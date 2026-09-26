@@ -251,19 +251,154 @@ func withoutDocumentationMakefileBlock(data string) string {
 	return data
 }
 
+// A Makefile line is read token by token; these name what a token turned out to be.
+const (
+	makefileAssignToken = "assign"
+	makefileRuleToken   = "rule"
+	makefileEndToken    = "end"
+)
+
+// maxMakefileLineBytes bounds the token scan of a single Makefile line (HISS-02). Real declarations
+// are far shorter; a line past the bound is read only in part, so its ownership is unresolved, and
+// makefileLineIsAmbiguous reports it as ambiguous so adoption preserves instead of appending.
+const maxMakefileLineBytes = 8192
+
+// makefileReferenceWidth returns the byte length of the variable reference text opens with, so the
+// colon and the "=" inside "$(SRCS:.c=.o)" are not read as operators. "$x" and "$$" span two
+// bytes; nesting is not tracked, so the first closing bracket ends the reference.
+func makefileReferenceWidth(text string) int {
+	if len(text) < 2 {
+		return 1
+	}
+	var closer byte
+	switch text[1] {
+	case '(':
+		closer = ')'
+	case '{':
+		closer = '}'
+	default:
+		return 2
+	}
+	if end := strings.IndexByte(text, closer); end > 0 {
+		return end + 1
+	}
+	return len(text)
+}
+
+// makefileColonOperator classifies the run of colons starting at line[i]. A run followed by "=" is
+// an assignment operator (":=", "::=", ":::="); any other run separates targets from prerequisites.
+func makefileColonOperator(line string, i int) (string, int) {
+	run := i
+	for run < len(line) && run < maxMakefileLineBytes && line[run] == ':' {
+		run++
+	}
+	if run < len(line) && line[run] == '=' {
+		return makefileAssignToken, run - i + 1
+	}
+	return makefileRuleToken, run - i
+}
+
+// makefileOperatorAt classifies the token starting at line[i] and reports the bytes it spans. Make
+// ends a variable name at "=", "+=", "?=", "!=" or a run of colons followed by "="; it stops
+// reading the line at an unescaped "#" (a comment) or ";" (the inline recipe), and a backslash
+// escapes the byte behind it.
+func makefileOperatorAt(line string, i int) (string, int) {
+	switch line[i] {
+	case '=':
+		return makefileAssignToken, 1
+	case '+', '?', '!':
+		if i+1 < len(line) && line[i+1] == '=' {
+			return makefileAssignToken, 2
+		}
+	case ':':
+		return makefileColonOperator(line, i)
+	case '$':
+		return "", makefileReferenceWidth(line[i:])
+	case '#', ';':
+		return makefileEndToken, 1
+	case '\\':
+		return "", 2
+	}
+	return "", 1
+}
+
+// makefileSplit returns the byte offsets of the first variable-assignment operator and of the first
+// rule colon on line, each -1 when the line holds none. Make reads whichever comes first: an
+// assignment first binds a variable whose value may itself contain colons ("V = a:b"), a colon
+// first opens a rule ("t: dep"). The scan ends where Make stops reading the line -- at a comment
+// or at the ";" that opens an inline recipe -- and at maxMakefileLineBytes (HISS-02).
+func makefileSplit(line string) (assign, colon int) {
+	assign, colon = -1, -1
+	for i := 0; i < len(line) && i < maxMakefileLineBytes; {
+		kind, width := makefileOperatorAt(line, i)
+		if kind == makefileEndToken {
+			return assign, colon
+		}
+		if kind == makefileAssignToken && assign < 0 {
+			assign = i
+		}
+		if kind == makefileRuleToken && colon < 0 {
+			colon = i
+		}
+		i += width
+	}
+	return assign, colon
+}
+
+// makefileBindsVariable reports whether text binds a variable rather than opening a rule, decided
+// by whichever operator Make reaches first.
+func makefileBindsVariable(text string) bool {
+	assign, colon := makefileSplit(text)
+	return assign >= 0 && (colon < 0 || assign < colon)
+}
+
+// makefileExportDirective reports whether line is an export or unexport directive: its first word,
+// followed by whitespace, is "export" or "unexport". Make reads such a line as a list of variables
+// to export and never as a rule, colon or not. Measured against GNU Make 4.4.1: "export
+// verify-all: dep", "unexport verify-all: dep" and "export : dep" declare no target, while
+// "export: dep" declares the target "export" and "override verify-all: dep", "private verify-all:
+// dep" and "override export verify-all: dep" declare verify-all -- only the first word decides.
+func makefileExportDirective(line string) bool {
+	trimmed := strings.TrimLeft(line, " \t")
+	end := strings.IndexAny(trimmed, " \t")
+	if end < 0 {
+		return false
+	}
+	word := trimmed[:end]
+	return word == "export" || word == "unexport"
+}
+
+// makefileTargetNames returns the target names a Makefile line declares, and none when the line
+// declares no rule. Make cuts the line at the first comment or inline-recipe ";" and decides on
+// what is left, so the test runs twice over text Make still reads: once over the whole line and
+// once over the prerequisites. Measured against GNU Make 4.4.1: "verify-all := x",
+// "verify-all = a:b", "verify-all ?= a:b", "verify-all += x:y", "verify-all != date" and
+// "override verify-all := x" all bind a variable, and "verify-all: CFLAGS := -g" -- with or
+// without a trailing comment or ";" recipe -- binds a target-specific variable; each answers
+// "make verify-all" with "No rule to make target". "verify-all:: dep", "verify-all: $(SRCS:.c=.o)",
+// "verify-all: lint ## run gates (FAST=1)" and "verify-all: ; FOO=1 echo c" all declare the target:
+// an "=" a comment or a recipe carries is not an assignment operator.
+func makefileTargetNames(line string) []string {
+	if strings.HasPrefix(line, "\t") || makefileExportDirective(line) {
+		return nil
+	}
+	_, colon := makefileSplit(line)
+	if colon < 0 || makefileBindsVariable(line) {
+		return nil
+	}
+	_, width := makefileOperatorAt(line, colon)
+	if makefileBindsVariable(line[colon+width:]) {
+		return nil
+	}
+	return strings.Fields(line[:colon])
+}
+
 func hasVerificationTarget(data, target string) bool {
 	lines := strings.Split(data, "\n")
 	for index := 0; index < len(lines) && index < maxMakefileLines; index++ {
-		line := lines[index]
-		if strings.HasPrefix(line, "\t") || strings.HasPrefix(strings.TrimSpace(line), "#") {
-			continue
-		}
-		left, _, ok := strings.Cut(line, ":")
-		if ok {
-			for _, name := range strings.Fields(left) {
-				if name == target {
-					return true
-				}
+		for _, name := range makefileTargetNames(lines[index]) {
+			if name == target {
+				return true
 			}
 		}
 	}
@@ -289,12 +424,57 @@ func appendVerificationTargets(existing string, plan *VerificationPlan) (string,
 	return util.RestoreLineEndings(result.String(), crlf), nil
 }
 
+// makefileDirective returns the first word of a Makefile line that carries meaning, skipping the
+// modifiers Make allows in front of a variable assignment or a define. "override", "export",
+// "unexport" and "private" take an assignment or a "define" and nothing else, so none of them can
+// introduce a rule; "override define recipe" is still a define.
+func makefileDirective(fields []string) string {
+	for _, field := range fields {
+		switch field {
+		case "override", "export", "unexport", "private":
+			continue
+		}
+		return field
+	}
+	return ""
+}
+
+// makefileLineIsAmbiguous reports whether a line may define targets only Make can resolve: an
+// include, a define, an $(eval ...) or ${eval ...} call, a computed or pattern target name, or a
+// line longer than the scan bound, which is read in part and therefore unresolved. The line is
+// already trimmed and is not a recipe line. A bare modifier is not ambiguous: measured against
+// GNU Make 4.4.1, a Makefile holding "override verify-all := x" or "override CFLAGS += -Wall"
+// beside an "all:" rule answers "make verify-all" with "No rule to make target".
+func makefileLineIsAmbiguous(line string) bool {
+	if strings.HasPrefix(line, "#") {
+		return false
+	}
+	if len(line) > maxMakefileLineBytes {
+		return true
+	}
+	switch makefileDirective(strings.Fields(line)) {
+	case "include", "-include", "sinclude", "define":
+		return true
+	}
+	if strings.Contains(line, "$(eval") || strings.Contains(line, "${eval") {
+		return true
+	}
+	for _, name := range makefileTargetNames(line) {
+		if strings.ContainsAny(name, "$%") {
+			return true
+		}
+	}
+	return false
+}
+
 // Includes, generated target names and pattern rules require Make evaluation.
 // Never append a potentially overriding recipe when ownership is ambiguous.
 func mayDefineVerificationTarget(data string) bool {
 	return mayDefineTarget(data, "verify-all")
 }
 
+// mayDefineTarget reports whether data may already own target: a rule for it, a line only Make can
+// resolve, or more than maxMakefileLines lines, whose unread tail may hold either (HISS-02).
 func mayDefineTarget(data, target string) bool {
 	if hasVerificationTarget(data, target) {
 		return true
@@ -304,29 +484,12 @@ func mayDefineTarget(data, target string) bool {
 		return true
 	}
 	for index := 0; index < len(lines) && index < maxMakefileLines; index++ {
-		if makefileLineHasAmbiguousOwnership(lines[index]) {
+		if strings.HasPrefix(lines[index], "\t") {
+			continue
+		}
+		if makefileLineIsAmbiguous(strings.TrimSpace(lines[index])) {
 			return true
 		}
 	}
 	return false
-}
-
-func makefileLineHasAmbiguousOwnership(line string) bool {
-	if strings.HasPrefix(line, "\t") {
-		return false
-	}
-	line = strings.TrimSpace(line)
-	fields := strings.Fields(line)
-	if len(fields) == 0 || strings.HasPrefix(line, "#") {
-		return false
-	}
-	switch fields[0] {
-	case "include", "-include", "sinclude", "define", "override":
-		return true
-	}
-	if strings.Contains(line, "$(eval") || strings.Contains(line, "${eval") {
-		return true
-	}
-	left, _, ok := strings.Cut(line, ":")
-	return ok && strings.ContainsAny(left, "$%")
 }

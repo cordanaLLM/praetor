@@ -11,6 +11,34 @@ runtimes, status, and any reasons requiring review.
 | `unavailable` | A required build/test command is missing or ambiguous. Generated recipes fail explicitly. |
 | `preserved-unverified` | Existing custom Makefile ownership is preserved. Review and exercise its `verify-all` contract. |
 
+Ownership means a rule. Make reads a line in two steps, and adoption follows both. First it cuts
+the line at the first unescaped `#`, which opens a comment, or `;`, which opens the inline recipe.
+Then it decides rule versus assignment on what is left, by whichever operator it reaches first: an
+assignment operator or a colon.
+
+A Makefile that only binds a variable of the same name declares no target, whether the operator is
+`:=`, `::=`, `:::=`, `=`, `?=`, `+=` or `!=`, whether the line carries an `export` or `override`
+modifier, and whether or not the value itself contains a colon (`verify-all = docker run --rm
+ci:latest check`, `verify-all = $(SRCS:.c=.o)`). The same test then runs over the prerequisites,
+which is why `verify-all: CFLAGS := -g` binds a target-specific variable without declaring a
+recipe -- with or without a trailing comment. A line whose first word is `export` or `unexport`
+is that directive and never a rule, so `export verify-all: dep` declares no target either; only
+the first word decides, which keeps `override verify-all: dep` and `private verify-all: dep`
+rules. In all of these adoption appends its own `verify-all` rule rather than preserving one and
+reporting a command the project's `make` answers with `No rule to make target 'verify-all'`.
+
+Because the cut comes first, an `=` that a comment or a recipe carries decides nothing:
+`verify-all: lint ## run gates (FAST=1)` and `verify-all: ; FOO=1 echo c` are rules and are
+preserved. So are double-colon rules (`verify-all:: dep`), target lists (`all verify-all: dep`) and
+rules whose prerequisites hold a substitution reference (`verify-all: $(SRCS:.c=.o)`), along with
+the forms only Make itself can resolve: an `include` or `define` directive, `$(eval ...)` or
+`${eval ...}`, a target name containing `$` or `%`, a line longer than the 8192-byte scan bound,
+which is read in part, and a Makefile longer than 4096 lines, which is read only in part as well;
+both are left to Make. The documentation gate uses the same reader to decide whether the project
+already owns `docs-lint` (`mayDefineTarget` in `internal/adopt/verification_makefile.go`). The
+table tests behind this contract are in `internal/adopt/verification_makefile_target_test.go`; each
+row was measured against GNU Make 4.4.1.
+
 Repositories declaring `docs:seo-portal` also receive a locked Markdown gate,
 its dedicated required CI workflow, and private scratch-link protection. The
 [documentation governance guide](documentation-governance.md) describes its
