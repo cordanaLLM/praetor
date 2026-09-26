@@ -145,14 +145,16 @@ never recorded as passed:
 skipped stage and a passed one identically, so the CLI printed `[PASS]` and the receipt certified
 security scans and prefetches that had never executed.
 
-`praetorctl gate verify` and `praetorctl forge validate-pr` refuse a receipt whose gate output does
-not open with `praetor-gate-output/v2`, after checking its signature and output hash
-(`lockdown.VerifyReceiptFile` in [`internal/lockdown/keys.go`](../../internal/lockdown/keys.go)). A
+`praetorctl gate verify`, `praetorctl forge validate-pr` and `praetorctl paperclip verify` refuse a
+receipt whose gate output does not open with `praetor-gate-output/v2`, after checking its signature
+and output hash (`lockdown.VerifyPinnedReceiptFile` and `lockdown.VerifyUnpinnedReceiptFile` in
+[`internal/lockdown/keys.go`](../../internal/lockdown/keys.go)). A
 v1 receipt still carries a valid signature, but its stage lines cannot tell a skipped stage from a
 passed one, so it is rejected with `receipt certifies an unsupported gate output version`. Re-mint
-it with `praetorctl gate run` on the current release. `TestVerifyReceiptFile_Negative`,
-`TestRunGateVerify_Negative` and `TestValidatePRChecklist_Negative_V1GateOutput` sign a real v1
-receipt and require each verifier to refuse it.
+it with `praetorctl gate run` on the current release. `TestVerifyPinnedReceiptFile_Negative`,
+`TestRunGateVerify_Negative`, `TestValidatePRChecklist_Negative_V1GateOutput` and
+`TestDisposition_VerifyReceipt_V1Refused` sign a real v1 receipt and require each verifier to
+refuse it.
 
 A skipped or not-applicable stage names its reason and does not fail the repository:
 

@@ -121,8 +121,8 @@ pipeline and leads to the rejected disposition; a stage that ran nothing is neve
 A dry run (`gate run --dry-run`) changes nothing and reaches no network. It verifies the lockfiles
 and runs stages 2 and 4. In a Go repository it records the module prefetch in stage 1, stage 3,
 stage 5 and the receipt as `skipped`; without a `go.mod`, stages 1 and 3 are `not_applicable`
-instead. It mints no receipt (`TestExecuteStages_DryRunInvokesNoCommand`). `gate verify` and
-`forge validate-pr` refuse a receipt whose gate output is not `praetor-gate-output/v2`
-(`lockdown.VerifyReceiptFile`). The [adoption verification guide](../guides/adoption-verification.md#stages-that-do-not-apply-are-skipped-not-failed)
+instead. It mints no receipt (`TestExecuteStages_DryRunInvokesNoCommand`). `gate verify`,
+`forge validate-pr` and `paperclip verify` refuse a receipt whose gate output is not
+`praetor-gate-output/v2` (`lockdown.VerifyPinnedReceiptFile`, `lockdown.VerifyUnpinnedReceiptFile`). The [adoption verification guide](../guides/adoption-verification.md#stages-that-do-not-apply-are-skipped-not-failed)
 covers each verdict. ADR-0012 (decision 3) records the pipeline; ADR-0004's four-stage description
 is superseded.
