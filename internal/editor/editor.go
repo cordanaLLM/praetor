@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -57,8 +58,12 @@ type Options struct {
 	// Editor configuration is derived from them rather than assumed: a repository without
 	// Go no longer receives Go settings, inspections or problem matchers, and an LSP path
 	// or extension recommendation needs evidence before it is written (BUG-776..778).
-	Languages         []string                  `json:"languages,omitempty"`
-	Commands          []Command                 `json:"commands,omitempty"`
+	Languages []string  `json:"languages,omitempty"`
+	Commands  []Command `json:"commands,omitempty"`
+	// Complexity carries the ceilings the caller resolved from the repository's policy.
+	// Limits left unset are completed from config.HISSComplexityCeiling, so an unadopted
+	// workspace is told the ceilings its first audit will enforce (issue #360).
+	Complexity        config.ComplexityPolicy   `json:"complexity,omitempty"`
 	Extensions        []ExtensionRecommendation `json:"extensions,omitempty"`
 	ExtensionRegistry string                    `json:"extension_registry,omitempty"`
 	LSPPath           string                    `json:"lsp_path,omitempty"`
@@ -177,11 +182,6 @@ func SynthesizeContext(ctx context.Context, opts Options) (_ *EditorConfigSet, e
 		return nil, err
 	}
 
-	binDir := opts.BinaryDir
-	if binDir == "" {
-		binDir = "bin"
-	}
-
 	arch := opts.Archetype
 	if arch == "" {
 		arch = "framework"
@@ -198,7 +198,7 @@ func SynthesizeContext(ctx context.Context, opts Options) (_ *EditorConfigSet, e
 		editorMap[e] = true
 	}
 
-	files := dispatchEditorFiles(editorMap, opts, binDir, arch, plan)
+	files := dispatchEditorFiles(editorMap, arch, plan)
 
 	return &EditorConfigSet{
 		Editors: editors,
@@ -206,20 +206,20 @@ func SynthesizeContext(ctx context.Context, opts Options) (_ *EditorConfigSet, e
 	}, nil
 }
 
-func dispatchEditorFiles(editorMap map[string]bool, opts Options, binDir, arch string, plan Plan) []GeneratedFile {
+func dispatchEditorFiles(editorMap map[string]bool, arch string, plan Plan) []GeneratedFile {
 	var files []GeneratedFile
 	if editorMap[EditorUniversal] {
 		files = append(files, generateUniversalEditorConfig()...)
 	}
 	if editorMap[EditorVSCode] || editorMap[EditorCursor] || editorMap[EditorWindsurf] || editorMap[EditorAntigravity] {
-		files = append(files, generateVSCodeFamily(binDir, opts.IncludeLSP, arch, plan, editorMap[EditorAntigravity])...)
+		files = append(files, generateVSCodeFamily(arch, plan, editorMap[EditorAntigravity])...)
 	}
 	for _, generator := range []struct {
 		editor   string
-		generate func(string) []GeneratedFile
+		generate func(string, Plan) []GeneratedFile
 	}{
 		{EditorJetBrains, generateJetBrains},
-		{EditorNeovim, func(arch string) []GeneratedFile { return generateNeovim(binDir, arch) }},
+		{EditorNeovim, generateNeovim},
 		{EditorZed, generateZed},
 		{EditorHelix, generateHelix},
 		{EditorEmacs, generateEmacs},
@@ -228,7 +228,7 @@ func dispatchEditorFiles(editorMap map[string]bool, opts Options, binDir, arch s
 		{EditorVisualStudio, generateVisualStudio},
 	} {
 		if editorMap[generator.editor] {
-			files = append(files, generator.generate(arch)...)
+			files = append(files, generator.generate(arch, plan)...)
 		}
 	}
 	return files
@@ -278,9 +278,9 @@ func normalizeEditors(input []string) (normalized, unknown []string) {
 	return normalized, unknown
 }
 
-func generateVSCodeFamily(binDir string, includeLSP bool, arch string, plan Plan, includeAntigravity bool) []GeneratedFile {
-	settings := buildVSCodeSettings(binDir, includeLSP, arch, plan, includeAntigravity)
-	extensions := buildVSCodeExtensions(arch)
+func generateVSCodeFamily(arch string, plan Plan, includeAntigravity bool) []GeneratedFile {
+	settings := buildVSCodeSettings(arch, plan, includeAntigravity)
+	extensions := buildVSCodeExtensions(plan)
 	tasks := buildVSCodeTasks(plan)
 
 	return []GeneratedFile{
@@ -310,30 +310,41 @@ func generateVSCodeFamily(binDir string, includeLSP bool, arch string, plan Plan
 // checkouts, and is the value already carried in the operator's own workspace settings.
 const antigravitySearchMaxWorkspaceFileCount = 50000
 
-// antigravityWatcherExclude extends the confirmed core VS Code setting files.watcherExclude
+// buildWatcherExclude extends the confirmed core VS Code setting files.watcherExclude
 // (schema: patternProperties ".*" -> boolean, resources/app/out/vs/workbench in the installed
-// IDE; Antigravity is a VS Code fork and reads the same workspace setting). Entries keep the
-// inotify-heavy .workingdir tree, build output and the isolated gate/dogfood run worktrees
-// under .standards/worktrees (see .gitignore) out of Antigravity's file watcher, addressing
-// issue #167 item 2. Run retention (#167 item 1) is a separate, still-open fix.
-var antigravityWatcherExclude = map[string]any{
-	"**/.workingdir*/**":         true,
-	"**/bin/**":                  true,
-	"**/dist/**":                 true,
-	"**/.standards/worktrees/**": true,
+// IDE; Antigravity is a VS Code fork and reads the same workspace setting). It keeps build
+// output and the isolated gate/dogfood run worktrees under .standards/worktrees (see
+// .gitignore) out of the file watcher, plus every private directory the plan resolved --
+// Plan.PrivateDirs used to be resolved and then ignored (issue #365). Addresses issue #167
+// item 2; run retention (#167 item 1) is a separate, still-open fix.
+func buildWatcherExclude(plan Plan) map[string]any {
+	exclude := map[string]any{
+		"**/bin/**":                  true,
+		"**/dist/**":                 true,
+		"**/.standards/worktrees/**": true,
+	}
+	for i := 0; i < len(plan.PrivateDirs) && i < maxLoopBound; i++ {
+		exclude["**/"+plan.PrivateDirs[i]+"/**"] = true
+	}
+	return exclude
 }
 
-func buildVSCodeSettings(binDir string, includeLSP bool, arch string, plan Plan, includeAntigravity bool) string {
+func buildVSCodeSettings(arch string, plan Plan, includeAntigravity bool) string {
 	data := map[string]any{
-		"standards.lsp.enabled":         includeLSP,
-		"standards.lsp.path":            fmt.Sprintf("${workspaceFolder}/%s/standards-lsp", binDir),
-		"standards.lsp.trace.server":    "messages",
 		"standards.sentinel.headroomMB": 1024,
+	}
+	// Settings that point at the Praetor language server are written only when the resolver
+	// found it. They used to be emitted unconditionally, so a workspace with no bin/standards-lsp
+	// received an enabled language server pointing at a file that does not exist (issue #365).
+	if plan.LSPPath != "" {
+		data["standards.lsp.enabled"] = true
+		data["standards.lsp.path"] = "${workspaceFolder}/" + plan.LSPPath
+		data["standards.lsp.trace.server"] = "messages"
 	}
 
 	if includeAntigravity {
 		data["antigravity.searchMaxWorkspaceFileCount"] = antigravitySearchMaxWorkspaceFileCount
-		data["files.watcherExclude"] = antigravityWatcherExclude
+		data["files.watcherExclude"] = buildWatcherExclude(plan)
 	}
 
 	if arch == "native-gpu-systems" {
@@ -365,16 +376,13 @@ func buildVSCodeSettings(binDir string, includeLSP bool, arch string, plan Plan,
 	return string(bytes) + "\n"
 }
 
-func buildVSCodeExtensions(arch string) string {
-	recs := []string{
-		"cordanaLLM.standards-vscode",
-		"github.copilot",
-		"eamodio.gitlens",
-	}
-	if arch == "native-gpu-systems" {
-		recs = append(recs, "llvm-vs-code-extensions.vscode-clangd", "mesonbuild.mesonbuild")
-	} else {
-		recs = append(recs, "golang.go")
+// buildVSCodeExtensions recommends exactly the extensions the caller proved are published in
+// the configured registry. Four ids were hard-coded here, so every repository was told to
+// install them whether or not any evidence for them existed (issue #365).
+func buildVSCodeExtensions(plan Plan) string {
+	recs := plan.Extensions
+	if recs == nil {
+		recs = []string{}
 	}
 	data := map[string]any{
 		"recommendations": recs,
@@ -386,43 +394,31 @@ func buildVSCodeExtensions(arch string) string {
 	return string(bytes) + "\n"
 }
 
+// buildVSCodeTasks binds exactly the repository commands the plan resolved. Four commands
+// were hard-coded here, so a repository with no Makefile was still given `make verify-all`
+// and `make build` tasks (issue #365).
 func buildVSCodeTasks(plan Plan) string {
+	commands := planCommands(plan)
+	tasks := make([]map[string]any, 0, len(commands))
+	defaulted := make(map[string]bool, len(commands))
+	for i := 0; i < len(commands); i++ {
+		command := commands[i]
+		task := map[string]any{
+			"label":          command.Label,
+			"type":           "shell",
+			"command":        commandShellLine(command),
+			"problemMatcher": goProblemMatcher(plan),
+		}
+		if command.Group != "" {
+			// Exactly one task per group may be the default one.
+			task["group"] = map[string]any{"kind": command.Group, "isDefault": !defaulted[command.Group]}
+			defaulted[command.Group] = true
+		}
+		tasks = append(tasks, task)
+	}
 	data := map[string]any{
 		"version": "2.0.0",
-		"tasks": []map[string]any{
-			{
-				"label":   "Standards: Verify All",
-				"type":    "shell",
-				"command": "make verify-all",
-				"group": map[string]any{
-					"kind":      "test",
-					"isDefault": true,
-				},
-				"problemMatcher": goProblemMatcher(plan),
-			},
-			{
-				"label":   "Standards: Build Binaries",
-				"type":    "shell",
-				"command": "make build",
-				"group": map[string]any{
-					"kind":      "build",
-					"isDefault": true,
-				},
-				"problemMatcher": goProblemMatcher(plan),
-			},
-			{
-				"label":          "Standards: Compile Context",
-				"type":           "shell",
-				"command":        "praetorctl compile-context",
-				"problemMatcher": []string{},
-			},
-			{
-				"label":          "Standards: Audit Invariants",
-				"type":           "shell",
-				"command":        "praetorctl audit",
-				"problemMatcher": []string{},
-			},
-		},
+		"tasks":   tasks,
 	}
 	bytes, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
@@ -451,47 +447,30 @@ func jetBrainsExtraTools(arch string) string {
 	return ""
 }
 
-func generateJetBrains(arch string) []GeneratedFile {
-	extraTools := jetBrainsExtraTools(arch)
+// generateJetBrains projects the resolved complexity ceilings into the inspection profile.
+// The limits used to be literals here, so a repository that tightened max_func_loc got an IDE
+// that accepted functions its own audit rejects (issue #360).
+func generateJetBrains(arch string, plan Plan) []GeneratedFile {
 	inspectionProfile := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <component name="InspectionProjectProfileManager">
   <profile version="1.0">
     <option name="myName" value="standards" />
     <inspection_tool class="GoCyclomaticComplexity" enabled="true" level="ERROR" enabled_by_default="true">
-      <option name="m_limit" value="10" />
+      <option name="m_limit" value="%d" />
     </inspection_tool>
     <inspection_tool class="GoUnhandledErrorResult" enabled="true" level="ERROR" enabled_by_default="true" />
     <inspection_tool class="GoInfiniteFor" enabled="true" level="ERROR" enabled_by_default="true" />
     <inspection_tool class="HISS01DAGControlFlow" enabled="true" level="ERROR" enabled_by_default="true" />
     <inspection_tool class="HISS02BoundedLoops" enabled="true" level="ERROR" enabled_by_default="true" />
     <inspection_tool class="HISS04ComplexityLOC" enabled="true" level="ERROR" enabled_by_default="true">
-      <option name="maxLoc" value="75" />
-      <option name="maxStatements" value="50" />
+      <option name="maxLoc" value="%d" />
+      <option name="maxStatements" value="%d" />
     </inspection_tool>
     <inspection_tool class="HISS07ZeroUnwrap" enabled="true" level="ERROR" enabled_by_default="true" />%s
   </profile>
 </component>
-`, extraTools)
-
-	workspaceHooks := `<?xml version="1.0" encoding="UTF-8"?>
-<project version="4">
-  <component name="InspectionProjectProfileManager">
-    <settings>
-      <option name="PROJECT_PROFILE" value="standards" />
-      <version value="1.0" />
-    </settings>
-  </component>
-  <component name="ExternalTools">
-    <tool name="Standards Audit" showInMainMenu="true" showInEditor="true">
-      <exec>
-        <option name="COMMAND" value="make" />
-        <option name="PARAMETERS" value="audit" />
-        <option name="WORKING_DIRECTORY" value="$ProjectFileDir$" />
-      </exec>
-    </tool>
-  </component>
-</project>
-`
+`, plan.Complexity.MaxCyclomatic, plan.Complexity.MaxFuncLOC, plan.Complexity.MaxStatements,
+		jetBrainsExtraTools(arch))
 
 	return []GeneratedFile{
 		{
@@ -501,25 +480,57 @@ func generateJetBrains(arch string) []GeneratedFile {
 		},
 		{
 			Path:    ".idea/workspace.xml",
-			Content: workspaceHooks,
+			Content: jetBrainsWorkspace(plan),
 			Editor:  EditorJetBrains,
 		},
 	}
 }
 
-func neovimLuaConfig(binDir, arch string) string {
-	ft := `"go"`
-	if arch == "native-gpu-systems" {
-		ft = `"c", "cpp", "cuda", "go", "python"`
+// jetBrainsWorkspace registers one external tool per resolved repository command. A single
+// `make audit` tool was hard-coded here and offered in repositories with no Makefile (#365).
+func jetBrainsWorkspace(plan Plan) string {
+	var tools strings.Builder
+	commands := planCommands(plan)
+	for i := 0; i < len(commands); i++ {
+		fmt.Fprintf(&tools, `
+    <tool name="%s" showInMainMenu="true" showInEditor="true">
+      <exec>
+        <option name="COMMAND" value="%s" />
+        <option name="PARAMETERS" value="%s" />
+        <option name="WORKING_DIRECTORY" value="$ProjectFileDir$" />
+      </exec>
+    </tool>`, xmlAttr(commands[i].Label), xmlAttr(commands[i].Program),
+			xmlAttr(strings.Join(commands[i].Args, " ")))
 	}
-	return fmt.Sprintf(`-- cordanaLLM/praetor Neovim LSP and Tool Configuration
-local lspconfig = require("lspconfig")
-local configs = require("lspconfig.configs")
+	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="InspectionProjectProfileManager">
+    <settings>
+      <option name="PROJECT_PROFILE" value="standards" />
+      <version value="1.0" />
+    </settings>
+  </component>
+  <component name="ExternalTools">%s
+  </component>
+</project>
+`, tools.String())
+}
 
+// neovimLSPBlock registers the Praetor language server only when the plan resolved a real
+// executable; `./bin/standards-lsp` used to be registered unconditionally (issue #365).
+func neovimLSPBlock(plan Plan, arch string) string {
+	if plan.LSPPath == "" {
+		return ""
+	}
+	filetypes := `"go"`
+	if arch == "native-gpu-systems" {
+		filetypes = `"c", "cpp", "cuda", "go", "python"`
+	}
+	return fmt.Sprintf(`
 if not configs.standards_lsp then
   configs.standards_lsp = {
     default_config = {
-      cmd = { "./%s/standards-lsp" },
+      cmd = { "./%s" },
       filetypes = { %s },
       root_dir = function(fname)
         return lspconfig.util.root_pattern(".standards.yaml", "meson.build", "go.mod", ".git")(fname)
@@ -527,8 +538,8 @@ if not configs.standards_lsp then
       settings = {
         standards = {
           hissEnforcement = true,
-          maxLOC = 75,
-          maxStatements = 50,
+          maxLOC = %d,
+          maxStatements = %d,
         },
       },
     },
@@ -536,23 +547,30 @@ if not configs.standards_lsp then
 end
 
 lspconfig.standards_lsp.setup({})
-
-vim.api.nvim_create_user_command("StandardsAudit", function()
-  vim.cmd("!praetorctl audit")
-end, { desc = "Audit repository against declared HISS invariants" })
-
-vim.api.nvim_create_user_command("StandardsCompileContext", function()
-  vim.cmd("!praetorctl compile-context")
-end, { desc = "Compile AGENTS.md cross-agent contexts" })
-
-vim.api.nvim_create_user_command("StandardsVerifyAll", function()
-  vim.cmd("!make verify-all")
-end, { desc = "Run full standards verification pipeline" })
-`, binDir, ft)
+`, plan.LSPPath, filetypes, plan.Complexity.MaxFuncLOC, plan.Complexity.MaxStatements)
 }
 
-func generateNeovim(binDir, arch string) []GeneratedFile {
-	luaConfig := neovimLuaConfig(binDir, arch)
+// neovimCommandBlock defines one :Standards<Name> command per resolved repository command.
+func neovimCommandBlock(plan Plan) string {
+	var block strings.Builder
+	commands := planCommands(plan)
+	for i := 0; i < len(commands); i++ {
+		fmt.Fprintf(&block, "\nvim.api.nvim_create_user_command(%s, function()\n  vim.cmd(%s)\nend, { desc = %s })\n",
+			luaString(neovimCommandName(commands[i].Label, i)),
+			luaString("!"+commandShellLine(commands[i])),
+			luaString("Run the repository command "+commands[i].Label))
+	}
+	return block.String()
+}
+
+func neovimLuaConfig(plan Plan, arch string) string {
+	return "-- Praetor Neovim LSP and Tool Configuration\n" +
+		"local lspconfig = require(\"lspconfig\")\n" +
+		"local configs = require(\"lspconfig.configs\")\n" +
+		neovimLSPBlock(plan, arch) + neovimCommandBlock(plan)
+}
+
+func generateNeovim(arch string, plan Plan) []GeneratedFile {
 	nvimRootLua := `-- Load project-level standards configuration
 local status_ok, res = pcall(require, "standards")
 if not status_ok then
@@ -567,7 +585,7 @@ end
 	return []GeneratedFile{
 		{
 			Path:    "lua/standards.lua",
-			Content: luaConfig,
+			Content: neovimLuaConfig(plan, arch),
 			Editor:  EditorNeovim,
 		},
 		{
@@ -663,32 +681,26 @@ func zedSettings() string {
 `
 }
 
-func zedTasks() string {
-	return `[
-  {
-    "label": "Standards: Verify All",
-    "command": "make",
-    "args": ["verify-all"],
-    "use_new_terminal": false,
-    "allow_concurrent_runs": false
-  },
-  {
-    "label": "Standards: Audit",
-    "command": "praetorctl",
-    "args": ["audit"],
-    "use_new_terminal": false
-  },
-  {
-    "label": "Standards: Compile Context",
-    "command": "praetorctl",
-    "args": ["compile-context", "--verify"],
-    "use_new_terminal": false
-  }
-]
-`
+// zedTasks binds the resolved repository commands; three were hard-coded here (issue #365).
+func zedTasks(plan Plan) string {
+	commands := planCommands(plan)
+	tasks := make([]map[string]any, 0, len(commands))
+	for i := 0; i < len(commands); i++ {
+		tasks = append(tasks, map[string]any{
+			"label":            commands[i].Label,
+			"command":          commands[i].Program,
+			"args":             commandArgs(commands[i]),
+			"use_new_terminal": false,
+		})
+	}
+	bytes, err := json.MarshalIndent(tasks, "", "  ")
+	if err != nil {
+		return "[]\n"
+	}
+	return string(bytes) + "\n"
 }
 
-func generateZed(arch string) []GeneratedFile {
+func generateZed(arch string, plan Plan) []GeneratedFile {
 	return []GeneratedFile{
 		{
 			Path:    ".zed/settings.json",
@@ -697,13 +709,13 @@ func generateZed(arch string) []GeneratedFile {
 		},
 		{
 			Path:    ".zed/tasks.json",
-			Content: zedTasks(),
+			Content: zedTasks(plan),
 			Editor:  EditorZed,
 		},
 	}
 }
 
-func generateHelix(arch string) []GeneratedFile {
+func generateHelix(_ string, _ Plan) []GeneratedFile {
 	config := `theme = "default"
 
 [editor]
@@ -756,13 +768,18 @@ formatter = { command = "gofmt" }
 	}
 }
 
-func generateEmacs(arch string) []GeneratedFile {
-	content := `;;; Directory Local Variables
+// generateEmacs binds compile-command only when the plan resolved a repository command;
+// `make verify-all` was hard-coded here and offered in repositories with no Makefile (#365).
+func generateEmacs(_ string, plan Plan) []GeneratedFile {
+	var compile string
+	if commands := planCommands(plan); len(commands) > 0 {
+		compile = fmt.Sprintf("\n         (compile-command . %q)", commandShellLine(commands[0]))
+	}
+	content := fmt.Sprintf(`;;; Directory Local Variables
 ;;; For more information see (info "(emacs) Directory Variables")
 
 ((nil . ((indent-tabs-mode . nil)
-         (fill-column . 100)
-         (compile-command . "make verify-all")))
+         (fill-column . 100)%s))
  (c-mode . ((c-basic-offset . 4)
             (c-file-style . "linux")))
  (c++-mode . ((c-basic-offset . 4)
@@ -770,7 +787,7 @@ func generateEmacs(arch string) []GeneratedFile {
  (python-mode . ((python-indent-offset . 4)))
  (go-mode . ((indent-tabs-mode . t)
              (tab-width . 4))))
-`
+`, compile)
 	return []GeneratedFile{
 		{
 			Path:    ".dir-locals.el",
@@ -780,28 +797,11 @@ func generateEmacs(arch string) []GeneratedFile {
 	}
 }
 
-func generateFleet(arch string) []GeneratedFile {
+func generateFleet(_ string, plan Plan) []GeneratedFile {
 	settings := `{
   "editor.tabSize": 4,
   "editor.insertSpaces": true,
   "editor.formatOnSave": true
-}
-`
-	run := `{
-  "configurations": [
-    {
-      "type": "command",
-      "name": "Standards: Verify All",
-      "program": "make",
-      "args": ["verify-all"]
-    },
-    {
-      "type": "command",
-      "name": "Standards: Audit",
-      "program": "praetorctl",
-      "args": ["audit"]
-    }
-  ]
 }
 `
 	return []GeneratedFile{
@@ -812,39 +812,57 @@ func generateFleet(arch string) []GeneratedFile {
 		},
 		{
 			Path:    ".fleet/run.json",
-			Content: run,
+			Content: fleetRun(plan),
 			Editor:  EditorFleet,
 		},
 	}
 }
 
-func generateSublime(arch string) []GeneratedFile {
-	content := `{
-  "folders": [
-    {
-      "path": "."
-    }
-  ],
-  "build_systems": [
-    {
-      "name": "Standards: Verify All",
-      "shell_cmd": "make verify-all",
-      "working_dir": "$project_path"
-    },
-    {
-      "name": "Standards: Audit",
-      "shell_cmd": "praetorctl audit",
-      "working_dir": "$project_path"
-    }
-  ],
-  "settings": {
-    "tab_size": 4,
-    "translate_tabs_to_spaces": true,
-    "trim_trailing_white_space_on_save": true,
-    "ensure_newline_at_eof_on_save": true
-  }
+// fleetRun lists the resolved repository commands; two were hard-coded here (issue #365).
+func fleetRun(plan Plan) string {
+	commands := planCommands(plan)
+	configurations := make([]map[string]any, 0, len(commands))
+	for i := 0; i < len(commands); i++ {
+		configurations = append(configurations, map[string]any{
+			"type":    "command",
+			"name":    commands[i].Label,
+			"program": commands[i].Program,
+			"args":    commandArgs(commands[i]),
+		})
+	}
+	bytes, err := json.MarshalIndent(map[string]any{"configurations": configurations}, "", "  ")
+	if err != nil {
+		return "{}\n"
+	}
+	return string(bytes) + "\n"
 }
-`
+
+// generateSublime builds one build system per resolved repository command; two were
+// hard-coded here and offered in repositories with no Makefile (issue #365).
+func generateSublime(_ string, plan Plan) []GeneratedFile {
+	commands := planCommands(plan)
+	systems := make([]map[string]any, 0, len(commands))
+	for i := 0; i < len(commands); i++ {
+		systems = append(systems, map[string]any{
+			"name":        commands[i].Label,
+			"shell_cmd":   commandShellLine(commands[i]),
+			"working_dir": "$project_path",
+		})
+	}
+	data := map[string]any{
+		"folders":       []map[string]any{{"path": "."}},
+		"build_systems": systems,
+		"settings": map[string]any{
+			"tab_size":                          4,
+			"translate_tabs_to_spaces":          true,
+			"trim_trailing_white_space_on_save": true,
+			"ensure_newline_at_eof_on_save":     true,
+		},
+	}
+	content := "{}\n"
+	if bytes, err := json.MarshalIndent(data, "", "  "); err == nil {
+		content = string(bytes) + "\n"
+	}
 	return []GeneratedFile{
 		{
 			Path:    "standards.sublime-project",
@@ -854,7 +872,7 @@ func generateSublime(arch string) []GeneratedFile {
 	}
 }
 
-func generateVisualStudio(arch string) []GeneratedFile {
+func generateVisualStudio(_ string, _ Plan) []GeneratedFile {
 	tidy := `# cordanaLLM/praetor High-Integrity Systems Standard (HISS) Clang-Tidy Configuration
 ---
 Checks: >

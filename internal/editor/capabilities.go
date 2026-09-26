@@ -7,10 +7,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/needs"
 )
@@ -18,7 +20,13 @@ import (
 const (
 	maxWorkspaceFiles       = 4096
 	maxLanguageObservations = maxWorkspaceFiles + maxLoopBound + 32
+	// lspBinaryName is the file the Praetor language server is built as.
+	lspBinaryName = "standards-lsp"
 )
+
+// defaultPrivateDirs are the agent state trees a repository keeps out of Git; ignoredWorkspaceDir
+// skips the same names while scanning.
+var defaultPrivateDirs = []string{".workingdir", ".workingdir2"}
 
 var errWorkspaceScanBound = errors.New("editor language scan exceeds file bound")
 
@@ -40,11 +48,16 @@ type ExtensionRecommendation struct {
 	Verified bool `json:"verified"`
 }
 
-// Plan is the immutable capability input shared by every editor renderer.
+// Plan is the immutable capability input shared by every editor renderer. Every renderer
+// reads the plan and nothing else: a capability the resolver rejected is omitted from the
+// generated file rather than asserted anyway (issue #365).
 type Plan struct {
-	Editors     []string
-	Languages   []string
-	Commands    []Command
+	Editors   []string
+	Languages []string
+	Commands  []Command
+	// Complexity carries the ceilings the repository's own policy resolves to, so an IDE
+	// inspection profile cannot contradict what `praetorctl audit` enforces (issue #360).
+	Complexity  config.ComplexityPolicy
 	Extensions  []string
 	LSPPath     string
 	PrivateDirs []string
@@ -86,7 +99,8 @@ func resolvePlan(ctx context.Context, opts Options, editors []string) (Plan, err
 	lspPath := resolveLSPPath(opts, root, languages)
 	privateDirs := normalizePrivateDirs(opts.PrivateDirs)
 	return Plan{Editors: editors, Languages: languages, Commands: commands,
-		Extensions: extensions, LSPPath: lspPath, PrivateDirs: privateDirs}, nil
+		Complexity: opts.Complexity.WithHISSDefaults(), Extensions: extensions,
+		LSPPath: lspPath, PrivateDirs: privateDirs}, nil
 }
 
 // DetectWorkspaceLanguages returns bounded observed language capabilities. It
@@ -219,7 +233,9 @@ func detectWorkspaceCommands(ctx context.Context, root string) ([]Command, error
 		return nil, err
 	}
 	if hasVerify {
-		commands = append(commands, Command{Label: "Verify All", Program: "make", Args: []string{"verify-all"}, Group: "test"})
+		// The label is the one every renderer already wrote for this command, so a repository
+		// that regenerates keeps the entry it had instead of gaining a second spelling of it.
+		commands = append(commands, Command{Label: "Standards: Verify All", Program: "make", Args: []string{"verify-all"}, Group: "test"})
 	}
 	return commands, nil
 }
@@ -277,21 +293,63 @@ func verifiedExtensions(input []ExtensionRecommendation, registry string) []stri
 	return normalizeStrings(result)
 }
 
+// resolveLSPPath returns the workspace-relative Praetor language server only when it is
+// actually there. An unset LSPPath falls back to the conventional location under BinaryDir;
+// without that fallback the field was unreachable from every CLI caller, so the resolver
+// always answered "absent" and the renderers asserted the binary anyway (issue #365).
 func resolveLSPPath(opts Options, root string, languages []string) string {
 	if !opts.IncludeLSP || !slices.Contains(languages, "go") {
 		return ""
 	}
-	rel := filepath.Clean(opts.LSPPath)
-	if rel == "." || !filepath.IsLocal(rel) || !isExecutableRegularFile(filepath.Join(root, rel)) {
-		return ""
+	for _, candidate := range lspCandidates(opts) {
+		rel := filepath.Clean(candidate)
+		if rel == "." || !filepath.IsLocal(rel) {
+			continue
+		}
+		if isExecutableRegularFile(filepath.Join(root, rel)) {
+			return filepath.ToSlash(rel)
+		}
 	}
-	return filepath.ToSlash(rel)
+	return ""
 }
 
+// lspCandidates lists the workspace-relative locations the language server may occupy. An
+// explicit LSPPath is the only candidate; otherwise the conventional location under BinaryDir
+// is tried under both names the build produces, because the Makefile appends .exe on Windows
+// (HISS-21: the capability has to be reachable on every host, not only on Unix).
+func lspCandidates(opts Options) []string {
+	if explicit := strings.TrimSpace(opts.LSPPath); explicit != "" {
+		return []string{explicit}
+	}
+	dir := defaultedBinaryDir(opts.BinaryDir)
+	return []string{filepath.Join(dir, lspBinaryName), filepath.Join(dir, lspBinaryName+".exe")}
+}
+
+// defaultedBinaryDir is the single answer to "where does this repository put its binaries".
+func defaultedBinaryDir(binDir string) string {
+	if strings.TrimSpace(binDir) == "" {
+		return "bin"
+	}
+	return binDir
+}
+
+// isExecutableRegularFile reports whether path is a regular file this host can execute.
+// Windows carries executability in the file extension rather than in a permission bit, and Go
+// reports 0666 or 0444 for every file there, so the Unix bit test alone would answer "not
+// executable" for every Windows workspace and silently drop the capability (HISS-21).
 func isExecutableRegularFile(path string) bool {
 	info, err := os.Lstat(path)
-	return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		return windowsExecutableExts[strings.ToLower(filepath.Ext(path))]
+	}
+	return info.Mode().Perm()&0o111 != 0
 }
+
+// windowsExecutableExts are the extensions Windows runs directly.
+var windowsExecutableExts = map[string]bool{".exe": true, ".bat": true, ".cmd": true, ".com": true}
 
 func isRegularFile(path string) bool {
 	info, err := os.Lstat(path)
@@ -300,7 +358,9 @@ func isRegularFile(path string) bool {
 
 func normalizePrivateDirs(input []string) []string {
 	if input == nil {
-		input = []string{".workingdir"}
+		// The default names exactly the private trees the workspace scan already skips, so a
+		// watcher exclusion and a language scan cannot disagree about what is private.
+		input = defaultPrivateDirs
 	}
 	result := make([]string, 0, len(input))
 	for i := 0; i < len(input) && i < maxLoopBound; i++ {

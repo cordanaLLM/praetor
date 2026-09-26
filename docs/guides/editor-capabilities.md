@@ -26,9 +26,10 @@ against the installed IDE rather than assumed from its docs:
   embedding scan bound above its shipped default of 5,000 (confirmed:
   `contributes.configuration` in the IDE's `extensions/antigravity/package.json`).
 - `files.watcherExclude` — a core VS Code setting (confirmed: the workbench's own
-  configuration schema) extended with `.workingdir*`, build output (`bin`, `dist`)
-  and the isolated gate/dogfood run worktrees under `.standards/worktrees`, to
-  keep inotify-heavy scratch out of the file watcher.
+  configuration schema) extended with every resolved private directory
+  (`editor.Options.PrivateDirs`, default `.workingdir` and `.workingdir2`), build
+  output (`bin`, `dist`) and the isolated gate/dogfood run worktrees under
+  `.standards/worktrees`, to keep inotify-heavy scratch out of the file watcher.
 
 These two keys are only added when `antigravity` is part of the requested editor
 set; `vscode`/`cursor`/`windsurf`-only runs do not receive them. Run-count
@@ -41,17 +42,68 @@ and nested agent worktrees. An incomplete scan is an error rather than a claim
 that the unexamined part of the repository has no relevant languages. The initial
 scan limit is 4096 files.
 
-Default commands include `make verify-all` only when that literal target exists.
-The generator does not add `make build` merely because a Makefile exists. Target
-presence is structural evidence; generation does not run or certify the command.
-Callers using the Go API can provide explicit commands and languages through
-`editor.Options`.
+Every renderer reads the resolved plan and nothing else (`Plan` in
+`internal/editor/capabilities.go`); a capability the resolver rejected is omitted,
+not asserted anyway:
 
-Praetor LSP settings require an explicitly selected, existing regular executable
-and a supported language. Extension recommendations require caller-supplied
-registry evidence through `editor.Options`; the generator does not contact an
-extension marketplace or prove publication from an extension's source directory.
+- Commands. Default commands include `make verify-all` only when that literal
+  target exists. The generator does not add `make build` merely because a Makefile
+  exists. VS Code tasks, JetBrains external tools, Neovim user commands, Zed tasks,
+  the Emacs `compile-command`, Fleet run configurations and Sublime build systems
+  list exactly the resolved commands; an empty plan binds none. Target presence is
+  structural evidence; generation does not run or certify the command. Callers
+  using the Go API can provide explicit commands and languages through
+  `editor.Options`.
+- Language server. The Praetor LSP is written only for a Go workspace that holds
+  a workspace-relative executable regular file at `editor.Options.LSPPath`, or,
+  when that is unset, at `<BinaryDir>/standards-lsp` (`standards-lsp.exe` on
+  Windows, where executability is the file extension). Otherwise VS Code settings
+  carry no `standards.lsp.*` key and Neovim registers no server.
+- Extensions. Recommendations are exactly the caller-supplied IDs verified in
+  `editor.Options.ExtensionRegistry`; the generator does not contact an extension
+  marketplace or prove publication from an extension's source directory. Without
+  that evidence `.vscode/extensions.json` recommends nothing, `golang.go` included.
+
 These settings do not prove installation, startup or native client activation.
+`internal/editor/plan_render_test.go` covers each rule with evidence present,
+absent and at its boundary.
+
+## Complexity ceilings
+
+The JetBrains inspection profile and the Neovim server settings state the
+complexity ceilings the repository's policy resolves to, which are the ceilings
+`praetorctl audit` enforces there. `praetorctl adopt` uses the policy its
+session already resolved. `praetorctl editors`, `standards-lsp` (for the
+workspace named in its `initialize` request) and the MCP
+`standards_inspect_symbols` tool (for its server root) use
+`config.ResolveRepositoryComplexity` (`internal/config/repository_policy.go`).
+A locked repository resolves exactly as `praetorctl plan` resolves it: pinned
+profiles, repository overrides and the audit function-length cap.
+
+Every other state resolves to `config.HISSComplexityCeiling` (cyclomatic 10,
+cognitive 15, statements 50 and the audit's function length,
+`config.AuditMaxFuncLOC` = 60), tightened by any complexity override the
+manifest declares. Overrides only tighten, so these states never state a limit
+looser than the ceiling:
+
+| Workspace state | Result | Stated |
+| :--- | :--- | :--- |
+| no `.standards.yaml` | ceiling | nothing |
+| manifest, no `.standards.lock` | ceiling tightened by overrides | nothing |
+| manifest or lock that does not resolve, including the lock `praetorctl init` writes | ceiling tightened by any readable override | `[WARN] repository policy unresolved ...` (CLI output, MCP report, LSP `window/logMessage`) |
+
+The lock-less row differs from `praetorctl plan` on purpose. The plan preview
+shows built-in defaults plus overrides (15/20/100/75 before overrides), but no
+audit runs before adoption and the first one after it caps function length at
+60, so an editor told 100 would accept what that audit rejects. An unresolvable
+policy warns rather than failing, because these commands generated editor files
+before they read policy at all; `praetorctl audit` still fails on that state.
+Only a nil or cancelled context fails the resolution: `editors` and the MCP
+inspection return the error, and `standards-lsp` keeps its current ceiling and
+logs the reason. Tests:
+`internal/config/repository_policy_test.go`,
+`cmd/standardsctl/editors_test.go`, `cmd/standards-lsp/policy_test.go`,
+`cmd/standards-mcp/server_test.go`.
 
 ## Existing configuration
 

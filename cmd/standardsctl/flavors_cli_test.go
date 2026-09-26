@@ -308,3 +308,22 @@ func TestPushFlavorTags_Negative_UnusableOrMissingRemote(t *testing.T) {
 		t.Error("a push to a remote that does not exist must fail")
 	}
 }
+
+// The reconciler heading names the tool, never this product's own repository (#361).
+func TestPrintFlavorPlan_HeadingIsRepositoryNeutral(t *testing.T) {
+	for _, transitions := range [][]flavors.TagTransition{
+		nil,
+		{{FlavorName: "stable", TargetRef: "v1.*", Action: flavors.ActionUnresolved}},
+	} {
+		out, err := captureStdout(t, func() error { printFlavorPlan(transitions); return nil })
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasPrefix(out, "=== Praetor Release Flavor Reconciler ===\n") || strings.Contains(out, "cordanaLLM/praetor") {
+			t.Errorf("heading = %q", out)
+		}
+		if len(transitions) > 0 && !strings.Contains(out, "<absent> -> <unresolved>") {
+			t.Errorf("transition line missing: %q", out)
+		}
+	}
+}

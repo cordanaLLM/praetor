@@ -15,6 +15,8 @@ import (
 
 func TestEditor_Positive_SynthesizeAllEditors(t *testing.T) {
 	opts := DefaultOptions()
+	// The workspace proves every capability, so each renderer has something to assert.
+	opts.WorkspaceRoot = evidenceWorkspace(t)
 	set, err := Synthesize(opts)
 	if err != nil {
 		t.Fatalf("Synthesize failed: %v", err)
@@ -78,8 +80,8 @@ func verifyNeovimAndZed(t *testing.T, fileMap map[string]string) {
 	if !strings.Contains(nvimLua, "standards_lsp") {
 		t.Errorf("lua/standards.lua missing standards_lsp registration")
 	}
-	if !strings.Contains(nvimLua, "StandardsAudit") {
-		t.Errorf("lua/standards.lua missing user commands")
+	if !strings.Contains(nvimLua, "StandardsVerifyAll") {
+		t.Errorf("lua/standards.lua missing the resolved verify-all user command")
 	}
 
 	if _, ok := fileMap[".zed/settings.json"]; !ok {
@@ -229,26 +231,18 @@ func TestEditor_Boundary_SingleEditorSelection(t *testing.T) {
 }
 
 func TestEditor_Boundary_CustomBinaryDirAndFlags(t *testing.T) {
-	customBin := "/opt/cordana/custom-bin"
-	set, err := Synthesize(Options{
-		Editors:    []string{"vscode"},
-		BinaryDir:  customBin,
-		IncludeMCP: false,
-		IncludeLSP: true,
-	})
-	if err != nil {
-		t.Fatalf("Synthesize with custom options failed: %v", err)
-	}
+	root := evidenceWorkspace(t)
+	customBin := "tools/custom-bin"
+	writeExecutable(t, root, lspBinaryRel(customBin))
+	settingsContent := fileContent(t, mustSynthesize(t, Options{
+		WorkspaceRoot: root,
+		Editors:       []string{"vscode"},
+		BinaryDir:     customBin,
+		IncludeMCP:    false,
+		IncludeLSP:    true,
+	}), ".vscode/settings.json")
 
-	var settingsContent string
-	for _, f := range set.Files {
-		if f.Path == ".vscode/settings.json" {
-			settingsContent = f.Content
-			break
-		}
-	}
-
-	if !strings.Contains(settingsContent, customBin+"/standards-lsp") {
+	if !strings.Contains(settingsContent, "${workspaceFolder}/"+lspBinaryRel(customBin)) {
 		t.Errorf("settings missing custom binary path: %s", settingsContent)
 	}
 	for _, forbidden := range []string{
@@ -259,11 +253,25 @@ func TestEditor_Boundary_CustomBinaryDirAndFlags(t *testing.T) {
 			t.Errorf("workspace settings must not assert %s: %s", forbidden, settingsContent)
 		}
 	}
+
+	// An absolute binary directory is outside the workspace, so the resolver cannot prove the
+	// server is the repository's own; nothing about it is written.
+	absolute := fileContent(t, mustSynthesize(t, Options{
+		WorkspaceRoot: root,
+		Editors:       []string{"vscode"},
+		BinaryDir:     filepath.Join(root, customBin),
+		IncludeLSP:    true,
+	}), ".vscode/settings.json")
+	if strings.Contains(absolute, "standards.lsp") {
+		t.Errorf("an absolute binary directory must not produce LSP settings: %s", absolute)
+	}
 }
 
 func TestEditor_Positive_ArchetypeNativeGPUSystems(t *testing.T) {
 	opts := DefaultOptions()
 	opts.Archetype = "native-gpu-systems"
+	// The filetypes belong to the language server block, which needs a proven server.
+	opts.WorkspaceRoot = evidenceWorkspace(t)
 	set, err := Synthesize(opts)
 	if err != nil {
 		t.Fatalf("Synthesize failed: %v", err)
@@ -314,12 +322,16 @@ func TestEditor_Positive_AntigravityAliasesAndKeys(t *testing.T) {
 
 	for _, alias := range []string{"antigravity", "agy", "antigravity-ide"} {
 		t.Run(alias, func(t *testing.T) {
-			// WorkspaceRoot points at an empty temp directory so language detection observes
-			// no Go sources, matching the golden fixture; the real repository (WorkspaceRoot
-			// defaulting to ".") would otherwise add unrelated Go-derived keys.
+			// WorkspaceRoot points at a temp directory holding only the language server, so
+			// language detection observes no Go sources, matching the golden fixture; the real
+			// repository (WorkspaceRoot defaulting to ".") would otherwise add unrelated
+			// Go-derived keys.
+			workspace := t.TempDir()
+			writeExecutable(t, workspace, lspBinaryRel("bin"))
+			wantSettings["standards.lsp.path"] = "${workspaceFolder}/" + lspBinaryRel("bin")
 			opts := Options{
 				Editors:       []string{alias},
-				WorkspaceRoot: t.TempDir(),
+				WorkspaceRoot: workspace,
 				BinaryDir:     "bin",
 				Archetype:     "framework",
 				IncludeLSP:    true,

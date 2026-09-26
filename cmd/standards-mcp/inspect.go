@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -8,16 +9,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/config"
 )
 
-// HISS-04 bounds as declared in AGENTS.md and .standards.yaml.
-const (
-	maxFuncLOC     = 75
-	maxStatements  = 50
-	maxCyclomatic  = 10
-	maxCognitive   = 15
-	maxFilesToScan = 500
-)
+// maxFilesToScan bounds one inspection (HISS-02).
+const maxFilesToScan = 500
 
 // funcMetrics holds the HISS-04 measurements of one function declaration.
 type funcMetrics struct {
@@ -27,19 +24,21 @@ type funcMetrics struct {
 	Cognitive  int
 }
 
-// violations lists the HISS-04 bounds the metrics exceed, in report order.
-func (m funcMetrics) violations() []string {
+// violations lists the bounds the metrics exceed, in report order. The bounds are the ones
+// the inspected repository resolves to; they used to be literals here, so this tool reported
+// a repository against ceilings its own audit does not enforce (issue #360).
+func (m funcMetrics) violations(bounds config.ComplexityPolicy) []string {
 	var out []string
-	if m.LOC > maxFuncLOC {
+	if m.LOC > bounds.MaxFuncLOC {
 		out = append(out, "LOC")
 	}
-	if m.Statements > maxStatements {
+	if m.Statements > bounds.MaxStatements {
 		out = append(out, "Stmts")
 	}
-	if m.Cyclomatic > maxCyclomatic {
+	if m.Cyclomatic > bounds.MaxCyclomatic {
 		out = append(out, "Cyclo")
 	}
-	if m.Cognitive > maxCognitive {
+	if m.Cognitive > bounds.MaxCognitive {
 		out = append(out, "Cognitive")
 	}
 	return out
@@ -252,7 +251,7 @@ func (s *Server) inspectableFile(path string) (string, error) {
 }
 
 // inspectSymbolsAtPath inspects Go files at path without recursion.
-func (s *Server) inspectSymbolsAtPath(path string) (string, error) {
+func (s *Server) inspectSymbolsAtPath(ctx context.Context, path string) (string, error) {
 	files, err := s.inspectionFiles(path)
 	if err != nil {
 		return "", err
@@ -260,17 +259,26 @@ func (s *Server) inspectSymbolsAtPath(path string) (string, error) {
 	if len(files) == 0 {
 		return "No Go source files found for symbol inspection.", nil
 	}
+	// A policy that exists but does not resolve yet reports against the HISS-04 ceiling and
+	// says so, as the editor projections do; only an interrupted resolution fails the tool.
+	bounds, warning, err := config.ResolveRepositoryComplexity(ctx, s.rootDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve complexity policy for %s: %w", s.rootDir, err)
+	}
 	fset := token.NewFileSet()
 	var b strings.Builder
 	b.WriteString("=== Go AST Symbol & HISS-04 Complexity Inspection ===\n\n")
+	if warning != "" {
+		fmt.Fprintf(&b, "[WARN] %s\n\n", warning)
+	}
 	for _, file := range files {
-		s.inspectSingleFile(fset, file, &b)
+		s.inspectSingleFile(fset, file, bounds, &b)
 	}
 	return b.String(), nil
 }
 
 // inspectSingleFile parses a single Go file and prints its top-level declarations.
-func (s *Server) inspectSingleFile(fset *token.FileSet, filePath string, b *strings.Builder) {
+func (s *Server) inspectSingleFile(fset *token.FileSet, filePath string, bounds config.ComplexityPolicy, b *strings.Builder) {
 	node, err := parser.ParseFile(fset, filePath, nil, parser.ParseComments)
 	if err != nil {
 		fmt.Fprintf(b, "File: %s (Parse error: %v)\n\n", filepath.Base(filePath), err)
@@ -287,7 +295,7 @@ func (s *Server) inspectSingleFile(fset *token.FileSet, filePath string, b *stri
 	for d := 0; d < declLimit; d++ {
 		switch decl := node.Decls[d].(type) {
 		case *ast.FuncDecl:
-			writeFuncReport(fset, decl, b)
+			writeFuncReport(fset, decl, bounds, b)
 		case *ast.GenDecl:
 			writeTypeReport(decl, b)
 		}
@@ -296,10 +304,10 @@ func (s *Server) inspectSingleFile(fset *token.FileSet, filePath string, b *stri
 }
 
 // writeFuncReport prints one function's HISS-04 metrics and verdict.
-func writeFuncReport(fset *token.FileSet, fn *ast.FuncDecl, b *strings.Builder) {
+func writeFuncReport(fset *token.FileSet, fn *ast.FuncDecl, bounds config.ComplexityPolicy, b *strings.Builder) {
 	m := measureFunc(fset, fn)
 	status := "PASS"
-	if bad := m.violations(); len(bad) > 0 {
+	if bad := m.violations(bounds); len(bad) > 0 {
 		status = "HISS-04 WARN: " + strings.Join(bad, ",")
 	}
 	receiver := ""
@@ -307,8 +315,8 @@ func writeFuncReport(fset *token.FileSet, fn *ast.FuncDecl, b *strings.Builder) 
 		receiver = "(recv) "
 	}
 	fmt.Fprintf(b, "  - %sFunc: %s | LOC: %d (<=%d) | Stmts: %d (<=%d) | Cyclo: %d (<=%d) | Cognitive: %d (<=%d) [%s]\n",
-		receiver, fn.Name.Name, m.LOC, maxFuncLOC, m.Statements, maxStatements,
-		m.Cyclomatic, maxCyclomatic, m.Cognitive, maxCognitive, status)
+		receiver, fn.Name.Name, m.LOC, bounds.MaxFuncLOC, m.Statements, bounds.MaxStatements,
+		m.Cyclomatic, bounds.MaxCyclomatic, m.Cognitive, bounds.MaxCognitive, status)
 }
 
 // writeTypeReport prints the type names declared by a type declaration group.

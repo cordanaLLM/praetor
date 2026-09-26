@@ -144,6 +144,41 @@ affected tool. Report placeholder results, missing operations, and blocked
 connections explicitly; the smoke probe does not establish correctness of every
 tool. Run the relevant code tests and `make verify-all` after implementing the fix.
 
+### Symbol inspection judges against the repository's ceilings
+
+`standards_inspect_symbols` prints each Go function's lines, statements,
+cyclomatic and cognitive complexity beside the ceiling it is judged against, as
+`LOC: 43 (<=60)`, and marks a function over any ceiling `HISS-04 WARN: <bounds>`.
+The ceilings come from `config.ResolveRepositoryComplexity`
+(`internal/config/repository_policy.go`) for the server root, the resolver
+`praetorctl editors` and `standards-lsp` also use, so the three report the
+ceilings `praetorctl audit` enforces in that repository:
+
+- A locked repository reports its resolved policy: pinned profiles, repository
+  overrides and the audit function-length cap (`config.AuditMaxFuncLOC`, 60).
+  That can be looser or tighter than the HISS-04 figures in `AGENTS.md`.
+- No `.standards.yaml`, or a manifest without `.standards.lock`, reports the
+  HISS-04 ceiling (cyclomatic 10, cognitive 15, statements 50, 60 lines),
+  tightened by any complexity override the manifest declares.
+- A manifest or lock that does not resolve, including the lock `praetorctl init`
+  writes, reports that same ceiling and opens with
+  `[WARN] repository policy unresolved (<cause>); stating the HISS-04 ceiling ...`.
+  The inspection still runs; `praetorctl audit` still fails on that state.
+- Policy resolution fails the tool only when the request is cancelled or the
+  resolution times out: `Inspection failed: resolve complexity policy for <root>: ...`.
+
+[Complexity ceilings](editor-capabilities.md#complexity-ceilings) explains why the
+lock-less case differs from `praetorctl plan`. Tests:
+`TestServer_Boundary_InspectSymbolsFollowsRepositoryPolicy` and
+`TestServer_Negative_InspectSymbolsUnresolvablePolicy` in
+`cmd/standards-mcp/server_test.go`.
+
+`standards_plan` opens with `=== Praetor Reconcile Plan (Dry Run) ===` and takes
+the `Repository: <owner>/<name>` line from the manifest's `repository` block
+(`TestWritePlanHeader_NamesTheManifestRepository`). Its target invariants are the
+built-in defaults plus the manifest's overrides (`createPlanTool` in
+`cmd/standards-mcp/server.go`); it does not read `.standards.lock`.
+
 ### Shared audit authority and parity
 
 The `standards_audit` tool executes the same gates as CLI `standardsctl audit`.

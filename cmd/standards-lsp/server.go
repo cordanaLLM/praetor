@@ -10,10 +10,13 @@ import (
 	"go/parser"
 	"go/token"
 	"io"
+	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 )
 
@@ -26,8 +29,6 @@ const (
 	// defaultMaxASTNodes bounds the nodes inspected per document (HISS-02). A document
 	// that exceeds it is reported as truncated instead of silently passing.
 	defaultMaxASTNodes = 1 << 20
-	maxFuncLOC         = 75
-	maxFuncStatements  = 50
 )
 
 var (
@@ -126,6 +127,10 @@ type Server struct {
 	isExited    bool
 	version     string
 	maxASTNodes int
+	// policyMu guards complexity, which initialize replaces with the ceilings the opened
+	// workspace resolves to while document analysis reads it.
+	policyMu   sync.RWMutex
+	complexity config.ComplexityPolicy
 }
 
 // NewServer instantiates an LSP server instance.
@@ -140,7 +145,18 @@ func NewServer(in io.Reader, out io.Writer, version string) *Server {
 		versions:    make(map[string]int),
 		version:     version,
 		maxASTNodes: defaultMaxASTNodes,
+		// Until initialize names a workspace there is no repository policy to resolve, so the
+		// documented HISS-04 ceiling stands in. It is the same fallback the editor projections
+		// use, from the same source, so the two cannot drift (issue #360).
+		complexity: config.HISSComplexityCeiling(),
 	}
+}
+
+// complexityPolicy returns the ceilings the current workspace resolves to.
+func (s *Server) complexityPolicy() config.ComplexityPolicy {
+	s.policyMu.RLock()
+	defer s.policyMu.RUnlock()
+	return s.complexity
 }
 
 // HandleMessage handles an unmarshaled JSON-RPC 2.0 request or notification.
@@ -181,7 +197,8 @@ func (s *Server) dispatchRequest(ctx context.Context, req JSONRPCRequest) (*JSON
 
 	switch req.Method {
 	case "initialize":
-		return s.handleInitialize(req), nil, nil
+		resp, notifs := s.handleInitialize(ctx, req)
+		return resp, notifs, nil
 	case "initialized":
 		return nil, nil, nil
 	case "shutdown":
@@ -240,7 +257,12 @@ func (s *Server) methodNotFound(req JSONRPCRequest) *JSONRPCResponse {
 	}
 }
 
-func (s *Server) handleInitialize(req JSONRPCRequest) *JSONRPCResponse {
+// handleInitialize answers the handshake and adopts the opened workspace's complexity policy.
+// The ceilings used to be constants here, so a repository that tightened max_func_loc got a
+// language server that accepted functions its own `praetorctl audit` rejects (issue #360).
+// A fallback is stated in a window/logMessage warning written after the response.
+func (s *Server) handleInitialize(ctx context.Context, req JSONRPCRequest) (*JSONRPCResponse, []JSONRPCNotification) {
+	notifs := s.adoptWorkspacePolicy(ctx, req.Params)
 	return &JSONRPCResponse{
 		JSONRPC: "2.0",
 		ID:      req.ID,
@@ -253,7 +275,85 @@ func (s *Server) handleInitialize(req JSONRPCRequest) *JSONRPCResponse {
 				"version": s.version,
 			},
 		},
+	}, notifs
+}
+
+// lspMessageTypeWarning is the LSP MessageType for a warning (LSP 3.17, window/logMessage).
+const lspMessageTypeWarning = 2
+
+// adoptWorkspacePolicy resolves the opened workspace's complexity ceilings, the same way the
+// editor projections and the MCP inspection do. A policy that exists but does not resolve yet
+// yields the HISS-04 ceiling tightened by any readable override; an interrupted resolution
+// keeps the ceiling the server started with. Either fallback is returned as a warning to log:
+// a handshake that failed over a policy read would leave the editor with no diagnostics at all,
+// and one that fell back silently would hide why they differ from the repository's policy.
+func (s *Server) adoptWorkspacePolicy(ctx context.Context, paramsRaw json.RawMessage) []JSONRPCNotification {
+	root := initializeWorkspaceRoot(paramsRaw)
+	if root == "" {
+		return nil
 	}
+	complexity, warning, err := config.ResolveRepositoryComplexity(ctx, root)
+	if err != nil {
+		warning = fmt.Sprintf("workspace policy not resolved (%v); keeping the HISS-04 ceiling", err)
+	} else {
+		s.policyMu.Lock()
+		s.complexity = complexity
+		s.policyMu.Unlock()
+	}
+	if warning == "" {
+		return nil
+	}
+	return []JSONRPCNotification{{
+		JSONRPC: "2.0",
+		Method:  "window/logMessage",
+		Params:  map[string]any{"type": lspMessageTypeWarning, "message": "standards-lsp: " + warning},
+	}}
+}
+
+// initializeWorkspaceRoot picks the workspace directory out of the initialize params,
+// preferring the first workspace folder over the deprecated rootUri and rootPath fields.
+func initializeWorkspaceRoot(paramsRaw json.RawMessage) string {
+	var params struct {
+		RootURI          string `json:"rootUri"`
+		RootPath         string `json:"rootPath"`
+		WorkspaceFolders []struct {
+			URI string `json:"uri"`
+		} `json:"workspaceFolders"`
+	}
+	if len(paramsRaw) == 0 || json.Unmarshal(paramsRaw, &params) != nil {
+		return ""
+	}
+	if len(params.WorkspaceFolders) > 0 {
+		if root := fileURIPath(params.WorkspaceFolders[0].URI); root != "" {
+			return root
+		}
+	}
+	if root := fileURIPath(params.RootURI); root != "" {
+		return root
+	}
+	return params.RootPath
+}
+
+// fileURIPath converts a file: URI to a host path, including the /C:/dir form Windows
+// clients send, and rejects every other scheme and any remote authority.
+func fileURIPath(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme != "file" || (parsed.Host != "" && parsed.Host != "localhost") {
+		return ""
+	}
+	path := parsed.Path
+	if len(path) > 2 && path[0] == '/' && path[2] == ':' && isASCIILetter(path[1]) {
+		path = path[1:]
+	}
+	return filepath.FromSlash(path)
+}
+
+// isASCIILetter reports whether b can be a Windows drive letter.
+func isASCIILetter(b byte) bool {
+	return ('a' <= b && b <= 'z') || ('A' <= b && b <= 'Z')
 }
 
 func (s *Server) handleDidOpen(ctx context.Context, paramsRaw json.RawMessage) ([]JSONRPCNotification, error) {
@@ -444,9 +544,11 @@ func (s *Server) newDiagnostic(fset *token.FileSet, node ast.Node, severity int,
 	}
 }
 
-// checkHISS04Complexity verifies function LOC <= 75 and statements <= 50.
+// checkHISS04Complexity verifies function length and statement count against the ceilings the
+// opened workspace resolved, which are the ceilings `praetorctl audit` enforces in it.
 func (s *Server) checkHISS04Complexity(fset *token.FileSet, nodes []ast.Node) []Diagnostic {
 	var diags []Diagnostic
+	complexity := s.complexityPolicy()
 	for i := 0; i < len(nodes); i++ {
 		fn, ok := nodes[i].(*ast.FuncDecl)
 		if !ok || fn.Body == nil {
@@ -454,14 +556,14 @@ func (s *Server) checkHISS04Complexity(fset *token.FileSet, nodes []ast.Node) []
 		}
 
 		loc := fset.Position(fn.End()).Line - fset.Position(fn.Pos()).Line + 1
-		if loc > maxFuncLOC {
+		if loc > complexity.MaxFuncLOC {
 			diags = append(diags, s.newDiagnostic(fset, fn, 1, "HISS-04",
-				fmt.Sprintf("Function %q length (%d LOC) exceeds HISS-04 limit of %d LOC", fn.Name.Name, loc, maxFuncLOC)))
+				fmt.Sprintf("Function %q length (%d LOC) exceeds HISS-04 limit of %d LOC", fn.Name.Name, loc, complexity.MaxFuncLOC)))
 		}
 
-		if stmts := len(fn.Body.List); stmts > maxFuncStatements {
+		if stmts := len(fn.Body.List); stmts > complexity.MaxStatements {
 			diags = append(diags, s.newDiagnostic(fset, fn, 1, "HISS-04",
-				fmt.Sprintf("Function %q statement count (%d) exceeds HISS-04 limit of %d", fn.Name.Name, stmts, maxFuncStatements)))
+				fmt.Sprintf("Function %q statement count (%d) exceeds HISS-04 limit of %d", fn.Name.Name, stmts, complexity.MaxStatements)))
 		}
 	}
 	return diags
