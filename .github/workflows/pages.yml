@@ -7,7 +7,7 @@ on:
     paths:
       - 'docs/**'
       - 'mkdocs.yml'
-      - 'scripts/docs_mermaid.py'
+      - 'scripts/docs_diagrams.py'
       - 'internal/seo/**'
       - 'cmd/standardsctl/seo.go'
       - '.github/workflows/pages.yml'
@@ -17,7 +17,7 @@ on:
     paths:
       - 'docs/**'
       - 'mkdocs.yml'
-      - 'scripts/docs_mermaid.py'
+      - 'scripts/docs_diagrams.py'
       - 'internal/seo/**'
       - 'cmd/standardsctl/seo.go'
       - '.github/workflows/pages.yml'
@@ -70,7 +70,7 @@ jobs:
       # fence was never declared and nothing looked at the output. This fails the build before
       # the artifact is uploaded when a ```mermaid block is not a <pre class="mermaid">.
       - name: Verify Mermaid Diagrams Render
-        run: python3 -B scripts/docs_mermaid.py --config mkdocs.yml --docs docs --site site
+        run: python3 -B scripts/docs_diagrams.py --config mkdocs.yml --docs docs --site site
 
       - name: Setup Go
         uses: actions/setup-go@v7

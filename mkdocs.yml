@@ -67,7 +67,7 @@ markdown_extensions:
   - md_in_html
   # The mermaid custom fence is what makes Material render a ```mermaid block as a diagram;
   # without it the block falls through to the highlighter and ships as a raw code listing.
-  # Form taken from Material's reference/diagrams page; scripts/docs_mermaid.py fails the
+  # Form taken from Material's reference/diagrams page; scripts/docs_diagrams.py fails the
   # Pages and docs CI builds when a diagram renders as code.
   - pymdownx.superfences:
       custom_fences:

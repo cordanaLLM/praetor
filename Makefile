@@ -181,12 +181,12 @@ docs-lint-test:
 	node tools/markdownlint/verify.mjs --self-test
 	node tools/docsurface/verify.mjs --self-test
 
-# The rendered half of scripts/docs_mermaid.py runs after mkdocs build in pages.yml and the CI
+# The rendered half of scripts/docs_diagrams.py runs after mkdocs build in pages.yml and the CI
 # docs audit; this replays its fixtures and checks both mkdocs.yml files declare the fence.
-.PHONY: docs-mermaid-test
-verify-all: docs-mermaid-test
-docs-mermaid-test:
-	python3 -B scripts/test_docs_mermaid.py
+.PHONY: docs-diagrams-test
+verify-all: docs-diagrams-test
+docs-diagrams-test:
+	python3 -B scripts/test_docs_diagrams.py
 
 # The presets' JSON-LD must read identity from the site's config, never name this project:
 # a source check always, and rendered MkDocs builds when mkdocs-material is installed.

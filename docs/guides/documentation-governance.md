@@ -262,7 +262,7 @@ by the diagram check:
 
 ```bash
 mkdocs build --strict -d /tmp/site
-python3 -B scripts/docs_mermaid.py --config mkdocs.yml --docs docs --site /tmp/site
+python3 -B scripts/docs_diagrams.py --config mkdocs.yml --docs docs --site /tmp/site
 ```
 
 Material for MkDocs draws a diagram only from a `<pre class="mermaid">`
@@ -275,8 +275,8 @@ nested inside a longer fence is source text and is not expected to render.
 The mapping from a page to its HTML file assumes the default
 `use_directory_urls: true`.
 
-`make docs-mermaid-test` (part of `make verify-all`) replays the check's
-fixtures in `scripts/test_docs_mermaid.py` and asserts that both configuration
+`make docs-diagrams-test` (part of `make verify-all`) replays the check's
+fixtures in `scripts/test_docs_diagrams.py` and asserts that both configuration
 files declare the fence, so removing it fails without a site build.
 
 Both sites share one JSON-LD template, `docs/presets/mkdocs/overrides/main.html`,
