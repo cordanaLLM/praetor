@@ -51,10 +51,12 @@ func ResolveGitHooksDir(ctx context.Context, repoPath string) (string, error) {
 
 // lefthookGovernedCommand renders a lefthook run line that executes a praetor
 // subcommand and fails closed: a failing command blocks, and so does a missing binary.
+// It resolves either installed name through util.ShellCLI, the same resolution generated
+// Makefiles use, so a repository whose make verify-all passes cannot fail every hook
+// because only the legacy name is on PATH (BUG-805).
 func lefthookGovernedCommand(args string) string {
-	return "if command -v praetorctl >/dev/null 2>&1; then praetorctl " + args +
-		"; elif [ -d ./cmd/standardsctl ]; then go run ./cmd/standardsctl " + args +
-		"; else echo HISS governance hook cannot run because praetorctl is not installed >&2; exit 1; fi"
+	return util.ShellCLI(args, "HISS governance hook cannot run because neither "+
+		util.PraetorCLI+" nor "+util.LegacyCLI+" is installed")
 }
 
 // optionalToolCommand renders a lefthook run line for a third-party tool that is skipped
@@ -62,6 +64,17 @@ func lefthookGovernedCommand(args string) string {
 func optionalToolCommand(tool, args string) string {
 	return "if command -v " + tool + " >/dev/null 2>&1; then " + tool + " " + args +
 		"; else echo " + tool + " is not installed, skipping >&2; fi"
+}
+
+// goModuleCommand renders a lefthook run line for a Go module tool. It runs command only
+// where the repository root holds a go.mod and otherwise skips with the reason, as the
+// gate's own security and test stages already do (internal/gating/pipeline.go). Without the
+// guard a repository with no root module failed every push on govulncheck and every commit
+// touching a .go file on go vet (#242). The reason avoids ": " so the line stays one plain
+// YAML scalar.
+func goModuleCommand(skipped, command string) string {
+	return "if [ -f go.mod ]; then " + command +
+		"; else echo no go.mod at the repository root, skipping " + skipped + " >&2; fi"
 }
 
 // buildLefthookYAML renders the scaffolded lefthook configuration.
@@ -81,7 +94,7 @@ func buildLefthookYAMLFor(checkpoint bool) string {
 		"  parallel: true\n" +
 		"  commands:\n" +
 		"    gofmt:\n      glob: \"*.go\"\n      run: gofmt -w {staged_files}\n      stage_fixed: true\n" +
-		"    govet:\n      glob: \"*.go\"\n      run: go vet ./...\n" +
+		"    govet:\n      glob: \"*.go\"\n      run: " + goModuleCommand("go vet", "go vet ./...") + "\n" +
 		"    context-check:\n      run: " + governed("compile-context --verify") + "\n" +
 		"    hiss-audit:\n      run: " + governed("audit") + "\n" +
 		"\n" +
@@ -93,7 +106,7 @@ func buildLefthookYAMLFor(checkpoint bool) string {
 		"pre-push:\n" +
 		"  parallel: false\n" +
 		"  commands:\n" +
-		"    security:\n      run: " + optionalToolCommand("govulncheck", "./...") + "\n" +
+		"    security:\n      run: " + goModuleCommand("govulncheck", optionalToolCommand("govulncheck", "./...")) + "\n" +
 		"    flavor-audit:\n      run: " + governed("flavor audit .") + "\n" +
 		"    audit:\n      run: " + governed("audit") + "\n" +
 		"    gate:\n      run: " + governed("gate run --path=.") + "\n"
@@ -164,47 +177,69 @@ if __name__ == "__main__":
 // buildFallbackPreCommitScript renders the hook installed when lefthook is unavailable.
 // It only runs binaries found on PATH and fails closed when none is installed.
 func buildFallbackPreCommitScript() string {
+	missing := "'[HISS] neither " + util.PraetorCLI + " nor " + util.LegacyCLI +
+		" is installed; refusing to commit unverified changes'"
 	return "#!/usr/bin/env bash\n" +
 		fallbackPreCommitMarker + " (installed because lefthook is not available)\n" +
 		"set -euo pipefail\n" +
-		"if command -v praetorctl >/dev/null 2>&1; then\n" +
-		"    praetorctl compile-context --verify\n" +
-		"    praetorctl audit\n" +
-		"elif command -v standardsctl >/dev/null 2>&1; then\n" +
-		"    standardsctl compile-context --verify\n" +
-		"    standardsctl audit\n" +
-		"else\n" +
-		"    echo '[HISS] praetorctl is not installed; refusing to commit unverified changes' >&2\n" +
-		"    exit 1\n" +
-		"fi\n"
+		util.ShellCLI("compile-context --verify", missing) + "\n" +
+		util.ShellCLI("audit", missing) + "\n"
 }
 
 // reconcileGitHooks scaffolds lefthook.yml and the agent evasion interceptor, then
-// activates local git hooks for configurations praetor itself wrote.
+// activates local git hooks for configurations praetor itself wrote. An earlier Praetor
+// rendering is migrated to the current one; a configuration that extends the canonical
+// policy or adds jobs to the generated ones is never replaced, --force included.
 func reconcileGitHooks(ctx context.Context, s *adoptSession) error {
 	checkpointReady, err := reconcileCheckpointLifecycle(ctx, s)
 	if err != nil {
 		return err
 	}
-	lefthookWritten, err := s.scaffoldFile(scaffold{
-		rel:      lefthookFile,
-		perm:     filePerm,
-		content:  []byte(buildLefthookYAMLFor(checkpointReady)),
-		force:    true,
-		created:  "Scaffolded Lefthook configuration for local pre-commit and pre-push enforcement",
-		verified: "Existing Lefthook configuration verified present",
-	})
+	current := buildLefthookYAMLFor(checkpointReady)
+	identity, err := s.classifyExistingLefthook(current)
+	if err != nil {
+		return err
+	}
+	if identity.reason != "" {
+		s.report.recordSkipped(lefthookFile, identity.reason)
+		return reconcileEvasionHook(s, identity.canonical)
+	}
+	lefthookWritten, err := s.writeLefthookConfig(current, identity.prior)
 	if err != nil {
 		return err
 	}
 	warnPreservedCheckpoint(s, checkpointReady, lefthookWritten)
-	if err := reconcileEvasionHook(s); err != nil {
+	if err := reconcileEvasionHook(s, false); err != nil {
 		return err
 	}
 	if s.opts.DryRun || s.opts.SkipHookActivation {
 		return nil
 	}
 	return s.activateGitHooks(ctx, lefthookWritten)
+}
+
+// writeLefthookConfig writes the current rendering over an earlier Praetor rendering, and
+// otherwise scaffolds it under the usual --force contract. It reports whether it wrote.
+func (s *adoptSession) writeLefthookConfig(current string, prior bool) (bool, error) {
+	if !prior {
+		return s.scaffoldFile(scaffold{
+			rel:      lefthookFile,
+			perm:     filePerm,
+			content:  []byte(current),
+			force:    true,
+			created:  "Scaffolded Lefthook configuration for local pre-commit and pre-push enforcement",
+			verified: "Existing Lefthook configuration verified present",
+		})
+	}
+	full, err := repoFile(s.repoPath, lefthookFile)
+	if err != nil {
+		return false, err
+	}
+	if err := s.write(full, []byte(current), filePerm); err != nil {
+		return false, err
+	}
+	s.report.recordReconciled(lefthookFile, "Migrated an earlier Praetor-generated Lefthook configuration to the current template")
+	return true, nil
 }
 
 func reconcileCheckpointLifecycle(ctx context.Context, s *adoptSession) (bool, error) {
@@ -233,12 +268,15 @@ func warnPreservedCheckpoint(s *adoptSession, ready, written bool) {
 	}
 }
 
-func reconcileEvasionHook(s *adoptSession) error {
+// reconcileEvasionHook scaffolds the interceptor. With vendored set, the repository carries
+// the canonical hook policy, whose interceptor belongs to that vendored bundle, so --force
+// does not replace it with the generated one.
+func reconcileEvasionHook(s *adoptSession, vendored bool) error {
 	_, err := s.scaffoldFile(scaffold{
 		rel:      evasionHookFile,
 		perm:     execPerm,
 		content:  []byte(blockEvasionPY),
-		force:    true,
+		force:    !vendored,
 		created:  "Scaffolded agent PreToolUse anti-evasion interceptor (wire it into the agent harness hooks)",
 		verified: "Existing agent anti-evasion interceptor verified present",
 	})
