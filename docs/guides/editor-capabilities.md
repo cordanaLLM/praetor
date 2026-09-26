@@ -138,7 +138,12 @@ absent and at its boundary.
 
 The JetBrains inspection profile and the Neovim server settings state the
 complexity ceilings the repository's policy resolves to, which are the ceilings
-`praetorctl audit` enforces there. `praetorctl adopt` uses the policy its
+`praetorctl audit` enforces there. The JetBrains profile carries the cyclomatic
+limit (`GoCyclomaticComplexity`'s `m_limit`) and otherwise names only inspections
+the IDE provides; it no longer lists `HISS01DAGControlFlow`, `HISS02BoundedLoops`,
+`HISS04ComplexityLOC` or `HISS07ZeroUnwrap`, which no plugin implements, so their
+function-length and statement options were never applied. Those limits reach an
+editor through `standards-lsp`. `praetorctl adopt` uses the policy its
 session already resolved. `praetorctl editors`, `standards-lsp` (for the
 workspace named in its `initialize` request) and the MCP
 `standards_inspect_symbols` tool (for its server root) use
@@ -172,6 +177,40 @@ logs the reason. Tests:
 `internal/config/repository_policy_test.go`,
 `cmd/standardsctl/editors_test.go`, `cmd/standards-lsp/policy_test.go`,
 `cmd/standards-mcp/server_test.go`.
+
+## Reference integrations under `editors/`
+
+`editors/neovim/lua/standards.lua` and
+`editors/jetbrains/inspectionProfiles/standards.xml` are the Neovim module and
+JetBrains inspection profile for editors without a Praetor extension. They are
+generator output: `editor.ReferenceSet` (`internal/editor/reference.go`) renders
+them with the same renderers as `editors generate`, from a fixed plan (a Go
+workspace, `praetorctl` on `PATH`, `bin/standards-lsp`, the HISS-04 ceiling), so
+they do not depend on what the host has built. The Neovim module defines
+`:StandardsAudit`, `:StandardsCompileContext`, `:StandardsVerifyAll` and
+`:StandardsRatchetSweep`; the ratchet sweep runs `praetorctl audit`, which
+evaluates the baseline ratchet against the working tree
+(`cmd/standardsctl/audit_ratchet.go`).
+
+Never edit them by hand. After changing a renderer, regenerate and check:
+
+```bash
+make editors-reference          # praetorctl editors reference
+make editors-reference-verify   # praetorctl editors reference --verify
+```
+
+`make verify-all` runs `editors-reference-verify`, which fails with the drifted
+file's path. Tests: `internal/editor/reference_test.go`,
+`cmd/standardsctl/editors_reference_test.go`.
+
+## VS Code extension trace level
+
+The extension starts its language client with the id `standards.lsp`
+(`LSP_CLIENT_ID` in `editors/vscode/src/setup.ts`). vscode-languageclient reads
+the trace level from `<client id>.trace.server` and re-reads it on every
+configuration change, so the contributed `standards.lsp.trace.server` setting
+(`off`, `messages`, `verbose`) now takes effect. The former id `standardsLSP`
+read a key nothing contributes. Test: `editors/vscode/src/setup.test.ts`.
 
 ## Existing configuration
 

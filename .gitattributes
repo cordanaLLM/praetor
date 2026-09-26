@@ -86,6 +86,13 @@ templates/** text eol=lf
 # also normalises one consistent CRLF style for a checkout that ignores this file.
 internal/astmerge/testdata/*.txt text eol=lf
 
+# The editors/ reference integrations are generator output: `praetorctl editors reference
+# --verify` (make verify-all) and internal/editor's TestReferenceSetMatchesTrackedTree compare
+# them byte-exact against the LF text internal/editor renders, so a CRLF checkout would report
+# both as drift on Windows only (HISS-21). Same fix, same reason as templates/** above.
+editors/neovim/lua/standards.lua text eol=lf
+editors/jetbrains/inspectionProfiles/standards.xml text eol=lf
+
 # The CRLF fixtures assert that the line-based matchers are not silenced by a Windows
 # checkout. Two attributes are needed and they defend different things.
 #

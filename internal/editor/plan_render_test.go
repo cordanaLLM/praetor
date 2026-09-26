@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -84,10 +85,8 @@ func TestPlanRender_Positive_ResolvedComplexityReachesJetBrainsAndNeovim(t *test
 	})
 	idea := fileContent(t, set, ".idea/inspectionProfiles/standards.xml")
 	assertWellFormedXML(t, "inspection profile", idea)
-	for _, want := range []string{`name="m_limit" value="7"`, `name="maxLoc" value="42"`, `name="maxStatements" value="33"`} {
-		if !strings.Contains(idea, want) {
-			t.Errorf("inspection profile lacks %s:\n%s", want, idea)
-		}
+	if !strings.Contains(idea, `name="m_limit" value="7"`) {
+		t.Errorf("inspection profile lacks the resolved cyclomatic limit 7:\n%s", idea)
 	}
 	lua := fileContent(t, set, "lua/standards.lua")
 	for _, want := range []string{"maxLOC = 42,", "maxStatements = 33,"} {
@@ -107,8 +106,8 @@ func TestPlanRender_Boundary_UnsetComplexityIsTheAuditCeiling(t *testing.T) {
 	ceiling := config.HISSComplexityCeiling()
 	idea := fileContent(t, mustSynthesize(t, Options{WorkspaceRoot: root, Editors: []string{EditorJetBrains}}),
 		".idea/inspectionProfiles/standards.xml")
-	if !strings.Contains(idea, `name="maxLoc" value="60"`) || ceiling.MaxFuncLOC != config.AuditMaxFuncLOC {
-		t.Errorf("an unresolved policy must state the audit length %d:\n%s", config.AuditMaxFuncLOC, idea)
+	if want := fmt.Sprintf(`name="m_limit" value="%d"`, ceiling.MaxCyclomatic); !strings.Contains(idea, want) {
+		t.Errorf("an unresolved policy must state the ceiling's cyclomatic limit %d:\n%s", ceiling.MaxCyclomatic, idea)
 	}
 
 	// One resolved limit is kept; the others are completed from the ceiling.

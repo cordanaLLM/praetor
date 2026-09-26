@@ -123,9 +123,11 @@ func TestRunEditors_Boundary_EmptyEditorsFlagKeepsDefault(t *testing.T) {
 // Resolved complexity policy (#360)
 // =========================================================================
 
-// generatedLimits runs `editors generate` for JetBrains and returns its output and the
-// m_limit, maxLoc and maxStatements the inspection profile states, in that order.
-func generatedLimits(t *testing.T, root string) (string, [3]string) {
+// generatedCyclomatic runs `editors generate` for JetBrains and returns its output and the
+// cyclomatic limit (m_limit) the inspection profile states. It is the one resolved ceiling the
+// profile carries: the length and statement limits sat on HISS04ComplexityLOC, an inspection no
+// IDE provides, and now reach the editor through standards-lsp (BUG-656).
+func generatedCyclomatic(t *testing.T, root string) (string, string) {
 	t.Helper()
 	out, err := captureStdout(t, func() error {
 		return runEditors([]string{"generate", "--path=" + root, "--editors=jetbrains"})
@@ -137,21 +139,17 @@ func generatedLimits(t *testing.T, root string) (string, [3]string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var limits [3]string
-	for i, name := range []string{"m_limit", "maxLoc", "maxStatements"} {
-		_, after, ok := strings.Cut(string(profile), `name="`+name+`" value="`)
-		if !ok {
-			t.Fatalf("profile states no %s:\n%s", name, profile)
-		}
-		limits[i], _, _ = strings.Cut(after, `"`)
+	_, after, ok := strings.Cut(string(profile), `name="m_limit" value="`)
+	if !ok {
+		t.Fatalf("profile states no m_limit:\n%s", profile)
 	}
-	return out, limits
+	limit, _, _ := strings.Cut(after, `"`)
+	return out, limit
 }
 
-// ceilingLimits is the HISS-04 ceiling as the JetBrains profile states it, with maxLoc replaced.
-func ceilingLimits(maxLoc int) [3]string {
-	c := config.HISSComplexityCeiling()
-	return [3]string{fmt.Sprint(c.MaxCyclomatic), fmt.Sprint(maxLoc), fmt.Sprint(c.MaxStatements)}
+// ceilingCyclomatic is the HISS-04 cyclomatic ceiling as the JetBrains profile states it.
+func ceilingCyclomatic() string {
+	return fmt.Sprint(config.HISSComplexityCeiling().MaxCyclomatic)
 }
 
 func writeEditorsManifest(t *testing.T, root, name, body string) {
@@ -165,23 +163,23 @@ const editorsManifest = "version: 1\nrepository:\n  owner: example\n  name: demo
 
 func TestRunEditors_Positive_ProjectsTheRepositoryPolicy(t *testing.T) {
 	root := t.TempDir()
-	writeEditorsManifest(t, root, ".standards.yaml", editorsManifest+"overrides:\n  complexity:\n    max_func_loc: 42\n")
-	if _, got := generatedLimits(t, root); got != ceilingLimits(42) {
-		t.Errorf("limits = %v, want the repository's 42 lines within the ceiling %v", got, ceilingLimits(42))
+	writeEditorsManifest(t, root, ".standards.yaml", editorsManifest+"overrides:\n  complexity:\n    max_cyclomatic: 7\n")
+	if _, got := generatedCyclomatic(t, root); got != "7" {
+		t.Errorf("m_limit = %s, want the repository's 7 within the ceiling %s", got, ceilingCyclomatic())
 	}
 }
 
-// An unadopted workspace and a manifest without a lock both state the HISS-04 ceiling with the
-// audit's length; the lock-less case used to state the 15/100/75 plan-preview baseline.
+// An unadopted workspace and a manifest without a lock both state the HISS-04 ceiling; the
+// lock-less case used to state the plan-preview baseline's cyclomatic 15.
 func TestRunEditors_Boundary_UnlockedWorkspaceGetsTheCeiling(t *testing.T) {
-	want := ceilingLimits(config.AuditMaxFuncLOC)
-	if _, got := generatedLimits(t, t.TempDir()); got != want {
-		t.Errorf("unadopted limits = %v, want %v", got, want)
+	want := ceilingCyclomatic()
+	if _, got := generatedCyclomatic(t, t.TempDir()); got != want {
+		t.Errorf("unadopted m_limit = %s, want %s", got, want)
 	}
 	root := t.TempDir()
 	writeEditorsManifest(t, root, ".standards.yaml", editorsManifest)
-	if out, got := generatedLimits(t, root); got != want || strings.Contains(out, "[WARN]") {
-		t.Errorf("no-lock limits = %v, want %v without a warning:\n%s", got, want, out)
+	if out, got := generatedCyclomatic(t, root); got != want || strings.Contains(out, "[WARN]") {
+		t.Errorf("no-lock m_limit = %s, want %s without a warning:\n%s", got, want, out)
 	}
 }
 
@@ -190,21 +188,21 @@ func TestRunEditors_Boundary_UnlockedWorkspaceGetsTheCeiling(t *testing.T) {
 func TestRunEditors_Negative_UnresolvablePolicyWarnsAndGenerates(t *testing.T) {
 	initLocked := t.TempDir()
 	writeEditorsManifest(t, initLocked, ".standards.yaml",
-		editorsManifest+"profiles: [framework]\noverrides:\n  complexity:\n    max_func_loc: 42\n")
+		editorsManifest+"profiles: [framework]\noverrides:\n  complexity:\n    max_cyclomatic: 7\n")
 	writeEditorsManifest(t, initLocked, ".standards.lock", "# SemVer lockfile\nversion: 1\npinned_version: \"v0.0.0\"\n")
 	corrupt := t.TempDir()
 	writeEditorsManifest(t, corrupt, ".standards.yaml", "version: [\n")
 
 	for name, tc := range map[string]struct {
 		root string
-		want [3]string
+		want string
 	}{
-		"init lock":        {initLocked, ceilingLimits(42)},
-		"corrupt manifest": {corrupt, ceilingLimits(config.AuditMaxFuncLOC)},
+		"init lock":        {initLocked, "7"},
+		"corrupt manifest": {corrupt, ceilingCyclomatic()},
 	} {
-		out, got := generatedLimits(t, tc.root)
+		out, got := generatedCyclomatic(t, tc.root)
 		if got != tc.want {
-			t.Errorf("%s: limits = %v, want %v", name, got, tc.want)
+			t.Errorf("%s: m_limit = %s, want %s", name, got, tc.want)
 		}
 		if !strings.Contains(out, "[WARN] repository policy unresolved") {
 			t.Errorf("%s: fallback not stated:\n%s", name, out)

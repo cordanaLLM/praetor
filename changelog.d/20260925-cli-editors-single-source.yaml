@@ -1,0 +1,3 @@
+type: fixed
+title: "Render editors/neovim and editors/jetbrains from internal/editor with `praetorctl editors reference` and fail `make verify-all` on drift; the Neovim `:StandardsRatchetSweep` runs `praetorctl audit` instead of the nonexistent `baseline --check`; generated JetBrains profiles drop the HISS inspection classes no IDE implements; and the VS Code extension honours `standards.lsp.trace.server`"
+breaking: false

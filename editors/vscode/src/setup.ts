@@ -5,6 +5,12 @@ export type ClientCapability = {
   lifecycle: { state: "adapter-defined" | "unsupported"; activation: "unverified"; definition_paths: string[] };
 };
 
+// The LanguageClient id is also the configuration section vscode-languageclient reads the trace
+// level from: `<id>.trace.server`, re-read on every configuration change. With this id that key is
+// the contributed standards.lsp.trace.server. The former id "standardsLSP" made the client read
+// standardsLSP.trace.server, a key nothing contributes, so the setting never took effect.
+export const LSP_CLIENT_ID = "standards.lsp";
+
 export function requireTrust(trusted: boolean): void {
   if (!trusted) throw new Error("Workspace Trust is required before running Praetor.");
 }

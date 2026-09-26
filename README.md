@@ -125,7 +125,7 @@ See the [HISS specification](docs/standards/hiss-spec.md) for the full invariant
 ├── docker/dev/                 # Developer environment container builds
 ├── docs/                       # Dual-Surface MkDocs documentation & assets
 │   └── assets/                 # Branding assets (banners, logos, icons, favicons)
-├── editors/                    # Vendor editor integrations & LSP configs
+├── editors/                    # VS Code extension; generated Neovim and JetBrains references
 ├── internal/                   # Core Go packages (config, lattice, AST transpiler)
 ├── lua/ & .nvim.lua            # Neovim native governance integrations
 ├── .needs.yaml                 # Golusoris framework capability declarations
