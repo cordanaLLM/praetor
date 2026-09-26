@@ -252,31 +252,43 @@ func snapshotRoot(ctx context.Context, root *os.Root, name string) (data []byte,
 	return data, nil
 }
 
-func snapshotRootBytes(ctx context.Context, root *os.Root, name string) (data []byte, err error) {
-	if err := ctx.Err(); err != nil {
+func snapshotRootBytes(ctx context.Context, root *os.Root, name string) ([]byte, error) {
+	var buffer bytes.Buffer
+	if _, err := snapshotRootCopy(ctx, root, name, &buffer, MaxSourceBytes); err != nil {
 		return nil, err
+	}
+	return buffer.Bytes(), nil
+}
+
+// snapshotRootCopy streams one regular file of at most limit bytes from a pinned
+// directory into dst, rejecting symlinks, non-regular files and any change to the
+// file's identity, size or modification time during the copy. dst may hold a partial
+// copy when an error is returned; callers discard it.
+func snapshotRootCopy(ctx context.Context, root *os.Root, name string, dst io.Writer, limit int64) (size int64, err error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
 	}
 	before, err := root.Lstat(name)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
-	if !before.Mode().IsRegular() || before.Size() > MaxSourceBytes {
-		return nil, fmt.Errorf("source must be regular and at most %d bytes", MaxSourceBytes)
+	if !before.Mode().IsRegular() || before.Size() > limit {
+		return 0, fmt.Errorf("source must be regular and at most %d bytes", limit)
 	}
 	file, err := openSource(root, name)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	defer func() { err = errors.Join(err, file.Close()) }()
-	data, err = stableRead(ctx, file, before)
+	size, err = stableCopy(ctx, dst, file, before, limit)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	linked, err := root.Lstat(name)
 	if err != nil || !os.SameFile(before, linked) {
-		return nil, errors.Join(fmt.Errorf("source replaced during snapshot"), err)
+		return 0, errors.Join(fmt.Errorf("source replaced during snapshot"), err)
 	}
-	return data, nil
+	return size, nil
 }
 
 func validateText(data []byte) error {
@@ -299,23 +311,34 @@ func (r contextReader) Read(buffer []byte) (int, error) {
 }
 
 func stableRead(ctx context.Context, file *os.File, before os.FileInfo) ([]byte, error) {
+	var buffer bytes.Buffer
+	if _, err := stableCopy(ctx, &buffer, file, before, MaxSourceBytes); err != nil {
+		return nil, err
+	}
+	return buffer.Bytes(), nil
+}
+
+// stableCopy copies at most limit bytes of an opened file into dst and fails unless
+// exactly the size observed before opening was read and the file kept its identity,
+// size and modification time throughout.
+func stableCopy(ctx context.Context, dst io.Writer, file *os.File, before os.FileInfo, limit int64) (int64, error) {
 	opened, err := file.Stat()
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	if !os.SameFile(before, opened) || !opened.Mode().IsRegular() {
-		return nil, fmt.Errorf("source changed while opening")
+		return 0, fmt.Errorf("source changed while opening")
 	}
-	data, err := io.ReadAll(io.LimitReader(contextReader{ctx, file}, MaxSourceBytes+1))
+	count, err := io.Copy(dst, io.LimitReader(contextReader{ctx, file}, limit+1))
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	after, err := file.Stat()
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
-	if len(data) > MaxSourceBytes || int64(len(data)) != before.Size() || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
-		return nil, fmt.Errorf("source changed during snapshot or exceeded byte bound")
+	if count > limit || count != before.Size() || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
+		return 0, fmt.Errorf("source changed during snapshot or exceeded byte bound")
 	}
-	return data, ctx.Err()
+	return count, ctx.Err()
 }
