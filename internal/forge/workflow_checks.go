@@ -164,14 +164,19 @@ type workflowJob struct {
 // plus the id and env the adopt workflow's credential checks follow a value through
 // (internal/forge/adopt_workflow_test.go). `with:` values are not all strings --
 // `cache: false` is a bool, `fetch-depth: 0` an int -- so the map is untyped.
+//
+// Env is a raw node because the key has two shapes: a mapping, or one expression such as
+// `${{ fromJSON(vars.X) }}` that evaluates to one (the workflow schema gives step env a
+// context). A typed map rejects the second shape and would fail the whole document for a key
+// no production check reads.
 type workflowStep struct {
-	Name string            `yaml:"name"`
-	ID   string            `yaml:"id"`
-	If   string            `yaml:"if"`
-	Uses string            `yaml:"uses"`
-	Run  string            `yaml:"run"`
-	With map[string]any    `yaml:"with"`
-	Env  map[string]string `yaml:"env"`
+	Name string         `yaml:"name"`
+	ID   string         `yaml:"id"`
+	If   string         `yaml:"if"`
+	Uses string         `yaml:"uses"`
+	Run  string         `yaml:"run"`
+	With map[string]any `yaml:"with"`
+	Env  yaml.Node      `yaml:"env"`
 }
 
 // workflowStrategy carries the matrix legs a job expands into. A matrix job reports one

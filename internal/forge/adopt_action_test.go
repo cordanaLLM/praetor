@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -93,6 +94,8 @@ type compositeAction struct {
 type compositeStep struct {
 	Name string            `yaml:"name"`
 	ID   string            `yaml:"id"`
+	Uses string            `yaml:"uses"`
+	With map[string]string `yaml:"with"`
 	Env  map[string]string `yaml:"env"`
 	Run  string            `yaml:"run"`
 }
@@ -751,6 +754,69 @@ func TestPraetorAdoptAction_Boundary_GoVersionDefaultBuildsThisModule(t *testing
 	if declared.Default != want {
 		t.Errorf("go-version defaults to %q, but the module it builds declares go %q",
 			declared.Default, want)
+	}
+}
+
+// setupGoCacheGap names why the action's setup-go step would not follow the cache input, or
+// returns "". setup-go caches unless its own cache input says false, so a step that does not
+// pass the action's input through keeps caching whatever a caller asks for.
+func setupGoCacheGap(action compositeAction) string {
+	declared, ok := action.Inputs["cache"]
+	if !ok {
+		return "the action declares no cache input"
+	}
+	if declared.Default != "true" {
+		return "the cache input defaults to " + strconv.Quote(declared.Default) + ", not setup-go's own true"
+	}
+	for i := 0; i < len(action.Runs.Steps) && i < maxJobsPerFile; i++ {
+		step := action.Runs.Steps[i]
+		if strings.HasPrefix(step.Uses, setupGoPrefix) && step.With["cache"] != "${{ inputs.cache }}" {
+			return "setup-go takes cache " + strconv.Quote(step.With["cache"]) + ", not the cache input"
+		}
+	}
+	return ""
+}
+
+// The comment path of adopt.yml turns the action's Go cache off (adopt_workflow_test.go), which
+// only works while the action hands that input to setup-go. Positive: the shipped action does,
+// and keeps setup-go's default for every other caller. Negative: the pass-through dropped or
+// hard-coded, or the input undeclared. Boundary: a default that flips caching off for adopters
+// who never asked.
+func TestPraetorAdoptAction_Positive_CacheInputReachesSetupGo(t *testing.T) {
+	if gap := setupGoCacheGap(loadAdoptAction(t)); gap != "" {
+		t.Fatal(gap)
+	}
+	setupGo := func(action compositeAction) *compositeStep {
+		for i := range action.Runs.Steps {
+			if strings.HasPrefix(action.Runs.Steps[i].Uses, setupGoPrefix) {
+				return &action.Runs.Steps[i]
+			}
+		}
+		t.Fatal("praetor-adopt has no setup-go step")
+		return nil
+	}
+	cases := []struct {
+		name   string
+		mutate func(action compositeAction)
+		want   string
+	}{
+		{"negative: the pass-through dropped", func(action compositeAction) { delete(setupGo(action).With, "cache") }, `setup-go takes cache ""`},
+		{"negative: cache hard-coded", func(action compositeAction) { setupGo(action).With["cache"] = "true" }, `setup-go takes cache "true"`},
+		{"negative: the input undeclared", func(action compositeAction) { delete(action.Inputs, "cache") }, "declares no cache input"},
+		{"boundary: caching off by default", func(action compositeAction) {
+			action.Inputs["cache"] = struct {
+				Default string `yaml:"default"`
+			}{Default: "false"}
+		}, `defaults to "false"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			action := loadAdoptAction(t)
+			tc.mutate(action)
+			if gap := setupGoCacheGap(action); !strings.Contains(gap, tc.want) {
+				t.Fatalf("gap = %q, want containing %q", gap, tc.want)
+			}
+		})
 	}
 }
 

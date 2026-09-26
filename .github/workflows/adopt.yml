@@ -6,8 +6,8 @@ name: Praetor Fast Adoption Bot
 #   that job holds contents: write, and only its commit step is handed the token.
 # - A `/adopt` or `/dogfood` comment on a pull request asks for a report on that pull
 #   request's head. issue_comment runs this default-branch file with the base repository's
-#   token for anyone who can comment, so the job admits trusted commenters only and holds
-#   read scopes only.
+#   token for anyone who can comment, so the job admits trusted commenters only, holds read
+#   scopes only, runs only heads pushed to this repository, and saves no Go cache.
 #
 # internal/forge/workflow_permissions.go audits the permission split on every test run, and
 # internal/forge/adopt_workflow_test.go pins the rest of this shape and executes the head
@@ -45,6 +45,23 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # Go is set up here, before the action sets it up again, so the job keeps a build cache
+      # of its own and stays inside AuditGoBuildCaches (internal/forge/go_cache_checks.go),
+      # which reads the setup-go steps of workflow jobs and not those inside an action. The
+      # action's own setup-go cache is off for the same reason.
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.27'
+          cache: false
+          check-latest: true
+
+      - name: Restore Go Module And Build Caches
+        uses: ./.github/actions/go-cache
+        with:
+          job: adopt
+          go-version: '1.27'
+
       # target_path reaches standardsctl through the action's path input, which the action
       # passes through env as one argument (.github/actions/praetor-adopt/action.yml).
       - name: Execute Fast Adoption
@@ -55,6 +72,7 @@ jobs:
           mode: adopt
           force: "true"
           record-baseline: "true"
+          cache: "false"
 
       # HISS-13: a re-recorded baseline must not grow versus the default branch. The audit
       # fails before anything is committed when --record-baseline absorbed new debt without
@@ -114,9 +132,20 @@ jobs:
     steps:
       # An issue_comment payload carries the issue, not the pull request, so the event has no
       # pull_request object to read a head from, and a checkout without a ref takes the default
-      # branch. The head is asked for by number instead. It is read when the job starts, so a
-      # push after the comment is what runs; with read scopes only, that race costs a report,
-      # not a write. Every payload value reaches the script through env, never spliced into it;
+      # branch. The head is asked for by number instead.
+      #
+      # The steps below build and run the head, and load ./.github/actions/praetor-adopt from
+      # it, inside the default branch's context. Read scopes do not make that harmless: code in
+      # the job can still save entries to the Actions cache in the default branch's scope,
+      # which the dispatch job and every other branch restore. So only a head pushed to this
+      # repository runs. Pushing here takes write access, and an account with write access can
+      # start this job by commenting anyway, so a push that lands between the comment and the
+      # lookup lets in no one the commenter gate keeps out. A fork head is refused, and so is a
+      # head whose repository was deleted. The head is read when the job starts, and the
+      # repository and the commit come from one answer, so the check covers the commit that
+      # runs, not the one the comment saw.
+      #
+      # Every payload value reaches the script through env, never spliced into it;
       # GITHUB_REPOSITORY is the runner's own default variable.
       - name: Resolve Pull Request Head
         id: pr-head
@@ -132,8 +161,19 @@ jobs:
               exit 1
               ;;
           esac
-          if ! sha="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.head.sha')"; then
+          query='.head.repo.full_name // "", .head.sha // ""'
+          if ! answer="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq "$query")"; then
             echo "adopt: could not read pull request #$PR_NUMBER of $GITHUB_REPOSITORY" >&2
+            exit 1
+          fi
+          # Two lines: the head's repository, then its commit. Any further line stays in sha
+          # and fails the commit id check.
+          repo="${answer%%$'\n'*}"
+          sha="${answer#*$'\n'}"
+          if [ "$repo" != "$GITHUB_REPOSITORY" ]; then
+            echo "adopt: pull request #$PR_NUMBER's head lives in '${repo:-a deleted repository}'," \
+              "not in $GITHUB_REPOSITORY; this job builds and runs the head, so it runs only heads" \
+              "pushed to this repository" >&2
             exit 1
           fi
           if [[ ! "$sha" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]; then
@@ -151,11 +191,14 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # cache: "false" keeps setup-go from saving what this job built into the default
+      # branch's cache scope; the job restores no cache either.
       - name: Execute Dogfood Benchmark
         if: contains(github.event.comment.body, '/dogfood')
         uses: ./.github/actions/praetor-adopt
         with:
           mode: dogfood
+          cache: "false"
 
       - name: Execute Fast Adoption
         id: praetor
@@ -165,6 +208,7 @@ jobs:
           mode: adopt
           force: "true"
           record-baseline: "true"
+          cache: "false"
 
       - name: Enforce Monotonic Debt Ratchet
         if: "!contains(github.event.comment.body, '/dogfood')"

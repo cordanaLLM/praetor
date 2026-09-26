@@ -114,11 +114,12 @@ jobs:
         with:
           mode: adopt
           force: true
+          cache: false
 ```
 
 A `/adopt` comment on a pull request, written by the repository's owner, a member of its
 organization or a collaborator, runs the adoption against that pull request's head and leaves the
-result in the job summary. It commits nothing. Three parts of the example each close a hole:
+result in the job summary. It commits nothing. Four parts of the example each close a hole:
 
 - **The `author_association` conjunct.** `issue_comment` runs the default branch's workflow with
   the base repository's token for any account that can comment. `OWNER`, `MEMBER` and
@@ -131,9 +132,14 @@ result in the job summary. It commits nothing. Three parts of the example each c
   anything that is not a commit id.
 - **Read scopes and `persist-credentials: false`.** The checked-out tree is the pull request's
   content; the job holds no write scope and leaves no credential in the checkout.
+- **`cache: false`.** `actions/setup-go` restores and saves the Go caches unless its `cache` input
+  is false, and an `issue_comment` run saves into the default branch's cache scope, which every
+  branch restores from. The job saves nothing there.
 
 `standardsctl` itself still comes from the praetor ref the `uses:` line pins, not from the pull
-request (see below).
+request (see below). That is why the example accepts a head pushed to a fork: the adoption reads
+the fork's files but never builds or executes them. A job that builds or runs the pull request's
+code has to refuse fork heads, as praetor's own bot does.
 
 ### Praetor's own adoption bot
 
@@ -142,13 +148,28 @@ entry point:
 
 | Job | Trigger | Token | What it does |
 | :-- | :-- | :-- | :-- |
-| `adopt` | `workflow_dispatch` | `contents: write`, handed only to the commit step | adopts `target_path` (default `.`), runs the HISS-13 debt ratchet on it, then commits with a DCO sign-off and pushes unless `dry_run` is set |
-| `adopt-comment` | `/adopt` or `/dogfood` comment from a trusted commenter | `contents: read`, `pull-requests: read` | resolves the pull request head, checks it out without credentials, and runs the adoption and ratchet, or the dogfood benchmark, against it |
+| `adopt` | `workflow_dispatch` | `contents: write`, handed only to the commit step | adopts `target_path` (default `.`), runs the HISS-13 debt ratchet on it, then commits with a DCO sign-off and pushes unless `dry_run` is set; keeps its own Go build cache through `.github/actions/go-cache` (`job: adopt`) |
+| `adopt-comment` | `/adopt` or `/dogfood` comment from a trusted commenter | `contents: read`, `pull-requests: read` | resolves the pull request head, refuses it unless it lives in this repository, checks it out without credentials, and runs the adoption and ratchet, or the dogfood benchmark, against it; restores and saves no cache |
 
-Inside praetor the action builds the checked-out tree's own `cmd/standardsctl`, so the comment
-job builds and runs the pull request's code. That is the point of `/dogfood` and the reason for
-the gate: only a trusted commenter can ask for it, and the run holds read scopes only. The head
-is read when the job starts, so a push that lands after the comment is what runs.
+Inside praetor the action builds the checked-out tree's own `cmd/standardsctl`, and the job loads
+`./.github/actions/praetor-adopt` from that tree too, so the comment job builds and runs the pull
+request's code. That is the point of `/dogfood`, and read scopes alone do not contain it: the job
+runs in the default branch's context, and code in it can save Actions cache entries into the
+default branch's scope, which the `adopt` job and every other branch restore. Three things keep
+it contained:
+
+- Only a trusted commenter can start the job.
+- The head lookup refuses a head whose repository is not this one, which covers forks and
+  deleted forks. Pushing a branch here takes write access, and an account with write access can
+  start the job by commenting anyway, so a push that lands between the comment and the lookup
+  admits no one the gate keeps out. The head is read when the job starts, so that later push is
+  what runs; the repository and the commit come from one API answer, so the check covers it.
+- Both uses of the action pass `cache: "false"`, and the job has no cache step, so nothing it
+  builds is saved for a later run.
+
+The `adopt` job sets Go up itself with `cache: false` before the action does. That keeps it
+inside `AuditGoBuildCaches` (`internal/forge/go_cache_checks.go`), which reads the `setup-go`
+steps of workflow jobs and not those inside an action.
 
 Two checks keep the split honest. `AuditPullRequestPermissions` in
 `internal/forge/workflow_permissions.go` reports any job that `pull_request`,
@@ -156,8 +177,9 @@ Two checks keep the split honest. `AuditPullRequestPermissions` in
 `TestAuditPullRequestPermissions_Guard_ThisRepositoryIsDisciplined` runs it over this repository.
 `internal/forge/adopt_workflow_test.go` pins the rest: only the dispatch job writes and pushes,
 every checkout drops its credential, the comment job checks out the head it resolved,
-`target_path` reaches both the adoption and the ratchet through env, and the head lookup's own
-shell body is executed against a stub `gh`.
+`target_path` reaches both the adoption and the ratchet through env, only the dispatch job keeps
+a Go cache and stays visible to `AuditGoBuildCaches`, and the head lookup's own shell body is
+executed against a stub `gh`, which is how a fork head is shown to be refused.
 
 ### Inputs, the binary, and the `report` output
 
@@ -169,6 +191,7 @@ shell body is executed against a stub `gh`.
 | `force` | `PRAETOR_FORCE` | `--force=<value>`, adopt only |
 | `record-baseline` | `PRAETOR_RECORD_BASELINE` | `--record-baseline=<value>`, adopt only |
 | `go-version` | `actions/setup-go` | the toolchain the step compiles `standardsctl` with; it never reaches `standardsctl`, and it has to satisfy the `go` directive of praetor's `go.mod` |
+| `cache` | `actions/setup-go` | its `cache` input, default `true` as in `setup-go` itself; set `false` in a job a pull request or its comment starts, and in a job that keeps its own Go cache (`TestPraetorAdoptAction_Positive_CacheInputReachesSetupGo`) |
 
 All five runtime inputs reach the run step as environment variables rather than as expressions
 spliced into its script, so a value carrying a shell metacharacter or a newline is data rather
