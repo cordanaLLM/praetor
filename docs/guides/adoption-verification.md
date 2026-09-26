@@ -530,3 +530,30 @@ An oversized composition remains an explicit preparation failure. Review and
 condense the repository's instructions before retrying; adoption does not silently
 discard them or raise the limit. A dry-run reports the same compilation failure
 without writing context files.
+
+## Generated Markdown and markdownlint
+
+Every Markdown file adoption writes passes markdownlint's default configuration, so an
+adopter whose own lint runs the defaults does not fail on Praetor output. Where a rule
+has to be disabled, the disable covers only the lines that need it and ends before the
+repository's own text.
+
+| File | Rules disabled |
+| :--- | :--- |
+| `CONTRIBUTING.md`, `.github/pull_request_template.md`, `SECURITY.md`, `docs/adr/README.md`, `docs/adr/0000-template.md` | none; lines are wrapped within 80 columns |
+| `.agents/agents/repo-auditor.md`, `.agents/agents/repo-gatekeeper.md` | none |
+| `.paperclip/rules.md` | none, except MD013 around a push command too long to wrap; contract lines are wrapped within 80 columns |
+| `AGENTS.md` | MD013 from the first line to `<!-- praetor:harness:end -->`, for the harness table; MD025 after it, because the repository's instructions open with their own H1 |
+
+Files adopted before this change open with a file-wide `<!-- markdownlint-disable MD013 -->`
+(an older harness disables MD013 and MD025 together). Adoption with `--force` rewrites the
+personas and `.paperclip/`, and refreshes the `AGENTS.md` harness while keeping the
+repository's own instructions. It never rewrites an existing `CONTRIBUTING.md`, pull
+request template, `SECURITY.md` or `docs/adr/`: those belong to the repository once
+written (`internal/adopt/governance.go`), so delete their disable line by hand and wrap
+the lines it covered.
+
+`internal/adopt/generated_markdown_test.go` and
+`internal/paperclip/rules_markdown_test.go` check each file with
+`testsupport.MarkdownFindings` (`internal/testsupport/markdown.go`), a Go subset of the
+markdownlint rules these generators must hold.
