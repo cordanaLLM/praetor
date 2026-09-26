@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/nodemanifest"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
@@ -144,7 +145,8 @@ func TestApplyUpdateRejectsEscapingModuleAndManifestSymlink(t *testing.T) {
 
 func TestCanaryRejectsWhitespaceCommand(t *testing.T) {
 	result := &CanaryResult{}
-	if err := executeCanaryTest(t.Context(), t.TempDir(), " \t ", t.TempDir(), result); !errors.Is(err, ErrCanaryFailed) {
+	opts := CanaryOptions{RepoPath: t.TempDir(), TestCmd: " \t "}
+	if err := executeCanaryTest(t.Context(), t.TempDir(), opts, result); !errors.Is(err, ErrCanaryFailed) {
 		t.Fatalf("empty test command error lost: %v", err)
 	}
 	if result.Success || result.CanaryCertified || result.ExecutionLog == "" {
@@ -209,7 +211,10 @@ func TestDiscoverNodePackagesIncludesRootAlongsideWorkspaceMembers(t *testing.T)
 	write("pnpm-workspace.yaml", "packages:\n  - 'packages/*'\n")
 	write("packages/alpha/package.json", `{"name":"alpha"}`)
 
-	dirs := DiscoverNodePackages(root)
+	dirs, err := DiscoverNodePackages(root)
+	if err != nil {
+		t.Fatalf("DiscoverNodePackages: %v", err)
+	}
 	found := make(map[string]bool, len(dirs))
 	for _, dir := range dirs {
 		found[dir] = true
@@ -219,5 +224,34 @@ func TestDiscoverNodePackagesIncludesRootAlongsideWorkspaceMembers(t *testing.T)
 	}
 	if !found["packages/alpha"] {
 		t.Errorf("workspace member missing from %v", dirs)
+	}
+}
+
+// Negative: a workspace past nodemanifest.MaxWorkspaceDirs used to come back as
+// a silently shortened set, and any discovery error as an empty one — which the
+// scan read as "no Node manifests". Both now fail the Node scan.
+func TestScanNodeDependenciesReportsTruncatedDiscovery(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, body string) {
+		t.Helper()
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("package.json", `{"name":"root","workspaces":["packages/*"]}`)
+	for i := range nodemanifest.MaxWorkspaceDirs {
+		write("packages/p"+strconv.Itoa(i)+"/package.json", `{"name":"p"}`)
+	}
+
+	if _, err := DiscoverNodePackages(root); !errors.Is(err, nodemanifest.ErrWorkspaceTruncated) {
+		t.Fatalf("DiscoverNodePackages err = %v, want ErrWorkspaceTruncated", err)
+	}
+	_, err := ScanNodeDependencies(t.Context(), root, ScanOptions{})
+	if !errors.Is(err, nodemanifest.ErrWorkspaceTruncated) {
+		t.Fatalf("ScanNodeDependencies err = %v, want ErrWorkspaceTruncated", err)
 	}
 }

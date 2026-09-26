@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/nodemanifest"
 )
 
 func TestDeclaredDependenciesRejectsIncompleteSources(t *testing.T) {
@@ -77,6 +79,7 @@ func TestFailedHarvestDoesNotBecomeCoverage(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("PATH", t.TempDir())
 	t.Setenv("GOPATH", t.TempDir())
+	t.Setenv("GOMODCACHE", t.TempDir())
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/app\nrequire example.com/missing v1.0.0\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -99,13 +102,16 @@ func TestHarvestRejectsInvalidAndCancelledRequests(t *testing.T) {
 		{Name: "example.com/pkg", Kind: PackageKind("unsupported")},
 		{Name: "actions/checkout", Version: "v4", Kind: KindGitHubAction},
 	} {
-		if content, err := HarvestDocumentation(t.Context(), ref, true); err == nil || content != "" {
+		if content, err := HarvestDocumentation(t.Context(), t.TempDir(), ref, true); err == nil || content != "" {
 			t.Fatalf("unavailable documentation accepted: %q, %v", content, err)
 		}
 	}
+	if content, err := HarvestDocumentation(t.Context(), " ", PackageRef{Name: "example.com/pkg", Kind: KindGoModule}, true); err == nil || content != "" {
+		t.Fatalf("harvest without a repository accepted: %q, %v", content, err)
+	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := HarvestDocumentation(ctx, PackageRef{Name: "example.com/pkg", Kind: KindGoModule}, true); !errors.Is(err, context.Canceled) {
+	if _, err := HarvestDocumentation(ctx, t.TempDir(), PackageRef{Name: "example.com/pkg", Kind: KindGoModule}, true); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation lost: %v", err)
 	}
 }
@@ -235,5 +241,21 @@ func TestWorkspaceMemberCannotEscapeTheRepository(t *testing.T) {
 	refs, err := ScanDeclaredDependencies(t.Context(), root, false)
 	if err == nil && nodeRefNames(refs)["private"] {
 		t.Fatalf("read a manifest outside the repository: %v", refs)
+	}
+}
+
+// Negative: a workspace past nodemanifest.MaxWorkspaceDirs fails the scan, as
+// the go.mod, workflow-directory and action caps in this package do, instead of
+// returning the references of a silently shortened manifest set.
+func TestDeclaredDependenciesRejectsTruncatedWorkspace(t *testing.T) {
+	root := t.TempDir()
+	writeNodeFile(t, root, "package.json", `{"name":"root","workspaces":["packages/*"]}`)
+	for i := range nodemanifest.MaxWorkspaceDirs {
+		writeNodeFile(t, root, fmt.Sprintf("packages/p%04d/package.json", i), `{"name":"p"}`)
+	}
+
+	refs, err := ScanDeclaredDependencies(t.Context(), root, false)
+	if !errors.Is(err, nodemanifest.ErrWorkspaceTruncated) {
+		t.Fatalf("err = %v, refs = %d, want ErrWorkspaceTruncated", err, len(refs))
 	}
 }

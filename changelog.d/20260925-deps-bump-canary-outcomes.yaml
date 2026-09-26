@@ -1,0 +1,3 @@
+type: fixed
+title: Report deadline-stopped bump canaries as cancelled instead of breakage, test Node candidates with pnpm by default, and return canary worktree cleanup failures as errors
+breaking: false

@@ -25,7 +25,7 @@ var (
 	// ErrNilForge is returned when an epic is published without a forge driver.
 	ErrNilForge = errors.New("needs: forge driver cannot be nil")
 	// errRepoNotPrepared marks a discovered directory that carries no repository
-	// marker, so fleet regeneration skips it without counting it as a failure.
+	// marker, so fleet regeneration reports it as a skip rather than a failure.
 	errRepoNotPrepared = errors.New("needs: directory is not a prepared repository")
 )
 
@@ -175,8 +175,23 @@ func renderEpicChecklistMarkdown(repoName string, repoNeeds *RepoNeeds, plan *Mi
 	return sb.String()
 }
 
-// PublishPreMigrationEpic synchronizes the pre-migration parent epic and decomposed tasks to the target forge.
-func PublishPreMigrationEpic(ctx context.Context, f forge.Forge, epic *PreMigrationEpic) (*forge.IssueResponse, []*forge.IssueResponse, error) {
+// PublishPreMigrationEpic publishes the pre-migration parent epic and decomposed tasks
+// to the target forge, creating only the issues that do not exist yet.
+//
+// Publishing resolves every issue by title against the forge's issue inventory, the
+// identity forge.SyncIssues upserts on, so publishing again creates no second epic: an
+// issue whose title already exists is reused as it is, and only missing issues are
+// created. A partial earlier publish therefore resumes, and each child chains onto the
+// real number of the task before it whether that task was just created or already
+// existed. Every title is checked against the inventory before the first write; a
+// duplicate or ambiguous title fails the publish with nothing created.
+//
+// Publishing does not synchronize existing issues. Their body, labels, dependency
+// references and state are never converged onto the regenerated epic, so a task the
+// operator closed or relabelled stays that way, and an epic republished after its
+// readiness changed keeps the body it was first published with. No result is ever
+// forge.IssueUpdated.
+func PublishPreMigrationEpic(ctx context.Context, f forge.Forge, epic *PreMigrationEpic) (*forge.IssueUpsertResult, []*forge.IssueUpsertResult, error) {
 	if f == nil {
 		return nil, nil, ErrNilForge
 	}
@@ -187,19 +202,25 @@ func PublishPreMigrationEpic(ctx context.Context, f forge.Forge, epic *PreMigrat
 		return nil, nil, ctx.Err()
 	}
 
-	parentRes, err := f.CreateIssue(ctx, epic.ParentEpic)
+	planned := append([]forge.IssueSpec{epic.ParentEpic}, epic.ChildIssues...)
+	batch, err := forge.PrepareIssueBatch(ctx, f, planned)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create parent epic issue: %w", err)
+		return nil, nil, fmt.Errorf("prepare epic issues: %w", err)
+	}
+	parentRes, err := batch.Ensure(ctx, epic.ParentEpic)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to publish parent epic issue: %w", err)
 	}
 
-	childResults := make([]*forge.IssueResponse, 0, len(epic.ChildIssues))
+	childResults := make([]*forge.IssueUpsertResult, 0, len(epic.ChildIssues))
 	for i := range epic.ChildIssues {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return parentRes, childResults, ctxErr
 		}
-		res, cErr := publishChildTask(ctx, f, epic, parentRes, epic.ChildIssues[i], childResults)
+		spec := chainChildTask(epic, parentRes, epic.ChildIssues[i], childResults)
+		res, cErr := batch.Ensure(ctx, spec)
 		if cErr != nil {
-			return parentRes, childResults, fmt.Errorf("failed to create child task %d: %w", i+1, cErr)
+			return parentRes, childResults, fmt.Errorf("failed to publish child task %d: %w", i+1, cErr)
 		}
 		childResults = append(childResults, res)
 	}
@@ -207,10 +228,12 @@ func PublishPreMigrationEpic(ctx context.Context, f forge.Forge, epic *PreMigrat
 	return parentRes, childResults, nil
 }
 
-// publishChildTask creates one child task, chaining it onto the task published before it
-// by its real issue number rather than the pre-publish anchor.
-func publishChildTask(ctx context.Context, f forge.Forge, epic *PreMigrationEpic,
-	parent *forge.IssueResponse, spec forge.IssueSpec, published []*forge.IssueResponse) (*forge.IssueResponse, error) {
+// chainChildTask renders one child task for publishing, chaining it onto the task
+// published before it by its real issue number rather than the pre-publish anchor. The
+// parent's URL is cited only when known: an epic that already existed is resolved from
+// the issue inventory, which carries its number but no URL.
+func chainChildTask(epic *PreMigrationEpic, parent *forge.IssueUpsertResult,
+	spec forge.IssueSpec, published []*forge.IssueUpsertResult) forge.IssueSpec {
 	if len(published) > 0 {
 		prev := published[len(published)-1]
 		spec.DependsOn = []string{fmt.Sprintf("%s#%d", epic.RepoName, prev.Number)}
@@ -220,9 +243,12 @@ func publishChildTask(ctx context.Context, f forge.Forge, epic *PreMigrationEpic
 	if len(spec.DependsOn) > 0 {
 		body = fmt.Sprintf("%s\n\nDepends-On: %s", body, strings.Join(spec.DependsOn, ", "))
 	}
-	spec.Body = fmt.Sprintf("%s\n\n---\n*Part of Epic #%d (%s)*\n", body, parent.Number, parent.URL)
-
-	return f.CreateIssue(ctx, spec)
+	backlink := fmt.Sprintf("*Part of Epic #%d*", parent.Number)
+	if parent.URL != "" {
+		backlink = fmt.Sprintf("*Part of Epic #%d (%s)*", parent.Number, parent.URL)
+	}
+	spec.Body = fmt.Sprintf("%s\n\n---\n%s\n", body, backlink)
+	return spec
 }
 
 // WriteEpicMarkdown exports the pre-migration epic to the specified file path.
@@ -276,39 +302,53 @@ type FleetEpicOptions struct {
 	DryRun bool
 }
 
+// FleetEpicSkip names a discovered directory fleet regeneration generated no epic for,
+// and why. A skip is not a failure, but it is reported: a checkout the operator expected
+// to be covered must not vanish from the run without a trace.
+type FleetEpicSkip struct {
+	RepoDir string `json:"repo_dir"`
+	Reason  string `json:"reason"`
+}
+
+// notPreparedReason is the skip reason for a directory without a repository marker.
+const notPreparedReason = "no repository marker: not a Git checkout with HEAD metadata, and no .standards.yaml or .needs.yaml"
+
 // RegenerateFleetEpics discovers all prepared repositories in fleetRoot and regenerates
 // their pre-migration epics.
 //
 // Per-repository failures are collected and returned joined: a run in which nothing could
-// be generated or written reports an error instead of an empty success.
-func RegenerateFleetEpics(ctx context.Context, fleetRoot string, opts FleetEpicOptions) ([]*PreMigrationEpic, error) {
+// be generated or written reports an error instead of an empty success. Discovered
+// directories that are not prepared repositories are returned as skips with their reason.
+func RegenerateFleetEpics(ctx context.Context, fleetRoot string, opts FleetEpicOptions) ([]*PreMigrationEpic, []FleetEpicSkip, error) {
 	if ctx.Err() != nil {
-		return nil, ctx.Err()
+		return nil, nil, ctx.Err()
 	}
 
 	repos, err := discoverFleetRepos(ctx, fleetRoot)
 	if err != nil {
-		return nil, fmt.Errorf("failed discovering fleet repos: %w", err)
+		return nil, nil, fmt.Errorf("failed discovering fleet repos: %w", err)
 	}
 
 	var epics []*PreMigrationEpic
+	var skips []FleetEpicSkip
 	var failures []error
 	for i := 0; i < len(repos); i++ {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			failures = append(failures, ctxErr)
-			return epics, errors.Join(failures...)
+			return epics, skips, errors.Join(failures...)
 		}
 		epic, rErr := regenerateRepoEpic(ctx, repos[i], opts)
 		switch {
 		case rErr == nil:
 			epics = append(epics, epic)
 		case errors.Is(rErr, errRepoNotPrepared):
+			skips = append(skips, FleetEpicSkip{RepoDir: repos[i], Reason: notPreparedReason})
 		default:
 			failures = append(failures, rErr)
 		}
 	}
 
-	return epics, errors.Join(failures...)
+	return epics, skips, errors.Join(failures...)
 }
 
 // regenerateRepoEpic regenerates one repository's epic, writing it unless opts.DryRun.

@@ -1,0 +1,3 @@
+type: fixed
+title: Apply a go.mod replace directive that names a version only to that version in `praetorctl sbom`, and record the scanned module's own release tag or `--module-version` as the SBOM version instead of praetor's build version, omitting it when unknown
+breaking: false

@@ -223,6 +223,8 @@ func printCanaryResult(res *bump.CanaryResult) {
 		fmt.Println("Status:           [PLANNED] Dependency update and tests were not executed.")
 	case bump.CanaryPassed:
 		fmt.Println("Status:           [PASS] Configured test command exited zero; no certification issued.")
+	case bump.CanaryCancelled:
+		fmt.Println("Status:           [CANCELLED] Deadline or cancellation stopped the canary before it finished; no verdict on the candidate.")
 	default:
 		fmt.Println("Status:           [FAIL] Canary execution did not pass.")
 		if res.DistilledErrors != "" {
@@ -257,13 +259,23 @@ func runBumpTrain(ctx context.Context, args []string) error {
 		}
 		res, err := bump.RunCanary(ctx, opts)
 		if err != nil {
-			fmt.Printf("  - [%s] %s: [ERROR] %v\n", cand.Channel, cand.Package, err)
+			fmt.Printf("  - [%s] %s: [%s] %v\n", cand.Channel, cand.Package, canaryErrorLabel(err), err)
 			failures = append(failures, fmt.Errorf("canary %s: %w", cand.Package, err))
 			continue
 		}
 		fmt.Printf("  - [%s] %s (%s): [%s] No certification issued\n", cand.Channel, cand.Package, cand.TargetVersion, res.Status)
 	}
 	return errors.Join(failures...)
+}
+
+// canaryErrorLabel names a failed train entry. A canary stopped by the train's
+// shared deadline is labelled CANCELLED, so it does not read as a candidate
+// that broke the build.
+func canaryErrorLabel(err error) string {
+	if errors.Is(err, bump.ErrCanaryCancelled) {
+		return "CANCELLED"
+	}
+	return "ERROR"
 }
 
 func runBumpApply(ctx context.Context, args []string) error {

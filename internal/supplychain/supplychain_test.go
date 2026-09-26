@@ -12,7 +12,7 @@ func TestGenerateCycloneDX_Positive_And_Negative(t *testing.T) {
 	ctx := context.Background()
 	repoRoot := filepath.Join("..", "..")
 
-	bom, err := GenerateCycloneDX(ctx, repoRoot)
+	bom, err := GenerateCycloneDX(ctx, repoRoot, SBOMOptions{})
 	if err != nil {
 		t.Fatalf("expected CycloneDX generation to succeed on repo root: %v", err)
 	}
@@ -43,19 +43,20 @@ func TestGenerateCycloneDX_Positive_And_Negative(t *testing.T) {
 	if bom.Metadata.Component.Name != "github.com/cordanaLLM/praetor" {
 		t.Errorf("expected metadata component name to be the module path, got %q", bom.Metadata.Component.Name)
 	}
-	if bom.Metadata.Component.Version == "" {
-		t.Error("expected metadata component version to be populated from build info")
+	// The version belongs to the scanned checkout, never to the test binary's build info.
+	if bom.Metadata.Component.Version == "(devel)" {
+		t.Error("metadata component version was taken from the generating binary's build info")
 	}
 
 	// Negative: non-existent repo directory
-	_, negErr := GenerateCycloneDX(ctx, filepath.Join(repoRoot, "nonexistent-dir"))
+	_, negErr := GenerateCycloneDX(ctx, filepath.Join(repoRoot, "nonexistent-dir"), SBOMOptions{})
 	if negErr == nil {
 		t.Error("expected error for non-existent directory, got nil")
 	}
 
 	// Boundary: nil context
 	var absentContext context.Context
-	_, nilErr := GenerateCycloneDX(absentContext, repoRoot)
+	_, nilErr := GenerateCycloneDX(absentContext, repoRoot, SBOMOptions{})
 	if nilErr == nil {
 		t.Error("expected error for nil context, got nil")
 	}
@@ -113,7 +114,7 @@ func TestGenerateCycloneDX_Positive_ReplaceDirectiveAppliesToComponent(t *testin
 		t.Fatalf("write go.mod: %v", err)
 	}
 
-	bom, err := GenerateCycloneDX(context.Background(), tmpDir)
+	bom, err := GenerateCycloneDX(context.Background(), tmpDir, SBOMOptions{})
 	if err != nil {
 		t.Fatalf("expected generation to succeed: %v", err)
 	}
@@ -139,7 +140,7 @@ func TestParseGoModComponents_Boundary(t *testing.T) {
 		t.Fatalf("write empty go.mod: %v", err)
 	}
 
-	bom, err := GenerateCycloneDX(context.Background(), tmpDir)
+	bom, err := GenerateCycloneDX(context.Background(), tmpDir, SBOMOptions{})
 	if err != nil {
 		t.Fatalf("expected generation on empty go.mod to succeed: %v", err)
 	}
@@ -158,7 +159,7 @@ func TestSBOMRejectsLinkedOrOversizedManifest(t *testing.T) {
 	if err := os.Symlink(source, target); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := GenerateCycloneDX(t.Context(), root); err == nil {
+	if _, err := GenerateCycloneDX(t.Context(), root, SBOMOptions{}); err == nil {
 		t.Fatal("linked manifest accepted")
 	}
 	if err := os.Remove(target); err != nil {
@@ -167,7 +168,7 @@ func TestSBOMRejectsLinkedOrOversizedManifest(t *testing.T) {
 	if err := os.WriteFile(target, make([]byte, (1<<20)+1), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := GenerateCycloneDX(t.Context(), root); err == nil {
+	if _, err := GenerateCycloneDX(t.Context(), root, SBOMOptions{}); err == nil {
 		t.Fatal("oversized manifest accepted")
 	}
 }

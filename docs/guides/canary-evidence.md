@@ -13,7 +13,14 @@ false for planned, passing, and failing requests. CLI and train output make this
 distinction explicit.
 
 Update and test failures return `bump.ErrCanaryFailed` through wrapping compatible
-with `errors.Is`; cancellation remains inspectable through its context error.
+with `errors.Is`. An attempt stopped by a deadline or cancellation before the update
+or test command finished has `status: cancelled` and returns `bump.ErrCanaryCancelled`,
+with the context error still inspectable; it is no verdict on the candidate, so no
+breakage diagnostics are written for it (`TestCanaryInterruptedTestIsCancelledNotBreakage`
+in `internal/bump/canary_evidence_test.go`). `bump train` runs every canary under one
+shared deadline and labels the ones it stopped `CANCELLED`, not `ERROR`.
+A worktree the canary cannot remove afterwards is joined into the returned error,
+even when the test passed (`TestCanaryReportsWorktreeCleanupFailure`).
 Command output is bounded to 64 KiB per stream. Overflow fails the attempt, and
 retained output can be partial. Failures expose private SARIF diagnostics through
 `diagnostic_path`, with a bounded summary in `distilled_errors`. ANSI output is
@@ -38,8 +45,11 @@ fails to apply after the dependency update, the command exits nonzero and report
 that the update has already happened. It does not roll back or claim an atomic
 update. This command does not admit or verify certification evidence.
 
-The default test command remains `go test -v ./...`; callers using the Go API can
-provide an explicit command for another runtime. Commands are split into argv on
+Without a configured command, the test command follows the candidate's manifest:
+`go test ./...` for `go.mod` and `pnpm test` for `package.json`; any other manifest
+type has no default and fails the attempt. Both run from the worktree root
+(`defaultCanaryTestCommand` in `internal/bump/canary.go`). Callers using the Go API
+can provide an explicit command for another runtime. Commands are split into argv on
 whitespace, without shell quoting. Runtime-specific test selection and evidence
 admission remain separate work. There is currently no registered MCP canary tool.
 

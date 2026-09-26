@@ -4,6 +4,7 @@
 package nodemanifest
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -167,17 +168,39 @@ func TestDiscoverIgnoresNegatedAndEscapingPatterns(t *testing.T) {
 	}
 }
 
-// Boundary: the resolved set is bounded, and hitting the ceiling returns what
-// was found rather than failing (HISS-02).
-func TestDiscoverBoundsTheResolvedSet(t *testing.T) {
+// writeWorkspace creates a root manifest plus members workspace members.
+func writeWorkspace(t *testing.T, members int) string {
+	t.Helper()
 	root := t.TempDir()
 	writeFile(t, root, "package.json", `{"name":"root","workspaces":["packages/*"]}`)
-	for i := 0; i < MaxWorkspaceDirs+5; i++ {
+	for i := range members {
 		writeFile(t, root, fmt.Sprintf("packages/p%04d/package.json", i), `{"name":"p"}`)
 	}
+	return root
+}
+
+// Negative: the resolved set is bounded (HISS-02), and hitting the ceiling is
+// reported rather than hidden. The directories found are still returned, so a
+// caller that can use a partial set is not left with nothing.
+func TestDiscoverReportsTruncationPastTheBound(t *testing.T) {
+	root := writeWorkspace(t, MaxWorkspaceDirs+5)
+
+	got, err := DiscoverPackageDirs(root)
+	if !errors.Is(err, ErrWorkspaceTruncated) {
+		t.Fatalf("err = %v, want ErrWorkspaceTruncated", err)
+	}
+	if len(got) != MaxWorkspaceDirs {
+		t.Errorf("got %d dirs, want the bound of %d", len(got), MaxWorkspaceDirs)
+	}
+}
+
+// Boundary: a set that fills the bound exactly — root plus MaxWorkspaceDirs-1
+// members — examined every member, so it is complete and not truncated.
+func TestDiscoverAtExactlyTheBoundIsNotTruncated(t *testing.T) {
+	root := writeWorkspace(t, MaxWorkspaceDirs-1)
 
 	got := mustDiscover(t, root)
 	if len(got) != MaxWorkspaceDirs {
-		t.Errorf("got %d dirs, want the bound of %d", len(got), MaxWorkspaceDirs)
+		t.Errorf("got %d dirs, want %d", len(got), MaxWorkspaceDirs)
 	}
 }

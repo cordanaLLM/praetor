@@ -18,6 +18,7 @@ package nodemanifest
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -32,6 +33,12 @@ import (
 // discovery unbounded (HISS-02). A monorepo an order of magnitude larger than
 // any we govern still fits well inside it.
 const MaxWorkspaceDirs = 2000
+
+// ErrWorkspaceTruncated marks a discovery that hit MaxWorkspaceDirs. The
+// directories returned alongside it are real but incomplete: every member past
+// the bound was never examined, so a caller must not present the set as the
+// repository's whole manifest set.
+var ErrWorkspaceTruncated = errors.New("workspace discovery truncated")
 
 type pnpmWorkspaceConfig struct {
 	Packages []string `yaml:"packages"`
@@ -72,6 +79,12 @@ type rootManifest struct {
 // The result is sorted and deduplicated, so a workspace pattern that matches the
 // root — pnpm permits `packages: ['.']` — yields the root once rather than
 // twice. An empty result means the repository declares no Node manifest at all.
+//
+// When the declared members exceed MaxWorkspaceDirs, the first MaxWorkspaceDirs
+// directories are returned together with an error wrapping
+// ErrWorkspaceTruncated. A caller that can use a partial set tests for it with
+// errors.Is; every other caller fails, as the sibling caps in internal/docdistill
+// do, rather than scanning a silently shortened set.
 func DiscoverPackageDirs(repoPath string) ([]string, error) {
 	seen := make(map[string]struct{})
 	var dirs []string
@@ -104,10 +117,8 @@ func DiscoverPackageDirs(repoPath string) ([]string, error) {
 	for _, pattern := range patterns {
 		for _, member := range globWorkspacePackages(repoPath, pattern) {
 			if !add(member) {
-				// The bound is a ceiling, not an error: returning what was found
-				// beats returning nothing, and the count is visible to callers.
 				sort.Strings(dirs)
-				return dirs, nil
+				return dirs, fmt.Errorf("%w: more than %d package directories declared", ErrWorkspaceTruncated, MaxWorkspaceDirs)
 			}
 		}
 	}
