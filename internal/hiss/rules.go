@@ -319,12 +319,26 @@ func hasBannedCall(line, name string) bool {
 func hasCall(line, callee string, excluded func(byte) bool) bool {
 	at := nextIdent(line, callee, 0)
 	for i := 0; i < len(line) && at >= 0; i++ {
-		if (at == 0 || !excluded(line[at-1])) && opensArgs(line, at+len(callee)) {
+		if callAt(line, at, callee, excluded) {
 			return true
 		}
 		at = nextIdent(line, callee, at+1)
 	}
 	return false
+}
+
+// callAt reports whether line invokes callee at byte at, by the same test hasCall applies to
+// each occurrence; the Rust scanner uses it to place each call against the bindings in scope.
+func callAt(line string, at int, callee string, excluded func(byte) bool) bool {
+	return identAt(line, at, callee) && (at == 0 || !excluded(line[at-1])) && opensArgs(line, at+len(callee))
+}
+
+// identAt reports whether name stands at byte at of text as a whole identifier, with no
+// identifier byte on either side: the test nextIdent applies to each match while searching.
+func identAt(text string, at int, name string) bool {
+	end := at + len(name)
+	return name != "" && strings.HasPrefix(text[at:], name) &&
+		(at == 0 || !isIdentByte(text[at-1])) && (end == len(text) || !isIdentByte(text[end]))
 }
 
 // opensArgs reports whether an argument list opens at after, allowing blanks before it.
@@ -347,8 +361,7 @@ func nextIdent(text, name string, from int) int {
 			return -1
 		}
 		at := from + pos
-		end := at + len(name)
-		if (at == 0 || !isIdentByte(text[at-1])) && (end == len(text) || !isIdentByte(text[end])) {
+		if identAt(text, at, name) {
 			return at
 		}
 		from = at + 1
@@ -508,6 +521,11 @@ type pythonFunc struct {
 	sigOpen bool
 	sig     string
 	calls   selfCalls
+	// outerBinds has bit i set when this scope binds the name of the open function at stack
+	// index i below it, so its calls to that name reach its own local.
+	outerBinds uint64
+	// relayed holds this scope's calls to enclosing functions, passed outward when it closes.
+	relayed []relayedCall
 }
 
 // pythonScanner carries the cross-line state of one Python file.
@@ -679,7 +697,8 @@ func beginsPythonStatement(trimmed string) bool {
 }
 
 // openScope pushes the def or class this line opens, if any. A nested def binds its name in
-// every enclosing function, so a bare call to that name there reaches the nested def.
+// the scope it sits directly in, so a bare call to that name in that function reaches the
+// nested def. Functions further out, and a class body, keep their own binding of the name.
 func (s *pythonScanner) openScope(trimmed string, idx, indent int) {
 	if !opensPythonScope(trimmed) {
 		return
@@ -689,11 +708,7 @@ func (s *pythonScanner) openScope(trimmed string, idx, indent int) {
 	if !isClass {
 		name = extractPythonFuncName(trimmed)
 	}
-	for i := 0; i < len(s.open); i++ {
-		if s.open[i].name == name {
-			s.open[i].calls.bound = true
-		}
-	}
+	s.bindName(name)
 	if len(s.open) >= maxPythonNesting {
 		return
 	}
@@ -705,7 +720,9 @@ func (s *pythonScanner) openScope(trimmed string, idx, indent int) {
 		owner: owner, sigOpen: !isClass, calls: selfCalls{name: name}})
 }
 
-// observeCalls finishes an open def header and hands the body text to every open function.
+// observeCalls finishes an open def header and hands the body text to every open function: a
+// call anywhere inside a function re-enters it, unless a scope between the call and the
+// function binds the name (observeScopedCalls).
 func (s *pythonScanner) observeCalls(code string, colon, lineNum int) {
 	body := code
 	if n := len(s.open); n > 0 && s.open[n-1].sigOpen {
@@ -718,15 +735,13 @@ func (s *pythonScanner) observeCalls(code string, colon, lineNum int) {
 		s.closeSignature(top)
 		body = code[colon+1:]
 	}
-	for i := 0; i < len(s.open); i++ {
-		if !s.open[i].class {
-			s.open[i].calls.observe(body, lineNum)
-		}
-	}
+	s.observeScopedBindings(body)
+	s.observeScopedCalls(body, lineNum)
 }
 
 // closeSignature decides how the def is reached from its own body, and treats a parameter
-// sharing an open function's name as a local that shadows it.
+// sharing an open function's name as a local of this def: it shadows that name for the calls
+// this def makes, never for the enclosing function's own.
 func (s *pythonScanner) closeSignature(top *pythonFunc) {
 	top.sigOpen = false
 	params := ""
@@ -734,9 +749,10 @@ func (s *pythonScanner) closeSignature(top *pythonFunc) {
 		params = top.sig[open+1:]
 	}
 	pythonCallees(&top.calls, top.owner, leadingIdent(params))
-	for i := 0; i < len(s.open); i++ {
+	j := len(s.open) - 1
+	for i := 0; i <= j; i++ {
 		if containsIdent(params, s.open[i].name) {
-			s.open[i].calls.bound = true
+			s.markBound(j, i)
 		}
 	}
 }
@@ -753,6 +769,7 @@ func (s *pythonScanner) close(indent int) {
 			checkPythonFuncLen(top.start, s.lastCode, top.name, s.rel, s.rep, s.maxLOC)
 			top.calls.report(s.rep, s.rel)
 		}
+		s.passOutward(len(s.open) - 1)
 		s.open = s.open[:len(s.open)-1]
 	}
 }

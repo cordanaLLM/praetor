@@ -120,12 +120,34 @@ rule:
 | :--- | :--- | :--- |
 | Python plain function | `f()`, including from a nested def | a parameter, assignment, loop target, `as` target, import or nested def named `f` |
 | Python method | `self.f()`, `cls.f()`, `Owner.f()` | bare `f()` (reaches the module-level `f`), `self.inner.f()`, `super().f()` |
-| Rust free function | `f()`, including from a closure | `other::f()`, a `let`, closure parameter, match binding or nested `fn` named `f` |
+| Rust free function | `f()`, including from a closure and after a local `f` goes out of scope | `other::f()`; `f()` while a `let`, `for`, `if let`, match-arm or closure-parameter binding named `f` is in scope, or anywhere in a body that declares a nested `fn` or `use` of `f` |
 | Rust method or associated function in `impl T` or `trait T` | `self.f()`, `Self::f()` | bare `f()` inside the `impl` or `trait` body (reaches a free function) |
 | Rust function in `impl Trait for T` | nothing | `self.f()` and `Self::f()`, which reach an inherent `T::f` first, or another impl when `Self::f` is picked by argument type (`Self::from(b)` inside `From<A>` reaches `From<B>`) |
 
 A finding is decided when the function closes rather than at the call, because a Python binding
-later in the body makes the name local for all of it.
+later in the body makes the name local for all of it. That binding belongs to the function that
+makes it: a nested def's parameter or assignment shadows the name for the nested def's calls and
+never for the enclosing function's own, and a class body binds nothing a function reads.
+
+Rust scopes are lexical, so `internal/hiss/rustscope.go` walks the body byte by byte and tracks
+brace and parenthesis depth. A `let` shadows from the semicolon ending it to the end of its
+block, so `let f = f(n - 1);` still calls the function. A `for`, `if let` or `while let` pattern
+shadows inside the block it heads, a match arm's pattern from its `=>` to the end of the arm, and
+a closure parameter from the closing `|` to the end of the closure. An item (`fn`, `use`, `const`,
+`static`) covers the whole body. A match arm's pattern names a path and calls nothing, so
+`Variant(x) =>` is not a call site, while the arm's guard and body are.
+
+A macro may rewrite its input: `syscall!(recv(fd, buf))` expands to `libc::recv`, and tracing's
+`debug!(x = debug(&v))` never calls a function named `debug`. A call inside the input of any macro
+except the standard expression macros (`assert!`, `format!`, `println!`, `vec!`, `write!` and the
+rest of `rustExpressionMacros`) is therefore not decided. The cost is a real self-call inside a
+user-defined wrapper macro, such as `ok!(self.parse_expr())`, which
+`HISS-01/rust/gap/user-macro-self-call.rs` records.
+
+`TestPythonSelfRecursionScopesBindings`, `TestRustSelfRecursionShadowsLexically` and
+`TestRustMacroInputIsUndecided` in `internal/hiss/recursion_test.go` pin these rules. The fixtures
+`HISS-01/python/positive/nested-scope-binding.py`, `HISS-01/rust/positive/binding-after-call.rs`,
+`HISS-01/rust/negative/scoped-binding.rs` and `HISS-01/rust/negative/macro-input.rs` replay them.
 
 A trait impl is left undecided because one function's text cannot tell forwarding from recursion
 there: the inherent method that `self.f()` would reach may sit in any file of the crate. Deciding
@@ -134,7 +156,11 @@ name or `Self::from` reaching a different `From` impl, which rustc compiles clea
 `-D unconditional_recursion`. `HISS-01/rust/negative/trait-impl-forwarding.rs` holds both shapes
 and `HISS-01/rust/gap/trait-impl-self-call.rs` the real recursion this leaves unseen.
 `rustHeaderKind` in `internal/hiss/selfcall.go` classifies each `impl` header, including one
-rustfmt wraps across lines, and `TestRustHeaderKind` pins it.
+rustfmt wraps across lines or one with an attribute on the same line. A brace inside the header's
+brackets is a const generic argument (`impl Tr for W<{ N + 1 }>`) and a semicolon there an array
+length (`impl Tr for [u8; N]`); a semicolon outside them ends an item that opens no body
+(`trait Alias = A + B;`). `TestRustHeaderKind` and `TestRustTraitImplHeaderForms` pin it, and
+`HISS-01/rust/negative/trait-impl-header-forms.rs` replays it.
 
 The Python scanner also treats a line that starts inside an open bracket or a string as a
 continuation of the statement above it. Reading its indentation as a dedent ended a

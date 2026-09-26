@@ -25,7 +25,15 @@ import (
 //     (Self::from(b) in From<A> reaches From<B>). One function's text cannot tell forwarding
 //     from recursion there, so those functions are not decided.
 //   - A local binding of the same name (a parameter, let, assignment, loop target, import or
-//     nested definition) shadows the function, so a bare call then reaches the local.
+//     nested definition) shadows the function, so a bare call then reaches the local. A
+//     Python binding makes the name local for the whole body of the function that owns the
+//     line, and no other. Rust scopes are lexical (rustscope.go): a let shadows from the end
+//     of its statement to the end of its block, a for, if-let, while-let, match-arm or closure
+//     pattern only inside its construct, while an item (fn, use, const, static) covers the
+//     whole body.
+//   - A Rust macro other than the standard expression macros may rewrite its input into a
+//     call of something else (syscall!(recv(..)) calls libc::recv), so a call written there
+//     is not decided.
 //
 // Mutual and indirect recursion need a call graph across functions and are not decided here;
 // .config/hiss/coverage.yaml holds them as gap fixtures.
@@ -37,11 +45,19 @@ const (
 	maxSignatureBytes = 4096
 	// maxRustImplNesting bounds the stack of open impl and trait bodies (HISS-02).
 	maxRustImplNesting = 16
+	// maxRelayedCalls bounds the calls one Python scope holds for its enclosing functions
+	// (HISS-02).
+	maxRelayedCalls = 2 * maxSelfCallSites
 )
 
+// pythonFunc.outerBinds is a bit set over stack indices; this fails to compile if the Python
+// nesting bound ever outgrows it.
+const _ = uint64(1) << (maxPythonNesting - 1)
+
 // rustImplHeader matches a line that opens an impl or trait body, whose functions resolve a
-// bare call to a free function rather than to themselves.
-var rustImplHeader = regexp.MustCompile(`^(?:pub(?:\s*\([^)]*\))?\s+)?(?:unsafe\s+)?(?:impl\b|trait\s)`)
+// bare call to a free function rather than to themselves. Attributes may precede it on the
+// same line (`#[derive(Clone)] impl Trait for T {`).
+var rustImplHeader = regexp.MustCompile(`^(?:#\[[^\]]*\]\s*)*(?:pub(?:\s*\([^)]*\))?\s+)?(?:unsafe\s+)?(?:impl\b|trait\s)`)
 
 // rustBodyKind is the kind of body a Rust function is declared in, which decides the
 // spellings that reach it from its own body.
@@ -68,7 +84,7 @@ type selfCalls struct {
 	callees []string
 	// excluded reports a byte that, preceding a callee, means the call reaches something else.
 	excluded func(byte) bool
-	// binds reports whether a line binds name as a local.
+	// binds reports whether a line binds name as a local for the whole body.
 	binds func(code, name string) bool
 	// shadowable is true when the callee is the bare name, which a local binding can capture.
 	shadowable bool
@@ -76,17 +92,38 @@ type selfCalls struct {
 	sites      []int
 }
 
-// observe inspects one line of the function's body.
-func (c *selfCalls) observe(code string, line int) {
+// observeBinding records a local binding of the name on this line.
+func (c *selfCalls) observeBinding(code string) {
 	if c.shadowable && !c.bound && c.binds != nil && c.binds(code, c.name) {
 		c.bound = true
 	}
+}
+
+// observeCall records a call on one of the function's own lines that reaches it.
+func (c *selfCalls) observeCall(code string, line int) {
+	if c.reaches(code) {
+		c.addSite(line)
+	}
+}
+
+// reaches reports whether code calls the function by a spelling that reaches it.
+func (c *selfCalls) reaches(code string) bool {
 	for i := 0; i < len(c.callees); i++ {
 		if hasCall(code, c.callees[i], c.excluded) {
-			c.addSite(line)
-			return
+			return true
 		}
 	}
+	return false
+}
+
+// callsAt reports whether code calls the function at byte at by a spelling that reaches it.
+func (c *selfCalls) callsAt(code string, at int) bool {
+	for i := 0; i < len(c.callees); i++ {
+		if callAt(code, at, c.callees[i], c.excluded) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *selfCalls) addSite(line int) {
@@ -152,6 +189,7 @@ type rustSelfCalls struct {
 	body   rustBodyKind
 	sig    string
 	calls  selfCalls
+	walk   rustWalk
 }
 
 func (r *rustSelfCalls) observe(l rustLine) {
@@ -178,7 +216,7 @@ func (r *rustSelfCalls) observe(l rustLine) {
 		r.active = false // the header declared a function without a body
 		return
 	}
-	r.calls.observe(body, l.num)
+	r.observeBody(body, l.num)
 	if !l.open {
 		r.calls.report(r.rep, r.rel)
 		r.active = false
@@ -202,7 +240,7 @@ func (r *rustSelfCalls) startBody() {
 	default:
 		r.calls.callees = []string{name}
 		r.calls.shadowable = true
-		r.calls.binds = rustBinds
+		r.calls.binds = rustItemBinds
 		r.calls.bound = containsIdent(params, name)
 	}
 }
@@ -258,11 +296,13 @@ func rustHasReceiver(params string) bool {
 	return leadingIdent(first) == "self"
 }
 
-// rustBinds reports whether code binds name as a local that would capture a bare call.
-func rustBinds(code, name string) bool {
+// rustItemBinds reports whether code declares an item of the name (a nested fn, a const or
+// static, a use). An item is visible throughout its block, so it captures a bare call written
+// before it as well as after.
+func rustItemBinds(code, name string) bool {
 	at := nextIdent(code, name, 0)
 	for i := 0; i < len(code) && at >= 0; i++ {
-		if rustDeclaresAt(code, at) || rustPatternBindsAt(code, at) {
+		if rustDeclaresAt(code, at) {
 			return true
 		}
 		at = nextIdent(code, name, at+1)
@@ -280,21 +320,24 @@ func rustDeclaresAt(code string, at int) bool {
 		strings.HasPrefix(trimmed, "use ") || strings.HasPrefix(trimmed, "pub use ")
 }
 
-// rustPatternBindsAt reports a pattern binding the name at at: a let or for pattern, a
-// closure parameter, or a match arm.
-func rustPatternBindsAt(code string, at int) bool {
-	before, after := code[:at], code[at:]
-	if let := nextIdent(before, "let", 0); let >= 0 && !strings.ContainsAny(before[let:], "=;") {
-		return true
+// rustCallText returns the part of a line that can hold a call. A match arm's pattern, such
+// as `Variant(x) =>` or a macro arm like select!'s `recv(r) -> v =>`, names a path and never
+// calls it, so the text up to the arm's guard or arrow is dropped. A line that opens the match
+// or binds (`match f(n) {`, `let r = match f(n) { .. => .. }`) keeps all of its text.
+func rustCallText(code string) string {
+	arrow := strings.Index(code, "=>")
+	if arrow < 0 {
+		return code
 	}
-	if loop := strings.LastIndex(before, "for "); loop >= 0 && !strings.Contains(before[loop:], " in ") &&
-		strings.Contains(after, " in ") {
-		return true
+	pattern := code[:arrow]
+	if nextIdent(pattern, "match", 0) >= 0 || nextIdent(pattern, "let", 0) >= 0 ||
+		strings.ContainsAny(pattern, ";{") || strings.Contains(pattern, " = ") {
+		return code
 	}
-	if strings.Count(before, "|")%2 == 1 && strings.Contains(after, "|") {
-		return true
+	if guard := nextIdent(pattern, "if", 0); guard >= 0 {
+		return code[guard:]
 	}
-	return strings.Contains(after, "=>") && !strings.Contains(before, "=>")
+	return code[arrow:]
 }
 
 // rustBlockScope tracks the brace depth of open impl and trait bodies across a file, and the
@@ -306,6 +349,47 @@ type rustBlockScope struct {
 	// later line when the header wraps (`impl<T> Trait\n    for Type<T>\nwhere ...\n{`).
 	header  string
 	pending bool
+	nesting rustHeaderNesting
+}
+
+// rustHeaderNesting follows the brackets inside a pending impl or trait header. Within them a
+// brace is a const generic argument (`W<{ N + 1 }>`) and a semicolon an array length
+// (`[u8; N]`), not the body's opening brace or the end of the item.
+type rustHeaderNesting struct {
+	paren, angle, curly int
+}
+
+// consumes updates the depths for byte i and reports whether the byte belongs to a bracket of
+// the header, so it neither opens the body nor ends the item.
+func (n *rustHeaderNesting) consumes(code string, i int) bool {
+	c := code[i]
+	if n.curly > 0 {
+		n.curly += bracketStep(c, "{", "}")
+		return true
+	}
+	nested := n.paren > 0 || n.angle > 0
+	switch {
+	case c == '{' && nested:
+		n.curly = 1
+		return true
+	case c == ';':
+		return nested
+	}
+	n.paren = max(n.paren+bracketStep(c, "([", ")]"), 0)
+	n.angle = rustAngleDepth(code, i, n.angle)
+	return false
+}
+
+// bracketStep returns 1 when c is one of the opening bytes, -1 when one of the closing bytes,
+// and 0 otherwise.
+func bracketStep(c byte, opening, closing string) int {
+	switch {
+	case strings.IndexByte(opening, c) >= 0:
+		return 1
+	case strings.IndexByte(closing, c) >= 0:
+		return -1
+	}
+	return 0
 }
 
 // rustBodyFrame is one open impl or trait body: the brace depth it opened at and its kind.
@@ -324,22 +408,31 @@ func (s *rustBlockScope) kind() rustBodyKind {
 
 func (s *rustBlockScope) observe(code string) {
 	if !s.pending && rustImplHeader.MatchString(strings.TrimSpace(code)) {
-		s.pending = true
-		s.header = ""
+		s.pending, s.header, s.nesting = true, "", rustHeaderNesting{}
 	}
 	for i := 0; i < len(code); i++ {
-		switch code[i] {
-		case '{':
-			s.depth++
-			if s.pending {
-				s.open(appendSignature(s.header, code[:i]))
-			}
-		case '}':
-			s.closeBrace()
+		if !s.pending || !s.nesting.consumes(code, i) {
+			s.bodyByte(code, i)
 		}
 	}
 	if s.pending {
 		s.header = appendSignature(s.header, code)
+	}
+}
+
+// bodyByte follows the braces outside a header's brackets. A semicolon there ends a header
+// that never opens a body (`trait Alias = Foo + Bar;`), so the next impl is read on its own.
+func (s *rustBlockScope) bodyByte(code string, i int) {
+	switch code[i] {
+	case '{':
+		s.depth++
+		if s.pending {
+			s.open(appendSignature(s.header, code[:i]))
+		}
+	case '}':
+		s.closeBrace()
+	case ';':
+		s.pending, s.header = false, ""
 	}
 }
 
@@ -437,6 +530,98 @@ func pythonBrackets(code string, depth int) (int, int) {
 		}
 	}
 	return colon, depth
+}
+
+// relayedCall is a call written in a nested scope to the open function at stack index target.
+type relayedCall struct {
+	target int
+	line   int
+}
+
+// bindName records the name a def or class statement binds in the scope it sits directly in.
+// A class body binds in the class namespace, which no function's name resolution reads.
+func (s *pythonScanner) bindName(name string) {
+	j := len(s.open) - 1
+	if j < 0 || s.open[j].class {
+		return
+	}
+	for i := 0; i <= j; i++ {
+		if s.open[i].name == name {
+			s.markBound(j, i)
+		}
+	}
+}
+
+// markBound records that the scope at stack index j binds the name of the function at i: its
+// own name makes its bare self-calls reach the local, and an enclosing function's name makes
+// the calls from j to that name reach the local instead.
+func (s *pythonScanner) markBound(j, i int) {
+	switch {
+	case i == j:
+		s.open[j].calls.bound = true
+	case s.open[i].calls.shadowable:
+		s.open[j].outerBinds |= 1 << uint(i)
+	}
+}
+
+// observeScopedBindings records what the line binds, in the function that owns it: a binding
+// in a nested def is that def's local, so it never shadows the enclosing function.
+func (s *pythonScanner) observeScopedBindings(body string) {
+	j := len(s.open) - 1
+	if j < 0 || s.open[j].class {
+		return
+	}
+	s.open[j].calls.observeBinding(body)
+	for i := 0; i < j; i++ {
+		if s.open[i].calls.shadowable && pythonBinds(body, s.open[i].name) {
+			s.open[j].outerBinds |= 1 << uint(i)
+		}
+	}
+}
+
+// observeScopedCalls records a call to each open function. A call on the function's own line
+// is its call site; a call from a nested scope is held there until that scope closes, because
+// a binding later in the nested scope makes the name its local for the whole of it.
+func (s *pythonScanner) observeScopedCalls(body string, lineNum int) {
+	j := len(s.open) - 1
+	for i := 0; i <= j; i++ {
+		switch {
+		case s.open[i].class:
+		case i == j:
+			s.open[i].calls.observeCall(body, lineNum)
+		case s.open[i].calls.reaches(body):
+			s.open[j].relayed = appendRelayed(s.open[j].relayed, relayedCall{target: i, line: lineNum})
+		}
+	}
+}
+
+// passOutward hands the calls the closing scope at stack index j held to the scope around it,
+// dropping those whose name j binds: the target's call site when that is the next scope out,
+// otherwise that scope's own relay. A class body binds nothing a nested function reads, so its
+// relayed calls pass through unchanged.
+func (s *pythonScanner) passOutward(j int) {
+	if j < 1 {
+		return
+	}
+	from, to := &s.open[j], &s.open[j-1]
+	for k := 0; k < len(from.relayed); k++ {
+		r := from.relayed[k]
+		switch {
+		case from.outerBinds&(1<<uint(r.target)) != 0:
+		case r.target == j-1:
+			to.calls.addSite(r.line)
+		default:
+			to.relayed = appendRelayed(to.relayed, r)
+		}
+	}
+}
+
+// appendRelayed appends one relayed call within maxRelayedCalls.
+func appendRelayed(relayed []relayedCall, r relayedCall) []relayedCall {
+	if len(relayed) >= maxRelayedCalls {
+		return relayed
+	}
+	return append(relayed, r)
 }
 
 // pythonCallees decides which spellings reach a function from its own body, given the class
