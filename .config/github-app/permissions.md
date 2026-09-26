@@ -7,7 +7,7 @@ The Praetor governance bot is a dedicated, organization-level GitHub App designe
 ## Status
 
 Nothing provisions, installs or authenticates as this App today. No workflow, command or
-runtime reads `manifest.json`, and `internal/forge/pr.go` only names `praetor-governance-bot`
+runtime reads `manifest.json`, and `internal/forge/pr.go` names a review bot
 as a requested reviewer. The manifest and this matrix are the operator's input for creating
 the App by hand (below); `docs/guides/operational-configuration.md` points operators here.
 
