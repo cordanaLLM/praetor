@@ -50,6 +50,19 @@ const (
 	MaxDispatchBriefs = 64
 )
 
+// Scan bounds of the Python adapters, in characters (Python str length). Python's re
+// backtracks, so the built-in rules cost more than linear time there: find..hooks..action
+// and sed..-i..hooks are cubic in the length of one line and the git option prefix is
+// quadratic. A 16 KiB line took the find rule 16 s, long enough to outlive a client's hook
+// timeout, and a client that lets a timed-out hook through turns the stall into an evasion.
+// The adapters refuse a command over either bound instead of scanning it, and never
+// truncate one: a truncated scan allows what lies past the cut. Within both bounds the
+// slowest rule stays under a second. RE2 is linear, so the Go policy has no such bound.
+const (
+	MaxScanChars     = 64 << 10
+	MaxScanLineChars = 2 << 10
+)
+
 // argumentShape is the whole grammar of both command-line arguments.
 var argumentShape = regexp.MustCompile(`^[a-z-]+$`)
 

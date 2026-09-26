@@ -122,8 +122,9 @@ func buildLefthookYAMLFor(checkpoint bool) string {
 // allowed what it could not read: an empty or non-JSON stdin, a payload without
 // tool_input.command, and it crashed with exit 1 (not blocking) on a JSON array. It now reads
 // a bounded stdin and refuses, with the blocking exit 2, any input that is not one JSON object
-// carrying a nonempty tool_input.command. Native payloads of other clients are agenthook's
-// dialects, reached through `praetorctl hook`; this script does not guess at them.
+// carrying a nonempty tool_input.command, and any command over the Python scan bounds.
+// Native payloads of other clients are agenthook's dialects, reached through
+// `praetorctl hook`; this script does not guess at them.
 const blockEvasionTemplate = `#!/usr/bin/env python3
 """Agent PreToolUse evasion interceptor (HISS), written by praetorctl adopt.
 
@@ -144,6 +145,8 @@ import re
 import sys
 
 MAX_INPUT_BYTES = {{MAX_INPUT_BYTES}}
+MAX_SCAN_CHARS = {{MAX_SCAN_CHARS}}
+MAX_SCAN_LINE_CHARS = {{MAX_SCAN_LINE_CHARS}}
 BLOCK_EXIT = 2
 
 RULES = [
@@ -163,7 +166,7 @@ def block(invariant, reason):
 def read_payload_command(stream):
     raw = stream.read(MAX_INPUT_BYTES + 1)
     if len(raw) > MAX_INPUT_BYTES:
-        raise ValueError("hook input exceeds 1 MiB")
+        raise ValueError("hook input exceeds " + str(MAX_INPUT_BYTES) + " bytes")
     payload = json.loads(raw.decode("utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("hook input must be one JSON object")
@@ -187,6 +190,16 @@ def pending_command():
         block("HISS", "invalid hook input: " + str(error))
 
 
+def require_scannable(command):
+    # re backtracks, so a longer command or line could stall this script past the harness's
+    # hook timeout. Such a command is refused, never truncated.
+    if len(command) <= MAX_SCAN_CHARS:
+        if max(len(line) for line in command.split("\n")) <= MAX_SCAN_LINE_CHARS:
+            return
+    block("HISS", "command exceeds the scan bound: at most " + str(MAX_SCAN_CHARS) + " characters, "
+          + str(MAX_SCAN_LINE_CHARS) + " per line; split it or write the long content to a file first.")
+
+
 def main():
     try:
         value = os.environ.get("LEFTHOOK")
@@ -196,6 +209,7 @@ def main():
             if os.environ.get(name):
                 block("HISS", "Hook exclusions are prohibited.")
         command = pending_command()
+        require_scannable(command)
         for pattern, invariant in RULES:
             if re.search(pattern, command):
                 block(invariant, "Verification evasion prohibited: " + pattern)
@@ -210,7 +224,8 @@ if __name__ == "__main__":
 `
 
 // buildBlockEvasionPY renders the interceptor from the engine's command policy: the built-in
-// rules (agenthook.BuiltinRules), the Lefthook environment checks and the input bound. It
+// rules (agenthook.BuiltinRules), the Lefthook environment checks, the input bound and the
+// scan bounds of the Python adapters (agenthook.MaxScanChars, MaxScanLineChars). It
 // never includes operator rules; those are repository configuration (ADR-0011).
 func buildBlockEvasionPY() string {
 	var rules strings.Builder
@@ -219,6 +234,8 @@ func buildBlockEvasionPY() string {
 	}
 	return strings.NewReplacer(
 		"{{MAX_INPUT_BYTES}}", strconv.Itoa(agenthook.MaxInputBytes),
+		"{{MAX_SCAN_CHARS}}", strconv.Itoa(agenthook.MaxScanChars),
+		"{{MAX_SCAN_LINE_CHARS}}", strconv.Itoa(agenthook.MaxScanLineChars),
 		"{{RULES}}", rules.String(),
 		"{{LEFTHOOK_DISABLED}}", pythonStringTuple(agenthook.LefthookDisableValues()),
 		"{{LEFTHOOK_NARROWING}}", pythonStringTuple(agenthook.LefthookNarrowingVariables()),

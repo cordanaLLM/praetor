@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -137,6 +138,34 @@ func TestPythonGuardCarriesTheBuiltinEvasionList(t *testing.T) {
 	}
 	if len(got) < 10 {
 		t.Errorf("the evasion list lost rules: %d", len(got))
+	}
+}
+
+// pythonIntConstant returns the value of a top-level `NAME = <digits>` line of the Python guard.
+func pythonIntConstant(t *testing.T, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(pythonGuard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	match := regexp.MustCompile(`(?m)^` + name + ` = ([0-9]+)\r?$`).FindSubmatch(data)
+	if match == nil {
+		t.Fatalf("%s has no integer constant %s", pythonGuard, name)
+	}
+	return string(match[1])
+}
+
+// TestPythonGuardCarriesTheScanBounds holds praetor's own Python guard to the scan bounds the
+// adopted interceptor is rendered with. The corpus replay cannot: the Go policy has no such
+// bound, so a command beyond it is refused by the Python guard alone.
+func TestPythonGuardCarriesTheScanBounds(t *testing.T) {
+	for name, want := range map[string]int{"MAX_SCAN_CHARS": MaxScanChars, "MAX_SCAN_LINE_CHARS": MaxScanLineChars} {
+		if got := pythonIntConstant(t, name); got != strconv.Itoa(want) {
+			t.Errorf("%s in %s is %s, agenthook's bound is %d", name, pythonGuard, got, want)
+		}
+	}
+	if MaxScanLineChars <= 0 || MaxScanLineChars > MaxScanChars || MaxScanChars >= MaxInputBytes {
+		t.Errorf("scan bounds out of order: line %d, command %d, input %d", MaxScanLineChars, MaxScanChars, MaxInputBytes)
 	}
 }
 

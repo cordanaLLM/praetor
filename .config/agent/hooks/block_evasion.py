@@ -9,12 +9,17 @@ import re
 import json
 
 MAX_INPUT_BYTES = 1 << 20
+# agenthook.MaxScanChars and MaxScanLineChars (TestPythonGuardCarriesTheScanBounds): re
+# backtracks, so a longer command or line could stall this guard past the client's hook
+# timeout. Such a command is refused, never truncated.
+MAX_SCAN_CHARS = 65536
+MAX_SCAN_LINE_CHARS = 2048
 
 # The engine's built-in evasion rules (internal/agenthook/policy.go, builtinEvasion), byte
 # for byte; TestPythonGuardCarriesTheBuiltinEvasionList fails when the two lists differ.
 BLOCKED_PATTERNS = [
     r"--no-verify\b",
-    r"\bgit(\s+-[Cc]\s+(\x22[^\x22]*\x22|\x27[^\x27]*\x27|[^ \t\n\x22\x27][^ \t\n]*)|\s+(--[A-Za-z][-A-Za-z]*|-[A-Za-bd-z][-A-Za-z]*|-[Cc][A-Za-z]+)(=[^ \t\n]+)?)*\s+commit\b[^\n]*\s-[aeiopqsvz]*n",
+    r"\bgit([ \t]+-[Cc][ \t]+(\x22[^\x22]*\x22|\x27[^\x27]*\x27|[^ \t\n\x22\x27][^ \t\n]*)|[ \t]+(--[A-Za-z][-A-Za-z]*|-[ABD-Zabd-z][-A-Za-z]*|-[Cc][A-Za-z]+)(=[^ \t\n]+)?)*\s+commit\b[^\n]*\s-[aeiopqsvz]*n",
     r"LEFTHOOK=[\x22\x27]?(0|false)\b",
     r"SKIP=.*git",
     r"(?i:core\.hookspath)(\s*=|\s+[\x22\x27]?[/~.$A-Za-z_\\])",
@@ -33,7 +38,21 @@ TOPOLOGY_PATTERNS = [
     r"(standardsctl|praetorctl)\s+(adopt|conform|bootstrap|needs\s+(scan|report|migrate|epic))\b.*(\bdev/?(\s|$)|/dev/(cordanaLLM|lusoris|vmafx|golusoris|upstream|local|stacks|worktrees|scratch)/?(\s|$))",
 ]
 
+def scannable(command_str: str) -> bool:
+    if len(command_str) <= MAX_SCAN_CHARS:
+        if max(len(line) for line in command_str.split("\n")) <= MAX_SCAN_LINE_CHARS:
+            return True
+    sys.stderr.write(
+        f"\n[BLOCKED BY HISS] Command exceeds the scan bound: at most {MAX_SCAN_CHARS} characters, "
+        f"{MAX_SCAN_LINE_CHARS} per line.\n"
+        f"Split it, or write the long content to a file first.\n\n"
+    )
+    return False
+
+
 def audit_command(command_str: str) -> bool:
+    if not scannable(command_str):
+        return False
     for pattern in BLOCKED_PATTERNS:
         if re.search(pattern, command_str):
             sys.stderr.write(
@@ -69,7 +88,7 @@ def audit_environment() -> bool:
 def read_json_command(stream) -> str:
     raw = stream.read(MAX_INPUT_BYTES + 1)
     if len(raw) > MAX_INPUT_BYTES:
-        raise ValueError("hook input exceeds 1 MiB")
+        raise ValueError(f"hook input exceeds {MAX_INPUT_BYTES} bytes")
     payload = json.loads(raw.decode("utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("hook input must be an object")

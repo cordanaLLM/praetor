@@ -1,3 +1,3 @@
 type: fixed
-title: audit and standards_audit now compare .github/rulesets/main.json with the ruleset the declared branch protection policy renders, as sync does, so "{}" or a ruleset with zero approvals and no signature rule no longer passes; adopt writes the same eight-label taxonomy as sync, and adopt --force keeps an existing .config/labels.yaml instead of truncating it to three labels
-breaking: false
+title: "audit and standards_audit now compare .github/rulesets/main.json with the ruleset the effective branch protection policy (profiles, facets and overrides joined) renders, as adopt and sync do, so \"{}\" or a ruleset with zero approvals and no signature rule no longer passes; adopt writes the same eight-label taxonomy as sync, and adopt --force keeps an existing .config/labels.yaml instead of truncating it to three labels. Migration: a committed ruleset that differs from the declared policy now fails audit, and sync writes the ruleset only when the file is absent, so regenerate a drifted one with `praetorctl adopt --force` or delete it and run `praetorctl sync`"
+breaking: true

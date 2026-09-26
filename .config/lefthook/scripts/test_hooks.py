@@ -1569,6 +1569,50 @@ class ScopeAndGuard(unittest.TestCase):
                 self.assertIn(b"Invalid hook input", result.stderr)
                 self.assertNotIn(b"Traceback", result.stderr)
 
+    def guard_command(self, command):
+        started = time.monotonic()
+        result = self.guard_input(json.dumps({"tool_input": {"command": command}}).encode())
+        return result, time.monotonic() - started
+
+    def guard_scan_bounds(self):
+        spec = importlib.util.spec_from_file_location("tested_block_evasion", GUARD)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.MAX_SCAN_CHARS, module.MAX_SCAN_LINE_CHARS
+
+    def test_guard_refuses_commands_over_the_scan_bound_without_scanning(self):
+        """re backtracks: one 16 KiB find..hooks line held the find rule for 16 s.
+
+        That outlives a client's hook timeout, and a client that lets a timed-out hook
+        through turns the stall into an evasion. The guard refuses such a command at once.
+        """
+        characters, per_line = self.guard_scan_bounds()
+        full = ("x" * (per_line - 1) + "\n") * (characters // per_line)
+        cases = {
+            "pathological find line": ("find .git/hooks " * 1024, False),
+            "line at the bound": ("x" * per_line, True),
+            "line over the bound": ("x" * (per_line + 1), False),
+            "command at the bound": (full, True),
+            "command over the bound": (full + "x", False),
+        }
+        for name, (command, allowed) in cases.items():
+            with self.subTest(name):
+                result, elapsed = self.guard_command(command)
+                self.assertEqual(result.returncode == 0, allowed, result.stderr)
+                self.assertLess(elapsed, 5)
+                if not allowed:
+                    self.assertIn(b"exceeds the scan bound", result.stderr)
+
+    def test_guard_answers_the_slowest_admitted_commands_inside_the_bound(self):
+        """The costliest shapes the bound admits, every line at the limit, still pass in time."""
+        characters, per_line = self.guard_scan_bounds()
+        for unit in ("find .git/hooks ", "sed -i ", " -git", "git -C\r-C\r"):
+            with self.subTest(unit=unit):
+                line = (unit * per_line)[:per_line - 1] + "\n"
+                result, elapsed = self.guard_command(line * (characters // per_line))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertLess(elapsed, 5)
+
     def test_guard_preserves_argv_and_environment_entry_points(self):
         for args in (("git", "status"), ("--environment",)):
             result = subprocess.run(["python3", str(GUARD), *args], input=b"",

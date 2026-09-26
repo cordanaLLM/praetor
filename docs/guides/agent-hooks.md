@@ -486,6 +486,22 @@ and blocks with exit 2 on any input that is not one JSON object with a nonempty
 which are the dialects `praetorctl hook` owns. `internal/adopt/evasion_hook_test.go` replays
 the corpus above against the rendered script.
 
+Both Python scripts, the adopted interceptor and praetor's own guard, refuse a command over
+the scan bounds instead of scanning it: more than 65,536 characters in all, or one line over
+2,048 characters (`agenthook.MaxScanChars`, `agenthook.MaxScanLineChars`). Python's `re`
+backtracks, so the find and `sed -i` rules cost cubic time in the length of one line and a
+16 KiB line held the find rule for 16 s, long enough to outlive a client's hook timeout. A
+command is refused, never truncated, because a truncated scan allows what lies past the cut;
+split it, or write the long content to a file first. Within both bounds the slowest rule
+answers in under a second (`TestEmittedInterceptorScanBounds`,
+`test_guard_answers_the_slowest_admitted_commands_inside_the_bound` in
+`.config/lefthook/scripts/test_hooks.py`). The Go policy uses RE2, which is linear, and has
+no such bound; `TestPythonGuardCarriesTheScanBounds` keeps praetor's guard on the same
+numbers. The Git global-option prefix of the commit rule parses one way only, so the corpus
+cases `allow-directory-options-without-commit` and
+`allow-directory-options-split-by-carriage-returns`, which took the earlier rule minutes,
+are answered at once.
+
 Organisation container names are operator data, not engine data. The policy accepts a
 bounded operator deny list (RE2, at most 64 patterns of at most 512 bytes; an empty,
 oversized or non-compiling pattern fails the whole list). `hooks.command_policy.deny`

@@ -49,6 +49,13 @@ const hooksDir = `\.git[/\\]hooks`
 //     `-sn`; gitcli(7) bundles short options), and after Git's global options
 //     (`git -C dir commit -n`). A bundle whose skip letter follows an argument option
 //     (`-mn`) is a message, not a skip.
+//   - The global options before `commit` parse one way only, because Python's re backtracks
+//     through every parse when nothing matches: a bare -C or -c is reachable through the
+//     argument alternative alone, and the options are separated by the shell's blanks (space,
+//     tab) only, which no option or argument token contains. `-[A-Za-bd-z]` still admitted
+//     `-C` and `\s` separators also matched the \r, \v and Unicode spaces the tokens admit, so
+//     `git -C -C ... status` took seconds per two more options (the corpus holds both shapes).
+//     A space other than a blank does not split a shell word, so it separates no option.
 //   - Lefthook is disabled by LEFTHOOK=0 and by LEFTHOOK=false (lefthook v2.1.14,
 //     internal/command/run.go).
 //   - core.hooksPath is refused in any assignment form: `=`, a space-separated value, any
@@ -58,7 +65,7 @@ const hooksDir = `\.git[/\\]hooks`
 //     refused outright. Reading it (ls, cat, sed -n, find without an action) stays allowed.
 var builtinEvasion = []string{
 	`--no-verify\b`,
-	`\bgit(\s+-[Cc]\s+(\x22[^\x22]*\x22|\x27[^\x27]*\x27|[^ \t\n\x22\x27][^ \t\n]*)|\s+(--[A-Za-z][-A-Za-z]*|-[A-Za-bd-z][-A-Za-z]*|-[Cc][A-Za-z]+)(=[^ \t\n]+)?)*\s+commit\b[^\n]*\s-[aeiopqsvz]*n`,
+	`\bgit([ \t]+-[Cc][ \t]+(\x22[^\x22]*\x22|\x27[^\x27]*\x27|[^ \t\n\x22\x27][^ \t\n]*)|[ \t]+(--[A-Za-z][-A-Za-z]*|-[ABD-Zabd-z][-A-Za-z]*|-[Cc][A-Za-z]+)(=[^ \t\n]+)?)*\s+commit\b[^\n]*\s-[aeiopqsvz]*n`,
 	`LEFTHOOK=[\x22\x27]?(0|false)\b`,
 	`SKIP=.*git`,
 	`(?i:core\.hookspath)(\s*=|\s+[\x22\x27]?[/~.$A-Za-z_\\])`,

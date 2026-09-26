@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -146,12 +147,62 @@ func TestBuildBlockEvasionPY_NoOperatorData(t *testing.T) {
 			t.Errorf("rendered script lacks rule %q", rule.Source)
 		}
 	}
-	for _, operator := range []string{"cordanaLLM", "lusoris", "vmafx", "golusoris", "TOPOLOGY_PATTERNS"} {
+	for _, operator := range append(operatorContainers(t), "TOPOLOGY_PATTERNS", "/dev/(") {
 		if strings.Contains(script, operator) {
 			t.Errorf("rendered script ships operator data %q", operator)
 		}
 	}
 	if strings.Contains(script, "{{") {
 		t.Error("rendered script has an unfilled placeholder")
+	}
+}
+
+// operatorContainers returns the organisation folders praetor's own Python guard names in
+// its topology rule (`/dev/(a|b|...)`), so the check above names no operator itself.
+func operatorContainers(t *testing.T) []string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", ".config", "agent", "hooks", "block_evasion.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	match := regexp.MustCompile(`/dev/\(([^()]+)\)`).FindSubmatch(data)
+	if match == nil {
+		t.Fatal("praetor's own guard has no /dev/(...) topology alternation to compare against")
+	}
+	return strings.Split(string(match[1]), "|")
+}
+
+// TestEmittedInterceptorScanBounds pins the scan bounds of the emitted script. Python's re
+// backtracks: one 16 KiB find..hooks line held the find rule for 16 s, past a harness's hook
+// timeout, and a harness that lets a timed-out hook through turns the stall into an evasion.
+// A command over agenthook's bounds is refused at once; the costliest command inside them
+// still gets its verdict in time.
+func TestEmittedInterceptorScanBounds(t *testing.T) {
+	python, script := emittedInterceptor(t)
+	lines := agenthook.MaxScanChars / agenthook.MaxScanLineChars
+	full := strings.Repeat(strings.Repeat("x", agenthook.MaxScanLineChars-1)+"\n", lines)
+	findLine := strings.Repeat("find .git/hooks ", agenthook.MaxScanLineChars)[:agenthook.MaxScanLineChars-1] + "\n"
+	for name, tc := range map[string]struct {
+		command string
+		want    int
+	}{
+		"pathological find line":   {strings.Repeat("find .git/hooks ", 1024), 2},
+		"line at the bound":        {strings.Repeat("x", agenthook.MaxScanLineChars), 0},
+		"line over the bound":      {strings.Repeat("x", agenthook.MaxScanLineChars+1), 2},
+		"command at the bound":     {full, 0},
+		"command over the bound":   {full + "x", 2},
+		"costliest admitted lines": {strings.Repeat(findLine, lines), 0},
+	} {
+		payload, err := json.Marshal(map[string]any{"tool_input": map[string]string{"command": tc.command}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		start := time.Now()
+		if got := runInterceptor(t, python, script, payload, nil); got != tc.want {
+			t.Errorf("%s: exit %d, want %d", name, got, tc.want)
+		}
+		if elapsed := time.Since(start); elapsed > 5*time.Second {
+			t.Errorf("%s: interceptor took %v, over the 5 s bound", name, elapsed)
+		}
 	}
 }

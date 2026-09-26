@@ -17,6 +17,10 @@
    "payload": {"tool_input": {"command": "git log --grep commit -n 5"}}},
   {"name": "allow-push-dry-run-short", "allow": true,
    "payload": {"tool_input": {"command": "git push -n origin topic"}}},
+  {"name": "allow-directory-options-without-commit", "allow": true,
+   "payload": {"tool_input": {"command": "git -C -C -C -C -C -C -C -C -C -C -C -C -C -C -C -C -C -C -C -C -C -C -C -C -C -C -C -C -C -C -C -C -C -C -C -C -C -C -C -C status"}}},
+  {"name": "allow-directory-options-split-by-carriage-returns", "allow": true,
+   "payload": {"tool_input": {"command": "git -C\r-C\r-C\r-C\r-C\r-C\r-C\r-C\r-C\r-C\r-C\r-C\r-C\r-C\r-C\r-C\r-C\r-C\r-C\r-C\r-C\r-C\r-C\r-C\r-C\r-C\r-C\r-C\r-C\r-C\r-C\r-C\r-C\r-C\r-C\r-C\r-C\r-C\r-C\r-C\r-C status"}}},
   {"name": "allow-lefthook-enabled-inline", "allow": true,
    "payload": {"tool_input": {"command": "LEFTHOOK=1 git commit -m x"}}},
   {"name": "allow-read-hooks-path", "allow": true,
@@ -54,6 +58,10 @@
    "payload": {"tool_input": {"command": "git -C \"my repo\" commit -m x -n"}}},
   {"name": "deny-short-skip-after-config-option", "allow": false,
    "payload": {"tool_input": {"command": "git -c user.name=x --no-pager commit -n"}}},
+  {"name": "deny-short-skip-after-directory-named-like-an-option", "allow": false,
+   "payload": {"tool_input": {"command": "git -C -C commit -n"}}},
+  {"name": "deny-short-skip-after-alternating-directory-and-config-options", "allow": false,
+   "payload": {"tool_input": {"command": "git -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c commit -n"}}},
   {"name": "deny-lefthook-disabled-with-false", "allow": false,
    "payload": {"tool_input": {"command": "LEFTHOOK=false git commit -m x"}}},
   {"name": "deny-lefthook-disabled-quoted", "allow": false,
@@ -140,5 +148,4 @@
   {"name": "invalid-command-empty", "allow": false, "payload": {"tool_input": {"command": ""}}},
   {"name": "invalid-command-whitespace", "allow": false, "payload": {"tool_input": {"command": " \t\r\n"}}},
   {"name": "invalid-command-information-separators", "allow": false, "payload": {"tool_input": {"command": "\u001c\u001f\u00a0"}}}
-  ,{"name": "deny-git-commit-exponential-backtracking", "allow": false, "payload": {"tool_input": {"command": "git -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c -C -c commit -n"}}}
 ]
