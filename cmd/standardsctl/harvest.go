@@ -86,6 +86,13 @@ func runHarvestWorkstation(ctx context.Context, args []string) error {
 	if rep == nil {
 		return fmt.Errorf("failed scanning workstation: %w", err)
 	}
+	// Normalize path separators at the output boundary so JSON output isn't platform-shaped (HISS-21).
+	for i, r := range rep.MissingRulesRepos {
+		rep.MissingRulesRepos[i] = util.NormalizeSlashes(r)
+	}
+	for i, wt := range rep.StaleWorktrees {
+		rep.StaleWorktrees[i] = util.NormalizeSlashes(wt)
+	}
 	if *jsonOutput {
 		if err := json.NewEncoder(os.Stdout).Encode(rep); err != nil {
 			return fmt.Errorf("encode workstation report: %w", err)

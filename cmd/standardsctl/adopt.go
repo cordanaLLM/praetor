@@ -216,7 +216,6 @@ func batchAdoptMissing(ctx context.Context, devDir string, dryRun, force, record
 	return nil
 }
 
-// printBatchResult prints one batch entry and reports whether it succeeded.
 // printBatchResult reports one --all-missing adoption. repoName is relative to the dev root
 // and built with the host separator; it is shown in slash form on every platform.
 func printBatchResult(repoName string, dryRun bool, rep *adopt.AdoptReport, err error) bool {
