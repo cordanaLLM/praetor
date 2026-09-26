@@ -137,6 +137,21 @@ a closure parameter from the closing `|` to the end of the closure. An item (`fn
 `static`) covers the whole body. A match arm's pattern names a path and calls nothing, so
 `Variant(x) =>` is not a call site, while the arm's guard and body are.
 
+An arm and a closure end where rustc's grammar ends them, not at the next closing brace. An arm
+ends at its comma, or, when its body starts with a block-like expression (`{`, `if`, `match`,
+`loop`, `while`, `for`, `unsafe`, `const`), at the brace closing that expression, unless the next
+token (on the same line or a later one) is `else`, a method call or `?`. So in
+`Some(f) => if c { 1 } else { f() }` the brace after `1` ends nothing and `f()` reaches the local,
+while a comma-less block arm still ends before the next arm's pattern. A closure's body is a
+whole expression (`|f| { 0 } + f()` is one body), so it ends only at a comma, a semicolon or the
+bracket around it. The opening pipe of a closure's parameters is the last pipe before the name
+when what precedes it cannot be an operand (`(|`, `= |`, `move |`), so the pipe of an or-pattern
+(`A | B => v.map(|f| f())`) or of a bitwise or is not taken for it.
+
+A binding is read from one line: a `let` pattern or closure parameter list wrapped across lines
+is not recognised as binding the name, so a call of that local is reported. Keep such a pattern
+on one line, or rename the local.
+
 A macro may rewrite its input: `syscall!(recv(fd, buf))` expands to `libc::recv`, and tracing's
 `debug!(x = debug(&v))` never calls a function named `debug`. A call inside the input of any macro
 except the standard expression macros (`assert!`, `format!`, `println!`, `vec!`, `write!` and the
@@ -147,7 +162,9 @@ user-defined wrapper macro, such as `ok!(self.parse_expr())`, which
 `TestPythonSelfRecursionScopesBindings`, `TestRustSelfRecursionShadowsLexically` and
 `TestRustMacroInputIsUndecided` in `internal/hiss/recursion_test.go` pin these rules. The fixtures
 `HISS-01/python/positive/nested-scope-binding.py`, `HISS-01/rust/positive/binding-after-call.rs`,
-`HISS-01/rust/negative/scoped-binding.rs` and `HISS-01/rust/negative/macro-input.rs` replay them.
+`HISS-01/rust/positive/after-block-arm.rs`, `HISS-01/rust/negative/scoped-binding.rs`,
+`HISS-01/rust/negative/block-in-arm-or-closure.rs` and `HISS-01/rust/negative/macro-input.rs`
+replay them.
 
 A trait impl is left undecided because one function's text cannot tell forwarding from recursion
 there: the inherent method that `self.f()` would reach may sit in any file of the crate. Deciding

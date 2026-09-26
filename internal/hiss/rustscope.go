@@ -11,6 +11,13 @@ import "strings"
 // that stayed in force for the rest of the function hid every recursive call written after a
 // closure, loop or inner block that happened to reuse the name.
 //
+// An arm or a closure is an expression, so its end follows rustc's grammar rather than the
+// next closing brace. An arm ends at its comma, or, when its body starts with a block-like
+// expression ({, if, match, loop, while, for, unsafe, const), at the brace closing that
+// expression unless an else, a method call or ? carries it on; a brace inside the body (an
+// if-else branch, a nested match) ends nothing. A closure's body is a whole expression, so it
+// ends only at a comma, a semicolon or the bracket around it.
+//
 // rustWalk follows one function body byte by byte, tracking brace and parenthesis depth, to
 // place each call against those scopes. It also marks the input of a macro invocation: a
 // macro may rewrite its input into a call of something else (syscall!(recv(fd)) expands to
@@ -56,6 +63,9 @@ type rustScope struct {
 	paren int
 	// pipe is the byte, on the binding's line, of the pipe closing a closure's parameters.
 	pipe int
+	// block is set on an arm whose body starts with a block-like expression, which ends the
+	// arm at its closing brace.
+	block bool
 }
 
 // rustMacroInput is the input of a macro invocation the walk is inside.
@@ -74,7 +84,10 @@ type rustWalk struct {
 	// active is the binding in scope while live is set; a bare call then reaches the local.
 	active rustScope
 	live   bool
-	macro  rustMacroInput
+	// closing is set once the block-like body of the arm in scope has closed: the next token
+	// decides whether the arm ends there (settle).
+	closing bool
+	macro   rustMacroInput
 }
 
 // observeBody walks one line of the body, placing each call against the scopes open at it.
@@ -85,6 +98,7 @@ func (r *rustSelfCalls) observeBody(body string, line int) {
 	from := len(body) - len(rustCallText(body))
 	r.walk.startLine()
 	for i := 0; i < len(body); i++ {
+		r.walk.settle(body, i)
 		if i == 0 || !isIdentByte(body[i-1]) {
 			r.observeWord(body, i, from, line)
 		}
@@ -122,13 +136,30 @@ func rustBindingAt(code string, at int) (rustBindKind, int) {
 	if kind, keyword := rustKeywordBinding(before, after); kind != rustNoBinding {
 		return kind, keyword
 	}
-	if strings.Count(before, "|")%2 == 1 && strings.Contains(after, "|") {
+	if rustInClosureParams(before) && strings.Contains(after, "|") {
 		return rustClosureBinding, -1
 	}
 	if strings.Contains(after, "=>") && !strings.Contains(before, "=>") {
 		return rustArmBinding, -1
 	}
 	return rustNoBinding, -1
+}
+
+// rustInClosureParams reports whether the text before a name ends inside a closure's parameter
+// list: its last pipe opens one, because what stands before that pipe cannot be the left
+// operand of a bitwise or (`(|`, `= |`, `move |`, a line start). A pipe after an operand is an
+// or-pattern or a bitwise or, so `A | B => v.map(|f| f())` and `(a | b) + v.map(|f| f())` still
+// see the closure's opening pipe.
+func rustInClosureParams(before string) bool {
+	pipe := strings.LastIndexByte(before, '|')
+	if pipe < 0 {
+		return false
+	}
+	prev := strings.TrimRight(before[:pipe], " \t")
+	if prev == "" || strings.IndexByte("([{,;=:&>", prev[len(prev)-1]) >= 0 {
+		return true
+	}
+	return endsWithWord(prev, "move") || endsWithWord(prev, "return")
 }
 
 // rustKeywordBinding recognises a binding in the pattern of a let or a for, which runs from the
@@ -209,10 +240,23 @@ func (w *rustWalk) fire(code string, i int) {
 	if n == 0 || !w.pending[n-1].firesAt(code, i, w.brace, w.paren) {
 		return
 	}
-	s := w.pending[n-1].scope(w.brace, w.paren)
+	s := w.pending[n-1].scope(code, i, w.brace, w.paren)
 	w.pending = w.pending[:n-1]
 	if !w.live || s.outlasts(w.active) {
-		w.active, w.live = s, true
+		w.active, w.live, w.closing = s, true, false
+	}
+}
+
+// settle decides, at the first token after the block-like body of the arm in scope closed,
+// whether the arm ended there. That token may sit on a later line: rustc accepts an else
+// there too.
+func (w *rustWalk) settle(code string, i int) {
+	if !w.closing || strings.IndexByte(" \t\r", code[i]) >= 0 {
+		return
+	}
+	w.closing = false
+	if rustArmEnds(code[i:]) {
+		w.live = false
 	}
 }
 
@@ -225,11 +269,21 @@ func (w *rustWalk) leave(c byte) {
 		}
 		w.pending = w.pending[:len(w.pending)-1]
 	}
-	if w.live && w.active.endsAt(c, w.brace, w.paren) {
-		w.live = false
-	}
+	w.leaveScope(c)
 	if w.macro.open && w.macro.closedBy(c, w.brace, w.paren) {
 		w.macro.open = false
+	}
+}
+
+// leaveScope ends the binding in scope when c closed it, or marks the block-like body of its
+// arm closed so settle can decide at the next token.
+func (w *rustWalk) leaveScope(c byte) {
+	switch {
+	case !w.live:
+	case w.active.endsAt(c, w.brace, w.paren):
+		w.live = false
+	case w.active.closesBody(c, w.brace, w.paren):
+		w.closing = true
 	}
 }
 
@@ -275,13 +329,16 @@ func (s rustScope) firesAt(code string, i, brace, paren int) bool {
 	return strings.HasPrefix(code[i:], "=>")
 }
 
-// scope returns where the binding is in scope once it fires at the given depths.
-func (s rustScope) scope(brace, paren int) rustScope {
+// scope returns where the binding is in scope once it fires at byte i, walked at the given
+// depths. An arm's arrow is followed by its body, which tells whether a brace can end it.
+func (s rustScope) scope(code string, i, brace, paren int) rustScope {
 	switch s.kind {
 	case rustLetBinding:
 		return rustScope{kind: s.kind, brace: brace}
 	case rustHeadBinding:
 		return rustScope{kind: s.kind, brace: brace + 1}
+	case rustArmBinding:
+		return rustScope{kind: s.kind, brace: brace, paren: paren, block: rustBlockLed(code[i+len("=>"):])}
 	}
 	return rustScope{kind: s.kind, brace: brace, paren: paren}
 }
@@ -298,8 +355,9 @@ func (s rustScope) outlasts(t rustScope) bool {
 }
 
 // endsAt reports whether c, walked to the given depths, ends the scope: the block holding it
-// closes, or an arm or closure expression ends at a comma, a semicolon, a closing bracket or
-// the close of a block it opened.
+// closes, or an arm or closure expression ends at a comma, a semicolon or a closing bracket.
+// A brace closed inside the expression ends nothing; closesBody covers the arm whose body is
+// block-like.
 func (s rustScope) endsAt(c byte, brace, paren int) bool {
 	switch {
 	case brace < s.brace:
@@ -309,7 +367,44 @@ func (s rustScope) endsAt(c byte, brace, paren int) bool {
 	case paren < s.paren:
 		return true
 	}
-	return brace == s.brace && paren == s.paren && (c == ',' || c == ';' || c == '}')
+	return brace == s.brace && paren == s.paren && (c == ',' || c == ';')
+}
+
+// closesBody reports whether c, walked to the given depths, closed a block at the depth of an
+// arm whose body is block-like: the arm ends there unless the next token carries it on.
+func (s rustScope) closesBody(c byte, brace, paren int) bool {
+	return s.block && c == '}' && brace == s.brace && paren == s.paren
+}
+
+// rustBlockLeaders are the keywords that start a block-like expression, which rustc ends at
+// its closing brace when it stands first in a match arm.
+var rustBlockLeaders = map[string]bool{
+	"if": true, "match": true, "loop": true, "while": true, "for": true, "unsafe": true, "const": true,
+}
+
+// rustBlockLed reports whether an arm body starting at text is a block-like expression. A body
+// that starts on a later line counts as not block-like, so its arm ends at its comma.
+func rustBlockLed(text string) bool {
+	text = strings.TrimLeft(text, " \t")
+	return strings.HasPrefix(text, "{") || rustBlockLeaders[leadingIdent(text)]
+}
+
+// rustArmEnds reports whether the token text starts with ends an arm whose block-like body has
+// just closed: a comma, the match's closing brace, or a token the next arm's pattern starts
+// with (a name, a literal, a tuple, a slice, an attribute, a range or a path). An else or in,
+// a method call, ?, = (an if-let pattern's struct braces) and { (a block in the head) carry
+// the expression on. rustc rejects a binary operator there, so reading one as a continuation
+// costs nothing on code that compiles.
+func rustArmEnds(text string) bool {
+	switch word := leadingIdent(text); {
+	case word == "else" || word == "in":
+		return false
+	case word != "":
+		return true
+	case text == "":
+		return false
+	}
+	return strings.IndexByte(",}([#'\"", text[0]) >= 0 || strings.HasPrefix(text, "..") || strings.HasPrefix(text, "::")
 }
 
 // rustNesting returns how many parentheses and brackets text leaves open.
