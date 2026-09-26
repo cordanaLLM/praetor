@@ -22,12 +22,24 @@ const fixtureAgentsMD = "# Fixture Repository\n\n## Rules\n\n- Keep functions sm
 // printed together with its error, so command tests can assert on the report lines.
 func captureStdout(t *testing.T, fn func() error) (string, error) {
 	t.Helper()
+	return captureStream(t, &os.Stdout, fn)
+}
+
+// captureStderr is captureStdout for the warnings a command prints to os.Stderr.
+func captureStderr(t *testing.T, fn func() error) (string, error) {
+	t.Helper()
+	return captureStream(t, &os.Stderr, fn)
+}
+
+// captureStream runs fn with *stream redirected into a buffer and restores it afterwards.
+func captureStream(t *testing.T, stream **os.File, fn func() error) (string, error) {
+	t.Helper()
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatalf("pipe: %v", err)
 	}
-	orig := os.Stdout
-	os.Stdout = w
+	orig := *stream
+	*stream = w
 
 	var buf bytes.Buffer
 	var copyErr error
@@ -38,7 +50,7 @@ func captureStdout(t *testing.T, fn func() error) (string, error) {
 	}()
 
 	runErr := fn()
-	os.Stdout = orig
+	*stream = orig
 	if cerr := w.Close(); cerr != nil {
 		t.Fatalf("close pipe writer: %v", cerr)
 	}
@@ -47,7 +59,7 @@ func captureStdout(t *testing.T, fn func() error) (string, error) {
 		t.Fatalf("close pipe reader: %v", cerr)
 	}
 	if copyErr != nil {
-		t.Fatalf("capture stdout: %v", copyErr)
+		t.Fatalf("capture output: %v", copyErr)
 	}
 	return buf.String(), runErr
 }

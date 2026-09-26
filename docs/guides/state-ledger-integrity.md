@@ -40,17 +40,32 @@ either absent or holds its whole template, never a zero-byte file an audit would
 read as a corrupt ledger.
 
 Both forms of `praetorctl state init` then make Git ignore the directory, unless
-the path is not a directory at all. Every other command that seeds a missing
-ledger as a side effect does the same, but only when that run created the ledger:
-`state sync`, `state task add`, `state bug add`, `state bug resolve` (which seeds
-the ledger before it reports an unknown ID), `state question add` and
-`praetorctl flavor apply`. A ledger that existed before the command ran is left
-to `state init`. `state sync` takes this step before it records the working tree,
-so the snapshot it writes already includes the new `.gitignore` and the
-commit-msg hook's `state sync --verify` accepts it.
+the path is not a directory at all. Every other command that writes into the
+ledger, and seeds it on first use, does the same: `state sync`, `state task add`,
+`state bug add`, `state bug resolve` (which seeds the ledger before it reports an
+unknown ID), `state question add` and `praetorctl flavor apply`
+([`cmd/standardsctl/state.go`](https://github.com/cordanaLLM/praetor/blob/main/cmd/standardsctl/state.go),
+`withLedgerIgnore`).
 
-Git is asked whether its own ignore rules exclude `.workingdir` itself; global
-excludes do not count, because every clone must inherit the rule. A directory
+- **Existing ledger:** the command reconciles the rule before it writes
+  anything. That covers a ledger an older binary created, one seeded before
+  `git init`, and one whose first ignore step failed. If `.gitignore` cannot be
+  merged, the command is refused and nothing is written, so running it again
+  never records the same change twice.
+- **Ledger created by this run:** the rule follows the run. If that ignore step
+  fails, the error says the change was recorded and must not be repeated; the
+  next ledger command reconciles before it writes.
+- **`adoption.decline` warning:** printed only by the run that seeded the
+  ledger, not by every later command.
+
+`state sync` takes this step before it records the working tree, so the snapshot
+it writes already includes the new `.gitignore` and the commit-msg hook's
+`state sync --verify` accepts it.
+
+Git is asked whether its own ignore rules exclude `.workingdir` itself: the
+repository's `.gitignore` files and `.git/info/exclude` count, while a global
+`core.excludesFile` does not, because it belongs to one host and not to the
+repository. A directory
 excluded as a whole keeps every file under it private, whatever negations
 follow; a rule such as `.workingdir/*` followed by `!.workingdir/STATE.md` does
 not. The command acts on the answer:

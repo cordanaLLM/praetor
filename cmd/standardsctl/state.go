@@ -106,7 +106,7 @@ func runStateInit(args []string) error {
 		return fmt.Errorf("state init failed: %w", err)
 	}
 	fmt.Printf("Initialized %s/ in %s\n", state.WorkingDirName, dir)
-	return ignoreStateLedger(context.Background(), dir)
+	return ignoreStateLedger(context.Background(), dir, true)
 }
 
 func bootstrapState(dir string) error {
@@ -119,46 +119,61 @@ func bootstrapState(dir string) error {
 	if outcome == state.BootstrapUnseedable || outcome == state.BootstrapNestedRepository {
 		return nil
 	}
-	return ignoreStateLedger(ctx, dir)
+	return ignoreStateLedger(ctx, dir, true)
 }
 
 // ignoreStateLedger makes Git exclude the ledger a command wrote or kept, through
 // the same .gitignore writer adoption uses, and says so whenever it had to act. Standalone
 // initialization used to leave the private files unignored in every repository that had
 // not been adopted, so the next broad staging command would have published them.
-func ignoreStateLedger(ctx context.Context, dir string) error {
+//
+// warnDecline prints the warning for a repository whose manifest declines git-ignore. It
+// is set when the command wrote the ledger in this run; a command that merely writes into
+// a ledger an operator keeps unignored on purpose repeats nothing on every call.
+func ignoreStateLedger(ctx context.Context, dir string, warnDecline bool) error {
 	outcome, err := adopt.EnsurePrivateIgnore(ctx, dir)
 	if err != nil {
 		return fmt.Errorf("could not make Git ignore %s/ in %s: %w", state.WorkingDirName, dir, err)
 	}
-	switch outcome {
-	case adopt.PrivateIgnoreWritten:
+	switch {
+	case outcome == adopt.PrivateIgnoreWritten:
 		fmt.Printf("Added the Praetor private-artifact block to .gitignore in %s; Git now ignores %s/\n", dir, state.WorkingDirName)
-	case adopt.PrivateIgnoreDeclined:
+	case outcome == adopt.PrivateIgnoreDeclined && warnDecline:
 		fmt.Fprintf(os.Stderr, "Warning: Git does not ignore %s/ in %s and adoption.decline declines git-ignore; add /%s/ to the operator-owned .gitignore\n",
 			state.WorkingDirName, dir, state.WorkingDirName)
 	}
 	return nil
 }
 
-// withLedgerIgnore runs a command that may create the private ledger as a side effect
-// and, when the ledger was absent before it ran and is present after, makes Git ignore
-// it through ignoreStateLedger. `state sync`, `task add`, `bug add`, `bug resolve`,
-// `question add` and `flavor apply` all seed the ledger on first use, while only
-// `state init` followed that with the ignore step, so the first sync in an unadopted
+// withLedgerIgnore runs a command that writes into the private ledger, creating it on
+// first use, and keeps Git ignoring that ledger. `state sync`, `task add`, `bug add`,
+// `bug resolve`, `question add` and `flavor apply` all seed the ledger on first use, while
+// only `state init` followed that with the ignore step, so the first sync in an unadopted
 // repository left .workingdir/ one `git add .` away from publication.
 //
-// The second probe runs whatever the command returned: `bug resolve` of an unknown ID
-// seeds the ledger before it fails. A ledger that already existed is not this command's
-// doing and stays as it is; `state init` reconciles it explicitly. When the first probe
-// fails the ledger is treated as absent, so the ignore step is attempted rather than
-// skipped. When the second probe fails too, the command's own error names the cause.
+// A ledger present before the command runs is reconciled first, whoever created it: an
+// older binary, a run before `git init`, or a first run whose ignore step failed. An
+// unmergeable .gitignore then refuses the command before it writes anything, so a retry
+// never records the same change twice. A ledger the command creates is reconciled after
+// it; see runSeedingLedger. When the first probe fails the ledger is treated as absent,
+// so the ignore step is still attempted after the run rather than skipped.
 func withLedgerIgnore(ctx context.Context, dir string, run func() error) error {
 	existed, probeErr := ledgerPresent(ctx, dir)
-	runErr := run()
 	if probeErr == nil && existed {
-		return runErr
+		if err := ignoreStateLedger(ctx, dir, false); err != nil {
+			return fmt.Errorf("%w; nothing was written: repair .gitignore and run the command again", err)
+		}
+		return run()
 	}
+	return runSeedingLedger(ctx, dir, run)
+}
+
+// runSeedingLedger runs a command over an absent ledger and, when the run created one,
+// makes Git ignore it. The second probe runs whatever the command returned: `bug resolve`
+// of an unknown ID seeds the ledger before it fails. When that probe fails too, the
+// command's own error names the cause.
+func runSeedingLedger(ctx context.Context, dir string, run func() error) error {
+	runErr := run()
 	created, err := ledgerPresent(ctx, dir)
 	switch {
 	case err != nil && runErr != nil:
@@ -168,13 +183,29 @@ func withLedgerIgnore(ctx context.Context, dir string, run func() error) error {
 	case !created:
 		return runErr
 	}
-	return errors.Join(runErr, ignoreStateLedger(ctx, dir))
+	if err := ignoreStateLedger(ctx, dir, true); err != nil {
+		return errors.Join(runErr, seededUnignored(err, runErr))
+	}
+	return runErr
+}
+
+// seededUnignored explains a failed ignore step after the run already wrote the ledger,
+// so the operator neither repeats a change that was recorded nor believes that nothing
+// happened. The next ledger command reconciles before it writes; see withLedgerIgnore.
+func seededUnignored(ignoreErr, runErr error) error {
+	kept := "the command's change was recorded, so do not repeat it"
+	if runErr != nil {
+		kept = "the ledger this run seeded was kept"
+	}
+	return fmt.Errorf("%w; %s: repair .gitignore, and the next ledger command, state sync included, makes Git ignore %s/ before it writes",
+		ignoreErr, kept, state.WorkingDirName)
 }
 
 // seedIgnoredLedger seeds a missing ledger the way SyncState would and makes Git ignore
-// it before the sync records the working tree. The ignore step may write .gitignore, and a
-// snapshot recorded ahead of that write is stale the moment the command returns, so the
-// commit-msg hook's `state sync --verify` would refuse the very next commit.
+// the ledger, new or existing, before the sync records the working tree. The ignore step
+// may write .gitignore, and a snapshot recorded ahead of that write is stale the moment
+// the command returns, so the commit-msg hook's `state sync --verify` would refuse the
+// very next commit.
 func seedIgnoredLedger(ctx context.Context, dir string) error {
 	return withLedgerIgnore(ctx, dir, func() error {
 		_, err := state.InitWorkingDirIfAbsentContext(ctx, dir)

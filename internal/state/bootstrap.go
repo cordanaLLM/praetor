@@ -131,23 +131,14 @@ func LedgerPresent(ctx context.Context, rootPath string) (present bool, err erro
 	if ctx == nil {
 		return false, errors.New("ledger inspection requires a context")
 	}
-	project, err := contextopt.OpenDirectory(ctx, rootPath)
-	if err != nil {
-		return false, fmt.Errorf("open project to inspect its ledger: %w", err)
-	}
-	defer func() { err = errors.Join(err, project.Close()) }()
-	info, err := project.Lstat(WorkingDirName)
+	working, absent, err := openWorkingDirReadRoot(ctx, rootPath)
 	switch {
-	case errors.Is(err, os.ErrNotExist):
+	case errors.Is(err, errWorkingDirNotDirectory):
 		return false, nil
 	case err != nil:
 		return false, fmt.Errorf("inspect private working directory: %w", err)
-	case !info.IsDir():
+	case absent:
 		return false, nil
-	}
-	working, err := project.OpenRoot(WorkingDirName)
-	if err != nil {
-		return false, fmt.Errorf("open private working directory: %w", err)
 	}
 	defer func() { err = errors.Join(err, working.Close()) }()
 	ledgerless, err := workingDirLedgerless(working)
