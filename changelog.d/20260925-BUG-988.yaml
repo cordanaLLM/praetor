@@ -1,0 +1,3 @@
+type: fixed
+title: Make the race-stage deadline attribution tests deterministic by starting each millisecond deadline only once the fake suite starts, so a slow `git worktree add` on a loaded host can no longer fire the deadline during worktree creation and fail a test about the suite
+breaking: false

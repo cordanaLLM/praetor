@@ -139,15 +139,87 @@ func TestTestStageHonoursABoundBeyondTheOldRunCap(t *testing.T) {
 }
 
 // blockedSuite stands in for a suite a deadline cuts off: it reports the child's death only once
-// its context is done, exactly as an exec-killed `go test` does.
-func blockedSuite(ran *bool) commandRunner {
+// its context is done, exactly as an exec-killed `go test` does. A non-nil arm runs as the suite
+// starts, which is where the tests start the clock of a deadline held back by holdDeadline.
+func blockedSuite(ran *bool, arm func()) commandRunner {
 	return func(runCtx context.Context, dir, name string, args ...string) (string, error) {
 		if name == "go" && len(args) > 0 && args[0] == "test" {
 			*ran = true
+			if arm != nil {
+				arm()
+			}
 			<-runCtx.Done()
 			return "ok github.com/example/pkg 1.4s", errors.New("signal: killed")
 		}
 		return fakeRunner(&[]recordedCommand{}, "", nil)(runCtx, dir, name, args...)
+	}
+}
+
+// deadlineFunc builds a deadline under parent, the way production builds the one under test.
+type deadlineFunc func(parent context.Context) (context.Context, context.CancelFunc)
+
+// holdDeadline returns a context under parent that start's deadline ends, but whose clock runs
+// only from arm on; the context then ends with that deadline's own cause. Only when it fires is
+// held back: the cause, and so the attribution under test, is the one production produces.
+//
+// A millisecond deadline armed at the call instead raced the real `git worktree add` before the
+// suite, and on a loaded host fired there, failing a test about the suite (BUG-988). Every test
+// here that means to cut the suite arms its deadline from blockedSuite.
+func holdDeadline(parent context.Context, start deadlineFunc) (context.Context, context.CancelFunc, func()) {
+	held, release := context.WithCancelCause(parent)
+	stop := context.CancelFunc(func() {})
+	arm := func() {
+		deadline, stopDeadline := start(parent)
+		stop = stopDeadline
+		context.AfterFunc(deadline, func() { release(context.Cause(deadline)) })
+	}
+	cancel := func() {
+		release(nil)
+		stop()
+	}
+	return held, cancel, arm
+}
+
+// holdStageBound holds back the clock of cfg's race stage bound, which the stage itself creates
+// before its worktree, and returns the arm that starts it.
+func holdStageBound(cfg *stageConfig) func() {
+	var arm func()
+	cfg.boundStage = func(ctx context.Context, bound time.Duration) (context.Context, context.CancelFunc) {
+		held, cancel, armBound := holdDeadline(ctx, func(parent context.Context) (context.Context, context.CancelFunc) {
+			return withStageBound(parent, bound)
+		})
+		arm = armBound
+		return held, cancel
+	}
+	return func() { arm() }
+}
+
+// Boundary for the helper every cut-suite test relies on: a held deadline does not fire before
+// it is armed, fires after, and carries the deadline's own cause.
+func TestHoldDeadlineStartsTheClockOnlyWhenArmed(t *testing.T) {
+	budget := RunBudget{StageBound: time.Millisecond, Allowance: time.Millisecond}
+	held, cancel, arm := holdDeadline(context.Background(), func(parent context.Context) (context.Context, context.CancelFunc) {
+		return WithRunDeadline(parent, budget)
+	})
+	defer cancel()
+
+	// Negative: long past the deadline's value, an unarmed hold is still live.
+	time.Sleep(20 * budget.Timeout())
+	if cause := context.Cause(held); cause != nil {
+		t.Fatalf("an unarmed deadline must not fire, got %v", cause)
+	}
+
+	// Positive: once armed it fires with the run deadline's own cause.
+	arm()
+	<-held.Done()
+	if cause, ok := errors.AsType[*RunDeadlineError](context.Cause(held)); !ok || cause.Budget != budget {
+		t.Errorf("an armed hold must end with the run deadline's cause, got %v", context.Cause(held))
+	}
+
+	// Boundary: cancelling an armed hold that has fired keeps the deadline's cause.
+	cancel()
+	if cause, ok := errors.AsType[*RunDeadlineError](context.Cause(held)); !ok || cause.Budget != budget {
+		t.Errorf("cancel after the firing must not replace its cause, got %v", context.Cause(held))
 	}
 }
 
@@ -158,12 +230,15 @@ func TestTestStageBlamesTheRunDeadlineWhenItFiresFirst(t *testing.T) {
 	repoDir := newHermeticGitRepo(t)
 	seedGoModule(t, repoDir)
 	cfg, _ := newTestConfig(t, repoDir, false)
+	budget := RunBudget{StageBound: 25 * time.Millisecond, Allowance: 25 * time.Millisecond}
+	ctx, cancel, arm := holdDeadline(context.Background(), func(parent context.Context) (context.Context, context.CancelFunc) {
+		return WithRunDeadline(parent, budget)
+	})
+	defer cancel()
 	ran := false
-	cfg.run = blockedSuite(&ran)
+	cfg.run = blockedSuite(&ran, arm)
 
 	t.Setenv(TestStageTimeoutEnv, "10m")
-	ctx, cancel := WithRunDeadline(context.Background(), RunBudget{StageBound: 25 * time.Millisecond, Allowance: 25 * time.Millisecond})
-	defer cancel()
 	_, err := runTestStage(ctx, cfg)
 	if err == nil || !ran {
 		t.Fatalf("a stage cut off by the run deadline must fail after starting the suite: ran=%v err=%v", ran, err)
@@ -190,18 +265,21 @@ func TestTestStageBlamesAPlainCallerDeadlineOnTheCaller(t *testing.T) {
 	repoDir := newHermeticGitRepo(t)
 	seedGoModule(t, repoDir)
 	cfg, _ := newTestConfig(t, repoDir, false)
+	ctx, cancel, arm := holdDeadline(context.Background(), func(parent context.Context) (context.Context, context.CancelFunc) {
+		return context.WithTimeout(parent, 50*time.Millisecond)
+	})
+	defer cancel()
 	ran := false
-	cfg.run = blockedSuite(&ran)
+	cfg.run = blockedSuite(&ran, arm)
 
 	t.Setenv(TestStageTimeoutEnv, "10m")
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
 	_, err := runTestStage(ctx, cfg)
-	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("a caller deadline must fail the stage and stay inspectable, got %v", err)
+	if err == nil || !ran || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("a caller deadline must fail the stage after starting the suite and stay inspectable: ran=%v err=%v", ran, err)
 	}
 	message := err.Error()
-	if !strings.Contains(message, "its caller stopped it") || strings.Contains(message, "hit the 10m0s stage bound") {
+	if !strings.Contains(message, "race-detector tests") || !strings.Contains(message, "its caller stopped it") ||
+		strings.Contains(message, "hit the 10m0s stage bound") {
 		t.Errorf("a caller deadline must be blamed on the caller, got %q", message)
 	}
 }
@@ -213,17 +291,17 @@ func TestTestStageStillBlamesItsOwnBoundUnderARunDeadline(t *testing.T) {
 	seedGoModule(t, repoDir)
 	cfg, _ := newTestConfig(t, repoDir, false)
 	ran := false
-	cfg.run = blockedSuite(&ran)
+	cfg.run = blockedSuite(&ran, holdStageBound(cfg))
 
 	t.Setenv(TestStageTimeoutEnv, "50ms")
 	ctx, cancel := WithRunDeadline(context.Background(), EnvRunBudget())
 	defer cancel()
 	_, err := runTestStage(ctx, cfg)
-	if err == nil {
-		t.Fatal("a stage cut off by its bound must fail")
+	if err == nil || !ran {
+		t.Fatalf("a stage cut off by its bound must fail after starting the suite: ran=%v err=%v", ran, err)
 	}
 	message := err.Error()
-	for _, want := range []string{"hit the 50ms stage bound", "bound firing", TestStageTimeoutEnv} {
+	for _, want := range []string{"race-detector tests hit the 50ms stage bound", "bound firing", TestStageTimeoutEnv} {
 		if !strings.Contains(message, want) {
 			t.Errorf("message must mention %q, got %q", want, message)
 		}
@@ -239,7 +317,7 @@ func TestTestStageBlamesTheRunDeadlineDuringWorktreeCreation(t *testing.T) {
 	seedGoModule(t, repoDir)
 	cfg, _ := newTestConfig(t, repoDir, false)
 	ran := false
-	cfg.run = blockedSuite(&ran)
+	cfg.run = blockedSuite(&ran, nil)
 
 	t.Setenv(TestStageTimeoutEnv, "10m")
 	ctx, cancel := WithRunDeadline(context.Background(), RunBudget{StageBound: time.Nanosecond})

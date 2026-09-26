@@ -116,16 +116,21 @@ type stageConfig struct {
 	// defaults apply and the gate sees exactly the scope `praetorctl audit` sees; tests set
 	// it to reach the truncation path without synthesizing a repository of that size.
 	scanOpts hiss.ScanOptions
+	// boundStage derives the race stage's context under its resolved bound. Production uses
+	// withStageBound. Tests start the bound's clock only once their fake suite starts, so how
+	// long the real `git worktree add` before it takes cannot decide where it fires (BUG-988).
+	boundStage func(context.Context, time.Duration) (context.Context, context.CancelFunc)
 }
 
 // newStageConfig builds a stage configuration backed by the real toolchain.
 func newStageConfig(repoDir string, dryRun bool, rep *PipelineReport) *stageConfig {
 	return &stageConfig{
-		repoDir:  repoDir,
-		dryRun:   dryRun,
-		run:      util.RunCommand,
-		lookPath: exec.LookPath,
-		rep:      rep,
+		repoDir:    repoDir,
+		dryRun:     dryRun,
+		run:        util.RunCommand,
+		lookPath:   exec.LookPath,
+		rep:        rep,
+		boundStage: withStageBound,
 	}
 }
 
@@ -396,7 +401,7 @@ func runTestStage(ctx context.Context, cfg *stageConfig) (msg string, err error)
 
 	budget := EnvRunBudget()
 	bound := budget.StageBound
-	tCtx, cancel := withStageBound(ctx, bound)
+	tCtx, cancel := cfg.boundStage(ctx, bound)
 	defer cancel()
 
 	wtMgr := worktree.NewManager(cfg.repoDir)
