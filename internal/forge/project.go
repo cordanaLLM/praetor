@@ -1,14 +1,12 @@
 package forge
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -28,7 +26,45 @@ const (
 	projectCacheFilePerm = 0o644
 	// projectCacheDirPerm is the mode applied to the working directory holding the cache.
 	projectCacheDirPerm = 0o750
+	// projectsPerPage is the Projects v2 connection page size; GitHub caps first at 100.
+	projectsPerPage = 100
+	// maxProjectPages bounds board pagination (HISS-02): MaxProjectsLimit boards at most.
+	maxProjectPages = MaxProjectsLimit / projectsPerPage
 )
+
+// listProjectsQuery pages through an owner's boards with their item counts.
+// repositoryOwner resolves an organization or a user alike, and the owner login travels as
+// a variable, never spliced into the query text.
+const listProjectsQuery = `query($owner: String!, $first: Int!, $after: String) {
+  repositoryOwner(login: $owner) {
+    ... on ProjectV2Owner {
+      projectsV2(first: $first, after: $after) {
+        nodes { id number title url closed items { totalCount } }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }
+}`
+
+// resolveProjectItemQuery resolves the node ids addProjectV2ItemById needs: the board's,
+// from its owner and number, and the issue's or pull request's, from its URL.
+const resolveProjectItemQuery = `query($owner: String!, $number: Int!, $url: URI!) {
+  repositoryOwner(login: $owner) {
+    ... on ProjectV2Owner { projectV2(number: $number) { id } }
+  }
+  resource(url: $url) {
+    __typename
+    ... on Issue { id }
+    ... on PullRequest { id }
+  }
+}`
+
+// addProjectItemMutation adds an issue or pull request to a board by node id.
+const addProjectItemMutation = `mutation($project: ID!, $content: ID!) {
+  addProjectV2ItemById(input: {projectId: $project, contentId: $content}) {
+    item { id }
+  }
+}`
 
 // ProjectV2 represents a GitHub Projects (v2) board.
 type ProjectV2 struct {
@@ -127,8 +163,9 @@ func (pm *ProjectManager) ListProjects(ctx context.Context, rootPath string) ([]
 }
 
 // mergeProjects overlays remote board metadata onto the cached boards, preserving the
-// items recorded locally (the remote projectsV2 selection carries no items) and keeping
-// cached boards that the remote no longer reports.
+// items recorded locally and keeping cached boards that the remote no longer reports. The
+// remote item count is the board's truth; local-only items, which never reached the
+// board, are added on top of it.
 func mergeProjects(cached, remote []ProjectV2) []ProjectV2 {
 	byNumber := make(map[int]int, len(cached))
 	for i := 0; i < len(cached) && i < MaxProjectsLimit; i++ {
@@ -141,9 +178,7 @@ func mergeProjects(cached, remote []ProjectV2) []ProjectV2 {
 		board := remote[i]
 		if idx, ok := byNumber[board.Number]; ok {
 			board.Items = cached[idx].Items
-			if board.TotalItems == 0 {
-				board.TotalItems = cached[idx].TotalItems
-			}
+			board.TotalItems += countLocalOnly(cached[idx].Items)
 		}
 		seen[board.Number] = true
 		merged = append(merged, board)
@@ -156,11 +191,23 @@ func mergeProjects(cached, remote []ProjectV2) []ProjectV2 {
 	return merged
 }
 
+// countLocalOnly counts the cached items that exist only locally.
+func countLocalOnly(items []ProjectItem) int {
+	count := 0
+	for i := 0; i < len(items) && i < MaxProjectItemsLimit; i++ {
+		if items[i].LocalOnly {
+			count++
+		}
+	}
+	return count
+}
+
 // AddItem adds an issue or PR URL to the target project board.
 //
-// With credentials the item is added through `gh project item-add` and a failure is
-// returned: the local cache is never used to fabricate a success record for a board the
-// item never reached. Without credentials the item is recorded as LocalOnly.
+// With credentials the item is added through the addProjectV2ItemById GraphQL mutation on
+// the manager's own endpoint and token, and a failure is returned: the local cache is never
+// used to fabricate a success record for a board the item never reached. Without
+// credentials the item is recorded as LocalOnly.
 func (pm *ProjectManager) AddItem(ctx context.Context, rootPath string, projectNum int, itemURL string) (*ProjectItem, error) {
 	trimmedURL := strings.TrimSpace(itemURL)
 	if trimmedURL == "" {
@@ -187,86 +234,195 @@ func (pm *ProjectManager) AddItem(ctx context.Context, rootPath string, projectN
 	})
 }
 
-// addItemRemote adds the item to the real board through the gh CLI and records the
-// resulting item id in the cache.
+// projectItemTargets is the data of resolveProjectItemQuery.
+type projectItemTargets struct {
+	RepositoryOwner *struct {
+		ProjectV2 *struct {
+			ID string `json:"id"`
+		} `json:"projectV2"`
+	} `json:"repositoryOwner"`
+	Resource *struct {
+		TypeName string `json:"__typename"`
+		ID       string `json:"id"`
+	} `json:"resource"`
+}
+
+// projectItemTypes maps a GraphQL content type to the cached item type.
+var projectItemTypes = map[string]string{"Issue": "ISSUE", "PullRequest": "PULL_REQUEST"}
+
+// addedProjectItem is the data of addProjectItemMutation.
+type addedProjectItem struct {
+	AddProjectV2ItemByID *struct {
+		Item *struct {
+			ID string `json:"id"`
+		} `json:"item"`
+	} `json:"addProjectV2ItemById"`
+}
+
+// addItemRemote adds the item to the real board with addProjectV2ItemById, through the
+// manager's own endpoint and token, and records the resulting item id in the cache.
 func (pm *ProjectManager) addItemRemote(ctx context.Context, rootPath string, projectNum int, itemURL string) (*ProjectItem, error) {
-	if err := util.ValidateExecArg(pm.Owner); err != nil {
-		return nil, fmt.Errorf("reject project owner %q: %w", pm.Owner, err)
-	}
-
-	cmdArgs := []string{
-		"project", "item-add", strconv.Itoa(projectNum),
-		"--owner", pm.Owner, "--url", itemURL, "--format", "json",
-	}
-	out, err := util.RunCommand(ctx, "", "gh", cmdArgs...)
+	projectID, contentID, itemType, err := pm.resolveItemTargets(ctx, projectNum, itemURL)
 	if err != nil {
-		return nil, fmt.Errorf("gh project item-add %d --url %s: %w (output: %s)",
-			projectNum, itemURL, err, util.TruncateExcerpt(out, maxErrorBodyBytes))
+		return nil, err
 	}
-
-	var res struct {
-		ID string `json:"id"`
+	var added addedProjectItem
+	vars := map[string]any{"project": projectID, "content": contentID}
+	if err := pm.postGraphQL(ctx, addProjectItemMutation, vars, &added); err != nil {
+		return nil, fmt.Errorf("add %s to project #%d: %w", itemURL, projectNum, err)
 	}
-	if decodeErr := json.Unmarshal([]byte(out), &res); decodeErr != nil {
-		return nil, fmt.Errorf("decode gh project item output: %w", decodeErr)
-	}
-	if strings.TrimSpace(res.ID) == "" {
-		return nil, fmt.Errorf("gh project item-add %d returned no item id", projectNum)
+	if added.AddProjectV2ItemByID == nil || added.AddProjectV2ItemByID.Item == nil || added.AddProjectV2ItemByID.Item.ID == "" {
+		return nil, fmt.Errorf("adding %s to project #%d returned no item id", itemURL, projectNum)
 	}
 
 	return pm.appendItemToCache(rootPath, projectNum, ProjectItem{
-		ID:        res.ID,
-		Type:      "ISSUE",
+		ID:        added.AddProjectV2ItemByID.Item.ID,
+		Type:      itemType,
 		Title:     itemURL,
 		URL:       itemURL,
 		UpdatedAt: time.Now().UTC(),
 	})
 }
 
-func (pm *ProjectManager) fetchRemoteProjects(ctx context.Context) (projects []ProjectV2, err error) {
-	query := fmt.Sprintf(`{"query":"query { organization(login: \"%s\") { projectsV2(first: 20) { nodes { id number title url closed } } } }"}`, pm.Owner)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, pm.Endpoint, bytes.NewBufferString(query))
-	if err != nil {
-		return nil, fmt.Errorf("build projects request: %w", err)
+// resolveItemTargets resolves the board's node id from its owner and number, and the
+// content node id and item type from the issue or pull request URL.
+func (pm *ProjectManager) resolveItemTargets(ctx context.Context, projectNum int, itemURL string) (projectID, contentID, itemType string, err error) {
+	if strings.TrimSpace(pm.Owner) == "" {
+		return "", "", "", errors.New("project owner cannot be empty")
 	}
-	req.Header.Set("Authorization", "Bearer "+pm.Token)
-	req.Header.Set("Content-Type", "application/json")
+	var targets projectItemTargets
+	vars := map[string]any{"owner": pm.Owner, "number": projectNum, "url": itemURL}
+	if err := pm.postGraphQL(ctx, resolveProjectItemQuery, vars, &targets); err != nil {
+		return "", "", "", fmt.Errorf("resolve project #%d and item %s: %w", projectNum, itemURL, err)
+	}
+	if targets.RepositoryOwner == nil || targets.RepositoryOwner.ProjectV2 == nil || targets.RepositoryOwner.ProjectV2.ID == "" {
+		return "", "", "", fmt.Errorf("project #%d of %q does not exist or is not visible to this token", projectNum, pm.Owner)
+	}
+	known := false
+	if targets.Resource != nil && targets.Resource.ID != "" {
+		itemType, known = projectItemTypes[targets.Resource.TypeName]
+	}
+	if !known {
+		return "", "", "", fmt.Errorf("item URL %s does not name an issue or pull request visible to this token", itemURL)
+	}
+	return targets.RepositoryOwner.ProjectV2.ID, targets.Resource.ID, itemType, nil
+}
 
-	resp, err := pm.HTTPClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("projects request failed: %w", err)
+// projectsConnection is one page of an owner's projectsV2 connection.
+type projectsConnection struct {
+	Nodes []*struct {
+		ID     string `json:"id"`
+		Number int    `json:"number"`
+		Title  string `json:"title"`
+		URL    string `json:"url"`
+		Closed bool   `json:"closed"`
+		Items  struct {
+			TotalCount int `json:"totalCount"`
+		} `json:"items"`
+	} `json:"nodes"`
+	PageInfo struct {
+		HasNextPage bool   `json:"hasNextPage"`
+		EndCursor   string `json:"endCursor"`
+	} `json:"pageInfo"`
+}
+
+// projectsPage is the data of listProjectsQuery.
+type projectsPage struct {
+	RepositoryOwner *struct {
+		ProjectsV2 *projectsConnection `json:"projectsV2"`
+	} `json:"repositoryOwner"`
+}
+
+// boards validates one page and converts its nodes; a null node is skipped.
+func (p *projectsPage) boards(owner string) ([]ProjectV2, *projectsConnection, error) {
+	if p.RepositoryOwner == nil || p.RepositoryOwner.ProjectsV2 == nil {
+		return nil, nil, fmt.Errorf("GitHub owner %q does not exist or is not visible to this token", owner)
 	}
-	defer func() {
-		if cerr := resp.Body.Close(); cerr != nil && err == nil {
-			err = fmt.Errorf("close projects response body: %w", cerr)
+	conn := p.RepositoryOwner.ProjectsV2
+	if len(conn.Nodes) > projectsPerPage {
+		return nil, nil, fmt.Errorf("projects page exceeds %d boards", projectsPerPage)
+	}
+	boards := make([]ProjectV2, 0, len(conn.Nodes))
+	for _, node := range conn.Nodes {
+		if node == nil {
+			continue
 		}
-	}()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub GraphQL returned HTTP %d: %s",
-			resp.StatusCode, util.ReadErrorBody(resp.Body))
+		boards = append(boards, ProjectV2{
+			ID: node.ID, Number: node.Number, Title: node.Title, URL: node.URL,
+			Closed: node.Closed, TotalItems: node.Items.TotalCount,
+		})
 	}
+	return boards, conn, nil
+}
 
-	var res struct {
-		Data struct {
-			Organization struct {
-				ProjectsV2 struct {
-					Nodes []ProjectV2 `json:"nodes"`
-				} `json:"projectsV2"`
-			} `json:"organization"`
-		} `json:"data"`
-		Errors []struct {
-			Message string `json:"message"`
-		} `json:"errors"`
+// fetchRemoteProjects lists every board of the owner, an organization or a user, following
+// the connection cursor up to maxProjectPages (HISS-02). A listing that still has pages at
+// the bound is an error, not a silently shortened list.
+func (pm *ProjectManager) fetchRemoteProjects(ctx context.Context) ([]ProjectV2, error) {
+	if strings.TrimSpace(pm.Owner) == "" {
+		return nil, errors.New("project owner cannot be empty")
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, maxHTTPResponseBody)).Decode(&res); err != nil {
-		return nil, fmt.Errorf("decode projects response: %w", err)
+	projects := make([]ProjectV2, 0, projectsPerPage)
+	var after any // JSON null requests the first page
+	for page := 0; page < maxProjectPages; page++ {
+		var data projectsPage
+		vars := map[string]any{"owner": pm.Owner, "first": projectsPerPage, "after": after}
+		if err := pm.postGraphQL(ctx, listProjectsQuery, vars, &data); err != nil {
+			return nil, err
+		}
+		boards, conn, err := data.boards(pm.Owner)
+		if err != nil {
+			return nil, err
+		}
+		projects = append(projects, boards...)
+		if !conn.PageInfo.HasNextPage {
+			return projects, nil
+		}
+		if conn.PageInfo.EndCursor == "" {
+			return nil, errors.New("projects page reports more boards but no end cursor")
+		}
+		after = conn.PageInfo.EndCursor
+	}
+	return nil, fmt.Errorf("project listing for %q exceeds %d boards", pm.Owner, MaxProjectsLimit)
+}
+
+// graphQLResponse is the envelope of every GitHub GraphQL answer.
+type graphQLResponse struct {
+	Data   json.RawMessage `json:"data"`
+	Errors []struct {
+		Message string `json:"message"`
+	} `json:"errors"`
+}
+
+// postGraphQL sends one GraphQL operation through the GitHub driver's authenticated,
+// bounded request path (sendRequest) and decodes its data into out. The query text is a
+// constant and every caller-supplied value travels in variables. A non-200 status, a
+// non-empty errors array and a missing data object are all failures; response text reaches
+// the error only through util.BodyPreview.
+func (pm *ProjectManager) postGraphQL(ctx context.Context, query string, variables map[string]any, out any) error {
+	transport := &GitHubDriver{Token: pm.Token, Endpoint: pm.Endpoint, HTTPClient: pm.HTTPClient}
+	body, status, err := transport.sendRequest(ctx, http.MethodPost, "", map[string]any{"query": query, "variables": variables})
+	if err != nil {
+		return err
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("GitHub GraphQL returned HTTP %d: %s", status, util.BodyPreview(body))
+	}
+	var res graphQLResponse
+	if err := json.Unmarshal(body, &res); err != nil {
+		return fmt.Errorf("decode GraphQL response (raw: %q): %w", util.BodyPreview(body), err)
 	}
 	if len(res.Errors) > 0 {
-		return nil, fmt.Errorf("GitHub GraphQL reported %d error(s), first: %s",
-			len(res.Errors), util.TruncateExcerpt(res.Errors[0].Message, maxErrorBodyBytes))
+		return fmt.Errorf("GitHub GraphQL reported %d error(s), first: %s",
+			len(res.Errors), util.BodyPreview([]byte(res.Errors[0].Message)))
 	}
-	return res.Data.Organization.ProjectsV2.Nodes, nil
+	if len(res.Data) == 0 || string(res.Data) == "null" {
+		return errors.New("GitHub GraphQL response carries no data")
+	}
+	if err := json.Unmarshal(res.Data, out); err != nil {
+		return fmt.Errorf("decode GraphQL data: %w", err)
+	}
+	return nil
 }
 
 // projectCachePath resolves the cache file inside rootPath, refusing a path that escapes
@@ -353,7 +509,9 @@ func (pm *ProjectManager) appendItemToCache(rootPath string, projectNum int, ite
 		item.ID = fmt.Sprintf("local-%d-%d-%d", projectNum, len(projects[idx].Items)+1, time.Now().UTC().UnixNano())
 	}
 	projects[idx].Items = append(projects[idx].Items, item)
-	projects[idx].TotalItems = len(projects[idx].Items)
+	// The cached count may carry the board's remote total, which exceeds the items recorded
+	// here; resetting it to len(Items) made status under-report a populated board.
+	projects[idx].TotalItems = max(projects[idx].TotalItems+1, len(projects[idx].Items))
 
 	if err := pm.saveCache(rootPath, projects); err != nil {
 		return nil, err

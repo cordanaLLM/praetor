@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const (
@@ -33,21 +34,55 @@ var ErrRepoIdentityUnresolved = errors.New("util: unable to resolve repository o
 // is a symbolic link, or exists and is not a regular file.
 var ErrSymlinkDestination = errors.New("util: refusing to write through a non-regular destination")
 
-// MaxErrorBodyBytes bounds how much of an HTTP error response body may be read into, and
-// embedded in, an error message that a command prints verbatim.
+// MaxErrorBodyBytes bounds how much of an HTTP error response body is read into memory, and
+// how much command diagnostic text an error may embed.
 const MaxErrorBodyBytes = 64 * 1024
+
+// MaxErrorBodyPreview bounds how much of a forge response body BodyPreview embeds in an
+// error string that ends up on a terminal or inside a receipt.
+const MaxErrorBodyPreview = 256
 
 // ReadErrorBody reads the excerpt of an HTTP error response that may be embedded in an
 // error message. The read is bounded by MaxErrorBodyBytes, so neither a hostile nor a
-// misconfigured endpoint can stream an unbounded body into memory, and a read failure is
-// reported rather than silently yielding a truncated body (HISS-07).
+// misconfigured endpoint can stream an unbounded body into memory, and the excerpt goes
+// through BodyPreview, so it is bounded and free of control characters and escape
+// sequences. A read failure is reported rather than silently yielding a truncated body
+// (HISS-07).
 func ReadErrorBody(r io.Reader) string {
 	data, err := io.ReadAll(io.LimitReader(r, MaxErrorBodyBytes))
-	excerpt := strings.TrimSpace(string(data))
+	excerpt := BodyPreview(data)
 	if err != nil {
-		return fmt.Sprintf("%s [reading the response body failed: %v]", excerpt, err)
+		return fmt.Sprintf("%s [reading the response body failed: %s]", excerpt, BodyPreview([]byte(err.Error())))
 	}
 	return excerpt
+}
+
+// BodyPreview renders a bounded, control-character-free excerpt of a response body so that
+// a hostile or misconfigured endpoint cannot flood a terminal or inject escape sequences.
+// Line breaks and tabs become spaces, every other control character or invalid UTF-8 byte
+// becomes '.', and a body longer than MaxErrorBodyPreview bytes is cut and marked.
+func BodyPreview(body []byte) string {
+	truncated := false
+	if len(body) > MaxErrorBodyPreview {
+		body = body[:MaxErrorBodyPreview]
+		truncated = true
+	}
+	var sb strings.Builder
+	for _, r := range string(body) {
+		switch {
+		case r == '\n' || r == '\t' || r == '\r':
+			sb.WriteByte(' ')
+		case unicode.IsControl(r) || r == unicode.ReplacementChar:
+			sb.WriteByte('.')
+		default:
+			sb.WriteRune(r)
+		}
+	}
+	out := strings.TrimSpace(sb.String())
+	if truncated {
+		out += "... (truncated)"
+	}
+	return out
 }
 
 // TruncateExcerpt shortens s to at most limit bytes, marking that it was cut.

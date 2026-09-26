@@ -26,8 +26,6 @@ const (
 	// maxErrorBodyBytes bounds how much of an error response is embedded in an error
 	// message that the CLI prints verbatim.
 	maxErrorBodyBytes = util.MaxErrorBodyBytes
-	// defaultAPIBase is the forge API used when no endpoint is configured.
-	defaultAPIBase = "https://api.github.com"
 )
 
 // RemoteMilestone represents the GitHub REST API representation of a milestone.
@@ -69,15 +67,6 @@ func SyncWithGitHub(ctx context.Context, rootPath, owner, repo, token, endpoint 
 	return store.Milestones, nil
 }
 
-// resolveAPIBase normalizes the configured endpoint into an API base URL.
-func resolveAPIBase(endpoint string) string {
-	apiBase := strings.TrimRight(strings.TrimSpace(endpoint), "/")
-	if apiBase == "" || apiBase == "https://github.com" {
-		return defaultAPIBase
-	}
-	return apiBase
-}
-
 // fetchRemoteMilestones lists every milestone of the repository, following pagination up
 // to maxMilestonePages so that a repository with more than one page of milestones is
 // never silently truncated.
@@ -86,7 +75,7 @@ func fetchRemoteMilestones(ctx context.Context, owner, repo, tok, endpoint strin
 		return nil, err
 	}
 
-	apiBase := resolveAPIBase(endpoint)
+	apiBase := util.GitHubAPIBase(endpoint)
 	client := &http.Client{Timeout: remoteHTTPTimeout}
 	all := make([]RemoteMilestone, 0, milestonePageSize)
 
@@ -234,7 +223,7 @@ func PublishMilestone(ctx context.Context, rootPath, owner, repo, token, endpoin
 		return err
 	}
 
-	url := fmt.Sprintf("%s/repos/%s/%s/milestones", resolveAPIBase(endpoint), owner, repo)
+	url := fmt.Sprintf("%s/repos/%s/%s/milestones", util.GitHubAPIBase(endpoint), owner, repo)
 	created, err := postMilestone(ctx, url, tok, m)
 	if err != nil {
 		return err
