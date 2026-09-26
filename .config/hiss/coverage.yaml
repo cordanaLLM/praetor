@@ -58,18 +58,23 @@ rules:
           names a different item, and a local binding of the same name shadows it, so none of
           those are reported. Shadowing follows Rust's lexical scopes: a let from the end of
           its statement to the end of its block, a for, if-let or while-let pattern inside the
-          block it heads, a match arm's pattern inside that arm, a closure parameter inside
-          the closure, and a nested fn or use for the whole body. An arm ends where rustc ends
-          it: at its comma, or at the brace closing a block-like body ({, if, match, loop, ...)
-          unless an else, a method call or ? carries it on, so a brace inside an if-else branch
-          or a nested match ends nothing. A closure's body is a whole expression and ends only
-          at a comma, a semicolon or its enclosing bracket, and the pipe of an or-pattern or a
-          bitwise or is not taken for a closure's opening pipe. A call outside that scope,
-          before the let or after the block, loop, arm or closure ends, is still reported, and
-          a name followed by a parenthesis is a call rather than a binding. A binding is read
-          from one line only: a let pattern or a closure parameter list wrapped across lines
-          is not recognised as binding the name, so a call of that local is reported. A match arm's
-          pattern calls nothing, while its guard and body can. Inside impl Trait for T,
+          block it heads, a match arm's pattern in its guard and body, a closure parameter
+          inside the closure, and a nested fn or use for the whole body. A struct pattern's
+          braces belong to the pattern, and a later arm on the match's line binds as a first
+          arm does. An arm ends where rustc ends it: at its comma, or at the brace closing a
+          block-like body ({, if, match, loop, ...) unless an else, a method call or ? carries
+          it on, so a brace inside an if-else branch or a nested match ends nothing, while a
+          -, &, | or < after that brace opens the next arm's pattern. A body that starts on
+          the line after the arrow is read at its first token. A closure's body is a whole
+          expression and ends only at a comma, a semicolon or its enclosing bracket, and the
+          pipe of an or-pattern or a bitwise or is not taken for a closure's opening pipe. A
+          call outside that scope, before the let or after the block, loop, arm or closure
+          ends, is still reported, and a name followed by a parenthesis is a call rather than
+          a binding. A binding is read from one line only: a let pattern or a closure
+          parameter list wrapped across lines, or an arm whose guard or arrow sits on a later
+          line than the name, is not recognised as binding the name, so a call of that local
+          is reported. A match arm's pattern calls nothing; its guard and body are call sites,
+          where the arm's own bindings are already in scope. Inside impl Trait for T,
           self.f and Self::f reach an inherent T::f first, which may sit in any file of the
           crate, and Self::f picks among T's impls by argument type, so no function there is
           decided; the header is classified with its attributes, const generic braces and
