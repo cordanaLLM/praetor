@@ -190,9 +190,13 @@ jobs:
           echo "Pure documentation change detected. Running MkDocs verification."
           python3 -m pip install -r docs/presets/mkdocs/requirements.txt
           mkdocs build --strict
+          # A strict build still passes when a ```mermaid block ships as a code listing.
+          python3 -B scripts/docs_mermaid.py --config mkdocs.yml --docs docs --site site
           # The preset ships its own mkdocs.yml; build it too so a nav entry without a page
           # or a template error fails here instead of in the adopter's first build.
           mkdocs build --strict -f docs/presets/mkdocs/mkdocs.yml -d "$RUNNER_TEMP/mkdocs-preset-site"
+          python3 -B scripts/docs_mermaid.py --config docs/presets/mkdocs/mkdocs.yml \
+            --docs docs/presets/mkdocs/docs --site "$RUNNER_TEMP/mkdocs-preset-site"
 
       - name: Markdown Documentation Governance
         if: steps.filter.outputs.run_docs == 'true' && steps.filter.outputs.skip_heavy_gates == 'true' && github.event_name != 'push'
