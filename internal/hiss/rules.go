@@ -689,18 +689,26 @@ func scanRustLineInvariants(code string, lines []string, idx int, rel string, re
 	if rustUnboundedLoop.MatchString(code) {
 		recordViolation(rep, "HISS-02", rel, lineNum, "", "Legacy unbounded loop {} in Rust without explicit scalar bound")
 	}
-	if !scope.test && rustUnwrapCall.MatchString(code) {
-		recordViolation(rep, "HISS-07", rel, lineNum, "", "Legacy .unwrap() invocation bypassing error propagation")
-	}
-	if !scope.test && rustExpectCall.MatchString(code) {
-		recordViolation(rep, "HISS-07", rel, lineNum, "", "Legacy .expect() invocation in production Rust code")
-	}
-	if !scope.test && !scope.entry {
-		checkRustAbort(code, rel, lineNum, rep)
+	if !scope.test {
+		checkRustErrorForms(code, rel, lineNum, rep, scope.entry)
 	}
 	isUnsafe := rustUnsafeBlock.MatchString(code) || strings.HasPrefix(trimmed, "unsafe fn")
 	if isUnsafe && !hasSafetyComment(lines, idx) {
 		recordViolation(rep, "HISS-09", rel, lineNum, "", "unsafe block without a preceding // SAFETY: proof comment")
+	}
+}
+
+// checkRustErrorForms reports the HISS-07 forms on one line of production code: unwrap and
+// expect everywhere, and the abort forms everywhere but the entry point.
+func checkRustErrorForms(code, rel string, lineNum int, rep *ScanReport, entry bool) {
+	if rustUnwrapCall.MatchString(code) {
+		recordViolation(rep, "HISS-07", rel, lineNum, "", "Legacy .unwrap() invocation bypassing error propagation")
+	}
+	if rustExpectCall.MatchString(code) {
+		recordViolation(rep, "HISS-07", rel, lineNum, "", "Legacy .expect() invocation in production Rust code")
+	}
+	if !entry {
+		checkRustAbort(code, rel, lineNum, rep)
 	}
 }
 
