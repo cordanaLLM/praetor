@@ -60,7 +60,7 @@ func (s *Server) runAuditGates(ctx context.Context, p auditPaths) *mcp.ToolResul
 			return auditBaselineRatchetWithPolicy(ctx, s.rootDir, p.baseline, effective.Policy.Complexity.MaxFuncLOC)
 		},
 		func(ctx context.Context) (string, error) { return auditContextSync(ctx, p.agents, s.rootDir) },
-		func(context.Context) (string, error) { return auditBranchProtection(manifest, s.rootDir) },
+		func(ctx context.Context) (string, error) { return auditBranchProtection(ctx, manifest, s.rootDir) },
 		func(context.Context) (string, error) { return auditLabelTaxonomy(s.rootDir) },
 		func(context.Context) (string, error) { return auditHookConfig(s.rootDir) },
 	}
@@ -164,8 +164,8 @@ func auditContextSync(ctx context.Context, agentsPath, root string) (string, err
 
 // auditBranchProtection delegates branch protection ruleset audit to the shared authority
 // in internal/adopt.
-func auditBranchProtection(manifest *config.Manifest, root string) (string, error) {
-	return adopt.AuditBranchProtection(manifest, root)
+func auditBranchProtection(ctx context.Context, manifest *config.Manifest, root string) (string, error) {
+	return adopt.AuditBranchProtection(ctx, manifest, root)
 }
 
 // auditLabelTaxonomy requires the repository label taxonomy.

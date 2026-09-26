@@ -12,6 +12,8 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/compiler"
+	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
@@ -165,10 +167,26 @@ func newAuditFixture(t *testing.T) *auditFixture {
 	}
 
 	writeFixtureFile(t, dir, ".config/labels.yaml", "version: 1\nlabels: []\n")
-	writeFixtureFile(t, dir, ".github/rulesets/main.json", "{}\n")
+	writeDeclaredRuleset(t, dir, config.DefaultPolicy().BranchProtection)
 	writeFixtureFile(t, dir, ".paperclip/harness.json",
 		`{"version":1,"platform":"acme/widgets","operating_contract":["Rule 0: end with a disposition."],"agit_push_format":"reviewed fixture push","invariants":["fixture invariant"]}`+"\n")
 	return f
+}
+
+// writeDeclaredRuleset writes the ruleset the branch protection audit accepts for dir: the one
+// policy renders for the status checks dir's workflows report. The audit compares content, so
+// a placeholder such as "{}" no longer passes it.
+func writeDeclaredRuleset(t *testing.T, dir string, policy config.BranchProtectionPolicy) {
+	t.Helper()
+	contexts, err := forge.RequiredStatusContexts(t.Context(), dir)
+	if err != nil {
+		t.Fatalf("discover fixture status checks: %v", err)
+	}
+	ruleset, err := forge.RenderRepositoryRuleset(policy, contexts)
+	if err != nil {
+		t.Fatalf("render fixture ruleset: %v", err)
+	}
+	writeFixtureFile(t, dir, ".github/rulesets/main.json", string(ruleset))
 }
 
 // writeBaseline records infractions (and an optional rationale) as the fixture baseline.

@@ -105,10 +105,9 @@ func distillFlavorFacts(ctx context.Context, repoPath string) ([]MemoryFact, err
 	if err != nil {
 		return nil, fmt.Errorf("resolve detected flavor %q: %w", detected, err)
 	}
-		stmt := fmt.Sprintf("Repository is governed under archetype %s (Profile: %s). Description: %s.",
-			flv.Name(), flv.HISSProfile(), flv.Description())
-		facts = append(facts, createFact(CategoryFlavor, flv.Name(), stmt, "internal/flavor", []string{"flavor", flv.Name()}))
-	}
+	stmt := fmt.Sprintf("Repository is governed under archetype %s (Profile: %s). Description: %s.",
+		flv.Name(), flv.HISSProfile(), flv.Description())
+	facts = append(facts, createFact(CategoryFlavor, flv.Name(), stmt, "internal/flavor", []string{"flavor", flv.Name()}))
 	return facts, nil
 }
 

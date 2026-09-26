@@ -95,6 +95,21 @@ func TestAuditBranchRuleset_CLI_Negative_MissingRulesetFailsClosed(t *testing.T)
 	mustErrContain(t, err, "Branch protection ruleset .github/rulesets/main.json is missing")
 }
 
+// TestAuditBranchRuleset_CLI_Negative_PlaceholderRulesetFails pins BUG-267 end to end: audit
+// reported "{}" verified because it checked only that the file existed.
+func TestAuditBranchRuleset_CLI_Negative_PlaceholderRulesetFails(t *testing.T) {
+	f := newAuditFixture(t)
+	writeFixtureFile(t, f.dir, ".github/rulesets/main.json", "{}\n")
+	out, err := f.audit(t)
+	if err == nil {
+		t.Fatalf("audit must fail on a placeholder ruleset:\n%s", out)
+	}
+	mustErrContain(t, err, "does not match the declared policy")
+	if strings.Contains(out, "[PASS] Branch protection") {
+		t.Fatalf("placeholder ruleset produced pass evidence: %s", out)
+	}
+}
+
 func TestAuditBranchRuleset_CLI_Negative_MalformedDeclineFailsClosed(t *testing.T) {
 	f := newAuditFixture(t)
 	malformedManifest := `version: 1
@@ -137,7 +152,7 @@ func TestAuditBranchRuleset_CLI_Boundary_PolicyNotRequired(t *testing.T) {
 			RequireSignedCommits: false,
 		},
 	}
-	out, err := adopt.AuditBranchProtectionWithPolicy(manifest, f.dir, policy)
+	out, err := adopt.AuditBranchProtectionWithPolicy(t.Context(), manifest, f.dir, policy)
 	if err != nil {
 		t.Fatalf("audit failed when policy does not require ruleset: %v\nOutput: %s", err, out)
 	}

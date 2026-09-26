@@ -143,7 +143,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error { return auditAgentContextAndDevcontainer(ctx, manifest, opts) },
 		func() error { return auditAgentProjections(ctx, rootDir) },
 		func() error { return auditCavemanAgentSurfaces(rootDir) },
-		func() error { return auditBranchProtectionAndSupplyChain(manifest, rootDir) },
+		func() error { return auditBranchProtectionAndSupplyChain(ctx, manifest, rootDir) },
 		func() error { return auditPaperclipHarness(ctx, manifest, rootDir) },
 		func() error { return auditRunnerMatrix(ctx, manifest, rootDir) },
 		func() error { return auditPreMigrationTracking(rootDir) },
@@ -321,8 +321,8 @@ func auditCavemanAgentSurfaces(rootDir string) error {
 	return nil
 }
 
-func auditBranchProtectionAndSupplyChain(manifest *config.Manifest, rootDir string) error {
-	summary, err := adopt.AuditBranchProtection(manifest, rootDir)
+func auditBranchProtectionAndSupplyChain(ctx context.Context, manifest *config.Manifest, rootDir string) error {
+	summary, err := adopt.AuditBranchProtection(ctx, manifest, rootDir)
 	if err != nil {
 		return err
 	}

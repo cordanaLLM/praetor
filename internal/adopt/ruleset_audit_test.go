@@ -1,28 +1,24 @@
 package adopt
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/forge"
 )
 
 func TestAuditBranchProtection_Positive(t *testing.T) {
-	// Case 1: Required ruleset is present and no decline
+	// Case 1: Required ruleset is the one the declared policy renders, and no decline
 	t.Run("ruleset present and verified", func(t *testing.T) {
 		root := t.TempDir()
-		rulesetDir := filepath.Join(root, ".github", "rulesets")
-		if err := os.MkdirAll(rulesetDir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(rulesetDir, "main.json"), []byte("{}\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		writeAuditRuleset(t, root, renderAuditRuleset(t, config.DefaultPolicy().BranchProtection, nil))
 
 		manifest := &config.Manifest{}
-		summary, err := AuditBranchProtection(manifest, root)
+		summary, err := AuditBranchProtection(t.Context(), manifest, root)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -39,7 +35,7 @@ func TestAuditBranchProtection_Positive(t *testing.T) {
 				Decline: []string{"branch-ruleset"},
 			},
 		}
-		summary, err := AuditBranchProtection(manifest, root)
+		summary, err := AuditBranchProtection(t.Context(), manifest, root)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -63,7 +59,7 @@ func TestAuditBranchProtection_Positive(t *testing.T) {
 				Decline: []string{"branch-ruleset"},
 			},
 		}
-		summary, err := AuditBranchProtection(manifest, root)
+		summary, err := AuditBranchProtection(t.Context(), manifest, root)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -78,7 +74,7 @@ func TestAuditBranchProtection_Negative(t *testing.T) {
 	t.Run("ruleset required and missing fails closed", func(t *testing.T) {
 		root := t.TempDir()
 		manifest := &config.Manifest{}
-		_, err := AuditBranchProtection(manifest, root)
+		_, err := AuditBranchProtection(t.Context(), manifest, root)
 		if err == nil {
 			t.Fatal("expected failure for missing ruleset without decline")
 		}
@@ -95,7 +91,7 @@ func TestAuditBranchProtection_Negative(t *testing.T) {
 				Decline: []string{"unknown-artefact-name"},
 			},
 		}
-		_, err := AuditBranchProtection(manifest, root)
+		_, err := AuditBranchProtection(t.Context(), manifest, root)
 		if err == nil {
 			t.Fatal("expected failure for unknown decline")
 		}
@@ -112,7 +108,7 @@ func TestAuditBranchProtection_Negative(t *testing.T) {
 				Decline: []string{"manifest"},
 			},
 		}
-		_, err := AuditBranchProtection(manifest, root)
+		_, err := AuditBranchProtection(t.Context(), manifest, root)
 		if err == nil {
 			t.Fatal("expected failure for mandatory decline")
 		}
@@ -133,7 +129,7 @@ func TestAuditBranchProtection_Negative(t *testing.T) {
 				Decline: declines,
 			},
 		}
-		_, err := AuditBranchProtection(manifest, root)
+		_, err := AuditBranchProtection(t.Context(), manifest, root)
 		if err == nil {
 			t.Fatal("expected failure for oversized decline list")
 		}
@@ -145,7 +141,7 @@ func TestAuditBranchProtection_Negative(t *testing.T) {
 	// Case 5: Nil manifest fails closed
 	t.Run("nil manifest fails closed", func(t *testing.T) {
 		root := t.TempDir()
-		_, err := AuditBranchProtection(nil, root)
+		_, err := AuditBranchProtection(t.Context(), nil, root)
 		if err == nil {
 			t.Fatal("expected failure for nil manifest")
 		}
@@ -157,7 +153,7 @@ func TestAuditBranchProtection_Negative(t *testing.T) {
 	// Case 6: Empty root dir fails closed
 	t.Run("empty root fails closed", func(t *testing.T) {
 		manifest := &config.Manifest{}
-		_, err := AuditBranchProtection(manifest, "")
+		_, err := AuditBranchProtection(t.Context(), manifest, "")
 		if err == nil {
 			t.Fatal("expected failure for empty root")
 		}
@@ -169,7 +165,7 @@ func TestAuditBranchProtection_Negative(t *testing.T) {
 	// Case 7: Nil policy fails closed
 	t.Run("nil policy fails closed", func(t *testing.T) {
 		manifest := &config.Manifest{}
-		_, err := AuditBranchProtectionWithPolicy(manifest, t.TempDir(), nil)
+		_, err := AuditBranchProtectionWithPolicy(t.Context(), manifest, t.TempDir(), nil)
 		if err == nil {
 			t.Fatal("expected failure for nil policy")
 		}
@@ -190,7 +186,7 @@ func TestAuditBranchProtection_Boundary(t *testing.T) {
 				RequireSignedCommits: false,
 			},
 		}
-		summary, err := AuditBranchProtectionWithPolicy(manifest, root, policy)
+		summary, err := AuditBranchProtectionWithPolicy(t.Context(), manifest, root, policy)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -207,7 +203,7 @@ func TestAuditBranchProtection_Boundary(t *testing.T) {
 				Decline: []string{"  BRANCH-RULESET  "},
 			},
 		}
-		summary, err := AuditBranchProtection(manifest, root)
+		summary, err := AuditBranchProtection(t.Context(), manifest, root)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -224,7 +220,7 @@ func TestAuditBranchProtection_Boundary(t *testing.T) {
 				Decline: []string{},
 			},
 		}
-		_, err := AuditBranchProtection(manifest, root)
+		_, err := AuditBranchProtection(t.Context(), manifest, root)
 		if err == nil {
 			t.Fatal("expected failure for missing ruleset with empty decline list")
 		}
@@ -239,7 +235,7 @@ func TestAuditBranchProtection_Boundary(t *testing.T) {
 		manifest := &config.Manifest{
 			Adoption: nil,
 		}
-		_, err := AuditBranchProtection(manifest, root)
+		_, err := AuditBranchProtection(t.Context(), manifest, root)
 		if err == nil {
 			t.Fatal("expected failure for missing ruleset with nil adoption policy")
 		}
@@ -247,4 +243,121 @@ func TestAuditBranchProtection_Boundary(t *testing.T) {
 			t.Fatalf("unexpected error diagnostic: %v", err)
 		}
 	})
+}
+
+// signedPolicy is a policy that requires every protection the ruleset carries: linear
+// history, signed commits and one independent approval.
+func signedPolicy() config.BranchProtectionPolicy {
+	return config.BranchProtectionPolicy{
+		EnforceLinearHistory:       true,
+		RequireSignedCommits:       true,
+		RequiredApprovingReviewers: 1,
+		DismissStaleReviews:        true,
+		ReviewMode:                 config.BranchReviewModeIndependent,
+	}
+}
+
+func renderAuditRuleset(t *testing.T, policy config.BranchProtectionPolicy, contexts []string) string {
+	t.Helper()
+	data, err := forge.RenderRepositoryRuleset(policy, contexts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func writeAuditRuleset(t *testing.T, root, content string) {
+	t.Helper()
+	dir := filepath.Join(root, ".github", "rulesets")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.json"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestAuditBranchProtection_Negative_ContentMustEnforcePolicy pins BUG-041 and BUG-267: the
+// audit checked only that the ruleset existed, so each of these was reported verified.
+func TestAuditBranchProtection_Negative_ContentMustEnforcePolicy(t *testing.T) {
+	policy := &config.ResolvedPolicy{BranchProtection: signedPolicy()}
+	weaker := signedPolicy()
+	weaker.RequiredApprovingReviewers = 0
+	unsigned := signedPolicy()
+	unsigned.RequireSignedCommits = false
+	cases := map[string]string{
+		"empty object":           "{}\n",
+		"zero approvals":         renderAuditRuleset(t, weaker, nil),
+		"no required_signatures": renderAuditRuleset(t, unsigned, nil),
+		"not JSON":               "rules: []\n",
+		"duplicate keys":         `{"rules": [], "rules": []}`,
+	}
+	for name, content := range cases {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeAuditRuleset(t, root, content)
+			summary, err := AuditBranchProtectionWithPolicy(t.Context(), &config.Manifest{}, root, policy)
+			if err == nil || !strings.Contains(err.Error(), "[FAIL] Branch protection ruleset .github/rulesets/main.json does not match the declared policy") {
+				t.Fatalf("a ruleset that does not enforce the policy must fail, got %q, %v", summary, err)
+			}
+		})
+	}
+}
+
+// TestAuditBranchProtection_Negative_MissingWorkflowCheck asserts the ruleset must require the
+// status checks the repository's workflows report, as sync requires.
+func TestAuditBranchProtection_Negative_MissingWorkflowCheck(t *testing.T) {
+	root := t.TempDir()
+	writeAuditWorkflow(t, root)
+	writeAuditRuleset(t, root, renderAuditRuleset(t, signedPolicy(), nil))
+	policy := &config.ResolvedPolicy{BranchProtection: signedPolicy()}
+	if _, err := AuditBranchProtectionWithPolicy(t.Context(), &config.Manifest{}, root, policy); err == nil {
+		t.Fatal("a ruleset that omits a workflow's required check must fail")
+	}
+}
+
+// TestAuditBranchProtection_Boundary_FormattingIsNotContent asserts a ruleset that differs from
+// the rendered one only in key order and whitespace passes, and that a ruleset carrying the
+// workflow-derived checks passes.
+func TestAuditBranchProtection_Boundary_FormattingIsNotContent(t *testing.T) {
+	policy := &config.ResolvedPolicy{BranchProtection: signedPolicy()}
+	t.Run("key order and whitespace", func(t *testing.T) {
+		root := t.TempDir()
+		var doc map[string]any
+		if err := json.Unmarshal([]byte(renderAuditRuleset(t, signedPolicy(), nil)), &doc); err != nil {
+			t.Fatal(err)
+		}
+		compact, err := json.Marshal(doc) // sorted keys, no indentation
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeAuditRuleset(t, root, string(compact))
+		if _, err := AuditBranchProtectionWithPolicy(t.Context(), &config.Manifest{}, root, policy); err != nil {
+			t.Fatalf("formatting differences must not fail the audit: %v", err)
+		}
+	})
+	t.Run("workflow checks present", func(t *testing.T) {
+		root := t.TempDir()
+		writeAuditWorkflow(t, root)
+		contexts, err := forge.RequiredStatusContexts(t.Context(), root)
+		if err != nil || len(contexts) == 0 {
+			t.Fatalf("fixture workflow must report a status context: %v, %v", contexts, err)
+		}
+		writeAuditRuleset(t, root, renderAuditRuleset(t, signedPolicy(), contexts))
+		if _, err := AuditBranchProtectionWithPolicy(t.Context(), &config.Manifest{}, root, policy); err != nil {
+			t.Fatalf("the rendered ruleset with workflow checks must pass: %v", err)
+		}
+	})
+}
+
+func writeAuditWorkflow(t *testing.T, root string) {
+	t.Helper()
+	dir := filepath.Join(root, ".github", "workflows")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const workflow = "name: CI\non:\n  pull_request:\njobs:\n  test:\n    name: Unit Tests\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n"
+	if err := os.WriteFile(filepath.Join(dir, "ci.yml"), []byte(workflow), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }

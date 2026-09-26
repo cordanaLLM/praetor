@@ -345,15 +345,20 @@ func TestAdopt_Positive_ExplicitFacetsAndSkipGitValidation(t *testing.T) {
 func TestAdopt_Positive_ForceRegeneratesScaffolds(t *testing.T) {
 	repoPath := newTestRepo(t, "force-repo")
 	mustWrite(t, filepath.Join(repoPath, "lefthook.yml"), "pre-commit:\n  commands:\n    custom:\n      run: echo custom\n")
-	mustWrite(t, filepath.Join(repoPath, ".config", "labels.yaml"), "version: 0\n")
+	// The label taxonomy is repository configuration, not a scaffold: --force keeps it (BUG-287).
+	const labels = "version: 0\n"
+	mustWrite(t, filepath.Join(repoPath, ".config", "labels.yaml"), labels)
 
 	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Force: true})
 	if err != nil {
 		t.Fatalf("Adopt --force failed: %v", err)
 	}
 	assertNoIssues(t, rep)
-	if !contains(rep.CreatedFiles, "lefthook.yml") || !contains(rep.CreatedFiles, ".config/labels.yaml") {
+	if !contains(rep.CreatedFiles, "lefthook.yml") {
 		t.Fatalf("--force must regenerate scaffolds, got created=%v", rep.CreatedFiles)
+	}
+	if contains(rep.CreatedFiles, ".config/labels.yaml") || mustRead(t, filepath.Join(repoPath, ".config", "labels.yaml")) != labels {
+		t.Errorf("--force must keep the existing label taxonomy, got created=%v", rep.CreatedFiles)
 	}
 	if mustRead(t, filepath.Join(repoPath, "lefthook.yml")) != buildLefthookYAML() {
 		t.Error("--force must replace lefthook.yml with the praetor configuration")

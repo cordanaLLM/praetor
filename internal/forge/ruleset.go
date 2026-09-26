@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -93,6 +95,40 @@ func RenderRepositoryRuleset(policy config.BranchProtectionPolicy, contexts []st
 		return nil, err
 	}
 	return json.MarshalIndent(doc, "", "  ")
+}
+
+// ErrRulesetDrift reports a committed ruleset whose content differs from the one the declared
+// branch protection policy renders.
+var ErrRulesetDrift = errors.New("ruleset differs from declared branch protection policy; review the existing file before reconciliation")
+
+// ValidateRepositoryRuleset checks a committed ruleset against the one RenderRepositoryRuleset
+// produces for policy and contexts. It is the single content check behind sync, the branch
+// protection audit and the documentation audit; the audit used to check only that the file
+// existed, so "{}" and a ruleset with zero approvals and no signature rule both passed it.
+//
+// The data must be JSON syntax, and is then parsed through YAML because yaml.v3 rejects
+// duplicate keys, nested JSON objects included. Comparing parsed documents ignores whitespace
+// and object key order while preserving every declared rule, parameter and condition.
+func ValidateRepositoryRuleset(data []byte, policy config.BranchProtectionPolicy, contexts []string) error {
+	if !json.Valid(data) {
+		return errors.New("ruleset must be a single valid JSON document")
+	}
+	var observed map[string]any
+	if err := yaml.Unmarshal(data, &observed); err != nil {
+		return fmt.Errorf("parse ruleset: %w", err)
+	}
+	expectedBytes, err := RenderRepositoryRuleset(policy, contexts)
+	if err != nil {
+		return err
+	}
+	var expected map[string]any
+	if err := yaml.Unmarshal(expectedBytes, &expected); err != nil {
+		return fmt.Errorf("parse rendered ruleset: %w", err)
+	}
+	if !reflect.DeepEqual(observed, expected) {
+		return ErrRulesetDrift
+	}
+	return nil
 }
 
 func protectionRuleset(name string, refs []string, policy config.BranchProtectionPolicy, contexts []string, strict bool) (map[string]any, error) {

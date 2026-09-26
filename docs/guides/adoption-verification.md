@@ -103,7 +103,12 @@ authority path (`adopt.AuditBranchProtection`) to verify branch protection:
   and passes cleanly without requiring `.github/rulesets/main.json`.
 - If `branch-ruleset` is not declined and active policy requires branch protection
   (such as linear history or signed commits), audit fails closed if
-  `.github/rulesets/main.json` is missing or invalid.
+  `.github/rulesets/main.json` is missing, or if its content differs from the ruleset
+  the declared policy renders for the status checks the repository's workflows report.
+  That comparison is `forge.ValidateRepositoryRuleset`, the same check
+  `praetorctl sync` runs; key order and whitespace do not count, so `{}`, zero
+  required approvals or a missing `required_signatures` rule fail where the policy
+  asks for them (`internal/adopt/ruleset_audit_test.go`).
 - An unknown decline item, malformed decline entry, or unreadable `.standards.yaml`
   fails closed, ensuring invalid configuration cannot produce a false pass.
 
@@ -135,6 +140,14 @@ standardsctl sync --remote --forge-host=ghe.example.com \
 - **Labels.** Every label in `.config/labels.yaml` is updated on GitHub, or created when GitHub
   lacks it; labels the taxonomy does not name are left alone (`forge.ParseLabelTaxonomy`,
   `TestSync_Remote_Labels`).
+
+### Label taxonomy
+
+`praetorctl adopt` and `praetorctl sync` write the same eight-label
+`.config/labels.yaml` into a repository that has none (`forge.DefaultLabelTaxonomy`,
+which `internal/forge/labels_test.go` holds byte-for-byte equal to praetor's own file).
+An existing taxonomy is the repository's configuration: `adopt --force` keeps it
+(`TestAdopt_Positive_ForceRegeneratesScaffolds` in `internal/adopt/adopt_test.go`).
 
 ### Stages that do not apply are skipped, not failed
 
