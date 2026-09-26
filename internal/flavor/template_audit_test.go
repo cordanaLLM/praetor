@@ -45,8 +45,10 @@ func TestAuditFlavor_Negative_CommentStubTemplateIsMissing(t *testing.T) {
 	}
 }
 
-// #379: a directory at .github/workflows/ci.yml satisfied the Go library CI requirement and
-// the audit reported 100%.
+// Regression guard for #379's file policy: a directory at .github/workflows/ci.yml configures
+// nothing, so it must stay a missing template now that readRequiredFile decides what counts.
+// It is not a fix of this change: main's util.FileExists already refused directories. The
+// test pins that behavior through the new code path.
 func TestAuditFlavor_Negative_DirectoryAtWorkflowPathIsMissing(t *testing.T) {
 	emptyPATH(t)
 	repo := conformingGoLibrary(t, nil)
@@ -101,6 +103,39 @@ func TestTemplateSatisfied_Boundary_SymlinkPolicy(t *testing.T) {
 	symlinkOrSkip(t, outside, link)
 	if flavor.TemplateSatisfied(repo, item) {
 		t.Error("a link resolving outside the repository must not satisfy the template")
+	}
+}
+
+// Boundary: apply never writes the canonical name beside an alternative the repository
+// already carries, even one the audit does not accept. A comment-only tsconfig.base.json
+// fails carriesCode and a link out of the repository fails the confinement policy, yet each
+// is the file the toolchain reads: a scaffolded rival beside it is the contradictory second
+// config AltPaths exists to prevent. The audit still reports the template missing.
+func TestApplyFlavor_Boundary_AlternativeTheAuditRejectsBlocksARival(t *testing.T) {
+	repo := repoWithFiles(t, map[string]string{"tsconfig.base.json": "// compiler options live upstream\n"})
+	shared := filepath.Join(t.TempDir(), "eslint.config.js")
+	if err := os.WriteFile(shared, []byte("export default [];\n"), 0o600); err != nil {
+		t.Fatalf("write the shared config: %v", err)
+	}
+	symlinkOrSkip(t, shared, filepath.Join(repo, "eslint.config.js"))
+	report, err := flavor.ApplyFlavor(t.Context(), repo, "typescript-node", false)
+	if err != nil || len(report.Errors) > 0 {
+		t.Fatalf("apply: err %v, recorded %v", err, report.Errors)
+	}
+	for _, rival := range []string{"tsconfig.json", "eslint.config.mjs"} {
+		if _, err := os.Stat(filepath.Join(repo, rival)); !os.IsNotExist(err) {
+			t.Errorf("apply wrote %s beside the alternative in use: %v", rival, err)
+		}
+		if !slices.Contains(report.SkippedTemplates, rival) {
+			t.Errorf("%s not reported skipped: %+v", rival, report)
+		}
+	}
+	audit, err := flavor.AuditFlavor(repo, "typescript-node")
+	if err != nil {
+		t.Fatalf("audit: %v", err)
+	}
+	if got := missingPaths(audit); !slices.Contains(got, "tsconfig.json") || !slices.Contains(got, "eslint.config.mjs") {
+		t.Errorf("the audit accepted alternatives it cannot vouch for: missing %v", got)
 	}
 }
 
