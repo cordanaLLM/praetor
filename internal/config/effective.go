@@ -9,11 +9,15 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
+
+	"github.com/cordanaLLM/praetor/internal/hiss"
 )
 
 const (
-	// AuditMaxFuncLOC preserves the existing audit scanner ceiling during migration.
-	AuditMaxFuncLOC    = 60
+	// AuditMaxFuncLOC is the function-length ceiling the audit-compatibility layer imposes.
+	// It is the scanner's own default, the same value DefaultPolicy starts from, so the
+	// built-in default and the audit ceiling cannot disagree.
+	AuditMaxFuncLOC    = hiss.DefaultMaxFuncLOC
 	maxPolicyLayers    = 2*maxLockEntries + 8
 	maxEvidenceSources = 16
 )

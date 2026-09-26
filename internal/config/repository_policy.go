@@ -27,7 +27,8 @@ const repositoryPolicyTimeout = 30 * time.Second
 // the HISS-04 McCabe, cognitive and statement limits (<= 10, <= 15, <= 50) once, so the editor
 // projections, the language server and the MCP inspection cannot drift from each other.
 //
-// The function-length limit is AuditMaxFuncLOC rather than the 75 HISS-04 documents: the audit
+// The function-length limit is AuditMaxFuncLOC (hiss.DefaultMaxFuncLOC, the one source every
+// function-length default derives from) rather than the 75 HISS-04 documents: the audit
 // caps every adopted repository at that length whatever its manifest declares, so a workspace
 // told 75 would accept a function its first audit after adoption rejects (BUG-445).
 func HISSComplexityCeiling() ComplexityPolicy {
@@ -112,9 +113,9 @@ func ResolveRepositoryPolicy(ctx context.Context, configPath string, manifest *M
 // Every other state resolves to HISSComplexityCeiling tightened by whatever complexity
 // overrides the manifest declares, never to the DefaultPolicy baseline the plan preview shows:
 //   - no <root>/.standards.yaml: the workspace is unadopted;
-//   - a manifest without a lock: no audit runs yet, and the first one after adoption caps
-//     function length at AuditMaxFuncLOC, so the 100-line, cyclomatic-15 baseline would tell
-//     an editor to accept what that audit rejects;
+//   - a manifest without a lock: no audit runs yet, and the DefaultPolicy baseline's
+//     cyclomatic 15, cognitive 20 and 75 statements would tell an editor to accept what the
+//     HISS-04 ceiling rejects (function length is hiss.DefaultMaxFuncLOC in both);
 //   - a manifest or lock that cannot be resolved, including the lock `praetorctl init` writes
 //     before any catalog is pinned: the returned warning names the cause. The projection keeps
 //     working, as it did before it read policy at all, and `praetorctl audit` still fails on

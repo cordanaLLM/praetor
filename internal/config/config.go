@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/hiss"
 	"gopkg.in/yaml.v3"
 )
 
@@ -264,13 +265,15 @@ func validateManifestRepositorySource(m *Manifest) error {
 	return nil
 }
 
-// DefaultPolicy returns a baseline default policy.
+// DefaultPolicy returns a baseline default policy. Its function-length limit is
+// hiss.DefaultMaxFuncLOC, the length the scanner and the audit enforce; it used to be 100,
+// so a plan or sync preview promised a length no audit accepted (BUG-309).
 func DefaultPolicy() *ResolvedPolicy {
 	return &ResolvedPolicy{
 		Complexity: ComplexityPolicy{
 			MaxCyclomatic: 15,
 			MaxCognitive:  20,
-			MaxFuncLOC:    100,
+			MaxFuncLOC:    hiss.DefaultMaxFuncLOC,
 			MaxStatements: 75,
 		},
 		BranchProtection: BranchProtectionPolicy{

@@ -28,17 +28,24 @@ not public-loop options.
 
 Resolution uses these sources in a fixed order:
 
-1. Built-in defaults.
+1. Built-in defaults (`config.DefaultPolicy`): cyclomatic 15, cognitive 20,
+   `max_func_loc: 60`, statements 75.
 2. The repository's `.standards.lock` and its pinned, materialized profiles/facets.
 3. Explicit fleet, organization, deployment and workstation files, in that order.
 4. Repository `overrides.complexity` from `.standards.yaml`.
 5. The audit compatibility constraint: `max_func_loc: 60`.
 
 Every complexity constraint can only tighten an earlier limit. A later limit of
-`90` cannot override an existing `50`. The compatibility constraint preserves the
-previous scanner ceiling; it can be tightened further. Omitted fields do not
-contribute. Explicit zero, negative, null, noninteger and unknown complexity fields
-are errors.
+`90` cannot override an existing `50`. Omitted fields do not contribute. Explicit
+zero, negative, null, noninteger and unknown complexity fields are errors.
+
+Both `60`s are one constant. `hiss.DefaultMaxFuncLOC` in `internal/hiss/hiss.go`
+is the scanner's default; the built-in default, the compatibility constraint
+(`config.AuditMaxFuncLOC`), adoption's legacy-debt scan and the editor, language
+server and MCP inspection fallbacks all read it. Because the built-in default
+already is the audit's length, the compatibility constraint never lowers the
+limit; in an audit it only joins `builtin:defaults-v1` as a tied contributor.
+`internal/config/func_loc_default_test.go` pins every consumer to the constant.
 
 ### What `plan` reports
 
@@ -54,16 +61,22 @@ profiles, so defaults plus the repository's overrides is the whole policy, and `
 [INFO] no .standards.lock: built-in defaults and repository overrides only
 ```
 
-### Consequence of the compatibility constraint
+That preview states a function length of 60 there, the length the first audit after adoption
+enforces, and so does the MCP `standards_plan` tool, which reports built-in defaults plus overrides
+(`cmd/standards-mcp/server.go`). The built-in default used to be 100, so a lock-less preview
+promised a length no audit accepted, and an override above 60 showed up in it.
 
-Because strictness only tightens, `max_func_loc: 60` wins against any archetype declaring more.
-Ten of the fourteen shipped archetypes declare a looser bound -- `template-seed` 100,
-`app-service` 80, seven at 75, `library-client` 70 -- and every one of them is enforced at 60 while
-that constraint is in place.
+### Consequence of the 60-line default
+
+Because strictness only tightens, `max_func_loc: 60` wins against any archetype declaring more,
+with or without the audit compatibility constraint. Ten of the fourteen shipped archetypes declare
+a looser bound -- `template-seed` 100, `app-service` 80, seven at 75, `library-client` 70 -- and
+every one of them resolves to 60.
 
 An archetype's declared `max_func_loc` above 60 is therefore documentation of intent rather than an
 effective limit. Read the `audit` output, not the archetype file, to learn what a repository is held
-to.
+to. A repository can still tighten the limit with `overrides.complexity.max_func_loc`; nothing can
+loosen it.
 
 An explicitly selected external file must contain at least one owned root section:
 `complexity`, or one of the operator sections `clients`, `hooks` and `update`
@@ -204,7 +217,9 @@ spelling in the digest, so moving the documents does not change it.
 file that set it.
 
 A policy whose layers carry no operator section keeps the digest it had before
-these sections existed. Retained plans and repair anchors therefore still verify.
+these sections existed. The operator sections therefore did not invalidate
+retained plans and repair anchors; the 60-line built-in default did (see
+[Provenance and migration](#provenance-and-migration)).
 
 ### Which documents the hook, client and workstation commands use
 
@@ -271,6 +286,16 @@ policy values and field contributors. Diagnostic filesystem paths are excluded,
 so relocating an identical catalog or mounting the same configuration elsewhere
 does not change its identity. CLI/MCP text includes at most 16 source hashes and
 an explicit omitted count. The typed result retains every source and contributor.
+
+The built-in function length changed from 100 to 60 (BUG-309). The
+`builtin:defaults-v1` source hash encodes the default values, so every effective
+digest changed with it, and unless a layer tightens function length below 60, an
+audit now lists `builtin:defaults-v1` beside `builtin:audit-compat-v1` as a
+`max_func_loc` contributor. Public-loop plans and
+repair anchors recorded before that change fail with `public verification policy
+differs from the planned policy` (`internal/dogfood/repair_validate.go`); rerun
+the dry run to record a new anchor. Enforced limits did not change for audits,
+which already capped function length at 60.
 
 Existing repositories with lock pins but no local archetypes must either select a
 matching source bundle with `--catalog-root` or materialize the pinned catalog

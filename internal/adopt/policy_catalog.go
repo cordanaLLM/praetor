@@ -10,6 +10,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/hiss"
 )
 
 // Each lock permits at most 256 profiles and 256 facets.
@@ -56,13 +57,13 @@ func reconcilePolicyCatalog(ctx context.Context, s *adoptSession) error {
 	return nil
 }
 
-// Legacy standalone scan callers retain the existing ceiling. Planned and applied
+// Legacy standalone scan callers use the scanner's own default ceiling. Planned and applied
 // adoption use the same resolved ceiling as the generated CLI/MCP audit.
 func adoptionScanLimit(s *adoptSession) int {
 	if s.policy != nil {
 		return s.policy.Policy.Complexity.MaxFuncLOC
 	}
-	return defaultMaxFuncLOC
+	return hiss.DefaultMaxFuncLOC
 }
 
 // Inspect every destination before publishing any catalog entry. Force permits

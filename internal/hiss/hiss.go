@@ -16,7 +16,11 @@ import (
 )
 
 const (
-	DefaultMaxFuncLOC = 60 // Gerard Holzmann NASA JPL Power-of-10 Rule 4
+	// DefaultMaxFuncLOC is the one HISS-04 function-length default (Gerard Holzmann, NASA
+	// JPL Power-of-10 Rule 4). The scanner, config.DefaultPolicy, the audit-compatibility
+	// ceiling config.AuditMaxFuncLOC, adoption's legacy-debt scan and the editor, language
+	// server and MCP inspection fallbacks all derive from it, so none can drift (BUG-309).
+	DefaultMaxFuncLOC = 60
 	MaxInfractionsCap = 10000
 	// DefaultScanTimeout bounds a scan whose caller context carries no deadline (HISS-02).
 	DefaultScanTimeout = 30 * time.Second

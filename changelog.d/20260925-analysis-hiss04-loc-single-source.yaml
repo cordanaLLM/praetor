@@ -1,0 +1,3 @@
+type: fixed
+title: Every HISS-04 function-length default now derives from hiss.DefaultMaxFuncLOC (60); the built-in policy default drops from 100 to 60, so lock-less plan previews, MCP standards_plan and non-audit resolutions state the length the audit enforces, and every effective-policy digest changes, invalidating public-loop plans and repair anchors recorded earlier
+breaking: true

@@ -141,7 +141,7 @@ func TestAdoptionBaselineUsesResolvedAuditCeiling(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustWrite(t, filepath.Join(s.repoPath, "example.go"), "package example\nfunc example() int {\nx := 0\n"+strings.Repeat("x++\n", 8)+"return x\n}\n")
-	legacy, err := hiss.Scan(t.Context(), s.repoPath, hiss.ScanOptions{MaxFuncLOC: defaultMaxFuncLOC})
+	legacy, err := hiss.Scan(t.Context(), s.repoPath, hiss.ScanOptions{MaxFuncLOC: hiss.DefaultMaxFuncLOC})
 	if err != nil || legacy.TotalInfractions != 0 {
 		t.Fatalf("fixture must fit legacy scan ceiling: %v", err)
 	}
