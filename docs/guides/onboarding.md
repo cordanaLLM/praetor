@@ -106,7 +106,9 @@ a Go library.
 - Where nothing matches, `flavor audit` and `flavor apply` refuse with `ErrNoFlavorMatched` instead
   of scoring the repository against a flavor that describes nothing about it. Pass `--flavor=<name>`
   to audit against one deliberately. `praetorctl adopt` scaffolds no flavor templates there and
-  prints a "Not applicable" warning instead (`internal/adopt/flavor_report_test.go`).
+  prints a "Not applicable" warning naming `praetorctl flavor apply --flavor=<name>` instead
+  (`internal/adopt/flavor_report_test.go`); a flat Go module with only root `.go` files is one such
+  repository.
 - `flavor apply` fails when any template could not be written (`flavor.ErrApplyIncomplete`), and
   prints what it created before the failure. `--force` refreshes flavor scaffolds but never rewrites
   `.standards.yaml`, `.standards.lock` or the `.workingdir/` ledger
