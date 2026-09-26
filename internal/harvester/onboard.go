@@ -25,7 +25,7 @@ var ErrOnboardingIncomplete = errors.New("harvester: onboarding scaffold require
 
 // onboardFilePerm is the mode of every file onboarding scaffolds into a repository.
 const (
-	onboardFilePerm         os.FileMode = 0o600
+	onboardFilePerm         os.FileMode = util.PrivateFileMode
 	maxOnboardDocumentBytes             = 8 * 1024 * 1024
 	maxOnboardOutputs                   = 50
 )

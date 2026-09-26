@@ -22,7 +22,7 @@ const (
 	syncTimeout = 2 * time.Minute
 	// syncDirPerm and syncFilePerm are the modes of the synthesized, tracked files.
 	syncDirPerm  os.FileMode = 0o750
-	syncFilePerm os.FileMode = 0o600
+	syncFilePerm os.FileMode = util.PrivateFileMode
 )
 
 // ErrRemoteTokenMissing reports a --remote sync without any usable credential.

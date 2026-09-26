@@ -27,9 +27,9 @@ const (
 	DistilledDirRel = ".workingdir/docs/distilled"
 	CatalogFileRel  = ".workingdir/docs/catalog.json"
 	// cacheDirPerm is the mode of the docs cache directories.
-	cacheDirPerm os.FileMode = 0o755
+	cacheDirPerm os.FileMode = util.PrivateDirMode
 	// cacheFilePerm is the mode of the catalog and distilled markdown files.
-	cacheFilePerm os.FileMode = 0o644
+	cacheFilePerm os.FileMode = util.PrivateFileMode
 
 	// maxSyncPackages bounds how many declared dependencies SyncRepositoryDocs harvests
 	// in one call (HISS-02): ScanDeclaredDependencies can return as many refs as a

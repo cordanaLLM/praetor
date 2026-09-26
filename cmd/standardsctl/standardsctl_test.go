@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1516,7 +1517,9 @@ func TestDispatchCommand_StateTaskArchive_Negative(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing dir")
 	}
-	mustErrContain(t, err, "no such file or directory")
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("expected fs.ErrNotExist, got %v", err)
+	}
 
 	// malformed flag
 	_, err = captureStdout(t, func() error {

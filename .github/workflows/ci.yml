@@ -70,8 +70,8 @@ jobs:
       - name: Install Security Toolchains (govulncheck & gosec)
         if: steps.filter.outputs.run_security != 'false' || github.event_name == 'push'
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          go install github.com/securego/gosec/v2/cmd/gosec@latest
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          go install github.com/securego/gosec/v2/cmd/gosec@v2.29.0
 
       - name: Install Pinned Git Hook Toolchain
         if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'

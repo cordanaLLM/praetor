@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func TestInitWorkingDirContext(t *testing.T) {
@@ -45,7 +47,7 @@ func TestArchiveCompletedTasksPreservesOpenWhenBacklogUnreadable(t *testing.T) {
 	if err := os.Remove(backlog); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(backlog, 0755); err != nil {
+	if err := os.Mkdir(backlog, util.PrivateDirMode); err != nil {
 		t.Fatal(err)
 	}
 	if count, err := ArchiveCompletedTasks(dir, "fixture"); err == nil || count != 0 {
@@ -160,11 +162,11 @@ func TestTasks_Boundary_MultipleAndNumeric(t *testing.T) {
 func TestTasks_PreservesFileMode(t *testing.T) {
 	dir := t.TempDir()
 	workingdir := filepath.Join(dir, ".workingdir")
-	if err := os.Mkdir(workingdir, 0755); err != nil {
+	if err := os.Mkdir(workingdir, util.PrivateDirMode); err != nil {
 		t.Fatal(err)
 	}
 	openFile := filepath.Join(workingdir, "OPEN.md")
-	if err := os.WriteFile(openFile, []byte("- [ ] task 1\n"), 0o600); err != nil {
+	if err := os.WriteFile(openFile, []byte("- [ ] task 1\n"), util.PrivateFileMode); err != nil {
 		t.Fatal(err)
 	}
 
@@ -176,7 +178,7 @@ func TestTasks_PreservesFileMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if info.Mode().Perm() != util.PrivateFileMode {
 		t.Errorf("expected mode 0600, got %o", info.Mode().Perm())
 	}
 }

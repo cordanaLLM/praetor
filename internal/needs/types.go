@@ -3,12 +3,14 @@ package needs
 import (
 	"os"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
 	// Fleet artifacts can contain private repository and dependency inventories.
 	// New files and output directories remain accessible only to their owner.
-	manifestFilePerm os.FileMode = 0o600
+	manifestFilePerm os.FileMode = util.PrivateFileMode
 	outputDirPerm    os.FileMode = 0o700
 )
 

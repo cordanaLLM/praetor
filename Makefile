@@ -73,8 +73,14 @@ caveman-sources:
 	go run ./cmd/standardsctl caveman check --configured-sources --root=.
 
 lint:
+	@bad=$$(gofmt -l . | grep -v '^vendor/' || true); \
+	if [ -n "$$bad" ]; then \
+		echo "The following files are not formatted (run 'gofmt -s -w .'):"; \
+		echo "$$bad"; \
+		exit 1; \
+	fi
 	go vet ./...
-	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run
+	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 run
 
 # HISS-12 declares "zero credentials in Git history" and gitleaks as its mechanism, but
 # gitleaks appeared only in the archetypes this engine scaffolds INTO other repositories:
@@ -88,7 +94,7 @@ secrets:
 		"$$(go env GOPATH)/bin/gitleaks" detect --no-banner --redact --config .gitleaks.toml; \
 	else \
 		echo "gitleaks not found; installing..."; \
-		go install github.com/zricethezav/gitleaks/v8@latest && "$$(go env GOPATH)/bin/gitleaks" detect --no-banner --redact --config .gitleaks.toml; \
+		go install github.com/zricethezav/gitleaks/v8@v8.30.1 && "$$(go env GOPATH)/bin/gitleaks" detect --no-banner --redact --config .gitleaks.toml; \
 	fi
 
 vuln:
@@ -98,7 +104,7 @@ vuln:
 		"$$(go env GOPATH)/bin/govulncheck" ./...; \
 	else \
 		echo "govulncheck not found; installing..."; \
-		go install golang.org/x/vuln/cmd/govulncheck@latest && "$$(go env GOPATH)/bin/govulncheck" ./...; \
+		go install golang.org/x/vuln/cmd/govulncheck@v1.8.0 && "$$(go env GOPATH)/bin/govulncheck" ./...; \
 	fi
 
 # gosec runs with ZERO exclusions: .gosec.json carries an empty exclude list and every
@@ -122,7 +128,7 @@ sec: nosec-justified
 		python3 -B .config/lefthook/scripts/security_scope.py -- "$$(go env GOPATH)/bin/gosec" -conf .gosec.json; \
 	else \
 		echo "gosec not found; installing..."; \
-		go install github.com/securego/gosec/v2/cmd/gosec@latest && python3 -B .config/lefthook/scripts/security_scope.py -- "$$(go env GOPATH)/bin/gosec" -conf .gosec.json; \
+		go install github.com/securego/gosec/v2/cmd/gosec@v2.29.0 && python3 -B .config/lefthook/scripts/security_scope.py -- "$$(go env GOPATH)/bin/gosec" -conf .gosec.json; \
 	fi
 
 flavor-audit: state-init
@@ -144,7 +150,10 @@ hiss-coverage:
 	go run ./cmd/standardsctl hiss coverage --verify
 
 topology-audit:
-	@if [ -d "$$HOME/dev" ]; then go run ./cmd/standardsctl topology audit "$$HOME/dev"; fi
+	@if [ -z "$$PRAETOR_DEV_ROOT" ] && [ -n "$$CI" ]; then \
+		echo "[FAIL] topology-audit requires PRAETOR_DEV_ROOT to be set in CI"; exit 1; \
+	fi
+	go run ./cmd/standardsctl topology audit "$${PRAETOR_DEV_ROOT:-$$HOME/dev}"
 
 verify-all: adr-verify semgrep-test docs-drift-test docs-assets-test github-app-test docs-lint-test portability-test notebook-test mcp-test dev-codex-hooks-test dev-install-test dev-schedule-test dev-repair-test wiki-sync-test adopt-sweep-test dco-check-test vscode-test mcp-probe compile-context-verify caveman-sources needs-check editors-reference-verify test audit lint vuln sec secrets fuzz hiss-coverage flavor-audit state-audit dedupe topology-audit hooks-test
 	go run ./cmd/standardsctl verify-all .
