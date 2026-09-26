@@ -67,7 +67,7 @@ func printHarvestUsage() {
 
 func runHarvestWorkstation(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("harvest workstation", flag.ContinueOnError)
-	dirFlag := fs.String("dir", "", "Path to development directory (default: $HOME/dev)")
+	dirFlag := fs.String("dir", "", "Path to development directory "+devRootUsageDefault)
 	jsonOutput := fs.Bool("json", false, "Emit the complete read-only workstation report as JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -76,7 +76,7 @@ func runHarvestWorkstation(ctx context.Context, args []string) error {
 		return errors.New("harvest workstation accepts no positional arguments")
 	}
 
-	devDir, err := resolveHomeSubdir(*dirFlag, "--dir", "dev")
+	devDir, err := resolveDevRootDir(*dirFlag, "--dir")
 	if err != nil {
 		return fmt.Errorf("harvest workstation: %w", err)
 	}
@@ -301,7 +301,7 @@ func runHarvestOnboard(ctx context.Context, args []string) error {
 	repoPath := fs.String("repo", "", "Target repository path to onboard")
 	allMissing := fs.Bool("all-missing", false, "Onboard all unmanaged repositories under --dir")
 	dryRun := fs.Bool("dry-run", true, "Preview onboarding actions without modifying files")
-	dirFlag := fs.String("dir", "", "Path to development directory (default: $HOME/dev)")
+	dirFlag := fs.String("dir", "", "Path to development directory "+devRootUsageDefault)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -352,7 +352,7 @@ func onboardTargets(ctx context.Context, repoPath, dirFlag string, allMissing bo
 		return nil, fmt.Errorf("either --repo=<path> or --all-missing must be specified")
 	}
 
-	devDir, err := resolveHomeSubdir(dirFlag, "--dir", "dev")
+	devDir, err := resolveDevRootDir(dirFlag, "--dir")
 	if err != nil {
 		return nil, fmt.Errorf("harvest onboard: %w", err)
 	}
@@ -372,7 +372,7 @@ func runHarvestBundle(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("harvest bundle", flag.ContinueOnError)
 	name := fs.String("name", "", "Workstation name identifier (e.g. --name=office-1)")
 	outDir := fs.String("out", "", "Output destination directory for bundle (required)")
-	devFlag := fs.String("dev", "", "Path to local development directory (default: $HOME/dev)")
+	devFlag := fs.String("dev", "", "Path to local development directory "+devRootUsageDefault)
 	homeFlag := fs.String("home", "", "Workstation home directory to harvest (default: $HOME)")
 	vaultDir := fs.String("vault", "", "Optional path to workstation vault containing patches/inventory")
 	includeHistory := fs.Bool("include-shell-history", false, "Include shell history, which may contain credentials")
@@ -389,7 +389,7 @@ func runHarvestBundle(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("harvest bundle: %w", err)
 	}
-	devDir, err := resolveHomeSubdir(*devFlag, "--dev", "dev")
+	devDir, err := resolveDevRootDir(*devFlag, "--dev")
 	if err != nil {
 		return fmt.Errorf("harvest bundle: %w", err)
 	}

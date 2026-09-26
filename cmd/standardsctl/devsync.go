@@ -95,7 +95,7 @@ func runDevsyncInit(ctx context.Context, args []string) error {
 
 func runDevsyncPush(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("devsync push", flag.ContinueOnError)
-	dev := fs.String("dev", defaultDevDir(), "folder holding the projects")
+	dev := fs.String("dev", "", "folder holding the projects "+devRootUsageDefault)
 	remote := fs.String("remote", devsync.DefaultRemote, "remote root")
 	host := fs.String("host", "", "folder name for this workstation (default: host name)")
 	dryRun := fs.Bool("dry-run", false, "report what would be uploaded without uploading")
@@ -119,6 +119,10 @@ func runDevsyncPush(ctx context.Context, args []string) error {
 }
 
 func devsyncPushOptions(dev, remote, host, config string) (devsync.PushOptions, error) {
+	dev, err := resolveDevRootDir(dev, "--dev")
+	if err != nil {
+		return devsync.PushOptions{}, err
+	}
 	if host == "" {
 		name, err := os.Hostname()
 		if err != nil {
@@ -160,10 +164,14 @@ func runDevsyncPull(ctx context.Context, args []string) error {
 		}
 		target = dir
 	}
-	opts := devsync.PullOptions{
-		Remote: *remote, Host: *host, Into: target, DevDir: defaultDevDir(), Rclone: devsyncRclone(*config), Out: os.Stdout,
+	devDir, err := resolveDevRootDir("", devRootEnv)
+	if err != nil {
+		return fmt.Errorf("devsync pull cannot locate the local dev folder it must not restore into: %w", err)
 	}
-	_, err := devsync.Pull(ctx, opts)
+	opts := devsync.PullOptions{
+		Remote: *remote, Host: *host, Into: target, DevDir: devDir, Rclone: devsyncRclone(*config), Out: os.Stdout,
+	}
+	_, err = devsync.Pull(ctx, opts)
 	return err
 }
 
