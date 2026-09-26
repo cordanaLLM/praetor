@@ -33,11 +33,17 @@ of the following in the PR description:
 
 1. A checked HISS-16 context-integrity box.
 2. A checked HISS-15 3D-testing box.
-3. A fenced ` ```receipt ` block carrying the `.standards-receipt.json` envelope produced by
-   `praetorctl gate run`. The block is parsed as JSON, its Ed25519 signature is verified
-   against `receipt.public_key` pinned in `.standards.yaml`, its recorded output hash is
-   checked against the gate output it carries, and its `commit_sha` must equal the pull
-   request head. Prose, a bare code block, or the words "Exit-0 Receipt" satisfy nothing.
+3. A fenced ` ```receipt ` (or ` ~~~receipt `) block carrying the `.standards-receipt.json`
+   envelope produced by `praetorctl gate run`. The block is parsed as JSON, its Ed25519
+   signature is verified against `receipt.public_key` pinned in `.standards.yaml`, its
+   recorded output hash is checked against the gate output it carries, and its `commit_sha`
+   must equal the pull request head. Prose, a bare code block, or the words "Exit-0 Receipt"
+   satisfy nothing.
+
+A checked box is a task-list item (`- [x]`, `* [x]`, `1. [x]`); a `[x]` quoted mid-sentence
+or inside a code fence is not counted. A description that ends inside an unclosed fence is
+rejected, because everything after the opening delimiter renders as code. The rules live in
+`internal/forge/pr.go` and are pinned by `internal/forge/pr_template_test.go`.
 
 ---
 

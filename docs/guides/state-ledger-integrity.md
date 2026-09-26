@@ -179,9 +179,10 @@ implementation every scanner that follows fences across a whole document drives
 (HISS-19): the task parser, the bug-ledger parser, the marked-block finder, the
 `BACKLOG.md` milestone section remover (`RemoveMarkdownSection`), the
 caveman line scanner (`internal/caveman/scan.go`) and the `AGENTS.md` vendor
-splitter (`internal/agentcontext/render.go`). Readers that extract a single
-labelled block, such as the PR receipt fence, match their own label and keep no
-fence state. A line closes a fence when it repeats the
+splitter (`internal/agentcontext/render.go`) and the PR checklist and receipt
+readers (`internal/forge/pr.go`). The ADR constraint block reader
+(`internal/adr/constraint.go`) extracts a single labelled block, matches its own
+label and keeps no fence state. A line closes a fence when it repeats the
 delimiter run that opened it and carries nothing further but that delimiter
 character, spaces and tabs; a shorter run never closes a longer one. A backtick
 line whose info string holds another backtick, such as `` ```make``` must pass ``,

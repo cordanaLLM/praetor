@@ -7,10 +7,12 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/lockdown"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // Invariant bounds adhering to HISS-02.
@@ -20,7 +22,7 @@ const (
 	MaxPathSegments   = 64
 	StandardReviewBot = "cordana-standards[bot]"
 	// ReceiptFenceToken is the info-string token that marks the fenced block carrying the
-	// Ed25519 Exit-0 receipt, e.g. "```receipt" or "```json receipt".
+	// Ed25519 Exit-0 receipt, e.g. "```receipt", "```json receipt" or "~~~receipt".
 	ReceiptFenceToken = "receipt"
 )
 
@@ -60,7 +62,10 @@ type CommitAnalysis struct {
 }
 
 var (
-	checkedBoxRegex     = regexp.MustCompile(`(?i)\[[xX]\]`)
+	// checkedBoxRegex matches a ticked GitHub task-list item: a bullet or ordered list
+	// marker, then "[x]" followed by whitespace or the end of the line. A "[x]" quoted
+	// mid-sentence is prose, not a ticked box.
+	checkedBoxRegex     = regexp.MustCompile(`^(?:[-*+]|\d{1,9}[.)])[ \t]+\[[xX]\](?:[ \t]|$)`)
 	breakingHeaderRegex = regexp.MustCompile(`(?i)^[a-z]+(\([^\)]+\))?!:\s*.+`)
 	// breakingFooterRegex matches both Conventional Commits 1.0.0 spellings of the
 	// breaking-change footer token, which the specification declares synonymous.
@@ -91,13 +96,40 @@ func ValidatePRChecklistWithPolicy(prBody string, policy ReceiptPolicy) (*PRChec
 	}
 
 	res := &PRChecklistResult{}
-	for i := 0; i < len(lines); i++ {
-		checkLineForRequirements(strings.TrimSpace(lines[i]), res)
+	scanChecklistLines(lines, res)
+	receipt, err := extractReceiptBlock(lines)
+	if err != nil {
+		res.Errors = append(res.Errors, err.Error())
+	} else {
+		applyReceiptVerification(res, receipt, policy)
 	}
-
-	applyReceiptVerification(res, extractReceiptBlock(lines), policy)
 	finalizeChecklistValidation(res)
 	return res, nil
+}
+
+// scanChecklistLines reads the ticked boxes outside fenced code. A box quoted inside a
+// ``` or ~~~ example renders as code, not as a checkbox, so it never satisfies a
+// requirement. A body that ends inside a fence is reported: everything after the opening
+// delimiter renders as code, so a box the contributor ticked there is silently unread.
+func scanChecklistLines(lines []string, res *PRChecklistResult) {
+	fence := util.MarkdownFence{}
+	opened := 0
+	for i := 0; i < len(lines); i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		wasOpen := fence.Open()
+		if fence.Inside(trimmed) {
+			if !wasOpen {
+				opened = i + 1
+			}
+			continue
+		}
+		checkLineForRequirements(trimmed, res)
+	}
+	if fence.Open() {
+		res.Errors = append(res.Errors, fmt.Sprintf(
+			"PR body ends inside the %q code fence opened at line %d: close it, or every checklist box after it is read as code",
+			fence.Marker(), opened))
+	}
 }
 
 func checkLineForRequirements(line string, res *PRChecklistResult) {
@@ -116,35 +148,38 @@ func checkLineForRequirements(line string, res *PRChecklistResult) {
 // isReceiptFence reports whether a fence line opens the receipt block, i.e. carries the
 // "receipt" token in its info string. An unlabelled code block is never a receipt.
 func isReceiptFence(line string) bool {
-	info := strings.ToLower(strings.TrimSpace(strings.TrimLeft(line, "`")))
-	for _, field := range strings.Fields(info) {
-		if field == ReceiptFenceToken {
-			return true
-		}
-	}
-	return false
+	info := strings.ToLower(strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), "`~")))
+	return slices.Contains(strings.Fields(info), ReceiptFenceToken)
 }
 
-// extractReceiptBlock returns the verbatim content of the first fenced block labelled as a
-// receipt. Unlabelled blocks are ignored: a code snippet in a description is not a receipt.
-func extractReceiptBlock(lines []string) string {
+// extractReceiptBlock returns the verbatim content of the first fenced block, backtick or
+// tilde, labelled as a receipt. Unlabelled blocks are ignored: a code snippet in a
+// description is not a receipt, and a "```receipt" line quoted inside another fence is that
+// fence's content. A receipt fence that is never closed is an error rather than a receipt
+// running to the end of the body.
+func extractReceiptBlock(lines []string) (string, error) {
 	var sb strings.Builder
-	inBlock := false
+	fence := util.MarkdownFence{}
+	inReceipt := false
 	for i := 0; i < len(lines); i++ {
-		trimmed := strings.TrimSpace(lines[i])
-		if strings.HasPrefix(trimmed, "```") {
-			if inBlock {
-				break
-			}
-			inBlock = isReceiptFence(trimmed)
+		wasOpen := fence.Open()
+		if !fence.Inside(strings.TrimSpace(lines[i])) {
 			continue
 		}
-		if inBlock {
+		switch {
+		case !wasOpen:
+			inReceipt = isReceiptFence(lines[i])
+		case !fence.Open() && inReceipt:
+			return strings.TrimSpace(sb.String()), nil
+		case inReceipt:
 			sb.WriteString(lines[i])
 			sb.WriteString("\n")
 		}
 	}
-	return strings.TrimSpace(sb.String())
+	if inReceipt {
+		return "", fmt.Errorf("the Ed25519 Exit-0 receipt fence %q is never closed: end the receipt block with a matching fence", fence.Marker())
+	}
+	return "", nil
 }
 
 // verifyReceiptEnvelope verifies the signature, the certified gate output and the commit

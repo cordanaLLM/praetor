@@ -1,0 +1,3 @@
+type: fixed
+title: Count only ticked task-list items outside code fences as PR checklist boxes, read receipts from tilde fences as well as backtick fences, ignore a receipt label quoted inside another fence, and reject a PR description that ends inside an unclosed fence
+breaking: false
