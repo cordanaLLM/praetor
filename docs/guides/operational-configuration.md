@@ -25,11 +25,11 @@ Everything needed to govern a repository without knowing whose repository it is:
 
 ### GitHub App manifest
 
-`.config/github-app/manifest.json` describes the `cordana-standards` GitHub App, and
+`.config/github-app/manifest.json` describes the `praetor-governance-bot` GitHub App, and
 `.config/github-app/permissions.md` explains each permission it requests and how to create
 the App from the manifest. Nothing provisions, installs or authenticates as that App today:
 no workflow or command reads the manifest, and `internal/forge/pr.go` only names
-`cordana-standards[bot]` as a requested reviewer. `make github-app-test` fails when the
+`praetor-governance-bot` as a requested reviewer. `make github-app-test` fails when the
 permission matrix and the manifest's `default_permissions` disagree.
 
 ## What the operator owns
