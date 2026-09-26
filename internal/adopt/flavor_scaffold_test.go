@@ -78,6 +78,23 @@ func TestReconcileWorkingDirAndFlavor_Negative_UndetectedRepositoryGetsNoFallbac
 	}
 }
 
+// Negative: a template ApplyFlavor records as failed is an adoption error. ApplyFlavor returns
+// no error for it, and adoption used to drop the recorded failure and report success with the
+// file missing. A directory where go-library's linter config belongs makes that write fail.
+func TestReconcileWorkingDirAndFlavor_Negative_TemplateWriteFailureIsAnError(t *testing.T) {
+	s := flavorSession(t, false, goLibrary)
+	if err := os.Mkdir(filepath.Join(s.repoPath, ".golangci.yml"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := reconcileWorkingDirAndFlavor(t.Context(), s); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.report.Errors) != 1 || !strings.Contains(s.report.Errors[0], "apply flavor go-library") ||
+		!strings.Contains(s.report.Errors[0], ".golangci.yml") {
+		t.Fatalf("want one error naming the unwritten .golangci.yml, got errors %v warnings %v", s.report.Errors, s.report.Warnings)
+	}
+}
+
 // Boundary: a dry run writes no flavor file even when a flavor is detected.
 func TestReconcileWorkingDirAndFlavor_Boundary_DryRunWritesNothing(t *testing.T) {
 	s := flavorSession(t, true, goLibrary)

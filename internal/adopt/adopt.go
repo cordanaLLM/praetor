@@ -586,7 +586,9 @@ func reconcileWorkingDirAndFlavor(ctx context.Context, s *adoptSession) error {
 // A detected flavor can still hold back a template whose body cannot work in this repository
 // (flavor.ApplyReport.UnmetTemplates), such as typescript-node's npm CI job in a pnpm project.
 // Each is a warning: the ruleset derived next requires no check for it, and the operator learns
-// what the flavor audit will report missing.
+// what the flavor audit will report missing. A template ApplyFlavor failed to write (a mkdir,
+// render or write error it records in ApplyReport.Errors and does not return) is an adoption
+// error, not a silent gap.
 func applyDetectedFlavor(ctx context.Context, s *adoptSession) {
 	detected, ok := flavor.Detect(s.repoPath)
 	if !ok {
@@ -597,6 +599,9 @@ func applyDetectedFlavor(ctx context.Context, s *adoptSession) {
 	if err != nil {
 		s.report.addError("apply flavor %s: %v", detected, err)
 		return
+	}
+	for _, failure := range applied.Errors {
+		s.report.addError("apply flavor %s: %s", detected, failure)
 	}
 	for _, unmet := range applied.UnmetTemplates {
 		s.report.addWarning("flavor %s did not scaffold %s", detected, unmet)
