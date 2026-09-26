@@ -109,11 +109,6 @@ func sortedNames(names []string) []string {
 	return out
 }
 
-// declaredDeclines reads adoption.decline from a repository's existing manifest.
-func declaredDeclines(ctx context.Context, repoPath string) []string {
-	return manifestDeclines(declaredManifest(ctx, repoPath))
-}
-
 // declaredManifest reads the repository's existing manifest once, before the chain runs, so
 // its recorded decisions (adoption.decline, the declared profiles) govern the run that
 // follows rather than the run after next. It returns nil when there is no manifest yet, which
