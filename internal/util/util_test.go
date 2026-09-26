@@ -430,6 +430,73 @@ func TestResolveRemoteIdentity_Boundary_RemoteWithoutOwner(t *testing.T) {
 	}
 }
 
+// Positive: ReadOriginRemote keeps the host, so a caller comparing forges sees which one
+// the origin names, and ResolveRemoteIdentity reports the same owner and repository.
+func TestReadOriginRemote_Positive_HostAndPath(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	remote, err := ReadOriginRemote(ctx, newHermeticGitRepo(t, "git@GitLab.com:acme/widget.git"))
+	want := GitRemote{Host: "gitlab.com", Path: "acme/widget", Owner: "acme", Repo: "widget"}
+	if err != nil || remote != want {
+		t.Fatalf("got %+v (err %v), want %+v", remote, err, want)
+	}
+}
+
+// Negative: a local-path or file:// origin says where a copy sits, not which forge
+// repository it is. ReadOriginRemote and ResolveRemoteIdentity refuse it as unresolved and
+// name the non-network cause, while ResolveRepoIdentity keeps reading its last two segments
+// for the callers that accept a guess.
+func TestReadOriginRemote_Negative_LocalRemoteIsNotIdentity(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	for _, origin := range []string{"/srv/git/acme/widget.git", "file:///srv/git/acme/widget.git"} {
+		repo := newHermeticGitRepo(t, origin)
+		if remote, err := ReadOriginRemote(ctx, repo); !errors.Is(err, ErrRepoIdentityUnresolved) ||
+			!errors.Is(err, ErrGitRemoteNotNetwork) || remote != (GitRemote{}) {
+			t.Fatalf("%s: got %+v (err %v), want an unresolved non-network remote", origin, remote, err)
+		}
+		if o, r, err := ResolveRemoteIdentity(ctx, repo); !errors.Is(err, ErrRepoIdentityUnresolved) || o != "" || r != "" {
+			t.Fatalf("%s: remote identity recorded a path-derived owner %q/%q (err %v)", origin, o, r, err)
+		}
+		if o, r, err := ResolveRepoIdentity(ctx, repo); err != nil || o != "acme" || r != "widget" {
+			t.Fatalf("%s: ResolveRepoIdentity remote reading changed: %q/%q %v", origin, o, r, err)
+		}
+	}
+}
+
+// Boundary: a network remote with one path segment names a host and a repository but no
+// owner. It is unresolved rather than read with the host as the owner.
+func TestReadOriginRemote_Boundary_HostIsNeverTheOwner(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	o, r, err := ResolveRemoteIdentity(ctx, newHermeticGitRepo(t, "https://github.com/widget.git"))
+	if !errors.Is(err, ErrRepoIdentityUnresolved) || o != "" || r != "" {
+		t.Fatalf("host-only remote resolved to %q/%q (err %v), want unresolved", o, r, err)
+	}
+}
+
+// Boundary: only git's "not set" answer is an unresolved identity. A read git never
+// answered, a cancelled context or a git that cannot start in a missing directory, is an
+// error callers must not record as "no identity", while ResolveRepoIdentity keeps its layout
+// fallback for every remote error.
+func TestResolveRemoteIdentity_Boundary_UnansweredReadIsNotUnresolved(t *testing.T) {
+	repo := newHermeticGitRepo(t, "https://github.com/acme/widget.git")
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if o, r, err := ResolveRemoteIdentity(cancelled, repo); err == nil || errors.Is(err, ErrRepoIdentityUnresolved) || o != "" || r != "" {
+		t.Fatalf("cancelled read = %q/%q (err %v), want a read error that is not ErrRepoIdentityUnresolved", o, r, err)
+	}
+	ctx, stop := context.WithTimeout(context.Background(), 15*time.Second)
+	defer stop()
+	missing := filepath.Join(t.TempDir(), "acme-org", "gone")
+	if o, r, err := ResolveRemoteIdentity(ctx, missing); err == nil || errors.Is(err, ErrRepoIdentityUnresolved) {
+		t.Fatalf("read in a missing directory = %q/%q (err %v), want a read error", o, r, err)
+	}
+	if o, r, err := ResolveRepoIdentity(ctx, missing); err != nil || o != "acme-org" || r != "gone" {
+		t.Fatalf("ResolveRepoIdentity layout fallback changed: %q/%q %v", o, r, err)
+	}
+}
+
 func TestResolveRepoIdentity_Boundary_RootAndRelativeDot(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()

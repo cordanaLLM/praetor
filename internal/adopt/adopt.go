@@ -2,6 +2,7 @@ package adopt
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -158,7 +159,10 @@ func Adopt(ctx context.Context, opts AdoptOptions) (*AdoptReport, error) {
 		verification: verification,
 		declined:     manifestDeclines(declared),
 	}
-	s.resolveIdentity(ctx)
+	if err := s.resolveIdentity(ctx); err != nil {
+		report.addError("%s", err)
+		return report, err
+	}
 	report.addWarning("%s", verification.notice())
 
 	if err := executeAdoptSteps(ctx, s); err != nil {
@@ -275,19 +279,25 @@ func (id repoIdentity) coordinate() string {
 // resolveIdentity fills the session's identity and prose label under the caller's context. An
 // unresolved identity is a warning, because every identity field adoption writes stays empty.
 // The origin remote is the only source: the checkpoint evaluator checks the policy's repository
-// against that remote, so no other source could name a repository it accepts.
-func (s *adoptSession) resolveIdentity(ctx context.Context) {
+// against that remote, so no other source could name a repository it accepts. A remote read
+// git did not answer (a cancelled context, a git failure) is an error, not an unresolved
+// identity: adoption must not write an empty identity for a question it never got answered.
+func (s *adoptSession) resolveIdentity(ctx context.Context) error {
 	owner, name, err := util.ResolveRemoteIdentity(ctx, s.repoPath)
 	if err == nil {
 		s.identity = repoIdentity{owner: owner, name: name}
 		s.repoName = name
-		return
+		return nil
+	}
+	if !errors.Is(err, util.ErrRepoIdentityUnresolved) {
+		return fmt.Errorf("resolve repository identity: %w", err)
 	}
 	s.repoName = filepath.Base(s.repoPath)
 	s.report.addWarning("repository identity unresolved (%v): adoption writes no repository.owner or repository.name "+
 		"and installs no checkpoint lifecycle. praetorctl audit fails until %s names both: set them by hand, since "+
 		"adoption never rewrites an existing manifest, and add an origin remote naming <owner>/<repo> before "+
 		"re-running adoption to install the checkpoint lifecycle", err, manifestFile)
+	return nil
 }
 
 func resolveFacets(input []string) []string {

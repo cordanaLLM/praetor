@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
@@ -266,26 +265,18 @@ func ensureOnboardingHarness(ctx context.Context, repoPath, repoName string) err
 }
 
 // resolveGitIdentity reads the owner and repository name from the target's own origin
-// remote. It deliberately does not fall back to the directory layout: an onboarding
-// manifest must never claim an owner the repository did not itself declare.
+// remote through util.ResolveRemoteIdentity, the one origin-remote identity reader. It
+// deliberately does not fall back to the directory layout: an onboarding manifest must never
+// claim an owner the repository did not itself declare. A remote that is absent or names no
+// <owner>/<repo> yields an empty identity; a read git did not answer is an error.
 func resolveGitIdentity(ctx context.Context, repoPath string) (owner, name string, err error) {
-	remote, err := util.RunGit(ctx, repoPath, "config", "--get", "remote.origin.url")
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		return "", "", fmt.Errorf("resolve onboarding identity: %w", ctxErr)
-	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return "", "", err
-	}
-	if err != nil {
-		var exitErr *exec.ExitError
-		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
-			return "", "", fmt.Errorf("read onboarding origin: %w", err)
-		}
-	}
-	if remote == "" {
+	owner, name, err = util.ResolveRemoteIdentity(ctx, repoPath)
+	if errors.Is(err, util.ErrRepoIdentityUnresolved) {
 		return "", "", nil
 	}
-	owner, name = util.ExtractOwnerAndRepo(remote)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve onboarding identity: %w", err)
+	}
 	return owner, name, nil
 }
 

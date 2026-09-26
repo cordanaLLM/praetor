@@ -51,11 +51,15 @@ unset flag keeps the default. The flags apply to single-repository adoption; bat
 - **Repository identity.** `repository.owner` and `repository.name` come from the
   `origin` remote only (`util.ResolveRemoteIdentity`). The checkout path is never read
   as identity, because its parent directory names where the checkout sits, not who owns
-  the repository (`TestAdoptionManifest_CheckoutLayoutIsNotIdentity`). Without a remote
-  naming `<owner>/<repo>`, both stay empty, the report warns `repository identity
-  unresolved`, the checkpoint lifecycle is not installed, and the README badge block is
-  skipped. `repository.visibility` is always left unset because adoption cannot observe
-  it offline (`TestAdoptionManifest_UnresolvedIdentityStaysEmpty`).
+  the repository (`TestAdoptionManifest_CheckoutLayoutIsNotIdentity`). The remote must
+  be a network remote naming a host and `<owner>/<repo>` (`util.ReadOriginRemote`); a
+  local path or `file://` origin names where a copy sits and counts as no remote
+  (`TestReadOriginRemote_Negative_LocalRemoteIsNotIdentity`). Without such a remote,
+  both stay empty, the report warns `repository identity unresolved`, the checkpoint
+  lifecycle is not installed, and the README badge block is skipped. A remote read git does not answer, such as a cancelled run, fails adoption
+  instead of counting as no identity. `repository.visibility` is always left unset
+  because adoption cannot observe it offline
+  (`TestAdoptionManifest_UnresolvedIdentityStaysEmpty`).
 - **Recovering an unresolved identity.** Until both fields are set, `praetorctl audit`
   fails with `Manifest repository owner and name must not be empty`
   (`cmd/standardsctl/audit.go`), so the audit pre-commit hook blocks commits. Adoption

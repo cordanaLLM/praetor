@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -29,7 +30,7 @@ const (
 
 // ErrRepoIdentityUnresolved is returned by ResolveRepoIdentity when neither the git
 // origin remote nor the directory layout identifies an owner and repository, and by
-// ResolveRemoteIdentity when the origin remote does not.
+// ReadOriginRemote and ResolveRemoteIdentity when the origin remote does not.
 var ErrRepoIdentityUnresolved = errors.New("util: unable to resolve repository owner and name")
 
 // ErrSymlinkDestination is returned by WriteFileNoFollow when the destination exists and
@@ -525,32 +526,81 @@ func RunGitBytes(ctx context.Context, dir string, maxBytes int, args ...string) 
 	return RunCommandBytes(ctx, dir, "git", maxBytes, args...)
 }
 
-// ResolveRemoteIdentity extracts the owner and repository name from the configured origin
-// remote alone. It returns ErrRepoIdentityUnresolved when there is no origin remote or it
-// names no <owner>/<repo>. Unlike ResolveRepoIdentity it never reads the checkout path, so
-// a caller that records identity as fact gets only what the repository itself declares.
+// ReadOriginRemote reads the configured origin remote and parses it as a network remote
+// (ParseGitRemote), host included. It is the one origin-remote reader: adoption,
+// onboarding, the Paperclip harness, flavor scaffolds and the forge-sync origin check all
+// read the remote through it, directly or through ResolveRemoteIdentity.
+//
+// It returns ErrRepoIdentityUnresolved when git answers that no origin remote is configured
+// (git config exits 1), and ErrRepoIdentityUnresolved wrapping ErrGitRemoteNotNetwork when
+// the remote is a local path, a file:// URL, or names no host and <owner>/<repo>: such a
+// remote says where a copy sits, not which forge repository it is. A read git did not
+// answer (a cancelled or expired context, git failing to start, any other exit status) is
+// returned wrapped and is neither, so no caller records "no identity" for a question that
+// was never answered.
+func ReadOriginRemote(ctx context.Context, repoPath string) (GitRemote, error) {
+	raw, err := readOriginURL(ctx, repoPath)
+	if err != nil {
+		return GitRemote{}, err
+	}
+	remote, err := ParseGitRemote(raw)
+	if err != nil {
+		return GitRemote{}, fmt.Errorf("%w: the origin remote in %q: %w", ErrRepoIdentityUnresolved, repoPath, err)
+	}
+	return remote, nil
+}
+
+// ResolveRemoteIdentity returns the owner and repository name of the origin remote as
+// ReadOriginRemote reads it, with the same errors. Unlike ResolveRepoIdentity it never reads
+// the checkout path, so a caller that records identity as fact gets only what the
+// repository itself declares.
 func ResolveRemoteIdentity(ctx context.Context, repoPath string) (owner, repo string, err error) {
-	out, gitErr := RunGit(ctx, repoPath, "config", "--get", "remote.origin.url")
-	if gitErr != nil {
-		return "", "", fmt.Errorf("%w: no origin remote in %q: %w", ErrRepoIdentityUnresolved, repoPath, gitErr)
+	remote, err := ReadOriginRemote(ctx, repoPath)
+	if err != nil {
+		return "", "", err
 	}
-	owner, repo = ExtractOwnerAndRepo(out)
-	if owner == "" || repo == "" {
-		return "", "", fmt.Errorf("%w: the origin remote in %q names no <owner>/<repo>", ErrRepoIdentityUnresolved, repoPath)
+	return remote.Owner, remote.Repo, nil
+}
+
+// readOriginURL returns the raw origin remote URL. No origin remote, or an empty one, is
+// ErrRepoIdentityUnresolved; a read git did not answer is any other error.
+func readOriginURL(ctx context.Context, repoPath string) (string, error) {
+	remote, err := RunGit(ctx, repoPath, "config", "--get", "remote.origin.url")
+	if err != nil && !gitAnsweredUnset(ctx, err) {
+		return "", fmt.Errorf("util: read the origin remote in %q: %w", repoPath, err)
 	}
-	return owner, repo, nil
+	if strings.TrimSpace(remote) == "" {
+		return "", fmt.Errorf("%w: no origin remote in %q", ErrRepoIdentityUnresolved, repoPath)
+	}
+	return remote, nil
+}
+
+// gitAnsweredUnset reports whether err is git config's answer "key not set" (exit status
+// 1) rather than a read that did not complete. A context that ended during the call is
+// never an answer, whatever status the stopped process reported.
+func gitAnsweredUnset(ctx context.Context, err error) bool {
+	if ctx != nil && ctx.Err() != nil {
+		return false
+	}
+	var exitErr *exec.ExitError
+	return errors.As(err, &exitErr) && exitErr.ExitCode() == 1
 }
 
 // ResolveRepoIdentity extracts the owner and repository name from the configured origin
-// remote (ResolveRemoteIdentity), falling back to the <owner>/<repo> shape of the absolute
-// directory path.
+// remote as ExtractOwnerAndRepo reads it, a local-path remote included, falling back to the
+// <owner>/<repo> shape of the absolute directory path whenever the remote read fails or
+// names no <owner>/<repo>. A caller that records identity as fact calls
+// ResolveRemoteIdentity instead: a checkout's parent directory names wherever it sits, not
+// its owner.
 //
 // It never invents an owner: when neither the remote nor the directory layout yields
 // one, it returns ErrRepoIdentityUnresolved so that callers writing to a forge refuse to
 // publish into a guessed repository.
 func ResolveRepoIdentity(ctx context.Context, repoPath string) (owner, repo string, err error) {
-	if owner, repo, err = ResolveRemoteIdentity(ctx, repoPath); err == nil {
-		return owner, repo, nil
+	if raw, readErr := readOriginURL(ctx, repoPath); readErr == nil {
+		if owner, repo = ExtractOwnerAndRepo(raw); owner != "" && repo != "" {
+			return owner, repo, nil
+		}
 	}
 
 	absPath, absErr := filepath.Abs(repoPath)

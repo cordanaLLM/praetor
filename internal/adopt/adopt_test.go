@@ -659,7 +659,9 @@ func writeOriginRemote(t *testing.T, repo, url string) {
 func identitySession(t *testing.T, repo string) *adoptSession {
 	t.Helper()
 	s := &adoptSession{repoPath: repo, arch: "framework", facets: resolveFacets(nil), report: &AdoptReport{}}
-	s.resolveIdentity(t.Context())
+	if err := s.resolveIdentity(t.Context()); err != nil {
+		t.Fatalf("resolve identity: %v", err)
+	}
 	return s
 }
 
