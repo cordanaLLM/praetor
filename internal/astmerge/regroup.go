@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // kindBlock is the Conflict kind of two incompatible groupings of block specs.
@@ -53,7 +55,7 @@ type groupMerge struct {
 func mergeLayout(base, ours, theirs *ParsedAST) (layout, []Conflict) {
 	m := groupMerge{
 		base: partitionOf(base), ours: partitionOf(ours), theirs: partitionOf(theirs),
-		basePos: indexOf(base.DeclOrder), oursPos: indexOf(ours.DeclOrder), theirsPos: indexOf(theirs.DeclOrder),
+		basePos: util.PositionIndex(base.DeclOrder), oursPos: util.PositionIndex(ours.DeclOrder), theirsPos: util.PositionIndex(theirs.DeclOrder),
 		inputs: [3]*ParsedAST{base, ours, theirs},
 		sets:   make(blockSets), rank: make(map[string]int),
 	}

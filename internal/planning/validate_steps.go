@@ -3,13 +3,15 @@ package planning
 import (
 	"context"
 	"fmt"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func validateSteps(ctx context.Context, list []Step, requirements, milestones map[string]bool,
 	milestoneOrder []string, prerequisites map[string]map[string]bool) ([]graphNode, error) {
 	stepIDs := make(map[string]bool, len(list))
 	stepMilestones := make(map[string]string, len(list))
-	milestoneRanks := rankIDs(milestoneOrder)
+	milestoneRanks := util.PositionIndex(milestoneOrder)
 	coveredRequirements := make(map[string]bool, len(requirements))
 	coveredMilestones := make(map[string]bool, len(milestones))
 	links, outputs := make(map[string]bool, len(list)*2), make(map[string]bool)
@@ -38,14 +40,6 @@ func validateSteps(ctx context.Context, list []Step, requirements, milestones ma
 		return nil, fmt.Errorf("every requirement and milestone must be covered by a step")
 	}
 	return nodes, nil
-}
-
-func rankIDs(order []string) map[string]int {
-	ranks := make(map[string]int, len(order))
-	for index, id := range order {
-		ranks[id] = index
-	}
-	return ranks
 }
 
 func validateMilestoneDirection(steps []Step, stepMilestones map[string]string, prerequisites map[string]map[string]bool) error {
