@@ -870,14 +870,29 @@ func (s *Server) handleToolsCall(ctx context.Context, req JSONRPCRequest) *JSONR
 
 	res, err := tool.Handler(callCtx, params.Arguments)
 	if err != nil {
-		return errorResponse(req.ID, -32603, fmt.Sprintf("Internal tool execution error: %v", err))
+		return errorResponse(req.ID, -32603, servedErrorText(err))
+	}
+	safe, err := mcp.SanitizeResult(res)
+	if err != nil {
+		return errorResponse(req.ID, -32603, fmt.Sprintf("Tool %s result withheld: %v", params.Name, err))
 	}
 
 	return &JSONRPCResponse{
 		JSONRPC: "2.0",
 		ID:      req.ID,
-		Result:  res,
+		Result:  safe,
 	}
+}
+
+// servedErrorText renders a handler error for the client. Errors quote paths, file
+// content and upstream messages, so they pass the same neutralizer as results; an error
+// too large to inspect is replaced by the bound violation instead of being served raw.
+func servedErrorText(err error) string {
+	text, sanitizeErr := mcp.SanitizeText(err.Error())
+	if sanitizeErr != nil {
+		return fmt.Sprintf("Internal tool execution error withheld: %v", sanitizeErr)
+	}
+	return "Internal tool execution error: " + text
 }
 
 // HandleRequest processes an incoming JSON-RPC 2.0 request and produces a response.

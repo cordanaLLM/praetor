@@ -1,0 +1,3 @@
+type: fixed
+title: Neutralize prompt-injection text in every standards-mcp tool result and error before it is served, including JSON-escaped delimiters and phrases, withhold output too large to inspect, refuse tool descriptors that carry an injection pattern, remove the unreachable OpenAI/Anthropic/Gemini schema translators, and describe the agent:sandboxed facet by what it actually wires
+breaking: false

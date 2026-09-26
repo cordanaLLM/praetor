@@ -97,7 +97,7 @@ flowchart LR
 | Architectural Pillar | Technical Functionality | Primary Tooling |
 | :--- | :--- | :--- |
 | **Universal Context Transpiler** | Single canonical `AGENTS.md` compiled into vendor targets ($\le 300$ lines for `CLAUDE.md`). | `praetorctl compile-context` |
-| **Multi-Transport MCP Bridge** | `stdio`, Streamable HTTP, and SSE Model Context Protocol server with tool schema translation. | `standards-mcp` |
+| **Multi-Transport MCP Server** | `stdio`, Streamable HTTP, and SSE Model Context Protocol server; every tool result and error passes the prompt-injection neutralizer before it is served (`internal/mcp/sanitize.go`). | `standards-mcp` |
 | **HISS Lattice Engine** | Composable archetypes resolved via Join-Semilattice supremum ("Highest Standard Wins"). | `internal/config` |
 | **Hermetic Devcontainers** | Reproducible multi-architecture dev environments pre-wiring toolchains and Editor setups. | `praetorctl devcontainer` |
 | **Monotonic Debt Ratcheting** | Baselined legacy debt with non-increasing debt invariants and touched-file clean rules. | `praetorctl baseline` |
