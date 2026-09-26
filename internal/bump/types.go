@@ -52,7 +52,9 @@ type DeprecationWarning struct {
 
 // VersionAuditReport aggregates health and modernization status across all dependencies.
 // TotalScanned counts every declared dependency and workflow action examined, up-to-date
-// ones included, whether or not the upstream report was reachable.
+// ones included, whether or not the upstream report was reachable. ModernizationScore and
+// PendingUpgrades reflect only the upgrades that report named: offline no upgrade target is
+// known, so an outdated dependency counts as up to date.
 type VersionAuditReport struct {
 	TotalScanned       int                  `json:"total_scanned"`
 	UpToDate           int                  `json:"up_to_date"`

@@ -149,6 +149,35 @@ func TestScanInventory_Positive_AuditMatchesOnlineAndOffline(t *testing.T) {
 
 // A complete upstream report with nothing outdated is an answer: it never pivots to the
 // manifest-only result, and no dependency becomes a candidate.
+// Only total_scanned is independent of the network. An offline audit knows no upgrade
+// target, so an outdated repository's score still differs: one of four dependencies
+// outdated scores 75 online and 100 offline, over the same four scanned.
+func TestScanInventory_Boundary_OfflineAuditCannotSeeUpgrades(t *testing.T) {
+	repo := inventoryRepo(t)
+	tools := toolchainBin(t)
+	online := reportBin(t, outdatedGoReport, "{}", 0)
+
+	t.Setenv("PATH", pathOf(online, tools))
+	up, err := AuditCodebaseVersions(t.Context(), repo, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", tools)
+	down, err := AuditCodebaseVersions(t.Context(), repo, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if up.TotalScanned != 4 || down.TotalScanned != 4 {
+		t.Fatalf("scanned online=%d offline=%d, want 4 both", up.TotalScanned, down.TotalScanned)
+	}
+	if up.ModernizationScore != 75 || len(up.PendingUpgrades) != 1 {
+		t.Fatalf("online score=%.1f pending=%d, want 75 and 1", up.ModernizationScore, len(up.PendingUpgrades))
+	}
+	if down.ModernizationScore != 100 || len(down.PendingUpgrades) != 0 {
+		t.Fatalf("offline score=%.1f pending=%d, want 100 and 0", down.ModernizationScore, len(down.PendingUpgrades))
+	}
+}
+
 func TestScanInventory_Negative_ZeroOutdatedIsNotAFallback(t *testing.T) {
 	repo := inventoryRepo(t)
 	t.Setenv("PATH", reportBin(t, currentGoReport, "{}", 0))

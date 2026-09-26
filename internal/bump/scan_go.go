@@ -184,7 +184,7 @@ func ScanGoDependencies(ctx context.Context, repoPath string, opts ScanOptions) 
 
 // scanGoModule returns one module's inventory. The requirements its go.mod declares are
 // the inventory; `go list -m -u` only supplies their selected versions and upgrade
-// targets, so the inventory never depends on network state.
+// targets, so which modules are scanned never depends on network state.
 func scanGoModule(ctx context.Context, modDir, modRel string, opts ScanOptions) ([]UpgradeCandidate, error) {
 	return manifestInventory(ctx,
 		func() ([]UpgradeCandidate, error) { return scanGoModStatic(ctx, modDir, modRel) },
