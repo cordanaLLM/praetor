@@ -85,8 +85,8 @@ func runForgeSyncWiki(ctx context.Context, args []string) error {
 // resolvePinnedReceiptKey loads the pinned Ed25519 receipt public key from the manifest.
 // A missing pin is only tolerated when the operator explicitly opted out, because without
 // it the receipt is merely self-consistent and proves nothing about this repository.
-func resolvePinnedReceiptKey(manifestPath string, allowUnpinned bool) (ed25519.PublicKey, error) {
-	pinned, err := lockdown.PinnedPublicKey(manifestPath)
+func resolvePinnedReceiptKey(ctx context.Context, manifestPath string, allowUnpinned bool) (ed25519.PublicKey, error) {
+	pinned, err := lockdown.PinnedPublicKey(ctx, manifestPath)
 	if err == nil {
 		return pinned, nil
 	}
@@ -119,7 +119,7 @@ func runForgeValidatePR(args []string) error {
 		return fmt.Errorf("failed to read PR body file: %w", err)
 	}
 
-	pinned, err := resolvePinnedReceiptKey(*configPath, *allowUnpinned)
+	pinned, err := resolvePinnedReceiptKey(context.Background(), *configPath, *allowUnpinned)
 	if err != nil {
 		return err
 	}

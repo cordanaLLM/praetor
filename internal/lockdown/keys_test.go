@@ -1,6 +1,7 @@
 package lockdown
 
 import (
+	"context"
 	"crypto/ed25519"
 	"encoding/hex"
 	"errors"
@@ -336,7 +337,7 @@ func TestPinnedPublicKey_3D(t *testing.T) {
 	if err := os.WriteFile(good, []byte(body), 0o600); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
-	loaded, err := PinnedPublicKey(good)
+	loaded, err := PinnedPublicKey(context.Background(), good)
 	if err != nil {
 		t.Fatalf("PinnedPublicKey: %v", err)
 	}
@@ -349,12 +350,12 @@ func TestPinnedPublicKey_3D(t *testing.T) {
 	if err := os.WriteFile(bare, []byte("version: 1\n"), 0o600); err != nil {
 		t.Fatalf("write manifest: %v", err)
 	}
-	if _, err := PinnedPublicKey(bare); !errors.Is(err, ErrNoPinnedKey) {
+	if _, err := PinnedPublicKey(context.Background(), bare); !errors.Is(err, ErrNoPinnedKey) {
 		t.Errorf("expected ErrNoPinnedKey, got %v", err)
 	}
 
 	// Negative: a missing manifest is an error, not an empty key.
-	if _, err := PinnedPublicKey(filepath.Join(dir, "absent.yaml")); err == nil {
+	if _, err := PinnedPublicKey(context.Background(), filepath.Join(dir, "absent.yaml")); err == nil {
 		t.Error("expected an error for a missing manifest")
 	}
 
@@ -367,7 +368,7 @@ func TestPinnedPublicKey_3D(t *testing.T) {
 		if err := os.WriteFile(path, []byte("receipt:\n  public_key: \""+value+"\"\n"), 0o600); err != nil {
 			t.Fatalf("write manifest: %v", err)
 		}
-		if _, err := PinnedPublicKey(path); !errors.Is(err, ErrMalformedPinnedKey) {
+		if _, err := PinnedPublicKey(context.Background(), path); !errors.Is(err, ErrMalformedPinnedKey) {
 			t.Errorf("%s: expected ErrMalformedPinnedKey, got %v", name, err)
 		}
 	}

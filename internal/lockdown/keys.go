@@ -187,9 +187,9 @@ func SaveSigningKey(path string, priv ed25519.PrivateKey) error {
 // The manifest is read through config.ReadYAMLDocument, the read every .standards.yaml reader
 // shares: a FIFO is refused rather than blocking, and a second document is refused, so the key
 // can never come from the first document of a manifest the policy loader rejects (BUG-857).
-func PinnedPublicKey(manifestPath string) (ed25519.PublicKey, error) {
+func PinnedPublicKey(ctx context.Context, manifestPath string) (ed25519.PublicKey, error) {
 	var section manifestReceiptSection
-	err := config.ReadYAMLDocument(context.Background(), manifestPath, &section, util.YAMLDocumentOptions{AllowEmpty: true})
+	err := config.ReadYAMLDocument(ctx, manifestPath, &section, util.YAMLDocumentOptions{AllowEmpty: true})
 	if err != nil {
 		return nil, fmt.Errorf("standards manifest: %w", err)
 	}

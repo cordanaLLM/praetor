@@ -178,7 +178,7 @@ func runGateVerify(args []string) error {
 	}
 
 	supplied := strings.TrimSpace(*publicKeyHex)
-	pinned, err := resolveVerifyKey(supplied, *path, *manifestPath)
+	pinned, err := resolveVerifyKey(context.Background(), supplied, *path, *manifestPath)
 	if err != nil {
 		return fmt.Errorf("[FAIL] %w", err)
 	}
@@ -210,7 +210,7 @@ func runGateVerify(args []string) error {
 // explicit --public-key always wins over a manifest-pinned key: the operator asked to trust
 // this specific key, not to cross-check it against .standards.yaml. With no supplied key it
 // falls back to the existing manifest-pinned lookup, unchanged from before --public-key existed.
-func resolveVerifyKey(supplied, path, manifestPath string) (ed25519.PublicKey, error) {
+func resolveVerifyKey(ctx context.Context, supplied, path, manifestPath string) (ed25519.PublicKey, error) {
 	if supplied != "" {
 		return lockdown.ParsePinnedPublicKey(supplied)
 	}
@@ -218,7 +218,7 @@ func resolveVerifyKey(supplied, path, manifestPath string) (ed25519.PublicKey, e
 	if resolvedManifest == "" {
 		resolvedManifest = filepath.Join(path, ".standards.yaml")
 	}
-	return lockdown.PinnedPublicKey(resolvedManifest)
+	return lockdown.PinnedPublicKey(ctx, resolvedManifest)
 }
 
 // verifyReceiptCommit binds a receipt to the commit currently checked out, through the same

@@ -3,9 +3,10 @@ package needs
 import (
 	"context"
 	"path/filepath"
-	"runtime"
-	"syscall"
 	"testing"
+	"time"
+
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 func TestPythonAnalyzerManifestSyntaxForms(t *testing.T) {
@@ -154,31 +155,25 @@ func TestNativeAnalyzerDeduplicatesAcrossManifests(t *testing.T) {
 }
 
 func TestPythonAnalyzer_FIFO(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("FIFOs are not supported on Windows")
-	}
 	tempDir := t.TempDir()
-	fifoPath := filepath.Join(tempDir, "requirements.txt")
-	if err := syscall.Mkfifo(fifoPath, 0666); err != nil {
-		t.Fatalf("failed to make fifo: %v", err)
-	}
-	_, err := NewPythonAnalyzer().Analyze(context.Background(), tempDir)
+	testsupport.MakeFIFO(t, filepath.Join(tempDir, "requirements.txt"))
+	err := testsupport.RunWithin(t, 10*time.Second, func() error {
+		_, analyzeErr := NewPythonAnalyzer().Analyze(context.Background(), tempDir)
+		return analyzeErr
+	})
 	if err == nil {
-		t.Fatal("expected error reading FIFO manifest, got nil")
+		t.Fatal("expected an error reading a FIFO manifest, got nil")
 	}
 }
 
 func TestNodeAnalyzer_FIFO(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("FIFOs are not supported on Windows")
-	}
 	tempDir := t.TempDir()
-	fifoPath := filepath.Join(tempDir, "package.json")
-	if err := syscall.Mkfifo(fifoPath, 0666); err != nil {
-		t.Fatalf("failed to make fifo: %v", err)
-	}
-	_, err := NewNodeAnalyzer().Analyze(context.Background(), tempDir)
+	testsupport.MakeFIFO(t, filepath.Join(tempDir, "package.json"))
+	err := testsupport.RunWithin(t, 10*time.Second, func() error {
+		_, analyzeErr := NewNodeAnalyzer().Analyze(context.Background(), tempDir)
+		return analyzeErr
+	})
 	if err == nil {
-		t.Fatal("expected error reading FIFO manifest, got nil")
+		t.Fatal("expected an error reading a FIFO manifest, got nil")
 	}
 }
