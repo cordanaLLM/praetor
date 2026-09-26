@@ -63,11 +63,12 @@ func newTestConfig(t *testing.T, repoDir string, dryRun bool) (*stageConfig, *[]
 	t.Helper()
 	recorded := &[]recordedCommand{}
 	return &stageConfig{
-		repoDir:  repoDir,
-		dryRun:   dryRun,
-		run:      fakeRunner(recorded, "", nil),
-		lookPath: func(name string) (string, error) { return "/usr/bin/" + name, nil },
-		rep:      &PipelineReport{Stages: make([]StageResult, 0, maxStages)},
+		repoDir:    repoDir,
+		dryRun:     dryRun,
+		run:        fakeRunner(recorded, "", nil),
+		lookPath:   func(name string) (string, error) { return "/usr/bin/" + name, nil },
+		rep:        &PipelineReport{Stages: make([]StageResult, 0, maxStages)},
+		boundStage: withStageBound,
 	}, recorded
 }
 

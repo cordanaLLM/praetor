@@ -60,27 +60,21 @@ func TestTestStageDistinguishesItsDeadlineFromAFailingSuite(t *testing.T) {
 	repoDir := newHermeticGitRepo(t)
 	seedGoModule(t, repoDir)
 	timedOut, _ := newTestConfig(t, repoDir, false)
-	recorded := &[]recordedCommand{}
-	// Stand in for a suite the bound cuts off: the runner reports the child's death after
-	// its context is already past the deadline, exactly as an exec-killed `go test` does.
-	timedOut.run = func(runCtx context.Context, dir, name string, args ...string) (string, error) {
-		if name == "go" && len(args) > 0 && args[0] == "test" {
-			<-runCtx.Done()
-			return "ok github.com/example/pkg 1.4s", errors.New("signal: killed")
-		}
-		return fakeRunner(recorded, "", nil)(runCtx, dir, name, args...)
-	}
+	// Stand in for a suite the bound cuts off, with the bound's clock started as the suite
+	// starts, so the real worktree creation before it cannot use the 50ms up.
+	ran := false
+	timedOut.run = blockedSuite(&ran, holdStageBound(timedOut))
 
 	t.Setenv(TestStageTimeoutEnv, "50ms")
 	_, err := runTestStage(ctx, timedOut)
-	if err == nil {
-		t.Fatal("a stage cut off by its bound must fail")
+	if err == nil || !ran {
+		t.Fatalf("a stage cut off by its bound must fail after starting the suite: ran=%v err=%v", ran, err)
 	}
 	message := err.Error()
 	if strings.Contains(message, "tests failed") {
 		t.Errorf("a deadline must not be reported as a test failure, got %q", message)
 	}
-	for _, want := range []string{"bound firing", TestStageTimeoutEnv, "50ms"} {
+	for _, want := range []string{"race-detector tests", "bound firing", TestStageTimeoutEnv, "50ms"} {
 		if !strings.Contains(message, want) {
 			t.Errorf("deadline message must mention %q, got %q", want, message)
 		}
@@ -89,7 +83,7 @@ func TestTestStageDistinguishesItsDeadlineFromAFailingSuite(t *testing.T) {
 
 // The bound also covers creating the isolated worktree, and firing there is the same event. A
 // one-nanosecond bound expires before git can start, so this reaches that path on every
-// platform, where the test above reaches it only on a host slow enough to outlast 50ms.
+// platform; the test above holds its bound back until the suite starts and never reaches it.
 func TestTestStageAttributesABoundFiringDuringWorktreeCreation(t *testing.T) {
 	repoDir := newHermeticGitRepo(t)
 	seedGoModule(t, repoDir)
