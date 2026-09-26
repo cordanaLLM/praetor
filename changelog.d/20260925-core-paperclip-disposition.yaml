@@ -1,0 +1,3 @@
+type: fixed
+title: Verify Paperclip disposition receipts against the pinned key and gate output, apply one status and whitespace rule to created and decoded dispositions, and require in_review runs to have pushed HEAD to a remote-tracking upstream
+breaking: true

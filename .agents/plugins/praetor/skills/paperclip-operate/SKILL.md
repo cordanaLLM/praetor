@@ -74,3 +74,6 @@ Generate cryptographically verifiable terminal disposition record:
   ```bash
   praetorctl paperclip verify --path=.
   ```
+  - `in_review` fails unless: working tree clean (disposition file itself exempt); branch tracks remote-tracking upstream (`git push -u origin HEAD`); zero commits ahead of upstream. AGit `refs/for/*` push updates no tracking ref -> alone does not satisfy check.
+  - Status: whitespace + case ignored, `done` -> `in_review`. Whitespace-only issue, note, proof, recovery owner rejected.
+  - Attached `receipt` = envelope carrying `gate_output`; verified against `receipt.public_key` pinned in `.standards.yaml` (`--config=<path>` names another manifest), never key embedded in receipt. Receipt without pin fails.

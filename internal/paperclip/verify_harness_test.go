@@ -24,7 +24,7 @@ func TestVerifyRunRejectsInvalidHarness(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(root, ".paperclip", "harness.json"), []byte(data), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if err := VerifyRun(context.Background(), root, disposition); err == nil {
+			if err := VerifyRun(context.Background(), root, disposition, VerifyOptions{}); err == nil {
 				t.Fatal("invalid harness certified as a valid run")
 			}
 		})
