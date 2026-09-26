@@ -46,6 +46,56 @@ func Parse(s string) (Version, bool) {
 	return Version{Major: major, Minor: minor, Patch: patch, Prerelease: m[4], Build: m[5]}, true
 }
 
+// tagPattern matches a version tag cut short at major ("v4") or major.minor ("v4.1")
+// precision, the moving tags GitHub Actions publish beside exact releases.
+var tagPattern = regexp.MustCompile(`^v?(0|[1-9]\d*)(?:\.(0|[1-9]\d*))?$`)
+
+// Precision values ParseTag reports: how many of major, minor and patch a tag names.
+const (
+	PrecisionMajor = 1
+	PrecisionMinor = 2
+	PrecisionPatch = 3
+)
+
+// ParseTag parses s as a full SemVer version (precision PrecisionPatch) or as a tag that
+// stops at major ("v4", PrecisionMajor) or major.minor ("v4.1", PrecisionMinor). Such a tag
+// names a release line rather than one release, so callers compare it only at its own
+// precision (see Truncate). ok is false for anything else, such as a commit SHA or "main".
+func ParseTag(s string) (v Version, precision int, ok bool) {
+	if full, ok := Parse(s); ok {
+		return full, PrecisionPatch, true
+	}
+	m := tagPattern.FindStringSubmatch(strings.TrimSpace(s))
+	if m == nil {
+		return Version{}, 0, false
+	}
+	major, err := strconv.Atoi(m[1])
+	if err != nil {
+		return Version{}, 0, false
+	}
+	if m[2] == "" {
+		return Version{Major: major}, PrecisionMajor, true
+	}
+	minor, err := strconv.Atoi(m[2])
+	if err != nil {
+		return Version{}, 0, false
+	}
+	return Version{Major: major, Minor: minor}, PrecisionMinor, true
+}
+
+// Truncate cuts v to precision: PrecisionMajor keeps the major, PrecisionMinor the major
+// and minor, and both drop the prerelease and build. PrecisionPatch or more returns v.
+func (v Version) Truncate(precision int) Version {
+	switch {
+	case precision <= PrecisionMajor:
+		return Version{Major: v.Major}
+	case precision == PrecisionMinor:
+		return Version{Major: v.Major, Minor: v.Minor}
+	default:
+		return v
+	}
+}
+
 // IsPrerelease reports whether v carries a prerelease component (e.g. "0.2.0-rc.1").
 func (v Version) IsPrerelease() bool {
 	return v.Prerelease != ""

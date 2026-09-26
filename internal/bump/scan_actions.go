@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/semver"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -141,7 +142,12 @@ func parseWorkflowFile(ctx context.Context, repoPath, fileName string, seen map[
 	if err != nil {
 		return nil, nil, fmt.Errorf("read workflow %s: %w", fileName, err)
 	}
-	matches := workflowActionRegex.FindAllStringSubmatch(string(content), 100)
+	// A commented-out `uses:` line is an example or a disabled step, not a pin in use.
+	live, err := util.StripHashComments(string(content))
+	if err != nil {
+		return nil, nil, fmt.Errorf("read workflow %s: %w", fileName, err)
+	}
+	matches := workflowActionRegex.FindAllStringSubmatch(live, 100)
 	var candidates []ActionCandidate
 	var deprecations []DeprecationWarning
 
@@ -193,7 +199,27 @@ func buildActionCandidate(actName, curVer, fileName string) (ActionCandidate, *D
 		Action:         actName,
 		CurrentVersion: curVer,
 		LatestVersion:  latestVer,
+		UpToDate:       ActionPinCurrent(curVer, latestVer),
 		Deprecated:     isDeprecated,
 		Warning:        warningMsg,
 	}, dep
+}
+
+// ActionPinCurrent reports whether an action pinned at current is at or ahead of latest.
+//
+// The registry names some actions by a moving major tag ("v4") and others by an exact
+// release ("v4.1.2"), so a raw string comparison called every exact pin of a major-tag
+// action drift (BUG-425). Both tags are compared at the precision of the less precise
+// one: "v4.1.2" is current against "v4", "v4" (which follows every v4.x release) against
+// "v4.1.2", and "v3.8.1" is behind "v4.1.2". A pin ahead of the registry is current; the
+// registry lagging is not the workflow's drift. A pin that is not a version tag, such as a
+// commit SHA or a branch, is current only when it equals latest.
+func ActionPinCurrent(current, latest string) bool {
+	cur, curPrecision, curOK := semver.ParseTag(current)
+	lat, latPrecision, latOK := semver.ParseTag(latest)
+	if !curOK || !latOK {
+		return current == latest
+	}
+	precision := min(curPrecision, latPrecision)
+	return semver.Compare(cur.Truncate(precision), lat.Truncate(precision)) >= 0
 }

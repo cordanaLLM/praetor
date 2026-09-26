@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -102,7 +103,12 @@ func stepGeneratesSBOM(ctx context.Context, repoPath string, step workflowStep) 
 		}
 		return goreleaserReleaseGeneratesSBOM(ctx, repoPath, strings.Fields(args))
 	}
-	fields := strings.Fields(withoutShellComments(step.Run))
+	// A generator named only in a comment does not run.
+	script, err := util.StripHashComments(step.Run)
+	if err != nil {
+		return false, fmt.Errorf("run script: %w", err)
+	}
+	fields := strings.Fields(script)
 	if len(fields) > maxRunScriptFields {
 		return false, fmt.Errorf("run script exceeds %d fields", maxRunScriptFields)
 	}
@@ -113,19 +119,6 @@ func stepGeneratesSBOM(ctx context.Context, repoPath string, step workflowStep) 
 		return goreleaserReleaseGeneratesSBOM(ctx, repoPath, fields[at+1:])
 	}
 	return false, nil
-}
-
-// withoutShellComments drops whole-line shell comments, so a script that only mentions a
-// generator in prose is not mistaken for one that runs it.
-func withoutShellComments(script string) string {
-	lines := strings.Split(script, "\n")
-	kept := make([]string, 0, len(lines))
-	for i := 0; i < len(lines) && i < maxRunScriptFields; i++ {
-		if !strings.HasPrefix(strings.TrimSpace(lines[i]), "#") {
-			kept = append(kept, lines[i])
-		}
-	}
-	return strings.Join(kept, "\n")
 }
 
 // runInvokesSBOMGenerator reports whether a run script's fields invoke a generator that

@@ -23,6 +23,13 @@ unreleased commits has to ask for them, for example `@main`.
 `praetorctl bump` compares workflows against, and `internal/bump/release_pins_test.go`
 fails when the workflows and that baseline disagree.
 
+`praetorctl bump audit` compares each pin with that baseline by SemVer at the precision
+of the less precise tag (`bump.ActionPinCurrent`): an exact `v4.1.2` is current against a
+baseline `v4`, a moving `v4` is current against `v4.1.2`, and `v3.8.1` drifts behind
+`v4.1.2`. A pin that is not a version tag, such as a commit SHA, is current only when it
+equals the baseline. Commented-out `uses:` lines are not scanned. Tests:
+`internal/bump/version_compare_test.go`.
+
 | Tool | Action pin | Installs | Why the pin reads the way it does |
 | :--- | :--- | :--- | :--- |
 | GoReleaser | `goreleaser/goreleaser-action@v7` | GoReleaser `~> v2`, from the step's `version` input | v7 moves the action runtime to node24 and adds only the optional `version-file` input, so the step's inputs are unchanged |
