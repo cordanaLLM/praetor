@@ -16,10 +16,14 @@ import (
 //   - A Python method is reached through its receiver or its class (self.f, cls.f, Owner.f);
 //     a bare f() inside a method resolves to the module-level f. A plain function is reached
 //     by its bare name.
-//   - A Rust method is reached through self.f or Self::f, and an associated function inside an
-//     impl or trait body through Self::f; a bare f() there resolves to a free function. A free
-//     function is reached by its bare name, never through a path, because other::f is a
-//     different item.
+//   - A Rust method in an inherent impl or a trait body is reached through self.f or Self::f,
+//     and an associated function there through Self::f; a bare f() there resolves to a free
+//     function. A free function is reached by its bare name, never through a path, because
+//     other::f is a different item.
+//   - Inside `impl Trait for T`, self.f and Self::f resolve to an inherent T::f first, which
+//     may sit in any file of the crate, and Self::f picks among T's impls by argument type
+//     (Self::from(b) in From<A> reaches From<B>). One function's text cannot tell forwarding
+//     from recursion there, so those functions are not decided.
 //   - A local binding of the same name (a parameter, let, assignment, loop target, import or
 //     nested definition) shadows the function, so a bare call then reaches the local.
 //
@@ -38,6 +42,22 @@ const (
 // rustImplHeader matches a line that opens an impl or trait body, whose functions resolve a
 // bare call to a free function rather than to themselves.
 var rustImplHeader = regexp.MustCompile(`^(?:pub(?:\s*\([^)]*\))?\s+)?(?:unsafe\s+)?(?:impl\b|trait\s)`)
+
+// rustBodyKind is the kind of body a Rust function is declared in, which decides the
+// spellings that reach it from its own body.
+type rustBodyKind int
+
+const (
+	// rustFreeBody is outside any impl or trait body: the bare name reaches the function.
+	rustFreeBody rustBodyKind = iota
+	// rustInherentBody is `impl T`: self.f and Self::f reach the inherent method itself.
+	rustInherentBody
+	// rustTraitBody is `trait T`: a default method is reached through self.f and Self::f.
+	rustTraitBody
+	// rustTraitImplBody is `impl Trait for T`: self.f and Self::f may reach an inherent T::f
+	// or another impl of the trait, so no spelling is decided.
+	rustTraitImplBody
+)
 
 // selfCalls collects the recursive call sites of one open function and decides them when the
 // function closes, once every local binding in its body has been seen: a later binding in
@@ -117,7 +137,7 @@ type rustLine struct {
 	num     int
 	header  bool
 	name    string
-	inImpl  bool
+	body    rustBodyKind
 	entered bool // the function body opened on this line
 	open    bool // the body is still open after this line
 	pending bool // a header is waiting for its opening brace
@@ -129,14 +149,14 @@ type rustSelfCalls struct {
 	rep    *ScanReport
 	active bool
 	inSig  bool
-	inImpl bool
+	body   rustBodyKind
 	sig    string
 	calls  selfCalls
 }
 
 func (r *rustSelfCalls) observe(l rustLine) {
 	if l.header {
-		*r = rustSelfCalls{rel: r.rel, rep: r.rep, active: true, inSig: true, inImpl: l.inImpl, calls: selfCalls{name: l.name}}
+		*r = rustSelfCalls{rel: r.rel, rep: r.rep, active: true, inSig: true, body: l.body, calls: selfCalls{name: l.name}}
 	}
 	if !r.active {
 		return
@@ -165,16 +185,19 @@ func (r *rustSelfCalls) observe(l rustLine) {
 	}
 }
 
-// startBody decides, from the finished signature, which spellings reach the function.
+// startBody decides, from the finished signature, which spellings reach the function. A
+// function in a trait impl gets none, so its calls are observed and never reported.
 func (r *rustSelfCalls) startBody() {
 	r.inSig = false
 	params := rustParams(r.sig)
 	name := r.calls.name
 	r.calls.excluded = isPathByte
 	switch {
+	case r.body == rustTraitImplBody:
+		r.calls.callees = nil
 	case rustHasReceiver(params):
 		r.calls.callees = []string{"self." + name, "Self::" + name}
-	case r.inImpl:
+	case r.body != rustFreeBody:
 		r.calls.callees = []string{"Self::" + name}
 	default:
 		r.calls.callees = []string{name}
@@ -193,17 +216,9 @@ func rustParams(sig string) string {
 	}
 	angle := 0
 	for i := fn; i < len(sig); i++ {
-		switch sig[i] {
-		case '<':
-			angle++
-		case '>':
-			if sig[i-1] != '-' && angle > 0 {
-				angle--
-			}
-		case '(':
-			if angle == 0 {
-				return enclosedParens(sig, i)
-			}
+		angle = rustAngleDepth(sig, i, angle)
+		if sig[i] == '(' && angle == 0 {
+			return enclosedParens(sig, i)
 		}
 	}
 	return ""
@@ -282,38 +297,120 @@ func rustPatternBindsAt(code string, at int) bool {
 	return strings.Contains(after, "=>") && !strings.Contains(before, "=>")
 }
 
-// rustBlockScope tracks the brace depth of open impl and trait bodies across a file.
+// rustBlockScope tracks the brace depth of open impl and trait bodies across a file, and the
+// kind of each.
 type rustBlockScope struct {
-	depth   int
-	implAt  []int
+	depth  int
+	frames []rustBodyFrame
+	// header gathers an impl or trait header until its opening brace, which rustfmt moves to a
+	// later line when the header wraps (`impl<T> Trait\n    for Type<T>\nwhere ...\n{`).
+	header  string
 	pending bool
 }
 
-func (s *rustBlockScope) inImpl() bool {
-	return len(s.implAt) > 0
+// rustBodyFrame is one open impl or trait body: the brace depth it opened at and its kind.
+type rustBodyFrame struct {
+	depth int
+	kind  rustBodyKind
+}
+
+// kind returns the kind of the innermost open body.
+func (s *rustBlockScope) kind() rustBodyKind {
+	if n := len(s.frames); n > 0 {
+		return s.frames[n-1].kind
+	}
+	return rustFreeBody
 }
 
 func (s *rustBlockScope) observe(code string) {
-	if rustImplHeader.MatchString(strings.TrimSpace(code)) {
+	if !s.pending && rustImplHeader.MatchString(strings.TrimSpace(code)) {
 		s.pending = true
+		s.header = ""
 	}
 	for i := 0; i < len(code); i++ {
 		switch code[i] {
 		case '{':
 			s.depth++
-			if s.pending && len(s.implAt) < maxRustImplNesting {
-				s.implAt = append(s.implAt, s.depth)
+			if s.pending {
+				s.open(appendSignature(s.header, code[:i]))
 			}
-			s.pending = false
 		case '}':
-			if n := len(s.implAt); n > 0 && s.implAt[n-1] == s.depth {
-				s.implAt = s.implAt[:n-1]
-			}
-			if s.depth > 0 {
-				s.depth--
-			}
+			s.closeBrace()
 		}
 	}
+	if s.pending {
+		s.header = appendSignature(s.header, code)
+	}
+}
+
+// closeBrace pops the innermost body when this brace closes it.
+func (s *rustBlockScope) closeBrace() {
+	if n := len(s.frames); n > 0 && s.frames[n-1].depth == s.depth {
+		s.frames = s.frames[:n-1]
+	}
+	if s.depth > 0 {
+		s.depth--
+	}
+}
+
+// open pushes the body whose header just reached its opening brace.
+func (s *rustBlockScope) open(header string) {
+	s.pending = false
+	s.header = ""
+	if len(s.frames) < maxRustImplNesting {
+		s.frames = append(s.frames, rustBodyFrame{depth: s.depth, kind: rustHeaderKind(header)})
+	}
+}
+
+// rustHeaderKind classifies an impl or trait header: a trait, an inherent impl, or an impl of a
+// trait for a type.
+func rustHeaderKind(header string) rustBodyKind {
+	trimmed := strings.TrimSpace(header)
+	loc := rustImplHeader.FindStringIndex(trimmed)
+	if loc == nil {
+		return rustFreeBody
+	}
+	if !strings.HasSuffix(trimmed[:loc[1]], "impl") {
+		return rustTraitBody
+	}
+	if rustNamesTrait(trimmed[loc[1]:]) {
+		return rustTraitImplBody
+	}
+	return rustInherentBody
+}
+
+// rustNamesTrait reports whether the text after `impl` implements a trait: a `for` keyword
+// outside every angle bracket and before any where clause. A higher-ranked `for<'a>` bound is
+// not that keyword, and neither is a `for` inside the generic parameter list.
+func rustNamesTrait(rest string) bool {
+	angle := 0
+	for i := 0; i < len(rest); i++ {
+		angle = rustAngleDepth(rest, i, angle)
+		if angle > 0 || !isIdentByte(rest[i]) || (i > 0 && isIdentByte(rest[i-1])) {
+			continue
+		}
+		word := leadingIdent(rest[i:])
+		if word == "where" {
+			return false
+		}
+		if word == "for" && !strings.HasPrefix(strings.TrimLeft(rest[i+len(word):], " \t"), "<") {
+			return true
+		}
+		i += len(word) - 1
+	}
+	return false
+}
+
+// rustAngleDepth returns the angle-bracket depth after the byte at i, where the arrow of a
+// return type such as Fn() -> T closes nothing.
+func rustAngleDepth(text string, i, depth int) int {
+	switch {
+	case text[i] == '<':
+		return depth + 1
+	case text[i] == '>' && depth > 0 && (i == 0 || text[i-1] != '-'):
+		return depth - 1
+	}
+	return depth
 }
 
 // ---------------------------------------------------------------------------

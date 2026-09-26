@@ -164,9 +164,12 @@ var (
 	pythonSyntax = literalSyntax{apostropheIsString: true, lineComment: "#"}
 )
 
+// blockCommentClose ends a C-style block comment, the one fence that honours no escapes.
+const blockCommentClose = "*/"
+
 // literalStripper strips literals and comments across a whole file, carrying the state that
 // a single line cannot hold: a C-style block comment and a Python triple-quoted string both
-// span lines.
+// span lines, and so does a quoted string whose line ends in a backslash.
 //
 // Without that state every construct inside a multi-line comment or docstring was scanned as
 // code, so documenting a counter-example reported it as a live infraction. A gate that
@@ -199,14 +202,23 @@ func (s *literalStripper) strip(line string) string {
 }
 
 // consumeFence skips bytes until the open span's closing delimiter, which may not appear on
-// this line at all.
+// this line at all. Inside a string a backslash escapes the byte after it, so `\"""` does not
+// close a triple-quoted string. A single-quoted string carried here by a trailing backslash
+// ends with this line unless the line ends in a backslash too, so a string the stripper
+// misreads can never hold the rest of the file.
 func (s *literalStripper) consumeFence(line string, i int) int {
-	if idx := strings.Index(line[i:], s.fence); idx >= 0 {
-		end := i + idx + len(s.fence)
-		s.fence = ""
-		return end
+	if s.fence == blockCommentClose {
+		if idx := strings.Index(line[i:], s.fence); idx >= 0 {
+			s.fence = ""
+			return i + idx + len(blockCommentClose)
+		}
+		return len(line)
 	}
-	return len(line)
+	end, closed, carried := scanQuoted(line, i, s.fence)
+	if closed || (len(s.fence) == 1 && !carried) {
+		s.fence = ""
+	}
+	return end
 }
 
 // openFence reports whether a multi-line span starts at i and records its closing delimiter.
@@ -223,7 +235,7 @@ func (s *literalStripper) openFence(line string, i int) (int, bool) {
 		return i, false
 	}
 	if strings.HasPrefix(line[i:], "/*") {
-		s.fence = "*/"
+		s.fence = blockCommentClose
 		return i + 2, true
 	}
 	return i, false
@@ -240,25 +252,41 @@ func (s *literalStripper) copyOne(line string, i int, b *strings.Builder) int {
 			b.WriteByte(c)
 			return i + 1
 		}
-		return skipQuoted(line, i, c)
+		end, _, carried := scanQuoted(line, i+1, line[i:i+1])
+		if carried {
+			s.fence = line[i : i+1]
+		}
+		return end
 	default:
 		b.WriteByte(c)
 		return i + 1
 	}
 }
 
-// skipQuoted returns the index just past a single-line quoted run opened at i, honouring
-// backslash escapes. An unterminated quote consumes the rest of the line.
-func skipQuoted(line string, i int, quote byte) int {
-	for j := i + 1; j < len(line); j++ {
-		switch line[j] {
-		case '\\':
+// scanQuoted scans a string body from i for its closing delimiter, honouring backslash
+// escapes. It returns the index just past the delimiter and closed=true, or len(line) when
+// the line ends first, with carried=true when a backslash escapes the line break itself: the
+// string then continues on the next line, in Python, C and Rust alike.
+func scanQuoted(line string, i int, closing string) (end int, closed, carried bool) {
+	for j := i; j < len(line); j++ {
+		if line[j] == '\\' {
+			if escapesLineBreak(line, j) {
+				return len(line), false, true
+			}
 			j++
-		case quote:
-			return j + 1
+			continue
+		}
+		if strings.HasPrefix(line[j:], closing) {
+			return j + len(closing), true, false
 		}
 	}
-	return len(line)
+	return len(line), false, false
+}
+
+// escapesLineBreak reports whether the backslash at j is the last byte of the line, ignoring
+// the carriage return of a CRLF line ending.
+func escapesLineBreak(line string, j int) bool {
+	return j == len(line)-1 || (j == len(line)-2 && line[len(line)-1] == '\r')
 }
 
 // charLiteralWidth returns the byte width of a character literal starting at i ('x' or
@@ -511,18 +539,26 @@ func scanPythonLines(lines []string, rel string, rep *ScanReport, opts ScanOptio
 
 // observe feeds one physical line.
 //
-// A line that starts inside an open bracket or a triple-quoted string continues the statement
-// above it, so its indentation says nothing about which function it belongs to. Reading it as
-// a dedent closed a black-formatted function at its `) -> T:` line and a function holding a
-// column-0 multi-line string at that string, leaving the rest of the body in no function.
+// A line that starts inside an open bracket or a string continues the statement above it, so
+// its indentation says nothing about which function it belongs to. Reading it as a dedent
+// closed a black-formatted function at its `) -> T:` line and a function holding a column-0
+// multi-line string at that string, leaving the rest of the body in no function.
+//
+// A statement such as def, class or return can never start a line inside a bracket, so one met
+// at a carried depth means the depth is wrong (a bracket inside an f-string replacement field
+// that reuses its quote, say). The depth resets there, so one misread bracket costs at most
+// the lines up to the next such statement rather than every function below it.
 func (s *pythonScanner) observe(idx int, line string) {
+	trimmed := strings.TrimSpace(line)
+	if s.depth > 0 && s.stripper.fence == "" && beginsPythonStatement(trimmed) {
+		s.depth = 0
+	}
 	continued := s.stripper.fence != "" || s.depth > 0
 	code := s.stripper.strip(line)
 	scanPythonLineInvariants(code, s.rel, idx+1, s.rep)
 	if !s.abort.observe(line, code, s.joiner.continues(code)) {
 		checkPythonAbort(code, s.rel, idx+1, s.rep)
 	}
-	trimmed := strings.TrimSpace(line)
 	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 		return
 	}
@@ -616,13 +652,39 @@ func isPythonDef(trimmed string) bool {
 	return strings.HasPrefix(trimmed, "def ") || strings.HasPrefix(trimmed, "async def ")
 }
 
+// opensPythonScope reports whether a statement line opens a def or class.
+func opensPythonScope(trimmed string) bool {
+	return isPythonDef(trimmed) || strings.HasPrefix(trimmed, "class ")
+}
+
+// pythonStatementOnly holds the keywords that only ever begin a statement. None of them can
+// start a line inside an open bracket, unlike if, else, for, from, lambda or await, which an
+// expression continued across lines may start with.
+var pythonStatementOnly = map[string]bool{
+	"def": true, "class": true, "return": true, "import": true, "raise": true, "del": true,
+	"pass": true, "break": true, "continue": true, "global": true, "nonlocal": true,
+	"assert": true, "while": true, "with": true, "try": true, "except": true, "finally": true,
+	"elif": true,
+}
+
+// beginsPythonStatement reports whether a line starts with a statement-only keyword. async is
+// one only before def or with: `async for` may continue a comprehension.
+func beginsPythonStatement(trimmed string) bool {
+	word := leadingIdent(trimmed)
+	if word == "async" {
+		next := leadingIdent(trimmed[len(word):])
+		return next == "def" || next == "with"
+	}
+	return pythonStatementOnly[word]
+}
+
 // openScope pushes the def or class this line opens, if any. A nested def binds its name in
 // every enclosing function, so a bare call to that name there reaches the nested def.
 func (s *pythonScanner) openScope(trimmed string, idx, indent int) {
-	isClass := strings.HasPrefix(trimmed, "class ")
-	if !isClass && !isPythonDef(trimmed) {
+	if !opensPythonScope(trimmed) {
 		return
 	}
+	isClass := strings.HasPrefix(trimmed, "class ")
 	name := leadingIdent(strings.TrimPrefix(trimmed, "class "))
 	if !isClass {
 		name = extractPythonFuncName(trimmed)
@@ -783,7 +845,7 @@ func (s *rustScanner) scanLine(lines []string, idx int) {
 	}
 	wasOpen := s.fn.inFunc
 	s.fn.observe(code, strings.TrimSpace(line), idx, isHeader, name)
-	s.calls.observe(rustLine{code: code, num: idx + 1, header: isHeader, name: name, inImpl: s.blocks.inImpl(),
+	s.calls.observe(rustLine{code: code, num: idx + 1, header: isHeader, name: name, body: s.blocks.kind(),
 		entered: !wasOpen && s.fn.start == idx+1, open: s.fn.inFunc, pending: s.fn.pending})
 	s.blocks.observe(code)
 	// The header line of fn main is part of it even when the body closes on that same line

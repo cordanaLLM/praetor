@@ -196,6 +196,14 @@ func TestRustSelfRecursionFollowsResolution(t *testing.T) {
 		"string":       "fn f() {\n    let s = \"f()\";\n}\n",
 		"macro":        "fn vec() -> Vec<u8> {\n    vec![1]\n}\n",
 		"other method": "fn len(v: &[u8]) -> usize {\n    v.len()\n}\n",
+		// Inside `impl Trait for T` an inherent T::f outranks the trait method, and Self::f
+		// picks among T's impls by argument type; rustc compiles both of these clean with
+		// -D unconditional_recursion.
+		"trait impl to inherent": "impl W {\n    fn count_ones(&self) -> u32 {\n        self.0.count_ones()\n    }\n}\nimpl Ones for W {\n    fn count_ones(&self) -> u32 {\n        self.count_ones()\n    }\n}\n",
+		"trait impl cross From":  "impl From<A> for E {\n    fn from(_a: A) -> Self {\n        Self::from(B)\n    }\n}\n",
+		"trait impl wrapped":     "impl<T: Copy> Ones\n    for W<T>\nwhere\n    T: Default,\n{\n    fn count_ones(&self) -> u32 {\n        self.count_ones()\n    }\n}\n",
+		"unsafe trait impl":      "unsafe impl<T> Sync for W<T> {\n    fn sync(&self) {\n        self.sync()\n    }\n}\n",
+		"nested in trait impl":   "impl Drop for W {\n    fn drop(&mut self) {\n        if self.0 {\n            Self::drop(self);\n        }\n    }\n}\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			assertSelfCalls(t, "src/lib.rs", src)
@@ -210,6 +218,15 @@ func TestRustSelfRecursionBoundaries(t *testing.T) {
 	assertSelfCalls(t, "src/c.rs", "fn outer(n: u32) -> u32 {\n    let f = || outer(n - 1);\n    f()\n}\n", 2)
 	assertSelfCalls(t, "src/i.rs", "impl S {\n    fn m(&self) {}\n}\n\nfn walk(n: u32) {\n    walk(n)\n}\n", 6)
 	assertSelfCalls(t, "src/t.rs", "trait T {\n    fn f(&self) -> u32 {\n        self.f()\n    }\n}\n", 3)
+	// A for inside the generic list or a where clause is a higher-ranked bound, not a trait
+	// impl, so these inherent impls stay decided.
+	assertSelfCalls(t, "src/h.rs", "impl<F: for<'a> Fn(&'a u8)> Wrap<F> {\n    fn run(&self) {\n        self.run()\n    }\n}\n", 3)
+	assertSelfCalls(t, "src/wh.rs", "impl<F> Wrap<F>\nwhere\n    F: for<'a> Fn(&'a u8),\n{\n    fn run(&self) {\n        self.run()\n    }\n}\n", 6)
+	// A trait impl's scope ends at its closing brace: the inherent impl after it is decided.
+	assertSelfCalls(t, "src/after.rs", "impl Default for S {\n    fn default() -> Self {\n        Self::default()\n    }\n}\nimpl S {\n    fn walk(&self) {\n        self.walk()\n    }\n}\n", 8)
+	// The recorded gap: real recursion inside a trait impl is not reported, because only the
+	// absence of an inherent next anywhere in the crate makes it recursion.
+	assertSelfCalls(t, "src/gap.rs", "impl Iterator for C {\n    type Item = u32;\n    fn next(&mut self) -> Option<u32> {\n        self.next()\n    }\n}\n")
 
 	var src strings.Builder
 	src.WriteString("fn f(n: u32) -> u32 {\n")
@@ -259,6 +276,12 @@ func TestPythonSelfRecursionFollowsResolution(t *testing.T) {
 		"string":         "def f():\n    return \"f()\"\n",
 		"comment":        "def f():\n    # f()\n    return 1\n",
 		"default at def": "def f(n=f):\n    return n\n",
+		// The string continues past its backslash, so load closes after it and the call in
+		// check is not load's.
+		"backslash string": "def load(path):\n    raise ValueError('bad \\\n        \"{0}\"'.format(path))\n\ndef check():\n    return load(\"x\")\n",
+		// A misread bracket resets at the next statement-only line, so g still ends before
+		// the module-level call.
+		"statement resets depth": "def g(d):\n    x = f\"{d[\"(\"]}\"\n    return x\ny = g(1)\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			assertSelfCalls(t, "m.py", src)
@@ -275,6 +298,77 @@ func TestPythonSelfRecursionBoundaries(t *testing.T) {
 	assertSelfCalls(t, "wrap.py", "def walk(\n    node,\n) -> int:\n    return walk(node.next)\n", 4)
 	assertSelfCalls(t, "doc.py", "def f(n):\n    s = \"\"\"\ncolumn zero\n\"\"\"\n    return f(n)\n", 5)
 	assertSelfCalls(t, "own.py", "class Outer:\n    class Inner:\n        @staticmethod\n        def g():\n            return Outer.g()\n        @staticmethod\n        def h():\n            return Inner.h()\n", 8)
+}
+
+// TestPythonStringAndBracketRecovery covers the edges of continuation tracking: an escaped
+// quote does not close a triple-quoted string, a def resets a misread bracket depth, and a
+// line that an expression may legitimately start with (for, async for) is not a reset.
+func TestPythonStringAndBracketRecovery(t *testing.T) {
+	assertSelfCalls(t, "tq.py", "def pattern():\n    return r\"\"\"say \\\"\"\" twice\"\"\"\n\ndef walk(n):\n    return walk(n - 1)\n", 5)
+	assertSelfCalls(t, "fs.py", "def label(d):\n    return f\"{d[\"(\"]}\"\n\ndef walk(n):\n    return walk(n - 1)\n", 5)
+	assertSelfCalls(t, "crlf.py", "def load(p):\r\n    raise E('a \\\r\n        b'.format(p))\r\n\r\ndef check():\r\n    return load(1)\r\n")
+	assertSelfCalls(t, "comp.py", "def f(xs):\n    ys = [x\nfor x in xs]\n    return f(ys)\n", 4)
+	assertSelfCalls(t, "acomp.py", "async def f(xs):\n    ys = [x\nasync for x in xs]\n    return await f(ys)\n", 4)
+}
+
+// TestLiteralStripperCarriesEscapedLineBreaks pins the stripper at the line break: a trailing
+// backslash carries a quoted string onto the next line in Python and C alike, a single-quoted
+// string without one ends with its line, and a block comment honours no escapes.
+func TestLiteralStripperCarriesEscapedLineBreaks(t *testing.T) {
+	for name, tc := range map[string]struct {
+		syn   literalSyntax
+		lines []string
+		want  []string
+	}{
+		"python carried":       {pythonSyntax, []string{"x = 'a \\", "b' + f(", ")"}, []string{"x = ", " + f(", ")"}},
+		"python crlf carried":  {pythonSyntax, []string{"x = 'a \\\r", "b' + f(\r"}, []string{"x = ", " + f(\r"}},
+		"python unterminated":  {pythonSyntax, []string{"x = 'abc", "y = f("}, []string{"x = ", "y = f("}},
+		"python escaped fence": {pythonSyntax, []string{"s = \"\"\"a \\\"\"\" b\"\"\"", "f("}, []string{"s = ", "f("}},
+		"triple spans lines":   {pythonSyntax, []string{"s = '''a \\", "b''' + g("}, []string{"s = ", " + g("}},
+		"c carried":            {cLikeSyntax, []string{"char *s = \"a\\", "b\"; f();"}, []string{"char *s = ", "; f();"}},
+		"c block no escape":    {cLikeSyntax, []string{"/* a \\*/ b"}, []string{" b"}},
+		"empty line":           {pythonSyntax, []string{""}, []string{""}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := &literalStripper{syn: tc.syn}
+			for i, line := range tc.lines {
+				if got := s.strip(line); got != tc.want[i] {
+					t.Fatalf("line %d: strip(%q) = %q, want %q", i, line, got, tc.want[i])
+				}
+			}
+			if s.fence != "" {
+				t.Fatalf("fence %q left open after the last line", s.fence)
+			}
+		})
+	}
+}
+
+// TestRustHeaderKind pins the classification that decides whether a method's self-call is
+// judged: only a top-level for outside the generic list and before any where clause makes an
+// impl a trait impl.
+func TestRustHeaderKind(t *testing.T) {
+	for header, want := range map[string]rustBodyKind{
+		"impl W":                           rustInherentBody,
+		"impl<T> W<T>":                     rustInherentBody,
+		"impl<F: for<'a> Fn(&'a u8)> W<F>": rustInherentBody,
+		"impl<F> W<F> where F: for<'a> Fn(&'a u8)": rustInherentBody,
+		"impl dyn Any":                             rustInherentBody,
+		"impl Ones for W":                          rustTraitImplBody,
+		"impl<T> From<T> for W":                    rustTraitImplBody,
+		"unsafe impl Send for W":                   rustTraitImplBody,
+		"impl !Send for W":                         rustTraitImplBody,
+		"impl<F: Fn() -> u8> Tr for W<F>":          rustTraitImplBody,
+		"impl Foo for for<'a> fn(&'a u8)":          rustTraitImplBody,
+		"impl<T> Tr<T>     for W<T> where T: Copy": rustTraitImplBody,
+		"pub trait T":                              rustTraitBody,
+		"pub(crate) unsafe trait T: Send":          rustTraitBody,
+		"fn f()":                                   rustFreeBody,
+		"":                                         rustFreeBody,
+	} {
+		if got := rustHeaderKind(header); got != want {
+			t.Errorf("rustHeaderKind(%q) = %d, want %d", header, got, want)
+		}
+	}
 }
 
 // TestPythonContinuationLinesStayInTheirFunction pins the HISS-04 half of the continuation

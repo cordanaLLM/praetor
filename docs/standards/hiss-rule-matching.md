@@ -121,23 +121,41 @@ rule:
 | Python plain function | `f()`, including from a nested def | a parameter, assignment, loop target, `as` target, import or nested def named `f` |
 | Python method | `self.f()`, `cls.f()`, `Owner.f()` | bare `f()` (reaches the module-level `f`), `self.inner.f()`, `super().f()` |
 | Rust free function | `f()`, including from a closure | `other::f()`, a `let`, closure parameter, match binding or nested `fn` named `f` |
-| Rust method or associated function | `self.f()`, `Self::f()` | bare `f()` inside the `impl` or `trait` body (reaches a free function) |
+| Rust method or associated function in `impl T` or `trait T` | `self.f()`, `Self::f()` | bare `f()` inside the `impl` or `trait` body (reaches a free function) |
+| Rust function in `impl Trait for T` | nothing | `self.f()` and `Self::f()`, which reach an inherent `T::f` first, or another impl when `Self::f` is picked by argument type (`Self::from(b)` inside `From<A>` reaches `From<B>`) |
 
 A finding is decided when the function closes rather than at the call, because a Python binding
 later in the body makes the name local for all of it.
 
-The Python scanner also treats a line that starts inside an open bracket or a triple-quoted
-string as a continuation of the statement above it. Reading its indentation as a dedent ended a
+A trait impl is left undecided because one function's text cannot tell forwarding from recursion
+there: the inherent method that `self.f()` would reach may sit in any file of the crate. Deciding
+it anyway reported idiomatic forwarding, a trait method calling the inherent method of the same
+name or `Self::from` reaching a different `From` impl, which rustc compiles clean with
+`-D unconditional_recursion`. `HISS-01/rust/negative/trait-impl-forwarding.rs` holds both shapes
+and `HISS-01/rust/gap/trait-impl-self-call.rs` the real recursion this leaves unseen.
+`rustHeaderKind` in `internal/hiss/selfcall.go` classifies each `impl` header, including one
+rustfmt wraps across lines, and `TestRustHeaderKind` pins it.
+
+The Python scanner also treats a line that starts inside an open bracket or a string as a
+continuation of the statement above it. Reading its indentation as a dedent ended a
 black-formatted function at its `) -> T:` line, and a function holding a column-0 string at that
 string, so neither body was measured for HISS-04 or scanned for recursion.
 `TestPythonContinuationLinesStayInTheirFunction` in `internal/hiss/recursion_test.go` pins it.
 
+That tracking depends on the literal stripper reading strings the way Python does: a trailing
+backslash carries a quoted string onto the next line, and `\"""` does not close a triple-quoted
+string. When the stripper still misreads one, as with a Python 3.12 f-string field that reuses its
+quote, the carried bracket depth resets at the next line that starts with a statement-only keyword
+(`def`, `class`, `return`, `import` and the like), which no bracket can hold. A misread then costs
+the lines up to that statement, not every function below it.
+`TestLiteralStripperCarriesEscapedLineBreaks` and `TestPythonStringAndBracketRecovery` pin both.
+
 Mutual and indirect recursion need a call graph across functions and stay undecided for both
-languages, as do nested-fn recursion, turbofish or path-qualified self-calls in Rust, and lambda
-recursion in Python. `HISS-01/rust/gap/` and `HISS-01/python/gap/` record each one. So does
-`HISS-01/rust/gap/unrecognised-header.rs`: a function behind a header the Rust scanner does not
-recognise yet (`pub(super)`, `const`, `unsafe` or `extern fn`) is never opened, so its self-call
-goes unseen.
+languages, as do nested-fn recursion, recursion inside a trait impl, turbofish or path-qualified
+self-calls in Rust, and lambda recursion in Python. `HISS-01/rust/gap/` and `HISS-01/python/gap/`
+record each one. So does `HISS-01/rust/gap/unrecognised-header.rs`: a function behind a header the
+Rust scanner does not recognise yet (`pub(super)`, `const`, `unsafe` or `extern fn`) is never
+opened, so its self-call goes unseen.
 
 ## HISS-20: claims are replayed
 
