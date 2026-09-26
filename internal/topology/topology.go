@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,6 +24,9 @@ var (
 	ErrDevRootNotExist = errors.New("dev root directory does not exist")
 	// ErrDevRootNotDir indicates the dev root path is not a directory.
 	ErrDevRootNotDir = errors.New("dev root path is not a directory")
+	// ErrScanTruncated indicates cleanup refused to act on an audit that did not cover the
+	// whole tree; the report's TruncationReasons name the unaudited parts.
+	ErrScanTruncated = errors.New("topology audit incomplete; cleanup refused")
 )
 
 // KnownOrgContainers lists recognized organization directories under dev root (DEV-01).
@@ -39,6 +43,7 @@ var KnownOrgContainers = map[string]bool{
 }
 
 // StrayGovernanceNames lists governance artifacts that must not exist in org containers or dev root.
+// A match is an audit finding; whether cleanup may remove it is decided by autoCleanNames.
 var StrayGovernanceNames = map[string]bool{
 	".agents":                   true,
 	"agents.md":                 true,
@@ -73,6 +78,24 @@ var StrayGovernanceNames = map[string]bool{
 	".vscode":                   true,
 	".windsurfrules":            true,
 	".zed":                      true,
+}
+
+// autoCleanNames is the subset of StrayGovernanceNames whose name alone identifies an
+// artifact Praetor manages: its configuration and state files, the lefthook config it
+// installs, and the agent-instruction files compile-context emits. Every other name in
+// StrayGovernanceNames (docs, lua, Makefile, .config, .github, .vscode, .editorconfig, ...)
+// is shared with ordinary operator content, so a finding under it needs manual review
+// (BUG-320).
+var autoCleanNames = map[string]bool{
+	"agents.md":                 true,
+	"claude.md":                 true,
+	"lefthook.yml":              true,
+	".needs.yaml":               true,
+	".standards-baseline.json":  true,
+	".standards.lock":           true,
+	"standards.sublime-project": true,
+	".standards.yaml":           true,
+	".windsurfrules":            true,
 }
 
 // StrayFile represents an misplaced file or directory violating workstation topology.
@@ -119,14 +142,44 @@ type TopologyReport struct {
 	Symlinks      []string    `json:"symlinks"`
 	StrayFiles    []StrayFile `json:"stray_files"`
 	Violations    []string    `json:"violations"`
+	// Truncated is true when a MaxScanEntries bound or an unreadable directory left part of
+	// the tree unaudited. The findings are then a lower bound, not an exhaustive result.
+	Truncated         bool     `json:"truncated"`
+	TruncationReasons []string `json:"truncation_reasons"`
+}
+
+func (r *TopologyReport) markTruncated(reason string) {
+	r.Truncated = true
+	r.TruncationReasons = append(r.TruncationReasons, reason)
+}
+
+// boundScanEntries caps a directory listing at MaxScanEntries (HISS-02) and records the
+// cut, so a bounded scan is never reported as an exhaustive one (BUG-904).
+func boundScanEntries(entries []os.DirEntry, scope string, report *TopologyReport) []os.DirEntry {
+	if len(entries) <= MaxScanEntries {
+		return entries
+	}
+	report.markTruncated(fmt.Sprintf("%s: scan stopped after %d of %d entries (MaxScanEntries)",
+		scope, MaxScanEntries, len(entries)))
+	return entries[:MaxScanEntries]
+}
+
+// scanInterrupted reports a cancelled or expired context. Every scan and deletion loop
+// iteration checks it, so the caller's deadline bounds the whole operation (BUG-609).
+func scanInterrupted(ctx context.Context, phase string) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("topology %s interrupted: %w", phase, err)
+	}
+	return nil
 }
 
 // AuditWorkstationTopology audits devRoot against the workstation topology rules it
 // implements: DEV-01 (repositories live in organization folders) and DEV-02 (no root
-// compatibility symlinks). DEV-03 through DEV-05 are not evaluated here.
+// compatibility symlinks). DEV-03 through DEV-05 are not evaluated here. A context that ends
+// mid-scan returns an error and no partial report.
 func AuditWorkstationTopology(ctx context.Context, devRoot string) (*TopologyReport, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("context cancelled: %w", err)
+	if err := scanInterrupted(ctx, "audit"); err != nil {
+		return nil, err
 	}
 
 	normRoot, err := validateDevRoot(devRoot)
@@ -135,12 +188,13 @@ func AuditWorkstationTopology(ctx context.Context, devRoot string) (*TopologyRep
 	}
 
 	report := &TopologyReport{
-		DevRoot:       normRoot,
-		ValidRepos:    make([]string, 0),
-		OrgContainers: make([]string, 0),
-		Symlinks:      make([]string, 0),
-		StrayFiles:    make([]StrayFile, 0),
-		Violations:    make([]string, 0),
+		DevRoot:           normRoot,
+		ValidRepos:        make([]string, 0),
+		OrgContainers:     make([]string, 0),
+		Symlinks:          make([]string, 0),
+		StrayFiles:        make([]StrayFile, 0),
+		Violations:        make([]string, 0),
+		TruncationReasons: make([]string, 0),
 	}
 
 	entries, err := os.ReadDir(normRoot)
@@ -148,15 +202,14 @@ func AuditWorkstationTopology(ctx context.Context, devRoot string) (*TopologyRep
 		return nil, fmt.Errorf("read dev root: %w", err)
 	}
 
-	scanCount := 0
-	for _, entry := range entries {
-		if scanCount >= MaxScanEntries {
-			break
+	for _, entry := range boundScanEntries(entries, "dev root", report) {
+		if err := scanInterrupted(ctx, "audit"); err != nil {
+			return nil, err
 		}
-		scanCount++
-
 		entryPath := filepath.Join(normRoot, entry.Name())
-		processDevRootEntry(ctx, normRoot, entry, entryPath, report)
+		if err := processDevRootEntry(ctx, entry, entryPath, report); err != nil {
+			return nil, err
+		}
 	}
 
 	return report, nil
@@ -181,7 +234,7 @@ func validateDevRoot(devRoot string) (string, error) {
 	return normRoot, nil
 }
 
-func processDevRootEntry(ctx context.Context, normRoot string, entry os.DirEntry, entryPath string, report *TopologyReport) {
+func processDevRootEntry(ctx context.Context, entry os.DirEntry, entryPath string, report *TopologyReport) error {
 	lowerName := strings.ToLower(entry.Name())
 
 	// Check if entry is a symlink (DEV-02: root compatibility symlinks are prohibited)
@@ -195,26 +248,30 @@ func processDevRootEntry(ctx context.Context, normRoot string, entry os.DirEntry
 		})
 		report.Violations = append(report.Violations,
 			fmt.Sprintf("DEV-02: root compatibility symlink %s violates canonical path invariant", entry.Name()))
-		return
+		return nil
 	}
 
 	if !entry.IsDir() {
-		checkDevRootFile(entryPath, lowerName, report)
-		return
+		checkDevRootFile(entryPath, lowerName, entry.Type(), report)
+		return nil
 	}
 
 	if KnownOrgContainers[lowerName] {
 		report.OrgContainers = append(report.OrgContainers, entry.Name())
-		auditOrgContainer(ctx, normRoot, entryPath, entry.Name(), report)
-		return
+		return auditOrgContainer(ctx, entryPath, entry.Name(), report)
 	}
 
 	// Any unrecognized directory in dev root with .git is violating DEV-01
-	childGit := filepath.Join(entryPath, ".git")
-	if _, err := os.Stat(childGit); err == nil {
+	_, err := os.Stat(filepath.Join(entryPath, ".git"))
+	switch {
+	case err == nil:
 		report.Violations = append(report.Violations,
 			fmt.Sprintf("DEV-01: repository %s is located directly in dev root instead of an org folder", entry.Name()))
+	case !errors.Is(err, os.ErrNotExist):
+		report.markTruncated(fmt.Sprintf("%s: DEV-01 not evaluated, git metadata could not be inspected: %v",
+			entry.Name(), err))
 	}
+	return nil
 }
 
 func isSymlink(path string) bool {
@@ -225,41 +282,63 @@ func isSymlink(path string) bool {
 	return lInfo.Mode()&os.ModeSymlink != 0
 }
 
-func checkDevRootFile(path, lowerName string, report *TopologyReport) {
+func checkDevRootFile(path, lowerName string, mode fs.FileMode, report *TopologyReport) {
 	// Dev root is allowed to have AGENTS.md, workstation workspace, and snapshot inventory
 	if lowerName == "agents.md" || strings.HasSuffix(lowerName, ".code-workspace") || strings.HasPrefix(lowerName, ".snapshot-inventory") {
 		return
 	}
-	if StrayGovernanceNames[lowerName] {
-		report.StrayFiles = append(report.StrayFiles, StrayFile{
-			Path:           path,
-			RelPath:        filepath.Base(path),
-			Reason:         "governance file misplaced in dev root instead of repository",
-			IsSafeToDelete: true,
-		})
+	if !StrayGovernanceNames[lowerName] {
+		return
 	}
+	finding := StrayFile{
+		Path:           path,
+		RelPath:        filepath.Base(path),
+		Reason:         "governance file misplaced in dev root instead of repository",
+		IsSafeToDelete: true,
+	}
+	if reason, reviewed := manualReviewReason(lowerName, mode, "dev root"); reviewed {
+		finding.Reason = reason
+		finding.IsSafeToDelete = false
+	}
+	report.StrayFiles = append(report.StrayFiles, finding)
 }
 
-func auditOrgContainer(ctx context.Context, devRoot, orgPath, orgName string, report *TopologyReport) {
+// manualReviewReason decides whether a governance-named entry needs manual review before
+// removal. Cleanup acts on a name match only for an autoCleanNames artifact that is a
+// regular file or a symlink; a directory is never removed on its name alone, because the
+// removal would recurse into whatever the operator keeps there (BUG-320).
+func manualReviewReason(lowerName string, mode fs.FileMode, location string) (string, bool) {
+	if mode.IsDir() {
+		return fmt.Sprintf("governance-named directory in %s; a name match never authorizes recursive deletion, review manually", location), true
+	}
+	if !mode.IsRegular() && mode&fs.ModeSymlink == 0 {
+		return fmt.Sprintf("governance-named special file in %s; only regular files and symlinks are cleaned automatically", location), true
+	}
+	if !autoCleanNames[lowerName] {
+		return fmt.Sprintf("governance-named entry in %s shares its name with ordinary operator content, review manually", location), true
+	}
+	return "", false
+}
+
+func auditOrgContainer(ctx context.Context, orgPath, orgName string, report *TopologyReport) error {
 	lowerOrg := strings.ToLower(orgName)
 	if lowerOrg == "scratch" || lowerOrg == "worktrees" {
-		return
+		return nil
 	}
 
 	entries, err := os.ReadDir(orgPath)
 	if err != nil {
-		return
+		report.markTruncated(fmt.Sprintf("organization container %s could not be read: %v", orgName, err))
+		return nil
 	}
+	entries = boundScanEntries(entries, "organization container "+orgName, report)
 	orgGitState, orgGitErr := inspectWorktreeGitMetadata(orgPath)
 
-	scanCount := 0
 	hasChildRepos := false
 	for _, entry := range entries {
-		if scanCount >= MaxScanEntries {
-			break
+		if err := scanInterrupted(ctx, "audit"); err != nil {
+			return err
 		}
-		scanCount++
-
 		childPath := filepath.Join(orgPath, entry.Name())
 		if entry.IsDir() && HasValidGitRepo(childPath) {
 			hasChildRepos = true
@@ -270,19 +349,16 @@ func auditOrgContainer(ctx context.Context, devRoot, orgPath, orgName string, re
 	if isProtectedGitState(orgGitState, orgGitErr) {
 		auditStrayGitDir(filepath.Join(orgPath, ".git"), filepath.Join(orgName, ".git"),
 			hasChildRepos, orgGitState, orgGitErr, report)
-		return
+		return nil
 	}
-	auditOrgStrayEntries(orgPath, orgName, entries, hasChildRepos, report)
+	return auditOrgStrayEntries(ctx, orgPath, orgName, entries, hasChildRepos, report)
 }
 
-func auditOrgStrayEntries(orgPath, orgName string, entries []os.DirEntry, hasChildRepos bool, report *TopologyReport) {
-	scanCount := 0
+func auditOrgStrayEntries(ctx context.Context, orgPath, orgName string, entries []os.DirEntry, hasChildRepos bool, report *TopologyReport) error {
 	for _, entry := range entries {
-		if scanCount >= MaxScanEntries {
-			break
+		if err := scanInterrupted(ctx, "audit"); err != nil {
+			return err
 		}
-		scanCount++
-
 		name := entry.Name()
 		lowerName := strings.ToLower(name)
 		entryPath := filepath.Join(orgPath, name)
@@ -298,27 +374,34 @@ func auditOrgStrayEntries(orgPath, orgName string, entries []os.DirEntry, hasChi
 			auditGovernanceEntry(entry, entryPath, relPath, orgName, report)
 		}
 	}
+	return nil
 }
 
 func auditGovernanceEntry(entry os.DirEntry, entryPath, relPath, orgName string, report *TopologyReport) {
-	reason := fmt.Sprintf("stray governance file in organization container %s (DEV-01)", orgName)
-	safe := true
+	finding := StrayFile{
+		Path:           entryPath,
+		RelPath:        relPath,
+		Reason:         fmt.Sprintf("stray governance file in organization container %s (DEV-01)", orgName),
+		IsSafeToDelete: true,
+	}
 	if entry.IsDir() {
 		state, inspectErr := inspectWorktreeGitMetadata(entryPath)
 		if state == gitMetadataLive {
 			return
 		}
 		if inspectErr != nil || state == gitMetadataUnknown {
-			reason = "governance-named directory contains git metadata that could not be inspected safely"
-			safe = false
+			finding.Reason = "governance-named directory contains git metadata that could not be inspected safely"
+			finding.IsSafeToDelete = false
+			report.StrayFiles = append(report.StrayFiles, finding)
+			return
 		}
 	}
-	report.StrayFiles = append(report.StrayFiles, StrayFile{
-		Path:           entryPath,
-		RelPath:        relPath,
-		Reason:         reason,
-		IsSafeToDelete: safe,
-	})
+	location := "organization container " + orgName + " (DEV-01)"
+	if reason, reviewed := manualReviewReason(strings.ToLower(entry.Name()), entry.Type(), location); reviewed {
+		finding.Reason = reason
+		finding.IsSafeToDelete = false
+	}
+	report.StrayFiles = append(report.StrayFiles, finding)
 }
 
 func auditStrayGitDir(
@@ -460,11 +543,16 @@ func CleanWorkstationTopology(ctx context.Context, devRoot string, dryRun bool) 
 }
 
 // CleanWorkstationTopologyDetailed removes safe stray files and reports findings that
-// require manual review without changing the legacy CleanWorkstationTopology contract.
+// require manual review without changing the legacy CleanWorkstationTopology contract. It
+// refuses to act on a truncated audit (ErrScanTruncated) and stops between removals once
+// ctx ends, returning the removals made so far with the context error.
 func CleanWorkstationTopologyDetailed(ctx context.Context, devRoot string, dryRun bool) (*CleanResult, error) {
 	report, err := AuditWorkstationTopology(ctx, devRoot)
 	if err != nil {
 		return nil, fmt.Errorf("audit failed before clean: %w", err)
+	}
+	if report.Truncated {
+		return nil, fmt.Errorf("%w: %s", ErrScanTruncated, strings.Join(report.TruncationReasons, "; "))
 	}
 
 	result := &CleanResult{
@@ -472,6 +560,9 @@ func CleanWorkstationTopologyDetailed(ctx context.Context, devRoot string, dryRu
 		Blocked: make([]StrayFile, 0),
 	}
 	for _, stray := range report.StrayFiles {
+		if err := scanInterrupted(ctx, "clean"); err != nil {
+			return result, err
+		}
 		if !stray.IsSafeToDelete {
 			result.Blocked = append(result.Blocked, stray)
 			continue
@@ -528,6 +619,11 @@ func verifyDeletionSafety(devRoot, path string) error {
 	}
 	if pathIsSymlink || !pathInfo.IsDir() {
 		return nil
+	}
+	// The audit marks no directory safe except proven-headless .git metadata. A directory
+	// under any other name here means the tree changed after the audit: refuse (BUG-320).
+	if !strings.EqualFold(filepath.Base(cleanPath), ".git") {
+		return fmt.Errorf("cannot recursively delete a directory that is not git metadata: %s", cleanPath)
 	}
 	return verifyWorktreeDeletionTarget(cleanPath)
 }

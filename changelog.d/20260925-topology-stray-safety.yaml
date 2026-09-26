@@ -1,0 +1,3 @@
+type: fixed
+title: Stop topology clean from deleting operator content by name alone (generic names such as docs, lua, Makefile, .github and .vscode, and every directory except proven-headless .git metadata, now require manual review), honour context cancellation in every scan and removal iteration, and report MaxScanEntries cuts and unreadable organization containers as a truncated audit that fails the verdict and blocks cleanup
+breaking: false

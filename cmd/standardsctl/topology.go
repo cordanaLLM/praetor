@@ -108,6 +108,14 @@ func printTopologyAuditReport(report *topology.TopologyReport) {
 	fmt.Printf("Valid Leaf Repositories: %d\n", len(report.ValidRepos))
 	fmt.Printf("Compatibility Symlinks:  %d (%v)\n\n", len(report.Symlinks), report.Symlinks)
 
+	if report.Truncated {
+		fmt.Printf("--- Incomplete Scan (%d) ---\n", len(report.TruncationReasons))
+		for _, reason := range report.TruncationReasons {
+			fmt.Printf("  ! %s\n", reason)
+		}
+		fmt.Println()
+	}
+
 	if len(report.Violations) > 0 {
 		fmt.Printf("--- Invariant Violations (%d) ---\n", len(report.Violations))
 		for _, v := range report.Violations {
@@ -132,9 +140,13 @@ func printTopologyAuditReport(report *topology.TopologyReport) {
 // topologyAuditVerdict fails on any invariant violation or stray file. A violation alone,
 // such as a repository placed directly in the dev root, used to fall through to the pass
 // line; and that line claimed DEV-01 through DEV-05 while internal/topology evaluates only
-// DEV-01 and DEV-02 (BUG-817).
+// DEV-01 and DEV-02 (BUG-817). A truncated scan fails too: findings from a partial scan
+// are a lower bound, so a pass line would claim coverage the audit never had (BUG-904).
 func topologyAuditVerdict(report *topology.TopologyReport) error {
-	problems := make([]string, 0, 2)
+	problems := make([]string, 0, 3)
+	if report.Truncated {
+		problems = append(problems, fmt.Sprintf("an incomplete scan (%d truncation reasons)", len(report.TruncationReasons)))
+	}
 	if n := len(report.Violations); n > 0 {
 		problems = append(problems, fmt.Sprintf("%d invariant violations", n))
 	}
