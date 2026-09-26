@@ -21,10 +21,10 @@ Create `docs/adr/{NNNN}-{title}.md`:
 # ADR-NNNN: [Descriptive Decision Title]
 
 ## Status
-[Proposed | Accepted | Deprecated | Superseded by ADR-XXXX]
+[Draft | Proposed | Accepted | Superseded by ADR-XXXX]
 
 ## Context
-[What problem are we trying to solve? What are the technological, operational, or fleet constraints? What HISS invariants (HISS-01 through HISS-16) are impacted?]
+[What problem are we trying to solve? What are the technological, operational, or fleet constraints? Which HISS invariants from the AGENTS.md "Core Directives & Invariants" table are impacted?]
 
 ## Decision
 [What is the architectural or algorithmic choice? State the specific mechanisms, libraries, schemas, or protocols adopted. If resolving conflicts across profiles, demonstrate how the join-semilattice computes the supremum.]
@@ -48,4 +48,6 @@ Create `docs/adr/{NNNN}-{title}.md`:
 ## Checklist Before Submitting
 1. [ ] Correct 4-digit zero-padded index (`0003`, `0004`, etc.).
 2. [ ] Valid markdown with English prose in neutral professional register.
-3. [ ] Referenced from `README.md` or index docs if foundational.
+3. [ ] Row added to `docs/adr/README.md` "Decision Lattice Index" (every ADR: link, title, status, date) and entry `ADR-NNNN <short title>: adr/<file>.md` appended to `mkdocs.yml` nav group "Architectural Decisions (ADR)"; "Decision Lattice Index" there = README leaf, not group.
+4. [ ] Status follows `docs/adr/README.md` lifecycle: `Draft` -> `Proposed` -> `Accepted` -> `Superseded`; no other value.
+5. [ ] PR proposing or modifying ADR carries Ed25519 Exit-0 receipt signed by `standardsctl gate` (`docs/adr/README.md` Receipt Binding).

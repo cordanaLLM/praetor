@@ -1,17 +1,17 @@
 {% extends "base.html" %}
 
 {% block extrahead %}
-  <!-- Canonical URL -->
-  <link rel="canonical" href="{{ page.canonical_url or config.site_url ~ '/' ~ page.url }}" />
-
+  {#- base.html already writes <link rel="canonical"> from site_url. Static templates such
+      as 404.html render with page = None, so every page.* read sits behind this guard. -#}
+  {% if page %}
   <!-- Pre-wired Schema.org JSON-LD structured data -->
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@type": "TechArticle",
-    "headline": "{{ page.title | default(config.site_name) }}",
-    "description": "{{ page.meta.description | default(config.site_description) }}",
-    "url": "{{ page.canonical_url or config.site_url ~ '/' ~ page.url }}",
+    "headline": {{ (page.title or config.site_name) | tojson }},
+    "description": {{ ((page.meta and page.meta.description) or config.site_description) | tojson }},
+    "url": {{ (page.canonical_url or config.site_url ~ '/' ~ page.url) | tojson }},
     "author": {
       "@type": "Organization",
       "name": "cordanaLLM",
@@ -21,6 +21,7 @@
     "proficiencyLevel": "Expert"
   }
   </script>
+  {% endif %}
 
   <script type="application/ld+json">
   {

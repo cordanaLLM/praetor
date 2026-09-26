@@ -1,0 +1,3 @@
+type: added
+title: The caveman lint gains C13 unclosed-fence, always on like C1 to C6, so an AGENTS.md, persona or skill whose code fence is still open at the end of the file now fails caveman check, compile-context --verify and audit; adopted repositories close the fence (a template holding inner fences needs a longer outer fence), while a line that starts with a triple-backtick inline code span stays prose, as CommonMark defines it
+breaking: true

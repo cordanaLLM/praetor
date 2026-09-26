@@ -11,10 +11,9 @@ Welcome to the official documentation portal for `cordanaLLM/praetor`.
 
 ```mermaid
 flowchart TD
-    CONFIG[".standards.yaml"] --> COMPILER["standardsctl compile-context"]
-    COMPILER --> AGENTS["AGENTS.md (Canonical)"]
-    AGENTS --> VENDORS["CLAUDE.md / Cursor / Copilot"]
-    CONFIG --> CI["CI Status Checks (HISS)"]
+    AGENTS["AGENTS.md (Canonical)"] --> COMPILER["praetorctl compile-context"]
+    COMPILER --> VENDORS["CLAUDE.md / Cursor / Copilot"]
+    CONFIG[".standards.yaml"] --> CI["CI Status Checks (HISS)"]
 ```
 
 ## Highlights

@@ -53,6 +53,7 @@ type line struct {
 // scanner carries region state from one line to the next.
 type scanner struct {
 	fence      string
+	fenceOpen  int
 	lang       string
 	off        bool
 	comment    bool
@@ -98,6 +99,10 @@ func (s *scanner) next(num int, raw string) line {
 
 // open classifies a line outside every region and opens a region when the line starts one.
 func (s *scanner) open(num int, trimmed string) lineKind {
+	if delim, info := fenceOpener(trimmed); delim != "" {
+		s.fence, s.lang, s.fenceOpen = delim, info, num
+		return kindCode
+	}
 	switch {
 	case trimmed == "":
 		return kindBlank
@@ -105,10 +110,6 @@ func (s *scanner) open(num int, trimmed string) lineKind {
 		s.off, s.offOpen = true, num
 		s.offRegions++
 		return kindOff
-	case strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~"):
-		run := len(trimmed) - len(strings.TrimLeft(trimmed, trimmed[:1]))
-		s.fence, s.lang = trimmed[:run], strings.TrimSpace(trimmed[run:])
-		return kindCode
 	case strings.HasPrefix(trimmed, "<!--"):
 		s.comment = !strings.Contains(trimmed, "-->")
 		return kindStructured
@@ -116,6 +117,22 @@ func (s *scanner) open(num int, trimmed string) lineKind {
 		return kindStructured
 	}
 	return kindProse
+}
+
+// fenceOpener returns the delimiter run and info string of a line that opens fenced code,
+// or an empty delimiter when the line opens none. CommonMark forbids a backtick inside the
+// info string of a backtick fence, so "```foo``` flag" is an inline code span, not a
+// fence; a tilde fence's info string may carry backticks.
+func fenceOpener(trimmed string) (delim, info string) {
+	if !strings.HasPrefix(trimmed, "```") && !strings.HasPrefix(trimmed, "~~~") {
+		return "", ""
+	}
+	run := len(trimmed) - len(strings.TrimLeft(trimmed, trimmed[:1]))
+	info = strings.TrimSpace(trimmed[run:])
+	if trimmed[0] == '`' && strings.Contains(info, "`") {
+		return "", ""
+	}
+	return trimmed[:run], info
 }
 
 // isStructured reports lines whose shape a parser or a reader depends on: headings, table

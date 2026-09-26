@@ -1,0 +1,3 @@
+type: changed
+title: Build the documentation site on Python 3.14 with a pinned mkdocs stack (pymdown-extensions 12.1), pin yamllint to 1.38.0 in the portability matrix, drop the nonexistent mkdocs-sitemap-plugin that made the preset requirements file uninstallable, and make the mkdocs preset pass its own strict build by listing only the pages it ships and guarding its template override against the 404 page
+breaking: false

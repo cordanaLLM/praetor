@@ -20,8 +20,8 @@ const (
 	RuleUnclosedOff    = "C6 unclosed-off-region"
 	// RuleWordCeiling fires when Options.MaxProseWords is set and the text carries more
 	// prose words than the ceiling. It is opt-in (a zero or negative MaxProseWords disables
-	// it), unlike C1-C6, because the ceiling is per surface (600 words for a persona or a
-	// skill; text-register.md), not a property of caveman prose in general.
+	// it), unlike C1-C6 and C13, because the ceiling is per surface (600 words for a persona
+	// or a skill; text-register.md), not a property of caveman prose in general.
 	RuleWordCeiling = "C7 word-ceiling"
 	// RuleTokenCeiling fires when Options.MaxTokens is set and EstimateTokens of the whole
 	// input (prose, code and structured lines together, since a dispatch pays for all of
@@ -43,6 +43,10 @@ const (
 	// RuleRuntimeEvidence rejects pointer-shaped evidence fields unless the complete field
 	// is the canonical path, digest and line-count form.
 	RuleRuntimeEvidence = "C12 runtime-evidence-pointer"
+	// RuleUnclosedFence fires when a fenced code block is still open at the end of the
+	// text. Everything after the opening fence then counts as code, so the other rules never
+	// see it: an unclosed fence in a skill template once hid a whole section from C1.
+	RuleUnclosedFence = "C13 unclosed-fence"
 )
 
 const (
@@ -234,11 +238,20 @@ func checkProfile(text string, opts Options, runtime bool) Report {
 	if opts.MaxTokens > 0 && report.EstimatedTokens > opts.MaxTokens {
 		found.add(0, RuleTokenCeiling, fmt.Sprintf("%d estimated tokens, limit %d", report.EstimatedTokens, opts.MaxTokens))
 	}
+	checkOpenRegions(&found, s)
+	report.Findings = found.sorted()
+	return report
+}
+
+// checkOpenRegions reports a caveman:off region or a fenced code block still open when the
+// text ends, at the line that opened it.
+func checkOpenRegions(found *findings, s scanner) {
 	if s.off {
 		found.add(s.offOpen, RuleUnclosedOff, OffMarker+" without "+OnMarker)
 	}
-	report.Findings = found.sorted()
-	return report
+	if s.fence != "" {
+		found.add(s.fenceOpen, RuleUnclosedFence, s.fence+" fence without a closing "+s.fence)
+	}
 }
 
 func checkProfileLines(report *Report, found *findings, lines []line, kind MessageKind, runtime bool) {

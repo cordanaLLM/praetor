@@ -104,6 +104,9 @@ func writeWikiPages(ctx context.Context, outputDir string, pages []WikiPage) err
 	return nil
 }
 
+// generateHomeWiki renders the portal page. Its diagram follows the real data flow:
+// AGENTS.md is compile-context's input (its --source default) and the vendor files are the
+// output; .standards.yaml feeds the audit, not the transpiler.
 func generateHomeWiki(repoName string) WikiPage {
 	content := fmt.Sprintf(`# %s Wiki Portal
 
@@ -113,9 +116,11 @@ Welcome to the official repository governance wiki for cordanaLLM.
 
 `+"```mermaid"+`
 flowchart LR
-    MANIFEST[".standards.yaml"] --> TRANSPILER["praetorctl compile-context"]
-    TRANSPILER --> AGENTS["AGENTS.md\n(Canonical Truth)"]
-    AGENTS --> GATES["Verification Cascade\n(make verify-all)"]
+    AGENTS["AGENTS.md\n(canonical source)"] --> TRANSPILER["praetorctl compile-context"]
+    TRANSPILER --> VENDORS["CLAUDE.md, .cursor/rules, copilot-instructions,\n.windsurfrules, GEMINI.md, .codex/rules.md"]
+    MANIFEST[".standards.yaml\n+ .standards.lock"] --> AUDIT["praetorctl audit"]
+    VENDORS --> GATES["Verification Cascade\n(make verify-all)"]
+    AUDIT --> GATES
     GATES --> RECEIPT["Ed25519 Exit-0 Receipt"]
 `+"```"+`
 
@@ -123,7 +128,7 @@ flowchart LR
 
 | Document | Description |
 | :--- | :--- |
-| [[HISS-16-Invariants]] | Formal specification for all 16 aerospace-derived software invariants. |
+| [[HISS-16-Invariants]] | The invariants AGENTS.md gates, with the rule and verification for each. |
 | [[Architecture-Lattice]] | Mathematical join-semilattice and Highest Standard Wins resolution. |
 | [[API-Reference]] | CLI commands, MCP tools, and multi-forge driver specifications. |
 `, repoName)
@@ -203,7 +208,7 @@ flowchart TD
     IDE["1. IDE / standards-lsp"] --> HOOKS["2. Pre-Commit / lefthook"]
     HOOKS --> PUSH["3. Pre-Push / audit"]
     PUSH --> CI["4. CI Ephemeral Sandbox"]
-    CI --> ADMIT["5. Admission Controller"]
+    CI --> ADMIT["5. PR Admission\n(standardsctl forge validate-pr in CI)"]
 ` + "```\n"
 
 	return WikiPage{
@@ -239,6 +244,37 @@ flowchart TD
 	}
 }
 
+// frameworkKitReference documents compile-framework-assets (ADR-0007 clause 5). The flags
+// follow cmd/standardsctl/compile_framework_assets.go and the keys FrameworkKitConfig in
+// internal/compiler/framework_assets.go.
+const frameworkKitReference = "- `praetorctl compile-framework-assets --config <kit.yaml> --output <dir>`: " +
+	"Writes a framework kit's `llms.txt`, `llms-full.txt`, `.agents/rules/<kit_name>.md` and " +
+	"starter templates (ADR-0007 clause 5).\n" +
+	"\n" +
+	"### Framework kit assets\n" +
+	"\n" +
+	"`compile-framework-assets` reads one YAML document with the keys `kit_name`, `language`, " +
+	"`version`, `description`, `rules`, `skills` and `components` (the `FrameworkKitConfig` " +
+	"fields in `internal/compiler/framework_assets.go`); any other key is refused. Both flags " +
+	"are required: `--output` has no default, so the fixed asset names never overwrite the " +
+	"working tree's own `llms.txt` by accident.\n" +
+	"\n" +
+	"```yaml\n" +
+	"kit_name: sveltesentio\n" +
+	"language: svelte\n" +
+	"version: 5.0.0\n" +
+	"description: Svelte 5 component library\n" +
+	"rules: [Use Svelte 5 runes exclusively]\n" +
+	"skills: [a11y-debugging]\n" +
+	"components: [Button, Modal]\n" +
+	"```\n" +
+	"\n" +
+	"`kit_name` names the agent rule file, so it must be one file-name component: 1-64 " +
+	"letters, digits, `.`, `_` or `-`, starting with a letter or digit. Anything else, such " +
+	"as `../x` or `a/b`, fails before any file is written " +
+	"(`TestCompileFrameworkAssets_RejectsUnsafeKitNameBeforeWriting` in " +
+	"`internal/compiler/framework_assets_test.go`).\n"
+
 func generateAPIReferenceWiki() WikiPage {
 	content := `# API & CLI Reference Manual
 
@@ -250,7 +286,7 @@ func generateAPIReferenceWiki() WikiPage {
 - ` + "`praetorctl compile-context`" + `: Transpiles AGENTS.md to CLAUDE.md, Cursor rules, and Copilot.
 - ` + "`praetorctl baseline`" + `: Records or verifies legacy brownfield technical debt.
 - ` + "`praetorctl audit`" + `: Validates 100% compliance against the active standards baseline.
-
+` + frameworkKitReference + `
 ## Multi-Forge Federation
 
 ` + "```mermaid" + `

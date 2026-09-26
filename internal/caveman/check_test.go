@@ -2,6 +2,7 @@ package caveman
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -120,6 +121,59 @@ func TestCheckBoundary(t *testing.T) {
 	// A wrapped sentence is one sentence: two 16-word lines without a break are 32 words.
 	if report := Check(words(16)+"\n"+words(16), Options{}); len(report.Findings) != 1 || report.Findings[0].Rule != RuleLongSentence {
 		t.Errorf("wrapped sentence: %v", report.Findings)
+	}
+}
+
+// TestCheckUnclosedFence covers C13: a fence still open at the end of the text fires at the
+// line that opened it, a closed fence of any length does not, and only a bare delimiter at
+// least as long as the opener closes it. A backtick in the info string of a backtick fence
+// makes the line an inline code span (CommonMark); a tilde fence may carry one.
+func TestCheckUnclosedFence(t *testing.T) {
+	fires := map[string]struct {
+		text string
+		line int
+	}{
+		"backtick":            {"gate\n```go\nx := 1", 2},
+		"tilde":               {"~~~\nlog", 1},
+		"hides prose":         {"```\nPlease rerun sync.", 1},
+		"nested template":     {"````markdown\n```mermaid\nflow\n```\n", 1},
+		"info string line":    {"```\nx\n```bash", 1},
+		"shorter closer":      {"````\nx\n```", 1},
+		"tilde backtick info": {"~~~ `x`\ncode", 1},
+		"after inline span":   {"```foo``` flag set\n```\ncode", 2},
+	}
+	for name, tc := range fires {
+		t.Run(name, func(t *testing.T) {
+			report := Check(tc.text, Options{})
+			if got := rulesOf(report); !reflect.DeepEqual(got, []string{RuleUnclosedFence}) {
+				t.Fatalf("rules = %v, want only %s", got, RuleUnclosedFence)
+			}
+			if report.Findings[0].Line != tc.line {
+				t.Fatalf("finding at line %d, want %d", report.Findings[0].Line, tc.line)
+			}
+		})
+	}
+	for name, text := range map[string]string{
+		"closed":                     "```\nx\n```",
+		"closed template":            "````markdown\n```mermaid\nflow\n```\n````",
+		"longer closer":              "```\nx\n````",
+		"crlf closed":                "```\r\nx\r\n```\r\n",
+		"inline only":                "run `make lint` then ```x``` inline",
+		"leading span":               "```foo``` flag set",
+		"tilde backtick info closed": "~~~ `x`\ncode\n~~~",
+	} {
+		if report := Check(text, Options{}); !report.Passed() {
+			t.Errorf("%s: want pass, got %v", name, report.Findings)
+		}
+	}
+	// The runtime profile rejects every fence line (C11) and still names the open fence.
+	runtime := rulesOf(CheckRuntime("```\nx", Options{Kind: KindMessage}))
+	if !slices.Contains(runtime, RuleRuntimeEscape) || !slices.Contains(runtime, RuleUnclosedFence) {
+		t.Errorf("runtime unclosed fence: rules = %v, want %s and %s", runtime, RuleRuntimeEscape, RuleUnclosedFence)
+	}
+	// A leading inline code span is prose to the runtime profile too, not a fence region.
+	if report := CheckRuntime("```foo``` flag set", Options{Kind: KindMessage}); !report.Passed() {
+		t.Errorf("runtime leading span: want pass, got %v", report.Findings)
 	}
 }
 

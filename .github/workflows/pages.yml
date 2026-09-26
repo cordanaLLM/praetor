@@ -43,12 +43,21 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.14'
 
+      # Pinned, not floating. Two jobs build this same mkdocs.yml: this one, and the
+      # "Documentation Integrity Audit" step in ci.yml. They do not resolve one tree. That
+      # step installs docs/presets/mkdocs/requirements.txt, whose entries are >= floors, so
+      # it floats to the newest releases above them, and it runs on the runner's system
+      # python3; this job pins mkdocs-material and pymdown-extensions to exactly those floors
+      # on setup-python 3.14. A PR can therefore pass the audit on a newer release and a
+      # different interpreter than the ones this job deploys with, or the reverse. Raising a
+      # floor in requirements.txt without raising the pin here leaves this job building a
+      # version requirements.txt no longer admits.
       - name: Install Documentation Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install mkdocs-material pymdown-extensions
+          pip install 'mkdocs-material==9.7.7' 'pymdown-extensions==12.1'
 
       - name: Build MkDocs Site (Strict Mode)
         run: mkdocs build --strict

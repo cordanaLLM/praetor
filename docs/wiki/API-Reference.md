@@ -1,14 +1,14 @@
 # API & CLI Reference Manual
 
-## standardsctl CLI Commands
+## praetorctl CLI Commands
 
-- `standardsctl init`: Scaffolds a new .standards.yaml manifest with profiles and facets.
-- `standardsctl plan`: Computes the lattice supremum and performs a dry-run drift calculation.
-- `standardsctl sync`: Applies declarative standards to branch protections, labels, and CI.
-- `standardsctl compile-context`: Transpiles AGENTS.md to CLAUDE.md, Cursor rules, and Copilot.
-- `standardsctl baseline`: Records or verifies legacy brownfield technical debt.
-- `standardsctl audit`: Validates 100% compliance against the active standards baseline.
-- `standardsctl compile-framework-assets --config <kit.yaml> --output <dir>`: Writes a framework kit's `llms.txt`, `llms-full.txt`, `.agents/rules/<kit_name>.md` and starter templates (ADR-0007 clause 5).
+- `praetorctl init`: Scaffolds a new .standards.yaml manifest with profiles and facets.
+- `praetorctl plan`: Computes the lattice supremum and performs a dry-run drift calculation.
+- `praetorctl sync`: Applies declarative standards to branch protections, labels, and CI.
+- `praetorctl compile-context`: Transpiles AGENTS.md to CLAUDE.md, Cursor rules, and Copilot.
+- `praetorctl baseline`: Records or verifies legacy brownfield technical debt.
+- `praetorctl audit`: Validates 100% compliance against the active standards baseline.
+- `praetorctl compile-framework-assets --config <kit.yaml> --output <dir>`: Writes a framework kit's `llms.txt`, `llms-full.txt`, `.agents/rules/<kit_name>.md` and starter templates (ADR-0007 clause 5).
 
 ### Framework kit assets
 
@@ -30,7 +30,7 @@ components: [Button, Modal]
 
 ```mermaid
 sequenceDiagram
-    participant CLI as standardsctl
+    participant CLI as praetorctl
     participant GH as GitHub Driver
     participant GL as GitLab Driver
     participant GT as Gitea Driver

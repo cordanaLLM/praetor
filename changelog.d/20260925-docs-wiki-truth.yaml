@@ -1,0 +1,3 @@
+type: fixed
+title: Draw the wiki and mkdocs preset data flow the right way round (AGENTS.md feeds compile-context, which writes the vendor files), republish every generator-owned wiki page from the generator with a test that keeps them byte-equal, and name the real PR admission check (forge validate-pr) in place of the unprovisioned cordana-standards[bot] on the verification ladder
+breaking: false

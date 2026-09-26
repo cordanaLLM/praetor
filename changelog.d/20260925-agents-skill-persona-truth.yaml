@@ -1,0 +1,3 @@
+type: fixed
+title: Align the hiss-audit, adr-scaffold and infocard-generate skills and the auditor and needs-miner personas with the scanners, statuses, commands and file names the repository ships, and close the infocard-generate code fence that had hidden part of the skill from every caveman rule
+breaking: false

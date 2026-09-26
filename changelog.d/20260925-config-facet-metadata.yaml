@@ -1,0 +1,3 @@
+type: fixed
+title: Keep Go-only tools out of the language-neutral agent:sandboxed, perf:hotpath and api:public-contract facets, cite HISS-03 and HISS-14 in facet descriptions as extended-spec invariants rather than gated ones, and document that a facet is identified by its id field while its file name is descriptive
+breaking: false

@@ -72,6 +72,14 @@ Linux only. Its Windows-specific path is described in
 `internal/forge/workflow_guard_test.go` fails if the step is removed, moved before Node is set
 up, or given a condition that could skip it on some legs.
 
+The matrix pins the tools it installs, not only the platforms it runs on. The legs share one
+`actions/setup-python` version (3.14) and install `yamllint==1.38.0` through the interpreter path
+that action reports, rather than by name. Both pins serve this invariant directly: the job's only
+output is whether a result differs across platforms, so a tool free to resolve to a different
+version on a different leg makes an upstream release indistinguishable from the portability defect
+the job exists to report. A linter that is pinned on one leg and floating on another is not a
+narrower gate, it is a gate whose red runs cannot be attributed.
+
 The driver exists because the suites' exit codes are not a sufficient pass condition. It
 requires that every suite exited zero **and** that at least `--min-executed` tests actually ran,
 printing each skip with its reason. A platform quietly losing coverage then shows up as a number

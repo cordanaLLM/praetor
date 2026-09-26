@@ -28,7 +28,7 @@ const (
 	MaxEmissionDiagnosticBytes = 768
 	// EmissionContractVersion binds retained validation records to the checker contract.
 	// Any semantic checker change must increment it so old verdicts fail closed.
-	EmissionContractVersion = 4
+	EmissionContractVersion = 5
 	emissionExcerptBytes    = 160
 )
 

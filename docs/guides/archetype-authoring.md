@@ -5,7 +5,7 @@ Learn how to define new composable profiles and cross-cutting security/operation
 ```mermaid
 flowchart TD
     NEW["New Technology Stack\n(e.g., zig-systems, ml-training)"] --> PROFILE[".config/archetypes/{id}.yaml"]
-    CROSS["Cross-Cutting Invariant\n(e.g., zero-trust-network)"] --> FACET[".config/archetypes/facets/{id}.yaml"]
+    CROSS["Cross-Cutting Invariant\n(e.g., zero-trust-network)"] --> FACET[".config/archetypes/facets/*.yaml\n(identity = id field)"]
     
     PROFILE & FACET --> LATTICE["Lattice Engine (internal/config)"]
     LATTICE --> RESOLVE["Evaluates Supremum (Join)\nHighest Standard Wins"]
@@ -130,7 +130,8 @@ devcontainer_features:
 
 ## 2. Facet Definition Anatomy
 
-Facets are cross-cutting policy modifiers. Create `.config/archetypes/facets/{facet-id}.yaml`:
+Facets are cross-cutting policy modifiers. Create a YAML file under `.config/archetypes/facets/`,
+for example `security-high.yaml`:
 
 ```yaml
 id: "security:high"
@@ -148,6 +149,31 @@ branch_protection:
   required_approving_reviewers: 2
   dismiss_stale_reviews: true
 ```
+
+**The `id` field is the facet's identity; the file name is descriptive.** `.standards.yaml`
+`facets:` entries and `.standards.lock` resolve against the declared `id`, because the catalog
+index keys every file by it (`indexArchetypesWithSnapshots` in `internal/config/archetype_index.go`).
+A file name cannot repeat the id, since `:` is not legal in a Windows file name, and the shipped
+names abbreviate (`api:public-contract` lives in `api-public.yaml`). For a new facet, replace the
+colon with a hyphen. Two rules still bind the name:
+
+- A file without an `id` falls back to its name minus `.yaml`, so always declare one.
+  `TestFacetIndex_Boundary_ResolvesByDeclaredIDNotFileName` in
+  `internal/config/shipped_facets_test.go` covers both cases.
+- Adoption copies a facet under its file name into the adopter's catalog, and the index rejects two
+  files declaring one id (`TestCatalogProjectionFindsAlternateFilenameCollisionWithoutWrites` in
+  `internal/config/catalog_projection_test.go`). Renaming a shipped facet therefore collides with
+  the copy an adopter already holds; keep shipped names stable.
+
+**Keep facets language-neutral.** Any profile may select a facet, so a facet lists no tool that
+reads only one language's source (`gocyclo`, `benchstat`, `oapi-codegen`): that tooling belongs to
+the profile, which declares a `runtime`. `TestShippedFacets_Negative_NoGoOnlyLinter` enforces this
+for the shipped catalog.
+
+**Cite gated invariants as gated, and nothing else.** A description may cite a HISS invariant from
+the `AGENTS.md` table as enforced. An invariant defined only in the extended spec, such as HISS-03
+or HISS-14, is cited together with `docs/standards/hiss-spec.md`
+(`TestShippedFacets_Negative_UngatedHISSCitesTheExtendedSpec`).
 
 ---
 

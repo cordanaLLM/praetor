@@ -3,7 +3,7 @@
 Documentation preset powered by [Material for MkDocs](https://squidfunk.github.io/mkdocs-material/) pre-configured with:
 
 - **Schema.org JSON-LD Structured Data**: Injected automatically into the HTML `<head>` via template overrides.
-- **Automated Sitemap Generation**: Configured with daily change frequency and priority mapping via `mkdocs-sitemap-plugin`.
+- **Automated Sitemap Generation**: `site/sitemap.xml` and `site/sitemap.xml.gz` are written by MkDocs core from the `nav` tree, so no sitemap plugin is installed or configured.
 - **HTML/CSS/JS Minification**: Configured with `mkdocs-minify-plugin`.
 - **Mermaid Diagrams & PyMdown SuperFences**: Native diagrams rendered directly in documentation markdown.
 

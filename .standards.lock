@@ -8,7 +8,7 @@
 # failure message prints the expected digest.
 version: 1
 pinned_version: "v1.0.0"
-digest: "sha256:970e6ce02f99e623b8c5d4aa81db15f5473ca34d7b8fac418b50d25884e2bb4b"
+digest: "sha256:fc29c31cb9bac5ef8be0902340eabd652ddddc8c0bd530af32d544dfa6484d04"
 generated_at: "2026-09-12T00:00:00Z"
 profiles:
   - id: "framework"
@@ -20,13 +20,13 @@ facets:
     digest: "sha256:34de9dc4fe2b7da48c152c2e7457891ebc41ace8e671fd1db0f49e1fafcb567f"
   - id: "api:public-contract"
     version: "v1.0.0"
-    digest: "sha256:19963be9ae6292bc4ea0dcb44cbbc5f903886209387d33fbeb3bed8af9cde486"
+    digest: "sha256:4de328ae5f1c4a993f45c258758d105395b92b2974abf52023fc685b61dafdd9"
   - id: "docs:seo-portal"
     version: "v1.0.0"
     digest: "sha256:3381e1b7ab5cfb1029fa1b96cd84c7d3d5a890bc2d1f340a7b4e8b5bf61e2256"
   - id: "agent:sandboxed"
     version: "v1.0.0"
-    digest: "sha256:1a89a7a93d8f054d03edd203bb15006431468641d59ac61999b1997fa0a3233f"
+    digest: "sha256:53d33961b3e668416065a218cfa15b3e8e9e0192ca50fa848e208ea1331ea493"
   - id: "tooling:vscode-extension"
     version: "v1.0.0"
     digest: "sha256:c6c06e4f951b2c6d72df15f7d4c095892db3d64a1d616b5cfdae462d6ba9c26d"
