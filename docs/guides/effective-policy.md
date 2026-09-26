@@ -354,13 +354,13 @@ symlinks fail. Existing differing files require explicit `--force`; matching
 files remain unchanged. Baseline recording uses the same resolved audit limit.
 
 Adoption keeps baseline recording enabled by default, including its dry-run debt
-estimate. Both modes now require verified local pins and their catalog, or an
+estimate. Both modes require verified local pins and their catalog, or an
 explicit `--lock-source-root` for missing inputs. A dry run without these sources
 fails instead of estimating debt with an unrelated default limit. Planning with
 `--record-baseline=false` can explicitly omit that estimate; its report identifies
 any unavailable policy verification.
 
 `LoadEffectivePolicyContext` and `ResolvePolicy` are additive APIs. Existing
-manifest parsing and runner hierarchy APIs remain available. The audit's new
-requirement for materialized pinned sources is a default-behavior change and must
-ship with a breaking commit marker and a `Migration:` footer.
+manifest parsing and runner hierarchy APIs remain available. The audit requires
+materialized pinned sources by default; callers that previously relied on
+unverified defaults handle the error or supply `--lock-source-root`.

@@ -267,7 +267,7 @@ It is opt-in because the existing development image may lack required tools;
 successful documentation-only push does not generate a receipt. A source or
 governance push requires the verified receipt, but does not imply the optional
 Docker sandbox ran. Existing audit failures, missing scanners or missing signing
-configuration remain blocking failures; they are not bypassed during this audit.
+configuration remain blocking failures; the sandbox gate does not bypass them.
 
 The command guard accepts actual PreToolUse JSON or command arguments; Git calls
 its explicit environment mode. It rejects verification-evasion commands and

@@ -229,14 +229,13 @@ separate rows, told apart by the leaderboard's Location column.
 
 ## Migration
 
-Previously an explicitly missing framework silently used the built-in catalog,
-and CLI/MCP report scores ignored the framework index altogether. Missing paths
-now fail; select a real checkout or explicitly request the declared catalog.
-Consumers must treat lower source-observed scores and newly exposed gaps as
-corrected evidence, and must not infer verified migration readiness from 100%.
+An explicitly missing framework path is an error; select a real checkout or
+explicitly request the declared catalog with `--framework=""`.  Lower
+source-observed scores and newly exposed gaps are corrected evidence; a 100%
+score does not imply verified migration readiness.
 
-`FrameworkIndex.ProvidesCapability` now requires exact capability membership;
-unknown or broad domain directory names no longer imply arbitrary capabilities.
+`FrameworkIndex.ProvidesCapability` requires exact capability membership;
+unknown or broad domain directory names do not imply arbitrary capabilities.
 All existing exported signatures remain; callers can use the additive
 `ScanRepoWithFramework` function when selecting a framework. Human-readable
 reports use “Mapping availability” instead of “Readiness Score”. Parse structured

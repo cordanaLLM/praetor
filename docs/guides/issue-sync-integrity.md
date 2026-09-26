@@ -33,17 +33,18 @@ dry-run and apply behavior.
 
 ## Migration
 
-Previously accepted duplicate planned titles must be consolidated. If an intended
-existing title is ambiguous, resolve that ambiguity before syncing it. Large or
-incomplete inventories require a separately reviewed lookup strategy; increasing a
-local bound or treating a partial result as empty does not establish completeness.
+Duplicate planned titles are rejected. If an intended existing title is
+ambiguous, resolve that ambiguity before syncing it. Large or incomplete
+inventories require a separately reviewed lookup strategy; increasing a local
+bound or treating a partial result as empty does not establish completeness.
 
-Automation that tolerated offline, unauthorized or incomplete repositories during
-`issue reconcile` must handle its nonzero result and obtain complete selected
-inputs before retrying. Previously returned partial inventories and success
-summaries are not evidence of a complete reconciliation; rerun affected checks.
+`issue reconcile` returns a nonzero exit and names the failing repository when
+any selected repository's listing fails, including in dry-run mode. Complete
+selected inputs are required before retrying. Partial inventories and partial
+success summaries are not evidence of a complete reconciliation; rerun affected
+checks after obtaining complete inputs.
 
 Preflight failures cause no mutations. Later provider failures can still leave an
 explicitly reported partial batch, and simultaneous independent sync processes are
-not serialized by this change. No new forge provider, publication workflow,
-distributed idempotency mechanism or MCP mutation tool is introduced.
+not serialized. No new forge provider, publication workflow, distributed
+idempotency mechanism or MCP mutation tool is introduced.

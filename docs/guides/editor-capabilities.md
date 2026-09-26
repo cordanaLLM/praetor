@@ -183,8 +183,8 @@ match a generated template.
 
 Known legacy Go, unavailable LSP, unpublished extension and invented build-task
 settings are reported as conflicts when they are no longer supported by the
-resolved plan. They are retained for review; this release does not automatically
-migrate legacy generated files. Resolve each reported conflict using the actual
+resolved plan. They are retained for review; automatic migration of legacy
+generated files is not supported. Resolve each reported conflict using the actual
 repository's languages and commands, then generate and verify again.
 
 Non-JSON formats do not yet have semantic merge adapters. Existing files are
