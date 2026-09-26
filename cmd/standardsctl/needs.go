@@ -51,7 +51,7 @@ func runNeeds(args []string) error {
 func printNeedsUsage() {
 	fmt.Println("Usage: standardsctl needs <subcommand> [arguments]")
 	fmt.Println("\nSubcommands:")
-	fmt.Println("  scan [--path=.] [--write]           Scan repo AST and go.mod, emit .needs.yaml")
+	fmt.Println("  scan [--path=.] [--write|--check]   Scan repo AST and go.mod, emit or check .needs.yaml")
 	fmt.Println("  report [--path=.]                   Evaluate compatibility and replacement matrix against Golusoris")
 	fmt.Println("  aggregate [--dev-dir=...] [--output=...] Aggregate fleet-wide demand and output gap report")
 	fmt.Println("  requests [--dev-dir=...] [--output-dir=...] Synthesize and emit deduplicated Framework Demand Requests")
@@ -65,8 +65,12 @@ func runNeedsScan(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("needs scan", flag.ContinueOnError)
 	path := fs.String("path", ".", "Target repository path")
 	writeManifest := fs.Bool("write", false, "Write discovered needs to .needs.yaml")
+	check := fs.Bool("check", false, "Fail when the committed .needs.yaml differs from a fresh scan (updated_at ignored)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *writeManifest && *check {
+		return fmt.Errorf("--write and --check are mutually exclusive")
 	}
 
 	if err := adopt.ValidateAdoptionTarget(*path); err != nil {
@@ -76,6 +80,9 @@ func runNeedsScan(ctx context.Context, args []string) error {
 	report, err := needs.ScanRepo(ctx, *path)
 	if err != nil {
 		return fmt.Errorf("failed to scan repository needs: %w", err)
+	}
+	if *check {
+		return checkNeedsManifest(ctx, *path, report)
 	}
 
 	fmt.Printf("=== Framework Needs Scan: %s ===\n", report.Repository)
@@ -92,6 +99,21 @@ func runNeedsScan(ctx context.Context, args []string) error {
 		}
 		fmt.Printf("\n[PASS] Wrote %s/.needs.yaml successfully.\n", *path)
 	}
+	return nil
+}
+
+// checkNeedsManifest fails when the committed .needs.yaml is not what `needs scan --write`
+// would write now. Nothing regenerates the manifest on its own, so without this gate it
+// silently falls behind every change to the dependencies or to the generator's schema.
+func checkNeedsManifest(ctx context.Context, path string, report *needs.RepoNeeds) error {
+	drift, err := needs.CheckNeedsManifest(ctx, path, report)
+	if err != nil {
+		return err
+	}
+	if drift != "" {
+		return fmt.Errorf("%s/.needs.yaml is stale against a fresh scan; run 'praetorctl needs scan --write --path=%s':\n%s", path, path, drift)
+	}
+	fmt.Printf("[PASS] %s/.needs.yaml matches a fresh scan (updated_at ignored).\n", path)
 	return nil
 }
 

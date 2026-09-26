@@ -57,6 +57,13 @@ editors-reference:
 editors-reference-verify:
 	go run ./cmd/standardsctl editors reference --verify
 
+# Nothing regenerates .needs.yaml on its own; this fails when the committed manifest is not
+# what `needs scan --write` would write now. It gates this repository only: adopter audits
+# do not run it, so an adopter's older manifest is not failed by a newer Praetor.
+.PHONY: needs-check
+needs-check:
+	go run ./cmd/standardsctl needs scan --check
+
 audit:
 	go run ./cmd/standardsctl audit
 
@@ -134,7 +141,7 @@ hiss-coverage:
 topology-audit:
 	@if [ -d "$$HOME/dev" ]; then go run ./cmd/standardsctl topology audit "$$HOME/dev"; fi
 
-verify-all: adr-verify semgrep-test docs-drift-test docs-assets-test github-app-test docs-lint-test portability-test notebook-test mcp-test dev-codex-hooks-test dev-install-test dev-schedule-test dev-repair-test wiki-sync-test adopt-sweep-test dco-check-test vscode-test mcp-probe compile-context-verify editors-reference-verify test audit lint vuln sec secrets fuzz hiss-coverage flavor-audit state-audit dedupe topology-audit hooks-test
+verify-all: adr-verify semgrep-test docs-drift-test docs-assets-test github-app-test docs-lint-test portability-test notebook-test mcp-test dev-codex-hooks-test dev-install-test dev-schedule-test dev-repair-test wiki-sync-test adopt-sweep-test dco-check-test vscode-test mcp-probe compile-context-verify needs-check editors-reference-verify test audit lint vuln sec secrets fuzz hiss-coverage flavor-audit state-audit dedupe topology-audit hooks-test
 	@echo "All standards verification gates passed cleanly."
 
 .PHONY: docs-drift-test

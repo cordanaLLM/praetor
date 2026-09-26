@@ -129,6 +129,25 @@ capability keys, more than 512 packages or 1 MiB) fails inspection rather than
 degrading to heuristics. None of this proves API compatibility, runs a build, or
 admits `needs migrate --apply`.
 
+## The committed manifest
+
+`praetorctl needs scan --write` writes `.needs.yaml` from the declared catalog; nothing
+else regenerates it, `compile-context` included. `needs scan --check` scans the same way,
+writes nothing, and fails when the committed file differs from what `--write` would write
+now, printing the committed lines a fresh scan drops (`- committed:<line>`) and the lines
+it adds (`+ generated:<line>`):
+
+```bash
+praetorctl needs scan --write   # refresh .needs.yaml
+praetorctl needs scan --check   # fail on a stale .needs.yaml
+```
+
+The comparison ignores `updated_at`, which every scan stamps, and reads CRLF line
+endings as LF. `--write` and `--check` exclude each other. This repository runs the check
+as `make needs-check` inside `make verify-all`; `praetorctl audit` does not, so an
+adopter's manifest written by an older Praetor is not failed by a newer one. Tests:
+`internal/needs/manifest_check_test.go`, `cmd/standardsctl/needs_check_test.go`.
+
 ## Selecting the source
 
 ```bash
