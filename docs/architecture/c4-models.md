@@ -99,11 +99,11 @@ The Component diagram details the internal workflow of the Anti-Direct-Merge Gat
 ```mermaid
 flowchart LR
     INPUT["Merge / Commit Candidate"] --> PREFETCH["1. Prefetch & Lockfiles\n(.standards.yaml + .standards.lock,\ngo mod verify / download)"]
-    PREFETCH -->|"Pass"| AST_SCAN["2. HISS Invariant Scan\n(HISS-01/02/04/07/08/09, resolved\nfunction-length limit, baseline ratchet)"]
-    AST_SCAN -->|"No new infractions"| SECURITY["3. Security & SCA Scan\n(govulncheck, gosec)"]
-    SECURITY -->|"Pass"| FLAVOR["4. Flavor Conformance\n(flavor audit)"]
-    FLAVOR -->|"Pass / not applicable"| RACE_TEST["5. Race-Detector Tests\n(go test -race in worktree)"]
-    RACE_TEST -->|"Pass / skipped with reason"| RECEIPT["6. Ed25519 Exit-0 Receipt\n(signed stage output)"]
+    PREFETCH -->|"passed / not_applicable (no go.mod) / skipped (dry run)"| AST_SCAN["2. HISS Invariant Scan\n(HISS-01/02/04/07/08/09, resolved\nfunction-length limit, baseline ratchet)"]
+    AST_SCAN -->|"passed: no new infractions"| SECURITY["3. Security & SCA Scan\n(govulncheck, gosec)"]
+    SECURITY -->|"passed / not_applicable (no go.mod) / skipped (dry run)"| FLAVOR["4. Flavor Conformance\n(flavor audit)"]
+    FLAVOR -->|"passed / not_applicable (no flavor)"| RACE_TEST["5. Race-Detector Tests\n(go test -race in worktree)"]
+    RACE_TEST -->|"passed / not_applicable (no go.mod) / skipped (dry run, no C toolchain)"| RECEIPT["6. Ed25519 Exit-0 Receipt\n(signs praetor-gate-output/v2;\nskipped on dry run)"]
 
     PREFETCH -->|"Missing lockfile / checksum mismatch"| REJECT["Rejected Disposition (Exit 1)"]
     AST_SCAN -->|"New violations / incomplete scan"| REJECT
@@ -113,6 +113,16 @@ flowchart LR
     RECEIPT -->|"No signing key"| REJECT
 ```
 
-Stage order and names come from `executeStages` in `internal/gating/pipeline.go`; a dry run skips
-stage 5 and mints no receipt. ADR-0012 (decision 3) records the pipeline; ADR-0004's four-stage
-description is superseded.
+Stage order and names come from `executeStages` in `internal/gating/pipeline.go`. Each stage records
+one `StageStatus`: `passed`, `failed`, `skipped` or `not_applicable`. Only `failed` stops the
+pipeline and leads to the rejected disposition; a stage that ran nothing is never recorded as
+`passed`, in the CLI report, in `--json`, or in the signed `praetor-gate-output/v2` stage output.
+
+A dry run (`gate run --dry-run`) changes nothing and reaches no network. It verifies the lockfiles
+and runs stages 2 and 4. In a Go repository it records the module prefetch in stage 1, stage 3,
+stage 5 and the receipt as `skipped`; without a `go.mod`, stages 1 and 3 are `not_applicable`
+instead. It mints no receipt (`TestExecuteStages_DryRunInvokesNoCommand`). `gate verify` and
+`forge validate-pr` refuse a receipt whose gate output is not `praetor-gate-output/v2`
+(`lockdown.VerifyReceiptFile`). The [adoption verification guide](../guides/adoption-verification.md#stages-that-do-not-apply-are-skipped-not-failed)
+covers each verdict. ADR-0012 (decision 3) records the pipeline; ADR-0004's four-stage description
+is superseded.

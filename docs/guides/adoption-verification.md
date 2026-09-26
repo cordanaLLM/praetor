@@ -143,8 +143,16 @@ never recorded as passed:
 `--json` carries the verdict as `stages[].status`, and the stage output the Exit-0 receipt signs
 (`praetor-gate-output/v2`) carries it on every stage line. The previous `passed` bool rendered a
 skipped stage and a passed one identically, so the CLI printed `[PASS]` and the receipt certified
-security scans and prefetches that had never executed. A receipt minted under
-`praetor-gate-output/v1` does not verify against v2 output; re-mint it with `praetorctl gate run`.
+security scans and prefetches that had never executed.
+
+`praetorctl gate verify` and `praetorctl forge validate-pr` refuse a receipt whose gate output does
+not open with `praetor-gate-output/v2`, after checking its signature and output hash
+(`lockdown.VerifyReceiptFile` in [`internal/lockdown/keys.go`](../../internal/lockdown/keys.go)). A
+v1 receipt still carries a valid signature, but its stage lines cannot tell a skipped stage from a
+passed one, so it is rejected with `receipt certifies an unsupported gate output version`. Re-mint
+it with `praetorctl gate run` on the current release. `TestVerifyReceiptFile_Negative`,
+`TestRunGateVerify_Negative` and `TestValidatePRChecklist_Negative_V1GateOutput` sign a real v1
+receipt and require each verifier to refuse it.
 
 A skipped or not-applicable stage names its reason and does not fail the repository:
 
@@ -190,12 +198,15 @@ fetch modules and query the vulnerability database, so a dry run that started th
 [`internal/gating/gating_test.go`](../../internal/gating/gating_test.go) runs a whole dry run
 through a recording command runner and fails if any command starts.
 
-The gatekeeper persona that adoption writes (`.agents/agents/repo-gatekeeper.md`) runs
-`praetorctl gate run --path=. --dry-run`, and the pre-migration epic's verification task runs
-`praetorctl gate run --path=.`. Both derive from `gating.RepoRunCommand`
-([`internal/gating/pipeline.go`](../../internal/gating/pipeline.go)). They, and praetor's own
-`praetor-gatekeeper` persona, previously passed `--target=.`, which `gate run` rejects as an
-undefined flag before any stage runs.
+The gatekeeper persona that adoption writes (`.agents/agents/repo-gatekeeper.md`) and the
+pre-migration epic's verification task both run the full gate, `praetorctl gate run --path=.`,
+derived from `gating.RepoRunCommand`
+([`internal/gating/pipeline.go`](../../internal/gating/pipeline.go)). The persona names `--dry-run`
+only as a read-only preflight: its mission is the prefetch, security scans and receipt that a dry
+run skips. Praetor's own `praetor-gatekeeper` persona runs the same full gate that
+`praetorctl agent run praetor-gatekeeper` runs, then `gate verify`, and lists the dry run as a
+preflight. All three previously passed `--target=.`, which `gate run` rejects as an undefined flag
+before any stage runs.
 [`cmd/standardsctl/gate_command_test.go`](../../cmd/standardsctl/gate_command_test.go) parses the
 constant and every `gate run` line in `.agents/agents/*.md` against the real flag set;
 [`internal/adopt/persona_command_test.go`](../../internal/adopt/persona_command_test.go) and
