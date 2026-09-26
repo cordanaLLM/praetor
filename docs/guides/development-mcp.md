@@ -192,9 +192,22 @@ lock-less case differs from `praetorctl plan`. Tests:
 
 `standards_plan` opens with `=== Praetor Reconcile Plan (Dry Run) ===` and takes
 the `Repository: <owner>/<name>` line from the manifest's `repository` block
-(`TestWritePlanHeader_NamesTheManifestRepository`). Its target invariants are the
-built-in defaults plus the manifest's overrides (`createPlanTool` in
-`cmd/standards-mcp/server.go`); it does not read `.standards.lock`.
+(`TestWritePlanHeader_NamesTheManifestRepository`). Its target invariants come from
+`config.ResolveRepositoryPolicy`, the resolver `praetorctl plan` uses
+(`createPlanTool` in `cmd/standards-mcp/server.go`):
+
+- A locked repository shows the pinned profiles and facets joined with the
+  manifest's overrides, which is the policy `praetorctl adopt` writes the branch
+  ruleset from. Its drift list follows that policy, so a profile that requires an
+  SBOM reports a missing `.github/workflows/sbom.yml`
+  (`TestServer_Positive_PlanShowsThePinnedProfilePolicy`).
+- A manifest without `.standards.lock` shows the built-in defaults plus the
+  overrides and opens with `[INFO] no .standards.lock: built-in defaults and
+  repository overrides only`
+  (`TestServer_Boundary_PlanOverridesAfterTheJoinAndWithoutALock`).
+- A lock that does not resolve, for example a profile edited after it was pinned,
+  fails the tool with `Failed to resolve plan policy: ...` and prints no policy
+  (`TestServer_Negative_PlanRejectsAnUnverifiableLock`).
 
 ### Shared audit authority and parity
 
