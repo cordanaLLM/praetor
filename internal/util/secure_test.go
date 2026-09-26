@@ -362,10 +362,28 @@ func TestMkdirConfined_Boundary_RootAndSwapAfterCheck(t *testing.T) {
 		t.Fatalf("confineBelow: %v", err)
 	}
 	swapForLink(t, filepath.Join(root, "inner"), outside)
-	if err := mkdirConfined(absRoot, inside, 0o700); err == nil {
-		t.Errorf("expected a directory swapped for an escaping link to be refused")
+	if err := mkdirConfined(absRoot, inside, 0o700); !errors.Is(err, ErrPathEscapesRoot) {
+		t.Errorf("directory swapped for an escaping link = %v, want ErrPathEscapesRoot like the check reports", err)
 	}
 	assertEmptyDir(t, outside)
+}
+
+// TestClassifyEscape_Boundary_OnlyAnEscapeIsLabelled pins classifyEscape's two
+// pass-through edges: success stays nil, and a failure the re-run check does not see as an
+// escape (a missing directory) is returned untouched instead of mislabelled.
+func TestClassifyEscape_Boundary_OnlyAnEscapeIsLabelled(t *testing.T) {
+	root, _ := confinedFixture(t)
+	if err := classifyEscape(root, "inner", nil); err != nil {
+		t.Errorf("classifyEscape(nil) = %v, want nil", err)
+	}
+	missing := errors.New("missing directory")
+	if err := classifyEscape(root, filepath.Join("missing", "x"), missing); err != missing { //nolint:errorlint // identity is the contract under test
+		t.Errorf("classifyEscape(non-escape) = %v, want the operation error unchanged", err)
+	}
+	escaped := classifyEscape(root, filepath.Join("out", "x"), missing)
+	if !errors.Is(escaped, ErrPathEscapesRoot) || !errors.Is(escaped, missing) {
+		t.Errorf("classifyEscape(escape) = %v, want both ErrPathEscapesRoot and the operation error", escaped)
+	}
 }
 
 func TestWriteFileSecure_Positive(t *testing.T) {

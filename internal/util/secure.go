@@ -17,6 +17,9 @@ const (
 	// SecureDirPerm is the default directory mode applied by MkdirSecure when the
 	// caller passes a zero perm: accessible by the owner only.
 	SecureDirPerm os.FileMode = 0o700
+	// ownerWriteBit is the permission bit whose absence marks an existing file as
+	// write-protected for the no-follow writers.
+	ownerWriteBit os.FileMode = 0o200
 	// MaxExecArgLen bounds the length of a single externally supplied exec argument.
 	MaxExecArgLen = 4096
 	// maxPathAncestorWalk bounds the ancestor walk in ConfinePath (HISS-02: every loop
@@ -35,8 +38,12 @@ var (
 	ErrEmptyRoot = errors.New("util: confinement root must not be empty")
 	// ErrAbsoluteRelPath is returned when ConfinePath is given an absolute member path.
 	ErrAbsoluteRelPath = errors.New("util: member path must be relative to the root")
-	// ErrPathEscapesRoot is returned when a member path resolves outside its root.
+	// ErrPathEscapesRoot is returned when a member path resolves outside its root, whether
+	// ConfinePath's check catches it or a pinned os.Root refuses it at use time.
 	ErrPathEscapesRoot = errors.New("util: path escapes the confinement root")
+	// ErrRootItself is returned by WriteFileConfined for a member path that names the
+	// confinement root itself instead of a file below it.
+	ErrRootItself = errors.New("util: member path names the confinement root itself")
 	// ErrInsecurePerm is returned for permission bits that are world-writable or that
 	// carry non-permission mode bits (setuid, setgid, sticky).
 	ErrInsecurePerm = errors.New("util: insecure permission bits")
@@ -493,7 +500,8 @@ func MkdirSecure(path string, perm os.FileMode) error {
 // root must exist. Its own path is resolved when it is opened (it is the caller's chosen
 // boundary, and macOS ships /var and /tmp as links), and a rel naming root itself creates
 // nothing and changes no mode. An in-root link with an absolute target is refused, since
-// os.Root follows only relative links.
+// os.Root follows only relative links. An escape is ErrPathEscapesRoot whether the check or
+// the pinned handle refuses it.
 func MkdirConfined(root, rel string, perm os.FileMode) error {
 	perm, err := effectivePerm(perm, SecureDirPerm)
 	if err != nil {
@@ -507,9 +515,10 @@ func MkdirConfined(root, rel string, perm os.FileMode) error {
 }
 
 // mkdirConfined is MkdirConfined after the check: every component of inside resolves
-// through the pinned handle on absRoot.
+// through the pinned handle on absRoot, and an escape the handle refuses is classified by
+// classifyEscape.
 func mkdirConfined(absRoot, inside string, perm os.FileMode) error {
-	return inRoot(absRoot, ".", func(base *os.Root) error {
+	return classifyEscape(absRoot, inside, inRoot(absRoot, ".", func(base *os.Root) error {
 		if inside == "." {
 			return nil
 		}
@@ -526,7 +535,23 @@ func mkdirConfined(absRoot, inside string, perm os.FileMode) error {
 		return tightenMode(filepath.Join(absRoot, inside), info, perm, func(mode os.FileMode) error {
 			return base.Chmod(inside, mode)
 		})
-	})
+	}))
+}
+
+// classifyEscape labels opErr, the failure of a pinned os.Root operation on inside, with
+// ErrPathEscapesRoot when ConfinePath's check, run again now, finds inside escaping absRoot.
+// os.Root reports a component that leaves the root with an unexported error, so the check
+// that classifies an escape before the operation classifies it after the operation too: a
+// link swapped in between the two comes back errors.Is(ErrPathEscapesRoot), exactly like
+// the same link caught by the check. Any other failure, and a nil opErr, pass through.
+func classifyEscape(absRoot, inside string, opErr error) error {
+	if opErr == nil {
+		return nil
+	}
+	if _, _, err := confine(absRoot, inside); errors.Is(err, ErrPathEscapesRoot) {
+		return fmt.Errorf("%w: %w", err, opErr)
+	}
+	return opErr
 }
 
 // effectivePerm substitutes def for a zero perm and refuses what checkPerm refuses.

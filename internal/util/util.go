@@ -117,9 +117,11 @@ func TruncateExcerpt(s string, limit int) string {
 // perm keeps WriteFileSecure's ceiling: a zero perm selects SecureFilePerm, world-writable
 // or non-permission bits are refused, a new file is created with perm under the process
 // umask, and a replaced file keeps only the bits it already had that perm also grants.
-// As with every rename-based writer, the directory must be writable and the replacement is
-// a new inode: hard links to the old file keep the old contents, and its owner and extended
-// attributes do not carry forward.
+// An existing file without its owner-write bit is refused with an error wrapping
+// os.ErrPermission, as the in-place writer's open refused it, even though the rename itself
+// would only need a writable directory. As with every rename-based writer, the directory
+// must be writable and the replacement is a new inode: hard links to the old file keep the
+// old contents, and its owner and extended attributes do not carry forward.
 func WriteFileNoFollow(path string, data []byte, perm os.FileMode) error {
 	perm, err := effectivePerm(perm, SecureFilePerm)
 	if err != nil {
@@ -140,8 +142,9 @@ func WriteFileNoFollow(path string, data []byte, perm os.FileMode) error {
 //
 // rel's directory must exist; MkdirConfined creates it. root's own path is resolved when
 // it is opened (it is the caller's chosen boundary, and macOS ships /var and /tmp as
-// links). A rel naming root itself is refused, and so is an in-root link with an absolute
-// target, since os.Root follows only relative links.
+// links). A rel naming root itself is refused with ErrRootItself, and an in-root link with
+// an absolute target is refused too, since os.Root follows only relative links. An escape
+// is ErrPathEscapesRoot whether the check or the pinned handle refuses it.
 func WriteFileConfined(root, rel string, data []byte, perm os.FileMode) error {
 	perm, err := effectivePerm(perm, SecureFilePerm)
 	if err != nil {
@@ -155,14 +158,15 @@ func WriteFileConfined(root, rel string, data []byte, perm os.FileMode) error {
 }
 
 // writeConfined is WriteFileConfined after the check: inside's directory resolves through
-// the pinned handle on absRoot.
+// the pinned handle on absRoot, and an escape the handle refuses is classified by
+// classifyEscape.
 func writeConfined(absRoot, inside string, data []byte, perm os.FileMode) error {
 	if inside == "." {
-		return fmt.Errorf("%w: %q is the root itself, not a file below it", ErrSymlinkDestination, absRoot)
+		return fmt.Errorf("%w: %q", ErrRootItself, absRoot)
 	}
-	return inRoot(absRoot, filepath.Dir(inside), func(dir *os.Root) error {
+	return classifyEscape(absRoot, inside, inRoot(absRoot, filepath.Dir(inside), func(dir *os.Root) error {
 		return replaceNoFollow(dir, filepath.Base(inside), filepath.Join(absRoot, inside), data, perm)
-	})
+	}))
 }
 
 // replaceNoFollow is the no-follow write shared by WriteFileNoFollow and WriteFileConfined:
@@ -176,10 +180,15 @@ func replaceNoFollow(dir *os.Root, name, path string, data []byte, perm os.FileM
 	return replaceAtomically(dir, name, data, mode)
 }
 
-// noFollowPermission refuses a destination that exists but is a symbolic link or not a
-// regular file, and returns the mode its replacement takes: perm as a ceiling on the
-// umask-filtered creation mode for a new file, or the existing bits intersected with perm
-// for a file being replaced.
+// noFollowPermission refuses a destination that exists but is a symbolic link, is not a
+// regular file, or lacks its owner-write bit, and returns the mode its replacement takes:
+// perm as a ceiling on the umask-filtered creation mode for a new file, or the existing
+// bits intersected with perm for a file being replaced.
+//
+// The owner-write check keeps the write protection the in-place writer honored: a rename
+// needs write permission on the directory only, so without it a file its owner made
+// read-only would be replaced silently. Go reports a Windows read-only file without the
+// bit as well, so the refusal is the same on every platform.
 func noFollowPermission(dir *os.Root, name, path string, perm os.FileMode) (filePermission, error) {
 	info, err := dir.Lstat(name)
 	switch {
@@ -191,6 +200,9 @@ func noFollowPermission(dir *os.Root, name, path string, perm os.FileMode) (file
 		return filePermission{}, fmt.Errorf("%w: %q is a symbolic link", ErrSymlinkDestination, path)
 	case !info.Mode().IsRegular():
 		return filePermission{}, fmt.Errorf("%w: %q is not a regular file", ErrSymlinkDestination, path)
+	case info.Mode().Perm()&ownerWriteBit == 0:
+		return filePermission{}, fmt.Errorf("util: %q is write-protected (mode %#o): %w",
+			path, info.Mode().Perm(), os.ErrPermission)
 	}
 	return filePermission{mode: perm & info.Mode().Perm(), exact: true}, nil
 }

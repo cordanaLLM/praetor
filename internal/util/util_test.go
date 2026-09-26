@@ -652,6 +652,63 @@ func TestWriteFileNoFollow_Boundary_ReplaceNeverWidensExisting(t *testing.T) {
 	}
 }
 
+// writeProtectedFixture seeds a ledger with the given mode and restores a removable mode
+// before t.TempDir's cleanup, which a read-only file would otherwise fail on Windows.
+func writeProtectedFixture(t *testing.T, dir string, mode os.FileMode) string {
+	t.Helper()
+	ledger := filepath.Join(dir, "BACKLOG.md")
+	if err := os.WriteFile(ledger, []byte("keep"), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := os.Chmod(ledger, mode); err != nil {
+		t.Fatalf("chmod seed: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(ledger, 0o600); err != nil {
+			t.Errorf("restore mode: %v", err)
+		}
+	})
+	return ledger
+}
+
+// TestWriteFileNoFollow_Negative_WriteProtectedLedgerRefused keeps the write protection
+// the in-place writer honored: a rename needs only a writable directory, so without the
+// owner-write check a read-only ledger was replaced silently.
+func TestWriteFileNoFollow_Negative_WriteProtectedLedgerRefused(t *testing.T) {
+	dir := t.TempDir()
+	ledger := writeProtectedFixture(t, dir, 0o400)
+	if err := WriteFileNoFollow(ledger, []byte("clobber"), 0o600); !errors.Is(err, os.ErrPermission) {
+		t.Errorf("WriteFileNoFollow on a read-only ledger = %v, want os.ErrPermission", err)
+	}
+	if err := WriteFileConfined(dir, filepath.Base(ledger), []byte("clobber"), 0o600); !errors.Is(err, os.ErrPermission) {
+		t.Errorf("WriteFileConfined on a read-only ledger = %v, want os.ErrPermission", err)
+	}
+	if data, err := os.ReadFile(ledger); err != nil || string(data) != "keep" { // #nosec G304 -- test-local path from t.TempDir
+		t.Errorf("ledger = (%q, %v), want it untouched", data, err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 1 {
+		t.Errorf("expected only the ledger in %s, got (%v, %v)", dir, entries, err)
+	}
+}
+
+// TestWriteFileNoFollow_Boundary_OwnerWriteBitAlonePermitsReplace pins the edge of the
+// write-protection check: the owner-write bit is the whole test, so a file carrying only
+// that bit is still replaced.
+func TestWriteFileNoFollow_Boundary_OwnerWriteBitAlonePermitsReplace(t *testing.T) {
+	dir := t.TempDir()
+	ledger := writeProtectedFixture(t, dir, 0o200)
+	if err := WriteFileNoFollow(ledger, []byte("new"), 0o600); err != nil {
+		t.Fatalf("WriteFileNoFollow on an owner-writable ledger: %v", err)
+	}
+	if err := os.Chmod(ledger, 0o600); err != nil {
+		t.Fatalf("chmod for read-back: %v", err)
+	}
+	if data, err := ReadFileNoFollow(ledger); err != nil || string(data) != "new" {
+		t.Errorf("ledger = (%q, %v), want the replaced contents", data, err)
+	}
+}
+
 func TestWriteFileConfined_Positive(t *testing.T) {
 	root, _ := confinedFixture(t)
 	rel := filepath.Join("alias", "milestones.json")
@@ -711,8 +768,8 @@ func TestWriteFileConfined_Negative(t *testing.T) {
 // WriteFileConfined.
 func TestWriteFileConfined_Boundary_SwapAfterCheck(t *testing.T) {
 	root, outside := confinedFixture(t)
-	if err := WriteFileConfined(root, ".", []byte("x"), 0o600); !errors.Is(err, ErrSymlinkDestination) {
-		t.Errorf(`WriteFileConfined(root, ".") = %v, want ErrSymlinkDestination`, err)
+	if err := WriteFileConfined(root, ".", []byte("x"), 0o600); !errors.Is(err, ErrRootItself) || errors.Is(err, ErrSymlinkDestination) {
+		t.Errorf(`WriteFileConfined(root, ".") = %v, want ErrRootItself only`, err)
 	}
 	if err := os.Symlink(filepath.Join(root, "inner"), filepath.Join(root, "absolute")); err != nil {
 		t.Fatalf("symlink absolute: %v", err)
@@ -726,8 +783,8 @@ func TestWriteFileConfined_Boundary_SwapAfterCheck(t *testing.T) {
 		t.Fatalf("confineBelow: %v", err)
 	}
 	swapForLink(t, filepath.Join(root, "inner"), outside)
-	if err := writeConfined(absRoot, inside, []byte("ledger"), 0o600); err == nil {
-		t.Errorf("expected a directory swapped for an escaping link to be refused")
+	if err := writeConfined(absRoot, inside, []byte("ledger"), 0o600); !errors.Is(err, ErrPathEscapesRoot) {
+		t.Errorf("directory swapped for an escaping link = %v, want ErrPathEscapesRoot like the check reports", err)
 	}
 	assertEmptyDir(t, outside)
 
