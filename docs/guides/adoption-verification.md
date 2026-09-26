@@ -117,6 +117,23 @@ than failing the repository for it:
 A skipped stage prints its reason. That distinction matters: a skipped stage that reads as a pass is
 how a gate comes to certify what it never examined.
 
+### The HISS stage scans with the audit's function-length limit
+
+The gate's HISS stage resolves the function-length limit through
+`config.ResolveRepositoryComplexity` (`internal/config/repository_policy.go`), the resolver the
+editor projections use, and prints it on the stage line (`function length limit N`):
+
+- A repository with `.standards.lock` scans at the limit `praetorctl audit` enforces.
+- A manifest without a lock scans at the HISS-04 ceiling tightened by its
+  `overrides.complexity.max_func_loc`.
+- A tree without `.standards.yaml` scans at the ceiling.
+- A manifest or lock that does not resolve scans at the ceiling, and the stage line appends the
+  resolver's `repository policy unresolved (...)` warning; `praetorctl audit` fails on that state.
+
+The gate used to scan at the scanner's 60-line default whatever the manifest declared, so a
+repository with a stricter limit passed the gate with functions its audit rejected (BUG-638,
+`internal/gating/pipeline_test.go`).
+
 ### A failing flavor stage names the files that cost the score
 
 The flavor stage scores required templates and settings, and a setting counts only where the file
