@@ -1,0 +1,4 @@
+type: fixed
+title: Render release-scoped Helm names so a second install no longer collides, honour the image pull and name override values, and mount no unusable service account token; a release that left serviceAccount.name at its old praetor-sa default changes account on upgrade, which with serviceAccount.create=true deletes praetor-sa and creates <release>-praetor and with serviceAccount.create=false silently moves the pod to the namespace default account, dropping the pull secrets and grants held by the praetor-sa you created, so in both cases keep it with helm upgrade --set serviceAccount.name=praetor-sa; a release that had set nameOverride or fullnameOverride now renames its Deployment and Service too because no template read those values before, so clear them to keep the current names
+issue: "#289"
+breaking: true

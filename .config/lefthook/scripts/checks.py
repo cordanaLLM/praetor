@@ -76,6 +76,29 @@ def is_fixture(name):
     return slashed.startswith(FIXTURE_DIRECTORY + "/") or f"/{FIXTURE_DIRECTORY}/" in slashed
 
 
+# A Helm chart renders YAML; its templates are not YAML. "{{- if }}" is a syntax
+# error to every YAML parser, so a template can never pass yamllint, while the
+# chart's own Chart.yaml and values.yaml are ordinary documents and stay in scope.
+# Helm renders templates/ recursively, so a template sits at any depth below it;
+# matching only a direct child would block every commit staging the first
+# template someone files under templates/rbac/ or templates/tests/.
+CHART_MANIFEST = "Chart.yaml"
+CHART_TEMPLATE_DIRECTORY = "templates"
+
+
+def is_chart_template(directory, name):
+    """Report whether a path is a Helm chart template rather than a YAML document."""
+    parts = Path(name.replace("\\", "/")).parts
+    # The last part is the file name; a chart root is whatever directory holds
+    # Chart.yaml next to the templates/ directory the file sits under.
+    for index in range(len(parts) - 1):
+        if parts[index] != CHART_TEMPLATE_DIRECTORY:
+            continue
+        if (directory / Path(*parts[:index]) / CHART_MANIFEST).is_file():
+            return True
+    return False
+
+
 def file_checks(directory, names):
     files = present_files(directory, names)
     if any(name == ".workingdir" or name.startswith(".workingdir/") for name in files):
@@ -98,7 +121,8 @@ def file_checks(directory, names):
         matches = [name for name in files if predicate(name)]
         if matches:
             commands.append([*command, *matches])
-    yaml = [name for name in files if name.endswith((".yml", ".yaml"))]
+    yaml = [name for name in files
+            if name.endswith((".yml", ".yaml")) and not is_chart_template(directory, name)]
     if yaml:
         commands.append(["yamllint", "--strict", "-d", "{extends: relaxed, rules: {line-length: disable}}", *yaml])
     if any(name in {"lefthook.yml", ".codex/hooks.json", ".claude/settings.json",
