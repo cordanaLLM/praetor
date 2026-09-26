@@ -300,12 +300,18 @@ func TestPortabilityReplaysMarkdownGateSelfTestOnEveryLeg(t *testing.T) {
 	if gap := markdownGateSelfTestGap(harness); gap != "" {
 		t.Fatalf("portability harness: %s", gap)
 	}
+	// The leg is identified by its image family, not by one label: the matrix names an
+	// explicit image (windows-2025), never the windows-latest alias, and the next image
+	// bump must not read as the Windows leg disappearing.
 	legs := make([]string, 0, len(harness.Strategy.Matrix.Include))
+	windows := false
 	for i := 0; i < len(harness.Strategy.Matrix.Include) && i < maxMatrixLegs; i++ {
-		legs = append(legs, harness.Strategy.Matrix.Include[i]["os"])
+		leg := harness.Strategy.Matrix.Include[i]["os"]
+		legs = append(legs, leg)
+		windows = windows || strings.HasPrefix(leg, "windows-")
 	}
-	if !strings.Contains(" "+strings.Join(legs, " ")+" ", " windows-latest ") {
-		t.Fatalf("portability harness legs = %v, want a windows-latest leg", legs)
+	if !windows {
+		t.Fatalf("portability harness legs = %v, want a Windows leg", legs)
 	}
 	node := workflowStep{Uses: "actions/setup-node@v4", If: "${{ !cancelled() }}"}
 	selfTest := workflowStep{Run: markdownGateSelfTest + "\n", If: "${{ !cancelled() }}"}
