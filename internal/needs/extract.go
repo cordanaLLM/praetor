@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/topology"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
@@ -243,11 +244,11 @@ func isThirdPartyImport(importPath, modulePath string) bool {
 // loadExistingDeclarations merges capabilities declared in an existing .needs.yaml or
 // .standards.yaml into the freshly computed set. Declared entries are additive: replacing
 // the computed set would freeze Capabilities.Required at its first written value.
-func loadExistingDeclarations(repoPath string, repoNeeds *RepoNeeds) error {
+func loadExistingDeclarations(ctx context.Context, repoPath string, repoNeeds *RepoNeeds) error {
 	needsPath := filepath.Join(repoPath, ".needs.yaml")
 	if util.FileExists(needsPath) {
 		var existing RepoNeeds
-		if err := readYAMLFile(needsPath, &existing); err != nil {
+		if err := readYAMLFile(ctx, needsPath, &existing); err != nil {
 			return err
 		}
 		mergeCapabilities(repoNeeds, existing.Capabilities)
@@ -259,7 +260,7 @@ func loadExistingDeclarations(repoPath string, repoNeeds *RepoNeeds) error {
 		var st struct {
 			Needs CapabilityDeclaration `yaml:"needs"`
 		}
-		if err := readYAMLFile(standardsPath, &st); err != nil {
+		if err := readYAMLFile(ctx, standardsPath, &st); err != nil {
 			return err
 		}
 		mergeCapabilities(repoNeeds, st.Needs)
@@ -267,18 +268,12 @@ func loadExistingDeclarations(repoPath string, repoNeeds *RepoNeeds) error {
 	return nil
 }
 
-// readYAMLFile reads and unmarshals a repository-local declaration file.
-func readYAMLFile(path string, out any) error {
-	// #nosec G304 -- path is filepath.Join(repoPath, "<constant filename>") for a
-	// repository the caller already selected; no component comes from user input.
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("failed to read %q: %w", path, err)
-	}
-	if err := yaml.Unmarshal(data, out); err != nil {
-		return fmt.Errorf("failed to parse %q: %w", path, err)
-	}
-	return nil
+// readYAMLFile reads one section of a repository-local declaration file through
+// config.ReadYAMLDocument: a FIFO at the path is refused instead of blocking the scan past
+// its deadline (BUG-822), and a second YAML document is refused rather than ignored (BUG-857).
+// Keys outside the section are tolerated; the file's full schema belongs to its own loader.
+func readYAMLFile(ctx context.Context, path string, out any) error {
+	return config.ReadYAMLDocument(ctx, path, out, util.YAMLDocumentOptions{AllowEmpty: true})
 }
 
 // mergeCapabilities folds declared capabilities into the computed declaration.

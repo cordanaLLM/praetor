@@ -59,7 +59,7 @@ func (a *RustAnalyzer) Analyze(ctx context.Context, repoPath string) (*RepoNeeds
 		repoNeeds.Capabilities.Required = appendUniqueCap(repoNeeds.Capabilities.Required, demand.Capability)
 	}
 
-	if declErr := loadExistingDeclarations(repoPath, repoNeeds); declErr != nil {
+	if declErr := loadExistingDeclarations(ctx, repoPath, repoNeeds); declErr != nil {
 		return nil, fmt.Errorf("failed to load existing declarations: %w", declErr)
 	}
 	calculateReadiness(repoNeeds)

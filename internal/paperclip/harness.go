@@ -3,6 +3,7 @@ package paperclip
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,7 +12,6 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
-	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -75,6 +75,10 @@ func SynthesizeHarness(ctx context.Context, repoPath string) (*Harness, error) {
 		"HISS-16: Canonical AGENTS.md compiled to vendor harnesses",
 	}
 
+	platform, err := resolvePlatform(ctx, repoPath)
+	if err != nil {
+		return nil, err
+	}
 	return &Harness{
 		Version:           1,
 		Platform:          platform,
@@ -86,10 +90,12 @@ func SynthesizeHarness(ctx context.Context, repoPath string) (*Harness, error) {
 
 // resolvePlatform derives owner/name from the manifest, then the origin remote
 // (util.ResolveRemoteIdentity). It never reads the checkout path and never substitutes a
-// default owner: a parent directory names wherever the checkout sits, not its owner.
+// default owner: a parent directory names wherever the checkout sits, not its owner. A
+// manifest that exists but cannot be read is an error rather than a reason to fall back.
 func resolvePlatform(ctx context.Context, repoPath string) (string, error) {
-	if platform, ok := manifestPlatform(repoPath); ok {
-		return platform, nil
+	platform, ok, err := manifestPlatform(ctx, repoPath)
+	if err != nil || ok {
+		return platform, err
 	}
 	owner, repo, err := util.ResolveRemoteIdentity(ctx, repoPath)
 	if err != nil {
@@ -99,30 +105,28 @@ func resolvePlatform(ctx context.Context, repoPath string) (string, error) {
 	return owner + "/" + repo, nil
 }
 
-// manifestPlatform reads owner/name from .standards.yaml when present and complete.
-func manifestPlatform(repoPath string) (string, bool) {
-	manifestPath, err := util.ConfinePath(repoPath, manifestFile)
-	if err != nil {
-		return "", false
-	}
-	// #nosec G304 -- manifestPath is confined to repoPath by ConfinePath.
-	data, err := os.ReadFile(manifestPath)
-	if err != nil {
-		return "", false
-	}
+// manifestPlatform reads owner/name from .standards.yaml when present and complete. The read
+// is config.ReadYAMLDocument, bounded to a regular file and a single document (BUG-857). It
+// ignores the cancellation of ctx, which governs only the git lookup.
+func manifestPlatform(ctx context.Context, repoPath string) (string, bool, error) {
 	var m struct {
 		Repository struct {
 			Owner string `yaml:"owner"`
 			Name  string `yaml:"name"`
 		} `yaml:"repository"`
 	}
-	if err := yaml.Unmarshal(data, &m); err != nil {
-		return "", false
+	path := filepath.Join(repoPath, manifestFile)
+	err := config.ReadYAMLDocument(context.WithoutCancel(ctx), path, &m, util.YAMLDocumentOptions{AllowEmpty: true})
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("paperclip: repository identity: %w", err)
 	}
 	if m.Repository.Owner == "" || m.Repository.Name == "" {
-		return "", false
+		return "", false, nil
 	}
-	return fmt.Sprintf("%s/%s", m.Repository.Owner, m.Repository.Name), true
+	return fmt.Sprintf("%s/%s", m.Repository.Owner, m.Repository.Name), true, nil
 }
 
 // WriteHarness writes .paperclip/harness.json and .paperclip/rules.md into repoPath.

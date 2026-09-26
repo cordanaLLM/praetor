@@ -64,6 +64,9 @@ var (
 	// ErrInvalidReadLimit is returned by ReadFileLimited and ReadConfinedLimited for a
 	// non-positive limit.
 	ErrInvalidReadLimit = errors.New("util: read limit must be positive")
+	// ErrNotRegularFile is returned by ReadConfinedLimited for a path that is not a regular
+	// file, such as a FIFO, a device or a directory.
+	ErrNotRegularFile = errors.New("util: path is not a regular file")
 )
 
 // linkFile is os.Root.Link behind a seam, so a test can stand in for a filesystem without
@@ -94,6 +97,11 @@ func ReadConfined(root, rel string) ([]byte, error) {
 // so a multi-GB blob sitting at a configuration path is allocated in full before any
 // caller-side length check can reject it, which on a memory-capped runner is an OOM rather
 // than a finding.
+//
+// Only a regular file is opened. Opening a FIFO blocks until a writer appears, and no
+// deadline can interrupt a blocked open, so a named pipe planted at a configuration path
+// would hang the reader instead of failing it; a FIFO, device or directory is refused with
+// ErrNotRegularFile before any open.
 func ReadConfinedLimited(root, rel string, limit int64) ([]byte, error) {
 	if err := checkReadLimit(limit); err != nil {
 		return nil, err
@@ -114,12 +122,16 @@ func ReadConfinedLimited(root, rel string, limit int64) ([]byte, error) {
 // It does not confine path: the caller must already have resolved it from a trusted
 // location, such as os.UserConfigDir. A path below a caller-chosen root goes through
 // ReadConfinedLimited instead.
+//
+// Only a regular file is opened. Opening a FIFO blocks until a writer appears, and no
+// deadline can interrupt a blocked open, so a named pipe planted at a configuration path
+// would hang the reader instead of failing it; a FIFO, device or directory is refused with
+// ErrNotRegularFile before any open.
 func ReadFileLimited(path string, limit int64) (data []byte, resultErr error) {
 	if err := checkReadLimit(limit); err != nil {
 		return nil, err
 	}
-	// #nosec G304 -- callers pass a resolved, trusted path; ReadConfinedLimited confines first.
-	file, err := os.Open(path)
+	file, err := openRegular(path)
 	if err != nil {
 		return nil, err
 	}
@@ -141,6 +153,31 @@ func checkReadLimit(limit int64) error {
 		return fmt.Errorf("%w: %d", ErrInvalidReadLimit, limit)
 	}
 	return nil
+}
+
+// openRegular opens path only when it names a regular file, and refuses a file that was
+// replaced between the check and the open.
+func openRegular(path string) (*os.File, error) {
+	before, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !before.Mode().IsRegular() {
+		return nil, fmt.Errorf("%w: %q", ErrNotRegularFile, path)
+	}
+	// #nosec G304 -- callers confine path to their root before opening it.
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	opened, err := file.Stat()
+	if err == nil && !os.SameFile(before, opened) {
+		err = fmt.Errorf("%w: %q changed while opening", ErrNotRegularFile, path)
+	}
+	if err != nil {
+		return nil, errors.Join(err, file.Close())
+	}
+	return file, nil
 }
 
 // ConfinePath joins rel onto root and returns the cleaned, absolute result, guaranteeing

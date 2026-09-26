@@ -63,8 +63,8 @@ func TestReadConfinedLimited_Boundary(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "dir"), 0o700); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if _, err := ReadConfinedLimited(root, "dir", 1<<10); err == nil {
-		t.Errorf("a directory is not a readable file")
+	if _, err := ReadConfinedLimited(root, "dir", 1<<10); !errors.Is(err, ErrNotRegularFile) {
+		t.Errorf("a directory is not a readable file: got %v, want ErrNotRegularFile", err)
 	}
 }
 

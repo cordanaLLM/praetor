@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"github.com/cordanaLLM/praetor/internal/config"
-	"gopkg.in/yaml.v3"
 )
 
 // ErrLockSourceRequired prevents adoption from claiming placeholder pins are valid.
@@ -82,8 +81,10 @@ func manifestForLock(ctx context.Context, s *adoptSession) (*config.Manifest, er
 	if err != nil {
 		return nil, err
 	}
-	manifest := &config.Manifest{}
-	if err := yaml.Unmarshal(data, manifest); err != nil {
+	// The policy loader's decoder, so the lock is never pinned to a manifest, or to the first
+	// document of one, that the audit then refuses (BUG-857).
+	manifest, err := config.DecodeManifest(data)
+	if err != nil {
 		return nil, fmt.Errorf("parse target manifest for lock: %w", err)
 	}
 	if manifest.Version != 1 {

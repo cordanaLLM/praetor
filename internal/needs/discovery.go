@@ -323,7 +323,7 @@ func scanRepository(ctx context.Context, repo *fleetRepo) (*RepoNeeds, error) {
 	row := scan.row
 	if repo.subprojects[0] != repo.root {
 		row.Repository = repositoryDirName(repo.root)
-		if declErr := loadExistingDeclarations(repo.root, row); declErr != nil {
+		if declErr := loadExistingDeclarations(ctx, repo.root, row); declErr != nil {
 			return nil, fmt.Errorf("failed to load declarations of repository %q: %w", repo.root, declErr)
 		}
 	}
