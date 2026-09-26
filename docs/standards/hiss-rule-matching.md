@@ -35,6 +35,24 @@ It cannot resolve a name, follow a call, or know a type. A rule whose axiom need
 cannot be decided this way, and the coverage catalog records such a rule as `unsupported` with its
 gap fixtures rather than claiming an enforcement that does not exist.
 
+## Rust: scopes follow braces
+
+Test code and function bodies are both brace-delimited items, and one tracker (`braceTracker` in
+`internal/hiss/rules.go`) follows both:
+
+- A `#[cfg(test)]`, `#[test]` or path-qualified test attribute such as `#[tokio::test]` makes test
+  code of exactly the item it annotates, up to the brace that closes it. Code after a closed test
+  module is production code again. `#![cfg(test)]` and the Cargo test paths (`tests/`, `benches/`,
+  `*_test.rs`, `tests.rs`, `test.rs`) still cover the whole file.
+- A function header is any visibility (`pub`, `pub(crate)`, `pub(super)`, `pub(in path)`) followed
+  by any run of `const`, `async`, `unsafe`, `safe`, `default` and `extern` qualifiers before `fn`.
+  The grammar matches the line after literals are stripped, so a `fn` in a string or comment is not
+  a header.
+- The abort policy exempts the body of the unindented `fn main`; rustfmt indents a method of the
+  same name inside its `impl` block, so the method stays library code.
+
+`internal/hiss/rust_scope_test.go` and `internal/hiss/abort_policy_test.go` pin each case.
+
 ## Go: one pass reads a package, not a file
 
 Most matchers decide a line. HISS-01 cannot be decided that way in full: a function that calls
