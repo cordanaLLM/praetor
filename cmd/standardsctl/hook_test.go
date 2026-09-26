@@ -122,7 +122,7 @@ func TestHookProcessFailsClosed(t *testing.T) {
 	}{
 		{"no arguments", " ", allowed, "", 2}, {"one argument", "claude", allowed, "", 2},
 		{"three arguments", "claude pre-tool extra", allowed, "", 2}, {"unknown client", "cursor pre-tool", allowed, "", 2},
-		{"client without this event's row", "codex pre-edit", allowed, "", 2}, {"empty stdin", "claude pre-tool", nil, "", 2},
+		{"agy without this event's row", "agy post-tool", allowed, "", 2}, {"empty stdin", "claude pre-tool", nil, "", 2},
 		{"malformed stdin", "codex pre-tool", []byte("{"), "", 2},
 		{"disabled lefthook in the environment", "lefthook environment", nil, "LEFTHOOK=0", 1},
 		{"disabled lefthook reaches pre-tool", "claude pre-tool", allowed, "LEFTHOOK=0", 2},
@@ -196,8 +196,13 @@ func TestHookProcessClaudeHandbackGateAcrossProcesses(t *testing.T) {
 func TestHookProcessSkipsAnEventNewerThanTheEngine(t *testing.T) {
 	root := hookRepository(t, true)
 	result, exit := hookProcess(t, root, "claude future-event", []byte(`{}`))
-	if exit != 0 || !bytes.Contains(result.Stderr, []byte("serves no future-event event")) {
+	if exit != 0 || !bytes.Contains(result.Stderr, []byte("serves no claude future-event row")) {
 		t.Fatalf("skew: exit %d stdout %q stderr %q", exit, result.Stdout, result.Stderr)
+	}
+	// An existing event gaining a row for a client that lacks one is skew too.
+	if result, exit := hookProcess(t, root, "codex pre-edit", []byte(`{}`)); exit != 0 ||
+		!bytes.Contains(result.Stderr, []byte("serves no codex pre-edit row")) || len(result.Stdout) != 0 {
+		t.Fatalf("row skew: exit %d stdout %q stderr %q", exit, result.Stdout, result.Stderr)
 	}
 	if result, exit := hookProcess(t, root, "agy future-event", []byte(`{}`)); exit != 2 ||
 		!bytes.Contains(result.Stderr, []byte("usage: praetorctl hook")) {

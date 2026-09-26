@@ -7,9 +7,12 @@ judges the call in process and answers in that client's dialect.
 
 This page describes what ships today. The legacy command and checkpoint rows still call
 the Python adapters under `.config/agent/hooks/`; moving those rows and Lefthook jobs to
-this entrypoint remains later work. The subagent text rows are tracked now and call this
-entrypoint directly from `.claude/settings.json`, `.codex/hooks.json`,
-`.gemini/settings.json`, and `.agents/plugins/praetor/hooks.json`.
+this entrypoint remains later work. The subagent text rows are tracked now.
+`.claude/settings.json`, `.codex/hooks.json` and `.gemini/settings.json` reach this
+entrypoint through the skew guard `.config/agent/hooks/praetor_hook.py`;
+`.agents/plugins/praetor/hooks.json` calls it directly. The guard exists so that an engine
+older than a row can never block a client
+([Rollout](#rollout-engine-skew-never-blocks-a-client)).
 
 The legacy rows in `.claude/settings.json`, `.codex/hooks.json`, `.gemini/settings.json`
 and `.config/lefthook/praetor.yml` still guard live sessions (see
@@ -104,7 +107,7 @@ praetorctl hook <client> <event>
 
 Both arguments match `^[a-z-]+$`. The registration table is the support matrix; a pair
 without a row is rejected before any input is read. The one exception is engine skew,
-described under [Rollout](#rollout-the-installed-engine-must-serve-the-tracked-rows).
+described under [Rollout](#rollout-engine-skew-never-blocks-a-client).
 
 | Client | Event | Native event | Matcher | Budget | Registration string |
 | :-- | :-- | :-- | :-- | :-- | :-- |
@@ -144,9 +147,22 @@ and Lefthook's own checkpoint jobs (`agent-checkpoint-tool`, `agent-checkpoint-p
 `agent-checkpoint-stop`) still call the Python adapters directly; both flips are a later
 change (see [Not in this change](#not-in-this-change)).
 
-The registration string is one executable call. It resolves through `PATH` (and `PATHEXT`
-on Windows) and is valid under `sh -c` and under `cmd /c`. The text-gate rows are tracked
-in each native client file; AGY reads its row from `.agents/plugins/praetor/hooks.json`.
+The registration string in the table is the engine call: one executable call that resolves
+through `PATH` (and `PATHEXT` on Windows) and is valid under `sh -c` and under `cmd /c`.
+AGY reads its row, in exactly that form, from `.agents/plugins/praetor/hooks.json`. The
+three native client files of this repository carry the same pair behind the skew guard
+instead, in the form of their legacy adapter rows:
+
+```text
+python3 -B "${CLAUDE_PROJECT_DIR}/.config/agent/hooks/praetor_hook.py" claude pre-dispatch
+python3 -B "$(git rev-parse --show-toplevel)/.config/agent/hooks/praetor_hook.py" codex pre-dispatch
+```
+
+Claude Code rows use `CLAUDE_PROJECT_DIR`, the tree the settings were loaded from, which
+stays fixed when the session enters a worktree that may predate the guard. Codex runs hooks
+from the session directory and its documentation recommends resolving paths from the Git
+root; the Gemini CLI row follows its legacy adapter rows, which do the same.
+`TestRegistrationTableMatchesTheTrackedClientFiles` pins each tracked string to this form.
 
 ## One invocation
 
@@ -287,7 +303,7 @@ registered on a human-operator reply surface.
 | Situation | `claude`, `codex`, `gemini` | `lefthook` |
 | :-- | :-- | :-- |
 | unsupported or malformed arguments | exit 2, usage on stderr | exit 2, usage on stderr |
-| event no row of this engine carries (engine skew) | exit 0, `praetor hook: this praetorctl serves no <event> event: …, skipped` on stderr | same |
+| well-formed pair no row of this engine carries (engine skew) | exit 0, `praetor hook: this praetorctl serves no <client> <event> row: …, skipped` on stderr | same |
 | stdin missing, empty, over 1 MiB, not one JSON object, late | exit 2, reason on stderr | exit 1, reason on stderr |
 | payload event contradicts the argument | exit 2 | exit 1 |
 | command tool without a command string | exit 2 | exit 1 |
@@ -304,48 +320,78 @@ because no policy was evaluated. Reasons are bounded to 4096 bytes and never ech
 command, which may carry a secret. A deny keeps its exit code even when the client has
 already closed a stream.
 
-## Rollout: the installed engine must serve the tracked rows
+## Rollout: engine skew never blocks a client
 
-Tracked registrations call `praetorctl` through `PATH` (ADR 0011, decision 1), not the
-checkout. An engine installed before a row existed answers that row with the usage and
-exit 2. For the subagent rows that blocks every Claude `Agent`, Codex `spawn_agent` and
-Gemini `invoke_agent` launch, and keeps a Claude or Codex subagent that reaches
-`SubagentStop` running. AGY `invoke_subagent` gets the same exit 2 and no decision object.
-AGY's exit-code handling is unverified (`internal/agenthook/dialect_agy.go`), so treat that
-launch as blocked too. No change to the tracked files can prevent that, because the old
-binary answers before any new code runs. So the engine goes first. Before a change that adds
-rows lands, install the engine from that change's tip on every workstation that runs a
-client in this repository. That engine also serves every row it replaces. After pulling,
-reinstall before starting a client session:
+An engine installed before a row existed answers that row with its usage and exit 2. Claude
+Code, Codex and Gemini CLI read exit 2 as a block; any other failure, including a missing
+command, is reported and the action proceeds. So an engine older than the subagent rows
+would stop every Claude `Agent`, Codex `spawn_agent` and Gemini `invoke_agent` launch, and
+keep a Claude or Codex subagent that reaches `SubagentStop` running, until someone
+reinstalled. Two layers keep that from happening.
+
+**The skew guard.** The native client files of this repository call
+`.config/agent/hooks/praetor_hook.py <client> <event>`, not `praetorctl` from `PATH`. The
+engine that is already installed cannot be changed, so the check runs before any engine sees
+the call. Every engine version prints the pairs it serves when `praetorctl hook` runs with no
+arguments. The guard asks each candidate in order and hands the call, stdin included, to the
+first that lists the pair:
+
+1. `bin/praetorctl` of the tree the guard belongs to. `make hook-cli` builds it from that
+   tree, and the Git hooks rebuild it after a checkout or merge that changes Go sources, so
+   it serves the rows the tree registers.
+2. `praetorctl` from `PATH`, the installed engine.
+
+The chosen engine's stdout, stderr and exit code reach the client unchanged, so a deny stays
+a deny. When no candidate lists the pair, or none exists, the guard drains the payload and
+exits 0 with the reason on stderr:
+
+```text
+praetor hook: no engine serves claude pre-dispatch (checked /home/example/.local/bin/praetorctl); the gate is not enforced until bin/praetorctl is rebuilt (make hook-cli) or the engine is reinstalled (make dev-install), skipped
+```
+
+An engine that starts but gives no verdict within 60 seconds, or cannot start after its
+probe, is exit 1: a fault every client reports without blocking. Malformed guard arguments
+keep exit 2, as the engine does for malformed arguments; the tracked strings are pinned, so
+that only happens on a broken edit. A host without `python3` gets the shell's
+command-not-found status, which also does not block. `scripts/test_praetor_hook.py` runs the
+tracked strings through `sh -c` against the engine built from the tree, against a stand-in
+for the engine that predates these rows (it is only ever probed), and with no engine at all.
+
+**The engine's own skip.** An engine built from this change on answers a well-formed pair it
+has no row for as a stated skip in the client's dialect, whether the event is new or an
+existing event gained a row for that client. That covers registrations the guard does not
+front, such as a hand-written row. Tracked registration strings are pinned to the table in
+both directions: `TestRegistrationTableMatchesTheTrackedClientFiles` checks every row against
+the files, and `TestTrackedRegistrationsNameOnlyEngineRows` checks that every tracked engine
+command is a row. So a runtime pair this engine does not know means skew, not a typo
+(`TestRunSkipsAnEventNewerThanTheEngine`, `TestHookProcessSkipsAnEventNewerThanTheEngine`).
+Malformed arguments, an unknown client and an unknown `agy` event keep the usage and exit 2:
+the agy encoder has no response shape for an event it does not know.
+
+**What a skip costs.** Either layer skips, so a skewed host does not enforce the gate. Keep
+the engine current: after pulling a change that adds rows, reinstall before starting a
+client session, then check what the installed engine serves.
 
 ```bash
 make dev-install            # or: praetorctl workstation install --source <checkout>
 praetorctl workstation status
+praetorctl hook             # lists every pair; after this change it names claude post-return and agy pre-dispatch
 ```
 
 `status` reports the installed commit ([Workstation install and status](workstation-update.md)).
-`praetorctl hook` with no arguments prints every pair the installed engine serves. After the
-reinstall, that list names `praetorctl hook claude post-return` and
-`praetorctl hook agy pre-dispatch`.
+Nothing stops a downgrade: `workstation install` records the prior commit in its manifest but
+never compares it with the commit it installs (`internal/workstation/install.go`), and
+`make dev-install` runs the installer from the source checkout (`scripts/dev_install.py`).
+Installing from a checkout based before these rows puts back an engine that neither serves
+nor skips them. The native clients then fall through the guard to a skip, so nothing blocks,
+but nothing is enforced either until the next forward install.
 
-Nothing stops a downgrade. `workstation install` records the prior commit in its manifest but
-never compares it with the commit it installs (`internal/workstation/install.go`).
-`make dev-install` runs the installer from the source checkout (`go run ./cmd/standardsctl`
-in `scripts/dev_install.py`), so a checkout based before these rows runs an installer that
-lacks any guard added later. Installing from such a checkout puts back an engine that neither
-serves these rows nor skips them, and the launches above block again. Rebase or update that
-checkout before installing from it, then repeat the `praetorctl hook` check.
-
-An engine built from this change on reports a later event it does not know as a stated skip
-in the client's dialect instead of blocking. The cost is that such an engine does not
-enforce a gate added after it, so the reinstall step still applies. A known event registered
-for a client without that row, an unknown client, malformed arguments and an unknown `agy`
-event keep the usage and exit 2: the agy encoder has no response shape for an event it does
-not know. Tracked registration strings are pinned to the table in both directions:
-`TestRegistrationTableMatchesTheTrackedClientFiles` checks every row against the files, and
-`TestTrackedRegistrationsNameOnlyEngineRows` checks that every tracked `praetorctl hook`
-command is a row. So a runtime event this engine does not know means skew, not a typo
-(`TestRunSkipsAnEventNewerThanTheEngine`, `TestHookProcessSkipsAnEventNewerThanTheEngine`).
+**AGY is the exception.** The AGY plugin can be installed outside any checkout, and AGY runs
+the command from the directory that holds `hooks.json`, so its row cannot name a checkout
+file and calls `praetorctl hook agy pre-dispatch` from `PATH` directly. An engine that
+predates the row answers it with exit 2 and no decision object. AGY's exit-code handling is
+unverified (`internal/agenthook/dialect_agy.go`), so treat `invoke_subagent` as blocked on
+such a host until the reinstall above.
 
 ## Built-in command policy
 

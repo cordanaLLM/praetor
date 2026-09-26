@@ -11,9 +11,9 @@ import (
 )
 
 // usageExit is the exit code of a call no dialect can encode: the blocking code of the
-// native clients, so a malformed or misregistered pair fails closed. The one exception is
-// engine skew (unsupportedResponse): a well-formed event no row of this engine carries is a
-// stated skip, which also means an older engine does not enforce a gate added after it.
+// native clients, so a malformed pair fails closed. The one exception is engine skew
+// (unsupportedResponse): a well-formed pair no row of this engine carries is a stated skip,
+// which also means an older engine does not enforce a gate added after it.
 const usageExit = 2
 
 // Invocation is everything one hook call depends on. Nothing is read from process state.
@@ -63,40 +63,38 @@ func recordDirOf(getenv func(string) string) string {
 	return getenv(RecordDirEnv)
 }
 
-// unsupportedResponse answers a pair without a row. A known exit-code client naming an event
-// that no row of this engine carries gets a stated skip: the tracked registrations are pinned
-// to this table in both directions by TestRegistrationTableMatchesTheTrackedClientFiles and
-// TestTrackedRegistrationsNameOnlyEngineRows, so an event this engine has never heard of
-// means the registration is newer than the installed praetorctl, and failing closed there
-// would block the operator's client (every subagent launch, or a subagent that cannot stop)
-// until a reinstall. The cost is that an older engine skips, and so does not enforce, a
-// gate added after it. Malformed arguments, an unknown client, a known event registered for
-// a client without that row, and agy (its encoder has no response shape for an event it
-// does not know) keep the usage and the blocking exit code.
+// unsupportedResponse answers a pair without a row. A known exit-code client naming a
+// well-formed event that no row of this engine carries for that client gets a stated skip:
+// the tracked registrations are pinned to this table in both directions by
+// TestRegistrationTableMatchesTheTrackedClientFiles and TestTrackedRegistrationsNameOnlyEngineRows,
+// so such a pair means the registration is newer than the running praetorctl (a new event, or
+// an existing event gaining a row for this client), and failing closed there would block the
+// operator's client (every subagent launch, or a subagent that cannot stop) until a
+// reinstall. The cost is that an older engine skips, and so does not enforce, a gate added
+// after it. Malformed arguments, an unknown client and agy (its encoder has no response shape
+// for an event it does not know) keep the usage and the blocking exit code.
 func unsupportedResponse(in Invocation, err error) Response {
 	dialect, known := DialectFor(in.Client)
-	if !known || dialect.encode != nil || !argumentShape.MatchString(in.Event) || engineEvent(Event(in.Event)) {
+	if !known || dialect.encode != nil || !argumentShape.MatchString(in.Event) {
 		return usageResponse(err)
 	}
-	reason := "this praetorctl serves no " + in.Event + " event: the registration is newer than the installed engine; " +
-		"reinstall it from the checkout (praetorctl workstation install --source <checkout>)"
+	reason := "this praetorctl serves no " + in.Client + " " + in.Event + " row: the registration is newer than the " +
+		"running engine; rebuild bin/praetorctl (make hook-cli) or reinstall it from the checkout (make dev-install)"
 	return dialect.Encode(Canonical{Event: Event(in.Event)}, Verdict{Outcome: Skip, Reason: reason})
 }
 
-// engineEvent reports whether any registration row of this engine carries event.
-func engineEvent(event Event) bool {
-	for _, row := range registrationTable {
-		if row.Event == event {
-			return true
-		}
-	}
-	return false
-}
-
+// usageResponse lists every pair this engine serves, each once: two native events of one
+// client can reach the same pair (Claude's PostToolUseFailure and PermissionDenied both reach
+// dispatch-abort), and the tracked launcher reads this list to decide whether to call the
+// engine at all.
 func usageResponse(err error) Response {
 	lines := []string{"praetor hook: " + boundReason(err.Error()), "usage: praetorctl hook <client> <event>"}
+	listed := make(map[string]bool, len(registrationTable))
 	for _, row := range registrationTable {
-		lines = append(lines, "  "+row.Command())
+		if command := row.Command(); !listed[command] {
+			listed[command] = true
+			lines = append(lines, "  "+command)
+		}
 	}
 	return Response{Stderr: []byte(strings.Join(lines, "\n") + "\n"), ExitCode: usageExit}
 }

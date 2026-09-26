@@ -26,7 +26,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "praetorctl hook gemini pre-dispatch",
+            "command": "python3 -B \"$(git rev-parse --show-toplevel)/.config/agent/hooks/praetor_hook.py\" gemini pre-dispatch",
             "timeout": 15000
           }
         ]

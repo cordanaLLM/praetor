@@ -169,24 +169,28 @@ func TestTrackedCommandProblemsRejectsRowsTheEngineLacks(t *testing.T) {
 		}
 		return built
 	}
-	valid := group("^Agent$", "praetorctl hook claude pre-dispatch", 15)
+	launch := func(root, pair string) string { return `python3 -B "` + root + "/" + launcherScript + `" ` + pair }
+	claude := func(pair string) string { return launch("${CLAUDE_PROJECT_DIR}", pair) }
+	valid := group("^Agent$", claude("claude pre-dispatch"), 15)
 	for name, tc := range map[string]struct {
 		native string
 		group  nativeGroup
 		want   int
 	}{
-		"engine row":                   {"PreToolUse", valid, 0},
-		"second row of one event":      {"PermissionDenied", group("^Agent$", "praetorctl hook claude dispatch-abort", 15), 0},
-		"legacy adapter is not a row":  {"PreToolUse", group("^Bash$", "python3 -B guard.py", 15), 0},
-		"legacy engine pair untracked": {"PreToolUse", group("^Bash$", "praetorctl hook claude pre-tool", 15), 0},
-		"event of another native":      {"Stop", group("^Agent$", "praetorctl hook claude dispatch-abort", 15), 1},
-		"typo'd event":                 {"PreToolUse", group("^Agent$", "praetorctl hook claude pre-dispach", 15), 1},
-		"other client's row":           {"PreToolUse", group("^Agent$", "praetorctl hook codex pre-dispatch", 15), 1},
-		"wrong native event":           {"PostToolUse", valid, 1},
-		"wrong matcher":                {"PreToolUse", group("^Task$", "praetorctl hook claude pre-dispatch", 15), 1},
-		"wrong timeout":                {"PreToolUse", group("^Agent$", "praetorctl hook claude pre-dispatch", 16), 1},
-		"extra argument":               {"PreToolUse", group("^Agent$", "praetorctl hook claude pre-dispatch --x", 15), 1},
-		"missing event":                {"PreToolUse", group("^Agent$", "praetorctl hook claude", 15), 1},
+		"engine row":                    {"PreToolUse", valid, 0},
+		"second row of one event":       {"PermissionDenied", group("^Agent$", claude("claude dispatch-abort"), 15), 0},
+		"legacy adapter is not a row":   {"PreToolUse", group("^Bash$", "python3 -B guard.py", 15), 0},
+		"launcher row of a legacy pair": {"PreToolUse", group("^Bash$", claude("claude pre-tool"), 15), 0},
+		"engine from PATH, no launcher": {"PreToolUse", group("^Agent$", "praetorctl hook claude pre-dispatch", 15), 1},
+		"launcher from the cwd's tree":  {"PreToolUse", group("^Agent$", launch("$(git rev-parse --show-toplevel)", "claude pre-dispatch"), 15), 1},
+		"event of another native":       {"Stop", group("^Agent$", claude("claude dispatch-abort"), 15), 1},
+		"typo'd event":                  {"PreToolUse", group("^Agent$", claude("claude pre-dispach"), 15), 1},
+		"other client's row":            {"PreToolUse", group("^Agent$", claude("codex pre-dispatch"), 15), 1},
+		"wrong native event":            {"PostToolUse", valid, 1},
+		"wrong matcher":                 {"PreToolUse", group("^Task$", claude("claude pre-dispatch"), 15), 1},
+		"wrong timeout":                 {"PreToolUse", group("^Agent$", claude("claude pre-dispatch"), 16), 1},
+		"extra argument":                {"PreToolUse", group("^Agent$", claude("claude pre-dispatch --x"), 15), 1},
+		"missing event":                 {"PreToolUse", group("^Agent$", claude("claude"), 15), 1},
 	} {
 		got := trackedCommandProblems("claude", map[string][]nativeGroup{tc.native: {tc.group}}, time.Second)
 		if len(got) != tc.want {
@@ -195,8 +199,50 @@ func TestTrackedCommandProblemsRejectsRowsTheEngineLacks(t *testing.T) {
 	}
 }
 
-// trackedCommandProblems lists every `praetorctl hook` command in hooks (native event to
-// groups) that no engine row of client carries with that native event, matcher and timeout.
+// launcherScript hands a tracked row to an engine that serves it and skips with the reason
+// when none does, so an engine older than the row never blocks the client.
+const launcherScript = ".config/agent/hooks/praetor_hook.py"
+
+// trackedRoot is how each repository-scoped client file names the checkout holding the
+// launcher: Claude Code's project directory stays the tree its settings came from even after
+// the session enters an older worktree; Codex and Gemini CLI run hooks from the session
+// directory. AGY's plugin can be installed outside any checkout, so its row has no launcher.
+var trackedRoot = map[string]string{
+	"claude": "${CLAUDE_PROJECT_DIR}",
+	"codex":  "$(git rev-parse --show-toplevel)",
+	"gemini": "$(git rev-parse --show-toplevel)",
+}
+
+// trackedCommand is the exact string this repository's client files carry for row.
+func trackedCommand(row Registration) string {
+	root, launched := trackedRoot[row.Client]
+	if !launched {
+		return row.Command()
+	}
+	return `python3 -B "` + root + "/" + launcherScript + `" ` + row.Client + " " + string(row.Event)
+}
+
+// trackedPair returns the client and event a tracked engine command names, direct or through
+// the launcher; engine is false for anything else (the legacy adapters). A command with the
+// wrong number of arguments names no client.
+func trackedPair(command string) (client, event string, engine bool) {
+	rest, direct := strings.CutPrefix(command, "praetorctl hook ")
+	if !direct {
+		_, launched, found := strings.Cut(command, launcherScript+`" `)
+		if !found {
+			return "", "", strings.HasPrefix(command, "praetorctl hook")
+		}
+		rest = launched
+	}
+	fields := strings.Split(rest, " ")
+	if len(fields) != 2 {
+		return "", "", true
+	}
+	return fields[0], fields[1], true
+}
+
+// trackedCommandProblems lists every engine command in hooks (native event to groups) that no
+// engine row of client carries, in its tracked form, with that native event, matcher and timeout.
 func trackedCommandProblems(client string, hooks map[string][]nativeGroup, unit time.Duration) []string {
 	var problems []string
 	for native, groups := range hooks {
@@ -213,23 +259,23 @@ func trackedCommandProblems(client string, hooks map[string][]nativeGroup, unit 
 	return problems
 }
 
-// trackedCommandHeld reports whether a one-hook group is either not a praetorctl hook call or
-// exactly an engine row of client under native. One event may have several rows (Claude's
-// dispatch-abort serves PostToolUseFailure and PermissionDenied), so every row is tried.
+// trackedCommandHeld reports whether a one-hook group is either not an engine command or
+// exactly an engine row of client under native, in the row's tracked form. One event may
+// have several rows (Claude's dispatch-abort serves PostToolUseFailure and PermissionDenied),
+// so every row is tried.
 func trackedCommandHeld(client, native string, group nativeGroup, unit time.Duration) bool {
-	command := group.Hooks[0].Command
-	if !strings.HasPrefix(command, "praetorctl hook") {
+	named, event, engine := trackedPair(group.Hooks[0].Command)
+	if !engine {
 		return true
 	}
-	fields := strings.Split(command, " ")
-	if len(fields) != 4 || fields[2] != client {
+	if named != client {
 		return false
 	}
-	if _, err := ParseArguments(fields[2], fields[3]); err != nil {
+	if _, err := ParseArguments(named, event); err != nil {
 		return false
 	}
 	for _, row := range Registrations(client) {
-		if string(row.Event) == fields[3] && row.NativeEvent == native && groupsHold([]nativeGroup{group}, row, unit) {
+		if string(row.Event) == event && row.NativeEvent == native && groupsHold([]nativeGroup{group}, row, unit) {
 			return true
 		}
 	}
@@ -244,6 +290,15 @@ func readTrackedJSON(t *testing.T, rel string, target any) {
 	}
 	if err := json.Unmarshal(data, target); err != nil {
 		t.Fatalf("%s: %v", rel, err)
+	}
+}
+
+// TestTrackedLauncherIsInTheTree guards the file every launcher row names: a missing script
+// makes python3 exit 2, which the native clients read as a block.
+func TestTrackedLauncherIsInTheTree(t *testing.T) {
+	info, err := os.Stat(filepath.Join("..", "..", filepath.FromSlash(launcherScript)))
+	if err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("%s: %v", launcherScript, err)
 	}
 }
 
@@ -276,7 +331,7 @@ func TestHumanReplySurfacesHaveNoCavemanRegistration(t *testing.T) {
 
 func groupsHold(groups []nativeGroup, row Registration, unit time.Duration) bool {
 	for _, group := range groups {
-		if group.Matcher == row.Matcher && len(group.Hooks) == 1 && group.Hooks[0].Command == row.Command() &&
+		if group.Matcher == row.Matcher && len(group.Hooks) == 1 && group.Hooks[0].Command == trackedCommand(row) &&
 			time.Duration(group.Hooks[0].Timeout)*unit == row.Timeout {
 			return true
 		}

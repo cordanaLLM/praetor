@@ -237,16 +237,21 @@ func TestClaudeSubagentStopMatcherExcludesInternalAgents(t *testing.T) {
 // Misregistered known events, unknown clients, malformed arguments and agy stay usage errors.
 func TestRunSkipsAnEventNewerThanTheEngine(t *testing.T) {
 	root := repository(t, true)
-	for _, client := range []string{"claude", "codex", "gemini", "lefthook"} {
-		response := serve(t, client, "future-event", root, []byte(`{}`))
-		requireOutcome(t, client, response, 0, "this praetorctl serves no future-event event")
+	// A new event, and an existing event gaining a row for a client that lacks one, are both
+	// registrations newer than the running engine.
+	for _, pair := range [][2]string{
+		{"claude", "future-event"}, {"codex", "future-event"}, {"gemini", "future-event"}, {"lefthook", "future-event"},
+		{"codex", "pre-edit"}, {"gemini", "post-return"}, {"claude", "environment"}, {"lefthook", "post-tool"},
+	} {
+		response := serve(t, pair[0], pair[1], root, []byte(`{}`))
+		requireOutcome(t, pair[0]+" "+pair[1], response, 0, "this praetorctl serves no "+pair[0]+" "+pair[1]+" row")
 		if !bytes.HasSuffix(response.Stderr, []byte(", skipped\n")) || len(response.Stdout) != 0 {
-			t.Errorf("%s: skew is not a plain skip: %+v", client, response)
+			t.Errorf("%s: skew is not a plain skip: %+v", pair, response)
 		}
 	}
 	for _, pair := range [][2]string{
-		{"agy", "future-event"}, {"opencode", "future-event"}, {"codex", "pre-edit"}, {"gemini", "post-return"},
-		{"claude", "future_event"}, {"claude", ""},
+		{"agy", "future-event"}, {"agy", "post-tool"}, {"opencode", "future-event"},
+		{"claude", "future_event"}, {"claude", ""}, {"", "pre-dispatch"},
 	} {
 		requireOutcome(t, pair[0]+" "+pair[1], serve(t, pair[0], pair[1], root, []byte(`{}`)), usageExit,
 			"usage: praetorctl hook <client> <event>")

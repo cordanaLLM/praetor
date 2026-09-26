@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "praetorctl hook codex pre-dispatch",
+            "command": "python3 -B \"$(git rev-parse --show-toplevel)/.config/agent/hooks/praetor_hook.py\" codex pre-dispatch",
             "timeout": 15
           }
         ]
@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "praetorctl hook codex post-return",
+            "command": "python3 -B \"$(git rev-parse --show-toplevel)/.config/agent/hooks/praetor_hook.py\" codex post-return",
             "timeout": 60
           }
         ]

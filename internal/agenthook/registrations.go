@@ -19,8 +19,12 @@ type Registration struct {
 	Timeout time.Duration
 }
 
-// Command is the complete registration string for tracked files. It is one executable
-// call that resolves through PATH or PATHEXT and is valid under `sh -c` and `cmd /c`.
+// Command is the engine call that serves the row: one executable call that resolves through
+// PATH or PATHEXT and is valid under `sh -c` and `cmd /c`. A registration outside any
+// checkout (the AGY plugin) carries it as is. This repository's native client files reach it
+// through .config/agent/hooks/praetor_hook.py, which hands the call only to an engine whose
+// usage lists this command and otherwise skips, so an engine older than the row never blocks
+// the client (docs/guides/agent-hooks.md, Rollout).
 func (r Registration) Command() string {
 	return "praetorctl hook " + r.Client + " " + string(r.Event)
 }
@@ -28,7 +32,8 @@ func (r Registration) Command() string {
 // registrationTable is the support matrix of the entrypoint. A pair without a row is
 // rejected before any input is read. The checkpoint rows (pre-edit, post-tool, stop) reach
 // the native clients only (H2); Lefthook keeps its H1 rows until its jobs are re-pointed at
-// this entrypoint (H4), so `lefthook post-tool` etc. still fall through as unsupported here.
+// this entrypoint (H4), so `lefthook post-tool` etc. reach no evaluator here: they are answered
+// as a pair this engine does not serve (unsupportedResponse).
 // Codex carries no pre-edit row: measured fact, section 1 of the rollout spec ("no pre-edit
 // event registered today").
 var registrationTable = []Registration{
