@@ -43,12 +43,11 @@ type fleetRepo struct {
 	root string
 	// checkout is true for a git checkout, linked worktree or submodule.
 	checkout bool
-	// mainWorktree is true for a checkout whose .git is a directory.
-	mainWorktree bool
 	// declared is true when root holds .standards.yaml or .needs.yaml.
 	declared bool
-	// commonDir is the git common directory of a checkout; worktrees share it.
-	commonDir string
+	// identity is the repository a checkout belongs to: its linked worktrees, and every
+	// worktree's copy of one submodule, share identity.Key.
+	identity topology.CheckoutRepository
 	// subprojects are the directories holding an analyzer manifest at most
 	// maxSubprojectDepth below root, root first when it holds one.
 	subprojects []string
@@ -75,10 +74,9 @@ type walkItem struct {
 
 // dirMarks records what one directory's entries mark it as.
 type dirMarks struct {
-	gitEntry     bool
-	gitDirectory bool
-	manifest     bool
-	declaration  bool
+	gitEntry    bool
+	manifest    bool
+	declaration bool
 }
 
 // layoutWalker carries the state of one discovery walk.
@@ -99,7 +97,8 @@ type layoutWalker struct {
 // or a declaration starts a repository. Neither stops the walk: a checkout below a
 // manifest or declaration directory is still found. Every other manifest directory is a
 // sub-project of the repository it sits in. Linked worktrees of one repository (one git
-// common directory) collapse onto a single repository and are returned as duplicates.
+// common directory), and the copies of one submodule those worktrees check out, collapse
+// onto a single repository and are returned as duplicates.
 func discoverFleet(ctx context.Context, fleetRoot string) (*fleetLayout, error) {
 	walker := &layoutWalker{ctx: ctx, root: filepath.Clean(fleetRoot)}
 	if err := walker.walk(); err != nil {
@@ -179,7 +178,6 @@ func classifyEntries(entries []os.DirEntry) dirMarks {
 		name := entry.Name()
 		if name == ".git" {
 			marks.gitEntry = true
-			marks.gitDirectory = entry.IsDir()
 			continue
 		}
 		if !entry.Type().IsRegular() {
@@ -195,12 +193,11 @@ func classifyEntries(entries []os.DirEntry) dirMarks {
 // directory starts a repository of its own.
 func (w *layoutWalker) claim(item walkItem, marks dirMarks) (owner *fleetRepo, relDepth int, opened bool, err error) {
 	if marks.gitEntry && topology.HasValidGitRepo(item.path) {
-		common, cErr := topology.GitCommonDir(w.ctx, item.path)
-		if cErr != nil {
-			return nil, 0, false, fmt.Errorf("resolve the repository of checkout %q: %w", item.path, cErr)
+		identity, iErr := topology.ResolveCheckoutRepository(w.ctx, item.path)
+		if iErr != nil {
+			return nil, 0, false, fmt.Errorf("resolve the repository of checkout %q: %w", item.path, iErr)
 		}
-		repo := &fleetRepo{root: item.path, checkout: true, mainWorktree: marks.gitDirectory,
-			declared: marks.declaration, commonDir: common}
+		repo := &fleetRepo{root: item.path, checkout: true, declared: marks.declaration, identity: identity}
 		w.layout.repos = append(w.layout.repos, repo)
 		return repo, 0, true, nil
 	}
@@ -260,23 +257,26 @@ func prunedFromDiscovery(name string, parentDepth int, parentIsRepo bool) bool {
 	return parentDepth == 0 || parentIsRepo
 }
 
-// collapseWorktrees keeps one repository per git common directory. The main worktree
-// wins; without one in the walk, the first worktree found does. The others are recorded
-// as duplicates of the one kept.
+// collapseWorktrees keeps one repository per checkout identity (topology
+// ResolveCheckoutRepository): the linked worktrees of one clone, and every worktree's copy
+// of one submodule, are one repository. The primary checkout (the main worktree, or the
+// submodule the main worktree checked out) wins; without one in the walk, the first
+// checkout found does. The others are recorded as duplicates of the one kept.
+// Independent clones have identities of their own and are never collapsed.
 func (w *layoutWalker) collapseWorktrees() {
 	owners := make(map[string]*fleetRepo)
 	for _, repo := range w.layout.repos {
 		if !repo.checkout {
 			continue
 		}
-		kept, seen := owners[repo.commonDir]
-		if !seen || (repo.mainWorktree && !kept.mainWorktree) {
-			owners[repo.commonDir] = repo
+		kept, seen := owners[repo.identity.Key]
+		if !seen || (repo.identity.Primary && !kept.identity.Primary) {
+			owners[repo.identity.Key] = repo
 		}
 	}
 	repos := make([]*fleetRepo, 0, len(w.layout.repos))
 	for _, repo := range w.layout.repos {
-		if kept := owners[repo.commonDir]; repo.checkout && kept != repo {
+		if kept := owners[repo.identity.Key]; repo.checkout && kept != repo {
 			w.layout.duplicates = append(w.layout.duplicates, FleetDuplicate{Dir: repo.root, Of: kept.root})
 			continue
 		}
@@ -306,21 +306,22 @@ func isDeclarationFile(name string) bool {
 // analysed and merged into the row, and a demand two sub-projects share is counted once.
 // When the root itself is no analyzer's project (a checkout or a declaration above
 // core/meson.build), the row is named after the root and carries the root's declarations.
-// A repository without a sub-project within maxSubprojectDepth fails with ErrNoAnalyzer,
-// naming any deeper manifest it did not scan. Fleet aggregation, fleet epics and the
-// single-repository scan all score through this function.
+// A nested sub-project whose scan fails (a template package.json under examples/, say) is
+// listed in RepoNeeds.FailedSubprojects and the rest are still scored; the repository
+// fails only when its root project fails or no sub-project scans. A repository without a
+// sub-project within maxSubprojectDepth fails with ErrNoAnalyzer, naming any deeper
+// manifest it did not scan. Fleet aggregation, fleet epics and the single-repository scan
+// all score through this function.
 func scanRepository(ctx context.Context, repo *fleetRepo) (*RepoNeeds, error) {
 	if len(repo.subprojects) == 0 {
 		return nil, noProjectError(repo)
 	}
-	row, err := mergeSubprojectScans(ctx, repo.subprojects)
+	scan, err := mergeSubprojectScans(ctx, repo)
 	if err != nil {
 		return nil, err
 	}
-	nested := repo.subprojects
-	if repo.subprojects[0] == repo.root {
-		nested = repo.subprojects[1:]
-	} else {
+	row := scan.row
+	if repo.subprojects[0] != repo.root {
 		row.Repository = repositoryDirName(repo.root)
 		if declErr := loadExistingDeclarations(repo.root, row); declErr != nil {
 			return nil, fmt.Errorf("failed to load declarations of repository %q: %w", repo.root, declErr)
@@ -329,8 +330,9 @@ func scanRepository(ctx context.Context, repo *fleetRepo) (*RepoNeeds, error) {
 	// One project may name a package in two spellings too (typing-extensions in
 	// pyproject.toml, typing_extensions in requirements.txt).
 	row.Dependencies = appendNewDemands(make([]DependencyDemand, 0, len(row.Dependencies)), row.Dependencies)
-	row.Subprojects = relativeTo(repo.root, nested)
+	row.Subprojects = relativeTo(repo.root, scan.nested)
 	row.UnscannedSubprojects = relativeTo(repo.root, repo.unscanned)
+	row.FailedSubprojects = scan.failed
 	calculateReadiness(row)
 	return row, nil
 }
@@ -354,22 +356,54 @@ func noProjectError(repo *fleetRepo) error {
 		repo.root, ErrNoAnalyzer, maxSubprojectDepth, repo.root, strings.Join(relativeTo(repo.root, repo.unscanned), ", "))
 }
 
-// mergeSubprojectScans scans every directory in dirs and merges each result into the
-// first one's.
-func mergeSubprojectScans(ctx context.Context, dirs []string) (*RepoNeeds, error) {
-	var row *RepoNeeds
-	for _, dir := range dirs {
+// subprojectScan is the merged outcome of scanning a repository's sub-projects.
+type subprojectScan struct {
+	// row is the first successful scan with every later one merged into it.
+	row *RepoNeeds
+	// nested lists the sub-projects below the root merged into row.
+	nested []string
+	// failed lists, relative to the root, the nested sub-projects whose scan failed.
+	failed []SubprojectFailure
+}
+
+// mergeSubprojectScans scans every sub-project of repo and merges each result into the
+// first successful one's. A failing nested sub-project is recorded and skipped. A failing
+// root project, cancellation, or a repository in which no sub-project scans is an error;
+// the last is never ErrNoAnalyzer, so a repository whose manifests all fail to parse is
+// counted as failed, not skipped.
+func mergeSubprojectScans(ctx context.Context, repo *fleetRepo) (*subprojectScan, error) {
+	scan := &subprojectScan{}
+	for _, dir := range repo.subprojects {
 		sub, err := scanProjectDir(ctx, dir)
 		if err != nil {
-			return nil, err
-		}
-		if row == nil {
-			row = sub
+			if dir == repo.root || isContextError(err) {
+				return nil, err
+			}
+			scan.failed = append(scan.failed, SubprojectFailure{Dir: relativeTo(repo.root, []string{dir})[0], Error: err.Error()})
 			continue
 		}
-		mergeRepoNeeds(row, sub)
+		if dir != repo.root {
+			scan.nested = append(scan.nested, dir)
+		}
+		if scan.row == nil {
+			scan.row = sub
+			continue
+		}
+		mergeRepoNeeds(scan.row, sub)
 	}
-	return row, nil
+	if scan.row == nil {
+		return nil, noSubprojectScannedError(repo.root, scan.failed)
+	}
+	return scan, nil
+}
+
+// noSubprojectScannedError reports a repository in which every sub-project failed.
+func noSubprojectScannedError(root string, failed []SubprojectFailure) error {
+	reasons := make([]string, 0, len(failed))
+	for _, failure := range failed {
+		reasons = append(reasons, failure.Dir+": "+failure.Error)
+	}
+	return fmt.Errorf("failed to analyze repository %q: no sub-project could be scanned: %s", root, strings.Join(reasons, "; "))
 }
 
 // repositoryDirName names a repository after its root directory.

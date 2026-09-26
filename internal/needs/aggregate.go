@@ -119,7 +119,7 @@ func (a *fleetAggregation) result() error {
 // report, recording the failure instead of dropping it silently. Cancellation aborts
 // aggregation; unsupported repositories are skipped without claiming that their
 // dependency coverage is known. Manifests beyond the sub-project depth bound are listed
-// whatever the scan's outcome.
+// whatever the scan's outcome; sub-projects whose scan failed are listed with their error.
 func (a *fleetAggregation) scanRepo(ctx context.Context, repo *fleetRepo) error {
 	a.report.UnscannedSubprojects = append(a.report.UnscannedSubprojects, repo.unscanned...)
 	repoNeeds, err := scanRepository(ctx, repo)
@@ -138,6 +138,10 @@ func (a *fleetAggregation) scanRepo(ctx context.Context, repo *fleetRepo) error 
 		return nil
 	}
 	repoNeeds.Path = repo.root
+	for _, failure := range repoNeeds.FailedSubprojects {
+		a.report.FailedSubprojects = append(a.report.FailedSubprojects,
+			SubprojectFailure{Dir: filepath.Join(repo.root, filepath.FromSlash(failure.Dir)), Error: failure.Error})
+	}
 	if key := repoIdentityKey(repoNeeds.Repository); key != "" {
 		a.seen[key] = struct{}{}
 	}
@@ -439,7 +443,8 @@ func renderDemandHeader(report *FleetDemandReport) string {
 }
 
 // renderDemandHeaderCounts renders the preamble lines for everything discovered but not
-// scored: failed and skipped repositories, collapsed worktrees and unscanned sub-projects.
+// scored: failed and skipped repositories, collapsed worktrees, and unscanned and failed
+// sub-projects.
 func renderDemandHeaderCounts(report *FleetDemandReport) string {
 	var sb strings.Builder
 	if report.FailedRepositories > 0 {
@@ -455,8 +460,14 @@ func renderDemandHeaderCounts(report *FleetDemandReport) string {
 		writef(&sb, "**Sub-projects Not Scanned (more than %d directories below their repository root)**: %d  \n",
 			maxSubprojectDepth, len(report.UnscannedSubprojects))
 	}
+	if len(report.FailedSubprojects) > 0 {
+		writef(&sb, "**%s**: %d  \n", failedSubprojectsTitle, len(report.FailedSubprojects))
+	}
 	return sb.String()
 }
+
+// failedSubprojectsTitle heads the report lines for sub-projects whose scan failed.
+const failedSubprojectsTitle = "Sub-projects Failed (scan error; the rest of each repository was scored)"
 
 // renderDemandDiscovery lists every discovered directory the leaderboard does not rank,
 // each with why, so that no repository or sub-project leaves the report without a trace.
@@ -474,10 +485,16 @@ func renderDemandDiscovery(report *FleetDemandReport) string {
 	writeLocations("Skipped Repositories (no language analyzer matched)", report.SkippedRepositories)
 	writeLocations(fmt.Sprintf("Sub-projects Not Scanned (more than %d directories below their repository root)",
 		maxSubprojectDepth), report.UnscannedSubprojects)
+	if len(report.FailedSubprojects) > 0 {
+		writef(&sb, "\n## %s\n\n", failedSubprojectsTitle)
+		for _, failure := range report.FailedSubprojects {
+			writef(&sb, "- `%s`: %s\n", rowLocation(report.FleetRoot, failure.Dir), strings.ReplaceAll(failure.Error, "\n", " "))
+		}
+	}
 	if len(report.DuplicateCheckouts) > 0 {
 		sb.WriteString("\n## Linked Worktrees Collapsed\n\n")
 		for _, dup := range report.DuplicateCheckouts {
-			writef(&sb, "- `%s` is a worktree of `%s`\n",
+			writef(&sb, "- `%s` is a linked-worktree checkout of `%s`\n",
 				rowLocation(report.FleetRoot, dup.Dir), rowLocation(report.FleetRoot, dup.Of))
 		}
 	}

@@ -161,12 +161,16 @@ What counts as a repository:
   nested in another checkout is its own row with its own demand. The outer
   checkout's Go import scan stops at it (`TestDiscoverFleetNestedCheckoutsAreOwnRows`).
 - **Linked worktrees of one repository are one row.** Checkouts that share a
-  git common directory (`topology.GitCommonDir`, read from `.git` metadata
-  without running git) collapse onto the main worktree, or onto the first
-  worktree found when the main one is outside the walk. Every collapsed
-  worktree is listed under "Linked Worktrees Collapsed" in the aggregate report
-  and as a `[SKIP]` line by `needs epic --dev-dir`
-  (`TestDiscoverFleetCollapsesLinkedWorktrees`).
+  git common directory collapse onto the main worktree, or onto the first
+  worktree found when the main one is outside the walk. The submodules a
+  linked worktree checks out collapse the same way onto the main checkout's
+  copy: git keeps them under `.git/worktrees/<name>/modules/`, and
+  `topology.ResolveCheckoutRepository` folds that onto `.git/modules/`, reading
+  `.git` metadata without running git. Every collapsed checkout is listed under
+  "Linked Worktrees Collapsed" in the aggregate report and as a `[SKIP]` line
+  by `needs epic --dev-dir` (`TestDiscoverFleetCollapsesLinkedWorktrees`,
+  `TestDiscoverFleetCollapsesSubmodulesOfLinkedWorktrees`). Independent clones
+  are never collapsed, even when they sit in a worktree.
 - **Outside every checkout, a directory holding an analyzer manifest or a
   declaration starts a repository.** Manifests are `go.mod`, `package.json`,
   `pyproject.toml`, `requirements.txt`, `setup.py`, `Cargo.toml`, `meson.build`
@@ -183,6 +187,16 @@ root itself holds no manifest, as in a checkout whose only project is
 root's declared capabilities. A package several sub-projects demand is one
 demand; PyPI names compare after PEP 503 normalisation, so `typing-extensions`
 and `typing_extensions` are one package (`TestDemandIdentityNormalisesPyPINames`).
+
+A nested sub-project whose scan fails, such as a template `package.json`
+under `examples/`, does not fail the repository. The row keeps the root
+project and every other sub-project, and the failure is listed with its error
+in the row, in scan output ("Sub-projects that FAILED to scan"), in the
+aggregate report ("Sub-projects Failed") and as a pre-migration epic blocker.
+The repository fails only when its root project fails, or when no sub-project
+scans at all (`TestFailedSubprojectKeepsRepositoryRow`,
+`TestFailedSubprojectsUnderNonProjectRoot` in
+`internal/needs/discovery_subproject_test.go`).
 
 Sub-projects are scanned at most 5 directories below the repository root. A
 deeper manifest is never dropped silently: the row and the aggregate report list
@@ -283,7 +297,8 @@ for under `[SKIP]`, with the reason:
 
 - the directory is not a prepared repository: it needs a Git checkout with HEAD
   metadata, a `.standards.yaml`, or a `.needs.yaml`;
-- it is a linked worktree collapsed onto its repository's checkout;
+- it is a linked worktree, or a submodule checked out in one, collapsed onto
+  its repository's checkout;
 - it is a checkout that declares no needs and in which no analyzer recognises
   a project, such as a documentation-only repository.
 

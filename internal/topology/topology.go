@@ -541,6 +541,16 @@ var ErrNotCheckout = errors.New("topology: not a git checkout")
 // directories are equal. The result is resolved through util.ResolveExistingPath, so
 // aliased spellings of one directory compare equal. No git process is started.
 func GitCommonDir(ctx context.Context, path string) (string, error) {
+	gitDir, err := checkoutGitDir(path)
+	if err != nil {
+		return "", err
+	}
+	return resolveCommonDir(ctx, gitDir)
+}
+
+// checkoutGitDir returns the git directory of the checkout at path: its .git directory,
+// or the directory its .git gitlink file names. The result is not canonicalised.
+func checkoutGitDir(path string) (string, error) {
 	if !HasValidGitRepo(path) {
 		return "", fmt.Errorf("%w: %s", ErrNotCheckout, path)
 	}
@@ -549,17 +559,17 @@ func GitCommonDir(ctx context.Context, path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("lstat git metadata: %w", err)
 	}
-	if info.Mode().IsRegular() {
-		target, ok, linkErr := resolveGitlinkTarget(path)
-		if linkErr != nil {
-			return "", linkErr
-		}
-		if !ok {
-			return "", fmt.Errorf("%w: %s: gitlink target vanished", ErrNotCheckout, path)
-		}
-		gitDir = target
+	if !info.Mode().IsRegular() {
+		return gitDir, nil
 	}
-	return resolveCommonDir(ctx, gitDir)
+	target, ok, err := resolveGitlinkTarget(path)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("%w: %s: gitlink target vanished", ErrNotCheckout, path)
+	}
+	return target, nil
 }
 
 // resolveCommonDir follows gitDir's commondir file when it has one and canonicalises the

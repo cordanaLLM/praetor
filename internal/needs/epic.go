@@ -320,8 +320,9 @@ const notPreparedReason = "no repository marker: not a Git checkout with HEAD me
 // recognises a project, such as a documentation-only repository.
 const noAnalyzerReason = "no language analyzer recognises a project in this checkout, and it declares no needs"
 
-// duplicateReasonPrefix starts the skip reason for a collapsed linked worktree.
-const duplicateReasonPrefix = "linked worktree of "
+// duplicateReasonPrefix starts the skip reason for a collapsed linked worktree, or for a
+// submodule checked out in one.
+const duplicateReasonPrefix = "linked-worktree checkout of "
 
 // RegenerateFleetEpics discovers all prepared repositories in fleetRoot and regenerates
 // their pre-migration epics.
@@ -333,7 +334,8 @@ const duplicateReasonPrefix = "linked worktree of "
 // success. A repository that declares needs (.standards.yaml or .needs.yaml) but in which
 // no analyzer recognises a project is such a failure. Returned as skips, each with its
 // reason, are: discovered directories that are not prepared repositories, undeclared
-// checkouts no analyzer recognises, and linked worktrees collapsed onto their repository.
+// checkouts no analyzer recognises, and linked worktrees (and the submodules checked out
+// in them) collapsed onto their repository.
 func RegenerateFleetEpics(ctx context.Context, fleetRoot string, opts FleetEpicOptions) ([]*PreMigrationEpic, []FleetEpicSkip, error) {
 	if ctx.Err() != nil {
 		return nil, nil, ctx.Err()

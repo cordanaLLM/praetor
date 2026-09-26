@@ -272,7 +272,7 @@ func TestDiscoverFleetCollapsesLinkedWorktrees(t *testing.T) {
 	if consumers := report.CapabilityConsumers[cloneA.Dependencies[0].Capability]; len(consumers) != 2 {
 		t.Errorf("two same-named clones are %v, want two distinct consumers", consumers)
 	}
-	if md := RenderFrameworkDemandMarkdown(report); !strings.Contains(md, "`worktrees/b` is a worktree of `proj`") {
+	if md := RenderFrameworkDemandMarkdown(report); !strings.Contains(md, "`worktrees/b` is a linked-worktree checkout of `proj`") {
 		t.Errorf("markdown does not list the collapsed worktree:\n%s", md)
 	}
 }

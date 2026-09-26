@@ -88,6 +88,10 @@ func migrationBlockers(analysis *migrationAnalysis) []string {
 		blockers = append(blockers, fmt.Sprintf("%d sub-projects sit more than %d directories below the repository root and were not scanned: %s.",
 			len(deep), maxSubprojectDepth, strings.Join(deep, ", ")))
 	}
+	if failed := analysis.report.FailedSubprojects; len(failed) > 0 {
+		blockers = append(blockers, fmt.Sprintf("%d sub-projects failed to scan and their demand is not counted: %s.",
+			len(failed), formatSubprojectFailures(failed)))
+	}
 	return blockers
 }
 

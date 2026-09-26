@@ -102,10 +102,21 @@ type RepoNeeds struct {
 	// UnscannedSubprojects lists, relative to the repository root, the project directories
 	// deeper than the sub-project depth bound. They are reported, not scanned.
 	UnscannedSubprojects []string `json:"unscanned_subprojects,omitempty" yaml:"-"`
+	// FailedSubprojects lists, relative to the repository root, the nested project
+	// directories whose scan failed. Their demand is missing from this row; the root
+	// project and every other sub-project are still scored.
+	FailedSubprojects []SubprojectFailure `json:"failed_subprojects,omitempty" yaml:"-"`
 }
 
-// FleetDuplicate names a linked worktree that fleet discovery collapsed onto the checkout
-// kept for its repository (the two share one git common directory).
+// SubprojectFailure names a nested sub-project whose scan failed, with the error.
+type SubprojectFailure struct {
+	Dir   string `json:"dir"`
+	Error string `json:"error"`
+}
+
+// FleetDuplicate names a checkout that fleet discovery collapsed onto the checkout kept for
+// its repository: a linked worktree (the two share one git common directory), or a
+// submodule checked out in one (see topology.ResolveCheckoutRepository).
 type FleetDuplicate struct {
 	Dir string `json:"dir"`
 	Of  string `json:"of"`
@@ -169,12 +180,16 @@ type FleetDemandReport struct {
 	// OverallFleetCoverage carries no meaning and must not be rendered as a result.
 	CoverageKnown        bool    `json:"coverage_known"`
 	OverallFleetCoverage float64 `json:"overall_fleet_coverage"`
-	// DuplicateCheckouts lists the linked worktrees collapsed onto the checkout kept for
-	// their repository. They are not counted in TotalRepositories.
+	// DuplicateCheckouts lists the linked worktrees, and the submodules checked out in
+	// them, collapsed onto the checkout kept for their repository. They are not counted
+	// in TotalRepositories.
 	DuplicateCheckouts []FleetDuplicate `json:"duplicate_checkouts,omitempty"`
 	// UnscannedSubprojects lists the project directories deeper than the sub-project depth
 	// bound below their repository root, across the fleet.
 	UnscannedSubprojects []string `json:"unscanned_subprojects,omitempty"`
+	// FailedSubprojects lists the nested project directories whose scan failed, across
+	// the fleet, each with its error. Their repositories' rows were still scored.
+	FailedSubprojects []SubprojectFailure `json:"failed_subprojects,omitempty"`
 }
 
 // ReplacementAction defines an import or dependency substitution.
