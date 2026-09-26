@@ -156,3 +156,27 @@ func TestTasks_Boundary_MultipleAndNumeric(t *testing.T) {
 		t.Errorf("expected only task 2 (Beta) to be completed: %+v", tasks)
 	}
 }
+
+func TestTasks_PreservesFileMode(t *testing.T) {
+	dir := t.TempDir()
+	workingdir := filepath.Join(dir, ".workingdir")
+	if err := os.Mkdir(workingdir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	openFile := filepath.Join(workingdir, "OPEN.md")
+	if err := os.WriteFile(openFile, []byte("- [ ] task 1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := AddTask(dir, "task 2"); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := os.Stat(openFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("expected mode 0600, got %o", info.Mode().Perm())
+	}
+}
