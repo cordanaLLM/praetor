@@ -20,8 +20,8 @@ const (
 	RuleUnclosedOff    = "C6 unclosed-off-region"
 	// RuleWordCeiling fires when Options.MaxProseWords is set and the text carries more
 	// prose words than the ceiling. It is opt-in (a zero or negative MaxProseWords disables
-	// it), unlike C1-C6, because the ceiling is per surface (600 words for a persona or a
-	// skill; text-register.md), not a property of caveman prose in general.
+	// it), unlike C1-C6 and C13, because the ceiling is per surface (600 words for a persona
+	// or a skill; text-register.md), not a property of caveman prose in general.
 	RuleWordCeiling = "C7 word-ceiling"
 	// RuleTokenCeiling fires when Options.MaxTokens is set and EstimateTokens of the whole
 	// input (prose, code and structured lines together, since a dispatch pays for all of

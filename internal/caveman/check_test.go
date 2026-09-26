@@ -126,18 +126,21 @@ func TestCheckBoundary(t *testing.T) {
 
 // TestCheckUnclosedFence covers C13: a fence still open at the end of the text fires at the
 // line that opened it, a closed fence of any length does not, and only a bare delimiter at
-// least as long as the opener closes it.
+// least as long as the opener closes it. A backtick in the info string of a backtick fence
+// makes the line an inline code span (CommonMark); a tilde fence may carry one.
 func TestCheckUnclosedFence(t *testing.T) {
 	fires := map[string]struct {
 		text string
 		line int
 	}{
-		"backtick":         {"gate\n```go\nx := 1", 2},
-		"tilde":            {"~~~\nlog", 1},
-		"hides prose":      {"```\nPlease rerun sync.", 1},
-		"nested template":  {"````markdown\n```mermaid\nflow\n```\n", 1},
-		"info string line": {"```\nx\n```bash", 1},
-		"shorter closer":   {"````\nx\n```", 1},
+		"backtick":            {"gate\n```go\nx := 1", 2},
+		"tilde":               {"~~~\nlog", 1},
+		"hides prose":         {"```\nPlease rerun sync.", 1},
+		"nested template":     {"````markdown\n```mermaid\nflow\n```\n", 1},
+		"info string line":    {"```\nx\n```bash", 1},
+		"shorter closer":      {"````\nx\n```", 1},
+		"tilde backtick info": {"~~~ `x`\ncode", 1},
+		"after inline span":   {"```foo``` flag set\n```\ncode", 2},
 	}
 	for name, tc := range fires {
 		t.Run(name, func(t *testing.T) {
@@ -151,11 +154,13 @@ func TestCheckUnclosedFence(t *testing.T) {
 		})
 	}
 	for name, text := range map[string]string{
-		"closed":          "```\nx\n```",
-		"closed template": "````markdown\n```mermaid\nflow\n```\n````",
-		"longer closer":   "```\nx\n````",
-		"crlf closed":     "```\r\nx\r\n```\r\n",
-		"inline only":     "run `make lint` then ```x``` inline",
+		"closed":                     "```\nx\n```",
+		"closed template":            "````markdown\n```mermaid\nflow\n```\n````",
+		"longer closer":              "```\nx\n````",
+		"crlf closed":                "```\r\nx\r\n```\r\n",
+		"inline only":                "run `make lint` then ```x``` inline",
+		"leading span":               "```foo``` flag set",
+		"tilde backtick info closed": "~~~ `x`\ncode\n~~~",
 	} {
 		if report := Check(text, Options{}); !report.Passed() {
 			t.Errorf("%s: want pass, got %v", name, report.Findings)
@@ -165,6 +170,10 @@ func TestCheckUnclosedFence(t *testing.T) {
 	runtime := rulesOf(CheckRuntime("```\nx", Options{Kind: KindMessage}))
 	if !slices.Contains(runtime, RuleRuntimeEscape) || !slices.Contains(runtime, RuleUnclosedFence) {
 		t.Errorf("runtime unclosed fence: rules = %v, want %s and %s", runtime, RuleRuntimeEscape, RuleUnclosedFence)
+	}
+	// A leading inline code span is prose to the runtime profile too, not a fence region.
+	if report := CheckRuntime("```foo``` flag set", Options{Kind: KindMessage}); !report.Passed() {
+		t.Errorf("runtime leading span: want pass, got %v", report.Findings)
 	}
 }
 

@@ -1,3 +1,3 @@
 type: fixed
-title: Align the hiss-audit, adr-scaffold and infocard-generate skills and the auditor and needs-miner personas with the scanners, statuses, commands and file names the repository ships, and make the caveman lint reject an unclosed code fence (C13 unclosed-fence), which had hidden part of a skill from every other rule
+title: Align the hiss-audit, adr-scaffold and infocard-generate skills and the auditor and needs-miner personas with the scanners, statuses, commands and file names the repository ships, and close the infocard-generate code fence that had hidden part of the skill from every caveman rule
 breaking: false
