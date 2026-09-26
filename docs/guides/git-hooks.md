@@ -453,7 +453,7 @@ repaired from the platform it was broken on.
 
 ### The hook scripts themselves run on Windows
 
-Four POSIX-only calls in the scripts Lefthook invokes still failed there, each of them after the
+Five POSIX-only calls in the scripts Lefthook invokes failed on Windows, each of them after the
 CLI had already started:
 
 - **The checkpoint policy read.** `checkpoint.py` opened the policy with `O_DIRECTORY`,

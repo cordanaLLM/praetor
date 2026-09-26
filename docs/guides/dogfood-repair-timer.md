@@ -2,7 +2,7 @@
 
 The verification timer produces retained suite reports. A separate user timer
 can consume failed reports and run one bounded patch attempt per tick. Configure
-the [repair executor](dogfood-repairs.md) first and verify a direct invocation
+the [repair executor](dogfood-repair-execution.md) first and verify a direct invocation
 against its reviewed source commit, provider, file allowlist, and test packages.
 
 Create a private version 1 queue configuration outside the repository:
