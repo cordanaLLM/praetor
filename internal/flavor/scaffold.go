@@ -88,10 +88,28 @@ func templateDisposition(repoPath string, tmpl TemplateItem, force bool) (skip b
 	}
 	// An accepted alternative already covers this template, so scaffolding the canonical
 	// name would add a second configuration file that contradicts the one in use.
-	if !force && TemplateSatisfied(repoPath, tmpl) {
+	if !force && (TemplateSatisfied(repoPath, tmpl) || alternativePresent(repoPath, tmpl)) {
 		return true, nil
 	}
 	return false, nil
+}
+
+// alternativePresent reports whether the repository carries a file under any of a
+// template's AltPaths, whatever its content and wherever a symbolic link there resolves.
+//
+// TemplateSatisfied is the audit's question: does a valid file inside the repository cover
+// the template. Apply asks a narrower one: is a configuration already in use under another
+// name. A monorepo's tsconfig.base.json linked from a shared root, or one the validator
+// rejects, is still the file the toolchain reads, and a canonical tsconfig.json written
+// beside it is the contradictory second config AltPaths exists to prevent. The audit keeps
+// reporting the alternative's content; apply only declines to add a rival.
+func alternativePresent(repoPath string, tmpl TemplateItem) bool {
+	for i := 0; i < len(tmpl.AltPaths) && i < maxTemplateCandidates; i++ {
+		if util.FileExists(filepath.Join(repoPath, filepath.FromSlash(tmpl.AltPaths[i]))) {
+			return true
+		}
+	}
+	return false
 }
 
 // templateContent resolves a template's body from its generator or its embedded source.
