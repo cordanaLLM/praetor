@@ -152,12 +152,19 @@ func TestCurrentGoModVersion_Negative_CallerContext(t *testing.T) {
 }
 
 // TestCurrentGoModVersion_Negative_ReplaceIsNotARequirement pins the shared require-block
-// parser: a replace directive names the package and a version but does not require it.
+// parser: a replace or exclude directive names the package and a version but does not
+// require it.
 func TestCurrentGoModVersion_Negative_ReplaceIsNotARequirement(t *testing.T) {
-	dir := t.TempDir()
-	writeGoMod(t, dir, "module example.com/app\n\nreplace (\n\texample.com/pkg v1.0.0 => example.com/fork v1.2.0\n)\n")
-	if version, _, err := CurrentGoModVersion(t.Context(), dir, "example.com/pkg"); !errors.Is(err, ErrPackageNotRequired) {
-		t.Fatalf("replace directive read as a requirement: version %q, err %v", version, err)
+	for _, directives := range []string{
+		"replace (\n\texample.com/pkg v1.0.0 => example.com/fork v1.2.0\n)\n",
+		"exclude (\n\texample.com/pkg v1.0.0\n)\n",
+		"exclude example.com/pkg v1.0.0\n",
+	} {
+		dir := t.TempDir()
+		writeGoMod(t, dir, "module example.com/app\n\n"+directives)
+		if version, _, err := CurrentGoModVersion(t.Context(), dir, "example.com/pkg"); !errors.Is(err, ErrPackageNotRequired) {
+			t.Fatalf("%q read as a requirement: version %q, err %v", directives, version, err)
+		}
 	}
 }
 

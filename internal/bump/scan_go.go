@@ -258,8 +258,8 @@ var ErrPackageNotRequired = errors.New("package not required by any go.mod")
 // pkg, together with the module directory (relative to repoPath) that requires it.
 //
 // Callers building an UpgradeCandidate must use it instead of a placeholder: the go.mod
-// fallback edit in applyGoUpdate matches on the literal "<package> <current version>", so
-// a placeholder current version can never match and the fallback always fails.
+// fallback edit in applyGoUpdate rewrites only the require line naming the package at the
+// candidate's current version, and refuses an empty or placeholder current version.
 //
 // Every go.mod is read under readManifest's rule, so a manifest the writer would refuse is
 // reported instead of scanned. A missing go.mod is skipped; a cancelled caller gets its
@@ -307,16 +307,28 @@ func requiredVersionIn(ctx context.Context, repoPath, moduleRel, pkg string) (st
 	scanner := bufio.NewScanner(bytes.NewReader(data))
 	inRequire := false
 	for lines := 0; lines < MaxManifestLines && scanner.Scan(); lines++ {
-		line, isRequirement := gomanifest.RequirementLine(scanner.Text(), &inRequire)
-		fields := strings.Fields(line)
-		if isRequirement && len(fields) >= 2 && fields[0] == pkg && strings.HasPrefix(fields[1], "v") {
-			return fields[1], nil
+		version, found := requiredModuleVersion(scanner.Text(), &inRequire, pkg)
+		if found && strings.HasPrefix(version, "v") {
+			return version, nil
 		}
 	}
 	if scanErr := scanner.Err(); scanErr != nil {
 		return "", fmt.Errorf("scan %s: %w", name, scanErr)
 	}
 	return "", nil
+}
+
+// requiredModuleVersion advances require-block state over one go.mod line and, when the
+// line is a requirement naming pkg, returns the version token it carries. It is the one
+// matcher the version lookup and the fallback edit share: require lines come from
+// gomanifest.RequirementLine, so comment, exclude and replace lines never match.
+func requiredModuleVersion(raw string, inRequire *bool, pkg string) (string, bool) {
+	line, isRequirement := gomanifest.RequirementLine(raw, inRequire)
+	fields := strings.Fields(line)
+	if !isRequirement || len(fields) < 2 || fields[0] != pkg {
+		return "", false
+	}
+	return fields[1], true
 }
 
 func scanGoModFallback(ctx context.Context, modDir, modRel string, opts ScanOptions) ([]UpgradeCandidate, error) {
