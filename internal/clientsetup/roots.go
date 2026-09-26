@@ -80,14 +80,30 @@ type relocation struct {
 	verified bool
 }
 
+// rootBase names the directory a default global root is joined onto.
+type rootBase int
+
+const (
+	// baseHome joins the segments onto the home directory on every OS.
+	baseHome rootBase = iota
+	// baseXDGConfig joins onto $XDG_CONFIG_HOME, or <home>/.config, on every OS,
+	// macOS and Windows included: the npm xdg-basedir package ignores the platform.
+	baseXDGConfig
+)
+
 type globalRoot struct {
+	base        rootBase
 	segments    []string
 	relocations []relocation
 }
 
-// globalRoots is table data. Neither Antigravity variable occurs in the agy 1.2.5
-// binary, and whether GEMINI_CONFIG_DIR names the root or its parent is unknown, so
-// both rows are unverified and a root chosen through them resolves with Verified=false.
+// globalRoots is table data with one row per clientid.Known() client. Neither
+// Antigravity variable occurs in the agy 1.2.5 binary, and whether GEMINI_CONFIG_DIR
+// names the root or its parent is unknown, so both AGY rows are unverified and a root
+// chosen through them resolves with Verified=false. Every other row was read from the
+// client's current documentation or source, cited on the row. OPENCODE_CONFIG_DIR and
+// KILO_CONFIG_DIR are not relocations: both add a directory after the global root,
+// which stays loaded (packages/opencode/src/config/paths.ts in either repository).
 var globalRoots = map[Client]globalRoot{
 	AGY: {
 		segments: []string{".gemini", "config"},
@@ -96,6 +112,67 @@ var globalRoots = map[Client]globalRoot{
 			{variable: "GEMINI_CONFIG_DIR", suffix: []string{"config"}},
 		},
 	},
+	// https://code.claude.com/docs/en/settings: ~/.claude, %USERPROFILE%\.claude on
+	// Windows; CLAUDE_CONFIG_DIR moves settings, session history and plugins.
+	Claude: {
+		segments:    []string{".claude"},
+		relocations: []relocation{{variable: "CLAUDE_CONFIG_DIR", verified: true}},
+	},
+	// cline/cline sdk/packages/shared/src/storage/paths.ts resolveClineDir:
+	// CLINE_DIR, else <home>/.cline; settings live under its data directory.
+	Cline: {
+		segments:    []string{".cline"},
+		relocations: []relocation{{variable: "CLINE_DIR", verified: true}},
+	},
+	// https://learn.chatgpt.com/docs/config-file/config-advanced: local state lives under
+	// CODEX_HOME, which defaults to ~/.codex.
+	Codex: {
+		segments:    []string{".codex"},
+		relocations: []relocation{{variable: "CODEX_HOME", verified: true}},
+	},
+	// continuedev/continue core/util/paths.ts: CONTINUE_GLOBAL_DIR, else
+	// <home>/.continue (%USERPROFILE%\.continue on Windows per the configuration docs).
+	Continue: {
+		segments:    []string{".continue"},
+		relocations: []relocation{{variable: "CONTINUE_GLOBAL_DIR", verified: true}},
+	},
+	// https://geminicli.com/docs/reference/configuration/: ~/.gemini on every OS;
+	// GEMINI_CLI_HOME replaces the home directory the .gemini folder is created in.
+	Gemini: {
+		segments:    []string{".gemini"},
+		relocations: []relocation{{variable: "GEMINI_CLI_HOME", suffix: []string{".gemini"}, verified: true}},
+	},
+	// Kilo-Org/kilocode packages/core/src/global.ts: path.join(xdgConfig, "kilo").
+	Kilo: {base: baseXDGConfig, segments: []string{"kilo"}},
+	// anomalyco/opencode packages/core/src/global.ts: path.join(xdgConfig, "opencode").
+	OpenCodeV1: {base: baseXDGConfig, segments: []string{"opencode"}},
+}
+
+// VerifiedGetenv wraps getenv so a resolver reads only the relocation variables the
+// table records as verified; every other name reads as unset. The command layer uses
+// it for the running user's environment, so an unverified variable never moves a root
+// that is relied on without a native readback. A nil getenv stays nil.
+func VerifiedGetenv(getenv func(string) string) func(string) string {
+	if getenv == nil {
+		return nil
+	}
+	return func(name string) string {
+		if !verifiedVariable(name) {
+			return ""
+		}
+		return getenv(name)
+	}
+}
+
+func verifiedVariable(name string) bool {
+	for _, entry := range globalRoots {
+		for _, candidate := range entry.relocations {
+			if candidate.variable == name && candidate.verified {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // brainParents lists, in winning order, the directories under <home>/.gemini that
@@ -146,7 +223,11 @@ func resolveGlobal(entry globalRoot, env Env, override string) (Resolution, erro
 	if relocated, found, err := relocatedRoot(entry, env); err != nil || found {
 		return relocated, err
 	}
-	return Resolution{Path: joinFor(env.GOOS, env.Home, entry.segments...), Source: SourceDefault, Verified: true}, nil
+	base := xdgConfigHome(env)
+	if entry.base == baseHome {
+		base = env.Home
+	}
+	return Resolution{Path: joinFor(env.GOOS, base, entry.segments...), Source: SourceDefault, Verified: true}, nil
 }
 
 func relocatedRoot(entry globalRoot, env Env) (Resolution, bool, error) {
@@ -240,11 +321,17 @@ func userConfigDir(env Env) string {
 	case "darwin":
 		return joinFor(env.GOOS, env.Home, "Library", "Application Support")
 	default:
-		if isAbsFor(env.GOOS, env.ConfigHome) {
-			return env.ConfigHome
-		}
-		return joinFor(env.GOOS, env.Home, ".config")
+		return xdgConfigHome(env)
 	}
+}
+
+// xdgConfigHome is $XDG_CONFIG_HOME, or <home>/.config when it is unset or relative, on
+// every OS. It is the base of the XDG-rooted clients and the Linux user config directory.
+func xdgConfigHome(env Env) string {
+	if isAbsFor(env.GOOS, env.ConfigHome) {
+		return env.ConfigHome
+	}
+	return joinFor(env.GOOS, env.Home, ".config")
 }
 
 func localAppData(env Env) string {

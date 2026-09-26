@@ -14,6 +14,11 @@ release identity or a missing fragment directory with a pending journal returns
 an error and retains recovery evidence. After complete cleanup the journal is
 removed and the directory synced. An error does not prove publication failed.
 
+With no pending journal, a render needs at least one fragment. A missing `changelog.d`
+or one that holds no fragment returns `ErrNoFragments`, naming which of the two it was,
+and writes nothing (`TestPrepareRelease_Negative_NoFragments` in
+`internal/release/release_test.go`).
+
 Inputs, output and the journal use the shared 1 MiB snapshot limit. The operation
 has a ten-second deadline. Cooperating renderers serialize; external writers can
 still race the final content check and filesystem operation. Inspect the journal

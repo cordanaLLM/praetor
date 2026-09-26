@@ -63,9 +63,9 @@ func TestStatusRejectsUndecodableManifest(t *testing.T) {
 	}
 }
 
-// Positive + negative: per-client configuration-root presence via C1 (roots.go). AGY has a
-// root entry (config found or not); every other known client currently has none and
-// reports a stated reason instead of a false presence.
+// Positive + negative: per-client configuration-root presence via C1 (roots.go). Every known
+// client resolves a root; only the one whose directory exists reports it found, and none
+// reports a reason, since no resolution failed.
 func TestStatusClientPresenceViaC1Roots(t *testing.T) {
 	home := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(home, ".gemini", "config"), 0o755); err != nil {
@@ -90,22 +90,36 @@ func TestStatusClientPresenceViaC1Roots(t *testing.T) {
 	if len(report.Clients) != len(clientid.Known()) {
 		t.Fatalf("clients = %d, want one row per known client (%d)", len(report.Clients), len(clientid.Known()))
 	}
-	var sawAGY, sawUnresolved bool
+	var sawAGY bool
 	for _, client := range report.Clients {
-		if client.Client == clientsetup.AGY {
-			sawAGY = true
-			if !client.ConfigFound || client.Root == "" {
-				t.Fatalf("agy config root must be found: %+v", client)
-			}
-		} else if client.Reason != "" && !client.ConfigFound {
-			sawUnresolved = true
+		if client.Root == "" || client.Reason != "" {
+			t.Fatalf("every known client must resolve a root: %+v", client)
+		}
+		// .gemini/config makes both the AGY root and its parent, the Gemini CLI root, exist.
+		shared := client.Client == clientsetup.AGY || client.Client == clientsetup.Gemini
+		sawAGY = sawAGY || client.Client == clientsetup.AGY
+		if client.ConfigFound != shared {
+			t.Fatalf("%s: config found = %v, want %v: %+v", client.Client, client.ConfigFound, shared, client)
 		}
 	}
 	if !sawAGY {
 		t.Fatal("agy must be one of the reported clients")
 	}
-	if !sawUnresolved {
-		t.Fatal("a client with no C1 root entry yet must report a reason instead of a false presence")
+}
+
+// Negative: a failed resolution (here an empty home) is reported per client with its
+// reason instead of a false presence.
+func TestStatusClientReasonWhenResolutionFails(t *testing.T) {
+	report, err := Status(context.Background(), StatusOptions{
+		ManifestPath: filepath.Join(t.TempDir(), "install.json"), ClientEnv: clientsetup.Env{GOOS: runtime.GOOS},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, client := range report.Clients {
+		if client.Reason == "" || client.ConfigFound || client.Root != "" {
+			t.Fatalf("an unresolvable root must carry a reason: %+v", client)
+		}
 	}
 }
 

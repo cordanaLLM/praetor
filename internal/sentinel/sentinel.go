@@ -186,7 +186,10 @@ func checkDiskInvariants(stats HostStats, report *HostReport) {
 }
 
 // CanAllocateModel evaluates whether a model requiring vramRequiredGB can safely be loaded
-// without violating the host reservation invariant or driving memory utilization past 85%.
+// without violating the host reservation invariant. The reservation is the only guard: it
+// keeps at least RAMReserveRatio (20%) of total RAM free after the load, so utilization
+// after an admitted load is at most 80% and can never reach RAMPressureThreshold (85%).
+// A separate utilization check could not reject anything the reservation admits.
 func CanAllocateModel(stats *HostStats, vramRequiredGB float64) bool {
 	// A zero total means memory was never measured, and admission is refused rather than decided
 	// against unknown headroom. This guard already existed; it is what makes the unmeasured case
@@ -194,23 +197,15 @@ func CanAllocateModel(stats *HostStats, vramRequiredGB float64) bool {
 	if stats == nil || vramRequiredGB <= 0 || stats.RAMTotalBytes == 0 {
 		return false
 	}
-	if vramRequiredGB > 100000 {
+	// More free than total RAM is an inconsistent reading, refused rather than trusted.
+	if vramRequiredGB > 100000 || stats.RAMFreeBytes > stats.RAMTotalBytes {
 		return false
 	}
 	reqBytes := uint64(vramRequiredGB * 1024 * 1024 * 1024)
 	if reqBytes > stats.RAMFreeBytes {
 		return false
 	}
-
-	remFree := stats.RAMFreeBytes - reqBytes
-	resBytes := CalculateRAMReservation(stats.RAMTotalBytes)
-	if remFree < resBytes {
-		return false
-	}
-
-	newUsed := stats.RAMTotalBytes - remFree
-	newUtil := float64(newUsed) / float64(stats.RAMTotalBytes)
-	return newUtil <= RAMPressureThreshold
+	return stats.RAMFreeBytes-reqBytes >= CalculateRAMReservation(stats.RAMTotalBytes)
 }
 
 // meminfoPath is a variable so the absent-source path can be exercised on a host that does have

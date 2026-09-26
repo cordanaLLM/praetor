@@ -36,10 +36,31 @@ func TestHostClientEnvTakesNothingFromTheProcessForAForeignHome(t *testing.T) {
 	if foreign.Home != home || foreign.AppData != "" || foreign.LocalAppData != "" || foreign.ConfigHome != "" {
 		t.Fatalf("foreign home must derive from the home alone: %+v", foreign)
 	}
-	for name, env := range map[string]func(string) string{"own": own.Getenv, "foreign": foreign.Getenv} {
-		if env != nil {
-			t.Fatalf("%s: unverified relocation variables must stay out of the harvester", name)
-		}
+	if foreign.Getenv != nil {
+		t.Fatal("foreign: the running user's relocation variables must not move a foreign home")
+	}
+}
+
+// Positive + negative: the own-home environment reads verified relocation variables and
+// never the unverified Antigravity ones, so harvest keeps AGY on its default root.
+func TestHostClientEnvReadsOnlyVerifiedRelocations(t *testing.T) {
+	codex := t.TempDir()
+	t.Setenv("CODEX_HOME", codex)
+	t.Setenv("ANTIGRAVITY_CONFIG_DIR", t.TempDir())
+	home := t.TempDir()
+	own := hostClientEnv(home, false)
+	if own.Getenv == nil {
+		t.Fatal("own home must consult verified relocation variables")
+	}
+	if got := own.Getenv("CODEX_HOME"); got != codex {
+		t.Fatalf("CODEX_HOME = %q, want %q", got, codex)
+	}
+	if got := own.Getenv("ANTIGRAVITY_CONFIG_DIR"); got != "" {
+		t.Fatalf("unverified ANTIGRAVITY_CONFIG_DIR leaked: %q", got)
+	}
+	roots, err := harvestClientRoots(own)
+	if err != nil || roots.AGYConfig != filepath.Join(home, ".gemini", "config") {
+		t.Fatalf("AGY root = %q, %v; want the default under %s", roots.AGYConfig, err, home)
 	}
 }
 

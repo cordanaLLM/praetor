@@ -76,8 +76,11 @@ func validContentHash(value string) bool {
 
 func prepareRenderJournal(ctx context.Context, repoPath string, repo, fragmentsRoot *os.Root, version, date string) (*renderJournal, []byte, error) {
 	fragments, snapshots, err := loadFragmentSnapshots(ctx, fragmentsRoot)
-	if err != nil || len(fragments) == 0 {
+	if err != nil {
 		return nil, nil, err
+	}
+	if len(fragments) == 0 {
+		return nil, nil, fmt.Errorf("%w: changelog.d holds none", ErrNoFragments)
 	}
 	before, exists, err := contextopt.ObserveRootSnapshot(ctx, repo, "CHANGELOG.md")
 	if err != nil {

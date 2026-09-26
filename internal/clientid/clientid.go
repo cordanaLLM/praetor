@@ -16,7 +16,8 @@ import (
 // ID identifies one agent client.
 type ID string
 
-// The known clients. Adding one here without an adapter row fails clientsetup's tests.
+// The known clients. Adding one here without an adapter row and a global-root row fails
+// clientsetup's tests.
 const (
 	AGY        ID = "agy"
 	Claude     ID = "claude"

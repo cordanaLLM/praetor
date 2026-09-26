@@ -1,0 +1,3 @@
+type: fixed
+title: Resolve the global configuration root of every known client (Claude Code, Cline, Codex, Continue, Gemini CLI, Kilo, OpenCode) on Linux, macOS and Windows, honoring each client's verified relocation variable, so workstation status stops reporting seven clients as having no root recorded
+breaking: false

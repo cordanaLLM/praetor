@@ -1,0 +1,4 @@
+type: fixed
+title: Make models sync probe every local endpoint (Ollama /api/tags, then the OpenAI /v1/models that vLLM serves) and report an unreachable one instead of aborting, place models by their parameter-count tag before any name tag, take a model's family from the vendor prefix of its name so a finetune naming another vendor keeps its own lineage, and keep the governance keys and default-tier metadata a catalog declares
+issue: "#249"
+breaking: false

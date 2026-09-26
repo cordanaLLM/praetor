@@ -2,14 +2,12 @@ package router
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
-	"time"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"gopkg.in/yaml.v3"
@@ -51,6 +49,9 @@ type SyncResult struct {
 	Preserved int
 	// Removed lists, sorted, the model IDs a pruning sync dropped.
 	Removed []string
+	// DiscoveryFailures lists, one per endpoint, the local endpoints that did not answer
+	// a non-pruning sync; the sync kept their catalogued entries.
+	DiscoveryFailures []string
 }
 
 // ErrSyncWouldRemove means a sync without Prune would drop catalog entries.
@@ -59,25 +60,51 @@ var ErrSyncWouldRemove = errors.New("model catalog sync would remove entries")
 // localDiscovery lists the models installed on local runtime endpoints.
 type localDiscovery func(ctx context.Context, endpoints []string) ([]ModelDescriptor, error)
 
-// matchParamTag safely matches model parameter tags with boundary assertions (e.g. 2b won't match 32b).
-func matchParamTag(s string, tags ...string) bool {
-	for _, tag := range tags {
-		idx := strings.Index(s, tag)
-		for idx != -1 {
-			prefixOk := idx == 0 || !asciiDigit(s[idx-1])
-			endIdx := idx + len(tag)
-			suffixOk := endIdx == len(s) || !asciiAlphanumeric(s[endIdx])
-			if prefixOk && suffixOk {
-				return true
+// parameterSize matches a parameter-count token such as 7b, 1.5b, 235b or 8x7b that
+// starts after a separator, so the active-parameter tag of a mixture-of-experts name
+// (a22b in qwen3-235b-a22b) and a version number (qwen2.5) never read as the size.
+var parameterSize = regexp.MustCompile(`(?:^|[^a-z0-9.])(?:(\d+)x)?(\d+(?:\.\d+)?)b`)
+
+// parameterBillions returns the largest parameter-count token in a lowercase model ID;
+// NxMb counts N experts of M billion. A token must end at a separator, so 32b is 32,
+// never 2, and 7bit is no size.
+func parameterBillions(id string) (float64, bool) {
+	largest, found := 0.0, false
+	for _, match := range parameterSize.FindAllStringSubmatchIndex(id, MaxRoutingModels) {
+		if match[1] < len(id) && asciiAlphanumeric(id[match[1]]) {
+			continue
+		}
+		size, err := strconv.ParseFloat(id[match[4]:match[5]], 64)
+		if err != nil {
+			continue
+		}
+		if match[2] >= 0 {
+			experts, err := strconv.ParseFloat(id[match[2]:match[3]], 64)
+			if err != nil {
+				continue
 			}
-			next := strings.Index(s[idx+1:], tag)
-			if next == -1 {
-				break
-			}
-			idx += 1 + next
+			size *= experts
+		}
+		if !found || size > largest {
+			largest, found = size, true
 		}
 	}
-	return false
+	return largest, found
+}
+
+// tierForSize maps a declared parameter count onto the tier bands: below 5 billion is
+// nano, below 20 lightweight, up to 35 midweight, and anything larger heavy-frontier.
+func tierForSize(billions float64) string {
+	switch {
+	case billions < 5:
+		return "nano"
+	case billions < 20:
+		return "lightweight"
+	case billions <= 35:
+		return "midweight"
+	default:
+		return "heavy-frontier"
+	}
 }
 
 func asciiDigit(b byte) bool        { return b >= '0' && b <= '9' }
@@ -92,114 +119,69 @@ func containsModelTag(model string, tags ...string) bool {
 	return false
 }
 
-// ClassifyTier preserves the legacy name heuristic; it is not measured capability evidence.
-func ClassifyTier(modelID string, family ModelFamily, benchmarkELO float64) string {
+// ClassifyTier preserves the legacy name heuristic; it is not measured capability
+// evidence. A parameter-count tag in the ID decides first, so a 235B Qwen3 model is
+// heavy-frontier whatever its family name; the name tags only place IDs without one.
+func ClassifyTier(modelID string) string {
 	id := strings.ToLower(modelID)
-	if matchParamTag(id, "0.5b", "1b", "1.5b", "1.7b", "2b", "3b", "3.8b", "4b") || containsModelTag(id, "smollm", "tiny", "nano", "micro", "phi-3-mini", "phi-3.5-mini") {
+	if billions, ok := parameterBillions(id); ok {
+		return tierForSize(billions)
+	}
+	switch {
+	case containsModelTag(id, "smollm", "tiny", "nano", "micro", "phi-3-mini", "phi-3.5-mini"):
 		return "nano"
-	}
-	if matchParamTag(id, "20b", "22b", "27b", "30b", "32b", "35b") || containsModelTag(id, "qwen3.8", "qwen3", "codestral", "gpt-oss:20b", "gpt-oss-small") {
+	case containsModelTag(id, "qwen3.8", "qwen3", "codestral", "gpt-oss-small"):
 		return "midweight"
-	}
-	if matchParamTag(id, "5b", "6b", "7b", "8b", "9b", "14b", "16b") || containsModelTag(id, "qwythos", "gemma-2-9b", "phi-4", "haiku") {
+	case containsModelTag(id, "qwythos", "phi-4", "haiku"):
 		return "lightweight"
+	default:
+		return "heavy-frontier"
 	}
-	return "heavy-frontier"
+}
+
+// vendorFamilies maps the vendor prefix of a model name onto its training lineage.
+// Open weights of a vendor with a hosted API in the catalog (gemma, gpt-oss, qwen) join
+// that vendor's family; lineages without one share FamilyOpenWeights.
+var vendorFamilies = []struct {
+	family ModelFamily
+	tags   []string
+}{
+	{FamilyAnthropic, []string{"claude"}}, {FamilyGoogle, []string{"gemini", "gemma"}},
+	{FamilyOpenAI, []string{"gpt", "o1", "o3"}}, {"xai", []string{"grok"}},
+	{"deepseek", []string{"deepseek"}}, {"mistral", []string{"mistral", "codestral"}},
+	{"qwen", []string{"qwen"}}, {"cohere", []string{"command"}},
 }
 
 // DetectFamily preserves legacy catalog naming; dispatch requires an explicit binding.
+// Only the start of the model name counts, taken after the last '/' of a hosted path
+// such as hf.co/<org>/<name>: a finetune that names another vendor inside its name
+// (Qwythos-9B-Claude-Mythos) does not inherit that vendor's family.
 func DetectFamily(modelID string) ModelFamily {
-	lower := strings.ToLower(modelID)
-	families := []struct {
-		family ModelFamily
-		tags   []string
-	}{
-		{FamilyAnthropic, []string{"claude"}}, {FamilyGoogle, []string{"gemini"}},
-		{FamilyOpenAI, []string{"gpt", "o1", "o3"}}, {"xai", []string{"grok"}},
-		{"deepseek", []string{"deepseek"}}, {"mistral", []string{"mistral", "codestral"}},
-		{"qwen", []string{"qwen"}}, {"cohere", []string{"command"}},
+	name := strings.ToLower(modelID)
+	if slash := strings.LastIndexByte(name, '/'); slash >= 0 {
+		name = name[slash+1:]
 	}
-	for _, entry := range families {
-		if containsModelTag(lower, entry.tags...) {
-			return entry.family
+	for _, entry := range vendorFamilies {
+		for _, tag := range entry.tags {
+			if strings.HasPrefix(name, tag) {
+				return entry.family
+			}
 		}
 	}
 	return FamilyOpenWeights
 }
 
-// queryOllamaEndpoint queries a single Ollama API endpoint for installed models.
-func queryOllamaEndpoint(ctx context.Context, client *http.Client, ep string) (models []ModelDescriptor, resultErr error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", ep+"/api/tags", nil)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { resultErr = errors.Join(resultErr, resp.Body.Close()) }()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("local catalog returned HTTP %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, MaxRoutingFileBytes+1))
-	if err != nil {
-		return nil, err
-	}
-
-	if len(body) > MaxRoutingFileBytes {
-		return nil, errors.New("local catalog exceeds byte limit")
-	}
-	var payload struct {
-		Models []struct {
-			Name string `json:"name"`
-		} `json:"models"`
-	}
-
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, err
-	}
-
-	if len(payload.Models) > MaxRoutingModels {
-		return nil, errors.New("local catalog exceeds model limit")
-	}
-	res := make([]ModelDescriptor, 0, len(payload.Models))
-	for _, m := range payload.Models {
-		res = append(res, ModelDescriptor{
-			ID:          m.Name,
-			Family:      FamilyOpenWeights,
-			RPMLimit:    50000,
-			TPMLimit:    20000000,
-			CostPerMIn:  0.0,
-			CostPerMOut: 0.0,
-		})
-	}
-	return res, nil
-}
-
-// DiscoverLocalModels queries local Ollama/vLLM daemon endpoints.
-func DiscoverLocalModels(ctx context.Context, endpoints []string) ([]ModelDescriptor, error) {
-	discovered := make([]ModelDescriptor, 0)
-	client := &http.Client{Timeout: 3 * time.Second}
-
-	for _, ep := range endpoints {
-		if strings.Contains(ep, "11434") {
-			models, err := queryOllamaEndpoint(ctx, client, ep)
-			if err != nil {
-				return nil, fmt.Errorf("discover local models: %w", err)
-			}
-			discovered = append(discovered, models...)
-		}
-	}
-
-	return discovered, nil
+// seedLineage names the family of a seed entry whose name does not start with its
+// lineage's vendor tag. A family is training lineage, not hosting: the orthogonal
+// auditor exists to avoid correlated errors, which a local copy of a vendor's weights
+// shares with that vendor's API. gpt-oss-small therefore stays openai by its name.
+var seedLineage = map[string]ModelFamily{
+	// The GGUF architecture is qwen35 per the Hugging Face model card, a Qwen3.5 finetune.
+	"hf.co/empero-ai/Qwythos-9B-Claude-Mythos-5-1M-GGUF:Q8_0": "qwen",
 }
 
 type catalogEntry struct {
 	id      string
-	elo     float64
 	rpm     int
 	tpm     int
 	costIn  float64
@@ -208,47 +190,47 @@ type catalogEntry struct {
 
 var legacySeedCatalog = []catalogEntry{
 	// Nano / Micro (<= 4B)
-	{"smollm2:1.7b", 1120, 50000, 20000000, 0.0, 0.0},
-	{"qwen2.5-coder:1.5b", 1150, 50000, 20000000, 0.0, 0.0},
-	{"qwen2.5:3b", 1160, 50000, 20000000, 0.0, 0.0},
-	{"phi-3.5-mini:3.8b", 1180, 50000, 20000000, 0.0, 0.0},
-	{"llama-3.2:1b", 1100, 50000, 20000000, 0.0, 0.0},
-	{"llama-3.2:3b", 1165, 50000, 20000000, 0.0, 0.0},
-	{"gemma-2-2b", 1155, 50000, 20000000, 0.0, 0.0},
+	{"smollm2:1.7b", 50000, 20000000, 0.0, 0.0},
+	{"qwen2.5-coder:1.5b", 50000, 20000000, 0.0, 0.0},
+	{"qwen2.5:3b", 50000, 20000000, 0.0, 0.0},
+	{"phi-3.5-mini:3.8b", 50000, 20000000, 0.0, 0.0},
+	{"llama-3.2:1b", 50000, 20000000, 0.0, 0.0},
+	{"llama-3.2:3b", 50000, 20000000, 0.0, 0.0},
+	{"gemma-2-2b", 50000, 20000000, 0.0, 0.0},
 
 	// Lightweight (5B - 16B: 7B, 8B, 9B, 14B)
-	{"hf.co/empero-ai/Qwythos-9B-Claude-Mythos-5-1M-GGUF:Q8_0", 1240, 50000, 20000000, 0.0, 0.0},
-	{"gemma-2-9b", 1235, 5000, 2000000, 0.20, 0.20},
-	{"qwen-2.5-coder-7b-instruct", 1225, 50000, 20000000, 0.0, 0.0},
-	{"qwen-2.5-coder-14b-instruct", 1245, 50000, 20000000, 0.0, 0.0},
-	{"meta-llama/llama-3.1-8b-instruct", 1210, 5000, 5000000, 0.15, 0.15},
-	{"phi-4:14b", 1250, 50000, 20000000, 0.0, 0.0},
-	{"claude-3-5-haiku-20241022", 1230, 2000, 100000, 0.80, 4.0},
+	{"hf.co/empero-ai/Qwythos-9B-Claude-Mythos-5-1M-GGUF:Q8_0", 50000, 20000000, 0.0, 0.0},
+	{"gemma-2-9b", 5000, 2000000, 0.20, 0.20},
+	{"qwen-2.5-coder-7b-instruct", 50000, 20000000, 0.0, 0.0},
+	{"qwen-2.5-coder-14b-instruct", 50000, 20000000, 0.0, 0.0},
+	{"meta-llama/llama-3.1-8b-instruct", 5000, 5000000, 0.15, 0.15},
+	{"phi-4:14b", 50000, 20000000, 0.0, 0.0},
+	{"claude-3-5-haiku-20241022", 2000, 100000, 0.80, 4.0},
 
 	// Mid-Weight Workhorses (20B - 35B: 20B, 22B, 27B, 30B, 32B)
-	{"hf.co/unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M", 1280, 50000, 20000000, 0.0, 0.0},
-	{"qwen-2.5-coder-32b-instruct", 1260, 5000, 5000000, 0.20, 0.60},
-	{"codestral-2501", 1270, 1000, 500000, 0.30, 0.90},
-	{"gpt-oss-small", 1200, 50000, 20000000, 0.0, 0.0},
+	{"hf.co/unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M", 50000, 20000000, 0.0, 0.0},
+	{"qwen-2.5-coder-32b-instruct", 5000, 5000000, 0.20, 0.60},
+	{"codestral-2501", 1000, 500000, 0.30, 0.90},
+	{"gpt-oss-small", 50000, 20000000, 0.0, 0.0},
 
 	// Heavy & Frontier Reasoning (70B+ & Cloud APIs)
-	{"claude-3-7-sonnet-20250219", 1340, 1000, 80000, 3.0, 15.0},
-	{"claude-3-5-sonnet-20241022", 1315, 1000, 80000, 3.0, 15.0},
-	{"claude-3-opus-20240229", 1305, 50, 40000, 15.0, 75.0},
-	{"gemini-2.5-pro-preview-03-25", 1360, 300, 2000000, 1.25, 5.0},
-	{"gemini-2.5-flash-preview-03-25", 1320, 2000, 4000000, 0.075, 0.30},
-	{"gemini-2.0-flash", 1290, 2000, 4000000, 0.10, 0.40},
-	{"gpt-4.5-preview-2025-02-27", 1355, 200, 100000, 75.0, 150.0},
-	{"o3-mini", 1345, 500, 1000000, 1.10, 4.40},
-	{"o1", 1335, 500, 100000, 15.0, 60.0},
-	{"gpt-4o-2024-11-20", 1295, 2000, 450000, 2.50, 10.0},
-	{"grok-3", 1350, 100, 200000, 5.0, 15.0},
-	{"grok-3-mini", 1280, 500, 500000, 0.50, 2.0},
-	{"deepseek-reasoner", 1340, 5000, 5000000, 0.55, 2.19},
-	{"deepseek-chat", 1285, 10000, 10000000, 0.14, 0.28},
-	{"mistral-large-2411", 1290, 500, 250000, 2.0, 6.0},
-	{"qwen-2.5-max", 1325, 2000, 1000000, 1.60, 6.40},
-	{"meta-llama/llama-3.3-70b-instruct", 1275, 5000, 5000000, 0.35, 0.40},
+	{"claude-3-7-sonnet-20250219", 1000, 80000, 3.0, 15.0},
+	{"claude-3-5-sonnet-20241022", 1000, 80000, 3.0, 15.0},
+	{"claude-3-opus-20240229", 50, 40000, 15.0, 75.0},
+	{"gemini-2.5-pro-preview-03-25", 300, 2000000, 1.25, 5.0},
+	{"gemini-2.5-flash-preview-03-25", 2000, 4000000, 0.075, 0.30},
+	{"gemini-2.0-flash", 2000, 4000000, 0.10, 0.40},
+	{"gpt-4.5-preview-2025-02-27", 200, 100000, 75.0, 150.0},
+	{"o3-mini", 500, 1000000, 1.10, 4.40},
+	{"o1", 500, 100000, 15.0, 60.0},
+	{"gpt-4o-2024-11-20", 2000, 450000, 2.50, 10.0},
+	{"grok-3", 100, 200000, 5.0, 15.0},
+	{"grok-3-mini", 500, 500000, 0.50, 2.0},
+	{"deepseek-reasoner", 5000, 5000000, 0.55, 2.19},
+	{"deepseek-chat", 10000, 10000000, 0.14, 0.28},
+	{"mistral-large-2411", 500, 250000, 2.0, 6.0},
+	{"qwen-2.5-max", 2000, 1000000, 1.60, 6.40},
+	{"meta-llama/llama-3.3-70b-instruct", 5000, 5000000, 0.35, 0.40},
 }
 
 func defaultRoutingTiers() map[string]Tier {
@@ -292,7 +274,10 @@ func recordTierCount(result *SyncResult, tierName string) {
 // SyncCatalog merges legacy seed metadata and optional local model inventory into
 // the catalog at targetPath. Seed-owned entries are rewritten in place; every other
 // existing entry is kept unless opts.Prune is set, and a sync that would lose an
-// entry without it writes nothing and returns ErrSyncWouldRemove.
+// entry without it writes nothing and returns ErrSyncWouldRemove. Governance keys and
+// default-tier descriptions, task labels and fallbacks the catalog declares are kept;
+// only undeclared ones take the built-in defaults. A local endpoint that does not answer
+// is listed in SyncResult.DiscoveryFailures, and refuses a pruning sync.
 // Seed prices, quota values and naming heuristics are not live provider observations.
 func SyncCatalog(ctx context.Context, targetPath string, opts SyncOptions) (*SyncResult, error) {
 	return syncCatalog(ctx, targetPath, opts, DiscoverLocalModels)
@@ -307,16 +292,19 @@ func syncCatalog(ctx context.Context, targetPath string, opts SyncOptions, disco
 	if err != nil {
 		return nil, err
 	}
-	var discovered []ModelDescriptor
-	if opts.DiscoverLocal && len(opts.LocalEndpoints) > 0 {
-		if discovered, err = discover(ctx, opts.LocalEndpoints); err != nil {
-			return nil, err
-		}
-	}
-	cfg, result, err := planCatalog(existing, discovered, opts.Prune)
+	declared, err := declaredSettings(before, exists)
 	if err != nil {
 		return nil, err
 	}
+	discovered, failures, err := runDiscovery(ctx, opts, discover)
+	if err != nil {
+		return nil, err
+	}
+	cfg, result, err := planCatalog(existing, declared, discovered, opts.Prune)
+	if err != nil {
+		return nil, err
+	}
+	result.DiscoveryFailures = failures
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal updated routing config: %w", err)
@@ -342,10 +330,45 @@ func existingCatalog(data []byte, exists bool, path string) (*RoutingConfig, err
 	return cfg, nil
 }
 
+// runDiscovery lists local models when asked. An endpoint that did not answer is
+// reported, not fatal: its models, if catalogued, stay through the merge. A pruning
+// sync refuses instead, because it would drop that endpoint's entries, and a canceled
+// context stops the sync whichever mode it runs in.
+func runDiscovery(ctx context.Context, opts SyncOptions, discover localDiscovery) ([]ModelDescriptor, []string, error) {
+	if !opts.DiscoverLocal || len(opts.LocalEndpoints) == 0 {
+		return nil, nil, nil
+	}
+	discovered, err := discover(ctx, opts.LocalEndpoints)
+	if err == nil {
+		return discovered, nil, nil
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, nil, ctxErr
+	}
+	if opts.Prune {
+		return nil, nil, fmt.Errorf("refusing to prune from a partial local inventory: %w", err)
+	}
+	return discovered, discoveryFailures(err), nil
+}
+
+// discoveryFailures lists one message per endpoint failure a discovery joined.
+func discoveryFailures(err error) []string {
+	joined, ok := err.(interface{ Unwrap() []error })
+	if !ok {
+		return []string{err.Error()}
+	}
+	failures := make([]string, 0, len(joined.Unwrap()))
+	for _, failure := range joined.Unwrap() {
+		failures = append(failures, failure.Error())
+	}
+	return failures
+}
+
 // planCatalog merges the seed list, the existing catalog and discovered local
 // models, then refuses any removal the caller did not ask to prune.
-func planCatalog(existing *RoutingConfig, discovered []ModelDescriptor, prune bool) (*RoutingConfig, *SyncResult, error) {
+func planCatalog(existing *RoutingConfig, declared settingsPresence, discovered []ModelDescriptor, prune bool) (*RoutingConfig, *SyncResult, error) {
 	cfg := seedCatalog()
+	keepDeclaredSettings(cfg, existing, declared)
 	if !prune {
 		preserveUnowned(cfg, existing, modelIDs(cfg))
 	}
@@ -374,8 +397,11 @@ func seedCatalog() *RoutingConfig {
 		},
 	}
 	for _, m := range legacySeedCatalog {
-		family := DetectFamily(m.id)
-		appendModel(cfg.Tiers, ClassifyTier(m.id, family, m.elo), ModelDescriptor{
+		family, ok := seedLineage[m.id]
+		if !ok {
+			family = DetectFamily(m.id)
+		}
+		appendModel(cfg.Tiers, ClassifyTier(m.id), ModelDescriptor{
 			ID: m.id, Family: family, Source: SourceSeed,
 			RPMLimit: m.rpm, TPMLimit: m.tpm,
 			CostPerMIn: m.costIn, CostPerMOut: m.costOut, CostRatesDeclared: true,
@@ -412,7 +438,7 @@ func addDiscovered(cfg *RoutingConfig, discovered []ModelDescriptor) {
 		present[model.ID] = true
 		model.Source = SourceLocal
 		model.CostRatesDeclared = true
-		appendModel(cfg.Tiers, ClassifyTier(model.ID, model.Family, 0.0), model)
+		appendModel(cfg.Tiers, ClassifyTier(model.ID), model)
 	}
 }
 

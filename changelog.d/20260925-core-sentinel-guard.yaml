@@ -1,0 +1,3 @@
+type: fixed
+title: Drop the unreachable 85 percent utilization check from sentinel model admission, document the RAM reservation as its only guard, and refuse a reading with more free than total RAM explicitly instead of through an unsigned underflow
+breaking: false
