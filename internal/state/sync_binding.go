@@ -16,7 +16,6 @@ import (
 )
 
 const maxSyncPaths = 10000
-const stateGitAutocrlf = "core.autocrlf=input"
 
 var syncMarker = regexp.MustCompile(`\n<!-- praetor-state:v1 sha256:([a-f0-9]{64}) -->\n$`)
 
@@ -132,7 +131,7 @@ func stateGitBinding(ctx context.Context, root, gitState string) ([]string, erro
 	}
 	parts := make([]string, 0, len(commands))
 	for _, args := range commands {
-		result, err := stateGitProbe(ctx, root, contextopt.MaxTotalBytes, args...)
+		result, err := util.RunGitTreeProbe(ctx, root, contextopt.MaxTotalBytes, util.GitProbeTimeout, args...)
 		if err != nil {
 			return nil, fmt.Errorf("bind state Git %s: %w", args[0], err)
 		}
@@ -160,7 +159,7 @@ func validateSyncIndex(listing string) error {
 		if len(row) < 2 || row[1] != ' ' {
 			return fmt.Errorf("state synchronization index record is malformed")
 		}
-		if row[0] == 'S' || row[0] >= 'a' && row[0] <= 'z' {
+		if util.GitHiddenIndexReason(row[0]) != "" {
 			return fmt.Errorf("state synchronization refuses assume-unchanged or skip-worktree index entries")
 		}
 		if strings.HasPrefix(row[2:], "160000 ") {
@@ -200,34 +199,27 @@ func stateLogHash(binding string, content []byte) string {
 	return fmt.Sprintf("%x", sha256.Sum256(append([]byte(binding+"\x00"), content...)))
 }
 
+// stateGitString runs one state observation through util.RunGitTreeProbe, the line-ending
+// model every working-tree comparison shares: git's live index can carry stat entries an
+// ordinary command refreshed under core.autocrlf=true, and reading that cache with the implicit
+// false default made unchanged CRLF files alternate between dirty and clean on Windows.
 func stateGitString(ctx context.Context, root string, args ...string) (string, error) {
-	result, err := stateGitProbe(ctx, root, contextopt.MaxTotalBytes, args...)
+	result, err := util.RunGitTreeProbe(ctx, root, contextopt.MaxTotalBytes, util.GitProbeTimeout, args...)
 	return strings.TrimSpace(string(result.Stdout)), err
 }
 
+// rejectStateGitFilters refuses a repository whose own configuration names clean or process
+// filters, through the one probe util.GitWorkingTreeChanges uses: state observations run
+// status and diff, which would execute them.
 func rejectStateGitFilters(ctx context.Context, root string) error {
-	result, err := stateGitProbe(ctx, root, contextopt.MaxSourceBytes, "config", "--get-regexp", `^filter\..*\.(clean|process)$`)
-	var exit *exec.ExitError
-	if errors.As(err, &exit) && exit.ExitCode() == 1 && len(result.Stdout) == 0 {
-		return nil
+	err := util.RefuseGitStatusFilters(ctx, root)
+	if errors.Is(err, util.ErrGitStatusFilters) {
+		return fmt.Errorf("state inspection refuses configured Git clean/process filters: %w", err)
 	}
 	if err != nil {
 		return fmt.Errorf("inspect state Git filters: %w", err)
 	}
-	return fmt.Errorf("state inspection refuses configured Git clean/process filters")
-}
-
-// stateGitProbe gives every state observation one line-ending model. RunGitProbe excludes
-// system and global configuration, but Git's live index can still carry stat entries refreshed
-// by an ordinary command that honored core.autocrlf=true. Reading that cache later with the
-// implicit false default made unchanged CRLF files alternate between dirty and clean on Windows.
-// The input mode normalizes CRLF for comparison without rewriting the worktree; attributes such
-// as -text still override it for paths whose bytes must remain opaque.
-func stateGitProbe(ctx context.Context, root string, maxBytes int, args ...string) (util.CommandBytes, error) {
-	argv := make([]string, 0, len(args)+2)
-	argv = append(argv, "-c", stateGitAutocrlf)
-	argv = append(argv, args...)
-	return util.RunGitProbe(ctx, root, maxBytes, argv...)
+	return nil
 }
 
 func stateGitHead(ctx context.Context, root string) (string, error) {

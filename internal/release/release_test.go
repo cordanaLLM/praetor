@@ -211,7 +211,7 @@ func TestPrepareRelease_Negative_UntrackedFileHiddenByRepositoryConfig(t *testin
 	}
 	opts := ReleaseOptions{RepoPath: dir, Version: "v1.2.0", Date: "2026-09-11", SkipVerify: true}
 	err := PrepareRelease(t.Context(), opts)
-	if err == nil || !strings.Contains(err.Error(), "uncommitted changes: ?? hidden.txt") {
+	if err == nil || !strings.Contains(err.Error(), "uncommitted changes: 1 changed path(s) differ from HEAD: ?? hidden.txt") {
 		t.Fatalf("an untracked file hidden by repository config must refuse the release, got %v", err)
 	}
 	if _, statErr := os.Stat(filepath.Join(dir, "CHANGELOG.md")); !errors.Is(statErr, os.ErrNotExist) {

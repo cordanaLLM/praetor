@@ -29,12 +29,12 @@ func PrepareRelease(ctx context.Context, opts ReleaseOptions) error {
 
 	// 1. Verify working tree is clean
 	if !opts.SkipClean {
-		changes, err := util.GitWorkingTreeChanges(ctx, opts.RepoPath)
+		changes, err := util.GitWorkingTreeChanges(ctx, opts.RepoPath, util.GitTreeProbeTimeout)
 		if err != nil {
 			return fmt.Errorf("check git status: %w", err)
 		}
 		if len(changes) > 0 {
-			return fmt.Errorf("release: working tree has uncommitted changes: %s", strings.Join(changes, ", "))
+			return fmt.Errorf("release: working tree has uncommitted changes: %s", util.DescribeWorkingTreeChanges(changes))
 		}
 	}
 

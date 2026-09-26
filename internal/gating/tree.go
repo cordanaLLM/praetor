@@ -19,8 +19,6 @@ const (
 	// TreePreconditionStage names the stage a run that could mint a receipt records when it
 	// refuses a working tree that does not match HEAD.
 	TreePreconditionStage = "Clean Tree Precondition"
-	// maxReportedChanges bounds how many changed paths a refusal names.
-	maxReportedChanges = 5
 )
 
 // ErrUncleanTree reports a working tree the gate will not certify: a receipt names a commit,
@@ -49,24 +47,14 @@ func inspectTree(ctx context.Context, repoDir string) treeState {
 
 // treeProblem names why the working tree does not match HEAD, or returns "" when it does.
 func treeProblem(ctx context.Context, repoDir string) string {
-	changes, err := util.GitWorkingTreeChanges(ctx, repoDir, ":(exclude)"+ReceiptFileName)
+	changes, err := util.GitWorkingTreeChanges(ctx, repoDir, GitQueryTimeout, util.GitLiteralExclude(ReceiptFileName))
 	if err != nil {
 		return fmt.Sprintf("the working tree's state could not be read: %v", err)
 	}
 	if len(changes) > 0 {
-		return describeChanges(changes)
+		return util.DescribeWorkingTreeChanges(changes)
 	}
 	return untrackedInputProblem(ctx, repoDir)
-}
-
-// describeChanges summarises changed paths as a count and the first few porcelain records.
-func describeChanges(changes []string) string {
-	shown := changes[:min(len(changes), maxReportedChanges)]
-	summary := fmt.Sprintf("%d changed path(s) differ from HEAD: %s", len(changes), strings.Join(shown, ", "))
-	if len(changes) > len(shown) {
-		summary += fmt.Sprintf(", and %d more", len(changes)-len(shown))
-	}
-	return summary
 }
 
 // untrackedInputProblem names a subtractive input the stages would read from somewhere other

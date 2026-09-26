@@ -1,13 +1,16 @@
 package util
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // statusRepo initialises a work tree holding one committed file at a.txt and one at
@@ -48,7 +51,7 @@ func statusGit(t *testing.T, dir string, args ...string) {
 
 func mustChanges(t *testing.T, dir string, pathspec ...string) []string {
 	t.Helper()
-	changes, err := GitWorkingTreeChanges(t.Context(), dir, pathspec...)
+	changes, err := GitWorkingTreeChanges(t.Context(), dir, GitTreeProbeTimeout, pathspec...)
 	if err != nil {
 		t.Fatalf("GitWorkingTreeChanges: %v", err)
 	}
@@ -100,7 +103,7 @@ func TestGitWorkingTreeChanges_Negative_RepositorySettingsCannotHideChanges(t *t
 	t.Run("clean filter", func(t *testing.T) {
 		dir := statusRepo(t)
 		statusGit(t, dir, "config", "filter.normalise.clean", "cat")
-		_, err := GitWorkingTreeChanges(t.Context(), dir)
+		_, err := GitWorkingTreeChanges(t.Context(), dir, GitTreeProbeTimeout)
 		if !errors.Is(err, ErrGitStatusFilters) || !strings.Contains(err.Error(), "filter.normalise.clean") {
 			t.Fatalf("a configured clean filter was not refused: %v", err)
 		}
@@ -109,7 +112,7 @@ func TestGitWorkingTreeChanges_Negative_RepositorySettingsCannotHideChanges(t *t
 		if _, err := exec.LookPath("git"); err != nil {
 			t.Skipf("git unavailable: %v", err)
 		}
-		if _, err := GitWorkingTreeChanges(t.Context(), t.TempDir()); err == nil {
+		if _, err := GitWorkingTreeChanges(t.Context(), t.TempDir(), GitTreeProbeTimeout); err == nil {
 			t.Fatal("a directory outside any work tree answered as clean")
 		}
 	})
@@ -152,5 +155,111 @@ func TestHiddenIndexEntries_Boundary_MalformedRecordsAreSkipped(t *testing.T) {
 	}
 	if got := hiddenIndexEntries(nil); len(got) != 0 {
 		t.Fatalf("empty listing reported hidden entries: %q", got)
+	}
+}
+
+// TestGitWorkingTreeChanges_Boundary_CallerBound: the caller's bound governs the whole probe. A
+// non-positive bound is refused rather than read as unbounded, and a bound too short to finish
+// is an error, never a clean answer.
+func TestGitWorkingTreeChanges_Boundary_CallerBound(t *testing.T) {
+	dir := statusRepo(t)
+	for _, bound := range []time.Duration{0, -time.Second} {
+		if _, err := GitWorkingTreeChanges(t.Context(), dir, bound); err == nil || !strings.Contains(err.Error(), "must be positive") {
+			t.Fatalf("bound %v: want a refusal, got %v", bound, err)
+		}
+		if _, err := RunGitProbeWithin(t.Context(), dir, MaxCommandOutputBytes, bound, "status"); err == nil {
+			t.Fatalf("RunGitProbeWithin bound %v: want a refusal", bound)
+		}
+	}
+	if changes, err := GitWorkingTreeChanges(t.Context(), dir, time.Nanosecond); err == nil {
+		t.Fatalf("a probe that cannot finish within its bound answered %q", changes)
+	}
+	if changes, err := GitWorkingTreeChanges(t.Context(), dir, GitTreeProbeTimeout); err != nil || len(changes) != 0 {
+		t.Fatalf("a clean fixture within the default bound: changes %q, err %v", changes, err)
+	}
+}
+
+// TestRefuseGitStatusFilters_3D: no filter passes, a clean or process filter is refused, and a
+// smudge-only filter -- which a status probe never runs -- passes; a probe that cannot run is an
+// error, never an all-clear.
+func TestRefuseGitStatusFilters_3D(t *testing.T) {
+	dir := statusRepo(t)
+	if err := RefuseGitStatusFilters(t.Context(), dir); err != nil {
+		t.Fatalf("no filters configured: %v", err)
+	}
+	statusGit(t, dir, "config", "filter.lfs.smudge", "cat")
+	if err := RefuseGitStatusFilters(t.Context(), dir); err != nil {
+		t.Fatalf("a smudge-only filter must pass: %v", err)
+	}
+	for _, key := range []string{"filter.lfs.clean", "filter.lfs.process"} {
+		probe := statusRepo(t)
+		statusGit(t, probe, "config", key, "cat")
+		if err := RefuseGitStatusFilters(t.Context(), probe); !errors.Is(err, ErrGitStatusFilters) || !strings.Contains(err.Error(), key) {
+			t.Fatalf("%s must be refused by name, got %v", key, err)
+		}
+	}
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := RefuseGitStatusFilters(cancelled, dir); err == nil || errors.Is(err, ErrGitStatusFilters) {
+		t.Fatalf("a probe that could not run must be an error, not a verdict: %v", err)
+	}
+}
+
+// TestRunGitTreeProbe_Positive_PinsTheLineEndingModel: every tree probe reads the repository
+// under core.autocrlf=input, whatever the repository itself sets.
+func TestRunGitTreeProbe_Positive_PinsTheLineEndingModel(t *testing.T) {
+	dir := statusRepo(t)
+	statusGit(t, dir, "config", "core.autocrlf", "true")
+	out, err := RunGitTreeProbe(t.Context(), dir, MaxCommandOutputBytes, GitProbeTimeout, "config", "--get", "core.autocrlf")
+	if err != nil || strings.TrimSpace(string(out.Stdout)) != "input" {
+		t.Fatalf("core.autocrlf under a tree probe = %q (%v), want input", out.Stdout, err)
+	}
+}
+
+// TestGitHiddenIndexReason_3D: S and s are skip-worktree, other lowercase tags assume-unchanged,
+// and every tag git status compares -- uppercase, and the bytes either side of a..z -- is "".
+func TestGitHiddenIndexReason_3D(t *testing.T) {
+	cases := map[byte]string{
+		'S': "skip-worktree", 's': "skip-worktree", 'h': "assume-unchanged", 'a': "assume-unchanged",
+		'z': "assume-unchanged", 'H': "", 'M': "", 'R': "", '`': "", '{': "", 0: "",
+	}
+	for tag, want := range cases {
+		if got := GitHiddenIndexReason(tag); got != want {
+			t.Errorf("GitHiddenIndexReason(%q) = %q, want %q", tag, got, want)
+		}
+	}
+}
+
+// TestDescribeWorkingTreeChanges_Boundary_NamesOnlyTheFirstFew: past the bound the summary
+// counts the rest; at the bound it lists every change without a remainder.
+func TestDescribeWorkingTreeChanges_Boundary_NamesOnlyTheFirstFew(t *testing.T) {
+	changes := []string{"?? a", "?? b", "?? c", "?? d", "?? e", "?? f", "?? g"}
+	got := DescribeWorkingTreeChanges(changes)
+	if !strings.HasPrefix(got, "7 changed path(s)") || !strings.Contains(got, "?? e") ||
+		strings.Contains(got, "?? f") || !strings.HasSuffix(got, "and 2 more") {
+		t.Fatalf("summary of seven changes = %q", got)
+	}
+	if got := DescribeWorkingTreeChanges(changes[:maxReportedTreeChanges]); strings.Contains(got, "more") {
+		t.Fatalf("exactly the bound must list every change without a remainder: %q", got)
+	}
+	if got := DescribeWorkingTreeChanges([]string{"?? only"}); got != "1 changed path(s) differ from HEAD: ?? only" {
+		t.Fatalf("one change = %q", got)
+	}
+}
+
+// TestGitLiteralExclude_Boundary_GlobCharactersAreLiteral: the exclude drops exactly the named
+// path, so a name holding glob characters does not also hide the files it would match as a glob.
+func TestGitLiteralExclude_Boundary_GlobCharactersAreLiteral(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows file names cannot hold '*'")
+	}
+	dir := statusRepo(t)
+	writeStatusFile(t, dir, "r*.json", "r\n")
+	writeStatusFile(t, dir, "receipt.json", "r\n")
+	if got := mustChanges(t, dir, GitLiteralExclude("r*.json")); !slices.Equal(got, []string{"?? receipt.json"}) {
+		t.Fatalf("a literal exclude must drop only r*.json: %q", got)
+	}
+	if got := mustChanges(t, dir, GitLiteralExclude("absent.json")); len(got) != 2 {
+		t.Fatalf("excluding an absent path must leave every change: %q", got)
 	}
 }

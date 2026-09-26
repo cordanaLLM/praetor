@@ -236,15 +236,3 @@ func TestRunReceiptStage_Negative_TreeMustStillMatchTheStartingHead(t *testing.T
 		})
 	}
 }
-
-func TestDescribeChanges_Boundary_NamesOnlyTheFirstFew(t *testing.T) {
-	changes := []string{"?? a", "?? b", "?? c", "?? d", "?? e", "?? f", "?? g"}
-	got := describeChanges(changes)
-	if !strings.HasPrefix(got, "7 changed path(s)") || !strings.Contains(got, "?? e") ||
-		strings.Contains(got, "?? f") || !strings.HasSuffix(got, "and 2 more") {
-		t.Fatalf("summary of seven changes = %q", got)
-	}
-	if got := describeChanges(changes[:maxReportedChanges]); strings.Contains(got, "more") {
-		t.Fatalf("exactly the bound must list every change without a remainder: %q", got)
-	}
-}

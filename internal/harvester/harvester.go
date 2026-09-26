@@ -390,8 +390,7 @@ func inspectRepositoryState(ctx context.Context, repoPath string, observation *R
 		observation.DirtyScope = "not-applicable"
 		return
 	}
-	filterCode, filterErr := inventoryRunGitExit(ctx, repoPath, "config", "--get-regexp", `^filter\..*\.(clean|process)$`)
-	if filterErr != nil || filterCode == 0 {
+	if util.RefuseGitStatusFilters(ctx, repoPath) != nil {
 		observation.ProbeErrors = append(observation.ProbeErrors, "git status unavailable: configured filters or filter probe failure")
 		return
 	}

@@ -112,17 +112,17 @@ func verifyRepositoryState(ctx context.Context, repoPath string, d *Disposition,
 // no repository setting (status.showUntrackedFiles, assume-unchanged, skip-worktree) hides a
 // change.
 func verifyCleanWorktree(ctx context.Context, repoPath, dispositionPath string) error {
-	excludes := []string{literalExclude(gating.ReceiptFileName)}
+	excludes := []string{util.GitLiteralExclude(gating.ReceiptFileName)}
 	if exclude, ok := dispositionPathspec(repoPath, dispositionPath); ok {
 		excludes = append(excludes, exclude)
 	}
-	uncommitted, err := util.GitWorkingTreeChanges(ctx, repoPath, excludes...)
+	uncommitted, err := util.GitWorkingTreeChanges(ctx, repoPath, util.GitTreeProbeTimeout, excludes...)
 	if err != nil {
 		return fmt.Errorf("verify working tree git status: %w", err)
 	}
 	if len(uncommitted) > 0 {
 		return fmt.Errorf("contract violation: uncommitted changes exist in working tree (%s); commit and push branch before disposition",
-			strings.Join(uncommitted, ", "))
+			util.DescribeWorkingTreeChanges(uncommitted))
 	}
 	return nil
 }
@@ -145,13 +145,7 @@ func dispositionPathspec(repoPath, dispositionPath string) (string, bool) {
 	if err != nil || rel == "." || !filepath.IsLocal(rel) {
 		return "", false
 	}
-	return literalExclude(filepath.ToSlash(rel)), true
-}
-
-// literalExclude returns a pathspec that excludes rel, a slash-separated path relative to git's
-// working directory, matched literally rather than as a glob.
-func literalExclude(rel string) string {
-	return ":(exclude,literal)" + rel
+	return util.GitLiteralExclude(filepath.ToSlash(rel)), true
 }
 
 // verifyPushed fails unless a remote-tracking ref contains HEAD. It reads only local refs: a
