@@ -136,9 +136,13 @@ praetorctl needs report --path /path/to/consumer --framework /path/to/framework
 praetorctl needs report --path /path/to/consumer --framework=""
 ```
 
-The CLI keeps its existing default selection: `PRAETOR_FRAMEWORK_DIR`, otherwise
-`PRAETOR_DEV_DIR/golusoris/golusoris`, otherwise `$HOME/dev/golusoris/golusoris`.
-If that selected path is absent it now errors. Use an explicitly empty
+Without `--framework` the CLI selects `PRAETOR_FRAMEWORK_DIR`, otherwise
+`<dev root>/golusoris/golusoris`. The dev root is the one every dev-root flag
+shares (`resolveDevRootDir` in `cmd/standardsctl/devroot.go`): `PRAETOR_DEV_ROOT`,
+otherwise the earlier `PRAETOR_DEV_DIR`, otherwise `$HOME/dev`; `needs aggregate`
+and `needs requests` scan the same root unless `--dev-dir` is given. With none of
+them set and no usable home directory the command errors and names the flag to
+pass. If the selected path is absent it now errors. Use an explicitly empty
 `--framework=""` for a declared-catalog estimate. MCP keeps its existing default
 of a declared catalog when `framework` is omitted; explicit paths remain confined
 to the server root under the existing server policy.

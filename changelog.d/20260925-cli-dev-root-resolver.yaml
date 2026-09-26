@@ -1,0 +1,3 @@
+type: fixed
+title: needs, devsync, topology, adopt and harvest resolve the workstation dev root one way, honouring PRAETOR_DEV_ROOT (the name AGENTS.md documents), then the earlier PRAETOR_DEV_DIR, then <home>/dev, and fail naming the flag to pass instead of using a working-directory-relative dev folder when no home directory is usable
+breaking: false
