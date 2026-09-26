@@ -106,14 +106,16 @@ func readLockManifest(ctx context.Context, root string) (*Manifest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read source manifest: %w", err)
 	}
-	var manifest Manifest
-	if err := yaml.Unmarshal(data, &manifest); err != nil {
+	// The policy loader's decoder: a lock is never built from a manifest, or from the first
+	// document of one, that LoadManifest refuses (BUG-857).
+	manifest, err := DecodeManifest(data)
+	if err != nil {
 		return nil, fmt.Errorf("parse source manifest: %w", err)
 	}
 	if manifest.Version != 1 {
 		return nil, errors.New("source manifest requires version 1")
 	}
-	return &manifest, nil
+	return manifest, nil
 }
 
 func buildLockEntries(ctx context.Context, ids []string, sources map[string]string, version, kind string) ([]lockEntry, error) {

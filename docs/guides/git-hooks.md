@@ -1,7 +1,7 @@
 # Local Git hooks
 
-Install Lefthook 2.1.12 or newer, then run `make hooks` and `make hooks-check`.
-The configuration is tested with 2.1.12. Python 3, Git and the repository Go
+Install Lefthook 2.1.14 or newer, then run `make hooks` and `make hooks-check`.
+The configuration is tested with 2.1.14. Python 3, Git and the repository Go
 version are required. Install `yamllint`, `shellcheck`, `actionlint` and `hadolint`
 when editing their file types; applicable checks fail if their tool is missing.
 Strict source pushes also require `gosec`, `govulncheck` and `semgrep`. Golangci-lint runs
@@ -105,7 +105,7 @@ marker, and a blocked command still prints its reason and the failed job's name.
 
 For Lefthook's full reporting on one run, set `LEFTHOOK_OUTPUT`, for example
 `LEFTHOOK_OUTPUT=meta,summary,execution git commit -s`. The
-[pinned Lefthook `output` reference](https://github.com/evilmartians/lefthook/blob/v2.1.12/docs/configuration/output.md)
+[pinned Lefthook `output` reference](https://github.com/evilmartians/lefthook/blob/v2.1.14/docs/configuration/output.md)
 lists the values. A personal `lefthook-local.yml` can set `output` or `colors`; it is
 loaded after `extends` and wins.
 
@@ -326,7 +326,7 @@ screen for known verification-evasion and topology patterns, not a complete
 shell parser or an immutable security boundary. It does not inspect file edits,
 arbitrary MCP calls, or later input sent to an already-running shell.
 
-This integration is checked against Codex CLI 0.145.0 and Lefthook 2.1.12.
+This integration is checked against Codex CLI 0.145.0 and Lefthook 2.1.14.
 Version 2 supports custom agent lifecycle jobs; the earlier 1.13.6 validator
 rejected them. CI installs the same pinned v2 release. The adapter translates
 Lefthook's failure into Codex's blocking exit code rather than assuming their

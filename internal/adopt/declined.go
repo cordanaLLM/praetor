@@ -8,7 +8,6 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
-	"gopkg.in/yaml.v3"
 )
 
 // maxDeclinedArtifacts bounds the declared list so a malformed manifest cannot make
@@ -110,30 +109,41 @@ func sortedNames(names []string) []string {
 	return out
 }
 
-// declaredDeclines reads adoption.decline from a repository's existing manifest.
-func declaredDeclines(ctx context.Context, repoPath string) []string {
-	return manifestDeclines(declaredManifest(ctx, repoPath))
-}
-
 // declaredManifest reads the repository's existing manifest once, before the chain runs, so
 // its recorded decisions (adoption.decline, the declared profiles) govern the run that
 // follows rather than the run after next. It returns nil when there is no manifest yet, which
 // is what a first adoption means, and when the manifest cannot be read: the manifest step
 // parses it strictly and fails the run with the reason.
 func declaredManifest(ctx context.Context, repoPath string) *config.Manifest {
-	full, err := repoFile(repoPath, manifestFile)
+	manifest, err := loadDeclaredManifest(ctx, repoPath)
 	if err != nil {
 		return nil
 	}
+	return manifest
+}
+
+// loadDeclaredManifest reads and strictly decodes the repository's manifest (one bounded
+// document, BUG-857). A missing manifest is (nil, nil). A manifest that exists but cannot be
+// resolved, read or decoded is an error, so a caller that writes on the strength of "not
+// declined" (EnsurePrivateIgnore) fails closed instead of treating an unreadable decision as
+// no decision.
+func loadDeclaredManifest(ctx context.Context, repoPath string) (*config.Manifest, error) {
+	full, err := repoFile(repoPath, manifestFile)
+	if err != nil {
+		return nil, fmt.Errorf("resolve the adoption manifest: %w", err)
+	}
 	data, exists, err := contextopt.ObserveSnapshot(ctx, full)
-	if err != nil || !exists {
-		return nil
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", manifestFile, err)
 	}
-	var manifest config.Manifest
-	if err := yaml.Unmarshal(data, &manifest); err != nil {
-		return nil
+	if !exists {
+		return nil, nil
 	}
-	return &manifest
+	manifest, err := config.DecodeManifest(data)
+	if err != nil {
+		return nil, fmt.Errorf("decode %s: %w", manifestFile, err)
+	}
+	return manifest, nil
 }
 
 // adoptStepNames returns the name of every step in the adoption chain, so tests and error

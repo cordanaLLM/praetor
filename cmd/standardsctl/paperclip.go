@@ -132,7 +132,7 @@ func runPaperclipVerify(ctx context.Context, args []string) error {
 
 	opts := paperclip.VerifyOptions{DispositionPath: *dispPath}
 	if disp.Receipt != nil {
-		if opts.PinnedKey, err = resolveVerifyKey("", *path, *manifestPath); err != nil {
+		if opts.PinnedKey, err = resolveVerifyKey(ctx, "", *path, *manifestPath); err != nil {
 			return fmt.Errorf("[FAIL] Paperclip verification failed: resolve pinned receipt key: %w", err)
 		}
 	}

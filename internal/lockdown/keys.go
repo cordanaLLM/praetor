@@ -1,6 +1,7 @@
 package lockdown
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/subtle"
 	"encoding/hex"
@@ -10,8 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"gopkg.in/yaml.v3"
-
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -29,8 +29,6 @@ const (
 	SigningKeyDirPerm os.FileMode = 0o700
 	// maxKeyFileBytes bounds how much of the key file is read (HISS-02).
 	maxKeyFileBytes = 4096
-	// maxManifestBytes bounds how much of .standards.yaml is parsed for the pinned key.
-	maxManifestBytes = 1 << 20
 )
 
 var (
@@ -185,24 +183,15 @@ func SaveSigningKey(path string, priv ed25519.PrivateKey) error {
 // PinnedPublicKey reads receipt.public_key from the .standards.yaml manifest at
 // manifestPath. The pinned key is the only trust anchor a receipt may be verified
 // against; the public key embedded inside a receipt is never trusted on its own.
-func PinnedPublicKey(manifestPath string) (ed25519.PublicKey, error) {
-	info, err := os.Stat(manifestPath)
-	if err != nil {
-		return nil, fmt.Errorf("read standards manifest %s: %w", manifestPath, err)
-	}
-	if info.Size() > maxManifestBytes {
-		return nil, fmt.Errorf("standards manifest %s exceeds %d bytes", manifestPath, maxManifestBytes)
-	}
-
-	// #nosec G304 -- manifestPath is the repository's own .standards.yaml, resolved by the caller.
-	data, err := os.ReadFile(manifestPath)
-	if err != nil {
-		return nil, fmt.Errorf("read standards manifest %s: %w", manifestPath, err)
-	}
-
+//
+// The manifest is read through config.ReadYAMLDocument, the read every .standards.yaml reader
+// shares: a FIFO is refused rather than blocking, and a second document is refused, so the key
+// can never come from the first document of a manifest the policy loader rejects (BUG-857).
+func PinnedPublicKey(ctx context.Context, manifestPath string) (ed25519.PublicKey, error) {
 	var section manifestReceiptSection
-	if err := yaml.Unmarshal(data, &section); err != nil {
-		return nil, fmt.Errorf("parse standards manifest %s: %w", manifestPath, err)
+	err := config.ReadYAMLDocument(ctx, manifestPath, &section, util.YAMLDocumentOptions{AllowEmpty: true})
+	if err != nil {
+		return nil, fmt.Errorf("standards manifest: %w", err)
 	}
 	return ParsePinnedPublicKey(section.Receipt.PublicKey)
 }

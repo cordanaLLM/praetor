@@ -1,4 +1,4 @@
-.PHONY: all build test stress fuzz audit compile-context compile-context-verify lint vuln sec secrets nosec-justified hiss-coverage flavor-audit state-audit dedupe topology-audit vscode-test wiki-sync-test dco-check-test docs-lint docs-lint-test docs-surface verify-all clean hooks setup
+.PHONY: all build test stress fuzz audit compile-context compile-context-verify editors-reference editors-reference-verify lint vuln sec secrets nosec-justified hiss-coverage flavor-audit state-audit dedupe topology-audit vscode-test wiki-sync-test dco-check-test docs-lint docs-lint-test docs-surface verify-all clean hooks setup
 
 BIN_DIR := bin
 # Windows cannot execute an extension-less PE, so the binary is named for the host rather than
@@ -48,6 +48,14 @@ compile-context:
 
 compile-context-verify:
 	go run ./cmd/standardsctl compile-context --verify
+
+# editors/neovim and editors/jetbrains are rendered by internal/editor (editor.ReferenceSet);
+# regenerate them after a renderer change, never edit them by hand.
+editors-reference:
+	go run ./cmd/standardsctl editors reference
+
+editors-reference-verify:
+	go run ./cmd/standardsctl editors reference --verify
 
 audit:
 	go run ./cmd/standardsctl audit
@@ -126,7 +134,7 @@ hiss-coverage:
 topology-audit:
 	@if [ -d "$$HOME/dev" ]; then go run ./cmd/standardsctl topology audit "$$HOME/dev"; fi
 
-verify-all: adr-verify semgrep-test docs-drift-test docs-assets-test github-app-test docs-lint-test portability-test notebook-test mcp-test dev-codex-hooks-test dev-install-test dev-schedule-test dev-repair-test wiki-sync-test adopt-sweep-test dco-check-test vscode-test mcp-probe compile-context-verify test audit lint vuln sec secrets fuzz hiss-coverage flavor-audit state-audit dedupe topology-audit hooks-test
+verify-all: adr-verify semgrep-test docs-drift-test docs-assets-test github-app-test docs-lint-test portability-test notebook-test mcp-test dev-codex-hooks-test dev-install-test dev-schedule-test dev-repair-test wiki-sync-test adopt-sweep-test dco-check-test vscode-test mcp-probe compile-context-verify editors-reference-verify test audit lint vuln sec secrets fuzz hiss-coverage flavor-audit state-audit dedupe topology-audit hooks-test
 	@echo "All standards verification gates passed cleanly."
 
 .PHONY: docs-drift-test

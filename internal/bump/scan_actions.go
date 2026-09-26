@@ -16,51 +16,90 @@ import (
 
 var workflowActionRegex = regexp.MustCompile(`uses:\s*([a-zA-Z0-9\-_/]+)@([a-zA-Z0-9.\-_+]+)`)
 
-// Known canonical latest versions for standard CI actions.
+// Known canonical latest versions for standard CI actions: the newest upstream release
+// major, or the exact tag for actions consumed by tag. The deprecation warning names its
+// upgrade target from this map, so a bump moves in one place.
 var knownActionLatest = map[string]string{
-	"actions/checkout":                  "v4",
+	"actions/checkout":                  "v7",
 	"actions/cache":                     "v6",
-	"actions/setup-go":                  "v5",
-	"actions/setup-python":              "v5",
-	"actions/upload-artifact":           "v4",
-	"actions/download-artifact":         "v4",
-	"actions/upload-pages-artifact":     "v3",
-	"actions/deploy-pages":              "v4",
-	"actions/configure-pages":           "v5",
-	"fsfe/reuse-action":                 "v5",
+	"actions/setup-go":                  "v7",
+	"actions/setup-node":                "v7",
+	"actions/setup-python":              "v7",
+	"actions/upload-artifact":           "v7",
+	"actions/download-artifact":         "v8",
+	"actions/upload-pages-artifact":     "v5",
+	"actions/deploy-pages":              "v5",
+	"actions/configure-pages":           "v6",
+	"fsfe/reuse-action":                 "v6",
 	"goreleaser/goreleaser-action":      "v7",
 	"sigstore/cosign-installer":         "v4.1.2",
 	"anchore/sbom-action/download-syft": "v0.24.2",
 }
 
-// Deprecated action versions known to target obsolete runtimes (e.g. Node 20 runner deprecation).
+const (
+	node12Deprecated = "Node.js 12 runtime deprecated"
+	node16Deprecated = "Node.js 16 runtime deprecated"
+	node20Deprecated = "Node.js 20 runtime deprecated"
+	artifactV1Sunset = "Artifact v1 deprecated"
+	artifactV3Sunset = "Artifact v3 sunset"
+)
+
+// Deprecated action versions known to target obsolete runtimes. From v3 on, each entry is
+// the runtime that major's action.yml declares under runs.using; buildActionCandidate
+// appends the upgrade target from knownActionLatest.
 var deprecatedActionVersions = map[string]map[string]string{
 	"actions/checkout": {
-		"v1": "Node.js 12 runtime deprecated",
-		"v2": "Node.js 16 runtime deprecated",
-		"v3": "Node.js 16/20 runtime deprecated; upgrade to v4",
+		"v1": node12Deprecated,
+		"v2": node16Deprecated,
+		"v3": node16Deprecated,
+		"v4": node20Deprecated,
+	},
+	"actions/cache": {
+		"v3": node16Deprecated,
+		"v4": node20Deprecated,
 	},
 	"actions/setup-go": {
-		"v1": "Node.js 12 runtime deprecated",
-		"v2": "Node.js 16 runtime deprecated",
-		"v3": "Node.js 16 runtime deprecated",
-		"v4": "Node.js 20 runtime deprecated; upgrade to v5",
+		"v1": node12Deprecated,
+		"v2": node16Deprecated,
+		"v3": node16Deprecated,
+		"v4": node16Deprecated,
+		"v5": node20Deprecated,
+	},
+	"actions/setup-node": {
+		"v3": node16Deprecated,
+		"v4": node20Deprecated,
 	},
 	"actions/setup-python": {
-		"v1": "Node.js 12 runtime deprecated",
-		"v2": "Node.js 16 runtime deprecated",
-		"v3": "Node.js 16 runtime deprecated",
-		"v4": "Node.js 20 runtime deprecated; upgrade to v5",
+		"v1": node12Deprecated,
+		"v2": node16Deprecated,
+		"v3": node16Deprecated,
+		"v4": node16Deprecated,
+		"v5": node20Deprecated,
 	},
 	"actions/upload-artifact": {
-		"v1": "Artifact v1 deprecated",
-		"v2": "Node.js 16 runtime deprecated",
-		"v3": "Artifact v3 sunset; upgrade to v4",
+		"v1": artifactV1Sunset,
+		"v2": node16Deprecated,
+		"v3": artifactV3Sunset,
+		"v4": node20Deprecated,
+		"v5": node20Deprecated,
 	},
 	"actions/download-artifact": {
-		"v1": "Artifact v1 deprecated",
-		"v2": "Node.js 16 runtime deprecated",
-		"v3": "Artifact v3 sunset; upgrade to v4",
+		"v1": artifactV1Sunset,
+		"v2": node16Deprecated,
+		"v3": artifactV3Sunset,
+		"v4": node20Deprecated,
+		"v5": node20Deprecated,
+		"v6": node20Deprecated,
+	},
+	"actions/deploy-pages": {
+		"v1": node16Deprecated,
+		"v2": node16Deprecated,
+		"v3": node20Deprecated,
+		"v4": node20Deprecated,
+	},
+	"actions/configure-pages": {
+		"v4": node20Deprecated,
+		"v5": node20Deprecated,
 	},
 }
 
@@ -135,7 +174,11 @@ func buildActionCandidate(actName, curVer, fileName string) (ActionCandidate, *D
 	warningMsg := ""
 	var dep *DeprecationWarning
 	if depMap, ok := deprecatedActionVersions[actName]; ok {
-		if msg, found := depMap[curVer]; found {
+		if reason, found := depMap[curVer]; found {
+			msg := reason
+			if hasLatest {
+				msg += "; upgrade to " + latestVer
+			}
 			isDeprecated = true
 			warningMsg = msg
 			dep = &DeprecationWarning{

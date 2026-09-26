@@ -6,12 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"path/filepath"
 	"regexp"
 
 	"github.com/cordanaLLM/praetor/internal/util"
-	"gopkg.in/yaml.v3"
 )
 
 // LockStatus names the outcome of a lockfile validation that found no defect. An
@@ -179,14 +177,9 @@ func decodeStandardsLock(data []byte) (*standardsLock, error) {
 	if (trimmed[0] == '{' || trimmed[0] == '[') && !json.Valid(trimmed) {
 		return nil, errors.New("lockfile contains malformed JSON")
 	}
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	var lock standardsLock
-	if err := decoder.Decode(&lock); err != nil {
-		return nil, err
-	}
-	var extra any
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		return nil, errors.New("lockfile must contain exactly one document")
+	if err := util.DecodeYAMLDocument(data, &lock, util.YAMLDocumentOptions{}); err != nil {
+		return nil, fmt.Errorf("lockfile: %w", err)
 	}
 	return &lock, nil
 }

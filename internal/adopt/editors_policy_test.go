@@ -17,31 +17,32 @@ import (
 
 const inspectionProfile = ".idea/inspectionProfiles/standards.xml"
 
-func maxLocOption(value int) string { return fmt.Sprintf(`name="maxLoc" value="%d"`, value) }
+// cyclomaticOption is the one resolved ceiling the JetBrains profile carries (BUG-656).
+func cyclomaticOption(value int) string { return fmt.Sprintf(`name="m_limit" value="%d"`, value) }
 
 func TestReconcileEditors_Positive_ProjectsResolvedPolicy(t *testing.T) {
 	s, _ := catalogSession(t)
 	manifest := filepath.Join(s.repoPath, manifestFile)
-	mustWrite(t, manifest, mustRead(t, manifest)+"overrides:\n  complexity:\n    max_func_loc: 5\n")
+	mustWrite(t, manifest, mustRead(t, manifest)+"overrides:\n  complexity:\n    max_cyclomatic: 5\n")
 	if err := reconcilePolicyCatalog(t.Context(), s); err != nil {
 		t.Fatal(err)
 	}
 	if err := reconcileEditors(t.Context(), s); err != nil {
 		t.Fatal(err)
 	}
-	if profile := mustRead(t, filepath.Join(s.repoPath, inspectionProfile)); !strings.Contains(profile, maxLocOption(5)) {
-		t.Errorf("inspection profile ignores the resolved max_func_loc 5:\n%s", profile)
+	if profile := mustRead(t, filepath.Join(s.repoPath, inspectionProfile)); !strings.Contains(profile, cyclomaticOption(5)) {
+		t.Errorf("inspection profile ignores the resolved max_cyclomatic 5:\n%s", profile)
 	}
 }
 
-func TestReconcileEditors_Boundary_UnresolvedPolicyUsesAuditLength(t *testing.T) {
+func TestReconcileEditors_Boundary_UnresolvedPolicyUsesTheCeiling(t *testing.T) {
 	s, _ := catalogSession(t)
 	s.policy = nil
 	if err := reconcileEditors(t.Context(), s); err != nil {
 		t.Fatal(err)
 	}
-	if profile := mustRead(t, filepath.Join(s.repoPath, inspectionProfile)); !strings.Contains(profile, maxLocOption(config.AuditMaxFuncLOC)) {
-		t.Errorf("an unresolved policy must fall back to the audit length:\n%s", profile)
+	if profile := mustRead(t, filepath.Join(s.repoPath, inspectionProfile)); !strings.Contains(profile, cyclomaticOption(config.HISSComplexityCeiling().MaxCyclomatic)) {
+		t.Errorf("an unresolved policy must fall back to the HISS-04 ceiling:\n%s", profile)
 	}
 }
 

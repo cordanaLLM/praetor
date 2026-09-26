@@ -1,15 +1,13 @@
 package config
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
-	"io"
-	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -270,11 +268,10 @@ type ResolvedPolicy struct {
 	ErrorUnwraps     ErrorUnwrapMode `json:",omitempty"`
 }
 
-// LoadManifest reads and parses a .standards.yaml file.
+// LoadManifest reads and parses a .standards.yaml file through the bounded regular-file read
+// every manifest reader shares (readConfigFile).
 func LoadManifest(path string) (*Manifest, error) {
-	// #nosec G304 -- path is the manifest location chosen by the invoking user (a CLI
-	// flag defaulting to the repository root); there is no confinement root to enforce.
-	data, err := os.ReadFile(filepath.Clean(path))
+	data, err := readConfigFile(filepath.Clean(path))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read manifest at %s: %w", path, err)
 	}
@@ -283,7 +280,7 @@ func LoadManifest(path string) (*Manifest, error) {
 }
 
 func parseManifest(path string, data []byte) (*Manifest, error) {
-	m, err := decodeManifest(data)
+	m, err := DecodeManifest(data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse manifest at %s: %w", path, err)
 	}
@@ -300,18 +297,19 @@ func parseManifest(path string, data []byte) (*Manifest, error) {
 	return m, nil
 }
 
-// decodeManifest parses the manifest with no unknown fields, so a misspelled key is an
+// DecodeManifest parses the manifest with no unknown fields, so a misspelled key is an
 // error rather than a silently ignored line. A key that is quietly dropped reads as
 // configured while the repository is governed by the built-in defaults instead, which
-// silently loosens policy exactly where an operator believed they had tightened it.
-func decodeManifest(data []byte) (*Manifest, error) {
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
-	decoder.KnownFields(true)
+// silently loosens policy exactly where an operator believed they had tightened it. A second
+// YAML document is refused for the same reason: it used to be ignored here while other
+// readers of the file acted on whichever document they decoded (BUG-857). An empty manifest
+// decodes to the zero Manifest.
+//
+// It is LoadManifest's decoder without the policy validations, for a reader that already holds
+// the manifest bytes, such as a lock builder, so no reader decodes a manifest by other rules.
+func DecodeManifest(data []byte) (*Manifest, error) {
 	var m Manifest
-	if err := decoder.Decode(&m); err != nil {
-		if errors.Is(err, io.EOF) {
-			return &m, nil
-		}
+	if err := util.DecodeYAMLDocument(data, &m, util.YAMLDocumentOptions{KnownFields: true, AllowEmpty: true}); err != nil {
 		return nil, err
 	}
 	return &m, nil

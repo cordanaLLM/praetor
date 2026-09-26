@@ -29,6 +29,9 @@ func runEditors(args []string) error {
 		return nil
 	}
 	subArgs := args[1:]
+	if sub == "reference" {
+		return runEditorsReference(subArgs)
+	}
 
 	fs := flag.NewFlagSet("editors "+sub, flag.ContinueOnError)
 	path := fs.String("path", ".", "Workspace root directory")
@@ -119,6 +122,38 @@ func reportNotApplicableEditors(selection editor.Selection) {
 // drift apart (HISS-19).
 func printEditorsUsage() {
 	fmt.Println("Usage: praetorctl editors <generate|verify> [--path=.] [--editors=a,b]")
+	fmt.Println("       praetorctl editors reference [--path=.] [--verify]")
+}
+
+// runEditorsReference writes the engine's reference editor integrations under <path>/editors
+// (editor.ReferenceSet), or with --verify checks the tracked copies against the generator.
+// They are generator output, so a hand edit is drift that `make verify-all` fails on.
+func runEditorsReference(args []string) error {
+	fs := flag.NewFlagSet("editors reference", flag.ContinueOnError)
+	path := fs.String("path", ".", "Engine checkout root that holds editors/")
+	verify := fs.Bool("verify", false, "Check the tracked reference files instead of writing them")
+	positional, err := parseInterspersed(fs, args)
+	if err != nil {
+		return err
+	}
+	root := positionalAt(positional, 0, *path)
+	set := editor.ReferenceSet()
+	if *verify {
+		report, err := editor.VerifyWithReport(set, root)
+		if err != nil {
+			return fmt.Errorf("[FAIL] reference editor integrations out of sync; run `praetorctl editors reference`: %w", err)
+		}
+		fmt.Printf("[PASS] %d reference editor integration file(s) match the generator.\n", len(report.Verified))
+		return nil
+	}
+	report, err := editor.WriteWithReport(set, root)
+	if err != nil {
+		return fmt.Errorf("failed writing reference editor integrations: %w", err)
+	}
+	counts := reportEditorFiles(report)
+	fmt.Printf("[OK] Reference editor integrations: %d created, %d rewritten, %d already current.\n",
+		counts[editor.WriteCreated], counts[editor.WriteRewritten], counts[editor.WritePresent])
+	return nil
 }
 
 func runEditorsGenerate(opts editor.Options, root string) error {

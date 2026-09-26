@@ -4,11 +4,24 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import test from "node:test";
-import { artifactPath, machineExecutable, parseCapabilities, requireTrust, setupArguments, workspaceGlob } from "./setup";
+import { artifactPath, LSP_CLIENT_ID, machineExecutable, parseCapabilities, requireTrust, setupArguments, workspaceGlob } from "./setup";
 import { runCLI } from "./runner";
 
 const sample = { client: "claude", mode: "merge", documentation: "https://example.invalid/docs", lifecycle: { state: "adapter-defined", definition_paths: [".claude/settings.json"], activation: "unverified" } };
 const report = (clients: unknown[]) => JSON.stringify({ schema_version: 1, runtime_verified: false, clients });
+
+test("the language client reads its trace level from the contributed setting", () => {
+  const manifest = JSON.parse(fs.readFileSync(path.resolve(__dirname, "..", "package.json"), "utf8"));
+  const properties: Record<string, { enum?: string[] } | undefined> = manifest.contributes.configuration.properties;
+  // vscode-languageclient reads `<client id>.trace.server`; that key must be the contributed one.
+  const trace = properties[`${LSP_CLIENT_ID}.trace.server`];
+  assert.ok(trace, `${LSP_CLIENT_ID}.trace.server is not a contributed setting`);
+  assert.deepEqual(trace.enum, ["off", "messages", "verbose"]);
+  // The former client id read a key nothing contributes, so the setting had no effect.
+  assert.equal(properties["standardsLSP.trace.server"], undefined);
+  // Every other LSP setting is read from the "standards" section; the id stays inside it.
+  assert.ok(LSP_CLIENT_ID.startsWith("standards."));
+});
 
 test("configuration authority and strict capability boundaries", () => {
   assert.throws(() => requireTrust(false));

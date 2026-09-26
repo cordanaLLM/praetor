@@ -263,7 +263,7 @@ func TestLoadExistingDeclarationsMergesInsteadOfReplacing(t *testing.T) {
 		"capabilities:\n  required:\n    - ui.framework\n  optional:\n    - telemetry.logging\n")
 
 	repoNeeds := &RepoNeeds{Capabilities: CapabilityDeclaration{Required: []CapabilityKey{"http.client"}}}
-	if err := loadExistingDeclarations(dir, repoNeeds); err != nil {
+	if err := loadExistingDeclarations(t.Context(), dir, repoNeeds); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(repoNeeds.Capabilities.Required) != 2 {
@@ -279,7 +279,7 @@ func TestLoadExistingDeclarationsNegativeMalformedYAML(t *testing.T) {
 	dir := t.TempDir()
 	writeFixture(t, dir, ".needs.yaml", "capabilities: [this: is: not: valid\n")
 
-	if err := loadExistingDeclarations(dir, &RepoNeeds{}); err == nil {
+	if err := loadExistingDeclarations(t.Context(), dir, &RepoNeeds{}); err == nil {
 		t.Fatal("expected a parse error for malformed .needs.yaml")
 	}
 }

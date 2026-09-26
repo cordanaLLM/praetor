@@ -1,0 +1,3 @@
+type: fixed
+title: "Read every .standards.yaml, .needs.yaml and .standards.lock reader through one bounded single-document decode: the policy loader, the lock builders, the runner config, the receipt key, needs declarations and the Paperclip identity now refuse a second YAML document instead of acting on the first, and the repository readers in config, needs, lockdown, paperclip and adopt refuse a FIFO instead of blocking past their deadline"
+breaking: false

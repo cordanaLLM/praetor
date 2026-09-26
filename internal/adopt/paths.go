@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -46,10 +47,12 @@ func writeRepoFile(path string, data []byte, perm os.FileMode) error {
 	return nil
 }
 
-// readRepoFile reads a path already confined by repoFile.
+// readRepoFile reads a path already confined by repoFile. Only a regular file of at most
+// contextopt.MaxSourceBytes is read: a FIFO planted in the adopted repository is refused
+// instead of blocking adoption past every deadline, since no context can interrupt a blocked
+// open (BUG-822).
 func readRepoFile(path string) ([]byte, error) {
-	// #nosec G304 -- path was confined to the repository root by repoFile (ConfinePath).
-	data, err := os.ReadFile(path)
+	data, err := util.ReadConfinedLimited(filepath.Dir(path), filepath.Base(path), contextopt.MaxSourceBytes)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}

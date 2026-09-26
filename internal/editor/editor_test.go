@@ -67,8 +67,8 @@ func verifyVSCodeAndJetBrains(t *testing.T, fileMap map[string]string) {
 	if !ok {
 		t.Errorf("missing .idea/inspectionProfiles/standards.xml")
 	}
-	if !strings.Contains(ideaInspection, "HISS04ComplexityLOC") {
-		t.Errorf("idea inspection profile missing HISS04ComplexityLOC")
+	if !strings.Contains(ideaInspection, "GoCyclomaticComplexity") || strings.Contains(ideaInspection, `class="HISS`) {
+		t.Errorf("idea inspection profile must carry the IDE complexity inspection and no HISS class:\n%s", ideaInspection)
 	}
 }
 

@@ -61,11 +61,11 @@ func plannedPolicyInputs(ctx context.Context, s *adoptSession) ([]byte, []byte, 
 	if s.opts.LockSourceRoot == "" {
 		return nil, nil, ErrLockSourceRequired
 	}
-	var decoded config.Manifest
-	if err := yaml.Unmarshal(manifest, &decoded); err != nil {
+	decoded, err := config.DecodeManifest(manifest)
+	if err != nil {
 		return nil, nil, err
 	}
-	lock, err = config.BuildLockfile(ctx, s.opts.LockSourceRoot, &decoded)
+	lock, err = config.BuildLockfile(ctx, s.opts.LockSourceRoot, decoded)
 	return manifest, lock, err
 }
 

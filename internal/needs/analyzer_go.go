@@ -65,7 +65,7 @@ func (a *GoAnalyzer) Analyze(ctx context.Context, repoPath string) (*RepoNeeds, 
 	}
 
 	buildDependencyDemands(directDeps, astImports, repoNeeds)
-	if declErr := loadExistingDeclarations(repoPath, repoNeeds); declErr != nil {
+	if declErr := loadExistingDeclarations(ctx, repoPath, repoNeeds); declErr != nil {
 		return nil, fmt.Errorf("failed to load existing declarations: %w", declErr)
 	}
 	calculateReadiness(repoNeeds)

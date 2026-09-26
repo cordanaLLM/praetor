@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"os"
 	"path/filepath"
 
-	"gopkg.in/yaml.v3"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // RunnerSpec defines the runner environment and execution constraints for a platform target.
@@ -112,8 +112,10 @@ func mergeRunnerConfig(ctx context.Context, path string, target *RunnerPolicy) e
 	var config struct {
 		Runners runnerLayer `yaml:"runners"`
 	}
-	if err := yaml.Unmarshal(data, &config); err != nil {
-		return err
+	// One section of a file whose schema other decoders own: unrelated keys are tolerated,
+	// a second document is not (BUG-857).
+	if err := util.DecodeYAMLDocument(data, &config, util.YAMLDocumentOptions{AllowEmpty: true}); err != nil {
+		return fmt.Errorf("parse %s: %w", path, err)
 	}
 	mergePolicies(target, &config.Runners)
 	return nil

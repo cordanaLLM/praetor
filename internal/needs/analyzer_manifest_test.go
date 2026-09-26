@@ -2,7 +2,11 @@ package needs
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 func TestPythonAnalyzerManifestSyntaxForms(t *testing.T) {
@@ -147,5 +151,29 @@ func TestNativeAnalyzerDeduplicatesAcrossManifests(t *testing.T) {
 	}
 	if len(repoNeeds.Dependencies) != 1 {
 		t.Fatalf("expected cuda to be counted once across both manifests, got %+v", repoNeeds.Dependencies)
+	}
+}
+
+func TestPythonAnalyzer_FIFO(t *testing.T) {
+	tempDir := t.TempDir()
+	testsupport.MakeFIFO(t, filepath.Join(tempDir, "requirements.txt"))
+	err := testsupport.RunWithin(t, 10*time.Second, func() error {
+		_, analyzeErr := NewPythonAnalyzer().Analyze(context.Background(), tempDir)
+		return analyzeErr
+	})
+	if err == nil {
+		t.Fatal("expected an error reading a FIFO manifest, got nil")
+	}
+}
+
+func TestNodeAnalyzer_FIFO(t *testing.T) {
+	tempDir := t.TempDir()
+	testsupport.MakeFIFO(t, filepath.Join(tempDir, "package.json"))
+	err := testsupport.RunWithin(t, 10*time.Second, func() error {
+		_, analyzeErr := NewNodeAnalyzer().Analyze(context.Background(), tempDir)
+		return analyzeErr
+	})
+	if err == nil {
+		t.Fatal("expected an error reading a FIFO manifest, got nil")
 	}
 }

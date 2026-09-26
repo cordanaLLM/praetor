@@ -432,9 +432,16 @@ func jetBrainsExtraTools(arch string) string {
 	return ""
 }
 
-// generateJetBrains projects the resolved complexity ceilings into the inspection profile.
-// The limits used to be literals here, so a repository that tightened max_func_loc got an IDE
-// that accepted functions its own audit rejects (issue #360).
+// generateJetBrains projects the resolved cyclomatic ceiling into the inspection profile. The
+// limit used to be a literal here, so a repository that tightened its policy got an IDE that
+// accepted functions its own audit rejects (issue #360).
+//
+// The profile names only inspections the IDE itself provides. HISS01DAGControlFlow,
+// HISS02BoundedLoops, HISS04ComplexityLOC and HISS07ZeroUnwrap were listed here although no
+// plugin in this repository or any IDE implements them, so the IDE silently ignored every one,
+// including the function-length and statement limits HISS04ComplexityLOC carried (BUG-656).
+// Those limits reach the editor through the language server instead (neovimLSPBlock,
+// cmd/standards-lsp); `praetorctl audit` enforces all of them.
 func generateJetBrains(arch string, plan Plan) []GeneratedFile {
 	inspectionProfile := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <component name="InspectionProjectProfileManager">
@@ -444,18 +451,10 @@ func generateJetBrains(arch string, plan Plan) []GeneratedFile {
       <option name="m_limit" value="%d" />
     </inspection_tool>
     <inspection_tool class="GoUnhandledErrorResult" enabled="true" level="ERROR" enabled_by_default="true" />
-    <inspection_tool class="GoInfiniteFor" enabled="true" level="ERROR" enabled_by_default="true" />
-    <inspection_tool class="HISS01DAGControlFlow" enabled="true" level="ERROR" enabled_by_default="true" />
-    <inspection_tool class="HISS02BoundedLoops" enabled="true" level="ERROR" enabled_by_default="true" />
-    <inspection_tool class="HISS04ComplexityLOC" enabled="true" level="ERROR" enabled_by_default="true">
-      <option name="maxLoc" value="%d" />
-      <option name="maxStatements" value="%d" />
-    </inspection_tool>
-    <inspection_tool class="HISS07ZeroUnwrap" enabled="true" level="ERROR" enabled_by_default="true" />%s
+    <inspection_tool class="GoInfiniteFor" enabled="true" level="ERROR" enabled_by_default="true" />%s
   </profile>
 </component>
-`, plan.Complexity.MaxCyclomatic, plan.Complexity.MaxFuncLOC, plan.Complexity.MaxStatements,
-		jetBrainsExtraTools(arch))
+`, plan.Complexity.MaxCyclomatic, jetBrainsExtraTools(arch))
 
 	return []GeneratedFile{
 		{

@@ -6,7 +6,6 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/devcontainer"
-	"gopkg.in/yaml.v3"
 )
 
 // Use the same preserved or planned manifest as the policy resolver and audit.
@@ -16,11 +15,11 @@ func prepareAdoptDevContainer(ctx context.Context, s *adoptSession) (*devcontain
 	if err != nil {
 		return nil, err
 	}
-	var manifest config.Manifest
-	if err := yaml.Unmarshal(data, &manifest); err != nil {
+	manifest, err := config.DecodeManifest(data)
+	if err != nil {
 		return nil, err
 	}
-	baseline, err := devcontainer.Synthesize(&manifest)
+	baseline, err := devcontainer.Synthesize(manifest)
 	if err != nil {
 		return nil, err
 	}

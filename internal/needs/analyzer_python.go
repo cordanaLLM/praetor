@@ -2,10 +2,10 @@ package needs
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"maps"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -63,7 +63,7 @@ func (a *PythonAnalyzer) Analyze(ctx context.Context, repoPath string) (*RepoNee
 		repoNeeds.Capabilities.Required = appendUniqueCap(repoNeeds.Capabilities.Required, demand.Capability)
 	}
 
-	if declErr := loadExistingDeclarations(repoPath, repoNeeds); declErr != nil {
+	if declErr := loadExistingDeclarations(ctx, repoPath, repoNeeds); declErr != nil {
 		return nil, fmt.Errorf("failed to load existing declarations: %w", declErr)
 	}
 	calculateReadiness(repoNeeds)
@@ -93,32 +93,27 @@ func parsePythonDependencies(repoPath string) (map[string]string, error) {
 	return deps, nil
 }
 
-// openManifest opens a repository-local manifest for line scanning.
-func openManifest(path string) (*os.File, error) {
+// readManifest reads a repository-local manifest into memory safely.
+func readManifest(path string) ([]byte, error) {
 	// #nosec G304 -- path is either filepath.Join(repoPath, "<constant filename>") for a
 	// repository the caller already selected, or a path already confined to its bundle
 	// directory by util.ConfinePath; no component is unvalidated user input.
-	file, err := os.Open(path)
+	data, err := util.ReadFileLimited(path, 1024*1024)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open %q: %w", path, err)
+		return nil, fmt.Errorf("failed to read %q: %w", path, err)
 	}
-	return file, nil
+	return data, nil
 }
 
 // scanManifestLines applies visit to each trimmed line of path and reports read errors,
 // which bufio.Scanner otherwise hides behind a false Scan() exactly like end of file.
-func scanManifestLines(path string, visit func(line string)) (err error) {
-	file, openErr := openManifest(path)
-	if openErr != nil {
-		return openErr
+func scanManifestLines(path string, visit func(line string)) error {
+	data, err := readManifest(path)
+	if err != nil {
+		return err
 	}
-	defer func() {
-		if cerr := file.Close(); cerr != nil && err == nil {
-			err = fmt.Errorf("failed to close %q: %w", path, cerr)
-		}
-	}()
 
-	if scanErr := scanBoundedLines(bufio.NewScanner(file), func(line string) {
+	if scanErr := scanBoundedLines(bufio.NewScanner(bytes.NewReader(data)), func(line string) {
 		visit(strings.TrimSpace(line))
 	}); scanErr != nil {
 		return fmt.Errorf("failed to read %q: %w", path, scanErr)
