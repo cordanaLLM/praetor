@@ -1,0 +1,3 @@
+type: fixed
+title: flavors plan and sync honour each flavor's update_frequency (a manual flavor such as edge is held until named with the new --flavor flag, an unknown frequency fails the config load) and report its stability on every plan line
+breaking: false

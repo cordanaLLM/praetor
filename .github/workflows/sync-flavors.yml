@@ -42,9 +42,11 @@ jobs:
           job: sync-flavors
           go-version: '1.27'
 
-      # One step moves and publishes every flavor declared in .config/flavors.yaml. A
-      # flavor whose source does not exist yet (latest before the first v* tag, lts before
+      # One step moves and publishes every automatic flavor declared in .config/flavors.yaml.
+      # A flavor whose source does not exist yet (latest before the first v* tag, lts before
       # the first lts-* branch) is reported as pending and left untouched, so it no longer
-      # blocks the flavors that can move, and latest is never aliased to main (#205).
+      # blocks the flavors that can move, and latest is never aliased to main (#205). A
+      # flavor declared update_frequency: manual (edge) is reported as held; an operator
+      # moves it with 'praetorctl flavors sync --flavor=<name> --push'.
       - name: Reconcile And Publish Declared Flavors
         run: go run ./cmd/standardsctl flavors sync --push --remote=origin
