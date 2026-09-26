@@ -674,8 +674,8 @@ func runTaskArchive(args []string) error {
 	}
 	dir := stateDir(dirFlag, rest, 0)
 	commitSHA := ""
-	if out, gitErr := util.RunGit(context.Background(), dir, "rev-parse", "HEAD"); gitErr == nil {
-		commitSHA = strings.TrimSpace(out)
+	if head, gitErr := state.GitHead(context.Background(), dir); gitErr == nil {
+		commitSHA = head
 	}
 	count, err := state.ArchiveCompletedTasks(dir, commitSHA)
 	if err != nil {

@@ -12,17 +12,11 @@ import (
 )
 
 // runVerifyAll executes the final reproducibility check for the verify-all gate.
-// It unconditionally synchronizes the state ledger (repairing DEV-05 drift).
-// If running in CI, it asserts the working tree remains clean.
+// If running in CI, it asserts the working tree remains clean, avoiding implicit drift.
 func runVerifyAll(args []string) error {
 	dir := "."
 	if len(args) > 0 {
 		dir = args[0]
-	}
-
-	// Unconditionally sync state to repair DEV-05
-	if err := runStateSync([]string{"--dir=" + dir}); err != nil {
-		return fmt.Errorf("verify-all state sync failed: %w", err)
 	}
 
 	if os.Getenv("CI") == "true" {
@@ -31,22 +25,15 @@ func runVerifyAll(args []string) error {
 
 		abs, err := filepath.Abs(dir)
 		if err != nil {
-			return err
+			return fmt.Errorf("resolve working directory: %w", err)
 		}
 
-		// Wait for index to settle
-		if _, err := util.RunGit(ctx, abs, "update-index", "-q", "--refresh"); err != nil {
-			// update-index --refresh intentionally fails with code 1 if the tree is dirty.
-			// The subsequent git diff --quiet check evaluates the actual drift.
-			_ = err
-		}
-
-		out, err := util.RunGit(ctx, abs, "diff", "--quiet")
+		out, err := util.RunGit(ctx, abs, "status", "--porcelain")
 		if err != nil {
-			if strings.Contains(err.Error(), "exit status 1") || strings.Contains(err.Error(), "exit code 1") {
-				return fmt.Errorf("verify-all modified working tree: %s", out)
-			}
-			return fmt.Errorf("git diff failed: %w", err)
+			return fmt.Errorf("git status failed: %w", err)
+		}
+		if len(strings.TrimSpace(out)) > 0 {
+			return fmt.Errorf("verify-all modified working tree:\n%s", out)
 		}
 	}
 	return nil

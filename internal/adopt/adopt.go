@@ -517,11 +517,11 @@ func reconcileBaseline(ctx context.Context, s *adoptSession) error {
 		return nil
 	}
 	base := &baseline.Baseline{Version: 1, Infractions: make([]baseline.Infraction, 0)}
-	if owner, name, err := util.ResolveRepoIdentity(ctx, s.repoPath); err == nil {
+	if owner, name, err := util.ResolveRemoteIdentity(ctx, s.repoPath); err == nil {
 		base.Repository = owner + "/" + name
 	}
-	if out, err := util.RunGit(ctx, s.repoPath, "rev-parse", "HEAD"); err == nil {
-		base.CommitSHA = strings.TrimSpace(out)
+	if head, err := state.GitHead(ctx, s.repoPath); err == nil {
+		base.CommitSHA = head
 	}
 	if err := scanLegacyDebt(ctx, s.repoPath, base, s.report, adoptionScanLimit(s)); err != nil {
 		s.report.BaselineStatus = "failed"

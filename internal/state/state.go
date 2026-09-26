@@ -103,7 +103,7 @@ func populateGitSnapshot(ctx context.Context, rootPath string, snap *StateSnapsh
 	if err != nil {
 		return fmt.Errorf("read state Git branch: %w", err)
 	}
-	snap.HeadSHA, err = stateGitHead(ctx, rootPath)
+	snap.HeadSHA, err = GitHead(ctx, rootPath)
 	if err != nil {
 		return fmt.Errorf("read state Git HEAD: %w", err)
 	}

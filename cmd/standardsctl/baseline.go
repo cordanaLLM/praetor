@@ -5,12 +5,11 @@ import (
 	"flag"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
-	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/state"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -61,11 +60,11 @@ func recordBaseline(path string, previous *baseline.Baseline, opts baseline.Reco
 	}
 
 	repoDir := filepath.Dir(path)
-	if manifest, err := config.LoadManifest(filepath.Join(repoDir, ".standards.yaml")); err == nil {
-		opts.Repository = manifest.Repository.Owner + "/" + manifest.Repository.Name
+	if owner, name, err := util.ResolveRemoteIdentity(ctx, repoDir); err == nil {
+		opts.Repository = owner + "/" + name
 	}
-	if out, err := util.RunGit(ctx, repoDir, "rev-parse", "HEAD"); err == nil {
-		opts.CommitSHA = strings.TrimSpace(out)
+	if head, err := state.GitHead(ctx, repoDir); err == nil {
+		opts.CommitSHA = head
 	}
 
 	next, err := baseline.Record(previous, fingerprintViolations(scanRep.Violations), opts)

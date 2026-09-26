@@ -149,7 +149,7 @@ func printCoreCommands() {
 	fmt.Println("  seo audit          Audit a built docs site: page-head JSON-LD, sitemaps, robots.txt")
 	fmt.Println("  sentinel           Inspect workstation RAM/disk health and model headroom")
 	fmt.Println("  worktree           Manage isolated ephemeral git worktrees")
-	fmt.Println("  verify-all         Assert verify-all reproducibility and repair DEV-05 drift")
+	fmt.Println("  verify-all         Assert verify-all reproducibility in CI")
 }
 
 // printFleetCommands lists the fleet, forge and delivery commands.

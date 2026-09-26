@@ -222,7 +222,7 @@ func rejectStateGitFilters(ctx context.Context, root string) error {
 	return nil
 }
 
-func stateGitHead(ctx context.Context, root string) (string, error) {
+func GitHead(ctx context.Context, root string) (string, error) {
 	head, err := stateGitString(ctx, root, "rev-parse", "--verify", "--quiet", "HEAD")
 	if err == nil {
 		return head, nil
