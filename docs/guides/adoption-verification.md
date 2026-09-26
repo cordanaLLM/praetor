@@ -224,6 +224,50 @@ constant and every `gate run` line in `.agents/agents/*.md` against the real fla
 `TestGeneratePreMigrationEpic_GateTaskRunsTheGateCommand` in
 [`internal/needs/epic_test.go`](../../internal/needs/epic_test.go) pin the generated text to it.
 
+### A receipt certifies only a working tree that matches HEAD
+
+The scan stages read the working tree, while the receipt names a commit. `gate run` without
+`--dry-run` therefore refuses, before any stage runs and without writing a receipt, a tree that
+differs from HEAD:
+
+- a modified, staged or untracked file anywhere in the repository, the receipt file itself
+  excepted, because the gate rewrites it and a checkout may keep it untracked;
+- an index entry flagged assume-unchanged or skip-worktree, which `git status` never compares;
+- an ignored `.standards-baseline.json` or `.gosec.json`. Both relax what the gate enforces --
+  the baseline raises the HISS limit, the gosec configuration selects the rules -- and
+  `git status` does not list an ignored file, so each is checked against the ignore rules.
+
+The refusal is recorded as a failed `Clean Tree Precondition` stage naming the first changed paths:
+
+```text
+  1. [FAIL] Clean Tree Precondition   (0s)
+     Reason: the gate certifies only a working tree that matches HEAD: 1 changed path(s) differ
+             from HEAD: ?? scratch.txt; commit, stash or remove the changes, or preview with --dry-run
+```
+
+`--json` carries the same text as `worktree_problem`. A dry run mints nothing, so it reports the
+state on a `Worktree:` line and runs its stages anyway. The receipt stage reads the tree again
+before signing and refuses when it changed or HEAD moved while the stages ran. Before this, the
+gate recorded `worktree_clean false` in the signed output and signed it anyway, so a receipt could
+certify a commit whose scan had read uncommitted files (BUG-787) or an untracked baseline
+(BUG-788).
+
+Verification enforces the same rule on the receipt side: `gate verify`, `forge validate-pr` and a
+paperclip disposition carrying a receipt all reject one whose signed gate output does not record
+`worktree_clean true` exactly once in its header (`lockdown.RequireCleanWorktree` in
+[`internal/lockdown/receipts.go`](../../internal/lockdown/receipts.go)). A paperclip disposition
+now carries the whole `.standards-receipt.json` envelope, gate output included; a bare receipt
+signature no longer verifies.
+
+Cleanliness is read through `util.GitWorkingTreeChanges`
+([`internal/util/git_status.go`](../../internal/util/git_status.go)), which the gate,
+`praetorctl paperclip verify` and release preparation share. It overrides the repository settings
+that could hide a change (`status.showUntrackedFiles`, submodule ignore settings, `core.fsmonitor`,
+hooks), takes no optional index locks, and refuses a repository whose own configuration names a
+clean or process filter rather than executing it during a read-only probe. The cases are replayed
+in [`internal/util/git_status_test.go`](../../internal/util/git_status_test.go) and
+[`internal/gating/tree_test.go`](../../internal/gating/tree_test.go).
+
 ### A HISS rejection names the violations
 
 The gate's HISS stage rejects on the same ratchet as `praetorctl audit`, and both render the

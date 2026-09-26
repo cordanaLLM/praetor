@@ -46,7 +46,7 @@ make verify-all
      -- the audit-compatibility ceiling `config.AuditMaxFuncLOC` always tightens a looser
      repository override, per `internal/hiss/hiss.go` and `internal/config/effective.go`).
 3. **Receipt Generation**:
-   - Run `standardsctl gate run --path=.` to verify the ephemeral worktree and generate an Ed25519 Exit-0 receipt.
+   - Commit first, then run `standardsctl gate run --path=.` to verify the ephemeral worktree and generate an Ed25519 Exit-0 receipt. The gate refuses a tree with uncommitted or untracked changes ([details](adoption-verification.md#a-receipt-certifies-only-a-working-tree-that-matches-head)).
 4. **Pull Request Submission**:
    - Submit PR via GitHub. Direct pushes to `main` are declined by repository rules.
    - All 8 required status checks in `.github/rulesets/main.json` must pass before merge:
