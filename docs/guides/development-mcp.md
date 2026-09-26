@@ -258,13 +258,18 @@ lock-less case differs from `praetorctl plan`. Tests:
 the `Repository: <owner>/<name>` line from the manifest's `repository` block
 (`TestWritePlanHeader_NamesTheManifestRepository`). Its target invariants come from
 `config.ResolveRepositoryPolicyFromCatalog`, the resolver `praetorctl plan` uses
-(`createPlanTool` in `cmd/standards-mcp/server.go`):
+(`createPlanTool` in `cmd/standards-mcp/server.go`), and its drift lines come from
+`adopt.PlanDrift` and `adopt.FormatPlanStatus` (`internal/adopt/plan_drift.go`), the same code
+`praetorctl plan` prints:
 
 - A locked repository shows the pinned profiles and facets joined with the
   manifest's overrides, which is the policy `praetorctl adopt` writes the branch
   ruleset from. Its drift list follows that policy, so a profile that requires an
   SBOM reports a missing `.github/workflows/sbom.yml`
-  (`TestServer_Positive_PlanShowsThePinnedProfilePolicy`).
+  (`TestServer_Positive_PlanShowsThePinnedProfilePolicy`). Any workflow step that writes an
+  SBOM satisfies that requirement, including a GoReleaser release whose configuration declares
+  `sboms`; a file named `sbom.yml` that runs no generator does not
+  (`internal/forge/sbom_workflow_test.go`).
 - A manifest without `.standards.lock` shows the built-in defaults plus the
   overrides and opens with `[INFO] no .standards.lock: built-in defaults and
   repository overrides only`
