@@ -123,23 +123,35 @@ func (s *Server) createHindsightOptimizeTool() (mcp.Tool, error) {
 			return mcp.ErrorResult(fmt.Sprintf("failed saving local cache: %v", err)), nil
 		}
 
-		var sb strings.Builder
-		fmt.Fprintf(&sb, "Successfully distilled %d atomic facts across workspace subsystems:\n", report.TotalFacts)
-		for _, cat := range hindsight.SortedCategories(report.Categories) {
-			fmt.Fprintf(&sb, "  - %-20s: %d\n", cat, report.Categories[cat])
-		}
-		sb.WriteString("Updated .workingdir/memory/distilled.json.\n")
-
-		return mcp.TextResult(sb.String()), nil
+		return mcp.TextResult(formatDistillationReport(report)), nil
 	}
 
 	// The distilled cache file is replaced on every run: destructive, idempotent.
 	return mcp.NewMutatingTool(
 		"standards_hindsight_optimize",
-		"Harvest and distill verified repository facts into local memory cache and Hindsight knowledge pages",
+		"Harvest and distill verified repository facts into the local memory cache, naming every fact source that failed",
 		schema,
 		handler,
 		true,
 		true,
 	)
+}
+
+// formatDistillationReport renders a saved distillation. A report carrying warnings is
+// headed as partial, so a caller cannot read a run that lost sources as a clean success.
+func formatDistillationReport(report *hindsight.DistillationReport) string {
+	var sb strings.Builder
+	if len(report.Warnings) == 0 {
+		fmt.Fprintf(&sb, "Successfully distilled %d atomic facts across workspace subsystems:\n", report.TotalFacts)
+	} else {
+		fmt.Fprintf(&sb, "Partially distilled %d atomic facts; failed fact sources: %d\n", report.TotalFacts, len(report.Warnings))
+	}
+	for _, cat := range hindsight.SortedCategories(report.Categories) {
+		fmt.Fprintf(&sb, "  - %-20s: %d\n", cat, report.Categories[cat])
+	}
+	for _, warning := range report.Warnings {
+		fmt.Fprintf(&sb, "  Warning: %s\n", warning)
+	}
+	sb.WriteString("Updated .workingdir/memory/distilled.json.\n")
+	return sb.String()
 }
