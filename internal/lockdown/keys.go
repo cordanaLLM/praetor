@@ -245,13 +245,15 @@ func VerifyPinnedReceipt(receipt *ExecutionReceipt, pinned ed25519.PublicKey, ou
 }
 
 // VerifyPinnedReceiptFile verifies a gate receipt envelope against a pinned key: its signature,
-// the SHA-256 of the gate output it carries, and that output's format version.
-// `gate verify`, `forge validate-pr`, and paperclip dispositions all verify through it.
+// the SHA-256 of the gate output it carries, that output's format version, and that the output
+// records a clean scanned tree (RequireCleanWorktree). `gate verify`, `forge validate-pr`, and
+// paperclip dispositions all verify through it.
 //
 // The version check fails closed. A praetor-gate-output/v1 receipt still verifies
 // cryptographically, but its stage lines recorded a passed bool that read a skipped stage as
 // passed, so it can certify prefetches and security scans that never ran. It is re-minted
-// under GateOutputVersion, never accepted.
+// under GateOutputVersion, never accepted. The clean-tree check fails closed the same way: a
+// receipt whose scan read files HEAD does not carry is re-minted from a clean tree.
 func VerifyPinnedReceiptFile(rf *ReceiptFile, pinned ed25519.PublicKey) error {
 	if rf == nil {
 		return ErrNilReceipt
@@ -260,13 +262,13 @@ func VerifyPinnedReceiptFile(rf *ReceiptFile, pinned ed25519.PublicKey) error {
 	if err := VerifyPinnedReceipt(&rf.ExecutionReceipt, pinned, output); err != nil {
 		return err
 	}
-	return checkGateOutputVersion(rf.GateOutput)
+	return checkCertifiedGateOutput(rf.GateOutput)
 }
 
 // VerifyUnpinnedReceiptFile verifies a gate receipt envelope without a pinned key.
 // It checks the signature against the key the receipt carries, proving the output
-// was not altered but not who signed it. It checks the format version exactly as
-// VerifyPinnedReceiptFile does.
+// was not altered but not who signed it. It checks the format version and the clean-tree
+// record exactly as VerifyPinnedReceiptFile does.
 func VerifyUnpinnedReceiptFile(rf *ReceiptFile) error {
 	if rf == nil {
 		return ErrNilReceipt
@@ -275,5 +277,15 @@ func VerifyUnpinnedReceiptFile(rf *ReceiptFile) error {
 	if err := VerifyReceiptWithOutput(&rf.ExecutionReceipt, output); err != nil {
 		return err
 	}
-	return checkGateOutputVersion(rf.GateOutput)
+	return checkCertifiedGateOutput(rf.GateOutput)
+}
+
+// checkCertifiedGateOutput applies the content checks both envelope verifiers share, on output
+// whose hash the signature has already been verified against: the format version, then the
+// clean-tree record.
+func checkCertifiedGateOutput(output string) error {
+	if err := checkGateOutputVersion(output); err != nil {
+		return err
+	}
+	return RequireCleanWorktree(output)
 }

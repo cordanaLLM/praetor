@@ -9,7 +9,7 @@ runtime: "polyglot"
 #
 # A contribution fork must match the upstream it submits to. Reformatting it to local
 # standards makes every patch unmergeable and every diff unreviewable, so a gate that
-# rewrites the tree is worse than no gate. Measured on VMAFx/netflix-vmaf-contributions,
+# rewrites the tree is worse than no gate. Measured on an adopter's contribution fork,
 # which tracks Netflix/vmaf: it shares 57,044 lines with its sibling by lineage, and
 # imposing local complexity bounds on inherited C would fail the repository for code it
 # did not write and must not change.

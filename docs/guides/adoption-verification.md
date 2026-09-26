@@ -224,6 +224,69 @@ constant and every `gate run` line in `.agents/agents/*.md` against the real fla
 `TestGeneratePreMigrationEpic_GateTaskRunsTheGateCommand` in
 [`internal/needs/epic_test.go`](../../internal/needs/epic_test.go) pin the generated text to it.
 
+### A receipt certifies only a working tree that matches HEAD
+
+The scan stages read the working tree, while the receipt names a commit. `gate run` without
+`--dry-run` therefore refuses, before any stage runs and without writing a receipt, a tree that
+differs from HEAD:
+
+- a modified, staged or untracked file anywhere in the repository, the receipt file itself
+  excepted, because the gate rewrites it and a checkout may keep it untracked. "Untracked"
+  means what plain `git status` lists: the repository's ignore files, `.git/info/exclude` and
+  your global excludes file (`core.excludesFile`, else `~/.config/git/ignore`) all apply, so
+  editor and OS files you ignore globally do not block the gate;
+- an index entry flagged assume-unchanged or skip-worktree, which `git status` never compares;
+- an untracked `.standards-baseline.json` or `.gosec.json`, hidden from `git status` by any
+  ignore rule, your global excludes file included. Both relax what the gate enforces -- the
+  baseline raises the HISS limit, the gosec configuration selects the rules -- and `git status`
+  does not list an ignored file, so each present one must be tracked in the index
+  (`util.GitUntrackedPaths` in [`internal/util/git_ignore.go`](../../internal/util/git_ignore.go));
+  a committed one stays trusted even when an ignore pattern also matches it;
+- a `.standards-baseline.json` or `.gosec.json` that is a symbolic link or any other non-regular
+  file. `git status` compares a tracked link by its target path, not the content behind it, while
+  the stages follow the link, so a committed link to an ignored file or to one outside the
+  repository would read as clean. Replace the link with the file itself.
+
+The refusal is recorded as a failed `Clean Tree Precondition` stage naming the first changed paths:
+
+```text
+  1. [FAIL] Clean Tree Precondition   (0s)
+     Reason: the gate certifies only a working tree that matches HEAD: 1 changed path(s) differ
+             from HEAD: ?? scratch.txt; commit, stash or remove the changes, or preview with --dry-run
+```
+
+`--json` carries the same text as `worktree_problem`. A dry run mints nothing, so it reports the
+state on a `Worktree:` line and runs its stages anyway. The receipt stage reads the tree again
+before signing and refuses when it changed or HEAD moved while the stages ran. Before this, the
+gate recorded `worktree_clean false` in the signed output and signed it anyway, so a receipt could
+certify a commit whose scan had read uncommitted files (BUG-787) or an untracked baseline
+(BUG-788).
+
+Verification enforces the same rule on the receipt side: `gate verify`, `forge validate-pr` and a
+paperclip disposition carrying a receipt all reject one whose signed gate output does not record
+`worktree_clean true` exactly once in its header. The check (`lockdown.RequireCleanWorktree` in
+[`internal/lockdown/receipts.go`](../../internal/lockdown/receipts.go)) runs inside
+`lockdown.VerifyPinnedReceiptFile` and `lockdown.VerifyUnpinnedReceiptFile`
+([`internal/lockdown/keys.go`](../../internal/lockdown/keys.go)), right after the format-version
+check, so all three callers get it from the verifier they already share.
+
+`praetorctl paperclip verify` still leaves the gate receipt and the disposition file out of its
+own clean-tree check, so the documented order -- commit, push, mint the receipt, write the
+disposition -- verifies unchanged.
+
+Cleanliness is read through `util.GitWorkingTreeChanges`
+([`internal/util/git_status.go`](../../internal/util/git_status.go)), which the gate,
+`praetorctl paperclip verify` and release preparation share. It overrides the repository settings
+that could hide a change (`status.showUntrackedFiles`, submodule ignore settings, `core.fsmonitor`,
+hooks), takes no optional index locks, and refuses a repository whose own configuration names a
+clean or process filter rather than executing it during a read-only probe. Each caller bounds the
+whole walk: the gate with `gating.GitQueryTimeout`, paperclip verify and release preparation with
+`util.GitTreeProbeTimeout`; a probe that runs out of time is a refusal, never a clean answer. The
+cases are replayed in [`internal/util/git_status_test.go`](../../internal/util/git_status_test.go) and
+[`internal/gating/tree_test.go`](../../internal/gating/tree_test.go); the receipt-side checks in
+[`internal/lockdown/keys_test.go`](../../internal/lockdown/keys_test.go) and
+[`internal/paperclip/paperclip_test.go`](../../internal/paperclip/paperclip_test.go).
+
 ### A HISS rejection names the violations
 
 The gate's HISS stage rejects on the same ratchet as `praetorctl audit`, and both render the

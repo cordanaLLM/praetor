@@ -353,7 +353,7 @@ func TestCadence_PositiveAndBoundary(t *testing.T) {
 	if err != nil {
 		t.Skip("git not available or init failed")
 	}
-	runGit(t, tmp, "config", "user.email", "test@cordana.ai")
+	runGit(t, tmp, "config", "user.email", "test@example.com")
 	runGit(t, tmp, "config", "user.name", "Praetor Test")
 
 	// Commit 1

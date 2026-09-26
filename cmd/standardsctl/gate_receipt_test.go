@@ -59,13 +59,15 @@ func newGateFixture(t *testing.T) *gateFixture {
 	if err != nil {
 		t.Fatalf("GenerateKeyPair: %v", err)
 	}
+	// The gate output records the scanned tree as clean; gate verify refuses one that does not.
+	output := lockdown.GateOutputVersion + "\n" + lockdown.WorktreeCleanLine(true) + "\nstage\tPrefetch & Lockfiles\tpassed\t\n"
 	return &gateFixture{
 		dir:    dir,
 		head:   strings.TrimSpace(head),
 		env:    env,
 		pub:    pub,
 		priv:   priv,
-		output: []byte(lockdown.GateOutputVersion + "\nstage\tPrefetch & Lockfiles\tpassed\t\n"),
+		output: []byte(output),
 	}
 }
 
@@ -179,6 +181,22 @@ func TestRunGateVerify_Negative(t *testing.T) {
 	v1.mintReceipt(t, v1.priv, v1.head)
 	if err := runGate([]string{"verify", "--path", v1.dir}); !errors.Is(err, lockdown.ErrGateOutputVersion) {
 		t.Errorf("expected ErrGateOutputVersion for a v1 receipt, got %v", err)
+	}
+
+	// A genuine receipt for HEAD whose signed output records a dirty scanned tree, or no
+	// cleanliness record at all, certifies files HEAD does not carry (BUG-787).
+	for name, output := range map[string]string{
+		"worktree_clean false": lockdown.GateOutputVersion + "\n" + lockdown.WorktreeCleanLine(false) + "\n",
+		"no worktree_clean":    lockdown.GateOutputVersion + "\nstage\tPrefetch & Lockfiles\tpassed\t\n",
+	} {
+		dirty := newGateFixture(t)
+		dirty.output = []byte(output)
+		dirty.pin(t, dirty.pub)
+		dirty.mintReceipt(t, dirty.priv, dirty.head)
+		err := runGate([]string{"verify", "--path", dirty.dir})
+		if !errors.Is(err, lockdown.ErrWorktreeNotClean) && !errors.Is(err, lockdown.ErrWorktreeUnrecorded) {
+			t.Errorf("%s: expected the unclean-tree refusal, got %v", name, err)
+		}
 	}
 }
 

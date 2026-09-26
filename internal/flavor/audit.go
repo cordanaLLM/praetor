@@ -66,7 +66,7 @@ func (r *FlavorAuditReport) InvalidSettingPaths() []string {
 // This is returned rather than auditing against a guess. The audit drives which templates,
 // settings and toolchains a repository is required to have, so auditing a repository against a
 // flavor that does not describe it demands tooling it has no reason to install and reports a
-// score that means nothing. Measured on cordanaLLM/imago, an OS image forge audited as a
+// score that means nothing. Measured on an adopter's OS image forge audited as a
 // PyTorch pipeline and failed for lacking uv and ruff.
 var ErrNoFlavorMatched = errors.New("flavor: no registered flavor matches this repository; pass an explicit --flavor")
 
@@ -79,7 +79,7 @@ var ErrNoFlavorMatched = errors.New("flavor: no registered flavor matches this r
 // is written in -- there is nothing for this audit to check, and holding the repository to an
 // inferred language flavor demands files that do not follow from anything it declared.
 //
-// Measured on cordanaLLM/imago, an OS image forge declaring os-image, which was held to Go
+// Measured on an adopter's OS image forge declaring os-image, which was held to Go
 // service templates and failed its own push gate for lacking a Dockerfile it has no use for.
 var ErrFlavorNotApplicable = errors.New("flavor: the declared profile has no flavor to audit against")
 

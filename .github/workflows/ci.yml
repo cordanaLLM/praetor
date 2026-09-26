@@ -158,7 +158,7 @@ jobs:
             --head-sha="$PR_HEAD_SHA" \
             "$RUNNER_TEMP/pr_body.txt"
 
-      # Backported from VMAFx/vmafx, which built this first and runs it as a blocking gate.
+      # Backported from a downstream adopter's blocking gate.
       # compile-context --verify proves the agent instructions stay in sync with AGENTS.md, and
       # docs sync harvests dependency documentation; neither checks whether this repository's own
       # docs still describe what its code does. Nothing did, so documentation drifted silently.

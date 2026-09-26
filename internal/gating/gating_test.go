@@ -63,14 +63,22 @@ func testInvocations(recorded []recordedCommand) []recordedCommand {
 func newTestConfig(t *testing.T, repoDir string, dryRun bool) (*stageConfig, *[]recordedCommand) {
 	t.Helper()
 	recorded := &[]recordedCommand{}
+	rep := &PipelineReport{Stages: make([]StageResult, 0, maxStages)}
 	return &stageConfig{
-		repoDir:    repoDir,
-		dryRun:     dryRun,
-		run:        fakeRunner(recorded, "", nil),
-		lookPath:   func(name string) (string, error) { return "/usr/bin/" + name, nil },
-		rep:        &PipelineReport{Stages: make([]StageResult, 0, maxStages)},
-		boundStage: withStageBound,
+		repoDir:     repoDir,
+		dryRun:      dryRun,
+		run:         fakeRunner(recorded, "", nil),
+		lookPath:    func(name string) (string, error) { return "/usr/bin/" + name, nil },
+		rep:         rep,
+		boundStage:  withStageBound,
+		inspectTree: cleanTree(rep),
 	}, recorded
+}
+
+// cleanTree answers every tree inspection as a clean tree at rep's recorded commit, so a stage
+// fixture need not be a repository. The real inspection is covered in tree_test.go.
+func cleanTree(rep *PipelineReport) func(context.Context, string) treeState {
+	return func(context.Context, string) treeState { return treeState{commit: rep.CommitSHA} }
 }
 
 // newGoModuleDir writes a minimal dependency-free Go module.
@@ -664,8 +672,11 @@ func TestRunReceiptStage_Negative_NoSigningKey(t *testing.T) {
 
 	repoDir := t.TempDir()
 	cfg, _ := newTestConfig(t, repoDir, false)
-	if _, err := runReceiptStage(context.Background(), cfg); err == nil {
-		t.Fatal("expected the receipt stage to fail closed without a signing key")
+	// A clean tree, so the refusal below is the missing key's and not the tree's.
+	cfg.rep.WorktreeClean = true
+	_, err := runReceiptStage(context.Background(), cfg)
+	if err == nil || errors.Is(err, ErrUncleanTree) {
+		t.Fatalf("expected the receipt stage to fail closed on the missing signing key, got %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(repoDir, ReceiptFileName)); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("a keyless run wrote a receipt: %v", err)

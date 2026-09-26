@@ -13,7 +13,7 @@ name: Platform Neutrality
 # Enforcement is a matrix rather than a rule, because a rule only catches the defects
 # somebody thought to enumerate. This catches the class.
 #
-# Structure is taken from VMAFx/vmafx's build matrix, which solved the same problem first
+# Structure is taken from a downstream adopter's build matrix, which solved the same problem first
 # across eighteen cells: fail-fast off so one platform's failure cannot mask another's,
 # advisory legs marked rather than hidden, and legs that cannot run their tests saying so
 # in the workflow instead of quietly omitting the step.

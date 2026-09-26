@@ -9,10 +9,24 @@ import (
 	"time"
 )
 
+// GitProbeTimeout bounds one RunGitProbe inspection.
+const GitProbeTimeout = 5 * time.Second
+
 // RunGitProbe isolates bounded read-only Git inspections from inherited Git
 // configuration, hooks, filesystem monitors and lazy network fetches. Callers
 // supply fixed inspection argv and must handle filters/submodules before status.
 func RunGitProbe(ctx context.Context, dir string, maxBytes int, args ...string) (CommandBytes, error) {
+	return RunGitProbeWithin(ctx, dir, maxBytes, GitProbeTimeout, args...)
+}
+
+// RunGitProbeWithin is RunGitProbe under a caller-chosen bound instead of GitProbeTimeout, for
+// an inspection whose cost grows with the repository, such as a status walk of a large tree.
+// The caller's own deadline still applies when it is earlier; a timeout of zero or less is
+// refused rather than read as "unbounded".
+func RunGitProbeWithin(ctx context.Context, dir string, maxBytes int, timeout time.Duration, args ...string) (CommandBytes, error) {
+	if timeout <= 0 {
+		return CommandBytes{}, fmt.Errorf("git probe bound must be positive, got %v", timeout)
+	}
 	probeCtx, err := WithCommandEnvironment(ctx, []string{
 		"PATH=" + os.Getenv("PATH"), "LANG=C.UTF-8", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull,
 		"GIT_ATTR_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0", "GIT_NO_REPLACE_OBJECTS=1", "GIT_NO_LAZY_FETCH=1",
@@ -20,7 +34,7 @@ func RunGitProbe(ctx context.Context, dir string, maxBytes int, args ...string) 
 	if err != nil {
 		return CommandBytes{}, err
 	}
-	probeCtx, cancel := context.WithTimeout(probeCtx, 5*time.Second)
+	probeCtx, cancel := context.WithTimeout(probeCtx, timeout)
 	defer cancel()
 	argv := append([]string{"-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + os.DevNull}, args...)
 	return RunGitBytes(probeCtx, dir, maxBytes, argv...)

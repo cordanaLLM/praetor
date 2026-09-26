@@ -5,13 +5,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
 
 // maxGitIgnoreQueryPaths bounds one GitIgnoredPaths query (HISS-02).
 const maxGitIgnoreQueryPaths = 4096
 
-// gitIgnoreOutputLimit bounds each stream of a check-ignore answer.
+// maxGitTrackedQueryPaths bounds one GitUntrackedPaths query, whose paths are arguments and so
+// must stay well inside the shortest platform command-line limit (HISS-02, HISS-21).
+const maxGitTrackedQueryPaths = 64
+
+// gitIgnoreOutputLimit bounds each stream of a check-ignore or ls-files answer.
 const gitIgnoreOutputLimit = 1 << 20
 
 // GitIgnoredPaths returns the subset of relPaths, slash-separated and relative to the work
@@ -48,6 +53,42 @@ func GitIgnoredPaths(ctx context.Context, dir string, relPaths []string, noIndex
 	return splitNUL(result.Stdout), nil
 }
 
+// GitUntrackedPaths returns the subset of relPaths, slash-separated file paths relative to
+// dir, that dir's index does not hold. It asks the index, not the ignore rules, so the answer
+// does not depend on which excludes files a probe reads: a file any rule hides from git status
+// is untracked here all the same, and a tracked file an ignore pattern matches is not. Each
+// path is matched literally and must name a file; a directory prefix of tracked files is
+// reported untracked. The paths travel as arguments, so one query is bounded more tightly
+// than GitIgnoredPaths.
+func GitUntrackedPaths(ctx context.Context, dir string, relPaths []string) ([]string, error) {
+	if len(relPaths) == 0 {
+		return nil, nil
+	}
+	if len(relPaths) > maxGitTrackedQueryPaths {
+		return nil, fmt.Errorf("git ls-files query exceeds %d paths", maxGitTrackedQueryPaths)
+	}
+	args := make([]string, 0, len(relPaths)+3)
+	args = append(args, "ls-files", "-z", "--")
+	for i := 0; i < len(relPaths) && i < maxGitTrackedQueryPaths; i++ {
+		if err := checkGitQueryPath("ls-files", relPaths[i]); err != nil {
+			return nil, err
+		}
+		args = append(args, ":(literal)"+relPaths[i])
+	}
+	result, err := RunGitProbe(ctx, dir, gitIgnoreOutputLimit, args...)
+	if err != nil {
+		return nil, fmt.Errorf("git ls-files in %s: %w", dir, withCommandDiagnostic(err, result.Stderr))
+	}
+	tracked := splitNUL(result.Stdout)
+	untracked := make([]string, 0, len(relPaths))
+	for i := 0; i < len(relPaths); i++ {
+		if !slices.Contains(tracked, relPaths[i]) {
+			untracked = append(untracked, relPaths[i])
+		}
+	}
+	return untracked, nil
+}
+
 // checkIgnoreInput renders relPaths as the NUL-terminated records check-ignore --stdin -z
 // reads, refusing a query past the bound and a path that is empty or would split a record.
 func checkIgnoreInput(relPaths []string) ([]byte, error) {
@@ -56,13 +97,22 @@ func checkIgnoreInput(relPaths []string) ([]byte, error) {
 	}
 	var input bytes.Buffer
 	for i := 0; i < len(relPaths) && i < maxGitIgnoreQueryPaths; i++ {
-		if relPaths[i] == "" || strings.ContainsRune(relPaths[i], 0) {
-			return nil, fmt.Errorf("git check-ignore path %q is empty or holds a NUL byte", relPaths[i])
+		if err := checkGitQueryPath("check-ignore", relPaths[i]); err != nil {
+			return nil, err
 		}
 		input.WriteString(relPaths[i])
 		input.WriteByte(0)
 	}
 	return input.Bytes(), nil
+}
+
+// checkGitQueryPath refuses a path query that is empty or holds a NUL byte, which would name
+// the whole tree or split a record.
+func checkGitQueryPath(command, rel string) error {
+	if rel == "" || strings.ContainsRune(rel, 0) {
+		return fmt.Errorf("git %s path %q is empty or holds a NUL byte", command, rel)
+	}
+	return nil
 }
 
 // splitNUL splits NUL-terminated records, dropping the empty tail.

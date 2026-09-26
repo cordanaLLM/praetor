@@ -30,7 +30,7 @@ func setupTestGitRepo(t *testing.T) string {
 
 	runCmd("init", "-b", "main")
 	runCmd("config", "user.name", "Standards Test Agent")
-	runCmd("config", "user.email", "agent@cordana.ai")
+	runCmd("config", "user.email", "agent@example.com")
 	runCmd("config", "core.longpaths", "true")
 
 	initFile := filepath.Join(dir, "README.md")

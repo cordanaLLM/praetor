@@ -91,7 +91,7 @@ func TestShouldIgnorePath(t *testing.T) {
 		{"src/main.go", false},
 		{"internal/util/util.go", false},
 		// Project-shaped names are scanned: exemptions are segment-anchored and universal.
-		{"harvest/office-kcromm/script.py", false},
+		{"harvest/example-host/script.py", false},
 		{"internal/model/router.go", false},
 		{"pkg/compat/shim.go", false},
 		// A file name resembling an ignored directory is still a file.

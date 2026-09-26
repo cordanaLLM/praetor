@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check that a change touching a user-discoverable surface also updates its documentation.
 
-Backported from VMAFx/vmafx, which built this mechanism first and runs it as a blocking CI gate
+Backported from a downstream adopter's blocking gate
 (its ADR-0167). The design is theirs; the surface map is praetor's own.
 
 The problem it solves is one praetor otherwise had no answer to. `compile-context --verify` proves

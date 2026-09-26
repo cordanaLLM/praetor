@@ -60,7 +60,7 @@ not user input to validate.
 language flavors, and its markers sit ahead of `go.mod` and `pyproject.toml` in `classify.rules()`.
 An image forge carries both — a Go CLI that drives the build, a Python suite that verifies the
 result — so whichever language flavor claimed it first would describe the *tooling* instead of the
-*product*. That is not hypothetical: `cordanaLLM/imago` was audited as a Go service and told to add
+*product*. That is not hypothetical: an adopter's OS image forge was audited as a Go service and told to add
 a Dockerfile it has no use for. Order the markers the same way when you add a profile whose
 repositories are known by their output rather than their source language.
 

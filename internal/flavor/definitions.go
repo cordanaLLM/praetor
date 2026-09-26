@@ -220,8 +220,8 @@ func (f *PythonMLFlavor) HISSProfile() string { return "app-service" }
 // Detect requires evidence that this is a machine-learning pipeline, not merely that Python is
 // present. The previous predicate fired on any pyproject.toml or requirements.txt, so every
 // Python repository in the fleet was reported as a PyTorch/OpenVINO pipeline and was then audited
-// against ML tooling it had no reason to install. Measured on cordanaLLM/nucleus, a Linux kernel
-// build forge, and cordanaLLM/imago, an OS image forge that is majority Go.
+// against ML tooling it had no reason to install. Measured on an adopter's Linux kernel
+// build forge and an adopter's OS image forge that is majority Go.
 //
 // A Python project with no ML dependency now matches nothing here, which is the honest answer:
 // no Python library or Python service flavor exists yet, and reporting one that does exist but
@@ -386,7 +386,7 @@ func (f *AgenticAutonomousFlavor) HISSProfile() string { return "framework" }
 // into every governed repository, and so is .paperclip/harness.json, so every adopted repository
 // looked like an agent runtime harness. That was masked only because this flavor sat last in a
 // hardcoded precedence list that disagreed with the registry; ordering the two consistently
-// exposed it immediately, and cordanaLLM/imago -- an OS image forge -- audited as an agent
+// exposed it immediately, and an adopter's OS image forge audited as an agent
 // runtime at 100%.
 //
 // A flavor whose only evidence is produced by the governance tool itself cannot be detected from

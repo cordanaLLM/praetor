@@ -447,7 +447,7 @@ func TestVerifyPinnedReceiptFile_Positive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateKeyPair: %v", err)
 	}
-	rf := signedEnvelope(t, priv, GateOutputVersion+"\nstage\tPrefetch & Lockfiles\tpassed\t\n")
+	rf := signedEnvelope(t, priv, GateOutputVersion+"\n"+WorktreeCleanLine(true)+"\nstage\tPrefetch & Lockfiles\tpassed\t\n")
 	if err := VerifyPinnedReceiptFile(rf, pub); err != nil {
 		t.Fatalf("pinned: %v", err)
 	}
@@ -489,6 +489,15 @@ func TestVerifyPinnedReceiptFile_Negative(t *testing.T) {
 	if err := VerifyPinnedReceiptFile(forged, pub); !errors.Is(err, ErrKeyNotPinned) {
 		t.Errorf("want ErrKeyNotPinned, got %v", err)
 	}
+	// A genuine envelope whose output records a dirty scanned tree is refused by both
+	// verifiers: the signature proves who signed, not that the scan read HEAD alone (BUG-787).
+	dirty := signedEnvelope(t, priv, GateOutputVersion+"\n"+WorktreeCleanLine(false)+"\n")
+	if err := VerifyPinnedReceiptFile(dirty, pub); !errors.Is(err, ErrWorktreeNotClean) {
+		t.Errorf("pinned: want ErrWorktreeNotClean, got %v", err)
+	}
+	if err := VerifyUnpinnedReceiptFile(dirty); !errors.Is(err, ErrWorktreeNotClean) {
+		t.Errorf("unpinned: want ErrWorktreeNotClean, got %v", err)
+	}
 	altered := signedEnvelope(t, priv, GateOutputVersion+"\nstage\tRace-Detector Tests\tskipped\t\n")
 	altered.GateOutput = strings.Replace(altered.GateOutput, "skipped", "passed", 1)
 	if err := VerifyPinnedReceiptFile(altered, pub); !errors.Is(err, ErrOutputMismatch) {
@@ -497,14 +506,14 @@ func TestVerifyPinnedReceiptFile_Negative(t *testing.T) {
 }
 
 // Boundary: the header must be exactly GateOutputVersion on the first line. A header-only
-// output passes; an empty output, a lookalike version and a missing envelope fail; an
+// output recording a clean tree passes; an empty output, a lookalike version and a missing envelope fail; an
 // unterminated oversized header is echoed only up to maxVersionEcho characters.
 func TestVerifyPinnedReceiptFile_Boundary(t *testing.T) {
 	pub, priv, err := GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("GenerateKeyPair: %v", err)
 	}
-	if err := VerifyPinnedReceiptFile(signedEnvelope(t, priv, GateOutputVersion), pub); err != nil {
+	if err := VerifyPinnedReceiptFile(signedEnvelope(t, priv, GateOutputVersion+"\n"+WorktreeCleanLine(true)), pub); err != nil {
 		t.Errorf("header-only output: %v", err)
 	}
 	for _, output := range []string{"", GateOutputVersion + "0\n", " " + GateOutputVersion + "\n", "stage\tx\tpassed\t\n" + GateOutputVersion + "\n"} {
