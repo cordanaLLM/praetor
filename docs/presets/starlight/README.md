@@ -2,7 +2,7 @@
 
 Production-ready documentation preset powered by [Astro Starlight](https://starlight.astro.build/) pre-configured with:
 
-- **Schema.org JSON-LD Structured Data**: a site-wide `SoftwareSourceCode` block from the `head` entry in `astro.config.mjs`, and a per-page `TechArticle` (page title, description, canonical URL, language) from `src/components/SEOHead.astro`. That component is registered as Starlight's `components.Head` override and renders Starlight's default head first, so canonical, OpenGraph and Twitter tags are emitted once, by Starlight.
+- **Schema.org JSON-LD Structured Data**: a site-wide `SoftwareSourceCode` block from the `head` entry in `astro.config.mjs`, and a per-page `TechArticle` (page title, description, canonical URL, language, `dateModified`) from `src/components/SEOHead.astro`. `dateModified` is Starlight's `lastUpdated` for the page, or the build time when Starlight has none. That component is registered as Starlight's `components.Head` override and renders Starlight's default head first, so canonical, OpenGraph and Twitter tags are emitted once, by Starlight.
 - **Core Web Vitals Optimization** (`src/styles/custom.css`):
   - System font stacks only, so no web font is downloaded and no text waits on one.
   - `content-visibility: auto` on `article` and `section` to skip rendering offscreen content.
@@ -23,7 +23,11 @@ npm run dev
 ```bash
 DOCS_SITE_URL=https://<owner>.github.io/<repo>/ npm run build
 # Built artifacts in dist/ with sitemap-index.xml and sitemap-0.xml
+praetorctl seo audit dist
 ```
+
+`praetorctl seo audit dist` checks the JSON-LD in every built page head and validates both sitemap
+files; the [MkDocs preset README](../mkdocs/README.md) lists what it enforces.
 
 ## Site URL
 
