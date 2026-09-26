@@ -1,6 +1,7 @@
 package util
 
 import (
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -21,6 +22,10 @@ const (
 	// maxPathAncestorWalk bounds the ancestor walk in ConfinePath (HISS-02: every loop
 	// carries a scalar upper bound).
 	maxPathAncestorWalk = 256
+	// maxStageAttempts bounds how often createStage retries a colliding temp file name.
+	maxStageAttempts = 8
+	// stageSuffixLen is the number of random base32 characters in a temp file name.
+	stageSuffixLen = 12
 	// execArgMetaChars lists the shell metacharacters rejected by ValidateExecArg.
 	execArgMetaChars = ";&|$`<>(){}\"'\\"
 )
@@ -51,15 +56,6 @@ var (
 	ErrInvalidReadLimit = errors.New("util: read limit must be positive")
 )
 
-// ConfinePath joins rel onto root and returns the cleaned, absolute result, guaranteeing
-// that the result cannot leave root either lexically (via "..") or through a symbolic
-// link. Paths that do not exist yet are still confined: the check resolves the deepest
-// existing ancestor and re-attaches the remaining segments.
-//
-// gosec: this is the canonical sanitizer for G304 (file inclusion via variable) and
-// G305 (file traversal when extracting an archive). Pass user-, config- or
-// archive-supplied relative paths through ConfinePath before handing them to os.Open,
-// os.ReadFile, WriteFileSecure or MkdirSecure.
 // ReadConfined reads rel below root after confining it with ConfinePath, so a
 // caller-supplied repository path or a workspace glob can never read outside
 // root. It is the read half of the confinement contract: callers that only ever
@@ -108,45 +104,101 @@ func ReadConfinedLimited(root, rel string, limit int64) (data []byte, resultErr 
 	return data, nil
 }
 
+// ConfinePath joins rel onto root and returns the cleaned, absolute result, guaranteeing
+// that the result cannot leave root either lexically (via "..") or through a symbolic
+// link. Paths that do not exist yet are still confined: the check resolves the deepest
+// existing ancestor and re-attaches the remaining segments.
+//
+// The returned path is the location that was checked, not the lexical join (BUG-826):
+// every existing directory between root and the final element is replaced by its real
+// location inside the root, so a caller that opens, creates or renames below the result
+// never traverses an in-root symlinked directory again after the check. The root itself
+// is returned as given (absolute and cleaned): the caller chose it, and callers relate
+// their results back to it. The final element is returned unresolved, so a caller that
+// must refuse a symbolic-link destination (WriteFileNoFollow, ReadFileNoFollow) still
+// sees the link. Both the resolved parent directory and, when the final element exists,
+// its resolved target must lie inside the resolved root: a create or rename lands in the
+// parent, so a final element that links back into the root cannot vouch for a parent
+// directory that lives outside it. A root of "/" (or a Windows volume root) confines
+// every path on that volume (BUG-825).
+//
+// gosec: this is the canonical sanitizer for G304 (file inclusion via variable) and
+// G305 (file traversal when extracting an archive). Pass user-, config- or
+// archive-supplied relative paths through ConfinePath before handing them to os.Open,
+// os.ReadFile, WriteFileSecure or MkdirSecure.
 func ConfinePath(root, rel string) (string, error) {
-	if strings.TrimSpace(root) == "" {
-		return "", ErrEmptyRoot
-	}
-	if filepath.IsAbs(rel) {
-		return "", fmt.Errorf("%w: %q", ErrAbsoluteRelPath, rel)
-	}
-	absRoot, err := filepath.Abs(filepath.Clean(root))
+	absRoot, candidate, err := lexicalConfine(root, rel)
 	if err != nil {
-		return "", fmt.Errorf("util: resolve confinement root %q: %w", root, err)
+		return "", err
 	}
-
-	candidate := filepath.Clean(filepath.Join(absRoot, rel))
-	if !withinRoot(absRoot, candidate) {
-		return "", fmt.Errorf("%w: %q is not under %q", ErrPathEscapesRoot, candidate, absRoot)
-	}
-
 	resolvedRoot, err := resolveExistingAncestor(absRoot)
 	if err != nil {
 		return "", err
 	}
-	resolvedCandidate, err := resolveExistingAncestor(candidate)
+	if candidate == absRoot {
+		return absRoot, nil
+	}
+	return resolveConfined(candidate, absRoot, resolvedRoot)
+}
+
+// lexicalConfine validates root and rel and returns the absolute root together with the
+// cleaned join, refusing a join that leaves the root through "..".
+func lexicalConfine(root, rel string) (absRoot, candidate string, err error) {
+	if strings.TrimSpace(root) == "" {
+		return "", "", ErrEmptyRoot
+	}
+	if filepath.IsAbs(rel) {
+		return "", "", fmt.Errorf("%w: %q", ErrAbsoluteRelPath, rel)
+	}
+	absRoot, err = filepath.Abs(filepath.Clean(root))
+	if err != nil {
+		return "", "", fmt.Errorf("util: resolve confinement root %q: %w", root, err)
+	}
+	candidate = filepath.Clean(filepath.Join(absRoot, rel))
+	if !withinRoot(absRoot, candidate) {
+		return "", "", fmt.Errorf("%w: %q is not under %q", ErrPathEscapesRoot, candidate, absRoot)
+	}
+	return absRoot, candidate, nil
+}
+
+// resolveConfined resolves candidate's parent directory and candidate itself, requires
+// both to stay inside resolvedRoot, and returns absRoot joined with the parent's resolved
+// position inside the root and candidate's unresolved final element.
+func resolveConfined(candidate, absRoot, resolvedRoot string) (string, error) {
+	parent, err := resolveExistingAncestor(filepath.Dir(candidate))
 	if err != nil {
 		return "", err
 	}
-	if !withinRoot(resolvedRoot, resolvedCandidate) {
-		return "", fmt.Errorf("%w: %q resolves to %q, outside %q",
-			ErrPathEscapesRoot, candidate, resolvedCandidate, resolvedRoot)
+	target, err := resolveExistingAncestor(candidate)
+	if err != nil {
+		return "", err
 	}
-	return candidate, nil
+	for _, resolved := range [...]string{parent, target} {
+		if !withinRoot(resolvedRoot, resolved) {
+			return "", fmt.Errorf("%w: %q resolves to %q, outside %q",
+				ErrPathEscapesRoot, candidate, resolved, resolvedRoot)
+		}
+	}
+	inside, err := filepath.Rel(resolvedRoot, parent)
+	if err != nil {
+		return "", fmt.Errorf("util: relate %q to the confinement root %q: %w", parent, resolvedRoot, err)
+	}
+	return filepath.Join(absRoot, inside, filepath.Base(candidate)), nil
 }
 
 // withinRoot reports whether p is root itself or a descendant of root. Both arguments
-// must already be cleaned absolute paths.
+// must already be cleaned absolute paths. A root that already ends in a separator -- "/"
+// or a Windows volume root such as `C:\` -- is its own prefix; appending another separator
+// would demand a doubled one that no cleaned path carries (BUG-825).
 func withinRoot(root, p string) bool {
 	if p == root {
 		return true
 	}
-	return strings.HasPrefix(p, root+string(os.PathSeparator))
+	prefix := root
+	if !strings.HasSuffix(prefix, string(os.PathSeparator)) {
+		prefix += string(os.PathSeparator)
+	}
+	return strings.HasPrefix(p, prefix)
 }
 
 // resolveExistingAncestor resolves symlinks in the deepest existing ancestor of path and
@@ -185,11 +237,9 @@ func resolveExistingAncestor(path string) (string, error) {
 // gosec: addresses G306 (WriteFile with permissions above 0600) and G302 (OpenFile with
 // permissive mode). Call sites pass an explicit perm; perm == 0 selects SecureFilePerm.
 func WriteFileSecure(path string, data []byte, perm os.FileMode) (err error) {
-	if perm == 0 {
-		perm = SecureFilePerm
-	}
-	if permErr := checkPerm(perm); permErr != nil {
-		return permErr
+	perm, err = effectivePerm(perm, SecureFilePerm)
+	if err != nil {
+		return err
 	}
 
 	// #nosec G304 -- callers validate paths with ConfinePath; permissions are checked above.
@@ -240,52 +290,116 @@ func tightenFilePermissions(file *os.File, perm os.FileMode) error {
 // (BUG-447) -- use WriteFileAtomic instead wherever a reader may run concurrently with a
 // writer, or a partial write would otherwise destroy the previous, valid contents.
 //
+// path's directory is opened once and pinned (os.Root): the temp file, its fsync and the
+// rename all resolve against that handle, so an ancestor swapped for a symbolic link
+// mid-write cannot move where the file lands. The rename replaces a symbolic link at path
+// instead of writing through it. Like every rename-based writer it needs write permission
+// on the directory, and the replacement is a new inode: hard links to the old file keep
+// the old contents, and its owner and extended attributes do not carry forward.
+//
 // perm is the same permission ceiling WriteFileSecure enforces: a zero perm selects
 // SecureFilePerm, and world-writable or non-permission bits are refused. Unlike
 // WriteFileSecure, perm is not intersected with any pre-existing file at path: the
 // rename replaces that file outright, so its historical permission bits do not carry
-// forward, matching every other atomic-rename writer.
+// forward, matching every other atomic-rename writer. WriteFileNoFollow is the variant
+// that refuses a symbolic-link destination and keeps WriteFileSecure's ceiling.
 func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
-	if perm == 0 {
-		perm = SecureFilePerm
-	}
-	if permErr := checkPerm(perm); permErr != nil {
-		return permErr
-	}
-
-	dir := filepath.Dir(path)
-	// #nosec G304 -- dir is the caller-confined directory of path; the pattern below is a
-	// fixed prefix plus a directory-local base name, not attacker-controlled.
-	tmp, err := os.CreateTemp(dir, ".tmp-"+filepath.Base(path)+"-*")
+	perm, err := effectivePerm(perm, SecureFilePerm)
 	if err != nil {
-		return fmt.Errorf("util: create temp file for %q: %w", path, err)
+		return err
 	}
-	tmpPath := tmp.Name()
+	return inParentDirectory(path, func(dir *os.Root, name string) error {
+		return replaceAtomically(dir, name, data, filePermission{mode: perm, exact: true})
+	})
+}
 
-	if writeErr := writeAndSyncTemp(tmp, data, perm); writeErr != nil {
-		// #nosec G104 -- best-effort; a leftover temp file self-heals on the next write attempt.
-		os.Remove(tmpPath) //nolint:errcheck // best-effort; a leftover temp file self-heals on the next write attempt and must not mask writeErr
-		return writeErr
+// filePermission is the mode replaceAtomically gives the staged file before the rename.
+// exact sets mode outright; otherwise mode is a ceiling that only tightens the creation
+// mode, which already carries the process umask.
+type filePermission struct {
+	mode  os.FileMode
+	exact bool
+}
+
+func (p filePermission) apply(file *os.File) error {
+	if !p.exact {
+		return tightenFilePermissions(file, p.mode)
 	}
-	if renameErr := os.Rename(tmpPath, path); renameErr != nil {
-		// #nosec G104 -- best-effort; a leftover temp file self-heals on the next write attempt.
-		os.Remove(tmpPath) //nolint:errcheck // best-effort; a leftover temp file self-heals on the next write attempt and must not mask renameErr
-		return fmt.Errorf("util: rename %q to %q: %w", tmpPath, path, renameErr)
+	if err := file.Chmod(p.mode); err != nil {
+		return fmt.Errorf("util: chmod temp file %q to %#o: %w", file.Name(), p.mode, err)
 	}
 	return nil
 }
 
-// writeAndSyncTemp chmods, writes and fsyncs an already-created temporary file, always
-// closing it exactly once. It is WriteFileAtomic's only path back to the caller before
-// the rename, so every failure it returns leaves the rename unattempted.
-func writeAndSyncTemp(tmp *os.File, data []byte, perm os.FileMode) (err error) {
+// inParentDirectory opens path's directory as a pinned os.Root, runs fn with that handle
+// and path's final element, and closes the handle.
+func inParentDirectory(path string, fn func(dir *os.Root, name string) error) (err error) {
+	clean := filepath.Clean(path)
+	dir, err := os.OpenRoot(filepath.Dir(clean))
+	if err != nil {
+		return fmt.Errorf("util: open the directory of %q: %w", path, err)
+	}
+	defer func() {
+		if cerr := dir.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("util: close the directory of %q: %w", path, cerr)
+		}
+	}()
+	return fn(dir, filepath.Base(clean))
+}
+
+// replaceAtomically is the one atomic-replace implementation behind WriteFileAtomic and
+// WriteFileNoFollow. It stages data in a fresh sibling of name inside dir, applies perm,
+// fsyncs, and renames the stage onto name. Every failure before the rename removes the
+// stage and leaves name untouched.
+func replaceAtomically(dir *os.Root, name string, data []byte, perm filePermission) error {
+	stage, tmp, err := createStage(dir, name, perm.mode)
+	if err != nil {
+		return err
+	}
+	if writeErr := writeAndSyncTemp(tmp, data, perm); writeErr != nil {
+		// #nosec G104 -- best-effort; a leftover temp file self-heals on the next write attempt.
+		dir.Remove(stage) //nolint:errcheck // best-effort; a leftover temp file self-heals on the next write attempt and must not mask writeErr
+		return writeErr
+	}
+	if renameErr := dir.Rename(stage, name); renameErr != nil {
+		// #nosec G104 -- best-effort; a leftover temp file self-heals on the next write attempt.
+		dir.Remove(stage) //nolint:errcheck // best-effort; a leftover temp file self-heals on the next write attempt and must not mask renameErr
+		return fmt.Errorf("util: rename %q to %q in %q: %w", stage, name, dir.Name(), renameErr)
+	}
+	return nil
+}
+
+// createStage exclusively creates a temporary file next to name. The random suffix makes
+// a collision vanishingly unlikely, O_EXCL makes one harmless, and the retry is bounded
+// (HISS-02).
+func createStage(dir *os.Root, name string, perm os.FileMode) (string, *os.File, error) {
+	var lastErr error
+	for attempt := 0; attempt < maxStageAttempts; attempt++ {
+		stage := ".tmp-" + name + "-" + rand.Text()[:stageSuffixLen]
+		file, err := dir.OpenFile(stage, os.O_RDWR|os.O_CREATE|os.O_EXCL, perm)
+		if err == nil {
+			return stage, file, nil
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return "", nil, fmt.Errorf("util: create temp file for %q in %q: %w", name, dir.Name(), err)
+		}
+		lastErr = err
+	}
+	return "", nil, fmt.Errorf("util: create temp file for %q in %q: %d attempts collided: %w",
+		name, dir.Name(), maxStageAttempts, lastErr)
+}
+
+// writeAndSyncTemp applies perm to, writes and fsyncs an already-created temporary file,
+// always closing it exactly once. It is replaceAtomically's only path back to the caller
+// before the rename, so every failure it returns leaves the rename unattempted.
+func writeAndSyncTemp(tmp *os.File, data []byte, perm filePermission) (err error) {
 	defer func() {
 		if cerr := tmp.Close(); cerr != nil && err == nil {
 			err = fmt.Errorf("util: close temp file %q: %w", tmp.Name(), cerr)
 		}
 	}()
-	if chErr := tmp.Chmod(perm); chErr != nil {
-		return fmt.Errorf("util: chmod temp file %q to %#o: %w", tmp.Name(), perm, chErr)
+	if chErr := perm.apply(tmp); chErr != nil {
+		return chErr
 	}
 	if _, werr := tmp.Write(data); werr != nil {
 		return fmt.Errorf("util: write temp file %q: %w", tmp.Name(), werr)
@@ -303,10 +417,8 @@ func writeAndSyncTemp(tmp *os.File, data []byte, perm os.FileMode) (err error) {
 // gosec: addresses G301 (directory created with permissions above 0750). Call sites pass
 // an explicit perm; perm == 0 selects SecureDirPerm.
 func MkdirSecure(path string, perm os.FileMode) error {
-	if perm == 0 {
-		perm = SecureDirPerm
-	}
-	if err := checkPerm(perm); err != nil {
+	perm, err := effectivePerm(perm, SecureDirPerm)
+	if err != nil {
 		return err
 	}
 	if err := os.MkdirAll(path, perm); err != nil {
@@ -323,6 +435,17 @@ func MkdirSecure(path string, perm os.FileMode) error {
 		}
 	}
 	return nil
+}
+
+// effectivePerm substitutes def for a zero perm and refuses what checkPerm refuses.
+func effectivePerm(perm, def os.FileMode) (os.FileMode, error) {
+	if perm == 0 {
+		perm = def
+	}
+	if err := checkPerm(perm); err != nil {
+		return 0, err
+	}
+	return perm, nil
 }
 
 // checkPerm rejects world-writable and non-permission mode bits.

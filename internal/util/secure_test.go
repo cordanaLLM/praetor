@@ -114,6 +114,109 @@ func TestConfinePath_Boundary(t *testing.T) {
 	}
 }
 
+// TestConfinePath_Positive_FilesystemRoot pins BUG-825: a root of "/" (a volume root on
+// Windows) already ends in a separator, and withinRoot used to demand a doubled one, so
+// every path under it was refused.
+func TestConfinePath_Positive_FilesystemRoot(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("resolve temp dir: %v", err)
+	}
+	volumeRoot := filepath.VolumeName(dir) + string(filepath.Separator)
+	want := filepath.Join(dir, "ledger.json")
+	rel, err := filepath.Rel(volumeRoot, want)
+	if err != nil {
+		t.Fatalf("rel: %v", err)
+	}
+	got, err := ConfinePath(volumeRoot, rel)
+	if err != nil {
+		t.Fatalf("ConfinePath(%q, %q): %v", volumeRoot, rel, err)
+	}
+	if got != want {
+		t.Errorf("ConfinePath(%q, %q) = %q, want %q", volumeRoot, rel, got, want)
+	}
+	if got, err := ConfinePath(volumeRoot, "."); err != nil || got != volumeRoot {
+		t.Errorf(`ConfinePath(%q, ".") = (%q, %v), want (%q, nil)`, volumeRoot, got, err, volumeRoot)
+	}
+}
+
+func TestWithinRoot_Boundary_SeparatorTerminatedRoot(t *testing.T) {
+	sep := string(filepath.Separator)
+	repo := sep + "repo"
+	cases := []struct {
+		root, path string
+		want       bool
+	}{
+		{sep, sep, true},
+		{sep, sep + "etc", true},
+		{repo, repo, true},
+		{repo, repo + sep + "file", true},
+		{repo, repo + "-evil", false},
+		{repo, sep, false},
+		{repo + sep + "a", repo, false},
+	}
+	for _, tc := range cases {
+		if got := withinRoot(tc.root, tc.path); got != tc.want {
+			t.Errorf("withinRoot(%q, %q) = %v, want %v", tc.root, tc.path, got, tc.want)
+		}
+	}
+}
+
+// TestConfinePath_Negative_SymlinkedAncestor pins BUG-826: ConfinePath resolved every
+// symlink to check the path but then returned the lexical join, so the caller's own open
+// traversed the in-root link again, and a final element linking back into the root
+// vouched for a parent directory outside it.
+func TestConfinePath_Negative_SymlinkedAncestor(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	inner := filepath.Join(root, "inner")
+	if err := os.MkdirAll(inner, 0o700); err != nil {
+		t.Fatalf("mkdir inner: %v", err)
+	}
+	if err := os.Symlink(inner, filepath.Join(root, "alias")); err != nil {
+		t.Skipf("symlinks unsupported on this platform: %v", err)
+	}
+
+	// The in-root symlinked ancestor is replaced by its real location; the root stays as given.
+	got, err := ConfinePath(root, filepath.Join("alias", "sub", "ledger.json"))
+	if err != nil {
+		t.Fatalf("ConfinePath through an in-root link: %v", err)
+	}
+	if want := filepath.Join(root, "inner", "sub", "ledger.json"); got != want {
+		t.Errorf("ConfinePath through an in-root link = %q, want the resolved %q", got, want)
+	}
+
+	// A final element that is itself a link stays visible to no-follow callers.
+	victim := filepath.Join(inner, "victim.txt")
+	if err := os.WriteFile(victim, []byte("keep"), 0o600); err != nil {
+		t.Fatalf("seed victim: %v", err)
+	}
+	if err := os.Symlink(victim, filepath.Join(root, "leaf.json")); err != nil {
+		t.Fatalf("symlink leaf: %v", err)
+	}
+	leaf, err := ConfinePath(root, "leaf.json")
+	if err != nil || leaf != filepath.Join(root, "leaf.json") {
+		t.Fatalf("ConfinePath(root, leaf.json) = (%q, %v), want the unresolved link", leaf, err)
+	}
+	if err := WriteFileNoFollow(leaf, []byte("clobber"), 0o600); !errors.Is(err, ErrSymlinkDestination) {
+		t.Errorf("expected the confined link to be refused, got %v", err)
+	}
+
+	// A parent directory outside the root is refused even when the final element links back in.
+	if err := os.Symlink(outside, filepath.Join(root, "out")); err != nil {
+		t.Fatalf("symlink out: %v", err)
+	}
+	if err := os.Symlink(victim, filepath.Join(outside, "back.json")); err != nil {
+		t.Fatalf("symlink back: %v", err)
+	}
+	if got, err := ConfinePath(root, filepath.Join("out", "back.json")); !errors.Is(err, ErrPathEscapesRoot) {
+		t.Errorf("expected ErrPathEscapesRoot for a parent outside the root, got (%q, %v)", got, err)
+	}
+	if data, err := os.ReadFile(victim); err != nil || string(data) != "keep" { // #nosec G304 -- test-local path from t.TempDir
+		t.Errorf("victim = (%q, %v), want it untouched", data, err)
+	}
+}
+
 func TestWriteFileSecure_Positive(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "receipt.key")

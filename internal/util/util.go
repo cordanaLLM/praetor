@@ -98,21 +98,57 @@ func TruncateExcerpt(s string, limit int) string {
 // os.WriteFile follows symlinks and truncates their target, so a repository that ships a
 // tracked ledger path (.workingdir/BACKLOG.md, .workingdir/milestones.json, docs/wiki/*)
 // as a link to a file outside the repository can redirect praetor's own writes onto that
-// file. The destination is inspected with os.Lstat, which does not follow the final path
+// file. The destination is inspected with an lstat that does not follow the final path
 // component, and anything that exists but is not a regular file is rejected before the
-// write. The write itself goes through WriteFileSecure so the permission bits are
-// validated and enforced.
+// write.
+//
+// The write is atomic and pinned (BUG-826, BUG-827): path's directory is opened once as an
+// os.Root, and the inspection, a temp-file write with fsync, and the rename onto path all
+// resolve against that handle (WriteFileAtomic's implementation). A crash or a failed write
+// leaves the previous ledger intact instead of truncated; an ancestor swapped for a
+// symbolic link after the directory is opened cannot move the write; and a link planted at
+// path after the inspection is replaced by the rename, never written through. Ancestors
+// above path's directory are resolved when the directory is opened, so a caller holding an
+// untrusted relative path confines it with ConfinePath first, which returns it with every
+// existing ancestor already resolved inside the root.
+//
+// perm keeps WriteFileSecure's ceiling: a zero perm selects SecureFilePerm, world-writable
+// or non-permission bits are refused, a new file is created with perm under the process
+// umask, and a replaced file keeps only the bits it already had that perm also grants.
+// As with every rename-based writer, the directory must be writable and the replacement is
+// a new inode: hard links to the old file keep the old contents, and its owner and extended
+// attributes do not carry forward.
 func WriteFileNoFollow(path string, data []byte, perm os.FileMode) error {
-	info, err := os.Lstat(path)
-	switch {
-	case err == nil && info.Mode()&os.ModeSymlink != 0:
-		return fmt.Errorf("%w: %q is a symbolic link", ErrSymlinkDestination, path)
-	case err == nil && !info.Mode().IsRegular():
-		return fmt.Errorf("%w: %q is not a regular file", ErrSymlinkDestination, path)
-	case err != nil && !errors.Is(err, os.ErrNotExist):
-		return fmt.Errorf("util: inspect write destination %q: %w", path, err)
+	perm, err := effectivePerm(perm, SecureFilePerm)
+	if err != nil {
+		return err
 	}
-	return WriteFileSecure(path, data, perm)
+	return inParentDirectory(path, func(dir *os.Root, name string) error {
+		mode, err := noFollowPermission(dir, name, path, perm)
+		if err != nil {
+			return err
+		}
+		return replaceAtomically(dir, name, data, mode)
+	})
+}
+
+// noFollowPermission refuses a destination that exists but is a symbolic link or not a
+// regular file, and returns the mode its replacement takes: perm as a ceiling on the
+// umask-filtered creation mode for a new file, or the existing bits intersected with perm
+// for a file being replaced.
+func noFollowPermission(dir *os.Root, name, path string, perm os.FileMode) (filePermission, error) {
+	info, err := dir.Lstat(name)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return filePermission{mode: perm}, nil
+	case err != nil:
+		return filePermission{}, fmt.Errorf("util: inspect write destination %q: %w", path, err)
+	case info.Mode()&os.ModeSymlink != 0:
+		return filePermission{}, fmt.Errorf("%w: %q is a symbolic link", ErrSymlinkDestination, path)
+	case !info.Mode().IsRegular():
+		return filePermission{}, fmt.Errorf("%w: %q is not a regular file", ErrSymlinkDestination, path)
+	}
+	return filePermission{mode: perm & info.Mode().Perm(), exact: true}, nil
 }
 
 // ReadFileNoFollow reads path, refusing to read through a symbolic link.

@@ -586,4 +586,68 @@ func TestWriteFileNoFollow_Boundary_DirectoryAndMissingFile(t *testing.T) {
 	if err := WriteFileNoFollow(filepath.Join(dir, "fresh.txt"), nil, 0o600); err != nil {
 		t.Errorf("expected an empty write to a fresh path to succeed, got %v", err)
 	}
+	if err := WriteFileNoFollow(filepath.Join(dir, "missing", "ledger.json"), []byte("x"), 0o600); err == nil {
+		t.Errorf("expected a write below a missing directory to fail")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "missing")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a failed write must not create its directory, stat err = %v", err)
+	}
+}
+
+// TestWriteFileNoFollow_Negative_HardLinkedVictimUntouched pins the replace-by-rename
+// half of BUG-827: the old in-place truncate wrote through a hard link planted at the
+// ledger path onto whatever file it shared an inode with.
+func TestWriteFileNoFollow_Negative_HardLinkedVictimUntouched(t *testing.T) {
+	dir := t.TempDir()
+	victim := filepath.Join(dir, "victim.txt")
+	if err := os.WriteFile(victim, []byte("do not touch"), 0o600); err != nil {
+		t.Fatalf("seed victim: %v", err)
+	}
+	ledger := filepath.Join(dir, "milestones.json")
+	if err := os.Link(victim, ledger); err != nil {
+		t.Skipf("hard links unsupported on this filesystem: %v", err)
+	}
+	if err := WriteFileNoFollow(ledger, []byte("ledger"), 0o600); err != nil {
+		t.Fatalf("WriteFileNoFollow: %v", err)
+	}
+	if data, err := os.ReadFile(victim); err != nil || string(data) != "do not touch" { // #nosec G304 -- test-local path from t.TempDir
+		t.Errorf("victim = (%q, %v), want it untouched", data, err)
+	}
+	if data, err := ReadFileNoFollow(ledger); err != nil || string(data) != "ledger" {
+		t.Errorf("ledger = (%q, %v), want the new contents", data, err)
+	}
+}
+
+// TestWriteFileNoFollow_Boundary_ReplaceNeverWidensExisting keeps WriteFileSecure's
+// ceiling across the switch to rename: a replacement keeps only the bits the old file had
+// that perm also grants, and no staged temp file survives.
+func TestWriteFileNoFollow_Boundary_ReplaceNeverWidensExisting(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permission bits are not available on Windows")
+	}
+	dir := t.TempDir()
+	ledger := filepath.Join(dir, "BACKLOG.md")
+	if err := os.WriteFile(ledger, []byte("old"), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := os.Chmod(ledger, 0o640); err != nil {
+		t.Fatalf("chmod seed: %v", err)
+	}
+	if err := WriteFileNoFollow(ledger, []byte("new"), 0o604); err != nil {
+		t.Fatalf("WriteFileNoFollow: %v", err)
+	}
+	info, err := os.Lstat(ledger)
+	if err != nil {
+		t.Fatalf("lstat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Errorf("mode = %#o, want 0600 (0640 & 0604)", got)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("readdir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("expected only %s in %s, got %v", filepath.Base(ledger), dir, entries)
+	}
 }
