@@ -105,7 +105,12 @@ a Go library.
   the governance tool rather than the repository.
 - Where nothing matches, `flavor audit` and `flavor apply` refuse with `ErrNoFlavorMatched` instead
   of scoring the repository against a flavor that describes nothing about it. Pass `--flavor=<name>`
-  to audit against one deliberately.
+  to audit against one deliberately. `praetorctl adopt` scaffolds no flavor templates there and
+  prints a "Not applicable" warning instead (`internal/adopt/flavor_report_test.go`).
+- `flavor apply` fails when any template could not be written (`flavor.ErrApplyIncomplete`), and
+  prints what it created before the failure. `--force` refreshes flavor scaffolds but never rewrites
+  `.standards.yaml`, `.standards.lock` or the `.workingdir/` ledger
+  (`internal/flavor/scaffold_integrity_test.go`).
 
 ## What the flavor score measures
 

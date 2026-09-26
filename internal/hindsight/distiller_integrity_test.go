@@ -47,3 +47,41 @@ func writeDistillerLedger(t *testing.T, content string) string {
 	writeDistillerFile(t, root, filepath.Join(".workingdir", "BUGS.md"), content)
 	return root
 }
+
+// TestDistillFlavorFacts pins BUG-939 in the distiller: a repository no flavor matches used to be
+// stored as governed under go-library, because detection substituted that name.
+func TestDistillFlavorFacts(t *testing.T) {
+	t.Run("matched flavor yields one fact", func(t *testing.T) {
+		root := t.TempDir()
+		writeDistillerFile(t, filepath.Join(root, "go.mod"), "module x\n")
+		writeDistillerFile(t, filepath.Join(root, "cmd", "x", "main.go"), "package main\n")
+		facts, err := distillFlavorFacts(context.Background(), root)
+		if err != nil || len(facts) != 1 || facts[0].Subject != "go-service" {
+			t.Fatalf("expected one go-service fact, got %+v, %v", facts, err)
+		}
+	})
+	t.Run("unmatched repository yields no fact", func(t *testing.T) {
+		root := t.TempDir()
+		writeDistillerFile(t, filepath.Join(root, "Rakefile"), "task :default\n")
+		facts, err := distillFlavorFacts(context.Background(), root)
+		if err != nil || len(facts) != 0 {
+			t.Fatalf("an unmatched repository must yield no flavor fact, got %+v, %v", facts, err)
+		}
+	})
+	t.Run("empty directory yields no fact", func(t *testing.T) {
+		facts, err := distillFlavorFacts(context.Background(), t.TempDir())
+		if err != nil || len(facts) != 0 {
+			t.Fatalf("an empty directory must yield no flavor fact, got %+v, %v", facts, err)
+		}
+	})
+}
+
+func writeDistillerFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}

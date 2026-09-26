@@ -168,10 +168,20 @@ func runFlavorApply(args []string) error {
 // applyFlavor scaffolds one flavor and prints what it created, skipped and failed.
 func applyFlavor(ctx context.Context, dir, targetFlv string, force bool) error {
 	report, err := flavor.ApplyFlavor(ctx, dir, targetFlv, force)
+	if report == nil {
+		return fmt.Errorf("flavor apply failed: %w", err)
+	}
+	// A report beside an error (flavor.ErrApplyIncomplete) still names what was written, so it
+	// is printed before the failure is returned.
+	printFlavorApplyReport(dir, report)
 	if err != nil {
 		return fmt.Errorf("flavor apply failed: %w", err)
 	}
+	return nil
+}
 
+// printFlavorApplyReport prints what one flavor apply created, skipped and failed.
+func printFlavorApplyReport(dir string, report *flavor.ApplyReport) {
 	fmt.Printf("=== Applied Flavor: %s to %s ===\n", report.Flavor, dir)
 	fmt.Printf("  Created Templates (%d): %s\n", len(report.CreatedTemplates), strings.Join(report.CreatedTemplates, ", "))
 	if len(report.SkippedTemplates) > 0 {
@@ -184,8 +194,5 @@ func applyFlavor(ctx context.Context, dir, targetFlv string, force bool) error {
 		for _, e := range report.Errors {
 			fmt.Printf("    - %s\n", e)
 		}
-		return fmt.Errorf("flavor apply completed with %d error(s): %s",
-			len(report.Errors), strings.Join(report.Errors, "; "))
 	}
-	return nil
 }

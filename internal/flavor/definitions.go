@@ -10,7 +10,7 @@ import (
 // builtinFlavorList returns every built-in flavor in detection precedence order, most specific
 // first. This slice is the single source of that order.
 //
-// It used to be stated twice: once here as registration order, and again inside DetectFlavor as a
+// It used to be stated twice: once here as registration order, and again inside detection as a
 // hardcoded list of the same eleven names. The two disagreed, and a flavor registered but left
 // out of the second list fell through to map iteration order, so its precedence was whatever the
 // runtime happened to produce that execution.

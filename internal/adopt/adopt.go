@@ -38,6 +38,8 @@ const (
 	agentsFile       = "AGENTS.md"
 	devcontainerFile = ".devcontainer/devcontainer.json"
 	workingDirPath   = ".workingdir"
+	// flavorReportPath names the flavor scaffold in the report when no template path applies.
+	flavorReportPath = "flavor"
 )
 
 // RepositoryState describes the adoption state of a target codebase.
@@ -623,17 +625,54 @@ func reconcileWorkingDirAndFlavor(ctx context.Context, s *adoptSession) error {
 		if err := state.InitWorkingDirContext(ctx, s.repoPath); err != nil {
 			s.report.addError("workingdir init: %v", err)
 		}
-		detectedFlv := flavor.DetectFlavor(s.repoPath)
-		if _, err := flavor.ApplyFlavor(ctx, s.repoPath, detectedFlv, false); err != nil {
-			s.report.addError("apply flavor %s: %v", detectedFlv, err)
-		}
 	}
 	s.report.ActionDetails = append(s.report.ActionDetails, ActionDetail{
 		Path:    workingDirPath,
 		Action:  actionCreate,
 		Details: "Initialized canonical session state ledger and bug/question journals",
 	})
+	if !s.opts.DryRun {
+		s.applyDetectedFlavor(ctx)
+	}
 	return nil
+}
+
+// applyDetectedFlavor scaffolds the flavor detection names and records what it did.
+//
+// It used to scaffold go-library for a repository that matched nothing, because detection
+// substituted that name, and it discarded the apply report, so neither the written templates nor
+// a total write failure reached the adoption report.
+func (s *adoptSession) applyDetectedFlavor(ctx context.Context) {
+	name, ok := flavor.Detect(s.repoPath)
+	if !ok {
+		s.report.recordSkipped(flavorReportPath, "Not applicable: no registered flavor matches this repository, "+
+			"so no flavor templates were scaffolded; run `praetorctl flavor apply --flavor=<name>` to choose one")
+		return
+	}
+	applied, err := flavor.ApplyFlavor(ctx, s.repoPath, name, false)
+	s.recordFlavorReport(applied)
+	if err != nil {
+		s.report.addError("apply flavor %s: %v", name, err)
+	}
+}
+
+// recordFlavorReport lists the templates a flavor apply created and the existing files it left
+// alone. A skipped template is an action detail only: the file is either the operator's or one
+// an earlier adoption step already listed.
+func (s *adoptSession) recordFlavorReport(applied *flavor.ApplyReport) {
+	if applied == nil {
+		return
+	}
+	for _, rel := range applied.CreatedTemplates {
+		s.report.recordCreated(rel, fmt.Sprintf("Scaffolded %s flavor template", applied.Flavor))
+	}
+	for _, rel := range applied.SkippedTemplates {
+		s.report.ActionDetails = append(s.report.ActionDetails, ActionDetail{
+			Path:    rel,
+			Action:  actionSkip,
+			Details: fmt.Sprintf("Existing file satisfies the %s flavor template; left unchanged", applied.Flavor),
+		})
+	}
 }
 
 // lowerFirst lower-cases the first byte of an ASCII detail string.

@@ -146,10 +146,6 @@ func List() []Flavor {
 	return res
 }
 
-// FallbackFlavor is what callers that must name something use when nothing matched. It is
-// exported so the substitution is visible at the call site rather than hidden inside detection.
-const FallbackFlavor = "go-library"
-
 // maxDetectionCandidates bounds the detection scan (HISS-02).
 const maxDetectionCandidates = 64
 
@@ -160,6 +156,10 @@ const maxDetectionCandidates = 64
 // callers acted on the guess. Measured on a bare Dockerfile and on a bare agent harness, both of
 // which reported go-library through that fallback while a second classifier reported
 // container-image and framework respectively.
+//
+// Detect is the only detection entry point. The DetectFlavor wrapper that substituted go-library
+// on no match is gone, because its two callers (adoption and the Hindsight distiller) scaffolded
+// and recorded that guess as fact.
 func Detect(repoPath string) (string, bool) {
 	registryMu.RLock()
 	defer registryMu.RUnlock()
@@ -169,15 +169,6 @@ func Detect(repoPath string) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-// DetectFlavor returns the best-matching flavor name, substituting FallbackFlavor when nothing
-// matched. Prefer Detect, which lets the caller see the difference.
-func DetectFlavor(repoPath string) string {
-	if name, ok := Detect(repoPath); ok {
-		return name
-	}
-	return FallbackFlavor
 }
 
 // CheckFileExists is an internal helper for flavor detection.
