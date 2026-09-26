@@ -224,7 +224,7 @@ func writeFile(t *testing.T, path, content string) {
 // wantSkip asserts that a stage reported a skip with the given verdict and returns its reason.
 func wantSkip(t *testing.T, err error, want StageStatus) string {
 	t.Helper()
-	skip, ok := asStageSkip(err)
+	skip, ok := errors.AsType[*stageSkip](err)
 	if !ok {
 		t.Fatalf("expected a %s verdict, got error %v", want, err)
 	}

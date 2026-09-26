@@ -118,15 +118,6 @@ func notApplicable(reason string) error {
 	return &stageSkip{status: StageNotApplicable, reason: reason}
 }
 
-// asStageSkip returns the skip a stage reported, or false when err is a real outcome.
-func asStageSkip(err error) (*stageSkip, bool) {
-	var skip *stageSkip
-	if errors.As(err, &skip) {
-		return skip, true
-	}
-	return nil, false
-}
-
 // PipelineReport aggregates the entire gated pre-merge verification.
 type PipelineReport struct {
 	Status           GatingStatus  `json:"status"`
@@ -297,7 +288,7 @@ func executeStage(ctx context.Context, s stage, cfg *stageConfig) error {
 	sStart := time.Now()
 	msg, err := s.fn(ctx, cfg)
 	res := StageResult{Name: s.name, Status: StagePassed, Message: msg}
-	if skip, ok := asStageSkip(err); ok {
+	if skip, ok := errors.AsType[*stageSkip](err); ok {
 		// A skip is decided before any check runs, so a deadline that fires afterwards
 		// is the next stage's to report, not a reason to reclassify this one.
 		res.Status, res.Message, err = skip.status, skip.reason, nil

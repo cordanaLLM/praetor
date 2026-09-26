@@ -171,20 +171,26 @@ func AuditFlavorContext(ctx context.Context, repoPath string, targetFlavor strin
 		Flavor:   flv.Name(),
 		RepoPath: repoPath,
 	}
-
-	if err := auditTemplates(ctx, repoPath, flv.RequiredTemplates(), report); err != nil {
-		return nil, err
-	}
-	if err := auditSettings(ctx, repoPath, flv.RequiredSettings(), report); err != nil {
-		return nil, err
-	}
-	if err := auditToolchains(ctx, repoPath, flv.RequiredToolchains(), report); err != nil {
+	if err := auditRequiredItems(ctx, repoPath, flv, report); err != nil {
 		return nil, err
 	}
 
 	report.Score = conformanceScore(report)
 	report.Passed = report.Score >= passingScore && len(report.MissingTemplates) == 0
 	return report, nil
+}
+
+// auditRequiredItems records flv's required templates, settings and toolchains in report,
+// stopping at the first cancellation. It keeps AuditFlavorContext within HISS-04's
+// cyclomatic cap of 10.
+func auditRequiredItems(ctx context.Context, repoPath string, flv Flavor, report *FlavorAuditReport) error {
+	if err := auditTemplates(ctx, repoPath, flv.RequiredTemplates(), report); err != nil {
+		return err
+	}
+	if err := auditSettings(ctx, repoPath, flv.RequiredSettings(), report); err != nil {
+		return err
+	}
+	return auditToolchains(ctx, repoPath, flv.RequiredToolchains(), report)
 }
 
 // passingScore is the share of required templates and settings a repository must carry.
