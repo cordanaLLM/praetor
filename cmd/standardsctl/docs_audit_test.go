@@ -49,3 +49,47 @@ func TestDocsAuditRejectsMissingAndFileRoots(t *testing.T) {
 		}
 	}
 }
+
+// auditNodeRepo declares left-pad 1.3.0 with a README that documents it.
+func auditNodeRepo(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	writeFixtureFile(t, root, "package.json", `{"dependencies":{"left-pad":"1.3.0"}}`)
+	writeFixtureFile(t, root, "node_modules/left-pad/README.md", "# left-pad\nPads strings on the left, documented here.\n")
+	return root
+}
+
+// A sheet from an older catalog schema is listed as stale and fails the audit; after a sync
+// the same repository passes.
+func TestDocsAuditListsStaleSheetsUntilSynced(t *testing.T) {
+	root := auditNodeRepo(t)
+	writeFixtureFile(t, root, ".workingdir/docs/catalog.json",
+		`{"version":"v1","packages":{"left-pad@1.3.0":{"package_name":"left-pad","version":"1.3.0","token_count":12}}}`)
+	out, err := captureStdout(t, func() error { return runDocsAudit(t.Context(), []string{root}) })
+	if err == nil || !strings.Contains(err.Error(), "0 missing, 1 stale") {
+		t.Fatalf("stale sheet passed the audit: output=%q err=%v", out, err)
+	}
+	if !strings.Contains(out, "Stale Distilled Documentation:\n  - left-pad@1.3.0") || strings.Contains(out, "Missing Distilled") {
+		t.Fatalf("stale sheet not listed as stale: %q", out)
+	}
+	if _, err := captureStdout(t, func() error { return runDocsSync(t.Context(), []string{"--offline", root}) }); err != nil {
+		t.Fatalf("docs sync: %v", err)
+	}
+	out, err = captureStdout(t, func() error { return runDocsAudit(t.Context(), []string{root}) })
+	if err != nil || !strings.Contains(out, "Documented: 1 / 1") {
+		t.Fatalf("synced repository failed the audit: output=%q err=%v", out, err)
+	}
+}
+
+// A README that yields no documentation content is cached, but the audit lists it as missing.
+func TestDocsAuditCountsHeaderOnlySheetAsMissing(t *testing.T) {
+	root := auditNodeRepo(t)
+	writeFixtureFile(t, root, "node_modules/left-pad/README.md", "# left-pad\n")
+	if _, err := captureStdout(t, func() error { return runDocsSync(t.Context(), []string{"--offline", root}) }); err != nil {
+		t.Fatalf("docs sync: %v", err)
+	}
+	out, err := captureStdout(t, func() error { return runDocsAudit(t.Context(), []string{root}) })
+	if err == nil || !strings.Contains(err.Error(), "1 missing, 0 stale") || !strings.Contains(out, "Documented: 0 / 1") {
+		t.Fatalf("header-only sheet counted as documented: output=%q err=%v", out, err)
+	}
+}

@@ -116,19 +116,31 @@ func runDocsAudit(ctx context.Context, args []string) error {
 	fmt.Printf("  Passed:     %t\n", result.Passed)
 	fmt.Printf("  Status:     %s\n", result.Status)
 
-	if len(result.Missing) > 0 {
-		fmt.Println("\nMissing Distilled Documentation:")
-		for _, m := range result.Missing {
-			fmt.Printf("  - %s@%s (%s in %s)\n", m.Name, m.Version, m.Kind, m.Manifest)
-		}
-		fmt.Println("\nRun 'standardsctl docs sync' to harvest missing documentation.")
-		return fmt.Errorf("documentation audit failed: %d missing packages", len(result.Missing))
+	if len(result.Missing) > 0 || len(result.Stale) > 0 {
+		printDocsAuditGaps("Missing Distilled Documentation", result.Missing)
+		printDocsAuditGaps("Stale Distilled Documentation", result.Stale)
+		fmt.Println("\nRun 'standardsctl docs sync' to harvest missing and stale documentation;" +
+			" add --force to re-harvest a package whose cached sheet extracted no content.")
+		return fmt.Errorf("documentation audit failed: %d missing, %d stale packages",
+			len(result.Missing), len(result.Stale))
 	}
 
 	if !result.Passed {
 		return fmt.Errorf("documentation audit did not pass (status: %s)", result.Status)
 	}
 	return nil
+}
+
+// printDocsAuditGaps prints one titled list of declared packages the audit did not count,
+// or nothing when the list is empty.
+func printDocsAuditGaps(title string, refs []docdistill.PackageRef) {
+	if len(refs) == 0 {
+		return
+	}
+	fmt.Printf("\n%s:\n", title)
+	for _, m := range refs {
+		fmt.Printf("  - %s@%s (%s in %s)\n", m.Name, m.Version, m.Kind, m.Manifest)
+	}
 }
 
 func runDocsLookup(args []string) error {

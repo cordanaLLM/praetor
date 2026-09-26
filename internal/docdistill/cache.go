@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -17,7 +18,11 @@ import (
 )
 
 const (
-	CatalogVersion  = "v1"
+	// CatalogVersion is the schema of catalog.json this build reads and writes. v2 adds
+	// DistilledDoc.Extracted and quotes harvested text in RawMarkdown; LoadCatalog drops
+	// the entries of a catalog written under a legacyCatalogVersions schema, so the next
+	// sync harvests them again.
+	CatalogVersion  = "v2"
 	DocsDirRel      = ".workingdir/docs"
 	DistilledDirRel = ".workingdir/docs/distilled"
 	CatalogFileRel  = ".workingdir/docs/catalog.json"
@@ -46,6 +51,16 @@ const (
 // bound was hit is already in the returned catalog and on disk; nothing after it is
 // missing silently.
 var ErrSyncTruncated = errors.New("docdistill: sync truncated before covering every declared dependency")
+
+// legacyCatalogVersions are the older catalog schemas LoadCatalog migrates: "v1" has no
+// DistilledDoc.Extracted and rendered harvested notes under a heading of Praetor's own, and
+// "" is a catalog saved without a version before SaveCatalog stamped one.
+var legacyCatalogVersions = []string{"", "v1"}
+
+// ErrCatalogVersion reports a catalog.json written under a schema this build does not know,
+// usually by a newer Praetor. LoadCatalog refuses it rather than let the next save overwrite
+// it with an older schema.
+var ErrCatalogVersion = errors.New("docdistill: unsupported doc catalog version")
 
 // cachePath confines a cache-relative path to repoPath.
 func cachePath(repoPath, rel string) (string, error) {
@@ -80,10 +95,34 @@ func LoadCatalog(repoPath string) (*DocCatalog, error) {
 	if err := json.Unmarshal(data, &cat); err != nil {
 		return nil, fmt.Errorf("failed to parse doc catalog: %w", err)
 	}
-	if cat.Packages == nil {
-		cat.Packages = make(map[string]DistilledDoc)
+	return migrateCatalog(&cat, catPath)
+}
+
+// migrateCatalog checks the schema of the catalog read from path. A current catalog is
+// returned as read. A legacy one is returned empty, at CatalogVersion, with its keys kept in
+// superseded: its sheets predate the Extracted flag and the quoted rendering, so none can be
+// served or counted, and docs sync harvests each again. An unknown version is refused.
+func migrateCatalog(cat *DocCatalog, path string) (*DocCatalog, error) {
+	if cat.Version == CatalogVersion {
+		if cat.Packages == nil {
+			cat.Packages = make(map[string]DistilledDoc)
+		}
+		return cat, nil
 	}
-	return &cat, nil
+	if !slices.Contains(legacyCatalogVersions, cat.Version) {
+		return nil, fmt.Errorf("%w: %s has version %q, this build reads %s; remove it and run docs sync to rebuild it",
+			ErrCatalogVersion, path, cat.Version, CatalogVersion)
+	}
+	superseded := make(map[string]string, len(cat.Packages))
+	for key, doc := range cat.Packages {
+		superseded[key] = doc.PackageName
+	}
+	return &DocCatalog{
+		Version:      CatalogVersion,
+		LastSyncedAt: cat.LastSyncedAt,
+		Packages:     make(map[string]DistilledDoc),
+		superseded:   superseded,
+	}, nil
 }
 
 // SaveCatalog writes the doc catalog to the repo's .workingdir/docs/catalog.json.
@@ -99,6 +138,8 @@ func SaveCatalog(repoPath string, cat *DocCatalog) error {
 		return fmt.Errorf("failed to create docs dir: %w", err)
 	}
 
+	// This build writes only the current schema, whatever the caller's value says.
+	cat.Version = CatalogVersion
 	cat.LastSyncedAt = time.Now().UTC()
 	data, err := json.MarshalIndent(cat, "", "  ")
 	if err != nil {
@@ -287,6 +328,11 @@ func syncOnePackage(ctx context.Context, repoPath string, ref PackageRef, cat *D
 
 // AuditDocumentationCoverage evaluates the ratio of declared dependencies with active distilled docs.
 //
+// A dependency is documented only when its sheet extracted documentation content
+// (DistilledDoc.Extracted); a sheet that is a header only counts as missing, however many
+// tokens it holds. A sheet from a superseded catalog schema, or one cached only for another
+// version of the package, is stale. Missing and stale dependencies both fail the audit.
+//
 // It takes the same options as SyncRepositoryDocs so the two cannot disagree
 // about what a repository declares. It previously hardcoded them, which meant a
 // flag accepted by `docs sync` had no equivalent on `docs audit` and the
@@ -309,17 +355,7 @@ func AuditDocumentationCoverage(ctx context.Context, repoPath string, opts Disti
 		return nil, err
 	}
 
-	var missing []PackageRef
-	var documented int
-
-	for _, ref := range refs {
-		key := makeDocKey(ref.Name, ref.Version)
-		if doc, exists := cat.Packages[key]; exists && doc.TokenCount > 0 {
-			documented++
-		} else {
-			missing = append(missing, ref)
-		}
-	}
+	documented, missing, stale := cat.classifyCoverage(refs)
 
 	total := len(refs)
 	score := 0.0
@@ -328,7 +364,7 @@ func AuditDocumentationCoverage(ctx context.Context, repoPath string, opts Disti
 	}
 
 	status := "observed"
-	passed := len(missing) == 0
+	passed := len(missing) == 0 && len(stale) == 0
 	if total == 0 {
 		status = "not_applicable"
 		passed = false
@@ -337,10 +373,70 @@ func AuditDocumentationCoverage(ctx context.Context, repoPath string, opts Disti
 		TotalDeclared: total,
 		Documented:    documented,
 		Missing:       missing,
+		Stale:         stale,
 		CoverageScore: score,
 		Passed:        passed,
 		Status:        status,
 	}, nil
+}
+
+// docCoverage classifies one declared dependency for the coverage audit.
+type docCoverage int
+
+const (
+	coverageMissing docCoverage = iota
+	coverageDocumented
+	coverageStale
+)
+
+// classifyCoverage sorts refs into the documented count and the missing and stale lists,
+// in declaration order, using coverageOf for each one.
+func (c *DocCatalog) classifyCoverage(refs []PackageRef) (documented int, missing, stale []PackageRef) {
+	cachedNames := c.cachedPackageNames()
+	for _, ref := range refs {
+		switch c.coverageOf(ref, cachedNames) {
+		case coverageDocumented:
+			documented++
+		case coverageStale:
+			stale = append(stale, ref)
+		default:
+			missing = append(missing, ref)
+		}
+	}
+	return documented, missing, stale
+}
+
+// coverageOf classifies ref against the catalog: documented when its own sheet extracted
+// content, missing when that sheet is a header only, stale when only a superseded sheet or
+// a sheet for another version exists (cachedNames), and missing otherwise.
+func (c *DocCatalog) coverageOf(ref PackageRef, cachedNames map[string]struct{}) docCoverage {
+	key := makeDocKey(ref.Name, ref.Version)
+	if doc, exists := c.Packages[key]; exists {
+		if doc.Extracted {
+			return coverageDocumented
+		}
+		return coverageMissing
+	}
+	if _, superseded := c.superseded[key]; superseded {
+		return coverageStale
+	}
+	if _, cached := cachedNames[ref.Name]; cached {
+		return coverageStale
+	}
+	return coverageMissing
+}
+
+// cachedPackageNames returns the name of every package the catalog holds a sheet for, at any
+// version, superseded sheets included.
+func (c *DocCatalog) cachedPackageNames() map[string]struct{} {
+	names := make(map[string]struct{}, len(c.Packages)+len(c.superseded))
+	for _, doc := range c.Packages {
+		names[doc.PackageName] = struct{}{}
+	}
+	for _, name := range c.superseded {
+		names[name] = struct{}{}
+	}
+	return names
 }
 
 func makeDocKey(pkgName, version string) string {
