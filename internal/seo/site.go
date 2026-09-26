@@ -241,6 +241,7 @@ func (a *siteAudit) add(file, message string) {
 // Script bodies are skipped as raw text, so a "</head>" inside one does not end the head.
 func headJSONLD(page []byte) ([][]byte, error) {
 	lower := lowerASCII(page)
+	maskHTMLComments(lower)
 	start := findTag(lower, 0, "head")
 	if start < 0 {
 		return nil, errors.New("no <head> element")
@@ -423,23 +424,75 @@ func isHTMLSpace(c byte) bool {
 // into b; bytes.ToLower would re-encode some non-ASCII runes at a different length.
 func lowerASCII(b []byte) []byte {
 	out := make([]byte, len(b))
-	inComment := false
 	for i := 0; i < len(b); i++ {
-		if !inComment && bytes.HasPrefix(b[i:], []byte("<!--")) {
-			inComment = true
-		}
 		c := b[i]
-		if inComment {
-			out[i] = ' '
-			if bytes.HasSuffix(b[:i+1], []byte("-->")) {
-				inComment = false
-			}
-		} else {
-			if c >= 'A' && c <= 'Z' {
-				c += 'a' - 'A'
-			}
-			out[i] = c
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
 		}
+		out[i] = c
 	}
 	return out
+}
+
+// maskHTMLComments replaces <!-- ... --> with spaces when found in the HTML data state.
+func maskHTMLComments(lower []byte) {
+	state := 0 // 0:data, 1:tag, 2:dq, 3:sq, 4:rawText, 5:comment
+	var end []byte
+	for i := 0; i < len(lower); i++ {
+		c := lower[i]
+		switch state {
+		case 0:
+			if c == '<' {
+				state, end, i = enterTag(lower, i)
+			}
+		case 1:
+			if c == '>' {
+				if end != nil {
+					state = 4
+				} else {
+					state = 0
+				}
+			} else if c == '"' {
+				state = 2
+			} else if c == '\'' {
+				state = 3
+			}
+		case 2:
+			if c == '"' {
+				state = 1
+			}
+		case 3:
+			if c == '\'' {
+				state = 1
+			}
+		case 4:
+			if c == '<' && bytes.HasPrefix(lower[i:], end) {
+				state = 1
+				end = nil
+				i += len(end) - 1
+			}
+		case 5:
+			if c == '-' && bytes.HasPrefix(lower[i:], []byte("-->")) {
+				lower[i], lower[i+1], lower[i+2] = ' ', ' ', ' '
+				state = 0
+				i += 2
+			} else {
+				lower[i] = ' '
+			}
+		}
+	}
+}
+
+func enterTag(lower []byte, i int) (int, []byte, int) {
+	if bytes.HasPrefix(lower[i:], []byte("<!--")) {
+		lower[i], lower[i+1], lower[i+2], lower[i+3] = ' ', ' ', ' ', ' '
+		return 5, nil, i + 3
+	}
+	if bytes.HasPrefix(lower[i:], []byte("<script")) && (i+7 == len(lower) || isTagNameEnd(lower[i+7])) {
+		return 1, []byte("</script"), i + 6
+	}
+	if bytes.HasPrefix(lower[i:], []byte("<style")) && (i+6 == len(lower) || isTagNameEnd(lower[i+6])) {
+		return 1, []byte("</style"), i + 5
+	}
+	return 1, nil, i
 }

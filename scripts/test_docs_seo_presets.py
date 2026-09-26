@@ -129,6 +129,32 @@ class RenderedMkDocsTemplate(unittest.TestCase):
         }])
         self.assert_no_foreign_identity(pages)
 
+    def test_praetorctl_seo_audit_validates_placeholders_end_to_end(self):
+        """The CLI fails on PlaceholderLang/example-org unless --allow-placeholders is set."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "docs").mkdir()
+            (root / "docs" / "index.md").write_text("---\ndescription: test desc\n---\n# Welcome to example-org/example-repo", encoding="utf-8")
+            # Build with PlaceholderLang to ensure it's in the output.
+            (root / "mkdocs.yml").write_text(BASE_CONFIG + "extra:\n  source_code:\n    repository: https://git.example.org/acme/docs\n    programming_language: PlaceholderLang\n", encoding="utf-8")
+
+            subprocess.run([sys.executable, "-m", "mkdocs", "build", "--strict", "--quiet",
+                            "-f", str(root / "mkdocs.yml"), "-d", str(root / "site")], check=True)
+
+            # The test preset does not generate a sitemap by default (mkdocs needs a real URL or plugin sometimes, or it just generates one).
+            # We'll just provide a dummy one if it doesn't exist so audit passes the sitemap check.
+            if not (root / "site" / "sitemap.xml").exists():
+                (root / "site" / "sitemap.xml").write_text('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"><url><loc>https://docs.example.org/</loc></url></urlset>', encoding="utf-8")
+
+            praetorctl = ROOT / "bin" / "praetorctl"
+            result = subprocess.run([str(praetorctl), "seo", "audit", str(root / "site")], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("PlaceholderLang", result.stderr)
+            self.assertIn("example-org/example-repo", result.stderr)
+
+            result_lax = subprocess.run([str(praetorctl), "seo", "audit", "--allow-placeholders", str(root / "site")], capture_output=True, text=True)
+            self.assertEqual(result_lax.returncode, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

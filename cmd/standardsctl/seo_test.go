@@ -59,6 +59,15 @@ func TestRunSEO_Negative_FindingsFailTheCommand(t *testing.T) {
 	_, err = captureStdout(t, func() error { return runSEO([]string{"audit", "--require-robots", dir}) })
 	mustErrContain(t, err, "[FAIL] 1 SEO finding(s)")
 
+	// --allow-placeholders parses through to the options.
+	dirWithPlaceholders := seoSite(t, strings.Replace(seoFixtureArticle, `"D"`, `"PlaceholderLang"`, 1))
+	_, err = captureStdout(t, func() error { return runSEO([]string{"audit", dirWithPlaceholders}) })
+	mustErrContain(t, err, "[FAIL] 1 SEO finding(s)")
+	_, err = captureStdout(t, func() error { return runSEO([]string{"audit", "--allow-placeholders", dirWithPlaceholders}) })
+	if err != nil {
+		t.Fatalf("expected audit to pass with --allow-placeholders, got %v", err)
+	}
+
 	for _, args := range [][]string{{}, {"bogus"}, {"audit", "a", "b"}} {
 		mustErrContain(t, runSEO(args), seoUsage)
 	}

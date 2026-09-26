@@ -182,6 +182,8 @@ func TestAuditSite_Boundary_HeadDetection(t *testing.T) {
 		// A '>' inside a quoted attribute does not close the start tag.
 		"quoted.html":        page(`<script data-x="a>b" type="application/ld+json">` + siteCode + `</script>`),
 		"unterm.html":        "<html><head>" + `<script type="application/ld+json">` + siteCode,
+		"scriptcomment.html": page(`<script>var x = "<!--";</script>` + jsonLD(siteCode)),
+		"jsoncomment.html":   page(jsonLD(strings.Replace(siteCode, `"author": {`, `"name": "x <!-- y", "author": {`, 1))),
 		"emptyld.html":       page(jsonLD("   ")),
 		"commenthead.html":   "<html><!-- <head> --> <head>" + jsonLD(siteCode) + "</head></html>",
 		"commentscript.html": page("<!-- " + jsonLD(`{"@type":`) + " -->" + jsonLD(siteCode)),
@@ -191,7 +193,7 @@ func TestAuditSite_Boundary_HeadDetection(t *testing.T) {
 	requireFinding(t, report, "nohead.html", "no <head> element")
 	requireFinding(t, report, "unterm.html", "unterminated <script> element in <head>")
 	requireFinding(t, report, "emptyld.html", "empty payload")
-	for _, clean := range []string{"implicit.html", "rawtext.html", "quoted.html", "commenthead.html", "commentscript.html"} {
+	for _, clean := range []string{"implicit.html", "rawtext.html", "quoted.html", "commenthead.html", "commentscript.html", "scriptcomment.html", "jsoncomment.html"} {
 		for _, f := range report.Findings {
 			if f.File == clean {
 				t.Errorf("%s: unexpected finding %q", clean, f.Message)
@@ -200,6 +202,31 @@ func TestAuditSite_Boundary_HeadDetection(t *testing.T) {
 	}
 	if len(report.Findings) != 3 {
 		t.Fatalf("expected three findings, got %+v", report.Findings)
+	}
+}
+
+func TestAuditSite_Placeholders(t *testing.T) {
+	root := writeSite(t, map[string]string{
+		"head.html":   "<html><head><title>example-org/example-repo</title>" + jsonLD(siteCode) + "</head><body></body></html>",
+		"body.html":   "<html><head>" + jsonLD(siteCode) + "</head><body>PlaceholderLang</body></html>",
+		"clean.html":  page(jsonLD(siteCode)),
+		"sitemap.xml": siteSitemap,
+	})
+
+	// With AllowPlaceholders false (the default), the placeholders surface as findings.
+	strict := auditSite(t, root, SiteAuditOptions{AllowPlaceholders: false})
+	requireFinding(t, strict, "head.html", "carries unedited example-org/example-repo placeholder")
+	requireFinding(t, strict, "body.html", "carries unedited PlaceholderLang placeholder")
+	for _, f := range strict.Findings {
+		if f.File == "clean.html" {
+			t.Errorf("clean.html: unexpected finding %q", f.Message)
+		}
+	}
+
+	// With AllowPlaceholders true, the placeholders are ignored.
+	lax := auditSite(t, root, SiteAuditOptions{AllowPlaceholders: true})
+	for _, f := range lax.Findings {
+		t.Errorf("unexpected finding in lax audit: %s: %s", f.File, f.Message)
 	}
 }
 
