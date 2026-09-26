@@ -33,9 +33,10 @@ flowchart TD
 Dashed edges cross into infrastructure this repository does not ship. The ARC scale sets and the
 ArgoCD Application are operator data: `deploy/arc/` and `deploy/k8s/` are owner-only paths
 (`ownerOnlyPrefixes` in `internal/operationalsync/overlay.go`) that exist only in the operational
-fork, and ADR-0012 forbids them here. Praetor does not dispatch jobs: `praetorctl audit` checks that
-the runner policy resolves (`auditRunnerMatrix` in `cmd/standardsctl/audit.go`), and this
-repository's workflows run on GitHub-hosted runners.
+fork, and the engine's `.gitignore` ignores them (`TestOwnerOnlyPrefixesAreIgnoredByTheEngine` in
+`internal/operationalsync/owner_only_test.go`). Praetor does not dispatch jobs: `praetorctl audit`
+checks that the runner policy resolves (`auditRunnerMatrix` in `cmd/standardsctl/audit.go`), and
+this repository's workflows run on GitHub-hosted runners.
 
 ---
 

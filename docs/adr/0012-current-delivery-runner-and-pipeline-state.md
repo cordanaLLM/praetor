@@ -116,8 +116,9 @@ a runner until an operator defines that set or overrides the route.
 
 - **Positive**: every current-state claim in these five areas points at a file, a command or a test,
   and the superseded records say so on their first line.
-- **Positive**: the checkable clause below turns "operator data stays in the fork" into a replayed
-  check instead of a sentence.
+- **Positive**: "operator data stays in the fork" is already a replayed check:
+  `TestOwnerOnlyPrefixesAreIgnoredByTheEngine` (`internal/operationalsync/owner_only_test.go`)
+  fails when any `ownerOnlyPrefixes` entry is not ignored by the engine's `.gitignore`.
 - **Negative**: the image and ARC gaps remain gaps. This record states them; it does not add a publish
   workflow or an arm64 scale set.
 - **Neutral**: ADR-0001 through ADR-0006 bodies are unchanged; readers of an older record follow its
@@ -125,20 +126,16 @@ a runner until an operator defines that set or overrides the route.
 
 ## Checkable clauses
 
-```adr-constraint
-id: operator-deployment-data-stays-in-the-fork
-kind: forbidden-path
-forbids:
-  - "deploy/arc/"
-  - "deploy/k8s/"
-  - ".config/fleet.yaml"
-  - ".config/orgs/"
-rationale: >-
-  ARC scale sets, GitOps Applications and fleet or organization runner policy name one operator's
-  organization, secrets and capacity. They are owner-only paths in internal/operationalsync
-  (ownerOnlyPrefixes) and live in the operational fork. A copy tracked in the engine would ship one
-  operator's data to every adopter and drift from the fork's copy.
-```
+This record declares no `adr-constraint` block, on purpose. A `forbidden-path` clause for the
+owner-only paths would fail in the operational fork: the fork tracks `deploy/arc/`, `deploy/k8s/`,
+`.config/fleet.yaml` and `.config/orgs/` by design, it receives `docs/adr/` from this repository
+through `internal/operationalsync`, and its `make verify-all` runs `praetorctl adr verify`, which
+replays every record against `git ls-files` (`internal/adr/checks.go`, `trackedPaths`) with no
+per-repository exemption. `TestShippedDecisionRecordsAllowOwnerOnlyPaths`
+(`internal/operationalsync/owner_only_records_test.go`) replays every shipped record in a tree
+shaped like the fork and fails on such a clause. The engine side is covered by the `.gitignore`
+replay named under Consequences, which reads `ownerOnlyPrefixes` directly and so cannot fall behind
+that list.
 
 ## References
 
