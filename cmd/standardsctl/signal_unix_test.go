@@ -108,3 +108,165 @@ func waitForStubStart(t *testing.T, path string) time.Time {
 	t.Fatalf("the stub git never started: %s is absent", path)
 	return time.Time{}
 }
+
+// stubGo stands in for the Go toolchain during gate run subprocess signal tests.
+// For "go test" it records its PID into PRAETOR_TEST_READY and waits for cancellation.
+const stubGo = `#!/bin/sh
+case "$1" in
+	env)
+		case "$2" in
+			CGO_ENABLED) echo "1" ;;
+			CC) echo "cc" ;;
+			*) echo "" ;;
+		esac
+		;;
+	mod)
+		exit 0
+		;;
+	list)
+		echo "$PRAETOR_TEST_REPO"
+		;;
+	test)
+		echo $$ > "$PRAETOR_TEST_READY"
+		trap 'exit 143' TERM INT
+		while true; do
+			sleep 1
+		done
+		;;
+	*)
+		exit 0
+		;;
+esac
+`
+
+const stubScanner = "#!/bin/sh\nexit 0\n"
+
+// newHermeticGateRepo creates an isolated git repository with valid lockfiles, manifest,
+// module definition and gosec config, committed to the main branch so describeTree finds it clean.
+func newHermeticGateRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	env := append(os.Environ(),
+		"GIT_CONFIG_GLOBAL="+filepath.Join(dir, "no-such-gitconfig"),
+		"GIT_CONFIG_SYSTEM="+filepath.Join(dir, "no-such-gitconfig"),
+		"GIT_AUTHOR_NAME=praetor-test", "GIT_AUTHOR_EMAIL=test@example.invalid",
+		"GIT_COMMITTER_NAME=praetor-test", "GIT_COMMITTER_EMAIL=test@example.invalid",
+	)
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = env
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v in %s: %v\n%s", args, dir, err, string(out))
+		}
+	}
+	runGit("init", "-q", "-b", "main")
+	writeFile := func(name, content string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFile("README.md", "# fixture\n")
+	writeFile(".standards.yaml", "version: 1\nrepository:\n  owner: example\n  name: demo\nprofiles:\n  - none\n")
+	writeFile(".standards.lock", "{\"version\": 1}\n")
+	writeFile("go.mod", "module example.invalid/fixture\n\ngo 1.27\n")
+	writeFile(".gosec.json", "{}\n")
+	runGit("add", ".")
+	runGit("commit", "-q", "-m", "fixture")
+	return dir
+}
+
+// TestGateRun_Positive_InterruptCleansUpWorktreeAndBranch asserts that when gate run is
+// interrupted by SIGINT or SIGTERM while running race tests in an isolated worktree, the
+// cancellation propagates and removeWorktree cleans up both the worktree directory and git
+// branch without being blocked by TerminateCommandsOnSignal (BUG-791).
+func TestGateRun_Positive_InterruptCleansUpWorktreeAndBranch(t *testing.T) {
+	for _, sig := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM} {
+		t.Run(sig.String(), func(t *testing.T) {
+			stubs := t.TempDir()
+			repo := newHermeticGateRepo(t)
+			readyPath := filepath.Join(t.TempDir(), "ready")
+
+			writeStub := func(name, script string) {
+				if err := os.WriteFile(filepath.Join(stubs, name), []byte(script), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			writeStub("go", stubGo)
+			writeStub("govulncheck", stubScanner)
+			writeStub("gosec", stubScanner)
+			writeStub("cc", stubScanner)
+			writeStub("gcc", stubScanner)
+
+			binary, err := os.Executable()
+			if err != nil {
+				t.Fatal(err)
+			}
+			helper := exec.Command(binary, signalProcessRun)
+			helper.Env = append(os.Environ(),
+				"PATH="+stubs+string(os.PathListSeparator)+os.Getenv("PATH"),
+				"PRAETOR_SIGNAL_PROCESS_TEST=gate run --path="+repo,
+				"PRAETOR_TEST_READY="+readyPath,
+				"PRAETOR_TEST_REPO="+repo,
+				"GOCOVERDIR="+t.TempDir(),
+			)
+			helper.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			var helperOut strings.Builder
+			helper.Stdout = &helperOut
+			helper.Stderr = &helperOut
+			if err := helper.Start(); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if helper.ProcessState == nil {
+					if err := syscall.Kill(-helper.Process.Pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+						t.Errorf("kill helper group: %v", err)
+					}
+					var exit *exec.ExitError
+					if err := helper.Wait(); err != nil && !errors.As(err, &exit) {
+						t.Errorf("reap helper: %v", err)
+					}
+				}
+				if t.Failed() {
+					t.Logf("helper output:\n%s", helperOut.String())
+				}
+			})
+
+			waitForStubStart(t, readyPath)
+
+			wtDir := filepath.Join(repo, ".standards", "worktrees")
+			entries, err := os.ReadDir(wtDir)
+			if err != nil || len(entries) == 0 {
+				t.Fatalf("expected worktree to exist in %s before interrupt: %v", wtDir, err)
+			}
+			branchOut, err := exec.Command("git", "-C", repo, "branch", "--list", "wt/*").CombinedOutput()
+			if err != nil {
+				t.Fatalf("git branch --list: %v", err)
+			}
+			if strings.TrimSpace(string(branchOut)) == "" {
+				t.Fatal("expected wt/* branch to exist before interrupt")
+			}
+
+			if err := syscall.Kill(-helper.Process.Pid, sig); err != nil {
+				t.Fatal(err)
+			}
+
+			var exit *exec.ExitError
+			if err := helper.Wait(); !errors.As(err, &exit) {
+				t.Fatalf("praetorctl must exit on interrupt: %v", err)
+			}
+
+			if remaining, err := os.ReadDir(wtDir); err == nil && len(remaining) != 0 {
+				t.Fatalf("worktree directory was not cleaned up after %v: found %v", sig, remaining)
+			}
+
+			afterBranches, err := exec.Command("git", "-C", repo, "branch", "--list", "wt/*").CombinedOutput()
+			if err != nil {
+				t.Fatalf("git branch --list: %v", err)
+			}
+			if trimmed := strings.TrimSpace(string(afterBranches)); trimmed != "" {
+				t.Fatalf("git branch was not deleted after %v: %q", sig, trimmed)
+			}
+		})
+	}
+}

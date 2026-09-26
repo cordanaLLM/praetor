@@ -191,7 +191,7 @@ func main() {
 
 	cmd := os.Args[1]
 	args := os.Args[2:]
-	if !ownsTerminationSignals(cmd) {
+	if !ownsTerminationSignals(cmd, args) {
 		// Every command praetorctl runs sits in a process group of its own, out of reach of
 		// a terminal's Ctrl-C, and no subcommand observes the signal: this forwards the
 		// signal to those groups, so git still cleans up, and kills any group still running
@@ -211,11 +211,29 @@ func main() {
 	}
 }
 
-// ownsTerminationSignals reports whether command handles SIGINT and SIGTERM itself. serve
-// drains its health server on them (container.WaitForGracefulDrain), which a handler that
-// ends the process on the signal would cut short.
-func ownsTerminationSignals(command string) bool {
-	return command == "serve"
+// ownsTerminationSignals reports whether command handles SIGINT and SIGTERM itself:
+// serve drains its health server on them (container.WaitForGracefulDrain); gate run and the
+// gatekeeper agent tear down the isolated test worktree and branch under their root context,
+// which a handler that terminates child commands and locks the command registry would block.
+func ownsTerminationSignals(command string, args []string) bool {
+	return command == "serve" || needsSignalRootContext(command, args)
+}
+
+// needsSignalRootContext reports whether command derives its work from a signal-notified root context.
+func needsSignalRootContext(command string, args []string) bool {
+	switch command {
+	case "gate":
+		return len(args) > 0 && args[0] == "run"
+	case "agent":
+		return len(args) >= 2 && args[0] == "run" && isGatekeeperAgent(args[1])
+	default:
+		return false
+	}
+}
+
+// isGatekeeperAgent reports whether persona is the gatekeeper agent helper.
+func isGatekeeperAgent(persona string) bool {
+	return persona == "praetor-gatekeeper" || persona == "praetor_gatekeeper"
 }
 
 // commandFunc is the signature every top-level command implements.
@@ -330,7 +348,7 @@ func commandContext(timeout time.Duration) (context.Context, context.CancelFunc)
 }
 
 func dispatchCommand(cmd string, args []string) error {
-	if rootCtx == nil {
+	if rootCtx == nil && needsSignalRootContext(cmd, args) {
 		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer cancel()
 		rootCtx = ctx

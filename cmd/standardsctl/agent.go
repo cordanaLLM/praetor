@@ -86,7 +86,7 @@ const agentTimeout = 5 * time.Minute
 // agentContext bounds one agent helper. The gatekeeper runs the full gating pipeline, so it takes
 // the gate run's own deadline: a fixed five minutes cut its race stage short (#314).
 func agentContext(agentName string) (context.Context, context.CancelFunc) {
-	if agentName == "praetor-gatekeeper" || agentName == "praetor_gatekeeper" {
+	if isGatekeeperAgent(agentName) {
 		return gating.WithRunDeadline(rootContext(), gating.EnvRunBudget())
 	}
 	return commandContext(agentTimeout)
