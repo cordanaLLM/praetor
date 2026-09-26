@@ -77,7 +77,7 @@ linters:
         # local identifier that happens to be spelled the same way.
         - pattern: ^exec\.Command(Context)?$
           pkg: ^os/exec$
-          msg: use internal/util.RunCommand, RunGit, or RunGitProbe for a read-only inspection of a repository Praetor does not own; they enforce a context deadline (HISS-02) and are the single audited exec entry point
+          msg: use internal/util.RunCommand, RunGit or RunGitBytes, or RunGitProbe for a read-only inspection of a repository Praetor does not own; they enforce a context deadline (HISS-02) and are the single audited exec entry point
         - pattern: ^http\.DefaultClient$
           pkg: ^net/http$
           msg: http.DefaultClient has no timeout; build an http.Client with an explicit timeout (HISS-02)

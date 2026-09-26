@@ -362,7 +362,7 @@ func (m *Manager) runEffectiveProbe(ctx context.Context, path string, args ...st
 	if len(args) == 0 || args[0] != "config" {
 		argv = append([]string{"-c", "core.fsmonitor=false"}, args...)
 	}
-	return util.RunCommandBytes(probeCtx, path, "git", removalProbeMaxBytes, argv...)
+	return util.RunGitBytes(probeCtx, path, removalProbeMaxBytes, argv...)
 }
 
 func (m *Manager) checkRemovalGitlinks(ctx context.Context, path string) error {
@@ -493,7 +493,7 @@ func (m *Manager) refLines(ctx context.Context, args ...string) ([]string, error
 	return refs, nil
 }
 
-// runGit executes git through the audited util.RunCommand entry point (HISS-02: the
+// runGit executes git through the audited util.RunGit entry point (HISS-02: the
 // call always carries a deadline; DefaultGitTimeout applies when the caller's context
 // has none). The arguments are fixed by this package and validated task ids or branch
 // names, never free-form user input.
@@ -517,7 +517,7 @@ func (m *Manager) runGit(ctx context.Context, args ...string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("prepare git environment: %w", err)
 	}
-	out, err := util.RunCommand(mutatingCtx, m.rootDir, "git", gitArgs...)
+	out, err := util.RunGit(mutatingCtx, m.rootDir, gitArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("git %s failed: %w (output: %s)", strings.Join(args, " "), err, out)
 	}

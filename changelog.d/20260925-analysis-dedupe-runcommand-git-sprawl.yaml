@@ -1,0 +1,3 @@
+type: fixed
+title: Report git run through util.RunCommand or util.RunCommandBytes as utility sprawl in praetorctl dedupe scan, add util.RunGitBytes as the bounded-output git helper, and move the four production call sites that bypassed the git helpers onto util.RunGit and util.RunGitBytes
+breaking: false

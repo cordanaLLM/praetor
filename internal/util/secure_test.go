@@ -574,6 +574,197 @@ func TestWriteFileAtomic_Boundary(t *testing.T) {
 	}
 }
 
+// assertOnlyEntries fails unless dir holds exactly the named entries, so a leftover
+// temp file from WriteFileExclusive is caught.
+func assertOnlyEntries(t *testing.T, dir string, want ...string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("readdir %s: %v", dir, err)
+	}
+	got := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		got = append(got, entry.Name())
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("entries in %s = %v, want %v", dir, got, want)
+	}
+}
+
+func readTestFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path) // #nosec G304 -- test-local path from t.TempDir
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(data)
+}
+
+func TestWriteFileExclusive_Positive(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "receipt.key")
+
+	if err := WriteFileExclusive(path, []byte("seed\n"), 0o600); err != nil {
+		t.Fatalf("WriteFileExclusive: %v", err)
+	}
+	if got := readTestFile(t, path); got != "seed\n" {
+		t.Errorf("content = %q, want %q", got, "seed\n")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if ModeIsProtection() && info.Mode().Perm() != 0o600 {
+		t.Errorf("mode = %#o, want 0600", info.Mode().Perm())
+	}
+	// The temp name is dropped once the link lands: exactly one entry remains.
+	assertOnlyEntries(t, dir, "receipt.key")
+}
+
+func TestWriteFileExclusive_Negative(t *testing.T) {
+	dir := t.TempDir()
+
+	if err := WriteFileExclusive(filepath.Join(dir, "ww.key"), []byte("x"), 0o666); !errors.Is(err, ErrInsecurePerm) {
+		t.Errorf("expected ErrInsecurePerm for world-writable mode, got %v", err)
+	}
+	if err := WriteFileExclusive(filepath.Join(dir, "absent", "x.key"), []byte("x"), 0o600); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a missing parent directory must report ErrNotExist, got %v", err)
+	}
+
+	// An existing file is never truncated or replaced, whatever the new payload.
+	existing := filepath.Join(dir, "existing.key")
+	if err := os.WriteFile(existing, []byte("the original, valid key"), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := WriteFileExclusive(existing, []byte("x"), 0o600); !errors.Is(err, os.ErrExist) {
+		t.Errorf("an existing file must report ErrExist, got %v", err)
+	}
+	if got := readTestFile(t, existing); got != "the original, valid key" {
+		t.Errorf("existing content = %q, want it untouched", got)
+	}
+
+	// A directory at the path is an existing entry too.
+	if err := os.Mkdir(filepath.Join(dir, "sub"), 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := WriteFileExclusive(filepath.Join(dir, "sub"), []byte("x"), 0o600); !errors.Is(err, os.ErrExist) {
+		t.Errorf("a directory at the path must report ErrExist, got %v", err)
+	}
+	assertOnlyEntries(t, dir, "existing.key", "sub")
+}
+
+func TestWriteFileExclusive_Negative_DanglingSymlink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "elsewhere.key")
+	link := filepath.Join(dir, "receipt.key")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("this platform cannot create a symbolic link without privilege: %v", err)
+	}
+	if err := WriteFileExclusive(link, []byte("x"), 0o600); !errors.Is(err, os.ErrExist) {
+		t.Errorf("a dangling symlink at the path must report ErrExist, got %v", err)
+	}
+	if _, err := os.Lstat(target); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the write must never follow the link to create %s, got %v", target, err)
+	}
+}
+
+func TestWriteFileExclusive_Boundary(t *testing.T) {
+	dir := t.TempDir()
+
+	// Boundary: perm 0 selects SecureFilePerm.
+	defaulted := filepath.Join(dir, "defaulted.key")
+	if err := WriteFileExclusive(defaulted, []byte("x"), 0); err != nil {
+		t.Fatalf("WriteFileExclusive with default perm: %v", err)
+	}
+	if info, err := os.Stat(defaulted); err != nil {
+		t.Fatalf("stat: %v", err)
+	} else if ModeIsProtection() && info.Mode().Perm() != SecureFilePerm {
+		t.Errorf("mode = %#o, want %#o", info.Mode().Perm(), SecureFilePerm)
+	}
+
+	// Boundary: a zero-length payload is still created exactly once.
+	empty := filepath.Join(dir, "empty.key")
+	if err := WriteFileExclusive(empty, nil, 0o600); err != nil {
+		t.Fatalf("WriteFileExclusive empty: %v", err)
+	}
+	if err := WriteFileExclusive(empty, nil, 0o600); !errors.Is(err, os.ErrExist) {
+		t.Errorf("a second empty write must report ErrExist, got %v", err)
+	}
+	assertOnlyEntries(t, dir, "defaulted.key", "empty.key")
+}
+
+// TestWriteFileExclusive_Boundary_CompleteBeforeVisible asserts the crash-safety
+// invariant directly: at the instant the target name comes into existence, the file
+// behind it already holds the full payload. A writer that created the target first and
+// wrote into it afterwards would expose an empty or partial file to a crash in between.
+func TestWriteFileExclusive_Boundary_CompleteBeforeVisible(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "receipt.key")
+	payload := strings.Repeat("k", 8192)
+
+	original := linkFile
+	t.Cleanup(func() { linkFile = original })
+	linked := false
+	linkFile = func(root *os.Root, oldname, newname string) error {
+		linked = true
+		// The seam receives names relative to the pinned directory, which is dir.
+		if _, err := os.Lstat(filepath.Join(dir, newname)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("the target must not exist before the link, got %v", err)
+		}
+		if got := readTestFile(t, filepath.Join(dir, oldname)); got != payload {
+			t.Errorf("the temp file held %d bytes at link time, want the full %d", len(got), len(payload))
+		}
+		return original(root, oldname, newname)
+	}
+
+	if err := WriteFileExclusive(path, []byte(payload), 0o600); err != nil {
+		t.Fatalf("WriteFileExclusive: %v", err)
+	}
+	if !linked {
+		t.Fatal("the target must be published by a link of the finished temp file")
+	}
+	if got := readTestFile(t, path); got != payload {
+		t.Errorf("target held %d bytes, want %d", len(got), len(payload))
+	}
+}
+
+// TestWriteFileExclusive_Boundary_NoHardLinks covers a filesystem that refuses hard
+// links: the write falls back to an O_EXCL create, which stays exclusive.
+func TestWriteFileExclusive_Boundary_NoHardLinks(t *testing.T) {
+	dir := t.TempDir()
+	original := linkFile
+	t.Cleanup(func() { linkFile = original })
+	errNoLinks := errors.New("hard links are not supported on this filesystem")
+	linkFile = func(*os.Root, string, string) error { return errNoLinks }
+
+	path := filepath.Join(dir, "receipt.key")
+	if err := WriteFileExclusive(path, []byte("seed\n"), 0o600); err != nil {
+		t.Fatalf("WriteFileExclusive fallback: %v", err)
+	}
+	if got := readTestFile(t, path); got != "seed\n" {
+		t.Errorf("fallback content = %q, want %q", got, "seed\n")
+	}
+	assertOnlyEntries(t, dir, "receipt.key")
+
+	// A racer that creates the target between the failed link and the fallback wins;
+	// the fallback reports ErrExist and leaves the racer's file untouched.
+	raced := filepath.Join(dir, "raced.key")
+	linkFile = func(*os.Root, string, string) error {
+		if err := os.WriteFile(raced, []byte("the racer's key"), 0o600); err != nil {
+			t.Fatalf("racer write: %v", err)
+		}
+		return errNoLinks
+	}
+	err := WriteFileExclusive(raced, []byte("x"), 0o600)
+	if !errors.Is(err, os.ErrExist) || !errors.Is(err, errNoLinks) {
+		t.Errorf("expected ErrExist joined with the link failure, got %v", err)
+	}
+	if got := readTestFile(t, raced); got != "the racer's key" {
+		t.Errorf("raced content = %q, want the racer's file untouched", got)
+	}
+	assertOnlyEntries(t, dir, "raced.key", "receipt.key")
+}
+
 func TestMkdirSecure_3D(t *testing.T) {
 	root := t.TempDir()
 

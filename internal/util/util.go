@@ -515,6 +515,15 @@ func RunGit(ctx context.Context, dir string, args ...string) (string, error) {
 	return RunCommand(ctx, dir, "git", args...)
 }
 
+// RunGitBytes executes a git command through RunCommandBytes: the bounded-output form of
+// RunGit, for a caller that needs standard output and standard error apart and byte-exact
+// (NUL-separated listings, a probe whose empty streams carry meaning) or a cap below
+// MaxCommandOutputBytes. It runs under the caller's environment exactly as RunGit does;
+// RunGitProbe builds its isolated, read-only inspection on top of it.
+func RunGitBytes(ctx context.Context, dir string, maxBytes int, args ...string) (CommandBytes, error) {
+	return RunCommandBytes(ctx, dir, "git", maxBytes, args...)
+}
+
 // ResolveRepoIdentity extracts the owner and repository name from the configured origin
 // remote, falling back to the <owner>/<repo> shape of the absolute directory path.
 //

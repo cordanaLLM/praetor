@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,6 +52,9 @@ var (
 	ErrMalformedPinnedKey = errors.New("malformed pinned receipt public key: expected 64 hex characters")
 	// ErrKeyNotPinned is returned when a receipt was signed by a key other than the pinned one.
 	ErrKeyNotPinned = errors.New("receipt was not signed by the pinned receipt.public_key")
+	// ErrSigningKeyExists is returned by SaveSigningKey when anything already occupies the
+	// key path, including a key another keygen run created concurrently.
+	ErrSigningKeyExists = errors.New("receipt signing key already exists: refusing to overwrite")
 )
 
 // manifestReceiptSection is the minimal view of .standards.yaml required to read the
@@ -114,17 +116,14 @@ func readKeyFile(path string) (string, error) {
 		return "", err
 	}
 
-	// #nosec G304 -- path is derived from os.UserConfigDir(), never from user input.
-	file, err := os.Open(path)
+	// A key file past maxKeyFileBytes is refused, not cut to its prefix: a truncated read
+	// would accept whatever key happens to fill the first maxKeyFileBytes bytes.
+	data, err := util.ReadFileLimited(path, maxKeyFileBytes)
+	if errors.Is(err, util.ErrFileTooLarge) {
+		return "", fmt.Errorf("%s: %w: %w", path, ErrMalformedSigningKey, err)
+	}
 	if err != nil {
-		return "", fmt.Errorf("open receipt signing key %s: %w", path, err)
-	}
-	data, readErr := io.ReadAll(io.LimitReader(file, maxKeyFileBytes))
-	if cerr := file.Close(); cerr != nil && readErr == nil {
-		readErr = cerr
-	}
-	if readErr != nil {
-		return "", fmt.Errorf("read receipt signing key %s: %w", path, readErr)
+		return "", fmt.Errorf("read receipt signing key %s: %w", path, err)
 	}
 	return string(data), nil
 }
@@ -153,13 +152,18 @@ func ParseSigningKey(raw string) (ed25519.PrivateKey, error) {
 }
 
 // SaveSigningKey writes the 32-byte seed of priv to path with mode 0600, creating the
-// parent directory with mode 0700. It never overwrites an existing key.
+// parent directory with mode 0700. It never overwrites an existing key: the write is an
+// exclusive create, so of two concurrent keygen runs exactly one succeeds and the other
+// fails with ErrSigningKeyExists, and a crash mid-write never leaves a truncated key that
+// would block the next keygen.
 func SaveSigningKey(path string, priv ed25519.PrivateKey) error {
 	if len(priv) != ed25519.PrivateKeySize {
 		return fmt.Errorf("%w: private key is %d bytes", ErrMalformedSigningKey, len(priv))
 	}
-	if _, err := os.Stat(path); err == nil {
-		return fmt.Errorf("receipt signing key already exists at %s: refusing to overwrite", path)
+	// This early check only avoids touching the key directory when a key is already
+	// there; the exclusive create below is what actually prevents an overwrite.
+	if _, err := os.Lstat(path); err == nil {
+		return fmt.Errorf("%w at %s", ErrSigningKeyExists, path)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("stat %s: %w", path, err)
 	}
@@ -168,7 +172,11 @@ func SaveSigningKey(path string, priv ed25519.PrivateKey) error {
 		return fmt.Errorf("create receipt key directory: %w", err)
 	}
 	seed := hex.EncodeToString(priv.Seed()) + "\n"
-	if err := util.WriteFileSecure(path, []byte(seed), SigningKeyPerm); err != nil {
+	err := util.WriteFileExclusive(path, []byte(seed), SigningKeyPerm)
+	if errors.Is(err, os.ErrExist) {
+		return fmt.Errorf("%w at %s: %w", ErrSigningKeyExists, path, err)
+	}
+	if err != nil {
 		return fmt.Errorf("write receipt signing key: %w", err)
 	}
 	return nil

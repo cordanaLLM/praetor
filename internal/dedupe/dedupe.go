@@ -167,38 +167,47 @@ func checkUtilitySprawl(fset *token.FileSet, node *ast.File, relPath string, rep
 	})
 }
 
-// gitSprawlReplacement names both audited entry points because neither answers for every
-// call. util.RunGit inherits the ambient environment and the inspected repository's own
-// configuration, so recommending it alone reproduced the defect this rule exists to prevent
-// -- a scanned tree's core.fsmonitor command executing during the scan. util.RunGitProbe
-// scrubs that environment but is read-only by construction (internal/util/git_probe.go
-// forces a five-second deadline and core.hooksPath=devnull), so recommending it alone tells
-// a clone, fetch or commit to silently drop its hooks and die at five seconds. The
-// .golangci.yml forbidigo rule for the same call names the same pair (plus util.RunCommand,
-// which answers for a non-git binary), and
-// TestScanRepo_Boundary_SprawlAdviceMatchesTheLinterRule reads this constant's helper names
-// and requires that message to carry each of them, so the two cannot drift apart unnoticed.
-const gitSprawlReplacement = "util.RunGit(ctx, repoPath, ...), or util.RunGitProbe(ctx, repoPath, maxBytes, ...) " +
-	"for a read-only inspection of a repository Praetor does not own"
+// gitSprawlReplacement names the audited git entry points because no single one answers for
+// every call. util.RunGit and util.RunGitBytes (its bounded-output form) run under the
+// caller's environment and the repository's own configuration, so recommending them alone
+// reproduced the defect this rule exists to prevent -- a scanned tree's core.fsmonitor
+// command executing during the scan. util.RunGitProbe scrubs that environment but is
+// read-only by construction (internal/util/git_probe.go forces a five-second deadline and
+// core.hooksPath=devnull), so recommending it alone tells a clone, fetch or commit to
+// silently drop its hooks and die at five seconds. The .golangci.yml forbidigo rule for the
+// same call names the same helpers (plus util.RunCommand, which answers for a non-git
+// binary), and TestScanRepo_Boundary_SprawlAdviceMatchesTheLinterRule reads this constant's
+// helper names and requires that message to carry each of them, so the two cannot drift
+// apart unnoticed.
+const gitSprawlReplacement = "util.RunGit(ctx, repoPath, ...) or util.RunGitBytes(ctx, repoPath, maxBytes, ...), " +
+	"or util.RunGitProbe(ctx, repoPath, maxBytes, ...) for a read-only inspection of a repository Praetor does not own"
 
-// gitExecForm reports where an os/exec constructor keeps the executable name and how to
-// print the call. exec.Command takes the name first; exec.CommandContext takes the context
-// first and the name second.
-func gitExecForm(function string) (nameIndex int, pattern string, ok bool) {
-	switch function {
-	case "Command":
-		return 0, `exec.Command("git", ...)`, true
-	case "CommandContext":
-		return 1, `exec.CommandContext(ctx, "git", ...)`, true
-	default:
-		return 0, "", false
-	}
+// gitCallForm records where a command constructor keeps the executable name and how to
+// print the call.
+type gitCallForm struct {
+	nameIndex int
+	pattern   string
 }
 
-// checkAdHocGit reports a direct exec of git and names the helper to use instead.
+// gitCallForms lists every constructor that can run git outside the audited git helpers,
+// keyed by the package-qualified name the call is written with. exec.Command takes the name
+// first and exec.CommandContext takes the context first. util.RunCommand and
+// util.RunCommandBytes are audited exec entry points, but naming "git" to them bypasses the
+// git helpers, which is how four call sites stayed out of this report (BUG-818): the rule
+// matched the exec package only. Inside internal/util they are the implementation, so
+// checkUtilitySprawl never inspects that package.
+var gitCallForms = map[string]gitCallForm{
+	"exec.Command":         {nameIndex: 0, pattern: `exec.Command("git", ...)`},
+	"exec.CommandContext":  {nameIndex: 1, pattern: `exec.CommandContext(ctx, "git", ...)`},
+	"util.RunCommand":      {nameIndex: 2, pattern: `util.RunCommand(ctx, dir, "git", ...)`},
+	"util.RunCommandBytes": {nameIndex: 2, pattern: `util.RunCommandBytes(ctx, dir, "git", maxBytes, ...)`},
+}
+
+// checkAdHocGit reports a git execution that bypasses the audited git helpers and names the
+// helper to use instead.
 //
-// The name index comes from gitExecForm. Asserting a literal "git" at Args[0] for both
-// constructors left the CommandContext arm dead by construction -- Args[0] is then the
+// The name index comes from gitCallForms. Asserting a literal "git" at Args[0] for every
+// constructor left the CommandContext arm dead by construction -- Args[0] is then the
 // context expression, never a BasicLit -- so exec.CommandContext(ctx, "git", ...) passed the
 // name check and was dropped one line later (BUG-755, and one clause of BUG-818).
 func checkAdHocGit(call *ast.CallExpr, relPath string, line int, report *DedupeReport) {
@@ -207,21 +216,21 @@ func checkAdHocGit(call *ast.CallExpr, relPath string, line int, report *DedupeR
 		return
 	}
 	ident, ok := sel.X.(*ast.Ident)
-	if !ok || ident.Name != "exec" {
+	if !ok {
 		return
 	}
-	nameIndex, pattern, ok := gitExecForm(sel.Sel.Name)
-	if !ok || len(call.Args) <= nameIndex {
+	form, ok := gitCallForms[ident.Name+"."+sel.Sel.Name]
+	if !ok || len(call.Args) <= form.nameIndex {
 		return
 	}
-	lit, ok := call.Args[nameIndex].(*ast.BasicLit)
+	lit, ok := call.Args[form.nameIndex].(*ast.BasicLit)
 	if !ok || lit.Value != `"git"` {
 		return
 	}
 	report.SprawlItems = append(report.SprawlItems, SprawlItem{
 		File:        relPath,
 		Line:        line,
-		Pattern:     pattern,
+		Pattern:     form.pattern,
 		Replacement: gitSprawlReplacement,
 	})
 }
