@@ -483,32 +483,9 @@ func inspectWorktreeGitMetadata(path string) (gitMetadataState, error) {
 }
 
 func inspectGitlink(worktree string) (gitMetadataState, error) {
-	data, err := util.ReadConfinedLimited(worktree, ".git", maxGitlinkBytes)
-	if err != nil {
-		return gitMetadataUnknown, fmt.Errorf("read gitlink: %w", err)
-	}
-	line := strings.TrimRight(string(data), "\r\n")
-	const prefix = "gitdir: "
-	if !strings.HasPrefix(line, prefix) {
-		return gitMetadataUnknown, nil
-	}
-	target := line[len(prefix):]
-	if target == "" {
-		return gitMetadataUnknown, nil
-	}
-	if !filepath.IsAbs(target) {
-		target = filepath.Join(worktree, target)
-	}
-	target = filepath.Clean(target)
-	info, err := os.Stat(target)
-	if errors.Is(err, os.ErrNotExist) {
-		return gitMetadataUnknown, nil
-	}
-	if err != nil {
-		return gitMetadataUnknown, fmt.Errorf("stat gitlink target: %w", err)
-	}
-	if !info.IsDir() {
-		return gitMetadataUnknown, nil
+	target, ok, err := resolveGitlinkTarget(worktree)
+	if err != nil || !ok {
+		return gitMetadataUnknown, err
 	}
 	state, inspectErr := inspectGitDirectory(target)
 	if inspectErr != nil {
@@ -518,6 +495,108 @@ func inspectGitlink(worktree string) (gitMetadataState, error) {
 		return gitMetadataUnknown, nil
 	}
 	return gitMetadataLive, nil
+}
+
+// resolveGitlinkTarget reads the "gitdir: <path>" line of the .git file in worktree and
+// returns the directory it names, cleaned and joined onto worktree when relative. ok is
+// false when the file is no gitlink or its target is not an existing directory; err
+// carries read and stat failures.
+func resolveGitlinkTarget(worktree string) (target string, ok bool, err error) {
+	data, err := util.ReadConfinedLimited(worktree, ".git", maxGitlinkBytes)
+	if err != nil {
+		return "", false, fmt.Errorf("read gitlink: %w", err)
+	}
+	line := strings.TrimRight(string(data), "\r\n")
+	const prefix = "gitdir: "
+	if !strings.HasPrefix(line, prefix) {
+		return "", false, nil
+	}
+	target = line[len(prefix):]
+	if target == "" {
+		return "", false, nil
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(worktree, target)
+	}
+	target = filepath.Clean(target)
+	info, err := os.Stat(target)
+	if errors.Is(err, os.ErrNotExist) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("stat gitlink target: %w", err)
+	}
+	return target, info.IsDir(), nil
+}
+
+// ErrNotCheckout is returned by GitCommonDir for a path HasValidGitRepo does not accept.
+var ErrNotCheckout = errors.New("topology: not a git checkout")
+
+// GitCommonDir returns the canonical git common directory of the checkout at path: the
+// repository every linked worktree of one clone shares. A main checkout's common
+// directory is its own .git; a linked worktree's gitlink names .git/worktrees/<name>,
+// whose commondir file points back at that .git; a submodule's gitlink names
+// .git/modules/<name>, which has no commondir file and is therefore a repository of its
+// own. Two checkouts are worktrees of one repository exactly when their common
+// directories are equal. The result is resolved through util.ResolveExistingPath, so
+// aliased spellings of one directory compare equal. No git process is started.
+func GitCommonDir(ctx context.Context, path string) (string, error) {
+	gitDir, err := checkoutGitDir(path)
+	if err != nil {
+		return "", err
+	}
+	return resolveCommonDir(ctx, gitDir)
+}
+
+// checkoutGitDir returns the git directory of the checkout at path: its .git directory,
+// or the directory its .git gitlink file names. The result is not canonicalised.
+func checkoutGitDir(path string) (string, error) {
+	if !HasValidGitRepo(path) {
+		return "", fmt.Errorf("%w: %s", ErrNotCheckout, path)
+	}
+	gitDir := filepath.Join(path, ".git")
+	info, err := os.Lstat(gitDir)
+	if err != nil {
+		return "", fmt.Errorf("lstat git metadata: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return gitDir, nil
+	}
+	target, ok, err := resolveGitlinkTarget(path)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("%w: %s: gitlink target vanished", ErrNotCheckout, path)
+	}
+	return target, nil
+}
+
+// resolveCommonDir follows gitDir's commondir file when it has one and canonicalises the
+// result.
+func resolveCommonDir(ctx context.Context, gitDir string) (string, error) {
+	common := gitDir
+	data, err := util.ReadConfinedLimited(gitDir, "commondir", maxGitlinkBytes)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+	case err != nil:
+		return "", fmt.Errorf("read commondir of %s: %w", gitDir, err)
+	default:
+		if rel := strings.TrimSpace(string(data)); rel != "" {
+			common = rel
+			if !filepath.IsAbs(common) {
+				common = filepath.Join(gitDir, common)
+			}
+		}
+	}
+	resolved, err := util.ResolveExistingPath(ctx, filepath.Clean(common))
+	if err != nil {
+		return "", fmt.Errorf("resolve git common directory %s: %w", common, err)
+	}
+	if !util.DirExists(resolved) {
+		return "", fmt.Errorf("git common directory %q is not an existing directory", resolved)
+	}
+	return resolved, nil
 }
 
 // HasValidGitRepo reports whether path is a git working tree whose directory or gitlink

@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/topology"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
 )
@@ -22,17 +23,31 @@ const maxPathSegments = 128
 // no go.mod. Callers must not substitute a fabricated Go manifest for the missing file.
 var ErrGoModMissing = errors.New("needs: go.mod not found")
 
-// ScanRepo extracts framework capability needs and dependency mappings from a repository.
-// A repository that no registered language analyzer recognises is an error: silently
+// ScanRepo extracts framework capability needs and dependency mappings from the repository
+// rooted at repoPath as one row: the project at the root and every nested sub-project the
+// fleet walk assigns the repository (see discoverRepository and scanRepository), so a
+// single-repository scan and a fleet aggregation score a repository identically. A
+// repository that no registered language analyzer recognises is an error: silently
 // falling back to a Go manifest would report an unanalysed repository as fully ready.
 func ScanRepo(ctx context.Context, repoPath string) (*RepoNeeds, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-
-	repoNeeds, err := DefaultRegistry().AnalyzePolyglot(ctx, repoPath)
+	repo, err := discoverRepository(ctx, repoPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to analyze repository %q: %w", repoPath, err)
+		return nil, fmt.Errorf("failed to discover the projects of repository %q: %w", repoPath, err)
+	}
+	return scanRepository(ctx, repo)
+}
+
+// scanProjectDir runs every analyzer that detects a project in dir itself.
+func scanProjectDir(ctx context.Context, dir string) (*RepoNeeds, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	repoNeeds, err := DefaultRegistry().AnalyzePolyglot(ctx, dir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to analyze project %q: %w", dir, err)
 	}
 	return repoNeeds, nil
 }
@@ -117,7 +132,7 @@ func scanASTImports(ctx context.Context, rootDir, modulePath string) (map[string
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
-		if shouldSkipDir(info, path, root) {
+		if shouldSkipDir(info, path, root) || isNestedModuleBoundary(info, path, root) {
 			return filepath.SkipDir
 		}
 		if !isScannableGoFile(info) {
@@ -131,6 +146,18 @@ func scanASTImports(ctx context.Context, rootDir, modulePath string) (map[string
 	}
 
 	return thirdParty, nil
+}
+
+// isNestedModuleBoundary reports whether the directory at path, below the import scan's
+// root, starts another Go module (its own go.mod) or another repository (a nested
+// checkout, as a submodule or an independent clone is). Its imports are not the root
+// module's: a nested module is scanned as a sub-project of its own, and a nested checkout
+// is a fleet repository with its own demand.
+func isNestedModuleBoundary(info os.FileInfo, path, root string) bool {
+	if info == nil || !info.IsDir() || filepath.Clean(path) == root {
+		return false
+	}
+	return util.FileExists(filepath.Join(path, "go.mod")) || topology.HasValidGitRepo(path)
 }
 
 // isScannableGoFile reports whether info is a regular, non-test .go source file. Symlinks

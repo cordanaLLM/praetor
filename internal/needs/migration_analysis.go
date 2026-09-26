@@ -28,11 +28,21 @@ type migrationAnalysis struct {
 }
 
 func analyzeMigration(ctx context.Context, repoPath, selected string) (*migrationAnalysis, error) {
+	return analyzeMigrationWith(ctx, selected, func(framework *FrameworkIndex) (*RepoNeeds, error) {
+		return ScanRepoWithFramework(ctx, repoPath, framework)
+	})
+}
+
+// analyzeMigrationWith inspects the selected framework and scores a repository against it
+// with scan. Fleet epic regeneration passes the fleet walk's repository, a
+// single-repository epic or migration plan scans the path it was given.
+func analyzeMigrationWith(ctx context.Context, selected string,
+	scan func(framework *FrameworkIndex) (*RepoNeeds, error)) (*migrationAnalysis, error) {
 	framework, err := inspectMigrationFramework(ctx, selected)
 	if err != nil {
 		return nil, fmt.Errorf("inspect migration framework: %w", err)
 	}
-	report, err := ScanRepoWithFramework(ctx, repoPath, framework)
+	report, err := scan(framework)
 	if err != nil {
 		return nil, fmt.Errorf("scan repository for migration: %w", err)
 	}
@@ -73,6 +83,14 @@ func migrationBlockers(analysis *migrationAnalysis) []string {
 	}
 	if gaps := analysis.report.Readiness.GapDeps; gaps > 0 {
 		blockers = append(blockers, fmt.Sprintf("%d dependencies have no selected framework mapping.", gaps))
+	}
+	if deep := analysis.report.UnscannedSubprojects; len(deep) > 0 {
+		blockers = append(blockers, fmt.Sprintf("%d sub-projects sit more than %d directories below the repository root and were not scanned: %s.",
+			len(deep), maxSubprojectDepth, strings.Join(deep, ", ")))
+	}
+	if failed := analysis.report.FailedSubprojects; len(failed) > 0 {
+		blockers = append(blockers, fmt.Sprintf("%d sub-projects failed to scan and their demand is not counted: %s.",
+			len(failed), formatSubprojectFailures(failed)))
 	}
 	return blockers
 }
