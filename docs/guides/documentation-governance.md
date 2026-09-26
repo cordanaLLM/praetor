@@ -231,7 +231,14 @@ The dedicated hosted workflow runs for every push and pull request. The main CI
 workflow also selects the gate on documentation-only changes while skipping the
 race and security suites; state-only changes under the ignored private ledgers
 select no documentation work. Source/configuration changes reach the same gate
-through `make verify-all`.
+through `make verify-all`. Only Markdown, images, plain-text documents and the
+files under `docs/` count as documentation: a dependency manifest ending in
+`.txt` (`requirements*.txt`, `CMakeLists.txt`) is configuration even under
+`docs/`, and a file kind the filter does not recognise runs the full targeted
+matrix rather than the documentation-only path (`internal/cifilter/filter.go`,
+`TestBuildManifestTextIsConfiguration` and
+`TestUnclassifiedFileKindsRunHeavyGates` in
+`internal/cifilter/cifilter_test.go`).
 
 ## Site build and Mermaid diagrams
 
