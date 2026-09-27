@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -60,66 +59,116 @@ func TestResolvePathRejectsEscapingDefaults(t *testing.T) {
 	}
 }
 
-func TestCompileContextRejectsEscapingOutputDescendants(t *testing.T) {
-	for _, directory := range []bool{false, true} {
-		for _, verify := range []bool{false, true} {
-			t.Run(fmt.Sprintf("directory=%t/verify=%t", directory, verify), func(t *testing.T) {
-				srv, root := newFixtureServer(t)
-				out, outside := filepath.Join(root, "out"), t.TempDir()
-				marker := filepath.Join(outside, "rules.md")
-				writePathFixture(t, marker, "protected\n")
-				firstOutput := filepath.Join(out, "CLAUDE.md")
-				writePathFixture(t, firstOutput, "first output unchanged\n")
-				link, target := filepath.Join(out, ".codex", "rules.md"), marker
+// symlinkCase names one symlinked compile-context output: where the link points, whether the
+// link is the output file itself or its .codex directory, and the refusal the call must return.
+type symlinkCase struct {
+	target      string // "outside", "outside-allowed" (AllowOutsideRoot) or "in-root"
+	directory   bool
+	verify      bool
+	wantRefusal string
+}
+
+func symlinkCases() []symlinkCase {
+	var cases []symlinkCase
+	for _, target := range []string{"outside", "outside-allowed", "in-root"} {
+		for _, directory := range []bool{false, true} {
+			for _, verify := range []bool{false, true} {
+				prefix, refusal := "target .codex/rules.md: ", "compiled output must be a regular file, never a symlink or directory"
+				if verify {
+					prefix, refusal = "target .codex/rules.md missing or unreadable: ", "source must be regular"
+				}
 				if directory {
-					link, target = filepath.Join(out, ".codex"), outside
+					refusal = "path component must be a directory, never a symlink"
 				}
-				if err := os.MkdirAll(filepath.Dir(link), 0o700); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.Symlink(target, link); err != nil {
-					t.Fatal(err)
-				}
-				res := callTool(t, srv, "standards_compile_context", map[string]any{"target_dir": "out", "verify_only": verify})
-				if !res.IsError || !strings.Contains(res.Content[0].Text, "outside the server root") {
-					t.Errorf("escaping output must fail confinement, got %+v", res)
-				}
-				assertPathFixture(t, marker, "protected\n")
-				assertPathFixture(t, firstOutput, "first output unchanged\n")
-			})
+				cases = append(cases, symlinkCase{target: target, directory: directory, verify: verify, wantRefusal: prefix + refusal})
+			}
 		}
+	}
+	return cases
+}
+
+// A symlinked output, or a symlinked directory above one, is refused on write and on verify,
+// wherever it points and with or without --allow-outside-root, and a refused write leaves the
+// outputs before it unchanged. The CLI writer never followed one; the MCP tool now shares it.
+// For verify the link's target holds exactly the compiled content, so following it would
+// pass: the refusal is the only way the call can fail.
+func TestCompileContextRejectsSymlinkedOutputDescendants(t *testing.T) {
+	for _, c := range symlinkCases() {
+		t.Run(fmt.Sprintf("%s/directory=%t/verify=%t", c.target, c.directory, c.verify), func(t *testing.T) {
+			srv, root := newFixtureServer(t)
+			srv.opts.AllowOutsideRoot = c.target == "outside-allowed"
+			out := filepath.Join(root, "out")
+			expectText(t, "seed", callTool(t, srv, "standards_compile_context", map[string]any{"target_dir": "out"}), "[COMPILED] .codex/rules.md")
+			compiled := readPathFixture(t, filepath.Join(out, ".codex", "rules.md"))
+			if err := os.RemoveAll(filepath.Join(out, ".codex")); err != nil {
+				t.Fatal(err)
+			}
+			firstOutput := filepath.Join(out, "CLAUDE.md")
+			if !c.verify {
+				writePathFixture(t, firstOutput, "first output unchanged\n")
+			}
+			firstBefore := readPathFixture(t, firstOutput)
+			redirected := filepath.Join(root, "redirected")
+			if c.target != "in-root" {
+				redirected = t.TempDir()
+			}
+			markerBefore := "protected\n"
+			if c.verify {
+				markerBefore = compiled
+			}
+			marker := filepath.Join(redirected, "rules.md")
+			writePathFixture(t, marker, markerBefore)
+			link, target := filepath.Join(out, ".codex", "rules.md"), marker
+			if c.directory {
+				link, target = filepath.Join(out, ".codex"), redirected
+			}
+			if err := os.MkdirAll(filepath.Dir(link), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, link); err != nil {
+				t.Fatal(err)
+			}
+			res := callTool(t, srv, "standards_compile_context", map[string]any{"target_dir": "out", "verify_only": c.verify})
+			expectError(t, "symlinked output", res, c.wantRefusal)
+			assertPathFixture(t, marker, markerBefore)
+			assertPathFixture(t, firstOutput, firstBefore)
+		})
 	}
 }
 
-func TestCompileContextPermitsAllowedOutputDescendants(t *testing.T) {
+// Replaces the symlink half of the deleted TestCompileContextPermitsAllowedOutputDescendants
+// with what stays permitted: real output directories below target_dir, and a target_dir outside
+// the server root once --allow-outside-root opts in, are written over and then verify in sync.
+func TestCompileContextWritesRealOutputDescendants(t *testing.T) {
 	for _, allowOutside := range []bool{false, true} {
-		for _, directory := range []bool{false, true} {
-			t.Run(fmt.Sprintf("allowOutside=%t/directory=%t", allowOutside, directory), func(t *testing.T) {
-				srv, root := newFixtureServer(t)
-				srv.opts.AllowOutsideRoot = allowOutside
-				out, redirected := filepath.Join(root, "out"), filepath.Join(root, "redirected")
-				if allowOutside {
-					redirected = t.TempDir()
-				}
-				marker := filepath.Join(redirected, "rules.md")
-				writePathFixture(t, marker, "replace me\n")
-				link, target := filepath.Join(out, ".codex", "rules.md"), marker
-				if directory {
-					link, target = filepath.Join(out, ".codex"), redirected
-				}
-				if err := os.MkdirAll(filepath.Dir(link), 0o700); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.Symlink(target, link); err != nil {
-					t.Fatal(err)
-				}
-				written := callTool(t, srv, "standards_compile_context", map[string]any{"target_dir": "out"})
-				expectText(t, "allowed output symlink", written, "[COMPILED] .codex/rules.md")
-				verified := callTool(t, srv, "standards_compile_context", map[string]any{"target_dir": "out", "verify_only": true})
-				expectText(t, "allowed output verification", verified, "100% in sync")
-			})
-		}
+		t.Run(fmt.Sprintf("allowOutside=%t", allowOutside), func(t *testing.T) {
+			srv, root := newFixtureServer(t)
+			srv.opts.AllowOutsideRoot = allowOutside
+			targetArg, out := "out", filepath.Join(root, "out")
+			if allowOutside {
+				out = t.TempDir()
+				targetArg = out
+			}
+			stale := filepath.Join(out, ".codex", "rules.md")
+			writePathFixture(t, stale, "replace me\n")
+			written := callTool(t, srv, "standards_compile_context", map[string]any{"target_dir": targetArg})
+			expectText(t, "real output directory", written, "[COMPILED] .codex/rules.md")
+			if got := readPathFixture(t, stale); got == "replace me\n" {
+				t.Errorf("%s was not rewritten", stale)
+			}
+			verified := callTool(t, srv, "standards_compile_context", map[string]any{"target_dir": targetArg, "verify_only": true})
+			expectText(t, "real output verification", verified, "100% in sync")
+		})
 	}
+}
+
+func readPathFixture(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
 
 func writePathFixture(t *testing.T, path, data string) {

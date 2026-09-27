@@ -15,14 +15,14 @@ import (
 
 func TestInitCreatesCryptRemote(t *testing.T) {
 	ctx, rclone, store := newFakeRclone(t, "")
-	if err := Init(ctx, InitOptions{Rclone: rclone}); err != nil {
+	if err := Init(ctx, InitOptions{Base: "remote:folder", Rclone: rclone}); err != nil {
 		t.Fatal(err)
 	}
 	var args []string
 	if err := json.Unmarshal([]byte(readTestFile(t, filepath.Join(store, "config-create.json"))), &args); err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(args[:5], []string{"config", "create", DefaultRemoteName, "crypt", "remote=" + DefaultBase}) ||
+	if !slices.Equal(args[:5], []string{"config", "create", DefaultRemoteName, "crypt", "remote=remote:folder"}) ||
 		!slices.Contains(args, "--obscure") || !slices.Contains(args, "--non-interactive") {
 		t.Fatalf("config create argv = %v", args)
 	}
@@ -34,14 +34,14 @@ func TestInitCreatesCryptRemote(t *testing.T) {
 
 func TestInitRefusesExistingRemote(t *testing.T) {
 	ctx, rclone, _ := newFakeRclone(t, "")
-	if err := Init(ctx, InitOptions{RemoteName: "mine", Base: "gdrive:mine", Rclone: rclone}); err != nil {
+	if err := Init(ctx, InitOptions{RemoteName: "mine", Base: "remote:folder", Rclone: rclone}); err != nil {
 		t.Fatal(err)
 	}
-	if err := Init(ctx, InitOptions{RemoteName: "mine", Rclone: rclone}); !errors.Is(err, ErrRemoteExists) {
+	if err := Init(ctx, InitOptions{RemoteName: "mine", Base: "remote:folder", Rclone: rclone}); !errors.Is(err, ErrRemoteExists) {
 		t.Fatalf("second init = %v, want ErrRemoteExists", err)
 	}
 	for _, name := range []string{"has:colon", "-flag", "a/b", "semi;colon"} {
-		if err := Init(ctx, InitOptions{RemoteName: name, Rclone: rclone}); err == nil {
+		if err := Init(ctx, InitOptions{RemoteName: name, Base: "remote:folder", Rclone: rclone}); err == nil {
 			t.Errorf("remote name %q accepted", name)
 		}
 	}
@@ -49,8 +49,30 @@ func TestInitRefusesExistingRemote(t *testing.T) {
 		t.Error("base starting with '-' accepted")
 	}
 	failing, broken, _ := newFakeRclone(t, "config")
-	if err := Init(failing, InitOptions{Rclone: broken}); err == nil || !strings.Contains(err.Error(), "fake failure") {
+	if err := Init(failing, InitOptions{Base: "remote:folder", Rclone: broken}); err == nil || !strings.Contains(err.Error(), "fake failure") {
 		t.Fatalf("rclone failure not surfaced: %v", err)
+	}
+}
+
+func TestInitBaseRequirement_PNB(t *testing.T) {
+	ctx, rclone, _ := newFakeRclone(t, "")
+
+	// Negative: without --base -> error (unset = neutral refusal)
+	err := Init(ctx, InitOptions{Rclone: rclone})
+	if err == nil || err.Error() != "devsync init: --base required: name your rclone remote folder" {
+		t.Fatalf("Init without Base = %v, want 'devsync init: --base required: name your rclone remote folder'", err)
+	}
+
+	// Boundary: whitespace base -> error
+	err = Init(ctx, InitOptions{Base: "   ", Rclone: rclone})
+	if err == nil || err.Error() != "devsync init: --base required: name your rclone remote folder" {
+		t.Fatalf("Init with whitespace Base = %v, want 'devsync init: --base required: name your rclone remote folder'", err)
+	}
+
+	// Positive: with --base -> ok
+	err = Init(ctx, InitOptions{Base: "remote:folder", Rclone: rclone})
+	if err != nil {
+		t.Fatalf("Init with valid Base = %v, want nil", err)
 	}
 }
 

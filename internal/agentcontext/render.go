@@ -158,8 +158,24 @@ func knownClient(name string) bool {
 // compile order. Callers that must recognise a compiled file (the CI filter's agent
 // classification) read this list instead of keeping their own copy of it.
 func VendorTargetPaths() []string {
-	paths := make([]string, 0, len(vendorTargets))
-	for _, target := range vendorTargets {
+	return targetPaths(vendorTargets[:])
+}
+
+// TargetPaths resolves a client selection to the vendor file paths it writes and the ones it
+// leaves out, both in registry order, under the rules CompileContent applies: nil selects every
+// file, an empty list none, and an unknown id fails. A caller that checks the targets before
+// anything is compiled (adoption's preflight) reads them here.
+func TargetPaths(clients []string) (selected, excluded []string, err error) {
+	targets, excluded, err := selectTargets(clients)
+	if err != nil {
+		return nil, nil, err
+	}
+	return targetPaths(targets), excluded, nil
+}
+
+func targetPaths(targets []vendorTarget) []string {
+	paths := make([]string, 0, len(targets))
+	for _, target := range targets {
 		paths = append(paths, target.path)
 	}
 	return paths

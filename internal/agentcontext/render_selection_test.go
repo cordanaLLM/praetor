@@ -121,3 +121,40 @@ func TestPersonaDirs_Boundary_AbsentEmptyAndPersonalessClients(t *testing.T) {
 		t.Fatalf("personaless selection = %v, %v, %v", kept, left, err)
 	}
 }
+
+// Positive: TargetPaths keeps the selected clients' vendor files in registry order, the same
+// files CompileContent emits, and names the rest as left out.
+func TestTargetPaths_Positive_SelectionSplitsFiles(t *testing.T) {
+	selected, excluded, err := TargetPaths([]string{" Codex", "claude"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"CLAUDE.md", ".codex/rules.md"}; !reflect.DeepEqual(selected, want) {
+		t.Fatalf("selected = %v, want %v", selected, want)
+	}
+	wantExcluded := []string{".cursor/rules/hiss-invariants.mdc", ".github/copilot-instructions.md", ".windsurfrules", ".gemini/GEMINI.md"}
+	if !reflect.DeepEqual(excluded, wantExcluded) {
+		t.Fatalf("excluded = %v, want %v", excluded, wantExcluded)
+	}
+}
+
+// Negative: an unknown id fails TargetPaths the same way it fails CompileContent.
+func TestTargetPaths_Negative_UnknownClientRejected(t *testing.T) {
+	selected, excluded, err := TargetPaths([]string{"claude", "vim"})
+	if err == nil || selected != nil || excluded != nil || !strings.Contains(err.Error(), "vim") {
+		t.Fatalf("TargetPaths = %v, %v, %v; want an error naming vim", selected, excluded, err)
+	}
+}
+
+// Boundary: nil keeps every vendor file (VendorTargetPaths), and an empty list keeps none and
+// leaves every file out.
+func TestTargetPaths_Boundary_AbsentAndEmptySelection(t *testing.T) {
+	all, none, err := TargetPaths(nil)
+	if err != nil || !reflect.DeepEqual(all, VendorTargetPaths()) || none != nil {
+		t.Fatalf("nil selection = %v, %v, %v", all, none, err)
+	}
+	kept, left, err := TargetPaths([]string{})
+	if err != nil || len(kept) != 0 || !reflect.DeepEqual(left, all) {
+		t.Fatalf("empty selection = %v, %v, %v", kept, left, err)
+	}
+}

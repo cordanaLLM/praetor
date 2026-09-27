@@ -155,7 +155,7 @@ func initAgentContext(rootDir string) error {
 	// repository carries the text register block and passes compile-context --verify.
 	ctx, cancel := context.WithTimeout(context.Background(), compileContextTimeout)
 	defer cancel()
-	if err := compileVendorTargets(ctx, compiler.NewTranspiler(), agentsPath, rootDir); err != nil {
+	if err := compiler.CompileVendorTargets(ctx, os.Stdout, compiler.NewTranspiler(), agentsPath, rootDir); err != nil {
 		return fmt.Errorf("failed to compile AGENTS.md: %w", err)
 	}
 	fmt.Println("[TRANSPILED] Cross-agent context targets initialized from AGENTS.md.")

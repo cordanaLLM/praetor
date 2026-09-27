@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/compiler"
+
 	"github.com/cordanaLLM/praetor/internal/agentcontext"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -120,11 +122,11 @@ func TestCompileContext_Negative_AgentClientsStillVerifySelectedPersonas(t *test
 		t.Fatalf("compile-context: %v\n%s", err, out)
 	}
 	writeFixtureFile(t, dir, ".github/agents/praetor-gatekeeper.md", "# Gatekeeper\n\nReceipts are optional.\n")
-	if err := auditAgentProjections(t.Context(), dir); !errors.Is(err, ErrAgentProjectionDrift) {
-		t.Fatalf("audit gate: expected ErrAgentProjectionDrift, got %v", err)
+	if err := auditAgentProjections(t.Context(), dir); !errors.Is(err, compiler.ErrAgentProjectionDrift) {
+		t.Fatalf("audit gate: expected compiler.ErrAgentProjectionDrift, got %v", err)
 	}
 	writeFixtureFile(t, dir, ".standards.yaml", clientsManifest+"agent_clients: [copilot, vim]\n")
-	_, err := verifyAgentProjections(t.Context(), dir)
+	_, err := compiler.VerifyAgentProjections(t.Context(), dir)
 	mustErrContain(t, err, "unknown agent client id(s): vim")
 }
 
@@ -144,8 +146,8 @@ func TestCompileContext_Boundary_AgentClientsWithoutPersonaDirs(t *testing.T) {
 			}
 			mustContain(t, out, "[NOT_APPLICABLE] "+rel)
 		}
-		if n, err := verifyAgentProjections(t.Context(), dir); err != nil || n != 1 {
-			t.Fatalf("%s: verifyAgentProjections = %d, %v; want 1 (the plugin copy), nil", selection, n, err)
+		if n, err := compiler.VerifyAgentProjections(t.Context(), dir); err != nil || n != 1 {
+			t.Fatalf("%s: compiler.VerifyAgentProjections = %d, %v; want 1 (the plugin copy), nil", selection, n, err)
 		}
 	}
 }

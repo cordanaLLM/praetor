@@ -7,13 +7,13 @@ and never merges. Code lives in `internal/devsync/`; the command in
 `cmd/standardsctl/devsync.go`.
 
 Everything is stored encrypted through an rclone `crypt` remote named `praetor-sync`,
-which writes into the folder `praetor-sync/` at the root of your Drive. Each workstation
+which writes into the folder named with `--base` (for example `remote:folder`). Each workstation
 gets one subfolder, named after its host name.
 
 ## Before you start
 
-1. Install rclone and create a Google Drive remote named `gdrive` with `rclone config`.
-2. Use your own Google client ID for that remote. rclone's shared client ID is being
+1. Install rclone and configure a remote with `rclone config`.
+2. If using Google Drive, use your own Google client ID for that remote. rclone's shared client ID is being
    retired and stops working during 2026; see
    [Making your own client_id](https://rclone.org/drive/#making-your-own-client-id).
 
@@ -22,10 +22,10 @@ gets one subfolder, named after its host name.
 On the first workstation, create the encrypted remote:
 
 ```sh
-praetorctl devsync init
+praetorctl devsync init --base=remote:folder
 ```
 
-This runs `rclone config create praetor-sync crypt remote=gdrive:praetor-sync ...`
+This runs `rclone config create praetor-sync crypt remote=remote:folder ...`
 with two freshly generated keys, passed with `--obscure` so rclone stores them obscured.
 It refuses to run when a remote named `praetor-sync` already exists.
 

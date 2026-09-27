@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/compiler"
 )
 
 // Verifying that every canonical persona has a projection is only half a check. A file in a
@@ -18,7 +20,7 @@ func TestVerifyAgentProjections_Positive_RejectsAnOrphanProjection(t *testing.T)
 	if err := os.WriteFile(orphan, []byte("stale copy\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := verifyAgentProjections(t.Context(), root)
+	_, err := compiler.VerifyAgentProjections(t.Context(), root)
 	if err == nil {
 		t.Fatal("an orphan projection was accepted")
 	}
@@ -30,7 +32,7 @@ func TestVerifyAgentProjections_Positive_RejectsAnOrphanProjection(t *testing.T)
 // Negative: a tree whose projections all correspond to canonical personas verifies.
 func TestVerifyAgentProjections_Negative_AcceptsAMatchingTree(t *testing.T) {
 	root := projectionFixture(t)
-	verified, err := verifyAgentProjections(t.Context(), root)
+	verified, err := compiler.VerifyAgentProjections(t.Context(), root)
 	if err != nil {
 		t.Fatalf("a matching tree was rejected: %v", err)
 	}
@@ -47,13 +49,13 @@ func TestVerifyAgentProjections_Boundary_IgnoresNonPersonaFilesAndAbsentDirs(t *
 	if err := os.WriteFile(notes, []byte("not a persona\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := verifyAgentProjections(t.Context(), root); err != nil {
+	if _, err := compiler.VerifyAgentProjections(t.Context(), root); err != nil {
 		t.Errorf("a non-persona file was treated as a projection: %v", err)
 	}
 	if err := os.Remove(filepath.Join(root, ".agents", "plugins", "praetor", "plugin.json")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := verifyAgentProjections(t.Context(), root); err != nil {
+	if _, err := compiler.VerifyAgentProjections(t.Context(), root); err != nil {
 		t.Errorf("a repository shipping no plugin was rejected: %v", err)
 	}
 }

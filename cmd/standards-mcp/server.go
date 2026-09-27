@@ -11,12 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"bytes"
-
 	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
-	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/mcp"
 	"github.com/cordanaLLM/praetor/internal/needs"
@@ -507,92 +504,36 @@ func (s *Server) createCompileContextTool() (mcp.Tool, error) {
 		return s.compileContext(ctx, source, targetDir, verifyOnly), nil
 	}
 
-	// Writing overwrites the six vendor files in target_dir, so the tool is destructive.
+	// Writing overwrites the vendor files, persona projections and plugin copies in target_dir,
+	// so the tool is destructive.
 	return mcp.NewMutatingTool("standards_compile_context", "Compile or verify cross-agent instructions from AGENTS.md", schema, handler, true, true)
 }
 
-// compileContext verifies or (re)writes the vendor targets compiled from source.
+// compileContext verifies or (re)writes the vendor targets, persona projections and plugin
+// copies compiled from source, through the implementation the CLI's compile-context runs
+// (compiler.VerifyCompiledContext, compiler.CompileContextProjections). Both reconcile the text
+// register block themselves: a verify-only call never writes the source and reports a stale or
+// missing block as a verification failure instead.
 func (s *Server) compileContext(ctx context.Context, source, targetDir string, verifyOnly bool) *mcp.ToolResult {
+	source, err := s.resolveContextPath(ctx, source)
+	if err != nil {
+		return mcp.ErrorResult(fmt.Sprintf("Context source confinement failed: %v", err))
+	}
 	tr := compiler.NewTranspiler()
-	source, failure := s.prepareContextSource(ctx, source, verifyOnly)
-	if failure != nil {
-		return failure
-	}
-	res, err := tr.CompileContext(ctx, source)
-	if err != nil {
-		if verifyOnly {
-			return mcp.ErrorResult(fmt.Sprintf("Context verification failed: %v", err))
-		}
-		return mcp.ErrorResult(fmt.Sprintf("Context compilation failed: %v", err))
-	}
-	paths, err := s.confineContextOutputs(ctx, res, targetDir)
-	if err != nil {
-		return mcp.ErrorResult(fmt.Sprintf("Context output confinement failed: %v", err))
-	}
+	var b strings.Builder
 	if verifyOnly {
-		if err := verifyContextFiles(ctx, res, paths); err != nil {
+		if err := compiler.VerifyCompiledContext(ctx, &b, tr, source, targetDir); err != nil {
 			return mcp.ErrorResult(fmt.Sprintf("Context verification failed: %v", err))
 		}
-		lint, err := compiler.LintContext(ctx, source)
-		if err != nil {
-			return mcp.ErrorResult(fmt.Sprintf("Context verification failed: %v", err))
-		}
-		return mcp.TextResult("All agent context targets are 100% in sync with canonical AGENTS.md; " + lint.Summary() + ".")
+		return mcp.TextResult(b.String())
 	}
-
 	if err := ctx.Err(); err != nil {
 		return mcp.ErrorResult(fmt.Sprintf("compile-context cancelled before writing: %v", err))
 	}
-	if err := writeContextFiles(ctx, res, paths); err != nil {
-		return mcp.ErrorResult(fmt.Sprintf("Failed writing outputs: %v", err))
+	if err := compiler.CompileContextProjections(ctx, &b, tr, source, targetDir); err != nil {
+		return mcp.ErrorResult(fmt.Sprintf("Context compilation failed: %v", err))
 	}
-
-	return mcp.TextResult(compiledContextText(res))
-}
-
-// compiledContextText lists the projections a write compiled and the ones agent_clients left
-// out, which were neither written nor verified.
-func compiledContextText(res *compiler.CompileResult) string {
-	var b strings.Builder
-	b.WriteString("Cross-agent context transpilation completed successfully:\n")
-	for _, f := range res.Files {
-		fmt.Fprintf(&b, "  [COMPILED] %-35s (%d lines, budget <= %d)\n", f.RelativePath, f.LineCount, compiler.MaxLineBudget)
-	}
-	for _, rel := range res.NotApplicable {
-		b.WriteString(compiler.NotApplicableLine(rel) + "\n")
-	}
-	return b.String()
-}
-
-// prepareContextSource confines the canonical source and reconciles its text register
-// block with the manifest beside it. A verify-only call never writes the source; it reports
-// a stale or missing block as a verification failure instead.
-func (s *Server) prepareContextSource(ctx context.Context, source string, verifyOnly bool) (string, *mcp.ToolResult) {
-	source, err := s.resolveContextPath(ctx, source)
-	if err != nil {
-		return "", mcp.ErrorResult(fmt.Sprintf("Context source confinement failed: %v", err))
-	}
-	if _, err := compiler.SyncRegisterBlock(ctx, filepath.Dir(source), source, !verifyOnly); err != nil {
-		if verifyOnly {
-			return "", mcp.ErrorResult(fmt.Sprintf("Context verification failed: %v", err))
-		}
-		return "", mcp.ErrorResult(fmt.Sprintf("Text register splice failed: %v", err))
-	}
-	return source, nil
-}
-
-// confineContextOutputs resolves every permitted descendant before any writes.
-// The concrete paths are then opened without following any additional symlinks.
-func (s *Server) confineContextOutputs(ctx context.Context, result *compiler.CompileResult, targetDir string) ([]string, error) {
-	paths := make([]string, len(result.Files))
-	for i, file := range result.Files {
-		path, err := s.resolveContextPath(ctx, filepath.Join(targetDir, file.RelativePath))
-		if err != nil {
-			return nil, fmt.Errorf("target %s: %w", file.RelativePath, err)
-		}
-		paths[i] = path
-	}
-	return paths, nil
+	return mcp.TextResult(b.String())
 }
 
 func (s *Server) resolveContextPath(ctx context.Context, path string) (string, error) {
@@ -615,28 +556,6 @@ func (s *Server) resolveContextPath(ctx context.Context, path string) (string, e
 		return "", fmt.Errorf("%w: resolved context path", ErrOutsideRoot)
 	}
 	return resolved, nil
-}
-
-func verifyContextFiles(ctx context.Context, result *compiler.CompileResult, paths []string) error {
-	for i, file := range result.Files {
-		actual, err := contextopt.ReadSnapshot(ctx, paths[i])
-		if err != nil {
-			return err
-		}
-		if !bytes.Equal(bytes.TrimSpace(actual), bytes.TrimSpace([]byte(file.Content))) {
-			return fmt.Errorf("target %s is out of sync", file.RelativePath)
-		}
-	}
-	return nil
-}
-
-func writeContextFiles(ctx context.Context, result *compiler.CompileResult, paths []string) error {
-	for i, file := range result.Files {
-		if err := contextopt.WriteSnapshot(ctx, paths[i], []byte(file.Content), 0o644); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // createExplainRuleTool builds the read-only standards_explain_rule tool.

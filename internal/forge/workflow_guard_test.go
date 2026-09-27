@@ -704,3 +704,53 @@ func TestContainerReferenceViolationsBoundaries(t *testing.T) {
 		t.Error("malformed goreleaser configuration accepted")
 	}
 }
+
+// docsAuditConditionGap names why a job does not run the Documentation Integrity Audit
+// on run_docs, or returns "" when it does.
+func docsAuditConditionGap(job workflowJob) string {
+	for i := 0; i < len(job.Steps) && i < maxStepsPerJob; i++ {
+		step := job.Steps[i]
+		if step.Name == "Documentation Integrity Audit" {
+			condition := strings.TrimSpace(step.If)
+			if condition == "" {
+				return "unconditional"
+			}
+			if condition != "steps.filter.outputs.run_docs == 'true' && github.event_name == 'pull_request'" {
+				return "condition differs: " + condition
+			}
+			return ""
+		}
+	}
+	return "no step named 'Documentation Integrity Audit'"
+}
+
+func TestVerifyJobRunsDocsAuditOnRunDocs(t *testing.T) {
+	workflows, _ := engineWorkflows(t)
+	var spec workflowSpec
+	if err := yaml.Unmarshal(workflows["ci.yml"], &spec); err != nil {
+		t.Fatalf("parse ci.yml: %v", err)
+	}
+	verify := spec.Jobs["verify"]
+	if gap := docsAuditConditionGap(verify); gap != "" {
+		t.Fatalf("verify job: %s", gap)
+	}
+
+	cases := []struct {
+		name string
+		job  workflowJob
+		want string
+	}{
+		{"positive", workflowJob{Steps: []workflowStep{{Name: "Documentation Integrity Audit", If: "steps.filter.outputs.run_docs == 'true' && github.event_name == 'pull_request'"}}}, ""},
+		{"negative missing", workflowJob{Steps: []workflowStep{}}, "no step named"},
+		{"negative condition", workflowJob{Steps: []workflowStep{{Name: "Documentation Integrity Audit", If: "steps.filter.outputs.docs_only == 'true' && github.event_name == 'pull_request'"}}}, "condition differs"},
+		{"boundary unconditional", workflowJob{Steps: []workflowStep{{Name: "Documentation Integrity Audit", If: ""}}}, "unconditional"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := docsAuditConditionGap(tc.job)
+			if (tc.want == "") != (got == "") || !strings.Contains(got, tc.want) {
+				t.Fatalf("gap = %q, want containing %q", got, tc.want)
+			}
+		})
+	}
+}

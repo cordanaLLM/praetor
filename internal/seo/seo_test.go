@@ -93,13 +93,13 @@ func TestSitemapURLSet_Positive(t *testing.T) {
 	raw := []byte(`<?xml version="1.0" encoding="UTF-8"?>
 	<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 		<url>
-			<loc>https://standards.cordana.ai/</loc>
+			<loc>https://docs.example.com/</loc>
 			<lastmod>2026-09-10T10:00:00Z</lastmod>
 			<changefreq>daily</changefreq>
 			<priority>1.0</priority>
 		</url>
 		<url>
-			<loc>https://standards.cordana.ai/standards/hiss-16-spec/</loc>
+			<loc>https://docs.example.com/standards/hiss-16-spec/</loc>
 			<lastmod>2026-09-09</lastmod>
 			<changefreq>weekly</changefreq>
 			<priority>0.8</priority>
@@ -125,11 +125,11 @@ func TestSitemapIndex_Positive(t *testing.T) {
 	raw := []byte(`<?xml version="1.0" encoding="UTF-8"?>
 	<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
 		<sitemap>
-			<loc>https://standards.cordana.ai/sitemap-docs.xml</loc>
+			<loc>https://docs.example.com/sitemap-docs.xml</loc>
 			<lastmod>2026-09-10</lastmod>
 		</sitemap>
 		<sitemap>
-			<loc>https://standards.cordana.ai/sitemap-blog.xml</loc>
+			<loc>https://docs.example.com/sitemap-blog.xml</loc>
 		</sitemap>
 	</sitemapindex>`)
 
@@ -160,8 +160,8 @@ Crawl-delay: 1.5
 User-agent: GPTBot
 Disallow: /private/
 
-Sitemap: https://standards.cordana.ai/sitemap.xml
-Sitemap: https://standards.cordana.ai/sitemapindex.xml
+Sitemap: https://docs.example.com/sitemap.xml
+Sitemap: https://docs.example.com/sitemapindex.xml
 `
 	res, err := ValidateRobotsTxt(content)
 	if err != nil {

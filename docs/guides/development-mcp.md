@@ -330,6 +330,74 @@ repository without `source_root` shows both: the DevContainer pillar reads
 registries, so exercise it through a real call only where network access is
 intended.
 
+### Context compilation parity
+
+`standards_compile_context` runs the code `praetorctl compile-context` runs:
+`compileContext` in `cmd/standards-mcp/server.go` calls
+`compiler.VerifyCompiledContext` for `verify_only` and
+`compiler.CompileContextProjections` for a write (`internal/compiler/projection.go`).
+A tool call and the CLI therefore check and write the same things:
+
+- A write compiles the vendor files, then copies every persona under
+  `.agents/agents` into each selected client's persona directory and, when
+  `.agents/plugins/praetor/plugin.json` exists, into the plugin's `agents/` and
+  `skills/` copies.
+- `verify_only` also runs the caveman lint over every persona and skill and
+  fails on a persona or plugin skill copy that differs from its source beyond
+  leading and trailing whitespace.
+- More than 50 files in `.agents/agents` fail both modes instead of being
+  truncated.
+- Every file the call writes below `target_dir` (the vendor files, the
+  persona copies such as `.claude/agents/*.md`, and the plugin persona and
+  skill copies), and every persona and skill it reads from `.agents`, is
+  reached without following a symlink. A symlinked file, or a symlinked
+  directory anywhere between `target_dir` and the file (`.claude`, `.agents`,
+  `.agents/plugins/praetor`), is refused on write and on verify for the same
+  reason, with or without `-allow-outside-root`. That flag still admits a
+  `target_dir` outside the root; it no longer lets a link redirect a write.
+  The writer itself (`contextopt.WriteSnapshotIn`) creates and opens every
+  directory below `target_dir` without following a link, so a link planted
+  after the check is refused too.
+- A write reads every persona and skill, then checks every file it is about
+  to write before it splices the text register into `source` and before it
+  writes the first file (`planAgentSurfaces` in
+  `internal/compiler/projection.go`). The check applies the writer's own
+  refusals: the symlink refusals above, an existing file that is not a regular
+  file, and an existing file the writer cannot observe because it is not
+  UTF-8 text, holds a NUL byte or exceeds 1 MiB (`contextopt.MaxSourceBytes`).
+  Any of those leaves `source`, the vendor files, the persona copies and the
+  plugin copies unchanged. The check does not cover an I/O failure during the
+  writes themselves, such as a full disk, or a target changed between the
+  check and the write: the writer applies the same refusals again when it
+  reaches each file, but the files written before a refusal stay written.
+
+Tests: `cmd/standards-mcp/server_projection_test.go`,
+`TestCompileContextRejectsSymlinkedOutputDescendants` and
+`TestCompileContextWritesRealOutputDescendants` in
+`cmd/standards-mcp/server_path_test.go`, `internal/compiler/output_paths_test.go`,
+`internal/compiler/projection_test.go` and `internal/contextopt/write_in_test.go`.
+
+`standards_adopt` and `praetorctl adopt` write the vendor files of the selected
+clients and the two canonical personas (`repo-auditor.md`,
+`repo-gatekeeper.md`) through the same writer, and project the personas with
+`compiler.CompileAgents`. Before the first adoption step writes anything, adopt
+runs the same check over those files and every persona copy
+(`preflightAgentSurfaces` in `internal/adopt/adopt.go`), so a symlinked
+`.agents` or persona directory fails adoption with nothing written, and so does
+a symlinked `.github` when copilot is a selected client (its vendor file lives
+there). An existing selected vendor file or persona that is not UTF-8 text,
+holds a NUL byte or exceeds 1 MiB is refused instead of overwritten. A dry run
+runs the check too; a step declined through `adoption.decline` is not checked.
+Every other file adoption writes, `AGENTS.md`, the pull request template and the
+workflows included, still goes through the older writer (`writeRepoFile`), which
+refuses a link that leaves the repository but follows one that stays inside it:
+with copilot unselected, a symlinked `.github` fails later in the run, after
+files were written behind it.
+Tests: `internal/adopt/agent_surface_preflight_test.go`.
+
+`standards_audit` does not run the persona and skill checks yet; see
+[the persona and skill gate](text-register.md#the-persona-and-skill-gate).
+
 ## Retained public dogfood loops
 
 Use the [public dogfooding guide](../dogfooding.md) for the shared CLI/MCP

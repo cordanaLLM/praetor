@@ -5,10 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
+
 	"github.com/cordanaLLM/praetor/internal/agentcontext"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
-	"path/filepath"
 )
 
 const MaxLineBudget = agentcontext.MaxLineBudget
@@ -69,6 +70,25 @@ func (t *Transpiler) forRepository(ctx context.Context, root string) (*Transpile
 	return &selected, nil
 }
 
+// vendorTargetFiles lists, without content, the vendor file of every client t selects for the
+// repository at root (forRepository): the paths checkProjectionFiles checks before anything is
+// compiled or written.
+func (t *Transpiler) vendorTargetFiles(ctx context.Context, root string) ([]projectionFile, error) {
+	selected, err := t.forRepository(ctx, root)
+	if err != nil {
+		return nil, err
+	}
+	paths, _, err := agentcontext.TargetPaths(selected.Clients)
+	if err != nil {
+		return nil, err
+	}
+	files := make([]projectionFile, 0, len(paths))
+	for _, rel := range paths {
+		files = append(files, projectionFile{rel: rel})
+	}
+	return files, nil
+}
+
 // declaredAgentClients reads agent_clients from the manifest at root; nil means the key is
 // absent and every client applies.
 func declaredAgentClients(ctx context.Context, root string) ([]string, error) {
@@ -101,21 +121,19 @@ func (t *Transpiler) WriteOutputsContext(ctx context.Context, result *CompileRes
 	if result == nil || len(result.Files) > MaxAgentFiles {
 		return errors.New("invalid or oversized compiled outputs")
 	}
+	files := make([]projectionFile, 0, len(result.Files))
 	for _, file := range result.Files {
-		if _, err := projectionPath(targetDir, file.RelativePath); err != nil {
-			return err
-		}
+		files = append(files, projectionFile{rel: file.RelativePath, data: []byte(file.Content)})
 	}
-	for _, file := range result.Files {
-		path, err := projectionPath(targetDir, file.RelativePath)
-		if err != nil {
-			return err
-		}
-		if err := writeVendorAgent(ctx, path, file.Content); err != nil {
-			return err
-		}
+	if err := checkProjectionFiles(ctx, targetDir, files); err != nil {
+		return err
 	}
-	return nil
+	// The target directory is the operator's chosen boundary, so it is created the way every
+	// other root is (contextopt.EnsureDirectory); everything below it is written confined.
+	if err := contextopt.EnsureDirectory(ctx, targetDir, projectedDirPerm); err != nil {
+		return err
+	}
+	return writeProjectionFiles(ctx, targetDir, files)
 }
 
 // Verify checks that existing target files match compiled output without modification.
@@ -139,8 +157,7 @@ func (t *Transpiler) VerifyCompiled(ctx context.Context, agentsMdPath, targetDir
 	}
 
 	for _, f := range res.Files {
-		fullPath := filepath.Join(targetDir, f.RelativePath)
-		existing, err := contextopt.ReadSnapshot(ctx, fullPath)
+		existing, err := readConfinedText(ctx, targetDir, f.RelativePath)
 		if err != nil {
 			return nil, fmt.Errorf("target %s missing or unreadable: %w", f.RelativePath, err)
 		}

@@ -110,7 +110,7 @@ func mustRead(t *testing.T, path string) string {
 	return string(data)
 }
 
-// snapshotTree maps every entry under dir to a content hash (or "dir").
+// snapshotTree maps every entry under dir to a content hash, "dir", or "link:" and its target.
 func snapshotTree(t *testing.T, dir string) map[string]string {
 	t.Helper()
 	snap := make(map[string]string)
@@ -131,6 +131,12 @@ func snapshotTree(t *testing.T, dir string) map[string]string {
 			snap[rel] = "dir"
 			return nil
 		}
+		// Walk does not follow a symlink; record the link itself instead of reading through it.
+		if info.Mode()&os.ModeSymlink != 0 {
+			target, linkErr := os.Readlink(path)
+			snap[rel] = "link:" + target
+			return linkErr
+		}
 		data, readErr := os.ReadFile(path)
 		if readErr != nil {
 			return readErr
@@ -148,11 +154,11 @@ func snapshotTree(t *testing.T, dir string) map[string]string {
 func assertTreeUnchanged(t *testing.T, before, after map[string]string) {
 	t.Helper()
 	if len(before) != len(after) {
-		t.Fatalf("dry-run changed the tree: %d entries before, %d after", len(before), len(after))
+		t.Fatalf("the tree changed: %d entries before, %d after", len(before), len(after))
 	}
 	for rel, hash := range before {
 		if after[rel] != hash {
-			t.Fatalf("dry-run modified %s", rel)
+			t.Fatalf("%s modified", rel)
 		}
 	}
 }

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/compiler"
+
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -21,7 +23,7 @@ func newContextFixture(t *testing.T, withPlugin bool) string {
 	writeFixtureFile(t, dir, "AGENTS.md", fixtureAgentsMD)
 	writeFixtureFile(t, dir, ".agents/agents/praetor-gatekeeper.md", fixturePersona)
 	if withPlugin {
-		writeFixtureFile(t, dir, pluginManifestRel, `{"name":"praetor"}`+"\n")
+		writeFixtureFile(t, dir, compiler.PluginManifestRel, `{"name":"praetor"}`+"\n")
 	}
 	return dir
 }
@@ -46,7 +48,7 @@ func TestCompileContext_Positive(t *testing.T) {
 	if !util.FileExists(filepath.Join(dir, "CLAUDE.md")) {
 		t.Fatal("expected the transpiled CLAUDE.md to be written")
 	}
-	for _, rel := range append(allPersonaDirs(t), pluginAgentsRel) {
+	for _, rel := range append(allPersonaDirs(t), compiler.PluginAgentsRel) {
 		if got := readFixtureFile(t, dir, rel+"/praetor-gatekeeper.md"); got != fixturePersona {
 			t.Fatalf("projection %s differs from the canonical persona:\n%s", rel, got)
 		}
@@ -58,8 +60,8 @@ func TestCompileContext_Positive(t *testing.T) {
 		t.Fatalf("verify: %v\n%s", err, out)
 	}
 	mustContain(t, out, "5 persona projections verified")
-	if n, err := verifyAgentProjections(t.Context(), dir); err != nil || n != 5 {
-		t.Fatalf("verifyAgentProjections = %d, %v; want 5, nil", n, err)
+	if n, err := compiler.VerifyAgentProjections(t.Context(), dir); err != nil || n != 5 {
+		t.Fatalf("compiler.VerifyAgentProjections = %d, %v; want 5, nil", n, err)
 	}
 }
 
@@ -73,11 +75,11 @@ func TestCompileContext_Negative(t *testing.T) {
 	writeFixtureFile(t, dir, ".github/agents/praetor-gatekeeper.md", "# Gatekeeper\n\nMerges may skip receipts.\n")
 	_, err := runCompileContextCmd(t, dir, "--verify")
 	mustErrContain(t, err, ".github/agents/praetor-gatekeeper.md")
-	if !errors.Is(err, ErrAgentProjectionDrift) {
-		t.Fatalf("expected ErrAgentProjectionDrift, got %v", err)
+	if !errors.Is(err, compiler.ErrAgentProjectionDrift) {
+		t.Fatalf("expected compiler.ErrAgentProjectionDrift, got %v", err)
 	}
-	if err := auditAgentProjections(t.Context(), dir); !errors.Is(err, ErrAgentProjectionDrift) {
-		t.Fatalf("audit gate: expected ErrAgentProjectionDrift, got %v", err)
+	if err := auditAgentProjections(t.Context(), dir); !errors.Is(err, compiler.ErrAgentProjectionDrift) {
+		t.Fatalf("audit gate: expected compiler.ErrAgentProjectionDrift, got %v", err)
 	}
 
 	// Regeneration repairs it; a stale plugin copy and a missing vendor copy are caught.
@@ -87,9 +89,9 @@ func TestCompileContext_Negative(t *testing.T) {
 	if _, err := runCompileContextCmd(t, dir, "--verify"); err != nil {
 		t.Fatalf("verify after regenerate: %v", err)
 	}
-	writeFixtureFile(t, dir, pluginAgentsRel+"/praetor-gatekeeper.md", "stale\n")
+	writeFixtureFile(t, dir, compiler.PluginAgentsRel+"/praetor-gatekeeper.md", "stale\n")
 	_, err = runCompileContextCmd(t, dir, "--verify")
-	mustErrContain(t, err, pluginAgentsRel)
+	mustErrContain(t, err, compiler.PluginAgentsRel)
 	if _, err := runCompileContextCmd(t, dir); err != nil {
 		t.Fatalf("regenerate plugin copy: %v", err)
 	}
@@ -158,10 +160,10 @@ func TestCompileContext_Boundary(t *testing.T) {
 	if _, err := runCompileContextCmd(t, dir); err != nil {
 		t.Fatalf("compile without plugin: %v", err)
 	}
-	if n, err := verifyAgentProjections(t.Context(), dir); err != nil || n != 4 {
-		t.Fatalf("verifyAgentProjections = %d, %v; want 4, nil", n, err)
+	if n, err := compiler.VerifyAgentProjections(t.Context(), dir); err != nil || n != 4 {
+		t.Fatalf("compiler.VerifyAgentProjections = %d, %v; want 4, nil", n, err)
 	}
-	if util.DirExists(filepath.Join(dir, filepath.FromSlash(pluginAgentsRel))) {
+	if util.DirExists(filepath.Join(dir, filepath.FromSlash(compiler.PluginAgentsRel))) {
 		t.Fatal("plugin agents must not be projected without a plugin manifest")
 	}
 }

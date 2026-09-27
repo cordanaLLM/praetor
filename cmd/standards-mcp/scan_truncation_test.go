@@ -3,12 +3,13 @@ package main
 import (
 	"context"
 	"errors"
-	"github.com/cordanaLLM/praetor/internal/baseline"
-	"github.com/cordanaLLM/praetor/internal/hiss"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/baseline"
+	"github.com/cordanaLLM/praetor/internal/hiss"
 )
 
 func TestAuditBaselineRatchetRejectsTruncatedScan(t *testing.T) {

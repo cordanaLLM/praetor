@@ -178,6 +178,10 @@ func checkProvenanceContext(ctx context.Context) error {
 	return nil
 }
 
+// DefaultBuildType is the SLSA v1.0 build definition type every praetor provenance statement
+// records: the project's own URI, not an operator's domain.
+const DefaultBuildType = "https://cordanallm.github.io/praetor/slsa/build/v1"
+
 // newStatement builds the unsigned statement naming subjects, whose digests the caller has
 // already computed from the artifact bytes.
 func newStatement(subjects []Subject, builderID string) *SLSAStatement {
@@ -188,7 +192,7 @@ func newStatement(subjects []Subject, builderID string) *SLSAStatement {
 		PredicateType: "https://slsa.dev/provenance/v1",
 		Predicate: SLSAPredicate{
 			BuildDefinition: BuildDefinition{
-				BuildType: "https://cordana.ai/slsa/build/v1",
+				BuildType: DefaultBuildType,
 				External: map[string]string{
 					"builder": builderID,
 				},
