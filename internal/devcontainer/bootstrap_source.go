@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
@@ -39,21 +40,9 @@ func captureBootstrapSource(ctx context.Context, root string) ([]bootstrapSource
 	if err != nil {
 		return nil, err
 	}
-	files := make([]bootstrapSourceFile, 0, len(paths))
-	total := 0
-	for _, path := range paths {
-		data, err := contextopt.ReadSnapshot(ctx, filepath.Join(root, filepath.FromSlash(path)))
-		if err != nil {
-			return nil, fmt.Errorf("bootstrap source %s: %w", path, err)
-		}
-		total += len(data)
-		if total > maxBootstrapSourceBytes {
-			return nil, errors.New("bootstrap source exceeds 8 MiB")
-		}
-		if err := validateBootstrapSourceFile(path, data); err != nil {
-			return nil, err
-		}
-		files = append(files, bootstrapSourceFile{Name: path, Data: data})
+	files, err := captureBootstrapClosure(ctx, root, paths)
+	if err != nil {
+		return nil, err
 	}
 	if err := validateBootstrapSourceSet(files); err != nil {
 		return nil, err
@@ -72,8 +61,11 @@ func captureBootstrapSource(ctx context.Context, root string) ([]bootstrapSource
 // appended asset paths included: the recorded Dockerfile
 // only runs go build ./cmd/standardsctl, which never reads a _test.go file or a testdata
 // directory. Carrying them roughly doubled the compressed archive and pushed it to 96% of
-// the four-frame cap, so one added test failed every bootstrap (BUG-985). The glob magic
-// makes the leading ** match testdata at the root as well as at any depth.
+// the then four-frame cap, so one added test failed every bootstrap (BUG-985). The glob
+// magic makes the leading ** match testdata at the root as well as at any depth.
+//
+// The listing is the candidate inventory, not the capture: captureBootstrapClosure keeps
+// only the packages go build ./cmd/standardsctl reads (#501).
 var bootstrapSourcePathspec = []string{"*.go", "go.mod", "go.sum", "LICENSE", ":(exclude)*_test.go", ":(exclude,glob)**/testdata/**"}
 
 func bootstrapSourcePaths(ctx context.Context, root string) ([]string, error) {
@@ -159,24 +151,32 @@ func validateBootstrapSourceKind(name string) error {
 }
 
 func validateBootstrapSourceFile(name string, data []byte) error {
+	_, err := parseBootstrapSourceFile(name, data)
+	return err
+}
+
+// parseBootstrapSourceFile applies the name rule and, for Go source, the embed-directive
+// rule, and returns the parsed file so the build closure reads its imports without a
+// second parse. A non-Go member returns a nil file.
+func parseBootstrapSourceFile(name string, data []byte) (*ast.File, error) {
 	if err := validateBootstrapSourceName(name); err != nil {
-		return err
+		return nil, err
 	}
 	if !strings.HasSuffix(name, ".go") {
-		return nil
+		return nil, nil
 	}
 	parsed, err := parser.ParseFile(token.NewFileSet(), name, data, parser.ParseComments)
 	if err != nil {
-		return fmt.Errorf("parse bootstrap source %s: %w", name, err)
+		return nil, fmt.Errorf("parse bootstrap source %s: %w", name, err)
 	}
 	for _, group := range parsed.Comments {
 		for _, comment := range group.List {
 			if err := validateEmbedDirective(name, comment.Text); err != nil {
-				return err
+				return nil, err
 			}
 		}
 	}
-	return nil
+	return parsed, nil
 }
 
 // validateEmbedDirective refuses a go:embed directive unless it is exactly the directive of
@@ -257,7 +257,7 @@ func validateBootstrapSourceSet(files []bootstrapSourceFile) error {
 	if len(files) > maxBootstrapFiles {
 		return errors.New("bootstrap source exceeds 4096 files")
 	}
-	for _, required := range []string{"cmd/standardsctl/main.go", "go.mod", "go.sum", "LICENSE"} {
+	for _, required := range []string{bootstrapBuildPackage + "/main.go", "go.mod", "go.sum", "LICENSE"} {
 		if !containsBootstrapSource(files, required) {
 			return errors.New("bootstrap requires CLI sources, go.mod, go.sum and LICENSE")
 		}
@@ -371,7 +371,7 @@ func declaresPraetorModule(data []byte) bool {
 		fields := strings.Fields(directive)
 		if len(fields) > 0 && fields[0] == "module" {
 			count++
-			valid = len(fields) == 2 && fields[1] == "github.com/cordanaLLM/praetor"
+			valid = len(fields) == 2 && fields[1] == praetorModulePath
 		}
 	}
 	return count == 1 && valid

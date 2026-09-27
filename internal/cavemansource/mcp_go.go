@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
@@ -744,26 +745,23 @@ func localGoReceiverType(function *ast.FuncDecl) string {
 
 func resolveMCPImports(file *ast.File) (map[string]string, error) {
 	imports := make(map[string]string)
-	for _, spec := range file.Imports {
-		importPath, err := strconv.Unquote(spec.Path.Value)
-		canonical, governed := governedGoImport(importPath)
-		if err != nil || !governed {
+	for _, spec := range util.GoImportSpecs(file) {
+		canonical, governed := governedGoImport(spec.Path)
+		if !governed {
 			continue
 		}
-		if spec.Name == nil {
+		switch spec.Name {
+		case "":
 			imports[canonical] = canonical
-			continue
-		}
-		if spec.Name.Name == "." {
-			return nil, fmt.Errorf("dot import of %s is unsupported", importPath)
-		}
-		if spec.Name.Name == "_" {
-			if importPath == mcpImportPath {
+		case ".":
+			return nil, fmt.Errorf("dot import of %s is unsupported", spec.Path)
+		case "_":
+			if spec.Path == mcpImportPath {
 				return nil, errors.New("blank import of internal/mcp is unsupported")
 			}
-			continue
+		default:
+			imports[spec.Name] = canonical
 		}
-		imports[spec.Name.Name] = canonical
 	}
 	return imports, nil
 }

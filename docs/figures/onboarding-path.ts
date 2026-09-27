@@ -155,7 +155,7 @@ export default {
         flow: [
           { edges: 'baseline->devcontainer', say: 'DevContainer configuration and reviewed source bundle companions are generated.' },
           {
-            say: 'The configuration, Dockerfile.praetor and up to four source parts are written to .devcontainer/.',
+            say: 'The configuration, Dockerfile.praetor and up to eight source parts are written to .devcontainer/.',
             show: {
               devcontainer: [
                 { tag: 'created', tone: 'green', text: '.devcontainer/devcontainer.json', mono: true },

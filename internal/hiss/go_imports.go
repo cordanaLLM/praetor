@@ -3,14 +3,10 @@ package hiss
 import (
 	"go/ast"
 	"path"
-	"strconv"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 )
-
-// maxGoImports bounds the import specs read from one file (HISS-02).
-const maxGoImports = 4096
 
 // GoImports records the package names a Go file binds through its import declarations,
 // so a rule can ask what an identifier resolves to instead of how it is spelled.
@@ -25,33 +21,23 @@ type GoImports struct {
 	dot map[string]struct{}
 }
 
-// FileImports reads the file's import specs once. Without type information the name of
-// an unrenamed import is derived from its path by DefaultImportName. A spec whose path
-// does not unquote comes from a partial AST and binds nothing.
+// FileImports reads the file's import specs once, through util.GoImportSpecs. Without type
+// information the name of an unrenamed import is derived from its path by
+// DefaultImportName. A spec whose path does not unquote comes from a partial AST and binds
+// nothing.
 func FileImports(file *ast.File) GoImports {
 	im := GoImports{byName: make(map[string]string), dot: make(map[string]struct{})}
-	if file == nil {
-		return im
-	}
-	for i := 0; i < len(file.Imports) && i < maxGoImports; i++ {
-		spec := file.Imports[i]
-		if spec == nil || spec.Path == nil {
-			continue
-		}
-		importPath, err := strconv.Unquote(spec.Path.Value)
-		if err != nil || importPath == "" {
-			continue
-		}
-		name := DefaultImportName(importPath)
-		if spec.Name != nil {
-			name = spec.Name.Name
+	for _, spec := range util.GoImportSpecs(file) {
+		name := spec.Name
+		if name == "" {
+			name = DefaultImportName(spec.Path)
 		}
 		switch name {
 		case "_":
 		case ".":
-			im.dot[importPath] = struct{}{}
+			im.dot[spec.Path] = struct{}{}
 		default:
-			im.byName[name] = importPath
+			im.byName[name] = spec.Path
 		}
 	}
 	return im

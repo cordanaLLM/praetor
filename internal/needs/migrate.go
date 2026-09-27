@@ -151,9 +151,9 @@ func sortedReplacementKeys(replacements map[string]string) []string {
 	return keys
 }
 
-// scanFileForReplacements inspects a single file's parsed import specs. Matching on the
-// parsed import path (rather than on any line containing the package name) keeps string
-// literals such as "redis:6379" out of the plan.
+// scanFileForReplacements inspects a single file's parsed import specs, read through
+// util.GoImportPaths. Matching on the parsed import path (rather than on any line containing
+// the package name) keeps string literals such as "redis:6379" out of the plan.
 func scanFileForReplacements(filePath string, replacements map[string]string, keys []string) []ReplacementAction {
 	// Unparseable or generated sources carry no rewritable imports.
 	node := parseImportsOnly(filePath)
@@ -162,12 +162,9 @@ func scanFileForReplacements(filePath string, replacements map[string]string, ke
 	}
 
 	var actions []ReplacementAction
-	seen := make(map[string]struct{}, len(node.Imports))
-	for _, imp := range node.Imports {
-		rawPath, err := strconv.Unquote(imp.Path.Value)
-		if err != nil {
-			continue
-		}
+	importPaths := util.GoImportPaths(node)
+	seen := make(map[string]struct{}, len(importPaths))
+	for _, rawPath := range importPaths {
 		if _, dup := seen[rawPath]; dup {
 			continue
 		}
@@ -198,12 +195,13 @@ func parseImportsOnly(filePath string) *ast.File {
 }
 
 // rewriteImportPath maps an import path onto its framework replacement, preserving the
-// sub-package suffix. keys must be ordered longest-first.
+// sub-package suffix. A key owns an import path under util.ModuleImportDir. keys must be
+// ordered longest-first.
 func rewriteImportPath(importPath string, replacements map[string]string, keys []string) (string, bool) {
 	bound := len(keys)
 	for i := 0; i < bound; i++ {
 		key := keys[i]
-		if importPath != key && !strings.HasPrefix(importPath, key+"/") {
+		if _, inside := util.ModuleImportDir(importPath, key); !inside {
 			continue
 		}
 		rewritten := replacements[key] + strings.TrimPrefix(importPath, key)

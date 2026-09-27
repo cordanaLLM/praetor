@@ -164,6 +164,10 @@ func TestResolveModuleRoot3D(t *testing.T) {
 		{"undeclared two-segment host", "go.uber.org/zap/zapcore", "go.uber.org/zap"},
 		{"vanity two-segment path", "gopkg.in/yaml.v3", "gopkg.in/yaml.v3"},
 		{"golang.org/x three segments", "golang.org/x/sync/errgroup", "golang.org/x/sync"},
+		// A sibling sharing the declared module's prefix is not owned by it, and a trailing
+		// separator falls back to the host convention.
+		{"sibling of a declared module", "github.com/jackc/pgx/v5x/sub", "github.com/jackc/pgx"},
+		{"trailing separator", "github.com/jackc/pgx/v5/", "github.com/jackc/pgx/v5"},
 	}
 	for _, tc := range cases {
 		if got := ResolveModuleRoot(tc.imp, directDeps); got != tc.want {

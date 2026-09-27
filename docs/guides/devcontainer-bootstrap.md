@@ -15,11 +15,20 @@ praetorctl devcontainer verify
 
 Generation prepares the configuration and exact companion files. It does not
 build an image, execute the selected source, or certify application tests.
-The selected source must be a Git checkout declaring the Praetor module. Its
-tracked and nonignored untracked Go build sources, `go.mod`, `go.sum`,
-`LICENSE`, and the assets of the two `go:embed` families the CLI builds with —
-the five declared `tools/markdownlint` assets and the `templates/*/*.tmpl`
-bodies flavor apply scaffolds — are captured twice; a changed snapshot fails preparation. Go's test surface,
+The selected source must be a Git checkout declaring the Praetor module. From its
+tracked and nonignored untracked files, preparation captures what
+`go build ./cmd/standardsctl` reads: the Go sources of every module package
+`cmd/standardsctl` imports, directly or transitively, plus `go.mod`, `go.sum`,
+`LICENSE`, and the assets of each reached `go:embed` family — the five declared
+`tools/markdownlint` assets and the `templates/*/*.tmpl` bodies flavor apply
+scaffolds. The import closure is read with Go's parser, not the go command, so
+preparation needs no Go toolchain (`captureBootstrapClosure` in
+`internal/devcontainer/bootstrap_closure.go`). Build constraints are not
+evaluated: a reached package contributes every non-test file and its imports,
+for every platform. Packages only other commands import, such as
+`cmd/standards-mcp`, stay out, and an import of a module package with no
+captured Go source fails preparation, because the image could not build it.
+The set is captured twice; a changed snapshot fails preparation. Go's test surface,
 `_test.go` files and anything under a `testdata` directory, is not captured:
 the generated Dockerfile only runs `go build ./cmd/standardsctl`, which reads
 neither. The Git pathspec excludes it and the name check refuses it first, for
@@ -39,7 +48,8 @@ source snapshot, compressed archive, Dockerfile, and immutable builder/base
 images. The compiled CLI retains the version declared by the selected source;
 its displayed version is not the bundle digest. Read the source identity from
 the retained bootstrap specification and verified companions. The compressed
-source is carried in at most four 512 KiB base64 files, alongside
+source is carried in at most eight 512 KiB base64 files (`maxBootstrapParts`
+in `internal/devcontainer/bootstrap.go`), alongside
 `Dockerfile.praetor`. Keep these files together with the JSON. They are
 source-bearing artifacts: select and review the source before copying a bundle
 to another repository. The hashes establish integrity, not source authenticity
@@ -199,6 +209,22 @@ it until the bundle is regenerated with the generation command above and
 the `praetor-source.*.b64` parts; the recorded `sourceSHA256`, `archiveSHA256`
 and `dockerfileSHA256` change even when no build source changed. The compiled
 CLI does not change, because `go build` never read the removed files.
+
+### The archive carries only the build closure
+
+Before #501 the archive held every non-test Go file of the module, so packages
+the CLI never imports filled the four-frame cap. Preparation now captures the
+import closure of `cmd/standardsctl`, and the cap is eight frames. A ready
+bootstrap recorded earlier still verifies: its extra packages pass the same
+name rule, and its part count is within the new cap. Regenerating it with
+`--force` shrinks the archive and changes the recorded digests. A bundle that
+needs more than four parts is refused by a `praetorctl` released before this
+change, so verify such a bundle with a current CLI. This command prints the
+current usage of each bound:
+
+```bash
+go test -v -run TestRepositoryBootstrapSourceKeepsHeadroom ./internal/devcontainer
+```
 
 ## Infrastructure test environments
 

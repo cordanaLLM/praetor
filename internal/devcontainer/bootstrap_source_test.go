@@ -21,6 +21,8 @@ const bootstrapHeadroomPercent = 80
 // out, while names that merely resemble them stay in.
 func TestBootstrapSourceExcludesGoTestSurface(t *testing.T) {
 	root := bootstrapSourceFixture(t)
+	// The capture holds the build closure, so the CLI imports both packages under test.
+	writeBootstrapFile(t, root, "cmd/standardsctl/main.go", "package main\n\nimport (\n\t_ \"github.com/cordanaLLM/praetor/internal/mytestdata\"\n\t_ \"github.com/cordanaLLM/praetor/internal/x\"\n)\n\nfunc main() {}\n")
 	for _, name := range []string{
 		"cmd/standardsctl/main_test.go",
 		"internal/x/x_test.go",
@@ -136,10 +138,11 @@ func TestBootstrapMarkdownAssetsNeverAdmitTestSurface(t *testing.T) {
 	}
 }
 
-// TestBootstrapArchiveFitsAtTheFrameCap pins the one frame-capacity bound: an archive whose
-// base64 form fills the four frames exactly is accepted and framed, one byte more is not.
+// TestBootstrapArchiveFitsAtTheFrameCap pins the one frame-capacity bound at eight 512 KiB
+// frames (#501): an archive whose base64 form fills them exactly is accepted and framed, one
+// byte more is not, and the refusal states the cap from the constants.
 func TestBootstrapArchiveFitsAtTheFrameCap(t *testing.T) {
-	capacity := maxBootstrapParts * bootstrapPartBytes
+	capacity := 8 * 512 * 1024
 	atCap := base64.StdEncoding.DecodedLen(capacity)
 	if base64.StdEncoding.EncodedLen(atCap) != capacity {
 		t.Fatalf("fixture is not at the cap: %d encodes to %d", atCap, base64.StdEncoding.EncodedLen(atCap))
@@ -148,14 +151,18 @@ func TestBootstrapArchiveFitsAtTheFrameCap(t *testing.T) {
 		t.Fatalf("archive exactly at the cap refused: %v", err)
 	}
 	parts, err := frameBootstrapArchive(make([]byte, atCap))
-	if err != nil || len(parts) != maxBootstrapParts || len(parts[maxBootstrapParts-1].Content) != bootstrapPartBytes {
-		t.Fatalf("archive exactly at the cap did not fill four frames: %d parts, %v", len(parts), err)
+	if err != nil || len(parts) != 8 || len(parts[7].Content) != bootstrapPartBytes {
+		t.Fatalf("archive exactly at the cap did not fill eight frames: %d parts, %v", len(parts), err)
 	}
+	want := "8 bounded archive frames of 524288 bytes hold 4194304"
 	for _, size := range []int{atCap + 1, 0, -1} {
 		err := checkBootstrapArchiveFits(size)
-		if err == nil || !strings.Contains(err.Error(), "four bounded archive frames hold") {
-			t.Errorf("checkBootstrapArchiveFits(%d) = %v, want the frame-cap refusal", size, err)
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("checkBootstrapArchiveFits(%d) = %v, want the frame-cap refusal %q", size, err, want)
 		}
+	}
+	if _, err := frameBootstrapArchive(make([]byte, atCap+1)); err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("framing one byte past the cap = %v, want the frame-cap refusal %q", err, want)
 	}
 }
 

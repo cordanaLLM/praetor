@@ -15,9 +15,11 @@ func templateEmbedSource(directive string) string {
 }
 
 // writeTemplateFamily writes the template embedding source and every template body it
-// embeds into a bootstrap fixture.
+// embeds into a bootstrap fixture, and makes the CLI import the templates package, since
+// the capture holds only the build closure.
 func writeTemplateFamily(t *testing.T, root, directive string) []string {
 	t.Helper()
+	writeBootstrapFile(t, root, "cmd/standardsctl/main.go", "package main\n\nimport _ \"github.com/cordanaLLM/praetor/"+templates.Directory+"\"\n\nfunc main() {}\n")
 	writeBootstrapFile(t, root, templates.SourceFile, templateEmbedSource(directive))
 	assets, err := templateBootstrapAssetPaths()
 	if err != nil {
