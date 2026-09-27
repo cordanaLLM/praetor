@@ -126,13 +126,18 @@ func (g *GitHubDriver) TargetRepository() (string, error) {
 	return owner + "/" + repo, nil
 }
 
-// repoPath constructs an API path for the targeted repository.
+// repoPath constructs an API path for the targeted repository. An empty subpath names the
+// repository itself, /repos/<owner>/<repo>, with no trailing slash.
 func (g *GitHubDriver) repoPath(subpath string) (string, error) {
 	owner, repo, err := g.resolveRepository()
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("/repos/%s/%s/%s", owner, repo, strings.TrimPrefix(subpath, "/")), nil
+	base := fmt.Sprintf("/repos/%s/%s", owner, repo)
+	if sub := strings.TrimPrefix(subpath, "/"); sub != "" {
+		return base + "/" + sub, nil
+	}
+	return base, nil
 }
 
 func (g *GitHubDriver) Name() string {

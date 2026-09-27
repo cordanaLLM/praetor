@@ -81,7 +81,7 @@ export default {
       ],
     },
     edges: [
-      { from: 'sync', to: 'github', label: 'ruleset, labels' },
+      { from: 'sync', to: 'github', label: 'ruleset, labels, metadata' },
       { from: 'issue', to: 'github', label: 'list, relabel' },
       { from: 'epic', to: 'github', label: 'list, create' },
       { from: 'tests', to: 'factory', label: 'NewForge' },
@@ -91,7 +91,7 @@ export default {
     steps: [
       {
         label: 'sync --remote',
-        caption: 'sync --remote writes the branch ruleset and the label taxonomy through the GitHub driver.',
+        caption: 'sync --remote writes the branch ruleset, the label taxonomy and the repository metadata through the GitHub driver.',
         flow: [
           {
             edges: 'sync->github',
@@ -111,6 +111,17 @@ export default {
               github: [
                 { tag: 'call', tone: 'blue', text: 'ReconcileProtection', meta: 'sync.go', mono: true },
                 { tag: 'call', tone: 'blue', text: 'ReconcileLabels', meta: 'sync.go', mono: true },
+              ],
+            },
+          },
+          {
+            edges: 'sync->github',
+            say: 'ReconcileRepositoryMetadata writes the declared description, homepage and missing topics, and reports visibility drift.',
+            show: {
+              github: [
+                { tag: 'call', tone: 'blue', text: 'ReconcileProtection', meta: 'sync.go', mono: true },
+                { tag: 'call', tone: 'blue', text: 'ReconcileLabels', meta: 'sync.go', mono: true },
+                { tag: 'call', tone: 'blue', text: 'ReconcileRepositoryMetadata', meta: 'sync.go', mono: true },
               ],
             },
           },

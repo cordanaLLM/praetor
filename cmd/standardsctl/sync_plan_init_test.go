@@ -298,9 +298,10 @@ labels:
 	mustContain(t, out, "[OK] Labels verified")
 }
 
-// forgeStub is a stateful stand-in for the GitHub rulesets and labels REST API of
-// acme/widgets: it stores what is written, lists and reads it back, and records every
-// write. A writeStatus of 300 or above makes every write fail with that status.
+// forgeStub is a stateful stand-in for the GitHub rulesets, labels and repository
+// metadata REST API of acme/widgets: it stores what is written, lists and reads it back,
+// and records every write. A writeStatus of 300 or above makes every write fail with that
+// status. repo is the repository object; nil serves a public repository with no metadata.
 type forgeStub struct {
 	mu          sync.Mutex
 	writes      []string
@@ -308,6 +309,7 @@ type forgeStub struct {
 	writeStatus int
 	rulesets    map[int]map[string]any
 	labels      map[string]map[string]any
+	repo        map[string]any
 }
 
 const forgeStubRepo = "/repos/acme/widgets/"
@@ -323,6 +325,9 @@ func (s *forgeStub) handler() http.HandlerFunc {
 		if s.labels == nil {
 			s.labels = map[string]map[string]any{}
 		}
+		if s.repo == nil {
+			s.repo = map[string]any{"visibility": "public", "topics": []any{}}
+		}
 		var body map[string]any
 		if r.Method != http.MethodGet {
 			s.writes = append(s.writes, r.Method+" "+r.URL.Path)
@@ -334,6 +339,10 @@ func (s *forgeStub) handler() http.HandlerFunc {
 				stubRespond(w, s.writeStatus, map[string]any{"message": "stub rejection"})
 				return
 			}
+		}
+		if r.URL.Path == strings.TrimSuffix(forgeStubRepo, "/") || r.URL.Path == forgeStubRepo+"topics" {
+			s.serveRepository(w, r.Method, body)
+			return
 		}
 		resource := strings.TrimPrefix(r.URL.Path, forgeStubRepo)
 		if strings.HasPrefix(resource, "labels") {
@@ -389,6 +398,23 @@ func (s *forgeStub) serveLabel(w http.ResponseWriter, method, rest string, body 
 		}
 		s.labels[label] = body
 		stubRespond(w, http.StatusCreated, body)
+	}
+}
+
+// serveRepository answers the repository object (GET), a repository update (PATCH) and a
+// topic replacement (PUT .../topics).
+func (s *forgeStub) serveRepository(w http.ResponseWriter, method string, body map[string]any) {
+	switch method {
+	case http.MethodGet:
+		stubRespond(w, http.StatusOK, s.repo)
+	case http.MethodPatch:
+		for k, v := range body {
+			s.repo[k] = v
+		}
+		stubRespond(w, http.StatusOK, s.repo)
+	default:
+		s.repo["topics"] = body["names"]
+		stubRespond(w, http.StatusOK, map[string]any{"names": body["names"]})
 	}
 }
 
@@ -661,4 +687,86 @@ func TestSync_Remote_Labels(t *testing.T) {
 	if n := empty.requestCount(); n != 0 {
 		t.Fatalf("an invalid taxonomy reached the forge with %d requests", n)
 	}
+}
+
+// storedRepo returns a copy of the repository object the stub holds.
+func (s *forgeStub) storedRepo() map[string]any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]any, len(s.repo))
+	for k, v := range s.repo {
+		out[k] = v
+	}
+	return out
+}
+
+// metadataManifest is the fixture manifest declaring private visibility, a description, a
+// homepage and two topics.
+func metadataManifest() string {
+	return strings.Replace(fixtureManifest("acme", "widgets", false), "  visibility: \"public\"\n",
+		"  visibility: \"private\"\n  description: \"Widget engine\"\n  homepage: \"https://widgets.example\"\n"+
+			"  topics:\n    - \"widgets\"\n    - \"governance\"\n", 1)
+}
+
+// TestSync_Remote_RepositoryMetadata covers BUG-576 and BUG-906: --remote writes the
+// description, homepage and topics .standards.yaml declares, keeps the topics it does not
+// name, and reports visibility drift without changing the visibility.
+func TestSync_Remote_RepositoryMetadata(t *testing.T) {
+	f := newSyncValidationFixture(t)
+	env := initGitFixture(t, f.dir)
+	if out, gerr := runFixtureGit(t, f.dir, env, "remote", "add", "origin", "https://github.com/acme/widgets.git"); gerr != nil {
+		t.Fatalf("remote add: %v (%s)", gerr, out)
+	}
+	writeFixtureFile(t, f.dir, ".standards.yaml", metadataManifest())
+	stub := &forgeStub{repo: map[string]any{
+		"description": "stale", "homepage": "", "visibility": "public", "topics": []any{"governance", "operator-topic"},
+	}}
+	srv := httptest.NewServer(stub.handler())
+	t.Cleanup(srv.Close)
+	remote := []string{"--config=" + f.manifestPath, "--remote", "--token=ghp_x", "--endpoint=" + srv.URL}
+
+	// Positive: the drifted fields are written, the undeclared topic is kept, visibility is reported.
+	out, err := runSyncCmd(t, remote...)
+	if err != nil {
+		t.Fatalf("remote sync: %v\n%s", err, out)
+	}
+	mustContain(t, out,
+		"[SYNC] Reconciling repository description, homepage and topics on GitHub",
+		"[OK] Repository metadata synchronized on GitHub (updated description, homepage; topics added: widgets;",
+		"[DRIFT] Repository visibility: manifest declares private, GitHub reports public; left unchanged")
+	mustContain(t, strings.Join(stub.recorded(), "\n"), "PATCH /repos/acme/widgets", "PUT /repos/acme/widgets/topics")
+	repo := stub.storedRepo()
+	if repo["description"] != "Widget engine" || repo["homepage"] != "https://widgets.example" || repo["visibility"] != "public" {
+		t.Fatalf("repository metadata not converged, or visibility changed: %v", repo)
+	}
+	if topics := fmt.Sprint(repo["topics"]); topics != "[governance operator-topic widgets]" {
+		t.Fatalf("topics = %s; the operator's topic must be kept and the declared one added", topics)
+	}
+
+	// Boundary: a second run finds nothing to write.
+	before := len(stub.recorded())
+	out, err = runSyncCmd(t, remote...)
+	if err != nil {
+		t.Fatalf("second remote sync: %v\n%s", err, out)
+	}
+	mustContain(t, out, "[OK] Repository metadata synchronized on GitHub (already matched .standards.yaml;")
+	for _, write := range stub.recorded()[before:] {
+		if write == "PATCH /repos/acme/widgets" || write == "PUT /repos/acme/widgets/topics" {
+			t.Fatalf("a converged repository was written again: %v", stub.recorded()[before:])
+		}
+	}
+
+	// Negative: a rejected metadata write fails the command.
+	failing := &forgeStub{}
+	failSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPatch && r.URL.Path == "/repos/acme/widgets" {
+			stubRespond(w, http.StatusUnprocessableEntity, map[string]any{"message": "Validation Failed"})
+			return
+		}
+		failing.handler()(w, r)
+	}))
+	t.Cleanup(failSrv.Close)
+	_, err = runSyncCmd(t, "--config="+f.manifestPath, "--remote", "--token=ghp_x", "--endpoint="+failSrv.URL)
+	mustErrContain(t, err, "reconcile repository metadata")
+	mustErrContain(t, err, "422")
 }

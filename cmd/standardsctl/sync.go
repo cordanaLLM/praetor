@@ -191,9 +191,9 @@ type remoteSyncInputs struct {
 	labels []forge.Label
 }
 
-// reconcileRemoteForge pushes the branch protection ruleset and the label taxonomy and
-// returns every failure: a missing credential, an unset or foreign repository identity,
-// or a rejected API call.
+// reconcileRemoteForge pushes the branch protection ruleset, the label taxonomy and the
+// repository metadata and returns every failure: a missing credential, an unset or foreign
+// repository identity, or a rejected API call.
 func reconcileRemoteForge(ctx context.Context, rootDir string, in remoteSyncInputs, remote remoteSyncOptions) error {
 	token := resolveSyncToken(remote.token)
 	if token == "" {
@@ -227,7 +227,33 @@ func reconcileRemoteForge(ctx context.Context, rootDir string, in remoteSyncInpu
 		return fmt.Errorf("reconcile labels: %w", err)
 	}
 	fmt.Println("  [OK] Remote labels synchronized on GitHub (labels absent from .config/labels.yaml are left alone)")
+	fmt.Println("  [SYNC] Reconciling repository description, homepage and topics on GitHub...")
+	metadata, err := gh.ReconcileRepositoryMetadata(ctx, in.manifest.Repository)
+	if err != nil {
+		return fmt.Errorf("reconcile repository metadata: %w", err)
+	}
+	printRepositoryMetadataReport(metadata)
 	return nil
+}
+
+// printRepositoryMetadataReport prints what the metadata reconciliation wrote, and any
+// visibility drift it left for the operator.
+func printRepositoryMetadataReport(r *forge.RepositoryMetadataReport) {
+	changes := make([]string, 0, 2)
+	if len(r.Updated) > 0 {
+		changes = append(changes, "updated "+strings.Join(r.Updated, ", "))
+	}
+	if len(r.AddedTopics) > 0 {
+		changes = append(changes, "topics added: "+strings.Join(r.AddedTopics, ", "))
+	}
+	if len(changes) == 0 {
+		changes = append(changes, "already matched .standards.yaml")
+	}
+	fmt.Printf("  [OK] Repository metadata synchronized on GitHub (%s; fields .standards.yaml leaves unset and topics it does not name are left alone)\n",
+		strings.Join(changes, "; "))
+	if r.VisibilityDrift != "" {
+		fmt.Printf("  [DRIFT] Repository visibility: %s; left unchanged, because changing visibility is the operator's decision\n", r.VisibilityDrift)
+	}
 }
 
 // syncFlags are the parsed command-line inputs of sync.
@@ -241,7 +267,7 @@ type syncFlags struct {
 func parseSyncFlags(args []string) (syncFlags, error) {
 	fs := flag.NewFlagSet("sync", flag.ContinueOnError)
 	configPath := fs.String("config", ".standards.yaml", "Path to .standards.yaml; its directory is the reconciled root")
-	remote := fs.Bool("remote", false, "Also reconcile branch protection and labels on GitHub (an explicit opt-in; nothing is pushed without it)")
+	remote := fs.Bool("remote", false, "Also reconcile branch protection, labels and repository metadata on GitHub (an explicit opt-in; nothing is pushed without it)")
 	token := fs.String("token", "", "Forge API token for --remote (default: GITHUB_TOKEN, then GH_TOKEN; the gh CLI is never consulted)")
 	endpoint := fs.String("endpoint", "", "Forge API endpoint for --remote (default: https://api.github.com)")
 	catalogRoot := fs.String("catalog-root", "", "Root containing pinned .config/archetypes for lock digest verification (default: reconciled root)")
@@ -302,7 +328,7 @@ func runSync(args []string) error {
 			return fmt.Errorf("remote forge sync failed: %w", err)
 		}
 	} else {
-		fmt.Println("  [INFO] Remote forge untouched (pass --remote to reconcile branch protection and labels on GitHub)")
+		fmt.Println("  [INFO] Remote forge untouched (pass --remote to reconcile branch protection, labels and repository metadata on GitHub)")
 	}
 
 	fmt.Printf("Local sync checks finished: labels and ruleset verified; %d companion checks missing.\n", missing)

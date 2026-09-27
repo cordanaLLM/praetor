@@ -93,6 +93,10 @@ func TestGitHubDriver_RepoPath_Positive_ExplicitRepository(t *testing.T) {
 	if path != "/repos/acme/widgets/issues" {
 		t.Fatalf("unexpected path: %s", path)
 	}
+	// The repository itself carries no trailing slash.
+	if root, err := gh.repoPath(""); err != nil || root != "/repos/acme/widgets" {
+		t.Fatalf("repository path = %q (err %v)", root, err)
+	}
 	target, err := gh.TargetRepository()
 	if err != nil || target != "acme/widgets" {
 		t.Fatalf("unexpected target %q (err %v)", target, err)

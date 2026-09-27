@@ -124,7 +124,7 @@ stand-in; every shipped archetype requires signed commits, which the defaults do
 - An unknown decline item, malformed decline entry, or unreadable `.standards.yaml`
   fails closed, ensuring invalid configuration cannot produce a false pass.
 
-### Writing the ruleset and labels to GitHub with `sync --remote`
+### Writing the ruleset, labels and repository metadata to GitHub with `sync --remote`
 
 `standardsctl sync` verifies `.config/labels.yaml` and `.github/rulesets/main.json` locally.
 Only `--remote` writes to GitHub, with a token from `--token`, `GITHUB_TOKEN` or `GH_TOKEN`; the
@@ -152,6 +152,15 @@ standardsctl sync --remote --forge-host=ghe.example.com \
 - **Labels.** Every label in `.config/labels.yaml` is updated on GitHub, or created when GitHub
   lacks it; labels the taxonomy does not name are left alone (`forge.ParseLabelTaxonomy`,
   `TestSync_Remote_Labels`).
+- **Repository metadata.** The `repository.description` and `repository.homepage` of
+  `.standards.yaml` are written when they differ from GitHub's, and the declared
+  `repository.topics` GitHub lacks are added. A field left unset is never cleared on GitHub, and a
+  topic the manifest does not name is kept, so an empty topic list removes nothing. Topics are
+  lower-cased as GitHub stores them, and one GitHub would refuse (anything but lowercase letters,
+  numbers and hyphens, more than 50 characters, or more than 20 topics) fails the sync before any
+  write. `repository.visibility` is compared and a mismatch printed as `[DRIFT]`, but never
+  written: making a repository public or private stays the operator's decision
+  (`internal/forge/repo_metadata.go`, `TestSync_Remote_RepositoryMetadata`).
 
 ### Label taxonomy
 
