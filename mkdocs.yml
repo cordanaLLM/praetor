@@ -1,7 +1,7 @@
 site_name: Praetor
 site_url: https://cordanallm.github.io/praetor/
 site_description: Enterprise Fleet Governance, Repository-as-Code & Universal AI Agent Engineering Engine
-site_author: Acme
+site_author: Lusoris
 
 
 # The preset's override template is the live site's too, so the JSON-LD it injects into
