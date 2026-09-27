@@ -21,6 +21,7 @@ This directory documents all significant architectural and design decisions gove
 | **[ADR-0011](0011-agent-client-wrapping-and-operational-rollout.md)** | One Hook Entrypoint, Plugin-First Client Wrapping, and a Governed Operational Rollout | **Proposed** | 2026-09-17 |
 | **[ADR-0012](0012-current-delivery-runner-and-pipeline-state.md)** | Context Compilation, Gating, Delivery and Runner Routing as They Stand | **Accepted**; decision 4 **Superseded** by [ADR-0013](0013-container-image-and-helm-chart-delivery.md) | 2026-09-26 |
 | **[ADR-0013](0013-container-image-and-helm-chart-delivery.md)** | Container Image and Helm Chart Delivery | **Accepted** | 2026-09-26 |
+| **[ADR-0014](0014-operator-neutral-defaults.md)** | Operator-Neutral Defaults: Deployment Data Becomes Operator Configuration | **Proposed** | 2026-09-26 |
 | **[ADR-0015](0015-interactive-figures-from-vendored-interfig.md)** | Interactive Documentation Figures from Vendored interfig | **Proposed** | 2026-09-27 |
 
 ---

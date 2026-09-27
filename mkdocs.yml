@@ -200,6 +200,7 @@ nav:
           - ADR-0011 Agent Client Wrapping & Operational Rollout: adr/0011-agent-client-wrapping-and-operational-rollout.md
           - ADR-0012 Current Delivery, Runner & Pipeline State: adr/0012-current-delivery-runner-and-pipeline-state.md
           - ADR-0013 Container Image & Helm Chart Delivery: adr/0013-container-image-and-helm-chart-delivery.md
+          - ADR-0014 Operator-Neutral Defaults: adr/0014-operator-neutral-defaults.md
           - ADR-0015 Interactive Figures from Vendored interfig: adr/0015-interactive-figures-from-vendored-interfig.md
   - Reference:
       - API & CLI Reference: wiki/API-Reference.md

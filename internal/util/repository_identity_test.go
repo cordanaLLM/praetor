@@ -38,6 +38,24 @@ func TestValidateGitHubRepositoryIdentityNegativeAndBoundary(t *testing.T) {
 	}
 }
 
+// ValidateGitHubOwner is the owner half of ValidateGitHubRepositoryIdentity, shared by the
+// operator settings schema (forge.default_owner, forge.review_bot).
+func TestValidateGitHubOwner_3D(t *testing.T) {
+	// Positive and boundary: one character and the 39-character limit.
+	for _, owner := range []string{"acme", "a", "acme-labs", strings.Repeat("a", maxGitHubOwnerBytes)} {
+		if err := ValidateGitHubOwner(owner); err != nil {
+			t.Errorf("valid owner %q: %v", owner, err)
+		}
+	}
+	// Negative: empty, hyphen rules, underscores, whitespace, a slash and one byte over the limit.
+	for _, owner := range []string{"", "-acme", "acme-", "ac--me", "ac_me", " acme", "acme ", "acme/app",
+		strings.Repeat("a", maxGitHubOwnerBytes+1)} {
+		if err := ValidateGitHubOwner(owner); err == nil {
+			t.Errorf("invalid owner %q accepted", owner)
+		}
+	}
+}
+
 func TestSplitGitHubRepository_Positive(t *testing.T) {
 	owner, repository, err := SplitGitHubRepository("cordanaLLM/praetor")
 	if err != nil || owner != "cordanaLLM" || repository != "praetor" {

@@ -133,8 +133,15 @@ func runDogfooderAgent(ctx context.Context) error {
 	return nil
 }
 
+// runNeedsMinerAgent scans the working directory against the operator's framework targets,
+// selected through the environment and the install manifest like hook (the agent command
+// takes no settings flags).
 func runNeedsMinerAgent(ctx context.Context) error {
-	rep, err := needs.ScanRepo(ctx, ".")
+	selection, err := loadNeedsSelection(ctx, defaultOperatorSettingsFlags())
+	if err != nil {
+		return fmt.Errorf("needs miner error: %w", err)
+	}
+	rep, err := needs.ScanRepo(ctx, ".", selection.registry)
 	if err != nil {
 		return fmt.Errorf("needs miner error: %w", err)
 	}

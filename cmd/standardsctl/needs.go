@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -43,6 +42,8 @@ func runNeeds(args []string) error {
 		return runNeedsRequests(ctx, subArgs)
 	case "epic":
 		return runNeedsEpic(ctx, subArgs)
+	case "contract":
+		return runNeedsContract(ctx, subArgs)
 	default:
 		return fmt.Errorf("unknown needs subcommand: %s", sub)
 	}
@@ -52,13 +53,16 @@ func printNeedsUsage() {
 	fmt.Println("Usage: standardsctl needs <subcommand> [arguments]")
 	fmt.Println("\nSubcommands:")
 	fmt.Println("  scan [--path=.] [--write|--check]   Scan repo AST and go.mod, emit or check .needs.yaml")
-	fmt.Println("  report [--path=.]                   Evaluate compatibility and replacement matrix against Golusoris")
+	fmt.Println("  report [--path=.]                   Evaluate compatibility and replacement matrix against the target framework")
 	fmt.Println("  aggregate [--dev-dir=...] [--output=...] Aggregate fleet-wide demand and output gap report")
 	fmt.Println("  requests [--dev-dir=...] [--output-dir=...] Synthesize and emit deduplicated Framework Demand Requests")
+	fmt.Println("  migrate [--path=.] [--apply]        Automated import and dependency rewrite to the target framework (dry run unless --apply)")
 	fmt.Println("  epic [--path=.] [--dev-dir=...] [--framework=...] [--output=...] [--dry-run] Generate pre-migration hardening epic")
 	fmt.Println("       [--publish --owner=... --repo=... --yes]  Publish one repository's epic to an explicit forge target")
 	fmt.Println("       Fleet mode previews writes by default; pass --dry-run=false to write the listed files")
-	fmt.Println("  migrate [--path=.] [--apply]        Automated import and dependency rewrite to Golusoris (dry run unless --apply)")
+	fmt.Println("  contract export --language=<lang> --out=<file> [--framework=...]  Snapshot a target framework as a capability contract")
+	fmt.Println("\nEvery subcommand reads framework.targets from the operator settings")
+	fmt.Println("([--fleet-config=...] [--workstation-config=...] [--manifest=...]).")
 }
 
 func runNeedsScan(ctx context.Context, args []string) error {
@@ -66,6 +70,7 @@ func runNeedsScan(ctx context.Context, args []string) error {
 	path := fs.String("path", ".", "Target repository path")
 	writeManifest := fs.Bool("write", false, "Write discovered needs to .needs.yaml")
 	check := fs.Bool("check", false, "Fail when the committed .needs.yaml differs from a fresh scan (updated_at ignored)")
+	settings := registerOperatorSettingsFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -76,8 +81,12 @@ func runNeedsScan(ctx context.Context, args []string) error {
 	if err := adopt.ValidateAdoptionTarget(*path); err != nil {
 		return fmt.Errorf("invalid repository target: %w", err)
 	}
+	selection, err := loadNeedsSelection(ctx, settings)
+	if err != nil {
+		return fmt.Errorf("needs scan: %w", err)
+	}
 
-	report, err := needs.ScanRepo(ctx, *path)
+	report, err := needs.ScanRepo(ctx, *path, selection.registry)
 	if err != nil {
 		return fmt.Errorf("failed to scan repository needs: %w", err)
 	}
@@ -86,10 +95,11 @@ func runNeedsScan(ctx context.Context, args []string) error {
 	}
 
 	fmt.Printf("=== Framework Needs Scan: %s ===\n", report.Repository)
-	fmt.Printf("Go Version: %s | Target Framework: %s\n", report.GoVersion, report.Framework)
+	fmt.Printf("Go Version: %s | Target Framework: %s\n", report.GoVersion, needs.FrameworkDisplay(report.Framework))
 	fmt.Printf("Mapping availability: %.1f%% (%d covered, %d gaps, %d total third-party)\n\n",
 		report.Readiness.Score, report.Readiness.CoveredDeps, report.Readiness.GapDeps, report.Readiness.TotalThirdPartyDeps)
-	fmt.Printf("Coverage basis: %s; builds and tests not run\n\n", report.Readiness.Basis)
+	fmt.Printf("Coverage basis: %s; builds and tests not run\n", report.Readiness.Basis)
+	fmt.Println(needs.FormatDeprecations(report))
 
 	fmt.Print(needs.FormatLibraryRelationships(report))
 
@@ -121,6 +131,7 @@ func runNeedsReport(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("needs report", flag.ContinueOnError)
 	path := fs.String("path", ".", "Target repository path")
 	framework := fs.String("framework", "", "Target framework repository path "+frameworkUsageDefault)
+	settings := registerOperatorSettingsFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -128,29 +139,22 @@ func runNeedsReport(ctx context.Context, args []string) error {
 	if err := adopt.ValidateAdoptionTarget(*path); err != nil {
 		return fmt.Errorf("invalid repository target: %w", err)
 	}
-
-	frameworkDir, err := selectFrameworkDir(fs, *framework)
+	selection, err := loadNeedsSelection(ctx, settings)
 	if err != nil {
 		return fmt.Errorf("needs report: %w", err)
 	}
-	fwIndex, err := needs.InspectFramework(ctx, frameworkDir)
+
+	fwIndex, err := needs.InspectFramework(ctx, selection.frameworkSource(*framework, flagWasSet(fs, "framework")))
 	if err != nil {
 		return fmt.Errorf("failed to inspect framework: %w", err)
 	}
 
-	rep, err := needs.ScanRepoWithFramework(ctx, *path, fwIndex)
+	rep, err := needs.ScanRepoWithFramework(ctx, *path, fwIndex, selection.registry)
 	if err != nil {
 		return fmt.Errorf("failed to scan repository: %w", err)
 	}
 
-	fmt.Printf("=== Golusoris Migration Report: %s ===\n", rep.Repository)
-	fmt.Printf("Framework: %s (%s) | Mapping availability: %.1f%%\n\n", fwIndex.Name, fwIndex.Version, rep.Readiness.Score)
-	fmt.Printf("Coverage basis: %s; builds and tests not run\n", fwIndex.Basis)
-	if fwIndex.Contract != "" {
-		fmt.Printf("Capability contract: %s (declared packages source-observed)\n", fwIndex.Contract)
-	}
-	fmt.Println()
-
+	fmt.Print(needs.FormatReportHeader(rep, fwIndex))
 	fmt.Print(needs.FormatLibraryRelationships(rep))
 	return nil
 }
@@ -160,11 +164,12 @@ func runNeedsAggregate(ctx context.Context, args []string) error {
 	devDir := fs.String("dev-dir", "", "Fleet dev root directory "+devRootUsageDefault)
 	framework := fs.String("framework", "", "Framework repository path "+frameworkUsageDefault)
 	outputFile := fs.String("output", "", "Optional file path to write markdown report")
+	settings := registerOperatorSettingsFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	report, err := aggregateFleet(ctx, fs, *devDir, *framework)
+	report, _, err := aggregateFleet(ctx, fs, *devDir, *framework, settings)
 	if err != nil {
 		return err
 	}
@@ -187,6 +192,7 @@ func runNeedsMigrate(ctx context.Context, args []string) error {
 	framework := fs.String("framework", "", "Framework repository path "+frameworkUsageDefault)
 	dryRun := fs.Bool("dry-run", true, "Preview migration without mutating files")
 	apply := fs.Bool("apply", false, "Request application (blocked until module-version/API evidence is validated)")
+	settings := registerOperatorSettingsFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -199,17 +205,18 @@ func runNeedsMigrate(ctx context.Context, args []string) error {
 	if err := adopt.ValidateAdoptionTarget(*path); err != nil {
 		return fmt.Errorf("invalid repository target: %w", err)
 	}
-
-	frameworkDir, err := selectFrameworkDir(fs, *framework)
+	selection, err := loadNeedsSelection(ctx, settings)
 	if err != nil {
 		return fmt.Errorf("needs migrate: %w", err)
 	}
-	plan, err := needs.PlanMigration(ctx, *path, frameworkDir)
+
+	source := selection.frameworkSource(*framework, flagWasSet(fs, "framework"))
+	plan, err := needs.PlanMigration(ctx, *path, source, selection.registry)
 	if err != nil {
 		return fmt.Errorf("failed to plan migration: %w", err)
 	}
 
-	printMigrationCandidate(plan)
+	printMigrationCandidate(plan, needs.MigrationBranch(selection.settings.Framework.MigrationBranch))
 
 	if !applyNow {
 		fmt.Println("\n[INFO] Dry-run complete. Application is blocked pending verified module version and API compatibility evidence.")
@@ -231,9 +238,11 @@ func runNeedsMigrate(ctx context.Context, args []string) error {
 	return nil
 }
 
-func printMigrationCandidate(plan *needs.MigrationPlan) {
-	fmt.Printf("=== Migration Candidate: %s -> %s ===\n", plan.Repository, plan.Framework)
-	fmt.Printf("Status: %s | Framework version: %s\n", plan.Status, plan.FrameworkVersion)
+// printMigrationCandidate prints a blocked candidate and the branch an admitted
+// application would create (framework.migration_branch).
+func printMigrationCandidate(plan *needs.MigrationPlan, branch string) {
+	fmt.Printf("=== Migration Candidate: %s -> %s ===\n", plan.Repository, needs.FrameworkDisplay(plan.Framework))
+	fmt.Printf("Status: %s | Framework version: %s | Migration branch: %s\n", plan.Status, plan.FrameworkVersion, branch)
 	fmt.Printf("Mapping availability: %.1f%% | Coverage basis: %s; builds and tests not run\n", plan.MappingAvailability, plan.CoverageBasis)
 	for _, blocker := range plan.Blockers {
 		fmt.Printf("Blocker: %s\n", blocker)
@@ -276,21 +285,25 @@ func runNeedsRequests(ctx context.Context, args []string) error {
 	devDir := fs.String("dev-dir", "", "Fleet dev root directory "+devRootUsageDefault)
 	framework := fs.String("framework", "", "Framework repository path "+frameworkUsageDefault)
 	outputDir := fs.String("output-dir", "", "Optional output directory to write demand requests")
+	settings := registerOperatorSettingsFlags(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
-	report, err := aggregateFleet(ctx, fs, *devDir, *framework)
+	report, selection, err := aggregateFleet(ctx, fs, *devDir, *framework, settings)
 	if err != nil {
 		return err
 	}
 
-	requests := needs.SynthesizeDemands(report)
+	requests := needs.SynthesizeDemands(report, selection.targets)
 	fmt.Printf("=== Framework Demand Requests: %d Synthesized ===\n\n", len(requests))
 	for _, req := range requests {
+		kit := req.TargetBuilderKit
+		if kit == "" {
+			kit = "unrouted"
+		}
 		fmt.Printf("  [%s] %s\n", req.RequestID, req.Title)
-		fmt.Printf("    Target Kit: %s | Consuming Repos: %d | ROI: %s\n\n",
-			req.TargetBuilderKit, req.ConsumerCount, req.MaintenanceROI)
+		fmt.Printf("    Target Kit: %s | Consuming Repos: %d | ROI: %s\n\n", kit, req.ConsumerCount, req.MaintenanceROI)
 	}
 
 	if *outputDir != "" {
@@ -304,17 +317,19 @@ func runNeedsRequests(ctx context.Context, args []string) error {
 
 // epicFlags carries the parsed `needs epic` command line.
 type epicFlags struct {
-	path      string
-	devDir    string
-	framework string
-	output    string
-	publish   bool
-	token     string
-	endpoint  string
-	owner     string
-	repo      string
-	assumeYes bool
-	dryRun    bool
+	path         string
+	devDir       string
+	framework    string
+	frameworkSet bool
+	settings     *operatorSettingsFlags
+	output       string
+	publish      bool
+	token        string
+	endpoint     string
+	owner        string
+	repo         string
+	assumeYes    bool
+	dryRun       bool
 }
 
 func runNeedsEpic(ctx context.Context, args []string) error {
@@ -322,17 +337,21 @@ func runNeedsEpic(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-
+	if f.devDir != "" && f.publish {
+		return fmt.Errorf("--publish is not supported together with --dev-dir: a fleet epic carries only the repository name, " +
+			"not the directory needed to resolve forge coordinates; publish one repository at a time with " +
+			"'praetorctl needs epic --path=<repo> --publish --yes'")
+	}
+	selection, err := loadNeedsSelection(ctx, f.settings)
+	if err != nil {
+		return fmt.Errorf("needs epic: %w", err)
+	}
+	source := selection.frameworkSource(f.framework, f.frameworkSet)
 	if f.devDir != "" {
-		if f.publish {
-			return fmt.Errorf("--publish is not supported together with --dev-dir: a fleet epic carries only the repository name, " +
-				"not the directory needed to resolve forge coordinates; publish one repository at a time with " +
-				"'praetorctl needs epic --path=<repo> --publish --yes'")
-		}
-		opts := needs.FleetEpicOptions{FrameworkPath: f.framework, DryRun: f.dryRun}
+		opts := needs.FleetEpicOptions{Framework: source, Registry: selection.registry, DryRun: f.dryRun}
 		return runFleetNeedsEpic(ctx, f.devDir, opts)
 	}
-	return runSingleRepoEpic(ctx, f)
+	return runSingleRepoEpic(ctx, f, selection, source)
 }
 
 // parseEpicFlags parses the `needs epic` flag set.
@@ -351,6 +370,7 @@ func parseEpicFlags(args []string) (epicFlags, error) {
 	fs.StringVar(&f.repo, "repo", "", "Forge repository name to publish into (must be given with --owner)")
 	fs.BoolVar(&f.assumeYes, "yes", false, "Confirm creating issues in the resolved forge repository")
 	fs.BoolVar(&f.dryRun, "dry-run", true, "With --dev-dir, list the epic files without writing them")
+	f.settings = registerOperatorSettingsFlags(fs)
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
 		return epicFlags{}, err
@@ -358,19 +378,17 @@ func parseEpicFlags(args []string) (epicFlags, error) {
 	if len(positional) != 0 {
 		return epicFlags{}, fmt.Errorf("needs epic accepts no positional arguments; use --path (got %q)", positional)
 	}
-	if f.framework, err = selectFrameworkDir(fs, f.framework); err != nil {
-		return epicFlags{}, fmt.Errorf("needs epic: %w", err)
-	}
+	f.frameworkSet = flagWasSet(fs, "framework")
 	return f, nil
 }
 
 // runSingleRepoEpic generates, writes and optionally publishes the epic of one repository.
-func runSingleRepoEpic(ctx context.Context, f epicFlags) error {
+func runSingleRepoEpic(ctx context.Context, f epicFlags, selection *needsSelection, source needs.FrameworkSource) error {
 	if err := adopt.ValidateAdoptionTarget(f.path); err != nil {
 		return fmt.Errorf("invalid repository target: %w", err)
 	}
 
-	epic, err := needs.GeneratePreMigrationEpic(ctx, f.path, f.framework)
+	epic, err := needs.GeneratePreMigrationEpic(ctx, f.path, source, selection.registry)
 	if err != nil {
 		return fmt.Errorf("failed to generate pre-migration epic: %w", err)
 	}
@@ -385,7 +403,7 @@ func runSingleRepoEpic(ctx context.Context, f epicFlags) error {
 	}
 
 	if f.publish {
-		return publishEpicToForge(ctx, f, epic)
+		return publishEpicToForge(ctx, f, epic, selection.settings.Forge.DefaultOwner)
 	}
 	return nil
 }
@@ -439,19 +457,19 @@ func describeEpicIssue(target string, res *forge.IssueUpsertResult) string {
 	return line
 }
 
-func publishEpicToForge(ctx context.Context, f epicFlags, epic *needs.PreMigrationEpic) error {
+func publishEpicToForge(ctx context.Context, f epicFlags, epic *needs.PreMigrationEpic, defaultOwner string) error {
 	tok := resolveForgeAuthToken(ctx, f.token)
 	if tok == "" {
 		return fmt.Errorf("epic publishing requires GITHUB_TOKEN, GH_TOKEN, or an authenticated 'gh' CLI session")
 	}
 
-	owner, repo, err := resolveEpicTarget(ctx, f)
+	owner, repo, err := resolveEpicTarget(ctx, f, defaultOwner)
 	if err != nil {
 		return fmt.Errorf("failed resolving repository coordinates for %s: %w", f.path, err)
 	}
 	if !f.assumeYes {
 		return fmt.Errorf("refusing to create issues in %s/%s without confirmation: the target is derived from repository content "+
-			"(.standards.yaml or the git origin remote); re-run with --yes, or pass --owner/--repo explicitly", owner, repo)
+			"(.standards.yaml, the git origin remote or forge.default_owner); re-run with --yes, or pass --owner/--repo explicitly", owner, repo)
 	}
 
 	ghDriver := forge.NewGitHubDriver(tok, f.endpoint)
@@ -478,51 +496,51 @@ func resolveForgeAuthToken(ctx context.Context, explicitToken string) string {
 }
 
 // resolveEpicTarget returns the forge coordinates the epic is published to. Explicit
-// --owner/--repo win; otherwise the coordinates are read from the repository directory.
-func resolveEpicTarget(ctx context.Context, f epicFlags) (string, string, error) {
+// --owner/--repo win; otherwise the coordinates are resolved from the repository directory
+// (resolveRepoCoordinates).
+func resolveEpicTarget(ctx context.Context, f epicFlags, defaultOwner string) (string, string, error) {
 	if f.owner != "" && f.repo != "" {
 		return f.owner, f.repo, nil
 	}
 	if f.owner != "" || f.repo != "" {
 		return "", "", fmt.Errorf("--owner and --repo must be given together")
 	}
-	return resolveRepoCoordinates(ctx, f.path)
+	return resolveRepoCoordinates(ctx, f.path, defaultOwner)
 }
 
-// resolveRepoCoordinates reads the forge owner and repository name of the repository
-// checked out at path. path must be a real directory: a bare repository *name* cannot
-// identify a forge repository, and resolving one relative to the working directory used to
-// publish issues into a guessed organization.
+// resolveRepoCoordinates resolves the forge owner and repository name of the checkout at
+// path through config.ResolveRepositoryIdentity: the manifest, then the origin remote, with
+// forge.default_owner (defaultOwner) as the last owner step. path must be a real directory:
+// a bare repository *name* cannot identify a forge repository, and resolving one relative to
+// the working directory used to publish issues into a guessed organization. The checkout path
+// never names the owner.
 //
 // HISS-02: the git lookup inherits the caller's deadline instead of context.Background().
-func resolveRepoCoordinates(ctx context.Context, path string) (string, string, error) {
-	if !util.DirExists(path) {
-		return "", "", fmt.Errorf("%q is not a repository directory: forge coordinates must be resolved from a checkout, not from a repository name", path)
+func resolveRepoCoordinates(ctx context.Context, path, defaultOwner string) (string, string, error) {
+	owner, name, err := config.ResolveRepositoryIdentity(ctx, path, "", defaultOwner)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve forge coordinates of %s: %w", path, err)
 	}
-	manifestPath := filepath.Join(path, ".standards.yaml")
-	if util.FileExists(manifestPath) {
-		m, err := config.LoadManifest(manifestPath)
-		if err == nil && m.Repository.Owner != "" && m.Repository.Name != "" {
-			return m.Repository.Owner, m.Repository.Name, nil
-		}
-	}
-	return util.ResolveRepoIdentity(ctx, path)
+	return owner, name, nil
 }
 
-// aggregateFleet resolves the fleet dev root and the framework checkout of `needs
-// aggregate` and `needs requests`, then aggregates the fleet's framework demand.
-func aggregateFleet(ctx context.Context, fs *flag.FlagSet, devDir, framework string) (*needs.FleetDemandReport, error) {
+// aggregateFleet resolves the fleet dev root, the operator's framework targets and the
+// framework of `needs aggregate` and `needs requests`, then aggregates the fleet's framework
+// demand.
+func aggregateFleet(ctx context.Context, fs *flag.FlagSet, devDir, framework string,
+	settings *operatorSettingsFlags) (*needs.FleetDemandReport, *needsSelection, error) {
 	root, err := resolveDevRootDir(devDir, "--dev-dir")
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", fs.Name(), err)
+		return nil, nil, fmt.Errorf("%s: %w", fs.Name(), err)
 	}
-	frameworkDir, err := selectFrameworkDir(fs, framework)
+	selection, err := loadNeedsSelection(ctx, settings)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", fs.Name(), err)
+		return nil, nil, fmt.Errorf("%s: %w", fs.Name(), err)
 	}
-	report, err := needs.AggregateFleet(ctx, root, frameworkDir)
+	source := selection.frameworkSource(framework, flagWasSet(fs, "framework"))
+	report, err := needs.AggregateFleet(ctx, root, source, selection.registry)
 	if err != nil {
-		return nil, fmt.Errorf("fleet aggregation failed: %w", err)
+		return nil, nil, fmt.Errorf("fleet aggregation failed: %w", err)
 	}
-	return report, nil
+	return report, selection, nil
 }

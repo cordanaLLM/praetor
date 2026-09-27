@@ -9,7 +9,8 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// GoAnalyzer extracts Go module dependencies and maps them to Golusoris capabilities.
+// GoAnalyzer extracts Go module dependencies and maps them to capabilities of the go target
+// framework.
 type GoAnalyzer struct{}
 
 // NewGoAnalyzer returns an initialized GoAnalyzer.
@@ -27,8 +28,8 @@ func (a *GoAnalyzer) Detect(repoPath string) bool {
 	return util.FileExists(filepath.Join(repoPath, "go.mod"))
 }
 
-// Analyze scans go.mod and Go AST imports to produce RepoNeeds.
-func (a *GoAnalyzer) Analyze(ctx context.Context, repoPath string) (*RepoNeeds, error) {
+// Analyze scans go.mod and Go AST imports to produce RepoNeeds scored against target.
+func (a *GoAnalyzer) Analyze(ctx context.Context, repoPath string, target Target) (*RepoNeeds, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -57,14 +58,13 @@ func (a *GoAnalyzer) Analyze(ctx context.Context, repoPath string) (*RepoNeeds, 
 		Language:     "go",
 		Languages:    []string{"go"},
 		GoVersion:    goVer,
-		Framework:    defaultFrameworkModule,
-		BuilderKits:  []string{"golusoris/golusoris", "golusoris/goenvoy"},
 		Capabilities: CapabilityDeclaration{Required: make([]CapabilityKey, 0), Optional: make([]CapabilityKey, 0)},
 		Dependencies: make([]DependencyDemand, 0),
 		UpdatedAt:    time.Now().UTC(),
 	}
 
 	buildDependencyDemands(directDeps, astImports, repoNeeds)
+	target.applyTo(repoNeeds)
 	if declErr := loadExistingDeclarations(ctx, repoPath, repoNeeds); declErr != nil {
 		return nil, fmt.Errorf("failed to load existing declarations: %w", declErr)
 	}

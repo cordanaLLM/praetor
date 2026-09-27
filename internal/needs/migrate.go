@@ -19,8 +19,20 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// migrationBranch is the branch ApplyMigration creates for the rewrite.
-const migrationBranch = "refactor/golusoris-adoption"
+// defaultMigrationBranch is the branch an admitted migration creates when
+// framework.migration_branch is unset.
+const defaultMigrationBranch = "refactor/framework-adoption"
+
+// MigrationBranch returns the branch an admitted migration creates: the configured
+// framework.migration_branch, or the built-in refactor/framework-adoption when none is
+// configured. An operator with an open branch under the former built-in name configures that
+// name, since the migration refuses to reset an existing branch (ErrBranchExists).
+func MigrationBranch(configured string) string {
+	if configured == "" {
+		return defaultMigrationBranch
+	}
+	return configured
+}
 
 var (
 	// ErrNilMigrationPlan is returned when no plan was supplied.
@@ -45,8 +57,9 @@ type MigrationOptions struct {
 }
 
 // PlanMigration analyzes selected framework evidence and builds a blocked candidate.
-func PlanMigration(ctx context.Context, repoPath, frameworkPath string) (*MigrationPlan, error) {
-	analysis, err := analyzeMigration(ctx, repoPath, frameworkPath)
+// registry supplies the analyzers and framework targets; nil selects DefaultRegistry.
+func PlanMigration(ctx context.Context, repoPath string, framework FrameworkSource, registry *AnalyzerRegistry) (*MigrationPlan, error) {
+	analysis, err := analyzeMigration(ctx, repoPath, framework, registry)
 	if err != nil {
 		return nil, err
 	}
@@ -70,11 +83,11 @@ func planMigrationFromAnalysis(ctx context.Context, repoPath string, analysis *m
 	// and treating those as Go module paths deletes unrelated go.mod lines.
 	importReplacements := make(map[string]string)
 	for _, dep := range repoNeeds.Dependencies {
-		if dep.Relationship != nil || dep.Status != StatusCovered || dep.GolusorisReplacement == "" || dep.Ecosystem != "go" {
+		if dep.Relationship != nil || dep.Status != StatusCovered || dep.FrameworkReplacement == "" || dep.Ecosystem != "go" {
 			continue
 		}
 		plan.DroppedRequires = append(plan.DroppedRequires, dep.Package)
-		importReplacements[dep.Package] = dep.GolusorisReplacement
+		importReplacements[dep.Package] = dep.FrameworkReplacement
 	}
 	sort.Strings(plan.DroppedRequires)
 
@@ -167,7 +180,7 @@ func scanFileForReplacements(filePath string, replacements map[string]string, ke
 			File:        filePath,
 			OldImport:   rawPath,
 			NewImport:   newPath,
-			Description: fmt.Sprintf("Replace %s with Golusoris %s", rawPath, newPath),
+			Description: fmt.Sprintf("Replace %s with target framework package %s", rawPath, newPath),
 		})
 	}
 
@@ -184,7 +197,7 @@ func parseImportsOnly(filePath string) *ast.File {
 	return node
 }
 
-// rewriteImportPath maps an import path onto its Golusoris replacement, preserving the
+// rewriteImportPath maps an import path onto its framework replacement, preserving the
 // sub-package suffix. keys must be ordered longest-first.
 func rewriteImportPath(importPath string, replacements map[string]string, keys []string) (string, bool) {
 	bound := len(keys)
@@ -381,7 +394,7 @@ func writePreservingMode(path string, data []byte) error {
 	return nil
 }
 
-// updateGoMod drops superseded modules and appends the Golusoris framework require.
+// updateGoMod drops superseded modules and appends the target framework's require.
 func updateGoMod(goModPath string, added, dropped []string) error {
 	dropSet := make(map[string]struct{}, len(dropped))
 	for _, d := range dropped {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -27,16 +28,16 @@ type migrationAnalysis struct {
 	report    *RepoNeeds
 }
 
-func analyzeMigration(ctx context.Context, repoPath, selected string) (*migrationAnalysis, error) {
+func analyzeMigration(ctx context.Context, repoPath string, selected FrameworkSource, registry *AnalyzerRegistry) (*migrationAnalysis, error) {
 	return analyzeMigrationWith(ctx, selected, func(framework *FrameworkIndex) (*RepoNeeds, error) {
-		return ScanRepoWithFramework(ctx, repoPath, framework)
+		return ScanRepoWithFramework(ctx, repoPath, framework, registry)
 	})
 }
 
 // analyzeMigrationWith inspects the selected framework and scores a repository against it
 // with scan. Fleet epic regeneration passes the fleet walk's repository, a
 // single-repository epic or migration plan scans the path it was given.
-func analyzeMigrationWith(ctx context.Context, selected string,
+func analyzeMigrationWith(ctx context.Context, selected FrameworkSource,
 	scan func(framework *FrameworkIndex) (*RepoNeeds, error)) (*migrationAnalysis, error) {
 	framework, err := inspectMigrationFramework(ctx, selected)
 	if err != nil {
@@ -49,17 +50,19 @@ func analyzeMigrationWith(ctx context.Context, selected string,
 	return &migrationAnalysis{framework: framework, report: report}, nil
 }
 
-func inspectMigrationFramework(ctx context.Context, selected string) (*FrameworkIndex, error) {
+// inspectMigrationFramework inspects the selected framework. A selected checkout value that
+// is module-path shaped and not a directory names the framework by identity alone.
+func inspectMigrationFramework(ctx context.Context, selected FrameworkSource) (*FrameworkIndex, error) {
 	if ctx == nil {
 		return nil, errors.New("needs: migration requires a context")
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if !isModulePathShaped(selected) || util.DirExists(selected) {
+	if !config.IsModulePathShaped(selected.Checkout) || util.DirExists(selected.Checkout) {
 		return InspectFramework(ctx, selected)
 	}
-	module, err := frameworkModuleIdentity(selected)
+	module, err := frameworkModuleIdentity(selected.Checkout)
 	if err != nil {
 		return nil, err
 	}

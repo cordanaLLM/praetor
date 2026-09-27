@@ -52,9 +52,10 @@ type PreMigrationEpic struct {
 //
 // A selected checkout supplies the same evidence as a needs report. Module-only
 // selections remain unresolved identity declarations; invalid selected paths fail.
-// Local filesystem paths never reach public epic fields.
-func GeneratePreMigrationEpic(ctx context.Context, repoPath, targetFramework string) (*PreMigrationEpic, error) {
-	analysis, err := analyzeMigration(ctx, repoPath, targetFramework)
+// Local filesystem paths never reach public epic fields. registry supplies the analyzers
+// and framework targets; nil selects DefaultRegistry.
+func GeneratePreMigrationEpic(ctx context.Context, repoPath string, framework FrameworkSource, registry *AnalyzerRegistry) (*PreMigrationEpic, error) {
+	analysis, err := analyzeMigration(ctx, repoPath, framework, registry)
 	if err != nil {
 		return nil, fmt.Errorf("analyze pre-migration epic: %w", err)
 	}
@@ -307,8 +308,10 @@ func renderEpicDocument(epic *PreMigrationEpic) string {
 
 // FleetEpicOptions configures RegenerateFleetEpics.
 type FleetEpicOptions struct {
-	// FrameworkPath is the operator-supplied framework location or module path.
-	FrameworkPath string
+	// Framework selects the framework every epic scores against (SelectFrameworkSource).
+	Framework FrameworkSource
+	// Registry supplies the analyzers and framework targets; nil selects DefaultRegistry.
+	Registry *AnalyzerRegistry
 	// DryRun generates every epic and records the file it would write in
 	// PreMigrationEpic.OutputPath without touching any repository. Fleet regeneration
 	// writes into every discovered repository, so - like `needs migrate` - the caller
@@ -402,8 +405,8 @@ func regenerateRepoEpic(ctx context.Context, repo *fleetRepo, opts FleetEpicOpti
 		return nil, errRepoNotPrepared
 	}
 
-	analysis, err := analyzeMigrationWith(ctx, opts.FrameworkPath, func(framework *FrameworkIndex) (*RepoNeeds, error) {
-		return scanRepositoryWithFramework(ctx, repo, framework)
+	analysis, err := analyzeMigrationWith(ctx, opts.Framework, func(framework *FrameworkIndex) (*RepoNeeds, error) {
+		return scanRepositoryWithFramework(ctx, repo, framework, opts.Registry)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("generate epic for %s: %w", repoDir, err)

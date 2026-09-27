@@ -5,6 +5,57 @@ import (
 	"strings"
 )
 
+// FrameworkNotConfiguredText is how reports name a framework no source selects (ADR-0014 §4).
+const FrameworkNotConfiguredText = "not configured (set framework.targets.<lang>.module and .contract, or pass --framework)"
+
+// FormatReportHeader renders the header the CLI `needs report` and the MCP
+// standards_needs_report share: the repository, the framework and its mapping availability,
+// the coverage basis, the contract the inventory came from and any deprecated input.
+func FormatReportHeader(report *RepoNeeds, index *FrameworkIndex) string {
+	if report == nil || index == nil {
+		return "Framework migration report unavailable.\n"
+	}
+	var sb strings.Builder
+	writef(&sb, "=== Framework Migration Report: %s ===\n", report.Repository)
+	if index.Basis == FrameworkNotConfigured {
+		writef(&sb, "Framework: %s | Mapping availability: n/a (no target framework configured)\n\n", FrameworkNotConfiguredText)
+	} else {
+		writef(&sb, "Framework: %s (%s) | Mapping availability: %.1f%%\n\n", index.Name, index.Version, report.Readiness.Score)
+	}
+	writef(&sb, "Coverage basis: %s; builds and tests not run\n", index.Basis)
+	if index.Contract != "" {
+		observation := "declared packages source-observed"
+		if index.Basis != FrameworkSourceObserved {
+			observation = "declared packages, not source-observed"
+		}
+		writef(&sb, "Capability contract: %s (%s)\n", index.Contract, observation)
+	}
+	sb.WriteString(FormatDeprecations(report))
+	sb.WriteString("\n")
+	return sb.String()
+}
+
+// FormatDeprecations renders one "Deprecated input:" line per deprecated input the row was
+// read from, or nothing.
+func FormatDeprecations(report *RepoNeeds) string {
+	if report == nil {
+		return ""
+	}
+	var sb strings.Builder
+	for _, deprecation := range report.Deprecations {
+		writef(&sb, "Deprecated input: %s\n", deprecation)
+	}
+	return sb.String()
+}
+
+// FrameworkDisplay names a framework module in CLI output, or says none is configured.
+func FrameworkDisplay(module string) string {
+	if module == "" {
+		return "not configured"
+	}
+	return module
+}
+
 // FormatLibraryRelationships renders the shared CLI/MCP relationship table.
 // Availability describes catalog/native roles or inspected related packages,
 // never interchangeable APIs. Standard-library observations have separate counts.
@@ -76,8 +127,12 @@ func libraryRelationshipDescription(dependency DependencyDemand) string {
 		if dependency.Status == StatusGap {
 			availability = "unavailable"
 		}
+		related := relationship.FrameworkPackage
+		if related == "" {
+			related = "none"
+		}
 		return fmt.Sprintf("%s; related package=%s (%s); basis=%s; no import replacement",
-			relationship.Kind, relationship.FrameworkPackage, availability, relationship.Basis)
+			relationship.Kind, related, availability, relationship.Basis)
 	}
 	if dependency.Status == StatusGap {
 		return fmt.Sprintf("UNMAPPED (Gap); capability=%s", dependency.Capability)
@@ -85,5 +140,5 @@ func libraryRelationshipDescription(dependency DependencyDemand) string {
 	if dependency.Status == StatusNative {
 		return "native; no replacement required"
 	}
-	return fmt.Sprintf("replacement candidate: %s; API compatibility unverified", dependency.GolusorisReplacement)
+	return fmt.Sprintf("replacement candidate: %s; API compatibility unverified", dependency.FrameworkReplacement)
 }

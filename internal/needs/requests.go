@@ -27,15 +27,17 @@ type FrameworkDemandRequest struct {
 	SpecificationMarkdown string        `json:"specification_markdown" yaml:"specification_markdown"`
 }
 
-// SynthesizeDemands aggregates and deduplicates gaps across the fleet into prioritized requests.
-func SynthesizeDemands(report *FleetDemandReport) []FrameworkDemandRequest {
+// SynthesizeDemands aggregates and deduplicates gaps across the fleet into prioritized
+// requests, each routed to the first builder kit of the target serving its capability.
+func SynthesizeDemands(report *FleetDemandReport, targets Targets) []FrameworkDemandRequest {
 	if report == nil || len(report.Gaps) == 0 {
 		return make([]FrameworkDemandRequest, 0)
 	}
 
+	resolved := targets.resolved()
 	requests := make([]FrameworkDemandRequest, 0, len(report.Gaps))
 	for _, gap := range report.Gaps {
-		req := createDemandRequest(gap)
+		req := createDemandRequest(gap, resolved)
 		requests = append(requests, req)
 	}
 
@@ -49,21 +51,22 @@ func SynthesizeDemands(report *FleetDemandReport) []FrameworkDemandRequest {
 	return requests
 }
 
-func createDemandRequest(gap GapDetail) FrameworkDemandRequest {
+func createDemandRequest(gap GapDetail, targets Targets) FrameworkDemandRequest {
 	capStr := string(gap.Capability)
 	reqID := "REQ-CAP-" + strings.ToUpper(cleanDepKey(capStr))
-	targetKit := resolveTargetBuilderKit(capStr)
+	language := capabilityLanguage(capStr)
+	targetKit := targets[language].RoutingKit()
 	ratio := float64(gap.ConsumerCount)
 	roi := calculateROI(gap.ConsumerCount)
 
 	title := fmt.Sprintf("[FRAMEWORK-DEMAND] Universal %s Adapter (%d consuming repos)", capStr, gap.ConsumerCount)
-	specMD := renderRequestMarkdown(reqID, title, gap, targetKit, roi)
+	specMD := renderRequestMarkdown(reqID, title, gap, routingLine(targetKit, language), roi)
 
 	return FrameworkDemandRequest{
 		RequestID:             reqID,
 		Title:                 title,
 		Capability:            gap.Capability,
-		TargetOrg:             "golusoris",
+		TargetOrg:             kitOwner(targetKit),
 		TargetBuilderKit:      targetKit,
 		ConsumingRepos:        gap.Consumers,
 		ConsumerCount:         gap.ConsumerCount,
@@ -74,19 +77,36 @@ func createDemandRequest(gap GapDetail) FrameworkDemandRequest {
 	}
 }
 
-func resolveTargetBuilderKit(capStr string) string {
+// capabilityLanguage names the framework language whose target builds a capability: UI
+// capabilities belong to typescript, python and AI to python, rust to rust, native, media
+// and GPU to native, and every other capability to go.
+func capabilityLanguage(capStr string) string {
 	switch {
 	case strings.HasPrefix(capStr, "ui."):
-		return "golusoris/sveltesentio"
+		return "typescript"
 	case strings.HasPrefix(capStr, "python.") || strings.HasPrefix(capStr, "ai."):
-		return "golusoris/pykit"
+		return "python"
 	case strings.HasPrefix(capStr, "rust."):
-		return "golusoris/rustkit"
+		return "rust"
 	case strings.HasPrefix(capStr, "native.") || strings.HasPrefix(capStr, "media.") || strings.HasPrefix(capStr, "gpu."):
-		return "golusoris/template-native-gpu"
+		return "native"
 	default:
-		return "golusoris/golusoris"
+		return "go"
 	}
+}
+
+// kitOwner is the owner part of an <owner>/<name> builder kit, or "" for an unrouted request.
+func kitOwner(kit string) string {
+	owner, _, _ := strings.Cut(kit, "/")
+	return owner
+}
+
+// routingLine renders the request's routing target: the builder kit, or why there is none.
+func routingLine(kit, language string) string {
+	if kit == "" {
+		return fmt.Sprintf("unrouted (framework.targets.%s.builder_kits not set)", language)
+	}
+	return "`" + kit + "`"
 }
 
 func calculateROI(count int) string {
@@ -99,11 +119,12 @@ func calculateROI(count int) string {
 	return "Standard (Single repo gap)"
 }
 
-func renderRequestMarkdown(reqID, title string, gap GapDetail, kit, roi string) string {
+// renderRequestMarkdown renders one request; routing is its rendered routingLine.
+func renderRequestMarkdown(reqID, title string, gap GapDetail, routing, roi string) string {
 	var sb strings.Builder
 	writef(&sb, "# %s\n\n", title)
 	writef(&sb, "- **Request ID**: `%s`\n", reqID)
-	writef(&sb, "- **Target Builder Kit**: `%s`\n", kit)
+	writef(&sb, "- **Target Builder Kit**: %s\n", routing)
 	writef(&sb, "- **Maintenance ROI**: %s\n\n", roi)
 	sb.WriteString("## Consuming Repositories\n\n")
 	for _, repo := range gap.Consumers {

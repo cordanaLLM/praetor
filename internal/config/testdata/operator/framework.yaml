@@ -1,0 +1,18 @@
+# Framework, forge and topology sections (ADR-0014), placeholders only. The replay test
+# loads this document as the fleet layer and checks that every value reaches its field.
+framework:
+  targets:
+    go:
+      module: example.com/acme/kit
+      builder_kits: [acme/kit, acme/kit-extras]
+      contract: frameworks/kit.capabilities.yaml
+    typescript:
+      module: example.com/acme/ui
+      builder_kits: [acme/ui]
+  migration_branch: refactor/acme-adoption
+forge:
+  default_owner: acme
+  reconcile_repos: [acme/kit, acme/app]
+  review_bot: acme-review[bot]
+topology:
+  org_containers: [acme, acme-labs]

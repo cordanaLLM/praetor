@@ -11,8 +11,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// OperatorSetting is one decoded key of a clients, hooks or update section. Path is the
-// dotted key, for example clients.selected.agy.required. A scalar carries its canonical
+// OperatorSetting is one decoded key of an operator section (operatorSectionNames). Path is
+// the dotted key, for example clients.selected.agy.required. A scalar carries its canonical
 // text in Value, a sequence of strings carries List, and hooks.python carries Argv.
 type OperatorSetting struct {
 	Path  string
@@ -21,15 +21,15 @@ type OperatorSetting struct {
 	Argv  [][]string
 }
 
-var operatorSectionNames = [...]string{"clients", "hooks", "update"}
+var operatorSectionNames = [...]string{"clients", "hooks", "update", "framework", "forge", "topology"}
 
 type sectionEntry struct {
 	node *yaml.Node
 	path string
 }
 
-// decodeOperatorSections returns the settings of a document's clients, hooks and update
-// sections, and whether it carries any of them. Root keys outside the owned sections stay
+// decodeOperatorSections returns the settings of a document's operator sections, and
+// whether it carries any of them. Root keys outside the owned sections stay
 // tolerated; keys inside an owned section are strict.
 func decodeOperatorSections(root *yaml.Node) ([]OperatorSetting, bool, error) {
 	queue := make([]sectionEntry, 0, len(operatorSectionNames))

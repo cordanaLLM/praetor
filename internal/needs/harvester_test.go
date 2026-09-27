@@ -38,7 +38,7 @@ func TestCodifyHarvestedInventory_Positive(t *testing.T) {
 	ctx := context.Background()
 	tempHarvest := setupTestHarvest(t)
 
-	results, err := CodifyHarvestedInventory(ctx, tempHarvest)
+	results, err := CodifyHarvestedInventory(ctx, tempHarvest, nil)
 	if err != nil {
 		t.Fatalf("harvest codification failed: %v", err)
 	}
@@ -57,13 +57,13 @@ func TestCodifyHarvestedInventory_Positive(t *testing.T) {
 
 func TestCodifyHarvestedInventory_Negative(t *testing.T) {
 	ctx := context.Background()
-	if _, err := CodifyHarvestedInventory(ctx, "/nonexistent/path"); err == nil {
+	if _, err := CodifyHarvestedInventory(ctx, "/nonexistent/path", nil); err == nil {
 		t.Fatal("expected error for nonexistent harvest path")
 	}
 
 	cancelCtx, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err := CodifyHarvestedInventory(cancelCtx, t.TempDir()); err == nil {
+	if _, err := CodifyHarvestedInventory(cancelCtx, t.TempDir(), nil); err == nil {
 		t.Fatal("expected error with cancelled context")
 	}
 }
@@ -79,11 +79,45 @@ func TestCodifyHarvestedInventory_Empty(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	results, err := CodifyHarvestedInventory(ctx, tempHarvest)
+	results, err := CodifyHarvestedInventory(ctx, tempHarvest, nil)
 	if err != nil {
 		t.Fatalf("empty inventory error: %v", err)
 	}
 	if len(results) != 0 {
 		t.Errorf("expected 0 repos, got %d", len(results))
+	}
+}
+
+// Harvested repositories are scored against the target of their inferred language: the
+// built-in ones on an unconfigured host, the configured ones otherwise, and none for a
+// language without a target.
+func TestCodifyHarvestedInventoryUsesTargets_3D(t *testing.T) {
+	harvest := setupTestHarvest(t)
+	// Positive: a configured go target names the framework and routes the harvested demand.
+	configured, err := CodifyHarvestedInventory(t.Context(), harvest, acmeTargets())
+	if err != nil {
+		t.Fatal(err)
+	}
+	goRepo := configured[0]
+	if goRepo.Framework != "example.com/acme/kit" || goRepo.BuilderKits[0] != "acme/kit" || goRepo.Dependencies[0].TargetBuilderKit != "acme/kit" ||
+		goRepo.Dependencies[0].FrameworkReplacement != "" {
+		t.Fatalf("configured go target = %+v", goRepo)
+	}
+	// Negative: a typescript repository on a host configuring only go has no framework.
+	goOnly, err := CodifyHarvestedInventory(t.Context(), harvest, Targets{"go": acmeTargets()["go"]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ts := goOnly[1]; ts.Framework != "" || len(ts.BuilderKits) != 0 {
+		t.Fatalf("unconfigured typescript target = %+v", ts)
+	}
+	// Boundary: no configured target keeps the built-in targets and their kits.
+	legacy, err := CodifyHarvestedInventory(t.Context(), harvest, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy[0].Framework != defaultFrameworkModule || legacy[0].Dependencies[0].TargetBuilderKit != legacyTargets()["go"].RoutingKit() ||
+		legacy[1].Framework != legacyTargets()["typescript"].Module {
+		t.Fatalf("built-in targets lost: %+v / %+v", legacy[0], legacy[1])
 	}
 }

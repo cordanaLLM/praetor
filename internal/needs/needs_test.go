@@ -26,8 +26,8 @@ func TestCatalogMatching(t *testing.T) {
 	if entry.Status != StatusCovered {
 		t.Fatalf("expected StatusCovered, got %s", entry.Status)
 	}
-	if entry.GolusorisReplacement != "github.com/golusoris/golusoris/db/pgx" {
-		t.Fatalf("unexpected replacement: %s", entry.GolusorisReplacement)
+	if entry.FrameworkReplacement != "github.com/golusoris/golusoris/db/pgx" {
+		t.Fatalf("unexpected replacement: %s", entry.FrameworkReplacement)
 	}
 
 	// Positive: Gin web framework
@@ -38,7 +38,7 @@ func TestCatalogMatching(t *testing.T) {
 
 	// Positive: YAML serialization
 	entry, found = MatchPackage("gopkg.in/yaml.v3")
-	if !found || entry.Capability != "config.yaml" || entry.Status != StatusCovered || entry.GolusorisReplacement != "github.com/golusoris/golusoris/core/codec/yaml" {
+	if !found || entry.Capability != "config.yaml" || entry.Status != StatusCovered || entry.FrameworkReplacement != "github.com/golusoris/golusoris/core/codec/yaml" {
 		t.Fatalf("expected config.yaml covered by core/codec/yaml for yaml.v3, got %v", entry)
 	}
 
@@ -119,7 +119,7 @@ func TestFrameworkInspection(t *testing.T) {
 	ctx := context.Background()
 
 	// Positive: Default framework inspection
-	index, err := InspectFramework(ctx, "")
+	index, err := InspectFramework(ctx, legacySource(""))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestFrameworkInspection(t *testing.T) {
 	// Negative: Cancelled context
 	cancCtx, cancel := context.WithCancel(ctx)
 	cancel()
-	_, err = InspectFramework(cancCtx, "")
+	_, err = InspectFramework(cancCtx, legacySource(""))
 	if err == nil {
 		t.Fatal("expected error with cancelled context")
 	}
@@ -179,7 +179,7 @@ func TestFrameworkInspectionFromCheckout(t *testing.T) {
 	writeFixture(t, root, "db/pgx/doc.go", "package pgx\ntype Available struct{}\n")
 	writeFixture(t, root, "cache/redis/doc.go", "package redis\ntype Available struct{}\n")
 	writeFixture(t, root, "quantum/doc.go", "package quantum\n")
-	index, err := InspectFramework(t.Context(), root)
+	index, err := InspectFramework(t.Context(), legacySource(root))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +200,7 @@ func TestFrameworkInspectionFromCheckout(t *testing.T) {
 }
 
 func TestFrameworkInspection_EmptyCheckout(t *testing.T) {
-	index, err := InspectFramework(context.Background(), t.TempDir())
+	index, err := InspectFramework(context.Background(), legacySource(t.TempDir()))
 	if err != nil {
 		t.Fatalf("inspect empty checkout failed: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestScanRepoFixture(t *testing.T) {
 
 	tmpDir := setupFixtureRepo(t)
 
-	repoNeeds, err := ScanRepo(ctx, tmpDir)
+	repoNeeds, err := ScanRepo(ctx, tmpDir, nil)
 	if err != nil {
 		t.Fatalf("scan repo failed: %v", err)
 	}
@@ -262,7 +262,7 @@ func TestScanRepoManifestPersistence(t *testing.T) {
 	defer cancel()
 
 	tmpDir := setupFixtureRepo(t)
-	repoNeeds, err := ScanRepo(ctx, tmpDir)
+	repoNeeds, err := ScanRepo(ctx, tmpDir, nil)
 	if err != nil {
 		t.Fatalf("initial scan failed: %v", err)
 	}
@@ -275,7 +275,7 @@ func TestScanRepoManifestPersistence(t *testing.T) {
 	assertPersistedNeedsManifest(t, filepath.Join(tmpDir, ".needs.yaml"), repoNeeds)
 
 	// The declared capabilities are the part of the manifest a rescan reads back.
-	rescan, err := ScanRepo(ctx, tmpDir)
+	rescan, err := ScanRepo(ctx, tmpDir, nil)
 	if err != nil {
 		t.Fatalf("rescan failed: %v", err)
 	}
@@ -343,7 +343,7 @@ func TestScanRepoBoundaries(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	needsEmpty, err := ScanRepo(ctx, tmpEmpty)
+	needsEmpty, err := ScanRepo(ctx, tmpEmpty, nil)
 	if err != nil {
 		t.Fatalf("empty scan failed: %v", err)
 	}
@@ -358,7 +358,7 @@ func TestScanRepoBoundaries(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	needsGap, err := ScanRepo(ctx, tmpGap)
+	needsGap, err := ScanRepo(ctx, tmpGap, nil)
 	if err != nil {
 		t.Fatalf("gap scan failed: %v", err)
 	}
@@ -416,7 +416,7 @@ func TestPlanAndMigrationRewritePrimitives(t *testing.T) {
 	defer cancel()
 	tmpDir := setupMigrationRepo(t)
 
-	plan, err := PlanMigration(ctx, tmpDir, "")
+	plan, err := PlanMigration(ctx, tmpDir, legacySource(""), nil)
 	if err != nil {
 		t.Fatalf("plan migration failed: %v", err)
 	}
@@ -437,10 +437,10 @@ func TestPlanAndMigrationRewritePrimitives(t *testing.T) {
 	if !res.Success || len(res.Warnings) != 0 {
 		t.Fatalf("expected a clean migration, got success=%v warnings=%v", res.Success, res.Warnings)
 	}
-	if len(runner.calls) != 3 || strings.Join(runner.calls[2], " ") != "git switch -c "+migrationBranch {
+	if len(runner.calls) != 3 || strings.Join(runner.calls[2], " ") != "git switch -c "+defaultMigrationBranch {
 		t.Fatalf("expected worktree/branch checks followed by safe branch creation, got %v", runner.calls)
 	}
-	if res.Branch != migrationBranch {
+	if res.Branch != defaultMigrationBranch {
 		t.Fatalf("unexpected branch: %s", res.Branch)
 	}
 
@@ -470,7 +470,7 @@ func TestPlanAndMigrationRewritePrimitives(t *testing.T) {
 // TestPlanMigrationHonoursFramework pins that --framework reaches the plan.
 func TestPlanMigrationHonoursFramework(t *testing.T) {
 	ctx := context.Background()
-	plan, err := PlanMigration(ctx, setupMigrationRepo(t), "github.com/acme/otherkit")
+	plan, err := PlanMigration(ctx, setupMigrationRepo(t), legacySource("github.com/acme/otherkit"), nil)
 	if err != nil {
 		t.Fatalf("plan migration failed: %v", err)
 	}
@@ -497,7 +497,7 @@ func TestApplyMigration_Negative(t *testing.T) {
 		t.Fatal("expected an error for a cancelled context")
 	}
 
-	plan, err := PlanMigration(ctx, tmpDir, "")
+	plan, err := PlanMigration(ctx, tmpDir, legacySource(""), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -581,7 +581,7 @@ func TestAggregateFleet(t *testing.T) {
 	ctx := context.Background()
 	tmpRoot := setupFleetRoot(t)
 
-	report, err := AggregateFleet(ctx, tmpRoot, "")
+	report, err := AggregateFleet(ctx, tmpRoot, legacySource(""), nil)
 	if err != nil {
 		t.Fatalf("aggregate fleet failed: %v", err)
 	}
@@ -604,7 +604,7 @@ func TestAggregateFleet(t *testing.T) {
 	}
 
 	// The rendered report must be byte-identical across runs over an unchanged fleet.
-	second, err := AggregateFleet(ctx, tmpRoot, "")
+	second, err := AggregateFleet(ctx, tmpRoot, legacySource(""), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -620,7 +620,7 @@ func TestAggregateFleetHonoursFrameworkCheckout(t *testing.T) {
 	ctx := context.Background()
 	tmpRoot := setupFleetRoot(t)
 
-	empty, err := AggregateFleet(ctx, tmpRoot, t.TempDir())
+	empty, err := AggregateFleet(ctx, tmpRoot, legacySource(t.TempDir()), nil)
 	if err != nil {
 		t.Fatalf("aggregate against an empty framework failed: %v", err)
 	}
@@ -633,7 +633,7 @@ func TestAggregateFleetHonoursFrameworkCheckout(t *testing.T) {
 
 	dbOnly := setupFrameworkCheckout(t, "github.com/acme/forkedfw", "db/pgx")
 	writeFixture(t, dbOnly, "db/pgx/doc.go", "package pgx\ntype Available struct{}\n")
-	partial, err := AggregateFleet(ctx, tmpRoot, dbOnly)
+	partial, err := AggregateFleet(ctx, tmpRoot, legacySource(dbOnly), nil)
 	if err != nil {
 		t.Fatalf("aggregate against a partial framework failed: %v", err)
 	}
@@ -677,7 +677,7 @@ func TestAggregateFleetWithHarvestDeduplicates(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	report, err := AggregateFleetWithHarvest(ctx, tmpRoot, "", harvest)
+	report, err := AggregateFleetWithHarvest(ctx, tmpRoot, legacySource(""), harvest, nil)
 	if err != nil {
 		t.Fatalf("harvest aggregation failed: %v", err)
 	}
@@ -696,10 +696,10 @@ func TestAggregateFleetWithHarvestDeduplicates(t *testing.T) {
 	}
 
 	// Negative: an unreadable harvest bundle is an error, not a silent empty merge.
-	if _, err := AggregateFleetWithHarvest(ctx, tmpRoot, "", filepath.Join(t.TempDir(), "missing")); err == nil {
+	if _, err := AggregateFleetWithHarvest(ctx, tmpRoot, legacySource(""), filepath.Join(t.TempDir(), "missing"), nil); err == nil {
 		t.Fatal("expected an error for a harvest path that is not a directory")
 	}
-	if _, err := AggregateFleetWithHarvest(ctx, tmpRoot, "", t.TempDir()); err == nil {
+	if _, err := AggregateFleetWithHarvest(ctx, tmpRoot, legacySource(""), t.TempDir(), nil); err == nil {
 		t.Fatal("expected an error for a harvest bundle without an inventory")
 	}
 }
@@ -707,7 +707,7 @@ func TestAggregateFleetWithHarvestDeduplicates(t *testing.T) {
 // TestAggregateFleetReportsTotalScanFailure pins that an aggregation in which nothing
 // could be scanned is an error and renders as unknown, never as 100% with zero gaps.
 func TestAggregateFleetReportsTotalScanFailure(t *testing.T) {
-	fwIndex, err := InspectFramework(context.Background(), "")
+	fwIndex, err := InspectFramework(context.Background(), legacySource(""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -828,7 +828,7 @@ func TestMigrationRewriteNegativeNonGitTarget(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := setupMigrationRepo(t)
 
-	plan, err := PlanMigration(ctx, tmpDir, "")
+	plan, err := PlanMigration(ctx, tmpDir, legacySource(""), nil)
 	if err != nil {
 		t.Fatalf("plan migration failed: %v", err)
 	}
@@ -858,11 +858,11 @@ func TestMigrationRewriteBoundaryExistingBranch(t *testing.T) {
 	tmpDir := setupMigrationRepo(t)
 	initGitFixture(t, tmpDir)
 
-	if out, err := util.RunCommand(ctx, tmpDir, "git", "branch", "refactor/golusoris-adoption"); err != nil {
+	if out, err := util.RunCommand(ctx, tmpDir, "git", "branch", defaultMigrationBranch); err != nil {
 		t.Fatalf("failed creating pre-existing branch: %v (%s)", err, out)
 	}
 
-	plan, err := PlanMigration(ctx, tmpDir, "")
+	plan, err := PlanMigration(ctx, tmpDir, legacySource(""), nil)
 	if err != nil {
 		t.Fatalf("plan migration failed: %v", err)
 	}

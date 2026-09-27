@@ -10,31 +10,50 @@ import (
 	"time"
 )
 
-// LoadOperatorSettings resolves the clients, hooks and update settings from the fleet and/or
-// workstation documents a SettingsSelection names, independent of any repository manifest:
-// `hook`, `clients` and `workstation` run outside a governed repository as often as inside
+// LoadOperatorSettings resolves the operator settings from the fleet and/or workstation
+// documents a SettingsSelection names, independent of any repository manifest: `hook`,
+// `clients`, `workstation` and `needs` run outside a governed repository as often as inside
 // one (an ungoverned or missing workspace is still a valid hook call, 3.2 of the rollout
 // spec), so this does not go through LoadEffectivePolicyContext, which requires one. Neither
 // document configured returns the built-in defaults. audit and gate never call this: they
 // take explicit flags only (install_manifest.go).
 func LoadOperatorSettings(ctx context.Context, selection SettingsSelection) (OperatorSettings, error) {
+	policy, err := LoadOperatorPolicy(ctx, selection)
+	if err != nil {
+		return OperatorSettings{}, err
+	}
+	return policy.OperatorSettings(), nil
+}
+
+// LoadOperatorPolicy is LoadOperatorSettings keeping the resolved policy, so a caller can
+// resolve a relative document path against the layer file that set it (ResolveOperatorPath).
+// Neither document configured returns a nil policy, whose OperatorSettings are the built-in
+// defaults.
+func LoadOperatorPolicy(ctx context.Context, selection SettingsSelection) (*EffectivePolicy, error) {
 	if ctx == nil {
-		return OperatorSettings{}, errors.New("operator settings load requires a context")
+		return nil, errors.New("operator settings load requires a context")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	layers, err := operatorLayers(ctx, selection)
 	if err != nil {
-		return OperatorSettings{}, err
+		return nil, err
 	}
 	if len(layers) == 0 {
-		return DefaultOperatorSettings(), nil
+		return nil, nil
 	}
-	policy, err := ResolvePolicy(ctx, layers)
+	return ResolvePolicy(ctx, layers)
+}
+
+// SelectOperatorPolicy selects the documents request names (SelectOperatorSettings) and
+// loads them (LoadOperatorPolicy): the one path every command and MCP tool that reads
+// operator settings takes.
+func SelectOperatorPolicy(ctx context.Context, request SettingsRequest) (*EffectivePolicy, error) {
+	selection, err := SelectOperatorSettings(ctx, request)
 	if err != nil {
-		return OperatorSettings{}, err
+		return nil, err
 	}
-	return policy.OperatorSettings(), nil
+	return LoadOperatorPolicy(ctx, selection)
 }
 
 // operatorLayers decodes whichever of the fleet and workstation documents are configured, in

@@ -30,11 +30,11 @@ func TestMigrationAndEpicUseSelectedFramework(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo, framework := migrationEvidenceFixture(t, tc.source)
-			plan, err := PlanMigration(t.Context(), repo, framework)
+			plan, err := PlanMigration(t.Context(), repo, legacySource(framework), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			epic, err := GeneratePreMigrationEpic(t.Context(), repo, framework)
+			epic, err := GeneratePreMigrationEpic(t.Context(), repo, legacySource(framework), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -59,17 +59,17 @@ func TestMigrationAndEpicUseSelectedFramework(t *testing.T) {
 func TestMigrationSelectionErrorsDoNotBecomeEpics(t *testing.T) {
 	repo, framework := migrationEvidenceFixture(t, "package pgx\n")
 	missing := filepath.Join(framework, "missing")
-	if _, err := PlanMigration(t.Context(), repo, missing); !errors.Is(err, os.ErrNotExist) {
+	if _, err := PlanMigration(t.Context(), repo, legacySource(missing), nil); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("missing selection: %v", err)
 	}
-	if _, err := GeneratePreMigrationEpic(t.Context(), repo, missing); !errors.Is(err, os.ErrNotExist) {
+	if _, err := GeneratePreMigrationEpic(t.Context(), repo, legacySource(missing), nil); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("missing epic selection: %v", err)
 	}
 }
 
 func TestMigrationApplyRejectsUnverifiedBeforeCommands(t *testing.T) {
 	repo, framework := migrationEvidenceFixture(t, "package pgx\ntype Exists struct{}\n")
-	plan, err := PlanMigration(t.Context(), repo, framework)
+	plan, err := PlanMigration(t.Context(), repo, legacySource(framework), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestMigrationCandidateMetadataCannotAdmitApplication(t *testing.T) {
 		}
 		before[name] = string(data)
 	}
-	plan, err := PlanMigration(t.Context(), repo, framework)
+	plan, err := PlanMigration(t.Context(), repo, legacySource(framework), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestMigrationCandidateMetadataCannotAdmitApplication(t *testing.T) {
 			t.Fatalf("candidate changed %s: %v", name, readErr)
 		}
 	}
-	for _, name := range []string{"MIGRATION.md", ".git/refs/heads/" + migrationBranch} {
+	for _, name := range []string{"MIGRATION.md", ".git/refs/heads/" + defaultMigrationBranch} {
 		if _, statErr := os.Stat(filepath.Join(repo, name)); !errors.Is(statErr, os.ErrNotExist) {
 			t.Fatalf("unexpected migration artifact %s: %v", name, statErr)
 		}
@@ -132,8 +132,14 @@ func TestMigrationCandidateMetadataCannotAdmitApplication(t *testing.T) {
 func TestMigrationAnalysisRejectsInvalidSourceAndContext(t *testing.T) {
 	repo, framework := migrationEvidenceFixture(t, "package pgx\nfunc broken(\n")
 	for _, generate := range []func(context.Context) error{
-		func(ctx context.Context) error { _, err := PlanMigration(ctx, repo, framework); return err },
-		func(ctx context.Context) error { _, err := GeneratePreMigrationEpic(ctx, repo, framework); return err },
+		func(ctx context.Context) error {
+			_, err := PlanMigration(ctx, repo, legacySource(framework), nil)
+			return err
+		},
+		func(ctx context.Context) error {
+			_, err := GeneratePreMigrationEpic(ctx, repo, legacySource(framework), nil)
+			return err
+		},
 	} {
 		if err := generate(t.Context()); err == nil || !strings.Contains(err.Error(), "parse framework source") {
 			t.Fatalf("invalid selected source: %v", err)
@@ -162,7 +168,7 @@ func TestMigrationSelectionKeepsDeclarationsUnverified(t *testing.T) {
 		{"", FrameworkCatalogDeclared, 1},
 		{"example.org/unknown", FrameworkIdentityDeclared, 0},
 	} {
-		plan, err := PlanMigration(t.Context(), repo, tc.selection)
+		plan, err := PlanMigration(t.Context(), repo, legacySource(tc.selection), nil)
 		if err != nil {
 			t.Fatal(err)
 		}

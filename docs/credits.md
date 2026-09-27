@@ -3,6 +3,14 @@
 Praetor adapts ideas from, ships code from, and builds with the open-source projects and published
 specifications below. Each entry links to its upstream source and names its license as stated there.
 
+The release archives and the container image carry
+[`THIRD-PARTY-NOTICES.md`](https://github.com/cordanaLLM/praetor/blob/main/THIRD-PARTY-NOTICES.md),
+which lists every shipped third-party component with its version, license and copyright line and
+reproduces the upstream license and notice texts, and the license texts in
+[`LICENSES/`](https://github.com/cordanaLLM/praetor/tree/main/LICENSES).
+
+<!-- REUSE-IgnoreStart -->
+
 ## Adapted work
 
 | Project | What praetor takes from it | License |
@@ -14,16 +22,24 @@ specifications below. Each entry links to its upstream source and names its lice
 
 | Project | Use | License |
 | :-- | :-- | :-- |
+| [Go](https://go.dev) standard library and runtime | Statically linked into every binary | BSD-3-Clause, © 2009 The Go Authors |
 | [go-yaml v3](https://github.com/go-yaml/yaml) (`gopkg.in/yaml.v3` v3.0.1) | YAML decoding and encoding; the only Go module the binaries link | MIT (files ported from libyaml, © 2006–2011 Kirill Simonov) and Apache-2.0 (© 2011–2019 Canonical Ltd) |
 | [markdownlint-cli2](https://github.com/DavidAnson/markdownlint-cli2) 0.23.2 | Markdown linting; its manifest and lock are embedded and installed for the Markdown gate | MIT, © David Anson |
 | [micromark](https://github.com/micromark/micromark) 4.0.2 | Markdown parsing, pinned in the same lock | MIT |
+| [micromark-extension-mdxjs](https://github.com/micromark/micromark-extension-mdxjs) 3.0.0 | MDX syntax for the same parser, pinned in the same lock | MIT, © 2020 Titus Wormer |
 | [parse5](https://github.com/inikulin/parse5) 8.0.1 | HTML parsing, pinned in the same lock | MIT |
 
 ## Container base image
 
 | Project | Use | License |
 | :-- | :-- | :-- |
-| [Distroless](https://github.com/GoogleContainerTools/distroless) | Runtime base of the published container image | Apache-2.0, © Google LLC |
+| [Distroless](https://github.com/GoogleContainerTools/distroless) | Runtime base of the published container image | Apache-2.0 |
+
+## Shipped on this site
+
+| Project | Use | License |
+| :-- | :-- | :-- |
+| [interfig](https://github.com/vectorize-io/hindsight/tree/ccfe85b4851957ac2adf88b4a9ddf9668b2882f1/hindsight-interfig) (`hindsight-interfig/` in vectorize-io/hindsight) | Draws the interactive figures on this site; vendored byte-identical at commit `ccfe85b4851957ac2adf88b4a9ddf9668b2882f1` in `third_party/interfig/` | MIT, © 2025 Vectorize AI, Inc. |
 
 ## Specifications and standards
 
@@ -58,3 +74,5 @@ These run in the build, the hooks or CI. None of them ships in the binaries.
 | [Syft](https://github.com/anchore/syft) | SBOM generation | Apache-2.0 |
 | [Renovate](https://github.com/renovatebot/renovate) | Dependency update proposals | AGPL-3.0 |
 | [REUSE](https://reuse.software) ([reuse-action](https://github.com/fsfe/reuse-action)) | License compliance check | GPL-3.0-or-later |
+
+<!-- REUSE-IgnoreEnd -->

@@ -45,7 +45,7 @@ func observeFramework(ctx context.Context, index *FrameworkIndex) (err error) {
 	if found {
 		return observeContractFramework(ctx, index, contract)
 	}
-	candidates, err := frameworkCandidates()
+	candidates, err := frameworkCandidates(index.CatalogModule)
 	if err != nil {
 		return err
 	}
@@ -132,13 +132,19 @@ func frameworkModuleIdentity(module string) (string, error) {
 	return module, nil
 }
 
-func frameworkCandidates() (map[string][]CapabilityKey, error) {
+// frameworkCandidates lists the checkout-relative package directories the built-in catalog
+// names inside catalogModule, with their capabilities. A fork is observed at the same
+// relative paths under its own module; an empty catalogModule selects no candidate.
+func frameworkCandidates(catalogModule string) (map[string][]CapabilityKey, error) {
 	if len(CanonicalCatalog) > maxFrameworkPackages {
 		return nil, errors.New("framework catalog exceeds package bound")
 	}
 	result := make(map[string][]CapabilityKey)
+	if catalogModule == "" {
+		return result, nil
+	}
 	for _, entry := range CanonicalCatalog {
-		relative, ok := strings.CutPrefix(catalogFrameworkPackage(entry), defaultFrameworkModule+"/")
+		relative, ok := strings.CutPrefix(catalogFrameworkPackage(entry), catalogModule+"/")
 		if !ok || entry.Status == StatusGap {
 			continue
 		}

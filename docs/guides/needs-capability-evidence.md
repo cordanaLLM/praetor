@@ -35,14 +35,15 @@ composition. A known relationship is not an import replacement:
   Its module also contains runtime middleware and error packages. A dependency
   declaration does not prove generator execution or generated-contract parity.
 
-These roles preserve Golusoris's decisions documented in ADR-0001 through
-ADR-0004. No package versions or dependency preferences are changed. Configurable
+These roles record the built-in go target's own design decisions (they are built-in
+framework data, see [Framework targets](#framework-targets)). No package versions or
+dependency preferences are changed. Configurable
 fleet/organization/repository library selection and template options remain
 separate work; these catalog entries do not activate that policy.
 
 JSON/YAML demands gain optional `relationship` metadata with `kind`,
 `framework_package` and `basis`. Related paths identify adapters and are never
-written into `golusoris_replacement`. Each relation has its own evidence basis:
+written into `framework_replacement`. Each relation has its own evidence basis:
 foundations remain `catalog-declared` even when a selected framework's adapter
 packages have been inspected. `source-observed` for a wrapper/tooling relation
 means only that its exact related package has qualifying declarations under the
@@ -96,18 +97,20 @@ optional `basis`, framework indexes carry `basis`, and fleet reports carry
 
 ## Capability contract
 
-A framework checkout may publish `capabilities.yaml` at its root (golusoris
-`core/capabilities`, schema version 1). When the selected checkout has one, it is the
-package inventory: every declared package, the Go module the contract says contains it,
-the capability keys it satisfies and the third-party modules it `replaces`. The static
-catalog's directory candidates are not consulted for such a checkout.
+A framework checkout may publish `capabilities.yaml` at its root (schema version 1).
+When the selected checkout has one, it is the package inventory: every declared
+package, the Go module the contract says contains it, the capability keys it satisfies
+and the third-party modules it `replaces`. The static catalog's directory candidates are
+not consulted for such a checkout. A contract can also be configured without a checkout
+(`framework.targets.<lang>.contract`, see [Framework targets](#framework-targets)); its
+packages are then declared, not observed.
 
 The contract changes what is declared, not what counts as evidence:
 
 - Every declared package is still source-observed under the same rules as catalog
   candidates: parseable non-test Go source with a declaration, in the exact declared
   directory, inside the module the contract declares for it. A declared nested module
-  (for example `github.com/golusoris/golusoris/core`) is honoured instead of being
+  (for example `example.com/acme/kit/core`) is honoured instead of being
   rejected as a foreign module, but its `go.mod` must exist and no other module may sit
   between the checkout root and the package. Header-only packages remain unavailable.
 - `replaces` maps a consumer's third-party module onto an observed package, ignoring a
@@ -118,11 +121,22 @@ The contract changes what is declared, not what counts as evidence:
   predates the framework's layout is corrected by the contract.
 - Catalog library relationships (retained foundations, wrappers, tooling) keep their
   roles; the contract never turns a retained library into an import replacement.
-- The framework's own modules imported by a consumer (`github.com/golusoris/golusoris`,
+- The framework's own modules imported by a consumer (`example.com/acme/kit`,
   `…/core`) are `native` under the `fleet.framework` capability and count as covered.
 
 The report prints `Capability contract: capabilities.yaml` next to its basis, which
-stays `source-observed`; `FrameworkIndex` carries `contract` and `replacements`. A
+stays `source-observed`; `FrameworkIndex` carries `contract` and `replacements`.
+
+Version 1 also accepts optional fields; a reader that predates them ignores them:
+
+| Field | Meaning |
+| :-- | :-- |
+| `ecosystem` | `go` (the default), `npm`, `pypi`, `cargo` or `system`: the grammar every third-party name below is checked against; a configured contract must declare its language's ecosystem |
+| `adapts` (per package) | third-party names the package offers an adapter for: `adapter_available`, not a replacement |
+| `wraps`, `tooling_for` (per package) | libraries the package wraps or is tooling for; the library is retained (`wrapped-by`, `tooling`) |
+| `foundations` (top level) | libraries the framework retains as foundations; a go contract may list standard-library imports here |
+
+Each list holds at most 64 names (`internal/needs/framework_contract.go`). A
 contract that fails validation (unsupported version, `framework` not matching the
 checkout's `go.mod` module, packages outside the framework, undeclared modules, invalid
 capability keys, more than 512 packages or 1 MiB) fails inspection rather than
@@ -131,8 +145,10 @@ admits `needs migrate --apply`.
 
 ## The committed manifest
 
-`praetorctl needs scan --write` writes `.needs.yaml` from the declared catalog; nothing
-else regenerates it, `compile-context` included. `needs scan --check` scans the same way,
+`praetorctl needs scan --write` writes `.needs.yaml` scored against the operator's
+framework targets (the built-in ones when none is configured, see
+[Framework targets](#framework-targets)); nothing else regenerates it,
+`compile-context` included. `needs scan --check` scans the same way,
 writes nothing, and fails when the committed file differs from what `--write` would write
 now, printing the committed lines a fresh scan drops (`- committed:<line>`) and the lines
 it adds (`+ generated:<line>`):
@@ -144,8 +160,11 @@ praetorctl needs scan --check   # fail on a stale .needs.yaml
 
 The comparison ignores `updated_at`, which every scan stamps, and reads CRLF line
 endings as LF. `--write` and `--check` exclude each other. This repository runs the check
-as `make needs-check` inside `make verify-all`; `praetorctl audit` does not, so an
-adopter's manifest written by an older Praetor is not failed by a newer one. Tests:
+as `make needs-check` inside `make verify-all`, with no operator settings selected (empty
+`PRAETOR_FLEET_CONFIG` and `PRAETOR_WORKSTATION_CONFIG`, `--manifest=`), so a workstation
+that configures framework targets judges the committed manifest the way CI does;
+`praetorctl audit` does not run the check, so an adopter's manifest written by an older
+Praetor is not failed by a newer one. Tests:
 `internal/needs/manifest_check_test.go`, `cmd/standardsctl/needs_check_test.go`.
 
 ## Selecting the source
@@ -155,16 +174,64 @@ praetorctl needs report --path /path/to/consumer --framework /path/to/framework
 praetorctl needs report --path /path/to/consumer --framework=""
 ```
 
-Without `--framework` the CLI selects `PRAETOR_FRAMEWORK_DIR`, otherwise
-`<dev root>/golusoris/golusoris`. The dev root is the one every dev-root flag
-shares (`resolveDevRootDir` in `cmd/standardsctl/devroot.go`): `PRAETOR_DEV_ROOT`,
-otherwise the earlier `PRAETOR_DEV_DIR`, otherwise `$HOME/dev`; `needs aggregate`
-and `needs requests` scan the same root unless `--dev-dir` is given. With none of
-them set and no usable home directory the command errors and names the flag to
-pass. If the selected path is absent, the command errors. Use an explicitly empty
-`--framework=""` for a declared-catalog estimate. MCP keeps its existing default
-of a declared catalog when `framework` is omitted; explicit paths remain confined
-to the server root under the existing server policy.
+Without `--framework` the CLI selects `$PRAETOR_FRAMEWORK_DIR`, then
+`framework.targets.go.checkout`. Without a checkout, `framework.targets.go.contract`
+declares the framework, and without a contract the go target's module names it
+(`needs.SelectFrameworkSource`, ADR-0014 §3). No checkout under the dev root is selected
+by default any more. If a selected path is absent, the command errors. Use an explicitly
+empty `--framework=""` to score against the declaration. The MCP
+`standards_needs_report` resolves `framework` the same way; an explicit path stays
+confined to the server root under the existing server policy. `needs aggregate` and
+`needs requests` scan the dev root (`PRAETOR_DEV_ROOT`, otherwise `PRAETOR_DEV_DIR`,
+otherwise `$HOME/dev`) unless `--dev-dir` is given.
+
+## Framework targets
+
+The framework each language is scored against is operator configuration,
+`framework.targets.<lang>` in the operator settings
+([effective policy](effective-policy.md#framework-forge-and-topology)). Every `needs`
+subcommand reads it; so do the MCP `standards_needs_report` and the needs-miner agent,
+through the environment and the install manifest.
+
+- **Nothing configured.** The engine keeps the built-in targets and catalog it
+  shipped before targets became configuration, so reports are unchanged. This is a
+  transition: the built-in data is removed once it is exported and configured.
+- **Targets configured.** A language without a target has no framework: its scan
+  names none and its requests are unrouted
+  (`Target Builder Kit: unrouted (framework.targets.<lang>.builder_kits not set)`, with
+  empty `target_builder_kit` and `target_org`). A configured target gets its own module,
+  builder kits and routing kit, and a built-in catalog package outside its module is never
+  offered as a candidate: the demand keeps its capability and is a gap unless the target's
+  contract declares a package for it (`TestTargetScopesBuiltinCatalogPaths`,
+  `TestRegistryScoresEachLanguageAgainstItsTarget` in `internal/needs/targets_test.go`).
+- **Contracts.** Each target's `contract` is loaded when a command starts
+  (`needs.LoadRegistry`); a scan maps the language's demands onto the packages it
+  declares, and a report does so for every language but go, whose framework the report
+  selects as above (`TestLoadRegistryDeclaresTargetContracts`).
+
+`praetorctl needs contract export --language=<lang> --out=<file>` writes the framework a
+language's target resolves to as a version-1 contract: the selected go framework
+(`--framework` selects a checkout), or another language's configured contract or
+built-in catalog. A framework without a contract of its own carries the built-in
+catalog's replacement, adapter, relationship and foundation claims, and the file is the
+starting point for configuring `framework.targets.<lang>.contract`. It is not yet a drop-in
+replacement: for targets other than go, a report built from an exported contract can grant
+coverage the built-in tables do not, so the built-in tables stay until the parity check that
+ADR-0014 requires passes. An entry
+the contract grammar cannot carry, such as a capability key without a dot, is listed as
+`[SKIP]` instead of being dropped silently (`internal/needs/framework_export_test.go`,
+`cmd/standardsctl/needs_contract_test.go`).
+
+### The `framework_replacement` key
+
+A demand's replacement is written as `framework_replacement`. A `.needs.yaml` or JSON
+report written with the former key `golusoris_replacement` still decodes: the old key is
+read when the new one is empty, the same value under both keys is accepted, and two
+different values are an error naming both. Every row read through the old key carries a
+deprecation that `needs scan`, `needs report` and the MCP report print as
+`Deprecated input:`; the next `needs scan --write` writes the new key only. The old key is
+removed two minor releases after ADR-0014 is accepted (`TestDemandReplacementAliasMatrix`
+in `internal/needs/demand_alias_test.go`).
 
 ## Repository and fleet discovery
 
@@ -249,14 +316,15 @@ separate rows, told apart by the leaderboard's Location column.
 ## Migration
 
 An explicitly missing framework path is an error; select a real checkout or
-explicitly request the declared catalog with `--framework=""`.  Lower
+explicitly request the declaration with `--framework=""`.  Lower
 source-observed scores and newly exposed gaps are corrected evidence; a 100%
 score does not imply verified migration readiness.
 
 `FrameworkIndex.ProvidesCapability` requires exact capability membership;
 unknown or broad domain directory names do not imply arbitrary capabilities.
-All existing exported signatures remain; callers can use the additive
-`ScanRepoWithFramework` function when selecting a framework. Human-readable
+Callers select a framework with `SelectFrameworkSource` and `InspectFramework`, and
+score against it with `ScanRepoWithFramework`, passing the analyzer registry built from
+the operator's targets (`RegistryFromPolicy`; `nil` selects the built-in targets). Human-readable
 reports use “Mapping availability” instead of “Readiness Score”. Parse structured
 fields and inspect the evidence basis rather than matching the old label.
 
@@ -268,7 +336,13 @@ come from the same reconciled inputs. An observed fork uses its root module name
 a header-only replacement package produces no replacement candidate. Epic
 creation propagates inspection/planning errors instead of generating a fallback.
 
-The exported function signatures and existing JSON fields remain. Migration plans
+The candidate also names the branch an admitted migration would create:
+`framework.migration_branch`, else `refactor/framework-adoption`. An operator with an
+open branch under the former built-in name configures that name, because the migration
+refuses to reset an existing branch (`TestMigrationBranch_3D` in
+`internal/needs/migrate_test.go`).
+
+The existing JSON fields remain. Migration plans
 add `coverage_basis`, `mapping_availability`, `framework_version`, `status`, and
 `blockers`; epics add version, status and blockers alongside their existing basis.
 Current results are `status: "candidate"`, `framework_version: "unverified"`.
@@ -276,7 +350,8 @@ Current results are `status: "candidate"`, `framework_version: "unverified"`.
 suffix. `AddedRequires` stays empty because no verified module version is known.
 `Replacements` and `DroppedRequires` describe proposals only, not approved edits.
 
-An empty selection explicitly requests the declared catalog. A module-shaped
+An empty selection explicitly requests the declaration: the go target's contract, or
+its built-in catalog on a host that configures no target. A module-shaped
 selection such as `example.org/fork` preserves its identity but uses
 `identity-declared` basis with no claimed source mappings. To select a relative
 checkout unambiguously, prefix its path with `./`. Missing local selections,
@@ -290,7 +365,7 @@ praetorctl needs migrate --path /path/to/consumer --framework /path/to/framework
 # Generate an advisory epic from that same source selection.
 praetorctl needs epic --path /path/to/consumer --framework /path/to/framework
 
-# Explicitly request an offline catalog estimate.
+# Explicitly request an offline estimate against the declaration.
 praetorctl needs migrate --path /path/to/consumer --framework=""
 ```
 

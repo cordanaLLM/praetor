@@ -23,11 +23,21 @@ var (
 	githubRepositorySegment = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 )
 
+// ValidateGitHubOwner rejects an owner that GitHub would not accept as a user or
+// organisation login: 1..39 letters, digits and single hyphens, not starting or ending with
+// a hyphen.
+func ValidateGitHubOwner(owner string) error {
+	if len(owner) > maxGitHubOwnerBytes || !githubOwnerSegment.MatchString(owner) || strings.Contains(owner, "--") {
+		return fmt.Errorf("invalid GitHub repository owner %q", owner)
+	}
+	return nil
+}
+
 // ValidateGitHubRepositoryIdentity rejects owner/name pairs that are unsafe or invalid
 // in GitHub API, workflow-status, and Markdown link paths.
 func ValidateGitHubRepositoryIdentity(owner, repository string) error {
-	if len(owner) > maxGitHubOwnerBytes || !githubOwnerSegment.MatchString(owner) || strings.Contains(owner, "--") {
-		return fmt.Errorf("invalid GitHub repository owner %q", owner)
+	if err := ValidateGitHubOwner(owner); err != nil {
+		return err
 	}
 	if len(repository) > maxGitHubRepositoryBytes || !githubRepositorySegment.MatchString(repository) ||
 		repository == "." || repository == ".." {

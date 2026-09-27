@@ -1,8 +1,9 @@
 # Release image. GoReleaser's dockers_v2 block (.goreleaser.yaml) builds it in the release
 # job from the praetorctl binaries that job already compiled, so the binary in the image is
 # the one in the release archive and is compiled exactly once (HISS-19). The build context
-# holds one <os>/<arch>/praetorctl per platform and no source tree, which is why a plain
-# `docker build .` in a checkout has nothing to copy; `goreleaser release --snapshot --clean`
+# holds one <os>/<arch>/praetorctl per platform plus the license and notices files the
+# dockers_v2 extra_files list, and no source tree, which is why a plain
+# `docker build .` in a checkout has no binary to copy; `goreleaser release --snapshot --clean`
 # builds the image locally (docs/guides/releasing.md). ADR-0013 records this as the one
 # image path.
 #
@@ -22,6 +23,12 @@ WORKDIR /workspace
 # standardsctl is the pre-rename name of the same program; .goreleaser.yaml keeps both.
 COPY $TARGETPLATFORM/praetorctl /usr/local/bin/praetorctl
 COPY $TARGETPLATFORM/praetorctl /usr/local/bin/standardsctl
+
+# The binary links third-party code whose licenses travel with it: THIRD-PARTY-NOTICES.md
+# names each component and LICENSES/ holds the license texts. The devcontainer image keeps
+# praetor's LICENSE under the same directory (internal/devcontainer/bootstrap.go).
+COPY LICENSE THIRD-PARTY-NOTICES.md /usr/local/share/praetor/
+COPY LICENSES /usr/local/share/praetor/LICENSES
 
 # The distroless nonroot user; the Helm chart's podSecurityContext runs as the same UID.
 USER 65532:65532

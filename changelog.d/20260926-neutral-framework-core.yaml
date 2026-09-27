@@ -1,0 +1,3 @@
+type: changed
+title: "Make the needs engine's target frameworks operator configuration (framework.targets.<lang>: module, builder kits, contract, go checkout) read by every needs subcommand and the MCP report; add framework, forge and topology operator sections, one repository-identity resolver, one operator-settings loader and needs contract export; rename the .needs.yaml key golusoris_replacement to framework_replacement (the old key stays readable with a deprecation), rename the migration branch to refactor/framework-adoption (framework.migration_branch restores a former name), retitle the report header, and stop selecting a framework checkout under the dev root by default"
+breaking: true

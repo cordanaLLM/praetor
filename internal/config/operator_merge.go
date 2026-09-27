@@ -7,6 +7,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -198,16 +199,24 @@ func (m *operatorMerge) finish() (*OperatorSettings, map[string][]string, error)
 	return &settings, m.contributors, nil
 }
 
+// assignSetting stores one merged value in its typed field. A wildcard path goes to the
+// entry its identifier names, created with that entry's defaults on first use.
 func assignSetting(settings *OperatorSettings, path string, setting OperatorSetting) error {
-	client := settingClient(path)
-	if client == "" {
-		return assignTarget(settings.targets(), path, setting)
+	prefix, id, field := settingWildcard(path)
+	switch prefix {
+	case selectedPrefix:
+		return assignClientSetting(settings, clientid.ID(id), field, setting)
+	case frameworkTargetsPrefix:
+		return assignFrameworkTarget(settings, id, field, setting)
 	}
+	return assignTarget(settings.targets(), path, setting)
+}
+
+func assignClientSetting(settings *OperatorSettings, client clientid.ID, field string, setting OperatorSetting) error {
 	selection, ok := settings.Clients.Selected[client]
 	if !ok {
 		selection = defaultClientSelection()
 	}
-	field := strings.TrimPrefix(strings.TrimPrefix(genericSettingPath(path), selectedPrefix+"*"), ".")
 	if err := assignTarget(selection.targets(), field, setting); err != nil {
 		return err
 	}
@@ -215,12 +224,40 @@ func assignSetting(settings *OperatorSettings, path string, setting OperatorSett
 	return nil
 }
 
-// targets maps each section path to the field it sets.
+func assignFrameworkTarget(settings *OperatorSettings, language, field string, setting OperatorSetting) error {
+	if settings.Framework.Targets == nil {
+		settings.Framework.Targets = map[string]FrameworkTarget{}
+	}
+	target := settings.Framework.Targets[language]
+	if err := assignTarget(target.targets(), field, setting); err != nil {
+		return err
+	}
+	settings.Framework.Targets[language] = target
+	return nil
+}
+
+// targets maps each section path to the field it sets, one section at a time.
 func (s *OperatorSettings) targets() map[string]any {
-	c, h, u := &s.Clients, &s.Hooks, &s.Update
+	targets := make(map[string]any, len(operatorSpecs))
+	for _, section := range [...]map[string]any{
+		s.Clients.targets(), s.Hooks.targets(), s.Update.targets(),
+		s.Framework.targets(), s.Forge.targets(), s.Topology.targets(),
+	} {
+		maps.Copy(targets, section)
+	}
+	return targets
+}
+
+func (c *ClientSettings) targets() map[string]any {
+	return map[string]any{"clients.mode": &c.Mode, "clients.verified_max_age": &c.VerifiedMaxAge, "clients.govern": &c.Govern}
+}
+
+func (h *HookSettings) targets() map[string]any {
+	return map[string]any{"hooks.scope": &h.Scope, "hooks.command_policy.deny": &h.CommandPolicy.Deny, "hooks.python": &h.Python}
+}
+
+func (u *UpdateSettings) targets() map[string]any {
 	return map[string]any{
-		"clients.mode": &c.Mode, "clients.verified_max_age": &c.VerifiedMaxAge, "clients.govern": &c.Govern,
-		"hooks.scope": &h.Scope, "hooks.command_policy.deny": &h.CommandPolicy.Deny, "hooks.python": &h.Python,
 		"update.channel": &u.Channel, "update.source": &u.Source, "update.checkout": &u.Checkout,
 		"update.remote": &u.Remote, "update.branch": &u.Branch, "update.pin": &u.Pin,
 		"update.interval": &u.Interval, "update.require_signed": &u.RequireSigned,
@@ -229,12 +266,34 @@ func (s *OperatorSettings) targets() map[string]any {
 	}
 }
 
+func (f *FrameworkSettings) targets() map[string]any {
+	return map[string]any{"framework.migration_branch": &f.MigrationBranch}
+}
+
+func (f *ForgeSettings) targets() map[string]any {
+	return map[string]any{
+		"forge.default_owner": &f.DefaultOwner, "forge.reconcile_repos": &f.ReconcileRepos, "forge.review_bot": &f.ReviewBot,
+	}
+}
+
+func (t *TopologySettings) targets() map[string]any {
+	return map[string]any{"topology.org_containers": &t.OrgContainers}
+}
+
 // targets maps each client key to the field it sets; "" is the entry that lists the client.
 func (c *ClientSelection) targets() map[string]any {
 	return map[string]any{
 		"": nil, "required": &c.Required, "scopes": &c.Scopes, "plugin": &c.Plugin, "binary": &c.Binary,
 		"config_root": &c.ConfigRoot, "registry": &c.Registry, "connection_profile": &c.ConnectionProfile,
 		"permissions.manage": &c.Permissions.Manage, "permissions.allow": &c.Permissions.Allow,
+	}
+}
+
+// targets maps each framework target key to the field it sets; "" is the entry that lists
+// the language.
+func (t *FrameworkTarget) targets() map[string]any {
+	return map[string]any{
+		"": nil, "module": &t.Module, "builder_kits": &t.BuilderKits, "contract": &t.Contract, "checkout": &t.Checkout,
 	}
 }
 
@@ -263,7 +322,7 @@ func assignTarget(targets map[string]any, key string, setting OperatorSetting) e
 }
 
 // ResolveOperatorPath resolves a document path from the operator settings (a registry,
-// connection profile or allowed-signers file). An absolute value is returned unchanged; a
+// connection profile, allowed-signers file or framework contract). An absolute value is returned unchanged; a
 // relative one is joined to the directory of the layer file that contributed key.
 func (p *EffectivePolicy) ResolveOperatorPath(key, value string) (string, error) {
 	native := filepath.FromSlash(value)

@@ -506,8 +506,10 @@ Organisation container names are operator data, not engine data. The policy acce
 bounded operator deny list (RE2, at most 64 patterns of at most 512 bytes; an empty,
 oversized or non-compiling pattern fails the whole list). `hooks.command_policy.deny`
 is read from the operator settings and merged into the built-in rules before every hook
-call: `runHook` resolves the section with `loadHookSettings`, then builds the policy with
-`agenthook.BuildPolicy(settings.Hooks)` (`cmd/standardsctl/hook.go`,
+call: `runHook` resolves the section through the operator-settings loader every command
+shares (`defaultOperatorSettingsFlags` in `cmd/standardsctl/operator_settings.go`: the
+environment, then the install manifest, since hook takes no flags), then builds the policy
+with `agenthook.BuildPolicy(settings.Hooks)` (`cmd/standardsctl/hook.go`,
 `internal/agenthook/settings.go`). See [checkpoint evaluators](#checkpoint-evaluators)
 below for the layering `hooks.command_policy.deny` shares with `hooks.scope` and
 `hooks.python`.

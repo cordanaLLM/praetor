@@ -48,6 +48,7 @@ type LibraryRelationship struct {
 }
 
 // DependencyDemand captures a single dependency requirement and its framework mapping.
+// Decoding also reads the key it replaced as a deprecated alias (demand_alias.go).
 type DependencyDemand struct {
 	Package              string               `json:"package" yaml:"package"`
 	Version              string               `json:"version,omitempty" yaml:"version,omitempty"`
@@ -55,10 +56,13 @@ type DependencyDemand struct {
 	Ecosystem            string               `json:"ecosystem,omitempty" yaml:"ecosystem,omitempty"`
 	Capability           CapabilityKey        `json:"capability" yaml:"capability"`
 	Status               CapabilityStatus     `json:"status" yaml:"status"`
-	GolusorisReplacement string               `json:"golusoris_replacement,omitempty" yaml:"golusoris_replacement,omitempty"`
+	FrameworkReplacement string               `json:"framework_replacement,omitempty" yaml:"framework_replacement,omitempty"`
 	TargetBuilderKit     string               `json:"target_builder_kit,omitempty" yaml:"target_builder_kit,omitempty"`
 	Notes                string               `json:"notes,omitempty" yaml:"notes,omitempty"`
 	Relationship         *LibraryRelationship `json:"relationship,omitempty" yaml:"relationship,omitempty"`
+
+	// legacyKey records that decoding read the replacement from the deprecated key.
+	legacyKey bool
 }
 
 // CapabilityDeclaration groups required and optional capabilities.
@@ -106,6 +110,10 @@ type RepoNeeds struct {
 	// directories whose scan failed. Their demand is missing from this row; the root
 	// project and every other sub-project are still scored.
 	FailedSubprojects []SubprojectFailure `json:"failed_subprojects,omitempty" yaml:"-"`
+	// Deprecations lists deprecated inputs this row was read from, such as a .needs.yaml
+	// written with a former key. The CLI and the MCP report print them; a manifest written
+	// from this row carries none of them.
+	Deprecations []string `json:"deprecations,omitempty" yaml:"-"`
 }
 
 // SubprojectFailure names a nested sub-project whose scan failed, with the error.
@@ -139,6 +147,13 @@ type FrameworkIndex struct {
 	Name     string `json:"name"`
 	RootPath string `json:"root_path"`
 	Version  string `json:"version"`
+	// CatalogModule is the module built-in catalog paths resolve against: the go target's
+	// module. A catalog path outside it names no package of this framework; empty applies
+	// no catalog path at all.
+	CatalogModule string `json:"catalog_module,omitempty"`
+	// Ecosystem is the package ecosystem a contract's third-party names belong to (go, npm,
+	// pypi, cargo or system); empty means go.
+	Ecosystem string `json:"ecosystem,omitempty"`
 	// Contract names the capability contract file the inventory came from; empty when
 	// the packages came from the static catalog or directory heuristics.
 	Contract     string                      `json:"contract,omitempty"`
@@ -148,6 +163,15 @@ type FrameworkIndex struct {
 	// every observed framework package whose contract entry replaces them, in import
 	// order; reconciliation prefers the claimant declaring the demanded capability.
 	Replacements map[string][]string `json:"replacements,omitempty"`
+	// Adaptations maps third-party names onto the packages whose contract entry offers an
+	// adapter for them (adapts): available, not a drop-in replacement.
+	Adaptations map[string][]string `json:"adaptations,omitempty"`
+	// Wrappers and Tooling map third-party names onto the packages whose contract entry
+	// wraps them or is tooling for them; the library itself is retained.
+	Wrappers map[string][]string `json:"wrappers,omitempty"`
+	Tooling  map[string][]string `json:"tooling,omitempty"`
+	// Foundations lists the third-party names the contract retains as foundations.
+	Foundations []string `json:"foundations,omitempty"`
 }
 
 // GapDetail documents an unmet capability demand across the fleet.

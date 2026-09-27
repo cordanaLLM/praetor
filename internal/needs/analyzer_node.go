@@ -36,8 +36,9 @@ type packageJSON struct {
 	DevDependencies map[string]string `json:"devDependencies"`
 }
 
-// Analyze parses package.json and maps dependencies to SvelteSentio capabilities.
-func (a *NodeAnalyzer) Analyze(ctx context.Context, repoPath string) (*RepoNeeds, error) {
+// Analyze parses package.json and maps dependencies to capabilities of the typescript target
+// framework.
+func (a *NodeAnalyzer) Analyze(ctx context.Context, repoPath string, target Target) (*RepoNeeds, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -57,8 +58,6 @@ func (a *NodeAnalyzer) Analyze(ctx context.Context, repoPath string) (*RepoNeeds
 		Repository:   repoName,
 		Language:     "typescript",
 		Languages:    []string{"typescript", "svelte"},
-		Framework:    "github.com/golusoris/sveltesentio",
-		BuilderKits:  []string{"golusoris/sveltesentio"},
 		Capabilities: CapabilityDeclaration{Required: make([]CapabilityKey, 0), Optional: make([]CapabilityKey, 0)},
 		Dependencies: make([]DependencyDemand, 0),
 		UpdatedAt:    time.Now().UTC(),
@@ -66,10 +65,11 @@ func (a *NodeAnalyzer) Analyze(ctx context.Context, repoPath string) (*RepoNeeds
 
 	allDeps := mergeDependencies(pkgData.Dependencies, pkgData.DevDependencies)
 	for _, pkg := range slices.Sorted(maps.Keys(allDeps)) {
-		demand := mapNodeDependency(pkg, allDeps[pkg])
+		demand := mapNodeDependency(pkg, allDeps[pkg], target.RoutingKit())
 		repoNeeds.Dependencies = append(repoNeeds.Dependencies, demand)
 		repoNeeds.Capabilities.Required = appendUniqueCap(repoNeeds.Capabilities.Required, demand.Capability)
 	}
+	target.applyTo(repoNeeds)
 
 	if declErr := loadExistingDeclarations(ctx, repoPath, repoNeeds); declErr != nil {
 		return nil, fmt.Errorf("failed to load existing declarations: %w", declErr)
@@ -103,7 +103,8 @@ func mergeDependencies(deps, devDeps map[string]string) map[string]string {
 	return merged
 }
 
-func mapNodeDependency(pkg, ver string) DependencyDemand {
+// mapNodeDependency maps one npm package onto the catalog; kit is the target's routing kit.
+func mapNodeDependency(pkg, ver, kit string) DependencyDemand {
 	mapping, found := lookupNodeCatalog(pkg)
 	if found {
 		return DependencyDemand{
@@ -113,8 +114,8 @@ func mapNodeDependency(pkg, ver string) DependencyDemand {
 			Ecosystem:            "npm",
 			Capability:           mapping.Capability,
 			Status:               mapping.Status,
-			GolusorisReplacement: mapping.Replacement,
-			TargetBuilderKit:     "golusoris/sveltesentio",
+			FrameworkReplacement: mapping.Replacement,
+			TargetBuilderKit:     kit,
 			Notes:                mapping.Notes,
 		}
 	}
@@ -125,7 +126,7 @@ func mapNodeDependency(pkg, ver string) DependencyDemand {
 		Ecosystem:        "npm",
 		Capability:       CapabilityKey("ui.external." + cleanDepKey(pkg)),
 		Status:           StatusGap,
-		TargetBuilderKit: "golusoris/sveltesentio",
-		Notes:            "External npm dependency requiring SvelteSentio adapter or evaluation",
+		TargetBuilderKit: kit,
+		Notes:            "External npm dependency requiring a target framework adapter or evaluation",
 	}
 }

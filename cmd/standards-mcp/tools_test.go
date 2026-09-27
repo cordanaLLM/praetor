@@ -225,9 +225,12 @@ func TestServer_Negative_CompileContext(t *testing.T) {
 
 func TestServer_Positive_NeedsReport(t *testing.T) {
 	srv, root := newFixtureServer(t)
+	// The operator's workstation document configures the go target (selectAcmeTarget).
+	selectAcmeTarget(t)
 
 	res := callTool(t, srv, "standards_needs_report", nil)
-	expectText(t, "needs default", res, "Golusoris Migration Report")
+	expectText(t, "needs default", res, "Framework Migration Report")
+	expectText(t, "needs default", res, "Framework: example.com/acme/kit (declared)")
 	expectText(t, "needs default", res, "Mapping availability")
 
 	// A framework checkout inside the root is inspected domain by domain.
@@ -235,7 +238,13 @@ func TestServer_Positive_NeedsReport(t *testing.T) {
 		t.Fatal(err)
 	}
 	withFW := callTool(t, srv, "standards_needs_report", map[string]any{"path": ".", "framework": "fw"})
-	expectText(t, "needs framework", withFW, "Golusoris Migration Report")
+	expectText(t, "needs framework", withFW, "Framework Migration Report")
+	expectText(t, "needs framework", withFW, "Framework: example.com/acme/kit (unverified)")
+	for _, text := range []string{res.Content[0].Text, withFW.Content[0].Text} {
+		if strings.Contains(text, "golusoris") {
+			t.Fatalf("a configured target reported built-in framework data:\n%s", text)
+		}
+	}
 
 	bad := callTool(t, srv, "standards_needs_report", map[string]any{"framework": t.TempDir()})
 	expectError(t, "framework outside", bad, "outside the server root")

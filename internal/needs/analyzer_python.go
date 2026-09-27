@@ -34,8 +34,9 @@ func (a *PythonAnalyzer) Detect(repoPath string) bool {
 		util.FileExists(filepath.Join(repoPath, "setup.py"))
 }
 
-// Analyze extracts Python dependencies and maps them to pykit capabilities.
-func (a *PythonAnalyzer) Analyze(ctx context.Context, repoPath string) (*RepoNeeds, error) {
+// Analyze extracts Python dependencies and maps them to capabilities of the python target
+// framework.
+func (a *PythonAnalyzer) Analyze(ctx context.Context, repoPath string, target Target) (*RepoNeeds, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -46,8 +47,6 @@ func (a *PythonAnalyzer) Analyze(ctx context.Context, repoPath string) (*RepoNee
 		Repository:   repoName,
 		Language:     "python",
 		Languages:    []string{"python"},
-		Framework:    "github.com/golusoris/pykit",
-		BuilderKits:  []string{"golusoris/pykit"},
 		Capabilities: CapabilityDeclaration{Required: make([]CapabilityKey, 0), Optional: make([]CapabilityKey, 0)},
 		Dependencies: make([]DependencyDemand, 0),
 		UpdatedAt:    time.Now().UTC(),
@@ -58,10 +57,11 @@ func (a *PythonAnalyzer) Analyze(ctx context.Context, repoPath string) (*RepoNee
 		return nil, fmt.Errorf("failed to parse Python dependencies in %q: %w", repoPath, err)
 	}
 	for _, pkg := range slices.Sorted(maps.Keys(deps)) {
-		demand := mapPythonDependency(pkg, deps[pkg])
+		demand := mapPythonDependency(pkg, deps[pkg], target.RoutingKit())
 		repoNeeds.Dependencies = append(repoNeeds.Dependencies, demand)
 		repoNeeds.Capabilities.Required = appendUniqueCap(repoNeeds.Capabilities.Required, demand.Capability)
 	}
+	target.applyTo(repoNeeds)
 
 	if declErr := loadExistingDeclarations(ctx, repoPath, repoNeeds); declErr != nil {
 		return nil, fmt.Errorf("failed to load existing declarations: %w", declErr)
@@ -303,7 +303,8 @@ func parseSetupPyFile(path string, deps map[string]string) error {
 	})
 }
 
-func mapPythonDependency(pkg, ver string) DependencyDemand {
+// mapPythonDependency maps one PyPI package onto the catalog; kit is the target's routing kit.
+func mapPythonDependency(pkg, ver, kit string) DependencyDemand {
 	mapping, found := lookupPythonCatalog(strings.ToLower(pkg))
 	if found {
 		return DependencyDemand{
@@ -313,8 +314,8 @@ func mapPythonDependency(pkg, ver string) DependencyDemand {
 			Ecosystem:            "pypi",
 			Capability:           mapping.Capability,
 			Status:               mapping.Status,
-			GolusorisReplacement: mapping.Replacement,
-			TargetBuilderKit:     "golusoris/pykit",
+			FrameworkReplacement: mapping.Replacement,
+			TargetBuilderKit:     kit,
 			Notes:                mapping.Notes,
 		}
 	}
@@ -325,7 +326,7 @@ func mapPythonDependency(pkg, ver string) DependencyDemand {
 		Ecosystem:        "pypi",
 		Capability:       CapabilityKey("python.external." + cleanDepKey(pkg)),
 		Status:           StatusGap,
-		TargetBuilderKit: "golusoris/pykit",
-		Notes:            "External PyPI dependency requiring PyKit adapter or evaluation",
+		TargetBuilderKit: kit,
+		Notes:            "External PyPI dependency requiring a target framework adapter or evaluation",
 	}
 }

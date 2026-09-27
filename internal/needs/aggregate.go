@@ -30,22 +30,24 @@ func writef(sb *strings.Builder, format string, args ...any) {
 }
 
 // AggregateFleet scans all repositories in fleetRoot and produces a FleetDemandReport.
-func AggregateFleet(ctx context.Context, fleetRoot, frameworkPath string) (*FleetDemandReport, error) {
-	return AggregateFleetWithHarvest(ctx, fleetRoot, frameworkPath, "")
+func AggregateFleet(ctx context.Context, fleetRoot string, framework FrameworkSource, registry *AnalyzerRegistry) (*FleetDemandReport, error) {
+	return AggregateFleetWithHarvest(ctx, fleetRoot, framework, "", registry)
 }
 
 // AggregateFleetWithHarvest scans all repositories and incorporates harvested state.
 //
-// Repositories are classified against the framework checkout at frameworkPath, not
-// against the static catalog alone, so pointing --framework at a checkout that does not
-// ship a capability turns every dependency demanding it into a gap. Repositories present
-// both on disk and in the harvest bundle are folded into a single leaderboard row.
-func AggregateFleetWithHarvest(ctx context.Context, fleetRoot, frameworkPath, harvestPath string) (*FleetDemandReport, error) {
+// Repositories are classified against the framework the source selects, not against the
+// static catalog alone, so pointing --framework at a checkout that does not ship a
+// capability turns every dependency demanding it into a gap. Repositories present both on
+// disk and in the harvest bundle are folded into a single leaderboard row. registry
+// supplies the analyzers and the framework targets; nil selects DefaultRegistry.
+func AggregateFleetWithHarvest(ctx context.Context, fleetRoot string, framework FrameworkSource, harvestPath string,
+	registry *AnalyzerRegistry) (*FleetDemandReport, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
 
-	fwIndex, err := InspectFramework(ctx, frameworkPath)
+	fwIndex, err := InspectFramework(ctx, framework)
 	if err != nil {
 		return nil, fmt.Errorf("failed to inspect framework: %w", err)
 	}
@@ -56,6 +58,7 @@ func AggregateFleetWithHarvest(ctx context.Context, fleetRoot, frameworkPath, ha
 	}
 
 	agg := newFleetAggregation(fleetRoot, fwIndex, len(layout.repos))
+	agg.registry = registryOrDefault(registry)
 	agg.report.DuplicateCheckouts = layout.duplicates
 	for _, repo := range layout.repos {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -78,6 +81,7 @@ func AggregateFleetWithHarvest(ctx context.Context, fleetRoot, frameworkPath, ha
 // fleetAggregation accumulates per-repository results while keeping repository identity
 // unique across the on-disk scan and the harvest bundle.
 type fleetAggregation struct {
+	registry    *AnalyzerRegistry
 	report      *FleetDemandReport
 	framework   *FrameworkIndex
 	gapPackages map[CapabilityKey]map[string]struct{}
@@ -122,7 +126,7 @@ func (a *fleetAggregation) result() error {
 // whatever the scan's outcome; sub-projects whose scan failed are listed with their error.
 func (a *fleetAggregation) scanRepo(ctx context.Context, repo *fleetRepo) error {
 	a.report.UnscannedSubprojects = append(a.report.UnscannedSubprojects, repo.unscanned...)
-	repoNeeds, err := scanRepository(ctx, repo)
+	repoNeeds, err := scanRepository(ctx, repo, a.registry)
 	if err != nil {
 		if isContextError(err) {
 			return fmt.Errorf("fleet aggregation interrupted at %q: %w", repo.root, err)
@@ -174,7 +178,7 @@ func (a *fleetAggregation) addHarvested(repoNeeds *RepoNeeds) bool {
 // discovered on disk are distinct repositories whatever they are named, so none is ever
 // merged away; a name two rows share is qualified by location in the consumer lists.
 func (a *fleetAggregation) add(repoNeeds *RepoNeeds) {
-	applyFrameworkCoverage(a.framework, repoNeeds)
+	applyFrameworkCoverage(a.framework, repoNeeds, a.registry)
 	a.report.ScannedRepositories++
 	a.report.Leaderboard = append(a.report.Leaderboard, *repoNeeds)
 
@@ -238,7 +242,7 @@ func (a *fleetAggregation) mergeHarvest(ctx context.Context, harvestPath string)
 		return fmt.Errorf("harvest path %q is not a directory", harvestPath)
 	}
 
-	harvested, err := CodifyHarvestedInventory(ctx, harvestPath)
+	harvested, err := CodifyHarvestedInventory(ctx, harvestPath, a.registry.Targets())
 	if err != nil {
 		return fmt.Errorf("failed to codify harvested inventory %q: %w", harvestPath, err)
 	}
@@ -296,12 +300,16 @@ func repoIdentityKey(repository string) string {
 // the operator pointed at: a capability that framework does not ship is a gap regardless
 // of what the static catalog claims. Without this step --framework would be inert and the
 // fleet coverage number would be a property of the catalog alone.
-func applyFrameworkCoverage(idx *FrameworkIndex, repoNeeds *RepoNeeds) {
+//
+// A demand of a language whose target declares a contract (LoadRegistry) is reconciled
+// against that contract instead; idx is the go framework.
+func applyFrameworkCoverage(idx *FrameworkIndex, repoNeeds *RepoNeeds, registry *AnalyzerRegistry) {
 	if idx == nil || repoNeeds == nil {
 		return
 	}
+	registry = registryOrDefault(registry)
 	for i := range repoNeeds.Dependencies {
-		reconcileDependency(idx, &repoNeeds.Dependencies[i])
+		reconcileDependency(registry.frameworkFor(repoNeeds.Dependencies[i].Language, idx), &repoNeeds.Dependencies[i])
 	}
 	calculateReadiness(repoNeeds)
 	repoNeeds.Framework = idx.Name
@@ -324,16 +332,19 @@ func reconcileDependency(idx *FrameworkIndex, dep *DependencyDemand) {
 		return
 	}
 	if replacement, available := frameworkReplacement(idx, *dep); available {
-		dep.GolusorisReplacement = replacement
+		dep.FrameworkReplacement = replacement
 		return
 	}
 	dep.Status = StatusGap
-	dep.GolusorisReplacement = ""
+	dep.FrameworkReplacement = ""
 	dep.Notes = fmt.Sprintf("%s has no observed catalog replacement for capability %s", idx.Name, dep.Capability)
+	if idx.Name == "" {
+		dep.Notes = undeclaredNote("", "catalog replacement", dep.Capability)
+	}
 }
 
 func frameworkReplacement(idx *FrameworkIndex, dep DependencyDemand) (string, bool) {
-	return availableFrameworkPackage(idx, dep.Capability, dep.GolusorisReplacement)
+	return availableFrameworkPackage(idx, dep.Capability, dep.FrameworkReplacement)
 }
 
 // compileGapsAndLeaderboard sorts leaderboard and formats gap details.
@@ -437,7 +448,7 @@ func renderDemandHeader(report *FleetDemandReport) string {
 		"**Generated At**: %s  \n"+
 		"**Repositories Scanned**: %d / %d  \n"+
 		"%s"+
-		"**Overall Fleet Golusoris Coverage**: %s\n\n",
+		"**Overall Fleet Target Framework Coverage**: %s\n\n",
 		report.Framework, report.CoverageBasis, report.GeneratedAt.Format(time.RFC3339),
 		report.ScannedRepositories, report.TotalRepositories, renderDemandHeaderCounts(report), coverage)
 }
@@ -544,7 +555,7 @@ func renderDemandGaps(report *FleetDemandReport) string {
 		return sb.String()
 	}
 	if len(report.Gaps) == 0 {
-		sb.WriteString("Zero gaps identified! All downstream dependencies are covered by Golusoris.\n")
+		sb.WriteString("Zero gaps identified! All downstream dependencies are covered by the target framework.\n")
 		return sb.String()
 	}
 
