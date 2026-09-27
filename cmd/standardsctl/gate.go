@@ -79,8 +79,9 @@ func runGateRun(args []string) error {
 	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
-	// Flag parsing stops at the first positional argument; refusing leftovers keeps a
-	// misplaced --path or --dry-run from being silently ignored.
+	// parseInterspersed binds --path, --dry-run and --json wherever they stand, so any
+	// positional left over is a stray token (a path missing its --path, or a token after
+	// --): refusing it keeps it from being silently ignored.
 	if fs.NArg() > 0 {
 		return fmt.Errorf("gate run accepts no positional arguments, got %q", fs.Args())
 	}

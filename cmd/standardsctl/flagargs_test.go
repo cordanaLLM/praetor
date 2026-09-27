@@ -254,6 +254,10 @@ func c(args []string) { var fs = flag.NewFlagSet("c", flag.ContinueOnError); _, 
 
 // rawFlagSetParses returns the position of every X.Parse call in file where X was assigned
 // from flag.NewFlagSet or declared as a *flag.FlagSet parameter.
+//
+// Known gap: a FlagSet returned by a helper constructor (fs := newFlags()) or reached
+// through a selector (c.fs.Parse(args)) is not followed. No command binds one that way
+// today; a command that starts to must extend this guard and its fixture first.
 func rawFlagSetParses(file *ast.File) []token.Pos {
 	flagSets := flagSetNames(file)
 	var found []token.Pos
