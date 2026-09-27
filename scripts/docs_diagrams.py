@@ -25,9 +25,11 @@ section 7). Standard library only, so it runs on whichever interpreter a CI job 
 The page mapping assumes MkDocs' default `use_directory_urls: true`, which the site and the preset
 both use. The configuration reader handles the block-style YAML both files are written in; it is a
 check on a third-party tool's file, not a loader for praetor configuration. Its `exclude_docs`
-matcher covers the gitignore subset the configurations use (anchored and unanchored paths,
-directory patterns, and `*`, `?` and `[...]` wildcards) and refuses the rest (`!`, `**` and `\\`)
-instead of guessing.
+matcher follows the gitignore rules MkDocs applies through pathspec for the subset it covers: a
+slash at the start or in the middle anchors a pattern at docs_dir, a trailing slash matches
+directories only, and `*`, `?` and `[...]` (negated with `!` or `^`) match within one path
+component, never across a `/`. It refuses the rest (a leading `!`, `**` and `\\`) instead of
+guessing.
 """
 
 from __future__ import annotations
@@ -74,8 +76,12 @@ EXCLUDE_BLOCK = re.compile(r"^exclude_docs\s*:\s*[|>][-+]?\s*(?:#.*)?$")
 EXCLUDE_LINE = re.compile(r"^exclude_docs\s*:\s*['\"]?([^'\"#]*?)['\"]?\s*(?:#.*)?$")
 # MkDocs adds these to every exclude_docs (mkdocs/structure/files.py, _default_exclude).
 DEFAULT_EXCLUDE = (".*", "/templates/")
-# gitignore syntax the exclude_docs matcher does not implement; a pattern using it is refused.
-UNSUPPORTED_EXCLUDE = ("!", "**", "\\")
+# gitignore syntax the exclude_docs matcher does not implement; a pattern using it is refused. A `!`
+# negates only at the start of a pattern; inside a bracket expression it negates the bracket.
+NEGATION = "!"
+UNSUPPORTED_EXCLUDE = ("**", "\\")
+# gitignore negates a bracket expression with `!` or `^`; fnmatch knows only `!`.
+CARET_BRACKET = re.compile(r"\[\^")
 # What to write instead of a fence whose kind the configuration does not enable, when the
 # configuration enables the kind that replaces it.
 REPLACEMENT = {"mermaid": ("figure", "draw it as a ```figure fence naming a spec under docs/figures/ "
@@ -230,21 +236,23 @@ def block_scalar_lines(following: list[str]) -> list[str]:
 def pattern_matches(parts: tuple[str, ...], pattern: str) -> bool:
     """Whether a gitignore-style `pattern` excludes the docs-relative path split into `parts`.
 
-    A pattern with a slash before its end is anchored at docs_dir and matches a leading run of
-    path components; one without matches any single component. A trailing slash matches a
-    directory only, so it never matches the page's own file name.
+    The pattern is matched component by component, so no wildcard crosses a `/`. A pattern with a
+    slash at its start or in its middle is anchored at docs_dir and matches a leading run of path
+    components (a matched directory excludes everything under it); one without matches any single
+    component. A trailing slash matches a directory only, so it never matches the page's own file
+    name. A bare `/` matches nothing, as in pathspec.
     """
-    if any(token in pattern for token in UNSUPPORTED_EXCLUDE):
+    if pattern.startswith(NEGATION) or any(token in pattern for token in UNSUPPORTED_EXCLUDE):
         raise CheckError(f"exclude_docs pattern {pattern!r} uses gitignore syntax this check does not implement "
-                         f"({', '.join(UNSUPPORTED_EXCLUDE)})")
-    core = pattern.strip("/")
-    anchored = "/" in pattern.rstrip("/")
-    last = len(parts) - 1 if pattern.endswith("/") else len(parts)
-    for end in range(1, last + 1):
-        candidate = "/".join(parts[:end]) if anchored else parts[end - 1]
-        if fnmatch.fnmatchcase(candidate, core):
-            return True
-    return False
+                         f"(a leading {NEGATION}, {', '.join(UNSUPPORTED_EXCLUDE)})")
+    body = pattern.removesuffix("/")
+    globs = [CARET_BRACKET.sub("[!", glob) for glob in body.removeprefix("/").split("/")]
+    if globs == [""]:
+        return False
+    names = parts[:-1] if pattern.endswith("/") else parts
+    if "/" not in body:
+        return any(fnmatch.fnmatchcase(name, globs[0]) for name in names)
+    return len(globs) <= len(names) and all(map(fnmatch.fnmatchcase, names, globs))
 
 
 def is_excluded(parts: tuple[str, ...], patterns: list[str]) -> bool:

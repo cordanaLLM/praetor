@@ -345,6 +345,53 @@ class ExcludeDocs(unittest.TestCase):
         self.assertFalse(self.excluded("drafts", "drafts/"))
         self.assertFalse(self.excluded("guides/figures.md", "/figures/"))
 
+    def test_wildcards_stay_within_one_path_component(self):
+        """BUG-1030: `*`, `?` and `[...]` never match a `/`, as in gitignore and pathspec."""
+        self.assertTrue(self.excluded("a/x.md", "/a/*.md"))
+        self.assertTrue(self.excluded("a/b.md", "/a/?.md"))
+        self.assertTrue(self.excluded("guides/x.md", "/*/x.md"))
+        self.assertTrue(self.excluded("a/c/x.md", "/a/[bc]/"))
+        self.assertFalse(self.excluded("a/b/x.md", "/a/*.md"))
+        self.assertFalse(self.excluded("a/b.md", "/a?b.md"))
+        self.assertFalse(self.excluded("a/b.md", "a?b.md"))
+        self.assertFalse(self.excluded("b/a/x.md", "*/x.md"))
+        self.assertFalse(self.excluded("a/b.md", "a[/]b.md"))
+        # A matched directory excludes everything under it, however deep.
+        self.assertTrue(self.excluded("a/b/c/x.md", "/a/*"))
+        self.assertTrue(self.excluded("a/b/c/x.md", "/a/*/"))
+        # gitignore negates a bracket with `^` as well as `!`.
+        self.assertTrue(self.excluded("b.md", "[^a].md"))
+        self.assertFalse(self.excluded("a.md", "[^a].md"))
+        self.assertFalse(self.excluded("a.md", "[!a].md"))
+
+    def test_a_leading_or_middle_slash_anchors(self):
+        self.assertTrue(self.excluded("x.md", "/x.md"))
+        self.assertFalse(self.excluded("sub/x.md", "/x.md"))
+        self.assertTrue(self.excluded("sub/x.md", "x.md"))
+        self.assertTrue(self.excluded("a/b.md", "a/b.md"))
+        self.assertFalse(self.excluded("x/a/b.md", "a/b.md"))
+        # Boundaries: a bare or doubled slash names no path; an empty component matches none.
+        self.assertFalse(self.excluded("x.md", "/"))
+        self.assertFalse(self.excluded("a/x.md", "//"))
+        self.assertFalse(self.excluded("a/b.md", "a//b.md"))
+
+    def test_matcher_agrees_with_the_pathspec_mkdocs_uses(self):
+        """Replays a pattern and path matrix against pathspec's GitIgnoreSpec when it is installed."""
+        try:
+            from pathspec.gitignore import GitIgnoreSpec
+        except ImportError:
+            self.skipTest("pathspec is not installed (it comes with mkdocs)")
+        patterns = ("/a/*.md", "/a/?.md", "a?b.md", "*/x.md", "/*/x.md", "/a/*", "/a/[bc]/", "[^a].md", "[!a].md",
+                    "x.md", "/x.md", "a/b.md", "drafts/", "/presets/mkdocs/docs/", "*.tmp.md", "/", "a//b.md")
+        paths = ("a/x.md", "a/b.md", "a/b/x.md", "a/c/x.md", "a/b/c/x.md", "b/a/x.md", "x.md", "sub/x.md", "x/a/b.md",
+                 "a.md", "b.md", "drafts/x.md", "p/drafts/x.md", "drafts", "presets/mkdocs/docs/index.md",
+                 "presets/mkdocs/README.md", "g/x.tmp.md")
+        for pattern in patterns:
+            spec = GitIgnoreSpec.from_lines([pattern])
+            for path in paths:
+                with self.subTest(pattern=pattern, path=path):
+                    self.assertEqual(docs_diagrams.pattern_matches(Path(path).parts, pattern), spec.match_file(path))
+
     def test_mkdocs_defaults_always_apply(self):
         self.assertTrue(self.excluded(".drafts/wip.md"))
         self.assertTrue(self.excluded("guides/.hidden.md"))

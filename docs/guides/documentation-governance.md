@@ -308,9 +308,11 @@ The preset's pages live in `docs/presets/mkdocs/docs/`, inside the root
 `docs_dir`. The root `mkdocs.yml` lists that directory under `exclude_docs`,
 so the root site neither builds nor links the preset's example page; the
 preset README stays in the root navigation. The checker reads `exclude_docs`
-and skips the same pages MkDocs skips. It implements the gitignore subset the
-configurations use and fails on a pattern with `!`, `**` or a backslash
-instead of guessing.
+and skips the same pages MkDocs skips. It matches the way MkDocs does through
+pathspec's gitignore rules: a leading or middle `/` anchors a pattern at
+`docs_dir`, a trailing `/` matches directories only, and `*`, `?` and `[...]`
+never match a `/`. It fails on a pattern with a leading `!`, `**` or a
+backslash instead of guessing.
 
 `site` fails when a page holds a fence of a kind its configuration does not
 enable (on the root site, a Mermaid fence, with a finding that says to draw it
