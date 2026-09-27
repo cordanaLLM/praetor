@@ -80,9 +80,12 @@ func AddQuestion(rootPath string, q QuestionEntry) (*QuestionEntry, error) {
 	return &q, nil
 }
 
-// ListQuestions retrieves questions from .workingdir/QUESTIONS.md.
+// ListQuestions retrieves questions from .workingdir/QUESTIONS.md, bounded by the
+// deadline contextopt gives one read (HISS-02).
 func ListQuestions(rootPath string, filterStatus string) ([]QuestionEntry, error) {
-	return ListQuestionsContext(context.Background(), rootPath, filterStatus)
+	ctx, cancel := context.WithTimeout(context.Background(), contextopt.MaxDuration)
+	defer cancel()
+	return ListQuestionsContext(ctx, rootPath, filterStatus)
 }
 
 // ListQuestionsContext reads a bounded question snapshot under the caller's deadline. A

@@ -15,6 +15,10 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// stateCommandTimeout bounds one state subcommand's ledger reads and writes and the
+// .gitignore reconciliation that follows them (HISS-02).
+const stateCommandTimeout = 30 * time.Second
+
 // stateCommands maps each state subcommand to its handler.
 var stateCommands = map[string]func([]string) error{
 	"init":         runStateInit,
@@ -106,11 +110,14 @@ func runStateInit(args []string) error {
 		return fmt.Errorf("state init failed: %w", err)
 	}
 	fmt.Printf("Initialized %s/ in %s\n", state.WorkingDirName, dir)
-	return ignoreStateLedger(context.Background(), dir, true)
+	ctx, cancel := context.WithTimeout(context.Background(), stateCommandTimeout)
+	defer cancel()
+	return ignoreStateLedger(ctx, dir, true)
 }
 
 func bootstrapState(dir string) error {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), stateCommandTimeout)
+	defer cancel()
 	outcome, err := state.InitWorkingDirIfAbsentContext(ctx, dir)
 	if err != nil {
 		return fmt.Errorf("state bootstrap failed: %w", err)
@@ -252,7 +259,7 @@ func runStateSync(args []string) error {
 	}
 	dir := stateDir(dirFlag, rest, 0)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), stateCommandTimeout)
 	defer cancel()
 	if *verify {
 		if *logMsg != "" {
@@ -293,7 +300,7 @@ func runStateStatus(args []string) error {
 			state.WorkingDirName, dir, dir)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), stateCommandTimeout)
 	defer cancel()
 
 	snap, err := inspectState(ctx, dir)
@@ -318,7 +325,7 @@ func runStateCompact(args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), stateCommandTimeout)
 	defer cancel()
 	report, err := state.CompactState(ctx, stateDir(dirFlag, rest, 0))
 	if err != nil {
@@ -338,7 +345,7 @@ func runStateMigrateBugs(args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), stateCommandTimeout)
 	defer cancel()
 	report, err := state.MigrateBugMetadata(ctx, stateDir(dirFlag, rest, 0))
 	if err != nil {
@@ -429,7 +436,9 @@ func runStateBugAdd(args []string) error {
 		return fmt.Errorf("--title is required")
 	}
 
-	return withLedgerIgnore(context.Background(), *dir, func() error {
+	ctx, cancel := context.WithTimeout(context.Background(), stateCommandTimeout)
+	defer cancel()
+	return withLedgerIgnore(ctx, *dir, func() error {
 		entry, err := state.AddBug(*dir, state.BugEntry{
 			Title:    *title,
 			Severity: *sev,
@@ -472,7 +481,9 @@ func runStateBugResolve(args []string) error {
 	id := rest[0]
 	res := rest[1]
 	dir := stateDir(dirFlag, rest, 2)
-	return withLedgerIgnore(context.Background(), dir, func() error {
+	ctx, cancel := context.WithTimeout(context.Background(), stateCommandTimeout)
+	defer cancel()
+	return withLedgerIgnore(ctx, dir, func() error {
 		if err := state.ResolveBug(dir, id, res); err != nil {
 			return err
 		}
@@ -527,7 +538,9 @@ func runStateQuestionAdd(args []string) error {
 		}
 	}
 
-	return withLedgerIgnore(context.Background(), *dir, func() error {
+	ctx, cancel := context.WithTimeout(context.Background(), stateCommandTimeout)
+	defer cancel()
+	return withLedgerIgnore(ctx, *dir, func() error {
 		entry, err := state.AddQuestion(*dir, state.QuestionEntry{
 			Question: *prompt,
 			Options:  optList,
@@ -626,7 +639,9 @@ func runTaskAdd(args []string) error {
 	}
 	desc := rest[0]
 	dir := stateDir(dirFlag, rest, 1)
-	return withLedgerIgnore(context.Background(), dir, func() error {
+	ctx, cancel := context.WithTimeout(context.Background(), stateCommandTimeout)
+	defer cancel()
+	return withLedgerIgnore(ctx, dir, func() error {
 		if err := state.AddTask(dir, desc); err != nil {
 			return err
 		}
@@ -679,7 +694,7 @@ func runTaskArchive(args []string) error {
 		return err
 	}
 	dir := stateDir(dirFlag, rest, 0)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), stateCommandTimeout)
 	defer cancel()
 	// Outside a Git worktree, or before the first commit, there is no commit to name and the
 	// archive keeps its "local" stamp; a Git read that fails is an error, not that stamp.

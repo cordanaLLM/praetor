@@ -138,10 +138,12 @@ func DefaultOptions() Options {
 }
 
 // Synthesize generates all declared IDE configuration files from observed repository
-// capabilities. It observes the workspace, so it takes a background context; callers that
-// already hold one should use SynthesizeContext.
+// capabilities. It observes the workspace under the same defaultIOTimeout SynthesizeContext
+// applies (HISS-02); callers that already hold a context should use SynthesizeContext.
 func Synthesize(opts Options) (*EditorConfigSet, error) {
-	return SynthesizeContext(context.Background(), opts)
+	ctx, cancel := context.WithTimeout(context.Background(), defaultIOTimeout)
+	defer cancel()
+	return SynthesizeContext(ctx, opts)
 }
 
 // SynthesizeContext resolves one capability plan within the caller's bounded context and

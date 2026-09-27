@@ -5,10 +5,15 @@ import (
 	"flag"
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/config"
 )
+
+// planTimeout bounds one plan run: resolving the effective policy from the pinned catalog
+// and inspecting the companion files it governs (HISS-02).
+const planTimeout = 2 * time.Minute
 
 func printPlanHeader(manifest *config.Manifest, policy *config.ResolvedPolicy) error {
 	reviewCount, _, err := policy.BranchProtection.EffectiveReviewRequirements()
@@ -49,8 +54,8 @@ func printPlanHeader(manifest *config.Manifest, policy *config.ResolvedPolicy) e
 // and the language server so those cannot disagree with this preview either (issue #360). The
 // no-lock notice is printed here, as it always was, and also returned for callers that test it.
 // catalogRoot selects the pinned catalog as sync's --catalog-root does; empty is the planned root.
-func planEffectivePolicy(configPath, catalogRoot string, manifest *config.Manifest) (*config.ResolvedPolicy, string, error) {
-	policy, notice, err := config.ResolveRepositoryPolicyFromCatalog(context.Background(), configPath, catalogRoot, manifest)
+func planEffectivePolicy(ctx context.Context, configPath, catalogRoot string, manifest *config.Manifest) (*config.ResolvedPolicy, string, error) {
+	policy, notice, err := config.ResolveRepositoryPolicyFromCatalog(ctx, configPath, catalogRoot, manifest)
 	if err != nil {
 		return nil, "", err
 	}
@@ -80,7 +85,9 @@ func runPlan(args []string) error {
 		return fmt.Errorf("failed to load manifest: %w", err)
 	}
 
-	policy, _, err := planEffectivePolicy(*configPath, *catalogRoot, manifest)
+	ctx, cancel := commandContext(planTimeout)
+	defer cancel()
+	policy, _, err := planEffectivePolicy(ctx, *configPath, *catalogRoot, manifest)
 	if err != nil {
 		return err
 	}
@@ -89,7 +96,7 @@ func runPlan(args []string) error {
 		return err
 	}
 	// The companion files are inspected next to the manifest, never the cwd.
-	missing, drift, err := adopt.PlanDrift(context.Background(), filepath.Dir(*configPath), policy)
+	missing, drift, err := adopt.PlanDrift(ctx, filepath.Dir(*configPath), policy)
 	if err != nil {
 		return err
 	}

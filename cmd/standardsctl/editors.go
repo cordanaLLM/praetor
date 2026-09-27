@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/editor"
@@ -13,6 +14,10 @@ import (
 // maxReportedEditorFiles is the scalar upper bound (HISS-02) on the per-file lines the
 // editors report prints.
 const maxReportedEditorFiles = 512
+
+// editorsResolveTimeout bounds reading the editor selection and the complexity policy an
+// editors command projects (HISS-02).
+const editorsResolveTimeout = 30 * time.Second
 
 func runEditors(args []string) error {
 	if len(args) < 1 {
@@ -64,7 +69,8 @@ func runEditors(args []string) error {
 // when given, else the editors list in root's .standards.yaml, else every supported editor
 // (#202).
 func resolveEditorsOptions(root, editorsFlag string) (editor.Options, editor.Selection, error) {
-	ctx := context.Background()
+	ctx, cancel := commandContext(editorsResolveTimeout)
+	defer cancel()
 	ids, err := requestedEditors(ctx, root, editorsFlag)
 	if err != nil {
 		return editor.Options{}, editor.Selection{}, err

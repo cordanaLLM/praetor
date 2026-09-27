@@ -61,9 +61,12 @@ type BuildResult struct {
 	Reason     string        `json:"reason"`
 }
 
-// LoadBuildConfig parses the .framework-build.yaml file.
+// LoadBuildConfig parses the .framework-build.yaml file, bounded by the deadline
+// contextopt gives one read (HISS-02).
 func LoadBuildConfig(path string) (*BuildConfig, error) {
-	return LoadBuildConfigContext(context.Background(), path)
+	ctx, cancel := context.WithTimeout(context.Background(), contextopt.MaxDuration)
+	defer cancel()
+	return LoadBuildConfigContext(ctx, path)
 }
 
 // LoadBuildConfigContext reads a bounded regular configuration under the caller deadline.

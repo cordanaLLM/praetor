@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -33,7 +32,9 @@ func runSEO(args []string) error {
 	if err != nil {
 		return err
 	}
-	report, err := seo.AuditSite(context.Background(), parsed.root, parsed.options)
+	ctx, cancel := commandContext(seo.SiteAuditTimeout)
+	defer cancel()
+	report, err := seo.AuditSite(ctx, parsed.root, parsed.options)
 	if err != nil {
 		return err
 	}

@@ -111,9 +111,12 @@ func SourceRefFor(f Flavor) string {
 	return "HEAD"
 }
 
-// LoadConfig reads and parses .config/flavors.yaml.
+// LoadConfig reads and parses .config/flavors.yaml, bounded by the deadline contextopt
+// gives one read (HISS-02).
 func LoadConfig(path string) (*Config, error) {
-	return LoadConfigContext(context.Background(), path)
+	ctx, cancel := context.WithTimeout(context.Background(), contextopt.MaxDuration)
+	defer cancel()
+	return LoadConfigContext(ctx, path)
 }
 
 // LoadConfigContext reads bounded configuration without following symbolic links.

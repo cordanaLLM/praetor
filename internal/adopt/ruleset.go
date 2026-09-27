@@ -41,10 +41,6 @@ func adoptionBranchPolicy(ctx context.Context, s *adoptSession) (config.BranchPr
 	return policy.BranchProtection, nil
 }
 
-func requiredStatusContexts(repoPath string) ([]string, error) {
-	return forge.RequiredStatusContexts(context.Background(), repoPath)
-}
-
 func reconcileBranchRuleset(ctx context.Context, s *adoptSession) error {
 	contexts, err := forge.RequiredStatusContexts(ctx, s.repoPath)
 	if err != nil {

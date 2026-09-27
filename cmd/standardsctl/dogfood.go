@@ -7,20 +7,34 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/dogfood"
+	"github.com/cordanaLLM/praetor/internal/repairrun"
 )
 
+// dogfoodSetupMargin is the time a dogfood subcommand may spend parsing its flags and
+// loading its inputs before the bound its own package applies to the work starts.
+const dogfoodSetupMargin = time.Minute
+
+// dogfoodSubcommand is one context-taking dogfood subcommand and the bound its package
+// applies to the work; the whole run is given that bound plus dogfoodSetupMargin (HISS-02).
+type dogfoodSubcommand struct {
+	run   func(context.Context, []string) error
+	bound time.Duration
+}
+
+var dogfoodSubcommands = map[string]dogfoodSubcommand{
+	"discover": {runDogfoodDiscovery, dogfood.MaxDiscoveryDuration},
+	"repairs":  {runDogfoodRepairs, repairrun.MaxDuration},
+	"schedule": {runDogfoodSchedule, dogfood.MaxScheduleDuration},
+	"suite":    {runDogfoodSuite, dogfood.MaxSuiteDuration},
+}
+
 func runDogfood(args []string) error {
-	if len(args) > 0 && args[0] == "discover" {
-		return runDogfoodDiscovery(context.Background(), args[1:])
-	}
-	if len(args) > 0 && args[0] == "repairs" {
-		return runDogfoodRepairs(context.Background(), args[1:])
-	}
-	if len(args) > 0 && args[0] == "schedule" {
-		return runDogfoodSchedule(context.Background(), args[1:])
-	}
-	if len(args) > 0 && args[0] == "suite" {
-		return runDogfoodSuite(context.Background(), args[1:])
+	if len(args) > 0 {
+		if sub, ok := dogfoodSubcommands[args[0]]; ok {
+			ctx, cancel := commandContext(sub.bound + dogfoodSetupMargin)
+			defer cancel()
+			return sub.run(ctx, args[1:])
+		}
 	}
 	return runDogfoodFlags(args)
 }

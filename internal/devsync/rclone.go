@@ -201,10 +201,10 @@ func (r Rclone) upload(ctx context.Context, dest string, produce func(io.Writer)
 	streamErr := r.stream(ctx, reader, nil, "rcat", partial)
 	closeErr := reader.CloseWithError(io.ErrClosedPipe) // releases the producer if rclone stopped reading
 	if cause := uploadCause(<-done, streamErr); cause != nil {
-		return 0, errors.Join(cause, closeErr, r.removeIfPresent(context.WithoutCancel(ctx), partial))
+		return 0, errors.Join(cause, closeErr, r.cleanupPartial(ctx, partial))
 	}
 	if _, err := r.run(ctx, "moveto", partial, dest); err != nil {
-		return 0, errors.Join(err, r.removeIfPresent(context.WithoutCancel(ctx), partial))
+		return 0, errors.Join(err, r.cleanupPartial(ctx, partial))
 	}
 	return counter.n, closeErr
 }
@@ -219,6 +219,15 @@ func uploadCause(produceErr, streamErr error) error {
 		return streamErr
 	}
 	return produceErr
+}
+
+// cleanupPartial removes the partial file of a failed upload. The failure may be ctx's own
+// cancellation, so the removal is detached from ctx and bounded by metadataTimeout instead
+// (HISS-02).
+func (r Rclone) cleanupPartial(ctx context.Context, partial string) error {
+	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), metadataTimeout)
+	defer cancel()
+	return r.removeIfPresent(cleanup, partial)
 }
 
 func (r Rclone) removeIfPresent(ctx context.Context, path string) error {
