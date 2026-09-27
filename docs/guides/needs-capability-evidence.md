@@ -388,16 +388,23 @@ A checkout inside a skipped directory is not discovered. The walk visits at
 most 250,000 directories and 64 levels; a tree beyond either bound fails
 the command rather than returning a partial fleet (`TestDiscoverFleetBounds`).
 
-Inside a Go project, the import scan skips what the go command skips when it
-expands `./...`: `testdata/` and `_`-prefixed directories, `_`- and
-`.`-prefixed files, and nested modules and checkouts
-(`TestScanASTImportsSkipsGoToolIgnoredSources`,
-`TestScanASTImportsStopsAtNestedModules` in `internal/needs`). It visits at most
-1,000,000 entries and fails beyond that rather than returning a partial import
-set (`TestScanASTImportsBoundaryEntryLimit`). `go.mod` is read through
-`internal/gomanifest`: a trailing comment never becomes part of the module path
-or Go version, and a requirement is indirect only when its comment is the go
-command's `indirect` marker (`TestParseGoModReadsDirectivesLikeTheGoCommand`).
+Inside a Go project, the import scan applies the skips the go command applies
+when it expands `./...` (`go help packages`): `vendor/` and `testdata/`,
+directories and files whose names begin with `_` or `.`, and directories that
+hold their own `go.mod` (`TestScanASTImportsSkipsGoToolIgnoredSources`,
+`TestScanASTImportsStopsAtNestedModules` in `internal/needs`). Praetor adds
+skips of its own: a nested checkout, which is a fleet repository with its own
+demand even without a `go.mod`, `node_modules/`, and `scratch/` and `cache/`
+directly under the scan root. The scan does not honour `ignore` directives in
+`go.mod`, so a directory the go command ignores that way is still scanned. It
+visits at most 1,000,000 entries and fails beyond that rather than returning a
+partial import set (`TestScanASTImportsBoundaryEntryLimit`). `go.mod` is read
+through `internal/gomanifest`: a trailing comment never becomes part of the
+module path or Go version, any white space may follow the `module` or `go`
+keyword, a quoted require path or version is unquoted, and a requirement is
+indirect only when its comment is the go command's `indirect` marker
+(`TestParseGoModReadsDirectivesLikeTheGoCommand`,
+`TestParseGoModQuotedRequirementsAndTabbedGoDirective`).
 
 In `needs aggregate`, a repository in which no analyzer recognises a project
 is listed under "Skipped Repositories". Rows are never merged by name: two

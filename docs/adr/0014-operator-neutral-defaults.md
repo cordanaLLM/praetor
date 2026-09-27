@@ -248,8 +248,9 @@ listed as upstreams.
   and generated surfaces.
 - Whether this repository's own `.needs.yaml` keeps a framework target. This record rescans it
   without one, so committed output does not depend on operator configuration.
-- Open pull request #193 adds a dependency on the maintainer's framework to praetor itself; its
-  direction conflicts with this record and needs a maintainer decision.
+- Resolved 2026-09-27: pull request #193 first added a dependency on the maintainer's framework to
+  praetor itself, a direction that conflicts with this record. The operator chose a neutral
+  rewrite instead; #193 now reads `go.mod` through `internal/gomanifest` and adds no module.
 
 ## Checkable clauses
 
