@@ -1,0 +1,3 @@
+type: fixed
+title: "The Documentation Integrity Audit step in CI now runs on pull requests that change code or configuration, instead of only on documentation-only pull requests, ensuring strict MkDocs verification covers mixed changes."
+breaking: false

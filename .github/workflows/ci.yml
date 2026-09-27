@@ -182,9 +182,9 @@ jobs:
         run: go run ./cmd/standardsctl compile-context --verify
 
       - name: Documentation Integrity Audit
-        if: steps.filter.outputs.docs_only == 'true' && github.event_name == 'pull_request'
+        if: steps.filter.outputs.run_docs == 'true' && github.event_name == 'pull_request'
         run: |
-          echo "Pure documentation change detected. Running MkDocs verification."
+          echo "Documentation change detected. Running MkDocs verification."
           python3 -m pip install --require-hashes -r docs/presets/mkdocs/requirements.txt
           mkdocs build --strict
           # A strict build still passes when a ```mermaid block ships as a code listing.
@@ -287,7 +287,7 @@ jobs:
 
   # Both documentation presets ship to adopters, and nothing else builds them: before this
   # job the Starlight preset had never been built in CI and the MkDocs preset only on
-  # documentation-only pull requests. Each preset installs from its committed lock, so an
+  # documentation pull requests. Each preset installs from its committed lock, so an
   # unpinned or unhashed entry fails the install (pip --require-hashes; npm ci refuses a
   # package.json the lock does not match). Each is built three times: without DOCS_SITE_URL,
   # where the output must name no site URL (the URL is operator configuration, never a shipped
