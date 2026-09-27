@@ -38,6 +38,8 @@ func runDocs(args []string) error {
 		return runDocsLookup(subArgs)
 	case "funding":
 		return runDocsFunding(ctx, subArgs)
+	case "references":
+		return runDocsReferences(ctx, subArgs)
 	case "-h", "--help", "help":
 		printDocsUsage()
 		return nil
@@ -54,6 +56,7 @@ func printDocsUsage() {
 	fmt.Println("  audit [path]                        Audit documentation coverage for declared packages")
 	fmt.Println("  lookup <package> [path]             Retrieve and print distilled documentation")
 	fmt.Println("  funding [path] [--config=f] [--check]  Render funding surfaces from operator configuration")
+	fmt.Println("  references [--path=.]               Check that README.md and docs/ name only existing commands, flags and paths (Praetor checkout)")
 }
 
 func runDocsSync(ctx context.Context, args []string) error {

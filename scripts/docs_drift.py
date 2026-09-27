@@ -65,6 +65,8 @@ SURFACE_MAP: list[tuple[str, str, str]] = [
     (r"^(tools/(markdownlint|docsurface)/|internal/adopt/documentation\.go$|internal/cifilter/filter\.go$|"
      r"\.github/workflows/praetor-docs\.yml$)",
      r"^docs/guides/documentation-governance\.md$", "Markdown documentation governance"),
+    (r"^(internal/docsref/[^/]+(?<!_test)\.go|cmd/standardsctl/docs_references\.go)$",
+     r"^docs/guides/documentation-drift\.md$", "documentation reference gate"),
     # The check guards its own documentation. Changing which surfaces are mapped changes what
     # contributors are required to document, which is itself user-discoverable.
     (r"^scripts/docs_drift\.py$", r"^docs/guides/documentation-drift\.md$", "docs-drift surface map"),

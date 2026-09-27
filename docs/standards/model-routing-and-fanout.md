@@ -295,6 +295,7 @@ script has no verified hook registration here; this command does not invoke it.
 merges a built-in catalog and can query configured local Ollama endpoints (see
 [Maintain the catalog with models sync](#maintain-the-catalog-with-models-sync)).
 It is not called by `models route`. There is no implemented upstream gateway
-pricing synchronization or `.config/models/catalog.json` writer in this path.
+pricing synchronization in this path, and the catalog it merges into is the routing file
+itself (`.config/models/routing.yaml`, the `--config` default), not a separate catalog file.
 Future work must connect execution and real observation sources explicitly before
 claiming live fanout or evidence-driven escalation.

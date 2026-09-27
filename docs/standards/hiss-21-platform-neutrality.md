@@ -87,6 +87,15 @@ files are pinned to LF in `.gitattributes`, so a Windows checkout reads the same
 Chromium smoke test needs a built site and runs in `pages.yml` on Linux only
 ([figures guide](../guides/figures.md#checks)).
 
+Every leg also runs the documentation reference gate (`praetorctl docs references --path=.`,
+see [references that stop resolving](../guides/documentation-drift.md#references-that-stop-resolving))
+through the binary the job builds, because `make` is absent on the Windows image. The gate reads
+Markdown the Windows image checks out with CRLF, lists the tree through git and reads Go source
+by slash-separated repository path, which are the three places a platform difference would make
+it answer differently. `TestPortabilityRunsDocumentationReferencesOnEveryLeg` in
+`internal/forge/docs_references_guard_test.go` fails if the step is removed, runs before the
+build, or is given a condition that could skip it on some legs.
+
 The matrix pins the tools it installs, not only the platforms it runs on. The legs share one
 `actions/setup-python` version (3.13) and install `yamllint==1.38.0` through the interpreter path
 that action reports, rather than by name. Both pins serve this invariant directly: the job's only

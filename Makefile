@@ -211,6 +211,14 @@ verify-all: docs-seo-presets-test
 docs-seo-presets-test:
 	python3 -B scripts/test_docs_seo_presets.py
 
+# BUG-992: README.md and docs/ may name only CLI commands, subcommands and flags the code
+# defines and repository paths that exist. A guide that stops matching unchanged code shows up
+# in no diff, so docs-drift cannot see it (docs/guides/documentation-drift.md).
+.PHONY: docs-references
+verify-all: docs-references
+docs-references:
+	go run ./cmd/standardsctl docs references --path=.
+
 notebook-test:
 	python3 -B scripts/test_notebooklm_export.py
 	python3 -B scripts/test_planning_import.py

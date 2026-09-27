@@ -504,7 +504,7 @@ The decision is recorded in [ADR-0010](../adr/0010-text-register-per-task.md) (d
 whatever C1-C6 and C11 already judge; 0 (the default) means no ceiling:
 
 ```bash
-praetorctl caveman check --kind=context --max-words=600 .agents/skills/example/SKILL.md
+praetorctl caveman check --kind=context --max-words=600 .agents/skills/<skill>/SKILL.md
 praetorctl caveman check --kind=return --max-tokens=1500 .workingdir/evidence/candidate-return.md
 ```
 

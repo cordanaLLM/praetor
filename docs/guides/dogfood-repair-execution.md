@@ -20,7 +20,7 @@ The private execution JSON has these required fields:
 | `source_root`, `source_sha` | Clean absolute source checkout and full 40-character commit SHA |
 | `state_dir` | Private absolute state directory; parent exists |
 | `allowed_files` | 1–8 explicit existing non-test `.go` paths under `internal/` or `cmd/` |
-| `test_packages` | 1–4 exact `./internal/name` or `./cmd/name` packages |
+| `test_packages` | 1–4 exact `./internal/<name>` or `./cmd/<name>` packages |
 | `timeout_seconds` | 30–300 seconds for the complete execution |
 | `max_patch_bytes` | 1,024–262,144 bytes |
 | `repair_policy` | Existing routing policy with declared token estimates and cost ceiling |

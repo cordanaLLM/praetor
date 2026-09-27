@@ -400,7 +400,7 @@ flowchart TD
 // follow cmd/standardsctl/compile_framework_assets.go and the keys FrameworkKitConfig in
 // internal/compiler/framework_assets.go.
 const frameworkKitReference = "- `praetorctl compile-framework-assets --config <kit.yaml> --output <dir>`: " +
-	"Writes a framework kit's `llms.txt`, `llms-full.txt`, `.agents/rules/<kit_name>.md` and " +
+	"Writes a framework kit's `llms.txt`, `llms-full.txt`, `<dir>/.agents/rules/<kit_name>.md` and " +
 	"starter templates (ADR-0007 clause 5).\n" +
 	"\n" +
 	"### Framework kit assets\n" +
