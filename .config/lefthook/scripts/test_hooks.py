@@ -1601,7 +1601,7 @@ class ScopeAndGuard(unittest.TestCase):
                 self.assertEqual(result.returncode == 0, allowed, result.stderr)
                 self.assertLess(elapsed, 5)
                 if not allowed:
-                    self.assertIn(b"exceeds the scan bound", result.stderr)
+                    self.assertIn(b"exceeds scan bound", result.stderr)
 
     def test_guard_answers_the_slowest_admitted_commands_inside_the_bound(self):
         """The costliest shapes the bound admits, every line at the limit, still pass in time."""

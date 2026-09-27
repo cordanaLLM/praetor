@@ -43,9 +43,9 @@ def scannable(command_str: str) -> bool:
         if max(len(line) for line in command_str.split("\n")) <= MAX_SCAN_LINE_CHARS:
             return True
     sys.stderr.write(
-        f"\n[BLOCKED BY HISS] Command exceeds the scan bound: at most {MAX_SCAN_CHARS} characters, "
+        f"\n[BLOCKED BY HISS] Command exceeds scan bound: at most {MAX_SCAN_CHARS} characters, "
         f"{MAX_SCAN_LINE_CHARS} per line.\n"
-        f"Split it, or write the long content to a file first.\n\n"
+        f"Split command, or write long content to file first.\n\n"
     )
     return False
 

@@ -526,9 +526,9 @@ exclusion is therefore a gate failure, not an invisible reduction in coverage.
 ```yaml
 register:
   sources:
-    expected: 259
+    expected: 256
     not_applicable: 121
-    sha256: "sha256:5a8019fecb63beec0f965d2a41fef986acf360d6b7b906736fc5f032116e2808"
+    sha256: "sha256:6cfcead0839ef7f3f12969e2b026d29861368b13ea21d2e3e69215ac4b25e3b7"
     inputs:
       - path: ".paperclip/harness.json"
         surface: prompts
@@ -657,9 +657,10 @@ digest-bound as not applicable. `shared-source` (`mcpTextShared`) is text
 another praetor package authors once and also prints elsewhere: the
 `standards_explain_rule` explanation that `internal/hisscatalog` also renders
 into the wiki, the `standards_compile_context` report that `internal/compiler`
-writes for the CLI too, and the adopt pillar line the CLI prints. The owning package stays the text's one source (HISS-19),
-and `http.Error` accepts only `protocol` or `untrusted-passthrough`
-(`TestExtractGoMCPRuntimeClassifiesSharedSourceText` in
+writes for the CLI too, the adopt pillar line and the `standards_plan` drift
+verdict (`adopt.FormatPlanStatus`) the CLI prints. The owning package stays the
+text's one source (HISS-19), and `http.Error` accepts only `protocol` or
+`untrusted-passthrough` (`TestExtractGoMCPRuntimeClassifiesSharedSourceText` in
 `internal/cavemansource/extract_test.go`). Dynamic text without one of those
 narrow wrappers, raw builder storage access, and helper implementations that
 differ from the fixed contract fail closed.
