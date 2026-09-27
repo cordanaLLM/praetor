@@ -21,3 +21,8 @@ func DeclaresFacet(facets []string, target string) (bool, error) {
 	}
 	return false, nil
 }
+
+// DefaultFacets returns the default set of facets used during initialisation and adoption.
+func DefaultFacets() []string {
+	return []string{"security:high", "api:public-contract", "docs:seo-portal", "agent:sandboxed"}
+}

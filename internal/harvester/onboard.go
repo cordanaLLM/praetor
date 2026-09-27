@@ -71,7 +71,7 @@ func OnboardRepository(ctx context.Context, repoPath string, dryRun bool) (*Onbo
 
 	repoName := filepath.Base(repoPath)
 	arch := detectRepoArchetype(repoPath)
-	facets := []string{"security:high", "api:public-contract", "docs:seo-portal"}
+	facets := config.DefaultFacets()
 
 	plan := &OnboardPlan{
 		RepoPath:  repoPath,

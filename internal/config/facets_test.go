@@ -29,3 +29,29 @@ func TestDeclaresFacetNegativeAndArguments(t *testing.T) {
 		t.Fatal("empty facet selector accepted")
 	}
 }
+
+func TestDefaultFacets(t *testing.T) {
+	expected := []string{"security:high", "api:public-contract", "docs:seo-portal", "agent:sandboxed"}
+	got := DefaultFacets()
+	if len(got) != len(expected) {
+		t.Fatalf("DefaultFacets() returned %d items, want %d", len(got), len(expected))
+	}
+	for i := range expected {
+		if got[i] != expected[i] {
+			t.Errorf("DefaultFacets()[%d] = %q, want %q", i, got[i], expected[i])
+		}
+	}
+
+	shipped := shippedFacetIndex(t)
+	for _, facet := range got {
+		if _, ok := shipped[facet]; !ok {
+			t.Errorf("DefaultFacets() includes %q, which is not a shipped facet", facet)
+		}
+	}
+
+	got[0] = "mutated"
+	got2 := DefaultFacets()
+	if got2[0] == "mutated" {
+		t.Error("DefaultFacets() returned a shared mutable slice, violating the fresh-slice contract")
+	}
+}
