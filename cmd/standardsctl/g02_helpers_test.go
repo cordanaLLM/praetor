@@ -133,8 +133,13 @@ const fixtureHarnessJSON = `{"version":1,"platform":"acme/widgets","operating_co
 // fixtureManifest renders a .standards.yaml for owner/name; signed adds the
 // require_signed_commits override.
 func fixtureManifest(owner, name string, signed bool) string {
+	return fixtureProfileManifest(owner, name, "framework", signed)
+}
+
+// fixtureProfileManifest is fixtureManifest declaring profile instead of framework.
+func fixtureProfileManifest(owner, name, profile string, signed bool) string {
 	m := "version: 1\nrepository:\n  owner: \"" + owner + "\"\n  name: \"" + name + "\"\n  visibility: \"public\"\n" +
-		"profiles:\n  - \"framework\"\nfacets:\n  - \"security:high\"\n"
+		"profiles:\n  - \"" + profile + "\"\nfacets:\n  - \"security:high\"\n"
 	if signed {
 		m += "overrides:\n  branch_protection:\n    require_signed_commits: true\n"
 	}

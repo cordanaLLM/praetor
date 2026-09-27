@@ -62,9 +62,15 @@ func (f *lockFixture) digestOf(t *testing.T, rel string) string {
 // digest computed the way auditLockDigests expects, unless topLevel is overridden.
 func (f *lockFixture) writeLock(t *testing.T, profileDigest, facetDigest, topLevel string) {
 	t.Helper()
+	f.writeProfileLock(t, "framework", profileDigest, facetDigest, topLevel)
+}
+
+// writeProfileLock is writeLock for a lock that pins profile instead of framework.
+func (f *lockFixture) writeProfileLock(t *testing.T, profile, profileDigest, facetDigest, topLevel string) {
+	t.Helper()
 	if topLevel == "" {
 		lines := []string{
-			"profile:framework=sha256:" + profileDigest,
+			"profile:" + profile + "=sha256:" + profileDigest,
 			"facet:security:high=sha256:" + facetDigest,
 		}
 		sort.Strings(lines)
@@ -75,14 +81,14 @@ func (f *lockFixture) writeLock(t *testing.T, profileDigest, facetDigest, topLev
 pinned_version: "v1.0.0"
 digest: "sha256:%s"
 profiles:
-  - id: "framework"
+  - id: "%s"
     version: "v1.0.0"
     digest: "sha256:%s"
 facets:
   - id: "security:high"
     version: "v1.0.0"
     digest: "sha256:%s"
-`, topLevel, profileDigest, facetDigest)
+`, topLevel, profile, profileDigest, facetDigest)
 	if err := os.WriteFile(filepath.Join(f.dir, ".standards.lock"), []byte(body), 0o600); err != nil {
 		t.Fatalf("write lock: %v", err)
 	}

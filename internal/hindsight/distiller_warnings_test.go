@@ -46,13 +46,13 @@ func TestDistillSources_Negative_FlavorFailureAndRequiredAbort(t *testing.T) {
 	ctx := context.Background()
 	fact := createFact(CategoryBugRuling, "BUG-1", "Resolved Bug BUG-1.", ".workingdir/BUGS.md", nil)
 	report, err := distillSources(ctx, t.TempDir(), []distillSource{
-		failingSource("flavor archetype", false),
+		failingSource("flavor", false),
 		factSource("bug ledger", true, fact),
 	})
 	if err != nil || report == nil {
 		t.Fatalf("optional failure aborted the report: %v", err)
 	}
-	if len(report.Warnings) != 1 || !strings.Contains(report.Warnings[0], "distill workspace flavor archetype: boom") {
+	if len(report.Warnings) != 1 || !strings.Contains(report.Warnings[0], "distill workspace flavor: boom") {
 		t.Errorf("flavor failure not recorded: %q", report.Warnings)
 	}
 	if report.TotalFacts != 1 || report.Facts[0].Subject != "BUG-1" {
@@ -60,7 +60,7 @@ func TestDistillSources_Negative_FlavorFailureAndRequiredAbort(t *testing.T) {
 	}
 
 	aborted, err := distillSources(ctx, t.TempDir(), []distillSource{
-		factSource("flavor archetype", false, fact),
+		factSource("flavor", false, fact),
 		failingSource("bug ledger", true),
 	})
 	if err == nil || aborted != nil || !strings.Contains(err.Error(), "distill workspace bug ledger") {
@@ -74,7 +74,7 @@ func TestDistillSources_Negative_FlavorFailureAndRequiredAbort(t *testing.T) {
 func TestDistillSources_Boundary_NothingHarvested(t *testing.T) {
 	ctx := context.Background()
 	allFail := []distillSource{
-		failingSource("flavor archetype", false),
+		failingSource("flavor", false),
 		failingSource("bug ledger", true),
 		failingSource("dedupe", false),
 		failingSource("package docs", false),
@@ -84,7 +84,7 @@ func TestDistillSources_Boundary_NothingHarvested(t *testing.T) {
 	}
 
 	optionalFail := []distillSource{
-		failingSource("flavor archetype", false),
+		failingSource("flavor", false),
 		factSource("bug ledger", true),
 		failingSource("dedupe", false),
 		failingSource("package docs", false),
@@ -93,7 +93,7 @@ func TestDistillSources_Boundary_NothingHarvested(t *testing.T) {
 	if err == nil || report != nil {
 		t.Fatalf("empty harvest with failures became a report: %+v", report)
 	}
-	for _, name := range []string{"flavor archetype", "dedupe", "package docs"} {
+	for _, name := range []string{"flavor", "dedupe", "package docs"} {
 		if !strings.Contains(err.Error(), name) {
 			t.Errorf("error omits failed source %q: %v", name, err)
 		}

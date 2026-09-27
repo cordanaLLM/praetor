@@ -117,15 +117,17 @@ func flavorIdentity(ctx context.Context, repoPath string) (owner, repoName strin
 	return "", filepath.Base(abs), nil
 }
 
-// resolveApplyTarget names the flavor an apply scaffolds: the explicit one, or the detected one
-// for "" and "auto". A repository nothing matches is refused, never given a guessed flavor.
+// resolveApplyTarget names the flavor an apply scaffolds: the explicit one, or for "" and "auto"
+// the one Resolve names, which is the flavor the audit then measures. It used to detect across
+// the whole catalog while the audit narrowed to the declared profile, so apply could scaffold a
+// flavor the audit never checked. A repository nothing matches is refused, never given a guess.
 func resolveApplyTarget(repoPath, targetFlavor string) (Flavor, error) {
 	if targetFlavor == "" || targetFlavor == "auto" {
-		detected, ok := Detect(repoPath)
-		if !ok {
-			return nil, fmt.Errorf("%w: %s", ErrNoFlavorMatched, repoPath)
+		resolved, err := Resolve(repoPath)
+		if err != nil {
+			return nil, err
 		}
-		targetFlavor = detected
+		targetFlavor = resolved
 	}
 	flv, err := Get(targetFlavor)
 	if err != nil {

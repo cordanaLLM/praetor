@@ -177,7 +177,7 @@ type nodeCICase struct {
 	// outside a Git work tree.
 	track []string
 	noGit bool
-	// flavor is what apply is asked for; "auto" exercises detection as adoption does.
+	// flavor is what apply is asked for; "auto" exercises Resolve as adoption does.
 	flavor string
 	// want is whether the job is scaffolded; unmet is a fragment of the reason it was not.
 	want  bool
@@ -198,6 +198,15 @@ func (tc nodeCICase) repo(t *testing.T) string {
 }
 
 const commitTooling = `{"name": "widget-tooling", "private": true, "devDependencies": {"@commitlint/cli": "^20.0.0"}}` + "\n"
+
+// goRepoWithCommitTooling is a Go service whose package.json only holds commit tooling, locked
+// by pnpm.
+func goRepoWithCommitTooling() map[string]string {
+	return map[string]string{
+		"go.mod": "module example.com/widget\n\ngo 1.27\n", "cmd/widget/main.go": "package main\n\nfunc main() {}\n",
+		"internal/w/w.go": "package w\n", "package.json": commitTooling, "pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
+	}
+}
 
 func nodeCICases() []nodeCICase {
 	withTest := `{"name": "widget", "scripts": {"test": "node --test", "lint": "eslint ."}}` + "\n"
@@ -221,11 +230,9 @@ func nodeCICases() []nodeCICase {
 		// Negative: the review's case, a pnpm project with no npm lockfile.
 		{name: "pnpm-lock-only", files: map[string]string{"package.json": withTest, "pnpm-lock.yaml": "lockfileVersion: '9.0'\n"}, flavor: "typescript-node", unmet: "no package-lock.json"},
 		// Negative: the review's probe, a Go service whose package.json only holds commit tooling.
-		// Detection names typescript-node (it precedes the Go flavors); the job must not follow.
-		{name: "go-repo-with-commit-tooling", files: map[string]string{
-			"go.mod": "module example.com/widget\n\ngo 1.27\n", "cmd/widget/main.go": "package main\n\nfunc main() {}\n",
-			"internal/w/w.go": "package w\n", "package.json": commitTooling, "pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
-		}, flavor: "auto", unmet: "no package-lock.json"},
+		// Resolution names go-service for it now (TestResolve_Positive_GoServiceWithCommitTooling);
+		// applying typescript-node to it by name must still not write the job.
+		{name: "go-repo-with-commit-tooling", files: goRepoWithCommitTooling(), flavor: "typescript-node", unmet: "no package-lock.json"},
 		// Negative: the same tooling installed with npm keeps the placeholder test `npm init` writes.
 		{name: "npm-init-placeholder", files: map[string]string{
 			"package.json":      `{"name": "t", "scripts": {"test": "echo \"Error: no test specified\" && exit 1"}}`,
@@ -250,7 +257,7 @@ func TestNodeCIJobIsScaffoldedOnlyWhereItRunsAsWritten(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := tc.repo(t)
 			if tc.flavor == "auto" {
-				if got, _ := flavor.Detect(repo); got != "typescript-node" {
+				if got, _ := resolve(repo); got != "typescript-node" {
 					t.Fatalf("fixture detects %q, not typescript-node; the case no longer tests the job", got)
 				}
 			}

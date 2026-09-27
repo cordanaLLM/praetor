@@ -14,6 +14,8 @@ type adoptionChecksCase struct {
 	name string
 	// arrange shapes the fixture before adoption runs.
 	arrange func(t *testing.T, dir string)
+	// profile is the profile the manifest declares; empty declares framework.
+	profile string
 	// wantChecks is whether the ruleset carries required status checks at all, wantTest
 	// whether the scaffolded CI job "test" is one of them.
 	wantChecks, wantTest bool
@@ -36,29 +38,32 @@ func adoptionChecksCases() []adoptionChecksCase {
 		},
 		wantChecks: true, wantTest: true,
 	}, {
-		// Negative: typescript-node is detected, but its CI job runs `npm ci` and `npm test`
-		// and this pnpm project has no package-lock.json, so the job is withheld and nothing
-		// is required. It used to be scaffolded and required, and could never pass.
-		name: "pnpm-project-without-workflows",
+		// Negative: typescript-node resolves under app-service, but its CI job runs `npm ci`
+		// and `npm test` and this pnpm project has no package-lock.json, so the job is withheld
+		// and nothing is required. It used to be scaffolded and required, and could never pass.
+		name: "pnpm-project-without-workflows", profile: "app-service",
 		arrange: func(t *testing.T, dir string) {
 			writeFixtureFile(t, dir, "package.json", `{"name": "widgets", "scripts": {"test": "vitest run"}}`)
 			writeFixtureFile(t, dir, "pnpm-lock.yaml", "lockfileVersion: '9.0'\n")
 		},
 	}, {
-		// Positive: an npm project with a lockfile and a test script gets the job, required.
-		name: "npm-project-without-workflows",
-		arrange: func(t *testing.T, dir string) {
-			writeFixtureFile(t, dir, "package.json", `{"name": "widgets", "scripts": {"test": "node --test"}}`)
-			writeFixtureFile(t, dir, "package-lock.json", `{"name": "widgets", "lockfileVersion": 3, "requires": true, "packages": {"": {"name": "widgets"}}}`)
-		},
+		// Positive: an app-service npm project with a lockfile and a test script gets the job,
+		// required.
+		name: "npm-project-without-workflows", profile: "app-service",
+		arrange:    arrangeNpmProject,
 		wantChecks: true, wantTest: true,
+	}, {
+		// Boundary: the same npm project declaring framework gets no flavor, because no
+		// framework flavor matches it, and so nothing is required (BUG-940). Detection across
+		// the whole catalog used to scaffold typescript-node, a flavor of another profile.
+		name:    "npm-project-declaring-framework",
+		arrange: arrangeNpmProject,
 	}, {
 		// Negative: a library that git-ignores its lockfile while a local `npm install` wrote
 		// one. CI's checkout has no lockfile, so the job is withheld and nothing is required.
-		name: "npm-library-ignoring-its-lockfile",
+		name: "npm-library-ignoring-its-lockfile", profile: "app-service",
 		arrange: func(t *testing.T, dir string) {
-			writeFixtureFile(t, dir, "package.json", `{"name": "widgets", "scripts": {"test": "node --test"}}`)
-			writeFixtureFile(t, dir, "package-lock.json", `{"name": "widgets", "lockfileVersion": 3, "requires": true, "packages": {"": {"name": "widgets"}}}`)
+			arrangeNpmProject(t, dir)
 			writeFixtureFile(t, dir, ".gitignore", "node_modules/\npackage-lock.json\n")
 		},
 	}, {
@@ -68,17 +73,39 @@ func adoptionChecksCases() []adoptionChecksCase {
 	}}
 }
 
+// arrangeNpmProject writes an npm project with a lockfile and a test script.
+func arrangeNpmProject(t *testing.T, dir string) {
+	t.Helper()
+	writeFixtureFile(t, dir, "package.json", `{"name": "widgets", "scripts": {"test": "node --test"}}`)
+	writeFixtureFile(t, dir, "package-lock.json", `{"name": "widgets", "lockfileVersion": 3, "requires": true, "packages": {"": {"name": "widgets"}}}`)
+}
+
+// declareFixtureProfile makes the fixture declare profile: its archetype file, a lock pinning
+// it, and a signed-commit manifest naming it.
+func declareFixtureProfile(t *testing.T, dir, profile string) {
+	t.Helper()
+	archetype := ".config/archetypes/" + profile + ".yaml"
+	writeFixtureFile(t, dir, archetype, "id: \""+profile+"\"\nname: \""+profile+"\"\n")
+	lf := &lockFixture{dir: dir}
+	lf.writeProfileLock(t, profile, lf.digestOf(t, archetype), lf.digestOf(t, ".config/archetypes/facets/security-high.yaml"), "")
+	writeFixtureFile(t, dir, ".standards.yaml", fixtureProfileManifest("acme", "widgets", profile, true))
+}
+
 func TestAdoptionAndSyncAgreeOnPolicyAndRepositoryChecks(t *testing.T) {
 	for _, tc := range adoptionChecksCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newSyncValidationFixture(t)
 			initGitFixture(t, f.dir)
-			writeFixtureFile(t, f.dir, ".standards.yaml", fixtureManifest("acme", "widgets", true))
+			profile := tc.profile
+			if profile == "" {
+				profile = "framework"
+			}
+			declareFixtureProfile(t, f.dir, profile)
 			if err := os.Remove(filepath.Join(f.dir, ".github/rulesets/main.json")); err != nil {
 				t.Fatal(err)
 			}
 			tc.arrange(t, f.dir)
-			if _, err := adopt.Adopt(t.Context(), adopt.AdoptOptions{Path: f.dir, Profile: "framework"}); err != nil {
+			if _, err := adopt.Adopt(t.Context(), adopt.AdoptOptions{Path: f.dir, Profile: profile}); err != nil {
 				t.Fatalf("adopt: %v", err)
 			}
 			before := readFixtureFile(t, f.dir, ".github/rulesets/main.json")

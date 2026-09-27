@@ -148,7 +148,7 @@ func TestAdopt_Boundary_NoFlavorMatchScaffoldsNothing(t *testing.T) {
 	}
 	warned := false
 	for _, w := range rep.Warnings {
-		warned = warned || strings.Contains(w, "Not applicable: no registered flavor matches")
+		warned = warned || strings.Contains(w, "Not applicable: profile template-seed has no flavor")
 	}
 	if !warned {
 		t.Errorf("the operator must be told no flavor applied, got warnings %v", rep.Warnings)

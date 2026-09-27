@@ -23,7 +23,7 @@ func TestDetectOSImageForge(t *testing.T) {
 	for _, marker := range []string{"packer/ubuntu.pkr.hcl", "mkosi.conf", "build/mkosi.conf"} {
 		root := t.TempDir()
 		writeForgeFile(t, root, marker)
-		name, ok := flavor.Detect(root)
+		name, ok := resolve(root)
 		if !ok || name != "os-image" {
 			t.Errorf("marker %q gave %q (matched=%v)", marker, name, ok)
 		}
@@ -38,7 +38,7 @@ func TestOSImageOutranksTheToolingItBuildsWith(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "cmd"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if name, _ := flavor.Detect(root); name != "os-image" {
+	if name, _ := resolve(root); name != "os-image" {
 		t.Fatalf("expected os-image, got %q", name)
 	}
 }
@@ -62,7 +62,7 @@ func TestDetectDoesNotInventAnImageForge(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeForgeFile(t, root, "packer/notes.txt")
-	if name, ok := flavor.Detect(root); ok && name == "os-image" {
+	if name, ok := resolve(root); ok && name == "os-image" {
 		t.Fatal("a packer directory without a template matched")
 	}
 }
