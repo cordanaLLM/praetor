@@ -55,7 +55,7 @@ var catalog = []Rule{
 		ID:            "HISS-04",
 		Title:         "Complexity Bounds & Modular Sizing",
 		Specification: "\n  - McCabe Cyclomatic Complexity <= 10\n  - Cognitive Complexity <= 15\n  - Function Length <= 75 LOC\n  - Executable Statements <= 50",
-		Enforcement:   "gocyclo, gocognit and funlen via golangci-lint (.golangci.yml), plus the standards_inspect_symbols AST scanner.",
+		Enforcement:   "gocyclo, gocognit and funlen via golangci-lint (.golangci.yml) at its configured thresholds; the HISS scanner enforces function length and measures cyclomatic, cognitive and statement counts without enforcing them, the measurement standards_inspect_symbols and standards-lsp share.",
 		FailureAction: "Build sweep blocker.",
 	},
 	{

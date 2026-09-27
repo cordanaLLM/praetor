@@ -225,7 +225,12 @@ in `cmd/standards-mcp/transport.go` and `validateEnvelope` in `server.go`. Tests
 
 `standards_inspect_symbols` prints each Go function's lines, statements,
 cyclomatic and cognitive complexity beside the ceiling it is judged against, as
-`LOC: 43 (<=60)`, and marks a function over any ceiling `HISS-04 WARN: <bounds>`.
+`LOC: 43 (<=60)`. A function over the length ceiling, which the audit enforces,
+is marked `HISS-04 WARN: LOC`. A function over a complexity ceiling is marked
+`HISS-04 REPORT: <kinds>` and followed by the `[REPORT]` lines the audit prints:
+the scanner's own measurement (`hiss.MeasureDecl`), reported and never enforced
+(see [HISS-04: Go complexity is measured, not enforced](../standards/hiss-rule-matching.md#hiss-04-go-complexity-is-measured-not-enforced)).
+A function literal bound to a package variable is listed as `Func literal`.
 The ceilings come from `config.ResolveRepositoryComplexity`
 (`internal/config/repository_policy.go`) for the server root, the resolver
 `praetorctl editors` and `standards-lsp` also use, so the three report the
