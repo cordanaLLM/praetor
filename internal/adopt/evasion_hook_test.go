@@ -39,6 +39,25 @@ func emittedInterceptor(t *testing.T) (string, string) {
 	return python, script
 }
 
+// interceptorRules loads the emitted script as a module, without running main, and returns
+// its RULES as (pattern, refusal) pairs: the values Python reads back from the adjacent
+// literals the layout splits long patterns into.
+func interceptorRules(t *testing.T, python, script string) [][2]string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), interceptorWallClock)
+	defer cancel()
+	const program = "import json, runpy, sys; module = runpy.run_path(sys.argv[1]); print(json.dumps(module['RULES']))"
+	out, err := exec.CommandContext(ctx, python, "-B", "-c", program, script).Output() //nolint:gosec // fixed interpreter and test script
+	if err != nil {
+		t.Fatalf("load the emitted script's rules: %v", err)
+	}
+	var rules [][2]string
+	if err := json.Unmarshal(out, &rules); err != nil {
+		t.Fatalf("decode the emitted script's rules: %v", err)
+	}
+	return rules
+}
+
 // runInterceptor feeds stdin (and optional argv) to the emitted script under a clean
 // environment plus extra, and returns its exit code.
 func runInterceptor(t *testing.T, python, script string, stdin []byte, extra []string, args ...string) int {
@@ -158,12 +177,18 @@ func TestEmittedInterceptorEnvironmentAndArguments(t *testing.T) {
 // shipped as engine rules). praetor's own guard names none either
 // (TestPythonGuardCarriesTheBuiltinDevRootRule in internal/agenthook).
 func TestBuildBlockEvasionPY_NoOperatorData(t *testing.T) {
-	script := buildBlockEvasionPY()
-	for _, rule := range agenthook.BuiltinRules() {
-		if !strings.Contains(script, `(r"`+rule.Source+`", "`+rule.Invariant+`"),`) {
-			t.Errorf("rendered script lacks rule %q", rule.Source)
+	python, path := emittedInterceptor(t)
+	rules := interceptorRules(t, python, path)
+	builtins := agenthook.BuiltinRules()
+	if len(rules) != len(builtins) {
+		t.Fatalf("rendered script carries %d rules, the engine %d", len(rules), len(builtins))
+	}
+	for i, rule := range builtins {
+		if rules[i][0] != rule.Source || !strings.HasPrefix(rules[i][1], "[BLOCKED BY "+rule.Invariant+"] ") {
+			t.Errorf("rule %d: rendered %q, engine %q (%s)", i, rules[i], rule.Source, rule.Invariant)
 		}
 	}
+	script := buildBlockEvasionPY()
 	for _, operator := range []string{"TOPOLOGY_PATTERNS", "/dev/("} {
 		if strings.Contains(script, operator) {
 			t.Errorf("rendered script ships operator data %q", operator)

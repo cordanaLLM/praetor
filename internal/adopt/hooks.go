@@ -84,34 +84,43 @@ func buildLefthookYAML() string {
 	return buildLefthookYAMLFor(false)
 }
 
+// buildLefthookYAMLFor renders lefthook.yml, with the checkpoint lifecycle jobs when
+// checkpoint is set. It opens with a document start and folds every run line longer than
+// yamllint's default limit (lefthookRun), so an adopter whose hooks lint the whole tree
+// with yamllint's defaults accepts it (BUG-782).
 func buildLefthookYAMLFor(checkpoint bool) string {
 	governed := lefthookGovernedCommand
 	checkpointJobs := ""
 	if checkpoint {
-		checkpointJobs = "agent-checkpoint-tool:\n  commands:\n    checkpoint:\n      run: python3 -B .config/lefthook/scripts/checkpoint.py --event tool --json --marker\nagent-checkpoint-stop:\n  commands:\n    checkpoint:\n      run: python3 -B .config/lefthook/scripts/checkpoint.py --event stop --json --marker\n"
+		checkpointJobs = "agent-checkpoint-tool:\n  commands:\n    checkpoint:\n" +
+			lefthookRun("python3 -B .config/lefthook/scripts/checkpoint.py --event tool --json --marker") +
+			"agent-checkpoint-stop:\n  commands:\n    checkpoint:\n" +
+			lefthookRun("python3 -B .config/lefthook/scripts/checkpoint.py --event stop --json --marker")
 	}
 	return "# Lefthook Configuration (Go 1.27+ & HISS Governance)\n" +
-		"# Governance commands fail closed: a failing or missing praetorctl blocks the commit or push.\n" +
+		"# Governance commands fail closed: a failing or missing praetorctl blocks the\n" +
+		"# commit or push.\n" +
+		"---\n" +
 		checkpointJobs + "pre-commit:\n" +
 		"  parallel: true\n" +
 		"  commands:\n" +
-		"    gofmt:\n      glob: \"*.go\"\n      run: gofmt -w {staged_files}\n      stage_fixed: true\n" +
-		"    govet:\n      glob: \"*.go\"\n      run: " + goModuleCommand("go vet", "go vet ./...") + "\n" +
-		"    context-check:\n      run: " + governed("compile-context --verify") + "\n" +
-		"    hiss-audit:\n      run: " + governed("audit") + "\n" +
+		"    gofmt:\n      glob: \"*.go\"\n" + lefthookRun("gofmt -w {staged_files}") + "      stage_fixed: true\n" +
+		"    govet:\n      glob: \"*.go\"\n" + lefthookRun(goModuleCommand("go vet", "go vet ./...")) +
+		"    context-check:\n" + lefthookRun(governed("compile-context --verify")) +
+		"    hiss-audit:\n" + lefthookRun(governed("audit")) +
 		"\n" +
 		"post-commit:\n" +
 		"  commands:\n" +
-		"    state-sync:\n      run: " + governed("state sync .") + "\n" +
-		"    dedupe-cadence:\n      run: " + governed("dedupe cadence --threshold=20 --record .") + "\n" +
+		"    state-sync:\n" + lefthookRun(governed("state sync .")) +
+		"    dedupe-cadence:\n" + lefthookRun(governed("dedupe cadence --threshold=20 --record .")) +
 		"\n" +
 		"pre-push:\n" +
 		"  parallel: false\n" +
 		"  commands:\n" +
-		"    security:\n      run: " + goModuleCommand("govulncheck", optionalToolCommand("govulncheck", "./...")) + "\n" +
-		"    flavor-audit:\n      run: " + governed("flavor audit .") + "\n" +
-		"    audit:\n      run: " + governed("audit") + "\n" +
-		"    gate:\n      run: " + governed("gate run --path=.") + "\n"
+		"    security:\n" + lefthookRun(goModuleCommand("govulncheck", optionalToolCommand("govulncheck", "./..."))) +
+		"    flavor-audit:\n" + lefthookRun(governed("flavor audit .")) +
+		"    audit:\n" + lefthookRun(governed("audit")) +
+		"    gate:\n" + lefthookRun(governed("gate run --path=."))
 }
 
 // blockEvasionTemplate is the agent PreToolUse interceptor adoption writes. It is not a git
@@ -125,6 +134,10 @@ func buildLefthookYAMLFor(checkpoint bool) string {
 // carrying a nonempty tool_input.command, and any command over the Python scan bounds.
 // Native payloads of other clients are agenthook's dialects, reached through
 // `praetorctl hook`; this script does not guess at them.
+//
+// The rendering passes black and flake8 at 100 columns with their defaults (BUG-782): the
+// generated values go through the layouts in emitted_layout.go, and every function stays
+// within the 35 lines the strictest public dogfood policy allows (checkpoint_loc_test.go).
 const blockEvasionTemplate = `#!/usr/bin/env python3
 """Agent PreToolUse evasion interceptor (HISS), written by praetorctl adopt.
 
@@ -133,12 +146,13 @@ the pending tool call as one JSON object on stdin with the shell command at
 tool_input.command; a command may instead be passed as arguments. Exit code 2 blocks the
 call and returns the reason to the agent. Input of any other shape is refused, not allowed.
 
-The rules are the engine's built-in command policy (internal/agenthook), rendered at
-adoption; operator rules belong in hooks.command_policy.deny of .standards.yaml.
+The rules and their refusals are the engine's built-in command policy (internal/agenthook),
+rendered at adoption; operator rules belong in hooks.command_policy.deny of .standards.yaml.
 
 A git hook cannot observe --no-verify because git skips hooks entirely, so this script
 is deliberately not part of lefthook.yml.
 """
+
 import json
 import os
 import re
@@ -149,18 +163,17 @@ MAX_SCAN_CHARS = {{MAX_SCAN_CHARS}}
 MAX_SCAN_LINE_CHARS = {{MAX_SCAN_LINE_CHARS}}
 BLOCK_EXIT = 2
 
+{{REFUSALS}}
 RULES = [
 {{RULES}}]
 
-LEFTHOOK_DISABLED = {{LEFTHOOK_DISABLED}}
+LEFTHOOK_DISABLED = [
+{{LEFTHOOK_DISABLED}}]
 LEFTHOOK_NARROWING = {{LEFTHOOK_NARROWING}}
 
 
 class Blocked(Exception):
     pass
-
-def block(invariant, reason):
-    raise Blocked("[BLOCKED BY " + invariant + "] " + reason + "\n")
 
 
 def read_payload_command(stream):
@@ -183,72 +196,120 @@ def pending_command():
     if len(sys.argv) > 1:
         return " ".join(sys.argv[1:])
     if sys.stdin.isatty():
-        block("HISS", "expected PreToolUse JSON on stdin or a command as arguments")
+        raise Blocked(NO_INPUT_REFUSAL)
     try:
         return read_payload_command(sys.stdin.buffer)
     except (ValueError, OSError, RecursionError) as error:
-        block("HISS", "invalid hook input: " + str(error))
+        raise Blocked(INVALID_INPUT_REFUSAL + str(error))
 
 
-def require_scannable(command):
+def check_environment(environ):
+    value = environ.get("LEFTHOOK")
+    for disabled, refusal in LEFTHOOK_DISABLED:
+        if value == disabled:
+            raise Blocked(refusal)
+    for name in LEFTHOOK_NARROWING:
+        if environ.get(name):
+            raise Blocked(NARROWING_REFUSAL)
+
+
+def check_command(command):
     # re backtracks, so a longer command or line could stall this script past the harness's
     # hook timeout. Such a command is refused, never truncated.
-    if len(command) <= MAX_SCAN_CHARS:
-        if max(len(line) for line in command.split("\n")) <= MAX_SCAN_LINE_CHARS:
-            return
-    block("HISS", "command exceeds the scan bound: at most " + str(MAX_SCAN_CHARS) + " characters, "
-          + str(MAX_SCAN_LINE_CHARS) + " per line; split it or write the long content to a file first.")
+    if len(command) > MAX_SCAN_CHARS:
+        raise Blocked(SCAN_BOUND_REFUSAL)
+    if max(len(line) for line in command.split("\n")) > MAX_SCAN_LINE_CHARS:
+        raise Blocked(SCAN_BOUND_REFUSAL)
+    for pattern, refusal in RULES:
+        if re.search(pattern, command):
+            raise Blocked(refusal + pattern)
 
 
 def main():
     try:
-        value = os.environ.get("LEFTHOOK")
-        if value in LEFTHOOK_DISABLED:
-            block("HISS", "LEFTHOOK=" + value + " detected in environment. Evasion prohibited.")
-        for name in LEFTHOOK_NARROWING:
-            if os.environ.get(name):
-                block("HISS", "Hook exclusions are prohibited.")
-        command = pending_command()
-        require_scannable(command)
-        for pattern, invariant in RULES:
-            if re.search(pattern, command):
-                block(invariant, "Verification evasion prohibited: " + pattern)
-        sys.exit(0)
-    except Blocked as e:
-        sys.stderr.write(str(e))
+        check_environment(os.environ)
+        check_command(pending_command())
+    except Blocked as blocked:
+        sys.stderr.write(str(blocked) + "\n")
         sys.exit(BLOCK_EXIT)
+    sys.exit(0)
 
 
 if __name__ == "__main__":
     main()
 `
 
-// buildBlockEvasionPY renders the interceptor from the engine's command policy: the built-in
-// rules (agenthook.BuiltinRules), the Lefthook environment checks, the input bound and the
-// scan bounds of the Python adapters (agenthook.MaxScanChars, MaxScanLineChars). It
-// never includes operator rules; those are repository configuration (ADR-0011).
-func buildBlockEvasionPY() string {
-	var rules strings.Builder
+// interceptorRefusal is one refusal text the interceptor prints, under its Python name.
+type interceptorRefusal struct {
+	name string
+	text string
+}
+
+// interceptorRefusals returns the refusal texts the interceptor declares, one module
+// constant each, in the order they are rendered.
+func interceptorRefusals() []interceptorRefusal {
+	refusals := []interceptorRefusal{
+		{"NO_INPUT_REFUSAL", "[BLOCKED BY HISS] expected PreToolUse JSON on stdin or a command as arguments"},
+		{"INVALID_INPUT_REFUSAL", "[BLOCKED BY HISS] invalid hook input: "},
+		{"NARROWING_REFUSAL", "[BLOCKED BY HISS] Hook exclusions are prohibited."},
+		{"SCAN_BOUND_REFUSAL", "[BLOCKED BY HISS] command exceeds the scan bound: at most " + strconv.Itoa(agenthook.MaxScanChars) +
+			" characters, " + strconv.Itoa(agenthook.MaxScanLineChars) + " per line; split it or write the long content to a file first."},
+	}
+	seen := map[string]bool{}
 	for _, rule := range agenthook.BuiltinRules() {
-		rules.WriteString(`    (r"` + rule.Source + `", "` + rule.Invariant + "\"),\n")
+		if name := ruleRefusalName(rule.Invariant); !seen[name] {
+			seen[name] = true
+			refusals = append(refusals, interceptorRefusal{name, "[BLOCKED BY " + rule.Invariant + "] Verification evasion prohibited: "})
+		}
+	}
+	return refusals
+}
+
+// ruleRefusalName is the Python name of the refusal a rule of invariant prints ahead of its
+// pattern: HISS_REFUSAL, DEV_01_REFUSAL.
+func ruleRefusalName(invariant string) string {
+	return strings.ToUpper(strings.ReplaceAll(invariant, "-", "_")) + "_REFUSAL"
+}
+
+// buildBlockEvasionPY renders the interceptor from the engine's command policy: the built-in
+// rules (agenthook.BuiltinRules), the Lefthook environment checks, the input bound, the
+// scan bounds of the Python adapters (agenthook.MaxScanChars, MaxScanLineChars) and the
+// refusal texts. It never includes operator rules; those are repository configuration
+// (ADR-0011).
+func buildBlockEvasionPY() string {
+	var refusals, rules, disabled strings.Builder
+	for _, refusal := range interceptorRefusals() {
+		refusals.WriteString(pythonAssignment(refusal.name, pyToken{refusal.text, pyString}))
+	}
+	for _, rule := range agenthook.BuiltinRules() {
+		rules.WriteString(pythonPairEntry(pyToken{rule.Source, pyRaw}, pyToken{ruleRefusalName(rule.Invariant), pyName}))
+	}
+	for _, value := range agenthook.LefthookDisableValues() {
+		refusal := "[BLOCKED BY HISS] LEFTHOOK=" + value + " detected in environment. Evasion prohibited."
+		disabled.WriteString(pythonPairEntry(pyToken{value, pyString}, pyToken{refusal, pyString}))
 	}
 	return strings.NewReplacer(
 		"{{MAX_INPUT_BYTES}}", strconv.Itoa(agenthook.MaxInputBytes),
 		"{{MAX_SCAN_CHARS}}", strconv.Itoa(agenthook.MaxScanChars),
 		"{{MAX_SCAN_LINE_CHARS}}", strconv.Itoa(agenthook.MaxScanLineChars),
+		"{{REFUSALS}}", refusals.String(),
 		"{{RULES}}", rules.String(),
-		"{{LEFTHOOK_DISABLED}}", pythonStringTuple(agenthook.LefthookDisableValues()),
+		"{{LEFTHOOK_DISABLED}}", disabled.String(),
 		"{{LEFTHOOK_NARROWING}}", pythonStringTuple(agenthook.LefthookNarrowingVariables()),
 	).Replace(blockEvasionTemplate)
 }
 
-// pythonStringTuple renders plain ASCII names as a Python tuple literal of strings.
+// pythonStringTuple renders plain ASCII names as a Python tuple literal of strings, laid out
+// as black leaves it: no trailing comma unless the tuple holds one element.
 func pythonStringTuple(values []string) string {
 	quoted := make([]string, 0, len(values))
 	for _, value := range values {
 		quoted = append(quoted, `"`+value+`"`)
 	}
-	return "(" + strings.Join(quoted, ", ") + ",)"
+	if len(quoted) == 1 {
+		return "(" + quoted[0] + ",)"
+	}
+	return "(" + strings.Join(quoted, ", ") + ")"
 }
 
 // buildFallbackPreCommitScript renders the hook installed when lefthook is unavailable.
