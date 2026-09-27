@@ -253,6 +253,29 @@ def refresh(names):
         print("governance configuration: changed. next: run make audit before next push.")
 
 
+# WORKSTATION_REFRESH_TIMEOUT bounds the engine refresh a merge may start: three engine builds,
+# inside the engine's own five-minute workstation bound (cmd/standardsctl/workstation.go).
+WORKSTATION_REFRESH_TIMEOUT = 330
+
+
+def refresh_install():
+    """Refresh this workstation's installed engine from the checkout after a merge (BUG-1004).
+
+    Client wrappers run the installed praetorctl, so an install that stopped at an old commit
+    kept serving stale agent context after main moved. The engine decides whether to rebuild
+    (`workstation install --if-stale`, internal/workstation/refresh.go): only an existing
+    install, only from a checkout of its own module on the update branch, only forward and only
+    from a clean tree. A skip prints nothing; a rebuild prints one line.
+    """
+    run(["make", "--no-print-directory", "-s", "hook-cli"], capture=False)
+    report = json.loads(run([praetorctl_path(), "workstation", "install", "--source", os.getcwd(),
+                             "--if-stale"], timeout=WORKSTATION_REFRESH_TIMEOUT))
+    if not isinstance(report, dict) or type(report.get("refreshed")) is not bool:
+        raise HookError("workstation install --if-stale returned an invalid result")
+    if report["refreshed"]:
+        print(f"engine install: refreshed; {report.get('reason', '')}.")
+
+
 def post_stage(stage, args):
     if stage == "post-commit":
         cli(["state", "sync", ".", "--log=Git post-commit synchronization"])
@@ -262,6 +285,7 @@ def post_stage(stage, args):
             refresh(changed(args[0], args[1]))
     elif stage == "post-merge":
         refresh(changed("ORIG_HEAD"))
+        refresh_install()
     else:
         names = set()
         for line in sys.stdin.read().splitlines():

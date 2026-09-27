@@ -97,14 +97,9 @@ func validateInstallOptions(opts Options) (Options, error) {
 	if !filepath.IsAbs(opts.BinDir) {
 		return opts, errors.New("workstation: bin directory must be an absolute path")
 	}
-	if opts.ManifestPath == "" {
-		path, err := config.DefaultInstallManifestPath()
-		if err != nil {
-			return opts, fmt.Errorf("workstation: resolve default manifest path: %w", err)
-		}
-		opts.ManifestPath = path
-	}
-	return opts, nil
+	path, err := manifestPathOrDefault(opts.ManifestPath)
+	opts.ManifestPath = path
+	return opts, err
 }
 
 func install(ctx context.Context, opts Options) (Result, error) {

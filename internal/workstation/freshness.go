@@ -161,10 +161,7 @@ func staleBuild(build Build, reason string) error {
 // buildLabel names a build the way `praetorctl version` does: the short revision, suffixed
 // -dirty for a modified tree.
 func buildLabel(build Build) string {
-	label := build.Revision
-	if len(label) > shortRevisionLen {
-		label = label[:shortRevisionLen]
-	}
+	label := shortCommit(build.Revision)
 	if build.Modified {
 		label += "-dirty"
 	}

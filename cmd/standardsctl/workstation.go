@@ -15,7 +15,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/workstation"
 )
 
-const workstationUsage = "usage: workstation install --source PATH [--bin-dir PATH] [--manifest PATH] " +
+const workstationUsage = "usage: workstation install --source PATH [--bin-dir PATH] [--manifest PATH] [--if-stale] " +
 	"[--fleet-config PATH] [--workstation-config PATH] | " +
 	"workstation status [--source PATH] [--bin-dir PATH] [--manifest PATH] [--home PATH]"
 
@@ -48,11 +48,15 @@ func runWorkstationInstall(ctx context.Context, args []string) error {
 	manifest := fs.String("manifest", "", "Install manifest path (default: the per-user configuration directory)")
 	fleetConfig := fs.String("fleet-config", "", "Fleet settings document; recorded into the install manifest")
 	workstationConfig := fs.String("workstation-config", "", "Workstation settings document; recorded into the install manifest")
+	ifStale := fs.Bool("if-stale", false, "Refresh only an existing install that lags --source on the update branch; otherwise report why not")
 	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
 		return errors.New("workstation install accepts no positional arguments")
+	}
+	if *ifStale {
+		return runWorkstationRefresh(ctx, operatorSettingsFlags{fleet: *fleetConfig, workstation: *workstationConfig, manifest: *manifest}, *source, *binDir)
 	}
 	opts, err := resolveInstallOptions(ctx, *source, *binDir, *manifest, *fleetConfig, *workstationConfig)
 	if err != nil {

@@ -1111,6 +1111,8 @@ print("fixture hook self-tests passed")
         command(self.repo, "git", "commit", "-s", "-m", "chore: merge topic")
         merged = self.hook("post-merge")
         self.assertEqual(merged.returncode, 0, merged.stdout + merged.stderr)
+        # The fixture is no engine checkout: the real engine skips the refresh, silently.
+        self.assertNotIn(b"engine install", merged.stdout + merged.stderr)
         rewritten = self.hook("post-rewrite", data=f"{base} {tip}\n".encode())
         self.assertEqual(rewritten.returncode, 0, rewritten.stdout + rewritten.stderr)
         self.assertNotEqual(self.hook("post-rewrite", data=b"bad\n").returncode, 0)
@@ -2217,6 +2219,47 @@ class ScopeAndGuard(unittest.TestCase):
         root = mock.Mock(getuid=mock.Mock(return_value=0), getgid=mock.Mock(return_value=0))
         self.assertEqual(sandbox.user_arguments(root), ["--user", "0:0"])
         self.assertEqual(sandbox.user_arguments(object()), [])
+
+
+class InstallRefresh(unittest.TestCase):
+    """post-merge refreshes a lagging engine install through the engine's own decision (BUG-1004)."""
+
+    def refresh(self, answer):
+        out = io.StringIO()
+        with mock.patch("hooks.run", side_effect=[b"", answer]) as process, \
+                contextlib.redirect_stdout(out):
+            hooks.refresh_install()
+        return process, out.getvalue()
+
+    def test_rebuilt_install_prints_one_line(self):
+        process, out = self.refresh(b'{"refreshed":true,"reason":"install was 2 commits behind the checkout"}')
+        self.assertEqual(out, "engine install: refreshed; install was 2 commits behind the checkout.\n")
+        engine = process.call_args_list[1]
+        self.assertEqual(engine.args[0][1:], ["workstation", "install", "--source", os.getcwd(), "--if-stale"])
+        self.assertEqual(engine.kwargs["timeout"], hooks.WORKSTATION_REFRESH_TIMEOUT)
+
+    def test_invalid_engine_answer_is_an_error(self):
+        for answer in (b"[]", b'{"refreshed":"yes"}', b"{}"):
+            with self.subTest(answer=answer), self.assertRaisesRegex(HookError, "invalid result"):
+                self.refresh(answer)
+        with self.assertRaises(ValueError):
+            self.refresh(b"not json")
+
+    def test_skip_prints_nothing(self):
+        _, out = self.refresh(b'{"refreshed":false,"reason":"no install manifest at /x; nothing installed to refresh"}')
+        self.assertEqual(out, "")
+
+    def test_post_merge_refreshes_context_then_install(self):
+        order = []
+        with mock.patch("hooks.changed", return_value=["go.mod"]), \
+                mock.patch("hooks.refresh", side_effect=lambda names: order.append(("context", names))), \
+                mock.patch("hooks.refresh_install", side_effect=lambda: order.append(("install",))):
+            hooks.post_stage("post-merge", [])
+        self.assertEqual(order, [("context", ["go.mod"]), ("install",)])
+        with mock.patch("hooks.changed", return_value=[]), mock.patch("hooks.refresh"), \
+                mock.patch("hooks.refresh_install") as install:
+            hooks.post_stage("post-checkout", ["a" * 40, "b" * 40, "1"])
+            install.assert_not_called()
 
 
 if __name__ == "__main__":
