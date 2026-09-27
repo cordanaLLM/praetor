@@ -32,4 +32,4 @@ components: [Button, Modal]
 forge-federation
 ```
 
-Only the GitHub driver enforces governance rules. The GitLab and Gitea drivers authenticate, but return `ErrNotImplemented` for all enforcement methods. The CLI builds the GitHub driver directly; `forge.NewForge` acts as a library factory for other drivers with no CLI caller.
+praetorctl builds only the GitHub driver: `sync --remote`, `issue reconcile` and `needs epic --publish` call `forge.NewGitHubDriver` directly. `forge.NewForge` is internal and has no production caller, so the GitLab and Gitea drivers are reached only from tests. They check that a token is set and return `ErrNotImplemented` from every enforcement method.
