@@ -3,7 +3,8 @@
 #
 # SPDX-License-Identifier: EUPL-1.2
 
-"""Praetor-owned hook sources and generated hook files pass downstream lint policies.
+"""Praetor-owned hook sources, generated hook files and documentation gate YAML pass downstream
+lint policies.
 
 Adoption copies the checkpoint evaluator and its shared module into an adopted repository
 (internal/adopt/checkpoint.go). .config/lefthook/praetor.yml is the vendorable canonical
@@ -17,6 +18,12 @@ TestEmittedHookFixturesMatchTheRendering keeps those fixtures equal to what adop
 A repository whose own hooks run black, flake8 or yamllint over its whole tree used to fail
 on all five files (BUG-782). The paths are read from the Go constants, so a moved file is
 followed without editing this list.
+
+The documentation gate's YAML is part of the same set: the hosted workflow text adoption
+writes to .github/workflows/praetor-docs.yml (the Workflow constant) and every YAML asset the
+gate embeds, read through the constants and go:embed line of tools/markdownlint/assets.go.
+Audit locks an adopter's copies to these bytes, so an adopter whose yamllint covers the tree
+cannot fix a finding in them.
 
 The policy is the one such a repository gets without configuring anything: black and
 yamllint (in strict mode, so warnings fail too) with their built-in defaults, and flake8
@@ -63,6 +70,8 @@ EMITTED_CONSTANTS = (
     ("internal/adopt/hooks.go", "lefthookFile", RENDERED),
     ("internal/adopt/hooks.go", "evasionHookFile", RENDERED),
 )
+# The Go file declaring the documentation gate's workflow, its directory and its embedded assets.
+DOCUMENTATION_GATE_SOURCE = "tools/markdownlint/assets.go"
 VERSION = re.compile(r"(\d+(?:\.\d+)+)")
 
 
@@ -82,6 +91,26 @@ def emitted_sources():
         path = go_constant(relative, name)
         sources[path] = f"{base}/{path}" if base else path
     return sources
+
+
+def documentation_gate_yaml():
+    """Return {repository path: emitted text} for the documentation gate's YAML.
+
+    The workflow text is the Workflow raw string constant, the bytes adoption writes; each YAML
+    asset named on the go:embed line is read from the gate's directory, which is its source.
+    """
+    source = (ROOT / DOCUMENTATION_GATE_SOURCE).read_text(encoding="utf-8")
+    workflow = re.search(r"^const Workflow = `([^`]*)`$", source, re.M)
+    embed = re.search(r"^//go:embed (.+)$", source, re.M)
+    if workflow is None or embed is None:
+        raise AssertionError(
+            f"{DOCUMENTATION_GATE_SOURCE} no longer declares Workflow and a go:embed line")
+    directory = go_constant(DOCUMENTATION_GATE_SOURCE, "Directory")
+    files = {go_constant(DOCUMENTATION_GATE_SOURCE, "WorkflowFile"): workflow.group(1)}
+    for name in embed.group(1).split():
+        if name.endswith((".yml", ".yaml")):
+            files[f"{directory}/{name}"] = (ROOT / directory / name).read_text(encoding="utf-8")
+    return files
 
 
 def pinned_versions(text):
@@ -178,20 +207,22 @@ class LintCase(unittest.TestCase):
 
 
 def emitted(suffixes):
-    """Return {adopted path: text} of every linted hook file with one of `suffixes`."""
-    return {
-        path: (ROOT / source).read_text(encoding="utf-8")
-        for path, source in emitted_sources().items()
-        if path.endswith(suffixes)
-    }
+    """Return {adopted path: text} of every linted file with one of `suffixes`.
+
+    The set is the hook files named in EMITTED_CONSTANTS and the documentation gate's YAML.
+    """
+    files = {path: (ROOT / source).read_text(encoding="utf-8")
+             for path, source in emitted_sources().items()}
+    files.update(documentation_gate_yaml())
+    return {path: text for path, text in files.items() if path.endswith(suffixes)}
 
 
 class EmittedSourcesTest(LintCase):
-    """Positive: every canonical hook source and generated hook file passes each tool."""
+    """Positive: every canonical hook source, generated hook file and gate YAML passes."""
 
     def emitted(self, suffixes):
         files = emitted(suffixes)
-        self.assertTrue(files, f"no {suffixes} hook file is linted")
+        self.assertTrue(files, f"no {suffixes} file is linted")
         return files
 
     def test_black_accepts_emitted_python(self):
@@ -200,7 +231,7 @@ class EmittedSourcesTest(LintCase):
     def test_flake8_accepts_emitted_python(self):
         self.assertLintPasses("flake8", self.emitted((".py",)))
 
-    def test_yamllint_accepts_emitted_policy(self):
+    def test_yamllint_accepts_emitted_yaml(self):
         self.assertLintPasses("yamllint", self.emitted((".yml", ".yaml")))
 
 
@@ -235,9 +266,22 @@ class PolicyFixtureTest(LintCase):
                              "line-length")
         self.assertLintFails("yamllint", {"nostart.yml": "key: value\n"}, "document-start")
 
+    def test_yamllint_truthy_on_key(self):
+        self.assertLintFails("yamllint", {"bare.yml": "---\non:\n  push:\n"}, "truthy")
+        self.assertLintPasses("yamllint", {"quoted.yml": "---\n'on':\n  push:\n"})
+
+    def test_yamllint_line_length_directive_scope(self):
+        long_line = "key: " + " ".join(["x"] * 40)
+        self.assertGreater(len(long_line), YAMLLINT_MAX_LINE)
+        exempt = f"---\n# yamllint disable-line rule:line-length\n{long_line}\n"
+        self.assertLintPasses("yamllint", {"exempt.yml": exempt})
+        next_line = long_line.replace("key", "other")
+        self.assertLintFails("yamllint", {"next.yml": f"{exempt}{next_line}\n"},
+                             "line-length")
+
 
 class RenderedTemplateTest(LintCase):
-    """Negative: a long line in a generated hook file fails the gate that passes it clean."""
+    """Negative: a defect in a generated or locked file fails the gate that passes it clean."""
 
     def test_yamllint_rejects_a_long_line_in_the_rendered_lefthook_config(self):
         files = emitted(("lefthook.yml",))
@@ -252,6 +296,13 @@ class RenderedTemplateTest(LintCase):
         path, text = next(iter(files.items()))
         long_line = PolicyFixtureTest.python_line(FLAKE8_MAX_LINE + 1)
         self.assertLintFails("flake8", {path: text + long_line}, "E501")
+
+    def test_yamllint_rejects_a_bare_on_key_in_the_documentation_gate_workflow(self):
+        path = ".github/workflows/praetor-docs.yml"
+        text = emitted((path,))[path]
+        self.assertIn("\n'on':\n", text)
+        self.assertLintFails("yamllint", {path: text.replace("\n'on':\n", "\non:\n", 1)},
+                             "truthy")
 
 
 class ResolutionTest(unittest.TestCase):
@@ -289,6 +340,15 @@ class ResolutionTest(unittest.TestCase):
                                          which=lambda name: "/bin/black",
                                          probe=lambda path, value=reported: value)
             self.assertIn("26.5.1 is pinned", problem)
+
+    def test_documentation_gate_yaml_comes_from_go_source(self):
+        files = documentation_gate_yaml()
+        self.assertEqual(sorted(files), [".github/workflows/praetor-docs.yml",
+                                         "tools/markdownlint/markdownlint-cli2.yaml"])
+        self.assertTrue(files[".github/workflows/praetor-docs.yml"].startswith("---\n"))
+        yaml = emitted((".yml", ".yaml"))
+        self.assertLessEqual(set(files), set(yaml))
+        self.assertIn("lefthook.yml", yaml)
 
     def test_emitted_sources_come_from_go_constants(self):
         sources = emitted_sources()

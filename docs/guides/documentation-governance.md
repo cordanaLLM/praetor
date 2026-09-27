@@ -227,10 +227,29 @@ the facet is disabled; the next `praetorctl adopt` rewrites the comment.
 The hosted workflow (this repository's own `.github/workflows/praetor-docs.yml`)
 and the template `adopt.DocumentationWorkflow()` emits to adopters
 (`markdownlint.Workflow`, `tools/markdownlint/assets.go`) both pin
-`runs-on: ubuntu-26.04`, and actions to `v7`. `DocumentationAssetIsCanonical` compares an adopted
-repository's workflow file byte-for-byte, line-ending normalized, against that
-template, so a workflow generated before these pins changed now fails the
-exact-content check; `praetorctl adopt` regenerates it onto `ubuntu-26.04` and `v7` actions.
+`runs-on: ubuntu-26.04` and every action by full commit SHA, with the release as
+a trailing comment (`actions/checkout@<sha>  # v7.0.1`). A repository whose
+organization requires SHA pinning can run the gate, and it cannot pin the
+actions itself because audit locks the file.
+`managedasset.Family.Validate` refuses a hosted workflow with a tag-, branch- or
+short-SHA-pinned action (`TestWorkflowPinsEveryActionNegative`). Renovate's
+github-actions manager reads `tools/markdownlint/assets.go` as well as the
+workflow (`renovate.json`), and one grouped branch moves both copies' pins
+together (`TestRenovateUpdatesTemplatePinsWithWorkflowCopy`).
+
+The workflow and `markdownlint-cli2.yaml` pass `yamllint --strict` under its
+default rules, which an adopter's own lint may apply to every file. Both open
+with a `---` document start, and the workflow quotes its `'on'` key so the truthy
+rule does not read it as a boolean. The two pin lines carry a
+`# yamllint disable-line rule:line-length` directive, because a 40-hex SHA plus
+its release comment runs past 80 columns at step indentation. `make hooks-lint`
+checks both files (`scripts/test_emitted_hook_lint.py`).
+
+`DocumentationAssetIsCanonical` compares an adopted repository's workflow file
+byte-for-byte, line-ending normalized, against that template, so a workflow
+generated before these pins changed fails the exact-content check. Plain
+`praetorctl adopt` refreshes an unedited earlier text as described above; an
+edited copy needs `praetorctl adopt --force`.
 
 `adoption.decline: [branch-ruleset]` leaves `.github/rulesets/main.json`
 operator-owned, as described in the

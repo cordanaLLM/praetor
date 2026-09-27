@@ -22,6 +22,7 @@ import (
 	"io/fs"
 	"maps"
 	"path"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -34,6 +35,8 @@ const (
 	MaxFamilies = 8
 	// MaxPriorTexts bounds the earlier texts one family may recognise (HISS-02).
 	MaxPriorTexts = 64
+	// MaxWorkflowLines bounds the action scan of one hosted workflow (HISS-02).
+	MaxWorkflowLines = 4096
 	// DocumentationFacet is the manifest facet that enables documentation governance.
 	DocumentationFacet = "docs:seo-portal"
 )
@@ -243,7 +246,48 @@ func (f Family) validateWorkflow() error {
 	if declared == 4 && (!cleanRelative(f.WorkflowFile) || strings.HasPrefix(f.WorkflowFile, f.Directory+"/")) {
 		return fmt.Errorf("managed asset family %q workflow %q must be a clean relative path outside its asset directory", f.Name, f.WorkflowFile)
 	}
+	return f.validateWorkflowPins()
+}
+
+// validateWorkflowPins refuses a hosted workflow with an action unpinnedActions reports.
+func (f Family) validateWorkflowPins() error {
+	unpinned, err := unpinnedActions(f.Workflow)
+	if err != nil {
+		return fmt.Errorf("managed asset family %q workflow: %w", f.Name, err)
+	}
+	if len(unpinned) > 0 {
+		return fmt.Errorf("managed asset family %q workflow must pin every action by full commit SHA with its release as a trailing comment: %q", f.Name, unpinned)
+	}
 	return nil
+}
+
+var (
+	// actionUsesLine captures the reference of a workflow step's uses: key.
+	actionUsesLine = regexp.MustCompile(`^\s*(?:-\s+)?uses:\s*(.*?)\s*$`)
+	// pinnedActionRef is a remote action pinned by full commit SHA and followed, after at
+	// least two spaces as yamllint's comments rule requires, by its release: the form
+	// repositories requiring SHA pinning accept and Renovate's github-actions manager keeps
+	// current, digest and comment together.
+	pinnedActionRef = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[^@\s]+)?@[0-9a-f]{40} {2,}# v?[0-9]+(?:\.[0-9]+)*$`)
+)
+
+// unpinnedActions returns every uses: line of workflow whose reference is neither a local
+// action (./...) nor pinnedActionRef. An adopter cannot edit a locked workflow, so one tag-
+// or branch-pinned action makes the whole gate fail under a SHA-pinning policy.
+func unpinnedActions(workflow string) ([]string, error) {
+	lines := strings.Split(workflow, "\n")
+	if len(lines) > MaxWorkflowLines {
+		return nil, fmt.Errorf("workflow has %d lines, want at most %d", len(lines), MaxWorkflowLines)
+	}
+	var unpinned []string
+	for index := 0; index < len(lines) && index < MaxWorkflowLines; index++ {
+		match := actionUsesLine.FindStringSubmatch(lines[index])
+		if match == nil || strings.HasPrefix(match[1], "./") || pinnedActionRef.MatchString(match[1]) {
+			continue
+		}
+		unpinned = append(unpinned, strings.TrimSpace(lines[index]))
+	}
+	return unpinned, nil
 }
 
 // validatePrior requires every Prior key to be a lowercase hex SHA-256 naming one of the

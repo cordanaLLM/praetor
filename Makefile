@@ -319,9 +319,10 @@ hooks-test:
 	python3 -B scripts/test_praetor_hook.py
 
 # The canonical hook sources (checkpoint.py and common.py, which adoption copies, and the
-# vendorable praetor.yml) must pass black, flake8 and yamllint as an adopter's hooks run
-# them. The templates adoption renders (lefthook.yml, block_evasion.py) are not linted yet
-# and stay open under BUG-782. The tools come from the hash-locked
+# vendorable praetor.yml) and the hook files adoption renders (lefthook.yml,
+# block_evasion.py) must pass black, flake8 and yamllint as an adopter's hooks run them,
+# and the documentation gate's locked YAML (praetor-docs.yml, markdownlint-cli2.yaml) must
+# pass yamllint the same way. The tools come from the hash-locked
 # .config/hook-lint/requirements.txt. A missing or mismatched tool is a skip with its reason
 # locally, and a failure where PRAETOR_HOOK_LINT_BIN names the pinned toolchain (CI).
 .PHONY: hooks-lint
