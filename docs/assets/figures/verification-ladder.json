@@ -16,15 +16,21 @@
   ],
   "evidence": [
     "cmd/standards-lsp/server.go:NewServer",
+    ".config/lefthook/scripts/hooks.py:pre_push",
+    ".config/lefthook/scripts/checks.py:run_full_gate",
     "internal/gating/pipeline.go:executeStages",
     "internal/gating/pipeline.go:runReceiptStage",
+    "internal/lockdown/keys.go:LoadSigningKey",
     "internal/lockdown/keys.go:VerifyPinnedReceiptFile",
     "internal/lockdown/receipts.go:GateOutputVersion",
+    "internal/forge/pr.go:ReceiptFenceToken",
     "internal/forge/pr.go:ValidatePRChecklistWithPolicy",
     "internal/forge/pr.go:verifyReceiptEnvelope",
-    "internal/forge/pr.go:applyReceiptVerification"
+    "internal/forge/pr.go:applyReceiptVerification",
+    "cmd/standardsctl/forge.go:runForgeValidatePR",
+    ".github/workflows/ci.yml:validate"
   ],
-  "spec_sha256": "ced645dc3f1114a9f78c8c9af3f26733b39b89553d17574a676394bdf2831e7e",
+  "spec_sha256": "17ccb211becdcdbefb09d4d770b2a9b7a85458c06a79adcd08bfd03ca82a647d",
   "engine": {
     "commit": "ccfe85b4851957ac2adf88b4a9ddf9668b2882f1",
     "sha256": "047b4bcb30562cca709be7175d11995cdda45cf4b89db1f6906c5805b26c6452"

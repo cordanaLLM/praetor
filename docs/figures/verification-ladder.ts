@@ -1,5 +1,5 @@
 // Verification ladder from editor LSP diagnostics through git hooks, gate stages, and CI PR admission,
-// drawn from the code at the evidence anchors across cmd/standards-lsp, internal/gating, and internal/forge.
+// drawn from the code at the evidence anchors across cmd/standards-lsp, internal/gating, internal/forge, .config/lefthook, and CI workflows.
 import type { PraetorFigure } from '../../tools/figures/types.ts';
 
 export default {
@@ -7,13 +7,19 @@ export default {
   alt: 'Four verification tiers from editor LSP to git hooks, local gate stages, and CI PR admission re-checking Exit-0 receipts.',
   evidence: [
     'cmd/standards-lsp/server.go:NewServer',
+    '.config/lefthook/scripts/hooks.py:pre_push',
+    '.config/lefthook/scripts/checks.py:run_full_gate',
     'internal/gating/pipeline.go:executeStages',
     'internal/gating/pipeline.go:runReceiptStage',
+    'internal/lockdown/keys.go:LoadSigningKey',
     'internal/lockdown/keys.go:VerifyPinnedReceiptFile',
     'internal/lockdown/receipts.go:GateOutputVersion',
+    'internal/forge/pr.go:ReceiptFenceToken',
     'internal/forge/pr.go:ValidatePRChecklistWithPolicy',
     'internal/forge/pr.go:verifyReceiptEnvelope',
     'internal/forge/pr.go:applyReceiptVerification',
+    'cmd/standardsctl/forge.go:runForgeValidatePR',
+    '.github/workflows/ci.yml:validate',
   ],
   describe: [
     'Verification escalates through four tiers: real-time editor diagnostics, local git hooks, the six-stage gate pipeline, and CI PR admission.',
