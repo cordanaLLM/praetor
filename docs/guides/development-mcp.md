@@ -383,11 +383,16 @@ clients and the two canonical personas (`repo-auditor.md`,
 `compiler.CompileAgents`. Before the first adoption step writes anything, adopt
 runs the same check over those files and every persona copy
 (`preflightAgentSurfaces` in `internal/adopt/adopt.go`), so a symlinked
-`.agents`, `.github` or persona directory fails adoption with nothing written.
-A dry run runs the check too; a step declined through `adoption.decline` is not
-checked. Every other file adoption writes, such as the pull request template or
-the workflows, still goes through the older writer (`writeRepoFile`), which
-refuses a link that leaves the repository but follows one that stays inside it.
+`.agents` or persona directory fails adoption with nothing written, and so does
+a symlinked `.github` when copilot is a selected client (its vendor file lives
+there). An existing selected vendor file or persona that is not UTF-8 text,
+holds a NUL byte or exceeds 1 MiB is refused instead of overwritten. A dry run
+runs the check too; a step declined through `adoption.decline` is not checked.
+Every other file adoption writes, `AGENTS.md`, the pull request template and the
+workflows included, still goes through the older writer (`writeRepoFile`), which
+refuses a link that leaves the repository but follows one that stays inside it:
+with copilot unselected, a symlinked `.github` fails later in the run, after
+files were written behind it.
 Tests: `internal/adopt/agent_surface_preflight_test.go`.
 
 `standards_audit` does not run the persona and skill checks yet; see
