@@ -1,0 +1,3 @@
+type: added
+title: make docs-references, part of verify-all, the light CI documentation step and every Platform Neutrality leg, fails when README.md or docs/ names a praetorctl command, subcommand or flag the code does not define, or a repository path that is not in the tree and is neither operator-owned, ignored nor named by the engine's source; the stale references it found in the guides now point at what exists
+breaking: false

@@ -350,6 +350,20 @@ type treeEntry struct {
 
 // ownerOnlyPath matches whole path segments: ".config/orgs/" accepts ".config/orgs/a.yaml" and
 // refuses ".config/orgsx/a.yaml"; an entry without a trailing slash names exactly one file.
+// IsOwnerOnlyReference reports whether rel, a slash-separated repository path, names an
+// owner-only prefix itself (with or without its trailing slash) or a path under one. The
+// public source never carries these paths, so documentation that names one describes operator
+// data an operational fork supplies, not a file missing from the engine (BUG-992).
+func IsOwnerOnlyReference(rel string) bool {
+	bare := strings.TrimSuffix(rel, "/")
+	for _, prefix := range ownerOnlyPrefixes {
+		if bare == strings.TrimSuffix(prefix, "/") {
+			return true
+		}
+	}
+	return ownerOnlyPath(rel)
+}
+
 func ownerOnlyPath(path string) bool {
 	for _, prefix := range ownerOnlyPrefixes {
 		if strings.HasSuffix(prefix, "/") {
