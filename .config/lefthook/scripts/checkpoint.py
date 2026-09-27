@@ -219,6 +219,12 @@ def _validate_config(value, pairs):
     ):
         raise CheckpointError("checkpoint boolean fields must be booleans")
     _validate_review_policy(value)
+    _validate_thresholds_and_refs(value)
+    _validate_repository(value["repository"], value["branch_prefixes"])
+    return value
+
+
+def _validate_thresholds_and_refs(value):
     if (
         type(value["commit_after_minutes"]) is not int
         or not 1 <= value["commit_after_minutes"] <= 1440
@@ -234,8 +240,6 @@ def _validate_config(value, pairs):
         for name in ("remote", "base")
     ):
         raise CheckpointError("checkpoint remote and base must be nonempty strings")
-    _validate_repository(value["repository"], value["branch_prefixes"])
-    return value
 
 
 def _validate_repository(repo, prefixes):
@@ -305,31 +309,22 @@ def _public(path):
     )
 
 
+WORKTREE_DIFF = ("--no-ext-diff", "--no-textconv", "--ignore-submodules=all")
+NAME_ONLY = ("--name-only", "-z", "--no-renames")
+
+
+def _diff_names(root, *options):
+    return _paths(_git(root, "diff", *WORKTREE_DIFF, *options))
+
+
 def _worktree(root):
-    common = ("--no-ext-diff", "--no-textconv", "--ignore-submodules=all")
-    tracked = _paths(
-        _git(root, "diff", *common, "--name-only", "-z", "--no-renames", "--")
-    )
+    tracked = _diff_names(root, *NAME_ONLY, "--")
     untracked = _paths(
         _git(root, "ls-files", "--others", "--exclude-standard", "-z", "--")
     )
-    staged = _paths(
-        _git(
-            root, "diff", *common, "--cached", "--name-only", "-z", "--no-renames", "--"
-        )
-    )
-    private_writes = _paths(
-        _git(
-            root,
-            "diff",
-            *common,
-            "--cached",
-            "--name-only",
-            "-z",
-            "--no-renames",
-            "--diff-filter=ACMRTUXB",
-            "--",
-        )
+    staged = _diff_names(root, "--cached", *NAME_ONLY, "--")
+    private_writes = _diff_names(
+        root, "--cached", *NAME_ONLY, "--diff-filter=ACMRTUXB", "--"
     )
     conflicts = _paths(_git(root, "ls-files", "-u", "-z"))
     public = {name for name in tracked | staged | untracked if _public(name)}
@@ -476,38 +471,24 @@ def _publication(root, cfg, branch, head, observation=None):
     return _pull_request(root, cfg, branch, head, observation)
 
 
-def _pull_request(root, cfg, branch, head, observation=None):
-    repo = cfg["repository"]
+def _open_pull_requests(root, cfg, branch):
     fields = "number,url,isDraft,headRefOid,headRefName,baseRefName"
     if cfg.get("require_checks", False):
         fields += ",statusCheckRollup"
-    raw = _run(
-        [
-            "gh",
-            "pr",
-            "list",
-            "--repo",
-            repo,
-            "--base",
-            cfg["base"],
-            "--head",
-            branch,
-            "--state",
-            "open",
-            "--limit",
-            "2",
-            "--json",
-            fields,
-        ],
-        root,
-        network=True,
-    )
+    command = ["gh", "pr", "list", "--repo", cfg["repository"], "--base", cfg["base"]]
+    command += ["--head", branch, "--state", "open", "--limit", "2", "--json", fields]
+    raw = _run(command, root, network=True)
     try:
-        prs = json.loads(raw)
+        return json.loads(raw)
     except json.JSONDecodeError as error:
         raise CheckpointError(
             f"gh returned malformed pull request data: {error}"
         ) from error
+
+
+def _pull_request(root, cfg, branch, head, observation=None):
+    repo = cfg["repository"]
+    prs = _open_pull_requests(root, cfg, branch)
     if not isinstance(prs, list) or len(prs) > 1:
         raise CheckpointError("pull request result is ambiguous")
     if not prs:
@@ -659,6 +640,22 @@ def _observe_worktree(root, cfg, event, include_paths, result):
     )
     result["enforce_batch_scope"] = cfg.get("enforce_batch_scope", False)
     result["branch"] = _branch(root)
+    head = _verified_head(root)
+    result["head"] = head
+    public = _worktree(root)
+    result["changed_count"] = len(public)
+    if include_paths:
+        result["public_paths"] = sorted(public)
+    result["commit_due"] = _commit_due(root, cfg, event, head, public)
+    result["due"] = result["commit_due"]
+    result["publication_status"] = "not_due"
+    if result["due"]:
+        _require_checkpoint_branch(result["branch"], cfg)
+        result["actions"] = list(PUBLIC_ACTIONS)
+    return head, public
+
+
+def _verified_head(root):
     head = (
         _git(root, "rev-parse", "--verify", "--quiet", "HEAD", allowed=(0, 1))
         .decode()
@@ -666,36 +663,29 @@ def _observe_worktree(root, cfg, event, include_paths, result):
     )
     if head and not OID.fullmatch(head):
         raise CheckpointError("HEAD is not a valid Git object ID")
-    result["head"] = head
-    public = _worktree(root)
-    result["changed_count"] = len(public)
-    if include_paths:
-        result["public_paths"] = sorted(public)
+    return head
+
+
+def _commit_due(root, cfg, event, head, public):
     age = (
         time.time()
         - int(_git(root, "show", "-s", "--format=%ct", "HEAD").decode().strip())
         if head
         else cfg["commit_after_minutes"] * 60
     )
-    result["commit_due"] = bool(public) and (
+    due = bool(public) and (
         age >= cfg["commit_after_minutes"] * 60
         or len(public) >= cfg["commit_after_files"]
     )
-    result["commit_due"] = result["commit_due"] or (
-        event == "stop" and cfg["on_stop"] and bool(public)
-    )
-    result["due"] = result["commit_due"]
-    result["publication_status"] = "not_due"
-    if result["due"]:
-        if not result["branch"]:
-            raise CheckpointError("checkpoint due on detached HEAD")
-        allowed = any(
-            result["branch"].startswith(prefix) for prefix in cfg["branch_prefixes"]
-        )
-        if result["branch"] in {"main", "master", cfg["base"]} or not allowed:
-            raise CheckpointError("checkpoint due on protected or nonallowed branch")
-        result["actions"] = list(PUBLIC_ACTIONS)
-    return head, public
+    return due or (event == "stop" and cfg["on_stop"] and bool(public))
+
+
+def _require_checkpoint_branch(branch, cfg):
+    if not branch:
+        raise CheckpointError("checkpoint due on detached HEAD")
+    allowed = any(branch.startswith(prefix) for prefix in cfg["branch_prefixes"])
+    if branch in {"main", "master", cfg["base"]} or not allowed:
+        raise CheckpointError("checkpoint due on protected or nonallowed branch")
 
 
 def _observe_publication(root, cfg, event, result):

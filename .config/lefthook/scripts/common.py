@@ -25,6 +25,17 @@ KILL_TREE_TIMEOUT = 10
 STOP_GRACE = 10
 STOP_POLL = 0.05
 SNAPSHOT_GIT_CONFIG = ("-c", "core.autocrlf=false")
+# A commit snapshot clones without checkout or hardlinks; the source keeps a remote name of
+# its own so the adopter's origin can be restored under "origin".
+SNAPSHOT_CLONE = (
+    "git",
+    "clone",
+    "--quiet",
+    "--no-hardlinks",
+    "--no-checkout",
+    "--origin",
+    "praetor-snapshot",
+)
 # The operating system already bounds a process environment, but the hook applies a lower
 # deterministic ceiling before scanning it. Git propagates command-line `-c` values to hooks
 # through GIT_CONFIG_COUNT plus indexed key/value variables or through GIT_CONFIG_PARAMETERS.
@@ -252,6 +263,19 @@ def _bounded_output(process, timeout, maximum):
     raise HookError("checkpoint command exceeded its read bound")
 
 
+def _spawn_bounded(args, cwd, env):
+    """Start args in a session of its own, stdin closed and both streams piped."""
+    return subprocess.Popen(
+        args,
+        cwd=cwd,
+        env=env,
+        start_new_session=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+
 def run_bounded(
     args,
     cwd=None,
@@ -270,15 +294,7 @@ def run_bounded(
     if not 0 < timeout <= 60 or not 0 < max_output <= 1024 * 1024:
         raise HookError("invalid checkpoint process bounds")
     try:
-        with subprocess.Popen(
-            args,
-            cwd=cwd,
-            env=env,
-            start_new_session=True,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        ) as process:
+        with _spawn_bounded(args, cwd, env) as process:
             try:
                 stdout = _bounded_output(process, timeout, max_output)
             except BaseException:
@@ -601,20 +617,7 @@ def _export_commit(dest, ref, env):
         "refs/remotes/origin/",
         env=env,
     )
-    run(
-        [
-            "git",
-            "clone",
-            "--quiet",
-            "--no-hardlinks",
-            "--no-checkout",
-            "--origin",
-            "praetor-snapshot",
-            source,
-            str(dest),
-        ],
-        env=env,
-    )
+    run([*SNAPSHOT_CLONE, source, str(dest)], env=env)
     if origin:
         run(["git", "remote", "add", "origin", origin], cwd=dest, env=env)
     for line in refs.decode().splitlines():
