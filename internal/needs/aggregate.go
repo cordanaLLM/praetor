@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -74,6 +76,7 @@ func AggregateFleetWithHarvest(ctx context.Context, fleetRoot string, framework 
 		return nil, mErr
 	}
 
+	agg.nameFrameworks()
 	compileGapsAndLeaderboard(agg.report, agg.gapPackages)
 	return agg.report, agg.result()
 }
@@ -88,6 +91,8 @@ type fleetAggregation struct {
 	seen        map[string]struct{}
 	// names maps each repository name on the leaderboard to the path of its first row.
 	names map[string]string
+	// scored maps every configured framework a row was scored against to its basis.
+	scored map[string]string
 }
 
 // newFleetAggregation prepares an aggregation over discovered repositories.
@@ -106,7 +111,37 @@ func newFleetAggregation(fleetRoot string, fwIndex *FrameworkIndex, discovered i
 		gapPackages: make(map[CapabilityKey]map[string]struct{}),
 		seen:        make(map[string]struct{}),
 		names:       make(map[string]string),
+		scored:      make(map[string]string),
 	}
+}
+
+// recordFramework notes a configured framework a row was scored against (RowFramework).
+func (a *fleetAggregation) recordFramework(index *FrameworkIndex) {
+	if index == nil || index.Basis == FrameworkNotConfigured {
+		return
+	}
+	a.scored[index.Name] = index.Basis
+}
+
+// nameFrameworks sets the framework and coverage basis the report header names: the selected
+// framework when it is configured, then every other framework a row was scored against in
+// name order, so a host that configures only a non-go target names that target instead of
+// reporting the fleet not configured. With neither the selection is kept.
+func (a *fleetAggregation) nameFrameworks() {
+	names, bases := make([]string, 0, len(a.scored)+1), make([]string, 0, len(a.scored)+1)
+	if a.framework.Basis != FrameworkNotConfigured {
+		names, bases = append(names, a.framework.Name), append(bases, a.framework.Basis)
+	}
+	for _, name := range slices.Sorted(maps.Keys(a.scored)) {
+		if slices.Contains(names, name) {
+			continue
+		}
+		names, bases = append(names, name), appendUniqueStr(bases, a.scored[name])
+	}
+	if len(names) == 0 {
+		return
+	}
+	a.report.Framework, a.report.CoverageBasis = strings.Join(names, ", "), strings.Join(bases, ", ")
 }
 
 // result reports whether the aggregation produced a usable report.
@@ -178,7 +213,7 @@ func (a *fleetAggregation) addHarvested(repoNeeds *RepoNeeds) bool {
 // discovered on disk are distinct repositories whatever they are named, so none is ever
 // merged away; a name two rows share is qualified by location in the consumer lists.
 func (a *fleetAggregation) add(repoNeeds *RepoNeeds) {
-	applyFrameworkCoverage(a.framework, repoNeeds, a.registry)
+	a.recordFramework(applyFrameworkCoverage(a.framework, repoNeeds, a.registry))
 	a.report.ScannedRepositories++
 	a.report.Leaderboard = append(a.report.Leaderboard, *repoNeeds)
 
@@ -302,19 +337,24 @@ func repoIdentityKey(repository string) string {
 //
 // A demand of a language whose target declares a contract (LoadRegistry) is reconciled
 // against that contract instead; idx is the go framework. Selected standard-library imports
-// take the retained role the framework declares for them, and never count as demand.
-func applyFrameworkCoverage(idx *FrameworkIndex, repoNeeds *RepoNeeds, registry *AnalyzerRegistry) {
+// take the retained role the framework declares for them, and never count as demand. The
+// row names, and takes its readiness basis from, the framework RowFramework derives from
+// those reconciliations, which it returns: a row is not configured only when none of its
+// languages has a configured framework.
+func applyFrameworkCoverage(idx *FrameworkIndex, repoNeeds *RepoNeeds, registry *AnalyzerRegistry) *FrameworkIndex {
 	if idx == nil || repoNeeds == nil {
-		return
+		return idx
 	}
 	registry = registryOrDefault(registry)
 	for i := range repoNeeds.Dependencies {
 		reconcileDependency(registry.frameworkFor(repoNeeds.Dependencies[i].Language, idx), &repoNeeds.Dependencies[i])
 	}
 	reconcileStandardImports(idx, repoNeeds)
+	scored := RowFramework(registry, repoNeeds, idx)
+	repoNeeds.Framework = scored.Name
 	calculateReadiness(repoNeeds)
-	repoNeeds.Framework = idx.Name
-	repoNeeds.Readiness.Basis = idx.Basis
+	repoNeeds.Readiness.Basis = scored.Basis
+	return scored
 }
 
 // reconcileStandardImports applies the foundation, wrapper or tooling role idx declares for

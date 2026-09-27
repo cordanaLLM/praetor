@@ -2,6 +2,8 @@ package main
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -147,4 +149,70 @@ func TestNeedsFleetEpicAndMinerUnconfigured_3D(t *testing.T) {
 	if err != nil || strings.Contains(out, "Readiness") {
 		t.Fatalf("empty fleet epic = %v\n%s", err, out)
 	}
+}
+
+// pythonOnlyWorkstation writes a workstation document that configures only the python
+// target, declared by the placeholder contract of the needs engine tests.
+func pythonOnlyWorkstation(t *testing.T) string {
+	t.Helper()
+	contract, err := os.ReadFile(filepath.Join("..", "..", "internal", "needs", "testdata", "contracts", "py.capabilities.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	writeFixtureFile(t, dir, "py.capabilities.yaml", string(contract))
+	writeFixtureFile(t, dir, "workstation.yaml", "framework:\n  targets:\n    python:\n      module: example.com/acme/py\n"+
+		"      builder_kits: [acme/py]\n      contract: py.capabilities.yaml\n")
+	return filepath.Join(dir, "workstation.yaml")
+}
+
+// newPythonFleet builds a dev root holding one python repository whose fastapi and requests
+// the python contract replaces and whose weird-lib nothing declares.
+func newPythonFleet(t *testing.T) (root, repo string) {
+	t.Helper()
+	root = t.TempDir()
+	repo = filepath.Join(root, "acme", "pyapp")
+	writeFixtureFile(t, repo, ".git/HEAD", "ref: refs/heads/main\n")
+	writeFixtureFile(t, repo, "requirements.txt", "fastapi==0.110\nrequests==2.31\nweird-lib==1.0\n")
+	return root, repo
+}
+
+// A host that configures only a python target renders its python repository at 66.7% in
+// every needs command, as needs scan does, never as not configured.
+func TestNeedsPythonOnlyHost_3D(t *testing.T) {
+	isolateDevRootEnv(t)
+	root, repo := newPythonFleet(t)
+	t.Setenv(config.WorkstationConfigEnv, pythonOnlyWorkstation(t))
+	// Positive: aggregate, report, migrate and the fleet epic listing name the python target.
+	for _, tc := range []struct {
+		args []string
+		want []string
+	}{
+		{[]string{"aggregate", "--dev-dir=" + root}, []string{"**Target Framework**: `example.com/acme/py`",
+			"**Overall Fleet Target Framework Coverage**: 66.7%", "| 66.7% | 2 | 1 |"}},
+		{[]string{"report", "--path=" + repo}, []string{"Framework: example.com/acme/py (declared) | Mapping availability: 66.7%"}},
+		{[]string{"migrate", "--path=" + repo}, []string{"-> example.com/acme/py ===", "Mapping availability: 66.7% | Coverage basis: catalog-declared"}},
+		{[]string{"epic", "--dev-dir=" + root}, []string{"(Readiness: 66.7%,"}},
+	} {
+		out, err := runNeedsCapture(t, tc.args...)
+		if err != nil {
+			t.Fatalf("%v: %v", tc.args, err)
+		}
+		mustContain(t, out, tc.want...)
+		if strings.Contains(out, unsetAvailability) || strings.Contains(out, "nothing to rewrite") {
+			t.Fatalf("%v rendered not configured on a python-only host:\n%s", tc.args, out)
+		}
+	}
+	// Negative: --apply is refused for want of evidence, not for want of a framework.
+	if _, err := runNeedsCapture(t, "migrate", "--path="+repo, "--apply"); err == nil || errors.Is(err, needs.ErrFrameworkNotConfigured) {
+		t.Fatalf("python-only migrate --apply = %v; want the evidence refusal", err)
+	}
+	// Boundary: a go repository no target configures is still n/a beside the python one.
+	writeFixtureFile(t, filepath.Join(root, "acme", "goapp"), ".git/HEAD", "ref: refs/heads/main\n")
+	writeFixtureFile(t, filepath.Join(root, "acme", "goapp"), "go.mod", "module example.com/goapp\n\ngo 1.27\n\nrequire github.com/spf13/cobra v1.8.0\n")
+	out, err := runNeedsCapture(t, "aggregate", "--dev-dir="+root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, out, "**Target Framework**: `example.com/acme/py`", "| 66.7% | 2 | 1 |", "| "+unsetAvailability+" | 0 | 1 |")
 }

@@ -229,6 +229,16 @@ operator configures one.
   declares, and a report does so for every language but go, whose framework the report
   selects as above (`TestLoadRegistryDeclaresTargetContracts`,
   `TestAcmeContractsLoadForEveryLanguage`).
+- **The framework a row names.** A report, a fleet row, a migration plan and an epic name
+  the framework the row's own language is reconciled against when that one is configured,
+  else the first configured framework another of its languages is reconciled against, as
+  `needs scan` does (`needs.RowFramework`). A host that configures only a python target
+  therefore reports a python repository against the python contract, with a percentage,
+  and a mixed go and python repository against the python contract too; only a row none
+  of whose languages has a target is not configured. The `needs aggregate` header names
+  the selected go framework when one is configured, then every other framework a row was
+  scored against (`internal/needs/row_framework_test.go`,
+  `TestNeedsPythonOnlyHost_3D` in `cmd/standardsctl/needs_unconfigured_test.go`).
 
 ### Configuring a framework
 
@@ -274,7 +284,9 @@ them configures the exported contracts under `framework.targets.<lang>`.
 ### Not configured
 
 With no `framework.targets` entry, every command still classifies dependencies and says
-the framework is not configured instead of inventing one. Every mapping availability or
+the framework is not configured instead of inventing one. The same holds for a single row
+none of whose languages has a target, on a host that configures other languages
+([The framework a row names](#framework-targets)). Every mapping availability or
 readiness figure renders as `n/a (no target framework configured)`, never 0% and never
 the empty-denominator 100% (`needs.MappingAvailability`; ADR-0014 §4; tests in
 `internal/needs/unconfigured_test.go` and `cmd/standardsctl/needs_unconfigured_test.go`):

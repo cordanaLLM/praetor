@@ -95,6 +95,30 @@ func (r *AnalyzerRegistry) frameworkFor(language string, fallback *FrameworkInde
 	return fallback
 }
 
+// RowFramework returns the framework a row scored against selected is reported against
+// (ADR-0014 §4): the framework its own language's demands are reconciled against
+// (frameworkFor) when that one is configured, else the first configured framework the
+// demands of another of its languages are reconciled against, the way a scan takes the
+// first framework a merged result names (mergeRepoNeeds), else selected. A host that
+// configures only a non-go target thus reports that target's rows against its contract, not
+// as not configured. A nil registry selects DefaultRegistry.
+func RowFramework(registry *AnalyzerRegistry, row *RepoNeeds, selected *FrameworkIndex) *FrameworkIndex {
+	if row == nil {
+		return selected
+	}
+	registry = registryOrDefault(registry)
+	languages := append([]string{row.Language}, row.Languages...)
+	for i := range row.Dependencies {
+		languages = append(languages, row.Dependencies[i].Language)
+	}
+	for _, language := range languages {
+		if index := registry.frameworkFor(language, selected); index != nil && index.Basis != FrameworkNotConfigured {
+			return index
+		}
+	}
+	return selected
+}
+
 // reconcileDeclared maps the demands of one analysed project onto the packages its
 // language's contract declares, when one is loaded.
 func (r *AnalyzerRegistry) reconcileDeclared(language string, repoNeeds *RepoNeeds) {

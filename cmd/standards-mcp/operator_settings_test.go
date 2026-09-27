@@ -104,3 +104,28 @@ func TestNeedsReportShowsDeprecatedKey(t *testing.T) {
 		t.Fatalf("a manifest using the new key reported a deprecation:\n%s", current.Content[0].Text)
 	}
 }
+
+// The MCP report of a host that configures only a python target names that target for a
+// python repository, as needs scan does; a go repository there stays not configured.
+func TestNeedsReportPythonOnlyHost(t *testing.T) {
+	contract, err := os.ReadFile(filepath.Join("..", "..", "internal", "needs", "testdata", "contracts", "py.capabilities.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	writeFixtureFile(t, dir, "py.capabilities.yaml", string(contract))
+	writeFixtureFile(t, dir, "workstation.yaml", "framework: {targets: {python: {module: example.com/acme/py, "+
+		"builder_kits: [acme/py], contract: py.capabilities.yaml}}}\n")
+	t.Setenv(config.WorkstationConfigEnv, filepath.Join(dir, "workstation.yaml"))
+	// Positive: the python repository is reported against the python contract.
+	srv, root := newFixtureServer(t)
+	writeFixtureFile(t, root, "requirements.txt", "fastapi==0.110\nrequests==2.31\nweird-lib==1.0\n")
+	python := callTool(t, srv, "standards_needs_report", nil)
+	expectText(t, "python target", python, "Framework: example.com/acme/py (declared) | Mapping availability: 66.7%")
+	expectText(t, "python contract", python, "Capability contract: py.capabilities.yaml (declared packages, not source-observed)")
+	// Negative and boundary: a go repository on the same host has no configured framework.
+	goSrv, goRoot := newFixtureServer(t)
+	writeFixtureFile(t, goRoot, "go.mod", "module example.com/consumer\n\ngo 1.27\nrequire github.com/jackc/pgx/v5 v5.7.2\n")
+	goReport := callTool(t, goSrv, "standards_needs_report", nil)
+	expectText(t, "go not configured", goReport, "Framework: "+needs.FrameworkNotConfiguredText+" | Mapping availability: n/a (no target framework configured)")
+}

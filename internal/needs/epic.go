@@ -414,7 +414,7 @@ func regenerateRepoEpic(ctx context.Context, repo *fleetRepo, opts FleetEpicOpti
 		return nil, errRepoNotPrepared
 	}
 
-	analysis, err := analyzeMigrationWith(ctx, opts.Framework, func(framework *FrameworkIndex) (*RepoNeeds, error) {
+	analysis, err := analyzeMigrationWith(ctx, opts.Framework, opts.Registry, func(framework *FrameworkIndex) (*RepoNeeds, error) {
 		return scanRepositoryWithFramework(ctx, repo, framework, opts.Registry)
 	})
 	if err != nil {
