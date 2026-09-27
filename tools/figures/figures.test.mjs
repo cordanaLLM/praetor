@@ -1,5 +1,6 @@
-// Tests for the figure build (build.mjs) and the keyboard shim (keyboard.ts): positive, negative
-// and boundary cases for every validation rule, the derived text, and the stale-output check.
+// Tests for the figure build (build.mjs), the keyboard shim (keyboard.ts) and the smoke test's pure
+// helpers (smoke.mjs): positive, negative and boundary cases for every validation rule, the derived
+// text, the stale-output check, the built-figure marker and the autoplay assertion.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -11,6 +12,7 @@ import {
   engineHash, listSpecs, main, normalizedEdges, render, renderAll, sha256, svgSize, validate, walkLayout,
 } from './build.mjs';
 import { nextTab } from './keyboard.ts';
+import { holdsFigure, stepAdvanced } from './smoke.mjs';
 
 const VENDOR = JSON.parse(readFileSync(join(ROOT, 'third_party/interfig/vendor.json'), 'utf8'));
 const box = (id, label = id.toUpperCase()) => ({ id, label });
@@ -246,4 +248,37 @@ test('tab keys rove, wrap at both ends, and ignore everything else', () => {
   assert.equal(nextTab('ArrowRight', 0, 1), 0);
   assert.equal(nextTab('ArrowRight', 0, 0), -1);
   assert.equal(nextTab('ArrowRight', -1, 3), -1);
+});
+
+test('a built figure is found with its class quoted or bare, and nothing else is', () => {
+  const rendered = '<figure class="praetor-figure" id="fig-x" data-figure="x"><picture></picture></figure>';
+  // htmlmin with remove_optional_attribute_quotes, as mkdocs-minify-plugin runs it.
+  const minified = '<figure class=praetor-figure id=fig-x data-figure=x><picture></picture></figure>';
+  assert.ok(holdsFigure(rendered));
+  assert.ok(holdsFigure(minified));
+  assert.ok(holdsFigure("<figure id=fig-x class='praetor-figure'>"));
+  assert.ok(holdsFigure('<figure class="wide praetor-figure dark">'));
+  assert.ok(holdsFigure('<figure class=praetor-figure>'));
+  assert.ok(!holdsFigure('<div class="praetor-figure__player"></div>'));
+  assert.ok(!holdsFigure('<figure class=praetor-figure__text>'));
+  assert.ok(!holdsFigure('<figure class="praetor-figures">'));
+  assert.ok(!holdsFigure('<div class="praetor-figure">'));
+  assert.ok(!holdsFigure('<code>&lt;figure class=&quot;praetor-figure&quot;&gt;</code>'));
+  assert.ok(!holdsFigure(''));
+});
+
+test('autoplay counts only a new selected tab or a longer progress line', () => {
+  const at = (selected, progress) => ({ selected, progress });
+  assert.ok(stepAdvanced(at(0, 0.1), at(1, 0)));
+  assert.ok(stepAdvanced(at(0, 0.1), at(0, 0.2)));
+  assert.ok(stepAdvanced(at(3, 0.9), at(0, 0)));
+  // A paused player: same tab, same progress, however many packets it draws.
+  assert.ok(!stepAdvanced(at(0, 0), at(0, 0)));
+  assert.ok(!stepAdvanced(at(0, 0.5), at(0, 0.5)));
+  assert.ok(!stepAdvanced(at(0, 0.5), at(0, 0.2)));
+  // No progress line to read, no selected tab, or no reading at all proves nothing.
+  assert.ok(!stepAdvanced(at(0, Number.NaN), at(0, Number.NaN)));
+  assert.ok(!stepAdvanced(at(-1, Number.NaN), at(-1, Number.NaN)));
+  assert.ok(!stepAdvanced(at(0, 0), at(-1, Number.NaN)));
+  assert.ok(!stepAdvanced(undefined, at(0, 0.3)));
 });

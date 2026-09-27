@@ -363,7 +363,9 @@ One checker, per HISS-19:
 - **`npm --prefix tools/figures run smoke`** uses Playwright Chromium against `site/` served by a
   bounded `node:http` server (module scripts do not load from `file://`). After scrolling, each
   page must have as many `.praetor-figure .interfig` as `figure.praetor-figure`, and no
-  `pageerror` or console error. A reduced-motion run shows no packets. Locally the target skips
+  `pageerror` or console error. Autoplay must advance the active step of every figure with
+  scenario tabs without input, and each such figure must show a packet, under autoplay or after
+  its tabs are started. A reduced-motion run shows no packets. Locally the target skips
   with a stated reason when no browser is installed (HISS-21).
 - **cifilter.** `internal/cifilter/filter.go` `isCode` gains `.tsx` and `.jsx`. Without them a
   sync touching only `index.tsx` runs no gates.

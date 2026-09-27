@@ -340,7 +340,8 @@ dropping the figures hook fails without a site build. `make docs-figures-check`
 (also part of `make verify-all`) runs the figure build's tests and type check,
 rebuilds every figure and compares it byte for byte with the committed files,
 and runs `sources`. The Pages workflow also runs the Chromium smoke test, which
-fails when a figure does not mount the player or moves no packet.
+fails when a figure does not mount the player, when autoplay does not advance
+a figure's active step, or when a figure shows no packet.
 
 Both sites share one JSON-LD template, `docs/presets/mkdocs/overrides/main.html`,
 which reads the author and repository from the rendering site's `mkdocs.yml`

@@ -1,0 +1,4 @@
+type: fixed
+title: "The Pages figure smoke test passes again when a figure's first scenarios move no packet (lattice-join), yet still fails a player whose autoplay does not run and finds figures in minified HTML; the diagram checker's exclude_docs wildcards no longer match across a slash"
+issue: "#500"
+breaking: false

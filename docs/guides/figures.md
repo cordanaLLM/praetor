@@ -148,7 +148,7 @@ GitHub keeps `figure`, `figcaption`, `picture`, `img` and `details`, and strips 
 | `npm --prefix tools/figures run check` | a spec breaks a rule, a committed output differs from a fresh build, or the player chunk exceeds its budget |
 | `python3 -B scripts/docs_diagrams.py sources` | a JSON hash no longer matches its spec, the engine or its SVGs; a JSON lacks the size of either SVG; a spec or JSON is missing its pair; a fence names an unknown figure; a root-site page holds a Mermaid fence; the README block differs; an evidence anchor is gone |
 | `python3 -B scripts/docs_diagrams.py site --config mkdocs.yml --docs docs --site site` | after `mkdocs build`: a figure did not render, an image does not resolve, the page does not load the loader, `registry.json` lacks the slug, or a page holds a Mermaid fence |
-| `npm --prefix tools/figures run smoke -- --site <dir>` | in Chromium, against a built site: a figure did not mount the player, a page with scenario tabs moved no packet under autoplay or after starting any tab, a packet moved under reduced motion, or a page logged an error |
+| `npm --prefix tools/figures run smoke -- --site <dir>` | in Chromium, against a built site: a figure did not mount the player; a figure with scenario tabs did not advance its active step under autoplay within 8 s (another selected tab or a longer progress line, since a paused player still draws its first packets), or showed no packet under autoplay or after starting any of its tabs; a packet showed under reduced motion; or a page logged an error |
 
 `make docs-figures-check` runs the tests, the type check, `check` and `sources`, and
 `make docs-diagrams-test` replays the checker's fixtures; both are part of `make verify-all`. The
