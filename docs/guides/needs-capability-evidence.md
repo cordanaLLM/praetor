@@ -213,8 +213,11 @@ through the environment and the install manifest.
 language's target resolves to as a version-1 contract: the selected go framework
 (`--framework` selects a checkout), or another language's configured contract or
 built-in catalog. A framework without a contract of its own carries the built-in
-catalog's replacement, adapter, relationship and foundation claims, so the file can be
-configured as `framework.targets.<lang>.contract` in place of the built-in data. An entry
+catalog's replacement, adapter, relationship and foundation claims, and the file is the
+starting point for configuring `framework.targets.<lang>.contract`. It is not yet a drop-in
+replacement: for targets other than go, a report built from an exported contract can grant
+coverage the built-in tables do not, so the built-in tables stay until the parity check that
+ADR-0014 requires passes. An entry
 the contract grammar cannot carry, such as a capability key without a dot, is listed as
 `[SKIP]` instead of being dropped silently (`internal/needs/framework_export_test.go`,
 `cmd/standardsctl/needs_contract_test.go`).
