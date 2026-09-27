@@ -219,3 +219,31 @@ func TestRegistryScoresEachLanguageAgainstItsTarget(t *testing.T) {
 		t.Fatalf("configured typescript target = %s %+v", configured.Framework, configured.Dependencies)
 	}
 }
+
+func TestRegistryFromPolicy_3D(t *testing.T) {
+	// Boundary: no settings document keeps the built-in targets.
+	registry, err := RegistryFromPolicy(t.Context(), nil)
+	if err != nil || registry.Targets().For("go").Module != defaultFrameworkModule {
+		t.Fatalf("nil policy registry = %v", err)
+	}
+	dir := t.TempDir()
+	writeFixture(t, dir, "kit.yaml", acmeContract)
+	load := func(body string) (*AnalyzerRegistry, error) {
+		writeFixture(t, dir, "workstation.yaml", body)
+		policy, err := config.LoadOperatorPolicy(t.Context(), config.SettingsSelection{Workstation: config.SettingsDocument{Path: filepath.Join(dir, "workstation.yaml")}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return RegistryFromPolicy(t.Context(), policy)
+	}
+	// Positive: the configured target and its contract, resolved against the document.
+	registry, err = load("framework: {targets: {go: {module: example.com/acme/kit, contract: kit.yaml}}}\n")
+	if err != nil || registry.Targets().For("go").Module != "example.com/acme/kit" || registry.frameworkFor("typescript", nil) != nil {
+		t.Fatalf("configured registry = %v", err)
+	}
+	// Negative: a contract naming another framework than its target's module refuses to load.
+	if _, err := load("framework: {targets: {go: {module: example.com/other/kit, contract: kit.yaml}}}\n"); err == nil ||
+		!strings.Contains(err.Error(), "load framework targets") {
+		t.Fatalf("mismatched contract = %v", err)
+	}
+}

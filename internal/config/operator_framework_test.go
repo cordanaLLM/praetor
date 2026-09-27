@@ -245,3 +245,26 @@ func TestOperatorFrameworkReplayAndDigestGolden(t *testing.T) {
 		t.Fatalf("sealed digest does not verify: %v", err)
 	}
 }
+
+func TestSelectOperatorPolicy_3D(t *testing.T) {
+	dir := t.TempDir()
+	workstation := writePolicyFile(t, dir, "workstation.yaml", "framework: {targets: {go: {module: example.com/acme/kit, contract: kit.yaml}}}\n")
+	// Positive: the selected document loads, and its relative contract resolves against it.
+	policy, err := SelectOperatorPolicy(t.Context(), SettingsRequest{WorkstationFlag: workstation})
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract, err := policy.ResolveOperatorPath("framework.targets.go.contract", policy.OperatorSettings().Framework.Targets["go"].Contract)
+	if err != nil || contract != filepath.Join(dir, "kit.yaml") {
+		t.Fatalf("contract = %q, %v", contract, err)
+	}
+	// Negative: a selected document that does not exist is an error, never the defaults.
+	if _, err := SelectOperatorPolicy(t.Context(), SettingsRequest{FleetFlag: filepath.Join(dir, "missing.yaml")}); err == nil {
+		t.Fatal("a missing selected document loaded")
+	}
+	// Boundary: nothing selected is a nil policy with the built-in settings.
+	none, err := SelectOperatorPolicy(t.Context(), SettingsRequest{Getenv: func(string) string { return "" }})
+	if err != nil || none != nil || len(none.OperatorSettings().Framework.Targets) != 0 {
+		t.Fatalf("nothing selected = %v, %v", none, err)
+	}
+}
