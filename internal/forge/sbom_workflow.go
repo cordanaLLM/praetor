@@ -17,6 +17,10 @@ import (
 const (
 	goreleaserActionPath = "goreleaser/goreleaser-action"
 	maxRunScriptFields   = 4096
+	// praetorNoticesSubcommand is the sbom subcommand that renders THIRD-PARTY-NOTICES.md
+	// tables and writes no SBOM document. runSBOM in cmd/standardsctl/supplychain.go
+	// dispatches to it only when it is the first argument after sbom.
+	praetorNoticesSubcommand = "notices"
 )
 
 // sbomGeneratorActions are the actions, lower-cased, whose step writes or attests an SBOM
@@ -131,11 +135,21 @@ func runInvokesSBOMGenerator(fields []string) bool {
 			return true
 		case fields[i] == "syft" && hasOutputFlag(fields[i+1:]):
 			return true
-		case i+1 < len(fields) && fields[i+1] == "sbom" && isPraetorBinary(fields[i]):
+		case invokesPraetorSBOM(fields[i:]):
 			return true
 		}
 	}
 	return false
+}
+
+// invokesPraetorSBOM reports whether fields start with this tool's sbom command in its
+// generating form. sbom notices writes THIRD-PARTY-NOTICES.md, not an SBOM, so a step that
+// runs only it is no evidence for require_sbom.
+func invokesPraetorSBOM(fields []string) bool {
+	if len(fields) < 2 || fields[1] != "sbom" || !isPraetorBinary(fields[0]) {
+		return false
+	}
+	return len(fields) == 2 || fields[2] != praetorNoticesSubcommand
 }
 
 // hasOutputFlag reports whether a Syft invocation names an output document; without one

@@ -274,8 +274,9 @@ the `Repository: <owner>/<name>` line from the manifest's `repository` block
   generates one (`adopt.SBOMWorkflowDrift`, pinned by
   `TestServer_Positive_PlanShowsThePinnedProfilePolicy`). Any workflow step that writes an
   SBOM satisfies that requirement, including a GoReleaser release whose configuration declares
-  `sboms`; a file named `sbom.yml` that runs no generator does not
-  (`internal/forge/sbom_workflow_test.go`).
+  `sboms`; a file named `sbom.yml` that runs no generator does not, and neither does a step
+  that runs only `praetorctl sbom notices`, which rewrites `THIRD-PARTY-NOTICES.md` and writes
+  no SBOM (`internal/forge/sbom_workflow_test.go`).
 - A manifest without `.standards.lock` shows the built-in defaults plus the
   overrides and opens with `[INFO] no .standards.lock: built-in defaults and
   repository overrides only`

@@ -65,6 +65,15 @@ func TestSBOMWorkflowAcceptsDedicatedAndReleaseJobs(t *testing.T) {
 			".github/workflows/release.yml": sbomJob("      - run: goreleaser release --config build/release.yaml\n"),
 			"build/release.yaml":            "sboms:\n  - artifacts: binary\n",
 		},
+		"praetorctl sbom as the last field": {
+			".github/workflows/sbom.yml": sbomJob("      - run: ./bin/praetorctl sbom\n"),
+		},
+		"notices check followed by a real sbom run": {
+			".github/workflows/release.yml": sbomJob("      - run: praetorctl sbom notices --check && praetorctl sbom --out sbom.json\n"),
+		},
+		"notices named after a flag is the generator": {
+			".github/workflows/release.yml": sbomJob("      - run: praetorctl sbom --out sbom.json notices\n"),
+		},
 	}
 	for name, files := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -77,7 +86,8 @@ func TestSBOMWorkflowAcceptsDedicatedAndReleaseJobs(t *testing.T) {
 }
 
 // Negative: the file name alone, an installer with no generator, a generator only named in
-// a comment, and a GoReleaser release without an sboms block are not SBOM evidence.
+// a comment, a GoReleaser release without an sboms block, and this tool's sbom notices
+// subcommand are not SBOM evidence.
 func TestSBOMWorkflowRejectsWorkflowsThatWriteNoSBOM(t *testing.T) {
 	cases := map[string]map[string]string{
 		"empty sbom.yml job": {
@@ -101,6 +111,13 @@ func TestSBOMWorkflowRejectsWorkflowsThatWriteNoSBOM(t *testing.T) {
 			".goreleaser.yaml":              "sboms:\n  - artifacts: archive\n",
 		},
 		"no workflows at all": {"README.md": "# none\n"},
+		// sbom notices renders THIRD-PARTY-NOTICES.md tables and writes no SBOM document.
+		"praetorctl sbom notices check": {
+			".github/workflows/sbom.yml": sbomJob("      - run: ./bin/praetorctl sbom notices --check\n"),
+		},
+		"go run standardsctl sbom notices": {
+			".github/workflows/sbom.yml": sbomJob("      - run: go run ./cmd/standardsctl sbom notices\n"),
+		},
 	}
 	for name, files := range cases {
 		t.Run(name, func(t *testing.T) {
