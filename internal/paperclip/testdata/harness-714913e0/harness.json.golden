@@ -1,11 +1,11 @@
 {
   "version": 1,
-  "platform": "cordanaLLM/praetor",
+  "platform": "acme/legacy",
   "operating_contract": [
     "Branch push != shipping. Open PR required. Work ships after merge.",
     "Rebase onto main immediately: run git fetch origin \u0026\u0026 git rebase origin/main before proposing.",
     "Rule 0 Terminal Disposition: every run ends with structured disposition: in_review or blocked.",
-    "Ed25519 Exit-0 Receipts: mint via `praetorctl gate run`; attach receipt to every PR proposal.",
+    "Ed25519 Exit-0 Receipts: attach cryptographic execution receipts to all PR proposals.",
     "Timeout != failure. Re-check open PRs before retry; prevent duplicate PRs.",
     "Text register internal: `caveman` skill: fragments, no filler, verbatim code/paths/errors; facts, paths, commands, verdict."
   ],

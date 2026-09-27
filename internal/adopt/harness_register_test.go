@@ -18,7 +18,7 @@ func registerTestPlan() *VerificationPlan {
 // The harness carries the default block, and that block is byte-for-byte what the
 // adoptee's own compile-context renders without a manifest: a fresh adoption verifies.
 func TestHarnessCarriesTheDefaultRegisterSection(t *testing.T) {
-	harness, err := buildAgentHarness("fixture", "framework", registerTestPlan())
+	harness, err := buildAgentHarness(adoptedFacts("", "fixture", "framework", registerTestPlan()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestHarnessRefreshKeepsOneRegisterSection(t *testing.T) {
 		t.Fatal(err)
 	}
 	section := config.RegisterSectionPrefix + block + "\n"
-	harness, err := buildAgentHarness("fixture", "framework", registerTestPlan())
+	harness, err := buildAgentHarness(adoptedFacts("", "fixture", "framework", registerTestPlan()))
 	if err != nil {
 		t.Fatal(err)
 	}

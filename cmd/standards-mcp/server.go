@@ -583,7 +583,7 @@ func (s *Server) createExplainRuleTool() (mcp.Tool, error) {
 			return mcp.ErrorResult(fmt.Sprintf("Unknown rule %q. Valid rules: %s", ruleID, ruleList)), nil
 		}
 
-		// The catalog text internal/hisscatalog authors once for this tool and the generated wiki.
+		// The catalog text internal/hisscatalog authors once, closed by its adopted-repository line.
 		return mcpTextResult(explanation, mcpTextShared), nil
 	}
 
@@ -707,18 +707,20 @@ func loadNeedsRegistry(ctx context.Context) (*needs.AnalyzerRegistry, error) {
 // ---- HISS rule explanations ----------------------------------------------------------------
 
 // knownRuleIDs returns the explainable rule identifiers in ascending order: every invariant
-// of the HISS catalog in internal/hisscatalog, the same registry the generated wiki matrix renders.
+// of the HISS catalog in internal/hisscatalog, the same registry the generated wiki matrix and
+// the adopted AGENTS.md harness render.
 func knownRuleIDs() []string {
 	return hisscatalog.RuleIDs()
 }
 
-// lookupRuleExplanation returns the authoritative HISS rule description.
+// lookupRuleExplanation returns the authoritative HISS rule description, closed by the line
+// that states what an adopted repository enforces (BUG-804).
 func lookupRuleExplanation(ruleID string) (string, bool) {
 	rule, ok := hisscatalog.LookupRule(ruleID)
 	if !ok {
 		return "", false
 	}
-	return rule.Explanation(), true
+	return rule.AdoptedExplanation(), true
 }
 
 // ---- JSON-RPC dispatch ----------------------------------------------------------------------

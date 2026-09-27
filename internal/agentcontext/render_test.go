@@ -1,6 +1,9 @@
 package agentcontext
 
 import (
+	"os"
+	"path"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -172,5 +175,129 @@ func TestVendorTargetPathsMatchCompiledFiles(t *testing.T) {
 	paths[0] = "mutated.md"
 	if again := VendorTargetPaths(); again[0] != "CLAUDE.md" {
 		t.Fatalf("a caller's edit leaked into the shared list: %q", again)
+	}
+}
+
+// TestVendorTargetsMatchCompiledFiles: the exported registry names exactly the files
+// CompileContent writes, in order, each with its own section, so a surface reading it cannot
+// name a file compile-context does not write or miss one it does (BUG-840).
+func TestVendorTargetsMatchCompiledFiles(t *testing.T) {
+	result, err := NewTranspiler().CompileContent("# Fixture\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targets := allVendorTargets(t)
+	if len(targets) != len(result.Files) || len(targets) != len(testPaths) {
+		t.Fatalf("registry lists %d targets, compile writes %d", len(targets), len(result.Files))
+	}
+	sections := map[string]bool{}
+	for i, target := range targets {
+		if target.Path != result.Files[i].RelativePath || target.Path != testPaths[i] {
+			t.Errorf("target %d = %q, compiled %q", i, target.Path, result.Files[i].RelativePath)
+		}
+		if target.Section == "" || sections[target.Section] || vendorFor("## "+target.Section) != target.Section {
+			t.Errorf("target %q section %q is empty, repeated or not recognised", target.Path, target.Section)
+		}
+		sections[target.Section] = true
+	}
+}
+
+// namesTarget reports whether rule names target in a code span, exactly or by a glob; the
+// frozen clarity floor (internal/compiler/testdata/agents-floor.txt) keeps the Cursor glob.
+func namesTarget(rule, target string) bool {
+	spans := strings.Split(rule, "`")
+	for i := 1; i < len(spans); i += 2 {
+		if matched, err := path.Match(spans[i], target); err == nil && matched {
+			return true
+		}
+	}
+	return false
+}
+
+// TestRepositoryAgentsNamesEveryVendorTarget: this repository's own transpiler rule names
+// each compiled file; it had named four of the six (BUG-840).
+func TestRepositoryAgentsNamesEveryVendorTarget(t *testing.T) {
+	if namesTarget("edit `.cursor/rules/*.mdc` and `CLAUDE.md`", ".codex/rules.md") ||
+		!namesTarget("edit `.cursor/rules/*.mdc`", ".cursor/rules/hiss-invariants.mdc") {
+		t.Fatal("namesTarget matches the wrong spans")
+	}
+	data, err := os.ReadFile(filepath.Join("..", "..", "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rule string
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.Contains(line, "**Context transpiler first.**") {
+			rule = line
+		}
+	}
+	if rule == "" {
+		t.Fatal("AGENTS.md has no transpiler rule")
+	}
+	for _, target := range allVendorTargets(t) {
+		if !namesTarget(rule, target.Path) {
+			t.Errorf("AGENTS.md transpiler rule omits %s", target.Path)
+		}
+	}
+}
+
+// allVendorTargets is VendorTargets with no agent_clients selection, which must equal
+// AllVendorTargets: every compiled file.
+func allVendorTargets(t *testing.T) []VendorTarget {
+	t.Helper()
+	targets, err := VendorTargets(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := AllVendorTargets()
+	if len(all) != len(targets) {
+		t.Fatalf("AllVendorTargets lists %d files, the nil selection %d", len(all), len(targets))
+	}
+	for i := range all {
+		if all[i] != targets[i] {
+			t.Fatalf("AllVendorTargets[%d] = %+v, nil selection %+v", i, all[i], targets[i])
+		}
+	}
+	return targets
+}
+
+// TestVendorTargetsReturnsACopy: editing the returned slice leaves the registry intact.
+func TestVendorTargetsReturnsACopy(t *testing.T) {
+	first := allVendorTargets(t)
+	first[0].Path = "edited"
+	if allVendorTargets(t)[0].Path != testPaths[0] {
+		t.Fatal("VendorTargets exposed the registry")
+	}
+}
+
+// TestVendorTargetsFollowsClientSelection: the list names what compile-context writes under
+// agent_clients. Positive: a subset keeps exactly the files CompileContent writes for it, in
+// order. Boundary: an empty selection names none. Negative: an unknown id fails as the
+// transpiler does, instead of naming every file.
+func TestVendorTargetsFollowsClientSelection(t *testing.T) {
+	selection := []string{"codex", "Claude"}
+	tr := NewTranspiler()
+	tr.Clients = selection
+	result, err := tr.CompileContent("# Fixture\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	targets, err := VendorTargets(selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 2 || len(result.Files) != 2 {
+		t.Fatalf("selection names %d targets, compile writes %d", len(targets), len(result.Files))
+	}
+	for i, target := range targets {
+		if target.Path != result.Files[i].RelativePath {
+			t.Errorf("target %d = %q, compiled %q", i, target.Path, result.Files[i].RelativePath)
+		}
+	}
+	if none, err := VendorTargets([]string{}); err != nil || len(none) != 0 {
+		t.Fatalf("empty selection = %v, %v", none, err)
+	}
+	if _, err := VendorTargets([]string{"claude", "vim"}); err == nil || !strings.Contains(err.Error(), "unknown agent client id(s): vim") {
+		t.Fatalf("unknown client accepted: %v", err)
 	}
 }

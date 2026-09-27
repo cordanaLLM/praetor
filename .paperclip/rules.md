@@ -2,29 +2,32 @@
 
 ## Operating Contract
 
-- Pushing a branch is NOT shipping: an open PR is required, but still not
-  shipped work until merged.
+- Branch push != shipping. Open PR required. Work ships after merge.
 - Rebase onto main immediately: run git fetch origin && git rebase origin/main
   before proposing.
-- Rule 0 Terminal Disposition: every run must end with a structured disposition
-  (in_review or blocked).
-- Ed25519 Exit-0 Receipts: attach cryptographic execution receipts to all PR
-  proposals.
-- Timeout Resilience: timeout is not failure; re-check open PRs before retrying
-  to prevent duplicate PRs.
+- Rule 0 Terminal Disposition: every run ends with structured disposition:
+  in_review or blocked.
+- Ed25519 Exit-0 Receipts: mint via `praetorctl gate run`; attach receipt to
+  every PR proposal.
+- Timeout != failure. Re-check open PRs before retry; prevent duplicate PRs.
 - Text register internal: `caveman` skill: fragments, no filler, verbatim
   code/paths/errors; facts, paths, commands, verdict.
 
 ## AGit Push Protocol
 
+<!-- markdownlint-disable MD013 -->
+
 ```bash
 git push origin HEAD:refs/for/main -o topic=<issue-id> && git push origin HEAD:refs/heads/paperclip/<issue-id>
 ```
 
+<!-- markdownlint-enable MD013 -->
+
 ## High-Integrity Invariants
 
 - HISS-01: Acyclic DAG control flow (no recursion)
-- HISS-02: Scalar upper bounds on all loops; context timeout on all input and output
+- HISS-02: Scalar upper bounds on all loops; context timeout on all input and
+  output
 - HISS-04: McCabe Cyclomatic <= 10, Cognitive <= 15, Func LOC <= 75
 - HISS-07: Zero .unwrap() / .expect(); all errors handled or wrapped
 - HISS-10: Zero-warning tolerance across compiler, linters, and formatters

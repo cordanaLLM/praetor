@@ -11,6 +11,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/lockdown"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -35,7 +36,10 @@ const (
 // the review; it updates no local ref, so the second push of the same commit to a review branch
 // records a remote-tracking ref that VerifyRun reads as local proof HEAD left the machine. The
 // explicit destination never pushes a local main to the remote main, whatever branch is checked
-// out.
+// out. It is prescribed whatever forge origin names: the AGit refs/for push opens a review only
+// on a forge that implements AGit (Forgejo, Gitea), the manifest declares no forge kind, and a
+// form chosen from the remote's host name would be a guess of the kind BUG-852 removed from
+// identity resolution. That residual of BUG-804 is stated in docs/guides/adoption-verification.md.
 const agitPushFormat = "git push origin HEAD:refs/for/main -o topic=<issue-id> && " +
 	"git push origin HEAD:refs/heads/paperclip/<issue-id>"
 
@@ -65,7 +69,7 @@ func SynthesizeHarness(ctx context.Context, repoPath string) (*Harness, error) {
 		"Branch push != shipping. Open PR required. Work ships after merge.",
 		"Rebase onto main immediately: run git fetch origin && git rebase origin/main before proposing.",
 		"Rule 0 Terminal Disposition: every run ends with structured disposition: in_review or blocked.",
-		"Ed25519 Exit-0 Receipts: attach cryptographic execution receipts to all PR proposals.",
+		receiptContract(ctx, repoPath),
 		"Timeout != failure. Re-check open PRs before retry; prevent duplicate PRs.",
 		// A Paperclip run reports to an orchestrating agent, so its product is internal text.
 		config.RegisterDirective(config.TextRegisterInternal),
@@ -94,7 +98,9 @@ func SynthesizeHarness(ctx context.Context, repoPath string) (*Harness, error) {
 // Caveman. The directive row was absent before the text register (#204) and changed form with
 // the caveman skill (#225); the review-branch push joined the AGit push in #458. They are
 // literals, not calls, so a later change to the current text cannot silently rewrite what
-// "earlier output" means.
+// "earlier output" means. cavemanOperatingContract and cavemanInvariants are the one Caveman
+// release (#487) before the receipt row followed the pinned key (receiptContract): its own
+// directive and push protocol, no other combination.
 var (
 	priorOperatingContract = []string{
 		"Pushing a branch is NOT shipping: an open PR is required, but still not shipped work until merged.",
@@ -111,6 +117,23 @@ var (
 	priorAGitPushFormats = []string{
 		"git push origin HEAD:refs/for/main -o topic=<issue-id>",
 		"git push origin HEAD:refs/for/main -o topic=<issue-id> && git push origin HEAD:refs/heads/paperclip/<issue-id>",
+	}
+	cavemanOperatingContract = []string{
+		"Branch push != shipping. Open PR required. Work ships after merge.",
+		"Rebase onto main immediately: run git fetch origin && git rebase origin/main before proposing.",
+		"Rule 0 Terminal Disposition: every run ends with structured disposition: in_review or blocked.",
+		"Ed25519 Exit-0 Receipts: attach cryptographic execution receipts to all PR proposals.",
+		"Timeout != failure. Re-check open PRs before retry; prevent duplicate PRs.",
+		"Text register internal: `caveman` skill: fragments, no filler, verbatim code/paths/errors; facts, paths, commands, verdict.",
+	}
+	cavemanInvariants = []string{
+		"HISS-01: Acyclic DAG control flow (no recursion)",
+		"HISS-02: Scalar upper bounds on all loops; context timeout on all input and output",
+		"HISS-04: McCabe Cyclomatic <= 10, Cognitive <= 15, Func LOC <= 75",
+		"HISS-07: Zero .unwrap() / .expect(); all errors handled or wrapped",
+		"HISS-10: Zero-warning tolerance across compiler, linters, and formatters",
+		"HISS-15: 3D testing mandatory (Positive, Negative, Boundary >= 2 checks/dim)",
+		"HISS-16: Canonical AGENTS.md compiled to vendor harnesses",
 	}
 	priorInvariants = []string{
 		"HISS-01: Acyclic DAG control flow (no recursion)",
@@ -199,15 +222,25 @@ func releaseText(harness, rules []byte) (string, string, bool) {
 }
 
 // priorHarnesses is every earlier synthesis for current's identity: each register directive
-// form under each push protocol.
+// form under each push protocol, then the Caveman release (cavemanHarness).
 func priorHarnesses(current *Harness) []Harness {
-	priors := make([]Harness, 0, len(priorRegisterDirectives)*len(priorAGitPushFormats))
+	priors := make([]Harness, 0, len(priorRegisterDirectives)*len(priorAGitPushFormats)+1)
 	for _, push := range priorAGitPushFormats {
 		for _, directive := range priorRegisterDirectives {
 			priors = append(priors, priorHarness(current, directive, push))
 		}
 	}
-	return priors
+	return append(priors, cavemanHarness(current))
+}
+
+// cavemanHarness is the Caveman release's synthesis for current's identity: its contract with
+// the unconditional receipt row, under the review-branch push protocol it shipped with.
+func cavemanHarness(current *Harness) Harness {
+	prior := *current
+	prior.OperatingContract = append([]string(nil), cavemanOperatingContract...)
+	prior.AGitPushFormat = priorAGitPushFormats[len(priorAGitPushFormats)-1]
+	prior.Invariants = cavemanInvariants
+	return prior
 }
 
 func priorHarness(current *Harness, directive, push string) Harness {
@@ -239,6 +272,32 @@ func readHarnessFiles(ctx context.Context, repoPath string) ([]byte, []byte, boo
 		return nil, nil, false, fmt.Errorf("read %s: %w", rulesFile, err)
 	}
 	return harnessData, rulesData, rulesExist, nil
+}
+
+// receiptContract is the operating-contract row on Exit-0 receipts. A receipt is minted by
+// `praetorctl gate run` and verifies only against the Ed25519 key .standards.yaml pins
+// (receipt.public_key, lockdown.PinnedPublicKey); without one, Disposition.Validate and VerifyRun
+// refuse any receipt attached (lockdown.ErrNoPinnedKey). So the row prescribes attaching
+// receipts only when that key is pinned, and otherwise says a run attaches none, instead of
+// prescribing a receipt nothing in the repository can verify (BUG-804).
+func receiptContract(ctx context.Context, repoPath string) string {
+	if receiptKeyPinned(ctx, repoPath) {
+		return "Ed25519 Exit-0 Receipts: mint via `praetorctl gate run`; attach receipt to every PR proposal."
+	}
+	return "Ed25519 Exit-0 Receipts: none. " + manifestFile + " pins no valid receipt.public_key -> attach no receipt; " +
+		"pin key from `praetorctl gate keygen` to require receipts."
+}
+
+// receiptKeyPinned reports whether the repository's manifest pins a well-formed receipt key.
+// A missing manifest, a missing key and a malformed one all mean no receipt can verify. The
+// manifest read is bounded by ctx (lockdown.PinnedPublicKey).
+func receiptKeyPinned(ctx context.Context, repoPath string) bool {
+	manifestPath, err := util.ConfinePath(repoPath, manifestFile)
+	if err != nil {
+		return false
+	}
+	_, err = lockdown.PinnedPublicKey(ctx, manifestPath)
+	return err == nil
 }
 
 // resolvePlatform derives owner/name through config.ResolveRepositoryIdentity (ADR-0014 §3):

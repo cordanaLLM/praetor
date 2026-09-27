@@ -54,7 +54,7 @@ make verify-all
    - Before filing: search open issues + pull requests. Defect may be tracked, fixed on unmerged branch, or contradicted by shipped code. No duplicates: duplicate costs reviewer more than agent.
    - Check own open work periodically, not only at task end: PR stale when base moves; receipt certifies commit gone after rebase; branch green an hour ago blocked by later merge. Re-read state; never assume last result holds.
 
-6. **Context transpiler first.** Never edit `CLAUDE.md`, `.cursor/rules/*.mdc`, `.windsurfrules`, `.github/copilot-instructions.md` manually. All agent instruction updates -> `AGENTS.md`, then:
+6. **Context transpiler first.** Never edit `CLAUDE.md`, `.cursor/rules/*.mdc`, `.github/copilot-instructions.md`, `.windsurfrules`, `.gemini/GEMINI.md`, `.codex/rules.md` manually. All agent instruction updates -> `AGENTS.md`, then:
    ```bash
    standardsctl compile-context
    ```

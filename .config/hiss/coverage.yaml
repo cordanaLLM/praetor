@@ -17,6 +17,9 @@
 #   not_applicable the axiom does not apply to this language
 #   manual         upheld by review, not by a runnable check -- never report it as a gate
 #
+# A rule's name comes from the HISS rule catalog (internal/hisscatalog); an entry may repeat
+# it as `title:` but never differ from it, so this file cannot keep a second list of names.
+#
 # This file is deliberately incomplete. It covers the invariants whose behaviour has been
 # measured directly; the remaining rules and languages are being added with their fixtures
 # rather than declared ahead of the evidence. An absent claim is honest; an unbacked one is
@@ -24,7 +27,6 @@
 version: 1
 rules:
   - id: HISS-01
-    title: Acyclic Control Flow
     coverage:
       - language: go
         state: partial
@@ -101,7 +103,6 @@ rules:
           self-call, and a call from inside that nested def reaches its local. Mutual and
           indirect recursion and recursion through a lambda are held as gaps.
   - id: HISS-02
-    title: Bounded Loops and I/O Timeouts
     coverage:
       - language: go
         state: partial
@@ -144,7 +145,6 @@ rules:
           while True is reported with arbitrary spacing. Other unbounded shapes such as
           while 1 and the I/O-timeout half are not decided.
   - id: HISS-04
-    title: Complexity Bounds
     coverage:
       - language: go
         state: partial
@@ -187,7 +187,6 @@ rules:
           Function length is decided by brace tracking. The other three caps have no native
           check.
   - id: HISS-08
-    title: Static Determinism
     coverage:
       - language: c
         state: partial
@@ -210,7 +209,6 @@ rules:
           syscall exec family are refused by forbidigo in the same gate, so the fixtures are
           held as gaps for the scanner rather than as coverage it does not have.
   - id: HISS-07
-    title: Checked Errors
     coverage:
       - language: go
         state: partial
@@ -251,7 +249,6 @@ rules:
           top-level def main. raise SystemExit and an exit imported under another name are
           held as a gap.
   - id: HISS-09
-    title: Reference Safety
     coverage:
       - language: rust
         state: partial
@@ -280,7 +277,6 @@ rules:
         mechanism: none
         rationale: No Python reference-safety rule exists.
   - id: HISS-10
-    title: Zero-Warning Cascade
     coverage:
       - language: go
         state: partial
@@ -364,7 +360,6 @@ rules:
           flat config it scaffolds into adopters (templates/node/eslint.config.mjs.tmpl) lints
           JavaScript only, and nothing here runs it
   - id: HISS-11
-    title: Hermetic Supply Chain
     coverage:
       - language: go
         state: partial
@@ -435,7 +430,6 @@ rules:
           pull unpinned third-party code into the browser at run time (a CDN script tag without
           subresource integrity, and a floating dynamic import) and neither
   - id: HISS-12
-    title: Secret Leak Prevention
     coverage:
       - language: go
         state: partial
@@ -512,7 +506,6 @@ rules:
           extension changed nothing about gitleaks' behaviour, which is the point: the secret scan is
           the one cluster mechanism whose coverage does not collapse on the two unparsed languages.
   - id: HISS-13
-    title: Monotonic Debt Ratchet
     coverage:
       - language: go
         state: partial
@@ -597,7 +590,6 @@ rules:
           ratchet replay returned V_total 0 -> 0, monotonic=PASS, ratchet=PASS, and the scan report
           counted it under UnscannedByExtension as .svelte:1.
   - id: HISS-14
-    title: Append-Only ABI
     coverage:
       - language: go
         state: partial
@@ -678,7 +670,6 @@ rules:
           fails silently at run time rather than at build time, since a parent passing the removed
           prop keeps compilin
   - id: HISS-15
-    title: 3D Test Discipline
     coverage:
       - language: go
         state: partial

@@ -1,0 +1,3 @@
+type: fixed
+title: The Paperclip harness prescribes minting an Ed25519 Exit-0 receipt with praetorctl gate run and attaching it to PR proposals only when .standards.yaml pins a well-formed receipt.public_key, and otherwise tells the run to attach none, since every receipt is refused without a pinned key, and adopt still refreshes an unmodified harness that carries the earlier unconditional receipt row; the AGit push line is still prescribed on every forge, and the adoption guide states that residual
+breaking: false

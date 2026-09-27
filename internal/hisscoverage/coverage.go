@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 )
 
 // State is the evidence state of one invariant in one language.
@@ -96,11 +98,22 @@ type Coverage struct {
 	Rationale string `yaml:"rationale" json:"rationale"`
 }
 
-// Rule is one invariant's declared evidence across languages.
+// Rule is one invariant's declared evidence across languages. Its name is the HISS catalog's
+// (hisscatalog.Rule.Title, CatalogTitle): Title is optional and, when declared, must repeat
+// that title exactly, so coverage.yaml cannot carry a second, drifting list of rule names.
 type Rule struct {
 	ID       string     `yaml:"id" json:"id"`
-	Title    string     `yaml:"title" json:"title"`
+	Title    string     `yaml:"title,omitempty" json:"title,omitempty"`
 	Coverage []Coverage `yaml:"coverage" json:"coverage"`
+}
+
+// CatalogTitle returns the rule's title from the HISS catalog, or the declared Title for an
+// identifier the catalog does not define (which Validate refuses).
+func (r Rule) CatalogTitle() string {
+	if rule, ok := hisscatalog.LookupRule(r.ID); ok {
+		return rule.Title
+	}
+	return r.Title
 }
 
 // Catalog is the declared enforcement evidence for every invariant.
@@ -136,6 +149,16 @@ func validateRule(rule *Rule, seen map[string]struct{}) error {
 	}
 	if _, dup := seen[rule.ID]; dup {
 		return fmt.Errorf("%w: rule %s declared twice", ErrInvalidCatalog, rule.ID)
+	}
+	// The HISS catalog is the one list of invariants; evidence for a rule it does not define
+	// would describe enforcement of nothing any other surface names.
+	registered, known := hisscatalog.LookupRule(rule.ID)
+	if !known {
+		return fmt.Errorf("%w: rule %s is not a registered invariant", ErrInvalidCatalog, rule.ID)
+	}
+	if rule.Title != "" && rule.Title != registered.Title {
+		return fmt.Errorf("%w: rule %s title %q differs from the HISS catalog title %q; drop it or repeat the catalog's",
+			ErrInvalidCatalog, rule.ID, rule.Title, registered.Title)
 	}
 	seen[rule.ID] = struct{}{}
 	if len(rule.Coverage) == 0 {

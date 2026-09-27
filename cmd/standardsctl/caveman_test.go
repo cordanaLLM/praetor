@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 )
 
@@ -461,5 +462,29 @@ func TestCavemanFloorBoundary(t *testing.T) {
 	ids := writeFixtureFile(t, dir, "ids.md", many.String())
 	if out, err := runCavemanCLI(t, "", "floor", ids, empty); err == nil || !strings.Contains(out, "(+5 more findings)") {
 		t.Fatalf("finding bound: err=%v\n%s", err, out)
+	}
+}
+
+// TestCavemanCheckJudgesHarnessTailLikeTheGate: the command reproduces the context gate on an
+// adopted AGENTS.md. Positive: a terse tail passes. Negative: one prose paragraph below the
+// harness fails although the long harness keeps whole-file density under the limit. Boundary:
+// without the end marker the same text passes, as the gate would judge it.
+func TestCavemanCheckJudgesHarnessTailLikeTheGate(t *testing.T) {
+	dir := t.TempDir()
+	harness := "# Fixture Agent Operating Harness\n\n" +
+		strings.Repeat("1. **Verify.** Run `make verify-all` before turn end; read source first, then edit; report exit status.\n", 30) +
+		compiler.HarnessEndMarker + "\n\n---\n\n"
+	terse := writeFixtureFile(t, dir, "terse/AGENTS.md", harness+cavemanTerse)
+	if out, err := runCavemanCLI(t, "", "check", "--kind=context", terse); err != nil {
+		t.Fatalf("terse tail: err=%v\n%s", err, out)
+	}
+	prose := writeFixtureFile(t, dir, "prose/AGENTS.md", harness+cavemanProse)
+	out, err := runCavemanCLI(t, "", "check", "--kind=context", prose)
+	if err == nil || !strings.Contains(out, "repository text below the harness:") {
+		t.Fatalf("prose below the harness passed: err=%v\n%s", err, out)
+	}
+	unmarked := writeFixtureFile(t, dir, "unmarked/AGENTS.md", strings.Replace(harness, compiler.HarnessEndMarker, "", 1)+cavemanProse)
+	if out, err := runCavemanCLI(t, "", "check", "--kind=context", unmarked); err != nil {
+		t.Fatalf("unmarked file judged by section: err=%v\n%s", err, out)
 	}
 }

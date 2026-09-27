@@ -23,7 +23,7 @@ func TestGeneratedArtefacts_Positive_AgreeOnOneBinary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("rendering README governance: %v", err)
 	}
-	harness, err := buildAgentHarness("praetor-test", "go", plan)
+	harness, err := buildAgentHarness(adoptedFacts("", "praetor-test", "go", plan))
 	if err != nil {
 		t.Fatalf("rendering the agent harness: %v", err)
 	}

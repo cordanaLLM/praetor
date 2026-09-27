@@ -1362,7 +1362,7 @@ func TestBuildMakefile_DetectedCommands(t *testing.T) {
 			if mk := buildMakefile(plan); !strings.Contains(mk, tc.command) {
 				t.Errorf("detected toolchain command absent: %s", mk)
 			}
-			harness, err := buildAgentHarness("r", "unrelated-governance-profile", plan)
+			harness, err := buildAgentHarness(adoptedFacts("", "r", "unrelated-governance-profile", plan))
 			if err != nil {
 				t.Fatal(err)
 			}

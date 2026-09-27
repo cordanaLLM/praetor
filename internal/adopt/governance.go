@@ -8,6 +8,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/readmegovernance"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -415,12 +416,21 @@ func buildSecurityPolicy() string {
 	)
 }
 
+// buildADRIndex renders the ADR index. It cites HISS-14 by the catalog's own title
+// (hisscatalog.LookupRule): the index once credited HISS-14 with an "immutable numbering
+// lattice" that no rule states (BUG-779).
 func buildADRIndex() string {
+	appendOnly := "HISS-14"
+	if rule, ok := hisscatalog.LookupRule(appendOnly); ok {
+		appendOnly = rule.Reference()
+	}
 	return markdownDocument(
 		"# Architectural Decision Records (ADRs)",
 		"",
-		"This directory documents key architectural decisions following the HISS-14",
-		"immutable numbering lattice.",
+		"This directory documents key architectural decisions. Records are append-only",
+		"like public APIs under "+appendOnly+".",
+		"An accepted record keeps its number and text; a changed decision is a new",
+		"record that supersedes it.",
 		"",
 		"| Number | Date | Title | Status |",
 		"| :--- | :--- | :--- | :--- |",

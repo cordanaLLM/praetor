@@ -146,7 +146,7 @@ func TestAdoptAgentWritesRefuseLinkPlantedAfterPreflight(t *testing.T) {
 		repoPath := t.TempDir()
 		real := linkInRootDir(t, repoPath, ".cursor", "shared/cursor")
 		s := &adoptSession{repoPath: repoPath, report: &AdoptReport{}}
-		harness, err := buildAgentHarness("fixture", "framework", registerTestPlan())
+		harness, err := buildAgentHarness(adoptedFacts("", "fixture", "framework", registerTestPlan()))
 		if err != nil {
 			t.Fatal(err)
 		}

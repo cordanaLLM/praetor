@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/caveman"
@@ -62,23 +63,54 @@ func (l ContextLint) Summary() string {
 		l.Report.ProseWords, l.Report.Density(), caveman.DefaultMaxArticleDensity, l.MaskedLines)
 }
 
+// HarnessEndMarker terminates the Agent Operating Harness praetor adoption writes into an
+// adopted AGENTS.md (internal/adopt). Everything after it is the repository's own text.
+const HarnessEndMarker = "<!-- praetor:harness:end -->"
+
 // LintContext runs the caveman lint over the canonical AGENTS.md at agentsMdPath. It reads no
 // manifest: the context surface is fixed to the internal register in every repository, so
 // there is no setting to consult and no opt-out. The whole file is linted, the praetor
-// harness and whatever the repository wrote below it included; only the rendered register
-// block is masked (MaskRegisterBlock). Findings return ErrContextProse, wrapped with the
-// first findings and the fix.
+// harness and whatever the repository wrote below it included (CheckContextText). Findings
+// return ErrContextProse, wrapped with the first findings and the fix.
 func LintContext(ctx context.Context, agentsMdPath string) (ContextLint, error) {
 	data, err := contextopt.ReadSnapshot(ctx, agentsMdPath)
 	if err != nil {
 		return ContextLint{}, fmt.Errorf("caveman lint: read %s: %w", agentsMdPath, err)
 	}
-	text, masked := MaskRegisterBlock(string(data))
-	lint := ContextLint{Report: caveman.Check(text, caveman.Options{Kind: caveman.KindContext}), MaskedLines: masked}
+	report, masked := CheckContextText(string(data), caveman.Options{Kind: caveman.KindContext})
+	lint := ContextLint{Report: report, MaskedLines: masked}
 	if !lint.Report.Passed() {
 		return lint, fmt.Errorf("%w: %s", ErrContextProse, describeLintFindings(agentsMdPath, lint.Report.Findings))
 	}
 	return lint, nil
+}
+
+// CheckContextText is the context gate's verdict on canonical AGENTS.md text, shared by
+// LintContext and `praetorctl caveman check` so the command reproduces the gate. The rendered
+// register block is masked (MaskRegisterBlock) and the whole text is checked. When the text
+// carries the adoption harness, the repository's part after HarnessEndMarker is also judged
+// for article density on its own: density is a whole-text ratio, and the long article-free
+// harness would otherwise dilute a paragraph of prose written below it until it passed. The
+// tail finding is reported at the first line after the marker. It returns the report and the
+// number of masked lines.
+func CheckContextText(content string, opts caveman.Options) (caveman.Report, int) {
+	text, masked := MaskRegisterBlock(content)
+	report := caveman.Check(text, opts)
+	marker := strings.Index(text, HarnessEndMarker)
+	if marker < 0 {
+		return report, masked
+	}
+	tailLine := strings.Count(text[:marker], "\n") + 2
+	tail := caveman.Check(text[marker+len(HarnessEndMarker):], opts)
+	for _, finding := range tail.Findings {
+		if finding.Rule != caveman.RuleArticleDensity {
+			continue // Line rules already fired in the whole-text check.
+		}
+		report.Findings = append(report.Findings, caveman.Finding{Line: tailLine, Rule: finding.Rule,
+			Excerpt: "repository text below the harness: " + finding.Excerpt})
+	}
+	sort.SliceStable(report.Findings, func(i, j int) bool { return report.Findings[i].Line < report.Findings[j].Line })
+	return report, masked
 }
 
 // MaskRegisterBlock blanks the text register block, markers included, and returns how many
