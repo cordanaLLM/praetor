@@ -2,6 +2,8 @@ package needs
 
 import (
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // CatalogEntry classifies a known Go library into a standard capability. It names no
@@ -93,13 +95,13 @@ var CapabilityCatalog = []CatalogEntry{
 // The match is anchored on a path boundary: an entry matches the import path itself or a
 // package inside it, never a different module that merely starts with the same
 // characters. Without the boundary, "github.com/uptrace/bunrouter" would inherit the
-// "github.com/uptrace/bun" classification.
+// "github.com/uptrace/bun" classification. The boundary is util.ModuleImportDir.
 func MatchPackage(importPath string) (CatalogEntry, bool) {
 	var bestMatch CatalogEntry
 	longestPrefix := 0
 
 	for _, entry := range CapabilityCatalog {
-		if !matchesModuleBoundary(importPath, entry.Package) {
+		if _, inside := util.ModuleImportDir(importPath, entry.Package); !inside {
 			continue
 		}
 		if len(entry.Package) > longestPrefix {
@@ -109,15 +111,6 @@ func MatchPackage(importPath string) (CatalogEntry, bool) {
 	}
 
 	return bestMatch, longestPrefix > 0
-}
-
-// matchesModuleBoundary reports whether importPath is modulePath itself or a package
-// nested inside it.
-func matchesModuleBoundary(importPath, modulePath string) bool {
-	if modulePath == "" {
-		return false
-	}
-	return importPath == modulePath || strings.HasPrefix(importPath, modulePath+"/")
 }
 
 // CatalogMapping classifies a non-Go dependency into a standard capability. Like

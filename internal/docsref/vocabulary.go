@@ -308,18 +308,19 @@ func (t *sourceTree) packageName(dir string) string {
 	return name
 }
 
-// imports maps each local name a file binds to a module package directory.
+// imports maps each local name a file binds to a module package directory. Only packages
+// below the module root are tracked; the specs and the module boundary are read through
+// util.GoImportSpecs and util.ModuleImportDir.
 func (t *sourceTree) imports(file *ast.File) map[string]string {
 	bound := map[string]string{}
-	for _, spec := range file.Imports {
-		importPath, err := strconv.Unquote(spec.Path.Value)
-		if err != nil || !strings.HasPrefix(importPath, t.module+"/") {
+	for _, spec := range util.GoImportSpecs(file) {
+		dir, inside := util.ModuleImportDir(spec.Path, t.module)
+		if !inside || dir == "." {
 			continue
 		}
-		dir := strings.TrimPrefix(importPath, t.module+"/")
-		name := t.packageName(dir)
-		if spec.Name != nil {
-			name = spec.Name.Name
+		name := spec.Name
+		if name == "" {
+			name = t.packageName(dir)
 		}
 		bound[name] = dir
 	}

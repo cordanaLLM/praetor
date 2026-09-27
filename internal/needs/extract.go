@@ -407,11 +407,12 @@ func classifyGoDemand(pkg, ver, externalPrefix, externalNote string) DependencyD
 // ResolveModuleRoot reduces an import path to the module that owns it. A module listed in
 // go.mod wins (longest matching path); otherwise the conventional module root for the
 // hosting domain is used, so that github.com/foo/bar/v4/sub resolves to
-// github.com/foo/bar/v4 rather than counting as an independent dependency.
+// github.com/foo/bar/v4 rather than counting as an independent dependency. A listed module
+// owns an import path under util.ModuleImportDir.
 func ResolveModuleRoot(importPath string, directDeps map[string]string) string {
 	best := ""
 	for mod := range directDeps {
-		if importPath != mod && !strings.HasPrefix(importPath, mod+"/") {
+		if _, inside := util.ModuleImportDir(importPath, mod); !inside {
 			continue
 		}
 		if len(mod) > len(best) {

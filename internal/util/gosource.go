@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-// maxGoImportSpecs bounds the import specs GoImportPaths reads from one file (HISS-02).
+// maxGoImportSpecs bounds the import specs GoImportSpecs reads from one file (HISS-02).
 const maxGoImportSpecs = 4096
 
 // IsGoNonTestSource reports whether path names a Go source file outside Go's test surface:
@@ -49,18 +49,27 @@ func IsGoMajorVersionElement(s string) bool {
 	return true
 }
 
-// GoImportPaths returns the import paths a parsed Go file declares, unquoted, in source
-// order. A spec whose path does not unquote, or unquotes to nothing, comes from a partial
-// AST and contributes no path. Blank, dot and renamed imports count like plain ones: each
-// makes go build read the imported package.
+// GoImportSpec is one import declaration of a parsed Go file: the name it is written with
+// ("" for an unrenamed import, "_" for a blank one, "." for a dot import, otherwise the
+// alias) and its unquoted import path.
+type GoImportSpec struct {
+	Name string
+	Path string
+}
+
+// GoImportSpecs returns the import declarations of a parsed Go file, in source order, reading
+// at most maxGoImportSpecs specs. A nil spec, a spec without a path, and a path that does
+// not unquote or unquotes to nothing come from a partial AST and are skipped.
 //
-// The needs import scan and the DevContainer bootstrap closure both read imports through
-// this one rule, whatever parser mode produced the file.
-func GoImportPaths(file *ast.File) []string {
+// Every reader that skips such a spec reads imports through this one rule: the HISS import
+// table (hiss.FileImports), GoImportPaths, the docs vocabulary tree and the caveman MCP
+// source reader. A reader that must refuse an undecodable import, or needs the spec's
+// position, walks file.Imports itself: the needs import rewrite does both.
+func GoImportSpecs(file *ast.File) []GoImportSpec {
 	if file == nil {
 		return nil
 	}
-	paths := make([]string, 0, min(len(file.Imports), maxGoImportSpecs))
+	specs := make([]GoImportSpec, 0, min(len(file.Imports), maxGoImportSpecs))
 	for i := 0; i < len(file.Imports) && i < maxGoImportSpecs; i++ {
 		spec := file.Imports[i]
 		if spec == nil || spec.Path == nil {
@@ -70,7 +79,24 @@ func GoImportPaths(file *ast.File) []string {
 		if err != nil || importPath == "" {
 			continue
 		}
-		paths = append(paths, importPath)
+		name := ""
+		if spec.Name != nil {
+			name = spec.Name.Name
+		}
+		specs = append(specs, GoImportSpec{Name: name, Path: importPath})
+	}
+	return specs
+}
+
+// GoImportPaths returns the import paths GoImportSpecs reads from a parsed Go file, in source
+// order. Blank, dot and renamed imports count like plain ones: each makes go build read the
+// imported package. The needs import scan and replacement plan and the DevContainer
+// bootstrap closure read paths through it.
+func GoImportPaths(file *ast.File) []string {
+	specs := GoImportSpecs(file)
+	paths := make([]string, 0, len(specs))
+	for _, spec := range specs {
+		paths = append(paths, spec.Path)
 	}
 	return paths
 }
@@ -79,7 +105,12 @@ func GoImportPaths(file *ast.File) []string {
 // if so, that package's directory relative to the module root, slash-separated: "." for the
 // module path itself. The comparison is boundary-aware, so a sibling module that only shares
 // a textual prefix (example.com/foo-plugins beside example.com/foo) is outside. An empty
-// module path owns no package.
+// module path owns no package, and a path with a trailing slash names none: the go command
+// rejects such an import path (golang.org/x/mod/module.CheckImportPath).
+//
+// It is the one module-boundary rule: the needs catalog match, module-root resolution,
+// replacement plan and third-party test, the docs vocabulary tree and the DevContainer
+// bootstrap closure all call it.
 func ModuleImportDir(importPath, modulePath string) (string, bool) {
 	if modulePath == "" {
 		return "", false

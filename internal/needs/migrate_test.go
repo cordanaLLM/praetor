@@ -58,6 +58,31 @@ func TestScanFileForReplacementsRewritesSubpackagesDeterministically(t *testing.
 	}
 }
 
+// TestScanFileForReplacementsHonoursTheModuleBoundary covers the replacement plan's import
+// read and key match: a raw-string import is rewritten like a quoted one, a sibling module
+// sharing the key's prefix and an empty key rewrite nothing, and a repeated import yields
+// one action.
+func TestScanFileForReplacementsHonoursTheModuleBoundary(t *testing.T) {
+	dir := t.TempDir()
+	src := writeFixture(t, dir, "main.go", "package main\n\nimport (\n"+
+		"\t\"github.com/jackc/pgx/v5\"\n\tconn `github.com/jackc/pgx/v5/pgconn`\n"+
+		"\t\"github.com/jackc/pgx/v5x\"\n\t_ \"github.com/jackc/pgx/v5\"\n\t\"fmt\"\n)\n")
+	replacements := map[string]string{"github.com/jackc/pgx/v5": "example.com/acme/kit/db/pgx", "": "example.com/acme/all"}
+	got := scanFileForReplacements(src, replacements, sortedReplacementKeys(replacements))
+	want := []ReplacementAction{
+		{OldImport: "github.com/jackc/pgx/v5", NewImport: "example.com/acme/kit/db/pgx"},
+		{OldImport: "github.com/jackc/pgx/v5/pgconn", NewImport: "example.com/acme/kit/db/pgx/pgconn"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("actions = %+v, want %d", got, len(want))
+	}
+	for i := range want {
+		if got[i].File != src || got[i].OldImport != want[i].OldImport || got[i].NewImport != want[i].NewImport {
+			t.Errorf("action %d = %+v, want %s -> %s in %s", i, got[i], want[i].OldImport, want[i].NewImport, src)
+		}
+	}
+}
+
 func TestApplyFileImportReplacementLeavesStringLiteralsAlone(t *testing.T) {
 	dir := t.TempDir()
 	src := writeFixture(t, dir, "main.go",

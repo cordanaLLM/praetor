@@ -5,6 +5,7 @@
 package util_test
 
 import (
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"path/filepath"
@@ -98,9 +99,10 @@ func TestIsGoMajorVersionElement(t *testing.T) {
 	}
 }
 
-// TestGoImportPathsReadsEveryImportForm covers the import reader the needs scan and the
-// DevContainer bootstrap closure share: every import form is read and unquoted, raw strings
-// included, and a file without imports or an absent file yields none.
+// TestGoImportPathsReadsEveryImportForm covers the path projection the needs scan and
+// replacement plan and the DevContainer bootstrap closure share: every import form is read
+// and unquoted, raw strings included, and a file without imports or an absent file yields
+// none.
 func TestGoImportPathsReadsEveryImportForm(t *testing.T) {
 	source := "package x\n\nimport (\n\t\"fmt\"\n\tal \"example.com/m/a\"\n\t_ \"example.com/m/b\"\n\t. \"example.com/m/c\"\n\t`example.com/m/raw`\n)\n"
 	file, err := parser.ParseFile(token.NewFileSet(), "x.go", source, parser.ImportsOnly)
@@ -132,8 +134,58 @@ func TestGoImportPathsReadsEveryImportForm(t *testing.T) {
 	}
 }
 
-// TestModuleImportDirDrawsTheModuleBoundary covers the module test the needs scan and the
-// DevContainer bootstrap closure share.
+// TestGoImportSpecsKeepsNamesAndBoundsTheScan covers the one import-spec reader the HISS
+// import table, GoImportPaths, the docs vocabulary tree and the caveman MCP reader share:
+// each spec keeps the name it is written with, a partial AST contributes nothing, and the
+// scan stops at 4096 specs.
+func TestGoImportSpecsKeepsNamesAndBoundsTheScan(t *testing.T) {
+	source := "package x\n\nimport (\n\t\"fmt\"\n\tal \"example.com/m/a\"\n\t_ \"example.com/m/b\"\n\t. \"example.com/m/c\"\n)\n"
+	file, err := parser.ParseFile(token.NewFileSet(), "x.go", source, parser.ImportsOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Positive: an unrenamed import has no name; alias, blank and dot names are kept.
+	want := []util.GoImportSpec{
+		{Name: "", Path: "fmt"},
+		{Name: "al", Path: "example.com/m/a"},
+		{Name: "_", Path: "example.com/m/b"},
+		{Name: ".", Path: "example.com/m/c"},
+	}
+	if got := util.GoImportSpecs(file); !slices.Equal(got, want) {
+		t.Fatalf("GoImportSpecs = %+v, want %+v", got, want)
+	}
+	// Negative: a nil spec, a spec without a path, and a path that does not unquote or
+	// unquotes to nothing are skipped, even when the spec carries a name.
+	partial := &ast.File{Imports: []*ast.ImportSpec{
+		nil,
+		{Name: ast.NewIdent("gone"), Path: nil},
+		{Name: ast.NewIdent("bad"), Path: &ast.BasicLit{Kind: token.STRING, Value: `"unterminated`}},
+		{Path: &ast.BasicLit{Kind: token.STRING, Value: `""`}},
+		{Name: ast.NewIdent("u"), Path: &ast.BasicLit{Kind: token.STRING, Value: `"unsafe"`}},
+	}}
+	if got := util.GoImportSpecs(partial); !slices.Equal(got, []util.GoImportSpec{{Name: "u", Path: "unsafe"}}) {
+		t.Fatalf("GoImportSpecs(partial AST) = %+v, want only u unsafe", got)
+	}
+	// Boundary: no file, then exactly 4096 specs and one more than that.
+	if got := util.GoImportSpecs(nil); len(got) != 0 {
+		t.Fatalf("GoImportSpecs(nil) = %+v", got)
+	}
+	for _, tc := range []struct{ specs, want int }{{4096, 4096}, {4097, 4096}} {
+		wide := &ast.File{Imports: make([]*ast.ImportSpec, tc.specs)}
+		for i := range wide.Imports {
+			wide.Imports[i] = &ast.ImportSpec{Path: &ast.BasicLit{Kind: token.STRING, Value: `"example.com/m/p"`}}
+		}
+		if got := util.GoImportSpecs(wide); len(got) != tc.want {
+			t.Fatalf("GoImportSpecs(%d specs) read %d, want %d", tc.specs, len(got), tc.want)
+		}
+		if got := util.GoImportPaths(wide); len(got) != tc.want {
+			t.Fatalf("GoImportPaths(%d specs) read %d, want %d", tc.specs, len(got), tc.want)
+		}
+	}
+}
+
+// TestModuleImportDirDrawsTheModuleBoundary covers the one module-boundary rule the needs
+// package, the docs vocabulary tree and the DevContainer bootstrap closure share.
 func TestModuleImportDirDrawsTheModuleBoundary(t *testing.T) {
 	const module = "github.com/acme/foo"
 	cases := []struct {

@@ -72,6 +72,8 @@ func TestMatchPackageBoundary(t *testing.T) {
 		{"sibling module sharing a prefix", "github.com/uptrace/bunrouter", false, ""},
 		{"hyphen extension of an entry", "github.com/go-chi/chi-middleware", false, ""},
 		{"empty import path", "", false, ""},
+		// A trailing separator names no package: the go command rejects the path.
+		{"trailing separator", "github.com/uptrace/bun/", false, ""},
 	}
 
 	for _, tc := range cases {
