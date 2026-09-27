@@ -163,7 +163,9 @@ func TestEditor_Negative_EmptyOrInvalidEditors(t *testing.T) {
 		Editors: []string{},
 	})
 	if err == nil {
-		t.Errorf("expected error for empty editors list")
+		// Fatal, not Errorf: the next line dereferences err, so a regression that returned
+		// nil used to end the test in a nil-pointer panic instead of this message (BUG-441).
+		t.Fatalf("expected error for empty editors list")
 	}
 	if !strings.Contains(err.Error(), "no valid editors") {
 		t.Errorf("unexpected error message: %v", err)
@@ -174,7 +176,7 @@ func TestEditor_Negative_EmptyOrInvalidEditors(t *testing.T) {
 		Editors: []string{"notepad", "nano", "gedit"},
 	})
 	if err == nil {
-		t.Errorf("expected error when no supported editors matched")
+		t.Fatalf("expected error when no supported editors matched")
 	}
 }
 

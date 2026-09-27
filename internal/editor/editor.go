@@ -101,8 +101,8 @@ const (
 	WritePresent WriteOutcome = "PRESENT"
 	// WriteRewritten means an existing non-JSON template file that differed was replaced.
 	WriteRewritten WriteOutcome = "REWRITTEN"
-	// WritePreserved means a differing or unreadable .editorconfig or .clang-tidy was
-	// left untouched and is not verified.
+	// WritePreserved means a differing or unreadable developer-owned file (see
+	// IsPreservedEditorFile) was left untouched and is not verified.
 	WritePreserved WriteOutcome = "PRESERVED"
 )
 
@@ -893,10 +893,25 @@ func fileExists(path string) bool {
 	return util.FileExists(path)
 }
 
-// isPreservedEditorFile reports whether an existing file carries hand-tuned project
-// settings that Write never replaces.
-func isPreservedEditorFile(path string) bool {
-	return path == ".clang-tidy" || path == ".editorconfig"
+// preservedEditorFiles are the generated paths a developer owns once they exist:
+// .editorconfig and .clang-tidy carry hand-tuned project policy, and .idea/workspace.xml,
+// .nvim.lua and .dir-locals.el hold IDE session state or personal editor setup that the IDE
+// itself rewrites. Write used to replace the last three whenever they differed from their
+// template, so an adoption or a `--force` run silently discarded open tabs, run
+// configurations and a developer's own Neovim or Emacs setup (BUG-024, BUG-171).
+var preservedEditorFiles = map[string]bool{
+	".clang-tidy":         true,
+	".editorconfig":       true,
+	".idea/workspace.xml": true,
+	".nvim.lua":           true,
+	".dir-locals.el":      true,
+}
+
+// IsPreservedEditorFile reports whether an existing file at the slash-separated workspace
+// path is developer-owned, so neither Write nor adoption replaces it. It is the single
+// preservation rule; adoption calls it rather than keeping a copy of the list.
+func IsPreservedEditorFile(path string) bool {
+	return preservedEditorFiles[path]
 }
 
 // Write writes all generated files to the target workspace root directory; see
@@ -910,8 +925,8 @@ func Write(set *EditorConfigSet, rootDir string) error {
 // reports the outcome per file. An existing JSON file keeps its unrelated keys,
 // list entries and exact number literals while missing managed values are added;
 // invalid JSON, duplicate keys or a conflicting managed value abort the whole run
-// without writing any file. An existing .editorconfig or .clang-tidy is preserved,
-// and any other existing file that differs from its template is rewritten.
+// without writing any file. An existing developer-owned file (IsPreservedEditorFile) is
+// preserved, and any other existing file that differs from its template is rewritten.
 func WriteWithReport(set *EditorConfigSet, rootDir string) (WriteReport, error) {
 	report := WriteReport{Files: []WriteResult{}}
 	if err := validateEditorFiles(set); err != nil {
@@ -985,7 +1000,7 @@ func prepareEditorWrite(ctx context.Context, file GeneratedFile, fullPath string
 	}
 	existing, err := readSingleFileWithContext(ctx, fullPath)
 	if err != nil {
-		if isPreservedEditorFile(file.Path) {
+		if IsPreservedEditorFile(file.Path) {
 			// Preserved files are never replaced, so an unreadable one is left as is.
 			write.write, write.result.Outcome = false, WritePreserved
 			return write, nil
@@ -1014,7 +1029,7 @@ func resolveExistingEditorFile(file GeneratedFile, existing []byte) (WriteOutcom
 		return WriteMerged, string(merged), nil
 	case string(existing) == file.Content:
 		return WritePresent, "", nil
-	case isPreservedEditorFile(file.Path):
+	case IsPreservedEditorFile(file.Path):
 		return WritePreserved, "", nil
 	default:
 		return WriteRewritten, file.Content, nil
@@ -1051,9 +1066,9 @@ func Verify(set *EditorConfigSet, rootDir string) error {
 
 // VerifyWithReport checks that every generated file exists in rootDir. A JSON file
 // must contain every managed value, with unrelated keys and list entries allowed;
-// any other file must match its template exactly. An .editorconfig or .clang-tidy
-// that differs from its template is preserved by Write, so it is reported as
-// PreservedUnverified instead of being counted as verified.
+// any other file must match its template exactly. A developer-owned file
+// (IsPreservedEditorFile) that differs from its template is preserved by Write, so it is
+// reported as PreservedUnverified instead of being counted as verified.
 func VerifyWithReport(set *EditorConfigSet, rootDir string) (VerificationReport, error) {
 	report := VerificationReport{Verified: []string{}, PreservedUnverified: []string{}}
 	if err := validateEditorFiles(set); err != nil {
@@ -1099,7 +1114,7 @@ func verifyEditorFile(ctx context.Context, rootDir string, file GeneratedFile) (
 		return true, nil
 	case string(existing) == file.Content:
 		return true, nil
-	case isPreservedEditorFile(file.Path):
+	case IsPreservedEditorFile(file.Path):
 		return false, nil
 	default:
 		return false, fmt.Errorf("configuration file %s is out of sync with standards policy", file.Path)

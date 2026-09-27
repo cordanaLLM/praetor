@@ -131,17 +131,18 @@ func TestEditorWriteRejectsManagedConflictBeforeAnyMutation(t *testing.T) {
 func TestEditorVerifyReportsPreservedNonJSONAsUnverified(t *testing.T) {
 	root := t.TempDir()
 	opts := DefaultOptions()
-	opts.Editors = []string{EditorUniversal, EditorVisualStudio, EditorEmacs}
+	opts.Editors = []string{EditorUniversal, EditorVisualStudio, EditorNeovim}
 	set := mustSynthesize(t, opts)
 	created, err := WriteWithReport(set, root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertOutcomes(t, created, map[string]WriteOutcome{".editorconfig": WriteCreated, ".clang-tidy": WriteCreated, ".dir-locals.el": WriteCreated})
+	assertOutcomes(t, created, map[string]WriteOutcome{".editorconfig": WriteCreated, ".clang-tidy": WriteCreated,
+		"lua/standards.lua": WriteCreated, ".nvim.lua": WriteCreated})
 
 	// Boundary: an untouched generation has zero preserved files.
 	clean, err := VerifyWithReport(set, root)
-	if err != nil || len(clean.Verified) != 3 || len(clean.PreservedUnverified) != 0 {
+	if err != nil || len(clean.Verified) != 4 || len(clean.PreservedUnverified) != 0 {
 		t.Fatalf("generated files were not all verified: %+v %v", clean, err)
 	}
 
@@ -151,12 +152,13 @@ func TestEditorVerifyReportsPreservedNonJSONAsUnverified(t *testing.T) {
 	if err != nil {
 		t.Fatalf("preserved human files failed verification: %v", err)
 	}
-	if !slices.Equal(report.PreservedUnverified, []string{".editorconfig", ".clang-tidy"}) || !slices.Equal(report.Verified, []string{".dir-locals.el"}) {
+	if !slices.Equal(report.PreservedUnverified, []string{".editorconfig", ".clang-tidy"}) || len(report.Verified) != 2 ||
+		!slices.Contains(report.Verified, "lua/standards.lua") || !slices.Contains(report.Verified, ".nvim.lua") {
 		t.Fatalf("preserved files were counted as verified: %+v", report)
 	}
 
 	// Negative: a differing template that Write rewrites is out of sync, not preserved.
-	writeTestFile(t, root, ".dir-locals.el", "; human managed\n")
+	writeTestFile(t, root, "lua/standards.lua", "-- human managed\n")
 	if err := Verify(set, root); err == nil || !strings.Contains(err.Error(), "out of sync") {
 		t.Fatalf("differing rewritable template verified: %v", err)
 	}
@@ -170,7 +172,7 @@ func TestEditorVerifyReportsPreservedNonJSONAsUnverified(t *testing.T) {
 
 func TestEditorWriteReportsPresentRewrittenAndPreserved(t *testing.T) {
 	root := t.TempDir()
-	set := mustSynthesize(t, Options{Editors: []string{EditorUniversal, EditorEmacs}})
+	set := mustSynthesize(t, Options{Editors: []string{EditorUniversal, EditorNeovim}})
 	if err := Write(set, root); err != nil {
 		t.Fatal(err)
 	}
@@ -178,19 +180,19 @@ func TestEditorWriteReportsPresentRewrittenAndPreserved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertOutcomes(t, present, map[string]WriteOutcome{".editorconfig": WritePresent, ".dir-locals.el": WritePresent})
+	assertOutcomes(t, present, map[string]WriteOutcome{".editorconfig": WritePresent, "lua/standards.lua": WritePresent, ".nvim.lua": WritePresent})
 
 	writeTestFile(t, root, ".editorconfig", "root = false\n")
-	writeTestFile(t, root, ".dir-locals.el", "; human managed\n")
+	writeTestFile(t, root, "lua/standards.lua", "-- human managed\n")
 	changed, err := WriteWithReport(set, root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertOutcomes(t, changed, map[string]WriteOutcome{".editorconfig": WritePreserved, ".dir-locals.el": WriteRewritten})
+	assertOutcomes(t, changed, map[string]WriteOutcome{".editorconfig": WritePreserved, "lua/standards.lua": WriteRewritten, ".nvim.lua": WritePresent})
 	if got := mustRead(t, filepath.Join(root, ".editorconfig")); got != "root = false\n" {
 		t.Fatalf("preserved file changed: %q", got)
 	}
-	if got := mustRead(t, filepath.Join(root, ".dir-locals.el")); got != fileContent(t, set, ".dir-locals.el") {
+	if got := mustRead(t, filepath.Join(root, "lua/standards.lua")); got != fileContent(t, set, "lua/standards.lua") {
 		t.Fatalf("rewritable template was not rewritten: %q", got)
 	}
 	// Boundary: a preserved file that cannot be read as text is still never replaced.
@@ -202,7 +204,7 @@ func TestEditorWriteReportsPresentRewrittenAndPreserved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertOutcomes(t, binary, map[string]WriteOutcome{".editorconfig": WritePreserved, ".dir-locals.el": WritePresent})
+	assertOutcomes(t, binary, map[string]WriteOutcome{".editorconfig": WritePreserved, "lua/standards.lua": WritePresent, ".nvim.lua": WritePresent})
 	if got := mustRead(t, filepath.Join(root, ".editorconfig")); got != string(unreadable) {
 		t.Fatalf("unreadable preserved file changed: %q", got)
 	}
