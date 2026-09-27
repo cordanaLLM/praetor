@@ -158,8 +158,9 @@ func appendCandidates(report *BumpReport, inventory []UpgradeCandidate) {
 // consulted only when something is declared. A report that could not be produced
 // (offline, a missing tool, no go.sum) is not a scan failure: the declared dependencies
 // are still the inventory, none with a known upgrade. A complete report, even one naming
-// no upgrade, is overlaid; it never pivots back to the manifest-only result.
-func manifestInventory(ctx context.Context, declare, report func() ([]UpgradeCandidate, error)) ([]UpgradeCandidate, error) {
+// no upgrade, is overlaid; it never pivots back to the manifest-only result. held names the
+// declared entries the report never replaces (see overlayUpgrades); nil holds none.
+func manifestInventory(ctx context.Context, declare, report func() ([]UpgradeCandidate, error), held func(UpgradeCandidate) bool) ([]UpgradeCandidate, error) {
 	declared, err := declare()
 	if err != nil || len(declared) == 0 {
 		return declared, err
@@ -169,7 +170,7 @@ func manifestInventory(ctx context.Context, declare, report func() ([]UpgradeCan
 		return nil, err
 	}
 	if reportErr == nil {
-		declared = overlayUpgrades(declared, upstream)
+		declared = overlayUpgrades(declared, upstream, held)
 	}
 	return declared, nil
 }
@@ -179,15 +180,17 @@ func manifestInventory(ctx context.Context, declare, report func() ([]UpgradeCan
 // and any admitted upgrade target. Entries the report names but the manifest does not
 // declare (a transitive module, another workspace member's dependency) are not part of
 // this manifest's inventory and are dropped, so the inventory is the same set online and
-// offline.
-func overlayUpgrades(declared, report []UpgradeCandidate) []UpgradeCandidate {
+// offline. A declared entry held reports true for keeps its declared form even when the
+// report names it: the ecosystem's rule for a declaration the report's versions do not
+// describe, such as a package.json comparator range (unrankedNodeRange).
+func overlayUpgrades(declared, report []UpgradeCandidate, held func(UpgradeCandidate) bool) []UpgradeCandidate {
 	byPackage := make(map[string]UpgradeCandidate, len(report))
 	for _, entry := range report {
 		byPackage[entry.Package] = entry
 	}
 	inventory := make([]UpgradeCandidate, 0, len(declared))
 	for _, dep := range declared {
-		if entry, ok := byPackage[dep.Package]; ok {
+		if entry, ok := byPackage[dep.Package]; ok && (held == nil || !held(dep)) {
 			dep = entry
 		}
 		inventory = append(inventory, dep)

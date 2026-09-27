@@ -188,7 +188,8 @@ func ScanGoDependencies(ctx context.Context, repoPath string, opts ScanOptions) 
 func scanGoModule(ctx context.Context, modDir, modRel string, opts ScanOptions) ([]UpgradeCandidate, error) {
 	return manifestInventory(ctx,
 		func() ([]UpgradeCandidate, error) { return scanGoModStatic(ctx, modDir, modRel) },
-		func() ([]UpgradeCandidate, error) { return scanGoModuleDir(ctx, modDir, modRel, opts) })
+		func() ([]UpgradeCandidate, error) { return scanGoModuleDir(ctx, modDir, modRel, opts) },
+		nil)
 }
 
 func scanGoModuleDir(ctx context.Context, modDir, modRel string, opts ScanOptions) ([]UpgradeCandidate, error) {
