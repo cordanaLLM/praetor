@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/router"
 )
@@ -111,7 +110,7 @@ func resolveTaskRegister(ctx context.Context, task string) (config.Resolution, e
 }
 
 func loadRegisterAuthority(ctx context.Context) (config.RegisterAuthority, error) {
-	authority, err := compiler.LoadRegisterAuthority(ctx, ".")
+	authority, err := config.LoadCheckedRegisterAuthority(ctx, ".")
 	if err != nil {
 		return config.RegisterAuthority{}, fmt.Errorf("text register: %w", err)
 	}

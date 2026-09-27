@@ -178,9 +178,21 @@ A subagent launch brief has no fallback. Text without a task label resolves to
 (`praetorctl hook <client> pre-dispatch`), a Claude `Agent`, Codex `spawn_agent`, Gemini
 `invoke_agent` or AGY `invoke_subagent` brief without a `task:` field is denied, and so is a
 label the routing vocabulary does not declare. The hook resolves the register from that
-label ([subagent text register gate](agent-hooks.md#subagent-text-register-gate)). The
-rendered block says so on its task-row line (`subagentBriefRule` in
-`internal/config/register_render.go`).
+label ([subagent text register gate](agent-hooks.md#subagent-text-register-gate)).
+
+The rendered block states the brief shape on its task-row line (`subagentBriefRule` in
+`internal/config/register_render.go`) and adds "registered dispatch hook denies brief
+missing `task:`" only where the repository registers that hook.
+`agenthook.DispatchGateRegistered` decides it from the repository's client hook files
+(`.claude/settings.json`, `.codex/hooks.json`, `.gemini/settings.json`), recognising a
+registration the way `praetorctl adopt` does: the engine call or the skew guard, under a
+matcher that covers the dispatch tool. A file that is absent or does not parse as strict
+JSON proves no registration. `compile-context` and `adopt` both read it, so the block an
+adopted repository receives verifies without a manual edit
+(`TestLoadRegisterBlockFollowsDispatchHook`, `TestAdoptRegisterBlockFollowsDispatchHook`).
+Adoption registers only the pre-tool row. The dispatch gate also binds dispatch receipts and
+returns through their own rows, so an operator registers it deliberately
+([agent hooks](agent-hooks.md)); until then, the block does not claim it.
 
 ## Caveman: the internal form
 

@@ -194,7 +194,7 @@ func TestValidateTaskLabels(t *testing.T) {
 }
 
 func TestRenderRegisterBlockGolden(t *testing.T) {
-	block, err := RenderRegisterBlock(DefaultRegisterPolicy())
+	block, err := RenderRegisterBlock(DefaultRegisterPolicy(), true)
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
@@ -238,13 +238,36 @@ func TestRenderRegisterBlockGolden(t *testing.T) {
 	}
 }
 
+// TestRenderRegisterBlockClaimsDispatchHookOnlyWhenRegistered: the task-row line keeps the
+// brief shape either way, and says a hook denies a brief without `task:` only for a repository
+// that registers the pre-dispatch hook (#504). Positive: registered. Negative: not registered,
+// no enforcement wording at all. Boundary: both renderings are the same number of lines, so
+// the block budget does not depend on the hook.
+func TestRenderRegisterBlockClaimsDispatchHookOnlyWhenRegistered(t *testing.T) {
+	gated, errGated := RenderRegisterBlock(DefaultRegisterPolicy(), true)
+	open, errOpen := RenderRegisterBlock(DefaultRegisterPolicy(), false)
+	if errGated != nil || errOpen != nil {
+		t.Fatalf("render: %v, %v", errGated, errOpen)
+	}
+	const brief = "Subagent launch brief: `caveman` brief shape with `task:` = routing label"
+	if !strings.Contains(gated, brief+"; registered dispatch hook denies brief missing `task:`.") {
+		t.Errorf("registered hook not stated:\n%s", gated)
+	}
+	if !strings.Contains(open, brief+".\n") || strings.Contains(open, "dispatch hook") || strings.Contains(open, "denies") {
+		t.Errorf("unregistered hook still claimed:\n%s", open)
+	}
+	if strings.Count(gated, "\n") != strings.Count(open, "\n") {
+		t.Errorf("hook changes the block's line count: %d vs %d", strings.Count(gated, "\n"), strings.Count(open, "\n"))
+	}
+}
+
 func TestRenderRegisterBlockFollowsThePolicy(t *testing.T) {
 	policy := DefaultRegisterPolicy()
 	policy.Surfaces[SurfaceForge] = TextRegisterDocs
 	policy.Tasks["waiver_signoff"] = RegisterTask{Register: TextRegisterSocial, MaxTokens: 1024}
 	policy.Tasks["ci_debugging"] = RegisterTask{Register: TextRegisterInternal}
 	policy.Evidence = EvidenceBounds{InlineMaxLines: 40, InlineMaxTokens: 900}
-	block, err := RenderRegisterBlock(policy)
+	block, err := RenderRegisterBlock(policy, false)
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}
@@ -265,7 +288,7 @@ func TestRenderRegisterBlockFollowsThePolicy(t *testing.T) {
 func TestRenderRegisterBlockRejectsOverflow(t *testing.T) {
 	policy := DefaultRegisterPolicy()
 	policy.Tasks["smuggled\nline"] = RegisterTask{Register: TextRegisterDocs}
-	if _, err := RenderRegisterBlock(policy); err == nil || !strings.Contains(err.Error(), "budget 15") {
+	if _, err := RenderRegisterBlock(policy, true); err == nil || !strings.Contains(err.Error(), "budget 15") {
 		t.Fatalf("a label that adds a line must exceed the block budget, got %v", err)
 	}
 }
@@ -466,8 +489,8 @@ func TestEmissionSurfacesBoundary(t *testing.T) {
 	// The block stays at its budget: emission surfaces are not rendered.
 	policy := DefaultRegisterPolicy()
 	policy.Surfaces[SurfaceMCP] = TextRegisterDocs
-	withSurface, errWith := RenderRegisterBlock(policy)
-	plain, errPlain := RenderRegisterBlock(DefaultRegisterPolicy())
+	withSurface, errWith := RenderRegisterBlock(policy, false)
+	plain, errPlain := RenderRegisterBlock(DefaultRegisterPolicy(), false)
 	if errWith != nil || errPlain != nil || withSurface != plain {
 		t.Errorf("an emission surface changed the rendered block (%v, %v)", errWith, errPlain)
 	}

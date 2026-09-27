@@ -5,7 +5,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
@@ -135,7 +134,7 @@ func TestSyncRegisterBlockBoundary(t *testing.T) {
 		if changed, err := SyncRegisterBlock(ctx, root, agents, true); err != nil || !changed {
 			t.Fatalf("append: changed=%v err=%v", changed, err)
 		}
-		block, err := config.RenderRegisterBlock(config.DefaultRegisterPolicy())
+		block, err := config.RenderRegisterBlock(config.DefaultRegisterPolicy(), false)
 		if err != nil {
 			t.Fatalf("render defaults: %v", err)
 		}
@@ -148,7 +147,7 @@ func TestSyncRegisterBlockBoundary(t *testing.T) {
 	})
 
 	t.Run("line budget", func(t *testing.T) {
-		block, err := config.RenderRegisterBlock(config.DefaultRegisterPolicy())
+		block, err := config.RenderRegisterBlock(config.DefaultRegisterPolicy(), false)
 		if err != nil {
 			t.Fatalf("render defaults: %v", err)
 		}
@@ -245,72 +244,32 @@ func TestLoadRegisterBlockRequiresContext(t *testing.T) {
 	}
 }
 
-const registerTaskRouting = `version: 1
-tiers:
-  only:
-    description: "single tier"
-    target_tasks: [deploy_prod]
-    models:
-      - {id: "m", family: "local", rpm_limit: 1, tpm_limit: 1, cost_per_m_in: 0, cost_per_m_out: 0}
-    fallback_tier: ""
-governance:
-  max_concurrent_same_model: 1
-  exhaustion_threshold_percent: 90
-  orthogonal_audit_required: false
-`
-
-func TestLoadRegisterTaskAuthorityPositive(t *testing.T) {
-	ctx := context.Background()
-	root := t.TempDir()
-	authority, labels, err := LoadRegisterTaskAuthority(ctx, root)
-	if err != nil || !slices.Contains(labels, "feature_implementation") {
-		t.Fatalf("defaults: labels=%v err=%v", labels, err)
+// TestLoadRegisterBlockFollowsDispatchHook: compile-context says a hook denies a brief without
+// `task:` only for a repository whose client hook file registers the pre-dispatch row (#504).
+// Positive: registered. Negative: no hook file. Boundary: the pre-tool row adoption registers
+// is not the dispatch hook.
+func TestLoadRegisterBlockFollowsDispatchHook(t *testing.T) {
+	const claim = "registered dispatch hook denies brief missing `task:`"
+	render := func(settings string) string {
+		root := t.TempDir()
+		if settings != "" {
+			writeRegisterFixture(t, root, ".claude/settings.json", settings)
+		}
+		_, block, err := LoadRegisterBlock(context.Background(), root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return block
 	}
-	resolution, err := authority.Resolve(config.SurfaceAgent, "feature_implementation")
-	if err != nil || resolution.ManifestSHA256 != authority.ManifestSHA256() || resolution.ManifestSHA256 == "" {
-		t.Fatalf("resolution must carry the snapshot digest: %+v, %v", resolution, err)
+	registered := `{"hooks": {"PreToolUse": [{"matcher": "^Agent$", "hooks": [{"type": "command", "command": "praetorctl hook claude pre-dispatch"}]}]}}`
+	preTool := `{"hooks": {"PreToolUse": [{"matcher": "^Bash$", "hooks": [{"type": "command", "command": "praetorctl hook claude pre-tool"}]}]}}`
+	if block := render(registered); !strings.Contains(block, claim) {
+		t.Errorf("registered dispatch hook not stated:\n%s", block)
 	}
-
-	writeRegisterFixture(t, root, ".config/models/routing.yaml", registerTaskRouting)
-	writeRegisterFixture(t, root, ".standards.yaml", "version: 1\nregister:\n  tasks:\n    deploy_prod: social\n")
-	authority, labels, err = LoadRegisterTaskAuthority(ctx, root)
-	if err != nil || !slices.Equal(labels, []string{"deploy_prod"}) {
-		t.Fatalf("declared vocabulary: labels=%v err=%v", labels, err)
+	if block := render(""); strings.Contains(block, claim) {
+		t.Errorf("dispatch hook claimed without a hook file:\n%s", block)
 	}
-	if got, err := authority.Resolve(config.SurfaceAgent, "deploy_prod"); err != nil || got.Register != config.TextRegisterSocial {
-		t.Fatalf("task row resolution = %+v, %v", got, err)
-	}
-}
-
-func TestLoadRegisterTaskAuthorityNegative(t *testing.T) {
-	ctx := context.Background()
-	var nilContext context.Context
-	if _, _, err := LoadRegisterTaskAuthority(nilContext, t.TempDir()); err == nil {
-		t.Fatal("a nil context must be an error")
-	}
-	canceled, cancel := context.WithCancel(ctx)
-	cancel()
-	if _, _, err := LoadRegisterTaskAuthority(canceled, t.TempDir()); !errors.Is(err, context.Canceled) {
-		t.Fatalf("canceled context: %v", err)
-	}
-	root := t.TempDir()
-	writeRegisterFixture(t, root, ".config/models/routing.yaml", registerTaskRouting)
-	writeRegisterFixture(t, root, ".standards.yaml", "version: 1\nregister:\n  tasks:\n    ci_debugging: docs\n")
-	if _, _, err := LoadRegisterTaskAuthority(ctx, root); err == nil || !strings.Contains(err.Error(), `"ci_debugging"`) {
-		t.Fatalf("manifest row outside the vocabulary: %v", err)
-	}
-}
-
-// Without declared manifest rows the plain loader never reads routing, while the task
-// loader must, because its caller checks a label against the vocabulary it returns.
-func TestLoadRegisterTaskAuthorityBoundary(t *testing.T) {
-	ctx := context.Background()
-	root := t.TempDir()
-	writeRegisterFixture(t, root, ".config/models/routing.yaml", "tiers: [\n")
-	if _, err := LoadRegisterAuthority(ctx, root); err != nil {
-		t.Fatalf("plain loader read routing without declared rows: %v", err)
-	}
-	if _, labels, err := LoadRegisterTaskAuthority(ctx, root); err == nil || labels != nil {
-		t.Fatalf("task loader accepted broken routing: labels=%v err=%v", labels, err)
+	if block := render(preTool); strings.Contains(block, claim) {
+		t.Errorf("pre-tool row read as the dispatch hook:\n%s", block)
 	}
 }

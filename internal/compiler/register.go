@@ -4,90 +4,37 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 
+	"github.com/cordanaLLM/praetor/internal/agenthook"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
-	"github.com/cordanaLLM/praetor/internal/router"
 	"github.com/cordanaLLM/praetor/internal/util"
-)
-
-const (
-	registerManifestRel = ".standards.yaml"
-	registerRoutingRel  = ".config/models/routing.yaml"
 )
 
 // ErrRegisterBlockOutOfSync is returned by a verifying SyncRegisterBlock when the block in
 // AGENTS.md differs from what the manifest renders, a missing block included.
 var ErrRegisterBlockOutOfSync = errors.New("AGENTS.md text register block is out of sync with .standards.yaml; run 'praetorctl compile-context'")
 
-// LoadRegisterBlock resolves the text register policy of the repository at root and renders
-// its block. The manifest and the routing configuration are both optional: without a
-// manifest the defaults govern, and without a routing.yaml the router's built-in labels are
-// the vocabulary. Only the rows the manifest wrote are checked against that vocabulary; a
-// default row is never an error in a repository that declared its own labels.
+// LoadRegisterBlock resolves the checked text register policy of the repository at root
+// (config.LoadCheckedRegisterAuthority) and renders its block. The block says a registered hook
+// denies a subagent brief without `task:` only where root registers the pre-dispatch hook in a
+// client hook file (agenthook.DispatchGateRegistered); elsewhere nothing enforces the label, and
+// the block does not claim it (#504).
 func LoadRegisterBlock(ctx context.Context, root string) (config.RegisterPolicy, string, error) {
-	authority, err := LoadRegisterAuthority(ctx, root)
+	authority, err := config.LoadCheckedRegisterAuthority(ctx, root)
 	if err != nil {
 		return config.RegisterPolicy{}, "", err
 	}
+	gated, err := agenthook.DispatchGateRegistered(ctx, root)
+	if err != nil {
+		return config.RegisterPolicy{}, "", fmt.Errorf("text register: %w", err)
+	}
 	policy := authority.Policy()
-	block, err := config.RenderRegisterBlock(policy)
+	block, err := config.RenderRegisterBlock(policy, gated)
 	if err != nil {
 		return config.RegisterPolicy{}, "", err
 	}
 	return policy, block, nil
-}
-
-// LoadRegisterAuthority resolves and validates the canonical manifest snapshot at root.
-func LoadRegisterAuthority(ctx context.Context, root string) (config.RegisterAuthority, error) {
-	authority, _, err := loadRegisterAuthority(ctx, root, false)
-	return authority, err
-}
-
-// LoadRegisterTaskAuthority returns the validated manifest snapshot at root together with
-// the target_tasks vocabulary that governs it, read once. A runtime boundary that receives
-// a task label from untrusted text checks the label against this vocabulary and resolves
-// it through the same digest-bound authority compile-context renders.
-func LoadRegisterTaskAuthority(ctx context.Context, root string) (config.RegisterAuthority, []string, error) {
-	return loadRegisterAuthority(ctx, root, true)
-}
-
-func loadRegisterAuthority(ctx context.Context, root string, withLabels bool) (config.RegisterAuthority, []string, error) {
-	if ctx == nil {
-		return config.RegisterAuthority{}, nil, errors.New("text register requires a context")
-	}
-	if err := ctx.Err(); err != nil {
-		return config.RegisterAuthority{}, nil, err
-	}
-	authority, err := config.LoadRegisterAuthority(ctx, root)
-	if err != nil {
-		return config.RegisterAuthority{}, nil, err
-	}
-	if !withLabels && !authority.HasDeclaredTasks() {
-		return authority, nil, nil
-	}
-	labels, err := registerTaskLabels(ctx, root)
-	if err != nil {
-		return config.RegisterAuthority{}, nil, err
-	}
-	if err := authority.ValidateTaskLabels(labels); err != nil {
-		return config.RegisterAuthority{}, nil, fmt.Errorf("%s: %w", registerManifestRel, err)
-	}
-	return authority, labels, nil
-}
-
-// registerTaskLabels returns the target_tasks vocabulary that governs root.
-func registerTaskLabels(ctx context.Context, root string) ([]string, error) {
-	path := filepath.Join(root, filepath.FromSlash(registerRoutingRel))
-	if !util.FileExists(path) {
-		return router.DefaultTaskLabels(), nil
-	}
-	cfg, err := router.LoadRoutingConfigContext(ctx, path)
-	if err != nil {
-		return nil, fmt.Errorf("text register task labels: %w", err)
-	}
-	return router.DeclaredTaskLabels(cfg), nil
 }
 
 // SyncRegisterBlock reconciles the text register block of agentsMdPath with the manifest at

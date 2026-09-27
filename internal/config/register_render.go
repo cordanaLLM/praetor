@@ -62,8 +62,11 @@ func RegisterDirective(r TextRegister) string {
 // under RegisterBlockHeading. The table, the task-row line and the evidence numbers come
 // from the policy; the rest is fixed text. Task budgets are deliberately not printed: they
 // are dispatch parameters, not writing guidance. Blank lines surround the table so that it
-// renders as a table on the forge and passes an adopter's Markdown lint.
-func RenderRegisterBlock(p RegisterPolicy) (string, error) {
+// renders as a table on the forge and passes an adopter's Markdown lint. dispatchGated
+// reports whether the repository registers the pre-dispatch hook
+// (agenthook.DispatchGateRegistered); only then does the block say a hook denies a subagent
+// brief without `task:` (#504).
+func RenderRegisterBlock(p RegisterPolicy, dispatchGated bool) (string, error) {
 	lines := []string{
 		RegisterBlockStart,
 		"Register follows the audience, then the task label of your brief (`register:` in `.standards.yaml`; labels are the router's `target_tasks`).",
@@ -71,7 +74,7 @@ func RenderRegisterBlock(p RegisterPolicy) (string, error) {
 	}
 	lines = append(lines, renderRegisterTable(p)...)
 	lines = append(lines, "",
-		"- "+renderRegisterTaskRows(p),
+		"- "+renderRegisterTaskRows(p, dispatchGated),
 		"- "+renderEvidenceRule(p.Evidence),
 		"- An internal return carries verdict, changed paths, commands run, evidence pointers and open questions, nothing else.",
 		RegisterBlockEnd)
@@ -102,8 +105,9 @@ func renderRegisterTable(p RegisterPolicy) []string {
 }
 
 // renderRegisterTaskRows names every row that departs from the agent surface; a row that
-// repeats it is the fallback already and is not printed.
-func renderRegisterTaskRows(p RegisterPolicy) string {
+// repeats it is the fallback already and is not printed. It closes with the subagent brief
+// rule, and with its enforcement only where the dispatch hook is registered.
+func renderRegisterTaskRows(p RegisterPolicy, dispatchGated bool) string {
 	fallback := p.surfaceRegister(SurfaceAgent)
 	grouped := make(map[TextRegister][]string, len(registerOrder))
 	for _, label := range p.sortedTaskLabels() {
@@ -118,15 +122,22 @@ func renderRegisterTaskRows(p RegisterPolicy) string {
 		}
 	}
 	parts = append(parts, fmt.Sprintf("every other label and any unlabeled text = %s.", fallback))
-	return "Task rows: " + strings.Join(parts, "; ") + " " + subagentBriefRule
+	rule := subagentBriefRule + "."
+	if dispatchGated {
+		rule = subagentBriefRule + subagentBriefGate
+	}
+	return "Task rows: " + strings.Join(parts, "; ") + " " + rule
 }
 
-// subagentBriefRule states what a subagent launch brief needs where the native dispatch hook
-// runs (`praetorctl hook <client> pre-dispatch`, internal/agenthook): it resolves the brief's
-// register from its `task:` label and denies a brief without one, so the fallback above never
-// applies to a launch brief.
-const subagentBriefRule = "Subagent launch brief: `caveman` brief shape with `task:` = routing label; " +
-	"registered dispatch hook denies brief missing `task:`."
+// subagentBriefRule states what a subagent launch brief needs. subagentBriefGate adds what the
+// native dispatch hook (`praetorctl hook <client> pre-dispatch`, internal/agenthook) does where
+// the repository registers it: it resolves the brief's register from its `task:` label and
+// denies a brief without one, so the fallback above never applies to a launch brief. Without the
+// registration nothing denies such a brief, and the block does not say anything does.
+const (
+	subagentBriefRule = "Subagent launch brief: `caveman` brief shape with `task:` = routing label"
+	subagentBriefGate = "; registered dispatch hook denies brief missing `task:`."
+)
 
 func renderEvidenceRule(e EvidenceBounds) string {
 	bounds := DefaultRegisterPolicy().Evidence

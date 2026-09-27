@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/agentcontext"
+	"github.com/cordanaLLM/praetor/internal/agenthook"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
@@ -109,6 +110,11 @@ type harnessFacts struct {
 	targets           []agentcontext.VendorTarget
 	// workflows are the CI workflows this run scaffolds, with what each runs (rule 5).
 	workflows []scaffoldedWorkflow
+	// dispatchGated reports a registered pre-dispatch hook (agenthook.DispatchGateRegistered);
+	// only then does the text register section say a hook denies a brief without `task:`.
+	// Adoption registers only the pre-tool row, so the agent-hooks step that runs later
+	// cannot change the answer.
+	dispatchGated bool
 }
 
 // buildAgentHarness renders the canonical harness, terminated by harnessEndMarker.
@@ -133,7 +139,7 @@ func buildAgentHarness(facts harnessFacts) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("render harness footer: %w", err)
 	}
-	register, err := harnessRegisterSection()
+	register, err := harnessRegisterSection(facts.dispatchGated)
 	if err != nil {
 		return "", err
 	}
@@ -159,9 +165,11 @@ func (s *adoptSession) harnessIdentity() (owner, name string) {
 
 // harnessRegisterSection renders the default text register section. Adoption needs neither
 // the adoptee's manifest nor its routing file here: the adoptee's own compile-context
-// re-splices the block from its manifest, and audit reports the difference until it does.
-func harnessRegisterSection() (string, error) {
-	block, err := config.RenderRegisterBlock(config.DefaultRegisterPolicy())
+// re-splices the block from its manifest, and audit reports the difference until it does. The
+// dispatch hook sentence follows harnessFacts.dispatchGated, read the way compile-context reads
+// it.
+func harnessRegisterSection(dispatchGated bool) (string, error) {
+	block, err := config.RenderRegisterBlock(config.DefaultRegisterPolicy(), dispatchGated)
 	if err != nil {
 		return "", fmt.Errorf("render harness text register: %w", err)
 	}
@@ -369,9 +377,13 @@ func (s *adoptSession) harnessFacts(ctx context.Context, clients []string) (harn
 	if err != nil {
 		return harnessFacts{}, err
 	}
+	gated, err := agenthook.DispatchGateRegistered(ctx, s.repoPath)
+	if err != nil {
+		return harnessFacts{}, fmt.Errorf("read dispatch hook registration for the harness: %w", err)
+	}
 	owner, name := s.harnessIdentity()
 	return harnessFacts{owner: owner, name: name, arch: s.arch, plan: s.verification, pipelines: pipelines,
-		hooks: hooks, targets: targets, workflows: workflows}, nil
+		hooks: hooks, targets: targets, workflows: workflows, dispatchGated: gated}, nil
 }
 
 func resolveAgentsContent(s *adoptSession, facts harnessFacts) (string, error) {
