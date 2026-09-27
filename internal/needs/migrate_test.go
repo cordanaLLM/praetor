@@ -20,8 +20,8 @@ func TestScanFileForReplacementsRewritesSubpackagesDeterministically(t *testing.
 		"const addr = \"redis:6379\"\n\nvar _, _ = pgx.Connect, pgxpool.New\n")
 
 	replacements := map[string]string{
-		"github.com/jackc/pgx/v5": "github.com/golusoris/golusoris/db/pgx",
-		"redis":                   "github.com/golusoris/pykit/cache",
+		"github.com/jackc/pgx/v5": "example.com/acme/kit/db/pgx",
+		"redis":                   "example.com/acme/py/cache",
 	}
 	keys := sortedReplacementKeys(replacements)
 
@@ -45,8 +45,8 @@ func TestScanFileForReplacementsRewritesSubpackagesDeterministically(t *testing.
 	}
 
 	wanted := map[string]string{
-		"github.com/jackc/pgx/v5":         "github.com/golusoris/golusoris/db/pgx",
-		"github.com/jackc/pgx/v5/pgxpool": "github.com/golusoris/golusoris/db/pgx/pgxpool",
+		"github.com/jackc/pgx/v5":         "example.com/acme/kit/db/pgx",
+		"github.com/jackc/pgx/v5/pgxpool": "example.com/acme/kit/db/pgx/pgxpool",
 	}
 	if len(first) != len(wanted) {
 		t.Fatalf("expected %d actions, got %+v", len(wanted), first)
@@ -63,7 +63,7 @@ func TestApplyFileImportReplacementLeavesStringLiteralsAlone(t *testing.T) {
 	src := writeFixture(t, dir, "main.go",
 		"package main\n\nimport cache `redis` // redis\n\nconst addr = \"redis:6379\"\nconst name = \"redis\"\n")
 
-	if err := applyFileImportReplacement(dir, src, "redis", "github.com/golusoris/pykit/cache"); err != nil {
+	if err := applyFileImportReplacement(dir, src, "redis", "example.com/acme/py/cache"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	data, err := os.ReadFile(src)
@@ -76,7 +76,7 @@ func TestApplyFileImportReplacementLeavesStringLiteralsAlone(t *testing.T) {
 	if !strings.Contains(string(data), "const name = \"redis\"") {
 		t.Fatalf("string value identical to the import path was rewritten:\n%s", data)
 	}
-	if !strings.Contains(string(data), "import cache \"github.com/golusoris/pykit/cache\" // redis") {
+	if !strings.Contains(string(data), "import cache \"example.com/acme/py/cache\" // redis") {
 		t.Fatalf("import was not rewritten:\n%s", data)
 	}
 }
@@ -85,12 +85,12 @@ func TestMigrationRewritePrimitivesWithRealGit(t *testing.T) {
 	ctx := context.Background()
 	dir := setupMigrationRepo(t)
 	initGitFixture(t, dir)
-	plan, err := PlanMigration(ctx, dir, legacySource(""), nil)
+	plan, err := PlanMigration(ctx, dir, acmeSource(""), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Synthetic requirement exercises the writer; it is not verified release evidence.
-	plan.AddedRequires = []string{defaultFrameworkModule + " v0.8.0"}
+	plan.AddedRequires = []string{acmeKit + " v0.8.0"}
 	result, err := rewriteMigrationFixture(ctx, dir, plan, MigrationOptions{SkipTidy: true})
 	if err != nil || result == nil || !result.Success {
 		t.Fatalf("expected a successful migration: result=%+v err=%v", result, err)
@@ -115,12 +115,12 @@ func TestMigrationRewritePrimitivesWithRealGit(t *testing.T) {
 func TestMigrationRewriteTidyFailureRetainsPartialResult(t *testing.T) {
 	ctx := context.Background()
 	dir := setupMigrationRepo(t)
-	plan, err := PlanMigration(ctx, dir, legacySource(""), nil)
+	plan, err := PlanMigration(ctx, dir, acmeSource(""), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Synthetic requirement exercises the writer; it is not verified release evidence.
-	plan.AddedRequires = []string{defaultFrameworkModule + " v0.8.0"}
+	plan.AddedRequires = []string{acmeKit + " v0.8.0"}
 	tidyErr := errors.New("tidy failed")
 	runner := &recordingRunner{err: tidyErr, failAt: 4}
 	result, err := rewriteMigrationFixture(ctx, dir, plan, MigrationOptions{Runner: runner.run})
@@ -174,7 +174,7 @@ func TestPlanMigrationDropsOnlyGoEcosystemDependencies(t *testing.T) {
 		"module github.com/acme/redis-proxy\n\ngo 1.24\n\nrequire github.com/gin-gonic/gin v1.10.0\n")
 	writeFixture(t, dir, "requirements.txt", "redis==5.0.1\nclick==8.1.7\n")
 
-	plan, err := PlanMigration(context.Background(), dir, legacySource(""), nil)
+	plan, err := PlanMigration(context.Background(), dir, acmeSource(""), nil)
 	if err != nil {
 		t.Fatalf("plan migration failed: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestUpdateGoModKeepsDirectivesAndIsIdempotent(t *testing.T) {
 	path := writeFixture(t, dir, "go.mod", "module github.com/acme/redis-proxy\n\ngo 1.24\n\n"+
 		"require (\n\tgithub.com/gin-gonic/gin v1.10.0\n\tgithub.com/redis/rueidis v1.0.51\n)\n")
 
-	added := []string{"github.com/golusoris/golusoris v0.8.0"}
+	added := []string{"example.com/acme/kit v0.8.0"}
 	dropped := []string{"github.com/gin-gonic/gin", "redis"}
 	for i := 0; i < 2; i++ {
 		if err := updateGoMod(path, added, dropped); err != nil {
@@ -215,7 +215,7 @@ func TestUpdateGoModKeepsDirectivesAndIsIdempotent(t *testing.T) {
 	if strings.Contains(body, "github.com/gin-gonic/gin") {
 		t.Fatalf("gin require should have been dropped:\n%s", body)
 	}
-	if strings.Count(body, "github.com/golusoris/golusoris v0.8.0") != 1 {
+	if strings.Count(body, "example.com/acme/kit v0.8.0") != 1 {
 		t.Fatalf("re-applying the migration duplicated the framework require:\n%s", body)
 	}
 }
@@ -227,7 +227,7 @@ func TestUpdateGoModNegativeScanErrorLeavesFileIntact(t *testing.T) {
 	original := "module example.com/big\n\ngo 1.24\n\n" + overlong + "\nrequire github.com/a/b v1.0.0\n"
 	path := writeFixture(t, dir, "go.mod", original)
 
-	err := updateGoMod(path, []string{"github.com/golusoris/golusoris v0.8.0"}, nil)
+	err := updateGoMod(path, []string{"example.com/acme/kit v0.8.0"}, nil)
 	if err == nil {
 		t.Fatal("expected the truncated scan to be reported as an error")
 	}
@@ -255,7 +255,7 @@ func TestFindFileImportReplacementsSkipsSymlinkedSources(t *testing.T) {
 		t.Skipf("symlinks unavailable on this platform: %v", err)
 	}
 
-	replacements := map[string]string{"github.com/gin-gonic/gin": "github.com/golusoris/golusoris/httpx"}
+	replacements := map[string]string{"github.com/gin-gonic/gin": "example.com/acme/kit/httpx"}
 	actions, err := findFileImportReplacements(context.Background(), repo, replacements)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

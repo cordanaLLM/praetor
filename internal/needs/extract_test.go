@@ -179,7 +179,7 @@ func TestScanRepoCollapsesSubpackageImports(t *testing.T) {
 	writeFixture(t, dir, "main.go", "package main\n\nimport (\n\t\"github.com/jackc/pgx/v5/pgxpool\"\n"+
 		"\t\"github.com/jackc/pgx/v5/pgconn\"\n)\n\nvar _, _ = pgxpool.New, pgconn.Config{}\n")
 
-	repoNeeds, err := ScanRepo(context.Background(), dir, nil)
+	repoNeeds, err := ScanRepo(context.Background(), dir, acmeRegistry(t))
 	if err != nil {
 		t.Fatalf("scan failed: %v", err)
 	}

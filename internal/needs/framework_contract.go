@@ -86,8 +86,8 @@ func (c *frameworkContract) ecosystem() string {
 }
 
 // loadFrameworkContract reads the contract at the checkout root. A missing file is not an
-// error: the caller falls back to catalog candidates. A present file must validate against
-// the module identity the checkout's go.mod declares.
+// error: the caller falls back to the configured contract, if any. A present file must
+// validate against the module identity the checkout's go.mod declares.
 func loadFrameworkContract(ctx context.Context, root *os.Root, module string) (contract *frameworkContract, found bool, err error) {
 	raw, err := contextopt.ReadRootSnapshot(ctx, root, FrameworkContractFile)
 	if errors.Is(err, os.ErrNotExist) {
@@ -284,12 +284,33 @@ func stripMajorSuffix(modulePath string) string {
 	return modulePath[:index]
 }
 
+// rebase returns a copy of the contract declaring the same packages under module: every
+// import path and module moves from the contract's framework onto module, so a fork is
+// observed at the paths its upstream's contract names.
+func (c *frameworkContract) rebase(module string) *frameworkContract {
+	move := func(path string) string { return module + strings.TrimPrefix(path, c.Framework) }
+	out := *c
+	out.Framework = module
+	out.Modules = make([]string, 0, len(c.Modules))
+	for _, nested := range c.Modules {
+		out.Modules = append(out.Modules, move(nested))
+	}
+	out.Packages = slices.Clone(c.Packages)
+	for i := range out.Packages {
+		out.Packages[i].Import = move(out.Packages[i].Import)
+		if out.Packages[i].Module != "" {
+			out.Packages[i].Module = move(out.Packages[i].Module)
+		}
+	}
+	return &out
+}
+
 // observeContractFramework builds the index from the contract's package inventory. Every
 // declared package is still source-observed inside its declared module: a declaration
 // alone never establishes availability, and declared nested modules are honoured instead
-// of being rejected as foreign modules.
-func observeContractFramework(ctx context.Context, index *FrameworkIndex, contract *frameworkContract) error {
-	packages := beginContractIndex(index, contract, FrameworkContractFile)
+// of being rejected as foreign modules. name labels the contract in notes.
+func observeContractFramework(ctx context.Context, index *FrameworkIndex, contract *frameworkContract, name string) error {
+	packages := beginContractIndex(index, contract, name)
 	total := 0
 	for i := range packages {
 		present, err := observeContractPackage(ctx, index, &packages[i], &total)

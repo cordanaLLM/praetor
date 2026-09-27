@@ -25,7 +25,11 @@ const maxFrameworkSourceBytes = 8 << 20
 var frameworkModuleCharacters = regexp.MustCompile(`^[A-Za-z0-9._~/-]+$`)
 var frameworkModuleHost = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]*$`)
 
-func observeFramework(ctx context.Context, index *FrameworkIndex) (err error) {
+// observeFramework indexes the checkout at index.RootPath: the packages its own
+// capabilities.yaml declares, or else the packages the configured contract declares, each
+// kept only when the checkout provides it. A checkout with neither inventory observes no
+// package: directory names alone never imply a capability.
+func observeFramework(ctx context.Context, index *FrameworkIndex, configured string) (err error) {
 	root, err := contextopt.OpenDirectory(ctx, index.RootPath)
 	if err != nil {
 		return fmt.Errorf("open selected framework: %w", err)
@@ -42,28 +46,38 @@ func observeFramework(ctx context.Context, index *FrameworkIndex) (err error) {
 	if err != nil {
 		return err
 	}
-	if found {
-		return observeContractFramework(ctx, index, contract)
+	name := FrameworkContractFile
+	if !found && configured != "" {
+		if contract, err = configuredCheckoutContract(ctx, configured, index.Name); err != nil {
+			return err
+		}
+		found, name = true, filepath.Base(configured)
 	}
-	candidates, err := frameworkCandidates(index.CatalogModule)
+	if !found {
+		return ctx.Err()
+	}
+	if index.Name == "" {
+		index.Name = contract.Framework
+	}
+	return observeContractFramework(ctx, index, contract, name)
+}
+
+// configuredCheckoutContract reads the configured contract a checkout without its own
+// capabilities.yaml is observed against. A checkout of another module, such as a fork, is
+// observed at the contract's package paths rebased onto its own module.
+func configuredCheckoutContract(ctx context.Context, path, module string) (*frameworkContract, error) {
+	raw, err := contextopt.ReadSnapshot(ctx, path)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("read framework contract %s: %w", path, err)
 	}
-	total := 0
-	for _, relative := range sortedFrameworkPaths(candidates) {
-		present, err := observeFrameworkPackage(ctx, index.RootPath, relative, &total)
-		if err != nil {
-			return fmt.Errorf("inspect framework package %s: %w", relative, err)
-		}
-		if !present {
-			continue
-		}
-		if module == "" {
-			return errors.New("observed framework package requires a root go.mod module identity")
-		}
-		addObservedPackage(index, relative, candidates[relative])
+	contract, err := parseFrameworkContract(raw, "")
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
 	}
-	return ctx.Err()
+	if module == "" || module == contract.Framework {
+		return contract, nil
+	}
+	return contract.rebase(module), nil
 }
 
 func frameworkModule(ctx context.Context, root *os.Root) (string, error) {
@@ -132,71 +146,6 @@ func frameworkModuleIdentity(module string) (string, error) {
 	return module, nil
 }
 
-// frameworkCandidates lists the checkout-relative package directories the built-in catalog
-// names inside catalogModule, with their capabilities. A fork is observed at the same
-// relative paths under its own module; an empty catalogModule selects no candidate.
-func frameworkCandidates(catalogModule string) (map[string][]CapabilityKey, error) {
-	if len(CanonicalCatalog) > maxFrameworkPackages {
-		return nil, errors.New("framework catalog exceeds package bound")
-	}
-	result := make(map[string][]CapabilityKey)
-	if catalogModule == "" {
-		return result, nil
-	}
-	for _, entry := range CanonicalCatalog {
-		relative, ok := strings.CutPrefix(catalogFrameworkPackage(entry), catalogModule+"/")
-		if !ok || entry.Status == StatusGap {
-			continue
-		}
-		if !filepath.IsLocal(relative) || filepath.ToSlash(filepath.Clean(relative)) != relative {
-			return nil, fmt.Errorf("invalid catalog replacement path %q", relative)
-		}
-		result[relative] = appendUniqueCap(result[relative], entry.Capability)
-	}
-	return result, nil
-}
-
-func sortedFrameworkPaths(candidates map[string][]CapabilityKey) []string {
-	paths := make([]string, 0, len(candidates))
-	for path := range candidates {
-		paths = append(paths, path)
-	}
-	slices.Sort(paths)
-	return paths
-}
-
-func addObservedPackage(index *FrameworkIndex, relative string, capabilities []CapabilityKey) {
-	path := index.Name + "/" + relative
-	domain, _, _ := strings.Cut(relative, "/")
-	pkg := index.Packages[path]
-	pkg.ImportPath, pkg.Domain = path, domain
-	for _, capability := range capabilities {
-		pkg.Capabilities = appendUniqueCap(pkg.Capabilities, capability)
-		index.Capabilities[capability] = appendUniqueStr(index.Capabilities[capability], path)
-	}
-	index.Packages[path] = pkg
-}
-
-func observeFrameworkPackage(ctx context.Context, base, relative string, total *int) (present bool, err error) {
-	root, err := contextopt.OpenDirectoryIn(ctx, base, filepath.FromSlash(relative))
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	defer func() { err = errors.Join(err, root.Close()) }()
-	inModule, err := frameworkPackageInModule(ctx, base, relative)
-	if err != nil || !inModule {
-		return false, err
-	}
-	entries, err := frameworkPackageEntries(root)
-	if err != nil {
-		return false, err
-	}
-	return frameworkPackageHasSource(ctx, root, entries, total)
-}
-
 func frameworkPackageHasSource(ctx context.Context, root *os.Root, entries []os.DirEntry, total *int) (bool, error) {
 	packageName := ""
 	hasDeclarations := false
@@ -215,22 +164,6 @@ func frameworkPackageHasSource(ctx context.Context, root *os.Root, entries []os.
 		hasDeclarations = hasDeclarations || declared
 	}
 	return hasDeclarations && packageName != "main", nil
-}
-
-func frameworkPackageInModule(ctx context.Context, base, relative string) (bool, error) {
-	parts := strings.Split(relative, "/")
-	if len(parts) > maxPathSegments {
-		return false, errors.New("framework package exceeds path depth bound")
-	}
-	current := base
-	for _, part := range parts {
-		current = filepath.Join(current, part)
-		_, exists, err := contextopt.ObserveSnapshot(ctx, filepath.Join(current, "go.mod"))
-		if err != nil || exists {
-			return false, err
-		}
-	}
-	return true, nil
 }
 
 func frameworkPackageEntries(root *os.Root) (entries []os.DirEntry, err error) {

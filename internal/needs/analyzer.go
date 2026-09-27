@@ -40,16 +40,16 @@ var (
 func NewAnalyzerRegistry() *AnalyzerRegistry {
 	return &AnalyzerRegistry{
 		analyzers: make([]LanguageAnalyzer, 0),
-		targets:   Targets(nil).resolved(),
+		targets:   Targets{},
 	}
 }
 
 // NewRegistry returns a registry of every built-in language analyzer scoring against the
-// operator's framework targets (TargetsFromPolicy). Empty targets resolve to the built-in
-// ones until they are removed (legacyTargets).
+// operator's framework targets (TargetsFromPolicy). A language without a target is
+// classified only: its demands are gaps and name no framework (ADR-0014 §4).
 func NewRegistry(targets Targets) *AnalyzerRegistry {
 	registry := NewAnalyzerRegistry()
-	registry.targets = targets.resolved()
+	registry.targets = targets.clone()
 	registry.Register(NewGoAnalyzer())
 	registry.Register(NewNodeAnalyzer())
 	registry.Register(NewPythonAnalyzer())
@@ -107,14 +107,17 @@ func (r *AnalyzerRegistry) reconcileDeclared(language string, repoNeeds *RepoNee
 	for i := range repoNeeds.Dependencies {
 		reconcileDependency(index, &repoNeeds.Dependencies[i])
 	}
+	if language == "go" {
+		reconcileStandardImports(index, repoNeeds)
+	}
 	calculateReadiness(repoNeeds)
 }
 
-// Targets returns a copy of the resolved targets the registry scores against.
+// Targets returns a copy of the targets the registry scores against.
 func (r *AnalyzerRegistry) Targets() Targets {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.targets.resolved()
+	return r.targets.clone()
 }
 
 // registryOrDefault returns r, or DefaultRegistry when r is nil.
@@ -151,7 +154,7 @@ func (r *AnalyzerRegistry) DetectAll(repoPath string) []LanguageAnalyzer {
 
 // DefaultRegistry returns the singleton registry with all built-in language analyzers and
 // no configured targets. Detection-only callers (bump, dogfood, editor) use it; a needs run
-// builds its registry from the operator's targets with NewRegistry.
+// builds its registry from the operator's targets with RegistryFromPolicy.
 func DefaultRegistry() *AnalyzerRegistry {
 	defaultRegistryOnce.Do(func() {
 		defaultRegistry = NewRegistry(nil)
@@ -192,10 +195,14 @@ func (r *AnalyzerRegistry) AnalyzePolyglot(ctx context.Context, repoPath string)
 // mergeRepoNeeds merges dependencies and capabilities from secondary analyzer results and
 // from the sub-projects of a repository. A dependency whose demandIdentity dst already
 // lists is not appended again: two sub-projects demanding one package are one demand of
-// the repository.
+// the repository. A row whose own language has no framework takes the first framework a
+// merged result names.
 func mergeRepoNeeds(dst, src *RepoNeeds) {
 	if src == nil {
 		return
+	}
+	if dst.Framework == "" {
+		dst.Framework = src.Framework
 	}
 	dst.Languages = appendUniqueStr(dst.Languages, src.Language)
 	for _, lang := range src.Languages {

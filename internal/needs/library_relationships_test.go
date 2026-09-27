@@ -53,35 +53,27 @@ func relationshipDemand(t *testing.T, report *RepoNeeds, pkg string) DependencyD
 	return DependencyDemand{}
 }
 
+// The catalog classifies retained libraries like any other: a capability, no framework
+// package. Their roles come from the selected contract (TestLibraryRelationshipsKeepThirdPartyAccounting).
 func TestLibraryRelationshipCatalogBoundaries(t *testing.T) {
 	for _, tc := range []struct {
 		pkg        string
 		capability CapabilityKey
-		kind       LibraryRelationshipKind
-		target     string
 	}{
-		{"go.uber.org/fx", "runtime.di", RelationshipFoundation, ""},
-		{"github.com/knadh/koanf/v2", "config.loader", RelationshipWrappedBy, "/core/config"},
-		{"github.com/lmittmann/tint", "telemetry.logging", RelationshipWrappedBy, "/core/log"},
-		{"github.com/ogen-go/ogen", "http.openapi", RelationshipTooling, "/ogenkit"},
+		{"go.uber.org/fx", "runtime.di"},
+		{"github.com/knadh/koanf/v2", "config.loader"},
+		{"github.com/lmittmann/tint", "telemetry.logging"},
+		{"github.com/ogen-go/ogen", "http.openapi"},
 	} {
 		t.Run(tc.pkg, func(t *testing.T) {
 			for _, pkg := range []string{tc.pkg, tc.pkg + "/subpkg"} {
 				entry, found := MatchPackage(pkg)
-				if !found || entry.Capability != tc.capability || entry.Relationship == nil {
-					t.Fatalf("missing relationship for %q: %+v", pkg, entry)
-				}
-				wantTarget := ""
-				if tc.target != "" {
-					wantTarget = defaultFrameworkModule + tc.target
-				}
-				want := LibraryRelationship{Kind: tc.kind, FrameworkPackage: wantTarget, Basis: FrameworkCatalogDeclared}
-				if *entry.Relationship != want || entry.FrameworkReplacement != "" {
-					t.Fatalf("relationship must not be a replacement: %+v", entry)
+				if !found || entry.Capability != tc.capability || entry.Notes == "" {
+					t.Fatalf("missing classification for %q: %+v", pkg, entry)
 				}
 			}
 			if entry, found := MatchPackage(tc.pkg + "-unrelated"); found {
-				t.Fatalf("relationship escaped module boundary: %+v", entry)
+				t.Fatalf("classification escaped module boundary: %+v", entry)
 			}
 		})
 	}
@@ -89,11 +81,7 @@ func TestLibraryRelationshipCatalogBoundaries(t *testing.T) {
 
 func TestLibraryRelationshipsKeepThirdPartyAccounting(t *testing.T) {
 	repo := libraryRelationshipFixture(t)
-	index, err := InspectFramework(t.Context(), legacySource(""))
-	if err != nil {
-		t.Fatal(err)
-	}
-	report, err := ScanRepoWithFramework(t.Context(), repo, index, nil)
+	report, err := ScanRepoWithFramework(t.Context(), repo, acmeIndex(t), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +121,7 @@ func TestLibraryRelationshipTargetsRequireObservedPackages(t *testing.T) {
 					writeFixture(t, framework, target+"/adapter.go", tc.source)
 				}
 			}
-			index, err := InspectFramework(t.Context(), legacySource(framework))
+			index, err := InspectFramework(t.Context(), acmeSource(framework))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -146,6 +134,9 @@ func TestLibraryRelationshipTargetsRequireObservedPackages(t *testing.T) {
 	}
 }
 
+// checkObservedRelationships checks the related packages of a fork observed against the
+// configured contract: an observed adapter keeps the retained role under the fork's module;
+// an adapter the checkout does not provide is a gap with no role to claim.
 func checkObservedRelationships(t *testing.T, report *RepoNeeds, status CapabilityStatus) {
 	t.Helper()
 	for pkg, target := range map[string]string{
@@ -154,8 +145,8 @@ func checkObservedRelationships(t *testing.T, report *RepoNeeds, status Capabili
 		"github.com/ogen-go/ogen":   "/ogenkit",
 	} {
 		dep := relationshipDemand(t, report, pkg)
-		if dep.Status != status || dep.Relationship == nil || dep.FrameworkReplacement != "" {
-			t.Fatalf("incorrect observed adapter state: %+v", dep)
+		if dep.Status != status || dep.FrameworkReplacement != "" || (dep.Relationship == nil) == (status == StatusCovered) {
+			t.Fatalf("incorrect observed adapter state: %+v %+v", dep, dep.Relationship)
 		}
 		if status == StatusCovered && (dep.Relationship.FrameworkPackage != "example.com/selected"+target || dep.Relationship.Basis != FrameworkSourceObserved) {
 			t.Fatalf("adapter source must identify exact fork package: %+v", dep)
@@ -174,7 +165,7 @@ func TestLibraryRelationshipScansDoNotContaminateCatalog(t *testing.T) {
 	repo := libraryRelationshipFixture(t)
 	framework := setupFrameworkCheckout(t, "example.com/first", "core/config")
 	writeFixture(t, framework, "core/config/adapter.go", "package config\ntype Available struct{}\n")
-	index, err := InspectFramework(t.Context(), legacySource(framework))
+	index, err := InspectFramework(t.Context(), acmeSource(framework))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,11 +178,11 @@ func TestLibraryRelationshipScansDoNotContaminateCatalog(t *testing.T) {
 		t.Fatal("observed relationship missing")
 	}
 	dep.Relationship.FrameworkPackage = "example.com/caller-edited"
-	declared, err := ScanRepo(t.Context(), repo, nil)
+	declared, err := ScanRepo(t.Context(), repo, acmeRegistry(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := LibraryRelationship{Kind: RelationshipWrappedBy, FrameworkPackage: defaultFrameworkModule + "/core/config", Basis: FrameworkCatalogDeclared}
+	want := LibraryRelationship{Kind: RelationshipWrappedBy, FrameworkPackage: acmeKit + "/core/config", Basis: FrameworkCatalogDeclared}
 	fresh := relationshipDemand(t, declared, "github.com/knadh/koanf/v2")
 	if fresh.Relationship == nil || *fresh.Relationship != want {
 		t.Fatalf("one scan or caller mutation contaminated later declarations: %+v", fresh)
@@ -204,7 +195,7 @@ func TestLibraryRelationshipsNeverBecomeMigrationActions(t *testing.T) {
 	for _, target := range []string{"config", "log", "ogenkit", "db/pgx"} {
 		writeFixture(t, framework, target+"/adapter.go", "package adapter\ntype Available struct{}\n")
 	}
-	analysis, err := analyzeMigration(t.Context(), repo, legacySource(framework), nil)
+	analysis, err := analyzeMigration(t.Context(), repo, acmeSource(framework), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +222,7 @@ func TestLibraryRelationshipsNeverBecomeMigrationActions(t *testing.T) {
 }
 
 func TestLibraryRelationshipSerializationIsAdditive(t *testing.T) {
-	report, err := ScanRepo(t.Context(), libraryRelationshipFixture(t), nil)
+	report, err := ScanRepo(t.Context(), libraryRelationshipFixture(t), acmeRegistry(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +258,7 @@ func TestLibraryRelationshipSerializationIsAdditive(t *testing.T) {
 }
 
 func TestLibraryRelationshipUnknownFoundationCannotClaimRetention(t *testing.T) {
-	index, err := InspectFramework(t.Context(), legacySource(""))
+	index, err := InspectFramework(t.Context(), acmeSource(""))
 	if err != nil {
 		t.Fatal(err)
 	}

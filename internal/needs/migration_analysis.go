@@ -81,7 +81,11 @@ func migrationBlockers(analysis *migrationAnalysis) []string {
 		"Replacement API compatibility and consumer compilation/tests are unverified.",
 		"Executable migration admission is unavailable until a real evidence validator exists.",
 	}
-	if analysis.framework.Basis != FrameworkSourceObserved {
+	switch analysis.framework.Basis {
+	case FrameworkSourceObserved:
+	case FrameworkNotConfigured:
+		blockers = append(blockers, nothingToRewrite+".")
+	default:
 		blockers = append(blockers, "Framework source availability is unobserved ("+analysis.framework.Basis+").")
 	}
 	if gaps := analysis.report.Readiness.GapDeps; gaps > 0 {

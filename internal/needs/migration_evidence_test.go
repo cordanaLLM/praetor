@@ -30,11 +30,11 @@ func TestMigrationAndEpicUseSelectedFramework(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo, framework := migrationEvidenceFixture(t, tc.source)
-			plan, err := PlanMigration(t.Context(), repo, legacySource(framework), nil)
+			plan, err := PlanMigration(t.Context(), repo, acmeSource(framework), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			epic, err := GeneratePreMigrationEpic(t.Context(), repo, legacySource(framework), nil)
+			epic, err := GeneratePreMigrationEpic(t.Context(), repo, acmeSource(framework), nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -59,17 +59,17 @@ func TestMigrationAndEpicUseSelectedFramework(t *testing.T) {
 func TestMigrationSelectionErrorsDoNotBecomeEpics(t *testing.T) {
 	repo, framework := migrationEvidenceFixture(t, "package pgx\n")
 	missing := filepath.Join(framework, "missing")
-	if _, err := PlanMigration(t.Context(), repo, legacySource(missing), nil); !errors.Is(err, os.ErrNotExist) {
+	if _, err := PlanMigration(t.Context(), repo, acmeSource(missing), nil); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("missing selection: %v", err)
 	}
-	if _, err := GeneratePreMigrationEpic(t.Context(), repo, legacySource(missing), nil); !errors.Is(err, os.ErrNotExist) {
+	if _, err := GeneratePreMigrationEpic(t.Context(), repo, acmeSource(missing), nil); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("missing epic selection: %v", err)
 	}
 }
 
 func TestMigrationApplyRejectsUnverifiedBeforeCommands(t *testing.T) {
 	repo, framework := migrationEvidenceFixture(t, "package pgx\ntype Exists struct{}\n")
-	plan, err := PlanMigration(t.Context(), repo, legacySource(framework), nil)
+	plan, err := PlanMigration(t.Context(), repo, acmeSource(framework), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestMigrationCandidateMetadataCannotAdmitApplication(t *testing.T) {
 		}
 		before[name] = string(data)
 	}
-	plan, err := PlanMigration(t.Context(), repo, legacySource(framework), nil)
+	plan, err := PlanMigration(t.Context(), repo, acmeSource(framework), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,11 +133,11 @@ func TestMigrationAnalysisRejectsInvalidSourceAndContext(t *testing.T) {
 	repo, framework := migrationEvidenceFixture(t, "package pgx\nfunc broken(\n")
 	for _, generate := range []func(context.Context) error{
 		func(ctx context.Context) error {
-			_, err := PlanMigration(ctx, repo, legacySource(framework), nil)
+			_, err := PlanMigration(ctx, repo, acmeSource(framework), nil)
 			return err
 		},
 		func(ctx context.Context) error {
-			_, err := GeneratePreMigrationEpic(ctx, repo, legacySource(framework), nil)
+			_, err := GeneratePreMigrationEpic(ctx, repo, acmeSource(framework), nil)
 			return err
 		},
 	} {
@@ -168,7 +168,7 @@ func TestMigrationSelectionKeepsDeclarationsUnverified(t *testing.T) {
 		{"", FrameworkCatalogDeclared, 1},
 		{"example.org/unknown", FrameworkIdentityDeclared, 0},
 	} {
-		plan, err := PlanMigration(t.Context(), repo, legacySource(tc.selection), nil)
+		plan, err := PlanMigration(t.Context(), repo, acmeSource(tc.selection), nil)
 		if err != nil {
 			t.Fatal(err)
 		}

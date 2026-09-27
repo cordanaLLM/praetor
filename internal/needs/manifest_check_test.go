@@ -18,7 +18,7 @@ func checkedManifest(when time.Time) *RepoNeeds {
 		Language:   "go",
 		Languages:  []string{"go"},
 		GoVersion:  "1.27",
-		Framework:  "github.com/golusoris/golusoris",
+		Framework:  "example.com/acme/kit",
 		Capabilities: CapabilityDeclaration{
 			Required: []CapabilityKey{"config.yaml"},
 		},

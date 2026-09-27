@@ -21,10 +21,9 @@ func TestInferLanguageFromItemBranches(t *testing.T) {
 		{"my-radarr-helper", "python"},
 		{"python-tooling", "python"},
 		// The remaining branches.
-		{"sveltesentio", "typescript"},
-		{"pelorus", "typescript"},
+		{"acme-svelte-app", "typescript"},
 		{"ffmpeg-tools", "native"},
-		{"vmafx", "native"},
+		{"vmaf-tools", "native"},
 		{"gpu-bench", "native"},
 		{"rust-compute", "rust"},
 		{"plain-service", LanguageUnsupported},
@@ -146,10 +145,11 @@ func TestCodifyHarvestedInventoryHarvestsGroupedImports(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("expected 1 codified repo, got %d", len(results))
 	}
-	if len(results[0].Dependencies) != 1 {
-		t.Fatalf("expected the grouped import to be harvested, got %+v", results[0].Dependencies)
+	if len(results[0].Dependencies) != 1 || results[0].Dependencies[0].Capability != "http.router" {
+		t.Fatalf("expected the grouped import to be harvested and classified, got %+v", results[0].Dependencies)
 	}
-	if results[0].Readiness.Score != 100.0 {
-		t.Errorf("gin is covered, expected 100%% readiness, got %.1f", results[0].Readiness.Score)
+	// Without a target the harvested row is classified only: its readiness is not configured.
+	if results[0].Readiness.Basis != FrameworkNotConfigured || results[0].Framework != "" {
+		t.Errorf("an unconfigured harvest must not be scored, got %+v", results[0].Readiness)
 	}
 }

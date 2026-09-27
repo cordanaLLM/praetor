@@ -36,11 +36,11 @@ func AggregateFleet(ctx context.Context, fleetRoot string, framework FrameworkSo
 
 // AggregateFleetWithHarvest scans all repositories and incorporates harvested state.
 //
-// Repositories are classified against the framework the source selects, not against the
-// static catalog alone, so pointing --framework at a checkout that does not ship a
-// capability turns every dependency demanding it into a gap. Repositories present both on
-// disk and in the harvest bundle are folded into a single leaderboard row. registry
-// supplies the analyzers and the framework targets; nil selects DefaultRegistry.
+// Repositories are reconciled against the framework the source selects, so pointing
+// --framework at a checkout that does not ship a capability turns every dependency
+// demanding it into a gap. Repositories present both on disk and in the harvest bundle
+// are folded into a single leaderboard row. registry supplies the analyzers and the
+// framework targets; nil selects DefaultRegistry.
 func AggregateFleetWithHarvest(ctx context.Context, fleetRoot string, framework FrameworkSource, harvestPath string,
 	registry *AnalyzerRegistry) (*FleetDemandReport, error) {
 	if ctx.Err() != nil {
@@ -296,13 +296,13 @@ func repoIdentityKey(repository string) string {
 	return cleaned
 }
 
-// applyFrameworkCoverage re-classifies catalog-covered dependencies against the framework
-// the operator pointed at: a capability that framework does not ship is a gap regardless
-// of what the static catalog claims. Without this step --framework would be inert and the
-// fleet coverage number would be a property of the catalog alone.
+// applyFrameworkCoverage reconciles every demand against the framework the operator
+// selected: a capability that framework does not declare is a gap. Without this step
+// --framework would be inert and the fleet coverage number would say nothing about it.
 //
 // A demand of a language whose target declares a contract (LoadRegistry) is reconciled
-// against that contract instead; idx is the go framework.
+// against that contract instead; idx is the go framework. Selected standard-library imports
+// take the retained role the framework declares for them, and never count as demand.
 func applyFrameworkCoverage(idx *FrameworkIndex, repoNeeds *RepoNeeds, registry *AnalyzerRegistry) {
 	if idx == nil || repoNeeds == nil {
 		return
@@ -311,15 +311,28 @@ func applyFrameworkCoverage(idx *FrameworkIndex, repoNeeds *RepoNeeds, registry 
 	for i := range repoNeeds.Dependencies {
 		reconcileDependency(registry.frameworkFor(repoNeeds.Dependencies[i].Language, idx), &repoNeeds.Dependencies[i])
 	}
+	reconcileStandardImports(idx, repoNeeds)
 	calculateReadiness(repoNeeds)
 	repoNeeds.Framework = idx.Name
 	repoNeeds.Readiness.Basis = idx.Basis
 }
 
+// reconcileStandardImports applies the foundation, wrapper or tooling role idx declares for
+// each selected standard-library import.
+func reconcileStandardImports(idx *FrameworkIndex, repoNeeds *RepoNeeds) {
+	if idx == nil {
+		return
+	}
+	for i := range repoNeeds.StandardLibraryImports {
+		applyContractRelationship(idx, &repoNeeds.StandardLibraryImports[i])
+	}
+}
+
 // reconcileDependency classifies one demand against the selected framework: the
-// framework's own modules are native, catalog relationships keep their retained roles, a
-// capability contract maps explicit replacements, and otherwise the catalog path must be
-// an observed package or the demand is a gap.
+// framework's own modules are native, a declared relationship keeps its retained role, a
+// capability contract maps replacements and adapters, and a demand an earlier framework
+// mapped keeps its package only when the selected framework lists it. Anything else is a
+// gap.
 func reconcileDependency(idx *FrameworkIndex, dep *DependencyDemand) {
 	if isFrameworkModule(idx, dep.Package) {
 		markFrameworkNative(idx, dep)
@@ -331,20 +344,11 @@ func reconcileDependency(idx *FrameworkIndex, dep *DependencyDemand) {
 	if dep.Status == StatusGap {
 		return
 	}
-	if replacement, available := frameworkReplacement(idx, *dep); available {
-		dep.FrameworkReplacement = replacement
+	if _, listed := idx.Packages[dep.FrameworkReplacement]; listed {
 		return
 	}
-	dep.Status = StatusGap
-	dep.FrameworkReplacement = ""
-	dep.Notes = fmt.Sprintf("%s has no observed catalog replacement for capability %s", idx.Name, dep.Capability)
-	if idx.Name == "" {
-		dep.Notes = undeclaredNote("", "catalog replacement", dep.Capability)
-	}
-}
-
-func frameworkReplacement(idx *FrameworkIndex, dep DependencyDemand) (string, bool) {
-	return availableFrameworkPackage(idx, dep.Capability, dep.FrameworkReplacement)
+	dep.Status, dep.FrameworkReplacement = StatusGap, ""
+	dep.Notes = undeclaredNote(idx.Name, "package", dep.Capability)
 }
 
 // compileGapsAndLeaderboard sorts leaderboard and formats gap details.
@@ -436,20 +440,28 @@ func RenderFrameworkDemandMarkdown(report *FleetDemandReport) string {
 }
 
 // renderDemandHeader renders the report preamble, including the failure and coverage state.
+// A fleet scored against no framework says so instead of a coverage percentage.
 func renderDemandHeader(report *FleetDemandReport) string {
 	coverage := fmt.Sprintf("%.1f%%", report.OverallFleetCoverage)
-	if !report.CoverageKnown {
+	framework := "`" + report.Framework + "`"
+	switch {
+	case !report.CoverageKnown:
 		coverage = "unknown (no repository could be scanned)"
+	case report.CoverageBasis == FrameworkNotConfigured:
+		coverage = mappingNotConfigured
+	}
+	if report.CoverageBasis == FrameworkNotConfigured {
+		framework = FrameworkNotConfiguredText
 	}
 
 	return fmt.Sprintf("# Framework Demand & Capability Report\n\n"+
-		"**Target Framework**: `%s`  \n"+
+		"**Target Framework**: %s  \n"+
 		"**Coverage Basis**: %s; builds and tests not run  \n"+
 		"**Generated At**: %s  \n"+
 		"**Repositories Scanned**: %d / %d  \n"+
 		"%s"+
 		"**Overall Fleet Target Framework Coverage**: %s\n\n",
-		report.Framework, report.CoverageBasis, report.GeneratedAt.Format(time.RFC3339),
+		framework, report.CoverageBasis, report.GeneratedAt.Format(time.RFC3339),
 		report.ScannedRepositories, report.TotalRepositories, renderDemandHeaderCounts(report), coverage)
 }
 

@@ -17,7 +17,7 @@ func TestPythonAnalyzerManifestSyntaxForms(t *testing.T) {
 		"[tool.poetry.dependencies]\npython = \"^3.12\"\nredis = \"^5.0\"\n"
 	writeFixture(t, tempDir, "pyproject.toml", pyproject)
 
-	repoNeeds, err := NewPythonAnalyzer().Analyze(context.Background(), tempDir, legacyTargets()["python"])
+	repoNeeds, err := acmeRegistry(t).AnalyzePolyglot(context.Background(), tempDir)
 	if err != nil {
 		t.Fatalf("python analysis failed: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestPythonAnalyzerSetupPyOnly(t *testing.T) {
 		"    install_requires=[\n        \"fastapi>=0.111\",\n        \"unknown-ml-lib==1.0.0\",\n    ],\n)\n"
 	writeFixture(t, tempDir, "setup.py", setupPy)
 
-	repoNeeds, err := NewPythonAnalyzer().Analyze(context.Background(), tempDir, legacyTargets()["python"])
+	repoNeeds, err := acmeRegistry(t).AnalyzePolyglot(context.Background(), tempDir)
 	if err != nil {
 		t.Fatalf("python analysis failed: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestRustAnalyzerTableForms(t *testing.T) {
 		"[dev-dependencies]\nclap = \"4.5\"\n"
 	writeFixture(t, tempDir, "Cargo.toml", cargo)
 
-	repoNeeds, err := NewRustAnalyzer().Analyze(context.Background(), tempDir, legacyTargets()["rust"])
+	repoNeeds, err := NewRustAnalyzer().Analyze(context.Background(), tempDir, acmeTargets()["rust"])
 	if err != nil {
 		t.Fatalf("rust analysis failed: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestNativeAnalyzerCMakeIsCaseInsensitive(t *testing.T) {
 		"find_package(CUDA REQUIRED)\nfind_package(Vulkan REQUIRED)\nfind_package(CustomDsp)\n"
 	writeFixture(t, tempDir, "CMakeLists.txt", cmake)
 
-	repoNeeds, err := NewNativeAnalyzer().Analyze(context.Background(), tempDir, legacyTargets()["native"])
+	repoNeeds, err := acmeRegistry(t).AnalyzePolyglot(context.Background(), tempDir)
 	if err != nil {
 		t.Fatalf("native analysis failed: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestNativeAnalyzerDeduplicatesAcrossManifests(t *testing.T) {
 	writeFixture(t, tempDir, "meson.build", "dep_cuda = dependency('cuda')\n")
 	writeFixture(t, tempDir, "CMakeLists.txt", "find_package(CUDA REQUIRED)\n")
 
-	repoNeeds, err := NewNativeAnalyzer().Analyze(context.Background(), tempDir, legacyTargets()["native"])
+	repoNeeds, err := NewNativeAnalyzer().Analyze(context.Background(), tempDir, acmeTargets()["native"])
 	if err != nil {
 		t.Fatalf("native analysis failed: %v", err)
 	}
@@ -158,7 +158,7 @@ func TestPythonAnalyzer_FIFO(t *testing.T) {
 	tempDir := t.TempDir()
 	testsupport.MakeFIFO(t, filepath.Join(tempDir, "requirements.txt"))
 	err := testsupport.RunWithin(t, 10*time.Second, func() error {
-		_, analyzeErr := NewPythonAnalyzer().Analyze(context.Background(), tempDir, legacyTargets()["python"])
+		_, analyzeErr := NewPythonAnalyzer().Analyze(context.Background(), tempDir, acmeTargets()["python"])
 		return analyzeErr
 	})
 	if err == nil {
@@ -170,7 +170,7 @@ func TestNodeAnalyzer_FIFO(t *testing.T) {
 	tempDir := t.TempDir()
 	testsupport.MakeFIFO(t, filepath.Join(tempDir, "package.json"))
 	err := testsupport.RunWithin(t, 10*time.Second, func() error {
-		_, analyzeErr := NewNodeAnalyzer().Analyze(context.Background(), tempDir, legacyTargets()["typescript"])
+		_, analyzeErr := NewNodeAnalyzer().Analyze(context.Background(), tempDir, acmeTargets()["typescript"])
 		return analyzeErr
 	})
 	if err == nil {

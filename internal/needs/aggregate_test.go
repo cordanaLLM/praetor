@@ -15,7 +15,7 @@ func TestAggregateFleetSkipsUnanalyzableRepositories(t *testing.T) {
 	writeFixture(t, root, filepath.Join("docs", ".standards.yaml"),
 		"repository:\n  name: docs\n  owner: acme\n")
 
-	report, err := AggregateFleet(context.Background(), root, legacySource(""), nil)
+	report, err := AggregateFleet(context.Background(), root, acmeSource(""), nil)
 	if err != nil {
 		t.Fatalf("aggregate fleet failed: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestAggregateFleetWithHarvestSkipsUnsupportedLanguage(t *testing.T) {
 	writeFixture(t, harvest, filepath.Join("dev-inventory", "dev-inventory.json"),
 		`[{"Name": "plain-service", "Type": "Git"}, {"Name": "plain-service", "Type": "Git"}]`)
 
-	report, err := AggregateFleetWithHarvest(context.Background(), root, legacySource(""), harvest, nil)
+	report, err := AggregateFleetWithHarvest(context.Background(), root, acmeSource(""), harvest, nil)
 	if err != nil {
 		t.Fatalf("AggregateFleetWithHarvest() error = %v", err)
 	}
@@ -88,13 +88,13 @@ func TestAggregateFleetNegativeCancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if _, err := AggregateFleet(ctx, root, legacySource(""), nil); err == nil {
+	if _, err := AggregateFleet(ctx, root, acmeSource(""), nil); err == nil {
 		t.Fatal("expected a cancelled aggregation to fail rather than report empty repos")
 	}
 }
 
 func TestAggregateFleetBoundaryEmptyRoot(t *testing.T) {
-	report, err := AggregateFleet(context.Background(), t.TempDir(), legacySource(""), nil)
+	report, err := AggregateFleet(context.Background(), t.TempDir(), acmeSource(""), nil)
 	if err != nil {
 		t.Fatalf("aggregate on an empty root failed: %v", err)
 	}

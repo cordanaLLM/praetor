@@ -220,9 +220,10 @@ func ApplyMigration(ctx context.Context, repoPath string, plan *MigrationPlan) (
 	return ApplyMigrationWithOptions(ctx, repoPath, plan, MigrationOptions{})
 }
 
-// ApplyMigrationWithOptions rejects candidates before commands or mutations.
-// No module-version/API compatibility evidence validator is available yet. Options
-// remain source-compatible but cannot bypass admission, including SkipTidy/Runner.
+// ApplyMigrationWithOptions rejects candidates before commands or mutations: a plan with no
+// target framework has nothing to rewrite (ErrFrameworkNotConfigured), and no
+// module-version/API compatibility evidence validator is available yet. Options remain
+// source-compatible but cannot bypass admission, including SkipTidy/Runner.
 func ApplyMigrationWithOptions(ctx context.Context, repoPath string, plan *MigrationPlan, opts MigrationOptions) (*MigrationResult, error) {
 	if ctx == nil {
 		return nil, errors.New("needs: migration requires a context")
@@ -232,6 +233,10 @@ func ApplyMigrationWithOptions(ctx context.Context, repoPath string, plan *Migra
 	}
 	if plan == nil {
 		return nil, ErrNilMigrationPlan
+	}
+	if plan.Framework == "" {
+		return failedMigration(&MigrationResult{Repository: plan.Repository},
+			fmt.Errorf("%s: %w", nothingToRewrite, ErrFrameworkNotConfigured))
 	}
 	return failedMigration(&MigrationResult{Repository: plan.Repository}, &UnverifiedMigrationError{})
 }
@@ -490,7 +495,7 @@ func requireModulePath(line string, inRequire *bool) string {
 // generateMigrationGuide creates a concise markdown walkthrough for the developer.
 func generateMigrationGuide(plan *MigrationPlan) string {
 	var sb strings.Builder
-	writef(&sb, "# Migration Guide: %s -> %s\n\n", plan.Repository, plan.Framework)
+	writef(&sb, "# Migration Guide: %s -> %s\n\n", plan.Repository, FrameworkDisplay(plan.Framework))
 	writeMigrationEvidence(&sb, plan)
 	sb.WriteString("## Candidate Dependency Changes\n\n")
 	sb.WriteString("**Added Requirements:**\n")

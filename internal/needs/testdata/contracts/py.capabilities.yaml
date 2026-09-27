@@ -1,0 +1,58 @@
+# Placeholder python framework contract for the internal/needs tests (ADR-0014): the
+# packages, capabilities and claims a configured target declares. No real framework.
+version: 1
+framework: example.com/acme/py
+ecosystem: pypi
+packages:
+  - import: example.com/acme/py/ai
+    module: example.com/acme/py
+    domain: ai
+    capabilities:
+      - ai.llm_client
+    replaces:
+      - litellm
+  - import: example.com/acme/py/cache
+    module: example.com/acme/py
+    domain: cache
+    capabilities:
+      - cache.redis
+    replaces:
+      - redis
+  - import: example.com/acme/py/cli
+    module: example.com/acme/py
+    domain: cli
+    capabilities:
+      - clikit.cli
+    replaces:
+      - click
+  - import: example.com/acme/py/client
+    module: example.com/acme/py
+    domain: client
+    capabilities:
+      - http.client
+    replaces:
+      - httpx
+      - requests
+  - import: example.com/acme/py/db
+    module: example.com/acme/py
+    domain: db
+    capabilities:
+      - db.postgres
+      - db.orm
+    replaces:
+      - asyncpg
+      - sqlalchemy
+  - import: example.com/acme/py/httpx
+    module: example.com/acme/py
+    domain: httpx
+    capabilities:
+      - http.router
+    replaces:
+      - fastapi
+  - import: example.com/acme/py/schema
+    module: example.com/acme/py
+    domain: schema
+    capabilities:
+      - data.validation
+    replaces:
+      - pydantic

@@ -67,7 +67,7 @@ func (a *NativeAnalyzer) Analyze(ctx context.Context, repoPath string, target Ta
 	sort.Strings(keys)
 
 	for _, key := range keys {
-		demand := mapNativeDependency(deps[key].name, deps[key].version, target.RoutingKit())
+		demand := nativeClassifier.classify(deps[key].name, deps[key].version, target.RoutingKit())
 		repoNeeds.Dependencies = append(repoNeeds.Dependencies, demand)
 		repoNeeds.Capabilities.Required = appendUniqueCap(repoNeeds.Capabilities.Required, demand.Capability)
 	}
@@ -152,34 +152,4 @@ func extractQuotedString(line string) string {
 		return ""
 	}
 	return rest[:end]
-}
-
-// mapNativeDependency resolves a native library against the catalog. The lookup is
-// case-insensitive: CMake's canonical module names are capitalised (CUDA, Vulkan,
-// OpenCL) while the catalog is keyed in lower case. kit is the target's routing kit.
-func mapNativeDependency(pkg, ver, kit string) DependencyDemand {
-	mapping, found := lookupNativeCatalog(strings.ToLower(pkg))
-	if found {
-		return DependencyDemand{
-			Package:              pkg,
-			Version:              ver,
-			Language:             "native",
-			Ecosystem:            "system",
-			Capability:           mapping.Capability,
-			Status:               mapping.Status,
-			FrameworkReplacement: mapping.Replacement,
-			TargetBuilderKit:     kit,
-			Notes:                mapping.Notes,
-		}
-	}
-	return DependencyDemand{
-		Package:          pkg,
-		Version:          ver,
-		Language:         "native",
-		Ecosystem:        "system",
-		Capability:       CapabilityKey("native.external." + cleanDepKey(strings.ToLower(pkg))),
-		Status:           StatusGap,
-		TargetBuilderKit: kit,
-		Notes:            "Native C/C++/GPU system library requiring a target framework binding",
-	}
 }

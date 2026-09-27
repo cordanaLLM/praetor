@@ -140,7 +140,7 @@ func createChildTasks(repoName string, plan *MigrationPlan, maxFuncLOC int) []fo
 
 	t3 := forge.IssueSpec{
 		Title:     fmt.Sprintf("[TASK 3/5] Framework Dependency Substitution: %s", repoName),
-		Body:      fmt.Sprintf("## Scope\n- Review %d proposed import substitutions targeting %s.\n- Resolve a verified module version and validate API compatibility before application.\n- Executable migration admission remains unavailable.\n- Reconcile .needs.yaml capability declarations.", len(plan.Replacements), plan.Framework),
+		Body:      fmt.Sprintf("## Scope\n- Review %d proposed import substitutions targeting %s.\n- Resolve a verified module version and validate API compatibility before application.\n- Executable migration admission remains unavailable.\n- Reconcile .needs.yaml capability declarations.", len(plan.Replacements), FrameworkDisplay(plan.Framework)),
 		State:     "open",
 		Labels:    []string{"task", "dependencies", "migration"},
 		DependsOn: []string{taskAnchor(2)},
@@ -168,8 +168,13 @@ func createChildTasks(repoName string, plan *MigrationPlan, maxFuncLOC int) []fo
 func renderEpicChecklistMarkdown(repoName string, repoNeeds *RepoNeeds, plan *MigrationPlan, tasks []forge.IssueSpec) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "# Pre-Migration Epic: %s\n\n", repoName)
-	fmt.Fprintf(&sb, "- **Target Framework**: `%s`\n", plan.Framework)
-	fmt.Fprintf(&sb, "- **Mapping Availability**: `%.1f%%`\n", repoNeeds.Readiness.Score)
+	if plan.Framework == "" {
+		sb.WriteString("- **Target Framework**: not configured\n")
+		fmt.Fprintf(&sb, "- **Mapping Availability**: %s\n", MappingAvailability(repoNeeds.Readiness))
+	} else {
+		fmt.Fprintf(&sb, "- **Target Framework**: `%s`\n", plan.Framework)
+		fmt.Fprintf(&sb, "- **Mapping Availability**: `%s`\n", MappingAvailability(repoNeeds.Readiness))
+	}
 	writeMigrationEvidence(&sb, plan)
 	fmt.Fprintf(&sb, "- **Third-Party Dependencies**: `%d` total (%d covered, %d gaps)\n\n",
 		repoNeeds.Readiness.TotalThirdPartyDeps, repoNeeds.Readiness.CoveredDeps, repoNeeds.Readiness.GapDeps)
@@ -191,7 +196,8 @@ func renderEpicChecklistMarkdown(repoName string, repoNeeds *RepoNeeds, plan *Mi
 }
 
 // PublishPreMigrationEpic publishes the pre-migration parent epic and decomposed tasks
-// to the target forge, creating only the issues that do not exist yet.
+// to the target forge, creating only the issues that do not exist yet. An epic with no
+// target framework is refused before the forge is contacted (ErrFrameworkNotConfigured).
 //
 // Publishing resolves every issue by title against the forge's issue inventory, the
 // identity forge.SyncIssues upserts on, so publishing again creates no second epic: an
@@ -215,6 +221,9 @@ func PublishPreMigrationEpic(ctx context.Context, f forge.Forge, epic *PreMigrat
 	}
 	if ctx.Err() != nil {
 		return nil, nil, ctx.Err()
+	}
+	if epic.TargetFramework == "" {
+		return nil, nil, fmt.Errorf("refusing to publish the pre-migration epic of %s: %w", epic.RepoName, ErrFrameworkNotConfigured)
 	}
 
 	planned := append([]forge.IssueSpec{epic.ParentEpic}, epic.ChildIssues...)

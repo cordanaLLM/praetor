@@ -21,7 +21,7 @@ func setupTestHarvest(t *testing.T) string {
 
 	invJSON := `[
 		{"Name": "jellyfin-utilities", "Type": "Git", "Path": "C:\\dev\\jellyfin-utilities", "DirtyCount": 1, "HasPatches": true},
-		{"Name": "sveltesentio", "Type": "Git", "Path": "C:\\dev\\sveltesentio", "DirtyCount": 0, "HasPatches": false}
+		{"Name": "acme-svelte-app", "Type": "Git", "Path": "C:\\dev\\acme-svelte-app", "DirtyCount": 0, "HasPatches": false}
 	]`
 	if err := os.WriteFile(filepath.Join(invDir, "dev-inventory.json"), []byte(invJSON), 0644); err != nil {
 		t.Fatal(err)
@@ -51,7 +51,7 @@ func TestCodifyHarvestedInventory_Positive(t *testing.T) {
 		t.Errorf("expected jellyfin go deps, got %+v", results[0])
 	}
 	if results[1].Language != "typescript" {
-		t.Errorf("expected sveltesentio typescript, got %s", results[1].Language)
+		t.Errorf("expected acme-svelte-app typescript, got %s", results[1].Language)
 	}
 }
 
@@ -88,9 +88,9 @@ func TestCodifyHarvestedInventory_Empty(t *testing.T) {
 	}
 }
 
-// Harvested repositories are scored against the target of their inferred language: the
-// built-in ones on an unconfigured host, the configured ones otherwise, and none for a
-// language without a target.
+// Harvested repositories record the target of their inferred language: the configured one,
+// or none for a language without a target; an unconfigured host records none at all and
+// scores the rows not-configured.
 func TestCodifyHarvestedInventoryUsesTargets_3D(t *testing.T) {
 	harvest := setupTestHarvest(t)
 	// Positive: a configured go target names the framework and routes the harvested demand.
@@ -111,13 +111,17 @@ func TestCodifyHarvestedInventoryUsesTargets_3D(t *testing.T) {
 	if ts := goOnly[1]; ts.Framework != "" || len(ts.BuilderKits) != 0 {
 		t.Fatalf("unconfigured typescript target = %+v", ts)
 	}
-	// Boundary: no configured target keeps the built-in targets and their kits.
-	legacy, err := CodifyHarvestedInventory(t.Context(), harvest, nil)
+	// Boundary: no configured target names no framework and routes nothing.
+	unconfigured, err := CodifyHarvestedInventory(t.Context(), harvest, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if legacy[0].Framework != defaultFrameworkModule || legacy[0].Dependencies[0].TargetBuilderKit != legacyTargets()["go"].RoutingKit() ||
-		legacy[1].Framework != legacyTargets()["typescript"].Module {
-		t.Fatalf("built-in targets lost: %+v / %+v", legacy[0], legacy[1])
+	for _, row := range unconfigured {
+		if row.Framework != "" || len(row.BuilderKits) != 0 || row.Readiness.Basis != FrameworkNotConfigured {
+			t.Fatalf("an unconfigured harvest row named a framework: %+v", row)
+		}
+	}
+	if unconfigured[0].Dependencies[0].TargetBuilderKit != "" || unconfigured[0].Dependencies[0].Status != StatusGap {
+		t.Fatalf("an unconfigured harvested demand was routed or scored: %+v", unconfigured[0].Dependencies[0])
 	}
 }

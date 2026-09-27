@@ -119,17 +119,22 @@ func TestContractExportRoundTrip_Positive(t *testing.T) {
 	}
 }
 
-// The built-in tables of every language export to a contract that parses back unchanged,
-// carrying their replacement, adapter, relationship and foundation claims; an entry the
-// contract grammar cannot carry is listed, never silently dropped.
-func TestContractExportBuiltinTables(t *testing.T) {
+// Every configured target exports to a contract that parses back as its language's
+// ecosystem with the target contract's packages and claims: the export of a configured
+// contract is that contract.
+func TestContractExportConfiguredTargets(t *testing.T) {
+	targets := acmeTargets()
 	for _, language := range []string{"go", "typescript", "python", "rust", "native"} {
-		export, err := ExportFrameworkContract(t.Context(), language, FrameworkSource{Module: defaultFrameworkModule}, nil)
+		export, err := ExportFrameworkContract(t.Context(), language, acmeDeclared(), targets)
 		if err != nil {
 			t.Fatalf("%s: %v", language, err)
 		}
-		if export.Framework != legacyTargets()[language].Module || export.Packages == 0 {
-			t.Fatalf("%s export = %+v", language, export)
+		declared, err := InspectFramework(t.Context(), FrameworkSource{Contract: targets[language].Contract, Module: targets[language].Module})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if export.Framework != targets[language].Module || export.Packages != len(declared.Packages) || len(export.Skipped) != 0 {
+			t.Fatalf("%s export = %+v, want %d packages", language, export, len(declared.Packages))
 		}
 		parsed, err := parseFrameworkContract(export.Data, export.Framework)
 		if err != nil || parsed.ecosystem() != languageEcosystem(language) {
@@ -142,17 +147,13 @@ func TestContractExportBuiltinTables(t *testing.T) {
 		if claims == 0 {
 			t.Errorf("%s export carries no claim", language)
 		}
-		if language == "python" && !strings.Contains(strings.Join(export.Skipped, "\n"), "not a contract capability key") {
-			t.Errorf("python export must list the catalog capability the contract grammar rejects: %v", export.Skipped)
-		}
 	}
-	goExport, err := ExportFrameworkContract(t.Context(), "go", FrameworkSource{Module: defaultFrameworkModule}, nil)
+	goExport, err := ExportFrameworkContract(t.Context(), "go", acmeDeclared(), targets)
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsed, err := parseFrameworkContract(goExport.Data, defaultFrameworkModule)
-	if err != nil || len(parsed.Foundations) == 0 {
-		t.Fatalf("go export lost the built-in foundations: %v %+v", err, parsed)
+	if parsed, err := parseFrameworkContract(goExport.Data, acmeKit); err != nil || len(parsed.Foundations) != 2 {
+		t.Fatalf("go export lost the contract's foundations: %v %+v", err, parsed)
 	}
 }
 
@@ -162,32 +163,30 @@ func TestContractExport_NegativeAndBoundary(t *testing.T) {
 		!strings.Contains(err.Error(), "set framework.targets.go.module") {
 		t.Fatalf("unconfigured go export = %v", err)
 	}
-	if _, err := ExportFrameworkContract(t.Context(), "python", FrameworkSource{}, Targets{"go": {Module: "example.com/acme/kit"}}); err == nil {
+	if _, err := ExportFrameworkContract(t.Context(), "python", FrameworkSource{}, Targets{"go": {Module: acmeKit}}); err == nil {
 		t.Fatal("an unconfigured python target exported")
 	}
 	if _, err := ExportFrameworkContract(t.Context(), "cobol", FrameworkSource{}, nil); err == nil {
 		t.Fatal("an unknown language exported")
 	}
-	// Boundary: a configured module the built-in tables do not describe exports a contract
-	// that names it and declares no package.
-	export, err := ExportFrameworkContract(t.Context(), "typescript", FrameworkSource{}, Targets{"typescript": {Module: "example.com/acme/ui"}})
-	if err != nil || export.Framework != "example.com/acme/ui" || export.Packages != 0 {
-		t.Fatalf("undescribed module export = %+v, %v", export, err)
+	// Boundary: a target configured with a module and no contract exports an empty contract
+	// that names it: praetor ships no framework data to fill it.
+	for _, language := range []string{"go", "typescript"} {
+		module := acmeTargets()[language].Module
+		export, err := ExportFrameworkContract(t.Context(), language, FrameworkSource{Module: module}, Targets{language: {Module: module}})
+		if err != nil || export.Framework != module || export.Packages != 0 {
+			t.Fatalf("%s module-only export = %+v, %v", language, export, err)
+		}
+		parsed, err := parseFrameworkContract(export.Data, module)
+		if err != nil || len(parsed.Packages) != 0 || len(parsed.Foundations) != 0 {
+			t.Fatalf("%s module-only export claims data: %v %+v", language, err, parsed)
+		}
 	}
-	// Boundary: a go module the catalog does not describe exports no catalog foundation;
-	// reconciliation would drop those claims for it, so the contract must not carry them.
-	goExport, err := ExportFrameworkContract(t.Context(), "go", FrameworkSource{Module: "example.com/acme/kit"}, nil)
-	if err != nil {
-		t.Fatalf("undescribed go module export: %v", err)
-	}
-	goParsed, err := parseFrameworkContract(goExport.Data, "example.com/acme/kit")
-	if err != nil || len(goParsed.Foundations) != 0 {
-		t.Fatalf("undescribed go module export claims foundations: %v %+v", err, goParsed.Foundations)
-	}
-	// Boundary: a configured contract exports its own claims unchanged.
-	contract := writeAcmeContract(t)
-	own, err := ExportFrameworkContract(t.Context(), "go", FrameworkSource{Contract: contract, Module: "example.com/acme/kit"}, nil)
-	if err != nil || own.Packages != 4 || strings.Contains(string(own.Data), defaultFrameworkModule) {
-		t.Fatalf("contract export = %+v, %v", own, err)
+	// Boundary: a checkout exports only the configured contract's packages it provides.
+	checkout := setupFrameworkCheckout(t, acmeKit, "db")
+	writeFixture(t, checkout, "db/db.go", "package db\n\ntype Pool struct{}\n")
+	observed, err := ExportFrameworkContract(t.Context(), "go", FrameworkSource{Checkout: checkout, Contract: writeAcmeContract(t), Module: acmeKit}, nil)
+	if err != nil || observed.Packages != 1 || !strings.Contains(string(observed.Data), acmeKit+"/db") {
+		t.Fatalf("checkout export = %+v, %v", observed, err)
 	}
 }

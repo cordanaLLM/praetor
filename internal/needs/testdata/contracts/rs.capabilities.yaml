@@ -1,0 +1,48 @@
+# Placeholder rust framework contract for the internal/needs tests (ADR-0014): the
+# packages, capabilities and claims a configured target declares. No real framework.
+version: 1
+framework: example.com/acme/rs
+ecosystem: cargo
+packages:
+  - import: example.com/acme/rs/cli
+    module: example.com/acme/rs
+    domain: cli
+    capabilities:
+      - clikit.cli
+    replaces:
+      - clap
+  - import: example.com/acme/rs/client
+    module: example.com/acme/rs
+    domain: client
+    capabilities:
+      - http.client
+    replaces:
+      - reqwest
+  - import: example.com/acme/rs/http
+    module: example.com/acme/rs
+    domain: http
+    capabilities:
+      - http.router
+    replaces:
+      - axum
+  - import: example.com/acme/rs/runtime
+    module: example.com/acme/rs
+    domain: runtime
+    capabilities:
+      - runtime.async
+    replaces:
+      - tokio
+  - import: example.com/acme/rs/serde
+    module: example.com/acme/rs
+    domain: serde
+    capabilities:
+      - data.serialization
+    replaces:
+      - serde
+  - import: example.com/acme/rs/tracing
+    module: example.com/acme/rs
+    domain: tracing
+    capabilities:
+      - telemetry.logging
+    replaces:
+      - tracing

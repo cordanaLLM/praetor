@@ -4,328 +4,87 @@ import (
 	"strings"
 )
 
-// CatalogEntry specifies a known library's mapping to Golusoris capabilities.
+// CatalogEntry classifies a known Go library into a standard capability. It names no
+// framework: which framework package replaces, adapts, wraps or retains the library is
+// declared by the operator's framework contract (framework.targets.<lang>.contract,
+// ADR-0014 §6), never by this catalog.
 type CatalogEntry struct {
-	Package              string
-	Capability           CapabilityKey
-	Status               CapabilityStatus
-	FrameworkReplacement string
-	Notes                string
-	Relationship         *LibraryRelationship
+	Package    string
+	Capability CapabilityKey
+	Notes      string
 }
 
-// CanonicalCatalog provides the authoritative fleet mapping of Go libraries to Golusoris.
-var CanonicalCatalog = []CatalogEntry{
+// CapabilityCatalog classifies well-known Go libraries, and the standard-library imports the
+// scan records, into capabilities. A library it does not list is a custom.* capability.
+var CapabilityCatalog = []CatalogEntry{
 	// Database
-	{
-		Package:              "github.com/jackc/pgx",
-		Capability:           "db.postgres",
-		Status:               StatusCovered,
-		FrameworkReplacement: "github.com/golusoris/golusoris/db/pgx",
-		Notes:                "Direct PostgreSQL driver and pool integration",
-	},
-	{
-		Package:              "github.com/uptrace/bun",
-		Capability:           "db.orm",
-		Status:               StatusCovered,
-		FrameworkReplacement: "github.com/golusoris/golusoris/db/bun",
-		Notes:                "Idiomatic Go SQL-first query builder",
-	},
-	{
-		Package:              "github.com/ClickHouse/clickhouse-go",
-		Capability:           "db.clickhouse",
-		Status:               StatusCovered,
-		FrameworkReplacement: "github.com/golusoris/golusoris/db/clickhouse",
-		Notes:                "High-performance analytical column-store database",
-	},
-	{
-		Package:              "github.com/jmoiron/sqlx",
-		Capability:           "db.sqlx",
-		Status:               StatusAdapterAvailable,
-		FrameworkReplacement: "github.com/golusoris/golusoris/db",
-		Notes:                "Migrate queries to Golusoris db/bun or db/pgx",
-	},
-	{
-		Package:              "gorm.io/gorm",
-		Capability:           "db.orm",
-		Status:               StatusAdapterAvailable,
-		FrameworkReplacement: "github.com/golusoris/golusoris/db/bun",
-		Notes:                "Migrate legacy GORM models to bun.Ident schema definitions",
-	},
-	{
-		Package:              "github.com/lib/pq",
-		Capability:           "db.postgres",
-		Status:               StatusAdapterAvailable,
-		FrameworkReplacement: "github.com/golusoris/golusoris/db/pgx",
-		Notes:                "Replace deprecated lib/pq with Golusoris pgx pool",
-	},
+	{Package: "github.com/jackc/pgx", Capability: "db.postgres", Notes: "Direct PostgreSQL driver and pool integration"},
+	{Package: "github.com/uptrace/bun", Capability: "db.orm", Notes: "Idiomatic Go SQL-first query builder"},
+	{Package: "github.com/ClickHouse/clickhouse-go", Capability: "db.clickhouse", Notes: "High-performance analytical column-store database"},
+	{Package: "github.com/jmoiron/sqlx", Capability: "db.sqlx", Notes: "database/sql extensions for struct scanning and named queries"},
+	{Package: "gorm.io/gorm", Capability: "db.orm", Notes: "ORM with model-based schema definitions"},
+	{Package: "github.com/lib/pq", Capability: "db.postgres", Notes: "PostgreSQL driver for database/sql, in maintenance mode"},
 
 	// Cache
-	{
-		Package:              "github.com/redis/rueidis",
-		Capability:           "cache.redis",
-		Status:               StatusCovered,
-		FrameworkReplacement: "github.com/golusoris/golusoris/cache/redis",
-		Notes:                "Fast auto-pipelining Redis client",
-	},
-	{
-		Package:              "github.com/redis/go-redis",
-		Capability:           "cache.redis",
-		Status:               StatusCovered,
-		FrameworkReplacement: "github.com/golusoris/golusoris/cache/redis",
-		Notes:                "Migrate to Golusoris cache/twotier or cache/redis",
-	},
-	{
-		Package:              "github.com/patrickmn/go-cache",
-		Capability:           "cache.inmemory",
-		Status:               StatusCovered,
-		FrameworkReplacement: "github.com/golusoris/golusoris/cache/memory",
-		Notes:                "In-process concurrent cache with TTL",
-	},
+	{Package: "github.com/redis/rueidis", Capability: "cache.redis", Notes: "Fast auto-pipelining Redis client"},
+	{Package: "github.com/redis/go-redis", Capability: "cache.redis", Notes: "Redis client"},
+	{Package: "github.com/patrickmn/go-cache", Capability: "cache.inmemory", Notes: "In-process concurrent cache with TTL"},
 
 	// HTTP & Routing
-	{
-		Package:    "github.com/ogen-go/ogen",
-		Capability: "http.openapi",
-		Status:     StatusCovered,
-		Relationship: &LibraryRelationship{Kind: RelationshipTooling,
-			FrameworkPackage: "github.com/golusoris/golusoris/ogenkit", Basis: FrameworkCatalogDeclared},
-		Notes: "Retain ogen for OpenAPI generation and runtime imports; ogenkit supplies integration helpers, not replacement APIs (Golusoris ADR-0004). A module dependency alone does not prove generator execution.",
-	},
-	{
-		Package:              "github.com/go-chi/chi",
-		Capability:           "http.router",
-		Status:               StatusCovered,
-		FrameworkReplacement: "github.com/golusoris/golusoris/httpx",
-		Notes:                "Composable net/http middleware and router",
-	},
-	{
-		Package:              "github.com/gin-gonic/gin",
-		Capability:           "http.router",
-		Status:               StatusCovered,
-		FrameworkReplacement: "github.com/golusoris/golusoris/httpx",
-		Notes:                "Fast HTTP router; migrate gin.Context handlers to httpx",
-	},
-	{
-		Package:              "github.com/swaggo/swag",
-		Capability:           "http.openapi",
-		Status:               StatusCovered,
-		FrameworkReplacement: "github.com/golusoris/golusoris/apidocs",
-		Notes:                "Swagger/OpenAPI spec generation and UI serving",
-	},
-	{
-		Package:              "github.com/swaggo/gin-swagger",
-		Capability:           "http.openapi",
-		Status:               StatusCovered,
-		FrameworkReplacement: "github.com/golusoris/golusoris/apidocs",
-		Notes:                "OpenAPI endpoint serving via Golusoris apidocs",
-	},
-	{
-		Package:              "github.com/getkin/kin-openapi",
-		Capability:           "http.openapi",
-		Status:               StatusCovered,
-		FrameworkReplacement: "github.com/golusoris/golusoris/apidocs",
-		Notes:                "OpenAPI 3.0 validation and specification parser",
-	},
+	{Package: "github.com/ogen-go/ogen", Capability: "http.openapi",
+		Notes: "OpenAPI code generator with runtime packages. A module dependency alone does not prove generator execution."},
+	{Package: "github.com/go-chi/chi", Capability: "http.router", Notes: "Composable net/http middleware and router"},
+	{Package: "github.com/gin-gonic/gin", Capability: "http.router", Notes: "Fast HTTP router and web framework"},
+	{Package: "github.com/swaggo/swag", Capability: "http.openapi", Notes: "Swagger/OpenAPI spec generation and UI serving"},
+	{Package: "github.com/swaggo/gin-swagger", Capability: "http.openapi", Notes: "Swagger UI serving for gin"},
+	{Package: "github.com/getkin/kin-openapi", Capability: "http.openapi", Notes: "OpenAPI 3.0 validation and specification parser"},
 
 	// Jobs & Queuing
-	{
-		Package:              "github.com/hibiken/asynq",
-		Capability:           "jobs.queue",
-		Status:               StatusCovered,
-		FrameworkReplacement: "github.com/golusoris/golusoris/jobs",
-		Notes:                "Migrate Redis worker tasks to Golusoris jobs (River PostgreSQL queue)",
-	},
-	{
-		Package:              "github.com/riverqueue/river",
-		Capability:           "jobs.queue",
-		Status:               StatusCovered,
-		FrameworkReplacement: "github.com/golusoris/golusoris/jobs",
-		Notes:                "Native River queue engine wrapped in Golusoris",
-	},
-	{
-		Package:              "github.com/robfig/cron",
-		Capability:           "jobs.cron",
-		Status:               StatusCovered,
-		FrameworkReplacement: "github.com/golusoris/golusoris/jobs/cron",
-		Notes:                "Scheduled recurring task manager",
-	},
+	{Package: "github.com/hibiken/asynq", Capability: "jobs.queue", Notes: "Redis-backed distributed task queue"},
+	{Package: "github.com/riverqueue/river", Capability: "jobs.queue", Notes: "PostgreSQL-backed job queue"},
+	{Package: "github.com/robfig/cron", Capability: "jobs.cron", Notes: "Scheduled recurring task manager"},
 
 	// PubSub & Messaging
-	{
-		Package:              "github.com/nats-io/nats.go",
-		Capability:           "pubsub.nats",
-		Status:               StatusCovered,
-		FrameworkReplacement: "github.com/golusoris/golusoris/pubsub/nats",
-		Notes:                "NATS Core and JetStream messaging client",
-	},
-	{
-		Package:              "github.com/confluentinc/confluent-kafka-go",
-		Capability:           "pubsub.kafka",
-		Status:               StatusCovered,
-		FrameworkReplacement: "github.com/golusoris/golusoris/pubsub/kafka",
-		Notes:                "High-throughput Kafka streaming client",
-	},
+	{Package: "github.com/nats-io/nats.go", Capability: "pubsub.nats", Notes: "NATS Core and JetStream messaging client"},
+	{Package: "github.com/confluentinc/confluent-kafka-go", Capability: "pubsub.kafka", Notes: "High-throughput Kafka streaming client"},
 
 	// Auth & Security
-	{
-		Package:              "github.com/golang-jwt/jwt",
-		Capability:           "auth.jwt",
-		Status:               StatusCovered,
-		FrameworkReplacement: "github.com/golusoris/golusoris/auth/jwt",
-		Notes:                "Secure HMAC/RSA/Ed25519 token issuance and verification",
-	},
-	{
-		Package:              "github.com/coreos/go-oidc",
-		Capability:           "auth.oidc",
-		Status:               StatusCovered,
-		FrameworkReplacement: "github.com/golusoris/golusoris/auth/oidc",
-		Notes:                "OpenID Connect verification and claims extraction",
-	},
+	{Package: "github.com/golang-jwt/jwt", Capability: "auth.jwt", Notes: "Secure HMAC/RSA/Ed25519 token issuance and verification"},
+	{Package: "github.com/coreos/go-oidc", Capability: "auth.oidc", Notes: "OpenID Connect verification and claims extraction"},
 
 	// Configuration
-	{
-		Package:    "github.com/knadh/koanf/v2",
-		Capability: "config.loader",
-		Status:     StatusCovered,
-		Relationship: &LibraryRelationship{Kind: RelationshipWrappedBy,
-			FrameworkPackage: "github.com/golusoris/golusoris/core/config", Basis: FrameworkCatalogDeclared},
-		Notes: "Retain koanf as the modular configuration engine; Golusoris config provides the application adapter (Golusoris ADR-0002).",
-	},
-	{
-		Package:              "github.com/spf13/viper",
-		Capability:           "config.loader",
-		Status:               StatusCovered,
-		FrameworkReplacement: "github.com/golusoris/golusoris/core/config",
-		Notes:                "Hierarchical configuration with environment override",
-	},
+	{Package: "github.com/knadh/koanf/v2", Capability: "config.loader", Notes: "Modular configuration engine"},
+	{Package: "github.com/spf13/viper", Capability: "config.loader", Notes: "Hierarchical configuration with environment override"},
 
 	// Telemetry & Observability
-	{
-		Package:      "log/slog",
-		Capability:   "telemetry.logging",
-		Status:       StatusNative,
-		Relationship: &LibraryRelationship{Kind: RelationshipFoundation, Basis: FrameworkCatalogDeclared},
-		Notes:        "Retain the standard-library structured logging API; Golusoris log configures its handlers (Golusoris ADR-0003).",
-	},
-	{
-		Package:    "github.com/lmittmann/tint",
-		Capability: "telemetry.logging",
-		Status:     StatusCovered,
-		Relationship: &LibraryRelationship{Kind: RelationshipWrappedBy,
-			FrameworkPackage: "github.com/golusoris/golusoris/core/log", Basis: FrameworkCatalogDeclared},
-		Notes: "Retain tint as an optional slog handler; Golusoris log configures tint or JSON without changing the application logging API (Golusoris ADR-0003).",
-	},
-	{
-		Package:              "go.opentelemetry.io/otel",
-		Capability:           "telemetry.otel",
-		Status:               StatusCovered,
-		FrameworkReplacement: "github.com/golusoris/golusoris/otel",
-		Notes:                "OpenTelemetry trace, metric, and baggage context propagation",
-	},
-	{
-		Package:              "github.com/prometheus/client_golang",
-		Capability:           "telemetry.prometheus",
-		Status:               StatusCovered,
-		FrameworkReplacement: "github.com/golusoris/golusoris/observability",
-		Notes:                "Prometheus metrics collector and scraping handler",
-	},
-	{
-		Package:              "go.uber.org/zap",
-		Capability:           "telemetry.logging",
-		Status:               StatusCovered,
-		FrameworkReplacement: "github.com/golusoris/golusoris/core/log",
-		Notes:                "High-performance structured JSON logging",
-	},
-	{
-		Package:              "github.com/sirupsen/logrus",
-		Capability:           "telemetry.logging",
-		Status:               StatusCovered,
-		FrameworkReplacement: "github.com/golusoris/golusoris/core/log",
-		Notes:                "Migrate legacy Logrus calls to Golusoris slog/log",
-	},
+	{Package: "log/slog", Capability: "telemetry.logging", Notes: "Standard-library structured logging API"},
+	{Package: "github.com/lmittmann/tint", Capability: "telemetry.logging", Notes: "Colourised slog handler"},
+	{Package: "go.opentelemetry.io/otel", Capability: "telemetry.otel", Notes: "OpenTelemetry trace, metric, and baggage context propagation"},
+	{Package: "github.com/prometheus/client_golang", Capability: "telemetry.prometheus", Notes: "Prometheus metrics collector and scraping handler"},
+	{Package: "go.uber.org/zap", Capability: "telemetry.logging", Notes: "High-performance structured JSON logging"},
+	{Package: "github.com/sirupsen/logrus", Capability: "telemetry.logging", Notes: "Structured logging with hooks and formatters"},
 
 	// CLI & Terminal
-	{
-		Package:              "github.com/spf13/cobra",
-		Capability:           "clikit.cobra",
-		Status:               StatusCovered,
-		FrameworkReplacement: "github.com/golusoris/golusoris/core/clikit",
-		Notes:                "Command line interface framework with flags",
-	},
-	{
-		Package:              "github.com/charmbracelet/bubbletea",
-		Capability:           "clikit.tui",
-		Status:               StatusCovered,
-		FrameworkReplacement: "github.com/golusoris/golusoris/clikit/tui",
-		Notes:                "The Elm Architecture terminal user interface",
-	},
+	{Package: "github.com/spf13/cobra", Capability: "clikit.cobra", Notes: "Command line interface framework with flags"},
+	{Package: "github.com/charmbracelet/bubbletea", Capability: "clikit.tui", Notes: "The Elm Architecture terminal user interface"},
 
 	// Identifiers
-	{
-		Package:              "github.com/google/uuid",
-		Capability:           "id.uuid",
-		Status:               StatusCovered,
-		FrameworkReplacement: "github.com/golusoris/golusoris/core/id",
-		Notes:                "V4 and V7 UUID generation",
-	},
+	{Package: "github.com/google/uuid", Capability: "id.uuid", Notes: "V4 and V7 UUID generation"},
 
 	// eBPF
-	{
-		Package:              "github.com/cilium/ebpf",
-		Capability:           "kernel.ebpf",
-		Status:               StatusCovered,
-		FrameworkReplacement: "github.com/golusoris/golusoris/ebpf",
-		Notes:                "Kernel tracing and XDP/TC networking hooks",
-	},
+	{Package: "github.com/cilium/ebpf", Capability: "kernel.ebpf", Notes: "Kernel tracing and XDP/TC networking hooks"},
 
 	// Testing & Inversion of Control
-	{
-		Package:              "github.com/stretchr/testify",
-		Capability:           "test.assert",
-		Status:               StatusCovered,
-		FrameworkReplacement: "github.com/golusoris/golusoris/testutil",
-		Notes:                "Testify assertions and mocks mapped to Golusoris testutil",
-	},
-	{
-		Package:      "go.uber.org/fx",
-		Capability:   "runtime.di",
-		Status:       StatusNative,
-		Relationship: &LibraryRelationship{Kind: RelationshipFoundation, Basis: FrameworkCatalogDeclared},
-		Notes:        "Retain fx as the dependency-injection and lifecycle foundation; compose Golusoris modules through fx rather than replacing it with clikit (Golusoris ADR-0001).",
-	},
+	{Package: "github.com/stretchr/testify", Capability: "test.assert", Notes: "Test assertions and mocks"},
+	{Package: "go.uber.org/fx", Capability: "runtime.di", Notes: "Dependency injection and application lifecycle"},
 
 	// Serialization & Configuration Formats
-	{
-		Package:              "gopkg.in/yaml.v3",
-		Capability:           "config.yaml",
-		Status:               StatusCovered,
-		FrameworkReplacement: "github.com/golusoris/golusoris/core/codec/yaml",
-		Notes:                "YAML parser and serializer; Golusoris core/codec/yaml is the framework's single YAML codec",
-	},
-	{
-		Package:              "gopkg.in/yaml.v2",
-		Capability:           "config.yaml",
-		Status:               StatusCovered,
-		FrameworkReplacement: "github.com/golusoris/golusoris/core/codec/yaml",
-		Notes:                "Legacy YAML v2 parser; migrate to Golusoris core/codec/yaml",
-	},
+	{Package: "gopkg.in/yaml.v3", Capability: "config.yaml", Notes: "YAML parser and serializer"},
+	{Package: "gopkg.in/yaml.v2", Capability: "config.yaml", Notes: "Legacy YAML v2 parser and serializer"},
 
 	// Model Context Protocol (MCP)
-	{
-		Package:              "github.com/mark3labs/mcp-go",
-		Capability:           "mcp.server",
-		Status:               StatusCovered,
-		FrameworkReplacement: "github.com/golusoris/golusoris/core/mcp",
-		Notes:                "Migrate community mcp-go server to Golusoris mcp module",
-	},
-	{
-		Package:              "github.com/modelcontextprotocol/go-sdk",
-		Capability:           "mcp.server",
-		Status:               StatusCovered,
-		FrameworkReplacement: "github.com/golusoris/golusoris/core/mcp",
-		Notes:                "Official MCP Go SDK wrapped in Golusoris mcp module",
-	},
+	{Package: "github.com/mark3labs/mcp-go", Capability: "mcp.server", Notes: "Community Model Context Protocol server library"},
+	{Package: "github.com/modelcontextprotocol/go-sdk", Capability: "mcp.server", Notes: "Official Model Context Protocol Go SDK"},
 }
 
 // MatchPackage searches the catalog for the longest module-path match for a given import
@@ -334,13 +93,12 @@ var CanonicalCatalog = []CatalogEntry{
 // The match is anchored on a path boundary: an entry matches the import path itself or a
 // package inside it, never a different module that merely starts with the same
 // characters. Without the boundary, "github.com/uptrace/bunrouter" would inherit the
-// "github.com/uptrace/bun" mapping and be reported as covered by an unrelated
-// replacement.
+// "github.com/uptrace/bun" classification.
 func MatchPackage(importPath string) (CatalogEntry, bool) {
 	var bestMatch CatalogEntry
 	longestPrefix := 0
 
-	for _, entry := range CanonicalCatalog {
+	for _, entry := range CapabilityCatalog {
 		if !matchesModuleBoundary(importPath, entry.Package) {
 			continue
 		}
@@ -362,91 +120,108 @@ func matchesModuleBoundary(importPath, modulePath string) bool {
 	return importPath == modulePath || strings.HasPrefix(importPath, modulePath+"/")
 }
 
-// CatalogMapping defines the framework mapping for a non-Go dependency.
+// CatalogMapping classifies a non-Go dependency into a standard capability. Like
+// CatalogEntry it names no framework.
 type CatalogMapping struct {
-	Capability  CapabilityKey
-	Status      CapabilityStatus
-	Replacement string
-	Notes       string
+	Capability CapabilityKey
+	Notes      string
 }
 
-// nodeCatalog is the built-in npm catalog (TRANSITION data, see defaultFrameworkModule).
+// nodeCatalog classifies well-known npm packages.
 var nodeCatalog = map[string]CatalogMapping{
-	"svelte":         {Capability: "ui.framework", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio", Notes: "Core Svelte reactive UI framework"},
-	"@sveltejs/kit":  {Capability: "ui.framework", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio", Notes: "SvelteKit application framework"},
-	"tailwindcss":    {Capability: "ui.styling", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio", Notes: "Utility-first CSS styling engine"},
-	"clsx":           {Capability: "ui.styling", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio", Notes: "Class name construction helper"},
-	"tailwind-merge": {Capability: "ui.styling", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio", Notes: "Conflict-free Tailwind class merger"},
-	"lucide-svelte":  {Capability: "ui.icons", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio/icons", Notes: "Clean SVG icons for Svelte"},
-	"@lucide/svelte": {Capability: "ui.icons", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio/icons", Notes: "Scoped Lucide SVG icons"},
-	"bits-ui":        {Capability: "ui.components", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio/components", Notes: "Headless primitives for Svelte"},
-	"shadcn-svelte":  {Capability: "ui.components", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio/components", Notes: "Accessible styled UI components"},
-	"zod":            {Capability: "ui.forms", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio/forms", Notes: "TypeScript schema validation with type inference"},
-	"svelte-sonner":  {Capability: "ui.toast", Status: StatusCovered, Replacement: "github.com/golusoris/sveltesentio/toast", Notes: "Toast notification component"},
-	"axios":          {Capability: "http.client", Status: StatusAdapterAvailable, Replacement: "github.com/golusoris/sveltesentio/fetch", Notes: "HTTP client; migrate to native fetch with SvelteSentio interceptors"},
+	"svelte":         {Capability: "ui.framework", Notes: "Core Svelte reactive UI framework"},
+	"@sveltejs/kit":  {Capability: "ui.framework", Notes: "SvelteKit application framework"},
+	"tailwindcss":    {Capability: "ui.styling", Notes: "Utility-first CSS styling engine"},
+	"clsx":           {Capability: "ui.styling", Notes: "Class name construction helper"},
+	"tailwind-merge": {Capability: "ui.styling", Notes: "Conflict-free Tailwind class merger"},
+	"lucide-svelte":  {Capability: "ui.icons", Notes: "Clean SVG icons for Svelte"},
+	"@lucide/svelte": {Capability: "ui.icons", Notes: "Scoped Lucide SVG icons"},
+	"bits-ui":        {Capability: "ui.components", Notes: "Headless primitives for Svelte"},
+	"shadcn-svelte":  {Capability: "ui.components", Notes: "Accessible styled UI components"},
+	"zod":            {Capability: "ui.forms", Notes: "TypeScript schema validation with type inference"},
+	"svelte-sonner":  {Capability: "ui.toast", Notes: "Toast notification component"},
+	"axios":          {Capability: "http.client", Notes: "Promise-based HTTP client"},
 }
 
-func lookupNodeCatalog(pkg string) (CatalogMapping, bool) {
-	m, ok := nodeCatalog[pkg]
-	return m, ok
-}
-
-// pythonCatalog is the built-in PyPI catalog (TRANSITION data, see defaultFrameworkModule).
+// pythonCatalog classifies well-known PyPI packages, keyed in lower case.
 var pythonCatalog = map[string]CatalogMapping{
-	"fastapi":    {Capability: "http.router", Status: StatusCovered, Replacement: "github.com/golusoris/pykit/httpx", Notes: "Async web framework for building APIs"},
-	"pydantic":   {Capability: "data.validation", Status: StatusCovered, Replacement: "github.com/golusoris/pykit/schema", Notes: "Data validation and settings management"},
-	"httpx":      {Capability: "http.client", Status: StatusCovered, Replacement: "github.com/golusoris/pykit/client", Notes: "Async HTTP client for Python"},
-	"requests":   {Capability: "http.client", Status: StatusCovered, Replacement: "github.com/golusoris/pykit/client", Notes: "HTTP library; migrate to PyKit async client"},
-	"redis":      {Capability: "cache.redis", Status: StatusCovered, Replacement: "github.com/golusoris/pykit/cache", Notes: "Redis in-memory data store client"},
-	"sqlalchemy": {Capability: "db.orm", Status: StatusCovered, Replacement: "github.com/golusoris/pykit/db", Notes: "Python SQL toolkit and Object Relational Mapper"},
-	"asyncpg":    {Capability: "db.postgres", Status: StatusCovered, Replacement: "github.com/golusoris/pykit/db", Notes: "Fast PostgreSQL driver for Python asyncio"},
-	"click":      {Capability: "clikit", Status: StatusCovered, Replacement: "github.com/golusoris/pykit/cli", Notes: "Composable command line interface kit"},
-	"litellm":    {Capability: "ai.llm_client", Status: StatusCovered, Replacement: "github.com/golusoris/pykit/ai", Notes: "Unified multi-provider LLM gateway client"},
+	"fastapi":    {Capability: "http.router", Notes: "Async web framework for building APIs"},
+	"pydantic":   {Capability: "data.validation", Notes: "Data validation and settings management"},
+	"httpx":      {Capability: "http.client", Notes: "Async HTTP client for Python"},
+	"requests":   {Capability: "http.client", Notes: "Synchronous HTTP library"},
+	"redis":      {Capability: "cache.redis", Notes: "Redis in-memory data store client"},
+	"sqlalchemy": {Capability: "db.orm", Notes: "Python SQL toolkit and Object Relational Mapper"},
+	"asyncpg":    {Capability: "db.postgres", Notes: "Fast PostgreSQL driver for Python asyncio"},
+	"click":      {Capability: "clikit.cli", Notes: "Composable command line interface kit"},
+	"litellm":    {Capability: "ai.llm_client", Notes: "Unified multi-provider LLM gateway client"},
 }
 
-func lookupPythonCatalog(pkg string) (CatalogMapping, bool) {
-	m, ok := pythonCatalog[pkg]
-	return m, ok
-}
-
-// rustCatalog is the built-in Cargo catalog (TRANSITION data, see defaultFrameworkModule).
+// rustCatalog classifies well-known Cargo crates, keyed in lower case.
 var rustCatalog = map[string]CatalogMapping{
-	"tokio":   {Capability: "runtime.async", Status: StatusCovered, Replacement: "github.com/golusoris/rustkit/runtime", Notes: "Asynchronous runtime for Rust"},
-	"serde":   {Capability: "data.serialization", Status: StatusCovered, Replacement: "github.com/golusoris/rustkit/serde", Notes: "Generic serialization/deserialization framework"},
-	"axum":    {Capability: "http.router", Status: StatusCovered, Replacement: "github.com/golusoris/rustkit/http", Notes: "Ergonomic and modular web framework"},
-	"reqwest": {Capability: "http.client", Status: StatusCovered, Replacement: "github.com/golusoris/rustkit/client", Notes: "Higher level HTTP client library"},
-	"clap":    {Capability: "clikit", Status: StatusCovered, Replacement: "github.com/golusoris/rustkit/cli", Notes: "Command Line Argument Parser for Rust"},
-	"tracing": {Capability: "telemetry.logging", Status: StatusCovered, Replacement: "github.com/golusoris/rustkit/tracing", Notes: "Application-level tracing and diagnostic instrumentation"},
+	"tokio":   {Capability: "runtime.async", Notes: "Asynchronous runtime for Rust"},
+	"serde":   {Capability: "data.serialization", Notes: "Generic serialization/deserialization framework"},
+	"axum":    {Capability: "http.router", Notes: "Ergonomic and modular web framework"},
+	"reqwest": {Capability: "http.client", Notes: "Higher level HTTP client library"},
+	"clap":    {Capability: "clikit.cli", Notes: "Command Line Argument Parser for Rust"},
+	"tracing": {Capability: "telemetry.logging", Notes: "Application-level tracing and diagnostic instrumentation"},
 }
 
-func lookupRustCatalog(pkg string) (CatalogMapping, bool) {
-	m, ok := rustCatalog[pkg]
-	return m, ok
-}
-
-// nativeCatalog is the built-in native library catalog (TRANSITION data, see defaultFrameworkModule).
+// nativeCatalog classifies well-known native libraries, keyed in lower case: CMake's
+// canonical module names are capitalised (CUDA, Vulkan, OpenCL).
 var nativeCatalog = map[string]CatalogMapping{
-	"libavcodec":  {Capability: "media.ffmpeg", Status: StatusCovered, Replacement: "github.com/golusoris/template-native-gpu/ffmpeg", Notes: "FFmpeg audio/video decoding and encoding library"},
-	"libavformat": {Capability: "media.ffmpeg", Status: StatusCovered, Replacement: "github.com/golusoris/template-native-gpu/ffmpeg", Notes: "FFmpeg container demuxing and muxing library"},
-	"libavfilter": {Capability: "media.ffmpeg", Status: StatusCovered, Replacement: "github.com/golusoris/template-native-gpu/ffmpeg", Notes: "FFmpeg audio/video graph filtering library"},
-	"libvmaf":     {Capability: "media.vmafx", Status: StatusCovered, Replacement: "github.com/golusoris/template-native-gpu/vmafx", Notes: "VMAFx video quality metric engine"},
-	"cuda":        {Capability: "gpu.cuda", Status: StatusCovered, Replacement: "github.com/golusoris/template-native-gpu/cuda", Notes: "NVIDIA CUDA compute acceleration library"},
-	"vulkan":      {Capability: "gpu.vulkan", Status: StatusCovered, Replacement: "github.com/golusoris/template-native-gpu/vulkan", Notes: "Cross-platform 3D graphics and compute API"},
-	"opencl":      {Capability: "gpu.opencl", Status: StatusCovered, Replacement: "github.com/golusoris/template-native-gpu/opencl", Notes: "Heterogeneous parallel computing framework"},
+	"libavcodec":  {Capability: "media.ffmpeg", Notes: "FFmpeg audio/video decoding and encoding library"},
+	"libavformat": {Capability: "media.ffmpeg", Notes: "FFmpeg container demuxing and muxing library"},
+	"libavfilter": {Capability: "media.ffmpeg", Notes: "FFmpeg audio/video graph filtering library"},
+	"libvmaf":     {Capability: "media.vmaf", Notes: "VMAF perceptual video quality metric library"},
+	"cuda":        {Capability: "gpu.cuda", Notes: "NVIDIA CUDA compute acceleration library"},
+	"vulkan":      {Capability: "gpu.vulkan", Notes: "Cross-platform 3D graphics and compute API"},
+	"opencl":      {Capability: "gpu.opencl", Notes: "Heterogeneous parallel computing framework"},
 }
 
-func lookupNativeCatalog(pkg string) (CatalogMapping, bool) {
-	m, ok := nativeCatalog[pkg]
-	return m, ok
+// manifestClassifier classifies the dependencies one non-Go analyzer reads from its
+// manifests: a catalog hit takes the catalog's capability, anything else an external
+// capability under the language's prefix.
+type manifestClassifier struct {
+	language, ecosystem string
+	catalog             map[string]CatalogMapping
+	// foldLookup looks packages up in lower case; foldExternal also lower-cases the
+	// external capability key.
+	foldLookup, foldExternal bool
+	// externalPrefix and externalNote classify a package the catalog does not list.
+	externalPrefix, externalNote string
 }
 
-// languageCatalog returns the built-in catalog of a non-Go framework language; ok is false
-// for go, whose catalog is CanonicalCatalog, and for an unknown language.
-func languageCatalog(language string) (map[string]CatalogMapping, bool) {
-	catalog, ok := map[string]map[string]CatalogMapping{
-		"typescript": nodeCatalog, "python": pythonCatalog, "rust": rustCatalog, "native": nativeCatalog,
-	}[language]
-	return catalog, ok
+var (
+	nodeClassifier = manifestClassifier{language: "typescript", ecosystem: "npm", catalog: nodeCatalog,
+		externalPrefix: "ui.external.", externalNote: "External npm dependency requiring a target framework adapter or evaluation"}
+	pythonClassifier = manifestClassifier{language: "python", ecosystem: "pypi", catalog: pythonCatalog, foldLookup: true,
+		externalPrefix: "python.external.", externalNote: "External PyPI dependency requiring a target framework adapter or evaluation"}
+	rustClassifier = manifestClassifier{language: "rust", ecosystem: "cargo", catalog: rustCatalog, foldLookup: true,
+		externalPrefix: "rust.external.", externalNote: "External Cargo crate requiring a target framework adapter or evaluation"}
+	nativeClassifier = manifestClassifier{language: "native", ecosystem: "system", catalog: nativeCatalog,
+		foldLookup: true, foldExternal: true,
+		externalPrefix: "native.external.", externalNote: "Native C/C++/GPU system library requiring a target framework binding"}
+)
+
+// classify returns the demand for one manifest dependency, routed to kit (the language
+// target's routing kit). The catalog assigns a capability only: every demand starts as a
+// gap, and a framework contract decides what covers it (reconcileDependency).
+func (c manifestClassifier) classify(pkg, ver, kit string) DependencyDemand {
+	demand := DependencyDemand{Package: pkg, Version: ver, Language: c.language, Ecosystem: c.ecosystem,
+		Status: StatusGap, TargetBuilderKit: kit}
+	lookup, external := pkg, pkg
+	if c.foldLookup {
+		lookup = strings.ToLower(pkg)
+	}
+	if c.foldExternal {
+		external = strings.ToLower(pkg)
+	}
+	if mapping, found := c.catalog[lookup]; found {
+		demand.Capability, demand.Notes = mapping.Capability, mapping.Notes
+		return demand
+	}
+	demand.Capability, demand.Notes = CapabilityKey(c.externalPrefix+cleanDepKey(external)), c.externalNote
+	return demand
 }
 
 func cleanDepKey(pkg string) string {

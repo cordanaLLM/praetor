@@ -18,8 +18,8 @@ func demandFixture() []FrameworkDemandRequest {
 			RequestID:             "REQ-CAP-STORAGE-S3",
 			Title:                 "[FRAMEWORK-DEMAND] Universal S3 Storage Adapter",
 			Capability:            "storage.s3",
-			TargetOrg:             "golusoris",
-			TargetBuilderKit:      "golusoris/storage",
+			TargetOrg:             "acme",
+			TargetBuilderKit:      "acme/storage",
 			ConsumingRepos:        []string{"repo-a", "repo-b"},
 			ConsumerCount:         2,
 			ReplacedPackages:      []string{"boto3"},
@@ -50,7 +50,7 @@ func TestSynthesizeDemands_Positive(t *testing.T) {
 		},
 	}
 
-	requests := SynthesizeDemands(report, nil)
+	requests := SynthesizeDemands(report, acmeTargets())
 	if len(requests) != 2 {
 		t.Fatalf("expected 2 demand requests, got %d", len(requests))
 	}
@@ -63,16 +63,16 @@ func TestSynthesizeDemands_Positive(t *testing.T) {
 	if first.DeduplicationRatio != 3.0 {
 		t.Errorf("expected deduplication ratio 3.0, got %.1f", first.DeduplicationRatio)
 	}
-	if first.TargetOrg != "golusoris" {
-		t.Errorf("expected target org golusoris, got %s", first.TargetOrg)
+	if first.TargetOrg != "acme" {
+		t.Errorf("expected target org acme, got %s", first.TargetOrg)
 	}
-	if first.TargetBuilderKit != "golusoris/golusoris" {
-		t.Errorf("expected default kit golusoris/golusoris, got %s", first.TargetBuilderKit)
+	if first.TargetBuilderKit != "acme/kit" {
+		t.Errorf("expected default kit acme/kit, got %s", first.TargetBuilderKit)
 	}
 
 	second := requests[1]
-	if second.TargetBuilderKit != "golusoris/sveltesentio" {
-		t.Errorf("expected UI kit golusoris/sveltesentio, got %s", second.TargetBuilderKit)
+	if second.TargetBuilderKit != "acme/ui" {
+		t.Errorf("expected UI kit acme/ui, got %s", second.TargetBuilderKit)
 	}
 }
 
@@ -190,7 +190,7 @@ func TestRenderRequestMarkdown_StatesHISSCeiling(t *testing.T) {
 		"consumers": {Capability: "storage.s3", ConsumerCount: 2, Consumers: []string{"a", "b"}, PackagesUsed: []string{"boto3"}},
 		"empty":     {},
 	} {
-		if body := renderRequestMarkdown("REQ-X", "title", gap, "golusoris/golusoris", "roi"); !strings.Contains(body, want) {
+		if body := renderRequestMarkdown("REQ-X", "title", gap, "acme/kit", "roi"); !strings.Contains(body, want) {
 			t.Errorf("%s: request = %s, want %q", name, body, want)
 		}
 	}
@@ -205,7 +205,9 @@ func TestSynthesizeDemandsRoutesThroughTargets_3D(t *testing.T) {
 		{Capability: "ui.forms", ConsumerCount: 2, Consumers: []string{"a", "b"}},
 		{Capability: "gpu.cuda", ConsumerCount: 1, Consumers: []string{"a"}},
 	}}
-	requests := SynthesizeDemands(report, acmeTargets())
+	withoutNative := acmeTargets()
+	delete(withoutNative, "native")
+	requests := SynthesizeDemands(report, withoutNative)
 	byCapability := map[CapabilityKey]FrameworkDemandRequest{}
 	for _, request := range requests {
 		byCapability[request.Capability] = request
@@ -224,16 +226,44 @@ func TestSynthesizeDemandsRoutesThroughTargets_3D(t *testing.T) {
 		!strings.Contains(gpu.SpecificationMarkdown, "unrouted (framework.targets.native.builder_kits not set)") {
 		t.Errorf("unrouted capability = %+v", gpu)
 	}
-	// Boundary: every capability prefix routes to its language; the built-in targets keep
-	// their kits when none is configured.
+	// Boundary: every capability prefix routes to its language's target, and no target at
+	// all leaves every request unrouted.
 	for prefix, language := range map[string]string{"ui.": "typescript", "python.": "python", "ai.": "python", "rust.": "rust",
 		"native.": "native", "media.": "native", "gpu.": "native", "db.": "go", "": "go"} {
 		if got := capabilityLanguage(prefix + "x"); got != language {
 			t.Errorf("capabilityLanguage(%sx) = %s, want %s", prefix, got, language)
 		}
-		legacy := createDemandRequest(GapDetail{Capability: CapabilityKey(prefix + "x")}, legacyTargets())
-		if legacy.TargetBuilderKit != legacyTargets()[language].RoutingKit() || legacy.TargetOrg != kitOwner(legacy.TargetBuilderKit) {
-			t.Errorf("built-in routing of %sx = %+v", prefix, legacy)
+		routed := createDemandRequest(GapDetail{Capability: CapabilityKey(prefix + "x")}, acmeTargets())
+		if routed.TargetBuilderKit != acmeTargets()[language].RoutingKit() || routed.TargetOrg != kitOwner(routed.TargetBuilderKit) {
+			t.Errorf("routing of %sx = %+v", prefix, routed)
 		}
+		if unrouted := createDemandRequest(GapDetail{Capability: CapabilityKey(prefix + "x")}, nil); unrouted.TargetBuilderKit != "" ||
+			unrouted.TargetOrg != "" || !strings.Contains(unrouted.SpecificationMarkdown, "unrouted (framework.targets."+language+".builder_kits not set)") {
+			t.Errorf("unconfigured routing of %sx = %+v", prefix, unrouted)
+		}
+	}
+}
+
+// The requests summary counts the requests no builder kit receives (ADR-0014 §4).
+func TestUnroutedSummary_3D(t *testing.T) {
+	report := &FleetDemandReport{Gaps: []GapDetail{
+		{Capability: "db.postgres", ConsumerCount: 3}, {Capability: "ui.forms", ConsumerCount: 2}, {Capability: "gpu.cuda", ConsumerCount: 1},
+	}}
+	withoutNative := acmeTargets()
+	delete(withoutNative, "native")
+	// Positive: one capability without a target is one unrouted request.
+	if got := UnroutedSummary(SynthesizeDemands(report, withoutNative)); got != "1 of 3 requests unrouted" {
+		t.Errorf("partial routing = %q", got)
+	}
+	// Negative: no target configured leaves every request unrouted.
+	if got := UnroutedSummary(SynthesizeDemands(report, nil)); got != "3 of 3 requests unrouted" {
+		t.Errorf("no targets = %q", got)
+	}
+	// Boundary: no request at all, and every request routed.
+	if got := UnroutedSummary(nil); got != "0 of 0 requests unrouted" {
+		t.Errorf("no requests = %q", got)
+	}
+	if got := UnroutedSummary(SynthesizeDemands(report, acmeTargets())); got != "0 of 3 requests unrouted" {
+		t.Errorf("full routing = %q", got)
 	}
 }

@@ -1,0 +1,280 @@
+# Placeholder go framework contract for the internal/needs tests (ADR-0014): the
+# packages, capabilities and claims a configured target declares. No real framework.
+version: 1
+framework: example.com/acme/kit
+ecosystem: go
+foundations:
+  - go.uber.org/fx
+  - log/slog
+packages:
+  - import: example.com/acme/kit/ai
+    module: example.com/acme/kit
+    domain: ai
+    capabilities:
+      - ai.llm_client
+      - ai.embeddings
+  - import: example.com/acme/kit/apidocs
+    module: example.com/acme/kit
+    domain: apidocs
+    capabilities:
+      - http.openapi
+    replaces:
+      - github.com/getkin/kin-openapi
+      - github.com/swaggo/gin-swagger
+      - github.com/swaggo/swag
+  - import: example.com/acme/kit/auth
+    module: example.com/acme/kit
+    domain: auth
+    capabilities:
+      - auth.jwt
+      - auth.oidc
+      - auth.apikey
+      - auth.session
+      - auth.passkeys
+  - import: example.com/acme/kit/auth/jwt
+    module: example.com/acme/kit
+    domain: auth
+    capabilities:
+      - auth.jwt
+    replaces:
+      - github.com/golang-jwt/jwt
+  - import: example.com/acme/kit/auth/oidc
+    module: example.com/acme/kit
+    domain: auth
+    capabilities:
+      - auth.oidc
+    replaces:
+      - github.com/coreos/go-oidc
+  - import: example.com/acme/kit/cache
+    module: example.com/acme/kit
+    domain: cache
+    capabilities:
+      - cache.redis
+      - cache.inmemory
+      - cache.twotier
+  - import: example.com/acme/kit/cache/memory
+    module: example.com/acme/kit
+    domain: cache
+    capabilities:
+      - cache.inmemory
+    replaces:
+      - github.com/patrickmn/go-cache
+  - import: example.com/acme/kit/cache/redis
+    module: example.com/acme/kit
+    domain: cache
+    capabilities:
+      - cache.redis
+    replaces:
+      - github.com/redis/go-redis
+      - github.com/redis/rueidis
+  - import: example.com/acme/kit/clikit/tui
+    module: example.com/acme/kit
+    domain: clikit
+    capabilities:
+      - clikit.tui
+    replaces:
+      - github.com/charmbracelet/bubbletea
+  - import: example.com/acme/kit/core/clikit
+    module: example.com/acme/kit
+    domain: core
+    capabilities:
+      - clikit.cobra
+    replaces:
+      - github.com/spf13/cobra
+  - import: example.com/acme/kit/core/codec/yaml
+    module: example.com/acme/kit
+    domain: core
+    capabilities:
+      - config.yaml
+    replaces:
+      - gopkg.in/yaml.v2
+      - gopkg.in/yaml.v3
+  - import: example.com/acme/kit/core/config
+    module: example.com/acme/kit
+    domain: core
+    capabilities:
+      - config.loader
+    replaces:
+      - github.com/spf13/viper
+    wraps:
+      - github.com/knadh/koanf
+  - import: example.com/acme/kit/core/id
+    module: example.com/acme/kit
+    domain: core
+    capabilities:
+      - id.uuid
+      - id.nanoid
+    replaces:
+      - github.com/google/uuid
+  - import: example.com/acme/kit/core/log
+    module: example.com/acme/kit
+    domain: core
+    capabilities:
+      - telemetry.logging
+    replaces:
+      - github.com/sirupsen/logrus
+      - go.uber.org/zap
+    wraps:
+      - github.com/lmittmann/tint
+  - import: example.com/acme/kit/core/mcp
+    module: example.com/acme/kit
+    domain: core
+    capabilities:
+      - mcp.server
+    replaces:
+      - github.com/mark3labs/mcp-go
+      - github.com/modelcontextprotocol/go-sdk
+  - import: example.com/acme/kit/db
+    module: example.com/acme/kit
+    domain: db
+    capabilities:
+      - db.postgres
+      - db.orm
+      - db.clickhouse
+      - db.timescale
+      - db.cdc
+      - db.sqlx
+    adapts:
+      - github.com/jmoiron/sqlx
+  - import: example.com/acme/kit/db/bun
+    module: example.com/acme/kit
+    domain: db
+    capabilities:
+      - db.orm
+    replaces:
+      - github.com/uptrace/bun
+    adapts:
+      - gorm.io/gorm
+  - import: example.com/acme/kit/db/clickhouse
+    module: example.com/acme/kit
+    domain: db
+    capabilities:
+      - db.clickhouse
+    replaces:
+      - github.com/ClickHouse/clickhouse-go
+  - import: example.com/acme/kit/db/pgx
+    module: example.com/acme/kit
+    domain: db
+    capabilities:
+      - db.postgres
+    replaces:
+      - github.com/jackc/pgx
+    adapts:
+      - github.com/lib/pq
+  - import: example.com/acme/kit/ebpf
+    module: example.com/acme/kit
+    domain: ebpf
+    capabilities:
+      - kernel.ebpf
+    replaces:
+      - github.com/cilium/ebpf
+  - import: example.com/acme/kit/http
+    module: example.com/acme/kit
+    domain: http
+    capabilities:
+      - http.router
+      - http.middleware
+  - import: example.com/acme/kit/httpx
+    module: example.com/acme/kit
+    domain: httpx
+    capabilities:
+      - http.router
+      - http.middleware
+      - http.openapi
+      - http.cors
+    replaces:
+      - github.com/gin-gonic/gin
+      - github.com/go-chi/chi
+  - import: example.com/acme/kit/idempotency
+    module: example.com/acme/kit
+    domain: idempotency
+    capabilities:
+      - http.idempotency
+  - import: example.com/acme/kit/jobs
+    module: example.com/acme/kit
+    domain: jobs
+    capabilities:
+      - jobs.queue
+      - jobs.cron
+      - jobs.workflow
+    replaces:
+      - github.com/hibiken/asynq
+      - github.com/riverqueue/river
+  - import: example.com/acme/kit/jobs/cron
+    module: example.com/acme/kit
+    domain: jobs
+    capabilities:
+      - jobs.cron
+    replaces:
+      - github.com/robfig/cron
+  - import: example.com/acme/kit/notify
+    module: example.com/acme/kit
+    domain: notify
+    capabilities:
+      - notify.email
+      - notify.push
+  - import: example.com/acme/kit/observability
+    module: example.com/acme/kit
+    domain: observability
+    capabilities:
+      - telemetry.prometheus
+    replaces:
+      - github.com/prometheus/client_golang
+  - import: example.com/acme/kit/ogenkit
+    module: example.com/acme/kit
+    domain: ogenkit
+    capabilities:
+      - http.openapi
+    tooling_for:
+      - github.com/ogen-go/ogen
+  - import: example.com/acme/kit/otel
+    module: example.com/acme/kit
+    domain: otel
+    capabilities:
+      - telemetry.otel
+    replaces:
+      - go.opentelemetry.io/otel
+  - import: example.com/acme/kit/pubsub
+    module: example.com/acme/kit
+    domain: pubsub
+    capabilities:
+      - pubsub.nats
+      - pubsub.kafka
+  - import: example.com/acme/kit/pubsub/kafka
+    module: example.com/acme/kit
+    domain: pubsub
+    capabilities:
+      - pubsub.kafka
+    replaces:
+      - github.com/confluentinc/confluent-kafka-go
+  - import: example.com/acme/kit/pubsub/nats
+    module: example.com/acme/kit
+    domain: pubsub
+    capabilities:
+      - pubsub.nats
+    replaces:
+      - github.com/nats-io/nats.go
+  - import: example.com/acme/kit/realtime
+    module: example.com/acme/kit
+    domain: realtime
+    capabilities:
+      - realtime.sse
+      - realtime.webrtc
+  - import: example.com/acme/kit/secrets
+    module: example.com/acme/kit
+    domain: secrets
+    capabilities:
+      - security.secrets
+  - import: example.com/acme/kit/storage
+    module: example.com/acme/kit
+    domain: storage
+    capabilities:
+      - storage.s3
+      - storage.tus
+  - import: example.com/acme/kit/testutil
+    module: example.com/acme/kit
+    domain: testutil
+    capabilities:
+      - test.assert
+    replaces:
+      - github.com/stretchr/testify
