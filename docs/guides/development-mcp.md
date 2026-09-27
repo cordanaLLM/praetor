@@ -7,9 +7,12 @@ Run from the repository root with Python 3, Git, and the Go version required by
 python3 scripts/dev_mcp.py probe
 ```
 
-This builds the current Go sources into a temporary binary, initializes its real
-stdio MCP transport, and checks `serverInfo.version` against
-`provenance.server_version` (`dev-<source_sha256>`). The report includes the checkout,
+This builds the current Go sources into a temporary binary under the checkout's
+git-ignored `bin/`, initializes its real stdio MCP transport, and checks
+`serverInfo.version` against `provenance.server_version` (`dev-<source_sha256>`). The
+build stays inside the checkout so the
+[engine build check](workstation-update.md#engine-build-check) accepts its context writes
+even when an untracked file stamps it `-dirty`. The report includes the checkout,
 source and binary hashes, Git revision, dirty state, and Go version. Keep that
 provenance with defect evidence. A source change during the build or probe fails
 the run; retry against the completed edit.

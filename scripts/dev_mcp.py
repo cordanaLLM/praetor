@@ -53,6 +53,20 @@ def read_bounded(path):
     return data
 
 
+def build_directory():
+    """A fresh temporary build directory under this checkout's git-ignored bin/.
+
+    Go stamps a build -dirty whenever the tree holds any uncommitted or untracked file, and
+    the engine-build check (internal/workstation/freshness.go) accepts a -dirty build for a
+    context write only when its executable lies inside the checkout it writes into. A build
+    in the system temporary directory was refused, although it was compiled from this exact
+    tree seconds earlier.
+    """
+    parent = ROOT / "bin"
+    parent.mkdir(exist_ok=True)
+    return tempfile.TemporaryDirectory(prefix="praetor-dev-mcp-", dir=parent)
+
+
 def build(directory):
     """Always build; Go's own cache handles reuse without trusting an old bin/ artifact."""
     source = source_hash()
@@ -138,7 +152,7 @@ def parse_args():
 
 def main():
     args = parse_args()
-    with tempfile.TemporaryDirectory(prefix="praetor-dev-mcp-") as directory:
+    with build_directory() as directory:
         binary, metadata = build(Path(directory))
         if args.action == "serve":
             print(json.dumps({"dev_mcp": metadata}), file=sys.stderr, flush=True)
