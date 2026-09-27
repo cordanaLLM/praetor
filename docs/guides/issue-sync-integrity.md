@@ -24,9 +24,21 @@ title and whether the conflict is in `planned` or `existing` issues. These error
 must stop mutation; retrying creation without a complete inventory can duplicate
 issues. Transport errors retain their existing wrapped context.
 
-`praetorctl issue reconcile` accepts at most 256 comma-separated repository entries;
-larger selections fail before authentication or network reads instead of being
-truncated. It loads every selected repository before reconciling or applying transitions. Any listing failure returns an error naming that
+`praetorctl issue reconcile` reconciles the repositories `--repos` names. Without the
+flag it reads `forge.reconcile_repos` from the operator settings that `--fleet-config`,
+`--workstation-config` and `--manifest` select ([effective policy](effective-policy.md)),
+and without that the repository in the working directory, identified by
+`config.ResolveRepositoryIdentity`. With none of them it refuses, as it refuses an
+explicit empty `--repos=`. A bare entry such as `kit` is qualified with `--owner`, else
+the working directory's `repository.owner` or origin remote owner, else
+`forge.default_owner`; with no owner the entry is refused by name. No owner or
+repository list is built in (`TestIssueReconcile_Positive_ScopeChain` and
+`TestIssueReconcile_Negative_NoInventedOwnerOrScope` in
+`cmd/standardsctl/forge_owner_test.go`).
+
+`praetorctl issue reconcile` accepts at most 256 comma-separated repository entries
+(`config.MaxReconcileRepos`, the same cap as `forge.reconcile_repos`); larger selections
+fail before authentication or network reads instead of being truncated. It loads every selected repository before reconciling or applying transitions. Any listing failure returns an error naming that
 repository, including in dry-run mode. It cannot report a successful fleet
 reconciliation from partially fetched input. Complete inventories retain normal
 dry-run and apply behavior.

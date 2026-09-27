@@ -11,6 +11,15 @@ workflow triggers on a push to `main` that touches `docs/wiki/**`,
 `docs/assets/figures/**` or `scripts/docs_diagrams.py`, and on manual
 `workflow_dispatch`; it does not run on every push.
 
+The generated portal is named after the repository's identity:
+`repository.owner`/`repository.name` in `.standards.yaml`, else the origin remote, with
+`forge.default_owner` from the operator settings (`--fleet-config`,
+`--workstation-config`, `--manifest`) as the last owner step
+(`config.ResolveRepositoryIdentity`). A checkout that declares no identity and has no
+origin remote fails instead of naming the portal after its directory layout
+(`TestResolveWikiRepoName_Negative_NoIdentityIsAnError` in
+`internal/forge/wiki_test.go`).
+
 Every top-level entry directly under `docs/wiki/` must be a regular, non-symlinked
 file whose name ends in `.md`; `scripts/sync_github_wiki.sh` rejects any other
 entry (a directory, symlink, or non-`.md` file) and exits 2 before copying
