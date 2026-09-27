@@ -78,8 +78,8 @@ export default {
             say: 'LoadRoutingConfigContext loads .config/models/routing.yaml; hasRoutingTag finds candidate tiers.',
             show: {
               f_task: [
-                { tag: 'candidates', tone: 'blue', text: 'midweight tier', meta: '.config/models/routing.yaml' },
-                { text: 'qwen-2.5-coder-32b-instruct, codestral-2501' },
+                { tag: 'candidates', tone: 'blue', text: 'midweight tier (4 models)', meta: '.config/models/routing.yaml' },
+                { text: 'gpt-oss-small, Qwen3.8, qwen-2.5, codestral' },
               ],
             },
           },
@@ -88,8 +88,8 @@ export default {
             say: 'hasTaskCapabilities verifies all requested capabilities are declared on candidate models.',
             show: {
               f_caps: [
-                { tag: 'passed', tone: 'green', text: 'qwen-2.5-coder-32b-instruct', meta: '.config/models/routing.yaml' },
-                { tag: 'passed', tone: 'green', text: 'codestral-2501', meta: '.config/models/routing.yaml' },
+                { tag: 'passed', tone: 'green', text: 'gpt-oss-small, Qwen3.8-27B', meta: '.config/models/routing.yaml' },
+                { tag: 'passed', tone: 'green', text: 'qwen-2.5-coder, codestral-2501', meta: '.config/models/routing.yaml' },
               ],
             },
           },
@@ -99,7 +99,7 @@ export default {
             show: {
               f_quota: [
                 { tag: 'headroom', tone: 'green', text: 'projected usage within limits', meta: 'LimitTracker' },
-                { text: '5000 RPM / 5M TPM limit' },
+                { text: '50000 RPM / 20M TPM limit' },
               ],
             },
           },
@@ -108,18 +108,20 @@ export default {
             say: 'betterTaskRoute compares estimated token costs to find the lowest-cost candidate.',
             show: {
               f_cost: [
-                { tag: 'eval', tone: 'blue', text: 'qwen-2.5-coder: $0.0005', meta: '$0.20/$0.60 per M' },
+                { tag: 'eval', tone: 'blue', text: 'gpt-oss-small: $0.00', meta: '$0/$0 per M' },
+                { tag: 'eval', tone: 'blue', text: 'Qwen3.8-27B: $0.00', meta: '$0/$0 per M' },
+                { tag: 'eval', tone: 'gray', text: 'qwen-2.5-coder: $0.0005', meta: '$0.20/$0.60 per M' },
                 { tag: 'eval', tone: 'gray', text: 'codestral-2501: $0.00075', meta: '$0.30/$0.90 per M' },
               ],
             },
           },
           {
             edges: 'f_cost->selected',
-            say: 'qwen-2.5-coder-32b-instruct wins with lowest configured cost; TaskRoute is returned.',
+            say: 'gpt-oss-small wins with lowest configured cost ($0) and ID tie-break; TaskRoute is returned.',
             show: {
               selected: [
-                { tag: 'selected', tone: 'green', text: 'qwen-2.5-coder-32b-instruct', meta: '.config/models/routing.yaml', mono: true },
-                { tag: 'cost', tone: 'blue', text: '$0.0005 estimated cost', mono: true },
+                { tag: 'selected', tone: 'green', text: 'gpt-oss-small', meta: '.config/models/routing.yaml', mono: true },
+                { tag: 'cost', tone: 'blue', text: '$0.00 estimated cost', mono: true },
                 { text: 'tier: midweight, basis: lowest configured cost' },
               ],
             },
@@ -180,8 +182,8 @@ export default {
             say: 'projectTaskCapacity projects +1 RPM and request TPM against exhaustion threshold.',
             show: {
               f_quota: [
-                { tag: 'counter', tone: 'orange', text: 'current: 7 RPM, projected: 8 RPM', meta: '10 RPM limit' },
-                { text: 'exceeds 80% exhaustion threshold' },
+                { tag: 'counter', tone: 'orange', text: 'current: 8 RPM, projected: 9 RPM', meta: '10 RPM limit' },
+                { text: 'projected 9 > 8 (80% of 10)' },
               ],
             },
           },
@@ -191,7 +193,7 @@ export default {
             show: {
               excluded: [
                 { tag: 'skipped', tone: 'orange', text: 'cheap', meta: 'internal/router/task_test.go', mono: true },
-                { tag: 'reason', tone: 'gray', text: 'projected RPM >= 80% limit', mono: true },
+                { tag: 'reason', tone: 'gray', text: 'projected RPM > 80% of limit, or >= limit', mono: true },
                 { text: 'active 429 cooldown (< 30s) also skips candidate' },
               ],
             },

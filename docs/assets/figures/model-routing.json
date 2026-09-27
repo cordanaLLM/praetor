@@ -11,7 +11,7 @@
     "2. hasTaskCapabilities → Excluded / Skipped (missing capability).",
     "3. quotaEligible → Excluded / Skipped (limit or cooldown).",
     "4. betterTaskRoute → Excluded / Skipped (cost or tie-break).",
-    "Scenario 1, candidate selected: Candidate passes task, capability, and quota checks, winning on configured cost. LoadRoutingConfigContext loads .config/models/routing.yaml; hasRoutingTag finds candidate tiers. hasTaskCapabilities verifies all requested capabilities are declared on candidate models. quotaEligible checks projected RPM, TPM, and ensures no active 30s 429 cooldown. betterTaskRoute compares estimated token costs to find the lowest-cost candidate. qwen-2.5-coder-32b-instruct wins with lowest configured cost; TaskRoute is returned.",
+    "Scenario 1, candidate selected: Candidate passes task, capability, and quota checks, winning on configured cost. LoadRoutingConfigContext loads .config/models/routing.yaml; hasRoutingTag finds candidate tiers. hasTaskCapabilities verifies all requested capabilities are declared on candidate models. quotaEligible checks projected RPM, TPM, and ensures no active 30s 429 cooldown. betterTaskRoute compares estimated token costs to find the lowest-cost candidate. gpt-oss-small wins with lowest configured cost ($0) and ID tie-break; TaskRoute is returned.",
     "Scenario 2, capability missing: A candidate lacking requested capabilities is excluded by hasTaskCapabilities. The request requires specific capabilities: tools, json. hasTaskCapabilities checks each model in the tier against required capabilities. Candidate missing requested capabilities is excluded from further evaluation.",
     "Scenario 3, limit or cooldown: A candidate exceeding projected capacity or in 429 cooldown is skipped. Candidate matches declared target task and requested capabilities. projectTaskCapacity projects +1 RPM and request TPM against exhaustion threshold. quotaEligible returns false; over-limit or cooling candidate is skipped.",
     "(Shortened to 2500 characters; docs/figures/model-routing.ts holds the full content.)"
@@ -32,15 +32,15 @@
     "cmd/standardsctl/models_route.go:modelRouteRequest",
     "cmd/standardsctl/models_route.go:modelRouteTracker"
   ],
-  "spec_sha256": "0c7ec279b7fc467332c54c52c6e2616cc69b8732a97f0ed6954128e947f02e35",
+  "spec_sha256": "1f4519bc60578f3b5f10928151252262744dd071246e4bb4baeb96bf17065205",
   "engine": {
     "commit": "ccfe85b4851957ac2adf88b4a9ddf9668b2882f1",
     "sha256": "047b4bcb30562cca709be7175d11995cdda45cf4b89db1f6906c5805b26c6452"
   },
-  "svg_sha256": "d724909221cf2e483b7060a466c7243f838d132fff41b132a13ecb23b001ece6",
-  "static_sha256": "8e5b23353dc5c661346f8c9dbbe0cd44ac4288a06e94239e0a22bdd16abb7f2d",
+  "svg_sha256": "16dc1875fe14942332b526526b565908a9a1e63a606573a1873dae4ffafb275d",
+  "static_sha256": "44a71a6b81e49fcae14bda9ffd41253c5f19ef05b1a96ec588d1d7d3fbd41773",
   "width": 890,
-  "height": 851,
+  "height": 919,
   "edges": [
     {
       "from": "models route",
