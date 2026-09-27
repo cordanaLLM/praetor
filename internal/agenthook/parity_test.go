@@ -14,31 +14,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // pythonGuard is the implementation the Go policy replaces. The parity replay lives
 // exactly as long as that file: the change that deletes the adapters deletes this test.
 var pythonGuard = filepath.Join("..", "..", ".config", "agent", "hooks", "block_evasion.py")
-
-// pythonInterpreter returns a working interpreter or skips with the reason (HISS-21).
-func pythonInterpreter(t *testing.T) string {
-	t.Helper()
-	for _, name := range []string{"python3", "python"} {
-		path, err := exec.LookPath(name)
-		if err != nil {
-			continue
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		_, err = util.RunCommandBytes(ctx, "", path, 4096, "-B", "-c", "import json, re")
-		cancel()
-		if err == nil {
-			return path
-		}
-	}
-	t.Skip("no working python3 or python on PATH; the Python guard cannot be replayed on this leg")
-	return ""
-}
 
 // guardEnvironment is the child environment of the Python guard: enough to start an
 // interpreter on every OS, and none of the Lefthook variables the guard itself judges.
@@ -89,8 +71,14 @@ func runGuardScript(t *testing.T, interpreter, script string, payload []byte, ar
 // refusalDrift compares a Python guard's stderr with the engine's for one case and returns
 // "" when they agree. Refusals of unreadable input agree on the InvalidInputRefusal prefix
 // only: the reason after it is each parser's own error text. Every other refusal, and the
-// empty stderr of an allowed command, must match character for character (BUG-1014).
-func refusalDrift(name string, python, engine []byte) string {
+// empty stderr of an allowed command, must match character for character (BUG-1014). The
+// guard's stderr is read as text first (testsupport.PythonText): CPython writes it with CRLF
+// line endings on Windows, the engine with LF everywhere, and the line ending is not wording.
+func refusalDrift(name string, stderr, engine []byte) string {
+	python, err := testsupport.PythonText(stderr)
+	if err != nil {
+		return name + ": python stderr " + strconv.Quote(string(stderr)) + ": " + err.Error()
+	}
 	if bytes.HasPrefix(engine, []byte(InvalidInputRefusal)) {
 		if bytes.HasPrefix(python, []byte(InvalidInputRefusal)) {
 			return ""
@@ -105,7 +93,7 @@ func refusalDrift(name string, python, engine []byte) string {
 // and the built-in Go policy. Neither carries operator rules, so a fixture that only an
 // operator deny pattern refuses (operator: true) is allowed by both.
 func TestParityWithThePythonGuardOnTheSuitePayloads(t *testing.T) {
-	interpreter := pythonInterpreter(t)
+	interpreter := testsupport.PythonInterpreter(t)
 	root := repository(t, true)
 	builtin := policy(t)
 	payloads := rawCases()
@@ -158,7 +146,7 @@ func refusalCases() []struct {
 // allowed command prints nothing. The engine's text comes from the Go policy itself where the
 // policy judges the command.
 func TestParityRefusalTextWithThePythonGuard(t *testing.T) {
-	interpreter := pythonInterpreter(t)
+	interpreter := testsupport.PythonInterpreter(t)
 	builtin := policy(t)
 	for _, tc := range refusalCases() {
 		python := runGuardScript(t, interpreter, pythonGuard, commandPayload(t, map[string]any{"tool_input": map[string]string{"command": tc.command}}), nil, guardEnvironment())
@@ -178,11 +166,41 @@ func TestParityRefusalTextWithThePythonGuard(t *testing.T) {
 	}
 }
 
+// TestParityRefusalTextSurvivesTheWindowsNewline replays the refusal cases and one
+// environment refusal through a launcher that gives the guard's standard streams CPython's
+// Windows newline translation, so a run on any host shows what the Windows leg sees: each
+// refusal arrives as CRLF text carrying the engine's words, and the approval marker, written as
+// bytes, still parses. Mixed line endings stay drift rather than pass as one style.
+func TestParityRefusalTextSurvivesTheWindowsNewline(t *testing.T) {
+	interpreter := testsupport.PythonInterpreter(t)
+	launcher := testsupport.WindowsNewlinePython(t, pythonGuard)
+	for _, tc := range refusalCases() {
+		python := runGuardScript(t, interpreter, launcher, commandPayload(t, map[string]any{"tool_input": map[string]string{"command": tc.command}}), nil, guardEnvironment())
+		if tc.want != nil && !bytes.HasSuffix(python.stderr, []byte("\r\n")) {
+			t.Errorf("%s: the launcher did not translate the newline: %q", tc.name, python.stderr)
+		}
+		if drift := refusalDrift(tc.name, python.stderr, tc.want); drift != "" {
+			t.Error(drift)
+		}
+		if python.marker != (tc.want == nil) {
+			t.Errorf("%s: marker %v under the Windows newline, want %v", tc.name, python.marker, tc.want == nil)
+		}
+	}
+	narrowed := runGuardScript(t, interpreter, launcher, nil, []string{"--environment"}, guardEnvironment("LEFTHOOK_SKIP=lint"))
+	if drift := refusalDrift("narrowed", narrowed.stderr, []byte(NarrowingRefusal+"\n")); drift != "" {
+		t.Error(drift)
+	}
+	mixed := []byte(NarrowingRefusal + "\r\n" + NarrowingRefusal + "\n")
+	if refusalDrift("mixed", mixed, []byte(NarrowingRefusal+"\n"+NarrowingRefusal+"\n")) == "" {
+		t.Error("mixed line endings passed the comparison")
+	}
+}
+
 // TestRefusalDriftFailsOnAChangedWord proves the comparison above can fail: a copy of the
 // guard with one word of its evasion refusal changed is reported, as is a guard that stays
 // silent where the engine refuses, while unreadable input only has to share the prefix.
 func TestRefusalDriftFailsOnAChangedWord(t *testing.T) {
-	interpreter := pythonInterpreter(t)
+	interpreter := testsupport.PythonInterpreter(t)
 	source, err := os.ReadFile(pythonGuard)
 	if err != nil {
 		t.Fatal(err)
@@ -285,7 +303,7 @@ func TestPythonGuardCarriesTheScanBounds(t *testing.T) {
 }
 
 func TestParityWithThePythonGuardOnTheEnvironment(t *testing.T) {
-	interpreter := pythonInterpreter(t)
+	interpreter := testsupport.PythonInterpreter(t)
 	root := repository(t, true)
 	for _, variable := range []string{"", "LEFTHOOK=0", "LEFTHOOK=false", "LEFTHOOK=False", "LEFTHOOK=1", "LEFTHOOK_EXCLUDE=lint", "LEFTHOOK_SKIP=pre-push"} {
 		var extra []string

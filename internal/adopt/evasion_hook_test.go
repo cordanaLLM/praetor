@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/agenthook"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 // evasionCorpus is agenthook's replay corpus: the payloads praetor's own guard and the Go
@@ -71,9 +72,9 @@ func runInterceptor(t *testing.T, python, script string, stdin []byte, extra []s
 const interceptorWallClock = 30 * time.Second
 
 // runInterceptorTimed runs the emitted interceptor and returns its exit code, the CPU time
-// (user plus system) the interpreter spent and its stderr. CPU time is what the scan bounds
-// control; wall-clock time on a shared CI runner also counts the time the process waited for
-// a core.
+// (user plus system) the interpreter spent and its stderr as LF text. CPU time is what the
+// scan bounds control; wall-clock time on a shared CI runner also counts the time the process
+// waited for a core.
 func runInterceptorTimed(t *testing.T, python, script string, stdin []byte, extra []string, args ...string) (int, time.Duration, string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), interceptorWallClock)
@@ -93,12 +94,24 @@ func runInterceptorTimed(t *testing.T, python, script string, stdin []byte, extr
 		if strings.Contains(stderr.String(), "Traceback") {
 			t.Errorf("interceptor crashed instead of refusing: %s", stderr.String())
 		}
-		return exitErr.ExitCode(), cpu, stderr.String()
+		return exitErr.ExitCode(), cpu, interceptorStderr(t, stderr.Bytes())
 	}
 	if err != nil {
 		t.Fatalf("run interceptor: %v", err)
 	}
-	return 0, cpu, stderr.String()
+	return 0, cpu, interceptorStderr(t, stderr.Bytes())
+}
+
+// interceptorStderr reads the interceptor's stderr as text (testsupport.PythonText): CPython
+// writes it with CRLF line endings on Windows, and the engine's refusals end in LF.
+func interceptorStderr(t *testing.T, stderr []byte) string {
+	t.Helper()
+	text, err := testsupport.PythonText(stderr)
+	if err != nil {
+		t.Errorf("interceptor stderr %q: %v", stderr, err)
+		return string(stderr)
+	}
+	return string(text)
 }
 
 // TestEmittedInterceptorReplaysTheEngineCorpus pins BUG-807 and BUG-808: the emitted script
@@ -276,5 +289,34 @@ func TestEmittedInterceptorRefusesInTheEngineWords(t *testing.T) {
 	}
 	if _, _, stderr := runInterceptorTimed(t, python, script, []byte("not json"), nil); !strings.HasPrefix(stderr, agenthook.InvalidInputRefusal) {
 		t.Errorf("unreadable input: %q lacks the engine's prefix", stderr)
+	}
+}
+
+// TestEmittedInterceptorRefusesInTheEngineWordsUnderTheWindowsNewline runs the emitted
+// interceptor with CPython's Windows newline translation on its standard streams
+// (testsupport.WindowsNewlinePython), so a run on any host shows what the Windows leg sees:
+// a refusal still reads as the engine's text, and an allowed command still prints nothing.
+func TestEmittedInterceptorRefusesInTheEngineWordsUnderTheWindowsNewline(t *testing.T) {
+	python, script := emittedInterceptor(t)
+	launcher := testsupport.WindowsNewlinePython(t, script)
+	builtin, err := agenthook.NewPolicy(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	benign := []byte(`{"tool_input":{"command":"go test ./..."}}`)
+	for _, tc := range []struct {
+		name  string
+		stdin []byte
+		env   []string
+		want  string
+	}{
+		{"evasion flag", []byte(`{"tool_input":{"command":"git push --no-verify"}}`), nil, builtin.Command("git push --no-verify").Reason + "\n"},
+		{"lefthook narrowed", benign, []string{"LEFTHOOK_SKIP=lint"}, agenthook.NarrowingRefusal + "\n"},
+		{"benign", benign, nil, ""},
+	} {
+		code, _, stderr := runInterceptorTimed(t, python, launcher, tc.stdin, tc.env)
+		if stderr != tc.want || (code == 0) != (tc.want == "") {
+			t.Errorf("%s: exit %d\ngot  %q\nwant %q", tc.name, code, stderr, tc.want)
+		}
 	}
 }
