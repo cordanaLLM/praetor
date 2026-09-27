@@ -1,40 +1,55 @@
 {
   "slug": "onboarding-path",
   "title": "Repository onboarding path",
-  "alt": "Five onboarding commands run in sequence to scaffold configuration, transpile context, record debt, and verify governance.",
+  "alt": "Five onboarding commands scaffold configuration and agent files, record debt, prepare a devcontainer, and verify governance.",
   "text": [
-    "Onboarding commands, in order: 1. Scaffolding (praetorctl init), 2. Context Transpilation (praetorctl compile-context), 3. Brownfield Baselining (praetorctl baseline --record --allow-increase), 4. Devcontainer Setup (praetorctl devcontainer generate), 5. Audit Verification (praetorctl audit).",
-    "Boxes: Target repository (prerequisite: AGENTS.md (or adopt)), Governed repository (praetorctl audit pass).",
-    "Target repository → 1. Scaffolding (start) → 2. Context Transpilation → 3. Brownfield Baselining → 4. Devcontainer Setup → 5. Audit Verification → Governed repository (verified).",
-    "Scenario 1, init: Initialize configuration with declared profile and facets. Target repository carries canonical AGENTS.md (greenfield repos use praetorctl adopt). Scaffolding creates .standards.yaml, .standards.lock, and initial baseline.",
-    "Scenario 2, compile-context: Transpile universal agent harness from AGENTS.md. Canonical agent instructions in AGENTS.md are compiled. Transpilation generates vendor instruction files and splices the text register.",
+    "Onboarding commands, in order: 1. Scaffolding (praetorctl init), 2. Context Recompilation (praetorctl compile-context), 3. Brownfield Baselining (praetorctl baseline --record --allow-increase), 4. Devcontainer Setup (praetorctl devcontainer generate), 5. Audit Verification (praetorctl audit).",
+    "Boxes: Target repository (already carries AGENTS.md), Alternate entry (praetorctl adopt), Governed repository (praetorctl audit pass).",
+    "Target repository → 1. Scaffolding (start) → 2. Context Recompilation → 3. Brownfield Baselining → 4. Devcontainer Setup → 5. Audit Verification.",
+    "Alternate entry → 5. Audit Verification (skips 1-4) → Governed repository (verified).",
+    "Scenario 1, init: Write the configuration, then compile the vendor files from AGENTS.md. init reads AGENTS.md beside the manifest; without it, init writes no agent files. createInitialManifest and initBaselineAndLockfile write the manifest, the lockfile and a zero-debt baseline. initAgentContext splices the text register into AGENTS.md and compiles the six vendor files.",
+    "Scenario 2, compile-context: Recompile the vendor files and add persona copies; rerun after every AGENTS.md edit. compile-context runs the same splice and compile that init ran. writeAgentSurfaces then copies every .agents/agents persona into each client persona directory.",
     "Scenario 3, baseline: Snapshot legacy technical debt into baseline file. HISS scanner sweeps the codebase for existing infractions. Initial legacy debt is recorded with --allow-increase and --reason=\"<why>\" to permit non-zero count.",
-    "Scenario 4, devcontainer: Prepare a portable devcontainer from reviewed Praetor sources. DevContainer configuration and reviewed source bundle companions are generated. Configuration, Dockerfile, and exact source companions are prepared in .devcontainer/.",
+    "Scenario 4, devcontainer: Prepare a portable devcontainer from reviewed Praetor sources. DevContainer configuration and reviewed source bundle companions are generated. The configuration, Dockerfile.praetor and up to four source parts are written to .devcontainer/.",
     "Scenario 5, audit: Verify configured governance contracts and debt ratchet. Audit checks manifest, lockfile, agent context, debt baseline, and DevContainer. Every executed gate passes with zero files modified; repository is verified and governed.",
-    "Onboarding executes five commands in sequence to establish declarative standards, vendor agent files, baseline legacy debt, generate devcontainers, and verify compliance. Greenfield repositories use praetorctl adopt to scaffold AGENTS.md."
+    "Scenario 6, adopt instead: An alternate entry that replaces steps 1 to 4, not a step before init. One adopt run writes what steps 1 to 4 write, and synthesizes AGENTS.md when it is missing. The path continues at step 5. init would now refuse: .standards.yaml already exists.",
+    "(Shortened to 2500 characters; docs/figures/onboarding-path.ts holds the full content.)"
   ],
   "evidence": [
     "cmd/standardsctl/init.go:runInit",
+    "cmd/standardsctl/init.go:ensureManifestAbsent",
     "cmd/standardsctl/init.go:createInitialManifest",
     "cmd/standardsctl/init.go:initBaselineAndLockfile",
+    "cmd/standardsctl/init.go:initAgentContext",
+    "internal/compiler/projection.go:CompileVendorTargets",
+    "internal/agentcontext/render.go:vendorTargets",
     "cmd/standardsctl/compile_context.go:runCompileContext",
     "internal/compiler/projection.go:CompileContextProjections",
+    "internal/compiler/projection.go:writeAgentSurfaces",
+    "internal/compiler/projection.go:VerifyCompiledContext",
+    "internal/compiler/agent_projection.go:CanonicalAgentsRel",
     "cmd/standardsctl/baseline.go:runBaseline",
     "cmd/standardsctl/baseline.go:recordBaseline",
     "cmd/standardsctl/devcontainer.go:runDevContainer",
     "cmd/standardsctl/devcontainer.go:generateDevContainerBundle",
+    "internal/devcontainer/bootstrap.go:bootstrapDockerfile",
+    "internal/devcontainer/bootstrap.go:maxBootstrapParts",
+    "internal/devcontainer/bootstrap_archive.go:bootstrapPartName",
     "cmd/standardsctl/audit.go:runAudit",
-    "cmd/standardsctl/adopt.go:runAdopt"
+    "cmd/standardsctl/adopt.go:runAdopt",
+    "internal/adopt/adopt.go:adoptSteps",
+    "internal/adopt/adopt.go:manifestFile",
+    "internal/adopt/harness.go:resolveAgentsContent"
   ],
-  "spec_sha256": "878488e532de6b1b0c2362bd5fd57027c56966bb21d28bee8f021936062b4c4e",
+  "spec_sha256": "d5f4c4f5232e70fa8f5cfb7dd7e31034985ec0af2ba6d4c8f13098f0e79443fd",
   "engine": {
     "commit": "ccfe85b4851957ac2adf88b4a9ddf9668b2882f1",
     "sha256": "047b4bcb30562cca709be7175d11995cdda45cf4b89db1f6906c5805b26c6452"
   },
-  "svg_sha256": "6bcb1828d7f5d7785919f1b1542724c7121883c0de80e2aee52a9371543c8088",
-  "static_sha256": "eda997f83b8eee9c414da59eaa4b5706eef0db3a873183f6bddda889cdeb7243",
-  "width": 964,
-  "height": 1088,
+  "svg_sha256": "785e2bd60c1a9c54cd51117e516fafc3a0f687437432d483d5c7513e501cf369",
+  "static_sha256": "6c3bd791d263b852351ddb2a570f1c86ac02bcee7af951e0904ed8608d914c98",
+  "width": 1194,
+  "height": 1360,
   "edges": [
     {
       "from": "Target repository",
@@ -43,10 +58,10 @@
     },
     {
       "from": "1. Scaffolding",
-      "to": "2. Context Transpilation"
+      "to": "2. Context Recompilation"
     },
     {
-      "from": "2. Context Transpilation",
+      "from": "2. Context Recompilation",
       "to": "3. Brownfield Baselining"
     },
     {
@@ -56,6 +71,11 @@
     {
       "from": "4. Devcontainer Setup",
       "to": "5. Audit Verification"
+    },
+    {
+      "from": "Alternate entry",
+      "to": "5. Audit Verification",
+      "label": "skips 1-4"
     },
     {
       "from": "5. Audit Verification",
