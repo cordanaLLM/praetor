@@ -125,8 +125,9 @@ func TestAuditWorkstationTopology_Negative_PlainFoldersAreNoContainers(t *testin
 }
 
 // TestAuditWorkstationTopology_StructuralScanBound: structural detection inspects at most
-// MaxScanEntries entries; a child repository beyond the bound leaves the folder unclassified
-// and the audit truncated rather than silently not a container.
+// MaxScanEntries entries. A child repository beyond the bound is not seen, so the folder is
+// not a container; the audit records a note and stays complete, because cleanup never acts
+// inside a non-container.
 func TestAuditWorkstationTopology_StructuralScanBound(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -148,13 +149,45 @@ func TestAuditWorkstationTopology_StructuralScanBound(t *testing.T) {
 				t.Fatalf("AuditWorkstationTopology: %v", err)
 			}
 			if got := slices.Contains(report.OrgContainers, "acme"); got != tc.container {
-				t.Fatalf("container = %v, want %v (reasons %v)", got, tc.container, report.TruncationReasons)
+				t.Fatalf("container = %v, want %v (notes %v)", got, tc.container, report.Notes)
 			}
-			reasons := strings.Join(report.TruncationReasons, "\n")
-			if tc.container == strings.Contains(reasons, "acme: organization container detection incomplete") {
-				t.Fatalf("truncation reasons = %q", reasons)
+			if report.Truncated {
+				t.Fatalf("a bounded structural scan truncated the audit: %v", report.TruncationReasons)
+			}
+			noted := strings.Contains(strings.Join(report.Notes, "\n"), "acme: not an organization container")
+			if noted == tc.container {
+				t.Fatalf("notes = %q, want a note only for the cut listing", report.Notes)
 			}
 		})
+	}
+}
+
+// TestAuditWorkstationTopology_LargePlainFolderKeepsAuditComplete: a data folder with more
+// than MaxScanEntries plain files is neither a container nor a truncation, so the audit
+// passes and cleanup runs; the same folder with git metadata stays a DEV-01 violation.
+func TestAuditWorkstationTopology_LargePlainFolderKeepsAuditComplete(t *testing.T) {
+	devRoot := t.TempDir()
+	writeFillerEntries(t, filepath.Join(devRoot, "datasets"), MaxScanEntries+1)
+	writeFillerEntries(t, filepath.Join(devRoot, "archive"), MaxScanEntries+1)
+	if err := os.MkdirAll(filepath.Join(devRoot, "archive", ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := AuditWorkstationTopology(context.Background(), devRoot, nil)
+	if err != nil {
+		t.Fatalf("AuditWorkstationTopology: %v", err)
+	}
+	if report.Truncated {
+		t.Fatalf("large plain folders truncated the audit: %v", report.TruncationReasons)
+	}
+	assertStringSet(t, "OrgContainers", report.OrgContainers, nil)
+	assertStringSet(t, "Violations", report.Violations, []string{rootRepositoryViolation("archive")})
+	if len(report.Notes) != 2 {
+		t.Fatalf("notes = %v, want one per cut listing", report.Notes)
+	}
+	result, err := CleanWorkstationTopologyDetailed(context.Background(), devRoot, nil, false)
+	if err != nil || len(result.Cleaned) != 0 {
+		t.Fatalf("clean = %+v, %v; want a complete audit with nothing to remove", result, err)
 	}
 }
 
@@ -263,4 +296,165 @@ func TestHoldsChildRepository(t *testing.T) {
 	if got, err := HoldsChildRepository(ctx, holder); !errors.Is(err, context.Canceled) || got {
 		t.Errorf("cancelled scan = %v, %v; want context.Canceled", got, err)
 	}
+}
+
+// plantOwnCheckout gives dir a checkout named name that keeps its git data inside dir's own
+// .git, as git lays out a submodule (store "modules") or a linked worktree (store
+// "worktrees"). The gitlink is relative, as git writes a submodule's.
+func plantOwnCheckout(t *testing.T, dir, store, name string) string {
+	t.Helper()
+	gitData := filepath.Join(dir, ".git", store, name)
+	writeTestFile(t, filepath.Join(gitData, "HEAD"))
+	checkout := filepath.Join(dir, name)
+	writeGitlink(t, checkout, "gitdir: "+filepath.Join("..", ".git", store, name)+"\n")
+	return filepath.Join(gitData, "HEAD")
+}
+
+// TestAuditWorkstationTopology_OwnSubmoduleIsNoChildRepository: an unnamed dev-root
+// repository whose .git lost HEAD but still holds a checked-out submodule is no structural
+// container. It stays a DEV-01 violation, and cleanup removes none of its git data.
+func TestAuditWorkstationTopology_OwnSubmoduleIsNoChildRepository(t *testing.T) {
+	devRoot := t.TempDir()
+	repo := filepath.Join(devRoot, "acme")
+	moduleHead := plantOwnCheckout(t, repo, "modules", "lib")
+
+	report, err := AuditWorkstationTopology(context.Background(), devRoot, nil)
+	if err != nil {
+		t.Fatalf("AuditWorkstationTopology: %v", err)
+	}
+	assertStringSet(t, "OrgContainers", report.OrgContainers, nil)
+	assertStringSet(t, "Violations", report.Violations, []string{rootRepositoryViolation("acme")})
+	if stray, found := findStray(report, filepath.Join(repo, ".git")); found {
+		t.Fatalf("git metadata of a dev-root repository was reported as a stray: %+v", stray)
+	}
+	result, err := CleanWorkstationTopologyDetailed(context.Background(), devRoot, nil, false)
+	if err != nil || len(result.Cleaned) != 0 {
+		t.Fatalf("clean = %+v, %v; want nothing removed", result, err)
+	}
+	assertPathsExist(t, []string{moduleHead})
+}
+
+// TestAuditWorkstationTopology_HeadlessGitHoldingCheckoutDataNeedsReview: in a recognised
+// container, headless git metadata that still holds submodule or linked worktree data is a
+// manual-review finding and survives cleanup; with an empty modules directory it is still
+// safe to clean.
+func TestAuditWorkstationTopology_HeadlessGitHoldingCheckoutDataNeedsReview(t *testing.T) {
+	devRoot := t.TempDir()
+	submodules := filepath.Join(devRoot, "acme")
+	moduleHead := plantOwnCheckout(t, submodules, "modules", "lib")
+	worktrees := filepath.Join(devRoot, "acme-labs")
+	worktreeHead := filepath.Join(worktrees, ".git", "worktrees", "feature", "HEAD")
+	writeTestFile(t, worktreeHead)
+	writeGitlink(t, filepath.Join(devRoot, "worktrees", "feature"),
+		"gitdir: "+filepath.Dir(worktreeHead)+"\n")
+	emptyModules := filepath.Join(devRoot, "local", ".git", "modules")
+	if err := os.MkdirAll(emptyModules, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := AuditWorkstationTopology(context.Background(), devRoot, acmeConfigured)
+	if err != nil {
+		t.Fatalf("AuditWorkstationTopology: %v", err)
+	}
+	for _, gitDir := range []string{filepath.Join(submodules, ".git"), filepath.Join(worktrees, ".git")} {
+		stray, found := findStray(report, gitDir)
+		if !found || stray.IsSafeToDelete || !strings.Contains(stray.Reason, "submodule or linked worktree data") {
+			t.Fatalf("finding for %s = %+v (found %v), want manual review", gitDir, stray, found)
+		}
+	}
+	requireSafeStray(t, report, filepath.Dir(emptyModules))
+
+	result, err := CleanWorkstationTopologyDetailed(context.Background(), devRoot, acmeConfigured, false)
+	if err != nil {
+		t.Fatalf("CleanWorkstationTopologyDetailed: %v", err)
+	}
+	assertStringSet(t, "Cleaned", result.Cleaned, []string{filepath.Dir(emptyModules)})
+	assertPathsExist(t, []string{moduleHead, worktreeHead})
+}
+
+// TestVerifyDeletionSafety_RefusesHeadlessGitHoldingCheckoutData: the final boundary
+// re-checks headless git metadata for submodule and worktree data, whatever the audit said.
+func TestVerifyDeletionSafety_RefusesHeadlessGitHoldingCheckoutData(t *testing.T) {
+	devRoot := t.TempDir()
+	cases := []struct {
+		name, entry string
+		refused     bool
+	}{
+		{name: "submodule git directory", entry: filepath.Join("modules", "lib", "HEAD"), refused: true},
+		{name: "linked worktree directory", entry: filepath.Join("worktrees", "feature", "HEAD"), refused: true},
+		{name: "empty modules directory", entry: "modules", refused: false},
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gitDir := filepath.Join(devRoot, fmt.Sprintf("acme-%d", i), ".git")
+			if tc.refused {
+				writeTestFile(t, filepath.Join(gitDir, tc.entry))
+			} else if err := os.MkdirAll(filepath.Join(gitDir, tc.entry), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			err := verifyDeletionSafety(context.Background(), devRoot, gitDir, OrgContainers(nil))
+			if refused := err != nil; refused != tc.refused {
+				t.Fatalf("verifyDeletionSafety = %v, want refused=%v", err, tc.refused)
+			}
+			if tc.refused && !strings.Contains(err.Error(), "submodule or linked worktree data") {
+				t.Fatalf("refusal = %v, want the checkout-data reason", err)
+			}
+		})
+	}
+}
+
+// TestHoldsChildRepository_OwnCheckoutsAreNotChildren: a submodule or linked worktree whose
+// gitlink resolves inside the directory's own .git, spelled directly or through a symlinked
+// alias, is part of that directory's repository; an independent repository beside it still
+// counts, and a listing cut at the bound is ErrScanBound.
+func TestHoldsChildRepository_OwnCheckoutsAreNotChildren(t *testing.T) {
+	root := t.TempDir()
+	submodule := filepath.Join(root, "submodule")
+	plantOwnCheckout(t, submodule, "modules", "lib")
+	worktree := filepath.Join(root, "worktree")
+	plantOwnCheckout(t, worktree, "worktrees", "feature")
+	mixed := filepath.Join(root, "mixed")
+	plantOwnCheckout(t, mixed, "modules", "lib")
+	initTestGit(t, filepath.Join(mixed, "app"))
+	bounded := filepath.Join(root, "bounded")
+	writeFillerEntries(t, bounded, MaxScanEntries+1)
+
+	cases := []struct {
+		dir  string
+		want bool
+	}{{submodule, false}, {worktree, false}, {mixed, true}}
+	if aliased, ok := aliasedOwnCheckout(t, root); ok {
+		cases = append(cases, struct {
+			dir  string
+			want bool
+		}{aliased, false})
+	}
+	for _, tc := range cases {
+		if got, err := HoldsChildRepository(context.Background(), tc.dir); err != nil || got != tc.want {
+			t.Errorf("HoldsChildRepository(%s) = %v, %v; want %v", tc.dir, got, err, tc.want)
+		}
+	}
+	if got, err := HoldsChildRepository(context.Background(), bounded); !errors.Is(err, ErrScanBound) || got {
+		t.Errorf("bounded listing = %v, %v; want ErrScanBound", got, err)
+	}
+}
+
+// aliasedOwnCheckout plants a directory whose linked worktree names its git data through a
+// symlinked alias of that directory, with an absolute gitlink as git writes a worktree's. It
+// reports false where the host cannot create symlinks (Windows without the privilege).
+func aliasedOwnCheckout(t *testing.T, root string) (string, bool) {
+	t.Helper()
+	dir := filepath.Join(root, "aliased")
+	alias := filepath.Join(root, "alias")
+	if err := os.MkdirAll(filepath.Join(dir, ".git", "worktrees", "feature"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(dir, alias); err != nil {
+		t.Logf("symlink alias case skipped: %v", err)
+		return "", false
+	}
+	writeTestFile(t, filepath.Join(dir, ".git", "worktrees", "feature", "HEAD"))
+	writeGitlink(t, filepath.Join(dir, "feature"),
+		"gitdir: "+filepath.Join(alias, ".git", "worktrees", "feature")+"\n")
+	return dir, true
 }

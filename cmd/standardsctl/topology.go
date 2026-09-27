@@ -122,21 +122,9 @@ func printTopologyAuditReport(report *topology.TopologyReport) {
 	fmt.Printf("Valid Leaf Repositories: %d\n", len(report.ValidRepos))
 	fmt.Printf("Compatibility Symlinks:  %d (%v)\n\n", len(report.Symlinks), report.Symlinks)
 
-	if report.Truncated {
-		fmt.Printf("--- Incomplete Scan (%d) ---\n", len(report.TruncationReasons))
-		for _, reason := range report.TruncationReasons {
-			fmt.Printf("  ! %s\n", reason)
-		}
-		fmt.Println()
-	}
-
-	if len(report.Violations) > 0 {
-		fmt.Printf("--- Invariant Violations (%d) ---\n", len(report.Violations))
-		for _, v := range report.Violations {
-			fmt.Printf("  ✗ %s\n", v)
-		}
-		fmt.Println()
-	}
+	printReportSection("Incomplete Scan", "!", report.TruncationReasons)
+	printReportSection("Notes", "i", report.Notes)
+	printReportSection("Invariant Violations", "✗", report.Violations)
 
 	if len(report.StrayFiles) > 0 {
 		fmt.Printf("--- Stray / Misplaced Files Detected (%d) ---\n", len(report.StrayFiles))
@@ -149,6 +137,19 @@ func printTopologyAuditReport(report *topology.TopologyReport) {
 		}
 		fmt.Printf("\nRun 'standardsctl topology clean --dev-root=%s' to purge safe stray files.\n", report.DevRoot)
 	}
+}
+
+// printReportSection prints a titled, counted list of report lines, or nothing when the
+// list is empty.
+func printReportSection(title, marker string, lines []string) {
+	if len(lines) == 0 {
+		return
+	}
+	fmt.Printf("--- %s (%d) ---\n", title, len(lines))
+	for _, line := range lines {
+		fmt.Printf("  %s %s\n", marker, line)
+	}
+	fmt.Println()
 }
 
 // topologyAuditVerdict fails on any invariant violation or stray file. A violation alone,

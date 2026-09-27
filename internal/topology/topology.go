@@ -27,6 +27,9 @@ var (
 	// ErrScanTruncated indicates cleanup refused to act on an audit that did not cover the
 	// whole tree; the report's TruncationReasons name the unaudited parts.
 	ErrScanTruncated = errors.New("topology audit incomplete; cleanup refused")
+	// ErrScanBound indicates a directory listing HoldsChildRepository cut at MaxScanEntries
+	// before a child repository turned up: the entries past the bound were not inspected.
+	ErrScanBound = errors.New("directory listing exceeds MaxScanEntries")
 )
 
 // BuiltinOrgContainers names the directories every dev root may use as organization
@@ -156,6 +159,9 @@ type TopologyReport struct {
 	// the tree unaudited. The findings are then a lower bound, not an exhaustive result.
 	Truncated         bool     `json:"truncated"`
 	TruncationReasons []string `json:"truncation_reasons"`
+	// Notes records classification decisions that leave the audit complete but that the
+	// operator may want to know about, such as a large folder not treated as a container.
+	Notes []string `json:"notes"`
 }
 
 func (r *TopologyReport) markTruncated(reason string) {
@@ -211,6 +217,7 @@ func AuditWorkstationTopology(ctx context.Context, devRoot string, configured []
 		StrayFiles:        make([]StrayFile, 0),
 		Violations:        make([]string, 0),
 		TruncationReasons: make([]string, 0),
+		Notes:             make([]string, 0),
 	}
 
 	entries, err := os.ReadDir(normRoot)
@@ -284,8 +291,10 @@ func processDevRootEntry(ctx context.Context, entry os.DirEntry, entryPath strin
 // repository is a DEV-01 violation. A directory that is not one but directly holds a child
 // repository is a structural organization container and is audited as one. Any other
 // directory with git metadata (headless or indeterminate) is a DEV-01 violation. A listing
-// that could not be read, or was cut at MaxScanEntries before a repository turned up,
-// leaves the directory unclassified and the audit truncated.
+// that could not be read leaves the directory unclassified and the audit truncated. A
+// listing cut at MaxScanEntries before a repository turned up is not a container and adds
+// a note, not a truncation: cleanup never acts inside a non-container, so failing the whole
+// audit over a large data folder would protect nothing.
 func classifyDevRootDirectory(ctx context.Context, path, name string, report *TopologyReport) error {
 	_, statErr := os.Stat(filepath.Join(path, ".git"))
 	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
@@ -302,12 +311,17 @@ func classifyDevRootDirectory(ctx context.Context, path, name string, report *To
 	switch {
 	case isInterruption(err):
 		return err
+	case errors.Is(err, ErrScanBound):
+		report.Notes = append(report.Notes, fmt.Sprintf(
+			"%s: not an organization container, no repository among its first %d entries", name, MaxScanEntries))
 	case err != nil:
 		report.markTruncated(fmt.Sprintf("%s: organization container detection incomplete: %v", name, err))
+		return nil
 	case found:
 		report.OrgContainers = append(report.OrgContainers, name)
 		return auditOrgContainer(ctx, path, name, report)
-	case hasGit:
+	}
+	if hasGit {
 		report.Violations = append(report.Violations, rootRepositoryViolation(name))
 	}
 	return nil
@@ -322,24 +336,98 @@ func isInterruption(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
-// HoldsChildRepository reports whether dir directly holds at least one child git repository
-// (a directory entry HasValidGitRepo accepts): the structural test for an organization
-// container. It inspects at most MaxScanEntries entries and checks ctx on every one
-// (HISS-02). A listing that cannot be read, or is cut at the bound before a repository turns
-// up, is an error: the answer is then unknown, never false.
+// HoldsChildRepository reports whether dir directly holds at least one child repository of
+// its own: the structural test for an organization container. A child counts when
+// HasValidGitRepo accepts it and its git directory lies outside dir/.git; a submodule or
+// linked worktree whose gitlink resolves inside dir/.git is part of dir's repository, so it
+// never makes dir a container (adopt's child scan skips gitlinks for the same reason). It
+// inspects at most MaxScanEntries entries and checks ctx on every one (HISS-02). A listing
+// that cannot be read, or a child whose gitlink cannot be resolved, is an error; a listing
+// cut at the bound before a repository turns up is ErrScanBound. The answer is then unknown,
+// never false.
 func HoldsChildRepository(ctx context.Context, dir string) (bool, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return false, fmt.Errorf("read %s: %w", dir, err)
 	}
+	store := filepath.Join(dir, ".git")
 	for i, entry := range entries {
 		if i == MaxScanEntries {
-			return false, fmt.Errorf("%s: scan stopped after %d of %d entries (MaxScanEntries)", dir, MaxScanEntries, len(entries))
+			return false, fmt.Errorf("%s: scan stopped after %d of %d entries: %w",
+				dir, MaxScanEntries, len(entries), ErrScanBound)
 		}
 		if err := scanInterrupted(ctx, "child repository scan"); err != nil {
 			return false, err
 		}
-		if entry.IsDir() && HasValidGitRepo(filepath.Join(dir, entry.Name())) {
+		found, err := independentChildRepository(ctx, filepath.Join(dir, entry.Name()), entry, store)
+		if found || err != nil {
+			return found, err
+		}
+	}
+	return false, nil
+}
+
+// independentChildRepository reports whether entry, a direct child of the directory whose
+// git directory is store, is a repository of its own: a checkout HasValidGitRepo accepts
+// whose git directory lies outside store.
+func independentChildRepository(ctx context.Context, child string, entry os.DirEntry, store string) (bool, error) {
+	if !entry.IsDir() || !HasValidGitRepo(child) {
+		return false, nil
+	}
+	owned, err := gitlinkWithin(ctx, child, store)
+	if err != nil {
+		return false, fmt.Errorf("resolve git directory of %s: %w", child, err)
+	}
+	return !owned, nil
+}
+
+// gitlinkWithin reports whether child's .git is a gitlink file whose git directory lies
+// inside store once symlinks in both are resolved: a submodule (store/modules/<name>) or a
+// linked worktree (store/worktrees/<name>) of the repository store belongs to. A .git
+// directory is never within store.
+func gitlinkWithin(ctx context.Context, child, store string) (bool, error) {
+	info, err := os.Lstat(filepath.Join(child, ".git"))
+	if err != nil {
+		return false, fmt.Errorf("lstat git metadata: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return false, nil
+	}
+	target, ok, err := resolveGitlinkTarget(child)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, errors.New("gitlink target vanished")
+	}
+	resolvedStore, err := util.ResolveExistingPath(ctx, store)
+	if err != nil {
+		return false, fmt.Errorf("resolve %s: %w", store, err)
+	}
+	resolvedTarget, err := util.ResolveExistingPath(ctx, target)
+	if err != nil {
+		return false, fmt.Errorf("resolve gitlink target %s: %w", target, err)
+	}
+	return util.WithinRoot(resolvedStore, resolvedTarget), nil
+}
+
+// checkoutGitDataDirs name the directories inside a .git directory where git keeps the
+// repository data of other checkouts: submodule git directories (modules/<name>) and the
+// administrative directories of linked worktrees (worktrees/<name>).
+var checkoutGitDataDirs = [...]string{"modules", "worktrees"}
+
+// holdsCheckoutGitData reports whether the git directory gitPath keeps data another
+// checkout depends on: a non-empty modules or worktrees directory. A headless .git holding
+// such data is never removed on its headlessness alone, because the removal would strand
+// every submodule or worktree using it.
+func holdsCheckoutGitData(gitPath string) (bool, error) {
+	for _, name := range checkoutGitDataDirs {
+		entries, err := os.ReadDir(filepath.Join(gitPath, name))
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+		case err != nil:
+			return false, fmt.Errorf("read %s: %w", filepath.Join(gitPath, name), err)
+		case len(entries) > 0:
 			return true, nil
 		}
 	}
@@ -484,12 +572,7 @@ func auditStrayGitDir(
 	report *TopologyReport,
 ) {
 	if state == gitMetadataHeadless {
-		report.StrayFiles = append(report.StrayFiles, StrayFile{
-			Path:           entryPath,
-			RelPath:        relPath,
-			Reason:         "headless .git directory in organization container",
-			IsSafeToDelete: true,
-		})
+		report.StrayFiles = append(report.StrayFiles, headlessGitFinding(entryPath, relPath))
 		return
 	}
 	if state == gitMetadataLive && !hasChildRepos {
@@ -507,6 +590,28 @@ func auditStrayGitDir(
 		Reason:         reason,
 		IsSafeToDelete: false,
 	})
+}
+
+// headlessGitFinding reports headless git metadata in an organization container. It is safe
+// to clean unless it holds submodule or linked worktree data (holdsCheckoutGitData), or that
+// could not be ruled out.
+func headlessGitFinding(path, relPath string) StrayFile {
+	finding := StrayFile{
+		Path:           path,
+		RelPath:        relPath,
+		Reason:         "headless .git directory in organization container",
+		IsSafeToDelete: true,
+	}
+	held, err := holdsCheckoutGitData(path)
+	switch {
+	case err != nil:
+		finding.Reason = "headless .git directory could not be checked for submodule or worktree data, review manually"
+		finding.IsSafeToDelete = false
+	case held:
+		finding.Reason = "headless .git directory holds submodule or linked worktree data, review manually"
+		finding.IsSafeToDelete = false
+	}
+	return finding
 }
 
 func isProtectedGitState(state gitMetadataState, inspectErr error) bool {
@@ -873,6 +978,13 @@ func verifyDirectGitMetadataTarget(candidate string) error {
 	}
 	if state != gitMetadataHeadless {
 		return fmt.Errorf("cannot delete live or indeterminate git metadata: %s", candidate)
+	}
+	held, err := holdsCheckoutGitData(candidate)
+	if err != nil {
+		return fmt.Errorf("cannot rule out submodule or worktree data in git metadata: %w", err)
+	}
+	if held {
+		return fmt.Errorf("cannot delete git metadata that holds submodule or linked worktree data: %s", candidate)
 	}
 	return nil
 }

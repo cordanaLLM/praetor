@@ -107,6 +107,26 @@ func TestTopologyAudit_ScanAtBoundPasses(t *testing.T) {
 	}
 }
 
+// TestTopologyAudit_LargeDataFolderPassesWithNote: a dev-root data folder with more than
+// MaxScanEntries plain files is listed as a note, not an incomplete scan, so the audit (and
+// make topology-audit) still passes.
+func TestTopologyAudit_LargeDataFolderPassesWithNote(t *testing.T) {
+	devRoot := t.TempDir()
+	datasets := filepath.Join(devRoot, "datasets")
+	if err := os.Mkdir(datasets, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTopologyFiller(t, datasets, topology.MaxScanEntries+1)
+	out, err := runTopologyAuditOn(t, devRoot)
+	if err != nil || strings.Contains(out, "Incomplete Scan") {
+		t.Fatalf("large data folder failed the audit: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "--- Notes (1) ---") || !strings.Contains(out, "datasets: not an organization container") ||
+		!strings.Contains(out, "[PASS]") {
+		t.Fatalf("output lacks the note or the pass line:\n%s", out)
+	}
+}
+
 func TestTopologyAuditVerdict_TruncationJoinsOtherProblems(t *testing.T) {
 	report := &topology.TopologyReport{
 		Truncated:         true,

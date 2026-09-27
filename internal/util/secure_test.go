@@ -115,7 +115,7 @@ func TestConfinePath_Boundary(t *testing.T) {
 }
 
 // TestConfinePath_Positive_FilesystemRoot pins BUG-825: a root of "/" (a volume root on
-// Windows) already ends in a separator, and withinRoot used to demand a doubled one, so
+// Windows) already ends in a separator, and WithinRoot used to demand a doubled one, so
 // every path under it was refused.
 func TestConfinePath_Positive_FilesystemRoot(t *testing.T) {
 	dir, err := filepath.EvalSymlinks(t.TempDir())
@@ -156,8 +156,8 @@ func TestWithinRoot_Boundary_SeparatorTerminatedRoot(t *testing.T) {
 		{repo + sep + "a", repo, false},
 	}
 	for _, tc := range cases {
-		if got := withinRoot(tc.root, tc.path); got != tc.want {
-			t.Errorf("withinRoot(%q, %q) = %v, want %v", tc.root, tc.path, got, tc.want)
+		if got := WithinRoot(tc.root, tc.path); got != tc.want {
+			t.Errorf("WithinRoot(%q, %q) = %v, want %v", tc.root, tc.path, got, tc.want)
 		}
 	}
 }
