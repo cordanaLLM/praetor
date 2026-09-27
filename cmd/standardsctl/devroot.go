@@ -42,4 +42,4 @@ func resolveDevRootDir(explicit, flagName string) (string, error) {
 
 // frameworkUsageDefault is the default clause of every needs --framework flag.
 const frameworkUsageDefault = "(default: $" + frameworkDirEnv + ", else framework.targets.go.checkout, " +
-	"else framework.targets.go.contract or the go target's declared catalog; \"\" selects the declaration)"
+	"else framework.targets.go.contract, else framework.targets.go.module; \"\" selects the declaration)"

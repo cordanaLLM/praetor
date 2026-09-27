@@ -65,19 +65,30 @@ func TestNeedsContractExport_Negative(t *testing.T) {
 	}
 }
 
-// Boundary: an unconfigured host exports the built-in tables of a language, listing the
-// entries the contract grammar cannot carry.
-func TestNeedsContractExport_BoundaryBuiltinTables(t *testing.T) {
+// Boundary: praetor ships no framework tables. An unconfigured host has nothing to export
+// and names the key to set; a target with a module and no contract exports an empty
+// contract naming the module.
+func TestNeedsContractExport_BoundaryNoBuiltinTables(t *testing.T) {
 	t.Setenv(config.WorkstationConfigEnv, "")
 	out := filepath.Join(t.TempDir(), "python.yaml")
+	err := dispatchCommand("needs", []string{"contract", "export", "--language=python", "--out=" + out})
+	if err == nil || !strings.Contains(err.Error(), "set framework.targets.python.module") {
+		t.Fatalf("unconfigured export = %v; want the key to set", err)
+	}
+	if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+		t.Fatalf("an unconfigured export wrote %s: %v", out, statErr)
+	}
+	moduleOnly := filepath.Join(t.TempDir(), "workstation.yaml")
+	writeFixtureFile(t, filepath.Dir(moduleOnly), "workstation.yaml", "framework: {targets: {python: {module: example.com/acme/py}}}\n")
 	stdout, err := captureStdout(t, func() error {
-		return dispatchCommand("needs", []string{"contract", "export", "--language=python", "--out=" + out})
+		return dispatchCommand("needs", []string{"contract", "export", "--language=python", "--out=" + out, "--workstation-config=" + moduleOnly})
 	})
 	if err != nil {
-		t.Fatalf("built-in export: %v", err)
+		t.Fatalf("module-only export: %v", err)
 	}
-	mustContain(t, stdout, "[SKIP] capability clikit", "[PASS] Exported the python framework")
-	if data, err := os.ReadFile(out); err != nil || !strings.Contains(string(data), "ecosystem: pypi") {
-		t.Fatalf("built-in python export = %v\n%s", err, data)
+	mustContain(t, stdout, "[PASS] Exported the python framework example.com/acme/py (0 packages)")
+	if data, err := os.ReadFile(out); err != nil || !strings.Contains(string(data), "ecosystem: pypi") ||
+		!strings.Contains(string(data), "framework: example.com/acme/py") {
+		t.Fatalf("module-only python export = %v\n%s", err, data)
 	}
 }

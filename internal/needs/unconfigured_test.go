@@ -240,6 +240,41 @@ func TestUnconfiguredAggregateAndRequests_3D(t *testing.T) {
 	}
 }
 
+// Every leaderboard row of a fleet scored against no framework shows n/a, never a
+// percentage (ADR-0014 §4), including a repository without dependencies.
+func TestUnconfiguredLeaderboard_3D(t *testing.T) {
+	root := t.TempDir()
+	unconfiguredRepo(t, filepath.Join(root, "app"))
+	const unset = "| n/a (no target framework configured) |"
+	// Positive: the row of a repository with demands shows n/a and its counts.
+	report, err := AggregateFleet(t.Context(), root, FrameworkSource{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := renderDemandLeaderboard(report); !strings.Contains(got, unset+" 0 | 2 |") || strings.Contains(got, "%") {
+		t.Fatalf("unconfigured leaderboard:\n%s", got)
+	}
+	// Negative: a configured fleet ranks its rows by percentage.
+	configured, err := AggregateFleet(t.Context(), root, acmeDeclared(), acmeRegistry(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := renderDemandLeaderboard(configured); !strings.Contains(got, "| 50.0% | 1 | 1 |") || strings.Contains(got, unset) {
+		t.Fatalf("configured leaderboard:\n%s", got)
+	}
+	// Boundary: a repository without dependencies is n/a, not the empty-denominator 100%.
+	bare := t.TempDir()
+	writeFixture(t, filepath.Join(bare, "lib"), ".git/HEAD", "ref: refs/heads/main\n")
+	writeFixture(t, filepath.Join(bare, "lib"), "go.mod", "module example.com/acme/lib\n\ngo 1.27\n")
+	empty, err := AggregateFleet(t.Context(), bare, FrameworkSource{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := renderDemandLeaderboard(empty); !strings.Contains(got, unset+" 0 | 0 |") || strings.Contains(got, "100.0%") {
+		t.Fatalf("dependency-free unconfigured leaderboard:\n%s", got)
+	}
+}
+
 // A declared contract may name up to 64 nested modules; one more is refused.
 func TestContractModuleBound(t *testing.T) {
 	contract := func(count int) []byte {

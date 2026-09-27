@@ -26,6 +26,7 @@ func TestNeedsReportDoesNotTreatEmptyFrameworkAsCovered(t *testing.T) {
 
 func TestNeedsReportUsesObservedPackageAndRejectsMissingFramework(t *testing.T) {
 	srv, root := newFixtureServer(t)
+	selectAcmeKit(t)
 	writeFixtureFile(t, root, "go.mod", "module example.com/consumer\n\ngo 1.27\nrequire github.com/jackc/pgx/v5 v5.7.2\n")
 	writeFixtureFile(t, root, "framework/go.mod", "module example.com/framework\ngo 1.27\n")
 	writeFixtureFile(t, root, "framework/db/pgx/doc.go", "package pgx\ntype Available struct{}\n")
@@ -35,6 +36,7 @@ func TestNeedsReportUsesObservedPackageAndRejectsMissingFramework(t *testing.T) 
 	expectText(t, "unverified source", result, "Coverage basis: source-observed; builds and tests not run")
 	declared := callTool(t, srv, "standards_needs_report", nil)
 	expectText(t, "declared only", declared, "Coverage basis: catalog-declared; builds and tests not run")
+	expectText(t, "declared contract", declared, "Capability contract: kit.capabilities.yaml")
 	missing := callTool(t, srv, "standards_needs_report", map[string]any{"framework": "missing"})
 	expectError(t, "missing selected framework", missing, "open selected framework")
 }
@@ -45,6 +47,7 @@ func TestNeedsMCPReportMatchesMigrationCandidateEvidence(t *testing.T) {
 	writeFixtureFile(t, root, "main.go", "package main\nimport \"github.com/jackc/pgx/v5\"\nfunc main() { _ = pgx.Connect }\n")
 	writeFixtureFile(t, root, "framework/go.mod", "module example.org/fork\ngo 1.27\n")
 	framework := filepath.Join(root, "framework")
+	targets := selectAcmeKit(t)
 	for _, tc := range []struct {
 		source string
 		score  float64
@@ -52,7 +55,7 @@ func TestNeedsMCPReportMatchesMigrationCandidateEvidence(t *testing.T) {
 		writeFixtureFile(t, root, "framework/db/pgx/doc.go", tc.source)
 		result := callTool(t, srv, "standards_needs_report", map[string]any{"framework": "framework"})
 		expectText(t, "same mapping score", result, fmt.Sprintf("Mapping availability: %.1f%%", tc.score))
-		source := needs.SelectFrameworkSource(needs.FrameworkSelection{Explicit: framework, ExplicitSet: true})
+		source := needs.SelectFrameworkSource(needs.FrameworkSelection{Explicit: framework, ExplicitSet: true, Targets: targets})
 		plan, err := needs.PlanMigration(t.Context(), root, source, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -73,10 +76,11 @@ func TestNeedsMCPLibraryRelationshipsUseSharedFormatter(t *testing.T) {
 	writeFixtureFile(t, root, "go.mod", "module example.com/consumer\ngo 1.27\nrequire (\ngo.uber.org/fx v1.24.0\ngithub.com/knadh/koanf/v2 v2.3.0\ngithub.com/lmittmann/tint v1.1.2\ngithub.com/ogen-go/ogen v1.13.0\n)\n")
 	writeFixtureFile(t, root, "consumer.go", "package consumer\nimport _ \"log/slog\"\n")
 	writeFixtureFile(t, root, "framework/go.mod", "module example.com/framework\ngo 1.27\n")
-	for _, name := range []string{"config", "log", "ogenkit"} {
+	for _, name := range []string{"core/config", "core/log", "ogenkit"} {
 		writeFixtureFile(t, root, "framework/"+name+"/adapter.go", "package adapter\ntype Available struct{}\n")
 	}
-	source := needs.SelectFrameworkSource(needs.FrameworkSelection{Explicit: filepath.Join(root, "framework"), ExplicitSet: true})
+	targets := selectAcmeKit(t)
+	source := needs.SelectFrameworkSource(needs.FrameworkSelection{Explicit: filepath.Join(root, "framework"), ExplicitSet: true, Targets: targets})
 	index, err := needs.InspectFramework(t.Context(), source)
 	if err != nil {
 		t.Fatal(err)

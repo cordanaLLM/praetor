@@ -435,9 +435,10 @@ Tests: `internal/adopt/agent_surface_preflight_test.go`.
 install manifest (`loadNeedsRegistry` in `cmd/standards-mcp/server.go`). A settings change
 therefore reaches a running server without a restart. The tool resolves `framework.targets`
 and its `framework` argument exactly as `praetorctl needs report` does
-(`needs.SelectFrameworkSource`), prints the same header (`needs.FormatReportHeader`,
-including `Deprecated input:` lines) and never falls back to built-in data for a configured
-target. A settings document that fails validation is an error result
+(`needs.SelectFrameworkSource`) and prints the same header (`needs.FormatReportHeader`,
+including `Deprecated input:` lines). Praetor ships no framework data: with no target
+configured the header reads `Framework: not configured (…)` with mapping availability
+`n/a (no target framework configured)`. A settings document that fails validation is an error result
 (`Failed to load operator settings: ...`), not a report against defaults
 (`TestNeedsReportHonoursConfiguredTarget` in `cmd/standards-mcp/operator_settings_test.go`):
 

@@ -258,12 +258,15 @@ forge:
 
 How the `needs` engine reads the targets (`internal/needs/targets.go`):
 
-- **No target configured.** The engine keeps the built-in targets it shipped before
-  this section existed, so an unconfigured host sees unchanged reports. They are
-  removed once their data is exported as contracts (ADR-0014 §6).
-- **Any target configured.** Only the configured languages have a framework. A built-in
-  catalog package outside a target's module is never offered: the demand keeps its
-  capability and is a gap, unless the target's contract declares a package for it.
+- **No target configured.** Praetor ships no framework. Every `needs` command still
+  classifies dependencies into capabilities and reports the framework as not configured:
+  mapping availability renders as `n/a (no target framework configured)`, never 0%,
+  `needs migrate --apply` and `needs epic --publish` refuse, and requests are unrouted
+  (ADR-0014 §4; the full table is under
+  [Not configured](needs-capability-evidence.md#not-configured)).
+- **Any target configured.** Only the configured languages have a framework. A demand
+  is mapped only when the target's contract declares a package for it; otherwise it
+  keeps its capability and is a gap.
 - **Framework selection** for `report`, `aggregate`, `migrate`, `epic` and
   `contract export`: `--framework`, then `$PRAETOR_FRAMEWORK_DIR`, then
   `framework.targets.go.checkout`; without a checkout, `framework.targets.go.contract`

@@ -4,8 +4,9 @@
 availability**, not whether a repository is ready to migrate. The retained Go/JSON
 field name `Readiness.Score` remains compatible; its percentage is the dependencies a
 target framework maps divided by scanned dependencies. It does not count tests or
-prove API compatibility. A dependency-free repository retains the existing 100%
-empty-denominator convention; that is not verification evidence.
+prove API compatibility. With a framework configured, a dependency-free repository
+retains the existing 100% empty-denominator convention; that is not verification
+evidence. With none configured it renders as `n/a`, like every other row.
 
 Praetor ships no framework. A built-in catalog (`internal/needs/catalog.go`) only
 **classifies** well-known libraries into capabilities (`github.com/jackc/pgx` is
@@ -273,17 +274,20 @@ them configures the exported contracts under `framework.targets.<lang>`.
 ### Not configured
 
 With no `framework.targets` entry, every command still classifies dependencies and says
-the framework is not configured instead of inventing one (ADR-0014 §4; tests in
-`internal/needs/unconfigured_test.go`):
+the framework is not configured instead of inventing one. Every mapping availability or
+readiness figure renders as `n/a (no target framework configured)`, never 0% and never
+the empty-denominator 100% (`needs.MappingAvailability`; ADR-0014 §4; tests in
+`internal/needs/unconfigured_test.go` and `cmd/standardsctl/needs_unconfigured_test.go`):
 
 | Command | Behaviour |
 | :-- | :-- |
-| `needs scan` | classifies; prints `Target Framework: not configured` and `Coverage basis: not-configured`; `--write` omits `framework` and `builder_kits` |
+| `needs scan` | classifies; prints `Target Framework: not configured`, `Mapping availability: n/a (no target framework configured) (…)` and `Coverage basis: not-configured`; `--write` omits `framework` and `builder_kits` |
 | `needs report`, MCP `standards_needs_report` | header `Framework: not configured (set framework.targets.<lang>.module and .contract, or pass --framework) \| Mapping availability: n/a (no target framework configured)`; exit 0 |
-| `needs aggregate` | `**Target Framework**: not configured (…)`, `**Overall Fleet Target Framework Coverage**: n/a (no target framework configured)` |
-| `needs epic` | the preview renders `**Target Framework**: not configured`; `--publish` refuses with `needs.ErrFrameworkNotConfigured` before the forge is contacted |
-| `needs migrate` | the dry run lists the blocker `nothing to rewrite: no target framework configured.`; `--apply` refuses with the same text |
-| `needs requests` | requests are synthesized for the classified gaps, each with empty `target_builder_kit` and `target_org` and the spec line `Target Builder Kit: unrouted (framework.targets.<lang>.builder_kits not set)`; `needs.UnroutedSummary` counts them as `N of M requests unrouted` |
+| `needs aggregate` | `**Target Framework**: not configured (…)`, `**Overall Fleet Target Framework Coverage**: n/a (no target framework configured)`; every leaderboard row's readiness is `n/a (…)` |
+| `needs epic` | the preview renders `**Target Framework**: not configured`; `needs epic --dev-dir` lists each repository with `Readiness: n/a (…)`; `--publish` refuses with `needs.ErrFrameworkNotConfigured` before the forge is contacted |
+| `needs migrate` | the dry run prints `Mapping availability: n/a (…)` and the blocker `nothing to rewrite: no target framework configured.`; `--apply` refuses with `needs.ErrFrameworkNotConfigured` |
+| `needs requests` | requests are synthesized for the classified gaps, each with empty `target_builder_kit` and `target_org` and the spec line `Target Builder Kit: unrouted (framework.targets.<lang>.builder_kits not set)`; the command prints `N of M requests unrouted` below its heading (`needs.UnroutedSummary`) |
+| `agent run praetor-needs-miner` | prints `Readiness n/a (…)` |
 | harvested rows | classified, readiness basis `not-configured`, no builder kits |
 
 ### The `framework_replacement` key

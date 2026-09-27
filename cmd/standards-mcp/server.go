@@ -639,7 +639,8 @@ func (s *Server) createNeedsReportTool() (mcp.Tool, error) {
 			"framework": {
 				Type: "string",
 				Description: "Go target framework local checkout path; default: $PRAETOR_FRAMEWORK_DIR, else " +
-					"framework.targets.go.checkout, else declared contract or catalog; \"\" selects declaration",
+					"framework.targets.go.checkout, else framework.targets.go.contract, else " +
+					"framework.targets.go.module; \"\" selects declaration",
 			},
 		},
 	}

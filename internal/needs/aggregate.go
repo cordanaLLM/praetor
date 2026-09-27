@@ -580,16 +580,17 @@ func renderDemandGaps(report *FleetDemandReport) string {
 	return sb.String()
 }
 
-// renderDemandLeaderboard renders the migration readiness leaderboard.
+// renderDemandLeaderboard renders the migration readiness leaderboard. A row scored
+// against no framework shows n/a, never a percentage (MappingAvailability).
 func renderDemandLeaderboard(report *FleetDemandReport) string {
 	var sb strings.Builder
 	sb.WriteString("\n## Migration Readiness Leaderboard\n\n")
 	sb.WriteString("| Rank | Repository | Location | Readiness Score | Covered Deps | Gaps |\n")
 	sb.WriteString("| :--- | :--- | :--- | :--- | :--- | :--- |\n")
 	for i, repo := range report.Leaderboard {
-		writef(&sb, "| #%d | `%s` | `%s` | %.1f%% | %d | %d |\n",
+		writef(&sb, "| #%d | `%s` | `%s` | %s | %d | %d |\n",
 			i+1, repo.Repository, rowLocation(report.FleetRoot, repo.Path),
-			repo.Readiness.Score, repo.Readiness.CoveredDeps, repo.Readiness.GapDeps)
+			MappingAvailability(repo.Readiness), repo.Readiness.CoveredDeps, repo.Readiness.GapDeps)
 	}
 	return sb.String()
 }

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/needs"
 )
 
@@ -13,6 +14,8 @@ func TestNeedsMigrationAndEpicAgreeWithSelectedReport(t *testing.T) {
 	repo := newNeedsRepo(t)
 	writeFixtureFile(t, repo, "go.mod", "module example.org/consumer\ngo 1.27\nrequire github.com/jackc/pgx/v5 v5.7.2\n")
 	writeFixtureFile(t, repo, "main.go", "package main\nimport \"github.com/jackc/pgx/v5\"\nfunc main() { _ = pgx.Connect }\n")
+	// The fork is observed at the configured contract's package paths under its own module.
+	t.Setenv(config.WorkstationConfigEnv, acmeKitWorkstation(t))
 	framework := t.TempDir()
 	writeFixtureFile(t, framework, "go.mod", "module example.org/fork\ngo 1.27\n")
 	for _, tc := range []struct{ source, score string }{{"package pgx\n", "0.0%"}, {"package pgx\ntype Exists struct{}\n", "100.0%"}} {

@@ -96,8 +96,8 @@ func runNeedsScan(ctx context.Context, args []string) error {
 
 	fmt.Printf("=== Framework Needs Scan: %s ===\n", report.Repository)
 	fmt.Printf("Go Version: %s | Target Framework: %s\n", report.GoVersion, needs.FrameworkDisplay(report.Framework))
-	fmt.Printf("Mapping availability: %.1f%% (%d covered, %d gaps, %d total third-party)\n\n",
-		report.Readiness.Score, report.Readiness.CoveredDeps, report.Readiness.GapDeps, report.Readiness.TotalThirdPartyDeps)
+	fmt.Printf("Mapping availability: %s (%d covered, %d gaps, %d total third-party)\n\n",
+		needs.MappingAvailability(report.Readiness), report.Readiness.CoveredDeps, report.Readiness.GapDeps, report.Readiness.TotalThirdPartyDeps)
 	fmt.Printf("Coverage basis: %s; builds and tests not run\n", report.Readiness.Basis)
 	fmt.Println(needs.FormatDeprecations(report))
 
@@ -239,11 +239,13 @@ func runNeedsMigrate(ctx context.Context, args []string) error {
 }
 
 // printMigrationCandidate prints a blocked candidate and the branch an admitted
-// application would create (framework.migration_branch).
+// application would create (framework.migration_branch). A plan against no framework
+// shows its mapping availability as n/a, never 0% (needs.MappingAvailability).
 func printMigrationCandidate(plan *needs.MigrationPlan, branch string) {
+	availability := needs.MappingAvailability(needs.ReadinessMetrics{Score: plan.MappingAvailability, Basis: plan.CoverageBasis})
 	fmt.Printf("=== Migration Candidate: %s -> %s ===\n", plan.Repository, needs.FrameworkDisplay(plan.Framework))
 	fmt.Printf("Status: %s | Framework version: %s | Migration branch: %s\n", plan.Status, plan.FrameworkVersion, branch)
-	fmt.Printf("Mapping availability: %.1f%% | Coverage basis: %s; builds and tests not run\n", plan.MappingAvailability, plan.CoverageBasis)
+	fmt.Printf("Mapping availability: %s | Coverage basis: %s; builds and tests not run\n", availability, plan.CoverageBasis)
 	for _, blocker := range plan.Blockers {
 		fmt.Printf("Blocker: %s\n", blocker)
 	}
@@ -296,7 +298,8 @@ func runNeedsRequests(ctx context.Context, args []string) error {
 	}
 
 	requests := needs.SynthesizeDemands(report, selection.targets)
-	fmt.Printf("=== Framework Demand Requests: %d Synthesized ===\n\n", len(requests))
+	fmt.Printf("=== Framework Demand Requests: %d Synthesized ===\n", len(requests))
+	fmt.Printf("%s\n\n", needs.UnroutedSummary(requests))
 	for _, req := range requests {
 		kit := req.TargetBuilderKit
 		if kit == "" {
@@ -423,8 +426,9 @@ func runFleetNeedsEpic(ctx context.Context, devDir string, opts needs.FleetEpicO
 	fmt.Printf("[PASS] %s %d pre-migration epics:\n\n", verb, len(epics))
 	for i := 0; i < len(epics); i++ {
 		ep := epics[i]
-		fmt.Printf("  [%2d/%2d] %-35s (Readiness: %5.1f%%, %d tasks) -> %s\n",
-			i+1, len(epics), ep.RepoName, ep.ReadinessScore, len(ep.ChildIssues), ep.OutputPath)
+		readiness := needs.MappingAvailability(needs.ReadinessMetrics{Score: ep.ReadinessScore, Basis: ep.CoverageBasis})
+		fmt.Printf("  [%2d/%2d] %-35s (Readiness: %s, %d tasks) -> %s\n",
+			i+1, len(epics), ep.RepoName, readiness, len(ep.ChildIssues), ep.OutputPath)
 	}
 	printFleetEpicSkips(skips)
 	if opts.DryRun {
