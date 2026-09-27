@@ -7,9 +7,9 @@ export default {
     'internal/agentcontext/render.go:vendorTargets',
     'internal/config/effective.go:ResolvePolicy',
     'cmd/standardsctl/audit.go:runAudit',
-    'cmd/standardsctl/baseline.go:runBaseline',
-
-    'internal/gating/pipeline.go:runReceiptStage',
+    'cmd/standardsctl/plan.go:planEffectivePolicy',
+    'cmd/standardsctl/gate.go:runGateRun',
+    'internal/gating/pipeline.go:executeStages',
   ],
   props: {
     layout: {
@@ -52,7 +52,7 @@ export default {
               children: [
                 { id: 'dev', label: '.devcontainer & Toolchain' },
                 { id: 'audit', label: 'praetorctl audit' },
-                { id: 'base', label: 'praetorctl baseline' },
+                { id: 'plan', label: 'praetorctl plan' },
               ],
             },
           ],
@@ -62,7 +62,7 @@ export default {
           gap: 40,
           align: 'center',
           children: [
-            { id: 'verify', label: 'make verify-all' },
+            { id: 'verify', label: 'praetorctl gate run' },
             { id: 'gate', label: 'Gate stages' },
             { id: 'receipt', label: 'Ed25519 Exit-0 receipt', shape: 'store' },
           ],
@@ -80,7 +80,7 @@ export default {
       { from: 'standards', to: 'lattice' },
       { from: 'lattice', to: 'dev' },
       { from: 'lattice', to: 'audit' },
-      { from: 'lattice', to: 'base' },
+      { from: 'lattice', to: 'plan' },
       { from: 'verify', to: 'gate' },
       { from: 'gate', to: 'receipt' },
     ],
@@ -109,16 +109,16 @@ export default {
         flow: [
           { edges: 'standards->lattice', say: 'Manifest and lockfile are merged.' },
           {
-            edges: ['lattice->dev', 'lattice->audit', 'lattice->base'],
-            say: 'Policy applies to tools, audits, and baselines.',
+            edges: ['lattice->dev', 'lattice->audit', 'lattice->plan'],
+            say: 'Policy applies to the devcontainer toolchain, audit enforcement, and plan previews.',
           },
         ],
       },
       {
-        label: 'verify-all',
-        caption: 'Local verification runs the gated pipeline.',
+        label: 'gate run',
+        caption: 'praetorctl gate run executes the gated pipeline.',
         flow: [
-          { edges: 'verify->gate', say: 'Make target triggers the verification cascade.' },
+          { edges: 'verify->gate', say: 'The gate command triggers the verification cascade.' },
           { edges: 'gate->receipt', say: 'A successful run mints a signed receipt.' },
         ],
       },
