@@ -5,6 +5,7 @@
 package adopt
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -62,5 +63,33 @@ func TestHarnessComplexityRowStatesTheEnforcedLimit(t *testing.T) {
 	}
 	if row := invariantRows(harness)[3]; !strings.Contains(row, "func LOC <= 60 (audit ceiling; stricter repository policy wins)") {
 		t.Errorf("unresolved HISS-04 row: %s", row)
+	}
+}
+
+// TestRepositoryLanguages reads languages from project markers as adoption does. Positive: a
+// Go module beside a Cargo crate is Go + Rust. Negative: a Node project is the known "other"
+// set, never Go. Boundary: a repository without any marker is the unknown set, and an
+// unreadable root is an error, not a guessed set.
+func TestRepositoryLanguages(t *testing.T) {
+	both := t.TempDir()
+	mustWrite(t, filepath.Join(both, "go.mod"), "module example.com/widget\n\ngo 1.27\n")
+	mustWrite(t, filepath.Join(both, "Cargo.toml"), "[package]\nname = \"widget\"\nversion = \"0.1.0\"\n")
+	node := t.TempDir()
+	mustWrite(t, filepath.Join(node, "package.json"), "{\"name\": \"widget\", \"scripts\": {\"build\": \"tsc\", \"test\": \"vitest\"}}\n")
+	cases := map[string]struct {
+		root string
+		want hisscatalog.Language
+	}{
+		"go and rust": {both, hisscatalog.LanguageGo | hisscatalog.LanguageRust},
+		"node":        {node, hisscatalog.LanguageOther},
+		"no marker":   {t.TempDir(), 0},
+	}
+	for name, tc := range cases {
+		if got, err := RepositoryLanguages(t.Context(), tc.root); err != nil || got != tc.want {
+			t.Errorf("%s: RepositoryLanguages = %b, %v; want %b", name, got, err, tc.want)
+		}
+	}
+	if _, err := RepositoryLanguages(t.Context(), filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Error("missing root read as a language set")
 	}
 }

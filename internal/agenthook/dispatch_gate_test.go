@@ -112,3 +112,41 @@ func TestDispatchGateClients(t *testing.T) {
 		t.Errorf("dispatchGateClients = %q", got)
 	}
 }
+
+// TestNativeHooks: the handlers adoption merges and DispatchGateRegistered looks up come from
+// the registration table. Positive: Claude Code's pre-tool row becomes its PreToolUse handler
+// with the engine call. Negative: a pair without a row (Codex pre-edit) and an unknown client
+// yield none. Boundary: the timeout is stated in the hook file's unit, seconds for Claude Code
+// and milliseconds for Gemini CLI, one handler per row.
+func TestNativeHooks(t *testing.T) {
+	claudeFile, _ := NativeHookFile("claude")
+	hooks := NativeHooks("claude", claudeFile, EventPreTool)
+	if len(hooks) != 1 || hooks[0].Event != "PreToolUse" || hooks[0].Command != "praetorctl hook claude pre-tool" || hooks[0].Timeout != 15 {
+		t.Fatalf("claude pre-tool handlers = %+v", hooks)
+	}
+	codexFile, _ := NativeHookFile("codex")
+	if hooks := NativeHooks("codex", codexFile, EventPreEdit); len(hooks) != 0 {
+		t.Errorf("codex pre-edit has no row but yields %+v", hooks)
+	}
+	if hooks := NativeHooks("cl4ude", claudeFile, EventPreTool); len(hooks) != 0 {
+		t.Errorf("unknown client yields %+v", hooks)
+	}
+	geminiFile, _ := NativeHookFile("gemini")
+	for _, event := range []Event{EventPreTool, EventStop} {
+		rows := 0
+		for _, row := range Registrations("gemini") {
+			if row.Event == event {
+				rows++
+			}
+		}
+		hooks := NativeHooks("gemini", geminiFile, event)
+		if len(hooks) != rows || rows == 0 {
+			t.Fatalf("gemini %s: %d handlers for %d rows", event, len(hooks), rows)
+		}
+		for _, hook := range hooks {
+			if hook.Timeout < 1000 || hook.Timeout%1000 != 0 {
+				t.Errorf("gemini %s timeout %d is not in milliseconds", event, hook.Timeout)
+			}
+		}
+	}
+}
