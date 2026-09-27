@@ -1,0 +1,3 @@
+type: changed
+title: Capture every PowerShell script under ~/.hindsight in workstation bundles instead of one fixed script name, and replace host-specific repository, kit and path names in test fixtures and code comments with neutral examples
+breaking: false

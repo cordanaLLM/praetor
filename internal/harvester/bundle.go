@@ -771,22 +771,27 @@ func (c *bundleCollector) bundlePlugins(ctx context.Context, pluginsDir, dstDir 
 	return nil
 }
 
-// bundleAgentConfigs copies the cross-agent configuration files.
+// bundleAgentConfigs copies the cross-agent configuration files. Hindsight helper
+// scripts carry operator-chosen names, so every PowerShell script directly under
+// ~/.hindsight is captured instead of one fixed file name.
 func (c *bundleCollector) bundleAgentConfigs(ctx context.Context, opts BundleOptions, dstDir string) error {
 	homeDir := opts.HomeDir
+	hindsightDir := filepath.Join(homeDir, ".hindsight")
 	sources := []bundleFileSpec{
 		{rootedPath(opts.Roots.AGYConfig, "hooks.json"), "", "agent-config"},
 		{rootedPath(opts.Roots.AGYConfig, "mcp_config.json"), "", "agent-config"},
 		{filepath.Join(homeDir, ".claude", "CLAUDE.md"), "", "agent-rule"},
 		{filepath.Join(homeDir, ".claude", "settings.json"), "", "agent-config"},
-		{filepath.Join(homeDir, ".hindsight", "coding-agent.json"), "", "hindsight-config"},
-		{filepath.Join(homeDir, ".hindsight", "cordana-hindsight-tunnel.ps1"), "", "hindsight-script"},
-		{filepath.Join(homeDir, ".hindsight", "current-workspace.txt"), "", "hindsight-state"},
+		{filepath.Join(hindsightDir, "coding-agent.json"), "", "hindsight-config"},
+		{filepath.Join(hindsightDir, "current-workspace.txt"), "", "hindsight-state"},
 	}
 	for i := range sources {
 		sources[i].dst = filepath.Join(dstDir, filepath.Base(sources[i].src))
 	}
-	return c.captureSpecs(ctx, sources)
+	if err := c.captureSpecs(ctx, sources); err != nil {
+		return err
+	}
+	return c.copyFilesMatching(ctx, hindsightDir, dstDir, ".ps1", "hindsight-script")
 }
 
 // copyFilesMatching copies the regular files directly inside dir whose name ends in ext.
