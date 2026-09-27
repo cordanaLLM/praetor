@@ -54,21 +54,31 @@ var objectNamePattern = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
 
 // RunningBuild describes the current process. A field the runtime cannot answer stays zero.
 func RunningBuild() Build {
+	info, _ := debug.ReadBuildInfo()
+	executable, err := os.Executable()
+	if err != nil {
+		executable = ""
+	}
+	return describeBuild(info, executable)
+}
+
+// describeBuild combines the build information of a binary with the executable file it was
+// read from; a nil info or an empty executable leaves those fields zero.
+func describeBuild(info *debug.BuildInfo, executable string) Build {
 	var build Build
-	if info, ok := debug.ReadBuildInfo(); ok {
+	if info != nil {
 		build.Module = info.Main.Path
 		build.Revision, build.Modified = BuildStamp(info)
 	}
-	executable, err := os.Executable()
-	if err != nil {
+	if executable == "" {
 		return build
 	}
-	if resolved, resolveErr := filepath.EvalSymlinks(executable); resolveErr == nil {
+	if resolved, err := filepath.EvalSymlinks(executable); err == nil {
 		executable = resolved
 	}
 	build.Executable = executable
-	if info, statErr := os.Stat(executable); statErr == nil {
-		build.ModTime = info.ModTime()
+	if stat, err := os.Stat(executable); err == nil {
+		build.ModTime = stat.ModTime()
 	}
 	return build
 }
@@ -101,6 +111,11 @@ func BuildStamp(info *debug.BuildInfo) (revision string, modified bool) {
 // its stamp does not name: it matches only when its executable lies inside root and every
 // changed input is older than it, which is the binary the checkout's own build or hook just
 // produced. Every other build fails with ErrStaleEngine and a one-line reason.
+//
+// Go marks a build modified for an untracked file alone, so the builders that feed this check
+// keep such builds clean or inside the checkout: Install builds a checkout whose tracked files
+// match HEAD from a clean clone of it (prepareBuildSource), and scripts/dev_mcp.py builds
+// under the checkout's bin/.
 func CheckBuildCurrent(ctx context.Context, root string, build Build) error {
 	if ctx == nil {
 		return errors.New("workstation: build check requires a context")

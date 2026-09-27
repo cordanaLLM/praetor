@@ -18,10 +18,12 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// BuildFunc builds one binary from checkout into destination (a full file path). The real
-// implementation (goBuild) runs `go build -trimpath`; tests substitute a fake that writes
-// fixture bytes instead, so Install's lock, backup, swap and manifest logic is exercised
-// without paying for a real compiler invocation on every run.
+// BuildFunc builds one binary from checkout into destination (a full file path). checkout is
+// the tree prepareBuildSource chose: a clean clone of HEAD, or the checkout itself when a
+// tracked file is modified. The real implementation (goBuild) runs `go build -trimpath
+// -buildvcs=true`; tests substitute a fake that writes fixture bytes instead, so Install's
+// lock, backup, swap and manifest logic is exercised without paying for a real compiler
+// invocation on every run.
 type BuildFunc func(ctx context.Context, checkout, name, destination string) error
 
 // Options configures Install. Checkout and BinDir must be clean absolute paths.
@@ -107,30 +109,31 @@ func install(ctx context.Context, opts Options) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	source, err := prepareBuildSource(ctx, opts.Checkout)
+	if err != nil {
+		return Result{}, err
+	}
+	defer source.cleanup()
 	var backupDir string
 	if !allAbsent(states) {
 		if backupDir, err = backupTargets(opts.BinDir, states); err != nil {
 			return Result{}, err
 		}
 	}
-	digests, err := placeAll(ctx, opts, states, backupDir)
+	digests, err := placeAll(ctx, opts, source.dir, states, backupDir)
 	if err != nil {
 		return Result{}, err
 	}
-	commit, err := engineCommit(ctx, opts.Checkout)
-	if err != nil {
-		return Result{}, err
-	}
-	manifest, err := writeManifest(ctx, opts, commit, digests, backupDir, states)
+	manifest, err := writeManifest(ctx, opts, source.commit, digests, backupDir, states)
 	if err != nil {
 		return Result{}, err
 	}
 	return Result{Manifest: manifest, ManifestPath: opts.ManifestPath}, nil
 }
 
-// placeAll builds each binary into a scratch directory, then swaps it and its alias into
-// binDir in turn. Any failure rolls back everything this call already placed.
-func placeAll(ctx context.Context, opts Options, states map[string]targetState, backupDir string) (map[string]string, error) {
+// placeAll builds each binary from source into a scratch directory, then swaps it and its
+// alias into binDir in turn. Any failure rolls back everything this call already placed.
+func placeAll(ctx context.Context, opts Options, source string, states map[string]targetState, backupDir string) (map[string]string, error) {
 	buildDir, err := os.MkdirTemp("", "praetor-workstation-build-")
 	if err != nil {
 		return nil, fmt.Errorf("workstation: create build directory: %w", err)
@@ -140,7 +143,7 @@ func placeAll(ctx context.Context, opts Options, states map[string]targetState, 
 	digests := make(map[string]string, len(binaryNames))
 	var done []string
 	for _, name := range binaryNames {
-		digest, placeErr := placeOne(ctx, opts, name, buildDir, states)
+		digest, placeErr := placeOne(ctx, opts, source, name, buildDir, states)
 		if placeErr != nil {
 			return nil, rollbackAndWrap(opts, backupDir, states, done, placeErr)
 		}
@@ -150,10 +153,10 @@ func placeAll(ctx context.Context, opts Options, states map[string]targetState, 
 	return digests, nil
 }
 
-// placeOne builds, hashes and swaps in one binary plus its alias symlink.
-func placeOne(ctx context.Context, opts Options, name, buildDir string, states map[string]targetState) (string, error) {
+// placeOne builds one binary from source, hashes it and swaps it in plus its alias symlink.
+func placeOne(ctx context.Context, opts Options, source, name, buildDir string, states map[string]targetState) (string, error) {
 	built := filepath.Join(buildDir, name)
-	if err := opts.Build(ctx, opts.Checkout, name, built); err != nil {
+	if err := opts.Build(ctx, source, name, built); err != nil {
 		return "", fmt.Errorf("workstation: build %s: %w", name, err)
 	}
 	digest, builtMode, err := hashFile(built)
@@ -276,15 +279,17 @@ func previousInstall(ctx context.Context, opts Options, backupDir string, states
 	return &config.InstalledPrevious{EngineCommit: prior.EngineCommit, Backup: backupDir}
 }
 
-// goBuild is the real BuildFunc: `go build -trimpath`, which still embeds Go's VCS stamp
-// (so `praetorctl version` reports the built commit) because -trimpath strips source paths
-// from the binary, not the module's recorded VCS metadata.
+// goBuild is the real BuildFunc: `go build -trimpath -buildvcs=true`. -trimpath strips source
+// paths from the binary, not the module's recorded VCS metadata, so `praetorctl version`
+// still reports the built commit. -buildvcs=true overrides a GOFLAGS=-buildvcs=false in the
+// environment: CheckBuildCurrent does not judge an unstamped build, so an install without a
+// stamp would escape the engine-build check.
 func goBuild(ctx context.Context, checkout, name, destination string) error {
 	pkg, ok := buildPackages[name]
 	if !ok {
 		return fmt.Errorf("workstation: no build package recorded for %s", name)
 	}
-	out, err := util.RunCommand(ctx, checkout, "go", "build", "-trimpath", "-o", destination, pkg)
+	out, err := util.RunCommand(ctx, checkout, "go", "build", "-trimpath", "-buildvcs=true", "-o", destination, pkg)
 	if err != nil {
 		return fmt.Errorf("workstation: go build %s: %w: %s", pkg, err, out)
 	}

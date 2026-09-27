@@ -39,7 +39,9 @@ standalone executables already on `PATH`. `scripts/dev_install.py` runs the MCP
 behavior probe against a fresh build, then delegates the atomic install itself to
 `praetorctl workstation install` (HISS-19: one installer, not two): it builds all
 three Praetor binaries from current source and installs them into `~/.local/bin`
-with the three legacy aliases. `python3 scripts/dev_install.py --help` lists
+with the three legacy aliases. With no tracked file modified, current source is a
+clean clone of HEAD, so untracked files stay out of the build; see
+[install step 4](workstation-update.md#workstation-install). `python3 scripts/dev_install.py --help` lists
 destination overrides for isolated installations.
 
 `workstation install` rejects an unexpected symlink or special file at an

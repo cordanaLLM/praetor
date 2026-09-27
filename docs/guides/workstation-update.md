@@ -53,9 +53,17 @@ Steps, in order (`internal/workstation/install.go`):
    file (a directory, device or pipe) at a target, is refused untouched.
 3. **Back up.** Anything already at a target is copied into a fresh backup directory
    under `--bin-dir`, skipped entirely on a genuine first install (nothing to back up).
-4. **Build and place.** Each binary is built with `go build -trimpath` (so `praetorctl
-   version` still reports the exact built commit — `-trimpath` strips source paths, not
-   Go's VCS stamp) into a scratch directory, then staged beside its destination and
+4. **Build and place.** Each binary is built with `go build -trimpath -buildvcs=true` into
+   a scratch directory. `praetorctl version` still reports the exact built commit:
+   `-trimpath` strips source paths, not Go's VCS stamp, and `-buildvcs=true` overrides a
+   `GOFLAGS=-buildvcs=false` that would leave the install unstamped and outside the
+   [engine build check](#engine-build-check). When no tracked file differs from HEAD, the
+   build reads a fresh clone of the HEAD commit (`prepareBuildSource`,
+   `internal/workstation/source.go`), so untracked files such as the gate receipt neither
+   enter the binaries nor mark them `-dirty`; Go stamps `vcs.modified` from
+   `git status --porcelain`, which lists untracked files. A checkout with a modified or
+   staged tracked file is built as it stands and stamped `-dirty`, so a work-in-progress
+   install carries its edits. Each binary is then staged beside its destination and
    swapped into place with one rename, so the replacement is atomic. Windows cannot
    rename a new file onto one that is memory-mapped for execution — the running
    `praetorctl` itself — so there the previous file is renamed aside first, freeing the
@@ -109,7 +117,9 @@ nothing and prints the first reason that failed:
    settings, `main` by default ([effective policy](effective-policy.md)).
 4. The installed `engine_commit` is a strict ancestor of the checkout HEAD, so a refresh
    never downgrades or moves sideways.
-5. No tracked file is modified. Untracked files do not block a refresh.
+5. No tracked file is modified. Untracked files do not block a refresh, and they stay out
+   of the build: the refresh builds a clean clone of HEAD (install step 4), so the refreshed
+   install passes the [engine build check](#engine-build-check).
 
 A refresh installs into the manifest's `bin_dir` unless `--bin-dir` names another, and
 records the same settings documents again unless `--fleet-config` or `--workstation-config`
@@ -139,6 +149,13 @@ matches when:
 - it was built from a modified tree (`-dirty`), its executable lies inside the checkout (for
   example `bin/praetorctl`), and every changed input is older than the executable.
 
+Go marks a build `-dirty` for an untracked file alone, so both builders that feed this check
+avoid a `-dirty` build outside the checkout when nothing tracked changed:
+`workstation install` builds a clean clone of HEAD (install step 4), and
+`scripts/dev_mcp.py` builds under the checkout's git-ignored `bin/` (`build_directory`).
+A work-in-progress install, built from modified tracked files into the bin directory, is
+refused.
+
 Anything else fails with one line naming the build, the reason, and the command that writes
 with the checkout's own compiler:
 
@@ -147,8 +164,11 @@ compile-context wrote nothing: engine build does not match this checkout: build 
 ```
 
 `compile-context --verify` and `verify_only` never write and are never refused. Tests:
-`internal/workstation/freshness_test.go`, `cmd/standardsctl/compile_context_engine_test.go`,
-`cmd/standards-mcp/compile_context_engine_test.go`.
+`internal/workstation/freshness_test.go`, `internal/workstation/source_test.go` (a real
+refresh from a checkout holding an untracked receipt passes the check),
+`cmd/standardsctl/compile_context_engine_test.go`,
+`cmd/standards-mcp/compile_context_engine_test.go`, `BuildDirectoryTests` in
+`scripts/test_dev_mcp.py`.
 
 ## The install manifest
 
