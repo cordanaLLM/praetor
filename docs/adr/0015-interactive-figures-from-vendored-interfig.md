@@ -4,8 +4,8 @@
 
 Proposed — 2026-09-27.
 
-Number note: ADR-0013 is the container image and Helm chart record, and ADR-0014 is claimed by
-the unmerged `fix/neutral-framework-core`, so this record takes 0015.
+Number note: ADR-0013 is the container image and Helm chart record and ADR-0014 the
+operator-neutral defaults record, so this record takes 0015.
 
 ## Context
 
