@@ -2,14 +2,8 @@
 
 Learn how to define new composable profiles and cross-cutting security/operational facets in `cordanaLLM/praetor`.
 
-```mermaid
-flowchart TD
-    NEW["New Technology Stack\n(e.g., zig-systems, ml-training)"] --> PROFILE[".config/archetypes/{id}.yaml"]
-    CROSS["Cross-Cutting Invariant\n(e.g., zero-trust-network)"] --> FACET[".config/archetypes/facets/*.yaml\n(identity = id field)"]
-    
-    PROFILE & FACET --> LATTICE["Lattice Engine (internal/config)"]
-    LATTICE --> RESOLVE["Evaluates Supremum (Join)\nHighest Standard Wins"]
-    RESOLVE --> CI["Tailored CI & Invariants"]
+```figure
+lattice-join
 ```
 
 ---
