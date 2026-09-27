@@ -47,7 +47,7 @@ SURFACE_MAP: list[tuple[str, str, str]] = [
     (r"^internal/hiss/rules\.go$", r"^docs/standards/", "HISS rule matchers"),
     (r"^internal/hiss/go_callgraph\.go$", r"^docs/standards/", "Go call-graph matcher"),
     (r"^internal/hisscoverage/", r"^docs/(guides|standards)/", "HISS-20 coverage engine"),
-    (r"^\.config/lefthook/scripts/[^/]+\.py$", r"^docs/guides/git-hooks\.md$", "git hook scripts"),
+    (r"^\.config/lefthook/scripts/(?!test_)[^/]+\.py$", r"^docs/guides/git-hooks\.md$", "git hook scripts"),
     (r"^lefthook\.yml$", r"^docs/guides/git-hooks\.md$", "hook configuration"),
     (r"^cmd/standards-mcp/", r"^docs/guides/development-mcp\.md$", "development MCP server"),
     (r"^internal/gating/pipeline\.go$", r"^docs/guides/adoption-verification\.md$",

@@ -116,6 +116,38 @@ class DocsDrift(unittest.TestCase):
             "internal/config/register_emission_test.go",
         ]), [])
 
+    def test_positive_git_hook_script_requires_guide(self):
+        """A change to hooks.py requires the git-hooks guide."""
+        found = docs_drift.violations([".config/lefthook/scripts/hooks.py"])
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("git hook scripts", found[0])
+        self.assertEqual(docs_drift.violations([
+            ".config/lefthook/scripts/hooks.py",
+            "docs/guides/git-hooks.md",
+        ]), [])
+
+    def test_negative_git_hook_test_does_not_require_guide(self):
+        """A change to test_hooks.py alone needs no documentation."""
+        self.assertEqual(docs_drift.violations([
+            ".config/lefthook/scripts/test_hooks.py",
+            ".config/lefthook/scripts/test_checkpoint.py",
+            ".config/lefthook/scripts/test_security_scope.py",
+        ]), [])
+
+    def test_boundary_git_hook_helper_requires_guide(self):
+        """A helper module that is not test_* still requires the git-hooks guide."""
+        for surface in (
+            ".config/lefthook/scripts/common.py",
+            ".config/lefthook/scripts/checkpoint_scope.py",
+        ):
+            found = docs_drift.violations([surface])
+            self.assertEqual(len(found), 1, surface)
+            self.assertIn("git hook scripts", found[0])
+            self.assertEqual(docs_drift.violations([
+                surface,
+                "docs/guides/git-hooks.md",
+            ]), [])
+
     def test_readme_renderer_and_audit_share_one_documented_contract(self):
         """Every producer or verifier of the managed README block maps to its guide."""
         surfaces = [

@@ -30,7 +30,7 @@ Only what an adopter reads about before using it. The map in `SURFACE_MAP` is de
 | `internal/config/register*.go` (tests excluded) | `docs/guides/text-register.md` |
 | `internal/hiss/rules.go`, `internal/hiss/go_callgraph.go` | `docs/standards/` |
 | `internal/hisscoverage/` | `docs/guides/` or `docs/standards/` |
-| `.config/lefthook/scripts/*.py`, `lefthook.yml` | `docs/guides/git-hooks.md` |
+| `.config/lefthook/scripts/*.py` (tests excluded), `lefthook.yml` | `docs/guides/git-hooks.md` |
 | `cmd/standards-mcp/` | `docs/guides/development-mcp.md` |
 | `internal/gating/pipeline.go` | `docs/guides/adoption-verification.md` |
 | `internal/readmegovernance/`, the adoption README renderer, and its audit gate | `docs/guides/adoption-verification.md` |
