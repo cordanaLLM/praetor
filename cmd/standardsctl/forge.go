@@ -48,7 +48,7 @@ func runForge(args []string) error {
 	case "-h", "--help", "help":
 		printForgeUsage()
 		return nil
-	case "sync-wiki":
+	case "sync-wiki", "wiki":
 		return runForgeSyncWiki(ctx, subArgs)
 	case "validate-pr":
 		return runForgeValidatePR(subArgs)

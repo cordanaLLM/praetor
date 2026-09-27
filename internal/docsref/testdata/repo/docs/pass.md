@@ -59,7 +59,7 @@ $ praetorctl state task list
 - `docs/private/notes.md`, ignored by the fixture's `.gitignore`
 - `docs/adr/0000-template.md`, named by the engine's source
 - `https://example.com/internal/missing.go` is a URL
-- `lusoris/praetor` names another repository
+- `acme/praetor` names another repository
 
 <!-- praetor:docs-references:off an illustrative path no repository carries -->
 

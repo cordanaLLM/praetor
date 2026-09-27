@@ -28,7 +28,7 @@ func providerFixtureConfig(t *testing.T, script string) ProviderConfig {
 	}
 	sum := sha256.Sum256(data)
 	return ProviderConfig{BaseURL: "https://provider.example/v1", TokenCommand: path,
-		TokenCommandSHA256: hex.EncodeToString(sum[:]), Model: "cordana/fixture", MaxInputBytes: providerPromptLimit, MaxOutputTokens: 256}
+		TokenCommandSHA256: hex.EncodeToString(sum[:]), Model: "example/fixture", MaxInputBytes: providerPromptLimit, MaxOutputTokens: 256}
 }
 
 func providerFixtureResponse(t *testing.T) map[string]any {

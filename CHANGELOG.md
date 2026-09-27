@@ -79,13 +79,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Polyglot needs extraction (Go, Svelte/Node, Python, Rust, Native GPU) and demand deduplicator
 - Universal builder and pre-build optimizer with framework asset compilation
 
-- Framework demand & needs reporting platform (`standardsctl needs`) with Golusoris catalog and automated AST migration engine
-- Adoption and governance lattice bootstrapping for `cordanaLLM/imago` and `cordanaLLM/nucleus`
+- Framework demand reporting with a declared capability catalog
+- Adoption bootstrapping for two downstream repositories
 - Comprehensive 3D dispatch and command integration tests in `cmd/standardsctl/standardsctl_test.go`
 - Continuous fuzzing battery spanning 8 subsystems (`hiss`, `compiler`, `baseline`, `seo`, `astmerge`, `changelog`, `lsp`) passing > 21M executions
 - Concurrency stress and generative property validation suite in `internal/stress/stress_test.go`
 - Dedicated `fuzz` and `stress` targets in `Makefile`
-- Dogfooded framework demand declarations (`.needs.yaml`) in `praetor` targeting upstream Golusoris capabilities
+- Dogfooded capability declarations
 - Expanded canonical catalog in `internal/needs/catalog.go` for YAML serialization and community MCP servers
 
 ### Changed

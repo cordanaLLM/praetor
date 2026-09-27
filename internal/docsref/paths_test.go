@@ -31,7 +31,7 @@ func TestPathReferenceOf_Positive_RepositoryShapes(t *testing.T) {
 func TestPathReferenceOf_Negative_NotRepositoryPaths(t *testing.T) {
 	for _, token := range []string{
 		"https://example.com/internal/x.go", "/etc/internal/x", "~/internal/x", "$HOME/internal",
-		"README.md", "lusoris/praetor", "docker/login-action@v4", "../internal/x.go", "internal",
+		"README.md", "acme/praetor", "docker/login-action@v4", "../internal/x.go", "internal",
 	} {
 		if got, ok := pathReferenceOf(token, testTops); ok {
 			t.Errorf("pathReferenceOf(%q) = %+v, want no path", token, got)
