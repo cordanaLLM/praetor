@@ -92,7 +92,12 @@ func addGoCatalogClaims(index *FrameworkIndex) {
 	}
 	for _, entry := range CanonicalCatalog {
 		if entry.Relationship != nil && entry.Relationship.Kind == RelationshipFoundation {
-			index.Foundations = appendUniqueStr(index.Foundations, entry.Package)
+			// The catalog's foundations describe its own module only; reconciliation drops
+			// them for any other module (library_relationships.go, targets.go scopeRelationship),
+			// so an export for another module must not claim them either.
+			if catalogDescribes(index.CatalogModule) {
+				index.Foundations = appendUniqueStr(index.Foundations, entry.Package)
+			}
 			continue
 		}
 		claims := catalogClaims(index, entry.Status, entry.Relationship)

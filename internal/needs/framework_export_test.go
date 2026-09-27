@@ -174,6 +174,16 @@ func TestContractExport_NegativeAndBoundary(t *testing.T) {
 	if err != nil || export.Framework != "example.com/acme/ui" || export.Packages != 0 {
 		t.Fatalf("undescribed module export = %+v, %v", export, err)
 	}
+	// Boundary: a go module the catalog does not describe exports no catalog foundation;
+	// reconciliation would drop those claims for it, so the contract must not carry them.
+	goExport, err := ExportFrameworkContract(t.Context(), "go", FrameworkSource{Module: "example.com/acme/kit"}, nil)
+	if err != nil {
+		t.Fatalf("undescribed go module export: %v", err)
+	}
+	goParsed, err := parseFrameworkContract(goExport.Data, "example.com/acme/kit")
+	if err != nil || len(goParsed.Foundations) != 0 {
+		t.Fatalf("undescribed go module export claims foundations: %v %+v", err, goParsed.Foundations)
+	}
 	// Boundary: a configured contract exports its own claims unchanged.
 	contract := writeAcmeContract(t)
 	own, err := ExportFrameworkContract(t.Context(), "go", FrameworkSource{Contract: contract, Module: "example.com/acme/kit"}, nil)
