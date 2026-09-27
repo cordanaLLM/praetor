@@ -96,19 +96,21 @@ func TestBumpUnifyApplyLeavesComparatorRangesUnranked(t *testing.T) {
 	}
 }
 
-// A bare, caret or tilde version is still ranked and raised; an "=" comparator on the same
-// version is not, so the boundary between the two sits exactly at the operator.
+// A bare, caret or tilde version is still ranked and raised to its pin's version under its
+// own operator, so a bare version stays bare and a tilde range stays tilde under a caret
+// pin; an "=" comparator on the same version is not ranked, so the boundary between the two
+// sits exactly at the operator.
 func TestBumpUnifyApplyRanksBareCaretAndTildeVersions(t *testing.T) {
-	pin := func(pkg string) string { return bump.FleetCatalog[pkg].Version }
+	pin := func(pkg string) string { return strings.TrimLeft(bump.FleetCatalog[pkg].Version, "^~") }
 	manifest := `{"dependencies":{"typescript":"5.0.0","svelte":"^5.0.0","vite":"~7.0.0","eslint":"=9.0.0"}}`
 	text, after, err := runUnifyFixture(t, manifest, "--apply")
 	if err != nil {
 		t.Fatalf("unify --apply: %v\n%s", err, text)
 	}
-	want := `{"dependencies":{"typescript":"` + pin("typescript") + `","svelte":"` + pin("svelte") +
-		`","vite":"` + pin("vite") + `","eslint":"=9.0.0"}}`
+	want := `{"dependencies":{"typescript":"` + pin("typescript") + `","svelte":"^` + pin("svelte") +
+		`","vite":"~` + pin("vite") + `","eslint":"=9.0.0"}}`
 	if after != want {
-		t.Fatalf("unify --apply wrote\n%s\nwant bare, caret and tilde raised and = unchanged:\n%s", after, want)
+		t.Fatalf("unify --apply wrote\n%s\nwant bare, caret and tilde raised under their own operator and = unchanged:\n%s", after, want)
 	}
 	if !strings.Contains(text, "Successfully unified 3 dependencies") ||
 		!strings.Contains(text, "[NOT SEMVER-COMPARABLE, left unchanged] (1):\n  - eslint: =9.0.0 (catalog") {
