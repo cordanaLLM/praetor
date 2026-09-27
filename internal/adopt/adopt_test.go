@@ -78,6 +78,19 @@ func writeStub(t *testing.T, dir, name, body string) {
 	}
 }
 
+// stubMkdir resolves mkdir for a shell stub before hermeticPath narrows PATH. hermeticPath
+// keeps only git's directory, and that directory need not hold mkdir: inside a git hook
+// (the pre-push gate) git puts its exec-path first, so git resolves to /usr/lib/git-core,
+// and on macOS git lives in /usr/bin while mkdir lives in /bin.
+func stubMkdir(t *testing.T) string {
+	t.Helper()
+	path, err := exec.LookPath("mkdir")
+	if err != nil {
+		t.Skipf("mkdir required for the lefthook stub: %v", err)
+	}
+	return path
+}
+
 // newTestRepo creates a hermetic leaf checkout named name under a fresh temp dir, whose
 // origin remote names acme/<name> as a clone's does. Adoption reads identity from that
 // remote alone, so a fixture without one exercises the unresolved-identity path instead of
@@ -1497,7 +1510,7 @@ func TestAdopt_Hooks_ForeignLefthookConfigIsNotActivated(t *testing.T) {
 func TestAdopt_Hooks_LefthookInstallHonoursHooksPath(t *testing.T) {
 	stubDir := t.TempDir()
 	// The stub installs the hook where git says hooks live, like real lefthook does.
-	writeStub(t, stubDir, "lefthook", "d=$(git rev-parse --git-path hooks) && mkdir -p \"$d\" && printf '#!/bin/sh\\n# lefthook stub\\n' > \"$d/pre-commit\"\n")
+	writeStub(t, stubDir, "lefthook", "d=$(git rev-parse --git-path hooks) && '"+stubMkdir(t)+"' -p \"$d\" && printf '#!/bin/sh\\n# lefthook stub\\n' > \"$d/pre-commit\"\n")
 	hermeticPath(t, stubDir)
 	repoPath := filepath.Join(t.TempDir(), "hookspath")
 	if err := os.MkdirAll(repoPath, 0o755); err != nil {
