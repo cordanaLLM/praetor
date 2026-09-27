@@ -76,8 +76,17 @@ reader. Each validator checks what its format makes checkable and no more:
 while any `AltPaths` file exists, even one the audit rejects (a comment-only `tsconfig.base.json`, or a
 link to a config outside the repository): that file is the one the toolchain reads, and a scaffolded
 rival beside it would contradict it. The audit keeps reporting the template missing until the
-alternative's content passes. `--force` is the exception: it writes the canonical file beside the
-alternative, so use it only when you mean to replace the alternative, and then delete the old file.
+alternative's content passes. `flavor apply` lists the file it kept under `Kept Existing Config`, and
+adoption records it against that file (`covered_templates` in the apply report). `--force` is the
+exception: it writes the canonical file beside the alternative, so use it only when you mean to
+replace the alternative, and then delete the old file.
+
+A template whose tool searches several names in a fixed order and reads only the first one it finds
+declares `Search` (the tool and its names, in its order) instead of `AltPaths`. Every name satisfies
+the template, but the audit validates only the first one present, because the tool never reads a
+later one, and lists the later ones under `Shadowed Templates (advisory)` with the file the tool
+reads. `Path` must be one of the names; `TestEverySearchedTemplateScaffoldsASearchedName`
+(`internal/flavor/template_alternatives_test.go`) fails otherwise.
 
 **Scaffolded workflows and images must run as written.** A workflow step may call only what the job
 installs: the Go CI job runs `go vet ./...` and `go test -race ./...`, not `make verify-all`, whose
@@ -124,9 +133,18 @@ does not pass its own validator or the old comment placeholder does.
 ### The `os-image` flavor: a forge is what it builds
 
 `os-image` is the first profile whose flavor is not a language stack. It requires `packer`,
-`shellcheck` and `yamllint`, plus a `.yamllint.yml` policy for the image and workflow definitions,
+`shellcheck` and `yamllint`, plus a yamllint policy for the image and workflow definitions,
 because an image forge is audited on the pipeline that produces a bootable artifact rather than on a
 compiler toolchain.
+
+**Any yamllint configuration name counts.** yamllint reads the first of `.yamllint`,
+`.yamllint.yaml` and `.yamllint.yml` it finds (`find_project_config_filepath` in yamllint's `cli.py`,
+checked on 1.38.0), so the template searches that list (`yamllintConfigNames` in
+`internal/flavor/definitions.go`). The audit accepts each name and judges the one yamllint reads: an
+empty `.yamllint` beside a valid `.yamllint.yml` fails, because yamllint never reads the valid file.
+With two present, the audit passes and names the file in use under `Shadowed Templates (advisory)`.
+`flavor apply` and adoption scaffold `.yamllint.yml` only for a repository with none of the three
+(`internal/flavor/yamllint_config_test.go`, `internal/adopt/flavor_report_test.go`).
 
 **What marks a forge.** Three markers, in `internal/flavor/definitions.go` and in the unified
 classification table in `internal/classify/classify.go`:
