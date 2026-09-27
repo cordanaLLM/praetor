@@ -716,8 +716,8 @@ func TestResolveArchetype_Markers(t *testing.T) {
 	}
 	// Precedence: meson beats go.mod; an explicit profile beats every marker.
 	tmpDir := t.TempDir()
-	mustWrite(t, filepath.Join(tmpDir, "meson.build"), "project('vmafx')")
-	mustWrite(t, filepath.Join(tmpDir, "go.mod"), "module vmafx")
+	mustWrite(t, filepath.Join(tmpDir, "meson.build"), "project('acme-gpu')")
+	mustWrite(t, filepath.Join(tmpDir, "go.mod"), "module example.com/acme/gpu")
 	if arch := archetypeOf(tmpDir, "", nil); arch != "native-gpu-systems" {
 		t.Fatalf("expected native-gpu-systems for meson project, got: %s", arch)
 	}
@@ -739,7 +739,7 @@ func archetypeOf(repoPath, explicit string, declared []string) string {
 // through instead of deciding.
 func TestResolveArchetype_DeclaredProfileOutranksMarkers(t *testing.T) {
 	repo := t.TempDir()
-	mustWrite(t, filepath.Join(repo, "go.mod"), "module imago")
+	mustWrite(t, filepath.Join(repo, "go.mod"), "module example.com/acme/infra")
 	// Positive: go.mod says framework, the repository says gitops-infra.
 	decision := resolveArchetype(repo, "", []string{"gitops-infra", "framework"})
 	if decision.Archetype != "gitops-infra" || decision.Source != classify.SourceDeclared {

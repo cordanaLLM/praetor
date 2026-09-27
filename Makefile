@@ -276,7 +276,7 @@ wiki-sync-test:
 
 .PHONY: adopt-sweep-test
 adopt-sweep-test:
-	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_adopt_priority_repos.py'
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_adopt_repos.py'
 
 # The compliance workflow's DCO 1.1 gate. Its cases build throwaway repositories under a
 # temporary directory and contact no remote.

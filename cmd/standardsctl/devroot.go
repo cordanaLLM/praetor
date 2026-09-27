@@ -8,7 +8,7 @@ import (
 )
 
 // Workstation dev-root environment names. PRAETOR_DEV_ROOT is the canonical name used by
-// AGENTS.md and scripts/adopt_priority_repos.sh; PRAETOR_DEV_DIR is the earlier name, kept
+// AGENTS.md and scripts/adopt_repos.sh; PRAETOR_DEV_DIR is the earlier name, kept
 // as a fallback so an operator environment that still sets it keeps selecting the same tree.
 // frameworkDirEnv names the go framework checkout (needs.SelectFrameworkSource).
 const (
