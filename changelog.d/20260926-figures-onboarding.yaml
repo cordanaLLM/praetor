@@ -1,0 +1,3 @@
+type: changed
+title: Convert the repository onboarding guide diagram to an interactive figure with command steps and committed SVGs (ADR-0015)
+breaking: false

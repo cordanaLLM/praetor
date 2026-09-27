@@ -2,13 +2,8 @@
 
 Onboard any existing or new repository into the cordanaLLM declarative governance fleet.
 
-```mermaid
-flowchart LR
-    REPO["Existing / Greenfield Repository"] --> STEP1["1. Install standardsctl\ngo install ..."]
-    STEP1 --> STEP2["2. Scaffold Manifest\nstandardsctl init"]
-    STEP2 --> STEP3["3. Record Debt Baseline\nstandardsctl baseline --record"]
-    STEP3 --> STEP4["4. Compile Agent Context\nstandardsctl compile-context"]
-    STEP4 --> VERIFY["5. Verification Gate\nmake verify-all"]
+```figure
+onboarding-path
 ```
 
 ## 1. Quickstart Onboarding Command

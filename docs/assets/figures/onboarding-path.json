@@ -1,0 +1,66 @@
+{
+  "slug": "onboarding-path",
+  "title": "Repository onboarding path",
+  "alt": "Five onboarding commands run in sequence to scaffold configuration, transpile context, record debt, and verify governance.",
+  "text": [
+    "Onboarding commands, in order: 1. Scaffolding (praetorctl init), 2. Context Transpilation (praetorctl compile-context), 3. Brownfield Baselining (praetorctl baseline --record), 4. Devcontainer Setup (praetorctl devcontainer generate), 5. Audit Verification (praetorctl audit).",
+    "Boxes: Target repository (greenfield or brownfield), Governed repository (praetorctl audit pass).",
+    "Target repository → 1. Scaffolding (start) → 2. Context Transpilation → 3. Brownfield Baselining → 4. Devcontainer Setup → 5. Audit Verification → Governed repository (verified).",
+    "Scenario 1, init: Initialize configuration with declared profile and facets. Target repository is initialized with declared profile and facets. Scaffolding creates .standards.yaml, .standards.lock, and initial baseline.",
+    "Scenario 2, compile-context: Transpile universal agent harness from AGENTS.md. Canonical agent instructions in AGENTS.md are compiled. Transpilation generates vendor instruction files and splices the text register.",
+    "Scenario 3, baseline: Snapshot legacy technical debt into baseline file. HISS scanner sweeps the codebase for existing infractions. Legacy infractions are snapshotted into .standards-baseline.json to prevent CI failure.",
+    "Scenario 4, devcontainer: Prepare a portable devcontainer from reviewed Praetor sources. DevContainer configuration and reviewed source bundle companions are generated. Configuration, Dockerfile, and exact source companions are prepared in .devcontainer/.",
+    "Scenario 5, audit: Verify configured governance contracts and debt ratchet. Audit checks manifest, lockfile, agent context, debt baseline, and DevContainer. Every executed gate passes with zero files modified; repository is verified and governed.",
+    "Onboarding executes five commands in sequence to establish declarative standards, vendor agent files, baseline legacy debt, generate devcontainers, and verify compliance."
+  ],
+  "evidence": [
+    "cmd/standardsctl/init.go:runInit",
+    "cmd/standardsctl/init.go:createInitialManifest",
+    "cmd/standardsctl/init.go:initBaselineAndLockfile",
+    "cmd/standardsctl/compile_context.go:runCompileContext",
+    "internal/compiler/projection.go:CompileContextProjections",
+    "cmd/standardsctl/baseline.go:runBaseline",
+    "cmd/standardsctl/baseline.go:recordBaseline",
+    "cmd/standardsctl/devcontainer.go:runDevContainer",
+    "cmd/standardsctl/devcontainer.go:generateDevContainerBundle",
+    "cmd/standardsctl/audit.go:runAudit",
+    "cmd/standardsctl/adopt.go:runAdopt"
+  ],
+  "spec_sha256": "94375b446bbdbf0f1d5f050bc3a8ec593b4ed5c6ce169a8c4972d513fcd183dd",
+  "engine": {
+    "commit": "ccfe85b4851957ac2adf88b4a9ddf9668b2882f1",
+    "sha256": "047b4bcb30562cca709be7175d11995cdda45cf4b89db1f6906c5805b26c6452"
+  },
+  "svg_sha256": "57ee6ae54fd9108ba7ea0df7981b1b1cef863044b3875afae66f2d8be39b1b1f",
+  "static_sha256": "617dec7c2a116a1c1f0194e764db5e4ca4c25068ca2ec63ad9659599a2d1c480",
+  "width": 864,
+  "height": 1069,
+  "edges": [
+    {
+      "from": "Target repository",
+      "to": "1. Scaffolding",
+      "label": "start"
+    },
+    {
+      "from": "1. Scaffolding",
+      "to": "2. Context Transpilation"
+    },
+    {
+      "from": "2. Context Transpilation",
+      "to": "3. Brownfield Baselining"
+    },
+    {
+      "from": "3. Brownfield Baselining",
+      "to": "4. Devcontainer Setup"
+    },
+    {
+      "from": "4. Devcontainer Setup",
+      "to": "5. Audit Verification"
+    },
+    {
+      "from": "5. Audit Verification",
+      "to": "Governed repository",
+      "label": "verified"
+    }
+  ]
+}
