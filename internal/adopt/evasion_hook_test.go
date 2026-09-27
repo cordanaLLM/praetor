@@ -44,7 +44,20 @@ func emittedInterceptor(t *testing.T) (string, string) {
 // environment plus extra, and returns its exit code.
 func runInterceptor(t *testing.T, python, script string, stdin []byte, extra []string, args ...string) int {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	code, _ := runInterceptorTimed(t, python, script, stdin, extra, args...)
+	return code
+}
+
+// interceptorWallClock is the ceiling on one interceptor run, a hook timeout's worth of
+// wall-clock time. The scan-bound test checks CPU time against a tighter budget instead.
+const interceptorWallClock = 30 * time.Second
+
+// runInterceptorTimed runs the emitted interceptor and returns its exit code and the CPU
+// time (user plus system) the interpreter spent. CPU time is what the scan bounds control;
+// wall-clock time on a shared CI runner also counts the time the process waited for a core.
+func runInterceptorTimed(t *testing.T, python, script string, stdin []byte, extra []string, args ...string) (int, time.Duration) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), interceptorWallClock)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, python, append([]string{"-B", script}, args...)...) //nolint:gosec // fixed interpreter and test script
 	cmd.Stdin = bytes.NewReader(stdin)
@@ -52,17 +65,21 @@ func runInterceptor(t *testing.T, python, script string, stdin []byte, extra []s
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	err := cmd.Run()
+	var cpu time.Duration
+	if cmd.ProcessState != nil {
+		cpu = cmd.ProcessState.UserTime() + cmd.ProcessState.SystemTime()
+	}
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
 		if strings.Contains(stderr.String(), "Traceback") {
 			t.Errorf("interceptor crashed instead of refusing: %s", stderr.String())
 		}
-		return exitErr.ExitCode()
+		return exitErr.ExitCode(), cpu
 	}
 	if err != nil {
 		t.Fatalf("run interceptor: %v", err)
 	}
-	return 0
+	return 0, cpu
 }
 
 // TestEmittedInterceptorReplaysTheEngineCorpus pins BUG-807 and BUG-808: the emitted script
@@ -176,7 +193,8 @@ func operatorContainers(t *testing.T) []string {
 // backtracks: one 16 KiB find..hooks line held the find rule for 16 s, past a harness's hook
 // timeout, and a harness that lets a timed-out hook through turns the stall into an evasion.
 // A command over agenthook's bounds is refused at once; the costliest command inside them
-// still gets its verdict in time.
+// still gets its verdict in time. The budget is CPU time, so a loaded CI runner does not fail
+// it; the wall-clock ceiling is runInterceptorTimed's context.
 func TestEmittedInterceptorScanBounds(t *testing.T) {
 	python, script := emittedInterceptor(t)
 	lines := agenthook.MaxScanChars / agenthook.MaxScanLineChars
@@ -197,12 +215,12 @@ func TestEmittedInterceptorScanBounds(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		start := time.Now()
-		if got := runInterceptor(t, python, script, payload, nil); got != tc.want {
+		got, cpu := runInterceptorTimed(t, python, script, payload, nil)
+		if got != tc.want {
 			t.Errorf("%s: exit %d, want %d", name, got, tc.want)
 		}
-		if elapsed := time.Since(start); elapsed > 5*time.Second {
-			t.Errorf("%s: interceptor took %v, over the 5 s bound", name, elapsed)
+		if cpu > 5*time.Second {
+			t.Errorf("%s: interceptor used %v of CPU time, over the 5 s bound", name, cpu)
 		}
 	}
 }
