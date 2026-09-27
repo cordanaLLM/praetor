@@ -57,3 +57,53 @@ func TestDecodeYAMLDocument_Boundary_EmptyLeavesTargetUnchanged(t *testing.T) {
 		}
 	}
 }
+
+// Positive: EncodeYAMLDocument opens with the document start and indents a sequence nested
+// in a sequence item by two spaces, like every other level, and decodes back to the value.
+func TestEncodeYAMLDocument_Positive_TwoSpaceLevels(t *testing.T) {
+	type item struct {
+		Import       string   `yaml:"import"`
+		Capabilities []string `yaml:"capabilities"`
+	}
+	value := struct {
+		Packages []item `yaml:"packages"`
+	}{Packages: []item{{Import: "example.com/acme/kit/db", Capabilities: []string{"db.postgres", "db.sql"}}}}
+	data, err := EncodeYAMLDocument(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "---\npackages:\n  - import: example.com/acme/kit/db\n    capabilities:\n      - db.postgres\n      - db.sql\n"
+	if string(data) != want {
+		t.Fatalf("EncodeYAMLDocument() =\n%s\nwant\n%s", data, want)
+	}
+	var back struct {
+		Packages []item `yaml:"packages"`
+	}
+	if err := DecodeYAMLStrict(data, &back); err != nil || len(back.Packages) != 1 || len(back.Packages[0].Capabilities) != 2 {
+		t.Fatalf("round trip = %+v, %v", back, err)
+	}
+}
+
+// failingYAMLMarshaler refuses to render itself.
+type failingYAMLMarshaler struct{}
+
+var errRefusedYAML = errors.New("refused")
+
+func (failingYAMLMarshaler) MarshalYAML() (any, error) { return nil, errRefusedYAML }
+
+// Negative: a value that refuses to render is an error wrapping the refusal, not a partial
+// document.
+func TestEncodeYAMLDocument_Negative_MarshalerError(t *testing.T) {
+	data, err := EncodeYAMLDocument(map[string]any{"value": failingYAMLMarshaler{}})
+	if !errors.Is(err, errRefusedYAML) || data != nil {
+		t.Fatalf("EncodeYAMLDocument(refusing) = %q, %v; want the refusal", data, err)
+	}
+}
+
+// Boundary: an empty mapping is still one document with the document start.
+func TestEncodeYAMLDocument_Boundary_EmptyMapping(t *testing.T) {
+	data, err := EncodeYAMLDocument(map[string]string{})
+	if err != nil || string(data) != "---\n{}\n" {
+		t.Fatalf("EncodeYAMLDocument(empty) = %q, %v", data, err)
+	}
+}

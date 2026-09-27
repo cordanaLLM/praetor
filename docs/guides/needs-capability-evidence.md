@@ -275,7 +275,10 @@ empty contract naming the module, and no target at all is an error
 runs that have no checkout, or to carry a configured framework to another host. An entry
 the contract grammar cannot carry, such as a capability key without a dot, is listed as
 `[SKIP]` instead of being dropped silently (`internal/needs/framework_export_test.go`,
-`cmd/standardsctl/needs_contract_test.go`).
+`cmd/standardsctl/needs_contract_test.go`). The file opens with the `---` document start
+and indents every level by two spaces, so it passes yamllint's default rules and the YAML
+lint of praetor's own pre-commit hook when committed (`TestContractExportPassesYAMLLint_3D`
+in `internal/needs/framework_export_test.go`).
 
 Earlier releases shipped framework targets and replacement tables of their own. They were
 removed (ADR-0014 §6) after being exported with this command, so an operator who relied on

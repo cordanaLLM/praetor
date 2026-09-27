@@ -6,14 +6,15 @@ import (
 	"maps"
 	"slices"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // ContractExport is a framework snapshotted as a version-1 capability contract.
 type ContractExport struct {
-	// Data is the contract YAML; it parses back to the contract it was rendered from.
+	// Data is the contract YAML; it parses back to the contract it was rendered from, and
+	// passes yamllint (util.EncodeYAMLDocument), so it can be committed to a repository
+	// whose pre-commit hook lints YAML.
 	Data []byte
 	// Framework is the module the contract declares.
 	Framework string
@@ -39,7 +40,7 @@ func ExportFrameworkContract(ctx context.Context, language string, source Framew
 	}
 	export := &ContractExport{Framework: index.Name}
 	contract := contractFromIndex(index, languageEcosystem(language), &export.Skipped)
-	data, err := yaml.Marshal(contract)
+	data, err := util.EncodeYAMLDocument(contract)
 	if err != nil {
 		return nil, fmt.Errorf("render framework contract: %w", err)
 	}
