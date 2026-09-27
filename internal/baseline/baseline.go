@@ -321,9 +321,8 @@ func EvaluateRatchetWithOptions(b *Baseline, currentViolations []Infraction, tou
 		}
 	}
 
-	noNew := len(newViolations) == 0 && len(touchedCleanViolations) == 0
-	passed := noNew && len(currentViolations) <= b.TotalInfractions
-	countRegressed := noNew && !passed
+	listed := len(newViolations) > 0 || len(touchedCleanViolations) > 0
+	passed, countRegressed := ratchetVerdict(listed, len(currentViolations), b.TotalInfractions)
 
 	return &RatchetResult{
 		PreviousCount:          b.TotalInfractions,
@@ -333,6 +332,14 @@ func EvaluateRatchetWithOptions(b *Baseline, currentViolations []Infraction, tou
 		CountRegressed:         countRegressed,
 		Passed:                 passed,
 	}
+}
+
+// ratchetVerdict decides a ratchet from whether any violation was listed and how the current
+// total compares with the baseline's: it passes only with nothing listed and no rise, and a
+// failure with nothing listed is the count-only regression (BUG-489).
+func ratchetVerdict(listed bool, current, baselined int) (passed, countRegressed bool) {
+	rose := current > baselined
+	return !listed && !rose, !listed && rose
 }
 
 // worsenedFiles reports which touched files carry more infractions of some rule than the
