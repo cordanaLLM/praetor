@@ -11,10 +11,13 @@ holds the full texts of the licenses named here that apply to shipped code. The 
 image carries the same files under `/usr/local/share/praetor/`. Each archive also has a
 CycloneDX and an SPDX SBOM that Syft writes during the release (`.goreleaser.yaml`, `sboms`).
 
-`internal/supplychain/notices_test.go` keeps this file in step with what ships: it fails
-when `go.mod`, the Go version, the embedded npm lock or the image's base names a component
-this file does not list at that version, when this file lists one they no longer name, and
-when a Go module's upstream license or notice text is missing here verbatim.
+The component tables are generated. `praetorctl sbom notices` (`make third-party-notices`)
+rewrites their rows from `go.mod`, the root `Dockerfile` and the embedded npm lock
+`tools/markdownlint/package-lock.json`, and keeps the copyright line each row already states
+(`internal/supplychain/notices.go`). A component with no row yet, or a license outside the
+reviewed set, stops the command until its row is written from the upstream license file.
+`internal/supplychain/notices_test.go` fails when this file is not what the command writes,
+and when a Go module's upstream license or notice text is missing here verbatim.
 
 The documentation site, not the archives or the image, ships the vendored interfig figure
 engine; [Credits & Acknowledgements](docs/credits.md) credits it.
