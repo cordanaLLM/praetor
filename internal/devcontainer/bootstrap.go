@@ -16,9 +16,13 @@ const (
 	BootstrapUnavailable = "unavailable"
 	bootstrapVersion     = 1
 	bootstrapDockerfile  = "Dockerfile.praetor"
-	maxBootstrapParts    = 4
-	bootstrapPartBytes   = 512 * 1024
-	DefaultBuilderImage  = "docker.io/library/golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414"
+	// maxBootstrapParts caps the base64 frames of one archive. Every consumer reads this
+	// constant: framing, the Dockerfile COPY lines, spec validation and companion reads.
+	// Part names are zero-padded to three digits, so the image's `cat *.b64` joins them in
+	// order for any cap up to 1000. It was 4 until #501; a spec recorded then stays valid.
+	maxBootstrapParts   = 8
+	bootstrapPartBytes  = 512 * 1024
+	DefaultBuilderImage = "docker.io/library/golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414"
 	// The 26.04 tag drops the hyphen the 24.04 and earlier tags carried:
 	// mcr.microsoft.com/devcontainers/base publishes "ubuntu26.04", and
 	// "ubuntu-26.04" is not a tag on that repository. The digest is what the
@@ -224,7 +228,7 @@ func renderBootstrapDockerfile(spec *BootstrapSpec) string {
 	}
 	fmt.Fprintf(&s, "RUN cat /tmp/praetor-source/*.b64 | base64 -d > /tmp/praetor-source.tar.gz\nRUN echo '%s  /tmp/praetor-source.tar.gz' | sha256sum -c - && tar -xzf /tmp/praetor-source.tar.gz -C /praetor-source\n", strings.TrimPrefix(spec.ArchiveSHA256, "sha256:"))
 	s.WriteString("ENV GOTOOLCHAIN=local CGO_ENABLED=0 GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org\nRUN sha256sum go.mod go.sum > /tmp/praetor-modules.sha256 && /usr/local/go/bin/go mod download && /usr/local/go/bin/go mod verify && sha256sum -c /tmp/praetor-modules.sha256\n")
-	s.WriteString("RUN /usr/local/go/bin/go build -mod=readonly -trimpath -buildvcs=false -o /out/praetorctl ./cmd/standardsctl\n")
+	s.WriteString("RUN /usr/local/go/bin/go build -mod=readonly -trimpath -buildvcs=false -o /out/praetorctl ./" + bootstrapBuildPackage + "\n")
 	fmt.Fprintf(&s, "FROM %s\nCOPY --from=praetor_build --chmod=0444 /praetor-source/LICENSE /usr/local/share/praetor/LICENSE\nCOPY --from=praetor_build --chmod=0555 /out/praetorctl /usr/local/bin/praetorctl\nCOPY --from=praetor_build --chmod=0555 /out/praetorctl /usr/local/bin/standardsctl\nUSER vscode\n", spec.BaseImage)
 	return s.String()
 }

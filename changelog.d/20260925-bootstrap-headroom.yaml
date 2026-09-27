@@ -1,0 +1,4 @@
+type: fixed
+title: The DevContainer bootstrap archive now carries only the import closure of cmd/standardsctl (plus go.mod, go.sum, LICENSE and the reached go:embed assets), read with Go's parser so capture needs no Go toolchain, and holds up to eight 512 KiB frames instead of four, so Praetor's own source uses 36% of the frame capacity instead of 80% and ordinary growth no longer fails the push gate; bundles recorded with four or fewer frames still verify
+issue: "#501"
+breaking: false

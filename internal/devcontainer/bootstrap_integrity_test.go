@@ -78,6 +78,8 @@ func TestBootstrapCapturesDeclaredMarkdownAssets(t *testing.T) {
 	assetSource := "package markdownlint\n\nimport \"embed\"\n\n" + markdownBootstrapEmbedDirective() +
 		"\nvar assets embed.FS\n"
 	writeBootstrapFile(t, root, "tools/markdownlint/assets.go", assetSource)
+	// The capture holds the build closure, so the CLI imports the embedding package.
+	writeBootstrapFile(t, root, "cmd/standardsctl/main.go", "package main\n\nimport _ \"github.com/cordanaLLM/praetor/tools/markdownlint\"\n\nfunc main() {}\n")
 	for _, asset := range markdownBootstrapAssetPaths() {
 		writeBootstrapFile(t, root, asset, "fixture\n")
 	}
@@ -121,7 +123,8 @@ func TestBootstrapRejectsUnsupportedSource(t *testing.T) {
 		"symlink-go": func(t *testing.T, root string) {
 			target := filepath.Join(t.TempDir(), "outside.go")
 			writeBootstrapFile(t, filepath.Dir(target), filepath.Base(target), "package main\n")
-			if err := os.Symlink(target, filepath.Join(root, "outside.go")); err != nil {
+			// Inside the build package, so the closure reads it.
+			if err := os.Symlink(target, filepath.Join(root, "cmd", "standardsctl", "outside.go")); err != nil {
 				t.Fatal(err)
 			}
 		},

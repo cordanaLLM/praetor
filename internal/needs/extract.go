@@ -229,16 +229,16 @@ func isScannableGoFile(info os.FileInfo) bool {
 }
 
 // collectFileImports parses one file and records its third-party imports. A file that
-// does not parse (generated or partially written code) contributes no imports.
+// does not parse (generated or partially written code) contributes no imports. The paths
+// are read through util.GoImportPaths, the rule the DevContainer bootstrap closure shares.
 func collectFileImports(fset *token.FileSet, path, modulePath string, thirdParty map[string]struct{}) {
 	node, parseErr := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
 	if parseErr != nil {
 		return
 	}
-	for _, imp := range node.Imports {
-		rawPath := strings.Trim(imp.Path.Value, `"`)
-		if isThirdPartyImport(rawPath, modulePath) || isSelectedStandardImport(rawPath) {
-			thirdParty[rawPath] = struct{}{}
+	for _, importPath := range util.GoImportPaths(node) {
+		if isThirdPartyImport(importPath, modulePath) || isSelectedStandardImport(importPath) {
+			thirdParty[importPath] = struct{}{}
 		}
 	}
 }
@@ -288,10 +288,10 @@ func isExcludedDirSegment(name string, depth int) bool {
 
 // isThirdPartyImport determines if an import path is external to stdlib and the current
 // module. The module comparison is boundary-aware: a sibling module that merely shares a
-// textual prefix (github.com/acme/foo-plugins vs github.com/acme/foo) is third-party.
+// textual prefix (github.com/acme/foo-plugins vs github.com/acme/foo) is third-party. The
+// module test is util.ModuleImportDir, shared with the DevContainer bootstrap closure.
 func isThirdPartyImport(importPath, modulePath string) bool {
-	if modulePath != "" &&
-		(importPath == modulePath || strings.HasPrefix(importPath, modulePath+"/")) {
+	if _, inModule := util.ModuleImportDir(importPath, modulePath); inModule {
 		return false
 	}
 	firstSeg := strings.Split(importPath, "/")[0]

@@ -5,9 +5,14 @@
 package util
 
 import (
+	"go/ast"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
+
+// maxGoImportSpecs bounds the import specs GoImportPaths reads from one file (HISS-02).
+const maxGoImportSpecs = 4096
 
 // IsGoNonTestSource reports whether path names a Go source file outside Go's test surface:
 // a .go file that IsGoTestSurface does not claim. go build never compiles a file on the test
@@ -42,4 +47,49 @@ func IsGoMajorVersionElement(s string) bool {
 		}
 	}
 	return true
+}
+
+// GoImportPaths returns the import paths a parsed Go file declares, unquoted, in source
+// order. A spec whose path does not unquote, or unquotes to nothing, comes from a partial
+// AST and contributes no path. Blank, dot and renamed imports count like plain ones: each
+// makes go build read the imported package.
+//
+// The needs import scan and the DevContainer bootstrap closure both read imports through
+// this one rule, whatever parser mode produced the file.
+func GoImportPaths(file *ast.File) []string {
+	if file == nil {
+		return nil
+	}
+	paths := make([]string, 0, min(len(file.Imports), maxGoImportSpecs))
+	for i := 0; i < len(file.Imports) && i < maxGoImportSpecs; i++ {
+		spec := file.Imports[i]
+		if spec == nil || spec.Path == nil {
+			continue
+		}
+		importPath, err := strconv.Unquote(spec.Path.Value)
+		if err != nil || importPath == "" {
+			continue
+		}
+		paths = append(paths, importPath)
+	}
+	return paths
+}
+
+// ModuleImportDir reports whether importPath names a package of the module modulePath and,
+// if so, that package's directory relative to the module root, slash-separated: "." for the
+// module path itself. The comparison is boundary-aware, so a sibling module that only shares
+// a textual prefix (example.com/foo-plugins beside example.com/foo) is outside. An empty
+// module path owns no package.
+func ModuleImportDir(importPath, modulePath string) (string, bool) {
+	if modulePath == "" {
+		return "", false
+	}
+	if importPath == modulePath {
+		return ".", true
+	}
+	dir, inside := strings.CutPrefix(importPath, modulePath+"/")
+	if !inside || dir == "" {
+		return "", false
+	}
+	return dir, true
 }

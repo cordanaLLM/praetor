@@ -42,11 +42,13 @@ func encodeBootstrapArchive(files []bootstrapSourceFile) ([]byte, error) {
 
 // checkBootstrapArchiveFits is the single frame-capacity bound: encoding refuses an
 // archive framing could not carry, and framing re-checks the same rule. The error names
-// both sizes so an archive approaching the cap is diagnosable from the message alone.
+// both sizes so an archive approaching the cap is diagnosable from the message alone; the
+// frame count and size in it come from the constants, so the text cannot drift from the cap.
 func checkBootstrapArchiveFits(archiveBytes int) error {
 	encoded := base64.StdEncoding.EncodedLen(archiveBytes)
 	if archiveBytes <= 0 || encoded > maxBootstrapParts*bootstrapPartBytes {
-		return fmt.Errorf("compressed bootstrap source needs %d base64 bytes; four bounded archive frames hold %d", encoded, maxBootstrapParts*bootstrapPartBytes)
+		return fmt.Errorf("compressed bootstrap source needs %d base64 bytes; %d bounded archive frames of %d bytes hold %d",
+			encoded, maxBootstrapParts, bootstrapPartBytes, maxBootstrapParts*bootstrapPartBytes)
 	}
 	return nil
 }
