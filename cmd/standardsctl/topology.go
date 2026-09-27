@@ -40,6 +40,19 @@ func printTopologyUsage() {
 	fmt.Println("\nSubcommands:")
 	fmt.Println("  audit [--dev-root=...] Audits dev tree against the workstation topology rules DEV-01 and DEV-02")
 	fmt.Println("  clean [--dev-root=...] [--dry-run=true|false] Safely removes stray governance files from org roots")
+	fmt.Println("\nBoth accept --fleet-config, --workstation-config and --manifest; the selected operator settings'")
+	fmt.Println("topology.org_containers names organization folders beyond the built-in ones. A directory")
+	fmt.Println("holding a child repository is recognised as one without configuration.")
+}
+
+// topologyContainers loads the operator's topology.org_containers through the shared
+// operator-settings loader.
+func topologyContainers(ctx context.Context, settings *operatorSettingsFlags) ([]string, error) {
+	loaded, err := settings.load(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return loaded.Topology.OrgContainers, nil
 }
 
 // defaultDevRoot returns the resolved dev root ($PRAETOR_DEV_ROOT, $PRAETOR_DEV_DIR or
@@ -80,6 +93,7 @@ func resolveDevRoot(flagValue string, positional []string) (string, error) {
 func runTopologyAudit(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("topology audit", flag.ContinueOnError)
 	devRootFlag := fs.String("dev-root", "", "Target workstation dev root directory "+devRootUsageDefault)
+	settings := registerOperatorSettingsFlags(fs)
 	if err := fs.Parse(reorderArgs(args, boolFlagNames(fs))); err != nil {
 		return err
 	}
@@ -87,8 +101,12 @@ func runTopologyAudit(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("topology audit: %w", err)
 	}
+	containers, err := topologyContainers(ctx, settings)
+	if err != nil {
+		return fmt.Errorf("topology audit: %w", err)
+	}
 
-	report, err := topology.AuditWorkstationTopology(ctx, devRoot)
+	report, err := topology.AuditWorkstationTopology(ctx, devRoot, containers)
 	if err != nil {
 		return fmt.Errorf("topology audit failed: %w", err)
 	}
@@ -160,6 +178,7 @@ func runTopologyClean(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("topology clean", flag.ContinueOnError)
 	devRootFlag := fs.String("dev-root", "", "Target workstation dev root directory "+devRootUsageDefault)
 	dryRun := fs.Bool("dry-run", true, "Simulate cleaning without deleting files")
+	settings := registerOperatorSettingsFlags(fs)
 	if err := fs.Parse(reorderArgs(args, boolFlagNames(fs))); err != nil {
 		return err
 	}
@@ -167,9 +186,13 @@ func runTopologyClean(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("topology clean: %w", err)
 	}
+	containers, err := topologyContainers(ctx, settings)
+	if err != nil {
+		return fmt.Errorf("topology clean: %w", err)
+	}
 
 	fmt.Printf("=== Workstation Topology Clean: %s (DryRun: %v) ===\n", devRoot, *dryRun)
-	result, cleanErr := topology.CleanWorkstationTopologyDetailed(ctx, devRoot, *dryRun)
+	result, cleanErr := topology.CleanWorkstationTopologyDetailed(ctx, devRoot, containers, *dryRun)
 	resultErr := printTopologyCleanResult(result, *dryRun, cleanErr == nil)
 	if cleanErr != nil {
 		return fmt.Errorf("topology clean failed: %w", cleanErr)

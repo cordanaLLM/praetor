@@ -91,11 +91,11 @@ func genericOrgEntries(t *testing.T, orgDir string) []string {
 
 func TestAuditWorkstationTopology_GenericOrgEntriesRequireManualReview(t *testing.T) {
 	devRoot := t.TempDir()
-	orgDir := filepath.Join(devRoot, "lusoris")
+	orgDir := filepath.Join(devRoot, "acme")
 	entries := genericOrgEntries(t, orgDir)
 	initTestGit(t, filepath.Join(orgDir, "repo"))
 
-	report, err := AuditWorkstationTopology(context.Background(), devRoot)
+	report, err := AuditWorkstationTopology(context.Background(), devRoot, nil)
 	if err != nil {
 		t.Fatalf("AuditWorkstationTopology: %v", err)
 	}
@@ -106,10 +106,10 @@ func TestAuditWorkstationTopology_GenericOrgEntriesRequireManualReview(t *testin
 
 func TestCleanWorkstationTopology_PreservesGenericOrgEntries(t *testing.T) {
 	devRoot := t.TempDir()
-	orgDir := filepath.Join(devRoot, "lusoris")
+	orgDir := filepath.Join(devRoot, "acme")
 	entries := genericOrgEntries(t, orgDir)
 
-	result, err := CleanWorkstationTopologyDetailed(context.Background(), devRoot, false)
+	result, err := CleanWorkstationTopologyDetailed(context.Background(), devRoot, acmeConfigured, false)
 	if err != nil {
 		t.Fatalf("CleanWorkstationTopologyDetailed: %v", err)
 	}
@@ -129,20 +129,20 @@ func TestCleanWorkstationTopology_PreservesGenericOrgEntries(t *testing.T) {
 
 func TestCleanWorkstationTopology_RemovesToolArtifactFiles(t *testing.T) {
 	devRoot := t.TempDir()
-	orgDir := filepath.Join(devRoot, "lusoris")
+	orgDir := filepath.Join(devRoot, "acme")
 	artifacts := []string{".standards.yaml", ".standards.lock", ".needs.yaml", "CLAUDE.md", "AGENTS.md", "lefthook.yml"}
 	for _, name := range artifacts {
 		writeTestFile(t, filepath.Join(orgDir, name))
 	}
 
-	report, err := AuditWorkstationTopology(context.Background(), devRoot)
+	report, err := AuditWorkstationTopology(context.Background(), devRoot, acmeConfigured)
 	if err != nil {
 		t.Fatalf("AuditWorkstationTopology: %v", err)
 	}
 	for _, name := range artifacts {
 		requireSafeStray(t, report, filepath.Join(orgDir, name))
 	}
-	result, err := CleanWorkstationTopologyDetailed(context.Background(), devRoot, false)
+	result, err := CleanWorkstationTopologyDetailed(context.Background(), devRoot, acmeConfigured, false)
 	if err != nil {
 		t.Fatalf("CleanWorkstationTopologyDetailed: %v", err)
 	}
@@ -159,11 +159,11 @@ func TestCleanWorkstationTopology_RemovesToolArtifactFiles(t *testing.T) {
 // A tool artifact name on a directory is still a directory: removal would recurse.
 func TestAuditWorkstationTopology_ToolNamedDirectoryRequiresManualReview(t *testing.T) {
 	devRoot := t.TempDir()
-	orgDir := filepath.Join(devRoot, "lusoris")
+	orgDir := filepath.Join(devRoot, "acme")
 	toolDir := filepath.Join(orgDir, "CLAUDE.md")
 	writeTestFile(t, filepath.Join(toolDir, "notes.txt"))
 
-	result, err := CleanWorkstationTopologyDetailed(context.Background(), devRoot, false)
+	result, err := CleanWorkstationTopologyDetailed(context.Background(), devRoot, acmeConfigured, false)
 	if err != nil {
 		t.Fatalf("CleanWorkstationTopologyDetailed: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestCleanWorkstationTopology_SymlinkClassification(t *testing.T) {
 		t.Skip("creating symlinks requires optional Windows privileges")
 	}
 	devRoot := t.TempDir()
-	orgDir := filepath.Join(devRoot, "lusoris")
+	orgDir := filepath.Join(devRoot, "acme")
 	target := filepath.Join(t.TempDir(), "AGENTS.md")
 	writeTestFile(t, target)
 	toolLink := filepath.Join(orgDir, "CLAUDE.md")
@@ -192,7 +192,7 @@ func TestCleanWorkstationTopology_SymlinkClassification(t *testing.T) {
 		}
 	}
 
-	result, err := CleanWorkstationTopologyDetailed(context.Background(), devRoot, false)
+	result, err := CleanWorkstationTopologyDetailed(context.Background(), devRoot, acmeConfigured, false)
 	if err != nil {
 		t.Fatalf("CleanWorkstationTopologyDetailed: %v", err)
 	}
@@ -215,7 +215,7 @@ func TestAuditWorkstationTopology_DevRootGenericFileRequiresManualReview(t *test
 	writeTestFile(t, makefile)
 	writeTestFile(t, claude)
 
-	report, err := AuditWorkstationTopology(context.Background(), devRoot)
+	report, err := AuditWorkstationTopology(context.Background(), devRoot, nil)
 	if err != nil {
 		t.Fatalf("AuditWorkstationTopology: %v", err)
 	}
@@ -255,16 +255,16 @@ func TestManualReviewReason(t *testing.T) {
 // file replaced by a directory between audit and removal.
 func TestVerifyDeletionSafety_RejectsNonGitDirectory(t *testing.T) {
 	devRoot := t.TempDir()
-	swapped := filepath.Join(devRoot, "lusoris", "CLAUDE.md")
+	swapped := filepath.Join(devRoot, "acme", "CLAUDE.md")
 	writeTestFile(t, filepath.Join(swapped, "payload.txt"))
-	if err := verifyDeletionSafety(devRoot, swapped); err == nil {
+	if err := verifyDeletionSafety(context.Background(), devRoot, swapped, nil); err == nil {
 		t.Fatal("a non-git directory passed the final deletion boundary")
 	}
-	headless := filepath.Join(devRoot, "lusoris", ".git")
+	headless := filepath.Join(devRoot, "acme", ".git")
 	if err := os.MkdirAll(headless, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyDeletionSafety(devRoot, headless); err != nil {
+	if err := verifyDeletionSafety(context.Background(), devRoot, headless, nil); err != nil {
 		t.Fatalf("proven-headless git metadata was rejected: %v", err)
 	}
 }
@@ -275,7 +275,7 @@ func writeCancellationTree(t *testing.T) string {
 	for _, name := range []string{"CLAUDE.md", ".standards.yaml", "lefthook.yml"} {
 		writeTestFile(t, filepath.Join(devRoot, name))
 	}
-	orgDir := filepath.Join(devRoot, "lusoris")
+	orgDir := filepath.Join(devRoot, "acme")
 	writeTestFile(t, filepath.Join(orgDir, ".needs.yaml"))
 	initTestGit(t, filepath.Join(orgDir, "repo"))
 	return devRoot
@@ -284,20 +284,21 @@ func writeCancellationTree(t *testing.T) string {
 func TestAuditWorkstationTopology_EveryCheckpointHonoursCancellation(t *testing.T) {
 	devRoot := writeCancellationTree(t)
 	counter := newBudgetCtx(-1)
-	if _, err := AuditWorkstationTopology(counter, devRoot); err != nil {
+	if _, err := AuditWorkstationTopology(counter, devRoot, nil); err != nil {
 		t.Fatalf("AuditWorkstationTopology: %v", err)
 	}
-	// One entry check, one per dev-root entry (4) and two per organization entry (2 x 2).
-	if counter.calls < 9 {
+	// One entry check, one per dev-root entry (4), one per entry the structural detection of
+	// the unconfigured acme folder inspects (2) and two per organization entry (2 x 2).
+	if counter.calls < 11 {
 		t.Fatalf("audit consulted the context %d times; scan loops do not check it", counter.calls)
 	}
 	for budget := range counter.calls {
-		report, err := AuditWorkstationTopology(newBudgetCtx(budget), devRoot)
+		report, err := AuditWorkstationTopology(newBudgetCtx(budget), devRoot, nil)
 		if !errors.Is(err, context.Canceled) || report != nil {
 			t.Fatalf("budget %d: report = %v, err = %v; want no report and context.Canceled", budget, report, err)
 		}
 	}
-	if _, err := AuditWorkstationTopology(newBudgetCtx(counter.calls), devRoot); err != nil {
+	if _, err := AuditWorkstationTopology(newBudgetCtx(counter.calls), devRoot, nil); err != nil {
 		t.Fatalf("audit failed with exactly enough budget: %v", err)
 	}
 }
@@ -305,7 +306,7 @@ func TestAuditWorkstationTopology_EveryCheckpointHonoursCancellation(t *testing.
 func auditCheckpoints(t *testing.T, devRoot string) int {
 	t.Helper()
 	counter := newBudgetCtx(-1)
-	if _, err := AuditWorkstationTopology(counter, devRoot); err != nil {
+	if _, err := AuditWorkstationTopology(counter, devRoot, nil); err != nil {
 		t.Fatalf("AuditWorkstationTopology: %v", err)
 	}
 	return counter.calls
@@ -328,11 +329,11 @@ func TestCleanWorkstationTopologyDetailed_CancellationStopsRemovalMidLoop(t *tes
 		filepath.Join(devRoot, "CLAUDE.md"),
 		filepath.Join(devRoot, ".standards.yaml"),
 		filepath.Join(devRoot, "lefthook.yml"),
-		filepath.Join(devRoot, "lusoris", ".needs.yaml"),
+		filepath.Join(devRoot, "acme", ".needs.yaml"),
 	}
 	auditCalls := auditCheckpoints(t, devRoot)
 
-	result, err := CleanWorkstationTopologyDetailed(newBudgetCtx(auditCalls+1), devRoot, false)
+	result, err := CleanWorkstationTopologyDetailed(newBudgetCtx(auditCalls+1), devRoot, nil, false)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled after the first removal", err)
 	}
@@ -348,16 +349,16 @@ func TestCleanWorkstationTopologyDetailed_CancellationBeforeFirstRemoval(t *test
 	devRoot := writeCancellationTree(t)
 	auditCalls := auditCheckpoints(t, devRoot)
 
-	result, err := CleanWorkstationTopologyDetailed(newBudgetCtx(auditCalls), devRoot, false)
+	result, err := CleanWorkstationTopologyDetailed(newBudgetCtx(auditCalls), devRoot, nil, false)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
 	if result == nil || len(result.Cleaned) != 0 {
 		t.Fatalf("result = %+v, want no removals", result)
 	}
-	assertPathsExist(t, []string{filepath.Join(devRoot, "CLAUDE.md"), filepath.Join(devRoot, "lusoris", ".needs.yaml")})
+	assertPathsExist(t, []string{filepath.Join(devRoot, "CLAUDE.md"), filepath.Join(devRoot, "acme", ".needs.yaml")})
 
-	cleaned, legacyErr := CleanWorkstationTopology(newBudgetCtx(auditCalls), devRoot, false)
+	cleaned, legacyErr := CleanWorkstationTopology(newBudgetCtx(auditCalls), devRoot, nil, false)
 	if !errors.Is(legacyErr, context.Canceled) || len(cleaned) != 0 {
 		t.Fatalf("legacy clean = %v, %v; want no removals and context.Canceled", cleaned, legacyErr)
 	}
@@ -376,7 +377,7 @@ func TestAuditWorkstationTopology_DevRootScanBound(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			devRoot := t.TempDir()
 			writeFillerEntries(t, devRoot, tc.entries)
-			report, err := AuditWorkstationTopology(context.Background(), devRoot)
+			report, err := AuditWorkstationTopology(context.Background(), devRoot, nil)
 			if err != nil {
 				t.Fatalf("AuditWorkstationTopology: %v", err)
 			}
@@ -397,7 +398,7 @@ func TestAuditWorkstationTopology_OrgScanBoundReportsTruncation(t *testing.T) {
 	devRoot := t.TempDir()
 	writeFillerEntries(t, filepath.Join(devRoot, "local"), MaxScanEntries+1)
 
-	report, err := AuditWorkstationTopology(context.Background(), devRoot)
+	report, err := AuditWorkstationTopology(context.Background(), devRoot, nil)
 	if err != nil {
 		t.Fatalf("AuditWorkstationTopology: %v", err)
 	}
@@ -427,16 +428,16 @@ func chmodUnreadable(t *testing.T, dir string) {
 
 func TestAuditWorkstationTopology_UnreadableOrgReportsTruncation(t *testing.T) {
 	devRoot := t.TempDir()
-	orgDir := filepath.Join(devRoot, "lusoris")
+	orgDir := filepath.Join(devRoot, "acme")
 	writeTestFile(t, filepath.Join(orgDir, "CLAUDE.md"))
 	chmodUnreadable(t, orgDir)
 
-	report, err := AuditWorkstationTopology(context.Background(), devRoot)
+	report, err := AuditWorkstationTopology(context.Background(), devRoot, acmeConfigured)
 	if err != nil {
 		t.Fatalf("AuditWorkstationTopology: %v", err)
 	}
 	if !report.Truncated || len(report.TruncationReasons) != 1 ||
-		!strings.Contains(report.TruncationReasons[0], "organization container lusoris could not be read") {
+		!strings.Contains(report.TruncationReasons[0], "organization container acme could not be read") {
 		t.Fatalf("truncation = %v %v, want the unreadable organization container", report.Truncated, report.TruncationReasons)
 	}
 }
@@ -447,7 +448,7 @@ func TestAuditWorkstationTopology_UninspectableRootRepoReportsTruncation(t *test
 	initTestGit(t, rogue)
 	chmodUnreadable(t, rogue)
 
-	report, err := AuditWorkstationTopology(context.Background(), devRoot)
+	report, err := AuditWorkstationTopology(context.Background(), devRoot, nil)
 	if err != nil {
 		t.Fatalf("AuditWorkstationTopology: %v", err)
 	}
@@ -465,7 +466,7 @@ func TestCleanWorkstationTopologyDetailed_RefusesTruncatedAudit(t *testing.T) {
 	writeTestFile(t, claude)
 	writeFillerEntries(t, devRoot, MaxScanEntries)
 
-	result, err := CleanWorkstationTopologyDetailed(context.Background(), devRoot, false)
+	result, err := CleanWorkstationTopologyDetailed(context.Background(), devRoot, nil, false)
 	if !errors.Is(err, ErrScanTruncated) || result != nil {
 		t.Fatalf("result = %+v, err = %v; want no result and ErrScanTruncated", result, err)
 	}
@@ -476,7 +477,7 @@ func TestCleanWorkstationTopologyDetailed_RefusesTruncatedAudit(t *testing.T) {
 }
 
 func TestTopologyReportJSON_CompleteScanDeclaresCompleteness(t *testing.T) {
-	report, err := AuditWorkstationTopology(context.Background(), t.TempDir())
+	report, err := AuditWorkstationTopology(context.Background(), t.TempDir(), nil)
 	if err != nil {
 		t.Fatalf("AuditWorkstationTopology: %v", err)
 	}

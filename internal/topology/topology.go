@@ -29,17 +29,27 @@ var (
 	ErrScanTruncated = errors.New("topology audit incomplete; cleanup refused")
 )
 
-// KnownOrgContainers lists recognized organization directories under dev root (DEV-01).
-var KnownOrgContainers = map[string]bool{
-	"cordanallm": true,
-	"lusoris":    true,
-	"vmafx":      true,
-	"golusoris":  true,
-	"upstream":   true,
-	"local":      true,
-	"stacks":     true,
-	"worktrees":  true,
-	"scratch":    true,
+// BuiltinOrgContainers names the directories every dev root may use as organization
+// containers without configuration (DEV-01). The engine names no operator organization:
+// those are configured through topology.org_containers (OrgContainers) or recognised by
+// structure, as a directory holding a child repository (AuditWorkstationTopology).
+var BuiltinOrgContainers = [...]string{"upstream", "local", "stacks", "worktrees", "scratch"}
+
+// OrgContainers returns the lowercased set of organization container names: the built-in
+// names plus the configured ones (topology.org_containers, validated and bounded by
+// internal/config). Blank entries are ignored. Structural containers carry no name and are
+// decided per directory by the audit.
+func OrgContainers(configured []string) map[string]bool {
+	set := make(map[string]bool, len(BuiltinOrgContainers)+len(configured))
+	for _, name := range BuiltinOrgContainers {
+		set[name] = true
+	}
+	for _, name := range configured {
+		if name = strings.ToLower(strings.TrimSpace(name)); name != "" {
+			set[name] = true
+		}
+	}
+	return set
 }
 
 // StrayGovernanceNames lists governance artifacts that must not exist in org containers or dev root.
@@ -177,7 +187,13 @@ func scanInterrupted(ctx context.Context, phase string) error {
 // implements: DEV-01 (repositories live in organization folders) and DEV-02 (no root
 // compatibility symlinks). DEV-03 through DEV-05 are not evaluated here. A context that ends
 // mid-scan returns an error and no partial report.
-func AuditWorkstationTopology(ctx context.Context, devRoot string) (*TopologyReport, error) {
+//
+// A dev-root directory is an organization container when its lowercased name is in
+// OrgContainers(configured), or, whatever its name, when it is not a git repository itself
+// and directly holds at least one child repository (structural detection). configured is
+// the operator's topology.org_containers; nil leaves the built-in names and structural
+// detection.
+func AuditWorkstationTopology(ctx context.Context, devRoot string, configured []string) (*TopologyReport, error) {
 	if err := scanInterrupted(ctx, "audit"); err != nil {
 		return nil, err
 	}
@@ -202,12 +218,13 @@ func AuditWorkstationTopology(ctx context.Context, devRoot string) (*TopologyRep
 		return nil, fmt.Errorf("read dev root: %w", err)
 	}
 
+	containers := OrgContainers(configured)
 	for _, entry := range boundScanEntries(entries, "dev root", report) {
 		if err := scanInterrupted(ctx, "audit"); err != nil {
 			return nil, err
 		}
 		entryPath := filepath.Join(normRoot, entry.Name())
-		if err := processDevRootEntry(ctx, entry, entryPath, report); err != nil {
+		if err := processDevRootEntry(ctx, entry, entryPath, containers, report); err != nil {
 			return nil, err
 		}
 	}
@@ -234,7 +251,7 @@ func validateDevRoot(devRoot string) (string, error) {
 	return normRoot, nil
 }
 
-func processDevRootEntry(ctx context.Context, entry os.DirEntry, entryPath string, report *TopologyReport) error {
+func processDevRootEntry(ctx context.Context, entry os.DirEntry, entryPath string, containers map[string]bool, report *TopologyReport) error {
 	lowerName := strings.ToLower(entry.Name())
 
 	// Check if entry is a symlink (DEV-02: root compatibility symlinks are prohibited)
@@ -256,22 +273,77 @@ func processDevRootEntry(ctx context.Context, entry os.DirEntry, entryPath strin
 		return nil
 	}
 
-	if KnownOrgContainers[lowerName] {
+	if containers[lowerName] {
 		report.OrgContainers = append(report.OrgContainers, entry.Name())
 		return auditOrgContainer(ctx, entryPath, entry.Name(), report)
 	}
+	return classifyDevRootDirectory(ctx, entryPath, entry.Name(), report)
+}
 
-	// Any unrecognized directory in dev root with .git is violating DEV-01
-	_, err := os.Stat(filepath.Join(entryPath, ".git"))
-	switch {
-	case err == nil:
-		report.Violations = append(report.Violations,
-			fmt.Sprintf("DEV-01: repository %s is located directly in dev root instead of an org folder", entry.Name()))
-	case !errors.Is(err, os.ErrNotExist):
+// classifyDevRootDirectory decides a dev-root directory no container name covers. A live
+// repository is a DEV-01 violation. A directory that is not one but directly holds a child
+// repository is a structural organization container and is audited as one. Any other
+// directory with git metadata (headless or indeterminate) is a DEV-01 violation. A listing
+// that could not be read, or was cut at MaxScanEntries before a repository turned up,
+// leaves the directory unclassified and the audit truncated.
+func classifyDevRootDirectory(ctx context.Context, path, name string, report *TopologyReport) error {
+	_, statErr := os.Stat(filepath.Join(path, ".git"))
+	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
 		report.markTruncated(fmt.Sprintf("%s: DEV-01 not evaluated, git metadata could not be inspected: %v",
-			entry.Name(), err))
+			name, statErr))
+		return nil
+	}
+	hasGit := statErr == nil
+	if hasGit && HasValidGitRepo(path) {
+		report.Violations = append(report.Violations, rootRepositoryViolation(name))
+		return nil
+	}
+	found, err := HoldsChildRepository(ctx, path)
+	switch {
+	case isInterruption(err):
+		return err
+	case err != nil:
+		report.markTruncated(fmt.Sprintf("%s: organization container detection incomplete: %v", name, err))
+	case found:
+		report.OrgContainers = append(report.OrgContainers, name)
+		return auditOrgContainer(ctx, path, name, report)
+	case hasGit:
+		report.Violations = append(report.Violations, rootRepositoryViolation(name))
 	}
 	return nil
+}
+
+func rootRepositoryViolation(name string) string {
+	return fmt.Sprintf("DEV-01: repository %s is located directly in dev root instead of an org folder", name)
+}
+
+// isInterruption reports an error scanInterrupted produced from a cancelled or expired context.
+func isInterruption(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+}
+
+// HoldsChildRepository reports whether dir directly holds at least one child git repository
+// (a directory entry HasValidGitRepo accepts): the structural test for an organization
+// container. It inspects at most MaxScanEntries entries and checks ctx on every one
+// (HISS-02). A listing that cannot be read, or is cut at the bound before a repository turns
+// up, is an error: the answer is then unknown, never false.
+func HoldsChildRepository(ctx context.Context, dir string) (bool, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false, fmt.Errorf("read %s: %w", dir, err)
+	}
+	for i, entry := range entries {
+		if i == MaxScanEntries {
+			return false, fmt.Errorf("%s: scan stopped after %d of %d entries (MaxScanEntries)", dir, MaxScanEntries, len(entries))
+		}
+		if err := scanInterrupted(ctx, "child repository scan"); err != nil {
+			return false, err
+		}
+		if entry.IsDir() && HasValidGitRepo(filepath.Join(dir, entry.Name())) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func isSymlink(path string) bool {
@@ -609,8 +681,9 @@ func HasValidGitRepo(path string) bool {
 
 // CleanWorkstationTopology removes safe stray files and returns their paths. Unsafe
 // findings remain untouched; callers that need them use CleanWorkstationTopologyDetailed.
-func CleanWorkstationTopology(ctx context.Context, devRoot string, dryRun bool) ([]string, error) {
-	result, err := CleanWorkstationTopologyDetailed(ctx, devRoot, dryRun)
+// configured is the operator's topology.org_containers, as for AuditWorkstationTopology.
+func CleanWorkstationTopology(ctx context.Context, devRoot string, configured []string, dryRun bool) ([]string, error) {
+	result, err := CleanWorkstationTopologyDetailed(ctx, devRoot, configured, dryRun)
 	if result == nil {
 		return nil, err
 	}
@@ -624,9 +697,10 @@ func CleanWorkstationTopology(ctx context.Context, devRoot string, dryRun bool) 
 // CleanWorkstationTopologyDetailed removes safe stray files and reports findings that
 // require manual review without changing the legacy CleanWorkstationTopology contract. It
 // refuses to act on a truncated audit (ErrScanTruncated) and stops between removals once
-// ctx ends, returning the removals made so far with the context error.
-func CleanWorkstationTopologyDetailed(ctx context.Context, devRoot string, dryRun bool) (*CleanResult, error) {
-	report, err := AuditWorkstationTopology(ctx, devRoot)
+// ctx ends, returning the removals made so far with the context error. It never deletes a
+// recognized organization container or any directory that holds a repository.
+func CleanWorkstationTopologyDetailed(ctx context.Context, devRoot string, configured []string, dryRun bool) (*CleanResult, error) {
+	report, err := AuditWorkstationTopology(ctx, devRoot, configured)
 	if err != nil {
 		return nil, fmt.Errorf("audit failed before clean: %w", err)
 	}
@@ -634,6 +708,7 @@ func CleanWorkstationTopologyDetailed(ctx context.Context, devRoot string, dryRu
 		return nil, fmt.Errorf("%w: %s", ErrScanTruncated, strings.Join(report.TruncationReasons, "; "))
 	}
 
+	containers := OrgContainers(configured)
 	result := &CleanResult{
 		Cleaned: make([]string, 0),
 		Blocked: make([]StrayFile, 0),
@@ -647,7 +722,7 @@ func CleanWorkstationTopologyDetailed(ctx context.Context, devRoot string, dryRu
 			continue
 		}
 
-		if err := verifyDeletionSafety(report.DevRoot, stray.Path); err != nil {
+		if err := verifyDeletionSafety(ctx, report.DevRoot, stray.Path, containers); err != nil {
 			return result, &deletionSafetyError{err: fmt.Errorf(
 				"safety check rejected deletion of %s: %w", stray.Path, err)}
 		}
@@ -676,7 +751,7 @@ func removeStrayEntry(path string) error {
 	return nil
 }
 
-func verifyDeletionSafety(devRoot, path string) error {
+func verifyDeletionSafety(ctx context.Context, devRoot, path string, containers map[string]bool) error {
 	cleanDev := filepath.Clean(devRoot)
 	cleanPath := filepath.Clean(path)
 	if err := verifyDeletionLocation(cleanDev, cleanPath); err != nil {
@@ -687,8 +762,13 @@ func verifyDeletionSafety(devRoot, path string) error {
 		return fmt.Errorf("cannot inspect deletion candidate: %w", err)
 	}
 	pathIsSymlink := pathInfo.Mode()&os.ModeSymlink != 0
-	if err := verifyOrganizationContainerTarget(cleanDev, cleanPath, pathIsSymlink); err != nil {
+	if err := verifyOrganizationContainerTarget(cleanDev, cleanPath, pathIsSymlink, containers); err != nil {
 		return err
+	}
+	if pathInfo.IsDir() {
+		if err := verifyHoldsNoRepository(ctx, cleanPath); err != nil {
+			return err
+		}
 	}
 	if err := verifyOrganizationGitBoundary(cleanDev, cleanPath); err != nil {
 		return err
@@ -721,12 +801,31 @@ func verifyDeletionLocation(devRoot, candidate string) error {
 	return nil
 }
 
-func verifyOrganizationContainerTarget(devRoot, candidate string, isSymlink bool) error {
+// verifyOrganizationContainerTarget refuses a dev-root entry whose name is a built-in or
+// configured organization container. Structural containers are refused by
+// verifyHoldsNoRepository, which needs no name.
+func verifyOrganizationContainerTarget(devRoot, candidate string, isSymlink bool, containers map[string]bool) error {
 	if filepath.Dir(candidate) != devRoot || isSymlink {
 		return nil
 	}
-	if KnownOrgContainers[strings.ToLower(filepath.Base(candidate))] {
+	if containers[strings.ToLower(filepath.Base(candidate))] {
 		return fmt.Errorf("cannot delete recognized organization container: %s", candidate)
+	}
+	return nil
+}
+
+// verifyHoldsNoRepository refuses a directory that directly holds a child repository, or
+// whose listing could not be read in full: cleanup never deletes a directory holding a
+// repository, whatever its name or classification.
+func verifyHoldsNoRepository(ctx context.Context, dir string) error {
+	found, err := HoldsChildRepository(ctx, dir)
+	switch {
+	case isInterruption(err):
+		return err
+	case err != nil:
+		return fmt.Errorf("cannot rule out a child repository: %w", err)
+	case found:
+		return fmt.Errorf("cannot delete a directory that holds a git repository: %s", dir)
 	}
 	return nil
 }
@@ -749,13 +848,16 @@ func verifyOrganizationGitBoundary(devRoot, candidate string) error {
 	return nil
 }
 
+// organizationForCandidate returns the dev-root directory a nested candidate lies beneath,
+// whatever that directory's name or classification: the git boundary applies beneath every
+// one, so a container recognised by configuration or by structure gets the same protection.
 func organizationForCandidate(devRoot, candidate string) (string, bool, error) {
 	relPath, err := filepath.Rel(devRoot, candidate)
 	if err != nil {
 		return "", false, fmt.Errorf("resolve organization candidate: %w", err)
 	}
 	parts := strings.Split(relPath, string(os.PathSeparator))
-	if len(parts) < 2 || !KnownOrgContainers[strings.ToLower(parts[0])] {
+	if len(parts) < 2 {
 		return "", false, nil
 	}
 	return filepath.Join(devRoot, parts[0]), true, nil

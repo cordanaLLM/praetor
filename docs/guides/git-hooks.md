@@ -293,7 +293,13 @@ configuration remain blocking failures; the sandbox gate does not bypass them.
 
 The command guard accepts actual PreToolUse JSON or command arguments; Git calls
 its explicit environment mode. It rejects verification-evasion commands and
-hook exclusions. It also refuses, without scanning, a command over 65,536
+hook exclusions, and an `adopt`, `conform`, `bootstrap` or `needs` command aimed
+at the workstation dev root itself. It names no organisation folder: a command
+aimed at `~/dev/<folder>` passes, and an operator who wants a folder refused adds a
+pattern to `hooks.command_policy.deny`, which the Go hook entrypoint applies (see
+[Agent hooks](agent-hooks.md#organisation-folders-dev-01);
+`test_guard_blocks_the_dev_root_and_names_no_organisation_folder` in
+`.config/lefthook/scripts/test_hooks.py`). It also refuses, without scanning, a command over 65,536
 characters or with a line over 2,048 characters: Python's `re` backtracks, and a
 longer line could hold the guard past the client's hook timeout (see
 [Agent hooks](agent-hooks.md#the-adopted-interceptor);

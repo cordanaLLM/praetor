@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/topology"
 )
 
@@ -40,9 +41,7 @@ func TestTopologyAudit_ViolationWithoutStrayFileFails(t *testing.T) {
 // audit evaluates, not DEV-03 through DEV-05.
 func TestTopologyAudit_CleanTreeNamesOnlyEvaluatedRules(t *testing.T) {
 	devRoot := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(devRoot, "cordanaLLM", "praetor", ".git"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	writeFixtureFile(t, devRoot, "acme/app/.git/HEAD", "ref: refs/heads/main\n")
 	out, err := runTopologyAuditOn(t, devRoot)
 	if err != nil {
 		t.Fatalf("clean tree failed: %v\n%s", err, out)
@@ -111,7 +110,7 @@ func TestTopologyAudit_ScanAtBoundPasses(t *testing.T) {
 func TestTopologyAuditVerdict_TruncationJoinsOtherProblems(t *testing.T) {
 	report := &topology.TopologyReport{
 		Truncated:         true,
-		TruncationReasons: []string{"organization container lusoris could not be read"},
+		TruncationReasons: []string{"organization container acme could not be read"},
 		Violations:        []string{"DEV-01: repository rogue"},
 	}
 	err := topologyAuditVerdict(report)
@@ -139,5 +138,45 @@ func TestTopologyClean_RefusesTruncatedAudit(t *testing.T) {
 	assertNoTopologySuccessClaim(t, out)
 	if _, statErr := os.Stat(stray); statErr != nil {
 		t.Fatalf("truncated clean deleted a finding: %v", statErr)
+	}
+}
+
+// TestTopologyAudit_ConfiguredContainersComeFromOperatorSettings: topology.org_containers
+// reaches the audit through the shared settings flags and environment; unset, only the
+// built-in names and structural detection apply.
+func TestTopologyAudit_ConfiguredContainersComeFromOperatorSettings(t *testing.T) {
+	devRoot := t.TempDir()
+	writeFixtureFile(t, devRoot, "acme/CLAUDE.md", "stray\n")
+	settings := writeFixtureFile(t, t.TempDir(), "workstation.yaml", "topology: {org_containers: [acme]}\n")
+
+	unconfigured, err := runTopologyAuditOn(t, devRoot)
+	if err != nil || !strings.Contains(unconfigured, "Organization Containers: 0 ([])") {
+		t.Fatalf("unconfigured audit = %v\n%s", err, unconfigured)
+	}
+	flagOut, flagErr := captureStdout(t, func() error {
+		return runTopologyAudit(context.Background(), []string{"--dev-root=" + devRoot, "--workstation-config=" + settings})
+	})
+	t.Setenv(config.WorkstationConfigEnv, settings)
+	envOut, envErr := runTopologyAuditOn(t, devRoot)
+	for name, result := range map[string]struct {
+		out string
+		err error
+	}{"flag": {flagOut, flagErr}, "env": {envOut, envErr}} {
+		if result.err == nil || !strings.Contains(result.err.Error(), "1 stray governance files") ||
+			!strings.Contains(result.out, "Organization Containers: 1 ([acme])") {
+			t.Errorf("%s: configured audit = %v\n%s", name, result.err, result.out)
+		}
+	}
+}
+
+// TestTopologyAudit_InvalidSettingsFails: a settings document topology.org_containers
+// rejects fails the command before any audit output.
+func TestTopologyAudit_InvalidSettingsFails(t *testing.T) {
+	invalid := writeFixtureFile(t, t.TempDir(), "workstation.yaml", "topology: {org_containers: [acme/app]}\n")
+	out, err := captureStdout(t, func() error {
+		return runTopologyAudit(context.Background(), []string{"--dev-root=" + t.TempDir(), "--workstation-config=" + invalid})
+	})
+	if err == nil || !strings.Contains(err.Error(), "load operator settings") || strings.Contains(out, "Topology Audit") {
+		t.Fatalf("err = %v, out = %q; want a settings failure and no audit", err, out)
 	}
 }

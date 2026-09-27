@@ -78,13 +78,16 @@ func runPythonGuard(t *testing.T, interpreter string, payload []byte, arguments 
 	return exit.ExitCode(), marker
 }
 
+// TestParityWithThePythonGuardOnTheSuitePayloads replays the corpus against the Python guard
+// and the built-in Go policy. Neither carries operator rules, so a fixture that only an
+// operator deny pattern refuses (operator: true) is allowed by both.
 func TestParityWithThePythonGuardOnTheSuitePayloads(t *testing.T) {
 	interpreter := pythonInterpreter(t)
 	root := repository(t, true)
-	withOperator := policy(t, organisationContainerPattern)
+	builtin := policy(t)
 	payloads := rawCases()
 	for _, fixture := range loadCases(t) {
-		payloads = append(payloads, rawCase{fixture.Name, fixture.Payload, fixture.Allow})
+		payloads = append(payloads, rawCase{fixture.Name, fixture.Payload, fixture.Allow || fixture.Operator})
 	}
 	for _, tc := range payloads {
 		start := time.Now()
@@ -94,7 +97,7 @@ func TestParityWithThePythonGuardOnTheSuitePayloads(t *testing.T) {
 		}
 		response := Run(context.Background(), Invocation{
 			Client: "lefthook", Event: "pre-tool", Stdin: bytes.NewReader(tc.payload),
-			Getenv: noEnvironment, WorkDir: root, Policy: withOperator,
+			Getenv: noEnvironment, WorkDir: root, Policy: builtin,
 		})
 		goMarker := bytes.Equal(response.Stdout, []byte(CommandPolicyMarker+"\n"))
 		if pythonExit != response.ExitCode || pythonMarker != goMarker || (pythonExit == 0) != tc.allow {
@@ -138,6 +141,16 @@ func TestPythonGuardCarriesTheBuiltinEvasionList(t *testing.T) {
 	}
 	if len(got) < 10 {
 		t.Errorf("the evasion list lost rules: %d", len(got))
+	}
+}
+
+// TestPythonGuardCarriesTheBuiltinDevRootRule holds praetor's own Python guard to the engine's
+// generic dev-root rule byte for byte, so neither side names an organisation folder the other
+// does not.
+func TestPythonGuardCarriesTheBuiltinDevRootRule(t *testing.T) {
+	got := pythonPatternList(t, "TOPOLOGY_PATTERNS")
+	if !slices.Equal(got, []string{builtinDevRoot}) {
+		t.Errorf("TOPOLOGY_PATTERNS in %s differs from builtinDevRoot:\npython %q\ngo     %q", pythonGuard, got, builtinDevRoot)
 	}
 }
 

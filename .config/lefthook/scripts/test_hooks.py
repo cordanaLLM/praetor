@@ -1574,6 +1574,21 @@ class ScopeAndGuard(unittest.TestCase):
         result = self.guard_input(json.dumps({"tool_input": {"command": command}}).encode())
         return result, time.monotonic() - started
 
+    def test_guard_blocks_the_dev_root_and_names_no_organisation_folder(self):
+        """Organisation folders are operator data (hooks.command_policy.deny), not guard rules."""
+        cases = {
+            "praetorctl adopt ~/dev": False,
+            "standardsctl needs scan /home/u/dev/ --json": False,
+            "PRAETORCTL Bootstrap ~/DEV": False,
+            "praetorctl adopt ~/dev/acme": True,
+            "praetorctl adopt ~/dev/scratch": True,
+            "standardsctl needs scan /home/u/dev/acme-labs --json": True,
+        }
+        for command, allowed in cases.items():
+            with self.subTest(command):
+                result, _ = self.guard_command(command)
+                self.assertEqual(result.returncode == 0, allowed, result.stderr)
+
     def guard_scan_bounds(self):
         spec = importlib.util.spec_from_file_location("tested_block_evasion", GUARD)
         module = importlib.util.module_from_spec(spec)

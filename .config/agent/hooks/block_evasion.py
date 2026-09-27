@@ -34,8 +34,11 @@ BLOCKED_PATTERNS = [
 # internal/command/run.go); agenthook's lefthookDisableValues holds the same pair.
 LEFTHOOK_DISABLED = ("0", "false")
 
+# The engine's generic dev-root rule (internal/agenthook/policy.go, builtinDevRoot), byte for
+# byte; TestPythonGuardCarriesTheBuiltinDevRootRule fails when the two differ. It names no
+# organisation folder: those are operator data, configured in hooks.command_policy.deny.
 TOPOLOGY_PATTERNS = [
-    r"(standardsctl|praetorctl)\s+(adopt|conform|bootstrap|needs\s+(scan|report|migrate|epic))\b.*(\bdev/?(\s|$)|/dev/(cordanaLLM|lusoris|vmafx|golusoris|upstream|local|stacks|worktrees|scratch)/?(\s|$))",
+    r"(?i)(standardsctl|praetorctl)\s+(adopt|conform|bootstrap|needs\s+(scan|report|migrate|epic))\b.*\bdev/?(\s|$)",
 ]
 
 def scannable(command_str: str) -> bool:
@@ -57,18 +60,18 @@ def audit_command(command_str: str) -> bool:
         if re.search(pattern, command_str):
             sys.stderr.write(
                 f"\n[BLOCKED BY HISS] verification evasion detected.\n"
-                f"pattern: '{pattern}'; policy: prohibited in cordanaLLM repositories.\n"
+                f"pattern: '{pattern}'; policy: prohibited in governed repositories.\n"
                 f"required: commits, pushes, and tool invocations pass verification gates cleanly.\n\n"
             )
             return False
 
     for pattern in TOPOLOGY_PATTERNS:
-        if re.search(pattern, command_str, re.IGNORECASE):
+        if re.search(pattern, command_str):
             sys.stderr.write(
-                f"\n[BLOCKED BY DEV-01] adoption/needs target rejects organization container or dev root.\n"
-                f"pattern: '{pattern}'; target: organization folder or dev root.\n"
+                f"\n[BLOCKED BY DEV-01] adoption/needs target rejects workstation dev root.\n"
+                f"pattern: '{pattern}'; target: dev root.\n"
                 f"required: repositories live inside organization folders as leaf Git repositories.\n"
-                f"prohibited: organization root or workstation dev root adoption.\n\n"
+                f"prohibited: workstation dev root adoption.\n\n"
             )
             return False
 

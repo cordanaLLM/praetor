@@ -463,8 +463,9 @@ text. A command is denied when it
   against the workstation dev root instead of a leaf repository (DEV-01).
 
 The sources live in `internal/agenthook/policy.go` (`builtinEvasion`, `builtinDevRoot`).
-`.config/agent/hooks/block_evasion.py` carries the evasion list byte for byte
-(`TestPythonGuardCarriesTheBuiltinEvasionList`), and `praetorctl adopt` renders the
+`.config/agent/hooks/block_evasion.py` carries the evasion list and the dev-root rule byte
+for byte (`TestPythonGuardCarriesTheBuiltinEvasionList`,
+`TestPythonGuardCarriesTheBuiltinDevRootRule`), and `praetorctl adopt` renders the
 interceptor it writes from `agenthook.BuiltinRules` (see
 [The adopted interceptor](#the-adopted-interceptor)). The allow and deny cases, including
 the false-positive ones, are in `internal/agenthook/testdata/pre-tool/cases.json`.
@@ -514,6 +515,38 @@ with `agenthook.BuildPolicy(settings.Hooks)` (`cmd/standardsctl/hook.go`,
 `internal/agenthook/settings.go`). See [checkpoint evaluators](#checkpoint-evaluators)
 below for the layering `hooks.command_policy.deny` shares with `hooks.scope` and
 `hooks.python`.
+
+### Organisation folders (DEV-01)
+
+DEV-01 keeps every repository inside an organisation folder under the dev root. The
+built-in hook rule refuses only the dev root itself; neither the Go policy nor praetor's
+Python guard names an organisation folder, so `praetorctl adopt ~/dev/acme` passes both
+(`deny-organisation-container` in the corpus is an `operator: true` case). An operator who
+also wants a folder root refused adds a pattern of the shape the replay uses
+(`organisationContainerPattern` in `internal/agenthook/support_test.go`) to their own
+settings:
+
+```yaml
+hooks:
+  command_policy:
+    deny:
+      - '(?i)(standardsctl|praetorctl)\s+(adopt|conform|bootstrap|needs\s+(scan|report|migrate|epic))\b.*/dev/(acme|acme-labs)/?(\s|$)'
+```
+
+`praetorctl topology audit` and `topology clean` recognise organisation folders without a
+hook rule. A dev-root directory is a container when its name, compared lowercased, is one
+of the built-in names (`upstream`, `local`, `stacks`, `worktrees`, `scratch`;
+`topology.BuiltinOrgContainers`) or is listed in `topology.org_containers`, read through
+`--fleet-config`, `--workstation-config` and `--manifest` or the settings environment
+(`cmd/standardsctl/topology.go`). Whatever its name, a directory that is not a repository
+itself and directly holds at least one child repository is a container too
+(`topology.HoldsChildRepository`, at most `MaxScanEntries` entries; a listing it cannot
+finish truncates the audit, which then blocks cleanup). Configure a name when structure
+cannot reveal the folder, for example one that is itself a repository or holds no valid
+child repository yet. Cleanup never deletes a recognised container or any directory that
+holds a repository (`internal/topology/containers_test.go`). `praetorctl adopt` refuses a
+dev-root folder with a built-in name or a child repository as an organisation directory
+(`internal/adopt/validate.go`).
 
 ## Record mode
 
@@ -685,7 +718,9 @@ The JSON-expressible payloads of the Python suites
 invalid UTF-8, two documents, exactly 1 MiB, 1 MiB plus one byte) are generated beside it.
 One Go test feeds every payload to `.config/agent/hooks/block_evasion.py` and to the Go
 entrypoint in the `lefthook` dialect and requires the same exit code and the same marker.
-A second test does the same for the environment check. Both skip with a stated reason on
+Both sides run their built-in rules only, so an `operator: true` case, which only an
+operator deny pattern refuses, is allowed by both (`TestParityWithThePythonGuardOnTheSuitePayloads`
+in `internal/agenthook/parity_test.go`). A second test does the same for the environment check. Both skip with a stated reason on
 a host without a working `python3` or `python`. The replay is removed together with the
 Python guard.
 
