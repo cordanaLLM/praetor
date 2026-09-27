@@ -1,0 +1,3 @@
+type: fixed
+title: Replace operator-private fork owners, organisation, repository, workstation and fleet names in ADR-0003, ADR-0006, ADR-0007 and ADR-0012 with neutral placeholders under ADR-0014 section 7, each record listing its redactions
+breaking: false

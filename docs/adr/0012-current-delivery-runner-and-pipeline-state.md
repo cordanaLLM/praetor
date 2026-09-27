@@ -13,7 +13,7 @@ older records keep their text; only their Status line changes, to `Superseded by
 
 Measured at `eed57331` (#352, the Ubuntu 26.04 runner and image baseline) plus the fixes on the
 same branch as this record (the gating stage's function-length resolution and the pre-commit
-context classification). The operational fork was read at `lusoris/praetor` `main` `88a39dd9`.
+context classification). The operational fork was read at `<owner>/praetor` `main` `88a39dd9`.
 
 | Record | Claim | Measured | Evidence |
 | :-- | :-- | :-- | :-- |
@@ -21,9 +21,9 @@ context classification). The operational fork was read at `lusoris/praetor` `mai
 | ADR-0003 | the engine keeps "100% test coverage" and a "100% zero-debt baseline" | CI enforces a 65% total statement-coverage floor; existing debt is recorded in `.standards-baseline.json` and only new or touched-file debt fails | `.github/workflows/ci.yml:217`, `internal/gating/pipeline.go` (`runHissStage`), `cmd/standardsctl/audit.go` (`auditBaselineAndInvariants`) |
 | ADR-0003 | verified releases and signed tags flow downstream | no `v*` tag exists, so the tag-triggered release workflow has never produced a release (#205) | `git tag -l 'v*'` is empty; `.github/workflows/release-binaries.yml:3-7` |
 | ADR-0004 | a 4-stage pipeline scanning HISS-01 through HISS-16 at <= 60 lines per function | six stages; the HISS scan emits HISS-01, 02, 04, 07, 08 and 09; the function-length limit comes from the repository's resolved policy | `internal/gating/pipeline.go` (`executeStages`, `hissScanOptions`), `internal/hiss/rules.go`, `internal/hiss/go_ast.go` |
-| ADR-0005 | GitOps delivery through ArgoCD at `deploy/k8s/application.yaml` | `deploy/` in this repository holds only the Helm chart; the ArgoCD Application is in the operational fork; no workflow builds or publishes an image | `git ls-files deploy`, `lusoris/praetor:deploy/k8s/application.yaml`, `.github/workflows/*.yml`, `.goreleaser.yaml` (no `dockers` section) |
+| ADR-0005 | GitOps delivery through ArgoCD at `deploy/k8s/application.yaml` | `deploy/` in this repository holds only the Helm chart; the ArgoCD Application is in the operational fork; no workflow builds or publishes an image | `git ls-files deploy`, `<owner>/praetor:deploy/k8s/application.yaml`, `.github/workflows/*.yml`, `.goreleaser.yaml` (no `dockers` section) |
 | ADR-0005 | Praetor's own image builds from `docker/dev/Dockerfile` | that file is the development container; the production image is `build/package/Dockerfile` | `docker/dev/Dockerfile`, `build/package/Dockerfile:3,32,47` |
-| ADR-0006 | Linux jobs run on ARC scale sets for amd64, arm64 and GPU | the routing policy still resolves those names, but no workflow routes through it: CI runs on GitHub-hosted `ubuntu-26.04`, with an `ubuntu-26.04`/`macos-26`/`windows-2025` portability matrix, and a guard test rejects any `-latest` runner alias; the operational fork defines `arc-runner-set-linux-amd64` and `arc-runner-set-gpu-xpu` and no arm64 set | `internal/config/hierarchy.go:58-69`, `.github/workflows/*.yml` (`runs-on`), `.github/workflows/portability.yml` (`matrix.include`), `internal/forge/runner_label_guard_test.go`, `lusoris/praetor:deploy/arc/runner-scale-set.yaml` |
+| ADR-0006 | Linux jobs run on ARC scale sets for amd64, arm64 and GPU | the routing policy still resolves those names, but no workflow routes through it: CI runs on GitHub-hosted `ubuntu-26.04`, with an `ubuntu-26.04`/`macos-26`/`windows-2025` portability matrix, and a guard test rejects any `-latest` runner alias; the operational fork defines `arc-runner-set-linux-amd64` and `arc-runner-set-gpu-xpu` and no arm64 set | `internal/config/hierarchy.go:58-69`, `.github/workflows/*.yml` (`runs-on`), `.github/workflows/portability.yml` (`matrix.include`), `internal/forge/runner_label_guard_test.go`, `<owner>/praetor:deploy/arc/runner-scale-set.yaml` |
 | ADR-0006 | Darwin targets route to GitHub-hosted `macos-14` and `macos-13` | the defaults are `macos-26` for `darwin/arm64` and `macos-26-intel` for `darwin/amd64`; `macos-14` carries a deprecated badge in actions/runner-images and `macos-13` is no longer published | `internal/config/hierarchy.go:39-69` (the comment cites the runner-images table) |
 
 ## Decision
@@ -45,7 +45,7 @@ A vendor with no entry in `vendorTargets` is not covered; covering one means add
 
 ### 2. Engine and operational fork (supersedes ADR-0003)
 
-The two-repository topology stands. `cordanaLLM/praetor` is the engine; `lusoris/praetor` is the
+The two-repository topology stands. `cordanaLLM/praetor` is the engine; `<owner>/praetor` is the
 operational fork that runs on workstations, carries operator data and reports demand through
 `.needs.yaml`. Paths only the fork may carry are engine schema in
 `internal/operationalsync/overlay.go` (`ownerOnlyPrefixes`), and the engine's `.gitignore` ignores
@@ -160,3 +160,15 @@ that list.
 
 - Issue #355 (items 1 and 2), #205 (first release), #222 (operator data is configuration).
 - ADR-0001, ADR-0003, ADR-0004, ADR-0005, ADR-0006 (superseded by this record).
+
+## Redactions
+
+Identifier-only redactions under [ADR-0014](0014-operator-neutral-defaults.md) §7. No decision,
+rationale, status or evidence path changed; line numbers refer to this file.
+
+- 2026-09-27, line 16: the operator fork's owner account became the placeholder `<owner>`.
+- 2026-09-27, line 24: the same owner account, in an evidence reference, became `<owner>`; the
+  file path after the colon is unchanged.
+- 2026-09-27, line 26: the same owner account, in an evidence reference, became `<owner>`; the
+  file path after the colon is unchanged.
+- 2026-09-27, line 48: the same owner account became `<owner>`.
