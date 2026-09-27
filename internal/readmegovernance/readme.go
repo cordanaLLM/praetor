@@ -18,6 +18,14 @@ const (
 	// Start and End delimit the only README region Praetor owns.
 	Start = "<!-- praetor:readme-governance:start -->"
 	End   = "<!-- praetor:readme-governance:end -->"
+	// File is the repository-relative README that carries the managed block.
+	File = "README.md"
+
+	// documentationRow and the debt row parts are shared by renderBlock and blockState, so
+	// the reader cannot drift from the renderer it reads back.
+	documentationRow = "| **Documentation** | `make docs-lint` | Enforces locked Markdown style and private scratch-link policy |"
+	debtRowPrefix    = "| **Debt Baseline** | `.standards-baseline.json` | "
+	debtRowSuffix    = " |"
 )
 
 var (
@@ -179,11 +187,9 @@ func renderBlock(state State, customHISSBadge bool) string {
 		"| **Context Sync** | `praetorctl compile-context --verify` | Verifies every generated agent context against `AGENTS.md` |",
 	)
 	if state.DocumentationEnabled {
-		lines = append(lines,
-			"| **Documentation** | `make docs-lint` | Enforces locked Markdown style and private scratch-link policy |")
+		lines = append(lines, documentationRow)
 	}
-	lines = append(lines,
-		fmt.Sprintf("| **Debt Baseline** | `.standards-baseline.json` | %s |", baselineDescription(state)), End)
+	lines = append(lines, debtRowPrefix+baselineDescription(state)+debtRowSuffix, End)
 	return strings.Join(lines, "\n")
 }
 
