@@ -203,6 +203,24 @@ make editors-reference-verify   # praetorctl editors reference --verify
 file's path. Tests: `internal/editor/reference_test.go`,
 `cmd/standardsctl/editors_reference_test.go`.
 
+## The engine's own editor files
+
+The engine checks its own editor files the way an adopter's are checked. Its
+`.standards.yaml` selects `editors: [universal, vscode]`, and `make verify-all`
+runs `make editors-verify` (`praetorctl editors verify`) against that selection:
+
+```bash
+make editors-verify   # praetorctl editors verify
+```
+
+The gate fails when a selected file is missing or has lost a managed value. The
+tracked `.editorconfig` adds two-space sections for the TypeScript, Lua, shell and
+web sources, so the gate reports it as preserved but unverified. Neovim is not
+selected: its module is compared byte for byte, and it holds a language-server
+block only when `bin/standards-lsp` is built, so a fresh checkout and a built one
+would disagree. Tests: `cmd/standardsctl/editors_self_gate_test.go`, which the
+platform matrix runs on Linux, macOS and Windows.
+
 ## VS Code extension trace level
 
 The extension starts its language client with the id `standards.lsp`

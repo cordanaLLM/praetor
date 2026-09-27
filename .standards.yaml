@@ -37,6 +37,16 @@ facets:
   - "agent:sandboxed"
   - "tooling:vscode-extension"
 
+# Editors this repository dogfoods: `praetorctl adopt` and `praetorctl editors generate|verify`
+# resolve this list, and `make editors-verify` checks it on every heavy CI run (BUG-439).
+# Neovim is left out although .nvim.lua and lua/standards.lua are tracked: its module is
+# compared byte for byte, and its language-server block exists only when bin/standards-lsp is
+# built, so a fresh checkout and a built one would disagree. The Neovim reference module under
+# editors/ is generator output that `make editors-reference-verify` checks instead.
+editors:
+  - "universal"
+  - "vscode"
+
 # Standard overrides only increase strictness. The explicit review mode below
 # temporarily permits single-maintainer operation; all other gates stay enforced.
 overrides:
