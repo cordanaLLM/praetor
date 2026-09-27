@@ -157,10 +157,13 @@ standardsctl sync --remote --forge-host=ghe.example.com \
   `repository.topics` GitHub lacks are added. A field left unset is never cleared on GitHub, and a
   topic the manifest does not name is kept, so an empty topic list removes nothing. Topics are
   lower-cased as GitHub stores them, and one GitHub would refuse (anything but lowercase letters,
-  numbers and hyphens, more than 50 characters, or more than 20 topics) fails the sync before any
-  write. `repository.visibility` is compared and a mismatch printed as `[DRIFT]`, but never
-  written: making a repository public or private stays the operator's decision
-  (`internal/forge/repo_metadata.go`, `TestSync_Remote_RepositoryMetadata`).
+  numbers and hyphens, more than 50 characters, or more than 20 topics) fails the sync before
+  anything is written to GitHub, the ruleset and labels included (`forge.ValidateRepositoryTopics`).
+  Declared topics that would take the repository's own past 20 fail right after the repository
+  is read, before the description or homepage is written; a topic write GitHub rejects after
+  those were written names them in the error. `repository.visibility` is compared and a mismatch
+  printed as `[DRIFT]`, but never written: making a repository public or private stays the
+  operator's decision (`internal/forge/repo_metadata.go`, `TestSync_Remote_RepositoryMetadata`).
 
 ### Label taxonomy
 

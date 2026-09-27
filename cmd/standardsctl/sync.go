@@ -191,24 +191,34 @@ type remoteSyncInputs struct {
 	labels []forge.Label
 }
 
+// preflightRemoteForge runs every check a --remote sync can decide before its first forge
+// write: a set repository identity, topics GitHub accepts, a bare forge host, and an origin
+// remote naming the manifest's repository. A failure here leaves GitHub untouched.
+func preflightRemoteForge(ctx context.Context, rootDir string, repo config.RepositoryMetadata, host string) error {
+	if repo.Owner == "" || repo.Name == "" {
+		return errors.New("manifest repository.owner and repository.name must be set before writing to the forge")
+	}
+	if err := forge.ValidateRepositoryTopics(repo.Topics); err != nil {
+		return fmt.Errorf("reconcile repository metadata: %w", err)
+	}
+	if err := validateForgeHost(host); err != nil {
+		return err
+	}
+	return verifyOriginIdentity(ctx, rootDir, host, repo.Owner, repo.Name)
+}
+
 // reconcileRemoteForge pushes the branch protection ruleset, the label taxonomy and the
 // repository metadata and returns every failure: a missing credential, an unset or foreign
-// repository identity, or a rejected API call.
+// repository identity, a topic GitHub would refuse, or a rejected API call.
 func reconcileRemoteForge(ctx context.Context, rootDir string, in remoteSyncInputs, remote remoteSyncOptions) error {
 	token := resolveSyncToken(remote.token)
 	if token == "" {
 		return ErrRemoteTokenMissing
 	}
+	if err := preflightRemoteForge(ctx, rootDir, in.manifest.Repository, remote.host); err != nil {
+		return err
+	}
 	owner, name := in.manifest.Repository.Owner, in.manifest.Repository.Name
-	if owner == "" || name == "" {
-		return errors.New("manifest repository.owner and repository.name must be set before writing to the forge")
-	}
-	if err := validateForgeHost(remote.host); err != nil {
-		return err
-	}
-	if err := verifyOriginIdentity(ctx, rootDir, remote.host, owner, name); err != nil {
-		return err
-	}
 
 	gh := forge.NewGitHubDriver(token, remote.endpoint)
 	gh.SetRepository(owner, name)

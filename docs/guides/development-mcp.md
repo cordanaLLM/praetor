@@ -566,7 +566,7 @@ sources (`workspaceSources`, `internal/hindsight/distiller.go`):
 | Source | On failure |
 | --- | --- |
 | bug ledger (`.workingdir/BUGS.md`) | required: the run fails and the cache is not written |
-| flavor archetype | optional: recorded as a warning |
+| flavor (`flavor.Resolve`) | optional: recorded as a warning |
 | dedupe scan | optional: recorded as a warning |
 | package docs (`.workingdir/docs/catalog.json`) | optional: recorded as a warning |
 

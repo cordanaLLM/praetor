@@ -6,7 +6,7 @@ repository:
   name: "praetor"
   visibility: "public"
   description: "Enterprise Fleet Governance, Repository-as-Code & Universal AI Agent Engineering Engine"
-  homepage: "https://standards.cordana.ai"
+  homepage: "https://cordanallm.github.io/praetor/"
   topics:
     - "governance"
     - "repository-as-code"

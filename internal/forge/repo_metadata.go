@@ -48,6 +48,11 @@ type ghRepositoryMetadata struct {
 // topics are only ever added. A topic the repository carries and the manifest does not name is
 // kept, the way labels outside .config/labels.yaml are, so an empty topic list never wipes the
 // repository's topics. Every write is checked against the state GitHub returns for it.
+//
+// Every refusal that can be decided up front is decided before the first write: an invalid
+// topic before the repository is read, and a topic union past GitHub's limit right after the
+// read, so a run that fails there has changed nothing. A topic write GitHub rejects after the
+// description or homepage was written names those fields in its error.
 func (g *GitHubDriver) ReconcileRepositoryMetadata(ctx context.Context, declared config.RepositoryMetadata) (*RepositoryMetadataReport, error) {
 	if err := g.Authenticate(ctx); err != nil {
 		return nil, err
@@ -60,14 +65,37 @@ func (g *GitHubDriver) ReconcileRepositoryMetadata(ctx context.Context, declared
 	if err != nil {
 		return nil, err
 	}
+	missing, err := missingTopics(topics, live.Topics)
+	if err != nil {
+		return nil, err
+	}
 	report := &RepositoryMetadataReport{VisibilityDrift: visibilityDrift(declared.Visibility, live.Visibility)}
 	if report.Updated, err = g.patchRepositoryFields(ctx, declared, live); err != nil {
 		return report, err
 	}
-	if report.AddedTopics, err = g.addMissingTopics(ctx, topics, live.Topics); err != nil {
-		return report, err
+	if err := g.addTopics(ctx, live.Topics, missing); err != nil {
+		return report, afterFieldWrites(err, report.Updated)
 	}
+	report.AddedTopics = missing
 	return report, nil
+}
+
+// ValidateRepositoryTopics reports a declared topic GitHub would refuse, or more topics than it
+// accepts. A --remote sync calls it before its first forge write, so a manifest GitHub would
+// reject leaves the ruleset and labels untouched too; ReconcileRepositoryMetadata applies the
+// same check again for any other caller.
+func ValidateRepositoryTopics(declared []string) error {
+	_, err := normalizeTopics(declared)
+	return err
+}
+
+// afterFieldWrites adds the repository fields already written to err, so an operator whose
+// sync fails on the topic write still learns the description or homepage changed.
+func afterFieldWrites(err error, written []string) error {
+	if len(written) == 0 {
+		return err
+	}
+	return fmt.Errorf("%w (repository %s already written)", err, strings.Join(written, " and "))
 }
 
 // normalizeTopics lower-cases the declared topics, as GitHub stores them, drops duplicates and
@@ -102,11 +130,17 @@ func validateTopic(topic string) error {
 		return fmt.Errorf("topic must start with a letter or number")
 	}
 	for i := 0; i < len(topic) && i < maxTopicLength; i++ {
-		if c := topic[i]; (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
+		if !isTopicByte(topic[i]) {
 			return fmt.Errorf("topic may hold only lowercase letters, numbers and hyphens")
 		}
 	}
 	return nil
+}
+
+// isTopicByte reports whether c may appear in a GitHub topic: a lowercase ASCII letter, a digit
+// or a hyphen.
+func isTopicByte(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-'
 }
 
 // visibilityDrift describes a declared visibility the repository does not have, or returns ""
@@ -200,27 +234,30 @@ func (g *GitHubDriver) sendRepositoryPatch(ctx context.Context, payload map[stri
 	return written, nil
 }
 
-// addMissingTopics adds the declared topics the repository lacks, keeping every topic it has,
-// and returns the ones it added. Nothing is written when none is missing.
-func (g *GitHubDriver) addMissingTopics(ctx context.Context, declared, live []string) ([]string, error) {
+// missingTopics returns the declared topics the repository lacks. It fails when adding them to
+// the topics the repository keeps would exceed GitHub's limit, which ReconcileRepositoryMetadata
+// checks before its first write so the refusal leaves the repository unchanged.
+func missingTopics(declared, live []string) ([]string, error) {
 	var missing []string
 	for i := 0; i < len(declared) && i < MaxRepositoryTopics; i++ {
 		if !containsFold(live, declared[i]) {
 			missing = append(missing, declared[i])
 		}
 	}
-	if len(missing) == 0 {
-		return nil, nil
-	}
-	names := append(append(make([]string, 0, len(live)+len(missing)), live...), missing...)
-	if len(names) > MaxRepositoryTopics {
+	if len(missing) > 0 && len(live)+len(missing) > MaxRepositoryTopics {
 		return nil, fmt.Errorf("adding %d declared topics to the repository's %d would exceed GitHub's limit of %d; nothing was written",
 			len(missing), len(live), MaxRepositoryTopics)
 	}
-	if err := g.putTopics(ctx, names); err != nil {
-		return nil, err
-	}
 	return missing, nil
+}
+
+// addTopics adds missing to the repository's live topics, keeping every topic it has. Nothing
+// is written when none is missing.
+func (g *GitHubDriver) addTopics(ctx context.Context, live, missing []string) error {
+	if len(missing) == 0 {
+		return nil
+	}
+	return g.putTopics(ctx, append(append(make([]string, 0, len(live)+len(missing)), live...), missing...))
 }
 
 // putTopics replaces the repository's topics with names and checks GitHub's answer holds them.

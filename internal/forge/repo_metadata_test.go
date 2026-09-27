@@ -3,6 +3,8 @@ package forge
 import (
 	"context"
 	"net/http"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -119,9 +121,13 @@ func TestReconcileRepositoryMetadata_Negative_NoTokenNoRequest(t *testing.T) {
 }
 
 // Negative: a rejected read or write is an error whose body preview is bounded and stripped of
-// control bytes, and nothing after the failure is written.
+// control bytes, and nothing after the failure is written. A topic write rejected after the
+// description was written names the written field, since sync drops the partial report.
 func TestReconcileRepositoryMetadata_Negative_ErrorBodiesSanitized(t *testing.T) {
-	for method, wantWrites := range map[string]int{http.MethodGet: 0, http.MethodPatch: 1} {
+	for method, want := range map[string]struct {
+		writes  int
+		written bool
+	}{http.MethodGet: {0, false}, http.MethodPatch: {1, false}, http.MethodPut: {2, true}} {
 		gh, fake, _ := newMetadataForge(t, liveMetadata(), map[string]int{method: http.StatusForbidden})
 		declared := config.RepositoryMetadata{Description: "new", Topics: []string{"added"}}
 		_, err := gh.ReconcileRepositoryMetadata(context.Background(), declared)
@@ -131,8 +137,11 @@ func TestReconcileRepositoryMetadata_Negative_ErrorBodiesSanitized(t *testing.T)
 		if strings.ContainsRune(err.Error(), '\x1b') || len(err.Error()) > 1024 {
 			t.Errorf("%s rejection: the error carries a raw or unbounded body (%d bytes)", method, len(err.Error()))
 		}
-		if got := writes(fake); len(got) != wantWrites {
+		if got := writes(fake); len(got) != want.writes {
 			t.Errorf("%s rejection: writes = %v", method, got)
+		}
+		if named := strings.Contains(err.Error(), "repository description already written"); named != want.written {
+			t.Errorf("%s rejection: error names the written description = %v, want %v: %v", method, named, want.written, err)
 		}
 	}
 }
@@ -183,20 +192,29 @@ func TestReconcileRepositoryMetadata_Boundary_UnsetFieldsNeverClear(t *testing.T
 	}
 }
 
-// Boundary: topics that would take the repository past GitHub's limit are refused before the
-// topic write, and a write GitHub does not echo back is an error.
+// Boundary: topics that would take the repository past GitHub's limit are refused right after
+// the read, before the drifted description is patched, so the "nothing was written" the error
+// states holds; a union of exactly the limit is written; and a write GitHub does not echo back
+// is an error.
 func TestReconcileRepositoryMetadata_Boundary_TopicLimitAndReadback(t *testing.T) {
 	full := make([]any, MaxRepositoryTopics)
 	for i := range full {
 		full[i] = "live-" + strings.Repeat("a", i+1)
 	}
-	gh, fake, _ := newMetadataForge(t, map[string]any{"topics": full}, nil)
-	_, err := gh.ReconcileRepositoryMetadata(context.Background(), config.RepositoryMetadata{Topics: []string{"one-more"}})
-	if err == nil || !strings.Contains(err.Error(), "limit of 20") {
+	gh, fake, forge := newMetadataForge(t, map[string]any{"description": "old", "topics": full}, nil)
+	declared := config.RepositoryMetadata{Description: "new", Topics: []string{"one-more"}}
+	_, err := gh.ReconcileRepositoryMetadata(context.Background(), declared)
+	if err == nil || !strings.Contains(err.Error(), "limit of 20") || !strings.Contains(err.Error(), "nothing was written") {
 		t.Fatalf("a topic past the limit: err = %v", err)
 	}
-	if got := writes(fake); len(got) != 0 {
-		t.Errorf("a topic past the limit was written: %v", got)
+	if got := writes(fake); len(got) != 0 || forge.live["description"] != "old" {
+		t.Errorf("a run refused for its topics still wrote %v (description now %v)", got, forge.live["description"])
+	}
+
+	gh, fake, _ = newMetadataForge(t, map[string]any{"description": "old", "topics": full[1:]}, nil)
+	report, err := gh.ReconcileRepositoryMetadata(context.Background(), declared)
+	if err != nil || !reflect.DeepEqual(report.AddedTopics, []string{"one-more"}) || len(writes(fake)) != 2 {
+		t.Fatalf("a union of exactly %d topics: report %+v, writes %v, err %v", MaxRepositoryTopics, report, writes(fake), err)
 	}
 
 	gh, _ = newFakeForge(t, func(w http.ResponseWriter, r *http.Request, _ int) {
@@ -205,5 +223,95 @@ func TestReconcileRepositoryMetadata_Boundary_TopicLimitAndReadback(t *testing.T
 	_, err = gh.ReconcileRepositoryMetadata(context.Background(), config.RepositoryMetadata{Description: "new"})
 	if err == nil || !strings.Contains(err.Error(), "readback") {
 		t.Fatalf("a write GitHub did not echo back must fail, got %v", err)
+	}
+}
+
+// Boundary: a declared homepage equal to the one GitHub carries produces no PATCH, and one that
+// differs only by its trailing slash is written as declared.
+func TestReconcileRepositoryMetadata_Boundary_MatchingHomepageNotPatched(t *testing.T) {
+	live := func() map[string]any {
+		return map[string]any{"description": "d", "homepage": "https://widgets.example/docs/", "topics": []any{}}
+	}
+	gh, fake, _ := newMetadataForge(t, live(), nil)
+	report, err := gh.ReconcileRepositoryMetadata(context.Background(), config.RepositoryMetadata{Description: "d", Homepage: " https://widgets.example/docs/ "})
+	if err != nil || len(report.Updated) != 0 || len(writes(fake)) != 0 {
+		t.Fatalf("a matching homepage: report %+v, writes %v, err %v", report, writes(fake), err)
+	}
+
+	gh, fake, forge := newMetadataForge(t, live(), nil)
+	report, err = gh.ReconcileRepositoryMetadata(context.Background(), config.RepositoryMetadata{Homepage: "https://widgets.example/docs"})
+	if err != nil || !reflect.DeepEqual(report.Updated, []string{"homepage"}) || forge.live["homepage"] != "https://widgets.example/docs" {
+		t.Fatalf("a homepage differing by its slash: report %+v, writes %v, err %v", report, writes(fake), err)
+	}
+}
+
+// Regression: this repository's own manifest declares the homepage its published documentation
+// site lives at (mkdocs.yml site_url), which is what GitHub carries, so its own sync --remote
+// sends no PATCH. The manifest used to declare a host that does not resolve, and the first
+// remote sync would have replaced the working Pages URL with it.
+func TestReconcileRepositoryMetadata_Regression_RepositoryHomepageIsPublishedSite(t *testing.T) {
+	root := filepath.Join("..", "..")
+	m, err := config.LoadManifest(filepath.Join(root, ".standards.yaml"))
+	if err != nil {
+		t.Fatalf("read this repository's manifest: %v", err)
+	}
+	site := mkdocsSiteURL(t, filepath.Join(root, "mkdocs.yml"))
+	gh, fake, _ := newMetadataForge(t, map[string]any{
+		"description": m.Repository.Description, "homepage": site, "visibility": m.Repository.Visibility,
+		"topics": []any{},
+	}, nil)
+	if _, err := gh.ReconcileRepositoryMetadata(context.Background(), m.Repository); err != nil {
+		t.Fatalf("reconcile the repository manifest: %v", err)
+	}
+	for _, write := range writes(fake) {
+		if write == "PATCH /repos/acme/widgets" {
+			t.Fatalf("repository.homepage %q differs from the published site %q, so sync --remote would overwrite it",
+				m.Repository.Homepage, site)
+		}
+	}
+}
+
+// mkdocsSiteURL returns the site_url of the MkDocs configuration at path; a missing file or
+// site_url fails the test rather than skipping it, so the regression check cannot pass unrun.
+func mkdocsSiteURL(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read the MkDocs configuration: %v", err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if value, ok := strings.CutPrefix(line, "site_url:"); ok {
+			return strings.Trim(strings.TrimSpace(value), `"'`)
+		}
+	}
+	t.Fatalf("%s declares no site_url", path)
+	return ""
+}
+
+// Positive, negative and boundary: ValidateRepositoryTopics accepts what GitHub accepts,
+// including a topic of exactly 50 characters and exactly 20 topics, and refuses one byte past
+// either edge of each allowed character range.
+func TestValidateRepositoryTopics(t *testing.T) {
+	twenty := make([]string, MaxRepositoryTopics)
+	for i := range twenty {
+		twenty[i] = "t" + strings.Repeat("a", i+1)
+	}
+	for name, topics := range map[string][]string{
+		"none":          nil,
+		"edges":         {"a", "z", "0", "9", "a-z-0-9", "Upper-Case"},
+		"50 characters": {strings.Repeat("a", maxTopicLength)},
+		"20 topics":     twenty,
+	} {
+		if err := ValidateRepositoryTopics(topics); err != nil {
+			t.Errorf("%s: a topic list GitHub accepts was refused: %v", name, err)
+		}
+	}
+	for _, topic := range []string{"a`", "a{", "a/", "a:", "a.b", "a\x00"} {
+		if err := ValidateRepositoryTopics([]string{topic}); err == nil {
+			t.Errorf("topic %q holds a byte just outside the allowed ranges and was accepted", topic)
+		}
+	}
+	if err := ValidateRepositoryTopics(append(twenty, "one-more")); err == nil {
+		t.Error("21 topics were accepted")
 	}
 }

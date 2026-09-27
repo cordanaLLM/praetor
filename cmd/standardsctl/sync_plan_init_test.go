@@ -769,4 +769,17 @@ func TestSync_Remote_RepositoryMetadata(t *testing.T) {
 	_, err = runSyncCmd(t, "--config="+f.manifestPath, "--remote", "--token=ghp_x", "--endpoint="+failSrv.URL)
 	mustErrContain(t, err, "reconcile repository metadata")
 	mustErrContain(t, err, "422")
+
+	// Negative: a topic GitHub would refuse fails before the first forge request, so neither
+	// the ruleset nor the labels are written for a manifest the metadata step would reject.
+	untouched := &forgeStub{}
+	untouchedSrv := httptest.NewServer(untouched.handler())
+	t.Cleanup(untouchedSrv.Close)
+	writeFixtureFile(t, f.dir, ".standards.yaml", strings.Replace(metadataManifest(), `- "widgets"`, `- "go lang"`, 1))
+	_, err = runSyncCmd(t, "--config="+f.manifestPath, "--remote", "--token=ghp_x", "--endpoint="+untouchedSrv.URL)
+	mustErrContain(t, err, "reconcile repository metadata")
+	mustErrContain(t, err, `repository.topics[0] "go lang"`)
+	if n := untouched.requestCount(); n != 0 {
+		t.Fatalf("an invalid topic reached the forge with %d requests; the ruleset and labels must stay unwritten", n)
+	}
 }
