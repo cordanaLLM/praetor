@@ -1,0 +1,89 @@
+{
+  "slug": "verification-ladder",
+  "title": "Verification ladder",
+  "alt": "Four verification tiers from editor LSP to git hooks, local gate stages, and CI PR admission re-checking Exit-0 receipts.",
+  "text": [
+    "Local Workstation: 1. Editor LSP (cmd/standards-lsp), 2. Git Hooks (lefthook pre-commit & pre-push), 3. Gate Pipeline (6 stages in internal/gating), Signing Key (PRAETOR_RECEIPT_KEY), .standards-receipt.json (Exit-0 receipt).",
+    "Remote CI & Admission: Pull Request (checklist & ```receipt block), 4. CI Re-check (standardsctl forge validate-pr), Admitted (PR status check passes), Rejected (hook block or CI exit 1).",
+    "1. Editor LSP → 2. Git Hooks (save / stage) → 3. Gate Pipeline (commit / push).",
+    "Signing Key → 3. Gate Pipeline (LoadSigningKey) → .standards-receipt.json (signed v2) → Pull Request (fenced in body) → 4. CI Re-check (validate-pr) → Admitted (valid receipt).",
+    "2. Git Hooks → Rejected (hook exit 1).",
+    "4. CI Re-check → Rejected (receipt invalid).",
+    "Scenario 1, clean change -> admitted: A clean change passes all four tiers and is admitted by CI. Editor LSP reports zero diagnostics as code is written. Pre-commit and pre-push hooks run local checks and linters. Gate runs 6 stages; Ed25519 signing key is loaded. Stage output signed; .standards-receipt.json minted for HEAD commit. PR is opened with checked HISS boxes and fenced receipt block. CI runs standardsctl forge validate-pr on the PR description. Signature, clean worktree, and head SHA match: PR is admitted.",
+    "Scenario 2, a hook blocks locally: A local hook blocks commit or push before CI runs. Change introduces an error or invariant violation. Lefthook pre-commit or pre-push hook rejects the change locally.",
+    "Scenario 3, CI rejects invalid receipt: CI rejects a pull request with a missing or invalid receipt. Code is edited and committed. Local checks pass. PR submitted with missing, unpinned, or mismatched receipt. CI step runs standardsctl forge validate-pr. Receipt verification fails: commit mismatch, dirty tree, or missing block.",
+    "Verification escalates through four tiers: real-time editor diagnostics, local git hooks, the six-stage gate pipeline, and CI PR admission."
+  ],
+  "evidence": [
+    "cmd/standards-lsp/server.go:NewServer",
+    ".config/lefthook/scripts/hooks.py:pre_push",
+    ".config/lefthook/scripts/checks.py:run_full_gate",
+    "internal/gating/pipeline.go:executeStages",
+    "internal/gating/pipeline.go:runReceiptStage",
+    "internal/lockdown/keys.go:LoadSigningKey",
+    "internal/lockdown/keys.go:VerifyPinnedReceiptFile",
+    "internal/lockdown/receipts.go:GateOutputVersion",
+    "internal/forge/pr.go:ReceiptFenceToken",
+    "internal/forge/pr.go:ValidatePRChecklistWithPolicy",
+    "internal/forge/pr.go:verifyReceiptEnvelope",
+    "internal/forge/pr.go:applyReceiptVerification",
+    "cmd/standardsctl/forge.go:runForgeValidatePR",
+    ".github/workflows/ci.yml:validate"
+  ],
+  "spec_sha256": "17ccb211becdcdbefb09d4d770b2a9b7a85458c06a79adcd08bfd03ca82a647d",
+  "engine": {
+    "commit": "ccfe85b4851957ac2adf88b4a9ddf9668b2882f1",
+    "sha256": "047b4bcb30562cca709be7175d11995cdda45cf4b89db1f6906c5805b26c6452"
+  },
+  "svg_sha256": "a0fbb489f6e5598da37eb0fc5976998974d2c8e3ee15c6365f2e7d7d9f3efba9",
+  "static_sha256": "b376dc8f8068872be604df704346e68e6381d66fadebe61f279670cc2a4ae0ea",
+  "width": 596,
+  "height": 576,
+  "edges": [
+    {
+      "from": "1. Editor LSP",
+      "to": "2. Git Hooks",
+      "label": "save / stage"
+    },
+    {
+      "from": "2. Git Hooks",
+      "to": "3. Gate Pipeline",
+      "label": "commit / push"
+    },
+    {
+      "from": "Signing Key",
+      "to": "3. Gate Pipeline",
+      "label": "LoadSigningKey"
+    },
+    {
+      "from": "3. Gate Pipeline",
+      "to": ".standards-receipt.json",
+      "label": "signed v2"
+    },
+    {
+      "from": ".standards-receipt.json",
+      "to": "Pull Request",
+      "label": "fenced in body"
+    },
+    {
+      "from": "Pull Request",
+      "to": "4. CI Re-check",
+      "label": "validate-pr"
+    },
+    {
+      "from": "4. CI Re-check",
+      "to": "Admitted",
+      "label": "valid receipt"
+    },
+    {
+      "from": "2. Git Hooks",
+      "to": "Rejected",
+      "label": "hook exit 1"
+    },
+    {
+      "from": "4. CI Re-check",
+      "to": "Rejected",
+      "label": "receipt invalid"
+    }
+  ]
+}
