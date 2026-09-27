@@ -302,6 +302,7 @@ func printGatingReport(rep *gating.PipelineReport) {
 			fmt.Printf("     Reason: %s\n", s.Message)
 		}
 	}
+	printLines(rep.Complexity.Lines())
 	if rep.ReceiptSignature != "" {
 		fmt.Printf("\nExit-0 Receipt: %s (Ed25519 signature: %s...)\n",
 			rep.ReceiptPath, rep.ReceiptSignature[:16])

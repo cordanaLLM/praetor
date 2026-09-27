@@ -130,6 +130,9 @@ type PipelineReport struct {
 	ReceiptPath      string        `json:"receipt_path,omitempty"`
 	Stages           []StageResult `json:"stages"`
 	TotalElapsed     time.Duration `json:"total_elapsed"`
+	// Complexity is the HISS stage's complexity report: measured and printed, never part of
+	// a stage verdict or of the signed stage output. Nil when the HISS stage did not scan.
+	Complexity *hiss.ComplexityReport `json:"complexity,omitempty"`
 }
 
 // StageOutput renders the canonical, deterministic byte stream whose SHA-256 the Exit-0
@@ -169,7 +172,8 @@ type stageConfig struct {
 	// scanOpts overrides the HISS scan bounds. Production leaves it zero so the package
 	// defaults apply and the gate sees exactly the scope `praetorctl audit` sees; tests set
 	// it to reach the truncation path without synthesizing a repository of that size. Its
-	// MaxFuncLOC is always replaced by the repository's resolved policy (hissScanOptions).
+	// MaxFuncLOC and complexity limits are always replaced by the repository's resolved
+	// policy (hissScanOptions).
 	scanOpts hiss.ScanOptions
 	// boundStage derives the race stage's context under its resolved bound. Production uses
 	// withStageBound. Tests start the bound's clock only once their fake suite starts, so how
@@ -358,6 +362,9 @@ func runHissStage(ctx context.Context, cfg *stageConfig) (string, error) {
 	if scanRep.Incomplete() {
 		return "", fmt.Errorf("hiss scan error: %w: %s", hiss.ErrScanIncomplete, scanRep.CoverageEvidence())
 	}
+	if cfg.rep != nil {
+		cfg.rep.Complexity = &scanRep.Complexity
+	}
 
 	base, err := baseline.LoadBaseline(filepath.Join(cfg.repoDir, BaselineFile))
 	if err != nil {
@@ -384,21 +391,21 @@ func runHissStage(ctx context.Context, cfg *stageConfig) (string, error) {
 	return msg, nil
 }
 
-// hissScanOptions returns the scan options with the function-length limit the repository's
-// policy imposes, resolved by config.ResolveRepositoryComplexity: a locked repository gets
-// exactly the limit `praetorctl audit` scans with, a manifest without a lock gets the HISS-04
-// ceiling tightened by its overrides, and an unadopted tree gets the ceiling. Scanning with
-// the package default instead let a repository whose manifest sets a stricter limit pass the
-// gate with functions its audit rejects (BUG-638). A policy that does not resolve still scans
-// with the ceiling, and the returned warning names the cause so the stage message shows it.
+// hissScanOptions returns the scan options with the function-length and complexity limits
+// the repository's policy imposes, resolved by config.ResolveRepositoryComplexity: a locked
+// repository gets exactly the limits `praetorctl audit` scans with, a manifest without a lock
+// gets the HISS-04 ceiling tightened by its overrides, and an unadopted tree gets the ceiling.
+// Scanning with the package default instead let a repository whose manifest sets a stricter
+// limit pass the gate with functions its audit rejects (BUG-638). A policy that does not
+// resolve still scans with the ceiling, and the returned warning names the cause so the stage
+// message shows it.
 func hissScanOptions(ctx context.Context, cfg *stageConfig) (hiss.ScanOptions, string, error) {
 	opts := cfg.scanOpts
 	complexity, warning, err := config.ResolveRepositoryComplexity(ctx, cfg.repoDir)
 	if err != nil {
 		return opts, "", fmt.Errorf("resolve repository complexity policy: %w", err)
 	}
-	opts.MaxFuncLOC = complexity.MaxFuncLOC
-	return opts, warning, nil
+	return complexity.ScanOptions(opts), warning, nil
 }
 
 // runSecurityStage runs govulncheck and gosec. A missing scanner fails the stage: a

@@ -101,6 +101,7 @@ func printRemoteResults(remotes []dogfood.RemoteAdoptionResult) {
 		}
 		fmt.Printf("  %s %s: Grade: %s | Archetype: %s | Debt: %d | HISS: %d | Actions: %d (%dms)\n",
 			status, r.RepoURL, r.ReadinessGrade, r.Archetype, r.DebtCount, r.HISSInfractions, r.SimulatedActions, r.DurationMs)
+		printLines(r.Complexity.Lines())
 	}
 }
 
@@ -117,6 +118,7 @@ func printDogfoodSummary(rep *dogfood.DogfoodReport) {
 	} else {
 		fmt.Println("  [WARN] Host repository has active unbaselined HISS infractions")
 	}
+	printLines(rep.SelfAuditComplexity.Lines())
 
 	if len(rep.TargetResults) > 0 {
 		fmt.Printf("\nLocal Target Adoption Simulations (%d repos):\n", len(rep.TargetResults))

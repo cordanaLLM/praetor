@@ -97,7 +97,9 @@ func scanPublicTree(ctx context.Context, dir string, policy *config.EffectivePol
 	if err := validatePublicPolicy(policy); err != nil {
 		return nil, err
 	}
-	report, err := hiss.Scan(ctx, dir, hiss.ScanOptions{MaxFuncLOC: policy.Policy.Complexity.MaxFuncLOC})
+	// The policy's complexity limits ride along so the retained report measures what the
+	// audit would; the measurements land in report.Complexity and never in the ratchet.
+	report, err := hiss.Scan(ctx, dir, policy.Policy.Complexity.ScanOptions(hiss.ScanOptions{}))
 	if err != nil {
 		return report, err
 	}

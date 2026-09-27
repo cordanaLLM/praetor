@@ -107,6 +107,46 @@ func TestDogfood_Positive(t *testing.T) {
 	}
 }
 
+// Positive, negative and boundary: the self audit measures the host's complexity and carries
+// it in the report, but a measurement never fails the self audit. Cyclomatic 10 is within the
+// HISS-04 limit, 11 is measured.
+func TestDogfood_SelfAuditReportsComplexityWithoutFailing(t *testing.T) {
+	for _, tc := range []struct{ branches, measured int }{{9, 0}, {10, 1}} {
+		host := newHostFixture(t, "# Fixture Harness\n\nRun `praetorctl audit` before concluding a turn.\n")
+		source := "package p\n\nfunc F(x int) int {\n" + strings.Repeat("\tif x > 0 {\n\t\tx++\n\t}\n", tc.branches) + "\treturn x\n}\n"
+		if err := os.WriteFile(filepath.Join(host, "branchy.go"), []byte(source), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		rep, err := RunDogfood(context.Background(), hermeticOptions(host))
+		if err != nil || !rep.SelfAuditPassed || !rep.OverallPassed {
+			t.Fatalf("cyclomatic %d: a measurement failed the self audit: %v (%+v)", tc.branches+1, err, rep)
+		}
+		if rep.SelfAuditComplexity == nil || len(rep.SelfAuditComplexity.Measurements) != tc.measured {
+			t.Errorf("cyclomatic %d: complexity = %+v, want %d measurements", tc.branches+1, rep.SelfAuditComplexity, tc.measured)
+		}
+	}
+}
+
+// Positive and negative: a remote clone's scan carries its complexity measurements beside the
+// infraction count, which they never raise; a scan that fails carries no report at all.
+func TestDogfood_RemoteScanCarriesComplexity(t *testing.T) {
+	dir := t.TempDir()
+	source := "package p\n\nfunc F(x int) int {\n" + strings.Repeat("\tif x > 0 {\n\t\tx++\n\t}\n", 10) + "\treturn x\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "branchy.go"), []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res := &RemoteAdoptionResult{}
+	scanRemoteInfractions(context.Background(), dir, res)
+	if res.Error != "" || res.HISSInfractions != 0 || res.Complexity == nil || len(res.Complexity.Measurements) != 1 {
+		t.Fatalf("remote scan = %+v, want no infraction and one measurement", res)
+	}
+	missing := &RemoteAdoptionResult{}
+	scanRemoteInfractions(context.Background(), filepath.Join(dir, "absent"), missing)
+	if missing.Error == "" || missing.Complexity != nil {
+		t.Errorf("a failed scan = %+v, want an error and no complexity report", missing)
+	}
+}
+
 // TestDogfood_TargetAdoptionSimulated covers the target loop that no test used to reach.
 func TestDogfood_TargetAdoptionSimulated(t *testing.T) {
 	ctx := context.Background()

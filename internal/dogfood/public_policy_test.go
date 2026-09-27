@@ -147,3 +147,38 @@ func TestPublicPolicyCancellationAndTruncation(t *testing.T) {
 		t.Fatalf("truncated post-scan accepted: %v (%+v)", err, check)
 	}
 }
+
+// branchyFunction returns a Go file holding one function of cyclomatic complexity n.
+func branchyFunction(n int) string {
+	return "package fixture\n\nfunc Branchy(x int) int {\n" +
+		strings.Repeat(" if x > 0 {\n  x++\n }\n", n-1) + " return x\n}\n"
+}
+
+// Positive, negative and boundary: public verification measures under the planned policy's
+// complexity limit, not the scanner default, and carries the measurement in the retained
+// scans without adding a single infraction. A limit of 6 admits cyclomatic 6 and measures 7.
+func TestPublicPolicyComplexityIsMeasuredNotEnforced(t *testing.T) {
+	for _, test := range []struct{ cyclomatic, measured int }{{6, 0}, {7, 1}} {
+		t.Run(fmt.Sprintf("cyclomatic-%d", test.cyclomatic), func(t *testing.T) {
+			manifest := "version: 1\nrepository:\n  owner: example\n  name: fixture\nprofiles: [framework]\n" +
+				"overrides:\n  complexity:\n    max_cyclomatic: 6\n"
+			opts, _ := publicLoopFixture(t, map[string]string{
+				"fixture.go": branchyFunction(test.cyclomatic), ".standards.yaml": manifest,
+			})
+			opts.Apply = true
+			report, err := RunPublicLoop(t.Context(), opts)
+			if err != nil || !report.Verified {
+				t.Fatalf("adoption failed: %v (%+v)", err, report)
+			}
+			item := report.Results[0]
+			for _, scan := range []*hiss.ScanReport{item.OriginalScan, item.Attempts[len(item.Attempts)-1].Verification.Scan} {
+				if scan.TotalInfractions != 0 || len(scan.Complexity.Measurements) != test.measured {
+					t.Fatalf("scan = %d infractions, complexity %+v; want 0 and %d measurements", scan.TotalInfractions, scan.Complexity, test.measured)
+				}
+				if test.measured > 0 && scan.Complexity.Measurements[0].Limit != 6 {
+					t.Errorf("measured against %d, want the planned limit of 6", scan.Complexity.Measurements[0].Limit)
+				}
+			}
+		})
+	}
+}

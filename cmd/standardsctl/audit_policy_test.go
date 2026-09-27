@@ -120,3 +120,38 @@ func TestAudit_EffectivePolicyCannotLoosenCompatibilityCeiling(t *testing.T) {
 	// The built-in default is the compatibility ceiling's own length (BUG-309), so both hold it.
 	mustContain(t, out, "max_func_loc=60", "contributors=builtin:defaults-v1,builtin:audit-compat-v1")
 }
+
+// branchySource returns a Go file holding one function of cyclomatic complexity n.
+func branchySource(n int) string {
+	return "package fixture\n\nfunc branchy(x int) int {\n" +
+		strings.Repeat(" if x > 0 {\n  x++\n }\n", n-1) + " return x\n}\n"
+}
+
+// Positive, negative and boundary: the audit measures complexity under the effective policy
+// and prints the report lines, but a measurement never fails it or needs a baseline entry.
+// The fixture's resolved policy admits cyclomatic 15 and measures 16; a deployment layer
+// tightening the limit to 8 measures 9 and the audit still passes.
+func TestAudit_ComplexityIsReportedNeverEnforced(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		cyclomatic int
+		limit      string
+		want       string
+	}{
+		{"within the resolved limit", 15, "", "0 measurements over limit"},
+		{"over the resolved limit", 16, "", "cyclomatic complexity 16 exceeds 15"},
+		{"over a tightened limit", 9, "8", "cyclomatic complexity 9 exceeds 8"},
+	} {
+		f := newAuditFixture(t)
+		writeFixtureFile(t, f.dir, "branchy.go", branchySource(tc.cyclomatic))
+		var flags []string
+		if tc.limit != "" {
+			flags = append(flags, "--deployment-config="+writeFixtureFile(t, f.dir, "deployment.yaml", "complexity:\n  max_cyclomatic: "+tc.limit+"\n"))
+		}
+		out, err := f.audit(t, flags...)
+		if err != nil {
+			t.Fatalf("%s: a complexity measurement failed the audit: %v\n%s", tc.name, err, out)
+		}
+		mustContain(t, out, "[REPORT] HISS-04 complexity measured, not enforced", tc.want, "0 active violations")
+	}
+}
