@@ -341,6 +341,7 @@ func adoptSteps() []namedStep {
 		{"paperclip", reconcilePaperclip},
 		{"agent-definitions", reconcileAgentDefinitions},
 		{"git-hooks", reconcileGitHooks},
+		{"agent-hooks", reconcileAgentHooks},
 	}
 }
 

@@ -1,0 +1,4 @@
+type: fixed
+title: Register PreToolUse anti-evasion interceptor in agent hooks
+breaking: false
+issue: BUG-911
