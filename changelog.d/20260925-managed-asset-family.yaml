@@ -1,0 +1,3 @@
+type: changed
+title: "The Markdown documentation gate is now the first entry of one managed asset family registry (internal/managedasset) that adopt, audit and the devcontainer bootstrap all read, so a further embedded asset family is one registry entry with no new code path; the registry adds an opt-in refuse-on-first-adopt switch that stops adopt, even with --force, from overwriting a repository's own files at a family's paths before the family was ever adopted (off for the Markdown gate), and .gitignore and the formatter inventory now share one managed tail-block merger. Adopt, audit and bootstrap output for the Markdown gate is byte-identical, pinned by golden tests"
+breaking: false

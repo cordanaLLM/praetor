@@ -11,27 +11,38 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/managedasset"
 	"github.com/cordanaLLM/praetor/internal/util"
-	markdownassets "github.com/cordanaLLM/praetor/tools/markdownlint"
 )
 
-func auditExactDocumentationFile(ctx context.Context, rootDir, rel string, expected []byte) error {
+// auditExactManagedFile requires the managed file at rel to hold expected, one consistent
+// checkout line-ending style allowed. gate opens every failure, e.g. "Documentation gate".
+func auditExactManagedFile(ctx context.Context, rootDir, rel string, expected []byte, gate string) error {
 	path, err := util.ConfinePath(rootDir, rel)
 	if err != nil {
-		return fmt.Errorf("[FAIL] Documentation gate path %s is unsafe: %w", rel, err)
+		return fmt.Errorf("[FAIL] %s path %s is unsafe: %w", gate, rel, err)
 	}
 	actual, err := contextopt.ReadSnapshot(ctx, path)
 	if err != nil {
-		return fmt.Errorf("[FAIL] Documentation gate asset %s is missing or unreadable: %w", rel, err)
+		return fmt.Errorf("[FAIL] %s asset %s is missing or unreadable: %w", gate, rel, err)
 	}
 	equivalent, compareErr := util.CanonicalTextEquivalent(actual, expected)
 	if compareErr != nil {
-		return fmt.Errorf("[FAIL] Documentation gate asset %s has invalid line endings: %w", rel, compareErr)
+		return fmt.Errorf("[FAIL] %s asset %s has invalid line endings: %w", gate, rel, compareErr)
 	}
 	if !equivalent {
-		return fmt.Errorf("[FAIL] Documentation gate asset %s differs from the locked Praetor asset; run 'praetorctl adopt --force'", rel)
+		return fmt.Errorf("[FAIL] %s asset %s differs from the locked Praetor asset; run 'praetorctl adopt --force'", gate, rel)
 	}
 	return nil
+}
+
+// familyGate names a family's gate in audit failures: "Documentation gate" for Kind
+// "documentation".
+func familyGate(family managedasset.Family) string {
+	if family.Kind == "" {
+		return "Managed gate"
+	}
+	return strings.ToUpper(family.Kind[:1]) + family.Kind[1:] + " gate"
 }
 
 // documentationDeclines records which declinable adoption steps behind the documentation
@@ -132,26 +143,38 @@ func auditDocumentationGateDisabled(ctx context.Context, rootDir string, decline
 }
 
 func auditDisabledDocumentationAssets(ctx context.Context, rootDir string) error {
-	paths := adopt.DocumentationAssetPaths()
-	for index := 0; index < len(paths) && index <= markdownassets.MaxAssets; index++ {
+	families := adopt.DocumentationFamilies()
+	for index := 0; index < len(families) && index < managedasset.MaxFamilies; index++ {
+		if err := auditDisabledManagedFamily(ctx, rootDir, families[index]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// auditDisabledManagedFamily fails while a disabled family's managed path still holds the
+// canonical text; an operator's own file at the same path is not Praetor's and passes.
+func auditDisabledManagedFamily(ctx context.Context, rootDir string, family managedasset.Family) error {
+	paths := family.ManagedPaths()
+	for index := 0; index < len(paths) && index <= family.MaxAssets; index++ {
 		rel := paths[index]
 		path, err := util.ConfinePath(rootDir, rel)
 		if err != nil {
-			return fmt.Errorf("[FAIL] Disabled documentation path %s is unsafe: %w", rel, err)
+			return fmt.Errorf("[FAIL] Disabled %s path %s is unsafe: %w", family.Kind, rel, err)
 		}
 		actual, exists, err := contextopt.ObserveSnapshot(ctx, path)
 		if err != nil {
-			return fmt.Errorf("[FAIL] Inspect disabled documentation asset %s: %w", rel, err)
+			return fmt.Errorf("[FAIL] Inspect disabled %s asset %s: %w", family.Kind, rel, err)
 		}
 		canonical := false
 		if exists {
-			canonical, err = adopt.DocumentationAssetIsCanonical(rel, actual)
+			canonical, err = adopt.ManagedFileIsCanonical(family, rel, actual)
 			if err != nil {
-				return fmt.Errorf("[FAIL] Classify disabled documentation asset %s: %w", rel, err)
+				return fmt.Errorf("[FAIL] Classify disabled %s asset %s: %w", family.Kind, rel, err)
 			}
 		}
 		if canonical {
-			return fmt.Errorf("[FAIL] Disabled documentation facet retains Praetor asset %s", rel)
+			return fmt.Errorf("[FAIL] Disabled %s facet retains Praetor asset %s", family.Kind, rel)
 		}
 	}
 	return nil
@@ -180,34 +203,59 @@ func auditDisabledDocumentationRuleset(ctx context.Context, rootDir string) erro
 	if err != nil {
 		return fmt.Errorf("[FAIL] Inspect disabled documentation ruleset: %w", err)
 	}
-	requiresDocumentation := false
-	if exists {
-		requiresDocumentation, err = forge.RulesetRequiresStatusContext(ruleset, adopt.DocumentationStatusContext)
-		if err != nil {
-			return fmt.Errorf("[FAIL] Inspect disabled documentation ruleset contexts: %w", err)
-		}
+	if !exists {
+		return nil
 	}
-	if requiresDocumentation {
-		return fmt.Errorf("[FAIL] Disabled documentation facet retains required context %q", adopt.DocumentationStatusContext)
+	families := adopt.DocumentationFamilies()
+	for index := 0; index < len(families) && index < managedasset.MaxFamilies; index++ {
+		family := families[index]
+		if family.StatusContext == "" {
+			continue
+		}
+		required, err := forge.RulesetRequiresStatusContext(ruleset, family.StatusContext)
+		if err != nil {
+			return fmt.Errorf("[FAIL] Inspect disabled %s ruleset contexts: %w", family.Kind, err)
+		}
+		if required {
+			return fmt.Errorf("[FAIL] Disabled %s facet retains required context %q", family.Kind, family.StatusContext)
+		}
 	}
 	return nil
 }
 
+// auditDocumentationAssets compares every enabled documentation family byte for byte and
+// returns how many assets, workflows not counted, it verified.
 func auditDocumentationAssets(ctx context.Context, rootDir string) (int, error) {
-	names := markdownassets.Names()
-	for index := 0; index < len(names) && index < markdownassets.MaxAssets; index++ {
-		expected, err := markdownassets.Read(names[index])
+	families := adopt.DocumentationFamilies()
+	count := 0
+	for index := 0; index < len(families) && index < managedasset.MaxFamilies; index++ {
+		verified, err := auditManagedFamily(ctx, rootDir, families[index])
 		if err != nil {
-			return 0, fmt.Errorf("[FAIL] Load canonical documentation asset: %w", err)
+			return 0, err
 		}
-		rel := filepath.ToSlash(filepath.Join(markdownassets.Directory, names[index]))
-		if err := auditExactDocumentationFile(ctx, rootDir, rel, expected); err != nil {
+		count += verified
+	}
+	return count, nil
+}
+
+// auditManagedFamily compares every asset of family, then its workflow, with the canonical
+// text and returns the number of assets verified.
+func auditManagedFamily(ctx context.Context, rootDir string, family managedasset.Family) (int, error) {
+	gate := familyGate(family)
+	names := family.Names()
+	for index := 0; index < len(names) && index < family.MaxAssets; index++ {
+		expected, err := family.Read(names[index])
+		if err != nil {
+			return 0, fmt.Errorf("[FAIL] Load canonical %s asset: %w", family.Kind, err)
+		}
+		if err := auditExactManagedFile(ctx, rootDir, family.AssetPath(names[index]), expected, gate); err != nil {
 			return 0, err
 		}
 	}
-	if err := auditExactDocumentationFile(ctx, rootDir, adopt.DocumentationWorkflowFile,
-		[]byte(adopt.DocumentationWorkflow())); err != nil {
-		return 0, err
+	if family.WorkflowFile != "" {
+		if err := auditExactManagedFile(ctx, rootDir, family.WorkflowFile, []byte(family.Workflow), gate); err != nil {
+			return 0, err
+		}
 	}
 	return len(names), nil
 }
@@ -294,9 +342,13 @@ func auditDocumentationHostedWiring(
 	if err != nil {
 		return fmt.Errorf("[FAIL] Discover hosted documentation context: %w", err)
 	}
-	if !slices.Contains(contexts, adopt.DocumentationStatusContext) {
-		return fmt.Errorf("[FAIL] Hosted documentation workflow does not report required context %q",
-			adopt.DocumentationStatusContext)
+	families := adopt.DocumentationFamilies()
+	for index := 0; index < len(families) && index < managedasset.MaxFamilies; index++ {
+		family := families[index]
+		if family.StatusContext != "" && !slices.Contains(contexts, family.StatusContext) {
+			return fmt.Errorf("[FAIL] Hosted %s workflow does not report required context %q",
+				family.Kind, family.StatusContext)
+		}
 	}
 	if rulesetDeclined {
 		return nil

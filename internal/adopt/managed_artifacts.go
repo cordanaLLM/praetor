@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
-	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // Adoption writes files whose bytes it later compares, and until now it told the adopter's
@@ -84,18 +83,18 @@ func ManagedFormatterIgnoreBlock(documentationEnabled bool) string {
 	return renderFormatterIgnoreBlock(managedFormatterHeader, documentationEnabled)
 }
 
-func renderFormatterIgnoreBlock(header string, documentationEnabled bool) string {
-	var sb strings.Builder
-	sb.WriteString(managedIgnoreBegin)
-	sb.WriteString("\n")
-	sb.WriteString(header)
-	for _, path := range managedArtifacts(documentationEnabled) {
-		sb.WriteString(path)
-		sb.WriteString("\n")
+// formatterTailBlock is the managed-artifact block adoption owns at the tail of the
+// formatter's ignore file.
+func formatterTailBlock() managedTailBlock {
+	return managedTailBlock{
+		file: prettierIgnoreFile, begin: managedIgnoreBegin, end: managedIgnoreEnd,
+		maxLines: maxIgnoreLines, duplicate: "duplicate or nested managed blocks",
 	}
-	sb.WriteString(managedIgnoreEnd)
-	sb.WriteString("\n")
-	return sb.String()
+}
+
+func renderFormatterIgnoreBlock(header string, documentationEnabled bool) string {
+	lines := strings.Split(strings.TrimSuffix(header, "\n"), "\n")
+	return formatterTailBlock().render(append(lines, managedArtifacts(documentationEnabled)...))
 }
 
 // mergeManagedIgnore returns the ignore file content with the managed block present exactly
@@ -109,67 +108,7 @@ func mergeManagedIgnore(existing string, documentationEnabled bool) (string, err
 }
 
 func mergeFormatterIgnoreBlock(existing, block string) (string, error) {
-	normalized, crlf, err := util.NormalizeLineEndingsStrict(existing)
-	if err != nil {
-		return "", fmt.Errorf("%s line endings are inconsistent: %w", prettierIgnoreFile, err)
-	}
-	lines := strings.Split(normalized, "\n")
-	if len(lines) > maxIgnoreLines {
-		return "", fmt.Errorf("%s exceeds %d lines", prettierIgnoreFile, maxIgnoreLines)
-	}
-	kept, err := filterManagedFormatterLines(lines)
-	if err != nil {
-		return "", err
-	}
-	body := strings.TrimRight(strings.Join(kept, "\n"), "\n")
-	merged := block
-	if body == "" {
-		return util.RestoreLineEndings(merged, crlf), nil
-	}
-	merged = body + "\n\n" + block
-	return util.RestoreLineEndings(merged, crlf), nil
-}
-
-type managedFormatterScan struct {
-	kept               []string
-	inBlock, seenBlock bool
-}
-
-func filterManagedFormatterLines(lines []string) ([]string, error) {
-	scan := managedFormatterScan{kept: make([]string, 0, len(lines))}
-	for index := 0; index < len(lines) && index < maxIgnoreLines; index++ {
-		if err := scan.consume(lines[index], index); err != nil {
-			return nil, err
-		}
-	}
-	if scan.inBlock {
-		return nil, fmt.Errorf("%s contains an unterminated managed block", prettierIgnoreFile)
-	}
-	return scan.kept, nil
-}
-
-func (scan *managedFormatterScan) consume(line string, index int) error {
-	trimmed := strings.TrimSpace(line)
-	if (trimmed == managedIgnoreBegin || trimmed == managedIgnoreEnd) && trimmed != line {
-		return fmt.Errorf("%s contains a non-canonical managed marker at line %d", prettierIgnoreFile, index+1)
-	}
-	switch line {
-	case managedIgnoreBegin:
-		if scan.inBlock || scan.seenBlock {
-			return fmt.Errorf("%s contains duplicate or nested managed blocks", prettierIgnoreFile)
-		}
-		scan.inBlock = true
-	case managedIgnoreEnd:
-		if !scan.inBlock {
-			return fmt.Errorf("%s contains an unmatched managed end marker", prettierIgnoreFile)
-		}
-		scan.inBlock, scan.seenBlock = false, true
-	default:
-		if !scan.inBlock {
-			scan.kept = append(scan.kept, line)
-		}
-	}
-	return nil
+	return formatterTailBlock().merge(existing, block)
 }
 
 // VerifyManagedFormatterIgnore accepts only the converged managed block for active facets, or

@@ -5,10 +5,13 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/managedasset"
 )
 
 func preparedBootstrap(t *testing.T) *Bundle {
@@ -73,31 +76,40 @@ func TestBootstrapSourceChangeDuringCaptureRejected(t *testing.T) {
 	}
 }
 
-func TestBootstrapCapturesDeclaredMarkdownAssets(t *testing.T) {
-	root := bootstrapSourceFixture(t)
-	assetSource := "package markdownlint\n\nimport \"embed\"\n\n" + markdownBootstrapEmbedDirective() +
-		"\nvar assets embed.FS\n"
-	writeBootstrapFile(t, root, "tools/markdownlint/assets.go", assetSource)
-	// The capture holds the build closure, so the CLI imports the embedding package.
-	writeBootstrapFile(t, root, "cmd/standardsctl/main.go", "package main\n\nimport _ \"github.com/cordanaLLM/praetor/tools/markdownlint\"\n\nfunc main() {}\n")
-	for _, asset := range markdownBootstrapAssetPaths() {
-		writeBootstrapFile(t, root, asset, "fixture\n")
-	}
-	files, err := captureBootstrapSource(t.Context(), root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, asset := range markdownBootstrapAssetPaths() {
-		if !containsBootstrapSource(files, asset) {
-			t.Fatalf("declared embedded asset %s was omitted", asset)
-		}
-	}
-	missing := markdownBootstrapAssetPaths()[0]
-	if err := os.Remove(filepath.Join(root, filepath.FromSlash(missing))); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := captureBootstrapSource(t.Context(), root); err == nil || !strings.Contains(err.Error(), missing) {
-		t.Fatalf("missing declared asset accepted: %v", err)
+// TestBootstrapCapturesDeclaredFamilyAssets runs for every managed asset family: the
+// bootstrap captures each declared asset beside the family's go:embed source, and refuses a
+// set that carries the source without one of its assets.
+func TestBootstrapCapturesDeclaredFamilyAssets(t *testing.T) {
+	for _, family := range managedasset.Families() {
+		t.Run(family.Name, func(t *testing.T) {
+			root := bootstrapSourceFixture(t)
+			assetSource := "package " + path.Base(family.Directory) + "\n\nimport \"embed\"\n\n" +
+				family.EmbedDirective() + "\nvar assets embed.FS\n"
+			writeBootstrapFile(t, root, family.Source, assetSource)
+			// The capture holds the build closure, so the CLI imports the embedding package.
+			writeBootstrapFile(t, root, bootstrapBuildPackage+"/main.go",
+				"package main\n\nimport _ \""+praetorModulePath+"/"+family.Directory+"\"\n\nfunc main() {}\n")
+			assets := family.AssetPaths()
+			for _, asset := range assets {
+				writeBootstrapFile(t, root, asset, "fixture\n")
+			}
+			files, err := captureBootstrapSource(t.Context(), root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, asset := range assets {
+				if !containsBootstrapSource(files, asset) {
+					t.Fatalf("declared embedded asset %s was omitted", asset)
+				}
+			}
+			missing := assets[0]
+			if err := os.Remove(filepath.Join(root, filepath.FromSlash(missing))); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := captureBootstrapSource(t.Context(), root); err == nil || !strings.Contains(err.Error(), missing) {
+				t.Fatalf("missing declared asset accepted: %v", err)
+			}
+		})
 	}
 }
 

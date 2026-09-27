@@ -1,0 +1,220 @@
+// SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
+//
+// SPDX-License-Identifier: EUPL-1.2
+
+// Package managedasset is the one registry of managed asset families: sets of locked files
+// compiled into praetorctl with go:embed that adoption writes into a repository, removes
+// again when their facet is disabled, and refuses to touch once an operator edited them.
+//
+// Three consumers read the registry instead of naming a family: adoption
+// (internal/adopt/managed_family.go) emits, removes and refuses the files; audit
+// (cmd/standardsctl/audit_documentation.go) compares them byte for byte, one consistent
+// checkout line-ending style allowed; and the devcontainer bootstrap
+// (internal/devcontainer/bootstrap_source.go) captures the embedded files beside the Go source
+// so a binary built from its archive embeds the same bytes. A new family is therefore one
+// embedding package of its own plus one entry in Families, and no new code path (HISS-19).
+package managedasset
+
+import (
+	"fmt"
+	"io/fs"
+	"path"
+	"slices"
+	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/util"
+	markdownassets "github.com/cordanaLLM/praetor/tools/markdownlint"
+)
+
+const (
+	// MaxFamilies bounds every walk over the registry (HISS-02).
+	MaxFamilies = 8
+	// DocumentationFacet is the manifest facet that enables documentation governance.
+	DocumentationFacet = "docs:seo-portal"
+)
+
+// Family is one managed asset family.
+type Family struct {
+	// Name labels the family in reports and bootstrap errors, e.g. "Markdown".
+	Name string
+	// Kind is the lowercase noun of the surface the family governs, e.g. "documentation";
+	// removal, refusal and audit messages name it.
+	Kind string
+	// AssetNoun names one asset in adoption reports, e.g. "Markdown governance asset".
+	AssetNoun string
+	// WorkflowNoun names the hosted workflow in adoption reports.
+	WorkflowNoun string
+	// Facet is the manifest facet that enables the family.
+	Facet string
+	// Directory is the repository-relative home of the assets, in slash form.
+	Directory string
+	// Source is the Go file below Directory carrying the go:embed directive.
+	Source string
+	// FS is the family's embedded asset tree, rooted at Directory.
+	FS fs.FS
+	// Assets is the complete inventory, relative to Directory, in emission order.
+	Assets []string
+	// MaxAssets bounds every walk over Assets (HISS-02).
+	MaxAssets int
+	// WorkflowFile, StatusContext and Workflow describe the hosted gate: the file adoption
+	// writes, the required check it reports, and its exact text. All three are empty for a
+	// family without a hosted gate.
+	WorkflowFile  string
+	StatusContext string
+	Workflow      string
+	// RefuseForeign makes adoption refuse, even under --force, to overwrite a file at a
+	// managed path while none of the family's paths yet holds its canonical bytes: such a
+	// file predates adoption and belongs to the repository, not to Praetor.
+	RefuseForeign bool
+}
+
+// Families returns the registry in its fixed order: the order adoption emits and audit
+// checks the families in.
+func Families() []Family {
+	return []Family{markdown()}
+}
+
+func markdown() Family {
+	return Family{
+		Name:          "Markdown",
+		Kind:          "documentation",
+		AssetNoun:     "Markdown governance asset",
+		WorkflowNoun:  "documentation governance workflow",
+		Facet:         DocumentationFacet,
+		Directory:     markdownassets.Directory,
+		Source:        markdownassets.SourceFile,
+		FS:            markdownassets.FS(),
+		Assets:        markdownassets.Names(),
+		MaxAssets:     markdownassets.MaxAssets,
+		WorkflowFile:  markdownassets.WorkflowFile,
+		StatusContext: markdownassets.StatusContext,
+		Workflow:      markdownassets.Workflow,
+	}
+}
+
+// ForFacet returns the families facet enables, in registry order.
+func ForFacet(facet string) []Family {
+	all := Families()
+	selected := make([]Family, 0, len(all))
+	for index := 0; index < len(all) && index < MaxFamilies; index++ {
+		if all[index].Facet == facet {
+			selected = append(selected, all[index])
+		}
+	}
+	return selected
+}
+
+// Names returns a copy of the inventory, cut at MaxAssets.
+func (f Family) Names() []string {
+	if f.MaxAssets <= 0 {
+		return nil
+	}
+	return slices.Clone(f.Assets[:min(len(f.Assets), f.MaxAssets)])
+}
+
+// Read returns a private copy of one inventory asset.
+func (f Family) Read(name string) ([]byte, error) {
+	return util.ReadEmbeddedAsset(f.FS, path.Base(f.Directory), f.Names(), name)
+}
+
+// AssetPath returns the repository-relative slash path of one asset.
+func (f Family) AssetPath(name string) string {
+	return path.Join(f.Directory, name)
+}
+
+// AssetPaths returns every asset's repository-relative path, in inventory order.
+func (f Family) AssetPaths() []string {
+	names := f.Names()
+	paths := make([]string, 0, len(names))
+	for index := 0; index < len(names) && index < f.MaxAssets; index++ {
+		paths = append(paths, f.AssetPath(names[index]))
+	}
+	return paths
+}
+
+// ManagedPaths returns every path the family alone owns: its workflow, when it has one,
+// followed by its assets. At most MaxAssets+1 paths.
+func (f Family) ManagedPaths() []string {
+	if f.WorkflowFile == "" {
+		return f.AssetPaths()
+	}
+	return append([]string{f.WorkflowFile}, f.AssetPaths()...)
+}
+
+// Canonical returns the exact bytes the family owns at the repository-relative path rel.
+// owned is false, with no error, when rel is not one of the family's managed paths.
+func (f Family) Canonical(rel string) (data []byte, owned bool, err error) {
+	if f.WorkflowFile != "" && rel == f.WorkflowFile {
+		return []byte(f.Workflow), true, nil
+	}
+	name, below := strings.CutPrefix(rel, f.Directory+"/")
+	if !below || !slices.Contains(f.Names(), name) {
+		return nil, false, nil
+	}
+	data, err = f.Read(name)
+	return data, true, err
+}
+
+// EmbedDirective returns the exact go:embed line Source must carry: the inventory, in order.
+func (f Family) EmbedDirective() string {
+	return "//go:embed " + strings.Join(f.Names(), " ")
+}
+
+// Validate reports the first structural defect of a family declaration: a missing label, an
+// inventory that is empty, over its bound, duplicated or not a clean relative path, a Source
+// outside Directory, or a partial hosted-gate declaration.
+func (f Family) Validate() error {
+	for _, field := range [][2]string{
+		{"name", f.Name}, {"kind", f.Kind}, {"asset noun", f.AssetNoun}, {"facet", f.Facet},
+		{"directory", f.Directory}, {"source", f.Source},
+	} {
+		if strings.TrimSpace(field[1]) == "" {
+			return fmt.Errorf("managed asset family %q declares no %s", f.Name, field[0])
+		}
+	}
+	if !cleanRelative(f.Directory) || path.Dir(f.Source) != f.Directory || f.FS == nil {
+		return fmt.Errorf("managed asset family %q must embed its assets from a Source file directly in its clean relative Directory", f.Name)
+	}
+	if err := f.validateInventory(); err != nil {
+		return err
+	}
+	return f.validateWorkflow()
+}
+
+func (f Family) validateInventory() error {
+	if f.MaxAssets <= 0 || len(f.Assets) == 0 || len(f.Assets) > f.MaxAssets {
+		return fmt.Errorf("managed asset family %q inventory holds %d assets, want 1..%d", f.Name, len(f.Assets), f.MaxAssets)
+	}
+	seen := make(map[string]bool, len(f.Assets))
+	for index := 0; index < len(f.Assets) && index < f.MaxAssets; index++ {
+		name := f.Assets[index]
+		if !cleanRelative(name) || seen[name] {
+			return fmt.Errorf("managed asset family %q asset %q is duplicated or not a clean relative path", f.Name, name)
+		}
+		seen[name] = true
+	}
+	return nil
+}
+
+func (f Family) validateWorkflow() error {
+	declared := 0
+	for _, value := range []string{f.WorkflowFile, f.StatusContext, f.Workflow, f.WorkflowNoun} {
+		if value != "" {
+			declared++
+		}
+	}
+	if declared != 0 && declared != 4 {
+		return fmt.Errorf("managed asset family %q declares its hosted gate partially", f.Name)
+	}
+	if declared == 4 && (!cleanRelative(f.WorkflowFile) || strings.HasPrefix(f.WorkflowFile, f.Directory+"/")) {
+		return fmt.Errorf("managed asset family %q workflow %q must be a clean relative path outside its asset directory", f.Name, f.WorkflowFile)
+	}
+	return nil
+}
+
+// cleanRelative reports whether name is a non-empty, clean, relative slash path that stays
+// inside its root.
+func cleanRelative(name string) bool {
+	return name != "" && name != "." && path.Clean(name) == name && !path.IsAbs(name) && name != ".." &&
+		!strings.HasPrefix(name, "../") && !strings.ContainsAny(name, "\\\x00\r\n")
+}

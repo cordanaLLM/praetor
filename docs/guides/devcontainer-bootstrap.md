@@ -19,10 +19,12 @@ The selected source must be a Git checkout declaring the Praetor module. From it
 tracked and nonignored untracked files, preparation captures what
 `go build ./cmd/standardsctl` reads: the Go sources of every module package
 `cmd/standardsctl` imports, directly or transitively, plus `go.mod`, `go.sum`,
-`LICENSE`, and the assets of each reached `go:embed` family — the five declared
-`tools/markdownlint` assets and the `templates/*/*.tmpl` bodies flavor apply
-scaffolds. The import closure is read with Go's parser, not the go command, so
-preparation needs no Go toolchain (`captureBootstrapClosure` in
+`LICENSE`, and the assets of each reached `go:embed` family — every managed
+asset family in the registry (`managedasset.Families`,
+`internal/managedasset/family.go`; today the five declared `tools/markdownlint`
+assets) and the `templates/*/*.tmpl` bodies flavor apply scaffolds. The import
+closure is read with Go's parser, not the go command, so preparation needs no Go
+toolchain (`captureBootstrapClosure` in
 `internal/devcontainer/bootstrap_closure.go`). Build constraints are not
 evaluated: a reached package contributes every non-test file and its imports,
 for every platform. Packages only other commands import, such as
@@ -36,9 +38,9 @@ declared assets too, through one rule, `util.IsGoTestSurface`
 (`internal/util/gosource.go`), so a test file cannot enter a captured set, and
 an archive carrying one fails verification
 (`internal/devcontainer/bootstrap_source.go`). A captured set holding a family's
-embedding source, `tools/markdownlint/assets.go` or `templates/embed.go`, must
-hold every asset that source embeds, and each source may carry only its declared
-directive (`bootstrapAssetFamilies`). Undeclared
+embedding source, such as `tools/markdownlint/assets.go` or `templates/embed.go`,
+must hold every asset that source embeds, and each source may carry only its
+declared directive (`bootstrapAssetFamilies`). Undeclared
 `go:embed` inputs and unsupported native build inputs fail explicitly rather
 than being omitted. Capture is bounded to 4,096 files, 8 MiB total, and 1 MiB
 per file.
