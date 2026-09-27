@@ -141,9 +141,22 @@ func testAgentHooksIdempotentRerun(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	hooks := root["hooks"].(map[string]any)
-	preToolUse := hooks["PreToolUse"].([]any)[0].(map[string]any)
-	commandHooks := preToolUse["hooks"].([]any)
+	hooks, ok := root["hooks"].(map[string]any)
+	if !ok {
+		t.Fatal("hooks field is not a map")
+	}
+	preToolUseList, ok := hooks["PreToolUse"].([]any)
+	if !ok || len(preToolUseList) == 0 {
+		t.Fatal("PreToolUse field is missing or empty")
+	}
+	preToolUse, ok := preToolUseList[0].(map[string]any)
+	if !ok {
+		t.Fatal("PreToolUse[0] is not a map")
+	}
+	commandHooks, ok := preToolUse["hooks"].([]any)
+	if !ok {
+		t.Fatal("hooks field is not a list")
+	}
 
 	if len(commandHooks) != 1 {
 		t.Errorf("idempotent rerun failed: expected 1 hook, got %d", len(commandHooks))
@@ -196,21 +209,40 @@ func testAgentHooksMergeAndBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	hooks := root["hooks"].(map[string]any)
-	preToolUse := hooks["PreToolUse"].([]any)[0].(map[string]any)
-	commandHooks := preToolUse["hooks"].([]any)
-
-	if len(commandHooks) != 2 {
-		t.Errorf("merge failed: expected 2 hooks, got %d", len(commandHooks))
+	hooks, ok := root["hooks"].(map[string]any)
+	if !ok {
+		t.Fatal("hooks field is not a map")
+	}
+	preToolUseList, ok := hooks["PreToolUse"].([]any)
+	if !ok || len(preToolUseList) == 0 {
+		t.Fatal("PreToolUse field is missing or empty")
+	}
+	preToolUse, ok := preToolUseList[0].(map[string]any)
+	if !ok {
+		t.Fatal("PreToolUse[0] is not a map")
+	}
+	commandHooks, ok := preToolUse["hooks"].([]any)
+	if !ok {
+		t.Fatal("hooks field is not a list")
 	}
 
-	firstCmd := commandHooks[0].(map[string]any)["command"].(string)
-	if firstCmd != "echo test" {
+	if len(commandHooks) != 2 {
+		t.Fatalf("merge failed: expected 2 hooks, got %d", len(commandHooks))
+	}
+
+	firstHook, ok := commandHooks[0].(map[string]any)
+	if !ok {
+		t.Fatal("commandHooks[0] is not a map")
+	}
+	if firstCmd := stringField(firstHook, "command"); firstCmd != "echo test" {
 		t.Errorf("existing hook was corrupted: expected 'echo test', got %s", firstCmd)
 	}
 
-	secondCmd := commandHooks[1].(map[string]any)["command"].(string)
-	if secondCmd != "praetorctl hook claude pre-tool" {
+	secondHook, ok := commandHooks[1].(map[string]any)
+	if !ok {
+		t.Fatal("commandHooks[1] is not a map")
+	}
+	if secondCmd := stringField(secondHook, "command"); secondCmd != "praetorctl hook claude pre-tool" {
 		t.Errorf("new hook was not appended correctly")
 	}
 }

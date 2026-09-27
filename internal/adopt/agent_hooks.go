@@ -25,20 +25,25 @@ func reconcileAgentHooks(ctx context.Context, s *adoptSession) error {
 	return nil
 }
 
-func reconcileClientHook(s *adoptSession, client string) error {
-	var relPath string
-	var unit time.Duration
+// clientHookConfig returns the hook-configuration file (relative to the repo
+// root) and the timeout unit a client's config expects, or ok=false when the
+// client has no known PreToolUse hook file.
+func clientHookConfig(client string) (relPath string, unit time.Duration, ok bool) {
 	switch client {
 	case "claude":
-		relPath = ".claude/settings.json"
-		unit = time.Second
+		return ".claude/settings.json", time.Second, true
 	case "codex":
-		relPath = ".codex/hooks.json"
-		unit = time.Second
+		return ".codex/hooks.json", time.Second, true
 	case "gemini":
-		relPath = ".gemini/settings.json"
-		unit = time.Millisecond
+		return ".gemini/settings.json", time.Millisecond, true
 	default:
+		return "", 0, false
+	}
+}
+
+func reconcileClientHook(s *adoptSession, client string) error {
+	relPath, unit, ok := clientHookConfig(client)
+	if !ok {
 		return nil
 	}
 
@@ -77,6 +82,13 @@ func reconcileClientHook(s *adoptSession, client string) error {
 		}
 	}
 
+	return writeReconciledHooks(s, fullPath, relPath, data, root, changed)
+}
+
+// writeReconciledHooks backs up the original config and persists the merged
+// one when the reconciliation changed anything; it is a no-op (besides
+// reporting) otherwise.
+func writeReconciledHooks(s *adoptSession, fullPath, relPath string, original []byte, root map[string]any, changed bool) error {
 	if !changed {
 		s.report.recordReconciled(relPath, "PreToolUse interceptor already registered")
 		return nil
@@ -87,7 +99,7 @@ func reconcileClientHook(s *adoptSession, client string) error {
 	}
 
 	bakPath := fullPath + ".bak"
-	if err := os.WriteFile(bakPath, data, filePerm); err != nil {
+	if err := os.WriteFile(bakPath, original, filePerm); err != nil {
 		return fmt.Errorf("backup %s: %w", relPath, err)
 	}
 
@@ -123,8 +135,7 @@ func injectHook(hooksMap map[string]any, row agenthook.Registration, unit time.D
 			continue
 		}
 
-		gMatcher, _ := group["matcher"].(string)
-		if gMatcher != matcher {
+		if stringField(group, "matcher") != matcher {
 			continue
 		}
 
@@ -148,8 +159,7 @@ func appendIfNotExists(hooksList *[]any, row agenthook.Registration, unit time.D
 		if !ok {
 			continue
 		}
-		cmd, _ := hookObj["command"].(string)
-		if cmd == targetCmd {
+		if stringField(hookObj, "command") == targetCmd {
 			return false
 		}
 	}
@@ -163,6 +173,16 @@ func appendIfNotExists(hooksList *[]any, row agenthook.Registration, unit time.D
 	}
 	*hooksList = append(*hooksList, newHook)
 	return true
+}
+
+// stringField returns m[key] as a string, or "" when the key is absent or
+// holds a non-string value.
+func stringField(m map[string]any, key string) string {
+	v, ok := m[key].(string)
+	if !ok {
+		return ""
+	}
+	return v
 }
 
 func marshalJSONWithIndent(v any) ([]byte, error) {
