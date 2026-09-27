@@ -124,7 +124,7 @@ func runForgeValidatePR(args []string) error {
 		return fmt.Errorf("failed to read PR body file: %w", err)
 	}
 
-	pinned, err := resolvePinnedReceiptKey(context.Background(), *configPath, *allowUnpinned)
+	pinned, err := resolvePinnedReceiptKey(ctx, *configPath, *allowUnpinned)
 	if err != nil {
 		return err
 	}

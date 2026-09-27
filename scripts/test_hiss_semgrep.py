@@ -146,22 +146,6 @@ class HissSemgrepRegression(unittest.TestCase):
     def setUpClass(cls):
         require_semgrep_version()
 
-    def test_http_get_and_post_each_match_but_context_request_does_not(self):
-        for call in ('http.Get("x")', 'http.Post("x", "text/plain", nil)'):
-            with self.subTest(call=call):
-                source = 'package main\nimport "net/http"\nfunc bad() { ' + call + ' }\n'
-                self.assertEqual(
-                    rules_at(scan(source, "go"), "hiss-02-go-http-without-context"), [3]
-                )
-        safe = (
-            'package main\nimport ("context"; "net/http")\n'
-            'func good(ctx context.Context) { req, _ := http.NewRequestWithContext('
-            'ctx, http.MethodGet, "x", nil); http.DefaultClient.Do(req) }\n'
-        )
-        self.assertEqual(
-            rules_at(scan(safe, "go"), "hiss-02-go-http-without-context"), []
-        )
-
     def test_eval_is_banned_and_non_eval_is_allowed_per_language(self):
         cases = {
             "python": ("eval(user_input)\n", "value = user_input\n", "hiss-08-banned-eval-python"),

@@ -232,3 +232,46 @@ func TestGoDirectiveLine_Boundary_DirectiveWithoutVersion(t *testing.T) {
 		}
 	}
 }
+
+// bomManifest is a go.mod an editor saved with a UTF-8 byte-order mark before its first
+// directive.
+const bomManifest = "\ufeffgo 1.27\n\nmodule example.com/bom\n"
+
+// Positive: the mark is dropped, so the directive it preceded is read: the go line through
+// GoDirective, and the module line once the manifest is split.
+func TestTrimBOM_Positive_DirectiveAfterTheMarkReads(t *testing.T) {
+	trimmed := TrimBOM([]byte(bomManifest))
+	if string(trimmed) != "go 1.27\n\nmodule example.com/bom\n" {
+		t.Fatalf("TrimBOM = %q", trimmed)
+	}
+	if version, declared := GoDirective([]byte(bomManifest)); !declared || version != "1.27" {
+		t.Fatalf("GoDirective after a BOM = %q, %v; want 1.27, true", version, declared)
+	}
+	first, _, _ := strings.Cut(string(TrimBOM([]byte("\ufeffmodule example.com/bom\n"))), "\n")
+	if path, ok := ModulePath(first); !ok || path != "example.com/bom" {
+		t.Fatalf("ModulePath after TrimBOM = %q, %v", path, ok)
+	}
+}
+
+// Negative: a manifest without a leading mark is returned unchanged, and a mark anywhere
+// but the start is not the file's byte-order mark and stays.
+func TestTrimBOM_Negative_OnlyALeadingMark(t *testing.T) {
+	for _, manifest := range []string{"module example.com/x\n", "module example.com/x\n\ufeffgo 1.27\n", "\ufefe" + "module x\n"} {
+		if got := TrimBOM([]byte(manifest)); string(got) != manifest {
+			t.Errorf("TrimBOM(%q) = %q, want it unchanged", manifest, got)
+		}
+	}
+	if _, declared := GoDirective([]byte("module example.com/x\n\ufeffgo 1.27\n")); declared {
+		t.Error("a mark inside the manifest was dropped")
+	}
+}
+
+// Boundary: a manifest that is only the mark, or empty, trims to empty; a truncated mark
+// is not a mark.
+func TestTrimBOM_Boundary_MarkOnlyEmptyAndTruncated(t *testing.T) {
+	for manifest, want := range map[string]string{"\ufeff": "", "": "", "\xef\xbb": "\xef\xbb"} {
+		if got := TrimBOM([]byte(manifest)); string(got) != want {
+			t.Errorf("TrimBOM(%q) = %q, want %q", manifest, got, want)
+		}
+	}
+}

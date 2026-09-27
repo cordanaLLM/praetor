@@ -3,13 +3,14 @@ package devcontainer
 import (
 	"math/rand/v2"
 	"os"
+	"path"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
-	markdownassets "github.com/cordanaLLM/praetor/tools/markdownlint"
+	"github.com/cordanaLLM/praetor/internal/managedasset"
 )
 
 // goFile renders a parseable Go file of package pkg with the given import specs.
@@ -103,22 +104,31 @@ func TestBootstrapClosureRefusesAnImportTheCaptureCannotBuild(t *testing.T) {
 	}
 }
 
-// TestBootstrapClosureCapturesReachedEmbedAssets covers the go:embed families under the
+// TestBootstrapClosureCapturesReachedEmbedAssets covers every managed asset family under the
 // closure: a reached embedding source brings every declared asset, an unreached one brings
 // neither itself nor its assets, and an undeclared go:embed outside the closure no longer
 // fails the capture, because go build never reads it.
 func TestBootstrapClosureCapturesReachedEmbedAssets(t *testing.T) {
-	names := markdownassets.Names()
-	assets := markdownBootstrapAssetPaths()
-	if len(names) == 0 || len(names) != len(assets) {
-		t.Fatalf("declared Markdown assets %q do not match their paths %q", names, assets)
+	families := managedasset.Families()
+	if len(families) == 0 {
+		t.Fatal("no managed asset family is declared")
 	}
-	source := markdownassets.Directory + "/assets.go"
+	for _, family := range families {
+		t.Run(family.Name, func(t *testing.T) { checkClosureFamilyAssets(t, family) })
+	}
+}
+
+func checkClosureFamilyAssets(t *testing.T, family managedasset.Family) {
+	t.Helper()
+	assets := family.AssetPaths()
+	if len(assets) == 0 || len(assets) != len(family.Names()) {
+		t.Fatalf("declared %s assets %q do not match their paths %q", family.Name, family.Names(), assets)
+	}
 	fixture := func(t *testing.T, mainImports ...string) string {
 		t.Helper()
 		root := bootstrapSourceFixture(t)
 		writeBootstrapFile(t, root, "cmd/standardsctl/main.go", goFile("main", mainImports...))
-		writeBootstrapFile(t, root, source, goFile("markdownlint", `"embed"`)+"\n"+markdownBootstrapEmbedDirective()+"\nvar assets embed.FS\n")
+		writeBootstrapFile(t, root, family.Source, goFile(path.Base(family.Directory), `"embed"`)+"\n"+family.EmbedDirective()+"\nvar assets embed.FS\n")
 		for _, asset := range assets {
 			writeBootstrapFile(t, root, asset, "{}\n")
 		}
@@ -127,8 +137,8 @@ func TestBootstrapClosureCapturesReachedEmbedAssets(t *testing.T) {
 		return root
 	}
 	t.Run("reached family", func(t *testing.T) {
-		got := capturedNames(t, fixture(t, `_ "github.com/cordanaLLM/praetor/tools/markdownlint"`))
-		want := append([]string{"LICENSE", "cmd/standardsctl/main.go", "go.mod", "go.sum", source}, assets...)
+		got := capturedNames(t, fixture(t, `_ "`+praetorModulePath+"/"+family.Directory+`"`))
+		want := append([]string{"LICENSE", "cmd/standardsctl/main.go", "go.mod", "go.sum", family.Source}, assets...)
 		slices.Sort(want)
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("captured set = %q, want %q", got, want)

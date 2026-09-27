@@ -1,13 +1,114 @@
 package needs
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
+
+// hookYAMLLintPattern finds the yamllint configuration praetor's pre-commit hook passes
+// with -d in .config/lefthook/scripts/checks.py.
+var hookYAMLLintPattern = regexp.MustCompile(`"yamllint", "--strict", "-d", "([^"]+)"`)
+
+// hookYAMLLintConfig returns the yamllint configuration of praetor's own pre-commit hook,
+// read from the hook script, so the test lints with what a commit is linted with.
+func hookYAMLLintConfig(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", ".config", "lefthook", "scripts", "checks.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	match := hookYAMLLintPattern.FindSubmatch(raw)
+	if match == nil {
+		t.Fatal("checks.py no longer passes yamllint a -d configuration")
+	}
+	return string(match[1])
+}
+
+// yamllintReport lints data with binary under config in strict mode and returns yamllint's
+// findings, or "" when the document passes.
+func yamllintReport(t *testing.T, binary, config string, data []byte) string {
+	t.Helper()
+	path := writeFixture(t, t.TempDir(), "contract.yaml", string(data))
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, binary, "--strict", "-f", "parsable", "-d", config, path).CombinedOutput()
+	var exit *exec.ExitError
+	switch {
+	case err == nil:
+		return ""
+	case errors.As(err, &exit):
+		return fmt.Sprintf("exit %d: %s", exit.ExitCode(), out)
+	default:
+		t.Fatalf("run yamllint: %v", err)
+		return ""
+	}
+}
+
+// An exported contract passes the yamllint configuration of praetor's own pre-commit hook
+// and yamllint's default rules, so committing it does not fail a YAML lint (BUG-1022).
+func TestContractExportPassesYAMLLint_3D(t *testing.T) {
+	binary, err := exec.LookPath("yamllint")
+	if err != nil {
+		t.Skip("yamllint is not installed; the pre-commit YAML lint this test mirrors needs it as well")
+	}
+	configs := map[string]string{
+		"pre-commit hook":  hookYAMLLintConfig(t),
+		"yamllint default": "{extends: default, rules: {line-length: disable}}",
+	}
+	targets := acmeTargets()
+	// Positive: every language's export passes both, nested capability lists included.
+	for _, language := range targets.Languages() {
+		export, err := ExportFrameworkContract(t.Context(), language, acmeDeclared(), targets)
+		if err != nil {
+			t.Fatalf("%s: %v", language, err)
+		}
+		for name, config := range configs {
+			if report := yamllintReport(t, binary, config, export.Data); report != "" {
+				t.Errorf("%s export fails %s yamllint:\n%s", language, name, report)
+			}
+		}
+	}
+	// Negative: yaml.Marshal's four-space rendering of the same contract fails the hook's
+	// rules, so the lint tells the two renderings apart.
+	goExport, err := ExportFrameworkContract(t.Context(), "go", acmeDeclared(), targets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := parseFrameworkContract(goExport.Data, acmeKit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := yaml.Marshal(parsed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report := yamllintReport(t, binary, configs["pre-commit hook"], legacy); !strings.Contains(report, "indentation") {
+		t.Fatalf("yaml.Marshal's contract passed the hook's yamllint: %q", report)
+	}
+	// Boundary: a module-only target's empty contract opens with the document start and passes.
+	empty, err := ExportFrameworkContract(t.Context(), "python", FrameworkSource{}, Targets{"python": {Module: "example.com/acme/py"}})
+	if err != nil || !strings.HasPrefix(string(empty.Data), "---\nversion: 1\n") {
+		t.Fatalf("module-only export = %v\n%s", err, empty.Data)
+	}
+	for name, config := range configs {
+		if report := yamllintReport(t, binary, config, empty.Data); report != "" {
+			t.Errorf("empty export fails %s yamllint:\n%s", name, report)
+		}
+	}
+}
 
 func TestContractEcosystemGrammar_3D(t *testing.T) {
 	base := "version: 1\nframework: example.com/acme/ui\necosystem: %s\n%spackages:\n  - import: example.com/acme/ui/forms\n" +
@@ -77,7 +178,7 @@ func exportRoundTrip(t *testing.T, index *FrameworkIndex, ecosystem string) (*fr
 	t.Helper()
 	var skipped []string
 	exported := contractFromIndex(index, ecosystem, &skipped)
-	data, err := yaml.Marshal(exported)
+	data, err := util.EncodeYAMLDocument(exported)
 	if err != nil {
 		t.Fatal(err)
 	}

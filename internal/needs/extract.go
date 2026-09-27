@@ -68,30 +68,47 @@ func ScanRepoWithFramework(ctx context.Context, repoPath string, framework *Fram
 	return report, nil
 }
 
-// parseGoMod extracts the module path, go version, and direct dependencies from go.mod.
-// Each line is classified through the shared lexical rules of internal/gomanifest, the
-// ones the SBOM, docs-reference and toolchain scanners use, so a trailing comment, a
-// quoted module path and the "//indirect" marker read the way the go command reads them.
-func parseGoMod(goModPath string) (modulePath string, goVersion string, directDeps map[string]string, err error) {
+// goModFile is what a Go analysis reads from a module's go.mod.
+type goModFile struct {
+	modulePath string
+	goVersion  string
+	directDeps map[string]string
+	// ignore holds the directories the module's ignore directives (Go 1.25+) remove from
+	// the go command's "./..." pattern; the import scan does not enter them.
+	ignore gomanifest.IgnoreSet
+}
+
+// parseGoMod extracts the module path, go version, direct dependencies and ignore
+// directives from go.mod. Each line is classified through the shared lexical rules of
+// internal/gomanifest, the ones the SBOM, docs-reference and toolchain scanners use, so a
+// trailing comment, a quoted module path and the "//indirect" marker read the way the go
+// command reads them. A leading UTF-8 byte-order mark is dropped first
+// (gomanifest.TrimBOM), so the module directive on the first line still names the module.
+func parseGoMod(goModPath string) (*goModFile, error) {
 	if !util.FileExists(goModPath) {
-		return "", "", nil, fmt.Errorf("%w: %s", ErrGoModMissing, goModPath)
+		return nil, fmt.Errorf("%w: %s", ErrGoModMissing, goModPath)
+	}
+	data, err := readManifest(goModPath)
+	if err != nil {
+		return nil, err
 	}
 
-	state := goModScanState{directDeps: make(map[string]string)}
-	if scanErr := scanManifestLines(goModPath, state.consume); scanErr != nil {
-		return "", "", nil, scanErr
+	var state goModScanState
+	state.directDeps = make(map[string]string)
+	if scanErr := scanManifestData(goModPath, gomanifest.TrimBOM(data), state.consume); scanErr != nil {
+		return nil, scanErr
 	}
-
-	return state.modulePath, state.goVersion, state.directDeps, nil
+	state.ignore = gomanifest.NewIgnoreSet(state.ignorePaths)
+	return &state.goModFile, nil
 }
 
 // goModScanState accumulates the go.mod directives seen so far. Keeping the per-line
 // classification here holds parseGoMod itself under the HISS-04 complexity cap.
 type goModScanState struct {
-	modulePath     string
-	goVersion      string
-	directDeps     map[string]string
+	goModFile
+	ignorePaths    []string
 	inRequireBlock bool
+	inIgnoreBlock  bool
 }
 
 // consume classifies a single trimmed go.mod line.
@@ -106,6 +123,12 @@ func (s *goModScanState) consume(line string) {
 	}
 	if requirement, ok := gomanifest.RequirementLine(line, &s.inRequireBlock); ok {
 		recordDirectRequirement(requirement, s.directDeps)
+		return
+	}
+	if ignore, ok := gomanifest.IgnoreLine(line, &s.inIgnoreBlock); ok {
+		if path, valid := gomanifest.ParseIgnore(ignore); valid {
+			s.ignorePaths = append(s.ignorePaths, path)
+		}
 	}
 }
 
@@ -127,18 +150,20 @@ func recordDirectRequirement(line string, directDeps map[string]string) {
 // returning the imports of the part it reached.
 const maxImportScanEntries = 1000000
 
-// scanASTImports extracts third-party imports and selected catalog stdlib imports.
-func scanASTImports(ctx context.Context, rootDir, modulePath string) (map[string]struct{}, error) {
-	return scanASTImportsBounded(ctx, rootDir, modulePath, maxImportScanEntries)
+// scanASTImports extracts third-party imports and selected catalog stdlib imports from the
+// module at rootDir, skipping the directories its go.mod ignore directives name.
+func scanASTImports(ctx context.Context, rootDir, modulePath string, ignore gomanifest.IgnoreSet) (map[string]struct{}, error) {
+	return scanASTImportsBounded(ctx, rootDir, modulePath, ignore, maxImportScanEntries)
 }
 
 // scanASTImportsBounded is scanASTImports with the entry bound as a parameter, so the
 // bound itself can be exercised without a million-file fixture.
-func scanASTImportsBounded(ctx context.Context, rootDir, modulePath string, limit int) (map[string]struct{}, error) {
+func scanASTImportsBounded(ctx context.Context, rootDir, modulePath string, ignore gomanifest.IgnoreSet, limit int) (map[string]struct{}, error) {
 	scan := &importScan{
 		ctx:        ctx,
 		root:       filepath.Clean(rootDir),
 		modulePath: modulePath,
+		ignore:     ignore,
 		limit:      limit,
 		fset:       token.NewFileSet(),
 		imports:    make(map[string]struct{}),
@@ -154,6 +179,7 @@ type importScan struct {
 	ctx        context.Context
 	root       string
 	modulePath string
+	ignore     gomanifest.IgnoreSet
 	limit      int
 	visited    int
 	fset       *token.FileSet
@@ -185,7 +211,19 @@ func (s *importScan) visit(path string, info os.FileInfo, walkErr error) error {
 func (s *importScan) skipsDir(info os.FileInfo, path string) bool {
 	return shouldSkipDir(info, path, s.root) ||
 		isGoToolIgnoredDir(info, path, s.root) ||
+		s.isModuleIgnoredDir(info, path) ||
 		isNestedModuleBoundary(info, path, s.root)
+}
+
+// isModuleIgnoredDir reports whether the directory at path is one the module's go.mod
+// ignore directives remove from "./..." (gomanifest.IgnoreSet): the go command builds no
+// package from it, so its imports are not the module's demand.
+func (s *importScan) isModuleIgnoredDir(info os.FileInfo, path string) bool {
+	if info == nil || !info.IsDir() {
+		return false
+	}
+	rel, err := filepath.Rel(s.root, path)
+	return err == nil && s.ignore.Ignores(rel)
 }
 
 // isGoToolIgnoredDir reports whether the directory at path, below the import scan's root,

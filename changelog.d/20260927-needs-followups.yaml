@@ -1,0 +1,3 @@
+type: fixed
+title: Name the framework a contract-only target's capability contract declares in needs scans instead of reporting the target not configured, load the operator settings and framework registry through one loader shared by the needs CLI and the MCP standards_needs_report, write needs contract export files with a document start and two-space indentation that yamllint accepts, skip the directories go.mod ignore directives name in the Go import scan, and drop a leading UTF-8 byte-order mark before reading go.mod
+breaking: false

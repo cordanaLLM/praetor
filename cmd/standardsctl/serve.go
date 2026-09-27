@@ -33,7 +33,9 @@ func runServe(args []string) error {
 		return fmt.Errorf("--audit-interval must not be negative, got %s", *auditInterval)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	// The server lives as long as the command root main.main owns; every probe and audit
+	// round inside it carries its own bound (HISS-02).
+	ctx, cancel := context.WithCancel(rootContext())
 	defer cancel()
 
 	hs := container.NewHealthServer(*addr)

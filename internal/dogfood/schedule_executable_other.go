@@ -7,13 +7,15 @@ import (
 	"errors"
 )
 
+// errSchedulingUnsupported is why scheduling cannot run where procfs is absent.
+var errSchedulingUnsupported = errors.New("dogfood scheduling requires Linux procfs executable identity")
+
 func scheduleExecutableSHA(_ context.Context) (string, error) {
-	return "", errors.New("dogfood scheduling requires Linux procfs executable identity")
+	return "", errSchedulingUnsupported
 }
 
 // SchedulingSupported reports whether dogfood scheduling can run on this platform, and why
 // not. The error is the one scheduling itself returns.
 func SchedulingSupported() error {
-	_, err := scheduleExecutableSHA(context.Background())
-	return err
+	return errSchedulingUnsupported
 }

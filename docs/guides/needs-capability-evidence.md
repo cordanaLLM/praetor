@@ -228,7 +228,12 @@ operator configures one.
   (`needs.LoadRegistry`); a scan maps the language's demands onto the packages it
   declares, and a report does so for every language but go, whose framework the report
   selects as above (`TestLoadRegistryDeclaresTargetContracts`,
-  `TestAcmeContractsLoadForEveryLanguage`).
+  `TestAcmeContractsLoadForEveryLanguage`). A target with a contract and no module takes
+  the framework its contract declares as its module, so `needs scan` names that framework
+  instead of `not configured` (`TestLoadRegistryContractOnlyTarget_3D`,
+  `TestNeedsScanContractOnlyTarget_3D` in `cmd/standardsctl/needs_unconfigured_test.go`).
+  The CLI and the MCP `standards_needs_report` select the operator settings and load these
+  contracts through one loader, `needs.SelectRegistry` (`TestSelectRegistry_3D`).
 - **The framework a row names.** A report, a fleet row, a migration plan and an epic name
   the framework the row's own language is reconciled against when that one is configured,
   else the first configured framework another of its languages is reconciled against, as
@@ -275,7 +280,10 @@ empty contract naming the module, and no target at all is an error
 runs that have no checkout, or to carry a configured framework to another host. An entry
 the contract grammar cannot carry, such as a capability key without a dot, is listed as
 `[SKIP]` instead of being dropped silently (`internal/needs/framework_export_test.go`,
-`cmd/standardsctl/needs_contract_test.go`).
+`cmd/standardsctl/needs_contract_test.go`). The file opens with the `---` document start
+and indents every level by two spaces, so it passes yamllint's default rules and the YAML
+lint of praetor's own pre-commit hook when committed (`TestContractExportPassesYAMLLint_3D`
+in `internal/needs/framework_export_test.go`).
 
 Earlier releases shipped framework targets and replacement tables of their own. They were
 removed (ADR-0014 §6) after being exported with this command, so an operator who relied on
@@ -390,21 +398,28 @@ the command rather than returning a partial fleet (`TestDiscoverFleetBounds`).
 
 Inside a Go project, the import scan applies the skips the go command applies
 when it expands `./...` (`go help packages`): `vendor/` and `testdata/`,
-directories and files whose names begin with `_` or `.`, and directories that
-hold their own `go.mod` (`TestScanASTImportsSkipsGoToolIgnoredSources`,
-`TestScanASTImportsStopsAtNestedModules` in `internal/needs`). Praetor adds
+directories and files whose names begin with `_` or `.`, directories that
+hold their own `go.mod`, and directories the module's `go.mod` `ignore`
+directives (Go 1.25+) name: a `./`-prefixed path below the module root only, any
+other path at every depth, each with everything inside it
+(`TestScanASTImportsSkipsGoToolIgnoredSources`,
+`TestScanASTImportsStopsAtNestedModules`,
+`TestGoAnalysisHonoursGoModIgnoreDirectives` in `internal/needs`;
+`gomanifest.IgnoreSet` applies the go command's matching rule). Praetor adds
 skips of its own: a nested checkout, which is a fleet repository with its own
 demand even without a `go.mod`, `node_modules/`, and `scratch/` and `cache/`
-directly under the scan root. The scan does not honour `ignore` directives in
-`go.mod`, so a directory the go command ignores that way is still scanned. It
-visits at most 1,000,000 entries and fails beyond that rather than returning a
+directly under the scan root. It visits at most 1,000,000 entries and fails beyond that rather than returning a
 partial import set (`TestScanASTImportsBoundaryEntryLimit`). `go.mod` is read
 through `internal/gomanifest`: a trailing comment never becomes part of the
 module path or Go version, any white space may follow the `module` or `go`
 keyword, a quoted require path or version is unquoted, and a requirement is
 indirect only when its comment is the go command's `indirect` marker
 (`TestParseGoModReadsDirectivesLikeTheGoCommand`,
-`TestParseGoModQuotedRequirementsAndTabbedGoDirective`).
+`TestParseGoModQuotedRequirementsAndTabbedGoDirective`). A UTF-8 byte-order mark
+at the start of `go.mod` is dropped before the lines are read, so the module
+directive after it still names the module (`TestGoModByteOrderMark_3D`). The go
+command itself refuses such a file; the scan reads it rather than count the
+module's own packages as third-party demand.
 
 In `needs aggregate`, a repository in which no analyzer recognises a project
 is listed under "Skipped Repositories". Rows are never merged by name: two

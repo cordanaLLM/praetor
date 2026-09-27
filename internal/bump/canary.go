@@ -99,7 +99,11 @@ func RunCanary(ctx context.Context, opts CanaryOptions) (res *CanaryResult, resu
 		if opts.Retention {
 			return
 		}
-		if rmErr := wtManager.Remove(context.WithoutCancel(ctx), taskID, true); rmErr != nil {
+		// The removal outlives a cancelled run, so it is detached from ctx and given its own
+		// bound instead (HISS-02).
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), worktree.DefaultGitTimeout)
+		defer cancel()
+		if rmErr := wtManager.Remove(cleanup, taskID, true); rmErr != nil {
 			res.ExecutionLog += fmt.Sprintf("\nwarning: failed removing worktree %s: %v", taskID, rmErr)
 			resultErr = errors.Join(resultErr, fmt.Errorf("remove canary worktree %s: %w", taskID, rmErr))
 		}

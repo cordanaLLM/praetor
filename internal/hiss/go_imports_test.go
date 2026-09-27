@@ -83,6 +83,37 @@ func TestGoImportsPathResolvesBoundNames(t *testing.T) {
 	}
 }
 
+// TestGoImportsDotPathsListsOnlyDotImportsSorted covers DotPaths in all three directions:
+// every dot import in sorted order, never a named, blank or plain import, and an empty
+// list for a file without a dot import and for the zero value.
+func TestGoImportsDotPathsListsOnlyDotImportsSorted(t *testing.T) {
+	parse := func(src string) GoImports {
+		t.Helper()
+		file, err := parser.ParseFile(token.NewFileSet(), "p.go", src, parser.ImportsOnly)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		return FileImports(file)
+	}
+	im := parse("package p\n\nimport (\n\t. \"strings\"\n\tx \"context\"\n\t. \"os/exec\"\n\t_ \"embed\"\n\t\"net\"\n\t. \"bytes\"\n)\n")
+	got := im.DotPaths()
+	want := []string{"bytes", "os/exec", "strings"}
+	if len(got) != len(want) {
+		t.Fatalf("DotPaths() = %q, want %q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("DotPaths() = %q, want %q", got, want)
+		}
+	}
+	if got := parse("package p\n\nimport (\n\tx \"context\"\n\t\"net\"\n)\n").DotPaths(); len(got) != 0 {
+		t.Errorf("DotPaths() without a dot import = %q, want none", got)
+	}
+	if got := (GoImports{}).DotPaths(); len(got) != 0 {
+		t.Errorf("zero GoImports DotPaths() = %q, want none", got)
+	}
+}
+
 // receiverExpr parses the receiver type of the one method in src.
 func receiverExpr(t *testing.T, recv string) ast.Expr {
 	t.Helper()

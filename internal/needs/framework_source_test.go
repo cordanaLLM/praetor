@@ -227,3 +227,48 @@ func TestContractNoteFollowsReplacement_3D(t *testing.T) {
 		t.Fatalf("covered gap = %+v", gap)
 	}
 }
+
+// A target configured by its contract alone scores a scan against the framework that
+// contract declares: the row names it and is not reported as not configured.
+func TestLoadRegistryContractOnlyTarget_3D(t *testing.T) {
+	dir := t.TempDir()
+	npm := writeFixture(t, dir, "ui.yaml", "version: 1\nframework: example.com/acme/ui\necosystem: npm\npackages:\n"+
+		"  - import: example.com/acme/ui/forms\n    capabilities: [ui.forms]\n    replaces: [zod]\n")
+	targets := Targets{"typescript": {BuilderKits: []string{"acme/ui"}, Contract: npm}}
+	registry, err := LoadRegistry(t.Context(), targets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := t.TempDir()
+	writeFixture(t, repo, ".git/HEAD", "ref: refs/heads/main\n")
+	writeFixture(t, repo, "package.json", `{"name":"ui","dependencies":{"zod":"^3","svelte":"^5"}}`)
+	// Positive: the scan names the contract's framework and scores a percentage.
+	report, err := ScanRepo(t.Context(), repo, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Framework != "example.com/acme/ui" || report.Readiness.Basis != FrameworkCatalogDeclared ||
+		MappingAvailability(report.Readiness) != "50.0%" || registry.Targets().For("typescript").Module != "example.com/acme/ui" {
+		t.Fatalf("contract-only scan = framework %q, basis %q, availability %s", report.Framework, report.Readiness.Basis,
+			MappingAvailability(report.Readiness))
+	}
+	// Negative: a language no target configures is still not configured beside it.
+	py := t.TempDir()
+	writeFixture(t, py, ".git/HEAD", "ref: refs/heads/main\n")
+	writeFixture(t, py, "requirements.txt", "requests==2.31\n")
+	unset, err := ScanRepo(t.Context(), py, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unset.Framework != "" || unset.Readiness.Basis != FrameworkNotConfigured {
+		t.Fatalf("unconfigured python scan = framework %q, basis %q", unset.Framework, unset.Readiness.Basis)
+	}
+	// Boundary: the caller's targets are not rewritten, and a configured module is kept.
+	if targets["typescript"].Module != "" {
+		t.Fatalf("LoadRegistry rewrote the caller's targets: %+v", targets["typescript"])
+	}
+	named, err := LoadRegistry(t.Context(), Targets{"typescript": {Module: "example.com/acme/ui", Contract: npm}})
+	if err != nil || named.Targets().For("typescript").Module != "example.com/acme/ui" {
+		t.Fatalf("configured module = %+v, %v", named.Targets(), err)
+	}
+}

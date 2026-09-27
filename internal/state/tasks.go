@@ -27,9 +27,12 @@ type TaskItem struct {
 	CompletedDate string `json:"completed_date,omitempty"`
 }
 
-// ListTasks parses OPEN.md and returns all task items.
+// ListTasks parses OPEN.md and returns all task items, bounded by the deadline
+// contextopt gives one read (HISS-02).
 func ListTasks(rootPath string) ([]TaskItem, error) {
-	return ListTasksContext(context.Background(), rootPath)
+	ctx, cancel := context.WithTimeout(context.Background(), contextopt.MaxDuration)
+	defer cancel()
+	return ListTasksContext(ctx, rootPath)
 }
 
 // ListTasksContext reads a bounded task snapshot under the caller's deadline.

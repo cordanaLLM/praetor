@@ -21,9 +21,12 @@ const (
 	MemoryFileRel = ".workingdir/memory/distilled.json"
 )
 
-// SaveLocalCache writes distilled memory facts to .workingdir/memory/distilled.json.
+// SaveLocalCache writes distilled memory facts to .workingdir/memory/distilled.json,
+// bounded by the deadline contextopt gives one file operation (HISS-02).
 func SaveLocalCache(repoPath string, facts []MemoryFact) error {
-	return SaveLocalCacheContext(context.Background(), repoPath, facts)
+	ctx, cancel := context.WithTimeout(context.Background(), contextopt.MaxDuration)
+	defer cancel()
+	return SaveLocalCacheContext(ctx, repoPath, facts)
 }
 
 // SaveLocalCacheContext atomically publishes bounded private facts without following links.
@@ -49,9 +52,12 @@ func SaveLocalCacheContext(ctx context.Context, repoPath string, facts []MemoryF
 	return contextopt.ReplaceSnapshot(ctx, path, data, contextopt.ReplaceOptions{Expected: before, Exists: err == nil, Mode: 0600})
 }
 
-// LoadLocalCache reads distilled memory facts from .workingdir/memory/distilled.json.
+// LoadLocalCache reads distilled memory facts from .workingdir/memory/distilled.json,
+// bounded by the deadline contextopt gives one read (HISS-02).
 func LoadLocalCache(repoPath string) ([]MemoryFact, error) {
-	return LoadLocalCacheContext(context.Background(), repoPath)
+	ctx, cancel := context.WithTimeout(context.Background(), contextopt.MaxDuration)
+	defer cancel()
+	return LoadLocalCacheContext(ctx, repoPath)
 }
 
 // LoadLocalCacheContext reads a complete, bounded local fact cache under caller context.
@@ -101,8 +107,11 @@ func RecallLocalFacts(repoPath, query string, category FactCategory) []MemoryFac
 
 // RecallLocalFactsWithError searches cached facts without hiding cache failures.
 // A missing cache is a legitimate empty result; corrupt or unreadable data is an error.
+// The read is bounded by the deadline contextopt gives one read (HISS-02).
 func RecallLocalFactsWithError(repoPath, query string, category FactCategory) ([]MemoryFact, error) {
-	return RecallLocalFactsContext(context.Background(), repoPath, query, category)
+	ctx, cancel := context.WithTimeout(context.Background(), contextopt.MaxDuration)
+	defer cancel()
+	return RecallLocalFactsContext(ctx, repoPath, query, category)
 }
 
 // RecallLocalFactsContext preserves caller cancellation and incomplete-cache failures.

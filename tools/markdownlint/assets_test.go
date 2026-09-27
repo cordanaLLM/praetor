@@ -2,7 +2,10 @@ package markdownlint
 
 import (
 	"encoding/json"
+	"io/fs"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -217,5 +220,55 @@ func TestPrivateLinkDiagnosticsAreGloballyBounded(t *testing.T) {
 		if !strings.Contains(text, required) {
 			t.Fatalf("private-link rule lacks bounded diagnostic contract %q", required)
 		}
+	}
+}
+
+// Positive: FS serves exactly the inventory Read returns, SourceFile is the file carrying this
+// package's embed directive, and Workflow reports StatusContext as its job name.
+func TestFamilySurfacePositive(t *testing.T) {
+	for _, name := range Names() {
+		want, err := Read(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := fs.ReadFile(FS(), name)
+		if err != nil || string(got) != string(want) {
+			t.Fatalf("FS %s differs from Read: %v", name, err)
+		}
+	}
+	source, err := os.ReadFile(filepath.Base(SourceFile))
+	if err != nil || !strings.Contains(string(source), "\n//go:embed "+strings.Join(Names(), " ")+"\n") {
+		t.Fatalf("%s does not carry the inventory directive: %v", SourceFile, err)
+	}
+	if !strings.Contains(Workflow, "\n    name: "+StatusContext+"\n") || !strings.Contains(Workflow, "node "+Directory+"/verify.mjs") {
+		t.Fatal("Workflow does not run the gate under its status context")
+	}
+}
+
+// Negative: FS holds no file beyond the inventory, and Read refuses a path escaping it.
+func TestFamilySurfaceNegative(t *testing.T) {
+	entries, err := fs.ReadDir(FS(), ".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if !slices.Contains(Names(), entry.Name()) {
+			t.Fatalf("embedded tree carries %s outside the inventory", entry.Name())
+		}
+	}
+	if _, err := Read("../assets.go"); err == nil {
+		t.Fatal("Read accepted a path outside the inventory")
+	}
+}
+
+// Boundary: the inventory fills MaxAssets exactly and Names returns a private copy.
+func TestFamilySurfaceBoundary(t *testing.T) {
+	names := Names()
+	if len(names) != MaxAssets {
+		t.Fatalf("inventory holds %d assets, MaxAssets is %d", len(names), MaxAssets)
+	}
+	names[0] = "mutated"
+	if Names()[0] != "package.json" {
+		t.Fatal("Names exposed the inventory for mutation")
 	}
 }

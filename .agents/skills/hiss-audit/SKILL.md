@@ -16,7 +16,7 @@ When invoked, execute audit in strict order of operations:
 1. **Verify State**: Read declared configurations (`.standards.yaml`, `.standards-baseline.json`, `.config/hiss/coverage.yaml`).
 2. **HISS AST Scan** (`internal/hiss` `Scan()`, run by `standardsctl audit`; these six rules, no others):
    - `HISS-01 (Control Flow)`: Go self-recursion and call cycles, `goto` in Go and C. Recursion prohibited; call graph must be DAG.
-   - `HISS-02 (Bounded Loops)`: unbounded `for {}` (Go), native loops (C), `loop {}` (Rust), `while True` (Python). Go HTTP call without `context.Context` deadline = Semgrep rule `hiss-02-go-http-without-context` (`.config/semgrep/hiss-invariants.yml`).
+   - `HISS-02 (Bounded Loops, I/O Timeouts)`: unbounded `for {}` (Go), native loops (C), `loop {}` (Rust), `while True` (Python). Go I/O: context without deadline (`context.Background`, `context.TODO`, `WithCancel` / `WithValue` of one, `WithoutCancel`) reaching call; context-less `exec.Command`, `net.Dial*`, `http.Get` / `Head` / `Post` / `PostForm` / `NewRequest`. Test files, `main.main` exempt.
    - `HISS-04 (Complexity Bounds)`: Func LOC $\le 75$. Cyclomatic $\le 10$, cognitive $\le 15$ = `gocyclo`, `gocognit`, `funlen` in golangci-lint (`make lint`), not `Scan()`.
    - `HISS-07 (Checked Errors)`: Go unchecked error assignment (`_ =`) and `panic`, Rust `.unwrap()` / `.expect()`, Python bare `except`.
    - `HISS-08 (Static Determinism)`: `gets`, `strcpy`, `sprintf` (C); `eval` / `exec` (Python). Go = `forbidigo` in golangci-lint.

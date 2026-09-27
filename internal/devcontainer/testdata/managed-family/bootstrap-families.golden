@@ -1,0 +1,19 @@
+family "Markdown" source "tools/markdownlint/assets.go" directive "//go:embed package.json package-lock.json markdownlint-cli2.yaml verify.mjs no-private-scratch-links.mjs"
+  assets ["tools/markdownlint/package.json" "tools/markdownlint/package-lock.json" "tools/markdownlint/markdownlint-cli2.yaml" "tools/markdownlint/verify.mjs" "tools/markdownlint/no-private-scratch-links.mjs"]
+family "template" source "templates/embed.go" directive "//go:embed */*.tmpl"
+asset tools/markdownlint/verify.mjs true <nil>
+name tools/markdownlint/verify.mjs <nil>
+asset tools/markdownlint/package-lock.json true <nil>
+name tools/markdownlint/package-lock.json <nil>
+asset tools/markdownlint/README.md false <nil>
+name tools/markdownlint/README.md unsupported bootstrap source file; non-Go build inputs require explicit capture support
+asset tools/markdownlint/assets.go false <nil>
+name tools/markdownlint/assets.go <nil>
+asset tools/figures/build.mjs false <nil>
+name tools/figures/build.mjs unsupported bootstrap source file; non-Go build inputs require explicit capture support
+asset templates/go/ci-go.yml.tmpl true <nil>
+name templates/go/ci-go.yml.tmpl <nil>
+directive tools/markdownlint/assets.go "//go:embed package.json package-lock.json markdownlint-cli2.yaml verify.mjs no-private-scratch-links.mjs" <nil>
+directive tools/markdownlint/assets.go "//go:embed verify.mjs" bootstrap source tools/markdownlint/assets.go embeds assets; explicit asset capture is required
+directive tools/markdownlint/other.go "//go:embed package.json package-lock.json markdownlint-cli2.yaml verify.mjs no-private-scratch-links.mjs" bootstrap source tools/markdownlint/other.go embeds assets; explicit asset capture is required
+directive tools/markdownlint/assets.go "// go:embed is only prose" <nil>

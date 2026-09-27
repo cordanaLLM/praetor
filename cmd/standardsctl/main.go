@@ -197,7 +197,9 @@ func main() {
 		util.TerminateCommandsOnSignal(os.Exit)
 	}
 
-	if err := dispatchCommand(cmd, args); err != nil {
+	// The entry point owns the process lifetime, so the root every command derives its
+	// deadline from is built here (HISS-02).
+	if err := dispatchCommandFrom(context.Background(), cmd, args); err != nil {
 		// flag.ErrHelp means a subcommand's own flag.Parse saw -h/--help and already
 		// printed its usage; that is a satisfied request, not a failure (BUG-811). Only
 		// two of the ~25 flag-parsed commands converted it to nil themselves, so every
@@ -213,7 +215,7 @@ func main() {
 // serve drains its health server on them (container.WaitForGracefulDrain); gate run and the
 // gatekeeper agent tear down the isolated test worktree and branch under their root context,
 // which a handler that terminates child commands and locks the command registry would block,
-// so they install util.CancelCommandsOnSignal instead (dispatchCommand).
+// so they install util.CancelCommandsOnSignal instead (dispatchCommandFrom).
 func ownsTerminationSignals(command string, args []string) bool {
 	return command == "serve" || needsSignalRootContext(command, args)
 }
@@ -243,7 +245,7 @@ type commandFunc func(args []string) error
 // commandTable maps every command name (and alias) to its handler. A table keeps
 // dispatch at constant complexity regardless of how many commands exist (HISS-04). It is
 // split into two literals, merged here, purely to stay inside the HISS-04 LOC bound; the
-// split carries no meaning dispatchCommand relies on.
+// split carries no meaning dispatchCommandFrom relies on.
 func commandTable() map[string]commandFunc {
 	table := make(map[string]commandFunc, len(coreCommandTable())+len(fleetCommandTable()))
 	for name, handler := range coreCommandTable() {
@@ -345,12 +347,15 @@ func commandContext(timeout time.Duration) (context.Context, context.CancelFunc)
 	return context.WithTimeout(rootContext(), timeout)
 }
 
-func dispatchCommand(cmd string, args []string) error {
+// dispatchCommandFrom runs cmd under root, the process context main.main owns. A command
+// that cleans up after itself (needsSignalRootContext) runs under root cancelled by the
+// termination signals instead.
+func dispatchCommandFrom(root context.Context, cmd string, args []string) error {
 	if rootCtx == nil && needsSignalRootContext(cmd, args) {
 		// The same signals util.TerminateCommandsOnSignal handles, ignored ones left ignored,
 		// forwarded to the running command groups; the root context is cancelled instead of
 		// the process ended, so the command still removes its worktree and branch.
-		ctx, stop := util.CancelCommandsOnSignal(context.Background())
+		ctx, stop := util.CancelCommandsOnSignal(root)
 		rootCtx = ctx
 		defer func() {
 			stop()

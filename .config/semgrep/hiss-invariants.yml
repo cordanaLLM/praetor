@@ -53,11 +53,3 @@ rules:
     message: "[HISS-08] Insecure legacy C memory functions prohibited. fix: bounded fgets, strncpy, or snprintf."
     languages: [c, cpp]
     severity: ERROR
-
-  - id: hiss-02-go-http-without-context
-    pattern-either:
-      - pattern: http.Get(...)
-      - pattern: http.Post(...)
-    message: "[HISS-02] Direct http.Get/Post lacks context timeout. fix: http.NewRequestWithContext."
-    languages: [go]
-    severity: ERROR

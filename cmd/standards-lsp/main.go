@@ -11,17 +11,19 @@ import (
 
 const lspVersion = "v1.0.0"
 
+// main wires the daemon to SIGINT/SIGTERM. The entry point owns the process lifetime, so
+// the daemon's root context is built here (HISS-02): the signal cancels it, which
+// Server.Run observes even while it idles on stdin, so a signalled daemon exits promptly
+// with status 0. os.Exit runs only after run returned and the signal handler was released.
 func main() {
-	os.Exit(run())
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	code := run(ctx)
+	stop()
+	os.Exit(code)
 }
 
-// run wires the daemon to stdio and to SIGINT/SIGTERM. The signal cancels the run
-// context, which Server.Run observes even while it idles on stdin, so a signalled
-// daemon exits promptly with status 0; os.Exit happens only after every defer ran.
-func run() int {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
+// run serves the language server protocol on stdio until ctx is cancelled or stdin ends.
+func run(ctx context.Context) int {
 	srv := NewServer(os.Stdin, os.Stdout, lspVersion)
 	err := srv.Run(ctx)
 	if err == nil || errors.Is(err, context.Canceled) {

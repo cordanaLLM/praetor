@@ -692,18 +692,16 @@ var installManifestPath = config.DefaultInstallManifestPath
 
 // loadNeedsRegistry selects the operator settings at call time the way hook does
 // (PRAETOR_FLEET_CONFIG / PRAETOR_WORKSTATION_CONFIG, then the install manifest) and prepares
-// the needs engine for their framework targets (needs.RegistryFromPolicy). A host with no
-// per-user configuration directory selects no manifest.
+// the needs engine for their framework targets through needs.SelectRegistry, the loader the
+// CLI needs subcommands share. A host with no per-user configuration directory selects no
+// manifest.
 func loadNeedsRegistry(ctx context.Context) (*needs.AnalyzerRegistry, error) {
 	manifest, err := installManifestPath()
 	if err != nil {
 		manifest = ""
 	}
-	policy, err := config.SelectOperatorPolicy(ctx, config.SettingsRequest{Getenv: os.Getenv, ManifestPath: manifest})
-	if err != nil {
-		return nil, fmt.Errorf("select operator settings: %w", err)
-	}
-	return needs.RegistryFromPolicy(ctx, policy)
+	_, registry, err := needs.SelectRegistry(ctx, config.SettingsRequest{Getenv: os.Getenv, ManifestPath: manifest})
+	return registry, err
 }
 
 // ---- HISS rule explanations ----------------------------------------------------------------

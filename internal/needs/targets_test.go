@@ -259,6 +259,47 @@ func TestRegistryFromPolicy_3D(t *testing.T) {
 	}
 }
 
+// SelectRegistry is the one operator-settings-then-registry loader of the CLI and the MCP
+// server: it selects the documents a request names and loads their targets' contracts.
+func TestSelectRegistry_3D(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture(t, dir, "kit.yaml", acmeContract)
+	workstation := writeFixture(t, dir, "workstation.yaml", "framework: {targets: {go: {module: example.com/acme/kit, contract: kit.yaml}}}\n")
+	env := func(name string) string {
+		if name == config.WorkstationConfigEnv {
+			return workstation
+		}
+		return ""
+	}
+	// Positive: a flag and the environment select the same document, policy and contract.
+	for name, request := range map[string]config.SettingsRequest{
+		"flag": {WorkstationFlag: workstation}, "environment": {Getenv: env},
+	} {
+		policy, registry, err := SelectRegistry(t.Context(), request)
+		if err != nil || policy.OperatorSettings().Framework.Targets["go"].Module != acmeKit ||
+			registry.Targets().For("go").Module != acmeKit || registry.contracts["go"] == nil {
+			t.Fatalf("%s: SelectRegistry = %v", name, err)
+		}
+	}
+	// Negative: an invalid document fails selection; a contract naming another framework
+	// fails loading; neither returns a registry.
+	invalid := writeFixture(t, dir, "invalid.yaml", "framework: {targets: {cobol: {}}}\n")
+	if _, registry, err := SelectRegistry(t.Context(), config.SettingsRequest{WorkstationFlag: invalid}); err == nil ||
+		registry != nil || !strings.Contains(err.Error(), "select operator settings") {
+		t.Fatalf("invalid document = %v", err)
+	}
+	other := writeFixture(t, dir, "other.yaml", "framework: {targets: {go: {module: example.com/other/kit, contract: kit.yaml}}}\n")
+	if _, registry, err := SelectRegistry(t.Context(), config.SettingsRequest{WorkstationFlag: other}); err == nil ||
+		registry != nil || !strings.Contains(err.Error(), "load framework targets") {
+		t.Fatalf("mismatched contract = %v", err)
+	}
+	// Boundary: nothing selected is a nil policy and a registry with no target.
+	policy, registry, err := SelectRegistry(t.Context(), config.SettingsRequest{})
+	if err != nil || policy != nil || len(registry.Targets()) != 0 {
+		t.Fatalf("empty request = %v, %v, %v", policy, registry, err)
+	}
+}
+
 // Every placeholder contract under testdata/contracts loads for its language, so the tests
 // configure a framework for every language the analyzers report.
 func TestAcmeContractsLoadForEveryLanguage(t *testing.T) {

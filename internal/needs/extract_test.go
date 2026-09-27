@@ -5,8 +5,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/gomanifest"
 )
 
 func writeFixture(t *testing.T, dir, name, content string) string {
@@ -252,7 +255,7 @@ func TestScanASTImportsNegativeCancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	imports, err := scanASTImports(ctx, dir, "example.com/x")
+	imports, err := scanASTImports(ctx, dir, "example.com/x", gomanifest.IgnoreSet{})
 	if err == nil {
 		t.Fatalf("expected a context error, got a truncated success with %d imports", len(imports))
 	}
@@ -288,13 +291,23 @@ func TestLoadExistingDeclarationsNegativeMalformedYAML(t *testing.T) {
 	}
 }
 
+// goModFields parses path and returns the module path, go version and direct
+// dependencies, the fields the go.mod reader tests below check.
+func goModFields(path string) (string, string, map[string]string, error) {
+	module, err := parseGoMod(path)
+	if err != nil {
+		return "", "", nil, err
+	}
+	return module.modulePath, module.goVersion, module.directDeps, nil
+}
+
 func TestParseGoMod3D(t *testing.T) {
 	dir := t.TempDir()
 	// Positive: module, go version and a require block.
 	path := writeFixture(t, dir, "go.mod",
 		"module example.com/svc\n\ngo 1.24\n\nrequire (\n\tgithub.com/a/b v1.0.0\n"+
 			"\tgithub.com/c/d v2.0.0 // indirect\n)\n")
-	modulePath, goVer, deps, err := parseGoMod(path)
+	modulePath, goVer, deps, err := goModFields(path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -306,13 +319,13 @@ func TestParseGoMod3D(t *testing.T) {
 	}
 
 	// Negative: a missing go.mod must not look like a successful empty module.
-	if _, _, _, err := parseGoMod(filepath.Join(dir, "absent", "go.mod")); !errors.Is(err, ErrGoModMissing) {
+	if _, _, _, err := goModFields(filepath.Join(dir, "absent", "go.mod")); !errors.Is(err, ErrGoModMissing) {
 		t.Fatalf("expected ErrGoModMissing, got %v", err)
 	}
 
 	// Boundary: a go.mod with only a module directive yields no dependencies.
 	bare := writeFixture(t, dir, filepath.Join("bare", "go.mod"), "module example.com/bare\n")
-	_, _, bareDeps, err := parseGoMod(bare)
+	_, _, bareDeps, err := goModFields(bare)
 	if err != nil || len(bareDeps) != 0 {
 		t.Fatalf("expected an empty dependency set, got %v (err %v)", bareDeps, err)
 	}
@@ -330,7 +343,7 @@ func TestParseGoModReadsDirectivesLikeTheGoCommand(t *testing.T) {
 			"\tgithub.com/a/b v1.0.0 // kept for the CLI\n"+
 			"\tgithub.com/c/d/v2 v2.0.0 //indirect\n"+
 			"\tgithub.com/e/f v1.2.0 // indirect; pulled in by github.com/a/b\n)\n")
-	modulePath, goVer, deps, err := parseGoMod(path)
+	modulePath, goVer, deps, err := goModFields(path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -348,7 +361,7 @@ func TestParseGoModReadsDirectivesLikeTheGoCommand(t *testing.T) {
 func TestParseGoModNegativeMentionOfIndirectStaysDirect(t *testing.T) {
 	path := writeFixture(t, t.TempDir(), "go.mod",
 		"module example.com/svc\n\nrequire github.com/a/b v1.0.0 // indirectly exercised by e2e\n")
-	_, _, deps, err := parseGoMod(path)
+	_, _, deps, err := goModFields(path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -361,12 +374,42 @@ func TestParseGoModNegativeMentionOfIndirectStaysDirect(t *testing.T) {
 // argument is a comment declares nothing, instead of a comment posing as a module path.
 func TestParseGoModBoundaryCommentOnlyDirectives(t *testing.T) {
 	path := writeFixture(t, t.TempDir(), "go.mod", "module // TODO\n\ngo // TODO\n")
-	modulePath, goVer, deps, err := parseGoMod(path)
+	modulePath, goVer, deps, err := goModFields(path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if modulePath != "" || goVer != "" || len(deps) != 0 {
 		t.Fatalf("module %q / go %q / deps %v, want all empty", modulePath, goVer, deps)
+	}
+}
+
+// utf8BOMBytes is the UTF-8 byte-order mark an editor may save before a go.mod's first line.
+const utf8BOMBytes = "\xef\xbb\xbf"
+
+// TestGoModByteOrderMark_3D: a go.mod saved with a UTF-8 byte-order mark still names its
+// module, so the module's own packages are not counted as third-party demand (BUG-1025).
+func TestGoModByteOrderMark_3D(t *testing.T) {
+	repo := t.TempDir()
+	path := writeFixture(t, repo, "go.mod", utf8BOMBytes+"module example.com/bom\n\ngo 1.27\n\nrequire github.com/a/b v1.0.0\n")
+	writeFixture(t, repo, "main.go", "package main\n\nimport (\n\t_ \"example.com/bom/internal/store\"\n\t_ \"github.com/a/b\"\n)\n")
+	// Positive: the module directive after the mark is read, and the own import is not demand.
+	modulePath, goVer, deps, err := goModFields(path)
+	if err != nil || modulePath != "example.com/bom" || goVer != "1.27" || deps["github.com/a/b"] != "v1.0.0" {
+		t.Fatalf("BOM go.mod = %q / %q / %v, %v", modulePath, goVer, deps, err)
+	}
+	if got := importsOf(t, repo); !slices.Equal(got, []string{"github.com/a/b"}) {
+		t.Fatalf("imports of a BOM module = %v, want only github.com/a/b", got)
+	}
+	// Negative: a mark that does not open the file is not dropped, and the line it precedes
+	// declares nothing, as the go command refuses it.
+	inner := writeFixture(t, t.TempDir(), "go.mod", "module example.com/bom\n"+utf8BOMBytes+"go 1.27\n")
+	if modulePath, goVer, _, err := goModFields(inner); err != nil || modulePath != "example.com/bom" || goVer != "" {
+		t.Fatalf("inner mark = %q / %q, %v; want the module and no go version", modulePath, goVer, err)
+	}
+	// Boundary: a go.mod that is only the mark is an empty manifest, not an error.
+	bare := writeFixture(t, t.TempDir(), "go.mod", utf8BOMBytes)
+	if modulePath, goVer, deps, err := goModFields(bare); err != nil || modulePath != "" || goVer != "" || len(deps) != 0 {
+		t.Fatalf("mark-only go.mod = %q / %q / %v, %v", modulePath, goVer, deps, err)
 	}
 }
 
@@ -378,7 +421,7 @@ func TestParseGoModQuotedRequirementsAndTabbedGoDirective(t *testing.T) {
 	path := writeFixture(t, t.TempDir(), "go.mod",
 		"module example.com/svc\n\ngo\t1.27\n\nrequire \"github.com/a/b\" v1.0.0\n\nrequire (\n"+
 			"\t\"github.com/c/d/v2\" \"v2.1.0\"\n\t\"github.com/e/f\" v1.2.0 // indirect\n)\n")
-	_, goVer, deps, err := parseGoMod(path)
+	_, goVer, deps, err := goModFields(path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -396,7 +439,7 @@ func TestParseGoModNegativeMalformedQuotedRequirement(t *testing.T) {
 	path := writeFixture(t, t.TempDir(), "go.mod",
 		"module example.com/svc\n\nrequire (\n\t\"github.com/a/b v1.0.0\n"+
 			"\t'github.com/c/d' v1.0.0\n\tgithub.com/e/\"f\" v1.0.0\n\tgithub.com/g/h v1.1.0\n)\n")
-	_, _, deps, err := parseGoMod(path)
+	_, _, deps, err := goModFields(path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -410,7 +453,7 @@ func TestParseGoModNegativeMalformedQuotedRequirement(t *testing.T) {
 func TestParseGoModBoundaryEmptyQuotedRequirement(t *testing.T) {
 	path := writeFixture(t, t.TempDir(), "go.mod",
 		"module example.com/svc\n\nrequire \"\" v1.0.0\n\nrequire github.com/a/b \"\"\n\nrequire \"github.com/c/d\"\n")
-	_, _, deps, err := parseGoMod(path)
+	_, _, deps, err := goModFields(path)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -432,7 +475,7 @@ func TestScanASTImportsSkipsGoToolIgnoredSources(t *testing.T) {
 	writeFixture(t, dir, "_scratch.go", "package main\n\nimport _ \"github.com/sirupsen/logrus\"\n")
 	writeFixture(t, dir, ".hidden.go", "package main\n\nimport _ \"github.com/pkg/errors\"\n")
 
-	imports, err := scanASTImports(t.Context(), dir, "example.com/x")
+	imports, err := scanASTImports(t.Context(), dir, "example.com/x", gomanifest.IgnoreSet{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -440,12 +483,53 @@ func TestScanASTImportsSkipsGoToolIgnoredSources(t *testing.T) {
 		t.Fatalf("imports = %v, want only github.com/gin-gonic/gin", imports)
 	}
 
-	rooted, err := scanASTImports(t.Context(), filepath.Join(dir, "testdata"), "example.com/x")
+	rooted, err := scanASTImports(t.Context(), filepath.Join(dir, "testdata"), "example.com/x", gomanifest.IgnoreSet{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if _, ok := rooted["github.com/spf13/cobra"]; !ok {
 		t.Fatalf("a scan rooted at testdata/ must read it, got %v", rooted)
+	}
+}
+
+// importsOf returns the sorted third-party imports a Go analysis of repo reports.
+func importsOf(t *testing.T, repo string) []string {
+	t.Helper()
+	report, err := NewGoAnalyzer().Analyze(t.Context(), repo, Target{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	packages := make([]string, 0, len(report.Dependencies))
+	for _, dependency := range report.Dependencies {
+		packages = append(packages, dependency.Package)
+	}
+	return packages
+}
+
+// TestGoAnalysisHonoursGoModIgnoreDirectives: a directory the module's go.mod ignore
+// directives remove from "./..." (Go 1.25+) is not scanned for imports, the way the go
+// command builds no package from it; a rooted "./" path ignores it below the module root
+// only, and a bare path at any depth (BUG-1024).
+func TestGoAnalysisHonoursGoModIgnoreDirectives(t *testing.T) {
+	repo := t.TempDir()
+	writeFixture(t, repo, "go.mod", "module example.com/app\n\ngo 1.27\n\nignore ./web // front end, built by npm\n\n"+
+		"ignore (\n\t\"static\"\n\tdocs/examples\n)\n")
+	writeFixture(t, repo, "main.go", "package main\n\nimport _ \"github.com/gin-gonic/gin\"\n")
+	writeFixture(t, repo, filepath.Join("web", "tools", "gen.go"), "package tools\n\nimport _ \"github.com/spf13/cobra\"\n")
+	writeFixture(t, repo, filepath.Join("assets", "static", "embed.go"), "package static\n\nimport _ \"github.com/spf13/viper\"\n")
+	writeFixture(t, repo, filepath.Join("docs", "examples", "demo", "demo.go"), "package demo\n\nimport _ \"github.com/urfave/cli\"\n")
+	// Negative: a rooted path does not reach deeper, and a pattern matches whole elements.
+	writeFixture(t, repo, filepath.Join("cmd", "web", "serve.go"), "package web\n\nimport _ \"github.com/go-chi/chi\"\n")
+	writeFixture(t, repo, filepath.Join("webapp", "app.go"), "package webapp\n\nimport _ \"github.com/redis/go-redis\"\n")
+	// Positive: only the imports of directories the go command builds are reported.
+	want := []string{"github.com/gin-gonic/gin", "github.com/go-chi/chi", "github.com/redis/go-redis"}
+	if got := importsOf(t, repo); !slices.Equal(got, want) {
+		t.Fatalf("imports = %v, want %v", got, want)
+	}
+	// Boundary: "ignore ./" removes every directory below the root, never the root itself.
+	writeFixture(t, repo, "go.mod", "module example.com/app\n\ngo 1.27\n\nignore ./\n")
+	if got := importsOf(t, repo); !slices.Equal(got, []string{"github.com/gin-gonic/gin"}) {
+		t.Fatalf("imports under ignore ./ = %v, want only the root's", got)
 	}
 }
 
@@ -458,11 +542,11 @@ func TestScanASTImportsBoundaryEntryLimit(t *testing.T) {
 	writeFixture(t, dir, "b.go", "package a\n\nimport _ \"github.com/spf13/cobra\"\n")
 	const entries = 3 // the root directory and its two files
 
-	imports, err := scanASTImportsBounded(t.Context(), dir, "example.com/x", entries)
+	imports, err := scanASTImportsBounded(t.Context(), dir, "example.com/x", gomanifest.IgnoreSet{}, entries)
 	if err != nil || len(imports) != 2 {
 		t.Fatalf("at the bound: imports = %v, err = %v; want both imports", imports, err)
 	}
-	imports, err = scanASTImportsBounded(t.Context(), dir, "example.com/x", entries-1)
+	imports, err = scanASTImportsBounded(t.Context(), dir, "example.com/x", gomanifest.IgnoreSet{}, entries-1)
 	if !errors.Is(err, ErrDiscoveryBound) || imports != nil {
 		t.Fatalf("past the bound: imports = %v, err = %v; want ErrDiscoveryBound and no imports", imports, err)
 	}

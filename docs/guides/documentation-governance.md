@@ -181,6 +181,18 @@ managed block fail for review. `praetorctl adopt --force` repairs an edited
 managed block while the facet remains enabled and refreshes the content-locked
 assets, but still refuses symbolic links.
 
+The tool assets and the workflow form the Markdown entry of the managed asset
+family registry (`managedasset.Families`, `internal/managedasset/family.go`).
+Adoption (`internal/adopt/managed_family.go`), audit
+(`cmd/standardsctl/audit_documentation.go`), and the DevContainer bootstrap all
+walk every family the facet enables, so a further embedded family joins the
+facet as one registry entry. A family may set `RefuseForeign`: until one of its
+paths holds the canonical text, a file already at any of its paths predates
+adoption, and adoption fails naming it, even with `--force`, instead of
+overwriting it. The Markdown entry leaves it off, so `--force` replaces those
+files as described above (`TestManagedFamilyRefusesForeignFilesOnFirstAdopt`,
+`TestMarkdownFamilyForeignFilesGolden` in `internal/adopt`).
+
 Disabling `docs:seo-portal` is a convergent transition. Run
 `praetorctl adopt --force` so the generated branch ruleset can drop its hosted
 status context; without that authorization, adoption refuses before deleting
@@ -206,7 +218,8 @@ differs from the current one only in its comment line and still passes while
 the facet is disabled; the next `praetorctl adopt` rewrites the comment.
 
 The hosted workflow (this repository's own `.github/workflows/praetor-docs.yml`)
-and the template `adopt.DocumentationWorkflow()` emits to adopters both pin
+and the template `adopt.DocumentationWorkflow()` emits to adopters
+(`markdownlint.Workflow`, `tools/markdownlint/assets.go`) both pin
 `runs-on: ubuntu-26.04`, and actions to `v7`. `DocumentationAssetIsCanonical` compares an adopted
 repository's workflow file byte-for-byte, line-ending normalized, against that
 template, so a workflow generated before these pins changed now fails the

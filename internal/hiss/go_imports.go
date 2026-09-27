@@ -3,6 +3,7 @@ package hiss
 import (
 	"go/ast"
 	"path"
+	"sort"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -76,4 +77,15 @@ func (im GoImports) Binds(name, importPath string) bool {
 func (im GoImports) DotImports(importPath string) bool {
 	_, ok := im.dot[importPath]
 	return ok
+}
+
+// DotPaths returns the import paths imported with ".", sorted so a lookup across them is
+// deterministic.
+func (im GoImports) DotPaths() []string {
+	paths := make([]string, 0, len(im.dot))
+	for importPath := range im.dot {
+		paths = append(paths, importPath)
+	}
+	sort.Strings(paths)
+	return paths
 }

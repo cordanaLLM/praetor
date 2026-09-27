@@ -14,6 +14,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/cavemansource"
 	"github.com/cordanaLLM/praetor/internal/classify"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/forge"
 	"gopkg.in/yaml.v3"
 )
 
@@ -1608,6 +1609,12 @@ func TestBuildRulesetJSON_Boundary(t *testing.T) {
 	if !strings.Contains(one, `"context": "verify"`) || !strings.Contains(one, `"required_approving_review_count": 1`) {
 		t.Fatalf("unexpected ruleset:\n%s", one)
 	}
+}
+
+// requiredStatusContexts reads the status contexts adoption requires of repoPath, through
+// the same forge reader reconcileBranchRuleset calls.
+func requiredStatusContexts(repoPath string) ([]string, error) {
+	return forge.RequiredStatusContexts(context.Background(), repoPath)
 }
 
 func TestRequiredStatusContexts_WorkflowTriggers(t *testing.T) {

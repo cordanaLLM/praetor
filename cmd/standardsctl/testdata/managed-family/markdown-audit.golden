@@ -1,0 +1,38 @@
+== canonical
+stdout "[PASS] Locked documentation gate verified (5 assets, local verify-all, hosted required context, private scratch ignores, formatter inventory).\n"
+== canonical CRLF
+stdout "[PASS] Locked documentation gate verified (5 assets, local verify-all, hosted required context, private scratch ignores, formatter inventory).\n"
+== asset drift
+stdout ""
+error [FAIL] Documentation gate asset tools/markdownlint/package.json differs from the locked Praetor asset; run 'praetorctl adopt --force'
+== asset missing
+stdout ""
+error [FAIL] Documentation gate asset tools/markdownlint/package.json is missing or unreadable: <os error>
+== asset mixed endings
+stdout ""
+error [FAIL] Documentation gate asset tools/markdownlint/package.json has invalid line endings: text contains mixed LF and CRLF line endings
+== last asset drift
+stdout ""
+error [FAIL] Documentation gate asset tools/markdownlint/no-private-scratch-links.mjs differs from the locked Praetor asset; run 'praetorctl adopt --force'
+== workflow drift
+stdout ""
+error [FAIL] Documentation gate asset .github/workflows/praetor-docs.yml differs from the locked Praetor asset; run 'praetorctl adopt --force'
+== workflow missing
+stdout ""
+error [FAIL] Documentation gate asset .github/workflows/praetor-docs.yml is missing or unreadable: <os error>
+== ruleset without context
+stdout ""
+error [FAIL] Documentation required status context is not reconciled in the branch ruleset: ruleset differs from declared branch protection policy; review the existing file before reconciliation
+== disabled clean
+stdout ""
+== disabled retains workflow
+stdout ""
+error [FAIL] Disabled documentation facet retains Praetor asset .github/workflows/praetor-docs.yml
+== disabled retains CRLF asset
+stdout ""
+error [FAIL] Disabled documentation facet retains Praetor asset tools/markdownlint/verify.mjs
+== disabled mixed-ending lookalike
+stdout ""
+== disabled retains ruleset context
+stdout ""
+error [FAIL] Disabled documentation facet retains required context "Documentation Governance"

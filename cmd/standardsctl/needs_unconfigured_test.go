@@ -155,15 +155,52 @@ func TestNeedsFleetEpicAndMinerUnconfigured_3D(t *testing.T) {
 // target, declared by the placeholder contract of the needs engine tests.
 func pythonOnlyWorkstation(t *testing.T) string {
 	t.Helper()
+	return pythonContractWorkstation(t, "      module: example.com/acme/py\n")
+}
+
+// pythonContractWorkstation writes a workstation document whose only target is python,
+// configured by moduleLine (empty for none) and the placeholder python contract.
+func pythonContractWorkstation(t *testing.T, moduleLine string) string {
+	t.Helper()
 	contract, err := os.ReadFile(filepath.Join("..", "..", "internal", "needs", "testdata", "contracts", "py.capabilities.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
 	writeFixtureFile(t, dir, "py.capabilities.yaml", string(contract))
-	writeFixtureFile(t, dir, "workstation.yaml", "framework:\n  targets:\n    python:\n      module: example.com/acme/py\n"+
+	writeFixtureFile(t, dir, "workstation.yaml", "framework:\n  targets:\n    python:\n"+moduleLine+
 		"      builder_kits: [acme/py]\n      contract: py.capabilities.yaml\n")
 	return filepath.Join(dir, "workstation.yaml")
+}
+
+// needs scan on a host whose python target is configured by its contract alone names the
+// framework that contract declares, never "not configured" (BUG-1017).
+func TestNeedsScanContractOnlyTarget_3D(t *testing.T) {
+	_, repo := newPythonFleet(t)
+	// Negative: without settings the python scan is not configured.
+	out, err := runNeedsCapture(t, "scan", "--path="+repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, out, "Target Framework: not configured", "Mapping availability: "+unsetAvailability)
+	// Positive: the contract-only target names its contract's framework and scores 66.7%.
+	t.Setenv(config.WorkstationConfigEnv, pythonContractWorkstation(t, ""))
+	out, err = runNeedsCapture(t, "scan", "--path="+repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, out, "Target Framework: example.com/acme/py", "Mapping availability: 66.7% (2 covered, 1 gaps",
+		"Coverage basis: catalog-declared")
+	if strings.Contains(out, unsetAvailability) {
+		t.Fatalf("contract-only scan rendered not configured:\n%s", out)
+	}
+	// Boundary: a go repository on the same host has no target and stays not configured.
+	goRepo := newNeedsRepo(t)
+	out, err = runNeedsCapture(t, "scan", "--path="+goRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, out, "Target Framework: not configured", "Coverage basis: not-configured")
 }
 
 // newPythonFleet builds a dev root holding one python repository whose fastapi and requests

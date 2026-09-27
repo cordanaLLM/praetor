@@ -374,6 +374,10 @@ sidecar record.
 
 Initialization and snapshots reuse the confined directory and file operations in
 `contextopt`. Caller-aware reads preserve cancellation and use bounded file snapshots.
+The wrappers without a context parameter, `ListBugs`, `ListQuestions` and `ListTasks`
+(`internal/state/bugs.go`, `questions.go`, `tasks.go`), give their read the 30-second
+`contextopt.MaxDuration` deadline instead of an unbounded `context.Background()`, so the
+HISS-02 scan (`internal/hiss/go_io.go`) finds no deadline-free context in them.
 
 **The project root must be a real directory, and so must every component of the ledger beneath
 it.** Initialization refuses a project root that is itself a symlink: accepting one would write

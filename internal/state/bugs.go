@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
 // BugEntry captures a defect discovered during active development.
@@ -51,9 +53,12 @@ func AddBug(rootPath string, bug BugEntry) (*BugEntry, error) {
 }
 
 // ListBugs returns validated records. Missing ledgers are empty; malformed or
-// unreadable existing ledgers return errors instead of partial results.
+// unreadable existing ledgers return errors instead of partial results. The read is
+// bounded by the deadline contextopt gives one read (HISS-02).
 func ListBugs(rootPath string, filterStatus string) ([]BugEntry, error) {
-	return ListBugsContext(context.Background(), rootPath, filterStatus)
+	ctx, cancel := context.WithTimeout(context.Background(), contextopt.MaxDuration)
+	defer cancel()
+	return ListBugsContext(ctx, rootPath, filterStatus)
 }
 
 // ListBugsContext preserves caller cancellation and caps file I/O at ten seconds.

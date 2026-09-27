@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/managedasset"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -105,7 +106,7 @@ func TestBootstrapSourceSetRefusesInjectedTests(t *testing.T) {
 	}
 }
 
-// TestBootstrapMarkdownAssetsNeverAdmitTestSurface covers the asset allowance against the
+// TestBootstrapMarkdownAssetsNeverAdmitTestSurface covers, for every managed asset family, the asset allowance against the
 // test-only rule: every declared asset is admitted and none lies on Go's test surface, while
 // a test-surface variant of each asset path is refused by the name rule and the set rule,
 // because the test-surface refusal runs before the allowance.
@@ -114,9 +115,12 @@ func TestBootstrapMarkdownAssetsNeverAdmitTestSurface(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assets := markdownBootstrapAssetPaths()
+	var assets []string
+	for _, family := range managedasset.Families() {
+		assets = append(assets, family.AssetPaths()...)
+	}
 	if len(assets) == 0 {
-		t.Fatal("no declared Markdown assets")
+		t.Fatal("no declared managed family assets")
 	}
 	for _, asset := range assets {
 		if util.IsGoTestSurface(asset) {

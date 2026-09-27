@@ -75,8 +75,7 @@ func TargetsFromPolicy(policy *config.EffectivePolicy) (Targets, error) {
 
 // RegistryFromPolicy prepares the needs engine for the operator settings policy selects:
 // its framework targets (TargetsFromPolicy) with each target's contract loaded
-// (LoadRegistry). A nil policy has no targets, so every language is unconfigured. The CLI
-// and the MCP server both build their registry here.
+// (LoadRegistry). A nil policy has no targets, so every language is unconfigured.
 func RegistryFromPolicy(ctx context.Context, policy *config.EffectivePolicy) (*AnalyzerRegistry, error) {
 	targets, err := TargetsFromPolicy(policy)
 	if err != nil {
@@ -87,6 +86,23 @@ func RegistryFromPolicy(ctx context.Context, policy *config.EffectivePolicy) (*A
 		return nil, fmt.Errorf("load framework targets: %w", err)
 	}
 	return registry, nil
+}
+
+// SelectRegistry selects the operator settings request names (config.SelectOperatorPolicy)
+// and prepares the needs engine for them (RegistryFromPolicy). It returns the selected
+// policy beside the registry for callers that read other settings; no document selected is
+// a nil policy with no targets. The CLI needs subcommands and the MCP standards_needs_report
+// both load their registry here, so they read one host the same way.
+func SelectRegistry(ctx context.Context, request config.SettingsRequest) (*config.EffectivePolicy, *AnalyzerRegistry, error) {
+	policy, err := config.SelectOperatorPolicy(ctx, request)
+	if err != nil {
+		return nil, nil, fmt.Errorf("select operator settings: %w", err)
+	}
+	registry, err := RegistryFromPolicy(ctx, policy)
+	if err != nil {
+		return nil, nil, err
+	}
+	return policy, registry, nil
 }
 
 // languageEcosystem is the package ecosystem of a framework language's dependencies.

@@ -62,7 +62,9 @@ func NewRegistry(targets Targets) *AnalyzerRegistry {
 // a declared framework index: a scan maps each language's demands to the packages its
 // contract declares, and a report does so for every language but go, whose framework the
 // report selects itself (SelectFrameworkSource). A contract must name its target's module
-// when one is configured and declare its language's ecosystem.
+// when one is configured and declare its language's ecosystem; a target configured by its
+// contract alone takes the framework that contract declares as its module, so a scan names
+// that framework instead of reporting the language not configured.
 func LoadRegistry(ctx context.Context, targets Targets) (*AnalyzerRegistry, error) {
 	registry := NewRegistry(targets)
 	registry.contracts = make(map[string]*FrameworkIndex)
@@ -80,6 +82,10 @@ func LoadRegistry(ctx context.Context, targets Targets) (*AnalyzerRegistry, erro
 				language, index.Ecosystem, language, want)
 		}
 		registry.contracts[language] = index
+		if declared := registry.targets[language]; declared.Module == "" {
+			declared.Module = index.Name
+			registry.targets[language] = declared
+		}
 	}
 	return registry, nil
 }

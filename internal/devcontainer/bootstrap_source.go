@@ -15,9 +15,9 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/managedasset"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"github.com/cordanaLLM/praetor/templates"
-	markdownassets "github.com/cordanaLLM/praetor/tools/markdownlint"
 )
 
 const (
@@ -50,7 +50,7 @@ func captureBootstrapSource(ctx context.Context, root string) ([]bootstrapSource
 	return files, nil
 }
 
-// bootstrapSourcePathspec, together with the declared Markdown gate assets that
+// bootstrapSourcePathspec, together with the declared family assets that
 // bootstrapSourcePaths appends, lists exactly what validateBootstrapSourceName accepts. It
 // previously also globbed *.s, *.S, *.c, *.h and *.syso, which that validator rejects as
 // "non-Go build inputs", so the first native file committed anywhere in the tree --
@@ -303,18 +303,25 @@ type bootstrapAssetFamily struct {
 	assets    []string
 }
 
-// bootstrapAssetFamilies declares the two embedded asset sets go build ./cmd/standardsctl
-// needs: the documentation gate that adoption emits, and the template bodies flavor apply
-// scaffolds.
+// bootstrapAssetFamilies declares the embedded asset sets go build ./cmd/standardsctl needs:
+// every managed asset family adoption emits (internal/managedasset), in registry order, and
+// the template bodies flavor apply scaffolds.
 func bootstrapAssetFamilies() ([]bootstrapAssetFamily, error) {
 	templateAssets, err := templateBootstrapAssetPaths()
 	if err != nil {
 		return nil, err
 	}
-	return []bootstrapAssetFamily{
-		{name: "Markdown", source: markdownassets.Directory + "/assets.go", directive: markdownBootstrapEmbedDirective(), assets: markdownBootstrapAssetPaths()},
-		{name: "template", source: templates.SourceFile, directive: "//go:embed " + templates.Pattern, assets: templateAssets},
-	}, nil
+	managed := managedasset.Families()
+	families := make([]bootstrapAssetFamily, 0, len(managed)+1)
+	for index := 0; index < len(managed) && index < managedasset.MaxFamilies; index++ {
+		family := managed[index]
+		families = append(families, bootstrapAssetFamily{
+			name: family.Name, source: family.Source, directive: family.EmbedDirective(), assets: family.AssetPaths(),
+		})
+	}
+	return append(families, bootstrapAssetFamily{
+		name: "template", source: templates.SourceFile, directive: "//go:embed " + templates.Pattern, assets: templateAssets,
+	}), nil
 }
 
 // templateBootstrapAssetPaths names every embedded template body as a repository path.
@@ -344,19 +351,6 @@ func isBootstrapAsset(name string) (bool, error) {
 		}
 	}
 	return false, nil
-}
-
-func markdownBootstrapAssetPaths() []string {
-	names := markdownassets.Names()
-	paths := make([]string, 0, len(names))
-	for index := 0; index < len(names) && index < markdownassets.MaxAssets; index++ {
-		paths = append(paths, markdownassets.Directory+"/"+names[index])
-	}
-	return paths
-}
-
-func markdownBootstrapEmbedDirective() string {
-	return "//go:embed " + strings.Join(markdownassets.Names(), " ")
 }
 
 func declaresPraetorModule(data []byte) bool {

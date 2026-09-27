@@ -44,6 +44,8 @@ func scanGoSource(data []byte, rel string, rep *ScanReport, opts ScanOptions) {
 		safety:  safetyCommentLines(fset, file),
 		imports: FileImports(file),
 		pkg:     file.Name.Name,
+
+		freeContexts: make(map[string]token.Pos),
 	}
 	g.walk(file)
 	g.measure(file, opts.Complexity)
@@ -76,6 +78,10 @@ type goScanner struct {
 	// pkg is the file's package name; main.main is an entry point only in package main.
 	pkg   string
 	stack []ast.Node
+	// freeContexts maps each identifier of the current function that holds a context
+	// without a deadline to the end of the scope that binding lives in (go_io.go). It is
+	// cleared at every function declaration.
+	freeContexts map[string]token.Pos
 }
 
 // walk visits every node once with an explicit ancestor stack; the traversal itself is
@@ -300,24 +306,47 @@ func (g *goScanner) inspect(n ast.Node) {
 	switch node := n.(type) {
 	case *ast.FuncDecl:
 		g.checkFuncLOC(node)
+		clear(g.freeContexts)
+	case *ast.FuncLit:
+		g.forgetParams(node)
 	case *ast.ForStmt:
-		if node.Cond == nil {
-			g.record("HISS-02", node.Pos(), "", "Unbounded for loop without an exit condition (for {} / for ;; )")
-		}
+		g.checkUnboundedFor(node)
 	case *ast.BranchStmt:
-		if node.Tok == token.GOTO {
-			g.record("HISS-01", node.Pos(), "", "Legacy non-DAG control flow jump (goto)")
-		}
+		g.checkGoto(node)
 	case *ast.CallExpr:
-		g.checkAbort(node)
-		g.checkSelfRecursion(node)
-		g.checkDotUnsafeCall(node)
+		g.checkCall(node)
 	case *ast.AssignStmt:
 		g.checkBlankAssign(node)
+		g.trackContextAssign(node)
+	case *ast.ValueSpec:
+		g.trackContextSpec(node)
 	case *ast.IfStmt:
 		g.checkEmptyErrBranch(node)
 	case *ast.SelectorExpr:
 		g.checkUnsafe(node)
+	}
+}
+
+// checkCall runs every rule that inspects a call expression.
+func (g *goScanner) checkCall(call *ast.CallExpr) {
+	g.checkAbort(call)
+	g.checkSelfRecursion(call)
+	g.checkDotUnsafeCall(call)
+	g.checkContextSink(call)
+	g.checkContextlessIO(call)
+}
+
+// checkUnboundedFor reports a for statement with no condition, the loop half of HISS-02.
+func (g *goScanner) checkUnboundedFor(loop *ast.ForStmt) {
+	if loop.Cond == nil {
+		g.record("HISS-02", loop.Pos(), "", "Unbounded for loop without an exit condition (for {} / for ;; )")
+	}
+}
+
+// checkGoto reports a goto, which HISS-01 forbids as non-DAG control flow.
+func (g *goScanner) checkGoto(branch *ast.BranchStmt) {
+	if branch.Tok == token.GOTO {
+		g.record("HISS-01", branch.Pos(), "", "Legacy non-DAG control flow jump (goto)")
 	}
 }
 
@@ -368,18 +397,8 @@ func (g *goScanner) checkAbort(call *ast.CallExpr) {
 // osExitCallee reports whether fun names os.Exit, and returns the identifier that reached
 // package os: the package name of a selector, or Exit itself under a dot import.
 func (g *goScanner) osExitCallee(fun ast.Expr) (string, bool) {
-	switch f := fun.(type) {
-	case *ast.SelectorExpr:
-		pkg, ok := f.X.(*ast.Ident)
-		if ok && f.Sel.Name == "Exit" && g.imports.Binds(pkg.Name, "os") {
-			return pkg.Name, true
-		}
-	case *ast.Ident:
-		if f.Name == "Exit" && g.imports.DotImports("os") {
-			return f.Name, true
-		}
-	}
-	return "", false
+	_, _, local, ok := resolvePackageCall(g.imports, fun, osExitFunc)
+	return local, ok
 }
 
 // shadowed reports whether the enclosing function binds name as its receiver, a parameter,

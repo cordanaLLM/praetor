@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/gomanifest"
 )
 
 // Fixture helpers. A checkout is a directory whose .git holds a HEAD; a linked worktree's
@@ -371,7 +373,7 @@ func TestScanASTImportsStopsAtNestedModules(t *testing.T) {
 	makeCheckout(t, clone)
 	writeRepoFile(t, filepath.Join(clone, "x.go"), "package x\n\nimport _ \"github.com/spf13/cobra\"\n")
 
-	imports, err := scanASTImports(context.Background(), repo, "example.com/repo")
+	imports, err := scanASTImports(context.Background(), repo, "example.com/repo", gomanifest.IgnoreSet{})
 	if err != nil {
 		t.Fatal(err)
 	}
