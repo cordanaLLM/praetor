@@ -3,196 +3,159 @@ package adopt
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
-	"time"
+	"path/filepath"
+	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/agentcontext"
 	"github.com/cordanaLLM/praetor/internal/agenthook"
+	"github.com/cordanaLLM/praetor/internal/clientid"
+	"github.com/cordanaLLM/praetor/internal/clientjson"
+	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
-func reconcileAgentHooks(ctx context.Context, s *adoptSession) error {
-	reason := "These clients have no PreToolUse hook surface today"
-	s.report.recordNotApplicable("cursor", reason)
-	s.report.recordNotApplicable("windsurf", reason)
-	s.report.recordNotApplicable("copilot", reason)
+// pluginHookClients register hooks through an installed plugin rather than a repository file;
+// adoption writes nothing for them and says so.
+var pluginHookClients = [...]clientid.ID{clientid.AGY}
 
-	for _, client := range []string{"claude", "codex", "gemini"} {
-		if err := reconcileClientHook(s, client); err != nil {
+// reconcileAgentHooks registers the engine's pre-tool row (agenthook.Registration.Command,
+// ADR-0011 decision 1) in the native hook file of every agent client agent_clients selects, so
+// the command policy runs on every shell call of an adopted repository instead of only in a
+// scaffolded script nothing calls. A selected client without a native hook file, an unselected
+// client and a plugin-registered client each get a not-applicable entry naming the reason.
+func reconcileAgentHooks(ctx context.Context, s *adoptSession) error {
+	declared, err := config.LoadDeclaredTooling(ctx, s.repoPath)
+	if err != nil {
+		return fmt.Errorf("read agent_clients selection from %s: %w", manifestFile, err)
+	}
+	selected, excluded, err := agentcontext.SelectedClients(declared.AgentClients)
+	if err != nil {
+		return fmt.Errorf("agent_clients in %s: %w", manifestFile, err)
+	}
+	for _, client := range excluded {
+		recordHookNotApplicable(s, client, "Not selected by agent_clients in "+manifestFile)
+	}
+	for _, client := range selected {
+		if err := reconcileClientHook(ctx, s, client); err != nil {
 			return err
 		}
+	}
+	for _, client := range pluginHookClients {
+		s.report.recordNotApplicable(string(client), "Registers hooks through its installed plugin, not a repository file")
 	}
 	return nil
 }
 
-// clientHookConfig returns the hook-configuration file (relative to the repo
-// root) and the timeout unit a client's config expects, or ok=false when the
-// client has no known PreToolUse hook file.
-func clientHookConfig(client string) (relPath string, unit time.Duration, ok bool) {
-	switch client {
-	case "claude":
-		return ".claude/settings.json", time.Second, true
-	case "codex":
-		return ".codex/hooks.json", time.Second, true
-	case "gemini":
-		return ".gemini/settings.json", time.Millisecond, true
-	default:
-		return "", 0, false
+// recordHookNotApplicable reports a client adoption registers nothing for, under its hook file
+// when it has one and under its id otherwise.
+func recordHookNotApplicable(s *adoptSession, client, reason string) {
+	if file, ok := agenthook.NativeHookFile(client); ok {
+		s.report.recordNotApplicable(file.Path, reason)
+		return
 	}
+	s.report.recordNotApplicable(client, reason)
 }
 
-func reconcileClientHook(s *adoptSession, client string) error {
-	relPath, unit, ok := clientHookConfig(client)
+// reconcileClientHook plans the pre-tool registration of one selected client against its hook
+// file and publishes the plan unless the session is a dry run. The report entry is the same in
+// both: what the plan found or would write.
+func reconcileClientHook(ctx context.Context, s *adoptSession, client string) error {
+	file, ok := agenthook.NativeHookFile(client)
 	if !ok {
+		s.report.recordNotApplicable(client, "No native hook file; the pre-tool interceptor is not registered")
 		return nil
 	}
-
-	fullPath, err := repoFile(s.repoPath, relPath)
+	full, err := repoFile(s.repoPath, file.Path)
 	if err != nil {
 		return err
 	}
-
-	if !fileExists(fullPath) {
-		s.report.recordSkipped(relPath, "Hook configuration file does not exist")
-		return nil
-	}
-
-	data, err := os.ReadFile(fullPath)
+	before, exists, err := readHookFile(full)
 	if err != nil {
-		return fmt.Errorf("read %s: %w", relPath, err)
+		return err
 	}
-
-	var root map[string]any
-	if err := json.Unmarshal(data, &root); err != nil {
-		return fmt.Errorf("parse %s: %w", relPath, err)
+	plan, err := clientjson.PlanHooks(ctx, before, preToolHooks(client, file))
+	if err != nil {
+		return fmt.Errorf("register %s pre-tool hook in %s: %w", client, file.Path, err)
 	}
-
-	hooksMap, ok := root["hooks"].(map[string]any)
-	if !ok {
+	if !plan.Changed {
+		s.report.recordReconciled(file.Path, "Pre-tool interceptor already registered: "+strings.Join(plan.Present, "; "))
 		return nil
 	}
+	if err := s.publishHookFile(ctx, file.Path, full, before, exists, plan.Content); err != nil {
+		return err
+	}
+	recordHookRegistration(s, file.Path, exists, plan.Added)
+	return nil
+}
 
-	changed := false
+// readHookFile reads a confined hook file through readRepoFile, which refuses a FIFO or an
+// oversized file instead of blocking or reading it in part. An absent file reads as no bytes.
+func readHookFile(full string) ([]byte, bool, error) {
+	if !fileExists(full) {
+		return nil, false, nil
+	}
+	data, err := readRepoFile(full)
+	if err != nil {
+		return nil, true, err
+	}
+	return data, true, nil
+}
+
+// preToolHooks turns the client's pre-tool registration rows into the handlers PlanHooks
+// merges, with the timeout in the unit of the client's hook file.
+func preToolHooks(client string, file agenthook.HookFile) []clientjson.Hook {
+	var hooks []clientjson.Hook
 	for _, row := range agenthook.Registrations(client) {
 		if row.Event != agenthook.EventPreTool {
 			continue
 		}
-		if injectHook(hooksMap, row, unit) {
-			changed = true
-		}
+		hooks = append(hooks, clientjson.Hook{
+			Event:    row.NativeEvent,
+			Matcher:  row.Matcher,
+			Command:  row.Command(),
+			Timeout:  int64(row.Timeout / file.TimeoutUnit),
+			ServedBy: row.ServedBy,
+		})
 	}
-
-	return writeReconciledHooks(s, fullPath, relPath, data, root, changed)
+	return hooks
 }
 
-// writeReconciledHooks backs up the original config and persists the merged
-// one when the reconciliation changed anything; it is a no-op (besides
-// reporting) otherwise.
-func writeReconciledHooks(s *adoptSession, fullPath, relPath string, original []byte, root map[string]any, changed bool) error {
-	if !changed {
-		s.report.recordReconciled(relPath, "PreToolUse interceptor already registered")
-		return nil
-	}
-
+// publishHookFile keeps a copy of an existing hook file beside it, replaces the file only while
+// it still holds the bytes the plan was made from, and reads the result back. Every write goes
+// through the root-pinned contextopt writers, so a symlinked file, backup or directory below
+// the repository is refused rather than written through.
+func (s *adoptSession) publishHookFile(ctx context.Context, rel, full string, before []byte, exists bool, content []byte) error {
 	if s.opts.DryRun {
 		return nil
 	}
-
-	bakPath := fullPath + ".bak"
-	if err := os.WriteFile(bakPath, original, filePerm); err != nil {
-		return fmt.Errorf("backup %s: %w", relPath, err)
+	if exists {
+		if err := contextopt.WriteSnapshotIn(ctx, s.repoPath, filepath.FromSlash(rel+hookBackupExt), before, filePerm); err != nil {
+			return fmt.Errorf("back up %s: %w", rel, err)
+		}
 	}
-
-	out, err := marshalJSONWithIndent(root)
+	options := contextopt.ReplaceOptions{Expected: before, Exists: exists, Mode: filePerm}
+	if err := contextopt.ReplaceSnapshotIn(ctx, s.repoPath, filepath.FromSlash(rel), content, options); err != nil {
+		return fmt.Errorf("write %s: %w", rel, err)
+	}
+	actual, err := readRepoFile(full)
 	if err != nil {
-		return fmt.Errorf("encode %s: %w", relPath, err)
+		return fmt.Errorf("read back %s: %w", rel, err)
 	}
-
-	if err := s.write(fullPath, out, filePerm); err != nil {
-		return err
+	if !bytes.Equal(actual, content) {
+		return fmt.Errorf("%s changed after it was written; compare it with %s%s", rel, rel, hookBackupExt)
 	}
-
-	s.report.recordReconciled(relPath, "Registered PreToolUse anti-evasion interceptor")
 	return nil
 }
 
-func injectHook(hooksMap map[string]any, row agenthook.Registration, unit time.Duration) bool {
-	changed := false
-	nativeEvent := row.NativeEvent
-	matcher := row.Matcher
-	if matcher == "" {
-		matcher = "*"
+// recordHookRegistration reports a registration as a created file, or as a merge into an
+// existing one together with the backup taken of it.
+func recordHookRegistration(s *adoptSession, rel string, existed bool, added []string) {
+	commands := strings.Join(added, "; ")
+	if !existed {
+		s.report.recordCreated(rel, "Registered pre-tool interceptor: "+commands)
+		return
 	}
-
-	eventList, ok := hooksMap[nativeEvent].([]any)
-	if !ok {
-		return false
-	}
-
-	for _, rawGroup := range eventList {
-		group, ok := rawGroup.(map[string]any)
-		if !ok {
-			continue
-		}
-
-		if stringField(group, "matcher") != matcher {
-			continue
-		}
-
-		hooksList, ok := group["hooks"].([]any)
-		if !ok {
-			continue
-		}
-
-		if appendIfNotExists(&hooksList, row, unit) {
-			group["hooks"] = hooksList
-			changed = true
-		}
-	}
-	return changed
-}
-
-func appendIfNotExists(hooksList *[]any, row agenthook.Registration, unit time.Duration) bool {
-	targetCmd := row.Command()
-	for _, rawHook := range *hooksList {
-		hookObj, ok := rawHook.(map[string]any)
-		if !ok {
-			continue
-		}
-		if stringField(hookObj, "command") == targetCmd {
-			return false
-		}
-	}
-
-	newHook := map[string]any{
-		"type":    "command",
-		"command": targetCmd,
-	}
-	if row.Timeout > 0 {
-		newHook["timeout"] = int(row.Timeout / unit)
-	}
-	*hooksList = append(*hooksList, newHook)
-	return true
-}
-
-// stringField returns m[key] as a string, or "" when the key is absent or
-// holds a non-string value.
-func stringField(m map[string]any, key string) string {
-	v, ok := m[key].(string)
-	if !ok {
-		return ""
-	}
-	return v
-}
-
-func marshalJSONWithIndent(v any) ([]byte, error) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(v); err != nil {
-		return nil, err
-	}
-	// json.Encoder adds a trailing newline, which is standard for JSON files.
-	return buf.Bytes(), nil
+	s.report.recordReconciledAs(rel, actionMerge, "Registered pre-tool interceptor: "+commands+"; prior file kept as "+rel+hookBackupExt)
+	s.report.recordCreated(rel+hookBackupExt, "Backup of "+rel+" before the pre-tool interceptor merge")
 }

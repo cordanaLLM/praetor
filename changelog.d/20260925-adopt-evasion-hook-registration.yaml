@@ -1,4 +1,3 @@
 type: fixed
-title: Register PreToolUse anti-evasion interceptor in agent hooks
+title: Register the engine's pre-tool interceptor in the hook file of every agent client agent_clients selects during adoption, creating the file, event list or matcher group when absent, merging without reordering members or rewriting literals, and keeping a backup of any file it changes
 breaking: false
-issue: BUG-911

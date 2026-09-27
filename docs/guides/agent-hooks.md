@@ -488,6 +488,25 @@ and blocks with exit 2 on any input that is not one JSON object with a nonempty
 which are the dialects `praetorctl hook` owns. `internal/adopt/evasion_hook_test.go` replays
 the corpus above against the rendered script.
 
+Adoption also registers the engine's own pre-tool call, `praetorctl hook <client> pre-tool`
+(ADR-0011 decision 1), in the hook file of every agent client that `agent_clients` selects:
+`.claude/settings.json`, `.codex/hooks.json` and `.gemini/settings.json`, with the matcher
+and the timeout unit of the registration row (`agenthook.NativeHookFile`,
+`internal/agenthook/registrations.go`). The `agent-hooks` step
+(`internal/adopt/agent_hooks.go`) creates a missing file, `hooks` object, event list or
+matcher group, and adds the handler to a group whose matcher equals the row's. The merge
+(`internal/clientjson/hooks.go`) keeps every other member in its place with its literal
+bytes, so no key is reordered and no number is rounded. A file the step changes is first
+copied to `<file>.bak`, then replaced only while it still holds the bytes the plan was made
+from, and read back; each write goes through the root-pinned `contextopt` writers, which
+refuse a symlink below the repository. A handler that already runs the evaluator (the engine
+call, the skew guard `praetor_hook.py`, or one of the Python pre-tool adapters) counts as
+registered, and the file stays byte for byte as it was (`Registration.ServedBy`). Cursor,
+Windsurf and Copilot have no native hook file and AGY registers through its plugin, so the
+report lists them as not applicable; a dry run reports the same entries without writing. A
+repository that maintains its hook files by hand declines the step with
+`adoption.decline: [agent-hooks]`. `internal/adopt/agent_hooks_test.go` covers each case.
+
 Both Python scripts, the adopted interceptor and praetor's own guard, refuse a command over
 the scan bounds instead of scanning it: more than 65,536 characters in all, or one line over
 2,048 characters (`agenthook.MaxScanChars`, `agenthook.MaxScanLineChars`). Python's `re`
