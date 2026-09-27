@@ -558,19 +558,54 @@ func TestCancelCommandsOnSignal_Negative_IgnoredHangupStaysIgnored(t *testing.T)
 	}
 }
 
-// Boundary: the first signal restores the default action, so a second one ends the process at
-// once instead of waiting out the grace of a command that ignores the first.
-func TestCancelCommandsOnSignal_Boundary_SecondSignalEndsTheProcess(t *testing.T) {
+// Boundary: whichever signal cancels the work, it hands Ctrl-C back to its default action, so an
+// operator who presses it next ends the process at once instead of waiting out the grace of a
+// command that ignores the first signal.
+func TestCancelCommandsOnSignal_Boundary_InterruptAfterFirstSignalEndsTheProcess(t *testing.T) {
 	t.Parallel()
-	// The pause stays short: without a parent-death signal the command outlives the helper.
-	script := "trap '' INT TERM HUP; " + readyStep + "; sleep 3"
-	helper, _, _ := startInterruptHelper(t, "cancel", script)
-	if err := syscall.Kill(-helper.Process.Pid, syscall.SIGINT); err != nil {
-		t.Fatal(err)
+	for _, first := range []syscall.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP} {
+		t.Run(first.String(), func(t *testing.T) {
+			t.Parallel()
+			// The pause stays short: without a parent-death signal the command outlives the helper.
+			script := "trap '' INT TERM HUP; " + readyStep + "; sleep 3"
+			helper, _, _ := startInterruptHelper(t, "cancel", script)
+			if err := syscall.Kill(-helper.Process.Pid, first); err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(500 * time.Millisecond) // the first signal is handled well within this
+			if took := signalHelper(t, helper, syscall.SIGINT, true); took >= CommandWaitDelay {
+				t.Fatalf("the interrupt after %v took %v, the whole %v grace", first, took, CommandWaitDelay)
+			}
+		})
 	}
-	time.Sleep(500 * time.Millisecond) // the first signal is handled well within this
-	if took := signalHelper(t, helper, syscall.SIGINT, true); took >= CommandWaitDelay {
-		t.Fatalf("the second interrupt took %v, the whole %v grace", took, CommandWaitDelay)
+}
+
+// Closing a terminal delivers SIGHUP twice, once from the shell to its jobs and again from the
+// kernel when the shell exits, and a supervisor may repeat SIGTERM. The repeat arrives while the
+// cancelled work is still inside its command's grace; it is absorbed, so the cleanup command
+// still starts and the process exits with the first signal's status instead of dying from the
+// second.
+func TestCancelCommandsOnSignal_Positive_RepeatedSignalStillCleansUp(t *testing.T) {
+	t.Parallel()
+	for _, sig := range []syscall.Signal{syscall.SIGHUP, syscall.SIGTERM} {
+		t.Run(sig.String(), func(t *testing.T) {
+			t.Parallel()
+			script := "trap '' INT TERM HUP; " + readyStep + "; sleep 3"
+			helper, dir, _ := startInterruptHelper(t, "cancel", script)
+			if err := syscall.Kill(-helper.Process.Pid, sig); err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(500 * time.Millisecond) // the first signal is handled well within this
+			if err := syscall.Kill(-helper.Process.Pid, sig); err != nil {
+				t.Fatal(err)
+			}
+			if status := helperStatus(t, helper); !status.Exited() || status.ExitStatus() != 128+int(sig) {
+				t.Fatalf("a repeated %v ended the helper before its cleanup: %v", sig, status)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "after-cancel")); err != nil {
+				t.Fatalf("the cleanup command after a repeated %v never started: %v", sig, err)
+			}
+		})
 	}
 }
 

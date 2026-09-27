@@ -111,7 +111,9 @@ func waitForStubStart(t *testing.T, path string) time.Time {
 }
 
 // stubGo stands in for the Go toolchain during gate run subprocess signal tests.
-// For "go test" it records its PID into PRAETOR_TEST_READY and waits for cancellation.
+// For "go test" it records its PID into PRAETOR_TEST_READY and waits for cancellation. With
+// PRAETOR_TEST_STUBBORN set it ignores every signal and fails two seconds later instead, which
+// holds the cancelled run inside the command's grace.
 const stubGo = `#!/bin/sh
 case "$1" in
 	env)
@@ -128,6 +130,12 @@ case "$1" in
 		echo "$PRAETOR_TEST_REPO"
 		;;
 	test)
+		if [ -n "$PRAETOR_TEST_STUBBORN" ]; then
+			trap '' TERM INT HUP
+			echo $$ > "$PRAETOR_TEST_READY"
+			sleep 2
+			exit 1
+		fi
 		echo $$ > "$PRAETOR_TEST_READY"
 		trap 'exit 143' TERM INT
 		while true; do
@@ -190,8 +198,9 @@ type gateRunHelper struct {
 // startGateRunHelper starts `gate run` against a hermetic repository with stubbed tools, as the
 // leader of its own process group the way a shell starts a foreground job, and returns once the
 // race stage's stub `go test` runs in the isolated worktree. ignoreHangup starts it with SIGHUP
-// ignored through an empty shell trap, the disposition nohup hands the program it execs.
-func startGateRunHelper(t *testing.T, ignoreHangup bool) *gateRunHelper {
+// ignored through an empty shell trap, the disposition nohup hands the program it execs. extraEnv
+// is added to the helper's environment.
+func startGateRunHelper(t *testing.T, ignoreHangup bool, extraEnv ...string) *gateRunHelper {
 	t.Helper()
 	stubs := t.TempDir()
 	for name, script := range map[string]string{
@@ -214,6 +223,7 @@ func startGateRunHelper(t *testing.T, ignoreHangup bool) *gateRunHelper {
 		"PATH="+stubs+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"PRAETOR_SIGNAL_PROCESS_TEST=gate run --path="+h.repo,
 		"PRAETOR_TEST_READY="+h.ready, "PRAETOR_TEST_REPO="+h.repo, "GOCOVERDIR="+t.TempDir())
+	h.cmd.Env = append(h.cmd.Env, extraEnv...)
 	h.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	h.cmd.Stdout, h.cmd.Stderr = &h.out, &h.out
 	if err := h.cmd.Start(); err != nil {
@@ -314,6 +324,19 @@ func TestGateRun_Positive_TerminatingSignalCleansUpWorktreeAndBranch(t *testing.
 			h.requireCleanedUp(t, sig)
 		})
 	}
+}
+
+// Closing a terminal delivers SIGHUP twice: the shell forwards it to its jobs, and the kernel
+// sends it again when the shell exits. The second hangup arrives while the cancelled gate run
+// still waits for its race stage, and must not end praetorctl before it removes its isolated
+// worktree and branch.
+func TestGateRun_Positive_RepeatedHangupStillCleansUp(t *testing.T) {
+	h := startGateRunHelper(t, false, "PRAETOR_TEST_STUBBORN=1")
+	h.signalGroup(t, syscall.SIGHUP)
+	time.Sleep(500 * time.Millisecond) // the first hangup is handled well within this
+	h.signalGroup(t, syscall.SIGHUP)
+	h.awaitExit(t, syscall.SIGHUP)
+	h.requireCleanedUp(t, syscall.SIGHUP)
 }
 
 // A gate run started with SIGHUP ignored (nohup, a background job) keeps ignoring it: the run,

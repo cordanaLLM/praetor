@@ -193,10 +193,14 @@ removes its index lock and nothing is left running. `gate run` forwards SIGINT, 
 the same way but does not end on them: it cancels the run, removes the race stage's isolated
 worktree and its `wt/*` branch, and exits with the shell's 128+signal status (130, 143 or 129), not
 the 1 of a rejection (`CancelCommandsOnSignal` in `internal/util/command_signal_context.go`). A
-signal the CLI started with ignored, as under `nohup`, stays ignored, and a second signal ends it
-at once. `TestGateRun_Positive_TerminatingSignalCleansUpWorktreeAndBranch` and
+signal the CLI started with ignored, as under `nohup`, stays ignored. A Ctrl-C after the first
+signal ends it at once; a repeated SIGHUP or SIGTERM does not, because closing a terminal sends
+SIGHUP twice (the shell forwards it to its jobs, and the kernel sends it again when the shell
+exits), and the cleanup the first one started is bounded.
+`TestGateRun_Positive_TerminatingSignalCleansUpWorktreeAndBranch`,
+`TestGateRun_Positive_RepeatedHangupStillCleansUp` and
 `TestGateRun_Negative_IgnoredHangupKeepsTheRunGoing` in `cmd/standardsctl/signal_unix_test.go`
-replay both cases. SIGKILL on the CLI's group cannot be forwarded
+replay these cases. SIGKILL on the CLI's group cannot be forwarded
 and misses those groups. On Linux the kernel still kills each command when the CLI dies
 (`internal/util/command_parent_death_linux.go`); the processes a command started, and every
 command on macOS, would run on. The `test_stop_*` cases in

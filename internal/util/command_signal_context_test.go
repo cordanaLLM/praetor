@@ -36,14 +36,14 @@ func TestSignalError_ExitCode_3D(t *testing.T) {
 	}
 }
 
-// Positive: the first signal stops the watch, reaches the running commands before the context
+// Positive: the first signal releases Ctrl-C, reaches the running commands before the context
 // is cancelled, and becomes the cancellation cause.
 func TestCancelOnSignal_Positive_ForwardsThenCancelsWithTheSignal(t *testing.T) {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	defer cancel(nil)
 	received := make(chan os.Signal, 1)
 	received <- syscall.SIGHUP
-	stoppedWatching := false
+	releasedInterrupt := false
 	var forwarded os.Signal
 	forward := func(sig os.Signal) error {
 		if ctx.Err() != nil {
@@ -52,10 +52,10 @@ func TestCancelOnSignal_Positive_ForwardsThenCancelsWithTheSignal(t *testing.T) 
 		forwarded = sig
 		return nil
 	}
-	cancelOnSignal(received, make(chan struct{}), func() { stoppedWatching = true }, forward, cancel)
+	cancelOnSignal(received, make(chan struct{}), func() { releasedInterrupt = true }, forward, cancel)
 
-	if !stoppedWatching {
-		t.Error("the first signal must restore the default action, so a second one ends the process")
+	if !releasedInterrupt {
+		t.Error("the first signal must hand Ctrl-C back to its default action")
 	}
 	if forwarded != syscall.SIGHUP {
 		t.Errorf("forwarded %v, want hangup", forwarded)
@@ -120,5 +120,34 @@ func TestCancelCommandsOnSignal_Boundary_StopAndParentCancelCarryNoSignal(t *tes
 	<-ctx.Done()
 	if !errors.Is(context.Cause(ctx), parentCause) {
 		t.Fatalf("cause = %v, want the parent's", context.Cause(ctx))
+	}
+}
+
+// Positive, negative and boundary: the watch absorbs repeats of every watched signal except
+// os.Interrupt, which the first signal hands back to its default action; a watch of os.Interrupt
+// alone lingers on nothing, since signal.Notify with no signals would relay every signal; and
+// once stopped, a late first signal registers nothing and a second stop is harmless.
+func TestSignalWatch_3D(t *testing.T) {
+	w := newSignalWatch([]os.Signal{os.Interrupt, syscall.SIGTERM})
+	if len(w.lingering) != 1 || w.lingering[0] != syscall.SIGTERM {
+		t.Errorf("lingering = %v, want only the termination request", w.lingering)
+	}
+	w.releaseInterrupt()
+	w.stop()
+	w.stop()
+	select {
+	case <-w.stopped:
+	default:
+		t.Error("stop did not end the wait")
+	}
+
+	only := newSignalWatch([]os.Signal{os.Interrupt})
+	if len(only.lingering) != 0 {
+		t.Errorf("lingering = %v, want none for an interrupt-only watch", only.lingering)
+	}
+	only.stop()
+	only.releaseInterrupt()
+	if !only.done {
+		t.Error("a release after stop reopened the watch")
 	}
 }

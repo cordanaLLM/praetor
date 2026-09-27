@@ -246,7 +246,7 @@ constant and every `gate run` line in `.agents/agents/*.md` against the real fla
 stage report, then the verdict line, and exits 1 when the pipeline is REJECTED. It used to print
 only the verdict and exit 0 on a rejection, so a script or agent that ran it read a rejected
 repository as admitted. `TestGatekeeperAgent_Negative_RejectedExitsOneWithTheFailingStage` in
-[`cmd/standardsctl/agent_gatekeeper_test.go`](../../cmd/standardsctl/agent_gatekeeper_test.go)
+[`cmd/standardsctl/agent_gatekeeper_test.go`](https://github.com/cordanaLLM/praetor/blob/main/cmd/standardsctl/agent_gatekeeper_test.go)
 pins the exit code and the failing stage's reason in the output.
 
 ### A receipt certifies only a working tree that matches HEAD
