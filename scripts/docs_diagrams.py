@@ -7,9 +7,12 @@ section 7). Standard library only, so it runs on whichever interpreter a CI job 
 * `site --config --docs --site` runs after `mkdocs build`. The kinds a build accepts come from its
   configuration: the declared mermaid custom fence enables ```mermaid, and the listed
   scripts/mkdocs_figures_hook.py enables ```figure. A fence of a kind the configuration does not
-  enable is an error. Every Mermaid fence must appear as a `<pre class="mermaid">`; every figure
-  fence as a `figure.praetor-figure[data-figure]` whose images resolve under the site, on a page
-  that loads the figure loader, with its slug in the bundle's registry.json.
+  enable is an error; the root site enables figures only, so a Mermaid fence there is told to
+  become a figure fence, while the adopter preset keeps Mermaid. Every Mermaid fence must appear
+  as a `<pre class="mermaid">`; every figure fence as a `figure.praetor-figure[data-figure]`
+  whose images resolve under the site, on a page that loads the figure loader, with its slug in
+  the bundle's registry.json. Pages the configuration's `exclude_docs` leaves out are skipped,
+  as MkDocs skips them.
 * `sources` needs no site and no Node. It fails when a figure's JSON no longer matches its spec,
   the vendored engine files, tools/figures/build.mjs or its SVGs; when a spec has no JSON or a JSON
   no spec; when a fence names a figure that does not exist; when the README's portable block
@@ -21,12 +24,16 @@ section 7). Standard library only, so it runs on whichever interpreter a CI job 
 
 The page mapping assumes MkDocs' default `use_directory_urls: true`, which the site and the preset
 both use. The configuration reader handles the block-style YAML both files are written in; it is a
-check on a third-party tool's file, not a loader for praetor configuration.
+check on a third-party tool's file, not a loader for praetor configuration. Its `exclude_docs`
+matcher covers the gitignore subset the configurations use (anchored and unanchored paths,
+directory patterns, and `*`, `?` and `[...]` wildcards) and refuses the rest (`!`, `**` and `\\`)
+instead of guessing.
 """
 
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import hashlib
 import html
 from html.parser import HTMLParser
@@ -63,6 +70,16 @@ HOOKS_BLOCK = re.compile(r"^hooks\s*:\s*(?:#.*)?$")
 HOOKS_FLOW = re.compile(r"^hooks\s*:\s*\[(.*)\]\s*(?:#.*)?$")
 SITE_URL = re.compile(r"^site_url\s*:\s*['\"]?([^'\"#\s]+)")
 LIST_ITEM = re.compile(r"^\s+-\s+['\"]?([^'\"#\s]+)")
+EXCLUDE_BLOCK = re.compile(r"^exclude_docs\s*:\s*[|>][-+]?\s*(?:#.*)?$")
+EXCLUDE_LINE = re.compile(r"^exclude_docs\s*:\s*['\"]?([^'\"#]*?)['\"]?\s*(?:#.*)?$")
+# MkDocs adds these to every exclude_docs (mkdocs/structure/files.py, _default_exclude).
+DEFAULT_EXCLUDE = (".*", "/templates/")
+# gitignore syntax the exclude_docs matcher does not implement; a pattern using it is refused.
+UNSUPPORTED_EXCLUDE = ("!", "**", "\\")
+# What to write instead of a fence whose kind the configuration does not enable, when the
+# configuration enables the kind that replaces it.
+REPLACEMENT = {"mermaid": ("figure", "draw it as a ```figure fence naming a spec under docs/figures/ "
+                                     "(docs/guides/figures.md)")}
 # A fence opener or closer: three or more backticks or tildes, then the info string.
 FENCE_LINE = re.compile(r"^(\s*)(`{3,}|~{3,})\s*([^\s`{]*)(.*)$")
 SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -186,6 +203,55 @@ def declared_hooks(text: str) -> list[str]:
     return []
 
 
+def excluded_patterns(text: str) -> list[str]:
+    """The patterns of the top-level `exclude_docs` key: a block scalar, or one plain value."""
+    lines = bounded_lines(text)
+    for index, line in enumerate(lines):
+        if EXCLUDE_BLOCK.match(line):
+            return block_scalar_lines(lines[index + 1:])
+        single = EXCLUDE_LINE.match(line)
+        if single:
+            return [single.group(1).strip()] if single.group(1).strip() else []
+    return []
+
+
+def block_scalar_lines(following: list[str]) -> list[str]:
+    """The non-blank, non-comment lines of a block scalar: the indented lines that follow its key."""
+    patterns = []
+    for line in following:
+        if line.strip() and not line[0].isspace():
+            break
+        entry = line.strip()
+        if entry and not entry.startswith("#"):
+            patterns.append(entry)
+    return patterns
+
+
+def pattern_matches(parts: tuple[str, ...], pattern: str) -> bool:
+    """Whether a gitignore-style `pattern` excludes the docs-relative path split into `parts`.
+
+    A pattern with a slash before its end is anchored at docs_dir and matches a leading run of
+    path components; one without matches any single component. A trailing slash matches a
+    directory only, so it never matches the page's own file name.
+    """
+    if any(token in pattern for token in UNSUPPORTED_EXCLUDE):
+        raise CheckError(f"exclude_docs pattern {pattern!r} uses gitignore syntax this check does not implement "
+                         f"({', '.join(UNSUPPORTED_EXCLUDE)})")
+    core = pattern.strip("/")
+    anchored = "/" in pattern.rstrip("/")
+    last = len(parts) - 1 if pattern.endswith("/") else len(parts)
+    for end in range(1, last + 1):
+        candidate = "/".join(parts[:end]) if anchored else parts[end - 1]
+        if fnmatch.fnmatchcase(candidate, core):
+            return True
+    return False
+
+
+def is_excluded(parts: tuple[str, ...], patterns: list[str]) -> bool:
+    """Whether MkDocs leaves the page at `parts` out: its default exclusions or `patterns`."""
+    return any(pattern_matches(parts, pattern) for pattern in (*DEFAULT_EXCLUDE, *patterns))
+
+
 def site_url(text: str) -> str:
     """The top-level `site_url` of an mkdocs.yml, or CheckError when it declares none."""
     for line in bounded_lines(text):
@@ -261,20 +327,36 @@ def figure_meta(figures_dir: Path, slug: str) -> dict:
     return read_json(path)
 
 
+def image_size(meta: dict, prefix: str = "") -> tuple[int, int]:
+    """The width and height the build recorded for the animated SVG, or for the static one with
+    `prefix` "static_"; CheckError when the JSON records no positive size (a stale build)."""
+    size = (meta.get(f"{prefix}width"), meta.get(f"{prefix}height"))
+    if not all(isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0 for value in size):
+        raise CheckError(f"figure {meta.get('slug')!r}: its JSON records no positive {prefix}width and "
+                         f"{prefix}height; rebuild with: {REBUILD}")
+    return int(size[0]), int(size[1])
+
+
 def render_block(slug: str, base: str, meta: dict, link: str | None = None) -> str:
     """The HTML for one figure: a <picture> of the committed SVGs, the caption and the text.
 
     `base` is the URL prefix of docs/assets/figures for the reader: relative on the site and in
     the README, absolute in the wiki. `link`, when given, points at the interactive version.
+    The static SVG has no scenario area, so it is shorter than the animated one: each image
+    carries its own size, and the browser reserves the size of the one it picks, with no
+    letterboxing or layout shift under reduced motion (BUG-1002).
     """
     esc = html.escape
     alt, title = esc(meta["alt"]), esc(meta["title"])
+    width, height = image_size(meta)
+    still_width, still_height = image_size(meta, "static_")
     items = "\n".join(f"<li>{esc(line)}</li>" for line in meta.get("text", []))
     parts = [
         f'<figure class="praetor-figure" id="fig-{slug}" data-figure="{slug}" aria-describedby="fig-{slug}-text">',
         "<picture>",
-        f'<source media="(prefers-reduced-motion: reduce)" srcset="{base}/{slug}.static.svg">',
-        f'<img src="{base}/{slug}.svg" alt="{alt}" width="{int(meta["width"])}" height="{int(meta["height"])}" loading="lazy">',
+        f'<source media="(prefers-reduced-motion: reduce)" srcset="{base}/{slug}.static.svg" '
+        f'width="{still_width}" height="{still_height}">',
+        f'<img src="{base}/{slug}.svg" alt="{alt}" width="{width}" height="{height}" loading="lazy">',
         "</picture>",
         f"<figcaption>{title}</figcaption>",
         "</figure>",
@@ -297,11 +379,10 @@ def expand(markdown: str, base: str, figures_dir: Path, link: str | None = None)
     for block in reversed([b for b in fence_blocks(markdown) if b.info == "figure"]):
         slug = figure_slug(block.body)
         try:
-            meta = figure_meta(figures_dir, slug)
+            rendered = render_block(slug, base, figure_meta(figures_dir, slug), link.format(slug=slug) if link else None)
         except CheckError as error:
             errors.append(str(error))
             continue
-        rendered = render_block(slug, base, meta, link.format(slug=slug) if link else None)
         lines[block.start:block.end] = [block.indent + line for line in rendered.split("\n")]
     return "\n".join(lines), list(reversed(errors))
 
@@ -362,12 +443,11 @@ def page_output(docs_dir: Path, site_dir: Path, page: Path) -> Path:
     return site_dir / relative.parent / relative.stem / "index.html"
 
 
-def markdown_pages(docs_dir: Path) -> list[Path]:
-    """Every page MkDocs builds from `docs_dir` under its default `exclude_docs`."""
+def markdown_pages(docs_dir: Path, excluded: list[str] | None = None) -> list[Path]:
+    """Every page MkDocs builds from `docs_dir`: its default exclusions and `excluded` left out."""
     pages = []
     for page in sorted(docs_dir.rglob("*.md")):
-        parts = page.relative_to(docs_dir).parts
-        if any(part.startswith(".") for part in parts) or parts[0] == "templates":
+        if is_excluded(page.relative_to(docs_dir).parts, excluded or []):
             continue
         pages.append(page)
         if len(pages) > MAX_PAGES:
@@ -378,8 +458,14 @@ def markdown_pages(docs_dir: Path) -> list[Path]:
 def kind_errors(page: Path, text: str, kinds: set[str]) -> list[str]:
     """A finding for every diagram fence on `page` whose kind the configuration does not enable."""
     found = {block.info for block in fence_blocks(text)} & set(KINDS)
-    return [f"{page}: ```{kind} fence, but the configuration does not enable {kind} diagrams"
-            for kind in sorted(found - kinds)]
+    return [kind_error(page, kind, kinds) for kind in sorted(found - kinds)]
+
+
+def kind_error(page: Path, kind: str, kinds: set[str]) -> str:
+    """The finding for a disabled `kind`, naming its replacement when the configuration enables it."""
+    message = f"{page}: ```{kind} fence, but the configuration does not enable {kind} diagrams"
+    replacement, advice = REPLACEMENT.get(kind, ("", ""))
+    return f"{message}; {advice}" if replacement in kinds else message
 
 
 def resolves(output: Path, site_dir: Path, url: str) -> bool:
@@ -446,9 +532,10 @@ def check(config: Path, docs_dir: Path, site_dir: Path) -> tuple[list[str], int]
         raise CheckError(f"{docs_dir} is not a directory")
     if not (site_dir / "index.html").is_file():
         raise CheckError(f"{site_dir} holds no built site (no index.html); run mkdocs build first")
-    kinds = enabled_kinds(read_text(config))
+    text = read_text(config)
+    kinds = enabled_kinds(text)
     errors, diagrams, slugs = [], 0, set()
-    for page in markdown_pages(docs_dir):
+    for page in markdown_pages(docs_dir, excluded_patterns(text)):
         found, count, named = page_errors(docs_dir, site_dir, page, kinds)
         errors += found
         diagrams += count
@@ -519,7 +606,19 @@ def figure_source_errors(root: Path) -> tuple[list[str], set[str]]:
     for slug in sorted(specs & metas):
         meta = read_json(root / FIGURE_DIR / f"{slug}.json")
         errors += hash_errors(root, slug, meta, engine) + evidence_errors(root, slug, meta.get("evidence") or [])
+        errors += size_errors(slug, meta)
     return errors, specs & metas
+
+
+def size_errors(slug: str, meta: dict) -> list[str]:
+    """A finding for each image, animated and static, whose size the figure's JSON lacks."""
+    errors = []
+    for prefix in ("", "static_"):
+        try:
+            image_size(meta, prefix)
+        except CheckError as error:
+            errors.append(f"{FIGURE_DIR.as_posix()}/{slug}.json: {error}")
+    return errors
 
 
 def relative_base(root: Path, document: Path) -> str:
@@ -543,15 +642,26 @@ def refresh_markers(text: str, base: str, figures_dir: Path) -> tuple[str, list[
     return MARKER.sub(replace, text, count=MAX_FIGURES), errors
 
 
-def sources(root: Path, docs: Path, config: Path, readme: Path) -> list[str]:
-    """Every source-side finding: figure bindings, fence slugs, fence kinds and the README block."""
-    errors, known = figure_source_errors(root)
-    kinds = enabled_kinds(read_text(root / config)) if (root / config).is_file() else set(KINDS)
-    for page in markdown_pages(root / docs):
+def page_source_errors(root: Path, docs: Path, config: Path, known: set[str]) -> list[str]:
+    """Disabled fence kinds and unknown figure slugs on every page the configuration builds.
+
+    Without a configuration file every kind is accepted and only MkDocs' default exclusions apply.
+    """
+    settings = read_text(root / config) if (root / config).is_file() else None
+    kinds = set(KINDS) if settings is None else enabled_kinds(settings)
+    errors = []
+    for page in markdown_pages(root / docs, excluded_patterns(settings or "")):
         text = read_text(page)
         errors += kind_errors(page.relative_to(root), text, kinds)
         errors += [f"{page.relative_to(root)}: ```figure fence names {slug!r}, which has no spec and JSON"
                    for slug in figure_slugs(text) if slug not in known]
+    return errors
+
+
+def sources(root: Path, docs: Path, config: Path, readme: Path) -> list[str]:
+    """Every source-side finding: figure bindings, fence slugs, fence kinds and the README block."""
+    errors, known = figure_source_errors(root)
+    errors += page_source_errors(root, docs, config, known)
     if (root / readme).is_file():
         text = read_text(root / readme)
         refreshed, failed = refresh_markers(text, relative_base(root, root / readme), root / FIGURE_DIR)

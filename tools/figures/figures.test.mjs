@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   ENGINE_FILES, LIMITS, OUT_DIR, ROOT, capLines, compareOutputs, decorate, describe, describeEdges,
-  engineHash, listSpecs, main, normalizedEdges, render, renderAll, sha256, validate, walkLayout,
+  engineHash, listSpecs, main, normalizedEdges, render, renderAll, sha256, svgSize, validate, walkLayout,
 } from './build.mjs';
 import { nextTab } from './keyboard.ts';
 
@@ -159,6 +159,21 @@ test('the SVG gains a title, a description and a credit, and upstream still read
     assert.deepEqual(JSON.parse(out), { props: figure().props });
   });
   assert.throws(() => decorate('<div/>', figure(), VENDOR), /no opening <svg> tag/);
+});
+
+test('the JSON records the static SVG size apart from the animated one (BUG-1002)', () => {
+  // Steps add the narration and card area, so the animated SVG is taller than the static one.
+  const outputs = render(figure(), 'fixture', Buffer.from('spec'), { vendor: VENDOR, engine: 'e' });
+  const meta = JSON.parse(outputs['fixture.json']);
+  assert.deepEqual({ width: meta.width, height: meta.height }, svgSize(outputs['fixture.svg']));
+  assert.deepEqual({ width: meta.static_width, height: meta.static_height }, svgSize(outputs['fixture.static.svg']));
+  assert.ok(meta.static_height < meta.height, `static ${meta.static_height} should be shorter than animated ${meta.height}`);
+  // Without steps both SVGs are the same drawing, so both sizes agree.
+  const still = JSON.parse(render(figure((f) => { f.props.steps = []; }), 'fixture', Buffer.from('spec'), { vendor: VENDOR, engine: 'e' })['fixture.json']);
+  assert.deepEqual([still.static_width, still.static_height], [still.width, still.height]);
+  // Fractional sizes round up to whole pixels; a tag without a size is refused.
+  assert.deepEqual(svgSize('<svg xmlns="x" width="10.2" height="3">'), { width: 11, height: 3 });
+  assert.throws(() => svgSize('<svg xmlns="x">'), /without width and height/);
 });
 
 test('the engine hash is stable and moves when an engine file changes', () => {

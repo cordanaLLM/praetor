@@ -19,12 +19,14 @@
   "spec_sha256": "d6915ec8078321cacc07aabf27ea415190018d1aefa76974b2534d645c3ae906",
   "engine": {
     "commit": "ccfe85b4851957ac2adf88b4a9ddf9668b2882f1",
-    "sha256": "047b4bcb30562cca709be7175d11995cdda45cf4b89db1f6906c5805b26c6452"
+    "sha256": "947c16f2d382b4ed4374ba8a368c4468114b97e5ec6323c4ecb785c11658d96e"
   },
   "svg_sha256": "1e4eeb17c61d25764b3d6fea89efb27b71bcf3b977c6f31589fd2d9b55022931",
   "static_sha256": "1e4eeb17c61d25764b3d6fea89efb27b71bcf3b977c6f31589fd2d9b55022931",
   "width": 1140,
   "height": 501,
+  "static_width": 1140,
+  "static_height": 501,
   "edges": [
     {
       "from": "HISS-01",

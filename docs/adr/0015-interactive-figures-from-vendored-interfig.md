@@ -17,7 +17,7 @@ labelled edges with moving packets, and scenario tabs with play, pause, speed an
 ### What praetor has today
 
 - **14 Mermaid diagrams**: 13 fences under `docs/` and one in `README.md`
-  (`git grep -n '```mermaid' -- docs README.md`).
+  (`git grep -n -E '^\s*(```|~~~)mermaid' -- docs README.md`).
   - `internal/forge/wiki.go` generates five of the `docs/wiki/` pages: Home, HISS-Invariants,
     HISS-Matrix, Architecture-Lattice and API-Reference.
     `TestCheckedInWiki_Boundary_MatchesGenerator` (`internal/forge/wiki_test.go`) holds the
