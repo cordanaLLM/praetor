@@ -228,7 +228,12 @@ operator configures one.
   (`needs.LoadRegistry`); a scan maps the language's demands onto the packages it
   declares, and a report does so for every language but go, whose framework the report
   selects as above (`TestLoadRegistryDeclaresTargetContracts`,
-  `TestAcmeContractsLoadForEveryLanguage`).
+  `TestAcmeContractsLoadForEveryLanguage`). A target with a contract and no module takes
+  the framework its contract declares as its module, so `needs scan` names that framework
+  instead of `not configured` (`TestLoadRegistryContractOnlyTarget_3D`,
+  `TestNeedsScanContractOnlyTarget_3D` in `cmd/standardsctl/needs_unconfigured_test.go`).
+  The CLI and the MCP `standards_needs_report` select the operator settings and load these
+  contracts through one loader, `needs.SelectRegistry` (`TestSelectRegistry_3D`).
 - **The framework a row names.** A report, a fleet row, a migration plan and an epic name
   the framework the row's own language is reconciled against when that one is configured,
   else the first configured framework another of its languages is reconciled against, as
