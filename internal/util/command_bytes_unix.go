@@ -136,15 +136,31 @@ func (r *commandGroupRegistry) release(pid int) {
 func (r *commandGroupRegistry) terminate(sig syscall.Signal, graceOver <-chan struct{}) (unlock func(), err error) {
 	r.mu.Lock()
 	r.terminated = true
-	for pid := range r.groups {
-		err = errors.Join(err, signalGroupReporting(pid, sig))
-	}
+	err = r.signalGroups(sig)
 	for pid, returned := range r.groups {
 		if !commandReturned(returned, graceOver) {
 			err = errors.Join(err, signalGroupReporting(pid, syscall.SIGKILL))
 		}
 	}
 	return r.mu.Unlock, err
+}
+
+// forward sends sig to every recorded group and, unlike terminate, neither waits for the
+// commands nor refuses later starts: the work that is being cancelled still runs its cleanup
+// commands, such as removing an isolated worktree, once the signalled ones have returned.
+func (r *commandGroupRegistry) forward(sig syscall.Signal) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.signalGroups(sig)
+}
+
+// signalGroups sends sig to every recorded group. The caller holds r.mu.
+func (r *commandGroupRegistry) signalGroups(sig syscall.Signal) error {
+	var err error
+	for pid := range r.groups {
+		err = errors.Join(err, signalGroupReporting(pid, sig))
+	}
+	return err
 }
 
 // signalGroupReporting sends sig to the group led by pid and describes a failure to send it.

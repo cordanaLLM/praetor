@@ -53,7 +53,7 @@ template comment, `<%- /* note */ -%>`, which renders to nothing. The context a 
 only; without one, `Owner` is empty and `RepoName` is the checkout directory's name, so a body that
 names the repository guards the owner, as `templates/native/.gitleaks.toml.tmpl` does
 (`TestApplyFlavor_Negative_CheckoutLayoutIsNotOwner`). `.clang-tidy` is shared with the Visual Studio editor target
-(`internal/editor/editor.go`), so both commands write one configuration.
+(`internal/editor/editor.go`), so both commands write one configuration setting `WarningsAsErrors: '*'` under HISS-10.
 
 **The audit reads the content.** `flavor audit` counts a template only when it is a regular file —
 not a directory, and a symbolic link only when it resolves inside the repository — whose content
@@ -63,6 +63,7 @@ reader. Each validator checks what its format makes checkable and no more:
 | Validator | Accepts |
 | :--- | :--- |
 | `validWorkflow` | a workflow with a non-empty `jobs` mapping |
+| `validClangTidyConfig` | a YAML mapping declaring a non-empty `WarningsAsErrors` setting |
 | `validDockerfile` | at least one `FROM` instruction |
 | `validGitleaksConfig` | a config that loads rules: `[extend] useDefault = true`, an `[extend] path`, or `[[rules]]` |
 | `assignsTOMLKey` | TOML assigning at least one key |

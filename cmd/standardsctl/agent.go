@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -86,10 +87,10 @@ const agentTimeout = 5 * time.Minute
 // agentContext bounds one agent helper. The gatekeeper runs the full gating pipeline, so it takes
 // the gate run's own deadline: a fixed five minutes cut its race stage short (#314).
 func agentContext(agentName string) (context.Context, context.CancelFunc) {
-	if agentName == "praetor-gatekeeper" || agentName == "praetor_gatekeeper" {
-		return gating.WithRunDeadline(context.Background(), gating.EnvRunBudget())
+	if isGatekeeperAgent(agentName) {
+		return gating.WithRunDeadline(rootContext(), gating.EnvRunBudget())
 	}
-	return context.WithTimeout(context.Background(), agentTimeout)
+	return commandContext(agentTimeout)
 }
 
 func runAuditorAgent(ctx context.Context) error {
@@ -108,12 +109,20 @@ func runAuditorAgent(ctx context.Context) error {
 	return nil
 }
 
+// runGatekeeperAgent runs the full gate the way `gate run` does and fails the same way: a
+// REJECTED pipeline is an error, so the helper exits 1 instead of reporting the rejection
+// under exit 0. The stage report prints first, so the failing stage and its reason stay
+// visible.
 func runGatekeeperAgent(ctx context.Context) error {
 	rep, err := gatedPipeline(ctx, ".", false)
 	if err != nil {
 		return fmt.Errorf("gatekeeper execution error: %w", err)
 	}
+	printGatingReport(rep)
 	fmt.Printf("[praetor-gatekeeper] Gated pipeline completed: %s\n", rep.Status)
+	if rep.Status == gating.StatusRejected {
+		return errors.New("gatekeeper rejection: repository rejected by gating pipeline")
+	}
 	return nil
 }
 

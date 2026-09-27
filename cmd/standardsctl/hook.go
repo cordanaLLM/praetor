@@ -1,13 +1,14 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/agenthook"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // exitStatusError carries an exit code a command has already explained on stderr. The
@@ -18,17 +19,27 @@ func (e exitStatusError) Error() string { return fmt.Sprintf("exit status %d", e
 
 // commandExitCode reports a command failure and returns the process exit code. An
 // exitStatusError is silent because its command wrote the diagnostic itself; a zero
-// status inside an error is a plain failure, never a silent success.
+// status inside an error is a plain failure, never a silent success. A command a signal
+// cancelled (util.SignalError) exits with the shell's 128+signal status, so a caller can
+// tell an interrupted gate run from a rejected one.
 func commandExitCode(stderr io.Writer, err error) int {
 	var status exitStatusError
 	if errors.As(err, &status) && status.code != 0 {
 		return status.code
 	}
-	if _, writeErr := fmt.Fprintf(stderr, "Error: %v\n", err); writeErr != nil {
-		return 1 // stderr is gone; the exit code is the only report left
+	code := 1
+	var interrupted *util.SignalError
+	if errors.As(err, &interrupted) {
+		code = interrupted.ExitCode()
 	}
-	return 1
+	if _, writeErr := fmt.Fprintf(stderr, "Error: %v\n", err); writeErr != nil {
+		return code // stderr is gone; the exit code is the only report left
+	}
+	return code
 }
+
+// hookTimeout bounds hook dispatch including settings resolution (HISS-02, BUG-060).
+const hookTimeout = 2 * time.Minute
 
 // runHook is `praetorctl hook <client> <event>`: the one string a client registration
 // contains. It takes no flags, so the registration needs no shell features; the operator's
@@ -44,7 +55,8 @@ func runHook(args []string) error {
 	if len(args) == 2 {
 		client, event = args[0], args[1]
 	}
-	ctx := context.Background()
+	ctx, cancel := commandContext(hookTimeout)
+	defer cancel()
 	settings, err := defaultOperatorSettingsFlags().load(ctx)
 	if err != nil {
 		return err

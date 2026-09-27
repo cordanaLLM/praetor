@@ -17,7 +17,7 @@ import (
 
 // terminatingSignals are the signals that end a process by default and that a terminal or
 // its shell sends to a whole job: Ctrl-C, kill's default, and hangup.
-var terminatingSignals = []syscall.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP}
+var terminatingSignals = []os.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP}
 
 // signalExitGrace bounds how long the process waits to die from its re-raised signal before
 // it exits with the shell's 128+signal status instead.
@@ -42,12 +42,7 @@ var installSignalTermination sync.Once
 // code's (HISS-07 abort policy). A nil exit skips that last resort.
 func TerminateCommandsOnSignal(exit func(code int)) {
 	installSignalTermination.Do(func() {
-		watched := make([]os.Signal, 0, len(terminatingSignals))
-		for _, sig := range terminatingSignals {
-			if !signal.Ignored(sig) {
-				watched = append(watched, sig)
-			}
-		}
+		watched := unignoredTerminatingSignals()
 		if len(watched) == 0 {
 			return
 		}
@@ -86,6 +81,24 @@ func endOnSignal(groups *commandGroupRegistry, sig os.Signal, exit func(code int
 	}
 	time.Sleep(signalExitGrace)
 	exitWith(exit, 128+int(number))
+}
+
+// forwardToCommands sends sig to every running command group without refusing later starts,
+// for CancelCommandsOnSignal: each command receives the signal it would have received in this
+// process's own group, and the cleanup commands the cancelled work runs next still start.
+func forwardToCommands(sig os.Signal) error {
+	return forwardSignal(runningCommandGroups, sig)
+}
+
+// forwardSignal sends sig to every group recorded in groups. A signal without a number, which
+// signal.Notify never delivers on Unix, is not forwarded: the cancellation that follows still
+// asks each group to stop with SIGTERM (commandGroupRegistry.track).
+func forwardSignal(groups *commandGroupRegistry, sig os.Signal) error {
+	number, ok := sig.(syscall.Signal)
+	if !ok {
+		return nil
+	}
+	return groups.forward(number)
 }
 
 // exitWith calls exit with code unless exit is nil.

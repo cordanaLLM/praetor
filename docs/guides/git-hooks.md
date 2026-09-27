@@ -189,7 +189,18 @@ child's process group SIGTERM (SIGINT for Ctrl-C), waits up to `STOP_GRACE` (10 
 member to exit, and only then sends SIGKILL; a second Ctrl-C during the wait kills at once. The
 CLI runs each git and go command in a process group of its own and forwards a catchable signal to
 those groups, waiting up to 5 seconds for them (`internal/util/command_interrupt_unix.go`), so git
-removes its index lock and nothing is left running. SIGKILL on the CLI's group cannot be forwarded
+removes its index lock and nothing is left running. `gate run` forwards SIGINT, SIGTERM and SIGHUP
+the same way but does not end on them: it cancels the run, removes the race stage's isolated
+worktree and its `wt/*` branch, and exits with the shell's 128+signal status (130, 143 or 129), not
+the 1 of a rejection (`CancelCommandsOnSignal` in `internal/util/command_signal_context.go`). A
+signal the CLI started with ignored, as under `nohup`, stays ignored. A Ctrl-C after the first
+signal ends it at once; a repeated SIGHUP or SIGTERM does not, because closing a terminal sends
+SIGHUP twice (the shell forwards it to its jobs, and the kernel sends it again when the shell
+exits), and the cleanup the first one started is bounded.
+`TestGateRun_Positive_TerminatingSignalCleansUpWorktreeAndBranch`,
+`TestGateRun_Positive_RepeatedHangupStillCleansUp` and
+`TestGateRun_Negative_IgnoredHangupKeepsTheRunGoing` in `cmd/standardsctl/signal_unix_test.go`
+replay these cases. SIGKILL on the CLI's group cannot be forwarded
 and misses those groups. On Linux the kernel still kills each command when the CLI dies
 (`internal/util/command_parent_death_linux.go`); the processes a command started, and every
 command on macOS, would run on. The `test_stop_*` cases in

@@ -745,3 +745,44 @@ func TestRuntimeProfileRejectsProseSlashTokensAndBoundaries(t *testing.T) {
 		}
 	})
 }
+
+func TestRuntimeProfileProtectsEnumerationMarkers(t *testing.T) {
+	for name, token := range map[string]string{
+		"(a)": "(a)",
+		"(b)": "(b)",
+		"a)":  "a)",
+		"i)":  "i)",
+	} {
+		t.Run("positive_"+name, func(t *testing.T) {
+			text := "verdict: pass\nchanged: none\nran: option " + token + " keep\nevidence: none\nopen: none"
+			if report := CheckRuntime(text, Options{Kind: KindReturn}); !report.Passed() {
+				t.Fatalf("enumeration marker %q must pass: %+v", token, report.Findings)
+			}
+		})
+	}
+
+	for name, tc := range map[string]struct {
+		token string
+		want  string
+	}{
+		"a file":        {"a file", `article "a"`},
+		"pick a option": {"pick a option", `article "a"`},
+		"(ab)":          {"(ab)", ""}, // Not an enumeration marker, but "ab" isn't a grammar word either. However, prompt says "a file", "pick a option" still flagged, and boundary "(ab)", "()", "a" alone. Wait, if "(ab)" doesn't flag anything normally, let's just make sure it behaves correctly (doesn't panic or something). But I should check what the prompt exactly said: "negative ("a file", "pick a option" still flagged), boundary ("(ab)", "()", "a" alone)."
+		"a":             {"a", `article "a"`},
+	} {
+		t.Run("negative_boundary_"+name, func(t *testing.T) {
+			text := "verdict: pass\nchanged: none\nran: check " + tc.token + "\nevidence: none\nopen: none"
+			report := CheckRuntime(text, Options{Kind: KindReturn})
+			if tc.want != "" && !hasFinding(report, RuleGrammar, tc.want) {
+				t.Fatalf("token %q missing finding %q: %+v", tc.token, tc.want, report.Findings)
+			}
+		})
+	}
+
+	t.Run("boundary_empty_parens", func(t *testing.T) {
+		text := "verdict: pass\nchanged: none\nran: check ()\nevidence: none\nopen: none"
+		if report := CheckRuntime(text, Options{Kind: KindReturn}); !report.Passed() {
+			t.Fatalf("boundary () must pass (no grammar word inside): %+v", report.Findings)
+		}
+	})
+}

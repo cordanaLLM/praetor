@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"runtime/debug"
 	"strings"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -187,7 +189,7 @@ func main() {
 
 	cmd := os.Args[1]
 	args := os.Args[2:]
-	if !ownsTerminationSignals(cmd) {
+	if !ownsTerminationSignals(cmd, args) {
 		// Every command praetorctl runs sits in a process group of its own, out of reach of
 		// a terminal's Ctrl-C, and no subcommand observes the signal: this forwards the
 		// signal to those groups, so git still cleans up, and kills any group still running
@@ -207,11 +209,32 @@ func main() {
 	}
 }
 
-// ownsTerminationSignals reports whether command handles SIGINT and SIGTERM itself. serve
-// drains its health server on them (container.WaitForGracefulDrain), which a handler that
-// ends the process on the signal would cut short.
-func ownsTerminationSignals(command string) bool {
-	return command == "serve"
+// ownsTerminationSignals reports whether command handles SIGINT and SIGTERM itself:
+// serve drains its health server on them (container.WaitForGracefulDrain); gate run and the
+// gatekeeper agent tear down the isolated test worktree and branch under their root context,
+// which a handler that terminates child commands and locks the command registry would block,
+// so they install util.CancelCommandsOnSignal instead (dispatchCommand).
+func ownsTerminationSignals(command string, args []string) bool {
+	return command == "serve" || needsSignalRootContext(command, args)
+}
+
+// needsSignalRootContext reports whether command derives its work from the signal-cancelled
+// root context. Every other command keeps the platform's default signal handling, so a
+// pure-Go command still ends at once on a Windows Ctrl-C.
+func needsSignalRootContext(command string, args []string) bool {
+	switch command {
+	case "gate":
+		return len(args) > 0 && args[0] == "run"
+	case "agent":
+		return len(args) >= 2 && args[0] == "run" && isGatekeeperAgent(args[1])
+	default:
+		return false
+	}
+}
+
+// isGatekeeperAgent reports whether persona is the gatekeeper agent helper.
+func isGatekeeperAgent(persona string) bool {
+	return persona == "praetor-gatekeeper" || persona == "praetor_gatekeeper"
 }
 
 // commandFunc is the signature every top-level command implements.
@@ -304,12 +327,58 @@ func fleetCommandTable() map[string]commandFunc {
 	}
 }
 
+// rootCtx is the signal-cancelled root context of a command that cleans up after itself
+// (needsSignalRootContext); nil for every other command.
+var rootCtx context.Context
+
+// rootContext returns the root context for commands, defaulting to context.Background()
+// when no root context has been installed.
+func rootContext() context.Context {
+	if rootCtx != nil {
+		return rootCtx
+	}
+	return context.Background()
+}
+
+// commandContext derives a context bounded by timeout from the root context (HISS-02).
+func commandContext(timeout time.Duration) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(rootContext(), timeout)
+}
+
 func dispatchCommand(cmd string, args []string) error {
+	if rootCtx == nil && needsSignalRootContext(cmd, args) {
+		// The same signals util.TerminateCommandsOnSignal handles, ignored ones left ignored,
+		// forwarded to the running command groups; the root context is cancelled instead of
+		// the process ended, so the command still removes its worktree and branch.
+		ctx, stop := util.CancelCommandsOnSignal(context.Background())
+		rootCtx = ctx
+		defer func() {
+			stop()
+			rootCtx = nil
+		}()
+		return interruptedError(ctx, runCommandHandler(cmd, args))
+	}
+	return runCommandHandler(cmd, args)
+}
+
+// runCommandHandler runs the handler commandTable registers for cmd.
+func runCommandHandler(cmd string, args []string) error {
 	if handler, ok := commandTable()[cmd]; ok {
 		return handler(args)
 	}
 	printUsage()
 	return fmt.Errorf("unknown command: %s", cmd)
+}
+
+// interruptedError adds the signal that cancelled ctx to the command's error, so the process
+// exits with the shell's 128+signal status (commandExitCode) instead of the 1 a gate rejection
+// returns. A command that succeeded despite the signal stays a success.
+func interruptedError(ctx context.Context, err error) error {
+	var interrupted *util.SignalError
+	if err == nil || !errors.As(context.Cause(ctx), &interrupted) {
+		return err
+	}
+	return fmt.Errorf("%w (%w)", err, interrupted)
 }
 
 func runVersion(_ []string) error {

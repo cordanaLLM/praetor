@@ -474,8 +474,8 @@ const maxCommandDiagnosticBytes = MaxErrorBodyBytes
 // own process group. Cancellation sends that group SIGTERM, so git can remove its locks,
 // and the child is killed if it is still running CommandWaitDelay later; the group is
 // killed on return, so a grandchild cannot outlive the call (BUG-889). The group no longer
-// receives a terminal's Ctrl-C, so a program's main calls TerminateCommandsOnSignal to
-// forward that signal to it.
+// receives a terminal's Ctrl-C, so a program's main calls TerminateCommandsOnSignal, or
+// CancelCommandsOnSignal for work that cleans up after itself, to forward that signal to it.
 // The child's environment follows commandEnvironment: without WithCommandEnvironment it
 // inherits the ambient one minus the variables that bind git to a repository (BUG-886).
 func RunCommand(ctx context.Context, dir string, name string, args ...string) (string, error) {

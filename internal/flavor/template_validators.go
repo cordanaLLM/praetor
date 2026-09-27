@@ -37,6 +37,18 @@ func validWorkflow(content []byte) bool {
 	return len(document.Jobs) > 0
 }
 
+// validClangTidyConfig reports whether content parses as a YAML mapping declaring a non-empty
+// WarningsAsErrors setting, so clang-tidy warnings fail the build as errors (HISS-10).
+func validClangTidyConfig(content []byte) bool {
+	var document struct {
+		WarningsAsErrors *string `yaml:"WarningsAsErrors"`
+	}
+	if err := yaml.Unmarshal(content, &document); err != nil {
+		return false
+	}
+	return document.WarningsAsErrors != nil && strings.TrimSpace(*document.WarningsAsErrors) != ""
+}
+
 // validDockerfile reports whether content declares at least one build stage: a FROM
 // instruction, matched case-insensitively as the first word of a line. Comment lines and
 // parser directives start with '#' and never match. The rest of the grammar is not checked.

@@ -721,8 +721,11 @@ workstation layer only, a clean absolute path, with up to eight of its own liter
 document named by `PRAETOR_FLEET_CONFIG` / `PRAETOR_WORKSTATION_CONFIG` or the install
 manifest is merged through `config.LoadOperatorSettings` before every hook call, with the
 built-in defaults (`python3`, `python`, `py -3`, governed scope, no operator deny patterns)
-when neither is configured. See [effective policy](effective-policy.md) for the layering
-model this section shares with `complexity`.
+when neither is configured. The whole call, this settings resolution included, runs under a
+two-minute bound (`hookTimeout` in `cmd/standardsctl/hook.go`): a settings source that stalls
+ends the call with exit 1 and the error on stderr instead of holding it open. See
+[effective policy](effective-policy.md) for the layering model this section shares with
+`complexity`.
 
 **No interpreter resolves.** `pre-edit` and `stop` fail closed (deny); `post-tool` can only
 annotate, so it is a stated skip. A `stop` deny after a Python failure reads `checkpoint

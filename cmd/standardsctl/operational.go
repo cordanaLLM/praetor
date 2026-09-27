@@ -18,7 +18,8 @@ func runOperational(args []string) error {
 	if len(args) < 2 || args[0] != "sync" {
 		return errors.New(operationalUsage)
 	}
-	return runOperationalSync(context.Background(), args[1], args[2:])
+	// operationalsync.Run bounds itself; a second bound here would silently cap a raised inner one.
+	return runOperationalSync(rootContext(), args[1], args[2:])
 }
 
 func runOperationalSync(ctx context.Context, stage string, args []string) error {

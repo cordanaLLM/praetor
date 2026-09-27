@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -26,7 +25,8 @@ func runBugs(args []string) error {
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
-	report, err := bugledger.Audit(context.Background(), *repoPath)
+	// bugledger.Audit bounds itself; a second bound here would silently cap a raised inner one.
+	report, err := bugledger.Audit(rootContext(), *repoPath)
 	if err != nil {
 		return err
 	}

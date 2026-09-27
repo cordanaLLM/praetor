@@ -206,6 +206,9 @@ func checkGrammar(found *findings, num int, prose string) {
 }
 
 func protectedGrammarToken(field string) bool {
+	if enumerationMarker(field) {
+		return true
+	}
 	token := field
 	for depth := 0; depth <= maxLiteralWrapperDepth; depth++ {
 		if protectedLiteralToken(token) {
@@ -346,6 +349,22 @@ func slashJoinedTechnicalToken(field string, parts []string) bool {
 		}
 	}
 	return true
+}
+
+// enumerationMarker reports whether field is a single letter enumeration marker such as (a) or a).
+func enumerationMarker(field string) bool {
+	field = strings.TrimRight(field, ",;.:")
+	if len(field) == 3 && field[0] == '(' && field[2] == ')' {
+		return asciiLetter(field[1])
+	}
+	if len(field) == 2 && field[1] == ')' {
+		return asciiLetter(field[0])
+	}
+	return false
+}
+
+func asciiLetter(c byte) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }
 
 func grammarWords(field string) []string {

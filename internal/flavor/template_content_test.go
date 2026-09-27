@@ -113,6 +113,21 @@ func TestValidWorkflow_3D(t *testing.T) {
 	})
 }
 
+func TestValidClangTidyConfig_3D(t *testing.T) {
+	runValidatorCases(t, validClangTidyConfig, []validatorCase{
+		{"positive: WarningsAsErrors wildcard", "Checks: '-*'\nWarningsAsErrors: '*'\n", true},
+		{"positive: WarningsAsErrors specific checks", "Checks: 'cert-*'\nWarningsAsErrors: 'cert-*'\n", true},
+		{"negative: without WarningsAsErrors key", "Checks: '-*,bugprone-*'\n", false},
+		{"negative: comment placeholder only", "# .clang-tidy configuration for acme/widget\n", false},
+		{"negative: prose", "this is not a clang-tidy file", false},
+		{"boundary: empty WarningsAsErrors single quotes", "Checks: '-*'\nWarningsAsErrors: ''\n", false},
+		{"boundary: empty WarningsAsErrors double quotes", "Checks: '-*'\nWarningsAsErrors: \"\"\n", false},
+		{"boundary: whitespace WarningsAsErrors", "Checks: '-*'\nWarningsAsErrors: '   '\n", false},
+		{"boundary: null WarningsAsErrors", "Checks: '-*'\nWarningsAsErrors:\n", false},
+		{"boundary: empty mapping", "{}\n", false},
+	})
+}
+
 func TestValidDockerfile_3D(t *testing.T) {
 	runValidatorCases(t, validDockerfile, []validatorCase{
 		{"positive: stage", "FROM scratch\nCOPY app /\n", true},

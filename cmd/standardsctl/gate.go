@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -20,11 +21,19 @@ import (
 // gateQueryTimeout bounds the short git queries used by `gate verify`.
 const gateQueryTimeout = 15 * time.Second
 
+// gateUsage describes the gate command-line syntax (BUG-790).
+const gateUsage = "usage: praetorctl gate <run|verify|deadline|keygen> [flags]"
+
+func printGateUsage() {
+	fmt.Println(gateUsage)
+}
+
 // gatedPipeline runs the gating pipeline. Tests substitute it to observe the deadline `gate run`
 // hands the pipeline without running a real gate.
 var gatedPipeline = gating.RunGatedPipeline
 
-// runGate dispatches the gate subcommands: run (default), verify, deadline and keygen.
+// runGate dispatches the gate subcommands: run, verify, deadline and keygen.
+// An explicit subcommand is required (BUG-790).
 func runGate(args []string) error {
 	sub, rest := splitGateSubcommand(args)
 	switch sub {
@@ -36,16 +45,24 @@ func runGate(args []string) error {
 		return runGateDeadline(rest)
 	case "keygen":
 		return runGateKeygen(rest)
+	case "":
+		printGateUsage()
+		return errors.New("gate requires an explicit subcommand (run, verify, deadline, keygen)")
 	default:
+		if isHelpToken(sub) {
+			printGateUsage()
+			return flag.ErrHelp
+		}
+		printGateUsage()
 		return fmt.Errorf("unknown gate subcommand %q (expected run, verify, deadline or keygen)", sub)
 	}
 }
 
-// splitGateSubcommand extracts a leading subcommand, defaulting to "run" so that
-// `gate --path=.` keeps working.
+// splitGateSubcommand extracts a leading subcommand. Unlike earlier versions, it does not
+// default to "run" when arguments are empty or start with a flag (BUG-790).
 func splitGateSubcommand(args []string) (string, []string) {
-	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
-		return "run", args
+	if len(args) == 0 {
+		return "", nil
 	}
 	return args[0], args[1:]
 }
@@ -71,12 +88,14 @@ func runGateRun(args []string) error {
 	// The run deadline follows the race stage's resolved bound. A fixed five minutes cut the
 	// stage short whatever PRAETOR_TEST_STAGE_TIMEOUT asked for (#314).
 	budget := gating.EnvRunBudget()
-	ctx, cancel := gating.WithRunDeadline(context.Background(), budget)
+	ctx, cancel := gating.WithRunDeadline(rootContext(), budget)
 	defer cancel()
 
-	fmt.Printf("=== Praetor Anti-Direct-Merge Gating Pipeline ===\n")
-	fmt.Printf("Target Repository: %s (dry-run: %v)\n", *path, *dryRun)
-	fmt.Printf("Run Deadline: %s\n", budget)
+	if !*asJSON {
+		fmt.Printf("=== Praetor Anti-Direct-Merge Gating Pipeline ===\n")
+		fmt.Printf("Target Repository: %s (dry-run: %v)\n", *path, *dryRun)
+		fmt.Printf("Run Deadline: %s\n", budget)
+	}
 
 	rep, err := gatedPipeline(ctx, *path, *dryRun)
 	if err != nil {
@@ -178,7 +197,7 @@ func runGateVerify(args []string) error {
 	}
 
 	supplied := strings.TrimSpace(*publicKeyHex)
-	pinned, err := resolveVerifyKey(context.Background(), supplied, *path, *manifestPath)
+	pinned, err := resolveVerifyKey(rootContext(), supplied, *path, *manifestPath)
 	if err != nil {
 		return fmt.Errorf("[FAIL] %w", err)
 	}
@@ -224,7 +243,7 @@ func resolveVerifyKey(ctx context.Context, supplied, path, manifestPath string) 
 // verifyReceiptCommit binds a receipt to the commit currently checked out, through the same
 // lockdown.VerifyReceiptCommit that paperclip verify uses, under the gate query timeout.
 func verifyReceiptCommit(repoPath, receiptSHA string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), gateQueryTimeout)
+	ctx, cancel := commandContext(gateQueryTimeout)
 	defer cancel()
 
 	if err := lockdown.VerifyReceiptCommit(ctx, repoPath, receiptSHA); err != nil {
@@ -238,7 +257,7 @@ func verifyReceiptCommit(repoPath, receiptSHA string) error {
 // another. It fails closed rather than guessing from a directory name: a receipt trusted
 // through a supplied key has no manifest to cross-check the repository against.
 func verifyReceiptRepository(repoPath, receiptRepository string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), gateQueryTimeout)
+	ctx, cancel := commandContext(gateQueryTimeout)
 	defer cancel()
 
 	owner, repo, err := util.ResolveRepoIdentity(ctx, repoPath)
