@@ -139,6 +139,7 @@ func generatedPersonas() []scaffold {
 		force:    true,
 		created:  "Scaffolded repository auditor agent definition",
 		verified: "Existing repository auditor agent definition verified present",
+		confined: true,
 	}, {
 		rel:      gatekeeperFile,
 		perm:     filePerm,
@@ -146,6 +147,7 @@ func generatedPersonas() []scaffold {
 		force:    true,
 		created:  "Scaffolded repository gatekeeper agent definition",
 		verified: "Existing repository gatekeeper agent definition verified present",
+		confined: true,
 	}}
 }
 

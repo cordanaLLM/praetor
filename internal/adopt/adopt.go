@@ -11,6 +11,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/classify"
+	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/devcontainer"
 	"github.com/cordanaLLM/praetor/internal/editor"
@@ -350,6 +351,9 @@ func executeAdoptSteps(ctx context.Context, s *adoptSession) error {
 	if err != nil {
 		return err
 	}
+	if err := preflightAgentSurfaces(ctx, s, declined); err != nil {
+		return err
+	}
 	for i := 0; i < len(steps) && i < maxAdoptSteps; i++ {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("adopt cancelled: %w", err)
@@ -368,6 +372,34 @@ func executeAdoptSteps(ctx context.Context, s *adoptSession) error {
 			return err
 		}
 		s.report.recordStep(name, StepCompleted, from)
+	}
+	return nil
+}
+
+// preflightAgentSurfaces refuses, before the first step writes anything, an agent file the
+// agent-harness or agent-definitions step would refuse to write: a vendor file, canonical persona
+// or persona copy behind a symlinked directory such as .agents or .github, or an existing one
+// that is not a regular text file. Those steps write through the root-pinned writer, which
+// refuses the same files at write time; checked only there, the refusal came after the manifest,
+// the vendor files, the pull request template and the workflows were written, and left a
+// half-adopted repository. A declined step's files are not checked, and a dry run is checked
+// too, so its preview does not report a run that would fail.
+func preflightAgentSurfaces(ctx context.Context, s *adoptSession, declined map[string]bool) error {
+	if !declined["agent-harness"] {
+		if err := compiler.CheckVendorTargets(ctx, s.repoPath); err != nil {
+			return fmt.Errorf("agent-harness preflight: %w", err)
+		}
+	}
+	if declined["agent-definitions"] {
+		return nil
+	}
+	personas := generatedPersonas()
+	names := make([]string, 0, len(personas))
+	for i := 0; i < len(personas) && i < maxTranspileTargets; i++ {
+		names = append(names, filepath.Base(personas[i].rel))
+	}
+	if err := compiler.CheckPersonaTargets(ctx, s.repoPath, names); err != nil {
+		return fmt.Errorf("agent-definitions preflight: %w", err)
 	}
 	return nil
 }

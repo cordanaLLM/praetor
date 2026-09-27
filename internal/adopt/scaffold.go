@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -66,6 +67,10 @@ type scaffold struct {
 	force    bool        // whether AdoptOptions.Force may overwrite an existing file
 	created  string      // action detail when the file is (or would be) written
 	verified string      // action detail when an existing file matches content
+	// confined writes through contextopt.WriteSnapshotIn, the writer compile-context uses, which
+	// follows no symlink below the repository. It is set for the files compile-context also
+	// reads (the canonical personas); every other scaffold goes through writeRepoFile.
+	confined bool
 }
 
 // scaffoldState is what scaffoldFile did with one file, or what it found there.
@@ -102,11 +107,23 @@ func (s *adoptSession) scaffoldFile(ctx context.Context, sc scaffold) (scaffoldS
 	if fileExists(full) && (!sc.force || !s.opts.Force) {
 		return s.recordExistingScaffold(ctx, full, sc)
 	}
-	if err := s.write(full, sc.content, sc.perm); err != nil {
+	if err := s.writeScaffold(ctx, full, sc); err != nil {
 		return 0, err
 	}
 	s.report.recordCreated(sc.rel, sc.created)
 	return scaffoldWritten, nil
+}
+
+// writeScaffold persists sc at full unless the session is a dry run, through the root-pinned
+// writer when sc is confined.
+func (s *adoptSession) writeScaffold(ctx context.Context, full string, sc scaffold) error {
+	if !sc.confined || s.opts.DryRun {
+		return s.write(full, sc.content, sc.perm)
+	}
+	if err := contextopt.WriteSnapshotIn(ctx, s.repoPath, filepath.FromSlash(sc.rel), sc.content, sc.perm); err != nil {
+		return fmt.Errorf("write %s: %w", sc.rel, err)
+	}
+	return nil
 }
 
 // recordExistingScaffold classifies a preserved file against its scaffold and records the

@@ -210,7 +210,7 @@ func reconcileAgentHarness(ctx context.Context, s *adoptSession) error {
 	if err != nil {
 		return err
 	}
-	return transpileAgentTargets(s, agentsContent, declared.AgentClients)
+	return transpileAgentTargets(ctx, s, agentsContent, declared.AgentClients)
 }
 
 func resolveAgentsContent(s *adoptSession) (string, error) {
@@ -293,8 +293,10 @@ func mergeExistingAgentsContent(s *adoptSession, full, existing, harness string)
 
 // transpileAgentTargets compiles AGENTS.md into the vendor context files of the selected
 // agent clients (nil selects every client). A compile failure is fatal: HISS-16 guarantees
-// that the vendor files mirror AGENTS.md.
-func transpileAgentTargets(s *adoptSession, agentsContent string, clients []string) error {
+// that the vendor files mirror AGENTS.md. The files are written by the writer compile-context
+// uses (Transpiler.WriteOutputsContext): every target is checked before the first is written,
+// and no symlink below the repository is followed.
+func transpileAgentTargets(ctx context.Context, s *adoptSession, agentsContent string, clients []string) error {
 	tr := compiler.NewTranspiler()
 	tr.Clients = clients
 	res, err := tr.CompileContent(agentsContent)
@@ -304,21 +306,41 @@ func transpileAgentTargets(s *adoptSession, agentsContent string, clients []stri
 	for i := 0; i < len(res.NotApplicable) && i < maxTranspileTargets; i++ {
 		s.report.recordNotApplicable(res.NotApplicable[i], "Not selected by agent_clients in "+manifestFile)
 	}
-	for i := 0; i < len(res.Files) && i < maxTranspileTargets; i++ {
-		f := res.Files[i]
-		full, err := repoFile(s.repoPath, f.RelativePath)
+	existed, err := existingVendorTargets(s.repoPath, res.Files)
+	if err != nil {
+		return err
+	}
+	if !s.opts.DryRun {
+		if err := tr.WriteOutputsContext(ctx, res, s.repoPath); err != nil {
+			return fmt.Errorf("write vendor context targets: %w", err)
+		}
+	}
+	recordVendorTargets(s.report, res.Files, existed)
+	return nil
+}
+
+// existingVendorTargets reports which vendor files already exist, refusing any path that leaves
+// the repository (repoFile).
+func existingVendorTargets(repoPath string, files []compiler.TargetFile) ([]bool, error) {
+	existed := make([]bool, len(files))
+	for i := 0; i < len(files) && i < maxTranspileTargets; i++ {
+		full, err := repoFile(repoPath, files[i].RelativePath)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		existed := fileExists(full)
-		if err := s.write(full, []byte(f.Content), filePerm); err != nil {
-			return err
-		}
-		if existed {
-			s.report.recordReconciled(f.RelativePath, fmt.Sprintf("Synchronized vendor context target (%d LOC)", f.LineCount))
+		existed[i] = fileExists(full)
+	}
+	return existed, nil
+}
+
+// recordVendorTargets lists each vendor file as reconciled when it existed and created otherwise.
+func recordVendorTargets(report *AdoptReport, files []compiler.TargetFile, existed []bool) {
+	for i := 0; i < len(files) && i < len(existed) && i < maxTranspileTargets; i++ {
+		f := files[i]
+		if existed[i] {
+			report.recordReconciled(f.RelativePath, fmt.Sprintf("Synchronized vendor context target (%d LOC)", f.LineCount))
 			continue
 		}
-		s.report.recordCreated(f.RelativePath, fmt.Sprintf("Compiled vendor context target (%d LOC)", f.LineCount))
+		report.recordCreated(f.RelativePath, fmt.Sprintf("Compiled vendor context target (%d LOC)", f.LineCount))
 	}
-	return nil
 }
