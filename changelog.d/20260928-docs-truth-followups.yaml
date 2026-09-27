@@ -1,4 +1,3 @@
 type: changed
 title: "docs: update documentation truth for github app permissions, review policy and milestone sync"
-issue: "BUG-1027, BUG-1028, BUG-1029"
 breaking: false

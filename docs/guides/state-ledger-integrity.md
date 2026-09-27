@@ -224,7 +224,7 @@ delimited milestone block of `BACKLOG.md` (`internal/milestone/milestone.go`).
   `owner unknown: pass --owner, set repository.owner, or set forge.default_owner`
   (`config.ErrOwnerUnknown`), and an owner without a repository name is refused with
   `config.ErrRepositoryNameUnknown` (`TestMilestoneSync_3D_RepositoryResolution` in
-  `cmd/standardsctl/forge_owner_test.go`). `milestone create --publish` fails after the local create when no identity resolves; the recovery command is to create the milestone on the forge and run `praetorctl milestone sync` to bind it by title. `list`, `create`, `status` and a local
+  `cmd/standardsctl/forge_owner_test.go`). `milestone create --publish` fails after the local create when no identity resolves; the recovery is to create the milestone on the forge and run a targeted sync passing the identity (e.g. `praetorctl milestone sync --owner=acme --repo=example`) to bind it by title. `list`, `create`, `status` and a local
   `close` need no remote.
 
 - **Remote sync binds by forge number.** A row with a `remote_number` is matched by

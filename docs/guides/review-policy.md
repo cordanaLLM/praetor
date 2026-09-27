@@ -33,7 +33,6 @@ them back. The retained `required_approving_reviewers` value restores the minimu
 Do not infer restoration merely from installing an app or adding an account.
 
 Preserve existing ruleset branch scopes and additional parameters when updating
-GitHub. In particular, the current repository's extra approval requirement for
-unattributed changes is temporarily disabled with the other independent-review
-requirements and must be restored alongside them. Hosted readback is required;
+GitHub. For example, if your hosted ruleset carries extra parameters such as
+last-push approval, restore them too. Hosted readback is required;
 a locally generated ruleset alone does not establish enforcement.
