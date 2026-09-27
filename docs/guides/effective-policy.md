@@ -131,7 +131,9 @@ and load the same schema through `config.LoadOperatorSettings` (or
 `config.SelectOperatorPolicy`, which keeps the policy for relative paths). `praetorctl
 hook` consumes `hooks`; `praetorctl clients permissions` consumes the AGY permission
 selection under `clients`; the `needs` commands consume `framework` and
-`forge.default_owner`. Repository policy and host activation therefore share
+`forge.default_owner`. `issue`, `milestone`, `project`, `init` and `forge
+sync-wiki` consume `forge.default_owner` too, and `issue reconcile` also reads
+`forge.reconcile_repos`. Repository policy and host activation therefore share
 one schema without making `audit` inspect a user's home directory.
 
 A workstation document, the layer that holds host paths:
@@ -235,9 +237,9 @@ without these sections keeps the digest it had before they existed
 | `framework.targets.<lang>.contract` | empty | clean path, relative to the file that sets it, or absolute | a version-1 capability contract declaring the framework's packages |
 | `framework.targets.go.checkout` | empty | clean absolute path; workstation layer only; accepted for `go` only | the framework checkout the `needs` commands observe |
 | `framework.migration_branch` | empty, meaning `refactor/framework-adoption` | a branch name as for `update.branch` | the branch `needs migrate` reports for an admitted migration |
-| `forge.default_owner` | empty | a GitHub owner: 1 to 39 letters, digits and single hyphens | the last owner step of `config.ResolveRepositoryIdentity`, used by `needs epic --publish` |
-| `forge.reconcile_repos` | `[]` | at most 256 `<owner>/<name>` coordinates | validated and sealed; the `issue reconcile` default adopts it in a later change |
-| `forge.review_bot` | empty | a GitHub owner, optionally followed by `[bot]` | validated and sealed; reviewer assignment adopts it in a later change |
+| `forge.default_owner` | empty | a GitHub owner: 1 to 39 letters, digits and single hyphens | the last owner step of `config.ResolveRepositoryIdentity`, used by `needs epic --publish`, `issue`, `milestone`, `project`, `init` and `forge sync-wiki` |
+| `forge.reconcile_repos` | `[]` | at most 256 `<owner>/<name>` coordinates | the `issue reconcile` scope when `--repos` is not given; without either, the current repository |
+| `forge.review_bot` | empty | a GitHub owner, optionally followed by `[bot]` | validated and sealed; `forge.AssignReviewers` takes the bot list from its caller, and no command passes this key yet |
 | `topology.org_containers` | `[]` | at most 64 names of lowercase letters, digits, `.`, `_` and `-`, merged across layers | `praetorctl topology audit` and `topology clean`, which add the names to the built-in containers (`topology.OrgContainers`) |
 
 A workstation document configuring one framework, with placeholder values:
