@@ -1,0 +1,44 @@
+name: Sync Vendored Interfig
+
+on:
+  schedule:
+    - cron: '0 4 * * 0' # Weekly on Sunday at 04:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  check-drift:
+    name: Check Vendored Interfig Drift (canonical repository only)
+    if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+
+      - name: Check for Drift
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # sync_interfig.py exits 3 on drift and 1 on any other failure (HTTP error, timeout,
+        # rate limit), so an upstream outage is not reported as drift.
+        run: |
+          status=0
+          python3 -B scripts/sync_interfig.py check || status=$?
+          if [ "$status" -eq 3 ]; then
+            echo "::error::Interfig vendor drift detected. Run the printed update command and open a pull request."
+          elif [ "$status" -ne 0 ]; then
+            echo "::error::Interfig drift check could not run (exit $status); see the log above."
+          fi
+          exit "$status"

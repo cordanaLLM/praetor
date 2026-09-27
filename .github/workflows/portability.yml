@@ -288,3 +288,17 @@ jobs:
           "$PYTHON" -B scripts/docs_diagrams.py sources
         env:
           PYTHON: ${{ steps.python.outputs.python-path }}
+
+      # `make interfig-verify` is a verify-all gate too; these are its commands. The script's
+      # suite and `verify` use pathlib and the standard library only, the vendored files are
+      # `-text` in .gitattributes so their hashes hold on a Windows checkout, and node expands the
+      # quoted test glob itself (docs/standards/hiss-21-platform-neutrality.md).
+      - name: Interfig Verify Gate
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          "$PYTHON" -B scripts/test_sync_interfig.py
+          "$PYTHON" -B scripts/sync_interfig.py verify
+          node --test 'third_party/interfig/upstream/src/*.test.ts'
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}

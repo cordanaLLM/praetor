@@ -249,6 +249,14 @@ files under `docs/` count as documentation: a dependency manifest ending in
 matrix rather than the documentation-only path (`internal/cifilter/filter.go`,
 `TestBuildManifestTextIsConfiguration` and
 `TestUnclassifiedFileKindsRunHeavyGates` in
+`internal/cifilter/cifilter_test.go`). `.tsx` and `.jsx` are code extensions,
+so a change to a vendored React source file (for example
+`third_party/interfig/upstream/src/index.tsx`) is classified as code and runs
+the targeted test matrix. Before, such a file fell through as unclassified,
+which also ran the tests but reported the change as configuration. A
+`.tsx`/`.jsx` file under `docs/` still follows the `docs/` prefix rule
+(`TestClassifyChanges_TsxJsxAreCode`,
+`TestClassifyChanges_TsxUnderDocsStaysDocsOnly` in
 `internal/cifilter/cifilter_test.go`).
 
 ## Site build and diagrams

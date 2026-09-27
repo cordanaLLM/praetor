@@ -344,7 +344,7 @@ func isDocumentation(p string) bool {
 
 func isCode(p string) bool {
 	return slices.Contains([]string{
-		".go", ".c", ".cpp", ".h", ".cu", ".rs", ".ts", ".js", ".mjs", ".cjs", ".py", ".java", ".dart", ".proto",
+		".go", ".c", ".cpp", ".h", ".cu", ".rs", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".java", ".dart", ".proto",
 	}, filepath.Ext(p))
 }
 

@@ -96,6 +96,16 @@ it answer differently. `TestPortabilityRunsDocumentationReferencesOnEveryLeg` in
 `internal/forge/docs_references_guard_test.go` fails if the step is removed, runs before the
 build, or is given a condition that could skip it on some legs.
 
+Every leg also runs the Interfig Verify Gate, the commands of `make interfig-verify`:
+`python3 -B scripts/test_sync_interfig.py`, `python3 -B scripts/sync_interfig.py verify` and
+`node --test 'third_party/interfig/upstream/src/*.test.ts'`. The script resolves every path from
+its own location through `pathlib`, so it answers the same from any working directory; the
+vendored files are `-text` in `.gitattributes`, so a Windows checkout hashes the same bytes as
+`vendor.json` records; and the test glob is quoted, so `node` expands it rather than the shell.
+The gate therefore runs, rather than skips, on every leg. The online `update` subcommand is not
+a gate, but it resolves `node` and `npm` through `shutil.which`, which finds `npm.cmd` on
+Windows where a bare `npm` would not start.
+
 The matrix pins the tools it installs, not only the platforms it runs on. The legs share one
 `actions/setup-python` version (3.13) and install `yamllint==1.38.0` through the interpreter path
 that action reports, rather than by name. Both pins serve this invariant directly: the job's only

@@ -1,0 +1,45 @@
+<svg role="img" aria-labelledby="figure-title figure-desc" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="914.8" height="346" viewBox="0 0 914.8 346" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+<title id="figure-title">System Context Diagram</title>
+<desc id="figure-desc">Praetor boundaries, agent interactions, git providers, and downstream infrastructure.</desc>
+<!-- interfig (c) 2025 Vectorize AI, Inc. MIT https://github.com/vectorize-io/hindsight/tree/ccfe85b4851957ac2adf88b4a9ddf9668b2882f1/hindsight-interfig -->
+<metadata id="figure-spec"><![CDATA[{"props":{"layout":{"direction":"row","gap":140,"children":[{"direction":"column","gap":60,"align":"end","children":[{"id":"developer","label":"Engineer / Operator"},{"id":"agent","label":"AI Coding Agent","sub":"fed by compile-context"}]},{"direction":"column","gap":70,"children":[{"id":"boundary","label":"Praetor Boundary","children":[{"id":"praetor","label":"Praetor Engine","sub":"praetorctl","width":190}]},{"id":"fork","label":"Operational Fork","sub":"operator data","width":190}]},{"direction":"column","gap":36,"align":"start","children":[{"id":"git_provider","label":"Git Provider","sub":"GitHub enforces"},{"id":"k8s_arc","label":"ARC Runner Scale Sets","sub":"fork deploy/arc/"},{"id":"gitops","label":"GitOps Controller","sub":"fork deploy/k8s/"}]}]},"edges":[{"from":"developer","to":"praetor","label":"runs praetorctl"},{"from":"agent","to":"praetor","label":"reads AGENTS.md"},{"from":"fork","to":"praetor","label":"demand"},{"from":"praetor","to":"fork","label":"sync"},{"from":"praetor","to":"git_provider","label":"branch protection"},{"from":"praetor","to":"k8s_arc","label":"runner labels"},{"from":"gitops","to":"praetor","label":"deploys chart"}],"steps":[]}}]]></metadata>
+<style>
+svg { --accent:#0074d9; --fg:#1c1e21; --muted:#606770; --bg:#ffffff; --surface:#f5f7fa; --border:#d0d7de; --card-on:#eef5fd; }
+@media (prefers-color-scheme: dark) { svg { --accent:#3396e8; --fg:#e3e3e3; --muted:#9aa0a6; --bg:#1b1b1d; --surface:#242526; --border:#3a3b3c; --card-on:#1d2733; } }
+.label { fill: var(--fg); font-size: 14px; font-weight: 500; text-anchor: middle; }
+.sub { fill: var(--muted); font-size: 12px; text-anchor: middle; }
+.frame { fill: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .04em; }
+.edgelabel { fill: var(--muted); font-size: 11px; text-anchor: middle; font-family: ui-monospace, Menlo, monospace; }
+.row { fill: var(--fg); font-size: 11px; }
+.row.mono { font-size: 10.5px; font-family: ui-monospace, Menlo, monospace; }
+.muted { fill: var(--muted); }
+.tag { font-size: 9px; font-weight: 600; letter-spacing: .03em; text-anchor: middle; }
+.mark { fill: var(--accent); font-size: 11px; font-weight: 600; text-anchor: end; }
+.chip { fill: #fff; font-size: 11.5px; text-anchor: middle; }
+.steplabel { fill: var(--fg); font-size: 13px; font-weight: 600; text-anchor: middle; font-family: ui-monospace, Menlo, monospace; }
+.caption { fill: var(--muted); font-size: 13.5px; text-anchor: middle; }
+
+</style>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9 z" fill="var(--muted)"/></marker></defs>
+<rect width="100%" height="100%" fill="var(--bg)"/>
+<g transform="translate(0 0)">
+<rect x="24" y="97.5" width="173" height="38" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="110.5" y="121.5" class="label">Engineer / Operator</text>
+<rect x="25.1" y="195.5" width="171.9" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="111" y="220" class="label">AI Coding Agent</text><text x="111" y="235" class="sub">fed by compile-context</text>
+<rect x="337" y="24" width="226" height="175" rx="14" fill="var(--surface)" stroke="var(--border)"/><text x="355" y="44" class="frame">PRAETOR BOUNDARY</text>
+<rect x="355" y="61" width="190" height="120" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="450" y="119" class="label">Praetor Engine</text><text x="450" y="134" class="sub">praetorctl</text>
+<rect x="355" y="269" width="190" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="450" y="293.5" class="label">Operational Fork</text><text x="450" y="308.5" class="sub">operator data</text>
+<rect x="703" y="57.5" width="127.4" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="766.7" y="82" class="label">Git Provider</text><text x="766.7" y="97" class="sub">GitHub enforces</text>
+<rect x="703" y="146.5" width="187.8" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="796.9" y="171" class="label">ARC Runner Scale Sets</text><text x="796.9" y="186" class="sub">fork deploy/arc/</text>
+<rect x="703" y="235.5" width="158.1" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="782.1" y="260" class="label">GitOps Controller</text><text x="782.1" y="275" class="sub">fork deploy/k8s/</text>
+<path id="p-developer-&gt;praetor" d="M 196.98 116.5 C 275.98 116.5, 275.98 101, 354.98 101" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/><rect x="225.3" y="99.8" width="101.5" height="18" rx="9" fill="var(--bg)" stroke="var(--border)"/><text x="276" y="112.8" class="edgelabel">runs praetorctl</text>
+<path id="p-agent-&gt;praetor" d="M 196.98 222 C 275.98 222, 275.98 141, 354.98 141" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/><rect x="225.3" y="172.5" width="101.5" height="18" rx="9" fill="var(--bg)" stroke="var(--border)"/><text x="276" y="185.5" class="edgelabel">reads AGENTS.md</text>
+<path id="p-fork-&gt;praetor" d="M 418.31333333333333 269 C 418.31333333333333 225, 418.31333333333333 225, 418.31333333333333 181" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/><rect x="393.8" y="216" width="49" height="18" rx="9" fill="var(--bg)" stroke="var(--border)"/><text x="418.3" y="229" class="edgelabel">demand</text>
+<path id="p-praetor-&gt;fork" d="M 481.64666666666665 181 C 481.64666666666665 225, 481.64666666666665 225, 481.64666666666665 269" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/><rect x="463" y="216" width="37.3" height="18" rx="9" fill="var(--bg)" stroke="var(--border)"/><text x="481.6" y="229" class="edgelabel">sync</text>
+<path id="p-praetor-&gt;git_provider" d="M 544.98 91 C 623.98 91, 623.98 84, 702.98 84" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/><rect x="567.4" y="78.5" width="113.1" height="18" rx="9" fill="var(--bg)" stroke="var(--border)"/><text x="624" y="91.5" class="edgelabel">branch protection</text>
+<path id="p-praetor-&gt;k8s_arc" d="M 544.98 121 C 623.98 121, 623.98 173, 702.98 173" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/><rect x="579.1" y="138" width="89.8" height="18" rx="9" fill="var(--bg)" stroke="var(--border)"/><text x="624" y="151" class="edgelabel">runner labels</text>
+<path id="p-gitops-&gt;praetor" d="M 702.98 262 C 623.98 262, 623.98 151, 544.98 151" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/><rect x="579.1" y="197.5" width="89.8" height="18" rx="9" fill="var(--bg)" stroke="var(--border)"/><text x="624" y="210.5" class="edgelabel">deploys chart</text>
+
+</g>
+
+
+</svg>

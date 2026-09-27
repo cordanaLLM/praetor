@@ -1,0 +1,3 @@
+type: changed
+title: Draw the C4 system context and container diagrams as interactive figures, show the runner overrides in their real fleet, org, repository order, and draw a rejection edge from every gate stage that can fail
+breaking: false

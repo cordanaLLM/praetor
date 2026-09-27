@@ -514,3 +514,64 @@ func TestMakePolicyDecision(t *testing.T) {
 		t.Fatalf("a code change must keep the targeted matrix, got %+v", d)
 	}
 }
+
+// Positive: .tsx and .jsx are code extensions. Before they were, a vendored React source file
+// fell through as unclassified: tests still ran (fail closed), but the change was reported as
+// configuration. Each extension is checked on its own so neither can ride on the other.
+func TestClassifyChanges_TsxJsxAreCode(t *testing.T) {
+	for _, path := range []string{"third_party/interfig/upstream/src/index.tsx", "web/src/utils.jsx"} {
+		cs := cifilter.ClassifyChanges([]string{path})
+		if !cs.CodeChanged || cs.UnclassifiedChanged || cs.ConfigChanged || cs.DocsOnly {
+			t.Errorf("%s: want code only, got code=%v unclassified=%v config=%v docsOnly=%v",
+				path, cs.CodeChanged, cs.UnclassifiedChanged, cs.ConfigChanged, cs.DocsOnly)
+		}
+		decision := cifilter.MakeDecision(cs, false)
+		if !decision.RunTests || decision.RunDocsOnly || decision.SkipHeavyGates {
+			t.Errorf("%s: a code change must keep the targeted matrix, got %+v", path, decision)
+		}
+	}
+}
+
+// Negative: .md only stays docs-only.
+func TestClassifyChanges_MdStaysDocsOnly(t *testing.T) {
+	cs := cifilter.ClassifyChanges([]string{"docs/guides/figures.md"})
+	if !cs.DocsOnly {
+		t.Errorf("expected DocsOnly=true for .md only, got false")
+	}
+	decision := cifilter.MakeDecision(cs, false)
+	if decision.RunTests {
+		t.Errorf("expected RunTests=false for docs-only, got true")
+	}
+	if !decision.SkipHeavyGates {
+		t.Errorf("expected SkipHeavyGates=true for docs-only, got false")
+	}
+}
+
+// Boundary: a .tsx under docs/ keeps the docs/ prefix rule, and an extension that only starts
+// with .tsx or .jsx is not code.
+func TestClassifyChanges_TsxUnderDocsStaysDocsOnly(t *testing.T) {
+	for _, path := range []string{"web/src/index.tsxx", "web/src/utils.jsxz"} {
+		if cs := cifilter.ClassifyChanges([]string{path}); cs.CodeChanged || !cs.UnclassifiedChanged {
+			t.Errorf("%s: want unclassified, got code=%v unclassified=%v", path, cs.CodeChanged, cs.UnclassifiedChanged)
+		}
+	}
+
+	cs := cifilter.ClassifyChanges([]string{"docs/assets/example.tsx"})
+	if !cs.DocsOnly {
+		t.Errorf("expected DocsOnly=true for .tsx under docs/, got false")
+	}
+	if cs.CodeChanged {
+		t.Errorf("expected CodeChanged=false for .tsx under docs/, got true")
+	}
+	if !cs.DocsChanged {
+		t.Errorf("expected DocsChanged=true for .tsx under docs/, got false")
+	}
+
+	decision := cifilter.MakeDecision(cs, false)
+	if decision.RunTests {
+		t.Errorf("expected RunTests=false for .tsx under docs/, got true")
+	}
+	if !decision.SkipHeavyGates {
+		t.Errorf("expected SkipHeavyGates=true for .tsx under docs/, got false")
+	}
+}

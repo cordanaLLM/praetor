@@ -142,6 +142,23 @@ before it uploads the site. Locally the smoke test needs Chromium
 (`npx --prefix tools/figures playwright install chromium`); without it, it exits 0 and says it
 skipped.
 
+## Updating interfig
+
+The engine is vendored at a pinned commit. The `interfig-sync.yml` workflow runs
+`scripts/sync_interfig.py check` weekly and fails with the update command when upstream has
+moved; an HTTP error or timeout fails it with a different message, so an outage does not read
+as drift. To take the update:
+
+```bash
+python3 scripts/sync_interfig.py update --commit <sha>
+```
+
+The command refuses a LICENSE change, an unlisted upstream file or an incompatible React peer
+range before it touches the tree, then swaps in the new files, runs the upstream tests and
+rebuilds every figure, because the engine hash changed. Commit `third_party/interfig/` and
+`docs/assets/figures/` together. The full procedure is in
+[VENDOR.md](https://github.com/cordanaLLM/praetor/blob/main/third_party/interfig/VENDOR.md#updating-the-pin).
+
 ## Credit
 
 The engine is interfig by Vectorize AI, Inc., MIT-licensed, vendored unmodified at a pinned

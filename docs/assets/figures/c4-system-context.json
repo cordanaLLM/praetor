@@ -1,0 +1,76 @@
+{
+  "slug": "c4-system-context",
+  "title": "System Context Diagram",
+  "alt": "Praetor boundaries, agent interactions, git providers, and downstream infrastructure.",
+  "text": [
+    "Praetor Boundary: Praetor Engine (praetorctl).",
+    "Boxes: Engineer / Operator, AI Coding Agent (fed by compile-context), Operational Fork (operator data), Git Provider (GitHub enforces), ARC Runner Scale Sets (fork deploy/arc/), GitOps Controller (fork deploy/k8s/).",
+    "Engineer / Operator → Praetor Engine (runs praetorctl).",
+    "AI Coding Agent → Praetor Engine (reads AGENTS.md).",
+    "Operational Fork → Praetor Engine (demand) → Operational Fork (sync).",
+    "Praetor Engine → Git Provider (branch protection).",
+    "Praetor Engine → ARC Runner Scale Sets (runner labels).",
+    "GitOps Controller → Praetor Engine (deploys chart).",
+    "demand is the .needs.yaml report praetorctl needs aggregates; sync is praetorctl operational, which prepares the fork from reviewed engine commits.",
+    "The runner labels and the deployed chart meet owner-only fork paths; Praetor dispatches no jobs."
+  ],
+  "evidence": [
+    "internal/forge/forge.go:NewForge",
+    "internal/forge/forge.go:ReconcileProtection",
+    "internal/runner/matrix.go:ResolveRunner",
+    "cmd/standardsctl/compile_context.go:runCompileContext",
+    "internal/operationalsync/overlay.go:ownerOnlyPrefixes",
+    "cmd/standardsctl/audit.go:auditRunnerMatrix",
+    "internal/config/hierarchy.go:DefaultRunnerPolicy",
+    "cmd/standardsctl/operational.go:runOperationalSync",
+    "internal/operationalsync/sync.go:Run",
+    "cmd/standardsctl/needs.go:runNeeds",
+    "deploy/helm/praetor/Chart.yaml:apiVersion"
+  ],
+  "spec_sha256": "3c78640afd3889608d47ac250acbb34ea4c0e5745ee621a2b1a4eeedeb73c1fb",
+  "engine": {
+    "commit": "ccfe85b4851957ac2adf88b4a9ddf9668b2882f1",
+    "sha256": "047b4bcb30562cca709be7175d11995cdda45cf4b89db1f6906c5805b26c6452"
+  },
+  "svg_sha256": "8009e7dfc3832b7726eba3edabd93f3e6a5ea9f1dd0c3c51dcbdc9fdaed91088",
+  "static_sha256": "8009e7dfc3832b7726eba3edabd93f3e6a5ea9f1dd0c3c51dcbdc9fdaed91088",
+  "width": 915,
+  "height": 346,
+  "edges": [
+    {
+      "from": "Engineer / Operator",
+      "to": "Praetor Engine",
+      "label": "runs praetorctl"
+    },
+    {
+      "from": "AI Coding Agent",
+      "to": "Praetor Engine",
+      "label": "reads AGENTS.md"
+    },
+    {
+      "from": "Operational Fork",
+      "to": "Praetor Engine",
+      "label": "demand"
+    },
+    {
+      "from": "Praetor Engine",
+      "to": "Operational Fork",
+      "label": "sync"
+    },
+    {
+      "from": "Praetor Engine",
+      "to": "Git Provider",
+      "label": "branch protection"
+    },
+    {
+      "from": "Praetor Engine",
+      "to": "ARC Runner Scale Sets",
+      "label": "runner labels"
+    },
+    {
+      "from": "GitOps Controller",
+      "to": "Praetor Engine",
+      "label": "deploys chart"
+    }
+  ]
+}
