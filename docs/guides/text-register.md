@@ -599,7 +599,10 @@ who wrote it:
   was removed stays removed. The recognized earlier texts, including both push
   protocols a release prescribed (the single AGit push, and the AGit push plus
   the review-branch push since #458), are pinned in
-  `internal/paperclip/harness.go` (`PriorGenerated`).
+  `internal/paperclip/harness.go` (`PriorGenerated`). A `rules.md` counts in
+  either layout a release wrote: unwrapped items before #477, or the
+  markdownlint-clean layout since
+  (`TestPriorGeneratedAcceptsBothRulesLayoutsOfItsHarness`).
 - Any other harness is operator-owned. Adoption keeps its bytes and binds the
   contract to its decoded values. When those values fail the lint, edit them or
   run `praetorctl adopt --force`.

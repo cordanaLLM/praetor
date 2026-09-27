@@ -158,11 +158,33 @@ func PriorGenerated(ctx context.Context, repoPath string, current *Harness) (Pri
 			return PriorState{}, err
 		}
 		if harnessText == string(rendered) {
-			state.Generated = !rulesExist || rulesText == renderRules(&prior)
+			state.Generated = !rulesExist || priorRules(rulesText, &prior)
 			return state, nil
 		}
 	}
 	return state, nil
+}
+
+// priorRules reports whether rules is a rendering of prior some release wrote: the current
+// markdownlint-clean layout (#477) or the unwrapped layout of every release before it.
+func priorRules(rules string, prior *Harness) bool {
+	return rules == renderRules(prior) || rules == renderUnwrappedRules(prior)
+}
+
+// renderUnwrappedRules is rules.md as every release before #477 wrote it: no blank line
+// below a section heading and one unwrapped list item per value. It stays byte for byte so
+// a released rules.md still reads as earlier output after the renderer changed.
+func renderUnwrappedRules(h *Harness) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# Paperclip Operating Rules (%s)\n\n## Operating Contract\n", h.Platform)
+	for i := 0; i < len(h.OperatingContract) && i < maxHarnessValues; i++ {
+		fmt.Fprintf(&b, "- %s\n", h.OperatingContract[i])
+	}
+	fmt.Fprintf(&b, "\n## AGit Push Protocol\n```bash\n%s\n```\n\n## High-Integrity Invariants\n", h.AGitPushFormat)
+	for i := 0; i < len(h.Invariants) && i < maxHarnessValues; i++ {
+		fmt.Fprintf(&b, "- %s\n", h.Invariants[i])
+	}
+	return b.String()
 }
 
 // releaseText folds one consistent CRLF checkout style to LF. A release never wrote mixed

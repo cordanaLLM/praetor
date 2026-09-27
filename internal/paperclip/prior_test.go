@@ -160,6 +160,40 @@ func TestPriorGeneratedRejectsMixedLineEndings(t *testing.T) {
 	}
 }
 
+// A released rules.md reads as earlier output in either layout a release wrote, the
+// unwrapped one before #477 or the markdownlint-clean one since, but only as the rendering
+// of the harness beside it.
+func TestPriorGeneratedAcceptsBothRulesLayoutsOfItsHarness(t *testing.T) {
+	harness := priorFixture(t, "harness.json.golden")
+	unwrapped := priorFixture(t, "rules.md.golden")
+	_, probe := priorRepo(t, harness, unwrapped)
+	golden := priorHarness(probe, priorRegisterDirectives[2], priorAGitPushFormats[0])
+	otherPush := priorHarness(probe, priorRegisterDirectives[2], priorAGitPushFormats[1])
+	if renderUnwrappedRules(&golden) != unwrapped {
+		t.Fatal("unwrapped renderer no longer reproduces the released rules.md byte for byte")
+	}
+	cases := []struct {
+		name      string
+		rules     string
+		generated bool
+	}{
+		{"unwrapped layout", unwrapped, true},
+		{"markdownlint layout", renderRules(&golden), true},
+		{"unwrapped rules of the other push era", renderUnwrappedRules(&otherPush), false},
+		{"markdownlint rules of the other push era", renderRules(&otherPush), false},
+		{"unwrapped layout without final newline", strings.TrimSuffix(unwrapped, "\n"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, current := priorRepo(t, harness, tc.rules)
+			state, err := PriorGenerated(context.Background(), repo, current)
+			if err != nil || state.Generated != tc.generated || !state.Rules {
+				t.Fatalf("%s: prior=%+v err=%v, want generated=%v", tc.name, state, err, tc.generated)
+			}
+		})
+	}
+}
+
 func TestWriteHarnessFilesRulesFlag(t *testing.T) {
 	for _, rules := range []bool{true, false} {
 		repo, current := priorRepo(t, "{}", "")
