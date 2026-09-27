@@ -13,10 +13,24 @@ reproduces the upstream license and notice texts, and the license texts in
 
 ## Adapted work
 
-| Project | What praetor takes from it | License |
-| :-- | :-- | :-- |
-| [Caveman](https://github.com/JuliusBrussee/caveman) | The rules for terse, token-compressed agent text, implemented as the `caveman` skill and the prose linter in `internal/caveman` | MIT |
-| [I Have ADHD](https://github.com/ayghri/i-have-adhd) | The formatting principles (bottom line first, bold anchors, callouts) behind the `adhd-format` skill | MIT, © 2026 Ayoub Ghriss |
+The relation column says how much of the upstream reached praetor: *copied* means upstream text
+or code is reproduced, and then `REUSE.toml` carries the upstream copyright and license for that
+path; *adapted* means upstream rules or structure are rewritten in praetor's own words; *inspired*
+means only the idea is taken. A skill derived from an upstream names it in its front matter as
+`metadata.derived_from`, for example `.agents/skills/caveman/SKILL.md`. Projects by praetor's own
+maintainer are not listed.
+
+| Project | Praetor artifact | Relation | What changed | License |
+| :-- | :-- | :-- | :-- | :-- |
+| [Caveman](https://github.com/JuliusBrussee/caveman) | `caveman` skill, `.agents/skills/caveman/SKILL.md` | adapted | The name and the rules (drop articles, filler and hedges; write fragments; keep code and error text verbatim; invent no abbreviations; keep negations; fall back to plain wording when compression makes a line ambiguous) are rewritten for agent-to-agent traffic only, and the skill adds connective symbols, the brief and return shapes and the evidence bound. No upstream text is copied. | MIT, © 2026 Julius Brussee (the upstream skill; its BSL-1.1 engine is not used) |
+| [Caveman](https://github.com/JuliusBrussee/caveman) | prose linter, `internal/caveman` (`praetorctl caveman check`) | adapted | The same rules checked mechanically: article density, filler and hedge words, sentence length, and the brief and return contracts. The Go code is praetor's own. | MIT, © 2026 Julius Brussee |
+
+"Caveman" is a trademark of Julius Brussee; praetor uses the name to refer to the upstream rules
+and is not affiliated with or endorsed by the Caveman project.
+
+No upstream is traced for the `adhd-format` skill (`.agents/skills/adhd-format/SKILL.md`) or for
+`social-text`, which inherits from it: no candidate project checked shares their text, so neither
+is credited until its source is confirmed.
 
 ## Shipped in the binaries
 
@@ -45,7 +59,7 @@ reproduces the upstream license and notice texts, and the license texts in
 
 | Specification | Where praetor uses it | License |
 | :-- | :-- | :-- |
-| [The Power of 10 rules](https://spinroot.com/gerard/pdf/P10.pdf) (Gerard J. Holzmann, NASA JPL, 2006) | The basis of the HISS invariants | — |
+| [The Power of 10 rules](https://spinroot.com/gerard/pdf/P10.pdf) (Gerard J. Holzmann, NASA JPL; IEEE Computer 39(6):95–97, 2006, [doi:10.1109/MC.2006.212](https://doi.org/10.1109/MC.2006.212)) | The basis of the HISS invariants | — |
 | [Semantic Versioning 2.0.0](https://semver.org) | Version comparison and release tags | CC BY 3.0 |
 | [Conventional Commits 1.0.0](https://www.conventionalcommits.org) | Commit subjects and the commit check | MIT, © 2018 Conventional Changelog |
 | [Keep a Changelog 1.1.0](https://keepachangelog.com) | Changelog sections | MIT, © 2014 Olivier Lacan |

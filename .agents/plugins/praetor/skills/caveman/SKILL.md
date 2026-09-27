@@ -1,6 +1,8 @@
 ---
 name: caveman
 description: Caveman form for internal agent traffic (briefs, agent returns, research fan-outs, workflow returns, tool-call notes). Fragments, one fact per line, code/paths/errors verbatim, nothing a reader pays for twice. The `internal` text register; forge text uses social-text, docs and human replies use full prose.
+metadata:
+  derived_from: "https://github.com/JuliusBrussee/caveman (MIT)"
 ---
 
 # Caveman: internal register (`caveman`)
