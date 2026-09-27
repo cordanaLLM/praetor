@@ -388,6 +388,17 @@ A checkout inside a skipped directory is not discovered. The walk visits at
 most 250,000 directories and 64 levels; a tree beyond either bound fails
 the command rather than returning a partial fleet (`TestDiscoverFleetBounds`).
 
+Inside a Go project, the import scan skips what the go command skips when it
+expands `./...`: `testdata/` and `_`-prefixed directories, `_`- and
+`.`-prefixed files, and nested modules and checkouts
+(`TestScanASTImportsSkipsGoToolIgnoredSources`,
+`TestScanASTImportsStopsAtNestedModules` in `internal/needs`). It visits at most
+1,000,000 entries and fails beyond that rather than returning a partial import
+set (`TestScanASTImportsBoundaryEntryLimit`). `go.mod` is read through
+`internal/gomanifest`: a trailing comment never becomes part of the module path
+or Go version, and a requirement is indirect only when its comment is the go
+command's `indirect` marker (`TestParseGoModReadsDirectivesLikeTheGoCommand`).
+
 In `needs aggregate`, a repository in which no analyzer recognises a project
 is listed under "Skipped Repositories". Rows are never merged by name: two
 repositories that share a name, such as two clones of one upstream, are
