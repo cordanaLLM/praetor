@@ -126,11 +126,19 @@ rules:
     coverage:
       - language: go
         state: partial
-        mechanism: internal/hiss go_ast.go checkFuncLOC, with gocyclo, gocognit and funlen in golangci-lint
+        mechanism: >-
+          internal/hiss go_ast.go checkFuncLOC enforces function length; internal/hiss
+          complexity.go measures cyclomatic, cognitive and statement counts and reports them
+          without enforcing them; gocyclo, gocognit and funlen in golangci-lint run with the
+          thresholds .golangci.yml sets.
         rationale: >-
-          The scanner decides function length only. The cyclomatic, cognitive and statement
-          caps HISS-04 also declares are golangci-lint's, so fixtures for them are held as
-          gaps here rather than counted as scanner coverage.
+          The scanner enforces function length only, which positive/ replays. The cyclomatic,
+          cognitive and statement caps are measured, not enforced: every measured/ fixture
+          (cyclomatic 11 and 12, cognitive 16, 17 and 21, statements 51, two of them
+          package-level function literals) must yield a HISS-04 measurement and no violation,
+          and the negative/ fixtures at the caps (cyclomatic 10, cognitive 15, statements 50)
+          must yield neither, so the limits are pinned from both sides. gap/ keeps what no
+          mechanism decides: the length of a test function and of a function literal.
       - language: rust
         state: partial
         mechanism: internal/hiss rules.go braceTracker with the rustFnHeader grammar
@@ -494,7 +502,9 @@ rules:
           positive/new-goto-debt.go moved V_total 0 -> 1, CheckMonotonic returned 'total infractions
           increased: 0 -> 1' and EvaluateRatchet failed on the touched-file clean rule with '[HISS-01]
           Legacy non-DAG control flow jump (goto)'. negative/clean-addition.go left V_total at 0 and
-          passed. gap/cyclomatic-debt.go is real HISS-04 debt -- golangci-lint repor
+          passed. gap/cyclomatic-debt.go is real HISS-04 debt -- McCabe cyclomatic 12, which
+          golangci-lint reports and the scanner measures -- but a measurement is reported, not
+          enforced, so it never enters V_total and the ratchet cannot move on it.
       - language: rust
         state: partial
         runner: baseline

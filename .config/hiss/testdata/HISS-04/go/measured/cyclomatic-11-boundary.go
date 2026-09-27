@@ -1,8 +1,8 @@
 package p
 
-// Cyclomatic11 has cyclomatic complexity 11, over the HISS-04 cap of 10. gocyclo is
-// configured at min-complexity 11 and reports only above it, so this is unreported
-// (BUG-830 in .golangci.yml).
+// Cyclomatic11 has cyclomatic complexity 11, one over the HISS-04 cap of 10. The hiss
+// scanner measures it and reports it without enforcing it. gocyclo, configured at
+// min-complexity 11 in .golangci.yml, reports only above that and stays quiet.
 func Cyclomatic11(total int) int {
 	if total > 0 {
 		total++

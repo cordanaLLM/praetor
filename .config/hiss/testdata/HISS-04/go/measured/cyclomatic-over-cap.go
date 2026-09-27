@@ -1,6 +1,7 @@
 package p
 
-// Cyclomatic12 has McCabe cyclomatic complexity 12, over the HISS-04 cap of 10.
+// Cyclomatic12 has McCabe cyclomatic complexity 12, over the HISS-04 cap of 10. The hiss
+// scanner measures it and reports it without enforcing it.
 func Cyclomatic12(total int) int {
 	if total > 0 {
 		total++
