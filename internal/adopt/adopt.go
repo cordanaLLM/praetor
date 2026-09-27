@@ -631,8 +631,8 @@ func reconcileDevContainer(ctx context.Context, s *adoptSession) error {
 }
 
 // reconcileEditors writes IDE configurations that do not exist yet. Existing files are
-// only regenerated with Force, and .clang-tidy/.editorconfig are always preserved
-// because they carry hand-tuned project settings.
+// only regenerated with Force, and developer-owned files (editor.IsPreservedEditorFile:
+// hand-tuned policy and IDE session state) are always preserved.
 func reconcileEditors(ctx context.Context, s *adoptSession) error {
 	declared, err := config.LoadDeclaredTooling(ctx, s.repoPath)
 	if err != nil {
@@ -685,7 +685,7 @@ func (s *adoptSession) reconcileEditorFile(f editor.GeneratedFile) error {
 		s.report.recordCreated(f.Path, fmt.Sprintf("Synthesized %s IDE configuration for archetype '%s'", f.Editor, s.arch))
 		return nil
 	}
-	if s.opts.Force && !isUserOwnedEditorFile(f.Path) {
+	if s.opts.Force && !editor.IsPreservedEditorFile(f.Path) {
 		if err := s.write(full, []byte(f.Content), filePerm); err != nil {
 			return err
 		}
@@ -694,12 +694,6 @@ func (s *adoptSession) reconcileEditorFile(f editor.GeneratedFile) error {
 	}
 	s.report.recordReconciled(f.Path, fmt.Sprintf("Existing %s IDE configuration preserved (use --force to regenerate)", f.Editor))
 	return nil
-}
-
-// isUserOwnedEditorFile reports whether an IDE file is never overwritten, mirroring the
-// preservation rule of the editor package.
-func isUserOwnedEditorFile(rel string) bool {
-	return rel == ".clang-tidy" || rel == ".editorconfig"
 }
 
 func reconcileWorkingDirAndFlavor(ctx context.Context, s *adoptSession) error {

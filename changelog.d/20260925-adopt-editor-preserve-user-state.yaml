@@ -1,0 +1,3 @@
+type: fixed
+title: Keep developer-owned IDE state on adopt and editor generation, so an existing .idea/workspace.xml, .nvim.lua or .dir-locals.el is never overwritten, not even by adopt --force, and adoption uses the editor package's single preservation rule instead of its own copy
+breaking: false

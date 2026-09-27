@@ -1,0 +1,3 @@
+type: fixed
+title: Render the managed README governance block for the fork's own identity during operational sync plan and prepare, so a synced fork passes its own README audit instead of carrying the public source's documentation badge
+breaking: false

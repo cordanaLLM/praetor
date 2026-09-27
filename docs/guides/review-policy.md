@@ -21,10 +21,10 @@ deletion protection, and force-push protection remain governed by their existing
 settings. It does not grant bypass privileges or disable Lefthook, receipts,
 lint, or tests. Unknown review modes are configuration errors.
 
-Praetor's owner authorized this temporary mode on 2026-09-13 because the author
+An adopter might configure this temporary mode when a single author
 is currently the only eligible repository account and no review bot is installed.
 Local agent review remains useful evidence but does not count as an independent
-GitHub approval.
+forge approval.
 
 Restore `review_mode: independent` when a second maintainer or review bot has
 the required access and can submit an approving review. Regenerate the ruleset,
@@ -33,7 +33,6 @@ them back. The retained `required_approving_reviewers` value restores the minimu
 Do not infer restoration merely from installing an app or adding an account.
 
 Preserve existing ruleset branch scopes and additional parameters when updating
-GitHub. In particular, the current repository's extra approval requirement for
-unattributed changes is temporarily disabled with the other independent-review
-requirements and must be restored alongside them. Hosted readback is required;
+GitHub. For example, if your hosted ruleset carries extra parameters such as
+last-push approval, restore them too. Hosted readback is required;
 a locally generated ruleset alone does not establish enforcement.

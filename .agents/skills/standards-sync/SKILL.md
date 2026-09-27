@@ -42,6 +42,8 @@ Reconcile local repository configurations, DevContainers, and universal AI agent
      ```bash
      go run ./cmd/standardsctl baseline --verify
      ```
+   - Read-only: rescans under audit policy; fails on unrecorded infraction, higher count, or missing baseline; never rewrites file.
+   - Touched-file clean rule needs change set: `go run ./cmd/standardsctl audit --base=origin/main`.
    - Invariant: Technical debt must monotonically decrease ($V_{\text{total}}(t_1) \le V_{\text{total}}(t_0)$).
 
 5. **Execute Fleet Verification Gate**:

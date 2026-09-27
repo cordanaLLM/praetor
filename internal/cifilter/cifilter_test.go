@@ -427,6 +427,9 @@ func TestUnclassifiedFileKindsRunHeavyGates(t *testing.T) {
 	for _, path := range []string{
 		"Dockerfile", "build/Dockerfile", "scripts/release.sh", "templates/ci.yml.tmpl",
 		"tools/tool.toml", "internal/data/fixture.json", ".gitignore",
+		// The editor files `make editors-verify` checks (BUG-439): a change to one alone must
+		// reach verify-all, which is where that gate runs.
+		".editorconfig", ".vscode/extensions.json", ".vscode/settings.json",
 	} {
 		decision := cifilter.MakeDecision(cifilter.ClassifyChanges([]string{path}), false)
 		if !decision.RunTests || !decision.RunLinters || !decision.RunSecurity || decision.SkipHeavyGates ||

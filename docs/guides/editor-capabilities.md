@@ -120,11 +120,19 @@ not asserted anyway:
   structural evidence; generation does not run or certify the command. Callers
   using the Go API can provide explicit commands and languages through
   `editor.Options`.
-- Language server. The Praetor LSP is written only for a Go workspace that holds
-  a workspace-relative executable regular file at `editor.Options.LSPPath`, or,
-  when that is unset, at `<BinaryDir>/standards-lsp` (`standards-lsp.exe` on
-  Windows, where executability is the file extension). Otherwise VS Code settings
-  carry no `standards.lsp.*` key and Neovim registers no server.
+- Language server. The Praetor LSP is written only for a Go workspace where the
+  host can start the workspace-relative command `editor.Options.LSPPath`, or,
+  when that is unset, `<BinaryDir>/standards-lsp`. Otherwise VS Code settings
+  carry no `standards.lsp.*` key and Neovim registers no server. The settings
+  name the command, never the file it resolves to, so one tracked
+  `.vscode/settings.json` verifies on every host. On Linux and macOS the command
+  is an executable regular file. On Windows the VS Code client spawns it without
+  a shell through libuv, whose `search_path` (`src/win/process.c`) appends `.com`
+  and then `.exe` to a name without an extension: a built
+  `bin/standards-lsp.exe` starts as `bin/standards-lsp`. Node rejects `.bat`
+  and `.cmd` files in that spawn, so they never count as a language server.
+  Tests: `internal/editor/lsp_launch_test.go` and
+  `cmd/standardsctl/editors_self_gate_test.go`.
 - Extensions. Recommendations are exactly the caller-supplied IDs verified in
   `editor.Options.ExtensionRegistry`; the generator does not contact an extension
   marketplace or prove publication from an extension's source directory. Without
@@ -203,6 +211,24 @@ make editors-reference-verify   # praetorctl editors reference --verify
 file's path. Tests: `internal/editor/reference_test.go`,
 `cmd/standardsctl/editors_reference_test.go`.
 
+## The engine's own editor files
+
+The engine checks its own editor files the way an adopter's are checked. Its
+`.standards.yaml` selects `editors: [universal, vscode]`, and `make verify-all`
+runs `make editors-verify` (`praetorctl editors verify`) against that selection:
+
+```bash
+make editors-verify   # praetorctl editors verify
+```
+
+The gate fails when a selected file is missing or has lost a managed value. The
+tracked `.editorconfig` adds two-space sections for the TypeScript, Lua, shell and
+web sources, so the gate reports it as preserved but unverified. Neovim is not
+selected: its module is compared byte for byte, and it holds a language-server
+block only when `bin/standards-lsp` is built, so a fresh checkout and a built one
+would disagree. Tests: `cmd/standardsctl/editors_self_gate_test.go`, which the
+platform matrix runs on Linux, macOS and Windows.
+
 ## VS Code extension trace level
 
 The extension starts its language client with the id `standards.lsp`
@@ -226,12 +252,21 @@ resolved plan. They are retained for review; automatic migration of legacy
 generated files is not supported. Resolve each reported conflict using the actual
 repository's languages and commands, then generate and verify again.
 
-Non-JSON formats do not yet have semantic merge adapters. Existing files are
-preserved and checked for known unsupported legacy settings; their existence is
-not full semantic verification of XML, TOML, Lua or editor Lisp. Missing files can
-still be generated from the resolved plan.
+Non-JSON formats do not yet have semantic merge adapters. Once they exist, the
+developer-owned files are never replaced: `.editorconfig` and `.clang-tidy` carry
+hand-tuned project policy, and `.idea/workspace.xml`, `.nvim.lua` and
+`.dir-locals.el` hold IDE session state or a developer's own editor setup.
+Generation reports each of them as `PRESERVED`, and verification lists them as
+preserved but unverified, because their existence is not semantic verification of
+XML, Lua or editor Lisp. Any other existing non-JSON file that differs from its
+template, such as `lua/standards.lua` or the JetBrains inspection profile, belongs
+to Praetor and is rewritten. Missing files are still generated from the resolved
+plan. The list lives in one place,
+[`internal/editor/editor.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/editor/editor.go)
+(`IsPreservedEditorFile`).
 
-Adoption retains its existing explicit `--force` contract. A successful workspace
+Adoption retains its existing explicit `--force` contract: `--force` regenerates
+existing editor files, except the developer-owned files above. A successful workspace
 configuration check does not imply that an IDE extension, coding-agent wrapper,
 hook or MCP connection is installed and active. Those require the separate
 [client bootstrap](client-bootstrap.md) and

@@ -1,10 +1,12 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
 )
@@ -183,5 +185,127 @@ func TestBaselineRecord_RecordsRepositoryIdentity_3D(t *testing.T) {
 	}
 	if _, err := os.Stat(broken); !os.IsNotExist(err) {
 		t.Fatalf("refused record still wrote a baseline: %v", err)
+	}
+}
+
+// fileSnapshot returns the bytes and modification time of path, so a test can prove a
+// read-only command left the file alone.
+func fileSnapshot(t *testing.T, path string) (string, time.Time) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data), info.ModTime()
+}
+
+func assertUnchanged(t *testing.T, path, wantData string, wantMod time.Time) {
+	t.Helper()
+	data, mod := fileSnapshot(t, path)
+	if data != wantData || !mod.Equal(wantMod) {
+		t.Fatalf("--verify rewrote %s:\n%s", path, data)
+	}
+}
+
+// Positive (BUG-662): a tree whose debt is exactly what the baseline records passes --verify,
+// and the file is neither rewritten nor touched. standards-sync step 4 runs this command.
+func TestBaselineVerify_Positive_UnchangedTreePassesReadOnly(t *testing.T) {
+	f := newAuditFixture(t)
+	f.writeBaseline(t, []baseline.Infraction{f.addViolation(t)}, "legacy debt inventory")
+	data, mod := fileSnapshot(t, f.baselinePath)
+
+	out, err := runBaselineCmd(t, f, "--verify")
+	if err != nil {
+		t.Fatalf("verify of an unchanged tree: %v\n%s", err, out)
+	}
+	mustContain(t, out, "[PASS] HISS-13 debt ratchet: 1 active infractions within the 1 recorded", "not rewritten")
+	assertUnchanged(t, f.baselinePath, data, mod)
+}
+
+// Negative: an infraction the baseline does not record fails --verify and names it, without
+// recording it; a missing baseline fails with its own error; --verify refuses the write flags.
+func TestBaselineVerify_Negative_NewDebtAndMissingBaselineFail(t *testing.T) {
+	f := newAuditFixture(t)
+	f.addViolation(t)
+	data, mod := fileSnapshot(t, f.baselinePath)
+	_, err := runBaselineCmd(t, f, "--verify")
+	mustErrContain(t, err, "1 new unbaselined")
+	mustErrContain(t, err, "legacy.go:4")
+	assertUnchanged(t, f.baselinePath, data, mod)
+
+	missing := filepath.Join(t.TempDir(), "absent.json")
+	_, err = captureStdout(t, func() error { return dispatchCommand("baseline", []string{"--file=" + missing, "--verify"}) })
+	if !errors.Is(err, errBaselineMissing) {
+		t.Fatalf("missing baseline must fail distinctly, got %v", err)
+	}
+	if _, statErr := os.Stat(missing); !os.IsNotExist(statErr) {
+		t.Fatalf("--verify created the baseline file (stat err %v)", statErr)
+	}
+
+	for _, extra := range [][]string{{"--record"}, {"--allow-increase"}, {"--reason=x"}} {
+		_, err := runBaselineCmd(t, f, append([]string{"--verify"}, extra...)...)
+		mustErrContain(t, err, "read-only")
+	}
+	assertUnchanged(t, f.baselinePath, data, mod)
+}
+
+// Boundary: a count equal to the baseline passes only when it is the recorded debt. The same
+// count at an unrecorded fingerprint is new debt, and the scan uses the repository's own
+// function-length limit, the one the audit enforces, not the scanner default.
+func TestBaselineVerify_Boundary_EqualCountAndPolicyLimit(t *testing.T) {
+	f := newAuditFixture(t)
+	f.addViolation(t)
+	f.writeBaseline(t, []baseline.Infraction{{RuleID: "HISS-07", FilePath: "other.go", LineNumber: 9, Fingerprint: "other.go:9:HISS-07"}}, "")
+	_, err := runBaselineCmd(t, f, "--verify")
+	mustErrContain(t, err, "1 new unbaselined")
+
+	tight := newAuditFixture(t)
+	writeFixtureFile(t, tight.dir, ".standards.yaml",
+		fixtureManifest("acme", "widgets", false)+"overrides:\n  complexity:\n    max_func_loc: 40\n")
+	writeFixtureFile(t, tight.dir, "long.go", "package long\n\nfunc long() int {\n\tx := 0\n"+
+		strings.Repeat("\tx++\n", 45)+"\treturn x\n}\n")
+	_, err = runBaselineCmd(t, tight, "--verify")
+	mustErrContain(t, err, "long.go")
+	// --record counts the same debt, so it refuses to raise the zero baseline silently.
+	_, err = runBaselineCmd(t, tight, "--record")
+	mustErrContain(t, err, "--allow-increase")
+}
+
+// Positive (BUG-895): baseline routes argv through parseInterspersed like every command, so
+// --verify binds wherever it is written and a trailing "--" terminator adds no positional.
+func TestParseBaselineMode_Positive_InterspersedFlagsAndTrailingTerminator(t *testing.T) {
+	mode, err := parseBaselineMode([]string{"--verify", "--file", "custom.json", "--"})
+	if err != nil || !mode.verify || mode.path != "custom.json" {
+		t.Fatalf("flags before a trailing terminator: mode %+v, err %v", mode, err)
+	}
+}
+
+// Negative: a stray positional is refused by name alone while a flag written after it still
+// binds, and an unknown flag after it is reported as a flag instead of as a positional.
+func TestParseBaselineMode_Negative_StrayPositionalRefusedByName(t *testing.T) {
+	mode, err := parseBaselineMode([]string{"stray", "--verify"})
+	if err == nil || err.Error() != `baseline accepts no positional arguments, got ["stray"]` {
+		t.Fatalf("a stray positional must be refused by name alone, got %v", err)
+	}
+	if !mode.verify {
+		t.Error("--verify written after the positional must still bind")
+	}
+	_, err = parseBaselineMode([]string{"stray", "--bogus"})
+	mustErrContain(t, err, "flag provided but not defined: -bogus")
+}
+
+// Boundary: a token after "--" stays positional, so "--verify -- --record" is refused as a
+// positional instead of switching on --record or tripping the read-only combination check.
+func TestParseBaselineMode_Boundary_TerminatorKeepsFlagShapedTokenPositional(t *testing.T) {
+	mode, err := parseBaselineMode([]string{"--verify", "--", "--record"})
+	if err == nil || err.Error() != `baseline accepts no positional arguments, got ["--record"]` {
+		t.Fatalf("a token after -- must stay positional, got %v", err)
+	}
+	if mode.record {
+		t.Error("a --record token after the terminator must not bind")
 	}
 }

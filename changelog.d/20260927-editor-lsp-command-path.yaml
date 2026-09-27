@@ -1,0 +1,3 @@
+type: fixed
+title: Name the language server command bin/standards-lsp in generated editor settings on every host, so a built Windows checkout no longer writes bin/standards-lsp.exe and fails editors verify against the tracked settings, and stop counting .bat and .cmd files as a language server the VS Code client can start
+breaking: false

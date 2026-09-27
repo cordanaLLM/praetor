@@ -18,14 +18,24 @@ import (
 
 // Renderers state what the resolved plan proves and nothing else (#360, #365, BUG-445, BUG-809).
 
-// lspBinaryRel is the workspace-relative language server path the resolver accepts on this
-// host. Windows carries executability in the file extension, not a permission bit (HISS-21).
-func lspBinaryRel(dir string) string {
-	name := dir + "/" + lspBinaryName
+// lspCommandRel is the workspace-relative command the renderers name for the language server
+// under dir. It is the same on every host, so one tracked settings file verifies on all (HISS-21).
+func lspCommandRel(dir string) string {
+	return dir + "/" + lspBinaryName
+}
+
+// hostLaunchFile is the file this host starts for an extension-less command: Windows appends
+// .exe (libuv search_path) and carries executability in that extension, POSIX runs the name.
+func hostLaunchFile(command string) string {
 	if runtime.GOOS == "windows" {
-		name += ".exe"
+		return command + ".exe"
 	}
-	return name
+	return command
+}
+
+// lspBinaryRel is the built language server under dir, as this host's build writes it.
+func lspBinaryRel(dir string) string {
+	return hostLaunchFile(lspCommandRel(dir))
 }
 
 func writeExecutable(t *testing.T, root, rel string) {
@@ -124,19 +134,16 @@ func TestPlanRender_Boundary_UnsetComplexityIsTheAuditCeiling(t *testing.T) {
 
 func TestPlanRender_Positive_LSPWrittenOnlyWithEvidence(t *testing.T) {
 	root := evidenceWorkspace(t)
-	writeExecutable(t, root, "tools/custom-lsp")
+	writeExecutable(t, root, hostLaunchFile("tools/custom-lsp"))
 	cases := []struct {
 		name string
 		opts Options
 		want string
 	}{
-		{"conventional bin dir", Options{IncludeLSP: true}, lspBinaryRel("bin")},
+		{"conventional bin dir", Options{IncludeLSP: true}, lspCommandRel("bin")},
 		{"explicit path", Options{IncludeLSP: true, LSPPath: "tools/custom-lsp"}, "tools/custom-lsp"},
 	}
 	for _, tc := range cases {
-		if runtime.GOOS == "windows" && tc.opts.LSPPath != "" {
-			continue // Windows needs an executable extension, which this explicit path lacks.
-		}
 		tc.opts.WorkspaceRoot, tc.opts.Editors = root, []string{EditorVSCode, EditorNeovim}
 		set := mustSynthesize(t, tc.opts)
 		var settings map[string]any

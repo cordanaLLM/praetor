@@ -1,4 +1,4 @@
-.PHONY: all build test stress fuzz audit caveman-sources compile-context compile-context-verify editors-reference editors-reference-verify lint vuln sec secrets nosec-justified hiss-coverage flavor-audit state-audit dedupe topology-audit vscode-test wiki-sync-test dco-check-test docs-lint docs-lint-test docs-surface verify-all clean hooks setup
+.PHONY: all build test stress fuzz audit caveman-sources compile-context compile-context-verify editors-reference editors-reference-verify editors-verify lint vuln sec secrets nosec-justified hiss-coverage flavor-audit state-audit dedupe topology-audit vscode-test wiki-sync-test dco-check-test docs-lint docs-lint-test docs-surface verify-all clean hooks setup
 
 BIN_DIR := bin
 # Windows cannot execute an extension-less PE, so the binary is named for the host rather than
@@ -56,6 +56,11 @@ editors-reference:
 
 editors-reference-verify:
 	go run ./cmd/standardsctl editors reference --verify
+
+# The editor files this repository selects in .standards.yaml (editors:) must hold every value
+# the generator manages; `praetorctl editors generate` repairs them (BUG-439).
+editors-verify:
+	go run ./cmd/standardsctl editors verify
 
 # Nothing regenerates .needs.yaml on its own; this fails when the committed manifest is not
 # what `needs scan --write` would write now. It gates this repository only: adopter audits
@@ -138,7 +143,7 @@ hiss-coverage:
 topology-audit:
 	go run ./cmd/standardsctl topology audit --skip-unconfigured
 
-verify-all: adr-verify semgrep-test docs-drift-test docs-assets-test github-app-test docs-lint-test portability-test notebook-test mcp-test dev-codex-hooks-test dev-install-test dev-schedule-test dev-repair-test wiki-sync-test adopt-sweep-test dco-check-test vscode-test mcp-probe compile-context-verify caveman-sources needs-check editors-reference-verify test audit lint vuln sec secrets fuzz hiss-coverage flavor-audit state-audit dedupe topology-audit hooks-test
+verify-all: adr-verify semgrep-test docs-drift-test docs-assets-test github-app-test docs-lint-test portability-test notebook-test mcp-test dev-codex-hooks-test dev-install-test dev-schedule-test dev-repair-test wiki-sync-test adopt-sweep-test dco-check-test vscode-test mcp-probe compile-context-verify caveman-sources needs-check editors-reference-verify editors-verify test audit lint vuln sec secrets fuzz hiss-coverage flavor-audit state-audit dedupe topology-audit hooks-test
 	@echo "All standards verification gates passed cleanly."
 
 # Vendored interfig (docs/adr/0015-interactive-figures-from-vendored-interfig.md section 8): the

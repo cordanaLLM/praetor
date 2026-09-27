@@ -1,0 +1,3 @@
+type: fixed
+title: Run editors verify on the engine itself, which selects universal and vscode in .standards.yaml, tracks the generated .editorconfig and .vscode/extensions.json, and gates them through make editors-verify in verify-all
+breaking: false

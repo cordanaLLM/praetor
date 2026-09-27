@@ -32,3 +32,27 @@ labels:
   - name: "breaking-change"
     color: "b60205"
     description: "Breaking API change requiring mandatory Migration: footer"
+
+  - name: "bug"
+    color: "d73a4a"
+    description: "Something isn't working"
+
+  - name: "enhancement"
+    color: "a2eeef"
+    description: "New feature or request"
+
+  - name: "triage"
+    color: "ededed"
+    description: "Awaiting maintainer triage"
+
+  - name: "rfc"
+    color: "c5def5"
+    description: "Request for comments on a proposed change"
+
+  - name: "api-review"
+    color: "1d76db"
+    description: "Changes a public API contract and needs API review"
+
+  - name: "dependencies"
+    color: "0366d6"
+    description: "Pull requests that update a dependency file"

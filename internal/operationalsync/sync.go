@@ -54,11 +54,12 @@ type operation struct {
 	expected         map[string][]byte
 	ownerOnly        []string
 	// funding is the owner's funding document, nil when the owner commit carries none;
-	// surfaces holds the funding surfaces rendered from it for the reviewed source, and
-	// fundingChanged the surfaces whose rendering differs from the reviewed source's file.
-	funding        *funding.Config
-	surfaces       map[string][]byte
-	fundingChanged []string
+	// surfaces holds the reviewed source's funding surfaces rendered from it, with the README
+	// governance block rendered for the owner identity, and surfacesChanged the surfaces whose
+	// rendering differs from the reviewed source's file.
+	funding         *funding.Config
+	surfaces        map[string][]byte
+	surfacesChanged []string
 }
 
 var commitSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
@@ -91,8 +92,8 @@ func runSync(ctx context.Context, g *gitRunner, stage string, opts Options) (*Re
 		return nil, err
 	}
 	report := &Report{Version: 1, Stage: stage, Status: "planned", Options: opts, Owner: op.origin, Source: op.upstream,
-		ChangedPaths: append(append([]string(nil), ownerPaths...), op.fundingChanged...), OwnerOnlyPaths: append([]string{}, op.ownerOnly...),
-		Scope: "Identity, reviewed ancestry, exact engine tree, owner-only configuration overlay, funding surfaces rendered from the owner's funding document and owner-only operator paths; no tests, publication or bot activation"}
+		ChangedPaths: append(append([]string(nil), ownerPaths...), op.surfacesChanged...), OwnerOnlyPaths: append([]string{}, op.ownerOnly...),
+		Scope: "Identity, reviewed ancestry, exact engine tree, owner-only configuration overlay, funding surfaces rendered from the owner's funding document, the README governance block rendered for the owner identity and owner-only operator paths; no tests, publication or bot activation"}
 	if stage == "plan" {
 		return report, nil
 	}
@@ -234,7 +235,7 @@ func (op *operation) validate(ctx context.Context) error {
 	if nextID != source {
 		return errors.New("reviewed upstream repository identity changed")
 	}
-	return op.renderOverlay(ctx, next)
+	return op.renderOverlay(ctx, next, source)
 }
 
 // inputDirs names the checkouts a stage reads: init has no source checkout.

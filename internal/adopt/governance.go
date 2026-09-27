@@ -20,7 +20,7 @@ const (
 	securityFile     = "SECURITY.md"
 	adrIndexFile     = "docs/adr/README.md"
 	adrTemplateFile  = "docs/adr/0000-template.md"
-	readmeFile       = "README.md"
+	readmeFile       = readmegovernance.File
 )
 
 // buildMakefile renders the greenfield Makefile. verify-all runs the same gates the

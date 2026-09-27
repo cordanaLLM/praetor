@@ -163,7 +163,9 @@ func TestEditor_Negative_EmptyOrInvalidEditors(t *testing.T) {
 		Editors: []string{},
 	})
 	if err == nil {
-		t.Errorf("expected error for empty editors list")
+		// Fatal, not Errorf: the next line dereferences err, so a regression that returned
+		// nil used to end the test in a nil-pointer panic instead of this message (BUG-441).
+		t.Fatalf("expected error for empty editors list")
 	}
 	if !strings.Contains(err.Error(), "no valid editors") {
 		t.Errorf("unexpected error message: %v", err)
@@ -174,7 +176,7 @@ func TestEditor_Negative_EmptyOrInvalidEditors(t *testing.T) {
 		Editors: []string{"notepad", "nano", "gedit"},
 	})
 	if err == nil {
-		t.Errorf("expected error when no supported editors matched")
+		t.Fatalf("expected error when no supported editors matched")
 	}
 }
 
@@ -242,7 +244,7 @@ func TestEditor_Boundary_CustomBinaryDirAndFlags(t *testing.T) {
 		IncludeLSP:    true,
 	}), ".vscode/settings.json")
 
-	if !strings.Contains(settingsContent, "${workspaceFolder}/"+lspBinaryRel(customBin)) {
+	if !strings.Contains(settingsContent, `"${workspaceFolder}/`+lspCommandRel(customBin)+`"`) {
 		t.Errorf("settings missing custom binary path: %s", settingsContent)
 	}
 	for _, forbidden := range []string{
@@ -328,7 +330,7 @@ func TestEditor_Positive_AntigravityAliasesAndKeys(t *testing.T) {
 			// Go-derived keys.
 			workspace := t.TempDir()
 			writeExecutable(t, workspace, lspBinaryRel("bin"))
-			wantSettings["standards.lsp.path"] = "${workspaceFolder}/" + lspBinaryRel("bin")
+			wantSettings["standards.lsp.path"] = "${workspaceFolder}/" + lspCommandRel("bin")
 			opts := Options{
 				Editors:       []string{alias},
 				WorkspaceRoot: workspace,

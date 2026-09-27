@@ -191,11 +191,17 @@ go run ./cmd/standardsctl audit
 
 ### 4. Technical Debt Ratcheting
 
-Freeze current debt baselines to enforce monotonic debt reduction on touched files:
+Record the current debt once, then check that it never grows:
 
 ```bash
-go run ./cmd/standardsctl baseline
+go run ./cmd/standardsctl baseline --record   # scan and write .standards-baseline.json
+go run ./cmd/standardsctl baseline --verify   # read-only: fail on debt the baseline does not record
+go run ./cmd/standardsctl baseline            # print the stored snapshot without scanning
 ```
+
+`--record` refuses to raise the count unless `--allow-increase --reason="<why>"`
+records why. `audit` applies the same ratchet and adds the touched-file clean
+rule.
 
 ---
 

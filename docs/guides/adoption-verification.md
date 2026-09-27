@@ -76,6 +76,13 @@ Set both fields in `.standards.yaml` and re-run `praetorctl adopt` to reconcile
 the block; adoption never rewrites an existing manifest, so adding an `origin`
 remote alone does not fill them (`TestAdopt_RerunCompletesOnceIdentityIsSet`).
 
+An operational fork carries the engine's README, whose block links the public
+source. `praetorctl operational sync plan` and `prepare` read the recorded state
+back from that block and render it again for the fork's `repository.owner` and
+`repository.name` with the same renderer, so the fork passes its own audit
+([README governance block](operational-sync.md#readme-governance-block),
+`internal/operationalsync/readme_test.go`).
+
 `praetorctl audit` renders the same expected block in memory and fails when the
 README block is missing, malformed, duplicated, or stale. Re-run
 `praetorctl adopt` to migrate the historical unmarked HISS-16 badge and
