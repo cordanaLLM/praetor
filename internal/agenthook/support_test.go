@@ -12,9 +12,9 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// organisationContainerPattern is the operator half of the Python topology rule with one
-// generic container name. The Python guard carries it built in; the Go engine receives it
-// through the operator deny list, so the replay supplies it explicitly.
+// organisationContainerPattern is an operator topology rule with one generic container name.
+// Neither the Go engine nor the Python guard carries it built in; an operator configures it in
+// hooks.command_policy.deny, so the replay supplies it explicitly.
 const organisationContainerPattern = `(?i)(standardsctl|praetorctl)\s+(adopt|conform|bootstrap|needs\s+(scan|report|migrate|epic))\b.*/dev/(scratch)/?(\s|$)`
 
 // fixtureCase is one JSON-expressible payload of the Python suites.

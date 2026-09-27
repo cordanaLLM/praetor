@@ -256,7 +256,7 @@ func lexicalConfine(root, rel string) (absRoot, candidate string, err error) {
 		return "", "", fmt.Errorf("util: resolve confinement root %q: %w", root, err)
 	}
 	candidate = filepath.Clean(filepath.Join(absRoot, rel))
-	if !withinRoot(absRoot, candidate) {
+	if !WithinRoot(absRoot, candidate) {
 		return "", "", fmt.Errorf("%w: %q is not under %q", ErrPathEscapesRoot, candidate, absRoot)
 	}
 	return absRoot, candidate, nil
@@ -274,7 +274,7 @@ func checkResolvedConfinement(candidate, resolvedRoot string) error {
 		return err
 	}
 	for _, resolved := range [...]string{parent, target} {
-		if !withinRoot(resolvedRoot, resolved) {
+		if !WithinRoot(resolvedRoot, resolved) {
 			return fmt.Errorf("%w: %q resolves to %q, outside %q",
 				ErrPathEscapesRoot, candidate, resolved, resolvedRoot)
 		}
@@ -282,11 +282,11 @@ func checkResolvedConfinement(candidate, resolvedRoot string) error {
 	return nil
 }
 
-// withinRoot reports whether p is root itself or a descendant of root. Both arguments
+// WithinRoot reports whether p is root itself or a descendant of root. Both arguments
 // must already be cleaned absolute paths. A root that already ends in a separator -- "/"
 // or a Windows volume root such as `C:\` -- is its own prefix; appending another separator
 // would demand a doubled one that no cleaned path carries (BUG-825).
-func withinRoot(root, p string) bool {
+func WithinRoot(root, p string) bool {
 	if p == root {
 		return true
 	}

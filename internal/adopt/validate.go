@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/topology"
 )
 
 // maxChildEntries bounds the child-repository scan of an adoption target (HISS-02).
@@ -18,23 +20,13 @@ var (
 	ErrTargetNotGitRepo = errors.New("target is not a git repository (missing .git)")
 	// ErrTargetIsWorkstationRoot indicates target is the top-level dev workspace root.
 	ErrTargetIsWorkstationRoot = errors.New("target path is the workstation dev root; adopting dev workspace root is strictly prohibited (DEV-01)")
-	// ErrTargetIsOrgDirectory indicates target is a recognized GitHub organization container.
+	// ErrTargetIsOrgDirectory indicates target is an organization container in the dev root:
+	// a built-in container name (topology.BuiltinOrgContainers) or a non-repository folder
+	// holding child repositories (checkForChildRepositories).
 	ErrTargetIsOrgDirectory = errors.New("target path is an organization container directory; repositories must live within org directories, not on org roots (DEV-01)")
 	// ErrOrgContainerWithSubRepos indicates the directory contains child git repositories.
 	ErrOrgContainerWithSubRepos = errors.New("target directory contains child git repositories; adoption must target individual leaf repositories")
 )
-
-var knownOrgNames = map[string]bool{
-	"cordanallm": true,
-	"lusoris":    true,
-	"vmafx":      true,
-	"golusoris":  true,
-	"upstream":   true,
-	"local":      true,
-	"stacks":     true,
-	"worktrees":  true,
-	"scratch":    true,
-}
 
 // ValidateAdoptionTarget verifies that the target path is a genuine, individual leaf Git repository.
 func ValidateAdoptionTarget(targetPath string) error {
@@ -68,7 +60,9 @@ func hasGitEntry(dir string) bool {
 // checkWorkstationBoundaries rejects the user's home directory, the workstation dev
 // root under it, and organization container directories. A directory that merely
 // happens to be named "dev" is only rejected when it is not a repository itself, so a
-// clone named dev under any other parent remains adoptable.
+// clone named dev under any other parent remains adoptable. Operator-configured container
+// names (topology.org_containers) are not consulted: this check has no settings, and a
+// configured container that is not a repository fails checkGitRepositoryRoot anyway.
 func checkWorkstationBoundaries(normPath string) error {
 	cleanPath := filepath.Clean(normPath)
 	baseName := strings.ToLower(filepath.Base(cleanPath))
@@ -86,11 +80,23 @@ func checkWorkstationBoundaries(normPath string) error {
 	}
 
 	parentBase := strings.ToLower(filepath.Base(filepath.Dir(cleanPath)))
-	if parentBase == "dev" && knownOrgNames[baseName] && !isRepo {
+	if parentBase == "dev" && !isRepo && isOrgContainer(cleanPath, baseName) {
 		return fmt.Errorf("%w: %s", ErrTargetIsOrgDirectory, normPath)
 	}
 
 	return nil
+}
+
+// isOrgContainer reports whether a non-repository dev-root folder is an organization
+// container: a built-in container name, or a folder holding a child repository, found by the
+// same scan that refuses a repository with child repositories (checkForChildRepositories). A
+// scan that cannot read the folder reports false; the target then fails
+// checkGitRepositoryRoot, which refuses every non-repository.
+func isOrgContainer(path, lowerName string) bool {
+	if topology.OrgContainers(nil)[lowerName] {
+		return true
+	}
+	return errors.Is(checkForChildRepositories(path), ErrOrgContainerWithSubRepos)
 }
 
 func checkGitRepositoryRoot(normPath string) error {

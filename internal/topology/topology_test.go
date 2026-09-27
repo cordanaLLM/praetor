@@ -23,6 +23,15 @@ func initTestGit(t *testing.T, dir string) {
 	}
 }
 
+// acmeConfigured is an operator's topology.org_containers for the acme fixtures. A test
+// whose organization folder structure alone does not reveal (a folder with a .git of its
+// own, or one holding no valid child repository) names it here, as an operator would.
+var acmeConfigured = []string{"acme", "acme-labs"}
+
+// mockConfigured names acme-labs from setupMockDevEnvironment, whose stray .git keeps it
+// from being recognised by structure; acme stays a structural container.
+var mockConfigured = []string{"acme-labs"}
+
 func setupMockDevEnvironment(t *testing.T) string {
 	t.Helper()
 	devRoot := t.TempDir()
@@ -35,19 +44,19 @@ func setupMockDevEnvironment(t *testing.T) string {
 		t.Fatal(err)
 	}
 
-	// vmafx org container
-	vmafxOrg := filepath.Join(devRoot, "vmafx")
-	if err := os.MkdirAll(vmafxOrg, 0755); err != nil {
+	// acme: a structural organization container (no configuration names it)
+	acmeOrg := filepath.Join(devRoot, "acme")
+	if err := os.MkdirAll(acmeOrg, 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	// Child repos inside vmafx
-	vmafxCore := filepath.Join(vmafxOrg, "vmafx")
-	initTestGit(t, vmafxCore)
-	pelorusRepo := filepath.Join(vmafxOrg, "pelorus")
-	initTestGit(t, pelorusRepo)
+	// Child repos inside acme
+	appRepo := filepath.Join(acmeOrg, "app")
+	initTestGit(t, appRepo)
+	libRepo := filepath.Join(acmeOrg, "lib")
+	initTestGit(t, libRepo)
 
-	// Stray governance files inside vmafx org root
+	// Stray governance files inside the acme organization root
 	strayFiles := []string{
 		"AGENTS.md",
 		".standards.yaml",
@@ -57,27 +66,28 @@ func setupMockDevEnvironment(t *testing.T) string {
 		".needs.yaml",
 	}
 	for _, sf := range strayFiles {
-		if err := os.WriteFile(filepath.Join(vmafxOrg, sf), []byte("stray"), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(acmeOrg, sf), []byte("stray"), 0644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	// Stray docs directory in vmafx
-	if err := os.MkdirAll(filepath.Join(vmafxOrg, "docs", "adr"), 0755); err != nil {
+	// Stray docs directory in acme
+	if err := os.MkdirAll(filepath.Join(acmeOrg, "docs", "adr"), 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	// golusoris org container with stray headless .git
-	golusorisOrg := filepath.Join(devRoot, "golusoris")
-	if err := os.MkdirAll(filepath.Join(golusorisOrg, ".git", "hooks"), 0755); err != nil {
+	// acme-labs: a configured organization container (mockConfigured) with a stray
+	// headless .git holding only hooks; a folder with a .git is never a structural container
+	labsOrg := filepath.Join(devRoot, "acme-labs")
+	if err := os.MkdirAll(filepath.Join(labsOrg, ".git", "hooks"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	// Child repo inside golusoris
-	goenvoyRepo := filepath.Join(golusorisOrg, "goenvoy")
-	initTestGit(t, goenvoyRepo)
+	// Child repo inside acme-labs
+	toolsRepo := filepath.Join(labsOrg, "tools")
+	initTestGit(t, toolsRepo)
 
 	// Symlink in dev root (DEV-02)
-	symlinkPath := filepath.Join(devRoot, "pelorus")
-	if err := os.Symlink(pelorusRepo, symlinkPath); err != nil {
+	symlinkPath := filepath.Join(devRoot, "lib")
+	if err := os.Symlink(libRepo, symlinkPath); err != nil {
 		t.Fatal(err)
 	}
 
@@ -89,7 +99,7 @@ func TestAuditWorkstationTopology_Positive(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	report, err := AuditWorkstationTopology(ctx, devRoot)
+	report, err := AuditWorkstationTopology(ctx, devRoot, mockConfigured)
 	if err != nil {
 		t.Fatalf("AuditWorkstationTopology failed: %v", err)
 	}
@@ -98,8 +108,8 @@ func TestAuditWorkstationTopology_Positive(t *testing.T) {
 		t.Errorf("expected 3 valid repos, got %d: %v", len(report.ValidRepos), report.ValidRepos)
 	}
 
-	if len(report.Symlinks) != 1 || report.Symlinks[0] != "pelorus" {
-		t.Errorf("expected symlink 'pelorus', got %v", report.Symlinks)
+	if len(report.Symlinks) != 1 || report.Symlinks[0] != "lib" {
+		t.Errorf("expected symlink 'lib', got %v", report.Symlinks)
 	}
 
 	// Verify stray files detected
@@ -108,14 +118,14 @@ func TestAuditWorkstationTopology_Positive(t *testing.T) {
 	}
 
 	if !containsStrayBase(report.StrayFiles, ".git") {
-		t.Error("expected stray headless .git in golusoris to be detected")
+		t.Error("expected stray headless .git in acme-labs to be detected")
 	}
 	if !containsStrayBase(report.StrayFiles, ".standards-baseline.json") {
 		t.Error("expected stray .standards-baseline.json to be detected")
 	}
-	assertStringSet(t, "OrgContainers", report.OrgContainers, []string{"golusoris", "vmafx"})
+	assertStringSet(t, "OrgContainers", report.OrgContainers, []string{"acme-labs", "acme"})
 	assertStringSet(t, "Violations", report.Violations,
-		[]string{"DEV-02: root compatibility symlink pelorus violates canonical path invariant"})
+		[]string{"DEV-02: root compatibility symlink lib violates canonical path invariant"})
 }
 
 func assertStringSet(t *testing.T, field string, got, want []string) {
@@ -136,7 +146,8 @@ func assertStringSet(t *testing.T, field string, got, want []string) {
 
 // TestAuditWorkstationTopology_DEV01RootRepositories pins the DEV-01 branch: a repository
 // directly in the dev root is a violation whether its .git is a directory or a gitlink,
-// a plain directory is not, and organization containers match case-insensitively.
+// a plain directory is not, and an unconfigured directory holding a child repository is a
+// structural organization container.
 func TestAuditWorkstationTopology_DEV01RootRepositories(t *testing.T) {
 	devRoot := t.TempDir()
 	initTestGit(t, filepath.Join(devRoot, "rogue"))
@@ -144,9 +155,9 @@ func TestAuditWorkstationTopology_DEV01RootRepositories(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(devRoot, "plain", "src"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	initTestGit(t, filepath.Join(devRoot, "cordanaLLM", "praetor"))
+	initTestGit(t, filepath.Join(devRoot, "acme", "app"))
 
-	report, err := AuditWorkstationTopology(context.Background(), devRoot)
+	report, err := AuditWorkstationTopology(context.Background(), devRoot, nil)
 	if err != nil {
 		t.Fatalf("AuditWorkstationTopology: %v", err)
 	}
@@ -154,15 +165,15 @@ func TestAuditWorkstationTopology_DEV01RootRepositories(t *testing.T) {
 		"DEV-01: repository linked is located directly in dev root instead of an org folder",
 		"DEV-01: repository rogue is located directly in dev root instead of an org folder",
 	})
-	assertStringSet(t, "OrgContainers", report.OrgContainers, []string{"cordanaLLM"})
-	assertStringSet(t, "ValidRepos", report.ValidRepos, []string{filepath.Join("cordanaLLM", "praetor")})
+	assertStringSet(t, "OrgContainers", report.OrgContainers, []string{"acme"})
+	assertStringSet(t, "ValidRepos", report.ValidRepos, []string{filepath.Join("acme", "app")})
 	if len(report.StrayFiles) != 0 || report.Truncated {
 		t.Fatalf("DEV-01 fixture produced strays %v or truncation %v", report.StrayFiles, report.TruncationReasons)
 	}
 }
 
 func TestAuditWorkstationTopology_Boundary_EmptyDevRootHasNoFindings(t *testing.T) {
-	report, err := AuditWorkstationTopology(context.Background(), t.TempDir())
+	report, err := AuditWorkstationTopology(context.Background(), t.TempDir(), nil)
 	if err != nil {
 		t.Fatalf("AuditWorkstationTopology: %v", err)
 	}
@@ -187,7 +198,7 @@ func TestCleanWorkstationTopology_DryRun(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cleaned, err := CleanWorkstationTopology(ctx, devRoot, true)
+	cleaned, err := CleanWorkstationTopology(ctx, devRoot, mockConfigured, true)
 	if err != nil {
 		t.Fatalf("CleanWorkstationTopology (dry run) failed: %v", err)
 	}
@@ -197,7 +208,7 @@ func TestCleanWorkstationTopology_DryRun(t *testing.T) {
 	}
 
 	// Verify files still exist on disk because it was dry-run
-	strayBaseline := filepath.Join(devRoot, "vmafx", ".standards-baseline.json")
+	strayBaseline := filepath.Join(devRoot, "acme", ".standards-baseline.json")
 	if _, err := os.Stat(strayBaseline); os.IsNotExist(err) {
 		t.Error("dry run must not delete files from disk")
 	}
@@ -208,7 +219,7 @@ func TestCleanWorkstationTopology_Apply(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cleaned, err := CleanWorkstationTopology(ctx, devRoot, false)
+	cleaned, err := CleanWorkstationTopology(ctx, devRoot, mockConfigured, false)
 	if err != nil {
 		t.Fatalf("CleanWorkstationTopology (apply) failed: %v", err)
 	}
@@ -218,29 +229,29 @@ func TestCleanWorkstationTopology_Apply(t *testing.T) {
 	}
 
 	// Verify stray files are gone
-	strayBaseline := filepath.Join(devRoot, "vmafx", ".standards-baseline.json")
+	strayBaseline := filepath.Join(devRoot, "acme", ".standards-baseline.json")
 	if _, err := os.Stat(strayBaseline); !os.IsNotExist(err) {
 		t.Errorf("expected %s to be deleted", strayBaseline)
 	}
 
-	strayGit := filepath.Join(devRoot, "golusoris", ".git")
+	strayGit := filepath.Join(devRoot, "acme-labs", ".git")
 	if _, err := os.Stat(strayGit); !os.IsNotExist(err) {
 		t.Errorf("expected stray .git %s to be deleted", strayGit)
 	}
 
 	// Verify child repos are 100% intact
-	vmafxCoreGit := filepath.Join(devRoot, "vmafx", "vmafx", ".git", "HEAD")
-	if _, err := os.Stat(vmafxCoreGit); err != nil {
-		t.Errorf("child repo vmafx was corrupted: %v", err)
+	appGit := filepath.Join(devRoot, "acme", "app", ".git", "HEAD")
+	if _, err := os.Stat(appGit); err != nil {
+		t.Errorf("child repo app was corrupted: %v", err)
 	}
 
-	goenvoyGit := filepath.Join(devRoot, "golusoris", "goenvoy", ".git", "HEAD")
-	if _, err := os.Stat(goenvoyGit); err != nil {
-		t.Errorf("child repo goenvoy was corrupted: %v", err)
+	toolsGit := filepath.Join(devRoot, "acme-labs", "tools", ".git", "HEAD")
+	if _, err := os.Stat(toolsGit); err != nil {
+		t.Errorf("child repo tools was corrupted: %v", err)
 	}
 
 	// Verify stray symlink in dev root was cleaned
-	symlinkPath := filepath.Join(devRoot, "pelorus")
+	symlinkPath := filepath.Join(devRoot, "lib")
 	if isSymlink(symlinkPath) {
 		t.Errorf("stray symlink %s should have been removed", symlinkPath)
 	}
@@ -248,15 +259,15 @@ func TestCleanWorkstationTopology_Apply(t *testing.T) {
 
 func TestCleanWorkstationTopology_PreservesLiveOrganizationRepository(t *testing.T) {
 	devRoot := t.TempDir()
-	orgDir := filepath.Join(devRoot, "golusoris")
+	orgDir := filepath.Join(devRoot, "acme-labs")
 	initTestGit(t, orgDir)
 	governancePaths := writeGovernancePayload(t, orgDir)
-	childRepo := filepath.Join(orgDir, "goenvoy")
+	childRepo := filepath.Join(orgDir, "tools")
 	initTestGit(t, childRepo)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	result, err := CleanWorkstationTopologyDetailed(ctx, devRoot, false)
+	result, err := CleanWorkstationTopologyDetailed(ctx, devRoot, acmeConfigured, false)
 	if err != nil {
 		t.Fatalf("CleanWorkstationTopology: %v", err)
 	}
@@ -277,11 +288,11 @@ func TestCleanWorkstationTopology_PreservesLiveOrganizationRepository(t *testing
 
 func TestCleanWorkstationTopology_PreservesLiveOrganizationRepositoryContents(t *testing.T) {
 	devRoot := t.TempDir()
-	orgDir := filepath.Join(devRoot, "golusoris")
+	orgDir := filepath.Join(devRoot, "acme-labs")
 	initTestGit(t, orgDir)
 	governancePaths := writeGovernancePayload(t, orgDir)
 
-	result, err := CleanWorkstationTopologyDetailed(context.Background(), devRoot, false)
+	result, err := CleanWorkstationTopologyDetailed(context.Background(), devRoot, acmeConfigured, false)
 	if err != nil {
 		t.Fatalf("CleanWorkstationTopology: %v", err)
 	}
@@ -293,7 +304,7 @@ func TestCleanWorkstationTopology_PreservesLiveOrganizationRepositoryContents(t 
 
 func TestCleanWorkstationTopology_PreservesIndeterminateOrganizationContents(t *testing.T) {
 	devRoot := t.TempDir()
-	orgDir := filepath.Join(devRoot, "golusoris")
+	orgDir := filepath.Join(devRoot, "acme-labs")
 	if err := os.MkdirAll(orgDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -302,7 +313,7 @@ func TestCleanWorkstationTopology_PreservesIndeterminateOrganizationContents(t *
 	}
 	governancePaths := writeGovernancePayload(t, orgDir)
 
-	result, err := CleanWorkstationTopologyDetailed(context.Background(), devRoot, false)
+	result, err := CleanWorkstationTopologyDetailed(context.Background(), devRoot, acmeConfigured, false)
 	if err != nil {
 		t.Fatalf("CleanWorkstationTopology: %v", err)
 	}
@@ -314,15 +325,15 @@ func TestCleanWorkstationTopology_PreservesIndeterminateOrganizationContents(t *
 
 func TestCleanWorkstationTopology_PreservesLiveOrganizationGitlink(t *testing.T) {
 	devRoot := t.TempDir()
-	orgDir := filepath.Join(devRoot, "golusoris")
+	orgDir := filepath.Join(devRoot, "acme-labs")
 	linkedRepo := filepath.Join(t.TempDir(), "linked")
 	initTestGit(t, linkedRepo)
 	writeGitlink(t, orgDir, "gitdir: "+filepath.Join(linkedRepo, ".git")+"\n")
-	initTestGit(t, filepath.Join(orgDir, "goenvoy"))
+	initTestGit(t, filepath.Join(orgDir, "tools"))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, err := CleanWorkstationTopology(ctx, devRoot, false); err != nil {
+	if _, err := CleanWorkstationTopology(ctx, devRoot, acmeConfigured, false); err != nil {
 		t.Fatalf("CleanWorkstationTopology: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(orgDir, ".git")); err != nil {
@@ -335,7 +346,7 @@ func TestCleanWorkstationTopology_PreservesLegacyHeadSymlink(t *testing.T) {
 		t.Skip("legacy Git HEAD symlinks are a POSIX repository layout")
 	}
 	devRoot := t.TempDir()
-	orgDir := filepath.Join(devRoot, "golusoris")
+	orgDir := filepath.Join(devRoot, "acme-labs")
 	initTestGit(t, orgDir)
 	headPath := filepath.Join(orgDir, ".git", "HEAD")
 	if err := os.Remove(headPath); err != nil {
@@ -344,9 +355,9 @@ func TestCleanWorkstationTopology_PreservesLegacyHeadSymlink(t *testing.T) {
 	if err := os.Symlink("refs/heads/master", headPath); err != nil {
 		t.Fatal(err)
 	}
-	initTestGit(t, filepath.Join(orgDir, "goenvoy"))
+	initTestGit(t, filepath.Join(orgDir, "tools"))
 
-	if _, err := CleanWorkstationTopology(context.Background(), devRoot, false); err != nil {
+	if _, err := CleanWorkstationTopology(context.Background(), devRoot, acmeConfigured, false); err != nil {
 		t.Fatalf("CleanWorkstationTopology: %v", err)
 	}
 	info, err := os.Lstat(headPath)
@@ -360,7 +371,7 @@ func TestCleanWorkstationTopology_PreservesIndeterminateGitSymlink(t *testing.T)
 		t.Skip("creating repository symlinks requires optional Windows privileges")
 	}
 	devRoot := t.TempDir()
-	orgDir := filepath.Join(devRoot, "golusoris")
+	orgDir := filepath.Join(devRoot, "acme-labs")
 	if err := os.MkdirAll(orgDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -368,9 +379,9 @@ func TestCleanWorkstationTopology_PreservesIndeterminateGitSymlink(t *testing.T)
 	if err := os.Symlink(filepath.Join(t.TempDir(), "unavailable"), gitPath); err != nil {
 		t.Fatal(err)
 	}
-	initTestGit(t, filepath.Join(orgDir, "goenvoy"))
+	initTestGit(t, filepath.Join(orgDir, "tools"))
 
-	if _, err := CleanWorkstationTopology(context.Background(), devRoot, false); err != nil {
+	if _, err := CleanWorkstationTopology(context.Background(), devRoot, nil, false); err != nil {
 		t.Fatalf("CleanWorkstationTopology: %v", err)
 	}
 	info, err := os.Lstat(gitPath)
@@ -384,7 +395,7 @@ func TestCleanWorkstationTopology_PreservesGovernanceNamedLegacyRepository(t *te
 		t.Skip("legacy Git HEAD symlinks are a POSIX repository layout")
 	}
 	devRoot := t.TempDir()
-	repo := filepath.Join(devRoot, "golusoris", "docs")
+	repo := filepath.Join(devRoot, "acme-labs", "docs")
 	initTestGit(t, repo)
 	headPath := filepath.Join(repo, ".git", "HEAD")
 	if err := os.Remove(headPath); err != nil {
@@ -394,7 +405,7 @@ func TestCleanWorkstationTopology_PreservesGovernanceNamedLegacyRepository(t *te
 		t.Fatal(err)
 	}
 
-	if _, err := CleanWorkstationTopology(context.Background(), devRoot, false); err != nil {
+	if _, err := CleanWorkstationTopology(context.Background(), devRoot, nil, false); err != nil {
 		t.Fatalf("CleanWorkstationTopology: %v", err)
 	}
 	info, err := os.Lstat(headPath)
@@ -408,7 +419,7 @@ func TestCleanWorkstationTopology_PreservesGovernanceNamedIndeterminateMetadata(
 		t.Skip("creating repository symlinks requires optional Windows privileges")
 	}
 	devRoot := t.TempDir()
-	repo := filepath.Join(devRoot, "golusoris", "docs")
+	repo := filepath.Join(devRoot, "acme-labs", "docs")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -417,7 +428,7 @@ func TestCleanWorkstationTopology_PreservesGovernanceNamedIndeterminateMetadata(
 		t.Fatal(err)
 	}
 
-	if _, err := CleanWorkstationTopology(context.Background(), devRoot, false); err != nil {
+	if _, err := CleanWorkstationTopology(context.Background(), devRoot, acmeConfigured, false); err != nil {
 		t.Fatalf("CleanWorkstationTopology: %v", err)
 	}
 	info, err := os.Lstat(gitPath)
@@ -431,7 +442,7 @@ func TestCleanWorkstationTopology_PreservesGovernanceNamedUnreadableMetadata(t *
 		t.Skip("Windows ACLs do not implement POSIX chmod permission denial")
 	}
 	devRoot := t.TempDir()
-	repo := filepath.Join(devRoot, "golusoris", "docs")
+	repo := filepath.Join(devRoot, "acme-labs", "docs")
 	initTestGit(t, repo)
 	gitPath := filepath.Join(repo, ".git")
 	if err := os.Chmod(gitPath, 0); err != nil {
@@ -446,13 +457,13 @@ func TestCleanWorkstationTopology_PreservesGovernanceNamedUnreadableMetadata(t *
 		t.Skip("current user can inspect chmod-000 directories")
 	}
 
-	if _, err := CleanWorkstationTopology(context.Background(), devRoot, false); err != nil {
+	if _, err := CleanWorkstationTopology(context.Background(), devRoot, acmeConfigured, false); err != nil {
 		t.Fatalf("CleanWorkstationTopology: %v", err)
 	}
 	if _, err := os.Lstat(gitPath); err != nil {
 		t.Fatalf("unreadable governance metadata was not preserved: %v", err)
 	}
-	if err := verifyDeletionSafety(devRoot, repo); err == nil {
+	if err := verifyDeletionSafety(context.Background(), devRoot, repo, OrgContainers(acmeConfigured)); err == nil {
 		t.Fatal("unreadable governance metadata passed the final deletion boundary")
 	}
 }
@@ -462,9 +473,9 @@ func TestAuditWorkstationTopology_UnreadableGitMetadataIsNotSafeToDelete(t *test
 		t.Skip("Windows ACLs do not implement POSIX chmod permission denial")
 	}
 	devRoot := t.TempDir()
-	orgDir := filepath.Join(devRoot, "golusoris")
+	orgDir := filepath.Join(devRoot, "acme-labs")
 	initTestGit(t, orgDir)
-	initTestGit(t, filepath.Join(orgDir, "goenvoy"))
+	initTestGit(t, filepath.Join(orgDir, "tools"))
 	gitPath := filepath.Join(orgDir, ".git")
 	if err := os.Chmod(gitPath, 0); err != nil {
 		t.Fatal(err)
@@ -478,23 +489,23 @@ func TestAuditWorkstationTopology_UnreadableGitMetadataIsNotSafeToDelete(t *test
 		t.Skip("current user can inspect chmod-000 directories")
 	}
 
-	report, err := AuditWorkstationTopology(context.Background(), devRoot)
+	report, err := AuditWorkstationTopology(context.Background(), devRoot, acmeConfigured)
 	if err != nil {
 		t.Fatalf("AuditWorkstationTopology: %v", err)
 	}
 	requireUnsafeStray(t, report, gitPath)
-	if err := verifyDeletionSafety(devRoot, gitPath); err == nil {
+	if err := verifyDeletionSafety(context.Background(), devRoot, gitPath, nil); err == nil {
 		t.Fatal("expected unreadable git metadata to fail closed")
 	}
 }
 
 func TestAuditWorkstationTopology_LiveOrganizationRepositoryIsNotSafeToDelete(t *testing.T) {
 	devRoot := t.TempDir()
-	orgDir := filepath.Join(devRoot, "golusoris")
+	orgDir := filepath.Join(devRoot, "acme-labs")
 	initTestGit(t, orgDir)
-	initTestGit(t, filepath.Join(orgDir, "goenvoy"))
+	initTestGit(t, filepath.Join(orgDir, "tools"))
 
-	report, err := AuditWorkstationTopology(context.Background(), devRoot)
+	report, err := AuditWorkstationTopology(context.Background(), devRoot, acmeConfigured)
 	if err != nil {
 		t.Fatalf("AuditWorkstationTopology: %v", err)
 	}
@@ -517,7 +528,7 @@ func requireUnsafeStray(t *testing.T, report *TopologyReport, path string) {
 
 func TestAuditWorkstationTopology_Negative_NonExistent(t *testing.T) {
 	ctx := context.Background()
-	_, err := AuditWorkstationTopology(ctx, "/nonexistent/path/for/test")
+	_, err := AuditWorkstationTopology(ctx, "/nonexistent/path/for/test", nil)
 	if !errors.Is(err, ErrDevRootNotExist) {
 		t.Errorf("expected ErrDevRootNotExist, got %v", err)
 	}
@@ -529,7 +540,7 @@ func TestAuditWorkstationTopology_Negative_NotADir(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	_, err := AuditWorkstationTopology(ctx, tmpFile)
+	_, err := AuditWorkstationTopology(ctx, tmpFile, nil)
 	if !errors.Is(err, ErrDevRootNotDir) {
 		t.Errorf("expected ErrDevRootNotDir, got %v", err)
 	}
@@ -538,7 +549,7 @@ func TestAuditWorkstationTopology_Negative_NotADir(t *testing.T) {
 func TestAuditWorkstationTopology_Negative_CancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := AuditWorkstationTopology(ctx, t.TempDir())
+	_, err := AuditWorkstationTopology(ctx, t.TempDir(), nil)
 	if err == nil {
 		t.Fatal("expected error on cancelled context, got nil")
 	}
@@ -547,7 +558,7 @@ func TestAuditWorkstationTopology_Negative_CancelledContext(t *testing.T) {
 func TestCleanWorkstationTopology_Boundary_EmptyDevRoot(t *testing.T) {
 	devRoot := t.TempDir()
 	ctx := context.Background()
-	cleaned, err := CleanWorkstationTopology(ctx, devRoot, false)
+	cleaned, err := CleanWorkstationTopology(ctx, devRoot, nil, false)
 	if err != nil {
 		t.Fatalf("unexpected error on empty dev root: %v", err)
 	}
@@ -559,14 +570,14 @@ func TestCleanWorkstationTopology_Boundary_EmptyDevRoot(t *testing.T) {
 func TestCleanWorkstationTopology_Negative_CancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	result, err := CleanWorkstationTopology(ctx, t.TempDir(), false)
+	result, err := CleanWorkstationTopology(ctx, t.TempDir(), nil, false)
 	if err == nil || result != nil {
 		t.Fatalf("cancelled clean result = %+v, err = %v; want nil result and error", result, err)
 	}
 }
 
 func TestCleanWorkstationTopologyDetailed_Boundary_EmptyDevRoot(t *testing.T) {
-	result, err := CleanWorkstationTopologyDetailed(context.Background(), t.TempDir(), false)
+	result, err := CleanWorkstationTopologyDetailed(context.Background(), t.TempDir(), nil, false)
 	if err != nil {
 		t.Fatalf("detailed clean on empty root: %v", err)
 	}
@@ -578,7 +589,7 @@ func TestCleanWorkstationTopologyDetailed_Boundary_EmptyDevRoot(t *testing.T) {
 func TestCleanWorkstationTopologyDetailed_Negative_CancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	result, err := CleanWorkstationTopologyDetailed(ctx, t.TempDir(), false)
+	result, err := CleanWorkstationTopologyDetailed(ctx, t.TempDir(), nil, false)
 	if err == nil || result != nil {
 		t.Fatalf("cancelled detailed result = %+v, err = %v; want nil result and error", result, err)
 	}
@@ -586,46 +597,47 @@ func TestCleanWorkstationTopologyDetailed_Negative_CancelledContext(t *testing.T
 
 func TestVerifyDeletionSafety_Protections(t *testing.T) {
 	devRoot := t.TempDir()
-	orgDir := filepath.Join(devRoot, "vmafx")
+	orgDir := filepath.Join(devRoot, "acme")
 	if err := os.MkdirAll(orgDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 
 	// 1. Cannot delete dev root
-	if err := verifyDeletionSafety(devRoot, devRoot); err == nil {
+	if err := verifyDeletionSafety(context.Background(), devRoot, devRoot, OrgContainers(acmeConfigured)); err == nil {
 		t.Error("expected safety check to reject dev root deletion")
 	}
 
 	// 2. Cannot delete org container itself
-	if err := verifyDeletionSafety(devRoot, orgDir); err == nil {
-		t.Error("expected safety check to reject org container deletion")
+	if err := verifyDeletionSafety(context.Background(), devRoot, orgDir, OrgContainers(acmeConfigured)); err == nil ||
+		!strings.Contains(err.Error(), "recognized organization container") {
+		t.Errorf("expected safety check to reject configured org container deletion, got %v", err)
 	}
 
 	// 3. Symlink unlinking is permitted
-	symlinkPath := filepath.Join(devRoot, "pelorus")
+	symlinkPath := filepath.Join(devRoot, "lib")
 	if err := os.Symlink(orgDir, symlinkPath); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyDeletionSafety(devRoot, symlinkPath); err != nil {
+	if err := verifyDeletionSafety(context.Background(), devRoot, symlinkPath, OrgContainers(acmeConfigured)); err != nil {
 		t.Errorf("expected safety check to allow symlink deletion, got %v", err)
 	}
 
 	// 4. Cannot delete directory with valid git repo
-	childRepo := filepath.Join(orgDir, "vmafx")
+	childRepo := filepath.Join(orgDir, "app")
 	initTestGit(t, childRepo)
-	if err := verifyDeletionSafety(devRoot, childRepo); err == nil {
+	if err := verifyDeletionSafety(context.Background(), devRoot, childRepo, OrgContainers(acmeConfigured)); err == nil {
 		t.Error("expected safety check to reject directory with valid git repo")
 	}
 
 	// 5. Cannot delete the metadata directory of a valid git repository.
-	if err := verifyDeletionSafety(devRoot, filepath.Join(childRepo, ".git")); err == nil {
+	if err := verifyDeletionSafety(context.Background(), devRoot, filepath.Join(childRepo, ".git"), OrgContainers(acmeConfigured)); err == nil {
 		t.Error("expected safety check to reject valid git metadata directory")
 	}
 }
 
 func TestVerifyDeletionSafety_GitMetadataTransitions(t *testing.T) {
 	devRoot := t.TempDir()
-	orgDir := filepath.Join(devRoot, "vmafx")
+	orgDir := filepath.Join(devRoot, "acme")
 	if err := os.MkdirAll(orgDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -633,7 +645,7 @@ func TestVerifyDeletionSafety_GitMetadataTransitions(t *testing.T) {
 	// Cannot delete malformed or indeterminate git metadata.
 	malformedRepo := filepath.Join(orgDir, "malformed")
 	writeGitlink(t, malformedRepo, "not a gitlink\n")
-	if err := verifyDeletionSafety(devRoot, filepath.Join(malformedRepo, ".git")); err == nil {
+	if err := verifyDeletionSafety(context.Background(), devRoot, filepath.Join(malformedRepo, ".git"), nil); err == nil {
 		t.Error("expected safety check to reject indeterminate git metadata")
 	}
 
@@ -642,31 +654,31 @@ func TestVerifyDeletionSafety_GitMetadataTransitions(t *testing.T) {
 	if err := os.MkdirAll(headlessGit, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyDeletionSafety(devRoot, headlessGit); err != nil {
+	if err := verifyDeletionSafety(context.Background(), devRoot, headlessGit, nil); err != nil {
 		t.Errorf("expected proven-headless git metadata to remain cleanable: %v", err)
 	}
 }
 
 func TestVerifyDeletionSafety_ProtectsOrganizationRepositoryContents(t *testing.T) {
 	devRoot := t.TempDir()
-	liveOrg := filepath.Join(devRoot, "golusoris")
+	liveOrg := filepath.Join(devRoot, "acme-labs")
 	initTestGit(t, liveOrg)
 	liveDocs := filepath.Join(liveOrg, "docs")
 	if err := os.MkdirAll(liveDocs, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyDeletionSafety(devRoot, liveDocs); err == nil {
+	if err := verifyDeletionSafety(context.Background(), devRoot, liveDocs, nil); err == nil {
 		t.Fatal("tracked directory passed the organization repository boundary")
 	}
 
-	unknownOrg := filepath.Join(devRoot, "lusoris")
+	unknownOrg := filepath.Join(devRoot, "acme")
 	if err := os.MkdirAll(filepath.Join(unknownOrg, "docs"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(unknownOrg, ".git"), []byte("invalid\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyDeletionSafety(devRoot, filepath.Join(unknownOrg, "docs")); err == nil {
+	if err := verifyDeletionSafety(context.Background(), devRoot, filepath.Join(unknownOrg, "docs"), nil); err == nil {
 		t.Fatal("indeterminate organization metadata passed the deletion boundary")
 	}
 }

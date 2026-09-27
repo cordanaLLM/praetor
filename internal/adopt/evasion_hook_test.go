@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -155,8 +154,9 @@ func TestEmittedInterceptorEnvironmentAndArguments(t *testing.T) {
 }
 
 // TestBuildBlockEvasionPY_NoOperatorData asserts the rendered script carries every built-in
-// rule and none of praetor's own organisation names (ADR-0011: operator data is configured,
-// never shipped as engine rules).
+// rule and no organisation-folder alternation (ADR-0011: operator data is configured, never
+// shipped as engine rules). praetor's own guard names none either
+// (TestPythonGuardCarriesTheBuiltinDevRootRule in internal/agenthook).
 func TestBuildBlockEvasionPY_NoOperatorData(t *testing.T) {
 	script := buildBlockEvasionPY()
 	for _, rule := range agenthook.BuiltinRules() {
@@ -164,7 +164,7 @@ func TestBuildBlockEvasionPY_NoOperatorData(t *testing.T) {
 			t.Errorf("rendered script lacks rule %q", rule.Source)
 		}
 	}
-	for _, operator := range append(operatorContainers(t), "TOPOLOGY_PATTERNS", "/dev/(") {
+	for _, operator := range []string{"TOPOLOGY_PATTERNS", "/dev/("} {
 		if strings.Contains(script, operator) {
 			t.Errorf("rendered script ships operator data %q", operator)
 		}
@@ -172,21 +172,6 @@ func TestBuildBlockEvasionPY_NoOperatorData(t *testing.T) {
 	if strings.Contains(script, "{{") {
 		t.Error("rendered script has an unfilled placeholder")
 	}
-}
-
-// operatorContainers returns the organisation folders praetor's own Python guard names in
-// its topology rule (`/dev/(a|b|...)`), so the check above names no operator itself.
-func operatorContainers(t *testing.T) []string {
-	t.Helper()
-	data, err := os.ReadFile(filepath.Join("..", "..", ".config", "agent", "hooks", "block_evasion.py"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	match := regexp.MustCompile(`/dev/\(([^()]+)\)`).FindSubmatch(data)
-	if match == nil {
-		t.Fatal("praetor's own guard has no /dev/(...) topology alternation to compare against")
-	}
-	return strings.Split(string(match[1]), "|")
 }
 
 // TestEmittedInterceptorScanBounds pins the scan bounds of the emitted script. Python's re

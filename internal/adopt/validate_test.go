@@ -138,17 +138,38 @@ func TestValidateAdoptionTarget_NegativeDevWorkstationRoot(t *testing.T) {
 }
 
 func TestValidateAdoptionTarget_NegativeOrgDirectory(t *testing.T) {
-	orgDir := filepath.Join(t.TempDir(), "dev", "vmafx")
-	if err := os.MkdirAll(orgDir, 0o755); err != nil {
-		t.Fatalf("mkdir dev/vmafx failed: %v", err)
+	devRoot := filepath.Join(t.TempDir(), "dev")
+	// A built-in container name, matched case-insensitively.
+	builtin := filepath.Join(devRoot, "Local")
+	if err := os.MkdirAll(builtin, 0o755); err != nil {
+		t.Fatalf("mkdir dev/Local failed: %v", err)
 	}
-	if err := ValidateAdoptionTarget(orgDir); !errors.Is(err, ErrTargetIsOrgDirectory) {
-		t.Fatalf("expected ErrTargetIsOrgDirectory, got: %v", err)
+	if err := ValidateAdoptionTarget(builtin); !errors.Is(err, ErrTargetIsOrgDirectory) {
+		t.Fatalf("expected ErrTargetIsOrgDirectory for a built-in name, got: %v", err)
+	}
+	// Any name is a container once it holds exactly one child repository (structural).
+	structural := filepath.Join(devRoot, "acme-labs")
+	writeLeafGit(t, filepath.Join(structural, "app"))
+	if err := ValidateAdoptionTarget(structural); !errors.Is(err, ErrTargetIsOrgDirectory) {
+		t.Fatalf("expected ErrTargetIsOrgDirectory for a folder holding a repository, got: %v", err)
 	}
 	// The same name is a repository when it carries .git, and then adoptable.
-	writeLeafGit(t, orgDir)
-	if err := ValidateAdoptionTarget(orgDir); err != nil {
+	writeLeafGit(t, builtin)
+	if err := ValidateAdoptionTarget(builtin); err != nil {
 		t.Fatalf("a repository named like an org must be adoptable, got: %v", err)
+	}
+}
+
+// An empty folder with no built-in name is no container: the engine names no operator
+// organization, so the target is refused only for not being a repository.
+func TestValidateAdoptionTarget_NegativeUnnamedEmptyFolderIsNotAContainer(t *testing.T) {
+	orgDir := filepath.Join(t.TempDir(), "dev", "acme")
+	if err := os.MkdirAll(orgDir, 0o755); err != nil {
+		t.Fatalf("mkdir dev/acme failed: %v", err)
+	}
+	err := ValidateAdoptionTarget(orgDir)
+	if errors.Is(err, ErrTargetIsOrgDirectory) || !errors.Is(err, ErrTargetNotGitRepo) {
+		t.Fatalf("expected ErrTargetNotGitRepo only, got: %v", err)
 	}
 }
 

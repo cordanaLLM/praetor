@@ -27,6 +27,7 @@ func assertBlockedTopologyClean(t *testing.T, dryRun bool) {
 		return runTopologyClean(context.Background(), []string{
 			"--dev-root=" + devRoot,
 			"--dry-run=" + strconv.FormatBool(dryRun),
+			"--workstation-config=" + acmeTopologySettings(t),
 		})
 	})
 	if err == nil {
@@ -62,6 +63,7 @@ func TestRunTopologyCleanMixedResultIsIncomplete(t *testing.T) {
 		return runTopologyClean(context.Background(), []string{
 			"--dev-root=" + devRoot,
 			"--dry-run=false",
+			"--workstation-config=" + acmeTopologySettings(t),
 		})
 	})
 	if err == nil {
@@ -126,7 +128,7 @@ func TestPrintTopologyCleanResultReportsPartialMutationWithoutSuccess(t *testing
 
 func writeIndeterminateGovernanceRepo(t *testing.T, devRoot string) string {
 	t.Helper()
-	repo := filepath.Join(devRoot, "golusoris", "docs")
+	repo := filepath.Join(devRoot, "acme", "docs")
 	if err := os.MkdirAll(repo, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -135,4 +137,45 @@ func writeIndeterminateGovernanceRepo(t *testing.T, devRoot string) string {
 		t.Fatal(err)
 	}
 	return gitPath
+}
+
+// acmeTopologySettings writes a workstation settings document that configures acme as an
+// organization container (topology.org_containers). The indeterminate repository above
+// hides acme's structure, so only the configured name makes it a container.
+func acmeTopologySettings(t *testing.T) string {
+	t.Helper()
+	return writeFixtureFile(t, t.TempDir(), "workstation.yaml", "topology: {org_containers: [acme]}\n")
+}
+
+// TestRunTopologyClean_UnconfiguredFolderIsNotCleaned: without the settings document the
+// acme folder is neither configured nor structural, so nothing in it is a finding.
+func TestRunTopologyClean_UnconfiguredFolderIsNotCleaned(t *testing.T) {
+	devRoot := t.TempDir()
+	gitPath := writeIndeterminateGovernanceRepo(t, devRoot)
+	out, err := captureStdout(t, func() error {
+		return runTopologyClean(context.Background(), []string{"--dev-root=" + devRoot, "--dry-run=false"})
+	})
+	if err != nil || !strings.Contains(out, "No stray governance files found") {
+		t.Fatalf("unconfigured clean = %v\n%s", err, out)
+	}
+	if _, statErr := os.Lstat(gitPath); statErr != nil {
+		t.Fatalf("unconfigured folder content was touched: %v", statErr)
+	}
+}
+
+// TestRunTopologyClean_InvalidSettingsRefuses: an invalid settings document stops cleanup
+// before the audit, so nothing is deleted.
+func TestRunTopologyClean_InvalidSettingsRefuses(t *testing.T) {
+	devRoot := t.TempDir()
+	stray := writeFixtureFile(t, devRoot, "CLAUDE.md", "stray\n")
+	invalid := writeFixtureFile(t, t.TempDir(), "workstation.yaml", "topology: {org_containers: [Acme]}\n")
+	err := runTopologyClean(context.Background(), []string{
+		"--dev-root=" + devRoot, "--dry-run=false", "--workstation-config=" + invalid,
+	})
+	if err == nil || !strings.Contains(err.Error(), "load operator settings") {
+		t.Fatalf("err = %v, want a settings failure", err)
+	}
+	if _, statErr := os.Stat(stray); statErr != nil {
+		t.Fatalf("cleanup ran despite invalid settings: %v", statErr)
+	}
 }

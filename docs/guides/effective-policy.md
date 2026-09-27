@@ -238,7 +238,7 @@ without these sections keeps the digest it had before they existed
 | `forge.default_owner` | empty | a GitHub owner: 1 to 39 letters, digits and single hyphens | the last owner step of `config.ResolveRepositoryIdentity`, used by `needs epic --publish` |
 | `forge.reconcile_repos` | `[]` | at most 256 `<owner>/<name>` coordinates | validated and sealed; the `issue reconcile` default adopts it in a later change |
 | `forge.review_bot` | empty | a GitHub owner, optionally followed by `[bot]` | validated and sealed; reviewer assignment adopts it in a later change |
-| `topology.org_containers` | `[]` | at most 64 names of lowercase letters, digits, `.`, `_` and `-`, merged across layers | validated and sealed; the topology audit adopts it in a later change |
+| `topology.org_containers` | `[]` | at most 64 names of lowercase letters, digits, `.`, `_` and `-`, merged across layers | `praetorctl topology audit` and `topology clean`, which add the names to the built-in containers (`topology.OrgContainers`) |
 
 A workstation document configuring one framework, with placeholder values:
 
