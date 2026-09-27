@@ -19,7 +19,7 @@ func goLibraryRepo(t *testing.T, settings map[string]string) string {
 		".standards.yaml":            "version: 1\n",
 		".standards.lock":            "version: 1\n",
 		".golangci.yml":              "version: \"2\"\n",
-		".github/workflows/ci.yml":   "name: ci\n",
+		".github/workflows/ci.yml":   "name: ci\non: push\njobs:\n  test:\n    runs-on: ubuntu-26.04\n    steps:\n      - run: make verify-all\n",
 		".workingdir/STATE.md":       "# state\n",
 		".workingdir/BUGS.md":        "# bugs\n",
 		".workingdir/QUESTIONS.md":   "# questions\n",

@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/nodemanifest"
 )
 
 func addNodeVerification(p *VerificationPlan, inputs verificationInputs) error {
@@ -21,7 +23,7 @@ func addNodeVerification(p *VerificationPlan, inputs verificationInputs) error {
 	if err != nil {
 		return err
 	}
-	if manager != "" && !strings.HasPrefix(manager, "npm@") {
+	if !nodemanifest.NpmRuns(manager) {
 		p.unavailable("Select commands for the declared package manager; npm cannot stand in for another package manager.")
 		return nil
 	}
@@ -38,7 +40,7 @@ func addNodeVerification(p *VerificationPlan, inputs verificationInputs) error {
 		if err != nil {
 			return err
 		}
-		addNodeScript(p, name, strings.TrimSpace(value) != "")
+		addNodeScript(p, name, nodemanifest.ScriptRuns(value))
 	}
 	return nil
 }
@@ -46,7 +48,7 @@ func addNodeVerification(p *VerificationPlan, inputs verificationInputs) error {
 func addNodeScript(p *VerificationPlan, name string, exists bool) {
 	if !exists {
 		if name == "test" {
-			p.unavailable("package.json has no nonempty test script; a missing script is not a passing gate.")
+			p.unavailable("package.json has no test script that can pass (it is missing, blank, or the placeholder npm init writes); a missing script is not a passing gate.")
 		}
 		return
 	}

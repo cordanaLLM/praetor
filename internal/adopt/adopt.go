@@ -330,11 +330,15 @@ func adoptSteps() []namedStep {
 		{"security-policy", reconcileSecurityPolicy},
 		{"adr", reconcileADR},
 		{"readme", reconcileReadme},
+		// Ahead of branch-ruleset: the flavor scaffolds CI workflows, and the ruleset's
+		// required status checks are derived from the workflows present. Run after it, the
+		// first adoption certified a ruleset missing the scaffolded jobs and the next run
+		// rewrote it.
+		{"working-dir-and-flavor", reconcileWorkingDirAndFlavor},
 		{"branch-ruleset", reconcileBranchRuleset},
 		{"labels", reconcileLabels},
 		{"paperclip", reconcilePaperclip},
 		{"agent-definitions", reconcileAgentDefinitions},
-		{"working-dir-and-flavor", reconcileWorkingDirAndFlavor},
 		{"git-hooks", reconcileGitHooks},
 	}
 }
@@ -673,7 +677,10 @@ func reconcileWorkingDirAndFlavor(ctx context.Context, s *adoptSession) error {
 //
 // It used to scaffold go-library for a repository that matched nothing, because detection
 // substituted that name, and it discarded the apply report, so neither the written templates nor
-// a total write failure reached the adoption report.
+// a total write failure reached the adoption report. With real template bodies the fallback was
+// worse than a guess: go-library's CI workflow runs setup-go against a go.mod the repository does
+// not have, and branch-ruleset, which runs after this step, makes every job of a scaffolded
+// workflow a required check no pull request could pass.
 func (s *adoptSession) applyDetectedFlavor(ctx context.Context) {
 	name, ok := flavor.Detect(s.repoPath)
 	if !ok {
@@ -691,6 +698,11 @@ func (s *adoptSession) applyDetectedFlavor(ctx context.Context) {
 // recordFlavorReport lists the templates a flavor apply created and the existing files it left
 // alone. A skipped template is an action detail only: the file is either the operator's or one
 // an earlier adoption step already listed.
+//
+// A detected flavor can still hold back a template whose body cannot work in this repository
+// (flavor.ApplyReport.UnmetTemplates), such as typescript-node's npm CI job in a pnpm project.
+// Each is a warning: the ruleset derived next requires no check for it, and the operator learns
+// what the flavor audit will report missing.
 func (s *adoptSession) recordFlavorReport(applied *flavor.ApplyReport) {
 	if applied == nil {
 		return
@@ -702,8 +714,11 @@ func (s *adoptSession) recordFlavorReport(applied *flavor.ApplyReport) {
 		s.report.ActionDetails = append(s.report.ActionDetails, ActionDetail{
 			Path:    rel,
 			Action:  actionSkip,
-			Details: fmt.Sprintf("Existing file satisfies the %s flavor template; left unchanged", applied.Flavor),
+			Details: fmt.Sprintf("Existing file kept; the %s flavor template was not written over it", applied.Flavor),
 		})
+	}
+	for _, unmet := range applied.UnmetTemplates {
+		s.report.addWarning("flavor %s did not scaffold %s", applied.Flavor, unmet)
 	}
 }
 

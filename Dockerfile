@@ -6,9 +6,9 @@
 # builds the image locally (docs/guides/releasing.md). ADR-0013 records this as the one
 # image path.
 #
-# The runtime digest is repeated in internal/flavor/scaffold.go and
-# templates/go/Dockerfile.distroless.tmpl; internal/supplychain/image_pins_test.go fails
-# when the copies disagree.
+# The runtime digest is repeated in templates/go/Dockerfile.distroless.tmpl, the body the
+# go-service flavor scaffolds; internal/supplychain/image_pins_test.go fails when the copies
+# disagree.
 FROM gcr.io/distroless/static-debian13:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3
 
 ARG TARGETPLATFORM

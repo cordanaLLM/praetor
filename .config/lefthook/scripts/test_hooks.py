@@ -431,9 +431,9 @@ class GitHooks(unittest.TestCase):
         # lefthook.yml and the ruleset file must parse as non-empty (validYAMLMapping /
         # validJSONObject in internal/flavor/flavor.go reject `{}`: a lefthook.yml or ruleset
         # holding nothing installs or enforces nothing, so it no longer counts as configuration).
-        files = {".standards.yaml": "repository: {}\n", ".standards.lock": "{}\n",
+        files = {".standards.yaml": "repository: {}\n", ".standards.lock": "version: 1\n",
                  "go.mod": "module fixture\n\ngo 1.25\n", "internal/doc.go": "package internal\n",
-                 ".golangci.yml": "version: '2'\n", ".github/workflows/ci.yml": "name: fixture\n",
+                 ".golangci.yml": "version: '2'\n", ".github/workflows/ci.yml": "name: fixture\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n",
                  "lefthook.yml": "pre-commit:\n  commands:\n    fixture: {}\n",
                  ".github/rulesets/main.json": '{"name": "main"}\n',
                  ".gitignore": "/.workingdir/\n",

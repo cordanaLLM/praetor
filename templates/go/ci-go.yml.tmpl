@@ -43,5 +43,10 @@ jobs:
             gobuild-${{ runner.os }}-${{ runner.arch }}-test-${{ hashFiles('**/go.sum') }}-
             gobuild-${{ runner.os }}-${{ runner.arch }}-test-
 
-      - name: Verify All Gates
-        run: make verify-all
+      # Only the Go toolchain runs here. Praetor's gates (compile-context, audit, flavor audit)
+      # need praetorctl, which no step installs; the git hooks adoption writes run them.
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race ./...
