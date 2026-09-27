@@ -5,6 +5,9 @@
 package managedasset
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -187,5 +190,91 @@ func TestFamilyAccessorsBoundary(t *testing.T) {
 	family.MaxAssets = 0
 	if family.Names() != nil || len(family.AssetPaths()) != 0 {
 		t.Fatal("a non-positive bound yielded assets")
+	}
+}
+
+// priorWorkflow is an earlier text of the fixture family's workflow.
+const priorWorkflow = "name: Fixture Gate\non: push\n"
+
+// sha256Hex spells a digest the way Family.Prior keys are spelled, computed here rather than
+// through the code under test.
+func sha256Hex(text string) string {
+	sum := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(sum[:])
+}
+
+func priorFixtureFamily() Family {
+	family := fixtureFamily()
+	family.Prior = map[string]string{sha256Hex(priorWorkflow): family.WorkflowFile}
+	return family
+}
+
+// Positive: an exact earlier text of a managed path is recognised in either consistent
+// line-ending style, and the Markdown family declares earlier texts of its own.
+func TestFamilyPriorTextPositive(t *testing.T) {
+	family := priorFixtureFamily()
+	if err := family.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{priorWorkflow, strings.ReplaceAll(priorWorkflow, "\n", "\r\n")} {
+		if !family.PriorText(family.WorkflowFile, []byte(text)) {
+			t.Fatalf("earlier text %q is not recognised", text)
+		}
+	}
+	if markdown := ForFacet(DocumentationFacet)[0]; len(markdown.Prior) == 0 {
+		t.Fatal("the Markdown family recognises no earlier text of its workflow")
+	}
+}
+
+// Negative: the current text, an edited earlier text, mixed endings and an earlier text at a
+// path its digest does not name are not prior texts; a malformed Prior fails validation.
+func TestFamilyPriorTextNegative(t *testing.T) {
+	family := priorFixtureFamily()
+	for _, probe := range []struct{ rel, text string }{
+		{family.WorkflowFile, family.Workflow},
+		{family.WorkflowFile, priorWorkflow + "# edited\n"},
+		{family.WorkflowFile, "name: Fixture Gate\r\non: push\n"},
+		{"tools/fixture/core.mjs", priorWorkflow},
+	} {
+		if family.PriorText(probe.rel, []byte(probe.text)) {
+			t.Fatalf("%s holding %q was taken for an earlier Praetor text", probe.rel, probe.text)
+		}
+	}
+	digest := sha256Hex(priorWorkflow)
+	for name, prior := range map[string]map[string]string{
+		"uppercase digest": {strings.ToUpper(digest): family.WorkflowFile},
+		"short digest":     {digest[:63]: family.WorkflowFile},
+		"unmanaged path":   {digest: "tools/fixture/not-in-the-inventory.json"},
+		"current text":     {sha256Hex(family.Workflow): family.WorkflowFile},
+	} {
+		broken := fixtureFamily()
+		broken.Prior = prior
+		if err := broken.Validate(); err == nil {
+			t.Fatalf("%s: malformed Prior validated", name)
+		}
+	}
+}
+
+// Boundary: a family without Prior recognises nothing, an empty earlier text is recognised
+// like any other, and Prior validates at MaxPriorTexts entries but not one more.
+func TestFamilyPriorTextBoundary(t *testing.T) {
+	family := fixtureFamily()
+	if family.PriorText(family.WorkflowFile, []byte(priorWorkflow)) {
+		t.Fatal("a family without Prior recognised an earlier text")
+	}
+	family.Prior = map[string]string{sha256Hex(""): "tools/fixture/core.mjs"}
+	if err := family.Validate(); err != nil || !family.PriorText("tools/fixture/core.mjs", nil) {
+		t.Fatalf("an empty earlier text: err=%v", err)
+	}
+	family.Prior = map[string]string{}
+	for index := 0; index < MaxPriorTexts; index++ {
+		family.Prior[sha256Hex(fmt.Sprintf("text %d\n", index))] = family.WorkflowFile
+	}
+	if err := family.Validate(); err != nil {
+		t.Fatalf("Prior at its bound failed validation: %v", err)
+	}
+	family.Prior[sha256Hex("one more\n")] = family.WorkflowFile
+	if err := family.Validate(); err == nil {
+		t.Fatal("Prior above its bound validated")
 	}
 }

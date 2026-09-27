@@ -16,8 +16,11 @@
 package managedasset
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io/fs"
+	"maps"
 	"path"
 	"slices"
 	"strings"
@@ -29,6 +32,8 @@ import (
 const (
 	// MaxFamilies bounds every walk over the registry (HISS-02).
 	MaxFamilies = 8
+	// MaxPriorTexts bounds the earlier texts one family may recognise (HISS-02).
+	MaxPriorTexts = 64
 	// DocumentationFacet is the manifest facet that enables documentation governance.
 	DocumentationFacet = "docs:seo-portal"
 )
@@ -66,6 +71,13 @@ type Family struct {
 	// managed path while none of the family's paths yet holds its canonical bytes: such a
 	// file predates adoption and belongs to the repository, not to Praetor.
 	RefuseForeign bool
+	// Prior maps the SHA-256, in lowercase hex, of every text an earlier Praetor shipped at
+	// one of the family's managed paths to that path; the digest covers the text with LF line
+	// endings. A file holding exactly such a text is Praetor's own unedited output, so
+	// adoption refreshes it without --force and a disabled facet removes it. Audit still
+	// fails on it, naming plain adoption as the repair. An edited file matches no digest and
+	// keeps the --force contract.
+	Prior map[string]string
 }
 
 // Families returns the registry in its fixed order: the order adoption emits and audit
@@ -89,6 +101,7 @@ func markdown() Family {
 		WorkflowFile:  markdownassets.WorkflowFile,
 		StatusContext: markdownassets.StatusContext,
 		Workflow:      markdownassets.Workflow,
+		Prior:         markdownassets.PriorDigests(),
 	}
 }
 
@@ -155,6 +168,23 @@ func (f Family) Canonical(rel string) (data []byte, owned bool, err error) {
 	return data, true, err
 }
 
+// PriorText reports whether actual is, in one consistent line-ending style, a text the family
+// shipped at rel before its current canonical text (Prior).
+func (f Family) PriorText(rel string, actual []byte) bool {
+	normalized, _, err := util.NormalizeLineEndingsStrict(string(actual))
+	if err != nil {
+		return false
+	}
+	owner, known := f.Prior[textDigest(normalized)]
+	return known && owner == rel
+}
+
+// textDigest is the lowercase hex SHA-256 of text, the key of Family.Prior.
+func textDigest(text string) string {
+	sum := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(sum[:])
+}
+
 // EmbedDirective returns the exact go:embed line Source must carry: the inventory, in order.
 func (f Family) EmbedDirective() string {
 	return "//go:embed " + strings.Join(f.Names(), " ")
@@ -162,7 +192,8 @@ func (f Family) EmbedDirective() string {
 
 // Validate reports the first structural defect of a family declaration: a missing label, an
 // inventory that is empty, over its bound, duplicated or not a clean relative path, a Source
-// outside Directory, or a partial hosted-gate declaration.
+// outside Directory, a partial hosted-gate declaration, or a Prior entry that is not a digest
+// of an earlier text at one of its managed paths.
 func (f Family) Validate() error {
 	for _, field := range [][2]string{
 		{"name", f.Name}, {"kind", f.Kind}, {"asset noun", f.AssetNoun}, {"facet", f.Facet},
@@ -178,7 +209,10 @@ func (f Family) Validate() error {
 	if err := f.validateInventory(); err != nil {
 		return err
 	}
-	return f.validateWorkflow()
+	if err := f.validateWorkflow(); err != nil {
+		return err
+	}
+	return f.validatePrior()
 }
 
 func (f Family) validateInventory() error {
@@ -210,6 +244,36 @@ func (f Family) validateWorkflow() error {
 		return fmt.Errorf("managed asset family %q workflow %q must be a clean relative path outside its asset directory", f.Name, f.WorkflowFile)
 	}
 	return nil
+}
+
+// validatePrior requires every Prior key to be a lowercase hex SHA-256 naming one of the
+// family's managed paths, and none to be the digest of that path's current canonical text.
+func (f Family) validatePrior() error {
+	if len(f.Prior) > MaxPriorTexts {
+		return fmt.Errorf("managed asset family %q declares %d prior texts, want at most %d", f.Name, len(f.Prior), MaxPriorTexts)
+	}
+	digests := slices.Sorted(maps.Keys(f.Prior))
+	managed := f.ManagedPaths()
+	for index := 0; index < len(digests) && index < MaxPriorTexts; index++ {
+		digest, rel := digests[index], f.Prior[digests[index]]
+		if !isTextDigest(digest) || !slices.Contains(managed, rel) {
+			return fmt.Errorf("managed asset family %q prior text %q -> %q is not a lowercase SHA-256 of one of its managed paths", f.Name, digest, rel)
+		}
+		current, _, err := f.Canonical(rel)
+		if err != nil {
+			return err
+		}
+		if f.PriorText(rel, current) {
+			return fmt.Errorf("managed asset family %q lists the current text of %s as a prior text", f.Name, rel)
+		}
+	}
+	return nil
+}
+
+// isTextDigest reports whether digest is spelled as textDigest spells one.
+func isTextDigest(digest string) bool {
+	decoded, err := hex.DecodeString(digest)
+	return err == nil && len(decoded) == sha256.Size && hex.EncodeToString(decoded) == digest
 }
 
 // cleanRelative reports whether name is a non-empty, clean, relative slash path that stays

@@ -1,0 +1,27 @@
+name: Praetor Documentation Governance
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  documentation:
+    name: Documentation Governance
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: tools/markdownlint/package-lock.json
+      - name: Verify public Markdown
+        run: node tools/markdownlint/verify.mjs

@@ -97,6 +97,13 @@ lock together. Audit compares emitted assets as canonical text under the line
 ending policy above; adoption preserves existing files unless `--force`
 explicitly refreshes Praetor-owned assets, and reports a preserved asset that
 differs from the canonical text as drift with a warning rather than as verified.
+One exception needs no `--force`: a file holding exactly a text an earlier
+Praetor shipped at that path is Praetor's own unedited output, so plain
+`praetorctl adopt` refreshes it in its line-ending style. Audit fails on such a
+file and names plain adoption as the repair. The family's `Prior` digests
+(`internal/managedasset/family.go`) list those texts, and
+`tools/markdownlint/testdata/prior/` holds each one
+(`TestPriorDigestsReproduce`, `TestAdoptionDocumentationGateRefreshesPriorTexts`).
 
 ## Private scratch links
 
@@ -196,8 +203,8 @@ files as described above (`TestManagedFamilyRefusesForeignFilesOnFirstAdopt`,
 Disabling `docs:seo-portal` is a convergent transition. Run
 `praetorctl adopt --force` so the generated branch ruleset can drop its hosted
 status context; without that authorization, adoption refuses before deleting
-local assets. The transition removes only canonical-equivalent workflow/tool assets
-and the exact managed Makefile block, strips the README badge and row, removes
+local assets. The transition removes only canonical-equivalent workflow/tool assets, earlier
+Praetor texts of them, and the exact managed Makefile block, strips the README badge and row, removes
 the required status context, and rebuilds the formatter-ignore inventory without
 documentation paths. Operator files beside the tool assets and bytes outside
 managed blocks are preserved.

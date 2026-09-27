@@ -15,9 +15,15 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// auditExactManagedFile requires the managed file at rel to hold expected, one consistent
-// checkout line-ending style allowed. gate opens every failure, e.g. "Documentation gate".
-func auditExactManagedFile(ctx context.Context, rootDir, rel string, expected []byte, gate string) error {
+// auditExactManagedFile requires the managed file at rel to hold family's canonical text, one
+// consistent checkout line-ending style allowed. An earlier Praetor text of rel fails as well,
+// naming plain adoption, which refreshes it, instead of --force.
+func auditExactManagedFile(ctx context.Context, rootDir string, family managedasset.Family, rel string) error {
+	gate := familyGate(family)
+	expected, _, err := family.Canonical(rel)
+	if err != nil {
+		return fmt.Errorf("[FAIL] Load canonical %s asset: %w", family.Kind, err)
+	}
 	path, err := util.ConfinePath(rootDir, rel)
 	if err != nil {
 		return fmt.Errorf("[FAIL] %s path %s is unsafe: %w", gate, rel, err)
@@ -30,10 +36,13 @@ func auditExactManagedFile(ctx context.Context, rootDir, rel string, expected []
 	if compareErr != nil {
 		return fmt.Errorf("[FAIL] %s asset %s has invalid line endings: %w", gate, rel, compareErr)
 	}
-	if !equivalent {
-		return fmt.Errorf("[FAIL] %s asset %s differs from the locked Praetor asset; run 'praetorctl adopt --force'", gate, rel)
+	if equivalent {
+		return nil
 	}
-	return nil
+	if family.PriorText(rel, actual) {
+		return fmt.Errorf("[FAIL] %s asset %s holds an earlier Praetor text; run 'praetorctl adopt' to refresh it", gate, rel)
+	}
+	return fmt.Errorf("[FAIL] %s asset %s differs from the locked Praetor asset; run 'praetorctl adopt --force'", gate, rel)
 }
 
 // familyGate names a family's gate in audit failures: "Documentation gate" for Kind
@@ -153,7 +162,8 @@ func auditDisabledDocumentationAssets(ctx context.Context, rootDir string) error
 }
 
 // auditDisabledManagedFamily fails while a disabled family's managed path still holds the
-// canonical text; an operator's own file at the same path is not Praetor's and passes.
+// canonical text or an earlier Praetor text of that path; an operator's own file at the same
+// path is not Praetor's and passes.
 func auditDisabledManagedFamily(ctx context.Context, rootDir string, family managedasset.Family) error {
 	paths := family.ManagedPaths()
 	for index := 0; index < len(paths) && index <= family.MaxAssets; index++ {
@@ -173,7 +183,7 @@ func auditDisabledManagedFamily(ctx context.Context, rootDir string, family mana
 				return fmt.Errorf("[FAIL] Classify disabled %s asset %s: %w", family.Kind, rel, err)
 			}
 		}
-		if canonical {
+		if canonical || (exists && family.PriorText(rel, actual)) {
 			return fmt.Errorf("[FAIL] Disabled %s facet retains Praetor asset %s", family.Kind, rel)
 		}
 	}
@@ -241,19 +251,14 @@ func auditDocumentationAssets(ctx context.Context, rootDir string) (int, error) 
 // auditManagedFamily compares every asset of family, then its workflow, with the canonical
 // text and returns the number of assets verified.
 func auditManagedFamily(ctx context.Context, rootDir string, family managedasset.Family) (int, error) {
-	gate := familyGate(family)
 	names := family.Names()
 	for index := 0; index < len(names) && index < family.MaxAssets; index++ {
-		expected, err := family.Read(names[index])
-		if err != nil {
-			return 0, fmt.Errorf("[FAIL] Load canonical %s asset: %w", family.Kind, err)
-		}
-		if err := auditExactManagedFile(ctx, rootDir, family.AssetPath(names[index]), expected, gate); err != nil {
+		if err := auditExactManagedFile(ctx, rootDir, family, family.AssetPath(names[index])); err != nil {
 			return 0, err
 		}
 	}
 	if family.WorkflowFile != "" {
-		if err := auditExactManagedFile(ctx, rootDir, family.WorkflowFile, []byte(family.Workflow), gate); err != nil {
+		if err := auditExactManagedFile(ctx, rootDir, family, family.WorkflowFile); err != nil {
 			return 0, err
 		}
 	}

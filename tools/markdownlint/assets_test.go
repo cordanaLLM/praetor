@@ -1,6 +1,8 @@
 package markdownlint
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io/fs"
 	"os"
@@ -270,5 +272,101 @@ func TestFamilySurfaceBoundary(t *testing.T) {
 	names[0] = "mutated"
 	if Names()[0] != "package.json" {
 		t.Fatal("Names exposed the inventory for mutation")
+	}
+}
+
+// priorTextDir holds every earlier text a digest in priorDigests names. A file is named after
+// the managed file it once was: praetor-docs.* for WorkflowFile, <asset>.* for an asset.
+var priorTextDir = filepath.Join("testdata", "prior")
+
+// priorTextPath maps a testdata/prior file name to the managed path it was shipped at.
+func priorTextPath(name string) string {
+	if strings.HasPrefix(name, "praetor-docs.") {
+		return WorkflowFile
+	}
+	asset, _, _ := strings.Cut(name, ".")
+	for _, candidate := range Names() {
+		if strings.HasPrefix(candidate, asset+".") {
+			return Directory + "/" + candidate
+		}
+	}
+	return ""
+}
+
+func lfDigest(data []byte) string {
+	sum := sha256.Sum256([]byte(strings.ReplaceAll(string(data), "\r\n", "\n")))
+	return hex.EncodeToString(sum[:])
+}
+
+// Positive: every file under testdata/prior reproduces exactly one digest of PriorDigests,
+// mapped to the managed path the file was shipped at, and every digest is reproduced.
+func TestPriorDigestsReproduce(t *testing.T) {
+	entries, err := os.ReadDir(priorTextDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digests := PriorDigests()
+	if len(entries) != len(digests) {
+		t.Fatalf("testdata/prior holds %d texts for %d digests", len(entries), len(digests))
+	}
+	for _, entry := range entries {
+		data, err := os.ReadFile(filepath.Join(priorTextDir, entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		rel, known := digests[lfDigest(data)]
+		if want := priorTextPath(entry.Name()); !known || want == "" || rel != want {
+			t.Fatalf("%s: digest maps to %q (known=%v), want %q", entry.Name(), rel, known, want)
+		}
+	}
+}
+
+// Negative: the current texts are not prior texts, and PriorDigests hands out a copy.
+func TestPriorDigestsExcludeCurrentTexts(t *testing.T) {
+	digests := PriorDigests()
+	current := map[string][]byte{WorkflowFile: []byte(Workflow)}
+	for _, name := range Names() {
+		data, err := Read(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		current[Directory+"/"+name] = data
+	}
+	for rel, data := range current {
+		if _, listed := digests[lfDigest(data)]; listed {
+			t.Fatalf("the current text of %s is listed as an earlier text", rel)
+		}
+	}
+	for digest := range digests {
+		delete(digests, digest)
+	}
+	if len(PriorDigests()) == 0 {
+		t.Fatal("PriorDigests exposed its map for mutation")
+	}
+}
+
+// Boundary: a text differing from an earlier one by a single trailing byte, or by carriage
+// returns alone, maps as the file-name convention says.
+func TestPriorDigestsBoundary(t *testing.T) {
+	entries, err := os.ReadDir(priorTextDir)
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("no earlier texts: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(priorTextDir, entries[0].Name()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	digests := PriorDigests()
+	if _, known := digests[lfDigest(append(data, '\n'))]; known {
+		t.Fatal("an earlier text with one more byte is listed")
+	}
+	if _, known := digests[lfDigest([]byte(strings.ReplaceAll(string(data), "\n", "\r\n")))]; !known {
+		t.Fatal("the CRLF form of an earlier text does not reduce to its listed digest")
+	}
+	if got := priorTextPath("markdownlint-cli2.v1.yaml"); got != Directory+"/markdownlint-cli2.yaml" {
+		t.Fatalf("asset naming convention maps to %q", got)
+	}
+	if got := priorTextPath("unknown.v1.txt"); got != "" {
+		t.Fatalf("an unknown prior file maps to %q", got)
 	}
 }

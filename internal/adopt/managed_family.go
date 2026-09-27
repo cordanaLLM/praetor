@@ -20,7 +20,8 @@ import (
 
 // reconcileManagedFamily writes every asset of family and then its hosted workflow. An
 // existing file with the canonical text, in one consistent line-ending style, is verified
-// and left alone; a differing one is preserved unless --force regenerates it.
+// and left alone; one holding an earlier Praetor text of that path (Family.Prior) is
+// refreshed; any other differing file is preserved unless --force regenerates it.
 func reconcileManagedFamily(ctx context.Context, s *adoptSession, family managedasset.Family) error {
 	if family.RefuseForeign {
 		if err := refuseForeignFamilyFiles(ctx, s, family); err != nil {
@@ -34,7 +35,7 @@ func reconcileManagedFamily(ctx context.Context, s *adoptSession, family managed
 			return err
 		}
 		rel := family.AssetPath(names[index])
-		if _, err := reconcileManagedFamilyFile(ctx, s, scaffold{
+		if _, err := reconcileManagedFamilyFile(ctx, s, family, scaffold{
 			rel: rel, perm: filePerm, content: data, force: true,
 			created:  "Scaffolded locked " + family.AssetNoun,
 			verified: "Existing " + family.AssetNoun + " preserved; audit verifies canonical text",
@@ -45,7 +46,7 @@ func reconcileManagedFamily(ctx context.Context, s *adoptSession, family managed
 	if family.WorkflowFile == "" {
 		return nil
 	}
-	_, err := reconcileManagedFamilyFile(ctx, s, scaffold{
+	_, err := reconcileManagedFamilyFile(ctx, s, family, scaffold{
 		rel: family.WorkflowFile, perm: filePerm, content: []byte(family.Workflow), force: true,
 		created:  "Scaffolded required " + family.WorkflowNoun,
 		verified: "Existing " + family.WorkflowNoun + " preserved; audit verifies canonical text",
@@ -53,7 +54,7 @@ func reconcileManagedFamily(ctx context.Context, s *adoptSession, family managed
 	return err
 }
 
-func reconcileManagedFamilyFile(ctx context.Context, s *adoptSession, sc scaffold) (scaffoldState, error) {
+func reconcileManagedFamilyFile(ctx context.Context, s *adoptSession, family managedasset.Family, sc scaffold) (scaffoldState, error) {
 	full, err := repoFile(s.repoPath, sc.rel)
 	if err != nil {
 		return 0, err
@@ -71,8 +72,30 @@ func reconcileManagedFamilyFile(ctx context.Context, s *adoptSession, sc scaffol
 			s.report.recordReconciled(sc.rel, sc.verified)
 			return scaffoldIdentical, nil
 		}
+		if family.PriorText(sc.rel, actual) {
+			return refreshPriorFamilyFile(ctx, s, full, actual, sc)
+		}
 	}
 	return s.scaffoldFile(ctx, sc)
+}
+
+// refreshPriorFamilyFile replaces actual, an exact earlier Praetor text at full, with the
+// current canonical text in the same line-ending style. The replacement is bound to the
+// observed bytes, so a file edited in between is not overwritten.
+func refreshPriorFamilyFile(ctx context.Context, s *adoptSession, full string, actual []byte, sc scaffold) (scaffoldState, error) {
+	_, crlf, err := util.NormalizeLineEndingsStrict(string(actual))
+	if err != nil {
+		return 0, fmt.Errorf("%s has invalid line endings: %w", sc.rel, err)
+	}
+	if !s.opts.DryRun {
+		content := []byte(util.RestoreLineEndings(string(sc.content), crlf))
+		options := contextopt.ReplaceOptions{Expected: actual, Exists: true, Mode: sc.perm}
+		if err := contextopt.ReplaceSnapshot(ctx, full, content, options); err != nil {
+			return 0, fmt.Errorf("refresh %s: %w", sc.rel, err)
+		}
+	}
+	s.report.recordReconciled(sc.rel, "Refreshed an earlier Praetor text to the current locked text")
+	return scaffoldWritten, nil
 }
 
 // refuseForeignFamilyFiles is refuse-on-first-adopt. The family counts as adopted once any of
@@ -102,7 +125,8 @@ func refuseForeignFamilyFiles(ctx context.Context, s *adoptSession, family manag
 		family.Name, foreign)
 }
 
-// observeManagedFile reports whether rel exists and whether it holds family's canonical text.
+// observeManagedFile reports whether rel exists and whether it holds family's canonical text
+// or an earlier Praetor text of that path, either of which shows the family was adopted.
 func observeManagedFile(ctx context.Context, s *adoptSession, family managedasset.Family, rel string) (canonical, exists bool, err error) {
 	full, err := repoFile(s.repoPath, rel)
 	if err != nil {
@@ -116,7 +140,7 @@ func observeManagedFile(ctx context.Context, s *adoptSession, family managedasse
 		return false, false, nil
 	}
 	canonical, err = ManagedFileIsCanonical(family, rel, actual)
-	return canonical, true, err
+	return canonical || family.PriorText(rel, actual), true, err
 }
 
 // ManagedFileIsCanonical reports whether actual is family's exact text at rel, allowing one
@@ -173,9 +197,10 @@ type managedRemoval struct {
 	family    managedasset.Family
 }
 
-// removeManagedFamilies deletes the canonical files of every family in two passes: the first
-// inspects every path and refuses a drifted file or one with mixed line endings, the second
-// removes. A refusal therefore deletes nothing.
+// removeManagedFamilies deletes the canonical files of every family, and files holding an
+// earlier Praetor text of their path, in two passes: the first inspects every path and
+// refuses a drifted file or one with mixed line endings, the second removes. A refusal
+// therefore deletes nothing.
 func removeManagedFamilies(ctx context.Context, s *adoptSession, families []managedasset.Family) error {
 	removals := make([]managedRemoval, 0, len(families)*2)
 	for index := 0; index < len(families) && index < managedasset.MaxFamilies; index++ {
@@ -213,7 +238,7 @@ func planManagedFamilyRemovals(ctx context.Context, s *adoptSession, family mana
 			return nil, fmt.Errorf("refusing to remove %s asset %s with invalid line endings: %w",
 				family.Kind, rel, compareErr)
 		}
-		if !equivalent {
+		if !equivalent && !family.PriorText(rel, actual) {
 			return nil, fmt.Errorf("refusing to remove drifted %s asset %s", family.Kind, rel)
 		}
 		removals = append(removals, managedRemoval{rel: rel, full: full, expected: actual, family: family})

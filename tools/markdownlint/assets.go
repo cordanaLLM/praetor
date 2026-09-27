@@ -10,6 +10,7 @@ package markdownlint
 import (
 	"embed"
 	"io/fs"
+	"maps"
 	"slices"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -59,6 +60,18 @@ jobs:
         run: node tools/markdownlint/verify.mjs
 `
 
+// priorDigests maps the SHA-256 of every text an earlier Praetor shipped at one of the
+// family's managed paths, taken with LF line endings, to that path: the family's Prior
+// (internal/managedasset). Adoption refreshes a file holding exactly one of these texts
+// without --force. testdata/prior holds each text, and TestPriorDigestsReproduce recomputes
+// every digest from it.
+var priorDigests = map[string]string{
+	// The first documentation gate: ubuntu-latest, checkout and setup-node v4.
+	"d4e893f5fee713d3a13d88277097a8b85adce9a886151a776fe24ee54bfe49fa": WorkflowFile,
+	// The explicit ubuntu-26.04 runner, actions still on v4.
+	"c474aa586d9e96f354027fc507543850bc7cf6e31fe927075604856649caff3a": WorkflowFile,
+}
+
 var assetNames = [...]string{
 	"package.json",
 	"package-lock.json",
@@ -78,6 +91,11 @@ func FS() fs.FS {
 // Names returns the complete deterministic asset inventory.
 func Names() []string {
 	return slices.Clone(assetNames[:min(len(assetNames), MaxAssets)])
+}
+
+// PriorDigests returns a copy of the digests of every earlier text of a managed path.
+func PriorDigests() map[string]string {
+	return maps.Clone(priorDigests)
 }
 
 // Read returns one canonical asset without exposing mutable embedded storage.

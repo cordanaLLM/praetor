@@ -106,6 +106,33 @@ func TestAuditDocumentationGateNegative(t *testing.T) {
 	}
 }
 
+// An earlier Praetor text of the workflow fails the byte lock like any drift, but names plain
+// adoption, which refreshes it, where an edited copy names --force; with the facet disabled
+// the earlier text still counts as a retained Praetor asset.
+func TestAuditDocumentationGatePriorText(t *testing.T) {
+	prior, err := os.ReadFile(filepath.Join("..", "..", markdownassets.Directory, "testdata", "prior", "praetor-docs.ubuntu-26.04-v4.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	enabled := &config.Manifest{Facets: []string{"docs:seo-portal"}}
+	for text, want := range map[string]string{
+		string(prior):                                   "holds an earlier Praetor text; run 'praetorctl adopt' to refresh it",
+		string(prior) + "# operator\n":                  "differs from the locked Praetor asset; run 'praetorctl adopt --force'",
+		strings.ReplaceAll(string(prior), "\n", "\r\n"): "holds an earlier Praetor text",
+	} {
+		root := documentationAuditFixture(t)
+		writeFixtureFile(t, root, adopt.DocumentationWorkflowFile, text)
+		if err := docGate(t.Context(), enabled, root); err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("workflow %q: audit = %v, want %q", text[:20], err, want)
+		}
+	}
+	root := t.TempDir()
+	writeFixtureFile(t, root, adopt.DocumentationWorkflowFile, string(prior))
+	if err := docGate(t.Context(), &config.Manifest{}, root); err == nil || !strings.Contains(err.Error(), "retains Praetor asset") {
+		t.Fatalf("disabled facet over an earlier workflow text: %v", err)
+	}
+}
+
 func TestAuditDocumentationGateBoundary(t *testing.T) {
 	if err := docGate(t.Context(), &config.Manifest{}, t.TempDir()); err != nil {
 		t.Fatalf("repository without documentation facet was gated: %v", err)

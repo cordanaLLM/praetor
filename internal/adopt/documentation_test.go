@@ -2,6 +2,8 @@ package adopt
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"slices"
@@ -105,6 +107,43 @@ func TestAdoptionDocumentationGateForceRefresh(t *testing.T) {
 	}
 	if got := mustRead(t, asset); got != string(want) {
 		t.Fatal("force did not restore the exact locked asset")
+	}
+}
+
+// Plain adoption refreshes every documentation gate file an earlier Praetor wrote, the texts
+// under tools/markdownlint/testdata/prior, while an edited copy stays preserved without
+// --force (TestAdoptionDocumentationGateForceRefresh).
+func TestAdoptionDocumentationGateRefreshesPriorTexts(t *testing.T) {
+	dir := filepath.Join("..", "..", markdownassets.Directory, "testdata", "prior")
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("no earlier documentation gate texts: %v", err)
+	}
+	root := newTestRepo(t, "documentation-prior-refresh")
+	opts := AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)}
+	if _, err := Adopt(t.Context(), opts); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		prior, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		// tools/markdownlint's TestPriorDigestsReproduce holds each text to the path it maps to.
+		sum := sha256.Sum256([]byte(strings.ReplaceAll(string(prior), "\r\n", "\n")))
+		rel, known := markdownassets.PriorDigests()[hex.EncodeToString(sum[:])]
+		if !known {
+			t.Fatalf("%s is no listed earlier text", entry.Name())
+		}
+		mustWrite(t, filepath.Join(root, filepath.FromSlash(rel)), string(prior))
+		report, err := Adopt(t.Context(), opts)
+		if err != nil {
+			t.Fatalf("%s: %v", entry.Name(), err)
+		}
+		if action, _ := actionOf(report, rel); action.Details != "Refreshed an earlier Praetor text to the current locked text" {
+			t.Fatalf("%s: %s action = %+v", entry.Name(), rel, action)
+		}
+		assertDocumentationAssets(t, root)
 	}
 }
 
