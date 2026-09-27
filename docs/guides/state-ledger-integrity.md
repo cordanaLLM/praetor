@@ -272,23 +272,6 @@ its own entry. That entry names the archive, for example
 
 The behaviour is covered by `internal/state/state_rotate_test.go`.
 
-## CI reproducibility: `standardsctl verify-all`
-
-`go run ./cmd/standardsctl verify-all .`, wired as the last step of `make
-verify-all`, catches implicit state drift: a repository verification target
-that quietly writes a tracked file instead of only reading state. Outside CI
-(`CI` unset or not `true`) it is a no-op, so a local `make verify-all` run
-never depends on it. Inside CI it runs `git status --porcelain` against the
-target directory and fails with `verify-all modified working tree` if
-anything is uncommitted, including untracked files; a directory git does not
-recognize as a repository also fails the step rather than reporting a false
-clean tree. It never runs `state sync` itself — earlier verify-all targets
-that need a synced ledger call `praetorctl state sync` on their own — so this
-step only observes, it never mutates. Covered by
-`cmd/standardsctl/verify_test.go` (positive: clean tree passes; negative:
-an uncommitted change fails; boundary: CI unset is a no-op, and a non-git
-directory fails closed).
-
 The marker binds the Git state, the repository's own path, and the other ledgers
 (`OPEN.md`, `BACKLOG.md`, `BUGS.md`, `QUESTIONS.md`, and `bugs.meta.json` and
 `questions.meta.json` once each exists), so editing any of them stales it. Sync removes the previous marker before it

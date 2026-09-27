@@ -156,7 +156,6 @@ topology-audit:
 	go run ./cmd/standardsctl topology audit "$${PRAETOR_DEV_ROOT:-$$HOME/dev}"
 
 verify-all: adr-verify semgrep-test docs-drift-test docs-assets-test github-app-test docs-lint-test portability-test notebook-test mcp-test dev-codex-hooks-test dev-install-test dev-schedule-test dev-repair-test wiki-sync-test adopt-sweep-test dco-check-test vscode-test mcp-probe compile-context-verify caveman-sources needs-check editors-reference-verify test audit lint vuln sec secrets fuzz hiss-coverage flavor-audit state-audit dedupe topology-audit hooks-test
-	go run ./cmd/standardsctl verify-all .
 	@echo "All standards verification gates passed cleanly."
 
 # Vendored interfig (docs/adr/0015-interactive-figures-from-vendored-interfig.md section 8): the
