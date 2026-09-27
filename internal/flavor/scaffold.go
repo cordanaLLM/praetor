@@ -34,7 +34,7 @@ type ApplyReport struct {
 	// requires these files, so a deferred template is work left for the named command.
 	DeferredTemplates []string `json:"deferred_templates,omitempty"`
 	// UnmetTemplates names each required template flavor apply does not write because the
-	// repository lacks what its body needs to work as written (TemplateItem.Requires), as
+	// repository lacks what its body needs to work as written (TemplateItem.Resolve), as
 	// "<path>: <what is missing>". The audit still requires these files: supply what is
 	// missing and apply again, or write a file that fits the repository.
 	UnmetTemplates []string `json:"unmet_templates,omitempty"`
@@ -182,20 +182,21 @@ func templateDisposition(repoPath string, tmpl TemplateItem, force bool) (templa
 	return templateCreated, "", nil
 }
 
-// templateContent resolves a template's body from its generator or its embedded source.
+// templateContent resolves a template's body from its generator or its embedded source,
+// rendered against vars: the repository identity plus the facts TemplateItem.Resolve read.
 //
 // A template with neither has no content behind it, and that is an error. This used to
 // fall back to a one-line "# <file> configuration for <owner>/<repo>" comment, which
 // disabled every gitleaks rule (#410), scaffolded workflows that ran nothing, and was then
 // scored by the audit as the file it stood in for (BUG-028, BUG-029).
-func templateContent(tmpl TemplateItem, repoName, owner string) (string, error) {
+func templateContent(tmpl TemplateItem, vars templates.Context) (string, error) {
 	if tmpl.ContentFunc != nil {
-		return tmpl.ContentFunc(repoName, owner), nil
+		return tmpl.ContentFunc(vars.RepoName, vars.Owner), nil
 	}
 	if tmpl.Source == "" {
 		return "", fmt.Errorf("template %s has no content source", tmpl.Path)
 	}
-	body, err := templates.RenderFile(tmpl.Source, templates.Context{RepoName: repoName, Owner: owner})
+	body, err := templates.RenderFile(tmpl.Source, vars)
 	if err != nil {
 		return "", fmt.Errorf("render template %s: %w", tmpl.Path, err)
 	}
@@ -239,7 +240,8 @@ func scaffoldTemplate(ctx context.Context, repoPath string, tmpl TemplateItem, r
 	if err != nil || outcome != templateCreated {
 		return outcome, note, err
 	}
-	if outcome, note := templateWithheld(ctx, repoPath, tmpl); outcome != templateCreated {
+	outcome, note, vars := templateWithheld(ctx, repoPath, tmpl)
+	if outcome != templateCreated {
 		return outcome, note, nil
 	}
 	destPath := filepath.Join(repoPath, tmpl.Path)
@@ -247,7 +249,8 @@ func scaffoldTemplate(ctx context.Context, repoPath string, tmpl TemplateItem, r
 	if err != nil || target.keep {
 		return templateSkipped, "", err
 	}
-	content, err := templateContent(tmpl, repoName, owner)
+	vars.RepoName, vars.Owner = repoName, owner
+	content, err := templateContent(tmpl, vars)
 	if err != nil {
 		return templateSkipped, "", err
 	}
@@ -262,21 +265,22 @@ func scaffoldTemplate(ctx context.Context, repoPath string, tmpl TemplateItem, r
 }
 
 // templateWithheld reports why flavor apply writes no body for a template whatever --force
-// says, or templateCreated when nothing withholds it. A producer-owned template has no body
-// here, only a placeholder to lose the real file to. A template whose requirement the
-// repository does not meet has a body that cannot work there, and writing it over an existing
-// file would replace one that might.
-func templateWithheld(ctx context.Context, repoPath string, tmpl TemplateItem) (templateOutcome, string) {
+// says, or templateCreated together with the facts the body renders against when nothing
+// withholds it. A producer-owned template has no body here, only a placeholder to lose the
+// real file to. A template whose requirement the repository does not meet has a body that
+// cannot work there, and writing it over an existing file would replace one that might.
+func templateWithheld(ctx context.Context, repoPath string, tmpl TemplateItem) (templateOutcome, string, templates.Context) {
 	if tmpl.Producer != "" {
-		return templateDeferred, tmpl.Producer
+		return templateDeferred, tmpl.Producer, templates.Context{}
 	}
-	if tmpl.Requires == nil {
-		return templateCreated, ""
+	if tmpl.Resolve == nil {
+		return templateCreated, "", templates.Context{}
 	}
-	if missing := tmpl.Requires(ctx, repoPath); missing != "" {
-		return templateUnmet, missing
+	facts, missing := tmpl.Resolve(ctx, repoPath)
+	if missing != "" {
+		return templateUnmet, missing, templates.Context{}
 	}
-	return templateCreated, ""
+	return templateCreated, "", facts
 }
 
 // templateTarget is the file already at a template's destination.

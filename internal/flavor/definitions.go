@@ -517,9 +517,10 @@ func (f *TypeScriptNodeFlavor) RequiredTemplates() []TemplateItem {
 			Path:        ".github/workflows/ci.yml",
 			Description: "Node.js CI test and build matrix",
 			Source:      "node/ci-node.yml.tmpl",
-			// The body installs with `npm ci` and runs `npm test`; outside an npm project with a
-			// real test script that job fails on every run.
-			Requires:  npmCIRequirement,
+			// The body installs from the committed lockfile with the manager packageManager names
+			// or the lockfile implies, and runs the test script; without both that job fails on
+			// every run.
+			Resolve:   nodeCIRequirement,
 			Validator: validWorkflow,
 		},
 	}

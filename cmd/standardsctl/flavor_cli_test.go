@@ -58,7 +58,7 @@ func TestFlavorApply_Boundary_ReportsTemplatesWithAnUnmetRequirement(t *testing.
 	if err != nil {
 		t.Fatalf("flavor apply: %v\n%s", err, out)
 	}
-	mustContain(t, out, "Unmet Requirement (1):\n    - .github/workflows/ci.yml: no package-lock.json for `npm ci`")
+	mustContain(t, out, "Unmet Requirement (1):\n    - .github/workflows/ci.yml: package.json is unreadable")
 	if strings.Contains(out, "Created Templates (3)") {
 		t.Fatalf("the CI job was reported created:\n%s", out)
 	}

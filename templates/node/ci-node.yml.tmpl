@@ -1,12 +1,16 @@
 <%- /*
 Scaffolded by typescript-node only where CI's checkout supplies what each step below needs
-(npmCIRequirement, internal/flavor/node_ci.go): Git tracks package-lock.json at the root or would
-commit it (one that is untracked and git-ignored does not count, and outside a Git work tree the
-job is withheld), package.json names npm or no packageManager, and its test script is neither
-missing, blank nor the npm init placeholder. Whether the scripts themselves pass is the
-repository's own code. Adoption makes the test job a required check, so a step this body adds
-must need only what that requirement checks; TestNodeCIJobIsScaffoldedOnlyWhereItRunsAsWritten
-fails on any command it does not model.
+(nodeCIRequirement, internal/flavor/node_ci.go): package.json names no packageManager or one of
+npm, pnpm, Yarn and Bun; Git tracks or would commit that manager's lockfile at the root (without a
+declaration, the lockfile of exactly one manager, which then installs); and the test script is
+neither missing, blank nor the npm init placeholder. Whether the scripts themselves pass is the
+repository's own code. .Node names the manager, and each branch below installs exactly what its
+lockfile records and fails when package.json disagrees. pnpm and Yarn come from Corepack, which
+provisions the version packageManager pins, or its own default; it is installed from npm because
+Node 25 and later ship without it. Bun comes from setup-bun, which reads the same field. Adoption
+makes the test job a required check, so a step this body adds must need only what that
+requirement checks; TestNodeCIJobIsScaffoldedOnlyWhereItRunsAsWritten fails on any command it does
+not model.
 */ -%>
 ---
 name: CI
@@ -22,6 +26,81 @@ jobs:
     runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v4
+<%- if eq .Node.Manager "pnpm" %>
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      # Corepack provisions the pnpm packageManager pins; Node 25 and later
+      # ship without Corepack.
+      - name: Enable pnpm
+        run: |
+          npm install --global corepack@latest
+          corepack enable pnpm
+
+      # --frozen-lockfile installs exactly what pnpm-lock.yaml records and
+      # fails when the two disagree.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm run --if-present lint
+
+      - name: Build
+        run: pnpm run --if-present build
+
+      - name: Test
+        run: pnpm run test
+<%- else if eq .Node.Manager "yarn" %>
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      # Corepack provisions the Yarn packageManager pins, or Yarn 1, which
+      # hands over to the release a .yarnrc.yml yarnPath names; Node 25 and
+      # later ship without Corepack.
+      - name: Enable Yarn
+        run: |
+          npm install --global corepack@latest
+          corepack enable yarn
+
+      # The locked install takes exactly what yarn.lock records and fails
+      # when the two disagree.
+      - name: Install dependencies
+        run: yarn install <% if .Node.YarnBerry %>--immutable<% else %>--frozen-lockfile<% end %>
+<%- if .Node.Lint %>
+
+      - name: Lint
+        run: yarn run lint
+<%- end %>
+<%- if .Node.Build %>
+
+      - name: Build
+        run: yarn run build
+<%- end %>
+
+      - name: Test
+        run: yarn run test
+<%- else if eq .Node.Manager "bun" %>
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      # --frozen-lockfile installs exactly what the Bun lockfile records and
+      # fails when the two disagree.
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Lint
+        run: bun run --if-present lint
+
+      - name: Build
+        run: bun run --if-present build
+
+      - name: Test
+        run: bun run test
+<%- else %>
       - uses: actions/setup-node@v4
         with:
           node-version: lts/*
@@ -40,3 +119,4 @@ jobs:
 
       - name: Test
         run: npm test
+<%- end %>

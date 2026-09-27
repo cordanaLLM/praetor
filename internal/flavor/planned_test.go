@@ -48,6 +48,31 @@ func TestPlannedWorkflows_Positive(t *testing.T) {
 	}
 }
 
+// TestPlannedWorkflows_Positive_RendersTheResolvedPackageManager: the planned Node job is the
+// one apply writes for the repository's package manager, so adoption names what CI runs there,
+// and the job an earlier apply wrote stays the flavor's own.
+func TestPlannedWorkflows_Positive_RendersTheResolvedPackageManager(t *testing.T) {
+	repo := gitRepoWithFiles(t, map[string]string{"package.json": withTest, "pnpm-lock.yaml": pnpmLock})
+	planned, err := flavor.PlannedWorkflows(t.Context(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(planned) != 1 || planned[0].Path != nodeCIPath {
+		t.Fatalf("planned workflows = %+v", planned)
+	}
+	assertJobRuns(t, planned[0].Content, []string{"pnpm install --frozen-lockfile", "pnpm run test"}, []string{"npm ci", "npm test"})
+	if _, err := flavor.ApplyFlavor(t.Context(), repo, "typescript-node", false); err != nil {
+		t.Fatal(err)
+	}
+	written, err := os.ReadFile(filepath.Join(repo, filepath.FromSlash(nodeCIPath)))
+	if err != nil || string(written) != planned[0].Content {
+		t.Fatalf("apply wrote a different %s than planned (%v)", nodeCIPath, err)
+	}
+	if got := plannedPaths(t, repo); !slices.Equal(got, []string{nodeCIPath}) {
+		t.Errorf("earlier apply's pnpm job not listed: %q", got)
+	}
+}
+
 // TestPlannedWorkflows_Negative: no flavor, a nil context, and a workflow the repository owns
 // (present, different from the rendering) are never listed.
 func TestPlannedWorkflows_Negative(t *testing.T) {

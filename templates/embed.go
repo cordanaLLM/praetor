@@ -63,6 +63,25 @@ type Context struct {
 	SLSALevel         int    `json:"slsa_level"`
 	CopyrightHolder   string `json:"copyright_holder"`
 	LicenseIdentifier string `json:"license_identifier"`
+
+	// Node is what the Node CI body (node/ci-node.yml.tmpl) installs and runs scripts with.
+	// flavor apply reads it from package.json and the committed lockfile
+	// (internal/flavor/node_ci.go); the zero value renders the npm job.
+	Node NodeContext `json:"node"`
+}
+
+// NodeContext describes a repository's Node package manager to the Node CI body.
+type NodeContext struct {
+	// Manager is "npm" (or ""), "pnpm", "yarn" or "bun".
+	Manager string `json:"manager"`
+	// YarnBerry selects Yarn 2 or later, whose locked install is `yarn install --immutable`;
+	// Yarn 1's is `yarn install --frozen-lockfile`.
+	YarnBerry bool `json:"yarn_berry"`
+	// Lint and Build report a lint or build script that can run. Yarn has no --if-present, so
+	// the Yarn job runs only these; the npm, pnpm and Bun jobs run whichever is present at run
+	// time.
+	Lint  bool `json:"lint"`
+	Build bool `json:"build"`
 }
 
 // Render parses and executes an inline template string with text/template's default

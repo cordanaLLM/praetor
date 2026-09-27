@@ -8,8 +8,56 @@ import (
 	"github.com/cordanaLLM/praetor/templates"
 )
 
-// sampleContext is what flavor scaffolding passes: a repository identity and nothing else.
+// sampleContext is what flavor scaffolding passes to a body that reads nothing from the
+// repository: its identity. A body that does (TemplateItem.Resolve in internal/flavor) renders
+// the zero value of those facts here.
 var sampleContext = templates.Context{RepoName: "widget", Owner: "acme"}
+
+// The Node CI body installs with the manager Context.Node names (BUG-1011).
+func TestRenderFile_NodeCIInstallsWithTheNamedManager(t *testing.T) {
+	render := func(node templates.NodeContext) string {
+		t.Helper()
+		ctx := sampleContext
+		ctx.Node = node
+		body, err := templates.RenderFile("node/ci-node.yml.tmpl", ctx)
+		if err != nil {
+			t.Fatalf("render %+v: %v", node, err)
+		}
+		return body
+	}
+	// Positive: each manager's locked install, and no npm install beside another manager's.
+	for manager, install := range map[string]string{
+		"npm":  "run: npm ci\n",
+		"pnpm": "run: pnpm install --frozen-lockfile\n",
+		"yarn": "run: yarn install --frozen-lockfile\n",
+		"bun":  "run: bun install --frozen-lockfile\n",
+	} {
+		body := render(templates.NodeContext{Manager: manager})
+		if !strings.Contains(body, install) {
+			t.Errorf("%s: body lacks %q:\n%s", manager, install, body)
+		}
+		if manager != "npm" && strings.Contains(body, "npm ci") {
+			t.Errorf("%s: body still installs with npm ci:\n%s", manager, body)
+		}
+	}
+	// Boundary: the zero value is the npm job, byte for byte.
+	if zero, npm := render(templates.NodeContext{}), render(templates.NodeContext{Manager: "npm"}); zero != npm {
+		t.Errorf("the zero NodeContext does not render the npm job:\n%s", zero)
+	}
+	// Boundary: Yarn 2+ switches the flag, and Yarn runs lint and build only where they exist.
+	berry := render(templates.NodeContext{Manager: "yarn", YarnBerry: true, Build: true})
+	if !strings.Contains(berry, "run: yarn install --immutable\n") || !strings.Contains(berry, "run: yarn run build\n") {
+		t.Errorf("Yarn 2+ body lacks --immutable or its build step:\n%s", berry)
+	}
+	// Negative: a script package.json lacks gets no Yarn step, and the Yarn-only facts change
+	// nothing for another manager.
+	if strings.Contains(berry, "yarn run lint") {
+		t.Errorf("Yarn body runs a lint script package.json lacks:\n%s", berry)
+	}
+	if pnpm := render(templates.NodeContext{Manager: "pnpm", YarnBerry: true, Lint: true}); pnpm != render(templates.NodeContext{Manager: "pnpm"}) {
+		t.Errorf("Yarn-only facts changed the pnpm body:\n%s", pnpm)
+	}
+}
 
 func TestRender_Positive(t *testing.T) {
 	text := "# {{ .Owner }}/{{ .RepoName }}\nArchetype: {{ .Archetype }}\nRunner: {{ .RunnerTag }}"

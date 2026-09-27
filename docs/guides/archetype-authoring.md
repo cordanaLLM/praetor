@@ -51,10 +51,11 @@ Every template a flavor requires states where its content comes from, in
 | `Source` | a body under `templates/`, compiled into the binary and rendered by `praetorctl flavor apply` | `go/ci-go.yml.tmpl` for `.github/workflows/ci.yml` |
 | `Producer` | the command that writes the file; `flavor apply` never writes it, `--force` included, and lists it under *Left to Producer* | `praetorctl adopt` for `.standards.yaml`, `praetorctl compile-context` for `CLAUDE.md` |
 
-A `Source` template may also carry `Requires`, a check of what the repository must hold for the body
-to work as written. Where it reports something missing, `flavor apply` writes nothing, `--force`
-included, and lists the path and what is missing under *Unmet Requirement*; `praetorctl adopt` turns
-each into a warning. The audit still requires the file.
+A `Source` template may also carry `Resolve`, which reads what the body needs from the repository:
+the facts it renders against (fields of `templates.Context`) and anything missing for it to work as
+written. Where it reports something missing, `flavor apply` writes nothing, `--force` included, and
+lists the path and what is missing under *Unmet Requirement*; `praetorctl adopt` turns each into a
+warning. The audit still requires the file.
 
 A template with neither is an apply error, not a placeholder. `flavor apply` used to write a one-line
 `# <file> configuration for <owner>/<repo>` comment for every template it had no body for, which
@@ -120,26 +121,43 @@ wrapper on a runner without `gradle` stops with a message naming the missing wra
 `TestJVMBuildStepRunsTheRepositorysBuild` (`internal/flavor/jvm_ci_test.go`) executes the step
 against each layout with stub build tools.
 
-A body that only works in some repositories declares `Requires`. The Node CI job runs `npm ci` and
-`npm test`, and `typescript-node` matches any `package.json` in an `app-service` repository — a pnpm,
-Yarn or Bun project included — and can be applied by name to any other. So `flavor apply` writes the
-job only when all of these hold (`internal/flavor/node_ci.go`):
+A body that depends on the repository declares `Resolve`. The Node CI job installs from the committed
+lockfile and runs the `test` script, and `typescript-node` matches any `package.json` in an
+`app-service` repository and can be applied by name to any other. So `flavor apply` writes the job
+only when all of these hold (`internal/flavor/node_ci.go`):
 
-- CI's checkout will hold `package-lock.json` at the root (npm 12 reads no `npm-shrinkwrap.json`).
-  The file on disk is not enough: a library that lists `package-lock.json` in `.gitignore` still gets
-  one from a local `npm install`, and CI never sees it. Git must track the lockfile, or would commit
-  it because no ignore rule excludes it. A lockfile force-added past such a rule counts, because it
-  is tracked. Outside a Git work tree, or without `git`, nothing shows what CI checks out, so the job
-  is withheld.
-- `packageManager` names npm or nothing.
+- The package manager is known: the one `packageManager` names (`npm`, `pnpm`, `yarn` or `bun`, as
+  `<name>@<version>`), or, without a declaration, the one whose lockfile CI's checkout holds.
+  Undeclared lockfiles of two managers leave the choice to you: name one in `packageManager`.
+- CI's checkout will hold that manager's lockfile at the root: `package-lock.json` (npm 12 reads no
+  `npm-shrinkwrap.json`), `pnpm-lock.yaml`, `yarn.lock`, or `bun.lock` (`bun.lockb` before Bun 1.2).
+  The file on disk is not enough: a library that lists its lockfile in `.gitignore` still gets one
+  from a local install, and CI never sees it. Git must track the lockfile, or would commit it because
+  no ignore rule excludes it. A lockfile force-added past such a rule counts, because it is tracked.
+  Outside a Git work tree, or without `git`, nothing shows what CI checks out, so the job is withheld.
 - The `test` script is neither missing, blank nor the placeholder `npm init` writes.
 
+The job then installs with that manager and fails when `package.json` disagrees with the lockfile:
+
+| Manager | Set up by | Install | Scripts |
+| :--- | :--- | :--- | :--- |
+| npm | `actions/setup-node` with the npm cache | `npm ci` | `npm run lint --if-present`, the same for `build`, `npm test` |
+| pnpm | Corepack | `pnpm install --frozen-lockfile` | `pnpm run --if-present lint`, the same for `build`, `pnpm run test` |
+| Yarn | Corepack | `yarn install --immutable` on Yarn 2+, `--frozen-lockfile` on Yarn 1 | `yarn run lint` and `yarn run build` where `package.json` defines them when the job is scaffolded (Yarn has no `--if-present`), `yarn run test` |
+| Bun | `oven-sh/setup-bun` | `bun install --frozen-lockfile` | `bun run --if-present lint`, the same for `build`, `bun run test` |
+
+Corepack is installed from npm, because Node 25 and later ship without it. Corepack and `setup-bun`
+install the version `packageManager` pins, or their own default. Yarn is 2 or later when the declared
+version says so or, without a declaration, when `.yarnrc.yml` sets `yarnPath`, which Yarn 1 hands the
+command over to.
+
 These checks cover what the steps need, not whether your scripts pass. Elsewhere adoption requires no
-Node check, and you write the CI job your package manager needs. The package-manager and test-script
-decisions are the ones adoption's verification plan makes (`internal/nodemanifest/scripts.go`).
+Node check, and you write the CI job your repository needs. The `packageManager` parse and the
+test-script decision are shared with adoption's verification plan (`internal/nodemanifest/scripts.go`),
+which generates `npm run` commands for npm projects only.
 `TestNodeCIJobIsScaffoldedOnlyWhereItRunsAsWritten` (`internal/flavor/node_ci_test.go`) checks every
-action, lockfile and script the scaffolded body names against the files `git add -A` stages in each
-fixture, which is what CI's checkout carries.
+action, tool, lockfile and script the scaffolded body names against the files `git add -A` stages in
+each fixture, which is what CI's checkout carries.
 
 **Adoption scaffolds the flavor of the profile it records.** `praetorctl adopt` resolves the flavor
 under the profile it writes into `.standards.yaml` (`flavor.ResolveForProfile`), before it derives
