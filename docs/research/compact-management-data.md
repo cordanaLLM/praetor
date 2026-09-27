@@ -19,7 +19,7 @@ provenance and distinguish mandatory constraints from overridable defaults.
 Unknown values, explicit zero, disabled features and inheritance must have
 different representations. Organization constraints must survive a local
 override. Operator-specific configuration belongs in private overlays; public
-releases must work without Cordana-specific paths, endpoints or accounts.
+releases must work without any operator's paths, endpoints or accounts.
 
 Machine artifacts need not be pleasant to edit. Generate reviewable diffs,
 effective-policy explanations and ordinary client configuration from them.

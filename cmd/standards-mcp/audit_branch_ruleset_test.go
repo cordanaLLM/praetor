@@ -18,8 +18,8 @@ func TestServerAuditBranchRuleset_TDD_Reproduction(t *testing.T) {
 
 	declinedManifest := `version: 1
 repository:
-  owner: VMAFx
-  name: pelorus
+  owner: acme
+  name: app
 profiles:
   - framework
 adoption:

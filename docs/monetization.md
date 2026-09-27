@@ -1,4 +1,4 @@
-# CordanaLLM & Praetor Financial Engineering & Monetization Strategy
+# Praetor Financial Engineering & Monetization Strategy
 
 > Comprehensive strategy blueprint leveraging modern open-source financial engineering: In-IDE Passive Monetization (Idlen), Merchant-of-Record infrastructure (Polar.sh), Corporate Sponsoring (GitHub Sponsors / Open Collective), Developer micro-donations (Ko-fi), and Value-Add Enterprise Licensing.
 
@@ -6,11 +6,11 @@
 
 ## 🏛️ Financial & Monetization Architecture
 
-Praetor and the CordanaLLM ecosystem are open-sourced under the **EUPL-1.2** license, providing a strong copyleft framework that protects against proprietary exploitation while maintaining interoperability across European and global software ecosystems.
+Praetor is open-sourced under the **EUPL-1.2** license, providing a strong copyleft framework that protects against proprietary exploitation while maintaining interoperability across European and global software ecosystems.
 
 ```text
                       ┌─────────────────────────────────────────┐
-                      │    CordanaLLM Open Source Ecosystem     │
+                      │       Praetor Open Source Project       │
                       └────────────────────┬────────────────────┘
                                            │
  ┌──────────────────────┬──────────────────┴──────────────────┬──────────────────────┐
@@ -42,7 +42,7 @@ Praetor and the CordanaLLM ecosystem are open-sourced under the **EUPL-1.2** lic
 
 ## 2. Polar.sh (Merchant of Record & Feature Crowding)
 
-Polar.sh acts as the core Merchant of Record (MoR) and feature-crowding engine for CordanaLLM:
+Polar.sh acts as the core Merchant of Record (MoR) and feature-crowding engine for Praetor:
 
 - **Feature Bounties**: Users and companies crowdfund high-priority GitHub issues.
 - **Contributor Reward Splits**: Transparent bounty splits for external developers resolving issues.

@@ -28,9 +28,14 @@ Everything needed to govern a repository without knowing whose repository it is:
 `.config/github-app/manifest.json` describes the `praetor-governance-bot` GitHub App, and
 `.config/github-app/permissions.md` explains each permission it requests and how to create
 the App from the manifest. Nothing provisions, installs or authenticates as that App today:
-no workflow or command reads the manifest, and `internal/forge/pr.go` names
-a review bot as a requested reviewer. `make github-app-test` fails when the
-permission matrix and the manifest's `default_permissions` disagree.
+no workflow or command reads the manifest, and nothing requests that App, or any other bot,
+as a reviewer. `forge.AssignReviewers` (`internal/forge/pr.go`) requests only the bots its
+caller names and never a built-in account (`TestAssignReviewers_Negative_NoBuiltInBot` in
+`internal/forge/forge_test.go`); the operator key for a review bot, `forge.review_bot`, is
+empty by default and no command passes it yet (see
+[framework, forge and topology](effective-policy.md#framework-forge-and-topology)).
+`make github-app-test` fails when the permission matrix and the manifest's
+`default_permissions` disagree.
 
 ### Commit identity of automated pushes
 

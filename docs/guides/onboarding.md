@@ -1,6 +1,6 @@
-# Repository Onboarding Guide: cordanaLLM/praetor
+# Repository Onboarding Guide
 
-Onboard an existing repository into the cordanaLLM declarative governance fleet.
+Onboard one of your existing repositories into declarative governance with Praetor.
 
 ```figure
 onboarding-path
@@ -30,6 +30,17 @@ praetorctl devcontainer generate --source-root /path/to/reviewed/praetor
 # 5. Verify the configured governance contract
 praetorctl audit
 ```
+
+Step 1 writes your repository's identity into `.standards.yaml`. `repository.owner` and
+`repository.name` come from the origin remote. Without a remote the owner is
+`forge.default_owner` from your operator settings, selected with `--fleet-config`,
+`--workstation-config` or `--manifest` (see
+[framework, forge and topology](effective-policy.md#framework-forge-and-topology)), and the
+name stays empty. Praetor ships no default owner: a field it cannot resolve is written empty
+and reported as `[WARN] repository.owner not detected; set it in .standards.yaml` (or
+`repository.name`), and you set it by hand (`initRepositoryIdentity` in
+`cmd/standardsctl/init.go`; `TestInit_3D_RepositoryIdentity` in
+`cmd/standardsctl/forge_owner_test.go`).
 
 ---
 

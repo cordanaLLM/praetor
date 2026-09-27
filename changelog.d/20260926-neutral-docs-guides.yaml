@@ -1,0 +1,3 @@
+type: fixed
+title: README, landing page, contributing, sponsoring, monetization, onboarding, HISS specification and research pages describe Praetor as an open governance engine for any repository fleet instead of one maintainer's ecosystem, and the onboarding, milestone and operational-configuration guides state that owner and review-bot values stay unset until forge.default_owner or forge.review_bot is configured
+breaking: false

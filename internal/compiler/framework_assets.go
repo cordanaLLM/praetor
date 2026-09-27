@@ -25,7 +25,7 @@ var ErrInvalidKitName = errors.New("kit_name must be 1-64 characters of letters,
 
 // FrameworkKitConfig defines metadata and assets to compile for a language builder kit.
 type FrameworkKitConfig struct {
-	KitName     string   `json:"kit_name" yaml:"kit_name"` // e.g. "sveltesentio", "template-native-gpu"
+	KitName     string   `json:"kit_name" yaml:"kit_name"` // e.g. "example-ui-kit", "example-native-kit"
 	Language    string   `json:"language" yaml:"language"` // e.g. "svelte", "c", "python", "rust"
 	Version     string   `json:"version" yaml:"version"`   // e.g. "1.0.0"
 	Description string   `json:"description" yaml:"description"`
