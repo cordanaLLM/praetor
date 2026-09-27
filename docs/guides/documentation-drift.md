@@ -97,7 +97,7 @@ each reference a reader would copy:
   `./bin/praetorctl`, or as `go run ./cmd/standardsctl`) in an inline code span or a shell fence.
   In a script fence (`bash`, `sh`, `shell`, `zsh`, `fish`, `powershell`) every line that is not
   a comment is a command. In a terminal transcript (`console`, `shell-session`, `terminal`) only
-  a line after the `$ ` prompt is; the lines between prompts are output, such as
+  a line that starts with the `$` prompt and a space is; the lines between prompts are output, such as
   `praetorctl version dev`, and are not read. The first word must be a command of the binary's
   own dispatch table, and each subcommand word and flag after it must be one its code defines.
 - **Repository paths.** Every word with a slash whose first element is a top-level entry of the
