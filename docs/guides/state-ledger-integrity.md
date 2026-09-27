@@ -215,7 +215,7 @@ is work somebody actually recorded. The behaviour is covered by
 `praetorctl milestone` keeps `.workingdir/milestones.json` and renders it into the
 delimited milestone block of `BACKLOG.md` (`internal/milestone/milestone.go`).
 
-- **The remote repository is resolved, never assumed.** `milestone sync` and
+- **The remote repository is resolved, never assumed.** `milestone sync`, `milestone create --publish`, and
   `milestone close --publish` act on `--owner` and `--repo`, else the directory's
   `repository.owner` and `repository.name` or its origin remote, with
   `forge.default_owner` from the operator settings (`--fleet-config`,
@@ -224,7 +224,7 @@ delimited milestone block of `BACKLOG.md` (`internal/milestone/milestone.go`).
   `owner unknown: pass --owner, set repository.owner, or set forge.default_owner`
   (`config.ErrOwnerUnknown`), and an owner without a repository name is refused with
   `config.ErrRepositoryNameUnknown` (`TestMilestoneSync_3D_RepositoryResolution` in
-  `cmd/standardsctl/forge_owner_test.go`). `list`, `create`, `status` and a local
+  `cmd/standardsctl/forge_owner_test.go`). `milestone create --publish` fails after the local create when no identity resolves; the recovery command is to create the milestone on the forge and run `praetorctl milestone sync` to bind it by title. `list`, `create`, `status` and a local
   `close` need no remote.
 
 - **Remote sync binds by forge number.** A row with a `remote_number` is matched by
