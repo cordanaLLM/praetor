@@ -1,6 +1,7 @@
 package forge
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -284,10 +285,10 @@ func flowEdges(content string) [][2]string {
 // compileContextFlowViolations names every way a diagram misstates the compile-context data
 // flow: AGENTS.md must feed compile-context, compile-context must feed the vendor files,
 // and no edge may produce AGENTS.md.
-func compileContextFlowViolations(content string) []string {
+func compileContextFlowViolations(edges [][2]string) []string {
 	var violations []string
 	feedsTranspiler, feedsVendors := false, false
-	for _, edge := range flowEdges(content) {
+	for _, edge := range edges {
 		from, to := edge[0], edge[1]
 		switch {
 		case strings.HasPrefix(to, "AGENTS.md"):
@@ -307,19 +308,43 @@ func compileContextFlowViolations(content string) []string {
 	return violations
 }
 
+func figureEdges(t *testing.T, path string) [][2]string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fig struct {
+		Edges []struct {
+			From string `json:"from"`
+			To   string `json:"to"`
+		} `json:"edges"`
+	}
+	if err := json.Unmarshal(data, &fig); err != nil {
+		t.Fatal(err)
+	}
+	var edges [][2]string
+	for _, e := range fig.Edges {
+		edges = append(edges, [2]string{e.From, e.To})
+	}
+	return edges
+}
+
 // TestHomeWiki_Positive_CompileContextFlowsFromAGENTS pins BUG-680: compile-context reads
 // AGENTS.md (its --source default) and writes the vendor files. The preset landing page
 // carried the same inverted diagram and is held to the same rule.
 func TestHomeWiki_Positive_CompileContextFlowsFromAGENTS(t *testing.T) {
-	if got := compileContextFlowViolations(generateHomeWiki("cordanaLLM/praetor", hisscatalog.Rules()).Content); len(got) != 0 {
+	if got := compileContextFlowViolations(flowEdges(generateHomeWiki("cordanaLLM/praetor", hisscatalog.Rules()).Content)); len(got) != 0 {
 		t.Errorf("generated Home diagram: %v", got)
 	}
 	preset, err := os.ReadFile(filepath.Join("..", "..", "docs", "presets", "mkdocs", "docs", "index.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := compileContextFlowViolations(string(preset)); len(got) != 0 {
+	if got := compileContextFlowViolations(flowEdges(string(preset))); len(got) != 0 {
 		t.Errorf("mkdocs preset index diagram: %v", got)
+	}
+	if got := compileContextFlowViolations(figureEdges(t, filepath.Join("..", "..", "docs", "assets", "figures", "governance-lifecycle.json"))); len(got) != 0 {
+		t.Errorf("governance-lifecycle figure diagram: %v", got)
 	}
 }
 
@@ -330,9 +355,35 @@ func TestHomeWiki_Negative_RejectsManifestToAGENTSFlow(t *testing.T) {
 		`    MANIFEST[".standards.yaml"] --> TRANSPILER["praetorctl compile-context"]` + "\n" +
 		`    TRANSPILER --> AGENTS["AGENTS.md\n(Canonical Truth)"]` + "\n" +
 		`    AGENTS --> GATES["Verification Cascade"]` + "\n```\n"
-	got := compileContextFlowViolations(old)
+	got := compileContextFlowViolations(flowEdges(old))
 	want := []string{
 		"praetorctl compile-context -> AGENTS.md makes AGENTS.md an output",
+		"AGENTS.md does not feed compile-context",
+		"compile-context does not feed the vendor files",
+	}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("violations = %q, want %q", got, want)
+	}
+}
+
+func TestHomeWiki_Negative_FigureEdgesWithCompileContextToAGENTS(t *testing.T) {
+	edges := [][2]string{
+		{"praetorctl compile-context", "AGENTS.md"},
+	}
+	got := compileContextFlowViolations(edges)
+	want := []string{
+		"praetorctl compile-context -> AGENTS.md makes AGENTS.md an output",
+		"AGENTS.md does not feed compile-context",
+		"compile-context does not feed the vendor files",
+	}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("violations = %q, want %q", got, want)
+	}
+}
+
+func TestHomeWiki_Boundary_EmptyEdgesProducesViolations(t *testing.T) {
+	got := compileContextFlowViolations([][2]string{})
+	want := []string{
 		"AGENTS.md does not feed compile-context",
 		"compile-context does not feed the vendor files",
 	}

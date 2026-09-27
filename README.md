@@ -53,21 +53,34 @@ While traditional repositories suffer from configuration drift and agentic fragm
 
 Praetor resolves context compilation and lattice configuration through a single-pass DAG pipeline:
 
-```mermaid
-flowchart LR
-    AGENTS["AGENTS.md\n(Canonical Source)"] --> COMP["praetorctl compile-context"]
-    COMP --> C1["CLAUDE.md (< 300 LOC)"]
-    COMP --> C2[".cursor/rules/*.mdc"]
-    COMP --> C3[".github/copilot-instructions.md"]
-    COMP --> C4[".windsurfrules"]
-    COMP --> C5[".gemini/GEMINI.md"]
-    COMP --> C6[".codex/rules.md"]
-    
-    STANDARDS[".standards.yaml"] --> LATTICE["Lattice Supremum\n(Highest Standard Wins)"]
-    LATTICE --> DEV[".devcontainer & Toolchain"]
-    LATTICE --> AUDIT["praetorctl audit"]
-    LATTICE --> BASE["praetorctl baseline"]
-```
+<!-- figure:governance-lifecycle -->
+<figure class="praetor-figure" id="fig-governance-lifecycle" data-figure="governance-lifecycle" aria-describedby="fig-governance-lifecycle-text">
+<picture>
+<source media="(prefers-reduced-motion: reduce)" srcset="docs/assets/figures/governance-lifecycle.static.svg">
+<img src="docs/assets/figures/governance-lifecycle.svg" alt="The governance lifecycle spans context compilation, policy resolution, and verification gating." width="678" height="712" loading="lazy">
+</picture>
+<figcaption>Governance Lifecycle</figcaption>
+</figure>
+<details class="praetor-figure__text" id="fig-governance-lifecycle-text"><summary>Text description</summary>
+<ul>
+<li>Vendor Projections: CLAUDE.md (&lt; 300 LOC), .cursor/rules/*.mdc, .github/copilot-instructions.md, .windsurfrules, .gemini/GEMINI.md, .codex/rules.md.</li>
+<li>Boxes: AGENTS.md (Canonical Source), praetorctl compile-context, .standards.yaml (&amp; .standards.lock), Effective Policy (Lattice Supremum), .devcontainer &amp; Toolchain, praetorctl audit, praetorctl baseline, make verify-all, Gate stages, Ed25519 Exit-0 receipt.</li>
+<li>AGENTS.md → praetorctl compile-context → CLAUDE.md.</li>
+<li>praetorctl compile-context → .cursor/rules/*.mdc.</li>
+<li>praetorctl compile-context → .github/copilot-instructions.md.</li>
+<li>praetorctl compile-context → .windsurfrules.</li>
+<li>praetorctl compile-context → .gemini/GEMINI.md.</li>
+<li>praetorctl compile-context → .codex/rules.md.</li>
+<li>.standards.yaml → Effective Policy → .devcontainer &amp; Toolchain.</li>
+<li>Effective Policy → praetorctl audit.</li>
+<li>Effective Policy → praetorctl baseline.</li>
+<li>make verify-all → Gate stages → Ed25519 Exit-0 receipt.</li>
+<li>Scenario 1, compile-context: AGENTS.md is transpiled to vendor-specific files. The single source of truth is read. Target-specific files are generated.</li>
+<li>Scenario 2, policy: The lattice resolves standard definitions into effective policy. Manifest and lockfile are merged. Policy applies to tools, audits, and baselines.</li>
+<li>Scenario 3, verify-all: Local verification runs the gated pipeline. Make target triggers the verification cascade. A successful run mints a signed receipt.</li>
+</ul>
+</details>
+<!-- /figure -->
 
 ---
 
