@@ -4,8 +4,8 @@
 
 Proposed — 2026-09-27.
 
-Number note: ADR-0013 and ADR-0014 are claimed by unmerged branches
-(`fix/w7-ci-container-helm-publish` and `fix/neutral-framework-core`), so this record takes 0015.
+Number note: ADR-0013 is the container image and Helm chart record, and ADR-0014 is claimed by
+the unmerged `fix/neutral-framework-core`, so this record takes 0015.
 
 ## Context
 
