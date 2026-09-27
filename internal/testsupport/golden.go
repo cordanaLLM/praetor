@@ -20,17 +20,24 @@ const GoldenUpdateEnv = "PRAETOR_UPDATE_GOLDEN"
 const maxGoldenLines = 1 << 16
 
 // AssertGolden fails t unless got equals the golden file at path, a path relative to the
-// test's package directory. The golden is read with CRLF folded to LF, so a checkout that
-// converted it on Windows still compares equal (HISS-21): golden text is printable, and a
-// test that pins a carriage return writes it escaped. With GoldenUpdateEnv set to 1 the file
-// is rewritten with got instead.
+// test's package directory. Access is confined to that directory through os.Root, so an
+// absolute path or one that escapes it fails instead of reading or writing elsewhere. The
+// golden is read with CRLF folded to LF, so a checkout that converted it on Windows still
+// compares equal (HISS-21): golden text is printable, and a test that pins a carriage return
+// writes it escaped. With GoldenUpdateEnv set to 1 the file is rewritten with got instead.
 func AssertGolden(t testing.TB, path, got string) {
 	t.Helper()
-	if os.Getenv(GoldenUpdateEnv) == "1" {
-		writeGolden(t, path, got)
+	root, err := os.OpenRoot(".")
+	if err != nil {
+		t.Fatalf("testsupport: open package directory for golden %s: %v", path, err)
 		return
 	}
-	data, err := os.ReadFile(path)
+	defer closeGoldenRoot(t, root)
+	if os.Getenv(GoldenUpdateEnv) == "1" {
+		writeGolden(t, root, path, got)
+		return
+	}
+	data, err := root.ReadFile(path)
 	if err != nil {
 		t.Fatalf("testsupport: read golden %s: %v (set %s=1 to create it)", path, err, GoldenUpdateEnv)
 		return
@@ -44,13 +51,20 @@ func AssertGolden(t testing.TB, path, got string) {
 		path, line, gotLine, wantLine, GoldenUpdateEnv)
 }
 
-func writeGolden(t testing.TB, path, got string) {
+func closeGoldenRoot(t testing.TB, root *os.Root) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := root.Close(); err != nil {
+		t.Errorf("testsupport: close package directory: %v", err)
+	}
+}
+
+func writeGolden(t testing.TB, root *os.Root, path, got string) {
+	t.Helper()
+	if err := root.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		t.Fatalf("testsupport: create golden directory for %s: %v", path, err)
 		return
 	}
-	if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
+	if err := root.WriteFile(path, []byte(got), 0o600); err != nil {
 		t.Fatalf("testsupport: write golden %s: %v", path, err)
 	}
 }
