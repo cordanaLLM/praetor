@@ -351,6 +351,23 @@ func grammarWords(field string) []string {
 		words = append(words, word)
 	}
 	parts := strings.FieldsFunc(field, grammarSeparator)
+
+	// Protect slash-joined technical tokens (e.g. I/O, A/B, TCP/IP) from yielding
+	// their individual parts as grammar words. Prose pronoun pairs like "I/we" or
+	// "he/she" are kept because they are neither all single-letter nor all uppercase.
+	if strings.Contains(field, "/") && len(parts) > 1 {
+		isTechnical := true
+		for _, part := range parts {
+			if utf8.RuneCountInString(part) != 1 && strings.ToUpper(part) != part {
+				isTechnical = false
+				break
+			}
+		}
+		if isTechnical {
+			return words
+		}
+	}
+
 	for _, part := range parts {
 		word := grammarWord(part)
 		if word != "" && word != words[0] {

@@ -696,3 +696,52 @@ func hasFinding(report Report, rule, excerpt string) bool {
 	}
 	return false
 }
+
+func TestRuntimeProfileProtectsTechnicalSlashTokens(t *testing.T) {
+	for name, token := range map[string]string{
+		"I/O":           "I/O",
+		"A/B":           "A/B",
+		"R/W":           "R/W",
+		"TCP/IP":        "TCP/IP",
+		"input/output":  "input/output",
+		"I/O with punc": "I/O.",
+		"slash I edge":  "/I",
+	} {
+		t.Run(name, func(t *testing.T) {
+			text := "verdict: pass\nchanged: none\nran: check " + token + "\nevidence: none\nopen: none"
+			if report := CheckRuntime(text, Options{Kind: KindReturn}); !report.Passed() {
+				t.Fatalf("technical slash token %q must pass: %+v", token, report.Findings)
+			}
+		})
+	}
+}
+
+func TestRuntimeProfileRejectsProseSlashTokensAndBoundaries(t *testing.T) {
+	cases := map[string]struct {
+		token string
+		want  string
+	}{
+		"prose I/we":    {"I/we", `pronoun "i"`},
+		"prose he/she":  {"he/she", `pronoun "he"`},
+		"prose I think": {"I think", `pronoun "i"`},
+		"I slash edge":  {"I/", `pronoun "i"`},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			text := "verdict: pass\nchanged: none\nran: check " + tc.token + "\nevidence: none\nopen: none"
+			report := CheckRuntime(text, Options{Kind: KindReturn})
+			if !hasFinding(report, RuleGrammar, tc.want) {
+				t.Fatalf("prose token %q missing finding %q: %+v", tc.token, tc.want, report.Findings)
+			}
+		})
+	}
+
+	// Boundary: lone "I" at line start.
+	t.Run("lone I", func(t *testing.T) {
+		text := "I\nverdict: pass\nchanged: none\nran: check\nevidence: none\nopen: none"
+		report := Check(text, Options{Kind: KindMessage})
+		if !hasFinding(report, RuleGrammar, `pronoun "i"`) {
+			t.Fatalf("lone 'I' at line start missing finding: %+v", report.Findings)
+		}
+	})
+}

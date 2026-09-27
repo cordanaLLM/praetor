@@ -1,0 +1,2 @@
+type: fixed
+description: "Fixed C9 grammar rule false positives for slash-joined technical tokens like I/O and TCP/IP."
