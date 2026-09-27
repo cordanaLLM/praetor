@@ -298,7 +298,7 @@ func (s *Server) createDogfoodTool() (mcp.Tool, error) {
 // complexity line once for every scan entry point; bound by count and digest.
 func writeLines(sb *mcpTextBuilder, lines []string) {
 	for _, line := range lines {
-		sb.External(line+"\n", mcpTextUntrusted)
+		sb.External(line+"\n", mcpTextShared)
 	}
 }
 

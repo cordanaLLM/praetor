@@ -673,8 +673,9 @@ func (s *Server) createNeedsReportTool() (mcp.Tool, error) {
 		}
 
 		var b mcpTextBuilder
-		// internal/needs renders header and table once for this tool and the CLI needs report.
-		b.External(needs.FormatReportHeader(rep, fwIndex), mcpTextUntrusted)
+		// internal/needs renders the header once for this tool and the CLI needs report; the
+		// relationship table carries repository-derived library names.
+		b.External(needs.FormatReportHeader(rep, fwIndex), mcpTextShared)
 		b.External(needs.FormatLibraryRelationships(rep), mcpTextUntrusted)
 
 		return mcpComposedTextResult(b.Text()), nil

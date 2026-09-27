@@ -526,9 +526,9 @@ exclusion is therefore a gate failure, not an invisible reduction in coverage.
 ```yaml
 register:
   sources:
-    expected: 247
-    not_applicable: 120
-    sha256: "sha256:dd494f20a031421b5cfc51574000710a92376117c39c2e8afc7a1af1537e1b80"
+    expected: 245
+    not_applicable: 123
+    sha256: "sha256:de8015ec75a1161cd847bce246e5940b09a0b87398a34fffc86f330e7839ff28"
     inputs:
       - path: ".paperclip/harness.json"
         surface: prompts

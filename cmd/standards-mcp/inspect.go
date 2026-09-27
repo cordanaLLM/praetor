@@ -131,7 +131,7 @@ func writeFuncReport(fset *token.FileSet, rel string, unit hiss.FuncUnit, bounds
 		m.Cyclomatic, bounds.MaxCyclomatic, m.Cognitive, bounds.MaxCognitive, funcStatus(m.LOC > bounds.MaxFuncLOC, measured))
 	for _, over := range measured {
 		// internal/hiss renders the [REPORT] line once for every scan entry point; bound by count and digest.
-		b.External("      "+over.String()+"\n", mcpTextUntrusted)
+		b.External("      "+over.String()+"\n", mcpTextShared)
 	}
 }
 
