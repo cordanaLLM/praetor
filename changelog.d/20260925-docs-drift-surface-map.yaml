@@ -1,0 +1,3 @@
+type: fixed
+title: "widen docs_drift SURFACE_MAP to cover all non-test effective policy and text register Go sources"
+breaking: false
