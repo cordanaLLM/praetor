@@ -36,7 +36,7 @@ func overlaidRepoRoot(t *testing.T) string {
 		mustWrite(t, filepath.Join(workflows, entries[i].Name()), data)
 	}
 	mustWrite(t, filepath.Join(root, ".standards.yaml"),
-		"version: 1\nrepository:\n  owner: \"lusoris\"\n  name: \"praetor\"\n  visibility: \"private\"\n  source: \"cordanaLLM/praetor\"\n")
+		"version: 1\nrepository:\n  owner: \"example-owner\"\n  name: \"praetor\"\n  visibility: \"private\"\n  source: \"cordanaLLM/praetor\"\n")
 	return root
 }
 
