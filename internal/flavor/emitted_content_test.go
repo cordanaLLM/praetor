@@ -161,8 +161,9 @@ func TestScaffoldedBodiesAreTheShippedTemplates(t *testing.T) {
 				t.Errorf("%s scaffolded no %s: %v", flv.Name(), tmpl.Path, err)
 				continue
 			}
-			// With no origin remote, ResolveRepoIdentity reads <owner>/<repo> off the path.
-			identity := templates.Context{RepoName: filepath.Base(root), Owner: filepath.Base(filepath.Dir(root))}
+			// With no origin remote, flavorIdentity supplies no owner and names the checkout
+			// directory; it never reads an owner off the parent directory.
+			identity := templates.Context{RepoName: filepath.Base(root)}
 			want, err := templates.RenderFile(tmpl.Source, identity)
 			if err != nil {
 				t.Fatalf("render %s: %v", tmpl.Source, err)

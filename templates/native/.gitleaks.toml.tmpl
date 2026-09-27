@@ -5,12 +5,17 @@ gitleaks loads a repository-local .gitleaks.toml in place of its built-in config
 not on top of it, so a file that neither extends the defaults nor declares rules of its own
 scans with zero rules and exits 0 on every secret (#410). [extend] useDefault = true keeps
 every built-in rule; internal/flavor's validGitleaksConfig refuses a file that loads none.
+
+The subject names owner/repo only when the origin remote supplied an owner, and the bare
+checkout name otherwise (internal/flavor's flavorIdentity): a parent directory names wherever
+the checkout sits, not its owner, so no owner is guessed from the path.
 */ -%>
-# gitleaks configuration for <% .Owner %>/<% .RepoName %>.
+<%- define "subject" %><% if .Owner %><% .Owner %>/<% end %><% .RepoName %><% end -%>
+# gitleaks configuration for <% template "subject" . %>.
 #
 # Extends the upstream default rules; nothing is disabled. Add [[allowlists]] entries
 # below for paths that hold deliberately fake secrets, never a blanket exclusion.
-title = "gitleaks configuration for <% .Owner %>/<% .RepoName %>"
+title = "gitleaks configuration for <% template "subject" . %>"
 
 [extend]
 useDefault = true
