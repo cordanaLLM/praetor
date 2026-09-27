@@ -13,7 +13,7 @@ import (
 )
 
 func TestSynthesizeHarness_Negative_NilContext(t *testing.T) {
-	if _, err := SynthesizeHarness(nil, t.TempDir()); err == nil { //nolint:staticcheck // exercising the nil-context contract
+	if _, err := SynthesizeHarness(nil, t.TempDir(), 0); err == nil { //nolint:staticcheck // exercising the nil-context contract
 		t.Fatal("nil context must be rejected")
 	}
 }
@@ -54,7 +54,7 @@ func layoutShapedRepo(t *testing.T, owner, name string) string {
 func TestSynthesizeHarness_Positive_PlatformFromOriginRemote(t *testing.T) {
 	dir := layoutShapedRepo(t, "parent-dir", "checkout-dir")
 	testsupport.InitGitRepoWithOrigin(t, dir, "https://github.com/acme/widget.git")
-	h, err := SynthesizeHarness(t.Context(), dir)
+	h, err := SynthesizeHarness(t.Context(), dir, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestSynthesizeHarness_Positive_PlatformFromOriginRemote(t *testing.T) {
 // write. The checkout layout is not an identity and no cordanaLLM owner is substituted.
 func TestSynthesizeHarness_Negative_NoIdentityIsAnError(t *testing.T) {
 	dir := layoutShapedRepo(t, "acme", "widget")
-	h, err := SynthesizeHarness(t.Context(), dir)
+	h, err := SynthesizeHarness(t.Context(), dir, 0)
 	if !errors.Is(err, util.ErrRepoIdentityUnresolved) || !errors.Is(err, config.ErrOwnerUnknown) || h != nil {
 		t.Fatalf("SynthesizeHarness = (%v, %v), want no harness, ErrRepoIdentityUnresolved and ErrOwnerUnknown", h, err)
 	}
@@ -78,7 +78,7 @@ func TestSynthesizeHarness_Negative_NoIdentityIsAnError(t *testing.T) {
 func TestSynthesizeHarness_Boundary_CancelledContextIsNotUnresolved(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	h, err := SynthesizeHarness(ctx, layoutShapedRepo(t, "acme", "widget"))
+	h, err := SynthesizeHarness(ctx, layoutShapedRepo(t, "acme", "widget"), 0)
 	if err == nil || errors.Is(err, util.ErrRepoIdentityUnresolved) || h != nil {
 		t.Fatalf("SynthesizeHarness = (%v, %v), want no harness and a read error", h, err)
 	}
@@ -96,7 +96,7 @@ func TestWriteHarness_Negative_EscapingPaperclipDirIsRefused(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(repo, ".paperclip")); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	h, err := SynthesizeHarness(context.Background(), repo)
+	h, err := SynthesizeHarness(context.Background(), repo, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

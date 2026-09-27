@@ -11,6 +11,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -52,12 +53,20 @@ type Harness struct {
 	Invariants        []string `json:"invariants"`
 }
 
+// harnessInvariants are the HISS rules a Paperclip run carries, in catalog order.
+var harnessInvariants = [...]string{"HISS-01", "HISS-02", "HISS-04", "HISS-07", "HISS-10", "HISS-15", "HISS-16"}
+
 // SynthesizeHarness generates a Paperclip agent harness embedding fleet contracts. The
 // repository identity lookup (a git subprocess) runs under the caller's context. The
 // platform is the identity .standards.yaml declares, else the origin remote's; with neither
 // the error wraps util.ErrRepoIdentityUnresolved and no harness is returned, because the
-// platform names a repository and none may be guessed.
-func SynthesizeHarness(ctx context.Context, repoPath string) (*Harness, error) {
+// platform names a repository and none may be guessed. The invariants are the HISS catalog's
+// adopted directives for the repository's languages (zero: unknown, every language clause
+// labelled), so a Rust or C repository is not handed Go's context.Context or a Go one Rust's
+// unwrap (#68). They carry no resolved function-length limit: adoption binds the harness in its
+// manifest step, before the policy that sets the limit is resolved, so HISS-04 states the
+// audit ceiling a policy may tighten.
+func SynthesizeHarness(ctx context.Context, repoPath string, languages hisscatalog.Language) (*Harness, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("paperclip: context cannot be nil")
 	}
@@ -75,14 +84,9 @@ func SynthesizeHarness(ctx context.Context, repoPath string) (*Harness, error) {
 		config.RegisterDirective(config.TextRegisterInternal),
 	}
 
-	invariants := []string{
-		"HISS-01: Acyclic DAG control flow (no recursion)",
-		"HISS-02: Scalar upper bounds on all loops; context timeout on all input and output",
-		"HISS-04: McCabe Cyclomatic <= 10, Cognitive <= 15, Func LOC <= 75",
-		"HISS-07: Zero .unwrap() / .expect(); all errors handled or wrapped",
-		"HISS-10: Zero-warning tolerance across compiler, linters, and formatters",
-		"HISS-15: 3D testing mandatory (Positive, Negative, Boundary >= 2 checks/dim)",
-		"HISS-16: Canonical AGENTS.md compiled to vendor harnesses",
+	invariants, err := catalogInvariants(languages)
+	if err != nil {
+		return nil, err
 	}
 	return &Harness{
 		Version:           1,
@@ -91,6 +95,19 @@ func SynthesizeHarness(ctx context.Context, repoPath string) (*Harness, error) {
 		AGitPushFormat:    agitPushFormat,
 		Invariants:        invariants,
 	}, nil
+}
+
+// catalogInvariants renders harnessInvariants from the HISS catalog for languages.
+func catalogInvariants(languages hisscatalog.Language) ([]string, error) {
+	invariants := make([]string, 0, len(harnessInvariants))
+	for _, id := range harnessInvariants {
+		rule, ok := hisscatalog.LookupRule(id)
+		if !ok {
+			return nil, fmt.Errorf("paperclip: HISS catalog has no rule %s", id)
+		}
+		invariants = append(invariants, rule.ID+": "+rule.AdoptedDirective(hisscatalog.Facts{Languages: languages}))
+	}
+	return invariants, nil
 }
 
 // priorOperatingContract, priorRegisterDirectives, priorAGitPushFormats and priorInvariants

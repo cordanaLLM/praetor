@@ -74,7 +74,7 @@ func newPushedRepo(t *testing.T) fixtureRepo {
 	}
 	// The harness platform names a repository, so the fixture declares one (identifiedRepo).
 	repo := fixtureRepo{ctx: ctx, dir: identifiedRepo(t), remote: t.TempDir()}
-	harness, err := SynthesizeHarness(ctx, repo.dir)
+	harness, err := SynthesizeHarness(ctx, repo.dir, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +213,7 @@ func TestDisposition_Positive_Blocked(t *testing.T) {
 
 func TestHarness_Positive_SynthesizeAndWrite(t *testing.T) {
 	tmpDir := identifiedRepo(t)
-	h, err := SynthesizeHarness(context.Background(), tmpDir)
+	h, err := SynthesizeHarness(context.Background(), tmpDir, 0)
 	if err != nil {
 		t.Fatalf("SynthesizeHarness failed: %v", err)
 	}
@@ -521,7 +521,7 @@ func TestLoadHarness_3D(t *testing.T) {
 
 	// Positive: Synthesize and load
 	writeRepoFile(t, tmpDir, ".standards.yaml", "repository:\n  owner: acme\n  name: widget\n")
-	h, err := SynthesizeHarness(context.Background(), tmpDir)
+	h, err := SynthesizeHarness(context.Background(), tmpDir, 0)
 	if err != nil {
 		t.Fatalf("SynthesizeHarness failed: %v", err)
 	}
@@ -539,7 +539,7 @@ func TestLoadHarness_3D(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(manifestDir, ".standards.yaml"), []byte(manifestContent), 0644); err != nil {
 		t.Fatal(err)
 	}
-	h2, err := SynthesizeHarness(context.Background(), manifestDir)
+	h2, err := SynthesizeHarness(context.Background(), manifestDir, 0)
 	if err != nil || h2.Platform != "test-org/test-repo" {
 		t.Fatalf("expected platform 'test-org/test-repo', got: %s (err: %v)", h2.Platform, err)
 	}

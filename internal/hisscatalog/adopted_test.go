@@ -18,8 +18,13 @@ import (
 // or a blocking one without a trigger, would claim a gate that blocks nothing.
 func TestAdoptedFields_Positive_EveryRuleStatesItsRow(t *testing.T) {
 	for _, rule := range Rules() {
-		if strings.TrimSpace(rule.Scope) == "" || strings.TrimSpace(rule.Directive) == "" {
+		if strings.TrimSpace(rule.Scope) == "" || len(rule.Directive) == 0 {
 			t.Errorf("%s has no scope or directive: %+v", rule.ID, rule)
+		}
+		for _, clause := range rule.Directive {
+			if strings.TrimSpace(clause.Text) == "" {
+				t.Errorf("%s has an empty directive clause", rule.ID)
+			}
 		}
 		adoption := rule.Adoption
 		if (adoption.Check == "") != (adoption.Stages == 0) {
@@ -38,7 +43,7 @@ func TestAdoptedFields_Positive_PassCavemanLint(t *testing.T) {
 	for _, rule := range Rules() {
 		for _, generated := range []Pipeline{AllPipelines, PipelineVerifyAll, PipelineLefthook, 0} {
 			check, failure := rule.Adopted(generated)
-			text.WriteString(rule.Scope + ": " + rule.Directive + ". " + check + ". " + failure + ".\n")
+			text.WriteString(rule.Scope + ": " + rule.AdoptedDirective(Facts{}) + ". " + check + ". " + failure + ".\n")
 		}
 	}
 	if report := caveman.Check(text.String(), caveman.Options{}); !report.Passed() || report.ProseWords == 0 {
@@ -111,16 +116,20 @@ func TestAdopted_Boundary_FollowsGeneratedPipelines(t *testing.T) {
 	}
 }
 
-// TestAdoptedDirective_Negative_ComplexityMatchesTheAuditCeiling: the HISS-04 row an adopted
-// AGENTS.md prints states the ceiling the audit applies to every adopted repository
-// (config.HISSComplexityCeiling), so it cannot restate a stale value. The catalog may not
-// import config (config's own tests import the catalog), so the numbers are pinned here.
+// TestAdoptedDirective_Negative_ComplexityMatchesTheAuditCeiling: the HISS-04 row states the
+// caps of the audit ceiling (config.HISSComplexityCeiling) and, until a repository's own limit
+// is resolved, that ceiling as the function length, so it cannot restate a stale value. The
+// catalog may not import config (config's own tests import the catalog), so the numbers are
+// pinned here.
 func TestAdoptedDirective_Negative_ComplexityMatchesTheAuditCeiling(t *testing.T) {
 	rule, _ := LookupRule("HISS-04")
 	ceiling := config.HISSComplexityCeiling()
-	want := fmt.Sprintf("McCabe cyclomatic <= %d, cognitive <= %d, func LOC <= %d, statements <= %d",
-		ceiling.MaxCyclomatic, ceiling.MaxCognitive, ceiling.MaxFuncLOC, ceiling.MaxStatements)
-	if rule.Directive != want {
-		t.Fatalf("HISS-04 directive = %q, want %q", rule.Directive, want)
+	if CeilingFuncLOC != ceiling.MaxFuncLOC {
+		t.Fatalf("CeilingFuncLOC = %d, audit ceiling %d", CeilingFuncLOC, ceiling.MaxFuncLOC)
+	}
+	want := fmt.Sprintf("McCabe cyclomatic <= %d, cognitive <= %d, statements <= %d; func LOC <= %d (audit ceiling; stricter repository policy wins)",
+		ceiling.MaxCyclomatic, ceiling.MaxCognitive, ceiling.MaxStatements, ceiling.MaxFuncLOC)
+	if got := rule.AdoptedDirective(Facts{}); got != want {
+		t.Fatalf("HISS-04 directive = %q, want %q", got, want)
 	}
 }

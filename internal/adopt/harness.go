@@ -110,6 +110,8 @@ type harnessFacts struct {
 	targets           []agentcontext.VendorTarget
 	// workflows are the CI workflows this run scaffolds, with what each runs (rule 5).
 	workflows []scaffoldedWorkflow
+	// hiss is what the invariant rows depend on: languages and the enforced function length.
+	hiss hisscatalog.Facts
 	// dispatchGated reports a registered pre-dispatch hook (agenthook.DispatchGateRegistered);
 	// only then does the text register section say a hook denies a brief without `task:`.
 	// Adoption registers only the pre-tool row, so the agent-hooks step that runs later
@@ -211,8 +213,10 @@ func foreignInstructions(existing string) string {
 // comes from the one HISS catalog (hisscatalog.Rules), so the table lists every rule the MCP
 // explain_rule tool explains, and each row states the check the pipelines this run generates
 // give it, or that none exists (BUG-779, BUG-804). The rows keep the shape
-// hisscatalog.ParseGatedInvariants reads, the parser the generated wiki uses. Rule 5 states the
-// local hooks and the CI workflows this run scaffolds.
+// hisscatalog.ParseGatedInvariants reads, the parser the generated wiki uses. Each rule's
+// directive names only the language constructs of the repository's languages and the
+// function length its audit enforces (#68). Rule 5 states the local hooks and the CI
+// workflows this run scaffolds.
 func buildAgentHarnessDirectives(facts harnessFacts) string {
 	var b strings.Builder
 	b.WriteString(hisscatalog.GatedInvariantsHeading + "\n\n")
@@ -220,7 +224,7 @@ func buildAgentHarnessDirectives(facts harnessFacts) string {
 	b.WriteString("| Invariant | Rule | Adopted check | On fail |\n| :--- | :--- | :--- | :--- |\n")
 	for _, rule := range hisscatalog.Rules() {
 		check, failure := rule.Adopted(facts.pipelines)
-		fmt.Fprintf(&b, "| **%s** %s | %s | %s | %s |\n", rule.ID, rule.Scope, rule.Directive, check, failure)
+		fmt.Fprintf(&b, "| **%s** %s | %s | %s | %s |\n", rule.ID, rule.Scope, rule.AdoptedDirective(facts.hiss), check, failure)
 	}
 	b.WriteString("\n" + harnessOperationalRules)
 	b.WriteString(transpilerRuleHead(facts.targets))
@@ -383,7 +387,7 @@ func (s *adoptSession) harnessFacts(ctx context.Context, clients []string) (harn
 	}
 	owner, name := s.harnessIdentity()
 	return harnessFacts{owner: owner, name: name, arch: s.arch, plan: s.verification, pipelines: pipelines,
-		hooks: hooks, targets: targets, workflows: workflows, dispatchGated: gated}, nil
+		hooks: hooks, targets: targets, workflows: workflows, hiss: s.hissFacts(), dispatchGated: gated}, nil
 }
 
 func resolveAgentsContent(s *adoptSession, facts harnessFacts) (string, error) {

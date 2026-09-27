@@ -11,7 +11,7 @@ import (
 // register as its last line, and the rendered rules and a reload keep it.
 func TestHarnessContractStatesTheInternalRegister(t *testing.T) {
 	repo := identifiedRepo(t)
-	h, err := SynthesizeHarness(t.Context(), repo)
+	h, err := SynthesizeHarness(t.Context(), repo, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

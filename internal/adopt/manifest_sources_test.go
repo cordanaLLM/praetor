@@ -12,6 +12,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// releasedIOInvariant is the released harness's HISS-02 wording; a refreshed harness states the
+// catalog directive instead, which never says "context timeout".
+const releasedIOInvariant = "context timeout on all I/O"
+
 const legacyManifest = "version: 1\nrepository:\n  owner: acme\n  name: legacy\n  visibility: public\nprofiles: [framework]\n"
 
 // releasedHarness reads the harness files the 462e3f3a release synthesized for acme/legacy.
@@ -90,7 +94,7 @@ func TestAdoptUpgradesReleasedHarnessToPassingSourceGate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := mustRead(t, filepath.Join(repoPath, paperclipFile)); got == harness || strings.Contains(got, "I/O") {
+	if got := mustRead(t, filepath.Join(repoPath, paperclipFile)); got == harness || strings.Contains(got, releasedIOInvariant) {
 		t.Fatalf("released harness was not refreshed:\n%s", got)
 	}
 	if !strings.Contains(reportDetail(report, paperclipFile), "Refreshed unmodified earlier") {

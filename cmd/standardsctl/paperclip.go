@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/paperclip"
 )
 
@@ -52,7 +53,11 @@ func runPaperclipHarness(ctx context.Context, args []string) error {
 		return err
 	}
 
-	h, err := paperclip.SynthesizeHarness(ctx, *path)
+	languages, err := adopt.RepositoryLanguages(ctx, *path)
+	if err != nil {
+		return fmt.Errorf("synthesize harness: %w", err)
+	}
+	h, err := paperclip.SynthesizeHarness(ctx, *path, languages)
 	if err != nil {
 		return fmt.Errorf("synthesize harness: %w", err)
 	}

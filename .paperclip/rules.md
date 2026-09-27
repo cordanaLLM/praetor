@@ -25,11 +25,14 @@ git push origin HEAD:refs/for/main -o topic=<issue-id> && git push origin HEAD:r
 
 ## High-Integrity Invariants
 
-- HISS-01: Acyclic DAG control flow (no recursion)
-- HISS-02: Scalar upper bounds on all loops; context timeout on all input and
-  output
-- HISS-04: McCabe Cyclomatic <= 10, Cognitive <= 15, Func LOC <= 75
-- HISS-07: Zero .unwrap() / .expect(); all errors handled or wrapped
-- HISS-10: Zero-warning tolerance across compiler, linters, and formatters
-- HISS-15: 3D testing mandatory (Positive, Negative, Boundary >= 2 checks/dim)
-- HISS-16: Canonical AGENTS.md compiled to vendor harnesses
+- HISS-01: recursion prohibited; call graph = DAG; Go: zero `goto`
+- HISS-02: scalar upper bound on every loop; explicit deadline on every I/O
+  call; Go: I/O takes `context.Context` deadline
+- HISS-04: McCabe cyclomatic <= 10, cognitive <= 15, statements <= 50; func
+  LOC <= 60 (audit ceiling; stricter repository policy wins)
+- HISS-07: every error handled or wrapped with context; Go: zero unchecked
+  `error` return
+- HISS-10: zero warnings: compiler, linter, format sweeps
+- HISS-15: positive + negative + boundary tests, every public interface
+- HISS-16: single canonical `AGENTS.md`; vendor files compiled via `praetorctl
+  compile-context`

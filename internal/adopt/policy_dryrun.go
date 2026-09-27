@@ -9,6 +9,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/cavemansource"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/paperclip"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -90,7 +91,7 @@ func planHarness(ctx context.Context, s *adoptSession) (harnessPlan, error) {
 	if s.declines("paperclip") {
 		return keptHarnessPlan(ctx, path, exists, false)
 	}
-	synthesized, fresh, err := synthesizeHarness(ctx, s.repoPath)
+	synthesized, fresh, err := synthesizeHarness(ctx, s.repoPath, planLanguages(s.verification))
 	if errors.Is(err, util.ErrRepoIdentityUnresolved) {
 		return keptHarnessPlan(ctx, path, exists, true)
 	}
@@ -122,8 +123,12 @@ func keptHarnessPlan(ctx context.Context, path string, exists, unresolved bool) 
 	return harnessPlan{data: existing, onDisk: true, unresolved: unresolved}, nil
 }
 
-func synthesizeHarness(ctx context.Context, repoPath string) (*paperclip.Harness, []byte, error) {
-	synthesized, err := paperclip.SynthesizeHarness(ctx, repoPath)
+// synthesizeHarness renders the Paperclip harness for the repository's languages. The languages
+// come from the verification plan resolved before the first step, so the manifest step, which
+// binds register.sources to these bytes, and the paperclip step, which writes them, render the
+// same harness.
+func synthesizeHarness(ctx context.Context, repoPath string, languages hisscatalog.Language) (*paperclip.Harness, []byte, error) {
+	synthesized, err := paperclip.SynthesizeHarness(ctx, repoPath, languages)
 	if err != nil {
 		return nil, nil, fmt.Errorf("synthesize paperclip harness: %w", err)
 	}

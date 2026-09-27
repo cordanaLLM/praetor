@@ -28,7 +28,7 @@ func priorRepo(t *testing.T, harness, rules string) (string, *Harness) {
 	if rules != "" {
 		writeRepoFile(t, repo, ".paperclip/rules.md", rules)
 	}
-	current, err := SynthesizeHarness(context.Background(), repo)
+	current, err := SynthesizeHarness(context.Background(), repo, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

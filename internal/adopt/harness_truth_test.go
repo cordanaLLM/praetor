@@ -21,7 +21,8 @@ var truthPlan = &VerificationPlan{Status: verificationDeclared, Runtimes: []stri
 // installed, every vendor file selected.
 func adoptedFacts(owner, name, arch string, plan *VerificationPlan) harnessFacts {
 	return harnessFacts{owner: owner, name: name, arch: arch, plan: plan,
-		pipelines: hisscatalog.AllPipelines, hooks: hooksLefthook, targets: agentcontext.AllVendorTargets()}
+		pipelines: hisscatalog.AllPipelines, hooks: hooksLefthook, targets: agentcontext.AllVendorTargets(),
+		hiss: hisscatalog.Facts{Languages: planLanguages(plan)}}
 }
 
 func renderTruthHarness(t *testing.T, owner, name string, plan *VerificationPlan) string {
@@ -55,7 +56,8 @@ func TestHarnessTableListsEveryRegisteredInvariant(t *testing.T) {
 	}
 	for i, rule := range rules {
 		check, failure := rule.Adopted(hisscatalog.AllPipelines)
-		want := "| **" + rule.ID + "** " + rule.Scope + " | " + rule.Directive + " | " + check + " | " + failure + " |"
+		want := "| **" + rule.ID + "** " + rule.Scope + " | " + rule.AdoptedDirective(hisscatalog.Facts{Languages: hisscatalog.LanguageGo}) +
+			" | " + check + " | " + failure + " |"
 		if rows[i] != want {
 			t.Errorf("row %d:\n got %s\nwant %s", i, rows[i], want)
 		}

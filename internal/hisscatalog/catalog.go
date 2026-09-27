@@ -29,9 +29,11 @@ type Rule struct {
 	FailureAction string
 	// Scope is the short area label that opens the rule's row in an adopted AGENTS.md.
 	Scope string
-	// Directive is the one-line rule that row prints. It is agent-only text, so it is written
-	// in the internal register and must pass the caveman lint.
-	Directive string
+	// Directive is the rule that row prints, as clauses AdoptedDirective joins for one
+	// repository: a clause that names one language's construct renders only where that
+	// language is present (#68). It is agent-only text, so it is written in the internal
+	// register and must pass the caveman lint.
+	Directive []Clause
 	// Adoption is the check an adopted repository gets from what adoption generates (the
 	// Makefile verify-all target and the lefthook configuration) and the stages that run it.
 	// The zero value means adoption generates none, and every surface must say the rule is not
@@ -54,7 +56,7 @@ var catalog = []Rule{
 		Enforcement:   "The internal/hiss scanner, deciding a subset per language. Go: goto, direct recursion, and mutual or indirect recursion between plain functions (a cycle through methods is not decided). Rust and Python: direct recursion only. C and C++: goto only. Each claim replays against .config/hiss/coverage.yaml via 'praetorctl hiss coverage --verify'.",
 		FailureAction: "Immediate build failure.",
 		Scope:         "control flow",
-		Directive:     "recursion prohibited; call graph = DAG; zero `goto`",
+		Directive:     []Clause{{Text: "recursion prohibited; call graph = DAG"}, {Languages: LanguageGo | LanguageC, Text: "zero `goto`"}},
 		Adoption:      auditCheck("Go `goto`, recursion + plain-function call cycles; Rust, Python direct recursion; C `goto`"),
 	},
 	{
@@ -64,8 +66,11 @@ var catalog = []Rule{
 		Enforcement:   "The internal/hiss scanner, deciding a subset per language. Go: a for statement without a condition, a context without a deadline reaching a call, and the context-less exec.Command, net.Dial and http.Get families, outside tests and main.main. Rust, Python and C: unbounded loop shapes only. Each claim replays against .config/hiss/coverage.yaml via 'praetorctl hiss coverage --verify'.",
 		FailureAction: "Pre-commit and CI blocker.",
 		Scope:         "loops, I/O",
-		Directive:     "scalar upper bound on every loop; explicit deadline on every I/O call (Go: `context.Context`)",
-		Adoption:      auditCheck("unbounded loop shapes in C, Rust, Python; I/O deadlines unchecked"),
+		Directive: []Clause{
+			{Text: "scalar upper bound on every loop; explicit deadline on every I/O call"},
+			{Languages: LanguageGo, Text: "I/O takes `context.Context` deadline"},
+		},
+		Adoption: auditCheck("unbounded loop shapes in C, Rust, Python; I/O deadlines unchecked"),
 	},
 	{
 		ID:            "HISS-03",
@@ -74,7 +79,7 @@ var catalog = []Rule{
 		Enforcement:   "NOT ENFORCED. No allocation benchmark gate exists in this repository.",
 		FailureAction: "None today; the rule is advisory until a check is attached.",
 		Scope:         "memory",
-		Directive:     "zero heap allocation in hot simulation/tick loops",
+		Directive:     []Clause{{Languages: LanguageGo | LanguageRust | LanguageC, Text: "zero heap allocation in hot simulation/tick loops"}},
 	},
 	{
 		ID:            "HISS-04",
@@ -83,8 +88,11 @@ var catalog = []Rule{
 		Enforcement:   "gocyclo, gocognit and funlen via golangci-lint (.golangci.yml) at its configured thresholds; the HISS scanner enforces function length and measures cyclomatic, cognitive and statement counts without enforcing them, the measurement standards_inspect_symbols and standards-lsp share.",
 		FailureAction: "Build sweep blocker.",
 		Scope:         "complexity",
-		Directive:     "McCabe cyclomatic <= 10, cognitive <= 15, func LOC <= 60, statements <= 50",
-		Adoption:      auditCheck("function length only; other caps need repository linter"),
+		Directive: []Clause{
+			{Text: "McCabe cyclomatic <= 10, cognitive <= 15, statements <= 50"},
+			{Text: "func LOC <=", FuncLOC: true},
+		},
+		Adoption: auditCheck("function length only; other caps need repository linter"),
 	},
 	{
 		ID:            "HISS-05",
@@ -93,7 +101,7 @@ var catalog = []Rule{
 		Enforcement:   "NOT ENFORCED. No executable check exists in this repository, and no configured linter decides this rule.",
 		FailureAction: "None today; the rule is advisory until a check is attached.",
 		Scope:         "scoping",
-		Directive:     "declare every identifier in smallest lexical scope serving it",
+		Directive:     []Clause{{Text: "declare every identifier in smallest lexical scope serving it"}},
 	},
 	{
 		ID:            "HISS-06",
@@ -102,7 +110,7 @@ var catalog = []Rule{
 		Enforcement:   "NOT ENFORCED for the axiom. The race detector cannot observe an unbounded pool: a lock-order inversion or an unbounded but race-free fan-out produces no data race. 'go test -race' runs, but it does not decide this rule.",
 		FailureAction: "None today; the rule is advisory until a check is attached.",
 		Scope:         "concurrency",
-		Directive:     "explicit scalar upper bound on every worker pool + concurrent fan-out",
+		Directive:     []Clause{{Text: "explicit scalar upper bound on every worker pool + concurrent fan-out"}},
 	},
 	{
 		ID:            "HISS-07",
@@ -111,8 +119,12 @@ var catalog = []Rule{
 		Enforcement:   "golangci-lint (errcheck and wrapping rules) in make lint.",
 		FailureAction: "Compiler / linter error.",
 		Scope:         "errors",
-		Directive:     "zero `.unwrap()` / `.expect()`; every error handled or wrapped with context",
-		Adoption:      auditCheck("partial in Go, Rust, Python"),
+		Directive: []Clause{
+			{Text: "every error handled or wrapped with context"},
+			{Languages: LanguageGo, Text: "zero unchecked `error` return"},
+			{Languages: LanguageRust, Text: "zero `.unwrap()` / `.expect()` outside tests"},
+		},
+		Adoption: auditCheck("partial in Go, Rust, Python"),
 	},
 	{
 		ID:            "HISS-08",
@@ -121,8 +133,11 @@ var catalog = []Rule{
 		Enforcement:   "Semgrep rules.",
 		FailureAction: "Admission rejection.",
 		Scope:         "determinism",
-		Directive:     "zero dynamic execution (`eval` / `exec`); zero banned libc (`gets` / `strcpy` / `sprintf`)",
-		Adoption:      auditCheck("C banned calls, Python `eval` / `exec`; Go unchecked"),
+		Directive: []Clause{
+			{Text: "zero dynamic code execution (`eval` / `exec`)"},
+			{Languages: LanguageC, Text: "zero banned libc (`gets` / `strcpy` / `sprintf`)"},
+		},
+		Adoption: auditCheck("C banned calls, Python `eval` / `exec`; Go unchecked"),
 	},
 	{
 		ID:            "HISS-09",
@@ -131,7 +146,7 @@ var catalog = []Rule{
 		Enforcement:   "AST check.",
 		FailureAction: "Immediate AST check rejection.",
 		Scope:         "reference safety",
-		Directive:     "`// SAFETY:` proof before every `unsafe` block",
+		Directive:     []Clause{{Languages: LanguageGo | LanguageRust, Text: "`// SAFETY:` proof before every `unsafe` block"}},
 		Adoption:      auditCheck("Go, Rust `unsafe` without proof; C, Python unchecked"),
 	},
 	{
@@ -141,7 +156,7 @@ var catalog = []Rule{
 		Enforcement:   "go vet and golangci-lint in make lint; any finding fails the run.",
 		FailureAction: "Exit code 1.",
 		Scope:         "warnings",
-		Directive:     "zero warnings: compiler, linter, format sweeps",
+		Directive:     []Clause{{Text: "zero warnings: compiler, linter, format sweeps"}},
 		Adoption:      AdoptedCheck{Check: "`go vet` + `gofmt`", Coverage: "Go only", Trigger: "vet finding", Stages: StagePreCommit},
 	},
 	{
@@ -151,7 +166,7 @@ var catalog = []Rule{
 		Enforcement:   "CI attestation gate.",
 		FailureAction: "Deployment rejection.",
 		Scope:         "supply chain",
-		Directive:     "pinned lockfiles; zero floating tags; signed provenance",
+		Directive:     []Clause{{Text: "pinned lockfiles; zero floating tags; signed provenance"}},
 	},
 	{
 		ID:            "HISS-12",
@@ -160,7 +175,7 @@ var catalog = []Rule{
 		Enforcement:   "'make secrets' runs gitleaks over repository history inside verify-all.",
 		FailureAction: "Verification gate rejection.",
 		Scope:         "secrets",
-		Directive:     "zero credentials in Git history",
+		Directive:     []Clause{{Text: "zero credentials in Git history"}},
 	},
 	{
 		ID:            "HISS-13",
@@ -169,7 +184,7 @@ var catalog = []Rule{
 		Enforcement:   "'praetorctl baseline' and the gate's HISS stage, evaluated against .standards-baseline.json. The scan feeding it refuses to certify a scope it did not fully examine.",
 		FailureAction: "PR status gate rejection.",
 		Scope:         "debt ratchet",
-		Directive:     "recorded infractions never grow vs committed baseline",
+		Directive:     []Clause{{Text: "recorded infractions never grow vs committed baseline"}},
 		Adoption:      AdoptedCheck{Check: "`praetorctl audit` ratchet vs `.standards-baseline.json`", Trigger: "growth", Stages: auditStages},
 	},
 	{
@@ -179,7 +194,7 @@ var catalog = []Rule{
 		Enforcement:   "praetorctl forge check-commits in CI (breaking-change marker and Migration: footer).",
 		FailureAction: "PR blocker.",
 		Scope:         "append-only ABI",
-		Directive:     "public API append-only; breaking change = `!` subject + `Migration:` footer",
+		Directive:     []Clause{{Text: "public API append-only; breaking change = `!` subject + `Migration:` footer"}},
 	},
 	{
 		ID:            "HISS-15",
@@ -188,7 +203,7 @@ var catalog = []Rule{
 		Enforcement:   "CI coverage gate (go test -race -coverprofile with a minimum statement-coverage floor enforced by 'go tool cover') and PR checklist validation of the 3D test attestation.",
 		FailureAction: "Merge gate rejection.",
 		Scope:         "3D testing",
-		Directive:     "positive + negative + boundary tests, every public interface",
+		Directive:     []Clause{{Text: "positive + negative + boundary tests, every public interface"}},
 	},
 	{
 		ID:            "HISS-16",
@@ -197,7 +212,7 @@ var catalog = []Rule{
 		Enforcement:   "Pre-commit blocker, server-side admission.",
 		FailureAction: "Merge blocker.",
 		Scope:         "context integrity",
-		Directive:     "single canonical `AGENTS.md`; vendor files compiled via `praetorctl compile-context`",
+		Directive:     []Clause{{Text: "single canonical `AGENTS.md`; vendor files compiled via `praetorctl compile-context`"}},
 		Adoption:      AdoptedCheck{Check: "`praetorctl compile-context --verify`", Trigger: "drift", Stages: StageVerifyAll | StagePreCommit},
 	},
 	{
@@ -207,7 +222,7 @@ var catalog = []Rule{
 		Enforcement:   "Pre-commit state-sync hook and the CI / pre-push state audit.",
 		FailureAction: "Pre-commit / CI gate rejection.",
 		Scope:         "state ledger",
-		Directive:     "turn start `praetorctl state status`; turn end `praetorctl state sync .`",
+		Directive:     []Clause{{Text: "turn start `praetorctl state status`; turn end `praetorctl state sync .`"}},
 		Adoption:      AdoptedCheck{Check: "`praetorctl state sync .`", Stages: StagePostCommit},
 	},
 	{
@@ -217,7 +232,7 @@ var catalog = []Rule{
 		Enforcement:   "CI filter step exporting run_* outputs that every heavy gate's condition consumes.",
 		FailureAction: "CI optimization gate.",
 		Scope:         "CI efficiency",
-		Directive:     "diff-aware gating via `praetorctl ci filter`",
+		Directive:     []Clause{{Text: "diff-aware gating via `praetorctl ci filter`"}},
 	},
 	{
 		ID:            "HISS-19",
@@ -226,7 +241,7 @@ var catalog = []Rule{
 		Enforcement:   "'praetorctl dedupe scan .' function-level clone and utility-sprawl detection, run by 'make dedupe' inside verify-all.",
 		FailureAction: "Verification gate rejection.",
 		Scope:         "reuse before writing",
-		Directive:     "one behavior = one implementation; extend or call existing code",
+		Directive:     []Clause{{Text: "one behavior = one implementation; extend or call existing code"}},
 	},
 	{
 		ID:            "HISS-20",
@@ -235,7 +250,7 @@ var catalog = []Rule{
 		Enforcement:   "'praetorctl hiss coverage --verify', run inside verify-all against '.config/hiss/coverage.yaml'.",
 		FailureAction: "Verification gate rejection.",
 		Scope:         "replayable evidence",
-		Directive:     "every enforcement claim backed by fixtures replayed both directions",
+		Directive:     []Clause{{Text: "every enforcement claim backed by fixtures replayed both directions"}},
 	},
 	{
 		ID:            "HISS-21",
@@ -244,14 +259,18 @@ var catalog = []Rule{
 		Enforcement:   "Platform Neutrality matrix in CI.",
 		FailureAction: "Verification gate rejection.",
 		Scope:         "platform neutrality",
-		Directive:     "gates, hooks, emitted templates run on Linux, macOS, Windows, or skip with stated reason",
+		Directive:     []Clause{{Text: "gates, hooks, emitted templates run on Linux, macOS, Windows, or skip with stated reason"}},
 	},
 }
 
-// Rules returns every HISS invariant in ascending ID order. The slice is a copy, so a
-// caller cannot edit the registry through it.
+// Rules returns every HISS invariant in ascending ID order. The slice and each rule's
+// directive clauses are copies, so a caller cannot edit the registry through them.
 func Rules() []Rule {
-	return slices.Clone(catalog)
+	rules := slices.Clone(catalog)
+	for i := range rules {
+		rules[i].Directive = slices.Clone(rules[i].Directive)
+	}
+	return rules
 }
 
 // RuleIDs returns every HISS invariant ID in ascending order.
@@ -263,11 +282,12 @@ func RuleIDs() []string {
 	return ids
 }
 
-// LookupRule returns the invariant with the given ID. The ID is matched exactly; callers
-// normalise case and whitespace first.
+// LookupRule returns the invariant with the given ID, its directive clauses copied. The ID is
+// matched exactly; callers normalise case and whitespace first.
 func LookupRule(id string) (Rule, bool) {
 	for _, rule := range catalog {
 		if rule.ID == id {
+			rule.Directive = slices.Clone(rule.Directive)
 			return rule, true
 		}
 	}

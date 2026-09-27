@@ -677,7 +677,24 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
   ([`internal/hisscatalog/catalog.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hisscatalog/catalog.go)), HISS-01 through
   HISS-21 (`TestHarnessTableListsEveryRegisteredInvariant`). The rows have the shape
   `hisscatalog.ParseGatedInvariants` reads, the parser the generated wiki uses for praetor's own
-  table (`TestHarnessDirectives_ParseGatedInvariants`). The `Adopted check` column names the
+  table (`TestHarnessDirectives_ParseGatedInvariants`). The `Rule` column is the catalog's
+  adopted directive for this repository
+  ([`internal/hisscatalog/directive.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hisscatalog/directive.go)):
+  - A clause that names one language's construct renders only where the verification plan
+    found that language, labelled with it: Go's `context.Context` deadline and unchecked
+    `error` returns, Rust's `.unwrap()` / `.expect()` ban, C and C++'s `goto` and banned libc
+    calls, the `// SAFETY:` proof for Go and Rust `unsafe`. A rule left with no clause, such as
+    HISS-09 in a TypeScript repository, says it has no analogue there. With no detected
+    runtime, every clause renders with its label.
+  - HISS-04 states the function length the repository's audit enforces, read from the policy
+    the policy-catalog step resolved (container-image, for example, enforces 50).
+  - `TestAdoptedHarnessGolden` pins the whole harness for a Go framework, a Rust crate and a
+    native C engine
+    ([`internal/adopt/testdata`](https://github.com/cordanaLLM/praetor/tree/main/internal/adopt/testdata));
+    regenerate with `go test ./internal/adopt -run TestAdoptedHarnessGolden
+    -update-harness-golden` after reviewing the change.
+
+  The `Adopted check` column names the
   check and the generated stages that run it, such as `praetorctl audit` HISS scan in verify-all +
   lefthook pre-commit/pre-push, qualified by language, or `not enforced`. It credits only the
   pipelines this run generates ([`internal/adopt/harness_pipelines.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/harness_pipelines.go)):
@@ -704,6 +721,11 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
   `TestHarnessNamesEveryProtectedContextFile`, `TestHarnessRule3FollowsAgentClients`).
 - **Paperclip harness.** `.paperclip/harness.json` and `.paperclip/rules.md` come from
   [`internal/paperclip/harness.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/paperclip/harness.go).
+  - The invariants are the same adopted directives for HISS-01, 02, 04, 07, 10, 15 and 16, for
+    the repository's languages (`TestSynthesizeHarness_Positive_InvariantsFollowLanguages`).
+    Adoption binds the harness in `register.sources` during its manifest step, before the
+    policy that sets the function length is resolved, so HISS-04 there states the 60-line
+    audit ceiling and that a stricter repository policy wins.
   - The receipt row prescribes minting a receipt with `praetorctl gate run` and attaching it only
     when `.standards.yaml` pins a well-formed `receipt.public_key`. Without one, every attached
     receipt is refused, so the row says to attach none and names `praetorctl gate keygen`

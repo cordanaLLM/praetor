@@ -111,10 +111,10 @@ func TestAdoptUpgradesCRLFReleasedHarness(t *testing.T) {
 	if _, err := Adopt(t.Context(), sourceAdoptOptions(t, repoPath, false)); err != nil {
 		t.Fatal(err)
 	}
-	if got := mustRead(t, filepath.Join(repoPath, paperclipFile)); strings.Contains(got, "I/O") {
+	if got := mustRead(t, filepath.Join(repoPath, paperclipFile)); strings.Contains(got, releasedIOInvariant) {
 		t.Fatalf("CRLF released harness was not refreshed:\n%s", got)
 	}
-	if got := mustRead(t, filepath.Join(repoPath, ".paperclip", "rules.md")); strings.Contains(got, "I/O") {
+	if got := mustRead(t, filepath.Join(repoPath, ".paperclip", "rules.md")); strings.Contains(got, releasedIOInvariant) {
 		t.Fatalf("CRLF released rules were not refreshed:\n%s", got)
 	}
 	requirePassingSourceGate(t, repoPath, paperclipFile)
