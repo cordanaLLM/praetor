@@ -11,7 +11,8 @@ import sys
 
 sys.dont_write_bytecode = True
 from common import HookError, changed, clean_env, git, paths, run, snapshot
-from checks import checkpoint_checks, context_changed, file_checks, go_packages, source_checks
+from checks import (checkpoint_checks, context_changed, file_checks, go_packages, gofmt_check,
+                    source_checks)
 from privacy import check_private_history, check_private_index
 
 SUBJECT = re.compile(r"^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)"
@@ -41,6 +42,11 @@ def pre_commit():
             if packages:
                 run(["go", "vet", *packages], cwd=directory, env=clean_env(), capture=False)
     print(f"Index: {len(names)} changed paths checked")
+
+
+def fmt_check():
+    """Run the gofmt check over every tracked Go file; `make fmt-check` and CI call this."""
+    gofmt_check(Path.cwd(), paths(git("ls-files", "-z", "--", "*.go")))
 
 
 def check_message(filename):
@@ -297,6 +303,8 @@ def main(argv):
         pre_push(args[0] if args else "origin")
     elif stage == "state-verify":
         verify_live_state()
+    elif stage == "fmt-check":
+        fmt_check()
     elif stage == "changed":
         gate, base = args
         base = git("rev-parse", "--verify", "--end-of-options", base + "^{commit}").decode().strip()

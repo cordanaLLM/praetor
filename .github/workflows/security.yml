@@ -47,10 +47,9 @@ jobs:
           job: security-scan
           go-version: '1.27'
 
+      # tools/go/go.mod is the one version source for both scanners; Renovate keeps it current.
       - name: Install Toolchains
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
-          go install github.com/securego/gosec/v2/cmd/gosec@v2.29.0
+        run: go install -modfile=tools/go/go.mod golang.org/x/vuln/cmd/govulncheck github.com/securego/gosec/v2/cmd/gosec
 
       - name: Run Vulnerability Scan (govulncheck)
         run: govulncheck ./...

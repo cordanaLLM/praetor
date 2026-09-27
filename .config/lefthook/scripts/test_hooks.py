@@ -22,7 +22,7 @@ from common import (HookError, MANAGED_PROCESS_ENV, MAX_PROCESS_ENV_ENTRIES,
                     clean_env, run, snapshot, stop_process_group)
 from checks import (go_packages, source_checks, governance_commands, context_changed,
                     audit_scope, local_package_patterns, checkpoint_checks,
-                    semgrep_commands, is_fixture, is_chart_template, file_checks,
+                    semgrep_commands, is_fixture, is_chart_template, file_checks, gofmt_check,
                     run_full_gate, gate_timeout, FIXTURE_DIRECTORY, GATE_LAUNCH_MARGIN,
                     GATE_QUERY_TIMEOUT, SEMGREP_LANGUAGE_EXTENSIONS, SEMGREP_SUFFIXES)
 import hooks
@@ -869,6 +869,27 @@ print("fixture hook self-tests passed")
         self.assertIn(b"gofmt", result.stdout + result.stderr)
         self.assertEqual(before, (self.repo / "main.go").read_bytes())
 
+    def test_fmt_check_skips_testdata_and_names_unformatted_source(self):
+        # `make fmt-check` and CI run this stage over every tracked Go file.
+        def fmt_check():
+            return command(self.repo, sys.executable, "-B", str(RUNNER), "fmt-check", ok=False)
+
+        # Boundary: a tree without Go files passes.
+        result = fmt_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # Positive: formatted source passes beside a deliberately unformatted testdata fixture.
+        self.write("go.mod", "module example.test/fmt\n\ngo 1.27\n")
+        self.write("main.go", "package main\n\nfunc main() {}\n")
+        self.write("testdata/fixture.go", "package fixture\nfunc  f(){}\n")
+        result = fmt_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # Negative: an unformatted tracked source file fails and is named.
+        self.write("pkg/bad.go", "package pkg\nfunc  f(){}\n")
+        result = fmt_check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"pkg/bad.go", result.stdout + result.stderr)
+        self.assertNotIn(b"testdata/fixture.go", result.stdout + result.stderr)
+
     def test_vet_checks_staged_go_package(self):
         self.write("go.mod", "module example.test/hooks\n\ngo 1.27\n")
         self.write("main.go", 'package main\n\nimport "fmt"\n\nfunc main() { fmt.Printf("%d", "bad") }\n')
@@ -1248,6 +1269,26 @@ class ScopeAndGuard(unittest.TestCase):
         self.assertTrue(is_fixture("a\\testdata\\b.go"))
         self.assertFalse(is_fixture("internal/testdatafile.go"))
         self.assertFalse(is_fixture("mytestdata/a.go"))
+
+    def test_gofmt_check_batches_cover_every_file(self):
+        # Boundary: gofmt runs in GOFMT_BATCH-sized argument lists, so a whole-tree check
+        # stays under the Windows command-line limit; a file in the last batch is still named.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            names = [f"f{index}.go" for index in range(3)]
+            for name in names[:-1]:
+                (root / name).write_text("package p\n", encoding="utf-8", newline="\n")
+            (root / names[-1]).write_text("package p\nfunc  f(){}\n", encoding="utf-8", newline="\n")
+            with mock.patch("checks.GOFMT_BATCH", 1), mock.patch("checks.run", wraps=run) as runner:
+                with self.assertRaises(HookError) as raised:
+                    gofmt_check(root, names)
+            self.assertEqual(runner.call_count, len(names))
+            self.assertIn(names[-1], str(raised.exception))
+            self.assertNotIn(names[0], str(raised.exception))
+            # Positive: every batch clean raises nothing.
+            (root / names[-1]).write_text("package p\n", encoding="utf-8", newline="\n")
+            with mock.patch("checks.GOFMT_BATCH", 1):
+                gofmt_check(root, names)
 
     def test_semgrep_scans_every_suffix_its_rule_languages_cover(self):
         # Positive: headers, C++ and JSX/TSX sources reach semgrep; the c/cpp and

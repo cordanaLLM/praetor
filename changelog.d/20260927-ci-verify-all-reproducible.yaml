@@ -1,0 +1,3 @@
+type: fixed
+title: Make verify-all machine-independent by pinning govulncheck, gosec and gitleaks in one Renovate-tracked tools module, running one gofmt check that skips testdata from make and CI, and auditing the workstation topology only for a configured dev root
+breaking: false

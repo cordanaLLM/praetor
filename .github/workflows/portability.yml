@@ -142,7 +142,7 @@ jobs:
       # reason, which is the intended behaviour working.
       - name: Install Security Scanner
         if: ${{ !cancelled() }}
-        run: go install github.com/securego/gosec/v2/cmd/gosec@latest
+        run: go install -modfile=tools/go/go.mod github.com/securego/gosec/v2/cmd/gosec
 
       # `make` is not on PATH on the Windows runner image (MSYS2 ships it but is unlisted),
       # so the Makefile target cannot be reused here. The executable extension comes from
