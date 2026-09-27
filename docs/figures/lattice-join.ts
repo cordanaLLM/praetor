@@ -6,13 +6,15 @@ export default {
   evidence: [
     'internal/config/config.go:Join',
     'internal/config/config.go:ApplyOverrides',
+    'internal/config/config.go:joinReviewMode',
+    'internal/config/config.go:knownBranchReviewMode',
     'internal/config/effective.go:ResolvePolicy',
     '.config/archetypes/native-gpu-systems.yaml:max_func_loc',
     'internal/config/archetype_test.go:TestResolvePolicyTiedArchetypesOnMemoryAndErrorUnwraps'
   ],
   describe: [
     'Numbers keep minimum positive bounds, booleans keep true, lists are deduplicated unions, tied values keep the first pinned.',
-    'Exception: ReviewMode is not joined.'
+    'Exception: ReviewMode keeps the stricter mode (independent) when both sides are known, but passes through an unknown/invalid mode unchanged so validation catches it later.'
   ],
   props: {
     layout: {
@@ -84,7 +86,7 @@ export default {
           },
           {
             edges: 'facets->join',
-            say: 'Numbers keep the minimum positive bound. Booleans keep true. Lists are deduplicated unions. Tied pins keep the first declared. ReviewMode is never joined.'
+            say: 'Numbers keep the minimum positive bound. Booleans keep true. Lists are deduplicated unions. Tied pins keep the first declared. ReviewMode keeps the stricter mode (independent) when both sides are known, but passes through an unknown/invalid mode unchanged so validation catches it later.'
           }
         ]
       },
