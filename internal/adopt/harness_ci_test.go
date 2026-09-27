@@ -59,8 +59,8 @@ func TestScaffoldedWorkflowsReadWhatAdoptionWrites(t *testing.T) {
 	if got := workflowPaths(workflows); !slices.Equal(got, []string{DocumentationWorkflowFile, ".github/workflows/ci.yml"}) {
 		t.Fatalf("scaffolded workflows = %q", got)
 	}
-	if !slices.Equal(workflows[1].runs, []string{"go vet ./...", "go test -race ./..."}) {
-		t.Errorf("ci.yml runs = %q", workflows[1].runs)
+	if !slices.Equal(runLabels(workflows[1].runs), []string{"go vet ./...", "go test -race ./..."}) {
+		t.Errorf("ci.yml runs = %+v", workflows[1].runs)
 	}
 
 	declined, err := ciSession(t, "working-dir-and-flavor").scaffoldedWorkflows(t.Context(), false)
@@ -83,18 +83,35 @@ func TestScaffoldedWorkflowsReadWhatAdoptionWrites(t *testing.T) {
 	}
 }
 
+// runLabels returns the label of each run, in order.
+func runLabels(runs []forge.WorkflowRun) []string {
+	labels := make([]string, 0, len(runs))
+	for _, run := range runs {
+		labels = append(labels, run.Label)
+	}
+	return labels
+}
+
+// command is a one-line `run:` step.
+func command(script string) forge.WorkflowRun {
+	return forge.WorkflowRun{Label: script, Script: script}
+}
+
 // TestCIClaimFollowsWhatWorkflowsRun: the no-server-side-gate sentence holds only while no
-// scaffolded workflow runs praetorctl, under either CLI name; a workflow of actions only runs no
-// command.
+// scaffolded workflow runs praetorctl, under either CLI name and on any line of a multi-line
+// script; a multi-line step reads as a named step, never as a command; a workflow of actions only
+// runs no command.
 func TestCIClaimFollowsWhatWorkflowsRun(t *testing.T) {
-	plain := ciClaim([]scaffoldedWorkflow{{path: "ci.yml", runs: []string{"cargo test"}}})
-	if plain != "Adoption adds no server-side `praetorctl` gate run. Scaffolded CI: `ci.yml` runs `cargo test`.\n\n" {
+	toolchain := forge.WorkflowRun{Label: "Install toolchain", Step: true, Script: "rustup toolchain install stable\nrustup default stable"}
+	plain := ciClaim([]scaffoldedWorkflow{{path: "ci.yml", runs: []forge.WorkflowRun{toolchain, command("cargo test")}}})
+	if plain != "Adoption adds no server-side `praetorctl` gate run. Scaffolded CI: `ci.yml` runs step `Install toolchain`, `cargo test`.\n\n" {
 		t.Errorf("plain claim = %q", plain)
 	}
-	for _, run := range []string{"praetorctl audit", "./bin/standardsctl audit", `C:\tools\praetorctl.exe audit`} {
-		claim := ciClaim([]scaffoldedWorkflow{{path: "ci.yml", runs: []string{run}}})
+	hidden := forge.WorkflowRun{Label: "Gate", Step: true, Script: "set -eu\npraetorctl audit"}
+	for _, run := range []forge.WorkflowRun{command("praetorctl audit"), command("./bin/standardsctl audit"), command(`C:\tools\praetorctl.exe audit`), hidden} {
+		claim := ciClaim([]scaffoldedWorkflow{{path: "ci.yml", runs: []forge.WorkflowRun{run}}})
 		if strings.Contains(claim, "no server-side") || !strings.HasPrefix(claim, "Scaffolded CI: ") {
-			t.Errorf("%q: claim keeps the no-gate sentence: %q", run, claim)
+			t.Errorf("%q: claim keeps the no-gate sentence: %q", run.Script, claim)
 		}
 	}
 	if claim := ciClaim([]scaffoldedWorkflow{{path: "pin.yml"}}); !strings.Contains(claim, "`pin.yml` runs no command") {
@@ -131,7 +148,7 @@ func TestNoScaffoldedWorkflowRunsPraetor(t *testing.T) {
 			t.Fatalf("%s: %v", name, err)
 		}
 		if runsPraetor(runs) {
-			t.Errorf("%s runs praetorctl: %q", name, runs)
+			t.Errorf("%s runs praetorctl: %+v", name, runs)
 		}
 	}
 }

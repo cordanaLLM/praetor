@@ -57,7 +57,7 @@ var catalog = []Rule{
 		FailureAction: "Immediate build failure.",
 		Scope:         "control flow",
 		Directive:     []Clause{{Text: "recursion prohibited; call graph = DAG"}, {Languages: LanguageGo | LanguageC, Text: "zero `goto`"}},
-		Adoption:      auditCheck("Go `goto`, recursion + plain-function call cycles; Rust, Python direct recursion; C `goto`"),
+		Adoption:      auditCheck(scannedLanguages, "Go `goto`, recursion + plain-function call cycles; Rust, Python direct recursion; C `goto`"),
 	},
 	{
 		ID:            "HISS-02",
@@ -70,7 +70,7 @@ var catalog = []Rule{
 			{Text: "scalar upper bound on every loop; explicit deadline on every I/O call"},
 			{Languages: LanguageGo, Text: "I/O takes `context.Context` deadline"},
 		},
-		Adoption: auditCheck("unbounded loop shapes in C, Rust, Python; I/O deadlines unchecked"),
+		Adoption: auditCheck(scannedLanguages, "unbounded loop shapes in Go, C, Rust, Python; I/O deadlines unchecked"),
 	},
 	{
 		ID:            "HISS-03",
@@ -92,7 +92,7 @@ var catalog = []Rule{
 			{Text: "McCabe cyclomatic <= 10, cognitive <= 15, statements <= 50"},
 			{Text: "func LOC <=", FuncLOC: true},
 		},
-		Adoption: auditCheck("function length only; other caps need repository linter"),
+		Adoption: auditCheck(scannedLanguages, "function length only; other caps need repository linter"),
 	},
 	{
 		ID:            "HISS-05",
@@ -124,7 +124,7 @@ var catalog = []Rule{
 			{Languages: LanguageGo, Text: "zero unchecked `error` return"},
 			{Languages: LanguageRust, Text: "zero `.unwrap()` / `.expect()` outside tests"},
 		},
-		Adoption: auditCheck("partial in Go, Rust, Python"),
+		Adoption: auditCheck(LanguageGo|LanguageRust|LanguagePython, "partial in Go, Rust, Python"),
 	},
 	{
 		ID:            "HISS-08",
@@ -137,7 +137,7 @@ var catalog = []Rule{
 			{Text: "zero dynamic code execution (`eval` / `exec`)"},
 			{Languages: LanguageC, Text: "zero banned libc (`gets` / `strcpy` / `sprintf`)"},
 		},
-		Adoption: auditCheck("C banned calls, Python `eval` / `exec`; Go unchecked"),
+		Adoption: auditCheck(LanguageC|LanguagePython, "C banned calls, Python `eval` / `exec`; Go unchecked"),
 	},
 	{
 		ID:            "HISS-09",
@@ -147,7 +147,7 @@ var catalog = []Rule{
 		FailureAction: "Immediate AST check rejection.",
 		Scope:         "reference safety",
 		Directive:     []Clause{{Languages: LanguageGo | LanguageRust, Text: "`// SAFETY:` proof before every `unsafe` block"}},
-		Adoption:      auditCheck("Go, Rust `unsafe` without proof; C, Python unchecked"),
+		Adoption:      auditCheck(LanguageGo|LanguageRust, "Go, Rust `unsafe` without proof; C, Python unchecked"),
 	},
 	{
 		ID:            "HISS-10",
@@ -157,7 +157,7 @@ var catalog = []Rule{
 		FailureAction: "Exit code 1.",
 		Scope:         "warnings",
 		Directive:     []Clause{{Text: "zero warnings: compiler, linter, format sweeps"}},
-		Adoption:      AdoptedCheck{Check: "`go vet` + `gofmt`", Coverage: "Go only", Trigger: "vet finding", Stages: StagePreCommit},
+		Adoption:      AdoptedCheck{Check: "`go vet` + `gofmt`", Coverage: "Go only", Trigger: "vet finding", Stages: StagePreCommit, Languages: LanguageGo},
 	},
 	{
 		ID:            "HISS-11",

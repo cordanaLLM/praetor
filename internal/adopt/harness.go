@@ -223,7 +223,7 @@ func buildAgentHarnessDirectives(facts harnessFacts) string {
 	b.WriteString(adoptedCheckLegend(facts.pipelines))
 	b.WriteString("| Invariant | Rule | Adopted check | On fail |\n| :--- | :--- | :--- | :--- |\n")
 	for _, rule := range hisscatalog.Rules() {
-		check, failure := rule.Adopted(facts.pipelines)
+		check, failure := rule.AdoptedFor(facts.pipelines, facts.hiss)
 		fmt.Fprintf(&b, "| **%s** %s | %s | %s | %s |\n", rule.ID, rule.Scope, rule.AdoptedDirective(facts.hiss), check, failure)
 	}
 	b.WriteString("\n" + harnessOperationalRules)
@@ -248,8 +248,8 @@ func adoptedCheckLegend(pipelines hisscatalog.Pipeline) string {
 	if len(generated) > 0 {
 		source = strings.Join(generated, " + ")
 	}
-	return "Adopted check = check adoption generated here (" + source + "); `" + hisscatalog.NotEnforced +
-		"` = rule binds, no generated check.\n\n"
+	return "Adopted check = check adoption generated here (" + source + "), as written at adoption; later edits to those files not reflected. `" +
+		hisscatalog.NotEnforced + "` = rule binds, no generated check decides it for repository languages.\n\n"
 }
 
 // transpilerRuleHead opens rule 3 with the files compile-context writes under agent_clients,

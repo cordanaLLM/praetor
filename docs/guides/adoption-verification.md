@@ -668,11 +668,13 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
     `cargo test`. A workflow the repository already owns, and every flavor workflow when
     `adoption.decline` lists `working-dir-and-flavor`, is not named.
 
-  Without a scaffolded workflow, rule 5 says the gates run locally only
+  A one-line `run:` step is named by its command. A multi-line script is named by its step
+  name, or its first line when it has none, and labelled `step` so it never reads as a command
+  to run. Without a scaffolded workflow, rule 5 says the gates run locally only
   (`TestScaffoldedWorkflowsReadWhatAdoptionWrites`, `TestCIClaimFollowsWhatWorkflowsRun`).
-  `TestNoScaffoldedWorkflowRunsPraetor` checks every flavor workflow and the documentation
-  workflow for a `praetorctl` step; should one ever run a gate, rule 5 drops its "no
-  server-side `praetorctl` gate run" sentence.
+  `TestNoScaffoldedWorkflowRunsPraetor` checks every line of every step in every flavor workflow
+  and the documentation workflow for a `praetorctl` call; should one ever run a gate, rule 5
+  drops its "no server-side `praetorctl` gate run" sentence.
 - **Invariant table.** One row per rule in the HISS rule catalog
   ([`internal/hisscatalog/catalog.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hisscatalog/catalog.go)), HISS-01 through
   HISS-21 (`TestHarnessTableListsEveryRegisteredInvariant`). The rows have the shape
@@ -688,6 +690,9 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
     runtime, every clause renders with its label.
   - HISS-04 states the function length the repository's audit enforces, read from the policy
     the policy-catalog step resolved (container-image, for example, enforces 50).
+  - Still open: the C and C++ `goto` clause of HISS-01 is unconditional, as the audit's HISS-01
+    scan is. A repository whose own standard allows a single-level cleanup `goto` cannot state
+    that exception in the harness or the scan yet.
   - `TestAdoptedHarnessGolden` pins the whole harness for a Go framework, a Rust crate and a
     native C engine
     ([`internal/adopt/testdata`](https://github.com/cordanaLLM/praetor/tree/main/internal/adopt/testdata));
@@ -708,7 +713,17 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
     fallback pre-commit hook, which runs `compile-context --verify` and `audit` alone, so the
     lefthook stages are not credited.
 
-  The line above the table names the pipelines it read. Rule 5 claims hooks only when lefthook
+  A check is also language-bound (`Rule.AdoptedFor` in
+  [`internal/hisscatalog/adopted.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hisscatalog/adopted.go)):
+  the audit's HISS scan reads Go, Rust, Python and C/C++ sources only, and each rule's scan
+  decides a subset of them, so a row reads `not enforced` where the check decides none of the
+  repository's languages or the rule has no analogue there. HISS-09 in a C engine, HISS-01 in a
+  TypeScript repository and the lefthook `go vet` row in a Rust crate are examples
+  (`TestAdoptedFor`).
+
+  The line above the table names the pipelines it read and says the cells describe the files as
+  adoption wrote them; a later edit to the `Makefile` or `lefthook.yml` is not reflected there.
+  Rule 5 claims hooks only when lefthook
   installs praetor's `lefthook.yml`, and says the file's hooks stay inactive when lefthook did not
   run (`TestHarnessTableFollowsGeneratedPipelines`,
   `TestAdoptHarnessDropsDeclinedAndPreservedPipelines`). `TestGeneratedPipelinesPredictGitHooks`

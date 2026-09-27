@@ -54,9 +54,10 @@ func TestHarnessTableListsEveryRegisteredInvariant(t *testing.T) {
 	if len(rows) != len(rules) {
 		t.Fatalf("table has %d rows, catalog %d", len(rows), len(rules))
 	}
+	goFacts := hisscatalog.Facts{Languages: hisscatalog.LanguageGo}
 	for i, rule := range rules {
-		check, failure := rule.Adopted(hisscatalog.AllPipelines)
-		want := "| **" + rule.ID + "** " + rule.Scope + " | " + rule.AdoptedDirective(hisscatalog.Facts{Languages: hisscatalog.LanguageGo}) +
+		check, failure := rule.AdoptedFor(hisscatalog.AllPipelines, goFacts)
+		want := "| **" + rule.ID + "** " + rule.Scope + " | " + rule.AdoptedDirective(goFacts) +
 			" | " + check + " | " + failure + " |"
 		if rows[i] != want {
 			t.Errorf("row %d:\n got %s\nwant %s", i, rows[i], want)

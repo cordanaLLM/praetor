@@ -133,3 +133,42 @@ func TestAdoptedDirective_Negative_ComplexityMatchesTheAuditCeiling(t *testing.T
 		t.Fatalf("HISS-04 directive = %q, want %q", got, want)
 	}
 }
+
+// TestAdoptedFor states each check only where it decides the repository's languages. Positive:
+// a Go repository keeps the audit's HISS-09 scan and the lefthook `go vet` row. Negative: a rule
+// with no analogue (HISS-09 in C), a scan that reads none of the languages (HISS-01 in a
+// TypeScript repository, HISS-07 in C) and `go vet` in a Rust crate read not enforced.
+// Boundary: unknown languages keep every check as Adopted states it, a language-independent
+// check (HISS-16) holds in every repository, and a mixed Go + TypeScript repository keeps Go's.
+func TestAdoptedFor(t *testing.T) {
+	cases := []struct {
+		id        string
+		languages Language
+		enforced  bool
+	}{
+		{"HISS-09", LanguageGo, true},
+		{"HISS-10", LanguageGo, true},
+		{"HISS-09", LanguageC, false},
+		{"HISS-01", LanguageOther, false},
+		{"HISS-07", LanguageC, false},
+		{"HISS-10", LanguageRust, false},
+		{"HISS-16", LanguageOther, true},
+		{"HISS-10", LanguageGo | LanguageOther, true},
+	}
+	for _, tc := range cases {
+		rule, _ := LookupRule(tc.id)
+		check, failure := rule.AdoptedFor(AllPipelines, Facts{Languages: tc.languages})
+		if enforced := check != NotEnforced; enforced != tc.enforced || (!enforced && failure != Advisory) {
+			t.Errorf("%s for %b: %q, %q; want enforced=%v", tc.id, tc.languages, check, failure, tc.enforced)
+		}
+	}
+	for _, rule := range Rules() {
+		wantCheck, wantFailure := rule.Adopted(AllPipelines)
+		if check, failure := rule.AdoptedFor(AllPipelines, Facts{}); check != wantCheck || failure != wantFailure {
+			t.Errorf("%s with unknown languages: %q, %q; want %q, %q", rule.ID, check, failure, wantCheck, wantFailure)
+		}
+		if rule.Adoption.Languages&^scannedLanguages != 0 && rule.Adoption.Check == adoptedAudit {
+			t.Errorf("%s audit scan claims a language internal/hiss does not read: %b", rule.ID, rule.Adoption.Languages)
+		}
+	}
+}

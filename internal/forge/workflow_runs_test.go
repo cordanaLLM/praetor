@@ -12,7 +12,8 @@ import (
 )
 
 // TestWorkflowRuns_Positive: one-line commands are listed verbatim, a multi-line script by its
-// step name, an unnamed one by its first line, jobs in ID order, and `uses:` steps not at all.
+// step name, an unnamed one by its first line, both marked as steps and carrying the whole
+// script, jobs in ID order, and `uses:` steps not at all.
 func TestWorkflowRuns_Positive(t *testing.T) {
 	const doc = `name: CI
 on: pull_request
@@ -38,9 +39,13 @@ jobs:
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"make build", "Install toolchain", "cargo clippy -- -D warnings"}
+	want := []WorkflowRun{
+		{Label: "make build", Step: true, Script: "make build\nmake package"},
+		{Label: "Install toolchain", Step: true, Script: "rustup toolchain install stable\nrustup default stable"},
+		{Label: "cargo clippy -- -D warnings", Script: "cargo clippy -- -D warnings"},
+	}
 	if !slices.Equal(runs, want) {
-		t.Fatalf("WorkflowRuns = %q, want %q", runs, want)
+		t.Fatalf("WorkflowRuns = %+v, want %+v", runs, want)
 	}
 }
 
@@ -59,7 +64,7 @@ func TestWorkflowRuns_Negative(t *testing.T) {
 func TestWorkflowRuns_Boundary(t *testing.T) {
 	runs, err := WorkflowRuns([]byte("jobs:\n  test:\n    steps:\n      - uses: actions/checkout@v7\n"))
 	if err != nil || len(runs) != 0 {
-		t.Fatalf("actions-only workflow: %q, %v", runs, err)
+		t.Fatalf("actions-only workflow: %+v, %v", runs, err)
 	}
 	stepsDoc := func(n int) []byte {
 		var b strings.Builder

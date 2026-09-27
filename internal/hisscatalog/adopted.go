@@ -82,11 +82,19 @@ type AdoptedCheck struct {
 	Trigger string
 	// Stages is the set of generated stages that run the check.
 	Stages Stage
+	// Languages are the source languages the check decides; zero means it reads no source
+	// language (a baseline ratchet, a context drift check) and holds in every repository.
+	Languages Language
 }
 
-// auditCheck is an adopted `praetorctl audit` HISS scan qualified by what it decides.
-func auditCheck(coverage string) AdoptedCheck {
-	return AdoptedCheck{Check: adoptedAudit, Coverage: coverage, Trigger: "new finding", Stages: auditStages}
+// scannedLanguages are the languages internal/hiss reads (.go, .rs, .py and native C/C++
+// sources); the audit's HISS scan decides nothing in any other.
+const scannedLanguages = LanguageGo | LanguageRust | LanguagePython | LanguageC
+
+// auditCheck is an adopted `praetorctl audit` HISS scan qualified by what it decides and the
+// languages the scan decides it in, a subset of scannedLanguages.
+func auditCheck(languages Language, coverage string) AdoptedCheck {
+	return AdoptedCheck{Check: adoptedAudit, Coverage: coverage, Trigger: "new finding", Stages: auditStages, Languages: languages}
 }
 
 // Adopted returns the check an adopted repository gets from the pipelines adoption generated
@@ -102,6 +110,26 @@ func (r Rule) Adopted(generated Pipeline) (check, failure string) {
 		check += ": " + r.Adoption.Coverage
 	}
 	return check, failureText(r.Adoption.Trigger, active)
+}
+
+// AdoptedFor is Adopted for one repository: a rule none of whose clauses applies to the
+// repository's languages, or whose check decides none of them, is not enforced there whatever
+// pipeline runs the scan, so no row names a rule "n/a" and credits a failing gate beside it.
+// Unknown languages (zero) keep every check, as they keep every clause.
+func (r Rule) AdoptedFor(generated Pipeline, f Facts) (check, failure string) {
+	if f.Languages != 0 && !r.decidedIn(f.Languages) {
+		return NotEnforced, Advisory
+	}
+	return r.Adopted(generated)
+}
+
+// decidedIn reports whether the rule binds a repository carrying languages and its check reads
+// one of them.
+func (r Rule) decidedIn(languages Language) bool {
+	if r.AdoptedDirective(Facts{Languages: languages}) == noAnalogue {
+		return false
+	}
+	return r.Adoption.Languages == 0 || r.Adoption.Languages&languages != 0
 }
 
 // AdoptedExplanation is Explanation followed by the line that states what an adopted

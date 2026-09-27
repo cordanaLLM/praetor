@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/flavor"
@@ -22,7 +23,7 @@ const maxScaffoldedWorkflows = 64
 // it runs as read from the file (forge.WorkflowRuns).
 type scaffoldedWorkflow struct {
 	path string
-	runs []string
+	runs []forge.WorkflowRun
 }
 
 // scaffoldedWorkflows lists the CI workflows this run leaves as adoption's rendering: the
@@ -85,27 +86,36 @@ func ciClaim(workflows []scaffoldedWorkflow) string {
 	return lead + strings.Join(parts, "; ") + ".\n\n"
 }
 
-// codeList renders commands as a comma-separated list of code spans, or "no command".
-func codeList(runs []string) string {
+// codeList renders what the steps run as a comma-separated list of code spans, a multi-line
+// script's name labelled as a step so it never reads as a command, or "no command".
+func codeList(runs []forge.WorkflowRun) string {
 	if len(runs) == 0 {
 		return "no command"
 	}
 	spans := make([]string, 0, len(runs))
 	for _, run := range runs {
-		spans = append(spans, "`"+strings.ReplaceAll(run, "`", "'")+"`")
+		span := "`" + strings.ReplaceAll(run.Label, "`", "'") + "`"
+		if run.Step {
+			span = "step " + span
+		}
+		spans = append(spans, span)
 	}
 	return strings.Join(spans, ", ")
 }
 
-// runsPraetor reports whether any command invokes the praetor CLI under either of its names.
-func runsPraetor(runs []string) bool {
+// runsPraetor reports whether any line of any step's script invokes the praetor CLI under either
+// of its names, a multi-line script's later lines included.
+func runsPraetor(runs []forge.WorkflowRun) bool {
 	for _, run := range runs {
-		for _, token := range strings.Fields(run) {
-			name := strings.TrimSuffix(path.Base(strings.ReplaceAll(token, `\`, "/")), ".exe")
-			if name == util.PraetorCLI || name == util.LegacyCLI {
-				return true
-			}
+		if slices.ContainsFunc(strings.Fields(run.Script), isPraetorCommand) {
+			return true
 		}
 	}
 	return false
+}
+
+// isPraetorCommand reports whether token names the praetor CLI, by path or bare, .exe or not.
+func isPraetorCommand(token string) bool {
+	name := strings.TrimSuffix(path.Base(strings.ReplaceAll(token, `\`, "/")), ".exe")
+	return name == util.PraetorCLI || name == util.LegacyCLI
 }
