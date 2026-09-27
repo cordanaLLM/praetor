@@ -37,6 +37,74 @@ func TestAdopt_Positive_ReportsFlavorScaffold(t *testing.T) {
 	}
 }
 
+// newImageForge returns an os-image repository carrying the given files.
+func newImageForge(t *testing.T, name string, files map[string]string) string {
+	t.Helper()
+	repoPath := newTestRepo(t, name)
+	mustWrite(t, filepath.Join(repoPath, "mkosi.conf"), "[Output]\nFormat=disk\n")
+	for rel, body := range files {
+		mustWrite(t, filepath.Join(repoPath, rel), body)
+	}
+	return repoPath
+}
+
+// adoptForge adopts an image forge and fails the test on any error. The profile is framework
+// because the lock fixture carries no os-image profile; the flavor is detected from mkosi.conf
+// whatever profile the repository declares.
+func adoptForge(t *testing.T, repoPath string) *AdoptReport {
+	t.Helper()
+	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Profile: "framework"})
+	if err != nil {
+		t.Fatalf("Adopt failed: %v", err)
+	}
+	assertNoIssues(t, rep)
+	return rep
+}
+
+// TestAdopt_Positive_KeepsAnExistingYamllintConfig pins #505: adoption wrote a .yamllint.yml
+// beside the repository's .yamllint.yaml, which yamllint reads first, so the new file was
+// configuration nothing read. The existing file stays, and the report names it.
+func TestAdopt_Positive_KeepsAnExistingYamllintConfig(t *testing.T) {
+	const policy = "extends: default\nrules:\n  line-length: disable\n"
+	repoPath := newImageForge(t, "forge-yamllint-yaml", map[string]string{".yamllint.yaml": policy})
+	rep := adoptForge(t, repoPath)
+	if _, err := os.Stat(filepath.Join(repoPath, ".yamllint.yml")); !os.IsNotExist(err) {
+		t.Fatalf("adoption wrote .yamllint.yml beside .yamllint.yaml: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(repoPath, ".yamllint.yaml")); err != nil || string(got) != policy {
+		t.Fatalf("adoption changed .yamllint.yaml: %q, %v", got, err)
+	}
+	d, ok := flavorDetail(rep, ".yamllint.yaml")
+	if !ok || d.Action != actionSkip || !strings.Contains(d.Details, ".yamllint.yml was not written beside it") {
+		t.Fatalf("the kept configuration must be reported, got %+v in %+v", d, rep.ActionDetails)
+	}
+	if _, ok := flavorDetail(rep, ".yamllint.yml"); ok || contains(rep.CreatedFiles, ".yamllint.yml") {
+		t.Errorf("the report names a .yamllint.yml the repository does not have: %+v", rep.ActionDetails)
+	}
+}
+
+// TestAdopt_Negative_ScaffoldsTheDefaultYamllintConfig asserts a forge with no yamllint
+// configuration still gets the default one.
+func TestAdopt_Negative_ScaffoldsTheDefaultYamllintConfig(t *testing.T) {
+	repoPath := newImageForge(t, "forge-no-yamllint", nil)
+	rep := adoptForge(t, repoPath)
+	d, ok := flavorDetail(rep, ".yamllint.yml")
+	if !ok || d.Action != actionCreate || !contains(rep.CreatedFiles, ".yamllint.yml") {
+		t.Fatalf("the default .yamllint.yml must be scaffolded, got %+v in %v", d, rep.CreatedFiles)
+	}
+}
+
+// TestAdopt_Boundary_ExistingScaffoldNameIsAnExistingFile asserts the scaffolded name already
+// present keeps the existing-file report, not the covered one.
+func TestAdopt_Boundary_ExistingScaffoldNameIsAnExistingFile(t *testing.T) {
+	repoPath := newImageForge(t, "forge-yamllint-yml", map[string]string{".yamllint.yml": "extends: relaxed\n"})
+	rep := adoptForge(t, repoPath)
+	d, ok := flavorDetail(rep, ".yamllint.yml")
+	if !ok || d.Action != actionSkip || !strings.Contains(d.Details, "was not written over it") {
+		t.Fatalf("the existing .yamllint.yml must be reported kept, got %+v", d)
+	}
+}
+
 // TestAdopt_Negative_FlavorWriteFailureIsAnError asserts a template the flavor could not write
 // fails the adoption instead of disappearing with the discarded apply report.
 func TestAdopt_Negative_FlavorWriteFailureIsAnError(t *testing.T) {
