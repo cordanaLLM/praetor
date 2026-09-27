@@ -68,8 +68,9 @@ type CatalogReport struct {
 	Upgrades []UpgradeCandidate `json:"upgrades"`
 	// Ahead are dependencies strictly newer than their catalog pin.
 	Ahead []CatalogDrift `json:"ahead"`
-	// Unranked are dependencies whose version or pin does not parse as SemVer
-	// (a workspace: protocol, a dist-tag, a compound range).
+	// Unranked are dependencies whose version or pin is not a bare, caret or tilde SemVer
+	// version (a comparator such as "<9.0.0", a workspace: protocol, a dist-tag, a
+	// compound range).
 	Unranked []CatalogDrift `json:"unranked"`
 }
 
@@ -90,7 +91,10 @@ func ReconcileCatalog(ctx context.Context, repoPath string) ([]UpgradeCandidate,
 // an upstream upgrade: a dependency already at upstream latest can still be behind or ahead
 // of its pin. The set of dependencies compared is the same online and offline; the versions
 // are not: online, a dependency the package manager reports carries its resolved current
-// version (go list, pnpm outdated), offline the version its manifest declares.
+// version (go list, pnpm outdated), offline the version its manifest declares. A
+// package.json range that is not bare, caret or tilde keeps its declared spec online too
+// (unrankedNodeRange), so it is reported unranked either way. An applied upgrade keeps the
+// declared range's operator and takes only the pin's version (raisedRange).
 func ReconcileCatalogReport(ctx context.Context, repoPath string) (*CatalogReport, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("reconcile catalog: context cannot be nil")
@@ -154,7 +158,8 @@ func catalogVersion(raw string) (semver.Version, bool) {
 // may order: a bare version names the version itself, and a caret or tilde range has it as
 // its floor. Every other comparator bounds the range differently ("<9.0.0" caps it, ">=5.0.0"
 // leaves it open, "=5.0.0" pins it), so ordering its version against a pin could raise a
-// capped range past its cap or report an allowed range as ahead.
+// capped range past its cap or report an allowed range as ahead. raisedRange rewrites only
+// these same forms.
 var rankedRangeOperators = map[string]bool{"": true, "^": true, "~": true}
 
 // rankedVersion returns the SemVer version a bare, caret or tilde range names. ok is false for

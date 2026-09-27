@@ -331,6 +331,36 @@ func TestScanInventory_Boundary_NodeRangeForms(t *testing.T) {
 	}
 }
 
+// Online, pnpm outdated reports every package of the same manifest, each at an installed
+// version with a newer latest release. Only the bare, caret and tilde ranges take pnpm's
+// versions; every other spec keeps its declared form with no upgrade target, exactly as
+// offline, so a comparator is never ranked by what pnpm installed under it.
+func TestScanInventory_Boundary_NodeRangeFormsOnline(t *testing.T) {
+	repo := writePackageJSON(t, `{"dependencies":{"a":"1.0.0","b":"^2.0.0","c":"~3.0.0","d":"=4.0.0","e":">=5.0.0","f":"<6.0.0","g":"<=7.0.0","h":">8.0.0","i":"workspace:*"}}`)
+	entries := make([]string, 0, 9)
+	for i, pkg := range []string{"a", "b", "c", "d", "e", "f", "g", "h", "i"} {
+		entries = append(entries, fmt.Sprintf(`%q:{"current":"%d.0.1","latest":"%d.0.0"}`, pkg, i+1, i+11))
+	}
+	bin, log := standInToolchain(t, map[string]standInReply{pnpmOutdate: {Out: "{" + strings.Join(entries, ",") + "}", Code: 1}}, "pnpm")
+	t.Setenv("PATH", bin)
+	inventory, err := ScanNodeDependencies(testDeadline(t), repo, ScanOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, 0, len(inventory))
+	for _, c := range inventory {
+		got = append(got, c.Package+"="+c.CurrentVersion+"->"+c.TargetVersion)
+	}
+	want := "a=1.0.1->11.0.0 b=2.0.1->12.0.0 c=3.0.1->13.0.0 d==4.0.0->=4.0.0 e=>=5.0.0->>=5.0.0 " +
+		"f=<6.0.0-><6.0.0 g=<=7.0.0-><=7.0.0 h=>8.0.0->>8.0.0 i=workspace:*->workspace:*"
+	if strings.Join(got, " ") != want {
+		t.Fatalf("inventory = %s\nwant        %s", strings.Join(got, " "), want)
+	}
+	if calls := callNames(standInCalls(t, log)); len(calls) != 1 || calls[0] != pnpmOutdate {
+		t.Fatalf("calls = %q, want one pnpm outdated", calls)
+	}
+}
+
 func TestCalculateAuditScore_Boundaries(t *testing.T) {
 	cases := []struct {
 		total, pending, deps, unexamined, upToDate int
