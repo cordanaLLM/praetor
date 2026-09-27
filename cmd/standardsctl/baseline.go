@@ -9,39 +9,115 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/state"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// baselineScanTimeout bounds the repository walk performed by --record (HISS-02).
+// baselineScanTimeout bounds the repository walk performed by --record and --verify (HISS-02).
 const baselineScanTimeout = 5 * time.Minute
 
-func runBaseline(args []string) error {
-	fs := flag.NewFlagSet("baseline", flag.ContinueOnError)
-	baselinePath := fs.String("file", ".standards-baseline.json", "Path to baseline file; its directory is the scanned root")
-	record := fs.Bool("record", false, "Record current infractions into baseline file")
-	allowIncrease := fs.Bool("allow-increase", false, "Permit --record to raise the infraction count (HISS-13 exception); requires --reason")
-	reason := fs.String("reason", "", "Rationale stored in the baseline when --allow-increase raises the count")
+// errBaselineMissing is the distinct verdict of --verify when there is no baseline file: with
+// nothing recorded there is no ratchet to check, which is neither a pass nor new debt.
+var errBaselineMissing = errors.New("no baseline file to verify")
 
-	if _, err := parseInterspersed(fs, args); err != nil {
+// baselineMode is the parsed baseline invocation.
+type baselineMode struct {
+	path          string
+	record        bool
+	verify        bool
+	allowIncrease bool
+	reason        string
+}
+
+func runBaseline(args []string) error {
+	mode, err := parseBaselineMode(args)
+	if err != nil {
 		return err
 	}
-	if fs.NArg() > 0 {
-		return fmt.Errorf("baseline accepts no positional arguments, got %q", fs.Args())
-	}
-
-	b, err := baseline.LoadBaseline(*baselinePath)
+	b, err := baseline.LoadBaseline(mode.path)
 	if err != nil {
 		return fmt.Errorf("failed to load baseline: %w", err)
 	}
 
-	if *record {
-		opts := baseline.RecordOptions{AllowIncrease: *allowIncrease, Rationale: *reason}
-		return recordBaseline(*baselinePath, b, opts)
+	switch {
+	case mode.record:
+		opts := baseline.RecordOptions{AllowIncrease: mode.allowIncrease, Rationale: mode.reason}
+		return recordBaseline(mode.path, b, opts)
+	case mode.verify:
+		return verifyBaseline(mode.path, b)
 	}
+	printBaseline(mode.path, b)
+	return nil
+}
 
-	printBaseline(*baselinePath, b)
+func parseBaselineMode(args []string) (baselineMode, error) {
+	var mode baselineMode
+	fs := flag.NewFlagSet("baseline", flag.ContinueOnError)
+	fs.StringVar(&mode.path, "file", ".standards-baseline.json", "Path to baseline file; its directory is the scanned root")
+	fs.BoolVar(&mode.record, "record", false, "Record current infractions into baseline file")
+	fs.BoolVar(&mode.verify, "verify", false,
+		"Rescan read-only and fail when the repository carries an infraction the baseline does not record or more than it records; never writes the file")
+	fs.BoolVar(&mode.allowIncrease, "allow-increase", false, "Permit --record to raise the infraction count (HISS-13 exception); requires --reason")
+	fs.StringVar(&mode.reason, "reason", "", "Rationale stored in the baseline when --allow-increase raises the count")
+
+	positional, err := parseInterspersed(fs, args)
+	if err != nil {
+		return mode, err
+	}
+	if len(positional) > 0 {
+		return mode, fmt.Errorf("baseline accepts no positional arguments, got %q", positional)
+	}
+	if mode.verify && (mode.record || mode.allowIncrease || mode.reason != "") {
+		return mode, errors.New("--verify is read-only and cannot be combined with --record, --allow-increase or --reason")
+	}
+	return mode, nil
+}
+
+// scanBaselineInfractions scans root under the complexity policy `praetorctl audit` enforces
+// there (config.ResolveRepositoryComplexity resolves a locked repository exactly as the audit
+// does) and fingerprints the violations. --record used to scan with the scanner defaults
+// instead, so in a repository that tightened its function-length limit the recorded baseline
+// and the audit that judges it disagreed on what counts as debt.
+func scanBaselineInfractions(ctx context.Context, root string) ([]baseline.Infraction, error) {
+	complexity, warning, err := config.ResolveRepositoryComplexity(ctx, root)
+	if err != nil {
+		return nil, fmt.Errorf("resolve complexity policy for %s: %w", root, err)
+	}
+	if warning != "" {
+		fmt.Printf("[WARN] %s\n", warning)
+	}
+	scanRep, err := hiss.Scan(ctx, root, complexity.ScanOptions(hiss.ScanOptions{}))
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan for baseline infractions: %w", err)
+	}
+	if scanRep.Truncated {
+		return nil, fmt.Errorf("refusing an incomplete scan: %w", hiss.ErrScanTruncated)
+	}
+	return fingerprintViolations(scanRep.Violations), nil
+}
+
+// verifyBaseline is the read-only ratchet check: it rescans and evaluates the stored baseline
+// with baseline.EvaluateRatchet, the rule the audit applies, and never writes the file. The
+// touched-file clean rule needs a change set, which is the audit's input (`praetorctl audit
+// --base=<ref>`); this check has none, so it applies the count and new-fingerprint rules only.
+func verifyBaseline(path string, b *baseline.Baseline) error {
+	if b.Absent {
+		return fmt.Errorf("[FAIL] %w at %s; record the current debt with 'praetorctl baseline --record'", errBaselineMissing, path)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), baselineScanTimeout)
+	defer cancel()
+	current, err := scanBaselineInfractions(ctx, filepath.Dir(path))
+	if err != nil {
+		return fmt.Errorf("[FAIL] verify %s: %w", path, err)
+	}
+	ratchet := baseline.EvaluateRatchet(b, current, nil)
+	if !ratchet.Passed {
+		return fmt.Errorf("[FAIL] %s: %s", path, ratchet.Summary())
+	}
+	fmt.Printf("[PASS] HISS-13 debt ratchet: %d active infractions within the %d recorded in %s; the file was not rewritten.\n",
+		ratchet.CurrentCount, b.TotalInfractions, path)
 	return nil
 }
 
@@ -70,13 +146,9 @@ func recordBaseline(path string, previous *baseline.Baseline, opts baseline.Reco
 	ctx, cancel := context.WithTimeout(context.Background(), baselineScanTimeout)
 	defer cancel()
 
-	scanRep, err := hiss.Scan(ctx, filepath.Dir(path), hiss.ScanOptions{})
+	current, err := scanBaselineInfractions(ctx, filepath.Dir(path))
 	if err != nil {
-		return fmt.Errorf("failed to scan for baseline infractions: %w", err)
-	}
-
-	if scanRep.Truncated {
-		return fmt.Errorf("refusing to record an incomplete baseline: %w", hiss.ErrScanTruncated)
+		return fmt.Errorf("refusing to record %s: %w", path, err)
 	}
 
 	opts.Repository, opts.CommitSHA, err = baselineIdentity(ctx, filepath.Dir(path))
@@ -84,7 +156,7 @@ func recordBaseline(path string, previous *baseline.Baseline, opts baseline.Reco
 		return fmt.Errorf("refusing to record %s: %w", path, err)
 	}
 
-	next, err := baseline.Record(previous, fingerprintViolations(scanRep.Violations), opts)
+	next, err := baseline.Record(previous, current, opts)
 	if err != nil {
 		return fmt.Errorf("refusing to record %s: %w (pass --allow-increase --reason=<why> to record a deliberate increase)", path, err)
 	}
@@ -124,5 +196,5 @@ func printBaseline(path string, b *baseline.Baseline) {
 	if b.TotalInfractions == 0 {
 		fmt.Println("Zero technical debt recorded in this baseline.")
 	}
-	fmt.Println("This is the stored snapshot, not a live scan; run 'praetorctl audit' to check the repository.")
+	fmt.Println("This is the stored snapshot, not a live scan; run 'praetorctl baseline --verify' or 'praetorctl audit' to check the repository.")
 }

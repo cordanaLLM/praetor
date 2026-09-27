@@ -129,7 +129,7 @@ Zero credentials in Git history:
 Total recorded infractions never grow against the committed baseline:
 
 - An increase in technical debt requires a deliberately recorded rationale.
-- Evaluated against `.standards-baseline.json` by `praetorctl baseline` and the gate's HISS stage.
+- Evaluated against `.standards-baseline.json` by `praetorctl baseline --verify` (read-only), `praetorctl audit` and the gate's HISS stage.
 
 ### HISS-14: Append-Only ABI & Migration Footers
 

@@ -1,0 +1,3 @@
+type: added
+title: Add baseline --verify, a read-only HISS-13 ratchet check that rescans under the audit's complexity policy, fails on unrecorded or additional debt and on a missing baseline, and never rewrites the file; baseline --record now scans under the same policy
+breaking: false
