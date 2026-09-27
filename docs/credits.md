@@ -1,81 +1,60 @@
 # Credits & Acknowledgements
 
-Praetor builds on the work of many open-source projects and published standards. This page credits every upstream origin.
+Praetor adapts ideas from, ships code from, and builds with the open-source projects and published
+specifications below. Each entry links to its upstream source and names its license as stated there.
 
-## Borrowed ideas and adapted work
+## Adapted work
 
-- **Caveman** — The core concept and syntax rules for token-compressed agent replies, implemented in the `caveman` skill and prose linter. MIT.
-  https://github.com/JuliusBrussee/caveman
-- **I Have ADHD (adhd-format)** — Formatting principles for high-focus, ADHD-friendly agent output, implemented in the `adhd-format` skill. MIT, © 2026 Ayoub Ghriss.
-  https://github.com/ayghri/i-have-adhd
+| Project | What praetor takes from it | License |
+| :-- | :-- | :-- |
+| [Caveman](https://github.com/JuliusBrussee/caveman) | The rules for terse, token-compressed agent text, implemented as the `caveman` skill and the prose linter in `internal/caveman` | MIT |
+| [I Have ADHD](https://github.com/ayghri/i-have-adhd) | The formatting principles (bottom line first, bold anchors, callouts) behind the `adhd-format` skill | MIT, © 2026 Ayoub Ghriss |
 
-## Runtime dependencies
+## Shipped in the binaries
 
-- **gopkg.in/yaml.v3** v3.0.1 — YAML parser for Go. MIT (ported libyaml files, © 2006–2011 Kirill Simonov) and Apache-2.0 (© 2011–2019 Canonical Ltd).
-  https://github.com/go-yaml/yaml
-- **markdownlint-cli2** 0.23.2 — Markdown linting engine. MIT, © David Anson.
-  https://github.com/DavidAnson/markdownlint-cli2
-- **micromark** 4.0.2 — Markdown parser. MIT.
-  https://github.com/micromark/micromark
-- **parse5** 8.0.1 — HTML parser. MIT.
-  https://github.com/inikulin/parse5
+| Project | Use | License |
+| :-- | :-- | :-- |
+| [go-yaml v3](https://github.com/go-yaml/yaml) (`gopkg.in/yaml.v3` v3.0.1) | YAML decoding and encoding; the only Go module the binaries link | MIT (files ported from libyaml, © 2006–2011 Kirill Simonov) and Apache-2.0 (© 2011–2019 Canonical Ltd) |
+| [markdownlint-cli2](https://github.com/DavidAnson/markdownlint-cli2) 0.23.2 | Markdown linting; its manifest and lock are embedded and installed for the Markdown gate | MIT, © David Anson |
+| [micromark](https://github.com/micromark/micromark) 4.0.2 | Markdown parsing, pinned in the same lock | MIT |
+| [parse5](https://github.com/inikulin/parse5) 8.0.1 | HTML parsing, pinned in the same lock | MIT |
 
 ## Container base image
 
-- **Distroless** — Minimal container runtime. Apache-2.0, © Google LLC.
-  https://github.com/GoogleContainerTools/distroless
+| Project | Use | License |
+| :-- | :-- | :-- |
+| [Distroless](https://github.com/GoogleContainerTools/distroless) | Runtime base of the published container image | Apache-2.0, © Google LLC |
 
-## Standards and specifications implemented
+## Specifications and standards
 
-- **NASA JPL "Power of 10" Rules** (Gerard J. Holzmann, 2006) — Basis for HISS invariants 01–10.
-  https://spinroot.com/gerard/pdf/P10.pdf
-- **Semantic Versioning 2.0.0** — Version string grammar and precedence.
-  https://semver.org
-- **Conventional Commits 1.0.0** — Commit message structure. MIT, © 2018 Conventional Changelog.
-  https://www.conventionalcommits.org
-- **Keep a Changelog 1.1.0** — Changelog section types. MIT, © 2014 Olivier Lacan.
-  https://keepachangelog.com
-- **Developer Certificate of Origin 1.1** — Commit sign-off contract. © 2004, 2006 The Linux Foundation.
-  https://developercertificate.org
-- **SLSA v1.0** — Supply-chain provenance levels. Community Specification License 1.0.
-  https://slsa.dev
-- **in-toto Attestation Framework v1** — Statement envelope format. Apache-2.0, © 2021 in-toto Developers.
-  https://github.com/in-toto/attestation
-- **CycloneDX 1.5** — Software Bill of Materials schema. Apache-2.0, © OWASP Foundation.
-  https://cyclonedx.org
-- **SPDX** — License identifiers and SBOM format.
-  https://spdx.org
-- **Model Context Protocol (MCP)** — Agent tool protocol.
-  https://modelcontextprotocol.io
-- **Schema.org** — Structured data vocabulary (TechArticle, SoftwareSourceCode). CC-BY-SA-3.0.
-  https://schema.org
-- **EditorConfig** — Cross-editor formatting configuration.
-  https://editorconfig.org
-- **Architectural Decision Records** — Decision documentation format (after Michael Nygard, 2011).
-- **MADR (Markdown Any Decision Records)** — ADR format template. MIT OR CC0-1.0.
-  https://adr.github.io/madr/
-- **AGENTS.md Convention** — Open standard for AI coding agents. MIT, © 2025 OpenAI.
-  https://agents.md/
+| Specification | Where praetor uses it | License |
+| :-- | :-- | :-- |
+| [The Power of 10 rules](https://spinroot.com/gerard/pdf/P10.pdf) (Gerard J. Holzmann, NASA JPL, 2006) | The basis of the HISS invariants | — |
+| [Semantic Versioning 2.0.0](https://semver.org) | Version comparison and release tags | CC BY 3.0 |
+| [Conventional Commits 1.0.0](https://www.conventionalcommits.org) | Commit subjects and the commit check | MIT, © 2018 Conventional Changelog |
+| [Keep a Changelog 1.1.0](https://keepachangelog.com) | Changelog sections | MIT, © 2014 Olivier Lacan |
+| [Developer Certificate of Origin 1.1](https://developercertificate.org) | The `Signed-off-by` requirement | © 2004, 2006 The Linux Foundation |
+| [SLSA v1.0](https://slsa.dev) | Release provenance | Community Specification License 1.0 |
+| [in-toto Attestation Framework v1](https://github.com/in-toto/attestation) | The provenance statement format | Apache-2.0 |
+| [CycloneDX](https://cyclonedx.org) and [SPDX](https://spdx.org) | SBOM formats and license identifiers | Apache-2.0 (CycloneDX); Community Specification License 1.0, older portions CC BY 3.0 (SPDX) |
+| [Model Context Protocol](https://modelcontextprotocol.io) | The MCP servers | Apache-2.0 (moving from MIT; not yet relicensed parts stay MIT) |
+| [Schema.org](https://schema.org) | JSON-LD in the documentation presets | CC BY-SA 3.0 |
+| [EditorConfig](https://editorconfig.org) | Editor settings the adoption writes | BSD-2-Clause, © 2019 EditorConfig Team |
+| [MADR](https://adr.github.io/madr/) | The ADR template, after Michael Nygard's decision records | MIT or CC0-1.0 |
+| [AGENTS.md](https://agents.md/) | The canonical agent instruction file | MIT, © 2025 OpenAI |
 
 ## Build and CI tooling
 
-- **Lefthook** — Git hooks manager. MIT, © 2019 Arkweid.
-  https://github.com/evilmartians/lefthook
-- **GoReleaser** — Release automation. MIT, © 2016–2026 Carlos Becker.
-  https://goreleaser.com
-- **golangci-lint** — Go linter aggregator. GPL-3.0-only.
-  https://golangci-lint.run
-- **Semgrep** — Static analysis. LGPL-2.1-only.
-  https://semgrep.dev
-- **MkDocs** — Documentation generator. BSD-2-Clause, © Tom Christie.
-  https://www.mkdocs.org
-- **MkDocs Material** — Documentation theme. MIT, © Martin Donath.
-  https://squidfunk.github.io/mkdocs-material/
-- **Cosign** (Sigstore) — Container/artifact signing. Apache-2.0.
-  https://github.com/sigstore/cosign
-- **Syft** (Anchore) — SBOM generation. Apache-2.0.
-  https://github.com/anchore/syft
-- **Renovate** — Dependency updates. AGPL-3.0-only.
-  https://github.com/renovatebot/renovate
-- **FSFE reuse-action** — REUSE compliance CI. GPL-3.0-or-later.
-  https://github.com/fsfe/reuse-action
+These run in the build, the hooks or CI. None of them ships in the binaries.
+
+| Project | Use | License |
+| :-- | :-- | :-- |
+| [Lefthook](https://github.com/evilmartians/lefthook) | Git hooks | MIT |
+| [GoReleaser](https://goreleaser.com) | Release archives, the container image and checksums | MIT |
+| [golangci-lint](https://golangci-lint.run) | Go linting | GPL-3.0 |
+| [Semgrep](https://semgrep.dev) | Static analysis rules | LGPL-2.1 |
+| [MkDocs](https://www.mkdocs.org) and [Material for MkDocs](https://squidfunk.github.io/mkdocs-material/) | This site | BSD-2-Clause; MIT |
+| [Cosign](https://github.com/sigstore/cosign) | Keyless signing and verification | Apache-2.0 |
+| [Syft](https://github.com/anchore/syft) | SBOM generation | Apache-2.0 |
+| [Renovate](https://github.com/renovatebot/renovate) | Dependency update proposals | AGPL-3.0 |
+| [REUSE](https://reuse.software) ([reuse-action](https://github.com/fsfe/reuse-action)) | License compliance check | GPL-3.0-or-later |
