@@ -37,7 +37,7 @@ func runDogfoodFlags(args []string) error {
 	maxTargets := fs.Int("max-targets", 20, "Maximum target repositories to simulate")
 	public := addPublicDogfoodFlags(fs)
 
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 

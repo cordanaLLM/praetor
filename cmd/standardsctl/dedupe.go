@@ -96,7 +96,7 @@ func runDedupeCadence(args []string) error {
 	addedLines := fs.Int("added-lines", dedupe.DefaultCadenceAddedLines, "Go source lines added since the last sweep that make a new one due")
 	addedFiles := fs.Int("added-files", dedupe.DefaultCadenceAddedFiles, "Go source files added since the last sweep that make a new one due")
 	record := fs.Bool("record", false, "Record cadence timestamp/commit upon execution")
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 

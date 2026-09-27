@@ -216,7 +216,7 @@ func assertRepositorySourceShape(t *testing.T, m *Manifest) {
 // internal/operationalsync's owner overlay writes into a fork's manifest, and
 // internal/forge's manifestIdentity reads in preference to owner/name, round-trips.
 func TestLoadManifestAcceptsRepositorySource(t *testing.T) {
-	path := writeManifest(t, "version: 1\nrepository:\n  owner: \"lusoris\"\n  name: \"praetor\"\n  visibility: \"private\"\n  source: \"cordanaLLM/praetor\"\n")
+	path := writeManifest(t, "version: 1\nrepository:\n  owner: \"example-owner\"\n  name: \"praetor\"\n  visibility: \"private\"\n  source: \"cordanaLLM/praetor\"\n")
 	m, err := LoadManifest(path)
 	if err != nil {
 		t.Fatalf("load manifest: %v", err)
@@ -232,7 +232,7 @@ func TestLoadManifestAcceptsRepositorySource(t *testing.T) {
 // silent fallback to owner/name -- exactly the ambiguity this field exists to remove.
 func TestLoadManifestRejectsMalformedRepositorySource(t *testing.T) {
 	for _, source := range []string{"not-an-identity", "cordanaLLM/praetor/extra", "/praetor", "cordanaLLM/", "/"} {
-		path := writeManifest(t, "version: 1\nrepository:\n  owner: \"lusoris\"\n  name: \"praetor\"\n  visibility: \"private\"\n  source: \""+source+"\"\n")
+		path := writeManifest(t, "version: 1\nrepository:\n  owner: \"example-owner\"\n  name: \"praetor\"\n  visibility: \"private\"\n  source: \""+source+"\"\n")
 		if _, err := LoadManifest(path); err == nil {
 			t.Errorf("repository.source %q was accepted", source)
 		}

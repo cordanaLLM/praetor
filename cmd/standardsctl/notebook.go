@@ -36,7 +36,7 @@ func notebookCommand(ctx context.Context, args []string, out io.Writer) error {
 	bundlePath := f.String("bundle", "", "Explicit private NotebookLM snapshot")
 	resultPath := f.String("result", "", "Generation JSON to validate")
 	directory := f.String("output-dir", "", "New private output directory")
-	if err := f.Parse(args[1:]); err != nil {
+	if _, err := parseInterspersed(f, args[1:]); err != nil {
 		return err
 	}
 	if f.NArg() != 0 || *bundlePath == "" {

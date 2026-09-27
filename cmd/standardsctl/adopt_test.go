@@ -8,35 +8,35 @@ import (
 	"github.com/cordanaLLM/praetor/internal/adopt"
 )
 
-func TestReorderAdoptArgs_Positive(t *testing.T) {
-	got := reorderTestAdoptArgs([]string{"repo-dir", "--profile", "framework", "--dry-run"})
-	want := "--profile framework --dry-run repo-dir"
-	if strings.Join(got, " ") != want {
-		t.Fatalf("got %q, want %q", strings.Join(got, " "), want)
+func TestParseAdoptArgs_Positive(t *testing.T) {
+	fx := parseAdoptFixture(t, "repo-dir", "--profile", "framework", "--dry-run")
+	if fx.err != nil || fx.profile != "framework" || !fx.bools["dry-run"] || strings.Join(fx.positional, " ") != "repo-dir" {
+		t.Fatalf("flags after the path must bind and the path stay positional: %+v", fx)
 	}
 }
 
-func TestReorderAdoptArgs_Negative_BoolFlagsNeverConsumeAPath(t *testing.T) {
+func TestParseAdoptArgs_Negative_BoolFlagsNeverConsumeAPath(t *testing.T) {
 	for _, flagName := range []string{"--dry-run", "-force", "--record-baseline", "--all-missing"} {
-		got := reorderTestAdoptArgs([]string{flagName, "repo-dir"})
-		if len(got) != 2 || got[0] != flagName || got[1] != "repo-dir" {
-			t.Errorf("%s must not swallow the positional path, got %v", flagName, got)
+		fx := parseAdoptFixture(t, flagName, "repo-dir")
+		if fx.err != nil || strings.Join(fx.positional, " ") != "repo-dir" || !fx.bools[strings.TrimLeft(flagName, "-")] {
+			t.Errorf("%s must not swallow the positional path: %+v", flagName, fx)
 		}
 	}
+	if fx := parseAdoptFixture(t, "repo-dir", "--profile"); fx.err == nil {
+		t.Errorf("a trailing value flag has no value and must be rejected: %+v", fx)
+	}
 }
 
-func TestReorderAdoptArgs_Boundary(t *testing.T) {
-	if got := reorderTestAdoptArgs(nil); len(got) != 0 {
-		t.Fatalf("nil args must yield no args, got %v", got)
+func TestParseAdoptArgs_Boundary(t *testing.T) {
+	if fx := parseAdoptFixture(t); fx.err != nil || len(fx.positional) != 0 {
+		t.Fatalf("no args must yield no positionals: %+v", fx)
 	}
-	if got := reorderTestAdoptArgs([]string{"--profile=framework", "repo"}); strings.Join(got, " ") != "--profile=framework repo" {
-		t.Fatalf("flag=value form must stay intact, got %v", got)
+	if fx := parseAdoptFixture(t, "--profile=framework", "repo"); fx.err != nil || fx.profile != "framework" || strings.Join(fx.positional, " ") != "repo" {
+		t.Fatalf("flag=value form must stay intact: %+v", fx)
 	}
-	if got := reorderTestAdoptArgs([]string{"--profile"}); len(got) != 1 {
-		t.Fatalf("a trailing value flag has no value to consume, got %v", got)
-	}
-	if got := reorderTestAdoptArgs([]string{"--profile", "--dry-run"}); len(got) != 2 {
-		t.Fatalf("a flag following a value flag is not its value, got %v", got)
+	// The flag package reads the next token as a value flag's value, whatever it looks like.
+	if fx := parseAdoptFixture(t, "--profile", "--dry-run"); fx.err != nil || fx.profile != "--dry-run" || fx.bools["dry-run"] {
+		t.Fatalf("a value flag takes the next token as its value: %+v", fx)
 	}
 }
 
@@ -155,9 +155,28 @@ func TestPrintAdoptReportDerivesPillarLinesFromSteps(t *testing.T) {
 	}
 }
 
-// reorderTestAdoptArgs supplies the adoption flag fixtures to the shared parser.
-func reorderTestAdoptArgs(args []string) []string {
-	return reorderArgs(args, map[string]bool{
-		"dry-run": true, "force": true, "record-baseline": true, "all-missing": true,
-	})
+// adoptArgsFixture is what parseInterspersed made of one adoption argv.
+type adoptArgsFixture struct {
+	profile    string
+	bools      map[string]bool
+	positional []string
+	err        error
+}
+
+// parseAdoptFixture parses args with a FlagSet carrying the adoption command's boolean
+// flags and its --profile value flag, through the parser runAdopt uses.
+func parseAdoptFixture(t *testing.T, args ...string) adoptArgsFixture {
+	t.Helper()
+	fs := newQuietFlagSet("adopt")
+	profile := fs.String("profile", "", "")
+	bools := map[string]*bool{}
+	for _, name := range []string{"dry-run", "force", "record-baseline", "all-missing"} {
+		bools[name] = fs.Bool(name, false, "")
+	}
+	positional, err := parseInterspersed(fs, args)
+	fx := adoptArgsFixture{profile: *profile, bools: map[string]bool{}, positional: positional, err: err}
+	for name, value := range bools {
+		fx.bools[name] = *value
+	}
+	return fx
 }

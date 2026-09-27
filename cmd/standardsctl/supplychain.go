@@ -21,7 +21,7 @@ func runSBOM(args []string) error {
 	moduleVersion := fs.String("module-version", "",
 		"Version of the scanned module to record (default: its release tag on HEAD, omitted when HEAD has none)")
 
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 
@@ -95,8 +95,9 @@ func runProvenance(args []string) error {
 	return nil
 }
 
-// parseProvenanceFlags reads the provenance flags and refuses a run with no subject source
-// or with -checksums beside the single-artifact flags it replaces.
+// parseProvenanceFlags reads the provenance flags, written in any order, and refuses a run
+// with a positional argument, with no subject source, or with -checksums beside the
+// single-artifact flags it replaces.
 func parseProvenanceFlags(args []string) (provenanceFlags, error) {
 	var f provenanceFlags
 	fs := flag.NewFlagSet("provenance", flag.ContinueOnError)
@@ -108,10 +109,13 @@ func parseProvenanceFlags(args []string) (provenanceFlags, error) {
 		"sha256sum manifest, such as GoReleaser's checksums.txt: every listed file beside it becomes a subject, "+
 			"digested from its bytes and cross-checked against its line (excludes -file, -artifact and -digest)")
 	fs.StringVar(&f.out, "out", "", "Output file path (default stdout)")
-	if err := fs.Parse(args); err != nil {
+	positional, err := parseInterspersed(fs, args)
+	if err != nil {
 		return f, err
 	}
 	switch {
+	case len(positional) > 0:
+		return f, fmt.Errorf("provenance accepts no positional arguments, got %q", positional)
 	case f.checksums != "" && (f.file != "" || f.artifact != "" || f.digest != ""):
 		return f, fmt.Errorf("flag -checksums names every subject itself and excludes -file, -artifact and -digest")
 	case f.checksums == "" && f.file == "":

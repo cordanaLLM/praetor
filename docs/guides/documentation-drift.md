@@ -202,6 +202,9 @@ go run ./cmd/standardsctl docs references --path=.
 go test ./internal/docsref/                       # its tests and fixture corpus
 ```
 
+`docs references` takes no positional argument. It parses argv like every other command, so a
+stray argument is refused by name wherever it stands among the flags, and a `--` ends the flags.
+
 It runs inside `make verify-all`, as the light documentation step of `.github/workflows/ci.yml`,
 and on every leg of `.github/workflows/portability.yml`. It lists the tree through git, so a file
 that exists only on one machine never satisfies it there and fails it in CI. The fixture corpus

@@ -101,7 +101,7 @@ func parseAuditOptions(args []string) (*auditOptions, error) {
 	fs.StringVar(&policy.DeploymentPath, "deployment-config", "", "Explicit deployment complexity policy file")
 	fs.StringVar(&policy.WorkstationPath, "workstation-config", "", "Explicit workstation complexity policy file")
 
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return nil, err
 	}
 	if fs.NArg() > 0 {

@@ -64,7 +64,7 @@ func stateArgs(name string, args []string, extra func(*flag.FlagSet)) (dirFlag s
 	if extra != nil {
 		extra(fs)
 	}
-	if parseErr := fs.Parse(reorderArgs(args, boolFlagNames(fs))); parseErr != nil {
+	if _, parseErr := parseInterspersed(fs, args); parseErr != nil {
 		return "", nil, parseErr
 	}
 	return *dir, fs.Args(), nil
@@ -419,8 +419,11 @@ func runStateBugAdd(args []string) error {
 	loc := fs.String("location", "core", "File or component location")
 	ctxStr := fs.String("context", "", "Additional context")
 	dir := fs.String("dir", ".", "Repository directory")
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("state bug add accepts no positional arguments, got %q", fs.Args())
 	}
 	if *title == "" {
 		return fmt.Errorf("--title is required")
@@ -504,8 +507,11 @@ func runStateQuestionAdd(args []string) error {
 	opts := fs.String("options", "", "Comma-separated options")
 	ctxStr := fs.String("context", "", "Context for decision")
 	dir := fs.String("dir", ".", "Repository directory")
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("state question add accepts no positional arguments, got %q", fs.Args())
 	}
 	if *prompt == "" {
 		return fmt.Errorf("--prompt is required")

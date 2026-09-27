@@ -23,7 +23,7 @@ func runCompileFrameworkAssets(args []string) error {
 	fs := flag.NewFlagSet("compile-framework-assets", flag.ContinueOnError)
 	configPath := fs.String("config", "", "Framework kit config: one YAML document with kit_name, language, version, description, rules, skills, components (required)")
 	output := fs.String("output", "", "Directory to write the kit assets into (required)")
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() > 0 {

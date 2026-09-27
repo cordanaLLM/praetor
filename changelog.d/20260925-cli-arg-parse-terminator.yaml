@@ -1,0 +1,3 @@
+type: fixed
+title: Every praetorctl command now parses flags written after a positional argument instead of silently dropping them, keeps everything after a -- terminator positional (a dashed task description after -- no longer fails as an undefined flag), state bug add and state question add refuse a stray positional argument by name instead of recording the entry with default values and exiting 0, and provenance refuses one by name instead of reporting -file as missing
+breaking: false

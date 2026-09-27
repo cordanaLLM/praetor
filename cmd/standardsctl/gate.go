@@ -76,13 +76,14 @@ func runGateRun(args []string) error {
 			"network; no receipt is minted")
 	asJSON := fs.Bool("json", false, "Output pipeline results as JSON")
 
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
-	// Flag parsing stops at the first positional argument; refusing leftovers keeps a
-	// misplaced --path or --dry-run from being silently ignored.
+	// parseInterspersed binds --path, --dry-run and --json wherever they stand, so any
+	// positional left over is a stray token (a path missing its --path, or a token after
+	// --): refusing it keeps it from being silently ignored.
 	if fs.NArg() > 0 {
-		return fmt.Errorf("gate run accepts no positional arguments, got %q (flags must precede them)", fs.Args())
+		return fmt.Errorf("gate run accepts no positional arguments, got %q", fs.Args())
 	}
 
 	// The run deadline follows the race stage's resolved bound. A fixed five minutes cut the
@@ -137,7 +138,7 @@ func runGateDeadline(args []string) error {
 	fs := flag.NewFlagSet("gate deadline", flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "Output the resolved run deadline as JSON")
 
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() > 0 {
@@ -179,7 +180,7 @@ func runGateVerify(args []string) error {
 	publicKeyHex := fs.String("public-key", "",
 		"Hex-encoded Ed25519 public key to verify against, overriding the manifest-pinned key")
 
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() > 0 {
@@ -278,7 +279,7 @@ func runGateKeygen(args []string) error {
 	fs := flag.NewFlagSet("gate keygen", flag.ContinueOnError)
 	keyPath := fs.String("key", "", "Where to write the private key (default ~/.config/praetor/receipt.key)")
 
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() > 0 {

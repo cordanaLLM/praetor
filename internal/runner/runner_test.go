@@ -98,7 +98,7 @@ func TestCascadingRunnerConfig_3D(t *testing.T) {
 	}
 
 	// 2. Org config override
-	orgYAML := "runners:\n  default: arc-org-cordana\n"
+	orgYAML := "runners:\n  default: arc-org-acme\n"
 	if err := os.WriteFile(filepath.Join(orgDir, "cordanaLLM.yaml"), []byte(orgYAML), 0644); err != nil {
 		t.Fatalf("write org config failed: %v", err)
 	}

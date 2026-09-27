@@ -164,7 +164,7 @@ func overlayManifestInPlace(t *testing.T, dest string) {
 	if err != nil {
 		t.Fatalf("read copied manifest: %v", err)
 	}
-	overlaid, err := ownerManifest(raw, identity{Owner: "lusoris", Name: "praetor", Visibility: "private"})
+	overlaid, err := ownerManifest(raw, identity{Owner: "example-owner", Name: "praetor", Visibility: "private"})
 	if err != nil {
 		t.Fatalf("apply owner overlay: %v", err)
 	}

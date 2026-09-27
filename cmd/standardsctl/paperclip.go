@@ -48,7 +48,7 @@ func printPaperclipUsage() {
 func runPaperclipHarness(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("paperclip harness", flag.ContinueOnError)
 	path := fs.String("path", ".", "Target repository path")
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 
@@ -77,7 +77,7 @@ func runPaperclipDisposition(ctx context.Context, args []string) error {
 	actor := fs.String("actor", "praetor/agent", "Actor identity creating the disposition")
 	outputPath := fs.String("output", "", "Optional path to save disposition JSON (defaults to stdout)")
 
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 
@@ -117,7 +117,7 @@ func runPaperclipVerify(ctx context.Context, args []string) error {
 	dispPath := fs.String("disposition", "", "Path to disposition JSON file to verify")
 	manifestPath := fs.String("config", "", "Path to .standards.yaml carrying receipt.public_key (default <path>/.standards.yaml)")
 
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 

@@ -70,7 +70,7 @@ func runHarvestWorkstation(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("harvest workstation", flag.ContinueOnError)
 	dirFlag := fs.String("dir", "", "Path to development directory "+devRootUsageDefault)
 	jsonOutput := fs.Bool("json", false, "Emit the complete read-only workstation report as JSON")
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
@@ -137,7 +137,7 @@ func runHarvestSkills(ctx context.Context, args []string) error {
 	dedupe := fs.Bool("dedupe", false, "Remove redundant shadowed duplicate skills")
 	cleanBackups := fs.Bool("clean-backups", false, "Purge stale GEMINI.md backups")
 	dryRun := fs.Bool("dry-run", true, "Simulate changes without deleting")
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 
@@ -280,7 +280,7 @@ func printHarvestFleet(ctx context.Context, rootDir string) error {
 func runHarvestMemory(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("harvest memory", flag.ContinueOnError)
 	brainFlag := fs.String("brain", "", "Path to brain directory (default: every existing Antigravity brain under $HOME/.gemini)")
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 
@@ -318,7 +318,7 @@ func runHarvestOnboard(ctx context.Context, args []string) error {
 	allMissing := fs.Bool("all-missing", false, "Onboard all unmanaged repositories under --dir")
 	dryRun := fs.Bool("dry-run", true, "Preview onboarding actions without modifying files")
 	dirFlag := fs.String("dir", "", "Path to development directory "+devRootUsageDefault)
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 
@@ -393,7 +393,7 @@ func runHarvestBundle(ctx context.Context, args []string) error {
 	vaultDir := fs.String("vault", "", "Optional path to workstation vault containing patches/inventory")
 	includeHistory := fs.Bool("include-shell-history", false, "Include shell history, which may contain credentials")
 
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 
@@ -484,7 +484,7 @@ func runHarvestIngest(ctx context.Context, args []string) error {
 	skillsFlag := fs.String("skills-dir", "", "Destination skills directory (default: $HOME/.gemini/config/skills)")
 	dryRun := fs.Bool("dry-run", true, "Analyze without copying files")
 
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 

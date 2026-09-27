@@ -247,7 +247,7 @@ func parseSyncFlags(args []string) (syncFlags, error) {
 	catalogRoot := fs.String("catalog-root", "", "Root containing pinned .config/archetypes for lock digest verification (default: reconciled root)")
 	forgeHost := fs.String("forge-host", defaultForgeHost, "Git host the origin remote must point at for --remote (GitHub Enterprise: the server's host name)")
 
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return syncFlags{}, err
 	}
 	if fs.NArg() > 0 {

@@ -71,7 +71,7 @@ func runNeedsScan(ctx context.Context, args []string) error {
 	writeManifest := fs.Bool("write", false, "Write discovered needs to .needs.yaml")
 	check := fs.Bool("check", false, "Fail when the committed .needs.yaml differs from a fresh scan (updated_at ignored)")
 	settings := registerOperatorSettingsFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if *writeManifest && *check {
@@ -132,7 +132,7 @@ func runNeedsReport(ctx context.Context, args []string) error {
 	path := fs.String("path", ".", "Target repository path")
 	framework := fs.String("framework", "", "Target framework repository path "+frameworkUsageDefault)
 	settings := registerOperatorSettingsFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 
@@ -165,7 +165,7 @@ func runNeedsAggregate(ctx context.Context, args []string) error {
 	framework := fs.String("framework", "", "Framework repository path "+frameworkUsageDefault)
 	outputFile := fs.String("output", "", "Optional file path to write markdown report")
 	settings := registerOperatorSettingsFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 
@@ -193,7 +193,7 @@ func runNeedsMigrate(ctx context.Context, args []string) error {
 	dryRun := fs.Bool("dry-run", true, "Preview migration without mutating files")
 	apply := fs.Bool("apply", false, "Request application (blocked until module-version/API evidence is validated)")
 	settings := registerOperatorSettingsFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 
@@ -288,7 +288,7 @@ func runNeedsRequests(ctx context.Context, args []string) error {
 	framework := fs.String("framework", "", "Framework repository path "+frameworkUsageDefault)
 	outputDir := fs.String("output-dir", "", "Optional output directory to write demand requests")
 	settings := registerOperatorSettingsFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 

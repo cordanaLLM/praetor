@@ -49,7 +49,7 @@ func parseWishesArgs(args []string) (wishesOptions, error) {
 	fs := flag.NewFlagSet("wishes "+options.subcommand, flag.ContinueOnError)
 	fs.StringVar(&options.storePath, "store", defaultWishesStore, "Private wish ledger path")
 	fs.StringVar(&options.requestPath, "request", "", "Bounded JSON request path")
-	if err := fs.Parse(args[1:]); err != nil {
+	if _, err := parseInterspersed(fs, args[1:]); err != nil {
 		return wishesOptions{}, err
 	}
 	if fs.NArg() != 0 {

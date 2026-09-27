@@ -48,7 +48,7 @@ func runWorkstationInstall(ctx context.Context, args []string) error {
 	manifest := fs.String("manifest", "", "Install manifest path (default: the per-user configuration directory)")
 	fleetConfig := fs.String("fleet-config", "", "Fleet settings document; recorded into the install manifest")
 	workstationConfig := fs.String("workstation-config", "", "Workstation settings document; recorded into the install manifest")
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
@@ -148,7 +148,7 @@ func runWorkstationStatus(ctx context.Context, args []string) error {
 	binDir := fs.String("bin-dir", "", "Bin directory to check for an installation lock (default: the manifest's own bin_dir)")
 	manifest := fs.String("manifest", "", "Install manifest path (default: the per-user configuration directory)")
 	homeFlag := fs.String("home", "", "Workstation home directory for per-client root resolution (default: $HOME)")
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {

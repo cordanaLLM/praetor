@@ -20,7 +20,7 @@ func runADR(args []string) error {
 	}
 	fs := flag.NewFlagSet("adr verify", flag.ContinueOnError)
 	repoPath := fs.String("path", ".", "Repository root to verify")
-	if err := fs.Parse(args[1:]); err != nil {
+	if _, err := parseInterspersed(fs, args[1:]); err != nil {
 		return err
 	}
 	// adr.Verify bounds itself; a second bound here would silently cap a raised inner one.

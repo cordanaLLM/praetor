@@ -109,7 +109,7 @@ func runTopologyAudit(ctx context.Context, args []string) error {
 		"Print a stated skip instead of auditing <home>/dev when no --dev-root, positional root, $"+
 			devRootEnv+" or $"+legacyDevRootEnv+" names a dev root")
 	settings := registerOperatorSettingsFlags(fs)
-	if err := fs.Parse(reorderArgs(args, boolFlagNames(fs))); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if *skipUnconfigured && topologyRootUnconfigured(*devRootFlag, fs.Args()) {
@@ -199,7 +199,7 @@ func runTopologyClean(ctx context.Context, args []string) error {
 	devRootFlag := fs.String("dev-root", "", "Target workstation dev root directory "+devRootUsageDefault)
 	dryRun := fs.Bool("dry-run", true, "Simulate cleaning without deleting files")
 	settings := registerOperatorSettingsFlags(fs)
-	if err := fs.Parse(reorderArgs(args, boolFlagNames(fs))); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	devRoot, err := resolveDevRoot(*devRootFlag, fs.Args())

@@ -61,7 +61,7 @@ func runBumpScan(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("bump scan", flag.ContinueOnError)
 	path := fs.String("path", ".", "Target repository path")
 	includePrerelease := fs.Bool("prerelease", true, "Include alpha, beta, rc, and nightly channels")
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 
@@ -91,7 +91,7 @@ func runBumpUpdate(ctx context.Context, args []string) error {
 	path := fs.String("path", ".", "Target repository path")
 	all := fs.Bool("all", false, "Update all discovered outdated dependencies")
 	prerelease := fs.Bool("prerelease", false, "Include prerelease versions")
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 
@@ -142,7 +142,7 @@ func runBumpUnify(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("bump unify", flag.ContinueOnError)
 	path := fs.String("path", ".", "Target repository path")
 	apply := fs.Bool("apply", false, "Apply unified versions to repository")
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 
@@ -264,7 +264,7 @@ func runBumpTrain(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("bump train", flag.ContinueOnError)
 	path := fs.String("path", ".", "Target repository path")
 	dryRun := fs.Bool("dry-run", false, "Simulate bump train without modifying files")
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 
@@ -355,7 +355,7 @@ func runBumpAudit(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("bump audit", flag.ContinueOnError)
 	path := fs.String("path", ".", "Target repository path")
 	prerelease := fs.Bool("prerelease", false, "Include prerelease channels")
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 

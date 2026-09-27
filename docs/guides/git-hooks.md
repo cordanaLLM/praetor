@@ -29,6 +29,35 @@ semgrep --version
 Keep `$HOME/.local/bin` on `PATH`. The symlink command deliberately refuses to
 replace an existing executable. See the [Semgrep package installation guidance](https://pypi.org/project/semgrep/1.177.0/).
 
+`make verify-all` also runs `make hooks-lint` (`scripts/test_emitted_hook_lint.py`). It lints
+the Praetor-owned canonical hook sources: `.config/lefthook/scripts/checkpoint.py` and
+`common.py`, which adoption copies into a repository, and `.config/lefthook/praetor.yml`, the
+vendorable canonical policy. Adoption does not write `praetor.yml`; an adopter vendors it by
+hand with its scripts and extends it from their own `lefthook.yml`, as
+`.config/lefthook/README.md` describes. These files must pass the linters an adopter's own
+hooks may run: black and yamllint with their built-in defaults (yamllint in strict mode) and
+flake8 at 100 columns. The gate lints copies in an empty directory with configuration files
+ignored, and checks negative and boundary fixtures so the policy is proven to be on.
+
+The gate does not yet cover the two hook files adoption renders from templates in
+`internal/adopt/hooks.go`: the root `lefthook.yml` (`buildLefthookYAMLFor`) and
+`.config/agent/hooks/block_evasion.py` (`blockEvasionTemplate`). Both still fail that policy,
+so an adopter whose hooks lint the whole tree still fails on them. They stay open under
+BUG-782.
+
+The tools come from the hash-locked `.config/hook-lint/requirements.txt`, which Renovate
+recompiles from `requirements.in`:
+
+```bash
+python3 -m venv "$HOME/.local/share/praetor-tools/hook-lint"
+"$HOME/.local/share/praetor-tools/hook-lint/bin/python" -m pip install --require-hashes -r .config/hook-lint/requirements.txt
+PRAETOR_HOOK_LINT_BIN="$HOME/.local/share/praetor-tools/hook-lint/bin" make hooks-lint
+```
+
+Without `PRAETOR_HOOK_LINT_BIN` the gate takes the tools from `PATH`, and each check skips
+with its reason when its tool is missing or is not the pinned version. With the variable set,
+as CI sets it, a missing or mismatched tool fails the gate.
+
 | Git stage | Work performed |
 | --- | --- |
 | `pre-commit`, `pre-merge-commit` | Audit the live private ledger, then check the exact index for whitespace, conflict markers, Python/JSON syntax, YAML, shell, workflow and Docker lint; Go formatting and vet on changed packages; verify affected generated agent instructions. |

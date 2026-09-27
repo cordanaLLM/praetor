@@ -57,7 +57,7 @@ func worktreeManager(name string, args []string, extra func(*flag.FlagSet)) (*wo
 	if extra != nil {
 		extra(fs)
 	}
-	if err := fs.Parse(reorderArgs(args, boolFlagNames(fs))); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return nil, nil, err
 	}
 	return worktree.NewManager(*path), fs.Args(), nil

@@ -6,7 +6,7 @@ Superseded by [ADR-0012](0012-current-delivery-runner-and-pipeline-state.md) —
 
 ## Context
 
-Praetor serves as the universal governance engine and repository-as-code standard for the Cordana ecosystem.
+Praetor serves as the universal governance engine and repository-as-code standard for the fleet.
 To maintain high velocity while guaranteeing system integrity, we require a clear separation between core framework development and live workstation deployment.
 Directly committing unverified experimental code to the core engine introduces regressions, while developing entirely in isolation causes divergence from real-world developer workflows.
 
@@ -15,8 +15,8 @@ Directly committing unverified experimental code to the core engine introduces r
 We establish a two-tiered repository topology:
 
 1. **Canonical Engine (`cordanaLLM/praetor`)**: The authoritative upstream repository containing core compilers, AST parsers, HISS invariants, container definitions, and runner matrices. All changes must satisfy the anti-direct-merge gating pipeline and 100% zero-debt baseline.
-2. **Managing & Dogfooding Fork (`lusoris/praetor`)**: The active downstream fork deployed on real workstations. It harvests developer requirements, tests pre-release features, and reports capability demand to upstream via `.needs.yaml`.
-3. **Reverse-Dogfooding Flow**: Requirements and bug discoveries flow from `lusoris/praetor` $\rightarrow$ upstream `cordanaLLM/praetor`. Verified releases and signed tags flow downstream from `cordanaLLM/praetor` $\rightarrow$ `lusoris/praetor`.
+2. **Managing & Dogfooding Fork (`<owner>/praetor`)**: The active downstream fork deployed on real workstations. It harvests developer requirements, tests pre-release features, and reports capability demand to upstream via `.needs.yaml`.
+3. **Reverse-Dogfooding Flow**: Requirements and bug discoveries flow from the operator fork (`<owner>/praetor`) $\rightarrow$ upstream `cordanaLLM/praetor`. Verified releases and signed tags flow downstream from `cordanaLLM/praetor` $\rightarrow$ the operator fork (`<owner>/praetor`).
 
 ## Consequences
 
@@ -43,3 +43,13 @@ rationale: >-
   inverting the reverse-dogfooding topology: the engine would enforce on adopters what it had
   exempted itself from.
 ```
+
+## Redactions
+
+Identifier-only redactions under [ADR-0014](0014-operator-neutral-defaults.md) §7. No decision,
+rationale, status or evidence path changed; line numbers refer to this file.
+
+- 2026-09-27, line 9: an operator-private fleet name became "the fleet".
+- 2026-09-27, line 18: the operator fork's owner account became the placeholder `<owner>`.
+- 2026-09-27, line 19: the operator fork's repository, named twice, became "the operator fork
+  (`<owner>/praetor`)".

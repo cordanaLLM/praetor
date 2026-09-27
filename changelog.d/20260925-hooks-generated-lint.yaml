@@ -1,0 +1,3 @@
+type: fixed
+title: The Praetor-owned canonical hook sources, meaning the checkpoint.py and common.py scripts adoption copies into a repository and the vendorable canonical policy .config/lefthook/praetor.yml, now pass black, flake8 at 100 columns and yamllint's default strict policy, and make hooks-lint (part of make verify-all) keeps them there with a hash-locked toolchain that Renovate updates; the lefthook.yml and .config/agent/hooks/block_evasion.py that adoption renders from templates still fail that policy and remain open
+breaking: false

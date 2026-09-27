@@ -19,11 +19,23 @@ class HookError(Exception):
 KILL_TREE_TIMEOUT = 10
 # The praetor CLI runs each git or go command in a process group of its own. Asked to stop by a
 # catchable signal, it forwards that signal to each command's group, waits up to its
-# util.CommandWaitDelay (5 s) for them, and kills the rest (internal/util/command_interrupt_unix.go).
-# STOP_GRACE outlasts that before the whole group is killed.
+# util.CommandWaitDelay (5 s) for them, and kills the rest
+# (internal/util/command_interrupt_unix.go). STOP_GRACE outlasts that before the whole
+# group is killed.
 STOP_GRACE = 10
 STOP_POLL = 0.05
 SNAPSHOT_GIT_CONFIG = ("-c", "core.autocrlf=false")
+# A commit snapshot clones without checkout or hardlinks; the source keeps a remote name of
+# its own so the adopter's origin can be restored under "origin".
+SNAPSHOT_CLONE = (
+    "git",
+    "clone",
+    "--quiet",
+    "--no-hardlinks",
+    "--no-checkout",
+    "--origin",
+    "praetor-snapshot",
+)
 # The operating system already bounds a process environment, but the hook applies a lower
 # deterministic ceiling before scanning it. Git propagates command-line `-c` values to hooks
 # through GIT_CONFIG_COUNT plus indexed key/value variables or through GIT_CONFIG_PARAMETERS.
@@ -129,9 +141,14 @@ def _await_group_exit(process, grace):
 def _kill_process_tree(process, timeout=KILL_TREE_TIMEOUT):
     """Kill a child and its descendants where no process group exists to signal."""
     try:
-        subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)],
-                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                       stderr=subprocess.DEVNULL, timeout=timeout, check=False)
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout,
+            check=False,
+        )
     except (OSError, subprocess.SubprocessError):
         pass  # No tree killer on this host; the direct kill below is what remains.
     process.kill()
@@ -202,8 +219,10 @@ def _bounded_output_threaded(process, timeout, maximum):
     for stream, key in ((process.stdout, "stdout"), (process.stderr, "stderr")):
         threading.Thread(target=_drain, args=(stream, key, bound), daemon=True).start()
     with bound.changed:
-        done = bound.changed.wait_for(lambda: bound.exceeded or bound.finished == 2,
-                                      timeout=max(0.0, deadline - time.monotonic()))
+        done = bound.changed.wait_for(
+            lambda: bound.exceeded or bound.finished == 2,
+            timeout=max(0.0, deadline - time.monotonic()),
+        )
         if bound.exceeded:
             raise HookError("checkpoint command output exceeded its byte limit")
         if not done:
@@ -244,8 +263,29 @@ def _bounded_output(process, timeout, maximum):
     raise HookError("checkpoint command exceeded its read bound")
 
 
-def run_bounded(args, cwd=None, *, timeout=10, max_output=1024 * 1024,
-                env=None, allowed=(0,), grace=None):
+def _spawn_bounded(args, cwd, env):
+    """Start args in a session of its own, stdin closed and both streams piped."""
+    return subprocess.Popen(
+        args,
+        cwd=cwd,
+        env=env,
+        start_new_session=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+
+def run_bounded(
+    args,
+    cwd=None,
+    *,
+    timeout=10,
+    max_output=1024 * 1024,
+    env=None,
+    allowed=(0,),
+    grace=None,
+):
     """Bound both streams during capture; never copy credential-bearing diagnostics.
 
     ``grace`` bounds the stop of a child that overran (see ``_stop_bounded``); by default the
@@ -254,30 +294,39 @@ def run_bounded(args, cwd=None, *, timeout=10, max_output=1024 * 1024,
     if not 0 < timeout <= 60 or not 0 < max_output <= 1024 * 1024:
         raise HookError("invalid checkpoint process bounds")
     try:
-        with subprocess.Popen(args, cwd=cwd, env=env, start_new_session=True,
-                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                              stderr=subprocess.PIPE) as process:
+        with _spawn_bounded(args, cwd, env) as process:
             try:
                 stdout = _bounded_output(process, timeout, max_output)
             except BaseException:
                 _stop_bounded(process, grace)
                 raise
             if process.returncode not in allowed:
-                raise HookError(f"{args[0]} exited {process.returncode}; checkpoint unverified")
+                raise HookError(
+                    f"{args[0]} exited {process.returncode}; checkpoint unverified"
+                )
             return stdout
     except (OSError, subprocess.TimeoutExpired) as error:
-        raise HookError(f"{args[0]} checkpoint process failed ({type(error).__name__})") from error
+        raise HookError(
+            f"{args[0]} checkpoint process failed ({type(error).__name__})"
+        ) from error
 
 
-def run(args, cwd=None, *, data=None, timeout=180, capture=True, env=None, allowed=(0,)):
+def run(
+    args, cwd=None, *, data=None, timeout=180, capture=True, env=None, allowed=(0,)
+):
     """Execute argv without a shell; preserve failures and bound every process."""
     settings = dict(os.environ if env is None else env)
     settings["PYTHONDONTWRITEBYTECODE"] = MANAGED_PROCESS_ENV["PYTHONDONTWRITEBYTECODE"]
     try:
-        with subprocess.Popen(args, cwd=cwd, env=settings, start_new_session=True,
-                              stdin=subprocess.PIPE if data is not None else None,
-                              stdout=subprocess.PIPE if capture else None,
-                              stderr=subprocess.PIPE if capture else None) as process:
+        with subprocess.Popen(
+            args,
+            cwd=cwd,
+            env=settings,
+            start_new_session=True,
+            stdin=subprocess.PIPE if data is not None else None,
+            stdout=subprocess.PIPE if capture else None,
+            stderr=subprocess.PIPE if capture else None,
+        ) as process:
             try:
                 stdout, stderr = process.communicate(input=data, timeout=timeout)
             except (subprocess.TimeoutExpired, KeyboardInterrupt) as error:
@@ -291,8 +340,10 @@ def run(args, cwd=None, *, data=None, timeout=180, capture=True, env=None, allow
         raise HookError(f"{args[0]}: {error}") from error
     if process.returncode not in allowed:
         output = (stdout or b"") + (stderr or b"")
-        raise HookError(f"{' '.join(map(str, args))} exited {process.returncode}\n"
-                        + output.decode(errors="replace"))
+        raise HookError(
+            f"{' '.join(map(str, args))} exited {process.returncode}\n"
+            + output.decode(errors="replace")
+        )
     return stdout or b""
 
 
@@ -378,6 +429,7 @@ def refuse_after(seconds, refuse):
     ``refuse`` returns None when the hook has already answered; the hook then exits itself.
     The caller cancels the timer once it has answered.
     """
+
     def expire():
         code = refuse()
         if code is not None:
@@ -394,10 +446,21 @@ def _checkout_identity(directory, budget):
 
     None when Git exits fatally there: the directory is in no repository Git can open.
     """
-    raw = run_bounded(["git", "rev-parse", "--path-format=absolute", "--show-toplevel",
-                       "--git-common-dir"], cwd=directory,
-                      timeout=budget.timeout(SESSION_GIT_TIMEOUT), max_output=SESSION_GIT_OUTPUT,
-                      env=clean_env(), allowed=(0, GIT_FATAL), grace=SESSION_GIT_GRACE)
+    raw = run_bounded(
+        [
+            "git",
+            "rev-parse",
+            "--path-format=absolute",
+            "--show-toplevel",
+            "--git-common-dir",
+        ],
+        cwd=directory,
+        timeout=budget.timeout(SESSION_GIT_TIMEOUT),
+        max_output=SESSION_GIT_OUTPUT,
+        env=clean_env(),
+        allowed=(0, GIT_FATAL),
+        grace=SESSION_GIT_GRACE,
+    )
     lines = os.fsdecode(raw).splitlines()
     if not lines:
         return None
@@ -406,7 +469,9 @@ def _checkout_identity(directory, budget):
     try:
         return Path(lines[0]).resolve(), Path(lines[1]).resolve()
     except (OSError, RuntimeError) as error:
-        raise HookError(f"checkout identity does not resolve ({type(error).__name__})") from error
+        raise HookError(
+            f"checkout identity does not resolve ({type(error).__name__})"
+        ) from error
 
 
 def _session_directory(root, cwd):
@@ -415,8 +480,11 @@ def _session_directory(root, cwd):
         return None
     directory = Path(cwd)
     try:
-        if (not directory.is_absolute() or not directory.is_dir()
-                or directory.resolve() == Path(root).resolve()):
+        if (
+            not directory.is_absolute()
+            or not directory.is_dir()
+            or directory.resolve() == Path(root).resolve()
+        ):
             return None
     except (OSError, RuntimeError, ValueError):
         return None
@@ -465,24 +533,36 @@ def index_env():
     """
     env = dict(os.environ)
     if len(env) > MAX_PROCESS_ENV_ENTRIES:
-        raise HookError(f"process environment exceeds {MAX_PROCESS_ENV_ENTRIES} entries")
+        raise HookError(
+            f"process environment exceeds {MAX_PROCESS_ENV_ENTRIES} entries"
+        )
     # Scan a statically bounded snapshot. Removing the count and legacy aggregate disables the
     # Git config injection; removing every indexed value also keeps transport URLs and other
     # caller data out of descendant process environments.
     for key in tuple(env)[:MAX_PROCESS_ENV_ENTRIES]:
-        if key in TRANSIENT_GIT_CONFIG_KEYS or key.startswith(TRANSIENT_GIT_CONFIG_PREFIXES):
+        if key in TRANSIENT_GIT_CONFIG_KEYS or key.startswith(
+            TRANSIENT_GIT_CONFIG_PREFIXES
+        ):
             env.pop(key, None)
     return env
 
 
 def clean_env():
     env = index_env()
-    for key in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR",
-                "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"):
+    for key in (
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_COMMON_DIR",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    ):
         env.pop(key, None)
     env.update(MANAGED_PROCESS_ENV)
     if len(env) > MAX_PROCESS_ENV_ENTRIES:
-        raise HookError(f"process environment exceeds {MAX_PROCESS_ENV_ENTRIES} entries")
+        raise HookError(
+            f"process environment exceeds {MAX_PROCESS_ENV_ENTRIES} entries"
+        )
     return env
 
 
@@ -493,32 +573,61 @@ def snapshot(ref=None):
         dest = Path(directory)
         env = clean_env()
         if ref is None:
-            # Snapshot checks consume repository bytes, not the operator's checkout
-            # preference. Without this pin, Windows' core.autocrlf=true rewrites LF
-            # shell/YAML blobs to CRLF and the isolated gate rejects bytes absent from
-            # the index it claims to inspect. The export reads the index the commit will
-            # record (index_env), never the stale .git/index clean_env would select.
-            git(*SNAPSHOT_GIT_CONFIG, "checkout-index", "--all", "--force",
-                f"--prefix={dest}/", env=index_env())
-            # Lefthook's validator requires a repository even though it only
-            # validates configuration. This metadata belongs solely to the export.
-            run(["git", "init", "--quiet", str(dest)], env=env)
+            _export_index(dest, env)
         else:
-            source = git("rev-parse", "--show-toplevel", env=env).decode().strip()
-            origin = run(["git", "config", "--get", "remote.origin.url"], env=env,
-                         allowed=(0, 1)).decode().strip()
-            refs = git("for-each-ref", "--format=%(objectname) %(refname)",
-                       "refs/remotes/origin/", env=env)
-            run(["git", "clone", "--quiet", "--no-hardlinks", "--no-checkout",
-                 "--origin", "praetor-snapshot", source, str(dest)], env=env)
-            if origin:
-                run(["git", "remote", "add", "origin", origin], cwd=dest, env=env)
-            for line in refs.decode().splitlines():
-                oid, name = line.split()
-                run(["git", "update-ref", name, oid], cwd=dest, env=env)
-            run(["git", *SNAPSHOT_GIT_CONFIG, "checkout", "--quiet", "--detach", ref],
-                cwd=dest, env=env)
+            _export_commit(dest, ref, env)
         yield dest
+
+
+def _export_index(dest, env):
+    """Write the index the commit will record into dest, as a repository of its own."""
+    # Snapshot checks consume repository bytes, not the operator's checkout
+    # preference. Without this pin, Windows' core.autocrlf=true rewrites LF
+    # shell/YAML blobs to CRLF and the isolated gate rejects bytes absent from
+    # the index it claims to inspect. The export reads the index the commit will
+    # record (index_env), never the stale .git/index clean_env would select.
+    git(
+        *SNAPSHOT_GIT_CONFIG,
+        "checkout-index",
+        "--all",
+        "--force",
+        f"--prefix={dest}/",
+        env=index_env(),
+    )
+    # Lefthook's validator requires a repository even though it only
+    # validates configuration. This metadata belongs solely to the export.
+    run(["git", "init", "--quiet", str(dest)], env=env)
+
+
+def _export_commit(dest, ref, env):
+    """Clone this repository into dest with origin and its refs, detached at ref."""
+    source = git("rev-parse", "--show-toplevel", env=env).decode().strip()
+    origin = (
+        run(
+            ["git", "config", "--get", "remote.origin.url"],
+            env=env,
+            allowed=(0, 1),
+        )
+        .decode()
+        .strip()
+    )
+    refs = git(
+        "for-each-ref",
+        "--format=%(objectname) %(refname)",
+        "refs/remotes/origin/",
+        env=env,
+    )
+    run([*SNAPSHOT_CLONE, source, str(dest)], env=env)
+    if origin:
+        run(["git", "remote", "add", "origin", origin], cwd=dest, env=env)
+    for line in refs.decode().splitlines():
+        oid, name = line.split()
+        run(["git", "update-ref", name, oid], cwd=dest, env=env)
+    run(
+        ["git", *SNAPSHOT_GIT_CONFIG, "checkout", "--quiet", "--detach", ref],
+        cwd=dest,
+        env=env,
+    )
 
 
 def present_files(directory, names):

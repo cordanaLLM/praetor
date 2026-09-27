@@ -120,7 +120,7 @@ register:
         format: go
         selector: "mcp.outputs"
 
-# Framework capability demand declarations towards upstream Golusoris
+# Framework capability demand declarations
 needs:
   required:
     - "config.yaml"

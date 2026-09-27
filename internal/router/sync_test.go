@@ -94,7 +94,7 @@ func TestSyncCatalogMergeKeepsLocalAndOperatorEntriesAndUpdatesSeed(t *testing.T
 		"lightweight":    {Models: []ModelDescriptor{syncModel("qwen2.5-coder:7b", SourceLocal)}},
 		"heavy-frontier": {Models: []ModelDescriptor{stale}},
 		"gpu-local": {Description: "operator tier", TargetTasks: []string{"grunt"}, FallbackTier: "lightweight",
-			Models: []ModelDescriptor{syncModel("cordana/qwen3-8-27b", SourceOperator)}},
+			Models: []ModelDescriptor{syncModel("example/qwen3-8-27b", SourceOperator)}},
 	}))
 	result, err := syncCatalog(context.Background(), path, SyncOptions{}, nil)
 	if err != nil {
@@ -104,7 +104,7 @@ func TestSyncCatalogMergeKeepsLocalAndOperatorEntriesAndUpdatesSeed(t *testing.T
 	if tier, model, ok := findSynced(cfg, "qwen2.5-coder:7b"); !ok || tier != "lightweight" || model.Source != SourceLocal {
 		t.Fatalf("local entry lost or moved: tier=%q model=%+v", tier, model)
 	}
-	if tier, _, ok := findSynced(cfg, "cordana/qwen3-8-27b"); !ok || tier != "gpu-local" || cfg.Tiers["gpu-local"].TargetTasks[0] != "grunt" {
+	if tier, _, ok := findSynced(cfg, "example/qwen3-8-27b"); !ok || tier != "gpu-local" || cfg.Tiers["gpu-local"].TargetTasks[0] != "grunt" {
 		t.Fatalf("operator entry or tier lost: tier=%q", tier)
 	}
 	if _, model, _ := findSynced(cfg, "o1"); model.CostPerMIn != 15.0 || model.Source != SourceSeed || model.Family != FamilyOpenAI {
@@ -264,7 +264,7 @@ func TestSyncCatalogKeepsDeclaredGovernanceAndTierMetadata(t *testing.T) {
 func TestSyncCatalogPruneRefusesDanglingDeclaredFallback(t *testing.T) {
 	path := writeSyncCatalog(t, syncFixture(map[string]Tier{
 		"heavy-frontier": {FallbackTier: "gpu-local"},
-		"gpu-local":      {Models: []ModelDescriptor{syncModel("cordana/qwen3-8-27b", SourceOperator)}},
+		"gpu-local":      {Models: []ModelDescriptor{syncModel("example/qwen3-8-27b", SourceOperator)}},
 	}))
 	if _, err := syncCatalog(context.Background(), path, SyncOptions{}, nil); err != nil {
 		t.Fatalf("merge with an operator fallback: %v", err)

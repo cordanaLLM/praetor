@@ -154,12 +154,16 @@ jobs:
       # on one. The version is pinned as well: an unpinned linter turns an upstream release
       # into a red gate on an untouched tree, and a new rule firing on one leg but not another
       # is indistinguishable from a portability defect, which is the only thing this job can
-      # report. 1.38.0 is the current release; it requires Python >= 3.10 and pathspec >= 1.0.0,
-      # both satisfied by the 3.14 toolchain this job sets up.
+      # report. The pin is the hash-locked .config/hook-lint/requirements.txt that make
+      # hooks-lint installs and Renovate recompiles, so this job and that gate share one
+      # yamllint pin (HISS-19). The lock is universal for Python >= 3.10, and it also brings
+      # black and flake8, which no hook runs.
       - name: Install YAML Linter
         if: ${{ !cancelled() }}
         shell: bash
-        run: '"$PYTHON" -m pip install --disable-pip-version-check yamllint==1.38.0'
+        run: >-
+          "$PYTHON" -m pip install --disable-pip-version-check --require-hashes
+          -r .config/hook-lint/requirements.txt
         env:
           PYTHON: ${{ steps.python.outputs.python-path }}
 

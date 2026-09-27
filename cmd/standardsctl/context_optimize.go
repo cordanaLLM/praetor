@@ -30,7 +30,7 @@ func contextOptimize(ctx context.Context, args []string, output io.Writer) error
 		_, usageErr = fmt.Fprintln(flags.Output(), "Usage: standardsctl context-optimize --root DIR [--output-dir NEW-DIR] SOURCE...\nSelect 1..64 relative files. Without --output-dir, report metadata only. Savings compare all selected bytes with the candidate, not live per-turn context.")
 		flags.PrintDefaults()
 	}
-	if err := flags.Parse(args); err != nil {
+	if _, err := parseInterspersed(flags, args); err != nil {
 		return errors.Join(err, usageErr)
 	}
 	plan, err := contextopt.Analyze(ctx, contextopt.Options{Root: *root, Sources: flags.Args()})

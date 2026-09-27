@@ -23,7 +23,7 @@ func runServe(args []string) error {
 	auditInterval := fs.Duration("audit-interval", 0, "Periodic background HISS audit interval (0 to disable)")
 	auditPath := fs.String("audit-path", ".", "Repository path scanned by the periodic HISS audit")
 
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if *drain <= 0 {

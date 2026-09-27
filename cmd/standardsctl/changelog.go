@@ -46,7 +46,7 @@ func runChangelogNew(args []string) error {
 	issue := fs.String("issue", "", "Optional issue / PR number")
 	breaking := fs.Bool("breaking", false, "Mark change as breaking")
 
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 
@@ -75,7 +75,7 @@ func runChangelogRender(args []string) error {
 	version := fs.String("version", "Unreleased", "Release version to render")
 	date := fs.String("date", "", "Release date (YYYY-MM-DD, defaults to today)")
 
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 

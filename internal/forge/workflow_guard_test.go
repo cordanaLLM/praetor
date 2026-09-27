@@ -421,7 +421,7 @@ func manifestWithRepository(t *testing.T, owner, name, source string) string {
 // not wrong), and a source that is not an owner/name pair fails closed rather than silently
 // falling back to the fork's own owner/name.
 func TestManifestIdentityPrefersRepositorySource(t *testing.T) {
-	overlaid := manifestWithRepository(t, "lusoris", "praetor", "cordanaLLM/praetor")
+	overlaid := manifestWithRepository(t, "example-owner", "praetor", "cordanaLLM/praetor")
 	if identity, err := manifestIdentity(overlaid); err != nil || identity != "cordanaLLM/praetor" {
 		t.Errorf("overlaid manifest identity = %q, %v, want cordanaLLM/praetor", identity, err)
 	}
@@ -434,7 +434,7 @@ func TestManifestIdentityPrefersRepositorySource(t *testing.T) {
 		t.Errorf("source equal to owner/name = %q, %v, want cordanaLLM/praetor", identity, err)
 	}
 	for _, malformed := range []string{"not-an-identity", "cordanaLLM/praetor/extra", "/praetor", "cordanaLLM/"} {
-		dir := manifestWithRepository(t, "lusoris", "praetor", malformed)
+		dir := manifestWithRepository(t, "example-owner", "praetor", malformed)
 		if _, err := manifestIdentity(dir); err == nil {
 			t.Errorf("malformed source %q yielded an identity instead of failing closed", malformed)
 		}
@@ -443,7 +443,7 @@ func TestManifestIdentityPrefersRepositorySource(t *testing.T) {
 
 // overlaidEngineRoot copies the engine's own checked-in workflow files -- unchanged, exactly
 // as operational sync's owner overlay leaves them -- beside a manifest shaped the way
-// internal/operationalsync's overlay() (owner: lusoris, source: cordanaLLM/praetor) leaves
+// internal/operationalsync's overlay() (owner: example-owner, source: cordanaLLM/praetor) leaves
 // .standards.yaml. It reproduces issue #255's failure shape without touching the real fork
 // checkout or any forge state.
 func overlaidEngineRoot(t *testing.T) string {
@@ -452,7 +452,7 @@ func overlaidEngineRoot(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("read engine workflows: %v", err)
 	}
-	root := manifestWithRepository(t, "lusoris", "praetor", "cordanaLLM/praetor")
+	root := manifestWithRepository(t, "example-owner", "praetor", "cordanaLLM/praetor")
 	workflows := filepath.Join(root, ".github", "workflows")
 	if err := os.MkdirAll(workflows, 0o700); err != nil {
 		t.Fatal(err)
@@ -467,7 +467,7 @@ func overlaidEngineRoot(t *testing.T) string {
 
 // TestOverlaidManifestKeepsEngineGuardsAndRequiredContexts is the guard+ruleset regression
 // issue #255 asks for: run against a temp copy of the repository manifest with the owner
-// overlay applied (owner lusoris, source cordanaLLM/praetor), it must guard every scheduled
+// overlay applied (owner example-owner, source cordanaLLM/praetor), it must guard every scheduled
 // or publishing job exactly as the canonical repository does, and it must derive the same
 // required status contexts -- so a fork's own pushed-checks.sh gate, and internal/adopt's
 // generated ruleset, do not drift from the checked-in one just because the fork carries the

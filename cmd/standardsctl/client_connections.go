@@ -18,7 +18,7 @@ func prepareConnections(args []string) error {
 	flags := flag.NewFlagSet("clients connect", flag.ContinueOnError)
 	profilePath := flags.String("profile", "", "Private gateway, provider and optional memory connection profile")
 	output := flags.String("out", "", "New private connection artifact directory")
-	if err := flags.Parse(args); err != nil {
+	if _, err := parseInterspersed(flags, args); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 || *profilePath == "" || *output == "" {
@@ -56,7 +56,7 @@ func bindClientMemory(args []string) error {
 	profilePath := flags.String("profile", "", "Private connection profile with a memory binding")
 	target := flags.String("target", "", "Existing Hindsight coding-agent configuration")
 	output := flags.String("out", "", "New private backup and candidate directory")
-	if err := flags.Parse(args); err != nil {
+	if _, err := parseInterspersed(flags, args); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 || *profilePath == "" || *target == "" || *output == "" {

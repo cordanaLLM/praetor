@@ -107,12 +107,14 @@ a gate, but it resolves `node` and `npm` through `shutil.which`, which finds `np
 Windows where a bare `npm` would not start.
 
 The matrix pins the tools it installs, not only the platforms it runs on. The legs share one
-`actions/setup-python` version (3.13) and install `yamllint==1.38.0` through the interpreter path
-that action reports, rather than by name. Both pins serve this invariant directly: the job's only
-output is whether a result differs across platforms, so a tool free to resolve to a different
-version on a different leg makes an upstream release indistinguishable from the portability defect
-the job exists to report. A linter that is pinned on one leg and floating on another is not a
-narrower gate, it is a gate whose red runs cannot be attributed. The `gosec` the security-scope
+`actions/setup-python` version (3.13) and install yamllint through the interpreter path that
+action reports, rather than by name, from the hash-locked `.config/hook-lint/requirements.txt`
+(`pip install --require-hashes -r`), the one yamllint pin `make hooks-lint` also installs.
+Both pins serve this invariant directly: the job's only output is whether a result differs
+across platforms, so a tool free to resolve to a different version on a different leg makes an
+upstream release indistinguishable from the portability defect the job exists to report. A
+linter that is pinned on one leg and floating on another is not a narrower gate, it is a gate
+whose red runs cannot be attributed. The `gosec` the security-scope
 suite needs is installed on every leg from `tools/go/go.mod`
 (`go install -modfile=tools/go/go.mod github.com/securego/gosec/v2/cmd/gosec`), the one version
 source the Makefile and the CI and security workflows also read.

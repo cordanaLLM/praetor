@@ -22,7 +22,7 @@ func runPromptOptimize(args []string) error {
 func promptOptimizeCommand(ctx context.Context, args []string, out io.Writer, now time.Time) error {
 	f := flag.NewFlagSet("prompt-optimize", flag.ContinueOnError)
 	path := f.String("experiment", "", "Measured held-out experiment JSON; selection only")
-	if err := f.Parse(args); err != nil {
+	if _, err := parseInterspersed(f, args); err != nil {
 		return err
 	}
 	if *path == "" || f.NArg() != 0 {

@@ -69,7 +69,7 @@ func parseSEOAuditArgs(args []string) (seoAuditArgs, error) {
 		"Fail when the site root has no robots.txt (crawlers read it only at a host root, so a project site under a path cannot serve one)")
 	allowPlaceholders := fs.Bool("allow-placeholders", false,
 		"Permit the preset placeholders example-org/example-repo and PlaceholderLang in page heads")
-	if err := fs.Parse(args[1:]); err != nil {
+	if _, err := parseInterspersed(fs, args[1:]); err != nil {
 		return seoAuditArgs{}, err
 	}
 	if fs.NArg() > 1 {

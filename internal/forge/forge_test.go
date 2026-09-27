@@ -632,7 +632,7 @@ func TestTranscribeDiscussionToADR_Positive(t *testing.T) {
 		ID:                   42,
 		Title:                "Multi-Forge Git Collaboration Federation",
 		Category:             "RFC",
-		Author:               "cordana-architect",
+		Author:               "acme-architect",
 		Status:               "approved",
 		ContextText:          "Modern fleets span GitHub, GitLab, and Gitea.",
 		DecisionText:         "Adopt declarative Forge interface across all providers.",
