@@ -35,6 +35,12 @@ __pycache__/
 
 # Dependency directories
 /vendor/
+/tools/figures/node_modules/
+
+# The figure player bundle is rebuilt by `npm --prefix tools/figures run bundle` in every
+# docs build (pages.yml, the CI docs audit), so a dependency bump never means committing
+# regenerated minified code. The SVG and JSON under docs/assets/figures/ stay committed.
+/docs/assets/javascripts/figures/
 
 # IDE and OS files
 .DS_Store

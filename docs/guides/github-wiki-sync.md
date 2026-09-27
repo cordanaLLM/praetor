@@ -7,7 +7,8 @@ refreshes them. The `Wiki Sync` workflow only copies that already-generated
 `docs/wiki/` into the repository wiki — it does not call `sync-wiki` itself, so a
 regenerate-and-commit is still required to keep the published wiki current. The
 workflow triggers on a push to `main` that touches `docs/wiki/**`,
-`.github/workflows/wiki-sync.yml` or `scripts/sync_github_wiki.sh`, and on manual
+`.github/workflows/wiki-sync.yml`, `scripts/sync_github_wiki.sh`,
+`docs/assets/figures/**` or `scripts/docs_diagrams.py`, and on manual
 `workflow_dispatch`; it does not run on every push.
 
 Every top-level entry directly under `docs/wiki/` must be a regular, non-symlinked
@@ -17,6 +18,23 @@ anything, so one bad entry blocks the whole sync. The source directory holds at
 most 256 such files (`MAX_WIKI_FILES`); more also exits 2. The workflow updates
 source-owned filenames and preserves other wiki pages. The workflow and each Git
 network process have explicit time limits.
+
+## Figures
+
+The wiki runs no JavaScript, so it cannot show the site's interactive figures.
+After copying the pages into the wiki clone, `scripts/sync_github_wiki.sh` runs
+`python3 -B scripts/docs_diagrams.py portable --wiki` on the copies. Each
+`figure` fence becomes a `<figure>` holding a `<picture>` of the figure's
+animated and static SVGs on the published site, with absolute URLs built from
+the `site_url` in `mkdocs.yml`, then a link to the interactive figure on the
+site (`<site_url>wiki/<Page>/#fig-<slug>`) and the text description. The pages
+under `docs/wiki/` keep their fences; only the wiki copies change. A fence that
+names a figure without `docs/assets/figures/<slug>.json` stops the sync before
+anything is committed. The [figures guide](figures.md) covers the figures
+themselves.
+
+The images point at the published site, so a figure added in the same push
+shows in the wiki once the Pages deployment has finished.
 
 ## Removing pages
 

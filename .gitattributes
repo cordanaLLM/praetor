@@ -102,3 +102,15 @@ editors/jetbrains/inspectionProfiles/standards.xml text eol=lf
 #                      returns as trailing whitespace. Without it the commit hook refuses
 #                      the fixtures, so the rule could never be pinned at all.
 .config/hiss/testdata/**/crlf-* -text whitespace=cr-at-eol
+
+# The vendored interfig subset is byte-identical to upstream at the pin, and vendor.json
+# records the SHA-256 of every file. -text keeps checkout and add from converting line
+# endings on any platform, so the hashes hold on a Windows checkout too.
+third_party/interfig/upstream/** -text
+
+# docs/assets/figures/<slug>.json binds each figure to the SHA-256 of its spec, the engine
+# files and both SVGs (tools/figures/build.mjs, scripts/docs_diagrams.py sources). A CRLF
+# checkout would change those bytes and report every figure stale on Windows only.
+tools/figures/build.mjs text eol=lf
+docs/figures/*.ts text eol=lf
+docs/assets/figures/* text eol=lf

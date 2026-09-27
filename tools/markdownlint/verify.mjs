@@ -62,6 +62,10 @@ const STYLE_EXCLUDED_PREFIXES = [
   ".workingdir2/",
   "internal/caveman/testdata/",
   "node_modules/",
+  // Vendored upstream source is kept byte-identical to its pin (third_party/interfig/vendor.json),
+  // so its Markdown follows upstream's style, not this gate's. Praetor's own notes beside it stay
+  // selected: only the upstream/ subtree is excluded.
+  "third_party/interfig/upstream/",
   "vendor/",
 ];
 
@@ -385,6 +389,7 @@ function inventorySelfTest(temporary) {
   fs.mkdirSync(path.join(fixture, "docs"), { recursive: true });
   fs.mkdirSync(path.join(fixture, "templates"), { recursive: true });
   fs.mkdirSync(path.join(fixture, "vendor"), { recursive: true });
+  fs.mkdirSync(path.join(fixture, "third_party", "interfig", "upstream"), { recursive: true });
   fs.mkdirSync(path.join(fixture, ".workingdir"), { recursive: true });
   fs.writeFileSync(path.join(fixture, ".gitignore"), "/.workingdir/\n**/node_modules/\n");
   fs.writeFileSync(path.join(fixture, "AGENTS.md"),
@@ -397,13 +402,18 @@ function inventorySelfTest(temporary) {
   fs.writeFileSync(path.join(fixture, "templates", "README.md.tmpl"), "# Template\n");
   fs.writeFileSync(path.join(fixture, "templates", "Card.mdx.tmpl"), "# MDX template\n");
   fs.writeFileSync(path.join(fixture, "vendor", "README.md"), "#Malformed vendor surface\n");
+  fs.writeFileSync(path.join(fixture, "third_party", "interfig", "upstream", "README.md"),
+    "#Malformed vendored upstream surface\n");
+  fs.writeFileSync(path.join(fixture, "third_party", "interfig", "VENDOR.md"), "# Vendor notes\n");
   fs.writeFileSync(path.join(fixture, ".workingdir", "private.md"), "# Private\n");
   command("git", ["init", "--quiet"], { cwd: fixture });
   command("git", ["add", "--", ".gitignore", "AGENTS.md", "README.md", "docs/guide.md",
-    "vendor/README.md"], { cwd: fixture });
+    "third_party/interfig/VENDOR.md", "third_party/interfig/upstream/README.md", "vendor/README.md"],
+  { cwd: fixture });
   const allFiles = inventory(fs.realpathSync(fixture));
   assert.deepEqual(allFiles, ["AGENTS.md", "README.md", "docs/guide.md", "docs/page.mdx",
-    "notes.markdown", "templates/Card.mdx.tmpl", "templates/README.md.tmpl", "vendor/README.md"]);
+    "notes.markdown", "templates/Card.mdx.tmpl", "templates/README.md.tmpl",
+    "third_party/interfig/VENDOR.md", "third_party/interfig/upstream/README.md", "vendor/README.md"]);
   for (const code of FILESYSTEM_SYMLINK_UNAVAILABLE) {
     assert.equal(filesystemSymlinkUnavailable({ code }), true);
   }
@@ -477,8 +487,12 @@ function inventorySelfTest(temporary) {
   fs.writeFileSync(path.join(fixture, "docs", "page.mdx"),
     "# MDX page\n\n[public](../README.md)\n\n<Card href=\"../README.md\">Public</Card>\n");
   const styleFiles = allFiles.filter(isStyleSelected);
+  // The vendored upstream README is malformed on purpose and must stay out of the style run; the
+  // praetor-owned VENDOR.md beside it is the boundary and stays in.
   assert.deepEqual(styleFiles, ["README.md", "docs/guide.md", "docs/page.mdx", "notes.markdown",
-    "templates/Card.mdx.tmpl", "templates/README.md.tmpl"]);
+    "templates/Card.mdx.tmpl", "templates/README.md.tmpl", "third_party/interfig/VENDOR.md"]);
+  assert.equal(isStyleSelected("third_party/interfig/upstream/src/README.md"), false);
+  assert.equal(isStyleSelected("third_party/interfig/upstreamish/README.md"), true);
   assert.equal(runMarkdownlint(fixture, temporary, styleFiles, false), 0);
   fs.writeFileSync(path.join(fixture, "docs", "malformed.md"), "#Malformed public Markdown\n");
   const malformedFiles = inventory(fs.realpathSync(fixture)).filter(isStyleSelected);

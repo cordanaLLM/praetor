@@ -251,33 +251,61 @@ matrix rather than the documentation-only path (`internal/cifilter/filter.go`,
 `TestUnclassifiedFileKindsRunHeavyGates` in
 `internal/cifilter/cifilter_test.go`).
 
-## Site build and Mermaid diagrams
+## Site build and diagrams
 
 The published site is built from the root `mkdocs.yml` by
 `.github/workflows/pages.yml`, and the adopter preset from
 `docs/presets/mkdocs/mkdocs.yml` by the CI **Documentation Integrity Audit**
 step. Both run `mkdocs build --strict`. A strict build still passes when a
-`mermaid` fence ships as a highlighted code listing, so each build is followed
-by the diagram check:
+diagram ships as a code listing, so each build is followed by the diagram
+check in `scripts/docs_diagrams.py`:
 
 ```bash
+npm ci --prefix tools/figures --ignore-scripts
+npm --prefix tools/figures run bundle
 mkdocs build --strict -d /tmp/site
-python3 -B scripts/docs_mermaid.py --config mkdocs.yml --docs docs --site /tmp/site
+python3 -B scripts/docs_diagrams.py site --config mkdocs.yml --docs docs --site /tmp/site
+python3 -B scripts/docs_diagrams.py sources
 ```
 
-Material for MkDocs draws a diagram only from a `<pre class="mermaid">`
-element, which `pymdownx.superfences` emits only when the configuration
-declares the mermaid custom fence (`name: mermaid`, `class: mermaid`,
-`format: !!python/name:pymdownx.superfences.fence_code_format`). The check
-fails when either `mkdocs.yml` lacks that entry, or when a built page holds
-fewer mermaid `<pre>` elements than its source has `mermaid` fences. A fence
-nested inside a longer fence is source text and is not expected to render.
-The mapping from a page to its HTML file assumes the default
+The documentation has two diagram kinds, and the configuration decides which
+ones a build accepts:
+
+- **Mermaid.** Material for MkDocs draws a diagram only from a
+  `<pre class="mermaid">` element, which `pymdownx.superfences` emits only when
+  the configuration declares the mermaid custom fence (`name: mermaid`,
+  `class: mermaid`,
+  `format: !!python/name:pymdownx.superfences.fence_code_format`).
+- **Interactive figures.** A `figure` fence names a spec under
+  `docs/figures/`. The root `mkdocs.yml` lists
+  `scripts/mkdocs_figures_hook.py` under `hooks:`, which renders each fence as
+  the committed SVGs, a caption and a text description; the player loads on
+  top. The preset lists no hook, so it accepts Mermaid only. The
+  [figures guide](figures.md) covers authoring and the build.
+
+`site` fails when a page holds a fence of a kind its configuration does not
+enable, when a built page holds fewer mermaid `<pre>` elements than its source
+has `mermaid` fences, or when a `figure` fence did not become a
+`figure.praetor-figure` whose images resolve under the site, on a page that
+loads the figure loader, with its slug in the bundle's `registry.json`. A fence
+nested inside a longer fence is source text and is not expected to render. The
+mapping from a page to its HTML file assumes the default
 `use_directory_urls: true`.
 
-`make docs-mermaid-test` (part of `make verify-all`) replays the check's
-fixtures in `scripts/test_docs_mermaid.py` and asserts that both configuration
-files declare the fence, so removing it fails without a site build.
+`sources` needs neither a site nor Node. It fails when a figure's JSON no
+longer matches its spec, the vendored engine or its SVGs, when a spec and its
+JSON are not both present, when a fence names an unknown figure, when the
+README's portable figure block differs from the renderer, or when an evidence
+anchor's file or symbol is gone.
+
+`make docs-diagrams-test` (part of `make verify-all`) replays the checker's
+fixtures in `scripts/test_docs_diagrams.py` in both directions and asserts
+which diagram kinds both configuration files enable, so removing the mermaid
+fence or the figures hook fails without a site build. `make docs-figures-check`
+(also part of `make verify-all`) runs the figure build's tests and type check,
+rebuilds every figure and compares it byte for byte with the committed files,
+and runs `sources`. The Pages workflow also runs the Chromium smoke test, which
+fails when a figure does not mount the player.
 
 Both sites share one JSON-LD template, `docs/presets/mkdocs/overrides/main.html`,
 which reads the author and repository from the rendering site's `mkdocs.yml`

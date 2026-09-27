@@ -77,6 +77,16 @@ Linux only. Its Windows-specific path is described in
 `internal/forge/workflow_guard_test.go` fails if the step is removed, moved before Node is set
 up, or given a condition that could skip it on some legs.
 
+Every leg also runs the figure build check, the commands `make docs-figures-check` runs, since
+`make` is not on the Windows image: the locked `npm ci --prefix tools/figures --ignore-scripts`,
+the build's tests and type check, `npm --prefix tools/figures run check` and
+`scripts/docs_diagrams.py sources`. esbuild and TypeScript arrive as per-platform npm optional
+dependencies, so the leg proves that the install works without install scripts on each OS, and
+`check` proves that a rebuild there is byte-identical to the committed SVG and JSON. The hashed
+files are pinned to LF in `.gitattributes`, so a Windows checkout reads the same bytes. The
+Chromium smoke test needs a built site and runs in `pages.yml` on Linux only
+([figures guide](../guides/figures.md#checks)).
+
 The matrix pins the tools it installs, not only the platforms it runs on. The legs share one
 `actions/setup-python` version (3.13) and install `yamllint==1.38.0` through the interpreter path
 that action reports, rather than by name. Both pins serve this invariant directly: the job's only

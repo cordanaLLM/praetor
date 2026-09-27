@@ -1,0 +1,3 @@
+type: added
+title: Draw documentation figures with a vendored, pinned copy of the MIT interfig engine, rendering each figure fence as committed animated and reduced-motion SVGs that mount an interactive player with scenario tabs on the site and stay readable in the README and GitHub wiki, checked by scripts/docs_diagrams.py (renamed from docs_mermaid.py), make docs-figures-check and a Chromium smoke test, starting with the gated pipeline on the C4 page (ADR-0015)
+breaking: false

@@ -1,0 +1,66 @@
+/*
+ * Praetor's documentation figures (docs/adr/0015-interactive-figures-from-vendored-interfig.md,
+ * section 4). The interfig player reads its colours from --fig-* variables; mapping them to
+ * Material's own variables carries the light/dark palette toggle into every figure without
+ * JavaScript, and the default slate scheme gives the dark cards.
+ */
+.praetor-figure {
+  --fig-accent: var(--md-accent-fg-color);
+  --fig-fg: var(--md-default-fg-color);
+  --fig-muted: var(--md-default-fg-color--light);
+  --fig-border: var(--md-default-fg-color--lightest);
+  --fig-bg: var(--md-default-bg-color);
+  --fig-surface: var(--md-code-bg-color);
+  --fig-font: var(--md-text-font-family);
+  /* interfig sets its monospace from this Docusaurus variable, with a fallback stack. */
+  --ifm-font-family-monospace: var(--md-code-font-family);
+  /* Material sizes a figure to its content (width: fit-content); the player needs the column's
+     width to decide how far to shrink a wide figure. */
+  width: auto;
+  margin: 1.5em 0 0.5em;
+  text-align: center;
+}
+
+.praetor-figure picture img {
+  max-width: 100%;
+  height: auto;
+}
+
+.praetor-figure figcaption {
+  font-size: 0.8rem;
+  color: var(--md-default-fg-color--light);
+}
+
+.praetor-figure .praetor-figure__player {
+  text-align: initial;
+}
+
+/* The player draws its own <figure> and puts the tabs and narration in a <figcaption>. Material's
+   typeset rules for both (fit-content width, italic, a 24rem caption) would reach into it. */
+.praetor-figure .interfig {
+  width: auto;
+  text-align: initial;
+}
+
+.praetor-figure .interfig figcaption {
+  max-width: none;
+  margin-bottom: 0;
+  font-style: normal;
+  color: inherit;
+  font-size: inherit;
+}
+
+.praetor-figure :focus-visible {
+  outline: 2px solid var(--md-accent-fg-color);
+  outline-offset: 2px;
+}
+
+.praetor-figure__text {
+  margin: 0 0 1.5em;
+  font-size: 0.75rem;
+}
+
+.praetor-figure__text > summary {
+  cursor: pointer;
+  color: var(--md-default-fg-color--light);
+}

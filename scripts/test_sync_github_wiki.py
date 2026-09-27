@@ -148,6 +148,45 @@ class WikiSyncTests(unittest.TestCase):
             self.assertIn("already up to date", result.stdout)
             self.assertEqual(remote_head(remote), before)
 
+    def test_figure_fence_is_published_as_a_portable_block(self) -> None:
+        """The wiki runs no JavaScript: a figure becomes the site's SVGs plus a link back."""
+        with tempfile.TemporaryDirectory(prefix="praetor-wiki-test-") as directory:
+            root = Path(directory)
+            source = make_source(
+                root, {"Home.md": "# Home\n\n```figure\ngating-pipeline\n```\n", "Plain.md": "# Plain\n"}
+            )
+            remote = root / "wiki.git"
+            init_bare(remote)
+
+            run(str(SCRIPT), str(source), str(remote))
+
+            files = remote_files(remote)
+            home = files["Home.md"]
+            site = "https://cordanallm.github.io/praetor/"
+            self.assertNotIn("```figure", home)
+            self.assertIn(f'<img src="{site}assets/figures/gating-pipeline.svg"', home)
+            self.assertIn(f'srcset="{site}assets/figures/gating-pipeline.static.svg"', home)
+            self.assertIn(f'<a href="{site}wiki/Home/#fig-gating-pipeline">', home)
+            self.assertEqual(files["Plain.md"], "# Plain\n")
+            # The source pages themselves are never rewritten.
+            self.assertIn("```figure", (source / "Home.md").read_text(encoding="utf-8"))
+
+    def test_unknown_figure_stops_the_sync_before_any_commit(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="praetor-wiki-test-") as directory:
+            root = Path(directory)
+            source = make_source(root, {"Home.md": "```figure\nno-such-figure\n```\n"})
+            remote = root / "wiki.git"
+            init_bare(remote)
+            seed_remote(remote, {"Home.md": "# Old\n"})
+            before = remote_head(remote)
+
+            result = run(str(SCRIPT), str(source), str(remote), check=False)
+
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("figure 'no-such-figure' has no", result.stderr)
+            self.assertIn("nothing was committed", result.stderr)
+            self.assertEqual(remote_head(remote), before)
+
     def test_page_removed_from_source_is_deleted_and_unmanaged_page_kept(self) -> None:
         with tempfile.TemporaryDirectory(prefix="praetor-wiki-test-") as directory:
             root = Path(directory)

@@ -9,3 +9,14 @@ precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 Lusoris <lusoris@proton.me>"
 SPDX-License-Identifier = "EUPL-1.2"
 
+
+# The vendored interfig engine keeps its upstream MIT terms. REUSE 3.3 applies only the
+# last matching annotation table, so this override must stay after the "**" table above;
+# moved before it, the EUPL table would relabel the vendored files and `reuse lint` would
+# still pass. VENDOR.md and vendor.json sit outside upstream/ and stay EUPL-1.2
+# (docs/adr/0015-interactive-figures-from-vendored-interfig.md).
+[[annotations]]
+path = ["third_party/interfig/upstream/**"]
+precedence = "override"
+SPDX-FileCopyrightText = "2025 Vectorize AI, Inc."
+SPDX-License-Identifier = "MIT"

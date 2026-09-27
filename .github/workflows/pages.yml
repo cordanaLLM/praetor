@@ -7,7 +7,10 @@ on:
     paths:
       - 'docs/**'
       - 'mkdocs.yml'
-      - 'scripts/docs_mermaid.py'
+      - 'scripts/docs_diagrams.py'
+      - 'scripts/mkdocs_figures_hook.py'
+      - 'third_party/interfig/**'
+      - 'tools/figures/**'
       - 'internal/seo/**'
       - 'cmd/standardsctl/seo.go'
       - '.github/workflows/pages.yml'
@@ -17,7 +20,10 @@ on:
     paths:
       - 'docs/**'
       - 'mkdocs.yml'
-      - 'scripts/docs_mermaid.py'
+      - 'scripts/docs_diagrams.py'
+      - 'scripts/mkdocs_figures_hook.py'
+      - 'third_party/interfig/**'
+      - 'tools/figures/**'
       - 'internal/seo/**'
       - 'cmd/standardsctl/seo.go'
       - '.github/workflows/pages.yml'
@@ -63,14 +69,42 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --require-hashes -r docs/presets/mkdocs/requirements.txt
 
+      # Interactive figures (docs/adr/0015-interactive-figures-from-vendored-interfig.md). The
+      # player bundle is gitignored, so it is built here from the locked tools/figures install
+      # before MkDocs copies docs/ into the site. `check` first proves the committed SVG and JSON
+      # still match a fresh build and the player chunk fits its budget.
+      - name: Setup Node Toolchain
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: tools/figures/package-lock.json
+
+      - name: Build Figure Player Bundle
+        run: |
+          npm ci --prefix tools/figures --ignore-scripts --no-audit --no-fund
+          npm --prefix tools/figures run check
+          npm --prefix tools/figures run bundle
+
       - name: Build MkDocs Site (Strict Mode)
         run: mkdocs build --strict
 
       # A strict build passes with every diagram shipped as a code listing: the mermaid custom
       # fence was never declared and nothing looked at the output. This fails the build before
-      # the artifact is uploaded when a ```mermaid block is not a <pre class="mermaid">.
-      - name: Verify Mermaid Diagrams Render
-        run: python3 -B scripts/docs_mermaid.py --config mkdocs.yml --docs docs --site site
+      # the artifact is uploaded when a ```mermaid block is not a <pre class="mermaid">, when a
+      # ```figure fence did not become a figure whose images resolve, or when a committed figure
+      # no longer matches its spec, the engine or its evidence anchors.
+      - name: Verify Diagrams Render
+        run: |
+          python3 -B scripts/docs_diagrams.py site --config mkdocs.yml --docs docs --site site
+          python3 -B scripts/docs_diagrams.py sources
+
+      # Proves every figure mounts the interactive player in Chromium, with and without reduced
+      # motion. --require-browser makes a missing browser a failure here instead of a skip.
+      - name: Smoke-Test Interactive Figures
+        run: |
+          npx --prefix tools/figures playwright install --with-deps chromium
+          npm --prefix tools/figures run smoke -- --site site --require-browser
 
       - name: Setup Go
         uses: actions/setup-go@v7
