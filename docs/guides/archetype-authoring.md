@@ -55,7 +55,10 @@ disabled every built-in gitleaks rule (#410) and scaffolded workflows that ran n
 because the workflows carry GitHub expressions such as `${{ runner.os }}`; a maintainer note goes in a
 template comment, `<%- /* note */ -%>`, which renders to nothing. The context a body can name is
 `templates.Context`; a body naming anything else fails `TestEveryShippedTemplateRenders`
-(`templates/embed_test.go`). `.clang-tidy` is shared with the Visual Studio editor target
+(`templates/embed_test.go`). `flavor apply` fills `Owner` and `RepoName` from the origin remote
+only; without one, `Owner` is empty and `RepoName` is the checkout directory's name, so a body that
+names the repository guards the owner, as `templates/native/.gitleaks.toml.tmpl` does
+(`TestApplyFlavor_Negative_CheckoutLayoutIsNotOwner`). `.clang-tidy` is shared with the Visual Studio editor target
 (`internal/editor/editor.go`), so both commands write one configuration.
 
 **The audit reads the content.** `flavor audit` counts a template only when it is a regular file —

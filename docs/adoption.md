@@ -62,7 +62,8 @@ unset flag keeps the default. The flags apply to single-repository adoption; bat
   report records `Paperclip harness not written`, and an existing harness stays as it
   is. `praetorctl paperclip harness` fails the same way instead of writing a guessed
   `cordanaLLM/<dir>` (`TestSynthesizeHarness_Negative_NoIdentityIsAnError`). No `cordanaLLM/<name>` default and no `<parent>/<name>` guess
-  reaches any adopted file; flavor stubs name the checkout directory alone
+  reaches any adopted file; a flavor body that names the repository, such as the
+  scaffolded `.gitleaks.toml`, names the checkout directory alone
   (`TestAdopt_NoRemoteWritesNoGuessedPlatform`,
   `TestApplyFlavor_Negative_CheckoutLayoutIsNotOwner`). A remote read git does not
   answer, such as a cancelled run, fails adoption instead of counting as no identity.
