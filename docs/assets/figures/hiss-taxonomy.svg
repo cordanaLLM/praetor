@@ -1,0 +1,58 @@
+<svg role="img" aria-labelledby="figure-title figure-desc" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1140" height="501" viewBox="0 0 1140 501" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+<title id="figure-title">HISS invariant taxonomy</title>
+<desc id="figure-desc">Twenty-one HISS invariants structured across deterministic execution, memory safety, governance, and operations families.</desc>
+<!-- interfig (c) 2025 Vectorize AI, Inc. MIT https://github.com/vectorize-io/hindsight/tree/ccfe85b4851957ac2adf88b4a9ddf9668b2882f1/hindsight-interfig -->
+<metadata id="figure-spec"><![CDATA[{"props":{"layout":{"direction":"row","gap":36,"children":[{"id":"exec","label":"Deterministic Execution","direction":"column","gap":16,"children":[{"id":"h01","label":"HISS-01","sub":"Acyclic DAG Control Flow","width":210},{"id":"h02","label":"HISS-02","sub":"Bounded Loops & I/O Timeouts","width":210},{"id":"h03","label":"HISS-03","sub":"Zero Frame Malloc","width":210},{"id":"h04","label":"HISS-04","sub":"Complexity & Sizing Bounds","width":210},{"id":"h05","label":"HISS-05","sub":"Variable Scoping","width":210},{"id":"h06","label":"HISS-06","sub":"Bounded Concurrency","width":210}]},{"id":"safety","label":"Memory & Error Integrity","direction":"column","gap":16,"children":[{"id":"h07","label":"HISS-07","sub":"Checked Errors & Zero Unwrap","width":210},{"id":"h08","label":"HISS-08","sub":"Static Determinism & Banned Funcs","width":210},{"id":"h09","label":"HISS-09","sub":"Mandatory // SAFETY: Proofs","width":210},{"id":"h10","label":"HISS-10","sub":"5-Layer Zero-Warnings Cascade","width":210}]},{"id":"gov","label":"Contracts & Fleet Governance","direction":"column","gap":16,"children":[{"id":"h11","label":"HISS-11","sub":"Hermetic Supply Chain","width":210},{"id":"h12","label":"HISS-12","sub":"Secret Leak Prevention","width":210},{"id":"h13","label":"HISS-13","sub":"Monotonic Debt Ratchet","width":210},{"id":"h14","label":"HISS-14","sub":"Append-Only ABI & Migration","width":210},{"id":"h15","label":"HISS-15","sub":"3D Test Discipline","width":210},{"id":"h16","label":"HISS-16","sub":"Canonical AGENTS.md & Server Gates","width":210}]},{"id":"ops","label":"Agent Operations & Evidence","direction":"column","gap":16,"children":[{"id":"h17","label":"HISS-17","sub":"State Ledger Discipline","width":210},{"id":"h18","label":"HISS-18","sub":"Diff-Aware CI Efficiency","width":210},{"id":"h19","label":"HISS-19","sub":"Reuse Before Writing","width":210},{"id":"h20","label":"HISS-20","sub":"Replayable Enforcement Evidence","width":210},{"id":"h21","label":"HISS-21","sub":"Platform Neutrality","width":210}]}]},"edges":[{"from":"exec","to":"safety"},{"from":"safety","to":"gov"},{"from":"gov","to":"ops"}],"steps":[]}}]]></metadata>
+<style>
+svg { --accent:#0074d9; --fg:#1c1e21; --muted:#606770; --bg:#ffffff; --surface:#f5f7fa; --border:#d0d7de; --card-on:#eef5fd; }
+@media (prefers-color-scheme: dark) { svg { --accent:#3396e8; --fg:#e3e3e3; --muted:#9aa0a6; --bg:#1b1b1d; --surface:#242526; --border:#3a3b3c; --card-on:#1d2733; } }
+.label { fill: var(--fg); font-size: 14px; font-weight: 500; text-anchor: middle; }
+.sub { fill: var(--muted); font-size: 12px; text-anchor: middle; }
+.frame { fill: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .04em; }
+.edgelabel { fill: var(--muted); font-size: 11px; text-anchor: middle; font-family: ui-monospace, Menlo, monospace; }
+.row { fill: var(--fg); font-size: 11px; }
+.row.mono { font-size: 10.5px; font-family: ui-monospace, Menlo, monospace; }
+.muted { fill: var(--muted); }
+.tag { font-size: 9px; font-weight: 600; letter-spacing: .03em; text-anchor: middle; }
+.mark { fill: var(--accent); font-size: 11px; font-weight: 600; text-anchor: end; }
+.chip { fill: #fff; font-size: 11.5px; text-anchor: middle; }
+.steplabel { fill: var(--fg); font-size: 13px; font-weight: 600; text-anchor: middle; font-family: ui-monospace, Menlo, monospace; }
+.caption { fill: var(--muted); font-size: 13.5px; text-anchor: middle; }
+
+</style>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9 z" fill="var(--muted)"/></marker></defs>
+<rect width="100%" height="100%" fill="var(--bg)"/>
+<g transform="translate(0 0)">
+<rect x="24" y="24" width="246" height="453" rx="14" fill="var(--surface)" stroke="var(--border)"/><text x="42" y="44" class="frame">DETERMINISTIC EXECUTION</text>
+<rect x="42" y="61" width="210" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="147" y="85.5" class="label">HISS-01</text><text x="147" y="100.5" class="sub">Acyclic DAG Control Flow</text>
+<rect x="42" y="130" width="210" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="147" y="154.5" class="label">HISS-02</text><text x="147" y="169.5" class="sub">Bounded Loops &amp; I/O Timeouts</text>
+<rect x="42" y="199" width="210" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="147" y="223.5" class="label">HISS-03</text><text x="147" y="238.5" class="sub">Zero Frame Malloc</text>
+<rect x="42" y="268" width="210" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="147" y="292.5" class="label">HISS-04</text><text x="147" y="307.5" class="sub">Complexity &amp; Sizing Bounds</text>
+<rect x="42" y="337" width="210" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="147" y="361.5" class="label">HISS-05</text><text x="147" y="376.5" class="sub">Variable Scoping</text>
+<rect x="42" y="406" width="210" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="147" y="430.5" class="label">HISS-06</text><text x="147" y="445.5" class="sub">Bounded Concurrency</text>
+<rect x="306" y="93" width="246" height="315" rx="14" fill="var(--surface)" stroke="var(--border)"/><text x="324" y="113" class="frame">MEMORY &amp; ERROR INTEGRITY</text>
+<rect x="324" y="130" width="210" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="429" y="154.5" class="label">HISS-07</text><text x="429" y="169.5" class="sub">Checked Errors &amp; Zero Unwrap</text>
+<rect x="324" y="199" width="210" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="429" y="223.5" class="label">HISS-08</text><text x="429" y="238.5" class="sub">Static Determinism &amp; Banned Funcs</text>
+<rect x="324" y="268" width="210" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="429" y="292.5" class="label">HISS-09</text><text x="429" y="307.5" class="sub">Mandatory // SAFETY: Proofs</text>
+<rect x="324" y="337" width="210" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="429" y="361.5" class="label">HISS-10</text><text x="429" y="376.5" class="sub">5-Layer Zero-Warnings Cascade</text>
+<rect x="588" y="24" width="246" height="453" rx="14" fill="var(--surface)" stroke="var(--border)"/><text x="606" y="44" class="frame">CONTRACTS &amp; FLEET GOVERNANCE</text>
+<rect x="606" y="61" width="210" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="711" y="85.5" class="label">HISS-11</text><text x="711" y="100.5" class="sub">Hermetic Supply Chain</text>
+<rect x="606" y="130" width="210" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="711" y="154.5" class="label">HISS-12</text><text x="711" y="169.5" class="sub">Secret Leak Prevention</text>
+<rect x="606" y="199" width="210" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="711" y="223.5" class="label">HISS-13</text><text x="711" y="238.5" class="sub">Monotonic Debt Ratchet</text>
+<rect x="606" y="268" width="210" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="711" y="292.5" class="label">HISS-14</text><text x="711" y="307.5" class="sub">Append-Only ABI &amp; Migration</text>
+<rect x="606" y="337" width="210" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="711" y="361.5" class="label">HISS-15</text><text x="711" y="376.5" class="sub">3D Test Discipline</text>
+<rect x="606" y="406" width="210" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="711" y="430.5" class="label">HISS-16</text><text x="711" y="445.5" class="sub">Canonical AGENTS.md &amp; Server Gates</text>
+<rect x="870" y="58.5" width="246" height="384" rx="14" fill="var(--surface)" stroke="var(--border)"/><text x="888" y="78.5" class="frame">AGENT OPERATIONS &amp; EVIDENCE</text>
+<rect x="888" y="95.5" width="210" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="993" y="120" class="label">HISS-17</text><text x="993" y="135" class="sub">State Ledger Discipline</text>
+<rect x="888" y="164.5" width="210" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="993" y="189" class="label">HISS-18</text><text x="993" y="204" class="sub">Diff-Aware CI Efficiency</text>
+<rect x="888" y="233.5" width="210" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="993" y="258" class="label">HISS-19</text><text x="993" y="273" class="sub">Reuse Before Writing</text>
+<rect x="888" y="302.5" width="210" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="993" y="327" class="label">HISS-20</text><text x="993" y="342" class="sub">Replayable Enforcement Evidence</text>
+<rect x="888" y="371.5" width="210" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="993" y="396" class="label">HISS-21</text><text x="993" y="411" class="sub">Platform Neutrality</text>
+<path id="p-exec-&gt;safety" d="M 270 250.5 C 288 250.5, 288 250.5, 306 250.5" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/>
+<path id="p-safety-&gt;gov" d="M 552 250.5 C 570 250.5, 570 250.5, 588 250.5" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/>
+<path id="p-gov-&gt;ops" d="M 834 250.5 C 852 250.5, 852 250.5, 870 250.5" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/>
+
+</g>
+
+
+</svg>

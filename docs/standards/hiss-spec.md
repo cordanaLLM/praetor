@@ -2,42 +2,13 @@
 
 The definitive formal specification for deterministic software engineering and autonomous agent governance across the cordanaLLM fleet.
 
+The High-Integrity Systems Standard (HISS) defines 21 invariants across four governing families.
 The invariants below are policy requirements. Their implemented coverage and
 remaining proof gaps are recorded in the [HISS refinement audit](../research/hiss-rule-refinement.md);
 a passing scanner does not establish every invariant for every language.
 
-```mermaid
-flowchart TD
-    subgraph ExecutionInvariants["Static & Runtime Determinism"]
-        H01["HISS-01: Acyclic DAG Control Flow"]
-        H02["HISS-02: Bounded Loops & I/O Timeouts"]
-        H03["HISS-03: Zero Frame Malloc in Hot Paths"]
-        H04["HISS-04: McCabe Complexity <= 10"]
-    end
-
-    subgraph SafetyInvariants["Memory & Error Integrity"]
-        H07["HISS-07: Zero Unchecked Errors / Unwraps"]
-        H08["HISS-08: Static Determinism & Banned Funcs"]
-        H09["HISS-09: Mandatory // SAFETY: Justifications"]
-        H10["HISS-10: 5-Layer Zero-Warning Cascade"]
-    end
-
-    subgraph ArchitectureInvariants["Contracts & Fleet Governance"]
-        H11["HISS-11: Hermetic Supply Chain (SLSA-3)"]
-        H14["HISS-14: Append-Only ABI & Migration Footers"]
-        H15["HISS-15: 3D Test Discipline (Pos/Neg/Boundary)"]
-        H16["HISS-16: Canonical AGENTS.md & Server Gates"]
-    end
-
-    subgraph AgentOperationsInvariants["Agent Operations & Replayable Evidence"]
-        H17["HISS-17: State Ledger Discipline"]
-        H18["HISS-18: Diff-Aware CI Efficiency"]
-        H19["HISS-19: Reuse Before Writing"]
-        H20["HISS-20: Replayable Enforcement Evidence"]
-        H21["HISS-21: Platform Neutrality"]
-    end
-
-    ExecutionInvariants --> SafetyInvariants --> ArchitectureInvariants --> AgentOperationsInvariants
+```figure
+hiss-taxonomy
 ```
 
 ---
@@ -74,6 +45,22 @@ Functions must remain strictly bounded in complexity and scope:
 | **Executable Statements** | $\le 50$ Statements | Compiler AST |
 
 **Function Length** is measured over the body: from the line carrying the opening brace to the line carrying the closing brace, both counted. The signature is not part of the measurement, so a definition written `int f(void)` / `{` on two lines is exactly as long as the same definition written `int f(void) {` on one, and a signature wrapped across a long parameter list -- the ordinary shape of a GPU kernel -- adds nothing to the count. A brace-delimited scanner may still recognise a function from its signature line, which is how it names one whose brace is elsewhere; recognition and measurement are separate. Reformatting must never move a function across the cap.
+
+### HISS-05: Variable Scoping
+
+Identifiers must be declared in the smallest lexical scope that serves them:
+
+- Narrow lexical scoping prevents accidental variable shadowing and state leakage.
+- Variables should be declared immediately before their first use.
+- Status: advisory until an executable AST scope analyzer is attached.
+
+### HISS-06: Bounded Concurrency
+
+Worker pools, concurrent routines, and parallel fan-out must declare an explicit scalar upper bound:
+
+- Goroutine pools and thread spawning must specify a maximum concurrency capacity.
+- Unbounded queue workers or unbounded concurrency patterns are banned.
+- Status: advisory; race-detector tests verify absence of data races but do not verify pool bounds.
 
 ---
 
@@ -129,6 +116,20 @@ Every dependency manifest must be cryptographically pinned:
 - Pinned lockfiles mandatory (`go.sum`, `Cargo.lock`, `pnpm-lock.yaml`).
 - Zero floating tags (e.g. `:latest`) in container deployments.
 - SLSA Level 3 provenance attestations and Sigstore Cosign signatures verified on all binaries.
+
+### HISS-12: Secret Leak Prevention
+
+Zero credentials in Git history:
+
+- Automated secret detection (`make secrets` / `gitleaks`) scans repository history inside `verify-all`.
+- API keys, private certificates, and credentials must never be committed.
+
+### HISS-13: Monotonic Debt Ratchet
+
+Total recorded infractions never grow against the committed baseline:
+
+- An increase in technical debt requires a deliberately recorded rationale.
+- Evaluated against `.standards-baseline.json` by `praetorctl baseline` and the gate's HISS stage.
 
 ### HISS-14: Append-Only ABI & Migration Footers
 

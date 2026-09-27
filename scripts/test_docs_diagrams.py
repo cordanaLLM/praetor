@@ -222,7 +222,7 @@ class EndToEnd(unittest.TestCase):
     def test_repository_docs_carry_diagrams(self):
         """The rendered check on the real site is not vacuous: the spec page holds a diagram."""
         spec = (ROOT / "docs" / "standards" / "hiss-spec.md").read_text(encoding="utf-8")
-        self.assertGreaterEqual(mermaid_count(spec), 1)
+        self.assertGreaterEqual(mermaid_count(spec) + len(docs_diagrams.figure_slugs(spec)), 1)
 
 
 # ---------------------------------------------------------------------------------------------
