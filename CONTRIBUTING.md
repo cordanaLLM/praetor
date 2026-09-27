@@ -1,6 +1,6 @@
 # Contributing to Praetor
 
-Thank you for contributing to Praetor! As the core governance and standardization platform for the CordanaLLM ecosystem, all contributions must adhere to High-Integrity Systems Standards (HISS).
+Thank you for contributing to Praetor, an open governance engine for any repository fleet. Every contribution must adhere to the [High-Integrity Systems Standard (HISS)](docs/standards/hiss-spec.md).
 
 ---
 

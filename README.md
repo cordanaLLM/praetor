@@ -6,7 +6,7 @@
 
   <strong>Enterprise Fleet Governance, Repository-as-Code & Universal AI Agent Engineering Engine</strong>
 
-  *Part of the [CordanaLLM](https://github.com/CordanaLLM) Deterministic Infrastructure Ecosystem*
+  *An open governance engine for any repository fleet: your repositories, your fork, your policy.*
 
   [![Go Version](https://img.shields.io/badge/Go-1.27%2B-00ADD8?style=for-the-badge&logo=go)](https://golang.org)
   [![HISS Governance](https://img.shields.io/badge/Standard-HISS_Governance-06B6D4?style=for-the-badge&logo=nasa)](https://cordanallm.github.io/praetor/standards/hiss-spec/)
@@ -40,7 +40,7 @@ Praetor manages this repository's declared governance policy. This managed block
 
 ## 🏛️ Executive Summary
 
-**Praetor** is the flagship execution and governance engine of the **CordanaLLM** ecosystem. Built in Go 1.27+, Praetor transforms repository governance into a deterministic, active platform capability by combining **Repository-as-Code** orchestration, **context transpilation** across vendor-specific AI tools, and unbypassable **HISS (High-Integrity Systems Standard)** invariant enforcement.
+**Praetor** is an open governance engine for any repository fleet: you run it against your own repositories or your own fork of it, and its default owner, target framework, review bot and organisation-folder list stay empty until you configure them ([framework, forge and topology settings](docs/guides/effective-policy.md#framework-forge-and-topology)). Built in Go 1.27+, Praetor transforms repository governance into a deterministic, active platform capability by combining **Repository-as-Code** orchestration, **context transpilation** across vendor-specific AI tools, and unbypassable **HISS (High-Integrity Systems Standard)** invariant enforcement.
 
 While traditional repositories suffer from configuration drift and agentic fragmentation, Praetor maintains a single canonical source of truth—**`AGENTS.md`**—and compiles it into vendor-specific harnesses (`.claude`, `.cursor/rules/*.mdc`, `.windsurfrules`, `.gemini/GEMINI.md`, `.github/copilot-instructions.md`, `.codex/rules.md`) while ensuring mathematical code quality and debt ratcheting.
 
@@ -141,7 +141,7 @@ See the [HISS specification](docs/standards/hiss-spec.md) for the full invariant
 ├── editors/                    # VS Code extension; generated Neovim and JetBrains references
 ├── internal/                   # Core Go packages (config, lattice, AST transpiler)
 ├── lua/ & .nvim.lua            # Neovim native governance integrations
-├── .needs.yaml                 # Golusoris framework capability declarations
+├── .needs.yaml                 # Capability needs written by `praetorctl needs scan --write`
 ├── .standards.yaml             # Primary repository governance specification
 ├── .standards.lock             # Immutable locked dependency & profile state
 ├── .standards-baseline.json    # Debt ratcheting baseline state
@@ -208,4 +208,4 @@ third-party components the release archives and the container image ship, with t
 licenses and upstream notices; both carry it beside `LICENSE` and [`LICENSES/`](LICENSES).
 For open-source projects, standards, and specifications this repository builds upon, see the [Credits & Acknowledgements](docs/credits.md) page.
 
-Part of the **[CordanaLLM](https://github.com/CordanaLLM)** project.
+Developed in the open at [github.com/cordanaLLM/praetor](https://github.com/cordanaLLM/praetor).

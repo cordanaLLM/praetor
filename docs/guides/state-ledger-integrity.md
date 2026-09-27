@@ -215,6 +215,18 @@ is work somebody actually recorded. The behaviour is covered by
 `praetorctl milestone` keeps `.workingdir/milestones.json` and renders it into the
 delimited milestone block of `BACKLOG.md` (`internal/milestone/milestone.go`).
 
+- **The remote repository is resolved, never assumed.** `milestone sync` and
+  `milestone close --publish` act on `--owner` and `--repo`, else the directory's
+  `repository.owner` and `repository.name` or its origin remote, with
+  `forge.default_owner` from the operator settings (`--fleet-config`,
+  `--workstation-config`, `--manifest`) as the last owner step. Praetor ships no default
+  owner: with none of these the command refuses with
+  `owner unknown: pass --owner, set repository.owner, or set forge.default_owner`
+  (`config.ErrOwnerUnknown`), and an owner without a repository name is refused with
+  `config.ErrRepositoryNameUnknown` (`TestMilestoneSync_3D_RepositoryResolution` in
+  `cmd/standardsctl/forge_owner_test.go`). `list`, `create`, `status` and a local
+  `close` need no remote.
+
 - **Remote sync binds by forge number.** A row with a `remote_number` is matched by
   that number, so a remote rename updates the row and a title swap between two remote
   milestones keeps both bindings. Only an unbound row is matched by title, which binds

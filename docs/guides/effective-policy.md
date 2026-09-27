@@ -133,7 +133,8 @@ hook` consumes `hooks`; `praetorctl clients permissions` consumes the AGY permis
 selection under `clients`; the `needs` commands consume `framework` and
 `forge.default_owner`. `issue`, `milestone`, `project`, `init` and `forge
 sync-wiki` consume `forge.default_owner` too, and `issue reconcile` also reads
-`forge.reconcile_repos`. Repository policy and host activation therefore share
+`forge.reconcile_repos`; `topology audit` and `topology clean` consume
+`topology.org_containers`. Repository policy and host activation therefore share
 one schema without making `audit` inspect a user's home directory.
 
 A workstation document, the layer that holds host paths:

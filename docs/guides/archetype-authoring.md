@@ -1,6 +1,6 @@
 # Archetype and Facet Authoring Guide
 
-Learn how to define new composable profiles and cross-cutting security/operational facets in `cordanaLLM/praetor`.
+Learn how to define new composable profiles and cross-cutting security/operational facets in the catalog Praetor ships, in this repository or in your fork of it.
 
 ```figure
 lattice-join

@@ -305,8 +305,8 @@ the empty-denominator 100% (`needs.MappingAvailability`; ADR-0014 §4; tests in
 ### The `framework_replacement` key
 
 A demand's replacement is written as `framework_replacement`. A `.needs.yaml` or JSON
-report written with the former key `golusoris_replacement` still decodes: the old key is
-read when the new one is empty, the same value under both keys is accepted, and two
+report written with the key earlier releases used (`legacyReplacementKey` in
+`internal/needs/demand_alias.go`) still decodes: the old key is read when the new one is empty, the same value under both keys is accepted, and two
 different values are an error naming both. Every row read through the old key carries a
 deprecation that `needs scan`, `needs report` and the MCP report print as
 `Deprecated input:`; the next `needs scan --write` writes the new key only. The old key is

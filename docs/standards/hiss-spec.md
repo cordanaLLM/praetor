@@ -1,6 +1,6 @@
 # The High-Integrity Systems Standard (HISS)
 
-The definitive formal specification for deterministic software engineering and autonomous agent governance across the cordanaLLM fleet.
+The definitive formal specification for deterministic software engineering and autonomous agent governance in every repository Praetor governs.
 
 The High-Integrity Systems Standard (HISS) defines 21 invariants across four governing families.
 The invariants below are policy requirements. Their implemented coverage and
