@@ -336,6 +336,22 @@ class FigureFences(unittest.TestCase):
             indented, _ = docs_diagrams.expand("- item\n\n    " + FIGURE.replace("\n", "\n    "), ".", figures)
             self.assertIn("\n    <picture>", indented)
 
+    def test_expand_keeps_line_separators_markdown_does_not_split_on(self):
+        with tempfile.TemporaryDirectory() as directory:
+            figures = Path(directory)
+            write(figures / "demo.json", json.dumps(META))
+            for separator in ("\x0c", " ", "\x85"):
+                source = f"intro{separator}line\n\n" + FIGURE + "after\n"
+                text, errors = docs_diagrams.expand(source, "..", figures)
+                self.assertEqual(errors, [])
+                self.assertTrue(text.startswith(f"intro{separator}line\n\n<figure"), repr(text[:40]))
+                self.assertNotIn("```figure", text)
+                self.assertTrue(text.endswith("</details>\nafter\n"), repr(text[-40:]))
+            crlf, errors = docs_diagrams.expand("intro\r\n\r\n" + FIGURE.replace("\n", "\r\n") + "after\r\n", "..", figures)
+            self.assertEqual(errors, [])
+            self.assertNotIn("```figure", crlf)
+            self.assertIn("after", crlf)
+
     def test_expand_leaves_an_unknown_figure_and_reports_it(self):
         with tempfile.TemporaryDirectory() as directory:
             text, errors = docs_diagrams.expand("```figure\nmissing\n```\n```figure\nBad Slug\n```\n", ".", Path(directory))

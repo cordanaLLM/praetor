@@ -35,7 +35,12 @@ async function fetchRegistry(): Promise<Registry> {
 
 async function mountFigure(figure: HTMLElement): Promise<void> {
   const slug = figure.dataset.figure ?? '';
-  registry ??= fetchRegistry();
+  // A failed or timed-out fetch is not cached: the next figure, or the next page after instant
+  // navigation, asks again instead of keeping its SVG until a full reload.
+  registry ??= fetchRegistry().catch((error: unknown) => {
+    registry = null;
+    throw error;
+  });
   const chunk = (await registry)[slug];
   const picture = figure.querySelector('picture');
   if (!chunk || !picture) return;

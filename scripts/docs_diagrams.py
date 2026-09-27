@@ -114,8 +114,15 @@ def read_json(path: Path) -> dict:
 
 
 def bounded_lines(text: str) -> list[str]:
-    """The lines of `text`, refusing more than MAX_LINES."""
-    lines = text.splitlines()
+    """The lines of `text`, refusing more than MAX_LINES.
+
+    Lines end at "\n" only, as Python-Markdown splits them, with a trailing "\r" dropped.
+    str.splitlines() also breaks at form feeds, U+2028 and other separators, which would
+    shift every index expand() uses to splice a rendered figure into the page.
+    """
+    lines = [line.removesuffix("\r") for line in text.split("\n")]
+    if lines and lines[-1] == "":
+        lines.pop()  # a final newline ends the last line; it does not start another
     if len(lines) > MAX_LINES:
         raise CheckError(f"more than {MAX_LINES} lines")
     return lines
