@@ -9,14 +9,8 @@ assignments are operator declarations, not measured quality or current availabil
 
 ## Current execution path
 
-```mermaid
-flowchart LR
-    CLI["models route"] --> CONFIG["Bounded, validated routing.yaml"]
-    CONFIG --> TASK["Exact target_tasks eligibility"]
-    TASK --> CAPS["All requested capabilities declared"]
-    CAPS --> USAGE["Projected +1 RPM, input+output TPM and cooldown checks"]
-    USAGE --> COST["Configured token cost, deterministic tie break"]
-    COST --> RESULT["JSON selection and observation status"]
+```figure
+model-routing
 ```
 
 The CLI calls `LoadRoutingConfigContext`, optionally `LoadUsageSnapshot` and
