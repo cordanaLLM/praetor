@@ -26,7 +26,7 @@
     "cmd/standardsctl/baseline.go:runBaseline",
     "internal/gating/pipeline.go:runReceiptStage"
   ],
-  "spec_sha256": "62aed3a9bc92d4e97d8c6c0c9717c8fc9e1d990167512f2d980d67b8a87d4087",
+  "spec_sha256": "8ea2a632583cbdac091753dab3e765b8d78d01d2fa434dae73a9f2e2432e4760",
   "engine": {
     "commit": "ccfe85b4851957ac2adf88b4a9ddf9668b2882f1",
     "sha256": "047b4bcb30562cca709be7175d11995cdda45cf4b89db1f6906c5805b26c6452"
