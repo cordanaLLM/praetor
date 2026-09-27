@@ -1,4 +1,4 @@
-package adopt_test
+package adopt
 
 import (
 	"os"
@@ -6,12 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/forge"
 )
 
 func TestNeutralText_Positive(t *testing.T) {
-	harness := adopt.BuildAgentHarnessDirectives()
+	harness := buildAgentHarnessDirectives()
 	if strings.Contains(harness, "[bot]") {
 		t.Errorf("Harness directives contain bot login: %q", harness)
 	}
@@ -33,8 +32,8 @@ func TestNeutralText_Positive(t *testing.T) {
 
 func TestNeutralText_Negative(t *testing.T) {
 	// A negative test ensures that an explicitly non-neutral string fails the check.
-	// Since BuildAgentHarnessDirectives has no parameters, we just assert its output doesn't match the old text.
-	harness := adopt.BuildAgentHarnessDirectives()
+	// Since buildAgentHarnessDirectives has no parameters, we just assert its output doesn't match the old text.
+	harness := buildAgentHarnessDirectives()
 	if strings.Contains(harness, "re-checks every pull request in ephemeral isolated sandbox") {
 		t.Errorf("Harness directives contain old non-neutral text")
 	}
