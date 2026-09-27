@@ -80,7 +80,7 @@ func buildAgentHarness(repoName, arch string, plan *VerificationPlan) (string, e
 	if err != nil {
 		return "", err
 	}
-	return header + BuildAgentHarnessDirectives() + register + footer + "\n" + harnessLintScopeEnd + harnessEndMarker + "\n", nil
+	return header + buildAgentHarnessDirectives() + register + footer + "\n" + harnessLintScopeEnd + harnessEndMarker + "\n", nil
 }
 
 // harnessRegisterSection renders the default text register section. Adoption needs neither
@@ -125,7 +125,7 @@ func foreignInstructions(existing string) string {
 	return existing
 }
 
-func BuildAgentHarnessDirectives() string {
+func buildAgentHarnessDirectives() string {
 	return `## Core Directives & Invariants
 
 | Invariant | Rule | Enforcement | On fail |

@@ -1,3 +1,3 @@
 type: changed
-title: "Neutralize bot identities and GitHub App manifests. Migration: Adopters must re-run adopt for the harness and edit or regenerate the labels.yaml description themselves. pr.go StandardReviewBot and forge labels have also been neutralized."
+title: "Neutralize bot identities and GitHub App manifests. Migration: Adopters must re-run adopt for the harness and edit or regenerate the labels.yaml description themselves. The synced label description no longer names a bot account; the review bot that forge requests on pull requests (StandardReviewBot) is unchanged and left for a follow-up."
 breaking: true
