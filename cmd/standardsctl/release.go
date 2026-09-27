@@ -17,7 +17,7 @@ func runRelease(args []string) error {
 	skipVerify := fs.Bool("skip-verify", false, "Skip make verify-all check")
 	skipClean := fs.Bool("skip-clean", false, "Skip working tree cleanliness check")
 
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}

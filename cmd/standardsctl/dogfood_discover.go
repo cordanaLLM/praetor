@@ -19,7 +19,7 @@ func runDogfoodDiscovery(ctx context.Context, args []string) error {
 	fs.StringVar(&opts.ArtifactDir, "artifacts", "", "New private evidence directory under an existing parent")
 	fs.StringVar(&opts.Stage, "stage", "plan", "plan (declarations only) or observe (bounded source observation)")
 	fs.IntVar(&opts.Concurrency, "concurrency", 4, "Concurrent public observations, 1..4")
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {

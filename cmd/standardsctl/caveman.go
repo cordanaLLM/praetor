@@ -80,7 +80,7 @@ func cavemanCheck(ctx context.Context, args []string, stdin io.Reader, out io.Wr
 	fset.Var(&selectors, "selector", "Dotted JSON/YAML string selector; repeat for multiple fields")
 	maxWords := fset.Int("max-words", 0, "Prose-word ceiling per input (caveman.Options.MaxProseWords, C7); 0 means no ceiling")
 	maxTokens := fset.Int("max-tokens", 0, "Estimated-token ceiling per input (caveman.EstimateTokens, C8); 0 means no ceiling")
-	if err := fset.Parse(args); err != nil {
+	if _, err := parseInterspersed(fset, args); err != nil {
 		return err
 	}
 	explicit := visitedFlags(fset)

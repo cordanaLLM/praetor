@@ -20,7 +20,7 @@ func runHissCoverage(args []string) error {
 	fs := flag.NewFlagSet("hiss coverage", flag.ContinueOnError)
 	root := fs.String("path", ".", "Repository root to inspect")
 	verify := fs.Bool("verify", false, "Replay the fixture corpus and fail when a claim is not supported")
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 

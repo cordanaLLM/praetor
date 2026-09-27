@@ -12,7 +12,7 @@ func runSentinel(args []string) error {
 	path := fs.String("path", ".", "Path to inspect for disk storage")
 	checkVRAM := fs.Float64("check-vram", 0, "Check if given VRAM (GB) can be allocated safely")
 
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 

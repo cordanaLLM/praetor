@@ -24,7 +24,7 @@ func runBaseline(args []string) error {
 	allowIncrease := fs.Bool("allow-increase", false, "Permit --record to raise the infraction count (HISS-13 exception); requires --reason")
 	reason := fs.String("reason", "", "Rationale stored in the baseline when --allow-increase raises the count")
 
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() > 0 {

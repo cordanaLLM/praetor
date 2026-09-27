@@ -63,7 +63,7 @@ func devsyncRclone(config string) devsync.Rclone {
 }
 
 func parseDevsyncFlags(fs *flag.FlagSet, args []string) error {
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {

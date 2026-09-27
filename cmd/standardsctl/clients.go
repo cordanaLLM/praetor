@@ -39,7 +39,7 @@ func prepareClientConfig(args []string) error {
 	client := flags.String("client", "", "Client adapter identifier")
 	existing := flags.String("existing", "", "Existing client config to preserve and merge")
 	output := flags.String("out", "", "New private artifact directory; parent must exist")
-	if err := flags.Parse(args); err != nil {
+	if _, err := parseInterspersed(flags, args); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 || *registryPath == "" || *client == "" || *output == "" {
@@ -62,7 +62,7 @@ func applyClientConfig(args []string) error {
 	client := flags.String("client", "", "Client adapter identifier")
 	target := flags.String("target", "", "Exact client configuration destination")
 	output := flags.String("out", "", "New private backup and plan directory")
-	if err := flags.Parse(args); err != nil {
+	if _, err := parseInterspersed(flags, args); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 || *registry == "" || *client == "" || *target == "" || *output == "" {

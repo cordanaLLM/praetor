@@ -32,7 +32,7 @@ func runOperationalSync(ctx context.Context, stage string, args []string) error 
 	fs.StringVar(&opts.BaseSHA, "base-sha", "", "Public commit already incorporated into owner history")
 	fs.StringVar(&opts.SourceSHA, "source-sha", "", "Exact reviewed new public commit, descending from base")
 	fs.StringVar(&opts.Destination, "destination", "", "New external clone for prepare; must not exist")
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {

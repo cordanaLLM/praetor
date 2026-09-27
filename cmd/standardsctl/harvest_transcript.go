@@ -20,7 +20,7 @@ func runHarvestTranscript(ctx context.Context, args []string) error {
 	fs.StringVar(&opts.Cursor, "cursor", "", "Opaque resume cursor from the previous page")
 	fs.StringVar(&opts.ExpectedSHA256, "expected-sha256", "", "Require this exact selected-source SHA256")
 	fs.IntVar(&opts.MaxRecords, "max-records", 1000, "Maximum records in this page (1..10000)")
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 || opts.SourcePath == "" || opts.CacheDir == "" {

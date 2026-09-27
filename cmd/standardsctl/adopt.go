@@ -22,54 +22,6 @@ const adoptTimeout = 2 * time.Minute
 // errAdoptIncomplete prevents a partially successful report from returning success.
 var errAdoptIncomplete = errors.New("adoption completed with errors")
 
-// boolFlagNames returns the names of every flag in fs whose value needs no separate
-// argument. It replaces the hand-maintained literal list that reorderAdoptArgs used to
-// carry, so adding a flag to a FlagSet can no longer desynchronise the reordering below.
-func boolFlagNames(fs *flag.FlagSet) map[string]bool {
-	names := make(map[string]bool)
-	fs.VisitAll(func(f *flag.Flag) {
-		if bf, ok := f.Value.(interface{ IsBoolFlag() bool }); ok && bf.IsBoolFlag() {
-			names[f.Name] = true
-		}
-	})
-	return names
-}
-
-// reorderArgs moves flags ahead of positional arguments. Go's flag package stops parsing
-// at the first non-flag argument, so without this the documented form
-// `state sync <dir> --log=msg` would silently drop the flag. Everything after a bare "--"
-// terminator stays positional.
-func reorderArgs(args []string, boolFlags map[string]bool) []string {
-	flagArgs := make([]string, 0, len(args))
-	posArgs := make([]string, 0, len(args))
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		if arg == "--" {
-			posArgs = append(posArgs, args[i+1:]...)
-			break
-		}
-		if len(arg) < 2 || !strings.HasPrefix(arg, "-") {
-			posArgs = append(posArgs, arg)
-			continue
-		}
-		flagArgs = append(flagArgs, arg)
-		if i+1 < len(args) && flagNeedsValue(arg, args[i+1], boolFlags) {
-			i++
-			flagArgs = append(flagArgs, args[i])
-		}
-	}
-	return append(flagArgs, posArgs...)
-}
-
-// flagNeedsValue reports whether arg consumes next as its value: only a non-boolean flag
-// written without "=" and followed by a non-flag token does.
-func flagNeedsValue(arg, next string, boolFlags map[string]bool) bool {
-	if strings.Contains(arg, "=") || strings.HasPrefix(next, "-") {
-		return false
-	}
-	return !boolFlags[strings.TrimLeft(arg, "-")]
-}
-
 // resolveHomeSubdir returns explicit when it is set, and otherwise joins segs onto the
 // user's home directory. It never degrades to a working-directory-relative path: when the
 // home directory cannot be resolved the caller gets an error naming the flag to pass
@@ -118,7 +70,7 @@ func runAdopt(args []string) error {
 	maxFiles := fs.Int("verification-max-files", 0, fmt.Sprintf("Verification input files discovery may read (default %d, ceiling %d)", defaults.MaxFiles, adopt.VerificationFilesCeiling))
 	maxDepth := fs.Int("verification-max-depth", 0, fmt.Sprintf("Directory depth verification discovery may descend (default %d, ceiling %d)", defaults.MaxDepth, adopt.VerificationDepthCeiling))
 
-	if err := fs.Parse(reorderArgs(args, boolFlagNames(fs))); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 

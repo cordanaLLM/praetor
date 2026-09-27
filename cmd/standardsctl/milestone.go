@@ -54,7 +54,7 @@ func runMilestoneList(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("milestone list", flag.ContinueOnError)
 	dir := fs.String("dir", ".", "Repository root directory")
 	stateFilter := fs.String("state", "all", "Filter by state: all, open, closed")
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 
@@ -117,7 +117,7 @@ func runMilestoneCreate(ctx context.Context, args []string) error {
 	publish := fs.Bool("publish", false, "Publish immediately to GitHub remote")
 	remote := addMilestoneForgeFlags(fs)
 
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if strings.TrimSpace(*title) == "" {
@@ -196,7 +196,7 @@ func runMilestoneSync(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("milestone sync", flag.ContinueOnError)
 	dir := fs.String("dir", ".", "Repository root directory")
 	remote := addMilestoneForgeFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 

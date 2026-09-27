@@ -30,7 +30,7 @@ func runInit(args []string) error {
 	outputPath := fs.String("output", ".standards.yaml", "Path to write .standards.yaml; its directory receives the companion files")
 	settings := registerOperatorSettingsFlags(fs)
 
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() > 0 {

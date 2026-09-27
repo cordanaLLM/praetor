@@ -904,67 +904,6 @@ func TestDispatchCommand_CISubcommands(t *testing.T) {
 }
 
 // =========================================================================
-// Argument reordering (HISS-15: positive, negative, boundary)
-// =========================================================================
-
-func TestReorderArgs_Table(t *testing.T) {
-	fs := flag.NewFlagSet("fixture", flag.ContinueOnError)
-	fs.String("path", ".", "string flag")
-	fs.String("log", "", "string flag")
-	fs.Bool("dry-run", false, "bool flag")
-	boolFlags := boolFlagNames(fs)
-
-	if !boolFlags["dry-run"] || boolFlags["path"] {
-		t.Fatalf("boolFlagNames misclassified flags: %v", boolFlags)
-	}
-
-	cases := []struct {
-		name string
-		in   []string
-		want []string
-	}{
-		{"equals form keeps order", []string{"--path=/x", "target"}, []string{"--path=/x", "target"}},
-		{"space form keeps flag value attached", []string{"--path", "/x", "target"}, []string{"--path", "/x", "target"}},
-		{"positional before flag is hoisted", []string{"target", "--log=msg"}, []string{"--log=msg", "target"}},
-		{"bool flag does not swallow positional", []string{"--dry-run", "target"}, []string{"--dry-run", "target"}},
-		{"bool flag before value flag", []string{"dir", "--dry-run", "--path", "/x"}, []string{"--dry-run", "--path", "/x", "dir"}},
-		{"trailing flag without value", []string{"dir", "--path"}, []string{"--path", "dir"}},
-		{"bare positional only", []string{"dir"}, []string{"dir"}},
-		{"empty input", []string{}, []string{}},
-		{"lone dash stays positional", []string{"-"}, []string{"-"}},
-		{"double dash terminates flags", []string{"--dry-run", "--", "--path", "x"}, []string{"--dry-run", "--path", "x"}},
-	}
-
-	for _, tc := range cases {
-		got := reorderArgs(tc.in, boolFlags)
-		if len(got) != len(tc.want) {
-			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
-			continue
-		}
-		for i := range got {
-			if got[i] != tc.want[i] {
-				t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
-				break
-			}
-		}
-	}
-}
-
-func TestReorderArgs_ParsesFlagAfterPositional(t *testing.T) {
-	fs := flag.NewFlagSet("fixture", flag.ContinueOnError)
-	logMsg := fs.String("log", "", "log message")
-	if err := fs.Parse(reorderArgs([]string{"/tmp/x", "--log=recorded"}, boolFlagNames(fs))); err != nil {
-		t.Fatalf("parse failed: %v", err)
-	}
-	if *logMsg != "recorded" {
-		t.Errorf("expected the flag after the positional to be parsed, got %q", *logMsg)
-	}
-	if fs.NArg() != 1 || fs.Arg(0) != "/tmp/x" {
-		t.Errorf("expected the positional to survive, got %v", fs.Args())
-	}
-}
-
-// =========================================================================
 // state: sync logs, status is read-only, --dir is a flag everywhere
 // =========================================================================
 

@@ -22,7 +22,7 @@ func runBugs(args []string) error {
 	fs := flag.NewFlagSet("bugs audit", flag.ContinueOnError)
 	repoPath := fs.String("path", ".", "Repository root whose bug ledger is audited")
 	strict := fs.Bool("strict", false, "Exit non-zero when a recorded location no longer resolves")
-	if err := fs.Parse(args[1:]); err != nil {
+	if _, err := parseInterspersed(fs, args[1:]); err != nil {
 		return err
 	}
 	// bugledger.Audit bounds itself; a second bound here would silently cap a raised inner one.

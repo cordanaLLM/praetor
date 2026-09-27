@@ -38,7 +38,7 @@ func runGC(args []string) error {
 	var released repeatedStringFlag
 	fs.Var(&released, "released-path", "Explicitly assert that a path is quiescent and released (repeatable)")
 
-	if err := fs.Parse(reorderArgs(args, boolFlagNames(fs))); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}

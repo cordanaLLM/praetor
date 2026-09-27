@@ -16,7 +16,7 @@ func runDogfoodSchedule(ctx context.Context, args []string) error {
 	}
 	fs := flag.NewFlagSet("dogfood schedule "+args[0], flag.ContinueOnError)
 	path := fs.String("config", "", "Explicit private version-1 schedule JSON")
-	if err := fs.Parse(args[1:]); err != nil {
+	if _, err := parseInterspersed(fs, args[1:]); err != nil {
 		return err
 	}
 	if *path == "" || fs.NArg() != 0 {

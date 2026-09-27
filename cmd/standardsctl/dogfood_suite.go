@@ -17,7 +17,7 @@ func runDogfoodSuite(ctx context.Context, args []string) error {
 	fs.StringVar(&opts.ArtifactDir, "artifacts", "", "New private evidence directory under an existing parent")
 	fs.StringVar(&opts.SourceRoot, "source-root", ".", "Validated Praetor source bundle for public cases")
 	fs.StringVar(&opts.Stage, "stage", "plan", "plan (declarations only) or verify (execute and replay)")
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 || opts.ConfigPath == "" || opts.ArtifactDir == "" {

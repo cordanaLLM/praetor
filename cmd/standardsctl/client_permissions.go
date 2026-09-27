@@ -81,7 +81,7 @@ func parseClientPermissionOptions(args []string) (clientPermissionOptions, error
 	flags.StringVar(&opts.home, "home", "", "Home directory used for the default AGY settings location")
 	flags.StringVar(&opts.target, "target", "", "Exact AGY settings destination")
 	flags.StringVar(&opts.output, "out", "", "New private plan and backup directory")
-	if err := flags.Parse(args[1:]); err != nil {
+	if _, err := parseInterspersed(flags, args[1:]); err != nil {
 		return clientPermissionOptions{}, err
 	}
 	return validateClientPermissionOptions(opts, flags.NArg())

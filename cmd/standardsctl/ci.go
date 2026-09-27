@@ -52,7 +52,7 @@ func runCIFilter(ctx context.Context, args []string) error {
 	force := fs.Bool("force", false, "Force execution of all CI test and security gates")
 	manifest := fs.String("config", "", "Path to the .standards.yaml whose overrides.ci governs the decision (default <dir>/.standards.yaml)")
 
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() > 0 {

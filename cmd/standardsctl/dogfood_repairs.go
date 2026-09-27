@@ -47,7 +47,7 @@ func runDogfoodRepairPlan(ctx context.Context, args []string) error {
 	ceiling := fs.Float64("max-cost", -1, "Required total configured-cost ceiling, including explicit zero")
 	usage := fs.String("usage", "", "Optional explicit capacity snapshot")
 	directory := fs.String("output", "", "New private local review directory")
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 || *reportPath == "" || *routing == "" || *directory == "" {

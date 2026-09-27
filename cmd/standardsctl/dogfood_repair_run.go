@@ -18,7 +18,7 @@ func runDogfoodRepairAction(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("dogfood repairs "+args[0], flag.ContinueOnError)
 	config := fs.String("config", "", "Explicit private repair execution configuration")
 	reportPath := fs.String("report", "", "Retained completed dogfood suite report")
-	if err := fs.Parse(args[1:]); err != nil {
+	if _, err := parseInterspersed(fs, args[1:]); err != nil {
 		return err
 	}
 	if *config == "" || *reportPath == "" || fs.NArg() != 0 {

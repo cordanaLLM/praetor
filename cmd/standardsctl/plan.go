@@ -68,7 +68,7 @@ func runPlan(args []string) error {
 	configPath := fs.String("config", ".standards.yaml", "Path to .standards.yaml; its directory is the planned root")
 	catalogRoot := fs.String("catalog-root", "", "Root containing pinned .config/archetypes (default: planned root)")
 
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() > 0 {

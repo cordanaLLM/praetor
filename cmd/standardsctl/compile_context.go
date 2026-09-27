@@ -19,7 +19,7 @@ func runCompileContext(args []string) error {
 	source := fs.String("source", "AGENTS.md", "Path to canonical AGENTS.md file")
 	targetDir := fs.String("target-dir", ".", "Root directory to write/verify target vendor files")
 
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() > 0 {

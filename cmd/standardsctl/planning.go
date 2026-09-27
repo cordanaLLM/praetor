@@ -28,7 +28,7 @@ func planningCommand(ctx context.Context, args []string, output io.Writer) error
 	flags := flag.NewFlagSet("planning prepare", flag.ContinueOnError)
 	input := flags.String("input", "", "Strict planning draft JSON")
 	directory := flags.String("output-dir", "", "Optional new private artifact directory")
-	if err := flags.Parse(args[1:]); err != nil {
+	if _, err := parseInterspersed(flags, args[1:]); err != nil {
 		return err
 	}
 	if *input == "" || flags.NArg() != 0 {

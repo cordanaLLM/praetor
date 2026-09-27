@@ -80,7 +80,7 @@ func (p projectFlags) manager(ctx context.Context) (*forge.ProjectManager, error
 func runProjectList(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("project list", flag.ContinueOnError)
 	flags := addProjectFlags(fs)
-	if err := fs.Parse(args); err != nil {
+	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
