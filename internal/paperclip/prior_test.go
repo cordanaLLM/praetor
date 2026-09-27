@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 )
 
 // priorFixture reads a golden harness file an earlier release wrote. CRLF is folded so a
@@ -57,14 +59,19 @@ func TestPriorGeneratedRecognisesReleasedHarness(t *testing.T) {
 }
 
 // Every release era is recognised: each register directive form under each push protocol,
-// including the review-branch push #458 added.
+// including the review-branch push #458 added, and the Caveman release. This release's
+// renderings under other repository facts follow them (TestPriorGeneratedRecognisesThisRelease*).
 func TestPriorGeneratedRecognisesEveryReleaseEra(t *testing.T) {
 	_, probe := priorRepo(t, "{}", "")
-	eras := priorHarnesses(probe)
-	if len(eras) != len(priorRegisterDirectives)*len(priorAGitPushFormats)+1 {
-		t.Fatalf("release eras = %d, want every directive under every push protocol plus the Caveman release", len(eras))
+	eras, err := priorHarnesses(probe)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for index := range eras {
+	earlier := len(priorRegisterDirectives)*len(priorAGitPushFormats) + 1
+	if len(eras) != earlier+len(receiptStates)*(int(hisscatalog.AllLanguages)+1) {
+		t.Fatalf("release eras = %d, want every directive under every push protocol, the Caveman release and every fact combination", len(eras))
+	}
+	for index := range eras[:earlier] {
 		repo, current := priorRepo(t, "{}", "")
 		prior := eras[index]
 		if err := WriteHarness(&prior, repo); err != nil {

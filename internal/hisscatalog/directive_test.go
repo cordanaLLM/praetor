@@ -99,3 +99,25 @@ func TestAdoptedDirective_Boundary_UnknownLanguagesAndLimit(t *testing.T) {
 		t.Errorf("adopted directives fail the lint: %+v", report.Findings)
 	}
 }
+
+// TestAllLanguages covers the enumeration bound the Paperclip refresh key walks. Positive: every
+// named language and LanguageOther lie inside it. Negative: no bit above it names a language, so
+// a set carrying one renders as the set without it. Boundary: its bits are contiguous from Go,
+// so zero through AllLanguages is exactly every language set.
+func TestAllLanguages(t *testing.T) {
+	for _, entry := range languageNames {
+		if AllLanguages&entry.language != entry.language {
+			t.Errorf("%s outside AllLanguages %b", entry.name, AllLanguages)
+		}
+	}
+	if AllLanguages&LanguageOther == 0 {
+		t.Errorf("LanguageOther outside AllLanguages %b", AllLanguages)
+	}
+	beyond := AllLanguages + 1
+	if allDirectives(Facts{Languages: beyond | LanguageRust}) != allDirectives(Facts{Languages: LanguageRust}) {
+		t.Error("a bit above AllLanguages changes a directive")
+	}
+	if beyond&AllLanguages != 0 || AllLanguages&LanguageGo == 0 {
+		t.Errorf("AllLanguages %b is not the contiguous run of bits from LanguageGo", AllLanguages)
+	}
+}

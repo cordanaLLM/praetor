@@ -736,6 +736,15 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
     every repository, still counts as earlier output, so `praetorctl adopt` refreshes it to the
     current receipt row without `--force`; an edited harness stays operator-owned
     (`TestPriorGeneratedRecognisesTheCavemanRelease`).
+  - The same holds for this release's own harness after a repository fact it reads changes.
+    Pinning `receipt.public_key`, as the unpinned row advises, or adding or removing a language
+    leaves the harness unmodified output, and the next plain `praetorctl adopt` refreshes it to
+    the row that requires receipts and the new language clauses. The refresh key compares the
+    harness byte for byte with this release rendered under both receipt states and every
+    language set (`hisscatalog.AllLanguages`), so an edit to the receipt row or an invariant
+    still keeps it operator-owned (`TestAdoptRefreshesHarnessAfterFactsChange`,
+    `TestAdoptKeepsHandEditedHarnessAfterFactsChange`, `TestAdoptHarnessRefreshFactBoundary`,
+    `TestPriorGeneratedRecognisesThisReleaseUnderEveryFactCombination`).
   - Still open: the `## AGit Push Protocol` section (`agit_push_format`) prescribes
     `git push origin HEAD:refs/for/main -o topic=<issue-id>` whatever forge `origin` names. That
     push opens a review only on a forge that implements AGit, such as Forgejo or Gitea. The

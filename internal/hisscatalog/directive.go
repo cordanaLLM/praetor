@@ -27,7 +27,14 @@ const (
 	// LanguageOther is a detected language no clause names, such as TypeScript or Java. It
 	// makes the set known, so no labelled clause renders for it.
 	LanguageOther
+	// languageEnd follows the last language bit; a language added above it joins AllLanguages.
+	languageEnd
 )
+
+// AllLanguages is every language bit. Every value from zero to AllLanguages is a language set a
+// repository can carry, so a caller that must recognise a rendering under any set (the Paperclip
+// refresh key) enumerates exactly that bounded range.
+const AllLanguages = languageEnd - 1
 
 // languageNames labels the languages in the order a clause names them.
 var languageNames = [...]struct {

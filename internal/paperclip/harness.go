@@ -74,27 +74,34 @@ func SynthesizeHarness(ctx context.Context, repoPath string, languages hisscatal
 	if err != nil {
 		return nil, err
 	}
-	contract := []string{
-		"Branch push != shipping. Open PR required. Work ships after merge.",
-		"Rebase onto main immediately: run git fetch origin && git rebase origin/main before proposing.",
-		"Rule 0 Terminal Disposition: every run ends with structured disposition: in_review or blocked.",
-		receiptContract(ctx, repoPath),
-		"Timeout != failure. Re-check open PRs before retry; prevent duplicate PRs.",
-		// A Paperclip run reports to an orchestrating agent, so its product is internal text.
-		config.RegisterDirective(config.TextRegisterInternal),
-	}
-
 	invariants, err := catalogInvariants(languages)
 	if err != nil {
 		return nil, err
 	}
-	return &Harness{
-		Version:           1,
-		Platform:          platform,
-		OperatingContract: contract,
-		AGitPushFormat:    agitPushFormat,
-		Invariants:        invariants,
-	}, nil
+	harness := releaseHarness(platform, receiptKeyPinned(ctx, repoPath), invariants)
+	return &harness, nil
+}
+
+// releaseHarness is this release's synthesis for platform under one set of repository facts:
+// whether .standards.yaml pins a receipt key, and the invariants rendered for the languages.
+// SynthesizeHarness and currentReleaseHarnesses both build from it, so the refresh key
+// enumerates exactly the text the synthesis writes.
+func releaseHarness(platform string, pinned bool, invariants []string) Harness {
+	return Harness{
+		Version:  1,
+		Platform: platform,
+		OperatingContract: []string{
+			"Branch push != shipping. Open PR required. Work ships after merge.",
+			"Rebase onto main immediately: run git fetch origin && git rebase origin/main before proposing.",
+			"Rule 0 Terminal Disposition: every run ends with structured disposition: in_review or blocked.",
+			receiptContract(pinned),
+			"Timeout != failure. Re-check open PRs before retry; prevent duplicate PRs.",
+			// A Paperclip run reports to an orchestrating agent, so its product is internal text.
+			config.RegisterDirective(config.TextRegisterInternal),
+		},
+		AGitPushFormat: agitPushFormat,
+		Invariants:     invariants,
+	}
 }
 
 // catalogInvariants renders harnessInvariants from the HISS catalog for languages.
@@ -175,8 +182,10 @@ type PriorState struct {
 }
 
 // PriorGenerated compares the harness under repoPath with every earlier synthesis for
-// current's identity. One consistent CRLF checkout style (core.autocrlf on Windows) compares
-// as the LF bytes the release wrote.
+// current's identity: each earlier release's text, and this release's text under repository
+// facts other than current's (currentReleaseHarnesses). A harness equal to current itself is
+// not earlier output. One consistent CRLF checkout style (core.autocrlf on Windows) compares as
+// the LF bytes the release wrote.
 func PriorGenerated(ctx context.Context, repoPath string, current *Harness) (PriorState, error) {
 	if ctx == nil || current == nil {
 		return PriorState{}, fmt.Errorf("paperclip: prior harness check requires context and current harness")
@@ -190,19 +199,35 @@ func PriorGenerated(ctx context.Context, repoPath string, current *Harness) (Pri
 	if !ok {
 		return state, nil
 	}
-	priors := priorHarnesses(current)
+	prior, err := matchPrior(harnessText, current)
+	if err != nil {
+		return PriorState{}, err
+	}
+	state.Generated = prior != nil && (!rulesExist || priorRules(rulesText, prior))
+	return state, nil
+}
+
+// matchPrior returns the earlier synthesis harnessText renders byte for byte, or nil when it
+// renders none of them or current itself.
+func matchPrior(harnessText string, current *Harness) (*Harness, error) {
+	currentText, err := MarshalHarness(current)
+	if err != nil || harnessText == string(currentText) {
+		return nil, err
+	}
+	priors, err := priorHarnesses(current)
+	if err != nil {
+		return nil, err
+	}
 	for index := 0; index < len(priors); index++ {
-		prior := priors[index]
-		rendered, err := MarshalHarness(&prior)
+		rendered, err := MarshalHarness(&priors[index])
 		if err != nil {
-			return PriorState{}, err
+			return nil, err
 		}
 		if harnessText == string(rendered) {
-			state.Generated = !rulesExist || priorRules(rulesText, &prior)
-			return state, nil
+			return &priors[index], nil
 		}
 	}
-	return state, nil
+	return nil, nil
 }
 
 // priorRules reports whether rules is a rendering of prior some release wrote: the current
@@ -239,15 +264,49 @@ func releaseText(harness, rules []byte) (string, string, bool) {
 }
 
 // priorHarnesses is every earlier synthesis for current's identity: each register directive
-// form under each push protocol, then the Caveman release (cavemanHarness).
-func priorHarnesses(current *Harness) []Harness {
-	priors := make([]Harness, 0, len(priorRegisterDirectives)*len(priorAGitPushFormats)+1)
+// form under each push protocol, the Caveman release (cavemanHarness), then this release under
+// every repository fact combination (currentReleaseHarnesses).
+func priorHarnesses(current *Harness) ([]Harness, error) {
+	released, err := currentReleaseHarnesses(current.Platform)
+	if err != nil {
+		return nil, err
+	}
+	priors := make([]Harness, 0, len(priorRegisterDirectives)*len(priorAGitPushFormats)+1+len(released))
 	for _, push := range priorAGitPushFormats {
 		for _, directive := range priorRegisterDirectives {
 			priors = append(priors, priorHarness(current, directive, push))
 		}
 	}
-	return append(priors, cavemanHarness(current))
+	priors = append(priors, cavemanHarness(current))
+	return append(priors, released...), nil
+}
+
+// receiptStates are both answers receiptKeyPinned can give.
+var receiptStates = [...]bool{false, true}
+
+// currentReleaseHarnesses renders this release for platform under every combination of the
+// repository facts SynthesizeHarness reads: the receipt key pinned or not, times every language
+// set (hisscatalog.AllLanguages). A harness adoption wrote is still unmodified output after the
+// operator pins receipt.public_key, as the unpinned row advises, or the repository's languages
+// change; recognising it lets plain adopt refresh it without --force, which would also rewrite
+// adopter-maintained files (#502). The set is enumerated rather than the fact-dependent rows
+// normalised away, so recognition stays byte for byte: an edit to the receipt row or to one
+// invariant still makes the harness operator-owned. It is bounded: 2 x (AllLanguages+1) values.
+// These are calls, so a later change to this text must first capture the rows as they stand as
+// literals, as cavemanOperatingContract captured #487's.
+func currentReleaseHarnesses(platform string) ([]Harness, error) {
+	sets := int(hisscatalog.AllLanguages) + 1
+	released := make([]Harness, 0, len(receiptStates)*sets)
+	for set := 0; set < sets; set++ {
+		invariants, err := catalogInvariants(hisscatalog.Language(set))
+		if err != nil {
+			return nil, err
+		}
+		for _, pinned := range receiptStates {
+			released = append(released, releaseHarness(platform, pinned, invariants))
+		}
+	}
+	return released, nil
 }
 
 // cavemanHarness is the Caveman release's synthesis for current's identity: its contract with
@@ -293,12 +352,12 @@ func readHarnessFiles(ctx context.Context, repoPath string) ([]byte, []byte, boo
 
 // receiptContract is the operating-contract row on Exit-0 receipts. A receipt is minted by
 // `praetorctl gate run` and verifies only against the Ed25519 key .standards.yaml pins
-// (receipt.public_key, lockdown.PinnedPublicKey); without one, Disposition.Validate and VerifyRun
-// refuse any receipt attached (lockdown.ErrNoPinnedKey). So the row prescribes attaching
-// receipts only when that key is pinned, and otherwise says a run attaches none, instead of
-// prescribing a receipt nothing in the repository can verify (BUG-804).
-func receiptContract(ctx context.Context, repoPath string) string {
-	if receiptKeyPinned(ctx, repoPath) {
+// (receipt.public_key, lockdown.PinnedPublicKey; receiptKeyPinned); without one,
+// Disposition.Validate and VerifyRun refuse any receipt attached (lockdown.ErrNoPinnedKey). So
+// the row prescribes attaching receipts only when that key is pinned, and otherwise says a run
+// attaches none, instead of prescribing a receipt nothing in the repository can verify (BUG-804).
+func receiptContract(pinned bool) string {
+	if pinned {
 		return "Ed25519 Exit-0 Receipts: mint via `praetorctl gate run`; attach receipt to every PR proposal."
 	}
 	return "Ed25519 Exit-0 Receipts: none. " + manifestFile + " pins no valid receipt.public_key -> attach no receipt; " +
