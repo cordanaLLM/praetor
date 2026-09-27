@@ -180,16 +180,8 @@ def _config(root):
     return _validate_config(value, pairs)
 
 
-def _validate_config(value, pairs):
-    if any(len(dict(items)) != len(items) for items in pairs):
-        raise CheckpointError("checkpoint configuration contains duplicate keys")
-    if (
-        not isinstance(value, dict)
-        or type(value.get("version")) is not int
-        or value.get("version") != 1
-    ):
-        raise CheckpointError("checkpoint configuration requires version 1")
-    expected = {
+CONFIG_FIELDS = frozenset(
+    {
         "version",
         "enabled",
         "commit_after_minutes",
@@ -202,8 +194,24 @@ def _validate_config(value, pairs):
         "branch_prefixes",
         "require_pr",
     }
-    optional = {"enforce_batch_scope", "require_checks", "required_checks"}
-    if not expected.issubset(value) or not set(value).issubset(expected | optional):
+)
+OPTIONAL_CONFIG_FIELDS = frozenset(
+    {"enforce_batch_scope", "require_checks", "required_checks"}
+)
+
+
+def _validate_config(value, pairs):
+    if any(len(dict(items)) != len(items) for items in pairs):
+        raise CheckpointError("checkpoint configuration contains duplicate keys")
+    if (
+        not isinstance(value, dict)
+        or type(value.get("version")) is not int
+        or value.get("version") != 1
+    ):
+        raise CheckpointError("checkpoint configuration requires version 1")
+    if not CONFIG_FIELDS.issubset(value) or not set(value).issubset(
+        CONFIG_FIELDS | OPTIONAL_CONFIG_FIELDS
+    ):
         raise CheckpointError("checkpoint configuration has unknown or missing fields")
     if any(
         type(value[name]) is not bool
@@ -226,8 +234,11 @@ def _validate_config(value, pairs):
         for name in ("remote", "base")
     ):
         raise CheckpointError("checkpoint remote and base must be nonempty strings")
-    repo = value["repository"]
-    prefixes = value["branch_prefixes"]
+    _validate_repository(value["repository"], value["branch_prefixes"])
+    return value
+
+
+def _validate_repository(repo, prefixes):
     if (
         not isinstance(repo, str)
         or repo.count("/") != 1
@@ -247,7 +258,6 @@ def _validate_config(value, pairs):
         )
     ):
         raise CheckpointError("checkpoint repository or branch_prefixes is malformed")
-    return value
 
 
 def _validate_review_policy(value):

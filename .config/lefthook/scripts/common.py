@@ -557,64 +557,74 @@ def snapshot(ref=None):
         dest = Path(directory)
         env = clean_env()
         if ref is None:
-            # Snapshot checks consume repository bytes, not the operator's checkout
-            # preference. Without this pin, Windows' core.autocrlf=true rewrites LF
-            # shell/YAML blobs to CRLF and the isolated gate rejects bytes absent from
-            # the index it claims to inspect. The export reads the index the commit will
-            # record (index_env), never the stale .git/index clean_env would select.
-            git(
-                *SNAPSHOT_GIT_CONFIG,
-                "checkout-index",
-                "--all",
-                "--force",
-                f"--prefix={dest}/",
-                env=index_env(),
-            )
-            # Lefthook's validator requires a repository even though it only
-            # validates configuration. This metadata belongs solely to the export.
-            run(["git", "init", "--quiet", str(dest)], env=env)
+            _export_index(dest, env)
         else:
-            source = git("rev-parse", "--show-toplevel", env=env).decode().strip()
-            origin = (
-                run(
-                    ["git", "config", "--get", "remote.origin.url"],
-                    env=env,
-                    allowed=(0, 1),
-                )
-                .decode()
-                .strip()
-            )
-            refs = git(
-                "for-each-ref",
-                "--format=%(objectname) %(refname)",
-                "refs/remotes/origin/",
-                env=env,
-            )
-            run(
-                [
-                    "git",
-                    "clone",
-                    "--quiet",
-                    "--no-hardlinks",
-                    "--no-checkout",
-                    "--origin",
-                    "praetor-snapshot",
-                    source,
-                    str(dest),
-                ],
-                env=env,
-            )
-            if origin:
-                run(["git", "remote", "add", "origin", origin], cwd=dest, env=env)
-            for line in refs.decode().splitlines():
-                oid, name = line.split()
-                run(["git", "update-ref", name, oid], cwd=dest, env=env)
-            run(
-                ["git", *SNAPSHOT_GIT_CONFIG, "checkout", "--quiet", "--detach", ref],
-                cwd=dest,
-                env=env,
-            )
+            _export_commit(dest, ref, env)
         yield dest
+
+
+def _export_index(dest, env):
+    """Write the index the commit will record into dest, as a repository of its own."""
+    # Snapshot checks consume repository bytes, not the operator's checkout
+    # preference. Without this pin, Windows' core.autocrlf=true rewrites LF
+    # shell/YAML blobs to CRLF and the isolated gate rejects bytes absent from
+    # the index it claims to inspect. The export reads the index the commit will
+    # record (index_env), never the stale .git/index clean_env would select.
+    git(
+        *SNAPSHOT_GIT_CONFIG,
+        "checkout-index",
+        "--all",
+        "--force",
+        f"--prefix={dest}/",
+        env=index_env(),
+    )
+    # Lefthook's validator requires a repository even though it only
+    # validates configuration. This metadata belongs solely to the export.
+    run(["git", "init", "--quiet", str(dest)], env=env)
+
+
+def _export_commit(dest, ref, env):
+    """Clone this repository into dest with origin and its refs, detached at ref."""
+    source = git("rev-parse", "--show-toplevel", env=env).decode().strip()
+    origin = (
+        run(
+            ["git", "config", "--get", "remote.origin.url"],
+            env=env,
+            allowed=(0, 1),
+        )
+        .decode()
+        .strip()
+    )
+    refs = git(
+        "for-each-ref",
+        "--format=%(objectname) %(refname)",
+        "refs/remotes/origin/",
+        env=env,
+    )
+    run(
+        [
+            "git",
+            "clone",
+            "--quiet",
+            "--no-hardlinks",
+            "--no-checkout",
+            "--origin",
+            "praetor-snapshot",
+            source,
+            str(dest),
+        ],
+        env=env,
+    )
+    if origin:
+        run(["git", "remote", "add", "origin", origin], cwd=dest, env=env)
+    for line in refs.decode().splitlines():
+        oid, name = line.split()
+        run(["git", "update-ref", name, oid], cwd=dest, env=env)
+    run(
+        ["git", *SNAPSHOT_GIT_CONFIG, "checkout", "--quiet", "--detach", ref],
+        cwd=dest,
+        env=env,
+    )
 
 
 def present_files(directory, names):
