@@ -113,6 +113,12 @@ fails on a step naming the praetor binary. The Go `Dockerfile` builds the module
 wherever it lives; with none or several, `docker build` stops and names them, and
 `--build-arg MAIN_PACKAGE=./cmd/<name>` picks one. `TestScaffoldedDockerfileBuilderCompilesTheModulesMainPackage`
 (`internal/flavor/dockerfile_build_test.go`) executes the builder instruction against each layout.
+The JVM CI job (`templates/jvm/ci-jvm.yml.tmpl`) runs whichever build the repository carries: the
+Maven wrapper, `mvn`, the Gradle wrapper, then the runner's `gradle` for a Gradle build with no
+wrapper. A wrapper committed without its executable bit runs through `sh`. A Gradle build with no
+wrapper on a runner without `gradle` stops with a message naming the missing wrapper.
+`TestJVMBuildStepRunsTheRepositorysBuild` (`internal/flavor/jvm_ci_test.go`) executes the step
+against each layout with stub build tools.
 
 A body that only works in some repositories declares `Requires`. The Node CI job runs `npm ci` and
 `npm test`, and `typescript-node` matches any `package.json` in an `app-service` repository — a pnpm,
