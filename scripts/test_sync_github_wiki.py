@@ -26,7 +26,12 @@ def run(
     cwd: Path | None = None,
     check: bool = True,
     extra_env: dict[str, str] | None = None,
+    remove_env: list[str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    merged_env = {**os.environ, **LOCALE_ENV, "WIKI_TOKEN": "", **(extra_env or {})}
+    if remove_env:
+        for k in remove_env:
+            merged_env.pop(k, None)
     return subprocess.run(
         args,
         cwd=cwd,
@@ -34,7 +39,7 @@ def run(
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        env={**os.environ, **LOCALE_ENV, "WIKI_TOKEN": "", **(extra_env or {})},
+        env=merged_env,
         timeout=10,
     )
 
@@ -260,6 +265,33 @@ class WikiSyncTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("lists more than 256 pages", result.stderr)
             self.assertEqual(remote_head(remote), before)
+
+    def test_default_bot_identity_is_neutral(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="praetor-wiki-test-") as directory:
+            root = Path(directory)
+            source = make_source(root, {"Home.md": "# New\n"})
+            remote = root / "wiki.git"
+            init_bare(remote)
+            seed_remote(remote, {"Home.md": "# Old\n", MANIFEST: "Home.md\n"})
+
+            run(str(SCRIPT), str(source), str(remote), remove_env=["WIKI_GIT_NAME", "WIKI_GIT_EMAIL"])
+
+            output = run("git", "log", "-1", "--format=%an <%ae>", cwd=remote)
+            self.assertEqual(output.stdout.strip(), "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>")
+
+    def test_override_bot_identity_wins(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="praetor-wiki-test-") as directory:
+            root = Path(directory)
+            source = make_source(root, {"Home.md": "# New2\n"})
+            remote = root / "wiki.git"
+            init_bare(remote)
+            seed_remote(remote, {"Home.md": "# Old2\n", MANIFEST: "Home.md\n"})
+
+            run(str(SCRIPT), str(source), str(remote), extra_env={"WIKI_GIT_NAME": "Custom Bot", "WIKI_GIT_EMAIL": "custom@example.com"})
+
+            output = run("git", "log", "-1", "--format=%an <%ae>", cwd=remote)
+            self.assertEqual(output.stdout.strip(), "Custom Bot <custom@example.com>")
+
 
     def test_manifest_at_the_page_limit_removes_every_stale_page(self) -> None:
         with tempfile.TemporaryDirectory(prefix="praetor-wiki-test-") as directory:

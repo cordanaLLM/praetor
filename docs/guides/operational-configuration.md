@@ -25,12 +25,24 @@ Everything needed to govern a repository without knowing whose repository it is:
 
 ### GitHub App manifest
 
-`.config/github-app/manifest.json` describes the `cordana-standards` GitHub App, and
+`.config/github-app/manifest.json` describes the `praetor-governance-bot` GitHub App, and
 `.config/github-app/permissions.md` explains each permission it requests and how to create
 the App from the manifest. Nothing provisions, installs or authenticates as that App today:
-no workflow or command reads the manifest, and `internal/forge/pr.go` only names
-`cordana-standards[bot]` as a requested reviewer. `make github-app-test` fails when the
+no workflow or command reads the manifest, and `internal/forge/pr.go` names
+a review bot as a requested reviewer. `make github-app-test` fails when the
 permission matrix and the manifest's `default_permissions` disagree.
+
+### Commit identity of automated pushes
+
+Automated commits default to the `github-actions[bot]` identity. Set a different one per repository or
+organisation, without editing a workflow:
+
+| Surface | Name | Email | Unset |
+| :-- | :-- | :-- | :-- |
+| `.github/workflows/adopt.yml` | Actions variable `PRAETOR_BOT_NAME` | Actions variable `PRAETOR_BOT_EMAIL` | `github-actions[bot]` and its noreply address |
+| [`scripts/sync_github_wiki.sh`](https://github.com/cordanaLLM/praetor/blob/main/scripts/sync_github_wiki.sh) | environment `WIKI_GIT_NAME` | environment `WIKI_GIT_EMAIL` | the same |
+
+`scripts/test_sync_github_wiki.py` covers the default and the override.
 
 ## What the operator owns
 

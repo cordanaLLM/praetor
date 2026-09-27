@@ -117,8 +117,8 @@ else
   exit 1
 fi
 
-git_bounded -C "$CLONE_DIR" config user.name "${WIKI_GIT_NAME:-cordana-standards[bot]}"
-git_bounded -C "$CLONE_DIR" config user.email "${WIKI_GIT_EMAIL:-standards-bot@cordana.ai}"
+git_bounded -C "$CLONE_DIR" config user.name "${WIKI_GIT_NAME:-github-actions[bot]}"
+git_bounded -C "$CLONE_DIR" config user.email "${WIKI_GIT_EMAIL:-41898282+github-actions[bot]@users.noreply.github.com}"
 
 # The manifest in the wiki repository lists the pages the previous sync published.
 # Only those names are ever removed, so pages created in the wiki itself are kept;
