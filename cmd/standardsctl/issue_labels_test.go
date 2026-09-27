@@ -6,12 +6,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
 )
 
@@ -178,16 +180,24 @@ func TestIsBlockedLabel_3D(t *testing.T) {
 }
 
 func TestParseTargetRepos_3D(t *testing.T) {
-	got := parseTargetRepos("praetor, golusoris/golusoris ,", "cordanaLLM")
-	if len(got) != 2 || got[0] != "cordanaLLM/praetor" || got[1] != "golusoris/golusoris" {
-		t.Fatalf("unexpected repo list: %v", got)
+	got, err := parseTargetRepos("kit, acme-labs/app ,", "acme")
+	if err != nil || len(got) != 2 || got[0] != "acme/kit" || got[1] != "acme-labs/app" {
+		t.Fatalf("unexpected repo list: %v, %v", got, err)
 	}
-	if len(parseTargetRepos("", "cordanaLLM")) != 0 {
-		t.Error("an empty repos flag must yield no targets")
+	if got, err := parseTargetRepos("", "acme"); err != nil || len(got) != 0 {
+		t.Errorf("an empty repos flag must yield no targets: %v, %v", got, err)
+	}
+	// Negative: a bare name with no owner is refused, never qualified with a guessed one.
+	if got, err := parseTargetRepos("acme/kit,app", ""); !errors.Is(err, config.ErrOwnerUnknown) || got != nil ||
+		!strings.Contains(err.Error(), `"app"`) {
+		t.Errorf("a bare name without an owner = (%v, %v), want ErrOwnerUnknown naming it", got, err)
+	}
+	if got, err := parseTargetRepos("acme/kit", ""); err != nil || len(got) != 1 {
+		t.Errorf("qualified names need no owner: %v, %v", got, err)
 	}
 
-	long := strings.Repeat("a/b,", maxReconciledRepos+50)
-	if got := len(parseTargetRepos(long, "cordanaLLM")); got > maxReconciledRepos {
-		t.Errorf("repo fan-out must respect the %d bound, got %d", maxReconciledRepos, got)
+	long := strings.Repeat("a/b,", config.MaxReconcileRepos+50)
+	if got, err := parseTargetRepos(long, "acme"); err != nil || len(got) > config.MaxReconcileRepos {
+		t.Errorf("repo fan-out must respect the %d bound, got %d (%v)", config.MaxReconcileRepos, len(got), err)
 	}
 }

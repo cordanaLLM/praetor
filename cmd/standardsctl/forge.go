@@ -62,6 +62,7 @@ func runForge(args []string) error {
 func runForgeSyncWiki(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("forge sync-wiki", flag.ContinueOnError)
 	outputDir := fs.String("output", "docs/wiki", "Output directory for generated wiki; a relative path must stay inside the repository")
+	settings := registerOperatorSettingsFlags(fs)
 	rest, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
@@ -69,8 +70,12 @@ func runForgeSyncWiki(ctx context.Context, args []string) error {
 	if len(rest) != 0 {
 		return fmt.Errorf("forge sync-wiki accepts no positional arguments, got %q", rest)
 	}
+	forgeSettings, err := loadForgeSettings(ctx, settings)
+	if err != nil {
+		return fmt.Errorf("forge sync-wiki: %w", err)
+	}
 
-	manifest, err := forge.GenerateWiki(ctx, ".", *outputDir)
+	manifest, err := forge.GenerateWiki(ctx, ".", *outputDir, forgeSettings.DefaultOwner)
 	if err != nil {
 		return fmt.Errorf("failed generating wiki: %w", err)
 	}

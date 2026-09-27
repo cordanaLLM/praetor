@@ -83,16 +83,29 @@ func runMilestoneList(ctx context.Context, args []string) error {
 // GitHub, declared once so create, close and sync cannot drift apart.
 type milestoneForge struct {
 	owner, repo, token, endpoint *string
+	settings                     *operatorSettingsFlags
 }
 
 // addMilestoneForgeFlags registers the shared forge flags on fs.
 func addMilestoneForgeFlags(fs *flag.FlagSet) milestoneForge {
 	return milestoneForge{
-		owner:    fs.String("owner", "cordanaLLM", "GitHub organization owner"),
-		repo:     fs.String("repo", "praetor", "GitHub repository name"),
+		owner:    fs.String("owner", "", "GitHub repository owner "+ownerDefaultHelp),
+		repo:     fs.String("repo", "", "GitHub repository name (default: repository.name, else origin remote name)"),
 		token:    fs.String("token", "", "GitHub access token"),
 		endpoint: fs.String("endpoint", "https://api.github.com", "GitHub API endpoint"),
+		settings: registerOperatorSettingsFlags(fs),
 	}
+}
+
+// target resolves the GitHub repository the milestones of dir are published to: --owner and
+// --repo, else dir's identity (resolveForgeRepository), with forge.default_owner as the last
+// owner step. It runs only when a subcommand reaches GitHub, so local-only runs need none.
+func (m milestoneForge) target(ctx context.Context, dir string) (string, string, error) {
+	forgeSettings, err := loadForgeSettings(ctx, m.settings)
+	if err != nil {
+		return "", "", err
+	}
+	return resolveForgeRepository(ctx, dir, *m.owner, *m.repo, forgeSettings.DefaultOwner)
 }
 
 func runMilestoneCreate(ctx context.Context, args []string) error {
@@ -127,11 +140,15 @@ func runMilestoneCreate(ctx context.Context, args []string) error {
 	fmt.Printf("[PASS] Created milestone #%d: %s (State: %s)\n", m.Number, m.Title, m.State)
 
 	if *publish {
-		if err := milestone.PublishMilestone(ctx, *dir, *remote.owner, *remote.repo, *remote.token, *remote.endpoint, m); err != nil {
+		owner, repo, err := remote.target(ctx, *dir)
+		if err != nil {
+			return fmt.Errorf("milestone created locally, but its GitHub repository is unknown: %w", err)
+		}
+		if err := milestone.PublishMilestone(ctx, *dir, owner, repo, *remote.token, *remote.endpoint, m); err != nil {
 			return fmt.Errorf("milestone published locally, but GitHub publish failed: %w", err)
 		}
 		fmt.Printf("[PASS] Published milestone #%d as remote milestone #%d: https://github.com/%s/%s/milestone/%d\n",
-			m.Number, m.RemoteNumber, *remote.owner, *remote.repo, m.RemoteNumber)
+			m.Number, m.RemoteNumber, owner, repo, m.RemoteNumber)
 	}
 	return nil
 }
@@ -164,10 +181,14 @@ func runMilestoneClose(ctx context.Context, args []string) error {
 		}
 		return nil
 	}
-	if err := milestone.PublishClose(ctx, dir, *remote.owner, *remote.repo, *remote.token, *remote.endpoint, m); err != nil {
+	owner, repo, err := remote.target(ctx, dir)
+	if err != nil {
+		return fmt.Errorf("milestone closed locally, but its GitHub repository is unknown (sync reports it as pending): %w", err)
+	}
+	if err := milestone.PublishClose(ctx, dir, owner, repo, *remote.token, *remote.endpoint, m); err != nil {
 		return fmt.Errorf("milestone closed locally, but the GitHub close failed (sync reports it as pending): %w", err)
 	}
-	fmt.Printf("[PASS] Closed remote milestone #%d on https://github.com/%s/%s\n", m.RemoteNumber, *remote.owner, *remote.repo)
+	fmt.Printf("[PASS] Closed remote milestone #%d on https://github.com/%s/%s\n", m.RemoteNumber, owner, repo)
 	return nil
 }
 
@@ -179,13 +200,17 @@ func runMilestoneSync(ctx context.Context, args []string) error {
 		return err
 	}
 
-	result, err := milestone.SyncWithGitHub(ctx, *dir, *remote.owner, *remote.repo, *remote.token, *remote.endpoint)
+	owner, repo, err := remote.target(ctx, *dir)
+	if err != nil {
+		return fmt.Errorf("milestone sync: %w", err)
+	}
+	result, err := milestone.SyncWithGitHub(ctx, *dir, owner, repo, *remote.token, *remote.endpoint)
 	if err != nil {
 		return fmt.Errorf("milestone sync failed: %w", err)
 	}
 
 	fmt.Printf("[PASS] Synchronized %d milestones from https://github.com/%s/%s\n",
-		len(result.Milestones), *remote.owner, *remote.repo)
+		len(result.Milestones), owner, repo)
 	printMilestoneSyncDrift(result)
 	return nil
 }

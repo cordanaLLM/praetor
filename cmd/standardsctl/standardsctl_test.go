@@ -586,7 +586,7 @@ func TestDispatchCommand_IssueReconcile(t *testing.T) {
 		t.Fatalf("issue -h failed: %v", err)
 	}
 	out, err := captureStdout(t, func() error {
-		return dispatchCommand("issue", []string{"reconcile", "--owner=cordanaLLM", "--repos=praetor", "--dry-run", "--token=test-fixture", "--endpoint=" + srv.URL})
+		return dispatchCommand("issue", []string{"reconcile", "--owner=acme", "--repos=widgets", "--dry-run", "--token=test-fixture", "--endpoint=" + srv.URL})
 	})
 	if err != nil {
 		t.Fatalf("issue reconcile failed: %v", err)
@@ -797,10 +797,10 @@ func TestDispatchCommand_MilestoneAndProject(t *testing.T) {
 	if err := dispatchCommand("project", []string{"status", tmpDir}); err != nil {
 		t.Fatalf("project status failed: %v", err)
 	}
-	if err := dispatchCommand("project", []string{"add", "--dir=" + tmpDir, "1", "https://github.com/cordanaLLM/praetor/issues/1"}); err != nil {
+	if err := dispatchCommand("project", []string{"add", "--owner=acme", "--dir=" + tmpDir, "1", "https://github.com/acme/widgets/issues/1"}); err != nil {
 		t.Fatalf("project add failed: %v", err)
 	}
-	if err := dispatchCommand("project", []string{"list", "--dir=" + tmpDir}); err != nil {
+	if err := dispatchCommand("project", []string{"list", "--owner=acme", "--dir=" + tmpDir}); err != nil {
 		t.Fatalf("project list failed: %v", err)
 	}
 	if err := dispatchCommand("project", []string{"invalid"}); err == nil {
@@ -838,7 +838,7 @@ func TestDispatchCommand_ProjectCachedStatusDoesNotResolveAuth(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "")
 	t.Setenv("GH_TOKEN", "")
 	out, err := captureStdout(t, func() error {
-		return dispatchCommand("project", []string{"add", "1", "https://github.com/acme/widgets/issues/1", "--dir", dir})
+		return dispatchCommand("project", []string{"add", "1", "https://github.com/acme/widgets/issues/1", "--dir", dir, "--owner", "acme"})
 	})
 	if err != nil {
 		t.Fatalf("local project fixture: %v", err)

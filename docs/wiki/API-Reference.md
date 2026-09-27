@@ -15,7 +15,7 @@
 `compile-framework-assets` reads one YAML document with the keys `kit_name`, `language`, `version`, `description`, `rules`, `skills` and `components` (the `FrameworkKitConfig` fields in `internal/compiler/framework_assets.go`); any other key is refused. Both flags are required: `--output` has no default, so the fixed asset names never overwrite the working tree's own `llms.txt` by accident.
 
 ```yaml
-kit_name: sveltesentio
+kit_name: example-ui-kit
 language: svelte
 version: 5.0.0
 description: Svelte 5 component library

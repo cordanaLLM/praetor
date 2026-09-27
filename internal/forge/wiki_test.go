@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -26,9 +27,11 @@ func canonicalAgentsMD(t *testing.T) string {
 	return string(data)
 }
 
-// wikiRepoRoot returns a fresh repository root named name whose AGENTS.md is agentsMD. The
-// wiki portal is named after the root's origin remote or directory structure, so tests that compare against the
-// checked-in pages create a parent directory named cordanaLLM and name the root praetor.
+// wikiRepoRoot returns a fresh repository root at name whose AGENTS.md is agentsMD. The wiki
+// portal is named after the root's manifest identity, so the root carries a .standards.yaml:
+// a name of the form <owner>/<repo> declares that pair (the tests comparing against the
+// checked-in pages pass cordanaLLM/praetor, this repository's own manifest identity), and a
+// bare name declares acme/<name>. The directory layout itself names nothing.
 func wikiRepoRoot(t *testing.T, name, agentsMD string) string {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), name)
@@ -38,13 +41,27 @@ func wikiRepoRoot(t *testing.T, name, agentsMD string) string {
 	if err := os.WriteFile(filepath.Join(root, wikiCanonicalSource), []byte(agentsMD), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	owner, repo, ok := strings.Cut(filepath.ToSlash(name), "/")
+	if !ok {
+		owner, repo = "acme", name
+	}
+	writeWikiIdentity(t, root, owner, repo)
 	return root
+}
+
+// writeWikiIdentity writes a manifest declaring owner/repo into root.
+func writeWikiIdentity(t *testing.T, root, owner, repo string) {
+	t.Helper()
+	manifest := "version: 1\nrepository:\n  owner: " + owner + "\n  name: " + repo + "\n"
+	if err := os.WriteFile(filepath.Join(root, ".standards.yaml"), []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // generatedPages runs GenerateWiki over root and indexes the pages by file name.
 func generatedPages(t *testing.T, root string) map[string]WikiPage {
 	t.Helper()
-	manifest, err := GenerateWiki(t.Context(), root, t.TempDir())
+	manifest, err := GenerateWiki(t.Context(), root, t.TempDir(), "")
 	if err != nil {
 		t.Fatalf("GenerateWiki: %v", err)
 	}
@@ -168,7 +185,7 @@ func TestGenerateWiki_Negative_UnreadableCanonicalTable(t *testing.T) {
 	}
 	for name, tc := range cases {
 		out := t.TempDir()
-		if _, err := GenerateWiki(t.Context(), wikiRepoRoot(t, "repo", tc.agents), out); !errors.Is(err, tc.want) {
+		if _, err := GenerateWiki(t.Context(), wikiRepoRoot(t, "repo", tc.agents), out, ""); !errors.Is(err, tc.want) {
 			t.Errorf("%s: err = %v, want %v", name, err, tc.want)
 		}
 		requireEmptyDir(t, out)
@@ -178,8 +195,9 @@ func TestGenerateWiki_Negative_UnreadableCanonicalTable(t *testing.T) {
 	if err := os.MkdirAll(missingRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	writeWikiIdentity(t, missingRoot, "acme", "repo")
 	out := t.TempDir()
-	if _, err := GenerateWiki(t.Context(), missingRoot, out); err == nil || !strings.Contains(err.Error(), wikiCanonicalSource) {
+	if _, err := GenerateWiki(t.Context(), missingRoot, out, ""); err == nil || !strings.Contains(err.Error(), wikiCanonicalSource) {
 		t.Errorf("a root without AGENTS.md: err = %v, want an error naming %s", err, wikiCanonicalSource)
 	}
 	requireEmptyDir(t, out)
@@ -431,41 +449,63 @@ func TestResolveWikiRepoName_Positive_DerivesFromRemote(t *testing.T) {
 	if _, err := util.RunGit(t.Context(), root, "remote", "add", "origin", "https://github.com/acme/widgets.git"); err != nil {
 		t.Fatal(err)
 	}
-	got, err := resolveWikiRepoName(t.Context(), root)
+	got, err := resolveWikiRepoName(t.Context(), root, "")
 	if err != nil {
 		t.Fatalf("resolveWikiRepoName failed: %v", err)
 	}
 	if got != "acme/widgets" {
 		t.Errorf("resolveWikiRepoName = %q, want acme/widgets", got)
 	}
+	// The manifest outranks the remote, and the default owner never replaces a resolved one.
+	writeWikiIdentity(t, root, "acme", "kit")
+	if got, err := resolveWikiRepoName(t.Context(), root, "fallback"); err != nil || got != "acme/kit" {
+		t.Errorf("resolveWikiRepoName with a manifest = (%q, %v), want acme/kit", got, err)
+	}
+	// forge.default_owner is the last owner step, for a manifest naming only the repository.
+	named := t.TempDir()
+	if err := os.WriteFile(filepath.Join(named, ".standards.yaml"), []byte("repository:\n  name: kit\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := resolveWikiRepoName(t.Context(), named, "fallback"); err != nil || got != "fallback/kit" {
+		t.Errorf("resolveWikiRepoName with forge.default_owner = (%q, %v), want fallback/kit", got, err)
+	}
 }
 
-func TestResolveWikiRepoName_Negative_NeutralFallback(t *testing.T) {
-	// A directory named "repo" inside a temp dir with no git remote.
-	// We want to ensure it never returns "cordanaLLM/praetor" (unless it actually is that).
-	parent := filepath.Join(t.TempDir(), "owner")
-	root := filepath.Join(parent, "repo")
+// Negative (ADR-0014 §3): a checkout that declares no identity and has no origin remote
+// names no portal. Its directory layout is not an identity, and no owner is invented.
+func TestResolveWikiRepoName_Negative_NoIdentityIsAnError(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "owner", "repo")
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	got, err := resolveWikiRepoName(t.Context(), root)
-	if err != nil {
-		t.Fatalf("resolveWikiRepoName failed: %v", err)
+	if got, err := resolveWikiRepoName(t.Context(), root, ""); !errors.Is(err, config.ErrOwnerUnknown) || got != "" {
+		t.Errorf("resolveWikiRepoName = (%q, %v), want ErrOwnerUnknown and no name", got, err)
 	}
-	if got == "cordanaLLM/praetor" {
-		t.Errorf("resolveWikiRepoName = %q, should not fall back to cordanaLLM/praetor", got)
+	// A default owner alone still names no repository.
+	if got, err := resolveWikiRepoName(t.Context(), root, "acme"); !errors.Is(err, config.ErrRepositoryNameUnknown) || got != "" {
+		t.Errorf("resolveWikiRepoName with only a default owner = (%q, %v), want ErrRepositoryNameUnknown", got, err)
 	}
-	if got != "owner/repo" {
-		t.Errorf("resolveWikiRepoName = %q, want owner/repo", got)
+	if _, err := GenerateWiki(t.Context(), root, t.TempDir(), ""); !errors.Is(err, config.ErrOwnerUnknown) {
+		t.Errorf("GenerateWiki without an identity = %v, want ErrOwnerUnknown", err)
 	}
 }
 
-func TestResolveWikiRepoName_Boundary_NoOwner(t *testing.T) {
-	// Root of filesystem or just a single temp dir with no parent directory that isn't tmp.
-	// ResolveRepoIdentity will return an error or we just get an error.
-	got, err := resolveWikiRepoName(t.Context(), "/")
-	if err == nil {
+func TestResolveWikiRepoName_Boundary_OwnerGrammar(t *testing.T) {
+	if got, err := resolveWikiRepoName(t.Context(), "/", ""); err == nil {
 		t.Errorf("resolveWikiRepoName(/) = %q, want error", got)
+	}
+	named := t.TempDir()
+	if err := os.WriteFile(filepath.Join(named, ".standards.yaml"), []byte("repository:\n  name: kit\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	longest := strings.Repeat("a", 39)
+	if got, err := resolveWikiRepoName(t.Context(), named, longest); err != nil || got != longest+"/kit" {
+		t.Errorf("39-byte default owner = (%q, %v), want accepted", got, err)
+	}
+	for _, owner := range []string{longest + "a", " acme", "ac--me", "-acme"} {
+		if got, err := resolveWikiRepoName(t.Context(), named, owner); err == nil {
+			t.Errorf("default owner %q = %q, want a grammar error", owner, got)
+		}
 	}
 }
 
