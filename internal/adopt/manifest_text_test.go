@@ -125,6 +125,14 @@ func TestSetManifestSourcesFillsNullRegisterAndSources(t *testing.T) {
 	if sources := requireSources(t, writeSources(t, "{version: 1, register: null}\n", false)); sources.Expected != 13 {
 		t.Fatalf("re-encode did not fill the null register: %+v", sources)
 	}
+	// Boundary: an explicitly tagged null skips the text patch; keeping the tag on the key line
+	// would put a mapping under !!null, which a typed decode of the manifest refuses.
+	for _, manifest := range []string{"version: 1\nregister: !!null\n", "version: 1\nregister: !!null ~ # later\n"} {
+		got := writeSources(t, manifest, false)
+		if strings.Contains(got, "!!null") || requireSources(t, got).Expected != 13 {
+			t.Fatalf("tagged null register %q kept its tag:\n%s", manifest, got)
+		}
+	}
 	// Negative: a register that is neither a mapping nor null still fails, naming what it found.
 	if _, _, err := setManifestSources(t.Context(), []byte("version: 1\nregister: 5\n"), textPatchSources(), false); err == nil ||
 		!strings.Contains(err.Error(), "must be a mapping or null, found !!int at line 2") {

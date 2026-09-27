@@ -113,8 +113,13 @@ func patchNullRegister(text manifestText, entry []*yaml.Node, sources *config.Re
 }
 
 // nullRegisterKeyLine drops an explicit null token (~, null) from the register key line and
-// keeps its comment. ok is false when the token is not where the decoder placed it.
+// keeps its comment. ok is false when the token is not where the decoder placed it, and for
+// an explicit tag (`register: !!null`): kept on the key line, the tag would type the inserted
+// mapping as null, so the re-encode handles that layout.
 func nullRegisterKeyLine(line string, value *yaml.Node) (string, bool) {
+	if value.Style&yaml.TaggedStyle != 0 {
+		return "", false
+	}
 	if value.Value == "" {
 		return line, true
 	}

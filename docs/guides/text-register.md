@@ -587,7 +587,8 @@ indented comment right above the next `register` key on a re-bind. A null
 them in place instead of failing
 (`TestAdoptBindsSourcesUnderNullRegister`,
 `TestSetManifestSourcesFillsNullRegisterAndSources`). A flow-style root or
-`register` mapping is re-encoded instead, with every value kept
+`register` mapping, and an explicitly tagged null (`register: !!null`), is
+re-encoded instead, with every value kept
 (`internal/adopt/manifest_text.go`). The Paperclip harness it binds depends on
 who wrote it:
 
