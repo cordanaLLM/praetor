@@ -4,15 +4,15 @@ Welcome to the official repository governance wiki for cordanaLLM/praetor.
 
 ## Governance Lifecycle Architecture
 
-```mermaid
-flowchart LR
-    AGENTS["AGENTS.md\n(canonical source)"] --> TRANSPILER["praetorctl compile-context"]
-    TRANSPILER --> VENDORS["CLAUDE.md, .cursor/rules, copilot-instructions,\n.windsurfrules, GEMINI.md, .codex/rules.md"]
-    MANIFEST[".standards.yaml\n+ .standards.lock"] --> AUDIT["praetorctl audit"]
-    VENDORS --> GATES["Verification Cascade\n(make verify-all)"]
-    AUDIT --> GATES
-    GATES --> RECEIPT["Ed25519 Exit-0 Receipt"]
+```figure
+governance-lifecycle
 ```
+
+The lifecycle has three flows. `praetorctl compile-context` reads `AGENTS.md` and writes
+the vendor instruction files. `.standards.yaml` and `.standards.lock` resolve to one
+effective policy, which the devcontainer toolchain, `praetorctl audit` and `praetorctl plan`
+apply. `praetorctl gate run` runs the gate stages, and a passing run mints the Ed25519
+Exit-0 receipt.
 
 ## Quick Navigation
 

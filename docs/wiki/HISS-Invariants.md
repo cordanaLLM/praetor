@@ -24,12 +24,14 @@ copies them from its "Core Directives & Invariants" table each time it regenerat
 | **HISS-20** | replayable evidence | every rule has fixtures replayed both directions; coverage claim reproducible, never asserted | `hiss coverage --verify` in verify-all | gate fail |
 | **HISS-21** | platform neutrality | gates, hooks, emitted templates run on Linux, macOS, Windows, or skip with stated reason; gate that cannot run != passing gate | Platform Neutrality matrix in CI | gate fail |
 
-## Zero-Warning Cascade
+## Verification Ladder
 
-```mermaid
-flowchart TD
-    IDE["1. IDE / standards-lsp"] --> HOOKS["2. Pre-Commit / lefthook"]
-    HOOKS --> PUSH["3. Pre-Push / audit"]
-    PUSH --> CI["4. CI Ephemeral Sandbox"]
-    CI --> ADMIT["5. PR Admission\n(standardsctl forge validate-pr in CI)"]
+```figure
+verification-ladder
 ```
+
+A change climbs four tiers: diagnostics from `standards-lsp` in the editor, the lefthook
+pre-commit and pre-push hooks, the six-stage gate pipeline that signs the Exit-0 receipt, and pull
+request admission, where CI re-checks that receipt with `standardsctl forge validate-pr`. A
+failing hook blocks the change locally; a missing or invalid receipt fails admission.
+[HISS-Matrix](HISS-Matrix.md) states the admission rules.
