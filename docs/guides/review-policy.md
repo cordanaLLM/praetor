@@ -21,10 +21,10 @@ deletion protection, and force-push protection remain governed by their existing
 settings. It does not grant bypass privileges or disable Lefthook, receipts,
 lint, or tests. Unknown review modes are configuration errors.
 
-Praetor's owner authorized this temporary mode on 2026-09-13 because the author
+An adopter might configure this temporary mode when a single author
 is currently the only eligible repository account and no review bot is installed.
 Local agent review remains useful evidence but does not count as an independent
-GitHub approval.
+forge approval.
 
 Restore `review_mode: independent` when a second maintainer or review bot has
 the required access and can submit an approving review. Regenerate the ruleset,
