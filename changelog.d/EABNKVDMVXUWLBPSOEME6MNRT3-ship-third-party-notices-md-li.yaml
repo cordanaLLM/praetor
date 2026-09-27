@@ -1,0 +1,3 @@
+type: added
+title: Ship THIRD-PARTY-NOTICES.md, LICENSE and the LICENSES/ texts (now with Apache-2.0 and BSD-3-Clause) in every release archive and under /usr/local/share/praetor/ in the container image, reproducing the upstream license and NOTICE texts of the linked Go code and listing the embedded Markdown gate's npm packages, and fail go test when the notices drift from go.mod, the embedded npm lock or the Dockerfile
+breaking: false
