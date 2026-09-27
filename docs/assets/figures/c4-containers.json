@@ -1,0 +1,101 @@
+{
+  "slug": "c4-containers",
+  "title": "Container Diagram",
+  "alt": "Runtime modules within the Praetor binary, daemon services, and configuration inputs.",
+  "text": [
+    "Repository Space: .standards.yaml (Manifest), .config/fleet.yaml (optional, operator-owned), AGENTS.md (Canonical Instructions), .agents/ (Personas, Skills, Plugin).",
+    "Praetor Core Engine (Go Binary / Container): CLI & Servers (cmd/standardsctl, mcp, lsp), HTTP Health Probes (praetorctl serve), Gating Engine, Compiler & Transpiler, HISS Invariant Scanner, Runner Matrix Router, Bump Canary, SARIF Distiller, Model Router.",
+    "Generated Projections: Vendor Agent Files (CLAUDE.md, etc.), Diagnostic Summary (SARIF output), Distroless Image (ghcr.io/cordanallm/praetor).",
+    ".standards.yaml → Gating Engine (lockfile & complexity policy).",
+    ".standards.yaml → Runner Matrix Router (runners:).",
+    ".config/fleet.yaml → Runner Matrix Router.",
+    "AGENTS.md → Compiler & Transpiler.",
+    ".agents/ → Compiler & Transpiler.",
+    "CLI & Servers → Gating Engine.",
+    "CLI & Servers → Compiler & Transpiler.",
+    "Gating Engine → HISS Invariant Scanner.",
+    "Compiler & Transpiler → Vendor Agent Files.",
+    "Bump Canary → SARIF Distiller (wraps failure as SARIF) → Diagnostic Summary.",
+    "HTTP Health Probes → Distroless Image (packaged in).",
+    "Scenario 1, compile-context: Compiles AGENTS.md and .agents/ to vendor-specific instructions. Reads AGENTS.md. Reads .agents/ personas and skills. Renders 6 vendor files (CLAUDE.md, etc.).",
+    "Scenario 2, gating: Anti-Direct-Merge Gating Pipeline. Runs praetorctl gate run. Reads policy and lockfiles. 6 stages including HISS.",
+    "Scenario 3, runner routing: Resolves runners using hierarchical policy. Reads local runners:. Applies fleet and org overrides.",
+    "Scenario 4, SARIF distillation: Condenses SARIF logs into bounded summaries. Canary test wraps failure in SARIF. Distills summary and writes full report.",
+    "The CLI routes commands to internal engines.",
+    "SARIF Distillation condenses failure outputs for the agent."
+  ],
+  "evidence": [
+    "cmd/standardsctl/serve.go:runServe",
+    "cmd/standardsctl/compile_context.go:runCompileContext",
+    "internal/agentcontext/render.go:NewTranspiler",
+    "internal/gating/pipeline.go:RunGatedPipeline",
+    "internal/hiss/hiss.go:Scan",
+    "internal/runner/matrix.go:ResolveRunner",
+    "internal/bump/canary.go:RunCanary",
+    "internal/lockdown/distill.go:DistillSARIF",
+    "internal/router/models.go:LoadRoutingConfig"
+  ],
+  "spec_sha256": "84db0a7ac7d2be44857dad6999fe33c7306e4cc5b6ad0714374bff1c4412a297",
+  "engine": {
+    "commit": "ccfe85b4851957ac2adf88b4a9ddf9668b2882f1",
+    "sha256": "047b4bcb30562cca709be7175d11995cdda45cf4b89db1f6906c5805b26c6452"
+  },
+  "svg_sha256": "f5eb30b8e56bfab9c5d76950bbb0a88ad08adc545bfa6f71c51031f21a490ef0",
+  "static_sha256": "387e85ea78500a11ffef6840eb6efe105aa0c52b802163151f933e293276c2ab",
+  "width": 2140,
+  "height": 374,
+  "edges": [
+    {
+      "from": ".standards.yaml",
+      "to": "Gating Engine",
+      "label": "lockfile & complexity policy"
+    },
+    {
+      "from": ".standards.yaml",
+      "to": "Runner Matrix Router",
+      "label": "runners:"
+    },
+    {
+      "from": ".config/fleet.yaml",
+      "to": "Runner Matrix Router"
+    },
+    {
+      "from": "AGENTS.md",
+      "to": "Compiler & Transpiler"
+    },
+    {
+      "from": ".agents/",
+      "to": "Compiler & Transpiler"
+    },
+    {
+      "from": "CLI & Servers",
+      "to": "Gating Engine"
+    },
+    {
+      "from": "CLI & Servers",
+      "to": "Compiler & Transpiler"
+    },
+    {
+      "from": "Gating Engine",
+      "to": "HISS Invariant Scanner"
+    },
+    {
+      "from": "Compiler & Transpiler",
+      "to": "Vendor Agent Files"
+    },
+    {
+      "from": "Bump Canary",
+      "to": "SARIF Distiller",
+      "label": "wraps failure as SARIF"
+    },
+    {
+      "from": "SARIF Distiller",
+      "to": "Diagnostic Summary"
+    },
+    {
+      "from": "HTTP Health Probes",
+      "to": "Distroless Image",
+      "label": "packaged in"
+    }
+  ]
+}

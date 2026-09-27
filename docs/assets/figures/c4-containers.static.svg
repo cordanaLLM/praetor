@@ -1,0 +1,61 @@
+<svg role="img" aria-labelledby="figure-title figure-desc" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="2140" height="324" viewBox="0 0 2140 324" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+<title id="figure-title">Container Diagram</title>
+<desc id="figure-desc">Runtime modules within the Praetor binary, daemon services, and configuration inputs.</desc>
+<!-- interfig (c) 2025 Vectorize AI, Inc. MIT https://github.com/vectorize-io/hindsight/tree/ccfe85b4851957ac2adf88b4a9ddf9668b2882f1/hindsight-interfig -->
+<metadata id="figure-spec"><![CDATA[{"props":{"layout":{"gap":30,"children":[{"id":"repo_space","label":"Repository Space","direction":"row","gap":20,"children":[{"id":"standards","label":".standards.yaml","sub":"Manifest"},{"id":"fleet","label":".config/fleet.yaml","sub":"optional, operator-owned"},{"id":"agents_md","label":"AGENTS.md","sub":"Canonical Instructions"},{"id":"subagents","label":".agents/","sub":"Personas, Skills, Plugin"}]},{"id":"praetor_cli","label":"Praetor Core Engine (Go Binary / Container)","direction":"column","gap":20,"children":[{"direction":"row","gap":20,"children":[{"id":"cli","label":"CLI & Servers","sub":"cmd/standardsctl, mcp, lsp"},{"id":"serve","label":"HTTP Health Probes","sub":"praetorctl serve"}]},{"direction":"row","gap":20,"children":[{"id":"gating","label":"Gating Engine"},{"id":"compiler","label":"Compiler & Transpiler"},{"id":"hiss","label":"HISS Invariant Scanner"}]},{"direction":"row","gap":20,"children":[{"id":"runner","label":"Runner Matrix Router"},{"id":"canary","label":"Bump Canary"},{"id":"distill","label":"SARIF Distiller"},{"id":"router","label":"Model Router"}]}]},{"id":"outputs","label":"Generated Projections","direction":"row","gap":20,"children":[{"id":"vendor","label":"Vendor Agent Files","sub":"CLAUDE.md, etc."},{"id":"sarif_out","label":"Diagnostic Summary","sub":"SARIF output"},{"id":"oci","label":"Distroless Image","sub":"ghcr.io/cordanallm/praetor"}]}]},"edges":[{"from":"standards","to":"gating","label":"lockfile & complexity policy"},{"from":"standards","to":"runner","label":"runners:"},{"from":"fleet","to":"runner"},{"from":"agents_md","to":"compiler"},{"from":"subagents","to":"compiler"},{"from":"cli","to":"gating"},{"from":"cli","to":"compiler"},{"from":"gating","to":"hiss"},{"from":"compiler","to":"vendor"},{"from":"canary","to":"distill","label":"wraps failure as SARIF"},{"from":"distill","to":"sarif_out"},{"from":"serve","to":"oci","label":"packaged in"}],"steps":[{"label":"compile-context","caption":"Compiles AGENTS.md and .agents/ to vendor-specific instructions.","flow":[{"edges":"agents_md->compiler","say":"Reads AGENTS.md."},{"edges":"subagents->compiler","say":"Reads .agents/ personas and skills."},{"edges":"compiler->vendor","say":"Renders 6 vendor files (CLAUDE.md, etc.)."}]},{"label":"gating","caption":"Anti-Direct-Merge Gating Pipeline.","flow":[{"edges":"cli->gating","say":"Runs praetorctl gate run."},{"edges":"standards->gating","say":"Reads policy and lockfiles."},{"edges":"gating->hiss","say":"6 stages including HISS."}]},{"label":"runner routing","caption":"Resolves runners using hierarchical policy.","flow":[{"edges":"standards->runner","say":"Reads local runners:."},{"edges":"fleet->runner","say":"Applies fleet and org overrides."}]},{"label":"SARIF distillation","caption":"Condenses SARIF logs into bounded summaries.","flow":[{"edges":"canary->distill","say":"Canary test wraps failure in SARIF."},{"edges":"distill->sarif_out","say":"Distills summary and writes full report."}]}]}}]]></metadata>
+<style>
+svg { --accent:#0074d9; --fg:#1c1e21; --muted:#606770; --bg:#ffffff; --surface:#f5f7fa; --border:#d0d7de; --card-on:#eef5fd; }
+@media (prefers-color-scheme: dark) { svg { --accent:#3396e8; --fg:#e3e3e3; --muted:#9aa0a6; --bg:#1b1b1d; --surface:#242526; --border:#3a3b3c; --card-on:#1d2733; } }
+.label { fill: var(--fg); font-size: 14px; font-weight: 500; text-anchor: middle; }
+.sub { fill: var(--muted); font-size: 12px; text-anchor: middle; }
+.frame { fill: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .04em; }
+.edgelabel { fill: var(--muted); font-size: 11px; text-anchor: middle; font-family: ui-monospace, Menlo, monospace; }
+.row { fill: var(--fg); font-size: 11px; }
+.row.mono { font-size: 10.5px; font-family: ui-monospace, Menlo, monospace; }
+.muted { fill: var(--muted); }
+.tag { font-size: 9px; font-weight: 600; letter-spacing: .03em; text-anchor: middle; }
+.mark { fill: var(--accent); font-size: 11px; font-weight: 600; text-anchor: end; }
+.chip { fill: #fff; font-size: 11.5px; text-anchor: middle; }
+.steplabel { fill: var(--fg); font-size: 13px; font-weight: 600; text-anchor: middle; font-family: ui-monospace, Menlo, monospace; }
+.caption { fill: var(--muted); font-size: 13.5px; text-anchor: middle; }
+
+</style>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9 z" fill="var(--muted)"/></marker></defs>
+<rect width="100%" height="100%" fill="var(--bg)"/>
+<g transform="translate(0 0)">
+<rect x="24" y="108" width="780.5" height="108" rx="14" fill="var(--surface)" stroke="var(--border)"/><text x="42" y="128" class="frame">REPOSITORY SPACE</text>
+<rect x="42" y="145" width="143.3" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="113.7" y="169.5" class="label">.standards.yaml</text><text x="113.7" y="184.5" class="sub">Manifest</text>
+<rect x="205.3" y="145" width="184.6" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="297.6" y="169.5" class="label">.config/fleet.yaml</text><text x="297.6" y="184.5" class="sub">optional, operator-owned</text>
+<rect x="409.9" y="145" width="171.9" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="495.9" y="169.5" class="label">AGENTS.md</text><text x="495.9" y="184.5" class="sub">Canonical Instructions</text>
+<rect x="601.9" y="145" width="184.6" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="694.2" y="169.5" class="label">.agents/</text><text x="694.2" y="184.5" class="sub">Personas, Skills, Plugin</text>
+<rect x="834.5" y="24" width="654.4" height="276" rx="14" fill="var(--surface)" stroke="var(--border)"/><text x="852.5" y="44" class="frame">PRAETOR CORE ENGINE (GO BINARY / CONTAINER)</text>
+<rect x="973.9" y="61" width="190" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="1068.9" y="85.5" class="label">CLI &amp; Servers</text><text x="1068.9" y="100.5" class="sub">cmd/standardsctl, mcp, lsp</text>
+<rect x="1183.9" y="61" width="165.6" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="1266.7" y="85.5" class="label">HTTP Health Probes</text><text x="1266.7" y="100.5" class="sub">praetorctl serve</text>
+<rect x="888.5" y="160" width="128.5" height="38" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="952.8" y="184" class="label">Gating Engine</text>
+<rect x="1037" y="134" width="187.8" height="90" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="1130.9" y="184" class="label">Compiler &amp; Transpiler</text>
+<rect x="1244.8" y="160" width="190" height="38" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="1339.8" y="184" class="label">HISS Invariant Scanner</text>
+<rect x="852.5" y="244" width="180.4" height="38" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="942.7" y="268" class="label">Runner Matrix Router</text>
+<rect x="1052.9" y="244" width="113.6" height="38" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="1109.7" y="268" class="label">Bump Canary</text>
+<rect x="1186.5" y="244" width="143.3" height="38" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="1258.2" y="268" class="label">SARIF Distiller</text>
+<rect x="1349.8" y="244" width="121" height="38" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="1410.3" y="268" class="label">Model Router</text>
+<rect x="1518.9" y="108" width="597.1" height="108" rx="14" fill="var(--surface)" stroke="var(--border)"/><text x="1536.9" y="128" class="frame">GENERATED PROJECTIONS</text>
+<rect x="1536.9" y="145" width="165.6" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="1619.6" y="169.5" class="label">Vendor Agent Files</text><text x="1619.6" y="184.5" class="sub">CLAUDE.md, etc.</text>
+<rect x="1722.4" y="145" width="165.6" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="1805.2" y="169.5" class="label">Diagnostic Summary</text><text x="1805.2" y="184.5" class="sub">SARIF output</text>
+<rect x="1908" y="145" width="190" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="2003" y="169.5" class="label">Distroless Image</text><text x="2003" y="184.5" class="sub">ghcr.io/cordanallm/praetor</text>
+<path id="p-standards-&gt;gating" d="M 185.3 162.66666666666666 C 536.9200000000001 162.66666666666666, 536.9200000000001 179, 888.5400000000002 179" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/><rect x="448.3" y="161.8" width="177.2" height="18" rx="9" fill="var(--bg)" stroke="var(--border)"/><text x="536.9" y="174.8" class="edgelabel">lockfile &amp; complexity policy</text>
+<path id="p-standards-&gt;runner" d="M 185.3 180.33333333333331 C 518.9000000000001 180.33333333333331, 518.9000000000001 256.6666666666667, 852.5000000000001 256.6666666666667" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/><rect x="488.6" y="209.5" width="60.6" height="18" rx="9" fill="var(--bg)" stroke="var(--border)"/><text x="518.9" y="222.5" class="edgelabel">runners:</text>
+<path id="p-fleet-&gt;runner" d="M 389.94000000000005 171.5 C 621.22 171.5, 621.22 269.3333333333333, 852.5000000000001 269.3333333333333" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/>
+<path id="p-agents_md-&gt;compiler" d="M 581.8600000000001 171.5 C 809.4300000000002 171.5, 809.4300000000002 164, 1037.0000000000002 164" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/>
+<path id="p-subagents-&gt;compiler" d="M 786.5000000000001 171.5 C 911.7500000000002 171.5, 911.7500000000002 194, 1037.0000000000002 194" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/>
+<path id="p-cli-&gt;gating" d="M 1037.2333333333333 114 C 1037.2333333333333 137, 952.7700000000002 137, 952.7700000000002 160" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/>
+<path id="p-cli-&gt;compiler" d="M 1100.5666666666668 114 C 1100.5666666666668 124, 1130.9100000000003 124, 1130.9100000000003 134" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/>
+<path id="p-gating-&gt;hiss" d="M 1017.0000000000002 179 C 1130.9100000000003 179, 1130.9100000000003 179, 1244.8200000000002 179" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/>
+<path id="p-compiler-&gt;vendor" d="M 1224.8200000000002 179 C 1380.8400000000001 179, 1380.8400000000001 171.5, 1536.8600000000001 171.5" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/>
+<path id="p-canary-&gt;distill" d="M 1166.52 263 C 1176.52 263, 1176.52 263, 1186.52 263" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/><rect x="1105.4" y="254" width="142.3" height="18" rx="9" fill="var(--bg)" stroke="var(--border)"/><text x="1176.5" y="267" class="edgelabel">wraps failure as SARIF</text>
+<path id="p-distill-&gt;sarif_out" d="M 1329.82 263 C 1526.12 263, 1526.12 171.5, 1722.42 171.5" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/>
+<path id="p-serve-&gt;oci" d="M 1349.46 87.5 C 1628.72 87.5, 1628.72 171.5, 1907.98 171.5" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/><rect x="1589.7" y="120.5" width="78.1" height="18" rx="9" fill="var(--bg)" stroke="var(--border)"/><text x="1628.7" y="133.5" class="edgelabel">packaged in</text>
+
+</g>
+
+
+</svg>

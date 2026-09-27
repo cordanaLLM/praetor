@@ -1,0 +1,3 @@
+type: changed
+title: Replace Mermaid diagrams in c4-models.md with interactive figures for System Context and Container diagrams, citing evidence and updating prose, and add reject edges from all failure-capable gate stages to the gating pipeline figure to fix BUG-1001
+breaking: false
