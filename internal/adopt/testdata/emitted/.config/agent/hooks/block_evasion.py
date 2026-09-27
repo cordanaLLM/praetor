@@ -24,16 +24,22 @@ MAX_SCAN_LINE_CHARS = 2048
 BLOCK_EXIT = 2
 
 NO_INPUT_REFUSAL = (
-    "[BLOCKED BY HISS] expected PreToolUse " "JSON on stdin or a command as arguments"
+    "[BLOCKED BY HISS] input: PreToolUse JSON " "on stdin or command arguments required"
 )
-INVALID_INPUT_REFUSAL = "[BLOCKED BY HISS] invalid hook input: "
-NARROWING_REFUSAL = "[BLOCKED BY HISS] Hook exclusions are prohibited."
+INVALID_INPUT_REFUSAL = "[BLOCKED BY HISS] Invalid hook input: "
+NARROWING_REFUSAL = "[BLOCKED BY HISS] hook exclusions: prohibited."
 SCAN_BOUND_REFUSAL = (
-    "[BLOCKED BY HISS] command exceeds the scan bound: at most 65536 characters, 2048 "
-    "per line; split it or write the long content to a file first."
+    "[BLOCKED BY HISS] command exceeds scan bound: at most 65536 characters, 2048 per "
+    "line; split command or write long content to file first"
 )
-HISS_REFUSAL = "[BLOCKED BY HISS] Verification evasion prohibited: "
-DEV_01_REFUSAL = "[BLOCKED BY DEV-01] Verification evasion prohibited: "
+HISS_REFUSAL = (
+    "[BLOCKED BY HISS] verification evasion prohibited; commits, pushes and tool calls "
+    "pass verification gates; pattern: "
+)
+DEV_01_REFUSAL = (
+    "[BLOCKED BY DEV-01] adoption or needs target: workstation dev root; repositories "
+    "live inside organization folders as leaf Git repositories; pattern: "
+)
 
 RULES = [
     (r"--no-verify\b", HISS_REFUSAL),

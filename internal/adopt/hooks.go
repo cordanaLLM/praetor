@@ -239,6 +239,10 @@ if __name__ == "__main__":
     main()
 `
 
+// noInputRefusal is the refusal of a call with neither arguments nor piped input. It is the
+// interceptor's own: the Go engine always reads the payload its client pipes in.
+const noInputRefusal = "[BLOCKED BY HISS] input: PreToolUse JSON on stdin or command arguments required"
+
 // interceptorRefusal is one refusal text the interceptor prints, under its Python name.
 type interceptorRefusal struct {
 	name string
@@ -246,20 +250,20 @@ type interceptorRefusal struct {
 }
 
 // interceptorRefusals returns the refusal texts the interceptor declares, one module
-// constant each, in the order they are rendered.
+// constant each, in the order they are rendered. Every text but noInputRefusal is
+// agenthook's wording, so the interceptor refuses in the engine's words (BUG-1014).
 func interceptorRefusals() []interceptorRefusal {
 	refusals := []interceptorRefusal{
-		{"NO_INPUT_REFUSAL", "[BLOCKED BY HISS] expected PreToolUse JSON on stdin or a command as arguments"},
-		{"INVALID_INPUT_REFUSAL", "[BLOCKED BY HISS] invalid hook input: "},
-		{"NARROWING_REFUSAL", "[BLOCKED BY HISS] Hook exclusions are prohibited."},
-		{"SCAN_BOUND_REFUSAL", "[BLOCKED BY HISS] command exceeds the scan bound: at most " + strconv.Itoa(agenthook.MaxScanChars) +
-			" characters, " + strconv.Itoa(agenthook.MaxScanLineChars) + " per line; split it or write the long content to a file first."},
+		{"NO_INPUT_REFUSAL", noInputRefusal},
+		{"INVALID_INPUT_REFUSAL", agenthook.InvalidInputRefusal},
+		{"NARROWING_REFUSAL", agenthook.NarrowingRefusal},
+		{"SCAN_BOUND_REFUSAL", agenthook.ScanBoundRefusal()},
 	}
 	seen := map[string]bool{}
 	for _, rule := range agenthook.BuiltinRules() {
 		if name := ruleRefusalName(rule.Invariant); !seen[name] {
 			seen[name] = true
-			refusals = append(refusals, interceptorRefusal{name, "[BLOCKED BY " + rule.Invariant + "] Verification evasion prohibited: "})
+			refusals = append(refusals, interceptorRefusal{name, rule.RefusalPrefix()})
 		}
 	}
 	return refusals
@@ -285,8 +289,8 @@ func buildBlockEvasionPY() string {
 		rules.WriteString(pythonPairEntry(pyToken{rule.Source, pyRaw}, pyToken{ruleRefusalName(rule.Invariant), pyName}))
 	}
 	for _, value := range agenthook.LefthookDisableValues() {
-		refusal := "[BLOCKED BY HISS] LEFTHOOK=" + value + " detected in environment. Evasion prohibited."
-		disabled.WriteString(pythonPairEntry(pyToken{value, pyString}, pyToken{refusal, pyString}))
+		refusal := pyToken{agenthook.LefthookDisabledRefusal(value), pyString}
+		disabled.WriteString(pythonPairEntry(pyToken{value, pyString}, refusal))
 	}
 	return strings.NewReplacer(
 		"{{MAX_INPUT_BYTES}}", strconv.Itoa(agenthook.MaxInputBytes),
