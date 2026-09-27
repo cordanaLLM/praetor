@@ -1,38 +1,44 @@
 {
   "slug": "forge-federation",
   "title": "Multi-Forge Federation",
-  "alt": "Architecture of praetorctl calling forge drivers for GitHub, GitLab, and Gitea",
+  "alt": "Architecture of praetorctl calling GitHub driver directly, with GitLab and Gitea accessible via NewForge factory",
   "text": [
-    "Boxes: praetorctl, forge.NewForge, GitHub Driver, GitLab Driver, Gitea Driver.",
-    "praetorctl → forge.NewForge (Initializes) → GitHub Driver (provider=github).",
+    "Boxes: praetorctl, Library Consumer, forge.NewForge, GitHub Driver, GitLab Driver, Gitea Driver.",
+    "praetorctl → GitHub Driver (NewGitHubDriver()).",
+    "Library Consumer → forge.NewForge (Initializes) → GitHub Driver (provider=github).",
     "forge.NewForge → GitLab Driver (provider=gitlab).",
     "forge.NewForge → Gitea Driver (provider=gitea).",
-    "praetorctl → GitHub Driver.",
-    "praetorctl → GitLab Driver.",
-    "praetorctl → Gitea Driver.",
-    "Scenario 1, GitHub. Initialize factory Create GitHub driver Authenticate() ReconcileProtection() ReconcileLabels() PostStatusCheck() CreatePullRequest() CreateIssue() ListIssues() UpdateIssue()",
+    "Library Consumer → GitLab Driver.",
+    "Library Consumer → Gitea Driver.",
+    "Scenario 1, GitHub. forge.NewGitHubDriver() Authenticate() ReconcileProtection() ReconcileLabels() PostStatusCheck() CreatePullRequest() CreateIssue() ListIssues() UpdateIssue()",
     "Scenario 2, GitLab. Initialize factory Create GitLab driver Authenticate() OK Enforcement -> ErrNotImplemented",
     "Scenario 3, Gitea. Initialize factory Create Gitea driver Authenticate() OK Enforcement -> ErrNotImplemented"
   ],
   "evidence": [
+    "cmd/standardsctl/sync.go:reconcileRemoteForge",
     "internal/forge/forge.go:NewForge",
     "internal/forge/forge.go:Forge",
     "internal/forge/github.go:GitHubDriver",
     "internal/forge/gitlab.go:GitLabDriver",
     "internal/forge/gitea.go:GiteaDriver"
   ],
-  "spec_sha256": "c86369ea178ed5d922079b9d12e065e5c6a9fbe22f54eedcb08f473a1476ceec",
+  "spec_sha256": "1e474f9f2d8d7035e98adc8df44b4c9e1c0236086205feac88c0f84770236718",
   "engine": {
     "commit": "ccfe85b4851957ac2adf88b4a9ddf9668b2882f1",
     "sha256": "047b4bcb30562cca709be7175d11995cdda45cf4b89db1f6906c5805b26c6452"
   },
-  "svg_sha256": "682bdf1d1264628d453c6b1b1c08f1a1d42db74093f4434cc524d54adfd0df66",
-  "static_sha256": "0d882837284267cf9480120f6e7f186beb891ed898411e4b3c9e0a65270dc9f6",
+  "svg_sha256": "dc8bbf92e3f828aaddc22dafeb2cc6326817a94313dbb40ba20425f08c44f48e",
+  "static_sha256": "91a86f852add842fc210bc281d1dbc041621b153c26d32721b11d7c739f7db4b",
   "width": 560,
-  "height": 268,
+  "height": 372,
   "edges": [
     {
       "from": "praetorctl",
+      "to": "GitHub Driver",
+      "label": "NewGitHubDriver()"
+    },
+    {
+      "from": "Library Consumer",
       "to": "forge.NewForge",
       "label": "Initializes"
     },
@@ -52,15 +58,11 @@
       "label": "provider=gitea"
     },
     {
-      "from": "praetorctl",
-      "to": "GitHub Driver"
-    },
-    {
-      "from": "praetorctl",
+      "from": "Library Consumer",
       "to": "GitLab Driver"
     },
     {
-      "from": "praetorctl",
+      "from": "Library Consumer",
       "to": "Gitea Driver"
     }
   ]

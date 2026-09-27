@@ -444,7 +444,7 @@ func generateAPIReferenceWiki() WikiPage {
 
 ` + "```figure\nforge-federation\n```" + `
 
-Only the GitHub driver enforces governance rules. The GitLab and Gitea drivers authenticate, but return ` + "`ErrNotImplemented`" + ` for all enforcement methods.
+Only the GitHub driver enforces governance rules. The GitLab and Gitea drivers authenticate, but return ` + "`ErrNotImplemented`" + ` for all enforcement methods. The CLI builds the GitHub driver directly; ` + "`forge.NewForge`" + ` acts as a library factory for other drivers with no CLI caller.
 `
 
 	return WikiPage{

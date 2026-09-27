@@ -700,10 +700,48 @@ func TestGenerateWiki_Positive(t *testing.T) {
 }
 
 func TestGenerateAPIReferenceWiki_Negative_NoFakeEnforcement(t *testing.T) {
+	ctx := context.Background()
+
+	for _, provider := range []string{"gitlab", "gitea"} {
+		f, err := NewForge(provider, "token", "")
+		if err != nil {
+			t.Fatalf("failed to create %s forge: %v", provider, err)
+		}
+
+		if err := f.ReconcileProtection(ctx, "main", nil); !errors.Is(err, ErrNotImplemented) {
+			t.Errorf("%s ReconcileProtection did not return ErrNotImplemented: %v", provider, err)
+		}
+		if err := f.ReconcileLabels(ctx, nil); !errors.Is(err, ErrNotImplemented) {
+			t.Errorf("%s ReconcileLabels did not return ErrNotImplemented: %v", provider, err)
+		}
+		if err := f.PostStatusCheck(ctx, "sha", CheckRun{}); !errors.Is(err, ErrNotImplemented) {
+			t.Errorf("%s PostStatusCheck did not return ErrNotImplemented: %v", provider, err)
+		}
+		if _, err := f.CreatePullRequest(ctx, PRRequest{}); !errors.Is(err, ErrNotImplemented) {
+			t.Errorf("%s CreatePullRequest did not return ErrNotImplemented: %v", provider, err)
+		}
+		if _, err := f.CreateIssue(ctx, IssueSpec{}); !errors.Is(err, ErrNotImplemented) {
+			t.Errorf("%s CreateIssue did not return ErrNotImplemented: %v", provider, err)
+		}
+		if _, err := f.ListIssues(ctx, "open"); !errors.Is(err, ErrNotImplemented) {
+			t.Errorf("%s ListIssues did not return ErrNotImplemented: %v", provider, err)
+		}
+		if err := f.UpdateIssue(ctx, 1, nil, "closed"); !errors.Is(err, ErrNotImplemented) {
+			t.Errorf("%s UpdateIssue did not return ErrNotImplemented: %v", provider, err)
+		}
+	}
+
 	page := generateAPIReferenceWiki()
+	if !strings.Contains(page.Content, "ErrNotImplemented") {
+		t.Errorf("API Reference page must mention ErrNotImplemented to accurately reflect drivers")
+	}
+
 	lower := strings.ToLower(page.Content)
-	if strings.Contains(lower, "gitlab enforces") || strings.Contains(lower, "gitea enforces") || strings.Contains(lower, "reconciles protections and gitea syncs labels") {
-		t.Errorf("API Reference page must never claim GitLab or Gitea enforce governance, got: %s", page.Content)
+
+	for _, verb := range []string{"enforce", "reconcile", "synchronize", "protect"} {
+		if strings.Contains(lower, "gitlab "+verb) || strings.Contains(lower, "gitea "+verb) {
+			t.Errorf("API Reference page must not pair GitLab/Gitea with verb %q", verb)
+		}
 	}
 }
 
