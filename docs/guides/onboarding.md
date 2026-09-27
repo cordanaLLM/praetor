@@ -1,6 +1,6 @@
 # Repository Onboarding Guide: cordanaLLM/praetor
 
-Onboard any existing or new repository into the cordanaLLM declarative governance fleet.
+Onboard an existing repository into the cordanaLLM declarative governance fleet.
 
 ```figure
 onboarding-path
@@ -8,7 +8,9 @@ onboarding-path
 
 ## 1. Quickstart Onboarding Command
 
-Execute the single-shot onboarding pipeline in your repository root:
+The five-step onboarding pipeline requires a repository with canonical `AGENTS.md` instructions. For greenfield repositories without an existing harness, run [`praetorctl adopt`](../adoption.md) to bootstrap configuration and scaffold `AGENTS.md` in a single step.
+
+Execute the onboarding pipeline in your repository root:
 
 ```bash
 # 1. Initialize configuration with declared profiles
@@ -18,7 +20,7 @@ praetorctl init --profile framework --facets security:high,api:public-contract
 praetorctl compile-context
 
 # 3. Snapshot legacy technical debt infractions to prevent CI failure
-praetorctl baseline --record
+praetorctl baseline --record --allow-increase --reason "<why>"
 
 # 4. Prepare a portable devcontainer from reviewed Praetor sources
 praetorctl devcontainer generate --source-root /path/to/reviewed/praetor
@@ -55,8 +57,8 @@ activation. Those stages need their own selected checks and execution evidence.
 | Step | Action | Command | Expected Output |
 | :--- | :--- | :--- | :--- |
 | **1. Scaffolding** | Create declarative `.standards.yaml` | `praetorctl init` | `.standards.yaml` created with selected profiles. |
-| **2. Context Transpilation** | Generate vendor agent files | `praetorctl compile-context` | `CLAUDE.md`, `.cursor/rules/*.mdc`, etc. created ($< 300$ LOC). |
-| **3. Brownfield Baselining** | Snapshot legacy debt | `praetorctl baseline --record` | `.standards-baseline.json` populated with existing debt. |
+| **2. Context Transpilation** | Generate vendor agent files | `praetorctl compile-context` | Canonical `AGENTS.md` updated; `CLAUDE.md`, `.cursor/rules/*.mdc`, etc. created ($< 300$ LOC). |
+| **3. Brownfield Baselining** | Snapshot legacy debt | `praetorctl baseline --record --allow-increase --reason "<why>"` | `.standards-baseline.json` populated with existing debt. |
 | **4. Devcontainer Setup** | Prepare a portable bootstrap | `praetorctl devcontainer generate --source-root /path/to/reviewed/praetor` | JSON and exact source companions prepared; build and startup remain separate checks. |
 | **5. Audit Verification** | Verify configured governance and debt-ratchet gates | `praetorctl audit` | Every executed gate reports pass; skipped or unsupported coverage remains explicit. |
 
@@ -68,12 +70,7 @@ Legacy infractions recorded in `.standards-baseline.json` will not fail CI statu
 
 - **Monotonic Ratchet**: Technical debt must decrease over time ($V_{\text{total}}(t_1) \le V_{\text{total}}(t_0)$).
 - **Touched-File Clean Rule**: Any legacy file modified during a pull request revokes previous exemptions and must be refactored clean.
-- **Waivers**: For an unavoidable architectural exception that raises the recorded
-  count, use the HISS-13 exception path: `praetorctl baseline --record
-  --allow-increase --reason "<rationale>"`. The reason is stored in the baseline
-  alongside the raised count; there is no CLI command or file that mints a standalone
-  signed waiver. The `hiss-waiver` repository label is a scaffolded taxonomy entry
-  with no enforcement attached.
+- **Initial Debt & Waivers**: Because `praetorctl init` seeds a clean baseline (0 infractions), recording existing debt in a brownfield repository represents an initial increase and requires an explicit, justified increase: `praetorctl baseline --record --allow-increase --reason "<why>"`. The same HISS-13 exception path applies to any subsequent unavoidable architectural exception that raises the recorded count. The reason is stored in the baseline alongside the raised count; there is no CLI command or file that mints a standalone signed waiver. The `hiss-waiver` repository label is a scaffolded taxonomy entry with no enforcement attached.
 
 ---
 

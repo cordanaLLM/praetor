@@ -17,7 +17,7 @@ export default {
     'cmd/standardsctl/adopt.go:runAdopt',
   ],
   describe: [
-    'Onboarding executes five commands in sequence to establish declarative standards, vendor agent files, baseline legacy debt, generate devcontainers, and verify compliance.',
+    'Onboarding executes five commands in sequence to establish declarative standards, vendor agent files, baseline legacy debt, generate devcontainers, and verify compliance. Greenfield repositories use praetorctl adopt to scaffold AGENTS.md.',
   ],
   props: {
     speed: 1100,
@@ -25,18 +25,18 @@ export default {
       gap: 40,
       align: 'center',
       children: [
-        { id: 'repo', label: 'Target repository', sub: 'greenfield or brownfield', shape: 'store', width: 220 },
+        { id: 'repo', label: 'Target repository', sub: 'prerequisite: AGENTS.md (or adopt)', shape: 'store', width: 250 },
         {
           id: 'pipeline',
           label: 'Onboarding commands, in order',
           direction: 'column',
           gap: 20,
           children: [
-            { id: 'init', label: '1. Scaffolding', sub: 'praetorctl init', width: 260 },
-            { id: 'compile', label: '2. Context Transpilation', sub: 'praetorctl compile-context', width: 260 },
-            { id: 'baseline', label: '3. Brownfield Baselining', sub: 'praetorctl baseline --record', width: 260 },
-            { id: 'devcontainer', label: '4. Devcontainer Setup', sub: 'praetorctl devcontainer generate', width: 260 },
-            { id: 'audit', label: '5. Audit Verification', sub: 'praetorctl audit', width: 260 },
+            { id: 'init', label: '1. Scaffolding', sub: 'praetorctl init', width: 330 },
+            { id: 'compile', label: '2. Context Transpilation', sub: 'praetorctl compile-context', width: 330 },
+            { id: 'baseline', label: '3. Brownfield Baselining', sub: 'praetorctl baseline --record --allow-increase', width: 330 },
+            { id: 'devcontainer', label: '4. Devcontainer Setup', sub: 'praetorctl devcontainer generate', width: 330 },
+            { id: 'audit', label: '5. Audit Verification', sub: 'praetorctl audit', width: 330 },
           ],
         },
         { id: 'governed', label: 'Governed repository', sub: 'praetorctl audit pass', shape: 'store', width: 220 },
@@ -55,7 +55,7 @@ export default {
         label: 'init',
         caption: 'Initialize configuration with declared profile and facets.',
         flow: [
-          { edges: 'repo->init', say: 'Target repository is initialized with declared profile and facets.' },
+          { edges: 'repo->init', say: 'Target repository carries canonical AGENTS.md (greenfield repos use praetorctl adopt).' },
           {
             say: 'Scaffolding creates .standards.yaml, .standards.lock, and initial baseline.',
             show: {
@@ -93,10 +93,11 @@ export default {
         flow: [
           { edges: 'compile->baseline', say: 'HISS scanner sweeps the codebase for existing infractions.' },
           {
-            say: 'Legacy infractions are snapshotted into .standards-baseline.json to prevent CI failure.',
+            say: 'Initial legacy debt is recorded with --allow-increase and --reason="<why>" to permit non-zero count.',
             show: {
               baseline: [
                 { tag: 'updated', tone: 'blue', text: '.standards-baseline.json', meta: 'scanned debt snapshot', mono: true },
+                { tag: 'required', tone: 'orange', text: '--allow-increase --reason="<why>"', mono: true },
               ],
             },
           },
