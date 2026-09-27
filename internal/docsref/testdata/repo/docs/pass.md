@@ -7,9 +7,12 @@ Every reference below exists in the fixture, so the check reports nothing for th
 - `praetorctl state sync --verify --log "done" .`
 - `praetorctl state task add`
 - `praetorctl state task [add|list]`
+- `praetorctl state task <add|list>`
 - `praetorctl state sync [--verify]`
-- `praetorctl hook claude pre-tool`
+- `praetorctl state task add fix-build`, an operand below a leaf
+- `praetorctl hook claude pre-tool` and `praetorctl hook claude any-event`, operands of a leaf
 - `praetorctl hook <client> <event>`
+- `praetorctl audit --json`, a flag the code compares by hand
 - `praetorctl audit --strict --config=.standards.yaml`
 - `praetorctl audit --config .standards.yaml --strict`
 - `praetorctl audit -h`
@@ -32,6 +35,17 @@ praetorctl audit \
   --strict
 FOO=1 praetorctl state task list | head -1
 praetorctl audit --strict > report.txt 2>&1 # praetorctl nosuch
+praetorctl audit # see internal/nothere/notes.go
+```
+
+A terminal transcript reads only the lines after the prompt; the rest is output:
+
+```console
+$ praetorctl audit \
+    --strict
+praetorctl version dev
+internal/removedx/file.go:3: an output line, not a reference
+$ praetorctl state task list
 ```
 
 ## Paths
@@ -39,6 +53,7 @@ praetorctl audit --strict > report.txt 2>&1 # praetorctl nosuch
 - `cmd/standardsctl/main.go` and `cmd/standardsctl/main.go:12-20`
 - `internal/events/` and `internal/events`
 - `internal/events.PreTool`, `internal/events.Registry` and `internal/events.Lookup`
+- `internal/events.templatePath`, an unexported identifier
 - `internal/*/events.go` and `internal/<package>/doc.go`
 - `deploy/arc/` and `deploy/k8s/app/kustomization.yaml`, operator-owned
 - `docs/private/notes.md`, ignored by the fixture's `.gitignore`

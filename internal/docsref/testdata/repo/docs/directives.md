@@ -1,11 +1,11 @@
 # Malformed directives
 
-<!-- praetor:docs-references:off -->
+<!-- praetor:docs-references:off x -->
 
 <!-- praetor:docs-references:on -->
 
 <!-- praetor:docs-references:on -->
 
-<!-- praetor:docs-references:off first reason -->
+<!-- praetor:docs-references:off the first illustrative block -->
 
-<!-- praetor:docs-references:off second reason -->
+<!-- praetor:docs-references:off the second illustrative block -->

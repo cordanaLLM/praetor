@@ -62,6 +62,10 @@ func TestInvocations_Boundary_SeparatorsCommentsAndRedirections(t *testing.T) {
 	if len(got) != 1 || len(got[0]) != 1 {
 		t.Fatalf("a redirection must end the arguments, got %q", got)
 	}
+	got = calls("praetorctl state task <add|list> --dir <dir>", false)
+	if len(got) != 1 || len(got[0]) != 5 {
+		t.Fatalf("angle-bracket alternatives and placeholders are arguments, not redirections, got %q", got)
+	}
 	got = calls(`praetorctl state task add "fix the | pipe"`, true)
 	if len(got) != 1 || len(got[0]) != 4 {
 		t.Fatalf("a quoted separator must stay inside its word, got %q", got)

@@ -20,6 +20,8 @@ var fixtureCommands = map[string]string{
 }
 
 // fixtureRepository copies testdata/repo into a fresh git work tree and returns its root.
+// The fixture keeps a real go.mod: it makes the fixture a module of its own, so tools that
+// read this repository's Go imports (needs scan) do not count its example.com imports.
 func fixtureRepository(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -86,6 +88,13 @@ func TestRun_Positive_ReportCountsAndSkips(t *testing.T) {
 	}
 	if len(report.Skipped) != 1 || !strings.HasPrefix(report.Skipped[0], "docs/adr/0001-accepted.md: Accepted") {
 		t.Errorf("skipped = %q, want only the Accepted record", report.Skipped)
+	}
+	want := []string{
+		"docs/directives.md:9: the first illustrative block",
+		"docs/pass.md:64: an illustrative path no repository carries",
+	}
+	if !slices.Equal(report.Suppressions, want) {
+		t.Errorf("suppressions = %q, want %q", report.Suppressions, want)
 	}
 }
 

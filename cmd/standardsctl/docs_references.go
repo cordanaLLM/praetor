@@ -56,16 +56,20 @@ func runDocsReferences(ctx context.Context, args []string) error {
 	return printDocsReferences(*repoPath, report)
 }
 
-// printDocsReferences prints the counts, every skipped document with its reason, and each
-// finding; it fails when any finding exists.
+// printDocsReferences prints the counts, every skipped document and suppressed block with
+// its reason, and each finding; it fails when any finding exists.
 func printDocsReferences(repoPath string, report *docsref.Report) error {
 	fmt.Printf("=== Documentation References: %s ===\n", repoPath)
 	fmt.Printf("  Documents checked:  %d\n", report.Documents)
 	fmt.Printf("  Documents skipped:  %d\n", len(report.Skipped))
+	fmt.Printf("  Suppressed blocks:  %d\n", len(report.Suppressions))
 	fmt.Printf("  CLI invocations:    %d\n", report.Invocations)
 	fmt.Printf("  Repository paths:   %d\n", report.Paths)
 	for _, skipped := range report.Skipped {
 		fmt.Printf("  skipped %s\n", skipped)
+	}
+	for _, suppressed := range report.Suppressions {
+		fmt.Printf("  suppressed %s\n", suppressed)
 	}
 	if len(report.Findings) == 0 {
 		fmt.Println("[PASS] every documented command, flag and repository path resolves.")

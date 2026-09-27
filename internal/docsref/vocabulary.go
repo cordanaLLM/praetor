@@ -62,12 +62,18 @@ type flagDefinition struct {
 	takesValue bool
 }
 
-// declaration is what one top-level declaration contributes to a vocabulary.
+// declaration is what one top-level declaration contributes: its string literals (for the
+// engine-literal path rule), the flags it registers or compares by hand, what it references,
+// and, for a function, how it dispatches on its argument list.
 type declaration struct {
-	literals []string
-	flags    []flagDefinition
-	refs     []reference
-	methods  []string
+	literals   []string
+	compared   []string
+	flags      []flagDefinition
+	refs       []reference
+	methods    []string
+	function   bool
+	dispatch   *dispatchSites
+	mapEntries []childEntry
 }
 
 // sourceTree reads the module's Go packages on demand.
@@ -112,17 +118,28 @@ func modulePath(root string) (string, error) {
 	return "", errors.New("go.mod declares no module path")
 }
 
-// vocabulary returns everything the code reachable from one top-level function of package
-// dir can recognise.
-func (t *sourceTree) vocabulary(ctx context.Context, dir, function string) (*Vocabulary, error) {
+// flagTable maps a flag name to whether it takes a value (false only for a boolean flag).
+type flagTable map[string]bool
+
+// add records a flag; a name registered both as a boolean and with a value takes one.
+func (f flagTable) add(name string, takesValue bool) {
+	f[name] = f[name] || takesValue
+}
+
+// flags returns the flags the code reachable from one function of package dir defines: every
+// registration through Go's flag package with a literal name, and every flag-shaped literal
+// the code compares an argument against by hand ("--json" in a case clause). Other literals
+// never count, so a git argument such as "--porcelain" is not mistaken for a CLI flag. The
+// walk does not enter the functions in stops: a subcommand's siblings keep their flags.
+func (t *sourceTree) flags(ctx context.Context, dir, function string, stops map[string]bool) (flagTable, error) {
 	decls, err := t.load(ctx, dir)
 	if err != nil {
 		return nil, err
 	}
-	if decls[function] == nil {
+	if decls[function] == nil || !decls[function].function {
 		return nil, fmt.Errorf("%s declares no function %s", dir, function)
 	}
-	walk := &closureWalk{tree: t, vocabulary: newVocabulary(), visited: map[reference]bool{},
+	walk := &closureWalk{tree: t, flags: flagTable{}, visited: map[reference]bool{}, stopDir: dir, stops: stops,
 		methods: map[string]bool{}, queue: []reference{{dir, function}}}
 	for round := 0; round < maxClosureRounds && len(walk.queue) > 0; round++ {
 		if err := walk.drain(ctx); err != nil {
@@ -131,18 +148,20 @@ func (t *sourceTree) vocabulary(ctx context.Context, dir, function string) (*Voc
 		walk.queueMethods()
 	}
 	if len(walk.queue) > 0 {
-		return nil, fmt.Errorf("vocabulary of %s.%s did not settle within %d rounds", dir, function, maxClosureRounds)
+		return nil, fmt.Errorf("flags of %s.%s did not settle within %d rounds", dir, function, maxClosureRounds)
 	}
-	return walk.vocabulary, nil
+	return walk.flags, nil
 }
 
 // closureWalk is one breadth-first walk over the declarations a function reaches.
 type closureWalk struct {
-	tree       *sourceTree
-	vocabulary *Vocabulary
-	visited    map[reference]bool
-	methods    map[string]bool
-	queue      []reference
+	tree    *sourceTree
+	flags   flagTable
+	visited map[reference]bool
+	stopDir string
+	stops   map[string]bool
+	methods map[string]bool
+	queue   []reference
 }
 
 // drain visits queued declarations until none is left. A queued reference may repeat one
@@ -154,7 +173,7 @@ func (w *closureWalk) drain(ctx context.Context) error {
 		}
 		next := w.queue[0]
 		w.queue = w.queue[1:]
-		if w.visited[next] {
+		if w.visited[next] || (next.dir == w.stopDir && w.stops[next.name]) {
 			continue
 		}
 		decls, err := w.tree.load(ctx, next.dir)
@@ -171,17 +190,15 @@ func (w *closureWalk) drain(ctx context.Context) error {
 	return nil
 }
 
-// absorb adds one declaration's words and flags and queues what it references.
+// absorb adds one declaration's flags and queues what it references.
 func (w *closureWalk) absorb(dir string, decl *declaration) {
-	for _, literal := range decl.literals {
-		w.vocabulary.words[literal] = true
+	for _, literal := range decl.compared {
 		if match := flagPattern.FindStringSubmatch(literal); match != nil && match[2] == "" {
-			// A flag the code compares by hand ("--json") rather than registering it.
-			w.vocabulary.addFlag(match[1], true)
+			w.flags.add(match[1], true)
 		}
 	}
 	for _, flag := range decl.flags {
-		w.vocabulary.addFlag(flag.name, flag.takesValue)
+		w.flags.add(flag.name, flag.takesValue)
 	}
 	for _, ref := range decl.refs {
 		if ref.dir == "" {
@@ -318,11 +335,14 @@ func (t *sourceTree) collectFile(ctx context.Context, file *ast.File, decls map[
 		}
 		switch typed := decl.(type) {
 		case *ast.FuncDecl:
+			info := collect(typed, imports)
 			key := typed.Name.Name
 			if typed.Recv != nil {
 				key = methodKey + key
+			} else {
+				info.function, info.dispatch = true, dispatchOf(typed)
 			}
-			merge(decls, key, collect(typed, imports))
+			merge(decls, key, info)
 		case *ast.GenDecl:
 			collectSpecs(typed, imports, decls)
 		}
@@ -339,6 +359,11 @@ func collectSpecs(group *ast.GenDecl, imports map[string]string, decls map[strin
 			merge(decls, typed.Name.Name, &declaration{})
 		case *ast.ValueSpec:
 			info := collect(typed, imports)
+			if len(typed.Values) == 1 {
+				if lit, ok := typed.Values[0].(*ast.CompositeLit); ok {
+					info.mapEntries = mapLiteralEntries(lit)
+				}
+			}
 			for _, name := range typed.Names {
 				merge(decls, name.Name, info)
 			}
@@ -354,6 +379,7 @@ func merge(decls map[string]*declaration, key string, info *declaration) {
 		return
 	}
 	existing.literals = append(existing.literals, info.literals...)
+	existing.compared = append(existing.compared, info.compared...)
 	existing.flags = append(existing.flags, info.flags...)
 	existing.refs = append(existing.refs, info.refs...)
 	existing.methods = append(existing.methods, info.methods...)
@@ -366,13 +392,17 @@ func collect(node ast.Node, imports map[string]string) *declaration {
 	ast.Inspect(node, func(n ast.Node) bool {
 		switch typed := n.(type) {
 		case *ast.BasicLit:
-			if value, err := strconv.Unquote(typed.Value); err == nil && typed.Kind == token.STRING {
+			if value, ok := stringLiteral(typed); ok {
 				info.literals = append(info.literals, value)
 			}
 		case *ast.CallExpr:
 			if flag, ok := flagDefinitionOf(typed); ok {
 				info.flags = append(info.flags, flag)
 			}
+		case *ast.BinaryExpr:
+			info.comparison(typed.Op, typed.X, typed.Y)
+		case *ast.CaseClause:
+			info.comparison(token.EQL, typed.List...)
 		case *ast.SelectorExpr:
 			return info.selector(typed, imports, selectors)
 		case *ast.Ident:
@@ -383,6 +413,19 @@ func collect(node ast.Node, imports map[string]string) *declaration {
 		return true
 	})
 	return info
+}
+
+// comparison records the string literals an == or != comparison, or a case clause, sets an
+// argument against.
+func (info *declaration) comparison(op token.Token, operands ...ast.Expr) {
+	if op != token.EQL && op != token.NEQ {
+		return
+	}
+	for _, operand := range operands {
+		if value, ok := stringLiteral(operand); ok {
+			info.compared = append(info.compared, value)
+		}
+	}
 }
 
 // selector records pkg.Name as a cross-package reference and value.Name as a method call,

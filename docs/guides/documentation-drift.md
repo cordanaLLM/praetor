@@ -94,28 +94,41 @@ that named it still reads as correct in review because none of them is in the di
 each reference a reader would copy:
 
 - **Commands.** Every call of `praetorctl` or `standardsctl` (bare, by path such as
-  `./bin/praetorctl`, or as `go run ./cmd/standardsctl`) in an inline code span or a shell fence
-  (`bash`, `sh`, `shell`, `console`, `zsh`, `fish`, `powershell`). The first word must be a
-  command of the binary's own dispatch table, and every later subcommand word and flag must be
-  known to that command's code.
+  `./bin/praetorctl`, or as `go run ./cmd/standardsctl`) in an inline code span or a shell fence.
+  In a script fence (`bash`, `sh`, `shell`, `zsh`, `fish`, `powershell`) every line that is not
+  a comment is a command. In a terminal transcript (`console`, `shell-session`, `terminal`) only
+  a line after the `$ ` prompt is; the lines between prompts are output, such as
+  `praetorctl version dev`, and are not read. The first word must be a command of the binary's
+  own dispatch table, and each subcommand word and flag after it must be one its code defines.
 - **Repository paths.** Every word with a slash whose first element is a top-level entry of the
   repository, such as `internal/forge/pr.go:37`, `deploy/helm/` or `internal/state.VerifyStateSync`.
-  It must exist in `git ls-files`; a package path followed by an identifier must declare it.
+  It must exist in `git ls-files`; a package path followed by an identifier, exported or not,
+  must declare it. A trailing `# comment` on a shell line is not read.
 
 ### Where the command vocabulary comes from
 
 Nothing is listed by hand. The top-level commands come from `commandTable()` in
-`cmd/standardsctl/main.go`, the table the binary dispatches on. Each command's subcommands and
-flags come from its handler's code: `internal/docsref` walks every declaration the handler
-reaches, across the module's packages, and collects the string literals it compares and the flags
-it registers through Go's `flag` package. A word the code never spells cannot be a subcommand, so
-a documented `state` call with the word `purge` fails, while `praetorctl hook claude pre-tool`
-passes because `pre-tool` is `agenthook.EventPreTool`.
+`cmd/standardsctl/main.go`, the table the binary dispatches on. Below that, `internal/docsref`
+reads each handler's source for how it dispatches on the head of its argument list: a `switch`
+on `args[0]` or on a variable taken from it, an `if args[0] == "run"` chain, a lookup in a map
+such as `stateCommands`, or a handler that only forwards the list. Each subcommand leads to the
+function that handles it, and the walk goes on from there, so `state task add` is three levels
+deep while `hook` has none.
 
-The check reads only what it can decide. A placeholder (`<file>`, `[path]`, `PATH`), a path, a
-quoted value and the value after a flag that takes one are operands and are not checked. A
-subcommand word can hide a stale reference only when the same word is still spelled somewhere in
-that command's code.
+- **Subcommand words** are checked only as deep as that tree goes. A `state` call with the
+  word `purge` fails, because `state` dispatches and has no `purge`. Below a leaf every word is an operand
+  and passes: `praetorctl docs lookup cobra`, `praetorctl state task add fix-build`,
+  `praetorctl agent run my-agent`, `praetorctl hook claude pre-tool`.
+- **Flags** come only from real definitions: a registration through Go's `flag` package
+  (`fs.Bool("verify", …)`, `fs.StringVar(…)`) or a flag-shaped literal the code compares an
+  argument against by hand (`arg == "--json"`). They are collected per path: the flags of each
+  command on the path, without the code of subcommands the call did not choose or of any other
+  top-level command. A git argument such as `--porcelain` is not a definition, so `--porcelain`
+  on `state sync` fails, and `--path=.` on `docs lookup` fails because `--path` belongs to its
+  sibling `docs references`.
+- **Operands** are never checked: a placeholder (`<file>`, `[path]`, `PATH`), a path, a quoted
+  value, the value after a flag that takes one, and every word below a leaf. Alternatives are
+  checked one by one: `praetorctl state task <add|list>` passes and `<add|rm>` fails.
 
 ### What is not checked, and why
 
@@ -160,8 +173,26 @@ block with a reasoned suppression:
 <!-- praetor:docs-references:on -->
 ```
 
-The reason is mandatory. A marker with no reason, an `on` with no open `off`, a repeated `off`
-and an `off` never closed are findings themselves.
+The reason is mandatory and must be at least three words, so `off x` does not pass. A marker
+without one, an `on` with no open `off`, a repeated `off` and an `off` never closed are findings
+themselves. Every accepted block is counted and printed with its reason, next to the skipped
+documents, so a reviewer sees what the run did not read.
+
+### Known limits
+
+- A path whose first element is no longer a top-level entry of the repository (a whole
+  top-level directory renamed or removed) is not recognised as a repository path, so it is not
+  checked.
+- Below a leaf the check cannot tell an operand from a stale subcommand. A command that checks a
+  word inline after the fact (`operational sync <stage>`) is a leaf here.
+- A path the engine assembles at run time instead of spelling it out needs a reference that
+  exists, or a reasoned off block.
+- The command list comes from the binary that runs the check and the subcommands and flags from
+  the source at `--path`. `make docs-references` builds both from the same checkout; running an
+  installed binary against another checkout can mix them.
+- On a fork where `PRAETOR_FORK_PORTABILITY` is not enabled, a light pull request that changes
+  neither documentation nor code runs no leg of the check; heavy runs and pushes reach it
+  through `make verify-all`.
 
 ### Running it
 

@@ -85,9 +85,6 @@ type pathReference struct {
 	// dir reports that the reference must be a directory: written with a trailing slash, or
 	// the literal prefix of a glob or placeholder.
 	dir bool
-	// symbol is the Go identifier written after a package path (internal/state.Verify), or
-	// empty.
-	symbol string
 	// text is the reference as written.
 	text string
 }
@@ -95,8 +92,10 @@ type pathReference struct {
 // lineSuffix matches a ":12", ":12-40" or ":12,40-44" line reference after a path.
 var lineSuffix = regexp.MustCompile(`:\d+(?:-\d+)?(?:,\d+(?:-\d+)?)*$`)
 
-// goSymbol matches a package directory's last element followed by an exported identifier.
-var goSymbol = regexp.MustCompile(`^([a-z0-9_]+)\.([A-Z][A-Za-z0-9_]*)(?:\.[A-Za-z0-9_]+)*$`)
+// goSymbol matches a package directory's last element followed by a Go identifier, exported
+// or not, and optionally a method or field (config.EffectiveOptions.Root). A file name such
+// as pr.go matches too; a path that exists as written is therefore never read as a symbol.
+var goSymbol = regexp.MustCompile(`^([A-Za-z0-9_-]+)\.([A-Za-z_][A-Za-z0-9_]*)(?:\.[A-Za-z0-9_]+)*$`)
 
 // pathText strips the punctuation, flag name, anchor and line reference around a path word
 // and reports whether what remains is shaped like a relative path.
@@ -129,6 +128,9 @@ var pathRejects = []string{"/", "~", "$", "-", "@", "#", "..", `\`}
 func pathReferences(candidate Candidate, tops map[string]bool) []pathReference {
 	var refs []pathReference
 	for _, token := range tokenize(candidate.Text) {
+		if candidate.Shell && strings.HasPrefix(token, "#") {
+			break // The rest of a shell line is a comment.
+		}
 		if ref, ok := pathReferenceOf(token, tops); ok {
 			refs = append(refs, ref)
 		}
@@ -153,33 +155,49 @@ func pathReferenceOf(token string, tops map[string]bool) (pathReference, bool) {
 			break
 		}
 	}
-	if last := len(segments) - 1; last > 0 {
-		if match := goSymbol.FindStringSubmatch(segments[last]); match != nil {
-			segments[last], ref.symbol, ref.dir = match[1], match[2], true
-		}
-	}
 	ref.path = path.Join(segments...)
 	return ref, ref.path != "" && ref.path != "."
 }
 
-// pathProblem describes why ref does not resolve, or returns "" when it does. An absent path
-// is returned with absent=true so the caller can ask whether it is operator data or ignored.
+// pathProblem describes why ref does not resolve, or returns "" when it does. A path that is
+// absent as written but names a Go package followed by an identifier
+// (internal/state.VerifyStateSync, internal/docsref.tokenize) resolves when that package
+// declares the identifier. Any other absent path is returned with absent=true so the caller
+// can ask whether it is operator data, ignored, or named by the engine's source.
 func (idx *repositoryIndex) pathProblem(ctx context.Context, tree *sourceTree, ref pathReference) (problem string, absent bool) {
-	exists := idx.dirs[ref.path] || (!ref.dir && idx.files[ref.path])
-	if !exists {
-		return fmt.Sprintf("path %q is not in the repository", ref.text), true
-	}
-	if ref.symbol == "" {
+	if idx.dirs[ref.path] || (!ref.dir && idx.files[ref.path]) {
 		return "", false
 	}
-	decls, err := tree.load(ctx, ref.path)
-	if err != nil {
-		return fmt.Sprintf("cannot read package %s for %q: %v", ref.path, ref.text, err), false
+	pkg, symbol, ok := idx.symbolReference(tree, ref)
+	if !ok {
+		return fmt.Sprintf("path %q is not in the repository", ref.text), true
 	}
-	if decls[ref.symbol] == nil && decls[methodKey+ref.symbol] == nil {
-		return fmt.Sprintf("package %s declares no %s (in %q)", ref.path, ref.symbol, ref.text), false
+	decls, err := tree.load(ctx, pkg)
+	if err != nil {
+		return fmt.Sprintf("cannot read package %s for %q: %v", pkg, ref.text, err), false
+	}
+	if decls[symbol] == nil && decls[methodKey+symbol] == nil {
+		return fmt.Sprintf("package %s declares no %s (in %q)", pkg, symbol, ref.text), false
 	}
 	return "", false
+}
+
+// symbolReference splits ref into a Go package directory and an identifier when its last
+// element is package.identifier and that directory holds Go source.
+func (idx *repositoryIndex) symbolReference(tree *sourceTree, ref pathReference) (pkg, symbol string, ok bool) {
+	if ref.dir {
+		return "", "", false
+	}
+	parent, last := path.Split(ref.path)
+	match := goSymbol.FindStringSubmatch(last)
+	if match == nil || parent == "" {
+		return "", "", false
+	}
+	pkg = parent + match[1]
+	if !idx.dirs[pkg] || len(tree.files[pkg]) == 0 {
+		return "", "", false
+	}
+	return pkg, match[2], true
 }
 
 // localOnly returns the subset of absent paths that legitimately exist outside the public

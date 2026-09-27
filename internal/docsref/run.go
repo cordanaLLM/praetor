@@ -52,11 +52,12 @@ type Options struct {
 // Report is the outcome of one run. The counts print on a clean run too: a report that lists
 // only failures cannot be told apart from one that read nothing.
 type Report struct {
-	Documents   int
-	Skipped     []string
-	Invocations int
-	Paths       int
-	Findings    []Finding
+	Documents    int
+	Skipped      []string
+	Suppressions []string
+	Invocations  int
+	Paths        int
+	Findings     []Finding
 }
 
 // pendingPath is an absent path waiting for the operator-owned and ignored lookups.
@@ -106,23 +107,20 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 	return state.report, nil
 }
 
-// buildModel derives each command's vocabulary from its handler's code. Aliases share their
-// handler's vocabulary.
+// buildModel binds each top-level command to its handler and fails when the package does not
+// declare one: a command the check cannot read must stop the run, not pass unchecked.
 func buildModel(ctx context.Context, tree *sourceTree, opts Options) (*CLIModel, error) {
-	model := &CLIModel{commands: map[string]*Vocabulary{}}
-	byHandler := map[string]*Vocabulary{}
+	model := &CLIModel{tree: tree, dir: opts.Package, commands: map[string]string{}, flagMemo: map[string]flagTable{}}
+	decls, err := tree.load(ctx, opts.Package)
+	if err != nil {
+		return nil, err
+	}
 	for _, name := range slices.Sorted(maps.Keys(opts.Commands)) {
 		handler := opts.Commands[name]
-		vocabulary, done := byHandler[handler]
-		if !done {
-			var err error
-			vocabulary, err = tree.vocabulary(ctx, opts.Package, handler)
-			if err != nil {
-				return nil, fmt.Errorf("command %s: %w", name, err)
-			}
-			byHandler[handler] = vocabulary
+		if decl := decls[handler]; decl == nil || !decl.function {
+			return nil, fmt.Errorf("command %s: %s declares no function %s", name, opts.Package, handler)
 		}
-		model.commands[name] = vocabulary
+		model.commands[name] = handler
 	}
 	return model, nil
 }
@@ -152,31 +150,55 @@ func (r *run) documents(ctx context.Context, inventory []string) error {
 			continue
 		}
 		r.report.Documents++
-		r.document(ctx, rel, content)
+		if err := r.document(ctx, rel, content); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-// document checks one document's candidates.
-func (r *run) document(ctx context.Context, rel, content string) {
-	candidates, problems := Scan(rel, content)
-	r.report.Findings = append(r.report.Findings, problems...)
-	for _, candidate := range candidates {
-		for _, call := range Invocations(candidate, r.opts.Package) {
-			r.report.Invocations++
-			for _, problem := range r.model.Check(call) {
-				r.report.Findings = append(r.report.Findings, Finding{Doc: rel, Line: candidate.Line, Message: problem})
-			}
+// document checks one document's candidates and records its suppressed blocks.
+func (r *run) document(ctx context.Context, rel, content string) error {
+	scan := Scan(rel, content)
+	r.report.Findings = append(r.report.Findings, scan.Problems...)
+	for _, suppression := range scan.Suppressions {
+		r.report.Suppressions = append(r.report.Suppressions, fmt.Sprintf("%s:%d: %s", rel, suppression.Line, suppression.Reason))
+	}
+	for _, candidate := range scan.Candidates {
+		if err := r.invocations(ctx, rel, candidate); err != nil {
+			return err
 		}
-		for _, ref := range pathReferences(candidate, r.index.tops) {
-			r.report.Paths++
-			problem, absent := r.index.pathProblem(ctx, r.tree, ref)
-			switch {
-			case absent:
-				r.pending = append(r.pending, pendingPath{doc: rel, line: candidate.Line, ref: ref})
-			case problem != "":
-				r.report.Findings = append(r.report.Findings, Finding{Doc: rel, Line: candidate.Line, Message: problem})
-			}
+		r.paths(ctx, rel, candidate)
+	}
+	return nil
+}
+
+// invocations checks every CLI call of one candidate.
+func (r *run) invocations(ctx context.Context, rel string, candidate Candidate) error {
+	for _, call := range Invocations(candidate, r.opts.Package) {
+		r.report.Invocations++
+		problems, err := r.model.Check(ctx, call)
+		if err != nil {
+			return fmt.Errorf("%s:%d: %w", rel, candidate.Line, err)
+		}
+		for _, problem := range problems {
+			r.report.Findings = append(r.report.Findings, Finding{Doc: rel, Line: candidate.Line, Message: problem})
+		}
+	}
+	return nil
+}
+
+// paths checks every repository path of one candidate; an absent one waits for the
+// operator-owned, ignored and engine-literal lookups.
+func (r *run) paths(ctx context.Context, rel string, candidate Candidate) {
+	for _, ref := range pathReferences(candidate, r.index.tops) {
+		r.report.Paths++
+		problem, absent := r.index.pathProblem(ctx, r.tree, ref)
+		switch {
+		case absent:
+			r.pending = append(r.pending, pendingPath{doc: rel, line: candidate.Line, ref: ref})
+		case problem != "":
+			r.report.Findings = append(r.report.Findings, Finding{Doc: rel, Line: candidate.Line, Message: problem})
 		}
 	}
 }

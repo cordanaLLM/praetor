@@ -1,19 +1,21 @@
 docs/adr/0002-no-status.md:5: "nosuch" names no command of the CLI (in "praetorctl nosuch")
-docs/directives.md:3: praetor:docs-references:off needs a reason on the same line: <!-- praetor:docs-references:off <reason> -->
+docs/directives.md:3: praetor:docs-references:off needs a reason of at least 3 words on the same line: <!-- praetor:docs-references:off <reason> -->
 docs/directives.md:7: praetor:docs-references:on closes no open praetor:docs-references:off
 docs/directives.md:9: praetor:docs-references:off is never closed by <!-- praetor:docs-references:on -->
 docs/directives.md:11: praetor:docs-references:off repeats the one opened on line 9
 docs/fail.md:5: "provider" names no command of the CLI (in "praetorctl provider doctor")
-docs/fail.md:6: command state has no subcommand or keyword "frobnicate" (in "praetorctl state frobnicate")
-docs/fail.md:7: command state has no subcommand or keyword "purge" (in "praetorctl state task purge")
+docs/fail.md:6: command state has no subcommand "frobnicate" (in "praetorctl state frobnicate")
+docs/fail.md:7: command state task has no subcommand "purge" (in "praetorctl state task purge")
 docs/fail.md:8: command audit has no flag "--nope" (in "praetorctl audit --nope")
-docs/fail.md:9: command state has no flag "--bogus" (in "praetorctl state sync --bogus=1")
-docs/fail.md:10: command state has no subcommand or keyword "zap" (in "praetorctl state task [add|zap]")
+docs/fail.md:9: command state sync has no flag "--bogus" (in "praetorctl state sync --bogus=1")
+docs/fail.md:10: command state task has no subcommand "zap" (in "praetorctl state task [add|zap]")
 docs/fail.md:11: "--version" names no command of the CLI (in "praetorctl --version")
 docs/fail.md:12: command audit has no flag "--gone" (in "go run ./cmd/standardsctl audit --gone")
-docs/fail.md:13: command hook has no subcommand or keyword "pre-nothing" (in "praetorctl hook claude pre-nothing")
-docs/fail.md:16: command audit has no flag "--missing" (in "praetorctl audit --strict --missing")
-docs/fail.md:21: path "internal/removed/file.go" is not in the repository, not operator-owned, not ignored and not named by the engine's Go source
-docs/fail.md:22: path "internal/gone/" is not in the repository, not operator-owned, not ignored and not named by the engine's Go source
-docs/fail.md:23: package internal/events declares no Missing (in "internal/events.Missing")
-docs/fail.md:24: path "deploy/k8sx/a.yaml" is not in the repository, not operator-owned, not ignored and not named by the engine's Go source
+docs/fail.md:13: command state task has no subcommand "zzqx" (in "praetorctl state task <add|zzqx>")
+docs/fail.md:14: command state sync has no flag "--porcelain" (in "praetorctl state sync --porcelain")
+docs/fail.md:17: command audit has no flag "--missing" (in "praetorctl audit --strict --missing")
+docs/fail.md:22: path "internal/removed/file.go" is not in the repository, not operator-owned, not ignored and not named by the engine's Go source
+docs/fail.md:23: path "internal/gone/" is not in the repository, not operator-owned, not ignored and not named by the engine's Go source
+docs/fail.md:24: package internal/events declares no Missing (in "internal/events.Missing")
+docs/fail.md:25: package internal/events declares no nothing (in "internal/events.nothing")
+docs/fail.md:26: path "deploy/k8sx/a.yaml" is not in the repository, not operator-owned, not ignored and not named by the engine's Go source

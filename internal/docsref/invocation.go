@@ -111,9 +111,10 @@ func commandArguments(args []string) []string {
 }
 
 // isRedirection reports whether word redirects a stream (">", "2>&1", ">/dev/null", "<").
-// A placeholder such as "<file>" is not one.
+// An angle-bracketed word is not one: "<file>" is a placeholder and "<add|list>" offers
+// alternatives, both of which the model reads.
 func isRedirection(word string) bool {
-	if isPlaceholder(word) {
+	if len(word) > 2 && strings.HasPrefix(word, "<") && strings.HasSuffix(word, ">") {
 		return false
 	}
 	trimmed := strings.TrimLeft(word, "0123456789")

@@ -10,7 +10,8 @@ Each reference below is broken in exactly one way.
 - `praetorctl state task [add|zap]`
 - `praetorctl --version`
 - `go run ./cmd/standardsctl audit --gone`
-- `praetorctl hook claude pre-nothing`
+- `praetorctl state task <add|zzqx>`
+- `praetorctl state sync --porcelain`
 
 ```bash
 praetorctl audit \
@@ -21,4 +22,5 @@ praetorctl audit \
 - `internal/removed/file.go`
 - `internal/gone/`
 - `internal/events.Missing`
+- `internal/events.nothing`
 - `deploy/k8sx/a.yaml`
