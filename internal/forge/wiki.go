@@ -442,16 +442,10 @@ func generateAPIReferenceWiki() WikiPage {
 ` + frameworkKitReference + `
 ## Multi-Forge Federation
 
-` + "```mermaid" + `
-sequenceDiagram
-    participant CLI as praetorctl
-    participant GH as GitHub Driver
-    participant GL as GitLab Driver
-    participant GT as Gitea Driver
-    CLI->>GH: Authenticate & Post Status Check
-    CLI->>GL: Reconcile Branch Protections
-    CLI->>GT: Synchronize Labels & Issues
-` + "```\n"
+` + "```figure\nforge-federation\n```" + `
+
+Only the GitHub driver enforces governance rules. The GitLab and Gitea drivers authenticate, but return ` + "`ErrNotImplemented`" + ` for all enforcement methods.
+`
 
 	return WikiPage{
 		Name:    "API-Reference.md",

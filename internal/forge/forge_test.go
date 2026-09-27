@@ -684,9 +684,26 @@ func TestGenerateWiki_Positive(t *testing.T) {
 			t.Errorf("missing expected wiki page %s: %v", ef, err)
 			continue
 		}
-		if strings.Contains(string(data), "```mermaid") != diagram {
-			t.Errorf("wiki page %s: Mermaid diagram present = %v, want %v", ef, !diagram, diagram)
+		if ef == "API-Reference.md" {
+			if !strings.Contains(string(data), "```figure\nforge-federation\n```") {
+				t.Errorf("wiki page %s must contain forge-federation figure fence", ef)
+			}
+			if strings.Contains(string(data), "```mermaid") {
+				t.Errorf("wiki page %s must not contain mermaid fence", ef)
+			}
+		} else {
+			if strings.Contains(string(data), "```mermaid") != diagram {
+				t.Errorf("wiki page %s: Mermaid diagram present = %v, want %v", ef, !diagram, diagram)
+			}
 		}
+	}
+}
+
+func TestGenerateAPIReferenceWiki_Negative_NoFakeEnforcement(t *testing.T) {
+	page := generateAPIReferenceWiki()
+	lower := strings.ToLower(page.Content)
+	if strings.Contains(lower, "gitlab enforces") || strings.Contains(lower, "gitea enforces") || strings.Contains(lower, "reconciles protections and gitea syncs labels") {
+		t.Errorf("API Reference page must never claim GitLab or Gitea enforce governance, got: %s", page.Content)
 	}
 }
 

@@ -1,0 +1,42 @@
+<svg role="img" aria-labelledby="figure-title figure-desc" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="560" height="218" viewBox="0 0 560 218" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+<title id="figure-title">Multi-Forge Federation</title>
+<desc id="figure-desc">Architecture of praetorctl calling forge drivers for GitHub, GitLab, and Gitea</desc>
+<!-- interfig (c) 2025 Vectorize AI, Inc. MIT https://github.com/vectorize-io/hindsight/tree/ccfe85b4851957ac2adf88b4a9ddf9668b2882f1/hindsight-interfig -->
+<metadata id="figure-spec"><![CDATA[{"props":{"layout":{"direction":"row","children":[{"id":"cli","label":"praetorctl","shape":"box"},{"id":"factory","label":"forge.NewForge","shape":"box"},{"direction":"column","children":[{"id":"github","label":"GitHub Driver","shape":"box"},{"id":"gitlab","label":"GitLab Driver","shape":"box"},{"id":"gitea","label":"Gitea Driver","shape":"box"}]}]},"edges":[{"from":"cli","to":"factory","label":"Initializes"},{"from":"factory","to":"github","label":"provider=github"},{"from":"factory","to":"gitlab","label":"provider=gitlab"},{"from":"factory","to":"gitea","label":"provider=gitea"},{"from":"cli","to":"github","quiet":true},{"from":"cli","to":"gitlab","quiet":true},{"from":"cli","to":"gitea","quiet":true}],"steps":[{"label":"GitHub","flow":[{"edges":"cli->factory","say":"Initialize factory"},{"edges":"factory->github","say":"Create GitHub driver"},{"edges":"cli->github","say":"Authenticate()"},{"edges":"cli->github","say":"ReconcileProtection()"},{"edges":"cli->github","say":"ReconcileLabels()"},{"edges":"cli->github","say":"PostStatusCheck()"},{"edges":"cli->github","say":"CreatePullRequest()"},{"edges":"cli->github","say":"CreateIssue()"},{"edges":"cli->github","say":"ListIssues()"},{"edges":"cli->github","say":"UpdateIssue()"}]},{"label":"GitLab","flow":[{"edges":"cli->factory","say":"Initialize factory"},{"edges":"factory->gitlab","say":"Create GitLab driver"},{"edges":"cli->gitlab","say":"Authenticate() OK"},{"edges":"cli->gitlab","say":"Enforcement -> ErrNotImplemented"}]},{"label":"Gitea","flow":[{"edges":"cli->factory","say":"Initialize factory"},{"edges":"factory->gitea","say":"Create Gitea driver"},{"edges":"cli->gitea","say":"Authenticate() OK"},{"edges":"cli->gitea","say":"Enforcement -> ErrNotImplemented"}]}]}}]]></metadata>
+<style>
+svg { --accent:#0074d9; --fg:#1c1e21; --muted:#606770; --bg:#ffffff; --surface:#f5f7fa; --border:#d0d7de; --card-on:#eef5fd; }
+@media (prefers-color-scheme: dark) { svg { --accent:#3396e8; --fg:#e3e3e3; --muted:#9aa0a6; --bg:#1b1b1d; --surface:#242526; --border:#3a3b3c; --card-on:#1d2733; } }
+.label { fill: var(--fg); font-size: 14px; font-weight: 500; text-anchor: middle; }
+.sub { fill: var(--muted); font-size: 12px; text-anchor: middle; }
+.frame { fill: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .04em; }
+.edgelabel { fill: var(--muted); font-size: 11px; text-anchor: middle; font-family: ui-monospace, Menlo, monospace; }
+.row { fill: var(--fg); font-size: 11px; }
+.row.mono { font-size: 10.5px; font-family: ui-monospace, Menlo, monospace; }
+.muted { fill: var(--muted); }
+.tag { font-size: 9px; font-weight: 600; letter-spacing: .03em; text-anchor: middle; }
+.mark { fill: var(--accent); font-size: 11px; font-weight: 600; text-anchor: end; }
+.chip { fill: #fff; font-size: 11.5px; text-anchor: middle; }
+.steplabel { fill: var(--fg); font-size: 13px; font-weight: 600; text-anchor: middle; font-family: ui-monospace, Menlo, monospace; }
+.caption { fill: var(--muted); font-size: 13.5px; text-anchor: middle; }
+
+</style>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9 z" fill="var(--muted)"/></marker></defs>
+<rect width="100%" height="100%" fill="var(--bg)"/>
+<g transform="translate(14.7 0)">
+<rect x="24" y="49" width="106.2" height="120" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="77.1" y="114" class="label">praetorctl</text>
+<rect x="186.2" y="64" width="135.9" height="90" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="254.1" y="114" class="label">forge.NewForge</text>
+<rect x="378.1" y="24" width="128.5" height="38" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="442.3" y="48" class="label">GitHub Driver</text>
+<rect x="378.1" y="90" width="128.5" height="38" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="442.3" y="114" class="label">GitLab Driver</text>
+<rect x="381.8" y="156" width="121" height="38" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="442.3" y="180" class="label">Gitea Driver</text>
+<path id="p-cli-&gt;factory" d="M 130.2 97 C 158.2 97, 158.2 109, 186.2 109" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/><rect x="119.1" y="94" width="78.1" height="18" rx="9" fill="var(--bg)" stroke="var(--border)"/><text x="158.2" y="107" class="edgelabel">Initializes</text>
+<path id="p-factory-&gt;github" d="M 322.08 86.5 C 350.08 86.5, 350.08 36.666666666666664, 378.08 36.666666666666664" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/><rect x="299.4" y="52.6" width="101.5" height="18" rx="9" fill="var(--bg)" stroke="var(--border)"/><text x="350.1" y="65.6" class="edgelabel">provider=github</text>
+<path id="p-factory-&gt;gitlab" d="M 322.08 109 C 350.08 109, 350.08 102.66666666666667, 378.08 102.66666666666667" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/><rect x="299.4" y="96.8" width="101.5" height="18" rx="9" fill="var(--bg)" stroke="var(--border)"/><text x="350.1" y="109.8" class="edgelabel">provider=gitlab</text>
+<path id="p-factory-&gt;gitea" d="M 322.08 131.5 C 351.93499999999995 131.5, 351.93499999999995 168.66666666666666, 381.78999999999996 168.66666666666666" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/><rect x="304.1" y="141.1" width="95.6" height="18" rx="9" fill="var(--bg)" stroke="var(--border)"/><text x="351.9" y="154.1" class="edgelabel">provider=gitea</text>
+<path id="p-cli-&gt;github" d="M 130.2 73 C 254.14 73, 254.14 49.33333333333333, 378.08 49.33333333333333" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/>
+<path id="p-cli-&gt;gitlab" d="M 130.2 121 C 254.14 121, 254.14 115.33333333333333, 378.08 115.33333333333333" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/>
+<path id="p-cli-&gt;gitea" d="M 130.2 145 C 255.99499999999998 145, 255.99499999999998 181.33333333333334, 381.78999999999996 181.33333333333334" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/>
+
+</g>
+
+
+</svg>
