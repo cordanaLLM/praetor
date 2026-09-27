@@ -111,14 +111,14 @@ func (s *goModScanState) consume(line string) {
 
 // recordDirectRequirement records the module and version of one require line, block
 // keyword and delimiters already removed, unless the line carries the go command's
-// indirect marker.
+// indirect marker. A quoted module path or version is unquoted, as the go command reads
+// it; a malformed quoted token records nothing.
 func recordDirectRequirement(line string, directDeps map[string]string) {
 	if gomanifest.IsIndirect(line) {
 		return
 	}
-	code, _, _ := strings.Cut(line, "//")
-	if fields := strings.Fields(code); len(fields) >= 2 {
-		directDeps[fields[0]] = fields[1]
+	if requirement, ok := gomanifest.ParseRequirement(line); ok {
+		directDeps[requirement.Path] = requirement.Version
 	}
 }
 

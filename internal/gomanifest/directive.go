@@ -9,8 +9,8 @@ import (
 // top, long before any plausible require block ends (HISS-02).
 const maxDirectiveLines = 4096
 
-// goDirectiveKeyword is the manifest line that fixes the language version.
-const goDirectiveKeyword = "go "
+// goDirectiveKeyword is the directive that fixes the language version.
+const goDirectiveKeyword = "go"
 
 // GoDirective returns the Go language version a manifest requires, as written in its
 // `go` line ("1.27", "1.27.1"), and whether the manifest declares one at all.
@@ -30,30 +30,36 @@ func GoDirective(manifest []byte) (string, bool) {
 }
 
 // GoDirectiveLine returns the version a single go.mod line declares when that line is
-// the `go` directive, with any trailing comment dropped. It reports false for every
-// other line, a commented-out directive and a directive without a version. Line
-// scanners that already walk a manifest use it instead of re-reading the whole file
-// through GoDirective.
+// the `go` directive, with any trailing comment dropped. Like the go.mod lexer of
+// golang.org/x/mod/modfile, it accepts any white space, a tab included, between the
+// keyword and the version. It reports false for every other line, a commented-out
+// directive and a directive without a version. Line scanners that already walk a
+// manifest use it instead of re-reading the whole file through GoDirective.
 func GoDirectiveLine(line string) (string, bool) {
-	version, found := strings.CutPrefix(strings.TrimSpace(line), goDirectiveKeyword)
+	value, found := directiveArgument(line, goDirectiveKeyword)
 	if !found {
 		return "", false
 	}
-	version = directiveVersion(version)
-	return version, version != ""
+	return strings.Fields(value)[0], true
 }
 
-// directiveVersion trims a directive value down to its version, dropping a trailing
-// comment. An empty result means the line carried no version.
-func directiveVersion(value string) string {
-	if comment := strings.Index(value, "//"); comment >= 0 {
-		value = value[:comment]
+// directiveArgument returns the argument of a single-line go.mod directive: the text
+// after keyword, with a trailing // comment dropped and surrounding white space
+// trimmed. It reports false when line is not that directive -- a commented-out line, a
+// keyword glued to what follows ("modulefoo", "go.uber.org/zap") -- or when the
+// directive carries no argument.
+func directiveArgument(line, keyword string) (string, bool) {
+	code, _, _ := strings.Cut(line, "//")
+	rest, found := strings.CutPrefix(strings.TrimSpace(code), keyword)
+	if !found {
+		return "", false
 	}
-	fields := strings.Fields(value)
-	if len(fields) == 0 {
-		return ""
+	argument := strings.TrimSpace(rest)
+	// The keyword must end at white space and be followed by an argument.
+	if argument == "" || len(argument) == len(rest) {
+		return "", false
 	}
-	return fields[0]
+	return argument, true
 }
 
 // ReplaceLine advances replace-block state and identifies a replace directive line, the
@@ -124,14 +130,8 @@ const moduleKeyword = "module"
 // `...`) is unquoted. It reports false for any line that is not a module directive and
 // for a quoted path that does not unquote.
 func ModulePath(line string) (string, bool) {
-	code, _, _ := strings.Cut(line, "//")
-	rest, found := strings.CutPrefix(strings.TrimSpace(code), moduleKeyword)
+	path, found := directiveArgument(line, moduleKeyword)
 	if !found {
-		return "", false
-	}
-	path := strings.TrimSpace(rest)
-	// The keyword must end at white space: "modulefoo" is not a module directive.
-	if path == "" || len(path) == len(rest) {
 		return "", false
 	}
 	if path[0] != '"' && path[0] != '`' {

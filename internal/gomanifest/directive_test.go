@@ -46,6 +46,7 @@ func TestGoDirective_Boundary_TrailingCommentsCRLFAndToolchainLines(t *testing.T
 		"commented out":    "module x\n\n// go 1.24\ngo 1.27\n",
 		"toolchain below":  "module x\n\ngo 1.27\n\ntoolchain go1.27.1\n",
 		"extra spacing":    "module x\n\n  go   1.27  \n",
+		"tab separator":    "module x\n\ngo\t1.27\n",
 	}
 	for name, manifest := range cases {
 		version, declared := GoDirective([]byte(manifest))
@@ -199,8 +200,13 @@ func TestModulePath_Boundary_CommentOnlyAndEmptyQuoted(t *testing.T) {
 	}
 }
 
+// Positive: modfile's lexer separates tokens by space, tab or carriage return, so a tab
+// after the keyword declares the version exactly as a space does.
 func TestGoDirectiveLine_Positive_TrimsCommentAndSpace(t *testing.T) {
-	for _, line := range []string{"go 1.27", "  go 1.27  ", "go 1.27 // pinned", "go 1.27\r"} {
+	for _, line := range []string{
+		"go 1.27", "  go 1.27  ", "go 1.27 // pinned", "go 1.27\r",
+		"go\t1.27", "\tgo \t 1.27\t// pinned", "go\t1.27//pinned",
+	} {
 		version, declared := GoDirectiveLine(line)
 		if !declared || version != "1.27" {
 			t.Errorf("GoDirectiveLine(%q) = %q, %v; want 1.27, true", line, version, declared)
@@ -209,7 +215,10 @@ func TestGoDirectiveLine_Positive_TrimsCommentAndSpace(t *testing.T) {
 }
 
 func TestGoDirectiveLine_Negative_OtherLines(t *testing.T) {
-	for _, line := range []string{"// go 1.24", "go.uber.org/zap v1.27.0", "toolchain go1.27.1", "module x"} {
+	for _, line := range []string{
+		"// go 1.24", "go.uber.org/zap v1.27.0", "toolchain go1.27.1", "module x",
+		"go1.27", "gopkg.in/yaml.v3 v3.0.1", "golang.org/x/mod\tv0.41.0",
+	} {
 		if version, declared := GoDirectiveLine(line); declared {
 			t.Errorf("GoDirectiveLine(%q) reported %q", line, version)
 		}
@@ -217,7 +226,7 @@ func TestGoDirectiveLine_Negative_OtherLines(t *testing.T) {
 }
 
 func TestGoDirectiveLine_Boundary_DirectiveWithoutVersion(t *testing.T) {
-	for _, line := range []string{"go ", "go // none", ""} {
+	for _, line := range []string{"go ", "go // none", "", "go", "go\t", "go\t// none"} {
 		if version, declared := GoDirectiveLine(line); declared || version != "" {
 			t.Errorf("GoDirectiveLine(%q) = %q, %v; want refusal", line, version, declared)
 		}

@@ -366,9 +366,59 @@ func TestParseGoModBoundaryCommentOnlyDirectives(t *testing.T) {
 	}
 }
 
+// TestParseGoModQuotedRequirementsAndTabbedGoDirective: go.mod may quote a require path
+// or version and separate the go keyword from its version with a tab; the go command
+// reads both, so the scan records the bare path and the version instead of a path with
+// its quotes attached or no Go version at all.
+func TestParseGoModQuotedRequirementsAndTabbedGoDirective(t *testing.T) {
+	path := writeFixture(t, t.TempDir(), "go.mod",
+		"module example.com/svc\n\ngo\t1.27\n\nrequire \"github.com/a/b\" v1.0.0\n\nrequire (\n"+
+			"\t\"github.com/c/d/v2\" \"v2.1.0\"\n\t\"github.com/e/f\" v1.2.0 // indirect\n)\n")
+	_, goVer, deps, err := parseGoMod(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := map[string]string{"github.com/a/b": "v1.0.0", "github.com/c/d/v2": "v2.1.0"}
+	if goVer != "1.27" || len(deps) != len(want) || deps["github.com/a/b"] != want["github.com/a/b"] ||
+		deps["github.com/c/d/v2"] != want["github.com/c/d/v2"] {
+		t.Fatalf("go %q / direct deps %v, want 1.27 / %v", goVer, deps, want)
+	}
+}
+
+// TestParseGoModNegativeMalformedQuotedRequirement: a require path the go command refuses
+// -- an unterminated or single-quoted string, or a quote inside an unquoted path -- is
+// not recorded as a dependency under a garbled name.
+func TestParseGoModNegativeMalformedQuotedRequirement(t *testing.T) {
+	path := writeFixture(t, t.TempDir(), "go.mod",
+		"module example.com/svc\n\nrequire (\n\t\"github.com/a/b v1.0.0\n"+
+			"\t'github.com/c/d' v1.0.0\n\tgithub.com/e/\"f\" v1.0.0\n\tgithub.com/g/h v1.1.0\n)\n")
+	_, _, deps, err := parseGoMod(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(deps) != 1 || deps["github.com/g/h"] != "v1.1.0" {
+		t.Fatalf("direct deps = %v, want only github.com/g/h v1.1.0", deps)
+	}
+}
+
+// TestParseGoModBoundaryEmptyQuotedRequirement: an empty quoted path or version names no
+// module, and a quoted path without a version is incomplete.
+func TestParseGoModBoundaryEmptyQuotedRequirement(t *testing.T) {
+	path := writeFixture(t, t.TempDir(), "go.mod",
+		"module example.com/svc\n\nrequire \"\" v1.0.0\n\nrequire github.com/a/b \"\"\n\nrequire \"github.com/c/d\"\n")
+	_, _, deps, err := parseGoMod(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(deps) != 0 {
+		t.Fatalf("direct deps = %v, want none", deps)
+	}
+}
+
 // TestScanASTImportsSkipsGoToolIgnoredSources: testdata/ and _-prefixed directories and
-// files are never compiled by the go command ("go help packages"), so their imports are
-// fixtures, not demand. A scan rooted in a directory named testdata still reads it.
+// _- and .-prefixed files are never compiled by the go command ("go help packages"), so
+// their imports are fixtures, not demand. A scan rooted in a directory named testdata
+// still reads it.
 func TestScanASTImportsSkipsGoToolIgnoredSources(t *testing.T) {
 	dir := t.TempDir()
 	writeFixture(t, dir, "main.go", "package main\n\nimport _ \"github.com/gin-gonic/gin\"\n")
@@ -376,6 +426,7 @@ func TestScanASTImportsSkipsGoToolIgnoredSources(t *testing.T) {
 	writeFixture(t, dir, filepath.Join("pkg", "testdata", "golden.go"), "package golden\n\nimport _ \"github.com/spf13/viper\"\n")
 	writeFixture(t, dir, filepath.Join("_parked", "old.go"), "package old\n\nimport _ \"github.com/urfave/cli\"\n")
 	writeFixture(t, dir, "_scratch.go", "package main\n\nimport _ \"github.com/sirupsen/logrus\"\n")
+	writeFixture(t, dir, ".hidden.go", "package main\n\nimport _ \"github.com/pkg/errors\"\n")
 
 	imports, err := scanASTImports(t.Context(), dir, "example.com/x")
 	if err != nil {
