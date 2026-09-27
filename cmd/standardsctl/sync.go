@@ -21,8 +21,8 @@ const (
 	// syncTimeout bounds the whole reconciliation, including the forge round trips.
 	syncTimeout = 2 * time.Minute
 	// syncDirPerm and syncFilePerm are the modes of the synthesized, tracked files.
-	syncDirPerm  os.FileMode = 0o750
-	syncFilePerm os.FileMode = 0o600
+	syncDirPerm  os.FileMode = util.TrackedDirPerm
+	syncFilePerm os.FileMode = util.TrackedFilePerm
 )
 
 // ErrRemoteTokenMissing reports a --remote sync without any usable credential.

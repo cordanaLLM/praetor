@@ -1,0 +1,3 @@
+type: fixed
+title: Stamp tasks that state task archive moves to BACKLOG.md with the HEAD commit, keep the local stamp only where no commit exists, and fail instead of stamping local when Git does not answer
+breaking: false

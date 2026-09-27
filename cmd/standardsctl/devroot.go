@@ -20,6 +20,17 @@ const (
 // devRootUsageDefault is the default clause every dev-root flag prints in its usage line.
 const devRootUsageDefault = "(default: $" + devRootEnv + ", else $" + legacyDevRootEnv + ", else <home>/dev)"
 
+// configuredDevRoot returns the dev root the environment names: $PRAETOR_DEV_ROOT, else
+// $PRAETOR_DEV_DIR, else "" when neither is set.
+func configuredDevRoot() string {
+	for _, name := range []string{devRootEnv, legacyDevRootEnv} {
+		if dir := os.Getenv(name); dir != "" {
+			return dir
+		}
+	}
+	return ""
+}
+
 // resolveDevRootDir is the one resolver for the workstation dev root: explicit when it is
 // set, else $PRAETOR_DEV_ROOT, else $PRAETOR_DEV_DIR, else <home>/dev. Without a usable
 // home directory it returns an error naming flagName instead of a path relative to the
@@ -28,10 +39,8 @@ func resolveDevRootDir(explicit, flagName string) (string, error) {
 	if explicit != "" {
 		return explicit, nil
 	}
-	for _, name := range []string{devRootEnv, legacyDevRootEnv} {
-		if dir := os.Getenv(name); dir != "" {
-			return dir, nil
-		}
+	if dir := configuredDevRoot(); dir != "" {
+		return dir, nil
 	}
 	root, err := resolveHomeSubdir("", flagName, "dev")
 	if err != nil {

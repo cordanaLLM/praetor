@@ -10,8 +10,6 @@ none is maintained as current documentation. For how Praetor behaves today, read
 
 - [Bidirectional module contracts](../plans/bidirectional-contracts.md): audited design
   proposal for contracts between generated configuration, observations and repairs.
-- [Golusoris core migration](../plans/golusoris-migration-plan.md): status of moving
-  Praetor's code onto golusoris core.
 - [IDE-driven agent setup](../plans/ide-agent-setup.md): the goal of IDE extensions that set
   up and reconcile every agent effective policy selects.
 - [Infrastructure development environments](../plans/infrastructure-development-environments.md):

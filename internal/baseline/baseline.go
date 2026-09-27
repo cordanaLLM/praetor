@@ -59,21 +59,30 @@ type RatchetResult struct {
 	CurrentCount           int
 	NewViolations          []Infraction
 	TouchedCleanViolations []Infraction
-	Passed                 bool
+	// CountRegressed is the rejection neither list explains: every violation is baselined and
+	// none sits in a touched file, yet the total rose above the baseline's.
+	CountRegressed bool
+	Passed         bool
 }
 
-// maxDescribedViolations bounds how many violations Describe lists per class (HISS-02).
+// maxDescribedViolations bounds how many violations Summary lists per class (HISS-02).
 const maxDescribedViolations = 3
 
-// Describe renders why the ratchet failed: the counts, then the first few new and
-// touched-file violations as [rule] file:line - message, and whether the total rose.
+// Summary renders why the ratchet failed: the counts, then the first few new and
+// touched-file violations as [rule] file:line - message, and whether the total rose. A
+// count-only regression names both totals, since no violation list explains it. It
+// describes a rejection only; callers print their own pass line.
 //
-// It is a shared renderer for a ratchet rejection. `praetorctl audit` and the gate's HISS stage
-// both reject on this result, and the gate used to report only the counts, so the push it had
-// just blocked named no file to open.
-func (r *RatchetResult) Describe() string {
+// It is the one renderer for a ratchet rejection: `praetorctl audit`, the gate's HISS stage,
+// the standards_audit MCP tool and the dogfood public-checkout verification all reject on
+// this result, and the gate used to report only the counts, so the push it had just blocked
+// named no file to open.
+func (r *RatchetResult) Summary() string {
 	if r == nil {
 		return "no ratchet result"
+	}
+	if r.CountRegressed {
+		return fmt.Sprintf("HISS invariant violations introduced: total infractions rose from %d to %d (no new fingerprints)", r.PreviousCount, r.CurrentCount)
 	}
 	var msgs []string
 	for i := 0; i < len(r.NewViolations) && i < maxDescribedViolations; i++ {
@@ -96,7 +105,9 @@ type RecordOptions struct {
 	// AllowIncrease permits the count to rise; Rationale must then be non-empty.
 	AllowIncrease bool
 	// Rationale is stored in the baseline when an increase is allowed.
-	Rationale string
+	Rationale  string
+	Repository string
+	CommitSHA  string
 }
 
 // LoadBaseline reads and parses .standards-baseline.json. A missing file is an empty
@@ -188,10 +199,20 @@ func Record(previous *Baseline, infractions []Infraction, opts RecordOptions) (*
 	if previous == nil {
 		previous = &Baseline{Version: 1, Infractions: []Infraction{}}
 	}
+
+	repository := opts.Repository
+	if repository == "" {
+		repository = previous.Repository
+	}
+	commitSHA := opts.CommitSHA
+	if commitSHA == "" {
+		commitSHA = previous.CommitSHA
+	}
+
 	next := &Baseline{
 		Version:          previous.Version,
-		Repository:       previous.Repository,
-		CommitSHA:        previous.CommitSHA,
+		Repository:       repository,
+		CommitSHA:        commitSHA,
 		Infractions:      make([]Infraction, 0, len(infractions)),
 		TotalInfractions: len(infractions),
 	}
@@ -199,6 +220,11 @@ func Record(previous *Baseline, infractions []Infraction, opts RecordOptions) (*
 		next.Version = 1
 	}
 	next.Infractions = append(next.Infractions, infractions...)
+
+	// Avoid commit_sha churn: if infractions didn't change at all, retain the old SHA.
+	if previous.CommitSHA != "" && sameInfractions(previous.Infractions, next.Infractions) {
+		next.CommitSHA = previous.CommitSHA
+	}
 
 	if err := CheckMonotonic(previous, next); err != nil {
 		if !opts.AllowIncrease {
@@ -211,6 +237,18 @@ func Record(previous *Baseline, infractions []Infraction, opts RecordOptions) (*
 		next.IncreaseRationale = rationale
 	}
 	return next, nil
+}
+
+func sameInfractions(a, b []Infraction) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // NormalizePath renders a repository-relative path with forward slashes.
@@ -283,15 +321,25 @@ func EvaluateRatchetWithOptions(b *Baseline, currentViolations []Infraction, tou
 		}
 	}
 
-	passed := len(newViolations) == 0 && len(touchedCleanViolations) == 0 && len(currentViolations) <= b.TotalInfractions
+	listed := len(newViolations) > 0 || len(touchedCleanViolations) > 0
+	passed, countRegressed := ratchetVerdict(listed, len(currentViolations), b.TotalInfractions)
 
 	return &RatchetResult{
 		PreviousCount:          b.TotalInfractions,
 		CurrentCount:           len(currentViolations),
 		NewViolations:          newViolations,
 		TouchedCleanViolations: touchedCleanViolations,
+		CountRegressed:         countRegressed,
 		Passed:                 passed,
 	}
+}
+
+// ratchetVerdict decides a ratchet from whether any violation was listed and how the current
+// total compares with the baseline's: it passes only with nothing listed and no rise, and a
+// failure with nothing listed is the count-only regression (BUG-489).
+func ratchetVerdict(listed bool, current, baselined int) (passed, countRegressed bool) {
+	rose := current > baselined
+	return !listed && !rose, !listed && rose
 }
 
 // worsenedFiles reports which touched files carry more infractions of some rule than the

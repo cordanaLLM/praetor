@@ -124,19 +124,36 @@ def is_chart_template(directory, name):
     return False
 
 
+# gofmt_check hands gofmt at most this many files per run, so a whole-tree check stays under
+# the Windows command-line limit (32,767 characters) however many Go files the tree holds.
+GOFMT_BATCH = 200
+
+
+def gofmt_check(directory, names):
+    """Fail when a Go source file among names is not gofmt-clean.
+
+    The one gofmt check: the pre-commit hook runs it on the staged set, and `make fmt-check`
+    (hooks.py fmt-check), which CI calls, runs it on every tracked Go file. testdata holds
+    inputs to the rules, not source governed by them: a HISS-10 fixture is deliberately
+    unformatted because that is what it demonstrates, and a semgrep fixture deliberately
+    violates an invariant. Go itself never builds testdata either.
+    """
+    gofiles = [name for name in names if name.endswith(".go") and not is_fixture(name)]
+    unformatted = []
+    for start in range(0, len(gofiles), GOFMT_BATCH):
+        output = run(["gofmt", "-l", *gofiles[start:start + GOFMT_BATCH]], cwd=directory)
+        if output:
+            unformatted.append(output.decode())
+    if unformatted:
+        raise HookError("Run gofmt and stage the intended changes:\n" + "".join(unformatted))
+
+
 def file_checks(directory, names):
     files = present_files(directory, names)
     if any(name == ".workingdir" or name.startswith(".workingdir/") for name in files):
         raise HookError(PRIVATE_STATE_ERROR)
     text_checks(directory, files)
-    # testdata holds inputs to the rules, not source governed by them: a HISS-10 fixture is
-    # deliberately unformatted because that is what it demonstrates, and a semgrep fixture
-    # deliberately violates an invariant. Go itself never builds testdata either.
-    gofiles = [name for name in files if name.endswith(".go") and not is_fixture(name)]
-    if gofiles:
-        output = run(["gofmt", "-l", *gofiles], cwd=directory)
-        if output:
-            raise HookError("Run gofmt and stage the intended changes:\n" + output.decode())
+    gofmt_check(directory, files)
     commands = []
     groups = [(["shellcheck"], lambda p: p.endswith(".sh")),
               (["actionlint"], lambda p: p.startswith(".github/workflows/")

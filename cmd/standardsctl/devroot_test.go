@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -215,5 +216,59 @@ func TestAdoptAndHarvest_HonourDevRootEnv(t *testing.T) {
 	}
 	if err := dispatchCommand("adopt", []string{"--all-missing", "--dry-run"}); err == nil || !strings.Contains(err.Error(), "--dev-dir") {
 		t.Fatalf("adopt --all-missing without a home = %v; want an error naming --dev-dir", err)
+	}
+}
+
+// TestTopologyAudit_SkipUnconfigured_3D pins what make topology-audit relies on: with
+// --skip-unconfigured the audit runs only against a dev root something names, and otherwise
+// prints a stated skip instead of auditing <home>/dev.
+func TestTopologyAudit_SkipUnconfigured_3D(t *testing.T) {
+	home := isolateDevRootEnv(t)
+	if err := os.Mkdir(filepath.Join(home, "dev"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	audit := func(args ...string) (string, error) {
+		return captureStdout(t, func() error { return dispatchCommand("topology", append([]string{"audit"}, args...)) })
+	}
+
+	// Boundary: nothing names a root, so <home>/dev exists but is not audited.
+	out, err := audit("--skip-unconfigured")
+	if err != nil {
+		t.Fatalf("unconfigured skip = %v\n%s", err, out)
+	}
+	mustContain(t, out, topologySkipLine)
+	if strings.Contains(out, "Workstation Topology Audit") {
+		t.Fatalf("unconfigured skip audited a tree:\n%s", out)
+	}
+
+	// Boundary: without the flag the <home>/dev default is still audited.
+	out, err = audit()
+	if err != nil {
+		t.Fatalf("default audit = %v\n%s", err, out)
+	}
+	mustContain(t, out, "Workstation Topology Audit: "+filepath.Join(home, "dev"))
+
+	// Positive: PRAETOR_DEV_ROOT, the earlier PRAETOR_DEV_DIR or --dev-root is audited.
+	root := t.TempDir()
+	t.Setenv(devRootEnv, root)
+	out, err = audit("--skip-unconfigured")
+	if err != nil || strings.Contains(out, "[SKIP]") {
+		t.Fatalf("configured audit = %v\n%s", err, out)
+	}
+	mustContain(t, out, "Workstation Topology Audit: "+root)
+	t.Setenv(devRootEnv, "")
+	t.Setenv(legacyDevRootEnv, root)
+	if out, err = audit("--skip-unconfigured"); err != nil || strings.Contains(out, "[SKIP]") {
+		t.Fatalf("PRAETOR_DEV_DIR audit = %v\n%s", err, out)
+	}
+	t.Setenv(legacyDevRootEnv, "")
+	if out, err = audit("--skip-unconfigured", "--dev-root="+root); err != nil || strings.Contains(out, "[SKIP]") {
+		t.Fatalf("--dev-root audit = %v\n%s", err, out)
+	}
+
+	// Negative: a named root that does not exist fails instead of skipping.
+	t.Setenv(devRootEnv, filepath.Join(root, "missing"))
+	if out, err = audit("--skip-unconfigured"); err == nil || strings.Contains(out, "[SKIP]") {
+		t.Fatalf("missing configured root = %v\n%s; want a failure, not a skip", err, out)
 	}
 }

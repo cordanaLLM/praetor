@@ -17,6 +17,11 @@ const (
 	// SecureDirPerm is the default directory mode applied by MkdirSecure when the
 	// caller passes a zero perm: accessible by the owner only.
 	SecureDirPerm os.FileMode = 0o700
+	// TrackedFilePerm is the mode of a generated file the repository commits: world-readable,
+	// writable by the owner only. Private stores under .workingdir use SecureFilePerm instead.
+	TrackedFilePerm os.FileMode = 0o644
+	// TrackedDirPerm is the mode of a directory holding committed, generated files.
+	TrackedDirPerm os.FileMode = 0o755
 	// ownerWriteBit is the permission bit whose absence marks an existing file as
 	// write-protected for the no-follow writers.
 	ownerWriteBit os.FileMode = 0o200

@@ -18,8 +18,6 @@ import (
 const (
 	// maxAuditGates bounds the governance gate loop (HISS-02).
 	maxAuditGates = 16
-	// maxReportedViolations caps the violations quoted in a failing ratchet report.
-	maxReportedViolations = 3
 )
 
 // auditPaths carries the resolved input files of one standards_audit call.
@@ -131,26 +129,11 @@ func auditBaselineRatchetWithPolicy(ctx context.Context, root, baselinePath stri
 
 	ratchet := baseline.EvaluateRatchet(base, current, nil)
 	if !ratchet.Passed {
-		return "", fmt.Errorf("[FAIL] HISS invariant violations introduced (%d total infractions, %d new unbaselined violations):\n%s",
-			ratchet.CurrentCount, len(ratchet.NewViolations), formatViolations(ratchet.NewViolations))
+		return "", fmt.Errorf("[FAIL] %s", ratchet.Summary())
 	}
 	verdict := fmt.Sprintf("[PASS] Technical debt baseline verified: %d recorded legacy infractions; HISS scan found %d active violations within the baselined limit. %s",
 		base.TotalInfractions, ratchet.CurrentCount, scanRep.CoverageEvidence())
 	return strings.Join(append([]string{verdict}, scanRep.Complexity.Lines()...), "\n"), nil
-}
-
-// formatViolations renders up to maxReportedViolations infractions for a failure line.
-func formatViolations(violations []baseline.Infraction) string {
-	limit := len(violations)
-	if limit > maxReportedViolations {
-		limit = maxReportedViolations
-	}
-	lines := make([]string, 0, limit)
-	for i := 0; i < limit; i++ {
-		v := violations[i]
-		lines = append(lines, fmt.Sprintf("  [%s] %s:%d - %s", v.RuleID, v.FilePath, v.LineNumber, v.Message))
-	}
-	return strings.Join(lines, "\n")
 }
 
 // auditContextSync verifies the compiled vendor targets match the canonical AGENTS.md.

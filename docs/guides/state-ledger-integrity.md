@@ -173,8 +173,22 @@ invalid UTF-8 or more than 16 KiB are errors, never skipped rows
 | code fences | a checkbox inside a ``` or `~~~` fence is an example, never a task: it is not listed, completed or archived |
 | unterminated fence | a fence opened and never closed is a ledger error naming the line it was opened on; `list`, `complete`, `archive`, `add` and `state sync` all refuse the file rather than silently dropping the rows after it, and `add` refuses rather than appending a row inside the open fence |
 
-A refused selector writes nothing, so `OPEN.md` stays byte-identical. The
-fence tracker is `util.MarkdownFence` in `internal/util/marked_block.go`, the one
+A refused selector writes nothing, so `OPEN.md` stays byte-identical.
+
+`praetorctl state task archive` moves completed rows to `BACKLOG.md` under a header
+naming the commit they were discharged at. The commit comes from
+`state.RecordedCommit` (`internal/state/sync_binding.go`): the HEAD SHA, or the stamp
+`local` when the directory is outside a Git worktree or its branch has no commit yet,
+so the unborn marker never reaches the ledger. A Git read that fails for any other
+reason, such as broken `.git` metadata, stops the archive with an error and leaves
+`OPEN.md` unchanged. `baseline --record` and adoption stamp a recorded baseline through
+the same function. A new `BACKLOG.md` is created owner-only (0600), like `OPEN.md`.
+Covered by `internal/state/recorded_commit_test.go`, the
+`TestDispatchCommand_StateTaskArchive_*` tests in
+`cmd/standardsctl/standardsctl_test.go` and
+`TestArchiveCompletedTasks_CreatesPrivateBacklog` in `internal/state/tasks_test.go`.
+
+The fence tracker is `util.MarkdownFence` in `internal/util/marked_block.go`, the one
 implementation every scanner that follows fences across a whole document drives
 (HISS-19): the task parser, the bug-ledger parser, the marked-block finder, the
 `BACKLOG.md` milestone section remover (`RemoveMarkdownSection`), the

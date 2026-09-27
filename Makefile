@@ -72,9 +72,19 @@ audit:
 caveman-sources:
 	go run ./cmd/standardsctl caveman check --configured-sources --root=.
 
-lint:
+# One gofmt check over every tracked Go file, leaving testdata fixtures out: the pre-commit
+# hook runs the same check (checks.py gofmt_check) on the staged set, and CI calls this target.
+.PHONY: fmt-check
+fmt-check:
+	$(HOOK_RUNNER) fmt-check
+
+lint: fmt-check
 	go vet ./...
 	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run
+
+# The security scanners and gitleaks are pinned in one place, tools/go/go.mod, which Renovate
+# keeps current; `go tool` builds and caches exactly that version, whatever is on PATH.
+GO_SECURITY_TOOL := go tool -modfile=tools/go/go.mod
 
 # HISS-12 declares "zero credentials in Git history" and gitleaks as its mechanism, but
 # gitleaks appeared only in the archetypes this engine scaffolds INTO other repositories:
@@ -82,24 +92,10 @@ lint:
 # just the working tree, which is what the axiom actually claims. Measured on this
 # repository: 234 commits, 23 MB, 2.5s, zero findings -- cheap enough to be unconditional.
 secrets:
-	@if command -v gitleaks >/dev/null 2>&1; then \
-		gitleaks detect --no-banner --redact --config .gitleaks.toml; \
-	elif [ -x "$$(go env GOPATH)/bin/gitleaks" ]; then \
-		"$$(go env GOPATH)/bin/gitleaks" detect --no-banner --redact --config .gitleaks.toml; \
-	else \
-		echo "gitleaks not found; installing..."; \
-		go install github.com/zricethezav/gitleaks/v8@latest && "$$(go env GOPATH)/bin/gitleaks" detect --no-banner --redact --config .gitleaks.toml; \
-	fi
+	$(GO_SECURITY_TOOL) gitleaks detect --no-banner --redact --config .gitleaks.toml
 
 vuln:
-	@if command -v govulncheck >/dev/null 2>&1; then \
-		govulncheck ./...; \
-	elif [ -x "$$(go env GOPATH)/bin/govulncheck" ]; then \
-		"$$(go env GOPATH)/bin/govulncheck" ./...; \
-	else \
-		echo "govulncheck not found; installing..."; \
-		go install golang.org/x/vuln/cmd/govulncheck@latest && "$$(go env GOPATH)/bin/govulncheck" ./...; \
-	fi
+	$(GO_SECURITY_TOOL) govulncheck ./...
 
 # gosec runs with ZERO exclusions: .gosec.json carries an empty exclude list and every
 # finding is fixed or carries a per-line "#nosec Gxxx -- <reason>" justification.
@@ -116,14 +112,7 @@ nosec-justified:
 	echo "[PASS] all $$(git grep -h '#nosec' -- '*.go' | wc -l | tr -d ' ') #nosec suppressions carry a reason."
 
 sec: nosec-justified
-	@if command -v gosec >/dev/null 2>&1; then \
-		python3 -B .config/lefthook/scripts/security_scope.py -- gosec -conf .gosec.json; \
-	elif [ -x "$$(go env GOPATH)/bin/gosec" ]; then \
-		python3 -B .config/lefthook/scripts/security_scope.py -- "$$(go env GOPATH)/bin/gosec" -conf .gosec.json; \
-	else \
-		echo "gosec not found; installing..."; \
-		go install github.com/securego/gosec/v2/cmd/gosec@latest && python3 -B .config/lefthook/scripts/security_scope.py -- "$$(go env GOPATH)/bin/gosec" -conf .gosec.json; \
-	fi
+	python3 -B .config/lefthook/scripts/security_scope.py -- $(GO_SECURITY_TOOL) gosec -conf .gosec.json
 
 flavor-audit: state-init
 	go run ./cmd/standardsctl flavor audit .
@@ -143,8 +132,11 @@ dedupe:
 hiss-coverage:
 	go run ./cmd/standardsctl hiss coverage --verify
 
+# DEV-01..DEV-05 judge a workstation's dev root, which this repository cannot declare. The
+# audit runs only against a root PRAETOR_DEV_ROOT (or --dev-root) names and otherwise prints
+# a stated skip, so verify-all never depends on whatever sits in a contributor's <home>/dev.
 topology-audit:
-	@if [ -d "$$HOME/dev" ]; then go run ./cmd/standardsctl topology audit "$$HOME/dev"; fi
+	go run ./cmd/standardsctl topology audit --skip-unconfigured
 
 verify-all: adr-verify semgrep-test docs-drift-test docs-assets-test github-app-test docs-lint-test portability-test notebook-test mcp-test dev-codex-hooks-test dev-install-test dev-schedule-test dev-repair-test wiki-sync-test adopt-sweep-test dco-check-test vscode-test mcp-probe compile-context-verify caveman-sources needs-check editors-reference-verify test audit lint vuln sec secrets fuzz hiss-coverage flavor-audit state-audit dedupe topology-audit hooks-test
 	@echo "All standards verification gates passed cleanly."

@@ -38,7 +38,7 @@ func runTopology(args []string) error {
 func printTopologyUsage() {
 	fmt.Println("Usage: standardsctl topology <subcommand> [arguments]")
 	fmt.Println("\nSubcommands:")
-	fmt.Println("  audit [--dev-root=...] Audits dev tree against the workstation topology rules DEV-01 and DEV-02")
+	fmt.Println("  audit [--dev-root=...] [--skip-unconfigured] Audits dev tree against the workstation topology rules DEV-01 and DEV-02")
 	fmt.Println("  clean [--dev-root=...] [--dry-run=true|false] Safely removes stray governance files from org roots")
 	fmt.Println("\nBoth accept --fleet-config, --workstation-config and --manifest; the selected operator settings'")
 	fmt.Println("topology.org_containers names organization folders beyond the built-in ones. A directory")
@@ -91,12 +91,30 @@ func resolveDevRoot(flagValue string, positional []string) (string, error) {
 	return root, nil
 }
 
+// topologySkipLine is what `topology audit --skip-unconfigured` prints instead of auditing
+// when nothing names a dev root (HISS-21: a check that cannot run says so).
+const topologySkipLine = "[SKIP] topology audit: no dev root configured; set " + devRootEnv +
+	" or pass --dev-root to audit DEV-01..DEV-05"
+
+// topologyRootUnconfigured reports whether neither --dev-root, a positional root nor the
+// dev-root environment names a root, so the audit would fall back to <home>/dev.
+func topologyRootUnconfigured(flagValue string, positional []string) bool {
+	return flagValue == "" && (len(positional) == 0 || positional[0] == "") && configuredDevRoot() == ""
+}
+
 func runTopologyAudit(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("topology audit", flag.ContinueOnError)
 	devRootFlag := fs.String("dev-root", "", "Target workstation dev root directory "+devRootUsageDefault)
+	skipUnconfigured := fs.Bool("skip-unconfigured", false,
+		"Print a stated skip instead of auditing <home>/dev when no --dev-root, positional root, $"+
+			devRootEnv+" or $"+legacyDevRootEnv+" names a dev root")
 	settings := registerOperatorSettingsFlags(fs)
 	if err := fs.Parse(reorderArgs(args, boolFlagNames(fs))); err != nil {
 		return err
+	}
+	if *skipUnconfigured && topologyRootUnconfigured(*devRootFlag, fs.Args()) {
+		fmt.Println(topologySkipLine)
+		return nil
 	}
 	devRoot, err := resolveDevRoot(*devRootFlag, fs.Args())
 	if err != nil {

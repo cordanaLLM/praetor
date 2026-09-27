@@ -516,7 +516,15 @@ func reconcileBaseline(ctx context.Context, s *adoptSession) error {
 			"Record one before committing, or every existing infraction is ratcheted as new debt")
 		return nil
 	}
-	base := &baseline.Baseline{Version: 1, Infractions: make([]baseline.Infraction, 0)}
+	commit, err := state.RecordedCommit(ctx, s.repoPath)
+	if err != nil {
+		s.report.BaselineStatus = "failed"
+		return fmt.Errorf("baseline commit: %w", err)
+	}
+	// The session resolved the repository once (resolveIdentity); "" when the origin remote
+	// names none, as every other identity field adoption writes.
+	base := &baseline.Baseline{Version: 1, Repository: s.identity.coordinate(), CommitSHA: commit,
+		Infractions: make([]baseline.Infraction, 0)}
 	if err := scanLegacyDebt(ctx, s.repoPath, base, s.report, adoptionScanLimit(s)); err != nil {
 		s.report.BaselineStatus = "failed"
 		return err

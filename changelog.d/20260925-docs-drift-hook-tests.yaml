@@ -1,0 +1,3 @@
+type: fixed
+title: "exclude test_*.py hook scripts from docs_drift SURFACE_MAP"
+breaking: false

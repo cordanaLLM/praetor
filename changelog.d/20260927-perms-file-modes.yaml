@@ -1,0 +1,3 @@
+type: fixed
+title: Create private .workingdir stores owner-only and write tracked generated files (labels, onboarding scaffolds, framework assets) with repository-normal 0644/0755 modes
+breaking: false

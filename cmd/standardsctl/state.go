@@ -673,7 +673,15 @@ func runTaskArchive(args []string) error {
 		return err
 	}
 	dir := stateDir(dirFlag, rest, 0)
-	count, err := state.ArchiveCompletedTasks(dir, "")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	// Outside a Git worktree, or before the first commit, there is no commit to name and the
+	// archive keeps its "local" stamp; a Git read that fails is an error, not that stamp.
+	commitSHA, err := state.RecordedCommit(ctx, dir)
+	if err != nil {
+		return fmt.Errorf("state task archive: %w", err)
+	}
+	count, err := state.ArchiveCompletedTasks(dir, commitSHA)
 	if err != nil {
 		return err
 	}

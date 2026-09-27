@@ -24,7 +24,7 @@ Today several surfaces carry the maintainer's deployment instead (all at `origin
 | Default reconcile set | `cmd/standardsctl/issue.go:58` | `issue reconcile` walks the maintainer's repositories |
 | Target framework | `internal/needs/framework.go:16-18`, `analyzer_{go,node,python,rust,native}.go`, `requests.go:66,78-90`, `harvester.go:186-212`, `migrate.go:21`, `catalog.go` | needs reports, migrations and demand requests routed to the maintainer's framework kits |
 | Report and help text | `cmd/standardsctl/main.go:168`, `needs.go:55,61,124`, `cmd/standards-mcp/server.go:677,703,711`, `internal/needs/aggregate.go:440,547` | the maintainer's framework named in headers and tool descriptions |
-| Serialized key | `internal/needs/types.go:58` (`golusoris_replacement`) | a maintainer-specific key written into every adopter's `.needs.yaml` |
+| Serialized key | `internal/needs/types.go:58` (a replacement key named after the maintainer's framework) | a maintainer-specific key written into every adopter's `.needs.yaml` |
 | Review bot and labels | `internal/forge/pr.go:23`, `internal/adopt/ruleset.go:95`, `cmd/standardsctl/sync.go:346`, `internal/adopt/harness.go:147` | an unprovisioned private GitHub App requested as reviewer and credited in emitted labels and AGENTS.md (`.config/github-app/permissions.md:9-12` states nothing provisions it) |
 | Organisation folders | `internal/topology/topology.go:33-43`, `internal/adopt/validate.go:27-37`, `.config/agent/hooks/block_evasion.py:23` | the maintainer's organisation names hard-coded as the only recognised containers, in three copies |
 | Endpoints, paths, identities | `tribunus/internal/sources/litellmgateway/source.go:4-5`, `internal/harvester/bundle.go:783`, `internal/devsync/devsync.go:27`, `internal/supplychain/slsa.go:134`, `.github/workflows/adopt.yml:79-80`, `scripts/sync_github_wiki.sh:118-119`, `.github/workflows/release-binaries.yml:66-89` | a private gateway, a personal script name, a personal Drive base, a private build-type domain, a private committer identity and legacy asset names |
@@ -142,7 +142,7 @@ topology: {org_containers: [acme, acme-labs]}
 
 | Old | New | Compatibility |
 | :--- | :--- | :--- |
-| `.needs.yaml` / JSON key `golusoris_replacement` | `framework_replacement` | read as a deprecated alias when the new key is empty; both set and different is an error; each alias read adds a warning to `RepoNeeds.Deprecations`, printed by CLI and MCP; writes use the new key only; the alias is removed two minor releases after this record is accepted |
+| `.needs.yaml` / JSON replacement key named after the former built-in framework (`legacyReplacementKey`, `internal/needs/demand_alias.go`) | `framework_replacement` | read as a deprecated alias when the new key is empty; both set and different is an error; each alias read adds a warning to `RepoNeeds.Deprecations`, printed by CLI and MCP; writes use the new key only; the alias is removed two minor releases after this record is accepted |
 | The Go field behind that key (`DependencyDemand`, `CatalogEntry`) | `FrameworkReplacement` | none needed: `internal/` packages cannot be imported from outside the module |
 | built-in framework module, builder kits, catalog replacements | operator configuration and contracts | no built-in fallback after the data unit lands; see §6 |
 | `migrate` branch (former framework-specific name, `internal/needs/migrate.go:21`) | `refactor/framework-adoption` | adopters with an open legacy branch set `framework.migration_branch` to the old name, which the release note states |
@@ -151,8 +151,8 @@ topology: {org_containers: [acme, acme-labs]}
 | `forge.StandardReviewBot` constant | `AssignReviewers(paths, codeowners, bots)` | no production caller today (tests only) |
 | `topology.KnownOrgContainers`, `adopt.knownOrgNames` | `topology.BuiltinOrgContainers` plus configured and structural containers | one implementation |
 | Report header naming the former built-in framework (`cmd/standardsctl/needs.go:124`) | `Framework Migration Report` | text consumers change once |
-| SBOM assets `cordana-standards-{cyclonedx,spdx}.json` | `praetor-{cyclonedx,spdx}.json` | renamed without alias; release note |
-| SLSA `buildType` `https://cordana.ai/slsa/build/v1` | a project-owned URI under `https://cordanallm.github.io/praetor/` | verifiers pinning the old value update once; release note |
+| SBOM assets named after a former private project name (`<former>-{cyclonedx,spdx}.json`) | `praetor-{cyclonedx,spdx}.json` | renamed without alias; release note |
+| SLSA `buildType` URI on an unprovisioned private domain | a project-owned URI under `https://cordanallm.github.io/praetor/` | verifiers pinning the old value update once; release note |
 | `$PRAETOR_FRAMEWORK_DIR`, MCP tool names | unchanged | – |
 
 Every breaking row is flagged `!` in its commit subject with a `Migration:` footer.
@@ -242,9 +242,10 @@ listed as upstreams.
 
 ## Open questions
 
-- Whether `cordana.ai` and `standards.cordana.ai` are project identity or private infrastructure;
-  they appear in `.standards.yaml`, `.config/github-app/manifest.json` and `docs/presets/**`. This
-  record treats them as unprovisioned private domains in emitted and generated surfaces.
+- Whether the domains named in `.standards.yaml` (`repository.homepage`) and, when this record
+  was written, in `.config/github-app/manifest.json` and `docs/presets/**` are project identity
+  or private infrastructure. This record treats them as unprovisioned private domains in emitted
+  and generated surfaces.
 - Whether this repository's own `.needs.yaml` keeps a framework target. This record rescans it
   without one, so committed output does not depend on operator configuration.
 - Open pull request #193 adds a dependency on the maintainer's framework to praetor itself; its
@@ -264,3 +265,13 @@ identifiers it forbids, which publishes them.
   `.config/agent/hooks/block_evasion.py`), ADR-0012 (owner-only paths of the operational fork).
 - `internal/config/operator_decode.go`, `operator_schema.go`, `operator_sections.go`,
   `operator_merge.go`, `install_manifest.go`; `internal/agenthook/policy.go:47`.
+
+## Redactions
+
+- 2026-09-27: operator-private identifiers replaced with neutral descriptions, in the form
+  Decision §7 prescribes; no decision content changed. Context table, serialized-key row: the literal key
+  name became a description. Decision §5, first row: the literal key name became a description
+  pointing at `legacyReplacementKey` in `internal/needs/demand_alias.go`, where the alias is
+  still read. Decision §5, SBOM row: the former asset name prefix became `<former>`. Decision
+  §5, SLSA row: the former build-type URI became a description. Open questions, first item: the
+  domain names became pointers to the files that declare them.

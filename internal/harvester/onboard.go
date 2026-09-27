@@ -25,7 +25,7 @@ var ErrOnboardingIncomplete = errors.New("harvester: onboarding scaffold require
 
 // onboardFilePerm is the mode of every file onboarding scaffolds into a repository.
 const (
-	onboardFilePerm         os.FileMode = 0o600
+	onboardFilePerm         os.FileMode = util.TrackedFilePerm
 	maxOnboardDocumentBytes             = 8 * 1024 * 1024
 	maxOnboardOutputs                   = 50
 )
@@ -217,7 +217,7 @@ func writeOnboardFile(ctx context.Context, root, rel string, data []byte) error 
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("onboarding cancelled before writing %s: %w", rel, err)
 	}
-	if err := util.MkdirConfined(root, filepath.Dir(rel), 0o700); err != nil {
+	if err := util.MkdirConfined(root, filepath.Dir(rel), util.TrackedDirPerm); err != nil {
 		return fmt.Errorf("create onboarding output directory for %s: %w", rel, err)
 	}
 	if err := util.WriteFileConfined(root, rel, data, onboardFilePerm); err != nil {

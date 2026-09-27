@@ -67,11 +67,12 @@ jobs:
             tools/figures/package-lock.json
             tools/markdownlint/package-lock.json
 
+      # tools/go/go.mod is the one version source for the security scanners (Renovate keeps
+      # it current); the Makefile runs them through `go tool` from the same file, and the
+      # installed binaries serve the hook self-tests that call gosec from PATH.
       - name: Install Security Toolchains (govulncheck & gosec)
         if: steps.filter.outputs.run_security != 'false' || github.event_name == 'push'
-        run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          go install github.com/securego/gosec/v2/cmd/gosec@latest
+        run: go install -modfile=tools/go/go.mod golang.org/x/vuln/cmd/govulncheck github.com/securego/gosec/v2/cmd/gosec
 
       - name: Install Pinned Git Hook Toolchain
         if: steps.filter.outputs.skip_heavy_gates != 'true' || github.event_name == 'push'
@@ -120,17 +121,9 @@ jobs:
 
       - name: Verify Go Formatting (gofmt)
         if: steps.filter.outputs.run_linters != 'false' || github.event_name == 'push'
-        run: |
-          # testdata is fixture input, not source: a HISS-10 fixture is deliberately
-          # unformatted because that is what it demonstrates. Go never builds testdata
-          # either, and the pre-commit hook applies the same exclusion.
-          UNFORMATTED=$(git ls-files -z '*.go' ':!:*testdata/*' | xargs -0 --no-run-if-empty gofmt -l)
-          if [ -n "$UNFORMATTED" ]; then
-            echo "Formatting error: Unformatted Go files detected:"
-            echo "$UNFORMATTED"
-            exit 1
-          fi
-          echo "Go formatting clean."
+        # make fmt-check is the one gofmt check (testdata fixtures stay out of scope); the
+        # pre-commit hook runs the same check on the staged set.
+        run: make fmt-check
 
       - name: Enforce Linear History (HISS & Branch Protection)
         if: github.event_name == 'pull_request'

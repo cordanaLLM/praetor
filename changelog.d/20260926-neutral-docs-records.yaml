@@ -1,0 +1,3 @@
+type: changed
+title: Remove maintainer repositories, organisations, domains and private ledger paths from the decision records and project plans, and retire the framework migration status page from the documentation site
+breaking: false

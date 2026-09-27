@@ -138,3 +138,41 @@ func TestRecord_Boundary(t *testing.T) {
 		t.Fatalf("baseline mode = %v, want %v", info.Mode().Perm(), FilePerm)
 	}
 }
+
+// BUG-801 test
+func TestRecord_Identity(t *testing.T) {
+	prev := &Baseline{
+		Version: 1, Repository: "acme/widgets", CommitSHA: "abc",
+		Infractions: sampleInfractions(2), TotalInfractions: 2,
+	}
+
+	// Unchanged infractions retain the previous SHA when options don't provide one.
+	opts := RecordOptions{Repository: "acme/widgets"}
+	next, err := Record(prev, sampleInfractions(2), opts)
+	if err != nil {
+		t.Fatalf("Record equal: %v", err)
+	}
+	if next.CommitSHA != "abc" {
+		t.Fatalf("unchanged infractions must retain previous SHA, got %q", next.CommitSHA)
+	}
+
+	// New infractions use the new SHA.
+	opts2 := RecordOptions{Repository: "acme/widgets", CommitSHA: "def"}
+	next2, err := Record(prev, sampleInfractions(1), opts2)
+	if err != nil {
+		t.Fatalf("Record decrease: %v", err)
+	}
+	if next2.CommitSHA != "def" {
+		t.Fatalf("changed infractions must update SHA, got %q", next2.CommitSHA)
+	}
+
+	// Absent previous git leaves them empty if opts is empty.
+	opts3 := RecordOptions{}
+	next3, err := Record(nil, sampleInfractions(0), opts3)
+	if err != nil {
+		t.Fatalf("Record empty: %v", err)
+	}
+	if next3.CommitSHA != "" || next3.Repository != "" {
+		t.Fatalf("absent git leaves identity empty, got %q %q", next3.Repository, next3.CommitSHA)
+	}
+}

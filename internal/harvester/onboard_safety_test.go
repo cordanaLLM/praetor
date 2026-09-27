@@ -174,7 +174,7 @@ func TestOnboardRepositoryReportsInvalidExistingLock(t *testing.T) {
 // TestWriteOnboardFileLeavesRepositoryRootMode pins the confined onboarding write: a
 // top-level output used to run MkdirSecure on the repository root itself, narrowing its
 // mode to 0700; the root is the confinement boundary and keeps its mode, while a nested
-// output directory is still created owner-only.
+// output directory is created with the tracked-directory mode.
 func TestWriteOnboardFileLeavesRepositoryRootMode(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX permission bits are not available on Windows")
@@ -190,18 +190,18 @@ func TestWriteOnboardFileLeavesRepositoryRootMode(t *testing.T) {
 	if err := writeOnboardFile(ctx, repo, filepath.Join(".vscode", "settings.json"), []byte("{}\n")); err != nil {
 		t.Fatalf("nested output: %v", err)
 	}
-	for dir, check := range map[string]func(os.FileMode) bool{
-		repo:                           func(mode os.FileMode) bool { return mode == 0o755 },
-		filepath.Join(repo, ".vscode"): func(mode os.FileMode) bool { return mode&^0o700 == 0 },
-	} {
-		info, err := os.Stat(dir)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !check(info.Mode().Perm()) {
-			t.Errorf("%s mode = %v: the root must keep 0755, the nested output directory must be owner-only", dir, info.Mode())
-		}
+	info, err := os.Stat(repo)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if info.Mode().Perm() != 0o755 {
+		t.Errorf("%s mode = %v: the repository root must keep 0755", repo, info.Mode())
+	}
+	// BUG-839: onboarding scaffolds files the repository commits, so the nested directory and
+	// both outputs carry the tracked-file modes rather than owner-only ones.
+	testsupport.RequireCreatedMode(t, filepath.Join(repo, ".vscode"), 0o755)
+	testsupport.RequireCreatedMode(t, filepath.Join(repo, ".vscode", "settings.json"), 0o644)
+	testsupport.RequireCreatedMode(t, filepath.Join(repo, ".editorconfig"), 0o644)
 	if data, err := os.ReadFile(filepath.Join(repo, ".editorconfig")); err != nil || string(data) != "root = true\n" {
 		t.Errorf("top-level output = (%q, %v)", data, err)
 	}

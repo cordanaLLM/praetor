@@ -11,6 +11,13 @@ import (
 // maxFuzzTouched bounds the touched-file list built from one fuzz input (HISS-02).
 const maxFuzzTouched = 16
 
+// fuzzNewFile and fuzzNewFingerprint name the infraction fuzzCurrent adds to every scan. A
+// baseline that happens to record the fingerprint already treats it as known debt.
+const (
+	fuzzNewFile        = "fuzz-new.go"
+	fuzzNewFingerprint = "fuzz-unbaselined-fingerprint"
+)
+
 func FuzzBaselineRatchet(f *testing.F) {
 	validBase := Baseline{
 		Version:          1,
@@ -27,6 +34,18 @@ func FuzzBaselineRatchet(f *testing.F) {
 	f.Add(validBytes, "a.go,c.go")
 	f.Add(validBytes, "")
 	f.Add(validBytes, "b.go")
+	// A baseline that already carries the synthetic fingerprint fuzzCurrent adds, with a total
+	// equal to its own length: nothing is new or touched, yet the count rose by one, so the
+	// count-only branch (BUG-489) is reachable from the seed corpus.
+	regressed := validBase
+	regressed.Infractions = append(append([]Infraction{}, validBase.Infractions...),
+		Infraction{RuleID: "HISS-04", FilePath: fuzzNewFile, Fingerprint: fuzzNewFingerprint})
+	regressed.TotalInfractions = len(regressed.Infractions)
+	regressedBytes, err := json.Marshal(regressed)
+	if err != nil {
+		f.Fatalf("marshal count-regression seed: %v", err)
+	}
+	f.Add(regressedBytes, "")
 
 	f.Fuzz(func(t *testing.T, data []byte, touchedStr string) {
 		baseFile := filepath.Join(t.TempDir(), "baseline.json")
@@ -46,7 +65,27 @@ func FuzzBaselineRatchet(f *testing.F) {
 		}
 		assertRatchetCountsAgree(t, base, current, res)
 		assertRatchetPartitionsViolations(t, base, touched, res)
+		assertRatchetVerdictExplained(t, res)
 	})
+}
+
+// assertRatchetVerdictExplained pins BUG-489: every rejection carries a reason a caller can
+// render. CountRegressed holds exactly when neither list explains a total that rose above the
+// baseline's, and a failed ratchet always has a listed violation or that flag.
+func assertRatchetVerdictExplained(t *testing.T, res *RatchetResult) {
+	t.Helper()
+	listed := len(res.NewViolations) > 0 || len(res.TouchedCleanViolations) > 0
+	wantRegressed := !listed && res.CurrentCount > res.PreviousCount
+	if res.CountRegressed != wantRegressed {
+		t.Fatalf("CountRegressed = %v, want %v (listed=%v, %d > %d): %+v",
+			res.CountRegressed, wantRegressed, listed, res.CurrentCount, res.PreviousCount, res)
+	}
+	if !res.Passed && !listed && !res.CountRegressed {
+		t.Fatalf("failed ratchet with no listed violation and no count regression: %+v", res)
+	}
+	if res.Passed && res.CountRegressed {
+		t.Fatalf("passing ratchet flagged as count-regressed: %+v", res)
+	}
 }
 
 // fuzzTouched turns the fuzzed string into a bounded touched-file list.
@@ -62,13 +101,14 @@ func fuzzTouched(touchedStr string) []string {
 }
 
 // fuzzCurrent builds the scan result the ratchet judges. It is the baseline's own
-// infractions plus one infraction the baseline never recorded, so the new-violation and
-// touched-file branches are reachable; passing the baseline back unchanged, as this target
-// used to, made both branches dead whatever the fuzzer supplied.
+// infractions plus one more, so the new-violation and touched-file branches are reachable;
+// passing the baseline back unchanged, as this target used to, made both branches dead
+// whatever the fuzzer supplied. A baseline that already records the added fingerprint
+// reaches the count-only branch instead.
 func fuzzCurrent(base *Baseline, touchedStr string) []Infraction {
 	current := make([]Infraction, 0, len(base.Infractions)+1)
 	current = append(current, base.Infractions...)
-	file := "fuzz-new.go"
+	file := fuzzNewFile
 	if parts := fuzzTouched(touchedStr); len(parts) > 0 {
 		file = parts[0]
 	}
@@ -76,7 +116,7 @@ func fuzzCurrent(base *Baseline, touchedStr string) []Infraction {
 		RuleID:      "HISS-04",
 		FilePath:    file,
 		LineNumber:  1,
-		Fingerprint: "fuzz-unbaselined-fingerprint",
+		Fingerprint: fuzzNewFingerprint,
 	})
 }
 

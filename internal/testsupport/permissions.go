@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // SkipIfFileModeUnenforced skips a case that provokes a permission failure by giving a file
@@ -60,4 +62,44 @@ func denyAll(t testing.TB, path string, mode os.FileMode) func() {
 			t.Errorf("restore probe mode on %s: %v", path, err)
 		}
 	}
+}
+
+// RequireCreatedMode fails t unless path carries the mode a writer that honours the process
+// umask gives an entry it creates with perm: perm filtered by the umask. The umask is measured
+// by creating a probe, never assumed, so a host with a restrictive umask asserts what it can
+// actually produce. It skips where permission bits are not the file protection
+// (util.ModeIsProtection), since no mode is asserted there.
+func RequireCreatedMode(t testing.TB, path string, perm os.FileMode) {
+	t.Helper()
+	if !util.ModeIsProtection() {
+		t.Skip("permission bits are not the file protection on this platform, so no mode is asserted")
+	}
+	want := perm & creationMask(t)
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat %s: %v", path, err)
+	}
+	if got := info.Mode().Perm(); got != want {
+		t.Errorf("%s mode = %#o, want %#o (%#o under this host's umask)", path, got, want, perm)
+	}
+}
+
+// creationMask is the set of permission bits the process umask lets a new entry keep, read off
+// a probe created with every bit requested.
+func creationMask(t testing.TB) os.FileMode {
+	t.Helper()
+	probe := filepath.Join(t.TempDir(), "umask-probe")
+	// #nosec G302 G304 -- a probe in this test's own temporary directory; requesting every bit is what measures the umask.
+	file, err := os.OpenFile(probe, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o777)
+	if err != nil {
+		t.Fatalf("create umask probe: %v", err)
+	}
+	info, err := file.Stat()
+	if cerr := file.Close(); cerr != nil && err == nil {
+		err = cerr
+	}
+	if err != nil {
+		t.Fatalf("read umask probe: %v", err)
+	}
+	return info.Mode().Perm()
 }
