@@ -538,16 +538,18 @@ hook rule. A dev-root directory is a container when its name, compared lowercase
 of the built-in names (`upstream`, `local`, `stacks`, `worktrees`, `scratch`;
 `topology.BuiltinOrgContainers`) or is listed in `topology.org_containers`, read through
 `--fleet-config`, `--workstation-config` and `--manifest` or the settings environment
-(`cmd/standardsctl/topology.go`). Whatever its name, a directory that is not a repository
-itself and directly holds at least one child repository is a container too
-(`topology.HoldsChildRepository`). A submodule or linked worktree whose gitlink resolves
-inside the directory's own `.git` belongs to that directory's repository and is not a
-child repository, so a dev-root repository with a lost `HEAD` stays a DEV-01 violation.
-The scan reads at most `MaxScanEntries` entries. A listing it cannot read truncates the
-audit, which then blocks cleanup. A listing cut at the bound before a repository turns up
+(`cmd/standardsctl/topology.go`). Whatever its name, a directory without a `.git` of its
+own that directly holds at least one child repository is a container too
+(`topology.HoldsChildRepository`). A directory with a `.git` of any kind is never
+recognised by structure and stays a DEV-01 violation: a `.git` that lost its `HEAD` can
+still hold the repository's objects and refs, and cleanup must not offer them for removal.
+A submodule or linked worktree whose gitlink resolves inside a directory's own `.git`
+belongs to that directory's repository and never counts as a child repository. The scan
+reads at most `MaxScanEntries` entries. A listing it cannot read truncates the audit,
+which then blocks cleanup. A listing cut at the bound before a repository turns up
 adds a line under `Notes` and leaves the folder out of the containers, so a large data
 folder does not fail the audit. Configure a name when structure cannot reveal the folder,
-for example one that is itself a repository or holds no valid child repository yet.
+for example one with a `.git` of its own or one that holds no valid child repository yet.
 Cleanup never deletes a recognised container, any directory that holds a repository, or
 headless `.git` metadata that still holds a non-empty `modules` or `worktrees` directory;
 the last is reported for manual review (`internal/topology/containers_test.go`).

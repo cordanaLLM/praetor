@@ -35,7 +35,8 @@ var (
 // BuiltinOrgContainers names the directories every dev root may use as organization
 // containers without configuration (DEV-01). The engine names no operator organization:
 // those are configured through topology.org_containers (OrgContainers) or recognised by
-// structure, as a directory holding a child repository (AuditWorkstationTopology).
+// structure, as a directory without a .git holding a child repository
+// (AuditWorkstationTopology).
 var BuiltinOrgContainers = [...]string{"upstream", "local", "stacks", "worktrees", "scratch"}
 
 // OrgContainers returns the lowercased set of organization container names: the built-in
@@ -195,8 +196,8 @@ func scanInterrupted(ctx context.Context, phase string) error {
 // mid-scan returns an error and no partial report.
 //
 // A dev-root directory is an organization container when its lowercased name is in
-// OrgContainers(configured), or, whatever its name, when it is not a git repository itself
-// and directly holds at least one child repository (structural detection). configured is
+// OrgContainers(configured), or, whatever its name, when it has no .git of its own and
+// directly holds at least one child repository (structural detection). configured is
 // the operator's topology.org_containers; nil leaves the built-in names and structural
 // detection.
 func AuditWorkstationTopology(ctx context.Context, devRoot string, configured []string) (*TopologyReport, error) {
@@ -287,24 +288,25 @@ func processDevRootEntry(ctx context.Context, entry os.DirEntry, entryPath strin
 	return classifyDevRootDirectory(ctx, entryPath, entry.Name(), report)
 }
 
-// classifyDevRootDirectory decides a dev-root directory no container name covers. A live
-// repository is a DEV-01 violation. A directory that is not one but directly holds a child
-// repository is a structural organization container and is audited as one. Any other
-// directory with git metadata (headless or indeterminate) is a DEV-01 violation. A listing
-// that could not be read leaves the directory unclassified and the audit truncated. A
-// listing cut at MaxScanEntries before a repository turned up is not a container and adds
-// a note, not a truncation: cleanup never acts inside a non-container, so failing the whole
-// audit over a large data folder would protect nothing.
+// classifyDevRootDirectory decides a dev-root directory no container name covers. A
+// directory with a .git of any kind, live, headless or indeterminate, is a DEV-01 violation
+// and never a structural container: a headless .git can still hold a repository's objects
+// and refs, and auditing the directory as a container would offer that history to cleanup.
+// A directory without a .git that directly holds a child repository is a structural
+// organization container and is audited as one. A listing that could not be read leaves the
+// directory unclassified and the audit truncated. A listing cut at MaxScanEntries before a
+// repository turned up is not a container and adds a note, not a truncation: cleanup never
+// acts inside a non-container, so failing the whole audit over a large data folder would
+// protect nothing.
 func classifyDevRootDirectory(ctx context.Context, path, name string, report *TopologyReport) error {
 	_, statErr := os.Stat(filepath.Join(path, ".git"))
-	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+	switch {
+	case statErr == nil:
+		report.Violations = append(report.Violations, rootRepositoryViolation(name))
+		return nil
+	case !errors.Is(statErr, os.ErrNotExist):
 		report.markTruncated(fmt.Sprintf("%s: DEV-01 not evaluated, git metadata could not be inspected: %v",
 			name, statErr))
-		return nil
-	}
-	hasGit := statErr == nil
-	if hasGit && HasValidGitRepo(path) {
-		report.Violations = append(report.Violations, rootRepositoryViolation(name))
 		return nil
 	}
 	found, err := HoldsChildRepository(ctx, path)
@@ -320,9 +322,6 @@ func classifyDevRootDirectory(ctx context.Context, path, name string, report *To
 	case found:
 		report.OrgContainers = append(report.OrgContainers, name)
 		return auditOrgContainer(ctx, path, name, report)
-	}
-	if hasGit {
-		report.Violations = append(report.Violations, rootRepositoryViolation(name))
 	}
 	return nil
 }

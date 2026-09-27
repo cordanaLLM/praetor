@@ -42,7 +42,8 @@ func printTopologyUsage() {
 	fmt.Println("  clean [--dev-root=...] [--dry-run=true|false] Safely removes stray governance files from org roots")
 	fmt.Println("\nBoth accept --fleet-config, --workstation-config and --manifest; the selected operator settings'")
 	fmt.Println("topology.org_containers names organization folders beyond the built-in ones. A directory")
-	fmt.Println("holding a child repository is recognised as one without configuration.")
+	fmt.Println("without a .git of its own that holds a child repository is recognised as one without")
+	fmt.Println("configuration.")
 }
 
 // topologyContainers loads the operator's topology.org_containers through the shared

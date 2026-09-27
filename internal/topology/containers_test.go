@@ -164,7 +164,8 @@ func TestAuditWorkstationTopology_StructuralScanBound(t *testing.T) {
 
 // TestAuditWorkstationTopology_LargePlainFolderKeepsAuditComplete: a data folder with more
 // than MaxScanEntries plain files is neither a container nor a truncation, so the audit
-// passes and cleanup runs; the same folder with git metadata stays a DEV-01 violation.
+// passes and cleanup runs; the same folder with git metadata stays a DEV-01 violation and
+// is never scanned for child repositories, so it adds no note.
 func TestAuditWorkstationTopology_LargePlainFolderKeepsAuditComplete(t *testing.T) {
 	devRoot := t.TempDir()
 	writeFillerEntries(t, filepath.Join(devRoot, "datasets"), MaxScanEntries+1)
@@ -182,8 +183,8 @@ func TestAuditWorkstationTopology_LargePlainFolderKeepsAuditComplete(t *testing.
 	}
 	assertStringSet(t, "OrgContainers", report.OrgContainers, nil)
 	assertStringSet(t, "Violations", report.Violations, []string{rootRepositoryViolation("archive")})
-	if len(report.Notes) != 2 {
-		t.Fatalf("notes = %v, want one per cut listing", report.Notes)
+	if len(report.Notes) != 1 || !strings.HasPrefix(report.Notes[0], "datasets: ") {
+		t.Fatalf("notes = %v, want one for the cut datasets listing", report.Notes)
 	}
 	result, err := CleanWorkstationTopologyDetailed(context.Background(), devRoot, nil, false)
 	if err != nil || len(result.Cleaned) != 0 {
@@ -245,7 +246,8 @@ func TestVerifyDeletionSafety_RefusesDirectoryHoldingRepository(t *testing.T) {
 }
 
 // TestCleanWorkstationTopologyDetailed_KeepsHeadlessMetadataHoldingRepository: headless git
-// metadata is a safe finding, but cleanup refuses it once it holds a repository.
+// metadata in a configured container is a safe finding, but cleanup refuses it once it
+// holds a repository.
 func TestCleanWorkstationTopologyDetailed_KeepsHeadlessMetadataHoldingRepository(t *testing.T) {
 	devRoot := t.TempDir()
 	container := filepath.Join(devRoot, "acme-labs")
@@ -253,7 +255,7 @@ func TestCleanWorkstationTopologyDetailed_KeepsHeadlessMetadataHoldingRepository
 	nested := filepath.Join(container, ".git", "nested")
 	initTestGit(t, nested)
 
-	result, err := CleanWorkstationTopologyDetailed(context.Background(), devRoot, nil, false)
+	result, err := CleanWorkstationTopologyDetailed(context.Background(), devRoot, acmeConfigured, false)
 	var safetyErr *deletionSafetyError
 	if !errors.As(err, &safetyErr) || !strings.Contains(err.Error(), "holds a git repository") {
 		t.Fatalf("clean err = %v, want the repository-holding refusal", err)
@@ -332,6 +334,108 @@ func TestAuditWorkstationTopology_OwnSubmoduleIsNoChildRepository(t *testing.T) 
 		t.Fatalf("clean = %+v, %v; want nothing removed", result, err)
 	}
 	assertPathsExist(t, []string{moduleHead})
+}
+
+// plantHeadlessHistory gives dir a .git that lost HEAD but keeps a repository's history: a
+// loose object, a branch ref and a reflog. It returns those paths, which cleanup must keep.
+func plantHeadlessHistory(t *testing.T, dir string) []string {
+	t.Helper()
+	gitDir := filepath.Join(dir, ".git")
+	history := []string{
+		filepath.Join(gitDir, "objects", "ab", "cdef0123456789abcdef0123456789abcdef01"),
+		filepath.Join(gitDir, "refs", "heads", "main"),
+		filepath.Join(gitDir, "logs", "HEAD"),
+	}
+	for _, path := range history {
+		writeTestFile(t, path)
+	}
+	return history
+}
+
+// requireNothingToClean audits devRoot unconfigured and requires that neither a dry run nor
+// an applied clean proposes or removes anything.
+func requireNothingToClean(t *testing.T, devRoot string) {
+	t.Helper()
+	for _, dryRun := range []bool{true, false} {
+		result, err := CleanWorkstationTopologyDetailed(context.Background(), devRoot, nil, dryRun)
+		if err != nil || len(result.Cleaned) != 0 || len(result.Blocked) != 0 {
+			t.Fatalf("clean (dry run %v) = %+v, %v; want nothing proposed", dryRun, result, err)
+		}
+	}
+}
+
+// TestAuditWorkstationTopology_HeadlessHistoryWithCloneIsNoContainer: a dev-root folder
+// whose .git lost HEAD but keeps objects, refs and logs, with an independent clone as a
+// direct child, is a DEV-01 violation and no structural container, so cleanup never offers
+// its history for removal.
+func TestAuditWorkstationTopology_HeadlessHistoryWithCloneIsNoContainer(t *testing.T) {
+	devRoot := t.TempDir()
+	proj := filepath.Join(devRoot, "proj")
+	history := plantHeadlessHistory(t, proj)
+	initTestGit(t, filepath.Join(proj, "clone"))
+
+	report, err := AuditWorkstationTopology(context.Background(), devRoot, nil)
+	if err != nil {
+		t.Fatalf("AuditWorkstationTopology: %v", err)
+	}
+	assertStringSet(t, "OrgContainers", report.OrgContainers, nil)
+	assertStringSet(t, "Violations", report.Violations, []string{rootRepositoryViolation("proj")})
+	if len(report.StrayFiles) != 0 || report.Truncated {
+		t.Fatalf("strays %+v, truncation %v; want neither", report.StrayFiles, report.TruncationReasons)
+	}
+	requireNothingToClean(t, devRoot)
+	assertPathsExist(t, append(history, filepath.Join(proj, "clone", ".git", "HEAD")))
+}
+
+// TestAuditWorkstationTopology_FolderWithoutGitHoldingCloneStaysContainer: the same clone
+// under a folder with no .git keeps the folder a structural container whose stray is safe
+// to clean.
+func TestAuditWorkstationTopology_FolderWithoutGitHoldingCloneStaysContainer(t *testing.T) {
+	devRoot := t.TempDir()
+	initTestGit(t, filepath.Join(devRoot, "proj", "clone"))
+	stray := filepath.Join(devRoot, "proj", "AGENTS.md")
+	writeTestFile(t, stray)
+
+	report, err := AuditWorkstationTopology(context.Background(), devRoot, nil)
+	if err != nil {
+		t.Fatalf("AuditWorkstationTopology: %v", err)
+	}
+	assertStringSet(t, "OrgContainers", report.OrgContainers, []string{"proj"})
+	assertStringSet(t, "ValidRepos", report.ValidRepos, []string{filepath.Join("proj", "clone")})
+	assertStringSet(t, "Violations", report.Violations, nil)
+	requireSafeStray(t, report, stray)
+	result, err := CleanWorkstationTopologyDetailed(context.Background(), devRoot, nil, true)
+	if err != nil || !slices.Equal(result.Cleaned, []string{stray}) {
+		t.Fatalf("dry run = %+v, %v; want only %s", result, err, stray)
+	}
+}
+
+// TestAuditWorkstationTopology_HooksOnlyGitBlocksStructuralDetection: a .git holding only
+// hooks, the least git metadata a folder can have, already keeps the folder from structural
+// detection and leaves a DEV-01 violation; configured as a container, that same .git is a
+// safe headless stray (setupMockDevEnvironment's acme-labs).
+func TestAuditWorkstationTopology_HooksOnlyGitBlocksStructuralDetection(t *testing.T) {
+	devRoot := t.TempDir()
+	labs := filepath.Join(devRoot, "acme-labs")
+	if err := os.MkdirAll(filepath.Join(labs, ".git", "hooks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initTestGit(t, filepath.Join(labs, "tools"))
+
+	report, err := AuditWorkstationTopology(context.Background(), devRoot, nil)
+	if err != nil {
+		t.Fatalf("AuditWorkstationTopology: %v", err)
+	}
+	assertStringSet(t, "OrgContainers", report.OrgContainers, nil)
+	assertStringSet(t, "Violations", report.Violations, []string{rootRepositoryViolation("acme-labs")})
+	requireNothingToClean(t, devRoot)
+
+	configured, err := AuditWorkstationTopology(context.Background(), devRoot, acmeConfigured)
+	if err != nil {
+		t.Fatalf("AuditWorkstationTopology (configured): %v", err)
+	}
+	assertStringSet(t, "Violations", configured.Violations, nil)
+	requireSafeStray(t, configured, filepath.Join(labs, ".git"))
 }
 
 // TestAuditWorkstationTopology_HeadlessGitHoldingCheckoutDataNeedsReview: in a recognised

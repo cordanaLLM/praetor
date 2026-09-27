@@ -24,9 +24,13 @@ func initTestGit(t *testing.T, dir string) {
 }
 
 // acmeConfigured is an operator's topology.org_containers for the acme fixtures. A test
-// whose organization folder structure alone does not reveal (a live repository itself, or
-// one holding no valid child repository) names it here, as an operator would.
+// whose organization folder structure alone does not reveal (a folder with a .git of its
+// own, or one holding no valid child repository) names it here, as an operator would.
 var acmeConfigured = []string{"acme", "acme-labs"}
+
+// mockConfigured names acme-labs from setupMockDevEnvironment, whose stray .git keeps it
+// from being recognised by structure; acme stays a structural container.
+var mockConfigured = []string{"acme-labs"}
 
 func setupMockDevEnvironment(t *testing.T) string {
 	t.Helper()
@@ -71,7 +75,8 @@ func setupMockDevEnvironment(t *testing.T) string {
 		t.Fatal(err)
 	}
 
-	// acme-labs: a structural organization container with a stray headless .git
+	// acme-labs: a configured organization container (mockConfigured) with a stray
+	// headless .git holding only hooks; a folder with a .git is never a structural container
 	labsOrg := filepath.Join(devRoot, "acme-labs")
 	if err := os.MkdirAll(filepath.Join(labsOrg, ".git", "hooks"), 0755); err != nil {
 		t.Fatal(err)
@@ -94,7 +99,7 @@ func TestAuditWorkstationTopology_Positive(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	report, err := AuditWorkstationTopology(ctx, devRoot, nil)
+	report, err := AuditWorkstationTopology(ctx, devRoot, mockConfigured)
 	if err != nil {
 		t.Fatalf("AuditWorkstationTopology failed: %v", err)
 	}
@@ -193,7 +198,7 @@ func TestCleanWorkstationTopology_DryRun(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cleaned, err := CleanWorkstationTopology(ctx, devRoot, nil, true)
+	cleaned, err := CleanWorkstationTopology(ctx, devRoot, mockConfigured, true)
 	if err != nil {
 		t.Fatalf("CleanWorkstationTopology (dry run) failed: %v", err)
 	}
@@ -214,7 +219,7 @@ func TestCleanWorkstationTopology_Apply(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cleaned, err := CleanWorkstationTopology(ctx, devRoot, nil, false)
+	cleaned, err := CleanWorkstationTopology(ctx, devRoot, mockConfigured, false)
 	if err != nil {
 		t.Fatalf("CleanWorkstationTopology (apply) failed: %v", err)
 	}
@@ -484,7 +489,7 @@ func TestAuditWorkstationTopology_UnreadableGitMetadataIsNotSafeToDelete(t *test
 		t.Skip("current user can inspect chmod-000 directories")
 	}
 
-	report, err := AuditWorkstationTopology(context.Background(), devRoot, nil)
+	report, err := AuditWorkstationTopology(context.Background(), devRoot, acmeConfigured)
 	if err != nil {
 		t.Fatalf("AuditWorkstationTopology: %v", err)
 	}
