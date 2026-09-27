@@ -326,9 +326,28 @@ func (f *OSImageFlavor) Detect(repoPath string) bool {
 	return false
 }
 
+// yamllintScaffoldName is the yamllint configuration os-image scaffolds when a repository has
+// none (templates/osimage/.yamllint.yml.tmpl).
+const yamllintScaffoldName = ".yamllint.yml"
+
+// yamllintConfigNames returns every project configuration name yamllint looks for, in its
+// order: it reads the first that is a file and ignores the rest (find_project_config_filepath
+// in yamllint's cli.py, checked on 1.38.0 with all three present). The audit accepts each name
+// and flavor apply writes none beside one, both from this list. A fresh slice per call, so no
+// caller can edit the order another sees.
+func yamllintConfigNames() []string {
+	return []string{".yamllint", ".yamllint.yaml", yamllintScaffoldName}
+}
+
 func (f *OSImageFlavor) RequiredTemplates() []TemplateItem {
 	return []TemplateItem{
-		{Path: ".yamllint.yml", Description: "YAML lint policy for image and workflow definitions", Source: "osimage/.yamllint.yml.tmpl", Validator: validYAMLMapping},
+		{
+			Path:        yamllintScaffoldName,
+			Description: "YAML lint policy for image and workflow definitions",
+			Source:      "osimage/.yamllint.yml.tmpl",
+			Search:      &ConfigSearch{Tool: "yamllint", Names: yamllintConfigNames()},
+			Validator:   validYAMLMapping,
+		},
 	}
 }
 

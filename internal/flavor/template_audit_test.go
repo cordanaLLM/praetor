@@ -122,13 +122,17 @@ func TestApplyFlavor_Boundary_AlternativeTheAuditRejectsBlocksARival(t *testing.
 	if err != nil || len(report.Errors) > 0 {
 		t.Fatalf("apply: err %v, recorded %v", err, report.Errors)
 	}
-	for _, rival := range []string{"tsconfig.json", "eslint.config.mjs"} {
+	covered := map[string]string{"tsconfig.json": "tsconfig.base.json", "eslint.config.mjs": "eslint.config.js"}
+	for rival, inUse := range covered {
 		if _, err := os.Stat(filepath.Join(repo, rival)); !os.IsNotExist(err) {
 			t.Errorf("apply wrote %s beside the alternative in use: %v", rival, err)
 		}
-		if !slices.Contains(report.SkippedTemplates, rival) {
-			t.Errorf("%s not reported skipped: %+v", rival, report)
+		if !slices.Contains(report.CoveredTemplates, flavor.CoveredTemplate{Path: rival, InUse: inUse}) {
+			t.Errorf("%s not reported covered by %s: %+v", rival, inUse, report)
 		}
+	}
+	if len(report.SkippedTemplates) != 0 {
+		t.Errorf("a template covered by an alternative was reported as an existing file: %v", report.SkippedTemplates)
 	}
 	audit, err := flavor.AuditFlavor(repo, "typescript-node")
 	if err != nil {

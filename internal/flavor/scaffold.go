@@ -37,9 +37,21 @@ type ApplyReport struct {
 	// repository lacks what its body needs to work as written (TemplateItem.Requires), as
 	// "<path>: <what is missing>". The audit still requires these files: supply what is
 	// missing and apply again, or write a file that fits the repository.
-	UnmetTemplates    []string `json:"unmet_templates,omitempty"`
-	WorkingDirCreated bool     `json:"working_dir_created"`
-	Errors            []string `json:"errors,omitempty"`
+	UnmetTemplates []string `json:"unmet_templates,omitempty"`
+	// CoveredTemplates names each required template flavor apply does not write because the
+	// repository already carries its configuration under another name the template accepts
+	// (AltPaths or Search). A file under the canonical name beside it would be a second
+	// configuration, one the tool ignores or one that contradicts the file in use.
+	CoveredTemplates  []CoveredTemplate `json:"covered_templates,omitempty"`
+	WorkingDirCreated bool              `json:"working_dir_created"`
+	Errors            []string          `json:"errors,omitempty"`
+}
+
+// CoveredTemplate is a template flavor apply left unwritten because the repository configures
+// it under another accepted name: InUse is that file, Path the name apply would have written.
+type CoveredTemplate struct {
+	Path  string `json:"path"`
+	InUse string `json:"in_use"`
 }
 
 // ApplyFlavor scaffolds the missing templates and configs for a target flavor.
@@ -134,40 +146,38 @@ func forceProtected(rel string) bool {
 	return strings.HasPrefix(rel, state.WorkingDirName+"/") || rel == config.ManifestFileName || rel == config.LockFileName
 }
 
-// templateDisposition decides, before any filesystem mutation, whether a template is
-// safe to write, already covered, or must be refused outright.
-func templateDisposition(repoPath string, tmpl TemplateItem, force bool) (skip bool, err error) {
+// templateDisposition decides, before any filesystem mutation, whether a template is safe to
+// write (templateCreated), already present (templateSkipped), configured under another name
+// (templateCovered, with that name as the note), or must be refused outright.
+func templateDisposition(repoPath string, tmpl TemplateItem, force bool) (templateOutcome, string, error) {
 	// A template path is declared in slash form (".github/workflows/ci.yml"), so its
 	// cleanliness is a slash-path property. filepath.Clean returns backslashes on Windows
 	// and never equalled the declared value, so every template was refused and `flavor
 	// apply` could scaffold nothing there. IsLocal still decides containment on the host.
 	if !filepath.IsLocal(tmpl.Path) || path.Clean(tmpl.Path) != tmpl.Path {
-		return false, fmt.Errorf("template path must remain within the repository: %s", tmpl.Path)
+		return templateSkipped, "", fmt.Errorf("template path must remain within the repository: %s", tmpl.Path)
 	}
-	// An accepted alternative already covers this template, so scaffolding the canonical
-	// name would add a second configuration file that contradicts the one in use.
-	if !force && (TemplateSatisfied(repoPath, tmpl) || alternativePresent(repoPath, tmpl)) {
-		return true, nil
+	if force {
+		return templateCreated, "", nil
 	}
-	return false, nil
-}
-
-// alternativePresent reports whether the repository carries a file under any of a
-// template's AltPaths, whatever its content and wherever a symbolic link there resolves.
-//
-// TemplateSatisfied is the audit's question: does a valid file inside the repository cover
-// the template. Apply asks a narrower one: is a configuration already in use under another
-// name. A monorepo's tsconfig.base.json linked from a shared root, or one the validator
-// rejects, is still the file the toolchain reads, and a canonical tsconfig.json written
-// beside it is the contradictory second config AltPaths exists to prevent. The audit keeps
-// reporting the alternative's content; apply only declines to add a rival.
-func alternativePresent(repoPath string, tmpl TemplateItem) bool {
-	for i := 0; i < len(tmpl.AltPaths) && i < maxTemplateCandidates; i++ {
-		if util.FileExists(filepath.Join(repoPath, filepath.FromSlash(tmpl.AltPaths[i]))) {
-			return true
-		}
+	// TemplateSatisfied is the audit's question: does a valid file inside the repository
+	// cover the template. Apply asks a narrower one: is a configuration already in use under
+	// another name. A monorepo's tsconfig.base.json linked from a shared root, or one the
+	// validator rejects, is still the file the toolchain reads, and a canonical tsconfig.json
+	// written beside it is the contradictory second config AltPaths exists to prevent. The
+	// same holds for a searched name: yamllint reads .yamllint.yaml ahead of .yamllint.yml, so
+	// a scaffolded .yamllint.yml beside it would be configuration nothing reads. The audit
+	// keeps reporting the file's content; apply only declines to add a rival.
+	present := presentNames(repoPath, tmpl)
+	if len(present) > 0 && present[0] != tmpl.Path {
+		return templateCovered, present[0], nil
 	}
-	return false
+	// Past this point any file present is the canonical one, first in lookup order; a second
+	// entry is an alternative beside it, which blocks a rewrite the same way.
+	if len(present) > 1 || TemplateSatisfied(repoPath, tmpl) {
+		return templateSkipped, "", nil
+	}
+	return templateCreated, "", nil
 }
 
 // templateContent resolves a template's body from its generator or its embedded source.
@@ -198,6 +208,7 @@ const (
 	templateSkipped
 	templateDeferred
 	templateUnmet
+	templateCovered
 )
 
 func applySingleTemplate(ctx context.Context, repoPath string, tmpl TemplateItem, repoName, owner string, force bool, report *ApplyReport) {
@@ -207,6 +218,8 @@ func applySingleTemplate(ctx context.Context, repoPath string, tmpl TemplateItem
 		report.Errors = append(report.Errors, err.Error())
 	case outcome == templateSkipped:
 		report.SkippedTemplates = append(report.SkippedTemplates, tmpl.Path)
+	case outcome == templateCovered:
+		report.CoveredTemplates = append(report.CoveredTemplates, CoveredTemplate{Path: tmpl.Path, InUse: note})
 	case outcome == templateDeferred:
 		report.DeferredTemplates = append(report.DeferredTemplates, fmt.Sprintf("%s (%s)", tmpl.Path, note))
 	case outcome == templateUnmet:
@@ -218,11 +231,11 @@ func applySingleTemplate(ctx context.Context, repoPath string, tmpl TemplateItem
 
 // scaffoldTemplate writes one template unless it is covered, owned by another command,
 // unable to work in this repository, or already present without --force. The note names the
-// producer of a deferred template and what an unmet one lacks.
+// file covering a covered template, the producer of a deferred one and what an unmet one lacks.
 func scaffoldTemplate(ctx context.Context, repoPath string, tmpl TemplateItem, repoName, owner string, force bool) (templateOutcome, string, error) {
-	skip, err := templateDisposition(repoPath, tmpl, force)
-	if err != nil || skip {
-		return templateSkipped, "", err
+	outcome, note, err := templateDisposition(repoPath, tmpl, force)
+	if err != nil || outcome != templateCreated {
+		return outcome, note, err
 	}
 	if outcome, note := templateWithheld(ctx, repoPath, tmpl); outcome != templateCreated {
 		return outcome, note, nil
