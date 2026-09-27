@@ -190,6 +190,6 @@ go run ./cmd/standardsctl baseline
 
 Distributed under the **European Union Public Licence 1.2 (EUPL-1.2)**. See
 [`LICENSE`](LICENSE) for the full text and [`REUSE.toml`](REUSE.toml) for SPDX
-licensing metadata.
+licensing metadata. For open-source projects, standards, and specifications this repository builds upon, see the [Credits & Acknowledgements](docs/credits.md) page.
 
 Part of the **[CordanaLLM](https://github.com/CordanaLLM)** project.
