@@ -8,7 +8,7 @@
 - `praetorctl compile-context`: Transpiles AGENTS.md to CLAUDE.md, Cursor rules, and Copilot.
 - `praetorctl baseline`: Records or verifies legacy brownfield technical debt.
 - `praetorctl audit`: Validates 100% compliance against the active standards baseline.
-- `praetorctl compile-framework-assets --config <kit.yaml> --output <dir>`: Writes a framework kit's `llms.txt`, `llms-full.txt`, `.agents/rules/<kit_name>.md` and starter templates (ADR-0007 clause 5).
+- `praetorctl compile-framework-assets --config <kit.yaml> --output <dir>`: Writes a framework kit's `llms.txt`, `llms-full.txt`, `<dir>/.agents/rules/<kit_name>.md` and starter templates (ADR-0007 clause 5).
 
 ### Framework kit assets
 

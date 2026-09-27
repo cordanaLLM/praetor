@@ -470,9 +470,10 @@ interceptor it writes from `agenthook.BuiltinRules` (see
 the false-positive ones, are in `internal/agenthook/testdata/pre-tool/cases.json`.
 
 The environment check denies when the hook process itself runs with Lefthook disabled
-(`LEFTHOOK=0` or `LEFTHOOK=false`, compared exactly, as lefthook v2.1.14 does in
-`internal/command/run.go`) or with a Lefthook exclusion or skip list. It runs for
-`environment` and before every `pre-tool` judgement.
+(`LEFTHOOK=0` or `LEFTHOOK=false`, compared exactly, as lefthook v2.1.14 does in its
+[command runner](https://github.com/evilmartians/lefthook/blob/v2.1.14/internal/command/run.go))
+or with a Lefthook exclusion or skip list. It runs for `environment` and before every
+`pre-tool` judgement.
 
 ### The adopted interceptor
 
@@ -556,6 +557,8 @@ verified on the installed 1.2.7 build, not taken from training memory or from
 everything it covers). It is not a live-recorded fixture; see the note at the end of this
 section for what remains unverified.
 
+<!-- praetor:docs-references:off .agents/hooks.json is Antigravity's own workspace hook file in a governed repository; this repository ships only the plugin copy, .agents/plugins/praetor/hooks.json -->
+
 Hooks are configured in `.agents/hooks.json` (or a plugin's own copy), one JSON object
 keyed by hook name, each hook naming one or more of `PreToolUse`, `PostToolUse`,
 `PreInvocation`, `PostInvocation` and `Stop`. `PreToolUse`/`PostToolUse` groups carry a
@@ -566,6 +569,8 @@ default 30 second timeout. `PreToolUse` serves both command policy and the
 `invoke_subagent` brief gate; `Stop` keeps its existing evaluator. `PostToolUse`,
 `PreInvocation` and `PostInvocation` have no AGY return-body enforcement because the
 public payload contract does not expose that body.
+
+<!-- praetor:docs-references:on -->
 
 Every payload carries `conversationId` and `workspacePaths` (an array; the entrypoint
 uses element 0 and falls back to the process working directory when the array is empty

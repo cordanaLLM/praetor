@@ -154,6 +154,8 @@ fleet topology, runner routing, cluster manifests, workstation settings. `plan`
 accepts them in the owner tree and `prepare` in the candidate tree, under a
 fixed list of owner-only prefixes:
 
+<!-- praetor:docs-references:off the Does not match column lists illustrative paths the owner-only matcher rejects; no repository carries them -->
+
 | Prefix | Kind | Matches | Does not match |
 | --- | --- | --- | --- |
 | `.config/fleet.yaml` | exact file | `.config/fleet.yaml` | `.config/fleet.yaml.bak` |
@@ -162,6 +164,8 @@ fixed list of owner-only prefixes:
 | `.config/operator/` | directory | `.config/operator/fleet.yaml` | |
 | `deploy/arc/` | directory | `deploy/arc/scale-set.yaml` | |
 | `deploy/k8s/` | directory | `deploy/k8s/app/kustomization.yaml` | `deploy/k8sx/a.yaml`, `deploy/helm/values.yaml` |
+
+<!-- praetor:docs-references:on -->
 
 Matching is on whole path segments. A path under a prefix is accepted only when
 all of these hold:

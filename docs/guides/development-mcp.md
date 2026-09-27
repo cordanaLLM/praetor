@@ -265,8 +265,9 @@ the `Repository: <owner>/<name>` line from the manifest's `repository` block
 - A locked repository shows the pinned profiles and facets joined with the
   manifest's overrides, which is the policy `praetorctl adopt` writes the branch
   ruleset from. Its drift list follows that policy, so a profile that requires an
-  SBOM reports a missing `.github/workflows/sbom.yml`
-  (`TestServer_Positive_PlanShowsThePinnedProfilePolicy`). Any workflow step that writes an
+  SBOM reports `.github/workflows (no workflow generates an SBOM: …)` when no workflow
+  generates one (`adopt.SBOMWorkflowDrift`, pinned by
+  `TestServer_Positive_PlanShowsThePinnedProfilePolicy`). Any workflow step that writes an
   SBOM satisfies that requirement, including a GoReleaser release whose configuration declares
   `sboms`; a file named `sbom.yml` that runs no generator does not
   (`internal/forge/sbom_workflow_test.go`).

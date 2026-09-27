@@ -23,10 +23,10 @@ npm run dev
 ```bash
 DOCS_SITE_URL=https://<owner>.github.io/<repo>/ npm run build
 # Built artifacts in dist/ with sitemap-index.xml and sitemap-0.xml
-praetorctl seo audit dist
+praetorctl seo audit ./dist
 ```
 
-`praetorctl seo audit dist` checks the JSON-LD in every built page head and validates both sitemap
+`praetorctl seo audit ./dist` checks the JSON-LD in every built page head and validates both sitemap
 files, and fails while a page head still carries a placeholder; the
 [MkDocs preset README](../mkdocs/README.md) lists what it enforces.
 

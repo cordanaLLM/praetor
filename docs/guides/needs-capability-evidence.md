@@ -302,7 +302,7 @@ The walk never enters:
   `target` or `testdata`. Matching is exact and case-sensitive, so
   first-party trees such as `Build-tools/` or `build_scripts/` are walked;
 - `scratch/` and `cache/` directly under the walk root or directly under a
-  repository root. Deeper, as in `internal/cache/`, they are ordinary sources.
+  repository root. Deeper, as in `<repo>/internal/cache/`, they are ordinary sources.
 
 A checkout inside a skipped directory is not discovered. The walk visits at
 most 250,000 directories and 64 levels; a tree beyond either bound fails
