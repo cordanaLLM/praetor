@@ -34,28 +34,10 @@ func skillFixture(t *testing.T) string {
 	return root
 }
 
-// Positive: the plugin ships every declared skill. It shipped none, while praetor's own
-// harvester already read plugin skills from <plugin>/skills, so installing the plugin
-// delivered six personas and not one of the eleven skills the repository declares.
-func TestProjectPluginSkills_Positive_ShipsEveryDeclaredSkill(t *testing.T) {
-	root := skillFixture(t)
-	written, err := ProjectPluginSkills(context.Background(), root)
-	if err != nil {
-		t.Fatalf("projection: %v", err)
-	}
-	if written != 2 {
-		t.Fatalf("expected 2 projected skills, got %d", written)
-	}
-	verified, err := VerifyPluginSkills(context.Background(), root)
-	if err != nil || verified != 2 {
-		t.Fatalf("freshly projected skills do not verify: %d %v", verified, err)
-	}
-}
-
 // Negative: a skill the repository does not declare must not ship.
 func TestVerifyPluginSkills_Negative_RejectsAnOrphanSkill(t *testing.T) {
 	root := skillFixture(t)
-	if _, err := ProjectPluginSkills(context.Background(), root); err != nil {
+	if err := compileFixture(t, root); err != nil {
 		t.Fatal(err)
 	}
 	orphan := filepath.Join(root, filepath.FromSlash(PluginSkillsRel), "not-declared")
@@ -74,7 +56,7 @@ func TestVerifyPluginSkills_Negative_RejectsAnOrphanSkill(t *testing.T) {
 // Negative: a shipped copy that drifts from its declaration is reported.
 func TestVerifyPluginSkills_Negative_RejectsADriftedCopy(t *testing.T) {
 	root := skillFixture(t)
-	if _, err := ProjectPluginSkills(context.Background(), root); err != nil {
+	if err := compileFixture(t, root); err != nil {
 		t.Fatal(err)
 	}
 	shipped := filepath.Join(root, filepath.FromSlash(PluginSkillsRel), "hiss-audit", SkillEntryName)
@@ -83,23 +65,6 @@ func TestVerifyPluginSkills_Negative_RejectsADriftedCopy(t *testing.T) {
 	}
 	if _, err := VerifyPluginSkills(context.Background(), root); err == nil {
 		t.Fatal("a drifted plugin skill verified")
-	}
-}
-
-// Boundary: a repository shipping no plugin manifest projects and verifies nothing rather
-// than inventing a requirement it never declared.
-func TestPluginSkills_Boundary_NoManifestIsNotAFailure(t *testing.T) {
-	root := skillFixture(t)
-	if err := os.Remove(filepath.Join(root, filepath.FromSlash(PluginManifestRel))); err != nil {
-		t.Fatal(err)
-	}
-	written, err := ProjectPluginSkills(context.Background(), root)
-	if err != nil || written != 0 {
-		t.Errorf("projected %d skills without a plugin manifest: %v", written, err)
-	}
-	verified, err := VerifyPluginSkills(context.Background(), root)
-	if err != nil || verified != 0 {
-		t.Errorf("verified %d skills without a plugin manifest: %v", verified, err)
 	}
 }
 

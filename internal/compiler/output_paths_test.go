@@ -163,34 +163,13 @@ func TestVerifyCompiledRefusesSymlinkedDirectoryComponent(t *testing.T) {
 	}
 }
 
-// Negative: a symlinked canonical persona is refused on the plugin path too, where no
-// CompileAgents read stands in front of it; main followed it and shipped the target's text.
-func TestProjectPluginAgentsRefusesSymlinkedPersona(t *testing.T) {
-	root := skillFixture(t)
-	victim := filepath.Join(root, "victim.md")
-	writeOutputFixture(t, victim, "victim text\n")
-	persona := filepath.Join(root, filepath.FromSlash(CanonicalAgentsRel), "linked.md")
-	if err := os.MkdirAll(filepath.Dir(persona), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(victim, persona); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ProjectPluginAgents(t.Context(), root); !errors.Is(err, errPersonaNotRegular) {
-		t.Fatalf("want errPersonaNotRegular, got %v", err)
-	}
-	if _, err := os.Lstat(filepath.Join(root, filepath.FromSlash(PluginAgentsRel), "linked.md")); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("projected the symlinked persona: %v", err)
-	}
-}
-
 // Negative: a symlinked skill directory, canonical or shipped, is refused rather than skipped.
 // IsDir is false for a symlink, so the old filter verified the plugin without it.
 func TestPluginSkillsRefuseSymlinkedSkillDirectories(t *testing.T) {
 	for _, base := range []string{CanonicalSkillsRel, PluginSkillsRel} {
 		t.Run(base, func(t *testing.T) {
 			root := skillFixture(t)
-			if _, err := ProjectPluginSkills(t.Context(), root); err != nil {
+			if err := compileFixture(t, root); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := VerifyPluginSkills(t.Context(), root); err != nil {

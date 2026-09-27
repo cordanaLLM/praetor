@@ -99,23 +99,6 @@ func pluginSkillProjections(ctx context.Context, rootDir string) ([]projectionFi
 	return files, nil
 }
 
-// ProjectPluginSkills writes every canonical skill into the plugin, so installing the plugin
-// delivers the skills the repository declares rather than the personas alone. Every copy is
-// checked before the first is written. It returns the number of files written.
-func ProjectPluginSkills(ctx context.Context, rootDir string) (int, error) {
-	files, err := pluginSkillProjections(ctx, rootDir)
-	if err != nil {
-		return 0, err
-	}
-	if err := checkProjectionFiles(ctx, rootDir, files); err != nil {
-		return 0, err
-	}
-	if err := writeProjectionFiles(ctx, rootDir, files); err != nil {
-		return 0, err
-	}
-	return len(files), nil
-}
-
 // VerifyPluginSkills checks the projection in both directions: every declared skill is shipped,
 // and every shipped skill is one the repository declares. Checking only the first direction
 // lets a stale copy survive indefinitely, which is how six orphaned personas came to sit in

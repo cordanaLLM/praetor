@@ -218,20 +218,3 @@ func verifyProjection(ctx context.Context, rootDir, rel string, want []byte) err
 	}
 	return nil
 }
-
-// ProjectPluginAgents copies the canonical personas into the plugin agents directory when
-// the repository ships the praetor plugin. Every copy is checked before the first is written.
-// It returns the number of files written.
-func ProjectPluginAgents(ctx context.Context, rootDir string) (int, error) {
-	files, err := personaProjections(ctx, rootDir, pluginPersonaDirs(rootDir))
-	if err != nil {
-		return 0, err
-	}
-	if err := checkProjectionFiles(ctx, rootDir, files); err != nil {
-		return 0, err
-	}
-	if err := writeProjectionFiles(ctx, rootDir, files); err != nil {
-		return 0, err
-	}
-	return len(files), nil
-}
