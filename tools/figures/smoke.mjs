@@ -21,6 +21,9 @@ const MAX_FILES = 20_000;
 const MAX_PAGES = 256;
 const PAGE_TIMEOUT_MS = 30_000;
 const PACKET_TIMEOUT_MS = 8_000;
+/** How long one scenario tab gets to move a packet once started, and how many tabs are tried. */
+const TAB_PACKET_TIMEOUT_MS = 3_000;
+const MAX_TABS = 48;
 const SETTLE_MS = 2_000;
 const MAX_SCROLL_STEPS = 400;
 const TYPES = {
@@ -81,6 +84,23 @@ const visiblePackets = () =>
     (g) => g.querySelector('circle[r="4.5"]') && g.style.opacity === '1',
   ).length;
 
+/**
+ * Whether a packet moves on the page: first under autoplay, then after starting each scenario tab
+ * in turn. A figure whose opening scenarios only light boxes (lattice-join: four of them, about
+ * 14 s at its speed) moves its first packet long after the autoplay wait, and its player is still
+ * sound; a tab starts its scenario from the first beat at once.
+ */
+async function packetMoved(page, tabs) {
+  const moved = (ms) => page.waitForFunction(visiblePackets, undefined, { timeout: ms }).then(() => true, () => false);
+  if (await moved(PACKET_TIMEOUT_MS)) return true;
+  const tab = page.locator('.praetor-figure [role="tab"]');
+  for (let i = 0; i < tabs && i < MAX_TABS; i++) {
+    await tab.nth(i).click({ timeout: PAGE_TIMEOUT_MS });
+    if (await moved(TAB_PACKET_TIMEOUT_MS)) return true;
+  }
+  return false;
+}
+
 /** Findings for one page in one motion mode. */
 async function checkPage(context, base, path, reduced) {
   const page = await context.newPage();
@@ -100,9 +120,8 @@ async function checkPage(context, base, path, reduced) {
       await page.waitForTimeout(SETTLE_MS);
       const packets = await page.evaluate(visiblePackets);
       if (packets) errors.push(`${packets} packet(s) moving under prefers-reduced-motion`);
-    } else if (tabs) {
-      const moved = await page.waitForFunction(visiblePackets, undefined, { timeout: PACKET_TIMEOUT_MS }).then(() => true, () => false);
-      if (!moved) errors.push('no packet moved within the timeout');
+    } else if (tabs && !(await packetMoved(page, tabs))) {
+      errors.push('no packet moved within the timeout, under autoplay or after starting any scenario tab');
     }
   } finally {
     await page.close();

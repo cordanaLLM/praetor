@@ -10,6 +10,17 @@ the design.
 The first figure is the gated pipeline on the
 [C4 architecture page](../architecture/c4-models.md#3-level-3-component-diagram-gating-engine).
 
+## Mermaid is retired on the root site
+
+Every diagram the root site builds is a figure, the generated wiki pages included, so the root
+`mkdocs.yml` declares no mermaid fence. A Mermaid fence on a page the root site builds fails
+`python3 -B scripts/docs_diagrams.py sources` and `site`, and the finding says to draw it as a
+`figure` fence instead. The one exception is the adopter preset: `docs/presets/mkdocs/` builds
+its own `docs/` with its own `mkdocs.yml`, keeps Mermaid, and needs no Node. The root
+`mkdocs.yml` excludes that directory (`exclude_docs`), and the checker skips it too. The
+[documentation governance guide](documentation-governance.md#site-build-and-diagrams) covers
+which configuration enables which kind.
+
 ## Add a figure
 
 1. Read the code the figure will show. Old diagrams and prose are hypotheses: every box, edge and
@@ -77,7 +88,7 @@ For each spec, `npm --prefix tools/figures run build` writes to `docs/assets/fig
 | :-- | :-- |
 | `<slug>.svg` | The animated SVG, with `role="img"`, a `<title>`, a `<desc>`, a credit comment and the embedded spec. |
 | `<slug>.static.svg` | The same figure without steps, shown under `prefers-reduced-motion`. |
-| `<slug>.json` | Title, alt, text description, evidence, the edges with box labels, the image size, and the SHA-256 of the spec, the engine and both SVGs. |
+| `<slug>.json` | Title, alt, text description, evidence, the edges with box labels, the size of each SVG (`width`/`height` animated, `static_width`/`static_height` static), and the SHA-256 of the spec, the engine and both SVGs. |
 
 A build also deletes the outputs of a spec that no longer exists. Each figure has its own JSON
 file, so figure changes in parallel branches do not collide.
@@ -97,6 +108,11 @@ The player chunk must stay under 250 kB minified; `run check` and `run bundle` f
 `<picture>` of both SVGs, the caption and a `<details>` text description. A fence nested inside a
 longer fence stays source text. A slug without JSON logs a warning, which fails
 `mkdocs build --strict`.
+
+The static SVG has no scenario area, so it is usually shorter than the animated one. The
+reduced-motion `<source>` carries the static size and the `<img>` the animated size, so the
+browser reserves the height of the image it shows: no letterboxing and no layout shift
+(`test_each_image_carries_its_own_recorded_size` in `scripts/test_docs_diagrams.py`).
 
 The loader then mounts the player in place of the `<picture>` when the figure nears the viewport.
 Under reduced motion it starts paused on each step's last beat. The caption and the text
@@ -130,9 +146,9 @@ GitHub keeps `figure`, `figcaption`, `picture`, `img` and `details`, and strips 
 | `npm --prefix tools/figures test` | a validation rule, the text derivation, the stale check or the keyboard shim regresses |
 | `npm --prefix tools/figures run typecheck` | a spec or the player code does not type-check against `tools/figures/types.ts` and interfig |
 | `npm --prefix tools/figures run check` | a spec breaks a rule, a committed output differs from a fresh build, or the player chunk exceeds its budget |
-| `python3 -B scripts/docs_diagrams.py sources` | a JSON hash no longer matches its spec, the engine or its SVGs; a spec or JSON is missing its pair; a fence names an unknown figure; the README block differs; an evidence anchor is gone |
-| `python3 -B scripts/docs_diagrams.py site --config mkdocs.yml --docs docs --site site` | after `mkdocs build`: a figure did not render, an image does not resolve, the page does not load the loader, or `registry.json` lacks the slug |
-| `npm --prefix tools/figures run smoke -- --site <dir>` | in Chromium, against a built site: a figure did not mount the player, a figure with tabs moved no packet, a packet moved under reduced motion, or a page logged an error |
+| `python3 -B scripts/docs_diagrams.py sources` | a JSON hash no longer matches its spec, the engine or its SVGs; a JSON lacks the size of either SVG; a spec or JSON is missing its pair; a fence names an unknown figure; a root-site page holds a Mermaid fence; the README block differs; an evidence anchor is gone |
+| `python3 -B scripts/docs_diagrams.py site --config mkdocs.yml --docs docs --site site` | after `mkdocs build`: a figure did not render, an image does not resolve, the page does not load the loader, `registry.json` lacks the slug, or a page holds a Mermaid fence |
+| `npm --prefix tools/figures run smoke -- --site <dir>` | in Chromium, against a built site: a figure did not mount the player, a page with scenario tabs moved no packet under autoplay or after starting any tab, a packet moved under reduced motion, or a page logged an error |
 
 `make docs-figures-check` runs the tests, the type check, `check` and `sources`, and
 `make docs-diagrams-test` replays the checker's fixtures; both are part of `make verify-all`. The

@@ -275,11 +275,11 @@ which also ran the tests but reported the change as configuration. A
 ## Site build and diagrams
 
 The published site is built from the root `mkdocs.yml` by
-`.github/workflows/pages.yml`, and the adopter preset from
-`docs/presets/mkdocs/mkdocs.yml` by the CI **Documentation Integrity Audit**
-step. Both run `mkdocs build --strict`. A strict build still passes when a
-diagram ships as a code listing, so each build is followed by the diagram
-check in `scripts/docs_diagrams.py`:
+`.github/workflows/pages.yml` and by the CI **Documentation Integrity Audit**
+step, and the adopter preset from `docs/presets/mkdocs/mkdocs.yml` by the CI
+`docs-presets` job. All of them run `mkdocs build --strict`. A strict build
+still passes when a diagram ships as a code listing, so each build is followed
+by the diagram check in `scripts/docs_diagrams.py`:
 
 ```bash
 npm ci --prefix tools/figures --ignore-scripts
@@ -289,44 +289,56 @@ python3 -B scripts/docs_diagrams.py site --config mkdocs.yml --docs docs --site 
 python3 -B scripts/docs_diagrams.py sources
 ```
 
-The documentation has two diagram kinds, and the configuration decides which
-ones a build accepts:
+The configuration decides which diagram kind a build accepts:
 
-- **Mermaid.** Material for MkDocs draws a diagram only from a
-  `<pre class="mermaid">` element, which `pymdownx.superfences` emits only when
-  the configuration declares the mermaid custom fence (`name: mermaid`,
-  `class: mermaid`,
-  `format: !!python/name:pymdownx.superfences.fence_code_format`).
-- **Interactive figures.** A `figure` fence names a spec under
+- **Interactive figures: the root site.** A `figure` fence names a spec under
   `docs/figures/`. The root `mkdocs.yml` lists
   `scripts/mkdocs_figures_hook.py` under `hooks:`, which renders each fence as
   the committed SVGs, a caption and a text description; the player loads on
-  top. The preset lists no hook, so it accepts Mermaid only. The
-  [figures guide](figures.md) covers authoring and the build.
+  top. The root site declares no mermaid fence, so figures are its only
+  diagram kind. The [figures guide](figures.md) covers authoring and the build.
+- **Mermaid: the adopter preset.** Material for MkDocs draws a diagram only
+  from a `<pre class="mermaid">` element, which `pymdownx.superfences` emits
+  only when the configuration declares the mermaid custom fence
+  (`name: mermaid`, `class: mermaid`,
+  `format: !!python/name:pymdownx.superfences.fence_code_format`). The preset
+  declares it and lists no hook, so it accepts Mermaid only and needs no Node.
+
+The preset's pages live in `docs/presets/mkdocs/docs/`, inside the root
+`docs_dir`. The root `mkdocs.yml` lists that directory under `exclude_docs`,
+so the root site neither builds nor links the preset's example page; the
+preset README stays in the root navigation. The checker reads `exclude_docs`
+and skips the same pages MkDocs skips. It implements the gitignore subset the
+configurations use and fails on a pattern with `!`, `**` or a backslash
+instead of guessing.
 
 `site` fails when a page holds a fence of a kind its configuration does not
-enable, when a built page holds fewer mermaid `<pre>` elements than its source
-has `mermaid` fences, or when a `figure` fence did not become a
-`figure.praetor-figure` whose images resolve under the site, on a page that
+enable (on the root site, a Mermaid fence, with a finding that says to draw it
+as a `figure` fence), when a built page holds fewer mermaid `<pre>` elements
+than its source has `mermaid` fences, or when a `figure` fence did not become
+a `figure.praetor-figure` whose images resolve under the site, on a page that
 loads the figure loader, with its slug in the bundle's `registry.json`. A fence
 nested inside a longer fence is source text and is not expected to render. The
 mapping from a page to its HTML file assumes the default
 `use_directory_urls: true`.
 
-`sources` needs neither a site nor Node. It fails when a figure's JSON no
-longer matches its spec, the vendored engine or its SVGs, when a spec and its
-JSON are not both present, when a fence names an unknown figure, when the
-README's portable figure block differs from the renderer, or when an evidence
-anchor's file or symbol is gone.
+`sources` needs neither a site nor Node. It checks the pages the root
+configuration builds and fails on a fence of a kind that configuration does
+not enable, when a figure's JSON no longer matches its spec, the vendored
+engine or its SVGs, when the JSON lacks the size of either SVG, when a spec
+and its JSON are not both present, when a fence names an unknown figure, when
+the README's portable figure block differs from the renderer, or when an
+evidence anchor's file or symbol is gone.
 
 `make docs-diagrams-test` (part of `make verify-all`) replays the checker's
-fixtures in `scripts/test_docs_diagrams.py` in both directions and asserts
-which diagram kinds both configuration files enable, so removing the mermaid
-fence or the figures hook fails without a site build. `make docs-figures-check`
+fixtures in `scripts/test_docs_diagrams.py` in both directions and asserts the
+diagram kind each configuration enables (figures only at the root, Mermaid
+only in the preset), so adding the mermaid fence back to the root site or
+dropping the figures hook fails without a site build. `make docs-figures-check`
 (also part of `make verify-all`) runs the figure build's tests and type check,
 rebuilds every figure and compares it byte for byte with the committed files,
 and runs `sources`. The Pages workflow also runs the Chromium smoke test, which
-fails when a figure does not mount the player.
+fails when a figure does not mount the player or moves no packet.
 
 Both sites share one JSON-LD template, `docs/presets/mkdocs/overrides/main.html`,
 which reads the author and repository from the rendering site's `mkdocs.yml`
