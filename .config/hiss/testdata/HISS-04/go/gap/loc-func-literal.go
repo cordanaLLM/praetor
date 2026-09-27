@@ -1,8 +1,9 @@
 package p
 
 // LongLiteral is a 120-line function body bound to a package-level variable. It is a
-// function by every measure HISS-04 names, and neither the hiss scanner (FuncDecl only)
-// nor funlen (top-level FuncDecl only) measures it.
+// function by every measure HISS-04 names. The hiss scanner measures its complexity but
+// enforces length on a FuncDecl only, and funlen reads top-level FuncDecls only, so nothing
+// decides its length.
 var LongLiteral = func() []int {
 	return []int{
 		0,

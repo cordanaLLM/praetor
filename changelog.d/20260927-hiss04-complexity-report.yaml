@@ -1,0 +1,3 @@
+type: added
+title: Measure Go cyclomatic, cognitive and statement complexity with one shared HISS-04 visitor and report it, without enforcing it, from every audit, gate, dogfood, MCP and editor entry point
+breaking: false

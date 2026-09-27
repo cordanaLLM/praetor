@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
@@ -89,16 +88,13 @@ func Classify(a, b, c, d int) string {
 }
 `
 
-const fixturePickGo = `package main
+// fixtureLiteralGo binds a function literal to a package variable; the literal it returns is
+// part of it.
+const fixtureLiteralGo = `package main
 
-// Pick exercises the else-if chain accounting.
-func Pick(x int) int {
-	if x < 0 {
-		return -1
-	} else if x == 0 {
-		return 0
-	} else {
-		return 1
+var Handler = func(n int) func() int {
+	return func() int {
+		return n
 	}
 }
 `
@@ -747,7 +743,13 @@ func TestServer_Positive_InspectSymbolsMeasuresComplexity(t *testing.T) {
 	expectText(t, "inspect dir", res, "Func: Greet")
 	expectText(t, "inspect dir", res, "Func: Classify")
 	expectText(t, "inspect dir", res, "Cyclo: 13 (<=10)")
-	expectText(t, "inspect dir", res, "HISS-04 WARN: Cyclo")
+	// Complexity is measured, not enforced: the verdict names it under the report severity
+	// and prints the same line the audit prints, while only length can warn.
+	expectText(t, "inspect dir", res, "[HISS-04 REPORT: cyclomatic]")
+	expectText(t, "inspect dir", res, "[REPORT] HISS-04 complex.go:4 Function 'Classify' cyclomatic complexity 13 exceeds 10")
+	if strings.Contains(res.Content[0].Text, "WARN") {
+		t.Errorf("a complexity measurement was reported as a warning:\n%s", res.Content[0].Text)
+	}
 
 	// The manifest asks for 75 lines; the audit caps it at its own length, and so does this.
 	single := callTool(t, srv, "standards_inspect_symbols", map[string]any{"path": "main.go"})
@@ -839,53 +841,33 @@ func TestServer_Negative_InspectSymbols(t *testing.T) {
 	expectText(t, "no go files", res, "No Go source files")
 }
 
-func TestServer_Boundary_MeasureFuncMetrics(t *testing.T) {
-	cases := []struct {
-		name string
-		src  string
-		fn   string
-		want funcMetrics
-	}{
-		{"simple", fixtureMainGo, "Greet", funcMetrics{LOC: 6, Statements: 3, Cyclomatic: 2, Cognitive: 1}},
-		{"branchy", fixtureComplexGo, "Classify", funcMetrics{LOC: 27, Statements: 20, Cyclomatic: 13, Cognitive: 12}},
-		{"else-if chain", fixturePickGo, "Pick", funcMetrics{LOC: 9, Statements: 5, Cyclomatic: 3, Cognitive: 3}},
-		{"empty body", "package p\n\nfunc Nop() {}\n", "Nop", funcMetrics{LOC: 1, Statements: 0, Cyclomatic: 1, Cognitive: 0}},
+// inspect_symbols measures with the scanner's own visitor: every value it prints is the one
+// hiss.MeasureDecl returns, and a literal bound to a package variable is measured as a unit.
+func TestServer_Boundary_InspectSymbolsUsesTheScannerVisitor(t *testing.T) {
+	srv, root := newFixtureServer(t)
+	writeFixtureFile(t, root, "literal.go", fixtureLiteralGo)
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "complex.go", fixtureComplexGo, 0)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, tc := range cases {
-		fset := token.NewFileSet()
-		file, err := parser.ParseFile(fset, tc.name+".go", tc.src, 0)
-		if err != nil {
-			t.Fatalf("%s: parse: %v", tc.name, err)
-		}
-		fn := findFunc(file, tc.fn)
-		if fn == nil {
-			t.Fatalf("%s: function %s not found", tc.name, tc.fn)
-		}
-		if got := measureFunc(fset, fn); got != tc.want {
-			t.Errorf("%s: metrics = %+v, want %+v", tc.name, got, tc.want)
-		}
+	units := hiss.MeasureDecl(fset, file.Decls[0])
+	if len(units) != 1 {
+		t.Fatalf("units = %+v, want Classify alone", units)
 	}
+	m := units[0].Metrics
+	res := callTool(t, srv, "standards_inspect_symbols", map[string]any{"path": "complex.go"})
+	expectText(t, "shared visitor", res, fmt.Sprintf("Func: Classify | LOC: %d (<=", m.LOC))
+	expectText(t, "shared visitor", res, fmt.Sprintf("| Stmts: %d (<=", m.Statements))
+	expectText(t, "shared visitor", res, fmt.Sprintf("| Cyclo: %d (<=", m.Cyclomatic))
+	expectText(t, "shared visitor", res, fmt.Sprintf("| Cognitive: %d (<=", m.Cognitive))
 
-	// Boundary: exactly at the caps is a pass; one over each cap names the bound.
-	bounds := config.HISSComplexityCeiling()
-	at := funcMetrics{LOC: bounds.MaxFuncLOC, Statements: bounds.MaxStatements, Cyclomatic: bounds.MaxCyclomatic, Cognitive: bounds.MaxCognitive}
-	if v := at.violations(bounds); len(v) != 0 {
-		t.Errorf("metrics at the caps reported %v", v)
+	literal := callTool(t, srv, "standards_inspect_symbols", map[string]any{"path": "literal.go"})
+	expectText(t, "package literal", literal, "Func literal: Handler | LOC: 5")
+	// Negative: a literal inside a function is part of that function, not a unit of its own.
+	if strings.Count(literal.Content[0].Text, "Func literal") != 1 {
+		t.Errorf("nested literal measured separately:\n%s", literal.Content[0].Text)
 	}
-	over := funcMetrics{LOC: bounds.MaxFuncLOC + 1, Statements: bounds.MaxStatements + 1, Cyclomatic: bounds.MaxCyclomatic + 1, Cognitive: bounds.MaxCognitive + 1}
-	if v := strings.Join(over.violations(bounds), ","); v != "LOC,Stmts,Cyclo,Cognitive" {
-		t.Errorf("violations over every cap = %q", v)
-	}
-}
-
-// findFunc returns the named top-level function declaration of a parsed file.
-func findFunc(file *ast.File, name string) *ast.FuncDecl {
-	for _, decl := range file.Decls {
-		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == name {
-			return fn
-		}
-	}
-	return nil
 }
 
 // ---- argument strictness and JSON-RPC framing ----------------------------------------------

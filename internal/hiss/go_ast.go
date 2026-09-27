@@ -46,6 +46,23 @@ func scanGoSource(data []byte, rel string, rep *ScanReport, opts ScanOptions) {
 		pkg:     file.Name.Name,
 	}
 	g.walk(file)
+	g.measure(file, opts.Complexity)
+}
+
+// measure reports every production function whose complexity exceeds limits. The values
+// are measurements, not violations: they never reach the infraction list, so no scan result,
+// baseline or gate changes because of them. Test files are exempt, as they are from the
+// length rule and from gocyclo, gocognit and funlen in .golangci.yml.
+func (g *goScanner) measure(file *ast.File, limits ComplexityLimits) {
+	if g.isTest {
+		return
+	}
+	units := MeasureFile(g.fset, file)
+	for i := 0; i < len(units); i++ {
+		for _, m := range units[i].Measurements(g.fset, g.rel, limits) {
+			recordMeasurement(g.rep, m)
+		}
+	}
 }
 
 type goScanner struct {
@@ -319,7 +336,7 @@ func (g *goScanner) checkFuncLOC(fn *ast.FuncDecl) {
 	if fn.Body == nil || g.isTest {
 		return
 	}
-	loc := g.line(fn.End()) - g.line(fn.Pos()) + 1
+	loc := nodeLines(g.fset, fn)
 	if loc > g.maxLOC {
 		g.record("HISS-04", fn.Pos(), fn.Name.Name,
 			fmt.Sprintf("Function '%s' (%d LOC) exceeds HISS-04 / NASA Rule 4 limit of %d LOC", fn.Name.Name, loc, g.maxLOC))

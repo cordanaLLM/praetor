@@ -214,10 +214,66 @@ record each one. A Rust function behind any header form that "Rust: scopes follo
 (`pub(super)`, `const`, `unsafe`, `extern "C"`) is decided like a plain `fn`
 (`HISS-01/rust/positive/qualified-header.rs`).
 
+## HISS-04: Go complexity is measured, not enforced
+
+For Go, the scanner enforces one HISS-04 bound, function length, and *measures* the other three:
+cyclomatic complexity, cognitive complexity and statement count. A value over its limit is printed
+as a report line and changes nothing else: it never becomes a violation, never enters
+`.standards-baseline.json`, and never fails an audit, a gate stage or a dogfood run. A report line
+has this shape:
+
+```text
+[REPORT] HISS-04 pkg/parse/parse.go:24 Function 'Parse' cyclomatic complexity 12 exceeds 10 (report: measured, not enforced)
+```
+
+One visitor takes every measurement: `hiss.MeasureFunc` in `internal/hiss/complexity.go`. Its
+counts follow the linters that enforce the same caps. Cyclomatic follows gocyclo, cognitive follows
+gocognit and statements follow funlen. `TestMeasureFunc_MatchesReferenceTools` pins one function per
+counting rule to the values those tools report. The one known difference is gocognit's recursion
+increment: gocognit also adds it when a method calls an unrelated identifier of the same name,
+which is not recursion, so the scanner does not.
+
+What is measured:
+
+- Every production function declaration. Test files are exempt, as they are from the length rule
+  and from the linters in `.golangci.yml`.
+- A function literal bound to a package-level variable, or otherwise outside any function, counted
+  as a function of its own.
+- A literal inside a function counts toward that function, as gocyclo and gocognit count it. It is
+  never measured twice.
+
+The limits come from the resolved policy through `config.ComplexityPolicy.ScanOptions`
+(`internal/config/repository_policy.go`), the same limits the audit resolves. Unset limits fall
+back to `hiss.DefaultMaxCyclomatic`, `hiss.DefaultMaxCognitive` and `hiss.DefaultMaxStatements`
+(10, 15, 50). The dogfood self audit and remote clones scan with those defaults.
+
+The measurements travel in one structured field, `ScanReport.Complexity`. Each entry carries its
+`kind` (`cyclomatic`, `cognitive`, `statements`), `value`, `limit` and `severity` (always
+`report`). Every entry point renders them with `ComplexityReport.Lines`:
+
+| Entry point | Where the lines appear |
+| :--- | :--- |
+| `praetorctl audit` | after the scan-scope line |
+| `praetorctl gate` | after the stage list; kept out of the signed stage output |
+| MCP `standards_audit` | after the baseline verdict |
+| `praetorctl dogfood`, MCP `standards_dogfood` | under the self audit and under each remote |
+| public dogfood | JSON: `original_scan.complexity` and each verification's `scan.complexity` |
+| MCP `standards_inspect_symbols` | under each function, verdict `HISS-04 REPORT: <kinds>` |
+| `standards-lsp` | one diagnostic per measurement, severity Information |
+
+Enforcement stays with gocyclo, gocognit and funlen at the thresholds `.golangci.yml` sets. The
+corpus pins both sides of each limit. Every fixture in
+`.config/hiss/testdata/HISS-04/go/measured/` sits over a limit and must yield a measurement and
+no violation. The `negative/` fixtures sit exactly at cyclomatic 10, cognitive 15 and statements
+50, and must yield neither.
+
 ## HISS-20: claims are replayed
 
 Every enforcement claim in `.config/hiss/coverage.yaml` is replayed against the fixture corpus by
 `praetorctl hiss coverage --verify`, which runs inside `make verify-all`. The check runs in both
 directions: a claim of enforcement must report each of its positive fixtures, and a claim of absence
 must leave its gap fixtures undetected. A rule that silently *gains* coverage fails the gate exactly
-as one that silently loses it, so the catalog cannot drift in either direction.
+as one that silently loses it, so the catalog cannot drift in either direction. A `measured/`
+bucket holds shapes the scanner reports without enforcing them. Each must yield a measurement and
+no violation, and a negative fixture must yield no measurement. So a measurement can neither
+disappear nor start to enforce unnoticed.

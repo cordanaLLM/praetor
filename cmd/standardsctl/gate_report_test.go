@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/gating"
+	"github.com/cordanaLLM/praetor/internal/hiss"
 )
 
 // The report prints each stage's verdict. A stage that did not run used to print [PASS].
@@ -77,5 +78,29 @@ func TestStageLabel_Negative_FailedAndUnknownVerdicts(t *testing.T) {
 func TestStageLabel_Boundary_ZeroVerdictIsNotAPass(t *testing.T) {
 	if got := stageLabel(""); got == "[PASS]" {
 		t.Errorf("a zero verdict rendered as %q", got)
+	}
+}
+
+// Positive and negative: the HISS stage's complexity report prints as the same report-only
+// lines the audit prints, after the stages; a run whose HISS stage never scanned prints none.
+func TestPrintGatingReport_ComplexityLines(t *testing.T) {
+	measured := &hiss.ComplexityReport{Measurements: []hiss.Measurement{{
+		RuleID: "HISS-04", FilePath: "a.go", LineNumber: 3, Symbol: "F",
+		Kind: hiss.KindCyclomatic, Value: 11, Limit: 10, Severity: hiss.SeverityReport,
+	}}}
+	out, err := captureStdout(t, func() error {
+		printGatingReport(&gating.PipelineReport{Status: gating.StatusAdmitted, Complexity: measured})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, out, measured.Summary(), measured.Measurements[0].String())
+	none, err := captureStdout(t, func() error { printGatingReport(&gating.PipelineReport{Status: gating.StatusAdmitted}); return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(none, "[REPORT]") {
+		t.Errorf("a run without a HISS scan printed complexity lines:\n%s", none)
 	}
 }

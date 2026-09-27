@@ -1,7 +1,8 @@
 package p
 
 // Cognitive17 has cognitive complexity 17 (five nesting levels plus two flat branches),
-// over the HISS-04 cap of 15, while its cyclomatic complexity stays at 8.
+// over the HISS-04 cap of 15, while its cyclomatic complexity stays at 8. The hiss scanner
+// measures it and reports it without enforcing it.
 func Cognitive17(total int) int {
 	if total > 0 {
 		if total > 1 {

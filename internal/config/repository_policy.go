@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -35,7 +36,26 @@ const repositoryPolicyTimeout = 30 * time.Second
 // caps every adopted repository at that length whatever its manifest declares, so a workspace
 // told 75 would accept a function its first audit after adoption rejects (BUG-445).
 func HISSComplexityCeiling() ComplexityPolicy {
-	return ComplexityPolicy{MaxCyclomatic: 10, MaxCognitive: 15, MaxFuncLOC: AuditMaxFuncLOC, MaxStatements: 50}
+	return ComplexityPolicy{
+		MaxCyclomatic: hiss.DefaultMaxCyclomatic, MaxCognitive: hiss.DefaultMaxCognitive,
+		MaxFuncLOC: AuditMaxFuncLOC, MaxStatements: hiss.DefaultMaxStatements,
+	}
+}
+
+// Limits returns the cyclomatic, cognitive and statement limits of c in the form the scanner
+// measures against. A non-positive limit falls back to the HISS-04 default there.
+func (c ComplexityPolicy) Limits() hiss.ComplexityLimits {
+	return hiss.ComplexityLimits{MaxCyclomatic: c.MaxCyclomatic, MaxCognitive: c.MaxCognitive, MaxStatements: c.MaxStatements}
+}
+
+// ScanOptions returns opts with every HISS-04 limit of c: the function length the scanner
+// enforces and the complexity limits it measures against without enforcing. Every entry
+// point that scans under a resolved policy derives its options here, so the audit, the gate,
+// the MCP audit and public verification measure against the same limits.
+func (c ComplexityPolicy) ScanOptions(opts hiss.ScanOptions) hiss.ScanOptions {
+	opts.MaxFuncLOC = c.MaxFuncLOC
+	opts.Complexity = c.Limits()
+	return opts
 }
 
 // WithHISSDefaults completes every limit the caller left unset (non-positive) from

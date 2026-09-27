@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/dogfood"
+	"github.com/cordanaLLM/praetor/internal/hiss"
 )
 
 func TestAdoptMCPPlanningSelectionWriteReadback(t *testing.T) {
@@ -85,5 +87,26 @@ func TestAdoptSelectionDefaultsAndBounds(t *testing.T) {
 	_, facets, err = adoptSelection(map[string]any{"facets": " , agent:sandboxed, "})
 	if err != nil || strings.Join(facets, ",") != "agent:sandboxed" {
 		t.Fatalf("CLI whitespace/empty-entry semantics lost: %v %v", facets, err)
+	}
+}
+
+// Positive and negative: the dogfood result carries the host's and each remote's complexity
+// report as the shared report lines; a report without a scan carries none.
+func TestFormatDogfoodMCPResultComplexityLines(t *testing.T) {
+	host := &hiss.ComplexityReport{Measurements: []hiss.Measurement{{
+		RuleID: "HISS-04", FilePath: "host.go", LineNumber: 1, Symbol: "H",
+		Kind: hiss.KindStatements, Value: 51, Limit: 50, Severity: hiss.SeverityReport,
+	}}}
+	out := formatDogfoodMCPResult(&dogfood.DogfoodReport{
+		SelfAuditComplexity: host,
+		RemoteResults:       []dogfood.RemoteAdoptionResult{{RepoURL: "https://example.com/r", Complexity: &hiss.ComplexityReport{}}},
+	})
+	for _, want := range []string{host.Summary(), host.Measurements[0].String(), "0 measurements over limit in 0 functions"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("result lacks %q:\n%s", want, out)
+		}
+	}
+	if bare := formatDogfoodMCPResult(&dogfood.DogfoodReport{}); strings.Contains(bare, "[REPORT]") {
+		t.Errorf("a report without scans printed complexity lines:\n%s", bare)
 	}
 }

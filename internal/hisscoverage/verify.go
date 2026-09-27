@@ -26,15 +26,18 @@ const (
 	FixtureDir = ".config/hiss/testdata"
 	// maxCatalogBytes bounds the catalog read (HISS-02).
 	maxCatalogBytes = 256 * 1024
-	// maxFixturesPerBucket bounds one positive, negative or gap directory (HISS-02).
+	// maxFixturesPerBucket bounds one positive, negative, gap or measured directory (HISS-02).
 	maxFixturesPerBucket = 256
 )
 
-// Bucket names within a fixture directory.
+// Bucket names within a fixture directory. A measured fixture holds a shape the scanner
+// measures and reports without enforcing it: it must yield a measurement for the rule and no
+// violation. A negative fixture must yield neither.
 const (
 	bucketPositive = "positive"
 	bucketNegative = "negative"
 	bucketGap      = "gap"
+	bucketMeasured = "measured"
 )
 
 // ErrCatalogAbsent reports that no catalog is present.
@@ -148,10 +151,13 @@ func Verify(ctx context.Context, rootDir string, catalog *Catalog) (*Report, err
 	return report, nil
 }
 
-// verifyClaim replays one rule/language claim against its three fixture buckets.
+// verifyClaim replays one rule/language claim against its fixture buckets.
 func verifyClaim(ctx context.Context, rootDir, ruleID string, cov *Coverage, report *Report) error {
 	report.Claims++
 	base := filepath.Join(rootDir, filepath.FromSlash(FixtureDir), ruleID, cov.Language)
+	if err := verifyMeasured(ctx, base, ruleID, cov, report); err != nil {
+		return err
+	}
 	if !cov.ReplayedHere() {
 		return verifyDelegatedClaim(ctx, base, ruleID, cov, report)
 	}
@@ -165,10 +171,10 @@ func verifyClaim(ctx context.Context, rootDir, ruleID string, cov *Coverage, rep
 			report.Unbacked = append(report.Unbacked,
 				fmt.Sprintf("%s/%s claims %s with no positive fixture", ruleID, cov.Language, cov.State))
 		}
-		appendUndetected(report, ruleID, cov.Language, bucketPositive, positives,
+		appendFindings(report, ruleID, cov.Language, bucketPositive, positives, undetected,
 			"declared "+string(cov.State)+" but the fixture is not reported")
 	} else {
-		appendDetected(report, ruleID, cov.Language, bucketPositive, positives,
+		appendFindings(report, ruleID, cov.Language, bucketPositive, positives, detected,
 			"declared "+string(cov.State)+" yet the fixture is reported; the catalog understates coverage")
 	}
 
@@ -176,15 +182,34 @@ func verifyClaim(ctx context.Context, rootDir, ruleID string, cov *Coverage, rep
 	if err != nil {
 		return err
 	}
-	appendDetected(report, ruleID, cov.Language, bucketNegative, negatives,
+	appendFindings(report, ruleID, cov.Language, bucketNegative, negatives, detected,
 		"legitimate code is reported; the rule over-matches")
+	appendFindings(report, ruleID, cov.Language, bucketNegative, negatives, measured,
+		"legitimate code is measured over a limit; the measurement over-matches")
 
 	gaps, err := replayBucket(ctx, base, bucketGap, ruleID, report)
 	if err != nil {
 		return err
 	}
-	appendDetected(report, ruleID, cov.Language, bucketGap, gaps,
+	appendFindings(report, ruleID, cov.Language, bucketGap, gaps, detected,
 		"a fixture recorded as an undetected gap is now reported; close the gap in the catalog")
+	return nil
+}
+
+// verifyMeasured replays the measured bucket in both directions: each fixture must yield a
+// measurement for the rule, so losing the measurement fails, and none may yield a violation,
+// so a measurement that starts to enforce fails too. Together with the negative bucket, whose
+// fixtures sit exactly at the limits and must yield no measurement, this pins the limits
+// from both sides.
+func verifyMeasured(ctx context.Context, base, ruleID string, cov *Coverage, report *Report) error {
+	results, err := replayBucket(ctx, base, bucketMeasured, ruleID, report)
+	if err != nil {
+		return err
+	}
+	appendFindings(report, ruleID, cov.Language, bucketMeasured, results, unmeasured,
+		"declared measured but the fixture yields no measurement")
+	appendFindings(report, ruleID, cov.Language, bucketMeasured, results, detected,
+		"a measured fixture is reported as a violation; a measurement must never be enforced")
 	return nil
 }
 
@@ -207,33 +232,31 @@ func verifyDelegatedClaim(ctx context.Context, base, ruleID string, cov *Coverag
 		if err != nil {
 			return err
 		}
-		appendDetected(report, ruleID, cov.Language, bucket, results,
+		appendFindings(report, ruleID, cov.Language, bucket, results, detected,
 			"attributed to "+cov.Runner+" yet the HISS scanner reports it; the runner is wrong")
 	}
 	return nil
 }
 
-// fixtureResult pairs a fixture with whether the rule reported it.
+// fixtureResult records what the scanner said about one fixture for one rule.
 type fixtureResult struct {
-	name     string
+	name string
+	// detected is true when the rule reported the fixture as a violation.
 	detected bool
+	// measured is true when the scanner measured the fixture over a limit of the rule.
+	measured bool
 }
 
-// appendUndetected records a finding for every fixture that was NOT reported.
-func appendUndetected(report *Report, ruleID, lang, bucket string, results []fixtureResult, detail string) {
-	for i := 0; i < len(results); i++ {
-		if !results[i].detected {
-			report.Findings = append(report.Findings, Finding{
-				Rule: ruleID, Language: lang, Bucket: bucket, Fixture: results[i].name, Detail: detail,
-			})
-		}
-	}
-}
+// Predicates selecting the fixtures a finding is recorded for.
+func detected(r fixtureResult) bool   { return r.detected }
+func undetected(r fixtureResult) bool { return !r.detected }
+func measured(r fixtureResult) bool   { return r.measured }
+func unmeasured(r fixtureResult) bool { return !r.measured }
 
-// appendDetected records a finding for every fixture that WAS reported.
-func appendDetected(report *Report, ruleID, lang, bucket string, results []fixtureResult, detail string) {
+// appendFindings records a finding for every fixture the predicate selects.
+func appendFindings(report *Report, ruleID, lang, bucket string, results []fixtureResult, selects func(fixtureResult) bool, detail string) {
 	for i := 0; i < len(results); i++ {
-		if results[i].detected {
+		if selects(results[i]) {
 			report.Findings = append(report.Findings, Finding{
 				Rule: ruleID, Language: lang, Bucket: bucket, Fixture: results[i].name, Detail: detail,
 			})
@@ -257,40 +280,54 @@ func replayBucket(ctx context.Context, base, bucket, ruleID string, report *Repo
 		if entries[i].IsDir() {
 			continue
 		}
-		detected, err := fixtureReported(ctx, dir, entries[i].Name(), ruleID)
+		result, err := fixtureReported(ctx, dir, entries[i].Name(), ruleID)
 		if err != nil {
 			return nil, err
 		}
 		report.Fixtures++
-		results = append(results, fixtureResult{name: entries[i].Name(), detected: detected})
+		results = append(results, result)
 	}
 	return results, nil
 }
 
-// fixtureReported scans one fixture in isolation and reports whether ruleID fired.
+// fixtureReported scans one fixture in isolation and reports whether ruleID fired as a
+// violation and whether the scanner measured it over one of the rule's limits.
 //
 // Each fixture is scanned alone in a temporary directory so a finding cannot be attributed
 // to a neighbouring file, and so a fixture that fails to parse cannot silently suppress the
 // rest of its bucket.
-func fixtureReported(ctx context.Context, dir, name, ruleID string) (reported bool, err error) {
+func fixtureReported(ctx context.Context, dir, name, ruleID string) (result fixtureResult, err error) {
+	result.name = name
 	data, err := contextopt.ReadSnapshot(ctx, filepath.Join(dir, name))
 	if err != nil {
-		return false, fmt.Errorf("read fixture %s: %w", name, err)
+		return result, fmt.Errorf("read fixture %s: %w", name, err)
 	}
 	tmp, err := os.MkdirTemp("", "hiss-fixture-")
 	if err != nil {
-		return false, fmt.Errorf("create fixture root: %w", err)
+		return result, fmt.Errorf("create fixture root: %w", err)
 	}
 	// A cleanup failure leaves a scratch directory behind and is joined into the result
 	// rather than discarded: a verifier that silently ignores its own errors is the shape
 	// this package exists to detect.
 	defer func() { err = errors.Join(err, os.RemoveAll(tmp)) }()
 	if err := os.WriteFile(filepath.Join(tmp, name), data, 0o600); err != nil {
-		return false, fmt.Errorf("stage fixture %s: %w", name, err)
+		return result, fmt.Errorf("stage fixture %s: %w", name, err)
 	}
 	rep, scanErr := hiss.Scan(ctx, tmp, hiss.ScanOptions{})
 	if scanErr != nil {
-		return false, fmt.Errorf("scan fixture %s: %w", name, scanErr)
+		return result, fmt.Errorf("scan fixture %s: %w", name, scanErr)
 	}
-	return rep.Breakdown[ruleID] > 0, nil
+	result.detected = rep.Breakdown[ruleID] > 0
+	result.measured = measuresRule(rep.Complexity.Measurements, ruleID)
+	return result, nil
+}
+
+// measuresRule reports whether any measurement belongs to ruleID.
+func measuresRule(measurements []hiss.Measurement, ruleID string) bool {
+	for i := 0; i < len(measurements); i++ {
+		if measurements[i].RuleID == ruleID {
+			return true
+		}
+	}
+	return false
 }

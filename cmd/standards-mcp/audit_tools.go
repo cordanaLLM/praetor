@@ -57,7 +57,7 @@ func (s *Server) runAuditGates(ctx context.Context, p auditPaths) *mcp.ToolResul
 			return auditLockfile(ctx, s.rootDir, p.policy.CatalogRoot, manifest)
 		},
 		func(ctx context.Context) (string, error) {
-			return auditBaselineRatchetWithPolicy(ctx, s.rootDir, p.baseline, effective.Policy.Complexity.MaxFuncLOC)
+			return auditBaselineRatchetWithPolicy(ctx, s.rootDir, p.baseline, effective.Policy.Complexity)
 		},
 		func(ctx context.Context) (string, error) { return auditContextSync(ctx, p.agents, s.rootDir) },
 		func(ctx context.Context) (string, error) {
@@ -102,16 +102,19 @@ func auditLockfile(ctx context.Context, root, catalogRoot string, manifest *conf
 // auditBaselineRatchet loads the debt baseline, scans the tree for HISS violations and
 // enforces the monotonic ratchet exactly like the CLI audit does.
 func auditBaselineRatchet(ctx context.Context, root, baselinePath string) (string, error) {
-	return auditBaselineRatchetWithPolicy(ctx, root, baselinePath, config.AuditMaxFuncLOC)
+	return auditBaselineRatchetWithPolicy(ctx, root, baselinePath, config.HISSComplexityCeiling())
 }
 
-func auditBaselineRatchetWithPolicy(ctx context.Context, root, baselinePath string, maxFuncLOC int) (string, error) {
+// auditBaselineRatchetWithPolicy scans under the policy's function-length limit, which the
+// ratchet enforces, and its complexity limits, whose measurements follow the verdict line as
+// report-only lines.
+func auditBaselineRatchetWithPolicy(ctx context.Context, root, baselinePath string, policy config.ComplexityPolicy) (string, error) {
 	base, err := baseline.LoadBaseline(baselinePath)
 	if err != nil {
 		return "", fmt.Errorf("[FAIL] Baseline audit failed: %w", err)
 	}
 
-	scanRep, err := hiss.Scan(ctx, root, hiss.ScanOptions{MaxFuncLOC: maxFuncLOC})
+	scanRep, err := hiss.Scan(ctx, root, policy.ScanOptions(hiss.ScanOptions{}))
 	if err != nil {
 		return "", fmt.Errorf("[FAIL] Invariant audit failed: %w", err)
 	}
@@ -130,8 +133,9 @@ func auditBaselineRatchetWithPolicy(ctx context.Context, root, baselinePath stri
 		return "", fmt.Errorf("[FAIL] HISS invariant violations introduced (%d total infractions, %d new unbaselined violations):\n%s",
 			ratchet.CurrentCount, len(ratchet.NewViolations), formatViolations(ratchet.NewViolations))
 	}
-	return fmt.Sprintf("[PASS] Technical debt baseline verified: %d recorded legacy infractions; HISS scan found %d active violations within the baselined limit. %s",
-		base.TotalInfractions, ratchet.CurrentCount, scanRep.CoverageEvidence()), nil
+	verdict := fmt.Sprintf("[PASS] Technical debt baseline verified: %d recorded legacy infractions; HISS scan found %d active violations within the baselined limit. %s",
+		base.TotalInfractions, ratchet.CurrentCount, scanRep.CoverageEvidence())
+	return strings.Join(append([]string{verdict}, scanRep.Complexity.Lines()...), "\n"), nil
 }
 
 // formatViolations renders up to maxReportedViolations infractions for a failure line.

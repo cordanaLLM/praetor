@@ -67,17 +67,20 @@ type TargetAdoptionResult struct {
 
 // DogfoodReport summarizes the end-to-end dogfooding run.
 type DogfoodReport struct {
-	HostRepoPath       string                 `json:"host_repo_path"`
-	Timestamp          time.Time              `json:"timestamp"`
-	SelfAuditPassed    bool                   `json:"self_audit_passed"`
-	ContextSyncPassed  bool                   `json:"context_sync_passed"`
-	ContextSyncError   string                 `json:"context_sync_error,omitempty"`
-	TargetsEvaluated   int                    `json:"targets_evaluated"`
-	TargetResults      []TargetAdoptionResult `json:"target_results"`
-	RemoteResults      []RemoteAdoptionResult `json:"remote_results,omitempty"`
-	SkippedRemotes     []string               `json:"skipped_remotes,omitempty"`
-	TotalSkillsAudited int                    `json:"total_skills_audited"`
-	OverallPassed      bool                   `json:"overall_passed"`
+	HostRepoPath    string    `json:"host_repo_path"`
+	Timestamp       time.Time `json:"timestamp"`
+	SelfAuditPassed bool      `json:"self_audit_passed"`
+	// SelfAuditComplexity is the host scan's complexity report: measured, never part of
+	// SelfAuditPassed or OverallPassed.
+	SelfAuditComplexity *hiss.ComplexityReport `json:"self_audit_complexity,omitempty"`
+	ContextSyncPassed   bool                   `json:"context_sync_passed"`
+	ContextSyncError    string                 `json:"context_sync_error,omitempty"`
+	TargetsEvaluated    int                    `json:"targets_evaluated"`
+	TargetResults       []TargetAdoptionResult `json:"target_results"`
+	RemoteResults       []RemoteAdoptionResult `json:"remote_results,omitempty"`
+	SkippedRemotes      []string               `json:"skipped_remotes,omitempty"`
+	TotalSkillsAudited  int                    `json:"total_skills_audited"`
+	OverallPassed       bool                   `json:"overall_passed"`
 }
 
 // governanceResult is the outcome of the host repository's own governance verification.
@@ -85,6 +88,7 @@ type governanceResult struct {
 	synced      bool
 	syncErr     string
 	auditPassed bool
+	complexity  *hiss.ComplexityReport
 }
 
 // verifySelfGovernance verifies cross-agent context synchronisation and the HISS invariants
@@ -109,6 +113,7 @@ func verifySelfGovernance(ctx context.Context, hostPath string) (governanceResul
 	}
 
 	res.auditPassed = scanRes.TotalInfractions == 0 && !scanRes.Truncated
+	res.complexity = &scanRes.Complexity
 	return res, nil
 }
 
@@ -281,6 +286,7 @@ func RunDogfood(ctx context.Context, opts DogfoodOptions) (*DogfoodReport, error
 	report.ContextSyncPassed = gov.synced
 	report.ContextSyncError = gov.syncErr
 	report.SelfAuditPassed = gov.auditPassed
+	report.SelfAuditComplexity = gov.complexity
 	if err != nil {
 		return report, fmt.Errorf("self governance audit failed: %w", err)
 	}

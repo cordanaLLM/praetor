@@ -1,0 +1,146 @@
+<svg role="img" aria-labelledby="figure-title figure-desc" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="677.8" height="712" viewBox="0 0 677.8 712" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+<title id="figure-title">Governance Lifecycle</title>
+<desc id="figure-desc">The governance lifecycle spans context compilation, policy resolution, and verification gating.</desc>
+<!-- interfig (c) 2025 Vectorize AI, Inc. MIT https://github.com/vectorize-io/hindsight/tree/ccfe85b4851957ac2adf88b4a9ddf9668b2882f1/hindsight-interfig -->
+<metadata id="figure-spec"><![CDATA[{"props":{"layout":{"direction":"column","gap":40,"children":[{"direction":"row","gap":40,"align":"center","children":[{"id":"agents","label":"AGENTS.md","sub":"Canonical Source","shape":"store"},{"id":"comp","label":"praetorctl compile-context"},{"id":"vendors","label":"Vendor Projections","direction":"column","gap":10,"children":[{"id":"c1","label":"CLAUDE.md","sub":"< 300 LOC"},{"id":"c2","label":".cursor/rules/*.mdc"},{"id":"c3","label":".github/copilot-instructions.md"},{"id":"c4","label":".windsurfrules"},{"id":"c5","label":".gemini/GEMINI.md"},{"id":"c6","label":".codex/rules.md"}]}]},{"direction":"row","gap":40,"align":"center","children":[{"id":"standards","label":".standards.yaml","sub":"& .standards.lock","shape":"store"},{"id":"lattice","label":"Effective Policy","sub":"Lattice Supremum"},{"direction":"column","gap":10,"children":[{"id":"dev","label":".devcontainer & Toolchain"},{"id":"audit","label":"praetorctl audit"},{"id":"plan","label":"praetorctl plan"}]}]},{"direction":"row","gap":40,"align":"center","children":[{"id":"verify","label":"praetorctl gate run"},{"id":"gate","label":"Gate stages"},{"id":"receipt","label":"Ed25519 Exit-0 receipt","shape":"store"}]}]},"edges":[{"from":"agents","to":"comp"},{"from":"comp","to":"c1"},{"from":"comp","to":"c2"},{"from":"comp","to":"c3"},{"from":"comp","to":"c4"},{"from":"comp","to":"c5"},{"from":"comp","to":"c6"},{"from":"standards","to":"lattice"},{"from":"lattice","to":"dev"},{"from":"lattice","to":"audit"},{"from":"lattice","to":"plan"},{"from":"verify","to":"gate"},{"from":"gate","to":"receipt"}],"steps":[{"label":"compile-context","caption":"AGENTS.md is transpiled to vendor-specific files.","flow":[{"edges":"agents->comp","say":"The single source of truth is read."},{"edges":["comp->c1","comp->c2","comp->c3","comp->c4","comp->c5","comp->c6"],"say":"Target-specific files are generated."}]},{"label":"policy","caption":"The lattice resolves standard definitions into effective policy.","flow":[{"edges":"standards->lattice","say":"Manifest and lockfile are merged."},{"edges":["lattice->dev","lattice->audit","lattice->plan"],"say":"Policy applies to the devcontainer toolchain, audit enforcement, and plan previews."}]},{"label":"gate run","caption":"praetorctl gate run executes the gated pipeline.","flow":[{"edges":"verify->gate","say":"The gate command triggers the verification cascade."},{"edges":"gate->receipt","say":"A successful run mints a signed receipt."}]}]}}]]></metadata>
+<style>
+svg { --accent:#0074d9; --fg:#1c1e21; --muted:#606770; --bg:#ffffff; --surface:#f5f7fa; --border:#d0d7de; --card-on:#eef5fd; }
+@media (prefers-color-scheme: dark) { svg { --accent:#3396e8; --fg:#e3e3e3; --muted:#9aa0a6; --bg:#1b1b1d; --surface:#242526; --border:#3a3b3c; --card-on:#1d2733; } }
+.label { fill: var(--fg); font-size: 14px; font-weight: 500; text-anchor: middle; }
+.sub { fill: var(--muted); font-size: 12px; text-anchor: middle; }
+.frame { fill: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .04em; }
+.edgelabel { fill: var(--muted); font-size: 11px; text-anchor: middle; font-family: ui-monospace, Menlo, monospace; }
+.row { fill: var(--fg); font-size: 11px; }
+.row.mono { font-size: 10.5px; font-family: ui-monospace, Menlo, monospace; }
+.muted { fill: var(--muted); }
+.tag { font-size: 9px; font-weight: 600; letter-spacing: .03em; text-anchor: middle; }
+.mark { fill: var(--accent); font-size: 11px; font-weight: 600; text-anchor: end; }
+.chip { fill: #fff; font-size: 11.5px; text-anchor: middle; }
+.steplabel { fill: var(--fg); font-size: 13px; font-weight: 600; text-anchor: middle; font-family: ui-monospace, Menlo, monospace; }
+.caption { fill: var(--muted); font-size: 13.5px; text-anchor: middle; }
+@keyframes a0 { 0%,9.5% { stroke: var(--accent) } 9.5%,33.3% { stroke: var(--accent) } 33.3%,42.8% { stroke: var(--border) } 42.9%,66.7% { stroke: var(--border) } 66.7%,76.2% { stroke: var(--border) } 76.2%,100% { stroke: var(--border) } }
+.a0 { animation: a0 7.6s infinite step-end; }
+@keyframes a1 { 0%,9.5% { stroke: var(--border) } 9.5%,33.3% { stroke: var(--accent) } 33.3%,42.8% { stroke: var(--border) } 42.9%,66.7% { stroke: var(--border) } 66.7%,76.2% { stroke: var(--border) } 76.2%,100% { stroke: var(--border) } }
+.a1 { animation: a1 7.6s infinite step-end; }
+@keyframes a2 { 0%,9.5% { stroke: var(--border) } 9.5%,33.3% { stroke: var(--border) } 33.3%,42.8% { stroke: var(--accent) } 42.9%,66.7% { stroke: var(--accent) } 66.7%,76.2% { stroke: var(--border) } 76.2%,100% { stroke: var(--border) } }
+.a2 { animation: a2 7.6s infinite step-end; }
+@keyframes a3 { 0%,9.5% { stroke: var(--border) } 9.5%,33.3% { stroke: var(--border) } 33.3%,42.8% { stroke: var(--border) } 42.9%,66.7% { stroke: var(--accent) } 66.7%,76.2% { stroke: var(--border) } 76.2%,100% { stroke: var(--border) } }
+.a3 { animation: a3 7.6s infinite step-end; }
+@keyframes a4 { 0%,9.5% { stroke: var(--border) } 9.5%,33.3% { stroke: var(--border) } 33.3%,42.8% { stroke: var(--border) } 42.9%,66.7% { stroke: var(--border) } 66.7%,76.2% { stroke: var(--accent) } 76.2%,100% { stroke: var(--accent) } }
+.a4 { animation: a4 7.6s infinite step-end; }
+@keyframes a5 { 0%,9.5% { stroke: var(--border) } 9.5%,33.3% { stroke: var(--border) } 33.3%,42.8% { stroke: var(--border) } 42.9%,66.7% { stroke: var(--border) } 66.7%,76.2% { stroke: var(--border) } 76.2%,100% { stroke: var(--accent) } }
+.a5 { animation: a5 7.6s infinite step-end; }
+@keyframes a6 { 0%,9.5% { stroke: var(--accent); stroke-width: 2 } 9.5%,33.3% { stroke: var(--accent); stroke-width: 2 } 33.3%,42.8% { stroke: var(--muted); stroke-width: 1.25 } 42.9%,66.7% { stroke: var(--muted); stroke-width: 1.25 } 66.7%,76.2% { stroke: var(--muted); stroke-width: 1.25 } 76.2%,100% { stroke: var(--muted); stroke-width: 1.25 } }
+.a6 { animation: a6 7.6s infinite step-end; }
+@keyframes a7 { 0%,9.5% { stroke: var(--muted); stroke-width: 1.25 } 9.5%,33.3% { stroke: var(--accent); stroke-width: 2 } 33.3%,42.8% { stroke: var(--muted); stroke-width: 1.25 } 42.9%,66.7% { stroke: var(--muted); stroke-width: 1.25 } 66.7%,76.2% { stroke: var(--muted); stroke-width: 1.25 } 76.2%,100% { stroke: var(--muted); stroke-width: 1.25 } }
+.a7 { animation: a7 7.6s infinite step-end; }
+@keyframes a8 { 0%,9.5% { stroke: var(--muted); stroke-width: 1.25 } 9.5%,33.3% { stroke: var(--muted); stroke-width: 1.25 } 33.3%,42.8% { stroke: var(--accent); stroke-width: 2 } 42.9%,66.7% { stroke: var(--accent); stroke-width: 2 } 66.7%,76.2% { stroke: var(--muted); stroke-width: 1.25 } 76.2%,100% { stroke: var(--muted); stroke-width: 1.25 } }
+.a8 { animation: a8 7.6s infinite step-end; }
+@keyframes a9 { 0%,9.5% { stroke: var(--muted); stroke-width: 1.25 } 9.5%,33.3% { stroke: var(--muted); stroke-width: 1.25 } 33.3%,42.8% { stroke: var(--muted); stroke-width: 1.25 } 42.9%,66.7% { stroke: var(--accent); stroke-width: 2 } 66.7%,76.2% { stroke: var(--muted); stroke-width: 1.25 } 76.2%,100% { stroke: var(--muted); stroke-width: 1.25 } }
+.a9 { animation: a9 7.6s infinite step-end; }
+@keyframes a10 { 0%,9.5% { stroke: var(--muted); stroke-width: 1.25 } 9.5%,33.3% { stroke: var(--muted); stroke-width: 1.25 } 33.3%,42.8% { stroke: var(--muted); stroke-width: 1.25 } 42.9%,66.7% { stroke: var(--muted); stroke-width: 1.25 } 66.7%,76.2% { stroke: var(--accent); stroke-width: 2 } 76.2%,100% { stroke: var(--accent); stroke-width: 2 } }
+.a10 { animation: a10 7.6s infinite step-end; }
+@keyframes a11 { 0%,9.5% { stroke: var(--muted); stroke-width: 1.25 } 9.5%,33.3% { stroke: var(--muted); stroke-width: 1.25 } 33.3%,42.8% { stroke: var(--muted); stroke-width: 1.25 } 42.9%,66.7% { stroke: var(--muted); stroke-width: 1.25 } 66.7%,76.2% { stroke: var(--muted); stroke-width: 1.25 } 76.2%,100% { stroke: var(--accent); stroke-width: 2 } }
+.a11 { animation: a11 7.6s infinite step-end; }
+@keyframes p0 { 0%,0% { opacity: 0 } 0%,9.5% { opacity: 1 } 9.5%,100% { opacity: 0 } }
+.p0 { animation: p0 7.6s infinite step-end; }
+@keyframes p1 { 0%,9.5% { opacity: 0 } 9.5%,19% { opacity: 1 } 19%,100% { opacity: 0 } }
+.p1 { animation: p1 7.6s infinite step-end; }
+@keyframes p2 { 0%,9.5% { opacity: 0 } 9.5%,19% { opacity: 1 } 19%,100% { opacity: 0 } }
+.p2 { animation: p2 7.6s infinite step-end; }
+@keyframes p3 { 0%,9.5% { opacity: 0 } 9.5%,19% { opacity: 1 } 19%,100% { opacity: 0 } }
+.p3 { animation: p3 7.6s infinite step-end; }
+@keyframes p4 { 0%,9.5% { opacity: 0 } 9.5%,19% { opacity: 1 } 19%,100% { opacity: 0 } }
+.p4 { animation: p4 7.6s infinite step-end; }
+@keyframes p5 { 0%,9.5% { opacity: 0 } 9.5%,19% { opacity: 1 } 19%,100% { opacity: 0 } }
+.p5 { animation: p5 7.6s infinite step-end; }
+@keyframes p6 { 0%,9.5% { opacity: 0 } 9.5%,19% { opacity: 1 } 19%,100% { opacity: 0 } }
+.p6 { animation: p6 7.6s infinite step-end; }
+@keyframes p7 { 0%,33.3% { opacity: 0 } 33.3%,42.8% { opacity: 1 } 42.9%,100% { opacity: 0 } }
+.p7 { animation: p7 7.6s infinite step-end; }
+@keyframes p8 { 0%,42.9% { opacity: 0 } 42.9%,52.4% { opacity: 1 } 52.4%,100% { opacity: 0 } }
+.p8 { animation: p8 7.6s infinite step-end; }
+@keyframes p9 { 0%,42.9% { opacity: 0 } 42.9%,52.4% { opacity: 1 } 52.4%,100% { opacity: 0 } }
+.p9 { animation: p9 7.6s infinite step-end; }
+@keyframes p10 { 0%,42.9% { opacity: 0 } 42.9%,52.4% { opacity: 1 } 52.4%,100% { opacity: 0 } }
+.p10 { animation: p10 7.6s infinite step-end; }
+@keyframes p11 { 0%,66.7% { opacity: 0 } 66.7%,76.2% { opacity: 1 } 76.2%,100% { opacity: 0 } }
+.p11 { animation: p11 7.6s infinite step-end; }
+@keyframes p12 { 0%,76.2% { opacity: 0 } 76.2%,85.7% { opacity: 1 } 85.7%,100% { opacity: 0 } }
+.p12 { animation: p12 7.6s infinite step-end; }
+@keyframes a12 { 0%,9.5% { opacity: 1 } 9.5%,33.3% { opacity: 1 } 33.3%,42.8% { opacity: 0 } 42.9%,66.7% { opacity: 0 } 66.7%,76.2% { opacity: 0 } 76.2%,100% { opacity: 0 } }
+.a12 { animation: a12 7.6s infinite step-end; }
+@keyframes a13 { 0%,9.5% { opacity: 0 } 9.5%,33.3% { opacity: 0 } 33.3%,42.8% { opacity: 1 } 42.9%,66.7% { opacity: 1 } 66.7%,76.2% { opacity: 0 } 76.2%,100% { opacity: 0 } }
+.a13 { animation: a13 7.6s infinite step-end; }
+@keyframes a14 { 0%,9.5% { opacity: 0 } 9.5%,33.3% { opacity: 0 } 33.3%,42.8% { opacity: 0 } 42.9%,66.7% { opacity: 0 } 66.7%,76.2% { opacity: 1 } 76.2%,100% { opacity: 1 } }
+.a14 { animation: a14 7.6s infinite step-end; }
+@keyframes a15 { 0%,9.5% { opacity: 1 } 9.5%,33.3% { opacity: 0 } 33.3%,42.8% { opacity: 0 } 42.9%,66.7% { opacity: 0 } 66.7%,76.2% { opacity: 0 } 76.2%,100% { opacity: 0 } }
+.a15 { animation: a15 7.6s infinite step-end; }
+@keyframes a16 { 0%,9.5% { opacity: 0 } 9.5%,33.3% { opacity: 1 } 33.3%,42.8% { opacity: 0 } 42.9%,66.7% { opacity: 0 } 66.7%,76.2% { opacity: 0 } 76.2%,100% { opacity: 0 } }
+.a16 { animation: a16 7.6s infinite step-end; }
+@keyframes a17 { 0%,9.5% { opacity: 0 } 9.5%,33.3% { opacity: 0 } 33.3%,42.8% { opacity: 1 } 42.9%,66.7% { opacity: 0 } 66.7%,76.2% { opacity: 0 } 76.2%,100% { opacity: 0 } }
+.a17 { animation: a17 7.6s infinite step-end; }
+@keyframes a18 { 0%,9.5% { opacity: 0 } 9.5%,33.3% { opacity: 0 } 33.3%,42.8% { opacity: 0 } 42.9%,66.7% { opacity: 1 } 66.7%,76.2% { opacity: 0 } 76.2%,100% { opacity: 0 } }
+.a18 { animation: a18 7.6s infinite step-end; }
+@keyframes a19 { 0%,9.5% { opacity: 0 } 9.5%,33.3% { opacity: 0 } 33.3%,42.8% { opacity: 0 } 42.9%,66.7% { opacity: 0 } 66.7%,76.2% { opacity: 1 } 76.2%,100% { opacity: 0 } }
+.a19 { animation: a19 7.6s infinite step-end; }
+@keyframes a20 { 0%,9.5% { opacity: 0 } 9.5%,33.3% { opacity: 0 } 33.3%,42.8% { opacity: 0 } 42.9%,66.7% { opacity: 0 } 66.7%,76.2% { opacity: 0 } 76.2%,100% { opacity: 1 } }
+.a20 { animation: a20 7.6s infinite step-end; }
+</style>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9 z" fill="var(--muted)"/></marker></defs>
+<rect width="100%" height="100%" fill="var(--bg)"/>
+<g transform="translate(0 0)">
+<path d="M24 176.5 a 66.9 12 0 0 1 133.8 0 v 43 a 66.9 12 0 0 1 -133.8 0 z" fill="var(--bg)" stroke="var(--border)" class="a0"/><path d="M24 176.5 a 66.9 12 0 0 0 133.8 0" fill="none" stroke="var(--border)" class="a0"/><text x="90.9" y="201.5" class="label">AGENTS.md</text><text x="90.9" y="216.5" class="sub">Canonical Source</text>
+<rect x="197.8" y="108" width="190" height="180" rx="10" fill="var(--bg)" stroke="var(--border)" class="a0"/><text x="292.8" y="203" class="label">praetorctl compile-context</text>
+<rect x="427.8" y="24" width="226" height="348" rx="14" fill="var(--surface)" stroke="var(--border)"/><text x="445.8" y="44" class="frame">VENDOR PROJECTIONS</text>
+<rect x="490.8" y="61" width="100" height="53" rx="10" fill="var(--bg)" stroke="var(--border)" class="a1"/><text x="540.8" y="85.5" class="label">CLAUDE.md</text><text x="540.8" y="100.5" class="sub">&lt; 300 LOC</text>
+<rect x="454.3" y="124" width="173" height="38" rx="10" fill="var(--bg)" stroke="var(--border)" class="a1"/><text x="540.8" y="148" class="label">.cursor/rules/*.mdc</text>
+<rect x="445.8" y="172" width="190" height="38" rx="10" fill="var(--bg)" stroke="var(--border)" class="a1"/><text x="540.8" y="196" class="label">.github/copilot-instructions.md</text>
+<rect x="472.8" y="220" width="135.9" height="38" rx="10" fill="var(--bg)" stroke="var(--border)" class="a1"/><text x="540.8" y="244" class="label">.windsurfrules</text>
+<rect x="461.7" y="268" width="158.1" height="38" rx="10" fill="var(--bg)" stroke="var(--border)" class="a1"/><text x="540.8" y="292" class="label">.gemini/GEMINI.md</text>
+<rect x="469.1" y="316" width="143.3" height="38" rx="10" fill="var(--bg)" stroke="var(--border)" class="a1"/><text x="540.8" y="340" class="label">.codex/rules.md</text>
+<path d="M56.9 457.5 a 71.7 12 0 0 1 143.3 0 v 43 a 71.7 12 0 0 1 -143.3 0 z" fill="var(--bg)" stroke="var(--border)" class="a2"/><path d="M56.9 457.5 a 71.7 12 0 0 0 143.3 0" fill="none" stroke="var(--border)" class="a2"/><text x="128.5" y="482.5" class="label">.standards.yaml</text><text x="128.5" y="497.5" class="sub">&amp; .standards.lock</text>
+<rect x="240.2" y="434" width="150.7" height="90" rx="10" fill="var(--bg)" stroke="var(--border)" class="a2"/><text x="315.5" y="477" class="label">Effective Policy</text><text x="315.5" y="492" class="sub">Lattice Supremum</text>
+<rect x="430.9" y="412" width="190" height="38" rx="10" fill="var(--bg)" stroke="var(--border)" class="a3"/><text x="525.9" y="436" class="label">.devcontainer &amp; Toolchain</text>
+<rect x="450.5" y="460" width="150.7" height="38" rx="10" fill="var(--bg)" stroke="var(--border)" class="a3"/><text x="525.9" y="484" class="label">praetorctl audit</text>
+<rect x="454.2" y="508" width="143.3" height="38" rx="10" fill="var(--bg)" stroke="var(--border)" class="a3"/><text x="525.9" y="532" class="label">praetorctl plan</text>
+<rect x="60.6" y="593" width="173" height="38" rx="10" fill="var(--bg)" stroke="var(--border)" class="a4"/><text x="147.1" y="617" class="label">praetorctl gate run</text>
+<rect x="273.6" y="593" width="113.6" height="38" rx="10" fill="var(--bg)" stroke="var(--border)" class="a4"/><text x="330.4" y="617" class="label">Gate stages</text>
+<path d="M427.2 598 a 95 12 0 0 1 190 0 v 28 a 95 12 0 0 1 -190 0 z" fill="var(--bg)" stroke="var(--border)" class="a5"/><path d="M427.2 598 a 95 12 0 0 0 190 0" fill="none" stroke="var(--border)" class="a5"/><text x="522.2" y="623" class="label">Ed25519 Exit-0 receipt</text>
+<path id="p-agents-&gt;comp" d="M 157.76 198 C 177.76 198, 177.76 198, 197.76 198" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a6"/>
+<path id="p-comp-&gt;c1" d="M 387.76 133.71428571428572 C 439.26 133.71428571428572, 439.26 87.5, 490.76 87.5" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a7"/>
+<path id="p-comp-&gt;c2" d="M 387.76 159.42857142857142 C 421.015 159.42857142857142, 421.015 143, 454.27 143" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a7"/>
+<path id="p-comp-&gt;c3" d="M 387.76 185.14285714285714 C 416.76 185.14285714285714, 416.76 191, 445.76 191" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a7"/>
+<path id="p-comp-&gt;c4" d="M 387.76 210.85714285714283 C 430.28999999999996 210.85714285714283, 430.28999999999996 239, 472.82 239" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a7"/>
+<path id="p-comp-&gt;c5" d="M 387.76 236.57142857142858 C 424.725 236.57142857142858, 424.725 287, 461.69 287" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a7"/>
+<path id="p-comp-&gt;c6" d="M 387.76 262.2857142857143 C 428.435 262.2857142857143, 428.435 335, 469.11 335" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a7"/>
+<path id="p-standards-&gt;lattice" d="M 200.17000000000002 479 C 220.17000000000002 479, 220.17000000000002 479, 240.17000000000002 479" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a8"/>
+<path id="p-lattice-&gt;dev" d="M 390.89 456.5 C 410.89 456.5, 410.89 431, 430.89 431" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a9"/>
+<path id="p-lattice-&gt;audit" d="M 390.89 479 C 420.71 479, 420.71 479, 450.53 479" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a9"/>
+<path id="p-lattice-&gt;plan" d="M 390.89 501.5 C 422.565 501.5, 422.565 527, 454.24 527" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a9"/>
+<path id="p-verify-&gt;gate" d="M 233.55999999999997 612 C 253.55999999999995 612, 253.55999999999995 612, 273.55999999999995 612" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a10"/>
+<path id="p-gate-&gt;receipt" d="M 387.17999999999995 612 C 407.17999999999995 612, 407.17999999999995 612, 427.17999999999995 612" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a11"/>
+<g class="p0" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="7.6s" repeatCount="indefinite" keyTimes="0;0;0.1;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-agents-&gt;comp" xlink:href="#p-agents-&gt;comp"/></animateMotion></g>
+<g class="p1" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="7.6s" repeatCount="indefinite" keyTimes="0;0.1;0.2;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-comp-&gt;c1" xlink:href="#p-comp-&gt;c1"/></animateMotion></g>
+<g class="p2" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="7.6s" repeatCount="indefinite" keyTimes="0;0.1;0.2;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-comp-&gt;c2" xlink:href="#p-comp-&gt;c2"/></animateMotion></g>
+<g class="p3" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="7.6s" repeatCount="indefinite" keyTimes="0;0.1;0.2;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-comp-&gt;c3" xlink:href="#p-comp-&gt;c3"/></animateMotion></g>
+<g class="p4" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="7.6s" repeatCount="indefinite" keyTimes="0;0.1;0.2;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-comp-&gt;c4" xlink:href="#p-comp-&gt;c4"/></animateMotion></g>
+<g class="p5" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="7.6s" repeatCount="indefinite" keyTimes="0;0.1;0.2;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-comp-&gt;c5" xlink:href="#p-comp-&gt;c5"/></animateMotion></g>
+<g class="p6" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="7.6s" repeatCount="indefinite" keyTimes="0;0.1;0.2;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-comp-&gt;c6" xlink:href="#p-comp-&gt;c6"/></animateMotion></g>
+<g class="p7" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="7.6s" repeatCount="indefinite" keyTimes="0;0.3;0.4;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-standards-&gt;lattice" xlink:href="#p-standards-&gt;lattice"/></animateMotion></g>
+<g class="p8" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="7.6s" repeatCount="indefinite" keyTimes="0;0.4;0.5;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-lattice-&gt;dev" xlink:href="#p-lattice-&gt;dev"/></animateMotion></g>
+<g class="p9" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="7.6s" repeatCount="indefinite" keyTimes="0;0.4;0.5;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-lattice-&gt;audit" xlink:href="#p-lattice-&gt;audit"/></animateMotion></g>
+<g class="p10" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="7.6s" repeatCount="indefinite" keyTimes="0;0.4;0.5;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-lattice-&gt;plan" xlink:href="#p-lattice-&gt;plan"/></animateMotion></g>
+<g class="p11" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="7.6s" repeatCount="indefinite" keyTimes="0;0.7;0.8;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-verify-&gt;gate" xlink:href="#p-verify-&gt;gate"/></animateMotion></g>
+<g class="p12" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="7.6s" repeatCount="indefinite" keyTimes="0;0.8;0.9;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-gate-&gt;receipt" xlink:href="#p-gate-&gt;receipt"/></animateMotion></g>
+</g>
+<text x="338.9" y="678" opacity="0" class="steplabel a12">compile-context</text>
+<text x="338.9" y="678" opacity="0" class="steplabel a13">policy</text>
+<text x="338.9" y="678" opacity="0" class="steplabel a14">gate run</text>
+<g opacity="0" class="a15"><text x="338.9" y="704" class="caption">The single source of truth is read.</text></g>
+<g opacity="0" class="a16"><text x="338.9" y="704" class="caption">Target-specific files are generated.</text></g>
+<g opacity="0" class="a17"><text x="338.9" y="704" class="caption">Manifest and lockfile are merged.</text></g>
+<g opacity="0" class="a18"><text x="338.9" y="704" class="caption">Policy applies to the devcontainer toolchain, audit enforcement, and plan previews.</text></g>
+<g opacity="0" class="a19"><text x="338.9" y="704" class="caption">The gate command triggers the verification cascade.</text></g>
+<g opacity="0" class="a20"><text x="338.9" y="704" class="caption">A successful run mints a signed receipt.</text></g>
+</svg>

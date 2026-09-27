@@ -53,7 +53,7 @@ type Range struct {
 // Diagnostic represents an LSP diagnostic item.
 type Diagnostic struct {
 	Range    Range  `json:"range"`
-	Severity int    `json:"severity"` // 1: Error, 2: Warning
+	Severity int    `json:"severity"` // 1: Error, 2: Warning, 3: Information
 	Code     string `json:"code,omitempty"`
 	Source   string `json:"source,omitempty"`
 	Message  string `json:"message"`
@@ -491,7 +491,7 @@ func (s *Server) AnalyzeGoSource(uri, code string) ([]Diagnostic, error) {
 	if truncated {
 		diags = append(diags, s.truncationDiagnostic(len(nodes)))
 	}
-	diags = append(diags, s.checkHISS04Complexity(fset, nodes)...)
+	diags = append(diags, s.checkHISS04Complexity(fset, file)...)
 	diags = append(diags, s.checkHISS01DAG(fset, nodes)...)
 	diags = append(diags, s.checkHISS02BoundedLoops(fset, nodes)...)
 	if !strings.HasSuffix(uri, "_test.go") {
@@ -544,29 +544,41 @@ func (s *Server) newDiagnostic(fset *token.FileSet, node ast.Node, severity int,
 	}
 }
 
-// checkHISS04Complexity verifies function length and statement count against the ceilings the
-// opened workspace resolved, which are the ceilings `praetorctl audit` enforces in it.
-func (s *Server) checkHISS04Complexity(fset *token.FileSet, nodes []ast.Node) []Diagnostic {
+// checkHISS04Complexity checks every function against the ceilings the opened workspace
+// resolved, which are the ceilings `praetorctl audit` uses in it. Function length is the
+// bound the audit enforces and is an error. The cyclomatic, cognitive and statement values
+// come from the scanner's own visitor and are reported at the severity the scanner gives
+// them, report-only information, exactly as every audit entry point prints them.
+func (s *Server) checkHISS04Complexity(fset *token.FileSet, file *ast.File) []Diagnostic {
 	var diags []Diagnostic
 	complexity := s.complexityPolicy()
-	for i := 0; i < len(nodes); i++ {
-		fn, ok := nodes[i].(*ast.FuncDecl)
-		if !ok || fn.Body == nil {
-			continue
-		}
-
-		loc := fset.Position(fn.End()).Line - fset.Position(fn.Pos()).Line + 1
-		if loc > complexity.MaxFuncLOC {
+	units := hiss.MeasureFile(fset, file)
+	for i := 0; i < len(units); i++ {
+		fn, isDecl := units[i].Node.(*ast.FuncDecl)
+		if isDecl && fn.Body != nil && units[i].Metrics.LOC > complexity.MaxFuncLOC {
 			diags = append(diags, s.newDiagnostic(fset, fn, 1, "HISS-04",
-				fmt.Sprintf("Function %q length (%d LOC) exceeds HISS-04 limit of %d LOC", fn.Name.Name, loc, complexity.MaxFuncLOC)))
+				fmt.Sprintf("Function %q length (%d LOC) exceeds HISS-04 limit of %d LOC", fn.Name.Name, units[i].Metrics.LOC, complexity.MaxFuncLOC)))
 		}
-
-		if stmts := len(fn.Body.List); stmts > complexity.MaxStatements {
-			diags = append(diags, s.newDiagnostic(fset, fn, 1, "HISS-04",
-				fmt.Sprintf("Function %q statement count (%d) exceeds HISS-04 limit of %d", fn.Name.Name, stmts, complexity.MaxStatements)))
+		for _, m := range units[i].Measurements(fset, "", complexity.Limits()) {
+			diags = append(diags, s.newDiagnostic(fset, units[i].Node, diagnosticSeverity(m.Severity), m.RuleID, m.Detail()))
 		}
 	}
 	return diags
+}
+
+// LSP DiagnosticSeverity values.
+const (
+	severityError       = 1
+	severityInformation = 3
+)
+
+// diagnosticSeverity maps a scanner severity to the LSP scale: a report-only measurement is
+// information, never an error an editor or a client gate could read as a failure.
+func diagnosticSeverity(s hiss.Severity) int {
+	if s == hiss.SeverityReport {
+		return severityInformation
+	}
+	return severityError
 }
 
 // checkHISS01DAG verifies acyclic control flow and bans direct recursion.

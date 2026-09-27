@@ -649,6 +649,39 @@ func TestLSP_Boundary_StatementThreshold(t *testing.T) {
 	}
 }
 
+// branchyFunc returns a function of cyclomatic complexity n built from n-1 flat ifs.
+func branchyFunc(name string, n int) string {
+	return "package sample\n\nfunc " + name + "(x int) int {\n" +
+		strings.Repeat("\tif x > 0 {\n\t\tx++\n\t}\n", n-1) + "\treturn x\n}\n"
+}
+
+// Positive, negative and boundary: complexity comes from the scanner's own visitor and is
+// reported at the scanner's report-only severity, as information and never as an error.
+// Cyclomatic 10 is silent, 11 is measured; a package-level literal is measured like a
+// declaration; statements nested in a block count, as the scanner and funlen count them.
+func TestLSP_ComplexityIsReportedAsInformation(t *testing.T) {
+	if diags := analyze(t, "file:///ten.go", branchyFunc("Ten", 10)); countDiagnostics(diags, "HISS-04", "cyclomatic") != 0 {
+		t.Errorf("cyclomatic 10 must pass, got %+v", diags)
+	}
+	literal := strings.Replace(branchyFunc("", 11), "func (x int) int {", "var Eleven = func(x int) int {", 1)
+	for name, source := range map[string]string{"declaration": branchyFunc("Eleven", 11), "literal": literal} {
+		diags := analyze(t, "file:///eleven.go", source)
+		if countDiagnostics(diags, "HISS-04", "'Eleven' cyclomatic complexity 11 exceeds 10") != 1 {
+			t.Errorf("%s: cyclomatic 11 must be measured, got %+v", name, diags)
+		}
+		for _, d := range diags {
+			if d.Code == "HISS-04" && d.Severity != severityInformation {
+				t.Errorf("%s: complexity reported at severity %d, want information", name, d.Severity)
+			}
+		}
+	}
+	nested := "package sample\n\nfunc Nested(ok bool) {\n\tif ok {\n" +
+		strings.Repeat("\t\tprintln(1); println(2)\n", 25) + "\t}\n}\n"
+	if countDiagnostics(analyze(t, "file:///nested.go", nested), "HISS-04", "statement count 51 exceeds 50") != 1 {
+		t.Error("an if and the 50 statements inside it must count as 51")
+	}
+}
+
 func TestLSP_Boundary_BoundedLoopAndEmptyChange(t *testing.T) {
 	boundedLoop := "package sample\n\nfunc BoundedLoop() {\n\tfor i := 0; i < 100; i++ {\n\t\tprintln(i)\n\t}\n}\n"
 	if diags := analyze(t, "file:///loop.go", boundedLoop); countDiagnostics(diags, "HISS-02", "") != 0 {

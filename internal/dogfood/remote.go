@@ -40,15 +40,18 @@ var PopularBenchmarks = []string{
 
 // RemoteAdoptionResult records adoption and HISS governance simulation for an external repository.
 type RemoteAdoptionResult struct {
-	RepoURL          string `json:"repo_url"`
-	Archetype        string `json:"archetype"`
-	DebtCount        int    `json:"debt_count"`
-	HISSInfractions  int    `json:"hiss_infractions"`
-	SimulatedActions int    `json:"simulated_actions"`
-	ReadinessGrade   string `json:"readiness_grade"`
-	DurationMs       int64  `json:"duration_ms"`
-	Passed           bool   `json:"passed"`
-	Error            string `json:"error,omitempty"`
+	RepoURL         string `json:"repo_url"`
+	Archetype       string `json:"archetype"`
+	DebtCount       int    `json:"debt_count"`
+	HISSInfractions int    `json:"hiss_infractions"`
+	// Complexity is the clone's complexity report: measured, never part of the grade or of
+	// Passed.
+	Complexity       *hiss.ComplexityReport `json:"complexity,omitempty"`
+	SimulatedActions int                    `json:"simulated_actions"`
+	ReadinessGrade   string                 `json:"readiness_grade"`
+	DurationMs       int64                  `json:"duration_ms"`
+	Passed           bool                   `json:"passed"`
+	Error            string                 `json:"error,omitempty"`
 }
 
 // calculateReadinessGrade assigns an adoption readiness rating based on debt and HISS infractions.
@@ -182,6 +185,7 @@ func scanRemoteInfractions(ctx context.Context, dir string, res *RemoteAdoptionR
 	}
 	if scanRes != nil {
 		res.HISSInfractions = scanRes.TotalInfractions
+		res.Complexity = &scanRes.Complexity
 	}
 }
 

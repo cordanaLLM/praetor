@@ -236,3 +236,77 @@ func TestRepositoryCatalogVerifies(t *testing.T) {
 		t.Error("the repository catalog must be backed by at least one fixture")
 	}
 }
+
+// branchyGo returns a Go function of cyclomatic complexity n built from n-1 flat ifs, padded
+// with pad extra lines so the length rule can be made to fire as well.
+func branchyGo(n, pad int) string {
+	var sb strings.Builder
+	sb.WriteString("package p\n\nfunc F(x int) int {\n")
+	for i := 1; i < n; i++ {
+		sb.WriteString("\tif x > 0 {\n\t\tx++\n\t}\n")
+	}
+	sb.WriteString(strings.Repeat("\t// padding\n", pad))
+	sb.WriteString("\treturn x\n}\n")
+	return sb.String()
+}
+
+// verifyHISS04 replays one fixture of a partial HISS-04/go claim and returns the findings.
+func verifyHISS04(t *testing.T, bucket, body string) []Finding {
+	t.Helper()
+	root := corpusRoot(t, "HISS-04", "go", bucket, "fixture.go", body)
+	writeLOCPositive(t, root)
+	report, err := Verify(t.Context(), root, catalogFor("HISS-04", "go", StatePartial))
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	return report.Findings
+}
+
+// writeLOCPositive backs the partial claim with a length violation, so only the fixture under
+// test can produce a finding.
+func writeLOCPositive(t *testing.T, root string) {
+	t.Helper()
+	dir := filepath.Join(root, filepath.FromSlash(FixtureDir), "HISS-04", "go", bucketPositive)
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "long.go"), []byte(branchyGo(1, 70)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Positive: a measured fixture that yields a measurement and no violation holds; so does a
+// negative fixture sitting exactly at the limit.
+func TestVerifyAcceptsAMeasuredFixture(t *testing.T) {
+	if findings := verifyHISS04(t, bucketMeasured, branchyGo(11, 0)); len(findings) != 0 {
+		t.Errorf("a measured fixture over the limit must hold: %+v", findings)
+	}
+	if findings := verifyHISS04(t, bucketNegative, branchyGo(10, 0)); len(findings) != 0 {
+		t.Errorf("a negative fixture at the limit must hold: %+v", findings)
+	}
+}
+
+// Negative, both directions: a measured fixture that yields no measurement fails, and a
+// negative fixture one over the limit fails because the measurement over-matches.
+func TestVerifyRejectsAMissingOrOverMatchingMeasurement(t *testing.T) {
+	for _, tc := range []struct {
+		bucket, body, detail string
+	}{
+		{bucketMeasured, branchyGo(10, 0), "yields no measurement"},
+		{bucketNegative, branchyGo(11, 0), "measured over a limit"},
+	} {
+		findings := verifyHISS04(t, tc.bucket, tc.body)
+		if len(findings) != 1 || !strings.Contains(findings[0].Detail, tc.detail) {
+			t.Errorf("%s fixture: findings %+v, want one saying %q", tc.bucket, findings, tc.detail)
+		}
+	}
+}
+
+// Boundary: a measured fixture that is also a violation fails, because a measurement must
+// never be what enforces a shape.
+func TestVerifyRejectsAMeasuredFixtureThatIsEnforced(t *testing.T) {
+	findings := verifyHISS04(t, bucketMeasured, branchyGo(11, 40))
+	if len(findings) != 1 || !strings.Contains(findings[0].Detail, "never be enforced") {
+		t.Errorf("findings %+v, want the enforced measured fixture", findings)
+	}
+}

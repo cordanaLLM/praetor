@@ -90,3 +90,58 @@ func TestRunHissStage_Negative_CancelledContext(t *testing.T) {
 		t.Fatal("a cancelled context must fail the stage")
 	}
 }
+
+// goFuncOfCyclomatic returns a Go file holding one function of cyclomatic complexity n.
+func goFuncOfCyclomatic(n int) string {
+	var b strings.Builder
+	b.WriteString("package fixture\n\nfunc branchy(x int) int {\n")
+	for i := 1; i < n; i++ {
+		b.WriteString("\tif x > 0 {\n\t\tx++\n\t}\n")
+	}
+	b.WriteString("\treturn x\n}\n")
+	return b.String()
+}
+
+// complexityStage runs the HISS stage over one branchy function under manifest and returns
+// the report it filled in.
+func complexityStage(t *testing.T, manifest string, cyclomatic int) *PipelineReport {
+	t.Helper()
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "branchy.go"), goFuncOfCyclomatic(cyclomatic))
+	if manifest != "" {
+		writeFile(t, filepath.Join(root, ".standards.yaml"), manifest)
+	}
+	cfg, _ := newTestConfig(t, root, false)
+	if _, err := runHissStage(context.Background(), cfg); err != nil {
+		t.Fatalf("a complexity measurement must never fail the stage: %v", err)
+	}
+	return cfg.rep
+}
+
+// Positive, negative and boundary: the stage measures under the repository's resolved limits
+// and carries the measurements in the report, never in its verdict. Without a manifest the
+// HISS-04 ceiling admits cyclomatic 10 and measures 11; a manifest tightening the limit to 8
+// measures 9.
+func TestRunHissStage_ComplexityIsReportedUnderResolvedLimits(t *testing.T) {
+	tight := "version: 1\nrepository:\n  owner: example\n  name: demo\n" +
+		"overrides:\n  complexity:\n    max_cyclomatic: 8\n"
+	for _, tc := range []struct {
+		name       string
+		manifest   string
+		cyclomatic int
+		measured   int
+	}{
+		{"ceiling at the limit", "", 10, 0},
+		{"ceiling over the limit", "", 11, 1},
+		{"tightened limit", tight, 9, 1},
+	} {
+		rep := complexityStage(t, tc.manifest, tc.cyclomatic)
+		if rep.Complexity == nil || len(rep.Complexity.Measurements) != tc.measured {
+			t.Errorf("%s: complexity = %+v, want %d measurements", tc.name, rep.Complexity, tc.measured)
+			continue
+		}
+		if tc.measured > 0 && rep.Complexity.Measurements[0].Value != tc.cyclomatic {
+			t.Errorf("%s: measured %+v", tc.name, rep.Complexity.Measurements[0])
+		}
+	}
+}

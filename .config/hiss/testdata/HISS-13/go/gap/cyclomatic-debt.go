@@ -1,9 +1,10 @@
 package p
 
 // Real HISS-04 debt: McCabe cyclomatic complexity 12, past both the declared cap of 10 and
-// the linter's effective threshold, so golangci-lint reports it. It stays under the
-// scanner's 60-LOC rule, so no scanner violation exists, nothing enters the baseline and
-// V_total does not move. The ratchet cannot ratchet what it does not count.
+// the linter's effective threshold, so golangci-lint reports it. The scanner measures it and
+// reports it without enforcing it, and it stays under the 60-LOC rule, so no scanner
+// violation exists, nothing enters the baseline and V_total does not move. The ratchet
+// cannot ratchet what it does not count.
 func Grade(n int) string {
 	if n < 0 {
 		return "negative"

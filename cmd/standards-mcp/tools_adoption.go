@@ -293,11 +293,19 @@ func (s *Server) createDogfoodTool() (mcp.Tool, error) {
 	return mcp.NewOpenWorldTool("standards_dogfood", "Execute self-governance verification and retained public adoption loops", schema, handler, false, false)
 }
 
+// writeLines appends report lines to a tool result, one per line.
+func writeLines(sb *strings.Builder, lines []string) {
+	for _, line := range lines {
+		sb.WriteString(line + "\n")
+	}
+}
+
 func formatDogfoodMCPResult(rep *dogfood.DogfoodReport) string {
 	var sb strings.Builder
 	sb.WriteString("=== Praetor Universal Dogfooding Report ===\n")
 	fmt.Fprintf(&sb, "Host: %s\n", rep.HostRepoPath)
 	fmt.Fprintf(&sb, "Context Sync: %t | Invariants Audit: %t\n", rep.ContextSyncPassed, rep.SelfAuditPassed)
+	writeLines(&sb, rep.SelfAuditComplexity.Lines())
 	if len(rep.TargetResults) > 0 {
 		fmt.Fprintf(&sb, "Local Targets Evaluated: %d\n", len(rep.TargetResults))
 		for _, tr := range rep.TargetResults {
@@ -308,6 +316,7 @@ func formatDogfoodMCPResult(rep *dogfood.DogfoodReport) string {
 		fmt.Fprintf(&sb, "Remote Benchmarks Evaluated: %d\n", len(rep.RemoteResults))
 		for _, rr := range rep.RemoteResults {
 			fmt.Fprintf(&sb, "  - %s: Grade: %s | Archetype: %s | Debt: %d | HISS: %d\n", rr.RepoURL, rr.ReadinessGrade, rr.Archetype, rr.DebtCount, rr.HISSInfractions)
+			writeLines(&sb, rr.Complexity.Lines())
 		}
 	}
 	fmt.Fprintf(&sb, "Overall Status: %t\n", rep.OverallPassed)

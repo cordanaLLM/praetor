@@ -194,11 +194,7 @@ func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
 	opts.baselineKnown = !base.Absent
 	opts.baseline = base
 
-	scanOpts := hiss.ScanOptions{MaxFuncLOC: config.AuditMaxFuncLOC}
-	if opts.effective != nil {
-		scanOpts.MaxFuncLOC = opts.effective.Policy.Complexity.MaxFuncLOC
-	}
-	scanRep, err := hiss.Scan(ctx, opts.rootDir, scanOpts)
+	scanRep, err := hiss.Scan(ctx, opts.rootDir, auditScanOptions(opts))
 	if err != nil {
 		return fmt.Errorf("[FAIL] Invariant audit failed: %w", err)
 	}
@@ -206,6 +202,7 @@ func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
 	if scanRep.Truncated {
 		return fmt.Errorf("[FAIL] Invariant audit failed: %w (%d infractions recorded before truncation)", hiss.ErrScanTruncated, scanRep.TotalInfractions)
 	}
+	printLines(scanRep.Complexity.Lines())
 	current := fingerprintViolations(scanRep.Violations)
 
 	touched, err := resolveTouchedFiles(ctx, opts)
@@ -232,6 +229,23 @@ func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
 		scanRep.Skips.Symlinks, scanRep.Skips.Oversize, scanRep.Skips.Irregular)
 
 	return auditBaselineGrowth(ctx, opts, base)
+}
+
+// auditScanOptions returns the scan options of the resolved policy: its function-length
+// limit, which the audit enforces, and its complexity limits, which it only measures. Without
+// a resolved policy the audit-compatibility ceiling applies.
+func auditScanOptions(opts *auditOptions) hiss.ScanOptions {
+	if opts.effective == nil {
+		return config.HISSComplexityCeiling().ScanOptions(hiss.ScanOptions{})
+	}
+	return opts.effective.Policy.Complexity.ScanOptions(hiss.ScanOptions{})
+}
+
+// printLines prints report lines to standard output, one per line.
+func printLines(lines []string) {
+	for _, line := range lines {
+		fmt.Println(line)
+	}
 }
 
 // verifiedTargetList names the projections one verification read, and any agent_clients left
