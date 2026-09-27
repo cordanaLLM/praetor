@@ -70,13 +70,7 @@ func runFlavorInspect(args []string) error {
 
 	fmt.Println("Required Templates:")
 	for _, t := range flv.RequiredTemplates() {
-		fmt.Printf("  - %-30s (%s)\n", t.Path, t.Description)
-		if t.Producer != "" {
-			fmt.Printf("    %-30s written by: %s\n", "", t.Producer)
-		}
-		if len(t.AltPaths) > 0 {
-			fmt.Printf("    %-30s or: %s\n", "", strings.Join(t.AltPaths, ", "))
-		}
+		printInspectTemplate(t)
 	}
 
 	fmt.Println("\nRequired Settings:")
@@ -95,6 +89,21 @@ func runFlavorInspect(args []string) error {
 		}
 	}
 	return nil
+}
+
+// printInspectTemplate prints one required template, its producer and the other names it is
+// accepted under.
+func printInspectTemplate(t flavor.TemplateItem) {
+	fmt.Printf("  - %-30s (%s)\n", t.Path, t.Description)
+	if t.Producer != "" {
+		fmt.Printf("    %-30s written by: %s\n", "", t.Producer)
+	}
+	if len(t.AltPaths) > 0 {
+		fmt.Printf("    %-30s or: %s\n", "", strings.Join(t.AltPaths, ", "))
+	}
+	if t.Search != nil {
+		fmt.Printf("    %-30s %s reads the first of: %s\n", "", t.Search.Tool, strings.Join(t.Search.Names, ", "))
+	}
 }
 
 func runFlavorAudit(args []string) error {
@@ -123,7 +132,18 @@ func runFlavorAudit(args []string) error {
 	fmt.Printf("  Templates:   %d/%d present\n", report.TemplatesPresent, report.TemplatesTotal)
 	fmt.Printf("  Settings:    %d/%d valid\n", report.SettingsValid, report.SettingsTotal)
 	fmt.Printf("  Toolchains:  %d/%d available (advisory, not scored)\n", report.ToolchainsAvailable, report.ToolchainsTotal)
+	printFlavorAuditFindings(report)
 
+	if !report.Passed {
+		return fmt.Errorf("flavor audit failed (score: %.1f%%)", report.Score)
+	}
+	return nil
+}
+
+// printFlavorAuditFindings prints each missing template, missing or invalid setting, missing
+// toolchain and shadowed template a flavor audit found, one block per kind, nothing for a
+// kind with no entries.
+func printFlavorAuditFindings(report *flavor.FlavorAuditReport) {
 	if len(report.MissingTemplates) > 0 {
 		fmt.Println("\nMissing Templates:")
 		for _, t := range report.MissingTemplates {
@@ -144,11 +164,14 @@ func runFlavorAudit(args []string) error {
 			fmt.Printf("  - %s : %s (Install: %s)\n", tc.Binary, tc.Purpose, tc.InstallGuide)
 		}
 	}
-
-	if !report.Passed {
-		return fmt.Errorf("flavor audit failed (score: %.1f%%)", report.Score)
+	// A shadowed file looks like configuration and is never read, so an edit to it changes
+	// nothing; naming the file in use is the whole point.
+	if len(report.ShadowedTemplates) > 0 {
+		fmt.Println("\nShadowed Templates (advisory):")
+		for _, s := range report.ShadowedTemplates {
+			fmt.Printf("  - %s reads %s; ignored: %s\n", s.Tool, s.InUse, strings.Join(s.Ignored, ", "))
+		}
 	}
-	return nil
 }
 
 func runFlavorApply(args []string) error {
@@ -194,11 +217,22 @@ func printFlavorApplyReport(dir string, report *flavor.ApplyReport) {
 	if len(report.DeferredTemplates) > 0 {
 		fmt.Printf("  Left to Producer  (%d): %s\n", len(report.DeferredTemplates), strings.Join(report.DeferredTemplates, ", "))
 	}
+	printApplyEntries("Kept Existing Config", coveredEntries(report.CoveredTemplates))
 	// One per line: each entry names a path and what the repository lacks for its body.
 	printApplyEntries("Unmet Requirement", report.UnmetTemplates)
 	fmt.Printf("  WorkingDir State:     %v\n", report.WorkingDirCreated)
 
 	printApplyEntries("Errors", report.Errors)
+}
+
+// coveredEntries renders each template apply left to the configuration already in use as
+// "<file in use> (<name not written>)".
+func coveredEntries(covered []flavor.CoveredTemplate) []string {
+	entries := make([]string, 0, len(covered))
+	for _, c := range covered {
+		entries = append(entries, fmt.Sprintf("%s (%s not written)", c.InUse, c.Path))
+	}
+	return entries
 }
 
 // printApplyEntries prints a labelled count and one entry per line, and nothing when empty.

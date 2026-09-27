@@ -174,8 +174,8 @@ func TestApplyFlavor_Positive_KeepsExistingYamllintConfig(t *testing.T) {
 		if !slices.Equal(report.CoveredTemplates, want) || len(report.CreatedTemplates) != 0 {
 			t.Errorf("%s: covered %+v created %v, want %+v and nothing created", name, report.CoveredTemplates, report.CreatedTemplates, want)
 		}
-		if got := readFile(t, repo, name); got != yamllintPolicy {
-			t.Errorf("%s: apply changed the existing configuration: %q", name, got)
+		if got, err := os.ReadFile(filepath.Join(repo, name)); err != nil || string(got) != yamllintPolicy {
+			t.Errorf("%s: apply changed the existing configuration: %q, %v", name, got, err)
 		}
 	}
 }
@@ -202,19 +202,10 @@ func TestApplyFlavor_Negative_NoYamllintConfigScaffoldsTheDefault(t *testing.T) 
 	if err != nil {
 		t.Fatalf("render the default: %v", err)
 	}
-	if got := readFile(t, repo, ".yamllint.yml"); got != body {
-		t.Errorf("scaffolded %q, want the default body %q", got, body)
+	if got, err := os.ReadFile(filepath.Join(repo, ".yamllint.yml")); err != nil || string(got) != body {
+		t.Errorf("scaffolded %q (%v), want the default body %q", got, err, body)
 	}
 	if audit := auditForge(t, repo); !audit.Passed {
 		t.Errorf("the scaffolded default did not satisfy the audit: missing %v", missingPaths(audit))
 	}
-}
-
-func readFile(t *testing.T, root, rel string) string {
-	t.Helper()
-	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
-	if err != nil {
-		t.Fatalf("read %s: %v", rel, err)
-	}
-	return string(data)
 }
