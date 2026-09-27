@@ -358,17 +358,37 @@ A tool call and the CLI therefore check and write the same things:
   The writer itself (`contextopt.WriteSnapshotIn`) creates and opens every
   directory below `target_dir` without following a link, so a link planted
   after the check is refused too.
-- A write reads every persona and skill and checks every one of those files
-  before it writes the first, so a refusal leaves the vendor files, the
-  persona copies and the plugin copies unchanged. The text register splice
-  into `source` is not one of those files: a refused vendor file can leave
-  `source` spliced.
+- A write reads every persona and skill, then checks every file it is about
+  to write before it splices the text register into `source` and before it
+  writes the first file (`planAgentSurfaces` in
+  `internal/compiler/projection.go`). The check applies the writer's own
+  refusals: the symlink refusals above, an existing file that is not a regular
+  file, and an existing file the writer cannot observe because it is not
+  UTF-8 text, holds a NUL byte or exceeds 1 MiB (`contextopt.MaxSourceBytes`).
+  Any of those leaves `source`, the vendor files, the persona copies and the
+  plugin copies unchanged. The check does not cover an I/O failure during the
+  writes themselves, such as a full disk, or a target changed between the
+  check and the write: the writer applies the same refusals again when it
+  reaches each file, but the files written before a refusal stay written.
 
 Tests: `cmd/standards-mcp/server_projection_test.go`,
 `TestCompileContextRejectsSymlinkedOutputDescendants` and
 `TestCompileContextWritesRealOutputDescendants` in
 `cmd/standards-mcp/server_path_test.go`, `internal/compiler/output_paths_test.go`,
-and `internal/contextopt/write_in_test.go`.
+`internal/compiler/projection_test.go` and `internal/contextopt/write_in_test.go`.
+
+`standards_adopt` and `praetorctl adopt` write the vendor files of the selected
+clients and the two canonical personas (`repo-auditor.md`,
+`repo-gatekeeper.md`) through the same writer, and project the personas with
+`compiler.CompileAgents`. Before the first adoption step writes anything, adopt
+runs the same check over those files and every persona copy
+(`preflightAgentSurfaces` in `internal/adopt/adopt.go`), so a symlinked
+`.agents`, `.github` or persona directory fails adoption with nothing written.
+A dry run runs the check too; a step declined through `adoption.decline` is not
+checked. Every other file adoption writes, such as the pull request template or
+the workflows, still goes through the older writer (`writeRepoFile`), which
+refuses a link that leaves the repository but follows one that stays inside it.
+Tests: `internal/adopt/agent_surface_preflight_test.go`.
 
 `standards_audit` does not run the persona and skill checks yet; see
 [the persona and skill gate](text-register.md#the-persona-and-skill-gate).
