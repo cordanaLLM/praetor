@@ -481,7 +481,9 @@ func contractReplacement(idx *FrameworkIndex, dep *DependencyDemand) (string, Ca
 
 // reconcileContractDemand marks a demand covered, or adapter-available, by its contract
 // replacement. A demand the catalog did not know adopts the replacement package's first
-// declared capability so it stops counting as a custom gap.
+// declared capability so it stops counting as a custom gap. The note is rewritten whenever
+// the status or the package changes, so a demand a scan mapped to the configured contract's
+// package and a report re-mapped to a fork's never names the package it no longer maps to.
 func reconcileContractDemand(idx *FrameworkIndex, dep *DependencyDemand) bool {
 	path, status, ok := contractReplacement(idx, dep)
 	if !ok {
@@ -491,7 +493,7 @@ func reconcileContractDemand(idx *FrameworkIndex, dep *DependencyDemand) bool {
 	if !slices.Contains(pkg.Capabilities, dep.Capability) && len(pkg.Capabilities) > 0 {
 		dep.Capability = pkg.Capabilities[0]
 	}
-	if dep.Status != status {
+	if dep.Status != status || dep.FrameworkReplacement != path {
 		dep.Notes = fmt.Sprintf("%s declares %s for %s", idx.Contract, path, dep.Capability)
 	}
 	dep.Status, dep.FrameworkReplacement = status, path

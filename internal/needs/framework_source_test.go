@@ -187,3 +187,43 @@ func TestLoadRegistryDeclaresTargetContracts(t *testing.T) {
 		t.Fatalf("no targets = %v", err)
 	}
 }
+
+// A demand a scan mapped to the configured contract's package, re-mapped by a report to a
+// fork's package at the same status, gets a note naming the fork's package; a note is kept
+// when neither the package nor the status changes.
+func TestContractNoteFollowsReplacement_3D(t *testing.T) {
+	contract := writeAcmeContract(t)
+	repo := t.TempDir()
+	writeFixture(t, repo, "go.mod", "module example.com/consumer\n\ngo 1.27\n\nrequire github.com/jackc/pgx/v5 v5.7.2\n")
+	registry, err := LoadRegistry(t.Context(), Targets{"go": {Module: acmeKit, Contract: contract}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fork := setupFrameworkCheckout(t, "example.com/fork/kit", "db")
+	writeFixture(t, fork, "db/db.go", "package db\n\ntype Pool struct{}\n")
+	forked, err := InspectFramework(t.Context(), FrameworkSource{Checkout: fork, Contract: contract, Module: acmeKit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Positive: the fork report's note names the fork's package, not the contract's.
+	report, err := ScanRepoWithFramework(t.Context(), repo, forked, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pgx := demandFor(t, report, "github.com/jackc/pgx/v5")
+	if pgx.Status != StatusCovered || pgx.FrameworkReplacement != "example.com/fork/kit/db" ||
+		!strings.Contains(pgx.Notes, "example.com/fork/kit/db") || strings.Contains(pgx.Notes, acmeKit+"/db") {
+		t.Fatalf("fork report demand = %+v", pgx)
+	}
+	// Negative: the same package at the same status keeps the note it has.
+	kept := DependencyDemand{Package: "github.com/jackc/pgx/v5", Ecosystem: "go", Capability: "db.postgres",
+		Status: StatusCovered, FrameworkReplacement: "example.com/fork/kit/db", Notes: "operator note"}
+	if !reconcileContractDemand(forked, &kept) || kept.Notes != "operator note" {
+		t.Fatalf("unchanged demand = %+v", kept)
+	}
+	// Boundary: a gap the contract now covers gets the contract's note.
+	gap := DependencyDemand{Package: "github.com/jackc/pgx/v5", Ecosystem: "go", Capability: "db.postgres", Status: StatusGap}
+	if !reconcileContractDemand(forked, &gap) || gap.Notes != "kit.capabilities.yaml declares example.com/fork/kit/db for db.postgres" {
+		t.Fatalf("covered gap = %+v", gap)
+	}
+}
