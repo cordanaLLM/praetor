@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/clientjson"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/httpendpoint"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -84,7 +85,7 @@ type agyPermissionLists struct {
 func decodeAGYPermissionSettings(ctx context.Context, existing []byte) (map[string]jsontext.Value, map[string]jsontext.Value, agyPermissionLists, error) {
 	root := make(map[string]jsontext.Value)
 	if len(existing) != 0 {
-		if err := validateJSON(ctx, existing); err != nil {
+		if err := clientjson.Validate(ctx, existing); err != nil {
 			return nil, nil, agyPermissionLists{}, err
 		}
 		var err error

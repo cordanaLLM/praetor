@@ -75,6 +75,21 @@ var vendorTargets = [6]vendorTarget{
 // every directory, an empty list keeps none, and an unknown id fails. A client that reads no
 // personas appears in neither list.
 func PersonaDirs(clients []string) (selected, excluded []string, err error) {
+	return partitionTargets(clients, func(target vendorTarget) string { return target.personaDir })
+}
+
+// SelectedClients resolves a client selection to the agent client ids it keeps and the ones it
+// leaves out, both in registry order, under the same rules as the context files: nil keeps
+// every client, an empty list none, and an unknown id fails. A step that acts per client
+// (adoption's hook registration) reads the selection here instead of re-parsing it.
+func SelectedClients(clients []string) (selected, excluded []string, err error) {
+	return partitionTargets(clients, func(target vendorTarget) string { return target.client })
+}
+
+// partitionTargets resolves a selection through selectTargets and returns field of every
+// chosen and every left-out projection, in registry order. A projection whose field is empty
+// appears in neither list.
+func partitionTargets(clients []string, field func(vendorTarget) string) (selected, excluded []string, err error) {
 	targets, _, err := selectTargets(clients)
 	if err != nil {
 		return nil, nil, err
@@ -84,12 +99,13 @@ func PersonaDirs(clients []string) (selected, excluded []string, err error) {
 		chosen[target.client] = true
 	}
 	for _, target := range vendorTargets {
+		value := field(target)
 		switch {
-		case target.personaDir == "":
+		case value == "":
 		case chosen[target.client]:
-			selected = append(selected, target.personaDir)
+			selected = append(selected, value)
 		default:
-			excluded = append(excluded, target.personaDir)
+			excluded = append(excluded, value)
 		}
 	}
 	return selected, excluded, nil

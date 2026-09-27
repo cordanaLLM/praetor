@@ -2,7 +2,13 @@ package agenthook
 
 import (
 	"fmt"
+	"path"
+	"slices"
+	"strings"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/clientid"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // Registration is one row of the client registration table: which native event of which
@@ -28,6 +34,75 @@ type Registration struct {
 // Rollout).
 func (r Registration) Command() string {
 	return "praetorctl hook " + r.Client + " " + string(r.Event)
+}
+
+// ServedBy reports whether a hook handler's command line already runs this row's evaluator:
+// the engine call itself under any path to praetorctl or standardsctl, the skew guard this
+// repository's tracked files use (praetor_hook.py <client> <event>), or, for the pre-tool row,
+// one of the Python adapters the engine call replaced. Adoption asks it before registering a
+// row, so a repository that already wires the evaluator is not given a second copy that runs
+// the same policy twice on every call.
+func (r Registration) ServedBy(commandLine string) bool {
+	tokens := strings.Fields(commandLineSeparators.Replace(commandLine))
+	for i, token := range tokens {
+		if r.servedFrom(strings.TrimSuffix(path.Base(token), ".exe"), tokens[i+1:]) {
+			return true
+		}
+	}
+	return false
+}
+
+// servedFrom judges one command-line token, reduced to its base name, and the tokens after it.
+func (r Registration) servedFrom(name string, rest []string) bool {
+	switch {
+	case r.Event == EventPreTool && slices.Contains(preToolAdapters, name):
+		return true
+	case name == skewGuardScript:
+		return r.invokedBy(rest)
+	case name == util.PraetorCLI || name == util.LegacyCLI:
+		return len(rest) > 0 && rest[0] == "hook" && r.invokedBy(rest[1:])
+	default:
+		return false
+	}
+}
+
+// invokedBy reports whether args open with this row's client and event.
+func (r Registration) invokedBy(args []string) bool {
+	return len(args) >= 2 && args[0] == r.Client && args[1] == string(r.Event)
+}
+
+// commandLineSeparators turns the quoting and the Windows path separator of a registered
+// command line into forms strings.Fields and path.Base split on.
+var commandLineSeparators = strings.NewReplacer(`"`, " ", "'", " ", `\`, "/")
+
+// skewGuardScript is the base name of the skew guard (Command); preToolAdapters are the base
+// names of the Python pre-tool adapters that preceded the engine call: this repository's
+// command guards and the interceptor adoption scaffolds.
+const skewGuardScript = "praetor_hook.py"
+
+var preToolAdapters = []string{"command_guard.py", "codex_pre_tool.py", "block_evasion.py"}
+
+// HookFile is where a native client reads the hook registrations of a repository, and the unit
+// the timeout field of a registration counts in there.
+type HookFile struct {
+	Path        string
+	TimeoutUnit time.Duration
+}
+
+// nativeHookFiles are the repository files carrying each native client's registrations. The
+// units are the ones this repository's tracked files use: Claude Code and Codex count seconds
+// (timeout 15), Gemini CLI milliseconds (timeout 15000).
+var nativeHookFiles = map[string]HookFile{
+	string(clientid.Claude): {Path: ".claude/settings.json", TimeoutUnit: time.Second},
+	string(clientid.Codex):  {Path: ".codex/hooks.json", TimeoutUnit: time.Second},
+	string(clientid.Gemini): {Path: ".gemini/settings.json", TimeoutUnit: time.Millisecond},
+}
+
+// NativeHookFile returns the repository hook file of client, or false for a client without
+// one: AGY registers through its plugin, and the context-only clients have no hook surface.
+func NativeHookFile(client string) (HookFile, bool) {
+	file, ok := nativeHookFiles[client]
+	return file, ok
 }
 
 // registrationTable is the support matrix of the entrypoint. A pair without a row is

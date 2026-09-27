@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/clientjson"
 	"github.com/cordanaLLM/praetor/internal/httpendpoint"
 	"github.com/cordanaLLM/praetor/internal/repairrun"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -42,7 +43,7 @@ type MemoryBinding struct {
 
 // DecodeConnectionProfile validates bounded, explicit configuration without I/O.
 func DecodeConnectionProfile(ctx context.Context, raw []byte) (ConnectionProfile, error) {
-	if err := validateJSON(ctx, raw); err != nil {
+	if err := clientjson.Validate(ctx, raw); err != nil {
 		return ConnectionProfile{}, err
 	}
 	var profile ConnectionProfile

@@ -7,47 +7,10 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"io"
 	"slices"
+
+	"github.com/cordanaLLM/praetor/internal/clientjson"
 )
-
-func validateJSON(ctx context.Context, raw []byte) error {
-	if err := checkContext(ctx); err != nil {
-		return err
-	}
-	if len(raw) == 0 || len(raw) > MaxConfigBytes {
-		return errors.New("JSON input requires 1..1048576 bytes")
-	}
-	decoder := jsontext.NewDecoder(bytes.NewReader(raw))
-	complete := false
-	for i := 0; i <= len(raw); i++ {
-		if err := checkContext(ctx); err != nil {
-			return err
-		}
-		token, err := decoder.ReadToken()
-		if errors.Is(err, io.EOF) && complete {
-			return nil
-		}
-		if err != nil {
-			return errors.New("invalid or ambiguous client JSON")
-		}
-		if err := validateJSONPosition(token, i, complete, decoder.StackDepth()); err != nil {
-			return err
-		}
-		complete = decoder.StackDepth() == 0
-	}
-	return errors.New("JSON token bound exceeded")
-}
-
-func validateJSONPosition(token jsontext.Token, index int, complete bool, depth int) error {
-	if complete || (index == 0 && token.Kind() != '{') {
-		return errors.New("client JSON requires exactly one object")
-	}
-	if depth > 32 {
-		return errors.New("JSON nesting exceeds 32")
-	}
-	return nil
-}
 
 func marshalJSON(value any) ([]byte, error) {
 	raw, err := json.Marshal(value, json.Deterministic(true), jsontext.WithIndent("  "))
@@ -71,7 +34,7 @@ func jsonObject(raw []byte) (map[string]jsontext.Value, error) {
 func mergeJSON(ctx context.Context, registry Registry, client Client, existing []byte) ([]byte, error) {
 	root := make(map[string]jsontext.Value)
 	if len(existing) != 0 {
-		if err := validateJSON(ctx, existing); err != nil {
+		if err := clientjson.Validate(ctx, existing); err != nil {
 			return nil, err
 		}
 		var err error
@@ -152,21 +115,14 @@ func matchingJSONServer(raw []byte, client Client, server Server) bool {
 			return false
 		}
 	}
-	if rawType, ok := fields["type"]; ok && stringValue(rawType) != "stdio" {
+	if rawType, ok := fields["type"]; ok && clientjson.StringValue(rawType) != "stdio" {
 		return false
 	}
 	return matchingArgs(fields["args"], server.Args)
 }
 
 func stringField(fields map[string]jsontext.Value, key string) string {
-	return stringValue(fields[key])
-}
-func stringValue(raw []byte) string {
-	var value string
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return ""
-	}
-	return value
+	return clientjson.StringValue(fields[key])
 }
 
 func matchingArgs(raw []byte, wanted []string) bool {

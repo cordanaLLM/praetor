@@ -5,6 +5,8 @@ import (
 	"errors"
 	"slices"
 	"sort"
+
+	"github.com/cordanaLLM/praetor/internal/agenthook"
 )
 
 type LifecycleCapability struct {
@@ -40,10 +42,20 @@ type CapabilityReport struct {
 }
 
 // lifecycleDefinitions are the tracked files that register a client's tool guard,
-// checkpoint and stop rows. AGY has none: its plugin registers only the subagent brief row,
-// so its lifecycle stays unsupported although the engine serves agy pre-tool and stop.
-var lifecycleDefinitions = map[Client][]string{
-	Codex: {".codex/hooks.json"}, Claude: {".claude/settings.json"}, Gemini: {".gemini/settings.json"},
+// checkpoint and stop rows: the native hook files of agenthook's registration table, the same
+// files adoption registers the pre-tool row in. AGY has none: its plugin registers only the
+// subagent brief row, so its lifecycle stays unsupported although the engine serves agy
+// pre-tool and stop.
+var lifecycleDefinitions = nativeHookDefinitions(Codex, Claude, Gemini)
+
+func nativeHookDefinitions(clients ...Client) map[Client][]string {
+	definitions := make(map[Client][]string, len(clients))
+	for _, client := range clients {
+		if file, ok := agenthook.NativeHookFile(string(client)); ok {
+			definitions[client] = []string{file.Path}
+		}
+	}
+	return definitions
 }
 
 // trafficDefinitions are the tracked files that register a client's subagent text rows.
