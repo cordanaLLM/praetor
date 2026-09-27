@@ -96,7 +96,7 @@ func goPackageRef(line string, includeTransitive bool) (PackageRef, bool) {
 	if len(matches) != 3 {
 		return PackageRef{}, false
 	}
-	indirect := strings.Contains(line, "// indirect")
+	indirect := gomanifest.IsIndirect(line)
 	if indirect && !includeTransitive {
 		return PackageRef{}, false
 	}

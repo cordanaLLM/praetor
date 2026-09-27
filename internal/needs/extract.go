@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/gomanifest"
 	"github.com/cordanaLLM/praetor/internal/topology"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -68,6 +69,9 @@ func ScanRepoWithFramework(ctx context.Context, repoPath string, framework *Fram
 }
 
 // parseGoMod extracts the module path, go version, and direct dependencies from go.mod.
+// Each line is classified through the shared lexical rules of internal/gomanifest, the
+// ones the SBOM, docs-reference and toolchain scanners use, so a trailing comment, a
+// quoted module path and the "//indirect" marker read the way the go command reads them.
 func parseGoMod(goModPath string) (modulePath string, goVersion string, directDeps map[string]string, err error) {
 	if !util.FileExists(goModPath) {
 		return "", "", nil, fmt.Errorf("%w: %s", ErrGoModMissing, goModPath)
@@ -92,61 +96,109 @@ type goModScanState struct {
 
 // consume classifies a single trimmed go.mod line.
 func (s *goModScanState) consume(line string) {
-	switch {
-	case strings.HasPrefix(line, "module "):
-		s.modulePath = strings.TrimSpace(strings.TrimPrefix(line, "module"))
-	case strings.HasPrefix(line, "go "):
-		s.goVersion = strings.TrimSpace(strings.TrimPrefix(line, "go"))
-	case strings.HasPrefix(line, "require ("):
-		s.inRequireBlock = true
-	case s.inRequireBlock && line == ")":
-		s.inRequireBlock = false
-	case s.inRequireBlock || strings.HasPrefix(line, "require "):
-		parseRequireLine(line, s.directDeps)
+	if path, ok := gomanifest.ModulePath(line); ok {
+		s.modulePath = path
+		return
+	}
+	if version, ok := gomanifest.GoDirectiveLine(line); ok {
+		s.goVersion = version
+		return
+	}
+	if requirement, ok := gomanifest.RequirementLine(line, &s.inRequireBlock); ok {
+		recordDirectRequirement(requirement, s.directDeps)
 	}
 }
 
-// parseRequireLine extracts a dependency if it is not marked as indirect.
-func parseRequireLine(line string, directDeps map[string]string) {
-	clean := strings.TrimPrefix(line, "require ")
-	clean = strings.TrimSpace(clean)
-	if strings.HasPrefix(clean, "//") || strings.HasPrefix(clean, "#") ||
-		strings.Contains(clean, "// indirect") || clean == "" || clean == "(" || clean == ")" {
+// recordDirectRequirement records the module and version of one require line, block
+// keyword and delimiters already removed, unless the line carries the go command's
+// indirect marker. A quoted module path or version is unquoted, as the go command reads
+// it; a malformed quoted token records nothing.
+func recordDirectRequirement(line string, directDeps map[string]string) {
+	if gomanifest.IsIndirect(line) {
 		return
 	}
-	parts := strings.Fields(clean)
-	if len(parts) >= 2 {
-		directDeps[parts[0]] = parts[1]
+	if requirement, ok := gomanifest.ParseRequirement(line); ok {
+		directDeps[requirement.Path] = requirement.Version
 	}
 }
+
+// maxImportScanEntries bounds how many files and directories one import scan visits
+// (HISS-02). A module tree holding more fails the scan with ErrDiscoveryBound instead of
+// returning the imports of the part it reached.
+const maxImportScanEntries = 1000000
 
 // scanASTImports extracts third-party imports and selected catalog stdlib imports.
 func scanASTImports(ctx context.Context, rootDir, modulePath string) (map[string]struct{}, error) {
-	thirdParty := make(map[string]struct{})
-	fset := token.NewFileSet()
-	root := filepath.Clean(rootDir)
+	return scanASTImportsBounded(ctx, rootDir, modulePath, maxImportScanEntries)
+}
 
-	err := filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return ctxErr
-		}
-		if shouldSkipDir(info, path, root) || isNestedModuleBoundary(info, path, root) {
-			return filepath.SkipDir
-		}
-		if !isScannableGoFile(info) {
-			return nil
-		}
-		collectFileImports(fset, path, modulePath, thirdParty)
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to walk %q for Go imports: %w", root, err)
+// scanASTImportsBounded is scanASTImports with the entry bound as a parameter, so the
+// bound itself can be exercised without a million-file fixture.
+func scanASTImportsBounded(ctx context.Context, rootDir, modulePath string, limit int) (map[string]struct{}, error) {
+	scan := &importScan{
+		ctx:        ctx,
+		root:       filepath.Clean(rootDir),
+		modulePath: modulePath,
+		limit:      limit,
+		fset:       token.NewFileSet(),
+		imports:    make(map[string]struct{}),
 	}
+	if err := filepath.Walk(scan.root, scan.visit); err != nil {
+		return nil, fmt.Errorf("failed to walk %q for Go imports: %w", scan.root, err)
+	}
+	return scan.imports, nil
+}
 
-	return thirdParty, nil
+// importScan is one bounded walk of a module's Go sources, collecting their imports.
+type importScan struct {
+	ctx        context.Context
+	root       string
+	modulePath string
+	limit      int
+	visited    int
+	fset       *token.FileSet
+	imports    map[string]struct{}
+}
+
+// visit is the filepath.WalkFunc of an import scan.
+func (s *importScan) visit(path string, info os.FileInfo, walkErr error) error {
+	if walkErr != nil {
+		return walkErr
+	}
+	if ctxErr := s.ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	s.visited++
+	if s.visited > s.limit {
+		return fmt.Errorf("%w: import scan visited more than %d entries below %s", ErrDiscoveryBound, s.limit, s.root)
+	}
+	if s.skipsDir(info, path) {
+		return filepath.SkipDir
+	}
+	if isScannableGoFile(info) {
+		collectFileImports(s.fset, path, s.modulePath, s.imports)
+	}
+	return nil
+}
+
+// skipsDir reports whether the import scan must not enter the directory at path.
+func (s *importScan) skipsDir(info os.FileInfo, path string) bool {
+	return shouldSkipDir(info, path, s.root) ||
+		isGoToolIgnoredDir(info, path, s.root) ||
+		isNestedModuleBoundary(info, path, s.root)
+}
+
+// isGoToolIgnoredDir reports whether the directory at path, below the import scan's root,
+// is one the go command never builds a package from when it expands "./...": a directory
+// named testdata, or one whose name begins with "_" (see "go help packages"). Its sources
+// are fixtures or parked code, not imports of the module. The root itself is never
+// ignored: the caller named it.
+func isGoToolIgnoredDir(info os.FileInfo, path, root string) bool {
+	if info == nil || !info.IsDir() || filepath.Clean(path) == root {
+		return false
+	}
+	name := info.Name()
+	return name == "testdata" || strings.HasPrefix(name, "_")
 }
 
 // isNestedModuleBoundary reports whether the directory at path, below the import scan's
@@ -161,13 +213,18 @@ func isNestedModuleBoundary(info os.FileInfo, path, root string) bool {
 	return util.FileExists(filepath.Join(path, "go.mod")) || topology.HasValidGitRepo(path)
 }
 
-// isScannableGoFile reports whether info is a regular, non-test .go source file. Symlinks
-// are excluded: their target may live outside the scanned repository.
+// isScannableGoFile reports whether info is a regular, non-test .go source file the go
+// command would compile. Symlinks are excluded: their target may live outside the scanned
+// repository. Names beginning with "_" or "." are excluded because the go command ignores
+// them (see "go help packages").
 func isScannableGoFile(info os.FileInfo) bool {
 	if info == nil || info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return false
 	}
 	name := info.Name()
+	if strings.HasPrefix(name, "_") || strings.HasPrefix(name, ".") {
+		return false
+	}
 	return strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go")
 }
 

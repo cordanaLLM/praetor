@@ -313,3 +313,153 @@ func TestParseGoMod3D(t *testing.T) {
 		t.Fatalf("expected an empty dependency set, got %v (err %v)", bareDeps, err)
 	}
 }
+
+// TestParseGoModReadsDirectivesLikeTheGoCommand: trailing comments on the module and go
+// lines, a quoted module path and the "//indirect" spelling are read the way
+// golang.org/x/mod/modfile reads them. The former prefix scanner kept the comment inside
+// the module path and the go version, and counted a "//indirect" requirement as direct.
+func TestParseGoModReadsDirectivesLikeTheGoCommand(t *testing.T) {
+	dir := t.TempDir()
+	path := writeFixture(t, dir, "go.mod",
+		"module \"example.com/svc\" // Deprecated: use example.com/svc/v2\n\n"+
+			"go 1.27 // raised for range-over-func\n\nrequire (\n"+
+			"\tgithub.com/a/b v1.0.0 // kept for the CLI\n"+
+			"\tgithub.com/c/d/v2 v2.0.0 //indirect\n"+
+			"\tgithub.com/e/f v1.2.0 // indirect; pulled in by github.com/a/b\n)\n")
+	modulePath, goVer, deps, err := parseGoMod(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if modulePath != "example.com/svc" || goVer != "1.27" {
+		t.Fatalf("module %q / go %q, want example.com/svc / 1.27", modulePath, goVer)
+	}
+	if len(deps) != 1 || deps["github.com/a/b"] != "v1.0.0" {
+		t.Fatalf("direct deps = %v, want only github.com/a/b v1.0.0", deps)
+	}
+}
+
+// TestParseGoModNegativeMentionOfIndirectStaysDirect: a comment that merely contains the
+// word "indirect" does not mark the requirement indirect; the former substring check
+// dropped such a direct dependency from the report.
+func TestParseGoModNegativeMentionOfIndirectStaysDirect(t *testing.T) {
+	path := writeFixture(t, t.TempDir(), "go.mod",
+		"module example.com/svc\n\nrequire github.com/a/b v1.0.0 // indirectly exercised by e2e\n")
+	_, _, deps, err := parseGoMod(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if deps["github.com/a/b"] != "v1.0.0" {
+		t.Fatalf("direct deps = %v, want github.com/a/b v1.0.0", deps)
+	}
+}
+
+// TestParseGoModBoundaryCommentOnlyDirectives: a module or go directive whose only
+// argument is a comment declares nothing, instead of a comment posing as a module path.
+func TestParseGoModBoundaryCommentOnlyDirectives(t *testing.T) {
+	path := writeFixture(t, t.TempDir(), "go.mod", "module // TODO\n\ngo // TODO\n")
+	modulePath, goVer, deps, err := parseGoMod(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if modulePath != "" || goVer != "" || len(deps) != 0 {
+		t.Fatalf("module %q / go %q / deps %v, want all empty", modulePath, goVer, deps)
+	}
+}
+
+// TestParseGoModQuotedRequirementsAndTabbedGoDirective: go.mod may quote a require path
+// or version and separate the go keyword from its version with a tab; the go command
+// reads both, so the scan records the bare path and the version instead of a path with
+// its quotes attached or no Go version at all.
+func TestParseGoModQuotedRequirementsAndTabbedGoDirective(t *testing.T) {
+	path := writeFixture(t, t.TempDir(), "go.mod",
+		"module example.com/svc\n\ngo\t1.27\n\nrequire \"github.com/a/b\" v1.0.0\n\nrequire (\n"+
+			"\t\"github.com/c/d/v2\" \"v2.1.0\"\n\t\"github.com/e/f\" v1.2.0 // indirect\n)\n")
+	_, goVer, deps, err := parseGoMod(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := map[string]string{"github.com/a/b": "v1.0.0", "github.com/c/d/v2": "v2.1.0"}
+	if goVer != "1.27" || len(deps) != len(want) || deps["github.com/a/b"] != want["github.com/a/b"] ||
+		deps["github.com/c/d/v2"] != want["github.com/c/d/v2"] {
+		t.Fatalf("go %q / direct deps %v, want 1.27 / %v", goVer, deps, want)
+	}
+}
+
+// TestParseGoModNegativeMalformedQuotedRequirement: a require path the go command refuses
+// -- an unterminated or single-quoted string, or a quote inside an unquoted path -- is
+// not recorded as a dependency under a garbled name.
+func TestParseGoModNegativeMalformedQuotedRequirement(t *testing.T) {
+	path := writeFixture(t, t.TempDir(), "go.mod",
+		"module example.com/svc\n\nrequire (\n\t\"github.com/a/b v1.0.0\n"+
+			"\t'github.com/c/d' v1.0.0\n\tgithub.com/e/\"f\" v1.0.0\n\tgithub.com/g/h v1.1.0\n)\n")
+	_, _, deps, err := parseGoMod(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(deps) != 1 || deps["github.com/g/h"] != "v1.1.0" {
+		t.Fatalf("direct deps = %v, want only github.com/g/h v1.1.0", deps)
+	}
+}
+
+// TestParseGoModBoundaryEmptyQuotedRequirement: an empty quoted path or version names no
+// module, and a quoted path without a version is incomplete.
+func TestParseGoModBoundaryEmptyQuotedRequirement(t *testing.T) {
+	path := writeFixture(t, t.TempDir(), "go.mod",
+		"module example.com/svc\n\nrequire \"\" v1.0.0\n\nrequire github.com/a/b \"\"\n\nrequire \"github.com/c/d\"\n")
+	_, _, deps, err := parseGoMod(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(deps) != 0 {
+		t.Fatalf("direct deps = %v, want none", deps)
+	}
+}
+
+// TestScanASTImportsSkipsGoToolIgnoredSources: testdata/ and _-prefixed directories and
+// _- and .-prefixed files are never compiled by the go command ("go help packages"), so
+// their imports are fixtures, not demand. A scan rooted in a directory named testdata
+// still reads it.
+func TestScanASTImportsSkipsGoToolIgnoredSources(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture(t, dir, "main.go", "package main\n\nimport _ \"github.com/gin-gonic/gin\"\n")
+	writeFixture(t, dir, filepath.Join("testdata", "fixture.go"), "package fixture\n\nimport _ \"github.com/spf13/cobra\"\n")
+	writeFixture(t, dir, filepath.Join("pkg", "testdata", "golden.go"), "package golden\n\nimport _ \"github.com/spf13/viper\"\n")
+	writeFixture(t, dir, filepath.Join("_parked", "old.go"), "package old\n\nimport _ \"github.com/urfave/cli\"\n")
+	writeFixture(t, dir, "_scratch.go", "package main\n\nimport _ \"github.com/sirupsen/logrus\"\n")
+	writeFixture(t, dir, ".hidden.go", "package main\n\nimport _ \"github.com/pkg/errors\"\n")
+
+	imports, err := scanASTImports(t.Context(), dir, "example.com/x")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := imports["github.com/gin-gonic/gin"]; !ok || len(imports) != 1 {
+		t.Fatalf("imports = %v, want only github.com/gin-gonic/gin", imports)
+	}
+
+	rooted, err := scanASTImports(t.Context(), filepath.Join(dir, "testdata"), "example.com/x")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := rooted["github.com/spf13/cobra"]; !ok {
+		t.Fatalf("a scan rooted at testdata/ must read it, got %v", rooted)
+	}
+}
+
+// TestScanASTImportsBoundaryEntryLimit: a tree that fits the entry bound exactly is
+// scanned in full; one entry more fails with ErrDiscoveryBound rather than returning the
+// imports of the part that was reached (HISS-02).
+func TestScanASTImportsBoundaryEntryLimit(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture(t, dir, "a.go", "package a\n\nimport _ \"github.com/gin-gonic/gin\"\n")
+	writeFixture(t, dir, "b.go", "package a\n\nimport _ \"github.com/spf13/cobra\"\n")
+	const entries = 3 // the root directory and its two files
+
+	imports, err := scanASTImportsBounded(t.Context(), dir, "example.com/x", entries)
+	if err != nil || len(imports) != 2 {
+		t.Fatalf("at the bound: imports = %v, err = %v; want both imports", imports, err)
+	}
+	imports, err = scanASTImportsBounded(t.Context(), dir, "example.com/x", entries-1)
+	if !errors.Is(err, ErrDiscoveryBound) || imports != nil {
+		t.Fatalf("past the bound: imports = %v, err = %v; want ErrDiscoveryBound and no imports", imports, err)
+	}
+}

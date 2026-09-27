@@ -1,0 +1,2 @@
+type: fixed
+title: Read go.mod module, go, require and indirect-marker lines the way the go command does in needs scans and dependency docs, including tab separators and quoted require paths, and skip testdata and underscore- or dot-prefixed sources in the bounded Go import scan

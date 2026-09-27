@@ -25,7 +25,7 @@ const (
 )
 
 // ErrDiscoveryBound is returned when a discovery walk exceeds maxDiscoveryDirs or
-// maxDiscoveryDepth.
+// maxDiscoveryDepth, and when a Go import scan exceeds maxImportScanEntries.
 var ErrDiscoveryBound = errors.New("needs: discovery walk exceeded its bound")
 
 // discoveryPrunedNames are the exact, case-sensitive directory names discovery never
