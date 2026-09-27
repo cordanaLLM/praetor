@@ -87,6 +87,17 @@ archives:
       - goos: windows
         formats: [zip]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    # Listing files replaces GoReleaser's default license*/readme*/changelog* globs, so
+    # README.md and CHANGELOG.md stay listed. LICENSES/ holds the full text of every
+    # license THIRD-PARTY-NOTICES.md names for shipped code; the binaries link third-party
+    # code whose licenses require both files to travel with them.
+    # internal/supplychain/notices_test.go fails when an archive drops one of them.
+    files:
+      - README.md
+      - CHANGELOG.md
+      - LICENSE
+      - LICENSES/*
+      - THIRD-PARTY-NOTICES.md
 
 sboms:
   - id: cyclonedx
@@ -137,6 +148,12 @@ dockers_v2:
     platforms:
       - linux/amd64
       - linux/arm64
+    # The license and notices files the archives carry, copied into the build context for
+    # the Dockerfile's COPY. extra_files takes no wildcards; a directory is copied whole.
+    extra_files:
+      - LICENSE
+      - LICENSES
+      - THIRD-PARTY-NOTICES.md
     # The OCI metadata is written down once: buildx sets it as labels on each platform's
     # image configuration and, through the alias, as annotations on the manifest list.
     labels: &oci-metadata

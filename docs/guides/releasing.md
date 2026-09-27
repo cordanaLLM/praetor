@@ -48,10 +48,13 @@ so an upload after it fails; the flow never makes one (#43).
 1. `helm lint deploy/helm/praetor` runs before anything is pushed.
 2. `goreleaser release --clean` builds the archives, runs Syft over each archive (the
    `.goreleaser.yaml` `sboms` block), writes `checksums.txt` over the archives and SBOMs,
-   signs it, and uploads all of it into a draft release (`release.draft: true`). Its
-   `dockers_v2` block builds the root `Dockerfile` from the Linux `praetorctl` binaries,
-   pushes a `linux/amd64` and `linux/arm64` manifest list with buildx's SBOM and provenance
-   attestations, and `docker_signs` signs the pushed digest keyless.
+   signs it, and uploads all of it into a draft release (`release.draft: true`). Each
+   archive carries the binaries, `README.md`, `CHANGELOG.md`, `LICENSE`, the `LICENSES/`
+   texts and `THIRD-PARTY-NOTICES.md`. Its `dockers_v2` block builds the root `Dockerfile`
+   from the Linux `praetorctl` binaries and the same license and notices files, which land
+   under `/usr/local/share/praetor/` in the image, pushes a `linux/amd64` and `linux/arm64`
+   manifest list with buildx's SBOM and provenance attestations, and `docker_signs` signs
+   the pushed digest keyless.
 3. `cosign verify-blob` checks `checksums.txt.sigstore.json` against this workflow's
    identity before anything else trusts it.
 4. `praetorctl provenance -checksums dist/checksums.txt` writes one in-toto SLSA v1.0
@@ -79,7 +82,10 @@ catalogues the checkout with `syft dir:.` again, or publication moves ahead of t
 signature, image attestation and chart verification. `internal/forge/workflow_guard_test.go`
 fails when the image name in `.goreleaser.yaml`, `deploy/helm/praetor/values.yaml` or the
 job's `IMAGE` and `CHART_REPOSITORY` stops being the lowercased `.standards.yaml` identity;
-GHCR accepts lowercase names only. ADR-0013 records the design.
+GHCR accepts lowercase names only. `internal/supplychain/notices_test.go` fails when an
+archive, `extra_files` or the `Dockerfile` drops one of the license and notices files, and
+when `THIRD-PARTY-NOTICES.md` falls out of step with `go.mod`, the embedded npm lock or the
+image's base. ADR-0013 records the design.
 
 A failure in steps 3 to 7 leaves the release a draft, but the image, and after step 7 the
 chart, are already on GHCR. A rerun of the job pushes over the same tags.
@@ -94,8 +100,9 @@ Later pushes keep the visibility.
 
 ### Building the image locally
 
-The image's build context holds only the binaries GoReleaser compiled, one
-`<os>/<arch>/praetorctl` per platform, so `docker build .` in a checkout has nothing to copy.
+The image's build context holds the binaries GoReleaser compiled, one
+`<os>/<arch>/praetorctl` per platform, plus the license and notices files `extra_files`
+lists, so `docker build .` in a checkout has no binary to copy.
 A snapshot build compiles the binaries and builds one image per platform without pushing:
 
 ```bash
