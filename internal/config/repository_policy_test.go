@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/hiss"
 )
 
 // The fallback states the function length the audit enforces, not the 75 HISS-04 documents:
@@ -209,5 +211,28 @@ func TestResolveRepositoryComplexity_Negative_InterruptedResolution(t *testing.T
 	complexity, warning, err := ResolveRepositoryComplexity(ctx, root)
 	if err == nil || !errors.Is(err, context.Canceled) || warning != "" || complexity != (ComplexityPolicy{}) {
 		t.Fatalf("cancelled resolution = %+v warning=%q err=%v", complexity, warning, err)
+	}
+}
+
+// The ceiling's complexity limits are the scanner's own defaults, so the two cannot drift.
+func TestHISSComplexityCeiling_Positive_UsesScannerDefaults(t *testing.T) {
+	want := hiss.ComplexityLimits{MaxCyclomatic: hiss.DefaultMaxCyclomatic, MaxCognitive: hiss.DefaultMaxCognitive, MaxStatements: hiss.DefaultMaxStatements}
+	if got := HISSComplexityCeiling().Limits(); got != want {
+		t.Fatalf("ceiling limits = %+v, want the scanner defaults %+v", got, want)
+	}
+}
+
+// Positive: ScanOptions carries all four limits and keeps the caller's other options.
+// Boundary: an unset limit stays zero, which the scanner completes from its defaults.
+func TestComplexityPolicyScanOptions_CarriesEveryLimit(t *testing.T) {
+	policy := ComplexityPolicy{MaxCyclomatic: 8, MaxCognitive: 12, MaxFuncLOC: 40, MaxStatements: 30}
+	opts := policy.ScanOptions(hiss.ScanOptions{Cap: 7, MaxFuncLOC: 99})
+	want := hiss.ScanOptions{Cap: 7, MaxFuncLOC: 40, Complexity: hiss.ComplexityLimits{MaxCyclomatic: 8, MaxCognitive: 12, MaxStatements: 30}}
+	if opts.Cap != want.Cap || opts.MaxFuncLOC != want.MaxFuncLOC || opts.Complexity != want.Complexity {
+		t.Fatalf("scan options = %+v, want %+v", opts, want)
+	}
+	unset := ComplexityPolicy{}.ScanOptions(hiss.ScanOptions{})
+	if unset.Complexity.WithDefaults() != HISSComplexityCeiling().Limits() {
+		t.Errorf("unset limits complete to %+v, want the HISS-04 defaults", unset.Complexity.WithDefaults())
 	}
 }

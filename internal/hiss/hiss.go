@@ -47,6 +47,10 @@ var ErrScanIncomplete = errors.New("hiss: scan did not cover its scope; the repo
 // ScanOptions configures the static invariant scanner.
 type ScanOptions struct {
 	MaxFuncLOC int
+	// Complexity holds the cyclomatic, cognitive and statement limits Go functions are
+	// measured against. Values over them are reported in ScanReport.Complexity and are never
+	// violations. Zero limits fall back to the HISS-04 defaults.
+	Complexity ComplexityLimits
 	Cap        int
 	// Timeout bounds the scan. Zero keeps the caller's deadline when it has one and
 	// applies DefaultScanTimeout otherwise.
@@ -104,6 +108,10 @@ type ScanReport struct {
 	// Coverage is present on newly executed scans. A missing value in a retained
 	// report means coverage was not recorded, not that every source was analyzed.
 	Coverage *ScanCoverage `json:"coverage,omitempty"`
+	// Complexity lists the Go functions whose cyclomatic, cognitive or statement values
+	// exceed their limits. It is measured and reported, never enforced: nothing in it counts
+	// toward TotalInfractions, Breakdown, the debt baseline or any gate verdict.
+	Complexity ComplexityReport `json:"complexity"`
 
 	capLimit int
 }
@@ -162,6 +170,7 @@ func (o ScanOptions) withDefaults() ScanOptions {
 	if o.MaxFiles <= 0 {
 		o.MaxFiles = DefaultMaxScanFiles
 	}
+	o.Complexity = o.Complexity.WithDefaults()
 	return o
 }
 
@@ -182,6 +191,7 @@ func newScanReport(capLimit int) *ScanReport {
 		Breakdown:  make(map[string]int),
 		Violations: make([]InvariantViolation, 0),
 		Coverage:   &ScanCoverage{UnscannedByExtension: make(map[string]int)},
+		Complexity: ComplexityReport{Measurements: make([]Measurement, 0)},
 		capLimit:   capLimit,
 	}
 }
