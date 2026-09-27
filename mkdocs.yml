@@ -183,6 +183,7 @@ nav:
           - MkDocs Preset Example: presets/mkdocs/docs/index.md
           - Starlight Preset README: presets/starlight/README.md
   - Project:
+      - Credits & Acknowledgements: credits.md
       - Sponsoring & Bounties: sponsoring.md
       - Monetization Strategy: monetization.md
       - Project Records (historical):
