@@ -49,7 +49,7 @@ record is that decision.
   `portable` call it (`scripts/mkdocs_figures_hook.py:25-31`; `scripts/docs_diagrams.py:565-582`).
   No Go code renders a figure: `internal/forge/wiki.go:445` writes a raw ` ```figure ` fence, so
   ADR-0015's claim that adopter wikis resolve through `portable` did not hold (amended at
-  `docs/adr/0015-interactive-figures-from-vendored-interfig.md:324-328`).
+  `docs/adr/0015-interactive-figures-from-vendored-interfig.md:329-333`).
 - **The only channel that already carries engine files to adopters** is go:embed plus an adopt
   step plus an audit byte-compare, used by the Markdown gate of the `docs:seo-portal` facet:
   - `tools/markdownlint/assets.go:15-33` (embedded inventory, `MaxAssets` bound, workflow file
@@ -65,7 +65,7 @@ record is that decision.
 - **Presets.** The MkDocs preset declares only a Mermaid fence
   (`docs/presets/mkdocs/mkdocs.yml:62-66`); the Starlight preset has no diagram support
   (`docs/presets/starlight/astro.config.mjs`). Presets are reference directories and adoption
-  never emits them (`docs/adr/0015-interactive-figures-from-vendored-interfig.md:512-516`).
+  never emits them (`docs/adr/0015-interactive-figures-from-vendored-interfig.md:530-534`).
 - **Default facets are defined three times** and all three include `docs:seo-portal`:
   `internal/adopt/adopt.go:307-312`, `cmd/standardsctl/init.go:29`,
   `internal/harvester/onboard.go:62`. They differ only in `agent:sandboxed`.
@@ -88,7 +88,7 @@ record is that decision.
 - ADR-0014: committed adopter artifacts carry project identity only, never operator data
   (`docs/adr/0014-operator-neutral-defaults.md:48-53`).
 - The MIT notice duty for interfig and React travels with every copy
-  (`docs/adr/0015-interactive-figures-from-vendored-interfig.md:484-516`).
+  (`docs/adr/0015-interactive-figures-from-vendored-interfig.md:500-534`).
 
 ## Decision
 
@@ -169,6 +169,10 @@ cannot put a managed lockfile out of step with the audit.
   `bundle.mjs --check` rebuilds it from the pinned lock with `npm ci --ignore-scripts`, compares
   bytes, and holds the 250 kB budget. It runs on Linux, macOS and Windows. `build.mjs check` no
   longer bundles, so it needs no esbuild.
+- A change that moves the lock or the interfig pin rebuilds `dist/` in the same pull request,
+  because `bundle.mjs --check` fails otherwise. `sync_interfig.py update` gains that step; today
+  it rebuilds only the figures (`scripts/sync_interfig.py:540-546`). A dependency-bot pull request
+  that bumps the lock needs the rebuild pushed to its branch.
 - `dist/THIRD-PARTY-LICENSES.txt` carries the full MIT texts of interfig, React, react-dom and
   scheduler. The interfig banner and React's `@license` comments stay in the bundle
   (`tools/figures/build.mjs:419,452`).
@@ -256,10 +260,19 @@ authoritative check (`tools/figures/types.ts:1-6`).
 Praetor declares `docs:seo-portal` (`.standards.yaml:33-38`), so it receives the managed family
 like any adopter:
 
-- Praetor's own site loads the committed `dist/` through the same hook. `pages.yml` stops bundling
-  for the deploy (`.github/workflows/pages.yml:87`) and runs `bundle.mjs --check` instead.
-- The three-platform figure leg (`.github/workflows/portability.yml:280-288`) therefore certifies
-  the exact bytes adopters receive.
+- Praetor's own site loads the committed `dist/` through the same hook, so no workflow bundles
+  for a site build:
+  - `pages.yml` drops its `bundle` step and the comment that calls the bundle gitignored
+    (`.github/workflows/pages.yml:72-75,87`) and runs `bundle.mjs --check` instead;
+  - the CI Documentation Integrity Audit drops its `bundle` step
+    (`.github/workflows/ci.yml:188-189`) and runs `make docs-figures` after
+    `make docs-figures-check` (`.github/workflows/ci.yml:183-187`), because a documentation-only
+    pull request skips verify-all;
+  - `.gitignore` drops the bundle entry and its comment (`.gitignore:40-43`).
+- The three-platform figure leg (`.github/workflows/portability.yml:280-288`) runs the commands of
+  both targets inline, since make is not on the Windows image
+  (`.github/workflows/portability.yml:274-275`), and therefore certifies the exact bytes adopters
+  receive.
 - Praetor's own `docs-figures-check` target (`Makefile:203-210`) keeps only the praetor-only steps
   (npm install, tests, type check, `bundle.mjs --check`) and leaves `build.mjs check` and `sources`
   to the managed `docs-figures` target, so each command runs once in `verify-all`.
@@ -271,6 +284,28 @@ like any adopter:
   praetor name in the example page's front matter and heading
   (`docs/presets/mkdocs/docs/index.md:2-8`) gives way to neutral text, because an adopter's site
   carries its own identity.
+- The checks that read the preset's Mermaid move with it, in the same change:
+  - **BUG-680 guard.** `TestHomeWiki_Positive_CompileContextFlowsFromAGENTS` reads the preset's
+    Mermaid through `flowEdges` (`internal/forge/wiki_test.go:357-363`), and
+    `compileContextFlowViolations` reports two violations for an empty edge list
+    (`TestHomeWiki_Boundary_EmptyEdgesProducesViolations`, `internal/forge/wiki_test.go:402-411`),
+    so a preset without Mermaid would fail the positive test. The example figure draws the
+    preset's own files, not the compile-context flow, so the guard drops its preset input rather
+    than retargeting it and keeps the `governance-lifecycle` JSON edges
+    (`internal/forge/wiki_test.go:364-366`).
+  - **Mermaid parser.** The generated Home page is the only other Mermaid input
+    (`internal/forge/wiki_test.go:354`), and it moves to the figure under ADR-0015 §9 ("Generated
+    pages"). Once both inputs are gone, the Mermaid replay
+    `TestHomeWiki_Negative_RejectsManifestToAGENTSFlow` (`internal/forge/wiki_test.go:371-385`)
+    is restated as an edge list with the same three expected violations, and `flowEdges` with
+    its two Mermaid patterns (`internal/forge/wiki_test.go:280-300`) is removed.
+  - **Preset fence pins.** `test_repository_configs_declare_the_mermaid_fence`
+    (`scripts/test_docs_diagrams.py:47-51`) requires the preset to declare the `mermaid` fence,
+    and `test_repository_site_enables_figures_and_preset_does_not`
+    (`scripts/test_docs_diagrams.py:286-289`) requires it to enable `mermaid` only. Both now
+    require the preset to enable `figure` only.
+  - **Preset README.** Its "Mermaid Diagrams" section (`docs/presets/mkdocs/README.md:70-75`)
+    describes the hook and the adopted engine instead of the `mermaid` custom fence.
 - The Starlight preset adds the integration, the CSS and an example figure.
 - The `docs-presets` CI job builds an adopter fixture instead of the preset in place: a temporary
   repository, `praetorctl adopt` with `docs:seo-portal`, `build`, `check`, the MkDocs and Astro
@@ -308,19 +343,30 @@ Line numbers are those of the amended ADR-0015.
 
 | ADR-0015 passage | Amended to |
 | :-- | :-- |
-| Status, `:7-10` | Notes the amendment and that its paths predate the move to one tree (section 1). |
-| §2, engine hash, `:172-174` | Covers the vendored render files and `core.mjs` (section 1). |
-| §2, bundle, `:179-189` and `:194-195` (gitignored bundle; spec chunks and `registry.json`; budget in `check`) | The generic player is committed under `tools/figures/dist/`; no spec chunks, no registry; `bundle.mjs --check` holds the budget (section 3). |
-| §2, `:201-205` (why the bundle is not committed) | The bundle is committed and reproducibility-checked (operator decision 2). |
-| §4, config, `:252-254` | The hook adds the loader and CSS itself (section 6). |
-| §4, loader, `:280-282` | The loader reads props from the SVG metadata (section 3). |
-| §5, `:304-308` (Python renderer) | One markup source in `core.mjs`; callers substitute (section 4). |
-| §5, `:324-328` (adopter wikis resolve through `portable`) | Did not hold (`internal/forge/wiki.go:445`); replaced by section 10. |
-| §7, `:382-383` (`registry.json` check) | The site check looks for the SVG metadata (section 3). |
-| §9, `:453-454`, `:468`, `:479-482` (preset keeps Mermaid) | The preset uses figures (section 9). |
-| License item 7, `:512-516` | Copies reach adopters through adoption, with the LICENSE (section 11). |
-| Neutral, `:561-562` | Decided by this record. |
-| Verification, `:572` | The bundle is committed; `bundle.mjs --check` rebuilds it. |
+| Status, `:7-12` | Notes the amendment and that its paths and file names predate the move to one tree (section 1). |
+| Decision, `:112-117` (bundle during the docs build) | The player is bundled once and committed; no docs build bundles (section 3, operator decision 2). |
+| §2, engine hash, `:177-179` | Covers the vendored render files and `core.mjs` (section 1). |
+| §2, bundle, `:184-194` and `:199-200` (gitignored bundle; spec chunks and `registry.json`; budget in `check`) | The generic player is committed under `tools/figures/dist/`; no spec chunks, no registry; `bundle.mjs --check` holds the budget (section 3). |
+| §2, `:206-210` (why the bundle is not committed) | The bundle is committed and reproducibility-checked (operator decision 2). |
+| §4, config, `:257-259` | The hook adds the loader and CSS itself (section 6). |
+| §4, loader, `:285-287` | The loader reads props from the SVG metadata (section 3). |
+| §5, `:309-313` (Python renderer) | One markup source in `core.mjs`; callers substitute (section 4). |
+| §5, `:329-333` (adopter wikis resolve through `portable`) | Did not hold (`internal/forge/wiki.go:445`); replaced by section 10. |
+| §7, `:387-388` (`registry.json` check) | The site check looks for the SVG metadata (section 3). |
+| §7, `:391-393` (`sources` hashes `build.mjs`) | `core.mjs` replaces `build.mjs` among the hashed engine files (section 1). |
+| §7, `:408-412` (`docs-figures-check` runs `check` and `sources`) | It keeps the praetor-only steps; `build.mjs check` and `sources` move to the managed `docs-figures` target (sections 5 and 8). |
+| §7, `:416-418` (`pages.yml` bundles) | `bundle.mjs --check` replaces `bundle` (section 8). |
+| §7, `:421-423` (CI docs audit bundles) | No bundle step; the audit runs `docs-figures-check` and `docs-figures` (section 8). |
+| §7, `:424-426` (portability leg) | Also runs the `docs-figures` commands (section 8). |
+| §8, `:449-450` (`update` rebuilds figures) | Also rebuilds the committed player (section 3). |
+| §9, `:467-468`, `:482`, `:495-498` (preset keeps Mermaid) | The preset uses figures (section 9). |
+| §9, `:486-489` (BUG-680 guard reads the preset's Mermaid) | The guard drops its preset input and keeps the `governance-lifecycle` JSON edges (section 9). |
+| License item 3, `:519-522` (`tools/figures/` stays EUPL-1.2) | `tools/figures/dist/**` is annotated EUPL-1.2 AND MIT (section 11). |
+| License item 7, `:530-534` | Copies reach adopters through adoption, with the LICENSE (section 11). |
+| Negative, `:567-570` (the docs build gains Node) | The MkDocs build needs Python only; Node stays in the checks (operator decision 3). |
+| Neutral, `:581-583` | Decided by this record (sections 5 and 9). |
+| Verification, `:591-595` | `docs-figures-check` runs the praetor-only steps, `docs-figures` is added, and the bundle is committed (sections 3 and 8). |
+| Verification, `:605-606` (CI docs audit) | It also runs `make docs-figures` (section 8). |
 
 ## Alternatives considered
 
@@ -381,9 +427,9 @@ Line numbers are those of the amended ADR-0015.
   not enable.
 - Unverified and unchanged by this record: whether GitHub animates an SVG in a README and honours
   `<source media="(prefers-reduced-motion: reduce)">`
-  (`docs/adr/0015-interactive-figures-from-vendored-interfig.md:322-323`); the SVG palette follows
+  (`docs/adr/0015-interactive-figures-from-vendored-interfig.md:327-328`); the SVG palette follows
   the operating system, not the site toggle
-  (`docs/adr/0015-interactive-figures-from-vendored-interfig.md:329-331`).
+  (`docs/adr/0015-interactive-figures-from-vendored-interfig.md:334-336`).
 
 ## Open questions
 
