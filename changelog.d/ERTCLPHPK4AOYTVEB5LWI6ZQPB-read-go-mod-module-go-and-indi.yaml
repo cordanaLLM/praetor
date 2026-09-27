@@ -1,0 +1,2 @@
+type: fixed
+title: Read go.mod module, go and indirect-marker lines the way the go command does in needs scans and dependency docs, and skip testdata and underscore-prefixed sources in the bounded Go import scan

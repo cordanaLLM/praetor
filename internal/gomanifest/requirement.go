@@ -24,3 +24,22 @@ func RequirementLine(raw string, inBlock *bool) (string, bool) {
 	}
 	return strings.TrimPrefix(line, "require "), *inBlock || strings.HasPrefix(line, "require ")
 }
+
+// indirectMarker is the comment word the go command writes after a requirement that no
+// package of the main module imports.
+const indirectMarker = "indirect"
+
+// IsIndirect reports whether a require line carries the go command's indirect marker. It
+// applies the rule of golang.org/x/mod/modfile: the line's comment, with its leading "//"
+// removed, is exactly the word "indirect", or begins with "indirect;" followed by more
+// text. "//indirect" is therefore indirect, while "// indirectly used" and
+// "// see indirect" are not.
+func IsIndirect(line string) bool {
+	_, comment, found := strings.Cut(line, "//")
+	if !found {
+		return false
+	}
+	fields := strings.Fields(comment)
+	return (len(fields) == 1 && fields[0] == indirectMarker) ||
+		(len(fields) > 1 && fields[0] == indirectMarker+";")
+}

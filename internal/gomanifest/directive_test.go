@@ -154,3 +154,72 @@ func TestModulePath_Boundary_EmptyPath(t *testing.T) {
 		t.Fatalf("empty line: path=%q ok=%v", path, ok)
 	}
 }
+
+// Positive: the module line forms golang.org/x/mod/modfile.ModulePath accepts -- a
+// trailing comment, a tab after the keyword, and both quoted spellings -- resolve to the
+// bare path, not to the path with the comment or the quotes still attached.
+func TestModulePath_Positive_CommentsTabsAndQuotes(t *testing.T) {
+	cases := map[string]string{
+		"trailing comment": "module example.com/app // Deprecated: use example.com/app/v2",
+		"tab separator":    "module\texample.com/app",
+		"double quoted":    `module "example.com/app"`,
+		"back quoted":      "module `example.com/app`",
+		"crlf":             "module example.com/app\r",
+	}
+	for name, line := range cases {
+		path, ok := ModulePath(line)
+		if !ok || path != "example.com/app" {
+			t.Errorf("%s: ModulePath(%q) = %q, %v; want example.com/app, true", name, line, path, ok)
+		}
+	}
+}
+
+// Negative: a keyword glued to its argument, a commented-out directive and a quoted path
+// that does not unquote are not module directives.
+func TestModulePath_Negative_GluedCommentedAndMalformed(t *testing.T) {
+	for _, line := range []string{
+		"moduleexample.com/app",
+		"modules.example.com/app v1.0.0",
+		"// module example.com/app",
+		`module "example.com/app`,
+	} {
+		if path, ok := ModulePath(line); ok || path != "" {
+			t.Errorf("ModulePath(%q) = %q, %v; want refusal", line, path, ok)
+		}
+	}
+}
+
+// Boundary: a directive whose only argument is a comment or an empty quoted string names
+// no module.
+func TestModulePath_Boundary_CommentOnlyAndEmptyQuoted(t *testing.T) {
+	for _, line := range []string{"module // no path yet", `module ""`, "module\t", "module"} {
+		if path, ok := ModulePath(line); ok || path != "" {
+			t.Errorf("ModulePath(%q) = %q, %v; want refusal", line, path, ok)
+		}
+	}
+}
+
+func TestGoDirectiveLine_Positive_TrimsCommentAndSpace(t *testing.T) {
+	for _, line := range []string{"go 1.27", "  go 1.27  ", "go 1.27 // pinned", "go 1.27\r"} {
+		version, declared := GoDirectiveLine(line)
+		if !declared || version != "1.27" {
+			t.Errorf("GoDirectiveLine(%q) = %q, %v; want 1.27, true", line, version, declared)
+		}
+	}
+}
+
+func TestGoDirectiveLine_Negative_OtherLines(t *testing.T) {
+	for _, line := range []string{"// go 1.24", "go.uber.org/zap v1.27.0", "toolchain go1.27.1", "module x"} {
+		if version, declared := GoDirectiveLine(line); declared {
+			t.Errorf("GoDirectiveLine(%q) reported %q", line, version)
+		}
+	}
+}
+
+func TestGoDirectiveLine_Boundary_DirectiveWithoutVersion(t *testing.T) {
+	for _, line := range []string{"go ", "go // none", ""} {
+		if version, declared := GoDirectiveLine(line); declared || version != "" {
+			t.Errorf("GoDirectiveLine(%q) = %q, %v; want refusal", line, version, declared)
+		}
+	}
+}

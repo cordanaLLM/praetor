@@ -1,6 +1,9 @@
 package gomanifest
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 // maxDirectiveLines bounds the scan for a go directive. A manifest declares it near the
 // top, long before any plausible require block ends (HISS-02).
@@ -19,19 +22,25 @@ const goDirectiveKeyword = "go "
 func GoDirective(manifest []byte) (string, bool) {
 	lines := strings.Split(string(manifest), "\n")
 	for i := 0; i < len(lines) && i < maxDirectiveLines; i++ {
-		line := strings.TrimSpace(strings.TrimSuffix(lines[i], "\r"))
-		if line == "" || strings.HasPrefix(line, "//") {
-			continue
-		}
-		version, found := strings.CutPrefix(line, goDirectiveKeyword)
-		if !found {
-			continue
-		}
-		if version = directiveVersion(version); version != "" {
+		if version, declared := GoDirectiveLine(lines[i]); declared {
 			return version, true
 		}
 	}
 	return "", false
+}
+
+// GoDirectiveLine returns the version a single go.mod line declares when that line is
+// the `go` directive, with any trailing comment dropped. It reports false for every
+// other line, a commented-out directive and a directive without a version. Line
+// scanners that already walk a manifest use it instead of re-reading the whole file
+// through GoDirective.
+func GoDirectiveLine(line string) (string, bool) {
+	version, found := strings.CutPrefix(strings.TrimSpace(line), goDirectiveKeyword)
+	if !found {
+		return "", false
+	}
+	version = directiveVersion(version)
+	return version, version != ""
 }
 
 // directiveVersion trims a directive value down to its version, dropping a trailing
@@ -105,17 +114,32 @@ func ParseReplaceDirective(line string) (ReplaceDirective, bool) {
 	return directive, true
 }
 
+// moduleKeyword is the directive that names the module a manifest defines.
+const moduleKeyword = "module"
+
 // ModulePath extracts the module directive's path from a single go.mod line, e.g.
-// "module github.com/cordanaLLM/praetor" -> "github.com/cordanaLLM/praetor". It reports
-// false for any line that is not a module directive.
+// "module github.com/cordanaLLM/praetor" -> "github.com/cordanaLLM/praetor". It reads the
+// line the way golang.org/x/mod/modfile.ModulePath does: a trailing // comment is dropped,
+// any white space may separate the keyword from the path, and a quoted path ("..." or
+// `...`) is unquoted. It reports false for any line that is not a module directive and
+// for a quoted path that does not unquote.
 func ModulePath(line string) (string, bool) {
-	trimmed := strings.TrimSpace(line)
-	if !strings.HasPrefix(trimmed, "module ") {
+	code, _, _ := strings.Cut(line, "//")
+	rest, found := strings.CutPrefix(strings.TrimSpace(code), moduleKeyword)
+	if !found {
 		return "", false
 	}
-	path := strings.TrimSpace(strings.TrimPrefix(trimmed, "module"))
-	if path == "" {
+	path := strings.TrimSpace(rest)
+	// The keyword must end at white space: "modulefoo" is not a module directive.
+	if path == "" || len(path) == len(rest) {
 		return "", false
 	}
-	return path, true
+	if path[0] != '"' && path[0] != '`' {
+		return path, true
+	}
+	unquoted, err := strconv.Unquote(path)
+	if err != nil || unquoted == "" {
+		return "", false
+	}
+	return unquoted, true
 }

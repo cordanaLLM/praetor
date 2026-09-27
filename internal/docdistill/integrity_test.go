@@ -62,6 +62,21 @@ func TestDeclaredDependenciesPreservesDirectAndTransitiveFlags(t *testing.T) {
 	}
 }
 
+// The indirect marker follows the go command's rule (gomanifest.IsIndirect): "//indirect"
+// without a space is transitive, a comment that merely mentions the word is not.
+func TestDeclaredDependenciesReadsTheIndirectMarkerLikeTheGoCommand(t *testing.T) {
+	root := t.TempDir()
+	body := "module example.com/app\nrequire (\nexample.com/packed v1.0.0 //indirect\n" +
+		"example.com/noted v1.1.0 // indirectly exercised by the e2e suite\n)\n"
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	direct, err := ScanDeclaredDependencies(t.Context(), root, false)
+	if err != nil || len(direct) != 1 || direct[0].Name != "example.com/noted" || !direct[0].Direct {
+		t.Fatalf("direct references=%v, %v; want only example.com/noted", direct, err)
+	}
+}
+
 func TestDeclaredDependenciesRejectsEscapingSymlink(t *testing.T) {
 	root, outside := t.TempDir(), t.TempDir()
 	if err := os.WriteFile(filepath.Join(outside, "package.json"), []byte(`{"dependencies":{"private":"1.0.0"}}`), 0600); err != nil {
