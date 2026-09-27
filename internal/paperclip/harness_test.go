@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -67,8 +68,8 @@ func TestSynthesizeHarness_Positive_PlatformFromOriginRemote(t *testing.T) {
 func TestSynthesizeHarness_Negative_NoIdentityIsAnError(t *testing.T) {
 	dir := layoutShapedRepo(t, "acme", "widget")
 	h, err := SynthesizeHarness(t.Context(), dir)
-	if !errors.Is(err, util.ErrRepoIdentityUnresolved) || h != nil {
-		t.Fatalf("SynthesizeHarness = (%v, %v), want no harness and ErrRepoIdentityUnresolved", h, err)
+	if !errors.Is(err, util.ErrRepoIdentityUnresolved) || !errors.Is(err, config.ErrOwnerUnknown) || h != nil {
+		t.Fatalf("SynthesizeHarness = (%v, %v), want no harness, ErrRepoIdentityUnresolved and ErrOwnerUnknown", h, err)
 	}
 }
 
@@ -107,16 +108,19 @@ func TestWriteHarness_Negative_EscapingPaperclipDirIsRefused(t *testing.T) {
 	}
 }
 
-// Boundary: a manifest naming only an owner declares no platform, so resolution goes on to
-// the origin remote; without one it is unresolved rather than cordanaLLM/<basename>.
+// Boundary: a manifest naming only an owner declares no repository name, so the name comes
+// from the origin remote while the declared owner outranks the remote's (ADR-0014 §3,
+// config.ResolveRepositoryIdentity); without a remote it is unresolved rather than
+// cordanaLLM/<basename> or the directory layout.
 func TestResolvePlatform_Boundary_IncompleteManifestFallsThrough(t *testing.T) {
 	dir := layoutShapedRepo(t, "acme", "repo")
 	writeRepoFile(t, dir, ".standards.yaml", "repository:\n  owner: only-owner\n")
-	if got, err := resolvePlatform(t.Context(), dir); !errors.Is(err, util.ErrRepoIdentityUnresolved) || got != "" {
-		t.Fatalf("resolvePlatform = (%q, %v), want unresolved", got, err)
+	got, err := resolvePlatform(t.Context(), dir)
+	if !errors.Is(err, util.ErrRepoIdentityUnresolved) || !errors.Is(err, config.ErrRepositoryNameUnknown) || got != "" {
+		t.Fatalf("resolvePlatform = (%q, %v), want unresolved with the name named as missing", got, err)
 	}
 	testsupport.InitGitRepoWithOrigin(t, dir, "git@github.com:remote-owner/remote-repo.git")
-	if got, err := resolvePlatform(t.Context(), dir); err != nil || got != "remote-owner/remote-repo" {
-		t.Fatalf("resolvePlatform = (%q, %v), want the origin remote after an incomplete manifest", got, err)
+	if got, err := resolvePlatform(t.Context(), dir); err != nil || got != "only-owner/remote-repo" {
+		t.Fatalf("resolvePlatform = (%q, %v), want the manifest owner and the remote's name", got, err)
 	}
 }

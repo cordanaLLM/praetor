@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/compiler"
@@ -18,11 +19,16 @@ import (
 // initFilePerm is the mode of the scaffolded, tracked configuration files.
 const initFilePerm os.FileMode = 0o644
 
+// initIdentityTimeout bounds the settings read and the origin-remote lookup that resolve the
+// identity init writes (HISS-02).
+const initIdentityTimeout = 30 * time.Second
+
 func runInit(args []string) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	profile := fs.String("profile", "framework", "Primary repository profile")
 	facets := fs.String("facets", "security:high,api:public-contract,docs:seo-portal", "Comma-separated list of facets")
 	outputPath := fs.String("output", ".standards.yaml", "Path to write .standards.yaml; its directory receives the companion files")
+	settings := registerOperatorSettingsFlags(fs)
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -37,7 +43,16 @@ func runInit(args []string) error {
 
 	// Every companion file lives next to the manifest, never in the process cwd.
 	rootDir := filepath.Dir(*outputPath)
-	if err := createInitialManifest(*outputPath, *profile, splitCSV(*facets)); err != nil {
+	if !util.DirExists(rootDir) {
+		return fmt.Errorf("failed to write %s: directory %s does not exist", *outputPath, rootDir)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), initIdentityTimeout)
+	defer cancel()
+	identity, err := initRepositoryIdentity(ctx, rootDir, settings)
+	if err != nil {
+		return err
+	}
+	if err := createInitialManifest(*outputPath, *profile, splitCSV(*facets), identity); err != nil {
 		return err
 	}
 	if err := initBaselineAndLockfile(rootDir); err != nil {
@@ -78,16 +93,38 @@ func fileMissing(path string) (bool, error) {
 	return false, fmt.Errorf("cannot inspect %s: %w", path, err)
 }
 
-func createInitialManifest(outputPath, profile string, facets []string) error {
+// initRepositoryIdentity resolves the repository.owner and repository.name init writes. The
+// manifest does not exist yet, so config.ResolveRepositoryIdentity reads the origin remote of
+// rootDir; without one the owner is forge.default_owner and the name stays empty. Nothing is
+// invented: every value left empty is printed as a field to set. A remote read git did not
+// answer, or unreadable settings, fail init instead of writing a guessed identity.
+func initRepositoryIdentity(ctx context.Context, rootDir string, settings *operatorSettingsFlags) (config.RepositoryMetadata, error) {
+	forgeSettings, err := loadForgeSettings(ctx, settings)
+	if err != nil {
+		return config.RepositoryMetadata{}, fmt.Errorf("init: %w", err)
+	}
+	owner, name, err := config.ResolveRepositoryIdentity(ctx, rootDir, "", "")
+	if err != nil && !errors.Is(err, config.ErrOwnerUnknown) && !errors.Is(err, config.ErrRepositoryNameUnknown) {
+		return config.RepositoryMetadata{}, fmt.Errorf("init: %w", err)
+	}
+	if err != nil {
+		owner, name = forgeSettings.DefaultOwner, ""
+	}
+	if owner == "" {
+		fmt.Printf("[WARN] repository.owner not detected; set it in %s\n", config.ManifestFileName)
+	}
+	if name == "" {
+		fmt.Printf("[WARN] repository.name not detected; set it in %s\n", config.ManifestFileName)
+	}
+	return config.RepositoryMetadata{Owner: owner, Name: name, Visibility: "public"}, nil
+}
+
+func createInitialManifest(outputPath, profile string, facets []string, identity config.RepositoryMetadata) error {
 	manifest := config.Manifest{
-		Version: 1,
-		Repository: config.RepositoryMetadata{
-			Owner:      "cordanaLLM",
-			Name:       "new-service",
-			Visibility: "public",
-		},
-		Profiles: []string{profile},
-		Facets:   facets,
+		Version:    1,
+		Repository: identity,
+		Profiles:   []string{profile},
+		Facets:     facets,
 	}
 
 	data, err := yaml.Marshal(&manifest)

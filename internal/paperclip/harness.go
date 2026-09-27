@@ -241,45 +241,23 @@ func readHarnessFiles(ctx context.Context, repoPath string) ([]byte, []byte, boo
 	return harnessData, rulesData, rulesExist, nil
 }
 
-// resolvePlatform derives owner/name from the manifest, then the origin remote
-// (util.ResolveRemoteIdentity). It never reads the checkout path and never substitutes a
-// default owner: a parent directory names wherever the checkout sits, not its owner. A
-// manifest that exists but cannot be read is an error rather than a reason to fall back.
+// resolvePlatform derives owner/name through config.ResolveRepositoryIdentity (ADR-0014 §3):
+// the manifest's repository block, then the origin remote. It never reads the checkout path
+// and substitutes no default owner: a parent directory names wherever the checkout sits, not
+// its owner. A manifest that exists but cannot be read, and a remote read git did not
+// answer, are errors rather than reasons to fall back. An identity neither source names
+// wraps util.ErrRepoIdentityUnresolved as well as the resolver's own sentinel, so a caller
+// that skips the harness for an unidentified repository keeps recognising the case.
 func resolvePlatform(ctx context.Context, repoPath string) (string, error) {
-	platform, ok, err := manifestPlatform(ctx, repoPath)
-	if err != nil || ok {
-		return platform, err
+	owner, repo, err := config.ResolveRepositoryIdentity(ctx, repoPath, "", "")
+	if errors.Is(err, config.ErrOwnerUnknown) || errors.Is(err, config.ErrRepositoryNameUnknown) {
+		return "", fmt.Errorf("paperclip: harness platform needs repository.owner and repository.name in %s or an origin remote: %w: %w",
+			manifestFile, util.ErrRepoIdentityUnresolved, err)
 	}
-	owner, repo, err := util.ResolveRemoteIdentity(ctx, repoPath)
 	if err != nil {
-		return "", fmt.Errorf("paperclip: harness platform needs repository.owner and repository.name in %s or an origin remote: %w",
-			manifestFile, err)
+		return "", fmt.Errorf("paperclip: repository identity: %w", err)
 	}
 	return owner + "/" + repo, nil
-}
-
-// manifestPlatform reads owner/name from .standards.yaml when present and complete. The read
-// is config.ReadYAMLDocument, bounded to a regular file and a single document (BUG-857). It
-// ignores the cancellation of ctx, which governs only the git lookup.
-func manifestPlatform(ctx context.Context, repoPath string) (string, bool, error) {
-	var m struct {
-		Repository struct {
-			Owner string `yaml:"owner"`
-			Name  string `yaml:"name"`
-		} `yaml:"repository"`
-	}
-	path := filepath.Join(repoPath, manifestFile)
-	err := config.ReadYAMLDocument(context.WithoutCancel(ctx), path, &m, util.YAMLDocumentOptions{AllowEmpty: true})
-	if errors.Is(err, os.ErrNotExist) {
-		return "", false, nil
-	}
-	if err != nil {
-		return "", false, fmt.Errorf("paperclip: repository identity: %w", err)
-	}
-	if m.Repository.Owner == "" || m.Repository.Name == "" {
-		return "", false, nil
-	}
-	return fmt.Sprintf("%s/%s", m.Repository.Owner, m.Repository.Name), true, nil
 }
 
 // MarshalHarness renders the canonical bytes written to .paperclip/harness.json. Coverage

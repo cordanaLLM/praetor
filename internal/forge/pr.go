@@ -17,10 +17,11 @@ import (
 
 // Invariant bounds adhering to HISS-02.
 const (
-	MaxPRLinesLimit   = 3000
-	MaxPathsLimit     = 1000
-	MaxPathSegments   = 64
-	StandardReviewBot = "cordana-standards[bot]"
+	MaxPRLinesLimit = 3000
+	MaxPathsLimit   = 1000
+	MaxPathSegments = 64
+	// MaxBotReviewers bounds the bot accounts one assignment requests (HISS-02).
+	MaxBotReviewers = 16
 	// ReceiptFenceToken is the info-string token that marks the fenced block carrying the
 	// Ed25519 Exit-0 receipt, e.g. "```receipt", "```json receipt" or "~~~receipt".
 	ReceiptFenceToken = "receipt"
@@ -232,9 +233,16 @@ func finalizeChecklistValidation(res *PRChecklistResult) {
 	res.Valid = len(res.Errors) == 0
 }
 
-// AssignReviewers maps touched file paths to owners via CODEOWNERS rules and attaches bots.
-// As on GitHub, the last matching rule for a path wins; earlier matches are discarded.
-func AssignReviewers(touchedPaths []string, codeownersContent string) (*ReviewerAssignment, error) {
+// AssignReviewers maps touched file paths to owners via CODEOWNERS rules and attaches bots,
+// the operator's bot reviewers (forge.review_bot; nil when unset requests none). As on
+// GitHub, the last matching rule for a path wins; earlier matches are discarded. More than
+// MaxBotReviewers bots, or an empty bot name, is an error: no bot is requested that the
+// caller did not name.
+func AssignReviewers(touchedPaths []string, codeownersContent string, bots []string) (*ReviewerAssignment, error) {
+	botList, err := botReviewers(bots)
+	if err != nil {
+		return nil, err
+	}
 	rules := parseCodeowners(codeownersContent)
 	assigned := make(map[string]struct{})
 
@@ -253,8 +261,25 @@ func AssignReviewers(touchedPaths []string, codeownersContent string) (*Reviewer
 
 	return &ReviewerAssignment{
 		HumanReviewers: humanList,
-		BotReviewers:   []string{StandardReviewBot},
+		BotReviewers:   botList,
 	}, nil
+}
+
+// botReviewers copies the requested bot accounts, refusing an empty name and more than
+// MaxBotReviewers entries. No bots is an empty list, never a built-in account.
+func botReviewers(bots []string) ([]string, error) {
+	if len(bots) > MaxBotReviewers {
+		return nil, fmt.Errorf("%d bot reviewers requested; at most %d are allowed", len(bots), MaxBotReviewers)
+	}
+	list := make([]string, 0, len(bots))
+	for i := 0; i < len(bots) && i < MaxBotReviewers; i++ {
+		name := strings.TrimSpace(bots[i])
+		if name == "" {
+			return nil, fmt.Errorf("bot reviewer %d is empty", i+1)
+		}
+		list = append(list, name)
+	}
+	return list, nil
 }
 
 // ownersForPath returns the owners of the last CODEOWNERS rule matching the path.

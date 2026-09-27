@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -113,7 +114,7 @@ func TestIssueDependencyParsing_Positive(t *testing.T) {
 Resolves core architecture.
 Depends-On: cordanaLLM/praetor#42
 Some other context.
-Depends-On: sveltesentio#232
+Depends-On: widgets#232
 Depends-On: #15
 `
 	refs := ParseIssueDependencies(body)
@@ -123,7 +124,7 @@ Depends-On: #15
 	if refs[0].Owner != "cordanaLLM" || refs[0].Repo != "praetor" || refs[0].Number != 42 {
 		t.Errorf("ref 0 mismatch: %+v", refs[0])
 	}
-	if refs[1].Owner != "" || refs[1].Repo != "sveltesentio" || refs[1].Number != 232 {
+	if refs[1].Owner != "" || refs[1].Repo != "widgets" || refs[1].Number != 232 {
 		t.Errorf("ref 1 mismatch: %+v", refs[1])
 	}
 	if refs[2].Number != 15 || refs[2].Owner != "" || refs[2].Repo != "" {
@@ -488,7 +489,7 @@ internal/forge/*    @cordanaLLM/multi-forge-team
 docs/                @cordanaLLM/docs-team
 `
 	touched := []string{"internal/forge/issues.go", "docs/wiki/Home.md"}
-	assignment, err := AssignReviewers(touched, codeowners)
+	assignment, err := AssignReviewers(touched, codeowners, []string{"acme-review[bot]"})
 	if err != nil {
 		t.Fatalf("unexpected error assigning reviewers: %v", err)
 	}
@@ -514,8 +515,40 @@ docs/                @cordanaLLM/docs-team
 		}
 	}
 
-	if len(assignment.BotReviewers) == 0 || assignment.BotReviewers[0] != StandardReviewBot {
-		t.Errorf("expected bot reviewer %s, got: %v", StandardReviewBot, assignment.BotReviewers)
+	if len(assignment.BotReviewers) != 1 || assignment.BotReviewers[0] != "acme-review[bot]" {
+		t.Errorf("expected the configured bot reviewer acme-review[bot], got: %v", assignment.BotReviewers)
+	}
+	many, err := AssignReviewers(touched, codeowners, []string{"acme-review[bot]", " acme-lint[bot] "})
+	if err != nil || strings.Join(many.BotReviewers, ",") != "acme-review[bot],acme-lint[bot]" {
+		t.Errorf("two configured bots = (%v, %v), want both in order, trimmed", many, err)
+	}
+}
+
+// Negative (ADR-0014 §4): with no forge.review_bot no bot is requested, and a bot list the
+// caller cannot mean (an empty name, more than MaxBotReviewers) is refused, not trimmed.
+func TestAssignReviewers_Negative_NoBuiltInBot(t *testing.T) {
+	for name, bots := range map[string][]string{"nil": nil, "empty": {}} {
+		assignment, err := AssignReviewers([]string{"a.go"}, "* @acme/core\n", bots)
+		if err != nil || assignment.BotReviewers == nil || len(assignment.BotReviewers) != 0 {
+			t.Errorf("%s bots = (%+v, %v), want no bot reviewer", name, assignment, err)
+		}
+	}
+	if assignment, err := AssignReviewers([]string{"a.go"}, "* @acme/core\n", []string{"acme-review[bot]", "  "}); err == nil {
+		t.Errorf("a blank bot name: assignment = %+v, want an error", assignment)
+	}
+}
+
+func TestAssignReviewers_Boundary_BotLimit(t *testing.T) {
+	bots := make([]string, MaxBotReviewers+1)
+	for i := range bots {
+		bots[i] = fmt.Sprintf("acme-%d[bot]", i)
+	}
+	assignment, err := AssignReviewers(nil, "", bots[:MaxBotReviewers])
+	if err != nil || len(assignment.BotReviewers) != MaxBotReviewers {
+		t.Fatalf("%d bots = (%v, %v), want all accepted", MaxBotReviewers, assignment, err)
+	}
+	if assignment, err := AssignReviewers(nil, "", bots); err == nil {
+		t.Fatalf("%d bots = %+v, want the limit refused rather than truncated", len(bots), assignment)
 	}
 }
 
@@ -558,7 +591,7 @@ func TestAssignReviewers_Boundary_PathLimit(t *testing.T) {
 	for i := range paths {
 		paths[i] = "internal/forge/pr.go"
 	}
-	assignment, err := AssignReviewers(paths, "internal/forge/* @team\n")
+	assignment, err := AssignReviewers(paths, "internal/forge/* @team\n", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -626,7 +659,7 @@ func TestGenerateWiki_Positive(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
 
-	manifest, err := GenerateWiki(ctx, wikiRepoRoot(t, "my-repo", canonicalAgentsMD(t)), tempDir)
+	manifest, err := GenerateWiki(ctx, wikiRepoRoot(t, "my-repo", canonicalAgentsMD(t)), tempDir, "")
 	if err != nil {
 		t.Fatalf("unexpected error generating wiki: %v", err)
 	}
@@ -766,14 +799,14 @@ func TestTranscribeDiscussionToADR_Negative_UnapprovedAndEmpty(t *testing.T) {
 
 func TestGenerateWiki_Negative_EmptyOutputDirAndCancelledContext(t *testing.T) {
 	ctx := context.Background()
-	_, err := GenerateWiki(ctx, "repo", "")
+	_, err := GenerateWiki(ctx, "repo", "", "")
 	if err == nil {
 		t.Fatalf("expected error on empty output directory")
 	}
 
 	cancCtx, cancel := context.WithCancel(ctx)
 	cancel()
-	_, errCanc := GenerateWiki(cancCtx, "repo", t.TempDir())
+	_, errCanc := GenerateWiki(cancCtx, "repo", t.TempDir(), "")
 	if errCanc == nil {
 		t.Fatalf("expected error on cancelled context")
 	}
@@ -921,42 +954,37 @@ func TestGenerateWiki_Boundary_RepoNameFromRelativeRoot(t *testing.T) {
 
 	agents := canonicalAgentsMD(t)
 	root := wikiRepoRoot(t, "my-repo", agents)
-	manifest, err := GenerateWiki(ctx, root, t.TempDir())
+	manifest, err := GenerateWiki(ctx, root, t.TempDir(), "")
 	if err != nil {
 		t.Fatalf("unexpected error generating wiki: %v", err)
 	}
-	wantMyRepo := filepath.Base(filepath.Dir(root)) + "/my-repo Wiki Portal"
-	if !strings.Contains(manifest.Pages[0].Content, wantMyRepo) {
+	if !strings.Contains(manifest.Pages[0].Content, "acme/my-repo Wiki Portal") {
 		t.Errorf("home page does not name the repository: %s", manifest.Pages[0].Content[:80])
 	}
 
-	// "." is what the CLI passes; it must resolve to the working directory's name, not
-	// to a hard-coded placeholder.
+	// "." is what the CLI passes; it must resolve to the working directory's own identity,
+	// not to a hard-coded placeholder or to the directory names around it.
 	relRoot := wikiRepoRoot(t, "relative-repo", agents)
 	t.Chdir(relRoot)
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	relManifest, err := GenerateWiki(ctx, ".", t.TempDir())
+	relManifest, err := GenerateWiki(ctx, ".", t.TempDir(), "")
 	if err != nil {
 		t.Fatalf("unexpected error generating wiki from '.': %v", err)
 	}
-	want := filepath.Base(filepath.Dir(cwd)) + "/" + filepath.Base(cwd) + " Wiki Portal"
+	want := "acme/relative-repo Wiki Portal"
 	if !strings.Contains(relManifest.Pages[0].Content, want) {
 		t.Errorf("expected home page to contain %q, got %q", want, relManifest.Pages[0].Content[:80])
 	}
 }
 
 func TestAssignReviewers_Boundary_EmptyCodeowners(t *testing.T) {
-	assignment, err := AssignReviewers([]string{"cmd/standardsctl/main.go"}, "")
+	assignment, err := AssignReviewers([]string{"cmd/standardsctl/main.go"}, "", []string{"acme-review[bot]"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(assignment.HumanReviewers) != 0 {
 		t.Fatalf("expected 0 human reviewers for empty codeowners, got %d", len(assignment.HumanReviewers))
 	}
-	if len(assignment.BotReviewers) != 1 || assignment.BotReviewers[0] != StandardReviewBot {
-		t.Fatalf("expected bot reviewer to still be assigned")
+	if len(assignment.BotReviewers) != 1 || assignment.BotReviewers[0] != "acme-review[bot]" {
+		t.Fatalf("expected the configured bot reviewer to still be assigned")
 	}
 }

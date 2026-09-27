@@ -1,0 +1,3 @@
+type: changed
+title: Owner-dependent commands (issue, milestone, project, init, forge sync-wiki, the Paperclip harness) resolve the owner from --owner, repository.owner, the origin remote, then forge.default_owner and refuse instead of defaulting to a built-in organisation; issue reconcile defaults to forge.reconcile_repos, then the current repository; AssignReviewers requests only the bots it is given; scripts/adopt_priority_repos.sh becomes scripts/adopt_repos.sh, which adopts the repositories named on its command line or in --targets-file
+breaking: true

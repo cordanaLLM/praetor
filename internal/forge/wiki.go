@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
-	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // Invariant bounds adhering to HISS-02.
@@ -52,7 +52,10 @@ type WikiManifest struct {
 // A relative outputDir is a location inside repoRoot and every page is written confined to
 // repoRoot, so a repository that ships docs/wiki (or an ancestor) as a link leading outside
 // it cannot redirect the pages (BUG-826). An absolute outputDir is written as given.
-func GenerateWiki(ctx context.Context, repoRoot, outputDir string) (*WikiManifest, error) {
+//
+// The portal is named after repoRoot's identity (resolveWikiRepoName), with defaultOwner
+// (forge.default_owner) as the last owner step.
+func GenerateWiki(ctx context.Context, repoRoot, outputDir, defaultOwner string) (*WikiManifest, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("context cancelled before wiki generation: %w", err)
 	}
@@ -60,7 +63,7 @@ func GenerateWiki(ctx context.Context, repoRoot, outputDir string) (*WikiManifes
 		return nil, errors.New("output directory cannot be empty")
 	}
 
-	repoName, err := resolveWikiRepoName(ctx, repoRoot)
+	repoName, err := resolveWikiRepoName(ctx, repoRoot, defaultOwner)
 	if err != nil {
 		return nil, err
 	}
@@ -104,17 +107,15 @@ func readGatedInvariants(ctx context.Context, repoRoot string) ([]hisscatalog.Ga
 	return gated, nil
 }
 
-// resolveWikiRepoName derives the "<owner>/<repo>" name the wiki portal is generated for.
-// It uses util.ResolveRepoIdentity, which reads remote.origin.url or falls back to
-// the parent and base directory names (e.g. "cordanaLLM/praetor"). Checkouts at ~/dev/<name>
-// without an origin remote will fail because the parent "dev" is rejected as an owner.
-func resolveWikiRepoName(ctx context.Context, repoRoot string) (string, error) {
-	owner, repo, err := util.ResolveRepoIdentity(ctx, repoRoot)
+// resolveWikiRepoName derives the "<owner>/<repo>" name the wiki portal is generated for
+// through config.ResolveRepositoryIdentity (ADR-0014 §3): the manifest's repository block,
+// then the origin remote, with defaultOwner as the last owner step. The checkout path is
+// never read, so a checkout's parent directory never names the portal, and a repository
+// that resolves no identity fails instead of publishing a guessed one.
+func resolveWikiRepoName(ctx context.Context, repoRoot, defaultOwner string) (string, error) {
+	owner, repo, err := config.ResolveRepositoryIdentity(ctx, repoRoot, "", defaultOwner)
 	if err != nil {
 		return "", fmt.Errorf("cannot derive a repository name from %q: %w", repoRoot, err)
-	}
-	if owner == "" || repo == "" {
-		return "", fmt.Errorf("cannot derive a complete repository name from %q", repoRoot)
 	}
 	return owner + "/" + repo, nil
 }
@@ -412,7 +413,7 @@ const frameworkKitReference = "- `praetorctl compile-framework-assets --config <
 	"working tree's own `llms.txt` by accident.\n" +
 	"\n" +
 	"```yaml\n" +
-	"kit_name: sveltesentio\n" +
+	"kit_name: example-ui-kit\n" +
 	"language: svelte\n" +
 	"version: 5.0.0\n" +
 	"description: Svelte 5 component library\n" +

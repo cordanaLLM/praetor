@@ -11,8 +11,8 @@ func TestParseCheckboxDependencies(t *testing.T) {
 	body := `
 ## Tasks
 - [ ] Task 1: Initialize repo
-- [x] Task 2: Implement #42 in golusoris
-- [ ] Task 3: Migrate downstream Depends-On: vmafx#10
+- [x] Task 2: Implement #42 in kit
+- [ ] Task 3: Migrate downstream Depends-On: app#10
 `
 	boxes := ParseCheckboxDependencies(body)
 	if len(boxes) != 3 {
@@ -35,22 +35,22 @@ func TestParseCheckboxDependencies(t *testing.T) {
 
 func TestReconcileEngine_CrossRepoUnblocking(t *testing.T) {
 	ctx := context.Background()
-	engine := NewReconcileEngine("cordanaLLM")
+	engine := NewReconcileEngine("acme")
 
-	// Upstream issue in golusoris
-	engine.TrackIssue("golusoris", IssueSpec{
+	// Upstream issue in kit
+	engine.TrackIssue("kit", IssueSpec{
 		ID:    42,
 		Title: "Add S3 Storage Builder Kit",
 		State: "closed", // Upstream is closed/resolved!
 	})
 
-	// Downstream issue in vmafx blocked on golusoris#42
-	engine.TrackIssue("vmafx", IssueSpec{
+	// Downstream issue in app blocked on kit#42
+	engine.TrackIssue("app", IssueSpec{
 		ID:        15,
 		Title:     "Adopt S3 Kit for Video Uploads",
 		State:     "open",
 		Labels:    []string{"task", "status/blocked"},
-		DependsOn: []string{"golusoris#42"},
+		DependsOn: []string{"kit#42"},
 		Body:      "- [x] Upstream S3 implementation verified",
 	})
 
@@ -64,7 +64,7 @@ func TestReconcileEngine_CrossRepoUnblocking(t *testing.T) {
 	}
 
 	unblocked := report.UnblockedIssues[0]
-	if unblocked.Repo != "vmafx" || unblocked.IssueNumber != 15 {
+	if unblocked.Repo != "app" || unblocked.IssueNumber != 15 {
 		t.Errorf("unexpected unblocked issue: %+v", unblocked)
 	}
 	if len(unblocked.ResolvedPrereqs) != 1 {
@@ -74,22 +74,22 @@ func TestReconcileEngine_CrossRepoUnblocking(t *testing.T) {
 
 func TestReconcileEngine_StillBlocked(t *testing.T) {
 	ctx := context.Background()
-	engine := NewReconcileEngine("cordanaLLM")
+	engine := NewReconcileEngine("acme")
 
 	// Upstream issue is still open
-	engine.TrackIssue("golusoris", IssueSpec{
+	engine.TrackIssue("kit", IssueSpec{
 		ID:    50,
 		Title: "WIP CUDA Kernels",
 		State: "open",
 	})
 
 	// Downstream issue
-	engine.TrackIssue("vmafx", IssueSpec{
+	engine.TrackIssue("app", IssueSpec{
 		ID:        20,
-		Title:     "Integrate CUDA VMAFx",
+		Title:     "Integrate CUDA kernels",
 		State:     "open",
 		Labels:    []string{"status/blocked"},
-		DependsOn: []string{"golusoris#50"},
+		DependsOn: []string{"kit#50"},
 	})
 
 	report, err := engine.Reconcile(ctx)
@@ -109,7 +109,7 @@ func TestReconcileEngine_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	engine := NewReconcileEngine("cordanaLLM")
+	engine := NewReconcileEngine("acme")
 	_, err := engine.Reconcile(ctx)
 	if err == nil {
 		t.Fatal("expected error on cancelled context")
@@ -157,13 +157,13 @@ func TestParseCheckboxDependencies_Boundary_MarkersAndLineBound(t *testing.T) {
 // ============================================================================
 
 func TestReconcileEngine_Negative_LowercaseDependsOnTag(t *testing.T) {
-	engine := NewReconcileEngine("cordanaLLM")
-	engine.TrackIssue("golusoris", IssueSpec{ID: 42, State: "closed"})
-	engine.TrackIssue("vmafx", IssueSpec{
+	engine := NewReconcileEngine("acme")
+	engine.TrackIssue("kit", IssueSpec{ID: 42, State: "closed"})
+	engine.TrackIssue("app", IssueSpec{
 		ID:        15,
 		State:     "open",
 		Labels:    []string{"status/blocked"},
-		DependsOn: []string{"depends-on: golusoris#42"},
+		DependsOn: []string{"depends-on: kit#42"},
 	})
 
 	report, err := engine.Reconcile(context.Background())
@@ -173,19 +173,19 @@ func TestReconcileEngine_Negative_LowercaseDependsOnTag(t *testing.T) {
 	if len(report.UnblockedIssues) != 1 {
 		t.Fatalf("a lowercase Depends-On tag was not resolved: %+v", report)
 	}
-	if report.UnblockedIssues[0].ResolvedPrereqs[0] != "golusoris#42" {
+	if report.UnblockedIssues[0].ResolvedPrereqs[0] != "kit#42" {
 		t.Errorf("unexpected resolved prerequisite: %+v", report.UnblockedIssues[0])
 	}
 }
 
 func TestReconcileEngine_Negative_CrossOrgDependencyIsNotConflated(t *testing.T) {
-	engine := NewReconcileEngine("cordanaLLM")
-	engine.TrackIssue("cordanaLLM/praetor", IssueSpec{ID: 5, State: "closed"})
-	engine.TrackIssue("golusoris/golusoris", IssueSpec{
+	engine := NewReconcileEngine("acme")
+	engine.TrackIssue("acme/praetor", IssueSpec{ID: 5, State: "closed"})
+	engine.TrackIssue("acme/kit", IssueSpec{
 		ID:        9,
 		State:     "open",
 		Labels:    []string{"status/blocked"},
-		DependsOn: []string{"Depends-On: lusoris/praetor#5"},
+		DependsOn: []string{"Depends-On: acme-fork/praetor#5"},
 	})
 
 	report, err := engine.Reconcile(context.Background())
@@ -193,15 +193,15 @@ func TestReconcileEngine_Negative_CrossOrgDependencyIsNotConflated(t *testing.T)
 		t.Fatalf("reconciliation failed: %v", err)
 	}
 	if len(report.UnblockedIssues) != 0 {
-		t.Fatalf("a dependency on lusoris/praetor was satisfied by cordanaLLM/praetor: %+v", report.UnblockedIssues)
+		t.Fatalf("a dependency on acme-fork/praetor was satisfied by acme/praetor: %+v", report.UnblockedIssues)
 	}
-	if len(report.StillBlocked) != 1 || report.StillBlocked[0].PendingPrereqs[0] != "lusoris/praetor#5" {
+	if len(report.StillBlocked) != 1 || report.StillBlocked[0].PendingPrereqs[0] != "acme-fork/praetor#5" {
 		t.Errorf("unexpected blocked summary: %+v", report.StillBlocked)
 	}
 }
 
 func TestReconcileEngine_Boundary_AmbiguousBareRepoStaysBlocked(t *testing.T) {
-	engine := NewReconcileEngine("cordanaLLM")
+	engine := NewReconcileEngine("acme")
 	engine.TrackIssue("acme/core", IssueSpec{ID: 7, State: "open"})
 	engine.TrackIssue("beta/core", IssueSpec{ID: 7, State: "closed"})
 	engine.TrackIssue("acme/core", IssueSpec{
@@ -222,7 +222,7 @@ func TestReconcileEngine_Boundary_AmbiguousBareRepoStaysBlocked(t *testing.T) {
 	}
 
 	// The referencing issue's own owner wins over any other tracked repository.
-	owned := NewReconcileEngine("cordanaLLM")
+	owned := NewReconcileEngine("acme")
 	owned.TrackIssue("acme/core", IssueSpec{ID: 7, State: "closed"})
 	owned.TrackIssue("beta/core", IssueSpec{ID: 7, State: "open"})
 	owned.TrackIssue("acme/web", IssueSpec{
@@ -241,7 +241,7 @@ func TestReconcileEngine_Boundary_AmbiguousBareRepoStaysBlocked(t *testing.T) {
 }
 
 func TestReconcileEngine_Boundary_DeterministicReportOrder(t *testing.T) {
-	engine := NewReconcileEngine("cordanaLLM")
+	engine := NewReconcileEngine("acme")
 	for i := 0; i < 12; i++ {
 		repo := fmt.Sprintf("owner%02d/repo", i)
 		engine.TrackIssue(repo, IssueSpec{ID: 1, State: "open"})
@@ -276,15 +276,15 @@ func TestReconcileEngine_Boundary_DeterministicReportOrder(t *testing.T) {
 }
 
 func TestReconcileEngine_Boundary_SetIssueStateSurvivesTrackIssue(t *testing.T) {
-	engine := NewReconcileEngine("cordanaLLM")
-	engine.SetIssueState("golusoris", 42, "closed")
-	engine.TrackIssue("golusoris", IssueSpec{ID: 1, State: "open"})
+	engine := NewReconcileEngine("acme")
+	engine.SetIssueState("kit", 42, "closed")
+	engine.TrackIssue("kit", IssueSpec{ID: 1, State: "open"})
 
-	engine.TrackIssue("vmafx", IssueSpec{
+	engine.TrackIssue("app", IssueSpec{
 		ID:        15,
 		State:     "open",
 		Labels:    []string{"status/blocked"},
-		DependsOn: []string{"Depends-On: golusoris#42"},
+		DependsOn: []string{"Depends-On: kit#42"},
 	})
 
 	report, err := engine.Reconcile(context.Background())

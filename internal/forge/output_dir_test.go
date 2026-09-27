@@ -50,7 +50,7 @@ func TestGeneratedDir_Positive_RelativeOutputsLandInsideTheRepository(t *testing
 	}
 	linkOrSkip(t, "site", filepath.Join(root, "docs"))
 
-	manifest, err := GenerateWiki(t.Context(), root, filepath.Join("docs", "wiki"))
+	manifest, err := GenerateWiki(t.Context(), root, filepath.Join("docs", "wiki"), "")
 	if err != nil {
 		t.Fatalf("GenerateWiki through an in-root link: %v", err)
 	}
@@ -84,13 +84,13 @@ func TestGeneratedDir_Negative_EscapingLinkIsRefused(t *testing.T) {
 	linkOrSkip(t, outside, filepath.Join(root, "docs", "wiki"))
 	linkOrSkip(t, outside, filepath.Join(root, "docs", "adr"))
 
-	if _, err := GenerateWiki(t.Context(), root, filepath.Join("docs", "wiki")); !errors.Is(err, util.ErrPathEscapesRoot) {
+	if _, err := GenerateWiki(t.Context(), root, filepath.Join("docs", "wiki"), ""); !errors.Is(err, util.ErrPathEscapesRoot) {
 		t.Errorf("GenerateWiki through an escaping link = %v, want ErrPathEscapesRoot", err)
 	}
 	if _, err := TranscribeDiscussionToADR(t.Context(), approvedDiscussion(), root, filepath.Join("docs", "adr")); !errors.Is(err, util.ErrPathEscapesRoot) {
 		t.Errorf("TranscribeDiscussionToADR through an escaping link = %v, want ErrPathEscapesRoot", err)
 	}
-	if _, err := GenerateWiki(t.Context(), root, filepath.Join("..", "wiki")); !errors.Is(err, util.ErrPathEscapesRoot) {
+	if _, err := GenerateWiki(t.Context(), root, filepath.Join("..", "wiki"), ""); !errors.Is(err, util.ErrPathEscapesRoot) {
 		t.Errorf("GenerateWiki climbing out with .. = %v, want ErrPathEscapesRoot", err)
 	}
 	requireEmptyDir(t, outside)
@@ -105,12 +105,12 @@ func TestGeneratedDir_Boundary_AncestorLinkAndAbsoluteChoice(t *testing.T) {
 	outside := t.TempDir()
 	linkOrSkip(t, outside, filepath.Join(root, "docs"))
 
-	if _, err := GenerateWiki(t.Context(), root, filepath.Join("docs", "wiki")); !errors.Is(err, util.ErrPathEscapesRoot) {
+	if _, err := GenerateWiki(t.Context(), root, filepath.Join("docs", "wiki"), ""); !errors.Is(err, util.ErrPathEscapesRoot) {
 		t.Errorf("GenerateWiki below an escaping ancestor = %v, want ErrPathEscapesRoot", err)
 	}
 	requireEmptyDir(t, outside)
 
-	if _, err := GenerateWiki(t.Context(), root, "."); err != nil {
+	if _, err := GenerateWiki(t.Context(), root, ".", ""); err != nil {
 		t.Fatalf("GenerateWiki into the repository root: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "Home.md")); err != nil {
@@ -118,7 +118,7 @@ func TestGeneratedDir_Boundary_AncestorLinkAndAbsoluteChoice(t *testing.T) {
 	}
 
 	absolute := filepath.Join(outside, "wiki")
-	if _, err := GenerateWiki(t.Context(), root, absolute); err != nil {
+	if _, err := GenerateWiki(t.Context(), root, absolute, ""); err != nil {
 		t.Fatalf("GenerateWiki into an absolute directory: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(absolute, "Home.md")); err != nil {

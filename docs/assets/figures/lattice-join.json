@@ -1,0 +1,94 @@
+{
+  "slug": "lattice-join",
+  "title": "Lattice Join",
+  "alt": "Policy layers fold in a fixed order through the lattice join; repository control overrides apply after the join.",
+  "text": [
+    "Layers, folded in this order: 1. Defaults (builtin:defaults-v1), 2. Pinned profiles (.config/archetypes, lock digest), 3. Pinned facets (.config/archetypes/facets, lock digest), 4. External (fleet, org, deployment, workstation), 5. Repository complexity (.standards.yaml overrides.complexity), 6. Audit compat (builtin:audit-compat-v1, if Audit set).",
+    "Boxes: Lattice join (ResolvePolicy), Control overrides (branch protection & supply chain), Effective policy (EffectivePolicy, sealed), Consumers (audit, adopt plan, devcontainer, workstation).",
+    "Layers, folded in this order → Lattice join → Effective policy.",
+    "Control overrides → Effective policy (ApplyOverrides) → Consumers.",
+    "Scenario 1, defaults: The join starts from the built-in defaults. newEffectivePolicy seeds the result with DefaultPolicy.",
+    "Scenario 2, pinned profiles: A profile joins only through its .standards.lock pin. pinnedLayer rejects a file whose digest differs from its lock pin (ErrLockDigestMismatch) or whose id changed. native-gpu-systems then contributes its complexity caps and controls.",
+    "Scenario 3, pinned facets: Facets pass the same pin check and fold in after the profiles. security:high adds two required reviewers, SLSA level 3 and two linters.",
+    "Scenario 4, external, repository, audit: These layers add complexity limits and operator settings, never controls. Selected fleet, organization, deployment and workstation files fold in, in that order. The manifest's overrides.complexity joins as one more layer. When Audit is set, as in audit and adopt, the audit-compat ceiling folds in last.",
+    "Scenario 5, join: ResolvePolicy joins every layer in order. Join keeps the lowest positive complexity cap, the higher reviewer count and SLSA level, true over false, strict_ban over allow_with_comment, and deduplicated unions. ArchetypeControls.validate rejects review_mode on every layer, so the joined policy keeps the independent default.",
+    "Scenario 6, control overrides: Repository branch and supply-chain overrides apply after the join. finishEffectivePolicy applies only branch_protection and supply_chain through ApplyOverrides; review_mode may relax to single_maintainer here and nowhere else.",
+    "Scenario 7, consumers: The sealed effective policy drives every consumer. standardsctl audit, adopt plans, devcontainer and workstation install each resolve policy through this loader. ResolveDevContainerFeatures re-reads the pinned files: one feature identity with another tag, digest or options fails closed."
+  ],
+  "evidence": [
+    "internal/config/effective_load.go:loadEffectivePolicy",
+    "internal/config/effective_load.go:effectiveLoader.manifest",
+    "internal/config/effective_load.go:externalLayers",
+    "internal/config/effective_load.go:auditCompatibilityLayer",
+    "internal/config/effective_load.go:finishEffectivePolicy",
+    "internal/config/effective_pins.go:pinnedLayers",
+    "internal/config/effective_pins.go:pinnedLayer",
+    "internal/config/effective_pins.go:ErrLockDigestMismatch",
+    "internal/config/effective.go:newEffectivePolicy",
+    "internal/config/effective.go:ResolvePolicy",
+    "internal/config/effective.go:applyLayer",
+    "internal/config/config.go:DefaultPolicy",
+    "internal/config/config.go:Join",
+    "internal/config/config.go:joinReviewMode",
+    "internal/config/config.go:ApplyOverrides",
+    "internal/config/archetype.go:ArchetypeControls.validate",
+    "internal/config/operator_decode.go:operatorSectionNames",
+    "internal/config/devcontainer_features.go:ResolveDevContainerFeatures",
+    "internal/config/devcontainer_features.go:mergeDevContainerFeature",
+    "internal/hiss/hiss.go:DefaultMaxFuncLOC",
+    ".config/archetypes/native-gpu-systems.yaml:max_func_loc",
+    ".config/archetypes/facets/security-high.yaml:gitleaks",
+    "cmd/standardsctl/audit.go:auditManifestAndLockfile",
+    "internal/adopt/policy_dryrun.go:planPolicyCatalog",
+    "cmd/standardsctl/devcontainer.go:runDevContainer",
+    "cmd/standardsctl/workstation.go:loadInstallSettings"
+  ],
+  "spec_sha256": "ba8daac2d097a547fe03b33e25825a408f6d03b6d66660ee22157b681bc4e7c3",
+  "engine": {
+    "commit": "ccfe85b4851957ac2adf88b4a9ddf9668b2882f1",
+    "sha256": "047b4bcb30562cca709be7175d11995cdda45cf4b89db1f6906c5805b26c6452"
+  },
+  "svg_sha256": "97a5b2f0a1180cb6db70e89442ccd0c9c7cce16444503ed9d299aeb883d37668",
+  "static_sha256": "daf8038ddea683a47b1feba6b40afda59f7c2f7f54dd351092171564ece74b1a",
+  "width": 947,
+  "height": 1104,
+  "edges": [
+    {
+      "from": "1. Defaults",
+      "to": "Lattice join"
+    },
+    {
+      "from": "2. Pinned profiles",
+      "to": "Lattice join"
+    },
+    {
+      "from": "3. Pinned facets",
+      "to": "Lattice join"
+    },
+    {
+      "from": "4. External",
+      "to": "Lattice join"
+    },
+    {
+      "from": "5. Repository complexity",
+      "to": "Lattice join"
+    },
+    {
+      "from": "6. Audit compat",
+      "to": "Lattice join"
+    },
+    {
+      "from": "Lattice join",
+      "to": "Effective policy"
+    },
+    {
+      "from": "Control overrides",
+      "to": "Effective policy",
+      "label": "ApplyOverrides"
+    },
+    {
+      "from": "Effective policy",
+      "to": "Consumers"
+    }
+  ]
+}

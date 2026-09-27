@@ -2,21 +2,22 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// maxReconciledRepos and maxUnblockTransitions are the scalar upper bounds (HISS-02) on
-// the reconciliation fan-out of a single command invocation.
-const (
-	maxReconciledRepos    = 256
-	maxUnblockTransitions = 1000
-)
+// maxUnblockTransitions is the scalar upper bound (HISS-02) on the status transitions of a
+// single command invocation. The repository fan-out is bounded by config.MaxReconcileRepos,
+// the cap forge.reconcile_repos is validated against.
+const maxUnblockTransitions = 1000
 
 // readyLabel is the label an unblocked issue is transitioned to.
 const readyLabel = "status/ready-for-work"
@@ -49,27 +50,42 @@ func runIssue(args []string) error {
 func printIssueUsage() {
 	fmt.Println("Usage: praetorctl issue <subcommand> [arguments]")
 	fmt.Println("\nSubcommands:")
-	fmt.Println("  reconcile [--repos=...] [--owner=cordanaLLM] [--dry-run] Reconcile cross-repo issue dependencies and tasklists")
+	fmt.Println("  reconcile [--repos=<owner>/<name>,...] [--owner=<owner>] [--dry-run] Reconcile cross-repo issue dependencies and tasklists")
+}
+
+// reconcileRequest is what the flags of one `issue reconcile` asked for. reposSet tells an
+// explicit --repos (even an empty one, which is refused) from an unset one.
+type reconcileRequest struct {
+	owner, repos string
+	reposSet     bool
+}
+
+// reconcileScope is the repository set of one reconciliation and the owner that qualified
+// its bare names. owner is empty when no resolution step names one and no bare name needs it.
+type reconcileScope struct {
+	owner string
+	repos []string
 }
 
 func runIssueReconcile(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("issue reconcile", flag.ContinueOnError)
-	owner := fs.String("owner", "cordanaLLM", "Default organization owner")
-	reposFlag := fs.String("repos", "golusoris/golusoris,golusoris/sveltesentio,cordanaLLM/praetor", "Comma-separated repositories to reconcile")
+	owner := fs.String("owner", "", "Owner qualifying bare repository names "+ownerDefaultHelp)
+	reposFlag := fs.String("repos", "", "Comma-separated repositories to reconcile "+
+		"(default: forge.reconcile_repos, else the current repository)")
 	dryRun := fs.Bool("dry-run", true, "Simulate dependency resolution without applying changes")
 	tokenFlag := fs.String("token", "", "Forge API token (default: GITHUB_TOKEN or gh auth token)")
 	endpoint := fs.String("endpoint", "", "Forge API endpoint (default: https://api.github.com)")
+	settings := registerOperatorSettingsFlags(fs)
 	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
-	if strings.Count(*reposFlag, ",") >= maxReconciledRepos {
-		return fmt.Errorf("repository selection exceeds limit of %d comma-separated entries", maxReconciledRepos)
+	if strings.Count(*reposFlag, ",") >= config.MaxReconcileRepos {
+		return fmt.Errorf("repository selection exceeds limit of %d comma-separated entries", config.MaxReconcileRepos)
 	}
-	// An empty selection reconciles nothing; reporting that as a successful run exits 0
-	// on a scope typo such as --repos= or --repos=",", so it is refused (BUG-727).
-	repos := parseTargetRepos(*reposFlag, *owner)
-	if len(repos) == 0 {
-		return fmt.Errorf("issue reconcile needs at least one repository; --repos=%q selects none", *reposFlag)
+	scope, err := selectReconcileScope(ctx, reconcileRequest{owner: *owner, repos: *reposFlag,
+		reposSet: flagWasSet(fs, "repos")}, settings)
+	if err != nil {
+		return err
 	}
 
 	tok := resolveForgeAuthToken(ctx, *tokenFlag)
@@ -77,9 +93,9 @@ func runIssueReconcile(ctx context.Context, args []string) error {
 		return fmt.Errorf("--dry-run=false needs a forge token: set GITHUB_TOKEN, sign in with gh, or pass --token")
 	}
 
-	engine := forge.NewReconcileEngine(*owner)
+	engine := forge.NewReconcileEngine(scope.owner)
 	labels := newIssueLabelIndex()
-	if err := loadFleetIssues(ctx, tok, *endpoint, repos, engine, labels); err != nil {
+	if err := loadFleetIssues(ctx, tok, *endpoint, scope.repos, engine, labels); err != nil {
 		return fmt.Errorf("failed loading fleet issues: %w", err)
 	}
 
@@ -95,27 +111,75 @@ func runIssueReconcile(ctx context.Context, args []string) error {
 		applied, failed = applyUnblockTransitions(ctx, tok, *endpoint, rep.UnblockedIssues, labels)
 	}
 
-	printReconciliationSummary(*owner, rep, *dryRun, applied, failed)
+	printReconciliationSummary(scope, rep, *dryRun, applied, failed)
 	if failed > 0 {
 		return fmt.Errorf("%d of %d status transitions failed", failed, applied+failed)
 	}
 	return nil
 }
 
-func parseTargetRepos(reposFlag, defaultOwner string) []string {
+// selectReconcileScope resolves the repositories to reconcile (ADR-0014 §3): --repos, then
+// forge.reconcile_repos, then the current repository, then a refusal. The owner qualifying
+// bare --repos names is resolveForgeOwner's over the working directory; an unknown owner is
+// an error only when a bare name needs one.
+func selectReconcileScope(ctx context.Context, req reconcileRequest, settings *operatorSettingsFlags) (reconcileScope, error) {
+	forgeSettings, err := loadForgeSettings(ctx, settings)
+	if err != nil {
+		return reconcileScope{}, fmt.Errorf("issue reconcile: %w", err)
+	}
+	owner, err := resolveForgeOwner(ctx, ".", req.owner, forgeSettings.DefaultOwner)
+	if err != nil && !errors.Is(err, config.ErrOwnerUnknown) {
+		return reconcileScope{}, fmt.Errorf("issue reconcile: %w", err)
+	}
+	switch {
+	case req.reposSet:
+		// An empty selection reconciles nothing; reporting that as a successful run exits 0
+		// on a scope typo such as --repos= or --repos=",", so it is refused (BUG-727).
+		repos, err := parseTargetRepos(req.repos, owner)
+		if err != nil {
+			return reconcileScope{}, err
+		}
+		if len(repos) == 0 {
+			return reconcileScope{}, fmt.Errorf("issue reconcile needs at least one repository; --repos=%q selects none", req.repos)
+		}
+		return reconcileScope{owner: owner, repos: repos}, nil
+	case len(forgeSettings.ReconcileRepos) > 0:
+		return reconcileScope{owner: owner, repos: slices.Clone(forgeSettings.ReconcileRepos)}, nil
+	}
+	return currentRepositoryScope(ctx, req.owner, forgeSettings.DefaultOwner)
+}
+
+// currentRepositoryScope reconciles the repository in the working directory, identified by
+// config.ResolveRepositoryIdentity. Without an identity there is nothing to reconcile.
+func currentRepositoryScope(ctx context.Context, explicitOwner, defaultOwner string) (reconcileScope, error) {
+	owner, name, err := config.ResolveRepositoryIdentity(ctx, ".", explicitOwner, defaultOwner)
+	if err != nil {
+		return reconcileScope{}, fmt.Errorf("issue reconcile needs at least one repository: pass --repos, "+
+			"set forge.reconcile_repos, or run it inside a repository whose identity resolves: %w", err)
+	}
+	return reconcileScope{owner: owner, repos: []string{owner + "/" + name}}, nil
+}
+
+// parseTargetRepos splits a --repos value into coordinates, qualifying a bare name with
+// owner. A bare name without an owner is an error naming it: no owner is guessed.
+func parseTargetRepos(reposFlag, owner string) ([]string, error) {
 	parts := strings.Split(reposFlag, ",")
 	res := make([]string, 0, len(parts))
-	for i := 0; i < len(parts) && i < maxReconciledRepos; i++ {
+	for i := 0; i < len(parts) && i < config.MaxReconcileRepos; i++ {
 		clean := strings.TrimSpace(parts[i])
 		if clean == "" {
 			continue
 		}
 		if !strings.Contains(clean, "/") {
-			clean = defaultOwner + "/" + clean
+			if owner == "" {
+				return nil, fmt.Errorf("--repos entry %q names no owner: write <owner>/<name> or pass --owner: %w",
+					clean, config.ErrOwnerUnknown)
+			}
+			clean = owner + "/" + clean
 		}
 		res = append(res, clean)
 	}
-	return res
+	return res, nil
 }
 
 // issueLabelIndex remembers the label set each tracked issue carries, keyed by
@@ -168,7 +232,7 @@ func isBlockedLabel(label string) bool {
 
 func loadFleetIssues(ctx context.Context, token, endpoint string, repos []string,
 	engine *forge.ReconcileEngine, labels issueLabelIndex) error {
-	for i := 0; i < len(repos) && i < maxReconciledRepos; i++ {
+	for i := 0; i < len(repos) && i < config.MaxReconcileRepos; i++ {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -247,8 +311,11 @@ func transitionUnblocked(ctx context.Context, gh *forge.GitHubDriver, number int
 	return nil
 }
 
-func printReconciliationSummary(owner string, rep *forge.ReconciliationReport, dryRun bool, applied, failed int) {
-	fmt.Printf("=== Cross-Repo Dependency Reconciliation: %s ===\n", owner)
+func printReconciliationSummary(scope reconcileScope, rep *forge.ReconciliationReport, dryRun bool, applied, failed int) {
+	fmt.Printf("=== Cross-Repo Dependency Reconciliation: %d repositories ===\n", len(scope.repos))
+	if scope.owner != "" {
+		fmt.Printf("Owner of bare repository names: %s\n", scope.owner)
+	}
 	fmt.Printf("Evaluated Issues: %d | Unblocked: %d | Still Blocked: %d\n\n",
 		rep.EvaluatedCount, len(rep.UnblockedIssues), len(rep.StillBlocked))
 

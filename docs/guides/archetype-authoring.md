@@ -2,14 +2,8 @@
 
 Learn how to define new composable profiles and cross-cutting security/operational facets in `cordanaLLM/praetor`.
 
-```mermaid
-flowchart TD
-    NEW["New Technology Stack\n(e.g., zig-systems, ml-training)"] --> PROFILE[".config/archetypes/{id}.yaml"]
-    CROSS["Cross-Cutting Invariant\n(e.g., zero-trust-network)"] --> FACET[".config/archetypes/facets/*.yaml\n(identity = id field)"]
-    
-    PROFILE & FACET --> LATTICE["Lattice Engine (internal/config)"]
-    LATTICE --> RESOLVE["Evaluates Supremum (Join)\nHighest Standard Wins"]
-    RESOLVE --> CI["Tailored CI & Invariants"]
+```figure
+lattice-join
 ```
 
 ---
@@ -195,12 +189,13 @@ mistake:
 
 ## 1. Profile Definition Anatomy
 
-Profiles represent the primary technology stack or architecture. Create `.config/archetypes/{profile-id}.yaml`:
+Profiles represent the primary technology stack or architecture. Create `.config/archetypes/{profile-id}.yaml`.
+The shipped `.config/archetypes/native-gpu-systems.yaml`, in full:
 
 ```yaml
 id: "native-gpu-systems"
 name: "Native GPU & Compute Systems"
-description: "High-performance C/C++/Rust/Vulkan systems with deterministic memory bounds"
+description: "High-performance C/C++/Rust/CUDA/Vulkan systems with deterministic memory bounds and zero dynamic frame allocations"
 runtime: "native"
 
 complexity:
@@ -213,27 +208,40 @@ memory:
   zero_frame_malloc: true
   banned_alloc_in_ticks: true
 
+branch_protection:
+  enforce_linear_history: true
+  require_signed_commits: true
+  required_approving_reviewers: 2
+  dismiss_stale_reviews: true
+
+supply_chain:
+  slsa_level: 3
+  enforce_cosign: true
+  require_sbom: true
+
 linters:
   - "clang-tidy"
   - "clippy"
   - "semgrep"
+  - "cppcheck"
 
 devcontainer_features:
   - "ghcr.io/devcontainers/features/rust:1"
   - "ghcr.io/devcontainers/features/common-utils:2"
+  - "ghcr.io/devcontainers/features/nix:1"
 ```
 
 ---
 
 ## 2. Facet Definition Anatomy
 
-Facets are cross-cutting policy modifiers. Create a YAML file under `.config/archetypes/facets/`,
-for example `security-high.yaml`:
+Facets are cross-cutting policy modifiers. Create a YAML file under `.config/archetypes/facets/`.
+The shipped `.config/archetypes/facets/security-high.yaml`, in full:
 
 ```yaml
 id: "security:high"
 name: "High-Security Provenance & Hardening"
-description: "SLSA Level 3 attestations, keyless Cosign signatures, and non-root execution"
+description: "SLSA Level 3 attestations, keyless Cosign signatures, SBOM generation, and non-root execution"
 
 supply_chain:
   slsa_level: 3
@@ -245,6 +253,13 @@ branch_protection:
   require_signed_commits: true
   required_approving_reviewers: 2
   dismiss_stale_reviews: true
+
+linters:
+  - "gitleaks"
+  - "trivy"
+
+devcontainer_features:
+  - "ghcr.io/devcontainers/features/common-utils:2"
 ```
 
 **The `id` field is the facet's identity; the file name is descriptive.** `.standards.yaml`
@@ -290,17 +305,27 @@ tested by `TestLoadEffectivePolicyJoinsEveryProfileDimension` in
 
 | Key | Join | Default |
 | :-- | :-- | :-- |
-| `complexity.*` | lowest positive limit; `0` means no bound | 15 / 20 / 100 / 75 |
+| `complexity.*` | lowest positive limit; `0` means no bound | 15 / 20 / 60 / 75 |
 | `branch_protection.enforce_linear_history`, `require_signed_commits`, `dismiss_stale_reviews` | `true` wins | `true`, `false`, `true` |
 | `branch_protection.required_approving_reviewers` | maximum | 1 |
+| `branch_protection.review_mode` | no catalog layer may set it (`TestLoadEffectivePolicyRejectsInvalidArchetypes`), so the join keeps `independent`; only the repository override may relax it to `single_maintainer`, after the join | `independent` |
 | `supply_chain.slsa_level` | maximum | 1 |
 | `supply_chain.enforce_cosign`, `require_sbom` | `true` wins | `false` |
 | `memory.zero_frame_malloc`, `banned_alloc_in_ticks` | `true` wins (ZeroFrameMalloc over StandardHeap) | `false` |
 | `error_unwraps` | `strict_ban` wins over `allow_with_comment` | `allow_with_comment` |
-| `linters`, `devcontainer_features` | deduplicated union, first occurrence order | `govet`, `common-utils` |
+| `linters` | deduplicated union, first occurrence order | `govet` |
+| `devcontainer_features` | deduplicated union by reference, first occurrence order; see the exception below | `common-utils` |
 
 Two archetypes that declare the same value tie on it; the result is that value whichever is
 pinned first (`TestResolvePolicyTiedArchetypesOnMemoryAndErrorUnwraps`).
+
+DevContainer features are the one dimension that can fail instead of joining. When a consumer
+resolves them (`ResolveDevContainerFeatures` in `internal/config/devcontainer_features.go`), it
+re-reads the pinned profile and facet files and keys each feature by its identity, the reference
+without its tag or digest. The same reference with the same options joins once. One identity with a
+different tag, digest or options is ambiguous and fails closed (`mergeDevContainerFeature`, tested by
+`TestResolveDevContainerFeaturesRejectsConflictsAndMalformedEntries` in
+`internal/config/devcontainer_features_test.go`).
 
 ### The schema is closed
 

@@ -1,29 +1,28 @@
 # Repository Onboarding Guide: cordanaLLM/praetor
 
-Onboard any existing or new repository into the cordanaLLM declarative governance fleet.
+Onboard an existing repository into the cordanaLLM declarative governance fleet.
 
-```mermaid
-flowchart LR
-    REPO["Existing / Greenfield Repository"] --> STEP1["1. Install standardsctl\ngo install ..."]
-    STEP1 --> STEP2["2. Scaffold Manifest\nstandardsctl init"]
-    STEP2 --> STEP3["3. Record Debt Baseline\nstandardsctl baseline --record"]
-    STEP3 --> STEP4["4. Compile Agent Context\nstandardsctl compile-context"]
-    STEP4 --> VERIFY["5. Verification Gate\nmake verify-all"]
+```figure
+onboarding-path
 ```
 
 ## 1. Quickstart Onboarding Command
 
-Execute the single-shot onboarding pipeline in your repository root:
+The five-step onboarding pipeline requires a repository with canonical `AGENTS.md` instructions: `praetorctl init` compiles the agent files from it and writes none without it.
+
+[`praetorctl adopt`](../adoption.md) is an alternate entry point, not a step before `init`. One adopt run writes what steps 1 to 4 write (manifest, lockfile, debt baseline, `AGENTS.md` when it is missing, vendor files and DevContainer; `adoptSteps` in `internal/adopt/adopt.go`), so after it you continue at step 5, `praetorctl audit`. Do not run `praetorctl init` afterwards: it refuses because `.standards.yaml` already exists (`ensureManifestAbsent` in `cmd/standardsctl/init.go`).
+
+Execute the onboarding pipeline in your repository root:
 
 ```bash
-# 1. Initialize configuration with declared profiles
+# 1. Initialize configuration with declared profiles and compile the agent files from AGENTS.md
 praetorctl init --profile framework --facets security:high,api:public-contract
 
-# 2. Transpile universal agent harness (AGENTS.md -> CLAUDE.md, Cursor, etc.)
+# 2. Recompile the agent files and add persona copies (rerun after every AGENTS.md edit)
 praetorctl compile-context
 
 # 3. Snapshot legacy technical debt infractions to prevent CI failure
-praetorctl baseline --record
+praetorctl baseline --record --allow-increase --reason "<why>"
 
 # 4. Prepare a portable devcontainer from reviewed Praetor sources
 praetorctl devcontainer generate --source-root /path/to/reviewed/praetor
@@ -59,9 +58,9 @@ activation. Those stages need their own selected checks and execution evidence.
 
 | Step | Action | Command | Expected Output |
 | :--- | :--- | :--- | :--- |
-| **1. Scaffolding** | Create declarative `.standards.yaml` | `praetorctl init` | `.standards.yaml` created with selected profiles. |
-| **2. Context Transpilation** | Generate vendor agent files | `praetorctl compile-context` | `CLAUDE.md`, `.cursor/rules/*.mdc`, etc. created ($< 300$ LOC). |
-| **3. Brownfield Baselining** | Snapshot legacy debt | `praetorctl baseline --record` | `.standards-baseline.json` populated with existing debt. |
+| **1. Scaffolding** | Create declarative configuration and compile agent files | `praetorctl init` | `.standards.yaml`, `.standards.lock` and a zero-debt `.standards-baseline.json` created; the text register spliced into `AGENTS.md`; the six vendor files `CLAUDE.md`, `.cursor/rules/hiss-invariants.mdc`, `.github/copilot-instructions.md`, `.windsurfrules`, `.gemini/GEMINI.md` and `.codex/rules.md` compiled (`initAgentContext` in `cmd/standardsctl/init.go`). |
+| **2. Context Recompilation** | Recompile vendor files and add persona copies | `praetorctl compile-context` | The vendor files rewritten from `AGENTS.md` (all six unless `agent_clients` in `.standards.yaml` selects fewer); each persona in `.agents/agents` copied to `.claude/agents`, `.github/agents`, `.gemini/agents` and `.codex/agents`. `praetorctl compile-context --verify` checks the same files and writes nothing. |
+| **3. Brownfield Baselining** | Snapshot legacy debt | `praetorctl baseline --record --allow-increase --reason "<why>"` | `.standards-baseline.json` populated with existing debt. |
 | **4. Devcontainer Setup** | Prepare a portable bootstrap | `praetorctl devcontainer generate --source-root /path/to/reviewed/praetor` | JSON and exact source companions prepared; build and startup remain separate checks. |
 | **5. Audit Verification** | Verify configured governance and debt-ratchet gates | `praetorctl audit` | Every executed gate reports pass; skipped or unsupported coverage remains explicit. |
 
@@ -73,12 +72,7 @@ Legacy infractions recorded in `.standards-baseline.json` will not fail CI statu
 
 - **Monotonic Ratchet**: Technical debt must decrease over time ($V_{\text{total}}(t_1) \le V_{\text{total}}(t_0)$).
 - **Touched-File Clean Rule**: Any legacy file modified during a pull request revokes previous exemptions and must be refactored clean.
-- **Waivers**: For an unavoidable architectural exception that raises the recorded
-  count, use the HISS-13 exception path: `praetorctl baseline --record
-  --allow-increase --reason "<rationale>"`. The reason is stored in the baseline
-  alongside the raised count; there is no CLI command or file that mints a standalone
-  signed waiver. The `hiss-waiver` repository label is a scaffolded taxonomy entry
-  with no enforcement attached.
+- **Initial Debt & Waivers**: Because `praetorctl init` seeds a clean baseline (0 infractions), recording existing debt in a brownfield repository represents an initial increase and requires an explicit, justified increase: `praetorctl baseline --record --allow-increase --reason "<why>"`. The same HISS-13 exception path applies to any subsequent unavoidable architectural exception that raises the recorded count. The reason is stored in the baseline alongside the raised count; there is no CLI command or file that mints a standalone signed waiver. The `hiss-waiver` repository label is a scaffolded taxonomy entry with no enforcement attached.
 
 ---
 
