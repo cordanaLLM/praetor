@@ -99,7 +99,7 @@ func assertDemand(t *testing.T, dep DependencyDemand, status CapabilityStatus, r
 
 func TestFrameworkContractObservesDeclaredPackagesAndReplacements(t *testing.T) {
 	root := setupContractCheckout(t, validContract)
-	index, err := InspectFramework(t.Context(), legacySource(root))
+	index, err := InspectFramework(t.Context(), acmeSource(root))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestFrameworkContractObservesDeclaredPackagesAndReplacements(t *testing.T) 
 func TestFrameworkContractDeclarationAloneDoesNotEstablishAvailability(t *testing.T) {
 	root := setupContractCheckout(t, validContract)
 	writeFixture(t, root, "core/id/id.go", "// Package id is planned.\npackage id\n")
-	index, err := InspectFramework(t.Context(), legacySource(root))
+	index, err := InspectFramework(t.Context(), acmeSource(root))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestFrameworkContractHonoursDeclaredModulesOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFixture(t, root, "db/go.mod", "module example.com/elsewhere\n\ngo 1.27\n")
-	index, err := InspectFramework(t.Context(), legacySource(root))
+	index, err := InspectFramework(t.Context(), acmeSource(root))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +190,7 @@ func TestFrameworkContractRejectsInvalidContracts(t *testing.T) {
 	for name, contract := range cases {
 		t.Run(name, func(t *testing.T) {
 			root := setupContractCheckout(t, contract)
-			if _, err := InspectFramework(t.Context(), legacySource(root)); err == nil {
+			if _, err := InspectFramework(t.Context(), acmeSource(root)); err == nil {
 				t.Fatal("an invalid contract must fail inspection instead of silently degrading")
 			}
 		})
@@ -215,16 +215,16 @@ func contractWithKeys(count int) string {
 }
 
 func TestFrameworkContractBoundsAreInclusive(t *testing.T) {
-	if _, err := InspectFramework(t.Context(), legacySource(setupContractCheckout(t, contractWithPackages(maxFrameworkPackages)))); err != nil {
+	if _, err := InspectFramework(t.Context(), acmeSource(setupContractCheckout(t, contractWithPackages(maxFrameworkPackages)))); err != nil {
 		t.Fatalf("package bound is inclusive: %v", err)
 	}
-	if _, err := InspectFramework(t.Context(), legacySource(setupContractCheckout(t, contractWithPackages(maxFrameworkPackages+1)))); err == nil {
+	if _, err := InspectFramework(t.Context(), acmeSource(setupContractCheckout(t, contractWithPackages(maxFrameworkPackages+1)))); err == nil {
 		t.Fatal("one package past the bound must be rejected")
 	}
-	if _, err := InspectFramework(t.Context(), legacySource(setupContractCheckout(t, contractWithKeys(maxContractKeys)))); err != nil {
+	if _, err := InspectFramework(t.Context(), acmeSource(setupContractCheckout(t, contractWithKeys(maxContractKeys)))); err != nil {
 		t.Fatalf("capability bound is inclusive: %v", err)
 	}
-	if _, err := InspectFramework(t.Context(), legacySource(setupContractCheckout(t, contractWithKeys(maxContractKeys+1)))); err == nil {
+	if _, err := InspectFramework(t.Context(), acmeSource(setupContractCheckout(t, contractWithKeys(maxContractKeys+1)))); err == nil {
 		t.Fatal("one capability past the bound must be rejected")
 	}
 }

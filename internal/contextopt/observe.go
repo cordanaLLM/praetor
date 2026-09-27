@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 )
 
 // ObserveSnapshot distinguishes initial absence from failure after observation.
@@ -38,4 +39,27 @@ func ObserveRootSnapshot(ctx context.Context, root *os.Root, name string) ([]byt
 	}
 	data, err := ReadRootSnapshot(ctx, root, name)
 	return data, true, err
+}
+
+// ObserveSnapshotIn is ObserveRootSnapshot for rel below root, walked as WriteSnapshotIn and
+// ReplaceSnapshotIn walk it but creating nothing: a component of rel that is a symlink or not a
+// directory, and a leaf that is a symlink, not a regular UTF-8 text file or above
+// MaxSourceBytes, are refused, which are the files those writers refuse to replace. An absent
+// directory or file reads as (nil, false, nil). A caller that checks a target here before its
+// first write fails before writing anything instead of at the write.
+func ObserveSnapshotIn(ctx context.Context, root, rel string) (data []byte, exists bool, err error) {
+	if ctx == nil {
+		return nil, false, errors.New("snapshot observation requires a context")
+	}
+	ctx, cancel := context.WithTimeout(ctx, MaxDuration)
+	defer cancel()
+	dir, err := OpenDirectoryIn(ctx, root, filepath.Dir(rel))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	defer func() { err = errors.Join(err, dir.Close()) }()
+	return ObserveRootSnapshot(ctx, dir, filepath.Base(rel))
 }

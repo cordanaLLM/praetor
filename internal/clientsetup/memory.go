@@ -6,6 +6,8 @@ import (
 	"encoding/json/jsontext"
 	"errors"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/clientjson"
 )
 
 func validateMemoryBinding(binding MemoryBinding) error {
@@ -25,7 +27,7 @@ func BuildMemoryPlan(ctx context.Context, binding MemoryBinding, existing []byte
 	if err := validateMemoryBinding(binding); err != nil {
 		return nil, err
 	}
-	if err := validateJSON(ctx, existing); err != nil {
+	if err := clientjson.Validate(ctx, existing); err != nil {
 		return nil, err
 	}
 	root, err := jsonObject(existing)
@@ -54,7 +56,7 @@ func mergeMemoryBinding(binding MemoryBinding, existing []byte, root map[string]
 	}
 	content := bytes.Clone(existing)
 	if current, found := mapping[binding.ProjectRoot]; found {
-		if stringValue(current) != binding.BankID {
+		if clientjson.StringValue(current) != binding.BankID {
 			return nil, errors.New("memory project already maps to a different bank")
 		}
 	} else {

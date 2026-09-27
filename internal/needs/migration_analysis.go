@@ -29,15 +29,17 @@ type migrationAnalysis struct {
 }
 
 func analyzeMigration(ctx context.Context, repoPath string, selected FrameworkSource, registry *AnalyzerRegistry) (*migrationAnalysis, error) {
-	return analyzeMigrationWith(ctx, selected, func(framework *FrameworkIndex) (*RepoNeeds, error) {
+	return analyzeMigrationWith(ctx, selected, registry, func(framework *FrameworkIndex) (*RepoNeeds, error) {
 		return ScanRepoWithFramework(ctx, repoPath, framework, registry)
 	})
 }
 
 // analyzeMigrationWith inspects the selected framework and scores a repository against it
 // with scan. Fleet epic regeneration passes the fleet walk's repository, a
-// single-repository epic or migration plan scans the path it was given.
-func analyzeMigrationWith(ctx context.Context, selected FrameworkSource,
+// single-repository epic or migration plan scans the path it was given. The analysis names
+// the framework the row was scored against (RowFramework), so a host that configures only a
+// non-go target plans against that target rather than against no framework.
+func analyzeMigrationWith(ctx context.Context, selected FrameworkSource, registry *AnalyzerRegistry,
 	scan func(framework *FrameworkIndex) (*RepoNeeds, error)) (*migrationAnalysis, error) {
 	framework, err := inspectMigrationFramework(ctx, selected)
 	if err != nil {
@@ -47,7 +49,7 @@ func analyzeMigrationWith(ctx context.Context, selected FrameworkSource,
 	if err != nil {
 		return nil, fmt.Errorf("scan repository for migration: %w", err)
 	}
-	return &migrationAnalysis{framework: framework, report: report}, nil
+	return &migrationAnalysis{framework: RowFramework(registry, report, framework), report: report}, nil
 }
 
 // inspectMigrationFramework inspects the selected framework. A selected checkout value that
@@ -81,7 +83,11 @@ func migrationBlockers(analysis *migrationAnalysis) []string {
 		"Replacement API compatibility and consumer compilation/tests are unverified.",
 		"Executable migration admission is unavailable until a real evidence validator exists.",
 	}
-	if analysis.framework.Basis != FrameworkSourceObserved {
+	switch analysis.framework.Basis {
+	case FrameworkSourceObserved:
+	case FrameworkNotConfigured:
+		blockers = append(blockers, nothingToRewrite+".")
+	default:
 		blockers = append(blockers, "Framework source availability is unobserved ("+analysis.framework.Basis+").")
 	}
 	if gaps := analysis.report.Readiness.GapDeps; gaps > 0 {

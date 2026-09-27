@@ -18,8 +18,8 @@ type needsSelection struct {
 }
 
 // loadNeedsSelection loads the operator settings the flags select and prepares the needs
-// engine for them. No framework target configured keeps the built-in targets until they
-// are removed (ADR-0014 §6).
+// engine for them. Praetor ships no framework: a language without a configured target is
+// classified and reported as not configured (ADR-0014 §4).
 func loadNeedsSelection(ctx context.Context, flags *operatorSettingsFlags) (*needsSelection, error) {
 	policy, err := flags.loadPolicy(ctx)
 	if err != nil {
@@ -34,7 +34,8 @@ func loadNeedsSelection(ctx context.Context, flags *operatorSettingsFlags) (*nee
 
 // frameworkSource resolves the go framework of a subcommand's --framework flag
 // (needs.SelectFrameworkSource): the flag when it was given, else $PRAETOR_FRAMEWORK_DIR,
-// else framework.targets.go.checkout, else the declared contract or catalog.
+// else framework.targets.go.checkout, else the declared contract, else the go target's
+// module; with none of them the framework is not configured.
 func (s *needsSelection) frameworkSource(value string, set bool) needs.FrameworkSource {
 	return needs.SelectFrameworkSource(needs.FrameworkSelection{
 		Explicit: value, ExplicitSet: set, Getenv: os.Getenv, Targets: s.targets,

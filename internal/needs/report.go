@@ -1,12 +1,36 @@
 package needs
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
 
 // FrameworkNotConfiguredText is how reports name a framework no source selects (ADR-0014 §4).
 const FrameworkNotConfiguredText = "not configured (set framework.targets.<lang>.module and .contract, or pass --framework)"
+
+// nothingToRewrite is the migration blocker, and the refusal of an application, when no
+// target framework is configured.
+const nothingToRewrite = "nothing to rewrite: no target framework configured"
+
+// ErrFrameworkNotConfigured is returned by the operations that need a target framework
+// (migration application, epic publishing) when none is configured.
+var ErrFrameworkNotConfigured = errors.New("needs: no target framework configured " +
+	"(set framework.targets.<lang>.module and .contract, or pass --framework)")
+
+// mappingNotConfigured is the mapping availability of a row scored against no framework: a
+// percentage would read as a finding about the repository.
+const mappingNotConfigured = "n/a (no target framework configured)"
+
+// MappingAvailability renders a row's mapping availability for CLI and MCP output: the
+// percentage of third-party dependencies with a mapping, or n/a when no framework is
+// configured (readiness basis not-configured), never 0%.
+func MappingAvailability(readiness ReadinessMetrics) string {
+	if readiness.Basis == FrameworkNotConfigured {
+		return mappingNotConfigured
+	}
+	return fmt.Sprintf("%.1f%%", readiness.Score)
+}
 
 // FormatReportHeader renders the header the CLI `needs report` and the MCP
 // standards_needs_report share: the repository, the framework and its mapping availability,
@@ -18,9 +42,9 @@ func FormatReportHeader(report *RepoNeeds, index *FrameworkIndex) string {
 	var sb strings.Builder
 	writef(&sb, "=== Framework Migration Report: %s ===\n", report.Repository)
 	if index.Basis == FrameworkNotConfigured {
-		writef(&sb, "Framework: %s | Mapping availability: n/a (no target framework configured)\n\n", FrameworkNotConfiguredText)
+		writef(&sb, "Framework: %s | Mapping availability: %s\n\n", FrameworkNotConfiguredText, mappingNotConfigured)
 	} else {
-		writef(&sb, "Framework: %s (%s) | Mapping availability: %.1f%%\n\n", index.Name, index.Version, report.Readiness.Score)
+		writef(&sb, "Framework: %s (%s) | Mapping availability: %s\n\n", index.Name, index.Version, MappingAvailability(report.Readiness))
 	}
 	writef(&sb, "Coverage basis: %s; builds and tests not run\n", index.Basis)
 	if index.Contract != "" {

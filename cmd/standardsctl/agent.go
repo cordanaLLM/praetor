@@ -145,7 +145,7 @@ func runNeedsMinerAgent(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("needs miner error: %w", err)
 	}
-	fmt.Printf("[praetor-needs-miner] Scan complete: Readiness %.1f%% (%d covered, %d gaps)\n",
-		rep.Readiness.Score, rep.Readiness.CoveredDeps, rep.Readiness.GapDeps)
+	fmt.Printf("[praetor-needs-miner] Scan complete: Readiness %s (%d covered, %d gaps)\n",
+		needs.MappingAvailability(rep.Readiness), rep.Readiness.CoveredDeps, rep.Readiness.GapDeps)
 	return nil
 }

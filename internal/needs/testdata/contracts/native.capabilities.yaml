@@ -1,0 +1,43 @@
+# Placeholder native framework contract for the internal/needs tests (ADR-0014): the
+# packages, capabilities and claims a configured target declares. No real framework.
+version: 1
+framework: example.com/acme/native
+ecosystem: system
+packages:
+  - import: example.com/acme/native/cuda
+    module: example.com/acme/native
+    domain: cuda
+    capabilities:
+      - gpu.cuda
+    replaces:
+      - cuda
+  - import: example.com/acme/native/ffmpeg
+    module: example.com/acme/native
+    domain: ffmpeg
+    capabilities:
+      - media.ffmpeg
+    replaces:
+      - libavcodec
+      - libavfilter
+      - libavformat
+  - import: example.com/acme/native/opencl
+    module: example.com/acme/native
+    domain: opencl
+    capabilities:
+      - gpu.opencl
+    replaces:
+      - opencl
+  - import: example.com/acme/native/vmaf
+    module: example.com/acme/native
+    domain: vmaf
+    capabilities:
+      - media.vmaf
+    replaces:
+      - libvmaf
+  - import: example.com/acme/native/vulkan
+    module: example.com/acme/native
+    domain: vulkan
+    capabilities:
+      - gpu.vulkan
+    replaces:
+      - vulkan

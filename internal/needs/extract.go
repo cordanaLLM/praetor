@@ -290,9 +290,9 @@ func mergeCapabilities(repoNeeds *RepoNeeds, declared CapabilityDeclaration) {
 	}
 }
 
-// buildDependencyDemands maps discovered packages to capabilities and built-in catalog
-// replacements. AST imports are collapsed onto the module that owns them so that
-// importing several packages of one module counts as a single dependency.
+// buildDependencyDemands classifies discovered packages into capabilities. AST imports are
+// collapsed onto the module that owns them so that importing several packages of one module
+// counts as a single dependency.
 func buildDependencyDemands(directDeps map[string]string, astImports map[string]struct{}, repoNeeds *RepoNeeds) {
 	pkgSet := make(map[string]string, len(directDeps)+len(astImports))
 	for pkg, ver := range directDeps {
@@ -329,26 +329,21 @@ func buildDependencyDemands(directDeps map[string]string, astImports map[string]
 	}
 }
 
-// buildGoDemand maps a single Go module path onto its catalog entry.
+// buildGoDemand classifies a single Go module path through the catalog. Every demand starts
+// as a gap: a framework contract decides what covers it (reconcileDependency).
 func buildGoDemand(pkg, ver string) DependencyDemand {
-	demand := DependencyDemand{
-		Package:   pkg,
-		Version:   ver,
-		Language:  "go",
-		Ecosystem: "go",
-	}
-	entry, found := MatchPackage(pkg)
-	if found {
-		demand.Capability = entry.Capability
-		demand.Status = entry.Status
-		demand.FrameworkReplacement = entry.FrameworkReplacement
-		demand.Notes = entry.Notes
-		demand.Relationship = cloneRelationship(entry.Relationship)
+	return classifyGoDemand(pkg, ver, "custom.", "Third-party package without a target framework equivalent")
+}
+
+// classifyGoDemand classifies a Go module path; a path the catalog does not list takes an
+// external capability under externalPrefix, explained by externalNote.
+func classifyGoDemand(pkg, ver, externalPrefix, externalNote string) DependencyDemand {
+	demand := DependencyDemand{Package: pkg, Version: ver, Language: "go", Ecosystem: "go", Status: StatusGap}
+	if entry, found := MatchPackage(pkg); found {
+		demand.Capability, demand.Notes = entry.Capability, entry.Notes
 		return demand
 	}
-	demand.Capability = CapabilityKey("custom." + cleanDepKey(pkg))
-	demand.Status = StatusGap
-	demand.Notes = "Third-party package without a target framework equivalent"
+	demand.Capability, demand.Notes = CapabilityKey(externalPrefix+cleanDepKey(pkg)), externalNote
 	return demand
 }
 
@@ -401,7 +396,9 @@ func conventionalModuleRoot(importPath string) string {
 	return root
 }
 
-// calculateReadiness computes the framework adoption score and dependency counts.
+// calculateReadiness computes the framework adoption score and dependency counts. A row
+// that names no framework has the basis not-configured, which renders as n/a
+// (MappingAvailability).
 func calculateReadiness(repoNeeds *RepoNeeds) {
 	total := len(repoNeeds.Dependencies)
 	covered := 0
@@ -421,8 +418,12 @@ func calculateReadiness(repoNeeds *RepoNeeds) {
 		score = (float64(covered) / float64(total)) * 100.0
 	}
 
+	basis := FrameworkCatalogDeclared
+	if repoNeeds.Framework == "" {
+		basis = FrameworkNotConfigured
+	}
 	repoNeeds.Readiness = ReadinessMetrics{
-		Basis:               FrameworkCatalogDeclared,
+		Basis:               basis,
 		Score:               score,
 		TotalThirdPartyDeps: total,
 		CoveredDeps:         covered,

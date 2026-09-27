@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -667,28 +668,37 @@ func TestGenerateWiki_Positive(t *testing.T) {
 		t.Fatalf("expected 6 wiki pages, got %d", len(manifest.Pages))
 	}
 
-	// Every page but the moved stub carries a diagram.
-	expectedFiles := map[string]bool{
-		"Home.md":                 true,
-		"HISS-Invariants.md":      true,
-		"HISS-16-Invariants.md":   false,
-		"HISS-Matrix.md":          true,
-		"Architecture-Lattice.md": true,
-		"API-Reference.md":        true,
+	// Every page but the moved stub carries a diagram: a Mermaid fence, or the figure fence
+	// of the one page whose diagram is an interactive figure.
+	const mermaidFence = "```mermaid"
+	expectedFences := map[string]string{
+		"Home.md":                 mermaidFence,
+		"HISS-Invariants.md":      mermaidFence,
+		"HISS-16-Invariants.md":   "",
+		"HISS-Matrix.md":          mermaidFence,
+		"Architecture-Lattice.md": mermaidFence,
+		"API-Reference.md":        "```figure\nforge-federation\n```",
 	}
 
-	for ef, diagram := range expectedFiles {
-		p := filepath.Join(tempDir, ef)
-		data, err := os.ReadFile(p)
+	for ef, fence := range expectedFences {
+		data, err := os.ReadFile(filepath.Join(tempDir, ef))
 		if err != nil {
 			t.Errorf("missing expected wiki page %s: %v", ef, err)
 			continue
 		}
-		if strings.Contains(string(data), "```mermaid") != diagram {
-			t.Errorf("wiki page %s: Mermaid diagram present = %v, want %v", ef, !diagram, diagram)
+		if fence != "" && !strings.Contains(string(data), fence) {
+			t.Errorf("wiki page %s lacks its diagram fence %q", ef, fence)
+		}
+		if strings.Contains(string(data), mermaidFence) != (fence == mermaidFence) {
+			t.Errorf("wiki page %s: Mermaid diagram present = %v, want %v", ef, fence != mermaidFence, fence == mermaidFence)
 		}
 	}
 }
+
+// stubEnforcementClaim matches a GitLab, Gitea or Forgejo name followed, within three words of
+// the same clause, by an enforcement verb: the shape of a sentence that credits a stub driver
+// with governance it never applies.
+var stubEnforcementClaim = regexp.MustCompile(`(?i)\b(gitlab|gitea|forgejo)\b(?:[^\w.;]+\w+){0,3}?[^\w.;]+(enforc|reconcil|synchroni[sz]|protect)`)
 
 // ============================================================================
 // 2. NEGATIVE TESTS (3D Dimension 2)
@@ -812,9 +822,55 @@ func TestGenerateWiki_Negative_EmptyOutputDirAndCancelledContext(t *testing.T) {
 	}
 }
 
+// The API reference must not credit the GitLab or Gitea driver with enforcement: both are
+// reached only through forge.NewForge, which only tests call, and fail every enforcement
+// method with ErrNotImplemented.
+func TestGenerateAPIReferenceWiki_Negative_NoStubEnforcementClaim(t *testing.T) {
+	content := generateAPIReferenceWiki().Content
+	for _, want := range []string{"ErrNotImplemented", "no production caller", "`forge.NewGitHubDriver`"} {
+		if !strings.Contains(content, want) {
+			t.Errorf("API reference must state %q", want)
+		}
+	}
+	if m := stubEnforcementClaim.FindString(content); m != "" {
+		t.Errorf("API reference credits a stub driver with enforcement: %q", m)
+	}
+}
+
+func TestStubEnforcementClaim_Negative_CatchesDriverSentences(t *testing.T) {
+	for _, claim := range []string{
+		"The GitLab driver reconciles branch protections.",
+		"The GitLab and Gitea drivers enforce protections.",
+		"Gitea synchronizes labels and issues.",
+		"forgejo protects main",
+	} {
+		if !stubEnforcementClaim.MatchString(claim) {
+			t.Errorf("claim %q was not caught", claim)
+		}
+	}
+}
+
 // ============================================================================
 // 3. BOUNDARY TESTS (3D Dimension 3)
 // ============================================================================
+
+// Three words between the driver name and the verb is the widest claim caught; a fourth word,
+// or a clause boundary, ends the window, so a later sentence that names ErrNotImplemented
+// for every enforcement method is not read as a claim.
+func TestStubEnforcementClaim_Boundary_WindowAndClause(t *testing.T) {
+	cases := map[string]bool{
+		"GitLab one two three enforces":      true,
+		"GitLab one two three four enforces": false,
+		"the GitLab and Gitea drivers are reached only from tests. They check that a token is set and return ErrNotImplemented from every enforcement method.": false,
+		"Gitea drivers; reconcile nothing": false,
+		"":                                 false,
+	}
+	for text, want := range cases {
+		if got := stubEnforcementClaim.MatchString(text); got != want {
+			t.Errorf("stubEnforcementClaim(%q) = %v, want %v", text, got, want)
+		}
+	}
+}
 
 func TestIssueDependencyParsing_Boundary_EmptyAndNoMatch(t *testing.T) {
 	refs1 := ParseIssueDependencies("")

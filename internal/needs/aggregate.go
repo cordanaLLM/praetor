@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -36,11 +38,11 @@ func AggregateFleet(ctx context.Context, fleetRoot string, framework FrameworkSo
 
 // AggregateFleetWithHarvest scans all repositories and incorporates harvested state.
 //
-// Repositories are classified against the framework the source selects, not against the
-// static catalog alone, so pointing --framework at a checkout that does not ship a
-// capability turns every dependency demanding it into a gap. Repositories present both on
-// disk and in the harvest bundle are folded into a single leaderboard row. registry
-// supplies the analyzers and the framework targets; nil selects DefaultRegistry.
+// Repositories are reconciled against the framework the source selects, so pointing
+// --framework at a checkout that does not ship a capability turns every dependency
+// demanding it into a gap. Repositories present both on disk and in the harvest bundle
+// are folded into a single leaderboard row. registry supplies the analyzers and the
+// framework targets; nil selects DefaultRegistry.
 func AggregateFleetWithHarvest(ctx context.Context, fleetRoot string, framework FrameworkSource, harvestPath string,
 	registry *AnalyzerRegistry) (*FleetDemandReport, error) {
 	if ctx.Err() != nil {
@@ -74,6 +76,7 @@ func AggregateFleetWithHarvest(ctx context.Context, fleetRoot string, framework 
 		return nil, mErr
 	}
 
+	agg.nameFrameworks()
 	compileGapsAndLeaderboard(agg.report, agg.gapPackages)
 	return agg.report, agg.result()
 }
@@ -88,6 +91,8 @@ type fleetAggregation struct {
 	seen        map[string]struct{}
 	// names maps each repository name on the leaderboard to the path of its first row.
 	names map[string]string
+	// scored maps every configured framework a row was scored against to its basis.
+	scored map[string]string
 }
 
 // newFleetAggregation prepares an aggregation over discovered repositories.
@@ -106,7 +111,37 @@ func newFleetAggregation(fleetRoot string, fwIndex *FrameworkIndex, discovered i
 		gapPackages: make(map[CapabilityKey]map[string]struct{}),
 		seen:        make(map[string]struct{}),
 		names:       make(map[string]string),
+		scored:      make(map[string]string),
 	}
+}
+
+// recordFramework notes a configured framework a row was scored against (RowFramework).
+func (a *fleetAggregation) recordFramework(index *FrameworkIndex) {
+	if index == nil || index.Basis == FrameworkNotConfigured {
+		return
+	}
+	a.scored[index.Name] = index.Basis
+}
+
+// nameFrameworks sets the framework and coverage basis the report header names: the selected
+// framework when it is configured, then every other framework a row was scored against in
+// name order, so a host that configures only a non-go target names that target instead of
+// reporting the fleet not configured. With neither the selection is kept.
+func (a *fleetAggregation) nameFrameworks() {
+	names, bases := make([]string, 0, len(a.scored)+1), make([]string, 0, len(a.scored)+1)
+	if a.framework.Basis != FrameworkNotConfigured {
+		names, bases = append(names, a.framework.Name), append(bases, a.framework.Basis)
+	}
+	for _, name := range slices.Sorted(maps.Keys(a.scored)) {
+		if slices.Contains(names, name) {
+			continue
+		}
+		names, bases = append(names, name), appendUniqueStr(bases, a.scored[name])
+	}
+	if len(names) == 0 {
+		return
+	}
+	a.report.Framework, a.report.CoverageBasis = strings.Join(names, ", "), strings.Join(bases, ", ")
 }
 
 // result reports whether the aggregation produced a usable report.
@@ -178,7 +213,7 @@ func (a *fleetAggregation) addHarvested(repoNeeds *RepoNeeds) bool {
 // discovered on disk are distinct repositories whatever they are named, so none is ever
 // merged away; a name two rows share is qualified by location in the consumer lists.
 func (a *fleetAggregation) add(repoNeeds *RepoNeeds) {
-	applyFrameworkCoverage(a.framework, repoNeeds, a.registry)
+	a.recordFramework(applyFrameworkCoverage(a.framework, repoNeeds, a.registry))
 	a.report.ScannedRepositories++
 	a.report.Leaderboard = append(a.report.Leaderboard, *repoNeeds)
 
@@ -296,30 +331,48 @@ func repoIdentityKey(repository string) string {
 	return cleaned
 }
 
-// applyFrameworkCoverage re-classifies catalog-covered dependencies against the framework
-// the operator pointed at: a capability that framework does not ship is a gap regardless
-// of what the static catalog claims. Without this step --framework would be inert and the
-// fleet coverage number would be a property of the catalog alone.
+// applyFrameworkCoverage reconciles every demand against the framework the operator
+// selected: a capability that framework does not declare is a gap. Without this step
+// --framework would be inert and the fleet coverage number would say nothing about it.
 //
 // A demand of a language whose target declares a contract (LoadRegistry) is reconciled
-// against that contract instead; idx is the go framework.
-func applyFrameworkCoverage(idx *FrameworkIndex, repoNeeds *RepoNeeds, registry *AnalyzerRegistry) {
+// against that contract instead; idx is the go framework. Selected standard-library imports
+// take the retained role the framework declares for them, and never count as demand. The
+// row names, and takes its readiness basis from, the framework RowFramework derives from
+// those reconciliations, which it returns: a row is not configured only when none of its
+// languages has a configured framework.
+func applyFrameworkCoverage(idx *FrameworkIndex, repoNeeds *RepoNeeds, registry *AnalyzerRegistry) *FrameworkIndex {
 	if idx == nil || repoNeeds == nil {
-		return
+		return idx
 	}
 	registry = registryOrDefault(registry)
 	for i := range repoNeeds.Dependencies {
 		reconcileDependency(registry.frameworkFor(repoNeeds.Dependencies[i].Language, idx), &repoNeeds.Dependencies[i])
 	}
+	reconcileStandardImports(idx, repoNeeds)
+	scored := RowFramework(registry, repoNeeds, idx)
+	repoNeeds.Framework = scored.Name
 	calculateReadiness(repoNeeds)
-	repoNeeds.Framework = idx.Name
-	repoNeeds.Readiness.Basis = idx.Basis
+	repoNeeds.Readiness.Basis = scored.Basis
+	return scored
+}
+
+// reconcileStandardImports applies the foundation, wrapper or tooling role idx declares for
+// each selected standard-library import.
+func reconcileStandardImports(idx *FrameworkIndex, repoNeeds *RepoNeeds) {
+	if idx == nil {
+		return
+	}
+	for i := range repoNeeds.StandardLibraryImports {
+		applyContractRelationship(idx, &repoNeeds.StandardLibraryImports[i])
+	}
 }
 
 // reconcileDependency classifies one demand against the selected framework: the
-// framework's own modules are native, catalog relationships keep their retained roles, a
-// capability contract maps explicit replacements, and otherwise the catalog path must be
-// an observed package or the demand is a gap.
+// framework's own modules are native, a declared relationship keeps its retained role, a
+// capability contract maps replacements and adapters, and a demand an earlier framework
+// mapped keeps its package only when the selected framework lists it. Anything else is a
+// gap.
 func reconcileDependency(idx *FrameworkIndex, dep *DependencyDemand) {
 	if isFrameworkModule(idx, dep.Package) {
 		markFrameworkNative(idx, dep)
@@ -331,20 +384,11 @@ func reconcileDependency(idx *FrameworkIndex, dep *DependencyDemand) {
 	if dep.Status == StatusGap {
 		return
 	}
-	if replacement, available := frameworkReplacement(idx, *dep); available {
-		dep.FrameworkReplacement = replacement
+	if _, listed := idx.Packages[dep.FrameworkReplacement]; listed {
 		return
 	}
-	dep.Status = StatusGap
-	dep.FrameworkReplacement = ""
-	dep.Notes = fmt.Sprintf("%s has no observed catalog replacement for capability %s", idx.Name, dep.Capability)
-	if idx.Name == "" {
-		dep.Notes = undeclaredNote("", "catalog replacement", dep.Capability)
-	}
-}
-
-func frameworkReplacement(idx *FrameworkIndex, dep DependencyDemand) (string, bool) {
-	return availableFrameworkPackage(idx, dep.Capability, dep.FrameworkReplacement)
+	dep.Status, dep.FrameworkReplacement = StatusGap, ""
+	dep.Notes = undeclaredNote(idx.Name, "package", dep.Capability)
 }
 
 // compileGapsAndLeaderboard sorts leaderboard and formats gap details.
@@ -436,20 +480,28 @@ func RenderFrameworkDemandMarkdown(report *FleetDemandReport) string {
 }
 
 // renderDemandHeader renders the report preamble, including the failure and coverage state.
+// A fleet scored against no framework says so instead of a coverage percentage.
 func renderDemandHeader(report *FleetDemandReport) string {
 	coverage := fmt.Sprintf("%.1f%%", report.OverallFleetCoverage)
-	if !report.CoverageKnown {
+	framework := "`" + report.Framework + "`"
+	switch {
+	case !report.CoverageKnown:
 		coverage = "unknown (no repository could be scanned)"
+	case report.CoverageBasis == FrameworkNotConfigured:
+		coverage = mappingNotConfigured
+	}
+	if report.CoverageBasis == FrameworkNotConfigured {
+		framework = FrameworkNotConfiguredText
 	}
 
 	return fmt.Sprintf("# Framework Demand & Capability Report\n\n"+
-		"**Target Framework**: `%s`  \n"+
+		"**Target Framework**: %s  \n"+
 		"**Coverage Basis**: %s; builds and tests not run  \n"+
 		"**Generated At**: %s  \n"+
 		"**Repositories Scanned**: %d / %d  \n"+
 		"%s"+
 		"**Overall Fleet Target Framework Coverage**: %s\n\n",
-		report.Framework, report.CoverageBasis, report.GeneratedAt.Format(time.RFC3339),
+		framework, report.CoverageBasis, report.GeneratedAt.Format(time.RFC3339),
 		report.ScannedRepositories, report.TotalRepositories, renderDemandHeaderCounts(report), coverage)
 }
 
@@ -568,16 +620,17 @@ func renderDemandGaps(report *FleetDemandReport) string {
 	return sb.String()
 }
 
-// renderDemandLeaderboard renders the migration readiness leaderboard.
+// renderDemandLeaderboard renders the migration readiness leaderboard. A row scored
+// against no framework shows n/a, never a percentage (MappingAvailability).
 func renderDemandLeaderboard(report *FleetDemandReport) string {
 	var sb strings.Builder
 	sb.WriteString("\n## Migration Readiness Leaderboard\n\n")
 	sb.WriteString("| Rank | Repository | Location | Readiness Score | Covered Deps | Gaps |\n")
 	sb.WriteString("| :--- | :--- | :--- | :--- | :--- | :--- |\n")
 	for i, repo := range report.Leaderboard {
-		writef(&sb, "| #%d | `%s` | `%s` | %.1f%% | %d | %d |\n",
+		writef(&sb, "| #%d | `%s` | `%s` | %s | %d | %d |\n",
 			i+1, repo.Repository, rowLocation(report.FleetRoot, repo.Path),
-			repo.Readiness.Score, repo.Readiness.CoveredDeps, repo.Readiness.GapDeps)
+			MappingAvailability(repo.Readiness), repo.Readiness.CoveredDeps, repo.Readiness.GapDeps)
 	}
 	return sb.String()
 }

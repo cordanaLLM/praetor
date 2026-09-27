@@ -162,8 +162,11 @@ Every breaking row is flagged `!` in its commit subject with a `Migration:` foot
 A private value becomes an operator configuration value whose default is unset; an operator who
 configures it keeps the feature. Before the built-in framework tables are removed, the data unit
 exports them with `praetorctl needs contract export` into contract files outside the repository,
-and proves parity: a report rendered from the built-in tables equals a report rendered from the
-exported contracts once configured. The maintainer then records the exports and the former
+and proves that nothing is lost: every demand the built-in tables covered is still covered once the
+exported contracts are configured. `needs scan` covers the same demands either way. `needs report`
+can cover more: the built-in report path reconciled every language against the go framework, so
+non-go demands its own language's contract maps were reported as gaps. A strict superset
+therefore passes; a demand covered before and a gap after fails. The maintainer then records the exports and the former
 defaults (owner, reconcile set, review bot, organisation folders, hook deny patterns, GitHub App
 manifest values) in their own operator documents. For a maintainer running an operational fork,
 `.config/fleet.yaml` and `.config/operator/` are owner-only paths
@@ -219,8 +222,8 @@ listed as upstreams.
 - `internal/config` replays operator documents with and without the new sections in both
   directions (HISS-20); the digest golden test proves existing documents keep their digest.
 - Each consumer has a test showing that an unset value produces the behaviour in §4.
-- The data unit's parity check compares reports from the built-in tables and from the exported
-  contracts before the tables are removed.
+- The data unit's parity check compares reports and scans from the built-in tables and from the
+  exported contracts before the tables are removed: no covered demand may become a gap.
 - `git grep` for the maintainer's identifiers over code, help text, templates, generated files and
   `docs/` returns only project identity, SPDX headers and this repository's own configuration.
 

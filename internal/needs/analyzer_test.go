@@ -35,7 +35,7 @@ func TestNodeAnalyzer(t *testing.T) {
 		t.Fatal("expected NodeAnalyzer to detect package.json")
 	}
 
-	needs, err := analyzer.Analyze(ctx, tempDir, legacyTargets()[analyzer.Language()])
+	needs, err := acmeRegistry(t).AnalyzePolyglot(ctx, tempDir)
 	if err != nil {
 		t.Fatalf("node analysis failed: %v", err)
 	}
@@ -79,7 +79,7 @@ unknown-ml-lib==1.0.0
 		t.Fatal("expected PythonAnalyzer to detect requirements.txt")
 	}
 
-	needs, err := analyzer.Analyze(ctx, tempDir, legacyTargets()[analyzer.Language()])
+	needs, err := acmeRegistry(t).AnalyzePolyglot(ctx, tempDir)
 	if err != nil {
 		t.Fatalf("python analysis failed: %v", err)
 	}
@@ -124,7 +124,7 @@ custom-crate = "0.2"
 		t.Fatal("expected RustAnalyzer to detect Cargo.toml")
 	}
 
-	needs, err := analyzer.Analyze(ctx, tempDir, legacyTargets()[analyzer.Language()])
+	needs, err := acmeRegistry(t).AnalyzePolyglot(ctx, tempDir)
 	if err != nil {
 		t.Fatalf("rust analysis failed: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestNativeAnalyzer(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
 
-	meson := `project('vmafx-accelerator', 'c', 'cpp',
+	meson := `project('acme-accelerator', 'c', 'cpp',
   version: '1.0.0',
   default_options: ['c_std=c23', 'cpp_std=c++20'])
 
@@ -166,7 +166,7 @@ dep_custom = dependency('custom_dsp')
 		t.Fatal("expected NativeAnalyzer to detect meson.build")
 	}
 
-	needs, err := analyzer.Analyze(ctx, tempDir, legacyTargets()[analyzer.Language()])
+	needs, err := acmeRegistry(t).AnalyzePolyglot(ctx, tempDir)
 	if err != nil {
 		t.Fatalf("native analysis failed: %v", err)
 	}
@@ -175,18 +175,18 @@ dep_custom = dependency('custom_dsp')
 		t.Errorf("expected language native, got %s", needs.Language)
 	}
 
-	foundVmafx := false
+	foundVmaf := false
 	foundCuda := false
 	for _, dep := range needs.Dependencies {
 		if dep.Package == "libvmaf" && dep.Status == StatusCovered {
-			foundVmafx = true
+			foundVmaf = true
 		}
 		if dep.Package == "cuda" && dep.Status == StatusCovered {
 			foundCuda = true
 		}
 	}
-	if !foundVmafx || !foundCuda {
-		t.Errorf("expected libvmaf and cuda covered, got vmafx=%v, cuda=%v", foundVmafx, foundCuda)
+	if !foundVmaf || !foundCuda {
+		t.Errorf("expected libvmaf and cuda covered, got vmaf=%v, cuda=%v", foundVmaf, foundCuda)
 	}
 }
 

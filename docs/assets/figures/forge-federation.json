@@ -1,0 +1,82 @@
+{
+  "slug": "forge-federation",
+  "title": "Multi-forge federation",
+  "alt": "praetorctl builds only the GitHub driver; GitLab and Gitea drivers come from forge.NewForge, which only tests call.",
+  "text": [
+    "praetorctl commands: sync --remote (reconcileRemoteForge), issue reconcile (loadFleetIssues), needs epic --publish (publishEpicToForge), GitHub driver (NewGitHubDriver, REST client).",
+    "Tests only, no production caller: forge package tests (forge_test.go), forge.NewForge (provider switch), GitLab driver (token check only), Gitea driver (gitea or forgejo).",
+    "sync --remote → GitHub driver (ruleset, labels).",
+    "issue reconcile → GitHub driver (list, relabel).",
+    "needs epic --publish → GitHub driver (list, create).",
+    "forge package tests → forge.NewForge (NewForge) → GitLab driver (gitlab).",
+    "forge.NewForge → Gitea driver (gitea, forgejo).",
+    "Scenario 1, sync --remote: sync --remote writes the branch ruleset and the label taxonomy through the GitHub driver. reconcileRemoteForge checks the token, repository and origin, then calls forge.NewGitHubDriver. ReconcileProtection writes the ruleset for main and lts-* and reads it back. ReconcileLabels updates, or creates, each label from .config/labels.yaml.",
+    "Scenario 2, issue reconcile: issue reconcile lists the issues of each selected repository and relabels the unblocked ones. loadFleetIssues builds a GitHub driver per repository and calls ListIssues. With --dry-run=false, transitionUnblocked calls AddLabels, then RemoveLabel.",
+    "Scenario 3, needs epic --publish: needs epic --publish creates the missing epic issues through the GitHub driver. publishEpicToForge passes the GitHub driver to needs.PublishPreMigrationEpic. PrepareIssueBatch checks the token and lists the existing issues by title. IssueBatch.Ensure calls CreateIssue only for a title the forge does not have yet.",
+    "Scenario 4, GitLab and Gitea: Only tests reach the GitLab and Gitea drivers, and every enforcement method fails. forge_test.go calls forge.NewForge; no praetorctl command calls it. Provider gitlab returns a GitLabDriver; Authenticate only checks that a token is set. Provider gitea or forgejo returns a GiteaDriver with the same local token check. Every enforcement method returns ErrNotImplemented, which wraps errors.ErrUnsupported.",
+    "The GitHub driver also implements PostStatusCheck, CreatePullRequest and UpdateIssue; no praetorctl command calls them.",
+    "forge.NewForge also returns the GitHub driver for provider github; only tests call it."
+  ],
+  "evidence": [
+    "cmd/standardsctl/sync.go:reconcileRemoteForge",
+    "cmd/standardsctl/issue.go:loadFleetIssues",
+    "cmd/standardsctl/issue.go:transitionUnblocked",
+    "cmd/standardsctl/needs.go:publishEpicToForge",
+    "internal/needs/epic.go:PublishPreMigrationEpic",
+    "internal/forge/issues.go:PrepareIssueBatch",
+    "internal/forge/issues.go:Ensure",
+    "internal/forge/github.go:NewGitHubDriver",
+    "internal/forge/github.go:ReconcileProtection",
+    "internal/forge/github.go:ReconcileLabels",
+    "internal/forge/ruleset.go:RepositoryRulesetRefs",
+    "internal/forge/github.go:AddLabels",
+    "internal/forge/github.go:RemoveLabel",
+    "internal/forge/forge.go:NewForge",
+    "internal/forge/forge.go:ErrNotImplemented",
+    "internal/forge/forge_test.go:TestNewForge_Providers_Positive",
+    "internal/forge/forge_test.go:TestStubDrivers_Negative_EveryEnforcementMethodIsUnsupported",
+    "internal/forge/gitlab.go:GitLabDriver",
+    "internal/forge/gitea.go:GiteaDriver"
+  ],
+  "spec_sha256": "a7c7ca67d7a9899938df50147b2364a8066950e595df65c8fa71c0341ea019de",
+  "engine": {
+    "commit": "ccfe85b4851957ac2adf88b4a9ddf9668b2882f1",
+    "sha256": "047b4bcb30562cca709be7175d11995cdda45cf4b89db1f6906c5805b26c6452"
+  },
+  "svg_sha256": "c42bcddd0f6b670f8fe80f6e60e121e0298f172561646234ea60e4ed5bb6f8ec",
+  "static_sha256": "8b6c18302a8830c072dc4152fe808be5b222c69dc2fad702cc7ddd35874dfc1d",
+  "width": 964,
+  "height": 685,
+  "edges": [
+    {
+      "from": "sync --remote",
+      "to": "GitHub driver",
+      "label": "ruleset, labels"
+    },
+    {
+      "from": "issue reconcile",
+      "to": "GitHub driver",
+      "label": "list, relabel"
+    },
+    {
+      "from": "needs epic --publish",
+      "to": "GitHub driver",
+      "label": "list, create"
+    },
+    {
+      "from": "forge package tests",
+      "to": "forge.NewForge",
+      "label": "NewForge"
+    },
+    {
+      "from": "forge.NewForge",
+      "to": "GitLab driver",
+      "label": "gitlab"
+    },
+    {
+      "from": "forge.NewForge",
+      "to": "Gitea driver",
+      "label": "gitea, forgejo"
+    }
+  ]
+}

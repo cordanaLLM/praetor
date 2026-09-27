@@ -43,7 +43,7 @@ func TestNeedsScanCheckRejectsStaleOrMissingManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stale := strings.Replace(string(data), "    basis: catalog-declared\n", "", 1)
+	stale := strings.Replace(string(data), "    basis: not-configured\n", "", 1)
 	if stale == string(data) {
 		t.Fatalf("fixture manifest carries no readiness.basis to remove:\n%s", data)
 	}
@@ -51,7 +51,7 @@ func TestNeedsScanCheckRejectsStaleOrMissingManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = captureStdout(t, func() error { return dispatchCommand("needs", []string{"scan", "--check", "--path=" + repo}) })
-	if err == nil || !strings.Contains(err.Error(), "is stale") || !strings.Contains(err.Error(), "+ generated:") || !strings.Contains(err.Error(), "basis: catalog-declared") {
+	if err == nil || !strings.Contains(err.Error(), "is stale") || !strings.Contains(err.Error(), "+ generated:") || !strings.Contains(err.Error(), "basis: not-configured") {
 		t.Fatalf("stale manifest: %v", err)
 	}
 }

@@ -639,7 +639,8 @@ func (s *Server) createNeedsReportTool() (mcp.Tool, error) {
 			"framework": {
 				Type: "string",
 				Description: "Go target framework local checkout path; default: $PRAETOR_FRAMEWORK_DIR, else " +
-					"framework.targets.go.checkout, else declared contract or catalog; \"\" selects declaration",
+					"framework.targets.go.checkout, else framework.targets.go.contract, else " +
+					"framework.targets.go.module; \"\" selects declaration",
 			},
 		},
 	}
@@ -673,9 +674,10 @@ func (s *Server) createNeedsReportTool() (mcp.Tool, error) {
 		}
 
 		var b mcpTextBuilder
-		// internal/needs renders the header once for this tool and the CLI needs report; the
-		// relationship table carries repository-derived library names.
-		b.External(needs.FormatReportHeader(rep, fwIndex), mcpTextShared)
+		// internal/needs renders the header once for this tool and the CLI needs report, for the
+		// framework the row is scored against; the relationship table carries repository-derived
+		// library names.
+		b.External(needs.FormatReportHeader(rep, needs.RowFramework(registry, rep, fwIndex)), mcpTextShared)
 		b.External(needs.FormatLibraryRelationships(rep), mcpTextUntrusted)
 
 		return mcpComposedTextResult(b.Text()), nil

@@ -28,9 +28,28 @@ func TestMain(m *testing.M) {
 // declared by a contract beside it that replaces pgx with the kit's db package.
 func acmeWorkstation(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	writeFixtureFile(t, dir, "kit.capabilities.yaml", "version: 1\nframework: example.com/acme/kit\npackages:\n"+
+	return acmeWorkstationWith(t, "version: 1\nframework: example.com/acme/kit\npackages:\n"+
 		"  - import: example.com/acme/kit/db\n    capabilities: [db.postgres]\n    replaces: [github.com/jackc/pgx]\n")
+}
+
+// acmeKitWorkstation is acmeWorkstation with the placeholder go contract of the needs
+// engine tests (internal/needs/testdata/contracts/kit.capabilities.yaml), whose package
+// paths (db/pgx, core/config, core/log, ogenkit) a checkout fixture provides.
+func acmeKitWorkstation(t *testing.T) string {
+	t.Helper()
+	contract, err := os.ReadFile(filepath.Join("..", "..", "internal", "needs", "testdata", "contracts", "kit.capabilities.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return acmeWorkstationWith(t, string(contract))
+}
+
+// acmeWorkstationWith writes the acme workstation document with contract as its go
+// target's contract and returns the document's path.
+func acmeWorkstationWith(t *testing.T, contract string) string {
+	t.Helper()
+	dir := t.TempDir()
+	writeFixtureFile(t, dir, "kit.capabilities.yaml", contract)
 	writeFixtureFile(t, dir, "workstation.yaml", "framework:\n  targets:\n    go:\n      module: example.com/acme/kit\n"+
 		"      builder_kits: [acme/kit]\n      contract: kit.capabilities.yaml\n  migration_branch: refactor/acme-adoption\n"+
 		"forge:\n  default_owner: acme\n")

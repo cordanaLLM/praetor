@@ -361,7 +361,7 @@ func reconcileEvasionHook(ctx context.Context, s *adoptSession, vendored bool) e
 		perm:     execPerm,
 		content:  []byte(buildBlockEvasionPY()),
 		force:    !vendored,
-		created:  "Scaffolded agent PreToolUse anti-evasion interceptor (wire it into the agent harness hooks)",
+		created:  "Scaffolded standalone agent PreToolUse anti-evasion interceptor; the agent-hooks step registers the engine call",
 		verified: "Existing agent anti-evasion interceptor verified present",
 	})
 	return err

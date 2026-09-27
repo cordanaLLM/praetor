@@ -28,16 +28,38 @@ func TestMain(m *testing.M) {
 // target is example.com/acme/kit, declared by a contract that replaces pgx.
 func selectAcmeTarget(t *testing.T) {
 	t.Helper()
-	dir := t.TempDir()
-	writeFixtureFile(t, dir, "kit.capabilities.yaml", "version: 1\nframework: example.com/acme/kit\npackages:\n"+
+	selectAcmeContract(t, "version: 1\nframework: example.com/acme/kit\npackages:\n"+
 		"  - import: example.com/acme/kit/db\n    capabilities: [db.postgres]\n    replaces: [github.com/jackc/pgx]\n")
+}
+
+// selectAcmeKit is selectAcmeTarget with the placeholder go contract of the needs engine
+// tests (internal/needs/testdata/contracts/kit.capabilities.yaml), whose package paths
+// (db/pgx, core/config, core/log, ogenkit) a checkout fixture provides. It returns the
+// configured target, for calls that bypass the operator settings.
+func selectAcmeKit(t *testing.T) needs.Targets {
+	t.Helper()
+	contract, err := os.ReadFile(filepath.Join("..", "..", "internal", "needs", "testdata", "contracts", "kit.capabilities.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := selectAcmeContract(t, string(contract))
+	return needs.Targets{"go": {Module: "example.com/acme/kit", BuilderKits: []string{"acme/kit"}, Contract: path}}
+}
+
+// selectAcmeContract points PRAETOR_WORKSTATION_CONFIG at a workstation document whose go
+// target is example.com/acme/kit, declared by contract, and returns the contract's path.
+func selectAcmeContract(t *testing.T, contract string) string {
+	t.Helper()
+	dir := t.TempDir()
+	writeFixtureFile(t, dir, "kit.capabilities.yaml", contract)
 	writeFixtureFile(t, dir, "workstation.yaml", "framework: {targets: {go: {module: example.com/acme/kit, "+
 		"builder_kits: [acme/kit], contract: kit.capabilities.yaml}}}\n")
 	t.Setenv(config.WorkstationConfigEnv, filepath.Join(dir, "workstation.yaml"))
+	return filepath.Join(dir, "kit.capabilities.yaml")
 }
 
 // The MCP report selects the operator settings at call time, as hook does, and reports the
-// configured target instead of the built-in one.
+// configured target; with none configured it says so.
 func TestNeedsReportHonoursConfiguredTarget(t *testing.T) {
 	srv, root := newFixtureServer(t)
 	writeFixtureFile(t, root, "go.mod", "module example.com/consumer\n\ngo 1.27\nrequire github.com/jackc/pgx/v5 v5.7.2\n")
@@ -56,10 +78,14 @@ func TestNeedsReportHonoursConfiguredTarget(t *testing.T) {
 	t.Setenv(config.WorkstationConfigEnv, invalid)
 	expectError(t, "invalid settings", callTool(t, srv, "standards_needs_report", nil), "Failed to load operator settings")
 
-	// Boundary: with no document selected the built-in targets still apply.
+	// Boundary: with no document selected there is no framework, and no built-in one.
 	t.Setenv(config.WorkstationConfigEnv, "")
-	builtin := callTool(t, srv, "standards_needs_report", nil)
-	expectText(t, "built-in targets", builtin, "Coverage basis: catalog-declared; builds and tests not run")
+	unset := callTool(t, srv, "standards_needs_report", nil)
+	expectText(t, "not configured", unset, "Framework: "+needs.FrameworkNotConfiguredText+" | Mapping availability: n/a (no target framework configured)")
+	expectText(t, "not configured basis", unset, "Coverage basis: not-configured; builds and tests not run")
+	if strings.Contains(unset.Content[0].Text, "%") {
+		t.Fatalf("an unconfigured report rendered a percentage:\n%s", unset.Content[0].Text)
+	}
 }
 
 // The MCP report shows a deprecated .needs.yaml key the scan read through its alias, and
@@ -77,4 +103,29 @@ func TestNeedsReportShowsDeprecatedKey(t *testing.T) {
 	if strings.Contains(current.Content[0].Text, "Deprecated input") {
 		t.Fatalf("a manifest using the new key reported a deprecation:\n%s", current.Content[0].Text)
 	}
+}
+
+// The MCP report of a host that configures only a python target names that target for a
+// python repository, as needs scan does; a go repository there stays not configured.
+func TestNeedsReportPythonOnlyHost(t *testing.T) {
+	contract, err := os.ReadFile(filepath.Join("..", "..", "internal", "needs", "testdata", "contracts", "py.capabilities.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	writeFixtureFile(t, dir, "py.capabilities.yaml", string(contract))
+	writeFixtureFile(t, dir, "workstation.yaml", "framework: {targets: {python: {module: example.com/acme/py, "+
+		"builder_kits: [acme/py], contract: py.capabilities.yaml}}}\n")
+	t.Setenv(config.WorkstationConfigEnv, filepath.Join(dir, "workstation.yaml"))
+	// Positive: the python repository is reported against the python contract.
+	srv, root := newFixtureServer(t)
+	writeFixtureFile(t, root, "requirements.txt", "fastapi==0.110\nrequests==2.31\nweird-lib==1.0\n")
+	python := callTool(t, srv, "standards_needs_report", nil)
+	expectText(t, "python target", python, "Framework: example.com/acme/py (declared) | Mapping availability: 66.7%")
+	expectText(t, "python contract", python, "Capability contract: py.capabilities.yaml (declared packages, not source-observed)")
+	// Negative and boundary: a go repository on the same host has no configured framework.
+	goSrv, goRoot := newFixtureServer(t)
+	writeFixtureFile(t, goRoot, "go.mod", "module example.com/consumer\n\ngo 1.27\nrequire github.com/jackc/pgx/v5 v5.7.2\n")
+	goReport := callTool(t, goSrv, "standards_needs_report", nil)
+	expectText(t, "go not configured", goReport, "Framework: "+needs.FrameworkNotConfiguredText+" | Mapping availability: n/a (no target framework configured)")
 }

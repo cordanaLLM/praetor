@@ -442,16 +442,10 @@ func generateAPIReferenceWiki() WikiPage {
 ` + frameworkKitReference + `
 ## Multi-Forge Federation
 
-` + "```mermaid" + `
-sequenceDiagram
-    participant CLI as praetorctl
-    participant GH as GitHub Driver
-    participant GL as GitLab Driver
-    participant GT as Gitea Driver
-    CLI->>GH: Authenticate & Post Status Check
-    CLI->>GL: Reconcile Branch Protections
-    CLI->>GT: Synchronize Labels & Issues
-` + "```\n"
+` + "```figure\nforge-federation\n```" + `
+
+praetorctl builds only the GitHub driver: ` + "`sync --remote`" + `, ` + "`issue reconcile`" + ` and ` + "`needs epic --publish`" + ` call ` + "`forge.NewGitHubDriver`" + ` directly. ` + "`forge.NewForge`" + ` is internal and has no production caller, so the GitLab and Gitea drivers are reached only from tests. They check that a token is set and return ` + "`ErrNotImplemented`" + ` from every enforcement method.
+`
 
 	return WikiPage{
 		Name:    "API-Reference.md",

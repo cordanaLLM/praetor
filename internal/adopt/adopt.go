@@ -341,6 +341,7 @@ func adoptSteps() []namedStep {
 		{"paperclip", reconcilePaperclip},
 		{"agent-definitions", reconcileAgentDefinitions},
 		{"git-hooks", reconcileGitHooks},
+		{"agent-hooks", reconcileAgentHooks},
 	}
 }
 
@@ -382,31 +383,43 @@ func executeAdoptSteps(ctx context.Context, s *adoptSession) error {
 }
 
 // preflightAgentSurfaces refuses, before the first step writes anything, an agent file the
-// agent-harness or agent-definitions step would refuse to write: a vendor file, canonical persona
-// or persona copy behind a symlinked directory such as .agents or .github, or an existing one
-// that is not a regular text file. Those steps write through the root-pinned writer, which
-// refuses the same files at write time; checked only there, the refusal came after the manifest,
-// the vendor files, the pull request template and the workflows were written, and left a
-// half-adopted repository. A declined step's files are not checked, and a dry run is checked
-// too, so its preview does not report a run that would fail.
+// agent-harness, agent-definitions or agent-hooks step would refuse to write: a vendor file,
+// canonical persona or persona copy behind a symlinked directory such as .agents or .github, a
+// native hook file or its backup path that is a symlink or sits behind one, or an existing one
+// that is not a regular text file or, for a hook file, cannot be merged. Those steps write
+// through the root-pinned writer, which refuses the same files at write time; checked only
+// there, the refusal came after the manifest, the vendor files, the pull request template and
+// the workflows were written, and left a half-adopted repository. A declined step's files are
+// not checked, and a dry run is checked too, so its preview does not report a run that would
+// fail.
 func preflightAgentSurfaces(ctx context.Context, s *adoptSession, declined map[string]bool) error {
 	if !declined["agent-harness"] {
 		if err := compiler.CheckVendorTargets(ctx, s.repoPath); err != nil {
 			return fmt.Errorf("agent-harness preflight: %w", err)
 		}
 	}
-	if declined["agent-definitions"] {
-		return nil
+	if !declined["agent-definitions"] {
+		if err := preflightPersonas(ctx, s.repoPath); err != nil {
+			return fmt.Errorf("agent-definitions preflight: %w", err)
+		}
 	}
+	if !declined["agent-hooks"] {
+		if err := preflightAgentHooks(ctx, s.repoPath); err != nil {
+			return fmt.Errorf("agent-hooks preflight: %w", err)
+		}
+	}
+	return nil
+}
+
+// preflightPersonas runs the persona writer's refusals over every persona agent-definitions
+// writes, before any is written.
+func preflightPersonas(ctx context.Context, repoPath string) error {
 	personas := generatedPersonas()
 	names := make([]string, 0, len(personas))
 	for i := 0; i < len(personas) && i < maxTranspileTargets; i++ {
 		names = append(names, filepath.Base(personas[i].rel))
 	}
-	if err := compiler.CheckPersonaTargets(ctx, s.repoPath, names); err != nil {
-		return fmt.Errorf("agent-definitions preflight: %w", err)
-	}
-	return nil
+	return compiler.CheckPersonaTargets(ctx, repoPath, names)
 }
 
 // forcedManifestNote explains why --force left the manifest alone, and says what to do instead.

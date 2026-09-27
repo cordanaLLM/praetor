@@ -28,16 +28,16 @@ type FrameworkDemandRequest struct {
 }
 
 // SynthesizeDemands aggregates and deduplicates gaps across the fleet into prioritized
-// requests, each routed to the first builder kit of the target serving its capability.
+// requests, each routed to the first builder kit of the target serving its capability. A
+// capability whose language has no target, or a target without builder kits, is unrouted.
 func SynthesizeDemands(report *FleetDemandReport, targets Targets) []FrameworkDemandRequest {
 	if report == nil || len(report.Gaps) == 0 {
 		return make([]FrameworkDemandRequest, 0)
 	}
 
-	resolved := targets.resolved()
 	requests := make([]FrameworkDemandRequest, 0, len(report.Gaps))
 	for _, gap := range report.Gaps {
-		req := createDemandRequest(gap, resolved)
+		req := createDemandRequest(gap, targets)
 		requests = append(requests, req)
 	}
 
@@ -49,6 +49,18 @@ func SynthesizeDemands(report *FleetDemandReport, targets Targets) []FrameworkDe
 	})
 
 	return requests
+}
+
+// UnroutedSummary counts the requests no builder kit receives, as "N of M requests
+// unrouted" (ADR-0014 §4).
+func UnroutedSummary(requests []FrameworkDemandRequest) string {
+	unrouted := 0
+	for _, request := range requests {
+		if request.TargetBuilderKit == "" {
+			unrouted++
+		}
+	}
+	return fmt.Sprintf("%d of %d requests unrouted", unrouted, len(requests))
 }
 
 func createDemandRequest(gap GapDetail, targets Targets) FrameworkDemandRequest {

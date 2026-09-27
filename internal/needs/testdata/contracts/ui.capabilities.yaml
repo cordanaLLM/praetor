@@ -1,0 +1,54 @@
+# Placeholder typescript framework contract for the internal/needs tests (ADR-0014): the
+# packages, capabilities and claims a configured target declares. No real framework.
+version: 1
+framework: example.com/acme/ui
+ecosystem: npm
+packages:
+  - import: example.com/acme/ui
+    module: example.com/acme/ui
+    capabilities:
+      - ui.framework
+      - ui.styling
+    replaces:
+      - '@sveltejs/kit'
+      - clsx
+      - svelte
+      - tailwind-merge
+      - tailwindcss
+  - import: example.com/acme/ui/components
+    module: example.com/acme/ui
+    domain: components
+    capabilities:
+      - ui.components
+    replaces:
+      - bits-ui
+      - shadcn-svelte
+  - import: example.com/acme/ui/fetch
+    module: example.com/acme/ui
+    domain: fetch
+    capabilities:
+      - http.client
+    adapts:
+      - axios
+  - import: example.com/acme/ui/forms
+    module: example.com/acme/ui
+    domain: forms
+    capabilities:
+      - ui.forms
+    replaces:
+      - zod
+  - import: example.com/acme/ui/icons
+    module: example.com/acme/ui
+    domain: icons
+    capabilities:
+      - ui.icons
+    replaces:
+      - '@lucide/svelte'
+      - lucide-svelte
+  - import: example.com/acme/ui/toast
+    module: example.com/acme/ui
+    domain: toast
+    capabilities:
+      - ui.toast
+    replaces:
+      - svelte-sonner

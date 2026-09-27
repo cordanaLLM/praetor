@@ -53,7 +53,7 @@ func (a *RustAnalyzer) Analyze(ctx context.Context, repoPath string, target Targ
 		return nil, fmt.Errorf("failed to parse Cargo.toml in %q: %w", repoPath, err)
 	}
 	for _, pkg := range slices.Sorted(maps.Keys(deps)) {
-		demand := mapRustDependency(pkg, deps[pkg], target.RoutingKit())
+		demand := rustClassifier.classify(pkg, deps[pkg], target.RoutingKit())
 		repoNeeds.Dependencies = append(repoNeeds.Dependencies, demand)
 		repoNeeds.Capabilities.Required = appendUniqueCap(repoNeeds.Capabilities.Required, demand.Capability)
 	}
@@ -181,32 +181,4 @@ func splitTOMLScalar(field string) (string, string, bool) {
 		return "", "", false
 	}
 	return name, value, true
-}
-
-// mapRustDependency maps one crate onto the catalog; kit is the target's routing kit.
-func mapRustDependency(pkg, ver, kit string) DependencyDemand {
-	mapping, found := lookupRustCatalog(strings.ToLower(pkg))
-	if found {
-		return DependencyDemand{
-			Package:              pkg,
-			Version:              ver,
-			Language:             "rust",
-			Ecosystem:            "cargo",
-			Capability:           mapping.Capability,
-			Status:               mapping.Status,
-			FrameworkReplacement: mapping.Replacement,
-			TargetBuilderKit:     kit,
-			Notes:                mapping.Notes,
-		}
-	}
-	return DependencyDemand{
-		Package:          pkg,
-		Version:          ver,
-		Language:         "rust",
-		Ecosystem:        "cargo",
-		Capability:       CapabilityKey("rust.external." + cleanDepKey(pkg)),
-		Status:           StatusGap,
-		TargetBuilderKit: kit,
-		Notes:            "External Cargo crate requiring a target framework adapter or evaluation",
-	}
 }

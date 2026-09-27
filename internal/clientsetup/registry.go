@@ -13,11 +13,12 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/clientjson"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
-	MaxConfigBytes        = 1 << 20
+	MaxConfigBytes        = clientjson.MaxBytes
 	MaxServers            = 32
 	MaxArgs               = 64
 	MaxValueBytes         = 4096
@@ -39,7 +40,7 @@ type Registry struct {
 // DecodeRegistry rejects unknown keys, duplicate keys, null required identity
 // values, interpolation, excessive nesting, and unsupported environment fields.
 func DecodeRegistry(ctx context.Context, raw []byte) (Registry, error) {
-	if err := validateJSON(ctx, raw); err != nil {
+	if err := clientjson.Validate(ctx, raw); err != nil {
 		return Registry{}, err
 	}
 	var registry Registry

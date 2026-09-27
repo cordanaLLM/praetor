@@ -1,0 +1,2 @@
+type: changed
+title: "The harvester no longer infers a harvested repository's language from its exact name or from a library it is named after (vmaf): without dependency evidence from its patch, only the generic name words svelte, python, the *arr project names, ffmpeg, gpu and rust decide, and any other repository is reported as skipped (no language analyzer matched) instead of being assigned typescript or native"

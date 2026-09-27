@@ -58,7 +58,7 @@ func discoveredRoots(t *testing.T, root string) []string {
 // aggregateRows runs AggregateFleet and indexes the leaderboard by row path.
 func aggregateRows(t *testing.T, root string) (*FleetDemandReport, map[string]RepoNeeds) {
 	t.Helper()
-	report, err := AggregateFleet(context.Background(), root, legacySource(""), nil)
+	report, err := AggregateFleet(context.Background(), root, acmeSource(""), nil)
 	if err != nil {
 		t.Fatalf("AggregateFleet(%s) error = %v", root, err)
 	}
@@ -341,7 +341,7 @@ func TestDiscoverFleetBounds(t *testing.T) {
 // whose root holds no manifest after the root, carries the root's declarations, and keeps
 // a nested checkout out.
 func TestScanRepoFoldsSubprojectsUnderNonProjectRoot(t *testing.T) {
-	repo := filepath.Join(t.TempDir(), "vmafx")
+	repo := filepath.Join(t.TempDir(), "acme-native")
 	makeCheckout(t, repo)
 	writeRepoFile(t, filepath.Join(repo, ".needs.yaml"), "capabilities:\n  required: [observability.tracing]\n")
 	writeRepoFile(t, filepath.Join(repo, "core", "meson.build"), "dep = dependency('zlib')\n")
@@ -353,8 +353,8 @@ func TestScanRepoFoldsSubprojectsUnderNonProjectRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ScanRepo() error = %v", err)
 	}
-	if row.Repository != "vmafx" || !hasDependency(*row, "zlib") || hasDependency(*row, "libpng") {
-		t.Errorf("row = %s %v, want vmafx with core's demand and without the nested checkout's", row.Repository, row.Dependencies)
+	if row.Repository != "acme-native" || !hasDependency(*row, "zlib") || hasDependency(*row, "libpng") {
+		t.Errorf("row = %s %v, want acme-native with core's demand and without the nested checkout's", row.Repository, row.Dependencies)
 	}
 	if !slices.Contains(row.Capabilities.Required, CapabilityKey("observability.tracing")) {
 		t.Errorf("root declarations dropped: %v", row.Capabilities.Required)
@@ -459,9 +459,9 @@ func TestPrunedFromDiscovery(t *testing.T) {
 func TestFleetEpicsScoreLikeAggregate(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
-	repo := filepath.Join(root, "vmafx")
+	repo := filepath.Join(root, "acme-native")
 	makeCheckout(t, repo)
-	writeGoProject(t, repo, "example.com/vmafx", pgxModule)
+	writeGoProject(t, repo, "example.com/acme/native-app", pgxModule)
 	writeRepoFile(t, filepath.Join(repo, "core", "meson.build"), "dep = dependency('zlib')\n")
 	writeRepoFile(t, filepath.Join(repo, "python", "pyproject.toml"), "[project]\ndependencies = [\"numpy>=2\"]\n")
 
@@ -470,11 +470,11 @@ func TestFleetEpicsScoreLikeAggregate(t *testing.T) {
 	if len(rows) != 1 || !ok {
 		t.Fatalf("aggregate rows = %v, want the one repository", rows)
 	}
-	epics, _, err := RegenerateFleetEpics(ctx, root, FleetEpicOptions{Framework: legacySource(""), DryRun: true})
+	epics, _, err := RegenerateFleetEpics(ctx, root, FleetEpicOptions{Framework: acmeSource(""), DryRun: true})
 	if err != nil || len(epics) != 1 {
 		t.Fatalf("fleet epics = %d, err = %v", len(epics), err)
 	}
-	single, err := GeneratePreMigrationEpic(ctx, repo, legacySource(""), nil)
+	single, err := GeneratePreMigrationEpic(ctx, repo, acmeSource(""), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

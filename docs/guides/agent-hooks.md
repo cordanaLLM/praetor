@@ -488,6 +488,38 @@ and blocks with exit 2 on any input that is not one JSON object with a nonempty
 which are the dialects `praetorctl hook` owns. `internal/adopt/evasion_hook_test.go` replays
 the corpus above against the rendered script.
 
+Adoption also registers the engine's own pre-tool call, `praetorctl hook <client> pre-tool`
+(ADR-0011 decision 1), in the hook file of every agent client that `agent_clients` selects:
+`.claude/settings.json`, `.codex/hooks.json` and `.gemini/settings.json`, with the matcher
+and the timeout unit of the registration row (`agenthook.NativeHookFile`,
+`internal/agenthook/registrations.go`). The `agent-hooks` step
+(`internal/adopt/agent_hooks.go`) creates a missing file, `hooks` object, event list or
+matcher group, and adds the handler to a group whose matcher equals the row's. The merge
+(`internal/clientjson/hooks.go`) keeps every other member in its place and every number
+literal as written, so no key is reordered and no number is rounded; the file is re-indented
+and string escapes are normalised (`"\/"` becomes `"/"`). A file the step changes is first
+copied to `<file>.bak`, then replaced only while it still holds the bytes the plan was made
+from, and read back; each write goes through the root-pinned `contextopt` writers, which
+refuse a symlink below the repository. A handler that already runs the evaluator (the engine
+call, the skew guard `praetor_hook.py`, or one of the Python pre-tool adapters) counts as
+registered when its group's matcher is the row's or matches every tool (absent, `*`, `.*`),
+and the file stays byte for byte as it was (`Registration.ServedBy`). A handler under another
+matcher, such as `^(Edit|Write)$`, does not guard shell calls, so the row is still registered.
+
+Before the first step writes anything, adoption plans the registration of every selected
+client (`preflightAgentHooks`, called from `preflightAgentSurfaces` in
+`internal/adopt/adopt.go`). A hook file or `<file>.bak` that is a symlink or sits behind one,
+a file that is not regular UTF-8 text, and a file whose content cannot be merged fail the run
+there, before the manifest or any other file is written. Gemini CLI strips comments from
+`.gemini/settings.json` before it parses it, so a commented file is valid for Gemini but not
+for the strict merge: the step leaves it untouched, and the report lists it as skipped, with a
+warning naming the handler to add by hand. The registration table has no pre-tool row for
+Cursor, Windsurf and Copilot, and AGY registers through its plugin, so the report lists them
+as not applicable; a dry run reports the same entries without writing. A repository that
+maintains its hook files by hand declines the step with `adoption.decline: [agent-hooks]`.
+`internal/adopt/agent_hooks_test.go` and `internal/adopt/agent_hooks_preflight_test.go`
+cover each case.
+
 Both Python scripts, the adopted interceptor and praetor's own guard, refuse a command over
 the scan bounds instead of scanning it: more than 65,536 characters in all, or one line over
 2,048 characters (`agenthook.MaxScanChars`, `agenthook.MaxScanLineChars`). Python's `re`

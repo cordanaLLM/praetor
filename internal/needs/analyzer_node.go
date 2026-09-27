@@ -65,7 +65,7 @@ func (a *NodeAnalyzer) Analyze(ctx context.Context, repoPath string, target Targ
 
 	allDeps := mergeDependencies(pkgData.Dependencies, pkgData.DevDependencies)
 	for _, pkg := range slices.Sorted(maps.Keys(allDeps)) {
-		demand := mapNodeDependency(pkg, allDeps[pkg], target.RoutingKit())
+		demand := nodeClassifier.classify(pkg, allDeps[pkg], target.RoutingKit())
 		repoNeeds.Dependencies = append(repoNeeds.Dependencies, demand)
 		repoNeeds.Capabilities.Required = appendUniqueCap(repoNeeds.Capabilities.Required, demand.Capability)
 	}
@@ -101,32 +101,4 @@ func mergeDependencies(deps, devDeps map[string]string) map[string]string {
 		merged[k] = v
 	}
 	return merged
-}
-
-// mapNodeDependency maps one npm package onto the catalog; kit is the target's routing kit.
-func mapNodeDependency(pkg, ver, kit string) DependencyDemand {
-	mapping, found := lookupNodeCatalog(pkg)
-	if found {
-		return DependencyDemand{
-			Package:              pkg,
-			Version:              ver,
-			Language:             "typescript",
-			Ecosystem:            "npm",
-			Capability:           mapping.Capability,
-			Status:               mapping.Status,
-			FrameworkReplacement: mapping.Replacement,
-			TargetBuilderKit:     kit,
-			Notes:                mapping.Notes,
-		}
-	}
-	return DependencyDemand{
-		Package:          pkg,
-		Version:          ver,
-		Language:         "typescript",
-		Ecosystem:        "npm",
-		Capability:       CapabilityKey("ui.external." + cleanDepKey(pkg)),
-		Status:           StatusGap,
-		TargetBuilderKit: kit,
-		Notes:            "External npm dependency requiring a target framework adapter or evaluation",
-	}
 }

@@ -158,3 +158,39 @@ func TestTargetPaths_Boundary_AbsentAndEmptySelection(t *testing.T) {
 		t.Fatalf("empty selection = %v, %v, %v", kept, left, err)
 	}
 }
+
+// Positive: SelectedClients keeps the selected client ids, normalized and in registry order,
+// and names every other client as left out.
+func TestSelectedClients_Positive_SelectionSplitsClients(t *testing.T) {
+	selected, excluded, err := SelectedClients([]string{" Codex", "claude", "cursor"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"claude", "cursor", "codex"}; !reflect.DeepEqual(selected, want) {
+		t.Fatalf("selected = %v, want %v", selected, want)
+	}
+	if want := []string{"copilot", "windsurf", "gemini"}; !reflect.DeepEqual(excluded, want) {
+		t.Fatalf("excluded = %v, want %v", excluded, want)
+	}
+}
+
+// Negative: an unknown id fails the client selection the same way it fails the context files.
+func TestSelectedClients_Negative_UnknownClientRejected(t *testing.T) {
+	selected, excluded, err := SelectedClients([]string{"claude", "vim"})
+	if err == nil || selected != nil || excluded != nil || !strings.Contains(err.Error(), "vim") {
+		t.Fatalf("SelectedClients = %v, %v, %v; want an error naming vim", selected, excluded, err)
+	}
+}
+
+// Boundary: nil keeps every client of the registry, an empty list keeps none and leaves every
+// one out.
+func TestSelectedClients_Boundary_AbsentAndEmptySelection(t *testing.T) {
+	all, none, err := SelectedClients(nil)
+	if err != nil || !reflect.DeepEqual(all, Clients()) || none != nil {
+		t.Fatalf("nil selection = %v, %v, %v", all, none, err)
+	}
+	kept, left, err := SelectedClients([]string{})
+	if err != nil || kept != nil || !reflect.DeepEqual(left, Clients()) {
+		t.Fatalf("empty selection = %v, %v, %v", kept, left, err)
+	}
+}

@@ -83,12 +83,14 @@ type ReadinessMetrics struct {
 
 // RepoNeeds is the declarative manifest of a repository's framework needs (.needs.yaml).
 type RepoNeeds struct {
-	Version      int                   `json:"version" yaml:"version"`
-	Repository   string                `json:"repository" yaml:"repository"`
-	Language     string                `json:"language" yaml:"language"`
-	Languages    []string              `json:"languages,omitempty" yaml:"languages,omitempty"`
-	GoVersion    string                `json:"go_version,omitempty" yaml:"go_version,omitempty"`
-	Framework    string                `json:"framework" yaml:"framework"`
+	Version    int      `json:"version" yaml:"version"`
+	Repository string   `json:"repository" yaml:"repository"`
+	Language   string   `json:"language" yaml:"language"`
+	Languages  []string `json:"languages,omitempty" yaml:"languages,omitempty"`
+	GoVersion  string   `json:"go_version,omitempty" yaml:"go_version,omitempty"`
+	// Framework is the target framework the row was scored against; a row scored against
+	// none omits it (ADR-0014 §4).
+	Framework    string                `json:"framework,omitempty" yaml:"framework,omitempty"`
 	BuilderKits  []string              `json:"builder_kits,omitempty" yaml:"builder_kits,omitempty"`
 	Capabilities CapabilityDeclaration `json:"capabilities" yaml:"capabilities"`
 	Dependencies []DependencyDemand    `json:"dependencies" yaml:"dependencies"`
@@ -147,15 +149,11 @@ type FrameworkIndex struct {
 	Name     string `json:"name"`
 	RootPath string `json:"root_path"`
 	Version  string `json:"version"`
-	// CatalogModule is the module built-in catalog paths resolve against: the go target's
-	// module. A catalog path outside it names no package of this framework; empty applies
-	// no catalog path at all.
-	CatalogModule string `json:"catalog_module,omitempty"`
 	// Ecosystem is the package ecosystem a contract's third-party names belong to (go, npm,
 	// pypi, cargo or system); empty means go.
 	Ecosystem string `json:"ecosystem,omitempty"`
-	// Contract names the capability contract file the inventory came from; empty when
-	// the packages came from the static catalog or directory heuristics.
+	// Contract names the capability contract file the inventory came from; empty when no
+	// contract declared the packages.
 	Contract     string                      `json:"contract,omitempty"`
 	Packages     map[string]FrameworkPackage `json:"packages"`
 	Capabilities map[CapabilityKey][]string  `json:"capabilities"` // capability -> list of import paths

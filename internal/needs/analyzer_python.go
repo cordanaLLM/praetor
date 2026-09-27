@@ -57,7 +57,7 @@ func (a *PythonAnalyzer) Analyze(ctx context.Context, repoPath string, target Ta
 		return nil, fmt.Errorf("failed to parse Python dependencies in %q: %w", repoPath, err)
 	}
 	for _, pkg := range slices.Sorted(maps.Keys(deps)) {
-		demand := mapPythonDependency(pkg, deps[pkg], target.RoutingKit())
+		demand := pythonClassifier.classify(pkg, deps[pkg], target.RoutingKit())
 		repoNeeds.Dependencies = append(repoNeeds.Dependencies, demand)
 		repoNeeds.Capabilities.Required = appendUniqueCap(repoNeeds.Capabilities.Required, demand.Capability)
 	}
@@ -301,32 +301,4 @@ func parseSetupPyFile(path string, deps map[string]string) error {
 		}
 		parseInlineRequirementList(line, deps)
 	})
-}
-
-// mapPythonDependency maps one PyPI package onto the catalog; kit is the target's routing kit.
-func mapPythonDependency(pkg, ver, kit string) DependencyDemand {
-	mapping, found := lookupPythonCatalog(strings.ToLower(pkg))
-	if found {
-		return DependencyDemand{
-			Package:              pkg,
-			Version:              ver,
-			Language:             "python",
-			Ecosystem:            "pypi",
-			Capability:           mapping.Capability,
-			Status:               mapping.Status,
-			FrameworkReplacement: mapping.Replacement,
-			TargetBuilderKit:     kit,
-			Notes:                mapping.Notes,
-		}
-	}
-	return DependencyDemand{
-		Package:          pkg,
-		Version:          ver,
-		Language:         "python",
-		Ecosystem:        "pypi",
-		Capability:       CapabilityKey("python.external." + cleanDepKey(pkg)),
-		Status:           StatusGap,
-		TargetBuilderKit: kit,
-		Notes:            "External PyPI dependency requiring a target framework adapter or evaluation",
-	}
 }

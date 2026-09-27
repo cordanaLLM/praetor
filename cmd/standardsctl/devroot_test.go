@@ -138,8 +138,8 @@ func TestNeedsAggregate_HonoursDevRootEnv(t *testing.T) {
 	mustContain(t, out, "**Repositories Scanned**: 1 / 1")
 
 	// Boundary: the dev root no longer selects a framework checkout. Without --framework,
-	// PRAETOR_FRAMEWORK_DIR or framework.targets.go.checkout, report scores against the
-	// declaration instead of failing over a missing path under the dev root.
+	// PRAETOR_FRAMEWORK_DIR or framework.targets.go.checkout, report falls back to the
+	// declaration, here none, instead of failing over a missing path under the dev root.
 	t.Setenv(devRootEnv, t.TempDir())
 	out, err = captureStdout(t, func() error {
 		return dispatchCommand("needs", []string{"report", "--path=" + filepath.Join(root, "acme", "widgets")})
@@ -147,7 +147,7 @@ func TestNeedsAggregate_HonoursDevRootEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("needs report without a selected framework: %v\n%s", err, out)
 	}
-	mustContain(t, out, "Coverage basis: catalog-declared; builds and tests not run")
+	mustContain(t, out, "Coverage basis: not-configured; builds and tests not run")
 
 	// Negative: no dev root and no home directory fails before scanning anything.
 	t.Setenv(devRootEnv, "")

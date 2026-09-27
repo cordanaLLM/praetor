@@ -86,8 +86,8 @@ func (c *frameworkContract) ecosystem() string {
 }
 
 // loadFrameworkContract reads the contract at the checkout root. A missing file is not an
-// error: the caller falls back to catalog candidates. A present file must validate against
-// the module identity the checkout's go.mod declares.
+// error: the caller falls back to the configured contract, if any. A present file must
+// validate against the module identity the checkout's go.mod declares.
 func loadFrameworkContract(ctx context.Context, root *os.Root, module string) (contract *frameworkContract, found bool, err error) {
 	raw, err := contextopt.ReadRootSnapshot(ctx, root, FrameworkContractFile)
 	if errors.Is(err, os.ErrNotExist) {
@@ -284,12 +284,33 @@ func stripMajorSuffix(modulePath string) string {
 	return modulePath[:index]
 }
 
+// rebase returns a copy of the contract declaring the same packages under module: every
+// import path and module moves from the contract's framework onto module, so a fork is
+// observed at the paths its upstream's contract names.
+func (c *frameworkContract) rebase(module string) *frameworkContract {
+	move := func(path string) string { return module + strings.TrimPrefix(path, c.Framework) }
+	out := *c
+	out.Framework = module
+	out.Modules = make([]string, 0, len(c.Modules))
+	for _, nested := range c.Modules {
+		out.Modules = append(out.Modules, move(nested))
+	}
+	out.Packages = slices.Clone(c.Packages)
+	for i := range out.Packages {
+		out.Packages[i].Import = move(out.Packages[i].Import)
+		if out.Packages[i].Module != "" {
+			out.Packages[i].Module = move(out.Packages[i].Module)
+		}
+	}
+	return &out
+}
+
 // observeContractFramework builds the index from the contract's package inventory. Every
 // declared package is still source-observed inside its declared module: a declaration
 // alone never establishes availability, and declared nested modules are honoured instead
-// of being rejected as foreign modules.
-func observeContractFramework(ctx context.Context, index *FrameworkIndex, contract *frameworkContract) error {
-	packages := beginContractIndex(index, contract, FrameworkContractFile)
+// of being rejected as foreign modules. name labels the contract in notes.
+func observeContractFramework(ctx context.Context, index *FrameworkIndex, contract *frameworkContract, name string) error {
+	packages := beginContractIndex(index, contract, name)
 	total := 0
 	for i := range packages {
 		present, err := observeContractPackage(ctx, index, &packages[i], &total)
@@ -460,7 +481,9 @@ func contractReplacement(idx *FrameworkIndex, dep *DependencyDemand) (string, Ca
 
 // reconcileContractDemand marks a demand covered, or adapter-available, by its contract
 // replacement. A demand the catalog did not know adopts the replacement package's first
-// declared capability so it stops counting as a custom gap.
+// declared capability so it stops counting as a custom gap. The note is rewritten whenever
+// the status or the package changes, so a demand a scan mapped to the configured contract's
+// package and a report re-mapped to a fork's never names the package it no longer maps to.
 func reconcileContractDemand(idx *FrameworkIndex, dep *DependencyDemand) bool {
 	path, status, ok := contractReplacement(idx, dep)
 	if !ok {
@@ -470,7 +493,7 @@ func reconcileContractDemand(idx *FrameworkIndex, dep *DependencyDemand) bool {
 	if !slices.Contains(pkg.Capabilities, dep.Capability) && len(pkg.Capabilities) > 0 {
 		dep.Capability = pkg.Capabilities[0]
 	}
-	if dep.Status != status {
+	if dep.Status != status || dep.FrameworkReplacement != path {
 		dep.Notes = fmt.Sprintf("%s declares %s for %s", idx.Contract, path, dep.Capability)
 	}
 	dep.Status, dep.FrameworkReplacement = status, path

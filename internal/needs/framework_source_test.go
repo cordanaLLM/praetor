@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -50,11 +51,6 @@ func TestInspectFrameworkSources_3D(t *testing.T) {
 	if named, err := InspectFramework(t.Context(), FrameworkSource{Contract: contract}); err != nil || named.Name != "example.com/acme/kit" {
 		t.Fatalf("contract without module = %+v, %v", named, err)
 	}
-	// Positive: the built-in module alone keeps the built-in declared catalog.
-	legacy, err := InspectFramework(t.Context(), FrameworkSource{Module: defaultFrameworkModule})
-	if err != nil || legacy.Version != defaultFrameworkVersion || legacy.Basis != FrameworkCatalogDeclared || len(legacy.Packages) == 0 {
-		t.Fatalf("built-in declared catalog = %+v, %v", legacy, err)
-	}
 	// Boundary: another module alone is named without a declared package; nothing selected
 	// is not configured.
 	identity, err := InspectFramework(t.Context(), FrameworkSource{Module: "example.com/acme/kit"})
@@ -77,7 +73,7 @@ func TestInspectFrameworkSources_3D(t *testing.T) {
 }
 
 // The declared contract reaches every claim kind a report shows: replacement, adapter,
-// wrapped library, tooling and retained foundation, and never a built-in package.
+// wrapped library, tooling and retained foundation, each naming the contract's package.
 func TestDeclaredContractReconcilesEveryClaim(t *testing.T) {
 	repo := t.TempDir()
 	writeFixture(t, repo, "go.mod", "module example.com/consumer\n\ngo 1.27\n\nrequire (\n\tgithub.com/jackc/pgx/v5 v5.7.2\n"+
@@ -107,41 +103,53 @@ func TestDeclaredContractReconcilesEveryClaim(t *testing.T) {
 	if gap := demandFor(t, report, "github.com/unknown/thing"); gap.Status != StatusGap {
 		t.Errorf("an undeclared dependency must stay a gap: %+v", gap)
 	}
-	if text := FormatLibraryRelationships(report); strings.Contains(text, defaultFrameworkModule) {
-		t.Fatalf("a declared contract reported built-in packages:\n%s", text)
+	if text := FormatLibraryRelationships(report); !strings.Contains(text, acmeKit+"/db") {
+		t.Fatalf("a declared contract did not report its packages:\n%s", text)
 	}
 }
 
-// A fork resolves built-in catalog paths under its own module; a framework the catalog does
-// not describe resolves none of them, and a related package comes from its own contract.
-func TestCatalogPathsResolveAgainstTheCatalogModule(t *testing.T) {
-	fork := &FrameworkIndex{Name: "example.com/fork/kit", CatalogModule: defaultFrameworkModule, Basis: FrameworkSourceObserved,
-		Packages:     map[string]FrameworkPackage{"example.com/fork/kit/db/pgx": {}},
-		Capabilities: map[CapabilityKey][]string{"db.postgres": {"example.com/fork/kit/db/pgx"}}}
-	if got, ok := availableFrameworkPackage(fork, "db.postgres", defaultFrameworkModule+"/db/pgx"); !ok || got != "example.com/fork/kit/db/pgx" {
-		t.Fatalf("fork package = %q, %v", got, ok)
+// A checkout without a capabilities.yaml of its own is observed against the configured
+// contract: a package the checkout provides is available, a missing one is not, and a fork
+// is observed at the contract's paths under its own module.
+func TestCheckoutObservedAgainstConfiguredContract_3D(t *testing.T) {
+	contract := writeAcmeContract(t)
+	// Positive: the upstream checkout provides db; config is absent and unavailable.
+	upstream := setupFrameworkCheckout(t, acmeKit, "db")
+	writeFixture(t, upstream, "db/db.go", "package db\n\ntype Pool struct{}\n")
+	index, err := InspectFramework(t.Context(), FrameworkSource{Checkout: upstream, Contract: contract, Module: acmeKit})
+	if err != nil {
+		t.Fatal(err)
 	}
-	other := *fork
-	other.CatalogModule = "example.com/acme/kit"
-	if got, ok := availableFrameworkPackage(&other, "db.postgres", defaultFrameworkModule+"/db/pgx"); ok || got != "" {
-		t.Fatalf("a foreign catalog path resolved under another framework: %q", got)
+	if index.Basis != FrameworkSourceObserved || index.Contract != "kit.capabilities.yaml" || len(index.Packages) != 1 ||
+		!slices.Equal(index.Replacements["github.com/jackc/pgx"], []string{acmeKit + "/db"}) {
+		t.Fatalf("upstream checkout = %+v", index)
 	}
-	candidates, err := frameworkCandidates("example.com/acme/kit")
-	if err != nil || len(candidates) != 0 {
-		t.Fatalf("candidates for a framework the catalog does not describe = %v, %v", candidates, err)
+	// Positive: a fork is observed under its own module at the contract's paths.
+	fork := setupFrameworkCheckout(t, "example.com/fork/kit", "db")
+	writeFixture(t, fork, "db/db.go", "package db\n\ntype Pool struct{}\n")
+	forked, err := InspectFramework(t.Context(), FrameworkSource{Checkout: fork, Contract: contract, Module: acmeKit})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if candidates, err := frameworkCandidates(""); err != nil || len(candidates) != 0 {
-		t.Fatalf("candidates without a catalog module = %v, %v", candidates, err)
+	if forked.Name != "example.com/fork/kit" || !slices.Equal(forked.Replacements["github.com/jackc/pgx"], []string{"example.com/fork/kit/db"}) {
+		t.Fatalf("fork checkout = %+v", forked)
 	}
-	if candidates, err := frameworkCandidates(defaultFrameworkModule); err != nil || len(candidates) == 0 {
-		t.Fatalf("candidates for the built-in module = %v, %v", candidates, err)
+	// Negative: a checkout with neither its own contract nor a configured one observes no
+	// package, whatever its directories are called.
+	bare, err := InspectFramework(t.Context(), FrameworkSource{Checkout: upstream, Module: acmeKit})
+	if err != nil || len(bare.Packages) != 0 || bare.Contract != "" {
+		t.Fatalf("checkout without an inventory = %+v, %v", bare, err)
 	}
-	related, ok := relatedFrameworkPackage(&other, "db.postgres", defaultFrameworkModule+"/db/pgx")
-	if !ok || related != "example.com/fork/kit/db/pgx" {
-		t.Fatalf("related package of another framework = %q, %v; want its own package for the capability", related, ok)
+	if _, err := InspectFramework(t.Context(), FrameworkSource{Checkout: upstream, Contract: filepath.Join(t.TempDir(), "missing.yaml")}); err == nil {
+		t.Fatal("a missing configured contract must fail the inspection")
 	}
-	if related, ok := relatedFrameworkPackage(&other, "cache.redis", defaultFrameworkModule+"/cache/redis"); ok || related != "" {
-		t.Fatalf("an undeclared capability found a related package: %q", related)
+	// Boundary: the checkout's own capabilities.yaml wins over the configured contract.
+	writeFixture(t, upstream, FrameworkContractFile, "version: 1\nframework: "+acmeKit+"\npackages:\n"+
+		"  - import: "+acmeKit+"/db\n    capabilities: [db.orm]\n    replaces: [gorm.io/gorm]\n")
+	own, err := InspectFramework(t.Context(), FrameworkSource{Checkout: upstream, Contract: contract, Module: acmeKit})
+	if err != nil || own.Contract != FrameworkContractFile || len(own.Replacements["github.com/jackc/pgx"]) != 0 ||
+		!slices.Equal(own.Replacements["gorm.io/gorm"], []string{acmeKit + "/db"}) {
+		t.Fatalf("checkout contract = %+v, %v", own, err)
 	}
 }
 
@@ -177,5 +185,45 @@ func TestLoadRegistryDeclaresTargetContracts(t *testing.T) {
 	// Boundary: no contract configured loads none and keeps scanning.
 	if registry, err := LoadRegistry(t.Context(), nil); err != nil || registry.frameworkFor("typescript", nil) != nil {
 		t.Fatalf("no targets = %v", err)
+	}
+}
+
+// A demand a scan mapped to the configured contract's package, re-mapped by a report to a
+// fork's package at the same status, gets a note naming the fork's package; a note is kept
+// when neither the package nor the status changes.
+func TestContractNoteFollowsReplacement_3D(t *testing.T) {
+	contract := writeAcmeContract(t)
+	repo := t.TempDir()
+	writeFixture(t, repo, "go.mod", "module example.com/consumer\n\ngo 1.27\n\nrequire github.com/jackc/pgx/v5 v5.7.2\n")
+	registry, err := LoadRegistry(t.Context(), Targets{"go": {Module: acmeKit, Contract: contract}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fork := setupFrameworkCheckout(t, "example.com/fork/kit", "db")
+	writeFixture(t, fork, "db/db.go", "package db\n\ntype Pool struct{}\n")
+	forked, err := InspectFramework(t.Context(), FrameworkSource{Checkout: fork, Contract: contract, Module: acmeKit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Positive: the fork report's note names the fork's package, not the contract's.
+	report, err := ScanRepoWithFramework(t.Context(), repo, forked, registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pgx := demandFor(t, report, "github.com/jackc/pgx/v5")
+	if pgx.Status != StatusCovered || pgx.FrameworkReplacement != "example.com/fork/kit/db" ||
+		!strings.Contains(pgx.Notes, "example.com/fork/kit/db") || strings.Contains(pgx.Notes, acmeKit+"/db") {
+		t.Fatalf("fork report demand = %+v", pgx)
+	}
+	// Negative: the same package at the same status keeps the note it has.
+	kept := DependencyDemand{Package: "github.com/jackc/pgx/v5", Ecosystem: "go", Capability: "db.postgres",
+		Status: StatusCovered, FrameworkReplacement: "example.com/fork/kit/db", Notes: "operator note"}
+	if !reconcileContractDemand(forked, &kept) || kept.Notes != "operator note" {
+		t.Fatalf("unchanged demand = %+v", kept)
+	}
+	// Boundary: a gap the contract now covers gets the contract's note.
+	gap := DependencyDemand{Package: "github.com/jackc/pgx/v5", Ecosystem: "go", Capability: "db.postgres", Status: StatusGap}
+	if !reconcileContractDemand(forked, &gap) || gap.Notes != "kit.capabilities.yaml declares example.com/fork/kit/db for db.postgres" {
+		t.Fatalf("covered gap = %+v", gap)
 	}
 }

@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/cordanaLLM/praetor/internal/config"
 )
 
 // ContractExport is a framework snapshotted as a version-1 capability contract.
@@ -25,10 +26,9 @@ type ContractExport struct {
 // ExportFrameworkContract snapshots the framework a language's target resolves to as a
 // version-1 capability contract (`needs contract export`). The go framework is the index
 // source selects (SelectFrameworkSource); another language's framework is its target's
-// declared contract, else the built-in catalog entries inside its target's module. A
-// framework without a contract of its own carries the built-in catalog's claims for it, so
-// the export can be configured as framework.targets.<language>.contract in place of the
-// built-in data.
+// contract, else its module alone. The export carries every package, capability and claim
+// the index holds, so it can be configured as framework.targets.<language>.contract, or
+// serve a CI run that has no checkout.
 func ExportFrameworkContract(ctx context.Context, language string, source FrameworkSource, targets Targets) (*ContractExport, error) {
 	index, err := exportIndex(ctx, language, source, targets.For(language))
 	if err != nil {
@@ -50,135 +50,16 @@ func ExportFrameworkContract(ctx context.Context, language string, source Framew
 	return export, nil
 }
 
-// exportIndex builds the framework index an export renders.
+// exportIndex builds the framework index an export renders: the selected go framework, or
+// another language's target contract or module.
 func exportIndex(ctx context.Context, language string, source FrameworkSource, target Target) (*FrameworkIndex, error) {
-	if language == "go" {
-		index, err := InspectFramework(ctx, source)
-		if err != nil {
-			return nil, err
-		}
-		addGoCatalogClaims(index)
-		return index, nil
+	if _, err := config.ParseFrameworkLanguage(language); err != nil {
+		return nil, err
 	}
-	if target.Contract != "" {
-		return InspectFramework(ctx, FrameworkSource{Contract: target.Contract, Module: target.Module})
+	if language != "go" {
+		source = FrameworkSource{Contract: target.Contract, Module: target.Module}
 	}
-	catalog, ok := languageCatalog(language)
-	if !ok {
-		return nil, fmt.Errorf("unknown framework language %q", language)
-	}
-	return catalogFrameworkIndex(target.Module, languageEcosystem(language), catalog), nil
-}
-
-// beginCatalogClaims prepares the claim maps of an index that has no contract of its own.
-// It reports false for an index a contract already filled, whose claims are authoritative.
-func beginCatalogClaims(index *FrameworkIndex) bool {
-	if index.Contract != "" {
-		return false
-	}
-	index.Replacements = make(map[string][]string)
-	index.Adaptations = make(map[string][]string)
-	index.Wrappers = make(map[string][]string)
-	index.Tooling = make(map[string][]string)
-	return true
-}
-
-// addGoCatalogClaims records CanonicalCatalog's claims on the go framework's packages. A
-// declared index gains the packages the catalog names; an observed index keeps only the
-// packages its checkout provides, since an unobserved package is unavailable.
-func addGoCatalogClaims(index *FrameworkIndex) {
-	if !beginCatalogClaims(index) {
-		return
-	}
-	for _, entry := range CanonicalCatalog {
-		if entry.Relationship != nil && entry.Relationship.Kind == RelationshipFoundation {
-			// The catalog's foundations describe its own module only; reconciliation drops
-			// them for any other module (library_relationships.go, targets.go scopeRelationship),
-			// so an export for another module must not claim them either.
-			if catalogDescribes(index.CatalogModule) {
-				index.Foundations = appendUniqueStr(index.Foundations, entry.Package)
-			}
-			continue
-		}
-		claims := catalogClaims(index, entry.Status, entry.Relationship)
-		if claims == nil {
-			continue
-		}
-		if path, ok := catalogClaimPackage(index, catalogFrameworkPackage(entry), entry.Capability); ok {
-			key := contractNameKey(contractEcosystemGo, entry.Package)
-			claims[key] = appendUniqueStr(claims[key], path)
-		}
-	}
-}
-
-// catalogClaims selects the claim map a catalog entry belongs in: its relationship's, else
-// replaces for a covered entry and adapts for an adapter; a gap claims nothing.
-func catalogClaims(index *FrameworkIndex, status CapabilityStatus, relationship *LibraryRelationship) map[string][]string {
-	if relationship != nil {
-		if relationship.Kind == RelationshipTooling {
-			return index.Tooling
-		}
-		return index.Wrappers
-	}
-	switch status {
-	case StatusCovered:
-		return index.Replacements
-	case StatusAdapterAvailable:
-		return index.Adaptations
-	}
-	return nil
-}
-
-// catalogClaimPackage maps a catalog path onto the framework's package, adding it to a
-// declared index. It reports false for a path outside the catalog module and for a package
-// an observed checkout does not provide.
-func catalogClaimPackage(index *FrameworkIndex, catalogPath string, capability CapabilityKey) (string, bool) {
-	relative, ok := index.catalogRelative(catalogPath)
-	if !ok || relative == "" {
-		return "", false
-	}
-	path := index.Name + "/" + relative
-	if _, present := index.Packages[path]; !present && index.Basis == FrameworkSourceObserved {
-		return "", false
-	}
-	addObservedPackage(index, relative, []CapabilityKey{capability})
-	return path, true
-}
-
-// catalogFrameworkIndex declares a non-go framework from its language's built-in catalog:
-// every catalog replacement inside module is a package with its capabilities and claims.
-func catalogFrameworkIndex(module, ecosystem string, catalog map[string]CatalogMapping) *FrameworkIndex {
-	index := &FrameworkIndex{Name: module, CatalogModule: module, Version: declaredFrameworkVersion,
-		Basis: FrameworkCatalogDeclared, Ecosystem: ecosystem,
-		Packages: make(map[string]FrameworkPackage), Capabilities: make(map[CapabilityKey][]string)}
-	beginCatalogClaims(index)
-	if module == "" {
-		return index
-	}
-	for _, name := range slices.Sorted(maps.Keys(catalog)) {
-		mapping := catalog[name]
-		claims := catalogClaims(index, mapping.Status, nil)
-		if claims == nil || !matchesModuleBoundary(mapping.Replacement, module) {
-			continue
-		}
-		relative := strings.TrimPrefix(strings.TrimPrefix(mapping.Replacement, module), "/")
-		declareCatalogPackage(index, mapping.Replacement, relative, mapping.Capability)
-		key := contractNameKey(ecosystem, name)
-		claims[key] = appendUniqueStr(claims[key], mapping.Replacement)
-	}
-	return index
-}
-
-// declareCatalogPackage adds or extends one declared package of a catalog index.
-func declareCatalogPackage(index *FrameworkIndex, path, relative string, capability CapabilityKey) {
-	entry, ok := index.Packages[path]
-	if !ok {
-		domain, _, _ := strings.Cut(relative, "/")
-		entry = FrameworkPackage{ImportPath: path, Domain: domain}
-	}
-	entry.Capabilities = appendUniqueCap(entry.Capabilities, capability)
-	index.Packages[path] = entry
-	index.Capabilities[capability] = appendUniqueStr(index.Capabilities[capability], path)
+	return InspectFramework(ctx, source)
 }
 
 // contractFromIndex renders an index as a version-1 contract. Packages are in import order

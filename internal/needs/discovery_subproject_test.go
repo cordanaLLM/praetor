@@ -62,7 +62,7 @@ func TestFailedSubprojectKeepsRepositoryRow(t *testing.T) {
 	if err != nil || !slices.Equal(failedDirs(single.FailedSubprojects), []string{"examples/tmpl"}) {
 		t.Fatalf("ScanRepo = %+v, %v; want the row with examples/tmpl failed", single, err)
 	}
-	epic, err := GeneratePreMigrationEpic(ctx, repo, legacySource(""), nil)
+	epic, err := GeneratePreMigrationEpic(ctx, repo, acmeSource(""), nil)
 	if err != nil {
 		t.Fatalf("GeneratePreMigrationEpic() error = %v", err)
 	}
@@ -87,7 +87,7 @@ func TestFailedRootProjectFailsRepository(t *testing.T) {
 	if _, err := ScanRepo(context.Background(), repo, nil); err == nil {
 		t.Fatal("ScanRepo() succeeded on a malformed root manifest")
 	}
-	report, err := AggregateFleet(context.Background(), root, legacySource(""), nil)
+	report, err := AggregateFleet(context.Background(), root, acmeSource(""), nil)
 	if !errors.Is(err, ErrNoRepositoryScanned) || report.FailedRepositories != 1 {
 		t.Fatalf("AggregateFleet() failed=%d err=%v, want the root failure counted", report.FailedRepositories, err)
 	}
@@ -97,7 +97,7 @@ func TestFailedRootProjectFailsRepository(t *testing.T) {
 // while one sub-project scans (boundary: exactly one), named after the root; when none
 // scans the repository fails, and not as an ErrNoAnalyzer skip.
 func TestFailedSubprojectsUnderNonProjectRoot(t *testing.T) {
-	repo := filepath.Join(t.TempDir(), "vmafx")
+	repo := filepath.Join(t.TempDir(), "acme-native")
 	makeCheckout(t, repo)
 	writeRepoFile(t, filepath.Join(repo, "a", "package.json"), malformedPackageJSON)
 	writeRepoFile(t, filepath.Join(repo, "b", "meson.build"), "dep = dependency('zlib')\n")
@@ -106,7 +106,7 @@ func TestFailedSubprojectsUnderNonProjectRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ScanRepo() error = %v", err)
 	}
-	if row.Repository != "vmafx" || !slices.Equal(row.Subprojects, []string{"b"}) ||
+	if row.Repository != "acme-native" || !slices.Equal(row.Subprojects, []string{"b"}) ||
 		!slices.Equal(failedDirs(row.FailedSubprojects), []string{"a"}) {
 		t.Errorf("row = %s subprojects %v failed %+v", row.Repository, row.Subprojects, row.FailedSubprojects)
 	}

@@ -44,13 +44,12 @@ func CodifyHarvestedInventory(ctx context.Context, harvestPath string, targets T
 
 	results := make([]RepoNeeds, 0, len(items))
 	patchesDir := filepath.Join(harvestPath, "dev-patches")
-	resolved := targets.resolved()
 
 	for _, item := range items {
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		repoNeeds, codifyErr := codifySingleHarvestRepo(item, patchesDir, resolved)
+		repoNeeds, codifyErr := codifySingleHarvestRepo(item, patchesDir, targets)
 		if codifyErr != nil {
 			return nil, fmt.Errorf("failed to codify harvested repo %q: %w", item.Name, codifyErr)
 		}
@@ -130,7 +129,8 @@ func unsupportedHarvestRepo(repository string) RepoNeeds {
 
 // inferLanguageFromItem guesses a harvested repository's language. Dependencies already
 // extracted from its patch are the stronger signal and take precedence over the name.
-// Neither signal -> LanguageUnsupported, never a Go default (BUG-864).
+// Neither signal -> LanguageUnsupported, never a Go default (BUG-864). The name heuristic
+// matches generic words only; no repository is recognised by its own name.
 func inferLanguageFromItem(item HarvestRepoItem, patchDeps []string) string {
 	if lang := inferLanguageFromDeps(patchDeps); lang != "" {
 		return lang
@@ -138,11 +138,11 @@ func inferLanguageFromItem(item HarvestRepoItem, patchDeps []string) string {
 
 	nameLower := strings.ToLower(item.Name)
 	switch {
-	case strings.Contains(nameLower, "svelte") || nameLower == "pelorus":
+	case strings.Contains(nameLower, "svelte"):
 		return "typescript"
 	case strings.Contains(nameLower, "python") || isArrStackName(nameLower):
 		return "python"
-	case strings.Contains(nameLower, "ffmpeg") || nameLower == "vmafx" || strings.Contains(nameLower, "gpu"):
+	case strings.Contains(nameLower, "ffmpeg") || strings.Contains(nameLower, "gpu"):
 		return "native"
 	case strings.Contains(nameLower, "rust"):
 		return "rust"
@@ -332,45 +332,21 @@ func pythonImportModule(trimmed string) []string {
 	return []string{spec}
 }
 
-// mapInferredDependency maps a harvested package of lang onto the catalog; kit is the
-// language target's routing kit.
+// mapInferredDependency classifies a harvested package of lang; kit is the language
+// target's routing kit.
 func mapInferredDependency(pkg, lang, kit string) DependencyDemand {
 	switch lang {
 	case "typescript":
-		return mapNodeDependency(pkg, "latest", kit)
+		return nodeClassifier.classify(pkg, "latest", kit)
 	case "python":
-		return mapPythonDependency(pkg, "latest", kit)
+		return pythonClassifier.classify(pkg, "latest", kit)
 	case "rust":
-		return mapRustDependency(pkg, "latest", kit)
+		return rustClassifier.classify(pkg, "latest", kit)
 	case "native":
-		return mapNativeDependency(pkg, "latest", kit)
+		return nativeClassifier.classify(pkg, "latest", kit)
 	default:
-		return mapHarvestedGoDependency(pkg, kit)
-	}
-}
-
-// mapHarvestedGoDependency resolves a harvested Go import path against the catalog.
-func mapHarvestedGoDependency(pkg, kit string) DependencyDemand {
-	matched, found := MatchPackage(pkg)
-	if found {
-		return DependencyDemand{
-			Package:              pkg,
-			Language:             "go",
-			Ecosystem:            "go",
-			Capability:           matched.Capability,
-			Status:               matched.Status,
-			FrameworkReplacement: matched.FrameworkReplacement,
-			TargetBuilderKit:     kit,
-			Notes:                matched.Notes,
-		}
-	}
-	return DependencyDemand{
-		Package:          pkg,
-		Language:         "go",
-		Ecosystem:        "go",
-		Capability:       CapabilityKey("go.external." + cleanDepKey(pkg)),
-		Status:           StatusGap,
-		TargetBuilderKit: kit,
-		Notes:            "Harvested external dependency from patch diff",
+		demand := classifyGoDemand(pkg, "", "go.external.", "Harvested external dependency from patch diff")
+		demand.TargetBuilderKit = kit
+		return demand
 	}
 }
