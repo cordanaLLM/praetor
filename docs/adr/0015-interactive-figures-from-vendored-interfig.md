@@ -4,6 +4,11 @@
 
 Proposed — 2026-09-27.
 
+Amended 2026-09-27 by [ADR-0016](0016-figures-for-adopters.md) while still Proposed
+(`docs/adr/README.md`, rule 4). Each changed passage below says "Amended by ADR-0016" and names
+the ADR-0016 section; ADR-0016 lists them all. ADR-0016 §1 also moves the engine files into one
+`tools/figures/` tree. The paths in this record are the paths before that move.
+
 Number note: ADR-0013 is the container image and Helm chart record and ADR-0014 the
 operator-neutral defaults record, so this record takes 0015.
 
@@ -164,29 +169,40 @@ third_party/interfig/
     - `<slug>.json`: title, alt, the derived text description, evidence, `spec_sha256`,
       `engine {commit, sha256}`, `svg_sha256`, `static_sha256`, width, height, and normalized
       edges.
-  - The engine hash covers `svg.ts`, `geometry.ts`, `model.ts` and `build.mjs`.
+  - The engine hash covers `svg.ts`, `geometry.ts`, `model.ts` and `build.mjs`. Amended by
+    ADR-0016 §1: it covers the three vendored render files and `tools/figures/core.mjs`, so an
+    edit to the command-line wrapper no longer marks every figure stale.
   - In normalized edges, `{from, to, label}` carry box labels; an edge to a group expands to each
     box inside it.
   - There is one JSON file per slug and no shared manifest, so figure pull requests never
     collide.
-- **Bundle.** esbuild builds ES modules with splitting into `docs/assets/javascripts/figures/`.
-  That directory is gitignored and rebuilt in CI.
+- **Bundle.** esbuild builds ES modules with splitting. Amended by ADR-0016 §3:
+  `tools/figures/bundle.mjs` writes the generic player to `tools/figures/dist/`, which is
+  committed, rebuilt byte for byte by `bundle.mjs --check` on Linux, macOS and Windows, and
+  emitted to adopters. The first version wrote `docs/assets/javascripts/figures/`, gitignored and
+  rebuilt in CI.
   - `loader.js` is small and loaded on every page.
   - The player chunk holds React and interfig and is imported only when a figure nears the
     viewport.
-  - Each spec gets its own chunk, listed in a generated `registry.json`.
+  - Amended by ADR-0016 §3: there are no spec chunks and no `registry.json`. The loader reads
+    each figure's props from the `<metadata id="figure-spec">` of the SVG it replaces. The first
+    version gave each spec its own chunk, listed in a generated `registry.json`.
   - `nodePaths: ["tools/figures/node_modules"]` is required, because React cannot be resolved
     from `third_party/` otherwise.
   - A `--banner:js` adds the interfig MIT notice. React's `@license` comments are kept as legal
     comments at the end of the file.
-  - Size budget: at most 250 kB minified for the player chunk, enforced by `npm run check`.
+  - Size budget: at most 250 kB minified for the player chunk. Amended by ADR-0016 §3:
+    `bundle.mjs --check` enforces it; `build.mjs check` no longer bundles and needs no esbuild.
 - **Why the SVGs and JSON are committed:**
   - README and wiki need stable URLs.
   - The docs-only CI path verifies them by hash without Node.
   - A `mkdocs serve` without Node still shows every figure.
   - The output does not depend on npm versions, because `toSvg` has no dependencies.
-- **Why the JS bundle is not committed:** a dependency bump must not require committing
-  regenerated minified code.
+- **The JS bundle is committed.** Amended by ADR-0016 §3 (its operator decision 2). The first
+  version kept the bundle out of the tree so that a dependency bump would not require committing
+  regenerated minified code. Adopters now receive the player byte for byte from praetorctl, so
+  the bytes live in the tree; `bundle.mjs --check` rebuilds them from the pinned lock and
+  compares, which stands in for reading the minified code.
 
 ### 3. Authoring
 
@@ -232,6 +248,10 @@ export default {
   - `extra_javascript` with `assets/javascripts/figures/loader.js` as `type: module`;
   - `extra_css: [stylesheets/figures.css]`;
   - a credit line in `copyright`.
+
+  Amended by ADR-0016 §6: the hook adds the loader (as a module) and `figures.css` in
+  `on_config` and serves the committed player files in `on_files`, so a site's `mkdocs.yml` lists
+  only the hook and the `exclude_docs` entry, and nothing is copied into `docs_dir`.
 - **Hook.** The hook is thin. In `on_page_markdown` it calls
   `docs_diagrams.expand(markdown, page.url)`, which reuses the checker's fence scanner, so a fence
   nested in a longer fence is left alone. An unknown slug logs a warning, which fails
@@ -257,6 +277,9 @@ export default {
   - It watches each `figure.praetor-figure[data-figure]` with an `IntersectionObserver`, at most
     32 per page. When one nears the viewport it imports the player and renders `Flow` with
     `autoplay` off under reduced motion.
+  - Amended by ADR-0016 §3: the props come from the figure's own SVG. The loader fetches the
+    `<img>`'s `currentSrc` with a byte cap and the 10 s timeout, parses
+    `<metadata id="figure-spec">`, and takes the title from the `<figcaption>`.
   - The player replaces the `<picture>`. The caption and text description stay.
 - **Theme.** `docs/stylesheets/figures.css` maps each `--fig-*` variable to a Material variable
   (confirm the names against the installed mkdocs-material 9.7.7 CSS):
@@ -278,7 +301,11 @@ export default {
 
 - **No JavaScript.** Without JavaScript or the bundle, the `<picture>` stays: the animated SVG,
   or the static one under reduced motion. The caption and text description stay visible.
-- **One renderer.** `docs_diagrams.render_block(slug, base, link)` serves three callers:
+- **One renderer.** Amended by ADR-0016 §4: `tools/figures/core.mjs` renders the
+  `<figure><picture>` block and the `<details>` text description into each `<slug>.json` as
+  `html`, with `{{base}}` and `{{link}}` slots, and every caller only substitutes the slots. The
+  first version rendered in Python, in `docs_diagrams.render_block(slug, base, link)`. It serves
+  three callers:
   - the MkDocs hook, with a relative base;
   - the wiki: `scripts/sync_github_wiki.sh` runs
     `python3 -B scripts/docs_diagrams.py portable --base https://cordanallm.github.io/praetor/`
@@ -295,7 +322,10 @@ export default {
   - Not verified yet: whether GitHub honours `prefers-reduced-motion` on `<source>`, and whether
     it animates an SVG in a README. The fallback is readable either way.
 - **Adopters.** `praetorctl forge sync-wiki` writes the same praetor-engine pages in any
-  repository. Their fences resolve through `portable` against praetor's published SVGs.
+  repository. Amended by ADR-0016 §10: the first version said their fences resolve through
+  `portable` against praetor's published SVGs, but `internal/forge/wiki.go` writes a raw
+  ` ```figure ` fence and no Go code renders one. ADR-0016 §10 substitutes the JSON `html` and
+  writes the referenced SVGs from copies embedded in the binary.
 - **Colours.** The exported SVGs keep upstream's default palette, because `toSvg` takes its theme
   only from `opts.theme` and its dark block follows the operating system, not the site toggle.
   This is a known gap, offered upstream (6c).
@@ -349,7 +379,8 @@ One checker, per HISS-19:
     - the fence count equals the number of `figure.praetor-figure[data-figure]` elements;
     - every `img`/`source` URL resolves to a file under `site/`;
     - the page loads `loader.js`;
-    - `registry.json` lists every slug.
+    - every figure's SVG carries the `<metadata id="figure-spec">` the loader reads. Amended by
+      ADR-0016 §3; the first version checked that `registry.json` lists every slug.
 - **`docs_diagrams.py sources`** needs no site and no Node. It runs in verify-all and in the
   docs-only CI audit, and fails on:
   - a JSON hash that no longer matches its spec, the vendored engine files, `build.mjs` or the
@@ -421,7 +452,8 @@ bounded loops:
 
 ### 9. Migration
 
-14 sites become 10 specs. 13 sites convert; the MkDocs preset keeps Mermaid.
+14 sites become 10 specs. 13 sites convert. The first version kept Mermaid in the MkDocs preset;
+amended by ADR-0016 §9, the preset moves to figures with a neutral example figure of its own.
 
 | Spec | Sites | Anchors to read first |
 | :-- | :-- | :-- |
@@ -435,7 +467,7 @@ bounded loops:
 | `model-routing` | `docs/standards/model-routing-and-fanout.md` | `cmd/standardsctl/models_route.go`, `internal/router/` |
 | `forge-federation` (fact fix) | `docs/wiki/API-Reference.md` | `internal/forge/forge.go:50-64`, `gitlab.go`, `gitea.go` |
 | `verification-ladder` | `docs/wiki/HISS-Invariants.md`, `docs/wiki/HISS-Matrix.md` | `lefthook.yml`, `cmd/standards-lsp`, `internal/gating`, `forge validate-pr` |
-| stays Mermaid | `docs/presets/mkdocs/docs/index.md` | preset has its own build |
+| neutral example figure (amended by ADR-0016 §9) | `docs/presets/mkdocs/docs/index.md` | preset files only; built as an adopter fixture |
 
 - **Generated pages.** `internal/forge/wiki.go` emits ` ```figure ` fences for the generated
   pages, and `forge_test.go` expects them.
@@ -446,8 +478,10 @@ bounded loops:
   - page conversions and the sync automation, which touch disjoint files;
   - generated wiki pages, retiring Mermaid on the root site, and moving the preset example out of
     the root navigation (`exclude_docs: /presets/mkdocs/docs/`).
-- **After the migration**, a Mermaid fence in the root `docs/` fails the checker. The preset's
-  own build keeps Mermaid, because that build needs no Node.
+- **After the migration**, a Mermaid fence in the root `docs/` fails the checker. Amended by
+  ADR-0016 §9: the preset moves to figures as well. The first version kept Mermaid there because
+  the preset's build needs no Node; with the committed SVGs, the committed player and the Python
+  hook, it still needs none.
 
 ## License and credit obligations
 
@@ -477,8 +511,11 @@ is kept. This follows from the two license texts and is not legal advice.
 6. Credit Vectorize without implying endorsement and without Hindsight branding: a line in the
    site footer (`copyright` in `mkdocs.yml`), `docs/guides/figures.md`, `VENDOR.md` and this
    record. Neither `figures/` nor the demo or export tooling is vendored.
-7. Any copy handed to adopters through `docs/presets/` carries the LICENSE. Nothing is copied
-   there today, and presets are not embedded in the binary.
+7. Any copy handed to adopters carries the LICENSE. Amended by ADR-0016 §11: copies reach
+   adopters through `praetorctl adopt` under the `docs:seo-portal` facet, with `upstream/LICENSE`
+   verbatim and `dist/THIRD-PARTY-LICENSES.txt` beside the player. The first version named
+   `docs/presets/` as the only channel; presets stay reference directories and are not embedded
+   in the binary.
 
 ## Alternatives considered
 
@@ -523,8 +560,8 @@ Registry facts were read from npm on 2026-09-26.
 
 ### Neutral
 
-- The MkDocs preset keeps Mermaid for adopters. Offering figures to adopters is a separate
-  decision.
+- Offering figures to adopters was left to a separate decision, with Mermaid kept in the MkDocs
+  preset meanwhile. Amended by ADR-0016, which makes that decision.
 - Five generated wiki pages emit ` ```figure ` fences, and the wiki sync turns them into portable
   blocks.
 
@@ -534,7 +571,7 @@ Registry facts were read from npm on 2026-09-26.
 node --test third_party/interfig/upstream/src/*.test.ts
 make docs-figures-check   # npm ci, tests, typecheck, check, sources
 make docs-diagrams-test
-npm --prefix tools/figures run bundle   # the player bundle is gitignored; site needs it
+npm --prefix tools/figures run bundle   # amended by ADR-0016 §3: committed; bundle.mjs --check rebuilds it
 mkdocs build --strict -d site
 python3 -B scripts/docs_diagrams.py site --config mkdocs.yml --docs docs --site site
 npm --prefix tools/figures run smoke
