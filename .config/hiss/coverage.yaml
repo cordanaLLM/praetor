@@ -103,6 +103,28 @@ rules:
   - id: HISS-02
     title: Bounded Loops and I/O Timeouts
     coverage:
+      - language: go
+        state: partial
+        mechanism: >-
+          internal/hiss go_ast.go checkUnboundedFor for loops; go_io.go checkContextSink and
+          checkContextlessIO for I/O, with package names resolved through go_imports.go
+        rationale: >-
+          A for statement without a condition is reported. Outside test files and main.main, a
+          context without a deadline reaching any call is reported: context.Background or
+          context.TODO, directly or through a local variable, a WithCancel, WithValue or
+          signal.NotifyContext derivation of one, and context.WithoutCancel of any context. A
+          WithTimeout or WithDeadline derivation, the caller's context parameter and a local
+          whose block has closed are not reported. exec.Command, net.Dial, DialTCP, DialUDP,
+          DialIP, DialUnix and http.Get, Head, Post, PostForm and NewRequest are reported as
+          calls that take no context, through an alias or a dot import, unless a local shadows
+          the package name; net.DialTimeout is bounded by its own timeout. The language
+          server's loop diagnostic reads the same table (ResolveContextlessCall). gap/ keeps
+          what needs types or whole-package data flow: a context returned by a helper, held by
+          a package variable or kept in a field, a method without a context such as
+          http.Client.Get or net.Dialer.Dial, and file I/O whose API takes no context. Measured
+          with golangci-lint 2.14.0 on these fixtures: noctx reports the context-less calls
+          with types and also http.Client.Get, contextcheck reports none of them, and neither
+          reports a deadline-free context, net.Dialer.Dial or os.ReadFile.
       - language: c
         state: partial
         mechanism: internal/hiss rules.go nativeUnboundedLoop
@@ -202,7 +224,10 @@ rules:
           decides that case with types in the same gate. The abort policy (owner decision
           Q-014) reports panic and os.Exit, including os.Exit through an alias or dot import,
           outside test files and main.main; os.Exit passed as a value is not a call and is not
-          reported. log.Fatal and the other wrappers that exit are held as a gap.
+          reported. log.Fatal and the other wrappers that exit are held as a gap. Measured with
+          golangci-lint 2.14.0 and this repository's .golangci.yml: errcheck reports
+          gap/bare-call.go as 'Error return value of os.Remove is not checked' and leaves
+          gap/log-fatal.go unreported.
       - language: rust
         state: partial
         mechanism: >-
@@ -348,7 +373,7 @@ rules:
           Go toolchain go.sum verification, reached by go build/go test ./... in make test (a
           verify-all prerequisite). NOT internal/hiss (no HISS-11 rule exists), NOT golangci-lint
           (.golangci.yml enables no supply-chain linter), NOT semgrep
-          (.config/semgrep/hiss-invariants.yml has 6 rules, none HISS-11), and NOT the gate:
+          (.config/semgrep/hiss-invariants.yml has 5 rules, none HISS-11), and NOT the gate:
           internal/gating.VerifyLockfiles, called by the stage named 'Prefetch & Lockfiles', only
           stats .standards.
         rationale: >-

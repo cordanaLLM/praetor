@@ -1,0 +1,2 @@
+type: added
+title: 'The Go HISS scanner enforces the I/O half of HISS-02: outside tests and main.main it reports a context without a deadline reaching a call (context.Background or TODO, a WithCancel, WithValue or signal.NotifyContext derivation of one, or WithoutCancel) and the context-less exec.Command, net.Dial and http.Get families, the language server''s loop diagnostic reads the same call table, and every CLI and library context the rule found now carries a deadline; adopters may see new HISS-02 findings'

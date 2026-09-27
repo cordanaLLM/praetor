@@ -41,7 +41,7 @@ var catalog = []Rule{
 		ID:            "HISS-02",
 		Title:         "Loops & I/O - Bounded Loops & Mandatory I/O Timeouts",
 		Specification: "Every loop construct must possess a statically verifiable scalar upper bound: iterations(L) <= N_max.\nUnbounded loops without counter termination are banned. All I/O operations must accept and enforce explicit context.Context deadlines.",
-		Enforcement:   "Semgrep rules and AST sweep.",
+		Enforcement:   "The internal/hiss scanner, deciding a subset per language. Go: a for statement without a condition, a context without a deadline reaching a call, and the context-less exec.Command, net.Dial and http.Get families, outside tests and main.main. Rust, Python and C: unbounded loop shapes only. Each claim replays against .config/hiss/coverage.yaml via 'praetorctl hiss coverage --verify'.",
 		FailureAction: "Pre-commit and CI blocker.",
 	},
 	{

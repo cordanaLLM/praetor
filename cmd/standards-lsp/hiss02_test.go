@@ -118,6 +118,69 @@ func TestHISS02_Boundary_EmptyFileAndUnboundedFor(t *testing.T) {
 	}
 }
 
+// The loop diagnostic reads the audit's table of context-less calls (internal/hiss), so it
+// resolves packages through the file's imports exactly as `praetorctl audit` does.
+func TestHISS02_Positive_AliasedContextFreeIOInsideLoopIsFlagged(t *testing.T) {
+	src := `package sample
+
+import (
+	web "net/http"
+	. "os/exec"
+)
+
+func Fetch(urls []string) {
+	for _, u := range urls {
+		_, _ = web.Get(u)
+		_ = Command("git", "status")
+	}
+}
+`
+	messages := hiss02Messages(t, src)
+	if !containsSubstring(messages, "I/O call http.Get inside loop") {
+		t.Errorf("expected the aliased http.Get to be reported under its standard name, got %v", messages)
+	}
+	if !containsSubstring(messages, "I/O call exec.Command inside loop") {
+		t.Errorf("expected the dot-imported exec.Command to be reported, got %v", messages)
+	}
+}
+
+func TestHISS02_Negative_SameSpellingFromAnotherPackageIsNotFlagged(t *testing.T) {
+	src := `package sample
+
+import "example.com/exec"
+
+func Run(names []string) {
+	for _, n := range names {
+		_ = exec.Command(n)
+	}
+}
+`
+	if messages := hiss02Messages(t, src); len(messages) != 0 {
+		t.Errorf("a package spelled exec that is not os/exec must not be reported, got %v", messages)
+	}
+}
+
+func TestHISS02_Boundary_DialTimeoutInsideLoopCarriesItsOwnBound(t *testing.T) {
+	src := `package sample
+
+import (
+	"net"
+	"time"
+)
+
+func Probe(addrs []string) {
+	for _, a := range addrs {
+		_, _ = net.DialTimeout("tcp", a, time.Second)
+		_, _ = net.Dial("tcp", a)
+	}
+}
+`
+	messages := hiss02Messages(t, src)
+	if len(messages) != 1 || !containsSubstring(messages, "I/O call net.Dial inside loop") {
+		t.Errorf("want net.Dial reported and net.DialTimeout left alone, got %v", messages)
+	}
+}
+
 func TestReadHeaderLine_3D(t *testing.T) {
 	srv := NewServer(strings.NewReader("Content-Length: 2\r\n"), &strings.Builder{}, "")
 	line, err := srv.readHeaderLine()

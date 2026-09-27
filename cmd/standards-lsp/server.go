@@ -493,7 +493,7 @@ func (s *Server) AnalyzeGoSource(uri, code string) ([]Diagnostic, error) {
 	}
 	diags = append(diags, s.checkHISS04Complexity(fset, file)...)
 	diags = append(diags, s.checkHISS01DAG(fset, nodes)...)
-	diags = append(diags, s.checkHISS02BoundedLoops(fset, nodes)...)
+	diags = append(diags, s.checkHISS02BoundedLoops(fset, nodes, hiss.FileImports(file))...)
 	if !strings.HasSuffix(uri, "_test.go") {
 		diags = append(diags, s.checkHISS07Errors(fset, nodes)...)
 	}
@@ -604,13 +604,14 @@ func (s *Server) checkHISS01DAG(fset *token.FileSet, nodes []ast.Node) []Diagnos
 	return diags
 }
 
-// checkHISS02BoundedLoops verifies loops have bounds and timeout context on I/O.
+// checkHISS02BoundedLoops verifies loops have bounds and timeout context on I/O. imports
+// are the file's, through which a call's package is resolved.
 //
 // Three loop shapes carry no statically verifiable scalar bound and are reported:
 // `for {}`, a condition-only loop such as `for scanner.Scan()` or `for !done`, and a
 // range with neither key nor value such as `for range ticker.C`. A three-clause `for` with a condition and a range that binds an index or element
 // are not flagged; a missing condition is unbounded even with initialization or post steps.
-func (s *Server) checkHISS02BoundedLoops(fset *token.FileSet, nodes []ast.Node) []Diagnostic {
+func (s *Server) checkHISS02BoundedLoops(fset *token.FileSet, nodes []ast.Node, imports hiss.GoImports) []Diagnostic {
 	var diags []Diagnostic
 	limit := len(nodes)
 
@@ -620,13 +621,13 @@ func (s *Server) checkHISS02BoundedLoops(fset *token.FileSet, nodes []ast.Node) 
 			if msg := unboundedForMessage(loop); msg != "" {
 				diags = append(diags, s.loopDiagnostic(fset, loop, msg))
 			}
-			diags = append(diags, s.checkLoopIOCalls(fset, loop.Body)...)
+			diags = append(diags, s.checkLoopIOCalls(fset, loop.Body, imports)...)
 		case *ast.RangeStmt:
 			if loop.Key == nil && loop.Value == nil {
 				diags = append(diags, s.loopDiagnostic(fset, loop,
 					"Range loop without key or value (for example over a channel or ticker) carries no statically verifiable scalar bound (HISS-02)"))
 			}
-			diags = append(diags, s.checkLoopIOCalls(fset, loop.Body)...)
+			diags = append(diags, s.checkLoopIOCalls(fset, loop.Body, imports)...)
 		}
 	}
 	return diags
@@ -658,7 +659,7 @@ func (s *Server) loopDiagnostic(fset *token.FileSet, loop ast.Node, message stri
 	}
 }
 
-func (s *Server) checkLoopIOCalls(fset *token.FileSet, body *ast.BlockStmt) []Diagnostic {
+func (s *Server) checkLoopIOCalls(fset *token.FileSet, body *ast.BlockStmt, imports hiss.GoImports) []Diagnostic {
 	if body == nil {
 		return nil
 	}
@@ -671,93 +672,17 @@ func (s *Server) checkLoopIOCalls(fset *token.FileSet, body *ast.BlockStmt) []Di
 		if !ok {
 			continue
 		}
-
-		sel, isSel := call.Fun.(*ast.SelectorExpr)
-		if !isSel {
+		// The table of context-less standard-library I/O calls is the audit's own
+		// (internal/hiss go_io.go), so the editor and `praetorctl audit` cannot disagree
+		// about which call needs a context-aware replacement (HISS-19).
+		found, unbounded := hiss.ResolveContextlessCall(imports, call.Fun)
+		if !unbounded {
 			continue
 		}
-
-		pkgIdent, isPkg := sel.X.(*ast.Ident)
-		if !isPkg {
-			continue
-		}
-
-		alternative, unbounded := contextFreeIOCall(pkgIdent.Name, sel.Sel.Name)
-		// Before reporting a missing deadline, the call is actually inspected for a
-		// context: a ...Context variant or a context argument satisfies HISS-02.
-		if !unbounded || callCarriesContext(call) {
-			continue
-		}
-		pos := fset.Position(call.Pos())
-		end := fset.Position(call.End())
-		diags = append(diags, Diagnostic{
-			Range: Range{
-				Start: Position{Line: pos.Line - 1, Character: pos.Column - 1},
-				End:   Position{Line: end.Line - 1, Character: end.Column - 1},
-			},
-			Severity: 1,
-			Code:     "HISS-02",
-			Source:   "standards-lsp",
-			Message: fmt.Sprintf("I/O call %s.%s inside loop carries no context deadline; use %s (HISS-02)",
-				pkgIdent.Name, sel.Sel.Name, alternative),
-		})
+		diags = append(diags, s.newDiagnostic(fset, call, 1, "HISS-02",
+			fmt.Sprintf("I/O call %s inside loop carries no context deadline; use %s (HISS-02)", found.Name, found.Replacement)))
 	}
 	return diags
-}
-
-// contextFreeIOCall reports package-level I/O entry points that have no context and do
-// have a context-carrying alternative, together with that alternative. Calls without any
-// context-aware form (os.ReadFile, for instance) are deliberately absent: reporting them
-// would be noise, because there is nothing the author could write instead.
-func contextFreeIOCall(pkg, method string) (alternative string, unbounded bool) {
-	switch pkg {
-	case "http":
-		if method == "Get" || method == "Post" || method == "Head" || method == "PostForm" {
-			return "http.NewRequestWithContext with an explicit client timeout", true
-		}
-	case "net":
-		if strings.HasPrefix(method, "Dial") && !strings.HasSuffix(method, "Context") {
-			return "net.Dialer.DialContext", true
-		}
-	case "exec":
-		if method == "Command" {
-			return "exec.CommandContext", true
-		}
-	}
-	return "", false
-}
-
-// callCarriesContext reports whether a call is context-aware: either it is a ...Context
-// variant, or one of its arguments is a context value.
-func callCarriesContext(call *ast.CallExpr) bool {
-	if sel, ok := call.Fun.(*ast.SelectorExpr); ok && strings.HasSuffix(sel.Sel.Name, "Context") {
-		return true
-	}
-	for _, arg := range call.Args {
-		if exprIsContext(arg) {
-			return true
-		}
-	}
-	return false
-}
-
-func exprIsContext(expr ast.Expr) bool {
-	switch e := expr.(type) {
-	case *ast.Ident:
-		return e.Name == "ctx" || e.Name == "context"
-	case *ast.SelectorExpr:
-		inner, ok := e.X.(*ast.Ident)
-		return ok && inner.Name == "context"
-	case *ast.CallExpr:
-		sel, ok := e.Fun.(*ast.SelectorExpr)
-		if !ok {
-			return false
-		}
-		inner, isIdent := sel.X.(*ast.Ident)
-		return isIdent && inner.Name == "context"
-	default:
-		return false
-	}
 }
 
 // checkHISS07Errors flags results discarded wholesale (`_ = f()`), empty error
