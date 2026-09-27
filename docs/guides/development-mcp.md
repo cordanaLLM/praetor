@@ -404,8 +404,15 @@ A tool call and the CLI therefore check and write the same things:
   writes themselves, such as a full disk, or a target changed between the
   check and the write: the writer applies the same refusals again when it
   reaches each file, but the files written before a refusal stay written.
+- Before a write, both check that the running engine matches the engine checkout they
+  write into (`workstation.CheckBuildCurrent`, `internal/workstation/freshness.go`). An
+  installed server or CLI built from an older revision refuses the write with
+  `engine build does not match this checkout` instead of rendering its own stale text into
+  `AGENTS.md` and the vendor files; `verify_only` is never refused. The rules are in
+  [the engine build check](workstation-update.md#engine-build-check).
 
 Tests: `cmd/standards-mcp/server_projection_test.go`,
+`cmd/standards-mcp/compile_context_engine_test.go`,
 `TestCompileContextRejectsSymlinkedOutputDescendants` and
 `TestCompileContextWritesRealOutputDescendants` in
 `cmd/standards-mcp/server_path_test.go`, `internal/compiler/output_paths_test.go`,

@@ -31,7 +31,7 @@ checkout>` (HISS-19 — the atomic install exists in one place, not two). See
 ## `workstation install`
 
 ```text
-praetorctl workstation install --source PATH [--bin-dir PATH] [--manifest PATH]
+praetorctl workstation install --source PATH [--bin-dir PATH] [--manifest PATH] [--if-stale]
                                 [--fleet-config PATH] [--workstation-config PATH]
 ```
 
@@ -41,6 +41,7 @@ praetorctl workstation install --source PATH [--bin-dir PATH] [--manifest PATH]
 | `--bin-dir` | Destination directory. Default: the loaded `update.bin_dir` setting, else the per-OS default. |
 | `--manifest` | Install manifest path. Default: the per-user configuration directory (below). |
 | `--fleet-config`, `--workstation-config` | Layered settings documents (see [effective policy](effective-policy.md#which-documents-the-hook-client-and-workstation-commands-use)). Loading one requires `--source` to be a governed checkout (it carries the `.standards.yaml` the loader reads). Neither is required: a plain `install --source .` never touches a settings document. |
+| `--if-stale` | Refresh an existing install only when it lags `--source`; otherwise install nothing and print why. See [Refresh a lagging install](#refresh-a-lagging-install). |
 
 Steps, in order (`internal/workstation/install.go`):
 
@@ -82,8 +83,72 @@ Prints one JSON object (`internal/workstation/status.go`):
 | `installed`, `manifest` | Whether a manifest exists at `--manifest`, and its contents when it does. |
 | `manifest_sha256` | Digest of the manifest file itself, for external tooling to reference an exact reported state. |
 | `checkout_head`, `up_to_date` | `--source`'s current commit, and whether it equals the installed `engine_commit`. Omitted when `--source` is not given. |
+| `commits_behind` | How many commits `--source`'s HEAD is ahead of the installed `engine_commit`: `0` at HEAD. Omitted when `--source` is not given, and when the installed commit is not an ancestor of HEAD or not in the checkout at all (`workstation.InstallLag`, `internal/workstation/refresh.go`). |
 | `lock_held` | Whether an installation lock is currently held in the bin directory (`--bin-dir`, or the manifest's own `bin_dir` when not given). Status never takes the lock itself. |
 | `clients` | Per-client configuration-root presence, resolved through C1 (`internal/clientsetup/roots.go`, `clientsetup.Root`). Every known client has a root entry; a client whose resolution fails, for example a relocation variable naming a missing directory, reports a stated reason instead of a false negative; `--home` selects a foreign home directory for this resolution, the same override `harvest bundle --home` uses. |
+
+## Refresh a lagging install
+
+Client wrappers and agent hooks run the installed `praetorctl`, not the checkout's build, so
+an install left at an old commit keeps serving old behavior after the checkout moves on.
+`workstation install --if-stale` refreshes it (`workstation.Refresh`,
+`internal/workstation/refresh.go`):
+
+```bash
+praetorctl workstation install --source /path/to/praetor/checkout --if-stale
+```
+
+It rebuilds only when every condition holds, checked in this order, and otherwise installs
+nothing and prints the first reason that failed:
+
+1. `--source` declares the running engine's own module in its `go.mod`. Any other checkout
+   is skipped before the manifest or a settings document is read.
+2. An install manifest exists (`--manifest`, else the default path). A refresh never makes
+   a first install.
+3. The checkout is on the update branch: `update.branch` from the selected operator
+   settings, `main` by default ([effective policy](effective-policy.md)).
+4. The installed `engine_commit` is a strict ancestor of the checkout HEAD, so a refresh
+   never downgrades or moves sideways.
+5. No tracked file is modified. Untracked files do not block a refresh.
+
+A refresh installs into the manifest's `bin_dir` unless `--bin-dir` names another, and
+records the same settings documents again unless `--fleet-config` or `--workstation-config`
+names another; the environment variables are not consulted, so a refresh reinstalls what was
+installed. It prints one JSON object: `refreshed`, `reason`, `commits_behind` and, after a
+rebuild, `install` (the same report `install` prints).
+
+This repository's `post-merge` hook runs it after every merge
+(`refresh_install` in `.config/lefthook/scripts/hooks.py`, see [Git hooks](git-hooks.md)): a
+skip prints nothing, a rebuild prints one line. A native scheduler can run the same command.
+
+## Engine build check
+
+`praetorctl compile-context` and the MCP `standards_compile_context` write refuse to write
+when the running engine does not match the engine checkout they write into
+(`workstation.CheckBuildCurrent`, `internal/workstation/freshness.go`). Without it, a client
+wrapper that runs `praetorctl compile-context` at session start with a lagging install
+rewrote the `AGENTS.md` register block and every vendor file with that install's older text.
+
+The check applies only when the target directory's `go.mod` declares the binary's own main
+module and the binary carries Go's VCS stamp (`praetorctl version`). Every other repository,
+and a `go run` build, which compiles the checkout on the spot, is not judged. A stamped build
+matches when:
+
+- it is a clean build and no non-test `.go` file, `go.mod` or `go.sum` differs between its
+  revision and the working tree, committed or untracked; or
+- it was built from a modified tree (`-dirty`), its executable lies inside the checkout (for
+  example `bin/praetorctl`), and every changed input is older than the executable.
+
+Anything else fails with one line naming the build, the reason, and the command that writes
+with the checkout's own compiler:
+
+```text
+compile-context wrote nothing: engine build does not match this checkout: build 0123456789ab lacks 3 changed Go build inputs (first internal/compiler/render.go); rebuild bin/praetorctl from the checkout or run go run ./cmd/standardsctl compile-context
+```
+
+`compile-context --verify` and `verify_only` never write and are never refused. Tests:
+`internal/workstation/freshness_test.go`, `cmd/standardsctl/compile_context_engine_test.go`,
+`cmd/standards-mcp/compile_context_engine_test.go`.
 
 ## The install manifest
 
@@ -103,6 +168,7 @@ manifest recorded (rejected if the file's digest no longer matches — `config.S
 ## Not yet implemented
 
 `workstation update`, `workstation rollback` and `workstation schedule render` land in
-later changes. Until then, refresh an install by running `workstation install` again
-with the same `--bin-dir`: the manifest records the prior commit and a backup for the
-next command to build a rollback on top of.
+later changes. Until then, refresh an install with `workstation install --if-stale`
+([above](#refresh-a-lagging-install)) or by running `workstation install` again with the
+same `--bin-dir`: the manifest records the prior commit and a backup for the next command
+to build a rollback on top of.
