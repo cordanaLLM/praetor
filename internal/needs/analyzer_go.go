@@ -34,7 +34,7 @@ func (a *GoAnalyzer) Analyze(ctx context.Context, repoPath string, target Target
 		return nil, ctx.Err()
 	}
 
-	modulePath, goVer, directDeps, err := parseGoMod(filepath.Join(repoPath, "go.mod"))
+	module, err := parseGoMod(filepath.Join(repoPath, "go.mod"))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse go.mod: %w", err)
 	}
@@ -42,12 +42,12 @@ func (a *GoAnalyzer) Analyze(ctx context.Context, repoPath string, target Target
 	// The module path is only a valid import prefix when go.mod actually declares one;
 	// the directory base name is a display fallback, never an import-classification
 	// prefix (a directory called "go" would swallow every golang.org/x import).
-	repoName := modulePath
+	repoName := module.modulePath
 	if repoName == "" {
 		repoName = filepath.Base(filepath.Clean(repoPath))
 	}
 
-	astImports, err := scanASTImports(ctx, repoPath, modulePath)
+	astImports, err := scanASTImports(ctx, repoPath, module.modulePath, module.ignore)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan AST imports: %w", err)
 	}
@@ -57,13 +57,13 @@ func (a *GoAnalyzer) Analyze(ctx context.Context, repoPath string, target Target
 		Repository:   repoName,
 		Language:     "go",
 		Languages:    []string{"go"},
-		GoVersion:    goVer,
+		GoVersion:    module.goVersion,
 		Capabilities: CapabilityDeclaration{Required: make([]CapabilityKey, 0), Optional: make([]CapabilityKey, 0)},
 		Dependencies: make([]DependencyDemand, 0),
 		UpdatedAt:    time.Now().UTC(),
 	}
 
-	buildDependencyDemands(directDeps, astImports, repoNeeds)
+	buildDependencyDemands(module.directDeps, astImports, repoNeeds)
 	target.applyTo(repoNeeds)
 	if declErr := loadExistingDeclarations(ctx, repoPath, repoNeeds); declErr != nil {
 		return nil, fmt.Errorf("failed to load existing declarations: %w", declErr)

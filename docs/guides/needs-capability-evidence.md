@@ -398,14 +398,17 @@ the command rather than returning a partial fleet (`TestDiscoverFleetBounds`).
 
 Inside a Go project, the import scan applies the skips the go command applies
 when it expands `./...` (`go help packages`): `vendor/` and `testdata/`,
-directories and files whose names begin with `_` or `.`, and directories that
-hold their own `go.mod` (`TestScanASTImportsSkipsGoToolIgnoredSources`,
-`TestScanASTImportsStopsAtNestedModules` in `internal/needs`). Praetor adds
+directories and files whose names begin with `_` or `.`, directories that
+hold their own `go.mod`, and directories the module's `go.mod` `ignore`
+directives (Go 1.25+) name: a `./`-prefixed path below the module root only, any
+other path at every depth, each with everything inside it
+(`TestScanASTImportsSkipsGoToolIgnoredSources`,
+`TestScanASTImportsStopsAtNestedModules`,
+`TestGoAnalysisHonoursGoModIgnoreDirectives` in `internal/needs`;
+`gomanifest.IgnoreSet` applies the go command's matching rule). Praetor adds
 skips of its own: a nested checkout, which is a fleet repository with its own
 demand even without a `go.mod`, `node_modules/`, and `scratch/` and `cache/`
-directly under the scan root. The scan does not honour `ignore` directives in
-`go.mod`, so a directory the go command ignores that way is still scanned. It
-visits at most 1,000,000 entries and fails beyond that rather than returning a
+directly under the scan root. It visits at most 1,000,000 entries and fails beyond that rather than returning a
 partial import set (`TestScanASTImportsBoundaryEntryLimit`). `go.mod` is read
 through `internal/gomanifest`: a trailing comment never becomes part of the
 module path or Go version, any white space may follow the `module` or `go`

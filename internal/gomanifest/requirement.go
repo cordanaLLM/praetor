@@ -10,6 +10,15 @@ import (
 // RequirementLine advances require-block state and identifies a dependency line.
 // Block delimiters are consumed; a single-line require has its keyword removed.
 func RequirementLine(raw string, inBlock *bool) (string, bool) {
+	return blockDirectiveLine(raw, "require", inBlock)
+}
+
+// blockDirectiveLine advances the block state of one go.mod directive that may be written
+// on one line ("keyword arg") or as a block ("keyword (" ... ")"), and identifies a line
+// carrying that directive's arguments. Block delimiters, blank lines and comment lines are
+// consumed; a single-line directive has its keyword removed. A nil state identifies
+// nothing. RequirementLine, ReplaceLine and IgnoreLine share it.
+func blockDirectiveLine(raw, keyword string, inBlock *bool) (string, bool) {
 	if inBlock == nil {
 		return "", false
 	}
@@ -17,7 +26,7 @@ func RequirementLine(raw string, inBlock *bool) (string, bool) {
 	if line == "" || strings.HasPrefix(line, "//") {
 		return "", false
 	}
-	if strings.HasPrefix(line, "require (") {
+	if strings.HasPrefix(line, keyword+" (") {
 		*inBlock = true
 		return "", false
 	}
@@ -25,7 +34,7 @@ func RequirementLine(raw string, inBlock *bool) (string, bool) {
 		*inBlock = false
 		return "", false
 	}
-	return strings.TrimPrefix(line, "require "), *inBlock || strings.HasPrefix(line, "require ")
+	return strings.TrimPrefix(line, keyword+" "), *inBlock || strings.HasPrefix(line, keyword+" ")
 }
 
 // indirectMarker is the comment word the go command writes after a requirement that no

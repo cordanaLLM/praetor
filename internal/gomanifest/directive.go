@@ -66,22 +66,7 @@ func directiveArgument(line, keyword string) (string, bool) {
 // same way RequirementLine does for require lines. Block delimiters are consumed; a
 // single-line replace has its keyword removed.
 func ReplaceLine(raw string, inBlock *bool) (string, bool) {
-	if inBlock == nil {
-		return "", false
-	}
-	line := strings.TrimSpace(raw)
-	if line == "" || strings.HasPrefix(line, "//") {
-		return "", false
-	}
-	if strings.HasPrefix(line, "replace (") {
-		*inBlock = true
-		return "", false
-	}
-	if *inBlock && line == ")" {
-		*inBlock = false
-		return "", false
-	}
-	return strings.TrimPrefix(line, "replace "), *inBlock || strings.HasPrefix(line, "replace ")
+	return blockDirectiveLine(raw, "replace", inBlock)
 }
 
 // ReplaceDirective is one go.mod replace directive: "OldPath[ OldVersion] =>
