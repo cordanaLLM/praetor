@@ -315,11 +315,19 @@ cases are replayed in [`internal/util/git_status_test.go`](https://github.com/co
 ### A HISS rejection names the violations
 
 The gate's HISS stage rejects on the same ratchet as `praetorctl audit`, and both render the
-rejection with `baseline.RatchetResult.Describe`
+rejection with `baseline.RatchetResult.Summary`
 ([`internal/baseline/baseline.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/baseline/baseline.go)): the counts, then up to
 three new and three touched-file violations as `[rule] file:line - message`. The stage previously
 reported only `hiss ratchet failed: N infractions (M new, baseline B)`, so a blocked push named no
 file to open.
+
+A ratchet can also fail with both lists empty: every violation matches a baselined fingerprint
+and no file was touched, yet the total rose above the baseline's. `RatchetResult.CountRegressed`
+marks that case, and `Summary` names both totals (`total infractions rose from 5 to 7 (no new
+fingerprints)`) rather than a listing that reads as zero new violations. The `standards_audit`
+MCP tool and the dogfood public-checkout verification render their rejections through the same
+method (`TestEvaluateRatchet_CountRegressed_3D` and `FuzzBaselineRatchet` in
+`internal/baseline`).
 
 ### The HISS stage scans with the audit's function-length limit
 

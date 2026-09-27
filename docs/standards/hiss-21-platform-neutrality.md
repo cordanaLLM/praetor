@@ -112,7 +112,10 @@ that action reports, rather than by name. Both pins serve this invariant directl
 output is whether a result differs across platforms, so a tool free to resolve to a different
 version on a different leg makes an upstream release indistinguishable from the portability defect
 the job exists to report. A linter that is pinned on one leg and floating on another is not a
-narrower gate, it is a gate whose red runs cannot be attributed.
+narrower gate, it is a gate whose red runs cannot be attributed. The `gosec` the security-scope
+suite needs is installed on every leg from `tools/go/go.mod`
+(`go install -modfile=tools/go/go.mod github.com/securego/gosec/v2/cmd/gosec`), the one version
+source the Makefile and the CI and security workflows also read.
 
 The driver exists because the suites' exit codes are not a sufficient pass condition. It
 requires that every suite exited zero **and** that at least `--min-executed` tests actually ran,

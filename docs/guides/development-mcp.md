@@ -315,6 +315,9 @@ with the production extractor. The form rules are in the
 ### Shared audit authority and parity
 
 The `standards_audit` tool executes the same gates as CLI `standardsctl audit`.
+A failing HISS ratchet reports `[FAIL]` followed by `baseline.RatchetResult.Summary`, the
+rejection text `praetorctl audit` and the gate print: new and touched-file violations by rule,
+file and line, or both totals when only the count rose.
 Both tools share the same authority implementations for artifact checks. When
 verifying branch protection rulesets, `standards_audit` consults
 `adopt.AuditBranchProtectionWithPolicy` with the effective policy it resolved

@@ -588,6 +588,14 @@ the last is reported for manual review (`internal/topology/containers_test.go`).
 `praetorctl adopt` refuses a dev-root folder with a built-in name or a child repository as
 an organisation directory (`internal/adopt/validate.go`).
 
+Without a root, `topology audit` falls back to `<home>/dev`. With `--skip-unconfigured` it
+audits only a root that `--dev-root`, a positional argument, `PRAETOR_DEV_ROOT` or
+`PRAETOR_DEV_DIR` names, and otherwise prints a `[SKIP]` line saying why. `make
+topology-audit` runs it that way, so `make verify-all` never judges whatever sits in a
+contributor's `<home>/dev` and passes the same on every machine; set `PRAETOR_DEV_ROOT` to audit
+your workstation there (`TestTopologyAudit_SkipUnconfigured_3D` in
+`cmd/standardsctl/devroot_test.go`).
+
 ## Record mode
 
 Set `PRAETOR_HOOK_RECORD_DIR` to a private, writable directory and every hook call, for

@@ -5,7 +5,11 @@ The configuration is tested with 2.1.14. Python 3, Git and the repository Go
 version are required. Install `yamllint`, `shellcheck`, `actionlint` and `hadolint`
 when editing their file types; applicable checks fail if their tool is missing.
 Strict source pushes also require `gosec`, `govulncheck` and `semgrep`. Golangci-lint runs
-from source using the existing repository `@latest` policy.
+from source using the existing repository `@latest` policy. `tools/go/go.mod` pins `gosec`,
+`govulncheck` and `gitleaks` as tool directives, which Renovate keeps current: `make sec`,
+`make vuln` and `make secrets` run exactly those versions through `go tool -modfile`, and
+`go install -modfile=tools/go/go.mod golang.org/x/vuln/cmd/govulncheck github.com/securego/gosec/v2/cmd/gosec`
+puts the same versions on `PATH` for the hooks.
 
 `make verify-all` also runs `make semgrep-test`, which checks the real matcher on
 temporary positive, negative and boundary fixtures. The engine version comes from
@@ -433,11 +437,18 @@ does when handed too much work.
 directory as input to the rules rather than source governed by them, and the gofmt and semgrep
 selections skip it.
 
+`gofmt_check()` is the one gofmt check. Pre-commit runs it on the staged set, and `make
+fmt-check` (`hooks.py fmt-check`), which `make lint` depends on and the CI gofmt step calls, runs
+it on every tracked Go file. It hands gofmt at most `GOFMT_BATCH` files per run, so a whole-tree
+check stays under the Windows command-line limit
+(`test_fmt_check_skips_testdata_and_names_unformatted_source` and
+`test_gofmt_check_batches_cover_every_file` in `.config/lefthook/scripts/test_hooks.py`).
+
 This is not a convenience. The HISS-20 corpus under `.config/hiss/testdata/` exists *because* its
 positive fixtures violate an invariant — a file that fails to be a bounded loop is how the rule is
 proven to fire. Scanning them reports the engine's own test data as the repository's debt and blocks
-every push that touches the corpus. The HISS scanner, the dedupe scan, gitleaks and the CI gofmt
-sweep all skip the same directory name, which is Go's own convention for the same reason.
+every push that touches the corpus. The HISS scanner, the dedupe scan, gitleaks and `make
+fmt-check` all skip the same directory name, which is Go's own convention for the same reason.
 
 The semgrep stage has two forms and both apply the exclusion. A per-file scan drops fixture paths
 from its file list. When a pushed range touches `.config/semgrep/`, the scan widens to the whole
