@@ -6,6 +6,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -51,10 +52,11 @@ type hookGroup struct {
 }
 
 // PlanHooks merges hooks into existing, the bytes of a client's hook file (empty when there is
-// none). A hook already served by a handler of its event is reported as present and left
-// alone. A missing file, hooks object, event list or matcher group is created; a handler is
+// none). A hook already served by a handler in a group of its event whose matcher covers the
+// hook's (coversMatcher) is reported as present and left alone. A missing file, hooks object, event list or matcher group is created; a handler is
 // appended to the first group whose matcher equals the hook's. Every member the plan does not
-// touch keeps its place and its literal bytes. A section of the wrong type fails the plan.
+// touch keeps its place and its number literals; the document is re-indented and its string
+// escapes normalised. A section of the wrong type fails the plan.
 func PlanHooks(ctx context.Context, existing []byte, hooks []Hook) (*HookPlan, error) {
 	if len(hooks) > MaxHooks {
 		return nil, fmt.Errorf("hook plan exceeds %d hooks", MaxHooks)
@@ -164,12 +166,18 @@ func eventGroups(events Object, event string) ([]jsontext.Value, error) {
 	return groups, nil
 }
 
-// servingHandler returns the command line of the first handler, in any group of the event,
-// that already serves hook. An entry that is not an object is not a handler of any shape the
-// clients run, so it serves nothing.
+// servingHandler returns the command line of the first handler that already serves hook, in a
+// group of the event whose matcher covers hook's. A handler under a narrower or unrelated
+// matcher, such as an evaluator registered only for ^(Edit|Write)$, does not run for the tools
+// hook guards and serves nothing. An entry that is not an object is not a handler of any shape
+// the clients run, so it serves nothing either.
 func servingHandler(groups []jsontext.Value, hook Hook) (string, bool) {
 	for _, raw := range groups {
-		for _, handler := range groupHandlers(raw) {
+		group, err := DecodeObject(raw)
+		if err != nil || !coversMatcher(group, hook.Matcher) {
+			continue
+		}
+		for _, handler := range groupHandlers(group) {
 			line := commandLine(handler)
 			if line == "" {
 				continue
@@ -182,12 +190,27 @@ func servingHandler(groups []jsontext.Value, hook Hook) (string, bool) {
 	return "", false
 }
 
-// groupHandlers returns the handler objects of one matcher group.
-func groupHandlers(raw jsontext.Value) []Object {
-	group, err := DecodeObject(raw)
-	if err != nil {
-		return nil
+// matchAllMatchers select every tool of an event: an absent or empty matcher, the "*" wildcard,
+// and the regular expression matching any tool name.
+var matchAllMatchers = [...]string{"", "*", ".*"}
+
+// coversMatcher reports whether group runs for every tool a hook with matcher want selects: its
+// matcher equals want or selects every tool. A matcher that is present but not a string covers
+// nothing.
+func coversMatcher(group Object, want string) bool {
+	raw, ok := group.Get("matcher")
+	if !ok {
+		return true
 	}
+	var matcher string
+	if err := json.Unmarshal(raw, &matcher); err != nil {
+		return false
+	}
+	return matcher == want || slices.Contains(matchAllMatchers[:], matcher)
+}
+
+// groupHandlers returns the handler objects of one matcher group.
+func groupHandlers(group Object) []Object {
 	list, ok := group.Get("hooks")
 	if !ok {
 		return nil

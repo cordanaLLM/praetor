@@ -12,6 +12,11 @@ import (
 	"io"
 )
 
+// ErrNotStrictJSON refuses a document that does not scan as strict JSON: a syntax error, a
+// duplicate member name, or JSONC comments and trailing commas, which some clients strip before
+// parsing (Gemini CLI does) but a merge cannot keep.
+var ErrNotStrictJSON = errors.New("invalid or ambiguous client JSON")
+
 const (
 	// MaxBytes bounds one client configuration document.
 	MaxBytes = 1 << 20
@@ -40,7 +45,7 @@ func Validate(ctx context.Context, raw []byte) error {
 			return nil
 		}
 		if err != nil {
-			return errors.New("invalid or ambiguous client JSON")
+			return ErrNotStrictJSON
 		}
 		if err := validatePosition(token, i, complete, decoder.StackDepth()); err != nil {
 			return err

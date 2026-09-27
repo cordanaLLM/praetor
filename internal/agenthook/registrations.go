@@ -82,24 +82,29 @@ const skewGuardScript = "praetor_hook.py"
 
 var preToolAdapters = []string{"command_guard.py", "codex_pre_tool.py", "block_evasion.py"}
 
-// HookFile is where a native client reads the hook registrations of a repository, and the unit
-// the timeout field of a registration counts in there.
+// HookFile is where a native client reads the hook registrations of a repository, the unit the
+// timeout field of a registration counts in there, and whether the client strips comments
+// before it parses the file, so a JSONC file a strict merge refuses is still one it reads.
 type HookFile struct {
 	Path        string
 	TimeoutUnit time.Duration
+	Comments    bool
 }
 
 // nativeHookFiles are the repository files carrying each native client's registrations. The
 // units are the ones this repository's tracked files use: Claude Code and Codex count seconds
-// (timeout 15), Gemini CLI milliseconds (timeout 15000).
+// (timeout 15), Gemini CLI milliseconds (timeout 15000). Gemini CLI's settings loader parses
+// JSON.parse(stripJsonComments(content)), so its file may carry comments.
 var nativeHookFiles = map[string]HookFile{
 	string(clientid.Claude): {Path: ".claude/settings.json", TimeoutUnit: time.Second},
 	string(clientid.Codex):  {Path: ".codex/hooks.json", TimeoutUnit: time.Second},
-	string(clientid.Gemini): {Path: ".gemini/settings.json", TimeoutUnit: time.Millisecond},
+	string(clientid.Gemini): {Path: ".gemini/settings.json", TimeoutUnit: time.Millisecond, Comments: true},
 }
 
 // NativeHookFile returns the repository hook file of client, or false for a client without
-// one: AGY registers through its plugin, and the context-only clients have no hook surface.
+// one: AGY registers through its plugin, and registrationTable has no pre-tool row for the
+// context-only clients (Cursor, Windsurf, Copilot), whatever hook surface the client itself
+// offers.
 func NativeHookFile(client string) (HookFile, bool) {
 	file, ok := nativeHookFiles[client]
 	return file, ok

@@ -71,7 +71,7 @@ func (o Object) With(name string, value jsontext.Value) Object {
 }
 
 // Encode renders o with two-space indentation and a final newline, members in order and every
-// value's literals as read.
+// number literal as read; string escapes come out in the encoder's normal form.
 func (o Object) Encode() ([]byte, error) {
 	var buf bytes.Buffer
 	encoder := jsontext.NewEncoder(&buf, jsontext.WithIndent("  "))

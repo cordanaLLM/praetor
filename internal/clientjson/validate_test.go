@@ -2,6 +2,7 @@ package clientjson
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -27,6 +28,16 @@ func TestValidate_Negative_RefusesAmbiguousInput(t *testing.T) {
 		if err := Validate(t.Context(), []byte(raw)); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+	// JSONC, which Gemini CLI strips before parsing, is not strict JSON; callers tell it apart
+	// from a document of the wrong shape through ErrNotStrictJSON.
+	for _, raw := range []string{"{ // note\n\"a\": 1}", `{/* note */"a": 1}`, `{"a": 1,}`, `{"a": 1, "a": 2}`} {
+		if err := Validate(t.Context(), []byte(raw)); !errors.Is(err, ErrNotStrictJSON) {
+			t.Errorf("%q = %v, want ErrNotStrictJSON", raw, err)
+		}
+	}
+	if err := Validate(t.Context(), []byte("[]")); errors.Is(err, ErrNotStrictJSON) {
+		t.Error("a well-formed array root reported as not strict JSON")
 	}
 	//nolint:staticcheck // SA1012: a nil context is the input under test.
 	if err := Validate(nil, []byte("{}")); err == nil {

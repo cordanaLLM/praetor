@@ -73,12 +73,13 @@ func TestServedBy_Boundary_TruncatedAndTrailingArguments(t *testing.T) {
 }
 
 // Positive, negative and boundary: the native clients have one hook file each, with the timeout
-// unit of their tracked registrations; AGY, context-only clients and an empty id have none.
+// unit of their tracked registrations, and only Gemini CLI reads comments in it; AGY,
+// context-only clients and an empty id have none.
 func TestNativeHookFile(t *testing.T) {
 	for client, want := range map[string]HookFile{
 		"claude": {Path: ".claude/settings.json", TimeoutUnit: time.Second},
 		"codex":  {Path: ".codex/hooks.json", TimeoutUnit: time.Second},
-		"gemini": {Path: ".gemini/settings.json", TimeoutUnit: time.Millisecond},
+		"gemini": {Path: ".gemini/settings.json", TimeoutUnit: time.Millisecond, Comments: true},
 	} {
 		if got, ok := NativeHookFile(client); !ok || got != want {
 			t.Errorf("%s: %+v, %v; want %+v", client, got, ok, want)

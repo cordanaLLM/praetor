@@ -3,7 +3,6 @@ package adopt
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -13,7 +12,6 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/classify"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
-	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const claudeHookFile = ".claude/settings.json"
@@ -193,7 +191,7 @@ func TestReconcileAgentHooks_Positive_HonoursAgentClientsSelection(t *testing.T)
 			t.Errorf("unselected %s not reported: %+v", rel, action)
 		}
 	}
-	if action, ok := actionOf(s.report, "cursor"); !ok || !strings.Contains(action.Details, "No native hook file") {
+	if action, ok := actionOf(s.report, "cursor"); !ok || !strings.Contains(action.Details, "No pre-tool row") {
 		t.Errorf("selected cursor = %+v", action)
 	}
 }
@@ -258,7 +256,7 @@ func TestReconcileAgentHooks_Negative_SymlinkedBackupRefused(t *testing.T) {
 }
 
 // Negative: a FIFO planted at a hook file is refused within the deadline instead of blocking
-// adoption in open(2) (BUG-822).
+// adoption in open(2) (BUG-822): the confined read checks the file type before it opens it.
 func TestReconcileAgentHooks_Negative_FIFORefused(t *testing.T) {
 	s := hookSession(t, true)
 	if err := os.MkdirAll(filepath.Dir(hookPath(s, claudeHookFile)), 0o755); err != nil {
@@ -268,8 +266,8 @@ func TestReconcileAgentHooks_Negative_FIFORefused(t *testing.T) {
 	err := testsupport.RunWithin(t, 10*time.Second, func() error {
 		return reconcileAgentHooks(context.Background(), s)
 	})
-	if !errors.Is(err, util.ErrNotRegularFile) {
-		t.Fatalf("FIFO hook file = %v, want ErrNotRegularFile", err)
+	if err == nil || !strings.Contains(err.Error(), "must be regular") {
+		t.Fatalf("FIFO hook file = %v, want a refusal of the non-regular file", err)
 	}
 }
 
