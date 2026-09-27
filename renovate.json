@@ -56,6 +56,13 @@
       "matchManagers": ["pip-compile"],
       "matchFileNames": ["docs/presets/mkdocs/**"],
       "groupName": "mkdocs docs preset"
+    },
+    {
+      "description": "tools/figures React cluster: keep React and its typings together.",
+      "matchManagers": ["npm"],
+      "matchFileNames": ["tools/figures/**"],
+      "matchPackageNames": ["react", "react-dom", "@types/react", "@types/react-*"],
+      "groupName": "react tools/figures"
     }
   ]
 }

@@ -383,8 +383,7 @@ One checker, per HISS-19:
 
 ### 8. Sync automation
 
-The sync automation lands separately from the engine; until it does, `third_party/interfig/VENDOR.md`
-lists the manual update steps. `scripts/sync_interfig.py` uses the standard library only, with a timeout on every request and
+`scripts/sync_interfig.py` uses the standard library only, with a timeout on every request and
 bounded loops:
 
 - **`verify`** is offline and runs in verify-all:

@@ -82,16 +82,31 @@ process. Praetor's build never calls that script: `tools/figures/build.mjs` impo
 
 ## Updating the pin
 
-Until the sync automation lands, an update is manual:
+`scripts/sync_interfig.py` owns the pin (ADR-0015, section 8):
 
-1. Fetch each included file at the new commit from
-   `https://raw.githubusercontent.com/vectorize-io/hindsight/<commit>/hindsight-interfig/<file>`,
-   and the repository-root `LICENSE`, into `upstream/`.
-2. List `src/` and `scripts/` at the new commit. A new file there must be added to the
-   include or exclude list before the update continues.
-3. Stop if `LICENSE` changed, or if the `react` peer range no longer matches
-   `tools/figures/package.json`.
-4. Update `commit`, `path_commit`, `fetched` and the file hashes in `vendor.json`.
-5. Run the upstream tests, then `npm --prefix tools/figures run build`: the engine hash
-   changes with `src/svg.ts`, `src/geometry.ts` or `src/model.ts`, so every figure is
-   regenerated. Commit the regenerated `docs/assets/figures/` files with the update.
+| Command | What it does |
+| :-- | :-- |
+| `python3 scripts/sync_interfig.py verify` | Offline, in `make interfig-verify`: `upstream/` matches the `vendor.json` hashes, the include list covers every file, the LICENSE hash is the reviewed `license_sha256`, and the `REUSE.toml` MIT override is the last annotation covering each vendored file |
+| `python3 scripts/sync_interfig.py check` | Compares the newest upstream commit under `hindsight-interfig/` with `path_commit`; exits 3 on drift with the compare URL and the update command, 1 on any other failure |
+| `python3 scripts/sync_interfig.py update --commit <sha>` | Vendors `<sha>` and runs the upstream tests and the figure build |
+
+The weekly `interfig-sync.yml` workflow runs `check` and fails with the update command when
+upstream has moved. To update the pin:
+
+1. Run the printed command. It works from any directory and needs `node` and `npm` on `PATH`:
+
+   ```bash
+   python3 scripts/sync_interfig.py update --commit <sha>
+   ```
+
+   It stops before touching the tree if the repository-root `LICENSE` changed, if `src/` or
+   `scripts/` (subdirectories included) holds a file that is neither included nor excluded, or
+   if the upstream `react` peer range does not admit the `react` version in
+   `tools/figures/package.json`. Otherwise it swaps in the new `upstream/` and `vendor.json`
+   together, restoring the previous tree if the swap fails, then runs the upstream tests and
+   `npm --prefix tools/figures run build`. If either fails, `git checkout third_party/interfig`
+   reverts the update.
+2. Add a new upstream file to the include or exclude list in `vendor.json` first, when step 1
+   stops on one.
+3. Commit the rewritten `upstream/`, `vendor.json` and the regenerated `docs/assets/figures/`.
+   The command prints the upstream commits between the two pins for the pull-request body.
