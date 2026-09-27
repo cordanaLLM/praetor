@@ -332,6 +332,22 @@ func grammarWord(field string) string {
 	return word
 }
 
+// slashJoinedTechnicalToken reports whether field is a slash-joined technical token such as
+// I/O, A/B, R/W or TCP/IP: every part is a single letter or all uppercase. Its parts are not
+// prose, so they yield no grammar words. A pair with a prose word, such as I/we or he/she,
+// is not one, and its parts are still checked.
+func slashJoinedTechnicalToken(field string, parts []string) bool {
+	if !strings.Contains(field, "/") || len(parts) < 2 {
+		return false
+	}
+	for _, part := range parts {
+		if utf8.RuneCountInString(part) != 1 && strings.ToUpper(part) != part {
+			return false
+		}
+	}
+	return true
+}
+
 func grammarWords(field string) []string {
 	field = compatibilityFold(field)
 	words := []string{grammarWord(field)}
@@ -351,6 +367,9 @@ func grammarWords(field string) []string {
 		words = append(words, word)
 	}
 	parts := strings.FieldsFunc(field, grammarSeparator)
+	if slashJoinedTechnicalToken(field, parts) {
+		return words
+	}
 	for _, part := range parts {
 		word := grammarWord(part)
 		if word != "" && word != words[0] {
