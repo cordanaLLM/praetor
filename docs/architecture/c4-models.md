@@ -66,7 +66,7 @@ flowchart TD
     subgraph ARTIFACT_OUTPUTS["Generated Projections"]
         VENDOR_AGENTS["CLAUDE.md, .cursor/rules/, .windsurfrules,\n.github/, .gemini/, .codex/, .claude/agents/"]
         SARIF_OUTPUT["Distilled diagnostic summary\n+ full report (.workingdir/evidence/)"]
-        OCI_IMAGE["Distroless image (build/package/Dockerfile)\nbuilt locally; no workflow publishes it"]
+        OCI_IMAGE["Distroless image (Dockerfile)\nghcr.io/cordanallm/praetor, pushed and signed per release"]
     end
 
     STANDARDS_YAML -->|"lockfile check, complexity policy"| GATING_SVC
@@ -87,8 +87,9 @@ SARIF enters through `lockdown.DistillSARIF`, which condenses a SARIF log (today
 wrapped test failure, `internal/bump/canary.go`) into a bounded summary and writes the full report
 under `.workingdir/evidence/`. The gate reads `.standards.yaml` twice: the prefetch stage requires it
 and `.standards.lock` to exist, and the HISS stage scans with the function-length limit its policy
-resolves to. The Helm chart's default image reference (`deploy/helm/praetor/values.yaml`) names a
-`ghcr.io` tag that no workflow publishes (ADR-0012, decision 4).
+resolves to. `.github/workflows/release-binaries.yml` builds the image from the released
+`praetorctl` binaries, pushes it and the Helm chart to GHCR and signs both; a published chart pulls
+the image tagged with its `appVersion` (ADR-0013).
 
 ---
 

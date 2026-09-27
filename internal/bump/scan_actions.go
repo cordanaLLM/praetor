@@ -35,6 +35,9 @@ var knownActionLatest = map[string]string{
 	"goreleaser/goreleaser-action":      "v7",
 	"sigstore/cosign-installer":         "v4.1.2",
 	"anchore/sbom-action/download-syft": "v0.24.2",
+	"docker/setup-buildx-action":        "v4",
+	"docker/login-action":               "v4",
+	"azure/setup-helm":                  "v5",
 }
 
 const (

@@ -2,6 +2,12 @@ apiVersion: v2
 name: praetor
 description: Autonomous Fleet Governance & Workstation Sentinel Engine
 type: application
+# Placeholders for the in-tree chart. The release workflow packages every v* tag with
+# `helm package --version <v> --app-version <v>` and pushes it to
+# oci://ghcr.io/cordanallm/charts, so a published chart's appVersion is the image tag the
+# same run pushed, and the default image tag follows it (templates/_helpers.tpl,
+# praetor.image). An install from this directory pulls ghcr.io/cordanallm/praetor:<appVersion>
+# and needs --set image.tag=<released version> until a release of that version exists.
 version: 1.0.0
 appVersion: 1.0.0
 icon: https://raw.githubusercontent.com/cordanaLLM/praetor/main/docs/assets/logo.png

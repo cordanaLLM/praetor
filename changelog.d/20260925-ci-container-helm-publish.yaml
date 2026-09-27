@@ -1,0 +1,3 @@
+type: added
+title: Every v* release now builds the container image from the released praetorctl binaries, pushes it to ghcr.io/cordanallm/praetor for linux/amd64 and linux/arm64 with SBOM and provenance attestations the job checks for every platform, pushes the Helm chart to oci://ghcr.io/cordanallm/charts, and cosign-signs and verifies both digests before the release is published; the chart's image tag now defaults to its appVersion instead of the never-pushed v1.0.0, so an install no longer ends in ImagePullBackOff, an empty image.repository fails the render, and the root Dockerfile is the one image definition (build/package/Dockerfile is removed, ADR-0013)
+breaking: false

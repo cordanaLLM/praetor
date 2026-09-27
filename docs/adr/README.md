@@ -19,7 +19,8 @@ This directory documents all significant architectural and design decisions gove
 | **[ADR-0009](0009-structural-unification.md)** | Structural Unification Before Further Fix Waves | **Proposed** | 2026-09-12 |
 | **[ADR-0010](0010-text-register-per-task.md)** | Text Register per Audience and Task Class | **Accepted** | 2026-09-17 |
 | **[ADR-0011](0011-agent-client-wrapping-and-operational-rollout.md)** | One Hook Entrypoint, Plugin-First Client Wrapping, and a Governed Operational Rollout | **Proposed** | 2026-09-17 |
-| **[ADR-0012](0012-current-delivery-runner-and-pipeline-state.md)** | Context Compilation, Gating, Delivery and Runner Routing as They Stand | **Accepted** | 2026-09-26 |
+| **[ADR-0012](0012-current-delivery-runner-and-pipeline-state.md)** | Context Compilation, Gating, Delivery and Runner Routing as They Stand | **Accepted**; decision 4 **Superseded** by [ADR-0013](0013-container-image-and-helm-chart-delivery.md) | 2026-09-26 |
+| **[ADR-0013](0013-container-image-and-helm-chart-delivery.md)** | Container Image and Helm Chart Delivery | **Accepted** | 2026-09-26 |
 
 ---
 

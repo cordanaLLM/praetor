@@ -5,13 +5,56 @@ its HTTP probes, and optionally the ServiceAccount the pod runs as.
 
 ## Install
 
+Every `v*` release publishes the chart to GHCR as an OCI artifact, next to the image it installs
+([releasing guide](releasing.md)). The chart version is the release version without its `v`:
+
 ```bash
-helm install praetor deploy/helm/praetor
-helm install praetor-canary deploy/helm/praetor   # a second release in the same namespace
+helm install praetor oci://ghcr.io/cordanallm/charts/praetor --version 0.1.0
+helm install praetor-canary oci://ghcr.io/cordanallm/charts/praetor --version 0.1.0   # a second release in the same namespace
 ```
 
 Both releases coexist. Every object is named `<release>-praetor`, so nothing collides; the render
 tests in `internal/deploychart/chart_test.go` assert exactly that and fail if a name ever repeats.
+
+The chart and the image are signed keyless by `.github/workflows/release-binaries.yml`. Check a
+chart before installing it:
+
+```bash
+VERSION=0.1.0
+SIGNER="https://github.com/cordanaLLM/praetor/.github/workflows/release-binaries.yml@refs/tags/v$VERSION"
+cosign verify \
+  --certificate-identity "$SIGNER" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  "ghcr.io/cordanallm/charts/praetor:$VERSION"
+```
+
+The same command with `ghcr.io/cordanallm/praetor:$VERSION` checks the image.
+
+## Image
+
+| `image.repository` | `image.tag` | Pod image |
+| :--- | :--- | :--- |
+| set (default) | empty (default) | `<image.repository>:<appVersion>` |
+| set | set | `<image.repository>:<image.tag>` |
+| empty | any | render fails: `image.repository must name the image to pull` |
+
+The release workflow packages the chart with `--app-version` set to the version it pushed the image
+under, so a published chart pulls the image released with it. The helper is `praetor.image` in
+`deploy/helm/praetor/templates/_helpers.tpl`; `TestDefaultImageTagIsTheChartAppVersion`,
+`TestExplicitImageTagWinsOverTheAppVersion`, `TestEmptyImageRepositoryFailsTheRender` and
+`TestPackagedAppVersionDrivesTheImageTag` in `internal/deploychart/chart_test.go` pin the four
+cases.
+
+Installing from a checkout (`helm install praetor deploy/helm/praetor`) uses the placeholder
+`appVersion` in `Chart.yaml`, which no release may have pushed yet. Name a released image instead:
+
+```bash
+helm install praetor deploy/helm/praetor --set image.tag=0.1.0
+```
+
+Earlier chart versions pinned `image.tag: v1.0.0`, a tag nothing pushed. A release that carries that
+value in its own values file keeps pulling it; clear the value or set a released version before
+upgrading.
 
 ## Names
 
@@ -113,6 +156,8 @@ helm lint deploy/helm/praetor
 helm template praetor deploy/helm/praetor
 go test ./internal/deploychart/
 ```
+
+The release workflow runs the same `helm lint` before it pushes anything.
 
 The Go tests drive the real `helm` binary and skip with a stated reason where it is absent, so the
 same command is meaningful on Linux, macOS and Windows.

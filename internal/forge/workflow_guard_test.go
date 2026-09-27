@@ -499,3 +499,208 @@ func TestOverlaidManifestKeepsEngineGuardsAndRequiredContexts(t *testing.T) {
 		t.Fatalf("required contexts drifted under the overlay:\noverlaid:  %v\ncanonical: %v", overlaidContexts, canonicalContexts)
 	}
 }
+
+// The container image and the Helm chart are published under the repository identity too,
+// but GHCR accepts lowercase names only, so the literal there is the lowercased identity
+// rather than the guard's. It is written down in three files that must agree: the image
+// .goreleaser.yaml pushes, the repository values.yaml pulls and the job environment the
+// release workflow verifies and pushes the chart with. A drift between them publishes an
+// image no install pulls, which is the ImagePullBackOff this rule exists for.
+
+// ghcrImage is the GHCR image repository of identity.
+func ghcrImage(identity string) string {
+	return "ghcr.io/" + strings.ToLower(identity)
+}
+
+// ghcrChartRepository is the OCI repository the release job pushes the chart to: the
+// charts namespace of the identity's owner, beside its image.
+func ghcrChartRepository(identity string) string {
+	owner, _, _ := strings.Cut(strings.ToLower(identity), "/")
+	return "oci://ghcr.io/" + owner + "/charts"
+}
+
+// containerSources are the three files a container reference is written down in.
+type containerSources struct {
+	goreleaser, values, workflow []byte
+}
+
+// maxPushedImages bounds the dockers_v2 image scan (HISS-02).
+const maxPushedImages = 16
+
+// pushedImages lists every image name the dockers_v2 blocks of a GoReleaser configuration
+// push.
+func pushedImages(goreleaser []byte) ([]string, error) {
+	var config struct {
+		Dockers []struct {
+			Images []string `yaml:"images"`
+		} `yaml:"dockers_v2"`
+	}
+	if err := yaml.Unmarshal(goreleaser, &config); err != nil {
+		return nil, fmt.Errorf("parse goreleaser: %w", err)
+	}
+	var images []string
+	for i := 0; i < len(config.Dockers) && i < maxPushedImages; i++ {
+		images = append(images, config.Dockers[i].Images...)
+	}
+	if len(images) > maxPushedImages {
+		return nil, fmt.Errorf("goreleaser pushes more than %d images", maxPushedImages)
+	}
+	return images, nil
+}
+
+// jobEnvironment returns the value every job of a workflow sets for key, keyed by job ID.
+func jobEnvironment(workflow []byte, key string) (map[string]string, error) {
+	var spec struct {
+		Jobs map[string]struct {
+			Env map[string]string `yaml:"env"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(workflow, &spec); err != nil {
+		return nil, fmt.Errorf("parse workflow: %w", err)
+	}
+	if len(spec.Jobs) > maxJobsPerFile {
+		return nil, fmt.Errorf("workflow exceeds %d jobs", maxJobsPerFile)
+	}
+	values := make(map[string]string, len(spec.Jobs))
+	for id, job := range spec.Jobs {
+		if value, ok := job.Env[key]; ok {
+			values[id] = value
+		}
+	}
+	return values, nil
+}
+
+// referenceViolations reports each reference in got that differs from want, and reports the
+// reference set itself when it is empty, so the rule cannot pass on a file that names none.
+func referenceViolations(what, want string, got map[string]string) []string {
+	if len(got) == 0 {
+		return []string{fmt.Sprintf("%s: no reference found; want %s", what, want)}
+	}
+	keys := make([]string, 0, len(got))
+	for key := range got {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	var violations []string
+	for i := 0; i < len(keys); i++ {
+		if got[keys[i]] != want {
+			violations = append(violations, fmt.Sprintf("%s %s = %q, want %q", what, keys[i], got[keys[i]], want))
+		}
+	}
+	return violations
+}
+
+// containerReferenceViolations names every image or chart reference that is not the GHCR
+// repository of identity.
+func containerReferenceViolations(identity string, sources containerSources) ([]string, error) {
+	images, err := pushedImages(sources.goreleaser)
+	if err != nil {
+		return nil, err
+	}
+	var values struct {
+		Image struct {
+			Repository string `yaml:"repository"`
+		} `yaml:"image"`
+	}
+	if err := yaml.Unmarshal(sources.values, &values); err != nil {
+		return nil, fmt.Errorf("parse values: %w", err)
+	}
+	imageEnv, err := jobEnvironment(sources.workflow, "IMAGE")
+	if err != nil {
+		return nil, err
+	}
+	chartEnv, err := jobEnvironment(sources.workflow, "CHART_REPOSITORY")
+	if err != nil {
+		return nil, err
+	}
+	pushed := make(map[string]string, len(images))
+	for i := 0; i < len(images); i++ {
+		pushed[fmt.Sprintf("[%d]", i)] = images[i]
+	}
+	image := ghcrImage(identity)
+	violations := referenceViolations(".goreleaser.yaml dockers_v2 image", image, pushed)
+	pulled := make(map[string]string, 1)
+	if values.Image.Repository != "" {
+		pulled["image.repository"] = values.Image.Repository
+	}
+	violations = append(violations, referenceViolations("values.yaml", image, pulled)...)
+	violations = append(violations, referenceViolations("release job IMAGE", image, imageEnv)...)
+	return append(violations, referenceViolations("release job CHART_REPOSITORY", ghcrChartRepository(identity), chartEnv)...), nil
+}
+
+// engineContainerSources reads the three shipped files a container reference lives in.
+func engineContainerSources(t *testing.T) containerSources {
+	t.Helper()
+	workflows, _ := engineWorkflows(t)
+	read := func(rel string) []byte {
+		data, err := os.ReadFile(filepath.Join(engineRoot, filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		return data
+	}
+	return containerSources{
+		goreleaser: read(".goreleaser.yaml"),
+		values:     read("deploy/helm/praetor/values.yaml"),
+		workflow:   workflows["release-binaries.yml"],
+	}
+}
+
+// Positive: the image .goreleaser.yaml pushes, the repository the chart pulls and the release
+// job's IMAGE and CHART_REPOSITORY are all the lowercased manifest identity.
+func TestContainerReferencesFollowTheManifestIdentity(t *testing.T) {
+	_, identity := engineWorkflows(t)
+	violations, err := containerReferenceViolations(identity, engineContainerSources(t))
+	if err != nil || len(violations) != 0 {
+		t.Fatalf("container references: violations %v, err %v", violations, err)
+	}
+}
+
+// Negative: judged against another identity every one of the four references fails, so each
+// literal is tied to the manifest rather than merely present.
+func TestContainerReferencesFailForAnotherIdentity(t *testing.T) {
+	violations, err := containerReferenceViolations(forkIdentity, engineContainerSources(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, where := range []string{"dockers_v2 image", "values.yaml", "release job IMAGE", "release job CHART_REPOSITORY"} {
+		if !strings.Contains(strings.Join(violations, "\n"), where) {
+			t.Errorf("a reference in %s passed for %s: %v", where, forkIdentity, violations)
+		}
+	}
+}
+
+// Boundary: the mixed-case identity lowercases to the GHCR name, a configuration that pushes
+// no image or a chart that names no repository fails rather than passing on nothing, and
+// malformed input is an error.
+func TestContainerReferenceViolationsBoundaries(t *testing.T) {
+	if got := ghcrImage("cordanaLLM/praetor"); got != "ghcr.io/cordanallm/praetor" {
+		t.Errorf("ghcrImage = %q", got)
+	}
+	if got := ghcrChartRepository("cordanaLLM/praetor"); got != "oci://ghcr.io/cordanallm/charts" {
+		t.Errorf("ghcrChartRepository = %q", got)
+	}
+	workflow := []byte("jobs:\n  release:\n    env:\n      IMAGE: ghcr.io/acme/engine\n      CHART_REPOSITORY: oci://ghcr.io/acme/charts\n")
+	goreleaser := []byte("dockers_v2:\n  - images: [ghcr.io/acme/engine]\n")
+	values := []byte("image:\n  repository: ghcr.io/acme/engine\n")
+	cases := []struct {
+		name    string
+		sources containerSources
+		want    int
+	}{
+		{"all agree for a mixed-case identity", containerSources{goreleaser, values, workflow}, 0},
+		{"no image pushed", containerSources{[]byte("builds: []\n"), values, workflow}, 1},
+		{"chart names no repository", containerSources{goreleaser, []byte("replicaCount: 1\n"), workflow}, 1},
+		{"workflow sets neither variable", containerSources{goreleaser, values, []byte("jobs:\n  release: {}\n")}, 2},
+		{"uppercase image literal", containerSources{[]byte("dockers_v2:\n  - images: [ghcr.io/Acme/engine]\n"), values, workflow}, 1},
+	}
+	for _, tc := range cases {
+		violations, err := containerReferenceViolations("Acme/engine", tc.sources)
+		if err != nil || len(violations) != tc.want {
+			t.Errorf("%s: violations %v, err %v, want %d", tc.name, violations, err, tc.want)
+		}
+	}
+	if _, err := containerReferenceViolations("acme/engine", containerSources{[]byte("dockers_v2: [\n"), values, workflow}); err == nil {
+		t.Error("malformed goreleaser configuration accepted")
+	}
+}

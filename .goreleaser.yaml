@@ -116,6 +116,52 @@ signs:
       - "${artifact}"
     artifacts: checksum
 
+# The container image the Helm chart in deploy/helm/praetor installs. It is built from the
+# praetorctl binaries above, not from source, so the image and the archives ship one build
+# (ADR-0013). buildx pushes the linux/amd64 and linux/arm64 manifest list in the publish
+# phase, with an SBOM attestation (sbom defaults to true) and the provenance attestation
+# buildx adds to every pushed build; the release job fails when either is missing. The only
+# tag is the release version without its "v", because that is the appVersion the release
+# job stamps into the packaged chart and the chart's default image tag.
+# internal/forge/workflow_guard_test.go holds the image name equal to the lowercased
+# .standards.yaml identity; GHCR accepts lowercase names only.
+dockers_v2:
+  - id: praetor
+    ids:
+      - praetorctl
+    dockerfile: Dockerfile
+    images:
+      - ghcr.io/cordanallm/praetor
+    tags:
+      - "{{ .Version }}"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    # The OCI metadata is written down once: buildx sets it as labels on each platform's
+    # image configuration and, through the alias, as annotations on the manifest list.
+    labels: &oci-metadata
+      "org.opencontainers.image.title": "praetor"
+      "org.opencontainers.image.description": "Autonomous Fleet Governance & Workstation Sentinel Engine"
+      "org.opencontainers.image.vendor": "cordanaLLM"
+      "org.opencontainers.image.source": "https://github.com/cordanaLLM/praetor"
+      "org.opencontainers.image.licenses": "EUPL-1.2"
+      "org.opencontainers.image.version": "{{ .Version }}"
+      "org.opencontainers.image.revision": "{{ .FullCommit }}"
+    annotations: *oci-metadata
+
+# Keyless cosign signature over the pushed manifest-list digest, never over a tag, so the
+# signature names exactly what buildx pushed. The default artifacts filter selects the
+# dockers_v2 images; the release job verifies this signature before it publishes.
+docker_signs:
+  - id: cosign-keyless-image
+    cmd: cosign
+    ids:
+      - praetor
+    args:
+      - "sign"
+      - "--yes"
+      - "${artifact}@${digest}"
+
 checksum:
   name_template: "checksums.txt"
 

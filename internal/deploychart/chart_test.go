@@ -55,20 +55,40 @@ func helmChart(t *testing.T) string {
 	return ""
 }
 
-// render templates the chart for one release and decodes the manifest stream.
-func render(t *testing.T, release string, args ...string) []document {
+// runHelm runs one helm command under renderTimeout and returns its stdout and
+// stderr with the command's error.
+func runHelm(t *testing.T, argv ...string) (stdout, stderr []byte, err error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), renderTimeout)
 	defer cancel()
-	argv := append([]string{"template", release, helmChart(t)}, args...)
-	var stderr bytes.Buffer
+	var errOut bytes.Buffer
 	cmd := exec.CommandContext(ctx, "helm", argv...)
-	cmd.Stderr = &stderr
+	cmd.Stderr = &errOut
 	out, err := cmd.Output()
+	return out, errOut.Bytes(), err
+}
+
+// helm runs one helm command and returns its stdout, failing the test with
+// helm's stderr when the command fails.
+func helm(t *testing.T, argv ...string) []byte {
+	t.Helper()
+	out, stderr, err := runHelm(t, argv...)
 	if err != nil {
-		t.Fatalf("helm %v failed: %v: %s", argv, err, stderr.String())
+		t.Fatalf("helm %v failed: %v: %s", argv, err, stderr)
 	}
-	return decode(t, out)
+	return out
+}
+
+// render templates the chart for one release and decodes the manifest stream.
+func render(t *testing.T, release string, args ...string) []document {
+	t.Helper()
+	return renderChart(t, helmChart(t), release, args...)
+}
+
+// renderChart templates the chart at chart, a directory or a packaged archive.
+func renderChart(t *testing.T, chart, release string, args ...string) []document {
+	t.Helper()
+	return decode(t, helm(t, append([]string{"template", release, chart}, args...)...))
 }
 
 // decodeDocuments decodes a manifest stream under a scalar bound (HISS-02). The
@@ -223,8 +243,9 @@ func standardLabels(t *testing.T) map[string]string {
 	}
 }
 
-// containerName reads the single container name of the rendered pod spec.
-func containerName(t *testing.T, docs []document) string {
+// containerField reads one string field of the single container in the rendered
+// pod spec.
+func containerField(t *testing.T, docs []document, field string) string {
 	t.Helper()
 	containers, ok := podSpec(t, docs)["containers"].([]any)
 	if !ok || len(containers) != 1 {
@@ -234,11 +255,38 @@ func containerName(t *testing.T, docs []document) string {
 	if !ok {
 		t.Fatalf("containers[0] = %v, want a mapping", containers[0])
 	}
-	value, ok := entry["name"].(string)
+	value, ok := entry[field].(string)
 	if !ok {
-		t.Fatalf("containers[0].name = %v, want a string", entry["name"])
+		t.Fatalf("containers[0].%s = %v, want a string", field, entry[field])
 	}
 	return value
+}
+
+// containerName reads the single container name of the rendered pod spec.
+func containerName(t *testing.T, docs []document) string {
+	t.Helper()
+	return containerField(t, docs, "name")
+}
+
+// containerImage reads the single container image of the rendered pod spec.
+func containerImage(t *testing.T, docs []document) string {
+	t.Helper()
+	return containerField(t, docs, "image")
+}
+
+// imageTag reads the tag of the single container image in the rendered pod spec:
+// the part after the last colon that follows the last slash, so a registry port
+// is never taken for a tag. internal/forge/workflow_guard_test.go holds the
+// repository the shipped values.yaml names equal to the image the release
+// pushes, so these tests check only the tag.
+func imageTag(t *testing.T, docs []document) string {
+	t.Helper()
+	image := containerImage(t, docs)
+	colon := strings.LastIndex(image, ":")
+	if colon < 0 || colon < strings.LastIndex(image, "/") {
+		t.Fatalf("image %q carries no tag", image)
+	}
+	return image[colon+1:]
 }
 
 func names(docs []document) map[string]bool {
@@ -425,6 +473,64 @@ func TestImagePullSecretsReachThePodSpec(t *testing.T) {
 	entry, ok := secrets[0].(document)
 	if !ok || entry["name"] != "ghcr-credentials" {
 		t.Fatalf("imagePullSecrets[0] = %v, want name ghcr-credentials", secrets[0])
+	}
+}
+
+// Positive: the release workflow lints the chart before it pushes anything, so a
+// chart helm lint rejects would stop a release; the same check runs here first.
+func TestChartPassesHelmLint(t *testing.T) {
+	out := helm(t, "lint", helmChart(t))
+	if !strings.Contains(string(out), "0 chart(s) failed") {
+		t.Fatalf("helm lint did not report a clean chart: %s", out)
+	}
+}
+
+// Positive: with no image.tag the pod pulls the image tagged with the chart's
+// appVersion. values.yaml used to pin v1.0.0, a tag nothing had pushed, so every
+// install ended in ImagePullBackOff.
+func TestDefaultImageTagIsTheChartAppVersion(t *testing.T) {
+	want := fmt.Sprint(chartMetadata(t)["appVersion"])
+	if got := imageTag(t, render(t, "alpha")); got != want {
+		t.Fatalf("image tag = %q, want the appVersion %q", got, want)
+	}
+}
+
+// Positive: an explicit repository and image.tag win over the defaults, for an
+// image built or mirrored outside the release; a registry port stays part of the
+// repository.
+func TestExplicitImageTagWinsOverTheAppVersion(t *testing.T) {
+	const mirror = "registry.example.test:5000/mirror/praetor"
+	docs := render(t, "alpha", "--set", "image.repository="+mirror, "--set", "image.tag=9.9.9-local")
+	if got, want := containerImage(t, docs), mirror+":9.9.9-local"; got != want {
+		t.Fatalf("image = %q, want %q", got, want)
+	}
+}
+
+// Negative: an empty image.repository fails the render with a message naming the
+// value, instead of rendering ":<tag>", which the cluster rejects only at pull
+// time.
+func TestEmptyImageRepositoryFailsTheRender(t *testing.T) {
+	out, stderr, err := runHelm(t, "template", "alpha", helmChart(t), "--set", "image.repository=")
+	if err == nil {
+		t.Fatalf("empty image.repository rendered:\n%s", out)
+	}
+	if !strings.Contains(string(stderr), "image.repository must name the image to pull") {
+		t.Fatalf("render failed without naming image.repository: %v: %s", err, stderr)
+	}
+}
+
+// Boundary: the path the release workflow takes. It packages the chart with
+// --app-version set to the version it pushed the image under; installing that
+// archive must pull exactly that tag, whatever the in-tree appVersion says. A tag
+// pinned in values.yaml fails here even when it happens to equal the in-tree
+// appVersion.
+func TestPackagedAppVersionDrivesTheImageTag(t *testing.T) {
+	const version = "0.4.2"
+	dir := t.TempDir()
+	helm(t, "package", helmChart(t), "--version", version, "--app-version", version, "--destination", dir)
+	archive := filepath.Join(dir, "praetor-"+version+".tgz")
+	if got := imageTag(t, renderChart(t, archive, "alpha")); got != version {
+		t.Fatalf("packaged chart image tag = %q, want %q", got, version)
 	}
 }
 

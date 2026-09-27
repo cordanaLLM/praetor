@@ -10,13 +10,17 @@ import (
 	"testing"
 )
 
-// releasePipelineActions are the signing and SBOM actions the engine's release workflows
-// install. knownActionLatest is the baseline the workflow scanner compares against, so a
-// registry entry that lags these workflows makes the scanner report a downgrade as drift.
+// releasePipelineActions are the signing, SBOM, image and chart actions the engine's
+// release workflows install. knownActionLatest is the baseline the workflow scanner compares
+// against, so a registry entry that lags these workflows makes the scanner report a
+// downgrade as drift.
 var releasePipelineActions = [...]string{
 	"goreleaser/goreleaser-action",
 	"anchore/sbom-action/download-syft",
 	"sigstore/cosign-installer",
+	"docker/setup-buildx-action",
+	"docker/login-action",
+	"azure/setup-helm",
 }
 
 // maxReleaseFixtureActions bounds the fixture scans below (HISS-02).
@@ -82,6 +86,9 @@ func TestReleasePipelineStalePinsReportDrift(t *testing.T) {
 		"goreleaser/goreleaser-action@v6",
 		"anchore/sbom-action/download-syft@v0.18.0",
 		"sigstore/cosign-installer@v3.8.1",
+		"docker/setup-buildx-action@v3",
+		"docker/login-action@v3",
+		"azure/setup-helm@v4",
 	}
 	actions, _, err := ScanWorkflowActions(t.Context(), writeReleaseWorkflow(t, stale))
 	if err != nil {

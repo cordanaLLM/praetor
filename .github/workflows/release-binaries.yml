@@ -7,6 +7,13 @@ name: Release Binaries
 # so a repository with immutable releases accepts every asset (#43), and every SBOM
 # describes a released archive rather than the source tree (#315).
 #
+# The same run ships the container image and the Helm chart (ADR-0013): GoReleaser's
+# dockers_v2 block builds the image from the praetorctl binaries it just compiled, pushes it
+# to GHCR and cosign-signs the pushed digest; the job verifies that signature, packages the
+# chart with the release version as its appVersion, pushes it to GHCR as an OCI artifact,
+# signs and verifies its digest, and only then publishes the release. A failure in any of
+# these steps leaves the release a draft.
+#
 # SLSA Build Level 3 is not claimed: the provenance is generated and signed in the job that
 # ran the build steps, and Level 3 requires signing isolated from them (#330).
 
@@ -29,6 +36,15 @@ jobs:
     if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')
     runs-on: ubuntu-26.04
     timeout-minutes: 30
+    env:
+      # GHCR names are lowercase. internal/forge/workflow_guard_test.go holds both equal to
+      # the lowercased .standards.yaml identity, to the image .goreleaser.yaml pushes and to
+      # the repository the chart's values.yaml pulls.
+      IMAGE: ghcr.io/cordanallm/praetor
+      CHART_REPOSITORY: oci://ghcr.io/cordanallm/charts
+      # The keyless certificate identity every cosign signature this job makes carries, and
+      # the builder its SLSA provenance names. Each verify step checks against this value.
+      SIGNER: ${{ github.server_url }}/${{ github.repository }}/.github/workflows/release-binaries.yml@${{ github.ref }}
 
     steps:
       - name: Checkout Source Code
@@ -54,8 +70,31 @@ jobs:
       - name: Install Syft
         uses: anchore/sbom-action/download-syft@v0.24.2
 
+      # Pinned rather than latest so a new Helm release cannot change the packaged chart
+      # between two tags. internal/deploychart's render, lint and package tests pass on this
+      # version, and its helm push prints the "Digest:" line the chart step reads.
+      - name: Install Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: v4.3.0
+
+      # dockers_v2 builds a multi-platform manifest list with buildx, which needs a
+      # docker-container builder. The Dockerfile only copies prebuilt binaries and runs
+      # nothing, so no QEMU emulation is involved.
+      - name: Set Up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      # buildx, cosign and helm all push to GHCR with the job token (packages: write).
+      - name: Log In To The GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       # A deprecated key still builds, but only until the next major of goreleaser drops
       # it, at which point the release breaks with no earlier warning. check fails on it.
+      # dockers_v2 needs GoReleaser v2.12 or newer, which '~> v2' resolves to.
       - name: Check GoReleaser Configuration
         uses: goreleaser/goreleaser-action@v7
         with:
@@ -63,8 +102,13 @@ jobs:
           version: '~> v2'
           args: check
 
-      # .goreleaser.yaml sets release.draft, so this leaves the release unpublished.
-      - name: Build Archives, SBOMs And The Checksums Bundle Into A Draft Release
+      # Fails before anything is pushed, so a broken chart never leaves an image behind.
+      - name: Lint The Helm Chart
+        run: helm lint deploy/helm/praetor
+
+      # .goreleaser.yaml sets release.draft, so this leaves the release unpublished. Its
+      # dockers_v2 and docker_signs blocks push the image and sign the pushed digest.
+      - name: Build Archives, SBOMs, The Checksums Bundle And The Signed Image Into A Draft Release
         uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
@@ -74,8 +118,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Verify The Checksums Bundle Against This Workflow
-        env:
-          SIGNER: ${{ github.server_url }}/${{ github.repository }}/.github/workflows/release-binaries.yml@${{ github.ref }}
         run: |
           cosign verify-blob \
             --certificate-identity "$SIGNER" \
@@ -84,8 +126,6 @@ jobs:
             dist/checksums.txt
 
       - name: Generate SLSA Provenance Over Every Checksummed File
-        env:
-          SIGNER: ${{ github.server_url }}/${{ github.repository }}/.github/workflows/release-binaries.yml@${{ github.ref }}
         run: |
           go run ./cmd/standardsctl provenance \
             -checksums dist/checksums.txt \
@@ -99,8 +139,6 @@ jobs:
             --bundle dist/provenance.intoto.json.sigstore.json
 
       - name: Verify The Provenance For Every Released File
-        env:
-          SIGNER: ${{ github.server_url }}/${{ github.repository }}/.github/workflows/release-binaries.yml@${{ github.ref }}
         run: |
           while read -r _ name; do
             cosign verify-blob-attestation \
@@ -110,6 +148,88 @@ jobs:
               --bundle dist/provenance.intoto.json.sigstore.json \
               "dist/${name#\*}"
           done < dist/checksums.txt
+
+      # GoReleaser records the manifest-list digest it pushed, and the platforms in it, in
+      # dist/artifacts.json. The signature is checked on that digest, not on the tag, so a tag
+      # moved after the push cannot pass this step with somebody else's image.
+      - name: Verify The Image Signature On The Pushed Digest
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version=$(jq -r .version dist/metadata.json)
+          image=$(jq -c --arg ref "$IMAGE:$version" \
+            'first(.[] | select(.type == "Docker Image" and .name == $ref)) // empty' \
+            dist/artifacts.json)
+          digest=$(jq -r '.extra.Digest // empty' <<< "${image:-null}")
+          if [ -z "$digest" ]; then
+            echo "dist/artifacts.json records no pushed digest for $IMAGE:$version" >&2
+            exit 1
+          fi
+          cosign verify \
+            --certificate-identity "$SIGNER" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "$IMAGE@$digest"
+          echo "IMAGE_DIGEST=$digest" >> "$GITHUB_ENV"
+          echo "IMAGE_PLATFORMS=$(jq -r '.extra.Platforms | join(" ")' <<< "$image")" >> "$GITHUB_ENV"
+
+      # dockers_v2 requests an SBOM attestation (its sbom setting defaults to true) and buildx
+      # adds a min-mode provenance attestation to every build it pushes. Neither is signed by
+      # the step above, and a builder without attestation support drops both silently, so
+      # each platform the digest holds must carry both. buildx keys the inspect output by
+      # platform for a multi-platform image and prints {} when an attestation is absent.
+      - name: Verify The Image SBOM And Provenance Attestations
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          if [ -z "$IMAGE_PLATFORMS" ]; then
+            echo "dist/artifacts.json records no platforms for $IMAGE@$IMAGE_DIGEST" >&2
+            exit 1
+          fi
+          docker buildx imagetools inspect "$IMAGE@$IMAGE_DIGEST" --format '{{ json .SBOM }}' > dist/image-sbom.json
+          docker buildx imagetools inspect "$IMAGE@$IMAGE_DIGEST" --format '{{ json .Provenance }}' > dist/image-provenance.json
+          for platform in $IMAGE_PLATFORMS; do
+            for kind in sbom provenance; do
+              if ! jq -e --arg p "$platform" '(.[$p] // {}) | length > 0' "dist/image-$kind.json" > /dev/null; then
+                echo "$IMAGE@$IMAGE_DIGEST carries no $kind attestation for $platform" >&2
+                exit 1
+              fi
+            done
+          done
+
+      # The chart's version and appVersion become the release version, which is the only
+      # tag the image above carries, so the chart's default image tag names that image.
+      # helm push reports the pushed manifest digest on a "Digest:" line.
+      - name: Package, Push And Sign The Helm Chart
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          version=$(jq -r .version dist/metadata.json)
+          helm package deploy/helm/praetor \
+            --version "$version" \
+            --app-version "$version" \
+            --destination dist/chart
+          printf '%s' "$GITHUB_TOKEN" | helm registry login ghcr.io \
+            --username "$GITHUB_ACTOR" \
+            --password-stdin
+          if ! helm push "dist/chart/praetor-$version.tgz" "$CHART_REPOSITORY" > dist/chart/push.log 2>&1; then
+            cat dist/chart/push.log >&2
+            exit 1
+          fi
+          cat dist/chart/push.log
+          digest=$(sed -n 's/^Digest: //p' dist/chart/push.log)
+          if [ -z "$digest" ]; then
+            echo "helm push reported no digest for praetor $version" >&2
+            exit 1
+          fi
+          echo "CHART_DIGEST=$digest" >> "$GITHUB_ENV"
+          cosign sign --yes "${CHART_REPOSITORY#oci://}/praetor@$digest"
+
+      - name: Verify The Chart Signature On The Pushed Digest
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          cosign verify \
+            --certificate-identity "$SIGNER" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            "${CHART_REPOSITORY#oci://}/praetor@$CHART_DIGEST"
 
       - name: Attach The Provenance And Publish The Release
         if: startsWith(github.ref, 'refs/tags/v')
