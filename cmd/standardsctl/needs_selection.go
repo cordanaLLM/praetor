@@ -18,14 +18,11 @@ type needsSelection struct {
 }
 
 // loadNeedsSelection loads the operator settings the flags select and prepares the needs
-// engine for them. Praetor ships no framework: a language without a configured target is
-// classified and reported as not configured (ADR-0014 §4).
+// engine for them (needs.SelectRegistry, shared with the MCP standards_needs_report).
+// Praetor ships no framework: a language without a configured target is classified and
+// reported as not configured (ADR-0014 §4).
 func loadNeedsSelection(ctx context.Context, flags *operatorSettingsFlags) (*needsSelection, error) {
-	policy, err := flags.loadPolicy(ctx)
-	if err != nil {
-		return nil, err
-	}
-	registry, err := needs.RegistryFromPolicy(ctx, policy)
+	policy, registry, err := needs.SelectRegistry(ctx, flags.request())
 	if err != nil {
 		return nil, err
 	}

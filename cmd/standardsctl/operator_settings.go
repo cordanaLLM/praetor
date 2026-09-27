@@ -43,12 +43,16 @@ func registerOperatorSettingsFlags(fs *flag.FlagSet) *operatorSettingsFlags {
 	return opts
 }
 
+// request is the settings selection the flags name, with the process environment as the
+// fallback (config.SettingsRequest).
+func (o *operatorSettingsFlags) request() config.SettingsRequest {
+	return config.SettingsRequest{FleetFlag: o.fleet, WorkstationFlag: o.workstation, Getenv: os.Getenv, ManifestPath: o.manifest}
+}
+
 // loadPolicy resolves and loads the selected documents (config.SelectOperatorPolicy). No
 // document selected returns a nil policy, whose settings are the built-in defaults.
 func (o *operatorSettingsFlags) loadPolicy(ctx context.Context) (*config.EffectivePolicy, error) {
-	policy, err := config.SelectOperatorPolicy(ctx, config.SettingsRequest{
-		FleetFlag: o.fleet, WorkstationFlag: o.workstation, Getenv: os.Getenv, ManifestPath: o.manifest,
-	})
+	policy, err := config.SelectOperatorPolicy(ctx, o.request())
 	if err != nil {
 		return nil, fmt.Errorf("load operator settings: %w", err)
 	}
