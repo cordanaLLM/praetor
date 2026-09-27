@@ -4,57 +4,64 @@
   "alt": "Praetor boundaries, agent interactions, git providers, and downstream infrastructure.",
   "text": [
     "Praetor Governance Boundary: Praetor Engine (praetorctl).",
-    "Boxes: Software Engineer / Operator, Autonomous AI Coding Agent (fed by compile-context), Operational Fork, Git Provider (GitHub enforces), ARC Runner Scale Sets (operational fork deploy/arc/), GitOps Controller (operational fork deploy/k8s/).",
-    "Software Engineer / Operator → Praetor Engine (invokes commands / verifies PRs).",
-    "Autonomous AI Coding Agent → Praetor Engine (reads AGENTS.md / runs checks).",
-    "Operational Fork → Praetor Engine (harvests requirements & dogfoods) → Git Provider (enforces branch protection & checks).",
-    "Praetor Engine → ARC Runner Scale Sets (resolves runner routing to scale-set names).",
-    "GitOps Controller → Praetor Engine (syncs deploy/helm/praetor)."
+    "Boxes: Software Engineer / Operator, Autonomous AI Coding Agent (fed by compile-context), Operational Fork, Git Provider (GitHub enforces), ARC Runner Scale Sets (fork deploy/arc/), GitOps Controller (fork deploy/k8s/, Helm chart).",
+    "Software Engineer / Operator → Praetor Engine (invokes, verifies PRs).",
+    "Autonomous AI Coding Agent → Praetor Engine (reads AGENTS.md).",
+    "Operational Fork → Praetor Engine (harvests, dogfoods) → Git Provider (branch protection).",
+    "Praetor Engine → ARC Runner Scale Sets (resolves routing).",
+    "GitOps Controller → Praetor Engine (syncs Helm chart)."
   ],
   "evidence": [
     "internal/forge/forge.go:NewForge",
     "internal/runner/matrix.go:ResolveRunner",
-    "cmd/standardsctl/compile_context.go:runCompileContext"
+    "cmd/standardsctl/compile_context.go:runCompileContext",
+    "internal/operationalsync/overlay.go:ownerOnlyPrefixes",
+    "cmd/standardsctl/audit.go:auditRunnerMatrix",
+    "internal/config/hierarchy.go:DefaultRunnerPolicy",
+    "cmd/standardsctl/harvest.go:runHarvest",
+    "cmd/standardsctl/dogfood.go:runDogfood",
+    "cmd/standardsctl/needs.go:runNeeds",
+    "deploy/helm/praetor/Chart.yaml:apiVersion"
   ],
-  "spec_sha256": "d73b9a2947768d75aea648c7f1bd4561239becbceed6574168c3fc15fa0a4c98",
+  "spec_sha256": "22209f7e7ec4077558ce0c4c01c3082aeab8c0f7bb3924fdc0a85f9e797752f3",
   "engine": {
     "commit": "ccfe85b4851957ac2adf88b4a9ddf9668b2882f1",
     "sha256": "047b4bcb30562cca709be7175d11995cdda45cf4b89db1f6906c5805b26c6452"
   },
-  "svg_sha256": "cc1768d18511d7a8886e261905456014551ec3fb1e4e1e8d7c27d3ce34765e38",
-  "static_sha256": "cc1768d18511d7a8886e261905456014551ec3fb1e4e1e8d7c27d3ce34765e38",
-  "width": 1458,
-  "height": 223,
+  "svg_sha256": "7550624decf6f15a0a470f6e250d70c63b9e7806e639824293a7030536f8347c",
+  "static_sha256": "7550624decf6f15a0a470f6e250d70c63b9e7806e639824293a7030536f8347c",
+  "width": 560,
+  "height": 502,
   "edges": [
     {
       "from": "Software Engineer / Operator",
       "to": "Praetor Engine",
-      "label": "invokes commands / verifies PRs"
+      "label": "invokes, verifies PRs"
     },
     {
       "from": "Autonomous AI Coding Agent",
       "to": "Praetor Engine",
-      "label": "reads AGENTS.md / runs checks"
+      "label": "reads AGENTS.md"
     },
     {
       "from": "Operational Fork",
       "to": "Praetor Engine",
-      "label": "harvests requirements & dogfoods"
+      "label": "harvests, dogfoods"
     },
     {
       "from": "Praetor Engine",
       "to": "Git Provider",
-      "label": "enforces branch protection & checks"
+      "label": "branch protection"
     },
     {
       "from": "Praetor Engine",
       "to": "ARC Runner Scale Sets",
-      "label": "resolves runner routing to scale-set names"
+      "label": "resolves routing"
     },
     {
       "from": "GitOps Controller",
       "to": "Praetor Engine",
-      "label": "syncs deploy/helm/praetor"
+      "label": "syncs Helm chart"
     }
   ]
 }

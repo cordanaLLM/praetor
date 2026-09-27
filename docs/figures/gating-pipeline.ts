@@ -130,6 +130,62 @@ export default {
         ],
       },
       {
+        label: 'lockfile mismatch',
+        caption: 'A checksum mismatch fails stage 1; no later stage runs.',
+        flow: [
+          {
+            edges: 's1-fail',
+            say: 'VerifyLockfiles finds a checksum that does not match .standards.lock; the gate exits 1.',
+            show: { reject: [{ tag: 'failed', tone: 'orange', text: 'Prefetch & Lockfiles', meta: 'checksum mismatch' }] },
+          },
+        ],
+      },
+      {
+        label: 'security finding',
+        caption: 'A vulnerability fails stage 3; no later stage runs.',
+        flow: [
+          { edges: 'candidate->s1', say: 'The tree matches HEAD.', ms: FAST },
+          { edges: 's1->s2', say: 'Lockfiles verified.', ms: FAST },
+          { edges: 's2->s3', say: 'No HISS violation beyond the baseline.', ms: FAST },
+          {
+            edges: 's3-fail',
+            say: 'govulncheck or gosec reports a vulnerability, or the scanner itself is missing; the gate exits 1.',
+            show: { reject: [{ tag: 'failed', tone: 'orange', text: 'Security & SCA Scan', meta: 'vulnerability found' }] },
+          },
+        ],
+      },
+      {
+        label: 'flavor conformance failure',
+        caption: 'A score below the bar fails stage 4; no later stage runs.',
+        flow: [
+          { edges: 'candidate->s1', say: 'The tree matches HEAD.', ms: FAST },
+          { edges: 's1->s2', say: 'Lockfiles verified.', ms: FAST },
+          { edges: 's2->s3', say: 'No HISS violation beyond the baseline.', ms: FAST },
+          { edges: 's3->s4', say: 'govulncheck and gosec pass.', ms: FAST },
+          {
+            edges: 's4-fail',
+            say: 'The flavor audit score falls below the bar, or the template is missing; the gate exits 1.',
+            show: { reject: [{ tag: 'failed', tone: 'orange', text: 'Flavor Conformance', meta: 'below bar' }] },
+          },
+        ],
+      },
+      {
+        label: 'race/test failure',
+        caption: 'A failing test fails stage 5; no later stage runs.',
+        flow: [
+          { edges: 'candidate->s1', say: 'The tree matches HEAD.', ms: FAST },
+          { edges: 's1->s2', say: 'Lockfiles verified.', ms: FAST },
+          { edges: 's2->s3', say: 'No HISS violation beyond the baseline.', ms: FAST },
+          { edges: 's3->s4', say: 'govulncheck and gosec pass.', ms: FAST },
+          { edges: 's4->s5', say: 'Flavor conformance holds.', ms: FAST },
+          {
+            edges: 's5-fail',
+            say: 'go test -race fails in the worktree; the gate exits 1.',
+            show: { reject: [{ tag: 'failed', tone: 'orange', text: 'Race-Detector Tests', meta: 'test failed' }] },
+          },
+        ],
+      },
+      {
         label: 'no signing key',
         caption: 'Stage 6 fails closed without a key.',
         flow: [

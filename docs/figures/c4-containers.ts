@@ -13,6 +13,14 @@ export default {
     'internal/bump/canary.go:RunCanary',
     'internal/lockdown/distill.go:DistillSARIF',
     'internal/router/models.go:LoadRoutingConfig',
+    'cmd/standards-mcp/main.go:main',
+    'cmd/standards-lsp/main.go:main',
+    'internal/compiler/agents.go:CompileAgents',
+    'internal/config/hierarchy.go:LoadCascadingRunnerConfigContext',
+    'internal/gating/prefetch.go:VerifyLockfiles',
+    'internal/gating/pipeline.go:hissScanOptions',
+    'Dockerfile:ENTRYPOINT',
+    '.github/workflows/release-binaries.yml:workflow_dispatch',
   ],
   describe: [
     'The CLI routes commands to internal engines.',
@@ -20,6 +28,7 @@ export default {
   ],
   props: {
     layout: {
+      direction: 'column',
       gap: 30,
       children: [
         {
@@ -28,10 +37,11 @@ export default {
           direction: 'row',
           gap: 20,
           children: [
-            { id: 'standards', label: '.standards.yaml', sub: 'Manifest' },
-            { id: 'fleet', label: '.config/fleet.yaml', sub: 'optional, operator-owned' },
-            { id: 'agents_md', label: 'AGENTS.md', sub: 'Canonical Instructions' },
-            { id: 'subagents', label: '.agents/', sub: 'Personas, Skills, Plugin' },
+            { id: 'standards', label: '.standards.yaml', sub: 'Manifest, repo-layer' },
+            { id: 'fleet', label: '.config/fleet.yaml', sub: 'fleet-layer, optional' },
+            { id: 'orgs', label: '.config/orgs/*.yaml', sub: 'org-layer, optional' },
+            { id: 'agents_md', label: 'AGENTS.md', sub: 'Instructions' },
+            { id: 'subagents', label: '.agents/', sub: 'Personas, Skills' },
           ],
         },
         {
@@ -83,9 +93,10 @@ export default {
       ],
     },
     edges: [
-      { from: 'standards', to: 'gating', label: 'lockfile & complexity policy' },
-      { from: 'standards', to: 'runner', label: 'runners:' },
-      { from: 'fleet', to: 'runner' },
+      { from: 'standards', to: 'gating', label: 'lockfile policy' },
+      { from: 'standards', to: 'runner', label: 'repo layer, wins' },
+      { from: 'fleet', to: 'runner', label: 'fleet layer' },
+      { from: 'orgs', to: 'runner', label: 'org layer' },
       { from: 'agents_md', to: 'compiler' },
       { from: 'subagents', to: 'compiler' },
       { from: 'cli', to: 'gating' },
@@ -102,7 +113,7 @@ export default {
         caption: 'Compiles AGENTS.md and .agents/ to vendor-specific instructions.',
         flow: [
           { edges: 'agents_md->compiler', say: 'Reads AGENTS.md.' },
-          { edges: 'subagents->compiler', say: 'Reads .agents/ personas and skills.' },
+          { edges: 'subagents->compiler', say: 'Reads .agents/ personas and skills (agents.go persona projection).' },
           { edges: 'compiler->vendor', say: 'Renders 6 vendor files (CLAUDE.md, etc.).' },
         ],
       },
@@ -111,16 +122,17 @@ export default {
         caption: 'Anti-Direct-Merge Gating Pipeline.',
         flow: [
           { edges: 'cli->gating', say: 'Runs praetorctl gate run.' },
-          { edges: 'standards->gating', say: 'Reads policy and lockfiles.' },
+          { edges: 'standards->gating', say: 'Reads policy and verifies lockfiles.' },
           { edges: 'gating->hiss', say: '6 stages including HISS.' },
         ],
       },
       {
         label: 'runner routing',
-        caption: 'Resolves runners using hierarchical policy.',
+        caption: 'Resolves runners using hierarchical policy; CI itself runs on GitHub-hosted runners and does not consume this result (ADR-0012).',
         flow: [
-          { edges: 'standards->runner', say: 'Reads local runners:.' },
-          { edges: 'fleet->runner', say: 'Applies fleet and org overrides.' },
+          { edges: 'fleet->runner', say: 'DefaultRunnerPolicy merges fleet.yaml first.' },
+          { edges: 'orgs->runner', say: 'Then .config/orgs/<org>.yaml overrides fleet.' },
+          { edges: 'standards->runner', say: 'Then .standards.yaml runners: overrides fleet and org (LoadCascadingRunnerConfigContext, last write wins).' },
         ],
       },
       {
