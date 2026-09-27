@@ -19,6 +19,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/mcp"
 	"github.com/cordanaLLM/praetor/internal/needs"
 	"github.com/cordanaLLM/praetor/internal/util"
+	"github.com/cordanaLLM/praetor/internal/workstation"
 )
 
 const (
@@ -38,6 +39,10 @@ const (
 	codeInvalidParams  = -32602
 	codeInternalError  = -32603
 )
+
+// engineBuild describes the running binary for the engine-build check the context write runs;
+// tests substitute a fake stale build.
+var engineBuild = workstation.RunningBuild
 
 var (
 	// ErrOutsideRoot is returned for path arguments that resolve outside -root.
@@ -527,7 +532,13 @@ func (s *Server) compileContext(ctx context.Context, source, targetDir string, v
 	if err := ctx.Err(); err != nil {
 		return mcp.ErrorResult(fmt.Sprintf("compile-context cancelled before writing: %v", err))
 	}
-	if err := compiler.CompileContextProjections(ctx, &b, tr, source, targetDir); err != nil {
+	// An installed server older than the engine checkout it serves would write its own stale
+	// rendering, as the CLI's compile-context did from client wrappers (BUG-1004).
+	err = workstation.CheckBuildCurrent(ctx, targetDir, engineBuild())
+	if err == nil {
+		err = compiler.CompileContextProjections(ctx, &b, tr, source, targetDir)
+	}
+	if err != nil {
 		return mcp.ErrorResult(fmt.Sprintf("Context compilation failed: %v", err))
 	}
 	// The compiler's shared report, the same text the CLI prints; bound by count and digest.

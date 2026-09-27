@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/util"
+	"github.com/cordanaLLM/praetor/internal/workstation"
 )
 
 // version is written at release time with -X main.version. It must stay a var: the Go linker
@@ -82,24 +83,15 @@ func formatDevLockVersion(revision string, modified bool) string {
 // deliberately the zero version rather than a plausible release number.
 const unidentifiedLockVersion = "v0.0.0"
 
-// vcsStamp extracts the revision and dirty flag Go embeds at build time.
+// vcsStamp extracts the revision, shortened for output, and the dirty flag Go embeds at build
+// time, through the one build-stamp reader the engine-build check also uses.
 func vcsStamp(info *debug.BuildInfo) (revision string, modified bool) {
-	for i := 0; i < len(info.Settings) && i < maxBuildSettings; i++ {
-		switch info.Settings[i].Key {
-		case "vcs.revision":
-			revision = info.Settings[i].Value
-			if len(revision) > shortRevisionLen {
-				revision = revision[:shortRevisionLen]
-			}
-		case "vcs.modified":
-			modified = info.Settings[i].Value == "true"
-		}
+	revision, modified = workstation.BuildStamp(info)
+	if len(revision) > shortRevisionLen {
+		revision = revision[:shortRevisionLen]
 	}
 	return revision, modified
 }
-
-// maxBuildSettings bounds the build-information scan (HISS-02).
-const maxBuildSettings = 256
 
 // shortRevisionLen is how much of a commit hash identifies a build in output.
 const shortRevisionLen = 12

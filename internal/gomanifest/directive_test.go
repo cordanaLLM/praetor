@@ -200,6 +200,36 @@ func TestModulePath_Boundary_CommentOnlyAndEmptyQuoted(t *testing.T) {
 	}
 }
 
+// Positive: the manifest-level reader finds the module line wherever it sits among the
+// first lines, comments and blank lines before it included.
+func TestModuleDirective_Positive(t *testing.T) {
+	manifest := "// header comment\n\nmodule example.com/engine // main module\n\ngo 1.27\n"
+	if path, ok := ModuleDirective([]byte(manifest)); !ok || path != "example.com/engine" {
+		t.Fatalf("path=%q ok=%v", path, ok)
+	}
+}
+
+// Negative: a manifest without a module line, or with only a commented-out one, declares none.
+func TestModuleDirective_Negative_NoModuleLine(t *testing.T) {
+	for _, manifest := range []string{"go 1.27\n", "// module example.com/engine\ngo 1.27\n", ""} {
+		if path, ok := ModuleDirective([]byte(manifest)); ok || path != "" {
+			t.Fatalf("%q: path=%q ok=%v, want no module", manifest, path, ok)
+		}
+	}
+}
+
+// Boundary: the scan reads exactly maxDirectiveLines lines, so a module line on the last
+// scanned line is found and one line further is not.
+func TestModuleDirective_Boundary_ScanBound(t *testing.T) {
+	padding := strings.Repeat("\n", maxDirectiveLines-1)
+	if path, ok := ModuleDirective([]byte(padding + "module example.com/last")); !ok || path != "example.com/last" {
+		t.Fatalf("last scanned line: path=%q ok=%v", path, ok)
+	}
+	if path, ok := ModuleDirective([]byte(padding + "\nmodule example.com/beyond")); ok || path != "" {
+		t.Fatalf("line past the bound: path=%q ok=%v", path, ok)
+	}
+}
+
 // Positive: modfile's lexer separates tokens by space, tab or carriage return, so a tab
 // after the keyword declares the version exactly as a space does.
 func TestGoDirectiveLine_Positive_TrimsCommentAndSpace(t *testing.T) {
