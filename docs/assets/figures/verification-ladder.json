@@ -3,11 +3,11 @@
   "title": "Verification ladder",
   "alt": "Four verification tiers from editor LSP to git hooks, local gate stages, and CI PR admission re-checking Exit-0 receipts.",
   "text": [
-    "Local Workstation: 1. Editor LSP (cmd/standards-lsp), 2. Git Hooks (lefthook pre-commit & pre-push), 3. Gate Pipeline (6 stages in internal/gating), Signing Key (PRAETOR_RECEIPT_KEY), .standards-receipt.json (Exit-0 receipt).",
-    "Remote CI & Admission: Pull Request (checklist & ```receipt block), 4. CI Re-check (standardsctl forge validate-pr), Admitted (PR status check passes), Rejected (hook block or CI exit 1).",
+    "Local Workstation: 1. Editor LSP (cmd/standards-lsp), Blocked locally (commit or push refused), 2. Git Hooks (lefthook pre-commit & pre-push), Signing Key (env var or key file), 3. Gate Pipeline (6 stages in internal/gating), .standards-receipt.json (Exit-0 receipt).",
+    "Remote CI & Admission: Pull Request (checklist & ```receipt block), 4. CI Re-check (standardsctl forge validate-pr), Admitted (PR check passes), Rejected (validate-pr exits 1).",
     "1. Editor LSP → 2. Git Hooks (save / stage) → 3. Gate Pipeline (commit / push).",
     "Signing Key → 3. Gate Pipeline (LoadSigningKey) → .standards-receipt.json (signed v2) → Pull Request (fenced in body) → 4. CI Re-check (validate-pr) → Admitted (valid receipt).",
-    "2. Git Hooks → Rejected (hook exit 1).",
+    "2. Git Hooks → Blocked locally (hook exit 1).",
     "4. CI Re-check → Rejected (receipt invalid).",
     "Scenario 1, clean change -> admitted: A clean change passes all four tiers and is admitted by CI. Editor LSP reports zero diagnostics as code is written. Pre-commit and pre-push hooks run local checks and linters. Gate runs 6 stages; Ed25519 signing key is loaded. Stage output signed; .standards-receipt.json minted for HEAD commit. PR is opened with checked HISS boxes and fenced receipt block. CI runs standardsctl forge validate-pr on the PR description. Signature, clean worktree, and head SHA match: PR is admitted.",
     "Scenario 2, a hook blocks locally: A local hook blocks commit or push before CI runs. Change introduces an error or invariant violation. Lefthook pre-commit or pre-push hook rejects the change locally.",
@@ -30,17 +30,17 @@
     "cmd/standardsctl/forge.go:runForgeValidatePR",
     ".github/workflows/ci.yml:validate"
   ],
-  "spec_sha256": "17ccb211becdcdbefb09d4d770b2a9b7a85458c06a79adcd08bfd03ca82a647d",
+  "spec_sha256": "ce55920fadc0210a493e31c7d58e968513050ba77698f2f11050c070fbd6656d",
   "engine": {
     "commit": "ccfe85b4851957ac2adf88b4a9ddf9668b2882f1",
     "sha256": "947c16f2d382b4ed4374ba8a368c4468114b97e5ec6323c4ecb785c11658d96e"
   },
-  "svg_sha256": "a0fbb489f6e5598da37eb0fc5976998974d2c8e3ee15c6365f2e7d7d9f3efba9",
-  "static_sha256": "b376dc8f8068872be604df704346e68e6381d66fadebe61f279670cc2a4ae0ea",
-  "width": 596,
-  "height": 576,
-  "static_width": 596,
-  "static_height": 476,
+  "svg_sha256": "a726da71294af3ae88047009f0e48ba895c57c77f6b44f53f3e0f4e8f66f1efe",
+  "static_sha256": "2211d8b64c0878f8ae5e795c5bb432ea460f2948c554be00fe0710692952591c",
+  "width": 604,
+  "height": 973,
+  "static_width": 604,
+  "static_height": 743,
   "edges": [
     {
       "from": "1. Editor LSP",
@@ -79,7 +79,7 @@
     },
     {
       "from": "2. Git Hooks",
-      "to": "Rejected",
+      "to": "Blocked locally",
       "label": "hook exit 1"
     },
     {

@@ -22,38 +22,51 @@ export default {
   describe: ['Filter chain evaluates candidate tiers and models in strict sequential order without fallback escalation.'],
   props: {
     speed: 1100,
+    // Edge labels sit at the middle of each edge, so the gaps beside the chain are wider than the
+    // longest label: no label reaches into a box or its card. The inputs line up with the top of
+    // the chain, so each meets its filter without crossing another input's edge even when the
+    // cards make the chain tall. The winning route drops out of the chain's last filter into
+    // Selected below it, and Excluded sits level with the middle filters, so the three rejection
+    // edges run nearly straight and no edge crosses another edge's label.
     layout: {
-      gap: 48,
+      gap: 190,
       children: [
         {
-          direction: 'column',
-          gap: 32,
+          direction: 'row',
+          gap: 190,
+          align: 'start',
           children: [
-            { id: 'cli', label: 'models route', sub: 'task, tokens & capabilities', width: 230 },
-            { id: 'config', label: 'routing.yaml', sub: '.config/models/routing.yaml', shape: 'store', width: 230 },
-            { id: 'tracker', label: 'LimitTracker', sub: 'in-process or --usage snapshot', shape: 'store', width: 230 },
+            {
+              direction: 'column',
+              gap: 32,
+              children: [
+                { id: 'cli', label: 'models route', sub: 'task, tokens & capabilities', width: 230 },
+                { id: 'config', label: 'routing.yaml', sub: '.config/models/routing.yaml', shape: 'store', width: 230 },
+                { id: 'tracker', label: 'LimitTracker', sub: 'in-process or --usage snapshot', shape: 'store', width: 230 },
+              ],
+            },
+            {
+              direction: 'column',
+              gap: 44,
+              children: [
+                {
+                  id: 'chain',
+                  label: 'Filter chain, in code order',
+                  direction: 'column',
+                  gap: 20,
+                  children: [
+                    { id: 'f_task', label: '1. hasRoutingTag', sub: 'tier.TargetTasks match', width: 250 },
+                    { id: 'f_caps', label: '2. hasTaskCapabilities', sub: 'model.Capabilities match', width: 250 },
+                    { id: 'f_quota', label: '3. quotaEligible', sub: 'RPM/TPM & 429 cooldown', width: 250 },
+                    { id: 'f_cost', label: '4. betterTaskRoute', sub: 'lowest cost & ID tie-break', width: 250 },
+                  ],
+                },
+                { id: 'selected', label: 'Selected TaskRoute', sub: 'model, tier, cost, headroom', width: 250 },
+              ],
+            },
           ],
         },
-        {
-          id: 'chain',
-          label: 'Filter chain, in code order',
-          direction: 'column',
-          gap: 20,
-          children: [
-            { id: 'f_task', label: '1. hasRoutingTag', sub: 'tier.TargetTasks match', width: 250 },
-            { id: 'f_caps', label: '2. hasTaskCapabilities', sub: 'model.Capabilities match', width: 250 },
-            { id: 'f_quota', label: '3. quotaEligible', sub: 'RPM/TPM & 429 cooldown', width: 250 },
-            { id: 'f_cost', label: '4. betterTaskRoute', sub: 'lowest cost & ID tie-break', width: 250 },
-          ],
-        },
-        {
-          direction: 'column',
-          gap: 40,
-          children: [
-            { id: 'selected', label: 'Selected TaskRoute', sub: 'model, tier, cost, headroom', width: 230 },
-            { id: 'excluded', label: 'Excluded / Skipped', sub: 'ineligible or higher cost', width: 230 },
-          ],
-        },
+        { id: 'excluded', label: 'Excluded / Skipped', sub: 'ineligible or higher cost', width: 230 },
       ],
     },
     edges: [
