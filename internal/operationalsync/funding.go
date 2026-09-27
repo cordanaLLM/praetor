@@ -85,8 +85,23 @@ func (op *operation) checkFundingOverlay(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("render incorporated funding surfaces: %w", err)
 	}
+	return checkOwnerSurfaces(current, base, rendered)
+}
+
+// checkOwnerSurfaces accepts each owner surface only when it equals the incorporated source's
+// file or that file's funding rendering. README.md is compared without its managed governance
+// block body (withoutGovernanceBody), which the overlay renders again for the owner.
+func checkOwnerSurfaces(current, base, rendered map[string][]byte) error {
+	trees := [...]map[string][]byte{current, base, rendered}
+	for i := range trees {
+		stripped, err := withoutGovernanceBody(trees[i])
+		if err != nil {
+			return fmt.Errorf("owner surface comparison: %w", err)
+		}
+		trees[i] = stripped
+	}
 	for _, path := range funding.SurfacePaths() {
-		if !sameTreeFile(current, base, path) && !sameTreeFile(current, rendered, path) {
+		if !sameTreeFile(trees[0], trees[1], path) && !sameTreeFile(trees[0], trees[2], path) {
 			return fmt.Errorf("unexpected owner override in %s: render it from %s with praetorctl docs funding", path, funding.ConfigFile)
 		}
 	}
@@ -94,9 +109,9 @@ func (op *operation) checkFundingOverlay(ctx context.Context) error {
 }
 
 // renderOverlay computes everything the candidate must carry: the identity overlay of the
-// reviewed source's configuration files and its funding surfaces rendered from the owner's
-// funding document.
-func (op *operation) renderOverlay(ctx context.Context, next map[string][]byte) error {
+// reviewed source's configuration files, its funding surfaces rendered from the owner's
+// funding document, and its README governance block rendered for the owner identity.
+func (op *operation) renderOverlay(ctx context.Context, next map[string][]byte, source identity) error {
 	var err error
 	if op.expected, err = overlay(next, op.owner); err != nil {
 		return err
@@ -108,10 +123,13 @@ func (op *operation) renderOverlay(ctx context.Context, next map[string][]byte) 
 	if op.surfaces, err = funding.RenderFiles(ctx, surfaces, op.funding); err != nil {
 		return fmt.Errorf("render reviewed funding surfaces: %w", err)
 	}
-	op.fundingChanged = op.fundingChanged[:0]
+	if err := rebindReadme(op.surfaces, source, op.owner); err != nil {
+		return err
+	}
+	op.surfacesChanged = op.surfacesChanged[:0]
 	for _, path := range funding.SurfacePaths() {
 		if !sameTreeFile(surfaces, op.surfaces, path) {
-			op.fundingChanged = append(op.fundingChanged, path)
+			op.surfacesChanged = append(op.surfacesChanged, path)
 		}
 	}
 	return nil

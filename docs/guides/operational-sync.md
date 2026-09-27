@@ -84,8 +84,9 @@ praetorctl operational sync plan \
 
 The existing owner tree must equal the incorporated source except for the
 [owner-only operator paths](#owner-only-operator-paths), the
-[funding surfaces](#funding-surfaces), and these four files and these specific
-identity fields:
+[funding surfaces](#funding-surfaces), the
+[README governance block](#readme-governance-block), and these four files and
+these specific identity fields:
 
 | File | Allowed owner difference |
 | --- | --- |
@@ -128,7 +129,8 @@ those surfaces from it with the renderer behind `praetorctl docs funding`
 
 - `plan` reads the document from `--owner-sha`. An invalid document is an
   error. Each owner funding surface must equal either the incorporated source's
-  file, not rendered yet, or that file rendered from the document. A hand edit,
+  file, not rendered yet, or that file rendered from the document; `README.md`
+  is compared without its [governance block](#readme-governance-block) body. A hand edit,
   or a rendering of another document, is refused as
   `unexpected owner override in <path>`.
 - `prepare` renders every surface of `--source-sha` from the document, writes
@@ -146,6 +148,42 @@ those surfaces from it with the renderer behind `praetorctl docs funding`
 and the next `prepare` renders it. `internal/operationalsync/funding_test.go`
 replays the rendered merge, a conflict inside a rendered block, the refused
 edits and the `up-to-date` cases.
+
+## README governance block
+
+`README.md` also carries the managed governance block that `praetorctl adopt`
+writes and `praetorctl audit` verifies (`internal/readmegovernance`). With the
+documentation contract enabled, the block's badge links to the repository the
+manifest names: the engine's block names the public source, and the fork's own
+audit expects the fork. `plan` and `prepare` render the block for the owner
+with that same renderer:
+
+- They read the recorded state back from the reviewed source's block (debt
+  baseline and documentation contract) and render it again for the owner's
+  `repository.owner`/`repository.name`. Every byte outside the block, funding
+  blocks included, stays as the source has it.
+- The source block must be exactly what the running `praetorctl` renders for
+  that state. A hand-edited block, or one another engine version wrote, stops
+  the operation before any candidate exists with
+  `README.md governance block of the reviewed source: managed README governance block is stale`;
+  run `prepare` with the `praetorctl` built at `--source-sha`.
+- A source without `README.md` gets none, and a `README.md` without the block
+  gets no block inserted: like `adopt`, the overlay never invents a README. A
+  block without the documentation contract names no repository and stays
+  unchanged.
+- `plan` compares the owner's `README.md` with the block's body left out,
+  because the overlay renders that body again. An owner block naming the source
+  (a fork synced before this overlay existed), naming the owner, or worded by
+  an older engine is accepted; a difference outside the block is refused as
+  `unexpected owner override in README.md`.
+- `changed_paths` lists `README.md` when the rendered block differs from the
+  source's. An `up-to-date` candidate whose owner tree still names the source
+  receives the rendering, staged.
+
+`init` does not render the block, the same as the funding surfaces; the first
+`prepare` does. `internal/operationalsync/readme_test.go` replays the rendered
+merge and the next sync, the preserved outside text, the refused cases and the
+`up-to-date` cases.
 
 ## Owner-only operator paths
 
@@ -221,7 +259,8 @@ normal merge commit therefore retains published owner ancestry. An already
 incorporated source produces a clean `up-to-date` candidate.
 
 The final index tree must equal the reviewed source outside the owner overlay,
-the rendered funding surfaces and the owner-only operator paths.
+the rendered funding surfaces, the rendered README governance block and the
+owner-only operator paths.
 Unresolved conflicts, unstaged modifications and untracked files are errors. No
 source code, build scripts, hooks, filters, submodules or GitHub workflows are
 executed by preparation. New clones use inert Git templates and an isolated Git
