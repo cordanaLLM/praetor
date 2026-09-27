@@ -8,6 +8,17 @@
   ],
   "labels": ["dependencies", "flavor:latest"],
   "assignees": [],
+  "ignorePaths": [
+    "**/node_modules/**",
+    "**/bower_components/**",
+    "**/vendor/**",
+    "**/examples/**",
+    "**/__tests__/**",
+    "**/test/**",
+    "**/tests/**",
+    "**/__fixtures__/**",
+    "third_party/**"
+  ],
   "pip-compile": {
     "managerFilePatterns": ["/^docs/presets/mkdocs/requirements\\.txt$/"]
   },

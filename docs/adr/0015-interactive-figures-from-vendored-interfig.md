@@ -530,12 +530,10 @@ Registry facts were read from npm on 2026-09-26.
 ## Verification & Compliance
 
 ```bash
-python3 -B scripts/sync_interfig.py verify
 node --test third_party/interfig/upstream/src/*.test.ts
-npm ci --prefix tools/figures --ignore-scripts
-npm --prefix tools/figures run check
-python3 -B scripts/docs_diagrams.py sources
+make docs-figures-check   # npm ci, tests, typecheck, check, sources
 make docs-diagrams-test
+npm --prefix tools/figures run bundle   # the player bundle is gitignored; site needs it
 mkdocs build --strict -d site
 python3 -B scripts/docs_diagrams.py site --config mkdocs.yml --docs docs --site site
 npm --prefix tools/figures run smoke
@@ -545,6 +543,8 @@ reuse lint
 CI runs the same commands:
 
 - `pages.yml` builds and smoke-tests the site;
-- the CI Documentation Integrity Audit runs on docs-only pull requests;
-- `make verify-all` runs on every other change;
-- `interfig-sync.yml` checks weekly for upstream drift.
+- the CI Documentation Integrity Audit runs `make docs-figures-check` on docs-only pull requests;
+- `make verify-all` runs on every other change.
+
+`scripts/sync_interfig.py verify` and the weekly `interfig-sync.yml` drift check are section 8;
+they land with the figures-sync change, not with this one.

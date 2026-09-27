@@ -20,7 +20,10 @@ file under `upstream/`.
 
 ## License and credit
 
-interfig is MIT-licensed, Copyright (c) 2025 Vectorize AI, Inc. `upstream/` has no license
+<!-- REUSE-IgnoreStart -->
+interfig is MIT-licensed, Copyright (c) 2025 Vectorize AI, Inc.
+<!-- REUSE-IgnoreEnd -->
+`upstream/` has no license
 file of its own in the upstream tree, so `upstream/LICENSE` is the repository-root
 `LICENSE` at the pinned commit, copied verbatim.
 

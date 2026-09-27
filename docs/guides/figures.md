@@ -112,8 +112,8 @@ The keyboard reaches every tab, button and the full-screen toggle, and Esc close
 
 ## Outside the site
 
-- **GitHub wiki.** The wiki sync runs `docs_diagrams.py portable --base <site URL>` on the copied
-  pages. Each fence becomes the same `<picture>` markup with absolute URLs to the published SVGs,
+- **GitHub wiki.** The wiki sync runs `docs_diagrams.py portable --wiki` on the copied pages, which
+  reads the site URL from `site_url` in `mkdocs.yml`. Each fence becomes the same `<picture>` markup with absolute URLs to the published SVGs,
   followed by a link to the interactive figure on the site (see the
   [wiki sync guide](github-wiki-sync.md#figures)).
 - **README.** A figure sits between `<!-- figure:<slug> -->` and `<!-- /figure -->`, with
