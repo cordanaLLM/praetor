@@ -3,24 +3,25 @@
   "title": "Container Diagram",
   "alt": "Runtime modules within the Praetor binary, daemon services, and configuration inputs.",
   "text": [
-    "Repository Space: .standards.yaml (Manifest, repo-layer), .config/fleet.yaml (fleet-layer, optional), .config/orgs/*.yaml (org-layer, optional), AGENTS.md (Instructions), .agents/ (Personas, Skills).",
-    "Praetor Core Engine (Go Binary / Container): CLI & Servers (cmd/standardsctl, mcp, lsp), HTTP Health Probes (praetorctl serve), Gating Engine, Compiler & Transpiler, HISS Invariant Scanner, Runner Matrix Router, Bump Canary, SARIF Distiller, Model Router.",
-    "Generated Projections: Vendor Agent Files (CLAUDE.md, etc.), Diagnostic Summary (SARIF output), Distroless Image (ghcr.io/cordanallm/praetor).",
-    ".standards.yaml → Gating Engine (lockfile policy).",
-    ".standards.yaml → Runner Matrix Router (repo layer, wins).",
+    "Repository Space: .config/fleet.yaml (fleet layer, optional), .config/orgs/*.yaml (org layer, optional), .standards.yaml (manifest, repo layer), AGENTS.md (instructions), .agents/ (personas, skills), routing.yaml (.config/models/).",
+    "Praetor Core Engine (Go Binary / Container): Runner Matrix Router (runner.ResolveRunner), Gating Engine (praetorctl gate run), HISS Invariant Scanner (hiss.Scan), CLI & Servers (cmd/standardsctl, mcp, lsp), HTTP Health Probes (praetorctl serve), Compiler & Transpiler (praetorctl compile-context), Bump Canary (bump.RunCanary), SARIF Distiller (lockdown.DistillSARIF), Model Router (praetorctl models).",
+    "Generated Projections: Distroless Image (ghcr.io/cordanallm/praetor), Vendor Agent Files (CLAUDE.md, etc.), Diagnostic Summary (SARIF output).",
+    "routing.yaml → Model Router.",
     ".config/fleet.yaml → Runner Matrix Router (fleet layer).",
     ".config/orgs/*.yaml → Runner Matrix Router (org layer).",
+    ".standards.yaml → Runner Matrix Router (repo layer, wins).",
+    ".standards.yaml → Gating Engine (lockfile policy).",
     "AGENTS.md → Compiler & Transpiler.",
     ".agents/ → Compiler & Transpiler.",
     "CLI & Servers → Gating Engine.",
     "CLI & Servers → Compiler & Transpiler.",
     "Gating Engine → HISS Invariant Scanner.",
     "Compiler & Transpiler → Vendor Agent Files.",
-    "Bump Canary → SARIF Distiller (wraps failure as SARIF) → Diagnostic Summary.",
+    "Bump Canary → SARIF Distiller (SARIF) → Diagnostic Summary.",
     "HTTP Health Probes → Distroless Image (packaged in).",
     "Scenario 1, compile-context: Compiles AGENTS.md and .agents/ to vendor-specific instructions. Reads AGENTS.md. Reads .agents/ personas and skills (agents.go persona projection). Renders 6 vendor files (CLAUDE.md, etc.).",
     "Scenario 2, gating: Anti-Direct-Merge Gating Pipeline. Runs praetorctl gate run. Reads policy and verifies lockfiles. 6 stages including HISS.",
-    "Scenario 3, runner routing: Resolves runners using hierarchical policy; CI itself runs on GitHub-hosted runners and does not consume this result (ADR-0012). DefaultRunnerPolicy merges fleet.yaml first. Then .config/orgs/<org>.yaml overrides fleet. Then .standards.yaml runners: overrides fleet and org (LoadCascadingRunnerConfigContext, last write wins).",
+    "Scenario 3, runner routing: Resolves runners using hierarchical policy; CI itself runs on GitHub-hosted runners and does not consume this result (ADR-0012). LoadCascadingRunnerConfigContext starts from DefaultRunnerPolicy and merges .config/fleet.yaml onto it. Then .config/orgs/<org>.yaml overrides fleet. Then the runners: key of .standards.yaml overrides fleet and org; the last layer merged wins.",
     "Scenario 4, SARIF distillation: Condenses SARIF logs into bounded summaries. Canary test wraps failure in SARIF. Distills summary and writes full report.",
     "The CLI routes commands to internal engines.",
     "SARIF Distillation condenses failure outputs for the agent."
@@ -39,30 +40,26 @@
     "cmd/standards-lsp/main.go:main",
     "internal/compiler/agents.go:CompileAgents",
     "internal/config/hierarchy.go:LoadCascadingRunnerConfigContext",
+    "internal/config/hierarchy.go:DefaultRunnerPolicy",
+    "cmd/standardsctl/models.go:runModels",
     "internal/gating/prefetch.go:VerifyLockfiles",
     "internal/gating/pipeline.go:hissScanOptions",
     "Dockerfile:ENTRYPOINT",
     ".github/workflows/release-binaries.yml:workflow_dispatch"
   ],
-  "spec_sha256": "59265c4ee7bd43ad05c2332305ab2659a1bd72998432881f2eb90328ab49069a",
+  "spec_sha256": "4f4cd6f0a5545ae4065fdb2bc5d0fbc59b83ec45cea4f47d207495e2cb3efb3f",
   "engine": {
     "commit": "ccfe85b4851957ac2adf88b4a9ddf9668b2882f1",
     "sha256": "047b4bcb30562cca709be7175d11995cdda45cf4b89db1f6906c5805b26c6452"
   },
-  "svg_sha256": "36924f4afb4085f74ec5c70e096ce06657f21f7ed76f89daad977ae15d156929",
-  "static_sha256": "88f227df9bbfea9edcdb61354eaac6255292e4138b6f08b5e49119a9c033139e",
-  "width": 904,
-  "height": 702,
+  "svg_sha256": "9c8d8c02f75c5dd7d7358e335172a1b042147a917bd99243b469cc7049d6e91b",
+  "static_sha256": "d1164447d644373f9527a1eea3303c7cd62501ac0885889d40cf77c7a695f342",
+  "width": 1155,
+  "height": 665,
   "edges": [
     {
-      "from": ".standards.yaml",
-      "to": "Gating Engine",
-      "label": "lockfile policy"
-    },
-    {
-      "from": ".standards.yaml",
-      "to": "Runner Matrix Router",
-      "label": "repo layer, wins"
+      "from": "routing.yaml",
+      "to": "Model Router"
     },
     {
       "from": ".config/fleet.yaml",
@@ -73,6 +70,16 @@
       "from": ".config/orgs/*.yaml",
       "to": "Runner Matrix Router",
       "label": "org layer"
+    },
+    {
+      "from": ".standards.yaml",
+      "to": "Runner Matrix Router",
+      "label": "repo layer, wins"
+    },
+    {
+      "from": ".standards.yaml",
+      "to": "Gating Engine",
+      "label": "lockfile policy"
     },
     {
       "from": "AGENTS.md",
@@ -101,7 +108,7 @@
     {
       "from": "Bump Canary",
       "to": "SARIF Distiller",
-      "label": "wraps failure as SARIF"
+      "label": "SARIF"
     },
     {
       "from": "SARIF Distiller",

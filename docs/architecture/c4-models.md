@@ -12,13 +12,22 @@ The System Context diagram details Praetor's boundaries, autonomous agent intera
 c4-system-context
 ```
 
-Edges cross into infrastructure this repository does not ship. The ARC scale sets and the
-ArgoCD Application are operator data: `deploy/arc/` and `deploy/k8s/` are owner-only paths
-(`ownerOnlyPrefixes` in `internal/operationalsync/overlay.go`) that exist only in the operational
-fork, and the engine's `.gitignore` ignores them (`TestOwnerOnlyPrefixesAreIgnoredByTheEngine` in
-`internal/operationalsync/owner_only_test.go`). Praetor does not dispatch jobs: `praetorctl audit`
-checks that the runner policy resolves (`auditRunnerMatrix` in `cmd/standardsctl/audit.go`), and
-this repository's workflows run on GitHub-hosted runners.
+The `runner labels` and `deploys chart` edges cross into infrastructure this repository does not
+ship. The ARC scale sets and the ArgoCD Application are operator data: `deploy/arc/` and
+`deploy/k8s/` are owner-only paths (`ownerOnlyPrefixes` in `internal/operationalsync/overlay.go`)
+that exist only in the operational fork, and the engine's `.gitignore` ignores them
+(`TestOwnerOnlyPrefixesAreIgnoredByTheEngine` in `internal/operationalsync/owner_only_test.go`).
+Praetor does not dispatch jobs: the runner policy only names the scale-set labels, `praetorctl audit`
+checks that it resolves (`auditRunnerMatrix` in `cmd/standardsctl/audit.go`), and this repository's
+workflows run on GitHub-hosted runners. The chart the GitOps controller deploys is the engine's own
+`deploy/helm/praetor`.
+
+The fork and the engine talk both ways (ADR-0012, decision 2). `praetorctl operational` prepares the
+fork from reviewed engine commits (`runOperationalSync` in `cmd/standardsctl/operational.go`), and
+the fork reports its demand back through `.needs.yaml`, which `praetorctl needs` scans and
+aggregates. The engine reconciles branch protection through its forge driver
+(`ReconcileProtection` in `internal/forge/forge.go`); only the GitHub driver enforces, the GitLab
+and Gitea drivers fail every enforcement method with `ErrNotImplemented`.
 
 ---
 
@@ -39,22 +48,36 @@ resolves to. `.github/workflows/release-binaries.yml` builds the image from the 
 `praetorctl` binaries, pushes it and the Helm chart to GHCR and signs both; a published chart pulls
 the image tagged with its `appVersion` (ADR-0013).
 
+The runner router starts from `DefaultRunnerPolicy` and merges `.config/fleet.yaml`,
+`.config/orgs/<org>.yaml` and the `runners:` key of `.standards.yaml` in that order, so the
+repository layer wins (`LoadCascadingRunnerConfigContext` in `internal/config/hierarchy.go`). The
+fleet and org files are optional owner-only paths, so in the engine only the defaults and
+`.standards.yaml` apply. The model router reads `.config/models/routing.yaml`, the file
+`praetorctl models` loads by default.
+
 ---
 
 ## 3. Level 3: Component Diagram (Gating Engine)
 
 The Component diagram details the internal workflow of the Anti-Direct-Merge Gating Pipeline (`internal/gating/pipeline.go`).
-Its tabs play four runs: a clean run that signs the receipt, a HISS violation rejected at stage 2, a dry run,
-and a missing signing key that fails stage 6 closed.
+Every stage that can fail has its own edge to the rejected disposition, and its tabs play four
+runs: a clean run that signs the receipt, a HISS violation rejected at stage 2, a dry run, and a
+missing signing key that fails stage 6 closed.
 
 ```figure
 gating-pipeline
 ```
 
-Stage order and names come from `executeStages` in `internal/gating/pipeline.go`. Each stage records
-one `StageStatus`: `passed`, `failed`, `skipped` or `not_applicable`. Only `failed` stops the
-pipeline and leads to the rejected disposition; a stage that ran nothing is never recorded as
-`passed`, in the CLI report, in `--json`, or in the signed `praetor-gate-output/v2` stage output.
+Stage order and names come from `executeStages` in `internal/gating/pipeline.go`. The rejection
+edges name what fails each stage: a missing or empty `.standards.yaml` or `.standards.lock`
+(`VerifyLockfiles`), or a failed `go mod verify` or `go mod download` (`prefetchDependencies`, both
+in `internal/gating/prefetch.go`); new debt beyond `.standards-baseline.json` or an incomplete scan;
+a `govulncheck` or `gosec` finding, or a missing scanner or `.gosec.json`; a flavor audit below
+`passingScore` or with a missing template (`internal/flavor/audit.go`); a failing `go test -race`;
+and no signing key. Each stage records one `StageStatus`: `passed`, `failed`, `skipped` or
+`not_applicable`. Only `failed` stops the pipeline and leads to the rejected disposition; a stage
+that ran nothing is never recorded as `passed`, in the CLI report, in `--json`, or in the signed
+`praetor-gate-output/v2` stage output.
 
 A dry run (`gate run --dry-run`) changes nothing and reaches no network. It verifies the lockfiles
 and runs stages 2 and 4. In a Go repository it records the module prefetch in stage 1, stage 3,

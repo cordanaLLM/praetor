@@ -3,45 +3,48 @@
   "title": "Gated pipeline",
   "alt": "Six gate stages run in order; a failing stage rejects the change before an Exit-0 receipt is signed.",
   "text": [
-    "Gate stages, in order: 1. Prefetch & Lockfiles (.standards.yaml, .standards.lock), 2. HISS Invariant Scan (ratchet against the debt baseline), 3. Security & SCA Scan (govulncheck, gosec), 4. Flavor Conformance (flavor audit), 5. Race-Detector Tests (go test -race in a worktree), 6. Ed25519 Exit-0 Receipt (signs the stage output).",
-    "Boxes: Candidate commit (praetorctl gate run), Signing key (PRAETOR_RECEIPT_KEY or key file), Rejected (exit 1, stage named), .standards-receipt.json (Exit-0 receipt).",
-    "Candidate commit → 1. Prefetch & Lockfiles (clean tree) → 2. HISS Invariant Scan → 3. Security & SCA Scan → 4. Flavor Conformance → 5. Race-Detector Tests → 6. Ed25519 Exit-0 Receipt.",
-    "Signing key → 6. Ed25519 Exit-0 Receipt (LoadSigningKey) → .standards-receipt.json (signed).",
-    "1. Prefetch & Lockfiles → Rejected (lockfile/checksum).",
-    "2. HISS Invariant Scan → Rejected (HISS findings or missing scanner).",
-    "3. Security & SCA Scan → Rejected (vulnerabilities or missing scanner).",
-    "4. Flavor Conformance → Rejected (flavor score below the bar or missing template).",
-    "5. Race-Detector Tests → Rejected (race/test failure).",
-    "6. Ed25519 Exit-0 Receipt → Rejected (no signing key).",
+    "Gate stages: 1. Prefetch & Lockfiles (lockfiles, go mod verify), 2. HISS Invariant Scan (debt-baseline ratchet), 3. Security & SCA Scan (govulncheck, gosec), 4. Flavor Conformance (flavor audit), 5. Race-Detector Tests (go test -race, worktree), 6. Exit-0 Receipt (Ed25519-signed output).",
+    "Boxes: Signing key (env var or key file), Candidate commit (praetorctl gate run), .standards-receipt.json (Exit-0 receipt), Rejected (exit 1, stage named).",
+    "Candidate commit → 1. Prefetch & Lockfiles (clean tree) → 2. HISS Invariant Scan → 3. Security & SCA Scan → 4. Flavor Conformance → 5. Race-Detector Tests → 6. Exit-0 Receipt.",
+    "Signing key → 6. Exit-0 Receipt (LoadSigningKey) → .standards-receipt.json (signed).",
+    "1. Prefetch & Lockfiles → Rejected (lockfiles).",
+    "2. HISS Invariant Scan → Rejected (new debt).",
+    "3. Security & SCA Scan → Rejected (findings).",
+    "4. Flavor Conformance → Rejected (below bar).",
+    "5. Race-Detector Tests → Rejected (tests fail).",
+    "6. Exit-0 Receipt → Rejected (no key).",
     "Scenario 1, clean run: Every stage passes and the receipt is signed. The tree matches HEAD. Lockfiles found; modules verified. No HISS violation beyond the baseline. govulncheck and gosec pass. Flavor conformance holds. Race-detector tests pass. LoadSigningKey returns the Ed25519 key. The stage output is signed for this commit.",
-    "Scenario 2, HISS violation: A new violation fails stage 2; no later stage runs. The tree matches HEAD. Stage 1 passes. The ratchet finds a violation beyond the baseline; the gate exits 1.",
+    "Scenario 2, HISS violation: A new violation fails stage 2; no later stage runs. The tree matches HEAD. Stage 1 passes. The ratchet finds a violation beyond the baseline (an incomplete scan fails too); the gate exits 1.",
     "Scenario 3, dry run: gate run --dry-run runs the read-only checks only. The tree may differ from HEAD. Lockfiles checked; module download skipped. The HISS scan runs. Security scan skipped. Flavor conformance runs. Race-detector tests skipped. No receipt is minted.",
-    "Scenario 4, lockfile mismatch: A checksum mismatch fails stage 1; no later stage runs. VerifyLockfiles finds a checksum that does not match .standards.lock; the gate exits 1.",
-    "Scenario 5, security finding: A vulnerability fails stage 3; no later stage runs. The tree matches HEAD. Lockfiles verified. No HISS violation beyond the baseline. govulncheck or gosec reports a vulnerability, or the scanner itself is missing; the gate exits 1.",
-    "(Shortened to 2500 characters; docs/figures/gating-pipeline.ts holds the full content.)"
+    "Scenario 4, no signing key: Stage 6 fails closed without a key. Stages 1 to 5 pass. No PRAETOR_RECEIPT_KEY and no key file: the stage fails and nothing is signed.",
+    "Only a failed stage stops the pipeline; a stage that ran nothing is skipped or not_applicable.",
+    "Stage failures: 1, a missing or empty manifest or lockfile, or a failed go mod verify or download; 2, debt beyond the baseline, an incomplete scan or an unreadable baseline; 3, a govulncheck or gosec finding, or a missing scanner or .gosec.json; 4, a flavor score below 80% or a missing template; 5, a failing go test -race; 6, no signing key."
   ],
   "evidence": [
     "internal/gating/pipeline.go:executeStages",
     "internal/gating/tree.go:requireCleanTree",
     "internal/gating/prefetch.go:VerifyLockfiles",
+    "internal/gating/prefetch.go:prefetchDependencies",
     "internal/gating/pipeline.go:runPrefetchStage",
     "internal/gating/pipeline.go:runHissStage",
     "internal/gating/pipeline.go:runSecurityStage",
+    "internal/gating/pipeline.go:requireScanner",
     "internal/gating/pipeline.go:runFlavorStage",
+    "internal/flavor/audit.go:passingScore",
     "internal/gating/pipeline.go:runTestStage",
     "internal/gating/pipeline.go:runReceiptStage",
     "internal/lockdown/keys.go:LoadSigningKey",
     "internal/lockdown/receipts.go:GateOutputVersion"
   ],
-  "spec_sha256": "889f758efb93c66574b4afaa44d6dd162036a4f26eb1f4fd1e14b2678e6151e8",
+  "spec_sha256": "1014e7f36a068da2b7cf46610aefdab90d7d6fec829e940ba4f449c72b835876",
   "engine": {
     "commit": "ccfe85b4851957ac2adf88b4a9ddf9668b2882f1",
     "sha256": "047b4bcb30562cca709be7175d11995cdda45cf4b89db1f6906c5805b26c6452"
   },
-  "svg_sha256": "3f05e4489b574ecaca56df9ce200f2edb5dca86021d0bc3c441c19ec6a317c40",
-  "static_sha256": "7c52ad4e1176f25601775a33798753382896b7d94975504c8032056312052139",
-  "width": 832,
-  "height": 581,
+  "svg_sha256": "610f27049099d77f233fffa2ff5203ad2d257f294f0c502f27887ceed8996dca",
+  "static_sha256": "7121b408c44115450a5f320aaaf94061f1389c0fe5e5ef2787651519b9e3bcfe",
+  "width": 943,
+  "height": 865,
   "edges": [
     {
       "from": "Candidate commit",
@@ -66,47 +69,47 @@
     },
     {
       "from": "5. Race-Detector Tests",
-      "to": "6. Ed25519 Exit-0 Receipt"
+      "to": "6. Exit-0 Receipt"
     },
     {
       "from": "Signing key",
-      "to": "6. Ed25519 Exit-0 Receipt",
+      "to": "6. Exit-0 Receipt",
       "label": "LoadSigningKey"
     },
     {
-      "from": "6. Ed25519 Exit-0 Receipt",
+      "from": "6. Exit-0 Receipt",
       "to": ".standards-receipt.json",
       "label": "signed"
     },
     {
       "from": "1. Prefetch & Lockfiles",
       "to": "Rejected",
-      "label": "lockfile/checksum"
+      "label": "lockfiles"
     },
     {
       "from": "2. HISS Invariant Scan",
       "to": "Rejected",
-      "label": "HISS findings or missing scanner"
+      "label": "new debt"
     },
     {
       "from": "3. Security & SCA Scan",
       "to": "Rejected",
-      "label": "vulnerabilities or missing scanner"
+      "label": "findings"
     },
     {
       "from": "4. Flavor Conformance",
       "to": "Rejected",
-      "label": "flavor score below the bar or missing template"
+      "label": "below bar"
     },
     {
       "from": "5. Race-Detector Tests",
       "to": "Rejected",
-      "label": "race/test failure"
+      "label": "tests fail"
     },
     {
-      "from": "6. Ed25519 Exit-0 Receipt",
+      "from": "6. Exit-0 Receipt",
       "to": "Rejected",
-      "label": "no signing key"
+      "label": "no key"
     }
   ]
 }

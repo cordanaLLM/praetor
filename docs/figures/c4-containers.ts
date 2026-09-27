@@ -17,6 +17,8 @@ export default {
     'cmd/standards-lsp/main.go:main',
     'internal/compiler/agents.go:CompileAgents',
     'internal/config/hierarchy.go:LoadCascadingRunnerConfigContext',
+    'internal/config/hierarchy.go:DefaultRunnerPolicy',
+    'cmd/standardsctl/models.go:runModels',
     'internal/gating/prefetch.go:VerifyLockfiles',
     'internal/gating/pipeline.go:hissScanOptions',
     'Dockerfile:ENTRYPOINT',
@@ -28,82 +30,99 @@ export default {
   ],
   props: {
     layout: {
-      direction: 'column',
-      gap: 30,
+      direction: 'row',
+      gap: 130,
       children: [
         {
           id: 'repo_space',
           label: 'Repository Space',
-          direction: 'row',
-          gap: 20,
+          direction: 'column',
+          gap: 80,
+          align: 'end',
           children: [
-            { id: 'standards', label: '.standards.yaml', sub: 'Manifest, repo-layer' },
-            { id: 'fleet', label: '.config/fleet.yaml', sub: 'fleet-layer, optional' },
-            { id: 'orgs', label: '.config/orgs/*.yaml', sub: 'org-layer, optional' },
-            { id: 'agents_md', label: 'AGENTS.md', sub: 'Instructions' },
-            { id: 'subagents', label: '.agents/', sub: 'Personas, Skills' },
+            {
+              direction: 'column',
+              gap: 8,
+              children: [
+                { id: 'fleet', label: '.config/fleet.yaml', sub: 'fleet layer, optional' },
+                { id: 'orgs', label: '.config/orgs/*.yaml', sub: 'org layer, optional' },
+                { id: 'standards', label: '.standards.yaml', sub: 'manifest, repo layer' },
+              ],
+            },
+            {
+              direction: 'column',
+              gap: 8,
+              children: [
+                { id: 'agents_md', label: 'AGENTS.md', sub: 'instructions' },
+                { id: 'subagents', label: '.agents/', sub: 'personas, skills' },
+              ],
+            },
+            { id: 'routing', label: 'routing.yaml', sub: '.config/models/' },
           ],
         },
         {
           id: 'praetor_cli',
           label: 'Praetor Core Engine (Go Binary / Container)',
           direction: 'column',
-          gap: 20,
+          gap: 24,
+          align: 'start',
           children: [
+            { id: 'runner', label: 'Runner Matrix Router', sub: 'runner.ResolveRunner' },
+            {
+              direction: 'row',
+              gap: 20,
+              children: [
+                { id: 'gating', label: 'Gating Engine', sub: 'praetorctl gate run' },
+                { id: 'hiss', label: 'HISS Invariant Scanner', sub: 'hiss.Scan' },
+              ],
+            },
             {
               direction: 'row',
               gap: 20,
               children: [
                 { id: 'cli', label: 'CLI & Servers', sub: 'cmd/standardsctl, mcp, lsp' },
                 { id: 'serve', label: 'HTTP Health Probes', sub: 'praetorctl serve' },
-              ]
+              ],
             },
+            { id: 'compiler', label: 'Compiler & Transpiler', sub: 'praetorctl compile-context' },
             {
               direction: 'row',
-              gap: 20,
+              gap: 60,
               children: [
-                { id: 'gating', label: 'Gating Engine' },
-                { id: 'compiler', label: 'Compiler & Transpiler' },
-                { id: 'hiss', label: 'HISS Invariant Scanner' },
-              ]
+                { id: 'canary', label: 'Bump Canary', sub: 'bump.RunCanary' },
+                { id: 'distill', label: 'SARIF Distiller', sub: 'lockdown.DistillSARIF' },
+              ],
             },
-            {
-              direction: 'row',
-              gap: 20,
-              children: [
-                { id: 'runner', label: 'Runner Matrix Router' },
-                { id: 'canary', label: 'Bump Canary' },
-                { id: 'distill', label: 'SARIF Distiller' },
-                { id: 'router', label: 'Model Router' },
-              ]
-            },
+            { id: 'router', label: 'Model Router', sub: 'praetorctl models' },
           ],
         },
         {
           id: 'outputs',
           label: 'Generated Projections',
-          direction: 'row',
-          gap: 20,
+          direction: 'column',
+          gap: 42,
+          align: 'start',
           children: [
+            { id: 'oci', label: 'Distroless Image', sub: 'ghcr.io/cordanallm/praetor' },
             { id: 'vendor', label: 'Vendor Agent Files', sub: 'CLAUDE.md, etc.' },
             { id: 'sarif_out', label: 'Diagnostic Summary', sub: 'SARIF output' },
-            { id: 'oci', label: 'Distroless Image', sub: 'ghcr.io/cordanallm/praetor' },
           ],
         },
       ],
     },
     edges: [
-      { from: 'standards', to: 'gating', label: 'lockfile policy' },
-      { from: 'standards', to: 'runner', label: 'repo layer, wins' },
+      { from: 'routing', to: 'router' },
       { from: 'fleet', to: 'runner', label: 'fleet layer' },
       { from: 'orgs', to: 'runner', label: 'org layer' },
+      { from: 'standards', to: 'runner', label: 'repo layer, wins' },
+      { from: 'standards', to: 'gating', label: 'lockfile policy' },
       { from: 'agents_md', to: 'compiler' },
       { from: 'subagents', to: 'compiler' },
       { from: 'cli', to: 'gating' },
       { from: 'cli', to: 'compiler' },
       { from: 'gating', to: 'hiss' },
       { from: 'compiler', to: 'vendor' },
-      { from: 'canary', to: 'distill', label: 'wraps failure as SARIF' },
+      { from: 'canary', to: 'distill', label: 'SARIF' },
       { from: 'distill', to: 'sarif_out' },
       { from: 'serve', to: 'oci', label: 'packaged in' },
     ],
@@ -130,9 +149,9 @@ export default {
         label: 'runner routing',
         caption: 'Resolves runners using hierarchical policy; CI itself runs on GitHub-hosted runners and does not consume this result (ADR-0012).',
         flow: [
-          { edges: 'fleet->runner', say: 'DefaultRunnerPolicy merges fleet.yaml first.' },
+          { edges: 'fleet->runner', say: 'LoadCascadingRunnerConfigContext starts from DefaultRunnerPolicy and merges .config/fleet.yaml onto it.' },
           { edges: 'orgs->runner', say: 'Then .config/orgs/<org>.yaml overrides fleet.' },
-          { edges: 'standards->runner', say: 'Then .standards.yaml runners: overrides fleet and org (LoadCascadingRunnerConfigContext, last write wins).' },
+          { edges: 'standards->runner', say: 'Then the runners: key of .standards.yaml overrides fleet and org; the last layer merged wins.' },
         ],
       },
       {
