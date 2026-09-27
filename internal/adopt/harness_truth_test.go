@@ -3,10 +3,12 @@ package adopt
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/agentcontext"
+	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 )
@@ -78,11 +80,11 @@ func TestHarnessMakesNoUnbackedClaims(t *testing.T) {
 			t.Errorf("harness still claims %q", claim)
 		}
 	}
-	if !strings.Contains(harness, "receipt = `praetorctl gate run` only; generated `make verify-all` mints none.") {
+	if !strings.Contains(harness, "Signed Ed25519 Exit-0 receipt only from `praetorctl gate run`; report no receipt it did not mint.") {
 		t.Error("harness does not say where a receipt comes from")
 	}
-	if line := harnessReceiptLine(0); strings.Contains(line, verifyCommand) || !strings.Contains(line, "`praetorctl gate run` only.") {
-		t.Errorf("receipt line names a verify-all adoption did not generate: %s", line)
+	if strings.Contains(harnessReceiptLine, verifyCommand) {
+		t.Errorf("receipt line ties a receipt to verify-all: %s", harnessReceiptLine)
 	}
 	if row := invariantRows(harness)[0]; !strings.Contains(row, "Rust, Python direct recursion") || !strings.Contains(row, "new finding fails verify-all") {
 		t.Errorf("HISS-01 row is not qualified by language: %s", row)
@@ -90,33 +92,44 @@ func TestHarnessMakesNoUnbackedClaims(t *testing.T) {
 }
 
 // summaryFor renders the verify-all summary of one plan under the given pipelines.
-func summaryFor(plan *VerificationPlan, pipelines hisscatalog.Pipeline, docsGate bool) string {
-	return verificationSummary(harnessFacts{plan: plan, pipelines: pipelines, docsGate: docsGate})
+func summaryFor(plan *VerificationPlan, pipelines hisscatalog.Pipeline) string {
+	return verificationSummary(harnessFacts{plan: plan, pipelines: pipelines})
 }
 
-// TestHarnessSummaryMatchesGeneratedVerifyAll: every command the declared summary attributes
-// to verify-all is one the generated Makefile runs, docs-lint included exactly when the
-// documentation gate adds it, so the summary cannot drift from the target.
-func TestHarnessSummaryMatchesGeneratedVerifyAll(t *testing.T) {
-	makefile := buildMakefile(truthPlan)
-	summary := summaryFor(truthPlan, hisscatalog.AllPipelines, false)
-	for _, command := range []string{"compile-context --verify", "caveman check --configured-sources", "audit"} {
-		if !strings.Contains(summary, "`praetorctl "+command+"`") || !strings.Contains(makefile, command) {
-			t.Errorf("summary and generated Makefile disagree on %q:\n%s", command, summary)
+// TestHarnessSummaryDescribesVerifyAllAsRepositoryGate: the harness calls verify-all the
+// repository's own gate and points at the Makefile, never listing the steps the target runs or
+// tying a receipt to it (#503). Positive: the generated and the preserved target read as the
+// repository's gate. Negative: no summary, and no whole harness, names a step of the generated
+// target or promises a receipt. Boundary: a declined makefile step and an unavailable plan keep
+// their own sentences.
+func TestHarnessSummaryDescribesVerifyAllAsRepositoryGate(t *testing.T) {
+	generated := summaryFor(truthPlan, hisscatalog.AllPipelines)
+	preserved := summaryFor(&VerificationPlan{Status: verificationPreserved}, hisscatalog.PipelineLefthook)
+	if !strings.Contains(generated, "`make verify-all` = repository gate. Steps live in `Makefile`") ||
+		!strings.Contains(preserved, "`make verify-all` = repository-owned gate") || !strings.Contains(preserved, "Steps live in `Makefile`") {
+		t.Errorf("verify-all not described as the repository gate:\n%s\n%s", generated, preserved)
+	}
+	makefile := buildMakefile(truthPlan) + DocumentationMakefileBlock()
+	declined := summaryFor(truthPlan, hisscatalog.PipelineLefthook)
+	unavailable := summaryFor(&VerificationPlan{Status: verificationUnavailable}, hisscatalog.AllPipelines)
+	harness := renderTruthHarness(t, "", "fixture", truthPlan)
+	for _, step := range []string{"compile-context --verify", "caveman check --configured-sources", "praetorctl audit", "docs-lint"} {
+		if !strings.Contains(makefile, strings.TrimPrefix(step, "praetorctl ")) {
+			t.Fatalf("fixture precondition: generated Makefile no longer runs %q", step)
+		}
+		for name, summary := range map[string]string{"generated": generated, "preserved": preserved, "unavailable": unavailable} {
+			if strings.Contains(summary, step) || strings.Contains(summary, "receipt") {
+				t.Errorf("%s summary restates the target (%q):\n%s", name, step, summary)
+			}
 		}
 	}
-	docs := summaryFor(truthPlan, hisscatalog.AllPipelines, true)
-	if strings.Contains(summary, "docs-lint") || !strings.Contains(docs, "`docs-lint`") ||
-		!strings.Contains(DocumentationMakefileBlock(), "verify-all: docs-lint") {
-		t.Errorf("docs-lint summary does not follow the documentation gate:\n%s\n%s", summary, docs)
+	for _, claim := range []string{"All pass -> Ed25519", "Exit-0 receipt.", "mints none", "Run all formatting, linting, and security gates"} {
+		if strings.Contains(harness, claim) {
+			t.Errorf("harness still claims %q", claim)
+		}
 	}
-	preserved := summaryFor(&VerificationPlan{Status: verificationPreserved}, hisscatalog.PipelineLefthook, false)
-	unavailable := summaryFor(&VerificationPlan{Status: verificationUnavailable}, hisscatalog.AllPipelines, false)
-	declined := summaryFor(truthPlan, hisscatalog.PipelineLefthook, false)
-	if strings.Contains(preserved, "praetorctl audit") || !strings.Contains(preserved, "repository-owned") ||
-		!strings.Contains(unavailable, "fails until") ||
-		strings.Contains(declined, "praetorctl audit") || !strings.Contains(declined, "`makefile` declined") {
-		t.Errorf("summaries claim gates adoption cannot vouch for:\n%s\n%s\n%s", preserved, unavailable, declined)
+	if !strings.Contains(declined, "No `make verify-all` target: `makefile` declined") || !strings.Contains(unavailable, "fails until") {
+		t.Errorf("declined and unavailable summaries:\n%s\n%s", declined, unavailable)
 	}
 }
 
@@ -131,6 +144,61 @@ func TestHarnessNamesEveryProtectedContextFile(t *testing.T) {
 	}
 	if strings.Contains(harness, ".cursor/rules/*.mdc") {
 		t.Error("rule 3 still names a glob instead of the compiled Cursor file")
+	}
+}
+
+// rule3Files returns the files rule 3 forbids editing by hand, in the order it names them.
+func rule3Files(harness string) []string {
+	for _, line := range strings.Split(harness, "\n") {
+		if !strings.HasPrefix(line, "3. **Context transpiler first.** Never edit ") {
+			continue
+		}
+		list, _, _ := strings.Cut(strings.TrimPrefix(line, "3. **Context transpiler first.** Never edit "), " manually.")
+		var files []string
+		for _, name := range strings.Split(list, ", ") {
+			files = append(files, strings.Trim(name, "`"))
+		}
+		return files
+	}
+	return nil
+}
+
+// TestHarnessRule3NamesExactlyTheCompiledFiles: rule 3's never-hand-edit list is the set
+// compile-context writes for the same agent_clients selection, taken from one source, so
+// .gemini/GEMINI.md and .codex/rules.md are named whenever they are written (#503). Positive:
+// every client. Negative: a selection names only its own files. Boundary: an empty selection
+// writes and names none.
+func TestHarnessRule3NamesExactlyTheCompiledFiles(t *testing.T) {
+	for _, clients := range [][]string{nil, {"gemini", "codex"}, {}} {
+		targets, err := agentcontext.VendorTargets(clients)
+		if err != nil {
+			t.Fatal(err)
+		}
+		facts := adoptedFacts("", "fixture", "framework", truthPlan)
+		facts.targets = targets
+		harness, err := buildAgentHarness(facts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tr := compiler.NewTranspiler()
+		tr.Clients = clients
+		res, err := tr.CompileContent(harness)
+		if err != nil {
+			t.Fatalf("clients %q: compile: %v", clients, err)
+		}
+		written := make([]string, 0, len(res.Files))
+		for _, file := range res.Files {
+			written = append(written, file.RelativePath)
+		}
+		if named := rule3Files(harness); !slices.Equal(named, written) {
+			t.Errorf("clients %q: rule 3 names %q, compile-context writes %q", clients, named, written)
+		}
+	}
+	all := rule3Files(renderTruthHarness(t, "", "fixture", truthPlan))
+	for _, want := range []string{".gemini/GEMINI.md", ".codex/rules.md"} {
+		if !slices.Contains(all, want) {
+			t.Errorf("rule 3 omits %s: %q", want, all)
+		}
 	}
 }
 
@@ -181,7 +249,7 @@ func TestAdoptForceKeepsOwnerAndDeclaredCommands(t *testing.T) {
 		t.Fatalf("fixture precondition: custom verify-all must be preserved, got %+v", rep.Verification)
 	}
 	content := mustRead(t, filepath.Join(repo, agentsFile))
-	for _, want := range []string{"# acme/gadget Agent Operating Harness", "'go' 'build' '-v' './...'", "'go' 'test' '-v' '-race' './...'", "repository-owned target", "# Gadget rules"} {
+	for _, want := range []string{"# acme/gadget Agent Operating Harness", "'go' 'build' '-v' './...'", "'go' 'test' '-v' '-race' './...'", "repository-owned gate", "# Gadget rules"} {
 		if !strings.Contains(content, want) {
 			t.Errorf("refreshed harness lacks %q", want)
 		}
@@ -197,7 +265,7 @@ func TestHarnessVariantsPassCavemanLint(t *testing.T) {
 		"unavailable": adoptedFacts("acme", "widget", "framework",
 			&VerificationPlan{Status: verificationUnavailable, Reasons: []string{"A required build or test command is absent."}}),
 		"declined": {owner: "acme", name: "widget", plan: truthPlan, hooks: hooksNone},
-		"inactive": {owner: "acme", name: "widget", plan: truthPlan, pipelines: hisscatalog.PipelineVerifyAll, hooks: hooksInactive, docsGate: true},
+		"inactive": {owner: "acme", name: "widget", plan: truthPlan, pipelines: hisscatalog.PipelineVerifyAll, hooks: hooksInactive},
 	}
 	for name, facts := range variants {
 		harness, err := buildAgentHarness(facts)
@@ -217,7 +285,7 @@ func TestHarnessVariantsPassCavemanLint(t *testing.T) {
 func TestHarnessEntrypointFollowsVerifyAll(t *testing.T) {
 	const makeBlock = "```bash\nmake verify-all\n```"
 	const gatesBlock = "```bash\npraetorctl compile-context --verify\npraetorctl caveman check --configured-sources\npraetorctl audit\n```"
-	const footerVerify = "# Run all formatting, linting, and security gates\nmake verify-all\n"
+	const footerVerify = "# Repository gate; steps live in Makefile\nmake verify-all\n"
 	render := func(plan *VerificationPlan, pipelines hisscatalog.Pipeline) string {
 		harness, err := buildAgentHarness(harnessFacts{name: "widget", plan: plan, pipelines: pipelines})
 		if err != nil {

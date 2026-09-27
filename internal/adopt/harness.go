@@ -49,16 +49,11 @@ Before concluding any turn:
 
 ` + "```bash\n{{ if .VerifyCmd }}{{ .VerifyCmd }}{{ else }}praetorctl compile-context --verify\npraetorctl caveman check --configured-sources\npraetorctl audit{{ end }}\n```\n\n"
 
-// harnessReceiptLine states where a signed receipt comes from. Only `praetorctl gate run`
-// mints one (cmd/standardsctl/gate.go), and the verify-all target adoption generates never
-// calls it, so the harness must not promise a receipt for passing verify-all (BUG-804).
-func harnessReceiptLine(pipelines hisscatalog.Pipeline) string {
-	source := "Signed Ed25519 Exit-0 receipt = `praetorctl gate run` only"
-	if pipelines&hisscatalog.PipelineVerifyAll != 0 {
-		source += "; generated `" + verifyCommand + "` mints none"
-	}
-	return "Pass = exit 0. " + source + ". Fail -> SARIF diagnostic distillation (<= 1500 tokens).\n\n"
-}
+// harnessReceiptLine states where a signed receipt comes from: only `praetorctl gate run` mints
+// one (cmd/standardsctl/gate.go). What verify-all runs is the repository's own Makefile, so the
+// harness promises no receipt for passing it (BUG-804, #503).
+const harnessReceiptLine = "Pass = exit 0. Signed Ed25519 Exit-0 receipt only from `praetorctl gate run`; report no receipt it did not mint. " +
+	"Fail -> SARIF diagnostic distillation (<= 1500 tokens).\n\n"
 
 // hasVerifyAll reports whether the repository has a verify-all target after this run: the one
 // adoption generates, or a repository-owned one it preserved.
@@ -66,27 +61,24 @@ func hasVerifyAll(plan *VerificationPlan, pipelines hisscatalog.Pipeline) bool {
 	return plan.Status == verificationPreserved || pipelines&hisscatalog.PipelineVerifyAll != 0
 }
 
-// verificationSummary states what verify-all runs, from the plan the Makefile step renders: the
-// generated target's gates for a declared plan (buildMakefile's caveman-sources included, and
-// docs-lint where the documentation gate adds it, DocumentationMakefileBlock), nothing adoption
-// can vouch for in a preserved
-// custom target, no target at all when the makefile step is declined, and an explicit failure
-// for an unavailable plan.
+// verificationSummary describes verify-all as the repository's own gate. Its steps live in the
+// Makefile, which the repository owns and may change after adoption, so the harness never lists
+// them: a restated recipe drifts from the target, and an agent reports what the list says
+// instead of what runs (#503). Per plan it says whether adoption generated the target, kept a
+// repository-owned one unread, has none because the makefile step is declined, or wrote one that
+// fails until the project declares build and test commands.
 func verificationSummary(facts harnessFacts) string {
 	plan, pipelines := facts.plan, facts.pipelines
 	switch {
 	case plan.Status == verificationPreserved:
-		return "`" + verifyCommand + "` = repository-owned target; adoption kept it unread + unexecuted. Footer commands = project markers only.\n"
+		return "`" + verifyCommand + "` = repository-owned gate; adoption kept it unread + unexecuted. Steps live in `" + makefileName +
+			"`: read there, never restate. Footer commands = project markers only.\n"
 	case pipelines&hisscatalog.PipelineVerifyAll == 0:
 		return "No `" + verifyCommand + "` target: `makefile` declined in `" + manifestFile + "`. Run gates above + declared build/test commands (footer) directly.\n"
 	case plan.Status == verificationUnavailable:
 		return "`" + verifyCommand + "` fails until project build + test commands exist; reasons in footer.\n"
 	}
-	gates := "`praetorctl compile-context --verify` + `praetorctl caveman check --configured-sources` + `praetorctl audit`"
-	if facts.docsGate {
-		gates += " + `docs-lint`"
-	}
-	return "`" + verifyCommand + "` = " + gates + " + declared build/test commands (footer); adoption executed none.\n"
+	return "`" + verifyCommand + "` = repository gate. Steps live in `" + makefileName + "`: read there, never restate; adoption executed none.\n"
 }
 
 const agentHarnessFooterTemplate = harnessFooterHeading + `
@@ -100,7 +92,7 @@ praetorctl compile-context --verify
 # Audit repository against declared HISS standards
 praetorctl audit
 {{ if .VerifyCmd }}
-# Run all formatting, linting, and security gates
+# Repository gate; steps live in Makefile
 {{ .VerifyCmd }}
 {{ end }}` + "```\n"
 
@@ -115,8 +107,6 @@ type harnessFacts struct {
 	pipelines         hisscatalog.Pipeline
 	hooks             hookActivation
 	targets           []agentcontext.VendorTarget
-	// docsGate reports the documentation gate, which adds docs-lint to the generated verify-all.
-	docsGate bool
 	// workflows are the CI workflows this run scaffolds, with what each runs (rule 5).
 	workflows []scaffoldedWorkflow
 }
@@ -147,7 +137,7 @@ func buildAgentHarness(facts harnessFacts) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	header += verificationSummary(facts) + harnessReceiptLine(facts.pipelines)
+	header += verificationSummary(facts) + harnessReceiptLine
 	directives := buildAgentHarnessDirectives(facts)
 	return header + directives + register + footer + "\n" + harnessLintScopeEnd + harnessEndMarker + "\n", nil
 }
@@ -381,7 +371,7 @@ func (s *adoptSession) harnessFacts(ctx context.Context, clients []string) (harn
 	}
 	owner, name := s.harnessIdentity()
 	return harnessFacts{owner: owner, name: name, arch: s.arch, plan: s.verification, pipelines: pipelines,
-		hooks: hooks, targets: targets, docsGate: docsGate, workflows: workflows}, nil
+		hooks: hooks, targets: targets, workflows: workflows}, nil
 }
 
 func resolveAgentsContent(s *adoptSession, facts harnessFacts) (string, error) {

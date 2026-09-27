@@ -1,0 +1,4 @@
+type: fixed
+title: The adopted AGENTS.md harness calls make verify-all the repository's own gate and points at its Makefile instead of listing the steps it runs, says a signed Ed25519 Exit-0 receipt comes only from praetorctl gate run and ties none to verify-all, and rule 3 forbids hand edits of exactly the vendor files compile-context writes for the agent_clients selection, .gemini/GEMINI.md and .codex/rules.md included
+issue: "#503"
+breaking: false

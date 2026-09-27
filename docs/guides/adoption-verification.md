@@ -641,18 +641,19 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
   target exists, the block names `praetorctl compile-context --verify`,
   `praetorctl caveman check --configured-sources` and `praetorctl audit` instead, and the footer
   drops its `make verify-all` line (`TestHarnessEntrypointFollowsVerifyAll`).
-- **Verification line.** It describes `make verify-all` per plan status: the generated target's
-  gates for `declared-unverified` (`compile-context --verify`, `caveman check --configured-sources`,
-  `audit` and the declared build and test commands), `docs-lint` included when the
-  `docs:seo-portal` facet adds it to the target; a repository-owned target adoption did not read
-  for `preserved-unverified`; and
-  an explicit failure for `unavailable`. When `adoption.decline` lists `makefile`, it says no
-  target exists and to run the gates directly (`TestHarnessSummaryMatchesGeneratedVerifyAll`). A
-  preserved custom target keeps the commands the project markers declare in the report's
-  `verification.declared` list, and the harness footer lists them, so `--force` no longer reduces
-  them to `make verify-all` (`TestAdoptForceKeepsOwnerAndDeclaredCommands`).
-- **Receipt.** Only `praetorctl gate run` mints an Ed25519 Exit-0 receipt, and the generated
-  `verify-all` never calls it, so the harness promises no receipt for `verify-all`
+- **Verification line.** It calls `make verify-all` the repository's own gate and points at the
+  `Makefile` for its steps, without listing them: the repository owns the target and may change
+  it after adoption, so a restated recipe would drift from what runs. Per plan status it adds
+  that adoption generated the target and executed none of it (`declared-unverified`), kept a
+  repository-owned target unread (`preserved-unverified`), or wrote one that fails until the
+  project declares build and test commands (`unavailable`). When `adoption.decline` lists
+  `makefile`, it says no target exists and to run the gates directly
+  (`TestHarnessSummaryDescribesVerifyAllAsRepositoryGate`). A preserved custom target keeps the
+  commands the project markers declare in the report's `verification.declared` list, and the
+  harness footer lists them, so `--force` no longer reduces them to `make verify-all`
+  (`TestAdoptForceKeepsOwnerAndDeclaredCommands`).
+- **Receipt.** Only `praetorctl gate run` mints an Ed25519 Exit-0 receipt. The harness says so,
+  tells agents to report no receipt that command did not mint, and ties none to `verify-all`
   (`TestHarnessMakesNoUnbackedClaims`).
 - **Server side.** Adoption installs no CI job that runs a `praetorctl` gate; those gates run in
   the local hooks and targets only. Rule 5 says so and names each CI workflow the run does
@@ -697,8 +698,10 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
   replays the prediction against the git-hooks step for each case, including a failing and a
   missing lefthook binary and skipped activation, and checks which pre-commit hook it installed.
 - **Protected files.** Rule 3 names the files `compile-context` writes under the manifest's
-  `agent_clients`, read from `agentcontext.VendorTargets`; an empty selection names none
-  (`TestHarnessNamesEveryProtectedContextFile`, `TestHarnessRule3FollowsAgentClients`).
+  `agent_clients`, read from `agentcontext.VendorTargets`, the selection the transpiler itself
+  applies: all six by default, `.gemini/GEMINI.md` and `.codex/rules.md` included, and none for
+  an empty selection (`TestHarnessRule3NamesExactlyTheCompiledFiles`,
+  `TestHarnessNamesEveryProtectedContextFile`, `TestHarnessRule3FollowsAgentClients`).
 - **Paperclip harness.** `.paperclip/harness.json` and `.paperclip/rules.md` come from
   [`internal/paperclip/harness.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/paperclip/harness.go).
   - The receipt row prescribes minting a receipt with `praetorctl gate run` and attaching it only
