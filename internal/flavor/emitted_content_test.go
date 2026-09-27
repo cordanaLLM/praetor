@@ -305,3 +305,11 @@ func TestScaffoldedGitleaksConfigExtendsTheDefaultRules(t *testing.T) {
 		t.Errorf("scaffolded gitleaks config does not extend the default rules: %q", body)
 	}
 }
+
+// BUG-1013: .clang-tidy sets WarningsAsErrors to fail builds on any clang-tidy finding (HISS-10).
+func TestScaffoldedClangTidySetsWarningsAsErrors(t *testing.T) {
+	body := scaffoldInto(t, "native-gpu-systems", ".clang-tidy")[".clang-tidy"]
+	if !strings.Contains(body, "\nWarningsAsErrors: '*'\n") {
+		t.Errorf("scaffolded clang-tidy does not set WarningsAsErrors to '*': %q", body)
+	}
+}

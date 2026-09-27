@@ -159,7 +159,7 @@ func (f *NativeGPUSystemsFlavor) Detect(repoPath string) bool {
 
 func (f *NativeGPUSystemsFlavor) RequiredTemplates() []TemplateItem {
 	return []TemplateItem{
-		{Path: ".clang-tidy", Description: "Clang-tidy AST static analyzer config", Source: "native/.clang-tidy.tmpl", Validator: validYAMLMapping},
+		{Path: ".clang-tidy", Description: "Clang-tidy AST static analyzer config", Source: "native/.clang-tidy.tmpl", Validator: validClangTidyConfig},
 		{Path: ".clang-format", Description: "C/C++ code formatting rules", Source: "native/.clang-format.tmpl", Validator: validYAMLMapping},
 		{Path: ".gitleaks.toml", Description: "Secret leak detection policy", Source: "native/.gitleaks.toml.tmpl", Validator: validGitleaksConfig},
 	}

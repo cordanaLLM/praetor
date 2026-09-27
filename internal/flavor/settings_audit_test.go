@@ -33,7 +33,7 @@ func conformingGoLibrary(t *testing.T, settings map[string]string) string {
 func conformingNativeGPU(t *testing.T, settings map[string]string) string {
 	t.Helper()
 	files := map[string]string{
-		".clang-tidy":                "Checks: '-*,bugprone-*'\n",
+		".clang-tidy":                "Checks: '-*,bugprone-*'\nWarningsAsErrors: '*'\n",
 		".clang-format":              "BasedOnStyle: LLVM\n",
 		".gitleaks.toml":             "title = \"leaks\"\n[extend]\nuseDefault = true\n",
 		".vscode/settings.json":      "{\"C_Cpp.default.cppStandard\": \"c++20\"}\n",

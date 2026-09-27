@@ -1,0 +1,3 @@
+type: fixed
+title: Require non-empty WarningsAsErrors in the native .clang-tidy template and flavor validator so static analysis findings fail builds as errors under HISS-10
+breaking: false
