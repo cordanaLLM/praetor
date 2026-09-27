@@ -2,8 +2,8 @@
 
 ## Status
 
-Proposed — 2026-09-26. On acceptance this record supersedes ADR-0007 (the designation of one
-framework organisation as the fleet-wide framework hub) and amends rule 4 of
+Accepted — 2026-09-27 (proposed 2026-09-26). This record supersedes ADR-0007 (the designation
+of one framework organisation as the fleet-wide framework hub) and amends rule 4 of
 `docs/adr/README.md` (see Decision §7). It implements stage 1 ("Shared package policy") of
 `docs/plans/package-development-pipeline.md`.
 

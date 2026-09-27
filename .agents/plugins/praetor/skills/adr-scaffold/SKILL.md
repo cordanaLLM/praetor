@@ -10,7 +10,7 @@ Author and record significant architectural choices, invariant trade-offs, and g
 ## ADR Lifecycle & Invariants
 
 - **Sequential Numbering**: Identify highest existing number in `docs/adr/` and increment (`NNNN-kebab-title.md`).
-- **Immutability**: Once ADR marked `Accepted`, decision text = immutable. Any change requires new ADR that supersedes prior one (`Superseded by ADR-NNNN`).
+- **Immutability**: Once ADR marked `Accepted`, decision text = immutable. Any change requires new ADR that supersedes prior one (`Superseded by ADR-NNNN`). Exception (ADR-0014 §7): operator-private identifier -> neutral placeholder allowed in Accepted or Superseded body; list each redaction with date in `Redactions` note at record end.
 - **Mathematical / Formal Rigor**: Frame trade-offs against HISS invariants and strictness lattice.
 
 ## Standard ADR Template
