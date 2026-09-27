@@ -187,14 +187,16 @@ jobs:
         run: |
           echo "Documentation change detected. Running MkDocs verification."
           python3 -m pip install --require-hashes -r docs/presets/mkdocs/requirements.txt
-          # The figure player bundle is gitignored; build it before MkDocs copies docs/ (ADR-0015).
-          npm ci --prefix tools/figures --ignore-scripts --no-audit --no-fund
+          # verify-all is skipped on this path, so its figure gate runs here: the build's own
+          # tests and typecheck, `check` (a hand-edited committed SVG, static SVG or JSON no
+          # longer matches its spec) and `sources` (ADR-0015).
+          make -s docs-figures-check
+          # The figure player bundle is gitignored; build it before MkDocs copies docs/.
           npm --prefix tools/figures run bundle
           mkdocs build --strict
           # A strict build still passes when a ```mermaid block ships as a code listing or a
-          # ```figure fence does not become a figure; `sources` catches a stale committed figure.
+          # ```figure fence does not become a figure.
           python3 -B scripts/docs_diagrams.py site --config mkdocs.yml --docs docs --site site
-          python3 -B scripts/docs_diagrams.py sources
           python3 -B scripts/test_docs_seo_presets.py
           go run ./cmd/standardsctl seo audit site
           # The preset's own mkdocs.yml is built (and mermaid-checked) by the docs-presets
