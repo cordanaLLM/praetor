@@ -1,5 +1,5 @@
-# Lint toolchain for the canonical hook sources (scripts/test_emitted_hook_lint.py), one
-# exact pin each. requirements.txt is the lock
+# Lint toolchain for the canonical hook sources (scripts/test_emitted_hook_lint.py) and the
+# portability job's yamllint, one exact pin each. requirements.txt is the lock
 # compiled from this file: every package the gate installs, pinned with hashes. Change a
 # pin here, then regenerate the lock from this directory with the command recorded in the
 # requirements.txt header (Renovate runs the same command). Keep '=' between each option
