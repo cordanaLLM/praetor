@@ -63,15 +63,58 @@ class DocsDrift(unittest.TestCase):
         self.assertEqual(len(found), 1, found)
         self.assertIn("effective policy", found[0])
 
+    def test_positive_effective_digest_requires_guide(self):
+        """A change to effective_digest.go or siblings requires the effective-policy guide."""
+        for surface in (
+            "internal/config/effective_digest.go",
+            "internal/config/effective_pins.go",
+            "internal/config/effective_yaml.go",
+            "internal/config/effective_load.go",
+        ):
+            found = docs_drift.violations([surface])
+            self.assertEqual(len(found), 1, surface)
+            self.assertIn("effective policy resolution", found[0])
+            self.assertEqual(docs_drift.violations([
+                surface, "docs/guides/effective-policy.md",
+            ]), [])
+
+    def test_negative_effective_digest_test_does_not_require_guide(self):
+        """A change to effective_digest_test.go or other test files needs no documentation."""
+        self.assertEqual(docs_drift.violations([
+            "internal/config/effective_digest_test.go",
+            "internal/config/effective_test.go",
+            "internal/config/effective_inputs_test.go",
+        ]), [])
+
+    def test_boundary_effective_base_matches(self):
+        """The base effective.go file still matches and requires its guide."""
+        found = docs_drift.violations(["internal/config/effective.go"])
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("effective policy resolution", found[0])
+        self.assertEqual(docs_drift.violations([
+            "internal/config/effective.go",
+            "docs/guides/effective-policy.md",
+        ]), [])
+
     def test_text_register_pair(self):
-        """Both files of the register policy map to its guide, and only to it."""
-        for surface in ("internal/config/register.go", "internal/config/register_render.go"):
+        """Every non-test register policy file maps to its guide, and only to it."""
+        surfaces = (
+            "internal/config/register.go",
+            "internal/config/register_render.go",
+            "internal/config/register_authority.go",
+            "internal/config/register_emission.go",
+        )
+        for surface in surfaces:
             found = docs_drift.violations([surface, "docs/guides/effective-policy.md"])
             self.assertEqual(len(found), 1, surface)
             self.assertIn("text register policy", found[0])
             self.assertEqual(docs_drift.violations([surface, "docs/guides/text-register.md"]), [])
-        # A test file of the same package is not a user-discoverable surface.
-        self.assertEqual(docs_drift.violations(["internal/config/register_test.go"]), [])
+        # Test files of the same package are not a user-discoverable surface.
+        self.assertEqual(docs_drift.violations([
+            "internal/config/register_test.go",
+            "internal/config/register_authority_test.go",
+            "internal/config/register_emission_test.go",
+        ]), [])
 
     def test_readme_renderer_and_audit_share_one_documented_contract(self):
         """Every producer or verifier of the managed README block maps to its guide."""
