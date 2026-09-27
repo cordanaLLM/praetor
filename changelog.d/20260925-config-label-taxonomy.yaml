@@ -1,0 +1,3 @@
+type: fixed
+title: Add bug, enhancement, triage, rfc, api-review and dependencies to the canonical label taxonomy, the labels the issue forms and the Renovate configuration apply, so label reconciliation creates them with managed colors and descriptions
+breaking: false

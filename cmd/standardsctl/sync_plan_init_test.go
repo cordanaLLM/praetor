@@ -624,10 +624,10 @@ func TestSync_Remote_Labels(t *testing.T) {
 	if err != nil {
 		t.Fatalf("remote sync: %v\n%s", err, out)
 	}
-	mustContain(t, out, "[SYNC] Reconciling 8 labels from .config/labels.yaml on GitHub")
+	mustContain(t, out, "[SYNC] Reconciling 14 labels from .config/labels.yaml on GitHub")
 	labels := stub.storedLabels()
-	if len(labels) != 9 {
-		t.Fatalf("expected the 8 taxonomy labels plus the operator's own, got %d: %v", len(labels), labels)
+	if len(labels) != 15 {
+		t.Fatalf("expected the 14 taxonomy labels plus the operator's own, got %d: %v", len(labels), labels)
 	}
 	if got := labels["hiss-violation"]; got["color"] != "d73a4a" || got["description"] != "Code introduces a regression against HISS invariants" {
 		t.Fatalf("existing label not converged onto the taxonomy: %v", got)

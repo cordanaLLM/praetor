@@ -93,13 +93,13 @@ func parseTaxonomy(t *testing.T, data []byte) []Label {
 	return labels
 }
 
-// TestDefaultLabelTaxonomy_Positive pins the single taxonomy: eight unique labels, carried byte
-// for byte by praetor's own .config/labels.yaml, so the shipped default and the dogfooded file
-// cannot drift apart again.
+// TestDefaultLabelTaxonomy_Positive pins the single taxonomy: fourteen unique labels, carried
+// byte for byte by praetor's own .config/labels.yaml, so the shipped default and the dogfooded
+// file cannot drift apart again.
 func TestDefaultLabelTaxonomy_Positive(t *testing.T) {
 	labels := parseTaxonomy(t, DefaultLabelTaxonomy())
-	if len(labels) != 8 {
-		t.Fatalf("expected 8 labels, got %d", len(labels))
+	if len(labels) != 14 {
+		t.Fatalf("expected 14 labels, got %d", len(labels))
 	}
 	own, err := os.ReadFile(filepath.Join("..", "..", ".config", "labels.yaml"))
 	if err != nil {

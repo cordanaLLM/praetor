@@ -61,8 +61,14 @@ func validateLabelEntries(labels []Label) error {
 // defaultLabelTaxonomy is the canonical repository label taxonomy, in the .config/labels.yaml
 // format. praetor's own .config/labels.yaml carries it byte for byte (labels_test.go).
 //
-// It used to exist twice: sync wrote these eight labels and adoption wrote a three-label copy,
-// so `adopt --force` truncated a repository's taxonomy to three.
+// It used to exist twice: sync wrote eight labels and adoption wrote a three-label copy, so
+// `adopt --force` truncated a repository's taxonomy to three.
+//
+// bug, enhancement, triage, rfc, api-review and dependencies are the labels the issue forms
+// and the Renovate configuration apply; they were missing, so a label reconciliation could
+// never create them (BUG-548). bug, enhancement and dependencies keep the colors and
+// descriptions GitHub and Dependabot give them by default, so reconciling a repository that
+// already has them changes nothing.
 const defaultLabelTaxonomy = `# Canonical Repository Label Taxonomy
 version: 1
 labels:
@@ -97,6 +103,30 @@ labels:
   - name: "breaking-change"
     color: "b60205"
     description: "Breaking API change requiring mandatory Migration: footer"
+
+  - name: "bug"
+    color: "d73a4a"
+    description: "Something isn't working"
+
+  - name: "enhancement"
+    color: "a2eeef"
+    description: "New feature or request"
+
+  - name: "triage"
+    color: "ededed"
+    description: "Awaiting maintainer triage"
+
+  - name: "rfc"
+    color: "c5def5"
+    description: "Request for comments on a proposed change"
+
+  - name: "api-review"
+    color: "1d76db"
+    description: "Changes a public API contract and needs API review"
+
+  - name: "dependencies"
+    color: "0366d6"
+    description: "Pull requests that update a dependency file"
 `
 
 // DefaultLabelTaxonomy returns the canonical .config/labels.yaml that adoption and sync write
