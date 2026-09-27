@@ -217,7 +217,6 @@ nav:
           - project-records/index.md
           - Plans:
               - Bidirectional Module Contracts: plans/bidirectional-contracts.md
-              - Golusoris Core Migration: plans/golusoris-migration-plan.md
               - IDE Agent Setup: plans/ide-agent-setup.md
               - Infrastructure Development Environments: plans/infrastructure-development-environments.md
               - Lifecycle Management: plans/lifecycle-management.md
