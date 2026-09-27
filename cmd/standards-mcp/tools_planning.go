@@ -18,17 +18,17 @@ func (s *Server) createPlanningValidateTool() (mcp.Tool, error) {
 		"input_path": {Type: "string", Description: "Strict planning draft JSON inside this server root"},
 	}}
 	return mcp.NewReadOnlyTool("standards_planning_validate",
-		"Structurally validate a bounded planning draft and return metadata; source assertions remain unverified and no artifacts or project state are written",
+		"Validate bounded planning draft structure; output: metadata; source assertions remain unverified; no artifact or project-state writes",
 		schema, s.validatePlanning)
 }
 
 func (s *Server) createPlanningPrepareTool() (mcp.Tool, error) {
 	schema := mcp.ToolInputSchema{Type: "object", Required: []string{"input_path", "output_dir"}, Properties: map[string]mcp.PropertySchema{
 		"input_path": {Type: "string", Description: "Strict planning draft JSON inside this server root"},
-		"output_dir": {Type: "string", Description: "New private artifact directory below the server root .workingdir"},
+		"output_dir": {Type: "string", Description: "Private artifact directory creation path below server-root .workingdir"},
 	}}
 	return mcp.NewMutatingTool("standards_planning_prepare",
-		"Compile a structural planning proposal into a new private .workingdir artifact directory; no existing state, source verification, execution or publication",
+		"Compile structural planning proposal into new private .workingdir artifact directory; no existing state, source verification, execution or publication",
 		schema, s.preparePlanning, false, false)
 }
 
@@ -38,7 +38,7 @@ func (s *Server) validatePlanning(ctx context.Context, args map[string]any) (*mc
 	}
 	result, err := s.compilePlanningInput(ctx, args)
 	if err != nil {
-		return mcp.ErrorResult(err.Error()), nil
+		return mcpErrorResult(err.Error(), mcpTextUntrusted), nil
 	}
 	return planningMetadataResult(result, false)
 }
@@ -49,11 +49,11 @@ func (s *Server) preparePlanning(ctx context.Context, args map[string]any) (*mcp
 	}
 	result, err := s.compilePlanningInput(ctx, args)
 	if err != nil {
-		return mcp.ErrorResult(err.Error()), nil
+		return mcpErrorResult(err.Error(), mcpTextUntrusted), nil
 	}
 	directory, err := s.privatePlanningOutput(args)
 	if err != nil {
-		return mcp.ErrorResult(err.Error()), nil
+		return mcpErrorResult(err.Error(), mcpTextUntrusted), nil
 	}
 	if err := contextopt.WriteArtifacts(ctx, directory, result.Files); err != nil {
 		return mcp.ErrorResult(fmt.Sprintf("write planning artifacts: %v", err)), nil
@@ -126,5 +126,5 @@ func planningMetadataResult(result *planning.Result, written bool) (*mcp.ToolRes
 	if err != nil {
 		return nil, fmt.Errorf("encode planning metadata: %w", err)
 	}
-	return mcp.TextResult(string(data)), nil
+	return mcpTextResult(string(data), mcpTextStructuredJSON), nil
 }

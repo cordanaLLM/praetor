@@ -26,21 +26,21 @@ func (s *Server) createContextAnalyzeTool() (mcp.Tool, error) {
 func (s *Server) analyzeContext(ctx context.Context, args map[string]any) (*mcp.ToolResult, error) {
 	root, err := s.resolvePath(args, "root", s.rootDir)
 	if err != nil {
-		return mcp.ErrorResult(err.Error()), nil
+		return mcpErrorResult(err.Error(), mcpTextUntrusted), nil
 	}
 	sources, err := contextSourceArguments(args)
 	if err != nil {
-		return mcp.ErrorResult(err.Error()), nil
+		return mcpErrorResult(err.Error(), mcpTextUntrusted), nil
 	}
 	plan, err := contextopt.Analyze(ctx, contextopt.Options{Root: root, Sources: sources})
 	if err != nil {
-		return mcp.ErrorResult(err.Error()), nil
+		return mcpErrorResult(err.Error(), mcpTextUntrusted), nil
 	}
 	data, err := json.Marshal(plan.Metadata())
 	if err != nil {
 		return nil, fmt.Errorf("encode context metadata: %w", err)
 	}
-	return mcp.TextResult(string(data)), nil
+	return mcpTextResult(string(data), mcpTextStructuredJSON), nil
 }
 
 func contextSourceArguments(args map[string]any) ([]string, error) {

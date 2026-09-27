@@ -382,7 +382,7 @@ a deny. When no candidate lists the pair, or none exists, the guard drains the p
 exits 0 with the reason on stderr:
 
 ```text
-praetor hook: no engine serves claude pre-dispatch (checked /home/example/.local/bin/praetorctl); the gate is not enforced until bin/praetorctl is rebuilt (make hook-cli) or the engine is reinstalled (make dev-install), skipped
+praetor hook: no engine serves claude pre-dispatch (checked /home/example/.local/bin/praetorctl); gate unenforced until bin/praetorctl rebuilt (make hook-cli) or engine reinstalled (make dev-install), skipped
 ```
 
 For AGY, the same skip also prints the answer the engine's agy encoder gives a skip:

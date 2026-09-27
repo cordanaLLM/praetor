@@ -43,9 +43,9 @@ def scannable(command_str: str) -> bool:
         if max(len(line) for line in command_str.split("\n")) <= MAX_SCAN_LINE_CHARS:
             return True
     sys.stderr.write(
-        f"\n[BLOCKED BY HISS] Command exceeds the scan bound: at most {MAX_SCAN_CHARS} characters, "
+        f"\n[BLOCKED BY HISS] Command exceeds scan bound: at most {MAX_SCAN_CHARS} characters, "
         f"{MAX_SCAN_LINE_CHARS} per line.\n"
-        f"Split it, or write the long content to a file first.\n\n"
+        f"Split command, or write long content to file first.\n\n"
     )
     return False
 
@@ -56,19 +56,19 @@ def audit_command(command_str: str) -> bool:
     for pattern in BLOCKED_PATTERNS:
         if re.search(pattern, command_str):
             sys.stderr.write(
-                f"\n[BLOCKED BY HISS] Attempted verification evasion detected!\n"
-                f"Pattern '{pattern}' is strictly prohibited in cordanaLLM repositories.\n"
-                f"All commits, pushes, and tool invocations must pass verification gates cleanly.\n\n"
+                f"\n[BLOCKED BY HISS] verification evasion detected.\n"
+                f"pattern: '{pattern}'; policy: prohibited in cordanaLLM repositories.\n"
+                f"required: commits, pushes, and tool invocations pass verification gates cleanly.\n\n"
             )
             return False
 
     for pattern in TOPOLOGY_PATTERNS:
         if re.search(pattern, command_str, re.IGNORECASE):
             sys.stderr.write(
-                f"\n[BLOCKED BY DEV-01] Attempted adoption/needs target on organization container or dev root!\n"
-                f"Pattern '{pattern}' targets an organization folder or dev root.\n"
-                f"Repositories must live inside organization folders as leaf git repos.\n"
-                f"Adopting an organization root folder or workstation dev root is strictly prohibited.\n\n"
+                f"\n[BLOCKED BY DEV-01] adoption/needs target rejects organization container or dev root.\n"
+                f"pattern: '{pattern}'; target: organization folder or dev root.\n"
+                f"required: repositories live inside organization folders as leaf Git repositories.\n"
+                f"prohibited: organization root or workstation dev root adoption.\n\n"
             )
             return False
 
@@ -80,7 +80,7 @@ def audit_environment() -> bool:
         sys.stderr.write(f"[BLOCKED BY HISS] LEFTHOOK={value} detected in environment. Evasion prohibited.\n")
         return False
     if os.environ.get("LEFTHOOK_EXCLUDE") or os.environ.get("LEFTHOOK_SKIP"):
-        sys.stderr.write("[BLOCKED BY HISS] Hook exclusions are prohibited.\n")
+        sys.stderr.write("[BLOCKED BY HISS] hook exclusions: prohibited.\n")
         return False
     return True
 
@@ -118,14 +118,14 @@ def main():
             sys.stderr.write(f"[BLOCKED BY HISS] Invalid hook input: {error}\n")
             sys.exit(1)
     else:
-        sys.stderr.write("Expected a command, PreToolUse JSON, or --environment.\n")
+        sys.stderr.write("input: command, PreToolUse JSON, or --environment required.\n")
         sys.exit(1)
     if not audit_command(cmd):
         sys.exit(1)
     if json_input:
         # A protocol marker, written as exact bytes: print() translates the newline to CRLF on
         # Windows, so the same approval read differently depending on the host.
-        sys.stdout.buffer.write(b"PRAETOR_COMMAND_POLICY_OK\n")
+        sys.stdout.buffer.write(b"PRAETOR_COMMAND_POLICY_OK\n")  # caveman:not-applicable protocol-marker
         sys.stdout.buffer.flush()
 
     sys.exit(0)

@@ -23,14 +23,14 @@ func TestAdoptMCPPlanningSelectionWriteReadback(t *testing.T) {
 		t.Fatal(err)
 	}
 	args := map[string]any{"profile": "planning-artifacts", "facets": "agent:sandboxed", "source_root": source, "record_baseline": false, "dry_run": true}
-	expectText(t, "planning preview", callTool(t, srv, "standards_adopt", args), "Archetype: planning-artifacts")
+	expectText(t, "planning preview", callTool(t, srv, "standards_adopt", args), "archetype: planning-artifacts.")
 	if _, err := os.Stat(filepath.Join(root, ".standards.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("dry run wrote manifest or failed observation: %v", err)
 	}
 	args["dry_run"] = false
 	result := callTool(t, srv, "standards_adopt", args)
-	expectText(t, "planning apply", result, "[APPLIED]")
-	expectText(t, "selected facets", result, "Facets: agent:sandboxed")
+	expectText(t, "planning apply", result, "mode: APPLIED")
+	expectText(t, "selected facets", result, "facets: agent:sandboxed.")
 	manifest, err := config.LoadManifest(filepath.Join(root, ".standards.yaml"))
 	if err != nil {
 		t.Fatal(err)
@@ -97,16 +97,16 @@ func TestFormatDogfoodMCPResultComplexityLines(t *testing.T) {
 		RuleID: "HISS-04", FilePath: "host.go", LineNumber: 1, Symbol: "H",
 		Kind: hiss.KindStatements, Value: 51, Limit: 50, Severity: hiss.SeverityReport,
 	}}}
-	out := formatDogfoodMCPResult(&dogfood.DogfoodReport{
+	out := string(formatDogfoodMCPResult(&dogfood.DogfoodReport{
 		SelfAuditComplexity: host,
 		RemoteResults:       []dogfood.RemoteAdoptionResult{{RepoURL: "https://example.com/r", Complexity: &hiss.ComplexityReport{}}},
-	})
+	}))
 	for _, want := range []string{host.Summary(), host.Measurements[0].String(), "0 measurements over limit in 0 functions"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("result lacks %q:\n%s", want, out)
 		}
 	}
-	if bare := formatDogfoodMCPResult(&dogfood.DogfoodReport{}); strings.Contains(bare, "[REPORT]") {
+	if bare := string(formatDogfoodMCPResult(&dogfood.DogfoodReport{})); strings.Contains(bare, "[REPORT]") {
 		t.Errorf("a report without scans printed complexity lines:\n%s", bare)
 	}
 }

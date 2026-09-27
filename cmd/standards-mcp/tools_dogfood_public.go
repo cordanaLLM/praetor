@@ -13,7 +13,7 @@ import (
 func (s *Server) runPublicDogfood(ctx context.Context, args map[string]any) *mcp.ToolResult {
 	opts, err := s.parsePublicDogfood(args)
 	if err != nil {
-		return mcp.ErrorResult(err.Error())
+		return mcpErrorResult(err.Error(), mcpTextUntrusted)
 	}
 	report, runErr := dogfood.RunPublicLoop(ctx, opts)
 	if report == nil {
@@ -24,9 +24,9 @@ func (s *Server) runPublicDogfood(ctx context.Context, args map[string]any) *mcp
 		return mcp.ErrorResult(fmt.Sprintf("Encode public dogfood: %v", err))
 	}
 	if runErr != nil {
-		return mcp.ErrorResult(string(data) + "\n" + runErr.Error())
+		return mcpErrorResult(string(data)+"\n"+runErr.Error(), mcpTextUntrusted)
 	}
-	return mcp.TextResult(string(data))
+	return mcpTextResult(string(data), mcpTextStructuredJSON)
 }
 
 func (s *Server) parsePublicDogfood(args map[string]any) (dogfood.PublicLoopOptions, error) {

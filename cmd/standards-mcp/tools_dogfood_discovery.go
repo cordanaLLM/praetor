@@ -16,7 +16,7 @@ func (s *Server) createDogfoodDiscoveryTool() (mcp.Tool, error) {
 		"config_path":  {Type: "string", Description: "Pinned public cohort; exclusive with path"},
 		"path":         {Type: "string", Description: "Explicit local source tree; exclusive with config_path"},
 		"policy_path":  {Type: "string", Description: "Reviewed capability detection rules, never loaded from observed repositories"},
-		"artifact_dir": {Type: "string", Description: "New private evidence directory under an existing parent"},
+		"artifact_dir": {Type: "string", Description: "Private evidence directory creation path under existing parent"},
 		"stage":        {Type: "string", Description: "plan (default) or observe; public observation needs server remote opt-in"},
 	}}
 	return mcp.NewOpenWorldTool("standards_dogfood_discover", "Observe selected Praetor capability gaps in local or pinned public source; retain deduplicated review candidates without upstream execution or automatic repairs", schema, s.runDogfoodDiscovery, false, false)
@@ -25,7 +25,7 @@ func (s *Server) createDogfoodDiscoveryTool() (mcp.Tool, error) {
 func (s *Server) runDogfoodDiscovery(ctx context.Context, args map[string]any) (*mcp.ToolResult, error) {
 	opts, err := s.discoveryArguments(args)
 	if err != nil {
-		return mcp.ErrorResult(err.Error()), nil
+		return mcpErrorResult(err.Error(), mcpTextUntrusted), nil
 	}
 	report, runErr := dogfood.RunDiscovery(ctx, opts)
 	response := discoveryToolSummary(report, runErr)
@@ -33,7 +33,7 @@ func (s *Server) runDogfoodDiscovery(ctx context.Context, args map[string]any) (
 	if err != nil {
 		return nil, fmt.Errorf("encode discovery result: %w", err)
 	}
-	result := mcp.TextResult(string(data))
+	result := mcpTextResult(string(data), mcpTextStructuredJSON)
 	result.IsError = runErr != nil
 	return result, nil
 }

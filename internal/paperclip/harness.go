@@ -62,18 +62,18 @@ func SynthesizeHarness(ctx context.Context, repoPath string) (*Harness, error) {
 		return nil, err
 	}
 	contract := []string{
-		"Pushing a branch is NOT shipping: an open PR is required, but still not shipped work until merged.",
+		"Branch push != shipping. Open PR required. Work ships after merge.",
 		"Rebase onto main immediately: run git fetch origin && git rebase origin/main before proposing.",
-		"Rule 0 Terminal Disposition: every run must end with a structured disposition (in_review or blocked).",
+		"Rule 0 Terminal Disposition: every run ends with structured disposition: in_review or blocked.",
 		"Ed25519 Exit-0 Receipts: attach cryptographic execution receipts to all PR proposals.",
-		"Timeout Resilience: timeout is not failure; re-check open PRs before retrying to prevent duplicate PRs.",
+		"Timeout != failure. Re-check open PRs before retry; prevent duplicate PRs.",
 		// A Paperclip run reports to an orchestrating agent, so its product is internal text.
 		config.RegisterDirective(config.TextRegisterInternal),
 	}
 
 	invariants := []string{
 		"HISS-01: Acyclic DAG control flow (no recursion)",
-		"HISS-02: Scalar upper bounds on all loops; context timeout on all I/O",
+		"HISS-02: Scalar upper bounds on all loops; context timeout on all input and output",
 		"HISS-04: McCabe Cyclomatic <= 10, Cognitive <= 15, Func LOC <= 75",
 		"HISS-07: Zero .unwrap() / .expect(); all errors handled or wrapped",
 		"HISS-10: Zero-warning tolerance across compiler, linters, and formatters",
@@ -87,6 +87,158 @@ func SynthesizeHarness(ctx context.Context, repoPath string) (*Harness, error) {
 		AGitPushFormat:    agitPushFormat,
 		Invariants:        invariants,
 	}, nil
+}
+
+// priorOperatingContract, priorRegisterDirectives, priorAGitPushFormats and priorInvariants
+// are the texts every earlier release synthesized, from 5d08985f until the contract moved to
+// Caveman. The directive row was absent before the text register (#204) and changed form with
+// the caveman skill (#225); the review-branch push joined the AGit push in #458. They are
+// literals, not calls, so a later change to the current text cannot silently rewrite what
+// "earlier output" means.
+var (
+	priorOperatingContract = []string{
+		"Pushing a branch is NOT shipping: an open PR is required, but still not shipped work until merged.",
+		"Rebase onto main immediately: run git fetch origin && git rebase origin/main before proposing.",
+		"Rule 0 Terminal Disposition: every run must end with a structured disposition (in_review or blocked).",
+		"Ed25519 Exit-0 Receipts: attach cryptographic execution receipts to all PR proposals.",
+		"Timeout Resilience: timeout is not failure; re-check open PRs before retrying to prevent duplicate PRs.",
+	}
+	priorRegisterDirectives = []string{
+		"",
+		"Text register internal: telegraphic: no filler, no preamble, no restatement; facts, paths, commands, verdict.",
+		"Text register internal: `caveman` skill: fragments, no filler, verbatim code/paths/errors; facts, paths, commands, verdict.",
+	}
+	priorAGitPushFormats = []string{
+		"git push origin HEAD:refs/for/main -o topic=<issue-id>",
+		"git push origin HEAD:refs/for/main -o topic=<issue-id> && git push origin HEAD:refs/heads/paperclip/<issue-id>",
+	}
+	priorInvariants = []string{
+		"HISS-01: Acyclic DAG control flow (no recursion)",
+		"HISS-02: Scalar upper bounds on all loops; context timeout on all I/O",
+		"HISS-04: McCabe Cyclomatic <= 10, Cognitive <= 15, Func LOC <= 75",
+		"HISS-07: Zero .unwrap() / .expect(); all errors handled or wrapped",
+		"HISS-10: Zero-warning tolerance across compiler, linters, and formatters",
+		"HISS-15: 3D testing mandatory (Positive, Negative, Boundary >= 2 checks/dim)",
+		"HISS-16: Canonical AGENTS.md compiled to vendor harnesses",
+	}
+)
+
+// PriorState is how the harness under a repository compares with earlier releases' output.
+type PriorState struct {
+	// Generated: harness.json is one earlier synthesis for the current identity, and rules.md
+	// is absent or that synthesis's rendering. Adoption refreshes only such a harness; an
+	// edited one is operator-owned and stays byte for byte.
+	Generated bool
+	// Rules: rules.md exists. A refresh rewrites it only then, so a rules.md the operator
+	// removed stays removed.
+	Rules bool
+}
+
+// PriorGenerated compares the harness under repoPath with every earlier synthesis for
+// current's identity. One consistent CRLF checkout style (core.autocrlf on Windows) compares
+// as the LF bytes the release wrote.
+func PriorGenerated(ctx context.Context, repoPath string, current *Harness) (PriorState, error) {
+	if ctx == nil || current == nil {
+		return PriorState{}, fmt.Errorf("paperclip: prior harness check requires context and current harness")
+	}
+	harnessData, rulesData, rulesExist, err := readHarnessFiles(ctx, repoPath)
+	if err != nil {
+		return PriorState{}, err
+	}
+	state := PriorState{Rules: rulesExist}
+	harnessText, rulesText, ok := releaseText(harnessData, rulesData)
+	if !ok {
+		return state, nil
+	}
+	priors := priorHarnesses(current)
+	for index := 0; index < len(priors); index++ {
+		prior := priors[index]
+		rendered, err := MarshalHarness(&prior)
+		if err != nil {
+			return PriorState{}, err
+		}
+		if harnessText == string(rendered) {
+			state.Generated = !rulesExist || priorRules(rulesText, &prior)
+			return state, nil
+		}
+	}
+	return state, nil
+}
+
+// priorRules reports whether rules is a rendering of prior some release wrote: the current
+// markdownlint-clean layout (#477) or the unwrapped layout of every release before it.
+func priorRules(rules string, prior *Harness) bool {
+	return rules == renderRules(prior) || rules == renderUnwrappedRules(prior)
+}
+
+// renderUnwrappedRules is rules.md as every release before #477 wrote it: no blank line
+// below a section heading and one unwrapped list item per value. It stays byte for byte so
+// a released rules.md still reads as earlier output after the renderer changed.
+func renderUnwrappedRules(h *Harness) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# Paperclip Operating Rules (%s)\n\n## Operating Contract\n", h.Platform)
+	for i := 0; i < len(h.OperatingContract) && i < maxHarnessValues; i++ {
+		fmt.Fprintf(&b, "- %s\n", h.OperatingContract[i])
+	}
+	fmt.Fprintf(&b, "\n## AGit Push Protocol\n```bash\n%s\n```\n\n## High-Integrity Invariants\n", h.AGitPushFormat)
+	for i := 0; i < len(h.Invariants) && i < maxHarnessValues; i++ {
+		fmt.Fprintf(&b, "- %s\n", h.Invariants[i])
+	}
+	return b.String()
+}
+
+// releaseText folds one consistent CRLF checkout style to LF. A release never wrote mixed
+// endings or a lone carriage return, so either one makes ok false: the harness is edited.
+func releaseText(harness, rules []byte) (string, string, bool) {
+	harnessText, _, err := util.NormalizeLineEndingsStrict(string(harness))
+	if err != nil {
+		return "", "", false
+	}
+	rulesText, _, err := util.NormalizeLineEndingsStrict(string(rules))
+	return harnessText, rulesText, err == nil
+}
+
+// priorHarnesses is every earlier synthesis for current's identity: each register directive
+// form under each push protocol.
+func priorHarnesses(current *Harness) []Harness {
+	priors := make([]Harness, 0, len(priorRegisterDirectives)*len(priorAGitPushFormats))
+	for _, push := range priorAGitPushFormats {
+		for _, directive := range priorRegisterDirectives {
+			priors = append(priors, priorHarness(current, directive, push))
+		}
+	}
+	return priors
+}
+
+func priorHarness(current *Harness, directive, push string) Harness {
+	prior := *current
+	prior.OperatingContract = append([]string(nil), priorOperatingContract...)
+	if directive != "" {
+		prior.OperatingContract = append(prior.OperatingContract, directive)
+	}
+	prior.AGitPushFormat = push
+	prior.Invariants = priorInvariants
+	return prior
+}
+
+func readHarnessFiles(ctx context.Context, repoPath string) ([]byte, []byte, bool, error) {
+	jsonPath, err := util.ConfinePath(repoPath, filepath.Join(paperclipDir, harnessFile))
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("resolve %s: %w", harnessFile, err)
+	}
+	harnessData, err := contextopt.ReadSnapshot(ctx, jsonPath)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("read %s: %w", harnessFile, err)
+	}
+	mdPath, err := util.ConfinePath(repoPath, filepath.Join(paperclipDir, rulesFile))
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("resolve %s: %w", rulesFile, err)
+	}
+	rulesData, rulesExist, err := contextopt.ObserveSnapshot(ctx, mdPath)
+	if err != nil {
+		return nil, nil, false, fmt.Errorf("read %s: %w", rulesFile, err)
+	}
+	return harnessData, rulesData, rulesExist, nil
 }
 
 // resolvePlatform derives owner/name from the manifest, then the origin remote
@@ -130,11 +282,32 @@ func manifestPlatform(ctx context.Context, repoPath string) (string, bool, error
 	return fmt.Sprintf("%s/%s", m.Repository.Owner, m.Repository.Name), true, nil
 }
 
-// WriteHarness writes .paperclip/harness.json and .paperclip/rules.md into repoPath.
-// Both targets are confined to repoPath so a symlinked .paperclip cannot redirect them.
-func WriteHarness(h *Harness, repoPath string) error {
+// MarshalHarness renders the canonical bytes written to .paperclip/harness.json. Coverage
+// digests and the writer share this serializer so line-bound provenance cannot drift.
+func MarshalHarness(h *Harness) ([]byte, error) {
 	if h == nil {
-		return fmt.Errorf("paperclip: harness cannot be nil")
+		return nil, fmt.Errorf("paperclip: harness cannot be nil")
+	}
+	data, err := json.MarshalIndent(h, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("marshal harness: %w", err)
+	}
+	return append(data, '\n'), nil
+}
+
+// WriteHarness writes .paperclip/harness.json and .paperclip/rules.md into repoPath.
+func WriteHarness(h *Harness, repoPath string) error {
+	return WriteHarnessFiles(h, repoPath, true)
+}
+
+// WriteHarnessFiles writes .paperclip/harness.json and, when rules is set, .paperclip/rules.md.
+// A refresh of earlier output passes PriorState.Rules, so it never recreates a rules.md the
+// operator removed. Both targets are confined to repoPath so a symlinked .paperclip cannot
+// redirect them.
+func WriteHarnessFiles(h *Harness, repoPath string, rules bool) error {
+	data, err := MarshalHarness(h)
+	if err != nil {
+		return err
 	}
 	dir, err := util.ConfinePath(repoPath, paperclipDir)
 	if err != nil {
@@ -144,16 +317,15 @@ func WriteHarness(h *Harness, repoPath string) error {
 		return fmt.Errorf("create %s dir: %w", paperclipDir, err)
 	}
 
-	data, err := json.MarshalIndent(h, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal harness: %w", err)
-	}
 	jsonPath, err := util.ConfinePath(repoPath, filepath.Join(paperclipDir, harnessFile))
 	if err != nil {
 		return fmt.Errorf("resolve %s: %w", harnessFile, err)
 	}
-	if err := util.WriteFileSecure(jsonPath, append(data, '\n'), filePerm); err != nil {
+	if err := util.WriteFileSecure(jsonPath, data, filePerm); err != nil {
 		return fmt.Errorf("write %s: %w", jsonPath, err)
+	}
+	if !rules {
+		return nil
 	}
 
 	mdPath, err := util.ConfinePath(repoPath, filepath.Join(paperclipDir, rulesFile))

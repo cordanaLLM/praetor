@@ -98,7 +98,7 @@ func (s *Server) createAdoptTool() (mcp.Tool, error) {
 				Type:        "boolean",
 				Description: "Overwrite existing standards configurations (default: false)",
 			},
-			"source_root": {Type: "string", Description: "Optional Praetor source bundle for creating a real pinned lock; confined to the server root"},
+			"source_root": {Type: "string", Description: "Optional Praetor source bundle; purpose: real pinned lock; confinement: server root"},
 			"record_baseline": {
 				Type:        "boolean",
 				Description: "Record existing infractions into .standards-baseline.json (default: true)",
@@ -114,7 +114,7 @@ func (s *Server) createAdoptTool() (mcp.Tool, error) {
 func (s *Server) runAdoptTool(ctx context.Context, args map[string]any) (*mcp.ToolResult, error) {
 	a, err := s.parseAdoptArgs(args)
 	if err != nil {
-		return mcp.ErrorResult(err.Error()), nil
+		return mcpErrorResult(err.Error(), mcpTextUntrusted), nil
 	}
 
 	adoptCtx, cancel := context.WithTimeout(ctx, adoptBudget)
@@ -130,56 +130,57 @@ func (s *Server) runAdoptTool(ctx context.Context, args map[string]any) (*mcp.To
 		RecordBaseline: a.recordBase,
 	})
 	if err != nil {
-		details := ""
+		var details mcpTextBuilder
 		if report != nil {
-			details = formatAdoptMCPResult(report, a.dryRun)
+			details.Append(formatAdoptMCPResult(report, a.dryRun))
 		}
-		return mcp.ErrorResult(details + fmt.Sprintf("Adoption failed: %v", err)), nil
+		details.Template("block: adoption failed: %v", err)
+		return mcpComposedErrorResult(details.Text()), nil
 	}
 
 	if len(report.Errors) != 0 {
-		return mcp.ErrorResult(formatAdoptMCPResult(report, a.dryRun)), nil
+		return mcpComposedErrorResult(formatAdoptMCPResult(report, a.dryRun)), nil
 	}
-	return mcp.TextResult(formatAdoptMCPResult(report, a.dryRun)), nil
+	return mcpComposedTextResult(formatAdoptMCPResult(report, a.dryRun)), nil
 }
 
-func formatAdoptMCPResult(r *adopt.AdoptReport, dryRun bool) string {
-	var sb strings.Builder
+func formatAdoptMCPResult(r *adopt.AdoptReport, dryRun bool) mcpGovernedText {
+	var sb mcpTextBuilder
 	// adopt.AdoptReport.Outcome decides the mode: errors win over a dry run, so a failed
 	// plan reads INCOMPLETE rather than SIMULATED (BUG-871).
 	outcomeReport := *r
 	outcomeReport.DryRun = r.DryRun || dryRun
-	fmt.Fprintf(&sb, "=== Praetor Repository Adoption [%s] ===\n", adoptModes[outcomeReport.Outcome()])
-	fmt.Fprintf(&sb, "State: %s | Archetype: %s\n", r.State, r.Archetype)
-	fmt.Fprintf(&sb, "Facets: %s\n", strings.Join(r.Facets, ", "))
+	sb.Template("adoption: Praetor repository; mode: %s.\nstate: %s; archetype: %s.\nfacets: %s.\n",
+		adoptModes[outcomeReport.Outcome()], r.State, r.Archetype, strings.Join(r.Facets, ", "))
 	formatAdoptDebt(&sb, r, dryRun)
 	fileLabel := "Created Files"
 	if dryRun {
 		fileLabel = "Planned Files"
 	}
-	fmt.Fprintf(&sb, "%s: %d\n", fileLabel, len(r.CreatedFiles))
+	sb.Template("%s: %d\n", fileLabel, len(r.CreatedFiles))
 	for _, f := range r.CreatedFiles {
-		fmt.Fprintf(&sb, "  + %s\n", f)
+		sb.Template("  + %s\n", f)
 	}
 	reconciledLabel := "Reconciled Files"
 	if dryRun {
 		reconciledLabel = "Planned Reconciliations"
 	}
-	fmt.Fprintf(&sb, "%s: %d\n", reconciledLabel, len(r.ReconciledFiles))
+	sb.Template("%s: %d\n", reconciledLabel, len(r.ReconciledFiles))
 	for _, f := range r.ReconciledFiles {
-		fmt.Fprintf(&sb, "  ~ %s\n", f)
+		sb.Template("  ~ %s\n", f)
 	}
-	sb.WriteString("Governance Pillars:\n")
+	sb.Template("Governance Pillars:\n")
 	for _, pillar := range outcomeReport.Pillars() {
-		sb.WriteString("  " + pillar.Line() + "\n")
+		// The adopt package's shared pillar line, the same one the CLI prints.
+		sb.External("  "+pillar.Line()+"\n", mcpTextShared)
 	}
 	for _, failure := range r.Errors {
-		fmt.Fprintf(&sb, "[ERROR] %s\n", failure)
+		sb.Template("[ERROR] %s\n", failure)
 	}
 	for _, warning := range r.Warnings {
-		fmt.Fprintf(&sb, "[WARN] %s\n", warning)
+		sb.Template("[WARN] %s\n", warning)
 	}
-	return sb.String()
+	return sb.Text()
 }
 
 var adoptModes = map[adopt.AdoptOutcome]string{
@@ -188,24 +189,24 @@ var adoptModes = map[adopt.AdoptOutcome]string{
 	adopt.OutcomeApplied:    "APPLIED",
 }
 
-func formatAdoptDebt(sb *strings.Builder, r *adopt.AdoptReport, dryRun bool) {
+func formatAdoptDebt(sb *mcpTextBuilder, r *adopt.AdoptReport, dryRun bool) {
 	switch r.BaselineStatus {
 	case "scanned":
 		if dryRun {
-			fmt.Fprintf(sb, "Legacy Debt Scanned (dry-run; not written): %d infractions\n", r.LegacyDebtCount)
+			sb.Template("Legacy Debt Scanned (dry-run; not written): %d infractions\n", r.LegacyDebtCount)
 			return
 		}
-		fmt.Fprintf(sb, "Legacy Debt Baselined: %d infractions\n", r.LegacyDebtCount)
+		sb.Template("Legacy Debt Baselined: %d infractions\n", r.LegacyDebtCount)
 	case "existing":
-		fmt.Fprintf(sb, "Existing Legacy Debt Baseline: %d infractions\n", r.LegacyDebtCount)
+		sb.Template("Existing Legacy Debt Baseline: %d infractions\n", r.LegacyDebtCount)
 	case "skipped":
-		sb.WriteString("Legacy Debt Scan: skipped (baseline recording disabled)\n")
+		sb.Template("Legacy Debt Scan: skipped (baseline recording disabled)\n")
 	default:
 		status := r.BaselineStatus
 		if status == "" {
 			status = "not_run"
 		}
-		fmt.Fprintf(sb, "Legacy Debt Baseline: %s; no usable result\n", status)
+		sb.Template("Legacy Debt Baseline: %s; no usable result\n", status)
 	}
 }
 
@@ -243,7 +244,7 @@ func (s *Server) createDogfoodTool() (mcp.Tool, error) {
 			},
 			"targets_dir": {
 				Type:        "string",
-				Description: "Optional local directory containing target repos to test (confined to the server root unless -allow-outside-root)",
+				Description: "Optional local target-repository directory; confinement: server root unless -allow-outside-root",
 			},
 			"public_loop":  {Type: "boolean", Description: "Run retained public clone plan/apply/recheck loop (requires server remote opt-in)"},
 			"public_repos": {Type: "string", Description: "Comma-separated curated HTTPS URLs, optionally #<commit SHA>"},
@@ -253,7 +254,7 @@ func (s *Server) createDogfoodTool() (mcp.Tool, error) {
 			"dry_run":      {Type: "boolean", Description: "Public loop plans only by default; false applies inside fresh disposable clones"},
 			"benchmark_popular": {
 				Type:        "boolean",
-				Description: "Benchmark against curated popular public OSS repositories (clones them; requires the server flag -allow-remote-benchmarks)",
+				Description: "Benchmark curated popular public OSS repositories; clones required; server flag: -allow-remote-benchmarks",
 			},
 		},
 	}
@@ -261,17 +262,17 @@ func (s *Server) createDogfoodTool() (mcp.Tool, error) {
 	handler := func(ctx context.Context, args map[string]any) (*mcp.ToolResult, error) {
 		public, err := argBool(args, "public_loop", false)
 		if err != nil {
-			return mcp.ErrorResult(err.Error()), nil
+			return mcpErrorResult(err.Error(), mcpTextUntrusted), nil
 		}
 		if public {
 			return s.runPublicDogfood(ctx, args), nil
 		}
 		if err := rejectPublicOnlyArgs(args); err != nil {
-			return mcp.ErrorResult(err.Error()), nil
+			return mcpErrorResult(err.Error(), mcpTextUntrusted), nil
 		}
 		opts, err := s.parseDogfoodOptions(args)
 		if err != nil {
-			return mcp.ErrorResult(err.Error()), nil
+			return mcpErrorResult(err.Error(), mcpTextUntrusted), nil
 		}
 
 		dfCtx, cancel := context.WithTimeout(ctx, dogfoodBudget)
@@ -283,9 +284,9 @@ func (s *Server) createDogfoodTool() (mcp.Tool, error) {
 		}
 
 		if !rep.OverallPassed {
-			return mcp.ErrorResult(formatDogfoodMCPResult(rep)), nil
+			return mcpComposedErrorResult(formatDogfoodMCPResult(rep)), nil
 		}
-		return mcp.TextResult(formatDogfoodMCPResult(rep)), nil
+		return mcpComposedTextResult(formatDogfoodMCPResult(rep)), nil
 	}
 
 	// Dogfooding spawns Git for explicitly enabled clones and retains public-loop
@@ -293,34 +294,34 @@ func (s *Server) createDogfoodTool() (mcp.Tool, error) {
 	return mcp.NewOpenWorldTool("standards_dogfood", "Execute self-governance verification and retained public adoption loops", schema, handler, false, false)
 }
 
-// writeLines appends report lines to a tool result, one per line.
-func writeLines(sb *strings.Builder, lines []string) {
+// writeLines appends report lines to a tool result, one per line. internal/hiss renders each
+// complexity line once for every scan entry point; bound by count and digest.
+func writeLines(sb *mcpTextBuilder, lines []string) {
 	for _, line := range lines {
-		sb.WriteString(line + "\n")
+		sb.External(line+"\n", mcpTextShared)
 	}
 }
 
-func formatDogfoodMCPResult(rep *dogfood.DogfoodReport) string {
-	var sb strings.Builder
-	sb.WriteString("=== Praetor Universal Dogfooding Report ===\n")
-	fmt.Fprintf(&sb, "Host: %s\n", rep.HostRepoPath)
-	fmt.Fprintf(&sb, "Context Sync: %t | Invariants Audit: %t\n", rep.ContextSyncPassed, rep.SelfAuditPassed)
+func formatDogfoodMCPResult(rep *dogfood.DogfoodReport) mcpGovernedText {
+	var sb mcpTextBuilder
+	sb.Template("dogfood: Praetor universal.\nhost: %s.\ncontext_sync: %t; invariants_audit: %t.\n",
+		rep.HostRepoPath, rep.ContextSyncPassed, rep.SelfAuditPassed)
 	writeLines(&sb, rep.SelfAuditComplexity.Lines())
 	if len(rep.TargetResults) > 0 {
-		fmt.Fprintf(&sb, "Local Targets Evaluated: %d\n", len(rep.TargetResults))
+		sb.Template("Local Targets Evaluated: %d\n", len(rep.TargetResults))
 		for _, tr := range rep.TargetResults {
-			fmt.Fprintf(&sb, "  - %s: Archetype: %s | Debt: %d | Actions: %d\n", tr.RepoName, tr.Archetype, tr.DebtCount, tr.Actions)
+			sb.Template("  - %s: Archetype: %s | Debt: %d | Actions: %d\n", tr.RepoName, tr.Archetype, tr.DebtCount, tr.Actions)
 		}
 	}
 	if len(rep.RemoteResults) > 0 {
-		fmt.Fprintf(&sb, "Remote Benchmarks Evaluated: %d\n", len(rep.RemoteResults))
+		sb.Template("Remote Benchmarks Evaluated: %d\n", len(rep.RemoteResults))
 		for _, rr := range rep.RemoteResults {
-			fmt.Fprintf(&sb, "  - %s: Grade: %s | Archetype: %s | Debt: %d | HISS: %d\n", rr.RepoURL, rr.ReadinessGrade, rr.Archetype, rr.DebtCount, rr.HISSInfractions)
+			sb.Template("  - %s: Grade: %s | Archetype: %s | Debt: %d | HISS: %d\n", rr.RepoURL, rr.ReadinessGrade, rr.Archetype, rr.DebtCount, rr.HISSInfractions)
 			writeLines(&sb, rr.Complexity.Lines())
 		}
 	}
-	fmt.Fprintf(&sb, "Overall Status: %t\n", rep.OverallPassed)
-	return sb.String()
+	sb.Template("Overall Status: %t\n", rep.OverallPassed)
+	return sb.Text()
 }
 
 // resolveDevDir returns the workstation directory to harvest: the dev_dir argument,
@@ -349,7 +350,7 @@ func (s *Server) createHarvestWorkstationTool() (mcp.Tool, error) {
 			"json": {Type: "boolean", Description: "Return private workstation repository observations as JSON (default false)"},
 			"dev_dir": {
 				Type:        "string",
-				Description: "Path to developer repositories root directory (default: ~/dev; requires -allow-outside-root unless under the server root)",
+				Description: "Developer repositories root path; default: ~/dev; -allow-outside-root required outside server root",
 			},
 		},
 	}

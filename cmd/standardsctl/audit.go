@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -147,6 +148,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 			return auditBranchProtectionAndSupplyChain(ctx, manifest, rootDir, &opts.effective.Policy)
 		},
 		func() error { return auditPaperclipHarness(ctx, manifest, rootDir) },
+		func() error { return auditCavemanConfiguredSources(ctx, manifest, rootDir) },
 		func() error { return auditRunnerMatrix(ctx, manifest, rootDir) },
 		func() error { return auditPreMigrationTracking(rootDir) },
 		func() error { return auditAgentDefinitions(rootDir) },
@@ -335,6 +337,40 @@ func auditCavemanAgentSurfaces(ctx context.Context, rootDir string) error {
 			personas, skills, compiler.AgentTextCeiling)
 	}
 	return nil
+}
+
+// auditCavemanConfiguredSources enforces the omission-resistant register.sources inventory
+// through the same checker as `caveman check --configured-sources`. An omitted register or
+// sources contract is zero verified work and fails closed.
+func auditCavemanConfiguredSources(ctx context.Context, manifest *config.Manifest, rootDir string) error {
+	if manifest == nil || manifest.Register == nil || manifest.Register.Sources == nil {
+		return errors.New("[FAIL] Caveman non-Markdown source coverage: audit requires register.sources")
+	}
+	inputs, result, err := configuredCavemanInputs(ctx, rootDir, manifest.EffectiveRegister())
+	if err != nil {
+		return fmt.Errorf("[FAIL] Caveman non-Markdown source coverage: %w", err)
+	}
+	if report, failed := renderCavemanChecks(inputs, 0, 0, true); failed > 0 {
+		return fmt.Errorf("[FAIL] Caveman non-Markdown source lint (%d of %d values):\n%s",
+			failed, len(inputs), boundedSourceReport(report))
+	}
+	fmt.Printf("[PASS] Caveman non-Markdown source coverage verified (%d values, %s).\n",
+		len(result.Sources), result.SHA256)
+	return nil
+}
+
+// maxAuditSourceReportLines bounds the lint report one audit prints; a contract may hold
+// thousands of values. `caveman check --configured-sources` prints every report.
+const maxAuditSourceReportLines = 60
+
+func boundedSourceReport(report string) string {
+	lines := strings.SplitN(strings.TrimSpace(report), "\n", maxAuditSourceReportLines+1)
+	if len(lines) <= maxAuditSourceReportLines {
+		return strings.Join(lines, "\n")
+	}
+	omitted := strings.Count(lines[maxAuditSourceReportLines], "\n") + 1
+	return strings.Join(lines[:maxAuditSourceReportLines], "\n") + fmt.Sprintf(
+		"\n... %d more lines; run `praetorctl caveman check --configured-sources` for the full report", omitted)
 }
 
 // auditBranchProtectionAndSupplyChain checks the committed ruleset against policy, the

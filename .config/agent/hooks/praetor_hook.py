@@ -118,7 +118,7 @@ def proceed(pair, code):
     answer = PROCEED.get(tuple(pair))
     if answer is None:
         return code
-    sys.stdout.write(answer)
+    sys.stdout.write(answer)  # caveman:not-applicable structured-protocol
     sys.stdout.flush()
     return 0
 
@@ -156,8 +156,8 @@ def drain(read, limit=DRAIN_LIMIT, timeout=DRAIN_TIMEOUT):
 def skip(pair, engines):
     checked = "checked " + ", ".join(engines) if engines else "no praetorctl is built or installed"
     sys.stderr.write(
-        f"praetor hook: no engine serves {' '.join(pair)} ({checked}); the gate is not enforced "
-        "until bin/praetorctl is rebuilt (make hook-cli) or the engine is reinstalled "
+        f"praetor hook: no engine serves {' '.join(pair)} ({checked}); gate unenforced "
+        "until bin/praetorctl rebuilt (make hook-cli) or engine reinstalled "
         "(make dev-install), skipped\n")
     return proceed(pair, 0)
 

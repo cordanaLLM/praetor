@@ -28,7 +28,7 @@ def audit_dispatch(requested_model: str, requested_role: str, active_agents: lis
         sys.stderr.write(
             f"\n[BLOCKED BY MODEL ROUTER - MONO-MODEL SPAMMING DETECTED]\n"
             f"Already running {count} concurrent subagents on model '{requested_model}'.\n"
-            f"Max allowed per single model is {MAX_CONCURRENT_SAME_MODEL}.\n"
+            f"maximum_concurrent_per_model: {MAX_CONCURRENT_SAME_MODEL}.\n"
             f"Action Required: Fan out to secondary frontier models, workhorse tier, or local OSS models.\n"
             f"Run 'standardsctl models list' to view available alternatives.\n\n"
         )

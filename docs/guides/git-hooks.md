@@ -103,6 +103,17 @@ printed exactly as before. `test_hook_output_is_job_output_and_failures_only` in
 `.config/lefthook/scripts/test_hooks.py` pins both halves: a pass prints only its
 marker, and a blocked command still prints its reason and the failed job's name.
 
+The diagnostics these scripts print are agent text, so `.config/lefthook/scripts`
+and `.config/agent/hooks` are `register.sources` inputs in `.standards.yaml`. A
+static message or f-string template is linted in the internal register. A value
+that is entirely computed, such as a JSON result, passthrough tool output or one of
+the markers above, carries one exact classification comment on its line:
+`# caveman:not-applicable structured-protocol`, `untrusted-passthrough` or
+`protocol-marker`. Changing a message changes the contract digest; refresh
+`expected`, `not_applicable` and `sha256` from
+`praetorctl caveman check --configured-sources --root=.`. The extraction rules are in
+the [text-register guide](text-register.md#tracked-runtime-sources).
+
 For Lefthook's full reporting on one run, set `LEFTHOOK_OUTPUT`, for example
 `LEFTHOOK_OUTPUT=meta,summary,execution git commit -s`. The
 [pinned Lefthook `output` reference](https://github.com/evilmartians/lefthook/blob/v2.1.14/docs/configuration/output.md)

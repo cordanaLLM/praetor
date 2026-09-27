@@ -151,7 +151,7 @@ func TestServer_InspectionRejectsEscapingChildrenAndOverflow(t *testing.T) {
 func TestFormatAdoptionIncludesSafetyWarnings(t *testing.T) {
 	message := "hooks not activated because their configuration was not written by praetor"
 	got := formatAdoptMCPResult(&adopt.AdoptReport{Warnings: []string{message}}, false)
-	if !strings.Contains(got, message) {
+	if !strings.Contains(string(got), message) {
 		t.Fatalf("adoption safety warning omitted: %s", got)
 	}
 }
@@ -171,16 +171,16 @@ func TestFormatAdoptionBaselineStatesAndDryRunLabels(t *testing.T) {
 		{name: "existing", report: adopt.AdoptReport{BaselineStatus: "existing", LegacyDebtCount: 3}, want: "Existing Legacy Debt Baseline: 3"},
 		{name: "skipped", report: adopt.AdoptReport{BaselineStatus: "skipped"}, want: "Legacy Debt Scan: skipped"},
 		{name: "failed", report: adopt.AdoptReport{BaselineStatus: "failed"}, want: "Legacy Debt Baseline: failed; no usable result"},
-		{name: "failed apply", report: adopt.AdoptReport{Errors: []string{"planning failed"}}, want: "[INCOMPLETE]", avoid: "[APPLIED]"},
+		{name: "failed apply", report: adopt.AdoptReport{Errors: []string{"planning failed"}}, want: "mode: INCOMPLETE", avoid: "mode: APPLIED"},
 		{name: "unknown", report: adopt.AdoptReport{BaselineStatus: "future"}, want: "Legacy Debt Baseline: future; no usable result"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got := formatAdoptMCPResult(&tc.report, tc.dryRun)
-			if !strings.Contains(got, tc.want) {
+			if !strings.Contains(string(got), tc.want) {
 				t.Fatalf("missing %q in %s", tc.want, got)
 			}
-			if tc.avoid != "" && strings.Contains(got, tc.avoid) {
+			if tc.avoid != "" && strings.Contains(string(got), tc.avoid) {
 				t.Fatalf("unexpected %q in %s", tc.avoid, got)
 			}
 		})
@@ -266,7 +266,7 @@ func TestServer_Positive_AdoptDryRunAndApply(t *testing.T) {
 	}
 
 	applied := callTool(t, srv, "standards_adopt", map[string]any{"record_baseline": false})
-	expectText(t, "adopt apply", applied, "[APPLIED]")
+	expectText(t, "adopt apply", applied, "mode: APPLIED")
 	if strings.Contains(applied.Content[0].Text, "Created Files: 0\n") {
 		t.Errorf("apply created nothing:\n%s", applied.Content[0].Text)
 	}
@@ -286,7 +286,7 @@ func TestServer_Negative_AdoptConfinement(t *testing.T) {
 	expectError(t, "adopt typed force", typed, "force must be a boolean")
 
 	notRepo := callTool(t, srv, "standards_adopt", map[string]any{"path": "out-of-tree", "dry_run": true})
-	expectError(t, "adopt missing", notRepo, "Adoption failed")
+	expectError(t, "adopt missing", notRepo, "adoption failed")
 
 	open, err := NewServerWithOptions(ServerOptions{RootDir: srv.rootDir, Version: "v", AllowOutsideRoot: true})
 	if err != nil {
@@ -316,7 +316,7 @@ func TestServer_Positive_DogfoodOnFixture(t *testing.T) {
 	initGitRepo(t, repo)
 
 	res := callTool(t, srv, "standards_dogfood", map[string]any{"targets_dir": "targets"})
-	expectText(t, "dogfood", res, "Context Sync: true | Invariants Audit: true")
+	expectText(t, "dogfood", res, "context_sync: true; invariants_audit: true.")
 	expectText(t, "dogfood", res, "Local Targets Evaluated: 1")
 	expectText(t, "dogfood", res, "Overall Status: true")
 }
@@ -361,8 +361,8 @@ func TestServer_Positive_HarvestWorkstation(t *testing.T) {
 	initGitRepo(t, repo)
 
 	res := callTool(t, srv, "standards_harvest_workstation", map[string]any{"dev_dir": "devroot"})
-	expectText(t, "harvest", res, "Workstation Governance & Fleet Audit")
-	expectText(t, "harvest", res, "Dev Repos Total: 1")
+	expectText(t, "harvest", res, "audit: workstation governance.")
+	expectText(t, "harvest", res, "repositories_total: 1.")
 }
 
 func TestServer_Negative_HarvestWorkstation(t *testing.T) {
@@ -382,7 +382,7 @@ func TestServer_Negative_HarvestWorkstation(t *testing.T) {
 		t.Fatal(err)
 	}
 	allowed := callTool(t, open, "standards_harvest_workstation", map[string]any{"dev_dir": t.TempDir()})
-	expectText(t, "harvest allowed", allowed, "Dev Repos Total: 0")
+	expectText(t, "harvest allowed", allowed, "repositories_total: 0.")
 }
 
 // ---- package_docs -------------------------------------------------------------------------------
@@ -409,7 +409,7 @@ func TestServer_PackageDocs(t *testing.T) {
 	unknown := callTool(t, srv, "standards_package_docs", map[string]any{"package": "left-pad"})
 	expectError(t, "docs unknown", unknown, "not found in local catalog")
 	missing := callTool(t, srv, "standards_package_docs", nil)
-	expectError(t, "docs missing", missing, "package argument is required")
+	expectError(t, "docs missing", missing, "package argument required")
 	typed := callTool(t, srv, "standards_package_docs", map[string]any{"package": 1})
 	expectError(t, "docs typed", typed, "package must be a string")
 
@@ -466,8 +466,8 @@ func TestServer_VersionAudit(t *testing.T) {
 		t.Fatal(err)
 	}
 	res := callTool(t, empty, "standards_version_audit", nil)
-	expectText(t, "version audit", res, "=== Codebase Version Audit:")
-	expectText(t, "version audit", res, "Scanned: 0")
+	expectText(t, "version audit", res, "audit: codebase versions;")
+	expectText(t, "version audit", res, "scanned: 0")
 
 	typed := callTool(t, empty, "standards_version_audit", map[string]any{"prerelease": "no"})
 	expectError(t, "version audit typed", typed, "prerelease must be a boolean")
@@ -491,7 +491,7 @@ func TestServer_MemoryRecallAndHindsightOptimize(t *testing.T) {
 	expectText(t, "recall hit", hit, "gopkg.in/yaml.v3")
 
 	missing := callTool(t, srv, "standards_memory_recall", nil)
-	expectError(t, "recall missing query", missing, "query argument is required")
+	expectError(t, "recall missing query", missing, "query argument required")
 	typed := callTool(t, srv, "standards_memory_recall", map[string]any{"query": 3})
 	expectError(t, "recall typed query", typed, "query must be a string")
 
@@ -530,7 +530,7 @@ func TestServer_AdoptionStepErrorRetainsIncompleteReport(t *testing.T) {
 	writeFixtureFile(t, root, "CLAUDE.md", "incumbent context\n")
 	result := callTool(t, srv, "standards_adopt", map[string]any{"record_baseline": false})
 	expectError(t, "context overflow", result, "context composition cannot produce valid projections")
-	if !strings.Contains(result.Content[0].Text, "[INCOMPLETE]") || strings.Contains(result.Content[0].Text, "[APPLIED]") {
+	if !strings.Contains(result.Content[0].Text, "mode: INCOMPLETE") || strings.Contains(result.Content[0].Text, "mode: APPLIED") {
 		t.Fatalf("failed apply claimed success: %s", result.Content[0].Text)
 	}
 	content, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))

@@ -512,7 +512,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     result = inspect_checkpoint(args.root.resolve(), args.event, args.include_paths)
     line = json.dumps(result, sort_keys=True)
-    print("PRAETOR_CHECKPOINT_RESULT=" + line if args.marker else line)
+    print("PRAETOR_CHECKPOINT_RESULT=" + line if args.marker else line)  # caveman:not-applicable structured-protocol
     return 0 if "error" not in result else 1
 
 

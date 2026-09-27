@@ -288,6 +288,30 @@ the `Repository: <owner>/<name>` line from the manifest's `repository` block
   `standards_audit` takes; a blank value means the server root and a path outside
   it is refused (`TestServer_Boundary_PlanResolvesThroughTheSelectedCatalog`).
 
+Each target invariant follows as one `- <field>: <value>.` line, for example
+`- review_mode: single_maintainer.`
+
+### Tool text is a counted runtime source
+
+Every tool description, property description and result callsite in
+`cmd/standards-mcp` is part of `register.sources` in `.standards.yaml`
+(`mcp.descriptions` and `mcp.outputs`). Results go through the helpers in
+`cmd/standards-mcp/mcp_runtime_text.go`: a static template is linted as agent text,
+and runtime-owned text (structured JSON, untrusted passthrough, protocol bytes) is
+classified and bound by count and digest instead. A bare `mcp.TextResult` with
+dynamic text, direct `mcp.ToolResult` construction or a post-construction mutation
+fails the extractor.
+
+Adding, removing or rewording a tool string therefore changes the contract. Update
+`expected`, `not_applicable` and `sha256` from
+`praetorctl caveman check --configured-sources --root=.`, and the callsite count
+and identity digest pinned by `TestMCPRuntimeOutputsHaveNoUnclassifiedCallsites`
+in `cmd/standards-mcp/runtime_text_coverage_test.go`. That test recounts the
+callsites with an independent AST oracle
+(`cmd/standards-mcp/runtime_output_oracle_test.go`) and fails when it disagrees
+with the production extractor. The form rules are in the
+[text-register guide](text-register.md#tracked-runtime-sources).
+
 ### Shared audit authority and parity
 
 The `standards_audit` tool executes the same gates as CLI `standardsctl audit`.

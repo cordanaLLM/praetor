@@ -12,7 +12,7 @@ func TestServerAuditEffectiveDeploymentPolicy(t *testing.T) {
 	srv, root := newFixtureServer(t)
 	before := callTool(t, srv, "standards_audit", nil)
 	expectText(t, "default audit", before, "max_func_loc=60")
-	expectText(t, "audited repository identity", before, "=== fixture/repo Governance Audit ===")
+	expectText(t, "audited repository identity", before, "audit: fixture/repo governance.")
 	args := map[string]any{}
 	for _, layer := range []struct{ name, limit string }{
 		{"fleet", "55"}, {"organization", "50"}, {"deployment", "8"}, {"workstation", "45"},
@@ -97,7 +97,7 @@ func TestServerAuditExternalManifestPreservesExplicitAuthorization(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectText(t, "authorized external manifest", callTool(t, open, "standards_audit", args), "7/7 MCP audit gates passed")
+	expectText(t, "authorized external manifest", callTool(t, open, "standards_audit", args), "passed: 7/7")
 }
 
 func TestServerAuditUsesSelectedCatalog(t *testing.T) {
@@ -107,7 +107,7 @@ func TestServerAuditUsesSelectedCatalog(t *testing.T) {
 	relocateCatalog(t, root, "catalog")
 	expectError(t, "missing default catalog", callTool(t, srv, "standards_audit", nil), "materialized profile")
 	after := callTool(t, srv, "standards_audit", map[string]any{"catalog_root": "catalog"})
-	expectText(t, "selected catalog", after, "7/7 MCP audit gates passed")
+	expectText(t, "selected catalog", after, "passed: 7/7")
 	// Mounting identical catalog bytes at another path retains policy identity.
 	beforeLine := strings.Split(before.Content[0].Text, "\n")[2]
 	afterLine := strings.Split(after.Content[0].Text, "\n")[2]

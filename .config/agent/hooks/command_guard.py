@@ -37,7 +37,7 @@ def payload_cwd(payload: bytes):
 
 def overrun() -> int:
     sys.stderr.write(f"Praetor: shared hook policy gave no answer within {GUARD_LIMIT} s; "
-                     "refusing the call.\n")
+                     "call refused.\n")
     sys.stderr.flush()
     return 2
 

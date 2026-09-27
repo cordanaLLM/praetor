@@ -76,6 +76,8 @@ register:
 | `tasks.<label>.max_tokens` | none | 256..8192 when written | `register max_tokens for "<k>" must be 256..8192` |
 | `evidence.inline_max_lines` | 58 | 1..58, tighten only | `register evidence bound must be 1..58` |
 | `evidence.inline_max_tokens` | 1500 | 1..1500, tighten only | `register evidence bound must be 1..1500` |
+| `sources.expected` / `sources.not_applicable` / `sources.sha256` | none | 1..16384 applicable values; 0..16384 explicitly classified exclusions; full lowercase SHA-256 | applicable count, exclusion count, or digest mismatch |
+| `sources.inputs[]` | none | 1..64 tracked shell, Python, Go, JSON, or YAML scopes | strict field, path, parser, selector, surface, and kind errors |
 
 No default row carries `max_tokens`, and the rendered block prints no token numbers for
 tasks. A budget is a dispatch parameter: set one after repair reports show what a task
@@ -258,11 +260,22 @@ evidence pointer suppresses nothing unless the complete line has the canonical p
 12-hex digest and line-count form. Initial validation and terminal replay call this same
 profile.
 
-Still not mechanically checked: dynamic MCP tool descriptions and results; hook and gate
-diagnostics; notebook prompts; Paperclip synthesis (#321); `.workingdir` ledger free text;
-popup question text; and native-client chats or hooks (#415). No `internal` label may imply
-coverage of those surfaces. Static extraction from non-Markdown source remains #364. A
-green repository gate proves tracked context text. Repair terminal readback additionally
+Tracked shell and Python output templates, selected JSON/YAML values, and MCP
+descriptions and result callsites are checked through `register.sources`,
+described under [Tracked runtime sources](#tracked-runtime-sources). Dynamic
+template fields are normalized to placeholders so the agent-owned surrounding
+text is linted. Entirely runtime-owned values and wire formats require a narrow,
+explicit classification; they remain in the count and digest as
+`not_applicable` instead of disappearing. A green source gate therefore proves
+the declared roots, semantic selectors, full applicable inventory, and full
+classified-exclusion inventory. It does not prove the runtime value substituted
+into a placeholder; that still needs producer validation.
+
+Still not mechanically checked: runtime values substituted into MCP and hook
+templates; notebook prompts; Paperclip synthesis (#321); `.workingdir` ledger free
+text; popup question text; and native-client chats or hooks (#415). No `internal`
+label may imply coverage of those surfaces. A green repository gate proves tracked
+context text. Repair terminal readback additionally
 reconstructs deterministic owned text, rereads the retained proposal summary and replays
 the current checker. It rejects missing records, changed bytes, stale checker contracts,
 forged digests and mismatched register provenance; it does not make unlisted runtime
@@ -485,7 +498,8 @@ total.
 
 `--surface=<name>` makes `check` resolve that surface from the repository at `--root`
 (default `.`) through the same loader `compile-context` uses. When the surface resolves to
-`docs` or `social`, the command prints which row decided it and skips the lint:
+`docs` or `social`, the command returns an error naming the deciding row; a surface without
+a Caveman verdict never produces a green skip:
 
 ```bash
 praetorctl caveman check --surface=mcp descriptions.md
@@ -497,6 +511,188 @@ surface's own key opts it out, and `context` accepts no value but `internal`. An
 The decision is recorded in [ADR-0010](../adr/0010-text-register-per-task.md) (decisions
 9 and 10); tests and fixtures are in `internal/caveman` and
 `cmd/standardsctl/caveman_test.go`.
+
+### Tracked runtime sources
+
+The canonical declaration sits beside `register.surfaces` in
+`.standards.yaml`; there is no second source-manifest format. Every selected
+file must be Git-tracked below `--root`. `expected`, `not_applicable`, and the
+aggregate `sha256` bind the sorted extraction inventory, including path,
+semantic selector, surface, kind, parser, decoded-text digest, and exclusion
+class. The reported physical line is diagnostic only, so inserting comments
+does not churn the digest. Removing a selector, matched value, or classified
+exclusion is therefore a gate failure, not an invisible reduction in coverage.
+
+```yaml
+register:
+  sources:
+    expected: 245
+    not_applicable: 123
+    sha256: "sha256:de8015ec75a1161cd847bce246e5940b09a0b87398a34fffc86f330e7839ff28"
+    inputs:
+      - path: ".paperclip/harness.json"
+        surface: prompts
+        kind: message
+        format: json
+        selector: "operating_contract.*"
+      - path: ".paperclip/harness.json"
+        surface: prompts
+        kind: message
+        format: json
+        selector: "invariants.*"
+      - path: ".config/semgrep/hiss-invariants.yml"
+        surface: hooks
+        kind: message
+        format: yaml
+        selector: "rules.*.message"
+      - path: ".config/agent/hooks"
+        surface: hooks
+        kind: message
+        format: python
+      - path: ".config/lefthook/scripts"
+        surface: hooks
+        kind: message
+        format: python
+      - path: "cmd/standards-mcp"
+        surface: mcp
+        kind: message
+        format: go
+        selector: "mcp.descriptions"
+      - path: "cmd/standards-mcp"
+        surface: mcp
+        kind: message
+        format: go
+        selector: "mcp.outputs"
+```
+
+`praetorctl caveman check --configured-sources --root=.` verifies coverage,
+then lints every decoded value. `praetorctl audit` runs the same checker
+(`configuredCavemanInputs` in `cmd/standardsctl/caveman.go`), so the two cannot
+disagree about which values are linted: classified exclusions are skipped
+before the surface verdict is checked, in both
+(`TestConfiguredSourceGatesShareOneChecker`). `make caveman-sources` and
+`make verify-all` (which CI runs) call it for Praetor. New adoption writes the
+same contract for its generated Paperclip harness and adds the source target to
+the generated Makefile. Both `audit` and the dedicated command fail closed when
+`register.sources` is absent.
+
+#### Upgrading an adopted repository
+
+Run `praetorctl adopt`. It adds `register.sources` to an existing manifest
+without replacing operator fields, and changes only the lines of that block:
+comments, blank lines and indentation elsewhere stay as written, including an
+indented comment right above the next `register` key on a re-bind. A null
+`register` (`register:` with no children, only commented-out children, or
+`register: ~`) and a null `sources` value load as undeclared, so adoption fills
+them in place instead of failing
+(`TestAdoptBindsSourcesUnderNullRegister`,
+`TestSetManifestSourcesFillsNullRegisterAndSources`). A flow-style root or
+`register` mapping, and an explicitly tagged null (`register: !!null`), is
+re-encoded instead, with every value kept
+(`internal/adopt/manifest_text.go`). The Paperclip harness it binds depends on
+who wrote it:
+
+- A harness byte-identical to what an earlier release synthesized for this
+  repository (`harness.json`, and `rules.md` when present) is refreshed to the
+  current contract text, which passes the lint, and the contract binds the
+  refreshed bytes. A consistent CRLF checkout (`core.autocrlf=true` on Windows)
+  counts as those bytes; mixed line endings count as an edit. A `rules.md` that
+  was removed stays removed. The recognized earlier texts, including both push
+  protocols a release prescribed (the single AGit push, and the AGit push plus
+  the review-branch push since #458), are pinned in
+  `internal/paperclip/harness.go` (`PriorGenerated`). A `rules.md` counts in
+  either layout a release wrote: unwrapped items before #477, or the
+  markdownlint-clean layout since
+  (`TestPriorGeneratedAcceptsBothRulesLayoutsOfItsHarness`).
+- Any other harness is operator-owned. Adoption keeps its bytes and binds the
+  contract to its decoded values. When those values fail the lint, edit them or
+  run `praetorctl adopt --force`.
+- With `adoption.decline: [paperclip]`, adoption never writes a harness, in
+  either mode. An existing one stays byte for byte and the contract binds it.
+  A declined step never writes, so `--force` does not refresh it: when a kept
+  harness fails the lint (a released one flags `I/O`, `is` and `must`), either
+  drop `paperclip` from `adoption.decline` and rerun `praetorctl adopt`, which
+  refreshes released output and re-binds the contract, or edit the failing
+  values by hand and set `expected`, `not_applicable` and `sha256` from
+  `praetorctl caveman check --configured-sources --root=.`. With no harness on
+  disk, adoption adds no `register.sources` and reports `preserved without
+  register.sources`; declare the contract for the repository's own agent-facing
+  text, or audit keeps failing.
+- Without a repository identity (no `repository.owner` and `repository.name`
+  in `.standards.yaml` and no origin remote), adoption cannot name the harness
+  platform, so it writes no harness, in either mode (BUG-852). An existing
+  harness stays byte for byte and the contract binds it. With none on disk,
+  adoption adds no `register.sources` and reports `repository identity is
+  unresolved`, both for an existing manifest and for the one a first adoption
+  scaffolds; set the identity or add the remote and rerun
+  (`TestAdoptUnresolvedIdentityBindsOnlyAnExistingHarness` and
+  `TestAdoptFreshManifestReportsUnboundSources` in
+  `internal/adopt/harness_plan_test.go`).
+
+`praetorctl adopt --force` regenerates the harness and re-binds an existing
+contract to it. It keeps every declared input, including rows an operator
+added, and recomputes only `expected`, `not_applicable` and `sha256`. Adoption
+never re-blesses drift it did not cause: in both modes, a declared contract that
+fails its own gate before the run stops adoption with `existing
+register.sources fails its configured gate`. Fix the reported drift, then
+rerun. The fixtures, including the harness the 462e3f3a release wrote, are in
+`internal/adopt/manifest_sources_test.go` and `internal/paperclip/prior_test.go`.
+
+`shell` extracts static quoted `echo`, bounded `%s` `printf`, here-document
+output, and exact trailing `>&2` or `1>&2` redirection. Shell expansion and
+interpolated here-documents fail as unverified instead of disappearing.
+
+`python` recognizes `print`, `agent_message`, `sys.stderr.write`,
+`sys.stdout.write`, `sys.stdout.buffer.write`, and `stream.write`. It decodes
+Python escapes, joins adjacent or `+`-concatenated text, and replaces f-string
+expressions and dynamic concatenation terms with `{value}`. A template must
+contain agent-owned static text. An entirely computed value requires one exact
+adjacent classification comment: `structured-protocol`,
+`untrusted-passthrough`, or `protocol-marker`; unsupported arguments and broad
+classifications fail closed.
+
+Generic `go` extraction selects one named static `[]string` or `[...]string`
+table through `table.*` or `table.<index>`. The `mcp.descriptions` selector
+censuses tool and property descriptions. `mcp.outputs` censuses tool results,
+governed builders, `http.Error`, and transport writer output. Static templates
+are linted; governed composition and the fixed `structured-json`,
+`untrusted-passthrough`, `protocol`, and `shared-source` classes are count- and
+digest-bound as not applicable. `shared-source` (`mcpTextShared`) is text
+another praetor package authors once and also prints elsewhere: the
+`standards_explain_rule` explanation that `internal/hisscatalog` also renders
+into the wiki, the `standards_compile_context` report that `internal/compiler`
+writes for the CLI too, the adopt pillar line and the `standards_plan` drift
+verdict (`adopt.FormatPlanStatus`) the CLI prints. The owning package stays the
+text's one source (HISS-19), and `http.Error` accepts only `protocol` or
+`untrusted-passthrough` (`TestExtractGoMCPRuntimeClassifiesSharedSourceText` in
+`internal/cavemansource/extract_test.go`). Dynamic text without one of those
+narrow wrappers, raw builder storage access, and helper implementations that
+differ from the fixed contract fail closed.
+
+`json` and `yaml` use dotted selectors; `*` selects every mapping value or
+sequence element, and a numeric segment selects one sequence index. Escapes are
+decoded before linting, so checked static text matches the runtime string.
+
+For an ad-hoc directory check, exact `--surface=hooks` selects `.sh,.py` unless
+`--ext` is explicit. Checks without that surface retain the historical `.md`
+default:
+
+```bash
+praetorctl caveman check --root=. --surface=hooks scripts
+praetorctl caveman check --root=. --surface=prompts \
+  --selector='agent.*.prompt' config/agents.json
+```
+
+A directory matching no requested files, an extractor producing no values, or
+a non-internal surface returns an error rather than a green no-op. One contract
+is bounded to 64 inputs and 64 discovered files. One selector's match set or one
+Go string table yields at most 256 values; the whole contract extracts at most
+16,384 applicable values and 16,384 explicitly classified exclusions, one full
+table per input (`config.MaxRegisterSourceOutputs`). Each file is at most 1 MiB, each value at
+most 64 KiB and at most 1,024 logical lines; all selected text is at most 1
+MiB. Positive, negative, exact-limit, and +1 fixtures live in
+`internal/cavemansource` and
+`cmd/standardsctl/caveman_source_test.go`.
 
 ### Ceilings
 
@@ -510,9 +706,10 @@ praetorctl caveman check --kind=return --max-tokens=1500 .workingdir/evidence/ca
 
 The persona/skill gate calls the same `caveman.Options.MaxProseWords` field programmatically
 (`compiler.AgentTextCeiling`, 600); the flags exist so any other surface can be capped the
-moment its text is a file, including a return or a brief a dispatch path writes out before
-sending it, and the evidence-pointer bound (`register.evidence`, default 1500 tokens) the
-same way. Repair planning and execution call the shared checker directly on their owned
-runtime fields, without first writing them to a file. Dynamic MCP and hook text, notebook
-and Paperclip prompts, ledger text, popup questions and native-client traffic still need
-their own producer or capture wiring and remain unverified; see "What is not enforced".
+moment its text is a file, including decoded runtime sources and a return or a brief a
+dispatch path writes out before sending it, and the evidence-pointer bound
+(`register.evidence`, default 1500 tokens) the same way. Repair planning and execution call
+the shared checker directly on their owned runtime fields, without first writing them to a
+file. Runtime values substituted into MCP and hook templates, notebook and Paperclip
+prompts, ledger text, popup questions and native-client traffic still need their own
+producer or capture wiring and remain unverified; see "What is not enforced".

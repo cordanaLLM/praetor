@@ -47,7 +47,7 @@ func declinedArtifacts(declared []string, known []string) (map[string]bool, erro
 	}
 	declined := make(map[string]bool, len(declared))
 	for i := 0; i < len(declared) && i < maxDeclinedArtifacts; i++ {
-		name := strings.ToLower(strings.TrimSpace(declared[i]))
+		name := declinedName(declared[i])
 		if name == "" {
 			continue
 		}
@@ -155,4 +155,21 @@ func adoptStepNames() []string {
 		names = append(names, steps[i].name)
 	}
 	return names
+}
+
+// declinedName normalizes one adoption.decline entry to the step name it declines.
+func declinedName(entry string) string {
+	return strings.ToLower(strings.TrimSpace(entry))
+}
+
+// declines reports whether the manifest's adoption.decline names step. Steps that plan an
+// artefact another step writes read it, so a declined writer never leaves a planned file
+// that nothing produces.
+func (s *adoptSession) declines(step string) bool {
+	for i := 0; i < len(s.declined) && i < maxDeclinedArtifacts; i++ {
+		if declinedName(s.declined[i]) == step {
+			return true
+		}
+	}
+	return false
 }

@@ -142,6 +142,7 @@ type RegisterPolicy struct {
 	Surfaces map[RegisterSurface]TextRegister `yaml:"surfaces,omitempty"`
 	Tasks    map[string]RegisterTask          `yaml:"tasks,omitempty"`
 	Evidence EvidenceBounds                   `yaml:"evidence,omitempty"`
+	Sources  *RegisterSources                 `yaml:"sources,omitempty"`
 }
 
 // Resolution is the register a caller must write in, with the row that decided it.
@@ -276,6 +277,7 @@ func (m *Manifest) EffectiveRegister() RegisterPolicy {
 	for label, row := range m.Register.Tasks {
 		policy.Tasks[label] = RegisterTask{Register: row.Register, MaxTokens: row.MaxTokens}
 	}
+	policy.Sources = m.Register.Sources
 	tightenPositive(&policy.Evidence.InlineMaxLines, m.Register.Evidence.InlineMaxLines)
 	tightenPositive(&policy.Evidence.InlineMaxTokens, m.Register.Evidence.InlineMaxTokens)
 	return policy
@@ -386,7 +388,14 @@ func (p RegisterPolicy) validate() error {
 			return err
 		}
 	}
-	return p.Evidence.validate()
+	return p.validateBoundsAndSources()
+}
+
+func (p RegisterPolicy) validateBoundsAndSources() error {
+	if err := p.Evidence.validate(); err != nil {
+		return err
+	}
+	return p.Sources.validate()
 }
 
 func (t RegisterTask) validate(label string) error {

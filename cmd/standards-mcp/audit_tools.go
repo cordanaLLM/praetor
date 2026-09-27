@@ -39,7 +39,7 @@ type auditGate func(ctx context.Context) (string, error)
 // policy-mandated repository files, so the summary reflects what was verified instead
 // of an unconditional compliance claim.
 func (s *Server) runAuditGates(ctx context.Context, p auditPaths) *mcp.ToolResult {
-	var report strings.Builder
+	var report mcpTextBuilder
 
 	p.policy.Root, p.policy.ManifestPath, p.policy.Audit = s.rootDir, p.manifest, true
 	effective, err := config.LoadEffectivePolicyContext(ctx, p.policy)
@@ -47,10 +47,9 @@ func (s *Server) runAuditGates(ctx context.Context, p auditPaths) *mcp.ToolResul
 		return mcp.ErrorResult(fmt.Sprintf("[FAIL] Effective policy audit failed: %v", err))
 	}
 	manifest := effective.Manifest
-	fmt.Fprintf(&report, "=== %s/%s Governance Audit ===\n", manifest.Repository.Owner, manifest.Repository.Name)
-	fmt.Fprintf(&report, "[PASS] Manifest verified: %s/%s (Version %d)\n",
-		manifest.Repository.Owner, manifest.Repository.Name, manifest.Version)
-	fmt.Fprintf(&report, "[PASS] %s\n", effective.Evidence())
+	report.Template("audit: %s/%s governance.\nmanifest: pass; repository: %s/%s; version: %d.\npolicy: pass; evidence: %s.\n",
+		manifest.Repository.Owner, manifest.Repository.Name, manifest.Repository.Owner,
+		manifest.Repository.Name, manifest.Version, effective.Evidence())
 
 	gates := []auditGate{
 		func(ctx context.Context) (string, error) {
@@ -70,21 +69,23 @@ func (s *Server) runAuditGates(ctx context.Context, p auditPaths) *mcp.ToolResul
 	passed := 0
 	for i := 0; i < len(gates) && i < maxAuditGates; i++ {
 		if err := ctx.Err(); err != nil {
-			return mcp.ErrorResult(fmt.Sprintf("%s[FAIL] Audit cancelled: %v", report.String(), err))
+			report.Template("[FAIL] Audit cancelled: %v", err)
+			return mcpComposedErrorResult(report.Text())
 		}
 		line, err := gates[i](ctx)
 		if err != nil {
-			return mcp.ErrorResult(report.String() + err.Error())
+			// A gate error carries its own [FAIL] verdict and quotes repository paths.
+			report.External(err.Error(), mcpTextUntrusted)
+			return mcpComposedErrorResult(report.Text())
 		}
-		report.WriteString(line + "\n")
+		report.External(line+"\n", mcpTextUntrusted)
 		passed++
 	}
 
-	fmt.Fprintf(&report, "\nAudit Summary: %d/%d MCP audit gates passed for %s/%s "+
-		"(manifest, lockfile pins and digests, HISS ratchet, context sync, branch protection, labels, hooks). "+
-		"Run 'praetorctl audit' for the full CLI gate set (paperclip harness, runner matrix, hook activation).",
+	report.Template("\nsummary: MCP audit gates; passed: %d/%d; repository: %s/%s; coverage: manifest, lockfile pins and digests, HISS ratchet, context sync, branch protection, labels, hooks. "+
+		"next: run 'praetorctl audit' for full CLI gate set: paperclip harness, runner matrix, hook activation.",
 		passed+1, len(gates)+1, manifest.Repository.Owner, manifest.Repository.Name)
-	return mcp.TextResult(report.String())
+	return mcpComposedTextResult(report.Text())
 }
 
 // auditLockfile uses the same version, entry, source and aggregate checks as the CLI,

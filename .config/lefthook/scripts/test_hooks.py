@@ -682,7 +682,7 @@ print("fixture hook self-tests passed")
         protocol = f"refs/heads/incoming {head} refs/heads/main {'f' * 40}\n".encode()
         result = self.hook("pre-push", "origin", data=protocol)
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn(b"checking the full tree", result.stdout + result.stderr)
+        self.assertIn(b"scope: full tree", result.stdout + result.stderr)
         self.assertIn(b"Private .workingdir content must stay untracked", result.stdout + result.stderr)
 
     def test_private_symlink_and_ancestor_rejected_without_reading_target(self):
@@ -974,7 +974,7 @@ print("fixture hook self-tests passed")
         missing = protocol.replace(b"0" * 40, b"f" * 40)
         result = self.hook("pre-push", "origin", data=missing)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn(b"checking the full tree", result.stdout + result.stderr)
+        self.assertIn(b"scope: full tree", result.stdout + result.stderr)
         self.assertNotEqual(self.hook("pre-push", "origin", data=b"broken\n").returncode, 0)
 
     def test_push_passes_actual_base_to_snapshot_audit(self):
@@ -1601,7 +1601,7 @@ class ScopeAndGuard(unittest.TestCase):
                 self.assertEqual(result.returncode == 0, allowed, result.stderr)
                 self.assertLess(elapsed, 5)
                 if not allowed:
-                    self.assertIn(b"exceeds the scan bound", result.stderr)
+                    self.assertIn(b"exceeds scan bound", result.stderr)
 
     def test_guard_answers_the_slowest_admitted_commands_inside_the_bound(self):
         """The costliest shapes the bound admits, every line at the limit, still pass in time."""
@@ -1712,7 +1712,7 @@ class ScopeAndGuard(unittest.TestCase):
         result = subprocess.run([sys.executable, "-B", "-c", script], input=b'{"cwd":"/"}',
                                 capture_output=True, timeout=20, check=False)
         self.assertEqual(result.returncode, 2, result.stderr)
-        self.assertIn(b"no answer within 0.3 s; refusing the call", result.stderr)
+        self.assertIn(b"no answer within 0.3 s; call refused", result.stderr)
         self.assertLess(time.monotonic() - started, 10)
 
     def test_reverse_dependencies_embed_testdata_module_and_docs_scope(self):

@@ -12,7 +12,7 @@ rules:
       - pattern-not-inside: |
           #[cfg(test)]
           mod $_ { ... }
-    message: "[HISS-07] Direct .unwrap() is strictly banned in production code. Use pattern matching or ? propagation."
+    message: "[HISS-07] Direct .unwrap() prohibited. fix: pattern match or ? propagation."
     languages: [rust]
     severity: ERROR
 
@@ -27,20 +27,20 @@ rules:
       - pattern-not-inside: |
           #[cfg(test)]
           mod $_ { ... }
-    message: "[HISS-07] Direct .expect() is strictly banned in production code. Use pattern matching or ? propagation."
+    message: "[HISS-07] Direct .expect() prohibited. fix: pattern match or ? propagation."
     languages: [rust]
     severity: ERROR
 
   - id: hiss-08-banned-eval
     patterns:
       - pattern: eval(...)
-    message: "[HISS-08] Dynamic runtime eval() is strictly prohibited."
+    message: "[HISS-08] Dynamic runtime eval() prohibited."
     languages: [javascript, typescript]
     severity: ERROR
 
   - id: hiss-08-banned-eval-python
     pattern: eval(...)
-    message: "[HISS-08] Dynamic runtime eval() is strictly prohibited."
+    message: "[HISS-08] Dynamic runtime eval() prohibited."
     languages: [python]
     severity: ERROR
 
@@ -50,7 +50,7 @@ rules:
           - pattern: gets(...)
           - pattern: strcpy(...)
           - pattern: sprintf(...)
-    message: "[HISS-08] Insecure legacy C runtime memory functions are strictly prohibited. Use bounded variants (fgets, strncpy, snprintf)."
+    message: "[HISS-08] Insecure legacy C memory functions prohibited. fix: bounded fgets, strncpy, or snprintf."
     languages: [c, cpp]
     severity: ERROR
 
@@ -58,6 +58,6 @@ rules:
     pattern-either:
       - pattern: http.Get(...)
       - pattern: http.Post(...)
-    message: "[HISS-02] Direct http.Get/Post without context timeout violates bounded I/O invariant. Use http.NewRequestWithContext."
+    message: "[HISS-02] Direct http.Get/Post lacks context timeout. fix: http.NewRequestWithContext."
     languages: [go]
     severity: ERROR

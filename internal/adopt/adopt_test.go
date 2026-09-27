@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/cavemansource"
 	"github.com/cordanaLLM/praetor/internal/classify"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"gopkg.in/yaml.v3"
@@ -42,6 +43,18 @@ func initTestGit(t *testing.T, dir string) {
 	}
 	if err := os.WriteFile(filepath.Join(gitDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644); err != nil {
 		t.Fatalf("write HEAD: %v", err)
+	}
+}
+
+func stageAdoptPaths(t *testing.T, dir string, paths ...string) {
+	t.Helper()
+	gitPath := requireGit(t)
+	args := []string{"-C", dir, "add", "--"}
+	args = append(args, paths...)
+	cmd := exec.Command(gitPath, args...)
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("stage adopted paths: %v (%s)", err, output)
 	}
 }
 
@@ -231,7 +244,8 @@ func TestAdopt_Positive_Greenfield(t *testing.T) {
 		t.Error("greenfield AGENTS.md must end with the harness end marker")
 	}
 	makefile := mustRead(t, filepath.Join(repoPath, "Makefile"))
-	if !strings.Contains(makefile, "verify-all: compile-context-verify audit test") {
+	if !strings.Contains(makefile, "verify-all: compile-context-verify caveman-sources audit test") ||
+		!strings.Contains(makefile, "caveman check --configured-sources") {
 		t.Errorf("greenfield verify-all must run the real gates, got:\n%s", makefile)
 	}
 	if strings.Contains(makefile, "Running verification...") {
@@ -246,6 +260,114 @@ func TestAdopt_Positive_Greenfield(t *testing.T) {
 		if _, err := os.Stat(path); err != nil {
 			t.Errorf("agent definition projection missing at %s: %v", path, err)
 		}
+	}
+}
+
+func TestAdoptGreenfieldConfiguredSourcesVerifyWrittenHarness(t *testing.T) {
+	repoPath := newTestRepo(t, "source-gate")
+	mustWrite(t, filepath.Join(repoPath, "go.mod"), "module github.com/test/source-gate\n")
+	if _, err := Adopt(t.Context(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath,
+		Profile: "framework", RecordBaseline: true}); err != nil {
+		t.Fatal(err)
+	}
+	stageAdoptPaths(t, repoPath, paperclipFile)
+	manifest, err := config.LoadManifest(filepath.Join(repoPath, manifestFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cavemansource.ExtractDeclared(t.Context(), repoPath, manifest.Register.Sources); err != nil {
+		t.Fatalf("fresh adoption source gate failed: %v", err)
+	}
+}
+
+func TestAdoptExistingManifestAddsSourceContractWithoutDroppingContent(t *testing.T) {
+	repoPath := newTestRepo(t, "existing-source-gate")
+	mustWrite(t, filepath.Join(repoPath, "go.mod"), "module github.com/test/existing-source-gate\n")
+	mustWrite(t, filepath.Join(repoPath, manifestFile), `# operator manifest comment
+version: 1
+repository:
+  owner: custom
+  name: existing-source-gate
+  visibility: private
+  description: "keep this description"
+profiles: [framework]
+register:
+  surfaces:
+    hooks: internal
+`)
+	if _, err := Adopt(t.Context(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath,
+		Profile: "framework", RecordBaseline: true}); err != nil {
+		t.Fatal(err)
+	}
+	stageAdoptPaths(t, repoPath, paperclipFile)
+	manifest, err := config.LoadManifest(filepath.Join(repoPath, manifestFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Register == nil || manifest.Register.Sources == nil {
+		t.Fatal("existing manifest did not gain register.sources")
+	}
+	if _, err := cavemansource.ExtractDeclared(t.Context(), repoPath, manifest.Register.Sources); err != nil {
+		t.Fatalf("existing-manifest source gate failed: %v", err)
+	}
+	text := mustRead(t, filepath.Join(repoPath, manifestFile))
+	for _, retained := range []string{"# operator manifest comment", "keep this description", "hooks: internal"} {
+		if !strings.Contains(text, retained) {
+			t.Fatalf("existing manifest content dropped: %q\n%s", retained, text)
+		}
+	}
+}
+
+func TestAdoptCustomHarnessPreservesBytesAndBindsActualCoverage(t *testing.T) {
+	repoPath := newTestRepo(t, "custom-source-harness")
+	mustWrite(t, filepath.Join(repoPath, "go.mod"), "module github.com/test/custom-source-harness\n")
+	custom := `{
+  "version": 1,
+  "platform": "custom/source-harness",
+  "operating_contract": ["result: custom contract."],
+  "agit_push_format": "git push custom",
+  "invariants": ["result: custom invariant."]
+}
+`
+	mustWrite(t, filepath.Join(repoPath, paperclipFile), custom)
+	if _, err := Adopt(t.Context(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath,
+		Profile: "framework", RecordBaseline: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustRead(t, filepath.Join(repoPath, paperclipFile)); got != custom {
+		t.Fatalf("custom harness changed:\n%s", got)
+	}
+	stageAdoptPaths(t, repoPath, paperclipFile)
+	manifest, err := config.LoadManifest(filepath.Join(repoPath, manifestFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := cavemansource.ExtractDeclared(t.Context(), repoPath, manifest.Register.Sources)
+	if err != nil || len(result.Sources) != 2 {
+		t.Fatalf("custom harness source gate: values=%d err=%v", len(result.Sources), err)
+	}
+}
+
+func TestAdoptRejectsStaleExistingSourceContract(t *testing.T) {
+	repoPath := newTestRepo(t, "stale-source-contract")
+	mustWrite(t, filepath.Join(repoPath, "go.mod"), "module github.com/test/stale-source-contract\n")
+	options := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath,
+		Profile: "framework", RecordBaseline: true}
+	if _, err := Adopt(t.Context(), options); err != nil {
+		t.Fatal(err)
+	}
+	stageAdoptPaths(t, repoPath, paperclipFile)
+	manifestPath := filepath.Join(repoPath, manifestFile)
+	manifest, err := config.LoadManifest(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	validDigest := manifest.Register.Sources.SHA256
+	staleDigest := "sha256:" + strings.Repeat("0", sha256.Size*2)
+	mustWrite(t, manifestPath, strings.Replace(mustRead(t, manifestPath), validDigest, staleDigest, 1))
+	report, err := Adopt(t.Context(), options)
+	if err == nil || !strings.Contains(err.Error(), "fails its configured gate") {
+		t.Fatalf("stale source contract reported adoption success: report=%+v err=%v", report, err)
 	}
 }
 
@@ -667,6 +789,16 @@ func writeOriginRemote(t *testing.T, repo, url string) {
 }
 
 // identitySession resolves identity for repo the way Adopt does.
+// adoptionManifest builds the adoption manifest for s or fails the test.
+func adoptionManifest(t *testing.T, s *adoptSession) *config.Manifest {
+	t.Helper()
+	manifest, _, err := newAdoptionManifest(t.Context(), s)
+	if err != nil {
+		t.Fatalf("build adoption manifest: %v", err)
+	}
+	return manifest
+}
+
 func identitySession(t *testing.T, repo string) *adoptSession {
 	t.Helper()
 	s := &adoptSession{repoPath: repo, arch: "framework", facets: resolveFacets(nil), report: &AdoptReport{}}
@@ -683,7 +815,7 @@ func TestAdoptionManifest_IdentityFromRemote(t *testing.T) {
 	repo := newTestRepo(t, "checkout-dir")
 	writeOriginRemote(t, repo, "https://github.com/acme/widget.git")
 	s := identitySession(t, repo)
-	manifest := newAdoptionManifest(s)
+	manifest := adoptionManifest(t, s)
 	got := manifest.Repository
 	if got.Owner != "acme" || got.Name != "widget" || got.Visibility != "" {
 		t.Fatalf("manifest identity = %+v, want acme/widget with visibility unset", got)
@@ -703,7 +835,7 @@ func TestAdoptionManifest_UnresolvedIdentityStaysEmpty(t *testing.T) {
 	}
 	initTestGit(t, repo)
 	s := identitySession(t, repo)
-	manifest := newAdoptionManifest(s)
+	manifest := adoptionManifest(t, s)
 	if got := manifest.Repository; got.Owner != "" || got.Name != "" || got.Visibility != "" {
 		t.Fatalf("unresolved identity was invented: %+v", manifest.Repository)
 	}
@@ -766,7 +898,7 @@ func TestAdoptionManifest_CheckoutLayoutIsNotIdentity(t *testing.T) {
 	}
 	initTestGit(t, repo)
 	s := identitySession(t, repo)
-	manifest := newAdoptionManifest(s)
+	manifest := adoptionManifest(t, s)
 	if got := manifest.Repository; got.Owner != "" || got.Name != "" || s.identity.resolved() {
 		t.Fatalf("checkout layout became identity: manifest %+v, session %+v", got, s.identity)
 	}
@@ -837,8 +969,8 @@ func findAdoptedText(t *testing.T, repo, text string) string {
 
 // TestAdopt_RerunCompletesOnceIdentityIsSet pins the recovery the unresolved-identity warning
 // names. Boundary: a re-run that finds the origin remote installs the checkpoint lifecycle,
-// which reads that remote, but never rewrites the empty identity in the existing manifest,
-// so the README block stays unreconciled. Positive: once the operator sets both fields, the
+// which reads that remote, and binds register.sources to the harness it now writes, but never
+// rewrites the empty identity in the existing manifest, so the README block stays unreconciled. Positive: once the operator sets both fields, the
 // re-run reconciles the README block from them and warns nothing about identity.
 func TestAdopt_RerunCompletesOnceIdentityIsSet(t *testing.T) {
 	requireGit(t)
@@ -872,8 +1004,16 @@ func TestAdopt_RerunCompletesOnceIdentityIsSet(t *testing.T) {
 	if _, err := Adopt(t.Context(), opts); err != nil {
 		t.Fatalf("re-run with a remote failed: %v", err)
 	}
-	if got := mustRead(t, manifestPath); got != firstManifest {
-		t.Fatalf("re-run rewrote the existing manifest:\n%s", got)
+	// The re-run writes the harness, so it binds register.sources to it; the identity the
+	// operator has to set stays empty.
+	rerun, err := config.LoadManifest(manifestPath)
+	if err != nil || rerun.Repository.Owner != "" || rerun.Repository.Name != "" ||
+		rerun.Register == nil || rerun.Register.Sources == nil {
+		t.Fatalf("re-run must keep the empty identity and only add register.sources: %+v %v\n%s",
+			rerun, err, mustRead(t, manifestPath))
+	}
+	if got := mustRead(t, manifestPath); !strings.HasPrefix(got, firstManifest) {
+		t.Fatalf("re-run rewrote the lines of the existing manifest:\n%s", got)
 	}
 	policy := mustRead(t, filepath.Join(repo, filepath.FromSlash(checkpointPolicy)))
 	if !strings.Contains(policy, `"repository": "acme/orphan"`) {

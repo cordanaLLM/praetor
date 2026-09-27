@@ -48,6 +48,14 @@ register:
     function_docstrings: docs
   evidence:
     inline_max_lines: 40
+  sources:
+    expected: 1
+    sha256: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    inputs:
+      - path: hooks/check.py
+        surface: hooks
+        kind: message
+        format: python
 `)
 
 	m, err := LoadManifest(path)
@@ -56,6 +64,9 @@ register:
 	}
 	if m.Register == nil || m.Register.Tasks["function_docstrings"].Register != TextRegisterDocs {
 		t.Errorf("register section was dropped: %+v", m.Register)
+	}
+	if m.Register.Sources == nil || m.Register.Sources.Expected != 1 {
+		t.Errorf("register source coverage was dropped: %+v", m.Register)
 	}
 	if m.Repository.Owner != "exampleOrg" || m.Version != 1 {
 		t.Errorf("unexpected manifest head: %+v", m.Repository)

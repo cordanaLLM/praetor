@@ -13,22 +13,22 @@ import (
 func (s *Server) createTranscriptIngestTool() (mcp.Tool, error) {
 	schema := mcp.ToolInputSchema{Type: "object", Required: []string{"source_path", "cache_dir"},
 		Properties: map[string]mcp.PropertySchema{
-			"format":          {Type: "string", Description: "antigravity-jsonl-v1 (default) or claude-code-jsonl-v1"},
-			"source_path":     {Type: "string", Description: "Explicit local JSONL source; Antigravity full counterpart preferred"},
-			"cache_dir":       {Type: "string", Description: "Explicit private local destination for observed events"},
-			"cursor":          {Type: "string", Description: "Opaque resume cursor from the previous page"},
-			"expected_sha256": {Type: "string", Description: "Optional required SHA256 of the selected full source"},
-			"max_records":     {Type: "integer", Description: "Maximum records in this page, 1..10000 (default 1000)"},
+			"format":          {Type: "string", Description: "format: antigravity-jsonl-v1 (default) | claude-code-jsonl-v1."},
+			"source_path":     {Type: "string", Description: "source_path: explicit local JSONL. prefer: Antigravity full counterpart."},
+			"cache_dir":       {Type: "string", Description: "cache_dir: explicit private local event destination."},
+			"cursor":          {Type: "string", Description: "cursor: opaque resume value from prior page."},
+			"expected_sha256": {Type: "string", Description: "expected_sha256: optional required SHA256 for selected full source."},
+			"max_records":     {Type: "integer", Description: "max_records: page record limit 1..10000 (default 1000)."},
 		}}
 	return mcp.NewMutatingTool("standards_transcript_ingest",
-		"Ingest a bounded page of observed transcript events into private local storage; return metadata and continuation, never upload or execute content",
+		"action: ingest bounded transcript page into private local storage. return: metadata + continuation. never upload or execute content.",
 		schema, s.ingestTranscript, false, true)
 }
 
 func (s *Server) ingestTranscript(ctx context.Context, args map[string]any) (*mcp.ToolResult, error) {
 	opts, err := s.transcriptArguments(args)
 	if err != nil {
-		return mcp.ErrorResult(err.Error()), nil
+		return mcpErrorResult(err.Error(), mcpTextUntrusted), nil
 	}
 	report, ingestErr := harvester.IngestTranscript(ctx, opts)
 	result := struct {
@@ -42,7 +42,7 @@ func (s *Server) ingestTranscript(ctx context.Context, args map[string]any) (*mc
 	if err != nil {
 		return mcp.ErrorResult(fmt.Sprintf("encode transcript report: %v", err)), nil
 	}
-	response := mcp.TextResult(string(data))
+	response := mcpTextResult(string(data), mcpTextStructuredJSON)
 	response.IsError = ingestErr != nil
 	return response, nil
 }

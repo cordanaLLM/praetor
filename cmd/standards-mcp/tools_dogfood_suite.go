@@ -12,7 +12,7 @@ import (
 func (s *Server) createDogfoodSuiteTool() (mcp.Tool, error) {
 	schema := mcp.ToolInputSchema{Type: "object", Required: []string{"config_path", "artifact_dir"}, Properties: map[string]mcp.PropertySchema{
 		"config_path":  {Type: "string", Description: "Version-1 JSON suite file; embedded transcript paths also obey server confinement"},
-		"artifact_dir": {Type: "string", Description: "New private evidence directory under an existing parent"},
+		"artifact_dir": {Type: "string", Description: "Private evidence directory creation path under existing parent"},
 		"source_root":  {Type: "string", Description: "Praetor source bundle for public cases; default server root"},
 		"stage":        {Type: "string", Description: "plan (declarations only, default) or verify (bounded execution and replay); public verify requires server remote opt-in"},
 	}}
@@ -22,7 +22,7 @@ func (s *Server) createDogfoodSuiteTool() (mcp.Tool, error) {
 func (s *Server) runDogfoodSuite(ctx context.Context, args map[string]any) (*mcp.ToolResult, error) {
 	opts, err := s.dogfoodSuiteArguments(args)
 	if err != nil {
-		return mcp.ErrorResult(err.Error()), nil
+		return mcpErrorResult(err.Error(), mcpTextUntrusted), nil
 	}
 	report, runErr := dogfood.RunSuite(ctx, opts)
 	result := struct {
@@ -36,7 +36,7 @@ func (s *Server) runDogfoodSuite(ctx context.Context, args map[string]any) (*mcp
 	if err != nil {
 		return nil, fmt.Errorf("encode suite report: %w", err)
 	}
-	response := mcp.TextResult(string(data))
+	response := mcpTextResult(string(data), mcpTextStructuredJSON)
 	response.IsError = runErr != nil
 	return response, nil
 }

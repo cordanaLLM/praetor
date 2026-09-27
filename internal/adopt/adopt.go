@@ -13,6 +13,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/classify"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/devcontainer"
 	"github.com/cordanaLLM/praetor/internal/editor"
 	"github.com/cordanaLLM/praetor/internal/flavor"
@@ -429,15 +430,16 @@ func reconcileManifest(ctx context.Context, s *adoptSession) error {
 	// it from detected markers replaced a declared profile and facet set with guessed ones and
 	// still reported success, which is governance data loss dressed as adoption.
 	if fileExists(full) {
-		// An existing manifest is an input: one the config loader rejects fails adoption here
-		// and is never reported as verified present on existence alone (BUG-853).
-		if _, err := config.LoadManifest(full); err != nil {
-			return fmt.Errorf("existing %s: %w", manifestFile, err)
-		}
-		s.report.recordReconciled(manifestFile, forcedManifestNote(s.opts.Force))
-		return nil
+		return reconcileExistingManifest(ctx, s, full)
 	}
-	manifest := newAdoptionManifest(s)
+	return createAdoptionManifest(ctx, s, full)
+}
+
+func createAdoptionManifest(ctx context.Context, s *adoptSession, full string) error {
+	manifest, harness, err := newAdoptionManifest(ctx, s)
+	if err != nil {
+		return err
+	}
 	data, err := yaml.Marshal(manifest)
 	if err != nil {
 		return fmt.Errorf("marshal manifest: %w", err)
@@ -449,8 +451,31 @@ func reconcileManifest(ctx context.Context, s *adoptSession) error {
 	if repository == "" {
 		repository = "unresolved"
 	}
-	s.report.recordCreated(manifestFile, fmt.Sprintf("Scaffolded standards manifest (Repository: %s, Profile: %s; "+
-		"visibility left unset, adoption cannot observe it)", repository, s.arch))
+	note := fmt.Sprintf("Scaffolded standards manifest (Repository: %s, Profile: %s; "+
+		"visibility left unset, adoption cannot observe it)", repository, s.arch)
+	if manifest.Register == nil {
+		note += "; register.sources not added: " + unboundSourcesReason(harness)
+	}
+	s.report.recordCreated(manifestFile, note)
+	return nil
+}
+
+func reconcileExistingManifest(ctx context.Context, s *adoptSession, full string) error {
+	data, _, err := contextopt.ObserveSnapshot(ctx, full)
+	if err != nil {
+		return err
+	}
+	plan, changed, err := planExistingManifest(ctx, s, full, data)
+	if err != nil {
+		return err
+	}
+	if changed && !s.opts.DryRun {
+		if err := contextopt.ReplaceSnapshot(ctx, full, plan.data,
+			contextopt.ReplaceOptions{Expected: data, Exists: true, Mode: filePerm}); err != nil {
+			return err
+		}
+	}
+	s.report.recordReconciled(manifestFile, plan.note)
 	return nil
 }
 
