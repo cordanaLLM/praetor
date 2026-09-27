@@ -299,36 +299,64 @@ func verifiedExtensions(input []ExtensionRecommendation, registry string) []stri
 	return normalizeStrings(result)
 }
 
-// resolveLSPPath returns the workspace-relative Praetor language server only when it is
-// actually there. An unset LSPPath falls back to the conventional location under BinaryDir;
-// without that fallback the field was unreachable from every CLI caller, so the resolver
-// always answered "absent" and the renderers asserted the binary anyway (issue #365).
+// resolveLSPPath returns the workspace-relative command that starts the Praetor language server,
+// and only when this host can launch it. An unset LSPPath falls back to the conventional location
+// under BinaryDir; without that fallback the field was unreachable from every CLI caller, so the
+// resolver always answered "absent" and the renderers asserted the binary anyway (issue #365).
 func resolveLSPPath(opts Options, root string, languages []string) string {
+	return resolveLSPPathFor(opts, root, languages, runtime.GOOS)
+}
+
+// resolveLSPPathFor is resolveLSPPath for the host goos names, so the Windows rule is tested on
+// every host. It returns the command as written, never the file the host resolves it to: a built
+// Windows checkout used to emit bin/standards-lsp.exe where every other host emitted
+// bin/standards-lsp, so one tracked .vscode/settings.json could not verify on both (HISS-21).
+func resolveLSPPathFor(opts Options, root string, languages []string, goos string) string {
 	if !opts.IncludeLSP || !slices.Contains(languages, "go") {
 		return ""
 	}
-	for _, candidate := range lspCandidates(opts) {
-		rel := filepath.Clean(candidate)
-		if rel == "." || !filepath.IsLocal(rel) {
-			continue
-		}
-		if isExecutableRegularFile(filepath.Join(root, rel)) {
-			return filepath.ToSlash(rel)
+	command := filepath.Clean(lspCommand(opts))
+	if command == "." || !filepath.IsLocal(command) {
+		return ""
+	}
+	for _, file := range launchedFiles(command, goos) {
+		if isExecutableRegularFile(filepath.Join(root, file), goos) {
+			return filepath.ToSlash(command)
 		}
 	}
 	return ""
 }
 
-// lspCandidates lists the workspace-relative locations the language server may occupy. An
-// explicit LSPPath is the only candidate; otherwise the conventional location under BinaryDir
-// is tried under both names the build produces, because the Makefile appends .exe on Windows
-// (HISS-21: the capability has to be reachable on every host, not only on Unix).
-func lspCandidates(opts Options) []string {
+// lspCommand is the workspace-relative command for the language server: the explicit LSPPath,
+// otherwise the conventional name under BinaryDir.
+func lspCommand(opts Options) string {
 	if explicit := strings.TrimSpace(opts.LSPPath); explicit != "" {
-		return []string{explicit}
+		return explicit
 	}
-	dir := defaultedBinaryDir(opts.BinaryDir)
-	return []string{filepath.Join(dir, lspBinaryName), filepath.Join(dir, lspBinaryName+".exe")}
+	return filepath.Join(defaultedBinaryDir(opts.BinaryDir), lspBinaryName)
+}
+
+// launchedFiles lists the files goos starts for command, in the order it tries them. POSIX
+// execve runs the named file only. On Windows the VS Code language client spawns the command
+// through Node's child_process, that is libuv, whose search_path (src/win/process.c) tries the
+// literal name only when it carries an extension and then the name with .com and .exe appended.
+// So bin/standards-lsp starts bin/standards-lsp.exe, the file `make build` writes on Windows.
+func launchedFiles(command, goos string) []string {
+	if goos != "windows" {
+		return []string{command}
+	}
+	files := make([]string, 0, 3)
+	if hasLaunchExtension(filepath.Base(command)) {
+		files = append(files, command)
+	}
+	return append(files, command+".com", command+".exe")
+}
+
+// hasLaunchExtension applies libuv's test for an extension: a dot in the file name that is not
+// its last character.
+func hasLaunchExtension(name string) bool {
+	dot := strings.IndexByte(name, '.')
+	return dot >= 0 && dot < len(name)-1
 }
 
 // defaultedBinaryDir is the single answer to "where does this repository put its binaries".
@@ -339,23 +367,25 @@ func defaultedBinaryDir(binDir string) string {
 	return binDir
 }
 
-// isExecutableRegularFile reports whether path is a regular file this host can execute.
-// Windows carries executability in the file extension rather than in a permission bit, and Go
-// reports 0666 or 0444 for every file there, so the Unix bit test alone would answer "not
-// executable" for every Windows workspace and silently drop the capability (HISS-21).
-func isExecutableRegularFile(path string) bool {
+// isExecutableRegularFile reports whether path is a regular file goos can execute. Windows
+// carries executability in the file extension rather than in a permission bit, and Go reports
+// 0666 or 0444 for every file there, so the Unix bit test alone would answer "not executable"
+// for every Windows workspace and silently drop the capability (HISS-21).
+func isExecutableRegularFile(path, goos string) bool {
 	info, err := os.Lstat(path)
 	if err != nil || !info.Mode().IsRegular() {
 		return false
 	}
-	if runtime.GOOS == "windows" {
+	if goos == "windows" {
 		return windowsExecutableExts[strings.ToLower(filepath.Ext(path))]
 	}
 	return info.Mode().Perm()&0o111 != 0
 }
 
-// windowsExecutableExts are the extensions Windows runs directly.
-var windowsExecutableExts = map[string]bool{".exe": true, ".bat": true, ".cmd": true, ".com": true}
+// windowsExecutableExts are the extensions a shell-less spawn starts on Windows: CreateProcess
+// runs .com and .exe images, and Node's process_wrap rejects .bat and .cmd with EINVAL, so a
+// batch-file language server never starts from the VS Code client.
+var windowsExecutableExts = map[string]bool{".exe": true, ".com": true}
 
 func isRegularFile(path string) bool {
 	info, err := os.Lstat(path)

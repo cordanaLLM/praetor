@@ -107,3 +107,66 @@ func copyEngineSelection(t *testing.T) string {
 	}
 	return root
 }
+
+// trackedLSPPath is the language-server command the engine's tracked settings name.
+const trackedLSPPath = `"${workspaceFolder}/bin/standards-lsp"`
+
+// builtEngineCopy is copyEngineSelection with a go.mod, so the language server is resolved, and
+// the given built files under the workspace. It stands in for a checkout after `make build`.
+func builtEngineCopy(t *testing.T, built ...string) string {
+	t.Helper()
+	root := copyEngineSelection(t)
+	writeEditorsManifest(t, root, "go.mod", "module fixture\n\ngo 1.27\n")
+	for _, rel := range built {
+		target := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target, []byte("built\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+func verifyEditors(t *testing.T, root string) error {
+	t.Helper()
+	_, err := captureStdout(t, func() error { return runEditors([]string{"verify", "--path=" + root}) })
+	return err
+}
+
+// Positive: a checkout holding the Windows build output, a regular bin/standards-lsp.exe, verifies
+// against the tracked settings. The managed path used to become bin/standards-lsp.exe there and
+// fail the gate on every built Windows checkout (HISS-21).
+func TestEditorsVerify_Positive_BuiltWindowsBinaryKeepsTrackedLSPPath(t *testing.T) {
+	if err := verifyEditors(t, builtEngineCopy(t, "bin/standards-lsp.exe")); err != nil {
+		t.Fatalf("built checkout failed editors verify: %v", err)
+	}
+}
+
+// Negative: with a built language server, settings naming any other path, the .exe form
+// included, still fail the gate.
+func TestEditorsVerify_Negative_OtherLSPPathFailsWhenBuilt(t *testing.T) {
+	for _, other := range []string{`"${workspaceFolder}/bin/standards-lsp.exe"`, `"${workspaceFolder}/tools/other-lsp"`} {
+		root := builtEngineCopy(t, "bin/standards-lsp", "bin/standards-lsp.exe")
+		settings := filepath.Join(root, ".vscode", "settings.json")
+		data, err := os.ReadFile(settings)
+		if err != nil || strings.Count(string(data), trackedLSPPath) != 1 {
+			t.Fatalf("tracked settings do not name %s once: %v", trackedLSPPath, err)
+		}
+		if err := os.WriteFile(settings, []byte(strings.Replace(string(data), trackedLSPPath, other, 1)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		err = verifyEditors(t, root)
+		if err == nil || !strings.Contains(err.Error(), ".vscode/settings.json") {
+			t.Errorf("settings naming %s passed the gate: %v", other, err)
+		}
+	}
+}
+
+// Boundary: both names the build may leave behind verify as one language server.
+func TestEditorsVerify_Boundary_BothBuiltNamesVerify(t *testing.T) {
+	if err := verifyEditors(t, builtEngineCopy(t, "bin/standards-lsp", "bin/standards-lsp.exe")); err != nil {
+		t.Fatalf("checkout with both built names failed editors verify: %v", err)
+	}
+}

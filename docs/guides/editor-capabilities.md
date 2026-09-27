@@ -120,11 +120,19 @@ not asserted anyway:
   structural evidence; generation does not run or certify the command. Callers
   using the Go API can provide explicit commands and languages through
   `editor.Options`.
-- Language server. The Praetor LSP is written only for a Go workspace that holds
-  a workspace-relative executable regular file at `editor.Options.LSPPath`, or,
-  when that is unset, at `<BinaryDir>/standards-lsp` (`standards-lsp.exe` on
-  Windows, where executability is the file extension). Otherwise VS Code settings
-  carry no `standards.lsp.*` key and Neovim registers no server.
+- Language server. The Praetor LSP is written only for a Go workspace where the
+  host can start the workspace-relative command `editor.Options.LSPPath`, or,
+  when that is unset, `<BinaryDir>/standards-lsp`. Otherwise VS Code settings
+  carry no `standards.lsp.*` key and Neovim registers no server. The settings
+  name the command, never the file it resolves to, so one tracked
+  `.vscode/settings.json` verifies on every host. On Linux and macOS the command
+  is an executable regular file. On Windows the VS Code client spawns it without
+  a shell through libuv, whose `search_path` (`src/win/process.c`) appends `.com`
+  and then `.exe` to a name without an extension: a built
+  `bin/standards-lsp.exe` starts as `bin/standards-lsp`. Node rejects `.bat`
+  and `.cmd` files in that spawn, so they never count as a language server.
+  Tests: `internal/editor/lsp_launch_test.go` and
+  `cmd/standardsctl/editors_self_gate_test.go`.
 - Extensions. Recommendations are exactly the caller-supplied IDs verified in
   `editor.Options.ExtensionRegistry`; the generator does not contact an extension
   marketplace or prove publication from an extension's source directory. Without

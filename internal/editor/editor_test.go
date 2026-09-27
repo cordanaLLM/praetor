@@ -244,7 +244,7 @@ func TestEditor_Boundary_CustomBinaryDirAndFlags(t *testing.T) {
 		IncludeLSP:    true,
 	}), ".vscode/settings.json")
 
-	if !strings.Contains(settingsContent, "${workspaceFolder}/"+lspBinaryRel(customBin)) {
+	if !strings.Contains(settingsContent, `"${workspaceFolder}/`+lspCommandRel(customBin)+`"`) {
 		t.Errorf("settings missing custom binary path: %s", settingsContent)
 	}
 	for _, forbidden := range []string{
@@ -330,7 +330,7 @@ func TestEditor_Positive_AntigravityAliasesAndKeys(t *testing.T) {
 			// Go-derived keys.
 			workspace := t.TempDir()
 			writeExecutable(t, workspace, lspBinaryRel("bin"))
-			wantSettings["standards.lsp.path"] = "${workspaceFolder}/" + lspBinaryRel("bin")
+			wantSettings["standards.lsp.path"] = "${workspaceFolder}/" + lspCommandRel("bin")
 			opts := Options{
 				Editors:       []string{alias},
 				WorkspaceRoot: workspace,
