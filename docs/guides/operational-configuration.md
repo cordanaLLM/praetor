@@ -32,6 +32,18 @@ no workflow or command reads the manifest, and `internal/forge/pr.go` names
 a review bot as a requested reviewer. `make github-app-test` fails when the
 permission matrix and the manifest's `default_permissions` disagree.
 
+### Commit identity of automated pushes
+
+Automated commits default to the `github-actions[bot]` identity. Set a different one per repository or
+organisation, without editing a workflow:
+
+| Surface | Name | Email | Unset |
+| :-- | :-- | :-- | :-- |
+| `.github/workflows/adopt.yml` | Actions variable `PRAETOR_BOT_NAME` | Actions variable `PRAETOR_BOT_EMAIL` | `github-actions[bot]` and its noreply address |
+| [`scripts/sync_github_wiki.sh`](https://github.com/cordanaLLM/praetor/blob/main/scripts/sync_github_wiki.sh) | environment `WIKI_GIT_NAME` | environment `WIKI_GIT_EMAIL` | the same |
+
+`scripts/test_sync_github_wiki.py` covers the default and the override.
+
 ## What the operator owns
 
 Supplied locally or from the operational fork, and ignored by this repository:
