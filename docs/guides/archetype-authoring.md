@@ -284,7 +284,7 @@ tested by `TestLoadEffectivePolicyJoinsEveryProfileDimension` in
 
 | Key | Join | Default |
 | :-- | :-- | :-- |
-| `complexity.*` | lowest positive limit; `0` means no bound | 15 / 20 / 100 / 75 |
+| `complexity.*` | lowest positive limit; `0` means no bound | 15 / 20 / 60 / 75 |
 | `branch_protection.enforce_linear_history`, `require_signed_commits`, `dismiss_stale_reviews` | `true` wins | `true`, `false`, `true` |
 | `branch_protection.required_approving_reviewers` | maximum | 1 |
 | `supply_chain.slsa_level` | maximum | 1 |
