@@ -152,13 +152,18 @@ func printNotApplicable(w io.Writer, rels []string) error {
 
 // CompileContextProjections writes the vendor context files, every persona projection and the
 // plugin persona and skill copies; any projection failure is an error, never a silently skipped
-// success line. Every canonical persona and skill is read, and every target is checked, before
-// the first file is written, so a refused target leaves the whole tree unchanged. The CLI's
+// success line. Every canonical persona and skill is read, and every target is checked
+// (checkProjectionFiles), before the text register splice into source and before the first file
+// is written, so a refused target leaves source and every output unchanged. The CLI's
 // compile-context and the MCP standards_compile_context write call both run it.
 func CompileContextProjections(ctx context.Context, w io.Writer, tr *Transpiler, source, targetDir string) error {
 	sw := &syncWriter{w: w}
 	sw.printf("Compiling agent context from canonical %s...\n", source)
-	plan, err := planAgentSurfaces(ctx, targetDir)
+	vendor, err := tr.vendorTargetFiles(ctx, filepath.Dir(source))
+	if err != nil {
+		return fmt.Errorf("compilation failed: %w", err)
+	}
+	plan, err := planAgentSurfaces(ctx, targetDir, vendor)
 	if err != nil {
 		return fmt.Errorf("agent projection failed: %w", err)
 	}
@@ -178,10 +183,11 @@ type agentSurfacePlan struct {
 	personas, pluginPersonas, pluginSkills []projectionFile
 }
 
-// planAgentSurfaces reads every canonical persona and skill and checks every copy's target
-// (checkProjectionFiles), writing nothing. The persona and plugin directories are the ones
-// verify reads (agentProjectionDirs), so write and verify refuse the same trees.
-func planAgentSurfaces(ctx context.Context, targetDir string) (agentSurfacePlan, error) {
+// planAgentSurfaces reads every canonical persona and skill and checks the target of every
+// vendor file in vendor and of every persona and plugin copy (checkProjectionFiles), writing
+// nothing. The persona and plugin directories are the ones verify reads (agentProjectionDirs), so
+// write and verify refuse the same trees.
+func planAgentSurfaces(ctx context.Context, targetDir string, vendor []projectionFile) (agentSurfacePlan, error) {
 	var plan agentSurfacePlan
 	dirs, _, err := SelectPersonaDirs(ctx, targetDir)
 	if err != nil {
@@ -196,7 +202,7 @@ func planAgentSurfaces(ctx context.Context, targetDir string) (agentSurfacePlan,
 	if plan.pluginSkills, err = pluginSkillProjections(ctx, targetDir); err != nil {
 		return plan, err
 	}
-	for _, files := range [][]projectionFile{plan.personas, plan.pluginPersonas, plan.pluginSkills} {
+	for _, files := range [][]projectionFile{vendor, plan.personas, plan.pluginPersonas, plan.pluginSkills} {
 		if err := checkProjectionFiles(ctx, targetDir, files); err != nil {
 			return plan, err
 		}

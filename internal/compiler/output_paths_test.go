@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
 // twoOutputs is a compile result whose first output sits at the target root and whose last one
@@ -87,6 +89,14 @@ func TestWriteOutputsRefusesUnwritableTargetsBeforeAnyWrite(t *testing.T) {
 				}
 			},
 			want: errOutputNotRegular,
+		},
+		// The writer observes an existing output before replacing it and refuses one that is not
+		// UTF-8 text. That refusal used to come only at write time, after CLAUDE.md was written.
+		"existing output is not UTF-8 text": {
+			arrange: func(t *testing.T, out string) {
+				writeOutputFixture(t, filepath.Join(out, ".codex", "rules.md"), "\xff\xfe\n")
+			},
+			text: "existing output cannot be replaced: source must be UTF-8 text without NUL bytes",
 		},
 	}
 	for name, tc := range cases {
@@ -273,5 +283,31 @@ func TestCheckOutputPathSurfacesLeafInspectionErrors(t *testing.T) {
 	err := checkOutputPath(t.Context(), root, "bad\x00name.md")
 	if err == nil || errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("want the lookup failure surfaced, got %v", err)
+	}
+}
+
+// Negative and boundary: checkOutputPath refuses an existing output the writer cannot observe,
+// one that is not UTF-8 text, holds a NUL byte or exceeds contextopt.MaxSourceBytes, and accepts
+// one of exactly that size.
+func TestCheckOutputPathAppliesTheWritersContentRefusals(t *testing.T) {
+	root := t.TempDir()
+	cases := map[string]struct {
+		data   string
+		refuse bool
+	}{
+		"not UTF-8":     {data: "\xff\xfe\n", refuse: true},
+		"NUL byte":      {data: "text\x00more\n", refuse: true},
+		"above the cap": {data: strings.Repeat("a", contextopt.MaxSourceBytes+1), refuse: true},
+		"at the cap":    {data: strings.Repeat("a", contextopt.MaxSourceBytes)},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			rel := strings.ReplaceAll(name, " ", "-") + ".md"
+			writeOutputFixture(t, filepath.Join(root, rel), tc.data)
+			err := checkOutputPath(t.Context(), root, rel)
+			if tc.refuse != (err != nil) {
+				t.Fatalf("refuse=%t, got %v", tc.refuse, err)
+			}
+		})
 	}
 }

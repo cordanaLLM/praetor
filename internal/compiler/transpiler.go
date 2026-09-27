@@ -70,6 +70,25 @@ func (t *Transpiler) forRepository(ctx context.Context, root string) (*Transpile
 	return &selected, nil
 }
 
+// vendorTargetFiles lists, without content, the vendor file of every client t selects for the
+// repository at root (forRepository): the paths checkProjectionFiles checks before anything is
+// compiled or written.
+func (t *Transpiler) vendorTargetFiles(ctx context.Context, root string) ([]projectionFile, error) {
+	selected, err := t.forRepository(ctx, root)
+	if err != nil {
+		return nil, err
+	}
+	paths, _, err := agentcontext.TargetPaths(selected.Clients)
+	if err != nil {
+		return nil, err
+	}
+	files := make([]projectionFile, 0, len(paths))
+	for _, rel := range paths {
+		files = append(files, projectionFile{rel: rel})
+	}
+	return files, nil
+}
+
 // declaredAgentClients reads agent_clients from the manifest at root; nil means the key is
 // absent and every client applies.
 func declaredAgentClients(ctx context.Context, root string) ([]string, error) {

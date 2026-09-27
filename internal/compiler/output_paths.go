@@ -84,8 +84,8 @@ type projectionFile struct {
 	data []byte
 }
 
-// checkProjectionFiles runs the writer's path refusals (projectionPath, checkOutputPath) over
-// every file before the first is written, so a refused target leaves all of them unchanged.
+// checkProjectionFiles runs the writer's refusals (projectionPath, checkOutputPath) over every
+// file before the first is written, so a refused target leaves all of them unchanged.
 func checkProjectionFiles(ctx context.Context, root string, files []projectionFile) error {
 	for _, file := range files {
 		if _, err := projectionPath(root, file.rel); err != nil {
@@ -108,11 +108,14 @@ func writeProjectionFiles(ctx context.Context, root string, files []projectionFi
 	return nil
 }
 
-// checkOutputPath applies the path refusals contextopt.WriteSnapshotIn makes at write time: an
-// existing component of rel that is a symlink or not a directory, or an existing output that
-// is not a regular file. Callers run it over every output before the first write, so a refusal
-// leaves every output untouched. A component that does not exist yet ends the walk: nothing
-// below it exists, and the writer creates it without following a symlink.
+// checkOutputPath applies the refusals contextopt.WriteSnapshotIn makes at write time, without
+// writing: an existing component of rel that is a symlink or not a directory, an existing output
+// that is not a regular file, and an existing output the writer cannot observe, that is one
+// above contextopt.MaxSourceBytes or not UTF-8 text without NUL bytes (read through
+// contextopt.ReadRootSnapshot, the read the writer's ObserveRootSnapshot makes). Callers run it
+// over every output before the first write, so a refusal leaves every output untouched. A
+// component that does not exist yet ends the walk: nothing below it exists, and the writer
+// creates it without following a symlink.
 func checkOutputPath(ctx context.Context, root, rel string) (err error) {
 	ctx, cancel := context.WithTimeout(ctx, contextopt.MaxDuration)
 	defer cancel()
@@ -133,6 +136,9 @@ func checkOutputPath(ctx context.Context, root, rel string) (err error) {
 	}
 	if !info.Mode().IsRegular() {
 		return errOutputNotRegular
+	}
+	if _, err := contextopt.ReadRootSnapshot(ctx, dir, leaf); err != nil {
+		return fmt.Errorf("existing output cannot be replaced: %w", err)
 	}
 	return nil
 }
