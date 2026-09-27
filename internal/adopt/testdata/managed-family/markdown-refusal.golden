@@ -1,0 +1,22 @@
+== disable over drifted asset
+report-error refusing to remove drifted documentation asset tools/markdownlint/package.json
+error refusing to remove drifted documentation asset tools/markdownlint/package.json
+file .github/workflows/praetor-docs.yml sha256:97d1fad8184587e73dfa25af2cc4e30cf9fa278abf5868fdc0dc27c7a222c95e
+file tools/markdownlint/package.json sha256:814f0b111bbd33310d28e9307d3ca07556631e895002729953c06f0c1ef6859a
+file tools/markdownlint/package-lock.json sha256:7b2c98f403f05acb4cb6a9645ae2ef9dac9e824ec83eb6b19281e1fd55dda1c7
+file tools/markdownlint/markdownlint-cli2.yaml sha256:67aad4771daac4e6db3c2f8b65dfbd93f72c4067c9187ec759014bbc71bbfd0d
+file tools/markdownlint/verify.mjs sha256:a74e1e4f30edb5edb32d5e54b0d21d0d1d7dcfb1984293275ae6ddb6092c77de
+file tools/markdownlint/no-private-scratch-links.mjs sha256:fec9b4f1b48f5847c91fb64e52483a51ae3c1cc4b2574af6eedce7210cad0d5f
+file .gitignore "bin/\n*.test\n*.out\n.DS_Store\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n# END praetor private artifacts\n"
+file .prettierignore absent
+== disable over mixed asset
+report-error refusing to remove documentation asset tools/markdownlint/package.json with invalid line endings: text contains mixed LF and CRLF line endings
+error refusing to remove documentation asset tools/markdownlint/package.json with invalid line endings: text contains mixed LF and CRLF line endings
+file .github/workflows/praetor-docs.yml sha256:97d1fad8184587e73dfa25af2cc4e30cf9fa278abf5868fdc0dc27c7a222c95e
+file tools/markdownlint/package.json sha256:478075b86e983158355cb48f3fdd7630b2217b5855be6bfa69c4428b6ae58a25
+file tools/markdownlint/package-lock.json sha256:7b2c98f403f05acb4cb6a9645ae2ef9dac9e824ec83eb6b19281e1fd55dda1c7
+file tools/markdownlint/markdownlint-cli2.yaml sha256:67aad4771daac4e6db3c2f8b65dfbd93f72c4067c9187ec759014bbc71bbfd0d
+file tools/markdownlint/verify.mjs sha256:a74e1e4f30edb5edb32d5e54b0d21d0d1d7dcfb1984293275ae6ddb6092c77de
+file tools/markdownlint/no-private-scratch-links.mjs sha256:fec9b4f1b48f5847c91fb64e52483a51ae3c1cc4b2574af6eedce7210cad0d5f
+file .gitignore "bin/\n*.test\n*.out\n.DS_Store\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n# END praetor private artifacts\n"
+file .prettierignore absent
