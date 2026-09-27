@@ -88,7 +88,7 @@ process. Praetor's build never calls that script: `tools/figures/build.mjs` impo
 | :-- | :-- |
 | `python3 scripts/sync_interfig.py verify` | Offline, in `make interfig-verify`: `upstream/` matches the `vendor.json` hashes, the include list covers every file, the LICENSE hash is the reviewed `license_sha256`, and the `REUSE.toml` MIT override is the last annotation covering each vendored file |
 | `python3 scripts/sync_interfig.py check` | Compares the newest upstream commit under `hindsight-interfig/` with `path_commit`; exits 3 on drift with the compare URL and the update command, 1 on any other failure |
-| `python3 scripts/sync_interfig.py update --commit <sha>` | Vendors `<sha>` and runs the upstream tests and the figure build |
+| `python3 scripts/sync_interfig.py update --commit <sha>` | Vendors `<sha>`, a full 40-character commit sha, and runs the upstream tests and the figure build |
 
 The weekly `interfig-sync.yml` workflow runs `check` and fails with the update command when
 upstream has moved. To update the pin:
@@ -104,9 +104,17 @@ upstream has moved. To update the pin:
    if the upstream `react` peer range does not admit the `react` version in
    `tools/figures/package.json`. Otherwise it swaps in the new `upstream/` and `vendor.json`
    together, restoring the previous tree if the swap fails, then runs the upstream tests and
-   `npm --prefix tools/figures run build`. If either fails, `git checkout third_party/interfig`
-   reverts the update.
+   `npm --prefix tools/figures run build`. If either fails, revert the update. `git clean`
+   removes the new upstream files and figure outputs that `git checkout` leaves behind:
+
+   ```bash
+   git checkout -- third_party/interfig docs/assets/figures
+   git clean -fd -- third_party/interfig/upstream docs/assets/figures
+   ```
+
 2. Add a new upstream file to the include or exclude list in `vendor.json` first, when step 1
    stops on one.
 3. Commit the rewritten `upstream/`, `vendor.json` and the regenerated `docs/assets/figures/`.
-   The command prints the upstream commits between the two pins for the pull-request body.
+   The command prints the upstream commits under `hindsight-interfig/` since the old pin and
+   the compare URL for the pull-request body. The list is best effort: when GitHub rate-limits
+   or fails the request, the update still succeeds and prints only the compare URL.

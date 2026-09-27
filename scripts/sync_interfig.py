@@ -39,7 +39,7 @@ BUILD_TIMEOUT = 600
 MAX_FILES = 256
 MAX_DIRS = 32
 MAX_ANNOTATIONS = 256
-MAX_LOG_COMMITS = 250
+LOG_PAGE = 50
 EXIT_DRIFT = 3
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -55,6 +55,12 @@ API = f"https://api.github.com/repos/{UPSTREAM_REPO}"
 RAW = f"https://raw.githubusercontent.com/{UPSTREAM_REPO}"
 OVERRIDE_PATH = "third_party/interfig/upstream/**"
 LISTED_DIRS = ("src", "scripts")
+FULL_SHA = re.compile(r"[0-9a-f]{40}")
+REVERT_HINT = (
+    "upstream/ and vendor.json are updated; revert with: "
+    "git checkout -- third_party/interfig docs/assets/figures && "
+    "git clean -fd -- third_party/interfig/upstream docs/assets/figures"
+)
 
 
 class SyncError(RuntimeError):
@@ -236,11 +242,24 @@ def verify() -> None:
 # --- check --------------------------------------------------------------------------------
 
 
+def path_commits(fetcher: Fetcher, ref: str, per_page: int) -> list:
+    """Commits reachable from `ref` that touch hindsight-interfig/, newest first."""
+    url = f"{API}/commits?path={UPSTREAM_PATH}&sha={ref}&per_page={per_page}"
+    commits = fetch_json(fetcher, url)
+    if not isinstance(commits, list):
+        raise SyncError(f"GET {url} did not return a commit list")
+    return commits
+
+
 def latest_path_commit(fetcher: Fetcher) -> str:
-    commits = fetch_json(fetcher, f"{API}/commits?path={UPSTREAM_PATH}&sha=main&per_page=1")
-    if not isinstance(commits, list) or not commits or "sha" not in commits[0]:
+    commits = path_commits(fetcher, "main", 1)
+    if not commits or "sha" not in commits[0]:
         raise SyncError(f"No commit found under {UPSTREAM_PATH}/ on upstream main")
     return commits[0]["sha"]
+
+
+def compare_url(pinned: str, sha: str) -> str:
+    return f"https://github.com/{UPSTREAM_REPO}/compare/{pinned}...{sha}"
 
 
 def check(fetcher: Fetcher) -> None:
@@ -249,7 +268,7 @@ def check(fetcher: Fetcher) -> None:
     if latest != pinned:
         raise DriftError(
             f"Drift detected: {UPSTREAM_PATH}/ moved from {pinned} to {latest}\n"
-            f"https://github.com/{UPSTREAM_REPO}/compare/{pinned}...{latest}\n"
+            f"{compare_url(pinned, latest)}\n"
             f"python3 scripts/sync_interfig.py update --commit {latest}"
         )
     print("No drift")
@@ -362,15 +381,33 @@ def check_react_compat(fetcher: Fetcher, sha: str) -> None:
 # --- update -------------------------------------------------------------------------------
 
 
+def upstream_log(fetcher: Fetcher, pinned: str, sha: str) -> list[str]:
+    """One line per commit touching hindsight-interfig/ after `pinned`, up to `sha`, newest first.
+
+    The path-filtered commit list stays small (about 8 KiB a commit), unlike compare/, whose
+    file patches exceed the 1 MiB cap after a few days of monorepo traffic.
+    """
+    lines = []
+    for commit in path_commits(fetcher, sha, LOG_PAGE)[:LOG_PAGE]:
+        if commit["sha"] == pinned:
+            return lines
+        lines.append(f"  {commit['sha'][:8]} {commit['commit']['message'].splitlines()[0]}")
+    lines.append(f"  (pin {pinned[:8]} is not among the newest {LOG_PAGE} commits; see the compare URL)")
+    return lines
+
+
 def print_upstream_log(fetcher: Fetcher, pinned: str, sha: str) -> None:
-    body, status = fetcher.get(f"{API}/compare/{pinned}...{sha}")
-    if status != 200:
-        print(f"Upstream commit list unavailable (HTTP {status})")
+    """Best effort: upstream/ and vendor.json already hold the new pin, so a failed lookup
+    only loses the list, never the update; the compare URL is printed either way."""
+    compare = compare_url(pinned, sha)
+    try:
+        lines = upstream_log(fetcher, pinned, sha)
+    except (SyncError, OSError, ValueError, LookupError, TypeError, AttributeError) as e:
+        print(f"Upstream commit list unavailable ({e}); see {compare}")
         return
-    commits = json.loads(body.decode("utf-8")).get("commits", [])
-    print(f"Upstream commits {pinned[:8]}...{sha[:8]}:")
-    for commit in commits[:MAX_LOG_COMMITS]:
-        print(f"  {commit['sha'][:8]} {commit['commit']['message'].splitlines()[0]}")
+    print(f"Upstream commits under {UPSTREAM_PATH}/ since {pinned[:8]} ({compare}):")
+    for line in lines:
+        print(line)
 
 
 def fetch_license(fetcher: Fetcher, vendor: dict, sha: str) -> bytes:
@@ -506,11 +543,14 @@ def run_upstream_checks() -> None:
         run_tool(["node", "--test", *tests])
         run_tool(["npm", "--prefix", str(TOOLS_FIGURES), "run", "build"])
     except SyncError as e:
-        hint = "upstream/ and vendor.json are updated; git checkout third_party/interfig reverts them"
-        raise SyncError(f"{e}\n{hint}") from e
+        raise SyncError(f"{e}\n{REVERT_HINT}") from e
 
 
 def update(fetcher: Fetcher, sha: str) -> None:
+    if not FULL_SHA.fullmatch(sha):
+        # check compares path_commit with the API's full sha, so a short sha or branch name
+        # pinned here would report drift forever.
+        raise SyncError(f"--commit needs a full 40-character lowercase commit sha, got {sha!r}")
     vendor = load_vendor()
     if sha == vendor["path_commit"]:
         print("Commit matches current path_commit, no-op")

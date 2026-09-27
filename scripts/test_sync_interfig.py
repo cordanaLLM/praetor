@@ -26,10 +26,21 @@ import sync_interfig  # noqa: E402
 
 API = sync_interfig.API
 RAW = sync_interfig.RAW
+PIN = "a" * 40
+NEW = "b" * 40
 COMMITS_URL = f"{API}/commits?path=hindsight-interfig&sha=main&per_page=1"
+LOG_URL = f"{API}/commits?path=hindsight-interfig&sha={NEW}&per_page={sync_interfig.LOG_PAGE}"
+SRC_LISTING = f"{API}/contents/hindsight-interfig/src?ref={NEW}"
 LICENSE = b"MIT License\n"
 CONTENT = b"content"
-COMPARE_BODY = json.dumps({"commits": [{"sha": "0123456789", "commit": {"message": "feat: x\n\nbody"}}]}).encode()
+
+
+def commit_list(*shas):
+    """A commits API body: one entry per sha, message 'feat: <sha prefix>' plus a body line."""
+    return json.dumps([{"sha": sha, "commit": {"message": f"feat: {sha[:4]}\n\nbody"}} for sha in shas]).encode()
+
+
+LOG_BODY = commit_list(NEW, "0123456789" + "c" * 30, PIN, "d" * 40)
 
 REUSE_OK = """
 [[annotations]]
@@ -57,7 +68,8 @@ SPDX-License-Identifier = "EUPL-1.2"
 
 
 class DummyFetcher:
-    """Serves canned (body, status) pairs or raises a canned exception; records every URL."""
+    """Serves canned (body, status) pairs, raises a canned exception or delegates to a callable
+    taking the URL; records every URL."""
 
     def __init__(self, responses=None):
         self.responses = responses or {}
@@ -68,7 +80,17 @@ class DummyFetcher:
         resp = self.responses.get(url, (b"", 404))
         if isinstance(resp, Exception):
             raise resp
-        return resp
+        return resp(url) if callable(resp) else resp
+
+
+def oversize_through_real_fetcher(url):
+    """Runs the real Fetcher against a response one byte over the cap, like a busy compare/."""
+    response = MagicMock()
+    response.read.side_effect = lambda n: b"x" * n
+    response.status = 200
+    with patch("urllib.request.urlopen") as mock_urlopen:
+        mock_urlopen.return_value.__enter__.return_value = response
+        return sync_interfig.Fetcher().get(url)
 
 
 def listing(*entries):
@@ -103,8 +125,8 @@ class TreeCase(unittest.TestCase):
         (self.upstream / "src" / "a.ts").write_bytes(CONTENT)
         (self.upstream / "LICENSE").write_bytes(LICENSE)
         self.vendor = {
-            "path_commit": "abc",
-            "commit": "abc",
+            "path_commit": PIN,
+            "commit": PIN,
             "fetched": "2026-01-01",
             "license_sha256": sync_interfig.sha256_bytes(LICENSE),
             "include": ["src/a.ts"],
@@ -209,17 +231,17 @@ class TestVerify(TreeCase):
 
 class TestCheck(TreeCase):
     def test_no_drift(self):
-        fetcher = DummyFetcher({COMMITS_URL: (b'[{"sha": "abc"}]', 200)})
+        fetcher = DummyFetcher({COMMITS_URL: (commit_list(PIN), 200)})
         with contextlib.redirect_stdout(io.StringIO()) as out:
             sync_interfig.check(fetcher)
         self.assertIn("No drift", out.getvalue())
 
     def test_drift_reports_compare_url_and_command(self):
-        fetcher = DummyFetcher({COMMITS_URL: (b'[{"sha": "def"}]', 200)})
+        fetcher = DummyFetcher({COMMITS_URL: (commit_list("def"), 200)})
         with self.assertRaises(sync_interfig.DriftError) as cm:
             sync_interfig.check(fetcher)
         message = str(cm.exception)
-        self.assertIn("https://github.com/vectorize-io/hindsight/compare/abc...def", message)
+        self.assertIn(f"https://github.com/vectorize-io/hindsight/compare/{PIN}...def", message)
         self.assertIn("python3 scripts/sync_interfig.py update --commit def", message)
 
     def test_empty_commit_list(self):
@@ -228,8 +250,8 @@ class TestCheck(TreeCase):
 
     def test_exit_codes_tell_drift_from_outage(self):
         cases = {
-            0: DummyFetcher({COMMITS_URL: (b'[{"sha": "abc"}]', 200)}),
-            sync_interfig.EXIT_DRIFT: DummyFetcher({COMMITS_URL: (b'[{"sha": "def"}]', 200)}),
+            0: DummyFetcher({COMMITS_URL: (commit_list(PIN), 200)}),
+            sync_interfig.EXIT_DRIFT: DummyFetcher({COMMITS_URL: (commit_list("def"), 200)}),
             1: DummyFetcher({COMMITS_URL: (b"rate limited", 403)}),
         }
         for want, fetcher in cases.items():
@@ -326,75 +348,153 @@ class TestReactRange(TreeCase):
                 sync_interfig.satisfies("19.3.0", spec)
 
     def peer(self, body):
-        return DummyFetcher({f"{RAW}/new/hindsight-interfig/package.json": (body, 200)})
+        return DummyFetcher({f"{RAW}/{NEW}/hindsight-interfig/package.json": (body, 200)})
 
     def test_compatible_peer(self):
-        sync_interfig.check_react_compat(self.peer(b'{"peerDependencies": {"react": ">=18"}}'), "new")
+        sync_interfig.check_react_compat(self.peer(b'{"peerDependencies": {"react": ">=18"}}'), NEW)
 
     def test_incompatible_peer(self):
         fetcher = self.peer(b'{"peerDependencies": {"react": "^18"}}')
-        self.assertFails(sync_interfig.check_react_compat, fetcher, "new", contains="React version mismatch")
+        self.assertFails(sync_interfig.check_react_compat, fetcher, NEW, contains="React version mismatch")
 
     def test_missing_upstream_peer(self):
         fetcher = self.peer(b'{"dependencies": {}}')
-        self.assertFails(sync_interfig.check_react_compat, fetcher, "new", contains="no react peer range")
+        self.assertFails(sync_interfig.check_react_compat, fetcher, NEW, contains="no react peer range")
 
     def test_missing_local_react(self):
         (self.figures / "package.json").write_text('{"devDependencies": {}}', encoding="utf-8")
         fetcher = self.peer(b'{"peerDependencies": {"react": ">=18"}}')
-        self.assertFails(sync_interfig.check_react_compat, fetcher, "new", contains="declares no react dependency")
+        self.assertFails(sync_interfig.check_react_compat, fetcher, NEW, contains="declares no react dependency")
 
 
 class TestUpdate(TreeCase):
-    NEW = b"new content"
+    NEW_BYTES = b"new content"
 
     def responses(self, **overrides):
         base = {
-            f"{RAW}/new/LICENSE": (LICENSE, 200),
-            f"{RAW}/new/hindsight-interfig/package.json": (b'{"peerDependencies": {"react": ">=18"}}', 200),
-            f"{API}/contents/hindsight-interfig/src?ref=new": listing(("src/a.ts", "file"), ("src/fixtures", "dir")),
-            f"{API}/contents/hindsight-interfig/scripts?ref=new": listing(),
-            f"{RAW}/new/hindsight-interfig/src/a.ts": (self.NEW, 200),
-            f"{API}/compare/abc...new": (COMPARE_BODY, 200),
+            f"{RAW}/{NEW}/LICENSE": (LICENSE, 200),
+            f"{RAW}/{NEW}/hindsight-interfig/package.json": (b'{"peerDependencies": {"react": ">=18"}}', 200),
+            SRC_LISTING: listing(("src/a.ts", "file"), ("src/fixtures", "dir")),
+            f"{API}/contents/hindsight-interfig/scripts?ref={NEW}": listing(),
+            f"{RAW}/{NEW}/hindsight-interfig/src/a.ts": (self.NEW_BYTES, 200),
+            LOG_URL: (LOG_BODY, 200),
         }
         base.update(overrides)
         return base
 
     def run_update(self, fetcher):
         with contextlib.redirect_stdout(io.StringIO()) as out:
-            sync_interfig.update(fetcher, "new")
+            sync_interfig.update(fetcher, NEW)
         return out.getvalue()
 
     def assertTreeUnchanged(self):
         self.assertEqual((self.upstream / "src" / "a.ts").read_bytes(), CONTENT)
-        self.assertEqual(self.read_vendor()["path_commit"], "abc")
+        self.assertEqual(self.read_vendor()["path_commit"], PIN)
         self.assertFalse((self.vendor_dir / "upstream.new").exists())
         self.assertFalse((self.vendor_dir / "upstream.old").exists())
 
     def test_same_pin_is_noop(self):
         fetcher = DummyFetcher()
         with contextlib.redirect_stdout(io.StringIO()):
-            sync_interfig.update(fetcher, "abc")
+            sync_interfig.update(fetcher, PIN)
         self.assertEqual(fetcher.urls, [])
 
     @patch("sync_interfig.shutil.which", side_effect=lambda name: f"/usr/bin/{name}")
     @patch("sync_interfig.subprocess.run")
     def test_happy_path_installs_new_bytes_and_pin(self, mock_run, _which):
         out = self.run_update(DummyFetcher(self.responses()))
-        self.assertEqual((self.upstream / "src" / "a.ts").read_bytes(), self.NEW)
+        self.assertEqual((self.upstream / "src" / "a.ts").read_bytes(), self.NEW_BYTES)
         self.assertEqual((self.upstream / "LICENSE").read_bytes(), LICENSE)
         vendor = self.read_vendor()
-        self.assertEqual((vendor["path_commit"], vendor["commit"]), ("new", "new"))
-        self.assertEqual(vendor["files"]["src/a.ts"], sync_interfig.sha256_bytes(self.NEW))
+        self.assertEqual((vendor["path_commit"], vendor["commit"]), (NEW, NEW))
+        self.assertEqual(vendor["files"]["src/a.ts"], sync_interfig.sha256_bytes(self.NEW_BYTES))
         self.assertEqual(list(vendor["files"]), ["LICENSE", "src/a.ts"])
         self.assertFalse((self.vendor_dir / "upstream.new").exists())
         self.assertFalse((self.vendor_dir / "upstream.old").exists())
         commands = [c.args[0] for c in mock_run.call_args_list]
         self.assertEqual(commands[0][:2], ["/usr/bin/node", "--test"])
         self.assertEqual(commands[1][-2:], ["run", "build"])
-        self.assertIn("01234567 feat: x", out)
+        # The log lists the interfig commits after the pin and stops there.
+        log = out.splitlines()[-2:]
+        self.assertEqual(log, [f"  {NEW[:8]} feat: bbbb", "  01234567 feat: 0123"])
+        self.assertNotIn("aaaaaaaa feat", out)
+        self.assertNotIn("dddddddd", out)
+        self.assertIn(f"compare/{PIN}...{NEW}", out)
         with contextlib.redirect_stdout(io.StringIO()):
             sync_interfig.verify()
+
+    @patch("sync_interfig.shutil.which", side_effect=lambda name: f"/usr/bin/{name}")
+    @patch("sync_interfig.subprocess.run")
+    def test_upstream_log_failure_keeps_the_update(self, _run, _which):
+        rate_limited = urllib.error.HTTPError(LOG_URL, 403, "rate limit exceeded", {}, io.BytesIO(b""))
+        self.addCleanup(rate_limited.close)
+        cases = {
+            "oversize body": oversize_through_real_fetcher,
+            "403 raised": rate_limited,
+            "403 returned": (b"", 403),
+            "timeout": TimeoutError("timed out"),
+            "invalid JSON": (b"<html>", 200),
+            "not a list": (b'{"message": "Bad credentials"}', 200),
+            "missing field": (b'[{"sha": "x"}]', 200),
+            "empty message": (commit_list(NEW).replace(b"feat: bbbb\\n\\nbody", b""), 200),
+        }
+        for name, log_response in cases.items():
+            with self.subTest(case=name):
+                (self.upstream / "src" / "a.ts").write_bytes(CONTENT)
+                self.write_vendor()
+                fetcher = DummyFetcher(self.responses(**{LOG_URL: log_response}))
+                with contextlib.redirect_stdout(io.StringIO()) as out, \
+                        contextlib.redirect_stderr(io.StringIO()) as err:
+                    code = sync_interfig.main(["update", "--commit", NEW], fetcher)
+                self.assertEqual(code, 0, err.getvalue())
+                self.assertEqual(self.read_vendor()["path_commit"], NEW)
+                self.assertEqual((self.upstream / "src" / "a.ts").read_bytes(), self.NEW_BYTES)
+                self.assertIn("Upstream commit list unavailable", out.getvalue())
+                self.assertIn(f"compare/{PIN}...{NEW}", out.getvalue())
+
+    def test_upstream_log_stops_at_the_page(self):
+        with patch.object(sync_interfig, "LOG_PAGE", 2):
+            url = f"{API}/commits?path=hindsight-interfig&sha={NEW}&per_page=2"
+            other = "c" * 40
+            cases = {
+                "pin on the last row": (commit_list(NEW, PIN), [f"  {NEW[:8]} feat: bbbb"]),
+                "pin first": (commit_list(PIN, NEW), []),
+                "pin past the page": (commit_list(NEW, other, PIN), None),
+                "pin absent": (commit_list(NEW, other), None),
+            }
+            for name, (body, want) in cases.items():
+                with self.subTest(case=name):
+                    lines = sync_interfig.upstream_log(DummyFetcher({url: (body, 200)}), PIN, NEW)
+                    if want is not None:
+                        self.assertEqual(lines, want)
+                        continue
+                    self.assertEqual(len(lines), 3)
+                    self.assertIn("is not among the newest 2 commits", lines[-1])
+
+    def test_commit_must_be_a_full_sha(self):
+        for commit in ("main", NEW[:7], NEW[:39], NEW + "b", NEW.upper(), "g" * 40, ""):
+            with self.subTest(commit=commit):
+                fetcher = DummyFetcher(self.responses())
+                with contextlib.redirect_stderr(io.StringIO()) as err:
+                    code = sync_interfig.main(["update", "--commit", commit], fetcher)
+                self.assertEqual(code, 1)
+                self.assertIn("--commit", err.getvalue())
+                self.assertEqual(fetcher.urls, [])
+                self.assertTreeUnchanged()
+
+    def test_vendor_json_written_after_the_tree_swap(self):
+        real_write = sync_interfig.write_json_atomic
+        seen = []
+
+        def spy(path, data):
+            target = self.upstream / "src" / "a.ts"
+            seen.append(target.read_bytes() if target.exists() else None)
+            real_write(path, data)
+
+        with patch("sync_interfig.write_json_atomic", side_effect=spy), \
+                patch("sync_interfig.run_upstream_checks"):
+            self.run_update(DummyFetcher(self.responses()))
+        self.assertEqual(seen, [self.NEW_BYTES])
 
     @patch("sync_interfig.write_json_atomic", side_effect=OSError("disk full"))
     def test_failed_install_restores_previous_tree(self, _write):
@@ -403,37 +503,45 @@ class TestUpdate(TreeCase):
         self.assertTreeUnchanged()
 
     def test_license_changed(self):
-        fetcher = DummyFetcher(self.responses(**{f"{RAW}/new/LICENSE": (b"new license", 200)}))
+        fetcher = DummyFetcher(self.responses(**{f"{RAW}/{NEW}/LICENSE": (b"new license", 200)}))
         self.assertFails(self.run_update, fetcher, contains="LICENSE changed!")
-        self.assertNotIn(f"{RAW}/new/hindsight-interfig/src/a.ts", fetcher.urls)
+        self.assertNotIn(f"{RAW}/{NEW}/hindsight-interfig/src/a.ts", fetcher.urls)
         self.assertTreeUnchanged()
 
     def test_react_mismatch(self):
-        peer = {f"{RAW}/new/hindsight-interfig/package.json": (b'{"peerDependencies": {"react": "^18"}}', 200)}
+        peer = {f"{RAW}/{NEW}/hindsight-interfig/package.json": (b'{"peerDependencies": {"react": "^18"}}', 200)}
         self.assertFails(self.run_update, DummyFetcher(self.responses(**peer)), contains="React version mismatch")
         self.assertTreeUnchanged()
 
     def test_unlisted_file(self):
-        src = {f"{API}/contents/hindsight-interfig/src?ref=new": listing(("src/a.ts", "file"), ("src/new.ts", "file"))}
+        src = {SRC_LISTING: listing(("src/a.ts", "file"), ("src/new.ts", "file"))}
         self.assertFails(self.run_update, DummyFetcher(self.responses(**src)), contains="Unlisted new file: src/new.ts")
         self.assertTreeUnchanged()
 
     def test_unlisted_file_in_subdirectory(self):
         overrides = {
-            f"{API}/contents/hindsight-interfig/src?ref=new": listing(("src/a.ts", "file"), ("src/sub", "dir")),
-            f"{API}/contents/hindsight-interfig/src/sub?ref=new": listing(("src/sub/b.ts", "file")),
+            SRC_LISTING: listing(("src/a.ts", "file"), ("src/sub", "dir")),
+            f"{API}/contents/hindsight-interfig/src/sub?ref={NEW}": listing(("src/sub/b.ts", "file")),
         }
         fetcher = DummyFetcher(self.responses(**overrides))
         self.assertFails(self.run_update, fetcher, contains="Unlisted new file: src/sub/b.ts")
+
+    def test_unsupported_entry_type_fails_closed(self):
+        for kind in ("symlink", "submodule"):
+            with self.subTest(kind=kind):
+                src = {SRC_LISTING: listing(("src/a.ts", "file"), ("src/x", kind))}
+                fetcher = DummyFetcher(self.responses(**src))
+                self.assertFails(self.run_update, fetcher, contains=f"Unsupported upstream entry type '{kind}'")
+                self.assertTreeUnchanged()
 
     def test_excluded_subdirectory_is_not_listed(self):
         with patch("sync_interfig.swap_in"), patch("sync_interfig.run_upstream_checks"):
             fetcher = DummyFetcher(self.responses())
             self.run_update(fetcher)
-        self.assertNotIn(f"{API}/contents/hindsight-interfig/src/fixtures?ref=new", fetcher.urls)
+        self.assertNotIn(f"{API}/contents/hindsight-interfig/src/fixtures?ref={NEW}", fetcher.urls)
 
     def test_missing_listing_fails_closed(self):
-        gone = {f"{API}/contents/hindsight-interfig/scripts?ref=new": (b"", 404)}
+        gone = {f"{API}/contents/hindsight-interfig/scripts?ref={NEW}": (b"", 404)}
         self.assertFails(self.run_update, DummyFetcher(self.responses(**gone)), contains="returned HTTP 404")
         self.assertTreeUnchanged()
 
@@ -450,7 +558,9 @@ class TestUpdate(TreeCase):
     @patch("sync_interfig.subprocess.run", side_effect=subprocess.CalledProcessError(1, ["npm"]))
     def test_failed_build_says_how_to_revert(self, _run, _which):
         fetcher = DummyFetcher(self.responses())
-        err = self.assertFails(self.run_update, fetcher, contains="git checkout third_party/interfig")
+        err = self.assertFails(self.run_update, fetcher, contains="git checkout -- third_party/interfig")
+        self.assertIn("docs/assets/figures", str(err))
+        self.assertIn("git clean -fd -- third_party/interfig/upstream", str(err))
         self.assertIsInstance(err.__cause__, sync_interfig.SyncError)
 
     def test_safe_target_rejects_escape(self):
