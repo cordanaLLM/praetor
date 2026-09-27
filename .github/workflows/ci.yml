@@ -208,6 +208,13 @@ jobs:
         if: steps.filter.outputs.run_docs == 'true' && steps.filter.outputs.skip_heavy_gates == 'true' && github.event_name != 'push'
         run: make docs-lint
 
+      # BUG-992: a guide naming a removed command, flag or file is drift no diff shows, because
+      # the guide itself did not change. Heavy runs reach the same target through verify-all;
+      # this step covers the light documentation runs that skip it.
+      - name: Documentation References (commands, flags, repository paths)
+        if: steps.filter.outputs.run_docs == 'true' && steps.filter.outputs.skip_heavy_gates == 'true' && github.event_name != 'push'
+        run: make docs-references
+
       # Heavy changes use the complete local authority once, including race tests,
       # context, audit, all configured linters, vulnerability and AST security scans.
       # Lightweight changes retain their selective governance checks below.

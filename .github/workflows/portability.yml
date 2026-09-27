@@ -222,6 +222,15 @@ jobs:
         shell: bash
         run: go build -o "bin/praetorctl$(go env GOEXE)" ./cmd/standardsctl
 
+      # BUG-992. The documentation reference gate reads Markdown that the Windows image checks
+      # out with CRLF, lists the tree through git and reads Go source by slash-separated
+      # repository path: the three places a platform difference would make it wrong. `make`
+      # is not on the Windows image, so the binary built above runs it directly.
+      - name: Documentation References
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: '"bin/praetorctl$(go env GOEXE)" docs references --path=.'
+
       # The self-tests are the part that could not run on Windows at all before #102, and the
       # part that governs the hooks, so they are the highest-value cell in the matrix. The
       # driver refuses to report a pass that executed nothing and prints every skip with its
