@@ -23,11 +23,13 @@ func TestInferLanguageFromItemBranches(t *testing.T) {
 		// The remaining branches.
 		{"acme-svelte-app", "typescript"},
 		{"ffmpeg-tools", "native"},
-		{"vmaf-tools", "native"},
 		{"gpu-bench", "native"},
 		{"rust-compute", "rust"},
 		{"plain-service", LanguageUnsupported},
 		{"", LanguageUnsupported},
+		// A library a repository is named after is not language evidence: without patch
+		// evidence such a name is unsupported.
+		{"vmaf-tools", LanguageUnsupported},
 	}
 	for _, tc := range cases {
 		got := inferLanguageFromItem(HarvestRepoItem{Name: tc.name}, nil)

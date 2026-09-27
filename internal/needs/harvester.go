@@ -129,7 +129,8 @@ func unsupportedHarvestRepo(repository string) RepoNeeds {
 
 // inferLanguageFromItem guesses a harvested repository's language. Dependencies already
 // extracted from its patch are the stronger signal and take precedence over the name.
-// Neither signal -> LanguageUnsupported, never a Go default (BUG-864).
+// Neither signal -> LanguageUnsupported, never a Go default (BUG-864). The name heuristic
+// matches generic words only; no repository is recognised by its own name.
 func inferLanguageFromItem(item HarvestRepoItem, patchDeps []string) string {
 	if lang := inferLanguageFromDeps(patchDeps); lang != "" {
 		return lang
@@ -141,7 +142,7 @@ func inferLanguageFromItem(item HarvestRepoItem, patchDeps []string) string {
 		return "typescript"
 	case strings.Contains(nameLower, "python") || isArrStackName(nameLower):
 		return "python"
-	case strings.Contains(nameLower, "ffmpeg") || strings.Contains(nameLower, "vmaf") || strings.Contains(nameLower, "gpu"):
+	case strings.Contains(nameLower, "ffmpeg") || strings.Contains(nameLower, "gpu"):
 		return "native"
 	case strings.Contains(nameLower, "rust"):
 		return "rust"
