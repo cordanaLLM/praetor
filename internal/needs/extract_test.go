@@ -383,6 +383,36 @@ func TestParseGoModBoundaryCommentOnlyDirectives(t *testing.T) {
 	}
 }
 
+// utf8BOMBytes is the UTF-8 byte-order mark an editor may save before a go.mod's first line.
+const utf8BOMBytes = "\xef\xbb\xbf"
+
+// TestGoModByteOrderMark_3D: a go.mod saved with a UTF-8 byte-order mark still names its
+// module, so the module's own packages are not counted as third-party demand (BUG-1025).
+func TestGoModByteOrderMark_3D(t *testing.T) {
+	repo := t.TempDir()
+	path := writeFixture(t, repo, "go.mod", utf8BOMBytes+"module example.com/bom\n\ngo 1.27\n\nrequire github.com/a/b v1.0.0\n")
+	writeFixture(t, repo, "main.go", "package main\n\nimport (\n\t_ \"example.com/bom/internal/store\"\n\t_ \"github.com/a/b\"\n)\n")
+	// Positive: the module directive after the mark is read, and the own import is not demand.
+	modulePath, goVer, deps, err := goModFields(path)
+	if err != nil || modulePath != "example.com/bom" || goVer != "1.27" || deps["github.com/a/b"] != "v1.0.0" {
+		t.Fatalf("BOM go.mod = %q / %q / %v, %v", modulePath, goVer, deps, err)
+	}
+	if got := importsOf(t, repo); !slices.Equal(got, []string{"github.com/a/b"}) {
+		t.Fatalf("imports of a BOM module = %v, want only github.com/a/b", got)
+	}
+	// Negative: a mark that does not open the file is not dropped, and the line it precedes
+	// declares nothing, as the go command refuses it.
+	inner := writeFixture(t, t.TempDir(), "go.mod", "module example.com/bom\n"+utf8BOMBytes+"go 1.27\n")
+	if modulePath, goVer, _, err := goModFields(inner); err != nil || modulePath != "example.com/bom" || goVer != "" {
+		t.Fatalf("inner mark = %q / %q, %v; want the module and no go version", modulePath, goVer, err)
+	}
+	// Boundary: a go.mod that is only the mark is an empty manifest, not an error.
+	bare := writeFixture(t, t.TempDir(), "go.mod", utf8BOMBytes)
+	if modulePath, goVer, deps, err := goModFields(bare); err != nil || modulePath != "" || goVer != "" || len(deps) != 0 {
+		t.Fatalf("mark-only go.mod = %q / %q / %v, %v", modulePath, goVer, deps, err)
+	}
+}
+
 // TestParseGoModQuotedRequirementsAndTabbedGoDirective: go.mod may quote a require path
 // or version and separate the go keyword from its version with a tab; the go command
 // reads both, so the scan records the bare path and the version instead of a path with

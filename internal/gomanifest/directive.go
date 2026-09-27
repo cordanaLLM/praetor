@@ -1,6 +1,7 @@
 package gomanifest
 
 import (
+	"bytes"
 	"strconv"
 	"strings"
 )
@@ -12,6 +13,20 @@ const maxDirectiveLines = 4096
 // goDirectiveKeyword is the directive that fixes the language version.
 const goDirectiveKeyword = "go"
 
+// utf8BOM is the UTF-8 encoding of U+FEFF, the byte-order mark some editors write at the
+// start of a file.
+const utf8BOM = "\ufeff"
+
+// TrimBOM returns manifest without a leading UTF-8 byte-order mark, and manifest unchanged
+// otherwise. The go command refuses a go.mod that starts with one ("unexpected input
+// character '\ufeff'"); an offline scanner drops it instead, because U+FEFF is not white
+// space: left in place, it glues onto the first directive, so a module line reads as no
+// module and the module's own imports would count as third-party demand. Call it on the
+// whole manifest before splitting it into lines.
+func TrimBOM(manifest []byte) []byte {
+	return bytes.TrimPrefix(manifest, []byte(utf8BOM))
+}
+
 // GoDirective returns the Go language version a manifest requires, as written in its
 // `go` line ("1.27", "1.27.1"), and whether the manifest declares one at all.
 //
@@ -20,7 +35,7 @@ const goDirectiveKeyword = "go"
 // builds the module with a compiler the module never declared. Callers compare against
 // this value rather than repeating the number.
 func GoDirective(manifest []byte) (string, bool) {
-	lines := strings.Split(string(manifest), "\n")
+	lines := strings.Split(string(TrimBOM(manifest)), "\n")
 	for i := 0; i < len(lines) && i < maxDirectiveLines; i++ {
 		if version, declared := GoDirectiveLine(lines[i]); declared {
 			return version, true

@@ -82,14 +82,20 @@ type goModFile struct {
 // directives from go.mod. Each line is classified through the shared lexical rules of
 // internal/gomanifest, the ones the SBOM, docs-reference and toolchain scanners use, so a
 // trailing comment, a quoted module path and the "//indirect" marker read the way the go
-// command reads them.
+// command reads them. A leading UTF-8 byte-order mark is dropped first
+// (gomanifest.TrimBOM), so the module directive on the first line still names the module.
 func parseGoMod(goModPath string) (*goModFile, error) {
 	if !util.FileExists(goModPath) {
 		return nil, fmt.Errorf("%w: %s", ErrGoModMissing, goModPath)
 	}
+	data, err := readManifest(goModPath)
+	if err != nil {
+		return nil, err
+	}
 
-	state := goModScanState{goModFile: goModFile{directDeps: make(map[string]string)}}
-	if scanErr := scanManifestLines(goModPath, state.consume); scanErr != nil {
+	var state goModScanState
+	state.directDeps = make(map[string]string)
+	if scanErr := scanManifestData(goModPath, gomanifest.TrimBOM(data), state.consume); scanErr != nil {
 		return nil, scanErr
 	}
 	state.ignore = gomanifest.NewIgnoreSet(state.ignorePaths)

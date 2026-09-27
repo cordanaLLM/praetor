@@ -415,7 +415,11 @@ module path or Go version, any white space may follow the `module` or `go`
 keyword, a quoted require path or version is unquoted, and a requirement is
 indirect only when its comment is the go command's `indirect` marker
 (`TestParseGoModReadsDirectivesLikeTheGoCommand`,
-`TestParseGoModQuotedRequirementsAndTabbedGoDirective`).
+`TestParseGoModQuotedRequirementsAndTabbedGoDirective`). A UTF-8 byte-order mark
+at the start of `go.mod` is dropped before the lines are read, so the module
+directive after it still names the module (`TestGoModByteOrderMark_3D`). The go
+command itself refuses such a file; the scan reads it rather than count the
+module's own packages as third-party demand.
 
 In `needs aggregate`, a repository in which no analyzer recognises a project
 is listed under "Skipped Repositories". Rows are never merged by name: two

@@ -112,7 +112,12 @@ func scanManifestLines(path string, visit func(line string)) error {
 	if err != nil {
 		return err
 	}
+	return scanManifestData(path, data, visit)
+}
 
+// scanManifestData applies visit to each trimmed line of data, the manifest read from path,
+// for a caller that prepares the bytes before they are split into lines.
+func scanManifestData(path string, data []byte, visit func(line string)) error {
 	if scanErr := scanBoundedLines(bufio.NewScanner(bytes.NewReader(data)), func(line string) {
 		visit(strings.TrimSpace(line))
 	}); scanErr != nil {
