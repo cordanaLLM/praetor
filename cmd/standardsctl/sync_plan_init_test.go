@@ -147,7 +147,7 @@ func TestPlan_3D(t *testing.T) {
 
 // The heading names the tool, never a repository; the manifest identity follows it (#361).
 func TestPrintPlanHeader_NamesTheManifestRepository(t *testing.T) {
-	for _, repo := range []config.RepositoryMetadata{{Owner: "golusoris", Name: "golusoris"}, {}} {
+	for _, repo := range []config.RepositoryMetadata{{Owner: "acme", Name: "kit"}, {}} {
 		out, err := captureStdout(t, func() error {
 			return printPlanHeader(&config.Manifest{Repository: repo}, config.DefaultPolicy())
 		})

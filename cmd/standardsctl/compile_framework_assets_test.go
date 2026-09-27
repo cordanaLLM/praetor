@@ -23,7 +23,7 @@ func writeKitConfig(t *testing.T, body string) string {
 // TestCompileFrameworkAssetsCommand_DispatchesAndWrites runs the command through the
 // dispatch table, the path ADR-0007 clause 5 needed and BUG-694 found missing.
 func TestCompileFrameworkAssetsCommand_DispatchesAndWrites(t *testing.T) {
-	config := writeKitConfig(t, "kit_name: sveltesentio\nlanguage: svelte\nversion: 5.0.0\nrules: [Use runes]\ncomponents: [Button]\n")
+	config := writeKitConfig(t, "kit_name: example-ui-kit\nlanguage: svelte\nversion: 5.0.0\nrules: [Use runes]\ncomponents: [Button]\n")
 	output := filepath.Join(t.TempDir(), "assets")
 	stdout, err := captureStdout(t, func() error {
 		return dispatchCommand("compile-framework-assets", []string{"--config", config, "--output", output})
@@ -31,7 +31,7 @@ func TestCompileFrameworkAssetsCommand_DispatchesAndWrites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile-framework-assets error = %v", err)
 	}
-	for _, rel := range []string{"llms.txt", "llms-full.txt", filepath.Join(".agents", "rules", "sveltesentio.md"),
+	for _, rel := range []string{"llms.txt", "llms-full.txt", filepath.Join(".agents", "rules", "example-ui-kit.md"),
 		filepath.Join("templates", ".framework-build.yaml"), filepath.Join("templates", "README.md")} {
 		path := filepath.Join(output, rel)
 		if _, err := os.Stat(path); err != nil {

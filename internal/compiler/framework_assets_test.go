@@ -9,10 +9,10 @@ import (
 	"testing"
 )
 
-func TestCompileFrameworkAssets_Sveltesentio(t *testing.T) {
+func TestCompileFrameworkAssets_UIKit(t *testing.T) {
 	tmpDir := t.TempDir()
 	kit := &FrameworkKitConfig{
-		KitName:     "sveltesentio",
+		KitName:     "example-ui-kit",
 		Language:    "svelte",
 		Version:     "5.0.0",
 		Description: "Universal Svelte 5 frontend component library and state harness",
@@ -24,14 +24,14 @@ func TestCompileFrameworkAssets_Sveltesentio(t *testing.T) {
 		Components: []string{"Button", "Modal", "Card"},
 	}
 
-	outDir := filepath.Join(tmpDir, "sveltesentio-out")
+	outDir := filepath.Join(tmpDir, "ui-kit-out")
 	res, err := CompileFrameworkAssets(context.Background(), kit, outDir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	llmsData, err := os.ReadFile(res.LLMsTxtPath)
-	if err != nil || !strings.Contains(string(llmsData), "sveltesentio") {
+	if err != nil || !strings.Contains(string(llmsData), "example-ui-kit") {
 		t.Errorf("llms.txt missing expected content: %s", string(llmsData))
 	}
 
@@ -41,10 +41,10 @@ func TestCompileFrameworkAssets_Sveltesentio(t *testing.T) {
 	}
 }
 
-func TestCompileFrameworkAssets_NativeGPU(t *testing.T) {
+func TestCompileFrameworkAssets_NativeKit(t *testing.T) {
 	tmpDir := t.TempDir()
 	kit := &FrameworkKitConfig{
-		KitName:     "template-native-gpu",
+		KitName:     "example-native-kit",
 		Language:    "c",
 		Version:     "1.0.0",
 		Description: "High-performance C23/C++20 GPU compute kernels with Vulkan and CUDA",
@@ -54,7 +54,7 @@ func TestCompileFrameworkAssets_NativeGPU(t *testing.T) {
 		},
 	}
 
-	outDir := filepath.Join(tmpDir, "native-gpu-out")
+	outDir := filepath.Join(tmpDir, "native-kit-out")
 	res, err := CompileFrameworkAssets(context.Background(), kit, outDir)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -127,14 +127,14 @@ func TestCompileFrameworkAssets_RejectsUnsafeKitNameBeforeWriting(t *testing.T) 
 // lands under outputDir, with the rule file named after the kit.
 func TestCompileFrameworkAssets_WritesEveryAssetUnderOutputDir(t *testing.T) {
 	outDir := filepath.Join(t.TempDir(), "kit-out")
-	res, err := CompileFrameworkAssets(context.Background(), &FrameworkKitConfig{KitName: "pykit", Language: "python"}, outDir)
+	res, err := CompileFrameworkAssets(context.Background(), &FrameworkKitConfig{KitName: "example-python-kit", Language: "python"}, outDir)
 	if err != nil {
 		t.Fatalf("CompileFrameworkAssets() error = %v", err)
 	}
 	want := []string{
 		filepath.Join(outDir, "llms.txt"),
 		filepath.Join(outDir, "llms-full.txt"),
-		filepath.Join(outDir, ".agents", "rules", "pykit.md"),
+		filepath.Join(outDir, ".agents", "rules", "example-python-kit.md"),
 		filepath.Join(outDir, "templates", ".framework-build.yaml"),
 		filepath.Join(outDir, "templates", "README.md"),
 	}
@@ -191,7 +191,7 @@ func TestCompileFrameworkAssets_RefusesRuleSymlinkOutsideRulesDir(t *testing.T) 
 
 func TestLoadFrameworkKitConfig_ReadsDeclaredKeys(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "kit.yaml")
-	body := "kit_name: rustkit\nlanguage: rust\nversion: 0.1.0\ndescription: Rust kit\nrules: [No unsafe]\nskills: [clippy]\ncomponents: [core]\n"
+	body := "kit_name: example-rust-kit\nlanguage: rust\nversion: 0.1.0\ndescription: Rust kit\nrules: [No unsafe]\nskills: [clippy]\ncomponents: [core]\n"
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +199,7 @@ func TestLoadFrameworkKitConfig_ReadsDeclaredKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadFrameworkKitConfig() error = %v", err)
 	}
-	if kit.KitName != "rustkit" || kit.Language != "rust" || len(kit.Rules) != 1 || kit.Components[0] != "core" {
+	if kit.KitName != "example-rust-kit" || kit.Language != "rust" || len(kit.Rules) != 1 || kit.Components[0] != "core" {
 		t.Fatalf("LoadFrameworkKitConfig() = %+v", kit)
 	}
 }

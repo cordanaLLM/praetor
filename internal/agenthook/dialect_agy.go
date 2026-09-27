@@ -9,7 +9,7 @@ import (
 
 // Antigravity ("agy") hook payload and response shapes, verified against the
 // "Lifecycle Hooks (hooks.json)" contract embedded in the installed Antigravity 1.2.7
-// binary (agy --help at /home/kilian/.local/bin/agy; the contract text is a string
+// binary (agy --help, AGY 1.2.x; the contract text is a string
 // literal in the binary itself, printed by the CLI's own in-app documentation, not
 // model memory). docs/guides/agent-hooks.md quotes the relevant sections verbatim.
 //

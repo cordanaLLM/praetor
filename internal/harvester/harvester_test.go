@@ -170,11 +170,11 @@ func TestScanLocalWorkstation_NestedOrgLayout(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
 
-	repoC := filepath.Join(tmpDir, "vmafx", "vmafx")
+	repoC := filepath.Join(tmpDir, "acme", "kit")
 	mustMkdirAll(t, filepath.Join(repoC, ".git"))
 	mustWriteFile(t, filepath.Join(repoC, "AGENTS.md"), "# Rules")
 
-	repoD := filepath.Join(tmpDir, "vmafx", "pelorus")
+	repoD := filepath.Join(tmpDir, "acme", "app")
 	mustMkdirAll(t, filepath.Join(repoD, ".git"))
 
 	rep, err := ScanLocalWorkstation(ctx, tmpDir)
@@ -185,7 +185,7 @@ func TestScanLocalWorkstation_NestedOrgLayout(t *testing.T) {
 	if rep.DevReposCount != 2 {
 		t.Fatalf("expected 2 dev repos in nested layout, got: %d", rep.DevReposCount)
 	}
-	expectedMissing := filepath.Join("vmafx", "pelorus")
+	expectedMissing := filepath.Join("acme", "app")
 	if len(rep.MissingRulesRepos) != 1 || rep.MissingRulesRepos[0] != expectedMissing {
 		t.Fatalf("expected %s in missing rules, got: %v", expectedMissing, rep.MissingRulesRepos)
 	}
