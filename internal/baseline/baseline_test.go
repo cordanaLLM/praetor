@@ -66,6 +66,34 @@ func TestEvaluateRatchet_NegativeAndBoundary(t *testing.T) {
 	}
 }
 
+// TestEvaluateRatchet_CountRegressed_3D pins BUG-489: a total that rose while every
+// violation is baselined and no file was touched is a rejection with both lists empty, and
+// CountRegressed is what names it.
+func TestEvaluateRatchet_CountRegressed_3D(t *testing.T) {
+	legacy := Infraction{RuleID: "HISS-04", FilePath: "old.go", LineNumber: 1, Fingerprint: "fp1"}
+	b := &Baseline{Version: 1, TotalInfractions: 1, Infractions: []Infraction{legacy}}
+
+	// Positive: a second infraction under the baselined fingerprint raises the total.
+	res := EvaluateRatchet(b, []Infraction{legacy, legacy}, nil)
+	if res.Passed || !res.CountRegressed || len(res.NewViolations) != 0 || len(res.TouchedCleanViolations) != 0 {
+		t.Fatalf("count-only regression = %+v; want failed, CountRegressed, both lists empty", res)
+	}
+	if got := res.Summary(); !strings.Contains(got, "rose from 1 to 2") {
+		t.Fatalf("count-only regression summary = %q", got)
+	}
+
+	// Negative: a listed violation explains the rejection, so it is not count-only.
+	other := Infraction{RuleID: "HISS-07", FilePath: "new.go", LineNumber: 1, Fingerprint: "fp2"}
+	if res := EvaluateRatchet(b, []Infraction{legacy, other}, nil); res.Passed || res.CountRegressed {
+		t.Fatalf("new violation = %+v; want failed without CountRegressed", res)
+	}
+
+	// Boundary: a total equal to the baseline's passes and is no regression.
+	if res := EvaluateRatchet(b, []Infraction{legacy}, nil); !res.Passed || res.CountRegressed {
+		t.Fatalf("equal total = %+v; want passed without CountRegressed", res)
+	}
+}
+
 func TestLoadBaseline_PositiveAndMissing(t *testing.T) {
 	tmpDir := t.TempDir()
 	missingPath := filepath.Join(tmpDir, "nonexistent.json")

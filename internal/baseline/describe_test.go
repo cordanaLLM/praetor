@@ -49,29 +49,12 @@ func TestRatchetResultSummary_Boundary_ListsAtMostThreePerClass(t *testing.T) {
 	}
 }
 
-// BUG-489 test: both lists empty and count rose gives CountRegressed plus a message naming the counts
-func TestRatchetResultSummary_CountRegressedOnly(t *testing.T) {
-	res := &RatchetResult{
-		Passed:         false,
-		CountRegressed: true,
-		PreviousCount:  5,
-		CurrentCount:   7,
-	}
+// Positive (BUG-489): a count-only regression names both totals rather than an empty
+// violation listing that reads as "0 new".
+func TestRatchetResultSummary_Positive_CountRegressedNamesTotals(t *testing.T) {
+	res := &RatchetResult{CountRegressed: true, PreviousCount: 5, CurrentCount: 7}
 	got := res.Summary()
-	if !strings.Contains(got, "total infractions rose from 5 to 7") {
-		t.Errorf("expected count regression message, got: %s", got)
-	}
-}
-
-// Passed branch
-func TestRatchetResultSummary_Passed(t *testing.T) {
-	res := &RatchetResult{
-		Passed:        true,
-		PreviousCount: 5,
-		CurrentCount:  3,
-	}
-	got := res.Summary()
-	if !strings.Contains(got, "verified") || !strings.Contains(got, "3 active") {
-		t.Errorf("expected passing message, got: %s", got)
+	if !strings.Contains(got, "total infractions rose from 5 to 7") || strings.Contains(got, "0 new unbaselined") {
+		t.Errorf("count-only regression summary = %q", got)
 	}
 }

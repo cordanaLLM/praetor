@@ -222,7 +222,33 @@ func rejectStateGitFilters(ctx context.Context, root string) error {
 	return nil
 }
 
-func GitHead(ctx context.Context, root string) (string, error) {
+// unbornHead is what stateGitHead reports for a branch that has no commit yet.
+const unbornHead = "(unborn)"
+
+// RecordedCommit returns the commit a record made at root names: the HEAD SHA, or "" when
+// root is outside a Git worktree or its branch has no commit yet, since neither has a commit
+// to name. A Git read that fails for any other reason (broken metadata, a timeout) is an
+// error, never an empty commit. `state task archive`, `baseline --record` and adoption's
+// baseline all stamp their records through it.
+func RecordedCommit(ctx context.Context, root string) (string, error) {
+	present, err := util.GitWorktreePresent(ctx, root)
+	if err != nil {
+		return "", fmt.Errorf("detect Git worktree: %w", err)
+	}
+	if !present {
+		return "", nil
+	}
+	head, err := stateGitHead(ctx, root)
+	if err != nil {
+		return "", fmt.Errorf("read Git HEAD: %w", err)
+	}
+	if head == unbornHead {
+		return "", nil
+	}
+	return head, nil
+}
+
+func stateGitHead(ctx context.Context, root string) (string, error) {
 	head, err := stateGitString(ctx, root, "rev-parse", "--verify", "--quiet", "HEAD")
 	if err == nil {
 		return head, nil
@@ -237,7 +263,7 @@ func GitHead(ctx context.Context, root string) (string, error) {
 	}
 	_, err = stateGitString(ctx, root, "show-ref", "--verify", "--quiet", ref)
 	if errors.As(err, &exit) && exit.ExitCode() == 1 {
-		return "(unborn)", nil
+		return unbornHead, nil
 	}
 	return "", errors.Join(fmt.Errorf("missing HEAD has an invalid branch reference"), err)
 }

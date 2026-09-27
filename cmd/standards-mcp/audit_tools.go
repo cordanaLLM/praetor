@@ -131,7 +131,8 @@ func auditBaselineRatchetWithPolicy(ctx context.Context, root, baselinePath stri
 	if !ratchet.Passed {
 		return "", fmt.Errorf("[FAIL] %s", ratchet.Summary())
 	}
-	verdict := fmt.Sprintf("[PASS] %s %s", ratchet.Summary(), scanRep.CoverageEvidence())
+	verdict := fmt.Sprintf("[PASS] Technical debt baseline verified: %d recorded legacy infractions; HISS scan found %d active violations within the baselined limit. %s",
+		base.TotalInfractions, ratchet.CurrentCount, scanRep.CoverageEvidence())
 	return strings.Join(append([]string{verdict}, scanRep.Complexity.Lines()...), "\n"), nil
 }
 

@@ -227,7 +227,7 @@ func TestStateSyncRejectsHiddenIndexFlagsAndSubmodules(t *testing.T) {
 		})
 	}
 	root := syncFixture(t)
-	head, err := GitHead(t.Context(), root)
+	head, err := stateGitHead(t.Context(), root)
 	if err != nil {
 		t.Fatal(err)
 	}

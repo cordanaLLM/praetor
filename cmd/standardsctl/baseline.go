@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"path/filepath"
@@ -44,6 +45,25 @@ func runBaseline(args []string) error {
 	return nil
 }
 
+// baselineIdentity names the repository and commit a baseline recorded in dir belongs to:
+// the origin remote's owner/name (util.ResolveRemoteIdentity, the source adoption records
+// too) and the HEAD commit, each "" when the checkout has none. A Git read that was not
+// answered is an error rather than an empty identity.
+func baselineIdentity(ctx context.Context, dir string) (repository, commit string, err error) {
+	owner, name, err := util.ResolveRemoteIdentity(ctx, dir)
+	switch {
+	case err == nil:
+		repository = owner + "/" + name
+	case !errors.Is(err, util.ErrRepoIdentityUnresolved):
+		return "", "", fmt.Errorf("resolve repository identity: %w", err)
+	}
+	commit, err = state.RecordedCommit(ctx, dir)
+	if err != nil {
+		return "", "", err
+	}
+	return repository, commit, nil
+}
+
 // recordBaseline rescans the repository around the baseline and replaces the snapshot,
 // refusing to raise the count unless the operator allowed it with a rationale.
 func recordBaseline(path string, previous *baseline.Baseline, opts baseline.RecordOptions) error {
@@ -59,12 +79,9 @@ func recordBaseline(path string, previous *baseline.Baseline, opts baseline.Reco
 		return fmt.Errorf("refusing to record an incomplete baseline: %w", hiss.ErrScanTruncated)
 	}
 
-	repoDir := filepath.Dir(path)
-	if owner, name, err := util.ResolveRemoteIdentity(ctx, repoDir); err == nil {
-		opts.Repository = owner + "/" + name
-	}
-	if head, err := state.GitHead(ctx, repoDir); err == nil {
-		opts.CommitSHA = head
+	opts.Repository, opts.CommitSHA, err = baselineIdentity(ctx, filepath.Dir(path))
+	if err != nil {
+		return fmt.Errorf("refusing to record %s: %w", path, err)
 	}
 
 	next, err := baseline.Record(previous, fingerprintViolations(scanRep.Violations), opts)

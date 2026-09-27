@@ -137,3 +137,51 @@ func TestBaselineRecord_Boundary(t *testing.T) {
 		t.Fatalf("missing baseline must inspect as empty: %v", err)
 	}
 }
+
+// TestBaselineRecord_RecordsRepositoryIdentity_3D pins BUG-801 for `baseline --record`: the
+// recorded baseline names the origin remote's repository and the HEAD commit it was taken at.
+func TestBaselineRecord_RecordsRepositoryIdentity_3D(t *testing.T) {
+	// Positive: the fixture is a committed repository; give it an origin remote.
+	f := newAuditFixture(t)
+	if out, err := runFixtureGit(t, f.dir, f.gitEnv, "remote", "add", "origin", "https://github.com/acme/widgets.git"); err != nil {
+		t.Fatalf("add origin: %v (%s)", err, out)
+	}
+	head, err := runFixtureGit(t, f.dir, f.gitEnv, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatalf("rev-parse: %v (%s)", err, head)
+	}
+	if out, err := runBaselineCmd(t, f, "--record"); err != nil {
+		t.Fatalf("record: %v\n%s", err, out)
+	}
+	b, err := baseline.LoadBaseline(f.baselinePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Repository != "acme/widgets" || b.CommitSHA != strings.TrimSpace(head) {
+		t.Fatalf("recorded identity = %q @ %q; want acme/widgets @ %q", b.Repository, b.CommitSHA, strings.TrimSpace(head))
+	}
+
+	// Boundary: outside a Git worktree there is no repository or commit to record.
+	plain := filepath.Join(t.TempDir(), ".standards-baseline.json")
+	if out, err := captureStdout(t, func() error {
+		return dispatchCommand("baseline", []string{"--file=" + plain, "--record"})
+	}); err != nil {
+		t.Fatalf("record outside Git: %v\n%s", err, out)
+	}
+	if b, err = baseline.LoadBaseline(plain); err != nil || b.Repository != "" || b.CommitSHA != "" {
+		t.Fatalf("identity outside Git = %+v, %v; want both empty", b, err)
+	}
+
+	// Negative: Git metadata that does not answer refuses the record and writes nothing.
+	brokenDir := t.TempDir()
+	writeFixtureFile(t, brokenDir, ".git", "gitdir: nonexistent\n")
+	broken := filepath.Join(brokenDir, ".standards-baseline.json")
+	if _, err := captureStdout(t, func() error {
+		return dispatchCommand("baseline", []string{"--file=" + broken, "--record"})
+	}); err == nil {
+		t.Fatal("record with broken Git metadata succeeded; want a refusal")
+	}
+	if _, err := os.Stat(broken); !os.IsNotExist(err) {
+		t.Fatalf("refused record still wrote a baseline: %v", err)
+	}
+}

@@ -103,7 +103,7 @@ func populateGitSnapshot(ctx context.Context, rootPath string, snap *StateSnapsh
 	if err != nil {
 		return fmt.Errorf("read state Git branch: %w", err)
 	}
-	snap.HeadSHA, err = GitHead(ctx, rootPath)
+	snap.HeadSHA, err = stateGitHead(ctx, rootPath)
 	if err != nil {
 		return fmt.Errorf("read state Git HEAD: %w", err)
 	}
@@ -112,7 +112,7 @@ func populateGitSnapshot(ctx context.Context, rootPath string, snap *StateSnapsh
 		return fmt.Errorf("read state Git status: %w", err)
 	}
 	snap.GitState = "available"
-	if snap.HeadSHA == "(unborn)" {
+	if snap.HeadSHA == unbornHead {
 		snap.GitState = "unborn"
 	}
 	snap.Clean = status == ""

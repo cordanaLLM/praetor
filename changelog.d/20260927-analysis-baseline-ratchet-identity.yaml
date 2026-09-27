@@ -1,0 +1,3 @@
+type: fixed
+title: Name count-only HISS ratchet regressions in every audit, gate, MCP and dogfood rejection, and record the repository and commit a baseline was taken at from adoption and baseline --record
+breaking: false

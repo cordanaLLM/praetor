@@ -1456,29 +1456,22 @@ func TestDispatchCommand_HarvestFleetOutput(t *testing.T) {
 	}
 }
 
+// writeOpenTasks writes .workingdir/OPEN.md under dir with the given task lines.
+func writeOpenTasks(t *testing.T, dir, tasks string) string {
+	t.Helper()
+	return writeFixtureFile(t, dir, filepath.Join(".workingdir", "OPEN.md"), tasks)
+}
+
+// TestDispatchCommand_StateTaskArchive_Positive pins BUG-577: an archive run in a committed
+// repository stamps the archived tasks with that commit, not "local".
 func TestDispatchCommand_StateTaskArchive_Positive(t *testing.T) {
 	dir := t.TempDir()
-	testsupport.InitGitRepoWithOrigin(t, dir, "")
-	gitCtx, err := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
+	env := initGitFixture(t, dir)
+	head, err := runFixtureGit(t, dir, env, "rev-parse", "HEAD")
 	if err != nil {
-		t.Fatalf("fixture git environment: %v", err)
+		t.Fatalf("rev-parse: %v (%s)", err, head)
 	}
-	if _, err := util.RunGit(gitCtx, dir, "commit", "--allow-empty", "-m", "init"); err != nil {
-		t.Fatal(err)
-	}
-	outSha, err := util.RunGit(gitCtx, dir, "rev-parse", "HEAD")
-	if err != nil {
-		t.Fatal(err)
-	}
-	sha := strings.TrimSpace(outSha)
-	workingdir := filepath.Join(dir, ".workingdir")
-	if err := os.Mkdir(workingdir, 0755); err != nil {
-		t.Fatal(err)
-	}
-	openFile := filepath.Join(workingdir, "OPEN.md")
-	if err := os.WriteFile(openFile, []byte("- [x] done task 1\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeOpenTasks(t, dir, "- [x] done task 1\n")
 
 	out, err := captureStdout(t, func() error {
 		return dispatchCommand("state", []string{"task", "archive", "--dir=" + dir})
@@ -1487,60 +1480,54 @@ func TestDispatchCommand_StateTaskArchive_Positive(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustContain(t, out, "[PASS] Archived 1 completed tasks from OPEN.md to BACKLOG.md")
-
-	backlogFile := filepath.Join(workingdir, "BACKLOG.md")
-	b, err := os.ReadFile(backlogFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	mustContain(t, string(b), fmt.Sprintf("commit `%s`", sha), "done task 1")
+	backlog := readFixtureFile(t, dir, ".workingdir/BACKLOG.md")
+	mustContain(t, backlog, fmt.Sprintf("commit `%s`", strings.TrimSpace(head)), "done task 1")
 }
 
+// TestDispatchCommand_StateTaskArchive_Negative pins BUG-321's failure paths: a selector no
+// task matches, a missing directory, an unknown flag, and Git metadata that does not answer.
 func TestDispatchCommand_StateTaskArchive_Negative(t *testing.T) {
-	// bad selector
 	dir := t.TempDir()
-	if err := os.Mkdir(dir+"/.workingdir", 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(dir+"/.workingdir/OPEN.md", []byte("- [ ] some task\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	writeOpenTasks(t, dir, "- [ ] some task\n")
 	_, err := captureStdout(t, func() error {
 		return dispatchCommand("state", []string{"task", "complete", "bad-selector", "--dir=" + dir})
 	})
-	if err == nil {
-		t.Fatal("expected error for bad selector")
-	}
 	mustErrContain(t, err, "no pending task matched selector")
 
-	// missing dir
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
 	_, err = captureStdout(t, func() error {
-		return dispatchCommand("state", []string{"task", "complete", "1", "--dir=/does/not/exist/999"})
+		return dispatchCommand("state", []string{"task", "complete", "1", "--dir=" + missing})
 	})
-	if err == nil {
-		t.Fatal("expected error for missing dir")
-	}
 	if !errors.Is(err, fs.ErrNotExist) {
-		t.Errorf("expected fs.ErrNotExist, got %v", err)
+		t.Errorf("missing dir = %v; want fs.ErrNotExist", err)
 	}
 
-	// malformed flag
 	_, err = captureStdout(t, func() error {
 		return dispatchCommand("state", []string{"task", "archive", "--unknown=foo"})
 	})
-	if err == nil {
-		t.Fatal("expected error for malformed flag")
-	}
 	mustErrContain(t, err, "flag provided but not defined")
+
+	// A Git read that fails is an error, never a silent "local" stamp; OPEN.md is kept.
+	broken := t.TempDir()
+	writeFixtureFile(t, broken, ".git", "gitdir: nonexistent\n")
+	open := writeOpenTasks(t, broken, "- [x] kept task\n")
+	_, err = captureStdout(t, func() error {
+		return dispatchCommand("state", []string{"task", "archive", "--dir=" + broken})
+	})
+	mustErrContain(t, err, "state task archive")
+	mustContain(t, readFixtureFile(t, broken, ".workingdir/OPEN.md"), "- [x] kept task")
+	if _, statErr := os.Stat(filepath.Join(filepath.Dir(open), "BACKLOG.md")); !os.IsNotExist(statErr) {
+		t.Fatalf("failed archive still wrote BACKLOG.md: %v", statErr)
+	}
 }
 
+// TestDispatchCommand_StateTaskArchive_Boundary: nothing to archive, and a directory with no
+// commit to name (outside Git, or an unborn branch) keeps the "local" stamp.
 func TestDispatchCommand_StateTaskArchive_Boundary(t *testing.T) {
 	dir := t.TempDir()
-	workingdir := filepath.Join(dir, ".workingdir")
-	if err := os.Mkdir(workingdir, 0755); err != nil {
+	if err := os.Mkdir(filepath.Join(dir, ".workingdir"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	// no OPEN.md yet
 	out, err := captureStdout(t, func() error {
 		return dispatchCommand("state", []string{"task", "archive", "--dir=" + dir})
 	})
@@ -1549,22 +1536,21 @@ func TestDispatchCommand_StateTaskArchive_Boundary(t *testing.T) {
 	}
 	mustContain(t, out, "[PASS] Archived 0 completed tasks")
 
-	// Create OPEN.md with one completed task, but no git
-	if err := os.WriteFile(filepath.Join(workingdir, "OPEN.md"), []byte("- [x] done task 2\n"), 0644); err != nil {
-		t.Fatal(err)
+	unborn := t.TempDir()
+	testsupport.InitGitRepoWithOrigin(t, unborn, "")
+	for name, root := range map[string]string{"non-git": dir, "unborn": unborn} {
+		writeOpenTasks(t, root, "- [x] done task 2\n")
+		out, err = captureStdout(t, func() error {
+			return dispatchCommand("state", []string{"task", "archive", "--dir=" + root})
+		})
+		if err != nil {
+			t.Fatalf("%s archive: %v", name, err)
+		}
+		mustContain(t, out, "[PASS] Archived 1 completed tasks")
+		backlog := readFixtureFile(t, root, ".workingdir/BACKLOG.md")
+		mustContain(t, backlog, "commit `local`", "done task 2")
+		if strings.Contains(backlog, "(unborn)") {
+			t.Fatalf("%s archive leaked the unborn marker:\n%s", name, backlog)
+		}
 	}
-	out, err = captureStdout(t, func() error {
-		return dispatchCommand("state", []string{"task", "archive", "--dir=" + dir})
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	mustContain(t, out, "[PASS] Archived 1 completed tasks")
-
-	backlogFile := filepath.Join(workingdir, "BACKLOG.md")
-	b, err := os.ReadFile(backlogFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	mustContain(t, string(b), "commit `local`", "done task 2")
 }

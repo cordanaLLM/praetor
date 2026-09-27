@@ -160,27 +160,20 @@ func TestTasks_Boundary_MultipleAndNumeric(t *testing.T) {
 	}
 }
 
-func TestTasks_PreservesFileMode(t *testing.T) {
-	testsupport.SkipIfFileModeUnenforced(t)
+// TestArchiveCompletedTasks_CreatesPrivateBacklog pins the ledger's private mode: a BACKLOG.md
+// the archive creates is owner-only, like OPEN.md. An earlier revision of this change widened
+// both to 0644; the literal mode here fails on any such widening.
+func TestArchiveCompletedTasks_CreatesPrivateBacklog(t *testing.T) {
 	dir := t.TempDir()
-	workingdir := filepath.Join(dir, ".workingdir")
-	if err := os.Mkdir(workingdir, util.SecureDirPerm); err != nil {
+	workingdir := filepath.Join(dir, WorkingDirName)
+	if err := os.Mkdir(workingdir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	openFile := filepath.Join(workingdir, "OPEN.md")
-	if err := os.WriteFile(openFile, []byte("- [ ] task 1\n"), util.SecureFilePerm); err != nil {
+	if err := os.WriteFile(filepath.Join(workingdir, "OPEN.md"), []byte("- [x] done\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-
-	if err := AddTask(dir, "task 2"); err != nil {
-		t.Fatal(err)
+	if count, err := ArchiveCompletedTasks(dir, "fixture"); err != nil || count != 1 {
+		t.Fatalf("archive = %d, %v; want 1 task archived", count, err)
 	}
-
-	info, err := os.Stat(openFile)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info.Mode().Perm() != util.SecureFilePerm {
-		t.Errorf("expected mode 0600, got %o", info.Mode().Perm())
-	}
+	testsupport.RequireCreatedMode(t, filepath.Join(workingdir, "BACKLOG.md"), 0o600)
 }
