@@ -123,6 +123,19 @@ func ParseReplaceDirective(line string) (ReplaceDirective, bool) {
 // moduleKeyword is the directive that names the module a manifest defines.
 const moduleKeyword = "module"
 
+// ModuleDirective returns the module path a whole manifest declares, as ModulePath reads its
+// module line, and whether the manifest declares one within the first maxDirectiveLines
+// lines. It is the manifest-level form of ModulePath, as GoDirective is of GoDirectiveLine.
+func ModuleDirective(manifest []byte) (string, bool) {
+	lines := strings.Split(string(manifest), "\n")
+	for i := 0; i < len(lines) && i < maxDirectiveLines; i++ {
+		if path, declared := ModulePath(lines[i]); declared {
+			return path, true
+		}
+	}
+	return "", false
+}
+
 // ModulePath extracts the module directive's path from a single go.mod line, e.g.
 // "module github.com/cordanaLLM/praetor" -> "github.com/cordanaLLM/praetor". It reads the
 // line the way golang.org/x/mod/modfile.ModulePath does: a trailing // comment is dropped,
