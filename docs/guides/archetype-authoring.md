@@ -119,7 +119,13 @@ Maven wrapper, `mvn`, the Gradle wrapper, then the runner's `gradle` for a Gradl
 wrapper. A wrapper committed without its executable bit runs through `sh`. A Gradle build with no
 wrapper on a runner without `gradle` stops with a message naming the missing wrapper.
 `TestJVMBuildStepRunsTheRepositorysBuild` (`internal/flavor/jvm_ci_test.go`) executes the step
-against each layout with stub build tools.
+against each layout with stub build tools. The Flutter analyzer config
+(`templates/flutter/analysis_options.yaml.tmpl`) includes `package:flutter_lints/flutter.yaml` or
+`package:lints/recommended.yaml` only when `pubspec.yaml` declares that package as a dependency or dev
+dependency (`internal/flavor/dart_lints.go`). Otherwise it has no include, because `flutter analyze`
+fails on an include pub cannot resolve, and keeps its core linter rules, which need no package.
+`TestScaffoldedDartAnalysisConfigIncludesOnlyADeclaredLintPackage` (`internal/flavor/dart_lints_test.go`)
+covers each case.
 
 A body that depends on the repository declares `Resolve`. The Node CI job installs from the committed
 lockfile and runs the `test` script, and `typescript-node` matches any `package.json` in an

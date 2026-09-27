@@ -13,6 +13,35 @@ import (
 // the zero value of those facts here.
 var sampleContext = templates.Context{RepoName: "widget", Owner: "acme"}
 
+// The Dart analyzer config includes the rule set Context.DartLints names, and no include
+// otherwise (BUG-1010).
+func TestRenderFile_DartAnalysisIncludesOnlyTheNamedLintPackage(t *testing.T) {
+	for lints, include := range map[string]string{
+		// Positive: each lint package flavor apply can name.
+		"flutter_lints": "include: package:flutter_lints/flutter.yaml\n",
+		"lints":         "include: package:lints/recommended.yaml\n",
+		// Boundary: the zero value, and negative: a value no branch knows.
+		"":              "",
+		"pedantic_mono": "",
+	} {
+		ctx := sampleContext
+		ctx.DartLints = lints
+		body, err := templates.RenderFile("flutter/analysis_options.yaml.tmpl", ctx)
+		if err != nil {
+			t.Fatalf("render %q: %v", lints, err)
+		}
+		if hasInclude := strings.Contains("\n"+body, "\ninclude:"); hasInclude != (include != "") {
+			t.Errorf("%q: include present = %v, want %v:\n%s", lints, hasInclude, include != "", body)
+		}
+		if !strings.Contains(body, include) {
+			t.Errorf("%q: body lacks %q:\n%s", lints, include, body)
+		}
+		if !strings.Contains(body, "\nlinter:\n  rules:\n") {
+			t.Errorf("%q: body lost its linter rules:\n%s", lints, body)
+		}
+	}
+}
+
 // The Node CI body installs with the manager Context.Node names (BUG-1011).
 func TestRenderFile_NodeCIInstallsWithTheNamedManager(t *testing.T) {
 	render := func(node templates.NodeContext) string {

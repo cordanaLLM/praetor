@@ -604,7 +604,15 @@ func (f *MobileFlutterFlavor) Detect(repoPath string) bool {
 
 func (f *MobileFlutterFlavor) RequiredTemplates() []TemplateItem {
 	return []TemplateItem{
-		{Path: "analysis_options.yaml", Description: "Dart and Flutter analyzer linter configuration", Source: "flutter/analysis_options.yaml.tmpl", Validator: validYAMLMapping},
+		{
+			Path:        "analysis_options.yaml",
+			Description: "Dart and Flutter analyzer linter configuration",
+			Source:      "flutter/analysis_options.yaml.tmpl",
+			// The body includes a lint package's rule set only where pubspec.yaml declares that
+			// package; flutter analyze fails on an include pub cannot resolve.
+			Resolve:   dartAnalysisFacts,
+			Validator: validYAMLMapping,
+		},
 		{Path: ".github/workflows/ci.yml", Description: "Flutter test and build validation matrix", Source: "flutter/ci-flutter.yml.tmpl", Validator: validWorkflow},
 	}
 }

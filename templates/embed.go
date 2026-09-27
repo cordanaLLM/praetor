@@ -64,6 +64,12 @@ type Context struct {
 	CopyrightHolder   string `json:"copyright_holder"`
 	LicenseIdentifier string `json:"license_identifier"`
 
+	// DartLints names the lint package whose rule set the Dart analyzer config
+	// (flutter/analysis_options.yaml.tmpl) includes: "flutter_lints", "lints", or "" for a
+	// config that includes none. flavor apply reads it from pubspec.yaml
+	// (internal/flavor/dart_lints.go).
+	DartLints string `json:"dart_lints"`
+
 	// Node is what the Node CI body (node/ci-node.yml.tmpl) installs and runs scripts with.
 	// flavor apply reads it from package.json and the committed lockfile
 	// (internal/flavor/node_ci.go); the zero value renders the npm job.
