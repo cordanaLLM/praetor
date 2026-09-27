@@ -435,8 +435,10 @@ Tests: `internal/adopt/agent_surface_preflight_test.go`.
 
 `standards_needs_report` selects the operator settings on every call, the way
 `praetorctl hook` does: `PRAETOR_FLEET_CONFIG` and `PRAETOR_WORKSTATION_CONFIG`, then the
-install manifest (`loadNeedsRegistry` in `cmd/standards-mcp/server.go`). A settings change
-therefore reaches a running server without a restart. The tool resolves `framework.targets`
+install manifest (`loadNeedsRegistry` in `cmd/standards-mcp/server.go`). It loads the
+settings and the targets' contracts through `needs.SelectRegistry`, the loader the
+`praetorctl needs` subcommands use (`TestSelectRegistry_3D` in `internal/needs`). A settings
+change therefore reaches a running server without a restart. The tool resolves `framework.targets`
 and its `framework` argument exactly as `praetorctl needs report` does
 (`needs.SelectFrameworkSource`) and prints the same header (`needs.FormatReportHeader`,
 including `Deprecated input:` lines). Praetor ships no framework data: with no target
