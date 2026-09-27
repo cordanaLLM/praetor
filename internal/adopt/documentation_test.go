@@ -50,8 +50,10 @@ func TestAdoptionDocumentationGatePositive(t *testing.T) {
 		"/actions/workflows/praetor-docs.yml"
 	readme := mustRead(t, filepath.Join(root, readmeFile))
 	for _, want := range []string{
-		"[![Documentation Governance](" + workflowURL + "/badge.svg)](" + workflowURL + ")",
-		"| **Documentation** | `make docs-lint` | Enforces locked Markdown style and private scratch-link policy |",
+		"[![Documentation Governance][praetor-docs-badge]][praetor-docs-runs]\n",
+		"[praetor-docs-badge]: " + workflowURL + "/badge.svg\n",
+		"[praetor-docs-runs]: " + workflowURL + "\n",
+		"**Documentation**: `make docs-lint` enforces locked Markdown style and the\n",
 	} {
 		if strings.Count(readme, want) != 1 {
 			t.Fatalf("adopted README must contain one exact documentation contract %q:\n%s", want, readme)

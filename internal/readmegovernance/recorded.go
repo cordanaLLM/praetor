@@ -9,8 +9,8 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// RecordedState reads back the state content's managed block records: the debt baseline row
-// and whether the documentation contract row is present. With the contract present the state
+// RecordedState reads back the state content's managed block records: the debt baseline
+// paragraph and whether the documentation contract paragraph is present. With the contract present the state
 // names owner/name, the repository the block's documentation badge must link to. It reports
 // false with no error when content carries no managed block. A state is returned only when
 // content is exactly Reconcile's output for it, so a hand-edited block, a block another
@@ -43,23 +43,23 @@ func RecordedState(content, owner, name string) (State, bool, error) {
 // RecordedState then proves the parse by rendering it again through Verify.
 func blockState(lines []string, owner, name string) (State, error) {
 	var state State
-	if slices.Contains(lines, documentationRow) {
+	if slices.Contains(lines, documentationLine) {
 		state.DocumentationEnabled = true
 		state.RepositoryOwner, state.RepositoryName = owner, name
 	}
-	for _, line := range lines {
-		if description, found := strings.CutPrefix(line, debtRowPrefix); found {
-			return baselineState(state, strings.TrimSuffix(description, debtRowSuffix))
+	for index, line := range lines {
+		switch {
+		case line == debtPendingLine:
+			return state, nil
+		case line == debtRecordedLine && index+1 < len(lines):
+			return baselineState(state, strings.TrimSuffix(lines[index+1], debtRecordedSuffix))
 		}
 	}
 	return State{}, fmt.Errorf("%w: no debt baseline row", ErrStale)
 }
 
-// baselineState reads one baselineDescription output back into state.
+// baselineState reads the recorded count line baselineParagraph writes back into state.
 func baselineState(state State, description string) (State, error) {
-	if description == baselineDescription(State{}) {
-		return state, nil
-	}
 	count, _, _ := strings.Cut(description, " ")
 	n, err := strconv.Atoi(count)
 	if err != nil || n < 0 {

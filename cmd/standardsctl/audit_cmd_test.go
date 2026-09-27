@@ -111,16 +111,24 @@ func TestAuditReadmeGovernanceGate(t *testing.T) {
 		writeFixtureFile(t, f.dir, "README.md", `# Widgets
 
 <!-- praetor:readme-governance:start -->
-[![HISS Adopted](https://img.shields.io/badge/Standards-HISS%20Adopted-blue)](AGENTS.md)
+[![HISS Adopted][praetor-hiss-badge]](AGENTS.md)
 
-Praetor manages this repository's declared governance policy. This managed block records adoption state; it is not a verification certificate.
+Praetor manages this repository's declared governance policy. This managed
+block records adoption state; it is not a verification certificate.
 
-| Gate | Command | Contract |
-| :--- | :--- | :--- |
-| **Verification** | `+"`make verify-all`"+` | Runs the repository's configured verification cascade |
-| **HISS Audit** | `+"`praetorctl audit`"+` | Enforces policy, generated-surface integrity, and the debt ratchet |
-| **Context Sync** | `+"`praetorctl compile-context --verify`"+` | Verifies every generated agent context against `+"`AGENTS.md`"+` |
-| **Debt Baseline** | `+"`.standards-baseline.json`"+` | 0 recorded infractions; audit forbids growth |
+**Verification**: `+"`make verify-all`"+` runs the repository's configured
+verification cascade.
+
+**HISS Audit**: `+"`praetorctl audit`"+` enforces policy, generated-surface
+integrity, and the debt ratchet.
+
+**Context Sync**: `+"`praetorctl compile-context --verify`"+` verifies every
+generated agent context against `+"`AGENTS.md`"+`.
+
+**Debt Baseline**: `+"`.standards-baseline.json`"+` anchors the debt ratchet at
+0 recorded infractions; audit forbids growth.
+
+[praetor-hiss-badge]: https://img.shields.io/badge/Standards-HISS%20Adopted-blue
 <!-- praetor:readme-governance:end -->
 `)
 		out, err := f.audit(t)

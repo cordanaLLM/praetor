@@ -410,10 +410,10 @@ func TestAuditReadmeDocumentationContract(t *testing.T) {
 	}
 	for name, stale := range map[string]string{
 		"missing badge": strings.Replace(canonical,
-			"[![Documentation Governance](https://github.com/acme/widgets/actions/workflows/praetor-docs.yml/badge.svg)](https://github.com/acme/widgets/actions/workflows/praetor-docs.yml)\n", "", 1),
+			"[![Documentation Governance][praetor-docs-badge]][praetor-docs-runs]\n", "", 1),
 		"stale badge": strings.Replace(canonical, "github.com/acme/widgets/", "github.com/acme/old-widgets/", 1),
 		"missing row": strings.Replace(canonical,
-			"| **Documentation** | `make docs-lint` | Enforces locked Markdown style and private scratch-link policy |\n", "", 1),
+			"**Documentation**: `make docs-lint` enforces locked Markdown style and the\n", "", 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			writeFixtureFile(t, root, "README.md", stale)

@@ -74,7 +74,7 @@ func TestRecordedStateNegativeRefusesUnrenderedBlocks(t *testing.T) {
 	stale := map[string]string{
 		"hand-edited count": strings.Replace(rendered, "3 recorded infractions", "9 recorded infractions", 1),
 		"other repository":  strings.ReplaceAll(rendered, "github.com/acme/widgets/", "github.com/other/widgets/"),
-		"no debt row":       strings.Replace(rendered, debtRowPrefix+"3 recorded infractions; audit forbids growth"+debtRowSuffix+"\n", "", 1),
+		"no debt row":       strings.Replace(rendered, debtRecordedLine+"\n3 recorded infractions"+debtRecordedSuffix+"\n", "", 1),
 		"unreadable count":  strings.Replace(rendered, "3 recorded infractions", "three recorded infractions", 1),
 	}
 	for name, input := range stale {

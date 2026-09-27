@@ -23,17 +23,28 @@
 </div>
 
 <!-- praetor:readme-governance:start -->
-[![Documentation Governance](https://github.com/cordanaLLM/praetor/actions/workflows/praetor-docs.yml/badge.svg)](https://github.com/cordanaLLM/praetor/actions/workflows/praetor-docs.yml)
+[![Documentation Governance][praetor-docs-badge]][praetor-docs-runs]
 
-Praetor manages this repository's declared governance policy. This managed block records adoption state; it is not a verification certificate.
+Praetor manages this repository's declared governance policy. This managed
+block records adoption state; it is not a verification certificate.
 
-| Gate | Command | Contract |
-| :--- | :--- | :--- |
-| **Verification** | `make verify-all` | Runs the repository's configured verification cascade |
-| **HISS Audit** | `praetorctl audit` | Enforces policy, generated-surface integrity, and the debt ratchet |
-| **Context Sync** | `praetorctl compile-context --verify` | Verifies every generated agent context against `AGENTS.md` |
-| **Documentation** | `make docs-lint` | Enforces locked Markdown style and private scratch-link policy |
-| **Debt Baseline** | `.standards-baseline.json` | 0 recorded infractions; audit forbids growth |
+**Verification**: `make verify-all` runs the repository's configured
+verification cascade.
+
+**HISS Audit**: `praetorctl audit` enforces policy, generated-surface
+integrity, and the debt ratchet.
+
+**Context Sync**: `praetorctl compile-context --verify` verifies every
+generated agent context against `AGENTS.md`.
+
+**Documentation**: `make docs-lint` enforces locked Markdown style and the
+private scratch-link policy.
+
+**Debt Baseline**: `.standards-baseline.json` anchors the debt ratchet at
+0 recorded infractions; audit forbids growth.
+
+[praetor-docs-badge]: https://github.com/cordanaLLM/praetor/actions/workflows/praetor-docs.yml/badge.svg
+[praetor-docs-runs]: https://github.com/cordanaLLM/praetor/actions/workflows/praetor-docs.yml
 <!-- praetor:readme-governance:end -->
 
 ---

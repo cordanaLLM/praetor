@@ -83,6 +83,17 @@ back from that block and render it again for the fork's `repository.owner` and
 ([README governance block](operational-sync.md#readme-governance-block),
 `internal/operationalsync/readme_test.go`).
 
+Every line of the block passes markdownlint's MD013 at its default 80 columns,
+strict mode and tables included, whatever the repository identity, so an
+adopter's own line-length lint needs no disable comment around it. The badges
+are reference-style images whose URLs sit in link reference definitions at the
+end of the block, which MD013 always exempts, and the prose is wrapped. Each
+gate is a paragraph rather than a list item: MD004 takes a document's list
+marker from its first list, and a list near the top of the README would impose
+its marker on every list below (`TestRenderedBlockPassesMD013Positive` and its
+negative and boundary cases in `internal/readmegovernance`, the boundary at
+GitHub's 39-character owner and 100-character repository limits).
+
 `praetorctl audit` renders the same expected block in memory and fails when the
 README block is missing, malformed, duplicated, or stale. Re-run
 `praetorctl adopt` to migrate the historical unmarked HISS-16 badge and

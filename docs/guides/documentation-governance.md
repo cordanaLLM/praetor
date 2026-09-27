@@ -170,7 +170,7 @@ copy an entire scratch directory to make the diagnostic disappear.
 Repositories declaring the `docs:seo-portal` facet receive the five canonical
 assets under `tools/markdownlint/`, a `docs-lint` prerequisite on `verify-all`,
 and `.github/workflows/praetor-docs.yml`. The marker-owned README block gains an
-exact **Documentation Governance** workflow badge and `make docs-lint` gate row,
+exact **Documentation Governance** workflow badge and `make docs-lint` gate entry,
 using the repository identity declared by the effective manifest. A manifest
 without `repository.owner` and `repository.name` leaves the README block
 unreconciled and records the skip as a warning. Adoption runs
@@ -204,7 +204,7 @@ Disabling `docs:seo-portal` is a convergent transition. Run
 `praetorctl adopt --force` so the generated branch ruleset can drop its hosted
 status context; without that authorization, adoption refuses before deleting
 local assets. The transition removes only canonical-equivalent workflow/tool assets, earlier
-Praetor texts of them, and the exact managed Makefile block, strips the README badge and row, removes
+Praetor texts of them, and the exact managed Makefile block, strips the README badge and gate entry, removes
 the required status context, and rebuilds the formatter-ignore inventory without
 documentation paths. Operator files beside the tool assets and bytes outside
 managed blocks are preserved.
@@ -214,7 +214,7 @@ assets are deleted; `--force` does not turn an ambiguous deletion into an
 authorized one. Re-enabling the facet restores the same canonical surfaces.
 
 `praetorctl audit` verifies the assets, workflow, Makefile attachment, README
-badge and row, effective scratch ignore rules, any configured formatter's
+badge and gate entry, effective scratch ignore rules, any configured formatter's
 inventory, and the required hosted context. When the facet is disabled, audit rejects stale Praetor
 documentation assets, exact Makefile marker lines, README contract text,
 formatter paths, or a structurally declared hosted status context instead of
