@@ -19,6 +19,25 @@ standardsctl adopt --dry-run
 praetorctl adopt --force --record-baseline --lock-source-root=/path/to/praetor
 ```
 
+### Dry-run ruleset preview
+
+`adopt --dry-run` writes nothing. For the branch protection ruleset
+(`.github/rulesets/main.json`), it prints what a real run would do and what the file would contain
+(`AdoptReport.Previews`, `internal/adopt/preview.go`):
+
+| Action | Meaning | Printed |
+| :--- | :--- | :--- |
+| `create` | no ruleset yet; the run writes one | the rendered ruleset |
+| `update` | the ruleset differs and `--force` replaces it | unified diff from the file on disk to the rendering |
+| `unchanged` | the ruleset already is the rendering, line endings aside | nothing more |
+| `keep` | the ruleset differs and stays, because `--force` was not passed | the diff `--force` would apply |
+
+The preview comes from the same rendering and the same keep-or-replace decision as the real run
+(`internal/adopt/preview_test.go`). Its status checks come from the workflows on disk. A dry run does
+not write the workflows the same adoption would scaffold, such as the flavor's CI or the
+documentation gate, so those checks are missing from the preview. The real run derives the checks
+again after it writes those workflows.
+
 ### Large repositories
 
 Adoption discovers verification inputs (Makefiles, manifests, scripts) through a bounded

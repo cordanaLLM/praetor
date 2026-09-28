@@ -77,6 +77,9 @@ func runFlavorInspect(args []string) error {
 	fmt.Println("\nRequired Settings:")
 	for _, s := range flv.RequiredSettings() {
 		fmt.Printf("  - %-25s : %s\n", s.Name, s.Path)
+		if s.Producer != "" {
+			fmt.Printf("    %-25s   written by: %s\n", "", s.Producer)
+		}
 	}
 
 	fmt.Println("\nRequired Toolchains:")

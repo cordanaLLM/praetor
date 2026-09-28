@@ -74,6 +74,20 @@ func TestFlavorUsage_Boundary_DescribesSettingsApplyWrites(t *testing.T) {
 	}
 }
 
+// Boundary: inspect names the producer of each setting apply leaves to another command and none
+// for the ruleset apply renders.
+func TestFlavorInspect_Boundary_NamesSettingProducers(t *testing.T) {
+	out, err := captureStdout(t, func() error { return dispatchCommand("flavor", []string{"inspect", "go-service"}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, settings, _ := strings.Cut(out, "Required Settings:")
+	mustContain(t, settings, "lefthook.yml\n", "written by: praetorctl adopt", "written by: praetorctl editors generate")
+	if strings.Count(settings, "written by:") != 2 {
+		t.Fatalf("only the two deferred settings name a producer:\n%s", settings)
+	}
+}
+
 // printAdoptPreviews prints the rendered file for a create, the diff for an update and nothing
 // beyond the heading for an unchanged file.
 func TestPrintAdoptPreviews_3D(t *testing.T) {
