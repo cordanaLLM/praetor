@@ -191,14 +191,9 @@ func checkDiskInvariants(stats HostStats, report *HostReport) {
 // after an admitted load is at most 80% and can never reach RAMPressureThreshold (85%).
 // A separate utilization check could not reject anything the reservation admits.
 func CanAllocateModel(stats *HostStats, vramRequiredGB float64) bool {
-	// A zero total means memory was never measured, and admission is refused rather than decided
-	// against unknown headroom. This guard already existed; it is what makes the unmeasured case
-	// safe without a second check.
-	if stats == nil || vramRequiredGB <= 0 || stats.RAMTotalBytes == 0 {
-		return false
-	}
-	// More free than total RAM is an inconsistent reading, refused rather than trusted.
-	if vramRequiredGB > 100000 || stats.RAMFreeBytes > stats.RAMTotalBytes {
+	// Without a consistent memory reading admission is refused rather than decided against
+	// unknown headroom (MemoryMeasured).
+	if !MemoryMeasured(stats) || vramRequiredGB <= 0 || vramRequiredGB > 100000 {
 		return false
 	}
 	reqBytes := uint64(vramRequiredGB * 1024 * 1024 * 1024)
@@ -206,6 +201,14 @@ func CanAllocateModel(stats *HostStats, vramRequiredGB float64) bool {
 		return false
 	}
 	return stats.RAMFreeBytes-reqBytes >= CalculateRAMReservation(stats.RAMTotalBytes)
+}
+
+// MemoryMeasured reports whether stats hold a consistent memory reading: a non-nil report with a
+// non-zero total (zero means memory was never measured) and free RAM not above total (more free
+// than total is an inconsistent reading). CanAllocateModel, MeetsHeadroom and praetorctl sentinel
+// --min-free-mb refuse to decide without one, through this one predicate.
+func MemoryMeasured(stats *HostStats) bool {
+	return stats != nil && stats.RAMTotalBytes != 0 && stats.RAMFreeBytes <= stats.RAMTotalBytes
 }
 
 // MaxHeadroomMB bounds a free-RAM headroom request in MiB: 1 PiB, above any host, and low enough
@@ -216,10 +219,7 @@ const MaxHeadroomMB uint64 = 1 << 30
 // CanAllocateModel it refuses rather than decides: an unmeasured host (zero total), an
 // inconsistent reading (free above total) and a request outside 1..MaxHeadroomMB all return false.
 func MeetsHeadroom(stats *HostStats, headroomMB uint64) bool {
-	if stats == nil || headroomMB == 0 || headroomMB > MaxHeadroomMB {
-		return false
-	}
-	if stats.RAMTotalBytes == 0 || stats.RAMFreeBytes > stats.RAMTotalBytes {
+	if !MemoryMeasured(stats) || headroomMB == 0 || headroomMB > MaxHeadroomMB {
 		return false
 	}
 	return stats.RAMFreeBytes >= headroomMB*1024*1024

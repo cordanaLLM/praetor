@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Event } from "vscode";
-import { MCP_SERVER_LABEL, McpFolder, McpLaunch, mcpLaunch, McpProviderHost, McpSettings, StandardsMcpProvider } from "./mcp";
+import { LaunchFileWatch, MCP_SERVER_LABEL, McpFolder, McpLaunch, mcpLaunch, McpProviderHost, McpSettings, StandardsMcpProvider } from "./mcp";
 import { launchCandidates } from "./setup";
 
 const root = "/work/repo";
@@ -97,5 +97,89 @@ test("a standards.mcp change, trust or folder change fires the definitions event
   subject.configurationChanged({ affectsConfiguration: section => section === "standards.lsp" });
   assert.equal(fired, 1, "an unrelated setting fired the MCP event");
   subject.refresh();
+  assert.equal(fired, 2);
+});
+
+// watching wires a LaunchFileWatch the way extension.ts does: update() after every provider change,
+// with a fake WatchFile that records the watched files and their change callbacks.
+function watching(subject: StandardsMcpProvider<McpLaunch>) {
+  const active = new Map<string, () => void>();
+  let started = 0;
+  const watch = new LaunchFileWatch(subject, (file, changed) => {
+    started++;
+    active.set(file, changed);
+    return { dispose: () => { active.delete(file); } };
+  });
+  subject.onDidChangeMcpServerDefinitions(() => watch.update());
+  watch.update();
+  return { watch, active, started: () => started };
+}
+
+test("a server built after activation is listed without a reload", async () => {
+  const fixture: Fixture = { files: [] };
+  const { provider: subject } = provider(fixture);
+  const { active } = watching(subject);
+  let fired = 0;
+  subject.onDidChangeMcpServerDefinitions(() => { fired++; });
+  assert.deepEqual(await subject.provideMcpServerDefinitions(), []);
+  assert.deepEqual([...active.keys()], [defaultCommand]);
+  // make build writes bin/standards-mcp: the watcher reports it and VS Code asks again.
+  fixture.files = [defaultCommand];
+  active.get(defaultCommand)?.();
+  assert.equal(fired, 1);
+  assert.equal((await subject.provideMcpServerDefinitions()).length, 1);
+});
+
+test("nothing is watched without a launch or for a command the host looks up", () => {
+  const cases: Fixture[] = [
+    { settings: { enabled: false, path: undefined } },
+    { trusted: false },
+    { folder: undefined },
+    { settings: { enabled: true, path: "standards-mcp" } },
+    { settings: { enabled: true, path: "bin/standards-mcp" } },
+  ];
+  for (const fixture of cases) {
+    const { provider: subject } = provider(fixture);
+    assert.deepEqual(subject.launchFiles(), [], JSON.stringify(fixture));
+    const { active, started } = watching(subject);
+    assert.equal(active.size + started(), 0, JSON.stringify(fixture));
+  }
+});
+
+test("the watch covers at most the three launch candidates and follows setting changes", () => {
+  const fixture: Fixture = { platform: "win32" };
+  const { provider: subject } = provider(fixture);
+  const { watch, active, started } = watching(subject);
+  assert.deepEqual([...active.keys()], [defaultCommand, `${defaultCommand}.com`, `${defaultCommand}.exe`]);
+  // A change that leaves the files alone keeps the same watchers.
+  subject.refresh();
+  assert.equal(started(), 3);
+  // A new path replaces them: the old watchers are disposed, one new file is watched.
+  const moved = `${root}/tools/praetor-mcp.exe`;
+  fixture.settings = { enabled: true, path: moved };
+  subject.configurationChanged({ affectsConfiguration: section => section === "standards.mcp" });
+  assert.deepEqual([...active.keys()], [moved]);
+  assert.equal(started(), 4);
+  watch.dispose();
+  assert.equal(active.size, 0);
+});
+
+test("a changed active folder re-announces the definitions, an unchanged one does not", async () => {
+  // A multi-root window with no active editor at activation selects no folder.
+  const fixture: Fixture = { folder: undefined };
+  const { provider: subject } = provider(fixture);
+  let fired = 0;
+  subject.onDidChangeMcpServerDefinitions(() => { fired++; });
+  assert.deepEqual(await subject.provideMcpServerDefinitions(), []);
+  subject.activeFolderChanged();
+  assert.equal(fired, 0, "no folder before and after fired the event");
+  fixture.folder = { fsPath: root };
+  subject.activeFolderChanged();
+  assert.equal(fired, 1);
+  assert.equal((await subject.provideMcpServerDefinitions()).length, 1);
+  subject.activeFolderChanged();
+  assert.equal(fired, 1, "an editor in the same folder fired the event");
+  fixture.folder = { fsPath: "/work/other" };
+  subject.activeFolderChanged();
   assert.equal(fired, 2);
 });

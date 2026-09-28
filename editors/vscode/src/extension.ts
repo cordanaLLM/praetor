@@ -1,15 +1,17 @@
 import { stat } from "node:fs/promises";
+import * as path from "node:path";
 import * as vscode from "vscode";
 import { LanguageClient } from "vscode-languageclient/node";
-import { MCP_PROVIDER_ID, McpLaunch, StandardsMcpProvider } from "./mcp";
+import { LaunchFileWatch, MCP_PROVIDER_ID, McpLaunch, StandardsMcpProvider } from "./mcp";
 import { DEFAULT_TIMEOUT_MS, runCLI } from "./runner";
-import { artifactPath, ClientCapability, commandAvailable, IsFile, LSP_CLIENT_ID, LSP_DEFAULT_PATH, machineExecutable, parseCapabilities, praetorWorkspace, requireTrust, sentinelArguments, setupArguments, workspaceExecutable, workspaceGlob } from "./setup";
+import { artifactPath, boundedIsFile, ClientCapability, commandAvailable, globLiteral, LSP_CLIENT_ID, LSP_DEFAULT_PATH, machineExecutable, parseCapabilities, praetorWorkspace, requireTrust, sentinelArguments, setupArguments, workspaceExecutable, workspaceGlob } from "./setup";
 
 let client: LanguageClient | undefined;
 let lspStarting = false;
 let output: vscode.OutputChannel;
 
-const isFile: IsFile = file => stat(file).then(entry => entry.isFile(), () => false);
+// Every existence probe is raced against FILE_PROBE_TIMEOUT_MS; a stalled mount counts as absent.
+const isFile = boundedIsFile(file => stat(file).then(entry => entry.isFile()));
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   output = vscode.window.createOutputChannel("Praetor");
@@ -50,8 +52,25 @@ function registerMcpProvider(context: vscode.ExtensionContext): StandardsMcpProv
   }, emitter);
   context.subscriptions.push(emitter, vscode.lm.registerMcpServerDefinitionProvider(MCP_PROVIDER_ID, provider),
     vscode.workspace.onDidChangeConfiguration(change => provider.configurationChanged(change)),
-    vscode.workspace.onDidChangeWorkspaceFolders(() => provider.refresh()));
+    vscode.workspace.onDidChangeWorkspaceFolders(() => provider.refresh()),
+    vscode.window.onDidChangeActiveTextEditor(() => provider.activeFolderChanged()));
+  watchLaunchFiles(context, provider);
   return provider;
+}
+
+// watchLaunchFiles refreshes the provider when a launch file of the current server appears or
+// disappears, so the first build after activation lists the server without a reload. A watch on a
+// directory that does not exist yet starts once it is created (workspace.createFileSystemWatcher).
+function watchLaunchFiles(context: vscode.ExtensionContext, provider: StandardsMcpProvider<vscode.McpStdioServerDefinition, vscode.Uri>): void {
+  const watch = new LaunchFileWatch(provider, (file, changed) => {
+    const pattern = new vscode.RelativePattern(vscode.Uri.file(path.dirname(file)), globLiteral(path.basename(file)));
+    const watcher = vscode.workspace.createFileSystemWatcher(pattern, false, true, false);
+    watcher.onDidCreate(changed);
+    watcher.onDidDelete(changed);
+    return watcher;
+  });
+  context.subscriptions.push(watch, provider.onDidChangeMcpServerDefinitions(() => watch.update()));
+  watch.update();
 }
 
 async function selectWorkspaceFolder(): Promise<vscode.WorkspaceFolder | undefined> {

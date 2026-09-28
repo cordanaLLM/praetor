@@ -26,7 +26,7 @@ This installs the lockfile dependencies without install scripts, compiles strict
 TypeScript, runs subprocess and setup tests, and builds a temporary Go CLI for a
 real configuration prepare/apply test. `make verify-all` includes this gate.
 The runtime dependency is `vscode-languageclient` 9.0.1; the declared minimum host
-is VS Code 1.125 (see [Minimum host](#minimum-host)). These tests do not launch
+is VS Code 1.107 (see [Minimum host](#minimum-host)). These tests do not launch
 an extension host. With an installed
 VS Code and a working display, run `npm run test:host --prefix editors/vscode`
 for an isolated host smoke test. It uses disposable user data, extension and
@@ -67,8 +67,11 @@ it does not start against an arbitrary first folder. The default is
 starts nothing and logs one line to the **Praetor** output channel; the
 **Praetor LSP unavailable** warning is reserved for a binary that exists but
 fails to start. The existence check is the one the MCP provider uses
-(`commandAvailable` in `src/setup.ts`). All paths and processes belong to the
-actual extension host, which may be remote or in a container.
+(`commandAvailable` in `src/setup.ts`). Every existence probe, including the
+status-bar marker check, is raced against a 1 s timer (`boundedIsFile`,
+`FILE_PROBE_TIMEOUT_MS`), so a stalled network or remote mount counts as absent
+instead of hanging activation. All paths and processes belong to the actual
+extension host, which may be remote or in a container.
 
 ## MCP server
 
@@ -102,9 +105,22 @@ of these hold:
   `<path>.exe` also count, so `make build` output `bin/standards-mcp.exe` serves
   the default. A command name or relative path is passed on unchecked.
 
-A change to any `standards.mcp.*` setting, granted Workspace Trust or a changed
-folder set fires `onDidChangeMcpServerDefinitions`, and VS Code asks again. The
-LSP and the MCP server resolve `${workspaceFolder}` through one helper,
+The provider fires `onDidChangeMcpServerDefinitions`, and VS Code asks again,
+when:
+
+- a `standards.mcp.*` setting changes, Workspace Trust is granted or the folder
+  set changes;
+- in a multi-root window, the active editor moves to another folder, including
+  the first editor opened after activation;
+- one of the checked files above is created or deleted, for example when
+  `make build` writes `bin/standards-mcp` after the window opened.
+  `LaunchFileWatch` in `src/mcp.ts` keeps one non-recursive watcher per checked
+  file, at most three, and replaces them when the path changes. A non-recursive
+  watch still reports files that `files.watcherExclude` hides, such as the `bin`
+  entry Praetor's generated Antigravity settings add, and a watch on a directory
+  that does not exist yet starts once it is created.
+
+The LSP and the MCP server resolve `${workspaceFolder}` through one helper,
 `workspaceExecutable` in `src/setup.ts`. Tests: `src/mcp.test.ts` (provider)
 and `src/setup.test.ts` (manifest contract).
 
@@ -115,18 +131,26 @@ writes a second VS Code entry; its setup command serves the other clients.
 
 ## Minimum host
 
-`engines.vscode` is `^1.125.0`, and the pinned `@types/vscode` is `1.125.0`,
-because `vsce` refuses host types newer than the engine floor. The MCP provider
-API first ships in 1.101.0, and its declarations are unchanged from 1.101.0
-through 1.138.0. The floor sits about one quarter behind VS Code 1.139 (stable
-on 2026-09-28), leaving room for VS Code-based editors that trail upstream. It is
-also later than the September 2025 fix for VS Code activating every MCP provider
-extension in empty workspaces (microsoft/vscode#266221): that fix,
-microsoft/vscode#268097, made MCP provider activation lazy and added the
-contribution `when` clause the extension uses. VS Code and forks older
-than 1.125 no longer install updates of this extension. `src/setup.test.ts`
-checks that the floor, the pinned types and the lockfile agree and that the
-floor carries the MCP API.
+`engines.vscode` is `^1.107.0`, and the pinned `@types/vscode` is `1.107.0`,
+because `vsce` refuses host types newer than the engine floor. The floor keeps
+Antigravity IDE, which reports VS Code 1.107.0, and other VS Code-based editors
+that trail upstream on the update path. Everything the extension uses is in
+1.107.0:
+
+- the MCP provider API (`lm.registerMcpServerDefinitionProvider`,
+  `McpStdioServerDefinition`) first ships in 1.101.0, and its declarations in
+  `@types/vscode` 1.107.0 and 1.125.0 are identical;
+- the contribution `when` clause first ships in 1.105.0. It is
+  microsoft/vscode#268097, the fix for microsoft/vscode#266221, where VS Code
+  activated every MCP provider extension in empty workspaces. In 1.107.0,
+  `extensionMcpDiscovery.ts` registers a collection that has a `when` only
+  while the clause holds, and only that collection's lazy load fires
+  `onMcpCollection:standards.mcp`.
+
+VS Code and forks older than 1.107 no longer install updates of this extension.
+`src/setup.test.ts` checks that the floor, the pinned types and the lockfile
+agree, and that the floor lies between 1.105.0 (the `when` clause) and 1.107.0
+(the trailing fork host).
 
 ## Settings
 

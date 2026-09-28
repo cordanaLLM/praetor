@@ -81,7 +81,7 @@ func reportModelAllocation(stats *sentinel.HostStats, vramGB float64) {
 // RAM covers headroomMB. The VS Code extension's Check Sentinel Host Headroom command passes its
 // standards.sentinel.headroomMB setting here, so the measurement stays in this one implementation.
 func reportHeadroom(stats *sentinel.HostStats, headroomMB uint64) error {
-	if stats.RAMTotalBytes == 0 || stats.RAMFreeBytes > stats.RAMTotalBytes {
+	if !sentinel.MemoryMeasured(stats) {
 		fmt.Printf("\nHeadroom (%d MiB): [UNMEASURED] No consistent memory reading on this host.\n", headroomMB)
 		return fmt.Errorf("headroom of %d MiB unverified: host memory has no consistent reading", headroomMB)
 	}

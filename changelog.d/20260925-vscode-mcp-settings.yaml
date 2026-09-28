@@ -1,3 +1,0 @@
-type: fixed
-title: The VS Code extension no longer contributes the standards.mcp.enabled and standards.mcp.path settings, which nothing read and which its VS Code 1.90 host API cannot act on; MCP configuration comes from the Prepare Agent MCP Configuration command
-breaking: false

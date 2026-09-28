@@ -628,3 +628,48 @@ func TestMeetsHeadroom_Boundary(t *testing.T) {
 		t.Fatal("a request past the MiB limit was decided")
 	}
 }
+
+// TestMemoryMeasured_Positive: a non-zero total with free RAM at or below it is a reading.
+func TestMemoryMeasured_Positive(t *testing.T) {
+	for _, stats := range []HostStats{
+		{RAMTotalBytes: 16 * gib, RAMFreeBytes: 2 * gib},
+		{RAMTotalBytes: 16 * gib},
+	} {
+		if !MemoryMeasured(&stats) {
+			t.Errorf("%+v was not accepted as a memory reading", stats)
+		}
+	}
+}
+
+// TestMemoryMeasured_Negative: a nil report, an unmeasured host and free above total are no
+// reading, and every decision built on the predicate refuses them alike.
+func TestMemoryMeasured_Negative(t *testing.T) {
+	cases := map[string]*HostStats{
+		"nil":          nil,
+		"unmeasured":   {},
+		"free only":    {RAMFreeBytes: gib},
+		"inconsistent": {RAMTotalBytes: 8 * gib, RAMFreeBytes: 64 * gib},
+	}
+	for name, stats := range cases {
+		if MemoryMeasured(stats) {
+			t.Errorf("%s: accepted as a memory reading", name)
+		}
+		if MeetsHeadroom(stats, 1) || CanAllocateModel(stats, 0.001) {
+			t.Errorf("%s: a decision was made without a memory reading", name)
+		}
+	}
+}
+
+// TestMemoryMeasured_Boundary: free exactly equal to total is a reading, one byte more is not,
+// and the smallest non-zero total counts.
+func TestMemoryMeasured_Boundary(t *testing.T) {
+	if !MemoryMeasured(&HostStats{RAMTotalBytes: 4 * gib, RAMFreeBytes: 4 * gib}) {
+		t.Fatal("free RAM equal to total was refused")
+	}
+	if MemoryMeasured(&HostStats{RAMTotalBytes: 4 * gib, RAMFreeBytes: 4*gib + 1}) {
+		t.Fatal("free RAM one byte above total was accepted")
+	}
+	if !MemoryMeasured(&HostStats{RAMTotalBytes: 1}) {
+		t.Fatal("a one-byte total was refused")
+	}
+}

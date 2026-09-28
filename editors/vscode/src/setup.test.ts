@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import test from "node:test";
 import { MCP_PROVIDER_ID } from "./mcp";
-import { artifactPath, commandAvailable, LSP_CLIENT_ID, LSP_DEFAULT_PATH, machineExecutable, MAX_MARKER_FOLDERS, MCP_DEFAULT_PATH, parseCapabilities, PRAETOR_MARKERS, praetorWorkspace, requireTrust, sentinelArguments, setupArguments, workspaceExecutable, workspaceGlob } from "./setup";
+import { artifactPath, boundedIsFile, checkedLaunchFiles, commandAvailable, globLiteral, LSP_CLIENT_ID, LSP_DEFAULT_PATH, machineExecutable, MAX_MARKER_FOLDERS, MCP_DEFAULT_PATH, parseCapabilities, PRAETOR_MARKERS, praetorWorkspace, requireTrust, sentinelArguments, setupArguments, workspaceExecutable, workspaceGlob } from "./setup";
 import { runCLI } from "./runner";
 
 const sample = { client: "claude", mode: "merge", documentation: "https://example.invalid/docs", lifecycle: { state: "adapter-defined", definition_paths: [".claude/settings.json"], activation: "unverified" } };
@@ -28,6 +28,15 @@ const readLock = (): { packages: Record<string, { version?: string; engines?: Re
   JSON.parse(fs.readFileSync(path.resolve(__dirname, "..", "package-lock.json"), "utf8"));
 // registerMcpServerDefinitionProvider and McpStdioServerDefinition first ship in @types/vscode 1.101.0.
 const MCP_API_FLOOR = [1, 101, 0];
+// The contribution `when` clause first ships in VS Code 1.105.0 (extensionMcpDiscovery.ts,
+// microsoft/vscode#268097); below it MCP discovery activates the extension everywhere.
+const WHEN_CLAUSE_FLOOR = [1, 105, 0];
+// Antigravity IDE reports VS Code 1.107.0; a floor above it stops the fork receiving the extension.
+const TRAILING_FORK_HOST = [1, 107, 0];
+const compareVersions = (left: number[], right: number[]): number => {
+  const index = left.findIndex((part, position) => part !== right[position]);
+  return index === -1 ? 0 : left[index] - right[index];
+};
 const extensionSource = (): string => fs.readFileSync(path.resolve(__dirname, "..", "src", "extension.ts"), "utf8");
 
 // Settings the extension reads from its configuration section: `.get<T>("key", fallback)` and
@@ -136,6 +145,39 @@ test("a server command starts only when an absolute path names a file", async ()
   assert.deepEqual(checked, [], "a command name or relative path was checked on disk");
 });
 
+test("the checked launch files are the candidates of an absolute command only", () => {
+  assert.deepEqual(checkedLaunchFiles("/r/bin/standards-mcp", "linux"), ["/r/bin/standards-mcp"]);
+  const windows = "C:\\r\\bin\\standards-mcp";
+  assert.deepEqual(checkedLaunchFiles(windows, "win32"), [windows, `${windows}.com`, `${windows}.exe`]);
+  assert.deepEqual(checkedLaunchFiles(`${windows}.exe`, "win32"), [`${windows}.exe`]);
+  for (const command of ["standards-mcp", "bin/standards-mcp", "bin\\standards-mcp"]) {
+    assert.deepEqual(checkedLaunchFiles(command, "win32"), [], command);
+    assert.deepEqual(checkedLaunchFiles(command, "linux"), [], command);
+  }
+});
+
+test("glob symbols in a watched file name match literally", () => {
+  assert.equal(globLiteral("standards-mcp"), "standards-mcp");
+  assert.equal(globLiteral("a*b?c[d]{e}"), "a[*]b[?]c[[]d[]][{]e[}]");
+  assert.equal(globLiteral(""), "");
+  assert.equal(workspaceGlob("/r/a*b/"), "/r/a[*]b/**/*.go");
+});
+
+test("a file probe that stalls or fails counts as absent", async () => {
+  assert.equal(await boundedIsFile(async () => true, 50)("/r/f"), true);
+  assert.equal(await boundedIsFile(async () => false, 50)("/r/f"), false);
+  assert.equal(await boundedIsFile(async () => { throw new Error("EACCES"); }, 50)("/r/f"), false);
+  assert.equal(await boundedIsFile(() => { throw new Error("sync"); }, 50)("/r/f"), false);
+  // A probe that never settles is abandoned at the timeout.
+  const started = Date.now();
+  assert.equal(await boundedIsFile(() => new Promise<boolean>(() => undefined), 20)("/r/f"), false);
+  assert.ok(Date.now() - started < 1000, "the stalled probe was awaited past its timeout");
+  // Boundary: an answer inside the window is kept, one after it is not.
+  const late = (ms: number) => () => new Promise<boolean>(resolve => setTimeout(() => resolve(true), ms));
+  assert.equal(await boundedIsFile(late(5), 200)("/r/f"), true);
+  assert.equal(await boundedIsFile(late(200), 5)("/r/f"), false);
+});
+
 test("the LSP start and the status bar are gated on what exists", () => {
   const source = extensionSource();
   // The LSP resolves its command through commandAvailable before a LanguageClient exists, and the
@@ -145,6 +187,12 @@ test("the LSP start and the status bar are gated on what exists", () => {
   assert.ok(source.indexOf("await lspExecutable(folder)") < source.indexOf("new LanguageClient("));
   assert.deepEqual([...source.matchAll(/status\.show\(\)/g)].length, 1);
   assert.match(source, /if \(await praetorWorkspace\(folders, isFile\)\) status\.show\(\);/);
+  // Every probe those gates make is bounded, and the MCP provider follows its launch files and the
+  // active editor's folder.
+  assert.match(source, /const isFile = boundedIsFile\(/);
+  assert.equal([...source.matchAll(/\bstat\(/g)].length, 1, "an unbounded stat call was added");
+  assert.match(source, /onDidChangeActiveTextEditor\(\(\) => provider\.activeFolderChanged\(\)\)/);
+  assert.match(source, /watchLaunchFiles\(context, provider\);/);
 });
 
 test("both server paths are restricted settings and every restricted setting is contributed", () => {
@@ -165,8 +213,17 @@ test("the engine floor carries the MCP provider API and equals the pinned host t
   const lock = readLock();
   assert.equal(lock.packages["node_modules/@types/vscode"]?.version, version.join("."));
   assert.equal(lock.packages[""]?.engines?.vscode, manifest.engines.vscode);
-  const below = MCP_API_FLOOR.findIndex((part, index) => version[index] !== part);
-  assert.ok(below === -1 || version[below] > MCP_API_FLOOR[below], `floor ${version.join(".")} predates the MCP provider API`);
+  assert.ok(compareVersions(version, MCP_API_FLOOR) >= 0, `floor ${version.join(".")} predates the MCP provider API`);
+});
+
+test("the engine floor honours the MCP when clause and still admits trailing forks", () => {
+  const floor = /^\^(\d+)\.(\d+)\.(\d+)$/.exec(readManifest().engines.vscode);
+  assert.ok(floor);
+  const version = floor.slice(1).map(Number);
+  assert.ok(compareVersions(version, WHEN_CLAUSE_FLOOR) >= 0, `floor ${version.join(".")} ignores the contribution when clause`);
+  assert.ok(compareVersions(version, TRAILING_FORK_HOST) <= 0, `floor ${version.join(".")} drops VS Code ${TRAILING_FORK_HOST.join(".")} forks`);
+  assert.equal(compareVersions([1, 107, 0], [1, 107, 0]), 0);
+  assert.ok(compareVersions([1, 108, 0], TRAILING_FORK_HOST) > 0 && compareVersions([1, 104, 9], WHEN_CLAUSE_FLOOR) < 0);
 });
 
 test("server paths fall back to the contributed default and bind the folder", () => {

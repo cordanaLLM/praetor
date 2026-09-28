@@ -249,7 +249,7 @@ read a key nothing contributes. Test: `editors/vscode/src/setup.test.ts`.
 Generated `.vscode/settings.json` files carry no `standards.mcp.*` key and no
 MCP server entry. The extension registers `standards-mcp` itself through the MCP
 server definition provider API, defaulting to `${workspaceFolder}/bin/standards-mcp`
-in a trusted workspace; its engine floor is VS Code 1.125. The generated
+in a trusted workspace; its engine floor is VS Code 1.107. The generated
 `standards.sentinel.headroomMB` value is the headroom the extension's
 **Check Sentinel Host Headroom** command passes to
 `praetorctl sentinel --min-free-mb`. Details and tests:
