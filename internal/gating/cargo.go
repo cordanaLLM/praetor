@@ -7,9 +7,13 @@ package gating
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/topology"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -33,6 +37,12 @@ const (
 	// maxCargoOutputBytes bounds how much of a failed cargo command's standard output a stage
 	// message carries; its standard error is bounded by util.RunCommand already.
 	maxCargoOutputBytes = util.MaxErrorBodyBytes
+	// cargoTargetDirRel is where the test stage keeps its Cargo build output, relative to the
+	// repository's git common directory (cargoTargetDir).
+	cargoTargetDirRel = "praetor/cargo-target"
+	// cargoTargetDirEnv is Cargo's own target-directory variable. An absolute value is the
+	// operator's persistent build directory, and the gate leaves it to cargo.
+	cargoTargetDirEnv = "CARGO_TARGET_DIR"
 )
 
 // cargoTestCommands are the test stage's Cargo commands, run in order in the isolated worktree.
@@ -102,8 +112,10 @@ func runCargoSecurity(ctx context.Context, cfg *stageConfig) (string, error) {
 }
 
 // runCargoTests is the test stage's Cargo part: cargo test and cargo clippy with warnings denied,
-// against HEAD in an isolated worktree under the same bound as the Go race detector
-// (inStageWorktree), so a raised PRAETOR_TEST_STAGE_TIMEOUT applies to it too.
+// against HEAD in an isolated worktree under a race-stage bound of its own (inStageWorktree), so a
+// raised PRAETOR_TEST_STAGE_TIMEOUT applies to it too and the run deadline reserves it beside the
+// Go suite's (ResolveRepoRunBudget). Both commands build into the persistent target directory
+// cargoTargetDir names, so only the first run in a clone compiles the dependencies.
 func runCargoTests(ctx context.Context, cfg *stageConfig) (string, error) {
 	if cfg.dryRun {
 		return "", skipped("dry run: cargo test and cargo clippy not run")
@@ -111,11 +123,12 @@ func runCargoTests(ctx context.Context, cfg *stageConfig) (string, error) {
 	if err := requireCargo(cfg); err != nil {
 		return "", err
 	}
-	budget := EnvRunBudget()
+	budget := EnvRunBudget(cfg.repoDir)
 	bound := budget.StageBound
+	targetArgs, targetNote := cargoTargetDir(ctx, cfg.repoDir)
 	err := inStageWorktree(ctx, cfg, bound, func(tCtx context.Context, dir string) error {
 		for i := 0; i < len(cargoTestCommands); i++ {
-			if runErr := runCargoSuite(tCtx, cfg, bound, dir, cargoTestCommands[i]); runErr != nil {
+			if runErr := runCargoSuite(tCtx, cfg, bound, dir, cargoTestCommands[i], targetArgs); runErr != nil {
 				return runErr
 			}
 		}
@@ -125,16 +138,48 @@ func runCargoTests(ctx context.Context, cfg *stageConfig) (string, error) {
 		return "", err
 	}
 	msg := "cargo test --workspace --locked and cargo clippy --workspace --all-targets -- -D warnings passed"
-	if budget.Note != "" {
-		msg += "; " + budget.Note
+	for _, note := range []string{targetNote, budget.Note} {
+		if note != "" {
+			msg += "; " + note
+		}
 	}
 	return msg, nil
 }
 
-// runCargoSuite runs one cargo command of the test stage in the worktree dir. A cut by the stage
-// bound or the run deadline is reported as the cut, as the race stage reports one (cutError).
-func runCargoSuite(tCtx context.Context, cfg *stageConfig, bound time.Duration, dir string, args []string) error {
-	out, err := cfg.run(tCtx, dir, "cargo", args...)
+// cargoTargetDir returns the arguments that point a test-stage cargo command at a target directory
+// that outlives the isolated worktree, or a note saying why this run builds cold.
+//
+// The worktree is created for one run and removed after it, and Cargo builds into target/ beside
+// the manifest by default, so every run used to compile every dependency twice (cargo test and
+// cargo clippy) inside the stage bound. The directory is <git common dir>/praetor/cargo-target:
+// shared by every linked worktree of the clone and outside every working tree, so it neither
+// dirties the tree the receipt certifies nor competes with the developer's own target/. Cargo
+// reuses a dependency's build there whatever path the worktree has. An absolute CARGO_TARGET_DIR
+// is the operator's own persistent directory, and cargo uses it without a flag.
+func cargoTargetDir(ctx context.Context, repoDir string) (args []string, note string) {
+	if filepath.IsAbs(os.Getenv(cargoTargetDirEnv)) {
+		return nil, ""
+	}
+	cold := "no persistent Cargo target directory (%v), so this run compiled every dependency"
+	gitCtx, cancel := context.WithTimeout(ctx, GitQueryTimeout)
+	defer cancel()
+	common, err := topology.GitCommonDir(gitCtx, repoDir)
+	if err != nil {
+		return nil, fmt.Sprintf(cold, err)
+	}
+	dir, err := util.ConfinePath(common, cargoTargetDirRel)
+	if err != nil {
+		return nil, fmt.Sprintf(cold, err)
+	}
+	return []string{"--target-dir", dir}, ""
+}
+
+// runCargoSuite runs one cargo command of the test stage in the worktree dir, with targetArgs
+// after its subcommand. A cut by the stage bound or the run deadline is reported as the cut, as
+// the race stage reports one (cutError).
+func runCargoSuite(tCtx context.Context, cfg *stageConfig, bound time.Duration, dir string, args, targetArgs []string) error {
+	argv := slices.Concat(args[:1], targetArgs, args[1:])
+	out, err := cfg.run(tCtx, dir, "cargo", argv...)
 	if err == nil {
 		return nil
 	}

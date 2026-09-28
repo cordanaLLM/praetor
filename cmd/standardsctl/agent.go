@@ -104,11 +104,15 @@ func dispatchAgentTask(agentName string, extraArgs []string) error {
 // agentTimeout bounds every agent helper except the gatekeeper.
 const agentTimeout = 5 * time.Minute
 
+// gatekeeperRepoDir is the repository the gatekeeper gates: the working directory. Its deadline
+// is sized to the same directory, so a repository holding a Cargo.lock gets the Cargo budget.
+const gatekeeperRepoDir = "."
+
 // agentContext bounds one agent helper. The gatekeeper runs the full gating pipeline, so it takes
 // the gate run's own deadline: a fixed five minutes cut its race stage short (#314).
 func agentContext(agentName string) (context.Context, context.CancelFunc) {
 	if isGatekeeperAgent(agentName) {
-		return gating.WithRunDeadline(rootContext(), gating.EnvRunBudget())
+		return gating.WithRunDeadline(rootContext(), gating.EnvRunBudget(gatekeeperRepoDir))
 	}
 	return commandContext(agentTimeout)
 }
@@ -134,7 +138,7 @@ func runAuditorAgent(ctx context.Context) error {
 // under exit 0. The stage report prints first, so the failing stage and its reason stay
 // visible.
 func runGatekeeperAgent(ctx context.Context) error {
-	rep, err := gatedPipeline(ctx, ".", false)
+	rep, err := gatedPipeline(ctx, gatekeeperRepoDir, false)
 	if err != nil {
 		return fmt.Errorf("gatekeeper execution error: %w", err)
 	}

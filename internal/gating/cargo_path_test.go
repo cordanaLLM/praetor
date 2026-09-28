@@ -19,14 +19,28 @@ import (
 
 // fakeCargoSource stands in for cargo. It appends "<working directory>\t<arguments>" to
 // $FAKE_CARGO_LOG, and fails with cargo's exit status 101 when its arguments start with
-// $FAKE_CARGO_FAIL. Built from Go source, it runs the same way on every platform (HISS-21).
+// $FAKE_CARGO_FAIL. Given --target-dir, it records its subcommand in fake-cargo.stamp there, as
+// a real build leaves its output. Built from Go source, it runs the same way on every platform
+// (HISS-21).
 const fakeCargoSource = `package main
 
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
+
+func appendLine(path, line string) {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		os.Exit(3)
+	}
+	fmt.Fprintln(f, line)
+	if f.Close() != nil {
+		os.Exit(3)
+	}
+}
 
 func main() {
 	args := strings.Join(os.Args[1:], " ")
@@ -34,13 +48,14 @@ func main() {
 	if err != nil {
 		os.Exit(3)
 	}
-	log, err := os.OpenFile(os.Getenv("FAKE_CARGO_LOG"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-	if err != nil {
-		os.Exit(3)
-	}
-	fmt.Fprintf(log, "%s\t%s\n", wd, args)
-	if log.Close() != nil {
-		os.Exit(3)
+	appendLine(os.Getenv("FAKE_CARGO_LOG"), wd+"\t"+args)
+	for i := 1; i+1 < len(os.Args); i++ {
+		if os.Args[i] == "--target-dir" {
+			if os.MkdirAll(os.Args[i+1], 0o750) != nil {
+				os.Exit(3)
+			}
+			appendLine(filepath.Join(os.Args[i+1], "fake-cargo.stamp"), os.Args[1])
+		}
 	}
 	if fail := os.Getenv("FAKE_CARGO_FAIL"); fail != "" && strings.HasPrefix(args, fail) {
 		fmt.Println("error: denied by the fixture")
@@ -125,7 +140,8 @@ func cargoInvocations(t *testing.T, log string) (argv []string, inWorktree []boo
 }
 
 // Positive: with cargo and cargo-audit on PATH, a Cargo repository runs all four commands through
-// the production runner and receives a receipt that verifies and records each Cargo outcome.
+// the production runner and receives a receipt that verifies and records each Cargo outcome. The
+// test and clippy builds land in the persistent target directory, which outlives the worktree.
 func TestCargoGate_Positive_FakeCargoOnPathMintsReceipt(t *testing.T) {
 	pub := sandboxReceiptKey(t)
 	log := fakeCargoOnPath(t)
@@ -134,12 +150,18 @@ func TestCargoGate_Positive_FakeCargoOnPathMintsReceipt(t *testing.T) {
 		t.Fatalf("a passing Cargo repository was rejected: %v (%+v)", err, cfg.rep.Stages)
 	}
 	argv, inWorktree := cargoInvocations(t, log)
-	want := []string{"fetch --locked", "audit", "test --workspace --locked", "clippy --workspace --all-targets -- -D warnings"}
+	target := persistentTargetDir(t, cfg.repoDir)
+	want := []string{"fetch --locked", "audit", "test --target-dir " + target + " --workspace --locked",
+		"clippy --target-dir " + target + " --workspace --all-targets -- -D warnings"}
 	if strings.Join(argv, "|") != strings.Join(want, "|") {
 		t.Fatalf("cargo ran %q, want %q", argv, want)
 	}
 	if inWorktree[0] || inWorktree[1] || !inWorktree[2] || !inWorktree[3] {
 		t.Errorf("fetch and audit run in the repository, test and clippy in the worktree: %v", inWorktree)
+	}
+	stamp, err := os.ReadFile(filepath.Join(target, "fake-cargo.stamp"))
+	if err != nil || string(stamp) != "test\nclippy\n" {
+		t.Errorf("the build output must outlive the removed worktree, got %q (%v)", stamp, err)
 	}
 	rf, err := lockdown.LoadReceiptFile(filepath.Join(cfg.repoDir, ReceiptFileName))
 	if err != nil {

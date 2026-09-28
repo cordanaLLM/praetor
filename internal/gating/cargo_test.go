@@ -13,6 +13,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/worktree"
 )
 
 // cargoAuditMissingReason is how the security stage reports a Cargo.lock it could not audit.
@@ -103,8 +105,9 @@ func TestToolchainStages_Positive_CargoRepositoryRunsCargo(t *testing.T) {
 		stageSecurity: {Status: StagePassed, Message: "cargo: cargo audit passed"},
 		stageTests:    {Status: StagePassed, Message: "cargo: " + cargoTestsPassed},
 	})
-	want := []string{"cargo fetch --locked", "cargo audit", "cargo test --workspace --locked",
-		"cargo clippy --workspace --all-targets -- -D warnings"}
+	target := "--target-dir " + persistentTargetDir(t, repo)
+	want := []string{"cargo fetch --locked", "cargo audit", "cargo test " + target + " --workspace --locked",
+		"cargo clippy " + target + " --workspace --all-targets -- -D warnings"}
 	if lines := commandLines(*recorded); !slices.Equal(lines, want) {
 		t.Fatalf("commands = %q, want %q", lines, want)
 	}
@@ -220,21 +223,84 @@ func TestToolchainStages_Negative_CargoFailuresFailTheStage(t *testing.T) {
 			if !isFailure(err) || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("want a failure containing %q, got %v", tc.want, err)
 			}
-			if lines := commandLines(*recorded); lines[len(lines)-1] != "cargo "+strings.Join(cargoCommand(tc.fail), " ") {
-				t.Errorf("the failing command must be the last one run, got %q", lines)
+			last := (*recorded)[len(*recorded)-1]
+			if last.name != "cargo" || len(last.args) == 0 || last.args[0] != tc.fail {
+				t.Errorf("the failing command must be the last one run, got %q", commandLines(*recorded))
 			}
 		})
 	}
 }
 
-// cargoCommand returns the argv of the Cargo command whose subcommand is sub.
-func cargoCommand(sub string) []string {
-	for i := 0; i < len(cargoTestCommands); i++ {
-		if cargoTestCommands[i][0] == sub {
-			return cargoTestCommands[i]
-		}
+// persistentTargetDir returns the target directory the test stage's cargo commands build into for
+// repo, and requires it to be the shared one under the git common directory.
+func persistentTargetDir(t *testing.T, repo string) string {
+	t.Helper()
+	args, note := cargoTargetDir(t.Context(), repo)
+	if len(args) != 2 || args[0] != "--target-dir" || note != "" {
+		t.Fatalf("cargoTargetDir(%s) = %q, %q; want a persistent --target-dir", repo, args, note)
 	}
-	return []string{sub}
+	if !strings.HasSuffix(filepath.ToSlash(args[1]), "/.git/"+cargoTargetDirRel) {
+		t.Fatalf("target directory %s is not <git common dir>/%s", args[1], cargoTargetDirRel)
+	}
+	return args[1]
+}
+
+// Positive: the test stage's cargo commands build into one directory under the git common
+// directory, which every linked worktree of the clone resolves to as well, so the isolated test
+// worktree of the next run finds the dependencies already built.
+func TestCargoTargetDir_Positive_SharedByEveryWorktreeOfTheClone(t *testing.T) {
+	t.Setenv(cargoTargetDirEnv, "")
+	repo := newHermeticGitRepo(t)
+	dir := persistentTargetDir(t, repo)
+	wt, err := worktree.NewManager(repo).Create(t.Context(), "linked", "HEAD")
+	if err != nil {
+		t.Skipf("git worktree add unavailable here: %v", err)
+	}
+	if got := persistentTargetDir(t, wt.Path); got != dir {
+		t.Errorf("a linked worktree builds into %s, the main checkout into %s; want one directory", got, dir)
+	}
+	if rel, relErr := filepath.Rel(wt.Path, dir); relErr == nil && !strings.HasPrefix(rel, "..") {
+		t.Errorf("target directory %s lies inside the worktree %s the stage removes", dir, wt.Path)
+	}
+}
+
+// Boundary: an absolute CARGO_TARGET_DIR is the operator's persistent directory and cargo uses it
+// unflagged; a relative one would resolve inside the removed worktree, so the gate's own is used.
+func TestCargoTargetDir_Boundary_OperatorTargetDir(t *testing.T) {
+	repo := newHermeticGitRepo(t)
+	t.Setenv(cargoTargetDirEnv, t.TempDir())
+	if args, note := cargoTargetDir(t.Context(), repo); args != nil || note != "" {
+		t.Errorf("an absolute %s must be left to cargo, got %q %q", cargoTargetDirEnv, args, note)
+	}
+	t.Setenv(cargoTargetDirEnv, "target")
+	persistentTargetDir(t, repo)
+}
+
+// Negative: where no git common directory resolves, the commands run without a shared directory
+// and the stage reason says the run built every dependency, rather than failing the stage.
+func TestCargoTargetDir_Negative_NoCheckoutBuildsCold(t *testing.T) {
+	t.Setenv(cargoTargetDirEnv, "")
+	args, note := cargoTargetDir(t.Context(), t.TempDir())
+	if args != nil || !strings.Contains(note, "no persistent Cargo target directory") ||
+		!strings.Contains(note, "compiled every dependency") {
+		t.Fatalf("cargoTargetDir(no checkout) = %q, %q; want no flag and the cold-build note", args, note)
+	}
+
+	// Through the stage: a crate in a subdirectory of the checkout names the cold build.
+	crate := filepath.Join(newHermeticGitRepo(t), "crate")
+	if err := os.Mkdir(crate, 0o750); err != nil {
+		t.Fatalf("mkdir crate: %v", err)
+	}
+	seedCargoWorkspace(t, crate, true)
+	cfg, recorded := newTestConfig(t, crate, false)
+	t.Setenv(TestStageTimeoutEnv, "")
+	msg, err := runCargoTests(t.Context(), cfg)
+	if err != nil || !strings.HasPrefix(msg, cargoTestsPassed+"; no persistent Cargo target directory") {
+		t.Fatalf("runCargoTests = %q, %v; want the pass with the cold-build note", msg, err)
+	}
+	if lines := commandLines(*recorded); slices.ContainsFunc(lines, func(l string) bool { return strings.Contains(l, "--target-dir") }) {
+		t.Errorf("a cold build passed a target directory: %q", lines)
+	}
 }
 
 // Boundary: without cargo on PATH every Cargo part is reported as not run, nothing starts, and

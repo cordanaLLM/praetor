@@ -7,6 +7,7 @@ package gating
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -72,12 +73,13 @@ func TestRunBudgetTimeoutSecondsRoundsUp(t *testing.T) {
 }
 
 func TestEnvRunBudgetReadsTheStageVariable(t *testing.T) {
+	repo := t.TempDir()
 	t.Setenv(TestStageTimeoutEnv, "12m")
-	if got, want := EnvRunBudget(), ResolveRunBudget("12m"); got != want {
+	if got, want := EnvRunBudget(repo), ResolveRunBudget("12m"); got != want {
 		t.Errorf("EnvRunBudget() = %+v, want %+v", got, want)
 	}
 	t.Setenv(TestStageTimeoutEnv, "")
-	if got := EnvRunBudget().StageBound; got != TestStageTimeout {
+	if got := EnvRunBudget(repo).StageBound; got != TestStageTimeout {
 		t.Errorf("unset variable must keep the %s default, got %s", TestStageTimeout, got)
 	}
 }
@@ -128,7 +130,7 @@ func TestTestStageHonoursABoundBeyondTheOldRunCap(t *testing.T) {
 	}
 
 	t.Setenv(TestStageTimeoutEnv, "12m")
-	ctx, cancel := WithRunDeadline(context.Background(), EnvRunBudget())
+	ctx, cancel := WithRunDeadline(context.Background(), EnvRunBudget(repoDir))
 	defer cancel()
 	if _, err := runTestStage(ctx, cfg); err != nil {
 		t.Fatalf("stage failed: %v", err)
@@ -294,7 +296,7 @@ func TestTestStageStillBlamesItsOwnBoundUnderARunDeadline(t *testing.T) {
 	cfg.run = blockedSuite(&ran, holdStageBound(cfg))
 
 	t.Setenv(TestStageTimeoutEnv, "50ms")
-	ctx, cancel := WithRunDeadline(context.Background(), EnvRunBudget())
+	ctx, cancel := WithRunDeadline(context.Background(), EnvRunBudget(repoDir))
 	defer cancel()
 	_, err := runTestStage(ctx, cfg)
 	if err == nil || !ran {
@@ -380,5 +382,103 @@ func TestExecuteStageAttributesARunCut(t *testing.T) {
 	}
 	if got := cfg.rep.Stages[len(cfg.rep.Stages)-1].Message; strings.Count(got, "gate run's deadline") != 1 {
 		t.Errorf("a stage reporting its own cut must not be attributed twice, got %q", got)
+	}
+}
+
+// ResolveRepoRunBudget sizes the run deadline to the test suites and Cargo stages a repository
+// holds. A deadline sized for one suite cut a mixed repository's Cargo suite once the Go suite and
+// the Cargo commands had spent it, however high the stage bound was raised.
+func TestResolveRepoRunBudget_3D(t *testing.T) {
+	const bound = 12 * time.Minute
+	cargoAllowance := OtherStagesAllowance + DefaultPrefetchTimeout + CargoAuditTimeout
+	goForm := "12m0s race stage bound + 5m0s for the other stages"
+	cases := []struct {
+		name      string
+		markers   []string
+		suites    int
+		allowance time.Duration
+		form      string
+	}{
+		// Positive: a mixed repository reserves a bound per suite and the Cargo commands' bounds.
+		{"go and cargo", []string{"go.mod", CargoLockFile}, 2, cargoAllowance,
+			"2 test suites at a 12m0s stage bound each + 9m0s for the other stages"},
+		{"cargo only", []string{"Cargo.toml", CargoLockFile}, 1, cargoAllowance,
+			"12m0s race stage bound + 9m0s for the other stages"},
+		// Negative: a Go repository keeps exactly the budget it had before Cargo support.
+		{"go only", []string{"go.mod"}, 1, OtherStagesAllowance, goForm},
+		// Boundary: a Cargo.toml without its Cargo.lock runs no Cargo command and adds nothing.
+		{"cargo without a lock", []string{"go.mod", "Cargo.toml"}, 1, OtherStagesAllowance, goForm},
+		{"no marker", nil, 1, OtherStagesAllowance, goForm},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := t.TempDir()
+			for _, marker := range tc.markers {
+				writeFile(t, filepath.Join(repo, marker), "\n")
+			}
+			budget := ResolveRepoRunBudget("12m", repo)
+			if budget.TestSuites() != tc.suites || budget.Allowance != tc.allowance || budget.StageBound != bound {
+				t.Fatalf("budget = %+v, want %d suites at %s + %s", budget, tc.suites, bound, tc.allowance)
+			}
+			if want := time.Duration(tc.suites)*bound + tc.allowance; budget.Timeout() != want {
+				t.Errorf("run deadline = %s, want %s", budget.Timeout(), want)
+			}
+			if !strings.Contains(budget.String(), tc.form) {
+				t.Errorf("deadline reads %q, want it to contain %q", budget, tc.form)
+			}
+		})
+	}
+	// Boundary: the ceiling applies per suite, so a mixed repository at 30m gets 2 x 30m + 9m.
+	if got, want := ResolveRepoRunBudget("31m", mixedMarkers(t)).Timeout(), 2*MaxTestStageTimeout+cargoAllowance; got != want {
+		t.Errorf("mixed repository at the ceiling = %s, want %s", got, want)
+	}
+}
+
+// mixedMarkers returns a directory holding both a go.mod and a Cargo.lock.
+func mixedMarkers(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "go.mod"), "module gating.test\n")
+	writeFile(t, filepath.Join(dir, CargoLockFile), "version = 4\n")
+	return dir
+}
+
+// A zero-valued Suites counts as one suite, so a budget literal keeps its pre-Cargo meaning.
+func TestRunBudgetTestSuitesCountsAtLeastOne(t *testing.T) {
+	for suites, want := range map[int]int{-1: 1, 0: 1, 1: 1, 2: 2} {
+		if got := (RunBudget{Suites: suites}).TestSuites(); got != want {
+			t.Errorf("TestSuites(%d) = %d, want %d", suites, got, want)
+		}
+	}
+}
+
+// Positive: in a mixed repository the Cargo suite gets its whole bound even had the Go suite used
+// all of its own, because the run deadline reserves a bound for each. Under the one-suite
+// deadline the run deadline lay a single allowance past the Go suite's bound.
+func TestRunTestStage_MixedRepositoryReservesABoundPerSuite(t *testing.T) {
+	repoDir := newHermeticGitRepo(t)
+	seedGoModule(t, repoDir)
+	writeFile(t, filepath.Join(repoDir, CargoLockFile), "version = 4\n")
+	cfg, _ := newTestConfig(t, repoDir, false)
+	seen := map[string]time.Time{}
+	cfg.run = func(runCtx context.Context, dir, name string, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "test" {
+			seen[name], _ = runCtx.Deadline()
+		}
+		return fakeRunner(&[]recordedCommand{}, "", nil)(runCtx, dir, name, args...)
+	}
+
+	t.Setenv(TestStageTimeoutEnv, "12m")
+	ctx, cancel := WithRunDeadline(context.Background(), EnvRunBudget(repoDir))
+	defer cancel()
+	if _, err := runTestStage(ctx, cfg); err != nil {
+		t.Fatalf("stage failed: %v", err)
+	}
+	runDeadline, _ := ctx.Deadline()
+	if left := runDeadline.Sub(seen["go"]); left < 12*time.Minute {
+		t.Errorf("after the Go suite's bound the run deadline leaves %s, want the Cargo suite's full 12m", left)
+	}
+	if left := time.Until(seen["cargo"]); left <= 11*time.Minute || left > 12*time.Minute {
+		t.Errorf("the Cargo suite was given %s, want its full 12m bound", left)
 	}
 }

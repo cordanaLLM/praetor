@@ -569,7 +569,7 @@ func runGoTests(ctx context.Context, cfg *stageConfig) (string, error) {
 				"CI runs this leg on Linux with cgo", absent))
 	}
 
-	budget := EnvRunBudget()
+	budget := EnvRunBudget(cfg.repoDir)
 	bound := budget.StageBound
 	err := inStageWorktree(ctx, cfg, bound, func(tCtx context.Context, dir string) error {
 		out, testErr := cfg.run(tCtx, dir, "go", "test", "-race", "./...")

@@ -86,9 +86,10 @@ func runGateRun(args []string) error {
 		return fmt.Errorf("gate run accepts no positional arguments, got %q", fs.Args())
 	}
 
-	// The run deadline follows the race stage's resolved bound. A fixed five minutes cut the
-	// stage short whatever PRAETOR_TEST_STAGE_TIMEOUT asked for (#314).
-	budget := gating.EnvRunBudget()
+	// The run deadline follows the race stage's resolved bound, once per test suite the
+	// repository holds. A fixed five minutes cut the stage short whatever
+	// PRAETOR_TEST_STAGE_TIMEOUT asked for (#314).
+	budget := gating.EnvRunBudget(*path)
 	ctx, cancel := gating.WithRunDeadline(rootContext(), budget)
 	defer cancel()
 
@@ -122,20 +123,25 @@ func runGateRun(args []string) error {
 	return nil
 }
 
-// gateDeadlineReport is the machine-readable form of `gate deadline --json`.
+// gateDeadlineReport is the machine-readable form of `gate deadline --json`. StageBound is the
+// bound each of TestSuites test suites gets; OtherStagesAllowance includes the Cargo stages' bounds
+// where a Cargo.lock is present.
 type gateDeadlineReport struct {
 	TimeoutSeconds       int64  `json:"timeout_seconds"`
 	Timeout              string `json:"timeout"`
 	StageBound           string `json:"stage_bound"`
+	TestSuites           int    `json:"test_suites"`
 	OtherStagesAllowance string `json:"other_stages_allowance"`
 	Note                 string `json:"note,omitempty"`
 }
 
-// runGateDeadline prints the run deadline `gate run` applies in this environment, resolved from
-// PRAETOR_TEST_STAGE_TIMEOUT by the pipeline's own parser. The pre-push hook bounds its gate
-// subprocess by this value instead of a figure of its own, so the two cannot drift apart (#314).
+// runGateDeadline prints the run deadline `gate run --path` applies to the same repository in this
+// environment, resolved from PRAETOR_TEST_STAGE_TIMEOUT by the pipeline's own parser and sized to
+// the test suites the repository holds. The pre-push hook bounds its gate subprocess by this value
+// instead of a figure of its own, so the two cannot drift apart (#314).
 func runGateDeadline(args []string) error {
 	fs := flag.NewFlagSet("gate deadline", flag.ContinueOnError)
+	path := fs.String("path", ".", "Path to the repository whose gate run deadline to resolve")
 	asJSON := fs.Bool("json", false, "Output the resolved run deadline as JSON")
 
 	if _, err := parseInterspersed(fs, args); err != nil {
@@ -145,12 +151,13 @@ func runGateDeadline(args []string) error {
 		return fmt.Errorf("gate deadline accepts no positional arguments, got %q", fs.Args())
 	}
 
-	budget := gating.EnvRunBudget()
+	budget := gating.EnvRunBudget(*path)
 	if *asJSON {
 		if err := json.NewEncoder(os.Stdout).Encode(gateDeadlineReport{
 			TimeoutSeconds:       budget.TimeoutSeconds(),
 			Timeout:              budget.Timeout().String(),
 			StageBound:           budget.StageBound.String(),
+			TestSuites:           budget.TestSuites(),
 			OtherStagesAllowance: budget.Allowance.String(),
 			Note:                 budget.Note,
 		}); err != nil {

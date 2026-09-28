@@ -296,7 +296,7 @@ instead of it ([`internal/gating/cargo.go`](https://github.com/cordanaLLM/praeto
 | :--- | :--- | :--- | :--- |
 | Prefetch & Lockfiles | `cargo fetch --locked` | the repository | `DefaultPrefetchTimeout`, 60 s |
 | Security & SCA Scan | `cargo audit`, when `cargo-audit` is on `PATH` | the repository | `CargoAuditTimeout`, 3 min |
-| Race-Detector Tests | `cargo test --workspace --locked`, then `cargo clippy --workspace --all-targets -- -D warnings` | the isolated worktree | the race stage bound |
+| Race-Detector Tests | `cargo test --workspace --locked`, then `cargo clippy --workspace --all-targets -- -D warnings` | the isolated worktree | a race stage bound of its own |
 
 - A `Cargo.toml` without a committed `Cargo.lock` runs no Cargo command: every command is held to
   the lockfile with `--locked`, and without one there is nothing to hold it to.
@@ -316,18 +316,35 @@ instead of it ([`internal/gating/cargo.go`](https://github.com/cordanaLLM/praeto
 - A repository without a `Cargo.lock` runs the same commands and records the same verdicts and
   reasons as before Cargo support, so its signed output is unchanged
   (`TestToolchainStages_Positive_GoPathUnchanged`).
-- The test commands share the race stage's bound (default 3 min). A cold build of a large workspace
-  counts against it; raise `PRAETOR_TEST_STAGE_TIMEOUT` as
-  [the race stage's bound](#the-race-stages-bound-and-what-firing-it-means) describes.
+- The Cargo suite runs in a worktree of its own under a whole race stage bound (default 3 min),
+  not what the Go suite left of one. The run deadline reserves that bound beside the Go suite's
+  and adds the `cargo fetch` and `cargo audit` bounds to the other stages' allowance
+  ([the whole run's deadline](#the-whole-runs-deadline)). Raise `PRAETOR_TEST_STAGE_TIMEOUT` as
+  [the race stage's bound](#the-race-stages-bound-and-what-firing-it-means) describes; it applies
+  to each suite.
+- `cargo test` and `cargo clippy` build into `praetor/cargo-target` under the repository's git
+  common directory (`cargoTargetDir` in `cargo.go`), passed as `--target-dir`. The test worktree is
+  removed after every run, and Cargo's default `target/` inside it went with it, so every run
+  compiled every dependency twice inside the bound. The shared directory outlives the worktree, is
+  the same for every linked worktree of the clone, sits outside every working tree (the tree the
+  receipt certifies stays clean), and does not contend with your own `target/`. Only the first run
+  in a clone builds cold; give that run a raised bound on a large workspace.
+  - An absolute `CARGO_TARGET_DIR` is used instead, without a flag. A relative one would resolve
+    inside the removed worktree, so the gate's directory is used.
+  - Where no git common directory resolves, for example when `--path` names a subdirectory of the
+    checkout, the commands run without the flag, and the stage reason says the run compiled every
+    dependency.
+  - The directory grows like any `target/`; delete it to reclaim the space, and the next run
+    rebuilds it.
 - A failing command's standard output is cut at 64 KiB in the stage reason; `util.RunCommand`
   already bounds its standard error the same way.
 
 [`internal/gating/cargo_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/cargo_test.go) replays each outcome
-through a recording command runner.
+through a recording command runner, and the `TestCargoTargetDir_*` cases pin the shared directory.
 [`internal/gating/cargo_path_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/cargo_path_test.go) builds a
 stand-in `cargo` with `testsupport.BuildExecutable`, puts it first on `PATH`, and runs the stages
-through the production runner: all commands passing mints a receipt that verifies, and a clippy
-failure mints none.
+through the production runner: all commands passing mints a receipt that verifies and leaves the
+build output in the shared directory after the worktree is gone, and a clippy failure mints none.
 
 ### No receipt when no toolchain stage ran
 
@@ -568,6 +585,24 @@ Note: race stage bound raised to 30m0s by PRAETOR_TEST_STAGE_TIMEOUT
 The run deadline used to be a fixed five minutes, so no value of `PRAETOR_TEST_STAGE_TIMEOUT` could
 give the race stage more than what was left of those five minutes (#314). The `praetor-gatekeeper`
 agent helper runs the same pipeline and takes the same derived deadline.
+
+The deadline is sized to the repository `--path` names (`ResolveRepoRunBudget` in `deadline.go`):
+
+| Repository root holds | Test suites, one bound each | Allowance for the other stages |
+| :--- | :--- | :--- |
+| `go.mod`, no `Cargo.lock` | 1 | 5 min |
+| `Cargo.lock`, no `go.mod` | 1 | 5 min + 1 min `cargo fetch` + 3 min `cargo audit` = 9 min |
+| `go.mod` and `Cargo.lock` | 2 | 9 min |
+
+A mixed repository therefore gets 2 × 3 + 9 = 15 minutes by default. Sized for one suite, the run
+deadline let the Go suite and the Cargo commands spend the time the Cargo suite needed, and no value
+of the variable could fix it. `gate deadline` takes the same `--path` (default `.`) and reports the
+suite count as `test_suites` in its JSON:
+
+```text
+$ praetorctl gate deadline --path=.
+Run Deadline: 15m0s (2 test suites at a 3m0s stage bound each + 9m0s for the other stages)
+```
 
 Two deadlines can now stop the race stage, and the stage names the one that actually fired. Only
 when the stage's own bound fired does it report `hit the … stage bound`. When the run deadline
