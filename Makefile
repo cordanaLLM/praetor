@@ -327,10 +327,13 @@ hooks-test:
 # pass yamllint the same way. The tools come from the hash-locked
 # .config/hook-lint/requirements.txt. A missing or mismatched tool is a skip with its reason
 # locally, and a failure where PRAETOR_HOOK_LINT_BIN names the pinned toolchain (CI).
+# scripts/test_emitted_yaml_lint.py applies the same yamllint run to the other YAML Praetor
+# emits into an adopted repository, reusing that gate's tool resolution.
 .PHONY: hooks-lint
 verify-all: hooks-lint
 hooks-lint:
 	python3 -B scripts/test_emitted_hook_lint.py
+	python3 -B scripts/test_emitted_yaml_lint.py
 
 check-staged:
 	$(HOOK_RUNNER) pre-commit

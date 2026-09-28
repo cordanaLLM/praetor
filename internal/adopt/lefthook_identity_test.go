@@ -2,9 +2,6 @@ package adopt
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -17,19 +14,7 @@ const priorLefthookFixtures = "testdata/lefthook"
 
 func readPriorLefthookFixtures(t *testing.T) map[string][]byte {
 	t.Helper()
-	entries, err := os.ReadDir(priorLefthookFixtures)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fixtures := make(map[string][]byte, len(entries))
-	for _, entry := range entries {
-		data, err := os.ReadFile(filepath.Join(priorLefthookFixtures, entry.Name()))
-		if err != nil {
-			t.Fatal(err)
-		}
-		fixtures[entry.Name()] = data
-	}
-	return fixtures
+	return readFixtureDir(t, priorLefthookFixtures)
 }
 
 func adoptLefthookFixture(t *testing.T, name, lefthook string, force bool) (string, *AdoptReport) {
@@ -48,21 +33,7 @@ func adoptLefthookFixture(t *testing.T, name, lefthook string, force bool) (stri
 // every digest has a fixture, so the set can neither claim bytes nobody can reproduce nor
 // silently stop covering a fixture.
 func TestPriorLefthookDigests_Positive_ReproducedByFixtures(t *testing.T) {
-	fixtures := readPriorLefthookFixtures(t)
-	seen := make(map[string]bool, len(fixtures))
-	for name, data := range fixtures {
-		sum := sha256.Sum256(data)
-		digest := hex.EncodeToString(sum[:])
-		if _, ok := priorLefthookDigests[digest]; !ok {
-			t.Errorf("fixture %s (%s) is not a recognised prior rendering", name, digest)
-		}
-		seen[digest] = true
-	}
-	for digest, origin := range priorLefthookDigests {
-		if !seen[digest] {
-			t.Errorf("digest %s (%s) has no fixture under %s", digest, origin, priorLefthookFixtures)
-		}
-	}
+	assertPriorDigestsReproduced(t, priorLefthookFixtures, priorLefthookDigests)
 }
 
 // Positive: an earlier Praetor rendering is migrated to the current one without --force and

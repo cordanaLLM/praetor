@@ -65,17 +65,28 @@ func reconcileBranchRuleset(ctx context.Context, s *adoptSession) error {
 	return err
 }
 
+// priorLabelTaxonomyDigests are the SHA-256 digests of every label taxonomy adoption wrote
+// before the current forge.DefaultLabelTaxonomy, keyed to what produced them. Only these exact
+// bytes are refreshed; testdata/labels reproduces each digest (ruleset_labels_test.go).
+var priorLabelTaxonomyDigests = map[string]string{
+	"458258424e4d1f9a0a3cb4c20de5f3c039b44c94a3296f1d0105a5305853ea8c": "fourteen labels, no document start",
+}
+
 // reconcileLabels writes the canonical label taxonomy sync also writes (forge.DefaultLabelTaxonomy)
 // into a repository that has none. An existing taxonomy is the repository's configuration, so
-// --force leaves it alone: it used to replace it with a shorter three-label copy.
+// --force leaves it alone: it used to replace it with a shorter three-label copy. The one
+// exception is an earlier taxonomy text adoption wrote and nobody edited: it holds the same
+// labels and failed yamllint's default document-start rule (BUG-782), so it is refreshed.
 func reconcileLabels(ctx context.Context, s *adoptSession) error {
 	_, err := s.scaffoldFile(ctx, scaffold{
-		rel:      labelsFile,
-		perm:     filePerm,
-		content:  forge.DefaultLabelTaxonomy(),
-		force:    false,
-		created:  "Scaffolded repository label taxonomy",
-		verified: "Existing repository label taxonomy preserved (repository configuration; --force does not replace it)",
+		rel:       labelsFile,
+		perm:      filePerm,
+		content:   forge.DefaultLabelTaxonomy(),
+		force:     false,
+		created:   "Scaffolded repository label taxonomy",
+		verified:  "Existing repository label taxonomy preserved (repository configuration; --force does not replace it)",
+		prior:     priorLabelTaxonomyDigests,
+		refreshed: "Refreshed the unmodified earlier Praetor label taxonomy to the current text (same labels)",
 	})
 	return err
 }

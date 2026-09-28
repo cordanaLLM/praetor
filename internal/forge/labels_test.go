@@ -101,6 +101,10 @@ func TestDefaultLabelTaxonomy_Positive(t *testing.T) {
 	if len(labels) != 14 {
 		t.Fatalf("expected 14 labels, got %d", len(labels))
 	}
+	// yamllint's default document-start rule, which make hooks-lint applies (BUG-782).
+	if !bytes.HasPrefix(DefaultLabelTaxonomy(), []byte("---\n")) {
+		t.Error("the taxonomy adoption writes must open with the --- document start")
+	}
 	own, err := os.ReadFile(filepath.Join("..", "..", ".config", "labels.yaml"))
 	if err != nil {
 		t.Fatal(err)

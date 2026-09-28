@@ -1,8 +1,6 @@
 package adopt
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"sort"
 	"strings"
@@ -49,9 +47,7 @@ type lefthookIdentity struct {
 
 // isPriorLefthookConfig reports whether data is exactly an earlier Praetor rendering.
 func isPriorLefthookConfig(data []byte) bool {
-	sum := sha256.Sum256(data)
-	_, known := priorLefthookDigests[hex.EncodeToString(sum[:])]
-	return known
+	return isPriorRendering(data, priorLefthookDigests)
 }
 
 // currentLefthookRendering reports whether data is exactly a current Praetor rendering and, when
