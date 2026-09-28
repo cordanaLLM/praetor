@@ -14,7 +14,6 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/cavemansource"
 	"github.com/cordanaLLM/praetor/internal/classify"
-	"github.com/cordanaLLM/praetor/internal/clientjson"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
@@ -434,34 +433,17 @@ func TestAdoptInvalidHarnessStillErrors(t *testing.T) {
 }
 
 // renamedHarness is an operator-owned harness naming the repository's old identity, with a
-// member this release does not know and an escaped value a released harness carries.
+// member this release does not know and a value in the \u003c escaped form json.MarshalIndent
+// writes into a released harness.
 const renamedHarness = `{
   "version": 1,
   "notes": "operator: keep this member",
   "platform": "acme/renamed",
   "operating_contract": ["result: custom contract."],
   "agit_push_format": "git push custom",
-  "invariants": ["result: func LOC <= 75."]
+  "invariants": ["result: func LOC \u003c= 75."]
 }
 `
-
-// decodedMembers returns the member names of a harness in document order and its values.
-func decodedMembers(t *testing.T, text string) ([]string, map[string]any) {
-	t.Helper()
-	object, err := clientjson.DecodeObject([]byte(text))
-	if err != nil {
-		t.Fatal(err)
-	}
-	names := make([]string, 0, len(object))
-	for _, member := range object {
-		names = append(names, member.Name)
-	}
-	values := map[string]any{}
-	if err := yaml.Unmarshal([]byte(text), &values); err != nil {
-		t.Fatal(err)
-	}
-	return names, values
-}
 
 // TestAdoptForcePatchesOnlyHarnessPlatform (#502) Boundary: an operator-owned harness naming
 // another repository keeps its bytes on a plain run, with a warning naming --force; --force
@@ -487,10 +469,12 @@ func TestAdoptForcePatchesOnlyHarnessPlatform(t *testing.T) {
 				t.Fatal(err)
 			}
 			patched := mustRead(t, filepath.Join(repoPath, paperclipFile))
-			assertOnlyPlatformChanged(t, original, patched, eol)
+			assertOnlyPlatformChanged(t, original, patched)
+			detail := reportDetail(forced, paperclipFile)
 			if !hasAction(forced, paperclipFile, actionReplace) ||
-				!strings.Contains(reportDetail(forced, paperclipFile), "Set platform of the operator-owned Paperclip harness to acme/legacy") {
-				t.Fatalf("platform patch not reported as replace: %+v", forced.ActionDetails)
+				!strings.Contains(detail, "Set platform of the operator-owned Paperclip harness to acme/legacy") ||
+				!strings.Contains(detail, `(-1/+1 lines, removed "  \"platform\": \"acme/renamed\","`) {
+				t.Fatalf("platform patch not reported as a one-line replace: %+v", forced.ActionDetails)
 			}
 			requirePassingSourceGate(t, repoPath, paperclipFile)
 			again, err := Adopt(t.Context(), sourceAdoptOptions(t, repoPath, true))
@@ -533,22 +517,13 @@ func TestAdoptForceKeepsHarnessItCannotPatch(t *testing.T) {
 	}
 }
 
-// assertOnlyPlatformChanged holds patched to original with only platform set to acme/legacy:
-// same members in the same order, same decoded values, same line-ending style.
-func assertOnlyPlatformChanged(t *testing.T, original, patched, eol string) {
+// assertOnlyPlatformChanged holds patched to original with only the platform value set to
+// acme/legacy: every other byte, the escaped invariant and the line endings included, stays.
+func assertOnlyPlatformChanged(t *testing.T, original, patched string) {
 	t.Helper()
-	beforeNames, before := decodedMembers(t, original)
-	afterNames, after := decodedMembers(t, patched)
-	if after["platform"] != "acme/legacy" {
-		t.Fatalf("platform not set: %v", after["platform"])
-	}
-	delete(before, "platform")
-	delete(after, "platform")
-	if !reflect.DeepEqual(beforeNames, afterNames) || !reflect.DeepEqual(before, after) {
-		t.Fatalf("patch changed more than platform:\n%s", patched)
-	}
-	if strings.Count(patched, eol) != strings.Count(patched, "\n") {
-		t.Fatalf("patch changed the line endings (%q):\n%q", eol, patched)
+	want := strings.Replace(original, `"platform": "acme/renamed"`, `"platform": "acme/legacy"`, 1)
+	if want == original || patched != want {
+		t.Fatalf("patch changed more than the platform value:\n%q\nwant:\n%q", patched, want)
 	}
 }
 

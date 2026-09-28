@@ -2,6 +2,7 @@ package paperclip
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -9,16 +10,22 @@ import (
 )
 
 // operatorHarness is an operator-owned harness naming acme/old, with a member this release does
-// not know and a value in the escaped form json.MarshalIndent writes.
+// not know and values in the \u003c / \u0026 escaped form json.MarshalIndent writes.
 const operatorHarness = `{
   "version": 1,
   "platform": "acme/old",
-  "operating_contract": ["result: edited contract."],
+  "operating_contract": ["result: edited contract, fetch \u0026\u0026 rebase."],
   "agit_push_format": "git push custom",
-  "invariants": ["result: func LOC <= 75."],
+  "invariants": ["result: func LOC \u003c= 75."],
   "notes": "operator: keep this member"
 }
 `
+
+// withPlatform returns text with its "platform": "acme/old" member naming platform instead, the
+// one change PatchPlatform may make to a harness that has the member.
+func withPlatform(text, platform string) string {
+	return strings.Replace(text, `"platform": "acme/old"`, `"platform": "`+platform+`"`, 1)
+}
 
 // decodeMembers decodes a harness text into its member values, unknown members included.
 func decodeMembers(t *testing.T, data []byte) map[string]any {
@@ -46,14 +53,45 @@ func TestPatchPlatform_Positive_SetsOnlyPlatform(t *testing.T) {
 	if !reflect.DeepEqual(before, after) {
 		t.Fatalf("members other than platform changed:\n%s", patched)
 	}
-	if strings.Index(string(patched), `"platform"`) > strings.Index(string(patched), `"operating_contract"`) ||
-		!strings.HasSuffix(string(patched), "member\"\n}\n") {
-		t.Fatalf("member order or layout not kept:\n%s", patched)
+	if want := withPlatform(operatorHarness, "acme/new"); string(patched) != want {
+		t.Fatalf("patch changed more bytes than the platform value:\n%s\nwant:\n%s", patched, want)
 	}
 	dir := t.TempDir()
 	writeRepoFile(t, dir, "harness.json", string(patched))
-	if h, err := LoadHarness(filepath.Join(dir, "harness.json")); err != nil || h.Platform != "acme/new" || h.OperatingContract[0] != "result: edited contract." {
+	if h, err := LoadHarness(filepath.Join(dir, "harness.json")); err != nil || h.Platform != "acme/new" ||
+		h.OperatingContract[0] != "result: edited contract, fetch && rebase." {
 		t.Fatalf("patched harness does not load: %+v %v", h, err)
+	}
+}
+
+// TestPatchPlatform_Positive_ReleasedHarnessChangesOneLine: on a harness a release wrote
+// (json.MarshalIndent, so &&, < and > stand escaped as \u0026, \u003c and \u003e), the patch
+// differs from the input in the platform line alone; every escaped contract row stays byte for
+// byte.
+func TestPatchPlatform_Positive_ReleasedHarnessChangesOneLine(t *testing.T) {
+	released, err := os.ReadFile(filepath.Join("testdata", "harness-462e3f3a", "harness.json.golden"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(released), `\u003c`) || !strings.Contains(string(released), `"platform": "acme/legacy"`) {
+		t.Fatal("golden harness no longer carries an escaped value and platform acme/legacy")
+	}
+	patched, changed, err := PatchPlatform(released, "acme/other")
+	if err != nil || !changed {
+		t.Fatalf("PatchPlatform: changed=%v err=%v", changed, err)
+	}
+	before, after := strings.Split(string(released), "\n"), strings.Split(string(patched), "\n")
+	if len(before) != len(after) {
+		t.Fatalf("line count changed: %d -> %d", len(before), len(after))
+	}
+	var diff []string
+	for i := range before {
+		if before[i] != after[i] {
+			diff = append(diff, before[i]+" -> "+after[i])
+		}
+	}
+	if len(diff) != 1 || diff[0] != `  "platform": "acme/legacy", ->   "platform": "acme/other",` {
+		t.Fatalf("patch changed %d lines, want the platform line alone:\n%s", len(diff), strings.Join(diff, "\n"))
 	}
 }
 
@@ -77,8 +115,9 @@ func TestPatchPlatform_Negative_RefusesWhatItCannotPatch(t *testing.T) {
 }
 
 // TestPatchPlatform_Boundary_UnchangedAndLineEndings: a harness already naming the platform is
-// returned as it is, byte for byte and escapes included; a consistent CRLF text stays CRLF; a
-// harness without a platform member gains one after the last member.
+// returned as it is, byte for byte and escapes included; a CRLF text and a compact one differ
+// from the input in the platform value alone; a harness without a platform member gains one
+// after the last member.
 func TestPatchPlatform_Boundary_UnchangedAndLineEndings(t *testing.T) {
 	same, changed, err := PatchPlatform([]byte(operatorHarness), "acme/old")
 	if err != nil || changed || string(same) != operatorHarness {
@@ -86,8 +125,13 @@ func TestPatchPlatform_Boundary_UnchangedAndLineEndings(t *testing.T) {
 	}
 	crlf := strings.ReplaceAll(operatorHarness, "\n", "\r\n")
 	patched, changed, err := PatchPlatform([]byte(crlf), "acme/new")
-	if err != nil || !changed || strings.Count(string(patched), "\r\n") != strings.Count(string(patched), "\n") {
-		t.Fatalf("CRLF style not kept: changed=%v err=%v\n%q", changed, err, patched)
+	if err != nil || !changed || string(patched) != withPlatform(crlf, "acme/new") {
+		t.Fatalf("CRLF text not kept byte for byte: changed=%v err=%v\n%q", changed, err, patched)
+	}
+	compact := `{"version":1,"notes":"a \u003c b","platform":"acme/old"}`
+	patched, changed, err = PatchPlatform([]byte(compact), "acme/new")
+	if err != nil || !changed || string(patched) != `{"version":1,"notes":"a \u003c b","platform":"acme/new"}` {
+		t.Fatalf("compact layout re-rendered: changed=%v err=%v\n%s", changed, err, patched)
 	}
 	missing, changed, err := PatchPlatform([]byte(`{"version": 1}`), "acme/new")
 	if err != nil || !changed || !strings.HasSuffix(string(missing), "\"platform\": \"acme/new\"\n}\n") {

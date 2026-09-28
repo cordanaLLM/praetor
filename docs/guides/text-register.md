@@ -664,8 +664,9 @@ who wrote it:
   (`TestAdoptForceKeepsEditedOperatingContract` in
   `internal/adopt/adopt_test.go`). `--force` changes one value: a `platform`
   naming another repository than the identity, which audit rejects, is set to
-  the identity, and every other member stays (`paperclip.PatchPlatform`,
-  `TestAdoptForcePatchesOnlyHarnessPlatform`). When the kept values fail the
+  the identity in place, and every other byte of the file stays
+  (`paperclip.PatchPlatform`, `TestAdoptForcePatchesOnlyHarnessPlatform`).
+  When the kept values fail the
   lint, edit them, or delete `.paperclip/harness.json` and rerun
   `praetorctl adopt` to regenerate it.
 - With `adoption.decline: [paperclip]`, adoption never writes a harness, in
