@@ -88,6 +88,12 @@ func TestShouldIgnorePath(t *testing.T) {
 		{".harvest/bundle.json", true},
 		{"internal/testdata/fixture.go", true},
 		{"a/b/c/build-release/x.c", true},
+		// The trees Zig writes inside a checkout: fetched packages, install prefix, cache.
+		{"zig-pkg/dep-0.0.1-h/src/dep.c", true},
+		{"engine/zig-out/include/dep.h", true},
+		{".zig-cache/o/h/cimport.h", true},
+		{"zig-pkg-tools/shim.c", false},
+		{"src/zig-pkg.c", false},
 		{"src/main.go", false},
 		{"internal/util/util.go", false},
 		// Project-shaped names are scanned: exemptions are segment-anchored and universal.
@@ -123,6 +129,10 @@ func TestShouldIgnoreDir(t *testing.T) {
 		{"x", "target/x", true},
 		{"testdata", "internal/hiss/testdata", true},
 		{".git", ".git", true},
+		{"zig-pkg", "zig-pkg", true},
+		{"ZIG-OUT", "engine/ZIG-OUT", true},
+		{"h", ".zig-cache/o/h", true},
+		{"zig", "zig", false},
 		{"model", "internal/model", false},
 		{"compat", "compat", false},
 		{"harvest", "harvest", false},

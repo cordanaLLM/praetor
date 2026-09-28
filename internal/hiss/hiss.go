@@ -408,7 +408,9 @@ func ShouldIgnorePath(rel string) bool {
 // output, dependency trees, caches and tool state. They are matched per path segment,
 // never as substrings. Project-specific names belong in ScanOptions.IgnoreDirs. The agent and
 // ledger scratch directories (.claude, .standards, .workingdir, .workingdir2) come from
-// util.IsScratchDir, the list adopt's verification planner and dedupe share.
+// util.IsScratchDir, the list adopt's verification planner and dedupe share, and the trees a
+// build toolchain writes inside the checkout (zig-pkg, zig-out, .zig-cache) from
+// util.IsToolchainTreeDir.
 var ignoredDirNames = map[string]struct{}{
 	".git": {}, ".corpus": {}, ".harvest": {},
 	"vendor": {}, "node_modules": {}, "third_party": {},
@@ -423,7 +425,7 @@ var ignoredDirPrefixes = []string{"build-", "build_"}
 
 func isIgnoredDirName(name string, extra map[string]struct{}) bool {
 	norm := strings.ToLower(name)
-	if _, ok := ignoredDirNames[norm]; ok || util.IsScratchDir(norm) {
+	if _, ok := ignoredDirNames[norm]; ok || util.IsScratchDir(norm) || util.IsToolchainTreeDir(norm) {
 		return true
 	}
 	if _, ok := extra[norm]; ok {

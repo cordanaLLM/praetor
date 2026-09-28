@@ -148,3 +148,107 @@ func TestDiscoverFleetZigMarkers(t *testing.T) {
 		t.Errorf("sub-projects = %v, want %v", subprojects, want)
 	}
 }
+
+// fetchedZigApp writes a Zig application after `zig build`: its manifest fetches dep by url,
+// and Zig 0.16 copied the package into zig-pkg/<name>-<version>-<hash>/ with the package's own
+// build.zig and build.zig.zon, next to the .zig-cache/ cache and the zig-out/ install prefix.
+func fetchedZigApp(t *testing.T) string {
+	t.Helper()
+	repo := t.TempDir()
+	writeFixture(t, repo, "build.zig", "const std = @import(\"std\");\n")
+	writeFixture(t, repo, "build.zig.zon", `.{ .name = .app, .version = "0.1.0", .dependencies = .{ .dep = .{ .url = "https://example.com/dep.tar.gz", .hash = "dep-0.0.1-h" } }, .paths = .{""} }`)
+	fetched := filepath.Join("zig-pkg", "dep-0.0.1-h")
+	writeFixture(t, repo, filepath.Join(fetched, "build.zig"), "const std = @import(\"std\");\n")
+	writeFixture(t, repo, filepath.Join(fetched, "build.zig.zon"), `.{ .name = .dep, .version = "0.0.1", .dependencies = .{ .inner = .{ .url = "https://example.com/inner.tar.gz", .hash = "inner-1.0.0-h" } }, .paths = .{""} }`)
+	writeFixture(t, repo, filepath.Join(fetched, "src", "dep.c"), "int dep(void) { return 0; }\n")
+	writeFixture(t, repo, filepath.Join("zig-out", "lib", "build.zig"), "const std = @import(\"std\");\n")
+	writeFixture(t, repo, filepath.Join(".zig-cache", "o", "h", "build.zig.zon"), ".{}\n")
+	return repo
+}
+
+// Positive: after a build, the packages Zig fetched into zig-pkg/ are third-party copies, not
+// sub-projects: the repository's demands stay the ones its own build.zig.zon declares, and a
+// fetched package's own url dependencies are no demands of the repository.
+func TestScanRepoZigToolchainTreesPruned_Positive(t *testing.T) {
+	row, err := ScanRepo(context.Background(), fetchedZigApp(t), NewRegistry(nil))
+	if err != nil {
+		t.Fatalf("ScanRepo() error = %v", err)
+	}
+	if len(row.Subprojects) != 0 || len(row.UnscannedSubprojects) != 0 {
+		t.Errorf("toolchain trees became sub-projects: %v unscanned %v", row.Subprojects, row.UnscannedSubprojects)
+	}
+	if got, want := nativeDemandNames(row), []string{"dep"}; !slices.Equal(got, want) {
+		t.Errorf("demands = %v, want %v", got, want)
+	}
+}
+
+// Negative: discovery prunes the toolchain trees in every repository, so neither a fetched
+// package nor the cache or install prefix is a sub-project or a repository of its own.
+func TestDiscoverFleetZigToolchainTreesPruned_Negative(t *testing.T) {
+	root := t.TempDir()
+	repo := filepath.Join(root, "repo")
+	makeCheckout(t, repo)
+	writeRepoFile(t, filepath.Join(repo, "build.zig"), "const std = @import(\"std\");\n")
+	for _, tree := range []string{"zig-pkg/dep-0.0.1-h", "zig-out/lib", ".zig-cache/o/h", "engine/zig-pkg/dep-0.0.1-h"} {
+		writeRepoFile(t, filepath.Join(repo, filepath.FromSlash(tree), "build.zig.zon"), ".{}\n")
+	}
+	writeRepoFile(t, filepath.Join(root, "zig-pkg", "loose", "build.zig"), "const std = @import(\"std\");\n")
+
+	layout, err := discoverFleet(context.Background(), root)
+	if err != nil {
+		t.Fatalf("discoverFleet() error = %v", err)
+	}
+	if len(layout.repos) != 1 || layout.repos[0].root != repo {
+		t.Fatalf("repositories = %+v, want only %s", layout.repos, repo)
+	}
+	if want := []string{repo}; !slices.Equal(layout.repos[0].subprojects, want) {
+		t.Errorf("sub-projects = %v, want %v", layout.repos[0].subprojects, want)
+	}
+}
+
+// Boundary: the prune matches the exact directory names only; a first-party directory whose
+// name resembles a toolchain tree is scanned, and a path package vendored into zig-pkg/ is a
+// third-party demand like one under vendor/.
+func TestScanRepoZigToolchainTreeLookalikes_Boundary(t *testing.T) {
+	repo := t.TempDir()
+	writeFixture(t, repo, "build.zig", "const std = @import(\"std\");\n")
+	writeFixture(t, repo, "build.zig.zon", `.{ .name = .app, .dependencies = .{ .pinned = .{ .path = "zig-pkg/pinned" }, .tools = .{ .path = "zig-pkg-tools" } }, .paths = .{""} }`)
+	writeFixture(t, repo, filepath.Join("zig-pkg-tools", "build.zig"), "const std = @import(\"std\");\n")
+	writeFixture(t, repo, filepath.Join("zig", "build.zig.zon"), ".{}\n")
+
+	row, err := ScanRepo(context.Background(), repo, NewRegistry(nil))
+	if err != nil {
+		t.Fatalf("ScanRepo() error = %v", err)
+	}
+	if want := []string{"zig", "zig-pkg-tools"}; !slices.Equal(row.Subprojects, want) {
+		t.Errorf("sub-projects = %v, want %v", row.Subprojects, want)
+	}
+	if got, want := nativeDemandNames(row), []string{"pinned"}; !slices.Equal(got, want) {
+		t.Errorf("demands = %v, want %v", got, want)
+	}
+}
+
+// NativeLanguages names the languages behind the analyzer id "native". Positive: meson or CMake
+// is C, C++ and CUDA, a Zig build is Zig. Negative: a directory without a native marker, or with
+// build.zig only inside zig-pkg/, has none. Boundary: a Zig build beside CMake has all four.
+func TestNativeLanguages(t *testing.T) {
+	for _, tc := range []struct {
+		files []string
+		want  []string
+	}{
+		{[]string{"meson.build"}, []string{"c", "cpp", "cuda"}},
+		{[]string{"CMakeLists.txt"}, []string{"c", "cpp", "cuda"}},
+		{[]string{"build.zig"}, []string{"zig"}},
+		{nil, nil},
+		{[]string{filepath.Join("zig-pkg", "dep", "build.zig"), "main.zig"}, nil},
+		{[]string{"CMakeLists.txt", "build.zig.zon"}, []string{"c", "cpp", "cuda", "zig"}},
+	} {
+		repo := t.TempDir()
+		for _, name := range tc.files {
+			writeFixture(t, repo, name, "\n")
+		}
+		if got := NativeLanguages(repo); !slices.Equal(got, tc.want) {
+			t.Errorf("%v: NativeLanguages = %v, want %v", tc.files, got, tc.want)
+		}
+	}
+}

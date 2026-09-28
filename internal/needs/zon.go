@@ -30,20 +30,15 @@ type zonDependency struct {
 
 // thirdParty reports whether the dependency is a package the repository does not author: one
 // the build fetches by url, or one vendored into a directory the discovery walk prunes as not the
-// repository's own (discoveryPrunedNames: vendor/, third_party/ and the like). Any other path
-// dependency is a package of the repository, which discovery scans as a sub-project of its own
-// when it holds a build.zig, like a Cargo path crate (cargoManifest.thirdPartyCrates).
+// repository's own (notRepositorySource: vendor/, third_party/, zig-pkg/ and the like). Any other
+// path dependency is a package of the repository, which discovery scans as a sub-project of its
+// own when it holds a build.zig, like a Cargo path crate (cargoManifest.thirdPartyCrates).
 func (d zonDependency) thirdParty() bool {
 	if d.hasURL {
 		return true
 	}
 	segments := strings.Split(path.Clean(strings.ReplaceAll(d.path, `\`, "/")), "/")
-	for _, segment := range segments {
-		if _, pruned := discoveryPrunedNames[segment]; pruned {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(segments, notRepositorySource)
 }
 
 type zonTokenKind uint8

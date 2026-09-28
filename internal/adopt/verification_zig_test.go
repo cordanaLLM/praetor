@@ -1,6 +1,7 @@
 package adopt
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -132,5 +133,61 @@ func TestAdoptedHarnessOfZigBuiltWorkspace(t *testing.T) {
 	facts, _, err := RepositoryHISSFacts(t.Context(), writeRepo(t, map[string]string{"build.zig": "", "src/main.zig": "pub fn main() void {}\n"}), nil)
 	if want := (hisscatalog.Facts{Languages: hisscatalog.LanguageOther, CeilingFuncLOC: config.AuditMaxFuncLOC}); err != nil || facts != want {
 		t.Errorf("Zig-only facts = %+v, %v; want %+v", facts, err, want)
+	}
+}
+
+// builtZigRepository is a pure-Zig repository after `zig build`: Zig 0.16 fetched a package with
+// its own build.zig and C source into zig-pkg/, installed a header into the zig-out/ prefix and
+// cached a translated header in .zig-cache/. None of the three trees is the repository's own.
+func builtZigRepository() map[string]string {
+	return map[string]string{
+		"build.zig":    "const std = @import(\"std\");\n",
+		"src/main.zig": "pub fn main() void {}\n",
+
+		"zig-pkg/dep-0.0.1-h/build.zig":     "const std = @import(\"std\");\n",
+		"zig-pkg/dep-0.0.1-h/build.zig.zon": ".{}\n",
+		"zig-pkg/dep-0.0.1-h/src/dep.c":     cSource,
+		"zig-out/include/dep.h":             "int probe(void);\n",
+		".zig-cache/o/h/cimport.h":          "int probe(void);\n",
+	}
+}
+
+// Positive: the C sources in the trees Zig writes select no C/C++ source language, so a pure-Zig
+// repository keeps the known language set no labelled clause names. Negative: the same C source in
+// a first-party directory whose name only resembles a toolchain tree is the repository's own.
+func TestVerificationSkipsZigToolchainTrees(t *testing.T) {
+	root := writeRepo(t, builtZigRepository())
+	plan, err := ObserveVerificationPlanWithLimits(t.Context(), root, nil)
+	if err != nil || len(plan.SourceLanguages) != 0 {
+		t.Fatalf("built Zig repository = %+v, %v; want no source language", plan, err)
+	}
+	facts, _, err := RepositoryHISSFacts(t.Context(), root, nil)
+	if want := (hisscatalog.Facts{Languages: hisscatalog.LanguageOther, CeilingFuncLOC: config.AuditMaxFuncLOC}); err != nil || facts != want {
+		t.Errorf("built Zig repository facts = %+v, %v; want %+v", facts, err, want)
+	}
+	mustWrite(t, filepath.Join(root, "zig-pkg-tools", "shim.c"), cSource)
+	facts, _, err = RepositoryHISSFacts(t.Context(), root, nil)
+	if err != nil || facts.Languages&hisscatalog.LanguageC == 0 {
+		t.Errorf("first-party zig-pkg-tools/shim.c facts = %+v, %v; want C/C++ among the languages", facts, err)
+	}
+}
+
+// Boundary: the toolchain trees spend none of the walk's entry bound. The root's six entries and
+// src/main.zig fit a bound of exactly that many however large the fetched packages grow; one more
+// first-party entry stops the walk.
+func TestVerificationZigToolchainTreesSpendNoEntries(t *testing.T) {
+	files := builtZigRepository()
+	for i := range 32 {
+		files[fmt.Sprintf("zig-pkg/dep-0.0.1-h/src/f%d.zig", i)] = ""
+	}
+	root := writeRepo(t, files)
+	limits := DefaultVerificationLimits()
+	limits.MaxEntries = 6
+	if _, err := ObserveVerificationPlanWithLimits(t.Context(), root, &limits); err != nil {
+		t.Fatalf("toolchain trees spent the entry bound: %v", err)
+	}
+	mustWrite(t, filepath.Join(root, "src", "extra.zig"), "")
+	if _, err := ObserveVerificationPlanWithLimits(t.Context(), root, &limits); err == nil || !strings.Contains(err.Error(), "--"+VerificationEntriesFlag) {
+		t.Fatalf("one entry past the bound: %v; want the entries flag named", err)
 	}
 }

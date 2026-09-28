@@ -103,8 +103,13 @@ retention for `~/.local/state/praetor/dogfood-local` is a separate, still-open
 fix tracked on the issue that requested this key.
 
 The shared resolver combines supported project markers and source formats with
-explicit caller options. It excludes private state, dependency/build directories
-and nested agent worktrees. An incomplete scan is an error rather than a claim
+explicit caller options. It excludes private state, dependency/build directories,
+nested agent worktrees, and the trees Zig writes inside a checkout: `zig-pkg`
+(fetched packages), `zig-out` and `.zig-cache` (`util.IsToolchainTreeDir`). A
+native build marker adds `c` and `cpp` for `meson.build` or `CMakeLists.txt` and
+`zig` for `build.zig` or `build.zig.zon` (`needs.NativeLanguages`), so a pure-Zig
+repository gets no C/C++ tooling (`internal/editor/native_languages_test.go`).
+`cuda` comes only from `.cu` and `.cuh` sources. An incomplete scan is an error rather than a claim
 that the unexamined part of the repository has no relevant languages. The scan
 walks at most 4096 files by default (`Options.MaxWorkspaceFiles`, zero selects the
 default). `praetorctl adopt` passes the entry bound its verification walk resolved,

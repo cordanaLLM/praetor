@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/topology"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
@@ -35,6 +36,15 @@ var ErrDiscoveryBound = errors.New("needs: discovery walk exceeded its bound")
 var discoveryPrunedNames = map[string]struct{}{
 	"vendor": {}, "node_modules": {}, "third_party": {},
 	"build": {}, "target": {}, "testdata": {},
+}
+
+// notRepositorySource reports whether a directory named name holds no source of the repository
+// it sits in, at any depth: a discoveryPrunedNames entry, or a tree a build toolchain writes
+// inside the checkout (util.IsToolchainTreeDir: the packages Zig fetched into zig-pkg/, each with
+// its own build.zig and build.zig.zon, and its install and cache trees).
+func notRepositorySource(name string) bool {
+	_, pruned := discoveryPrunedNames[name]
+	return pruned || util.IsToolchainTreeDir(name)
 }
 
 // fleetRepo is one repository a discovery walk found: a git checkout, or a directory
@@ -240,15 +250,12 @@ func (w *layoutWalker) children(item walkItem, entries []os.DirEntry, owner *fle
 }
 
 // prunedFromDiscovery reports whether discovery skips the child directory name of a
-// directory parentDepth levels below the walk root. Dot-directories and
-// discoveryPrunedNames are skipped everywhere. scratch/ and cache/ are local work areas
+// directory parentDepth levels below the walk root. Dot-directories and the directories
+// notRepositorySource names are skipped everywhere. scratch/ and cache/ are local work areas
 // only directly under the walk root or directly under a repository root (parentIsRepo);
 // deeper, as in internal/cache, they are ordinary source directories (BUG-864).
 func prunedFromDiscovery(name string, parentDepth int, parentIsRepo bool) bool {
-	if strings.HasPrefix(name, ".") {
-		return true
-	}
-	if _, pruned := discoveryPrunedNames[name]; pruned {
+	if strings.HasPrefix(name, ".") || notRepositorySource(name) {
 		return true
 	}
 	if name != "scratch" && name != "cache" {

@@ -62,10 +62,12 @@ func hasAnyFile(dir string, names []string) bool {
 	})
 }
 
-// nativeLanguages returns the languages the native builds in repoPath build: C, C++ and CUDA
-// for meson or CMake, Zig for a Zig build. A Zig build that also compiles C or C++ is C/C++
-// only through a C-family marker; build.zig is a program, not a manifest that declares it.
-func nativeLanguages(repoPath string) []string {
+// NativeLanguages returns the languages the native builds in repoPath build: C, C++ and CUDA
+// for meson or CMake, Zig for a Zig build, nothing without a native marker. A Zig build that
+// also compiles C or C++ is C/C++ only through a C-family marker; build.zig is a program, not a
+// manifest that declares it. The analyzer id "native" covers all three build systems, so a
+// caller that needs the languages behind it asks here instead of reading the id as C/C++.
+func NativeLanguages(repoPath string) []string {
 	var languages []string
 	if hasAnyFile(repoPath, cFamilyMarkers) {
 		languages = append(languages, "c", "cpp", "cuda")
@@ -88,7 +90,7 @@ func (a *NativeAnalyzer) Analyze(ctx context.Context, repoPath string, target Ta
 		Version:      1,
 		Repository:   repoName,
 		Language:     "native",
-		Languages:    nativeLanguages(repoPath),
+		Languages:    NativeLanguages(repoPath),
 		Capabilities: CapabilityDeclaration{Required: make([]CapabilityKey, 0), Optional: make([]CapabilityKey, 0)},
 		Dependencies: make([]DependencyDemand, 0),
 		UpdatedAt:    time.Now().UTC(),

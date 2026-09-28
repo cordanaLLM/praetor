@@ -653,7 +653,12 @@ renders both newly generated Makefiles and AGENTS.md. Discovery recognizes:
   plan is unavailable and its reason names the missing native test step for
   `build.zig`. A `build.zig.zon` alone selects nothing, and a `build.zig` below
   the root is not a marker (`internal/adopt/verification.go` `addZigVerification`,
-  `internal/adopt/verification_zig_test.go`).
+  `internal/adopt/verification_zig_test.go`). The walk skips the trees Zig
+  writes inside the checkout, `zig-pkg` (fetched packages), `zig-out` and
+  `.zig-cache` (`util.IsToolchainTreeDir`): their files spend no entry bound,
+  and the C sources of a fetched package do not make a pure-Zig repository
+  C/C++ (`TestVerificationSkipsZigToolchainTrees`,
+  `TestVerificationZigToolchainTreesSpendNoEntries`).
 
 Mixed projects retain all detected gates; npm build precedes .NET builds for
 frontend resources, and `zig build` precedes both. A solution marker without projects, or Meson/CMake markers
@@ -844,7 +849,8 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
     `goto` and banned-libc checks on. A `.h` file does too, unless an Objective-C source (`.m`,
     `.mm`) sits beside it: `.h` is Objective-C's header as well, and the audit does not scan
     Objective-C. Files under a directory the scan ignores (`vendor`, `third_party`, `testdata`,
-    build output; `hiss.ShouldIgnorePath`) never count. In a work tree a file must also be one
+    build output, and the Zig trees `zig-pkg`, `zig-out` and `.zig-cache`;
+    `hiss.ShouldIgnorePath`) never count. In a work tree a file must also be one
     git reports as the repository's own: tracked, or untracked and not ignored
     (`hiss.GitVisiblePaths`, the scan's own listing, asked once and only when the walk saw a
     C/C++ or Objective-C file). An in-place Cython `.c` a `*.c` rule ignores, or C under ignored

@@ -404,7 +404,7 @@ demands come from the `.dependencies` of `build.zig.zon`, read in the format of
 Zig 0.16.0 (`doc/build.zig.zon.md` in the Zig source): each entry names a
 package fetched by `url` (with its `hash`) or found in the tree by `path`. A url
 package is a third-party demand. A path package is one only when it sits under a
-directory discovery prunes (`vendor/`, `third_party/` and the other names above),
+directory discovery prunes (`vendor/`, `third_party/`, `zig-pkg/` and the other names below),
 where it is vendored; any other path package is the repository's own, scanned as
 a sub-project when it holds a `build.zig`, like a Cargo path crate. Demands take
 the native catalog's capability or `native.external.<name>`. `build.zig` itself
@@ -443,6 +443,15 @@ The walk never enters:
 - directories named exactly `vendor`, `node_modules`, `third_party`, `build`,
   `target` or `testdata`. Matching is exact and case-sensitive, so
   first-party trees such as `Build-tools/` or `build_scripts/` are walked;
+- the trees Zig writes inside a checkout, named exactly `zig-pkg`, `zig-out` or
+  `.zig-cache` (`util.IsToolchainTreeDir`, the list every repository walker
+  shares). Zig 0.16 copies each package it fetches into
+  `zig-pkg/<name>-<version>-<hash>/` with the package's own `build.zig` and
+  `build.zig.zon`, so a built checkout would otherwise list every fetched
+  package as a sub-project and its url dependencies as the repository's demands
+  (`TestScanRepoZigToolchainTreesPruned_Positive`,
+  `TestDiscoverFleetZigToolchainTreesPruned_Negative`,
+  `TestScanRepoZigToolchainTreeLookalikes_Boundary`);
 - `scratch/` and `cache/` directly under the walk root or directly under a
   repository root. Deeper, as in `<repo>/internal/cache/`, they are ordinary sources.
 

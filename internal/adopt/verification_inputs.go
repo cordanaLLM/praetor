@@ -120,9 +120,10 @@ func visitVerificationInput(ctx context.Context, root, rel string, entry fs.DirE
 // skipVerificationDirectory reports a directory that holds no verification input of the
 // repository's own. The scratch directories come from util.IsScratchDir: a .claude/worktrees
 // tree alone holds whole copies of the checkout and ran the walk past its entry bound on an
-// ordinary working checkout.
+// ordinary working checkout. The toolchain trees come from util.IsToolchainTreeDir: the C
+// sources of a package Zig fetched into zig-pkg/ made a pure-Zig repository C/C++.
 func skipVerificationDirectory(name string) bool {
-	if util.IsScratchDir(name) {
+	if util.IsScratchDir(name) || util.IsToolchainTreeDir(name) {
 		return true
 	}
 	switch name {
