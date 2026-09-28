@@ -19,8 +19,8 @@ const batchHelperEnv = "PRAETOR_BATCH_FILE_TEST"
 
 // batchHostileArgs are nine arguments cmd.exe would reinterpret if they reached it bare:
 // a caret range, command separators, a pipe, grouping and redirection with spaces, a variable
-// reference, a delayed-expansion reference, an empty argument, a trailing backslash, and
-// delimiters with a run of carets. Nine, so %1 through %9 forward every one.
+// reference, a delayed-expansion reference, an empty argument, a trailing backslash,
+// delimiters with a run of carets, and a tab. Nine, so %1 through %9 forward every one.
 var batchHostileArgs = []string{"lib@^5.7.3", "a&b|c", "(x) <y> z", "%PATH%", "!USERNAME!", "",
 	`C:\dir with space\`, ",;=^^", "a\tb"}
 
