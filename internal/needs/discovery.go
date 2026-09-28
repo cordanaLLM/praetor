@@ -286,11 +286,11 @@ func (w *layoutWalker) collapseWorktrees() {
 }
 
 // isAnalyzerManifest reports whether name is a file a registered analyzer detects a
-// project by (CMakeLists.txt and setup.py included, BUG-864).
+// project by (CMakeLists.txt and setup.py included, BUG-864; the Zig build markers, #566).
 func isAnalyzerManifest(name string) bool {
 	switch name {
 	case "go.mod", "package.json", "pyproject.toml", "requirements.txt", "setup.py",
-		"Cargo.toml", "meson.build", "CMakeLists.txt":
+		"Cargo.toml", mesonMarker, cmakeMarker, zigMarker, zigManifest:
 		return true
 	}
 	return false

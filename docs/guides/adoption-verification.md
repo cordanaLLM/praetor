@@ -643,9 +643,20 @@ renders both newly generated Makefiles and AGENTS.md. Discovery recognizes:
   discovery. Python 3.14 fails when discovery finds no tests. A separate build
   command remains necessary; a Python-only project without one needs a custom
   contract rather than a generated no-op build.
+- Zig builds: a root `build.zig` runs `zig build`, its default install step,
+  ahead of every other build and test command, because language builds such as
+  Cargo's link the native libraries it produces. `build.zig` is Zig source, not
+  metadata: discovery records its presence without reading it, so a build script
+  of any size fits the byte bounds, and a symlinked one is refused. It supplies
+  no test command, since `zig build test` exists only where the script declares
+  a test step. The language markers beside it supply the tests; without one the
+  plan is unavailable and its reason names the missing native test step for
+  `build.zig`. A `build.zig.zon` alone selects nothing, and a `build.zig` below
+  the root is not a marker (`internal/adopt/verification.go` `addZigVerification`,
+  `internal/adopt/verification_zig_test.go`).
 
 Mixed projects retain all detected gates; npm build precedes .NET builds for
-frontend resources. A solution marker without projects, or Meson/CMake markers
+frontend resources, and `zig build` precedes both. A solution marker without projects, or Meson/CMake markers
 without a selected configured build directory, remains unavailable. Discovery is
 bounded to 4,096 entries, 32 directory levels (to cover nested public `src`/test
 project layouts), 128 metadata files, 64 KiB per metadata file and 2 MiB in
@@ -846,6 +857,12 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
     `TestCSourceDetectionFollowsTheAuditScan`, `TestRepositoryHISSFactsReadsOnlyGitVisibleCSources`,
     `TestGitVisiblePathsAnswersTheScanScope`, `TestIsNativeExtensionMatchesTheScanDispatch`,
     `TestCSourceDetectionStaysInsideTheWalkBounds`, `TestAdoptedHarnessRendersCClausesFromSources`).
+  - A Zig build (`build.zig`) is a runtime no clause names. It selects no C/C++ clause by
+    itself, since the build script is a program that declares no language; the C or C++
+    sources it compiles do, as above. A Cargo workspace built with `zig build` whose crates
+    carry C shims therefore states the Rust and C/C++ clauses and no Go clause, and a Zig-only
+    repository is a known language set in which no labelled clause renders
+    (`TestAdoptedHarnessOfZigBuiltWorkspace`).
   - HISS-04 states the function length the repository's audit enforces, read from the policy
     the policy-catalog step resolved (container-image, for example, enforces 50). At the 60-line
     audit ceiling it adds `(audit ceiling)`: a pinned profile snapshot such as

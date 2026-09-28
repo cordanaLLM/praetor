@@ -3,7 +3,9 @@ package needs
 import (
 	"context"
 	"fmt"
+	"maps"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -11,8 +13,23 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// NativeAnalyzer extracts C/C++ and GPU accelerator dependencies from Meson/CMake manifests.
+// NativeAnalyzer extracts C/C++ and GPU accelerator dependencies from Meson/CMake manifests,
+// and the packages a Zig build declares in build.zig.zon.
 type NativeAnalyzer struct{}
+
+// Native build markers. meson.build and CMakeLists.txt build C, C++ and CUDA; build.zig is a Zig
+// build, and build.zig.zon its package manifest.
+const (
+	mesonMarker = "meson.build"
+	cmakeMarker = "CMakeLists.txt"
+	zigMarker   = "build.zig"
+	zigManifest = "build.zig.zon"
+)
+
+var (
+	cFamilyMarkers = []string{mesonMarker, cmakeMarker}
+	zigMarkers     = []string{zigMarker, zigManifest}
+)
 
 // nativeDep records a native dependency together with the spelling used in the manifest.
 // The map key is the lower-cased name (CMake writes find_package(CUDA), Meson writes
@@ -32,10 +49,31 @@ func (a *NativeAnalyzer) Language() string {
 	return "native"
 }
 
-// Detect checks if the repository contains C/C++ or GPU build manifests.
+// Detect checks if the repository contains a native build manifest: meson.build,
+// CMakeLists.txt, build.zig or build.zig.zon.
 func (a *NativeAnalyzer) Detect(repoPath string) bool {
-	return util.FileExists(filepath.Join(repoPath, "meson.build")) ||
-		util.FileExists(filepath.Join(repoPath, "CMakeLists.txt"))
+	return hasAnyFile(repoPath, cFamilyMarkers) || hasAnyFile(repoPath, zigMarkers)
+}
+
+// hasAnyFile reports whether dir holds a file with one of names.
+func hasAnyFile(dir string, names []string) bool {
+	return slices.ContainsFunc(names, func(name string) bool {
+		return util.FileExists(filepath.Join(dir, name))
+	})
+}
+
+// nativeLanguages returns the languages the native builds in repoPath build: C, C++ and CUDA
+// for meson or CMake, Zig for a Zig build. A Zig build that also compiles C or C++ is C/C++
+// only through a C-family marker; build.zig is a program, not a manifest that declares it.
+func nativeLanguages(repoPath string) []string {
+	var languages []string
+	if hasAnyFile(repoPath, cFamilyMarkers) {
+		languages = append(languages, "c", "cpp", "cuda")
+	}
+	if hasAnyFile(repoPath, zigMarkers) {
+		languages = append(languages, "zig")
+	}
+	return languages
 }
 
 // Analyze extracts native C/C++ and GPU library dependencies and maps them to capabilities
@@ -50,7 +88,7 @@ func (a *NativeAnalyzer) Analyze(ctx context.Context, repoPath string, target Ta
 		Version:      1,
 		Repository:   repoName,
 		Language:     "native",
-		Languages:    []string{"c", "cpp", "cuda"},
+		Languages:    nativeLanguages(repoPath),
 		Capabilities: CapabilityDeclaration{Required: make([]CapabilityKey, 0), Optional: make([]CapabilityKey, 0)},
 		Dependencies: make([]DependencyDemand, 0),
 		UpdatedAt:    time.Now().UTC(),
@@ -83,20 +121,39 @@ func (a *NativeAnalyzer) Analyze(ctx context.Context, repoPath string, target Ta
 func parseNativeBuildManifests(repoPath string) (map[string]nativeDep, error) {
 	deps := make(map[string]nativeDep)
 
-	mesonPath := filepath.Join(repoPath, "meson.build")
-	if util.FileExists(mesonPath) {
-		if err := parseMesonBuild(mesonPath, deps); err != nil {
-			return nil, err
+	for _, manifest := range []struct {
+		name  string
+		parse func(string, map[string]nativeDep) error
+	}{{mesonMarker, parseMesonBuild}, {cmakeMarker, parseCMakeLists}, {zigManifest, parseZigManifest}} {
+		manifestPath := filepath.Join(repoPath, manifest.name)
+		if !util.FileExists(manifestPath) {
+			continue
 		}
-	}
-
-	cmakePath := filepath.Join(repoPath, "CMakeLists.txt")
-	if util.FileExists(cmakePath) {
-		if err := parseCMakeLists(cmakePath, deps); err != nil {
+		if err := manifest.parse(manifestPath, deps); err != nil {
 			return nil, err
 		}
 	}
 	return deps, nil
+}
+
+// parseZigManifest records the third-party packages a build.zig.zon declares
+// (zonDependency.thirdParty): every package fetched by url, and every path package vendored
+// under a directory discovery prunes. A manifest parseZon refuses fails the scan with its reason.
+func parseZigManifest(manifestPath string, deps map[string]nativeDep) error {
+	data, err := readManifest(manifestPath)
+	if err != nil {
+		return err
+	}
+	zonDeps, err := parseZon(string(data))
+	if err != nil {
+		return fmt.Errorf("parse %q: %w", manifestPath, err)
+	}
+	for _, name := range slices.Sorted(maps.Keys(zonDeps)) {
+		if zonDeps[name].thirdParty() {
+			recordNativeDep(deps, name)
+		}
+	}
+	return nil
 }
 
 // recordNativeDep stores a dependency under its normalised key without overwriting a

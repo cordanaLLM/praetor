@@ -95,7 +95,8 @@ func TestDefaultDiscoveryPolicyNativeCoverage(t *testing.T) {
 		"hiss:apple-native":   {".metal", ".mm"},
 		"hiss:shaders":        {".comp", ".glsl"},
 		"needs:native":        {"CMakeLists.txt", "meson.build"},
-		"verification:native": {"CMakeLists.txt", "meson.build"},
+		"needs:zig":           {"build.zig", "build.zig.zon"},
+		"verification:native": {"CMakeLists.txt", "build.zig", "meson.build"},
 	} {
 		rule, ok := rules[key]
 		if !ok {
@@ -110,6 +111,10 @@ func TestDefaultDiscoveryPolicyNativeCoverage(t *testing.T) {
 				t.Errorf("default policy %q missing %q: %v", key, match, rule.Matches)
 			}
 		}
+	}
+	// The native needs analyzer detects a Zig build (#566); no analyzer is named zig.
+	if analyzer := rules["needs:zig"].Analyzer; analyzer != "native" {
+		t.Errorf("needs:zig analyzer = %q, want native", analyzer)
 	}
 }
 
