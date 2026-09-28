@@ -468,6 +468,54 @@ tells the adopter's Renovate to leave the managed files alone
 `TestMergeRenovateRule` in `internal/adopt/renovate_test.go` cover these cases. Dependabot and other
 update bots are not configured; keep the managed files out of them by hand.
 
+actionlint rejects a `runs-on` label missing from its built-in table of
+GitHub-hosted runners, and v1.7.12, its release at the time of writing, has no
+`ubuntu-26.04`. The locked workflow runs on that label, and audit forbids
+editing it, so the `actionlint-labels` adoption step declares the label to
+actionlint under `self-hosted-runner.labels`, the one declaration actionlint
+accepts for it (`internal/adopt/actionlint.go`):
+
+- The labels come from the Markdown family (`actionlintLabels` in
+  `tools/markdownlint/assets.go`, read as `managedasset.Family.ActionlintLabels`).
+  Each must be a `runs-on` value of the workflow (`Family.Validate`). With
+  `docs:seo-portal` disabled, no label is needed and nothing is written.
+- It edits the file actionlint reads: `.github/actionlint.yaml`, or
+  `.github/actionlint.yml` when the `.yaml` file is absent. With both present,
+  actionlint v1.7.12 ignores the `.yml` file, so adoption does too. A
+  repository without either gets `.github/actionlint.yaml`, with a header that
+  says why it exists. That file passes `yamllint --strict`
+  (`scripts/test_emitted_yaml_lint.py` lints its committed rendering,
+  `internal/adopt/testdata/emitted/.github/actionlint.yaml`).
+- It only adds a missing label, after the adopter's own. A label counts as
+  declared when the list holds it, or when one of its patterns matches it under
+  Go's `path.Match`. actionlint also reads brace patterns; adoption does not, so
+  a brace pattern costs a redundant label, never a missing one. Adoption never
+  removes a label, including one it added, because the adopter's own workflows
+  may run on it too.
+- The edit changes only the lines it inserts, and it is kept only when the
+  result decodes to the original document plus the new labels. It handles an
+  empty file, a file without `self-hosted-runner`, a null or block
+  `self-hosted-runner`, and a `labels` value that is null, a block list or a
+  one-line flow list such as the `labels: []` that `actionlint -init-config`
+  writes. The file keeps its line endings.
+- Any other file is reported with the label to declare by hand and left
+  untouched, and adoption goes on with its other steps. That covers a symbolic
+  link, a directory, a file over 1 MiB or one it may not read, mixed line
+  endings, several documents, anchors, aliases, duplicate keys, a flow-style
+  mapping, a multi-line flow list and a `labels` value of another kind.
+- Once actionlint ships a label, remove it from `actionlintLabels`, and
+  adoption stops adding it. Wherever actionlint is on `PATH`,
+  `TestActionlintStillRejectsTheDeclaredLabels` fails as soon as actionlint
+  accepts the workflow without the declaration, and
+  `TestActionlintAcceptsTheAdoptedWorkflow` checks that it accepts the workflow
+  beside the file adoption creates. Both skip where actionlint is not
+  installed; Praetor does not pin it (#343).
+
+The `TestActionlintLabels*` and `TestMergeActionlintLabelsBoundaryLayouts`
+tests in `internal/adopt/actionlint_test.go` cover these cases. This
+repository's own `.github/actionlint.yaml` declares the label for all its
+workflows, which adoption leaves as it is.
+
 The workflow and `markdownlint-cli2.yaml` pass `yamllint --strict` under its
 default rules, which an adopter's own lint may apply to every file. Both open
 with a `---` document start, and the workflow quotes its `'on'` key so the truthy
@@ -495,7 +543,8 @@ Declining `makefile` leaves the `Makefile` to the operator: audit neither
 requires the managed `docs-lint` block nor, with the facet disabled, rejects
 one. Declining `formatter-ignore` does the same for `.prettierignore`, and
 declining `renovate-ignore` leaves the Renovate configuration untouched, which
-audit does not read. Declining
+audit does not read. Declining `actionlint-labels` likewise leaves the
+actionlint configuration alone and creates none. Declining
 `git-ignore` waives only the managed `.gitignore` tail block; audit still runs
 `git check-ignore` and fails until the operator's own rules exclude both
 private scratch roots. A decline list with an unknown or mandatory name fails

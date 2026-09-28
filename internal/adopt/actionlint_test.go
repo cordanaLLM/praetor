@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -262,15 +263,15 @@ func TestMergeActionlintLabelsBoundaryLayouts(t *testing.T) {
 		"flow list":           {"self-hosted-runner:\n  labels: [gpu, 'arm64']  # ours ]\n", "self-hosted-runner:\n  labels: [gpu, 'arm64', ubuntu-26.04]  # ours ]\n"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			merge, err := mergeActionlintLabels(t.Context(), []byte(tc.in), []string{"ubuntu-26.04"})
-			if err != nil || merge.refused != "" || string(merge.data) != tc.want {
-				t.Fatalf("err=%v refused=%q\n%q\nwant\n%q", err, merge.refused, merge.data, tc.want)
+			merged, added, err := mergeActionlintLabels(t.Context(), []byte(tc.in), []string{"ubuntu-26.04"})
+			if err != nil || string(merged) != tc.want || !slices.Equal(added, []string{"ubuntu-26.04"}) {
+				t.Fatalf("err=%v added=%v\n%q\nwant\n%q", err, added, merged, tc.want)
 			}
 		})
 	}
-	merge, err := mergeActionlintLabels(t.Context(), []byte(actionlintInitConfig), nil)
-	if err != nil || merge.refused != "" || len(merge.added) != 0 || merge.data != nil {
-		t.Fatalf("an empty label set changed the file: %+v %v", merge, err)
+	merged, added, err := mergeActionlintLabels(t.Context(), []byte(actionlintInitConfig), nil)
+	if err != nil || len(added) != 0 || merged != nil {
+		t.Fatalf("an empty label set changed the file: %q %v %v", merged, added, err)
 	}
 }
 
