@@ -318,6 +318,14 @@ repository as admitted. `TestGatekeeperAgent_Negative_RejectedExitsOneWithTheFai
 [`cmd/standardsctl/agent_gatekeeper_test.go`](https://github.com/cordanaLLM/praetor/blob/main/cmd/standardsctl/agent_gatekeeper_test.go)
 pins the exit code and the failing stage's reason in the output.
 
+A help probe never starts the pipeline. `--help`, `-h` or `help` anywhere after `agent`, for
+example `praetorctl agent run praetor-gatekeeper --help`, prints the agent usage and exits 0
+before any helper runs, the way `praetorctl gate --help` does; both use `isHelpToken` in
+[`cmd/standardsctl/main.go`](https://github.com/cordanaLLM/praetor/blob/main/cmd/standardsctl/main.go).
+Any other argument after the persona is refused.
+[`cmd/standardsctl/agent_help_test.go`](https://github.com/cordanaLLM/praetor/blob/main/cmd/standardsctl/agent_help_test.go)
+counts pipeline calls for every help spelling and position.
+
 ### A receipt certifies only a working tree that matches HEAD
 
 The scan stages read the working tree, while the receipt names a commit. `gate run` without
