@@ -120,8 +120,15 @@ func TestAdopt_Boundary_PriorProjectionIsSynchronizedNotReplaced(t *testing.T) {
 		t.Fatal(err)
 	}
 	rep := readoptWith(t, repoPath, source, AdoptOptions{Force: true})
-	if len(rep.Replaced()) != 0 {
-		t.Fatalf("prior projections replaced: %+v", rep.Replaced())
+	// The refresh drops the hand edit inside AGENTS.md's harness, so AGENTS.md itself is a
+	// replace with its delta and backup; the vendor projections of it are not.
+	for _, replaced := range rep.Replaced() {
+		if replaced.Path != agentsFile {
+			t.Fatalf("prior projection %s replaced: %+v", replaced.Path, rep.Replaced())
+		}
+	}
+	if !hasAction(rep, agentsFile, actionReplace) {
+		t.Fatalf("the dropped harness edit must be reported as a replace: %+v", rep.ActionDetails)
 	}
 	if !hasAction(rep, vendorContextFile, actionReconcile) || strings.Contains(mustRead(t, filepath.Join(repoPath, vendorContextFile)), "Local harness note.") {
 		t.Fatalf("vendor file not synchronized to the refreshed harness: %+v", rep.ActionDetails)
