@@ -67,8 +67,9 @@ func LefthookDisabledRefusal(value string) string {
 	return refusal("HISS", "LEFTHOOK="+value+" detected in environment. Evasion prohibited.")
 }
 
-// hooksDir matches the repository hooks directory in either path separator.
-const hooksDir = `\.git[/\\]hooks`
+// hooksDir matches the repository hooks directory in either path separator and any letter
+// case: Windows file systems resolve `.GIT\Hooks` to the same directory.
+const hooksDir = `(?i:\.git[/\\]hooks)`
 
 // builtinEvasion are the engine's evasion patterns. praetor's own Python guard
 // (`.config/agent/hooks/block_evasion.py`) carries the same list byte for byte
@@ -79,10 +80,16 @@ const hooksDir = `\.git[/\\]hooks`
 // Every source is valid in both RE2 and Python's re, names quotes as \x22 and \x27 so it
 // embeds in a Python raw string, and uses `\s` outside bracket expressions only.
 //
+//   - The long skip option counts in every abbreviation down to `--no-v`: Git's option
+//     parser resolves any unambiguous prefix (gitcli(7)), `--no-veri` on commit, push and
+//     rebase, `--no-v` on am. A shorter prefix that collides with `--no-verbose` is rejected
+//     by Git itself, so refusing it too costs nothing.
 //   - A short skip flag counts inside a bundle of flags that take no argument (`-an`,
 //     `-sn`; gitcli(7) bundles short options), and after Git's global options
 //     (`git -C dir commit -n`). A bundle whose skip letter follows an argument option
-//     (`-mn`) is a message, not a skip.
+//     (`-mn`) is a message, not a skip. `git am` has the same short flag (it skips
+//     pre-applypatch and applypatch-msg) with its own argument-free letters; its `-m` keeps
+//     the message id and takes no argument.
 //   - The global options before `commit` parse one way only, because Python's re backtracks
 //     through every parse when nothing matches: a bare -C or -c is reachable through the
 //     argument alternative alone, and the options are separated by the shell's blanks (space,
@@ -97,13 +104,17 @@ const hooksDir = `\.git[/\\]hooks`
 //   - The hooks directory is refused as the operand of a command that removes, moves,
 //     rewrites or re-permissions it, as a redirect target, and `lefthook uninstall` is
 //     refused outright. Reading it (ls, cat, sed -n, find without an action) stays allowed.
+//     The command names include cmd.exe's and PowerShell's (del, erase, rd, Remove-Item and
+//     its ri alias, move, ren, copy, Set-Content, Out-File, icacls, attrib), matched in any
+//     letter case as both shells do; a `cmd /c` or `powershell -c` wrapper still carries the
+//     inner command in the text.
 var builtinEvasion = []string{
-	`--no-verify\b`,
-	`\bgit([ \t]+-[Cc][ \t]+(\x22[^\x22]*\x22|\x27[^\x27]*\x27|[^ \t\n\x22\x27][^ \t\n]*)|[ \t]+(--[A-Za-z][-A-Za-z]*|-[ABD-Zabd-z][-A-Za-z]*|-[Cc][A-Za-z]+)(=[^ \t\n]+)?)*\s+commit\b[^\n]*\s-[aeiopqsvz]*n`,
+	`--no-v(e(r(i(f(y)?)?)?)?)?\b`,
+	`\bgit([ \t]+-[Cc][ \t]+(\x22[^\x22]*\x22|\x27[^\x27]*\x27|[^ \t\n\x22\x27][^ \t\n]*)|[ \t]+(--[A-Za-z][-A-Za-z]*|-[ABD-Zabd-z][-A-Za-z]*|-[Cc][A-Za-z]+)(=[^ \t\n]+)?)*\s+(commit\b[^\n]*\s-[aeiopqsvz]*|am\b[^\n]*\s-[3cikmqsu]*)n`,
 	`LEFTHOOK=[\x22\x27]?(0|false)\b`,
 	`SKIP=.*git`,
 	`(?i:core\.hookspath)(\s*=|\s+[\x22\x27]?[/~.$A-Za-z_\\])`,
-	`\b(rm|rmdir|unlink|mv|cp|ln|chmod|chown|chattr|truncate|shred|tee)\b[^\n]*` + hooksDir,
+	`\b(?i:rm|rmdir|unlink|mv|cp|ln|chmod|chown|chattr|truncate|shred|tee|del|erase|rd|ri|remove-item|move|move-item|ren|rename|rename-item|copy|copy-item|set-content|add-content|out-file|icacls|attrib)\b[^\n]*` + hooksDir,
 	`\b(sed|perl)\b[^\n]*\s(-[A-Za-z]*i|--in-place)[^\n]*` + hooksDir,
 	`\bfind\b[^\n]*` + hooksDir + `[^\n]*\s-(delete|exec|execdir|ok)\b`,
 	`>\s*[\x22\x27]?[^ \t\n\x22\x27]*` + hooksDir,
