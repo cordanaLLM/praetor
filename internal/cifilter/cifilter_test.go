@@ -522,7 +522,7 @@ func TestMakePolicyDecision(t *testing.T) {
 // fell through as unclassified: tests still ran (fail closed), but the change was reported as
 // configuration. Each extension is checked on its own so neither can ride on the other.
 func TestClassifyChanges_TsxJsxAreCode(t *testing.T) {
-	for _, path := range []string{"third_party/interfig/upstream/src/index.tsx", "web/src/utils.jsx"} {
+	for _, path := range []string{"tools/figures/third_party/interfig/upstream/src/index.tsx", "web/src/utils.jsx"} {
 		cs := cifilter.ClassifyChanges([]string{path})
 		if !cs.CodeChanged || cs.UnclassifiedChanged || cs.ConfigChanged || cs.DocsOnly {
 			t.Errorf("%s: want code only, got code=%v unclassified=%v config=%v docsOnly=%v",

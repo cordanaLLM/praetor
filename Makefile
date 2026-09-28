@@ -161,7 +161,7 @@ verify-all: interfig-verify
 interfig-verify:
 	python3 -B scripts/test_sync_interfig.py
 	python3 -B scripts/sync_interfig.py verify
-	node --test 'third_party/interfig/upstream/src/*.test.ts'
+	node --test 'tools/figures/third_party/interfig/upstream/src/*.test.ts'
 
 .PHONY: docs-drift-test
 .PHONY: vscode-test
@@ -200,26 +200,28 @@ docs-lint-test:
 	node tools/markdownlint/verify.mjs --self-test
 	node tools/docsurface/verify.mjs --self-test
 
-# The rendered half of scripts/docs_diagrams.py (`site`) runs after mkdocs build in pages.yml and
-# the CI docs audit; this replays its Mermaid and figure fixtures, both directions, and checks both
-# mkdocs.yml files declare the diagram kinds their pages use.
+# The rendered half of tools/figures/docs_diagrams.py (`site`) runs after mkdocs build in pages.yml
+# and the CI docs audit; this replays its Mermaid and figure fixtures, both directions, checks both
+# mkdocs.yml files declare the diagram kinds their pages use, and tests the MkDocs figures hook.
 .PHONY: docs-diagrams-test
 verify-all: docs-diagrams-test
 docs-diagrams-test:
 	python3 -B scripts/test_docs_diagrams.py
 
-# Interactive figures (docs/adr/0015-interactive-figures-from-vendored-interfig.md): the build's
-# unit tests, a fresh build compared byte for byte with the committed SVG and JSON plus the player
-# size budget, and the Node-free source check (hashes, spec/JSON pairs, fence slugs, evidence,
-# the README block). A hand-edited or stale SVG fails both `check` and `sources`.
+# Interactive figures (docs/adr/0015-interactive-figures-from-vendored-interfig.md): the engine's
+# unit tests and type check, a fresh render compared byte for byte with the committed SVG and JSON
+# (`build.mjs check`, plain Node), the player bundle held to its size budget (`bundle.mjs --check`,
+# the one step that needs esbuild), and the Node-free source check (hashes, spec/JSON pairs, fence
+# slugs, evidence, the README block). A hand-edited or stale SVG fails both `check` and `sources`.
 .PHONY: docs-figures-check
 verify-all: docs-figures-check
 docs-figures-check:
 	npm ci --prefix tools/figures --ignore-scripts --no-audit --no-fund
 	npm --prefix tools/figures test
 	npm --prefix tools/figures run typecheck
-	npm --prefix tools/figures run check
-	python3 -B scripts/docs_diagrams.py sources
+	node tools/figures/build.mjs check
+	node tools/figures/bundle.mjs --check
+	python3 -B tools/figures/docs_diagrams.py sources
 
 # The presets' JSON-LD must read identity from the site's config, never name this project:
 # a source check always, and rendered MkDocs builds when mkdocs-material is installed.

@@ -49,7 +49,7 @@ SPDX-FileCopyrightText = "2026 Example"
 SPDX-License-Identifier = "EUPL-1.2"
 
 [[annotations]]
-path = ["third_party/interfig/upstream/**"]
+path = ["tools/figures/third_party/interfig/upstream/**"]
 precedence = "override"
 SPDX-FileCopyrightText = "2025 Vectorize AI, Inc."
 SPDX-License-Identifier = "MIT"
@@ -57,7 +57,7 @@ SPDX-License-Identifier = "MIT"
 
 REUSE_OVERRIDE_FIRST = """
 [[annotations]]
-path = ["third_party/interfig/upstream/**"]
+path = ["tools/figures/third_party/interfig/upstream/**"]
 precedence = "override"
 SPDX-License-Identifier = "MIT"
 
@@ -103,11 +103,11 @@ class TreeCase(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
-        self.vendor_dir = self.root / "third_party" / "interfig"
+        self.vendor_dir = self.root / "tools" / "figures" / "third_party" / "interfig"
         self.upstream = self.vendor_dir / "upstream"
         (self.upstream / "src").mkdir(parents=True)
         self.figures = self.root / "tools" / "figures"
-        self.figures.mkdir(parents=True)
+        self.figures.mkdir(parents=True, exist_ok=True)
         for name, value in {
             "REPO_ROOT": self.root,
             "VENDOR_DIR": self.vendor_dir,
@@ -208,7 +208,7 @@ class TestVerify(TreeCase):
         self.assertFails(sync_interfig.verify, contains='precedence = "override"')
 
     def test_reuse_later_narrow_table_shadows_override(self):
-        shadow = REUSE_OK + '\n[[annotations]]\npath = ["third_party/interfig/upstream/src/*.ts"]\n'
+        shadow = REUSE_OK + '\n[[annotations]]\npath = ["tools/figures/third_party/interfig/upstream/src/*.ts"]\n'
         shadow += 'SPDX-License-Identifier = "EUPL-1.2"\n'
         (self.root / "REUSE.toml").write_text(shadow, encoding="utf-8")
         self.assertFails(sync_interfig.verify, contains="upstream/src/a.ts")
@@ -558,9 +558,9 @@ class TestUpdate(TreeCase):
     @patch("sync_interfig.subprocess.run", side_effect=subprocess.CalledProcessError(1, ["npm"]))
     def test_failed_build_says_how_to_revert(self, _run, _which):
         fetcher = DummyFetcher(self.responses())
-        err = self.assertFails(self.run_update, fetcher, contains="git checkout -- third_party/interfig")
+        err = self.assertFails(self.run_update, fetcher, contains="git checkout -- tools/figures/third_party/interfig ")
         self.assertIn("docs/assets/figures", str(err))
-        self.assertIn("git clean -fd -- third_party/interfig/upstream", str(err))
+        self.assertIn("git clean -fd -- tools/figures/third_party/interfig/upstream ", str(err))
         self.assertIsInstance(err.__cause__, sync_interfig.SyncError)
 
     def test_safe_target_rejects_escape(self):
@@ -568,6 +568,23 @@ class TestUpdate(TreeCase):
             with self.subTest(rel=rel), self.assertRaises(sync_interfig.SyncError):
                 sync_interfig.safe_target(self.root, rel)
         self.assertEqual(sync_interfig.safe_target(self.root, "src/a.ts"), self.root / "src" / "a.ts")
+
+
+class TestLayout(unittest.TestCase):
+    """The vendored tree lives inside the figure engine, and every path the script names agrees."""
+
+    def test_vendored_tree_sits_under_tools_figures(self):
+        root = sync_interfig.REPO_ROOT
+        self.assertEqual(sync_interfig.VENDOR_DIR, root / "tools" / "figures" / "third_party" / "interfig")
+        self.assertEqual(sync_interfig.UPSTREAM_DIR.relative_to(root).as_posix(), sync_interfig.UPSTREAM_REL)
+        self.assertTrue((sync_interfig.UPSTREAM_DIR / "LICENSE").is_file())
+        self.assertTrue(sync_interfig.VENDOR_JSON.is_file())
+        self.assertFalse((root / "third_party" / "interfig").exists())
+
+    def test_override_and_revert_hint_name_the_same_tree(self):
+        self.assertEqual(sync_interfig.OVERRIDE_PATH, f"{sync_interfig.UPSTREAM_REL}/**")
+        self.assertIn(f"-- {sync_interfig.UPSTREAM_REL} ", sync_interfig.REVERT_HINT)
+        self.assertNotIn("-- third_party/", sync_interfig.REVERT_HINT)
 
 
 if __name__ == "__main__":

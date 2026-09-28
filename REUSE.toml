@@ -16,7 +16,7 @@ SPDX-License-Identifier = "EUPL-1.2"
 # still pass. VENDOR.md and vendor.json sit outside upstream/ and stay EUPL-1.2
 # (docs/adr/0015-interactive-figures-from-vendored-interfig.md).
 [[annotations]]
-path = ["third_party/interfig/upstream/**"]
+path = ["tools/figures/third_party/interfig/upstream/**"]
 precedence = "override"
 SPDX-FileCopyrightText = "2025 Vectorize AI, Inc."
 SPDX-License-Identifier = "MIT"

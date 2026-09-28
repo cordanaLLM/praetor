@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Verify, drift-check and update the vendored interfig engine under third_party/interfig/.
+"""Verify, drift-check and update the vendored interfig engine in tools/figures/third_party/interfig/.
 
 The decision record is docs/adr/0015-interactive-figures-from-vendored-interfig.md (section 8);
-the operator procedure is third_party/interfig/VENDOR.md.
+the operator procedure is tools/figures/third_party/interfig/VENDOR.md.
 
 - `verify` is offline and runs in `make interfig-verify`: the files under upstream/ match the
   vendor.json hashes, the include list covers every file, the LICENSE hash is the recorded one,
@@ -43,23 +43,25 @@ LOG_PAGE = 50
 EXIT_DRIFT = 3
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-VENDOR_DIR = REPO_ROOT / "third_party" / "interfig"
+TOOLS_FIGURES = REPO_ROOT / "tools" / "figures"
+VENDOR_DIR = TOOLS_FIGURES / "third_party" / "interfig"
 UPSTREAM_DIR = VENDOR_DIR / "upstream"
 VENDOR_JSON = VENDOR_DIR / "vendor.json"
 REUSE_TOML = REPO_ROOT / "REUSE.toml"
-TOOLS_FIGURES = REPO_ROOT / "tools" / "figures"
 
 UPSTREAM_REPO = "vectorize-io/hindsight"
 UPSTREAM_PATH = "hindsight-interfig"
 API = f"https://api.github.com/repos/{UPSTREAM_REPO}"
 RAW = f"https://raw.githubusercontent.com/{UPSTREAM_REPO}"
-OVERRIDE_PATH = "third_party/interfig/upstream/**"
+# The vendored tree relative to the repository root, as REUSE.toml and git name it.
+UPSTREAM_REL = "tools/figures/third_party/interfig/upstream"
+OVERRIDE_PATH = f"{UPSTREAM_REL}/**"
 LISTED_DIRS = ("src", "scripts")
 FULL_SHA = re.compile(r"[0-9a-f]{40}")
 REVERT_HINT = (
     "upstream/ and vendor.json are updated; revert with: "
-    "git checkout -- third_party/interfig docs/assets/figures && "
-    "git clean -fd -- third_party/interfig/upstream docs/assets/figures"
+    "git checkout -- tools/figures/third_party/interfig docs/assets/figures && "
+    f"git clean -fd -- {UPSTREAM_REL} docs/assets/figures"
 )
 
 
@@ -159,7 +161,7 @@ def check_override(annotation: dict | None, rel: str) -> None:
     paths = annotation_paths(annotation) if annotation else []
     if OVERRIDE_PATH not in paths:
         raise SyncError(
-            f"REUSE.toml: the last annotation covering third_party/interfig/upstream/{rel} is "
+            f"REUSE.toml: the last annotation covering {UPSTREAM_REL}/{rel} is "
             f"{paths}; the {OVERRIDE_PATH} override must sit after the ** table"
         )
     if annotation.get("SPDX-License-Identifier") != "MIT":
@@ -175,7 +177,7 @@ def verify_reuse(files: list[str]) -> None:
     if not any(OVERRIDE_PATH in annotation_paths(a) for a in annotations):
         raise SyncError(f"REUSE.toml: missing override annotation for {OVERRIDE_PATH}")
     for rel in files:
-        path = f"third_party/interfig/upstream/{rel}"
+        path = f"{UPSTREAM_REL}/{rel}"
         check_override(last_matching_annotation(annotations, path), rel)
 
 

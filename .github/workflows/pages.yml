@@ -7,9 +7,6 @@ on:
     paths:
       - 'docs/**'
       - 'mkdocs.yml'
-      - 'scripts/docs_diagrams.py'
-      - 'scripts/mkdocs_figures_hook.py'
-      - 'third_party/interfig/**'
       - 'tools/figures/**'
       - 'internal/seo/**'
       - 'cmd/standardsctl/seo.go'
@@ -20,9 +17,6 @@ on:
     paths:
       - 'docs/**'
       - 'mkdocs.yml'
-      - 'scripts/docs_diagrams.py'
-      - 'scripts/mkdocs_figures_hook.py'
-      - 'third_party/interfig/**'
       - 'tools/figures/**'
       - 'internal/seo/**'
       - 'cmd/standardsctl/seo.go'
@@ -72,7 +66,7 @@ jobs:
       # Interactive figures (docs/adr/0015-interactive-figures-from-vendored-interfig.md). The
       # player bundle is gitignored, so it is built here from the locked tools/figures install
       # before MkDocs copies docs/ into the site. `check` first proves the committed SVG and JSON
-      # still match a fresh build and the player chunk fits its budget.
+      # still match a fresh render; `bundle` fails when the player chunk exceeds its budget.
       - name: Setup Node Toolchain
         uses: actions/setup-node@v7
         with:
@@ -83,7 +77,7 @@ jobs:
       - name: Build Figure Player Bundle
         run: |
           npm ci --prefix tools/figures --ignore-scripts --no-audit --no-fund
-          npm --prefix tools/figures run check
+          node tools/figures/build.mjs check
           npm --prefix tools/figures run bundle
 
       - name: Build MkDocs Site (Strict Mode)
@@ -96,8 +90,8 @@ jobs:
       # when a committed figure no longer matches its spec, the engine or its evidence anchors.
       - name: Verify Diagrams Render
         run: |
-          python3 -B scripts/docs_diagrams.py site --config mkdocs.yml --docs docs --site site
-          python3 -B scripts/docs_diagrams.py sources
+          python3 -B tools/figures/docs_diagrams.py site --config mkdocs.yml --docs docs --site site
+          python3 -B tools/figures/docs_diagrams.py sources
 
       # Proves every figure mounts the interactive player in Chromium, with and without reduced
       # motion. --require-browser makes a missing browser a failure here instead of a skip.
