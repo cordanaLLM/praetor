@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/classify"
 )
 
 // flavorSession is an adoption session over a fresh directory holding files.
@@ -21,7 +23,9 @@ func flavorSession(t *testing.T, dryRun bool, files map[string]string) *adoptSes
 			t.Fatal(err)
 		}
 	}
-	return &adoptSession{repoPath: root, opts: AdoptOptions{DryRun: dryRun}, report: &AdoptReport{}}
+	// The profile Adopt would record for the tree: its markers, else the fallback archetype.
+	arch := classify.ByMarkers(root).Or(classify.FallbackArchetype)
+	return &adoptSession{repoPath: root, arch: arch, opts: AdoptOptions{DryRun: dryRun}, report: &AdoptReport{}}
 }
 
 // gitFlavorSession is flavorSession in a Git work tree, for a flavor whose requirement asks Git
@@ -73,8 +77,9 @@ func TestReconcileWorkingDirAndFlavor_Negative_UndetectedRepositoryGetsNoFallbac
 	if _, err := os.Stat(filepath.Join(s.repoPath, ".golangci.yml")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("an undetected repository received the fallback flavor's linter config: %v", err)
 	}
-	if len(s.report.Warnings) != 1 || !strings.Contains(s.report.Warnings[0], "no registered flavor matches") {
-		t.Fatalf("want one no-flavor warning, got %v", s.report.Warnings)
+	if len(s.report.Warnings) != 1 || !strings.Contains(s.report.Warnings[0], "profile template-seed has no flavor") ||
+		!strings.Contains(s.report.Warnings[0], "no flavor templates were scaffolded") {
+		t.Fatalf("want one no-flavor warning naming the recorded profile, got %v", s.report.Warnings)
 	}
 }
 
@@ -107,14 +112,13 @@ func TestReconcileWorkingDirAndFlavor_Boundary_DryRunWritesNothing(t *testing.T)
 	}
 }
 
-// Negative: a detected flavor holds back a template whose body cannot work here, and adoption
-// says which. The review's probe: a Go service whose package.json only carries commit tooling,
-// locked by pnpm, detects typescript-node, whose CI job runs `npm ci` and `npm test`.
+// Negative: a resolved flavor holds back a template whose body cannot work here, and adoption
+// says which. A pnpm project resolves to typescript-node, whose CI job runs `npm ci` and
+// `npm test`.
 func TestReconcileWorkingDirAndFlavor_Negative_UnrunnableNodeJobIsWithheldAndWarned(t *testing.T) {
 	s := flavorSession(t, false, map[string]string{
-		"go.mod": "module example.com/widget\n\ngo 1.27\n", "cmd/widget/main.go": "package main\n\nfunc main() {}\n",
-		"internal/w/w.go": "package w\n", "pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
-		"package.json": `{"private": true, "devDependencies": {"@commitlint/cli": "^20.0.0"}}`,
+		"pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
+		"package.json":   `{"private": true, "devDependencies": {"@commitlint/cli": "^20.0.0"}}`,
 	})
 	if err := reconcileWorkingDirAndFlavor(t.Context(), s); err != nil {
 		t.Fatal(err)
@@ -165,5 +169,81 @@ func TestReconcileWorkingDirAndFlavor_Boundary_NpmProjectGetsTheNodeJob(t *testi
 	}
 	if len(s.report.Warnings) != 0 || len(s.report.Errors) != 0 {
 		t.Fatalf("unexpected warnings %v errors %v", s.report.Warnings, s.report.Errors)
+	}
+}
+
+// goServiceWithCommitTooling is a Go service whose package.json only carries commit tooling,
+// locked by pnpm.
+func goServiceWithCommitTooling() map[string]string {
+	return map[string]string{
+		"go.mod": "module example.com/widget\n\ngo 1.27\n", "cmd/widget/main.go": "package main\n\nfunc main() {}\n",
+		"internal/w/w.go": "package w\n", "pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
+		"package.json": `{"private": true, "devDependencies": {"@commitlint/cli": "^20.0.0"}}`,
+	}
+}
+
+// reportMentions reports whether any action detail or warning contains fragment.
+func reportMentions(r *AdoptReport, fragment string) bool {
+	for _, d := range r.ActionDetails {
+		if strings.Contains(d.Details, fragment) {
+			return true
+		}
+	}
+	for _, w := range r.Warnings {
+		if strings.Contains(w, fragment) {
+			return true
+		}
+	}
+	return false
+}
+
+// Positive: the profile adoption records decides the flavor (BUG-940). The Go service with commit
+// tooling is adopted as framework, so it is scaffolded as go-service. Detection across the whole
+// catalog named typescript-node for it, a flavor of a profile adoption never recorded.
+func TestReconcileWorkingDirAndFlavor_Positive_RecordedProfileDecidesTheFlavor(t *testing.T) {
+	s := flavorSession(t, false, goServiceWithCommitTooling())
+	if s.arch != "framework" {
+		t.Fatalf("precondition: the fixture must be adopted as framework, got %q", s.arch)
+	}
+	if err := reconcileWorkingDirAndFlavor(t.Context(), s); err != nil {
+		t.Fatal(err)
+	}
+	if !reportMentions(s.report, "Scaffolded go-service flavor template") {
+		t.Fatalf("the framework profile's go-service flavor was not scaffolded; report %+v", s.report)
+	}
+	if reportMentions(s.report, "typescript-node") {
+		t.Fatalf("a flavor outside the recorded profile reached the report: %+v", s.report)
+	}
+}
+
+// Boundary: a declared profile no flavor implements is reported by name and nothing is guessed.
+// The repository declares gitops-infra and carries the PyTorch dependency python-ml claims.
+func TestReconcileWorkingDirAndFlavor_Boundary_DeclaredProfileWithoutFlavorIsReported(t *testing.T) {
+	s := flavorSession(t, false, map[string]string{"pyproject.toml": "[project]\ndependencies = [\"torch>=2.0\"]\n"})
+	s.arch = "gitops-infra"
+	if err := reconcileWorkingDirAndFlavor(t.Context(), s); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(s.repoPath, "ruff.toml")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("python-ml's ruff.toml was scaffolded under the gitops-infra profile: %v", err)
+	}
+	if len(s.report.Warnings) != 1 || !strings.Contains(s.report.Warnings[0], "profile gitops-infra has no flavor") {
+		t.Fatalf("want one warning naming the flavorless profile, got %v", s.report.Warnings)
+	}
+}
+
+// Negative: a profile whose flavors all fail to match names the profile and scaffolds nothing.
+// os-image's markers are absent, and the go.mod beside them must not pull in a Go flavor.
+func TestReconcileWorkingDirAndFlavor_Negative_UnmatchedProfileFlavorsScaffoldNothing(t *testing.T) {
+	s := flavorSession(t, false, goLibrary)
+	s.arch = "os-image"
+	if err := reconcileWorkingDirAndFlavor(t.Context(), s); err != nil {
+		t.Fatal(err)
+	}
+	if scaffoldedCI(t, s) {
+		t.Fatal("a Go flavor was scaffolded under the os-image profile")
+	}
+	if len(s.report.Warnings) != 1 || !strings.Contains(s.report.Warnings[0], "no registered flavor of profile os-image matches") {
+		t.Fatalf("want one warning naming the unmatched profile, got %v", s.report.Warnings)
 	}
 }

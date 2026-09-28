@@ -12,6 +12,13 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// resolve is flavor.Resolve as a name and whether anything matched, for assertions about which
+// flavor a fixture resolves to.
+func resolve(repo string) (string, bool) {
+	name, err := flavor.Resolve(repo)
+	return name, err == nil
+}
+
 func TestDetect_Positive(t *testing.T) {
 	tmp := t.TempDir()
 
@@ -22,7 +29,7 @@ func TestDetect_Positive(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(tmp, "cmd", "svc"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	detected, _ := flavor.Detect(tmp)
+	detected, _ := resolve(tmp)
 	if detected != "go-service" {
 		t.Fatalf("expected go-service, got %s", detected)
 	}
@@ -35,7 +42,7 @@ func TestDetect_Positive(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmpSvelte, "svelte.config.js"), []byte("// config"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	detectedSvelte, _ := flavor.Detect(tmpSvelte)
+	detectedSvelte, _ := resolve(tmpSvelte)
 	if detectedSvelte != "frontend-svelte" {
 		t.Fatalf("expected frontend-svelte, got %s", detectedSvelte)
 	}
@@ -164,7 +171,7 @@ func TestDetect_ExpandedArchetypes(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmpRust, "Cargo.toml"), []byte("[package]\nname = \"rg\"\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := flavor.Detect(tmpRust); got != "rust-systems" {
+	if got, _ := resolve(tmpRust); got != "rust-systems" {
 		t.Fatalf("expected rust-systems, got %s", got)
 	}
 
@@ -176,7 +183,7 @@ func TestDetect_ExpandedArchetypes(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmpTS, "tsconfig.json"), []byte("{}"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := flavor.Detect(tmpTS); got != "typescript-node" {
+	if got, _ := resolve(tmpTS); got != "typescript-node" {
 		t.Fatalf("expected typescript-node, got %s", got)
 	}
 
@@ -185,7 +192,7 @@ func TestDetect_ExpandedArchetypes(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmpJVM, "pom.xml"), []byte("<project></project>"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := flavor.Detect(tmpJVM); got != "jvm-service" {
+	if got, _ := resolve(tmpJVM); got != "jvm-service" {
 		t.Fatalf("expected jvm-service, got %s", got)
 	}
 
@@ -194,7 +201,7 @@ func TestDetect_ExpandedArchetypes(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tmpFlutter, "pubspec.yaml"), []byte("name: app\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := flavor.Detect(tmpFlutter); got != "mobile-flutter" {
+	if got, _ := resolve(tmpFlutter); got != "mobile-flutter" {
 		t.Fatalf("expected mobile-flutter, got %s", got)
 	}
 }
@@ -319,11 +326,11 @@ func runFixtureGit(t *testing.T, dir string, args ...string) []byte {
 // must describe a machine-learning pipeline, not every repository that contains Python.
 func TestDetect_Positive_PythonMLRequiresAnMLDependency(t *testing.T) {
 	ml := repoWithFiles(t, map[string]string{"pyproject.toml": "[project]\ndependencies = [\"torch>=2.0\"]\n"})
-	if got, ok := flavor.Detect(ml); !ok || got != "python-ml" {
+	if got, ok := resolve(ml); !ok || got != "python-ml" {
 		t.Errorf("a declared torch dependency must detect python-ml, got %q ok=%v", got, ok)
 	}
 	req := repoWithFiles(t, map[string]string{"requirements.txt": "openvino==2025.1\n"})
-	if got, ok := flavor.Detect(req); !ok || got != "python-ml" {
+	if got, ok := resolve(req); !ok || got != "python-ml" {
 		t.Errorf("requirements.txt naming openvino must detect python-ml, got %q ok=%v", got, ok)
 	}
 }
@@ -337,7 +344,7 @@ func TestDetect_Negative_PlainPythonIsNotAnMLPipeline(t *testing.T) {
 		"pyproject.toml":   "[project]\nname = \"kernel-forge\"\ndependencies = [\"click\", \"pyyaml\"]\n",
 		"requirements.txt": "pytest\nruff\n",
 	})
-	if got, ok := flavor.Detect(plain); ok {
+	if got, ok := resolve(plain); ok {
 		t.Errorf("a Python project with no ML dependency must not detect python-ml, got %q", got)
 	}
 }
@@ -351,7 +358,7 @@ func TestDetect_Negative_AdoptionArtifactsDoNotDecideAFlavor(t *testing.T) {
 		"scaffolded paperclip file": {".paperclip/harness.json": "{}\n"},
 		"both":                      {".agents/agents/x.md": "x\n", ".paperclip/harness.json": "{}\n"},
 	} {
-		if got, ok := flavor.Detect(repoWithFiles(t, files)); ok {
+		if got, ok := resolve(repoWithFiles(t, files)); ok {
 			t.Errorf("%s: adoption output must not decide a flavor, got %q", name, got)
 		}
 	}
@@ -365,11 +372,11 @@ func TestDetect_Negative_AdoptionArtifactsDoNotDecideAFlavor(t *testing.T) {
 // return value. Both of these used to report go-library: one because it genuinely matched
 // nothing, the other because it genuinely is a Go library.
 func TestDetect_Boundary_NoMatchIsDistinguishableFromGoLibrary(t *testing.T) {
-	if got, ok := flavor.Detect(repoWithFiles(t, map[string]string{"Rakefile": "task :default\n"})); ok {
+	if got, ok := resolve(repoWithFiles(t, map[string]string{"Rakefile": "task :default\n"})); ok {
 		t.Errorf("an unrecognised repository must report no match, got %q", got)
 	}
 	real := repoWithFiles(t, map[string]string{"go.mod": "module x\n", "internal/doc.go": "package internal\n"})
-	if got, ok := flavor.Detect(real); !ok || got != "go-library" {
+	if got, ok := resolve(real); !ok || got != "go-library" {
 		t.Errorf("a genuine Go library must still detect, got %q ok=%v", got, ok)
 	}
 }
@@ -442,9 +449,10 @@ func TestAuditFlavor_Negative_ProfileWithNoFlavorIsNotApplicable(t *testing.T) {
 	if errors.Is(err, flavor.ErrNoFlavorMatched) {
 		t.Error("not-applicable must be distinguishable from nothing-matched; callers treat them differently")
 	}
-	// The markers alone would have matched go-service, which is exactly the wrong answer.
-	if got, ok := flavor.Detect(repo); !ok || got != "go-service" {
-		t.Errorf("precondition: bare marker detection should still say go-service, got %q ok=%v", got, ok)
+	// go-service's own markers match, which is exactly the answer the declaration rules out.
+	goService, err := flavor.Get("go-service")
+	if err != nil || !goService.Detect(repo) {
+		t.Errorf("precondition: go-service's markers should match this fixture (err %v)", err)
 	}
 }
 

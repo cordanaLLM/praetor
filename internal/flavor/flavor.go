@@ -212,29 +212,12 @@ func List() []Flavor {
 }
 
 // maxDetectionCandidates bounds the detection scan (HISS-02).
+//
+// Detection has one entry point, Resolve (resolve.go). The catalog-wide Detect it replaces
+// ignored the repository's profile, so adoption and flavor apply scaffolded a flavor the
+// profile did not name while the audit measured another (BUG-940). Its go-library fallback
+// was removed earlier for the same reason: callers acted on the guess as fact.
 const maxDetectionCandidates = 64
-
-// Detect returns the best-matching flavor and whether anything matched at all.
-//
-// The second return value is the point. Detection used to end in an unconditional "go-library",
-// so a repository that matched nothing was indistinguishable from one that is a Go library, and
-// callers acted on the guess. Measured on a bare Dockerfile and on a bare agent harness, both of
-// which reported go-library through that fallback while a second classifier reported
-// container-image and framework respectively.
-//
-// Detect is the only detection entry point. The DetectFlavor wrapper that substituted go-library
-// on no match is gone, because its two callers (adoption and the Hindsight distiller) scaffolded
-// and recorded that guess as fact.
-func Detect(repoPath string) (string, bool) {
-	registryMu.RLock()
-	defer registryMu.RUnlock()
-	for i := 0; i < len(detectionOrder) && i < maxDetectionCandidates; i++ {
-		if detectionOrder[i].Detect(repoPath) {
-			return detectionOrder[i].Name(), true
-		}
-	}
-	return "", false
-}
 
 // CheckFileExists is an internal helper for flavor detection.
 func CheckFileExists(path string) bool {

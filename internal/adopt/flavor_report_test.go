@@ -48,12 +48,13 @@ func newImageForge(t *testing.T, name string, files map[string]string) string {
 	return repoPath
 }
 
-// adoptForge adopts an image forge and fails the test on any error. The profile is framework
-// because the lock fixture carries no os-image profile; the flavor is detected from mkosi.conf
-// whatever profile the repository declares.
+// adoptForge adopts an image forge under the os-image profile and fails the test on any error.
+// The os-image flavor implements that profile, and adoption resolves the flavor only among the
+// flavors of the profile it records (BUG-940), so the forge must declare it for mkosi.conf to
+// select the os-image templates.
 func adoptForge(t *testing.T, repoPath string) *AdoptReport {
 	t.Helper()
-	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Profile: "framework"})
+	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Profile: "os-image"})
 	if err != nil {
 		t.Fatalf("Adopt failed: %v", err)
 	}
@@ -148,7 +149,7 @@ func TestAdopt_Boundary_NoFlavorMatchScaffoldsNothing(t *testing.T) {
 	}
 	warned := false
 	for _, w := range rep.Warnings {
-		warned = warned || strings.Contains(w, "Not applicable: no registered flavor matches")
+		warned = warned || strings.Contains(w, "Not applicable: profile template-seed has no flavor")
 	}
 	if !warned {
 		t.Errorf("the operator must be told no flavor applied, got warnings %v", rep.Warnings)

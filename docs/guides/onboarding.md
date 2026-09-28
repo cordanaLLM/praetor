@@ -93,9 +93,12 @@ Detection reports what matched, or reports that nothing did. It no longer falls 
 answer, because a repository that matched nothing was previously indistinguishable from one that is
 a Go library.
 
-- A declared profile **narrows** detection: candidates are restricted to the flavors implementing
-  that profile, and detection picks among those. Where the profile has no flavors, `flavor audit`
-  reports not applicable.
+- The profile decides which flavors are candidates. A flavor names the stack within a profile, so
+  `flavor.Resolve` (`internal/flavor/resolve.go`) first takes the profile `.standards.yaml` declares,
+  else the one `internal/classify` reads from the markers, and then picks among the flavors
+  implementing it. `flavor audit`, `flavor apply`, `praetorctl adopt` and the Hindsight distiller
+  all resolve this way, so they name the same flavor for one checkout. Where the profile has no
+  flavors, they report not applicable (`internal/flavor/resolve_test.go`).
 - `python-ml` requires a declared machine-learning dependency. It previously fired on any
   `pyproject.toml`, so every Python repository was reported as a PyTorch pipeline and then audited
   against ML tooling it had no reason to install.

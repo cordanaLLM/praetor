@@ -713,19 +713,21 @@ func reconcileWorkingDirAndFlavor(ctx context.Context, s *adoptSession) error {
 	return nil
 }
 
-// applyDetectedFlavor scaffolds the flavor detection names and records what it did.
+// applyDetectedFlavor scaffolds the flavor of the profile this adoption records, and records
+// what it did.
 //
-// It used to scaffold go-library for a repository that matched nothing, because detection
-// substituted that name, and it discarded the apply report, so neither the written templates nor
-// a total write failure reached the adoption report. With real template bodies the fallback was
-// worse than a guess: go-library's CI workflow runs setup-go against a go.mod the repository does
-// not have, and branch-ruleset, which runs after this step, makes every job of a scaffolded
-// workflow a required check no pull request could pass.
+// The flavor is resolved under s.arch, the profile adoption writes into .standards.yaml or reads
+// from it, so adoption scaffolds exactly the flavor `flavor audit` measures afterwards. It used
+// to detect across the whole flavor catalog and ignore that profile (BUG-940): a Go service whose
+// package.json only held commit tooling was adopted as framework and scaffolded as
+// typescript-node, and a repository declaring gitops-infra received python-ml templates for a
+// PyTorch dependency. Before that it scaffolded go-library for a repository nothing matched and
+// discarded the apply report, so neither the written templates nor a total write failure reached
+// the adoption report.
 func (s *adoptSession) applyDetectedFlavor(ctx context.Context) {
-	name, ok := flavor.Detect(s.repoPath)
-	if !ok {
-		s.report.recordSkipped(flavorReportPath, "Not applicable: no registered flavor matches this repository, "+
-			"so no flavor templates were scaffolded; run `praetorctl flavor apply --flavor=<name>` to choose one")
+	name, err := flavor.ResolveForProfile(s.repoPath, s.arch)
+	if err != nil {
+		s.report.recordSkipped(flavorReportPath, flavorSkipDetail(s.arch, err))
 		return
 	}
 	applied, err := flavor.ApplyFlavor(ctx, s.repoPath, name, false)
@@ -733,6 +735,20 @@ func (s *adoptSession) applyDetectedFlavor(ctx context.Context) {
 	if err != nil {
 		s.report.addError("apply flavor %s: %v", name, err)
 	}
+}
+
+// flavorSkipDetail says why adoption scaffolded no flavor for profile: the profile has no flavor
+// at all, or none of its flavors matches the repository. Neither is replaced by a guess.
+func flavorSkipDetail(profile string, err error) string {
+	reason := "no registered flavor matches this repository"
+	switch {
+	case errors.Is(err, flavor.ErrFlavorNotApplicable):
+		reason = fmt.Sprintf("profile %s has no flavor", profile)
+	case profile != "":
+		reason = fmt.Sprintf("no registered flavor of profile %s matches this repository", profile)
+	}
+	return "Not applicable: " + reason + ", so no flavor templates were scaffolded; " +
+		"run `praetorctl flavor apply --flavor=<name>` to choose one"
 }
 
 // recordFlavorReport lists the templates a flavor apply created and the existing files it left

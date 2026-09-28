@@ -21,8 +21,9 @@ Six facets ship in `.config/archetypes/facets/`.
 **A profile is not a flavor.** A profile says what governance applies; a flavor says which templates,
 settings and toolchains a repository of that kind requires. Five profiles currently have any flavor
 implementing them — `app-service`, `framework`, `native-gpu-systems`, `container-image` and
-`os-image`. For the other nine, `flavor audit` reports **not applicable** rather than measuring the
-repository against an inferred language flavor.
+`os-image`. For the other nine, `flavor audit`, `flavor apply` and adoption report **not applicable**
+rather than measuring or scaffolding the repository against an inferred language flavor. A flavor
+is only ever chosen among the flavors of the repository's profile (`internal/flavor/resolve.go`).
 
 ### Flavor templates: one embedded body, checked content
 
@@ -98,9 +99,9 @@ wherever it lives; with none or several, `docker build` stops and names them, an
 (`internal/flavor/dockerfile_build_test.go`) executes the builder instruction against each layout.
 
 A body that only works in some repositories declares `Requires`. The Node CI job runs `npm ci` and
-`npm test`, and `typescript-node` detects any `package.json` — a pnpm, Yarn or Bun project, or a Go
-repository whose `package.json` only holds commit tooling. So `flavor apply` writes the job only when
-all of these hold (`internal/flavor/node_ci.go`):
+`npm test`, and `typescript-node` matches any `package.json` in an `app-service` repository — a pnpm,
+Yarn or Bun project included — and can be applied by name to any other. So `flavor apply` writes the
+job only when all of these hold (`internal/flavor/node_ci.go`):
 
 - CI's checkout will hold `package-lock.json` at the root (npm 12 reads no `npm-shrinkwrap.json`).
   The file on disk is not enough: a library that lists `package-lock.json` in `.gitignore` still gets
@@ -118,12 +119,16 @@ decisions are the ones adoption's verification plan makes (`internal/nodemanifes
 action, lockfile and script the scaffolded body names against the files `git add -A` stages in each
 fixture, which is what CI's checkout carries.
 
-**Adoption scaffolds a detected flavor only.** `praetorctl adopt` applies the flavor detection names,
-before it derives the branch ruleset, so the scaffolded CI job is a required check from the first run.
-A repository no flavor detects gets no flavor templates and a warning naming
-`praetorctl flavor apply --flavor=<name>`. Adoption used to apply `go-library` there, and its CI job
-(`setup-go` against a `go.mod` the repository lacks) became a required check no pull request could
-pass. `flavor audit` already refused such a repository instead of guessing a flavor.
+**Adoption scaffolds the flavor of the profile it records.** `praetorctl adopt` resolves the flavor
+under the profile it writes into `.standards.yaml` (`flavor.ResolveForProfile`), before it derives
+the branch ruleset, so the scaffolded CI job is a required check from the first run and is the flavor
+`flavor audit` measures afterwards. A Go service whose `package.json` only holds commit tooling is
+adopted as `framework` and scaffolded as `go-service`; adoption used to scaffold `typescript-node`
+there, because it detected across the whole catalog. A profile with no flavor, or whose flavors all
+fail to match, gets no flavor templates and a warning naming the profile and
+`praetorctl flavor apply --flavor=<name>` (`internal/adopt/flavor_scaffold_test.go`). Adoption once
+applied `go-library` there, and its CI job (`setup-go` against a `go.mod` the repository lacks)
+became a required check no pull request could pass.
 
 When you add a template, give it a `Source` (add the body under `templates/<ecosystem>/`) or a
 `Producer`, and a `Validator`. `TestEveryRequiredTemplateStatesItsContent`

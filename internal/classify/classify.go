@@ -9,6 +9,11 @@
 // agreed on all nine overlapping markers; every disagreement came from one table lacking a rule
 // the other had, or from a default that looked like a match. So this is one table, written once,
 // with the union of the rules and a result that can say it matched nothing.
+//
+// A flavor (internal/flavor) is not a fifth answer. It names the stack within the archetype
+// decided here, and flavor.Resolve picks it only among the flavors implementing that archetype,
+// so adoption, flavor apply, the flavor audit and the Hindsight distiller agree with this package
+// and with each other.
 package classify
 
 import (

@@ -45,7 +45,7 @@ type distillSource struct {
 // workspaceSources lists the fact sources in the order their facts appear in the report.
 func workspaceSources() []distillSource {
 	return []distillSource{
-		{name: "flavor archetype", run: distillFlavorFacts},
+		{name: "flavor", run: distillFlavorFacts},
 		{name: "bug ledger", required: true, run: distillStateFacts},
 		{name: "dedupe", run: distillDedupeFacts},
 		{name: "package docs", run: func(_ context.Context, repoPath string) ([]MemoryFact, error) {
@@ -93,22 +93,28 @@ func distillSources(ctx context.Context, repoPath string, sources []distillSourc
 	}, nil
 }
 
-func distillFlavorFacts(ctx context.Context, repoPath string) ([]MemoryFact, error) {
-	var facts []MemoryFact
-	// A repository no flavor matches yields no flavor fact. Detection used to substitute
-	// go-library there, and the distiller stored that guess as a governance fact.
-	detected, ok := flavor.Detect(repoPath)
-	if !ok {
-		return facts, nil
+// distillFlavorFacts records the repository's flavor as one fact. The flavor is resolved the
+// way adoption and the flavor audit resolve it (flavor.Resolve): among the flavors of the
+// profile the repository declares, else of the profile its markers classify. It used to be
+// detected across the whole catalog, so the distiller could record python-ml for a repository
+// declaring native-gpu-systems, and the statement called the flavor an archetype (BUG-940).
+// A repository no flavor of its profile matches, or whose profile has no flavor, yields no
+// fact rather than a guess.
+func distillFlavorFacts(_ context.Context, repoPath string) ([]MemoryFact, error) {
+	resolved, err := flavor.Resolve(repoPath)
+	if errors.Is(err, flavor.ErrNoFlavorMatched) || errors.Is(err, flavor.ErrFlavorNotApplicable) {
+		return nil, nil
 	}
-	flv, err := flavor.Get(detected)
 	if err != nil {
-		return nil, fmt.Errorf("resolve detected flavor %q: %w", detected, err)
+		return nil, fmt.Errorf("resolve repository flavor: %w", err)
 	}
-	stmt := fmt.Sprintf("Repository is governed under archetype %s (Profile: %s). Description: %s.",
+	flv, err := flavor.Get(resolved)
+	if err != nil {
+		return nil, fmt.Errorf("resolve flavor %q: %w", resolved, err)
+	}
+	stmt := fmt.Sprintf("Repository uses flavor %s under profile %s. Description: %s.",
 		flv.Name(), flv.HISSProfile(), flv.Description())
-	facts = append(facts, createFact(CategoryFlavor, flv.Name(), stmt, "internal/flavor", []string{"flavor", flv.Name()}))
-	return facts, nil
+	return []MemoryFact{createFact(CategoryFlavor, flv.Name(), stmt, "internal/flavor", []string{"flavor", flv.Name()})}, nil
 }
 
 func distillStateFacts(ctx context.Context, repoPath string) ([]MemoryFact, error) {

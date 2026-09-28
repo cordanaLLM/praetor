@@ -5,12 +5,12 @@
   "text": [
     "praetorctl commands: sync --remote (reconcileRemoteForge), issue reconcile (loadFleetIssues), needs epic --publish (publishEpicToForge), GitHub driver (NewGitHubDriver, REST client).",
     "Tests only, no production caller: forge package tests (forge_test.go), forge.NewForge (provider switch), GitLab driver (token check only), Gitea driver (gitea or forgejo).",
-    "sync --remote → GitHub driver (ruleset, labels).",
+    "sync --remote → GitHub driver (ruleset, labels, metadata).",
     "issue reconcile → GitHub driver (list, relabel).",
     "needs epic --publish → GitHub driver (list, create).",
     "forge package tests → forge.NewForge (NewForge) → GitLab driver (gitlab).",
     "forge.NewForge → Gitea driver (gitea, forgejo).",
-    "Scenario 1, sync --remote: sync --remote writes the branch ruleset and the label taxonomy through the GitHub driver. reconcileRemoteForge checks the token, repository and origin, then calls forge.NewGitHubDriver. ReconcileProtection writes the ruleset for main and lts-* and reads it back. ReconcileLabels updates, or creates, each label from .config/labels.yaml.",
+    "Scenario 1, sync --remote: sync --remote writes the branch ruleset, the label taxonomy and the repository metadata through the GitHub driver. reconcileRemoteForge checks the token, repository and origin, then calls forge.NewGitHubDriver. ReconcileProtection writes the ruleset for main and lts-* and reads it back. ReconcileLabels updates, or creates, each label from .config/labels.yaml. ReconcileRepositoryMetadata writes the declared description, homepage and missing topics, and reports visibility drift.",
     "Scenario 2, issue reconcile: issue reconcile lists the issues of each selected repository and relabels the unblocked ones. loadFleetIssues builds a GitHub driver per repository and calls ListIssues. With --dry-run=false, transitionUnblocked calls AddLabels, then RemoveLabel.",
     "Scenario 3, needs epic --publish: needs epic --publish creates the missing epic issues through the GitHub driver. publishEpicToForge passes the GitHub driver to needs.PublishPreMigrationEpic. PrepareIssueBatch checks the token and lists the existing issues by title. IssueBatch.Ensure calls CreateIssue only for a title the forge does not have yet.",
     "Scenario 4, GitLab and Gitea: Only tests reach the GitLab and Gitea drivers, and every enforcement method fails. forge_test.go calls forge.NewForge; no praetorctl command calls it. Provider gitlab returns a GitLabDriver; Authenticate only checks that a token is set. Provider gitea or forgejo returns a GiteaDriver with the same local token check. Every enforcement method returns ErrNotImplemented, which wraps errors.ErrUnsupported.",
@@ -38,13 +38,13 @@
     "internal/forge/gitlab.go:GitLabDriver",
     "internal/forge/gitea.go:GiteaDriver"
   ],
-  "spec_sha256": "a7c7ca67d7a9899938df50147b2364a8066950e595df65c8fa71c0341ea019de",
+  "spec_sha256": "4844c9b1e52cc81085e26cefded64e019b009dd21dbaae24fa72cc0171e7fe4c",
   "engine": {
     "commit": "ccfe85b4851957ac2adf88b4a9ddf9668b2882f1",
     "sha256": "947c16f2d382b4ed4374ba8a368c4468114b97e5ec6323c4ecb785c11658d96e"
   },
-  "svg_sha256": "c42bcddd0f6b670f8fe80f6e60e121e0298f172561646234ea60e4ed5bb6f8ec",
-  "static_sha256": "8b6c18302a8830c072dc4152fe808be5b222c69dc2fad702cc7ddd35874dfc1d",
+  "svg_sha256": "056afc84a4ad4b82e7a0926fabba6e3d951838f66ce408eeb9f6015b7572f756",
+  "static_sha256": "39832cbb20a379b1d154ad24c9c85f6e9e1685be2a4fc5bf60c1645fb94153e8",
   "width": 964,
   "height": 685,
   "static_width": 964,
@@ -53,7 +53,7 @@
     {
       "from": "sync --remote",
       "to": "GitHub driver",
-      "label": "ruleset, labels"
+      "label": "ruleset, labels, metadata"
     },
     {
       "from": "issue reconcile",

@@ -6,6 +6,7 @@ package hindsight
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -66,6 +67,30 @@ func TestDistillFlavorFacts(t *testing.T) {
 		facts, err := distillFlavorFacts(context.Background(), root)
 		if err != nil || len(facts) != 0 {
 			t.Fatalf("an unmatched repository must yield no flavor fact, got %+v, %v", facts, err)
+		}
+	})
+	// BUG-940: the declared profile decides the flavor, and the statement names it a flavor of
+	// that profile rather than an archetype.
+	t.Run("declared profile decides the fact", func(t *testing.T) {
+		root := t.TempDir()
+		writeDistillerFile(t, root, ".standards.yaml", "version: 1\nprofiles:\n  - native-gpu-systems\n")
+		writeDistillerFile(t, root, "CMakeLists.txt", "project(engine)\n")
+		writeDistillerFile(t, root, "pyproject.toml", "[project]\ndependencies = [\"torch\"]\n")
+		facts, err := distillFlavorFacts(context.Background(), root)
+		if err != nil || len(facts) != 1 || facts[0].Subject != "native-gpu-systems" {
+			t.Fatalf("expected one native-gpu-systems fact, got %+v, %v", facts, err)
+		}
+		if want := "Repository uses flavor native-gpu-systems under profile native-gpu-systems."; !strings.HasPrefix(facts[0].Statement, want) {
+			t.Errorf("statement %q does not start with %q", facts[0].Statement, want)
+		}
+	})
+	t.Run("declared profile without flavor yields no fact", func(t *testing.T) {
+		root := t.TempDir()
+		writeDistillerFile(t, root, ".standards.yaml", "version: 1\nprofiles:\n  - gitops-infra\n")
+		writeDistillerFile(t, root, "pyproject.toml", "[project]\ndependencies = [\"torch\"]\n")
+		facts, err := distillFlavorFacts(context.Background(), root)
+		if err != nil || len(facts) != 0 {
+			t.Fatalf("a profile with no flavor must yield no flavor fact, got %+v, %v", facts, err)
 		}
 	})
 	t.Run("empty directory yields no fact", func(t *testing.T) {

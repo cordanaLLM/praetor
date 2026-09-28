@@ -7,10 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
-
-	"github.com/cordanaLLM/praetor/internal/config"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -95,62 +92,14 @@ var ErrNoFlavorMatched = errors.New("flavor: no registered flavor matches this r
 //
 // Measured on an adopter's OS image forge declaring os-image, which was held to Go
 // service templates and failed its own push gate for lacking a Dockerfile it has no use for.
-var ErrFlavorNotApplicable = errors.New("flavor: the declared profile has no flavor to audit against")
-
-// declaredProfile returns the repository's first declared profile, or "" when it declares none.
-// An unreadable manifest is not a declaration, so detection proceeds as though none were present.
-func declaredProfile(repoPath string) string {
-	manifest, err := config.LoadManifest(filepath.Join(repoPath, ".standards.yaml"))
-	if err != nil || manifest == nil || len(manifest.Profiles) == 0 {
-		return ""
-	}
-	return strings.TrimSpace(manifest.Profiles[0])
-}
-
-// flavorsForProfile returns the registered flavors that implement one HISS profile.
-func flavorsForProfile(profile string) []Flavor {
-	all := List()
-	matched := make([]Flavor, 0, len(all))
-	for i := 0; i < len(all) && i < maxDetectionCandidates; i++ {
-		if all[i].HISSProfile() == profile {
-			matched = append(matched, all[i])
-		}
-	}
-	return matched
-}
-
-// resolveAuditTarget decides which flavor to audit a repository against.
-//
-// The repository's own declaration comes first, and it narrows rather than replaces detection:
-// a declared profile restricts the candidates to the flavors that implement it, and detection
-// then picks among those. That keeps a Go framework repository detecting go-service rather than
-// go-library while stopping an OS image forge from being measured as either.
-func resolveAuditTarget(repoPath string) (string, error) {
-	if profile := declaredProfile(repoPath); profile != "" {
-		candidates := flavorsForProfile(profile)
-		if len(candidates) == 0 {
-			return "", fmt.Errorf("%w: profile %q", ErrFlavorNotApplicable, profile)
-		}
-		for i := 0; i < len(candidates) && i < maxDetectionCandidates; i++ {
-			if candidates[i].Detect(repoPath) {
-				return candidates[i].Name(), nil
-			}
-		}
-		return "", fmt.Errorf("%w: profile %q declares flavors but none match %s", ErrNoFlavorMatched, profile, repoPath)
-	}
-	detected, ok := Detect(repoPath)
-	if !ok {
-		return "", fmt.Errorf("%w: %s", ErrNoFlavorMatched, repoPath)
-	}
-	return detected, nil
-}
+var ErrFlavorNotApplicable = errors.New("flavor: the declared profile has no flavor to audit or scaffold against")
 
 // DefaultAuditTimeout bounds AuditFlavor, whose callers bring no deadline of their own
 // (HISS-02). An audit reads a few dozen small files and resolves a handful of binaries.
 const DefaultAuditTimeout = 60 * time.Second
 
-// AuditFlavor audits a repository against a target flavor (or auto-detected if empty/"auto"),
-// bounded by DefaultAuditTimeout. Callers that carry a context use AuditFlavorContext.
+// AuditFlavor audits a repository against a target flavor (for "" and "auto", the one Resolve
+// names), bounded by DefaultAuditTimeout. Callers that carry a context use AuditFlavorContext.
 func AuditFlavor(repoPath string, targetFlavor string) (*FlavorAuditReport, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultAuditTimeout)
 	defer cancel()
@@ -169,7 +118,7 @@ func AuditFlavorContext(ctx context.Context, repoPath string, targetFlavor strin
 		return nil, fmt.Errorf("audit flavor cancelled: %w", err)
 	}
 	if targetFlavor == "" || targetFlavor == "auto" {
-		resolved, err := resolveAuditTarget(repoPath)
+		resolved, err := Resolve(repoPath)
 		if err != nil {
 			return nil, err
 		}
