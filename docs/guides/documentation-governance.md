@@ -554,8 +554,9 @@ are the only diagram kind of both sites
 
 The preset's hook entry names the engine `praetorctl adopt` writes to
 `tools/figures/` under `docs:seo-portal`, so the preset does not build in
-place. The `docs-presets` job copies it into a temporary repository, adopts
-that repository with `docs:seo-portal`, and there runs `build` (which must
+place. The `docs-presets` job adopts a temporary repository with
+`docs:seo-portal`, copies every preset file but the README into it, as the
+[preset README's Quickstart](../presets/mkdocs/README.md#quickstart) tells an adopter, and there runs `build` (which must
 reproduce the committed example figure), `make docs-figures`, three strict
 builds (no `DOCS_SITE_URL`, a root URL, a URL with a path), `site` on each,
 and the Chromium smoke test on the two builds with a URL. The example
@@ -566,9 +567,9 @@ outputs in such a fixture:
 
 ```bash
 fixture=$(mktemp -d)
-cp -R docs/presets/mkdocs/. "$fixture"
 git -C "$fixture" init -q
 go run ./cmd/standardsctl adopt --path "$fixture" --facets docs:seo-portal --lock-source-root .
+cp -R docs/presets/mkdocs/{mkdocs.yml,requirements.in,requirements.txt,docs,overrides} "$fixture"
 node "$fixture/tools/figures/build.mjs" build
 cp "$fixture"/docs/assets/figures/* docs/presets/mkdocs/docs/assets/figures/
 ```

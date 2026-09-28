@@ -400,27 +400,36 @@ jobs:
           job: docs-presets
           go-version: '1.27'
 
-      # An adopter copies the MkDocs preset into its repository root, and its mkdocs.yml lists the
-      # figure hook that `praetorctl adopt` writes to tools/figures/ under docs:seo-portal, so the
-      # preset does not build in place. It is built as an adopter builds it: in a temporary
-      # repository holding a copy of the preset, adopted with that facet
-      # (docs/adr/0016-figures-for-adopters.md, section 9). `build` must reproduce the committed
-      # example figure byte for byte, and the managed docs-figures target (`check`, `sources`) holds
-      # it to its spec, the engine and its evidence in the preset's files. A strict build still
-      # passes when a ```figure fence does not become a figure, so `site` checks every build.
+      # Both fixture builds below run praetorctl adopt, and their smoke tests drive Chromium through
+      # the playwright pin in tools/figures/package-lock.json, so both are set up once here; the SEO
+      # audit reuses the same binary.
+      - name: Build praetorctl And Install The Figure Smoke Test
+        if: steps.changed.outputs.run == 'true'
+        run: |
+          go build -o "$RUNNER_TEMP/praetorctl" ./cmd/standardsctl
+          npm ci --prefix tools/figures --ignore-scripts --no-audit --no-fund
+          npx --prefix tools/figures playwright install --with-deps chromium
+
+      # The MkDocs preset's mkdocs.yml lists the figure hook that `praetorctl adopt` writes to
+      # tools/figures/ under docs:seo-portal, so the preset does not build in place. It is set up as
+      # its README tells an adopter: a temporary repository adopted with that facet, then every
+      # preset file but the README copied into its root (docs/adr/0016-figures-for-adopters.md,
+      # section 9). `build` must reproduce the committed example figure byte for byte, and the
+      # managed docs-figures target (`check`, `sources`) holds it to its spec, the engine and its
+      # evidence in the preset's files. A strict build still passes when a ```figure fence does not
+      # become a figure, so `site` checks every build.
       - name: Build MkDocs Preset From Its Hashed Lock
         if: steps.changed.outputs.run == 'true'
         run: |
           python -m pip install --require-hashes -r docs/presets/mkdocs/requirements.txt
-          go build -o "$RUNNER_TEMP/praetorctl" ./cmd/standardsctl
+          praetor="$PWD"
           fixture="$RUNNER_TEMP/preset-mkdocs-fixture"
-          mkdir "$fixture"
-          cp -R docs/presets/mkdocs/. "$fixture"
-          git -C "$fixture" init -q
-          "$RUNNER_TEMP/praetorctl" adopt --path "$fixture" --facets docs:seo-portal --lock-source-root "$GITHUB_WORKSPACE"
+          git init -q "$fixture"
+          "$RUNNER_TEMP/praetorctl" adopt --path "$fixture" --facets docs:seo-portal --lock-source-root "$praetor"
+          cp -R docs/presets/mkdocs/{mkdocs.yml,requirements.in,requirements.txt,docs,overrides} "$fixture/"
           cd "$fixture"
           node tools/figures/build.mjs build
-          if ! diff -r "$GITHUB_WORKSPACE/docs/presets/mkdocs/docs/assets/figures" docs/assets/figures; then
+          if ! diff -r "$praetor/docs/presets/mkdocs/docs/assets/figures" docs/assets/figures; then
             echo "::error file=docs/presets/mkdocs/docs/figures/site-build.ts::the committed example figure differs from a fresh render; rebuild it in an adopted fixture (docs/guides/documentation-governance.md, Site build and diagrams)"
             exit 1
           fi
@@ -439,10 +448,8 @@ jobs:
       - name: Smoke-Test MkDocs Preset Figures
         if: steps.changed.outputs.run == 'true'
         run: |
-          npm ci --prefix tools/figures --ignore-scripts --no-audit --no-fund
-          npx --prefix tools/figures playwright install --with-deps chromium
-          npm --prefix tools/figures run smoke -- --site "$RUNNER_TEMP/preset-mkdocs-root" --require-browser
-          npm --prefix tools/figures run smoke -- --site "$RUNNER_TEMP/preset-mkdocs-subpath" --base /preset/ --require-browser
+          node tools/figures/smoke.mjs --site "$RUNNER_TEMP/preset-mkdocs-root" --require-browser
+          node tools/figures/smoke.mjs --site "$RUNNER_TEMP/preset-mkdocs-subpath" --base /preset/ --require-browser
 
       # The Starlight preset imports the figure integration from tools/figures/, which `praetorctl
       # adopt` writes with docs:seo-portal, so it is built as an adopter builds it, never in place
@@ -457,9 +464,6 @@ jobs:
         run: |
           praetor="$PWD"
           fixture="$RUNNER_TEMP/preset-starlight-fixture"
-          go build -o "$RUNNER_TEMP/praetorctl" ./cmd/standardsctl
-          npm ci --prefix tools/figures --ignore-scripts --no-audit --no-fund
-          npx --prefix tools/figures playwright install --with-deps chromium
           git init -q "$fixture"
           "$RUNNER_TEMP/praetorctl" adopt --path "$fixture" --facets docs:seo-portal --lock-source-root "$praetor"
           cp -R docs/presets/starlight/. "$fixture/"
@@ -487,7 +491,6 @@ jobs:
       - name: Audit Preset SEO
         if: steps.changed.outputs.run == 'true'
         run: |
-          go build -o "$RUNNER_TEMP/praetorctl" ./cmd/standardsctl
           for build in mkdocs-root mkdocs-subpath starlight-root starlight-subpath; do
             "$RUNNER_TEMP/praetorctl" seo audit --allow-placeholders "$RUNNER_TEMP/preset-$build"
           done

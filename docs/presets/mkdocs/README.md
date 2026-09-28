@@ -10,14 +10,16 @@ Documentation preset powered by [Material for MkDocs](https://squidfunk.github.i
 
 ## Quickstart
 
-The preset is the root of your documentation: copy it into the root of a repository that
+The preset is the root of your documentation: copy its files into the root of a repository that
 `praetorctl adopt` has adopted with the `docs:seo-portal` facet, which the default facet set
 includes. Adoption writes the figure engine to `tools/figures/`, where `mkdocs.yml` expects its
-hook.
+hook. Copy every file but this README: the copy replaces a file of the same name, and your
+repository keeps its own `README.md`.
 
 ```bash
-# from your repository root, with this directory at <preset>
-cp -R <preset>/. .
+# from your adopted repository root, with this directory at <preset>
+cp -R <preset>/mkdocs.yml <preset>/requirements.in <preset>/requirements.txt \
+  <preset>/docs <preset>/overrides .
 python3 -m venv .venv
 source .venv/bin/activate
 pip install --require-hashes -r requirements.txt
@@ -75,8 +77,8 @@ Renovate's `lib/modules/manager/pip-compile/common.ts`). The `docs-presets` job 
 Renovate runs the same command: `renovate.json` enables its `pip-compile` manager for this lock
 and groups the updates as `mkdocs docs preset`. The `docs-presets` job in
 `.github/workflows/ci.yml` installs the lock and builds this preset with `--strict`, in a
-temporary repository adopted with `docs:seo-portal`, whenever a file under `docs/presets/` or
-`tools/figures/` changes.
+temporary repository adopted with `docs:seo-portal` and set up with the Quickstart copy, whenever
+a file under `docs/presets/` or `tools/figures/` changes.
 
 ## Figures
 
