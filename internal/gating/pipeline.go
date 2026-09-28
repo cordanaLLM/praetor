@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -58,6 +59,18 @@ const (
 	maxStages = 16
 )
 
+// The stage names, in pipeline order. The prefetch, security and test stages are the toolchain
+// stages: they run a language's own commands, and the receipt stage signs nothing unless one of
+// them ran for some language (requireVerification).
+const (
+	stagePrefetch = "Prefetch & Lockfiles"
+	stageHISS     = "HISS Invariant Scan"
+	stageSecurity = "Security & SCA Scan"
+	stageFlavor   = "Flavor Conformance"
+	stageTests    = "Race-Detector Tests"
+	stageReceipt  = "Ed25519 Exit-0 Receipt"
+)
+
 // ErrMissingScanner reports that a required security scanner is absent, which must fail
 // the security stage instead of silently passing it.
 var ErrMissingScanner = errors.New("required security scanner is not installed")
@@ -74,11 +87,13 @@ const (
 	StagePassed StageStatus = "passed"
 	// StageFailed means the stage ran and rejected the repository, or could not run at all.
 	StageFailed StageStatus = "failed"
-	// StageSkipped means the stage applies to this repository but deliberately did not run
-	// its checks here: a dry run, or a host that cannot build the race detector.
+	// StageSkipped means the stage applies to this repository but did not run all of its
+	// checks here: a dry run, a host that cannot build the race detector, or a toolchain stage
+	// that ran for one of the repository's languages and not for another (its reason names
+	// each language's outcome).
 	StageSkipped StageStatus = "skipped"
-	// StageNotApplicable means the repository has nothing this stage checks: no go.mod for
-	// the Go stages, or a declared profile no flavor implements.
+	// StageNotApplicable means the repository has nothing this stage checks: neither a go.mod
+	// nor a Cargo.lock for the toolchain stages, or a declared profile no flavor implements.
 	StageNotApplicable StageStatus = "not_applicable"
 )
 
@@ -182,6 +197,9 @@ type stageConfig struct {
 	// inspectTree reads the HEAD commit and whether the working tree matches it. Production
 	// uses inspectTree; tests substitute an answer so a stage fixture need not be a repository.
 	inspectTree func(context.Context, string) treeState
+	// verified lists the languages for which at least one toolchain stage ran its checks and
+	// passed, in the order they first did. The receipt stage refuses to sign while it is empty.
+	verified []string
 }
 
 // newStageConfig builds a stage configuration backed by the real toolchain.
@@ -200,13 +218,15 @@ func newStageConfig(repoDir string, dryRun bool, rep *PipelineReport) *stageConf
 // RunGatedPipeline executes the six-stage anti-direct-merge gating pipeline: prefetch and
 // lockfiles, HISS invariants against the debt baseline, security and SCA scanning, flavor
 // conformance, race-detector tests in an isolated worktree, and the Ed25519 Exit-0
-// receipt.
+// receipt. The prefetch, security and test stages run the Go toolchain where a go.mod is
+// present and the Cargo toolchain where a Cargo.lock is (cargo.go); the receipt is refused
+// when neither ran any of them (requireVerification).
 //
 // A dry run changes nothing and reaches no network: it runs only the read-only checks --
 // lockfiles, the HISS scan and flavor conformance -- and records the module prefetch, the
 // security scanners, the race tests and the receipt as skipped. `go mod download` writes the
 // module cache, and govulncheck and `go list` can fetch modules and query the vulnerability
-// database, so a dry run that ran them was not one.
+// database, so a dry run that ran them was not one; the Cargo commands are skipped alike.
 //
 // A run that can mint a receipt first requires the working tree to match HEAD, because the
 // scan stages read the working tree while the receipt certifies the commit. A tree with
@@ -284,12 +304,12 @@ type stage struct {
 
 func executeStages(ctx context.Context, cfg *stageConfig) error {
 	stages := []stage{
-		{"Prefetch & Lockfiles", runPrefetchStage},
-		{"HISS Invariant Scan", runHissStage},
-		{"Security & SCA Scan", runSecurityStage},
-		{"Flavor Conformance", runFlavorStage},
-		{"Race-Detector Tests", runTestStage},
-		{"Ed25519 Exit-0 Receipt", runReceiptStage},
+		{stagePrefetch, runPrefetchStage},
+		{stageHISS, runHissStage},
+		{stageSecurity, runSecurityStage},
+		{stageFlavor, runFlavorStage},
+		{stageTests, runTestStage},
+		{stageReceipt, runReceiptStage},
 	}
 
 	for i := 0; i < len(stages) && i < maxStages; i++ {
@@ -322,10 +342,18 @@ func executeStage(ctx context.Context, s stage, cfg *stageConfig) error {
 	return err
 }
 
+// runPrefetchStage verifies the standards lockfiles, then prefetches each language's
+// dependencies: the Go modules, and the Cargo crates where a Cargo.lock pins them (withCargo).
 func runPrefetchStage(ctx context.Context, cfg *stageConfig) (string, error) {
 	if err := VerifyLockfiles(cfg.repoDir); err != nil {
 		return "", err
 	}
+	msg, err := runGoPrefetch(ctx, cfg)
+	return withCargo(ctx, cfg, languagePart{language: languageGo, msg: msg, err: err}, runCargoPrefetch)
+}
+
+// runGoPrefetch is the prefetch stage's Go part: go mod verify and go mod download.
+func runGoPrefetch(ctx context.Context, cfg *stageConfig) (string, error) {
 	// Without a go.mod the prefetch below runs nothing and reports not applicable, which is
 	// the truer verdict for a dry run of a non-Go repository too.
 	if cfg.dryRun && util.FileExists(filepath.Join(cfg.repoDir, "go.mod")) {
@@ -411,9 +439,16 @@ func hissScanOptions(ctx context.Context, cfg *stageConfig) (hiss.ScanOptions, s
 	return opts, warning, nil
 }
 
-// runSecurityStage runs govulncheck and gosec. A missing scanner fails the stage: a
-// security gate that certifies a run in which nothing executed is worse than no gate.
+// runSecurityStage runs each language's scanners: govulncheck and gosec for Go, and cargo audit
+// where a Cargo.lock is present (withCargo).
 func runSecurityStage(ctx context.Context, cfg *stageConfig) (string, error) {
+	msg, err := runGoSecurity(ctx, cfg)
+	return withCargo(ctx, cfg, languagePart{language: languageGo, msg: msg, err: err}, runCargoSecurity)
+}
+
+// runGoSecurity runs govulncheck and gosec. A missing scanner fails the stage: a security
+// gate that certifies a run in which nothing executed is worse than no gate.
+func runGoSecurity(ctx context.Context, cfg *stageConfig) (string, error) {
 	if !util.FileExists(filepath.Join(cfg.repoDir, "go.mod")) {
 		return "", notApplicable("no go.mod: Go security scanners skipped")
 	}
@@ -500,10 +535,17 @@ func invalidSettingsClause(rep *flavor.FlavorAuditReport) string {
 	return ", missing or invalid settings: " + strings.Join(paths, ", ")
 }
 
-// runTestStage runs the race detector against HEAD in an isolated worktree. A worktree
-// that cannot be created fails the stage rather than silently testing the dirty tree,
-// and cleanup failures are surfaced instead of dropped.
-func runTestStage(ctx context.Context, cfg *stageConfig) (msg string, err error) {
+// runTestStage runs each language's test suite against HEAD in an isolated worktree: the Go
+// race detector, and cargo test and cargo clippy where a Cargo.lock is present (withCargo).
+func runTestStage(ctx context.Context, cfg *stageConfig) (string, error) {
+	msg, err := runGoTests(ctx, cfg)
+	return withCargo(ctx, cfg, languagePart{language: languageGo, msg: msg, err: err}, runCargoTests)
+}
+
+// runGoTests runs the race detector against HEAD in an isolated worktree. A worktree that
+// cannot be created fails the stage rather than silently testing the dirty tree, and cleanup
+// failures are surfaced instead of dropped (inStageWorktree).
+func runGoTests(ctx context.Context, cfg *stageConfig) (string, error) {
 	if cfg.dryRun {
 		return "", skipped("dry run: race-detector tests skipped")
 	}
@@ -530,38 +572,54 @@ func runTestStage(ctx context.Context, cfg *stageConfig) (msg string, err error)
 
 	budget := EnvRunBudget()
 	bound := budget.StageBound
-	tCtx, cancel := cfg.boundStage(ctx, bound)
-	defer cancel()
-
-	wtMgr := worktree.NewManager(cfg.repoDir)
-	if wtMgr == nil {
-		return "", fmt.Errorf("cannot create a worktree manager for %s", cfg.repoDir)
-	}
-	taskID := fmt.Sprintf("gate-%d-%d", os.Getpid(), time.Now().UnixNano())
-	wt, createErr := createStageWorktree(tCtx, wtMgr, taskID, bound, cfg.repoDir)
-	if createErr != nil {
-		return "", createErr
-	}
-	defer func() {
-		if cleanErr := removeWorktree(ctx, wtMgr, taskID); cleanErr != nil {
-			err = errors.Join(err, cleanErr)
+	err := inStageWorktree(ctx, cfg, bound, func(tCtx context.Context, dir string) error {
+		out, testErr := cfg.run(tCtx, dir, "go", "test", "-race", "./...")
+		if testErr == nil {
+			return nil
 		}
-	}()
-
-	if out, testErr := cfg.run(tCtx, wt.Path, "go", "test", "-race", "./..."); testErr != nil {
 		// A stage killed by a deadline is not a failing suite, and printing it as one sends
 		// every reader to diagnose a change that was never the cause. The context is the
 		// authoritative witness: the child dies of a signal and reports nothing useful. Its
 		// cause also says which deadline fired, the stage's own bound or the whole run's.
 		// util.RunCommand returns standard output only; build errors and anything else the
 		// go command printed on standard error travel in testErr.
-		if cutErr := cutError(tCtx, "race-detector tests", bound, wt.Path,
+		if cutErr := cutError(tCtx, "race-detector tests", bound, dir,
 			fmt.Sprintf("%s [%v]", out, testErr)); cutErr != nil {
-			return "", cutErr
+			return cutErr
 		}
-		return "", fmt.Errorf("tests failed in %s: %s (%w)", wt.Path, out, testErr)
+		return fmt.Errorf("tests failed in %s: %s (%w)", dir, out, testErr)
+	})
+	if err != nil {
+		return "", err
 	}
 	return budget.Note, nil
+}
+
+// inStageWorktree runs suite in an isolated worktree of HEAD, under the stage bound, and removes
+// the worktree afterwards. The worktree is removed under the caller's context rather than the
+// expired stage context (removeWorktree), and a removal that fails is joined to suite's error
+// instead of dropped: an un-removed worktree would leak into the next gate. Every test suite the
+// test stage runs goes through it, so each language's suite is isolated the same way.
+func inStageWorktree(ctx context.Context, cfg *stageConfig, bound time.Duration,
+	suite func(tCtx context.Context, dir string) error) (err error) {
+	tCtx, cancel := cfg.boundStage(ctx, bound)
+	defer cancel()
+
+	wtMgr := worktree.NewManager(cfg.repoDir)
+	if wtMgr == nil {
+		return fmt.Errorf("cannot create a worktree manager for %s", cfg.repoDir)
+	}
+	taskID := fmt.Sprintf("gate-%d-%d", os.Getpid(), time.Now().UnixNano())
+	wt, createErr := createStageWorktree(tCtx, wtMgr, taskID, bound, cfg.repoDir)
+	if createErr != nil {
+		return createErr
+	}
+	defer func() {
+		if cleanErr := removeWorktree(ctx, wtMgr, taskID); cleanErr != nil {
+			err = errors.Join(err, cleanErr)
+		}
+	}()
+	return suite(tCtx, wt.Path)
 }
 
 // createStageWorktree creates the isolated test worktree under the stage context.
@@ -720,4 +778,313 @@ func getGitCommitSHA(ctx context.Context, repoDir string) string {
 		return "uncommitted"
 	}
 	return strings.TrimSpace(out)
+}
+
+// The languages whose own toolchain the prefetch, security and test stages run. A language
+// counts as present when its marker is at the repository root: go.mod for Go, Cargo.lock for
+// Cargo, which is also what its commands hold the build to (--locked).
+const (
+	languageGo    = "go"
+	languageCargo = "cargo"
+	// supportedLanguages names them with their markers for the refusal message.
+	supportedLanguages = "Go (go.mod) and Cargo (Cargo.lock)"
+)
+
+// ErrNothingVerified reports a run in which no toolchain stage ran its checks for any language.
+// The receipt stage refuses to sign such a run: a receipt certifying prefetch, security scans
+// and tests that were each not applicable or skipped attests to nothing but the HISS scan.
+var ErrNothingVerified = errors.New("no verification stage ran for any language")
+
+// unsupportedMarkers are the root files that identify a language the gate runs no toolchain
+// for. They are named when a receipt is refused, so the refusal says what the repository holds
+// rather than only what the gate lacks. Cargo.toml counts here only without a Cargo.lock.
+var unsupportedMarkers = [...]struct{ file, language string }{
+	{"Cargo.toml", "cargo without a committed Cargo.lock"},
+	{"package.json", "node"},
+	{"pyproject.toml", "python"},
+	{"requirements.txt", "python"},
+	{"setup.py", "python"},
+	{"pom.xml", "java"},
+	{"build.gradle", "java"},
+	{"build.gradle.kts", "kotlin"},
+	{"Gemfile", "ruby"},
+	{"composer.json", "php"},
+	{"mix.exs", "elixir"},
+	{"Package.swift", "swift"},
+	{"pubspec.yaml", "dart"},
+	{"meson.build", "meson"},
+	{"CMakeLists.txt", "cmake"},
+}
+
+// languagePart is one language's share of a toolchain stage, carried the way a stage carries
+// its outcome: a nil err passed, a *stageSkip was skipped or not applicable, and any other
+// error failed.
+type languagePart struct {
+	language string
+	msg      string
+	err      error
+}
+
+// isFailure reports whether err fails a stage rather than recording a skip.
+func isFailure(err error) bool {
+	_, skip := errors.AsType[*stageSkip](err)
+	return err != nil && !skip
+}
+
+// partStatus is the verdict a part's err records.
+func partStatus(err error) StageStatus {
+	if err == nil {
+		return StagePassed
+	}
+	if skip, ok := errors.AsType[*stageSkip](err); ok {
+		return skip.status
+	}
+	return StageFailed
+}
+
+// noteVerified records that part's language ran a toolchain stage and passed it.
+func (c *stageConfig) noteVerified(part languagePart) {
+	if part.err == nil && !slices.Contains(c.verified, part.language) {
+		c.verified = append(c.verified, part.language)
+	}
+}
+
+// withCargo completes a toolchain stage whose Go part has already run, by running its Cargo
+// part where a Cargo.lock is present.
+//
+// Without a Cargo.lock it returns the Go part exactly as the stage returned it before Cargo
+// support, message and verdict alike, so a Go repository's stage lines and signed output are
+// unchanged. A Go part that failed stops the stage before Cargo runs, as any failure stops the
+// pipeline. Otherwise each present language contributes a "language: outcome" clause to the
+// stage's reason (combineParts), which is how the signed stage output records what ran for which
+// language.
+func withCargo(ctx context.Context, cfg *stageConfig, goPart languagePart,
+	cargo func(context.Context, *stageConfig) (string, error)) (string, error) {
+	cfg.noteVerified(goPart)
+	if !util.FileExists(filepath.Join(cfg.repoDir, CargoLockFile)) || isFailure(goPart.err) {
+		return goPart.msg, goPart.err
+	}
+	msg, err := cargo(ctx, cfg)
+	if isFailure(err) {
+		return "", fmt.Errorf("%s: %w", languageCargo, err)
+	}
+	cargoPart := languagePart{language: languageCargo, msg: msg, err: err}
+	cfg.noteVerified(cargoPart)
+	if !util.FileExists(filepath.Join(cfg.repoDir, "go.mod")) {
+		return combineParts(cargoPart)
+	}
+	return combineParts(goPart, cargoPart)
+}
+
+// combineParts folds the parts of the languages a repository holds into one stage verdict, none
+// of them failed. The stage passed only when every part passed. When some ran and some did not,
+// it is recorded as skipped, never as passed: a Cargo audit that did not run must not read as a
+// pass because the Go scanners beside it did. The reason names each language's outcome.
+func combineParts(parts ...languagePart) (string, error) {
+	clauses := make([]string, 0, len(parts))
+	passed, skippedAny := 0, false
+	for i := 0; i < len(parts); i++ {
+		part := parts[i]
+		outcome := part.msg
+		switch partStatus(part.err) {
+		case StagePassed:
+			passed++
+			if outcome == "" {
+				outcome = "passed"
+			}
+		case StageSkipped:
+			skippedAny = true
+			outcome = part.err.Error()
+		default:
+			outcome = part.err.Error()
+		}
+		clauses = append(clauses, part.language+": "+outcome)
+	}
+	reason := strings.Join(clauses, "; ")
+	switch {
+	case passed == len(parts):
+		return reason, nil
+	case passed > 0 || skippedAny:
+		return "", skipped(reason)
+	default:
+		return "", notApplicable(reason)
+	}
+}
+
+// requireVerification refuses a receipt for a run in which no toolchain stage ran for any
+// language: the prefetch, security and test stages were each not applicable or skipped.
+func requireVerification(cfg *stageConfig) error {
+	if len(cfg.verified) > 0 {
+		return nil
+	}
+	return nothingVerifiedError(cfg.repoDir)
+}
+
+// nothingVerifiedError names why nothing ran: a Cargo.lock whose stages could not run here, the
+// languages at the repository root the gate runs no toolchain for, or that it recognises none.
+func nothingVerifiedError(repoDir string) error {
+	notes := make([]string, 0, 2)
+	if util.FileExists(filepath.Join(repoDir, CargoLockFile)) {
+		notes = append(notes, "Cargo.lock is present, but no Cargo stage ran here; each stage's reason says why")
+	}
+	if unsupported := unsupportedLanguages(repoDir); len(unsupported) > 0 {
+		notes = append(notes, "unsupported languages at the repository root: "+strings.Join(unsupported, ", "))
+	}
+	if len(notes) == 0 {
+		notes = append(notes, "no language marker the gate recognises is at the repository root")
+	}
+	return fmt.Errorf("%w: %s, %s and %s each ran nothing, so no Exit-0 receipt is signed; "+
+		"the gate runs the toolchains of %s; %s",
+		ErrNothingVerified, stagePrefetch, stageSecurity, stageTests, supportedLanguages, strings.Join(notes, "; "))
+}
+
+// unsupportedLanguages lists the languages unsupportedMarkers finds at the repository root, each
+// once and with the files that identified it, in the table's order.
+func unsupportedLanguages(repoDir string) []string {
+	hasLock := util.FileExists(filepath.Join(repoDir, CargoLockFile))
+	order := make([]string, 0, len(unsupportedMarkers))
+	files := make(map[string][]string, len(unsupportedMarkers))
+	for i := 0; i < len(unsupportedMarkers); i++ {
+		marker := unsupportedMarkers[i]
+		if (hasLock && marker.file == "Cargo.toml") || !util.FileExists(filepath.Join(repoDir, marker.file)) {
+			continue
+		}
+		if _, seen := files[marker.language]; !seen {
+			order = append(order, marker.language)
+		}
+		files[marker.language] = append(files[marker.language], marker.file)
+	}
+	named := make([]string, 0, len(order))
+	for i := 0; i < len(order); i++ {
+		named = append(named, fmt.Sprintf("%s (%s)", order[i], strings.Join(files[order[i]], ", ")))
+	}
+	return named
+}
+
+const (
+	// CargoLockFile marks a Cargo workspace whose dependency graph is committed. The gate runs
+	// the Cargo toolchain only where it is present: every Cargo command below is held to it with
+	// --locked, and without it there is nothing to hold the build to.
+	CargoLockFile = "Cargo.lock"
+	// CargoAuditTimeout bounds cargo audit, which fetches the RustSec advisory database before
+	// it scans Cargo.lock.
+	CargoAuditTimeout = 3 * time.Minute
+	// cargoInstallHint says where the Cargo toolchain comes from when cargo is not on PATH.
+	cargoInstallHint = "install the Rust toolchain from https://rustup.rs"
+	// cargoAuditInstallHint installs the cargo audit subcommand.
+	cargoAuditInstallHint = "cargo install cargo-audit --locked"
+	// maxCargoOutputBytes bounds how much of a failed cargo command's standard output a stage
+	// message carries; its standard error is bounded by util.RunCommand already.
+	maxCargoOutputBytes = util.MaxErrorBodyBytes
+)
+
+// cargoTestCommands are the test stage's Cargo commands, run in order in the isolated worktree.
+var cargoTestCommands = [...][]string{
+	{"test", "--workspace", "--locked"},
+	{"clippy", "--workspace", "--all-targets", "--", "-D", "warnings"},
+}
+
+// requireCargo reports the Cargo part of a stage as not run when cargo is not on PATH. A runner
+// without the Rust toolchain is reported, never passed (HISS-21).
+func requireCargo(cfg *stageConfig) error {
+	if _, err := cfg.lookPath("cargo"); err != nil {
+		return skipped(fmt.Sprintf("not run: cargo is not on PATH (%s)", cargoInstallHint))
+	}
+	return nil
+}
+
+// cargoFailure describes a cargo command that failed under a bound of its own. When that bound
+// fired while the stage's context was still live, it says so rather than reporting a finding;
+// a cut by the run's deadline is named by attributeRunCut instead.
+func cargoFailure(ctx, cmdCtx context.Context, what string, bound time.Duration, out string, err error) error {
+	excerpt := util.TruncateExcerpt(out, maxCargoOutputBytes)
+	if cmdCtx.Err() != nil && ctx.Err() == nil {
+		return fmt.Errorf("%s did not finish within its %s bound, so this is not a finding: %w: %s",
+			what, bound, err, excerpt)
+	}
+	return fmt.Errorf("%s failed: %w: %s", what, err, excerpt)
+}
+
+// runCargoPrefetch is the prefetch stage's Cargo part: cargo fetch --locked downloads the
+// crates Cargo.lock pins and fails when the lockfile no longer matches the manifests.
+func runCargoPrefetch(ctx context.Context, cfg *stageConfig) (string, error) {
+	if cfg.dryRun {
+		return "", skipped("dry run: cargo fetch --locked not run")
+	}
+	if err := requireCargo(cfg); err != nil {
+		return "", err
+	}
+	pCtx, cancel := context.WithTimeout(ctx, DefaultPrefetchTimeout)
+	defer cancel()
+	if out, err := cfg.run(pCtx, cfg.repoDir, "cargo", "fetch", "--locked"); err != nil {
+		return "", cargoFailure(ctx, pCtx, "cargo fetch --locked", DefaultPrefetchTimeout, out, err)
+	}
+	return "cargo fetch --locked passed", nil
+}
+
+// runCargoSecurity is the security stage's Cargo part: cargo audit checks Cargo.lock against the
+// RustSec advisory database. Unlike the Go scanners it is optional: where cargo-audit is not
+// installed the part is reported as not run, with the command that installs it, and the stage is
+// never recorded as passed on its account (combineParts).
+func runCargoSecurity(ctx context.Context, cfg *stageConfig) (string, error) {
+	if cfg.dryRun {
+		return "", skipped("dry run: cargo audit not run")
+	}
+	if err := requireCargo(cfg); err != nil {
+		return "", err
+	}
+	if _, err := cfg.lookPath("cargo-audit"); err != nil {
+		return "", skipped(fmt.Sprintf("cargo audit not run: cargo-audit is not installed (%s)", cargoAuditInstallHint))
+	}
+	aCtx, cancel := context.WithTimeout(ctx, CargoAuditTimeout)
+	defer cancel()
+	if out, err := cfg.run(aCtx, cfg.repoDir, "cargo", "audit"); err != nil {
+		return "", cargoFailure(ctx, aCtx, "cargo audit", CargoAuditTimeout, out, err)
+	}
+	return "cargo audit passed", nil
+}
+
+// runCargoTests is the test stage's Cargo part: cargo test and cargo clippy with warnings denied,
+// against HEAD in an isolated worktree under the same bound as the Go race detector
+// (inStageWorktree), so a raised PRAETOR_TEST_STAGE_TIMEOUT applies to it too.
+func runCargoTests(ctx context.Context, cfg *stageConfig) (string, error) {
+	if cfg.dryRun {
+		return "", skipped("dry run: cargo test and cargo clippy not run")
+	}
+	if err := requireCargo(cfg); err != nil {
+		return "", err
+	}
+	budget := EnvRunBudget()
+	bound := budget.StageBound
+	err := inStageWorktree(ctx, cfg, bound, func(tCtx context.Context, dir string) error {
+		for i := 0; i < len(cargoTestCommands); i++ {
+			if runErr := runCargoSuite(tCtx, cfg, bound, dir, cargoTestCommands[i]); runErr != nil {
+				return runErr
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	msg := "cargo test --workspace --locked and cargo clippy --workspace --all-targets -- -D warnings passed"
+	if budget.Note != "" {
+		msg += "; " + budget.Note
+	}
+	return msg, nil
+}
+
+// runCargoSuite runs one cargo command of the test stage in the worktree dir. A cut by the stage
+// bound or the run deadline is reported as the cut, as the race stage reports one (cutError).
+func runCargoSuite(tCtx context.Context, cfg *stageConfig, bound time.Duration, dir string, args []string) error {
+	out, err := cfg.run(tCtx, dir, "cargo", args...)
+	if err == nil {
+		return nil
+	}
+	what := "cargo " + strings.Join(args, " ")
+	excerpt := util.TruncateExcerpt(out, maxCargoOutputBytes)
+	if cutErr := cutError(tCtx, what, bound, dir, fmt.Sprintf("%s [%v]", excerpt, err)); cutErr != nil {
+		return cutErr
+	}
+	return fmt.Errorf("%s failed in %s: %s (%w)", what, dir, excerpt, err)
 }
