@@ -107,7 +107,7 @@ func epicFromAnalysis(ctx context.Context, repoPath string, analysis *migrationA
 func buildEpicStructure(repoPath string, repoNeeds *RepoNeeds, plan *MigrationPlan, facts *epicFacts) (*PreMigrationEpic, error) {
 	repoName := repoNeeds.Repository
 	if repoName == "" || repoName == "unknown" {
-		repoName = filepath.Base(filepath.Clean(repoPath))
+		repoName = repositoryDirName(repoPath)
 	}
 	repoName = strings.TrimPrefix(repoName, "github.com/")
 

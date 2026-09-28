@@ -377,7 +377,9 @@ directory, resolved to an absolute path first, so `--path .`, `--path ./` and an
 absolute path give the same name in scan output, `.needs.yaml` and the
 pre-migration epic (`TestRepositoryNameFromRelativePath_3D`,
 `TestRepositoryNamePrecedenceAndEpic_3D` in
-`internal/needs/repository_name_test.go`).
+`internal/needs/repository_name_test.go`). The epic also treats a manifest that
+names its project `unknown` as unnamed and titles the epic after the root
+directory, through the same helper (`TestEpicRepositoryFallbackNamesDirectory_3D`).
 
 A Cargo dependency declared with `path`, in an inline table, a
 `[dependencies.<crate>]` sub-table or a dotted key (`core.path = "../core"`), is a

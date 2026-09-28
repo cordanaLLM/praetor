@@ -409,8 +409,9 @@ func noSubprojectScannedError(root string, failed []SubprojectFailure) error {
 // repositoryDirName names a repository after its root directory, made absolute first so
 // that a relative spelling such as the default --path=. names the directory, never ".".
 // Every analyzer without a manifest name (Rust, Python, native, a Go module without a
-// module directive, a package.json without a name) and a root that is no project name
-// the repository through it, so every needs command reports one name for one directory.
+// module directive, a package.json without a name), a root that is no project and the
+// pre-migration epic's fallback for an unnamed or "unknown" repository name the
+// repository through it, so every needs command reports one name for one directory.
 func repositoryDirName(root string) string {
 	if abs, err := filepath.Abs(root); err == nil {
 		return filepath.Base(abs)

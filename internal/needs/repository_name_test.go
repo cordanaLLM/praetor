@@ -103,3 +103,52 @@ func TestRepositoryNamePrecedenceAndEpic_3D(t *testing.T) {
 		t.Errorf("ScanRepo(.) of a non-project root Repository = %q, want outer", got)
 	}
 }
+
+// A manifest that names its project "unknown" leaves the epic to fall back to the
+// directory. Scanned through ".", that fallback titled the epic "." before it used the
+// shared directory-name helper.
+func TestEpicRepositoryFallbackNamesDirectory_3D(t *testing.T) {
+	registry := acmeRegistry(t)
+	contract, err := filepath.Abs(acmeTargets()["go"].Contract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := FrameworkSource{Contract: contract, Module: acmeKit}
+	parent := t.TempDir()
+	epicFrom := func(t *testing.T, dir, spelling string) *PreMigrationEpic {
+		t.Helper()
+		t.Chdir(dir)
+		epic, err := GeneratePreMigrationEpic(context.Background(), spelling, source, registry)
+		if err != nil {
+			t.Fatalf("GeneratePreMigrationEpic(%s) in %s error = %v", spelling, dir, err)
+		}
+		return epic
+	}
+	fixtures := map[string][2]string{
+		"go-unknown": {"go.mod", "module unknown\ngo 1.24\n"},
+		"ts-unknown": {"package.json", "{\"name\":\"unknown\",\"dependencies\":{\"zod\":\"3\"}}"},
+	}
+	for name, file := range fixtures {
+		t.Run(name, func(t *testing.T) {
+			repo := filepath.Join(parent, name)
+			writeRepoFile(t, filepath.Join(repo, file[0]), file[1])
+			// Positive: "." names the epic after the directory; boundary: a trailing
+			// separator and a path that leaves and re-enters the directory do too.
+			spellings := []string{".", "." + string(filepath.Separator), filepath.Join("..", name)}
+			for _, spelling := range spellings {
+				epic := epicFrom(t, repo, spelling)
+				if epic.RepoName != name || !strings.HasSuffix(epic.ParentEpic.Title, ": "+name) {
+					t.Errorf("epic from %q = name %q title %q, want %s", spelling, epic.RepoName,
+						epic.ParentEpic.Title, name)
+				}
+			}
+		})
+	}
+
+	// Negative: a module path is kept, with only the github.com/ prefix trimmed.
+	named := filepath.Join(parent, "svc")
+	writeRepoFile(t, filepath.Join(named, "go.mod"), "module github.com/acme/unknown\ngo 1.24\n")
+	if got := epicFrom(t, named, ".").RepoName; got != "acme/unknown" {
+		t.Errorf("epic of module github.com/acme/unknown RepoName = %q, want acme/unknown", got)
+	}
+}
