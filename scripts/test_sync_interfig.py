@@ -586,6 +586,13 @@ class TestLayout(unittest.TestCase):
         self.assertIn(f"-- {sync_interfig.UPSTREAM_REL} ", sync_interfig.REVERT_HINT)
         self.assertNotIn("-- third_party/", sync_interfig.REVERT_HINT)
 
+    def test_markdown_style_exclusion_names_the_same_tree(self):
+        # Upstream Markdown must stay byte-identical to the pin, so the docs gate may not
+        # style-lint it; a move of the tree that leaves the gate's prefix behind fails here.
+        gate = (sync_interfig.REPO_ROOT / "tools" / "markdownlint" / "verify.mjs").read_text(encoding="utf-8")
+        self.assertIn(f'"{sync_interfig.UPSTREAM_REL}/",', gate)
+        self.assertNotIn('"third_party/interfig/upstream/"', gate)
+
 
 if __name__ == "__main__":
     unittest.main()

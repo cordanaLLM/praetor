@@ -94,6 +94,9 @@ var priorDigests = map[string]string{
 	"8273fa87112eb15cc3382ba23ba894c542d2ae8352042eab253e9c8b503704f2": Directory + "/verify.mjs",
 	// verify.mjs before it excluded vendored upstream Markdown from the style rules.
 	"52cce450d5fd46647d2852919fb279122be22134c81353707a4f214f5f59c9c4": Directory + "/verify.mjs",
+	// verify.mjs while the vendored interfig tree sat at the repository root, before it moved
+	// under tools/figures.
+	"a74e1e4f30edb5edb32d5e54b0d21d0d1d7dcfb1984293275ae6ddb6092c77de": Directory + "/verify.mjs",
 	// The first scratch-link rule, which compared process.argv[1] by spelling and skipped
 	// main() under a symlinked temporary directory.
 	"56d7c5a15f5622e6ecf4e6fc2877bb796fd0db4fb73c6f07a41bec637830242c": Directory + "/no-private-scratch-links.mjs",
