@@ -1,10 +1,13 @@
-// The spec format for praetor's documentation figures (docs/figures/<slug>.ts).
+// The spec format for documentation figures (docs/figures/<slug>.ts).
 //
-// It narrows interfig's own types (third_party/interfig/upstream/src/model.ts) to strings: the
-// React player, the exported SVG and the derived text description must show the same content,
-// and the SVG exporter can only draw text. build.mjs enforces the same rules at runtime, so a
-// spec that bypasses the type checker still fails the build.
-import type { FigTone } from '../../third_party/interfig/upstream/src/model.ts';
+// It narrows interfig's own types (tools/figures/third_party/interfig/upstream/src/model.ts) to
+// strings: the React player, the exported SVG and the derived text description must show the same
+// content, and the SVG exporter can only draw text. `validate` in core.mjs enforces the same rules
+// at runtime, so a spec that bypasses the type checker still fails the build. The file imports
+// nothing, so a spec type-checks against it without the vendored engine on the import path.
+
+/** A card row's colour; the same five names as interfig's `FigTone` and `TONES` in core.mjs. */
+export type FigTone = 'blue' | 'purple' | 'green' | 'orange' | 'gray';
 
 /** A box: `store` draws a database cylinder for data at rest, `decision` a diamond. */
 export type PraetorNode = {
