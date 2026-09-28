@@ -195,15 +195,15 @@ func plannedPolicyInputs(ctx context.Context, s *adoptSession) ([]byte, []byte, 
 	if err != nil {
 		return nil, nil, err
 	}
-	if exists && !s.opts.Force {
+	decoded, err := config.DecodeManifest(manifest)
+	if err != nil {
+		return nil, nil, err
+	}
+	if exists && !s.opts.Force && !repinsEarlierCatalog(ctx, s, decoded) {
 		return manifest, lock, nil
 	}
 	if s.opts.LockSourceRoot == "" {
 		return nil, nil, ErrLockSourceRequired
-	}
-	decoded, err := config.DecodeManifest(manifest)
-	if err != nil {
-		return nil, nil, err
 	}
 	lock, err = config.BuildLockfile(ctx, s.opts.LockSourceRoot, decoded)
 	return manifest, lock, err

@@ -144,6 +144,22 @@ func canonicalLockDigest(lock *standardsLock) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// pinnedDigests returns the bare lowercase hex digest every entry of lock pins, profiles
+// first, in lock order.
+func pinnedDigests(lock *standardsLock) ([]string, error) {
+	digests := make([]string, 0, len(lock.Profiles)+len(lock.Facets))
+	for _, entries := range [][]lockEntry{lock.Profiles, lock.Facets} {
+		for i := 0; i < len(entries) && i < maxLockEntries; i++ {
+			digest, err := normalizeDigest(entries[i].Digest)
+			if err != nil {
+				return nil, fmt.Errorf("entry %q: %w", entries[i].ID, err)
+			}
+			digests = append(digests, digest)
+		}
+	}
+	return digests, nil
+}
+
 // verifyAggregateDigest checks the top-level digest against the canonical digest of
 // every pinned entry. Lock validation and effective policy share this one check.
 func verifyAggregateDigest(lock *standardsLock) error {

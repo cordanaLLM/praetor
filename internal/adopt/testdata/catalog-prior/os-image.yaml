@@ -1,0 +1,35 @@
+id: "os-image"
+name: "OS & Boot Artifact Forge"
+description: "Reproducible pipelines producing bootable artifacts -- OS images, kernels, initramfs and UKIs -- from declarative version manifests, with shell provisioners under Power-of-10 bounds and signed outputs"
+runtime: "image"
+
+complexity:
+  max_cyclomatic: 10
+  max_cognitive: 12
+  max_func_loc: 60
+  max_statements: 40
+
+branch_protection:
+  enforce_linear_history: true
+  require_signed_commits: true
+  required_approving_reviewers: 1
+  dismiss_stale_reviews: true
+
+supply_chain:
+  slsa_level: 3
+  enforce_cosign: true
+  require_sbom: true
+
+linters:
+  - "packer"
+  - "shellcheck"
+  - "shfmt"
+  - "yamllint"
+  - "trivy"
+  - "gitleaks"
+  - "codespell"
+
+devcontainer_features:
+  - "ghcr.io/devcontainers/features/common-utils:2"
+  - "ghcr.io/devcontainers/features/go:1"
+  - "ghcr.io/devcontainers/features/python:1"

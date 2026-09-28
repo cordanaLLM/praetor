@@ -178,6 +178,36 @@ func TestValidateLockfileCatalogBoundaries(t *testing.T) {
 	}
 }
 
+// Digests reports every pinned content digest bare and lowercase, so adoption can compare it
+// with the digests of earlier Praetor catalog texts.
+func TestValidateLockfileReportsPinnedDigests(t *testing.T) {
+	bare := strings.TrimPrefix(lockTestDigest(lockTestSource), "sha256:")
+	document := lockTestDocument()
+	root, manifest := writeConfigLockFixture(t, document)
+	writeLockTestCatalog(t, root, "framework.yaml", lockTestSource)
+	result, err := ValidateLockfile(context.Background(), root, manifest)
+	if err != nil || len(result.Digests) != 1 || result.Digests[0] != bare {
+		t.Fatalf("positive: digests %+v, err %v", result, err)
+	}
+
+	// Boundary: an uppercase pin is the same digest and is reported lowercase.
+	upper := "sha256:" + strings.ToUpper(bare)
+	document["profiles"] = []map[string]any{{"id": "framework", "version": "v1.0.0", "digest": upper}}
+	document["digest"] = lockTestDigest("profile:framework=" + upper + "\n")
+	root, manifest = writeConfigLockFixture(t, document)
+	writeLockTestCatalog(t, root, "framework.yaml", lockTestSource)
+	result, err = ValidateLockfile(context.Background(), root, manifest)
+	if err != nil || len(result.Digests) != 1 || result.Digests[0] != bare {
+		t.Errorf("boundary: uppercase pin reported as %+v, err %v", result, err)
+	}
+
+	// Negative: a lock whose pin disagrees with the catalog reports no digests at all.
+	writeLockTestCatalog(t, root, "framework.yaml", lockTestSource+"# edited\n")
+	if result, err = ValidateLockfile(context.Background(), root, manifest); err == nil || result != nil {
+		t.Errorf("negative: a mismatched lock must fail without a result, got %+v", result)
+	}
+}
+
 func TestValidateLockfileGeneratedAtIsOptional(t *testing.T) {
 	for name, value := range map[string]any{"omitted": nil, "empty": "", "stamped": "2026-09-12T00:00:00Z"} {
 		t.Run(name, func(t *testing.T) {

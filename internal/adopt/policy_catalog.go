@@ -17,6 +17,35 @@ import (
 // Each lock permits at most 256 profiles and 256 facets.
 const maxAdoptPolicyFiles = 512
 
+// priorCatalogDigests are the SHA-256 digests of every .config/archetypes file Praetor shipped
+// before the catalog passed yamllint's default rules (BUG-782), keyed to the file. Each decodes
+// to exactly the values of its current text; only the layout moved. A repository whose lock
+// pins only these texts is re-pinned without --force (pinsEarlierCatalog), and a catalog file
+// holding one is replaced from the selected source (prepareCatalogWrites). testdata/
+// catalog-prior reproduces each digest (policy_catalog_prior_test.go).
+var priorCatalogDigests = map[string]string{
+	"0ef3ebf5423873d200e12ba405ca93b3064c57eedf9091852f2d69316dfb7c63": "facets/agent-sandboxed.yaml",
+	"4de328ae5f1c4a993f45c258758d105395b92b2974abf52023fc685b61dafdd9": "facets/api-public.yaml", // gitleaks:allow: a digest, no credential
+	"3381e1b7ab5cfb1029fa1b96cd84c7d3d5a890bc2d1f340a7b4e8b5bf61e2256": "facets/docs-seoportal.yaml",
+	"96077842e27cf814ee7e26610d4697f17987f06b560dfd917923e65121f864b1": "facets/perf-hotpath.yaml",
+	"34de9dc4fe2b7da48c152c2e7457891ebc41ace8e671fd1db0f49e1fafcb567f": "facets/security-high.yaml",
+	"c6c06e4f951b2c6d72df15f7d4c095892db3d64a1d616b5cfdae462d6ba9c26d": "facets/tooling-vscode-extension.yaml",
+	"f9bf5a186f252fc3ed5bd75f4e2167538135e7f2577547b07d7632cde4e224e5": "app-service.yaml",
+	"9c031ec962998fceb63b47ffdca84f4915c5b98e9a42468bc0fba2d54224108e": "closed-private.yaml",
+	"5b442bab492d62fa1bf7b7f0835a63c6278490f0e49be8b3c26e3b2493ac688d": "container-image.yaml",
+	"91d601b8481143fa9621ab0f61d2d6e261af7a97d71ecc911868067e30ff0406": "framework.yaml",
+	"cf4e44806b73f90a85179739a52e20927ae443cf1732114e9b9652a10ce1ca8c": "gitops-infra.yaml",
+	"12857e00e09953e0e489852ca3acb7266bcd91c4151db814cb9f856ed719687e": "library-client.yaml",
+	"aabdfa13501105032bbecfb39eac49b482be4f426d7b409999e12e28f17b59c9": "native-gpu-systems.yaml",
+	"4fb8a98fc3e6b3bfaf4b6258a9dddaf58e68eb1b4db23d94f6fe7655f9b4db5c": "org-health.yaml",
+	"236ba3a1bb7dcdde43e86a46cb49dd935ef8070ecd39584045510df842ff136f": "os-image.yaml",
+	"f5e2e8aa975abc509cdd7b9ae21ea71dfec73a01fcb947508c856fd25285165b": "pages-site.yaml",
+	"55141334e1d4499096d2a7561f1a6f5776a8b84fa8affa06a77249f1d4711817": "planning-artifacts.yaml",
+	"6fb2c0dc63886be95afa1444850ae2c650ab946b83ae53bdaa1d8325f74431ea": "template-seed.yaml",
+	"4a406a9d957078d5082bc906ca58d74501ce43ee19b5e6123ace83d3511b4a36": "upstream-fork.yaml",
+	"22483af9e97cb2adb4cc024024ee54efb1d223e7f85858da05f05c17099dcae1": "web-package.yaml",
+}
+
 type catalogWrite struct {
 	artifact config.PolicyArtifact
 	path     string
@@ -68,7 +97,8 @@ func adoptionScanLimit(s *adoptSession) int {
 }
 
 // Inspect every destination before publishing any catalog entry. Force permits
-// explicit replacement; otherwise differing user files are always preserved.
+// explicit replacement, and an unmodified earlier Praetor text (priorCatalogDigests) is
+// replaced without it; otherwise differing user files are always preserved.
 func prepareCatalogWrites(ctx context.Context, s *adoptSession, artifacts []config.PolicyArtifact) ([]catalogWrite, error) {
 	if len(artifacts) > maxAdoptPolicyFiles {
 		return nil, errors.New("adoption catalog exceeds 512 pinned files")
@@ -87,7 +117,7 @@ func prepareCatalogWrites(ctx context.Context, s *adoptSession, artifacts []conf
 		if err != nil {
 			return nil, err
 		}
-		if exists && !bytes.Equal(before, artifact.Content) && !s.opts.Force {
+		if exists && !bytes.Equal(before, artifact.Content) && !s.opts.Force && !isPriorRendering(before, priorCatalogDigests) {
 			return nil, fmt.Errorf("pinned catalog destination differs: %s; inspect it before explicit forced adoption", artifact.RelativePath)
 		}
 		writes = append(writes, catalogWrite{artifact: artifact, path: path, before: before, exists: exists})

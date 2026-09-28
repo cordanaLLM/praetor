@@ -21,7 +21,7 @@ func reconcileLockfile(ctx context.Context, s *adoptSession) error {
 		return err
 	}
 	if fileExists(path) && !s.opts.Force {
-		return verifyExistingLock(ctx, s, manifest)
+		return reconcileExistingLock(ctx, s, path, manifest)
 	}
 	if s.opts.LockSourceRoot == "" {
 		if s.opts.DryRun {
@@ -30,6 +30,16 @@ func reconcileLockfile(ctx context.Context, s *adoptSession) error {
 		}
 		return ErrLockSourceRequired
 	}
+	if err := writeBuiltLock(ctx, s, path, manifest); err != nil {
+		return err
+	}
+	s.report.recordCreated(lockFile, "Pinned profiles and facets to verified source content digests")
+	return nil
+}
+
+// writeBuiltLock pins manifest to the selected source bundle and writes the lock unless the
+// session is a dry run.
+func writeBuiltLock(ctx context.Context, s *adoptSession, path string, manifest *config.Manifest) error {
 	data, err := config.BuildLockfile(ctx, s.opts.LockSourceRoot, manifest)
 	if err != nil {
 		return fmt.Errorf("generate adoption lock: %w", err)
@@ -37,11 +47,54 @@ func reconcileLockfile(ctx context.Context, s *adoptSession) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := s.write(path, data, filePerm); err != nil {
+	return s.write(path, data, filePerm)
+}
+
+// reconcileExistingLock verifies an existing lock, or re-pins it to the selected source bundle
+// when it pins only earlier Praetor catalog texts the source has since re-laid out
+// (repinsEarlierCatalog). Any other lock that disagrees with the source keeps failing, as
+// before: re-pinning it is --force.
+func reconcileExistingLock(ctx context.Context, s *adoptSession, path string, manifest *config.Manifest) error {
+	if !repinsEarlierCatalog(ctx, s, manifest) {
+		return verifyExistingLock(ctx, s, manifest)
+	}
+	if err := writeBuiltLock(ctx, s, path, manifest); err != nil {
 		return err
 	}
-	s.report.recordCreated(lockFile, "Pinned profiles and facets to verified source content digests")
+	s.report.recordReconciled(lockFile, "Re-pinned an unmodified earlier Praetor catalog to the selected source bundle; "+
+		"its values are unchanged, only the catalog's layout moved")
 	return nil
+}
+
+// repinsEarlierCatalog reports whether the existing lock disagrees with the selected source
+// bundle only because it pins earlier Praetor catalog texts. The lock step and the dry-run
+// policy plan (plannedPolicyInputs) share it, so a dry run plans the lock a real run writes.
+func repinsEarlierCatalog(ctx context.Context, s *adoptSession, manifest *config.Manifest) bool {
+	if s.opts.LockSourceRoot == "" {
+		return false
+	}
+	_, err := config.ValidateLockfileWithOptions(ctx, config.LockValidationOptions{
+		Root: s.repoPath, CatalogRoot: s.opts.LockSourceRoot,
+	}, manifest)
+	return errors.Is(err, config.ErrLockDigestMismatch) && pinsEarlierCatalog(ctx, s.repoPath, manifest)
+}
+
+// pinsEarlierCatalog reports whether root's lock verifies against root's own catalog and pins
+// only earlier Praetor catalog texts (priorCatalogDigests). Such a repository holds Praetor's
+// unedited output, so adoption re-pins it and the policy-catalog step refreshes its files
+// (prepareCatalogWrites). A lock that does not verify locally, for whatever reason, is not
+// re-pinned: the caller reports the mismatch against the source, as it did before.
+func pinsEarlierCatalog(ctx context.Context, root string, manifest *config.Manifest) bool {
+	local, err := config.ValidateLockfileWithOptions(ctx, config.LockValidationOptions{Root: root, RequireSources: true}, manifest)
+	if err != nil || len(local.Digests) == 0 {
+		return false
+	}
+	for i := 0; i < len(local.Digests) && i < maxAdoptPolicyFiles; i++ {
+		if _, known := priorCatalogDigests[local.Digests[i]]; !known {
+			return false
+		}
+	}
+	return true
 }
 
 // verifyExistingLock hashes the pins against the catalog the policy-catalog step
