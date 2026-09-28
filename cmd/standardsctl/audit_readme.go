@@ -51,14 +51,15 @@ func auditedReadmeState(manifest *config.Manifest, opts *auditOptions) (readmego
 			return readmegovernance.State{}, fmt.Errorf("resolve documentation facet: %w", err)
 		}
 	}
-	state := readmegovernance.State{
+	owner, name, err := adopt.ReadmeIdentity(manifest, documentationEnabled)
+	if err != nil {
+		return readmegovernance.State{}, err
+	}
+	return readmegovernance.State{
 		BaselineKnown:        opts.baselineKnown,
 		LegacyDebtCount:      opts.baseline.Count(),
 		DocumentationEnabled: documentationEnabled,
-	}
-	if state.DocumentationEnabled {
-		state.RepositoryOwner = manifest.Repository.Owner
-		state.RepositoryName = manifest.Repository.Name
-	}
-	return state, nil
+		RepositoryOwner:      owner,
+		RepositoryName:       name,
+	}, nil
 }

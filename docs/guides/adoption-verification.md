@@ -67,11 +67,28 @@ recorded debt baseline and preserves content outside it. The badge says
 debt, while only a commit-bound signed Exit-0 receipt proves that a particular
 verification run passed.
 
+Every link in the block is an absolute URL into the repository named by
+`repository.owner` and `repository.name`, never a repository-relative path: a
+documentation portal that includes the README resolves a relative link against
+its own pages, and `mkdocs build --strict` aborts on a target it cannot find
+(#506). The **HISS Adopted** badge links
+`https://github.com/<owner>/<name>/blob/HEAD/AGENTS.md`; GitHub serves
+`blob/HEAD` from the default branch, so the link needs no branch name, and a
+fork's manifest makes it point at the fork. A manifest that names no identity
+renders the badge as an unlinked image. `TestRenderedBlockBuildsInStrictMkDocsPortal`
+in `internal/readmegovernance/links_test.go` builds a strict MkDocs portal from
+every rendering when `mkdocs` is on `PATH`, and the link-shape tests beside it
+hold the same contract on hosts without it. A block an earlier Praetor wrote
+with the relative `AGENTS.md` link fails audit as stale; plain `praetorctl adopt`
+re-renders the whole marker region, so it needs no `--force`
+(`TestAdoptReadmeGovernanceRefreshesRelativeAgentsLink`).
+
 With the `docs:seo-portal` facet the block also links a workflow badge to the
-repository named by `repository.owner` and `repository.name`. When the manifest
-names none, because adoption could not resolve an identity, adoption leaves the
-README unchanged and records a `Governance block not reconciled` warning instead
-of linking to a guessed repository (`TestAdopt_UnresolvedIdentityCompletesWithoutGuessing`).
+same repository. When the manifest names no identity, or only half of one,
+because adoption could not resolve it, adoption leaves the README unchanged and
+records a `Governance block not reconciled` warning instead of linking to a
+guessed repository (`TestAdopt_UnresolvedIdentityCompletesWithoutGuessing`,
+`TestReadmeIdentity`).
 Set both fields in `.standards.yaml` and re-run `praetorctl adopt` to reconcile
 the block; adoption never rewrites an existing manifest, so adding an `origin`
 remote alone does not fill them (`TestAdopt_RerunCompletesOnceIdentityIsSet`).

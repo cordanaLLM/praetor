@@ -98,6 +98,35 @@ func TestAudit_Negative_GateFailures(t *testing.T) {
 	}
 }
 
+// auditReadmeFixture is the README block the audit fixture's clean baseline and acme/widgets
+// identity render, spelled out, with badge as its first line and agentsDefinition after the
+// badge image's reference definition.
+func auditReadmeFixture(badge, agentsDefinition string) string {
+	return `# Widgets
+
+<!-- praetor:readme-governance:start -->
+` + badge + `
+
+Praetor manages this repository's declared governance policy. This managed
+block records adoption state; it is not a verification certificate.
+
+**Verification**: ` + "`make verify-all`" + ` runs the repository's configured
+verification cascade.
+
+**HISS Audit**: ` + "`praetorctl audit`" + ` enforces policy, generated-surface
+integrity, and the debt ratchet.
+
+**Context Sync**: ` + "`praetorctl compile-context --verify`" + ` verifies every
+generated agent context against ` + "`AGENTS.md`" + `.
+
+**Debt Baseline**: ` + "`.standards-baseline.json`" + ` anchors the debt ratchet at
+0 recorded infractions; audit forbids growth.
+
+[praetor-hiss-badge]: https://img.shields.io/badge/Standards-HISS%20Adopted-blue
+` + agentsDefinition + `<!-- praetor:readme-governance:end -->
+`
+}
+
 func TestAuditReadmeGovernanceGate(t *testing.T) {
 	t.Run("stale managed content fails", func(t *testing.T) {
 		f := newAuditFixture(t)
@@ -108,34 +137,22 @@ func TestAuditReadmeGovernanceGate(t *testing.T) {
 
 	t.Run("current managed content passes", func(t *testing.T) {
 		f := newAuditFixture(t)
-		writeFixtureFile(t, f.dir, "README.md", `# Widgets
-
-<!-- praetor:readme-governance:start -->
-[![HISS Adopted][praetor-hiss-badge]](AGENTS.md)
-
-Praetor manages this repository's declared governance policy. This managed
-block records adoption state; it is not a verification certificate.
-
-**Verification**: `+"`make verify-all`"+` runs the repository's configured
-verification cascade.
-
-**HISS Audit**: `+"`praetorctl audit`"+` enforces policy, generated-surface
-integrity, and the debt ratchet.
-
-**Context Sync**: `+"`praetorctl compile-context --verify`"+` verifies every
-generated agent context against `+"`AGENTS.md`"+`.
-
-**Debt Baseline**: `+"`.standards-baseline.json`"+` anchors the debt ratchet at
-0 recorded infractions; audit forbids growth.
-
-[praetor-hiss-badge]: https://img.shields.io/badge/Standards-HISS%20Adopted-blue
-<!-- praetor:readme-governance:end -->
-`)
+		writeFixtureFile(t, f.dir, "README.md", auditReadmeFixture("[![HISS Adopted][praetor-hiss-badge]][praetor-hiss-agents]",
+			"[praetor-hiss-agents]: https://github.com/acme/widgets/blob/HEAD/AGENTS.md\n"))
 		out, err := f.audit(t)
 		if err != nil {
 			t.Fatalf("current README governance: %v\n%s", err, out)
 		}
 		mustContain(t, out, "[PASS] README governance block verified")
+	})
+
+	// #506: the block an earlier Praetor wrote linked AGENTS.md by a repository-relative
+	// path; audit reports it stale and names plain adoption as the repair.
+	t.Run("previous relative AGENTS.md link fails", func(t *testing.T) {
+		f := newAuditFixture(t)
+		writeFixtureFile(t, f.dir, "README.md", auditReadmeFixture("[![HISS Adopted][praetor-hiss-badge]](AGENTS.md)", ""))
+		_, err := f.audit(t)
+		mustErrContain(t, err, "README governance block is stale; run praetorctl adopt")
 	})
 
 	t.Run("explicit decline skips the managed surface", func(t *testing.T) {

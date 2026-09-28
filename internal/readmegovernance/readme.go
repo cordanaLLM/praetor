@@ -73,6 +73,14 @@ and modernized NASA JPL Power-of-10 rules.
 
 // State is the durable evidence adoption can truthfully render. A baseline is a debt
 // anchor, not proof that the repository's full verification gate passed.
+//
+// RepositoryOwner and RepositoryName name the repository the block describes, the one its
+// manifest declares; a fork's manifest names the fork. Every link the block renders is an
+// absolute URL into that repository: the HISS badge links AGENTS.md on the default branch
+// and the documentation badge links the workflow runs. The block never links a
+// repository-relative path, because a documentation portal that includes the README resolves
+// such a link against its own pages, and a strict MkDocs build aborts on it (#506). Without
+// an identity the HISS badge renders unlinked; the documentation contract requires one.
 type State struct {
 	BaselineKnown        bool
 	LegacyDebtCount      int
@@ -171,8 +179,13 @@ func hasCustomBadgeOutsideBlock(content string) bool {
 // so the prefix keeps them apart from the adopter's own.
 const (
 	hissBadgeRef    = "praetor-hiss-badge"
+	hissAgentsRef   = "praetor-hiss-agents"
 	docsBadgeRef    = "praetor-docs-badge"
 	docsWorkflowRef = "praetor-docs-runs"
+	// hissBadgeImage is the HISS badge's image. renderHISSBadge links it as hissBadgeLink
+	// when the block has an identity, and blockState reads that line back as the identity.
+	hissBadgeImage = "![HISS Adopted][" + hissBadgeRef + "]"
+	hissBadgeLink  = "[" + hissBadgeImage + "][" + hissAgentsRef + "]"
 )
 
 // renderBlock renders the managed block so every line passes markdownlint's MD013 at its
@@ -185,8 +198,9 @@ func renderBlock(state State, customHISSBadge bool) string {
 	var lines, definitions []string
 	lines = append(lines, Start)
 	if !customHISSBadge {
-		lines = append(lines, "[![HISS Adopted]["+hissBadgeRef+"]](AGENTS.md)")
-		definitions = append(definitions, "["+hissBadgeRef+"]: "+hissBadgeURL(state))
+		badge, links := renderHISSBadge(state)
+		lines = append(lines, badge)
+		definitions = append(definitions, links...)
 	}
 	if state.DocumentationEnabled {
 		badge, links := renderDocumentationBadge(state)
@@ -224,12 +238,31 @@ func validateState(state State) error {
 	if state.LegacyDebtCount < 0 {
 		return fmt.Errorf("%w: negative legacy debt count", ErrInvalidState)
 	}
-	if state.DocumentationEnabled {
+	if state.DocumentationEnabled || hasIdentity(state) {
 		if err := util.ValidateGitHubRepositoryIdentity(state.RepositoryOwner, state.RepositoryName); err != nil {
-			return fmt.Errorf("%w: documentation badge identity: %w", ErrInvalidState, err)
+			return fmt.Errorf("%w: repository identity: %w", ErrInvalidState, err)
 		}
 	}
 	return nil
+}
+
+// hasIdentity reports whether state names any part of a repository identity; validateState
+// then requires the whole identity to be valid.
+func hasIdentity(state State) bool {
+	return state.RepositoryOwner != "" || state.RepositoryName != ""
+}
+
+// renderHISSBadge returns the HISS badge line and its reference definitions: the image,
+// linked to AGENTS.md on the repository's default branch when state names the repository.
+// GitHub resolves blob/HEAD to the default branch, so the link needs no branch name and
+// follows a renamed default branch.
+func renderHISSBadge(state State) (string, []string) {
+	image := "[" + hissBadgeRef + "]: " + hissBadgeURL(state)
+	if !hasIdentity(state) {
+		return hissBadgeImage, []string{image}
+	}
+	agentsURL := fmt.Sprintf("https://github.com/%s/%s/blob/HEAD/AGENTS.md", state.RepositoryOwner, state.RepositoryName)
+	return hissBadgeLink, []string{image, "[" + hissAgentsRef + "]: " + agentsURL}
 }
 
 // renderDocumentationBadge returns the documentation gate's badge line and the reference
