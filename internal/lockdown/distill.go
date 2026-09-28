@@ -257,7 +257,8 @@ func writeEphemeralSARIF(dir string, data []byte) (string, error) {
 	fileName := fmt.Sprintf("sarif-%d-%s.sarif", time.Now().UnixNano(), hex.EncodeToString(hash[:6]))
 	fullPath := filepath.Join(dir, fileName)
 
-	if err := util.WriteFileSecure(fullPath, data, 0o600); err != nil {
+	// Anchored at dir: a link planted at the file name is refused, never written through.
+	if err := util.WriteFileConfined(dir, fileName, data, 0o600); err != nil {
 		return "", fmt.Errorf("failed writing ephemeral SARIF to %s: %w", fullPath, err)
 	}
 	return fullPath, nil

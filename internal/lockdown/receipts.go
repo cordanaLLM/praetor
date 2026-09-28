@@ -200,6 +200,11 @@ func LoadReceiptFile(path string) (*ReceiptFile, error) {
 }
 
 // SaveReceiptFile writes a receipt envelope with an explicit file mode.
+//
+// The write is util.WriteFileConfined anchored at the receipt's own directory, the
+// repository root the gate mints it into: a link planted at the receipt path is refused
+// instead of written through, and the envelope is replaced atomically, so LoadReceiptFile
+// never reads a torn one (BUG-826).
 func SaveReceiptFile(path string, rf *ReceiptFile, perm os.FileMode) error {
 	if rf == nil {
 		return ErrNilReceipt
@@ -208,7 +213,7 @@ func SaveReceiptFile(path string, rf *ReceiptFile, perm os.FileMode) error {
 	if err != nil {
 		return fmt.Errorf("marshal receipt: %w", err)
 	}
-	if err := util.WriteFileSecure(path, append(data, '\n'), perm); err != nil {
+	if err := util.WriteFileConfined(filepath.Dir(path), filepath.Base(path), append(data, '\n'), perm); err != nil {
 		return fmt.Errorf("write receipt %s: %w", path, err)
 	}
 	return nil

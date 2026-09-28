@@ -25,6 +25,9 @@ import (
 // file the observer could read whole is never too large to plan or rewrite.
 const maxMigrationFileBytes = maxFrameworkSourceBytes
 
+// migrationGuideName is the walkthrough a rewrite leaves at the repository root.
+const migrationGuideName = "MIGRATION.md"
+
 // defaultMigrationBranch is the branch an admitted migration creates when
 // framework.migration_branch is unset.
 const defaultMigrationBranch = "refactor/framework-adoption"
@@ -275,11 +278,11 @@ func applyPlannedRewrites(ctx context.Context, repoPath string, plan *MigrationP
 	if err := ctx.Err(); err != nil {
 		return sortedFileList(changed), err
 	}
-	guidePath, err := confineToRepo(repoPath, filepath.Join(repoPath, "MIGRATION.md"))
+	guidePath, err := confineToRepo(repoPath, filepath.Join(repoPath, migrationGuideName))
 	if err != nil {
 		return sortedFileList(changed), err
 	}
-	if err := util.WriteFileSecure(guidePath, []byte(plan.GuideMarkdown), manifestFilePerm); err != nil {
+	if err := util.WriteFileConfined(repoPath, migrationGuideName, []byte(plan.GuideMarkdown), manifestFilePerm); err != nil {
 		return sortedFileList(changed), fmt.Errorf("write migration guide: %w", err)
 	}
 	changed[guidePath] = struct{}{}
@@ -323,15 +326,25 @@ func sortedFileList(files map[string]struct{}) []string {
 // deadline; a link that resolves outside root is refused; and at most maxMigrationFileBytes
 // are read (BUG-857).
 func readMigrationFile(root, path string) ([]byte, error) {
-	rel, err := filepath.Rel(root, path)
+	rel, err := migrationRel(root, path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to relativize %q against %q: %w", path, root, err)
+		return nil, err
 	}
 	data, err := util.ReadConfinedLimited(root, rel, maxMigrationFileBytes)
 	if err != nil {
 		return nil, fmt.Errorf("read %q: %w", path, err)
 	}
 	return data, nil
+}
+
+// migrationRel returns path relative to root, the member path the confined reader and writer
+// resolve below root.
+func migrationRel(root, path string) (string, error) {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return "", fmt.Errorf("failed to relativize %q against %q: %w", path, root, err)
+	}
+	return rel, nil
 }
 
 // confineToRepo verifies that a planned target file really resolves inside repoPath, so
@@ -406,19 +419,27 @@ func applyFileImportReplacement(repoRoot, filePath, oldImport, newImport string)
 	if replaced == string(data) {
 		return nil
 	}
-	return writePreservingMode(target, []byte(replaced))
+	return writePreservingMode(repoRoot, target, []byte(replaced))
 }
 
-// writePreservingMode retains existing permissions except for the world-write bit.
-// Missing files use the secure default, while metadata errors abort before writing.
-func writePreservingMode(path string, data []byte) error {
+// writePreservingMode replaces path, a file below root, through util.WriteFileConfined: every
+// directory between root and the file resolves through a pinned handle on root, so a
+// symlinked ancestor cannot carry the rewrite outside the repository, and a link at the file
+// itself is refused rather than written through (BUG-826). It retains existing permissions
+// except for the world-write bit. Missing files use the secure default, while metadata
+// errors abort before writing.
+func writePreservingMode(root, path string, data []byte) error {
 	perm := util.SecureFilePerm
-	if info, err := os.Stat(path); err == nil {
+	if info, err := os.Lstat(path); err == nil {
 		perm = info.Mode().Perm() &^ 0o002
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("inspect %q before writing: %w", path, err)
 	}
-	if err := util.WriteFileSecure(path, data, perm); err != nil {
+	rel, err := migrationRel(root, path)
+	if err != nil {
+		return err
+	}
+	if err := util.WriteFileConfined(root, rel, data, perm); err != nil {
 		return fmt.Errorf("write %q: %w", path, err)
 	}
 	return nil
@@ -450,7 +471,7 @@ func updateGoMod(repoRoot, goModPath string, added, dropped []string) error {
 	}
 
 	body := []byte(strings.Join(lines, "\n") + "\n")
-	return writePreservingMode(goModPath, body)
+	return writePreservingMode(repoRoot, goModPath, body)
 }
 
 // readGoModLines returns the go.mod lines that survive the drop set plus the set of

@@ -510,38 +510,32 @@ func WriteHarness(h *Harness, repoPath string) error {
 
 // WriteHarnessFiles writes .paperclip/harness.json and, when rules is set, .paperclip/rules.md.
 // A refresh of earlier output passes PriorState.Rules, so it never recreates a rules.md the
-// operator removed. Both targets are confined to repoPath so a symlinked .paperclip cannot
-// redirect them.
+// operator removed. The directory and both files are created through a pinned handle on
+// repoPath (util.MkdirConfined, util.WriteFileConfined), so a symlinked .paperclip cannot
+// redirect them, not even one swapped in after a check, and a link planted at either file is
+// refused instead of written through (BUG-826).
 func WriteHarnessFiles(h *Harness, repoPath string, rules bool) error {
 	data, err := MarshalHarness(h)
 	if err != nil {
 		return err
 	}
-	dir, err := util.ConfinePath(repoPath, paperclipDir)
-	if err != nil {
-		return fmt.Errorf("resolve %s: %w", paperclipDir, err)
-	}
-	if err := util.MkdirSecure(dir, dirPerm); err != nil {
+	if err := util.MkdirConfined(repoPath, paperclipDir, dirPerm); err != nil {
 		return fmt.Errorf("create %s dir: %w", paperclipDir, err)
 	}
-
-	jsonPath, err := util.ConfinePath(repoPath, filepath.Join(paperclipDir, harnessFile))
-	if err != nil {
-		return fmt.Errorf("resolve %s: %w", harnessFile, err)
-	}
-	if err := util.WriteFileSecure(jsonPath, data, filePerm); err != nil {
-		return fmt.Errorf("write %s: %w", jsonPath, err)
+	if err := writeHarnessFile(repoPath, harnessFile, data); err != nil {
+		return err
 	}
 	if !rules {
 		return nil
 	}
+	return writeHarnessFile(repoPath, rulesFile, []byte(renderRules(h)))
+}
 
-	mdPath, err := util.ConfinePath(repoPath, filepath.Join(paperclipDir, rulesFile))
-	if err != nil {
-		return fmt.Errorf("resolve %s: %w", rulesFile, err)
-	}
-	if err := util.WriteFileSecure(mdPath, []byte(renderRules(h)), filePerm); err != nil {
-		return fmt.Errorf("write %s: %w", mdPath, err)
+// writeHarnessFile replaces name inside repoPath's .paperclip directory, confined to repoPath.
+func writeHarnessFile(repoPath, name string, data []byte) error {
+	rel := filepath.Join(paperclipDir, name)
+	if err := util.WriteFileConfined(repoPath, rel, data, filePerm); err != nil {
+		return fmt.Errorf("write %s: %w", filepath.Join(repoPath, rel), err)
 	}
 	return nil
 }
