@@ -172,23 +172,65 @@ func reportIgnoredCatalogWrites(ctx context.Context, s *adoptSession, writes []c
 	}
 }
 
+// publishCatalogFile writes one pinned catalog file bound to the bytes prepareCatalogWrites
+// observed. A file that already holds the pinned bytes is verified; an absent one is created;
+// an unmodified earlier Praetor text is refreshed to its layout-only successor; any other
+// existing file (--force) is replaced through replaceExisting, so the report lists it as
+// replaced with its line delta and backup.
 func publishCatalogFile(ctx context.Context, s *adoptSession, write catalogWrite) error {
+	rel := write.artifact.RelativePath
 	if write.exists && bytes.Equal(write.before, write.artifact.Content) {
-		s.report.recordReconciled(write.artifact.RelativePath, "Verified unchanged repository-local pinned policy")
+		s.report.recordReconciled(rel, "Verified unchanged repository-local pinned policy")
 		return nil
 	}
-	if err := contextopt.EnsureDirectory(ctx, filepath.Dir(write.path), dirPerm); err != nil {
-		return err
+	if replace, ok := catalogReplacement(write); ok {
+		return s.replaceExisting(ctx, replace)
 	}
-	if err := contextopt.ReplaceSnapshot(ctx, write.path, write.artifact.Content, contextopt.ReplaceOptions{
-		Expected: write.before, Exists: write.exists, Mode: filePerm,
-	}); err != nil {
+	if err := write.publish(ctx); err != nil {
 		return err
 	}
 	if write.exists {
-		s.report.recordReconciled(write.artifact.RelativePath, "Replaced pinned policy from explicitly selected source")
+		s.report.recordReconciled(rel, "Refreshed an unmodified earlier Praetor catalog text; its values are unchanged, only the layout moved")
 	} else {
-		s.report.recordCreated(write.artifact.RelativePath, "Materialized exact pinned policy for repository-local audit")
+		s.report.recordCreated(rel, "Materialized exact pinned policy for repository-local audit")
+	}
+	return nil
+}
+
+// catalogReplacement returns the replacement of write when it overwrites adopter bytes: an
+// existing file that holds neither the pinned bytes nor an earlier Praetor text they succeed
+// (isLayoutOnlySuccessor). prepareCatalogWrites admits one only under --force. The real run
+// (publishCatalogFile) and the dry-run plan (planCatalogReplacements) share it.
+func catalogReplacement(write catalogWrite) (replacement, bool) {
+	content := write.artifact.Content
+	if !write.exists || bytes.Equal(write.before, content) || isLayoutOnlySuccessor(write.before, content) {
+		return replacement{}, false
+	}
+	return replacement{
+		rel: write.artifact.RelativePath, before: write.before, after: content,
+		detail: "Replaced pinned policy from explicitly selected source", publish: write.publish,
+	}, true
+}
+
+// publish writes the pinned bytes over the ones observed at write.path.
+func (write catalogWrite) publish(ctx context.Context) error {
+	if err := contextopt.EnsureDirectory(ctx, filepath.Dir(write.path), dirPerm); err != nil {
+		return err
+	}
+	return contextopt.ReplaceSnapshot(ctx, write.path, write.artifact.Content, contextopt.ReplaceOptions{
+		Expected: write.before, Exists: write.exists, Mode: filePerm,
+	})
+}
+
+// planCatalogReplacements records, in a dry run, every pinned catalog file the run it previews
+// replaces (catalogReplacement), without a backup or a write.
+func planCatalogReplacements(ctx context.Context, s *adoptSession, writes []catalogWrite) error {
+	for i := 0; i < len(writes) && i < maxAdoptPolicyFiles; i++ {
+		if replace, ok := catalogReplacement(writes[i]); ok {
+			if err := s.replaceExisting(ctx, replace); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

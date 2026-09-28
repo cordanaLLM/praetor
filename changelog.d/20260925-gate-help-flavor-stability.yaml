@@ -1,0 +1,3 @@
+type: fixed
+title: a help probe of praetorctl agent, such as agent run praetor-gatekeeper --help, prints usage and exits 0 before any helper runs instead of being refused as an extra argument; the releasing guide and .config/flavors.yaml state that a flavor's stability is an informational label that never moves or holds a tag
+breaking: false

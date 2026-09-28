@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 
@@ -13,12 +14,17 @@ import (
 )
 
 // stubGatekeeperPipeline replaces the gating pipeline for one test with one that returns rep
-// and err.
-func stubGatekeeperPipeline(t *testing.T, rep *gating.PipelineReport, err error) {
+// and err, and returns the number of times the pipeline has been called.
+func stubGatekeeperPipeline(t *testing.T, rep *gating.PipelineReport, err error) *atomic.Int32 {
 	t.Helper()
+	calls := &atomic.Int32{}
 	original := gatedPipeline
-	gatedPipeline = func(context.Context, string, bool) (*gating.PipelineReport, error) { return rep, err }
+	gatedPipeline = func(context.Context, string, bool) (*gating.PipelineReport, error) {
+		calls.Add(1)
+		return rep, err
+	}
 	t.Cleanup(func() { gatedPipeline = original })
+	return calls
 }
 
 // runGatekeeper runs `agent run praetor-gatekeeper` and returns its output, its error and the

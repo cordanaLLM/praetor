@@ -186,14 +186,15 @@ func planPolicyCatalog(ctx context.Context, s *adoptSession) error {
 	if err != nil {
 		return err
 	}
-	if _, err := prepareCatalogWrites(ctx, s, s.policy.CatalogArtifacts); err != nil {
+	writes, err := prepareCatalogWrites(ctx, s, s.policy.CatalogArtifacts)
+	if err != nil {
 		return err
 	}
 	if err := config.ValidateCatalogProjectionContext(ctx, s.repoPath, s.policy.CatalogArtifacts); err != nil {
 		return err
 	}
 	s.report.recordReconciledAs(".config/archetypes", actionSkip, "Resolved prospective pinned policy without materializing files")
-	return nil
+	return planCatalogReplacements(ctx, s, writes)
 }
 
 func plannedPolicyInputs(ctx context.Context, s *adoptSession) ([]byte, []byte, error) {

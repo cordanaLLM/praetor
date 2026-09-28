@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -15,7 +17,25 @@ import (
 	"github.com/cordanaLLM/praetor/internal/needs"
 )
 
+// agentUsage describes the agent command-line syntax.
+const agentUsage = "usage: praetorctl agent <list|run <agent-name>>"
+
+// printAgentUsage answers a help probe of the agent command.
+func printAgentUsage() {
+	fmt.Println(agentUsage)
+	fmt.Println("Agent helpers take no arguments; 'praetorctl agent list' names them.")
+	fmt.Println("'praetorctl agent run praetor-gatekeeper' runs the full gate, the same pipeline as 'praetorctl gate run'.")
+}
+
+// runAgent dispatches the agent subcommands: list and run. A help token anywhere in args
+// (isHelpToken, the detection gate uses) prints usage and returns flag.ErrHelp before any
+// helper starts, so a `--help` probe of `agent run praetor-gatekeeper` never reaches the
+// gating pipeline and exits 0 like `gate --help` (BUG-790).
 func runAgent(args []string) error {
+	if slices.ContainsFunc(args, isHelpToken) {
+		printAgentUsage()
+		return flag.ErrHelp
+	}
 	if len(args) == 0 || args[0] == "list" {
 		return listAgents()
 	}

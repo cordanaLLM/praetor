@@ -177,12 +177,27 @@ func reconcileDocumentationMakefile(ctx context.Context, s *adoptSession) error 
 		s.report.recordReconciled(makefileName, "Documentation gate already attached to verify-all")
 		return nil
 	}
-	if !s.opts.DryRun {
-		err = contextopt.ReplaceSnapshot(ctx, full, []byte(merged),
+	publish := func(ctx context.Context) error {
+		return contextopt.ReplaceSnapshot(ctx, full, []byte(merged),
 			contextopt.ReplaceOptions{Expected: data, Exists: exists, Mode: filePerm})
 	}
+	// With a marker present, mergeDocumentationMakefile changes the file only by replacing an
+	// edited block under --force: that overwrites adopter lines, so it is a replace with a
+	// backup. The delta lists only in-block lines, since every line outside the block is kept.
+	markers, err := DocumentationMakefileMarkersPresent(string(data))
 	if err != nil {
 		return err
+	}
+	if markers {
+		return s.replaceExisting(ctx, replacement{
+			rel: makefileName, before: data, after: []byte(merged),
+			detail: "Restored the locked documentation gate block", publish: publish,
+		})
+	}
+	if !s.opts.DryRun {
+		if err := publish(ctx); err != nil {
+			return err
+		}
 	}
 	s.report.recordReconciledAs(makefileName, actionAppend, "Attached locked documentation gate to verify-all")
 	return nil

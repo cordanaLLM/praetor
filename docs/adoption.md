@@ -267,6 +267,20 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
   (`AdoptReport.ReconciledNotReplaced` in `internal/adopt/scaffold.go`,
   `TestServer_Positive_AdoptForceReportsReplacedFile`). The `--all-missing` summary counts
   replaced files on their own line.
+- **Audit-locked files.** Files whose exact bytes audit checks are rewritten, and an overwrite
+  of edited bytes is a replace with its delta and backup, never a create. Under `--force` that
+  covers `.standards.lock`, a pinned file under `.config/archetypes/`, a DevContainer bundle
+  file, a documentation family file such as `tools/markdownlint/markdownlint-cli2.yaml`, and
+  an edited documentation gate block in the `Makefile`, whose delta lists only the lines inside
+  the block. On every run, `--force` or not, it covers a vendor context file such as
+  `CLAUDE.md` that holds a hand edit. A file that already holds its bytes is verified. Three
+  earlier Praetor texts are refreshed, not replaced: a vendor file that is the projection of
+  `AGENTS.md` as the run found it, Praetor's own unedited DevContainer placeholder, and a
+  catalog text with a layout-only successor (tests in `internal/adopt/locked_replace_test.go`
+  and `internal/adopt/vendor_targets_test.go`). Without `--force`, a symlinked backup root
+  fails the run before its first write when a vendor file holds a hand edit
+  (`preflightVendorBackupRoot` in `internal/adopt/vendor_targets.go`,
+  `TestAdopt_Negative_PlainRunRefusesSymlinkedBackupRootForVendorEdit`).
 - **Earlier Praetor output.** The manifest, lock, label taxonomy, pinned catalog, flavor
   YAML (`.clang-format` and `.clang-tidy` included) and the `docs:seo-portal` documentation
   gate's YAML that adoption writes pass `yamllint --strict` with its default rules

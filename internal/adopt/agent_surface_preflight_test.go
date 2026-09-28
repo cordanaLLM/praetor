@@ -150,7 +150,7 @@ func TestAdoptAgentWritesRefuseLinkPlantedAfterPreflight(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := transpileAgentTargets(context.Background(), s, harness, nil); err == nil {
+		if err := transpileAgentTargets(context.Background(), s, harness, nil, nil); err == nil {
 			t.Fatal("vendor write followed a symlinked .cursor")
 		}
 		assertDirEmpty(t, real)

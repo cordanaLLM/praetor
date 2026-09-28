@@ -1,7 +1,6 @@
 package adopt
 
 import (
-	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -106,12 +105,7 @@ func earlierManifest(t *testing.T, repo string) string {
 
 func readopt(t *testing.T, repo, source string) *AdoptReport {
 	t.Helper()
-	report, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: source, Path: repo, Profile: "framework"})
-	if err != nil {
-		t.Fatalf("re-adopt: %v", err)
-	}
-	assertNoIssues(t, report)
-	return report
+	return readoptWith(t, repo, source, AdoptOptions{Profile: "framework"})
 }
 
 // Positive and boundary: an earlier adoption's manifest migrates to the current layout on
