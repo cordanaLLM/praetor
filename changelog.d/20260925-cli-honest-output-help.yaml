@@ -1,0 +1,3 @@
+type: fixed
+title: "praetorctl hiss and praetorctl dedupe scan answer -h, --help and help with their usage and exit 0; dedupe scan parses its arguments with a flag set, so --json and the new --path work before or after the directory and an unknown flag is rejected instead of being scanned as a directory"
+breaking: false

@@ -1,6 +1,9 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
+	"flag"
 	"strings"
 	"testing"
 
@@ -131,5 +134,61 @@ func TestRunDedupeCadence_Boundary_GrowthBelowThresholdStaysQuiet(t *testing.T) 
 	}
 	if !strings.Contains(out, "trigger: false") || strings.Contains(out, "Triggering") {
 		t.Fatalf("12 added lines against a 13-line threshold must not trigger a sweep:\n%s", out)
+	}
+}
+
+// #571: `dedupe scan` took args[0] as the directory and dropped the rest, so -h failed as a
+// missing directory, `--json .` scanned a directory named --json, and `. --json` ignored the
+// flag. It now parses its arguments like every other subcommand.
+
+func TestRunDedupeScan_Positive_HelpTokensPrintUsageAndSucceed(t *testing.T) {
+	for _, tok := range []string{"-h", "--help", "help"} {
+		out, err := captureStdout(t, func() error { return runDedupeScan([]string{tok}) })
+		if err != nil && !errors.Is(err, flag.ErrHelp) {
+			t.Fatalf("dedupe scan %s must be answered as help, got %v", tok, err)
+		}
+		mustContain(t, out, "Usage: praetorctl dedupe scan", "-json")
+	}
+	if err := runDedupeScan([]string{t.TempDir(), "-h"}); !errors.Is(err, flag.ErrHelp) {
+		t.Fatalf("a trailing -h must be answered as help, got %v", err)
+	}
+}
+
+func TestRunDedupeScan_Positive_JSONFlagAnywhereInArgv(t *testing.T) {
+	dir := dedupeFixtureDir(t, "clean.go", dedupeCleanSource)
+	for _, args := range [][]string{{"--json", dir}, {dir, "--json"}, {"--json", "--path", dir}} {
+		out, err := captureStdout(t, func() error { return runDedupeScan(args) })
+		if err != nil {
+			t.Fatalf("dedupe scan %q: %v", args, err)
+		}
+		var report dedupe.DedupeReport
+		if err := json.Unmarshal([]byte(out), &report); err != nil {
+			t.Fatalf("dedupe scan %q must print JSON: %v\n%s", args, err, out)
+		}
+		if report.TotalFilesScanned != 1 || !report.Passed {
+			t.Errorf("dedupe scan %q: report = %+v, want one clean file", args, report)
+		}
+	}
+}
+
+func TestRunDedupeScan_Negative_UnknownFlagAndSecondDirectoryAreRejected(t *testing.T) {
+	dir := dedupeFixtureDir(t, "clean.go", dedupeCleanSource)
+	if err := runDedupeScan([]string{"--bogus", dir}); err == nil || !strings.Contains(err.Error(), "-bogus") {
+		t.Errorf("an unknown flag must be refused, got %v", err)
+	}
+	mustErrContain(t, runDedupeScan([]string{dir, dir}), "at most one directory")
+}
+
+// The JSON form keeps the text form's exit, and "--" still passes a dash-led directory.
+func TestRunDedupeScan_Boundary_JSONKeepsTheVerdict(t *testing.T) {
+	dir := dedupeFixtureDir(t, "sprawl.go", dedupeSprawlSource)
+	out, err := captureStdout(t, func() error { return runDedupeScan([]string{"--json", dir}) })
+	mustErrContain(t, err, "1 utility sprawl finding")
+	if !strings.Contains(out, `"sprawl_items"`) {
+		t.Errorf("the failing report must still be printed as JSON:\n%s", out)
+	}
+	missing := "-dir-that-does-not-exist"
+	if err := runDedupeScan([]string{"--", missing}); err == nil || !strings.Contains(err.Error(), missing) {
+		t.Errorf(`a path after "--" must be read as the directory, got %v`, err)
 	}
 }
