@@ -94,6 +94,7 @@ func wantStages(t *testing.T, got []StageResult, want map[string]StageResult) {
 // Positive: a Cargo repository has its lockfile fetched and audited in place and its suite and
 // clippy run in the isolated worktree, and each stage names cargo as what ran.
 func TestToolchainStages_Positive_CargoRepositoryRunsCargo(t *testing.T) {
+	t.Setenv(cargoTargetDirEnv, "")
 	repo := seedCargoWorkspace(t, newHermeticGitRepo(t), true)
 	cfg, recorded := newTestConfig(t, repo, false)
 	got, err := runToolchainStages(t, cfg)

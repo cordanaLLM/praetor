@@ -68,6 +68,9 @@ func main() {
 // PATH, and returns the log the fake appends each invocation to.
 func fakeCargoOnPath(t *testing.T) string {
 	t.Helper()
+	// A host-wide absolute CARGO_TARGET_DIR replaces the gate's persistent target directory;
+	// clear it so the test sees the gate's own flag on hosts that export one.
+	t.Setenv(cargoTargetDirEnv, "")
 	bin := t.TempDir()
 	testsupport.BuildExecutable(t, bin, "cargo", fakeCargoSource)
 	testsupport.BuildExecutable(t, bin, "cargo-audit", "package main\n\nfunc main() {}\n")
