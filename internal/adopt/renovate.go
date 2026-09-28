@@ -126,12 +126,12 @@ func recordRenovateUnchanged(s *adoptSession, rel string, managed bool) {
 // there is reported, and no configuration at all is recorded as not applicable.
 func findRenovateConfig(ctx context.Context, s *adoptSession, paths []string) (string, []byte, bool, error) {
 	for index := 0; index < len(renovateConfigFiles); index++ {
-		data, exists, err := observeRepoFile(ctx, s, renovateConfigFiles[index])
+		data, exists, err := observeAdoptionInput(ctx, s, renovateConfigFiles[index])
 		if err != nil || exists {
 			return renovateConfigFiles[index], data, exists, err
 		}
 	}
-	data, exists, err := observeRepoFile(ctx, s, packageJSONFile)
+	data, exists, err := observeAdoptionInput(ctx, s, packageJSONFile)
 	if err != nil {
 		return "", nil, false, err
 	}
@@ -140,18 +140,6 @@ func findRenovateConfig(ctx context.Context, s *adoptSession, paths []string) (s
 	}
 	s.report.recordNotApplicable(renovateReportPath, "No Renovate configuration found; none created")
 	return "", nil, false, nil
-}
-
-func observeRepoFile(ctx context.Context, s *adoptSession, rel string) ([]byte, bool, error) {
-	full, err := repoFile(s.repoPath, rel)
-	if err != nil {
-		return nil, false, err
-	}
-	data, exists, err := contextopt.ObserveSnapshot(ctx, full)
-	if err != nil {
-		return nil, false, fmt.Errorf("inspect %s: %w", rel, err)
-	}
-	return data, exists, nil
 }
 
 // packageJSONConfiguresRenovate reports whether data is a strict JSON object with a
@@ -177,17 +165,17 @@ func renovateManagedPaths(ctx context.Context, s *adoptSession) ([]string, error
 		return nil, err
 	}
 	families := DocumentationFamilies()
-	var paths []string
+	adopted := make([]managedasset.Family, 0, len(families))
 	for index := 0; index < len(families) && index < managedasset.MaxFamilies; index++ {
-		_, origin, err := observeRepoFile(ctx, s, families[index].Source)
+		_, origin, err := observeAdoptionInput(ctx, s, families[index].Source)
 		if err != nil {
 			return nil, err
 		}
 		if !origin {
-			paths = append(paths, families[index].ManagedPaths()...)
+			adopted = append(adopted, families[index])
 		}
 	}
-	return paths, nil
+	return managedPathsOf(adopted), nil
 }
 
 // reportRenovateUnsafe records a configuration left untouched, with the rule to add by hand

@@ -230,10 +230,17 @@ func plannedManifestBytes(ctx context.Context, s *adoptSession) ([]byte, error) 
 	return config.RenderManifest(manifest)
 }
 
+// observeAdoptionInput observes the repository file name, confined to the repository
+// (repoFile), through contextopt.ObserveSnapshot: absent is (nil, false, nil), and a failed
+// read names the file.
 func observeAdoptionInput(ctx context.Context, s *adoptSession, name string) ([]byte, bool, error) {
 	path, err := repoFile(s.repoPath, name)
 	if err != nil {
 		return nil, false, err
 	}
-	return contextopt.ObserveSnapshot(ctx, path)
+	data, exists, err := contextopt.ObserveSnapshot(ctx, path)
+	if err != nil {
+		return nil, false, fmt.Errorf("inspect %s: %w", name, err)
+	}
+	return data, exists, nil
 }
