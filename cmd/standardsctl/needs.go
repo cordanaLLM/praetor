@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -177,7 +176,7 @@ func runNeedsAggregate(ctx context.Context, args []string) error {
 
 	md := needs.RenderFrameworkDemandMarkdown(report)
 	if *outputFile != "" {
-		if err := util.WriteFileConfined(filepath.Dir(*outputFile), filepath.Base(*outputFile), []byte(md), 0o644); err != nil {
+		if err := util.WriteFileAt(*outputFile, []byte(md), 0o644); err != nil {
 			return fmt.Errorf("failed to write output markdown: %w", err)
 		}
 		fmt.Printf("[PASS] Framework demand report written to %s\n", *outputFile)

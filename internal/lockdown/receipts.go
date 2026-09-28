@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -188,7 +187,11 @@ type ReceiptFile struct {
 // JSON value, so a second envelope appended to the file is an error rather than ignored:
 // the single-document rule the manifest readers apply (BUG-857).
 func LoadReceiptFile(path string) (*ReceiptFile, error) {
-	data, err := util.ReadConfinedLimited(filepath.Dir(path), filepath.Base(path), maxReceiptFileBytes)
+	dir, name, err := util.SplitFilePath(path)
+	if err != nil {
+		return nil, fmt.Errorf("read receipt %s: %w", path, err)
+	}
+	data, err := util.ReadConfinedLimited(dir, name, maxReceiptFileBytes)
 	if err != nil {
 		return nil, fmt.Errorf("read receipt %s: %w", path, err)
 	}
@@ -213,7 +216,7 @@ func SaveReceiptFile(path string, rf *ReceiptFile, perm os.FileMode) error {
 	if err != nil {
 		return fmt.Errorf("marshal receipt: %w", err)
 	}
-	if err := util.WriteFileConfined(filepath.Dir(path), filepath.Base(path), append(data, '\n'), perm); err != nil {
+	if err := util.WriteFileAt(path, append(data, '\n'), perm); err != nil {
 		return fmt.Errorf("write receipt %s: %w", path, err)
 	}
 	return nil

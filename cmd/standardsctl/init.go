@@ -143,7 +143,7 @@ func createInitialManifest(outputPath, profile string, facets []string, identity
 
 	// Anchored at the manifest's directory, the repository root every companion file shares:
 	// a link planted at the manifest path is refused instead of written through (BUG-826).
-	if err := util.WriteFileConfined(filepath.Dir(outputPath), filepath.Base(outputPath), data, initFilePerm); err != nil {
+	if err := util.WriteFileAt(outputPath, data, initFilePerm); err != nil {
 		return fmt.Errorf("failed to write %s: %w", outputPath, err)
 	}
 	fmt.Printf("[CREATED] %s (Profile: %s, Facets: %v)\n", outputPath, profile, facets)

@@ -320,7 +320,7 @@ func writeDogfoodReport(path string, report *DogfoodReport) error {
 	if mErr != nil {
 		return fmt.Errorf("marshal dogfood report: %w", mErr)
 	}
-	if err := util.WriteFileConfined(filepath.Dir(path), filepath.Base(path), data, reportFilePerm); err != nil {
+	if err := util.WriteFileAt(path, data, reportFilePerm); err != nil {
 		return fmt.Errorf("write dogfood report: %w", err)
 	}
 	return nil

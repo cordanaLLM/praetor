@@ -296,7 +296,7 @@ func WriteEpicMarkdown(ctx context.Context, epic *PreMigrationEpic, outputPath s
 	if err := util.MkdirSecure(filepath.Dir(outputPath), util.SecureDirPerm); err != nil {
 		return fmt.Errorf("failed to create directory for %s: %w", outputPath, err)
 	}
-	if err := util.WriteFileConfined(filepath.Dir(outputPath), filepath.Base(outputPath), []byte(renderEpicDocument(epic)), util.SecureFilePerm); err != nil {
+	if err := util.WriteFileAt(outputPath, []byte(renderEpicDocument(epic)), util.SecureFilePerm); err != nil {
 		return fmt.Errorf("failed to write %s: %w", outputPath, err)
 	}
 	return nil

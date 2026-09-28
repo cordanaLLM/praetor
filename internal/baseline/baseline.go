@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -168,7 +167,7 @@ func SaveBaseline(path string, b *Baseline) error {
 		return fmt.Errorf("failed to marshal baseline: %w", err)
 	}
 
-	if err := util.WriteFileConfined(filepath.Dir(path), filepath.Base(path), append(data, '\n'), FilePerm); err != nil {
+	if err := util.WriteFileAt(path, append(data, '\n'), FilePerm); err != nil {
 		return fmt.Errorf("failed to write baseline to %s: %w", path, err)
 	}
 	return nil

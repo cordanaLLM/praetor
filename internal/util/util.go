@@ -160,6 +160,35 @@ func WriteFileConfined(root, rel string, data []byte, perm os.FileMode) error {
 	return writeConfined(absRoot, inside, data, perm)
 }
 
+// ErrDirectoryPath refuses a file path that names a directory: one ending in a path
+// separator, or whose last element is "." or "..".
+var ErrDirectoryPath = errors.New("path names a directory, not a file")
+
+// SplitFilePath splits an operator-named file path into the directory the confined
+// readers and writers anchor at and the file name below it. filepath.Base drops a trailing
+// separator, so `out/` would split into out and out and a write would land in out/out; such
+// a path, and one whose last element is "." or "..", is ErrDirectoryPath instead.
+func SplitFilePath(path string) (dir, name string, err error) {
+	if path == "" || os.IsPathSeparator(path[len(path)-1]) {
+		return "", "", fmt.Errorf("%w: %q", ErrDirectoryPath, path)
+	}
+	name = filepath.Base(path)
+	if name == "." || name == ".." {
+		return "", "", fmt.Errorf("%w: %q", ErrDirectoryPath, path)
+	}
+	return filepath.Dir(path), name, nil
+}
+
+// WriteFileAt is WriteFileConfined for an operator-named file path, confined to the
+// directory that holds it (SplitFilePath).
+func WriteFileAt(path string, data []byte, perm os.FileMode) error {
+	dir, name, err := SplitFilePath(path)
+	if err != nil {
+		return err
+	}
+	return WriteFileConfined(dir, name, data, perm)
+}
+
 // writeConfined is WriteFileConfined after the check: inside's directory resolves through
 // the pinned handle on absRoot, and an escape the handle refuses is classified by
 // classifyEscape.
