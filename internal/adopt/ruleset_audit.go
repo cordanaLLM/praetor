@@ -35,13 +35,20 @@ func AuditBranchProtectionWithPolicy(ctx context.Context, manifest *config.Manif
 		return "[PASS] Branch protection ruleset declined by adoption.decline.", nil
 	}
 
-	if !policy.BranchProtection.EnforceLinearHistory && !policy.BranchProtection.RequireSignedCommits {
+	if !rulesetRequired(policy.BranchProtection) {
 		return "[PASS] Branch protection ruleset not required by policy.", nil
 	}
 	if err := auditRulesetContent(ctx, manifest, rootDir, policy.BranchProtection); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("[PASS] Branch protection & merge ruleset %s verified.", rulesetFile), nil
+}
+
+// rulesetRequired reports whether policy makes audit compare the committed ruleset with the
+// one it renders: only a policy that enforces linear history or signed commits does. It is the
+// one rule both the audit and adoption's --force contract (scaffold.auditLocked) read.
+func rulesetRequired(policy config.BranchProtectionPolicy) bool {
+	return policy.EnforceLinearHistory || policy.RequireSignedCommits
 }
 
 // auditInputsPresent refuses an audit that has nothing to audit against.

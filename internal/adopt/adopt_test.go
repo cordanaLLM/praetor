@@ -1112,7 +1112,7 @@ func TestAdopt_UnparsableManifestFailsWithoutRewrite(t *testing.T) {
 func TestScaffoldFile_ReportsDriftInsteadOfVerified(t *testing.T) {
 	repo := t.TempDir()
 	s := &adoptSession{repoPath: repo, report: &AdoptReport{}}
-	sc := scaffold{rel: evasionHookFile, perm: filePerm, content: []byte("import sys\nsys.exit(2)\n"), force: true,
+	sc := scaffold{rel: evasionHookFile, perm: filePerm, content: []byte("import sys\nsys.exit(2)\n"), auditLocked: true,
 		created: "created", verified: "verified"}
 	path := filepath.Join(repo, filepath.FromSlash(evasionHookFile))
 	cases := []struct {
@@ -1722,33 +1722,50 @@ func TestAdopt_Force_PreservesDeveloperSessionState(t *testing.T) {
 // Git hook behaviour
 // =========================================================================
 
-func TestAdopt_Hooks_ExistingPreCommitPreservedWithoutForce(t *testing.T) {
+// Positive and negative: a pre-commit hook praetor did not write is kept on a plain run and,
+// since audit requires only that one exists, under --force too: never replaced, never moved to
+// pre-commit.bak.
+func TestAdopt_Hooks_ForeignPreCommitKeptWithAndWithoutForce(t *testing.T) {
 	repoPath := newTestRepo(t, "custom-hook")
 	custom := "#!/bin/sh\necho secret-scan\n"
 	mustWrite(t, filepath.Join(repoPath, ".git", "hooks", "pre-commit"), custom)
+
+	for _, force := range []bool{false, true} {
+		rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Force: force})
+		if err != nil {
+			t.Fatalf("Adopt (force %v) failed: %v", force, err)
+		}
+		assertNoIssues(t, rep)
+		if got := mustRead(t, filepath.Join(repoPath, ".git", "hooks", "pre-commit")); got != custom {
+			t.Fatalf("force %v: existing hook must be kept, got:\n%s", force, got)
+		}
+		if fileExists(filepath.Join(repoPath, ".git", "hooks", "pre-commit"+hookBackupExt)) {
+			t.Fatalf("force %v: the kept hook was copied to pre-commit.bak", force)
+		}
+		if !hasAction(rep, ".git/hooks/pre-commit", actionSkip) ||
+			!strings.Contains(strings.Join(rep.Warnings, "\n"), ".git/hooks/pre-commit: "+foreignPreCommitNote) {
+			t.Fatalf("force %v: expected a skip action and the keep warning, got actions=%v warnings=%v",
+				force, rep.ActionDetails, rep.Warnings)
+		}
+	}
+}
+
+// Boundary: a pre-commit.bak an earlier adoption left under --force is reported and left as it is.
+func TestAdopt_Hooks_LegacyPreCommitBackupReportedNotRemoved(t *testing.T) {
+	repoPath := newTestRepo(t, "legacy-hook-backup")
+	legacy := filepath.Join(repoPath, ".git", "hooks", "pre-commit"+hookBackupExt)
+	mustWrite(t, legacy, "#!/bin/sh\necho old\n")
 
 	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath})
 	if err != nil {
 		t.Fatalf("Adopt failed: %v", err)
 	}
 	assertNoIssues(t, rep)
-	if got := mustRead(t, filepath.Join(repoPath, ".git", "hooks", "pre-commit")); got != custom {
-		t.Fatalf("existing hook must be preserved without --force, got:\n%s", got)
+	if got := mustRead(t, legacy); got != "#!/bin/sh\necho old\n" {
+		t.Fatal("adoption changed an earlier pre-commit.bak")
 	}
-	if !hasAction(rep, ".git/hooks/pre-commit", actionSkip) || len(rep.Warnings) == 0 {
-		t.Fatalf("expected a skip action and a warning, got actions=%v warnings=%v", rep.ActionDetails, rep.Warnings)
-	}
-
-	rep, err = Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Force: true})
-	if err != nil {
-		t.Fatalf("Adopt --force failed: %v", err)
-	}
-	assertNoIssues(t, rep)
-	if got := mustRead(t, filepath.Join(repoPath, ".git", "hooks", "pre-commit")); !strings.Contains(got, fallbackPreCommitMarker) {
-		t.Fatal("--force must install the praetor hook")
-	}
-	if got := mustRead(t, filepath.Join(repoPath, ".git", "hooks", "pre-commit.bak")); got != custom {
-		t.Fatalf("--force must keep a .bak copy of the replaced hook, got:\n%s", got)
+	if !strings.Contains(strings.Join(rep.Warnings, "\n"), ".git/hooks/pre-commit.bak: backup an earlier adoption wrote") {
+		t.Fatalf("legacy backup not reported: %v", rep.Warnings)
 	}
 }
 

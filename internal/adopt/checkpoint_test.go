@@ -173,17 +173,32 @@ func TestAdoptCheckpointBundle_Positive_VendoredScriptsSurviveForce(t *testing.T
 	}
 }
 
-// Negative: without a canonical policy the --force contract is unchanged: the differing script
-// is replaced by the verified source.
-func TestAdoptCheckpointBundle_Negative_ForceReplacesUnvendoredScript(t *testing.T) {
-	session := checkpointSession(t, checkpointSourceFixture(t, true))
-	session.opts.Force = true
-	mustWrite(t, filepath.Join(session.repoPath, filepath.FromSlash(checkpointScript)), "print('stale')\n")
-	if ready, err := reconcileCheckpointBundle(context.Background(), session, false); err != nil || !ready {
-		t.Fatalf("ready=%v err=%v", ready, err)
+// Boundary: audit does not read the checkpoint bundle, so without a canonical policy too --force
+// keeps a drifted script byte for byte. The lifecycle is then unavailable, the generated
+// lefthook.yml carries no checkpoint job, and the missing common.py is not installed beside it.
+func TestAdopt_Boundary_ForceKeepsDriftedCheckpointScriptLifecycleUnavailable(t *testing.T) {
+	repoPath := newTestRepo(t, "drifted-checkpoint")
+	drifted := "print('stale')\n"
+	mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(checkpointScript)), drifted)
+	source := newAdoptLockSource(t)
+	mustWrite(t, filepath.Join(source, filepath.FromSlash(checkpointScript)), "#!/usr/bin/env python3\nprint('shared')\n")
+	mustWrite(t, filepath.Join(source, filepath.FromSlash(checkpointCommon)), "class HookError(Exception):\n    pass\n")
+	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: source, Path: repoPath, Force: true})
+	if err != nil {
+		t.Fatalf("Adopt --force: %v", err)
 	}
-	if got := mustRead(t, filepath.Join(session.repoPath, filepath.FromSlash(checkpointScript))); !strings.Contains(got, "shared") {
-		t.Fatalf("--force kept a stale unvendored script: %q", got)
+	assertNoIssues(t, rep)
+	if got := mustRead(t, filepath.Join(repoPath, filepath.FromSlash(checkpointScript))); got != drifted {
+		t.Fatalf("--force replaced a drifted checkpoint script: %q", got)
+	}
+	if !strings.Contains(strings.Join(rep.Warnings, "\n"), "checkpoint lifecycle unavailable: existing "+checkpointScript+" differs") {
+		t.Fatalf("lifecycle not reported unavailable: %v", rep.Warnings)
+	}
+	if fileExists(filepath.Join(repoPath, filepath.FromSlash(checkpointCommon))) {
+		t.Error("common.py was installed beside a kept checkpoint.py")
+	}
+	if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); got != buildLefthookYAMLFor(false) {
+		t.Error("lefthook.yml carries checkpoint jobs while the lifecycle is unavailable")
 	}
 }
 

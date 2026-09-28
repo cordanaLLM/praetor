@@ -15,7 +15,7 @@ praetorctl adopt --lock-source-root=/path/to/praetor
 # Dry-run simulation: inspect proposed changes without writing files
 standardsctl adopt --dry-run
 
-# Force overwrite existing configurations & record technical debt
+# Regenerate drifted audit-locked files & record technical debt
 praetorctl adopt --force --record-baseline --lock-source-root=/path/to/praetor
 ```
 
@@ -29,9 +29,9 @@ same preview text (`adopt.FilePreview.Text`, `TestFormatAdoptMCPResultPrintsPrev
 | Action | Meaning | Printed |
 | :--- | :--- | :--- |
 | `create` | no ruleset yet; the run writes one | the rendered ruleset |
-| `update` | the run replaces the ruleset: the rendering current before the run, which it refreshes, or any differing ruleset under `--force` | unified diff from the file on disk to the rendering |
+| `update` | the run replaces the ruleset: the rendering current before the run, which it refreshes, or any differing ruleset under `--force` while the policy requires one | unified diff from the file on disk to the rendering |
 | `unchanged` | the ruleset already is the rendering, line endings aside | nothing more |
-| `keep` | the ruleset differs and stays, because `--force` was not passed | the diff `--force` would apply |
+| `keep` | the ruleset differs and stays: `--force` was not passed, or the policy requires neither linear history nor signed commits | the diff regenerating it would apply |
 
 The preview takes its action from the same keep-or-replace decision as the real run
 (`internal/adopt/preview_test.go`). Its status checks come from the workflows the run leaves
@@ -96,7 +96,10 @@ refreshed without `--force` (`forge.PriorRulesetDigests`, looked up through
 | a rendering with one value edited: review count, signature rule, status check | kept and reported | `TestAdopt_Negative_ValueEditAfterFlavorApplyIsKept` |
 | anything else: another name, layout, a final newline | kept and reported | `TestAdopt_Negative_EditedRenderingIsKept` |
 
-`--force` replaces any kept ruleset.
+`--force` replaces a kept ruleset only while the policy enforces linear history or signed
+commits: only then does the audit compare the file (`rulesetRequired` in
+`internal/adopt/ruleset_audit.go`). Under a policy requiring neither, `--force` keeps it too
+(`TestReconcileBranchRuleset_Boundary_ForceReplacesOnlyWhilePolicyRequiresIt`).
 
 A ruleset rendered for a policy the repository no longer declares is kept too, for example after
 `.standards.yaml` overrides change. `praetorctl sync` then reports it as drift. Pass `--force` to
@@ -285,11 +288,23 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
 - **Existing files.** An existing manifest must parse, or adoption fails and leaves it
   unchanged. Every other existing scaffold is compared with what adoption would write:
   a match is reported as verified, a difference as `differs from the scaffold` with a
-  warning, and the file is kept. `--force` regenerates only the scaffolds it owns
-  (`TestScaffoldFile_ReportsDriftInsteadOfVerified`). It never overwrites an editor
-  file: it merges the managed values into a JSON one, keeping every adopter key, and
-  keeps any other differing file with a warning
+  warning, and the file is kept (`TestScaffoldFile_ReportsDriftInsteadOfVerified`). `--force` never
+  overwrites an editor file: it merges the managed values into a JSON one, keeping every adopter
+  key, and keeps any other differing file with a warning
   ([editor capabilities](guides/editor-capabilities.md#adoption-and-onboarding)).
+- **What `--force` overwrites.** Only a file the audit compares byte for byte, so that the audit
+  fails until it holds the scaffold (`scaffold.auditLocked` in `internal/adopt/scaffold.go`):
+  the documentation gate's managed files and workflow, and the branch protection ruleset while
+  the policy requires one. Every other generated file is not audit-verified and is kept under
+  `--force` too, with the note `differs from the scaffold adoption writes (-N/+M lines); not
+  audit-verified; kept` and a warning: the agent anti-evasion interceptor, the checkpoint
+  scripts, the canonical personas `.agents/agents/repo-auditor.md` and `repo-gatekeeper.md`,
+  the label taxonomy and the checkpoint policy (`TestAdopt_Negative_EditedEvasionHookKeptUnderForce`,
+  `TestAdopt_Negative_EditedPersonaKeptUnderForce`,
+  `TestAdopt_Boundary_ForceKeepsDriftedCheckpointScriptLifecycleUnavailable`). So is a
+  pre-commit hook praetor did not write ([git hooks](guides/git-hooks.md#hook-files-adoption-keeps)).
+  To regenerate one of them, delete it and re-run adopt. `lefthook.yml` keeps its own contract
+  ([migration and activation limits](guides/adoption-verification.md#migration-and-activation-limits)).
 - **Replaced files.** When `--force` overwrites a drifted scaffold, the report lists it under
   `Files Replaced` with action `replace`, never as created. The entry carries a line delta
   (`-removed/+added lines` and the first three removed lines) and where the prior bytes went:
@@ -372,11 +387,22 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
   replaced (`TestAdoptRepinsAnUnmodifiedEarlierCatalog`). The catalog re-pin happens only when
   every source file decodes to exactly the values of the earlier text it replaces; a source
   that changes even one value keeps failing until `--force`
-  (`TestAdoptDoesNotRepinAnEarlierCatalogToChangedValues`). An earlier text is recognised in
-  either consistent line-ending style, so a CRLF checkout of the manifest or label taxonomy
-  (`core.autocrlf` on Windows) is refreshed too and keeps CRLF
+  (`TestAdoptDoesNotRepinAnEarlierCatalogToChangedValues`). The files `--force` no longer
+  overwrites are refreshed the same way when they hold a text an earlier release wrote: the agent
+  anti-evasion interceptor, the checkpoint scripts, which go to the `--lock-source-root` bundle,
+  and the two canonical personas, which go through the root-pinned writer `compile-context` uses
+  (`TestAdopt_Positive_PriorEvasionHookRefreshedOnPlainRun`,
+  `TestReconcileCheckpointBundle_Positive_PriorScriptRefreshedOnPlainRun`,
+  `TestAdopt_Positive_PriorPersonaRefreshedOnPlainRun`). Their sets hold the current text too,
+  and a test fails until a changed text is added, so the release that changes one still
+  refreshes the copy adopters hold (`priorPersonaDigests` in `internal/adopt/ruleset.go`,
+  `TestPriorPersonaDigests_Boundary_CurrentTextsRecorded`; the hook files are covered in
+  [git hooks](guides/git-hooks.md#hook-files-adoption-keeps)). An earlier text is recognised in
+  either consistent line-ending style, so a CRLF checkout of the manifest, label taxonomy or a
+  persona (`core.autocrlf` on Windows) is refreshed too and keeps CRLF
   (`TestAdoptMigratesACRLFEarlierManifestInItsOwnStyle`,
-  `TestReconcileLabels_Positive_RefreshesCRLFPriorInItsOwnStyle`). The catalog is the
+  `TestReconcileLabels_Positive_RefreshesCRLFPriorInItsOwnStyle`,
+  `TestReconcileAgentDefinitions_Boundary_CRLFPriorKeepsCRLFAndSymlinkNotWrittenThrough`). The catalog is the
   exception: `.standards.lock` pins the exact LF bytes of each file, so a CRLF checkout of it
   fails lock verification before and after this refresh; keep `.config/archetypes` at
   `eol=lf` in `.gitattributes`. An edited copy of any of them, or one with mixed line endings,

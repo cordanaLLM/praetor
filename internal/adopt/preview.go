@@ -26,9 +26,11 @@ const (
 	PreviewUpdate PreviewAction = "update"
 	// PreviewUnchanged: the file already holds what adoption renders, line endings aside.
 	PreviewUnchanged PreviewAction = "unchanged"
-	// PreviewKeep: the file differs and adoption would keep it, because --force was not passed
-	// or the file could not be read to compare. FilePreview.Diff holds what --force would change
-	// when the file could be read.
+	// PreviewKeep: the file differs and adoption would keep it, because --force was not passed,
+	// audit does not compare the file (scaffold.auditLocked; the ruleset under a policy that
+	// requires neither linear history nor signed commits), or the file could not be read to
+	// compare. FilePreview.Diff holds what regenerating the file would change when it could be
+	// read.
 	PreviewKeep PreviewAction = "keep"
 )
 

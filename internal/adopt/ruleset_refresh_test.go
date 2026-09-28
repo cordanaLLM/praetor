@@ -459,3 +459,34 @@ func TestAdopt_Negative_DeclaredBranchWinsAndAnEditedBranchIsKept(t *testing.T) 
 		t.Fatalf("the audit must pass for the declared branch: %q, %v", summary, err)
 	}
 }
+
+// Boundary: audit compares the ruleset only while the policy enforces linear history or signed
+// commits (rulesetRequired), so only then may --force replace a differing one. Under a policy
+// requiring neither, --force keeps it byte for byte with the not-audit-verified note; the same
+// ruleset under a policy requiring linear history is replaced.
+func TestReconcileBranchRuleset_Boundary_ForceReplacesOnlyWhilePolicyRequiresIt(t *testing.T) {
+	const handManaged = "{\"name\": \"hand-managed\"}\n"
+	for _, tc := range []struct {
+		name     string
+		linear   bool
+		replaced bool
+	}{{"neither linear nor signed", false, false}, {"linear history", true, true}} {
+		repo := newTestRepo(t, "ruleset-lock")
+		mustWrite(t, filepath.Join(repo, filepath.FromSlash(rulesetFile)), handManaged)
+		policy := config.DefaultPolicy()
+		policy.BranchProtection.EnforceLinearHistory = tc.linear
+		policy.BranchProtection.RequireSignedCommits = false
+		s := &adoptSession{repoPath: repo, report: &AdoptReport{}, opts: AdoptOptions{Force: true},
+			policy: &config.EffectivePolicy{Policy: *policy}}
+		if err := reconcileBranchRuleset(t.Context(), s); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		kept := mustRead(t, filepath.Join(repo, filepath.FromSlash(rulesetFile))) == handManaged
+		if kept == tc.replaced || hasAction(s.report, rulesetFile, actionReplace) != tc.replaced {
+			t.Fatalf("%s: kept=%v, want replaced=%v; actions %+v", tc.name, kept, tc.replaced, s.report.ActionDetails)
+		}
+		if detail := findActionDetail(s.report.ActionDetails, rulesetFile); !tc.replaced && !strings.Contains(detail, "not audit-verified; kept") {
+			t.Errorf("%s: drift note %q", tc.name, detail)
+		}
+	}
+}
