@@ -25,7 +25,7 @@ body:
         - "HISS-01: Acyclic DAG Control Flow"
         - "HISS-02: Bounded Loops & Mandatory I/O Timeouts"
         - "HISS-03: Zero Frame Malloc in Hot Paths"
-        - "HISS-04: Complexity Bounds (McCabe <= 10, LOC <= 75)"
+        - "HISS-04: Complexity Bounds (McCabe <= 10, LOC <= 60)"
         - "HISS-07: Checked Errors & Zero Unwrap"
         - "HISS-08: Static Determinism & Banned Functions"
         - "HISS-09: Mandatory // SAFETY: Proofs"
