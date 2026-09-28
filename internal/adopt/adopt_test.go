@@ -1324,8 +1324,8 @@ func TestAdopt_AgentsMD_ForceRefusesUnknownBoundary(t *testing.T) {
 func harnessAdditionsFixture(t *testing.T, harness, eol string) (edited string, own []string) {
 	t.Helper()
 	own = []string{
-		"| **AEGIS-01** secrets | never log tokens | review | blocker |",
-		`| **AEGIS-02** paths | allow a \| b only | review | blocker |`,
+		"| **ACME-01** secrets | never log tokens | review | blocker |",
+		`| **ACME-02** paths | allow a \| b only | review | blocker |`,
 	}
 	var lines []string
 	for _, line := range strings.Split(harness, "\n") {
@@ -1376,13 +1376,13 @@ func TestAdopt_AgentsMD_ForceKeepsRepositoryAdditions(t *testing.T) {
 	last := strings.Index(content, "| **HISS-21**")
 	first, second := strings.Index(content, own[0]+"\n"), strings.Index(content, own[1]+"\n")
 	if last < 0 || first < last || second < first {
-		t.Errorf("own rows must follow the catalog rows in their order (HISS-21 %d, AEGIS-01 %d, AEGIS-02 %d):\n%s", last, first, second, content)
+		t.Errorf("own rows must follow the catalog rows in their order (HISS-21 %d, ACME-01 %d, ACME-02 %d):\n%s", last, first, second, content)
 	}
 	if strings.Contains(content, "loops may run forever") || !strings.Contains(content, "| **HISS-02** loops, I/O | scalar upper bound") {
 		t.Errorf("the edited HISS-02 row must be regenerated:\n%s", content)
 	}
 	detail := findActionDetail(rep.ActionDetails, agentsFile)
-	for _, want := range []string{`"| **HISS-02** loops, I/O | loops may run forever | none | ignored |"`, "preamble (3 lines)", "2 repository invariant rows (AEGIS-01, AEGIS-02)", "repository-specific instructions"} {
+	for _, want := range []string{`"| **HISS-02** loops, I/O | loops may run forever | none | ignored |"`, "preamble (3 lines)", "2 repository invariant rows (ACME-01, ACME-02)", "repository-specific instructions"} {
 		if !hasAction(rep, agentsFile, actionReplace) || !strings.Contains(detail, want) {
 			t.Errorf("replace entry must carry %q, got %q", want, detail)
 		}

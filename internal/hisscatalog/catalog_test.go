@@ -217,8 +217,8 @@ func TestSplitInvariantRow_Positive_AnyBoldID(t *testing.T) {
 		"| **HISS-01** control flow | recursion prohibited | build | immediate build failure |": {
 			ID: "HISS-01", Cells: []string{"control flow", "recursion prohibited", "build", "immediate build failure"},
 		},
-		"  | **AEGIS-01** secrets | never log tokens | review |  ": {
-			ID: "AEGIS-01", Cells: []string{"secrets", "never log tokens", "review"},
+		"  | **ACME-01** secrets | never log tokens | review |  ": {
+			ID: "ACME-01", Cells: []string{"secrets", "never log tokens", "review"},
 		},
 	} {
 		got, ok := SplitInvariantRow(line)
@@ -252,25 +252,25 @@ func TestSplitInvariantRow_Negative_NotARow(t *testing.T) {
 // restored, a closing escaped pipe leaves the row unterminated, and ParseGatedInvariants skips
 // a repository's own row between catalog rows instead of rejecting it.
 func TestSplitInvariantRow_Boundary_EscapedPipes(t *testing.T) {
-	row, ok := SplitInvariantRow(`| **AEGIS-02** a \| b | c \| d |`)
-	if !ok || row.ID != "AEGIS-02" || !reflect.DeepEqual(row.Cells, []string{"a | b", "c | d"}) {
+	row, ok := SplitInvariantRow(`| **ACME-02** a \| b | c \| d |`)
+	if !ok || row.ID != "ACME-02" || !reflect.DeepEqual(row.Cells, []string{"a | b", "c | d"}) {
 		t.Fatalf("escaped pipes: %+v, %v", row, ok)
 	}
-	if row, ok := SplitInvariantRow(`| **AEGIS-02** a | b \|`); ok {
+	if row, ok := SplitInvariantRow(`| **ACME-02** a | b \|`); ok {
 		t.Errorf("a closing escaped pipe must not close the row: %+v", row)
 	}
 	rows, err := ParseGatedInvariants(gatedFixture(
 		"| **HISS-01** control flow | a | b | c |",
-		`| **AEGIS-01** own \| rule | x | y | z |`,
+		`| **ACME-01** own \| rule | x | y | z |`,
 		"| **HISS-02** loops | a | b | c |"))
 	if err != nil || len(rows) != 2 || rows[0].ID != "HISS-01" || rows[1].ID != "HISS-02" {
 		t.Fatalf("ParseGatedInvariants = %+v, %v; want HISS-01 and HISS-02 only", rows, err)
 	}
-	table, err := InvariantTableRows(gatedFixture("| **HISS-01** control flow | a | b | c |", "| **AEGIS-01** own | x | y | z |"))
-	if err != nil || len(table) != 2 || table[1].ID != "AEGIS-01" {
+	table, err := InvariantTableRows(gatedFixture("| **HISS-01** control flow | a | b | c |", "| **ACME-01** own | x | y | z |"))
+	if err != nil || len(table) != 2 || table[1].ID != "ACME-01" {
 		t.Fatalf("InvariantTableRows = %+v, %v; want both rows", table, err)
 	}
-	if table, err := InvariantTableRows("# Harness\n\n| **AEGIS-01** own | x | y | z |\n"); err != nil || len(table) != 0 {
+	if table, err := InvariantTableRows("# Harness\n\n| **ACME-01** own | x | y | z |\n"); err != nil || len(table) != 0 {
 		t.Errorf("a row outside the section: %+v, %v", table, err)
 	}
 }

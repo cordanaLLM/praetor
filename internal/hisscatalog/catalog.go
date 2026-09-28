@@ -362,7 +362,7 @@ type GatedInvariant struct {
 type InvariantRow struct {
 	// Line is the row as written, surrounding whitespace trimmed.
 	Line string
-	// ID is the bold identifier that opens the first cell, such as HISS-02 or AEGIS-01.
+	// ID is the bold identifier that opens the first cell, such as HISS-02 or ACME-01.
 	ID string
 	// Cells are the text after the ID in the first cell (the scope), then every further cell,
 	// each trimmed, escaped pipes restored.
@@ -374,7 +374,7 @@ type InvariantRow struct {
 var invariantIDCell = regexp.MustCompile(`^\*\*([^*\s]+)\*\*\s*(.*)$`)
 
 // gatedInvariantID is the ID grammar of a catalog row. A row under any other ID, such as a
-// repository's own AEGIS-01, is the repository's and never gated.
+// repository's own ACME-01, is the repository's and never gated.
 var gatedInvariantID = regexp.MustCompile(`^HISS-\d+$`)
 
 // gatedInvariantCells is the cell count of a catalog row: scope, rule, enforcement, on fail.
@@ -384,7 +384,7 @@ const gatedInvariantCells = 4
 // with a pipe and whose first cell opens with a bold ID, for example "| **HISS-01** control
 // flow | recursion prohibited | build | immediate build failure |". A backslash before a pipe
 // escapes it. It reports false for any other line (the header, the delimiter row, prose) and
-// checks no catalog, so a repository's own row, such as "| **AEGIS-01** ... |", splits too.
+// checks no catalog, so a repository's own row, such as "| **ACME-01** ... |", splits too.
 // ParseGatedInvariants and the adopt harness refresh both read rows through it.
 func SplitInvariantRow(line string) (InvariantRow, bool) {
 	line = strings.TrimSpace(line)

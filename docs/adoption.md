@@ -337,7 +337,7 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
     renamed title and its intro are regenerated rather than kept above a second copy
     (`harnessStart` in `internal/adopt/harness.go`,
     `TestAdopt_AgentsMD_ForceReplacesRenamedHarnessTitle`);
-  - invariant rows under an ID of the repository's own, such as `**AEGIS-01**`, appended
+  - invariant rows under an ID of the repository's own, such as `**ACME-01**`, appended
     after the catalog rows in their original order and byte for byte, escaped pipes
     included. `hisscatalog.InvariantTableRows` reads both tables through
     `SplitInvariantRow`, the splitter `ParseGatedInvariants` uses. A `HISS-<n>` row
