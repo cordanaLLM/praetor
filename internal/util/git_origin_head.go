@@ -25,20 +25,17 @@ const (
 // origin --auto` write, as a branch name such as "master". It runs through RunGitProbe, so no
 // inherited configuration or hook takes part and nothing is fetched.
 //
-// ok is false when the answer is that there is none: repoPath is not inside a git checkout, or
-// git answers that the ref is not a symbolic ref (a checkout that never recorded it, as a CI
-// checkout usually does not). A read git did not answer (a cancelled or expired context, git
-// failing to start, any other exit status) and a target outside refs/remotes/origin/ are errors,
-// never "none", so no caller falls back on a question that was never answered.
+// ok is false when git answers that there is none: repoPath is not inside a repository
+// (GitAnsweredNotARepository), or the ref is not a symbolic ref (a checkout that never recorded
+// it, as a CI checkout usually does not). A read git did not answer (a missing directory, a
+// cancelled or expired context, git failing to start, any other exit status) and a target outside
+// refs/remotes/origin/ are errors, never "none", so no caller falls back on a question that was
+// never answered.
 func ReadOriginHeadBranch(ctx context.Context, repoPath string) (branch string, ok bool, err error) {
-	present, err := GitWorktreePresent(ctx, repoPath)
-	if err != nil {
-		return "", false, fmt.Errorf("util: find the checkout of %q: %w", repoPath, err)
-	}
-	if !present {
+	result, status, err := RunGitProbeStatus(ctx, repoPath, maxOriginHeadBytes, "symbolic-ref", "--quiet", originHeadRef)
+	if GitAnsweredNotARepository(result, err) && ctx.Err() == nil {
 		return "", false, nil
 	}
-	result, status, err := RunGitProbeStatus(ctx, repoPath, maxOriginHeadBytes, "symbolic-ref", "--quiet", originHeadRef)
 	if err != nil {
 		return "", false, fmt.Errorf("util: read %s in %q: %w", originHeadRef, repoPath, err)
 	}

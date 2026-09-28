@@ -1,6 +1,7 @@
 package util
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -8,6 +9,15 @@ import (
 	"os/exec"
 	"time"
 )
+
+// GitAnsweredNotARepository reports whether a RunGitProbe that returned result and err failed
+// because git answered that its directory is not inside a repository, rather than because the
+// read did not complete. RunGitProbe runs git under LANG=C.UTF-8, so the message it matches is
+// the untranslated one.
+func GitAnsweredNotARepository(result CommandBytes, err error) bool {
+	var exit *exec.ExitError
+	return errors.As(err, &exit) && bytes.Contains(result.Stderr, []byte("not a git repository"))
+}
 
 // GitProbeTimeout bounds one RunGitProbe inspection.
 const GitProbeTimeout = 5 * time.Second

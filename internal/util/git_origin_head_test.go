@@ -52,13 +52,48 @@ func TestReadOriginHeadBranch_Positive_NamesTheRecordedBranch(t *testing.T) {
 	}
 }
 
-// No checkout and a checkout that never recorded origin HEAD both answer "none", not an error.
+// No checkout, a .git directory git does not take for a repository and a checkout that never
+// recorded origin HEAD all answer "none", not an error.
 func TestReadOriginHeadBranch_Negative_NoneRecordedIsNotAnError(t *testing.T) {
 	if got, ok, err := ReadOriginHeadBranch(t.Context(), originHeadRepo(t, "")); err != nil || ok || got != "" {
 		t.Fatalf("a checkout without origin HEAD: got %q, %v, %v", got, ok, err)
 	}
 	if got, ok, err := ReadOriginHeadBranch(t.Context(), t.TempDir()); err != nil || ok || got != "" {
 		t.Fatalf("a directory outside any checkout: got %q, %v, %v", got, ok, err)
+	}
+	stub := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(stub, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stub, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok, err := ReadOriginHeadBranch(t.Context(), stub); err != nil || ok || got != "" {
+		t.Fatalf("a .git directory git does not take for a repository: got %q, %v, %v", got, ok, err)
+	}
+}
+
+// Only git's own "not a git repository" exit is that answer: a success, a failure that is no git
+// exit, and a git exit with another message are not.
+func TestGitAnsweredNotARepository_3D(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("git unavailable: %v", err)
+	}
+	outside, err := RunGitProbe(t.Context(), t.TempDir(), maxOriginHeadBytes, "rev-parse", "--git-dir")
+	if !GitAnsweredNotARepository(outside, err) {
+		t.Fatalf("git's answer outside a repository must be recognised: %q, %v", outside.Stderr, err)
+	}
+	inside := originHeadRepo(t, "")
+	result, err := RunGitProbe(t.Context(), inside, maxOriginHeadBytes, "rev-parse", "--git-dir")
+	if err != nil || GitAnsweredNotARepository(result, err) {
+		t.Fatalf("a successful probe is no such answer: %v", err)
+	}
+	if GitAnsweredNotARepository(outside, errors.New("not a git repository")) {
+		t.Fatal("an error that is not a git exit is no such answer")
+	}
+	other, err := RunGitProbe(t.Context(), inside, maxOriginHeadBytes, "rev-parse", "--verify", "--end-of-options", "refs/heads/absent")
+	if err == nil || GitAnsweredNotARepository(other, err) {
+		t.Fatalf("a git exit with another message is no such answer: %q, %v", other.Stderr, err)
 	}
 }
 

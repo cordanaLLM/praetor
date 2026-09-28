@@ -1,11 +1,9 @@
 package agenthook
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -32,8 +30,7 @@ func ResolveRoot(ctx context.Context, workspaces []string, workDir string) (stri
 	}
 	result, err := util.RunGitProbe(ctx, dir, maxRootBytes, "rev-parse", "--show-toplevel")
 	if err != nil {
-		var exit *exec.ExitError
-		if errors.As(err, &exit) && bytes.Contains(result.Stderr, []byte("not a git repository")) {
+		if util.GitAnsweredNotARepository(result, err) {
 			return "", nil
 		}
 		return "", fmt.Errorf("resolve workspace root: %w", err)
