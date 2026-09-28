@@ -1,0 +1,4 @@
+type: fixed
+title: The branch protection ruleset protects the repository's default branch instead of a hard-coded main; adopt, flavor apply, sync (local and --remote) and the audit resolve it the same way, from repository.default_branch in .standards.yaml, then the checkout's origin HEAD, then main, and adopt and flavor apply refresh the main ruleset earlier versions wrote without --force
+issue: "#71"
+breaking: true

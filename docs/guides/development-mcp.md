@@ -333,8 +333,9 @@ from. If `.standards.yaml` records an accepted
 (`[PASS] Branch protection ruleset declined by adoption.decline.`) rather than
 failing on the absent `.github/rulesets/main.json`. When not declined and required
 by policy, `standards_audit` fails closed if the ruleset file is missing or its
-content differs from the ruleset the declared policy renders
-(`forge.ValidateRepositoryRuleset`), matching CLI behavior with byte-for-byte verdict
+content differs from the ruleset the declared policy renders for the repository's
+default branch (`forge.ValidateRepositoryRuleset`, branch from
+`forge.RepositoryDefaultBranch`), matching CLI behavior with byte-for-byte verdict
 parity (`cmd/standards-mcp/audit_branch_ruleset_test.go`).
 
 The lock digest gate inside `standards_audit` resolves its catalog from the same
