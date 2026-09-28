@@ -31,6 +31,42 @@ Everything the figures need sits in one tree, `tools/figures/`:
 | `README.md` | The neutral authoring guide that travels with the engine to adopting repositories. |
 | `assets.go` | Embeds the engine files an adopting repository receives into `praetorctl`, as an explicit list ([ADR-0016](../adr/0016-figures-for-adopters.md), section 2). `assets_test.go` fails when a tracked file is neither in that list nor named repository-only, or when a listed script imports a file outside it. |
 
+## In adopting repositories
+
+The engine is the second managed asset family of the `docs:seo-portal` facet, beside the
+Markdown gate (`figureEngine` in `internal/managedasset/family.go`;
+[ADR-0016](../adr/0016-figures-for-adopters.md), section 5). The facet is in the default facet
+set, and removing it is the only way to opt out of figures. With the facet enabled,
+`praetorctl adopt` writes:
+
+- the 18 files `assets.go` lists, under `tools/figures/`. A file the repository already had at
+  one of those paths stops the first adoption, with or without `--force`, because
+  `tools/figures/` is a name a repository may use for its own code;
+- a block at the end of `.gitattributes` that keeps the engine, `docs/figures/*.ts` and
+  `docs/assets/figures/*` at LF and the vendored interfig files unconverted
+  (`internal/adopt/gitattributes.go`, rules from `Attributes` in `assets.go`);
+- a `docs-figures` target in the managed Makefile block, attached to `verify-all` beside
+  `docs-lint`, running `build.mjs check` and `build.mjs sources`;
+- a "Verify figures" step in `.github/workflows/praetor-docs.yml`, after "Verify public
+  Markdown", under the same required `Documentation Governance` context.
+
+In a repository with no spec and no committed output, `check` and `sources` print that they
+skipped and why, and exit 0, so the target and the workflow step cost nothing there. With the
+facet disabled, adoption removes the canonical engine files, the `.gitattributes` block, the
+Makefile block and the documentation workflow, and refuses to remove an engine file that was
+edited. `praetorctl audit` compares every engine file byte for byte,
+requires the target and the block, and warns when the repository's `REUSE.toml` has no
+annotation labelling `tools/figures/third_party/interfig/upstream/**` MIT
+(`cmd/standardsctl/audit_reuse.go`).
+
+Every change to an embedded file reaches adopters on their next `praetorctl adopt`. The
+shipped-text ledger, `internal/managedasset/testdata/shipped/figure-engine.sha256`, records every
+text the family ever shipped; after such a change, append the new digests with
+`PRAETOR_UPDATE_SHIPPED_TEXTS=1 go test ./internal/managedasset -run 'TestShippedTextLedger$'`
+and add each outgoing digest to `priorDigests` in `assets.go`, so plain adoption refreshes an
+unedited copy. The family holds at most 64 earlier texts; a React bump costs two, one for
+`dist/player.js` and one for `dist/THIRD-PARTY-LICENSES.txt`.
+
 ## Mermaid is retired on the root site
 
 Every diagram the root site builds is a figure, the generated wiki pages included, so the root
@@ -141,7 +177,8 @@ node tools/figures/bundle.mjs
 `node tools/figures/bundle.mjs --check` rebuilds in memory and fails when a committed file differs,
 is missing or is not a bundle output, when `player.js` exceeds 250 kB minified, or when the
 installed esbuild or a bundled package differs from `package-lock.json`. It runs on Linux, macOS
-and Windows; `.gitattributes` pins `dist/` to LF so the comparison holds on a Windows checkout.
+and Windows; the managed block at the end of `.gitattributes` pins `tools/figures/**` to LF, so
+the comparison holds on a Windows checkout.
 `build.mjs check` does not bundle.
 
 ## How a page shows a figure
@@ -273,9 +310,11 @@ GitHub keeps `figure`, `figcaption`, `picture`, `img` and `details`, and strips 
 | `python3 -B tools/figures/test_mkdocs_hook.py` | the hook's fence scanner stops matching the fence fixtures, its slot filling stops matching the markup fixtures, or a site build no longer renders a figure or publishes `figures.css` |
 | `npm --prefix tools/figures run smoke -- --site <dir> [--base <path>]` | in Chromium, against a built site served under its base path: a figure did not mount the player; a figure with scenario tabs did not advance its active step under autoplay within 8 s (another selected tab or a longer progress line, since a paused player still draws its first packets), or showed no packet under autoplay or after starting any of its tabs; a packet showed under reduced motion; or a page logged an error |
 
-`make docs-figures-check` runs the tests, the type check, `check`, `bundle.mjs --check` and
-`sources`, and `make docs-diagrams-test` runs the hook's tests; both are part of
-`make verify-all`. Each check exits 0 on a pass, 1 on findings and 2 on a usage error or an input it
+`make docs-figures-check` runs the steps only this repository runs, because they need the npm
+lock: the tests, the type check and `bundle.mjs --check`. The managed `make docs-figures` target,
+which every adopting repository receives, runs `check` and `sources`; both skip, saying why, in a
+repository without a spec or output. `make docs-diagrams-test` runs the hook's tests. All three
+are part of `make verify-all`. Each check exits 0 on a pass, 1 on findings and 2 on a usage error or an input it
 cannot read. The
 Platform Neutrality workflow runs the same figure commands on Linux, macOS and Windows. The Pages
 workflow runs `check` and `bundle.mjs --check`, builds the site with the committed player, runs
@@ -308,4 +347,9 @@ commit under `tools/figures/third_party/interfig/`
 ([VENDOR.md](https://github.com/cordanaLLM/praetor/blob/main/tools/figures/third_party/interfig/VENDOR.md)).
 The credit does not imply endorsement. The site footer, every exported SVG and both player scripts
 carry the notice, and `tools/figures/dist/THIRD-PARTY-LICENSES.txt` carries the full license texts
-of interfig, React, react-dom and scheduler. `REUSE.toml` labels `dist/` EUPL-1.2 AND MIT.
+of interfig, React, react-dom and scheduler. `REUSE.toml` labels `dist/` EUPL-1.2 AND MIT. In an
+adopting repository that declares its licensing in `REUSE.toml`, `praetorctl audit` warns until
+an annotation labels the vendored interfig files MIT.
+[Credits](../credits.md) names the React, react-dom and scheduler versions the player bundles;
+`CheckCredits` in `internal/supplychain/credits.go` fails `make test` when that row stops
+matching `tools/figures/package-lock.json`.

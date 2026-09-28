@@ -66,7 +66,9 @@ editors-verify:
 # tools/markdownlint/package-lock.json and the embedded figure engine (the interfig pin, the
 # player's THIRD-PARTY-LICENSES.txt and tools/figures/package-lock.json;
 # internal/supplychain/notices_sources.go); run this after a dependency bump or a player
-# rebuild. `make test` fails while the committed tables are stale.
+# rebuild. `make test` fails while the committed tables are stale, and while the figure player row
+# of docs/credits.md names a package at a version the figure lock does not install
+# (supplychain.CheckCredits); edit that row by hand.
 .PHONY: third-party-notices
 third-party-notices:
 	go run ./cmd/standardsctl sbom notices

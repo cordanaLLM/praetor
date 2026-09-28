@@ -160,6 +160,16 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
 5. **`.devcontainer/devcontainer.json`**: Multi-architecture container configuration pinned to verified base images.
 6. **Multi-IDE Configs**: Workspace settings for every supported editor, or only the ones `editors` in `.standards.yaml` names ([editor selection](guides/editor-capabilities.md#selecting-editors)).
 7. **Makefile & LeftHook**: Automated pre-commit hooks and standard verification targets (`make verify-all`).
+8. **Documentation gate** (the `docs:seo-portal` facet, in the default facet set): the locked
+   Markdown gate under `tools/markdownlint/`, the interactive figure engine under
+   `tools/figures/`, `docs-lint` and `docs-figures` targets on `verify-all`, a managed block at
+   the end of `.gitattributes`, and `.github/workflows/praetor-docs.yml` with its required
+   **Documentation Governance** context
+   ([documentation governance](guides/documentation-governance.md#adoption-audit-and-ci),
+   [figures](guides/figures.md#in-adopting-repositories)). The figure checks skip, saying why,
+   until the repository adds its first spec under `docs/figures/`. Adoption stops, even with
+   `--force`, when a file the repository already had at one of the engine's paths under
+   `tools/figures/` differs from it; move that file aside and rerun. Remove the facet to opt out.
 
 ### What Adoption Reads Before It Writes
 
