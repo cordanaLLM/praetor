@@ -56,24 +56,65 @@ func auditManifestAndLockfileQuiet(t *testing.T, root string) (*config.Effective
 // code and combined output.
 func runFigureEngine(t *testing.T, node, root, command string) (int, string) {
 	t.Helper()
+	return runProcess(t, root, node, filepath.Join("tools", "figures", "build.mjs"), command)
+}
+
+// runProcess runs name with arguments in dir, bounded by figureCommandTimeout, and returns its
+// exit code and combined output.
+func runProcess(t *testing.T, dir, name string, arguments ...string) (int, string) {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), figureCommandTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, node, filepath.Join("tools", "figures", "build.mjs"), command)
-	cmd.Dir = root
+	cmd := exec.CommandContext(ctx, name, arguments...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOCOVERDIR="+t.TempDir())
 	out, err := cmd.CombinedOutput()
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) {
 		return exitErr.ExitCode(), string(out)
 	}
 	if err != nil {
-		t.Fatalf("node tools/figures/build.mjs %s: %v", command, err)
+		t.Fatalf("%s %s: %v", name, strings.Join(arguments, " "), err)
 	}
 	return 0, string(out)
 }
 
-// End to end through the adopt command and the adopted engine: adoption with the default facets,
-// docs:seo-portal among them, writes the engine, the attribute block and the docs-figures target
-// that audit then accepts. In the adopted repository check and sources skip with the reason while
+// adoptProcessRun selects TestAdoptProcessHelper in the re-executed test binary.
+const adoptProcessRun = "-test.run=^TestAdoptProcessHelper$"
+
+// adoptProcessArgs names the environment variable carrying the helper's arguments, one per
+// line, so a path with spaces stays one argument.
+const adoptProcessArgs = "PRAETOR_ADOPT_PROCESS_TEST"
+
+// TestAdoptProcessHelper is the child of the end-to-end test: it runs main with the arguments in
+// PRAETOR_ADOPT_PROCESS_TEST, as the praetorctl binary does, so flag parsing and the exit code
+// cross a real process boundary.
+func TestAdoptProcessHelper(t *testing.T) {
+	arguments := os.Getenv(adoptProcessArgs)
+	if arguments == "" {
+		return
+	}
+	os.Args = append([]string{"praetorctl"}, strings.Split(arguments, "\n")...)
+	main()
+	os.Exit(0)
+}
+
+// praetorctl runs praetorctl with arguments as a child process, the test binary re-executed
+// through main, and returns its exit code and combined output.
+func praetorctl(t *testing.T, arguments ...string) (int, string) {
+	t.Helper()
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(adoptProcessArgs, strings.Join(arguments, "\n"))
+	return runProcess(t, ".", binary, adoptProcessRun)
+}
+
+// End to end through the praetorctl process and the adopted engine: adoption with the default
+// facets, docs:seo-portal among them, writes the engine, the attribute block and the
+// docs-figures target that audit then accepts, while a flag adopt does not know exits non-zero
+// before writing anything. In the adopted repository check and sources skip with the reason while
 // it has no spec (positive), fail on a malformed spec (negative), and pass on a built valid one
 // (boundary: the first spec turns the skip into a real check).
 func TestAdoptFigureEngineEndToEnd(t *testing.T) {
@@ -88,10 +129,14 @@ func TestAdoptFigureEngineEndToEnd(t *testing.T) {
 	root := t.TempDir()
 	writeFixtureFile(t, root, "src/router.ts", "export function route() {}\n")
 	initGitFixture(t, root)
-	if _, err := captureStdout(t, func() error {
-		return dispatchCommand("adopt", []string{"--path", root, "--profile", "framework", "--lock-source-root", source})
-	}); err != nil {
-		t.Fatalf("adopt: %v", err)
+	if code, out := praetorctl(t, "adopt", "--path", root, "--no-such-flag"); code == 0 || !strings.Contains(out, "no-such-flag") {
+		t.Fatalf("adopt with an unknown flag: exit %d\n%s", code, out)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".standards.yaml")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a refused adopt wrote the manifest: %v", err)
+	}
+	if code, out := praetorctl(t, "adopt", "--path", root, "--profile", "framework", "--lock-source-root", source); code != 0 {
+		t.Fatalf("adopt: exit %d\n%s", code, out)
 	}
 	effective, err := auditManifestAndLockfileQuiet(t, root)
 	if err != nil {
