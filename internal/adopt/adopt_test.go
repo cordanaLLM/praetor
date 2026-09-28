@@ -428,6 +428,39 @@ func TestAdoptEditedHarnessFailsBeforeWritingWithRemedy(t *testing.T) {
 	requirePassingSourceGate(t, repoPath, paperclipFile)
 }
 
+// TestAdoptDeclinedHarnessRemedyNeverSuggestsDeletion (#502 U9) Negative: with the paperclip step
+// declined, adoption writes no harness, so a drifted harness under a declared contract gets the
+// restore remedy, never "delete it and re-run", plain or --force, and the run writes nothing.
+func TestAdoptDeclinedHarnessRemedyNeverSuggestsDeletion(t *testing.T) {
+	repoPath := newTestRepo(t, "legacy")
+	manifestPath := filepath.Join(repoPath, manifestFile)
+	mustWrite(t, manifestPath, legacyManifest)
+	if _, err := Adopt(t.Context(), sourceAdoptOptions(t, repoPath, false)); err != nil {
+		t.Fatal(err)
+	}
+	adopted := mustRead(t, manifestPath)
+	if strings.Contains(adopted, "\nadoption:") {
+		t.Fatalf("fixture manifest already declares adoption:\n%s", adopted)
+	}
+	mustWrite(t, manifestPath, adopted+"adoption:\n  decline: [paperclip]\n")
+	harnessPath := filepath.Join(repoPath, paperclipFile)
+	mustWrite(t, harnessPath, editOperatingContract(t, mustRead(t, harnessPath)))
+	before := snapshotTree(t, repoPath)
+	for _, force := range []bool{false, true} {
+		_, err := Adopt(t.Context(), sourceAdoptOptions(t, repoPath, force))
+		if err == nil || strings.Contains(err.Error(), "delete it") {
+			t.Fatalf("force=%v: declined run must fail without the delete remedy: %v", force, err)
+		}
+		for _, want := range []string{"restore the " + paperclipFile + " bytes the pins were bound to (git checkout)",
+			"adoption.decline lists the paperclip step"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("force=%v: error lacks %q: %v", force, want, err)
+			}
+		}
+		assertTreeUnchanged(t, before, snapshotTree(t, repoPath))
+	}
+}
+
 // TestAdoptForceKeepsReboundEditedOperatingContract (#502) Positive, the already re-bound case:
 // once the operator has recomputed the pins for the edited operating contract (the remedy
 // TestAdoptEditedHarnessFailsBeforeWritingWithRemedy names), --force keeps the harness byte for

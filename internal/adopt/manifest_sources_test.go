@@ -10,6 +10,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/caveman"
 	"github.com/cordanaLLM/praetor/internal/cavemansource"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/paperclip"
 	"gopkg.in/yaml.v3"
 )
 
@@ -307,4 +308,44 @@ func manifestSourcesYAML(t *testing.T, sources *config.RegisterSources) string {
 		t.Fatal(err)
 	}
 	return string(data)
+}
+
+// TestDeclaredSourcesRemedy_Positive: a plan that would regenerate the harness after deletion
+// keeps offering the delete remedy beside the pins and the configured-sources check.
+func TestDeclaredSourcesRemedy_Positive(t *testing.T) {
+	remedy := declaredSourcesRemedy(harnessPlan{onDisk: true, data: []byte("{}")})
+	for _, want := range []string{"to the extracted values this error reports",
+		"`praetorctl caveman check --configured-sources --root=.`", "delete it and re-run praetorctl adopt"} {
+		if !strings.Contains(remedy, want) {
+			t.Fatalf("remedy lacks %q: %s", want, remedy)
+		}
+	}
+}
+
+// TestDeclaredSourcesRemedy_Negative: a declined paperclip step writes no harness, so the remedy
+// never tells the operator to delete one; it names the restore path and the reason instead.
+func TestDeclaredSourcesRemedy_Negative(t *testing.T) {
+	remedy := declaredSourcesRemedy(harnessPlan{onDisk: true, data: []byte("{}"), neverWrites: true})
+	if strings.Contains(remedy, "delete it") {
+		t.Fatalf("a plan that never writes must not offer the delete remedy: %s", remedy)
+	}
+	for _, want := range []string{"restore the " + paperclipFile + " bytes the pins were bound to (git checkout)",
+		"adoption.decline lists the paperclip step", "to the extracted values this error reports"} {
+		if !strings.Contains(remedy, want) {
+			t.Fatalf("remedy lacks %q: %s", want, remedy)
+		}
+	}
+}
+
+// TestDeclaredSourcesRemedy_Boundary: an unresolved identity names its own reason even with no
+// harness on disk, and a harness this run writes over an absent file keeps the pins-only remedy.
+func TestDeclaredSourcesRemedy_Boundary(t *testing.T) {
+	remedy := declaredSourcesRemedy(harnessPlan{unresolved: true, neverWrites: true})
+	if strings.Contains(remedy, "delete it") || !strings.Contains(remedy, "the repository identity is unresolved") {
+		t.Fatalf("unresolved identity remedy: %s", remedy)
+	}
+	over := declaredSourcesRemedy(harnessPlan{write: &paperclip.Harness{}})
+	if strings.Contains(over, "delete it") || !strings.Contains(over, "which cover the harness this run writes") {
+		t.Fatalf("absent-harness remedy: %s", over)
+	}
 }

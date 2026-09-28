@@ -141,10 +141,23 @@ func declaredSourcesRemedy(harness harnessPlan) string {
 			"from the harness it writes, so it re-binds none: " + pins + ", which cover the harness this run writes, " +
 			"and re-run praetorctl adopt"
 	}
-	return "adoption never re-binds a contract to drift it did not cause, --force included: " + pins +
+	remedy := "adoption never re-binds a contract to drift it did not cause, --force included: " + pins +
 		", or recompute the pins with `praetorctl caveman check --configured-sources --root=.` once every input is " +
-		"staged (git add); or, when the drift is an edited " + paperclipFile + ", delete it and re-run praetorctl adopt " +
+		"staged (git add)"
+	if harness.neverWrites {
+		return remedy + "; or restore the " + paperclipFile + " bytes the pins were bound to (git checkout): this " +
+			"run writes no harness, because " + neverWritesReason(harness) + ", so deleting it regenerates nothing"
+	}
+	return remedy + "; or, when the drift is an edited " + paperclipFile + ", delete it and re-run praetorctl adopt " +
 		"to regenerate it, which binds a contract selecting only that harness to the bytes it writes"
+}
+
+// neverWritesReason says why a kept harness plan writes nothing (keptHarnessPlan).
+func neverWritesReason(harness harnessPlan) string {
+	if harness.unresolved {
+		return "the repository identity is unresolved"
+	}
+	return "adoption.decline lists the paperclip step"
 }
 
 // reconcileRegisterSources returns the register.sources adoption leaves in the manifest and

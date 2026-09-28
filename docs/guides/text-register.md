@@ -668,7 +668,9 @@ who wrote it:
   reports, all in one run, or read them from
   `praetorctl caveman check --configured-sources --root=.` once the harness is
   staged; or delete `.paperclip/harness.json` and rerun `praetorctl adopt` to
-  regenerate it (`TestAdoptEditedHarnessFailsBeforeWritingWithRemedy` and
+  regenerate it, except with the paperclip step declined or the repository
+  identity unresolved, where adoption writes no harness and the error names
+  restoring the bound bytes instead (`TestAdoptEditedHarnessFailsBeforeWritingWithRemedy` and
   `TestAdoptForceKeepsReboundEditedOperatingContract` in
   `internal/adopt/adopt_test.go`,
   `TestAdoptForceEditedHarnessNeedsRecomputedPins` in

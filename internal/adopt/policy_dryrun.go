@@ -81,6 +81,10 @@ type harnessPlan struct {
 	// unresolved reports a run without a repository identity: the harness platform names the
 	// repository, so none is synthesized and an existing harness stays as it is (BUG-852).
 	unresolved bool
+	// neverWrites reports a plan that writes no harness whatever is on disk: the paperclip step
+	// is declined or the repository identity is unresolved (keptHarnessPlan). Deleting the
+	// harness then regenerates nothing, so no remedy may suggest it.
+	neverWrites bool
 	// owned holds the bytes of an operator-owned harness, one that is neither the current
 	// synthesis nor unmodified earlier output. Adoption keeps it, under --force too (#502):
 	// data equals owned unless --force set its platform (patched).
@@ -176,13 +180,13 @@ func planOwnedHarness(plan harnessPlan, platform string, force bool) harnessPlan
 // byte for byte; with none on disk the plan is absent.
 func keptHarnessPlan(ctx context.Context, path string, exists, unresolved bool) (harnessPlan, error) {
 	if !exists {
-		return harnessPlan{unresolved: unresolved}, nil
+		return harnessPlan{unresolved: unresolved, neverWrites: true}, nil
 	}
 	existing, err := existingHarness(ctx, path)
 	if err != nil {
 		return harnessPlan{}, err
 	}
-	return harnessPlan{data: existing, onDisk: true, unresolved: unresolved}, nil
+	return harnessPlan{data: existing, onDisk: true, unresolved: unresolved, neverWrites: true}, nil
 }
 
 // synthesizeHarness renders the Paperclip harness for the repository's HISS facts

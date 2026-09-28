@@ -674,7 +674,10 @@ differs, extracted from the files as they stand, and two remedies:
    `.standards.yaml` to the extracted values the error reports, then rerun
    `praetorctl adopt --force`. `praetorctl caveman check --configured-sources --root=.` reports
    the same values once every input is staged with `git add`; it refuses untracked inputs.
-2. Drop the edit: delete `.paperclip/harness.json` and rerun `praetorctl adopt`. A harness
+2. Drop the edit: delete `.paperclip/harness.json` and rerun `praetorctl adopt`. This works only
+   when adoption writes a harness: with `adoption.decline: [paperclip]` or an unresolved
+   repository identity it writes none, so restore the bound bytes with `git checkout` instead,
+   as the error then says. A harness
    adoption writes where none existed is Praetor output. When every `register.sources` input
    selects `.paperclip/harness.json`, as the rows adoption declares do, adoption binds the pins
    to the harness it writes and reports `Re-bound register.sources to the Paperclip harness
