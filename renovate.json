@@ -47,7 +47,7 @@
       "pinDigests": true
     },
     {
-      "description": "Documentation gate: audit locks .github/workflows/praetor-docs.yml, here and in every adopted repository, to the template in tools/markdownlint/assets.go. The github-actions manager reads both, and one branch moves their SHA pins and release comments together.",
+      "description": "Documentation gate: audit locks .github/workflows/praetor-docs.yml, here and in every adopted repository, to the template in tools/markdownlint/assets.go. The github-actions manager reads both, and one branch moves their SHA pins and release comments together. The branch fails CI until the outgoing workflow text is recorded in priorDigests and internal/managedasset/testdata/shipped (docs/guides/documentation-governance.md), so adopters holding it still refresh without --force.",
       "matchManagers": ["github-actions"],
       "matchFileNames": [".github/workflows/praetor-docs.yml", "tools/markdownlint/assets.go"],
       "groupName": "documentation gate actions"

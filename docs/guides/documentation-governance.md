@@ -108,6 +108,21 @@ path: the workflow, `markdownlint-cli2.yaml`, `verify.mjs` and
 one (`TestPriorDigestsReproduce`,
 `TestAdoptionDocumentationGateRefreshesPriorTexts`).
 
+The list stays complete because every text the family ever shipped is recorded
+in `internal/managedasset/testdata/shipped/markdown.sha256`, oldest first, one
+`<sha256>  <path>` line each. The last line of a path must be its current text,
+and every earlier line must be in `priorDigests`, in both directions
+(`TestShippedTextLedger`). Changing a managed text therefore takes three steps,
+and CI fails until all three are done:
+
+1. Change the text (a Renovate pin update does this for the workflow).
+2. Append its digest:
+   `PRAETOR_UPDATE_SHIPPED_TEXTS=1 go test ./internal/managedasset -run 'TestShippedTextLedger$'`.
+   The step only appends; it never rewrites or drops a line.
+3. Record the outgoing text: add its digest to `priorDigests` and the text to
+   `tools/markdownlint/testdata/prior/`. The test failure names the digest and
+   the file whose history holds the text.
+
 ## Private scratch links
 
 Public Markdown must not link into `.workingdir/` or `.workingdir2/`. These
@@ -238,7 +253,14 @@ actions itself because audit locks the file.
 short-SHA-pinned action (`TestWorkflowPinsEveryActionNegative`). Renovate's
 github-actions manager reads `tools/markdownlint/assets.go` as well as the
 workflow (`renovate.json`), and one grouped branch moves both copies' pins
-together (`TestRenovateUpdatesTemplatePinsWithWorkflowCopy`).
+together (`TestRenovateUpdatesTemplatePinsWithWorkflowCopy`). Such a branch
+fails CI until someone finishes it: the outgoing workflow text must be recorded
+as described above, and the `sha256` lines of
+`internal/adopt/testdata/managed-family/*.golden` regenerated with
+`PRAETOR_UPDATE_GOLDEN=1 go test ./internal/adopt`. Adopters keep
+`.github/workflows/praetor-docs.yml` excluded from their own update bots:
+Praetor ships each pin update, and a copy an adopter's bot bumped first fails the
+byte lock until their Praetor catches up.
 
 The workflow and `markdownlint-cli2.yaml` pass `yamllint --strict` under its
 default rules, which an adopter's own lint may apply to every file. Both open

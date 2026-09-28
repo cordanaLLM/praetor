@@ -36,10 +36,12 @@ const (
 // may enforce without being able to edit it: every action is pinned by full commit SHA with
 // its release as a trailing comment, which repositories requiring SHA pinning demand and
 // Renovate's github-actions manager keeps current (renovate.json reads this file too, so one
-// update moves this text and the repository's own copy together); and the text passes
-// yamllint --strict under its default rules: a document start, a quoted 'on' key that the
-// truthy rule does not read as a boolean, and a line-length exemption for the two pin lines,
-// which a 40-hex SHA plus its comment carries past 80 columns at step indentation.
+// update moves this text and the repository's own copy together, and the update fails
+// internal/managedasset's TestShippedTextLedger until the outgoing text is in priorDigests);
+// and the text passes yamllint --strict under its default rules: a document start, a quoted
+// 'on' key that the truthy rule does not read as a boolean, and a line-length exemption for
+// the two pin lines, which a 40-hex SHA plus its comment carries past 80 columns at step
+// indentation.
 const Workflow = `---
 name: Praetor Documentation Governance
 
@@ -76,7 +78,8 @@ jobs:
 // family's managed paths, taken with LF line endings, to that path: the family's Prior
 // (internal/managedasset). Adoption refreshes a file holding exactly one of these texts
 // without --force. testdata/prior holds each text, and TestPriorDigestsReproduce recomputes
-// every digest from it.
+// every digest from it. internal/managedasset/testdata/shipped/markdown.sha256 records every
+// text ever shipped, and TestShippedTextLedger fails until each outgoing text is listed here.
 var priorDigests = map[string]string{
 	// The first documentation gate: ubuntu-latest, checkout and setup-node v4.
 	"d4e893f5fee713d3a13d88277097a8b85adce9a886151a776fe24ee54bfe49fa": WorkflowFile,
