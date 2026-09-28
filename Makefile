@@ -62,9 +62,11 @@ editors-reference-verify:
 editors-verify:
 	go run ./cmd/standardsctl editors verify
 
-# The component tables of THIRD-PARTY-NOTICES.md are rendered from go.mod, the root Dockerfile
-# and tools/markdownlint/package-lock.json (internal/supplychain/notices.go); run this after a
-# dependency bump. `make test` fails while the committed tables are stale.
+# The component tables of THIRD-PARTY-NOTICES.md are rendered from go.mod, the root Dockerfile,
+# tools/markdownlint/package-lock.json and the embedded figure engine (the interfig pin, the
+# player's THIRD-PARTY-LICENSES.txt and tools/figures/package-lock.json;
+# internal/supplychain/notices_sources.go); run this after a dependency bump or a player
+# rebuild. `make test` fails while the committed tables are stale.
 .PHONY: third-party-notices
 third-party-notices:
 	go run ./cmd/standardsctl sbom notices

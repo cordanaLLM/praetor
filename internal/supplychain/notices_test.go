@@ -3,9 +3,11 @@ package supplychain
 // THIRD-PARTY-NOTICES.md names every third-party component the release archives and the
 // container image carry, and the archives and the image carry the file. RenderNotices
 // generates its component tables from the files that decide what ships -- go.mod, the
-// embedded npm lock the binaries write out, the root Dockerfile -- and these tests fail when
-// the committed file is not what the render writes, when a Go module's upstream terms are not
-// carried verbatim, and when an archive or the image drops the notices.
+// embedded npm lock the binaries write out, the root Dockerfile, and the embedded figure
+// engine's interfig pin and player license file with the lock the player is built from -- and
+// these tests fail when the committed file is not what the render writes, when the upstream
+// terms of a Go module or of a part of the figure player are not carried verbatim, and when an
+// archive or the image drops the notices.
 
 import (
 	"context"
@@ -21,6 +23,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/cordanaLLM/praetor/internal/gomanifest"
+	figureassets "github.com/cordanaLLM/praetor/tools/figures"
 	markdownassets "github.com/cordanaLLM/praetor/tools/markdownlint"
 )
 
@@ -42,8 +45,9 @@ func readRepoFile(t *testing.T, rel string) []byte {
 }
 
 // The committed notices are exactly what `praetorctl sbom notices` writes for this checkout,
-// through the --check path that command takes (CheckNotices). The npm lock read from the
-// checkout is the one the binaries embed.
+// through the --check path that command takes (CheckNotices). The npm lock, the player license
+// file and the interfig pin read from the checkout are the ones the binaries embed; the figure
+// lock is not embedded, and the rows it yields must name what the embedded player bundles.
 func TestThirdPartyNoticesMatchWhatShips(t *testing.T) {
 	sources, err := ReadNoticeSources(context.Background(), filepath.Join("..", ".."))
 	if err != nil {
@@ -56,14 +60,58 @@ func TestThirdPartyNoticesMatchWhatShips(t *testing.T) {
 	if string(embedded) != string(sources.NPMLock) {
 		t.Fatalf("%s differs from the lock the binaries embed", noticesLockFile)
 	}
+	for rel, read := range map[string][]byte{figureLicensesFile: sources.FigureLicenses, interfigVendorFile: sources.InterfigVendor} {
+		figure, err := figureassets.Read(strings.TrimPrefix(rel, figureassets.Directory+"/"))
+		if err != nil || string(figure) != string(read) {
+			t.Fatalf("%s differs from the copy the binaries embed (%v)", rel, err)
+		}
+	}
 	// A check that derived nothing to compare is not a check that passed (HISS-21).
 	modules, modErr := goModuleRows(sources.GoMod)
 	packages, lockErr := lockRuntimePackages(sources.NPMLock)
-	if err := errors.Join(modErr, lockErr); err != nil || len(modules) == 0 || len(packages) == 0 {
-		t.Fatalf("derived %d Go modules and %d npm packages (%v): the sources stopped parsing", len(modules), len(packages), err)
+	figures, figureErr := figureNoticeRows(sources)
+	if err := errors.Join(modErr, lockErr, figureErr); err != nil || len(modules) == 0 || len(packages) == 0 ||
+		len(figures[noticesFigureEngine]) != 1 || len(figures[noticesFigureNPM]) == 0 {
+		t.Fatalf("derived %d Go modules, %d npm packages and figure rows %v (%v): the sources stopped parsing", len(modules), len(packages), figures, err)
 	}
 	if err := CheckNotices(string(readRepoFile(t, NoticesFile)), sources); err != nil {
 		t.Error(err)
+	}
+}
+
+// figurePlayerTermTexts returns the normalized license text of every part of the embedded
+// player's license file, keyed by the part's heading.
+func figurePlayerTermTexts(licenses string) map[string]string {
+	texts := map[string]string{}
+	for _, part := range strings.Split(strings.ReplaceAll(licenses, "\r\n", "\n"), figureLicenseRule+"\n")[1:] {
+		heading, rest, _ := strings.Cut(part, "\n")
+		_, text, _ := strings.Cut(rest, "\n\n")
+		texts[heading] = normalizeNoticeText(text)
+	}
+	return texts
+}
+
+// The MIT notice condition travels with the binary, which embeds interfig's source and the
+// player that bundles React, react-dom and scheduler: every license text the embedded player's
+// THIRD-PARTY-LICENSES.txt holds must appear in the notices file as written.
+func TestThirdPartyNoticesCarryFigurePlayerTermsVerbatim(t *testing.T) {
+	licenses, err := figureassets.Read("dist/THIRD-PARTY-LICENSES.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	texts := figurePlayerTermTexts(string(licenses))
+	parts, err := bundledFigureParts(licenses)
+	if err != nil || len(texts) != len(parts) || len(texts) < 2 {
+		t.Fatalf("split %d license texts from %d parts (%v); the parser and the split disagree", len(texts), len(parts), err)
+	}
+	notices := string(readRepoFile(t, NoticesFile))
+	for heading, text := range texts {
+		if text == "" {
+			t.Errorf("the player license part %q holds no text", heading)
+		}
+		for _, finding := range missingUpstreamTexts(heading, notices, map[string]string{"LICENSE": text}) {
+			t.Error(finding)
+		}
 	}
 }
 

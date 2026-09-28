@@ -1,9 +1,10 @@
 package supplychain
 
-// The files that decide what the release ships -- go.mod, the root Dockerfile and the npm
-// lock the binaries embed and write out for the Markdown gate -- and the readers that derive
-// the shipped components from them. RenderNotices lists exactly these components in
-// THIRD-PARTY-NOTICES.md.
+// The files that decide what the release ships -- go.mod, the root Dockerfile, the npm lock
+// the binaries embed and write out for the Markdown gate, and the figure engine the binaries
+// embed (the interfig pin and the committed player, with the lock it is built from) -- and the
+// readers that derive the shipped components from them. RenderNotices lists exactly these
+// components in THIRD-PARTY-NOTICES.md.
 
 import (
 	"context"
@@ -16,6 +17,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/gomanifest"
 	"github.com/cordanaLLM/praetor/internal/semver"
+	figureassets "github.com/cordanaLLM/praetor/tools/figures"
 	markdownassets "github.com/cordanaLLM/praetor/tools/markdownlint"
 )
 
@@ -29,6 +31,23 @@ const maxLockPackages = 4096
 // binaries embed (tools/markdownlint) and write into an adopting repository.
 const noticesLockFile = markdownassets.Directory + "/package-lock.json"
 
+// The figure engine the binaries embed (tools/figures/assets.go): the npm lock the committed
+// player is built from, the player's license file, which names every package the bundle holds
+// (thirdPartyLicenses in tools/figures/bundle.mjs), and the pin of the vendored interfig source.
+const (
+	figureLockFile     = figureassets.Directory + "/package-lock.json"
+	figureLicensesFile = figureassets.Directory + "/dist/THIRD-PARTY-LICENSES.txt"
+	interfigVendorFile = figureassets.Directory + "/third_party/interfig/vendor.json"
+)
+
+// interfigComponent names the vendored figure engine in the notices. Its part of the player's
+// license file carries the same name, with the upstream URL where a package carries a version.
+const interfigComponent = "interfig"
+
+// figureLicenseRule is the line that opens each part of the player's license file (RULE in
+// tools/figures/bundle.mjs).
+var figureLicenseRule = strings.Repeat("-", 78)
+
 // NoticeSources are the files that decide what the release archives and the image ship.
 type NoticeSources struct {
 	// GoMod is go.mod: the Go version the binaries link and every module they require.
@@ -37,24 +56,32 @@ type NoticeSources struct {
 	NPMLock []byte
 	// Dockerfile is the root Dockerfile, whose last stage names the image's base.
 	Dockerfile string
+	// FigureLock is the figure player's package-lock.json, from which the committed player the
+	// binaries embed is built.
+	FigureLock []byte
+	// FigureLicenses is the committed player's THIRD-PARTY-LICENSES.txt the binaries embed.
+	FigureLicenses []byte
+	// InterfigVendor is the vendor.json that pins the interfig source the binaries embed.
+	InterfigVendor []byte
 }
 
-// ReadNoticeSources reads go.mod, the root Dockerfile and the Markdown gate's npm lock from
-// the top of the Praetor checkout at root.
+// ReadNoticeSources reads go.mod, the root Dockerfile, the Markdown gate's npm lock and the
+// figure engine's lock, player license file and interfig pin from the top of the Praetor
+// checkout at root.
 func ReadNoticeSources(ctx context.Context, root string) (NoticeSources, error) {
-	goMod, err := readNoticeSource(ctx, root, "go.mod")
-	if err != nil {
-		return NoticeSources{}, err
+	rels := [...]string{"go.mod", "Dockerfile", noticesLockFile, figureLockFile, figureLicensesFile, interfigVendorFile}
+	var data [len(rels)][]byte
+	for index, rel := range rels {
+		read, err := readNoticeSource(ctx, root, rel)
+		if err != nil {
+			return NoticeSources{}, err
+		}
+		data[index] = read
 	}
-	dockerfile, err := readNoticeSource(ctx, root, "Dockerfile")
-	if err != nil {
-		return NoticeSources{}, err
-	}
-	lock, err := readNoticeSource(ctx, root, noticesLockFile)
-	if err != nil {
-		return NoticeSources{}, err
-	}
-	return NoticeSources{GoMod: goMod, NPMLock: lock, Dockerfile: string(dockerfile)}, nil
+	return NoticeSources{
+		GoMod: data[0], Dockerfile: string(data[1]), NPMLock: data[2],
+		FigureLock: data[3], FigureLicenses: data[4], InterfigVendor: data[5],
+	}, nil
 }
 
 // readNoticeSource reads one repository-relative file below root through the bounded,
@@ -115,10 +142,8 @@ type npmLockEntry struct {
 	Link        bool   `json:"link"`
 }
 
-// lockRuntimePackages lists each distinct name@version an npm lock installs outside its dev
-// dependencies, sorted. The root project, links and workspace folders are not packages
-// someone else wrote and are skipped.
-func lockRuntimePackages(lock []byte) ([]noticeRow, error) {
+// lockPackages returns the "packages" entries of an npm lock, keyed by install path.
+func lockPackages(lock []byte) (map[string]npmLockEntry, error) {
 	var parsed struct {
 		Packages map[string]npmLockEntry `json:"packages"`
 	}
@@ -128,10 +153,21 @@ func lockRuntimePackages(lock []byte) ([]noticeRow, error) {
 	if len(parsed.Packages) > maxLockPackages {
 		return nil, fmt.Errorf("npm lock holds %d packages, more than %d", len(parsed.Packages), maxLockPackages)
 	}
+	return parsed.Packages, nil
+}
+
+// lockRuntimePackages lists each distinct name@version an npm lock installs outside its dev
+// dependencies, sorted. The root project, links and workspace folders are not packages
+// someone else wrote and are skipped.
+func lockRuntimePackages(lock []byte) ([]noticeRow, error) {
+	packages, err := lockPackages(lock)
+	if err != nil {
+		return nil, err
+	}
 	const marker = "node_modules/"
-	seen := make(map[noticeRow]bool, len(parsed.Packages))
-	rows := make([]noticeRow, 0, len(parsed.Packages))
-	for path, entry := range parsed.Packages {
+	seen := make(map[noticeRow]bool, len(packages))
+	rows := make([]noticeRow, 0, len(packages))
+	for path, entry := range packages {
 		at := strings.LastIndex(path, marker)
 		if at < 0 || entry.Dev || entry.DevOptional || entry.Link {
 			continue
@@ -148,6 +184,80 @@ func lockRuntimePackages(lock []byte) ([]noticeRow, error) {
 	}
 	sortNoticeRows(rows)
 	return rows, nil
+}
+
+// bundledFigureParts returns the name and version of every part of the player's license file,
+// in file order: each part opens with figureLicenseRule, then "<name> <version>" and
+// "License: <id>". The interfig part carries its upstream URL as the version.
+func bundledFigureParts(licenses []byte) ([]noticeRow, error) {
+	lines, err := splitNoticeLines(string(licenses))
+	if err != nil {
+		return nil, fmt.Errorf("parse %s: %w", figureLicensesFile, err)
+	}
+	var parts []noticeRow
+	for index := 0; index < len(lines); index++ {
+		if lines[index] != figureLicenseRule {
+			continue
+		}
+		fields := []string{}
+		license, labelled := "", false
+		if index+2 < len(lines) {
+			fields = strings.Fields(lines[index+1])
+			license, labelled = strings.CutPrefix(lines[index+2], "License: ")
+		}
+		if len(fields) != 2 || !labelled {
+			return nil, fmt.Errorf("parse %s line %d: a part opens with \"<name> <version>\" and \"License: <id>\"", figureLicensesFile, index+2)
+		}
+		parts = append(parts, noticeRow{name: fields[0], version: fields[1], license: license})
+	}
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("parse %s: it lists no bundled part", figureLicensesFile)
+	}
+	return parts, nil
+}
+
+// figurePlayerRows lists every npm package the committed player bundles, sorted: each part of
+// its license file but interfig's, at the version and under the license the figure lock
+// records. A part the lock does not install at the version the bundle names means the player
+// was not rebuilt from the lock, and stops the render.
+func figurePlayerRows(licenses, lock []byte) ([]noticeRow, error) {
+	parts, err := bundledFigureParts(licenses)
+	if err != nil {
+		return nil, err
+	}
+	packages, err := lockPackages(lock)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", figureLockFile, err)
+	}
+	rows := make([]noticeRow, 0, len(parts))
+	for _, part := range parts {
+		if part.name == interfigComponent {
+			continue
+		}
+		entry, installed := packages["node_modules/"+part.name]
+		if !installed || entry.Version != part.version {
+			return nil, fmt.Errorf("%s names %s %s, which %s does not install; rebuild the player with node tools/figures/bundle.mjs",
+				figureLicensesFile, part.name, part.version, figureLockFile)
+		}
+		rows = append(rows, noticeRow{name: part.name, version: entry.Version, license: entry.License})
+	}
+	sortNoticeRows(rows)
+	return rows, nil
+}
+
+// interfigRows returns the vendored interfig source at the upstream commit vendor.json pins.
+// vendor.json records no license, so the row keeps the one the notices state.
+func interfigRows(vendor []byte) ([]noticeRow, error) {
+	var pin struct {
+		Commit string `json:"commit"`
+	}
+	if err := json.Unmarshal(vendor, &pin); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", interfigVendorFile, err)
+	}
+	if strings.TrimSpace(pin.Commit) == "" {
+		return nil, fmt.Errorf("parse %s: it pins no commit", interfigVendorFile)
+	}
+	return []noticeRow{{name: interfigComponent, version: pin.Commit}}, nil
 }
 
 // goModuleRows lists every module go.mod requires, after replace directives, sorted, through
@@ -211,7 +321,11 @@ func shippedNoticeRows(sources NoticeSources) (map[string][]noticeRow, error) {
 	if err != nil {
 		return nil, err
 	}
-	shipped := map[string][]noticeRow{noticesGoModules: modules, noticesNPM: packages}
+	shipped, err := figureNoticeRows(sources)
+	if err != nil {
+		return nil, err
+	}
+	shipped[noticesGoModules], shipped[noticesNPM] = modules, packages
 	if version, declared := gomanifest.GoDirective(sources.GoMod); declared {
 		shipped[noticesGoToolchain] = []noticeRow{{name: noticesGoToolchain, version: version, license: goToolchainLicense}}
 	}
@@ -223,4 +337,18 @@ func shippedNoticeRows(sources NoticeSources) (map[string][]noticeRow, error) {
 		shipped[noticesBaseImage] = []noticeRow{image}
 	}
 	return shipped, nil
+}
+
+// figureNoticeRows derives the figure engine's components: the vendored interfig source and
+// the npm packages the committed player bundles.
+func figureNoticeRows(sources NoticeSources) (map[string][]noticeRow, error) {
+	engine, err := interfigRows(sources.InterfigVendor)
+	if err != nil {
+		return nil, err
+	}
+	player, err := figurePlayerRows(sources.FigureLicenses, sources.FigureLock)
+	if err != nil {
+		return nil, err
+	}
+	return map[string][]noticeRow{noticesFigureEngine: engine, noticesFigureNPM: player}, nil
 }

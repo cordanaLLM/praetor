@@ -54,11 +54,12 @@ func runSBOM(args []string) error {
 	return nil
 }
 
-// sbomNoticesTimeout bounds one notices render: four small file reads and one write (HISS-02).
+// sbomNoticesTimeout bounds one notices render: seven small file reads and one write (HISS-02).
 const sbomNoticesTimeout = 30 * time.Second
 
 // runSBOMNotices regenerates THIRD-PARTY-NOTICES.md at the top of a Praetor checkout from its
-// go.mod, root Dockerfile and Markdown gate npm lock (supplychain.RenderNotices), or with
+// go.mod, root Dockerfile, Markdown gate npm lock and embedded figure engine
+// (supplychain.ReadNoticeSources, supplychain.RenderNotices), or with
 // --check fails when the committed file is not what the render writes. A Renovate or lock
 // maintenance bump is fixed by running it; a new component or an unreviewed license stops it
 // with the row a person has to write.
@@ -88,7 +89,7 @@ func runSBOMNotices(args []string) error {
 		if err := supplychain.CheckNotices(string(current), sources); err != nil {
 			return fmt.Errorf("[FAIL] %w", err)
 		}
-		fmt.Printf("[PASS] %s matches go.mod, the Dockerfile and the npm lock.\n", supplychain.NoticesFile)
+		fmt.Printf("[PASS] %s matches go.mod, the Dockerfile, the npm locks and the figure engine.\n", supplychain.NoticesFile)
 		return nil
 	}
 	return writeSBOMNotices(ctx, target, string(current), sources)
@@ -108,7 +109,7 @@ func writeSBOMNotices(ctx context.Context, target, current string, sources suppl
 	if err := writeCommandArtifact(ctx, target, []byte(rendered), 0644); err != nil {
 		return fmt.Errorf("failed writing %s: %w", target, err)
 	}
-	fmt.Printf("[OK] %s regenerated from go.mod, the Dockerfile and the npm lock.\n", supplychain.NoticesFile)
+	fmt.Printf("[OK] %s regenerated from go.mod, the Dockerfile, the npm locks and the figure engine.\n", supplychain.NoticesFile)
 	return nil
 }
 

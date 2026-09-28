@@ -26,6 +26,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
+	figureassets "github.com/cordanaLLM/praetor/tools/figures"
 	markdownassets "github.com/cordanaLLM/praetor/tools/markdownlint"
 )
 
@@ -73,6 +74,11 @@ type Family struct {
 	// managed path while none of the family's paths yet holds its canonical bytes: such a
 	// file predates adoption and belongs to the repository, not to Praetor.
 	RefuseForeign bool
+	// Staged registers a family whose facet wiring has not landed yet: praetorctl embeds its
+	// assets and the devcontainer bootstrap captures them, but ForFacet skips it, so adoption
+	// neither writes nor removes its files and audit does not check them. The change that
+	// wires the family into its facet drops the flag.
+	Staged bool
 	// Prior maps the SHA-256, in lowercase hex, of every text an earlier Praetor shipped at
 	// one of the family's managed paths to that path; the digest covers the text with LF line
 	// endings (util.CanonicalTextDigest). A file holding exactly such a text is Praetor's own unedited output, so
@@ -85,7 +91,7 @@ type Family struct {
 // Families returns the registry in its fixed order: the order adoption emits and audit
 // checks the families in.
 func Families() []Family {
-	return []Family{markdown()}
+	return []Family{markdown(), figureEngine()}
 }
 
 func markdown() Family {
@@ -107,12 +113,37 @@ func markdown() Family {
 	}
 }
 
-// ForFacet returns the families facet enables, in registry order.
+// figureEngine is the interactive figure engine of the documentation facet
+// (docs/adr/0016-figures-for-adopters.md, sections 2 and 5). tools/figures is a name a
+// repository may already use, so adoption refuses to overwrite a file it finds there first.
+// It has no hosted workflow of its own: the Markdown family's workflow is to run its checks
+// once the facet wiring lands, and until then the family is Staged.
+func figureEngine() Family {
+	return Family{
+		Name:          "Figure engine",
+		Kind:          "documentation",
+		AssetNoun:     "figure engine asset",
+		Facet:         DocumentationFacet,
+		Directory:     figureassets.Directory,
+		Source:        figureassets.SourceFile,
+		FS:            figureassets.FS(),
+		Assets:        figureassets.Names(),
+		MaxAssets:     figureassets.MaxAssets,
+		RefuseForeign: true,
+		Staged:        true,
+	}
+}
+
+// ForFacet returns the families facet enables, in registry order, leaving out Staged ones.
 func ForFacet(facet string) []Family {
-	all := Families()
+	return selectFacet(Families(), facet)
+}
+
+// selectFacet returns the families of all that facet enables and that are not Staged.
+func selectFacet(all []Family, facet string) []Family {
 	selected := make([]Family, 0, len(all))
 	for index := 0; index < len(all) && index < MaxFamilies; index++ {
-		if all[index].Facet == facet {
+		if all[index].Facet == facet && !all[index].Staged {
 			selected = append(selected, all[index])
 		}
 	}

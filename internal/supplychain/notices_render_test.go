@@ -23,6 +23,10 @@ const renderFixture = "# Third-party notices\n\nIntro prose stays as written.\n\
 	"| `gcr.io/distroless/static-debian13` | nonroot | Apache-2.0 | none stated in the upstream `LICENSE` |\n\n" +
 	"## npm packages of the Markdown gate\n\n| Package | Version | License | Copyright |\n| :-- | :-- | :-- | :-- |\n" +
 	"| `@scope/util` | 2.0.0 | MIT | `Copyright (c) Util` |\n| `left-pad` | 1.3.0 | ISC | `Copyright (c) Pad` |\n\n" +
+	"## Vendored figure engine\n\n| Component | Commit | License | Copyright |\n| :-- | :-- | :-- | :-- |\n" +
+	"| `interfig` | abc123 | MIT | `Copyright (c) Engine` |\n\n" +
+	"## npm packages of the figure player\n\n| Package | Version | License | Copyright |\n| :-- | :-- | :-- | :-- |\n" +
+	"| `react` | 19.0.0 | MIT | `Copyright (c) React` |\n\n" +
 	"<!-- REUSE-IgnoreEnd -->\n"
 
 // The fixture's rows, as the render writes them.
@@ -32,6 +36,8 @@ const (
 	fixtureImageRow     = "| `gcr.io/distroless/static-debian13` | nonroot | Apache-2.0 | none stated in the upstream `LICENSE` |"
 	fixtureUtilRow      = "| `@scope/util` | 2.0.0 | MIT | `Copyright (c) Util` |"
 	fixturePadRow       = "| `left-pad` | 1.3.0 | ISC | `Copyright (c) Pad` |"
+	fixtureEngineRow    = "| `interfig` | abc123 | MIT | `Copyright (c) Engine` |"
+	fixtureReactRow     = "| `react` | 19.0.0 | MIT | `Copyright (c) React` |"
 )
 
 // fixtureLock is renderFixtureSources' npm lock: the root project, a nested duplicate of one
@@ -43,12 +49,38 @@ const fixtureLock = `{"lockfileVersion":3,"packages":{` +
 	`"node_modules/@scope/util":{"version":"2.0.0","license":"MIT"},` +
 	`"node_modules/devtool":{"version":"9.9.9","license":"MIT","dev":true}}}`
 
+// fixtureFigureLicenses is renderFixtureSources' player license file: the interfig part, which
+// carries a URL for a version and is no npm package, and one bundled package.
+var fixtureFigureLicenses = "Third-party software in loader.js and player.js\n\n" +
+	figureLicenseRule + "\ninterfig https://example.com/tree/abc123/interfig\nLicense: MIT\n\nMIT License\n\nengine terms\n\n" +
+	figureLicenseRule + "\nreact 19.0.0\nLicense: MIT\n\nMIT License\n\nreact terms\n"
+
+// fixtureFigureLock is renderFixtureSources' figure lock: every entry is a dev dependency, as
+// in the real lock, and only the package the player bundles is a row.
+const fixtureFigureLock = `{"lockfileVersion":3,"packages":{"":{"name":"figures"},` +
+	`"node_modules/react":{"version":"19.0.0","license":"MIT","dev":true},` +
+	`"node_modules/esbuild":{"version":"0.1.0","license":"MIT","dev":true}}}`
+
+// fixtureInterfigVendor is renderFixtureSources' interfig pin.
+const fixtureInterfigVendor = `{"repo":"https://example.com","commit":"abc123"}`
+
 func renderFixtureSources() NoticeSources {
 	return NoticeSources{
-		GoMod:      []byte("module example.com/app\n\ngo 1.27\n\nrequire example.com/lib v1.2.3\n"),
-		NPMLock:    []byte(fixtureLock),
-		Dockerfile: "FROM gcr.io/distroless/static-debian13:nonroot@sha256:" + strings.Repeat("a", 64) + "\n",
+		GoMod:          []byte("module example.com/app\n\ngo 1.27\n\nrequire example.com/lib v1.2.3\n"),
+		NPMLock:        []byte(fixtureLock),
+		Dockerfile:     "FROM gcr.io/distroless/static-debian13:nonroot@sha256:" + strings.Repeat("a", 64) + "\n",
+		FigureLock:     []byte(fixtureFigureLock),
+		FigureLicenses: []byte(fixtureFigureLicenses),
+		InterfigVendor: []byte(fixtureInterfigVendor),
 	}
+}
+
+// bumpFigurePlayer returns sources whose player bundles react at version, rebuilt from a lock
+// that pins it there.
+func bumpFigurePlayer(sources NoticeSources, version string) NoticeSources {
+	sources.FigureLicenses = []byte(strings.Replace(string(sources.FigureLicenses), "react 19.0.0", "react "+version, 1))
+	sources.FigureLock = []byte(strings.Replace(string(sources.FigureLock), `"version":"19.0.0"`, `"version":"`+version+`"`, 1))
+	return sources
 }
 
 // replaceLock returns sources with one substitution applied to the npm lock.
@@ -145,6 +177,13 @@ func TestRenderNoticesFollowsEachSource(t *testing.T) {
 		{"a package changes to another reviewed license", func(s NoticeSources) NoticeSources {
 			return replaceLock(s, `"license":"ISC"`, `"license":"MIT"`)
 		}, []string{"| `left-pad` | 1.3.0 | MIT | `Copyright (c) Pad` |"}},
+		{"the interfig pin moves", func(s NoticeSources) NoticeSources {
+			s.InterfigVendor = []byte(`{"commit":"def456"}`)
+			return s
+		}, []string{"| `interfig` | def456 | MIT | `Copyright (c) Engine` |"}},
+		{"the player is rebuilt with a newer bundled package", func(s NoticeSources) NoticeSources {
+			return bumpFigurePlayer(s, "19.1.0")
+		}, []string{"| `react` | 19.1.0 | MIT | `Copyright (c) React` |"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -219,6 +258,22 @@ func TestRenderNoticesFailsLoudly(t *testing.T) {
 			[]string{"left-pad 1.4.0 (ISC) ships", "disagree"}},
 		{"a renamed heading", strings.Replace(renderFixture, "## Go modules", "## Go dependencies", 1), renderFixtureSources(),
 			[]string{`"## Go modules"`}},
+		{"a player not rebuilt after a lock bump", renderFixture, func() NoticeSources {
+			s := renderFixtureSources()
+			s.FigureLock = []byte(strings.Replace(fixtureFigureLock, `"version":"19.0.0"`, `"version":"19.1.0"`, 1))
+			return s
+		}(), []string{"names react 19.0.0", "does not install", "bundle.mjs"}},
+		{"a bundled package without a row", renderFixture, func() NoticeSources {
+			s := renderFixtureSources()
+			s.FigureLicenses = append(s.FigureLicenses, "\n"+figureLicenseRule+"\nscheduler 0.1.0\nLicense: MIT\n\nterms\n"...)
+			s.FigureLock = []byte(strings.Replace(string(s.FigureLock), `"node_modules/esbuild"`, `"node_modules/scheduler":{"version":"0.1.0","license":"MIT","dev":true},"node_modules/esbuild"`, 1))
+			return s
+		}(), []string{"npm packages of the figure player: scheduler 0.1.0 (MIT) ships", "holds no row for scheduler"}},
+		{"an interfig pin without a commit", renderFixture, func() NoticeSources {
+			s := renderFixtureSources()
+			s.InterfigVendor = []byte(`{"repo":"https://example.com"}`)
+			return s
+		}(), []string{"vendor.json: it pins no commit"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -265,6 +320,19 @@ func TestRenderNoticesAtTheTableEdges(t *testing.T) {
 	if _, err := RenderNotices(renderFixture, NoticeSources{GoMod: renderFixtureSources().GoMod, NPMLock: []byte("lockfileVersion: 3")}); err == nil {
 		t.Error("a lock that is not JSON rendered")
 	}
+	for name, edit := range map[string]func(*NoticeSources){
+		"a figure lock that is not JSON": func(s *NoticeSources) { s.FigureLock = []byte("lockfileVersion: 3") },
+		"a vendor.json that is not JSON": func(s *NoticeSources) { s.InterfigVendor = []byte("commit: abc123") },
+		"a player license file without parts": func(s *NoticeSources) {
+			s.FigureLicenses = []byte("Third-party software in loader.js and player.js\n")
+		},
+	} {
+		sources := renderFixtureSources()
+		edit(&sources)
+		if _, err := RenderNotices(renderFixture, sources); err == nil {
+			t.Errorf("%s rendered", name)
+		}
+	}
 }
 
 // All three directions for the license check: an expression of reviewed identifiers passes
@@ -289,10 +357,13 @@ func TestUnknownLicenseTerms(t *testing.T) {
 	}
 }
 
-// ReadNoticeSources reads the three files from the checkout root and names the one missing.
+// ReadNoticeSources reads the six files from the checkout root and names the one missing.
 func TestReadNoticeSources(t *testing.T) {
 	root := t.TempDir()
-	files := map[string]string{"go.mod": "module m\n\ngo 1.27\n", "Dockerfile": "FROM scratch\n", noticesLockFile: fixtureLock}
+	files := map[string]string{
+		"go.mod": "module m\n\ngo 1.27\n", "Dockerfile": "FROM scratch\n", noticesLockFile: fixtureLock,
+		figureLockFile: fixtureFigureLock, figureLicensesFile: fixtureFigureLicenses, interfigVendorFile: fixtureInterfigVendor,
+	}
 	for rel, content := range files {
 		path := filepath.Join(root, filepath.FromSlash(rel))
 		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
@@ -303,14 +374,17 @@ func TestReadNoticeSources(t *testing.T) {
 		}
 	}
 	sources, err := ReadNoticeSources(context.Background(), root)
-	if err != nil || string(sources.GoMod) != files["go.mod"] || sources.Dockerfile != files["Dockerfile"] || string(sources.NPMLock) != fixtureLock {
+	if err != nil || string(sources.GoMod) != files["go.mod"] || sources.Dockerfile != files["Dockerfile"] || string(sources.NPMLock) != fixtureLock ||
+		string(sources.FigureLock) != fixtureFigureLock || string(sources.FigureLicenses) != fixtureFigureLicenses || string(sources.InterfigVendor) != fixtureInterfigVendor {
 		t.Fatalf("ReadNoticeSources = %+v, %v", sources, err)
 	}
-	if err := os.Remove(filepath.Join(root, filepath.FromSlash(noticesLockFile))); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ReadNoticeSources(context.Background(), root); err == nil || !strings.Contains(err.Error(), noticesLockFile) {
-		t.Errorf("a missing lock was not named: %v", err)
+	for _, rel := range []string{figureLicensesFile, noticesLockFile} {
+		if err := os.Remove(filepath.Join(root, filepath.FromSlash(rel))); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ReadNoticeSources(context.Background(), root); err == nil || !strings.Contains(err.Error(), rel) {
+			t.Errorf("a missing %s was not named: %v", rel, err)
+		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -348,5 +422,33 @@ func TestNoticeSourceParsersAtTheirEdges(t *testing.T) {
 	rows, err := goModuleRows([]byte("module m\n\nrequire (\n\ta.example/x v1.0.0\n)\n\nreplace a.example/x => b.example/y v2.0.0\n"))
 	if err != nil || len(rows) != 1 || rows[0] != (noticeRow{name: "b.example/y", version: "v2.0.0"}) {
 		t.Errorf("a replaced module was not recorded as what builds: %v %v", rows, err)
+	}
+}
+
+// Boundary: the player license parser reads a CRLF checkout like the LF file, takes the
+// interfig part for a part without turning it into a package row, and refuses a part cut off
+// after its rule or missing its license line.
+func TestFigurePlayerSourcesAtTheirEdges(t *testing.T) {
+	crlf := strings.ReplaceAll(fixtureFigureLicenses, "\n", "\r\n")
+	parts, err := bundledFigureParts([]byte(crlf))
+	if err != nil || len(parts) != 2 || parts[0] != (noticeRow{name: "interfig", version: "https://example.com/tree/abc123/interfig", license: "MIT"}) ||
+		parts[1] != (noticeRow{name: "react", version: "19.0.0", license: "MIT"}) {
+		t.Fatalf("CRLF license file parsed to %v, %v", parts, err)
+	}
+	rows, err := figurePlayerRows([]byte(crlf), []byte(fixtureFigureLock))
+	if err != nil || len(rows) != 1 || rows[0] != (noticeRow{name: "react", version: "19.0.0", license: "MIT"}) {
+		t.Fatalf("player rows = %v, %v; want react alone, dev flag notwithstanding", rows, err)
+	}
+	for name, text := range map[string]string{
+		"a rule at the end":      fixtureFigureLicenses + figureLicenseRule + "\n",
+		"no license line":        figureLicenseRule + "\nreact 19.0.0\nMIT\n",
+		"a heading of one field": figureLicenseRule + "\nreact\nLicense: MIT\n",
+	} {
+		if _, err := bundledFigureParts([]byte(text)); err == nil || !strings.Contains(err.Error(), "a part opens with") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if _, err := bundledFigureParts([]byte(strings.Repeat("\n", maxNoticeLines))); err == nil || !strings.Contains(err.Error(), "scan bound") {
+		t.Errorf("a license file past the scan bound parsed: %v", err)
 	}
 }

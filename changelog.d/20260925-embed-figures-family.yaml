@@ -1,0 +1,3 @@
+type: added
+title: Embed the figure engine in praetorctl as the staged Figure engine family of the managed asset registry (tools/figures/assets.go, an explicit list of 18 files that its tests hold to git ls-files and keep import-closed), capture it in the devcontainer bootstrap, record its texts in the shipped-text ledger, add the neutral tools/figures/README.md authoring guide, and list interfig, React, react-dom and scheduler in THIRD-PARTY-NOTICES.md, generated from the interfig pin and the embedded player's license file; adoption writes the family only once its docs:seo-portal wiring lands
+breaking: false

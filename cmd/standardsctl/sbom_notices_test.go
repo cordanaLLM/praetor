@@ -18,10 +18,15 @@ const sbomNoticesFixture = "# Third-party notices\n\n" +
 	"## Container base image\n\n| Image | Tag | License | Copyright |\n| :-- | :-- | :-- | :-- |\n" +
 	"| `gcr.io/distroless/static-debian13` | nonroot | Apache-2.0 | none stated |\n\n" +
 	"## npm packages of the Markdown gate\n\n| Package | Version | License | Copyright |\n| :-- | :-- | :-- | :-- |\n" +
-	"| `left-pad` | 1.3.0 | ISC | `Copyright (c) Pad` |\n"
+	"| `left-pad` | 1.3.0 | ISC | `Copyright (c) Pad` |\n\n" +
+	"## Vendored figure engine\n\n| Component | Commit | License | Copyright |\n| :-- | :-- | :-- | :-- |\n" +
+	"| `interfig` | abc123 | MIT | `Copyright (c) Engine` |\n\n" +
+	"## npm packages of the figure player\n\n| Package | Version | License | Copyright |\n| :-- | :-- | :-- | :-- |\n" +
+	"| `react` | 19.0.0 | MIT | `Copyright (c) React` |\n"
 
-// sbomNoticesRepo writes a checkout whose npm lock pins left-pad at version under license,
-// beside sbomNoticesFixture, and returns its root.
+// sbomNoticesRepo writes a checkout whose npm lock pins left-pad at version under license, with
+// a figure engine whose player bundles react and whose interfig pin is abc123, beside
+// sbomNoticesFixture, and returns its root.
 func sbomNoticesRepo(t *testing.T, version, license string) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -29,6 +34,12 @@ func sbomNoticesRepo(t *testing.T, version, license string) string {
 	writeFixtureFile(t, dir, "Dockerfile", "FROM gcr.io/distroless/static-debian13:nonroot\n")
 	writeFixtureFile(t, dir, "tools/markdownlint/package-lock.json",
 		`{"lockfileVersion":3,"packages":{"node_modules/left-pad":{"version":"`+version+`","license":"`+license+`"}}}`)
+	writeFixtureFile(t, dir, "tools/figures/package-lock.json",
+		`{"lockfileVersion":3,"packages":{"node_modules/react":{"version":"19.0.0","license":"MIT","dev":true}}}`)
+	rule := strings.Repeat("-", 78)
+	writeFixtureFile(t, dir, "tools/figures/dist/THIRD-PARTY-LICENSES.txt",
+		rule+"\ninterfig https://example.com/tree/abc123\nLicense: MIT\n\nterms\n\n"+rule+"\nreact 19.0.0\nLicense: MIT\n\nterms\n")
+	writeFixtureFile(t, dir, "tools/figures/third_party/interfig/vendor.json", `{"commit":"abc123"}`)
 	writeFixtureFile(t, dir, supplychain.NoticesFile, sbomNoticesFixture)
 	return dir
 }
@@ -88,6 +99,13 @@ func TestRunSBOMNotices_Boundary_RefusesWhatItCannotRender(t *testing.T) {
 	}
 	if err := runSBOM([]string{"notices", "--path", dir}); err == nil || !strings.Contains(err.Error(), "Dockerfile") {
 		t.Errorf("a missing Dockerfile was not named: %v", err)
+	}
+	figures := sbomNoticesRepo(t, "1.3.0", "ISC")
+	if err := os.Remove(filepath.Join(figures, "tools", "figures", "third_party", "interfig", "vendor.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := runSBOM([]string{"notices", "--check", "--path", figures}); err == nil || !strings.Contains(err.Error(), "vendor.json") {
+		t.Errorf("a missing interfig pin was not named: %v", err)
 	}
 	empty := t.TempDir()
 	if err := runSBOM([]string{"notices", "--path", empty}); err == nil || !strings.Contains(err.Error(), supplychain.NoticesFile) {

@@ -1,0 +1,27 @@
+# Every text the Figure engine family shipped at a managed path, oldest first: "<sha256>  <path>",
+# the digest taken over the text with LF line endings. The last line of a path is its current
+# text; every earlier line must be in the family's Prior. TestShippedTextLedger
+# (internal/managedasset/shipped_texts_test.go) enforces both directions. After a managed text
+# changes, for example when bundle.mjs rebuilds the player after a React or interfig bump:
+#   PRAETOR_UPDATE_SHIPPED_TEXTS=1 go test ./internal/managedasset -run 'TestShippedTextLedger$'
+# appends the new digest; then record the outgoing text in the family's Prior. Never rewrite or
+# drop a line.
+
+874d4438acdb3f01e93a2c41d6c5cf97371838f17c8dc2c71b8fad9f61bab828  tools/figures/core.mjs
+03d1e126c3d583f264d54a646b1f3532b6a5e989edfbf1911353c9dedb97584b  tools/figures/checks.mjs
+f75975e7f7cbb147b156c3a8f4a00bffef985aa18fa4ee67f6505479fd8e730c  tools/figures/build.mjs
+7de2745fd0d5fbbb280ec5fca5603e4a75f3f4ac32b00d77cf71539687939ea6  tools/figures/types.ts
+4b5dd2e7e951756aef8a150a2b461ef152f7fa9713219859a7c15e8da1073b82  tools/figures/third_party/interfig/vendor.json
+93c89f5ba72ef0111c735aebda14a5bf2bc3012948f092b64ff312f93510910c  tools/figures/third_party/interfig/VENDOR.md
+01fde0bedf83bdc185065d7af524a61690efe576a67f922eaff3a1280c17b63a  tools/figures/third_party/interfig/upstream/LICENSE
+c3f0015d374ea2cb211b15c8ab439ffd8d7184da733eac94abda87f5b6a780ae  tools/figures/third_party/interfig/upstream/src/svg.ts
+89cc4b323db9583e6af5253433af128a318a5a36d67351539c7b345e777b8a46  tools/figures/third_party/interfig/upstream/src/geometry.ts
+29a34a05176aa4e71dc80099050ef6d002fe7e3a7bb6052586f9baac899bc2e9  tools/figures/third_party/interfig/upstream/src/model.ts
+abd878ebc16730be4fe5aef0316230f079825a5723b461bcde48c87e770d8b53  tools/figures/dist/loader.js
+2db2e3bfda05a3776f165530a519b6c4a5def717b4dd4192484f8d86076a4a94  tools/figures/dist/player.js
+c2eed2e1431851ddca033c197728664db21fc82d766e465c44f210b949d57a18  tools/figures/dist/THIRD-PARTY-LICENSES.txt
+5712a0955e4102669a9c9dd6d1a4943ce2df86934a60f3a08bd5e3cbe6342d81  tools/figures/figures.css
+8cb476e7baceb9e1f9205248c125284d43c4eaf69886c84d00db999738f21fb0  tools/figures/mkdocs_hook.py
+b767cd0c78901610f3f35e7a983e73eaad62b5b1d0f6f2a0e369213abb80ef05  tools/figures/astro.mjs
+0eeb8c757e73dcb06007af467d979c275fa4a5c164ff73339985032edd90d115  tools/figures/serve.mjs
+043ff416cab0a7536c0816f564e2f44ea0e8daa7d294ef7722d1878b1c0962de  tools/figures/README.md

@@ -99,6 +99,60 @@ func TestMarkdownFamilyDeclaration(t *testing.T) {
 	}
 }
 
+// Positive: the figure engine family is registered under the documentation facet with its
+// nested inventory, refuse-on-first-adopt on, no hosted workflow and no earlier texts, and it
+// stays Staged, so the facet does not select it before its wiring lands.
+func TestFigureFamilyDeclaration(t *testing.T) {
+	families := Families()
+	index := slices.IndexFunc(families, func(f Family) bool { return f.Name == "Figure engine" })
+	if index < 0 {
+		t.Fatalf("the registry holds no figure engine family: %+v", families)
+	}
+	figures := families[index]
+	if figures.Facet != DocumentationFacet || figures.Directory != "tools/figures" || figures.Source != "tools/figures/assets.go" ||
+		!figures.RefuseForeign || figures.WorkflowFile != "" || len(figures.Prior) != 0 {
+		t.Fatalf("figure engine family = %+v", figures)
+	}
+	paths := figures.ManagedPaths()
+	for _, want := range []string{"tools/figures/core.mjs", "tools/figures/dist/player.js", "tools/figures/third_party/interfig/upstream/LICENSE", "tools/figures/README.md"} {
+		if !slices.Contains(paths, want) {
+			t.Fatalf("figure engine managed paths %v lack %s", paths, want)
+		}
+	}
+	if !figures.Staged || slices.ContainsFunc(ForFacet(DocumentationFacet), func(f Family) bool { return f.Name == figures.Name }) {
+		t.Fatal("the figure engine family is selected by the documentation facet before its facet wiring lands")
+	}
+}
+
+// Positive, negative and boundary: selectFacet keeps an unstaged family of the facet, skips a
+// Staged one and one of another facet, and reads no further than MaxFamilies.
+func TestSelectFacetSkipsStagedFamilies(t *testing.T) {
+	enabled, staged, other := fixtureFamily(), fixtureFamily(), fixtureFamily()
+	enabled.Name, staged.Name, other.Name = "enabled", "staged", "other"
+	staged.Staged = true
+	other.Facet = "custom:other"
+	names := func(families []Family) []string {
+		var out []string
+		for _, family := range families {
+			out = append(out, family.Name)
+		}
+		return out
+	}
+	if got := names(selectFacet([]Family{staged, enabled, other}, DocumentationFacet)); !slices.Equal(got, []string{"enabled"}) {
+		t.Fatalf("selected %v, want only the unstaged documentation family", got)
+	}
+	if got := selectFacet([]Family{staged}, DocumentationFacet); len(got) != 0 {
+		t.Fatalf("a Staged family was selected: %v", names(got))
+	}
+	many := make([]Family, MaxFamilies+1)
+	for index := range many {
+		many[index] = enabled
+	}
+	if got := selectFacet(many, DocumentationFacet); len(got) != MaxFamilies {
+		t.Fatalf("selected %d of %d families, want the MaxFamilies bound %d", len(got), len(many), MaxFamilies)
+	}
+}
+
 // Positive: a nested second family resolves paths, canonical bytes and its directive.
 func TestFamilyAccessorsPositive(t *testing.T) {
 	family := fixtureFamily()

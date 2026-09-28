@@ -1,12 +1,12 @@
 package supplychain
 
 // THIRD-PARTY-NOTICES.md names every third-party component the release archives and the
-// container image carry, and the archives and the image carry the file. Its four component
+// container image carry, and the archives and the image carry the file. Its six component
 // tables are generated: RenderNotices writes one row for each component the sources ship
 // (notices_sources.go), taking the name, the version and, for an npm package, the license
 // from the source. The cells no source records -- the copyright line, the name cell as
-// written and, for a Go module or the base image, the license -- come from the row the file
-// already holds for that component. The prose and the verbatim upstream license texts outside
+// written and, for a Go module, the base image or the vendored interfig source, the license --
+// come from the row the file already holds for that component. The prose and the verbatim upstream license texts outside
 // the tables are hand-written and kept as they stand.
 //
 // A version bump therefore regenerates: `praetorctl sbom notices` rewrites the row.
@@ -27,22 +27,25 @@ const NoticesFile = "THIRD-PARTY-NOTICES.md"
 // The "## " headings of NoticesFile whose tables the render writes. Renaming one stops the
 // render with the missing section named, so a rename cannot silently disable it.
 const (
-	noticesGoToolchain = "Go standard library and runtime"
-	noticesGoModules   = "Go modules"
-	noticesBaseImage   = "Container base image"
-	noticesNPM         = "npm packages of the Markdown gate"
+	noticesGoToolchain  = "Go standard library and runtime"
+	noticesGoModules    = "Go modules"
+	noticesBaseImage    = "Container base image"
+	noticesNPM          = "npm packages of the Markdown gate"
+	noticesFigureEngine = "Vendored figure engine"
+	noticesFigureNPM    = "npm packages of the figure player"
 )
 
 // noticeSections are the generated sections, in the order the render reports on them.
-var noticeSections = [...]string{noticesGoToolchain, noticesGoModules, noticesBaseImage, noticesNPM}
+var noticeSections = [...]string{noticesGoToolchain, noticesGoModules, noticesBaseImage, noticesNPM, noticesFigureEngine, noticesFigureNPM}
 
 // goToolchainLicense is the license of the Go standard library and runtime.
 const goToolchainLicense = "BSD-3-Clause"
 
-// licenseFromSource names the sections whose license cell the source states: the npm lock
-// records each package's license, and the toolchain's is goToolchainLicense. go.mod and a
-// Dockerfile record none, so a Go module or the base image keeps the license its row states.
-var licenseFromSource = map[string]bool{noticesGoToolchain: true, noticesNPM: true}
+// licenseFromSource names the sections whose license cell the source states: the npm locks
+// record each package's license, and the toolchain's is goToolchainLicense. go.mod, a
+// Dockerfile and vendor.json record none, so a Go module, the base image or the vendored
+// interfig source keeps the license its row states.
+var licenseFromSource = map[string]bool{noticesGoToolchain: true, noticesNPM: true, noticesFigureNPM: true}
 
 // noticeColumns is the cell count of a generated table row: name, version, license, copyright.
 const noticeColumns = 4
@@ -122,7 +125,7 @@ func CheckNotices(notices string, sources NoticeSources) error {
 	if rendered == current {
 		return nil
 	}
-	return fmt.Errorf("%s is out of step with go.mod, the Dockerfile and the npm lock; run `%s` to regenerate it:\n%s",
+	return fmt.Errorf("%s is out of step with go.mod, the Dockerfile, the npm locks and the figure engine; run `%s` to regenerate it:\n%s",
 		NoticesFile, noticeRegenerateHint, strings.Join(noticeChanges(current, rendered), "\n"))
 }
 
