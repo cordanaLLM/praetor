@@ -249,6 +249,10 @@ type Manifest struct {
 	// generated harnesses read it through Manifest.CleanupGotoException, so both grant exactly
 	// the same exception.
 	HISS *HISSPolicy `yaml:"hiss,omitempty"`
+	// Documentation tunes the locked documentation gate within bounds: larger Markdown
+	// inventory bounds and style exclusions for partial, generated and fixture Markdown. The
+	// gate reads it from this file at run time (#532, #534).
+	Documentation *DocumentationPolicy `yaml:"documentation,omitempty"`
 }
 
 // AdoptionPolicy declares generated artefacts this repository refuses.
@@ -300,6 +304,9 @@ func parseManifest(path string, data []byte) (*Manifest, error) {
 		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
 	}
 	if err := m.HISS.validate(); err != nil {
+		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
+	}
+	if err := validateManifestDocumentation(m); err != nil {
 		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
 	}
 

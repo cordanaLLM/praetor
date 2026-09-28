@@ -62,6 +62,8 @@ capabilities:
         - ui.external.react
         - ui.external.react_dom
         - clikit.cli
+        - ui.external.js_yaml
+        - ui.external.micromatch
     optional:
         - clikit.cli
         - mcp.server
@@ -406,6 +408,13 @@ dependencies:
       capability: ui.external.react_dom
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
+    - package: js-yaml
+      version: 5.2.2
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.js_yaml
+      status: gap
+      notes: External npm dependency requiring a target framework adapter or evaluation
     - package: markdownlint-cli2
       version: 0.23.2
       language: typescript
@@ -427,6 +436,13 @@ dependencies:
       capability: ui.external.micromark_extension_mdxjs
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
+    - package: micromatch
+      version: 4.0.8
+      language: typescript
+      ecosystem: npm
+      capability: ui.external.micromatch
+      status: gap
+      notes: External npm dependency requiring a target framework adapter or evaluation
     - package: parse5
       version: 8.0.1
       language: typescript
@@ -437,7 +453,7 @@ dependencies:
 readiness:
     basis: not-configured
     score: 0
-    total_third_party_deps: 52
+    total_third_party_deps: 54
     covered_deps: 0
-    gap_deps: 52
-updated_at: 2026-09-27T03:57:56.388047282Z
+    gap_deps: 54
+updated_at: 2026-09-28T10:39:31.576712558Z

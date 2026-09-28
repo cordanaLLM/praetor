@@ -38,15 +38,20 @@ and their vendor directories), generated `CHANGELOG.md`, caveman fixtures,
 private scratch/worktree trees, and dependency/vendor trees. Those files are not
 public author-written documentation: they have a generator, fixture-byte,
 caveman, or upstream format contract. Except for ignored untracked content, they
-remain in the broader private-link scan. The runner refuses symbolic-link inputs
+remain in the broader private-link scan. A repository adds its own style
+exclusions for partial, generated, or fixture Markdown in `.standards.yaml`
+([Repository settings](#repository-settings)). The runner refuses symbolic-link inputs
 and paths escaping the repository root; the self-test creates a Markdown symlink
 and proves the inventory fails closed. It also reads tracked symlink targets from
 the Git index and rejects an alias into either private scratch root, including an
 alias consumed by a snippet or image link when the ignored target is absent from
 the checkout.
 
-The inventory is bounded to 4,096 files, 1 MiB per file, and 64 MiB total. A
-bound being exceeded is an error, not a partially successful check. The Git
+The inventory is bounded to 4,096 files, 1 MiB per file, and 64 MiB total by
+default. A repository with a larger documentation tree raises the first two in
+`.standards.yaml` ([Repository settings](#repository-settings)); the 64 MiB
+aggregate bound is fixed. A bound being exceeded is an error, not a partially
+successful check, and the message names the setting that raises it. The Git
 index scan is bounded to 65,536 entries and 2,048 symlinks; each symlink target
 is bounded to 4,096 bytes.
 
@@ -58,6 +63,24 @@ The runner copies the canonical tool assets to a temporary directory, executes
 `markdownlint-cli2` binary directly. It does not use `npx` or leave a source-tree
 `node_modules/` directory. Every subprocess has a timeout, and the temporary
 installation is removed after success or failure.
+
+The locked configuration is hermetic. `markdownlint-cli2` 0.23.2 has no option
+that turns configuration discovery off: beside the `--config` file it reads
+`.markdownlint-cli2.{jsonc,yaml,cjs,mjs}` and
+`.markdownlint.{jsonc,json,yaml,yml,cjs,mjs}` from its working directory and
+from every directory down to a linted file (`getAndProcessDirInfo` and
+`enumerateParents` in its `markdownlint-cli2.mjs`). A `.markdownlint.*` file
+found there replaces the locked rules outright, and the `.cjs` and `.mjs` forms
+run repository code. The runner therefore copies the selected Markdown files, at
+their repository-relative paths, into an empty directory inside its temporary
+installation and lints them from there (`stageStyleTree` in
+`tools/markdownlint/verify.mjs`). No configuration file name ends in a Markdown
+suffix, so the copy holds none, and diagnostics keep repository-relative paths.
+A repository may keep its own `.markdownlint.json` for other tooling; the gate
+ignores it whether it loosens or tightens the rules, and never executes a
+configuration module. The self-test proves both directions, and a control run
+from the fixture root shows the same files take effect when `markdownlint-cli2`
+is left to discover them.
 
 The private-link rule also runs from that temporary copy. It acts only when started
 as a script, which `invokedAsScript` in `tools/markdownlint/no-private-scratch-links.mjs`
@@ -103,8 +126,9 @@ Praetor shipped at that path is Praetor's own unedited output, so plain
 file and names plain adoption as the repair. The family's `Prior` digests
 (`priorDigests` in `tools/markdownlint/assets.go`, read through
 `internal/managedasset/family.go`) list every earlier text of each managed
-path: the workflow, `markdownlint-cli2.yaml`, `verify.mjs` and
-`no-private-scratch-links.mjs`. `tools/markdownlint/testdata/prior/` holds each
+path: the workflow, `package.json`, `package-lock.json`,
+`markdownlint-cli2.yaml`, `verify.mjs` and `no-private-scratch-links.mjs`.
+`tools/markdownlint/testdata/prior/` holds each
 one (`TestPriorDigestsReproduce`,
 `TestAdoptionDocumentationGateRefreshesPriorTexts`).
 
@@ -122,6 +146,66 @@ and CI fails until all three are done:
 3. Record the outgoing text: add its digest to `priorDigests` and the text to
    `tools/markdownlint/testdata/prior/`. The test failure names the digest and
    the file whose history holds the text.
+
+## Repository settings
+
+A repository tunes the gate in the `documentation` block of `.standards.yaml`.
+Every key is optional, and an absent block keeps the defaults.
+
+```yaml
+documentation:
+  max_files: 8192
+  max_file_bytes: 4194304
+  style_exclude:
+    - "changelog.d/**"
+    - "docs/adr/_index_fragments/*.md"
+    - "**/testdata/**"
+```
+
+| Key | Default | Accepted | Effect |
+| :--- | ---: | :--- | :--- |
+| `max_files` | 4,096 | 4,096 to 16,384 | Markdown inventory file-count bound |
+| `max_file_bytes` | 1,048,576 | 1,048,576 to 8,388,608 | Per-file size bound |
+| `style_exclude` | none | Up to 64 globs of at most 256 bytes | Files the style rules skip |
+
+The bounds can be raised but not removed: HISS-02 requires one, and the
+ceilings are fixed in `tools/markdownlint/verify.mjs`. The private-link rule
+follows a raised bound. It accepts inventories up to the file-count ceiling, and
+each file's parse bound grows with its size ([Private scratch links](#private-scratch-links)).
+
+`style_exclude` entries are micromatch globs over repository-relative paths,
+matched with dot files included, so `docs/**` also reaches `docs/.hidden/`. A
+glob is refused when it is absolute, drive-lettered, or negated with `!`, when
+it contains a backslash or an empty, `.`, or `..` segment, or when it holds no
+letter or number, so wildcards alone (`**`, `*/**`) cannot stand for every file.
+Exclusions apply after the built-in style exclusions and before the style rules
+run. They narrow the style run only: the private-link rule still reads every
+inventory file, excluded or not. When the globs would remove every file the
+built-in selection styles, the gate fails instead of styling nothing.
+
+A declared block is reported before linting, with the count each glob removed:
+
+```text
+markdown-governance: .standards.yaml documentation bounds 8192 files, 4194304 bytes per file (defaults 4096, 1048576; ceilings 16384, 8388608)
+markdown-governance: style exclusion "changelog.d/**" matched 17 files
+markdown-governance: style exclusion "docs/adr/_index_fragments/*.md" matched 212 files
+markdown-governance: style exclusion "**/testdata/**" matched 30 files
+markdown-governance: styled 1402 public Markdown files (259 excluded by documentation.style_exclude); checked 1905 tracked/non-ignored Markdown files for private links
+```
+
+`praetorctl audit` validates the block when it loads the manifest
+(`internal/config/documentation.go`), with the same ranges and glob rules, and
+records the effective values on their own line:
+
+```text
+[PASS] Documentation gate settings from .standards.yaml: max_files 8192, max_file_bytes 4194304, 3 style exclusions (changelog.d/**, docs/adr/_index_fragments/*.md, **/testdata/**).
+```
+
+The gate reads the block at run time, so a declaration changes no locked asset.
+`TestDocumentationSettingsMirrorConfig` in `tools/markdownlint/assets_test.go`
+keeps the gate's constants equal to audit's, and `make docs-lint-test` replays
+the settings, raised-bound, style-exclusion, and hermetic-configuration
+fixtures.
 
 ## Private scratch links
 
@@ -165,7 +249,9 @@ Embedded HTML traversal is bounded to 65,536 aggregate nodes and eight nested
 `srcdoc` documents. Each `srcset` is bounded to 4,096 candidates. Embedded CSS
 is bounded to 65,536 tokens and 64 levels of delimiter/function nesting. The
 aggregate Markdown and HTML destination inventory is bounded to 262,144
-entries. MDX syntax-tree traversal is bounded to 65,536 nodes, 128 levels, and
+entries. Each file's Markdown parse is bounded to 262,144 events, or to one event
+per byte for a larger file, so the bound follows the per-file size bound;
+ordinary documentation parses to 0.2 to 0.3 events per byte. MDX syntax-tree traversal is bounded to 65,536 nodes, 128 levels, and
 32 properties per node. Exceeding any bound fails the gate instead of truncating
 the scan.
 
@@ -233,7 +319,8 @@ authorized one. Re-enabling the facet restores the same canonical surfaces.
 
 `praetorctl audit` verifies the assets, workflow, Makefile attachment, README
 badge and gate entry, effective scratch ignore rules, any configured formatter's
-inventory, and the required hosted context. When the facet is disabled, audit rejects stale Praetor
+inventory, and the required hosted context, and records any declared
+[repository settings](#repository-settings). When the facet is disabled, audit rejects stale Praetor
 documentation assets, exact Makefile marker lines, README contract text,
 formatter paths, or a structurally declared hosted status context instead of
 silently treating them as active. Operator-owned files at the same paths, prose
