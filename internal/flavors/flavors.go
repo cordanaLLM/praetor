@@ -19,7 +19,9 @@ type Flavor struct {
 	// UpdateFrequency decides whether a sync moves the flavor's tag on its own: one of the
 	// Frequency constants, or empty for automatic.
 	UpdateFrequency string `yaml:"update_frequency"`
-	// Stability is the flavor's declared stability label; the plan reports it beside the tag.
+	// Stability is a free-form label the plan reports beside the tag. It is informational by
+	// contract (docs/guides/releasing.md): any value loads and PlanSelected never reads it to
+	// choose an Action. A channel that needs caution holds its tag with FrequencyManual.
 	Stability string `yaml:"stability"`
 }
 

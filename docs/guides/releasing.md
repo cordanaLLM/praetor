@@ -296,7 +296,15 @@ and `on_patch` name the event that moves the source ref; every sync follows it
 automatically, and an undeclared frequency behaves the same way. `manual` holds the tag:
 `plan` and `sync` report the flavor as `HELD` and leave its tag where it is, whatever its
 source resolves to, until an operator names it with `--flavor`. Any other value fails the
-config load. `stability` is reported on every plan line and changes nothing else.
+config load.
+
+`stability` is a free-form label. `plan` and `sync` print it on every flavor line, any value
+loads, and it never moves, holds or protects a tag: two flavors that differ only in `stability`
+get the same plan. Caution for a pre-release channel comes from `update_frequency: manual`,
+which holds the tag until named, and from the source ref: a `refs/tags/v*` source never
+resolves to a prerelease tag. `TestPlanSelected_Negative_StabilityNeverChangesTheAction` in
+[`internal/flavors/stability_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/flavors/stability_test.go)
+pins this.
 
 ```bash
 praetorctl flavors plan                 # print each flavor's current and target commit

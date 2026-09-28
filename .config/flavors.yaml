@@ -2,7 +2,8 @@
 #
 # update_frequency: on_push, on_release and on_patch are followed by every sync;
 # manual holds the tag until 'praetorctl flavors sync --flavor=<name>' names it.
-# stability is reported on every plan line. See docs/guides/releasing.md.
+# stability is a free-form label reported on every plan line; it moves and holds no tag.
+# See docs/guides/releasing.md.
 version: 1
 flavors:
   bleeding:
