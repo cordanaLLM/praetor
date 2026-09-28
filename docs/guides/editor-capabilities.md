@@ -319,8 +319,10 @@ carries the line delta and the backup location that every adoption overwrite rec
 
 How a kept file stops warning depends on what it is:
 
-- **Non-JSON file that differs.** Delete it and re-run adoption, or run
-  `praetorctl editors generate`, which rewrites it with its template.
+- **Non-JSON file that differs.** Delete it and re-run adoption, which regenerates it
+  from the template for the repository's adopted profile. `praetorctl editors generate`
+  is no substitute here: it renders the framework profile whatever profile adoption
+  selected, so for another profile it rewrites files adoption had verified.
 - **JSONC comments, a trailing comma or a duplicate key.** Adoption and
   `praetorctl editors verify` read strict JSON only, so such a file never verifies,
   even when it holds every managed value. `praetorctl editors generate` refuses it

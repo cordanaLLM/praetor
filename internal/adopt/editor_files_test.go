@@ -198,8 +198,13 @@ func TestAdopt_Boundary_ForceKeepsNonJSONDriftAndMergesSublimeProject(t *testing
 	if got := mustRead(t, filepath.Join(repoPath, module)); got != "-- stale module\n" {
 		t.Fatalf("--force replaced a drifted %s:\n%s", module, got)
 	}
-	if !hasWarningContaining(rep, module+": kept unchanged") || !hasWarningContaining(rep, "editors generate") {
+	if !hasWarningContaining(rep, module+": kept unchanged") || !hasWarningContaining(rep, "Delete it and re-run adopt") {
 		t.Errorf("drifted %s must be warned about with the regenerate path, got %v", module, rep.Warnings)
+	}
+	// editors generate renders the framework profile only, so for another adopted profile it
+	// would rewrite files adoption verified; the warning must not send the adopter there.
+	if hasWarningContaining(rep, module+": kept unchanged") && hasWarningContaining(rep, "editors generate`, to regenerate") {
+		t.Errorf("drifted %s warning points at the profile-blind editors generate: %v", module, rep.Warnings)
 	}
 	got := mustRead(t, filepath.Join(repoPath, project))
 	for _, want := range []string{`"path": "src"`, `"font_size": 12`, `"path": "."`, `"tab_size": 4`} {

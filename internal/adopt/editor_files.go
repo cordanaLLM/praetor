@@ -70,7 +70,7 @@ func (s *adoptSession) applyEditorResolution(ctx context.Context, full string, f
 	case editor.WriteKept:
 		s.keepEditorFile(f.Path, "it differs from the "+f.Editor+" template (regenerating would change "+
 			describeLineDelta(existing, []byte(f.Content))+") and adoption does not overwrite it. Delete it and "+
-			"re-run adopt, or run `"+util.PraetorCLI+" editors generate`, to regenerate it")
+			"re-run adopt to regenerate it")
 	case editor.WritePreserved:
 		s.report.recordReconciled(f.Path, fmt.Sprintf("Existing developer-owned %s file preserved, not verified", f.Editor))
 	case editor.WritePresent:
