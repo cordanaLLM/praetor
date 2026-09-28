@@ -164,6 +164,43 @@ func TestSyncRegisterBlockBoundary(t *testing.T) {
 	})
 }
 
+// #572: the drift error named .standards.yaml in a repository without that file and called
+// a block that was never written "out of sync". It now tells the two cases apart and names
+// the policy's real origin, and still matches ErrRegisterBlockOutOfSync.
+func TestSyncRegisterBlockDriftNamesTheOrigin(t *testing.T) {
+	ctx := context.Background()
+	stale := registerTestSource + "\n" + config.RegisterSectionPrefix + config.RegisterBlockStart + "\nhand edit\n" + config.RegisterBlockEnd + "\n"
+	cases := []struct {
+		name, manifest, source, want, reject string
+	}{
+		{name: "positive: stale block against a manifest register section",
+			manifest: "version: 1\nregister:\n  tasks:\n    ci_debugging: docs\n", source: stale,
+			want: "AGENTS.md text register block is out of sync with .standards.yaml;", reject: "has no text register block"},
+		{name: "negative: missing block without a manifest", source: registerTestSource,
+			want:   "AGENTS.md has no text register block; run 'praetorctl compile-context' to render it from the default register (no .standards.yaml)",
+			reject: "out of sync with .standards.yaml"},
+		{name: "boundary: stale block against a manifest without a register section", manifest: "version: 1\n", source: stale,
+			want:   "out of sync with the default register (.standards.yaml declares no register section)",
+			reject: "out of sync with .standards.yaml"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			if tc.manifest != "" {
+				writeRegisterFixture(t, root, ".standards.yaml", tc.manifest)
+			}
+			agents := writeRegisterFixture(t, root, "AGENTS.md", tc.source)
+			changed, err := SyncRegisterBlock(ctx, root, agents, false)
+			if !changed || !errors.Is(err, ErrRegisterBlockOutOfSync) {
+				t.Fatalf("changed=%v err=%v, want drift", changed, err)
+			}
+			if msg := err.Error(); !strings.Contains(msg, tc.want) || strings.Contains(msg, tc.reject) {
+				t.Fatalf("error = %q, want %q and not %q", msg, tc.want, tc.reject)
+			}
+		})
+	}
+}
+
 // A Windows checkout holds AGENTS.md with CRLF endings. The splice must neither report
 // that as drift nor mix line endings when it writes.
 func TestSyncRegisterBlockIsLineEndingNeutral(t *testing.T) {

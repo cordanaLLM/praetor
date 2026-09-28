@@ -94,4 +94,10 @@ func TestCompileContextRegister_Boundary(t *testing.T) {
 	if !errors.Is(err, compiler.ErrRegisterBlockOutOfSync) {
 		t.Fatalf("missing block: expected ErrRegisterBlockOutOfSync, got %v", err)
 	}
+	// #572: the repository has no manifest, so the message names the default register and
+	// says the block is missing rather than sending the reader to .standards.yaml.
+	mustErrContain(t, err, "has no text register block; run 'praetorctl compile-context' to render it from the default register (no .standards.yaml)")
+	if strings.Contains(err.Error(), "out of sync with .standards.yaml") {
+		t.Fatalf("missing block without a manifest must not name .standards.yaml: %v", err)
+	}
 }

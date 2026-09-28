@@ -24,7 +24,10 @@ type RegisterAuthority struct {
 	manifestData    []byte
 	manifestSource  string
 	manifestPresent bool
-	valid           bool
+	// registerDeclared records whether the manifest carries a register section; without
+	// one the policy is the default register even when the manifest exists.
+	registerDeclared bool
+	valid            bool
 }
 
 // LoadRegisterAuthority reads the canonical manifest at root once. An absent manifest is
@@ -75,9 +78,25 @@ func registerAuthority(data []byte, present bool, source string) (RegisterAuthor
 	authority := RegisterAuthority{policy: manifest.EffectiveRegister(), manifestSHA256: hex.EncodeToString(digest[:]),
 		manifestData: append([]byte(nil), data...), manifestSource: source, manifestPresent: present, valid: true}
 	if manifest != nil && manifest.Register != nil {
+		authority.registerDeclared = true
 		authority.declaredTasks = manifest.Register.sortedTaskLabels()
 	}
 	return authority, nil
+}
+
+// PolicyOrigin names where the effective register policy comes from, for a message that
+// sends the reader to it: the manifest when it declares a register section, otherwise the
+// default register together with the reason no manifest section applies. Naming
+// .standards.yaml when that file is absent sent readers to a file that does not exist (#572).
+func (a RegisterAuthority) PolicyOrigin() string {
+	switch {
+	case a.registerDeclared:
+		return registerManifestName
+	case a.manifestPresent:
+		return "the default register (" + registerManifestName + " declares no register section)"
+	default:
+		return "the default register (no " + registerManifestName + ")"
+	}
 }
 
 // Resolve returns a manifest-digest-bound resolution.

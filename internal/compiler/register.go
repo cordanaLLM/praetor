@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 
 	"github.com/cordanaLLM/praetor/internal/agenthook"
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -11,9 +12,29 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
-// ErrRegisterBlockOutOfSync is returned by a verifying SyncRegisterBlock when the block in
-// AGENTS.md differs from what the manifest renders, a missing block included.
-var ErrRegisterBlockOutOfSync = errors.New("AGENTS.md text register block is out of sync with .standards.yaml; run 'praetorctl compile-context'")
+// ErrRegisterBlockOutOfSync is matched (errors.Is) by the error a verifying
+// SyncRegisterBlock returns when the block in AGENTS.md differs from what the register policy
+// renders, a missing block included. The returned error's text says which of the two it is
+// and names the policy's origin (config.RegisterAuthority.PolicyOrigin).
+var ErrRegisterBlockOutOfSync = errors.New("text register block is out of sync; run 'praetorctl compile-context'")
+
+// registerBlockDrift is the error a verifying SyncRegisterBlock returns. It used to be the bare
+// sentinel, which named .standards.yaml for every repository, including one without that file,
+// and called a block that was never written "out of sync" (#572).
+type registerBlockDrift struct {
+	file    string // base name of the verified source, such as AGENTS.md
+	origin  string // config.RegisterAuthority.PolicyOrigin
+	missing bool   // the source carries no register block at all
+}
+
+func (e *registerBlockDrift) Error() string {
+	if e.missing {
+		return fmt.Sprintf("%s has no text register block; run 'praetorctl compile-context' to render it from %s", e.file, e.origin)
+	}
+	return fmt.Sprintf("%s text register block is out of sync with %s; run 'praetorctl compile-context'", e.file, e.origin)
+}
+
+func (e *registerBlockDrift) Unwrap() error { return ErrRegisterBlockOutOfSync }
 
 // LoadRegisterBlock resolves the checked text register policy of the repository at root
 // (config.LoadCheckedRegisterAuthority) and renders its block. The block says a registered hook
@@ -21,28 +42,38 @@ var ErrRegisterBlockOutOfSync = errors.New("AGENTS.md text register block is out
 // client hook file (agenthook.DispatchGateRegistered); elsewhere nothing enforces the label, and
 // the block does not claim it (#504).
 func LoadRegisterBlock(ctx context.Context, root string) (config.RegisterPolicy, string, error) {
-	authority, err := config.LoadCheckedRegisterAuthority(ctx, root)
+	authority, block, err := loadRegister(ctx, root)
 	if err != nil {
 		return config.RegisterPolicy{}, "", err
+	}
+	return authority.Policy(), block, nil
+}
+
+// loadRegister is LoadRegisterBlock returning the authority itself, so SyncRegisterBlock can
+// name the policy's origin in a drift error.
+func loadRegister(ctx context.Context, root string) (config.RegisterAuthority, string, error) {
+	authority, err := config.LoadCheckedRegisterAuthority(ctx, root)
+	if err != nil {
+		return config.RegisterAuthority{}, "", err
 	}
 	gated, err := agenthook.DispatchGateRegistered(ctx, root)
 	if err != nil {
-		return config.RegisterPolicy{}, "", fmt.Errorf("text register: %w", err)
+		return config.RegisterAuthority{}, "", fmt.Errorf("text register: %w", err)
 	}
-	policy := authority.Policy()
-	block, err := config.RenderRegisterBlock(policy, gated)
+	block, err := config.RenderRegisterBlock(authority.Policy(), gated)
 	if err != nil {
-		return config.RegisterPolicy{}, "", err
+		return config.RegisterAuthority{}, "", err
 	}
-	return policy, block, nil
+	return authority, block, nil
 }
 
 // SyncRegisterBlock reconciles the text register block of agentsMdPath with the manifest at
 // root. It runs before compilation, so the six vendor files receive the block through the
 // unchanged renderer. With write it splices the block and reports whether the file changed;
-// without write it never touches the file and returns ErrRegisterBlockOutOfSync on drift.
+// without write it never touches the file and returns an error matching
+// ErrRegisterBlockOutOfSync on drift.
 func SyncRegisterBlock(ctx context.Context, root, agentsMdPath string, write bool) (changed bool, err error) {
-	_, block, err := LoadRegisterBlock(ctx, root)
+	authority, block, err := loadRegister(ctx, root)
 	if err != nil {
 		return false, err
 	}
@@ -70,7 +101,7 @@ func SyncRegisterBlock(ctx context.Context, root, agentsMdPath string, write boo
 		return false, nil
 	}
 	if !write {
-		return true, ErrRegisterBlockOutOfSync
+		return true, &registerBlockDrift{file: filepath.Base(agentsMdPath), origin: authority.PolicyOrigin(), missing: first < 0}
 	}
 	if err := contextopt.WriteSnapshot(ctx, agentsMdPath, []byte(util.RestoreLineEndings(out, crlf)), 0o644); err != nil {
 		return false, fmt.Errorf("failed to write %s: %w", agentsMdPath, err)

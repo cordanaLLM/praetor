@@ -1,0 +1,3 @@
+type: fixed
+title: "compile-context --verify tells a missing AGENTS.md text register block apart from a drifted one and names where the policy comes from: .standards.yaml when it declares a register section, otherwise the default register, instead of naming .standards.yaml in a repository that has none"
+breaking: false
