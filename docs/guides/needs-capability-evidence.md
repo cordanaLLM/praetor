@@ -304,7 +304,7 @@ the empty-denominator 100% (`needs.MappingAvailability`; ADR-0014 §4; tests in
 | `needs scan` | classifies; prints `Target Framework: not configured`, `Mapping availability: n/a (no target framework configured) (…)` and `Coverage basis: not-configured`; `--write` omits `framework` and `builder_kits` |
 | `needs report`, MCP `standards_needs_report` | header `Framework: not configured (set framework.targets.<lang>.module and .contract, or pass --framework) \| Mapping availability: n/a (no target framework configured)`; exit 0 |
 | `needs aggregate` | `**Target Framework**: not configured (…)`, `**Overall Fleet Target Framework Coverage**: n/a (no target framework configured)`; every leaderboard row's readiness is `n/a (…)` |
-| `needs epic` | the preview renders `**Target Framework**: not configured`; `needs epic --dev-dir` lists each repository with `Readiness: n/a (…)`; `--publish` refuses with `needs.ErrFrameworkNotConfigured` before the forge is contacted |
+| `needs epic` | the preview renders `**Target Framework**: not configured` and omits the substitution task with `nothing to rewrite: no target framework configured`; `needs epic --dev-dir` lists each repository with `Readiness: n/a (…)`; `--publish` refuses with `needs.ErrFrameworkNotConfigured` before the forge is contacted |
 | `needs migrate` | the dry run prints `Mapping availability: n/a (…)` and the blocker `nothing to rewrite: no target framework configured.`; `--apply` refuses with `needs.ErrFrameworkNotConfigured` |
 | `needs requests` | requests are synthesized for the classified gaps, each with empty `target_builder_kit` and `target_org` and the spec line `Target Builder Kit: unrouted (framework.targets.<lang>.builder_kits not set)`; the command prints `N of M requests unrouted` below its heading (`needs.UnroutedSummary`) |
 | `agent run praetor-needs-miner` | prints `Readiness n/a (…)` |
@@ -520,6 +520,37 @@ in `internal/needs/discovery_test.go`).
 `TestPublishPreMigrationEpic_ResumesPartialPublish` and
 `TestRegenerateFleetEpics_ReportsSkippedDirectories` in
 `internal/needs/epic_test.go` pin publishing and skip reporting.
+
+### Epic task scope
+
+An epic has five task slots. Each is scoped by what the scan found, so a
+repository is not handed work that does not fit it (`createChildTasks` in
+`internal/needs/epic.go`):
+
+| Fact | Read from | Effect on the tasks |
+| :--- | :--- | :--- |
+| Detected languages | the row's `language` and `languages` | task 1 phrases its error-handling audit and 3D test run per language: `go test -race ./...` for Go, `cargo test --workspace` for Rust, the project's test runner for Python, the package's `test` script for TypeScript, the build system's test target under ThreadSanitizer for C/C++. Task 2 asks to break circular module dependencies only for Python, TypeScript and C/C++; the Go compiler and Cargo already reject such cycles |
+| Go module at the repository root | `go.mod` | the gate's prefetch, security and race-test stages check only that module, so task 4 names every other detected language as tested and audited outside the gate |
+| Kubernetes manifests | `Chart.yaml`, `kustomization.yaml` or `helmfile.yaml` at the root, as the `infra-k8s` flavor detects them | task 2 adds replacing in-cluster DNS names with configured endpoints |
+| Declared runner routing | the fleet and repository tiers `config.LoadCascadingRunnerConfigContext` merges; the organisation tier is keyed by the forge owner, which the scan does not resolve | routing that differs from `DefaultRunnerPolicy` adds a check through `praetorctl audit` to task 5; routing that does not load adds repair work instead of failing the epic |
+| Target framework and proposed substitutions | the migration plan | task 3 is omitted when no framework is configured, or when the scan proposes no substitution against the configured one |
+
+An omitted task keeps its slot. The checklist names it with its reason and no
+open item, the next planned task depends on the planned task before it, and
+`--publish` creates no issue for it. `PreMigrationEpic.OmittedTasks`
+(`omitted_tasks` in JSON) lists the omitted slots. A written epic still carries
+all five `[TASK n/5]` markers that `praetorctl audit` checks. The diff-aware CI
+directive states intent: the epic reads no workflow, so it never claims that
+`praetorctl ci filter` already runs. Task 5 names `praetorctl sync --remote`,
+because `praetorctl sync` without `--remote` leaves the forge untouched.
+
+`internal/needs/epic_scope_test.go` pins the scope:
+`TestGeneratePreMigrationEpic_Negative_RustWorkspaceGetsNoForeignWork` (a Cargo
+workspace with no framework, cluster or runner signal),
+`TestGeneratePreMigrationEpic_Positive_SignalsBringTheirSteps` and the
+`Boundary` cases. `TestEpicCommands_Positive_ParseAgainstTheCLI` in
+`cmd/standardsctl/needs_epic_commands_test.go` parses every `praetorctl`
+command an epic names against the real flag sets.
 
 ### Application requires evidence
 

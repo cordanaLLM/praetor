@@ -193,12 +193,14 @@ func TestGeneratePreMigrationEpic_Negative(t *testing.T) {
 func TestWriteEpicMarkdown_Boundary(t *testing.T) {
 	tempFile := filepath.Join(t.TempDir(), "epics", "TARGET_EPIC.md")
 
+	facts := &epicFacts{languages: []languageSteps{genericLanguageSteps}, maxFuncLOC: config.HISSComplexityCeiling().MaxFuncLOC}
+	children, _ := splitEpicTasks(createChildTasks("sample-repo", &MigrationPlan{Framework: "example.com/acme/kit"}, facts))
 	epic := &PreMigrationEpic{
 		RepoName:          "sample-repo",
 		TargetFramework:   "example.com/acme/kit",
 		ReadinessScore:    75.0,
 		ChecklistMarkdown: "# Sample Epic Checklist",
-		ChildIssues:       createChildTasks("sample-repo", &MigrationPlan{Framework: "example.com/acme/kit"}, config.HISSComplexityCeiling().MaxFuncLOC),
+		ChildIssues:       children,
 	}
 
 	if err := WriteEpicMarkdown(context.Background(), epic, tempFile); err != nil {
