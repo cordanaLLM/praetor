@@ -5,14 +5,19 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/adopt"
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/gating"
+	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
 	"github.com/cordanaLLM/praetor/internal/paperclip"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // writePaperclipFixtureHarness writes a valid .paperclip harness into dir.
@@ -23,7 +28,7 @@ func writePaperclipFixtureHarness(t *testing.T, dir string) {
 	// the repository the fixture's receipts attest.
 	identified := t.TempDir()
 	writeFixtureFile(t, identified, ".standards.yaml", "repository:\n  owner: acme\n  name: widget\n")
-	harness, err := paperclip.SynthesizeHarness(context.Background(), identified, 0)
+	harness, err := paperclip.SynthesizeHarness(context.Background(), identified, hisscatalog.Facts{})
 	if err != nil {
 		t.Fatalf("SynthesizeHarness: %v", err)
 	}
@@ -222,5 +227,94 @@ func TestPaperclipVerify_InReviewReceiptOnDisk(t *testing.T) {
 	}
 	if err := runPaperclip(verify); !errors.Is(err, lockdown.ErrCommitMismatch) {
 		t.Fatalf("a committed receipt attests the parent, not HEAD; want ErrCommitMismatch, got %v", err)
+	}
+}
+
+// TestDogfoodingPaperclipHarness: the repository's own .paperclip/harness.json and rules.md are
+// the bytes `praetorctl paperclip harness` synthesizes for it now. register.sources in
+// .standards.yaml binds both, so a synthesis change that leaves them stale would ship a harness
+// the release no longer writes and a census digest pinned to it. Regenerate with
+// `praetorctl paperclip harness --path=.`, then re-pin register.sources.sha256 from
+// `praetorctl caveman check --root=. --configured-sources`. A CRLF checkout compares as LF.
+func TestDogfoodingPaperclipHarness(t *testing.T) {
+	root := filepath.Join("..", "..")
+	facts, warnings, err := adopt.RepositoryHISSFacts(t.Context(), root)
+	if err != nil || len(warnings) != 0 {
+		t.Fatalf("RepositoryHISSFacts(repository root): warnings=%q err=%v", warnings, err)
+	}
+	harness, err := paperclip.SynthesizeHarness(t.Context(), root, facts)
+	if err != nil {
+		t.Fatalf("SynthesizeHarness(repository root): %v", err)
+	}
+	synthesized := t.TempDir()
+	if err := paperclip.WriteHarness(harness, synthesized); err != nil {
+		t.Fatalf("WriteHarness: %v", err)
+	}
+	for _, name := range []string{"harness.json", "rules.md"} {
+		want, wantErr := os.ReadFile(filepath.Join(synthesized, ".paperclip", name))
+		got, gotErr := os.ReadFile(filepath.Join(root, ".paperclip", name))
+		if wantErr != nil || gotErr != nil {
+			t.Fatalf("read .paperclip/%s: synthesized %v, repository %v", name, wantErr, gotErr)
+		}
+		if normalized, _ := util.NormalizeLineEndings(string(got)); normalized != string(want) {
+			t.Errorf(".paperclip/%s is stale; run `praetorctl paperclip harness --path=.`:\n--- repository\n%s\n--- synthesized\n%s",
+				name, normalized, want)
+		}
+	}
+}
+
+// TestDogfoodingAgentsFuncLOC holds the HISS-04 row of the repository's own AGENTS.md to the
+// function length `praetorctl audit` enforces here, resolved as the audit resolves it
+// (config.ResolveRepositoryPolicy): the row stated 75 while the audit enforced 60 (#68).
+func TestDogfoodingAgentsFuncLOC(t *testing.T) {
+	root := filepath.Join("..", "..")
+	agents, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := hisscatalog.ParseGatedInvariants(string(agents))
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, _, err := config.ResolveRepositoryPolicy(t.Context(), filepath.Join(root, config.ManifestFileName), nil)
+	if err != nil || policy == nil {
+		t.Fatalf("resolve the repository policy: %v, %v", policy, err)
+	}
+	want := fmt.Sprintf("func LOC <= %d,", policy.Complexity.MaxFuncLOC)
+	for _, row := range rows {
+		if row.ID == "HISS-04" {
+			if !strings.Contains(row.Rule, want) {
+				t.Fatalf("AGENTS.md HISS-04 states %q; the audit enforces %q", row.Rule, want)
+			}
+			return
+		}
+	}
+	t.Fatal("AGENTS.md gates no HISS-04 row")
+}
+
+// TestPaperclipHarness_WarnsOnUndocumentedException pins the CLI output of `praetorctl paperclip
+// harness` for a declared exception. Negative: a declaration whose document is missing prints one
+// [WARN] line naming it before the [OK] line. Positive: with the document there is no warning.
+func TestPaperclipHarness_WarnsOnUndocumentedException(t *testing.T) {
+	for _, documented := range []bool{false, true} {
+		repo := t.TempDir()
+		writeFixtureFile(t, repo, ".standards.yaml", "version: 1\nrepository:\n  owner: acme\n  name: widget\n"+
+			"hiss:\n  exceptions:\n    c_goto_cleanup: cleanup-goto.md\n")
+		if documented {
+			writeFixtureFile(t, repo, "cleanup-goto.md", "# Cleanup goto\n")
+		}
+		out, err := captureStdout(t, func() error {
+			return runPaperclipHarness(t.Context(), []string{"--path=" + repo})
+		})
+		if err != nil {
+			t.Fatalf("documented=%v: %v", documented, err)
+		}
+		warn := "[WARN] .standards.yaml hiss.exceptions.c_goto_cleanup names cleanup-goto.md, which is no regular file in the repository;"
+		if got := strings.Contains(out, warn); got == documented || strings.Count(out, "[WARN]") != strings.Count(out, warn) {
+			t.Errorf("documented=%v: output\n%s\nwant the undocumented warning only when the document is missing", documented, out)
+		}
+		if !strings.Contains(out, "[OK] Synthesized Paperclip harness") || strings.Index(out, "[OK]") < strings.LastIndex(out, "[WARN]") {
+			t.Errorf("documented=%v: output\n%s\nwant every warning before the [OK] line", documented, out)
+		}
 	}
 }

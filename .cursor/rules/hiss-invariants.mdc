@@ -29,7 +29,7 @@ make verify-all
 | :--- | :--- | :--- | :--- |
 | **HISS-01** control flow | recursion prohibited; call graph = DAG | build | immediate build failure |
 | **HISS-02** loops, I/O | scalar upper bound on every loop; explicit `context.Context` timeout on every I/O | Semgrep / AST | error |
-| **HISS-04** complexity | McCabe cyclomatic <= 10, cognitive <= 15, func LOC <= 75, statements <= 50 | AST sweep | blocker |
+| **HISS-04** complexity | McCabe cyclomatic <= 10, cognitive <= 15, func LOC <= 60, statements <= 50 | AST sweep | blocker |
 | **HISS-07** errors | zero `.unwrap()` / `.expect()`; every error handled or wrapped with context | linter / compiler | error |
 | **HISS-10** warnings | zero warnings: compiler, linter, format sweeps | sweep | exit code 1 |
 | **HISS-15** 3D testing | positive + negative + boundary tests mandatory, every public interface | CI coverage gate | blocker |

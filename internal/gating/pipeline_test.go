@@ -174,3 +174,37 @@ func TestRemoveWorktree_Boundary_WithoutCancelUnderCancelledContext(t *testing.T
 		t.Errorf("worktree %s must be removed even when context is cancelled", wt.Path)
 	}
 }
+
+// cleanupGotoStage runs the HISS stage over one C unit whose forward goto jumps to the sole
+// cleanup label, under a manifest declaring hiss.exceptions.c_goto_cleanup, with its document
+// when documented.
+func cleanupGotoStage(t *testing.T, declared, documented bool) (string, error) {
+	t.Helper()
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "unit.c"), "int f(int n) {\n    if (n < 0)\n        goto out;\n    n = 1;\nout:\n    return n;\n}\n")
+	manifest := "version: 1\nrepository:\n  owner: example\n  name: demo\n"
+	if declared {
+		manifest += "hiss:\n  exceptions:\n    c_goto_cleanup: cleanup-goto.md\n"
+	}
+	writeFile(t, filepath.Join(root, ".standards.yaml"), manifest)
+	if documented {
+		writeFile(t, filepath.Join(root, "cleanup-goto.md"), "# Cleanup goto\n")
+	}
+	cfg, _ := newTestConfig(t, root, false)
+	return runHissStage(context.Background(), cfg)
+}
+
+// TestRunHissStage_CleanupGotoException: the gate accepts exactly the cleanup gotos the audit
+// accepts (#68). Positive: a declared, documented exception passes a single-level forward
+// cleanup goto. Negative: without the declaration the goto fails the ratchet. Boundary: a
+// declaration whose document is missing fails the ratchet too.
+func TestRunHissStage_CleanupGotoException(t *testing.T) {
+	if msg, err := cleanupGotoStage(t, true, true); err != nil || !strings.Contains(msg, "0 infractions") {
+		t.Fatalf("documented exception: msg=%q err=%v; want the cleanup goto accepted", msg, err)
+	}
+	for name, declared := range map[string]bool{"undeclared": false, "undocumented": true} {
+		if _, err := cleanupGotoStage(t, declared, false); err == nil || !strings.Contains(err.Error(), "HISS-01") {
+			t.Errorf("%s: err = %v; want the goto to fail the ratchet as HISS-01", name, err)
+		}
+	}
+}

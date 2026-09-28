@@ -17,7 +17,7 @@ func receiptRow(t *testing.T, receiptSection string) (string, *Harness) {
 	t.Helper()
 	repo := t.TempDir()
 	writeRepoFile(t, repo, ".standards.yaml", "repository:\n  owner: acme\n  name: widget\n"+receiptSection)
-	h, err := SynthesizeHarness(t.Context(), repo, 0)
+	h, err := SynthesizeHarness(t.Context(), repo, unknownFacts)
 	if err != nil {
 		t.Fatal(err)
 	}

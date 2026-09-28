@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -61,12 +64,13 @@ var harnessInvariants = [...]string{"HISS-01", "HISS-02", "HISS-04", "HISS-07", 
 // platform is the identity .standards.yaml declares, else the origin remote's; with neither
 // the error wraps util.ErrRepoIdentityUnresolved and no harness is returned, because the
 // platform names a repository and none may be guessed. The invariants are the HISS catalog's
-// adopted directives for the repository's languages (zero: unknown, every language clause
-// labelled), so a Rust or C repository is not handed Go's context.Context or a Go one Rust's
-// unwrap (#68). They carry no resolved function-length limit: adoption binds the harness in its
-// manifest step, before the policy that sets the limit is resolved, so HISS-04 states the
-// audit ceiling a policy may tighten.
-func SynthesizeHarness(ctx context.Context, repoPath string, languages hisscatalog.Language) (*Harness, error) {
+// adopted directives for facts (#68): the repository's languages (zero: unknown, every
+// language clause labelled), so a Rust or C repository is not handed Go's context.Context or a
+// Go one Rust's unwrap; the exceptions it declares and documents; and the function length its
+// audit enforces, or, while that is unresolved, the audit ceiling a stricter policy tightens. A
+// zero facts.CeilingFuncLOC is completed from config.AuditMaxFuncLOC, the ceiling every audit
+// applies, so HISS-04 always states a number the refresh key can enumerate.
+func SynthesizeHarness(ctx context.Context, repoPath string, facts hisscatalog.Facts) (*Harness, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("paperclip: context cannot be nil")
 	}
@@ -74,7 +78,10 @@ func SynthesizeHarness(ctx context.Context, repoPath string, languages hisscatal
 	if err != nil {
 		return nil, err
 	}
-	invariants, err := catalogInvariants(languages)
+	if facts.CeilingFuncLOC == 0 {
+		facts.CeilingFuncLOC = config.AuditMaxFuncLOC
+	}
+	invariants, err := catalogInvariants(facts)
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +90,7 @@ func SynthesizeHarness(ctx context.Context, repoPath string, languages hisscatal
 }
 
 // releaseHarness is this release's synthesis for platform under one set of repository facts:
-// whether .standards.yaml pins a receipt key, and the invariants rendered for the languages.
+// whether .standards.yaml pins a receipt key, and the invariants rendered for the HISS facts.
 // SynthesizeHarness and currentReleaseHarnesses both build from it, so the refresh key
 // enumerates exactly the text the synthesis writes.
 func releaseHarness(platform string, pinned bool, invariants []string) Harness {
@@ -104,15 +111,15 @@ func releaseHarness(platform string, pinned bool, invariants []string) Harness {
 	}
 }
 
-// catalogInvariants renders harnessInvariants from the HISS catalog for languages.
-func catalogInvariants(languages hisscatalog.Language) ([]string, error) {
+// catalogInvariants renders harnessInvariants from the HISS catalog for facts.
+func catalogInvariants(facts hisscatalog.Facts) ([]string, error) {
 	invariants := make([]string, 0, len(harnessInvariants))
 	for _, id := range harnessInvariants {
 		rule, ok := hisscatalog.LookupRule(id)
 		if !ok {
 			return nil, fmt.Errorf("paperclip: HISS catalog has no rule %s", id)
 		}
-		invariants = append(invariants, rule.ID+": "+rule.AdoptedDirective(hisscatalog.Facts{Languages: languages}))
+		invariants = append(invariants, rule.ID+": "+rule.AdoptedDirective(facts))
 	}
 	return invariants, nil
 }
@@ -208,17 +215,39 @@ func PriorGenerated(ctx context.Context, repoPath string, current *Harness) (Pri
 }
 
 // matchPrior returns the earlier synthesis harnessText renders byte for byte, or nil when it
-// renders none of them or current itself.
+// renders none of them or current itself. Text that does not decode as a harness renders no
+// synthesis, since every synthesis marshals to a harness, so it matches none.
 func matchPrior(harnessText string, current *Harness) (*Harness, error) {
 	currentText, err := MarshalHarness(current)
 	if err != nil || harnessText == string(currentText) {
 		return nil, err
 	}
-	priors, err := priorHarnesses(current)
+	onDisk, decoded := decodedHarness(harnessText)
+	if !decoded {
+		return nil, nil
+	}
+	priors, err := priorHarnesses(current, statedFuncLOCs(current.Invariants))
 	if err != nil {
 		return nil, err
 	}
+	return renderedPrior(harnessText, &onDisk, priors)
+}
+
+// decodedHarness decodes text as a harness; decoded is false for text that is no harness JSON.
+func decodedHarness(text string) (Harness, bool) {
+	var harness Harness
+	decoded := json.Unmarshal([]byte(text), &harness) == nil
+	return harness, decoded
+}
+
+// renderedPrior returns the prior harnessText renders byte for byte. onDisk is harnessText
+// decoded: only a prior equal to it field by field can render it, so only such a prior is
+// marshalled and compared byte for byte.
+func renderedPrior(harnessText string, onDisk *Harness, priors []Harness) (*Harness, error) {
 	for index := 0; index < len(priors); index++ {
+		if !sameHarness(onDisk, &priors[index]) {
+			continue
+		}
 		rendered, err := MarshalHarness(&priors[index])
 		if err != nil {
 			return nil, err
@@ -228,6 +257,12 @@ func matchPrior(harnessText string, current *Harness) (*Harness, error) {
 		}
 	}
 	return nil, nil
+}
+
+// sameHarness reports whether a and b hold the same values.
+func sameHarness(a, b *Harness) bool {
+	return a.Version == b.Version && a.Platform == b.Platform && a.AGitPushFormat == b.AGitPushFormat &&
+		slices.Equal(a.OperatingContract, b.OperatingContract) && slices.Equal(a.Invariants, b.Invariants)
 }
 
 // priorRules reports whether rules is a rendering of prior some release wrote: the current
@@ -263,11 +298,30 @@ func releaseText(harness, rules []byte) (string, string, bool) {
 	return harnessText, rulesText, err == nil
 }
 
+// statedFuncLOC matches the function length a HISS-04 invariant states (hisscatalog funcLOCLimit).
+var statedFuncLOC = regexp.MustCompile(`func LOC <= ([1-9][0-9]{0,5})\b`)
+
+// statedFuncLOCs returns each function length invariants state, once, in order. matchPrior
+// reads it from the current synthesis only, never from the harness on disk: a number read
+// from the file on disk would make any hand-edited length a candidate, and so earlier output.
+// It reads at most maxHarnessValues invariants, the most a valid harness carries.
+func statedFuncLOCs(invariants []string) []int {
+	var limits []int
+	text := strings.Join(invariants[:min(len(invariants), maxHarnessValues)], "\n")
+	for _, match := range statedFuncLOC.FindAllStringSubmatch(text, maxHarnessValues) {
+		if limit, err := strconv.Atoi(match[1]); err == nil && !slices.Contains(limits, limit) {
+			limits = append(limits, limit)
+		}
+	}
+	return limits
+}
+
 // priorHarnesses is every earlier synthesis for current's identity: each register directive
 // form under each push protocol, the Caveman release (cavemanHarness), then this release under
-// every repository fact combination (currentReleaseHarnesses).
-func priorHarnesses(current *Harness) ([]Harness, error) {
-	released, err := currentReleaseHarnesses(current.Platform)
+// every repository fact combination, with the function-length statements limitFacts accepts
+// for limits, the lengths the current synthesis states (currentReleaseHarnesses).
+func priorHarnesses(current *Harness, limits []int) ([]Harness, error) {
+	released, err := currentReleaseHarnesses(current.Platform, limits)
 	if err != nil {
 		return nil, err
 	}
@@ -285,20 +339,22 @@ func priorHarnesses(current *Harness) ([]Harness, error) {
 var receiptStates = [...]bool{false, true}
 
 // currentReleaseHarnesses renders this release for platform under every combination of the
-// repository facts SynthesizeHarness reads: the receipt key pinned or not, times every language
-// set (hisscatalog.AllLanguages). A harness adoption wrote is still unmodified output after the
-// operator pins receipt.public_key, as the unpinned row advises, or the repository's languages
-// change; recognising it lets plain adopt refresh it without --force, which would also rewrite
-// adopter-maintained files (#502). The set is enumerated rather than the fact-dependent rows
-// normalised away, so recognition stays byte for byte: an edit to the receipt row or to one
-// invariant still makes the harness operator-owned. It is bounded: 2 x (AllLanguages+1) values.
-// These are calls, so a later change to this text must first capture the rows as they stand as
-// literals, as cavemanOperatingContract captured #487's.
-func currentReleaseHarnesses(platform string) ([]Harness, error) {
-	sets := int(hisscatalog.AllLanguages) + 1
-	released := make([]Harness, 0, len(receiptStates)*sets)
-	for set := 0; set < sets; set++ {
-		invariants, err := catalogInvariants(hisscatalog.Language(set))
+// repository facts SynthesizeHarness reads: the receipt key pinned or not, times every HISS fact
+// combination releaseFacts builds from limits. A harness adoption wrote is still unmodified
+// output after the operator pins receipt.public_key, as the unpinned row advises, the
+// repository's languages or declared exceptions change, or its policy resolves the function
+// length the harness stated as the audit ceiling; recognising it lets plain adopt refresh it
+// without --force, which would also rewrite adopter-maintained files (#502). The set is
+// enumerated rather than the fact-dependent rows normalised away, so recognition stays byte
+// for byte: an edit to the receipt row or to one invariant, its function length included,
+// still makes the harness operator-owned (limitFacts). It is bounded:
+// 2 x len(releaseFacts(limits)) values. These are calls, so a later change to this text must
+// first capture the rows as they stand as literals, as cavemanOperatingContract captured #487's.
+func currentReleaseHarnesses(platform string, limits []int) ([]Harness, error) {
+	combinations := releaseFacts(limits)
+	released := make([]Harness, 0, len(receiptStates)*len(combinations))
+	for _, facts := range combinations {
+		invariants, err := catalogInvariants(facts)
 		if err != nil {
 			return nil, err
 		}
@@ -307,6 +363,45 @@ func currentReleaseHarnesses(platform string) ([]Harness, error) {
 		}
 	}
 	return released, nil
+}
+
+// releaseFacts is every HISS fact combination the refresh key accepts when the current
+// synthesis states limits: every language set (hisscatalog.AllLanguages) times every exception
+// set (hisscatalog.AllExceptions) times each function-length statement of limitFacts.
+func releaseFacts(limits []int) []hisscatalog.Facts {
+	statements := limitFacts(limits)
+	combinations := make([]hisscatalog.Facts, 0,
+		(int(hisscatalog.AllLanguages)+1)*(int(hisscatalog.AllExceptions)+1)*len(statements))
+	for languages := range hisscatalog.AllLanguages + 1 {
+		for exceptions := range hisscatalog.AllExceptions + 1 {
+			for _, facts := range statements {
+				facts.Languages, facts.Exceptions = languages, exceptions
+				combinations = append(combinations, facts)
+			}
+		}
+	}
+	return combinations
+}
+
+// limitFacts is every function-length statement the refresh key accepts as earlier output, for
+// a current synthesis stating limits. The audit ceiling (config.AuditMaxFuncLOC) comes from
+// config, never from a harness, in both forms: stated unresolved, which a policy that later
+// resolves replaces, and resolved at the ceiling. A plain number is accepted only when the
+// current synthesis states it. Any other plain length is indistinguishable from an operator's
+// edit, so it keeps the harness operator-owned: after the repository's resolved limit moves
+// (50 to 45, or 50 up to the ceiling), `praetorctl adopt --force` refreshes it.
+func limitFacts(stated []int) []hisscatalog.Facts {
+	ceiling := config.AuditMaxFuncLOC
+	statements := make([]hisscatalog.Facts, 0, 2+len(stated))
+	statements = append(statements,
+		hisscatalog.Facts{CeilingFuncLOC: ceiling},
+		hisscatalog.Facts{MaxFuncLOC: ceiling, CeilingFuncLOC: ceiling})
+	for _, limit := range stated {
+		if limit != ceiling {
+			statements = append(statements, hisscatalog.Facts{MaxFuncLOC: limit, CeilingFuncLOC: ceiling})
+		}
+	}
+	return statements
 }
 
 // cavemanHarness is the Caveman release's synthesis for current's identity: its contract with

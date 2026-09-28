@@ -5,19 +5,31 @@
 package paperclip
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 )
+
+// unknownFacts are the HISS facts of a repository whose languages, exceptions and function
+// length are unknown: every language clause labelled, no exception, the audit ceiling stated.
+var unknownFacts = hisscatalog.Facts{}
 
 // invariantsFor synthesizes the harness of an acme/widget repository for languages and returns
 // its invariants joined one per line.
 func invariantsFor(t *testing.T, languages hisscatalog.Language) string {
 	t.Helper()
+	return invariantsForFacts(t, hisscatalog.Facts{Languages: languages})
+}
+
+// invariantsForFacts is invariantsFor for every HISS fact.
+func invariantsForFacts(t *testing.T, facts hisscatalog.Facts) string {
+	t.Helper()
 	repo := t.TempDir()
 	writeRepoFile(t, repo, ".standards.yaml", "repository:\n  owner: acme\n  name: widget\n")
-	h, err := SynthesizeHarness(t.Context(), repo, languages)
+	h, err := SynthesizeHarness(t.Context(), repo, facts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,5 +82,35 @@ func TestSynthesizeHarness_Boundary_UnknownLanguagesLabelEveryClause(t *testing.
 		if !strings.Contains(text, want) {
 			t.Errorf("unknown-language invariants lack %q:\n%s", want, text)
 		}
+	}
+}
+
+// TestSynthesizeHarness_Positive_ExceptionAndLimitFollowFacts: a C repository declaring its
+// cleanup-goto exception reads the exception instead of the zero-goto ban, and HISS-04 states
+// the function length the repository's audit enforces: a stricter limit alone, the ceiling
+// with the note that it caps the profile value (#68).
+func TestSynthesizeHarness_Positive_ExceptionAndLimitFollowFacts(t *testing.T) {
+	declared := invariantsForFacts(t, hisscatalog.Facts{Languages: hisscatalog.LanguageC, Exceptions: hisscatalog.ExceptionCleanupGoto, MaxFuncLOC: 50})
+	for _, want := range []string{"C/C++: `goto` only forward jump to sole label of same function; label directly in function body, outside nested blocks; label named `cleanup` / `out` / `err` / `fail` or listed in `hiss.exceptions.c_goto_cleanup_labels` (declared exception); audit reports every other `goto`",
+		"; func LOC <= 50\n"} {
+		if !strings.Contains(declared, want) {
+			t.Errorf("invariants lack %q:\n%s", want, declared)
+		}
+	}
+	atCeiling := invariantsForFacts(t, hisscatalog.Facts{Languages: hisscatalog.LanguageC, MaxFuncLOC: config.AuditMaxFuncLOC})
+	if want := fmt.Sprintf("func LOC <= %d (audit ceiling)", config.AuditMaxFuncLOC); !strings.Contains(atCeiling, want) {
+		t.Errorf("invariants lack %q:\n%s", want, atCeiling)
+	}
+}
+
+// TestSynthesizeHarness_Negative_NoExceptionWithoutDeclaration: a C repository that declares
+// nothing keeps the zero-goto ban, and a Go repository never reads the C exception.
+func TestSynthesizeHarness_Negative_NoExceptionWithoutDeclaration(t *testing.T) {
+	if text := invariantsFor(t, hisscatalog.LanguageC); !strings.Contains(text, "C/C++: zero `goto`") || strings.Contains(text, "declared exception") {
+		t.Errorf("undeclared C invariants:\n%s", text)
+	}
+	goText := invariantsForFacts(t, hisscatalog.Facts{Languages: hisscatalog.LanguageGo, Exceptions: hisscatalog.ExceptionCleanupGoto})
+	if !strings.Contains(goText, "Go: zero `goto`") || strings.Contains(goText, "C/C++") {
+		t.Errorf("Go invariants with the C exception declared:\n%s", goText)
 	}
 }

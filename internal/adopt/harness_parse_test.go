@@ -24,7 +24,7 @@ func TestHarnessDirectives_ParseGatedInvariants(t *testing.T) {
 	}
 	for i, rule := range rules {
 		check, failure := rule.Adopted(hisscatalog.AllPipelines)
-		want := hisscatalog.GatedInvariant{ID: rule.ID, Scope: rule.Scope, Rule: rule.AdoptedDirective(hisscatalog.Facts{}), Enforcement: check, OnFail: failure}
+		want := hisscatalog.GatedInvariant{ID: rule.ID, Scope: rule.Scope, Rule: rule.AdoptedDirective(repositoryFacts(nil, 0)), Enforcement: check, OnFail: failure}
 		if gated[i] != want {
 			t.Errorf("row %d parsed as %+v, want %+v", i, gated[i], want)
 		}

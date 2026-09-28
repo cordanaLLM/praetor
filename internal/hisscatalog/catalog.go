@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -53,11 +54,16 @@ var catalog = []Rule{
 		ID:            "HISS-01",
 		Title:         "Control Flow - Acyclic DAG Control Flow",
 		Specification: "Call graphs must form a Directed Acyclic Graph: G = (V, E), ∀v ∈ V, (v, v) ∉ E*\nDirect and mutual recursion are strictly prohibited in production runtimes.",
-		Enforcement:   "The internal/hiss scanner, deciding a subset per language. Go: goto, direct recursion, and mutual or indirect recursion between plain functions (a cycle through methods is not decided). Rust and Python: direct recursion only. C and C++: goto only. Each claim replays against .config/hiss/coverage.yaml via 'praetorctl hiss coverage --verify'.",
+		Enforcement:   "The internal/hiss scanner, deciding a subset per language. Go: goto, direct recursion, and mutual or indirect recursion between plain functions (a cycle through methods is not decided). Rust and Python: direct recursion only. C and C++: goto only, less the single-level forward cleanup gotos a declared hiss.exceptions.c_goto_cleanup accepts (hiss.CleanupGoto). Each claim replays against .config/hiss/coverage.yaml via 'praetorctl hiss coverage --verify'.",
 		FailureAction: "Immediate build failure.",
 		Scope:         "control flow",
-		Directive:     []Clause{{Text: "recursion prohibited; call graph = DAG"}, {Languages: LanguageGo | LanguageC, Text: "zero `goto`"}},
-		Adoption:      auditCheck(scannedLanguages, "Go `goto`, recursion + plain-function call cycles; Rust, Python direct recursion; C `goto`"),
+		Directive: []Clause{
+			{Text: "recursion prohibited; call graph = DAG"},
+			{Languages: LanguageGo | LanguageC, Text: "zero `goto`", Waiver: ExceptionCleanupGoto},
+			{Languages: LanguageC, Exception: ExceptionCleanupGoto,
+				Text: hiss.CleanupGotoRule() + " (declared exception); audit reports every other `goto`"},
+		},
+		Adoption: auditCheck(scannedLanguages, "Go `goto`, recursion + plain-function call cycles; Rust, Python direct recursion; C `goto`"),
 	},
 	{
 		ID:            "HISS-02",

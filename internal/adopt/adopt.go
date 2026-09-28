@@ -18,6 +18,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/editor"
 	"github.com/cordanaLLM/praetor/internal/flavor"
 	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/state"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -122,6 +123,18 @@ type adoptSession struct {
 	// declined carries adoption.decline from the repository's existing manifest, read before
 	// the chain runs so a repository's recorded decision applies to the run that follows it.
 	declined []string
+	// cleanupGoto is the cleanup-goto exception the existing manifest declares and documents
+	// (config.Manifest.CleanupGotoException), read before the chain runs like declined: the
+	// legacy-debt scan honours it as the audit does, and exceptions states it in the harnesses
+	// (harnessExceptions).
+	cleanupGoto hiss.CleanupGoto
+	exceptions  hisscatalog.Exception
+	// paperclipLimit is the function length the Paperclip harness states, resolved once per run
+	// (harnessFuncLOC) so every step renders the harness the manifest step bound.
+	paperclipLimit struct {
+		resolved bool
+		limit    int
+	}
 }
 
 // adoptStep is one reconciliation step of the adoption chain.
@@ -153,6 +166,10 @@ func Adopt(ctx context.Context, opts AdoptOptions) (*AdoptReport, error) {
 	}
 	report.Archetype = adoptionArchetype(decision, verification)
 	report.Verification = verification
+	cleanupGoto, undocumented := declared.CleanupGotoException(normPath)
+	if undocumented != "" {
+		report.addWarning("%s", undocumented)
+	}
 	s := &adoptSession{
 		repoPath:     normPath,
 		arch:         report.Archetype,
@@ -161,6 +178,8 @@ func Adopt(ctx context.Context, opts AdoptOptions) (*AdoptReport, error) {
 		report:       report,
 		verification: verification,
 		declined:     manifestDeclines(declared),
+		cleanupGoto:  cleanupGoto,
+		exceptions:   harnessExceptions(cleanupGoto),
 	}
 	if err := s.resolveIdentity(ctx); err != nil {
 		report.addError("%s", err)
@@ -539,7 +558,7 @@ func reconcileBaseline(ctx context.Context, s *adoptSession) error {
 	// names none, as every other identity field adoption writes.
 	base := &baseline.Baseline{Version: 1, Repository: s.identity.coordinate(), CommitSHA: commit,
 		Infractions: make([]baseline.Infraction, 0)}
-	if err := scanLegacyDebt(ctx, s.repoPath, base, s.report, adoptionScanLimit(s)); err != nil {
+	if err := scanLegacyDebt(ctx, s.repoPath, base, s.report, s.legacyDebtScanOptions()); err != nil {
 		s.report.BaselineStatus = "failed"
 		return err
 	}
@@ -575,16 +594,20 @@ func (s *adoptSession) verifyExistingBaseline(full string) error {
 	return nil
 }
 
+// legacyDebtScanOptions scans the legacy debt as the audit will judge it: under the function
+// length the audit enforces (adoptionScanLimit) and the cleanup-goto exception the manifest
+// declares and documents.
+func (s *adoptSession) legacyDebtScanOptions() hiss.ScanOptions {
+	return hiss.ScanOptions{MaxFuncLOC: adoptionScanLimit(s), Cap: maxInfractionsCap, CleanupGoto: s.cleanupGoto}
+}
+
 // scanLegacyDebt fills base with the current HISS infractions of repoPath. The scan is
 // bounded by defaultTimeout and derived from the caller's context.
-func scanLegacyDebt(ctx context.Context, repoPath string, base *baseline.Baseline, report *AdoptReport, maxFuncLOC int) error {
+func scanLegacyDebt(ctx context.Context, repoPath string, base *baseline.Baseline, report *AdoptReport, opts hiss.ScanOptions) error {
 	scanCtx, cancel := context.WithTimeout(ctx, defaultTimeout)
 	defer cancel()
 
-	scanRep, err := hiss.Scan(scanCtx, repoPath, hiss.ScanOptions{
-		MaxFuncLOC: maxFuncLOC,
-		Cap:        maxInfractionsCap,
-	})
+	scanRep, err := hiss.Scan(scanCtx, repoPath, opts)
 	if err != nil {
 		return fmt.Errorf("scan legacy debt in %s: %w", repoPath, err)
 	}

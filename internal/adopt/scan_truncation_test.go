@@ -19,7 +19,7 @@ func TestScanLegacyDebtRejectsTruncationBeforeRecording(t *testing.T) {
 	}
 	base := &baseline.Baseline{Version: 1}
 	report := &AdoptReport{DebtBreakdown: map[string]int{}}
-	err := scanLegacyDebt(context.Background(), root, base, report, hiss.DefaultMaxFuncLOC)
+	err := scanLegacyDebt(context.Background(), root, base, report, hiss.ScanOptions{MaxFuncLOC: hiss.DefaultMaxFuncLOC, Cap: maxInfractionsCap})
 	if !errors.Is(err, hiss.ErrScanTruncated) {
 		t.Fatalf("capped legacy scan must fail: %v", err)
 	}

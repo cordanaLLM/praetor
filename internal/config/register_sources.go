@@ -18,7 +18,7 @@ const (
 	// values a whole contract extracts: every declared input may contribute one full table.
 	// The selected-byte bound in cavemansource stays the tighter aggregate limit.
 	MaxRegisterSourceOutputs = MaxRegisterSourceInputs * MaxRegisterSourceTableValues
-	maxRegisterSourcePath    = 256
+	maxRepositoryPath        = 256
 )
 
 // RegisterSourceFormat selects the deterministic parser for a declared source scope.
@@ -104,7 +104,7 @@ func (s RegisterSourceInput) Validate() error {
 }
 
 func (s RegisterSourceInput) validateIdentity() error {
-	if !validRegisterSourcePath(s.Path) {
+	if !validRepositoryPath(s.Path) {
 		return errors.New("path must be a clean local forward-slash path of at most 256 bytes")
 	}
 	if s.Surface != SurfaceMCP && s.Surface != SurfaceHooks && s.Surface != SurfacePrompts {
@@ -130,8 +130,11 @@ func (s RegisterSourceInput) validateParser() error {
 	return nil
 }
 
-func validRegisterSourcePath(value string) bool {
-	return value != "" && len(value) <= maxRegisterSourcePath && !strings.ContainsAny(value, "\\\x00\r\n") &&
+// validRepositoryPath reports whether value names a file inside the repository the way the
+// manifest spells one: a clean forward-slash path of at most maxRepositoryPath bytes, never
+// absolute or escaping. register.sources inputs and the hiss.exceptions documents share it.
+func validRepositoryPath(value string) bool {
+	return value != "" && len(value) <= maxRepositoryPath && !strings.ContainsAny(value, "\\\x00\r\n") &&
 		!strings.HasPrefix(value, "/") && path.Clean(value) == value && value != "." &&
 		value != ".." && !strings.HasPrefix(value, "../")
 }

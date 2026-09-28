@@ -422,17 +422,28 @@ func scanNativeLines(lines []string, rel string, rep *ScanReport, opts ScanOptio
 	// header test and the brace tracker must all see the same view, or a block comment
 	// closes for one of them and not the others.
 	stripper := &literalStripper{syn: cLikeSyntax}
+	gotos := &nativeGotos{rel: rel, rep: rep, allow: opts.CleanupGoto}
 	for idx, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		code := stripper.strip(line)
 		scanNativeLineInvariants(code, rel, idx+1, rep)
+		inBody := t.inFunc
+		gotos.observe(code, idx+1, inBody, t.level)
 		name, isHeader := nativeFuncHeader(code)
 		isHeader = !t.inFunc && isHeader
 		t.observe(code, trimmed, idx, isHeader, name)
+		if inBody && !t.inFunc {
+			gotos.close()
+		}
 	}
+	// A body the file never closes still ends here: its held gotos are decided on what was
+	// seen, so an unbalanced file cannot keep one from being reported.
+	gotos.close()
 }
 
-// scanNativeLineInvariants inspects one line with literals and comments stripped.
+// scanNativeLineInvariants inspects one line with literals and comments stripped. HISS-01's
+// `goto` depends on the function around it under the cleanup-goto exception, so nativeGotos
+// decides it.
 func scanNativeLineInvariants(code, rel string, lineNum int, rep *ScanReport) {
 	if nativeUnboundedLoop.MatchString(code) {
 		recordViolation(rep, "HISS-02", rel, lineNum, "", "Legacy unbounded loop in native code")
@@ -445,9 +456,6 @@ func scanNativeLineInvariants(code, rel string, lineNum int, rep *ScanReport) {
 	}
 	if hasBannedCall(code, "sprintf") {
 		recordViolation(rep, "HISS-08", rel, lineNum, "", "Banned unsafe sprintf() invocation; snprintf required")
-	}
-	if strings.HasPrefix(strings.TrimSpace(code), "goto ") {
-		recordViolation(rep, "HISS-01", rel, lineNum, "", "Legacy non-DAG control flow jump (goto)")
 	}
 }
 

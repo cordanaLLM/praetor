@@ -1,0 +1,10 @@
+type: fixed
+title: >-
+  A C or C++ repository can declare its documented single-level cleanup goto as
+  hiss.exceptions.c_goto_cleanup in .standards.yaml. The audit, the gate, the baseline and
+  adoption then accept a forward goto to the function's sole body-level cleanup label and still
+  report every other goto, and HISS-01 in the AGENTS.md and Paperclip harnesses states that
+  exact rule instead of the zero-goto ban. HISS-04 in both harnesses, and in praetor's own
+  AGENTS.md, states the function length the audit enforces.
+issue: "68"
+breaking: false

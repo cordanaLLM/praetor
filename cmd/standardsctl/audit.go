@@ -234,13 +234,16 @@ func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
 }
 
 // auditScanOptions returns the scan options of the resolved policy: its function-length
-// limit, which the audit enforces, and its complexity limits, which it only measures. Without
-// a resolved policy the audit-compatibility ceiling applies.
+// limit, which the audit enforces, its complexity limits, which it only measures, and the HISS
+// exceptions the manifest declares and documents (config.EffectivePolicy.HISSScanOptions).
+// Without a resolved policy the audit-compatibility ceiling applies. A declared exception left
+// unhonoured is printed as a warning.
 func auditScanOptions(opts *auditOptions) hiss.ScanOptions {
-	if opts.effective == nil {
-		return config.HISSComplexityCeiling().ScanOptions(hiss.ScanOptions{})
+	scanOpts, warning := opts.effective.HISSScanOptions(opts.rootDir, hiss.ScanOptions{})
+	if warning != "" {
+		fmt.Printf("[WARN] %s\n", warning)
 	}
-	return opts.effective.Policy.Complexity.ScanOptions(hiss.ScanOptions{})
+	return scanOpts
 }
 
 // printLines prints report lines to standard output, one per line.

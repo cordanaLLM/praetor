@@ -691,12 +691,21 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
     HISS-09 in a TypeScript repository, says it has no analogue there. With no detected
     runtime, every clause renders with its label.
   - HISS-04 states the function length the repository's audit enforces, read from the policy
-    the policy-catalog step resolved (container-image, for example, enforces 50).
-  - Still open: the C and C++ `goto` clause of HISS-01 is unconditional, as the audit's HISS-01
-    scan is. A repository whose own standard allows a single-level cleanup `goto` cannot state
-    that exception in the harness or the scan yet.
-  - `TestAdoptedHarnessGolden` pins the whole harness for a Go framework, a Rust crate and a
-    native C engine
+    the policy-catalog step resolved (container-image, for example, enforces 50). At the 60-line
+    audit ceiling it adds `(audit ceiling)`: a pinned profile snapshot such as
+    `native-gpu-systems` states 75, and the audit-compatibility layer caps it at 60
+    ([effective policy](effective-policy.md#consequence-of-the-60-line-default)). The ceiling
+    comes from `config.AuditMaxFuncLOC`; the catalog keeps no copy of it
+    (`TestAdoptHarnessesStateTheAuditFunctionLength`, `TestFuncLOCLimit`).
+  - A C or C++ repository that declares `hiss.exceptions.c_goto_cleanup` and carries the
+    document it names reads that exception in HISS-01 instead of the zero-`goto` clause: the
+    exact rule the audit's native scan applies, rendered from the scan's own text
+    (`hiss.CleanupGotoRule`), so the harness grants nothing the audit rejects. Go's own ban
+    stays. Without the document the ban stays, the scan reports every `goto` and the report
+    warns ([declared HISS exceptions](../adoption.md#what-adoption-reads-before-it-writes),
+    `TestAdoptHonoursDocumentedCleanupGotoException`, `TestCleanupGotoExceptionReachesTheAudit`).
+  - `TestAdoptedHarnessGolden` pins the whole harness for a Go framework, a Rust crate, a
+    native C engine and one declaring the cleanup-`goto` exception
     ([`internal/adopt/testdata`](https://github.com/cordanaLLM/praetor/tree/main/internal/adopt/testdata));
     regenerate with `go test ./internal/adopt -run TestAdoptedHarnessGolden
     -update-harness-golden` after reviewing the change.
@@ -739,10 +748,18 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
 - **Paperclip harness.** `.paperclip/harness.json` and `.paperclip/rules.md` come from
   [`internal/paperclip/harness.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/paperclip/harness.go).
   - The invariants are the same adopted directives for HISS-01, 02, 04, 07, 10, 15 and 16, for
-    the repository's languages (`TestSynthesizeHarness_Positive_InvariantsFollowLanguages`).
-    Adoption binds the harness in `register.sources` during its manifest step, before the
-    policy that sets the function length is resolved, so HISS-04 there states the 60-line
-    audit ceiling and that a stricter repository policy wins.
+    the repository's languages and declared exceptions
+    (`TestSynthesizeHarness_Positive_InvariantsFollowLanguages`,
+    `TestSynthesizeHarness_Positive_ExceptionAndLimitFollowFacts`). Adoption binds the harness
+    in `register.sources` during its manifest step, before the policy-catalog step runs, so it
+    resolves the policy the planned manifest and lock produce, with the loader and audit layer
+    `praetorctl audit` uses (`resolvePlannedPolicy` in
+    [`internal/adopt/policy_dryrun.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/policy_dryrun.go)),
+    and HISS-04 states the same function length as `AGENTS.md`. `praetorctl paperclip harness`
+    reads the same facts through `adopt.RepositoryHISSFacts`, which resolves the length with
+    `config.ResolveRepositoryPolicy`, and writes the same bytes. Only where no policy resolves
+    yet, such as a first adoption without `--lock-source-root` or a manifest without a lock,
+    does HISS-04 state the 60-line ceiling and that a stricter repository policy wins.
   - The receipt row prescribes minting a receipt with `praetorctl gate run` and attaching it only
     when `.standards.yaml` pins a well-formed `receipt.public_key`. Without one, every attached
     receipt is refused, so the row says to attach none and names `praetorctl gate keygen`
@@ -754,14 +771,23 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
     current receipt row without `--force`; an edited harness stays operator-owned
     (`TestPriorGeneratedRecognisesTheCavemanRelease`).
   - The same holds for this release's own harness after a repository fact it reads changes.
-    Pinning `receipt.public_key`, as the unpinned row advises, or adding or removing a language
-    leaves the harness unmodified output, and the next plain `praetorctl adopt` refreshes it to
-    the row that requires receipts and the new language clauses. The refresh key compares the
-    harness byte for byte with this release rendered under both receipt states and every
-    language set (`hisscatalog.AllLanguages`), so an edit to the receipt row or an invariant
+    Pinning `receipt.public_key`, as the unpinned row advises, adding or removing a language,
+    declaring or withdrawing an exception, or a policy that resolves the function length the
+    harness stated as the unresolved ceiling leaves the harness unmodified output, and the next
+    plain `praetorctl adopt` refreshes it. The refresh key compares the harness byte for byte
+    with this release rendered under both receipt states, every language set
+    (`hisscatalog.AllLanguages`), every exception set (`hisscatalog.AllExceptions`) and the
+    HISS-04 statements it accepts: the 60-line ceiling unresolved, the ceiling resolved, and
+    the plain number this run states, if any. So an edit to the receipt row or an invariant
     still keeps it operator-owned (`TestAdoptRefreshesHarnessAfterFactsChange`,
     `TestAdoptKeepsHandEditedHarnessAfterFactsChange`, `TestAdoptHarnessRefreshFactBoundary`,
     `TestPriorGeneratedRecognisesThisReleaseUnderEveryFactCombination`).
+  - The function length is never read from the harness on disk, since any number found there
+    could be an operator's edit (`TestPriorGeneratedKeepsEditedFactRows`, `TestLimitFacts`).
+    The cost: once a policy has resolved the length, a later move of it (50 to 45, 50 up to
+    the ceiling, or back to unresolved) leaves a harness stating the old plain number
+    operator-owned, and `praetorctl adopt --force` refreshes it
+    (`TestPriorGeneratedKeepsHarnessAfterResolvedLimitMoves`).
   - Still open: the `## AGit Push Protocol` section (`agit_push_format`) prescribes
     `git push origin HEAD:refs/for/main -o topic=<issue-id>` whatever forge `origin` names. That
     push opens a review only on a forge that implements AGit, such as Forgejo or Gitea. The

@@ -214,6 +214,34 @@ record each one. A Rust function behind any header form that "Rust: scopes follo
 (`pub(super)`, `const`, `unsafe`, `extern "C"`) is decided like a plain `fn`
 (`HISS-01/rust/positive/qualified-header.rs`).
 
+## C and C++: `goto` and the declared cleanup exception
+
+The native scan reports HISS-01 for a line of literal-stripped code that opens with `goto` and a space.
+Without a declaration every such line is a finding, as it always was. A repository that declares
+`hiss.exceptions.c_goto_cleanup` in `.standards.yaml`, and carries the document it names, scans
+with `hiss.CleanupGoto` enabled ([declared HISS exceptions](../adoption.md#what-adoption-reads-before-it-writes)).
+`nativeGotos` in `internal/hiss/cleanup_goto.go` then holds each `goto` inside a function body
+until the brace tracker closes that body, since the label usually follows the jump, and reports it
+unless all five conditions hold:
+
+1. The `goto` line comes before its label.
+2. The label is in the same function body.
+3. That function defines exactly one label.
+4. The label sits at body depth 1, outside every nested block. A label after closing braces on its
+   own line (`} out:`) counts at the depth those braces leave.
+5. The label is `cleanup`, `out`, `err` or `fail`, or is listed in
+   `hiss.exceptions.c_goto_cleanup_labels`.
+
+A label is an identifier and one colon opening a line. `case`, `default`, the C++ access
+specifiers and a `::` qualified name are not labels. A `goto` outside any function body, and every
+`goto` past 1024 held in one function, is reported at once, so the bound fails closed. A body the
+file never closes is decided at end of file. The adopted HISS-01 clause renders the same rule text
+(`hiss.CleanupGotoRule`), so the harness and the scan cannot disagree. `internal/hiss/cleanup_goto_test.go`
+replays each condition in both directions, the label shapes and the bound.
+
+The limits of a line matcher still apply: a `goto` or a label that does not open its line, such as
+`if (rc) goto out;`, is not seen, with or without the exception.
+
 ## HISS-04: Go complexity is measured, not enforced
 
 For Go, the scanner enforces one HISS-04 bound, function length, and *measures* the other three:

@@ -547,7 +547,9 @@ applies here: the tool reports the rule *and* whether it bites.
 
 A rule enforced for some languages and not others names the split rather than one mechanism for
 all of them. HISS-01 answers per language: Go decides goto, direct recursion and cycles between
-plain functions; Rust and Python decide direct recursion only; C and C++ decide goto only. Each
+plain functions; Rust and Python decide direct recursion only; C and C++ decide goto only, less
+the forward cleanup gotos a declared `hiss.exceptions.c_goto_cleanup` accepts
+([declared HISS exceptions](../adoption.md#what-adoption-reads-before-it-writes)). Each
 line matches a claim in `.config/hiss/coverage.yaml`, and
 `TestServer_ExplainRuleHISS01ScopesEnforcementPerLanguage` in `cmd/standards-mcp/server_test.go`
 fails if the answer drifts back to a universal claim.

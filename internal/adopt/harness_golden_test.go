@@ -35,9 +35,23 @@ func adoptedHarness(t *testing.T, profile string, markers map[string]string) str
 	for rel, body := range markers {
 		mustWrite(t, filepath.Join(repo, filepath.FromSlash(rel)), body)
 	}
-	if _, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo, Profile: profile}); err != nil {
+	adoptFrom(t, repo, profile, newAdoptLockSource(t))
+	return agentsHarness(t, repo)
+}
+
+// adoptFrom adopts repo under profile with the pinned catalog at lockSource.
+func adoptFrom(t *testing.T, repo, profile, lockSource string) *AdoptReport {
+	t.Helper()
+	report, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: lockSource, Path: repo, Profile: profile})
+	if err != nil {
 		t.Fatalf("Adopt %s: %v", profile, err)
 	}
+	return report
+}
+
+// agentsHarness returns the harness part of repo's AGENTS.md, through its end marker.
+func agentsHarness(t *testing.T, repo string) string {
+	t.Helper()
 	content := mustRead(t, filepath.Join(repo, agentsFile))
 	end := strings.Index(content, harnessEndMarker)
 	if end < 0 {
@@ -71,7 +85,15 @@ func TestAdoptedHarnessGolden(t *testing.T) {
 			name: "native-c", profile: "native-gpu-systems",
 			markers: map[string]string{"meson.build": "project('widget', 'c')\n"},
 			present: []string{"C/C++: zero `goto`", "C/C++: zero banned libc (`gets` / `strcpy` / `sprintf`)", "func LOC <= 60"},
-			absent:  []string{"context.Context", "Go:", ".unwrap()", "Rust:", "`unsafe`"},
+			absent:  []string{"context.Context", "Go:", ".unwrap()", "Rust:", "`unsafe`", "declared exception"},
+		},
+		{
+			name: "native-c-exception", profile: "native-gpu-systems",
+			markers: map[string]string{"meson.build": "project('widget', 'c')\n", manifestFile: cleanupGotoManifest,
+				"docs/cleanup-goto.md": cleanupGotoDocument},
+			present: []string{"C/C++: `goto` only forward jump to sole label of same function; label directly in function body, outside nested blocks; label named `cleanup` / `out` / `err` / `fail` or listed in `hiss.exceptions.c_goto_cleanup_labels` (declared exception); audit reports every other `goto`",
+				"C/C++: zero banned libc (`gets` / `strcpy` / `sprintf`)", "func LOC <= 60"},
+			absent: []string{"zero `goto`", "context.Context", "Go:", ".unwrap()", "Rust:", "`unsafe`"},
 		},
 	}
 	for _, p := range profiles {

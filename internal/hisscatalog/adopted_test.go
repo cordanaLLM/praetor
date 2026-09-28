@@ -118,18 +118,18 @@ func TestAdopted_Boundary_FollowsGeneratedPipelines(t *testing.T) {
 
 // TestAdoptedDirective_Negative_ComplexityMatchesTheAuditCeiling: the HISS-04 row states the
 // caps of the audit ceiling (config.HISSComplexityCeiling) and, until a repository's own limit
-// is resolved, that ceiling as the function length, so it cannot restate a stale value. The
-// catalog may not import config (config's own tests import the catalog), so the numbers are
-// pinned here.
+// is resolved, the function length the caller read from config.AuditMaxFuncLOC, so it cannot
+// restate a stale value. The catalog may not import config (config's own tests import the
+// catalog), so the caps are pinned here and the function length is the caller's.
 func TestAdoptedDirective_Negative_ComplexityMatchesTheAuditCeiling(t *testing.T) {
 	rule, _ := LookupRule("HISS-04")
 	ceiling := config.HISSComplexityCeiling()
-	if CeilingFuncLOC != ceiling.MaxFuncLOC {
-		t.Fatalf("CeilingFuncLOC = %d, audit ceiling %d", CeilingFuncLOC, ceiling.MaxFuncLOC)
+	if ceiling.MaxFuncLOC != config.AuditMaxFuncLOC {
+		t.Fatalf("audit ceiling %d, config.AuditMaxFuncLOC %d", ceiling.MaxFuncLOC, config.AuditMaxFuncLOC)
 	}
 	want := fmt.Sprintf("McCabe cyclomatic <= %d, cognitive <= %d, statements <= %d; func LOC <= %d (audit ceiling; stricter repository policy wins)",
 		ceiling.MaxCyclomatic, ceiling.MaxCognitive, ceiling.MaxStatements, ceiling.MaxFuncLOC)
-	if got := rule.AdoptedDirective(Facts{}); got != want {
+	if got := rule.AdoptedDirective(Facts{CeilingFuncLOC: config.AuditMaxFuncLOC}); got != want {
 		t.Fatalf("HISS-04 directive = %q, want %q", got, want)
 	}
 }

@@ -7,7 +7,10 @@ package adopt
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
+	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 )
 
@@ -40,24 +43,65 @@ func planLanguages(plan *VerificationPlan) hisscatalog.Language {
 	return languages
 }
 
-// hissFacts is what this repository's HISS rows depend on: the languages its verification plan
-// found, and, once the policy-catalog step resolved the effective policy, the function length
-// its audit enforces (adoptionScanLimit).
+// repositoryFacts is what a repository's HISS rows depend on before its function length is
+// known: the languages its verification plan found, the audit ceiling (config.AuditMaxFuncLOC)
+// and the exceptions it declares and documents.
+func repositoryFacts(plan *VerificationPlan, exceptions hisscatalog.Exception) hisscatalog.Facts {
+	return hisscatalog.Facts{Languages: planLanguages(plan), CeilingFuncLOC: config.AuditMaxFuncLOC, Exceptions: exceptions}
+}
+
+// hissFacts is what this repository's AGENTS.md rows depend on: repositoryFacts and, once the
+// policy-catalog step resolved the effective policy, the function length its audit enforces
+// (adoptionScanLimit).
 func (s *adoptSession) hissFacts() hisscatalog.Facts {
-	facts := hisscatalog.Facts{Languages: planLanguages(s.verification)}
+	facts := repositoryFacts(s.verification, s.exceptions)
 	if s.policy != nil {
 		facts.MaxFuncLOC = adoptionScanLimit(s)
 	}
 	return facts
 }
 
-// RepositoryLanguages reports the languages of the repository at root as the verification
-// planner detects them, for a caller outside an adoption run (`praetorctl paperclip harness`)
-// that renders HISS directives the way adoption does. It reads project markers only.
-func RepositoryLanguages(ctx context.Context, root string) (hisscatalog.Language, error) {
+// harnessExceptions is the HISS exceptions the harnesses state for the cleanup-goto exception the
+// manifest declares and documents (config.Manifest.CleanupGotoException), the reading the audit's
+// scan honours too, so the harness never states an exception the audit does not grant.
+func harnessExceptions(cleanupGoto hiss.CleanupGoto) hisscatalog.Exception {
+	if cleanupGoto.Enabled {
+		return hisscatalog.ExceptionCleanupGoto
+	}
+	return 0
+}
+
+// RepositoryHISSFacts reports what the HISS directives of the repository at root depend on, for
+// a caller outside an adoption run (`praetorctl paperclip harness`) that renders them the way
+// adoption does: the languages the verification planner detects from project markers, the
+// exceptions the manifest declares and documents, and the function length the audit enforces,
+// resolved by config.ResolveRepositoryPolicy as `praetorctl audit` resolves it. A repository
+// whose policy does not resolve (no manifest, no lock, or a resolution error) states the audit
+// ceiling instead; each returned warning names a declaration or policy that was not read.
+func RepositoryHISSFacts(ctx context.Context, root string) (hisscatalog.Facts, []string, error) {
 	plan, err := ObserveVerificationPlan(ctx, root)
 	if err != nil {
-		return 0, fmt.Errorf("detect repository languages: %w", err)
+		return hisscatalog.Facts{}, nil, fmt.Errorf("detect repository languages: %w", err)
 	}
-	return planLanguages(plan), nil
+	manifest, err := loadDeclaredManifest(ctx, root)
+	if err != nil {
+		return hisscatalog.Facts{}, nil, err
+	}
+	var warnings []string
+	cleanupGoto, warning := manifest.CleanupGotoException(root)
+	if warning != "" {
+		warnings = append(warnings, warning)
+	}
+	facts := repositoryFacts(plan, harnessExceptions(cleanupGoto))
+	if manifest == nil {
+		return facts, warnings, nil
+	}
+	policy, notice, err := config.ResolveRepositoryPolicy(ctx, filepath.Join(root, manifestFile), manifest)
+	switch {
+	case err != nil:
+		warnings = append(warnings, "function length not resolved, audit ceiling stated: "+err.Error())
+	case policy != nil && notice == "":
+		facts.MaxFuncLOC = policy.Complexity.MaxFuncLOC
+	}
+	return facts, warnings, nil
 }

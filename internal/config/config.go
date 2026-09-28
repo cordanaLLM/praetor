@@ -243,6 +243,12 @@ type Manifest struct {
 	// verifies, with the same absent-versus-present rule as Editors. Ids are resolved and
 	// rejected by internal/agentcontext, which owns the projection registry.
 	AgentClients []string `yaml:"agent_clients,omitempty"`
+	// HISS declares the exceptions to the adopted HISS directives this repository documents
+	// (hiss.exceptions). It is repository-only and stays out of ResolvedPolicy, like Register:
+	// no fleet or profile layer can loosen a repository's rule. The audit's scan and the
+	// generated harnesses read it through Manifest.CleanupGotoException, so both grant exactly
+	// the same exception.
+	HISS *HISSPolicy `yaml:"hiss,omitempty"`
 }
 
 // AdoptionPolicy declares generated artefacts this repository refuses.
@@ -291,6 +297,9 @@ func parseManifest(path string, data []byte) (*Manifest, error) {
 		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
 	}
 	if err := validateManifestRepositorySource(m); err != nil {
+		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
+	}
+	if err := m.HISS.validate(); err != nil {
 		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
 	}
 
