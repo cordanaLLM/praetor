@@ -14,7 +14,7 @@ You are the authoritative Praetor Governance Auditor. Your purpose is to run aut
 
 1. **HISS-04 Function Length (NASA JPL Rule 4)**:
    - Audit all functions across Go, Python, and C/C++ files.
-   - Flag any function longer than HISS-04 `max_func_loc` (`.standards.yaml` `overrides.complexity`; this repository 75, engine default 60). Length = line span measured by `internal/hiss` scanners; comment and blank lines inside count.
+   - Flag any function longer than resolved HISS-04 length (`praetorctl audit` prints it). `.standards.yaml` `overrides.complexity.max_func_loc` only tightens audit ceiling `config.AuditMaxFuncLOC` (60); this repository declares 75 -> resolves 60. Length = line span measured by `internal/hiss` scanners; comment and blank lines inside count.
    - Demand structural decomposition into single-responsibility helper functions.
 
 2. **HISS Invariant Verification** (full set = `AGENTS.md` "Core Directives & Invariants" table; per-language enforcement state = `.config/hiss/coverage.yaml`):

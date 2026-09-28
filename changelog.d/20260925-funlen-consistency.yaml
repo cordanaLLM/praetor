@@ -1,0 +1,3 @@
+type: fixed
+title: "Every place praetor states the HISS-04 function-length cap now states the 60 lines the audit enforces (hiss.DefaultMaxFuncLOC): CONTRIBUTING.md, README.md, the HISS specification, standards_explain_rule's HISS-04 answer and the hiss-audit, infocard-generate, adhd-format and auditor agent text said 75, and .golangci.yml now runs funlen at 58 body lines with comment lines counted, the span the audit measures, instead of 75 lines with comments dropped; a forge test fails when any of them drifts from the audit value"
+breaking: false

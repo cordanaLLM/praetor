@@ -36,14 +36,14 @@ Forge-facing prose (issues, PR bodies, review comments, commit bodies) uses soci
 
 <!-- caveman:off -->
 ### ❌ Anti-Pattern (Cognitive Fatigue)
-> "In evaluating the repository against HISS-04, we noticed that several functions in the compiler package have cyclomatic complexity values exceeding the threshold of 10. Specifically, `compileAstNode` has a complexity of 14, and its length is 92 lines which also violates the 75 line limit. We should refactor this into sub-functions."
+> "In evaluating the repository against HISS-04, we noticed that several functions in the compiler package have cyclomatic complexity values exceeding the threshold of 10. Specifically, `compileAstNode` has a complexity of 14, and its length is 92 lines which also violates the 60 line limit. We should refactor this into sub-functions."
 
 ### ✅ ADHD-Optimized Pattern
 > ### 🚨 HISS-04 Complexity Infraction
 > 
 > | Function | Cyclomatic | Limit | Func LOC | Limit | Status |
 > | :--- | :--- | :--- | :--- | :--- | :--- |
-> | `compiler.compileAstNode` | **14** | $\le 10$ | **92** | $\le 75$ | ❌ Blocked |
+> | `compiler.compileAstNode` | **14** | $\le 10$ | **92** | $\le 60$ | ❌ Blocked |
 > 
 > **Immediate Action Required**:
 > - **Extract node visit logic** into `visitExpression()` and `visitStatement()`.

@@ -33,10 +33,15 @@ var npmProject = map[string]string{
 	"package-lock.json": "{\"name\": \"widget\", \"lockfileVersion\": 3, \"requires\": true, \"packages\": {\"\": {\"name\": \"widget\"}}}\n",
 }
 
+// rustCrate is the smallest repository rust-systems scaffolds rustfmt.toml in: a root crate
+// declaring no edition, so the config declares none either and is the template rendered for
+// the repository identity alone (rustfmtFacts).
+var rustCrate = map[string]string{"Cargo.toml": "[package]\nname = \"widget\"\nversion = \"0.1.0\"\n"}
+
 // flavorPrerequisites holds, per flavor, the files a repository needs before flavor apply
 // writes every template (TemplateItem.Resolve). A flavor absent here scaffolds everything
 // into an empty repository.
-var flavorPrerequisites = map[string]map[string]string{"typescript-node": npmProject}
+var flavorPrerequisites = map[string]map[string]string{"typescript-node": npmProject, "rust-systems": rustCrate}
 
 // flavorRepo returns a fresh repository holding the flavor's prerequisites. A requirement
 // may ask Git what the repository commits (nodeCIRequirement does), so a flavor with
@@ -176,16 +181,6 @@ func TestScaffoldedBodiesAreTheShippedTemplates(t *testing.T) {
 	}
 	if sourced == 0 {
 		t.Fatal("no template declares a Source; the equality would hold vacuously")
-	}
-}
-
-func TestScaffoldedRustfmtNamesThe2024Edition(t *testing.T) {
-	body := scaffoldInto(t, "rust-systems", "rustfmt.toml")["rustfmt.toml"]
-	if !strings.Contains(body, "edition = \"2024\"\n") {
-		t.Errorf("rustfmt.toml is not on the 2024 edition: %q", body)
-	}
-	if strings.Contains(body, "edition = \"2021\"") {
-		t.Errorf("rustfmt.toml still carries the 2021 edition: %q", body)
 	}
 }
 

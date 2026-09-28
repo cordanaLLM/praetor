@@ -70,6 +70,12 @@ type Context struct {
 	// (internal/flavor/dart_lints.go).
 	DartLints string `json:"dart_lints"`
 
+	// RustEdition is the edition the scaffolded rustfmt.toml (rust/rustfmt.toml.tmpl) declares:
+	// the one every crate of the root Cargo.toml's workspace is on, or "" for a config that
+	// declares none, where no crate declares one and Cargo and rustfmt both use 2015. flavor
+	// apply reads it from the workspace's manifests (internal/flavor/rustfmt.go).
+	RustEdition string `json:"rust_edition"`
+
 	// Node is what the Node CI body (node/ci-node.yml.tmpl) installs and runs scripts with.
 	// flavor apply reads it from package.json and the committed lockfile
 	// (internal/flavor/node_ci.go); the zero value renders the npm job.

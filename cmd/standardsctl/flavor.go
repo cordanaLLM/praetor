@@ -217,11 +217,12 @@ func applyFlavor(ctx context.Context, dir, targetFlv string, force bool) error {
 	return nil
 }
 
-// printFlavorApplyReport prints what one flavor apply created, skipped, deferred, held back
-// and failed.
+// printFlavorApplyReport prints what one flavor apply created, refreshed, skipped, deferred,
+// held back and failed.
 func printFlavorApplyReport(dir string, report *flavor.ApplyReport) {
 	fmt.Printf("=== Applied Flavor: %s to %s ===\n", report.Flavor, dir)
 	fmt.Printf("  Created Templates (%d): %s\n", len(report.CreatedTemplates), strings.Join(report.CreatedTemplates, ", "))
+	printApplyEntries("Refreshed Earlier Praetor Text", report.RefreshedTemplates)
 	if len(report.SkippedTemplates) > 0 {
 		fmt.Printf("  Skipped Existing  (%d): %s\n", len(report.SkippedTemplates), strings.Join(report.SkippedTemplates, ", "))
 	}

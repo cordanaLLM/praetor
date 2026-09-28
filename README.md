@@ -115,7 +115,7 @@ Praetor enforces the **High-Integrity Systems Standard (HISS)**—adapting NASA-
 
 * **HISS-01 (Acyclic Control Flow)**: Recursion is strictly prohibited; call graph must be a DAG.
 * **HISS-02 (Bounded Loops & Timeouts)**: Bounded iterations and explicit context deadlines on all network and disk I/O.
-* **HISS-04 (Complexity & Function Length Caps)**: Maximum McCabe cyclomatic complexity $M \le 10$, cognitive complexity $\le 15$, function length $\le 75$ LOC, $\le 50$ executable statements.
+* **HISS-04 (Complexity & Function Length Caps)**: Maximum McCabe cyclomatic complexity $M \le 10$, cognitive complexity $\le 15$, function length $\le 60$ LOC, $\le 50$ executable statements.
 * **HISS-07 (Zero Unchecked Errors)**: Zero unchecked error values and zero `.unwrap()` or unhandled panic calls in production.
 * **HISS-10 (Zero-Warning Cascade)**: 5-layer zero-warning cascade from editor to deployment admission controller.
 * **HISS-15 (3D Testing Discipline)**: Positive, negative, and boundary tests mandatory for all public APIs.

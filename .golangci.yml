@@ -53,9 +53,19 @@ linters:
       min-complexity: 11 # HISS-04: McCabe cyclomatic <= 10 (off by one, see above)
     gocognit:
       min-complexity: 16 # HISS-04: cognitive <= 15 (off by one, see above)
+    # The audit scanner measures a function from its `func` line to its closing brace, both
+    # counted, comments and blank lines included, and fails a span over hiss.DefaultMaxFuncLOC.
+    # funlen counts only the lines strictly between those two and, by default, drops comment
+    # lines, so `lines: 60` would let a 62-line function through lint that the audit rejects.
+    # Two lines fewer with comments counted is the same measurement. Running funlen over the
+    # .config/hiss/testdata/HISS-04/go corpus shows it: negative/loc-at-cap-60.go passes and
+    # positive/loc-func-decl-61.go is reported (59 > 58), as the scanner decides them.
+    # internal/forge/template_limits_test.go pins lines, ignore-comments and statements to
+    # the audit's caps.
     funlen:
-      lines: 75 # HISS-04: function LOC <= 75
+      lines: 58 # HISS-04: function LOC <= 60 (the audit's span, see above)
       statements: 50 # HISS-04: statements <= 50
+      ignore-comments: false
     errorlint:
       errorf: true
       asserts: true

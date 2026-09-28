@@ -42,6 +42,34 @@ func TestRenderFile_DartAnalysisIncludesOnlyTheNamedLintPackage(t *testing.T) {
 	}
 }
 
+// The rustfmt config declares the edition Context.RustEdition names, and none otherwise, so
+// rustfmt follows the edition Cargo passes (#567).
+func TestRenderFile_RustfmtDeclaresOnlyTheNamedEdition(t *testing.T) {
+	const settings = "max_width = 100\nnewline_style = \"Unix\"\nuse_small_heuristics = \"Default\"\n"
+	for edition, want := range map[string]string{
+		// Positive: the edition flavor apply read from Cargo.toml, first.
+		"2021": "edition = \"2021\"\n" + settings,
+		"2024": "edition = \"2024\"\n" + settings,
+		// Boundary: the zero value declares no edition at all, not an empty one.
+		"": settings,
+	} {
+		ctx := sampleContext
+		ctx.RustEdition = edition
+		body, err := templates.RenderFile("rust/rustfmt.toml.tmpl", ctx)
+		if err != nil {
+			t.Fatalf("render %q: %v", edition, err)
+		}
+		if body != want {
+			t.Errorf("%q: rendered %q, want %q", edition, body, want)
+		}
+	}
+	// Negative: the maintainer's note stays in the template and never reaches the adopter.
+	body, err := templates.RenderFile("rust/rustfmt.toml.tmpl", sampleContext)
+	if err != nil || strings.Contains(body, "Cargo.toml") || strings.Contains(body, "#") {
+		t.Errorf("the template note leaked into the rendering (err %v): %q", err, body)
+	}
+}
+
 // The Node CI body installs with the manager Context.Node names (BUG-1011).
 func TestRenderFile_NodeCIInstallsWithTheNamedManager(t *testing.T) {
 	render := func(node templates.NodeContext) string {

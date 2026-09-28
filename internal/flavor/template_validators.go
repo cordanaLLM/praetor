@@ -110,11 +110,10 @@ func validGitleaksConfig(content []byte) bool {
 // rules from elsewhere: useDefault = true or a path under [extend], or the dotted
 // extend.useDefault = true at the top level.
 func gitleaksExtendsRules(table, line string) bool {
-	key, value, ok := strings.Cut(line, "=")
+	key, value, ok := util.TOMLKeyValue(line)
 	if !ok {
 		return false
 	}
-	key = strings.ReplaceAll(strings.TrimSpace(key), " ", "")
 	words := strings.Fields(value)
 	if len(words) == 0 {
 		return false

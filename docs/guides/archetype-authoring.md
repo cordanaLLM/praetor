@@ -57,6 +57,18 @@ written. Where it reports something missing, `flavor apply` writes nothing, `--f
 lists the path and what is missing under *Unmet Requirement*; `praetorctl adopt` turns each into a
 warning. The audit still requires the file.
 
+A template whose body changed may carry `Prior`: the digests (`util.CanonicalTextDigest`) of the
+texts earlier releases scaffolded at its path. Without `--force`, `flavor apply`, and so a plain
+`praetorctl adopt`, refreshes a file that holds one of them in one consistent line-ending style to
+the current rendering, keeping that style. It lists the file under *Refreshed Earlier Praetor Text*
+(`refreshed_templates` in the apply report), and adoption records it as reconciled. An edited copy
+matches no digest and stays until `--force`, and the manifest, the lock and the ledger are never
+refreshed. While `Resolve` withholds the body, a file already there is kept. An earlier text stays
+unrefreshed and is listed under *Unmet Requirement* with the reason, and any other file is reported
+skipped (`internal/flavor/target_write_internal_test.go`). Every recorded text needs a fixture
+that reproduces its digest, as `TestRustfmtPriorTextsAreEarlierRenderings`
+(`internal/flavor/rustfmt_test.go`) holds for `rustfmt.toml`.
+
 A template with neither is an apply error, not a placeholder. `flavor apply` used to write a one-line
 `# <file> configuration for <owner>/<repo>` comment for every template it had no body for, which
 disabled every built-in gitleaks rule (#410) and scaffolded workflows that ran nothing.
@@ -164,6 +176,27 @@ dependency (`internal/flavor/dart_lints.go`). Otherwise it has no include, becau
 fails on an include pub cannot resolve, and keeps its core linter rules, which need no package.
 `TestScaffoldedDartAnalysisConfigIncludesOnlyADeclaredLintPackage` (`internal/flavor/dart_lints_test.go`)
 covers each case.
+
+The Rust formatter config (`templates/rust/rustfmt.toml.tmpl`) declares the edition every crate of
+the root `Cargo.toml`'s workspace is on (`internal/flavor/rustfmt.go`). `cargo fmt` passes each
+crate's edition to rustfmt, but rustfmt run directly, as a hook on staged files does, reads it from
+`rustfmt.toml`, so any other edition makes the two disagree (#567). The crates are the root package
+and every `[workspace]` member: a listed path, or each directory a `*` or `?` pattern matches that
+no `exclude` entry names or contains. A crate inheriting its edition (`edition.workspace = true`)
+takes the one `[workspace.package]` declares, and a workspace with no crate to read takes that one
+directly. Where no crate declares an edition, the config has none either, since Cargo and rustfmt
+then both use 2015. The crate editions are unknown when the repository has no root `Cargo.toml` (a
+crate in a subdirectory), the root manifest cannot be read (larger than 1 MiB, not a regular file),
+or a member cannot be read (no `Cargo.toml`, no `[package]`, a `**` or `[...]` pattern, a pattern
+matching nothing, which `cargo metadata` also rejects, more than 256 members). There, and where the
+crates share no edition, no single edition is known to agree with `cargo fmt` on every crate:
+`flavor apply` writes no config and names the reason under *Unmet Requirement*. It keeps a
+`rustfmt.toml` already there; an earlier Praetor text stays unrefreshed, with the reason listed
+beside it. Crates that only path dependencies pull into the workspace are not read.
+`TestScaffoldedRustfmtFollowsTheCrateEdition`,
+`TestRustfmtApply_Negative_NoCommonEditionWithholdsTheScaffold` and
+`TestRustfmtApply_Boundary_NoCommonEditionKeepsAnEarlierScaffold`
+(`internal/flavor/rustfmt_test.go`) cover each layout.
 
 A body that depends on the repository declares `Resolve`. The Node CI job installs from the committed
 lockfile and runs the `test` script, and `typescript-node` matches any `package.json` in an

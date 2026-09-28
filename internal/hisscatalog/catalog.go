@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/hiss"
@@ -41,6 +42,12 @@ type Rule struct {
 	// enforced rather than borrow praetor's own mechanism (BUG-804).
 	Adoption AdoptedCheck
 }
+
+// hiss04Specification lists HISS-04's caps. Its function length is the audit ceiling itself
+// (hiss.DefaultMaxFuncLOC, which config.AuditMaxFuncLOC reads), not a copy of it: the copy
+// said 75 while the audit enforced 60 (#574).
+var hiss04Specification = "\n  - McCabe Cyclomatic Complexity <= 10\n  - Cognitive Complexity <= 15\n  - Function Length <= " +
+	strconv.Itoa(hiss.DefaultMaxFuncLOC) + " LOC\n  - Executable Statements <= 50"
 
 // catalog is the one registry of every HISS invariant, in ascending ID order. The
 // standards_explain_rule MCP tool serves it, the generated wiki's HISS matrix renders it, the
@@ -90,7 +97,7 @@ var catalog = []Rule{
 	{
 		ID:            "HISS-04",
 		Title:         "Complexity Bounds & Modular Sizing",
-		Specification: "\n  - McCabe Cyclomatic Complexity <= 10\n  - Cognitive Complexity <= 15\n  - Function Length <= 75 LOC\n  - Executable Statements <= 50",
+		Specification: hiss04Specification,
 		Enforcement:   "gocyclo, gocognit and funlen via golangci-lint (.golangci.yml) at its configured thresholds; the HISS scanner enforces function length and measures cyclomatic, cognitive and statement counts without enforcing them, the measurement standards_inspect_symbols and standards-lsp share.",
 		FailureAction: "Build sweep blocker.",
 		Scope:         "complexity",

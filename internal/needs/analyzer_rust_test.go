@@ -218,3 +218,34 @@ func TestRustCatalogSystemsAndGraphics_3D(t *testing.T) {
 		}
 	}
 }
+
+// Dependency entries split their keys and inline tables through util.TOMLKeyValue and
+// util.TOMLInlineTableFields, the helpers internal/flavor's Cargo.toml read shares (HISS-19).
+func TestCargoDependencyEntriesThroughTheSharedTOMLHelpers_3D(t *testing.T) {
+	// Positive: quoted and padded keys unquote, and field values lose their quotes.
+	for value, want := range map[string]cargoDependency{
+		`{ "version" = "1.0", features = ["derive"] }`: {version: "1.0"},
+		`{ path = "../core" , version = '0.1' }`:       {version: "0.1", local: true},
+		`{ workspace = true }`:                         {inherited: true},
+		`"1.2" # pinned`:                               {version: "1.2"},
+	} {
+		if got := parseCargoDependency(value); got != want {
+			t.Errorf("parseCargoDependency(%q) = %+v, want %+v", value, got, want)
+		}
+	}
+	if name, version, ok := splitTOMLAssignment(`"requests" = { version = "^2" }`); !ok || name != "requests" || version != "^2" {
+		t.Errorf("quoted pyproject entry = %q, %q, %v", name, version, ok)
+	}
+
+	// Negative: no key, or a key that unquotes to nothing, is no entry.
+	for _, line := range []string{`= "1"`, `"" = "1"`, "serde"} {
+		if name, value, ok := splitTOMLKey(line); ok {
+			t.Errorf("splitTOMLKey(%q) = %q, %q, true; want no entry", line, name, value)
+		}
+	}
+
+	// Boundary: a comment holding a brace after the table is not read into the last field.
+	if got := parseCargoDependency(`{ version = "1.0" } # {json}`); got != (cargoDependency{version: "1.0"}) {
+		t.Errorf("table followed by a braced comment = %+v, want version 1.0", got)
+	}
+}

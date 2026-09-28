@@ -1,4 +1,17 @@
-edition = "2024"
+<%- /*
+Scaffolded as rustfmt.toml by rust-systems (internal/flavor/definitions.go). cargo fmt passes each
+crate's edition to rustfmt, but rustfmt run directly reads the edition from this file, so the two
+disagree on every crate whose edition this file does not name. The edition is therefore the one
+every crate of the root Cargo.toml's workspace is on, the root package and each member
+(.RustEdition, internal/flavor/rustfmt.go), and the key is left out when none declares one, since
+Cargo and rustfmt then both use 2015. Where the crates share no edition, or their editions cannot
+be read (no root Cargo.toml among them), the file is not scaffolded. The 2021 and 2024 renderings are byte for byte the texts earlier releases wrote
+unconditionally, recorded in priorRustfmtDigests so adoption refreshes an unedited copy
+(TestRustfmtPriorTextsAreEarlierRenderings, internal/flavor/rustfmt_test.go).
+*/ -%>
+<% if .RustEdition -%>
+edition = "<% .RustEdition %>"
+<% end -%>
 max_width = 100
 newline_style = "Unix"
 use_small_heuristics = "Default"

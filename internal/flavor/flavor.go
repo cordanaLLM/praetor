@@ -50,6 +50,17 @@ type TemplateItem struct {
 	// it needs is committed.
 	Resolve func(ctx context.Context, repoPath string) (facts templates.Context, missing string) `json:"-"`
 
+	// Prior maps the digest (util.CanonicalTextDigest) of every text an earlier release
+	// scaffolded at Path to what produced it. A file at Path holding one of them, in one
+	// consistent line-ending style, is Praetor output nobody edited: flavor apply refreshes it
+	// to the current rendering in that style without --force, and lists it under
+	// ApplyReport.RefreshedTemplates, so a plain adoption moves it on. An edited copy matches no
+	// digest and stays until --force. While Resolve withholds the body any file there is kept:
+	// an earlier text is listed under ApplyReport.UnmetTemplates with why it was not refreshed,
+	// any other file is reported skipped. rust-systems' rustfmt.toml declares the texts that
+	// named one edition for every crate (priorRustfmtDigests, #567).
+	Prior map[string]string `json:"-"`
+
 	// AltPaths lists equally valid alternatives to Path. A repository satisfies the
 	// template when Path or any AltPath is present, and scaffolding is skipped in that
 	// case. This exists because ecosystems rename their configuration without changing

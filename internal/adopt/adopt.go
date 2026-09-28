@@ -937,6 +937,11 @@ func (s *adoptSession) recordFlavorReport(applied *flavor.ApplyReport) {
 	for _, rel := range applied.CreatedTemplates {
 		s.report.recordCreated(rel, fmt.Sprintf("Scaffolded %s flavor template", applied.Flavor))
 	}
+	// An unedited earlier text of a template is Praetor's own, refreshed without --force
+	// (flavor.TemplateItem.Prior), so it is reconciled like any other earlier Praetor text.
+	for _, rel := range applied.RefreshedTemplates {
+		s.report.recordReconciled(rel, fmt.Sprintf("Refreshed an earlier Praetor text to the current %s flavor template", applied.Flavor))
+	}
 	for _, rel := range applied.SkippedTemplates {
 		s.report.ActionDetails = append(s.report.ActionDetails, ActionDetail{
 			Path:    rel,
