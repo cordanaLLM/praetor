@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/compiler"
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/state"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -56,8 +59,71 @@ func EnsurePrivateIgnore(ctx context.Context, repoPath string) (PrivateIgnoreOut
 	if err != nil || !inRepository {
 		return privateIgnoreOutcome(PrivateIgnoreNoRepository, err)
 	}
-	ignored, err := workingDirIgnored(ctx, repoPath)
-	if err != nil || ignored {
+	return reconcilePrivateIgnore(ctx, repoPath, workingDirIgnored)
+}
+
+// EnsureEvidenceIgnore makes Git exclude the evidence directory the text register block sends
+// agent evidence to (config.EvidenceDir), on the terms of EnsurePrivateIgnore: an effective rule
+// is left alone, a declined git-ignore step writes nothing, and otherwise the canonical block is
+// merged in and proven. The directory need not exist; compiler.EvidenceIgnored asks about a
+// path inside it. compile-context calls it before it renders the rule, which used to route
+// evidence into a directory an unadopted repository did not ignore.
+func EnsureEvidenceIgnore(ctx context.Context, repoPath string) (PrivateIgnoreOutcome, error) {
+	if ctx == nil {
+		return PrivateIgnoreUnknown, errors.New("evidence ignore reconciliation requires a context")
+	}
+	ctx, cancel := context.WithTimeout(ctx, maxPrivateIgnoreDuration)
+	defer cancel()
+	inRepository, err := util.GitWorktreePresent(ctx, repoPath)
+	if err != nil {
+		return PrivateIgnoreUnknown, fmt.Errorf("detect Git work tree: %w", err)
+	}
+	if !inRepository {
+		return PrivateIgnoreNoRepository, nil
+	}
+	return reconcilePrivateIgnore(ctx, repoPath, compiler.EvidenceIgnored)
+}
+
+// ReconcileEvidenceIgnore runs EnsureEvidenceIgnore for dir and writes its notice line
+// (PrivateIgnoreNotice) to w, the decline warning included. The CLI's compile-context and the
+// MCP standards_compile_context write call both run it before they render the text register
+// block, whose evidence rule it guards.
+func ReconcileEvidenceIgnore(ctx context.Context, w io.Writer, dir string) error {
+	outcome, err := EnsureEvidenceIgnore(ctx, dir)
+	if err != nil {
+		return fmt.Errorf("could not make Git ignore %s in %s: %w", config.EvidenceDir, dir, err)
+	}
+	line, _ := PrivateIgnoreNotice(outcome, dir)
+	if line == "" {
+		return nil
+	}
+	if _, err := fmt.Fprintln(w, line); err != nil {
+		return fmt.Errorf("write the %s ignore notice: %w", config.EvidenceDir, err)
+	}
+	return nil
+}
+
+// PrivateIgnoreNotice is the line a command prints about outcome in dir: the block it wrote, or
+// the warning a declined git-ignore step leaves the operator. It is empty for every other
+// outcome. warning reports that the line is the warning, which a CLI prints to standard error.
+func PrivateIgnoreNotice(outcome PrivateIgnoreOutcome, dir string) (line string, warning bool) {
+	switch outcome {
+	case PrivateIgnoreWritten:
+		return fmt.Sprintf("Added the Praetor private-artifact block to .gitignore in %s; Git now ignores %s/", dir, state.WorkingDirName), false
+	case PrivateIgnoreDeclined:
+		return fmt.Sprintf("Warning: Git does not ignore %s/ in %s and adoption.decline declines git-ignore; add /%s/ to the operator-owned .gitignore",
+			state.WorkingDirName, dir, state.WorkingDirName), true
+	default:
+		return "", false
+	}
+}
+
+// reconcilePrivateIgnore is what EnsurePrivateIgnore and EnsureEvidenceIgnore share once
+// repoPath is known to sit in a Git work tree: ignored answers whether the repository's rules
+// already exclude what the caller protects, before and after the write.
+func reconcilePrivateIgnore(ctx context.Context, repoPath string, ignored func(context.Context, string) (bool, error)) (PrivateIgnoreOutcome, error) {
+	effective, err := ignored(ctx, repoPath)
+	if err != nil || effective {
 		return privateIgnoreOutcome(PrivateIgnoreEffective, err)
 	}
 	manifest, err := loadDeclaredManifest(ctx, repoPath)
@@ -68,7 +134,7 @@ func EnsurePrivateIgnore(ctx context.Context, repoPath string) (PrivateIgnoreOut
 	if err != nil || declined {
 		return privateIgnoreOutcome(PrivateIgnoreDeclined, err)
 	}
-	return writePrivateIgnore(ctx, repoPath)
+	return writePrivateIgnore(ctx, repoPath, ignored)
 }
 
 // privateIgnoreApplies reports whether repoPath sits in a Git work tree, after checking
@@ -94,16 +160,16 @@ func privateIgnoreApplies(ctx context.Context, repoPath string) (bool, error) {
 	return inRepository, nil
 }
 
-// writePrivateIgnore merges the canonical block and proves Git honours it.
-func writePrivateIgnore(ctx context.Context, repoPath string) (PrivateIgnoreOutcome, error) {
+// writePrivateIgnore merges the canonical block and proves, through ignored, that Git honours it.
+func writePrivateIgnore(ctx context.Context, repoPath string, ignored func(context.Context, string) (bool, error)) (PrivateIgnoreOutcome, error) {
 	if _, _, err := writeManagedGitIgnore(ctx, repoPath, "", false); err != nil {
 		return PrivateIgnoreUnknown, fmt.Errorf("write %s: %w", gitIgnoreFile, err)
 	}
-	ignored, err := workingDirIgnored(ctx, repoPath)
+	effective, err := ignored(ctx, repoPath)
 	if err != nil {
 		return PrivateIgnoreUnknown, err
 	}
-	if !ignored {
+	if !effective {
 		return PrivateIgnoreUnknown, fmt.Errorf("%s ends with the Praetor private-artifact block but Git still does not exclude %s/", gitIgnoreFile, state.WorkingDirName)
 	}
 	return PrivateIgnoreWritten, nil

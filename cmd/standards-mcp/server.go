@@ -536,6 +536,10 @@ func (s *Server) compileContext(ctx context.Context, source, targetDir string, v
 	// rendering, as the CLI's compile-context did from client wrappers (BUG-1004).
 	err = workstation.CheckBuildCurrent(ctx, targetDir, engineBuild())
 	if err == nil {
+		// The same ignore reconciliation the CLI's write runs before it renders the block.
+		err = adopt.ReconcileEvidenceIgnore(ctx, &b, filepath.Dir(source))
+	}
+	if err == nil {
 		err = compiler.CompileContextProjections(ctx, &b, tr, source, targetDir)
 	}
 	if err != nil {

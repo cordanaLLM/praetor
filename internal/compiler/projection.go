@@ -2,9 +2,11 @@ package compiler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
+	"slices"
 )
 
 // syncWriter prints progress lines and keeps the first write error, so a caller checks once.
@@ -27,73 +29,87 @@ func (sw *syncWriter) println(args ...any) {
 	_, sw.err = fmt.Fprintln(sw.w, args...)
 }
 
-// VerifyCompiledContext checks the six transpiled vendor files, the caveman lint over AGENTS.md
-// and every canonical persona and skill, and every persona and plugin skill projection, without
-// writing anything. The CLI's compile-context --verify and the MCP standards_compile_context
-// verify_only call both run it.
+// VerifyCompiledContext checks the text register block, the ignore rule for the evidence
+// directory the block names (CheckEvidenceIgnored), the six transpiled vendor files, the caveman
+// lint over AGENTS.md and every canonical persona and skill, and every persona and plugin skill
+// projection, without writing anything. Every check runs and every failure is returned, so one
+// run names each fix instead of hiding the later failures behind the first. The CLI's
+// compile-context --verify and the MCP standards_compile_context verify_only call both run it.
 func VerifyCompiledContext(ctx context.Context, w io.Writer, tr *Transpiler, source, targetDir string) error {
 	sw := &syncWriter{w: w}
 	sw.printf("Verifying agent context synchronization against %s...\n", source)
-	if err := verifyVendorContext(ctx, sw, tr, source, targetDir); err != nil {
-		return err
+	vendorErr := verifyVendorContext(ctx, sw, tr, source, targetDir)
+	lintErrs := lintAgentText(ctx, sw, source, targetDir)
+	for i := range lintErrs {
+		lintErrs[i] = prefixError("context verification failed", lintErrs[i])
 	}
-	verified, err := verifyAgentSurfaces(ctx, sw, targetDir)
-	if err != nil {
+	verified, surfaceErr := verifyAgentSurfaces(ctx, sw, targetDir)
+	if err := errors.Join(vendorErr, errors.Join(lintErrs...), surfaceErr); err != nil {
 		return err
 	}
 	sw.printf("All agent context targets are 100%% in sync with canonical AGENTS.md (%d persona projections verified).\n", verified)
 	return sw.err
 }
 
-// verifyVendorContext checks the text register block, the vendor files compiled from source and
-// the caveman lint over source.
+// verifyVendorContext checks the text register block, the ignore rule for its evidence directory
+// and the vendor files compiled from source, and returns every failure.
 func verifyVendorContext(ctx context.Context, sw *syncWriter, tr *Transpiler, source, targetDir string) error {
-	if _, err := SyncRegisterBlock(ctx, filepath.Dir(source), source, false); err != nil {
-		return fmt.Errorf("context verification failed: %s: %w", source, err)
+	dir := filepath.Dir(source)
+	var registerErr error
+	if _, err := SyncRegisterBlock(ctx, dir, source, false); err != nil {
+		registerErr = fmt.Errorf("%s: %w", source, err)
 	}
-	res, err := tr.VerifyCompiled(ctx, source, targetDir)
-	if err != nil {
-		return fmt.Errorf("context verification failed: %w", err)
+	ignoreErr := CheckEvidenceIgnored(ctx, dir)
+	res, targetsErr := tr.VerifyCompiled(ctx, source, targetDir)
+	if targetsErr == nil {
+		targetsErr = printNotApplicableTargets(sw.w, res)
 	}
-	if err := printNotApplicableTargets(sw.w, res); err != nil {
-		return fmt.Errorf("context verification failed: %w", err)
-	}
-	lint, err := LintContext(ctx, source)
-	if err != nil {
-		return fmt.Errorf("context verification failed: %w", err)
-	}
-	sw.printf("  %s: %s.\n", source, lint.Summary())
-	return nil
+	const prefix = "context verification failed"
+	return errors.Join(prefixError(prefix, registerErr), prefixError(prefix, ignoreErr), prefixError(prefix, targetsErr))
 }
 
-// verifyAgentSurfaces lints every canonical persona and skill and verifies every persona and
-// plugin skill projection under targetDir. It returns the number of persona copies verified.
-func verifyAgentSurfaces(ctx context.Context, sw *syncWriter, targetDir string) (int, error) {
-	personasLinted, err := LintCanonicalPersonas(ctx, targetDir)
-	if err != nil {
-		return 0, fmt.Errorf("context verification failed: %w", err)
+// lintAgentText runs the caveman gate over the canonical AGENTS.md at source and over every
+// canonical persona and skill under targetDir. It prints the verdict of each surface that
+// passed and returns one error per surface that failed. compile-context runs it after writing
+// and compile-context --verify runs it read-only, so both hold the text to the same gate.
+func lintAgentText(ctx context.Context, sw *syncWriter, source, targetDir string) []error {
+	var errs []error
+	if lint, err := LintContext(ctx, source); err != nil {
+		errs = append(errs, err)
+	} else {
+		sw.printf("  %s: %s.\n", source, lint.Summary())
 	}
-	skillsLinted, err := LintCanonicalSkillFiles(ctx, targetDir)
-	if err != nil {
-		return 0, fmt.Errorf("context verification failed: %w", err)
+	personas, personaErr := LintCanonicalPersonas(ctx, targetDir)
+	skills, skillErr := LintCanonicalSkillFiles(ctx, targetDir)
+	if personaErr != nil || skillErr != nil {
+		return slices.DeleteFunc(append(errs, personaErr, skillErr), func(err error) bool { return err == nil })
 	}
 	sw.printf("  %d personas and %d skills passed the caveman lint (<= %d prose words each).\n",
-		personasLinted, skillsLinted, AgentTextCeiling)
-	verified, err := VerifyAgentProjections(ctx, targetDir)
-	if err != nil {
-		return 0, fmt.Errorf("agent persona verification failed: %w", err)
+		personas, skills, AgentTextCeiling)
+	return errs
+}
+
+// verifyAgentSurfaces verifies every persona and plugin skill projection under targetDir and
+// returns every failure. It returns the number of persona copies verified.
+func verifyAgentSurfaces(ctx context.Context, sw *syncWriter, targetDir string) (int, error) {
+	verified, personaErr := VerifyAgentProjections(ctx, targetDir)
+	if personaErr == nil {
+		personaErr = printNotApplicablePersonaDirs(ctx, sw.w, targetDir)
 	}
-	if err := printNotApplicablePersonaDirs(ctx, sw.w, targetDir); err != nil {
-		return 0, fmt.Errorf("agent persona verification failed: %w", err)
-	}
-	skills, err := VerifyPluginSkills(ctx, targetDir)
-	if err != nil {
-		return 0, fmt.Errorf("plugin skill verification failed: %w", err)
-	}
-	if skills > 0 {
+	skills, skillErr := VerifyPluginSkills(ctx, targetDir)
+	if skillErr == nil && skills > 0 {
 		sw.printf("  %d plugin skill projections verified (%s).\n", skills, PluginSkillsRel)
 	}
-	return verified, nil
+	return verified, errors.Join(prefixError("agent persona verification failed", personaErr),
+		prefixError("plugin skill verification failed", skillErr))
+}
+
+// prefixError wraps err with prefix, and leaves nil nil so errors.Join drops it.
+func prefixError(prefix string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", prefix, err)
 }
 
 // CompileVendorTargets splices the text register block into the canonical source, then
@@ -154,8 +170,11 @@ func printNotApplicable(w io.Writer, rels []string) error {
 // plugin persona and skill copies; any projection failure is an error, never a silently skipped
 // success line. Every canonical persona and skill is read, and every target is checked
 // (checkProjectionFiles), before the text register splice into source and before the first file
-// is written, so a refused target leaves source and every output unchanged. The CLI's
-// compile-context and the MCP standards_compile_context write call both run it.
+// is written, so a refused target leaves source and every output unchanged. Once everything is
+// written, the caveman gate compile-context --verify applies runs over AGENTS.md and every
+// canonical persona and skill (lintAgentText): a failure is returned, so the run never reports
+// success on text the next verify rejects. The CLI's compile-context and the MCP
+// standards_compile_context write call both run it.
 func CompileContextProjections(ctx context.Context, w io.Writer, tr *Transpiler, source, targetDir string) error {
 	sw := &syncWriter{w: w}
 	sw.printf("Compiling agent context from canonical %s...\n", source)
@@ -172,6 +191,9 @@ func CompileContextProjections(ctx context.Context, w io.Writer, tr *Transpiler,
 	}
 	if err := writeAgentSurfaces(ctx, sw, targetDir, plan); err != nil {
 		return err
+	}
+	if err := errors.Join(lintAgentText(ctx, sw, source, targetDir)...); err != nil {
+		return fmt.Errorf("context written, but compile-context --verify will fail: %w", err)
 	}
 	sw.println("Cross-agent context transpilation completed successfully.")
 	return sw.err

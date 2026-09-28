@@ -430,7 +430,15 @@ func reconcileAgentHarness(ctx context.Context, s *adoptSession) error {
 	if err != nil {
 		return err
 	}
-	return transpileAgentTargets(ctx, s, agentsContent, declared.AgentClients, prior)
+	if err := transpileAgentTargets(ctx, s, agentsContent, declared.AgentClients, prior); err != nil {
+		return err
+	}
+	// The gate compile-context --verify and audit apply; the text adoption keeps from the
+	// repository can fail it, so the pillar warns instead of claiming a linted harness.
+	if _, err := compiler.LintContextText(agentsFile, agentsContent); err != nil {
+		s.report.addWarning("%v", err)
+	}
+	return nil
 }
 
 // harnessFacts gathers what the harness may state about this run: identity, plan, the
