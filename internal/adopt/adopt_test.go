@@ -383,10 +383,12 @@ func editOperatingContract(t *testing.T, generated string) string {
 // TestAdoptEditedHarnessFailsBeforeWritingWithRemedy (#502 U9) Negative: the realistic path.
 // adopt writes the harness and binds register.sources to it; the operator edits a contract row
 // and does not re-bind. Adoption never re-blesses that drift, plain or --force: the run stops
-// before its first write, and the error names both remedies. The second one, deleting the
-// harness and re-running adopt, regenerates the bytes the contract was bound to. The first,
-// recomputing the pins with the named command, is TestAdoptForceEditedHarnessNeedsRecomputedPins
-// in cmd/standardsctl.
+// before its first write, and the error names the remedies. The first, setting the pins to the
+// values the error reports, needs no staged harness: the error carries the digest of the edited
+// bytes. The configured-sources check reports the same values once the harness is staged
+// (TestAdoptForceEditedHarnessNeedsRecomputedPins in cmd/standardsctl). The last, deleting the
+// harness and re-running adopt, regenerates the bytes the contract was bound to; across a release
+// it binds the pins to the new synthesis (TestAdoptDeletedHarnessRebindsPinsAcrossReleases).
 func TestAdoptEditedHarnessFailsBeforeWritingWithRemedy(t *testing.T) {
 	repoPath := newTestRepo(t, "legacy")
 	mustWrite(t, filepath.Join(repoPath, manifestFile), legacyManifest)
@@ -395,12 +397,18 @@ func TestAdoptEditedHarnessFailsBeforeWritingWithRemedy(t *testing.T) {
 	}
 	harnessPath := filepath.Join(repoPath, paperclipFile)
 	generated := mustRead(t, harnessPath)
-	mustWrite(t, harnessPath, editOperatingContract(t, generated))
+	edited := editOperatingContract(t, generated)
+	editedPins, err := managedRegisterSources(t.Context(), []byte(edited))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, harnessPath, edited)
 	before := snapshotTree(t, repoPath)
 	for _, force := range []bool{false, true} {
 		_, err := Adopt(t.Context(), sourceAdoptOptions(t, repoPath, force))
-		for _, want := range []string{"register.sources sha256 mismatch",
-			"recompute the pins with `praetorctl caveman check --configured-sources --root=.`",
+		for _, want := range []string{"register.sources sha256 mismatch", "actual " + editedPins.SHA256,
+			"to the extracted values this error reports",
+			"recompute the pins with `praetorctl caveman check --configured-sources --root=.` once every input is staged (git add)",
 			"delete it and re-run praetorctl adopt to regenerate it"} {
 			if err == nil || !strings.Contains(err.Error(), want) {
 				t.Fatalf("force=%v: error lacks %q: %v", force, want, err)
@@ -534,6 +542,38 @@ func TestAdoptForcePatchesOnlyHarnessPlatform(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestAdoptCaseVariantPlatformKey (#502) Boundary: LoadHarnessContext, and so audit, reads a
+// "Platform" key as the platform, and adoption compares that member too. Naming the identity, it
+// draws no warning on a plain run. Naming another repository, a plain run warns, and --force sets
+// its value in place: the key keeps its spelling, no second platform member is added, and the
+// harness loads the identity and passes the source gate.
+func TestAdoptCaseVariantPlatformKey(t *testing.T) {
+	repoPath := newTestRepo(t, "legacy")
+	harnessPath := filepath.Join(repoPath, paperclipFile)
+	variant := strings.Replace(renamedHarness, `"platform": "acme/renamed"`, `"Platform": "acme/legacy"`, 1)
+	mustWrite(t, filepath.Join(repoPath, manifestFile), legacyManifest)
+	mustWrite(t, harnessPath, variant)
+	matching, err := Adopt(t.Context(), sourceAdoptOptions(t, repoPath, false))
+	if err != nil || strings.Contains(strings.Join(matching.Warnings, "\n"), paperclipFile+": platform") {
+		t.Fatalf("case-variant key naming the identity: err=%v warnings=%v", err, matching.Warnings)
+	}
+	mustWrite(t, harnessPath, strings.Replace(variant, `"Platform": "acme/legacy"`, `"Platform": "acme/renamed"`, 1))
+	plain, err := Adopt(t.Context(), sourceAdoptOptions(t, repoPath, false))
+	if err != nil || !strings.Contains(strings.Join(plain.Warnings, "\n"), `audit expects "acme/legacy". Re-run adopt with --force`) {
+		t.Fatalf("case-variant key naming another repository not warned: err=%v warnings=%v", err, plain.Warnings)
+	}
+	if _, err := Adopt(t.Context(), sourceAdoptOptions(t, repoPath, true)); err != nil {
+		t.Fatalf("--force on a case-variant platform key: %v", err)
+	}
+	if got := mustRead(t, harnessPath); got != variant {
+		t.Fatalf("--force did not set the case-variant platform value in place:\n%s", got)
+	}
+	if h, err := paperclip.LoadHarness(harnessPath); err != nil || h.Platform != "acme/legacy" {
+		t.Fatalf("patched harness fails the audit platform check: %+v %v", h, err)
+	}
+	requirePassingSourceGate(t, repoPath, paperclipFile)
 }
 
 // TestAdoptForceKeepsHarnessItCannotPatch (#502) Boundary: a harness the loader accepts but

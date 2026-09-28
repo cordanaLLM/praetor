@@ -100,6 +100,12 @@ func (p harnessPlan) absent() bool {
 	return !p.onDisk && p.write == nil
 }
 
+// writesOverAbsent reports a harness this run synthesizes where no file exists: its bytes are
+// Praetor output, never an operator's edit.
+func (p harnessPlan) writesOverAbsent() bool {
+	return !p.onDisk && p.write != nil
+}
+
 // patched reports an operator-owned harness whose platform this --force run sets: data holds
 // the patched bytes it writes over owned.
 func (p harnessPlan) patched() bool {

@@ -667,17 +667,27 @@ does. To regenerate the harness, delete `.paperclip/harness.json` (and `rules.md
 
 Adoption does not re-bind `register.sources` to a harness you edited, under `--force` either.
 A declared contract that no longer matches stops the run before its first write with
-`existing register.sources fails its configured gate`, and the error names two remedies:
+`existing register.sources fails its configured gate`. The error names every value that
+differs, extracted from the files as they stand, and two remedies:
 
-1. Keep the edit: run `praetorctl caveman check --configured-sources --root=.`, set `expected`,
-   `not_applicable` and `sha256` under `register.sources` in `.standards.yaml` to the extracted
-   values it reports (one run reports every value that differs), then rerun
-   `praetorctl adopt --force`.
-2. Drop the edit: delete `.paperclip/harness.json` and rerun `praetorctl adopt`. It regenerates
-   the harness, and the contract bound to the generated harness matches again.
+1. Keep the edit: set `expected`, `not_applicable` and `sha256` under `register.sources` in
+   `.standards.yaml` to the extracted values the error reports, then rerun
+   `praetorctl adopt --force`. `praetorctl caveman check --configured-sources --root=.` reports
+   the same values once every input is staged with `git add`; it refuses untracked inputs.
+2. Drop the edit: delete `.paperclip/harness.json` and rerun `praetorctl adopt`. A harness
+   adoption writes where none existed is Praetor output. When every `register.sources` input
+   selects `.paperclip/harness.json`, as the rows adoption declares do, adoption binds the pins
+   to the harness it writes and reports `Re-bound register.sources to the Paperclip harness
+   this run writes where none existed`. That includes pins an earlier release bound to the
+   harness it wrote. A contract that also selects another file keeps its gate, because its one
+   digest cannot tell that file's drift from the new harness. The error then reports values
+   that cover the harness the run would write: set them and rerun.
 
-Tests: `TestAdoptEditedHarnessFailsBeforeWritingWithRemedy` in `internal/adopt/adopt_test.go`
-and `TestAdoptForceEditedHarnessNeedsRecomputedPins` in
+Tests: `TestAdoptEditedHarnessFailsBeforeWritingWithRemedy` in `internal/adopt/adopt_test.go`,
+`TestAdoptDeletedHarnessRebindsPinsAcrossReleases` and
+`TestAdoptAbsentHarnessKeepsGateOfMixedContract` in
+`internal/adopt/absent_harness_rebind_test.go`, and
+`TestAdoptForceEditedHarnessNeedsRecomputedPins` in
 `cmd/standardsctl/audit_paperclip_force_test.go`. The harness rules in full:
 [text register](guides/text-register.md#upgrading-an-adopted-repository).
 

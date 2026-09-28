@@ -96,13 +96,17 @@ func TestPatchPlatform_Positive_ReleasedHarnessChangesOneLine(t *testing.T) {
 }
 
 // TestPatchPlatform_Negative_RefusesWhatItCannotPatch: text that is no JSON object, an object
-// with a duplicate member, and a platform LoadHarnessContext would refuse all fail, with nothing
-// returned to write.
+// with a duplicate member, an object without a platform member or with two that differ only in
+// case, and a platform LoadHarnessContext would refuse all fail, with nothing returned to write.
+// Nothing is appended: a harness without a platform member does not load, so there is no
+// released layout to keep, and an appended "platform" beside a "Platform" would duplicate it.
 func TestPatchPlatform_Negative_RefusesWhatItCannotPatch(t *testing.T) {
 	for name, tc := range map[string]struct{ data, platform string }{
 		"array":            {`["acme/old"]`, "acme/new"},
 		"truncated":        {`{"version": 1, "platform": "acme/old",`, "acme/new"},
 		"duplicate member": {`{"platform": "acme/old", "platform": "acme/older"}`, "acme/new"},
+		"no platform":      {`{"version": 1}`, "acme/new"},
+		"case variants":    {`{"platform": "acme/old", "Platform": "acme/older"}`, "acme/new"},
 		"empty platform":   {operatorHarness, ""},
 		"blank platform":   {operatorHarness, "  "},
 		"oversized":        {operatorHarness, strings.Repeat("a", maxHarnessValueBytes+1)},
@@ -116,8 +120,7 @@ func TestPatchPlatform_Negative_RefusesWhatItCannotPatch(t *testing.T) {
 
 // TestPatchPlatform_Boundary_UnchangedAndLineEndings: a harness already naming the platform is
 // returned as it is, byte for byte and escapes included; a CRLF text and a compact one differ
-// from the input in the platform value alone; a harness without a platform member gains one
-// after the last member.
+// from the input in the platform value alone.
 func TestPatchPlatform_Boundary_UnchangedAndLineEndings(t *testing.T) {
 	same, changed, err := PatchPlatform([]byte(operatorHarness), "acme/old")
 	if err != nil || changed || string(same) != operatorHarness {
@@ -133,8 +136,26 @@ func TestPatchPlatform_Boundary_UnchangedAndLineEndings(t *testing.T) {
 	if err != nil || !changed || string(patched) != `{"version":1,"notes":"a \u003c b","platform":"acme/new"}` {
 		t.Fatalf("compact layout re-rendered: changed=%v err=%v\n%s", changed, err, patched)
 	}
-	missing, changed, err := PatchPlatform([]byte(`{"version": 1}`), "acme/new")
-	if err != nil || !changed || !strings.HasSuffix(string(missing), "\"platform\": \"acme/new\"\n}\n") {
-		t.Fatalf("absent platform not appended: changed=%v err=%v\n%s", changed, err, missing)
+}
+
+// TestPatchPlatform_Boundary_CaseVariantKey: LoadHarnessContext reads a "Platform" key as the
+// platform, so PatchPlatform does too. One already naming the platform is unchanged, so a plain
+// adopt warns about nothing; another has its value replaced where it stands, the key keeps its
+// spelling, and no second platform member is added.
+func TestPatchPlatform_Boundary_CaseVariantKey(t *testing.T) {
+	variant := strings.Replace(operatorHarness, `"platform": "acme/old"`, `"Platform": "acme/old"`, 1)
+	same, changed, err := PatchPlatform([]byte(variant), "acme/old")
+	if err != nil || changed || string(same) != variant {
+		t.Fatalf("case-variant key naming the platform rewritten: changed=%v err=%v\n%s", changed, err, same)
+	}
+	patched, changed, err := PatchPlatform([]byte(variant), "acme/new")
+	want := strings.Replace(variant, `"Platform": "acme/old"`, `"Platform": "acme/new"`, 1)
+	if err != nil || !changed || string(patched) != want {
+		t.Fatalf("case-variant key not patched in place: changed=%v err=%v\n%s", changed, err, patched)
+	}
+	dir := t.TempDir()
+	writeRepoFile(t, dir, "harness.json", string(patched))
+	if h, err := LoadHarness(filepath.Join(dir, "harness.json")); err != nil || h.Platform != "acme/new" {
+		t.Fatalf("patched case-variant harness does not load the new platform: %+v %v", h, err)
 	}
 }

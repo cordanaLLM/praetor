@@ -1038,8 +1038,11 @@ stays, layout, line endings and the `\u003c`-style escapes of a released harness
 the reported delta is that one line; a plain run keeps the file and warns
 (`TestAdoptForcePatchesOnlyHarnessPlatform`,
 `TestPatchPlatform_Positive_ReleasedHarnessChangesOneLine`). To regenerate the harness, delete
-`.paperclip/harness.json` and rerun `praetorctl adopt`. A `.paperclip/rules.md` you deleted stays
-deleted, under `--force` too (`TestAdoptForceKeepsDeletedRulesAbsent`).
+`.paperclip/harness.json` and rerun `praetorctl adopt`. A harness written where none existed is
+Praetor output, so a contract whose every input selects it is bound to the written bytes, pins
+an earlier release bound included (`TestAdoptDeletedHarnessRebindsPinsAcrossReleases`). A
+`.paperclip/rules.md` you deleted stays deleted, under `--force` too
+(`TestAdoptForceKeepsDeletedRulesAbsent`).
 
 ## Canonical context preparation
 
@@ -1073,10 +1076,10 @@ Files adopted before this change open with a file-wide `<!-- markdownlint-disabl
 (an older harness disables MD013 and MD025 together). Adoption with `--force` rewrites the
 personas and refreshes the `AGENTS.md` harness while keeping the repository's own
 instructions. `.paperclip/` is refreshed, with or without `--force`, only while it is
-unmodified earlier output; delete an edited one and rerun adoption to regenerate it. It never rewrites an existing `CONTRIBUTING.md`, pull
-request template, `SECURITY.md` or `docs/adr/`: those belong to the repository once
-written (`internal/adopt/governance.go`), so delete their disable line by hand and wrap
-the lines it covered.
+unmodified earlier output; delete an edited one and rerun adoption to regenerate it. It
+never rewrites an existing `CONTRIBUTING.md`, pull request template, `SECURITY.md` or
+`docs/adr/`: those belong to the repository once written (`internal/adopt/governance.go`),
+so delete their disable line by hand and wrap the lines it covered.
 
 `internal/adopt/generated_markdown_test.go` and
 `internal/paperclip/rules_markdown_test.go` check each file with

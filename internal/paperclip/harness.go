@@ -567,14 +567,12 @@ func writeHarnessFile(repoPath, name string, data []byte) error {
 
 // PatchPlatform returns the harness text data with only its platform member set to platform,
 // and whether that changed anything. It is how adoption --force reconciles an operator-owned
-// harness whose platform names another repository. A present platform member has its value
-// replaced where it stands (clientjson.ReplaceMember), so every other byte stays as written:
-// members this release does not know, layout, the \u003c-style escapes json.MarshalIndent wrote
-// into a released harness, and line endings. A harness without a platform member gains one after
-// its last member; that object is re-rendered (clientjson.Object.Encode), which re-indents it
-// and normalises its string escapes, and one consistent CRLF style stays CRLF. data must hold
-// one JSON object without a duplicate member name, and platform must be a value
-// LoadHarnessContext accepts.
+// harness whose platform names another repository. The member's value is replaced where it
+// stands (clientjson.ReplaceMember), so every other byte stays as written: members this release
+// does not know, layout, the \u003c-style escapes json.MarshalIndent wrote into a released
+// harness, and line endings. The member is the one LoadHarnessContext reads (platformMember), so
+// a case-variant key such as "Platform" keeps its spelling. data must hold one JSON object
+// without a duplicate member name, and platform must be a value LoadHarnessContext accepts.
 func PatchPlatform(data []byte, platform string) ([]byte, bool, error) {
 	if err := validateHarnessValues([]string{platform}); err != nil {
 		return nil, false, fmt.Errorf("paperclip: harness platform: %w", err)
@@ -583,36 +581,43 @@ func PatchPlatform(data []byte, platform string) ([]byte, bool, error) {
 	if err != nil {
 		return nil, false, fmt.Errorf("paperclip: harness is not one JSON object with unique member names: %w", err)
 	}
-	current, present := object.Get("platform")
-	if present && clientjson.StringValue(current) == platform {
+	member, err := platformMember(object)
+	if err != nil {
+		return nil, false, err
+	}
+	if clientjson.StringValue(member.Value) == platform {
 		return data, false, nil
 	}
 	value, err := jsontext.AppendQuote(nil, platform)
 	if err != nil {
 		return nil, false, fmt.Errorf("paperclip: encode harness platform: %w", err)
 	}
-	var patched []byte
-	if present {
-		patched, err = clientjson.ReplaceMember(data, "platform", value)
-	} else {
-		patched, err = appendPlatform(object, value, data)
-	}
+	patched, err := clientjson.ReplaceMember(data, member.Name, value)
 	if err != nil {
 		return nil, false, fmt.Errorf("paperclip: set harness platform: %w", err)
 	}
 	return patched, true, nil
 }
 
-// appendPlatform returns object, decoded from data, with a platform member holding value after
-// its last member, re-rendered (clientjson.Object.Encode) in data's line-ending style when that
-// style is one consistent CRLF.
-func appendPlatform(object clientjson.Object, value jsontext.Value, data []byte) ([]byte, error) {
-	encoded, err := object.With("platform", value).Encode()
-	if err != nil {
-		return nil, fmt.Errorf("encode harness: %w", err)
+// platformMember returns the member of a harness object LoadHarnessContext reads as its
+// platform. encoding/json matches member names case-insensitively (strings.EqualFold), so a
+// "Platform" key is the platform. Exactly one such member is required: with none the loader
+// refuses the harness, and with two in different case ("platform" and "Platform") the loader
+// reads the last, so replacing either value alone could leave the platform audit reads as it was.
+func platformMember(object clientjson.Object) (clientjson.Member, error) {
+	var found []clientjson.Member
+	for _, member := range object {
+		if strings.EqualFold(member.Name, "platform") {
+			found = append(found, member)
+		}
 	}
-	_, crlf, err := util.NormalizeLineEndingsStrict(string(data))
-	return []byte(util.RestoreLineEndings(string(encoded), err == nil && crlf)), nil
+	switch len(found) {
+	case 1:
+		return found[0], nil
+	case 0:
+		return clientjson.Member{}, errors.New("paperclip: harness has no platform member")
+	}
+	return clientjson.Member{}, fmt.Errorf("paperclip: harness holds %d platform members that differ only in case", len(found))
 }
 
 // renderRules renders the human-readable operating rules of a harness.
