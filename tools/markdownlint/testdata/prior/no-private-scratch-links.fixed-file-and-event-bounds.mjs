@@ -12,12 +12,7 @@ import { parse, postprocess, preprocess } from "micromark";
 import { mdxjs } from "micromark-extension-mdxjs";
 import { parseFragment } from "parse5";
 
-// MAX_EVENTS is the per-file floor of the Markdown parse bound. A file may parse to one event
-// per byte above it (parseEventLimit): verify.mjs bounds every file's size, 1 MiB by default and
-// raisable in .standards.yaml, and a larger document would otherwise fail on its size alone.
-// Ordinary documentation parses to 0.2-0.3 events per byte.
 const MAX_EVENTS = 262_144;
-const MAX_EVENTS_PER_BYTE = 1;
 const MAX_HTML_NODES = 65_536;
 const MAX_HTML_DEPTH = 8;
 const MAX_SRCSET_CANDIDATES = 4_096;
@@ -89,9 +84,7 @@ const HTML_CSS_URL_ATTRIBUTES = new Set([
   "stroke",
 ]);
 const SCRATCH_ROOTS = new Set([".workingdir", ".workingdir2"]);
-// The hard ceiling of documentation.max_files. verify.mjs enforces the repository's declared
-// bound, which never exceeds this, before it writes the inventory this rule reads.
-const MAX_FILES = 16_384;
+const MAX_FILES = 4_096;
 const MAX_FINDINGS = 64;
 const MAX_DIAGNOSTIC_FIELD_CHARS = 256;
 const MAX_SOURCE_PATH_BYTES = 4_096;
@@ -981,18 +974,14 @@ function collectAttributeLists(markdown, start, end, startLine, state, found, li
   }
 }
 
-function parseEventLimit(markdown) {
-  return Math.max(MAX_EVENTS, Buffer.byteLength(markdown) * MAX_EVENTS_PER_BYTE);
-}
-
-function snippetDestinations(markdown, limit, maxLines) {
+function snippetDestinations(markdown, limit) {
   const lines = markdown.split("\n");
-  if (lines.length > maxLines) {
-    throw new Error(`snippet input exceeds ${maxLines} lines`);
+  if (lines.length > MAX_EVENTS) {
+    throw new Error(`snippet input exceeds ${MAX_EVENTS} lines`);
   }
   const found = [];
   let inBlock = false;
-  for (let index = 0; index < lines.length && index < maxLines; index += 1) {
+  for (let index = 0; index < lines.length && index < MAX_EVENTS; index += 1) {
     const trimmed = lines[index].trim();
     if (trimmed.startsWith(";")) {
       continue;
@@ -1023,14 +1012,13 @@ export function findPrivateScratchLinks(source, markdown, limit = MAX_FINDINGS +
   }
   const options = isMDXSource(source) ? { extensions: [mdxjs()] } : {};
   const events = postprocess(parse(options).document().write(preprocess()(markdown, undefined, true)));
-  const eventLimit = parseEventLimit(markdown);
-  if (events.length > eventLimit) {
-    throw new Error(`${source}: Markdown parse exceeds ${eventLimit} events`);
+  if (events.length > MAX_EVENTS) {
+    throw new Error(`${source}: Markdown parse exceeds ${MAX_EVENTS} events`);
   }
-  const destinations = snippetDestinations(markdown, MAX_EVENTS, eventLimit);
+  const destinations = snippetDestinations(markdown, MAX_EVENTS);
   const htmlState = createHTMLState();
   const mdxPropertyExpressions = new Map();
-  for (let index = 0; index < events.length && index < eventLimit; index += 1) {
+  for (let index = 0; index < events.length && index < MAX_EVENTS; index += 1) {
     const [phase, token] = events[index];
     if (phase !== "enter") {
       continue;
@@ -1300,18 +1288,7 @@ function selfTest() {
   assert.equal(boundary.length, 1);
   assert.equal(boundary[0].resolved, ".workingdir/STATE.md");
   assert.doesNotThrow(() => validateFileList(new Array(MAX_FILES).fill("fixture.md")));
-  assert.throws(() => validateFileList(new Array(MAX_FILES + 1).fill("fixture.md")), /maximum is 16384/u);
-  // The parse bound grows with the file: a document past the MAX_EVENTS floor that parses to
-  // fewer events than its bytes passes, one that parses to more fails, and the limit is counted
-  // in UTF-8 bytes, not characters.
-  assert.equal(parseEventLimit("a".repeat(MAX_EVENTS)), MAX_EVENTS);
-  assert.equal(parseEventLimit("a".repeat(MAX_EVENTS + 1)), MAX_EVENTS + 1);
-  assert.equal(parseEventLimit("\u00e9".repeat(MAX_EVENTS)), 2 * MAX_EVENTS);
-  const sparseLines = "abcdef\n".repeat(70_000);
-  assert.deepEqual(findPrivateScratchLinks("docs/large.md", sparseLines), []);
-  const denseLines = "x\n".repeat(70_000);
-  assert.throws(() => findPrivateScratchLinks("docs/dense.md", denseLines),
-    /docs\/dense\.md: Markdown parse exceeds 262144 events/u);
+  assert.throws(() => validateFileList(new Array(MAX_FILES + 1).fill("fixture.md")), /maximum is 4096/u);
   const findingFixture = new Array(MAX_FINDINGS + 1).fill(findings[0]);
   assert.equal(capFindings(findingFixture.slice(0, MAX_FINDINGS), MAX_FINDINGS).firstOmitted, null);
   assert.equal(capFindings(findingFixture, MAX_FINDINGS).firstOmitted, findings[0]);

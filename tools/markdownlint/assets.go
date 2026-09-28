@@ -100,6 +100,9 @@ var priorDigests = map[string]string{
 	// The first scratch-link rule, which compared process.argv[1] by spelling and skipped
 	// main() under a symlinked temporary directory.
 	"56d7c5a15f5622e6ecf4e6fc2877bb796fd0db4fb73c6f07a41bec637830242c": Directory + "/no-private-scratch-links.mjs",
+	// The scratch-link rule with a fixed 4,096-file inventory and a fixed 262,144-event parse
+	// bound, before either grew with the bounds a repository declares.
+	"fec9b4f1b48f5847c91fb64e52483a51ae3c1cc4b2574af6eedce7210cad0d5f": Directory + "/no-private-scratch-links.mjs",
 }
 
 var assetNames = [...]string{

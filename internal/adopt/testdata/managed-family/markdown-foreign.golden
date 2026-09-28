@@ -12,7 +12,7 @@ file tools/markdownlint/package.json sha256:9eec2a40bdaff8ec72019d859c7c4f5a969d
 file tools/markdownlint/package-lock.json sha256:7b2c98f403f05acb4cb6a9645ae2ef9dac9e824ec83eb6b19281e1fd55dda1c7
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3
 file tools/markdownlint/verify.mjs sha256:f018e2ac86d3ba934ac84d617a26431a7cd3fcfc0f74e8c72f165610ea0d1ad8
-file tools/markdownlint/no-private-scratch-links.mjs sha256:fec9b4f1b48f5847c91fb64e52483a51ae3c1cc4b2574af6eedce7210cad0d5f
+file tools/markdownlint/no-private-scratch-links.mjs sha256:b9ff4ec80d895a8504e99ddce924435bafe0e949d99b48351ddc38c025195744
 file .gitignore "bin/\n*.test\n*.out\n.DS_Store\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n# END praetor private artifacts\n"
 file .prettierignore absent
 == foreign first adoption force=true
@@ -29,7 +29,7 @@ file tools/markdownlint/package.json sha256:9eec2a40bdaff8ec72019d859c7c4f5a969d
 file tools/markdownlint/package-lock.json sha256:7b2c98f403f05acb4cb6a9645ae2ef9dac9e824ec83eb6b19281e1fd55dda1c7
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3
 file tools/markdownlint/verify.mjs sha256:fa82c6380aaf001bab89f25c5dbdceecfa2c2ce59ffc4b3e2ad157693bc1b245
-file tools/markdownlint/no-private-scratch-links.mjs sha256:fec9b4f1b48f5847c91fb64e52483a51ae3c1cc4b2574af6eedce7210cad0d5f
+file tools/markdownlint/no-private-scratch-links.mjs sha256:b9ff4ec80d895a8504e99ddce924435bafe0e949d99b48351ddc38c025195744
 file .gitignore "bin/\n*.test\n*.out\n.DS_Store\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n# END praetor private artifacts\n"
 file .prettierignore absent
 == dry run
