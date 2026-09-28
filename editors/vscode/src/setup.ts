@@ -11,13 +11,107 @@ export type ClientCapability = {
 // standardsLSP.trace.server, a key nothing contributes, so the setting never took effect.
 export const LSP_CLIENT_ID = "standards.lsp";
 
+// Contributed defaults of standards.lsp.path and standards.mcp.path (package.json); setup.test.ts
+// checks they stay equal.
+export const LSP_DEFAULT_PATH = "${workspaceFolder}/bin/standards-lsp";
+export const MCP_DEFAULT_PATH = "${workspaceFolder}/bin/standards-mcp";
+
+// workspaceExecutable resolves a server path setting for one workspace folder: a value that is not
+// a non-blank string falls back to the contributed default, then ${workspaceFolder} becomes the
+// folder path, inserted literally (a replacer function, so `$&` in a path is not a pattern). The
+// LSP and the MCP server resolve their paths through this one function.
+export function workspaceExecutable(configured: unknown, fallback: string, folderPath: string): string {
+  const value = typeof configured === "string" && configured.trim() ? configured : fallback;
+  return value.replaceAll("${workspaceFolder}", () => folderPath);
+}
+
+// Files whose presence at a workspace folder root marks a Praetor workspace. They are the files the
+// workspaceContains activation events in package.json name; setup.test.ts checks the two agree.
+export const PRAETOR_MARKERS = [".standards.yaml", "AGENTS.md"] as const;
+// MAX_MARKER_FOLDERS bounds the folders praetorWorkspace inspects in one multi-root window.
+export const MAX_MARKER_FOLDERS = 64;
+
+export type IsFile = (file: string) => Promise<boolean>;
+
+// FILE_PROBE_TIMEOUT_MS bounds one file-existence probe (HISS-02). A stalled network or remote
+// mount must not hang activation, the status bar or provideMcpServerDefinitions.
+export const FILE_PROBE_TIMEOUT_MS = 1000;
+
+// boundedIsFile races probe against a timer: a probe that rejects, throws or has not settled after
+// timeoutMs counts as absent. The extension wraps its fs.stat probe with it, so every IsFile the
+// LSP gate, the MCP provider and praetorWorkspace receive is bounded.
+export function boundedIsFile(probe: IsFile, timeoutMs = FILE_PROBE_TIMEOUT_MS): IsFile {
+  return file => new Promise<boolean>(resolve => {
+    const timer = setTimeout(() => resolve(false), timeoutMs);
+    Promise.resolve().then(() => probe(file)).then(resolve, () => resolve(false)).finally(() => clearTimeout(timer));
+  });
+}
+
+// launchCandidates lists the files an absolute command can start. On Windows a command without an
+// extension also names <command>.com and <command>.exe, which libuv's search_path appends
+// (docs/guides/editor-capabilities.md, the same rule the generated LSP settings rely on), so a
+// built bin/standards-mcp.exe counts for the default bin/standards-mcp.
+export function launchCandidates(command: string, platform: NodeJS.Platform): string[] {
+  if (platform !== "win32" || path.win32.extname(command) !== "") return [command];
+  return [command, `${command}.com`, `${command}.exe`];
+}
+
+// checkedLaunchFiles lists the files that decide whether a server command can start: the
+// launchCandidates of an absolute command, at most three. A command name or relative path is left
+// to the host's own lookup and yields none. commandAvailable probes these files and the MCP
+// provider watches them, so the check and the watch cover the same set.
+export function checkedLaunchFiles(command: string, platform: NodeJS.Platform): string[] {
+  const flavor = platform === "win32" ? path.win32 : path.posix;
+  return flavor.isAbsolute(command) ? launchCandidates(command, platform) : [];
+}
+
+// commandAvailable reports whether a server command can start: an absolute command must name an
+// existing file (one of its checkedLaunchFiles). A command name or relative path is unchecked.
+// The LSP and the MCP provider both gate on it, so a workspace that never built bin/standards-lsp
+// or bin/standards-mcp starts and lists nothing.
+export async function commandAvailable(command: string, platform: NodeJS.Platform, isFile: IsFile): Promise<boolean> {
+  const files = checkedLaunchFiles(command, platform);
+  if (files.length === 0) return true;
+  for (const candidate of files) {
+    if (await isFile(candidate)) return true;
+  }
+  return false;
+}
+
+// praetorWorkspace reports whether one of the first MAX_MARKER_FOLDERS workspace folders holds a
+// PRAETOR_MARKERS file at its root. The status bar shows only then, so an activation from another
+// source (a Go file, VS Code's MCP discovery) stays silent in an unrelated workspace.
+export async function praetorWorkspace(folderPaths: readonly string[], isFile: IsFile): Promise<boolean> {
+  for (const folder of folderPaths.slice(0, MAX_MARKER_FOLDERS)) {
+    for (const marker of PRAETOR_MARKERS) {
+      if (await isFile(path.join(folder, marker))) return true;
+    }
+  }
+  return false;
+}
+
+// sentinelArguments turns standards.sentinel.headroomMB into the praetorctl sentinel call that
+// measures it. Zero would skip the CLI check, so only a positive integer is passed; the CLI refuses
+// values above its MiB limit.
+export function sentinelArguments(headroomMB: unknown): string[] {
+  if (typeof headroomMB !== "number" || !Number.isSafeInteger(headroomMB) || headroomMB < 1) {
+    throw new Error("standards.sentinel.headroomMB must be a positive whole number of MiB.");
+  }
+  return ["sentinel", `--min-free-mb=${headroomMB}`];
+}
+
 export function requireTrust(trusted: boolean): void {
   if (!trusted) throw new Error("Workspace Trust is required before running Praetor.");
 }
 
+// globLiteral escapes text for a VS Code glob pattern: glob symbols become bracket expressions that
+// match them literally. workspaceGlob and the MCP launch-file watcher both escape through it.
+export function globLiteral(text: string): string {
+  return text.replace(/[*?\[\]{}]/g, char => `[${char}]`);
+}
+
 export function workspaceGlob(root: string): string {
-  // VS Code glob patterns use bracket expressions to match literal glob symbols.
-  return root.replaceAll("\\", "/").replace(/[*?\[\]{}]/g, char => `[${char}]`).replace(/\/$/, "") + "/**/*.go";
+  return globLiteral(root.replaceAll("\\", "/")).replace(/\/$/, "") + "/**/*.go";
 }
 
 export function machineExecutable(globalValue: unknown, defaultValue: string): string {

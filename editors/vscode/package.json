@@ -6,7 +6,7 @@
   "publisher": "cordanaLLM",
   "license": "EUPL-1.2",
   "engines": {
-    "vscode": "^1.90.0"
+    "vscode": "^1.107.0"
   },
   "categories": [
     "Programming Languages",
@@ -48,6 +48,13 @@
         "category": "Standards"
       }
     ],
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "standards.mcp",
+        "label": "Praetor Standards",
+        "when": "isWorkspaceTrusted && config.standards.mcp.enabled && workspaceFolderCount > 0"
+      }
+    ],
     "configuration": {
       "type": "object",
       "title": "cordanaLLM Standards Configuration",
@@ -72,10 +79,22 @@
           "default": "messages",
           "description": "LSP trace communication level."
         },
+        "standards.mcp.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Offer the workspace standards-mcp server to VS Code chat through the MCP server definition provider; trusted workspaces only."
+        },
+        "standards.mcp.path": {
+          "type": "string",
+          "default": "${workspaceFolder}/bin/standards-mcp",
+          "description": "MCP server executable for the selected trusted workspace; an absolute path is offered only when the file exists. Never started in Restricted Mode."
+        },
         "standards.sentinel.headroomMB": {
-          "type": "number",
+          "type": "integer",
           "default": 1024,
-          "description": "Minimum required host RAM headroom in megabytes."
+          "minimum": 1,
+          "maximum": 1073741824,
+          "description": "Free host RAM in MiB that Standards: Check Sentinel Host Headroom requires; praetorctl sentinel --min-free-mb measures it."
         },
         "standards.cli.path": {
           "type": "string",
@@ -90,12 +109,6 @@
           "maximum": 600,
           "scope": "machine",
           "description": "Timeout for explicit repository verification; expiration is reported as incomplete."
-        },
-        "standards.modelTier": {
-          "type": "string",
-          "default": "",
-          "description": "Legacy setting; does not activate MCP or select a running model.",
-          "deprecationMessage": "Use Standards: Prepare Agent MCP Configuration and the shared routing configuration."
         }
       }
     }
@@ -109,7 +122,7 @@
   },
   "devDependencies": {
     "@types/node": "20.19.43",
-    "@types/vscode": "1.90.0",
+    "@types/vscode": "1.107.0",
     "typescript": "5.9.3"
   },
   "capabilities": {
@@ -118,7 +131,8 @@
       "description": "Read-only browsing is available; commands and subprocesses require Workspace Trust.",
       "restrictedConfigurations": [
         "standards.cli.path",
-        "standards.lsp.path"
+        "standards.lsp.path",
+        "standards.mcp.path"
       ]
     },
     "virtualWorkspaces": {

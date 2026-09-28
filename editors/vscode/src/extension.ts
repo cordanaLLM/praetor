@@ -1,18 +1,81 @@
+import { stat } from "node:fs/promises";
+import * as path from "node:path";
 import * as vscode from "vscode";
 import { LanguageClient } from "vscode-languageclient/node";
+import { LaunchFileWatch, MCP_PROVIDER_ID, McpLaunch, StandardsMcpProvider, stickyFolder } from "./mcp";
 import { DEFAULT_TIMEOUT_MS, runCLI } from "./runner";
-import { artifactPath, ClientCapability, LSP_CLIENT_ID, machineExecutable, parseCapabilities, requireTrust, setupArguments, workspaceGlob } from "./setup";
+import { artifactPath, boundedIsFile, ClientCapability, commandAvailable, globLiteral, LSP_CLIENT_ID, LSP_DEFAULT_PATH, machineExecutable, parseCapabilities, praetorWorkspace, requireTrust, sentinelArguments, setupArguments, workspaceExecutable, workspaceGlob } from "./setup";
 
 let client: LanguageClient | undefined;
+let lspStarting = false;
 let output: vscode.OutputChannel;
+
+// Every existence probe is raced against FILE_PROBE_TIMEOUT_MS; a stalled mount counts as absent.
+const isFile = boundedIsFile(file => stat(file).then(entry => entry.isFile()));
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   output = vscode.window.createOutputChannel("Praetor");
   context.subscriptions.push(output);
   registerCommands(context);
   setupStatusBar(context);
-  context.subscriptions.push(vscode.workspace.onDidGrantWorkspaceTrust(() => { void startOptionalLSP(context); }));
+  const mcp = registerMcpProvider(context);
+  context.subscriptions.push(vscode.workspace.onDidGrantWorkspaceTrust(() => { mcp?.refresh(); void startOptionalLSP(context); }));
   await startOptionalLSP(context);
+}
+
+// selectedFolder is the last folder serverFolder chose; stickyFolder keeps it while the active
+// editor belongs to no workspace folder.
+let selectedFolder: vscode.WorkspaceFolder | undefined;
+
+// serverFolder is the folder the LSP and the MCP server bind to: the only workspace folder, or
+// the active editor's folder in a multi-root window, never an arbitrary first folder, and the
+// previous choice while the active editor belongs to none (stickyFolder).
+function serverFolder(): vscode.WorkspaceFolder | undefined {
+  const active = vscode.window.activeTextEditor && vscode.workspace.getWorkspaceFolder(vscode.window.activeTextEditor.document.uri);
+  selectedFolder = stickyFolder(selectedFolder, active, vscode.workspace.workspaceFolders);
+  return selectedFolder;
+}
+
+function registerMcpProvider(context: vscode.ExtensionContext): StandardsMcpProvider<vscode.McpStdioServerDefinition, vscode.Uri> | undefined {
+  // An editor that satisfies engines.vscode without this API keeps the commands and the LSP.
+  if (typeof vscode.lm?.registerMcpServerDefinitionProvider !== "function") return undefined;
+  const emitter = new vscode.EventEmitter<void>();
+  const provider = new StandardsMcpProvider({
+    trusted: () => vscode.workspace.isTrusted,
+    folder: () => serverFolder()?.uri,
+    settings: (folder: vscode.Uri) => {
+      const config = vscode.workspace.getConfiguration("standards", folder);
+      return { enabled: config.get<boolean>("mcp.enabled", true), path: config.get<string>("mcp.path") };
+    },
+    isFile,
+    platform: process.platform,
+    define: (launch: McpLaunch) => {
+      const server = new vscode.McpStdioServerDefinition(launch.label, launch.command, launch.args);
+      server.cwd = vscode.Uri.file(launch.cwd);
+      return server;
+    },
+  }, emitter);
+  context.subscriptions.push(emitter, vscode.lm.registerMcpServerDefinitionProvider(MCP_PROVIDER_ID, provider),
+    vscode.workspace.onDidChangeConfiguration(change => provider.configurationChanged(change)),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => provider.refresh()),
+    vscode.window.onDidChangeActiveTextEditor(() => provider.activeFolderChanged()));
+  watchLaunchFiles(context, provider);
+  return provider;
+}
+
+// watchLaunchFiles refreshes the provider when a launch file of the current server appears or
+// disappears, so the first build after activation lists the server without a reload. A watch on a
+// directory that does not exist yet starts once it is created (workspace.createFileSystemWatcher).
+function watchLaunchFiles(context: vscode.ExtensionContext, provider: StandardsMcpProvider<vscode.McpStdioServerDefinition, vscode.Uri>): void {
+  const watch = new LaunchFileWatch(provider, (file, changed) => {
+    const pattern = new vscode.RelativePattern(vscode.Uri.file(path.dirname(file)), globLiteral(path.basename(file)));
+    const watcher = vscode.workspace.createFileSystemWatcher(pattern, false, true, false);
+    watcher.onDidCreate(changed);
+    watcher.onDidDelete(changed);
+    return watcher;
+  });
+  context.subscriptions.push(watch, provider.onDidChangeMcpServerDefinitions(() => watch.update()));
+  watch.update();
 }
 
 async function selectWorkspaceFolder(): Promise<vscode.WorkspaceFolder | undefined> {
@@ -22,15 +85,26 @@ async function selectWorkspaceFolder(): Promise<vscode.WorkspaceFolder | undefin
   return vscode.window.showWorkspaceFolderPick({ placeHolder: "Select the workspace for this Praetor operation" });
 }
 
-async function startOptionalLSP(context: vscode.ExtensionContext): Promise<void> {
-  if (!vscode.workspace.isTrusted || client) return;
-  const folders = vscode.workspace.workspaceFolders;
-  const active = vscode.window.activeTextEditor && vscode.workspace.getWorkspaceFolder(vscode.window.activeTextEditor.document.uri);
-  const folder = folders?.length === 1 ? folders[0] : active;
-  if (!folder) return;
+// lspExecutable resolves the LSP command for a folder, or nothing when standards.lsp.enabled is
+// false or an absolute path names no file. A missing binary is logged to the Praetor channel, not
+// raised: VS Code also activates the extension for Go files and MCP discovery in workspaces that
+// never built bin/standards-lsp.
+async function lspExecutable(folder: vscode.WorkspaceFolder): Promise<string | undefined> {
   const config = vscode.workspace.getConfiguration("standards", folder.uri);
-  if (!config.get<boolean>("lsp.enabled", true)) return;
-  const executable = config.get<string>("lsp.path", "${workspaceFolder}/bin/standards-lsp").replaceAll("${workspaceFolder}", folder.uri.fsPath);
+  if (!config.get<boolean>("lsp.enabled", true)) return undefined;
+  const executable = workspaceExecutable(config.get<string>("lsp.path"), LSP_DEFAULT_PATH, folder.uri.fsPath);
+  if (await commandAvailable(executable, process.platform, isFile)) return executable;
+  output.appendLine(`Praetor LSP not started: ${executable} does not exist. Build it or set standards.lsp.path.`);
+  return undefined;
+}
+
+async function startOptionalLSP(context: vscode.ExtensionContext): Promise<void> {
+  const folder = serverFolder();
+  if (!vscode.workspace.isTrusted || client || lspStarting || !folder) return;
+  lspStarting = true;
+  let executable: string | undefined;
+  try { executable = await lspExecutable(folder); } finally { lspStarting = false; }
+  if (!executable || client) return;
   const pattern = new vscode.RelativePattern(folder, "**/*.go");
   const watcher = vscode.workspace.createFileSystemWatcher(pattern);
   context.subscriptions.push(watcher);
@@ -41,13 +115,18 @@ async function startOptionalLSP(context: vscode.ExtensionContext): Promise<void>
   try { await client.start(); } catch (error) { void vscode.window.showWarningMessage(`Praetor LSP unavailable: ${String(error)}`); }
 }
 
+// setupStatusBar shows the status item only while a workspace folder holds a Praetor marker file.
 function setupStatusBar(context: vscode.ExtensionContext): void {
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   status.text = "$(shield) Praetor: Unverified";
   status.tooltip = "Configuration and lifecycle enforcement need separate checks. Open agent setup.";
   status.command = "standards.setupAgents";
-  status.show();
-  context.subscriptions.push(status);
+  const update = async (): Promise<void> => {
+    const folders = (vscode.workspace.workspaceFolders ?? []).map(folder => folder.uri.fsPath);
+    if (await praetorWorkspace(folders, isFile)) status.show(); else status.hide();
+  };
+  context.subscriptions.push(status, vscode.workspace.onDidChangeWorkspaceFolders(() => void update()));
+  void update();
 }
 
 function registerCommands(context: vscode.ExtensionContext): void {
@@ -63,9 +142,13 @@ function registerCommands(context: vscode.ExtensionContext): void {
     output.show(true);
   });
   register("standards.setupAgents", setupAgents);
-  context.subscriptions.push(vscode.commands.registerCommand("standards.checkSentinel", () => {
-    void vscode.window.showInformationMessage("Sentinel availability is unverified. A configured threshold is not a measurement.");
-  }));
+  register("standards.checkSentinel", async folder => {
+    const headroom = vscode.workspace.getConfiguration("standards", folder.uri).get<number>("sentinel.headroomMB", 1024);
+    // praetorctl sentinel measures free RAM and exits non-zero below the headroom or without a reading.
+    await execute(folder, cliPath(), sentinelArguments(headroom), "Check sentinel headroom");
+    output.show(true);
+    void vscode.window.showInformationMessage(`Measured free RAM meets the ${headroom} MiB headroom. See the Praetor output for the full sentinel report.`);
+  });
 }
 
 async function withWorkspace(action: (folder: vscode.WorkspaceFolder) => Promise<void>): Promise<void> {

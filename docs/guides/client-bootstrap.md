@@ -13,6 +13,12 @@ It reports projection mode, documented destination and lifecycle definition
 coverage. `runtime_verified: false` and `activation: unverified` mean that the
 inventory has not inspected or activated any native client session.
 
+VS Code is not in that inventory (`internal/clientid/clientid.go`). The Praetor
+VS Code extension offers the workspace `standards-mcp` server to VS Code chat
+through the MCP server definition provider API, so `praetorctl clients` writes
+no VS Code entry and the server is listed once. Settings, trust and path rules:
+`editors/vscode/README.md`, section "MCP server".
+
 For gateway endpoints, credential-file references, logical provider selectors and
 repository memory binding, start with [connection profiles](client-connections.md).
 The same registry can be supplied from a workstation directory, container mount,

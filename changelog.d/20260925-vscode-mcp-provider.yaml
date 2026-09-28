@@ -1,0 +1,3 @@
+type: changed
+title: The VS Code extension registers the workspace standards-mcp server through the MCP server definition provider API, so the standards.mcp.enabled and standards.mcp.path settings now take effect, and requires VS Code 1.107 or later; Check Sentinel Host Headroom now measures standards.sentinel.headroomMB through the new praetorctl sentinel --min-free-mb flag, and the unread standards.modelTier setting is removed
+breaking: true

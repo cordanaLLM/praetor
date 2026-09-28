@@ -4,23 +4,39 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import test from "node:test";
-import { artifactPath, LSP_CLIENT_ID, machineExecutable, parseCapabilities, requireTrust, setupArguments, workspaceGlob } from "./setup";
+import { MCP_PROVIDER_ID } from "./mcp";
+import { artifactPath, boundedIsFile, checkedLaunchFiles, commandAvailable, globLiteral, LSP_CLIENT_ID, LSP_DEFAULT_PATH, machineExecutable, MAX_MARKER_FOLDERS, MCP_DEFAULT_PATH, parseCapabilities, PRAETOR_MARKERS, praetorWorkspace, requireTrust, sentinelArguments, setupArguments, workspaceExecutable, workspaceGlob } from "./setup";
 import { runCLI } from "./runner";
 
 const sample = { client: "claude", mode: "merge", documentation: "https://example.invalid/docs", lifecycle: { state: "adapter-defined", definition_paths: [".claude/settings.json"], activation: "unverified" } };
 const report = (clients: unknown[]) => JSON.stringify({ schema_version: 1, runtime_verified: false, clients });
 
 type Manifest = {
+  engines: { vscode: string };
+  devDependencies: Record<string, string>;
   activationEvents: string[];
   capabilities: { untrustedWorkspaces: { restrictedConfigurations: string[] } };
   contributes: {
     commands: { command: string }[];
     configuration: { properties: Record<string, { default?: unknown; enum?: string[] } | undefined> };
-    mcpServerDefinitionProviders?: unknown;
+    mcpServerDefinitionProviders?: { id: string; label: string; when?: string }[];
   };
 };
 
 const readManifest = (): Manifest => JSON.parse(fs.readFileSync(path.resolve(__dirname, "..", "package.json"), "utf8"));
+const readLock = (): { packages: Record<string, { version?: string; engines?: Record<string, string> }> } =>
+  JSON.parse(fs.readFileSync(path.resolve(__dirname, "..", "package-lock.json"), "utf8"));
+// registerMcpServerDefinitionProvider and McpStdioServerDefinition first ship in @types/vscode 1.101.0.
+const MCP_API_FLOOR = [1, 101, 0];
+// The contribution `when` clause first ships in VS Code 1.105.0 (extensionMcpDiscovery.ts,
+// microsoft/vscode#268097); below it MCP discovery activates the extension everywhere.
+const WHEN_CLAUSE_FLOOR = [1, 105, 0];
+// Antigravity IDE reports VS Code 1.107.0; a floor above it stops the fork receiving the extension.
+const TRAILING_FORK_HOST = [1, 107, 0];
+const compareVersions = (left: number[], right: number[]): number => {
+  const index = left.findIndex((part, position) => part !== right[position]);
+  return index === -1 ? 0 : left[index] - right[index];
+};
 const extensionSource = (): string => fs.readFileSync(path.resolve(__dirname, "..", "src", "extension.ts"), "utf8");
 
 // Settings the extension reads from its configuration section: `.get<T>("key", fallback)` and
@@ -37,7 +53,7 @@ test("every setting the extension reads is contributed with the same default", (
   assert.ok(sections.length > 0, "extension reads no configuration section");
   assert.deepEqual([...new Set(sections)], ["standards"]);
   const reads = settingsReadBy(source);
-  for (const key of ["lsp.enabled", "lsp.path", "cli.path", "verificationTimeoutSeconds"]) assert.ok(reads.has(key), `${key} is no longer read`);
+  for (const key of ["lsp.enabled", "lsp.path", "mcp.enabled", "mcp.path", "cli.path", "verificationTimeoutSeconds"]) assert.ok(reads.has(key), `${key} is no longer read`);
   const properties = readManifest().contributes.configuration.properties;
   for (const [key, fallback] of reads) {
     const property = properties[`standards.${key}`];
@@ -46,26 +62,179 @@ test("every setting the extension reads is contributed with the same default", (
   }
 });
 
-test("no MCP setting is contributed; MCP configuration stays on the setup command", () => {
+test("every contributed setting has a reader", () => {
+  const reads = settingsReadBy(extensionSource());
+  const unread = Object.keys(readManifest().contributes.configuration.properties).filter(key =>
+    // vscode-languageclient reads `<client id>.trace.server` itself; every other key is read by extension.ts.
+    key !== `${LSP_CLIENT_ID}.trace.server` && !(key.startsWith("standards.") && reads.has(key.slice("standards.".length))));
+  assert.deepEqual(unread, []);
+  // BUG-1032: modelTier had no reader and is gone; headroomMB is now read by the sentinel command.
+  const properties = readManifest().contributes.configuration.properties;
+  assert.equal(properties["standards.modelTier"], undefined);
+  assert.ok(reads.has("sentinel.headroomMB"));
+});
+
+test("the sentinel headroom setting becomes one measured CLI call", () => {
+  assert.deepEqual(sentinelArguments(1024), ["sentinel", "--min-free-mb=1024"]);
+  assert.deepEqual(sentinelArguments(1), ["sentinel", "--min-free-mb=1"]);
+  // Zero would make the CLI skip the check, so it is refused here, as are fractions and non-numbers.
+  for (const value of [0, -1, 1.5, Number.NaN, Number.MAX_SAFE_INTEGER + 1, "1024", undefined, null]) {
+    assert.throws(() => sentinelArguments(value), `accepted ${String(value)}`);
+  }
+  assert.equal(readManifest().contributes.configuration.properties["standards.sentinel.headroomMB"]?.default, 1024);
+});
+
+test("the MCP server definition provider is contributed under the id the extension registers", () => {
   const manifest = readManifest();
-  // The pinned host API (engines.vscode ^1.90.0, @types/vscode 1.90.0) has no MCP server
-  // registration, so the extension registers no server and nothing reads standards.mcp.*.
-  const contributed = Object.keys(manifest.contributes.configuration.properties);
-  assert.deepEqual(contributed.filter(key => key.startsWith("standards.mcp.")), []);
-  assert.deepEqual([...settingsReadBy(extensionSource()).keys()].filter(key => key.startsWith("mcp.")), []);
-  assert.equal(manifest.contributes.mcpServerDefinitionProviders, undefined);
+  assert.deepEqual(manifest.contributes.mcpServerDefinitionProviders?.map(entry => entry.id), [MCP_PROVIDER_ID]);
+  assert.ok(manifest.contributes.mcpServerDefinitionProviders?.[0]?.label.trim());
+  assert.match(extensionSource(), /registerMcpServerDefinitionProvider\(MCP_PROVIDER_ID,/);
+  const properties = manifest.contributes.configuration.properties;
+  assert.equal(properties["standards.mcp.enabled"]?.default, true);
+  assert.equal(properties["standards.mcp.path"]?.default, MCP_DEFAULT_PATH);
+  assert.equal(properties["standards.lsp.enabled"]?.default, true);
+  assert.equal(properties["standards.lsp.path"]?.default, LSP_DEFAULT_PATH);
+  // The setup command still prepares configuration for every other client.
   assert.ok(manifest.contributes.commands.some(entry => entry.command === "standards.setupAgents"));
   assert.ok(manifest.activationEvents.includes("onCommand:standards.setupAgents"));
 });
 
-test("the MCP removal keeps the same-shaped LSP settings and every restricted setting contributed", () => {
+test("VS Code registers the MCP collection, and so activates the extension, only for a trusted, enabled folder", () => {
+  // VS Code turns each contributed collection into an onMcpCollection:<id> activation event and
+  // registers the collection only while its `when` holds (extensionMcpDiscovery.ts), so without a
+  // `when` MCP discovery activates the extension in every workspace.
+  const [collection] = readManifest().contributes.mcpServerDefinitionProviders ?? [];
+  const clauses = collection?.when?.split(" && ") ?? [];
+  assert.deepEqual(clauses, ["isWorkspaceTrusted", "config.standards.mcp.enabled", "workspaceFolderCount > 0"]);
+});
+
+test("the status bar markers are the workspaceContains activation files", () => {
+  const events = readManifest().activationEvents.filter(event => event.startsWith("workspaceContains:"));
+  assert.deepEqual(events.map(event => event.slice("workspaceContains:".length)), [...PRAETOR_MARKERS]);
+});
+
+test("a marker file at a folder root marks a Praetor workspace", async () => {
+  const folders = ["/work/app", "/work/tools"];
+  for (const marker of PRAETOR_MARKERS) {
+    const present = new Set([path.join("/work/tools", marker)]);
+    assert.equal(await praetorWorkspace(folders, async file => present.has(file)), true, marker);
+  }
+  assert.equal(await praetorWorkspace(folders, async () => false), false);
+  assert.equal(await praetorWorkspace([], async () => true), false);
+  // Only the first MAX_MARKER_FOLDERS folders are inspected.
+  const many = Array.from({ length: MAX_MARKER_FOLDERS + 1 }, (_, index) => `/work/f${index}`);
+  const at = (index: number) => new Set([path.join(many[index], "AGENTS.md")]);
+  assert.equal(await praetorWorkspace(many, async file => at(MAX_MARKER_FOLDERS - 1).has(file)), true);
+  assert.equal(await praetorWorkspace(many, async file => at(MAX_MARKER_FOLDERS).has(file)), false);
+});
+
+test("a server command starts only when an absolute path names a file", async () => {
+  const checked: string[] = [];
+  const files = (present: string[]) => async (file: string) => { checked.push(file); return present.includes(file); };
+  assert.equal(await commandAvailable("/r/bin/standards-lsp", "linux", files(["/r/bin/standards-lsp"])), true);
+  assert.equal(await commandAvailable("/r/bin/standards-lsp", "darwin", files([])), false);
+  assert.equal(await commandAvailable("/r/bin/standards-lsp", "linux", files(["/r/bin/standards-lsp.exe"])), false);
+  const windows = "C:\\r\\bin\\standards-lsp";
+  assert.equal(await commandAvailable(windows, "win32", files([`${windows}.exe`])), true);
+  assert.equal(await commandAvailable(windows, "win32", files([])), false);
+  checked.length = 0;
+  for (const command of ["standards-lsp", "bin/standards-lsp", "bin\\standards-lsp"]) {
+    assert.equal(await commandAvailable(command, "win32", files([])), true, command);
+    assert.equal(await commandAvailable(command, "linux", files([])), true, command);
+  }
+  assert.deepEqual(checked, [], "a command name or relative path was checked on disk");
+});
+
+test("the checked launch files are the candidates of an absolute command only", () => {
+  assert.deepEqual(checkedLaunchFiles("/r/bin/standards-mcp", "linux"), ["/r/bin/standards-mcp"]);
+  const windows = "C:\\r\\bin\\standards-mcp";
+  assert.deepEqual(checkedLaunchFiles(windows, "win32"), [windows, `${windows}.com`, `${windows}.exe`]);
+  assert.deepEqual(checkedLaunchFiles(`${windows}.exe`, "win32"), [`${windows}.exe`]);
+  for (const command of ["standards-mcp", "bin/standards-mcp", "bin\\standards-mcp"]) {
+    assert.deepEqual(checkedLaunchFiles(command, "win32"), [], command);
+    assert.deepEqual(checkedLaunchFiles(command, "linux"), [], command);
+  }
+});
+
+test("glob symbols in a watched file name match literally", () => {
+  assert.equal(globLiteral("standards-mcp"), "standards-mcp");
+  assert.equal(globLiteral("a*b?c[d]{e}"), "a[*]b[?]c[[]d[]][{]e[}]");
+  assert.equal(globLiteral(""), "");
+  assert.equal(workspaceGlob("/r/a*b/"), "/r/a[*]b/**/*.go");
+});
+
+test("a file probe that stalls or fails counts as absent", async () => {
+  assert.equal(await boundedIsFile(async () => true, 50)("/r/f"), true);
+  assert.equal(await boundedIsFile(async () => false, 50)("/r/f"), false);
+  assert.equal(await boundedIsFile(async () => { throw new Error("EACCES"); }, 50)("/r/f"), false);
+  assert.equal(await boundedIsFile(() => { throw new Error("sync"); }, 50)("/r/f"), false);
+  // A probe that never settles is abandoned at the timeout.
+  const started = Date.now();
+  assert.equal(await boundedIsFile(() => new Promise<boolean>(() => undefined), 20)("/r/f"), false);
+  assert.ok(Date.now() - started < 1000, "the stalled probe was awaited past its timeout");
+  // Boundary: an answer inside the window is kept, one after it is not.
+  const late = (ms: number) => () => new Promise<boolean>(resolve => setTimeout(() => resolve(true), ms));
+  assert.equal(await boundedIsFile(late(5), 200)("/r/f"), true);
+  assert.equal(await boundedIsFile(late(200), 5)("/r/f"), false);
+});
+
+test("the LSP start and the status bar are gated on what exists", () => {
+  const source = extensionSource();
+  // The LSP resolves its command through commandAvailable before a LanguageClient exists, and the
+  // status item is shown only through praetorWorkspace, so an activation by MCP discovery or a Go
+  // file in an unrelated workspace neither pops "Praetor LSP unavailable" nor shows the item.
+  assert.match(source, /commandAvailable\(executable, process\.platform, isFile\)/);
+  assert.ok(source.indexOf("await lspExecutable(folder)") < source.indexOf("new LanguageClient("));
+  assert.deepEqual([...source.matchAll(/status\.show\(\)/g)].length, 1);
+  assert.match(source, /if \(await praetorWorkspace\(folders, isFile\)\) status\.show\(\);/);
+  // Every probe those gates make is bounded, and the MCP provider follows its launch files and the
+  // active editor's folder.
+  assert.match(source, /const isFile = boundedIsFile\(/);
+  assert.equal([...source.matchAll(/\bstat\(/g)].length, 1, "an unbounded stat call was added");
+  assert.match(source, /onDidChangeActiveTextEditor\(\(\) => provider\.activeFolderChanged\(\)\)/);
+  assert.match(source, /watchLaunchFiles\(context, provider\);/);
+});
+
+test("both server paths are restricted settings and every restricted setting is contributed", () => {
   const manifest = readManifest();
   const properties = manifest.contributes.configuration.properties;
-  assert.equal(properties["standards.lsp.enabled"]?.default, true);
-  assert.equal(properties["standards.lsp.path"]?.default, "${workspaceFolder}/bin/standards-lsp");
   const restricted = manifest.capabilities.untrustedWorkspaces.restrictedConfigurations;
-  assert.ok(restricted.length > 0);
+  for (const key of ["standards.cli.path", "standards.lsp.path", "standards.mcp.path"]) assert.ok(restricted.includes(key), `${key} is not restricted`);
   for (const key of restricted) assert.ok(properties[key], `restricted ${key} is not a contributed setting`);
+});
+
+test("the engine floor carries the MCP provider API and equals the pinned host types", () => {
+  const manifest = readManifest();
+  const floor = /^\^(\d+)\.(\d+)\.(\d+)$/.exec(manifest.engines.vscode);
+  assert.ok(floor, `engines.vscode ${manifest.engines.vscode} is not a caret floor`);
+  const version = floor.slice(1).map(Number);
+  // vsce refuses @types/vscode newer than engines.vscode; equal keeps the typed API and the floor in step.
+  assert.equal(manifest.devDependencies["@types/vscode"], version.join("."));
+  const lock = readLock();
+  assert.equal(lock.packages["node_modules/@types/vscode"]?.version, version.join("."));
+  assert.equal(lock.packages[""]?.engines?.vscode, manifest.engines.vscode);
+  assert.ok(compareVersions(version, MCP_API_FLOOR) >= 0, `floor ${version.join(".")} predates the MCP provider API`);
+});
+
+test("the engine floor honours the MCP when clause and still admits trailing forks", () => {
+  const floor = /^\^(\d+)\.(\d+)\.(\d+)$/.exec(readManifest().engines.vscode);
+  assert.ok(floor);
+  const version = floor.slice(1).map(Number);
+  assert.ok(compareVersions(version, WHEN_CLAUSE_FLOOR) >= 0, `floor ${version.join(".")} ignores the contribution when clause`);
+  assert.ok(compareVersions(version, TRAILING_FORK_HOST) <= 0, `floor ${version.join(".")} drops VS Code ${TRAILING_FORK_HOST.join(".")} forks`);
+  assert.equal(compareVersions([1, 107, 0], [1, 107, 0]), 0);
+  assert.ok(compareVersions([1, 108, 0], TRAILING_FORK_HOST) > 0 && compareVersions([1, 104, 9], WHEN_CLAUSE_FLOOR) < 0);
+});
+
+test("server paths fall back to the contributed default and bind the folder", () => {
+  const root = path.join(os.tmpdir(), "a ${workspaceFolder} b");
+  assert.equal(workspaceExecutable("${workspaceFolder}/tools/mcp", MCP_DEFAULT_PATH, "/r"), "/r/tools/mcp");
+  assert.equal(workspaceExecutable("/opt/praetor/standards-lsp", LSP_DEFAULT_PATH, "/r"), "/opt/praetor/standards-lsp");
+  for (const value of [undefined, "", "  ", null, 7]) assert.equal(workspaceExecutable(value, MCP_DEFAULT_PATH, "/r"), "/r/bin/standards-mcp");
+  // The folder path is inserted literally: never re-expanded, and `$&` is not a replacement pattern.
+  assert.equal(workspaceExecutable(undefined, LSP_DEFAULT_PATH, root), `${root}/bin/standards-lsp`);
+  assert.equal(workspaceExecutable(undefined, MCP_DEFAULT_PATH, "/r$&x$'"), "/r$&x$'/bin/standards-mcp");
+  assert.equal(workspaceExecutable("${workspaceFolder}:${workspaceFolder}", LSP_DEFAULT_PATH, "/r"), "/r:/r");
 });
 
 test("the language client reads its trace level from the contributed setting", () => {
@@ -136,5 +305,15 @@ test("extension setup arguments execute against actual shared Go CLI", async () 
     assert.equal(fs.readFileSync(path.join(applied, "config.before"), "utf8"), before);
     const retry = await runCLI(binary, setupArguments(client, true, registry, applied, config), root);
     assert.notEqual(retry.exitCode, 0, "Existing backup destination was silently reused");
+    // The sentinel command's arguments reach the Go measurement: 1 MiB passes wherever memory is
+    // read (/proc/meminfo, Windows API), macOS reports it unmeasured, 1 PiB is never free, and one
+    // MiB past the CLI limit is refused.
+    const headroom = await runCLI(binary, sentinelArguments(1), root);
+    if (process.platform === "darwin") assert.match(headroom.stdout, /\[UNMEASURED\]/);
+    else assert.equal(headroom.exitCode, 0, headroom.stderr);
+    assert.notEqual((await runCLI(binary, sentinelArguments(1_073_741_824), root)).exitCode, 0);
+    const outside = await runCLI(binary, sentinelArguments(1_073_741_825), root);
+    assert.notEqual(outside.exitCode, 0);
+    assert.match(outside.stderr, /exceeds/);
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
