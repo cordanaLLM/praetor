@@ -3,6 +3,7 @@ package supplychain
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -183,5 +184,48 @@ func TestGenerateCycloneDX_Boundary_NestedModuleUsesItsOwnTagPrefix(t *testing.T
 	outside, err := releaseTag(t.Context(), plain)
 	if err != nil || outside != "" {
 		t.Errorf("a directory outside any checkout must yield no tag: %q, %v", outside, err)
+	}
+}
+
+// #573: a repository without a root go.mod failed with "read go.mod: statat go.mod: no such
+// file or directory", which never said the generator reads Go modules only.
+func TestGenerateCycloneDX_Negative_NoGoModNamesTheGoOnlyScope(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "Cargo.toml"), []byte("[workspace]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := GenerateCycloneDX(t.Context(), root, SBOMOptions{})
+	if !errors.Is(err, ErrNoGoModule) {
+		t.Fatalf("error = %v, want %v", err, ErrNoGoModule)
+	}
+	for _, want := range []string{"no go.mod in " + root, "reads Go modules only", "Syft"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %q, want it to contain %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "statat") {
+		t.Errorf("the raw stat error must not be the message: %q", err)
+	}
+}
+
+// A Go module below the root is not the root's module: the root is refused, the module
+// directory itself generates, and a go.mod that cannot be read keeps its own error.
+func TestGenerateCycloneDX_Boundary_NestedGoModuleOnly(t *testing.T) {
+	root := t.TempDir()
+	tooling := filepath.Join(root, "tooling")
+	writeGoMod(t, tooling, "module example.com/tooling\n\ngo 1.27\n")
+	if _, err := GenerateCycloneDX(t.Context(), root, SBOMOptions{}); !errors.Is(err, ErrNoGoModule) {
+		t.Fatalf("root without go.mod: error = %v, want %v", err, ErrNoGoModule)
+	}
+	bom, err := GenerateCycloneDX(t.Context(), tooling, SBOMOptions{ModuleVersion: "v0.1.0"})
+	if err != nil || bom.Metadata.Component.Name != "example.com/tooling" {
+		t.Fatalf("module directory: bom=%+v err=%v", bom, err)
+	}
+	unreadable := t.TempDir()
+	if err := os.Mkdir(filepath.Join(unreadable, "go.mod"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := GenerateCycloneDX(t.Context(), unreadable, SBOMOptions{}); err == nil || errors.Is(err, ErrNoGoModule) {
+		t.Fatalf("a go.mod that exists but cannot be read must keep its read error, got %v", err)
 	}
 }

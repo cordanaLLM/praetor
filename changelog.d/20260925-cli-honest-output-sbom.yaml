@@ -1,0 +1,3 @@
+type: fixed
+title: "praetorctl sbom says in its help and in the command list that it generates the SBOM of a Go module from go.mod only, answers sbom help like -h, and refuses a directory without a go.mod with a message naming that directory and pointing to generators such as Syft or cdxgen for other ecosystems, instead of the raw statat error"
+breaking: false

@@ -44,7 +44,7 @@ func (a *GoAnalyzer) Analyze(ctx context.Context, repoPath string, target Target
 	// prefix (a directory called "go" would swallow every golang.org/x import).
 	repoName := module.modulePath
 	if repoName == "" {
-		repoName = filepath.Base(filepath.Clean(repoPath))
+		repoName = repositoryDirName(repoPath)
 	}
 
 	astImports, err := scanASTImports(ctx, repoPath, module.modulePath, module.ignore)

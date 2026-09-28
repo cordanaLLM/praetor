@@ -1,0 +1,3 @@
+type: fixed
+title: Count Cargo path and workspace-member crates as first-party, name a repository scanned through a relative path after its directory, and classify common systems and graphics crates in the Rust catalog
+breaking: false

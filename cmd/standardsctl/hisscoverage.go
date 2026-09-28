@@ -104,10 +104,19 @@ func verifyCoverage(ctx context.Context, root string, catalog *hisscoverage.Cata
 	return nil
 }
 
-// runHiss dispatches the hiss subcommands.
+// printHissUsage answers a bare or help-token `hiss` invocation.
+func printHissUsage() {
+	fmt.Println("Usage: praetorctl hiss <subcommand> [args]")
+	fmt.Println("\nSubcommands:")
+	fmt.Println("  coverage [--path=.] [--verify]    Report declared HISS enforcement evidence; --verify replays the fixture corpus")
+}
+
+// runHiss dispatches the hiss subcommands. The top-level help tells a reader to run
+// `<command> -h`, so a help token (isHelpToken) prints usage and succeeds instead of
+// being read as an unknown subcommand.
 func runHiss(args []string) error {
-	if len(args) == 0 {
-		fmt.Println("Usage: praetorctl hiss <coverage> [--path=.] [--verify]")
+	if len(args) == 0 || isHelpToken(args[0]) {
+		printHissUsage()
 		return nil
 	}
 	switch args[0] {

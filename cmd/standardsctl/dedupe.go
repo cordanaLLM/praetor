@@ -2,8 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/dedupe"
@@ -23,10 +27,11 @@ func runDedupe(args []string) error {
 		return runDedupeScan(subArgs)
 	case "cadence":
 		return runDedupeCadence(subArgs)
-	case "-h", "--help", "help":
-		printDedupeUsage()
-		return nil
 	default:
+		if isHelpToken(sub) {
+			printDedupeUsage()
+			return nil
+		}
 		return fmt.Errorf("unknown dedupe subcommand: %s", sub)
 	}
 }
@@ -34,34 +39,85 @@ func runDedupe(args []string) error {
 func printDedupeUsage() {
 	fmt.Println("Usage: praetorctl dedupe <subcommand> [args]")
 	fmt.Println("\nSubcommands:")
-	fmt.Println("  scan [dir]                         Scan repository for AST clones and utility sprawl")
+	fmt.Println("  " + dedupeScanSynopsis)
+	fmt.Println("                                     Scan repository for AST clones and utility sprawl")
 	fmt.Println("  cadence [--threshold=20] [--added-lines=1000] [--added-files=10] [--record]")
 	fmt.Println("                                     Trigger a sweep every N commits or on Go source growth")
 }
 
+// dedupeScanSynopsis is the argument form of `dedupe scan`, shared by the dedupe usage and
+// the scan's own -h output so the two cannot drift apart.
+const dedupeScanSynopsis = "scan [--path=.] [--json] [dir]"
+
+// runDedupeScan parses its arguments through parseInterspersed, so a flag is a flag wherever
+// it stands: `--json .` and `. --json` both print JSON, an unknown flag is rejected, and
+// -h/--help prints usage. It used to read args[0] as the directory and drop the rest.
 func runDedupeScan(args []string) error {
-	dir := "."
-	if len(args) > 0 {
-		dir = args[0]
+	fs := flag.NewFlagSet("dedupe scan", flag.ContinueOnError)
+	pathFlag := fs.String("path", ".", "Repository root to scan (a positional dir takes precedence)")
+	asJSON := fs.Bool("json", false, "Print the report as JSON")
+	var usageErr error
+	fs.Usage = func() {
+		_, usageErr = fmt.Fprintln(fs.Output(), "Usage: praetorctl dedupe "+dedupeScanSynopsis)
+		fs.PrintDefaults()
 	}
+	if len(args) > 0 && isHelpToken(args[0]) {
+		fs.SetOutput(os.Stdout)
+		fs.Usage()
+		return usageErr
+	}
+	positional, err := parseInterspersed(fs, args)
+	if err != nil {
+		return errors.Join(err, usageErr)
+	}
+	if len(positional) > 1 {
+		return fmt.Errorf("dedupe scan accepts at most one directory, got %q", positional)
+	}
+	dir := positionalAt(positional, 0, *pathFlag)
 
 	report, err := dedupe.ScanRepo(dir)
 	if err != nil {
 		return fmt.Errorf("dedupe scan failed: %w", err)
 	}
+	if *asJSON {
+		return printDedupeJSON(report)
+	}
+	return printDedupeReport(dir, report)
+}
 
+// printDedupeJSON prints report as JSON and returns the same verdict the text form does, so
+// a caller that switches formats does not also switch exit codes.
+func printDedupeJSON(report *dedupe.DedupeReport) error {
+	data, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode dedupe report: %w", err)
+	}
+	fmt.Println(string(data))
+	return dedupeVerdict(report)
+}
+
+// printDedupeReport prints the human-readable report and returns its verdict.
+func printDedupeReport(dir string, report *dedupe.DedupeReport) error {
 	fmt.Printf("=== Codebase Deduplication & Unification Audit: %s ===\n", dir)
 	if !report.Applicable {
 		// Neither a pass nor a failure. The detector reads Go sources and found none, so it
 		// has no verdict to give; printing one would certify a tree it never opened.
 		fmt.Println("  Not applicable: no Go sources found; this detector reads Go only.")
+		printUnscannedLanguages(report)
 		fmt.Println("  Clone detection for other languages is not implemented.")
 		return nil
 	}
 	fmt.Printf("  Files Scanned:     %d\n", report.TotalFilesScanned)
 	fmt.Printf("  Functions Scanned: %d\n", report.TotalFuncsScanned)
 	fmt.Printf("  Cleanliness Score: %.1f%%\n", report.CleanlinessScore)
-	fmt.Printf("  Passed:            %v\n", report.Passed)
+	if report.Partial {
+		// A verdict over the Go files of a polyglot repository used to read as a clean bill
+		// for all of it (#161); the verdict now says what it covers.
+		fmt.Printf("  Passed:            %v (partial: Go sources only)\n", report.Passed)
+		printUnscannedLanguages(report)
+	} else {
+		fmt.Printf("  Passed:            %v\n", report.Passed)
+	}
 
 	if len(report.Duplicates) > 0 {
 		fmt.Printf("\nDuplicate Function Blocks (%d):\n", len(report.Duplicates))
@@ -79,8 +135,33 @@ func runDedupeScan(args []string) error {
 			fmt.Printf("  - %s:%d: uses %s (should use %s)\n", sp.File, sp.Line, sp.Pattern, sp.Replacement)
 		}
 	}
+	return dedupeVerdict(report)
+}
 
-	if !report.Passed {
+// printUnscannedLanguages names the source languages the scan found but cannot read, with
+// their file counts, and says HISS-19 is not measured for them. It prints nothing for a
+// repository whose source is all Go.
+func printUnscannedLanguages(report *dedupe.DedupeReport) {
+	languages := report.UnscannedLanguages()
+	if len(languages) == 0 {
+		return
+	}
+	counts := make([]string, 0, len(languages))
+	for _, language := range languages {
+		unit := "files"
+		if report.Unscanned[language] == 1 {
+			unit = "file"
+		}
+		counts = append(counts, fmt.Sprintf("%s (%d %s)", language, report.Unscanned[language], unit))
+	}
+	fmt.Printf("  Not Scanned:       %s\n", strings.Join(counts, ", "))
+	fmt.Println("  HISS-19 is not measured for these languages; this detector reads Go only.")
+}
+
+// dedupeVerdict turns a report into the command's exit: nil when the scan passed or did not
+// apply, an error naming the finding counts otherwise.
+func dedupeVerdict(report *dedupe.DedupeReport) error {
+	if report.Applicable && !report.Passed {
 		// The score is not the verdict: any finding fails the scan, so a single sprawl item
 		// used to be reported as "failed with score 95.0%", which reads like a threshold the
 		// repository missed rather than the one call site it has to fix.
@@ -119,7 +200,8 @@ func runDedupeCadence(args []string) error {
 
 	if status.Due {
 		fmt.Printf("Triggering periodic codebase deduplication audit: %s\n", status.Reason)
-		if err := runDedupeScan([]string{dir}); err != nil {
+		// "--" keeps a directory that starts with a dash from being read as a scan flag.
+		if err := runDedupeScan([]string{"--", dir}); err != nil {
 			return err
 		}
 		if *record {

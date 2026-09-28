@@ -98,3 +98,38 @@ func TestRegisterAuthorityFailsClosed(t *testing.T) {
 		t.Fatal("malformed manifest became authority")
 	}
 }
+
+// #572: a drift message named .standards.yaml even where the file did not exist. The origin
+// names the manifest only when its register section is what the policy renders from.
+func TestRegisterAuthorityPolicyOrigin(t *testing.T) {
+	cases := []struct {
+		name     string
+		manifest string // "" writes no manifest
+		want     string
+	}{
+		{name: "positive: register section", manifest: "version: 1\nregister:\n  tasks:\n    ci_debugging: docs\n", want: ".standards.yaml"},
+		{name: "negative: no manifest", want: "the default register (no .standards.yaml)"},
+		{name: "boundary: manifest without register section", manifest: "version: 1\n",
+			want: "the default register (.standards.yaml declares no register section)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			if tc.manifest != "" {
+				if err := os.WriteFile(filepath.Join(root, ".standards.yaml"), []byte(tc.manifest), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			authority, err := LoadRegisterAuthority(t.Context(), root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := authority.PolicyOrigin(); got != tc.want {
+				t.Fatalf("PolicyOrigin() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+	if got := AbsentRegisterAuthority().PolicyOrigin(); got != "the default register (no .standards.yaml)" {
+		t.Fatalf("absent authority origin = %q", got)
+	}
+}

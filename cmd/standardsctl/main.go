@@ -158,7 +158,7 @@ func printFleetCommands() {
 	fmt.Println("  gate               Execute 6-stage anti-direct-merge gating pipeline")
 	fmt.Println("  agent              Manage and dispatch autonomous Praetor agent helpers (list, run)")
 	fmt.Println("  serve              Run cloud-native container daemon with HTTP health probes")
-	fmt.Println("  sbom               Generate CycloneDX 1.5 Software Bill of Materials; sbom notices regenerates THIRD-PARTY-NOTICES.md")
+	fmt.Println("  sbom               Generate a CycloneDX 1.5 SBOM of a Go module (go.mod only); sbom notices regenerates THIRD-PARTY-NOTICES.md")
 	fmt.Println("  provenance         Generate an unsigned SLSA v1.0 provenance statement for an artifact file")
 	fmt.Println("  needs              Declare and report repository capabilities and demand to the target framework")
 	fmt.Println("  issue              Reconcile cross-repo dependencies and unblock ready tasks")

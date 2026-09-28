@@ -31,9 +31,17 @@ The block appears under `## Text Register` in AGENTS.md, between
 `CLAUDE.md`, the Cursor rules, the Copilot instructions, `.windsurfrules`, `GEMINI.md` and
 the Codex rules. Between the markers the manifest is the source and AGENTS.md is only the
 carrier: a hand edit there is overwritten by the next `compile-context` and reported by
-`--verify` and `praetorctl audit`. A repository whose AGENTS.md has no block yet is reported
-the same way until `compile-context` runs once; it appends the section at the end of the
-file when it finds no markers.
+`--verify` and `praetorctl audit`. A repository whose AGENTS.md has no block yet fails the
+same way, with its own message, until `compile-context` runs once; it appends the section at
+the end of the file when it finds no markers.
+
+The failure names where the block renders from: `.standards.yaml` when that file declares a
+`register` section, otherwise the default register, with the reason (no `.standards.yaml`, or
+one without a `register` section). A missing block reads
+`AGENTS.md has no text register block; run 'praetorctl compile-context' to render it from the default register (no .standards.yaml)`,
+an edited one `AGENTS.md text register block is out of sync with .standards.yaml`
+(`RegisterAuthority.PolicyOrigin` in `internal/config/register_authority.go`,
+`TestSyncRegisterBlockDriftNamesTheOrigin` in `internal/compiler/register_test.go`).
 
 ## Reference
 

@@ -14,7 +14,12 @@ Praetor ships no framework. A built-in catalog (`internal/needs/catalog.go`) onl
 or retains a library is declared by the operator's framework, configured under
 `framework.targets.<lang>` (see [Framework targets](#framework-targets)). With nothing
 configured every command still classifies, and says the framework is not configured
-([Not configured](#not-configured)).
+([Not configured](#not-configured)). A Rust crate that binds a capability the native
+catalog lists takes the native key, so the `ash` Vulkan bindings and
+`find_package(Vulkan)` are both `gpu.vulkan`; embedded WebAssembly runtimes such as
+`wasmtime` are `runtime.wasm` (`TestRustCatalogSystemsAndGraphics_3D`). A library the
+catalog does not list is classified under its language's external prefix, such as
+`rust.external.<crate>`.
 
 Every report states its coverage basis:
 
@@ -365,6 +370,29 @@ root itself holds no manifest, as in a checkout whose only project is
 root's declared capabilities. A package several sub-projects demand is one
 demand; PyPI names compare after PEP 503 normalisation, so `typing-extensions`
 and `typing_extensions` are one package (`TestDemandIdentityNormalisesPyPINames`).
+
+A row is named after its manifest where the manifest names the project: the Go
+module path, or the `package.json` name. Otherwise it is named after the root
+directory, resolved to an absolute path first, so `--path .`, `--path ./` and an
+absolute path give the same name in scan output, `.needs.yaml` and the
+pre-migration epic (`TestRepositoryNameFromRelativePath_3D`,
+`TestRepositoryNamePrecedenceAndEpic_3D` in
+`internal/needs/repository_name_test.go`). The epic also treats a manifest that
+names its project `unknown` as unnamed and titles the epic after the root
+directory, through the same helper (`TestEpicRepositoryFallbackNamesDirectory_3D`).
+
+A Cargo dependency declared with `path`, in an inline table, a
+`[dependencies.<crate>]` sub-table or a dotted key (`core.path = "../core"`), is a
+crate of the repository: a workspace member or a sibling crate. It is never a
+third-party demand, even when it also names a `version` for publishing. A
+dependency inherited with `workspace = true` takes the entry of the nearest
+`Cargo.toml` above the crate with a `[workspace]` table, the file Cargo itself
+searches for: an inherited path entry is first-party, and an inherited registry
+entry carries the workspace's version. An inherited crate that no workspace root
+declares stays a third-party demand without a version
+(`TestCargoPathDependenciesAreFirstParty_3D`,
+`TestCargoWorkspaceMembersAreFirstParty_3D` in
+`internal/needs/analyzer_rust_test.go`).
 
 A nested sub-project whose scan fails, such as a template `package.json`
 under `examples/`, does not fail the repository. The row keeps the root

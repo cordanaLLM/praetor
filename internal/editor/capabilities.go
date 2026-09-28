@@ -195,18 +195,23 @@ func ignoredWorkspaceDir(name string) bool {
 	}
 }
 
+// extensionLanguages adds the configuration and documentation formats an editor plan
+// configures to the programming languages util.SourceLanguage recognises.
 var extensionLanguages = map[string]string{
-	".go": "go", ".rs": "rust", ".c": "c", ".h": "c",
-	".cc": "cpp", ".cpp": "cpp", ".cxx": "cpp", ".hpp": "cpp",
-	".py": "python", ".ts": "typescript", ".tsx": "typescript",
-	".js": "typescript", ".jsx": "typescript", ".svelte": "svelte",
 	".yaml": "yaml", ".yml": "yaml", ".md": "markdown", ".mdx": "markdown",
-	".sh": "shell", ".bash": "shell",
 }
 
 func languageForFile(name string) string {
-	if language := extensionLanguages[strings.ToLower(filepath.Ext(name))]; language != "" {
+	language := util.SourceLanguage(name)
+	if language == "javascript" {
+		// The TypeScript language server and toolchain serve JavaScript too.
+		return "typescript"
+	}
+	if language != "" {
 		return language
+	}
+	if format := extensionLanguages[strings.ToLower(filepath.Ext(name))]; format != "" {
+		return format
 	}
 	if name == "Makefile" || strings.HasSuffix(name, ".mk") {
 		return "make"

@@ -149,14 +149,52 @@ var pythonCatalog = map[string]CatalogMapping{
 	"litellm":    {Capability: "ai.llm_client", Notes: "Unified multi-provider LLM gateway client"},
 }
 
-// rustCatalog classifies well-known Cargo crates, keyed in lower case.
+// rustCatalog classifies well-known Cargo crates, keyed in lower case. A crate binding a
+// capability the native catalog also lists takes the native key (ash and vulkano are
+// gpu.vulkan, as find_package(Vulkan) is), so one capability has one key whichever
+// language binds it. Each row follows the crate's crates.io description and categories.
 var rustCatalog = map[string]CatalogMapping{
-	"tokio":   {Capability: "runtime.async", Notes: "Asynchronous runtime for Rust"},
-	"serde":   {Capability: "data.serialization", Notes: "Generic serialization/deserialization framework"},
-	"axum":    {Capability: "http.router", Notes: "Ergonomic and modular web framework"},
-	"reqwest": {Capability: "http.client", Notes: "Higher level HTTP client library"},
-	"clap":    {Capability: "clikit.cli", Notes: "Command Line Argument Parser for Rust"},
-	"tracing": {Capability: "telemetry.logging", Notes: "Application-level tracing and diagnostic instrumentation"},
+	// Services, CLI and telemetry
+	"tokio":              {Capability: "runtime.async", Notes: "Asynchronous runtime for Rust"},
+	"smol":               {Capability: "runtime.async", Notes: "Small and fast async runtime"},
+	"serde":              {Capability: "data.serialization", Notes: "Generic serialization/deserialization framework"},
+	"serde_json":         {Capability: "data.serialization", Notes: "JSON serialization file format for serde"},
+	"axum":               {Capability: "http.router", Notes: "Ergonomic and modular web framework"},
+	"reqwest":            {Capability: "http.client", Notes: "Higher level HTTP client library"},
+	"clap":               {Capability: "clikit.cli", Notes: "Command Line Argument Parser for Rust"},
+	"tracing":            {Capability: "telemetry.logging", Notes: "Application-level tracing and diagnostic instrumentation"},
+	"tracing-subscriber": {Capability: "telemetry.logging", Notes: "Composable subscribers that collect tracing data"},
+	"log":                {Capability: "telemetry.logging", Notes: "Lightweight logging facade"},
+	"env_logger":         {Capability: "telemetry.logging", Notes: "Logger for the log facade configured through an environment variable"},
+
+	// GPU and graphics
+	"ash":     {Capability: "gpu.vulkan", Notes: "Vulkan API bindings"},
+	"vulkano": {Capability: "gpu.vulkan", Notes: "Safe wrapper for the Vulkan graphics API"},
+	"wgpu":    {Capability: "gpu.webgpu", Notes: "Cross-platform graphics API based on the WebGPU standard, on Vulkan, Metal, D3D12 and OpenGL"},
+	"metal":   {Capability: "gpu.metal", Notes: "Apple Metal graphics API bindings"},
+	"cudarc":  {Capability: "gpu.cuda", Notes: "Safe and minimal CUDA bindings"},
+	"opencl3": {Capability: "gpu.opencl", Notes: "Khronos OpenCL 3.0 API and extensions"},
+	"ocl":     {Capability: "gpu.opencl", Notes: "OpenCL bindings and interfaces"},
+	"winit":   {Capability: "graphics.windowing", Notes: "Cross-platform window creation"},
+	"glam":    {Capability: "graphics.math", Notes: "3D math library for games and graphics"},
+
+	// Media
+	"image": {Capability: "media.image", Notes: "Image processing with encoders and decoders for common image formats"},
+	"cpal":  {Capability: "media.audio", Notes: "Low-level cross-platform audio I/O"},
+
+	// WebAssembly
+	"wasmtime":     {Capability: "runtime.wasm", Notes: "Embedding API of the Wasmtime WebAssembly runtime"},
+	"wasmer":       {Capability: "runtime.wasm", Notes: "WebAssembly runtime"},
+	"wasmi":        {Capability: "runtime.wasm", Notes: "WebAssembly interpreter"},
+	"wat":          {Capability: "wasm.tooling", Notes: "WebAssembly text format (WAT) parser producing Wasm binaries"},
+	"wasmparser":   {Capability: "wasm.tooling", Notes: "Event-driven WebAssembly binary parser"},
+	"wasm-encoder": {Capability: "wasm.tooling", Notes: "Low-level WebAssembly binary encoder"},
+
+	// Operating system and concurrency
+	"nix":        {Capability: "os.unix", Notes: "Bindings to *nix system APIs"},
+	"windows":    {Capability: "os.windows", Notes: "Windows API bindings"},
+	"libloading": {Capability: "os.dynload", Notes: "Dynamic library loading through the platform's primitives"},
+	"rayon":      {Capability: "runtime.parallel", Notes: "Work-stealing data parallelism"},
 }
 
 // nativeCatalog classifies well-known native libraries, keyed in lower case: CMake's

@@ -50,7 +50,7 @@ func (a *NodeAnalyzer) Analyze(ctx context.Context, repoPath string, target Targ
 
 	repoName := pkgData.Name
 	if repoName == "" {
-		repoName = filepath.Base(repoPath)
+		repoName = repositoryDirName(repoPath)
 	}
 
 	repoNeeds := &RepoNeeds{
