@@ -1,0 +1,3 @@
+type: fixed
+title: "adopt-built .standards.lock files name the catalog they pin: pinned_version and every entry version are v0.0.0+catalog.<12 hex>, taken from a digest over every archetype and facet in the --lock-source-root catalog, instead of copying the source lock's declared v1.0.0; changed catalog content writes a new version, the same content the same one, and a source catalog that defines no archetypes fails lock generation. praetorctl init renders its unreleased v0.0.0+<revision> through the same helper. Existing locks still verify; the catalog version arrives with the next rebuild"
+breaking: false

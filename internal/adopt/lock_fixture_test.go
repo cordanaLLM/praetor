@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -85,7 +86,12 @@ func assertAdoptedLock(t *testing.T, root string) {
 	if err := yaml.Unmarshal([]byte(mustRead(t, filepath.Join(root, ".standards.lock"))), &lock); err != nil {
 		t.Fatal(err)
 	}
-	if lock.PinnedVersion != adoptFixtureVersion {
-		t.Fatalf("lock version must come from the source bundle: %q", lock.PinnedVersion)
+	// The version names the source catalog's content, never the source lock's declared
+	// adoptFixtureVersion (#595); internal/config pins the exact digest.
+	if !adoptedCatalogVersion.MatchString(lock.PinnedVersion) {
+		t.Fatalf("lock version must name the source catalog, not copy %q: %q", adoptFixtureVersion, lock.PinnedVersion)
 	}
 }
+
+// adoptedCatalogVersion is the shape of a lock version built from a source catalog.
+var adoptedCatalogVersion = regexp.MustCompile(`^v0\.0\.0\+catalog\.[0-9a-f]{12}$`)
