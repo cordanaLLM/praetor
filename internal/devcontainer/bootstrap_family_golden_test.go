@@ -16,7 +16,9 @@ import (
 // The bootstrap's Markdown asset family was moved onto the managed asset family registry as
 // a pure refactor. This golden was recorded before that change and pins the declared families
 // (the template family's asset list is left out: it grows with every shipped template) and
-// the verdicts of the asset and directive rules on the Markdown gate's paths.
+// the verdicts of the asset and directive rules on the Markdown gate's paths. The figure engine
+// family added its declaration and turned tools/figures/build.mjs into an admitted asset, while
+// its repository-only files, such as bundle.mjs and the npm lock, stay refused.
 func TestBootstrapAssetFamiliesGolden(t *testing.T) {
 	families, err := bootstrapAssetFamilies()
 	if err != nil {
@@ -31,7 +33,8 @@ func TestBootstrapAssetFamiliesGolden(t *testing.T) {
 	}
 	for _, name := range []string{
 		"tools/markdownlint/verify.mjs", "tools/markdownlint/package-lock.json", "tools/markdownlint/README.md",
-		"tools/markdownlint/assets.go", "tools/figures/build.mjs", "templates/go/ci-go.yml.tmpl",
+		"tools/markdownlint/assets.go", "tools/figures/build.mjs", "tools/figures/bundle.mjs",
+		"tools/figures/package-lock.json", "templates/go/ci-go.yml.tmpl",
 	} {
 		asset, assetErr := isBootstrapAsset(name)
 		fmt.Fprintf(&sb, "asset %s %t %v\n", name, asset, assetErr)

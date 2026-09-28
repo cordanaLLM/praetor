@@ -108,6 +108,13 @@ editors/jetbrains/inspectionProfiles/standards.xml text eol=lf
 #                      the fixtures, so the rule could never be pinned at all.
 .config/hiss/testdata/**/crlf-* -text whitespace=cr-at-eol
 
+# tools/figures/assets.go embeds the figure engine into the adopter binary, and
+# internal/managedasset's TestShippedTextLedger records the digest of every embedded text. Keep
+# Praetor's checkout bytes LF so the embedded bytes, the ledger digests and the bootstrap
+# fingerprint cannot vary by platform, as for tools/markdownlint/* above. The upstream rule
+# below comes later and wins for the vendored files: with text unset, eol has no effect.
+tools/figures/** text eol=lf
+
 # The vendored interfig subset is byte-identical to upstream at the pin, and vendor.json
 # records the SHA-256 of every file. -text keeps checkout and add from converting line
 # endings on any platform, so the hashes hold on a Windows checkout too.

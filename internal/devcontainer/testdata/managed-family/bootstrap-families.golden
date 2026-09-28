@@ -1,5 +1,7 @@
 family "Markdown" source "tools/markdownlint/assets.go" directive "//go:embed package.json package-lock.json markdownlint-cli2.yaml verify.mjs no-private-scratch-links.mjs"
   assets ["tools/markdownlint/package.json" "tools/markdownlint/package-lock.json" "tools/markdownlint/markdownlint-cli2.yaml" "tools/markdownlint/verify.mjs" "tools/markdownlint/no-private-scratch-links.mjs"]
+family "Figure engine" source "tools/figures/assets.go" directive "//go:embed core.mjs checks.mjs build.mjs types.ts third_party/interfig/vendor.json third_party/interfig/VENDOR.md third_party/interfig/upstream/LICENSE third_party/interfig/upstream/src/svg.ts third_party/interfig/upstream/src/geometry.ts third_party/interfig/upstream/src/model.ts dist/loader.js dist/player.js dist/THIRD-PARTY-LICENSES.txt figures.css mkdocs_hook.py astro.mjs serve.mjs README.md"
+  assets ["tools/figures/core.mjs" "tools/figures/checks.mjs" "tools/figures/build.mjs" "tools/figures/types.ts" "tools/figures/third_party/interfig/vendor.json" "tools/figures/third_party/interfig/VENDOR.md" "tools/figures/third_party/interfig/upstream/LICENSE" "tools/figures/third_party/interfig/upstream/src/svg.ts" "tools/figures/third_party/interfig/upstream/src/geometry.ts" "tools/figures/third_party/interfig/upstream/src/model.ts" "tools/figures/dist/loader.js" "tools/figures/dist/player.js" "tools/figures/dist/THIRD-PARTY-LICENSES.txt" "tools/figures/figures.css" "tools/figures/mkdocs_hook.py" "tools/figures/astro.mjs" "tools/figures/serve.mjs" "tools/figures/README.md"]
 family "template" source "templates/embed.go" directive "//go:embed */*.tmpl"
 asset tools/markdownlint/verify.mjs true <nil>
 name tools/markdownlint/verify.mjs <nil>
@@ -9,8 +11,12 @@ asset tools/markdownlint/README.md false <nil>
 name tools/markdownlint/README.md unsupported bootstrap source file; non-Go build inputs require explicit capture support
 asset tools/markdownlint/assets.go false <nil>
 name tools/markdownlint/assets.go <nil>
-asset tools/figures/build.mjs false <nil>
-name tools/figures/build.mjs unsupported bootstrap source file; non-Go build inputs require explicit capture support
+asset tools/figures/build.mjs true <nil>
+name tools/figures/build.mjs <nil>
+asset tools/figures/bundle.mjs false <nil>
+name tools/figures/bundle.mjs unsupported bootstrap source file; non-Go build inputs require explicit capture support
+asset tools/figures/package-lock.json false <nil>
+name tools/figures/package-lock.json unsupported bootstrap source file; non-Go build inputs require explicit capture support
 asset templates/go/ci-go.yml.tmpl true <nil>
 name templates/go/ci-go.yml.tmpl <nil>
 directive tools/markdownlint/assets.go "//go:embed package.json package-lock.json markdownlint-cli2.yaml verify.mjs no-private-scratch-links.mjs" <nil>

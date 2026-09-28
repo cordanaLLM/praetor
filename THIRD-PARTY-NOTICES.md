@@ -12,15 +12,21 @@ image carries the same files under `/usr/local/share/praetor/`. Each archive als
 CycloneDX and an SPDX SBOM that Syft writes during the release (`.goreleaser.yaml`, `sboms`).
 
 The component tables are generated. `praetorctl sbom notices` (`make third-party-notices`)
-rewrites their rows from `go.mod`, the root `Dockerfile` and the embedded npm lock
-`tools/markdownlint/package-lock.json`, and keeps the copyright line each row already states
+rewrites their rows from `go.mod`, the root `Dockerfile`, the embedded npm lock
+`tools/markdownlint/package-lock.json`, the interfig pin
+`tools/figures/third_party/interfig/vendor.json`, and the embedded figure player's
+`tools/figures/dist/THIRD-PARTY-LICENSES.txt` with the lock the player is built from,
+`tools/figures/package-lock.json`. It keeps the copyright line each row already states
 (`internal/supplychain/notices.go`). A component with no row yet, or a license outside the
 reviewed set, stops the command until its row is written from the upstream license file.
 `internal/supplychain/notices_test.go` fails when this file is not what the command writes,
-and when a Go module's upstream license or notice text is missing here verbatim.
+and when the upstream license or notice text of a Go module or of a part of the figure player
+is missing here verbatim.
 
-The documentation site, not the archives or the image, ships the vendored interfig figure
-engine; [Credits & Acknowledgements](docs/credits.md) credits it.
+The binaries also embed the documentation figure engine (`tools/figures/assets.go`): the
+vendored interfig render source and the committed figure player, whose `player.js` bundles
+interfig with React, react-dom and scheduler. The last two tables list them, and
+[Credits & Acknowledgements](docs/credits.md) credits them.
 
 <!-- REUSE-IgnoreStart -->
 
@@ -310,3 +316,99 @@ as the lock records them, copyright lines as each package's license file states 
 | `vfile-message` | 4.0.3 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
 
 <!-- REUSE-IgnoreEnd -->
+
+<!-- REUSE-IgnoreStart -->
+
+## Vendored figure engine
+
+The binaries embed the render source of interfig, vendored byte-identical at the upstream commit
+`tools/figures/third_party/interfig/vendor.json` pins, with its upstream `LICENSE`
+(`tools/figures/third_party/interfig/VENDOR.md`).
+
+| Component | Commit | License | Copyright |
+| :-- | :-- | :-- | :-- |
+| `interfig` | ccfe85b4851957ac2adf88b4a9ddf9668b2882f1 | MIT | `Copyright (c) 2025 Vectorize AI, Inc.` |
+
+## npm packages of the figure player
+
+The embedded figure player `tools/figures/dist/player.js` contains the code of the packages
+below, bundled by esbuild from `tools/figures/package-lock.json`. The table covers every package
+the player's `THIRD-PARTY-LICENSES.txt` names beside interfig; versions and licenses are as the
+lock records them, copyright lines as each package's license file states them.
+
+| Package | Version | License | Copyright |
+| :-- | :-- | :-- | :-- |
+| `react` | 19.3.0 | MIT | `Copyright (c) Meta Platforms, Inc. and affiliates.` |
+| `react-dom` | 19.3.0 | MIT | `Copyright (c) Meta Platforms, Inc. and affiliates.` |
+| `scheduler` | 0.28.0 | MIT | `Copyright (c) Meta Platforms, Inc. and affiliates.` |
+
+<!-- REUSE-IgnoreEnd -->
+
+### interfig license
+
+The interfig license, verbatim from `LICENSE` in the upstream tree
+(`tools/figures/third_party/interfig/upstream/LICENSE`):
+
+<!-- SPDX-SnippetBegin -->
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-SnippetCopyrightText: 2025 Vectorize AI, Inc. -->
+
+```text
+MIT License
+
+Copyright (c) 2025 Vectorize AI, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+<!-- SPDX-SnippetEnd -->
+
+### React, react-dom and scheduler license
+
+React, react-dom and scheduler carry the same license, verbatim from each package's `LICENSE`:
+
+<!-- SPDX-SnippetBegin -->
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-SnippetCopyrightText: Meta Platforms, Inc. and affiliates. -->
+
+```text
+MIT License
+
+Copyright (c) Meta Platforms, Inc. and affiliates.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+<!-- SPDX-SnippetEnd -->

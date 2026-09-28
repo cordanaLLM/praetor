@@ -93,7 +93,8 @@ fails when the image name in `.goreleaser.yaml`, `deploy/helm/praetor/values.yam
 job's `IMAGE` and `CHART_REPOSITORY` stops being the lowercased `.standards.yaml` identity;
 GHCR accepts lowercase names only. `internal/supplychain/notices_test.go` fails when an
 archive, `extra_files` or the `Dockerfile` drops one of the license and notices files, and
-when `THIRD-PARTY-NOTICES.md` falls out of step with `go.mod`, the embedded npm lock or the
+when `THIRD-PARTY-NOTICES.md` falls out of step with `go.mod`, the embedded npm lock, the
+embedded figure engine (the interfig pin and the packages the committed player bundles) or the
 image's base. After a dependency bump, `praetorctl sbom notices` (`make third-party-notices`)
 regenerates the notices' component tables; a new component or an unreviewed license stops it
 until its row is written by hand (`internal/supplychain/notices.go`). ADR-0013 records the

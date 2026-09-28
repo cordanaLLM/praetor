@@ -28,6 +28,8 @@ Everything the figures need sits in one tree, `tools/figures/`:
 | `serve.mjs` | Serves and copies the figure and player files for `astro.mjs`, and serves a built site for the smoke test. Node builtins only. |
 | `figures.css` | The figure stylesheet, reading Material's theme variables with Starlight's as the fallback. |
 | `third_party/interfig/` | The vendored engine, byte-identical to its pin. |
+| `README.md` | The neutral authoring guide that travels with the engine to adopting repositories. |
+| `assets.go` | Embeds the engine files an adopting repository receives into `praetorctl`, as an explicit list ([ADR-0016](../adr/0016-figures-for-adopters.md), section 2). `assets_test.go` fails when a tracked file is neither in that list nor named repository-only, or when a listed script imports a file outside it. |
 
 ## Mermaid is retired on the root site
 
