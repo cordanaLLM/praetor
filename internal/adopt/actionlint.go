@@ -6,6 +6,8 @@ package adopt
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"path"
 	"reflect"
 	"slices"
@@ -89,18 +91,18 @@ func reconcileActionlintLabels(ctx context.Context, s *adoptSession) error {
 		})
 		return err
 	}
-	merge, err := mergeActionlintLabels(ctx, data, labels)
+	merged, added, err := mergeActionlintLabels(ctx, data, labels)
+	var refusal actionlintRefusal
 	switch {
+	case errors.As(err, &refusal):
+		return reportActionlintUnsafe(s, rel, labels, string(refusal))
 	case err != nil:
 		return err
-	case merge.refused != "":
-		reportActionlintUnsafe(s, rel, labels, merge.refused)
-		return nil
-	case len(merge.added) == 0:
+	case len(added) == 0:
 		s.report.recordReconciled(rel, "actionlint already accepts the runner labels of the Praetor-managed workflows")
 		return nil
 	}
-	return publishActionlintConfig(ctx, s, rel, data, merge)
+	return publishActionlintConfig(ctx, s, rel, data, merged, added)
 }
 
 // actionlintManagedLabels returns the actionlint labels of every family the active facets
@@ -123,10 +125,10 @@ func findActionlintConfig(ctx context.Context, s *adoptSession, labels []string)
 		data, exists, err := observeAdoptionInput(ctx, s, rel)
 		if err != nil {
 			reason, err := uninspectableReason(ctx, err)
-			if err == nil {
-				reportActionlintUnsafe(s, rel, labels, reason)
+			if err != nil {
+				return "", nil, false, err
 			}
-			return "", nil, false, err
+			return "", nil, false, reportActionlintUnsafe(s, rel, labels, reason)
 		}
 		if exists {
 			return rel, data, true, nil
@@ -136,27 +138,28 @@ func findActionlintConfig(ctx context.Context, s *adoptSession, labels []string)
 }
 
 // reportActionlintUnsafe records a configuration left untouched, with the labels to declare by
-// hand.
-func reportActionlintUnsafe(s *adoptSession, rel string, labels []string, reason string) {
+// hand. Such a file never fails adoption, so it returns no error.
+func reportActionlintUnsafe(s *adoptSession, rel string, labels []string, reason string) error {
 	s.report.recordSkipped(rel, "actionlint configuration left untouched: "+reason+"; declare "+
 		strings.Join(labels, ", ")+" under its self-hosted-runner.labels so actionlint accepts the Praetor-managed workflows")
+	return nil
 }
 
-// publishActionlintConfig writes the merged configuration over data, bound to the observed
-// bytes, and reports the labels it declared. A dry run reports the write it would make.
-func publishActionlintConfig(ctx context.Context, s *adoptSession, rel string, data []byte, merge actionlintMerge) error {
+// publishActionlintConfig writes merged over data, bound to the observed bytes, and reports the
+// labels it added. A dry run reports the write it would make.
+func publishActionlintConfig(ctx context.Context, s *adoptSession, rel string, data, merged []byte, added []string) error {
 	if !s.opts.DryRun {
 		full, err := repoFile(s.repoPath, rel)
 		if err != nil {
 			return err
 		}
 		options := contextopt.ReplaceOptions{Expected: data, Exists: true, Mode: filePerm}
-		if err := contextopt.ReplaceSnapshot(ctx, full, merge.data, options); err != nil {
-			return err
+		if err := contextopt.ReplaceSnapshot(ctx, full, merged, options); err != nil {
+			return fmt.Errorf("update %s: %w", rel, err)
 		}
 	}
-	s.planDryRunWrite(rel, merge.data)
-	s.report.recordReconciledAs(rel, actionMerge, "Declared "+strings.Join(merge.added, ", ")+
+	s.planDryRunWrite(rel, merged)
+	s.report.recordReconciledAs(rel, actionMerge, "Declared "+strings.Join(added, ", ")+
 		" under self-hosted-runner.labels, runner labels of the Praetor-managed workflows actionlint does not know; every other line is kept")
 	return nil
 }
@@ -176,13 +179,11 @@ func actionlintItems(labels []string, indent, eol string) string {
 	return out.String()
 }
 
-// actionlintMerge is what mergeActionlintLabels made of one configuration: the patched bytes
-// and the labels it added, none when every label was declared, or why it left the file alone.
-type actionlintMerge struct {
-	data    []byte
-	added   []string
-	refused string
-}
+// actionlintRefusal is why mergeActionlintLabels leaves a configuration alone. The step reports
+// it with the labels to declare by hand; it never fails adoption.
+type actionlintRefusal string
+
+func (r actionlintRefusal) Error() string { return string(r) }
 
 // actionlintLayout locates self-hosted-runner.labels in a decoded configuration. root is the
 // top-level block mapping, nil for a file without content; the other nodes are nil where the
@@ -193,50 +194,51 @@ type actionlintLayout struct {
 }
 
 // mergeActionlintLabels returns data with every label it does not declare yet appended to
-// self-hosted-runner.labels, in data's line-ending style. Only the adoption context ending is
-// an error; a file it will not patch comes back with refused set.
-func mergeActionlintLabels(ctx context.Context, data []byte, labels []string) (actionlintMerge, error) {
+// self-hosted-runner.labels, in data's line-ending style, and those labels; no bytes and no
+// labels when every label is declared. An actionlintRefusal names a file it will not patch;
+// any other error is the adoption context ending.
+func mergeActionlintLabels(ctx context.Context, data []byte, labels []string) ([]byte, []string, error) {
 	text, crlf, err := util.NormalizeLineEndingsStrict(string(data))
 	if err != nil {
-		return actionlintMerge{refused: "its line endings are mixed"}, nil
+		return nil, nil, actionlintRefusal("its line endings are mixed (" + err.Error() + ")")
 	}
-	layout, refused, err := readActionlintLayout(ctx, text)
-	if err != nil || refused != "" {
-		return actionlintMerge{refused: refused}, err
+	layout, err := readActionlintLayout(ctx, text)
+	if err != nil {
+		return nil, nil, err
 	}
 	missing := missingActionlintLabels(layout.labels, labels)
 	if len(missing) == 0 {
-		return actionlintMerge{}, nil
+		return nil, nil, nil
 	}
 	patched, ok := patchActionlintLabels(newManifestText([]byte(text)), layout, missing)
 	if !ok || !actionlintPatchExact(text, patched, missing) {
-		return actionlintMerge{refused: "its layout is not one adoption extends in place"}, nil
+		return nil, nil, actionlintRefusal("its layout is not one adoption extends in place")
 	}
-	return actionlintMerge{data: []byte(util.RestoreLineEndings(patched, crlf)), added: missing}, nil
+	return []byte(util.RestoreLineEndings(patched, crlf)), missing, nil
 }
 
 // readActionlintLayout decodes text, one YAML document or none, and locates the labels list.
-func readActionlintLayout(ctx context.Context, text string) (actionlintLayout, string, error) {
+func readActionlintLayout(ctx context.Context, text string) (actionlintLayout, error) {
 	var document yaml.Node
-	if util.DecodeYAMLDocument([]byte(text), &document, util.YAMLDocumentOptions{AllowEmpty: true}) != nil {
-		return actionlintLayout{}, "it is not one YAML document", nil
+	if err := util.DecodeYAMLDocument([]byte(text), &document, util.YAMLDocumentOptions{AllowEmpty: true}); err != nil {
+		return actionlintLayout{}, actionlintRefusal("it is not one YAML document (" + err.Error() + ")")
 	}
 	if document.Kind == 0 || len(document.Content) != 1 || nullYAMLNode(document.Content[0]) {
-		return actionlintLayout{}, "", nil
+		return actionlintLayout{}, nil
 	}
 	if err := config.ValidateYAMLNodes(ctx, &document); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return actionlintLayout{}, "", ctxErr
+			return actionlintLayout{}, ctxErr
 		}
-		return actionlintLayout{}, "it uses anchors, aliases or keys that are not unique strings", nil
+		return actionlintLayout{}, actionlintRefusal("it uses anchors, aliases or keys that are not unique strings (" + err.Error() + ")")
 	}
 	root := document.Content[0]
 	if root.Kind != yaml.MappingNode || root.Style&yaml.FlowStyle != 0 || root.Column != 1 {
-		return actionlintLayout{}, "its top level is not a block mapping", nil
+		return actionlintLayout{}, actionlintRefusal("its top level is not a block mapping")
 	}
 	layout := actionlintLayout{root: root, runnerAt: mappingKeyIndex(root, actionlintRunnerKey)}
 	if layout.runnerAt < 0 {
-		return layout, "", nil
+		return layout, nil
 	}
 	layout.runnerKey, layout.runner = root.Content[layout.runnerAt], root.Content[layout.runnerAt+1]
 	return locateActionlintLabels(layout)
@@ -245,22 +247,22 @@ func readActionlintLayout(ctx context.Context, text string) (actionlintLayout, s
 // locateActionlintLabels fills the labels key and value of a layout whose self-hosted-runner
 // value it has, refusing a value that is neither null nor a block mapping and a labels value
 // that is neither null nor a sequence.
-func locateActionlintLabels(layout actionlintLayout) (actionlintLayout, string, error) {
+func locateActionlintLabels(layout actionlintLayout) (actionlintLayout, error) {
 	if nullYAMLNode(layout.runner) {
-		return layout, "", nil
+		return layout, nil
 	}
 	if layout.runner.Kind != yaml.MappingNode || layout.runner.Style&yaml.FlowStyle != 0 {
-		return layout, "its self-hosted-runner is not a block mapping", nil
+		return layout, actionlintRefusal("its self-hosted-runner is not a block mapping")
 	}
 	layout.labelsAt = mappingKeyIndex(layout.runner, actionlintLabelsKey)
 	if layout.labelsAt < 0 {
-		return layout, "", nil
+		return layout, nil
 	}
 	layout.labelsKey, layout.labels = layout.runner.Content[layout.labelsAt], layout.runner.Content[layout.labelsAt+1]
 	if !nullYAMLNode(layout.labels) && layout.labels.Kind != yaml.SequenceNode {
-		return layout, "its self-hosted-runner.labels is not a list", nil
+		return layout, actionlintRefusal("its self-hosted-runner.labels is not a list")
 	}
-	return layout, "", nil
+	return layout, nil
 }
 
 // missingActionlintLabels returns, in order, the labels no entry of declared, a labels sequence
