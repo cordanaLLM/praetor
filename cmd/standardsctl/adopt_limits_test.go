@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -91,5 +92,36 @@ func TestVerificationLimitsFromFlags_Boundary(t *testing.T) {
 	}
 	if _, err := adopt.NormalizeVerificationLimits(verificationLimitsFromFlags(0, 0, adopt.VerificationDepthCeiling)); err != nil {
 		t.Fatalf("the depth ceiling itself is admitted: %v", err)
+	}
+}
+
+// TestRegisterVerificationLimitFlags_NamesMatchAdopt: the flag names registerVerificationLimitFlags
+// spells as literals (for `praetorctl docs references`) are the ones adopt's bound errors advise.
+// Positive: each adopt.Verification*Flag is registered and parses into its bound. Negative: no
+// other flag is registered, so a misspelt literal cannot hide beside the right one. Boundary: no
+// flag given keeps adoption's defaults (nil limits).
+func TestRegisterVerificationLimitFlags_NamesMatchAdopt(t *testing.T) {
+	fs := flag.NewFlagSet("limits", flag.ContinueOnError)
+	limitFlags := registerVerificationLimitFlags(fs)
+	if got := limitFlags.limits(); got != nil {
+		t.Fatalf("no flag given = %+v; want nil, keeping adoption's defaults", got)
+	}
+	names := []string{adopt.VerificationEntriesFlag, adopt.VerificationFilesFlag, adopt.VerificationDepthFlag}
+	registered := 0
+	fs.VisitAll(func(*flag.Flag) { registered++ })
+	if registered != len(names) {
+		t.Fatalf("registered %d flags; want exactly %v", registered, names)
+	}
+	for i, name := range names {
+		if fs.Lookup(name) == nil {
+			t.Fatalf("adopt.Verification*Flag %q is not registered", name)
+		}
+		if err := fs.Set(name, strconv.Itoa(10+i)); err != nil {
+			t.Fatalf("set --%s: %v", name, err)
+		}
+	}
+	got := limitFlags.limits()
+	if got == nil || got.MaxEntries != 10 || got.MaxFiles != 11 || got.MaxDepth != 12 {
+		t.Fatalf("parsed flags = %+v; want entries 10, files 11, depth 12", got)
 	}
 }

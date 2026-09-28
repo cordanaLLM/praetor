@@ -118,13 +118,15 @@ type verificationLimitFlags struct {
 }
 
 // registerVerificationLimitFlags adds the discovery bound flags to fs. Each defaults to 0, which
-// keeps adoption's default for that bound.
+// keeps adoption's default for that bound. The names are literals, not adopt.Verification*Flag:
+// `praetorctl docs references` reads a flag name only from a string literal, so a constant would
+// hide these flags from it. TestRegisterVerificationLimitFlags_NamesMatchAdopt keeps both equal.
 func registerVerificationLimitFlags(fs *flag.FlagSet) verificationLimitFlags {
 	defaults := adopt.DefaultVerificationLimits()
 	return verificationLimitFlags{
-		entries: fs.Int(adopt.VerificationEntriesFlag, 0, fmt.Sprintf("Directory entries verification discovery and the editor language scan may walk (default %d, ceiling %d)", defaults.MaxEntries, adopt.VerificationEntriesCeiling)),
-		files:   fs.Int(adopt.VerificationFilesFlag, 0, fmt.Sprintf("Verification input files discovery may read (default %d, ceiling %d)", defaults.MaxFiles, adopt.VerificationFilesCeiling)),
-		depth:   fs.Int(adopt.VerificationDepthFlag, 0, fmt.Sprintf("Directory depth verification discovery may descend (default %d, ceiling %d)", defaults.MaxDepth, adopt.VerificationDepthCeiling)),
+		entries: fs.Int("verification-max-entries", 0, fmt.Sprintf("Directory entries verification discovery and the editor language scan may walk (default %d, ceiling %d)", defaults.MaxEntries, adopt.VerificationEntriesCeiling)),
+		files:   fs.Int("verification-max-files", 0, fmt.Sprintf("Verification input files discovery may read (default %d, ceiling %d)", defaults.MaxFiles, adopt.VerificationFilesCeiling)),
+		depth:   fs.Int("verification-max-depth", 0, fmt.Sprintf("Directory depth verification discovery may descend (default %d, ceiling %d)", defaults.MaxDepth, adopt.VerificationDepthCeiling)),
 	}
 }
 
