@@ -93,6 +93,10 @@ Dynamic runtime code evaluation is strictly banned:
 Unsafe pointer arithmetic and memory dereferencing require explicit rationale:
 
 - Any `unsafe` block must be preceded by an explanatory `// SAFETY:` comment proving invariants.
+- In Rust the comment may stand directly above the statement holding the block, and an `unsafe fn`
+  declaration documents its callers' contract in a rustdoc `# Safety` section or a `// SAFETY:`
+  comment.
+  [Rule matching](hiss-rule-matching.md#rust-where-a-safety-proof-attaches) lists the accepted shapes.
 - Missing `// SAFETY:` comments trigger immediate AST check rejection.
 
 ### HISS-10: 5-Layer Zero-Warnings Cascade

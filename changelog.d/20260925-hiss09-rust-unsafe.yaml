@@ -1,0 +1,3 @@
+type: fixed
+title: "HISS-09 in Rust follows clippy's undocumented_unsafe_blocks and missing_safety_doc: a SAFETY comment above the statement rustfmt wrapped around an unsafe block (a let, an assignment, call arguments, a method chain) proves the block, an unsafe fn of every visibility and qualifier is proven by a rustdoc # Safety section, and a method implementing a trait takes the trait's contract; before, a documented private unsafe fn and a wrapped let were reported while every pub, pub(crate), const or extern unsafe fn went unchecked, and an unsafe fn pointer type was read as a declaration; adopters may see new HISS-09 findings for an undocumented qualified unsafe fn"
+breaking: false
