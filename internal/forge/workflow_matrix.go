@@ -130,8 +130,11 @@ func expandMatrix(node *yaml.Node) ([]matrixLeg, error) {
 	if legs, err = excludeLegs(legs, spec.axes, spec.exclude); err != nil {
 		return nil, err
 	}
-	if legs, err = includeLegs(legs, spec.include); err != nil {
-		return nil, err
+	// Include only adds legs, so a count already past the ceiling is refused before the merge.
+	if len(legs) <= maxMatrixLegs {
+		if legs, err = includeLegs(legs, spec.include); err != nil {
+			return nil, err
+		}
 	}
 	if len(legs) == 0 {
 		return nil, errors.New("strategy.matrix yields no leg")

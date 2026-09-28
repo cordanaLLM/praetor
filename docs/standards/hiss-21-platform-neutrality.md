@@ -173,12 +173,23 @@ by the hook policy, absent on the Windows runner).
 A matrix job reports one check per leg, so `name: Platform Neutrality (${{ matrix.name }})`
 becomes three contexts on the forge: `Platform Neutrality (Linux)`, `(macOS)` and `(Windows)`.
 
-The ruleset generator expands the name against `strategy.matrix.include` rather than emitting
-the template. This is not cosmetic. A required status check whose context no run ever reports
-does not fail a pull request — it leaves it *expected* forever, so a generator that emitted
-`${{ matrix.name }}` verbatim would permanently block the branch it believed it was protecting.
-An unresolved expression is therefore an error in `forge.RequiredStatusContexts`, never a
-literal passed through.
+The ruleset generator names each leg the way GitHub reports it rather than emitting the
+template (`internal/forge/workflow_matrix.go`). It builds every combination of the matrix axes,
+drops the ones an `exclude` entry matches, then applies each `include` entry by the workflow
+syntax rules. A name holding `${{ matrix.<variable> }}` is evaluated against each leg and gets
+nothing appended. Any other name, or a job without one (reported under its id), gets the leg's
+axis values appended in declaration order with empty values left out, as
+`Test (ubuntu-latest, 1.22)`; a value an `include` entry merges into an axis combination is not
+appended, while an `include` entry that forms its own leg appends all of its values.
+
+This is not cosmetic. A required status check whose context no run ever reports does not fail a
+pull request — it leaves it *expected* forever, so a generator that emitted `${{ matrix.name }}`
+verbatim, or a constant name without its leg values, would permanently block the branch it
+believed it was protecting. `forge.RequiredStatusContexts` therefore refuses, with the shape
+named, every matrix whose contexts the file cannot show: an unresolved expression, a matrix,
+axis or `include` list that is itself an expression, and a value whose printed form differs from
+its spelling (an unquoted `3.10` is the number 3.1). None is ever passed through as a literal
+(`internal/forge/workflow_matrix_test.go`).
 
 An advisory leg — one carrying `continue-on-error` — is **excluded** from the required
 contexts. The forge reports such a job as successful whether or not it passed, so requiring it

@@ -537,7 +537,11 @@ operator-owned, as described in the
 writes the documentation context into it, disabling the facet does not ask
 `--force` to rewrite it, and audit still requires the workflow to report
 **Documentation Governance** but neither requires nor rejects that context in
-the ruleset.
+the ruleset. With no ruleset to compare, audit reads only the documentation
+workflow to find that context (`forge.RequiredStatusContextsOf`), so another
+workflow whose check contexts its file cannot show, such as a matrix built from
+an expression, does not fail the gate
+(`TestAuditDocumentationGate_Positive_DeclinedRulesetReadsOnlyItsWorkflow`).
 
 The other declinable steps behind the gate's surfaces follow the same rule.
 Declining `makefile` leaves the `Makefile` to the operator: audit neither

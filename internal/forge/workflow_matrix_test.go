@@ -157,24 +157,25 @@ func TestMatrixContexts_Negative_RefusesWhatTheFileCannotShow(t *testing.T) {
 	}
 }
 
-// Boundary: the leg, product and expression bounds hold at their limit and refuse one past it;
-// a leg of empty values has no name the file shows; one leg still carries its suffix; and a
-// matrix whose legs no file shows does not fail a workflow whose job is no required check.
-func TestMatrixContexts_Boundary_Limits(t *testing.T) {
-	values := func(n int) string {
-		items := make([]string, n)
-		for i := range items {
-			items[i] = fmt.Sprintf("v%d", i)
-		}
-		return "[" + strings.Join(items, ", ") + "]"
+// axisValues is a flow list of n distinct matrix values.
+func axisValues(n int) string {
+	items := make([]string, n)
+	for i := range items {
+		items[i] = fmt.Sprintf("v%d", i)
 	}
-	full := "    strategy:\n      matrix:\n        a: " + values(16) + "\n        b: " + values(16) + "\n"
+	return "[" + strings.Join(items, ", ") + "]"
+}
+
+// Boundary: the leg, product and expression bounds hold at their limit and refuse one past it,
+// and a leg of empty values has no name the file shows.
+func TestMatrixContexts_Boundary_Limits(t *testing.T) {
+	full := "    strategy:\n      matrix:\n        a: " + axisValues(16) + "\n        b: " + axisValues(16) + "\n"
 	if got, err := matrixJob(full); err != nil || len(got) != maxMatrixLegs {
 		t.Fatalf("a matrix of exactly %d legs: %d contexts, %v", maxMatrixLegs, len(got), err)
 	}
 	for name, tc := range map[string]struct{ body, want string }{
 		"one leg past the limit": {full + "        include:\n          - a: extra\n", "exceeds 256 legs"},
-		"product past its bound": {"    strategy:\n      matrix:\n        a: " + values(65) + "\n        b: " + values(64) + "\n", "more than 4096"},
+		"product past its bound": {"    strategy:\n      matrix:\n        a: " + axisValues(65) + "\n        b: " + axisValues(64) + "\n", "more than 4096"},
 		"every value empty":      {"    strategy:\n      matrix:\n        include:\n          - features: \"\"\n", "every matrix value"},
 		"one expression too many": {"    name: " + strings.Repeat("${{ matrix.a }}", maxNameExpressions+1) + "\n    strategy:\n      matrix:\n        a: [x]\n",
 			"more than 16 expressions"},
@@ -187,6 +188,11 @@ func TestMatrixContexts_Boundary_Limits(t *testing.T) {
 	if got, err := matrixJob(atLimit); err != nil || len(got) != 1 || got[0] != strings.Repeat("x", maxNameExpressions) {
 		t.Errorf("a name of exactly %d expressions: %q, %v", maxNameExpressions, got, err)
 	}
+}
+
+// Boundary: a matrix whose legs no file shows does not fail a workflow whose job is no required
+// check, because only a required job's matrix is read.
+func TestMatrixContexts_Boundary_UnreadMatrixOfAConditionalJob(t *testing.T) {
 	conditional := "    if: needs.plan.outputs.run == 'true'\n    strategy:\n      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}\n  gate:\n    name: CI success\n"
 	if got, err := matrixJob(conditional); err != nil || !slices.Equal(got, []string{"CI success"}) {
 		t.Errorf("a dynamic matrix on a conditional job: %q, %v; want only the gate", got, err)
