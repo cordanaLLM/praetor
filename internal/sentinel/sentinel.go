@@ -208,6 +208,23 @@ func CanAllocateModel(stats *HostStats, vramRequiredGB float64) bool {
 	return stats.RAMFreeBytes-reqBytes >= CalculateRAMReservation(stats.RAMTotalBytes)
 }
 
+// MaxHeadroomMB bounds a free-RAM headroom request in MiB: 1 PiB, above any host, and low enough
+// that the byte conversion in MeetsHeadroom cannot overflow.
+const MaxHeadroomMB uint64 = 1 << 30
+
+// MeetsHeadroom reports whether measured free RAM is at least headroomMB MiB. Like
+// CanAllocateModel it refuses rather than decides: an unmeasured host (zero total), an
+// inconsistent reading (free above total) and a request outside 1..MaxHeadroomMB all return false.
+func MeetsHeadroom(stats *HostStats, headroomMB uint64) bool {
+	if stats == nil || headroomMB == 0 || headroomMB > MaxHeadroomMB {
+		return false
+	}
+	if stats.RAMTotalBytes == 0 || stats.RAMFreeBytes > stats.RAMTotalBytes {
+		return false
+	}
+	return stats.RAMFreeBytes >= headroomMB*1024*1024
+}
+
 // meminfoPath is a variable so the absent-source path can be exercised on a host that does have
 // /proc/meminfo. Without this the regression is only reachable on macOS or Windows, which is
 // precisely where nobody runs the tests -- and a test that cannot run where the bug was introduced

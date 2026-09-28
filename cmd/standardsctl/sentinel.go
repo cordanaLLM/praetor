@@ -11,9 +11,13 @@ func runSentinel(args []string) error {
 	fs := flag.NewFlagSet("sentinel", flag.ContinueOnError)
 	path := fs.String("path", ".", "Path to inspect for disk storage")
 	checkVRAM := fs.Float64("check-vram", 0, "Check if given VRAM (GB) can be allocated safely")
+	minFreeMB := fs.Uint64("min-free-mb", 0, "Fail unless measured free RAM is at least this many MiB (0 skips the check)")
 
 	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
+	}
+	if *minFreeMB > sentinel.MaxHeadroomMB {
+		return fmt.Errorf("--min-free-mb %d exceeds the %d MiB limit", *minFreeMB, sentinel.MaxHeadroomMB)
 	}
 
 	report, err := sentinel.CheckHostHealth(*path)
@@ -58,5 +62,25 @@ func runSentinel(args []string) error {
 		}
 	}
 
+	if *minFreeMB > 0 {
+		return reportHeadroom(&report.Stats, *minFreeMB)
+	}
+	return nil
+}
+
+// reportHeadroom prints the free-RAM headroom verdict and fails the command unless measured free
+// RAM covers headroomMB. The VS Code extension's Check Sentinel Host Headroom command passes its
+// standards.sentinel.headroomMB setting here, so the measurement stays in this one implementation.
+func reportHeadroom(stats *sentinel.HostStats, headroomMB uint64) error {
+	if stats.RAMTotalBytes == 0 || stats.RAMFreeBytes > stats.RAMTotalBytes {
+		fmt.Printf("\nHeadroom (%d MiB): [UNMEASURED] No consistent memory reading on this host.\n", headroomMB)
+		return fmt.Errorf("headroom of %d MiB unverified: host memory has no consistent reading", headroomMB)
+	}
+	freeMB := stats.RAMFreeBytes / (1024 * 1024)
+	if !sentinel.MeetsHeadroom(stats, headroomMB) {
+		fmt.Printf("\nHeadroom (%d MiB): [BELOW] %d MiB free.\n", headroomMB, freeMB)
+		return fmt.Errorf("free RAM %d MiB is below the required headroom of %d MiB", freeMB, headroomMB)
+	}
+	fmt.Printf("\nHeadroom (%d MiB): [MET] %d MiB free.\n", headroomMB, freeMB)
 	return nil
 }

@@ -577,3 +577,54 @@ func TestCanAllocateModel_Positive_ReservationBoundsUtilization(t *testing.T) {
 		t.Fatal("the grid admitted no load, so it proves nothing")
 	}
 }
+
+const mib = uint64(1024 * 1024)
+
+// TestMeetsHeadroom_Positive: free RAM at or above the requested MiB meets the headroom.
+func TestMeetsHeadroom_Positive(t *testing.T) {
+	stats := HostStats{RAMTotalBytes: 16 * gib, RAMFreeBytes: 2 * gib}
+	for _, headroom := range []uint64{1, 1024, 2048} {
+		if !MeetsHeadroom(&stats, headroom) {
+			t.Fatalf("%d MiB headroom was refused with 2 GiB free", headroom)
+		}
+	}
+}
+
+// TestMeetsHeadroom_Negative: too little free RAM, no reading, an inconsistent reading, a nil
+// report and a zero request are refused rather than decided.
+func TestMeetsHeadroom_Negative(t *testing.T) {
+	cases := map[string]struct {
+		stats    *HostStats
+		headroom uint64
+	}{
+		"below":        {&HostStats{RAMTotalBytes: 16 * gib, RAMFreeBytes: 512 * mib}, 1024},
+		"unmeasured":   {&HostStats{}, 1},
+		"inconsistent": {&HostStats{RAMTotalBytes: 8 * gib, RAMFreeBytes: 64 * gib}, 1},
+		"nil":          {nil, 1},
+		"zero request": {&HostStats{RAMTotalBytes: 16 * gib, RAMFreeBytes: 8 * gib}, 0},
+	}
+	for name, tc := range cases {
+		if MeetsHeadroom(tc.stats, tc.headroom) {
+			t.Errorf("%s: headroom %d MiB was met", name, tc.headroom)
+		}
+	}
+}
+
+// TestMeetsHeadroom_Boundary: exactly the headroom is met, one byte less is not, and the MiB
+// limit is accepted while one past it is refused without overflowing.
+func TestMeetsHeadroom_Boundary(t *testing.T) {
+	if !MeetsHeadroom(&HostStats{RAMTotalBytes: 4 * gib, RAMFreeBytes: 1024 * mib}, 1024) {
+		t.Fatal("free RAM exactly at the headroom was refused")
+	}
+	if MeetsHeadroom(&HostStats{RAMTotalBytes: 4 * gib, RAMFreeBytes: 1024*mib - 1}, 1024) {
+		t.Fatal("free RAM one byte under the headroom was accepted")
+	}
+	full := HostStats{RAMTotalBytes: MaxHeadroomMB * mib, RAMFreeBytes: MaxHeadroomMB * mib}
+	if !MeetsHeadroom(&full, MaxHeadroomMB) {
+		t.Fatal("the MiB limit itself was refused")
+	}
+	huge := HostStats{RAMTotalBytes: ^uint64(0), RAMFreeBytes: ^uint64(0)}
+	if MeetsHeadroom(&huge, MaxHeadroomMB+1) {
+		t.Fatal("a request past the MiB limit was decided")
+	}
+}
