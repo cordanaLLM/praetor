@@ -133,6 +133,18 @@ func TestMakefileDefineOwnershipGNUReplay(t *testing.T) {
 	if err != nil {
 		t.Skipf("make is not on PATH, so the replay cannot run; the table test covers the reader: %v", err)
 	}
+	// The rows were measured on GNU Make 4.x. macOS ships GNU Make 3.81, whose parser differs in
+	// places the rows exercise, so another version skips rather than replaying unmeasured answers
+	// (HISS-21: a skip with its reason, never a silent pass).
+	version, err := util.RunCommand(t.Context(), t.TempDir(), makePath, "--version")
+	if err != nil || !strings.HasPrefix(version, "GNU Make 4.") {
+		t.Skipf("the replay rows were measured on GNU Make 4.x; %s reports %q (%v)", makePath, strings.SplitN(version, "\n", 2)[0], err)
+	}
+	// Make imports the environment as variables, so a caller's P, A or MAKEFLAGS would change
+	// what the rows that reference $(P) and $(A) expand to.
+	for _, name := range []string{"P", "A", "MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS"} {
+		t.Setenv(name, "")
+	}
 	accepted := map[string]string{}
 	for _, name := range []string{"called-in-recipe", "body-names-target", "nested-define-closed", "continued-assignment", "info-prints-define"} {
 		accepted[name] = makefileDefineOwnershipRows[name].makefile
