@@ -1,0 +1,160 @@
+{
+  "about": "Fence scanning, replayed in both languages (docs/adr/0016-figures-for-adopters.md, section 6): fenceBlocks in tools/figures/checks.mjs (tools/figures/checks.test.mjs) and fence_blocks in tools/figures/mkdocs_hook.py (tools/figures/test_mkdocs_hook.py) must turn each case's markdown into its blocks. A block is [start, end (exclusive), indent, info, body, slug]; slug is the figure slug the body names. The blocks were recorded from the Python checker the Node checks replaced.",
+  "cases": [
+    {
+      "name": "a backtick fence",
+      "markdown": "```mermaid\nflowchart TD\n    A --> B\n```\n",
+      "blocks": [
+        [0, 4, "", "mermaid", ["flowchart TD", "    A --> B"], "flowchart TD"]
+      ]
+    },
+    {
+      "name": "two fences with prose between",
+      "markdown": "```mermaid\nflowchart TD\n    A --> B\n```\n\ntext\n\n```mermaid\nflowchart TD\n    A --> B\n```\n",
+      "blocks": [
+        [0, 4, "", "mermaid", ["flowchart TD", "    A --> B"], "flowchart TD"],
+        [7, 11, "", "mermaid", ["flowchart TD", "    A --> B"], "flowchart TD"]
+      ]
+    },
+    {
+      "name": "a tilde fence; the info string is lowercased",
+      "markdown": "~~~ Mermaid\ngraph LR\n~~~\n",
+      "blocks": [
+        [0, 3, "", "mermaid", ["graph LR"], "graph LR"]
+      ]
+    },
+    {
+      "name": "an indented fence keeps its indent",
+      "markdown": "- item\n\n    ```mermaid\n    flowchart TD\n        A --> B\n    ```\n    ",
+      "blocks": [
+        [2, 6, "    ", "mermaid", ["    flowchart TD", "        A --> B"], "flowchart TD"]
+      ]
+    },
+    {
+      "name": "another language",
+      "markdown": "```python\nprint('mermaid')\n```\n",
+      "blocks": [
+        [0, 3, "", "python", ["print('mermaid')"], "print('mermaid')"]
+      ]
+    },
+    {
+      "name": "inline code is no fence",
+      "markdown": "Write `mermaid` diagrams.\n",
+      "blocks": []
+    },
+    {
+      "name": "the info string is one word",
+      "markdown": "```mermaidx\ngraph\n```\n",
+      "blocks": [
+        [0, 3, "", "mermaidx", ["graph"], "graph"]
+      ]
+    },
+    {
+      "name": "attributes after the info string",
+      "markdown": "```figure {.wide}\ndemo\n```\n",
+      "blocks": [
+        [0, 3, "", "figure", ["demo"], "demo"]
+      ]
+    },
+    {
+      "name": "a brace ends the info string",
+      "markdown": "```{figure}\ndemo\n```\n",
+      "blocks": [
+        [0, 3, "", "", ["demo"], "demo"]
+      ]
+    },
+    {
+      "name": "a fence nested in a longer fence is literal",
+      "markdown": "````markdown\n```mermaid\nflowchart TD\n    A --> B\n```\n````\n```mermaid\nflowchart TD\n    A --> B\n```\n",
+      "blocks": [
+        [0, 6, "", "markdown", ["```mermaid", "flowchart TD", "    A --> B", "```"], "```mermaid"],
+        [6, 10, "", "mermaid", ["flowchart TD", "    A --> B"], "flowchart TD"]
+      ]
+    },
+    {
+      "name": "a closer with an info string does not close",
+      "markdown": "```text\n```mermaid\n```\n```mermaid\nflowchart TD\n    A --> B\n```\n",
+      "blocks": [
+        [0, 3, "", "text", ["```mermaid"], "```mermaid"],
+        [3, 7, "", "mermaid", ["flowchart TD", "    A --> B"], "flowchart TD"]
+      ]
+    },
+    {
+      "name": "a shorter closer does not close a longer opener",
+      "markdown": "````\n```\n```mermaid\nflowchart TD\n    A --> B\n```\n````\n",
+      "blocks": [
+        [0, 7, "", "", ["```", "```mermaid", "flowchart TD", "    A --> B", "```"], "```"]
+      ]
+    },
+    {
+      "name": "a tilde closer does not close a backtick opener",
+      "markdown": "```figure\n~~~\ndemo\n```\n",
+      "blocks": [
+        [0, 4, "", "figure", ["~~~", "demo"], "~~~"]
+      ]
+    },
+    {
+      "name": "a closer may carry trailing whitespace",
+      "markdown": "```figure\ndemo\n```   \nafter\n",
+      "blocks": [
+        [0, 3, "", "figure", ["demo"], "demo"]
+      ]
+    },
+    {
+      "name": "an unclosed fence runs to the end of the page",
+      "markdown": "text\n```figure\ndemo\n```\n```mermaid\nx\n",
+      "blocks": [
+        [1, 4, "", "figure", ["demo"], "demo"],
+        [4, 6, "", "mermaid", ["x"], "x"]
+      ]
+    },
+    {
+      "name": "an empty page",
+      "markdown": "",
+      "blocks": []
+    },
+    {
+      "name": "CRLF line ends",
+      "markdown": "intro\r\n\r\n```figure\r\ndemo\r\n```\r\nafter\r\n",
+      "blocks": [
+        [2, 5, "", "figure", ["demo"], "demo"]
+      ]
+    },
+    {
+      "name": "form feed, NEL and U+2028 do not end a line",
+      "markdown": "intro\fline\u0085more\u2028end\n\n```figure\ndemo\n```\n",
+      "blocks": [
+        [2, 5, "", "figure", ["demo"], "demo"]
+      ]
+    },
+    {
+      "name": "Python whitespace indents a fence: U+001C and U+00A0",
+      "markdown": "\u001c```figure\ndemo\n```\n\u00a0```figure\nother\n```\n",
+      "blocks": [
+        [0, 3, "\u001c", "figure", ["demo"], "demo"],
+        [3, 6, "\u00a0", "figure", ["other"], "other"]
+      ]
+    },
+    {
+      "name": "a byte order mark is not whitespace",
+      "markdown": "\ufeff```figure\ndemo\n```\n",
+      "blocks": [
+        [2, 3, "", "", [], ""]
+      ]
+    },
+    {
+      "name": "an empty figure fence names no slug",
+      "markdown": "```figure\n\n```\n",
+      "blocks": [
+        [0, 3, "", "figure", [""], ""]
+      ]
+    },
+    {
+      "name": "the slug is the first non-blank line, stripped",
+      "markdown": "```figure\n\n  other-one  \nignored\n```\n",
+      "blocks": [
+        [0, 5, "", "figure", ["", "  other-one  ", "ignored"], "other-one"]
+      ]
+    }
+  ]
+}
