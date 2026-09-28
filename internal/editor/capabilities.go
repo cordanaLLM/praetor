@@ -19,8 +19,9 @@ import (
 )
 
 const (
-	maxWorkspaceFiles       = 4096
-	maxLanguageObservations = maxWorkspaceFiles + maxLoopBound + 32
+	// maxLanguageObservations bounds the language list normalizeLanguages accepts: caller
+	// languages, the needs analyzers' markers and the scan's distinct file languages.
+	maxLanguageObservations = util.DefaultDiscoveryEntries + maxLoopBound + 32
 	// lspBinaryName is the file the Praetor language server is built as.
 	lspBinaryName = "standards-lsp"
 )
@@ -29,7 +30,22 @@ const (
 // skips the same names while scanning.
 var defaultPrivateDirs = []string{".workingdir", ".workingdir2"}
 
-var errWorkspaceScanBound = errors.New("editor language scan exceeds file bound")
+// ErrWorkspaceScanBound reports a language scan that met more files than Options.MaxWorkspaceFiles
+// admits. A caller that lets the operator raise the bound matches it to name the flag that does.
+var ErrWorkspaceScanBound = errors.New("editor language scan exceeds its file bound")
+
+// workspaceFileBound resolves Options.MaxWorkspaceFiles: zero applies the discovery default adoption
+// shares, and a value outside 1..util.DiscoveryEntriesCeiling is refused rather than clamped, so no
+// caller can lift the scan past the ceiling the operator's flag is held to (issue #535).
+func workspaceFileBound(requested int) (int, error) {
+	if requested == 0 {
+		return util.DefaultDiscoveryEntries, nil
+	}
+	if requested < 0 || requested > util.DiscoveryEntriesCeiling {
+		return 0, fmt.Errorf("editor workspace file bound %d must be 1..%d", requested, util.DiscoveryEntriesCeiling)
+	}
+	return requested, nil
+}
 
 // Command is a repository command already selected by a caller or observed at a
 // supported repository boundary. Renderers must not invent commands.
@@ -77,7 +93,11 @@ func resolvePlan(ctx context.Context, opts Options, editors []string) (Plan, err
 	if err != nil {
 		return Plan{}, err
 	}
-	observed, err := detectWorkspaceLanguages(ctx, root)
+	fileBound, err := workspaceFileBound(opts.MaxWorkspaceFiles)
+	if err != nil {
+		return Plan{}, err
+	}
+	observed, err := detectWorkspaceLanguages(ctx, root, fileBound)
 	if err != nil {
 		return Plan{}, err
 	}
@@ -106,15 +126,16 @@ func resolvePlan(ctx context.Context, opts Options, editors []string) (Plan, err
 
 // DetectWorkspaceLanguages returns bounded observed language capabilities. It
 // reuses the needs analyzer registry for project markers and supplements it with
-// source/config formats that do not have dependency analyzers.
+// source/config formats that do not have dependency analyzers. The scan walks at most
+// util.DefaultDiscoveryEntries files.
 func DetectWorkspaceLanguages(root string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultIOTimeout)
 	defer cancel()
-	return detectWorkspaceLanguages(ctx, root)
+	return detectWorkspaceLanguages(ctx, root, util.DefaultDiscoveryEntries)
 }
 
-func detectWorkspaceLanguages(ctx context.Context, root string) ([]string, error) {
-	scan := workspaceLanguageScan{ctx: ctx, root: root, languages: make([]string, 0, 12)}
+func detectWorkspaceLanguages(ctx context.Context, root string, fileBound int) ([]string, error) {
+	scan := workspaceLanguageScan{ctx: ctx, root: root, fileBound: fileBound, languages: make([]string, 0, 12)}
 	for _, analyzer := range needs.DefaultRegistry().DetectAll(root) {
 		scan.languages = append(scan.languages, analyzer.Language())
 		if analyzer.Language() == "typescript" && isRegularFile(filepath.Join(root, "svelte.config.js")) {
@@ -130,6 +151,7 @@ func detectWorkspaceLanguages(ctx context.Context, root string) ([]string, error
 type workspaceLanguageScan struct {
 	ctx       context.Context
 	root      string
+	fileBound int
 	seen      int
 	languages []string
 }
@@ -148,10 +170,12 @@ func (scan *workspaceLanguageScan) visit(path string, entry fs.DirEntry, walkErr
 		return nil
 	}
 	scan.seen++
-	if scan.seen > maxWorkspaceFiles {
-		return errWorkspaceScanBound
+	if scan.seen > scan.fileBound {
+		return fmt.Errorf("%w (%d files)", ErrWorkspaceScanBound, scan.fileBound)
 	}
-	if language := languageForFile(entry.Name()); language != "" {
+	// Each language is kept once: a raised bound admits far more files than normalizeLanguages
+	// admits observations, and a file adds nothing its language has not already added.
+	if language := languageForFile(entry.Name()); language != "" && !slices.Contains(scan.languages, language) {
 		scan.languages = append(scan.languages, language)
 	}
 	return nil

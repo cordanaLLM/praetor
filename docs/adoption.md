@@ -74,7 +74,12 @@ Keep a hand-managed ruleset with `adoption.decline: [branch-ruleset]`.
 
 Adoption discovers verification inputs (Makefiles, manifests, scripts) through a bounded
 walk of the target: 4096 directory entries, 128 files and 32 levels of depth by default. A
-repository above those bounds fails with `verification discovery exceeds 4096 entries`.
+repository above those bounds fails with an error that names the flag raising the bound:
+
+```text
+verification discovery exceeds 4096 entries; raise max_entries with --verification-max-entries, up to 200000
+```
+
 Raise a bound explicitly instead of trimming the tree:
 
 ```bash
@@ -82,10 +87,24 @@ standardsctl adopt --dry-run --path /path/to/large-repo \
   --lock-source-root=/path/to/praetor --verification-max-entries=32768
 ```
 
+`--verification-max-entries` also raises the editor language scan, which reads the
+same tree for the IDE step
+([editor capabilities](guides/editor-capabilities.md)).
 `--verification-max-files` and `--verification-max-depth` raise the other two bounds.
-Each value is validated against its ceiling (200000 entries, 512 files, 64 levels); an
-unset flag keeps the default. The flags apply to single-repository adoption; batch
-`--all-missing` keeps the defaults.
+Each value is validated against its ceiling (200000 entries, 512 files, 64 levels). A
+value past its ceiling is refused, and an unset flag keeps the default. A bound already
+at its ceiling reports that instead of naming the flag. The flags apply to
+single-repository adoption; batch `--all-missing` keeps the defaults.
+
+`praetorctl paperclip harness` detects the repository's languages with the same walk and
+takes the same three flags:
+
+```bash
+praetorctl paperclip harness --path /path/to/large-repo --verification-max-entries=32768
+```
+
+Tests: `internal/adopt/large_repo_bounds_test.go` and
+`TestPaperclipHarness_VerificationLimitFlags` in `cmd/standardsctl/adopt_limits_test.go`.
 
 ### What Adoption Scaffolds Automatically
 

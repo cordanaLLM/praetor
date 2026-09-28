@@ -87,11 +87,11 @@ func TestRepositoryLanguages(t *testing.T) {
 	}
 	for name, tc := range cases {
 		want := hisscatalog.Facts{Languages: tc.want, CeilingFuncLOC: config.AuditMaxFuncLOC}
-		if got, warnings, err := RepositoryHISSFacts(t.Context(), tc.root); err != nil || got != want || len(warnings) != 0 {
+		if got, warnings, err := RepositoryHISSFacts(t.Context(), tc.root, nil); err != nil || got != want || len(warnings) != 0 {
 			t.Errorf("%s: RepositoryHISSFacts = %+v, %q, %v; want %+v", name, got, warnings, err, want)
 		}
 	}
-	if _, _, err := RepositoryHISSFacts(t.Context(), filepath.Join(t.TempDir(), "missing")); err == nil {
+	if _, _, err := RepositoryHISSFacts(t.Context(), filepath.Join(t.TempDir(), "missing"), nil); err == nil {
 		t.Error("missing root read as a language set")
 	}
 }
@@ -127,18 +127,18 @@ var cMarkers = map[string]string{"meson.build": "project('widget', 'c')\n"}
 // error, never an empty declaration. Boundary: a manifest without a lock states the audit
 // ceiling, as the audit cannot resolve its policy yet.
 func TestRepositoryHISSFactsReadsDeclaredExceptions(t *testing.T) {
-	facts, warnings, err := RepositoryHISSFacts(t.Context(), cleanupGotoRepo(t, t.TempDir(), cMarkers, true))
+	facts, warnings, err := RepositoryHISSFacts(t.Context(), cleanupGotoRepo(t, t.TempDir(), cMarkers, true), nil)
 	want := hisscatalog.Facts{Languages: hisscatalog.LanguageC, CeilingFuncLOC: config.AuditMaxFuncLOC, Exceptions: hisscatalog.ExceptionCleanupGoto}
 	if err != nil || facts != want || len(warnings) != 0 {
 		t.Fatalf("documented exception: %+v, %q, %v; want %+v", facts, warnings, err, want)
 	}
-	facts, warnings, err = RepositoryHISSFacts(t.Context(), cleanupGotoRepo(t, t.TempDir(), cMarkers, false))
+	facts, warnings, err = RepositoryHISSFacts(t.Context(), cleanupGotoRepo(t, t.TempDir(), cMarkers, false), nil)
 	if err != nil || facts.Exceptions != 0 || len(warnings) != 1 || !strings.Contains(warnings[0], "docs/cleanup-goto.md") {
 		t.Fatalf("undocumented exception: %+v, %q, %v; want no exception and one warning naming the document", facts, warnings, err)
 	}
 	broken := cleanupGotoRepo(t, t.TempDir(), cMarkers, true)
 	mustWrite(t, filepath.Join(broken, manifestFile), "version: 1\nhiss:\n  exceptions:\n    unknown_exception: docs/x.md\n")
-	if _, _, err := RepositoryHISSFacts(t.Context(), broken); err == nil {
+	if _, _, err := RepositoryHISSFacts(t.Context(), broken, nil); err == nil {
 		t.Fatal("malformed manifest read as no exception")
 	}
 }

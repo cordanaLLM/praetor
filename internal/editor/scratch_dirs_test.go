@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strconv"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func writeScratchFixture(t *testing.T, root, rel string) {
@@ -53,7 +55,7 @@ func TestDetectWorkspaceLanguages_Negative_ScratchTreesAreSkipped(t *testing.T) 
 func TestDetectWorkspaceLanguages_Boundary_StandardsWorktreeDoesNotExhaustTheBound(t *testing.T) {
 	root := t.TempDir()
 	writeScratchFixture(t, root, "main.go")
-	for i := 0; i <= maxWorkspaceFiles; i++ {
+	for i := 0; i <= util.DefaultDiscoveryEntries; i++ {
 		writeScratchFixture(t, root, filepath.ToSlash(filepath.Join(".standards", "worktrees", "gate", "pkg", "f"+strconv.Itoa(i)+".txt")))
 	}
 

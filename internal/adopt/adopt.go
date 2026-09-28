@@ -707,9 +707,7 @@ func reconcileEditors(ctx context.Context, s *adoptSession) error {
 	if s.policy != nil {
 		edOpts.Complexity = s.policy.Policy.Complexity
 	}
-	// Synthesis observes the workspace to decide which languages are present, so it needs the
-	// caller's deadline rather than a background one.
-	set, err := editor.SynthesizeContext(ctx, edOpts)
+	set, err := s.synthesizeEditors(ctx, edOpts)
 	if err != nil {
 		return fmt.Errorf("synthesize editors: %w", err)
 	}
@@ -720,6 +718,29 @@ func reconcileEditors(ctx context.Context, s *adoptSession) error {
 		}
 	}
 	return nil
+}
+
+// synthesizeEditors observes the workspace to decide which languages are present, so it runs
+// under the caller's deadline rather than a background one, and under the entry bound this run's
+// verification walk resolved rather than a fixed one of the editor's own: one
+// --verification-max-entries value reaches both walks, and a scan that still stops at the bound
+// names that flag (issue #535).
+func (s *adoptSession) synthesizeEditors(ctx context.Context, opts editor.Options) (*editor.EditorConfigSet, error) {
+	opts.MaxWorkspaceFiles = s.discoveryEntries()
+	set, err := editor.SynthesizeContext(ctx, opts)
+	if errors.Is(err, editor.ErrWorkspaceScanBound) {
+		return nil, entriesBound.exceeded(opts.MaxWorkspaceFiles, err)
+	}
+	return set, err
+}
+
+// discoveryEntries is the entry bound this run's verification plan resolved, which the operator's
+// --verification-max-entries raises; a session without a resolved plan keeps the default.
+func (s *adoptSession) discoveryEntries() int {
+	if s.verification == nil || s.verification.Limits == nil {
+		return maxVerificationEntries
+	}
+	return s.verification.Limits.MaxEntries
 }
 
 func (s *adoptSession) reconcileEditorFile(f editor.GeneratedFile) error {

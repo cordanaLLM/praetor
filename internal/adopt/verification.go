@@ -69,13 +69,9 @@ func resolveVerificationPlanWithLimits(ctx context.Context, root string, request
 	return plan, nil
 }
 
-// ObserveVerificationPlan exposes the bounded declarative planner to read-only
-// observers. It does not adopt files or execute project commands.
-func ObserveVerificationPlan(ctx context.Context, root string) (*VerificationPlan, error) {
-	return resolveVerificationPlan(ctx, root)
-}
-
-// ObserveVerificationPlanWithLimits exposes the bounded planner with explicit limits.
+// ObserveVerificationPlanWithLimits exposes the bounded declarative planner to read-only
+// observers under limits (nil selects DefaultVerificationLimits). It does not adopt files or
+// execute project commands.
 func ObserveVerificationPlanWithLimits(ctx context.Context, root string, limits *VerificationLimits) (*VerificationPlan, error) {
 	return resolveVerificationPlanWithLimits(ctx, root, limits)
 }

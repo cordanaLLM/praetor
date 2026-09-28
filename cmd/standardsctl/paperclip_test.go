@@ -238,7 +238,7 @@ func TestPaperclipVerify_InReviewReceiptOnDisk(t *testing.T) {
 // `praetorctl caveman check --root=. --configured-sources`. A CRLF checkout compares as LF.
 func TestDogfoodingPaperclipHarness(t *testing.T) {
 	root := filepath.Join("..", "..")
-	facts, warnings, err := adopt.RepositoryHISSFacts(t.Context(), root)
+	facts, warnings, err := adopt.RepositoryHISSFacts(t.Context(), root, nil)
 	if err != nil || len(warnings) != 0 {
 		t.Fatalf("RepositoryHISSFacts(repository root): warnings=%q err=%v", warnings, err)
 	}

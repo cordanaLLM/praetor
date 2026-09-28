@@ -78,8 +78,12 @@ func harnessExceptions(cleanupGoto hiss.CleanupGoto) hisscatalog.Exception {
 // resolved by config.ResolveRepositoryPolicy as `praetorctl audit` resolves it. A repository
 // whose policy does not resolve (no manifest, no lock, or a resolution error) states the audit
 // ceiling instead; each returned warning names a declaration or policy that was not read.
-func RepositoryHISSFacts(ctx context.Context, root string) (hisscatalog.Facts, []string, error) {
-	plan, err := ObserveVerificationPlan(ctx, root)
+//
+// The language walk runs under limits exactly as adoption's does: nil selects the defaults, and
+// a caller passes the operator's --verification-max-* overrides so a large repository is read
+// as far as adoption reads it (issue #535).
+func RepositoryHISSFacts(ctx context.Context, root string, limits *VerificationLimits) (hisscatalog.Facts, []string, error) {
+	plan, err := ObserveVerificationPlanWithLimits(ctx, root, limits)
 	if err != nil {
 		return hisscatalog.Facts{}, nil, fmt.Errorf("detect repository languages: %w", err)
 	}

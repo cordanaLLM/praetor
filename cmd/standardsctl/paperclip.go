@@ -40,7 +40,8 @@ func runPaperclip(args []string) error {
 func printPaperclipUsage() {
 	fmt.Println("Usage: standardsctl paperclip <subcommand> [arguments]")
 	fmt.Println("\nSubcommands:")
-	fmt.Println("  harness [--path=.]                               Synthesize Paperclip agent harness and AGit rules")
+	fmt.Println("  harness [--path=.] [--verification-max-entries=N] [--verification-max-files=N] [--verification-max-depth=N]")
+	fmt.Println("                                                   Synthesize Paperclip agent harness and AGit rules")
 	fmt.Println("  disposition --issue=<id> --status=<status> ...   Emit Rule 0 structured terminal disposition record")
 	fmt.Println("  verify [--path=.] [--disposition=path] [--config=path]")
 	fmt.Println("                                                   Verify run satisfies Rule 0 and contract invariants")
@@ -49,11 +50,12 @@ func printPaperclipUsage() {
 func runPaperclipHarness(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("paperclip harness", flag.ContinueOnError)
 	path := fs.String("path", ".", "Target repository path")
+	limitFlags := registerVerificationLimitFlags(fs)
 	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
 
-	facts, warnings, err := adopt.RepositoryHISSFacts(ctx, *path)
+	facts, warnings, err := adopt.RepositoryHISSFacts(ctx, *path, limitFlags.limits())
 	if err != nil {
 		return fmt.Errorf("synthesize harness: %w", err)
 	}

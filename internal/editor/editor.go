@@ -69,6 +69,11 @@ type Options struct {
 	ExtensionRegistry string                    `json:"extension_registry,omitempty"`
 	LSPPath           string                    `json:"lsp_path,omitempty"`
 	PrivateDirs       []string                  `json:"private_dirs,omitempty"`
+	// MaxWorkspaceFiles bounds the files the language scan walks. Zero applies
+	// util.DefaultDiscoveryEntries; a value above util.DiscoveryEntriesCeiling is refused.
+	// Adoption passes the entry bound its verification walk resolved, so
+	// --verification-max-entries raises this scan too (issue #535).
+	MaxWorkspaceFiles int `json:"max_workspace_files,omitempty"`
 	// IncludeMCP is retained for input compatibility; MCP setup belongs to the
 	// client setup pipeline and is never asserted by workspace settings.
 	IncludeMCP bool `json:"include_mcp"`
