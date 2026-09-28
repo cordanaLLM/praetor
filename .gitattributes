@@ -120,3 +120,8 @@ tools/figures/third_party/interfig/upstream/** -text
 tools/figures/core.mjs text eol=lf
 docs/figures/*.ts text eol=lf
 docs/assets/figures/* text eol=lf
+
+# tools/figures/dist/ holds the committed figure player, and `node tools/figures/bundle.mjs --check`
+# compares a rebuild with it byte for byte on Linux, macOS and Windows. esbuild writes LF, so a
+# CRLF checkout would fail that comparison on Windows only.
+tools/figures/dist/** text eol=lf

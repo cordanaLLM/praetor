@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Tests for the MkDocs figures hook (tools/figures/mkdocs_hook.py): its fence scanner, which replays
-the fixtures the Node checks replay, the slot filling, the fence expansion and the stylesheet.
+the fixtures the Node checks replay, the slot filling, the fence expansion, and the stylesheet and
+player files it publishes. The exclude_docs fixture the Node matcher replays is also replayed here
+against pathspec, the matcher MkDocs uses, so the recorded matrix cannot drift from it.
 
 The figure checks themselves are Node (tools/figures/checks.mjs) and are tested by
 tools/figures/checks.test.mjs."""
@@ -24,6 +26,7 @@ FIGURE = "```figure\ndemo\n```\n"
 # The fixtures tools/figures/checks.test.mjs replays against checks.mjs.
 FENCES = json.loads((FIGURES / "fence-fixtures.json").read_text(encoding="utf-8"))
 MARKUP = json.loads((FIGURES / "markup-fixtures.json").read_text(encoding="utf-8"))
+EXCLUDE = json.loads((FIGURES / "exclude-fixtures.json").read_text(encoding="utf-8"))
 META = dict(MARKUP["meta"], html=MARKUP["html"])
 
 
@@ -138,6 +141,27 @@ class Expand(unittest.TestCase):
         self.assertIn("does not hold a JSON object", errors[2])
 
 
+class ExcludeFixture(unittest.TestCase):
+    """exclude-fixtures.json records what pathspec matches; checks.test.mjs replays it against checks.mjs."""
+
+    def test_the_recorded_matrix_is_what_pathspec_matches(self):
+        try:
+            import pathspec
+        except ImportError:
+            self.skipTest("pathspec is not installed; MkDocs brings it (pip install -r docs/presets/mkdocs/requirements.txt)")
+        self.assertGreaterEqual(len(EXCLUDE["patterns"]), 15)
+        for case in EXCLUDE["patterns"]:
+            spec = pathspec.GitIgnoreSpec.from_lines([case["pattern"]])
+            with self.subTest(pattern=case["pattern"]):
+                self.assertEqual([path for path in EXCLUDE["paths"] if spec.match_file(path)], case["matches"])
+
+    def test_every_recorded_match_is_a_listed_path(self):
+        """Boundary: a match outside `paths` would never be replayed in either direction."""
+        for case in EXCLUDE["patterns"]:
+            with self.subTest(pattern=case["pattern"]):
+                self.assertLessEqual(set(case["matches"]), set(EXCLUDE["paths"]))
+
+
 class _Files:
     """The part of MkDocs' Files the hook reads before it appends: src_uris and append."""
 
@@ -151,24 +175,62 @@ class _Files:
 
 
 class Hook(unittest.TestCase):
-    """figures.css sits beside the hook, outside docs_dir, so the hook links and publishes it."""
+    """figures.css and dist/ sit beside the hook, outside docs_dir, so the hook links and publishes them."""
 
-    def test_the_stylesheet_sits_beside_the_hook(self):
+    def test_the_stylesheet_and_the_player_sit_beside_the_hook(self):
         self.assertEqual(mkdocs_hook.CSS_FILE, FIGURES / "figures.css")
         self.assertTrue(mkdocs_hook.CSS_FILE.is_file())
         self.assertFalse((ROOT / "docs/stylesheets/figures.css").exists())
+        self.assertEqual(mkdocs_hook.DIST_DIR, FIGURES / "dist")
+        self.assertEqual(mkdocs_hook.LOADER_URI, "assets/javascripts/figures/loader.js")
 
-    def test_on_config_links_the_stylesheet_once(self):
-        config = {"extra_css": ["extra.css"]}
+    def test_published_files_are_the_stylesheet_and_every_dist_file(self):
+        published = mkdocs_hook.published_files()
+        self.assertEqual(published[0], (mkdocs_hook.CSS_URI, mkdocs_hook.CSS_FILE))
+        self.assertEqual([uri for uri, _ in published[1:]], [
+            "assets/javascripts/figures/THIRD-PARTY-LICENSES.txt",
+            "assets/javascripts/figures/loader.js",
+            "assets/javascripts/figures/player.js",
+        ])
+        self.assertTrue(all(source.is_file() for _, source in published))
+
+    def test_published_files_without_dist_or_with_too_many_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            original = mkdocs_hook.DIST_DIR
+            self.addCleanup(setattr, mkdocs_hook, "DIST_DIR", original)
+            mkdocs_hook.DIST_DIR = Path(directory) / "absent"
+            self.assertEqual(mkdocs_hook.published_files(), [(mkdocs_hook.CSS_URI, mkdocs_hook.CSS_FILE)])
+            mkdocs_hook.DIST_DIR = Path(directory)
+            for index in range(mkdocs_hook.MAX_DIST_FILES):
+                write(Path(directory) / f"f{index:02}.js", "")
+            (Path(directory) / "sub").mkdir()
+            self.assertEqual(len(mkdocs_hook.published_files()), mkdocs_hook.MAX_DIST_FILES + 1)
+            write(Path(directory) / "one-more.js", "")
+            with self.assertRaises(mkdocs_hook.CheckError):
+                mkdocs_hook.published_files()
+
+    def test_on_config_links_the_stylesheet_once_and_keeps_a_listed_loader(self):
+        config = {"extra_css": ["extra.css"], "extra_javascript": ["other.js", mkdocs_hook.LOADER_URI]}
         self.assertIs(mkdocs_hook.on_config(config), config)
         mkdocs_hook.on_config(config)
         self.assertEqual(config["extra_css"], ["extra.css", mkdocs_hook.CSS_URI])
-        empty = mkdocs_hook.on_config({"extra_css": []})
-        self.assertEqual(empty["extra_css"], [mkdocs_hook.CSS_URI])
+        self.assertEqual(config["extra_javascript"], ["other.js", mkdocs_hook.LOADER_URI])
 
-    def test_a_site_build_renders_figures_and_publishes_the_stylesheet(self):
+    def test_on_config_adds_the_loader_as_a_module_script_once(self):
+        try:
+            import mkdocs  # noqa: F401 - on_config builds MkDocs' own script value
+        except ImportError:
+            self.skipTest("mkdocs is not installed; the hook runs only inside MkDocs")
+        config = mkdocs_hook.on_config({"extra_css": [], "extra_javascript": []})
+        mkdocs_hook.on_config(config)
+        self.assertEqual(config["extra_css"], [mkdocs_hook.CSS_URI])
+        self.assertEqual([(str(script), script.type) for script in config["extra_javascript"]],
+                         [(mkdocs_hook.LOADER_URI, "module")])
+
+    def test_a_site_build_renders_figures_and_publishes_the_stylesheet_and_the_player(self):
         """A real MkDocs build with only the hook listed: the fence becomes the figure with a base
-        relative to its page, the CSS lands at CSS_URI, and every page links it."""
+        relative to its page, the CSS lands at CSS_URI, the committed player files land under
+        DIST_URI byte for byte, and every page links the stylesheet and loads the loader as a module."""
         try:
             from mkdocs.commands.build import build
             from mkdocs.config import load_config
@@ -182,11 +244,14 @@ class Hook(unittest.TestCase):
             write(root / "mkdocs.yml", f"site_name: Fixture\nhooks:\n  - {(FIGURES / 'mkdocs_hook.py').as_posix()}\n")
             with contextlib.redirect_stderr(io.StringIO()):
                 build(load_config(str(root / "mkdocs.yml"), site_dir=str(root / "site")))
-            published = root / "site" / mkdocs_hook.CSS_URI
-            self.assertEqual(published.read_bytes(), mkdocs_hook.CSS_FILE.read_bytes())
+            for uri, source in mkdocs_hook.published_files():
+                with self.subTest(uri=uri):
+                    self.assertEqual((root / "site" / uri).read_bytes(), source.read_bytes())
             self.assertIn(mkdocs_hook.CSS_URI, (root / "site/index.html").read_text(encoding="utf-8"))
+            self.assertFalse((root / "docs/assets/javascripts").exists(), "nothing is copied into docs_dir")
             guide = (root / "site/guide/index.html").read_text(encoding="utf-8")
             self.assertIn('<img src="../assets/figures/demo.svg"', guide)
+            self.assertIn('<script src="../assets/javascripts/figures/loader.js" type="module"></script>', guide)
             self.assertNotIn("Open the interactive figure", guide)
 
     def test_on_page_markdown_warns_for_a_figure_it_cannot_render(self):
@@ -203,11 +268,13 @@ class Hook(unittest.TestCase):
         self.assertIn("guide.md: figure 'nope' has no", logs.output[0])
 
     def test_on_files_keeps_a_docs_file_at_the_same_path_and_warns(self):
-        files = _Files([mkdocs_hook.CSS_URI])
+        uris = [uri for uri, _ in mkdocs_hook.published_files()]
+        files = _Files(uris)
         with self.assertLogs("mkdocs.plugins.praetor_figures", level="WARNING") as logs:
             self.assertIs(mkdocs_hook.on_files(files, {}), files)
         self.assertEqual(files.appended, [])
-        self.assertIn("docs_dir already holds this path", logs.output[0])
+        self.assertEqual(len(logs.output), len(uris))
+        self.assertIn(f"{mkdocs_hook.LOADER_URI}: docs_dir already holds this path", "\n".join(logs.output))
 
 
 if __name__ == "__main__":

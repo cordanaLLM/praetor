@@ -1,0 +1,163 @@
+{
+  "about": "The paths each exclude_docs pattern matches, recorded from pathspec 1.1.1, the matcher MkDocs 1.6.1 applies to exclude_docs: GitIgnoreSpec.from_lines([pattern]).match_file(path). checks.test.mjs replays it against patternMatches in checks.mjs; test_mkdocs_hook.py replays it against pathspec itself.",
+  "paths": [
+    "a/x.md",
+    "a/b.md",
+    "a/b/x.md",
+    "a/c/x.md",
+    "a/b/c/x.md",
+    "b/a/x.md",
+    "x.md",
+    "sub/x.md",
+    "x/a/b.md",
+    "a.md",
+    "b.md",
+    "drafts/x.md",
+    "p/drafts/x.md",
+    "drafts",
+    "presets/mkdocs/docs/index.md",
+    "presets/mkdocs/README.md",
+    "g/x.tmp.md"
+  ],
+  "patterns": [
+    {
+      "pattern": "/a/*.md",
+      "matches": [
+        "a/x.md",
+        "a/b.md"
+      ]
+    },
+    {
+      "pattern": "/a/?.md",
+      "matches": [
+        "a/x.md",
+        "a/b.md"
+      ]
+    },
+    {
+      "pattern": "a?b.md",
+      "matches": []
+    },
+    {
+      "pattern": "*/x.md",
+      "matches": [
+        "a/x.md",
+        "sub/x.md",
+        "drafts/x.md"
+      ]
+    },
+    {
+      "pattern": "/*/x.md",
+      "matches": [
+        "a/x.md",
+        "sub/x.md",
+        "drafts/x.md"
+      ]
+    },
+    {
+      "pattern": "/a/*",
+      "matches": [
+        "a/x.md",
+        "a/b.md",
+        "a/b/x.md",
+        "a/c/x.md",
+        "a/b/c/x.md"
+      ]
+    },
+    {
+      "pattern": "/a/[bc]/",
+      "matches": [
+        "a/b/x.md",
+        "a/c/x.md",
+        "a/b/c/x.md"
+      ]
+    },
+    {
+      "pattern": "[^a].md",
+      "matches": [
+        "a/x.md",
+        "a/b.md",
+        "a/b/x.md",
+        "a/c/x.md",
+        "a/b/c/x.md",
+        "b/a/x.md",
+        "x.md",
+        "sub/x.md",
+        "x/a/b.md",
+        "b.md",
+        "drafts/x.md",
+        "p/drafts/x.md"
+      ]
+    },
+    {
+      "pattern": "[!a].md",
+      "matches": [
+        "a/x.md",
+        "a/b.md",
+        "a/b/x.md",
+        "a/c/x.md",
+        "a/b/c/x.md",
+        "b/a/x.md",
+        "x.md",
+        "sub/x.md",
+        "x/a/b.md",
+        "b.md",
+        "drafts/x.md",
+        "p/drafts/x.md"
+      ]
+    },
+    {
+      "pattern": "x.md",
+      "matches": [
+        "a/x.md",
+        "a/b/x.md",
+        "a/c/x.md",
+        "a/b/c/x.md",
+        "b/a/x.md",
+        "x.md",
+        "sub/x.md",
+        "drafts/x.md",
+        "p/drafts/x.md"
+      ]
+    },
+    {
+      "pattern": "/x.md",
+      "matches": [
+        "x.md"
+      ]
+    },
+    {
+      "pattern": "a/b.md",
+      "matches": [
+        "a/b.md"
+      ]
+    },
+    {
+      "pattern": "drafts/",
+      "matches": [
+        "drafts/x.md",
+        "p/drafts/x.md"
+      ]
+    },
+    {
+      "pattern": "/presets/mkdocs/docs/",
+      "matches": [
+        "presets/mkdocs/docs/index.md"
+      ]
+    },
+    {
+      "pattern": "*.tmp.md",
+      "matches": [
+        "g/x.tmp.md"
+      ]
+    },
+    {
+      "pattern": "/",
+      "matches": []
+    },
+    {
+      "pattern": "a//b.md",
+      "matches": []
+    }
+  ]
+}

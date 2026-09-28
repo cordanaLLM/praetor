@@ -5,24 +5,25 @@
 // cases. Every temporary tree is built with node:path, so the tests run on Linux, macOS and Windows.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { cpSync, mkdirSync, readFileSync, symlinkSync, unlinkSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
 import {
   CheckError, EXPECTED_FENCE, MAX_LINES, OUT_DIR, ROOT, checkSite, configError, declaredFences, declaredHooks, enabledKinds,
   engineHash, excludedPatterns, expand, fenceBlocks, fences, figureSlug, figureSlugs, fillSlots, globRegExp, htmlErrors, isExcluded,
   kindErrors, markdownPages, pageOutput, patternMatches, portable, quoted, refreshMarkers, renderedDiagrams, scanPage, siteUrl,
-  sizeErrors, sources,
+  sizeErrors, sources, svgSpecError,
 } from './checks.mjs';
-import { ENGINE_FILES, markup } from './core.mjs';
+import { ENGINE_FILES, markup, sha256 } from './core.mjs';
 import { main } from './build.mjs';
+import { capture, withTempDir, write } from './testkit.mjs';
 
 const FIXTURE = (name) => JSON.parse(readFileSync(join(ROOT, 'tools/figures', name), 'utf8'));
 /** The markup fixture: markup() in core.mjs renders its html, and each case records the filled block. */
 const MARKUP = FIXTURE('markup-fixtures.json');
 /** The fence fixture the MkDocs hook's Python scanner replays too. */
 const FENCES = FIXTURE('fence-fixtures.json');
+/** The exclude_docs matrix recorded from pathspec; test_mkdocs_hook.py replays it against pathspec itself. */
+const EXCLUDE = FIXTURE('exclude-fixtures.json');
 const META = { ...MARKUP.meta, html: MARKUP.html, evidence: ['src/app.go:Serve'] };
 const FENCE_FORMAT = '!!python/name:pymdownx.superfences.fence_code_format';
 const DECLARED = `markdown_extensions:
@@ -43,45 +44,10 @@ const FIGURE = '```figure\ndemo\n```\n';
 const RENDERED = '<pre class="mermaid"><code>flowchart TD\n    A --&gt; B</code></pre>';
 const LISTING = '<div class="highlight"><pre><span></span><code>flowchart TD</code></pre></div>';
 const LOADER_TAG = '<script src="../assets/javascripts/figures/loader.js" type="module"></script>';
+/** An SVG as core.mjs decorates one: the props the loader mounts, embedded in <metadata id="figure-spec">. */
+const SPEC_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10">\n' +
+  '<metadata id="figure-spec"><![CDATA[{"props":{"layout":{"children":[]},"edges":[]}}]]></metadata>\n</svg>\n';
 const mermaidCount = (text) => fences(text, 'mermaid').length;
-const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
-
-function withTempDir(fn) {
-  const dir = mkdtempSync(join(tmpdir(), 'praetor-checks-test-'));
-  try {
-    return fn(dir);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-}
-
-/** withTempDir for an async `fn`: the directory stays until its promise settles. */
-async function withTempDirAsync(fn) {
-  const dir = mkdtempSync(join(tmpdir(), 'praetor-checks-test-'));
-  try {
-    return await fn(dir);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-}
-
-function write(path, text) {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, text);
-}
-
-/** Runs `fn` with console output captured; returns its result and every line it printed. */
-async function capture(fn) {
-  const lines = [];
-  const [log, error] = [console.log, console.error];
-  console.log = (line) => lines.push(line);
-  console.error = (line) => lines.push(line);
-  try {
-    return { result: await fn(), output: lines.join('\n') };
-  } finally {
-    [console.log, console.error] = [log, error];
-  }
-}
 
 // ---------------------------------------------------------------------------------------------
 // Configuration
@@ -211,35 +177,12 @@ test('a leading or middle slash anchors; a bare or doubled slash names nothing',
   assert.ok(!excluded('a/b.md', 'a//b.md'));
 });
 
-/**
- * The paths each pattern matches, recorded from pathspec 1.1.1's GitIgnoreSpec, the matcher MkDocs
- * 1.6.1 applies to exclude_docs (`GitIgnoreSpec.from_lines([pattern]).match_file(path)`).
- */
-const PATHSPEC = {
-  '/a/*.md': ['a/x.md', 'a/b.md'],
-  '/a/?.md': ['a/x.md', 'a/b.md'],
-  'a?b.md': [],
-  '*/x.md': ['a/x.md', 'sub/x.md', 'drafts/x.md'],
-  '/*/x.md': ['a/x.md', 'sub/x.md', 'drafts/x.md'],
-  '/a/*': ['a/x.md', 'a/b.md', 'a/b/x.md', 'a/c/x.md', 'a/b/c/x.md'],
-  '/a/[bc]/': ['a/b/x.md', 'a/c/x.md', 'a/b/c/x.md'],
-  '[^a].md': ['a/x.md', 'a/b.md', 'a/b/x.md', 'a/c/x.md', 'a/b/c/x.md', 'b/a/x.md', 'x.md', 'sub/x.md', 'x/a/b.md', 'b.md', 'drafts/x.md', 'p/drafts/x.md'],
-  '[!a].md': ['a/x.md', 'a/b.md', 'a/b/x.md', 'a/c/x.md', 'a/b/c/x.md', 'b/a/x.md', 'x.md', 'sub/x.md', 'x/a/b.md', 'b.md', 'drafts/x.md', 'p/drafts/x.md'],
-  'x.md': ['a/x.md', 'a/b/x.md', 'a/c/x.md', 'a/b/c/x.md', 'b/a/x.md', 'x.md', 'sub/x.md', 'drafts/x.md', 'p/drafts/x.md'],
-  '/x.md': ['x.md'],
-  'a/b.md': ['a/b.md'],
-  'drafts/': ['drafts/x.md', 'p/drafts/x.md'],
-  '/presets/mkdocs/docs/': ['presets/mkdocs/docs/index.md'],
-  '*.tmp.md': ['g/x.tmp.md'],
-  '/': [],
-  'a//b.md': [],
-};
-const PATHS = ['a/x.md', 'a/b.md', 'a/b/x.md', 'a/c/x.md', 'a/b/c/x.md', 'b/a/x.md', 'x.md', 'sub/x.md', 'x/a/b.md', 'a.md', 'b.md',
-  'drafts/x.md', 'p/drafts/x.md', 'drafts', 'presets/mkdocs/docs/index.md', 'presets/mkdocs/README.md', 'g/x.tmp.md'];
-
 test('the matcher agrees with the pathspec matrix MkDocs uses, in both directions', () => {
-  for (const [pattern, matched] of Object.entries(PATHSPEC)) {
-    for (const path of PATHS) assert.equal(patternMatches(path.split('/'), pattern), matched.includes(path), `${pattern} ${path}`);
+  // Every pattern matches some listed path and misses another, or matches none on purpose.
+  assert.ok(EXCLUDE.patterns.length >= 15);
+  assert.ok(EXCLUDE.patterns.some(({ matches }) => matches.length === 0));
+  for (const { pattern, matches } of EXCLUDE.patterns) {
+    for (const path of EXCLUDE.paths) assert.equal(patternMatches(path.split('/'), pattern), matches.includes(path), `${pattern} ${path}`);
   }
 });
 
@@ -370,8 +313,8 @@ function siteFixture(dir, config) {
 function figureSite(dir, config = HOOKED) {
   const fixture = siteFixture(dir, config);
   write(join(fixture.docs, 'guide.md'), `# Guide\n\n${FIGURE}`);
-  for (const name of ['assets/figures/demo.svg', 'assets/figures/demo.static.svg', 'assets/javascripts/figures/loader.js']) write(join(fixture.site, name), '<svg/>');
-  write(join(fixture.site, 'assets/javascripts/figures/registry.json'), '{"demo": "specs/demo.js"}');
+  for (const name of ['assets/figures/demo.svg', 'assets/figures/demo.static.svg']) write(join(fixture.site, name), SPEC_SVG);
+  for (const name of ['loader.js', 'player.js']) write(join(fixture.site, 'assets/javascripts/figures', name), 'export {};\n');
   fixture.page = join(fixture.site, 'guide', 'index.html');
   write(fixture.page, fillSlots(META, '../assets/figures') + LOADER_TAG);
   return fixture;
@@ -431,18 +374,47 @@ test('site: a rendered figure passes; one rendered as code, without the hook or 
   assert.match(errors[0], /demo\.static\.svg does not resolve/);
 }));
 
-test('site: absolute image URLs, a missing loader and an incomplete registry fail', () => withTempDir((dir) => {
+test('site: absolute image URLs, a missing loader and a loader without its player fail', () => withTempDir((dir) => {
   const fixture = figureSite(dir);
   write(fixture.page, fillSlots(META, 'https://example.org') + LOADER_TAG);
   assert.equal(fixture.check().errors.length, 2);
   write(fixture.page, fillSlots(META, '../assets/figures'));
-  assert.match(fixture.check().errors[0], /loads no assets\/javascripts\/figures\/loader\.js/);
+  assert.deepEqual(fixture.check().errors, [`${join(fixture.docs, 'guide.md')}: holds figures but loads no assets/javascripts/figures/loader.js ` +
+    '(the figures hook publishes it from tools/figures/dist/)']);
   write(fixture.page, fillSlots(META, '../assets/figures') + LOADER_TAG);
-  write(join(fixture.site, 'assets/javascripts/figures/registry.json'), '{}');
-  assert.match(fixture.check().errors[0], /does not list figure 'demo'/);
-  unlinkSync(join(fixture.site, 'assets/javascripts/figures/registry.json'));
-  assert.match(fixture.check().errors[0], /registry\.json is missing/);
+  unlinkSync(join(fixture.site, 'assets/javascripts/figures/player.js'));
+  assert.deepEqual(fixture.check().errors, [`${join(fixture.docs, 'guide.md')}: loads ../assets/javascripts/figures/loader.js, ` +
+    'but no player.js sits beside it for the loader to import']);
 }));
+
+test('site: every figure image must embed the props the player mounts, the static one included', () => withTempDir((dir) => {
+  const fixture = figureSite(dir);
+  // The registry the player once read is gone: nothing names a figure beside the loader.
+  assert.deepEqual(fixture.check(), { errors: [], diagrams: 1 });
+  write(join(fixture.site, 'assets/figures/demo.static.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
+  const { errors } = fixture.check();
+  assert.equal(errors.length, 1, errors.join('\n'));
+  assert.match(errors[0], /figure demo: \.\.\/assets\/figures\/demo\.static\.svg carries no <metadata id="figure-spec">; rebuild with: node tools\/figures\/build\.mjs build$/);
+  // An SVG shown on several pages is read once and reported on each.
+  write(join(fixture.docs, 'again.md'), FIGURE);
+  write(join(fixture.site, 'again', 'index.html'), fillSlots(META, '../assets/figures') + LOADER_TAG);
+  assert.equal(fixture.check().errors.length, 2);
+}));
+
+test('the embedded spec: props with a layout and edges pass; a missing, unclosed, broken or empty spec fails', () => {
+  assert.equal(svgSpecError(SPEC_SVG), null);
+  assert.equal(svgSpecError(readFileSync(join(ROOT, OUT_DIR, 'gating-pipeline.svg'), 'utf8')), null);
+  assert.equal(svgSpecError(readFileSync(join(ROOT, OUT_DIR, 'gating-pipeline.static.svg'), 'utf8')), null);
+  assert.equal(svgSpecError('<svg/>'), 'carries no <metadata id="figure-spec">');
+  assert.equal(svgSpecError(SPEC_SVG.replace(']]></metadata>', '')), 'does not close its <metadata id="figure-spec">');
+  assert.match(svgSpecError(SPEC_SVG.replace('{"props"', '{props')), /^embeds a figure spec that is not JSON \(/);
+  for (const spec of ['null', '[]', '{}', '{"props":[]}', '{"props":{"edges":[]}}', '{"props":{"layout":{},"edges":{}}}']) {
+    const svg = `<svg><metadata id="figure-spec"><![CDATA[${spec}]]></metadata></svg>`;
+    assert.equal(svgSpecError(svg), 'embeds a figure spec without props.layout and props.edges', spec);
+  }
+  // Boundary: the smallest spec the player accepts, an empty layout with no edges.
+  assert.equal(svgSpecError('<metadata id="figure-spec"><![CDATA[{"props":{"layout":{},"edges":[]}}]]></metadata>'), null);
+});
 
 test('site: an image that leaves the site through a symbolic link does not resolve', (t) => withTempDir((dir) => {
   const fixture = figureSite(dir);
@@ -582,7 +554,7 @@ function figureRepo(root) {
   write(join(root, 'mkdocs.yml'), HOOKED);
   const repo = { root, meta: { ...META } };
   repo.rebind = () => {
-    const hash = (rel) => sha(readFileSync(join(root, rel)));
+    const hash = (rel) => sha256(readFileSync(join(root, rel)));
     Object.assign(repo.meta, {
       spec_sha256: hash('docs/figures/demo.ts'), svg_sha256: hash(`${OUT_DIR}/demo.svg`), static_sha256: hash(`${OUT_DIR}/demo.static.svg`),
       engine: { commit: 'c', sha256: engineHash(root) },
@@ -731,7 +703,7 @@ test('sources: the repository itself is consistent', () => {
 // The command line
 // ---------------------------------------------------------------------------------------------
 
-test('the check commands exit 0 on a pass, 1 on findings and 2 on misuse or an unreadable input', () => withTempDirAsync(async (dir) => {
+test('the check commands exit 0 on a pass, 1 on findings and 2 on misuse or an unreadable input', () => withTempDir(async (dir) => {
   const repo = figureRepo(dir);
   let run = await capture(() => main(['sources', '--root', dir]));
   assert.equal(run.result, 0, run.output);
@@ -753,7 +725,7 @@ test('the check commands exit 0 on a pass, 1 on findings and 2 on misuse or an u
   }
 }));
 
-test('site and portable run from the command line', () => withTempDirAsync(async (dir) => {
+test('site and portable run from the command line', () => withTempDir(async (dir) => {
   const fixture = figureSite(dir);
   let run = await capture(() => main(['site', '--config', fixture.config, '--docs', fixture.docs, '--site', fixture.site]));
   assert.equal(run.result, 0, run.output);

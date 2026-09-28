@@ -1,23 +1,28 @@
 // Tests for the render core (core.mjs), its command-line wrapper (build.mjs), the player bundler
-// (bundle.mjs), the keyboard shim (keyboard.ts) and the smoke test's pure helpers (smoke.mjs):
-// positive, negative and boundary cases for every validation rule, the derived text, the figure
-// markup and its escaper, the engine hash, the stale-output check, the bundle budget, the
-// built-figure marker and the autoplay assertion. The figure checks (checks.mjs) have their own
-// tests in checks.test.mjs.
+// (bundle.mjs), the loader (loader.ts), the keyboard shim (keyboard.ts) and the smoke test's pure
+// helpers (smoke.mjs): positive, negative and boundary cases for every validation rule, the derived
+// text, the figure markup and its escaper, the engine hash, the stale-output check, the committed
+// player files and their budget, the spec the loader reads from each SVG, the built-figure marker and
+// the autoplay assertion. The figure checks (checks.mjs) have their own tests in checks.test.mjs.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   ENGINE_FILES, LIMITS, SLOTS, capLines, decorate, describe, describeEdges, escapeHtml, markup, normalizedEdges, render,
   sha256, svgSize, validate, walkLayout,
 } from './core.mjs';
 import { OUT_DIR, ROOT, VENDOR_JSON, compareOutputs, engineHash, listSpecs, main, renderAll } from './build.mjs';
-import { MAX_BUNDLE_FILES, PLAYER_BUDGET, budget, main as bundleMain, playerBytes } from './bundle.mjs';
+import {
+  DIST_DIR, DIST_FILES, MAX_INPUTS, PLAYER_BUDGET, budget, bundledPackages, bundlesInterfig, compareDist, lockMismatches,
+  main as bundleMain, thirdPartyLicenses, writeDist,
+} from './bundle.mjs';
+import { svgSpecError } from './checks.mjs';
 import { nextTab } from './keyboard.ts';
+import { MAX_SVG_BYTES, fetchSpec, figureTitle, readCapped, specFromSvg } from './loader.ts';
 import { holdsFigure, stepAdvanced } from './smoke.mjs';
+import { capture, withTempDir, write } from './testkit.mjs';
 
 const VENDOR = JSON.parse(readFileSync(join(ROOT, VENDOR_JSON), 'utf8'));
 /** The markup fixture checks.test.mjs and tools/figures/test_mkdocs_hook.py replay against the slot fillers. */
@@ -40,15 +45,6 @@ function figure(patch = (f) => f) {
   const copy = structuredClone(base);
   patch(copy);
   return copy;
-}
-
-function withTempDir(fn) {
-  const dir = mkdtempSync(join(tmpdir(), 'praetor-figures-test-'));
-  try {
-    return fn(dir);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
 }
 
 test('a valid figure passes', () => {
@@ -282,20 +278,8 @@ test('spec names must be kebab-case', () => {
   });
 });
 
-/** Runs `fn` with console.error captured; returns what it returned and the captured lines. */
-async function captureErrors(fn) {
-  const errors = [];
-  const original = console.error;
-  console.error = (line) => errors.push(line);
-  try {
-    return { result: await fn(), errors };
-  } finally {
-    console.error = original;
-  }
-}
-
 test('an unknown command is a usage error, bundle included', async () => {
-  const { errors } = await captureErrors(async () => {
+  const { lines: errors } = await capture(async () => {
     assert.equal(await main([]), 2);
     assert.equal(await main(['deploy']), 2);
     assert.equal(await main(['bundle']), 2);
@@ -348,47 +332,199 @@ test('build and the checks need Node only: the engine imports builtins and relat
   assert.ok(!importsOf('checks.mjs').includes('./build.mjs'), 'checks.mjs must not import its command line back');
   // The bundler is the one module that loads esbuild, and it does so lazily.
   assert.ok(importsOf('bundle.mjs').includes('esbuild'));
+  // The loader imports the player by its fixed file name beside it, never a spec or a registry.
+  assert.deepEqual(importsOf('loader.ts'), ['./third_party/interfig/upstream/src/model.ts', './player.js']);
 });
 
+// ---------------------------------------------------------------------------------------------
+// The committed player (bundle.mjs, tools/figures/dist/)
+// ---------------------------------------------------------------------------------------------
+
 test('bundle.mjs takes no argument or --check, nothing else', async () => {
-  const { errors } = await captureErrors(async () => {
+  const { lines } = await capture(async () => {
     assert.equal(await bundleMain(['--write']), 2);
     assert.equal(await bundleMain(['--check', '--check']), 2);
     assert.equal(await bundleMain(['check']), 2);
   });
-  assert.match(errors[0], /usage: node bundle\.mjs \[--check\]/);
+  assert.equal(lines.length, 3);
+  assert.match(lines[0], /usage: node bundle\.mjs \[--check\]/);
 });
 
 test('the player budget: exactly the budget passes, one byte more fails', () => {
-  const sizes = (minified) => ({ loader: 1000, player: { minified, gzip: 1 }, slugs: ['a'] });
+  const sizes = (minified) => ({ loader: 1000, player: { minified, gzip: 1 } });
   const at = budget(sizes(PLAYER_BUDGET));
   assert.deepEqual(at.problems, []);
-  assert.match(at.line, /player 250\.0 kB minified, 0\.0 kB gzip \(budget 250\.0 kB\); 1 spec chunk/);
-  assert.match(budget(sizes(PLAYER_BUDGET + 1)).problems.join('\n'), /the player chunk is 250\.0 kB; the budget is 250\.0 kB/);
+  assert.equal(at.line, 'figures: loader.js 1.0 kB; player.js 250.0 kB minified, 0.0 kB gzip (budget 250.0 kB)');
+  assert.deepEqual(budget(sizes(PLAYER_BUDGET + 1)).problems, ['player.js is 250.0 kB; the budget is 250.0 kB']);
   assert.deepEqual(budget(sizes(0)).problems, []);
 });
 
-test('the player size counts its static imports, not dynamic, external or unrelated chunks', () => {
-  withTempDir((dir) => {
-    const files = { 'out/player.js': 10, 'out/chunks/react.js': 100, 'out/chunks/lazy.js': 1000, 'out/specs/a.js': 5000 };
-    for (const [name, size] of Object.entries(files)) {
-      mkdirSync(join(dir, name, '..'), { recursive: true });
-      writeFileSync(join(dir, name), 'x'.repeat(size));
+test('dist/ holds exactly the three player files, committed, and no chunk, spec or registry', () => {
+  assert.deepEqual([...DIST_FILES], ['THIRD-PARTY-LICENSES.txt', 'loader.js', 'player.js']);
+  assert.deepEqual(readdirSync(join(ROOT, DIST_DIR)).sort(), [...DIST_FILES]);
+  const loader = readFileSync(join(ROOT, DIST_DIR, 'loader.js'), 'utf8');
+  assert.ok(loader.includes('import("./player.js")'), 'the loader imports the player by its fixed name');
+  assert.doesNotMatch(loader, /registry\.json|specs\//);
+  // The interfig notice leads both files; React's legal comments stay at the end of the player.
+  for (const name of ['loader.js', 'player.js']) {
+    assert.match(readFileSync(join(ROOT, DIST_DIR, name), 'utf8'), /^\/\*! interfig \(c\) 2025 Vectorize AI, Inc\. MIT https:\/\/github\.com\//);
+  }
+  assert.match(readFileSync(join(ROOT, DIST_DIR, 'player.js'), 'utf8'), /@license React/);
+  const notices = readFileSync(join(ROOT, DIST_DIR, 'THIRD-PARTY-LICENSES.txt'), 'utf8');
+  for (const part of ['interfig https://github.com/', 'react ', 'react-dom ', 'scheduler ']) assert.ok(notices.includes(`\n${part}`), part);
+  assert.equal(notices.split('Permission is hereby granted').length - 1, 4, 'four full MIT texts');
+});
+
+test('the committed player is a byte-for-byte rebuild from the lock', async (t) => {
+  if (!existsSync(join(ROOT, 'tools/figures/node_modules/esbuild/package.json'))) {
+    t.skip('esbuild is not installed; run npm ci --prefix tools/figures --ignore-scripts (bundle.mjs --check is the gate)');
+    return;
+  }
+  const run = await capture(() => bundleMain(['--check']));
+  assert.equal(run.result, 0, run.output);
+  assert.match(run.output, /tools\/figures\/dist matches a rebuild from the lock byte for byte/);
+});
+
+test('a missing, stale or foreign dist file is reported with the rebuild command', () => withTempDir((dir) => {
+  const files = new Map([['a.js', Buffer.from('a')], ['b.js', Buffer.from('b')]]);
+  assert.deepEqual(compareDist(files, join(dir, 'absent')), [
+    `${DIST_DIR}/a.js is missing`, `${DIST_DIR}/b.js is missing`, 'rebuild with: node tools/figures/bundle.mjs',
+  ]);
+  writeDist(files, dir);
+  assert.deepEqual(compareDist(files, dir), []);
+  writeFileSync(join(dir, 'b.js'), 'b\r\n');
+  mkdirSync(join(dir, 'chunks'));
+  writeFileSync(join(dir, 'registry.json'), '{}');
+  assert.deepEqual(compareDist(files, dir), [
+    `${DIST_DIR}/b.js differs from a rebuild from the lock`, `${DIST_DIR}/chunks is not a bundle output`,
+    `${DIST_DIR}/registry.json is not a bundle output`, 'rebuild with: node tools/figures/bundle.mjs',
+  ]);
+  // Writing removes what the bundle no longer produces, directories included.
+  writeDist(files, dir);
+  assert.deepEqual(readdirSync(dir).sort(), ['a.js', 'b.js']);
+  assert.deepEqual(compareDist(files, dir), []);
+}));
+
+test('bundled packages are read from the inputs, scoped or not, on either path separator', () => {
+  const metafile = { inputs: {
+    'tools/figures/node_modules/react/cjs/react.production.js': {}, 'tools/figures/node_modules/react/index.js': {},
+    'tools\\figures\\node_modules\\scheduler\\index.js': {}, 'node_modules/@scope/pkg/x.js': {},
+    'tools/figures/third_party/interfig/upstream/src/index.tsx': {}, 'tools/figures/player.tsx': {},
+  } };
+  assert.deepEqual(bundledPackages(metafile), ['@scope/pkg', 'react', 'scheduler']);
+  assert.ok(bundlesInterfig(metafile));
+  assert.ok(!bundlesInterfig({ inputs: { 'tools/figures/player.tsx': {} } }));
+  assert.deepEqual(bundledPackages({ inputs: {} }), []);
+  const many = { inputs: Object.fromEntries(Array.from({ length: MAX_INPUTS + 1 }, (_, i) => [`f${i}.js`, {}])) };
+  assert.throws(() => bundledPackages(many), /more than 4096 inputs/);
+});
+
+test('an install that differs from the lock is refused, package by package', () => withTempDir((dir) => {
+  write(join(dir, 'tools/figures/package-lock.json'), JSON.stringify({ packages: { 'node_modules/react': { version: '1.0.0' }, 'node_modules/gone': { version: '2.0.0' } } }));
+  write(join(dir, 'tools/figures/node_modules/react/package.json'), '{"version": "1.0.0"}');
+  assert.deepEqual(lockMismatches(dir, ['react']), []);
+  assert.deepEqual(lockMismatches(dir, []), []);
+  write(join(dir, 'tools/figures/node_modules/react/package.json'), '{"version": "1.0.1"}');
+  assert.deepEqual(lockMismatches(dir, ['react', 'gone', 'extra']), [
+    'tools/figures/node_modules/react is 1.0.1; tools/figures/package-lock.json pins 1.0.0',
+    'tools/figures/node_modules/gone is not installed; tools/figures/package-lock.json pins 2.0.0',
+    'extra is bundled but tools/figures/package-lock.json does not pin it',
+  ]);
+}));
+
+test('the license file carries interfig and every bundled package in full, LF only; a package without a LICENSE fails', () => withTempDir((dir) => {
+  const vendor = { repo: 'https://example.invalid/repo', commit: 'c0ffee', path: 'lib' };
+  write(join(dir, 'tools/figures/third_party/interfig/upstream/LICENSE'), 'MIT License\r\n\r\ninterfig text\r\n\r\n');
+  write(join(dir, 'tools/figures/node_modules/b-pkg/package.json'), '{"version": "2.0.0", "license": "MIT"}');
+  write(join(dir, 'tools/figures/node_modules/b-pkg/LICENSE.md'), 'b text');
+  write(join(dir, 'tools/figures/node_modules/a-pkg/package.json'), '{"version": "1.0.0", "license": "ISC"}');
+  write(join(dir, 'tools/figures/node_modules/a-pkg/license'), 'a text\n');
+  const metafile = { inputs: {
+    'tools/figures/node_modules/b-pkg/i.js': {}, 'tools/figures/node_modules/a-pkg/i.js': {},
+    'tools/figures/third_party/interfig/upstream/src/svg.ts': {},
+  } };
+  const text = thirdPartyLicenses(dir, vendor, metafile);
+  assert.ok(!text.includes('\r'));
+  assert.ok(text.startsWith('Third-party software in loader.js and player.js\n\n'));
+  const heads = text.split('\n').filter((line, i, all) => i > 0 && /^-+$/.test(all[i - 1]));
+  assert.deepEqual(heads, ['interfig https://example.invalid/repo/tree/c0ffee/lib', 'a-pkg 1.0.0', 'b-pkg 2.0.0']);
+  assert.ok(text.includes('License: ISC\n\na text\n'));
+  assert.ok(text.endsWith('License: MIT\n\nb text\n'));
+  // Boundary: no bundled package and no interfig leaves the heading alone.
+  assert.equal(thirdPartyLicenses(dir, vendor, { inputs: {} }).split('-'.repeat(78)).length, 1);
+  write(join(dir, 'tools/figures/node_modules/c-pkg/package.json'), '{"version": "3.0.0", "license": "MIT"}');
+  assert.throws(() => thirdPartyLicenses(dir, vendor, { inputs: { 'node_modules/c-pkg/i.js': {} } }), /c-pkg holds no LICENSE file/);
+}));
+
+// ---------------------------------------------------------------------------------------------
+// The loader (loader.ts): the props come from the SVG a figure shows
+// ---------------------------------------------------------------------------------------------
+
+test('the loader reads the full props back from both SVG variants core.mjs writes', () => {
+  const outputs = render(figure(), 'fixture', Buffer.from('spec'), { vendor: VENDOR, engine: 'e' });
+  assert.deepEqual(specFromSvg(outputs['fixture.svg']), figure().props);
+  // The static variant carries the steps too, so a reduced-motion page mounts the whole figure.
+  assert.deepEqual(specFromSvg(outputs['fixture.static.svg']), figure().props);
+  // A "]]>" in figure text is escaped inside the CDATA and comes back unchanged.
+  const tricky = figure((f) => { f.props.layout.children[0].label = 'a]]>b'; });
+  assert.equal(specFromSvg(render(tricky, 'fixture', Buffer.from('s'), { vendor: VENDOR, engine: 'e' })['fixture.svg']).layout.children[0].label, 'a]]>b');
+});
+
+test('the loader refuses an SVG without a complete spec, as the site check does', () => {
+  const cases = [
+    '<svg/>',
+    '<svg><metadata id="figure-spec"><![CDATA[{"props":{"layout":{},"edges":[]}}</svg>',
+    '<svg><metadata id="figure-spec"><![CDATA[{props}]]></metadata></svg>',
+    '<svg><metadata id="figure-spec"><![CDATA[{"props":{"layout":{}}}]]></metadata></svg>',
+    '<svg><metadata id="figure-spec"><![CDATA[{"props":{"layout":[],"edges":[]}}]]></metadata></svg>',
+    '<svg><metadata id="figure-spec"><![CDATA[{"props":{"layout":{},"edges":[]}}]]></metadata></svg>',
+  ];
+  const committed = readdirSync(join(ROOT, OUT_DIR)).filter((n) => n.endsWith('.svg')).map((n) => readFileSync(join(ROOT, OUT_DIR, n), 'utf8'));
+  assert.ok(committed.length >= 20);
+  // The browser reader and the Node check agree on every committed SVG and on every broken one.
+  for (const svg of [...committed, ...cases]) {
+    let loaderError = null;
+    try {
+      specFromSvg(svg);
+    } catch (error) {
+      loaderError = error.message;
     }
-    const metafile = { outputs: {
-      'out/player.js': { imports: [
-        { path: 'out/chunks/react.js', kind: 'import-statement' },
-        { path: 'out/chunks/lazy.js', kind: 'dynamic-import' },
-        { path: 'https://cdn.invalid/x.js', kind: 'import-statement', external: true },
-      ] },
-      'out/chunks/react.js': { imports: [{ path: 'out/player.js', kind: 'import-statement' }] },
-      'out/chunks/lazy.js': {},
-      'out/specs/a.js': { imports: [{ path: 'out/chunks/react.js', kind: 'import-statement' }] },
-    } };
-    assert.equal(playerBytes(metafile, dir).minified, 110);
-    assert.throws(() => playerBytes({ outputs: { 'out/loader.js': {} } }, dir), /no player\.js/);
-  });
-  assert.equal(MAX_BUNDLE_FILES, 1024);
+    assert.equal(loaderError === null, svgSpecError(svg) === null, `${svg.slice(0, 80)}: loader ${loaderError}, check ${svgSpecError(svg)}`);
+  }
+  assert.throws(() => specFromSvg('<svg/>'), /carries no <metadata id="figure-spec">/);
+  assert.throws(() => specFromSvg(cases[1]), /is not closed/);
+  assert.throws(() => specFromSvg(cases[2]), SyntaxError);
+  assert.throws(() => specFromSvg(cases[3]), /holds no props with a layout and edges/);
+});
+
+test('the loader reads at most MAX_SVG_BYTES: exactly the cap passes, one byte more fails', async () => {
+  const cap = 8;
+  assert.equal(await readCapped(new Response('12345678'), cap), '12345678');
+  await assert.rejects(readCapped(new Response('123456789'), cap), /exceeds 8 bytes/);
+  // A declared length over the cap is refused before the body is read.
+  await assert.rejects(readCapped(new Response('1', { headers: { 'content-length': '9' } }), cap), /is 9 bytes; the loader reads at most 8/);
+  assert.equal(await readCapped(new Response(null), cap), '');
+  const chunks = new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode('ab')); c.enqueue(new TextEncoder().encode('é')); c.close(); } });
+  assert.equal(await readCapped(new Response(chunks), cap), 'abé');
+  assert.equal(MAX_SVG_BYTES, 4 * 1024 * 1024);
+});
+
+test('the loader fetches the SVG with a timeout signal and fails on an error status', async () => {
+  const svg = render(figure(), 'fixture', Buffer.from('spec'), { vendor: VENDOR, engine: 'e' })['fixture.svg'];
+  const calls = [];
+  const ok = async (url, init) => { calls.push([url, init.signal instanceof AbortSignal]); return new Response(svg); };
+  assert.deepEqual(await fetchSpec('https://site.invalid/a.svg', ok), figure().props);
+  assert.deepEqual(calls, [['https://site.invalid/a.svg', true]]);
+  await assert.rejects(fetchSpec('https://site.invalid/b.svg', async () => new Response('gone', { status: 404 })), /b\.svg answered 404/);
+  await assert.rejects(fetchSpec('https://site.invalid/c.svg', async () => new Response('<svg/>')), /carries no <metadata/);
+});
+
+test('the scenario label comes from the caption, or the slug when there is none', () => {
+  const element = (caption, slug) => ({ querySelector: () => (caption === null ? null : { textContent: caption }), dataset: { figure: slug } });
+  assert.equal(figureTitle(element('  Gated pipeline \n', 'gating-pipeline')), 'Gated pipeline');
+  assert.equal(figureTitle(element(null, 'gating-pipeline')), 'gating-pipeline');
+  assert.equal(figureTitle(element('   ', 'demo')), 'demo');
+  assert.equal(figureTitle(element(null, undefined)), '');
 });
 
 test('tab keys rove, wrap at both ends, and ignore everything else', () => {

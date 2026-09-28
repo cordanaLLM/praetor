@@ -13,9 +13,10 @@
 //   figures/mkdocs_hook.py enables ```figure. A fence of a kind the configuration does not enable is
 //   an error; the root site enables figures only, so a Mermaid fence there is told to become a
 //   figure fence. Every Mermaid fence must appear as a `<pre class="mermaid">`, every figure fence as
-//   a `figure.praetor-figure[data-figure]` whose images resolve under the site, on a page that loads
-//   the figure loader, with its slug in the bundle's registry.json. Pages the configuration's
-//   `exclude_docs` leaves out are skipped, as MkDocs skips them.
+//   a `figure.praetor-figure[data-figure]` whose images resolve under the site to SVGs that embed the
+//   props the player mounts (`<metadata id="figure-spec">`), on a page that loads the figure loader
+//   with player.js beside it. Pages the configuration's `exclude_docs` leaves out are skipped, as
+//   MkDocs skips them.
 // * `portable` renders figures for surfaces that run no JavaScript: `--base URL` replaces the figure
 //   fences of wiki pages with absolute image URLs and a link to the interactive figure, `--wiki` does
 //   the same with the `site_url` of mkdocs.yml, and `--write` refreshes `<!-- figure:SLUG -->` blocks
@@ -52,8 +53,12 @@ export const MAX_LINES = 100_000;
 const MAX_FIGURES = 256;
 const MAX_ENTRIES = 131_072;
 
+/** Where the figures hook publishes tools/figures/dist/loader.js; the loader imports PLAYER beside it. */
 const LOADER = 'assets/javascripts/figures/loader.js';
-const REGISTRY = 'assets/javascripts/figures/registry.json';
+const PLAYER = 'player.js';
+/** The markers core.mjs (`decorate`) writes around the props every figure SVG embeds. */
+const SPEC_OPEN = '<metadata id="figure-spec"><![CDATA[';
+const SPEC_CLOSE = ']]></metadata>';
 /** A hooks entry ending in these two path parts enables figures: tools/figures/mkdocs_hook.py from any directory. */
 const HOOK = ['figures', 'mkdocs_hook.py'];
 const KINDS = Object.freeze(['mermaid', 'figure']);
@@ -94,7 +99,8 @@ const EXCLUDE_BLOCK = new RegExp(`^exclude_docs${S}*:${S}*[|>][-+]?${S}*(?:#${AN
 const EXCLUDE_LINE = new RegExp(`^exclude_docs${S}*:${S}*['"]?([^'"#\\n]*?)['"]?${S}*(?:#${ANY}*)?$`);
 /** A fence opener or closer: three or more backticks or tildes, then the info string. */
 const FENCE_LINE = new RegExp(`^(${S}*)(\`{3,}|~{3,})${S}*([^${WS}\`{]*)(${ANY}*)$`);
-const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+/** A figure slug: lowercase kebab-case, the name of docs/figures/<slug>.ts and of its outputs. */
+export const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const MARKER = /<!-- figure:([a-z0-9-]+) -->\n([\s\S]*?)<!-- \/figure -->/g;
 /** The slots of a figure's JSON `html` (SLOTS and markup in core.mjs). */
 const SLOT = new RegExp(Object.values(SLOTS).map((slot) => slot.replace(/[{}]/g, '\\$&')).join('|'), 'g');
@@ -686,11 +692,55 @@ export function scanPage(html) {
 /** How many Mermaid diagrams Material will draw from a built page. */
 export const renderedDiagrams = (html) => scanPage(html).mermaid;
 
+/** The file a relative URL on the page at `output` names, with every symbolic link resolved. */
+const urlTarget = (output, url) => realOrResolved(resolve(dirname(output), url.split('#')[0].split('?')[0]));
+
 /** Whether a relative URL on the page at `output` names a file inside `siteDir`. */
 function resolves(output, siteDir, url) {
   if (!url || url.includes('://') || url.startsWith('/') || url.startsWith('data:')) return false;
-  const target = realOrResolved(resolve(dirname(output), url.split('#')[0].split('?')[0]));
+  const target = urlTarget(output, url);
   return isFile(target) && inside(realOrResolved(siteDir), target);
+}
+
+/**
+ * Why an SVG does not embed the props the player mounts, or null. The loader reads the same
+ * markers in the browser (`specFromSvg` in tools/figures/loader.ts), which cannot import this
+ * Node module; figures.test.mjs holds the two readers to the same verdicts.
+ */
+export function svgSpecError(svg) {
+  const start = svg.indexOf(SPEC_OPEN);
+  if (start < 0) return 'carries no <metadata id="figure-spec">';
+  const end = svg.indexOf(SPEC_CLOSE, start + SPEC_OPEN.length);
+  if (end < 0) return 'does not close its <metadata id="figure-spec">';
+  let spec;
+  try {
+    spec = JSON.parse(svg.slice(start + SPEC_OPEN.length, end));
+  } catch (error) {
+    return `embeds a figure spec that is not JSON (${error.message})`;
+  }
+  const props = isObject(spec) ? spec.props : null;
+  return isObject(props) && isObject(props.layout) && Array.isArray(props.edges) ? null : 'embeds a figure spec without props.layout and props.edges';
+}
+
+/** Spec findings for every figure image that resolves; `seen` keeps each SVG's verdict, so it is read once per check. */
+function specErrors(page, output, siteDir, figures, seen) {
+  const errors = [];
+  for (const figure of figures) {
+    for (const url of figure.urls.filter((candidate) => resolves(output, siteDir, candidate))) {
+      const target = urlTarget(output, url);
+      if (!seen.has(target)) seen.set(target, svgSpecError(readText(target)));
+      if (seen.get(target)) errors.push(`${page}: figure ${figure.slug}: ${url} ${seen.get(target)}; rebuild with: ${REBUILD}`);
+    }
+  }
+  return errors;
+}
+
+/** Why the page cannot mount its figures: no loader script that resolves, or no player.js beside it. */
+function loaderErrors(page, output, siteDir, scripts) {
+  const loader = scripts.find((src) => src.endsWith(LOADER) && resolves(output, siteDir, src));
+  if (!loader) return [`${page}: holds figures but loads no ${LOADER} (the figures hook publishes it from tools/figures/dist/)`];
+  if (isFile(join(dirname(urlTarget(output, loader)), PLAYER))) return [];
+  return [`${page}: loads ${loader}, but no ${PLAYER} sits beside it for the loader to import`];
 }
 
 function mermaidError(page, output, expected, scanned) {
@@ -699,43 +749,31 @@ function mermaidError(page, output, expected, scanned) {
     'a block without <pre class="mermaid"> ships as a code listing'];
 }
 
-/** Why the built page does not show its figures: count, slugs, image URLs and the loader. */
-function figureErrors(page, output, siteDir, slugs, scanned) {
+/** Why the built page does not show its figures: count, slugs, image URLs, embedded specs and the loader. */
+function figureErrors(page, output, siteDir, slugs, scanned, seen) {
   const built = scanned.figures.map((figure) => figure.slug);
   if (built.length !== slugs.length || built.some((slug, index) => slug !== slugs[index])) {
     return [`${page}: figure fence(s) ${quotedList(slugs)}, but ${output} holds figure.praetor-figure ${quotedList(built)}`];
   }
   const errors = scanned.figures.flatMap((figure) => figure.urls.filter((url) => !resolves(output, siteDir, url))
     .map((url) => `${page}: figure ${figure.slug}: ${url || '(empty URL)'} does not resolve to a file under ${siteDir}`));
-  if (!scanned.scripts.some((src) => src.endsWith(LOADER) && resolves(output, siteDir, src))) {
-    errors.push(`${page}: holds figures but loads no ${LOADER} (bundle before mkdocs build: npm --prefix tools/figures run bundle)`);
-  }
-  return errors;
+  return [...errors, ...specErrors(page, output, siteDir, scanned.figures, seen), ...loaderErrors(page, output, siteDir, scanned.scripts)];
 }
 
-/** Findings for one page, how many diagrams it holds, and the figure slugs it names. */
-function pageErrors(docsDir, siteDir, page, kinds) {
+/** Findings for one page and how many diagrams it holds; `seen` caches each figure SVG's verdict. */
+function pageErrors(docsDir, siteDir, page, kinds, seen) {
   const text = readText(page);
   const expected = fences(text, 'mermaid').length;
   const slugs = figureSlugs(text);
   const count = expected + slugs.length;
-  if (count === 0) return { errors: [], count, slugs };
+  if (count === 0) return { errors: [], count };
   const errors = kindErrors(page, text, kinds);
   const output = pageOutput(docsDir, siteDir, page);
-  if (!isFile(output)) return { errors: [...errors, `${page}: ${count} diagram(s) but MkDocs wrote no ${output}`], count, slugs };
+  if (!isFile(output)) return { errors: [...errors, `${page}: ${count} diagram(s) but MkDocs wrote no ${output}`], count };
   const scanned = scanPage(readText(output));
   if (expected) errors.push(...mermaidError(page, output, expected, scanned));
-  if (slugs.length) errors.push(...figureErrors(page, output, siteDir, slugs, scanned));
-  return { errors, count, slugs };
-}
-
-/** Slugs the bundle's registry.json does not list. */
-function registryErrors(siteDir, slugs) {
-  if (slugs.size === 0) return [];
-  const path = join(siteDir, REGISTRY);
-  if (!isFile(path)) return [`${path} is missing; run npm --prefix tools/figures run bundle before mkdocs build`];
-  const listed = readJson(path);
-  return [...slugs].filter((slug) => !Object.hasOwn(listed, slug)).sort().map((slug) => `${path} does not list figure ${quoted(slug)}`);
+  if (slugs.length) errors.push(...figureErrors(page, output, siteDir, slugs, scanned, seen));
+  return { errors, count };
 }
 
 /** Configuration and rendered-page findings for one built site, and how many diagrams were checked. */
@@ -746,15 +784,14 @@ export function checkSite(config, docs, site) {
   const text = readText(clean(config));
   const kinds = enabledKinds(text);
   const errors = [];
-  const slugs = new Set();
+  const seen = new Map();
   let diagrams = 0;
   for (const page of markdownPages(docsDir, excludedPatterns(text))) {
-    const found = pageErrors(docsDir, siteDir, page, kinds);
+    const found = pageErrors(docsDir, siteDir, page, kinds, seen);
     errors.push(...found.errors);
     diagrams += found.count;
-    for (const slug of found.slugs) slugs.add(slug);
   }
-  return { errors: [...errors, ...registryErrors(siteDir, slugs)], diagrams };
+  return { errors, diagrams };
 }
 
 // ---------------------------------------------------------------------------------------------
