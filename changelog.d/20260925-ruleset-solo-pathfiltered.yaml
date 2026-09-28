@@ -1,0 +1,3 @@
+type: fixed
+title: "the generated branch ruleset requires an aggregate job whose condition holds on every run (always(), success() || failure() or !cancelled()), so path-filtered CI keeps its merge gate required while lanes gated on a planner output stay optional; adopt, sync and the audit render it alike, and a single_maintainer review mode yields a ruleset its one maintainer can merge under. Migration: a committed ruleset in a repository with such a job now differs from the declared policy, so delete .github/rulesets/main.json and run `praetorctl sync` to regenerate it, then reconcile the hosted ruleset"
+breaking: true

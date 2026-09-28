@@ -1,0 +1,3 @@
+type: fixed
+title: "ci filter counts Zig, the .cc/.cxx/.hpp/.hh C++ sources and headers, HIP and shading-language sources (GLSL with its glslang stage suffixes, HLSL, WGSL, Metal) as code instead of unclassified configuration, so such a change no longer turns on context sync; test/, tests/ and benches/ directories count as tests at any depth, such as a Cargo crate's tests/; an unrecognised file under a test directory still fails closed; the HISS native scanner now reads .hh C++ headers, and ci filter takes its C-family table from the scanner"
+breaking: false

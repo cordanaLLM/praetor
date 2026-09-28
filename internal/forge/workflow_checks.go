@@ -34,9 +34,10 @@ const (
 	workflowIgnoreKey = "paths-ignore"
 )
 
-// RequiredStatusContexts selects unconditional job names from repository workflows
-// with unfiltered pull_request triggers. It never substitutes Praetor's own gates.
-// Reads are bounded and reject symlink paths; incomplete inventories fail.
+// RequiredStatusContexts selects the names of the jobs that report on every pull request
+// (reportsOnEveryPullRequest) from repository workflows with unfiltered pull_request triggers.
+// It never substitutes Praetor's own gates. Reads are bounded and reject symlink paths;
+// incomplete inventories fail.
 func RequiredStatusContexts(ctx context.Context, repoPath string) ([]string, error) {
 	return RequiredStatusContextsPlanned(ctx, repoPath, nil)
 }
@@ -260,14 +261,14 @@ type workflowStrategy struct {
 
 // workflowPullRequestContexts returns the check contexts of one workflow file, or nil
 // when the workflow does not run unconditionally on pull requests. No repository identity
-// is known, so every job condition makes its job conditional.
+// is known, so a repository guard makes its job conditional.
 func workflowPullRequestContexts(data []byte) ([]string, error) {
 	return workflowContextsIn(data, "")
 }
 
 // workflowContextsIn is workflowPullRequestContexts inside the repository named identity
-// ("<owner>/<name>", or "" when unknown). A job whose only condition is a repository guard
-// that holds for identity reports on every pull request there and stays a required check.
+// ("<owner>/<name>", or "" when unknown). Only a job that reports on every pull request there
+// (reportsOnEveryPullRequest) is a required check.
 func workflowContextsIn(data []byte, identity string) ([]string, error) {
 	var spec workflowSpec
 	if err := yaml.Unmarshal(data, &spec); err != nil {
@@ -283,7 +284,7 @@ func workflowContextsIn(data []byte, identity string) ([]string, error) {
 	var contexts []string
 	for i := 0; i < len(ids) && i < maxJobsPerFile; i++ {
 		job := spec.Jobs[ids[i]]
-		if strings.TrimSpace(job.If) != "" && !guardHoldsInRepository(job.If, identity) {
+		if !reportsOnEveryPullRequest(job.If, identity) {
 			continue
 		}
 		// An advisory leg is reported to the forge as successful whether or not it passed,
@@ -300,6 +301,39 @@ func workflowContextsIn(data []byte, identity string) ([]string, error) {
 		contexts = append(contexts, names...)
 	}
 	return contexts, nil
+}
+
+// everyRunConditions are the job conditions, whitespace removed, that consist of status
+// functions alone and hold on every run that is not cancelled. `success() || failure()` and
+// `!cancelled()` are one condition spelled two ways; always() holds on a cancelled run too.
+var everyRunConditions = []string{"always()", "!cancelled()", "success()||failure()", "failure()||success()"}
+
+// reportsOnEveryPullRequest reports whether a job carrying condition reports its check on every
+// pull request run of its workflow inside the repository named identity: an unconditional job,
+// one whose condition holds on every run (holdsOnEveryRun), such as an aggregate merge gate that
+// needs path-filtered lanes, and one whose only condition is a repository guard that holds there
+// (guardHoldsInRepository).
+//
+// Any other condition, such as a lane that runs only when a planner job's output selects it,
+// skips its job on some pull requests. GitHub reports a job a condition skipped as successful, so
+// requiring it would install a check that passes whether or not its work ran.
+func reportsOnEveryPullRequest(condition, identity string) bool {
+	return strings.TrimSpace(condition) == "" || holdsOnEveryRun(condition) || guardHoldsInRepository(condition, identity)
+}
+
+// holdsOnEveryRun reports whether a job condition is one of everyRunConditions, bare or as one
+// whole ${{ }} expression. A status function joined with anything else is not: the value of the
+// rest is not knowable from the file.
+func holdsOnEveryRun(condition string) bool {
+	expression := strings.TrimSpace(condition)
+	if inner, wrapped := strings.CutPrefix(expression, "${{"); wrapped {
+		body, closed := strings.CutSuffix(inner, "}}")
+		if !closed {
+			return false
+		}
+		expression = body
+	}
+	return slices.Contains(everyRunConditions, strings.Join(strings.Fields(expression), ""))
 }
 
 // advisoryJob reports whether continue-on-error makes a job's result non-binding. An

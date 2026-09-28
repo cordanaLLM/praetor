@@ -429,7 +429,7 @@ rules:
           none
         rationale: >-
           internal/hiss never reads TypeScript at all: isScannableExt covers only
-          .c/.cpp/.cc/.cxx/.h/.hpp/.cu/.hip/.py/.go/.rs, so the scan of HISS-11/typescript reports
+          .c/.cpp/.cc/.cxx/.h/.hpp/.hh/.cu/.hip/.py/.go/.rs, so the scan of HISS-11/typescript reports
           filesRead=0 with UnscannedByExtension map[.ts:4]. semgrep has a TypeScript rule
           (hiss-08-banned-eval) but none for HISS-11: 0 findings. No pnpm-lock.yaml /
           --frozen-lockfile check exists. gap/cdn-import-latest.ts imports executable code from a CDN
@@ -584,7 +584,7 @@ rules:
         state: unsupported
         runner: semgrep
         mechanism: >-
-          none. hiss.SupportsExtension covers only .c/.cpp/.cc/.cxx/.h/.hpp/.cu/.hip/.py/.go/.rs, so
+          none. hiss.SupportsExtension covers only .c/.cpp/.cc/.cxx/.h/.hpp/.hh/.cu/.hip/.py/.go/.rs, so
           .ts files are never scanned and can never contribute to V_total. Semgrep DOES cover
           TypeScript, but semgrep findings never reach internal/baseline.
         rationale: >-
