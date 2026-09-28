@@ -129,12 +129,16 @@ and `--base-image` overrides must include lowercase SHA-256 digests.
 
 Regeneration keeps the images the output file records. Without `--base-image`
 or `--builder-image`, generation reads the bootstrap specification already
-recorded there. An image from another repository than the reviewed default is
-the adopter's choice and is kept, so `--force` does not swap it for the
-reviewed base. An earlier pin of the reviewed default repository, such as the
-`ubuntu-24.04` base, is refreshed to the current reviewed pin. An explicit flag
-always wins. Each image kept, refreshed or replaced against its recorded value
-is printed as a `[RECORDED IMAGE KEPT]`, `[RECORDED IMAGE REFRESHED]` or
+recorded there. A recorded image that is an earlier reviewed default, such as
+the `ubuntu-24.04` base Praetor shipped before the 26.04 move, is refreshed to
+the current reviewed pin. Earlier defaults are listed as `repository@digest` in
+`priorDefaultBaseImages` and `priorDefaultBuilderImages` in
+`internal/devcontainer/bootstrap.go`, and a recorded image matches one when it
+names the same repository and digest. Any other recorded image is the adopter's
+choice and is kept, so `--force` does not swap it for the reviewed default. That
+includes another tag or digest of the reviewed default repository, such as a
+`debian-12` base or a newer `golang` builder. An explicit flag always wins.
+Each image kept, refreshed or replaced against its recorded value is printed as a `[RECORDED IMAGE KEPT]`, `[RECORDED IMAGE REFRESHED]` or
 `[RECORDED IMAGE REPLACED]` line naming the recorded image, the selected one and
 the flag that changes it. A missing file, a custom DevContainer or an invalid
 specification records no choice, so the reviewed defaults apply

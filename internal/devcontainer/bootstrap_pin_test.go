@@ -96,7 +96,9 @@ func TestPinnedImagesMatchTheDockerfilesThatUseThem(t *testing.T) {
 				t.Fatal(err)
 			}
 			if err := pinnedDigestDrift(data, tc.pin); err != nil {
-				t.Fatalf("%s: %v", tc.path, err)
+				// Regenerating the repository bundle keeps a replaced default that is
+				// missing from the prior-default lists, so this drift names that fix too.
+				t.Fatalf("%s: %v (moving a default: append the replaced pin to priorDefaultBaseImages or priorDefaultBuilderImages, then regenerate)", tc.path, err)
 			}
 		})
 	}

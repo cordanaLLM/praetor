@@ -23,8 +23,8 @@ func parseDevContainerOptions(args []string) (devContainerOptions, error) {
 	fs.StringVar(&opts.outputPath, "output", ".devcontainer/devcontainer.json", "Target path for devcontainer.json")
 	fs.BoolVar(&opts.verify, "verify", false, "Verify configuration against declared standards and recorded bootstrap inputs")
 	fs.StringVar(&opts.sourceRoot, "source-root", "", "Explicit complete Praetor source checkout for a portable bootstrap bundle")
-	fs.StringVar(&opts.builderImage, "builder-image", "", "Digest-pinned Go builder image (default: the recorded image unless it is an earlier reviewed pin, else the reviewed bootstrap image)")
-	fs.StringVar(&opts.baseImage, "base-image", "", "Digest-pinned DevContainer base image (default: the recorded image unless it is an earlier reviewed pin, else the reviewed base)")
+	fs.StringVar(&opts.builderImage, "builder-image", "", "Digest-pinned Go builder image (default: the recorded image unless it is an earlier reviewed default, else the reviewed bootstrap image)")
+	fs.StringVar(&opts.baseImage, "base-image", "", "Digest-pinned DevContainer base image (default: the recorded image unless it is an earlier reviewed default, else the reviewed base)")
 	fs.BoolVar(&opts.force, "force", false, "Replace only the reviewed generated DevContainer bundle files")
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {

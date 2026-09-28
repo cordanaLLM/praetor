@@ -181,10 +181,20 @@ func generateCLI(t *testing.T, base []string, extra ...string) (string, error) {
 }
 
 // TestDevContainerCLIForceKeepsRecordedBaseImage pins issue #536: a --force regeneration
-// from a new source keeps the adopter's recorded base image and reports it, an explicit
+// from a new source keeps the adopter's recorded base image and reports it, whether it
+// names another repository or another tag of the reviewed default repository; an explicit
 // --base-image still replaces it, and a first generation takes the reviewed default.
 func TestDevContainerCLIForceKeepsRecordedBaseImage(t *testing.T) {
-	adopterBase := "registry.example/team/dev-toolchains@sha256:" + strings.Repeat("c", 64)
+	for name, adopterBase := range map[string]string{
+		"other repository":               "registry.example/team/dev-toolchains@sha256:" + strings.Repeat("c", 64),
+		"reviewed repository, other tag": "mcr.microsoft.com/devcontainers/base:debian-12@sha256:" + strings.Repeat("e", 64),
+	} {
+		t.Run(name, func(t *testing.T) { assertCLIForceKeepsRecordedBase(t, adopterBase) })
+	}
+}
+
+func assertCLIForceKeepsRecordedBase(t *testing.T, adopterBase string) {
+	t.Helper()
 	manifest, output := cliBootstrapPaths(t)
 	base := []string{"generate", "--config", manifest, "--output", output}
 	// Boundary: no recorded specification, so the reviewed default applies silently.

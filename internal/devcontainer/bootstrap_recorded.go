@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -11,11 +12,11 @@ import (
 
 // Image selection outcomes a regeneration reports (ImageNote.Action).
 const (
-	// ImageKept: the recorded image names another repository than the reviewed default,
-	// so it is the adopter's choice and generation reuses it.
+	// ImageKept: the recorded image is not a reviewed default, so it is the adopter's choice
+	// and generation reuses it, whatever repository, tag or digest it names.
 	ImageKept = "kept"
-	// ImageRefreshed: the recorded image is an earlier pin of the reviewed default
-	// repository, so generation takes the current reviewed pin.
+	// ImageRefreshed: the recorded image names the repository and digest of an earlier
+	// reviewed default, so generation takes the current reviewed pin.
 	ImageRefreshed = "refreshed"
 	// ImageReplaced: an explicit option selected another image than the recorded one.
 	ImageReplaced = "replaced"
@@ -49,17 +50,19 @@ func (n ImageNote) String() string {
 // imageRole binds one image option to what the recorded specification holds for it.
 type imageRole struct {
 	name, flag, fallback, recorded string
+	prior                          []string // earlier reviewed defaults for this role
 	selected                       *string
 }
 
 // InheritRecordedImages resolves the images a regeneration of the config at path uses, so
 // --force no longer swaps an adopter's recorded image for the reviewed default (#536). An
 // image options sets explicitly always wins. Otherwise a valid bootstrap specification
-// recorded at path decides: an image from another repository than the reviewed default is
-// the adopter's choice and is kept; an earlier pin of the reviewed default repository is
-// refreshed to the current reviewed pin, so reviewed updates still reach default users. A
-// missing, unmanaged or invalid config records no choice and leaves options unchanged. The
-// notes list every image kept, refreshed or replaced against its recorded value.
+// recorded at path decides: a recorded image naming the repository and digest of an
+// earlier reviewed default is refreshed to the current pin, so reviewed updates still
+// reach default users; any other recorded image, another tag or digest of the default
+// repository included, is the adopter's choice and is kept. A missing, unmanaged or
+// invalid config records no choice and leaves options unchanged. The notes list every
+// image kept, refreshed or replaced against its recorded value.
 func InheritRecordedImages(ctx context.Context, path string, options BootstrapOptions) (BootstrapOptions, []ImageNote, error) {
 	if ctx == nil {
 		return options, nil, errors.New("recorded image inheritance requires context")
@@ -77,8 +80,8 @@ func InheritRecordedImages(ctx context.Context, path string, options BootstrapOp
 	}
 	var notes []ImageNote
 	for _, role := range []imageRole{
-		{name: "base", flag: "--base-image", fallback: DefaultBaseImage, recorded: recorded.BaseImage, selected: &options.BaseImage},
-		{name: "builder", flag: "--builder-image", fallback: DefaultBuilderImage, recorded: recorded.BuilderImage, selected: &options.BuilderImage},
+		{name: "base", flag: "--base-image", fallback: DefaultBaseImage, recorded: recorded.BaseImage, prior: priorDefaultBaseImages, selected: &options.BaseImage},
+		{name: "builder", flag: "--builder-image", fallback: DefaultBuilderImage, recorded: recorded.BuilderImage, prior: priorDefaultBuilderImages, selected: &options.BuilderImage},
 	} {
 		if note, changed := inheritImage(role); changed {
 			notes = append(notes, note)
@@ -97,7 +100,7 @@ func inheritImage(role imageRole) (ImageNote, bool) {
 	case *role.selected != "":
 		note.Action, note.Selected = ImageReplaced, *role.selected
 		return note, *role.selected != role.recorded
-	case sameImageRepository(role.recorded, role.fallback):
+	case role.recorded == role.fallback || isPriorDefault(role.recorded, role.prior):
 		*role.selected = role.fallback
 		note.Action, note.Selected = ImageRefreshed, role.fallback
 		return note, role.recorded != role.fallback
@@ -108,9 +111,10 @@ func inheritImage(role imageRole) (ImageNote, bool) {
 	}
 }
 
-// sameImageRepository compares two image references by repository, ignoring tag and digest.
-func sameImageRepository(a, b string) bool {
-	repositoryA, _, _ := util.SplitImageReference(a)
-	repositoryB, _, _ := util.SplitImageReference(b)
-	return repositoryA == repositoryB
+// isPriorDefault reports whether image is one of the earlier reviewed defaults in prior,
+// which are held as repository@digest: the same repository and digest under any tag match,
+// another digest or repository does not.
+func isPriorDefault(image string, prior []string) bool {
+	repository, _, digest := util.SplitImageReference(image)
+	return digest != "" && slices.Contains(prior, repository+"@"+digest)
 }

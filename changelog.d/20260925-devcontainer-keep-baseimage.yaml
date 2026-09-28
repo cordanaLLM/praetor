@@ -1,4 +1,4 @@
 type: fixed
-title: Keep the recorded DevContainer base and builder images when devcontainer generate --force or forced adoption regenerates the bundle without --base-image or --builder-image, refresh an earlier reviewed pin to the current one, and report every image kept, refreshed or replaced
+title: Keep the recorded DevContainer base and builder images when devcontainer generate --force or forced adoption regenerates the bundle without --base-image or --builder-image, refresh only an earlier reviewed default (same repository and digest) to the current pin while keeping any other tag or digest of the default repositories, and report every image kept, refreshed or replaced
 issue: "#536"
 breaking: false

@@ -5,16 +5,24 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // Neutral fixture images: an adopter-owned base and a mirrored builder from repositories
-// other than the reviewed defaults, and the reviewed base pin before the 26.04 move.
+// other than the reviewed defaults; adopter choices inside the reviewed default
+// repositories; and the reviewed pins before the 26.04 move as generation recorded them,
+// the tag put back onto the tagless prior-default entries.
 var (
-	adopterBase         = "registry.example/team/dev-toolchains@sha256:" + strings.Repeat("a", 64)
-	adopterBuilder      = "registry.example/mirror/golang:1.27-alpine@sha256:" + strings.Repeat("b", 64)
-	earlierReviewedBase = "mcr.microsoft.com/devcontainers/base:ubuntu-24.04@sha256:d94c97dd9cacf183d0a6fd12a8e87b526e9e928307674ae9c94139139c0c6eae"
+	adopterBase            = "registry.example/team/dev-toolchains@sha256:" + strings.Repeat("a", 64)
+	adopterBuilder         = "registry.example/mirror/golang:1.27-alpine@sha256:" + strings.Repeat("b", 64)
+	sameRepositoryBase     = "mcr.microsoft.com/devcontainers/base:debian-12@sha256:" + strings.Repeat("e", 64)
+	sameRepositoryBuilder  = "docker.io/library/golang:1.28-bookworm@sha256:" + strings.Repeat("f", 64)
+	earlierReviewedBase    = strings.Replace(priorDefaultBaseImages[0], "@", ":ubuntu-24.04@", 1)
+	earlierReviewedBuilder = strings.Replace(priorDefaultBuilderImages[0], "@", ":1.27-alpine@", 1)
 )
 
 // writeRecordedBundle writes what generation writes for options and returns the config path.
@@ -83,9 +91,33 @@ func TestInheritRecordedImagesExplicitOptionWins(t *testing.T) {
 	}
 }
 
-// Boundary: an earlier pin of the reviewed default repository is refreshed to the current
-// pin, not frozen, and the note names how to keep it. An unavailable placeholder records no
-// builder, so none is inherited.
+// Positive: another tag or digest of a reviewed default repository is a deliberate choice
+// too, so it is kept like any other image, in full or short reference form (#536).
+func TestInheritRecordedImagesKeepsSameRepositoryChoice(t *testing.T) {
+	source := bootstrapSourceFixture(t)
+	for name, recorded := range map[string]BootstrapOptions{
+		"other tags":   {SourceRoot: source, BaseImage: sameRepositoryBase, BuilderImage: sameRepositoryBuilder},
+		"short form":   {SourceRoot: source, BaseImage: sameRepositoryBase, BuilderImage: "golang:1.28-alpine@sha256:" + strings.Repeat("f", 64)},
+		"other digest": {SourceRoot: source, BaseImage: strings.SplitN(earlierReviewedBase, "@", 2)[0] + "@sha256:" + strings.Repeat("0", 64), BuilderImage: strings.SplitN(DefaultBuilderImage, "@", 2)[0] + "@sha256:" + strings.Repeat("1", 64)},
+	} {
+		options, notes, err := InheritRecordedImages(t.Context(), writeRecordedBundle(t, recorded), BootstrapOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if options.BaseImage != recorded.BaseImage || options.BuilderImage != recorded.BuilderImage || len(notes) != 2 {
+			t.Fatalf("%s: same-repository choice not kept: %+v %+v", name, options, notes)
+		}
+		for _, note := range notes {
+			if note.Action != ImageKept || !strings.HasPrefix(note.String(), "[RECORDED IMAGE KEPT] "+note.Role+" image "+note.Recorded) {
+				t.Fatalf("%s: %s note = %q", name, note.Role, note)
+			}
+		}
+	}
+}
+
+// Boundary: exactly an earlier reviewed default pin is refreshed to the current pin, not
+// frozen, and the note names how to keep it. An unavailable placeholder records no builder,
+// so none is inherited.
 func TestInheritRecordedImagesRefreshesEarlierReviewedPin(t *testing.T) {
 	path := writeRecordedBundle(t, BootstrapOptions{BaseImage: earlierReviewedBase})
 	options, notes, err := InheritRecordedImages(t.Context(), path, BootstrapOptions{})
@@ -99,6 +131,14 @@ func TestInheritRecordedImagesRefreshesEarlierReviewedPin(t *testing.T) {
 		"; devcontainer generate --base-image " + earlierReviewedBase + " keeps it"
 	if note := noteFor(t, notes, "base"); note.Action != ImageRefreshed || note.String() != want {
 		t.Fatalf("refresh note = %q, want %q", note, want)
+	}
+	both := writeRecordedBundle(t, BootstrapOptions{SourceRoot: bootstrapSourceFixture(t), BaseImage: earlierReviewedBase, BuilderImage: earlierReviewedBuilder})
+	options, notes, err = InheritRecordedImages(t.Context(), both, BootstrapOptions{})
+	if err != nil || len(notes) != 2 || options.BaseImage != DefaultBaseImage || options.BuilderImage != DefaultBuilderImage {
+		t.Fatalf("earlier reviewed builder pin not refreshed: %+v %+v %v", options, notes, err)
+	}
+	if note := noteFor(t, notes, "builder"); note.Action != ImageRefreshed || note.Selected != DefaultBuilderImage {
+		t.Fatalf("builder refresh note = %+v", note)
 	}
 	current := writeRecordedBundle(t, BootstrapOptions{SourceRoot: bootstrapSourceFixture(t)})
 	options, notes, err = InheritRecordedImages(t.Context(), current, BootstrapOptions{})
@@ -136,5 +176,51 @@ func TestInheritRecordedImagesWithoutRecordedChoice(t *testing.T) {
 	var absent context.Context
 	if _, _, err := InheritRecordedImages(absent, recorded, BootstrapOptions{}); err == nil {
 		t.Fatal("nil context accepted")
+	}
+}
+
+// The refresh history holds tagless, digest-pinned, retired defaults only: a current default
+// or an unpinned entry there would refresh or match an image no reviewed release recorded,
+// and a tag would make it a second live pin of that tag to the repository pin scan.
+func TestPriorDefaultImagesArePinnedAndRetired(t *testing.T) {
+	for current, prior := range map[string][]string{DefaultBaseImage: priorDefaultBaseImages, DefaultBuilderImage: priorDefaultBuilderImages} {
+		if len(prior) == 0 {
+			t.Fatalf("no earlier reviewed default recorded for %s", current)
+		}
+		if err := validateBootstrapImages(prior...); err != nil {
+			t.Fatalf("earlier reviewed default not digest-pinned: %v", err)
+		}
+		for i, image := range prior {
+			if _, tag, _ := util.SplitImageReference(image); tag != "" {
+				t.Fatalf("earlier reviewed default %s carries tag %q", image, tag)
+			}
+			if isPriorDefault(current, prior) || slices.Contains(prior[:i], image) {
+				t.Fatalf("earlier reviewed default %s is current or repeated", image)
+			}
+		}
+	}
+}
+
+// A prior default matches by repository and digest under any tag; another digest, the short
+// Docker Hub form of the repository, a tagless reference without digest or an empty history
+// does not.
+func TestIsPriorDefaultMatchesRepositoryAndDigest(t *testing.T) {
+	digest := strings.SplitN(priorDefaultBuilderImages[0], "@", 2)[1]
+	for image, want := range map[string]bool{
+		earlierReviewedBuilder:                    true,
+		priorDefaultBuilderImages[0]:              true,
+		"docker.io/library/golang:1.28@" + digest: true,
+		"golang:1.27-alpine@" + digest:            false,
+		"docker.io/library/golang:1.27-alpine":    false,
+		sameRepositoryBuilder:                     false,
+		"":                                        false,
+		"docker.io/library/golang:1.27-alpine@sha256:" + strings.Repeat("0", 64): false,
+	} {
+		if got := isPriorDefault(image, priorDefaultBuilderImages); got != want {
+			t.Errorf("isPriorDefault(%q) = %v, want %v", image, got, want)
+		}
+	}
+	if isPriorDefault(earlierReviewedBuilder, nil) {
+		t.Fatal("empty history matched")
 	}
 }
