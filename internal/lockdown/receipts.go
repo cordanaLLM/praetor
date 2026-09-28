@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -57,6 +58,12 @@ const gateWorktreeCleanKey = "worktree_clean"
 // maxGateOutputHeaderLines bounds the header scan (HISS-02). The gate writes five header lines
 // before its first stage line.
 const maxGateOutputHeaderLines = 32
+
+// maxReceiptFileBytes bounds how much of a receipt envelope LoadReceiptFile reads (HISS-02).
+// An envelope is a few hundred bytes of signed fields plus the gate output: five header lines
+// and one line per stage. 1 MiB leaves room for long stage messages without allocating a
+// planted multi-GB file in full.
+const maxReceiptFileBytes = 1 << 20
 
 // ExecutionReceipt represents an Ed25519-signed verification receipt certifying an Exit-0 run.
 type ExecutionReceipt struct {
@@ -172,10 +179,16 @@ type ReceiptFile struct {
 }
 
 // LoadReceiptFile reads and parses an on-disk receipt envelope.
+//
+// The read is the bounded, root-anchored one the manifest readers share
+// (util.ReadConfinedLimited, anchored at the receipt's own directory): only a regular file
+// is opened, so a FIFO planted at the receipt path fails instead of blocking the verifier
+// past every deadline; a link at the path that resolves outside that directory is refused;
+// and at most maxReceiptFileBytes are read. json.Unmarshal refuses anything after the first
+// JSON value, so a second envelope appended to the file is an error rather than ignored:
+// the single-document rule the manifest readers apply (BUG-857).
 func LoadReceiptFile(path string) (*ReceiptFile, error) {
-	// #nosec G304 -- path is the repository's own receipt location or an operator-supplied
-	// --receipt argument; the file is only parsed as JSON, never executed.
-	data, err := os.ReadFile(path)
+	data, err := util.ReadConfinedLimited(filepath.Dir(path), filepath.Base(path), maxReceiptFileBytes)
 	if err != nil {
 		return nil, fmt.Errorf("read receipt %s: %w", path, err)
 	}

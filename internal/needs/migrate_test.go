@@ -29,7 +29,7 @@ func TestScanFileForReplacementsRewritesSubpackagesDeterministically(t *testing.
 	// which of two overlapping keys won.
 	var first []ReplacementAction
 	for i := 0; i < 8; i++ {
-		got := scanFileForReplacements(src, replacements, keys)
+		got := scanFileForReplacements(dir, src, replacements, keys)
 		if first == nil {
 			first = got
 			continue
@@ -68,7 +68,7 @@ func TestScanFileForReplacementsHonoursTheModuleBoundary(t *testing.T) {
 		"\t\"github.com/jackc/pgx/v5\"\n\tconn `github.com/jackc/pgx/v5/pgconn`\n"+
 		"\t\"github.com/jackc/pgx/v5x\"\n\t_ \"github.com/jackc/pgx/v5\"\n\t\"fmt\"\n)\n")
 	replacements := map[string]string{"github.com/jackc/pgx/v5": "example.com/acme/kit/db/pgx", "": "example.com/acme/all"}
-	got := scanFileForReplacements(src, replacements, sortedReplacementKeys(replacements))
+	got := scanFileForReplacements(dir, src, replacements, sortedReplacementKeys(replacements))
 	want := []ReplacementAction{
 		{OldImport: "github.com/jackc/pgx/v5", NewImport: "example.com/acme/kit/db/pgx"},
 		{OldImport: "github.com/jackc/pgx/v5/pgconn", NewImport: "example.com/acme/kit/db/pgx/pgconn"},
@@ -180,7 +180,7 @@ func TestUpdateGoModPreservesOtherDirectiveBlocks(t *testing.T) {
 	other := "replace (\n\t" + module + " => ../local-gin\n)\n\nexclude (\n\t" + module + " v1.9.0\n)\n"
 	path := writeFixture(t, dir, "go.mod", "module example.com/app\n\ngo 1.24\n\nrequire (\n\t"+module+" v1.10.0\n)\n\n"+other)
 	for i := 0; i < 2; i++ {
-		if err := updateGoMod(path, nil, []string{module}); err != nil {
+		if err := updateGoMod(dir, path, nil, []string{module}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -221,7 +221,7 @@ func TestUpdateGoModKeepsDirectivesAndIsIdempotent(t *testing.T) {
 	added := []string{"example.com/acme/kit v0.8.0"}
 	dropped := []string{"github.com/gin-gonic/gin", "redis"}
 	for i := 0; i < 2; i++ {
-		if err := updateGoMod(path, added, dropped); err != nil {
+		if err := updateGoMod(dir, path, added, dropped); err != nil {
 			t.Fatalf("pass %d failed: %v", i, err)
 		}
 	}
@@ -252,7 +252,7 @@ func TestUpdateGoModNegativeScanErrorLeavesFileIntact(t *testing.T) {
 	original := "module example.com/big\n\ngo 1.24\n\n" + overlong + "\nrequire github.com/a/b v1.0.0\n"
 	path := writeFixture(t, dir, "go.mod", original)
 
-	err := updateGoMod(path, []string{"example.com/acme/kit v0.8.0"}, nil)
+	err := updateGoMod(dir, path, []string{"example.com/acme/kit v0.8.0"}, nil)
 	if err == nil {
 		t.Fatal("expected the truncated scan to be reported as an error")
 	}
