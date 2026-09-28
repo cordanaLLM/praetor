@@ -5,12 +5,14 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
@@ -259,6 +261,35 @@ func TestDogfoodingPaperclipHarness(t *testing.T) {
 				name, normalized, want)
 		}
 	}
+}
+
+// TestDogfoodingAgentsFuncLOC holds the HISS-04 row of the repository's own AGENTS.md to the
+// function length `praetorctl audit` enforces here, resolved as the audit resolves it
+// (config.ResolveRepositoryPolicy): the row stated 75 while the audit enforced 60 (#68).
+func TestDogfoodingAgentsFuncLOC(t *testing.T) {
+	root := filepath.Join("..", "..")
+	agents, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := hisscatalog.ParseGatedInvariants(string(agents))
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, _, err := config.ResolveRepositoryPolicy(t.Context(), filepath.Join(root, config.ManifestFileName), nil)
+	if err != nil || policy == nil {
+		t.Fatalf("resolve the repository policy: %v, %v", policy, err)
+	}
+	want := fmt.Sprintf("func LOC <= %d,", policy.Complexity.MaxFuncLOC)
+	for _, row := range rows {
+		if row.ID == "HISS-04" {
+			if !strings.Contains(row.Rule, want) {
+				t.Fatalf("AGENTS.md HISS-04 states %q; the audit enforces %q", row.Rule, want)
+			}
+			return
+		}
+	}
+	t.Fatal("AGENTS.md gates no HISS-04 row")
 }
 
 // TestPaperclipHarness_WarnsOnUndocumentedException pins the CLI output of `praetorctl paperclip

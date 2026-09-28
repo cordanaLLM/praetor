@@ -692,8 +692,8 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
     runtime, every clause renders with its label.
   - HISS-04 states the function length the repository's audit enforces, read from the policy
     the policy-catalog step resolved (container-image, for example, enforces 50). At the 60-line
-    audit ceiling it adds `(audit ceiling; caps profile value)`: a pinned profile snapshot such
-    as `native-gpu-systems` states 75, and the audit-compatibility layer caps it at 60
+    audit ceiling it adds `(audit ceiling)`: a pinned profile snapshot such as
+    `native-gpu-systems` states 75, and the audit-compatibility layer caps it at 60
     ([effective policy](effective-policy.md#consequence-of-the-60-line-default)). The ceiling
     comes from `config.AuditMaxFuncLOC`; the catalog keeps no copy of it
     (`TestAdoptHarnessesStateTheAuditFunctionLength`, `TestFuncLOCLimit`).

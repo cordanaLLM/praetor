@@ -71,7 +71,7 @@ func TestPriorGeneratedRecognisesThisReleaseAfterFactsChange(t *testing.T) {
 		"withdraw exception":   {"", "", cException, cFacts, "C/C++: zero `goto`"},
 		"policy resolves":      {"", "", cFacts, hisscatalog.Facts{Languages: hisscatalog.LanguageC, MaxFuncLOC: 50}, "func LOC <= 50"},
 		"policy resolves at ceiling": {"", "", cFacts,
-			hisscatalog.Facts{Languages: hisscatalog.LanguageC, MaxFuncLOC: config.AuditMaxFuncLOC}, "(audit ceiling; caps profile value)"},
+			hisscatalog.Facts{Languages: hisscatalog.LanguageC, MaxFuncLOC: config.AuditMaxFuncLOC}, "(audit ceiling)"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -110,7 +110,7 @@ func TestPriorGeneratedKeepsEditedFactRows(t *testing.T) {
 			return editedFuncLOC(t, h, "60 (audit ceiling; stricter", "45 (audit ceiling; stricter")
 		},
 		"edited number, at-ceiling suffix": func(h *Harness) *Harness {
-			return editedFuncLOC(t, h, "60 (audit ceiling; stricter repository policy wins)", "45 (audit ceiling; caps profile value)")
+			return editedFuncLOC(t, h, "60 (audit ceiling; stricter repository policy wins)", "45 (audit ceiling)")
 		},
 		"edited number, plain": func(h *Harness) *Harness {
 			return editedFuncLOC(t, h, "60 (audit ceiling; stricter repository policy wins)", "45")
@@ -241,7 +241,7 @@ func TestPriorGeneratedRecognisesThisReleaseUnderEveryFactCombination(t *testing
 // in order. Negative: text stating no length, or a zero or seven-digit one, yields none.
 // Boundary: a list longer than maxHarnessValues is read only up to that bound.
 func TestStatedFuncLOCs(t *testing.T) {
-	got := statedFuncLOCs([]string{"HISS-04: func LOC <= 60 (audit ceiling; caps profile value)",
+	got := statedFuncLOCs([]string{"HISS-04: func LOC <= 60 (audit ceiling)",
 		"HISS-04: func LOC <= 50", "HISS-04: func LOC <= 60"})
 	if len(got) != 2 || got[0] != 60 || got[1] != 50 {
 		t.Fatalf("statedFuncLOCs = %v, want [60 50]", got)
@@ -274,7 +274,7 @@ func TestLimitFacts(t *testing.T) {
 		return texts
 	}
 	unresolved := fmt.Sprintf("func LOC <= %d (audit ceiling; stricter repository policy wins)", ceiling)
-	atCeiling := fmt.Sprintf("func LOC <= %d (audit ceiling; caps profile value)", ceiling)
+	atCeiling := fmt.Sprintf("func LOC <= %d (audit ceiling)", ceiling)
 	below := fmt.Sprintf("func LOC <= %d", ceiling-1)
 	for _, tc := range []struct {
 		limits []int

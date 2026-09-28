@@ -203,7 +203,7 @@ func TestFuncLOCLimit(t *testing.T) {
 		want  string
 	}{
 		{Facts{MaxFuncLOC: 50, CeilingFuncLOC: 60}, " 50"},
-		{Facts{MaxFuncLOC: 60, CeilingFuncLOC: 60}, " 60 (audit ceiling; caps profile value)"},
+		{Facts{MaxFuncLOC: 60, CeilingFuncLOC: 60}, " 60 (audit ceiling)"},
 		{Facts{CeilingFuncLOC: 60}, " 60 (audit ceiling; stricter repository policy wins)"},
 		{Facts{}, " repository audit limit (`praetorctl audit` prints `max_func_loc`)"},
 		{Facts{MaxFuncLOC: 59, CeilingFuncLOC: 60}, " 59"},

@@ -131,7 +131,7 @@ func TestAdoptHarnessesStateTheAuditFunctionLength(t *testing.T) {
 			}
 			want := fmt.Sprintf("; func LOC <= %d", tc.want)
 			if tc.want == config.AuditMaxFuncLOC {
-				want += " (audit ceiling; caps profile value)"
+				want += " (audit ceiling)"
 			}
 			agents, paperclipRule := adoptedRules(t, repo, "HISS-04")
 			if !strings.HasSuffix(agents, want) || !strings.HasSuffix(paperclipRule, want) {

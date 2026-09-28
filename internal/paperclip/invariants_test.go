@@ -98,7 +98,7 @@ func TestSynthesizeHarness_Positive_ExceptionAndLimitFollowFacts(t *testing.T) {
 		}
 	}
 	atCeiling := invariantsForFacts(t, hisscatalog.Facts{Languages: hisscatalog.LanguageC, MaxFuncLOC: config.AuditMaxFuncLOC})
-	if want := fmt.Sprintf("func LOC <= %d (audit ceiling; caps profile value)", config.AuditMaxFuncLOC); !strings.Contains(atCeiling, want) {
+	if want := fmt.Sprintf("func LOC <= %d (audit ceiling)", config.AuditMaxFuncLOC); !strings.Contains(atCeiling, want) {
 		t.Errorf("invariants lack %q:\n%s", want, atCeiling)
 	}
 }

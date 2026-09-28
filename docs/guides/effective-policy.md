@@ -102,7 +102,7 @@ An archetype's declared `max_func_loc` above 60 is therefore documentation of in
 effective limit. Read the `audit` output, not the archetype file, to learn what a repository is held
 to. A repository can still tighten the limit with `overrides.complexity.max_func_loc`; nothing can
 loosen it. The HISS-04 row adoption writes into `AGENTS.md` and the Paperclip harness states the
-resolved length, and adds `(audit ceiling; caps profile value)` when the ceiling set it
+resolved length, and adds `(audit ceiling)` when that length is the 60-line ceiling
 ([what the generated harness claims](adoption-verification.md#what-the-generated-harness-claims)).
 
 An explicitly selected external file must contain at least one owned root section:

@@ -162,13 +162,14 @@ func (c Clause) render(f Facts, waived Language) (string, bool) {
 }
 
 // funcLOCLimit completes the HISS-04 function-length clause with the limit the audit enforces.
-// At the audit ceiling it says the ceiling caps the profile's value, which a pinned profile
-// snapshot can state higher; before the policy resolves it states the ceiling, which a
-// stricter repository policy tightens.
+// At the audit ceiling it names the ceiling, which explains a pinned profile snapshot stating a
+// higher value; it never claims the ceiling capped anything, since the facts do not say whether
+// the profile declared more. Before the policy resolves it states the ceiling, which a stricter
+// repository policy tightens.
 func funcLOCLimit(f Facts) string {
 	switch {
 	case f.MaxFuncLOC > 0 && f.MaxFuncLOC == f.CeilingFuncLOC:
-		return " " + strconv.Itoa(f.MaxFuncLOC) + " (audit ceiling; caps profile value)"
+		return " " + strconv.Itoa(f.MaxFuncLOC) + " (audit ceiling)"
 	case f.MaxFuncLOC > 0:
 		return " " + strconv.Itoa(f.MaxFuncLOC)
 	case f.CeilingFuncLOC > 0:

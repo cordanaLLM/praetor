@@ -29,7 +29,7 @@ git push origin HEAD:refs/for/main -o topic=<issue-id> && git push origin HEAD:r
 - HISS-02: scalar upper bound on every loop; explicit deadline on every I/O
   call; Go: I/O takes `context.Context` deadline
 - HISS-04: McCabe cyclomatic <= 10, cognitive <= 15, statements <= 50; func
-  LOC <= 60 (audit ceiling; caps profile value)
+  LOC <= 60 (audit ceiling)
 - HISS-07: every error handled or wrapped with context; Go: zero unchecked
   `error` return
 - HISS-10: zero warnings: compiler, linter, format sweeps
