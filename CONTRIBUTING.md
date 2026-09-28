@@ -42,7 +42,7 @@ make verify-all
 2. **Deterministic Checks**:
    - `gofmt` code formatting.
    - `REUSE 3.3` licensing compliance.
-   - AST complexity limits (McCabe $\le 10$, cognitive $\le 15$, function LOC $\le 75$).
+   - AST complexity limits (McCabe $\le 10$, cognitive $\le 15$, function LOC $\le 60$).
 3. **Receipt Generation**:
    - Run `standardsctl gate run --path=.` to verify the ephemeral worktree and generate an Ed25519 Exit-0 receipt.
 4. **Pull Request Submission**:

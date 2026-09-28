@@ -1,7 +1,7 @@
 package p
 
-// LongDecl spans 82 lines: over the HISS-04 function-length bound of 75 and over the
-// scanner's configured 60.
+// LongDecl spans 82 lines: over the 75 this repository declares for HISS-04 and over the
+// scanner's configured 60, the audit ceiling.
 func LongDecl() []int {
 	return []int{
 		0,

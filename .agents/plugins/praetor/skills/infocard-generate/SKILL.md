@@ -30,7 +30,7 @@ Generate cards adhering to this structure (outer fence = 4 backticks, so inner f
 | Invariant | Value | Enforcement Tool |
 | :--- | :--- | :--- |
 | **Max Cyclomatic** | $\le 10$ | `gocyclo` (golangci-lint) |
-| **Max Func LOC** | $\le 75$ | `funlen` (golangci-lint), `internal/hiss` `go_ast.go` |
+| **Max Func LOC** | $\le 60$ | `funlen` (golangci-lint), `internal/hiss` `go_ast.go` |
 | **Memory Model** | Standard Heap / Zero Frame Malloc | Manual review (HISS-03, extended spec only; no gate) |
 | **Error Ban** | Zero unwraps / All errors wrapped | `errcheck`, `errorlint` (golangci-lint), `internal/hiss` HISS-07 |
 | **Call Graph** | Strict DAG (No Recursion) | `internal/hiss` `go_callgraph.go` (HISS-01) |

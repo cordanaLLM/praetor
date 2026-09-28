@@ -3,8 +3,8 @@ package p
 // LongReceiver carries the method under test.
 type LongReceiver struct{}
 
-// LongMethod spans 78 lines on a bound receiver: over the scanner's 60, over the effective
-// policy's 75 and over funlen's 75 body lines.
+// LongMethod spans 78 lines on a bound receiver: over the scanner's 60, over the 75 this
+// repository declares and over funlen's 58 body lines.
 func (r LongReceiver) LongMethod() []int {
 	return []int{
 		0,
