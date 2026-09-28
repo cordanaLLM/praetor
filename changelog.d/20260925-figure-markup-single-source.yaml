@@ -1,0 +1,3 @@
+type: changed
+title: "The figure markup has one source: tools/figures/core.mjs renders the <figure><picture> block and its text description into each figure's JSON as `html` with `{{base}}` and `{{link}}` slots, and the MkDocs hook and `docs_diagrams.py portable` only fill the slots; the README block and the built site's figure HTML are byte-identical to before, and figure text can no longer form a slot"
+breaking: false

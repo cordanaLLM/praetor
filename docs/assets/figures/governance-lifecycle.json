@@ -30,7 +30,7 @@
   "spec_sha256": "55b6e54e8b8db0bde2b0632658f50b146376aa7cc6b67504e422d213353d87af",
   "engine": {
     "commit": "ccfe85b4851957ac2adf88b4a9ddf9668b2882f1",
-    "sha256": "e4bcc8a941a80c33dfabc2bf41de3e70e173f53307543dd2897c34f0cd234e60"
+    "sha256": "1cf9783ad63ff2d24081b3e34f3f2e73b680d8e616257a4fb42a499ec3e27f8a"
   },
   "svg_sha256": "6a79682d78b69ee21c26b4f2d990b0c9707a9c9d5aba21b6bcf8049fc34f960b",
   "static_sha256": "dcfb62cb138b632cdd642ea829c467e6812b211be9cd3113151dcda5095f1393",
@@ -91,5 +91,6 @@
       "from": "Gate stages",
       "to": "Ed25519 Exit-0 receipt"
     }
-  ]
+  ],
+  "html": "<figure class=\"praetor-figure\" id=\"fig-governance-lifecycle\" data-figure=\"governance-lifecycle\" aria-describedby=\"fig-governance-lifecycle-text\">\n<picture>\n<source media=\"(prefers-reduced-motion: reduce)\" srcset=\"{{base}}/governance-lifecycle.static.svg\" width=\"678\" height=\"662\">\n<img src=\"{{base}}/governance-lifecycle.svg\" alt=\"The governance lifecycle spans context compilation, policy resolution, and verification gating.\" width=\"678\" height=\"712\" loading=\"lazy\">\n</picture>\n<figcaption>Governance Lifecycle</figcaption>\n</figure>\n<p><a href=\"{{link}}\">Open the interactive figure</a></p>\n<details class=\"praetor-figure__text\" id=\"fig-governance-lifecycle-text\"><summary>Text description</summary>\n<ul>\n<li>Vendor Projections: CLAUDE.md (&lt; 300 LOC), .cursor/rules/*.mdc, .github/copilot-instructions.md, .windsurfrules, .gemini/GEMINI.md, .codex/rules.md.</li>\n<li>Boxes: AGENTS.md (Canonical Source), praetorctl compile-context, .standards.yaml (&amp; .standards.lock), Effective Policy (Lattice Supremum), .devcontainer &amp; Toolchain, praetorctl audit, praetorctl plan, praetorctl gate run, Gate stages, Ed25519 Exit-0 receipt.</li>\n<li>AGENTS.md → praetorctl compile-context → CLAUDE.md.</li>\n<li>praetorctl compile-context → .cursor/rules/*.mdc.</li>\n<li>praetorctl compile-context → .github/copilot-instructions.md.</li>\n<li>praetorctl compile-context → .windsurfrules.</li>\n<li>praetorctl compile-context → .gemini/GEMINI.md.</li>\n<li>praetorctl compile-context → .codex/rules.md.</li>\n<li>.standards.yaml → Effective Policy → .devcontainer &amp; Toolchain.</li>\n<li>Effective Policy → praetorctl audit.</li>\n<li>Effective Policy → praetorctl plan.</li>\n<li>praetorctl gate run → Gate stages → Ed25519 Exit-0 receipt.</li>\n<li>Scenario 1, compile-context: AGENTS.md is transpiled to vendor-specific files. The single source of truth is read. Target-specific files are generated.</li>\n<li>Scenario 2, policy: The lattice resolves standard definitions into effective policy. Manifest and lockfile are merged. Policy applies to the devcontainer toolchain, audit enforcement, and plan previews.</li>\n<li>Scenario 3, gate run: praetorctl gate run executes the gated pipeline. The gate command triggers the verification cascade. A successful run mints a signed receipt.</li>\n</ul>\n</details>"
 }
