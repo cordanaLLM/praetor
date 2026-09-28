@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
@@ -25,7 +26,7 @@ const initIdentityTimeout = 30 * time.Second
 func runInit(args []string) error {
 	fs := flag.NewFlagSet("init", flag.ContinueOnError)
 	profile := fs.String("profile", "framework", "Primary repository profile")
-	facets := fs.String("facets", "security:high,api:public-contract,docs:seo-portal", "Comma-separated list of facets")
+	facets := fs.String("facets", strings.Join(config.DefaultFacets(), ","), "Comma-separated list of facets")
 	outputPath := fs.String("output", ".standards.yaml", "Path to write .standards.yaml; its directory receives the companion files")
 	settings := registerOperatorSettingsFlags(fs)
 

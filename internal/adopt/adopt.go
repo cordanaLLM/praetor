@@ -321,7 +321,7 @@ func resolveFacets(input []string) []string {
 	if len(input) > 0 {
 		return input
 	}
-	return []string{"security:high", "api:public-contract", "docs:seo-portal", "agent:sandboxed"}
+	return config.DefaultFacets()
 }
 
 // adoptSteps is the reconciliation chain, in order. It is a function so the step names

@@ -2,6 +2,7 @@ package harvester
 
 import (
 	"context"
+	"github.com/cordanaLLM/praetor/internal/config"
 	"os"
 	"path/filepath"
 	"strings"
@@ -62,6 +63,24 @@ func TestOnboardRepository_Boundary_EmptySelectionWritesNone(t *testing.T) {
 	for _, rel := range []string{".vscode/settings.json", ".editorconfig", "CLAUDE.md", ".codex/rules.md"} {
 		if onboardExists(repo, rel) {
 			t.Errorf("empty selection wrote %s", rel)
+		}
+	}
+}
+
+func TestOnboardRepository_FacetsMatchDefault(t *testing.T) {
+	repo := verifiedOnboardFixture(t)
+	plan, err := OnboardRepository(context.Background(), repo, true)
+	if err != nil {
+		t.Fatalf("onboard: %v", err)
+	}
+
+	want := config.DefaultFacets()
+	if len(plan.Facets) != len(want) {
+		t.Fatalf("plan.Facets = %v, want %v", plan.Facets, want)
+	}
+	for i, f := range plan.Facets {
+		if f != want[i] {
+			t.Errorf("plan.Facets[%d] = %q, want %q", i, f, want[i])
 		}
 	}
 }

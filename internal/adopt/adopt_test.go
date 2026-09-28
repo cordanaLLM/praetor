@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -811,6 +812,25 @@ func adoptionManifest(t *testing.T, s *adoptSession) *config.Manifest {
 		t.Fatalf("build adoption manifest: %v", err)
 	}
 	return manifest
+}
+
+func TestResolveFacets_EmptyInputYieldsDefault(t *testing.T) {
+	got := resolveFacets(nil)
+	want := config.DefaultFacets()
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("resolveFacets(nil) = %v, want %v", got, want)
+	}
+
+	gotEmpty := resolveFacets([]string{})
+	if !reflect.DeepEqual(gotEmpty, want) {
+		t.Errorf("resolveFacets([]) = %v, want %v", gotEmpty, want)
+	}
+
+	provided := []string{"custom:facet"}
+	gotProvided := resolveFacets(provided)
+	if !reflect.DeepEqual(gotProvided, provided) {
+		t.Errorf("resolveFacets(%v) = %v, want %v", provided, gotProvided, provided)
+	}
 }
 
 func identitySession(t *testing.T, repo string) *adoptSession {
