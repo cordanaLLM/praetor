@@ -15,7 +15,7 @@ import {
 } from './core.mjs';
 import { OUT_DIR, ROOT, VENDOR_JSON, compareOutputs, engineHash, listSpecs, main, renderAll } from './build.mjs';
 import {
-  DIST_DIR, DIST_FILES, MAX_INPUTS, PLAYER_BUDGET, budget, bundledPackages, bundlesInterfig, compareDist, lockMismatches,
+  DIST_DIR, DIST_FILES, MAX_INPUTS, PLAYER_BUDGET, budget, bundle, bundledPackages, bundlesInterfig, compareDist, lockMismatches,
   main as bundleMain, thirdPartyLicenses, writeDist,
 } from './bundle.mjs';
 import { svgSpecError } from './checks.mjs';
@@ -418,6 +418,13 @@ test('bundled packages are read from the inputs, scoped or not, on either path s
   const many = { inputs: Object.fromEntries(Array.from({ length: MAX_INPUTS + 1 }, (_, i) => [`f${i}.js`, {}])) };
   assert.throws(() => bundledPackages(many), /more than 4096 inputs/);
 });
+
+test('bundling without the locked esbuild is refused before esbuild loads, naming the install command', () => withTempDir(async (dir) => {
+  write(join(dir, 'tools/figures/package-lock.json'), readFileSync(join(ROOT, 'tools/figures/package-lock.json'), 'utf8'));
+  const pinned = JSON.parse(readFileSync(join(ROOT, 'tools/figures/package-lock.json'), 'utf8')).packages['node_modules/esbuild'].version;
+  await assert.rejects(bundle(dir), new RegExp(`node_modules/esbuild is not installed; tools/figures/package-lock\\.json pins ${pinned.replaceAll('.', '\\.')}; ` +
+    'run npm ci --prefix tools/figures --ignore-scripts'));
+}));
 
 test('an install that differs from the lock is refused, package by package', () => withTempDir((dir) => {
   write(join(dir, 'tools/figures/package-lock.json'), JSON.stringify({ packages: { 'node_modules/react': { version: '1.0.0' }, 'node_modules/gone': { version: '2.0.0' } } }));
