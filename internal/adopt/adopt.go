@@ -20,7 +20,6 @@ import (
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/state"
 	"github.com/cordanaLLM/praetor/internal/util"
-	"gopkg.in/yaml.v3"
 )
 
 // Invariant bounds (HISS-02: every loop in this package carries one of these caps).
@@ -453,9 +452,9 @@ func createAdoptionManifest(ctx context.Context, s *adoptSession, full string) e
 	if err != nil {
 		return err
 	}
-	data, err := yaml.Marshal(manifest)
+	data, err := config.RenderManifest(manifest)
 	if err != nil {
-		return fmt.Errorf("marshal manifest: %w", err)
+		return err
 	}
 	if err := s.write(full, data, filePerm); err != nil {
 		return err

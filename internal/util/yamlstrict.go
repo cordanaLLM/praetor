@@ -36,20 +36,24 @@ func DecodeYAMLStrict(data []byte, out any) error {
 // yamlDocumentStart opens every document EncodeYAMLDocument renders.
 const yamlDocumentStart = "---\n"
 
+// yamlIndent is the indentation of every level EncodeYAMLDocument renders.
+const yamlIndent = 2
+
 // EncodeYAMLDocument renders value as one YAML document that yamllint's default and relaxed
-// rule sets accept: it opens with the "---" document start, and every mapping and sequence
-// level is indented by two spaces. yaml.Marshal indents by four, which puts a sequence
-// nested in a sequence item two spaces off the width of the rest of the document, so a file
-// it writes fails the indentation rule of the repository it is committed to.
+// rule sets accept: it opens with the "---" document start, every mapping and sequence level
+// is indented by two spaces, and a line past YAMLLineLimit holding one long unbroken value is
+// fitted (FitYAMLLines). yaml.Marshal indents by four, which puts a sequence nested in a
+// sequence item two spaces off the width of the rest of the document, so a file it writes
+// fails the indentation rule of the repository it is committed to.
 func EncodeYAMLDocument(value any) ([]byte, error) {
 	var buffer bytes.Buffer
 	buffer.WriteString(yamlDocumentStart)
 	encoder := yaml.NewEncoder(&buffer)
-	encoder.SetIndent(2)
+	encoder.SetIndent(yamlIndent)
 	if err := errors.Join(encoder.Encode(value), encoder.Close()); err != nil {
 		return nil, fmt.Errorf("util: encode YAML: %w", err)
 	}
-	return buffer.Bytes(), nil
+	return FitYAMLLines(buffer.Bytes(), yamlIndent)
 }
 
 // DecodeYAMLDocument decodes the one YAML document in data into out and refuses a second

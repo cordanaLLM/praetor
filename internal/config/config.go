@@ -315,6 +315,21 @@ func DecodeManifest(data []byte) (*Manifest, error) {
 	return &m, nil
 }
 
+// RenderManifest is the one text Praetor writes a new manifest as (adopt, init, onboarding):
+// one document yamllint's default rules accept, from util.EncodeYAMLDocument. yaml.Marshal's
+// text, which each writer used before, opens with no document start and runs a
+// register.sources digest past 80 columns, so an adopter linting its tree failed on it (BUG-782).
+func RenderManifest(m *Manifest) ([]byte, error) {
+	if m == nil {
+		return nil, errors.New("render manifest: no manifest")
+	}
+	data, err := util.EncodeYAMLDocument(m)
+	if err != nil {
+		return nil, fmt.Errorf("render manifest: %w", err)
+	}
+	return data, nil
+}
+
 func validateManifestReviewPolicy(m *Manifest) error {
 	if m == nil || m.Overrides.BranchProtection == nil {
 		return nil

@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 
 	"github.com/cordanaLLM/praetor/internal/util"
-	"gopkg.in/yaml.v3"
 )
 
 // BuildLockfile pins target profiles and facets to actual files in an explicitly
@@ -35,7 +34,9 @@ func BuildLockfile(ctx context.Context, sourceRoot string, target *Manifest) ([]
 		return nil, err
 	}
 	lock.Digest = digestPrefix + canonicalLockDigest(lock)
-	return yaml.Marshal(lock)
+	// The lock lands in the adopter's tree beside the YAML its own lint may cover, so it is one
+	// lint-clean document too (BUG-782).
+	return util.EncodeYAMLDocument(lock)
 }
 
 func validateLockBuildInputs(ctx context.Context, sourceRoot string, target *Manifest) error {
