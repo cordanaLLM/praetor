@@ -99,6 +99,14 @@ type SettingItem struct {
 	Path        string `json:"path"`
 	Description string `json:"description"`
 
+	// Producer names the command that writes the setting when flavor apply does not render it,
+	// as TemplateItem.Producer does for a template: adoption's hook step writes lefthook.yml and
+	// `praetorctl editors generate` writes the editor settings, each from inputs a flavor does
+	// not hold. flavor apply lists such a setting as deferred to its producer. The branch ruleset
+	// (forge.RepositoryRulesetPath) has none: apply renders it (applySettings). A setting with
+	// neither is an apply error.
+	Producer string `json:"producer,omitempty"`
+
 	// Validator decides whether the file's content satisfies the setting. A setting with
 	// no validator is satisfied by its presence alone, which is all that can be claimed
 	// for a file with no checkable shape. The field used to be declared and never

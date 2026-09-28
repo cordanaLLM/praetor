@@ -109,6 +109,10 @@ func TestApplyFlavor_Boundary_PartialFailureKeepsCreatedTemplates(t *testing.T) 
 // TestApplyFlavor_Positive_ForceKeepsManifestAndLock pins BUG-027: go-library lists the manifest
 // and lock as templates with no content of their own, so --force replaced a real declaration and
 // its pinned digests with a one-line comment stub.
+//
+// Neither fixture resolves to a policy, so the branch ruleset, rendered under the effective
+// policy, is the one failure: it is refused rather than rendered under a stand-in, and the
+// templates are still applied.
 func TestApplyFlavor_Positive_ForceKeepsManifestAndLock(t *testing.T) {
 	dir := t.TempDir()
 	const manifest = "version: 1\nprofile: framework\nfacets: [security:high]\n"
@@ -118,8 +122,12 @@ func TestApplyFlavor_Positive_ForceKeepsManifestAndLock(t *testing.T) {
 	mustWriteFile(t, filepath.Join(dir, ".golangci.yml"), "version: \"2\"\n# operator tuned\n")
 
 	report, err := flavor.ApplyFlavor(t.Context(), dir, "go-library", true)
-	if err != nil {
-		t.Fatalf("forced apply failed: %+v, %v", report, err)
+	if !errors.Is(err, flavor.ErrApplyIncomplete) || report == nil || len(report.Errors) != 1 ||
+		!strings.Contains(report.Errors[0], "resolve the effective policy for .github/rulesets/main.json") {
+		t.Fatalf("an unresolvable policy must fail the ruleset alone: %+v, %v", report, err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, ".github", "rulesets", "main.json")); !os.IsNotExist(statErr) {
+		t.Errorf("a ruleset was written without a resolved policy: %v", statErr)
 	}
 	for rel, want := range map[string]string{".standards.yaml": manifest, ".standards.lock": lock} {
 		data, readErr := os.ReadFile(filepath.Join(dir, rel))

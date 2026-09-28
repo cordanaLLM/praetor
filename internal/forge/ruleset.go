@@ -1,6 +1,7 @@
 package forge
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -95,6 +96,29 @@ func RenderRepositoryRuleset(policy config.BranchProtectionPolicy, contexts []st
 		return nil, err
 	}
 	return json.MarshalIndent(doc, "", "  ")
+}
+
+// RepositoryRulesetPath is where a repository carries the praetor branch protection ruleset,
+// relative to its root and in slash form.
+const RepositoryRulesetPath = ".github/rulesets/main.json"
+
+// RenderRulesetForRepository renders the ruleset for the repository at repoPath under policy.
+// Its required status checks are the workflow jobs RequiredStatusContexts selects from the
+// workflows present now, so a caller that scaffolds workflows renders after writing them. The
+// contexts come back beside the ruleset for a caller that reports or validates against them.
+//
+// Adoption's branch-ruleset step and flavor apply both write this rendering, so a repository
+// either one scaffolded carries the file sync and the audit validate (ValidateRepositoryRuleset).
+func RenderRulesetForRepository(ctx context.Context, repoPath string, policy config.BranchProtectionPolicy) ([]byte, []string, error) {
+	contexts, err := RequiredStatusContexts(ctx, repoPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	data, err := RenderRepositoryRuleset(policy, contexts)
+	if err != nil {
+		return nil, nil, fmt.Errorf("render %s: %w", RepositoryRulesetPath, err)
+	}
+	return data, contexts, nil
 }
 
 // ErrRulesetDrift reports a committed ruleset whose content differs from the one the declared

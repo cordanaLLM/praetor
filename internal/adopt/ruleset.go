@@ -12,19 +12,12 @@ import (
 )
 
 const (
-	rulesetFile      = ".github/rulesets/main.json"
+	rulesetFile      = forge.RepositoryRulesetPath
 	labelsFile       = ".config/labels.yaml"
 	paperclipFile    = ".paperclip/harness.json"
 	auditorAgentFile = ".agents/agents/repo-auditor.md"
 	gatekeeperFile   = ".agents/agents/repo-gatekeeper.md"
 )
-
-// buildRulesetJSON delegates policy rendering to the same service as CLI sync and
-// remote forge reconciliation. Context selection remains repository-specific.
-func buildRulesetJSON(policy config.BranchProtectionPolicy, contexts []string) (string, error) {
-	data, err := forge.RenderRepositoryRuleset(policy, contexts)
-	return string(data), err
-}
 
 func adoptionBranchPolicy(ctx context.Context, s *adoptSession) (config.BranchProtectionPolicy, error) {
 	if s.policy != nil {
@@ -41,28 +34,35 @@ func adoptionBranchPolicy(ctx context.Context, s *adoptSession) (config.BranchPr
 	return policy.BranchProtection, nil
 }
 
+// reconcileBranchRuleset writes the ruleset forge.RenderRulesetForRepository renders under the
+// adoption's branch protection policy, the rendering flavor apply writes too. A dry run writes
+// nothing and previews the file instead (AdoptReport.Previews): the create, update, unchanged or
+// keep it would come to, with the rendered ruleset or the diff from the one on disk.
 func reconcileBranchRuleset(ctx context.Context, s *adoptSession) error {
-	contexts, err := forge.RequiredStatusContexts(ctx, s.repoPath)
-	if err != nil {
-		return err
-	}
 	policy, err := adoptionBranchPolicy(ctx, s)
 	if err != nil {
 		return err
 	}
-	content, err := buildRulesetJSON(policy, contexts)
+	content, contexts, err := forge.RenderRulesetForRepository(ctx, s.repoPath, policy)
 	if err != nil {
 		return err
 	}
-	_, err = s.scaffoldFile(ctx, scaffold{
+	return s.scaffoldPreviewed(ctx, scaffold{
 		rel:      rulesetFile,
 		perm:     filePerm,
-		content:  []byte(content),
+		content:  content,
 		force:    true,
 		created:  fmt.Sprintf("Scaffolded declarative branch protection ruleset (%d required status checks derived from workflows)", len(contexts)),
 		verified: "Existing branch protection ruleset verified present",
-	})
-	return err
+	}, rulesetPreviewNote(len(contexts)))
+}
+
+// rulesetPreviewNote says where a previewed ruleset's status checks come from. A dry run writes
+// no workflow, so a workflow this adoption would scaffold (the flavor's CI, the documentation
+// gate) is not yet among them: the run that writes it derives the checks again.
+func rulesetPreviewNote(contexts int) string {
+	return fmt.Sprintf("%d required status checks derived from the workflows on disk; "+
+		"workflows this adoption would scaffold are not counted until they are written", contexts)
 }
 
 // priorLabelTaxonomyDigests are the digests (priorRendering) of every label taxonomy adoption

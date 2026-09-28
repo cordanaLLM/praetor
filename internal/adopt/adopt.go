@@ -94,8 +94,11 @@ type AdoptReport struct {
 	CreatedFiles    []string                `json:"created_files"`
 	ReconciledFiles []string                `json:"reconciled_files"`
 	ActionDetails   []ActionDetail          `json:"action_details,omitempty"`
-	DebtBreakdown   map[string]int          `json:"debt_breakdown,omitempty"`
-	LegacyDebtCount int                     `json:"legacy_debt_count"`
+	// Previews shows, in a dry run only, the content or the diff of each file adoption renders
+	// from repository state (FilePreview): the branch protection ruleset.
+	Previews        []FilePreview  `json:"previews,omitempty"`
+	DebtBreakdown   map[string]int `json:"debt_breakdown,omitempty"`
+	LegacyDebtCount int            `json:"legacy_debt_count"`
 	// BaselineStatus distinguishes an observed zero from a skipped or unevaluated scan.
 	BaselineStatus string   `json:"baseline_status"`
 	DryRun         bool     `json:"dry_run"`
@@ -767,7 +770,9 @@ func (s *adoptSession) applyDetectedFlavor(ctx context.Context) {
 		s.report.recordSkipped(flavorReportPath, flavorSkipDetail(s.arch, err))
 		return
 	}
-	applied, err := flavor.ApplyFlavor(ctx, s.repoPath, name, false)
+	// Templates only: the branch-ruleset step renders the ruleset once every workflow of the
+	// run exists, under the policy this run pins, and honours adoption.decline.
+	applied, err := flavor.ApplyFlavorWith(ctx, s.repoPath, name, flavor.ApplyOptions{TemplatesOnly: true})
 	s.recordFlavorReport(applied)
 	if err != nil {
 		s.report.addError("apply flavor %s: %v", name, err)

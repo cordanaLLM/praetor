@@ -209,6 +209,7 @@ func printAdoptReport(rep *adopt.AdoptReport) {
 
 	printDebtSummary(rep)
 	printAdoptedFiles(rep)
+	printAdoptPreviews(rep.Previews)
 	printAdoptIssues(rep)
 
 	// Each pillar line is derived from the step that owns it (adopt.AdoptReport.Pillars), so a
@@ -331,6 +332,25 @@ func printPlannedFiles(rep *adopt.AdoptReport) {
 		fmt.Printf("\nFiles Planned for Reconciliation (%d):\n", len(rep.ReconciledFiles))
 		for _, f := range rep.ReconciledFiles {
 			printAdoptedFile("~ [PLAN] ", f, findDetail(rep.ActionDetails, f))
+		}
+	}
+}
+
+// printAdoptPreviews prints what a dry run found each previewed file would come to: the action
+// and its note, then the rendered file for a create or the diff from the file on disk for an
+// update or a keep. A real run records no previews and prints nothing here.
+func printAdoptPreviews(previews []adopt.FilePreview) {
+	for _, p := range previews {
+		fmt.Printf("\n--- Preview: %s (%s) ---\n", p.Path, p.Action)
+		if p.Note != "" {
+			fmt.Printf("  %s\n", p.Note)
+		}
+		body := p.Content
+		if body == "" {
+			body = p.Diff
+		}
+		if body != "" {
+			fmt.Println(strings.TrimSuffix(body, "\n"))
 		}
 	}
 }
