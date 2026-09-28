@@ -14,7 +14,7 @@ become the page title and the description in its head.
 site-build
 ```
 
-The figure above is an example. Its spec is `docs/figures/site-build.ts`, and
+The figure above is an example. Its spec is `site-build.ts` in `docs/figures/`, and
 `node tools/figures/build.mjs build` renders it into `docs/assets/figures/`. Replace it with a
 figure of your own code, or delete the spec, its outputs and this section.
 

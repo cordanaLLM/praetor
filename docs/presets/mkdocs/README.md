@@ -88,10 +88,14 @@ the pages. The hook replaces each `figure` fence with the figure rendered from
 configuration needs no `extra_css`, `extra_javascript` or Mermaid fence. `tools/figures/README.md`,
 which adoption writes beside the hook, explains how to write a spec and render it.
 
+<!-- praetor:docs-references:off paths relative to the preset, as it sits in an adopter's repository root -->
+
 `docs/index.md` draws the example figure `site-build`: its spec is `docs/figures/site-build.ts`,
 its committed outputs are `docs/assets/figures/site-build.{svg,static.svg,json}`, and its evidence
 anchors name this preset's `mkdocs.yml`, `docs/index.md` and `overrides/main.html`. Replace it with
 a figure of your own code, or delete the spec, its three outputs and the page section.
+
+<!-- praetor:docs-references:on -->
 
 The preset needs the figure engine that `praetorctl adopt` writes under `docs:seo-portal`
 ([ADR-0016](../../adr/0016-figures-for-adopters.md), section 9). Its site build still needs
