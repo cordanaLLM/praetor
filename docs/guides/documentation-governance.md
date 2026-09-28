@@ -527,7 +527,7 @@ code kind and the test directories.
 The published site is built from the root `mkdocs.yml` by
 `.github/workflows/pages.yml` and by the CI **Documentation Integrity Audit**
 step, and the adopter preset from `docs/presets/mkdocs/mkdocs.yml` by the CI
-`docs-presets` job. All of them run `mkdocs build --strict`. A strict build
+`docs-presets` job, in an adopted fixture (below). All of them run `mkdocs build --strict`. A strict build
 still passes when a diagram ships as a code listing, so each build is followed
 by the diagram check, `site`, a command of the Node figure engine
 (`tools/figures/build.mjs`, implemented in `tools/figures/checks.mjs`; Node
@@ -542,20 +542,37 @@ node tools/figures/build.mjs sources
 No step bundles before the build: the figures hook publishes the committed
 player from `tools/figures/dist/`.
 
-The configuration decides which diagram kind a build accepts:
+The configuration decides which diagram kind a build accepts. A `figure`
+fence names a spec under `docs/figures/`. The root `mkdocs.yml` and the
+preset's `mkdocs.yml` both list `tools/figures/mkdocs_hook.py` under `hooks:`,
+which renders each fence as the committed SVGs, a caption and a text
+description, and publishes the figure stylesheet and the committed player;
+the player loads on top. Neither declares the mermaid custom fence, so figures
+are the only diagram kind of both sites
+([ADR-0016](../adr/0016-figures-for-adopters.md), section 9). The
+[figures guide](figures.md) covers authoring and the build.
 
-- **Interactive figures: the root site.** A `figure` fence names a spec under
-  `docs/figures/`. The root `mkdocs.yml` lists
-  `tools/figures/mkdocs_hook.py` under `hooks:`, which renders each fence as
-  the committed SVGs, a caption and a text description, and publishes the
-  figure stylesheet and the committed player; the player loads on top. The root site declares no mermaid fence, so figures are its only
-  diagram kind. The [figures guide](figures.md) covers authoring and the build.
-- **Mermaid: the adopter preset.** Material for MkDocs draws a diagram only
-  from a `<pre class="mermaid">` element, which `pymdownx.superfences` emits
-  only when the configuration declares the mermaid custom fence
-  (`name: mermaid`, `class: mermaid`,
-  `format: !!python/name:pymdownx.superfences.fence_code_format`). The preset
-  declares it and lists no hook, so it accepts Mermaid only and needs no Node.
+The preset's hook entry names the engine `praetorctl adopt` writes to
+`tools/figures/` under `docs:seo-portal`, so the preset does not build in
+place. The `docs-presets` job adopts a temporary repository with
+`docs:seo-portal`, copies every preset file but the README into it, as the
+[preset README's Quickstart](../presets/mkdocs/README.md#quickstart) tells an adopter, and there runs `build` (which must
+reproduce the committed example figure), `make docs-figures`, three strict
+builds (no `DOCS_SITE_URL`, a root URL, a URL with a path), `site` on each,
+and the Chromium smoke test on the two builds with a URL. The example
+figure's spec is `docs/presets/mkdocs/docs/figures/site-build.ts` and its
+evidence anchors name the preset's own files. After a change to
+`tools/figures/core.mjs` or the vendored render files, rebuild its committed
+outputs in such a fixture:
+
+```bash
+fixture=$(mktemp -d)
+git -C "$fixture" init -q
+go run ./cmd/standardsctl adopt --path "$fixture" --facets docs:seo-portal --lock-source-root .
+cp -R docs/presets/mkdocs/{mkdocs.yml,requirements.in,requirements.txt,docs,overrides} "$fixture"
+node "$fixture/tools/figures/build.mjs" build
+cp "$fixture"/docs/assets/figures/* docs/presets/mkdocs/docs/assets/figures/
+```
 
 The preset's pages live in `docs/presets/mkdocs/docs/`, inside the root
 `docs_dir`. The root `mkdocs.yml` lists that directory under `exclude_docs`,
@@ -568,7 +585,7 @@ never match a `/`. It fails on a pattern with a leading `!`, `**` or a
 backslash instead of guessing.
 
 `site` fails when a page holds a fence of a kind its configuration does not
-enable (on the root site, a Mermaid fence, with a finding that says to draw it
+enable (on a figures-only site, a Mermaid fence, with a finding that says to draw it
 as a `figure` fence), when a built page holds fewer mermaid `<pre>` elements
 than its source has `mermaid` fences, or when a `figure` fence did not become
 a `figure.praetor-figure` whose images resolve under the site to SVGs that
@@ -590,8 +607,8 @@ renderer, or when an evidence anchor's file or symbol is gone.
 `make docs-figures-check` (part of `make verify-all`) runs the figure engine's
 tests, among them `tools/figures/checks.test.mjs`, which replays the checks'
 fixtures in both directions and asserts the diagram kind each configuration
-enables (figures only at the root, Mermaid only in the preset), so adding the
-mermaid fence back to the root site or dropping the figures hook fails without
+enables (figures only, at the root and in the preset), so adding the
+mermaid fence back to either site or dropping the figures hook fails without
 a site build. It also runs the type check and rebuilds the committed player in
 `tools/figures/dist/` from the lock and compares it byte for byte within its
 size budget (`node tools/figures/bundle.mjs --check`). The managed
@@ -601,9 +618,13 @@ byte with the committed files (`node tools/figures/build.mjs check`, which
 needs no npm package) and runs `sources`.
 `make docs-diagrams-test` (also part of `make verify-all`) tests the MkDocs
 hook, the one Python part of the figure engine, with
-`tools/figures/test_mkdocs_hook.py`. The Pages workflow also runs the Chromium smoke test, which
+`tools/figures/test_mkdocs_hook.py`. The Pages workflow and the `docs-presets`
+job also run the Chromium smoke test (`tools/figures/smoke.mjs`), which
 fails when a figure does not mount the player, when autoplay does not advance
-a figure's active step, or when a figure shows no packet.
+a figure's active step, or when a figure shows no packet. It blocks every
+request to another origin and ignores the console errors those blocked
+requests raise, so a theme's repository widget or a web font never decides
+the result.
 
 Both sites share one JSON-LD template, `docs/presets/mkdocs/overrides/main.html`,
 which reads the author and repository from the rendering site's `mkdocs.yml`

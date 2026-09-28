@@ -70,16 +70,18 @@ unedited copy. The family holds at most 64 earlier texts; a React bump costs two
 `dist/player.js` and one for `dist/THIRD-PARTY-LICENSES.txt`, and an esbuild bump two, one for
 each bundle under `dist/`.
 
-## Mermaid is retired on the root site
+## Mermaid is retired
 
 Every diagram the root site builds is a figure, the generated wiki pages included, so the root
 `mkdocs.yml` declares no mermaid fence. A Mermaid fence on a page the root site builds fails
 `node tools/figures/build.mjs sources` and `site`, and the finding says to draw it as a `figure`
-fence instead. The one exception is the adopter preset: `docs/presets/mkdocs/` builds its own
-`docs/` with its own `mkdocs.yml`, keeps Mermaid, and needs no Node to build. The root
-`mkdocs.yml` excludes that directory (`exclude_docs`), and the checks skip it too. The
+fence instead. The adopter preset, `docs/presets/mkdocs/`, declares no mermaid fence either: its
+`mkdocs.yml` lists the figure hook, and its example page draws the `site-build` figure, whose spec
+and outputs live in the preset. It builds its own `docs/` in a repository adopted with
+`docs:seo-portal`, so the root `mkdocs.yml` excludes that directory (`exclude_docs`), and the
+root checks skip it too. The
 [documentation governance guide](documentation-governance.md#site-build-and-diagrams) covers
-which configuration enables which kind.
+which configuration enables which kind and how CI builds the preset.
 
 ## Add a figure
 

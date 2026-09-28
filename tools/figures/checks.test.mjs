@@ -53,13 +53,13 @@ const mermaidCount = (text) => fences(text, 'mermaid').length;
 // Configuration
 // ---------------------------------------------------------------------------------------------
 
-test('the root site enables figures only and the preset Mermaid only', () => {
+test('the root site and the MkDocs preset enable figures only; neither declares the mermaid fence', () => {
   const site = readFileSync(join(ROOT, 'mkdocs.yml'), 'utf8');
   const preset = readFileSync(join(ROOT, 'docs/presets/mkdocs/mkdocs.yml'), 'utf8');
-  assert.equal(configError(preset), null);
   assert.match(configError(site), /no custom fence/);
+  assert.match(configError(preset), /no custom fence/);
   assert.deepEqual([...enabledKinds(site)], ['figure']);
-  assert.deepEqual([...enabledKinds(preset)], ['mermaid']);
+  assert.deepEqual([...enabledKinds(preset)], ['figure']);
   assert.deepEqual([...enabledKinds(FIGURES_ONLY)], ['figure']);
 });
 

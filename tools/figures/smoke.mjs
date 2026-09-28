@@ -12,6 +12,11 @@
 // one of its scenario tabs; and once under prefers-reduced-motion, where every figure must mount
 // and no packet may show. A page error or a console error fails the run.
 //
+// The figures load from the site's own origin, so every request to another origin is blocked and
+// a console error that another origin raises does not count (`onSite`): a theme's
+// repository widget asking api.github.com about a placeholder repository, or a web font, neither
+// fails the run nor reaches the network.
+//
 // Without an installed Chromium the run exits 0 and says it skipped (HISS-21), unless
 // --require-browser is given, as the Pages workflow does.
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
@@ -89,6 +94,20 @@ const playerStates = () =>
     return { slug, tabs: tabs.length, selected, progress: scale ? Number(scale[1]) : Number.NaN, packets };
   });
 
+/**
+ * Whether `url` belongs to the served site: it is on `origin`'s origin, or it is empty or does not
+ * parse, so a console error without a usable source still counts. The run blocks every request for
+ * which this is false, and a console error whose source it is false for is that blocked request.
+ */
+export function onSite(url, origin) {
+  if (!url) return true;
+  try {
+    return new URL(url).origin === new URL(origin).origin;
+  } catch {
+    return true;
+  }
+}
+
 /** Whether a player's active step advanced between two readings: another tab, or more progress. */
 export function stepAdvanced(first, now) {
   if (!first || !now || first.selected === -1 || now.selected === -1) return false;
@@ -158,7 +177,8 @@ async function checkPage(context, origin, path, reduced) {
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (error) => errors.push(`page error: ${error.message}`));
-  page.on('console', (message) => message.type() === 'error' && errors.push(`console error: ${message.text()}`));
+  page.on('console', (message) => message.type() === 'error' && onSite(message.location().url, origin) &&
+    errors.push(`console error: ${message.text()}`));
   try {
     await page.goto(origin + path, { waitUntil: 'load', timeout: PAGE_TIMEOUT_MS });
     const expected = await page.locator('figure.praetor-figure').count();
@@ -201,6 +221,7 @@ async function smoke(site, base, requireBrowser) {
   try {
     for (const reduced of [false, true]) {
       const context = await browser.newContext({ reducedMotion: reduced ? 'reduce' : 'no-preference' });
+      await context.route((url) => !onSite(url.href, origin), (route) => route.abort('blockedbyclient'));
       for (const path of pages) errors.push(...(await checkPage(context, origin, path, reduced)));
       await context.close();
     }

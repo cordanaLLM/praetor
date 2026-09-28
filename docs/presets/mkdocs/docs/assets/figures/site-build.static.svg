@@ -1,0 +1,41 @@
+<svg role="img" aria-labelledby="figure-title figure-desc" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="781.8" height="305" viewBox="0 0 781.8 305" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+<title id="figure-title">Site Build</title>
+<desc id="figure-desc">A committed figure and a page with its fence pass through the figure hook and the theme override into site/.</desc>
+<!-- interfig (c) 2025 Vectorize AI, Inc. MIT https://github.com/vectorize-io/hindsight/tree/ccfe85b4851957ac2adf88b4a9ddf9668b2882f1/hindsight-interfig -->
+<metadata id="figure-spec"><![CDATA[{"props":{"layout":{"direction":"row","gap":56,"align":"center","children":[{"direction":"column","gap":28,"children":[{"id":"spec","label":"docs/figures/site-build.ts","sub":"figure spec","shape":"store"},{"id":"figure","label":"docs/assets/figures/","sub":"two SVGs and a JSON file","shape":"store"},{"id":"page","label":"docs/index.md","sub":"page with a figure fence","shape":"store"}]},{"id":"hook","label":"Figure hook","sub":"mkdocs_hook.py"},{"id":"theme","label":"Theme override","sub":"overrides/main.html"},{"id":"site","label":"site/","sub":"built pages","shape":"store"}]},"edges":[{"from":"spec","to":"figure","label":"build"},{"from":"figure","to":"hook","label":"markup"},{"from":"page","to":"hook","label":"fence"},{"from":"hook","to":"theme","label":"HTML"},{"from":"theme","to":"site","label":"page"}],"steps":[{"label":"render","caption":"The figure is rendered once and committed with its spec.","flow":[{"edges":"spec->figure","say":"node tools/figures/build.mjs build writes site-build.svg, site-build.static.svg and site-build.json."}]},{"label":"build","caption":"mkdocs build turns each page into a site page.","flow":[{"edges":"page->hook","say":"The hook, listed under hooks in mkdocs.yml, finds the fence that names site-build."},{"edges":"figure->hook","say":"It replaces the fence with the markup recorded in site-build.json."},{"edges":"hook->theme","say":"MkDocs renders the page, and the theme override adds the JSON-LD head.","show":{"theme":[{"tag":"JSON-LD","tone":"green","text":"TechArticle","meta":"every page"},{"tag":"JSON-LD","tone":"green","text":"SoftwareSourceCode","meta":"with a language set"}]}},{"edges":"theme->site","say":"MkDocs writes the page, the figure stylesheet and the player files to site/."}]}]}}]]></metadata>
+<style>
+svg { --accent:#0074d9; --fg:#1c1e21; --muted:#606770; --bg:#ffffff; --surface:#f5f7fa; --border:#d0d7de; --card-on:#eef5fd; }
+@media (prefers-color-scheme: dark) { svg { --accent:#3396e8; --fg:#e3e3e3; --muted:#9aa0a6; --bg:#1b1b1d; --surface:#242526; --border:#3a3b3c; --card-on:#1d2733; } }
+.label { fill: var(--fg); font-size: 14px; font-weight: 500; text-anchor: middle; }
+.sub { fill: var(--muted); font-size: 12px; text-anchor: middle; }
+.frame { fill: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .04em; }
+.edgelabel { fill: var(--muted); font-size: 11px; text-anchor: middle; font-family: ui-monospace, Menlo, monospace; }
+.row { fill: var(--fg); font-size: 11px; }
+.row.mono { font-size: 10.5px; font-family: ui-monospace, Menlo, monospace; }
+.muted { fill: var(--muted); }
+.tag { font-size: 9px; font-weight: 600; letter-spacing: .03em; text-anchor: middle; }
+.mark { fill: var(--accent); font-size: 11px; font-weight: 600; text-anchor: end; }
+.chip { fill: #fff; font-size: 11.5px; text-anchor: middle; }
+.steplabel { fill: var(--fg); font-size: 13px; font-weight: 600; text-anchor: middle; font-family: ui-monospace, Menlo, monospace; }
+.caption { fill: var(--muted); font-size: 13.5px; text-anchor: middle; }
+
+</style>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9 z" fill="var(--muted)"/></marker></defs>
+<rect width="100%" height="100%" fill="var(--bg)"/>
+<g transform="translate(0 0)">
+<path d="M24 36 a 95 12 0 0 1 190 0 v 43 a 95 12 0 0 1 -190 0 z" fill="var(--bg)" stroke="var(--border)"/><path d="M24 36 a 95 12 0 0 0 190 0" fill="none" stroke="var(--border)"/><text x="119" y="61" class="label">docs/figures/site-build.ts</text><text x="119" y="76" class="sub">figure spec</text>
+<path d="M26.7 131 a 92.3 12 0 0 1 184.6 0 v 43 a 92.3 12 0 0 1 -184.6 0 z" fill="var(--bg)" stroke="var(--border)"/><path d="M26.7 131 a 92.3 12 0 0 0 184.6 0" fill="none" stroke="var(--border)"/><text x="119" y="156" class="label">docs/assets/figures/</text><text x="119" y="171" class="sub">two SVGs and a JSON file</text>
+<path d="M26.7 226 a 92.3 12 0 0 1 184.6 0 v 43 a 92.3 12 0 0 1 -184.6 0 z" fill="var(--bg)" stroke="var(--border)"/><path d="M26.7 226 a 92.3 12 0 0 0 184.6 0" fill="none" stroke="var(--border)"/><text x="119" y="251" class="label">docs/index.md</text><text x="119" y="266" class="sub">page with a figure fence</text>
+<rect x="270" y="126" width="121" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="330.5" y="150.5" class="label">Figure hook</text><text x="330.5" y="165.5" class="sub">mkdocs_hook.py</text>
+<rect x="447" y="126" width="152.8" height="53" rx="10" fill="var(--bg)" stroke="var(--border)"/><text x="523.5" y="150.5" class="label">Theme override</text><text x="523.5" y="165.5" class="sub">overrides/main.html</text>
+<path d="M655.9 131 a 51 12 0 0 1 102 0 v 43 a 51 12 0 0 1 -102 0 z" fill="var(--bg)" stroke="var(--border)"/><path d="M655.9 131 a 51 12 0 0 0 102 0" fill="none" stroke="var(--border)"/><text x="706.9" y="156" class="label">site/</text><text x="706.9" y="171" class="sub">built pages</text>
+<path id="p-spec-&gt;figure" d="M 119 91 C 119 105, 119 105, 119 119" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/><rect x="97.4" y="96" width="43.2" height="18" rx="9" fill="var(--bg)" stroke="var(--border)"/><text x="119" y="109" class="edgelabel">build</text>
+<path id="p-figure-&gt;hook" d="M 211.32 152.5 C 240.66 152.5, 240.66 143.66666666666666, 270 143.66666666666666" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/><rect x="216.2" y="139.1" width="49" height="18" rx="9" fill="var(--bg)" stroke="var(--border)"/><text x="240.7" y="152.1" class="edgelabel">markup</text>
+<path id="p-page-&gt;hook" d="M 211.32 247.5 C 240.66 247.5, 240.66 161.33333333333331, 270 161.33333333333331" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/><rect x="219.1" y="195.4" width="43.2" height="18" rx="9" fill="var(--bg)" stroke="var(--border)"/><text x="240.7" y="208.4" class="edgelabel">fence</text>
+<path id="p-hook-&gt;theme" d="M 391.04 152.5 C 419.04 152.5, 419.04 152.5, 447.04 152.5" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/><rect x="400.4" y="143.5" width="37.3" height="18" rx="9" fill="var(--bg)" stroke="var(--border)"/><text x="419" y="156.5" class="edgelabel">HTML</text>
+<path id="p-theme-&gt;site" d="M 599.88 152.5 C 627.88 152.5, 627.88 152.5, 655.88 152.5" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)"/><rect x="609.2" y="143.5" width="37.3" height="18" rx="9" fill="var(--bg)" stroke="var(--border)"/><text x="627.9" y="156.5" class="edgelabel">page</text>
+
+</g>
+
+
+</svg>

@@ -1,0 +1,60 @@
+{
+  "slug": "site-build",
+  "title": "Site Build",
+  "alt": "A committed figure and a page with its fence pass through the figure hook and the theme override into site/.",
+  "text": [
+    "Boxes: docs/figures/site-build.ts (figure spec), docs/assets/figures/ (two SVGs and a JSON file), docs/index.md (page with a figure fence), Figure hook (mkdocs_hook.py), Theme override (overrides/main.html), site/ (built pages).",
+    "docs/figures/site-build.ts → docs/assets/figures/ (build) → Figure hook (markup).",
+    "docs/index.md → Figure hook (fence) → Theme override (HTML) → site/ (page).",
+    "Scenario 1, render: The figure is rendered once and committed with its spec. node tools/figures/build.mjs build writes site-build.svg, site-build.static.svg and site-build.json.",
+    "Scenario 2, build: mkdocs build turns each page into a site page. The hook, listed under hooks in mkdocs.yml, finds the fence that names site-build. It replaces the fence with the markup recorded in site-build.json. MkDocs renders the page, and the theme override adds the JSON-LD head. MkDocs writes the page, the figure stylesheet and the player files to site/.",
+    "Replace this example with a figure of your own code: its evidence anchors name the files it was drawn from."
+  ],
+  "evidence": [
+    "mkdocs.yml:hooks",
+    "mkdocs.yml:exclude_docs",
+    "mkdocs.yml:custom_dir",
+    "docs/index.md:figure",
+    "overrides/main.html:TechArticle",
+    "overrides/main.html:SoftwareSourceCode"
+  ],
+  "spec_sha256": "3e8d263f9880b3b9a6cd8bafa298efafb364c3232cb384c2eff83efe5aa9d771",
+  "engine": {
+    "commit": "ccfe85b4851957ac2adf88b4a9ddf9668b2882f1",
+    "sha256": "6a70b89b2d53c73fa79cb881a89e709622b2cfd2e8568b8e9797a328993dd0fc"
+  },
+  "svg_sha256": "37bedcb36f35c32f98787b30afd690d3ef36cb2d7dfc1c299b975e0927c99673",
+  "static_sha256": "a37902d788482a9503f50f29deedfc0b4de0278cf8b10c495d22b8f4c7294cfa",
+  "width": 795,
+  "height": 355,
+  "static_width": 782,
+  "static_height": 305,
+  "edges": [
+    {
+      "from": "docs/figures/site-build.ts",
+      "to": "docs/assets/figures/",
+      "label": "build"
+    },
+    {
+      "from": "docs/assets/figures/",
+      "to": "Figure hook",
+      "label": "markup"
+    },
+    {
+      "from": "docs/index.md",
+      "to": "Figure hook",
+      "label": "fence"
+    },
+    {
+      "from": "Figure hook",
+      "to": "Theme override",
+      "label": "HTML"
+    },
+    {
+      "from": "Theme override",
+      "to": "site/",
+      "label": "page"
+    }
+  ],
+  "html": "<figure class=\"praetor-figure\" id=\"fig-site-build\" data-figure=\"site-build\" aria-describedby=\"fig-site-build-text\">\n<picture>\n<source media=\"(prefers-reduced-motion: reduce)\" srcset=\"{{base}}/site-build.static.svg\" width=\"782\" height=\"305\">\n<img src=\"{{base}}/site-build.svg\" alt=\"A committed figure and a page with its fence pass through the figure hook and the theme override into site/.\" width=\"795\" height=\"355\" loading=\"lazy\">\n</picture>\n<figcaption>Site Build</figcaption>\n</figure>\n<p><a href=\"{{link}}\">Open the interactive figure</a></p>\n<details class=\"praetor-figure__text\" id=\"fig-site-build-text\"><summary>Text description</summary>\n<ul>\n<li>Boxes: docs/figures/site-build.ts (figure spec), docs/assets/figures/ (two SVGs and a JSON file), docs/index.md (page with a figure fence), Figure hook (mkdocs_hook.py), Theme override (overrides/main.html), site/ (built pages).</li>\n<li>docs/figures/site-build.ts → docs/assets/figures/ (build) → Figure hook (markup).</li>\n<li>docs/index.md → Figure hook (fence) → Theme override (HTML) → site/ (page).</li>\n<li>Scenario 1, render: The figure is rendered once and committed with its spec. node tools/figures/build.mjs build writes site-build.svg, site-build.static.svg and site-build.json.</li>\n<li>Scenario 2, build: mkdocs build turns each page into a site page. The hook, listed under hooks in mkdocs.yml, finds the fence that names site-build. It replaces the fence with the markup recorded in site-build.json. MkDocs renders the page, and the theme override adds the JSON-LD head. MkDocs writes the page, the figure stylesheet and the player files to site/.</li>\n<li>Replace this example with a figure of your own code: its evidence anchors name the files it was drawn from.</li>\n</ul>\n</details>"
+}

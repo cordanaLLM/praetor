@@ -278,28 +278,6 @@ func TestMarkdownTable_Boundary_EmptyPipeAndLineBreak(t *testing.T) {
 	}
 }
 
-// mermaidNode matches a node definition such as AGENTS["AGENTS.md\n(canonical source)"].
-var mermaidNode = regexp.MustCompile(`(\w+)\["([^"]*)"\]`)
-
-// mermaidEdge matches one "A --> B" edge; the source side may carry its label inline.
-var mermaidEdge = regexp.MustCompile(`^\s*(\w+)(?:\["[^"]*"\])?\s*-->\s*(\w+)`)
-
-// flowEdges returns every mermaid edge in content as {from, to}, each node resolved to the
-// first line of its label.
-func flowEdges(content string) [][2]string {
-	labels := make(map[string]string)
-	for _, m := range mermaidNode.FindAllStringSubmatch(content, -1) {
-		labels[m[1]] = strings.SplitN(m[2], `\n`, 2)[0]
-	}
-	var edges [][2]string
-	for _, line := range strings.Split(content, "\n") {
-		if m := mermaidEdge.FindStringSubmatch(line); m != nil {
-			edges = append(edges, [2]string{labels[m[1]], labels[m[2]]})
-		}
-	}
-	return edges
-}
-
 // compileContextFlowViolations names every way a diagram misstates the compile-context data
 // flow: AGENTS.md must feed compile-context, compile-context must feed the vendor files,
 // and no edge may produce AGENTS.md.
@@ -351,8 +329,8 @@ func figureEdges(t *testing.T, path string) [][2]string {
 // AGENTS.md (its --source default) and writes the vendor files. The generated Home page
 // draws the governance-lifecycle figure, so the check reads that figure's build output, the
 // edges with box labels in docs/assets/figures/governance-lifecycle.json, and the page must
-// name that figure. The preset landing page carried the same inverted diagram, keeps Mermaid,
-// and is held to the same rule.
+// name that figure. The MkDocs preset's example figure draws the preset's own files, not this
+// flow, so it is no input here (docs/adr/0016-figures-for-adopters.md, section 9).
 func TestHomeWiki_Positive_CompileContextFlowsFromAGENTS(t *testing.T) {
 	home := generateHomeWiki("cordanaLLM/praetor", hisscatalog.Rules()).Content
 	if !strings.Contains(home, figureFence("governance-lifecycle")) {
@@ -361,23 +339,18 @@ func TestHomeWiki_Positive_CompileContextFlowsFromAGENTS(t *testing.T) {
 	if got := compileContextFlowViolations(figureEdges(t, filepath.Join("..", "..", "docs", "assets", "figures", "governance-lifecycle.json"))); len(got) != 0 {
 		t.Errorf("governance-lifecycle figure diagram: %v", got)
 	}
-	preset, err := os.ReadFile(filepath.Join("..", "..", "docs", "presets", "mkdocs", "docs", "index.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := compileContextFlowViolations(flowEdges(string(preset))); len(got) != 0 {
-		t.Errorf("mkdocs preset index diagram: %v", got)
-	}
 }
 
 // TestHomeWiki_Negative_RejectsManifestToAGENTSFlow replays the diagram Home.md shipped
-// before the fix, .standards.yaml -> compile-context -> AGENTS.md, through the same check.
+// before the fix, .standards.yaml -> compile-context -> AGENTS.md -> Verification Cascade, as
+// its three edges between box labels, through the same check.
 func TestHomeWiki_Negative_RejectsManifestToAGENTSFlow(t *testing.T) {
-	old := "```mermaid\nflowchart LR\n" +
-		`    MANIFEST[".standards.yaml"] --> TRANSPILER["praetorctl compile-context"]` + "\n" +
-		`    TRANSPILER --> AGENTS["AGENTS.md\n(Canonical Truth)"]` + "\n" +
-		`    AGENTS --> GATES["Verification Cascade"]` + "\n```\n"
-	got := compileContextFlowViolations(flowEdges(old))
+	old := [][2]string{
+		{".standards.yaml", "praetorctl compile-context"},
+		{"praetorctl compile-context", "AGENTS.md"},
+		{"AGENTS.md", "Verification Cascade"},
+	}
+	got := compileContextFlowViolations(old)
 	want := []string{
 		"praetorctl compile-context -> AGENTS.md makes AGENTS.md an output",
 		"AGENTS.md does not feed compile-context",

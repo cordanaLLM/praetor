@@ -12,9 +12,9 @@ site_author: Lusoris
 # docs/figures/ holds the TypeScript figure specs. tools/figures/build.mjs turns them into the
 # committed SVG and JSON under docs/assets/figures/; the specs themselves are not published.
 #
-# docs/presets/mkdocs/docs/ is the adopter preset's own docs_dir: its mkdocs.yml builds it (CI
-# docs-presets job) and keeps Mermaid, which this site no longer renders. The preset's README
-# stays in the navigation. The figure checks (tools/figures/checks.mjs) read this list, so the root
+# docs/presets/mkdocs/docs/ is the adopter preset's own docs_dir: its mkdocs.yml builds it, with its
+# own example figure, in a repository adopted with docs:seo-portal (CI docs-presets job). The
+# preset's README stays in the navigation. The figure checks (tools/figures/checks.mjs) read this list, so the root
 # checks skip the excluded pages exactly as MkDocs does.
 exclude_docs: |
   presets/mkdocs/overrides/

@@ -108,6 +108,12 @@ editors/jetbrains/inspectionProfiles/standards.xml text eol=lf
 #                      the fixtures, so the rule could never be pinned at all.
 .config/hiss/testdata/**/crlf-* -text whitespace=cr-at-eol
 
+# The MkDocs preset's example figure becomes an adopter's docs/figures/ and docs/assets/figures/
+# once the preset is copied into a repository root, and its JSON binds the same hashes as the
+# figures in the managed block below, so it keeps the same LF rule on every platform.
+docs/presets/mkdocs/docs/figures/*.ts text eol=lf
+docs/presets/mkdocs/docs/assets/figures/* text eol=lf
+
 # The figure engine's rules are the managed attribute block at the end of this file, which
 # `praetorctl adopt` writes for docs:seo-portal in every adopting repository
 # (internal/adopt/gitattributes.go, rules from Attributes in tools/figures/assets.go):
