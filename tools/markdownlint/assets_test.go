@@ -440,10 +440,12 @@ func TestPriorDigestsBoundary(t *testing.T) {
 	if err != nil || len(entries) == 0 {
 		t.Fatalf("no earlier texts: %v", err)
 	}
-	data, err := os.ReadFile(filepath.Join(priorTextDir, entries[0].Name()))
+	raw, err := os.ReadFile(filepath.Join(priorTextDir, entries[0].Name()))
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A Windows checkout may convert testdata to CRLF; the fixtures below start from LF.
+	data := []byte(strings.ReplaceAll(string(raw), "\r\n", "\n"))
 	digests := PriorDigests()
 	if _, known := digests[lfDigest(append(data, '\n'))]; known {
 		t.Fatal("an earlier text with one more byte is listed")

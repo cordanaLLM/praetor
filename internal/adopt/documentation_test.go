@@ -127,17 +127,20 @@ func TestAdoptionDocumentationGateRefreshesPriorTexts(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, entry := range entries {
-		prior, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		raw, err := os.ReadFile(filepath.Join(dir, entry.Name()))
 		if err != nil {
 			t.Fatal(err)
 		}
+		// A Windows checkout may convert testdata to CRLF, which the refresh would keep; the
+		// LF text is refreshed to the exact LF canonical bytes assertDocumentationAssets reads.
+		prior := strings.ReplaceAll(string(raw), "\r\n", "\n")
 		// tools/markdownlint's TestPriorDigestsReproduce holds each text to the path it maps to.
-		sum := sha256.Sum256([]byte(strings.ReplaceAll(string(prior), "\r\n", "\n")))
+		sum := sha256.Sum256([]byte(prior))
 		rel, known := markdownassets.PriorDigests()[hex.EncodeToString(sum[:])]
 		if !known {
 			t.Fatalf("%s is no listed earlier text", entry.Name())
 		}
-		mustWrite(t, filepath.Join(root, filepath.FromSlash(rel)), string(prior))
+		mustWrite(t, filepath.Join(root, filepath.FromSlash(rel)), prior)
 		report, err := Adopt(t.Context(), opts)
 		if err != nil {
 			t.Fatalf("%s: %v", entry.Name(), err)

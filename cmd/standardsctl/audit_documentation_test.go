@@ -110,10 +110,12 @@ func TestAuditDocumentationGateNegative(t *testing.T) {
 // adoption, which refreshes it, where an edited copy names --force; with the facet disabled
 // the earlier text still counts as a retained Praetor asset.
 func TestAuditDocumentationGatePriorText(t *testing.T) {
-	prior, err := os.ReadFile(filepath.Join("..", "..", markdownassets.Directory, "testdata", "prior", "praetor-docs.ubuntu-26.04-v4.yml"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", markdownassets.Directory, "testdata", "prior", "praetor-docs.ubuntu-26.04-v4.yml"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A Windows checkout may convert testdata to CRLF; the edited case must not mix endings.
+	prior := []byte(strings.ReplaceAll(string(raw), "\r\n", "\n"))
 	enabled := &config.Manifest{Facets: []string{"docs:seo-portal"}}
 	for text, want := range map[string]string{
 		string(prior):                                   "holds an earlier Praetor text; run 'praetorctl adopt' to refresh it",
