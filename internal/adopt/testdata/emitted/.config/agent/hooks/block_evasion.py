@@ -42,27 +42,31 @@ DEV_01_REFUSAL = (
 )
 
 RULES = [
-    (r"--no-verify\b", HISS_REFUSAL),
+    (r"--no-v(e(r(i(f(y)?)?)?)?)?\b", HISS_REFUSAL),
     (
         r"\bgit([ \t]+-[Cc][ \t]+(\x22[^\x22]*\x22|\x27[^\x27]*\x27|[^ \t\n\x22\x27][^"
         r" \t\n]*)|[ \t]+(--[A-Za-z][-A-Za-z]*|-[ABD-Zabd-z][-A-Za-z]*|-[Cc][A-Za-z]+)"
-        r"(=[^ \t\n]+)?)*\s+commit\b[^\n]*\s-[aeiopqsvz]*n",
+        r"(=[^ \t\n]+)?)*\s+(commit\b[^\n]*\s-[aeiopqsvz]*|am\b[^\n]*\s-[3cikmqsu]*)n",
         HISS_REFUSAL,
     ),
     (r"LEFTHOOK=[\x22\x27]?(0|false)\b", HISS_REFUSAL),
     (r"SKIP=.*git", HISS_REFUSAL),
     (r"(?i:core\.hookspath)(\s*=|\s+[\x22\x27]?[/~.$A-Za-z_\\])", HISS_REFUSAL),
     (
-        r"\b(rm|rmdir|unlink|mv|cp|ln|chmod|chown|chattr|truncate|shred|tee)\b[^\n]*\."
-        r"git[/\\]hooks",
+        r"\b(?i:rm|rmdir|unlink|mv|cp|ln|chmod|chown|chattr|truncate|shred|tee|del|era"
+        r"se|rd|ri|remove-item|move|move-item|ren|rename|rename-item|copy|copy-item|se"
+        r"t-content|add-content|out-file|icacls|attrib)\b[^\n]*(?i:\.git[/\\]hooks)",
         HISS_REFUSAL,
     ),
     (
-        r"\b(sed|perl)\b[^\n]*\s(-[A-Za-z]*i|--in-place)[^\n]*\.git[/\\]hooks",
+        r"\b(sed|perl)\b[^\n]*\s(-[A-Za-z]*i|--in-place)[^\n]*(?i:\.git[/\\]hooks)",
         HISS_REFUSAL,
     ),
-    (r"\bfind\b[^\n]*\.git[/\\]hooks[^\n]*\s-(delete|exec|execdir|ok)\b", HISS_REFUSAL),
-    (r">\s*[\x22\x27]?[^ \t\n\x22\x27]*\.git[/\\]hooks", HISS_REFUSAL),
+    (
+        r"\bfind\b[^\n]*(?i:\.git[/\\]hooks)[^\n]*\s-(delete|exec|execdir|ok)\b",
+        HISS_REFUSAL,
+    ),
+    (r">\s*[\x22\x27]?[^ \t\n\x22\x27]*(?i:\.git[/\\]hooks)", HISS_REFUSAL),
     (r"\blefthook\s+uninstall\b", HISS_REFUSAL),
     (
         r"(?i)(standardsctl|praetorctl)\s+(adopt|conform|bootstrap|needs\s+(scan|repor"

@@ -1,0 +1,3 @@
+type: fixed
+title: The agent pre-tool guard refuses every abbreviation Git resolves to its hook-skip option, git am's short skip flag, and cmd.exe or PowerShell commands (del, erase, rd, Remove-Item, Set-Content, icacls and more) that remove or rewrite the hooks directory in any letter case
+breaking: false

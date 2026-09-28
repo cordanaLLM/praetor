@@ -460,17 +460,21 @@ the checkout so that it carries the guard's copy too.
 The rules are the ones of the Python guard, ported one to one. They judge the command
 text. A command is denied when it
 
-- passes the Git option that skips the commit or push hooks, in its long form anywhere or
-  in its short form on a commit: alone, inside a bundle of argument-free flags (`-an`,
-  `-sn`, `-name`; gitcli(7) bundles short options), and after Git's global options
-  (`git -C dir commit`, `git -c key=value commit`);
+- passes the Git option that skips the commit or push hooks, in its long form anywhere,
+  including every abbreviation Git resolves to it (Git accepts an unambiguous prefix of a
+  long option, gitcli(7)), or in its short form on a commit or `git am`: alone, inside a
+  bundle of argument-free flags (`-an`, `-sn`, `-name`, `-3sn`; gitcli(7) bundles short
+  options), and after Git's global options (`git -C dir commit`, `git -c key=value commit`);
 - disables Lefthook inline for one command (`0` or `false`, the two values Lefthook
   honours), or sets the skip variable in front of a Git call;
 - sets `core.hooksPath` to anything, with `=` or a space-separated value, per command or
   in config (reading it stays allowed);
 - removes, moves, copies over, rewrites in place, re-permissions or redirects into the
-  repository's hooks directory, in either path separator, or runs `lefthook uninstall`
-  (listing, printing or searching the directory stays allowed);
+  repository's hooks directory, in either path separator and any letter case, with a Unix,
+  cmd.exe or PowerShell command (`del`, `erase`, `rd`, `Remove-Item` and its `ri` alias,
+  `move`, `ren`, `copy`, `Set-Content`, `Out-File`, `icacls`, `attrib`), also inside a
+  `cmd /c` or `powershell -c` wrapper, or runs `lefthook uninstall` (listing, printing or
+  searching the directory stays allowed);
 - runs `adopt`, `conform`, `bootstrap` or a `needs` scan, report, migration or epic
   against the workstation dev root instead of a leaf repository (DEV-01).
 
