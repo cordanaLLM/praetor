@@ -365,8 +365,10 @@ const (
 const maxMakefileLineBytes = 8192
 
 // makefileReferenceWidth returns the byte length of the variable reference text opens with, so the
-// colon and the "=" inside "$(SRCS:.c=.o)" are not read as operators. "$x" and "$$" span two
-// bytes; nesting is not tracked, so the first closing bracket ends the reference.
+// colon and the "=" inside "$(SRCS:.c=.o)" or "$(call rule,$(P)x,A=b)" are not read as operators.
+// "$x" and "$$" span two bytes. Like GNU Make 4.4.1 it counts nested brackets of the kind the
+// reference opens with: "$(a $(b),c=d)" ends at its last ")", a "}" inside "$(" is plain text, and
+// a reference that is never closed spans the rest of text.
 func makefileReferenceWidth(text string) int {
 	if len(text) < 2 {
 		return 1
@@ -380,8 +382,17 @@ func makefileReferenceWidth(text string) int {
 	default:
 		return 2
 	}
-	if end := strings.IndexByte(text, closer); end > 0 {
-		return end + 1
+	depth := 0
+	for end := 1; end < len(text) && end < maxMakefileLineBytes; end++ {
+		switch text[end] {
+		case text[1]:
+			depth++
+		case closer:
+			depth--
+		}
+		if depth == 0 {
+			return end + 1
+		}
 	}
 	return len(text)
 }

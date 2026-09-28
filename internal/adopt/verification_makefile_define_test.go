@@ -12,13 +12,11 @@ import (
 // A define only binds a variable; Make turns its body into rules when something parses the
 // expansion as makefile syntax. Every row was measured against GNU Make 4.4.1 with "make -n
 // docs-lint": the accepted rows answer "No rule to make target 'docs-lint'", the refused rows
-// either declare the target or leave the file to Make (include, an unterminated define). The one
-// deliberate over-refusal is info-bare-expansion: Make answers it with "No rule", but the reader
-// does not evaluate functions, so any bare expansion beside a define counts.
-var makefileDefineOwnershipRows = map[string]struct {
-	makefile string
-	refused  bool
-}{
+// either declare the target or leave the file to Make (include, an unterminated define). The reader
+// evaluates no function except to know that info, warning and error expand to nothing, so any other
+// bare expansion beside a define counts, $(if ...) included; "$(info)" with no blank after the
+// name references a variable named info, which info-variable shows can hold the define.
+var makefileDefineOwnershipRows = map[string]docsLintOwnershipRow{
 	"called-in-recipe":     {calledDefineMakefile, false},
 	"body-names-target":    {"define docs-rule\ndocs-lint:\n\t@echo template\nendef\n\nall:\n\t@echo all\n", false},
 	"override-define-body": {"override define docs-rule\ndocs-lint: ; @echo template\nendef\n", false},
@@ -32,7 +30,11 @@ var makefileDefineOwnershipRows = map[string]struct {
 	"brace-eval-expanded":  {"define docs-rule\ndocs-lint: ; @echo template\nendef\n${eval ${docs-rule}}\n", true},
 	"bare-expansion":       {"define docs-rule\ndocs-lint: ; @echo template\nendef\n$(docs-rule)\n", true},
 	"bare-call":            {"define docs-rule\ndocs-lint: ; @echo $(1)\nendef\n$(call docs-rule,template)\n", true},
-	"info-bare-expansion":  {"define docs-rule\n@echo template\nendef\n$(info building)\n", true},
+	"bare-call-nested-arg": {"define docs-rule\n$(1): ; @echo template $(2)\nendef\n$(call docs-rule,$(P)docs-lint,FOO=bar)\n", true},
+	"if-nested-arg":        {"define docs-rule\ndocs-lint: ; @echo template\nendef\n$(if $(A),A=B,$(docs-rule))\n", true},
+	"info-variable":        {"define docs-rule\ndocs-lint: ; @echo template\nendef\ninfo = $(docs-rule)\n$(info)\n", true},
+	"info-bare-expansion":  {"define docs-rule\n@echo template\nendef\n$(info building)\n", false},
+	"info-prints-define":   {"define docs-rule\ndocs-lint: ; @echo template\nendef\n$(info $(docs-rule))\n", false},
 	"eval-in-body":         {"define docs-rule\n$(eval docs-lint: ; @echo template)\nendef\n", true},
 	"include":              {"define docs-rule\n@echo template\nendef\n-include docs.mk\n", true},
 	"unterminated":         {"define docs-rule\n@echo template\n", true},
@@ -54,7 +56,20 @@ const calledDefineMakefile = "define require-tool\n" +
 	"\t@shellcheck scripts/*.sh\n"
 
 func TestMakefileDefineOwnershipFollowsExpansion(t *testing.T) {
-	for name, tc := range makefileDefineOwnershipRows {
+	assertDocsLintOwnership(t, makefileDefineOwnershipRows)
+}
+
+// docsLintOwnershipRow is a Makefile and whether adoption must leave docs-lint ownership to Make.
+type docsLintOwnershipRow struct {
+	makefile string
+	refused  bool
+}
+
+// assertDocsLintOwnership runs every row through the reader and through the documentation merge,
+// which must refuse exactly the rows the reader leaves to Make.
+func assertDocsLintOwnership(t *testing.T, rows map[string]docsLintOwnershipRow) {
+	t.Helper()
+	for name, tc := range rows {
 		t.Run(name, func(t *testing.T) {
 			if got := mayDefineTarget(tc.makefile, "docs-lint"); got != tc.refused {
 				t.Fatalf("mayDefineTarget(%q, docs-lint) = %v, want %v", tc.makefile, got, tc.refused)
@@ -65,6 +80,27 @@ func TestMakefileDefineOwnershipFollowsExpansion(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A top-level bare expansion is parsed as makefile syntax after Make expands it, so rule text in a
+// function argument declares a rule without any define. Measured against GNU Make 4.4.1 with "make
+// -n docs-lint": the refused rows declare docs-lint, the accepted rows answer "No rule to make
+// target 'docs-lint'" because info, warning and error expand to nothing and computed-assignment
+// binds a variable. Nesting decides: the colon sits inside a nested reference in the refused
+// nested and foreach rows and in the accepted error-inside-if and computed-assignment rows.
+var makefileBareExpansionRows = map[string]docsLintOwnershipRow{
+	"literal-rule":             {"$(if X,docs-lint: ; @echo template)\n", true},
+	"nested-literal-rule":      {"X = 1\n$(if $(X),docs-lint: ; @echo template)\n", true},
+	"brace-literal-rule":       {"X = 1\n${if ${X},docs-lint: ; @echo template}\n", true},
+	"foreach-literal-rule":     {"X = 1\n$(foreach t,docs-lint,$(if $(X),$(t): ; @echo template))\n", true},
+	"info-literal-rule":        {"$(info docs-lint: ; @echo template)\nall: ; @echo all\n", false},
+	"warning-tab-literal-rule": {"$(warning\tdocs-lint: ; @echo template)\nall: ; @echo all\n", false},
+	"error-inside-if":          {"V = 1\n$(if $(V),,$(error V: set it))\nall: ; @echo all\n", false},
+	"computed-assignment":      {"A = 1\n$(if $(A),docs-lint:c) = x\nall: ; @echo all\n", false},
+}
+
+func TestMakefileBareExpansionRuleText(t *testing.T) {
+	assertDocsLintOwnership(t, makefileBareExpansionRows)
 }
 
 // A define body is variable text: a rule line inside one declares nothing, while the same line
@@ -97,29 +133,47 @@ func TestMakefileDefineOwnershipGNUReplay(t *testing.T) {
 	if err != nil {
 		t.Skipf("make is not on PATH, so the replay cannot run; the table test covers the reader: %v", err)
 	}
-	for _, name := range []string{"called-in-recipe", "body-names-target", "nested-define-closed", "continued-assignment"} {
+	accepted := map[string]string{}
+	for _, name := range []string{"called-in-recipe", "body-names-target", "nested-define-closed", "continued-assignment", "info-prints-define"} {
+		accepted[name] = makefileDefineOwnershipRows[name].makefile
+	}
+	for _, name := range []string{"info-literal-rule", "warning-tab-literal-rule", "error-inside-if", "computed-assignment"} {
+		accepted[name] = makefileBareExpansionRows[name].makefile
+	}
+	for name, makefile := range accepted {
+		t.Run(name, func(t *testing.T) { replayAcceptedDocsLint(t, makePath, makefile) })
+	}
+	refused := map[string]string{}
+	for _, name := range []string{"eval-expanded", "brace-eval-expanded", "bare-expansion", "bare-call", "bare-call-nested-arg", "if-nested-arg", "info-variable"} {
+		refused[name] = makefileDefineOwnershipRows[name].makefile
+	}
+	for _, name := range []string{"literal-rule", "nested-literal-rule", "brace-literal-rule", "foreach-literal-rule"} {
+		refused[name] = makefileBareExpansionRows[name].makefile
+	}
+	for name, makefile := range refused {
 		t.Run(name, func(t *testing.T) {
-			makefile := makefileDefineOwnershipRows[name].makefile
-			if _, err := replayDocsLint(t, makePath, makefile); err == nil {
-				t.Fatal("GNU Make found a docs-lint rule the reader accepted as absent")
-			}
-			merged, err := mergeDocumentationMakefile(makefile, false)
-			if err != nil {
-				t.Fatal(err)
-			}
-			out, err := replayDocsLint(t, makePath, merged)
-			if err != nil || strings.Count(out, "node tools/markdownlint/verify.mjs") != 1 {
-				t.Fatalf("GNU Make did not select exactly one managed recipe: %q %v", out, err)
+			out, err := replayDocsLint(t, makePath, makefile)
+			if err != nil || !strings.Contains(out, "echo template") {
+				t.Fatalf("GNU Make did not expand the Makefile into a docs-lint rule: %q %v", out, err)
 			}
 		})
 	}
-	for _, name := range []string{"eval-expanded", "brace-eval-expanded", "bare-expansion", "bare-call"} {
-		t.Run(name, func(t *testing.T) {
-			out, err := replayDocsLint(t, makePath, makefileDefineOwnershipRows[name].makefile)
-			if err != nil || !strings.Contains(out, "echo template") {
-				t.Fatalf("GNU Make did not expand the define into a docs-lint rule: %q %v", out, err)
-			}
-		})
+}
+
+// replayAcceptedDocsLint checks an accepted Makefile both ways: GNU Make finds no docs-lint rule
+// before the merge and selects exactly one managed recipe after it.
+func replayAcceptedDocsLint(t *testing.T, makePath, makefile string) {
+	t.Helper()
+	if _, err := replayDocsLint(t, makePath, makefile); err == nil {
+		t.Fatal("GNU Make found a docs-lint rule the reader accepted as absent")
+	}
+	merged, err := mergeDocumentationMakefile(makefile, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := replayDocsLint(t, makePath, merged)
+	if err != nil || strings.Count(out, "node tools/markdownlint/verify.mjs") != 1 {
+		t.Fatalf("GNU Make did not select exactly one managed recipe: %q %v", out, err)
 	}
 }
 

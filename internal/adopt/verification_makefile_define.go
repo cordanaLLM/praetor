@@ -6,7 +6,13 @@ import "strings"
 // expansion as makefile syntax. Measured against GNU Make 4.4.1, three things do: an $(eval ...)
 // or ${eval ...} call, a top-level line that is a bare expansion such as "$(name)" or
 // "$(call name)", and an include that may hold either. A define used only through $(call ...) in a
-// recipe declares no target, so it leaves ownership to this reader instead of to Make.
+// recipe declares no target, so it leaves ownership to this reader instead of to Make. A bare
+// expansion needs no define to declare a rule: "$(if $(X),docs-lint: ; @echo x)" does, so rule text
+// in its arguments leaves ownership to Make as well.
+
+// makefileSilentFunctions are the functions whose expansion is always empty: info and warning
+// print their argument and error stops Make, so no call to them expands into a rule.
+var makefileSilentFunctions = []string{"info", "warning", "error"}
 
 // makefileDirectiveWords are the first words that make a line a directive rather than a rule, an
 // assignment or a bare expansion. Include forms are listed for completeness; makefileLineIsAmbiguous
@@ -106,7 +112,9 @@ func (s *makefileOwnershipScan) read(line string) bool {
 	}
 	switch makefileLineKind(trimmed) {
 	case makefileLineExpansion:
-		s.expands = true
+		expands, colon := makefileBareExpansion(trimmed)
+		s.expands = s.expands || expands
+		return colon
 	case makefileLineDecided:
 		s.carry = makefileContinues(line)
 	}
@@ -137,6 +145,63 @@ func makefileLineKind(line string) string {
 		return makefileLineExpansion
 	}
 	return makefileLinePlain
+}
+
+// makefileBareExpansion reads a line makefileLineKind reports as a bare expansion. expands reports a
+// reference outside the info, warning and error calls, which may expand to a define body; colon
+// reports a colon outside those calls, which the expansion may carry into a rule. The walk ends
+// where Make stops reading the line: at a comment or the ";" of an inline recipe.
+func makefileBareExpansion(line string) (expands, colon bool) {
+	for i := 0; i < len(line) && i < maxMakefileLineBytes; {
+		kind, width := makefileOperatorAt(line, i)
+		if kind == makefileEndToken {
+			break
+		}
+		if kind == makefileReferenceToken && makefileSilentCallWidth(line[i:]) == 0 {
+			expands = true
+			colon = colon || makefileReferenceHoldsColon(line[i:i+width])
+		}
+		i += width
+	}
+	return expands, colon
+}
+
+// makefileReferenceHoldsColon reports whether reference text holds a colon outside the info,
+// warning and error calls nested in it and outside an escaped "$$".
+func makefileReferenceHoldsColon(reference string) bool {
+	for i := 0; i < len(reference) && i < maxMakefileLineBytes; i += makefileColonScanStep(reference[i:]) {
+		if reference[i] == ':' {
+			return true
+		}
+	}
+	return false
+}
+
+// makefileColonScanStep returns how far the colon scan moves from the start of text: past an
+// escaped "$$" or a whole info, warning or error call, else one byte.
+func makefileColonScanStep(text string) int {
+	if strings.HasPrefix(text, "$$") {
+		return 2
+	}
+	if width := makefileSilentCallWidth(text); width > 0 {
+		return width
+	}
+	return 1
+}
+
+// makefileSilentCallWidth returns the byte length of the info, warning or error call text opens
+// with, and 0 when text opens with anything else. Make reads the name as a function only when a
+// blank follows it, so "$(info)" references a variable named info.
+func makefileSilentCallWidth(text string) int {
+	if !strings.HasPrefix(text, "$(") && !strings.HasPrefix(text, "${") {
+		return 0
+	}
+	for _, name := range makefileSilentFunctions {
+		if strings.HasPrefix(text[2:], name+" ") || strings.HasPrefix(text[2:], name+"\t") {
+			return makefileReferenceWidth(text)
+		}
+	}
+	return 0
 }
 
 // makefileContinues reports whether line ends in an odd run of backslashes, which joins the next
