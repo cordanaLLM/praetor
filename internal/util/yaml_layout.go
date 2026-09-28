@@ -19,7 +19,7 @@ const (
 	// maxFitYAMLLines bounds the lines FitYAMLLines rewrites (HISS-02); a longer text is
 	// returned unchanged.
 	maxFitYAMLLines = 1 << 16
-	// maxYAMLDocuments bounds the documents yamlEquivalent compares (HISS-02).
+	// maxYAMLDocuments bounds the documents YAMLEquivalent compares (HISS-02).
 	maxYAMLDocuments = 64
 )
 
@@ -53,7 +53,7 @@ func FitYAMLLines(data []byte, indent int) ([]byte, error) {
 		return data, nil
 	}
 	fitted := []byte(out.String())
-	if err := yamlEquivalent(data, fitted); err != nil {
+	if err := YAMLEquivalent(data, fitted); err != nil {
 		return nil, fmt.Errorf("util: fit YAML lines: %w", err)
 	}
 	return fitted, nil
@@ -77,22 +77,28 @@ func fitYAMLLine(line string, indent int) (string, bool) {
 	return fitted, true
 }
 
-// yamlEquivalent reports an error unless left and right hold the same documents with the same
-// decoded values.
-func yamlEquivalent(left, right []byte) error {
+// YAMLEquivalent reports an error unless left and right hold the same number of documents and
+// each pair decodes to the same value, so the two texts differ at most in layout: comments,
+// line breaks, quoting, indentation, document markers. A text that does not decode is an error.
+func YAMLEquivalent(left, right []byte) error {
 	leftDecoder := yaml.NewDecoder(bytes.NewReader(left))
 	rightDecoder := yaml.NewDecoder(bytes.NewReader(right))
-	for range maxYAMLDocuments {
+	// One pass per document and one more to reach the end of both texts.
+	for range maxYAMLDocuments + 1 {
 		var leftValue, rightValue any
 		leftErr, rightErr := leftDecoder.Decode(&leftValue), rightDecoder.Decode(&rightValue)
-		if errors.Is(leftErr, io.EOF) && errors.Is(rightErr, io.EOF) {
+		leftDone, rightDone := errors.Is(leftErr, io.EOF), errors.Is(rightErr, io.EOF)
+		if leftDone && rightDone {
 			return nil
+		}
+		if leftDone != rightDone {
+			return errors.New("the texts hold different numbers of YAML documents")
 		}
 		if err := errors.Join(leftErr, rightErr); err != nil {
 			return err
 		}
 		if !reflect.DeepEqual(leftValue, rightValue) {
-			return errors.New("the fitted document decodes to a different value")
+			return errors.New("the documents decode to different values")
 		}
 	}
 	return fmt.Errorf("more than %d YAML documents", maxYAMLDocuments)

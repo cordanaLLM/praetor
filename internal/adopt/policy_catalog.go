@@ -19,9 +19,10 @@ const maxAdoptPolicyFiles = 512
 
 // priorCatalogDigests are the SHA-256 digests of every .config/archetypes file Praetor shipped
 // before the catalog passed yamllint's default rules (BUG-782), keyed to the file. Each decodes
-// to exactly the values of its current text; only the layout moved. A repository whose lock
-// pins only these texts is re-pinned without --force (pinsEarlierCatalog), and a catalog file
-// holding one is replaced from the selected source (prepareCatalogWrites). testdata/
+// to exactly the values of its current text; only the layout moved. Membership alone never
+// authorizes a change: a text listed here is replaced without --force only by a source text
+// with exactly its values (isLayoutOnlySuccessor), both when the lock is re-pinned
+// (pinsEarlierCatalog) and when the file is rewritten (prepareCatalogWrites). testdata/
 // catalog-prior reproduces each digest (policy_catalog_prior_test.go).
 var priorCatalogDigests = map[string]string{
 	"0ef3ebf5423873d200e12ba405ca93b3064c57eedf9091852f2d69316dfb7c63": "facets/agent-sandboxed.yaml",
@@ -44,6 +45,13 @@ var priorCatalogDigests = map[string]string{
 	"6fb2c0dc63886be95afa1444850ae2c650ab946b83ae53bdaa1d8325f74431ea": "template-seed.yaml",
 	"4a406a9d957078d5082bc906ca58d74501ce43ee19b5e6123ace83d3511b4a36": "upstream-fork.yaml",
 	"22483af9e97cb2adb4cc024024ee54efb1d223e7f85858da05f05c17099dcae1": "web-package.yaml",
+}
+
+// isLayoutOnlySuccessor reports whether before is an unmodified earlier Praetor catalog text
+// (priorCatalogDigests) and after holds exactly its values, so replacing before with after
+// moves the catalog's layout and never a policy value.
+func isLayoutOnlySuccessor(before, after []byte) bool {
+	return isPriorRendering(before, priorCatalogDigests) && util.YAMLEquivalent(before, after) == nil
 }
 
 type catalogWrite struct {
@@ -97,8 +105,9 @@ func adoptionScanLimit(s *adoptSession) int {
 }
 
 // Inspect every destination before publishing any catalog entry. Force permits
-// explicit replacement, and an unmodified earlier Praetor text (priorCatalogDigests) is
-// replaced without it; otherwise differing user files are always preserved.
+// explicit replacement, and an unmodified earlier Praetor text is replaced without it by a
+// text holding exactly its values (isLayoutOnlySuccessor); otherwise differing user files are
+// always preserved.
 func prepareCatalogWrites(ctx context.Context, s *adoptSession, artifacts []config.PolicyArtifact) ([]catalogWrite, error) {
 	if len(artifacts) > maxAdoptPolicyFiles {
 		return nil, errors.New("adoption catalog exceeds 512 pinned files")
@@ -117,7 +126,7 @@ func prepareCatalogWrites(ctx context.Context, s *adoptSession, artifacts []conf
 		if err != nil {
 			return nil, err
 		}
-		if exists && !bytes.Equal(before, artifact.Content) && !s.opts.Force && !isPriorRendering(before, priorCatalogDigests) {
+		if exists && !bytes.Equal(before, artifact.Content) && !s.opts.Force && !isLayoutOnlySuccessor(before, artifact.Content) {
 			return nil, fmt.Errorf("pinned catalog destination differs: %s; inspect it before explicit forced adoption", artifact.RelativePath)
 		}
 		writes = append(writes, catalogWrite{artifact: artifact, path: path, before: before, exists: exists})

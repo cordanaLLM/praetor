@@ -30,10 +30,6 @@ type LockValidation struct {
 	Profiles int
 	Facets   int
 	Status   LockStatus
-	// Digests holds the content digest of every pinned profile, then every pinned facet, in
-	// lock order, as lowercase hexadecimal SHA-256 without the sha256: prefix. Adoption reads
-	// it to recognise a lock that pins only earlier Praetor catalog texts.
-	Digests []string
 }
 
 // Verified reports whether every declared entry was hashed against its catalog source.
@@ -124,12 +120,7 @@ func verifyLockSources(ctx context.Context, catalog string, lock *standardsLock,
 }
 
 func lockValidationResult(path string, lock *standardsLock, unverified int, requireSources bool) (*LockValidation, error) {
-	digests, err := pinnedDigests(lock)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
-	}
-	result := &LockValidation{Profiles: len(lock.Profiles), Facets: len(lock.Facets), Status: LockStatusVerified,
-		Digests: digests}
+	result := &LockValidation{Profiles: len(lock.Profiles), Facets: len(lock.Facets), Status: LockStatusVerified}
 	if unverified == 0 {
 		return result, nil
 	}

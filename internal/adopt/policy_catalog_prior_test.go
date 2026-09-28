@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -158,5 +159,82 @@ func TestAdoptDoesNotRepinAnEditedOrForeignCatalog(t *testing.T) {
 	foreign.opts.LockSourceRoot = currentCatalogSource(t, manifest)
 	if err := runLockAndCatalog(t, foreign); !errors.Is(err, config.ErrLockDigestMismatch) {
 		t.Errorf("a lock pinning texts Praetor never shipped must keep failing, got %v", err)
+	}
+}
+
+// changedCatalogSource is a source bundle holding the shipped framework and security:high texts
+// with the policy value old replaced by new in the file named by id.
+func changedCatalogSource(t *testing.T, manifest *config.Manifest, id, old, replacement string) string {
+	t.Helper()
+	bodies := catalogBodies(t,
+		filepath.Join(shippedCatalog, "framework.yaml"), filepath.Join(shippedCatalog, "facets", "security-high.yaml"))
+	changed := strings.Replace(bodies[id], old, replacement, 1)
+	if changed == bodies[id] {
+		t.Fatalf("%s holds no %q to change", id, old)
+	}
+	bodies[id] = changed
+	return newCatalogLockSource(t, manifest, bodies)
+}
+
+// Negative and boundary: a source that re-lays out an earlier catalog and also changes one
+// policy value, in the profile or in only one facet, is not a layout-only successor. Plain
+// re-adoption keeps refusing it and rewrites neither the lock nor any catalog file; a dry run
+// refuses it the same way. Only --force takes up a changed value.
+func TestAdoptDoesNotRepinAnEarlierCatalogToChangedValues(t *testing.T) {
+	cases := map[string][3]string{
+		"profile value": {"framework", "max_func_loc: 75", "max_func_loc: 400"},
+		"facet value":   {"security:high", "required_approving_reviewers: 2", "required_approving_reviewers: 0"},
+	}
+	for name, change := range cases {
+		t.Run(name, func(t *testing.T) {
+			s, manifest := earlierCatalogRepo(t)
+			before := snapshotTree(t, s.repoPath)
+			s.opts.LockSourceRoot = changedCatalogSource(t, manifest, change[0], change[1], change[2])
+			if err := runLockAndCatalog(t, s); !errors.Is(err, config.ErrLockDigestMismatch) {
+				t.Errorf("a changed %s must keep failing without --force, got %v", name, err)
+			}
+			assertTreeUnchanged(t, before, snapshotTree(t, s.repoPath))
+
+			s.opts.DryRun = true
+			if err := runLockAndCatalog(t, s); err == nil {
+				t.Errorf("a dry run must refuse the changed %s too", name)
+			}
+			s.opts.DryRun, s.opts.Force = false, true
+			if err := runLockAndCatalog(t, s); err != nil {
+				t.Fatalf("--force must take up the changed %s: %v", name, err)
+			}
+		})
+	}
+}
+
+// Negative and boundary: the catalog step on its own replaces an unmodified earlier text only
+// with a text holding exactly its values. A changed value, or an earlier text a user edited, is
+// refused without --force, and --force still replaces it.
+func TestPrepareCatalogWritesReplacesEarlierTextsOnlyByLayout(t *testing.T) {
+	prior := mustRead(t, filepath.Join(priorCatalogFixtures, "framework.yaml"))
+	shipped := mustRead(t, filepath.Join(shippedCatalog, "framework.yaml"))
+	changed := strings.Replace(shipped, "max_func_loc: 75", "max_func_loc: 400", 1)
+	cases := []struct {
+		name, onDisk, source string
+		force, replaced      bool
+	}{
+		{"layout-only successor", prior, shipped, false, true},
+		{"changed value", prior, changed, false, false},
+		{"edited earlier text", prior + "# local note\n", shipped, false, false},
+		{"forced value change", prior, changed, true, true},
+	}
+	for _, tc := range cases {
+		s := lockAdoptSession(t)
+		s.opts.Force = tc.force
+		mustWrite(t, filepath.Join(s.repoPath, ".config", "archetypes", "framework.yaml"), tc.onDisk)
+		artifact := config.PolicyArtifact{RelativePath: ".config/archetypes/framework.yaml",
+			SHA256: fmt.Sprintf("%x", sha256.Sum256([]byte(tc.source))), Content: []byte(tc.source)}
+		writes, err := prepareCatalogWrites(t.Context(), s, []config.PolicyArtifact{artifact})
+		if tc.replaced && (err != nil || len(writes) != 1) {
+			t.Errorf("%s: must be replaced, got %d writes, %v", tc.name, len(writes), err)
+		}
+		if !tc.replaced && err == nil {
+			t.Errorf("%s: must be refused without --force", tc.name)
+		}
 	}
 }

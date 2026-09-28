@@ -94,7 +94,10 @@ unset flag keeps the default. The flags apply to single-repository adoption; bat
   (`TestAdoptMigratesAnEarlierManifestRendering`), the earlier label taxonomy
   (`TestReconcileLabels_Positive_RefreshesPriorTaxonomy`), and a lock that pins only earlier
   catalog texts, which is re-pinned to `--lock-source-root` while the pinned catalog files are
-  replaced (`TestAdoptRepinsAnUnmodifiedEarlierCatalog`). An edited copy of any of them is
+  replaced (`TestAdoptRepinsAnUnmodifiedEarlierCatalog`). The catalog re-pin happens only when
+  every source file decodes to exactly the values of the earlier text it replaces; a source
+  that changes even one value keeps failing until `--force`
+  (`TestAdoptDoesNotRepinAnEarlierCatalogToChangedValues`). An edited copy of any of them is
   left as it is and keeps the contract above
   (`TestAdoptDoesNotRepinAnEditedOrForeignCatalog`).
 

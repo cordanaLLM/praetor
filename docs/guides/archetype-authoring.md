@@ -29,7 +29,10 @@ audit` reports, as the lock's header describes. An adopter's lock pins the earli
 re-run of `praetorctl adopt` against the new catalog fails on it until `--force`. The exception
 is a layout-only change listed in `priorCatalogDigests` (`internal/adopt/policy_catalog.go`):
 a lock that pins only those texts is re-pinned without `--force`
-(`TestAdoptRepinsAnUnmodifiedEarlierCatalog`).
+(`TestAdoptRepinsAnUnmodifiedEarlierCatalog`), and only while the new catalog decodes to
+exactly the values of each earlier text (`isLayoutOnlySuccessor`). Once a later change moves
+a value, adopters still on an earlier text need `--force` again
+(`TestAdoptDoesNotRepinAnEarlierCatalogToChangedValues`).
 
 **A profile is not a flavor.** A profile says what governance applies; a flavor says which templates,
 settings and toolchains a repository of that kind requires. Five profiles currently have any flavor

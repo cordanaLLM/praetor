@@ -51,9 +51,9 @@ func writeBuiltLock(ctx context.Context, s *adoptSession, path string, manifest 
 }
 
 // reconcileExistingLock verifies an existing lock, or re-pins it to the selected source bundle
-// when it pins only earlier Praetor catalog texts the source has since re-laid out
-// (repinsEarlierCatalog). Any other lock that disagrees with the source keeps failing, as
-// before: re-pinning it is --force.
+// when it pins only earlier Praetor catalog texts the source has since re-laid out without
+// changing a value (repinsEarlierCatalog). Any other lock that disagrees with the source keeps
+// failing, as before: re-pinning it is --force.
 func reconcileExistingLock(ctx context.Context, s *adoptSession, path string, manifest *config.Manifest) error {
 	if !repinsEarlierCatalog(ctx, s, manifest) {
 		return verifyExistingLock(ctx, s, manifest)
@@ -67,8 +67,9 @@ func reconcileExistingLock(ctx context.Context, s *adoptSession, path string, ma
 }
 
 // repinsEarlierCatalog reports whether the existing lock disagrees with the selected source
-// bundle only because it pins earlier Praetor catalog texts. The lock step and the dry-run
-// policy plan (plannedPolicyInputs) share it, so a dry run plans the lock a real run writes.
+// bundle only because it pins earlier Praetor catalog texts whose source successors hold the
+// same values. The lock step and the dry-run policy plan (plannedPolicyInputs) share it, so a
+// dry run plans the lock a real run writes.
 func repinsEarlierCatalog(ctx context.Context, s *adoptSession, manifest *config.Manifest) bool {
 	if s.opts.LockSourceRoot == "" {
 		return false
@@ -76,21 +77,41 @@ func repinsEarlierCatalog(ctx context.Context, s *adoptSession, manifest *config
 	_, err := config.ValidateLockfileWithOptions(ctx, config.LockValidationOptions{
 		Root: s.repoPath, CatalogRoot: s.opts.LockSourceRoot,
 	}, manifest)
-	return errors.Is(err, config.ErrLockDigestMismatch) && pinsEarlierCatalog(ctx, s.repoPath, manifest)
+	return errors.Is(err, config.ErrLockDigestMismatch) &&
+		pinsEarlierCatalog(ctx, s.repoPath, s.opts.LockSourceRoot, manifest)
 }
 
-// pinsEarlierCatalog reports whether root's lock verifies against root's own catalog and pins
-// only earlier Praetor catalog texts (priorCatalogDigests). Such a repository holds Praetor's
-// unedited output, so adoption re-pins it and the policy-catalog step refreshes its files
-// (prepareCatalogWrites). A lock that does not verify locally, for whatever reason, is not
-// re-pinned: the caller reports the mismatch against the source, as it did before.
-func pinsEarlierCatalog(ctx context.Context, root string, manifest *config.Manifest) bool {
-	local, err := config.ValidateLockfileWithOptions(ctx, config.LockValidationOptions{Root: root, RequireSources: true}, manifest)
-	if err != nil || len(local.Digests) == 0 {
+// pinsEarlierCatalog reports whether root's lock verifies against root's own catalog, every
+// declared text there is an earlier Praetor catalog text (priorCatalogDigests), and source
+// holds for each one a text with exactly its values (isLayoutOnlySuccessor). Such a repository
+// holds Praetor's unedited output and re-pinning it changes layout only, so adoption re-pins
+// it and the policy-catalog step refreshes its files (prepareCatalogWrites). Anything else is
+// not re-pinned: a lock that does not verify locally, an edited or foreign catalog, and a
+// source that changes even one value of one file. The caller then reports the mismatch
+// against the source, as it did before, and taking up a changed value stays --force.
+func pinsEarlierCatalog(ctx context.Context, root, source string, manifest *config.Manifest) bool {
+	_, err := config.ValidateLockfileWithOptions(ctx, config.LockValidationOptions{Root: root, RequireSources: true}, manifest)
+	if err != nil {
 		return false
 	}
-	for i := 0; i < len(local.Digests) && i < maxAdoptPolicyFiles; i++ {
-		if _, known := priorCatalogDigests[local.Digests[i]]; !known {
+	local, err := config.DeclaredCatalogTexts(ctx, root, manifest)
+	if err != nil || len(local) == 0 {
+		return false
+	}
+	next, err := config.DeclaredCatalogTexts(ctx, source, manifest)
+	return err == nil && layoutOnlySuccessors(local, next)
+}
+
+// layoutOnlySuccessors reports whether next holds, entry for entry, a layout-only successor of
+// every text in local (isLayoutOnlySuccessor). Both come from DeclaredCatalogTexts for one
+// manifest, so they pair up by index.
+func layoutOnlySuccessors(local, next []config.CatalogText) bool {
+	if len(next) != len(local) || len(local) > maxAdoptPolicyFiles {
+		return false
+	}
+	for i := 0; i < len(local) && i < maxAdoptPolicyFiles; i++ {
+		if local[i].Kind != next[i].Kind || local[i].ID != next[i].ID ||
+			!isLayoutOnlySuccessor(local[i].Content, next[i].Content) {
 			return false
 		}
 	}

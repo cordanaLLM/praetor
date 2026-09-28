@@ -98,3 +98,48 @@ func deepEqualYAML(left, right any) bool {
 	rightText, rightErr := yaml.Marshal(right)
 	return leftErr == nil && rightErr == nil && string(leftText) == string(rightText)
 }
+
+// Positive: texts differing only in layout (document marker, comments, quoting, flow style,
+// indentation, a folded line) are equivalent.
+func TestYAMLEquivalent_Positive_LayoutOnly(t *testing.T) {
+	left := "id: framework\ndescription: \"a long\n  description\"\nlimits: {loc: 75}\nlist: [a, b]\n"
+	right := "---\n# comment\nid: \"framework\"\ndescription: a long description\nlimits:\n    loc: 75\nlist:\n  - a\n  - 'b'\n"
+	if err := YAMLEquivalent([]byte(left), []byte(right)); err != nil {
+		t.Fatalf("layout-only texts must be equivalent: %v", err)
+	}
+}
+
+// Negative: a changed value, a changed scalar type, an extra document and a text that does not
+// decode are not equivalent.
+func TestYAMLEquivalent_Negative_ValueOrShapeChanged(t *testing.T) {
+	base := "---\nlimits:\n  loc: 75\n"
+	for name, other := range map[string]string{
+		"value":    "---\nlimits:\n  loc: 400\n",
+		"type":     "---\nlimits:\n  loc: \"75\"\n",
+		"document": base + "---\nextra: true\n",
+		"invalid":  "---\nlimits: [\n",
+	} {
+		if err := YAMLEquivalent([]byte(base), []byte(other)); err == nil {
+			t.Errorf("%s: must not be equivalent", name)
+		}
+	}
+}
+
+// Boundary: two empty texts are equivalent, an empty text and a document are not, and more
+// than maxYAMLDocuments documents are refused instead of compared without bound.
+func TestYAMLEquivalent_Boundary_DocumentCounts(t *testing.T) {
+	if err := YAMLEquivalent(nil, []byte("")); err != nil {
+		t.Errorf("two empty texts must be equivalent: %v", err)
+	}
+	if err := YAMLEquivalent(nil, []byte("a: 1\n")); err == nil {
+		t.Error("an empty text and a document must not be equivalent")
+	}
+	many := []byte(strings.Repeat("---\na: 1\n", maxYAMLDocuments+1))
+	if err := YAMLEquivalent(many, many); err == nil {
+		t.Errorf("%d documents must be refused", maxYAMLDocuments+1)
+	}
+	exact := []byte(strings.Repeat("---\na: 1\n", maxYAMLDocuments))
+	if err := YAMLEquivalent(exact, exact); err != nil {
+		t.Errorf("exactly %d documents must compare: %v", maxYAMLDocuments, err)
+	}
+}
