@@ -193,7 +193,10 @@ class LintCase(unittest.TestCase):
                 "black": [executable, "--check", "--config", str(empty_config), *paths],
                 "flake8": [executable, "--isolated", f"--max-line-length={FLAKE8_MAX_LINE}",
                            *paths],
-                "yamllint": [executable, "--strict", "-d", "default", *paths],
+                # -f parsable: on GitHub Actions yamllint switches to its annotation format
+                # (rule names in brackets), so an output assertion that passes locally fails
+                # in CI; one fixed format keeps the output the same everywhere.
+                "yamllint": [executable, "--strict", "-f", "parsable", "-d", "default", *paths],
             }
             return run_tool(commands[name], work)
 
