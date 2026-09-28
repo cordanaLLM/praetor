@@ -170,6 +170,56 @@ func TestReconcileAgentHooks_Negative_SymlinkedBackupRootRefused(t *testing.T) {
 	}
 }
 
+// plantForceBackupRootFixture writes a drifted lefthook.yml, which --force replaces, and makes the
+// backup root an in-root symlink, with no agent hook file for the hook preflight to plan a merge
+// into. It returns the real directory behind the link.
+func plantForceBackupRootFixture(t *testing.T, repoPath string) string {
+	t.Helper()
+	mustWrite(t, filepath.Join(repoPath, lefthookFile), "pre-commit:\n  commands:\n    local:\n      run: 'true'\n")
+	if err := os.MkdirAll(filepath.Join(repoPath, workingDirPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return linkInRootDir(t, repoPath, adoptBackupRoot, "shared/backups")
+}
+
+// Negative: under --force a symlinked backup root fails adoption before its first write, even
+// with no hook file to merge into: a --force replace of a drifted scaffold backs up to that root
+// mid-run, where the refusal used to leave a half-adopted repository. A dry run is refused the
+// same way, so its preview does not report a run that would fail.
+func TestAdopt_Negative_ForceRefusesSymlinkedBackupRootBeforeAnyWrite(t *testing.T) {
+	for _, dryRun := range []bool{false, true} {
+		repoPath := newTestRepo(t, "force-backup-root")
+		shared := plantForceBackupRootFixture(t, repoPath)
+		before := snapshotTree(t, repoPath)
+		rep, err := Adopt(t.Context(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Force: true, DryRun: dryRun})
+		if err == nil || !strings.Contains(err.Error(), "--force preflight") || !strings.Contains(err.Error(), adoptBackupRoot) {
+			t.Fatalf("dry run %v: err = %v, want a --force preflight refusal naming the backup root", dryRun, err)
+		}
+		if rep == nil || len(rep.CreatedFiles) != 0 || len(rep.ReconciledFiles) != 0 {
+			t.Fatalf("dry run %v: adoption reported writes before the refusal: %+v", dryRun, rep)
+		}
+		assertTreeUnchanged(t, before, snapshotTree(t, repoPath))
+		assertDirEmpty(t, shared)
+	}
+}
+
+// Boundary: without --force nothing is replaced, so the same symlinked backup root does not stop
+// adoption, the drifted lefthook.yml is kept, and nothing is written behind the link.
+func TestAdopt_Boundary_SymlinkedBackupRootAcceptedWithoutForce(t *testing.T) {
+	repoPath := newTestRepo(t, "plain-backup-root")
+	shared := plantForceBackupRootFixture(t, repoPath)
+	drifted := mustRead(t, filepath.Join(repoPath, lefthookFile))
+	rep, err := Adopt(t.Context(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath})
+	if err != nil {
+		t.Fatalf("Adopt: %v", err)
+	}
+	assertNoIssues(t, rep)
+	if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); got != drifted || len(rep.Replaced()) != 0 {
+		t.Fatalf("replaced without --force: %q, %+v", got, rep.Replaced())
+	}
+	assertDirEmpty(t, shared)
+}
+
 // Negative: a <file>.bak an earlier adoption left is reported, never read, moved or removed.
 func TestReconcileAgentHooks_Negative_LegacyBackupReportedNotRemoved(t *testing.T) {
 	s := hookSession(t, false)

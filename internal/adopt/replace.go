@@ -119,6 +119,22 @@ func checkBackupRoot(ctx context.Context, repoPath string) error {
 	return dir.Close()
 }
 
+// preflightForceBackupRoot refuses, under --force and before the first step writes anything, a
+// backup root checkBackupRoot refuses. A --force replace of a drifted scaffold (replaceScaffold)
+// backs up to that root, and the scaffolds it may replace belong to nearly every step, so the
+// root is checked whenever --force is set instead of per planned replace; checked only at the
+// replace, the refusal came after every earlier step had written. Without --force only a hook
+// merge takes a backup, and preflightAgentHooks checks the root for it.
+func preflightForceBackupRoot(ctx context.Context, s *adoptSession) error {
+	if !s.opts.Force {
+		return nil
+	}
+	if err := checkBackupRoot(ctx, s.repoPath); err != nil {
+		return fmt.Errorf("--force preflight: %w", err)
+	}
+	return nil
+}
+
 // describeLineDelta renders the line delta from before to after for a report entry: the counts,
 // then the first removed lines, each cut to a bounded length and quoted.
 func describeLineDelta(before, after []byte) string {

@@ -445,7 +445,8 @@ func executeAdoptSteps(ctx context.Context, s *adoptSession) error {
 // write time; checked only there, the refusal came after the manifest, the vendor files, the
 // pull request template and the workflows were written, and left a half-adopted repository.
 // A declined step's files are not checked, and a dry run is checked too, so its preview does
-// not report a run that would fail.
+// not report a run that would fail. Under --force the backup root is checked whatever the steps
+// (preflightForceBackupRoot): a replaced scaffold is backed up there from any step.
 func preflightAgentSurfaces(ctx context.Context, s *adoptSession, declined map[string]bool) error {
 	if !declined["agent-harness"] {
 		if err := compiler.CheckVendorTargets(ctx, s.repoPath); err != nil {
@@ -462,7 +463,7 @@ func preflightAgentSurfaces(ctx context.Context, s *adoptSession, declined map[s
 			return fmt.Errorf("agent-hooks preflight: %w", err)
 		}
 	}
-	return nil
+	return preflightForceBackupRoot(ctx, s)
 }
 
 // preflightPersonas runs the persona writer's refusals over every persona agent-definitions

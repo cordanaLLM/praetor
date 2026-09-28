@@ -210,8 +210,11 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
   without a copy and a warning says so. A file that differs only in its line endings is
   verified, not replaced (`TestScaffoldFile_Positive_ForceReplacesWithBackupAndDelta`,
   `TestScaffoldFile_Boundary_DryRunPlansReplaceAndDeltaTruncates`,
-  `TestScaffoldFile_Boundary_CRLFOnlyDifferenceIsNotReplaced`). Agent hook merges keep their
-  copy in the same place ([agent hooks](guides/agent-hooks.md)).
+  `TestScaffoldFile_Boundary_CRLFOnlyDifferenceIsNotReplaced`). Under `--force`, a backup
+  root that is a symlink or sits behind one fails the run before the first write
+  (`preflightForceBackupRoot` in `internal/adopt/replace.go`,
+  `TestAdopt_Negative_ForceRefusesSymlinkedBackupRootBeforeAnyWrite`). Agent hook merges keep
+  their copy in the same place ([agent hooks](guides/agent-hooks.md)).
 - **Earlier Praetor output.** The manifest, lock, label taxonomy, pinned catalog, flavor
   YAML (`.clang-format` and `.clang-tidy` included) and the `docs:seo-portal` documentation
   gate's YAML that adoption writes pass `yamllint --strict` with its default rules
