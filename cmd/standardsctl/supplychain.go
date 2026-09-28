@@ -15,18 +15,37 @@ import (
 	"github.com/cordanaLLM/praetor/internal/supplychain"
 )
 
+// sbomUsage heads `sbom -h`. The generator reads a Go module's go.mod and nothing else, which
+// neither the help nor the command list used to say (#573).
+const sbomUsage = `Usage: praetorctl sbom [--path=.] [--out=FILE] [--module-version=VERSION]
+       praetorctl sbom notices [--path=.] [--check]
+
+Generates a CycloneDX 1.5 SBOM of the Go module at --path from its go.mod. Go only: a
+directory without a go.mod is refused; catalogue other ecosystems with a generator such
+as Syft or cdxgen. 'sbom notices' regenerates THIRD-PARTY-NOTICES.md of a Praetor checkout.`
+
 func runSBOM(args []string) error {
 	if len(args) > 0 && args[0] == "notices" {
 		return runSBOMNotices(args[1:])
 	}
 	fs := flag.NewFlagSet("sbom", flag.ContinueOnError)
-	path := fs.String("path", ".", "Path to repository to generate SBOM for")
+	path := fs.String("path", ".", "Go module root to generate the SBOM for (its go.mod is read)")
 	out := fs.String("out", "", "Output file path (default stdout)")
 	moduleVersion := fs.String("module-version", "",
 		"Version of the scanned module to record (default: its release tag on HEAD, omitted when HEAD has none)")
+	var usageErr error
+	fs.Usage = func() {
+		_, usageErr = fmt.Fprintf(fs.Output(), "%s\n\n", sbomUsage)
+		fs.PrintDefaults()
+	}
+	if len(args) > 0 && isHelpToken(args[0]) {
+		fs.SetOutput(os.Stdout)
+		fs.Usage()
+		return usageErr
+	}
 
 	if _, err := parseInterspersed(fs, args); err != nil {
-		return err
+		return errors.Join(err, usageErr)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

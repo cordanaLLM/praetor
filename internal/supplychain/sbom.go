@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -44,6 +45,10 @@ type Component struct {
 	PURL    string `json:"purl,omitempty"`
 }
 
+// ErrNoGoModule reports that the directory GenerateCycloneDX was given has no go.mod. The
+// generator catalogues a Go module's requirements and nothing else.
+var ErrNoGoModule = errors.New("the SBOM generator reads Go modules only")
+
 // SBOMOptions configures GenerateCycloneDX.
 type SBOMOptions struct {
 	// ModuleVersion is the scanned module's version to record in the BOM metadata. When
@@ -55,7 +60,8 @@ type SBOMOptions struct {
 // GenerateCycloneDX parses the repository dependencies into a CycloneDX SBOM whose
 // metadata component is the module at repoDir: its name comes from repoDir's go.mod
 // and its version from opts or repoDir's own release tag, never from the binary that
-// generates the BOM.
+// generates the BOM. It reads Go modules only; a repoDir without a go.mod returns an
+// error matching ErrNoGoModule.
 func GenerateCycloneDX(ctx context.Context, repoDir string, opts SBOMOptions) (*CycloneDXBOM, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("supplychain: context cannot be nil")
@@ -66,6 +72,12 @@ func GenerateCycloneDX(ctx context.Context, repoDir string, opts SBOMOptions) (*
 
 	goModPath := filepath.Join(repoDir, "go.mod")
 	data, err := contextopt.ReadSnapshot(ctx, goModPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		// The raw error was "read go.mod: statat go.mod: no such file or directory", which
+		// does not tell the reader that nothing but a Go module can be catalogued (#573).
+		return nil, fmt.Errorf("no go.mod in %s (%w: run it on a Go module root, "+
+			"or catalogue other ecosystems with a generator such as Syft or cdxgen)", repoDir, ErrNoGoModule)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("read go.mod: %w", err)
 	}
