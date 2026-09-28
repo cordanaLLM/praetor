@@ -71,9 +71,12 @@ work ran.
 A repository guard is judged against the manifest identity. An operational fork resolves that
 identity to its `repository.source`, so the ruleset the fork commits equals the canonical one.
 On the fork's forge the guard is false, and a guarded matrix job is skipped before its legs
-exist, so none of their checks is ever reported. `sync --remote` therefore writes only the checks
+exist, so none of their checks is ever reported. `sync --remote` therefore adds only the checks
 whose jobs report in `<repository.owner>/<repository.name>` (`forge.RequiredStatusContextsIn`)
 and prints the ones it left off (`TestSync_Remote_RequiresOnlyChecksThatReportInTheRepository`).
+It never removes a check the live ruleset already requires, so it warns about a left-off check
+an earlier sync added; remove that check from the live ruleset by hand
+(`TestSync_Remote_WarnsAboutLeftOffChecksTheLiveRulesetStillRequires`).
 The Platform Neutrality matrix is the case in point
 ([HISS-21](standards/hiss-21-platform-neutrality.md#outside-the-canonical-repository-the-matrix-is-opt-in-and-says-so)).
 

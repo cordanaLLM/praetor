@@ -219,22 +219,33 @@ three legs stay required in the canonical repository. The skip job's condition i
 group, which never counts, so it is required nowhere: a check that says no platform was
 verified must not satisfy a ruleset.
 
-A fork is never told on GitHub to require a check its runs will not report:
+`sync --remote` never adds to a fork's GitHub ruleset a check its runs will not report:
 
-| Where | Committed ruleset | Ruleset `sync --remote` writes to GitHub |
+| Where | Committed ruleset | Checks `sync --remote` adds on GitHub |
 | :--- | :--- | :--- |
 | canonical repository | the three legs | the three legs |
-| operational fork (`repository.source` names the canonical repository) | the three legs, so the fork's audit accepts the file it carries unchanged (#255) | no leg |
+| operational fork (`repository.source` names the canonical repository) | the three legs, so the fork's audit accepts the file it carries unchanged (#255) | no leg; a leg an earlier sync added stays required until it is removed by hand (below) |
 | adopter | no leg: `portability.yml` is not emitted to adopters | no leg |
 
 A fork's legs are skipped before their matrix expands, so GitHub never reports
 `Platform Neutrality (Linux)` there (actions/runner#952), and requiring it would leave every
-pull request waiting. `sync --remote` therefore requires only the checks whose jobs report in the
-repository it writes to (`forge.RequiredStatusContextsIn`) and names the checks it left off
-(`TestSync_Remote_RequiresOnlyChecksThatReportInTheRepository` in
-`cmd/standardsctl/sync_remote_guard_test.go`). A fork that sets `PRAETOR_FORK_PORTABILITY` and
-wants the legs required adds them to its live ruleset by hand; `sync --remote` keeps required
-checks it does not list.
+pull request waiting. `sync --remote` therefore adds only the checks whose jobs report in the
+repository it writes to (`forge.RequiredStatusContextsIn`), reads the live ruleset back, and
+names each check it left off (`TestSync_Remote_RequiresOnlyChecksThatReportInTheRepository` in
+`cmd/standardsctl/sync_remote_guard_test.go`):
+
+- `[INFO] Not required on GitHub for <owner>/<name> ...`: the live ruleset does not require it.
+- `[WARN] Still required on GitHub for <owner>/<name> ...`: the live ruleset still requires it,
+  and every pull request waits for it
+  (`TestSync_Remote_WarnsAboutLeftOffChecksTheLiveRulesetStillRequires`).
+
+The warning is the migration path for forks that ran `sync --remote` before this check existed.
+Since #258 a fork renders the legs, and those syncs wrote them to GitHub. The merge never removes
+a live required check (`mergeRuleset` in `internal/forge/ruleset_merge.go`), so a later sync
+leaves them in place. Remove the checks the warning names from the `praetor-main-protection`
+ruleset in the fork's repository settings (Settings, Rules, Rulesets). A fork that sets
+`PRAETOR_FORK_PORTABILITY` and wants the legs required adds them to that ruleset the same way,
+and `sync --remote` keeps them.
 
 ## Templating: the matrix shape is per language
 

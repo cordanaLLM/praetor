@@ -50,11 +50,10 @@ func guardedRemoteFixture(t *testing.T, source string) *auditFixture {
 	return f
 }
 
-// runGuardedRemoteSync runs sync --remote for f against a fresh stub and returns the output, the
-// ruleset the stub stored and the committed ruleset.
-func runGuardedRemoteSync(t *testing.T, f *auditFixture) (out, remote, local string) {
+// runGuardedRemoteSync runs sync --remote for f against stub and returns the output, the ruleset
+// the stub stored under id 1 and the committed ruleset.
+func runGuardedRemoteSync(t *testing.T, f *auditFixture, stub *forgeStub) (out, remote, local string) {
 	t.Helper()
-	stub := &forgeStub{}
 	srv := httptest.NewServer(stub.handler())
 	t.Cleanup(srv.Close)
 	out, err := runSyncCmd(t, "--config="+f.manifestPath, "--remote", "--token=ghp_x", "--endpoint="+srv.URL)
@@ -76,22 +75,67 @@ func TestSync_Remote_RequiresOnlyChecksThatReportInTheRepository(t *testing.T) {
 	legs := []string{"Leg (Linux)", "Leg (Windows)"}
 	const unit = "Unit Tests"
 
-	out, remote, local := runGuardedRemoteSync(t, guardedRemoteFixture(t, ""))
+	out, remote, local := runGuardedRemoteSync(t, guardedRemoteFixture(t, ""), &forgeStub{})
 	for _, check := range append([]string{unit}, legs...) {
 		requireRulesetCheck(t, "canonical GitHub ruleset", remote, check, true)
 		requireRulesetCheck(t, "canonical committed ruleset", local, check, true)
 	}
-	if strings.Contains(out, "Not required on GitHub") {
+	if strings.Contains(out, "Not required on GitHub") || strings.Contains(out, "Still required on GitHub") {
 		t.Errorf("canonical: sync reported checks left off:\n%s", out)
 	}
 
-	out, remote, local = runGuardedRemoteSync(t, guardedRemoteFixture(t, "upstream/widgets"))
+	out, remote, local = runGuardedRemoteSync(t, guardedRemoteFixture(t, "upstream/widgets"), &forgeStub{})
 	requireRulesetCheck(t, "fork GitHub ruleset", remote, unit, true)
 	for _, leg := range legs {
 		requireRulesetCheck(t, "fork GitHub ruleset", remote, leg, false)
 		requireRulesetCheck(t, "fork committed ruleset", local, leg, true)
 	}
 	mustContain(t, out, "[INFO] Not required on GitHub for acme/widgets, because a repository guard skips their jobs there: Leg (Linux), Leg (Windows)")
+}
+
+// liveLegRuleset is a live praetor ruleset whose only rule requires the named checks, as an
+// operational fork's ruleset looks after a sync that wrote every rendered check.
+func liveLegRuleset(checks ...string) map[string]any {
+	required := make([]any, 0, len(checks))
+	for _, check := range checks {
+		required = append(required, map[string]any{"context": check})
+	}
+	return map[string]any{
+		"id": 1, "name": forge.RepositoryRulesetName, "target": "branch", "enforcement": "active",
+		"rules": []any{map[string]any{"type": "required_status_checks", "parameters": map[string]any{
+			"strict_required_status_checks_policy": true, "required_status_checks": required,
+		}}},
+	}
+}
+
+// Before sync --remote judged checks per repository, an operational fork's sync wrote every
+// rendered check, the Platform Neutrality legs included. The merge never removes a live required
+// check, so leaving a leg off does not unrequire it: sync reads the live ruleset back and warns
+// about every left-off check it still requires, instead of claiming GitHub does not require it.
+//
+// Positive: both legs live, both named in the warning and no [INFO] line. Boundary: one leg
+// live, so the warning names it and the [INFO] line names only the other. Negative: the merge
+// keeps the live leg on GitHub (the operator removes it), and the committed ruleset is unchanged.
+func TestSync_Remote_WarnsAboutLeftOffChecksTheLiveRulesetStillRequires(t *testing.T) {
+	const warn = "[WARN] Still required on GitHub for acme/widgets, although a repository guard skips their jobs there, so every pull request waits for them: "
+
+	out, remote, _ := runGuardedRemoteSync(t, guardedRemoteFixture(t, "upstream/widgets"),
+		&forgeStub{rulesets: map[int]map[string]any{1: liveLegRuleset("Leg (Linux)", "Leg (Windows)")}})
+	mustContain(t, out, warn+"Leg (Linux), Leg (Windows). sync --remote never removes a live required check",
+		`remove them from ruleset "praetor-main-protection" by hand`)
+	if strings.Contains(out, "Not required on GitHub") {
+		t.Errorf("sync claims a live required leg is not required:\n%s", out)
+	}
+	requireRulesetCheck(t, "fork GitHub ruleset", remote, "Leg (Linux)", true)
+
+	out, remote, local := runGuardedRemoteSync(t, guardedRemoteFixture(t, "upstream/widgets"),
+		&forgeStub{rulesets: map[int]map[string]any{1: liveLegRuleset("Leg (Linux)")}})
+	mustContain(t, out, warn+"Leg (Linux). ",
+		"[INFO] Not required on GitHub for acme/widgets, because a repository guard skips their jobs there: Leg (Windows)\n")
+	requireRulesetCheck(t, "fork GitHub ruleset", remote, "Leg (Linux)", true)
+	requireRulesetCheck(t, "fork GitHub ruleset", remote, "Leg (Windows)", false)
+	requireRulesetCheck(t, "fork GitHub ruleset", remote, "Unit Tests", true)
+	requireRulesetCheck(t, "fork committed ruleset", local, "Leg (Windows)", true)
 }
 
 // requireRulesetCheck fails unless ruleset requires the status check exactly when want is true.
