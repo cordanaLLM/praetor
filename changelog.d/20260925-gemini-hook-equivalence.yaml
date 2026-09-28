@@ -1,0 +1,3 @@
+type: fixed
+title: "adopt recognises a Gemini CLI pre-tool registration under ^run_shell_command$ instead of adding a second praetorctl hook gemini pre-tool entry: the Gemini CLI pre-tool row is now ^run_shell_command$, the one tool its dialect evaluates, and on every client a bare NAME group still serves a ^NAME$ row, so the unanchored entry an earlier release wrote is recognised too; a hook served more than once is reported as a warning naming the extra entries, which adoption leaves in place"
+breaking: false

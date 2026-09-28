@@ -7,8 +7,8 @@
   before proposing.
 - Rule 0 Terminal Disposition: every run ends with structured disposition:
   in_review or blocked.
-- Ed25519 Exit-0 Receipts: mint via `praetorctl gate run`; attach receipt to
-  every PR proposal.
+- Ed25519 Exit-0 Receipts: only `praetorctl gate run` without `--dry-run` mints
+  one; attach minted receipt to PR proposal; report no unminted receipt.
 - Timeout != failure. Re-check open PRs before retry; prevent duplicate PRs.
 - Text register internal: `caveman` skill: fragments, no filler, verbatim
   code/paths/errors; facts, paths, commands, verdict.

@@ -59,13 +59,13 @@ func TestPlanHooks_Positive_ServedHookIsPresent(t *testing.T) {
 }
 
 // Negative: a serving handler under a matcher that does not cover the hook's, an unrelated
-// tool, the bare name for a client that tests every matcher as an unanchored regular
-// expression (bashHook leaves ExactLiteral false) or a matcher that is not a string, does not
-// run for exactly the guarded tool, so the hook is still registered in its own group.
+// tool, a half-anchored ^Bash (bashHook leaves ExactLiteral false) or a matcher that is not a
+// string, does not run for exactly the guarded tool, so the hook is still registered in its
+// own group.
 func TestPlanHooks_Negative_HandlerUnderOtherMatcherServesNothing(t *testing.T) {
 	served := bashHook
 	served.ServedBy = func(line string) bool { return strings.HasSuffix(line, "guard.py") }
-	for _, matcher := range []string{`"^(Edit|Write)$"`, `"Bash"`, `7`} {
+	for _, matcher := range []string{`"^(Edit|Write)$"`, `"^Bash"`, `7`} {
 		existing := `{"hooks": {"PreToolUse": [{"matcher": ` + matcher + `, "hooks": [{"type": "command", "command": "engine hook pre-tool"},` +
 			` {"command": "python3", "args": ["guard.py"]}]}]}}`
 		plan, err := PlanHooks(t.Context(), []byte(existing), []Hook{served})
@@ -173,22 +173,26 @@ func TestPlanHooks_Positive_LiteralAndAnchoredNameAreOneSelection(t *testing.T) 
 }
 
 // Negative: only the anchored literal is equivalent. A pattern that selects other tools as
-// well (Bash.*, a half-anchored ^Bash or Bash$), another tool list, another case and, for a
-// client that tests every matcher as an unanchored regular expression, even the bare name, do
-// not cover ^Bash$, so the hook gets its own group; nor does ^run_shell_command$ take a
-// run_shell_command handler for that client.
+// well (Bash.*, a half-anchored ^Bash or Bash$), another tool list and another case do not
+// cover ^Bash$, so the hook gets its own group. For a client that tests every matcher as an
+// unanchored regular expression, a ^NAME$ group selects less than a bare NAME hook, so it
+// serves none (^run_shell_command$ for run_shell_command) and takes no handler for it.
 func TestPlanHooks_Negative_OnlyTheAnchoredLiteralIsEquivalent(t *testing.T) {
-	cases := map[string]Hook{
-		"^(Edit|Write)$": literalHook, "Bash.*": literalHook, "^Bash": literalHook, "Bash$": literalHook,
-		"^bash$": literalHook, "Bash": bashHook,
+	cases := []struct {
+		group, want string
+		hook        Hook
+	}{
+		{"^(Edit|Write)$", "^Bash$", literalHook}, {"Bash.*", "^Bash$", literalHook}, {"^Bash", "^Bash$", literalHook},
+		{"Bash$", "^Bash$", literalHook}, {"^bash$", "^Bash$", literalHook}, {"^Bash$", "Bash", bashHook},
+		{"^run_shell_command$", "run_shell_command", bashHook},
 	}
-	for group, hook := range cases {
-		plan, err := PlanHooks(t.Context(), []byte(groupDocument(group, evasionAdapter)), []Hook{servedByAdapter(hook, "^Bash$")})
+	for _, c := range cases {
+		plan, err := PlanHooks(t.Context(), []byte(groupDocument(c.group, evasionAdapter)), []Hook{servedByAdapter(c.hook, c.want)})
 		if err != nil {
-			t.Fatalf("group %s: %v", group, err)
+			t.Fatalf("group %s: %v", c.group, err)
 		}
 		if !plan.Changed || len(plan.Added) != 1 || strings.Count(string(plan.Content), `"matcher"`) != 2 {
-			t.Fatalf("group %s (exact literal %v): plan %+v\n%s", group, hook.ExactLiteral, plan, plan.Content)
+			t.Fatalf("group %s, hook %s (exact literal %v): plan %+v\n%s", c.group, c.want, c.hook.ExactLiteral, plan, plan.Content)
 		}
 	}
 	shell := bashHook
@@ -242,5 +246,60 @@ func TestSameSelection(t *testing.T) {
 		if got := sameSelection(c.have, c.want, c.exact); got != c.same {
 			t.Errorf("sameSelection(%q, %q, %v) = %v, want %v", c.have, c.want, c.exact, got, c.same)
 		}
+	}
+}
+
+// Positive: every client runs a bare NAME group for the tool NAME, so a handler serving a
+// ^NAME$ hook under the bare name leaves the file alone whatever the matcher reading: the
+// exact literal one (literalHook) and the unanchored regular expression one (bashHook), where
+// the bare name selects more tools than the hook, not fewer.
+func TestPlanHooks_Positive_BareNameGroupCoversAnchoredHook(t *testing.T) {
+	engine := `{"type": "command", "command": "engine hook pre-tool"}`
+	for _, hook := range []Hook{literalHook, bashHook} {
+		for group, want := range map[string]string{"Bash": "^Bash$", "run_shell_command": "^run_shell_command$"} {
+			for _, handler := range []string{evasionAdapter, engine} {
+				existing := groupDocument(group, handler)
+				plan, err := PlanHooks(t.Context(), []byte(existing), []Hook{servedByAdapter(hook, want)})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if plan.Changed || string(plan.Content) != existing || len(plan.Present) != 1 || len(plan.Duplicates) != 0 {
+					t.Fatalf("group %s, hook %s (exact literal %v): plan %+v", group, want, hook.ExactLiteral, plan)
+				}
+			}
+		}
+	}
+}
+
+// Boundary: a hook served twice, under the bare and the anchored name (by another command line
+// or an identical copy) or twice in one group, is reported present once, in file order, and
+// duplicate once, and the file is left as it was. A
+// bare NAME group that only covers the hook takes no handler for a client that tests matchers
+// as unanchored regular expressions: a missing handler joins only a group of the same selection.
+func TestPlanHooks_Boundary_DuplicateServingHandlers(t *testing.T) {
+	engine := `{"type": "command", "command": "engine hook pre-tool"}`
+	hook := servedByAdapter(bashHook, "^run_shell_command$")
+	bareThenAnchored := func(second string) string {
+		return `{"hooks": {"PreToolUse": [{"matcher": "run_shell_command", "hooks": [` + engine + `]},` +
+			` {"matcher": "^run_shell_command$", "hooks": [` + second + `]}]}}`
+	}
+	for name, tc := range map[string]struct{ existing, duplicate string }{
+		"bare then anchored": {bareThenAnchored(evasionAdapter), "block_evasion.py"},
+		"identical copy":     {bareThenAnchored(engine), hook.Command},
+		"one group":          {groupDocument("^run_shell_command$", engine+", "+lintHandler+", "+evasionAdapter), "block_evasion.py"},
+	} {
+		plan, err := PlanHooks(t.Context(), []byte(tc.existing), []Hook{hook})
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if plan.Changed || string(plan.Content) != tc.existing || len(plan.Added) != 0 ||
+			len(plan.Present) != 1 || plan.Present[0] != hook.Command ||
+			len(plan.Duplicates) != 1 || !strings.HasSuffix(plan.Duplicates[0], tc.duplicate) {
+			t.Fatalf("%s: plan %+v", name, plan)
+		}
+	}
+	plan, err := PlanHooks(t.Context(), []byte(groupDocument("Bash", lintHandler)), []Hook{bashHook})
+	if err != nil || !plan.Changed || strings.Count(string(plan.Content), `"matcher"`) != 2 || len(plan.Duplicates) != 0 {
+		t.Fatalf("regex client joined a covering bare group: %v\n%s", err, plan.Content)
 	}
 }

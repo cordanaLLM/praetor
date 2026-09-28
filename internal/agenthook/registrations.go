@@ -107,6 +107,9 @@ type HookFile struct {
 // Bash and ^Bash$ select one tool. Gemini CLI runs new RegExp(matcher).test(toolName) on every
 // matcher (google-gemini/gemini-cli v0.61.0, packages/core/src/hooks/hookPlanner.ts,
 // matchesToolName), so there run_shell_command also selects any tool whose name contains it.
+// Its pre-tool row is therefore ^run_shell_command$, the one tool its dialect routes to the
+// command policy (dialectTable, commandTools); a bare run_shell_command group an earlier
+// adoption wrote still serves that row (clientjson coversMatcher).
 var nativeHookFiles = map[string]HookFile{
 	string(clientid.Claude): {Path: ".claude/settings.json", TimeoutUnit: time.Second, ExactLiteral: true},
 	string(clientid.Codex):  {Path: ".codex/hooks.json", TimeoutUnit: time.Second, ExactLiteral: true},
@@ -152,7 +155,7 @@ var registrationTable = []Registration{
 	{Client: "codex", Event: EventStop, NativeEvent: "Stop", Timeout: 60 * time.Second},
 	{Client: "codex", Event: EventPreDispatch, NativeEvent: "PreToolUse", Matcher: "^spawn_agent$", Timeout: 15 * time.Second},
 	{Client: "codex", Event: EventPostReturn, NativeEvent: "SubagentStop", Timeout: 60 * time.Second},
-	{Client: "gemini", Event: EventPreTool, NativeEvent: "BeforeTool", Matcher: "run_shell_command", Timeout: 15 * time.Second},
+	{Client: "gemini", Event: EventPreTool, NativeEvent: "BeforeTool", Matcher: "^run_shell_command$", Timeout: 15 * time.Second},
 	{Client: "gemini", Event: EventPreEdit, NativeEvent: "BeforeTool", Matcher: "^(replace|write_file)$", Timeout: 15 * time.Second},
 	{Client: "gemini", Event: EventPostTool, NativeEvent: "AfterTool", Timeout: 60 * time.Second},
 	{Client: "gemini", Event: EventStop, NativeEvent: "AfterAgent", Timeout: 60 * time.Second},

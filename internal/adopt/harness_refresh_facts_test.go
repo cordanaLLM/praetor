@@ -10,13 +10,16 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/hisscatalog"
+	"github.com/cordanaLLM/praetor/internal/paperclip"
 )
 
 const (
 	// pinnedReceiptSection pins a well-formed receipt key, as `praetorctl gate keygen` advises.
 	pinnedReceiptSection = "receipt:\n  public_key: \"" +
 		"abababababababababababababababababababababababababababababababab" + "\"\n"
-	pinnedReceiptClaim   = "attach receipt to every PR proposal"
+	pinnedReceiptClaim   = "without `--dry-run` mints one; attach minted receipt to PR proposal"
 	unpinnedReceiptClaim = "attach no receipt"
 	rustInvariantClaim   = "Rust: zero `.unwrap()`"
 	cargoManifest        = "[package]\nname = \"widget\"\nversion = \"0.1.0\"\n"
@@ -140,6 +143,81 @@ func editedFuncLOC(t *testing.T, text, prefix string) string {
 		t.Fatalf("fixture precondition: no function length after %q in:\n%s", prefix, text)
 	}
 	return stated.ReplaceAllString(text, "${1}45")
+}
+
+// unconditionalPinnedRow is the pinned receipt row #523 wrote; a gate run with --dry-run mints
+// nothing, so the row was replaced by the conditional one (#550).
+const unconditionalPinnedRow = "Ed25519 Exit-0 Receipts: mint via `praetorctl gate run`; attach receipt to every PR proposal."
+
+// writeUnconditionalPinnedHarness writes this release's harness for repo with the #523 pinned
+// row in place of the current one, harness.json beside its rules.md, as the release before
+// #550 wrote it, and returns harness.json.
+func writeUnconditionalPinnedHarness(t *testing.T, repo string) string {
+	t.Helper()
+	h, err := paperclip.SynthesizeHarness(t.Context(), repo, hisscatalog.Facts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, row := range h.OperatingContract {
+		if strings.HasPrefix(row, "Ed25519 Exit-0 Receipts:") {
+			h.OperatingContract[index] = unconditionalPinnedRow
+		}
+	}
+	if err := paperclip.WriteHarness(h, repo); err != nil {
+		t.Fatal(err)
+	}
+	return mustRead(t, filepath.Join(repo, paperclipFile))
+}
+
+// TestAdoptRefreshesUnconditionalReceiptRows: Boundary (#550). Plain adopt refreshes, without
+// --force, an unmodified harness carrying either earlier unconditional receipt claim, key
+// pinned: the 462e3f3a release's row and the #523 pinned row, each beside its rules.md and with
+// the contract bound to it. Both rendered forms then carry the conditional row and neither
+// claim, and the contract is re-bound to text that passes Caveman.
+func TestAdoptRefreshesUnconditionalReceiptRows(t *testing.T) {
+	cases := map[string]struct {
+		write func(t *testing.T, repo string) string
+		claim string
+	}{
+		"462e3f3a release": {func(t *testing.T, repo string) string {
+			mustWrite(t, filepath.Join(repo, ".paperclip", "rules.md"), releasedHarness(t, "rules.md.golden"))
+			harness := releasedHarness(t, "harness.json.golden")
+			mustWrite(t, filepath.Join(repo, paperclipFile), harness)
+			return harness
+		}, "attach cryptographic execution receipts to all PR proposals"},
+		"#523 pinned row": {writeUnconditionalPinnedHarness, "attach receipt to every PR proposal"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			repo := newTestRepo(t, "legacy")
+			mustWrite(t, filepath.Join(repo, manifestFile), legacyManifest+pinnedReceiptSection)
+			harness := tc.write(t, repo)
+			bound, err := managedRegisterSources(t.Context(), []byte(harness))
+			if err != nil || !strings.Contains(harness, tc.claim) {
+				t.Fatalf("fixture precondition: %v\n%s", err, harness)
+			}
+			mustWrite(t, filepath.Join(repo, manifestFile), legacyManifest+pinnedReceiptSection+manifestSourcesYAML(t, bound))
+			report, err := Adopt(t.Context(), sourceAdoptOptions(t, repo, false))
+			if err != nil {
+				t.Fatal(err)
+			}
+			forms := map[string]string{
+				paperclipFile:         mustRead(t, filepath.Join(repo, paperclipFile)),
+				".paperclip/rules.md": strings.Join(strings.Fields(mustRead(t, filepath.Join(repo, ".paperclip", "rules.md"))), " "),
+			}
+			for form, text := range forms {
+				if !strings.Contains(text, pinnedReceiptClaim) || strings.Contains(text, tc.claim) {
+					t.Fatalf("%s not refreshed to the conditional receipt row:\n%s", form, text)
+				}
+			}
+			if !strings.Contains(reportDetail(report, paperclipFile), "Refreshed unmodified earlier") {
+				t.Fatalf("refresh not reported: %q", reportDetail(report, paperclipFile))
+			}
+			if got := requirePassingSourceGate(t, repo, paperclipFile); got.SHA256 == bound.SHA256 {
+				t.Fatal("contract still bound to the earlier harness digest")
+			}
+		})
+	}
 }
 
 // TestAdoptHarnessRefreshFactBoundary: Boundary. Unchanged facts leave the harness byte for

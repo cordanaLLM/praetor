@@ -92,7 +92,7 @@ func TestReconcileAgentHooks_Positive_CreatesMissingHookFiles(t *testing.T) {
 		}
 	}
 	gemini := []byte(mustRead(t, hookPath(s, ".gemini/settings.json")))
-	requireHandler(t, gemini, "BeforeTool", "run_shell_command", "praetorctl hook gemini pre-tool", 15000)
+	requireHandler(t, gemini, "BeforeTool", "^run_shell_command$", "praetorctl hook gemini pre-tool", 15000)
 	for _, client := range []string{"cursor", "copilot", "windsurf", "agy"} {
 		if action, ok := actionOf(s.report, client); !ok || action.Action != actionSkip {
 			t.Errorf("%s not reported as not applicable: %+v", client, s.report.ActionDetails)
@@ -156,8 +156,8 @@ func TestReconcileAgentHooks_Positive_JoinsExactMatcherGroup(t *testing.T) {
 // tool ^Bash$ selects, so an adopter group Bash that runs the adopted interceptor serves the
 // row and the file stays byte for byte as it was, and a Bash group without it takes the
 // engine call instead of a second group. Gemini CLI tests every matcher as an unanchored
-// regular expression, so its ^run_shell_command$ group selects less than the row's
-// run_shell_command and the row still gets its own group.
+// regular expression; its row is ^run_shell_command$, so an adopter group of that matcher
+// running the interceptor serves it and the file stays as it was.
 func TestReconcileAgentHooks_LiteralMatcherPerClient(t *testing.T) {
 	adapter := `{"type": "command", "command": "python3", "args": [".config/agent/hooks/block_evasion.py"]}`
 	s := hookSession(t, false)
@@ -183,7 +183,131 @@ func TestReconcileAgentHooks_LiteralMatcherPerClient(t *testing.T) {
 	if got := registeredHandlers(t, codex, "PreToolUse", "^Bash$"); len(got) != 0 {
 		t.Fatalf("codex got a second group for Bash:\n%s", codex)
 	}
-	requireHandler(t, []byte(mustRead(t, hookPath(s, ".gemini/settings.json"))), "BeforeTool", "run_shell_command", "praetorctl hook gemini pre-tool", 15000)
+	if got := mustRead(t, hookPath(s, ".gemini/settings.json")); got != gemini {
+		t.Fatalf("served Gemini CLI file rewritten:\n%s", got)
+	}
+}
+
+// anchoredEngineFiles are, per native client, a hook file registering the engine's pre-tool
+// call under the anchored form of the row's matcher, the shape an adopter writes by hand.
+var anchoredEngineFiles = map[string]string{
+	claudeHookFile:          `{"hooks": {"PreToolUse": [{"matcher": "^Bash$", "hooks": [{"type": "command", "command": "praetorctl hook claude pre-tool", "timeout": 15}]}]}}`,
+	".codex/hooks.json":     `{"hooks": {"PreToolUse": [{"matcher": "^Bash$", "hooks": [{"type": "command", "command": "praetorctl hook codex pre-tool", "timeout": 15}]}]}}`,
+	".gemini/settings.json": `{"hooks": {"BeforeTool": [{"matcher": "^run_shell_command$", "hooks": [{"type": "command", "command": "praetorctl hook gemini pre-tool", "timeout": 15000}]}]}}`,
+}
+
+// requireUntouchedHookFiles fails unless every file in want still holds its bytes, is reported
+// as registered, and has no copy beside it or under the backup root.
+func requireUntouchedHookFiles(t *testing.T, s *adoptSession, want map[string]string) {
+	t.Helper()
+	for rel, content := range want {
+		if got := mustRead(t, hookPath(s, rel)); got != content {
+			t.Errorf("%s rewritten:\n%s", rel, got)
+		}
+		if action, ok := actionOf(s.report, rel); !ok || action.Action != actionReconcile {
+			t.Errorf("%s report = %+v", rel, action)
+		}
+		if fileExists(hookPath(s, rel+hookBackupExt)) {
+			t.Errorf("%s backed up beside itself", rel)
+		}
+	}
+	if fileExists(hookPath(s, adoptBackupRoot)) {
+		t.Errorf("unchanged hook files backed up under %s", adoptBackupRoot)
+	}
+}
+
+// Positive, per client: a hook file that registers the engine call under the anchored matcher
+// (^Bash$, ^Bash$, ^run_shell_command$) is recognised; adoption adds no second entry, takes no
+// backup, writes no <file>.bak and warns about nothing. A bare run_shell_command group an
+// earlier adoption wrote is recognised as well, since Gemini CLI runs it for that tool too.
+func TestReconcileAgentHooks_Positive_AnchoredEngineEntryPerClient(t *testing.T) {
+	s := hookSession(t, false)
+	for rel, content := range anchoredEngineFiles {
+		mustWrite(t, hookPath(s, rel), content)
+	}
+	if err := reconcileAgentHooks(context.Background(), s); err != nil {
+		t.Fatal(err)
+	}
+	requireUntouchedHookFiles(t, s, anchoredEngineFiles)
+	if len(s.report.Warnings) != 0 {
+		t.Fatalf("warnings %v", s.report.Warnings)
+	}
+	earlier := hookSession(t, false)
+	bare := map[string]string{".gemini/settings.json": strings.Replace(anchoredEngineFiles[".gemini/settings.json"], "^run_shell_command$", "run_shell_command", 1)}
+	mustWrite(t, hookPath(earlier, ".gemini/settings.json"), bare[".gemini/settings.json"])
+	if err := reconcileAgentHooks(context.Background(), earlier); err != nil {
+		t.Fatal(err)
+	}
+	requireUntouchedHookFiles(t, earlier, bare)
+}
+
+// Negative: foreign entries beside the Gemini CLI registration are kept. A foreign handler in
+// the anchored group and a foreign group leave a served file byte for byte as it was; in an
+// unserved file the engine call joins the anchored group after the foreign handler, which
+// keeps its place.
+func TestReconcileAgentHooks_Negative_ForeignGeminiEntriesKept(t *testing.T) {
+	const rel = ".gemini/settings.json"
+	lint := `{"type": "command", "command": "lint.sh", "timeout": 5000}`
+	engine := `{"type": "command", "command": "praetorctl hook gemini pre-tool", "timeout": 15000}`
+	foreignGroup := `{"matcher": "^read_file$", "hooks": [{"type": "command", "command": "audit.sh"}]}`
+	served := map[string]string{rel: `{"hooks": {"BeforeTool": [` + foreignGroup + `, {"matcher": "^run_shell_command$", "hooks": [` + lint + `, ` + engine + `]}]}}`}
+	s := hookSession(t, false)
+	mustWrite(t, hookPath(s, rel), served[rel])
+	if err := reconcileAgentHooks(context.Background(), s); err != nil {
+		t.Fatal(err)
+	}
+	requireUntouchedHookFiles(t, s, served)
+
+	unserved := hookSession(t, false)
+	mustWrite(t, hookPath(unserved, rel), `{"hooks": {"BeforeTool": [`+foreignGroup+`, {"matcher": "^run_shell_command$", "hooks": [`+lint+`]}]}}`)
+	if err := reconcileAgentHooks(context.Background(), unserved); err != nil {
+		t.Fatal(err)
+	}
+	merged := []byte(mustRead(t, hookPath(unserved, rel)))
+	handlers := registeredHandlers(t, merged, "BeforeTool", "^run_shell_command$")
+	if len(handlers) != 2 || handlers[0]["command"] != "lint.sh" || handlers[1]["command"] != "praetorctl hook gemini pre-tool" {
+		t.Fatalf("engine call not joined after the foreign handler:\n%s", merged)
+	}
+	if got := registeredHandlers(t, merged, "BeforeTool", "^read_file$"); len(got) != 1 || got[0]["command"] != "audit.sh" {
+		t.Fatalf("foreign group changed:\n%s", merged)
+	}
+}
+
+// Boundary: a Gemini CLI file that serves the row under both the bare and the anchored matcher
+// gains no third entry: the file stays as it was, the first entry is reported as the
+// registration and each further one in a warning; none is removed. The warning calls a copy of
+// the registered command line, the state an earlier release left beside an adopter's anchored
+// entry, redundant without claiming it runs twice, since Gemini CLI runs an identical command
+// once; only a different command line is said to evaluate the policy again.
+func TestReconcileAgentHooks_Boundary_BareAndAnchoredGeminiEntries(t *testing.T) {
+	const rel = ".gemini/settings.json"
+	const engineLine, guardLine = "praetorctl hook gemini pre-tool", "python3 -B .config/agent/hooks/praetor_hook.py gemini pre-tool"
+	engine := `{"type": "command", "command": "` + engineLine + `", "timeout": 15000}`
+	guard := `{"type": "command", "command": "` + guardLine + `", "timeout": 15000}`
+	const prefix = rel + ": pre-tool interceptor registered more than once, first by " + engineLine
+	const copyNote, againNote = "; redundant identical copy: " + engineLine, "; different command line that evaluates the policy again: " + guardLine
+	for name, tc := range map[string]struct{ bare, want string }{
+		"identical copy":         {engine, prefix + copyNote + "; adoption leaves"},
+		"different command line": {guard, prefix + againNote + "; adoption leaves"},
+		"both":                   {engine + ", " + guard, prefix + copyNote + againNote + "; adoption leaves"},
+	} {
+		both := map[string]string{rel: `{"hooks": {"BeforeTool": [{"matcher": "^run_shell_command$", "hooks": [` + engine + `]},` +
+			` {"matcher": "run_shell_command", "hooks": [` + tc.bare + `]}]}}`}
+		for _, dryRun := range []bool{false, true} {
+			s := hookSession(t, dryRun)
+			mustWrite(t, hookPath(s, rel), both[rel])
+			if err := reconcileAgentHooks(context.Background(), s); err != nil {
+				t.Fatal(err)
+			}
+			requireUntouchedHookFiles(t, s, both)
+			if action, _ := actionOf(s.report, rel); strings.Contains(action.Details, "praetor_hook.py") {
+				t.Errorf("%s, dry run %v: duplicate reported as the registration: %+v", name, dryRun, action)
+			}
+			if len(s.report.Warnings) != 1 || !strings.HasPrefix(s.report.Warnings[0], tc.want) {
+				t.Errorf("%s, dry run %v: warnings %v", name, dryRun, s.report.Warnings)
+			}
+		}
+	}
 }
 
 // Positive: a repository that already runs the evaluator, through the engine call, the skew
