@@ -507,6 +507,7 @@ const maxCommandDiagnosticBytes = MaxErrorBodyBytes
 // CancelCommandsOnSignal for work that cleans up after itself, to forward that signal to it.
 // The child's environment follows commandEnvironment: without WithCommandEnvironment it
 // inherits the ambient one minus the variables that bind git to a repository (BUG-886).
+// On Windows a batch file runs through cmd.exe as RunCommandBytes describes (#538).
 func RunCommand(ctx context.Context, dir string, name string, args ...string) (string, error) {
 	// ensureDeadline also turns a nil context, which runBoundedCommand refuses, into one.
 	ctx, cancel := ensureDeadline(ctx, DefaultCommandTimeout)
