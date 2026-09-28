@@ -47,10 +47,25 @@ var languageNames = [...]struct {
 	{LanguagePython, "Python"},
 }
 
-// CeilingFuncLOC is the HISS-04 function-length ceiling the audit-compatibility layer applies
-// to every adopted repository (config.AuditMaxFuncLOC; the catalog may not import config, so
-// TestAdoptedDirective_Negative_ComplexityMatchesTheAuditCeiling pins the two together).
-const CeilingFuncLOC = 60
+// Exception is a set of exceptions to adopted directives that a repository declares and
+// documents itself. A declared exception replaces the clause it waives, for the languages it
+// names, with the exception's own clause, so a repository whose standard allows a construct is
+// not handed a blanket ban contradicting it (#68). It changes the directive text only: every
+// check the audit runs stays as it is, and the exception's clause says so.
+type Exception uint8
+
+const (
+	// ExceptionCleanupGoto is a C/C++ `goto` jumping forward to the one cleanup label of its
+	// function (single-level error unwinding), declared as hiss.exceptions.c_goto_cleanup in
+	// .standards.yaml.
+	ExceptionCleanupGoto Exception = 1 << iota
+	// exceptionEnd follows the last exception bit; one added above it joins AllExceptions.
+	exceptionEnd
+)
+
+// AllExceptions is every exception bit. Every value from zero to AllExceptions is an exception
+// set a repository can declare, the bounded range the Paperclip refresh key enumerates.
+const AllExceptions = exceptionEnd - 1
 
 // Clause is one part of a rule's adopted directive.
 type Clause struct {
@@ -62,6 +77,12 @@ type Clause struct {
 	// FuncLOC completes Text with the function-length limit the repository's audit enforces
 	// (Facts.MaxFuncLOC), so HISS-04 states the effective limit rather than a copy of it.
 	FuncLOC bool
+	// Waiver is the exception that lifts this language clause, for the languages of the rule's
+	// clause stating that exception, once a repository declares it.
+	Waiver Exception
+	// Exception makes the clause state that exception: it renders only for a repository
+	// declaring it, in place of the clause it waives.
+	Exception Exception
 }
 
 // Facts is what one adopted repository's rows depend on.
@@ -69,9 +90,14 @@ type Facts struct {
 	// Languages the repository carries; zero means unknown, and every language clause then
 	// renders with its language label so no rule is lost.
 	Languages Language
-	// MaxFuncLOC is the function length the repository's audit enforces; zero means not
-	// resolved, and the row states CeilingFuncLOC as the ceiling a policy may tighten.
+	// MaxFuncLOC is the function length the repository's audit enforces, read from the
+	// effective policy the audit resolves; zero means not resolved.
 	MaxFuncLOC int
+	// CeilingFuncLOC is the function length the audit-compatibility layer caps every policy at
+	// (config.AuditMaxFuncLOC). The caller reads it from config; the catalog keeps no copy.
+	CeilingFuncLOC int
+	// Exceptions are the exceptions the repository declares and documents.
+	Exceptions Exception
 }
 
 // noAnalogue is the directive of a rule none of whose clauses applies to the repository's
@@ -80,12 +106,13 @@ const noAnalogue = "n/a: no such construct in repository languages; advisory"
 
 // AdoptedDirective renders the rule's directive for one adopted repository: every clause for
 // all languages, each language clause for a repository carrying its language (labelled with
-// it), and the effective function-length limit. A rule left with no clause says it has no
-// analogue there rather than asserting one.
+// it), a declared exception in place of the clause it waives, and the effective
+// function-length limit. A rule left with no clause says it has no analogue there rather than
+// asserting one.
 func (r Rule) AdoptedDirective(f Facts) string {
 	parts := make([]string, 0, len(r.Directive))
 	for _, clause := range r.Directive {
-		if text, ok := clause.render(f); ok {
+		if text, ok := clause.render(f, r.exceptionLanguages(clause.Waiver&f.Exceptions)); ok {
 			parts = append(parts, text)
 		}
 	}
@@ -95,16 +122,35 @@ func (r Rule) AdoptedDirective(f Facts) string {
 	return strings.Join(parts, "; ")
 }
 
-// render states one clause for f, or reports false when it does not apply.
-func (c Clause) render(f Facts) (string, bool) {
+// exceptionLanguages is the languages the rule's clauses stating any of declared cover: the
+// languages a clause those exceptions waive no longer claims.
+func (r Rule) exceptionLanguages(declared Exception) Language {
+	var languages Language
+	if declared == 0 {
+		return languages
+	}
+	for _, clause := range r.Directive {
+		if clause.Exception&declared != 0 {
+			languages |= clause.Languages
+		}
+	}
+	return languages
+}
+
+// render states one clause for f, less the waived languages, or reports false when it does
+// not apply.
+func (c Clause) render(f Facts, waived Language) (string, bool) {
+	if c.Exception != 0 && c.Exception&f.Exceptions == 0 {
+		return "", false
+	}
 	text := c.Text
 	if c.FuncLOC {
-		text += funcLOCLimit(f.MaxFuncLOC)
+		text += funcLOCLimit(f)
 	}
 	if c.Languages == 0 {
 		return text, true
 	}
-	shown := c.Languages
+	shown := c.Languages &^ waived
 	if f.Languages != 0 {
 		shown &= f.Languages
 	}
@@ -114,12 +160,21 @@ func (c Clause) render(f Facts) (string, bool) {
 	return languageLabel(shown) + ": " + text, true
 }
 
-// funcLOCLimit completes the HISS-04 function-length clause.
-func funcLOCLimit(limit int) string {
-	if limit > 0 {
-		return " " + strconv.Itoa(limit)
+// funcLOCLimit completes the HISS-04 function-length clause with the limit the audit enforces.
+// At the audit ceiling it says the ceiling caps the profile's value, which a pinned profile
+// snapshot can state higher; before the policy resolves it states the ceiling, which a
+// stricter repository policy tightens.
+func funcLOCLimit(f Facts) string {
+	switch {
+	case f.MaxFuncLOC > 0 && f.MaxFuncLOC == f.CeilingFuncLOC:
+		return " " + strconv.Itoa(f.MaxFuncLOC) + " (audit ceiling; caps profile value)"
+	case f.MaxFuncLOC > 0:
+		return " " + strconv.Itoa(f.MaxFuncLOC)
+	case f.CeilingFuncLOC > 0:
+		return " " + strconv.Itoa(f.CeilingFuncLOC) + " (audit ceiling; stricter repository policy wins)"
+	default:
+		return " repository audit limit (`praetorctl audit` prints `max_func_loc`)"
 	}
-	return " " + strconv.Itoa(CeilingFuncLOC) + " (audit ceiling; stricter repository policy wins)"
 }
 
 // languageLabel names the languages of set, in languageNames order.

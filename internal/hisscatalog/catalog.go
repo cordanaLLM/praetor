@@ -56,8 +56,13 @@ var catalog = []Rule{
 		Enforcement:   "The internal/hiss scanner, deciding a subset per language. Go: goto, direct recursion, and mutual or indirect recursion between plain functions (a cycle through methods is not decided). Rust and Python: direct recursion only. C and C++: goto only. Each claim replays against .config/hiss/coverage.yaml via 'praetorctl hiss coverage --verify'.",
 		FailureAction: "Immediate build failure.",
 		Scope:         "control flow",
-		Directive:     []Clause{{Text: "recursion prohibited; call graph = DAG"}, {Languages: LanguageGo | LanguageC, Text: "zero `goto`"}},
-		Adoption:      auditCheck(scannedLanguages, "Go `goto`, recursion + plain-function call cycles; Rust, Python direct recursion; C `goto`"),
+		Directive: []Clause{
+			{Text: "recursion prohibited; call graph = DAG"},
+			{Languages: LanguageGo | LanguageC, Text: "zero `goto`", Waiver: ExceptionCleanupGoto},
+			{Languages: LanguageC, Exception: ExceptionCleanupGoto,
+				Text: "`goto` only single-level forward jump to function cleanup label (declared exception); audit still reports each `goto`"},
+		},
+		Adoption: auditCheck(scannedLanguages, "Go `goto`, recursion + plain-function call cycles; Rust, Python direct recursion; C `goto`"),
 	},
 	{
 		ID:            "HISS-02",

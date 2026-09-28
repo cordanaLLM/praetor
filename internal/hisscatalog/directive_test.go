@@ -88,7 +88,7 @@ func TestAdoptedDirective_Boundary_UnknownLanguagesAndLimit(t *testing.T) {
 	if got := directiveOf(t, "HISS-09", Facts{Languages: LanguageGo | LanguageRust | LanguagePython}); got != "Go, Rust: `// SAFETY:` proof before every `unsafe` block" {
 		t.Errorf("HISS-09 for Go + Rust + Python = %q", got)
 	}
-	if got := directiveOf(t, "HISS-04", Facts{MaxFuncLOC: 50}); !strings.HasSuffix(got, "; func LOC <= 50") {
+	if got := directiveOf(t, "HISS-04", Facts{MaxFuncLOC: 50, CeilingFuncLOC: 60}); !strings.HasSuffix(got, "; func LOC <= 50") {
 		t.Errorf("HISS-04 with a resolved limit = %q", got)
 	}
 	var text strings.Builder
@@ -119,5 +119,97 @@ func TestAllLanguages(t *testing.T) {
 	}
 	if beyond&AllLanguages != 0 || AllLanguages&LanguageGo == 0 {
 		t.Errorf("AllLanguages %b is not the contiguous run of bits from LanguageGo", AllLanguages)
+	}
+}
+
+// cleanupGoto is HISS-01's exception clause as a C repository declaring it reads it.
+const cleanupGoto = "C/C++: `goto` only single-level forward jump to function cleanup label (declared exception); audit still reports each `goto`"
+
+// TestAdoptedDirective_Positive_DeclaredExceptionReplacesTheBan: a C repository that declares
+// its single-level cleanup `goto` reads that exception, not the blanket zero-`goto` ban, and is
+// told the audit still reports each `goto`; one that declares nothing keeps the ban (#68).
+func TestAdoptedDirective_Positive_DeclaredExceptionReplacesTheBan(t *testing.T) {
+	declared := directiveOf(t, "HISS-01", Facts{Languages: LanguageC, Exceptions: ExceptionCleanupGoto})
+	if want := "recursion prohibited; call graph = DAG; " + cleanupGoto; declared != want {
+		t.Errorf("HISS-01 for C declaring the exception = %q, want %q", declared, want)
+	}
+	if plain := directiveOf(t, "HISS-01", Facts{Languages: LanguageC}); plain != "recursion prohibited; call graph = DAG; C/C++: zero `goto`" {
+		t.Errorf("HISS-01 for C declaring nothing = %q", plain)
+	}
+}
+
+// TestAdoptedDirective_Negative_ExceptionStaysInItsLanguageAndRule: the C exception never
+// reaches a Go-only repository, which keeps Go's own ban, and no other rule's directive changes
+// when a repository declares it.
+func TestAdoptedDirective_Negative_ExceptionStaysInItsLanguageAndRule(t *testing.T) {
+	for _, exceptions := range []Exception{0, ExceptionCleanupGoto} {
+		got := directiveOf(t, "HISS-01", Facts{Languages: LanguageGo, Exceptions: exceptions})
+		if got != "recursion prohibited; call graph = DAG; Go: zero `goto`" {
+			t.Errorf("HISS-01 for Go with exceptions %b = %q", exceptions, got)
+		}
+	}
+	for _, rule := range Rules() {
+		for _, language := range []Language{0, LanguageC, LanguageGo | LanguageC, LanguageOther} {
+			plain := rule.AdoptedDirective(Facts{Languages: language})
+			declared := rule.AdoptedDirective(Facts{Languages: language, Exceptions: ExceptionCleanupGoto})
+			if rule.ID != "HISS-01" && plain != declared {
+				t.Errorf("%s changes with the cleanup-goto exception: %q -> %q", rule.ID, plain, declared)
+			}
+		}
+	}
+}
+
+// TestAdoptedDirective_Boundary_ExceptionWithUnknownOrMixedLanguages: with unknown languages, or
+// Go and C together, the exception lifts only C's share of the ban, so Go's stays labelled beside
+// it; an exception bit above AllExceptions changes nothing; every variant lints clean.
+func TestAdoptedDirective_Boundary_ExceptionWithUnknownOrMixedLanguages(t *testing.T) {
+	want := "recursion prohibited; call graph = DAG; Go: zero `goto`; " + cleanupGoto
+	for _, language := range []Language{0, LanguageGo | LanguageC} {
+		if got := directiveOf(t, "HISS-01", Facts{Languages: language, Exceptions: ExceptionCleanupGoto}); got != want {
+			t.Errorf("HISS-01 for %b declaring the exception = %q, want %q", language, got, want)
+		}
+	}
+	beyond := AllExceptions + 1
+	if allDirectives(Facts{Languages: LanguageC, Exceptions: beyond}) != allDirectives(Facts{Languages: LanguageC}) {
+		t.Error("a bit above AllExceptions changes a directive")
+	}
+	if beyond&AllExceptions != 0 || AllExceptions&ExceptionCleanupGoto == 0 {
+		t.Errorf("AllExceptions %b is not the contiguous run of bits from ExceptionCleanupGoto", AllExceptions)
+	}
+	var text strings.Builder
+	for _, language := range []Language{0, LanguageC, LanguageGo | LanguageC} {
+		text.WriteString(allDirectives(Facts{Languages: language, Exceptions: AllExceptions}))
+	}
+	if report := caveman.Check(text.String(), caveman.Options{}); !report.Passed() {
+		t.Errorf("exception directives fail the lint: %+v", report.Findings)
+	}
+}
+
+// TestFuncLOCLimit states the function length the audit enforces. Positive: a resolved limit
+// below the audit ceiling is stated alone, and one at the ceiling says the ceiling caps the
+// profile's value (a profile snapshot can say 75 where the audit enforces 60). Negative: an
+// unresolved policy never states a resolved number; it states the ceiling the caller read and
+// that a stricter policy wins, or, with no ceiling either, where the audit prints the limit.
+// Boundary: a limit one below the ceiling is plain. Every variant lints clean.
+func TestFuncLOCLimit(t *testing.T) {
+	cases := []struct {
+		facts Facts
+		want  string
+	}{
+		{Facts{MaxFuncLOC: 50, CeilingFuncLOC: 60}, " 50"},
+		{Facts{MaxFuncLOC: 60, CeilingFuncLOC: 60}, " 60 (audit ceiling; caps profile value)"},
+		{Facts{CeilingFuncLOC: 60}, " 60 (audit ceiling; stricter repository policy wins)"},
+		{Facts{}, " repository audit limit (`praetorctl audit` prints `max_func_loc`)"},
+		{Facts{MaxFuncLOC: 59, CeilingFuncLOC: 60}, " 59"},
+	}
+	var text strings.Builder
+	for _, tc := range cases {
+		if got := funcLOCLimit(tc.facts); got != tc.want {
+			t.Errorf("funcLOCLimit(%+v) = %q, want %q", tc.facts, got, tc.want)
+		}
+		text.WriteString(directiveOf(t, "HISS-04", tc.facts) + ".\n")
+	}
+	if report := caveman.Check(text.String(), caveman.Options{}); !report.Passed() {
+		t.Errorf("function-length variants fail the lint: %+v", report.Findings)
 	}
 }
