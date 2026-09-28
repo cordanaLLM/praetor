@@ -46,6 +46,37 @@ before its `branch-ruleset` step, not only the ones on disk:
 On a first adoption the preview is therefore the file the run writes, byte for byte
 (`TestAdoptDryRun_Positive_FirstAdoptionPreviewIsTheWrittenRuleset`).
 
+### Which jobs the ruleset requires
+
+Adoption, flavor apply, `sync` and the audit take the ruleset's required status checks from one
+function, `forge.RequiredStatusContexts` (`internal/forge/workflow_checks.go`). A job's check is
+required when the job reports on every pull request:
+
+- Its workflow triggers on `pull_request` without `paths` or `paths-ignore`. A filtered workflow
+  does not run on every pull request, and a required check that never reports leaves the pull
+  request waiting forever.
+- The job has no `if:`, or a condition that holds on every run: `always()`,
+  `success() || failure()` or `!cancelled()`, bare or as one `${{ }}` expression. A repository
+  guard that holds for the manifest's identity counts too
+  (see [Which workflows run where](guides/operational-sync.md#which-workflows-run-where)).
+- The job is not advisory: `continue-on-error` is absent or `false`.
+
+Any other condition makes the job optional, a status function joined with anything else
+(`always() && ...`) included. GitHub reports a job its condition skipped as successful, so a lane
+that runs only when a planner job selects it would pass as a required check whether or not its
+work ran.
+
+Path-filtered CI therefore gets its protection from an aggregate job: it `needs` every lane, runs
+with `if: always()`, and fails when a job it needs failed or was cancelled. The ruleset requires
+that aggregate beside the unconditional planner, never the gated lanes
+(`internal/forge/workflow_aggregate_test.go`). The aggregate is only as strict as its own steps.
+
+A repository with one maintainer declares `review_mode: single_maintainer` under
+`overrides.branch_protection` ([review policy](guides/review-policy.md)). Adoption, `sync` and the audit
+render the ruleset from the same effective policy, so the file adoption writes, with zero
+approvals, no code-owner review and the aggregate required, is the one the audit accepts
+(`TestAdopt_Positive_SoloPathFilteredRulesetIsMergeable` in `internal/adopt/ruleset_solo_test.go`).
+
 ### Refreshing a ruleset Praetor rendered earlier
 
 The ruleset is rendered from the effective policy and the workflows present, so it goes stale when
