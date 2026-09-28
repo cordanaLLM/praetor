@@ -1,9 +1,10 @@
 # Praetor VS Code extension
 
-This extension connects a trusted workspace to the shared Praetor CLI. Its agent
-setup command reads the Go adapter inventory and prepares or applies MCP client
-configuration with the same preservation, conflict, backup and readback checks
-as `praetorctl clients`.
+This extension connects a trusted workspace to the shared Praetor CLI. It offers
+the workspace's `standards-mcp` server to VS Code chat through the MCP server
+definition provider API. Its agent setup command reads the Go adapter inventory
+and prepares or applies MCP client configuration for other clients with the same
+preservation, conflict, backup and readback checks as `praetorctl clients`.
 
 The complete goal is [IDE-driven agent setup and enforcement](../../docs/plans/ide-agent-setup.md).
 Wrapper installation, native client activation, enforcement receipts and drift
@@ -22,7 +23,8 @@ This installs the lockfile dependencies without install scripts, compiles strict
 TypeScript, runs subprocess and setup tests, and builds a temporary Go CLI for a
 real configuration prepare/apply test. `make verify-all` includes this gate.
 The runtime dependency is `vscode-languageclient` 9.0.1; the declared minimum host
-is VS Code 1.90. These tests do not launch an extension host. With an installed
+is VS Code 1.125 (see [Minimum host](#minimum-host)). These tests do not launch
+an extension host. With an installed
 VS Code and a working display, run `npm run test:host --prefix editors/vscode`
 for an isolated host smoke test. It uses disposable user data, extension and
 workspace directories, checks activation and command registration, and records
@@ -61,19 +63,70 @@ it does not start against an arbitrary first folder. The default is
 `${workspaceFolder}/bin/standards-lsp`. All paths and processes belong to the
 actual extension host, which may be remote or in a container.
 
-The extension registers no MCP server: the declared minimum host (VS Code 1.90,
-`engines.vscode` and the pinned `@types/vscode` in `package.json`) has no MCP
-server registration API. MCP configuration comes only from the setup command
-above. The former `standards.mcp.enabled` and `standards.mcp.path` settings are
-no longer contributed because nothing read them; delete them from settings
-files, where VS Code now reports them as unknown. `src/setup.test.ts` checks
-that every setting the extension reads is contributed with the same default and
-that no `standards.mcp.*` setting returns. The legacy `standards.modelTier`
-setting remains declared for compatibility but does not activate services.
-Editor configuration generation emits none of these keys. The Go generator's
-legacy `IncludeMCP` option is retained for source compatibility; use the client
-setup pipeline to produce real MCP configuration.
+## MCP server
+
+The extension contributes the MCP server definition provider `standards.mcp`
+(`contributes.mcpServerDefinitionProviders` in `package.json`) and registers it
+with `vscode.lm.registerMcpServerDefinitionProvider` on activation
+(`src/extension.ts`). VS Code chat then lists one stdio server, **Praetor
+standards-mcp**, started as `<path> -transport=stdio -root <folder>` with the
+folder as its working directory. No `.vscode/mcp.json` entry is needed; adding
+one for the same binary lists the server twice.
+
+| Setting | Default | Effect |
+| :-- | :-- | :-- |
+| `standards.mcp.enabled` | `true` | `false` offers no server |
+| `standards.mcp.path` | `${workspaceFolder}/bin/standards-mcp` | server executable; blank falls back to the default |
+
+The provider (`src/mcp.ts`) offers the server only when all of these hold:
+
+- the workspace is trusted. `standards.mcp.path` is a restricted setting, like
+  `standards.lsp.path`;
+- a folder is selected by the same rule as the LSP: the only folder, or the
+  active editor's folder in a multi-root window;
+- an absolute path names an existing file. On Windows `<path>.com` and
+  `<path>.exe` also count, so `make build` output `bin/standards-mcp.exe` serves
+  the default. A command name or relative path is passed on unchecked.
+
+A change to any `standards.mcp.*` setting, granted Workspace Trust or a changed
+folder set fires `onDidChangeMcpServerDefinitions`, and VS Code asks again. The
+LSP and the MCP server resolve `${workspaceFolder}` through one helper,
+`workspaceExecutable` in `src/setup.ts`. Tests: `src/mcp.test.ts` (provider)
+and `src/setup.test.ts` (manifest contract).
+
+An editor that satisfies `engines.vscode` but has no
+`vscode.lm.registerMcpServerDefinitionProvider` keeps the commands and the LSP
+and offers no server. `praetorctl clients` has no VS Code adapter, so it never
+writes a second VS Code entry; its setup command serves the other clients.
+
+## Minimum host
+
+`engines.vscode` is `^1.125.0`, and the pinned `@types/vscode` is `1.125.0`,
+because `vsce` refuses host types newer than the engine floor. The MCP provider
+API first ships in 1.101.0, and its declarations are unchanged from 1.101.0
+through 1.138.0. The floor sits about one quarter behind VS Code 1.139 (stable
+on 2026-09-28), leaving room for VS Code-based editors that trail upstream. It is
+also later than the September 2025 fix for VS Code activating every MCP provider
+extension in empty workspaces (microsoft/vscode#266221). VS Code and forks older
+than 1.125 no longer install updates of this extension. `src/setup.test.ts`
+checks that the floor, the pinned types and the lockfile agree and that the
+floor carries the MCP API.
+
+## Settings
+
+Every contributed setting has a reader in `src/extension.ts`, except
+`standards.lsp.trace.server`, which vscode-languageclient reads itself.
+`src/setup.test.ts` fails on a contributed setting nothing reads.
+
+**Standards: Check Sentinel Host Headroom** runs
+`praetorctl sentinel --min-free-mb=<standards.sentinel.headroomMB>` (default
+1024 MiB) in a trusted workspace. The CLI measures free RAM
+(`internal/sentinel`) and exits non-zero when it is below the headroom or when
+the host has no memory reading, as on macOS. The legacy `standards.modelTier`
+setting is no longer contributed, because nothing read it; delete it from
+settings files. The Go generator's `IncludeMCP` option is retained for source
+compatibility and writes nothing.
 
 Inspect command output in the **Praetor** output channel. A configuration command
 finishing successfully does not establish native trust, tool use, wrapper
-execution, policy enforcement or measured model/headroom state.
+execution, policy enforcement or model state.

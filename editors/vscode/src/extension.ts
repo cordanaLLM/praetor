@@ -1,7 +1,9 @@
+import { stat } from "node:fs/promises";
 import * as vscode from "vscode";
 import { LanguageClient } from "vscode-languageclient/node";
+import { MCP_PROVIDER_ID, McpLaunch, StandardsMcpProvider } from "./mcp";
 import { DEFAULT_TIMEOUT_MS, runCLI } from "./runner";
-import { artifactPath, ClientCapability, LSP_CLIENT_ID, machineExecutable, parseCapabilities, requireTrust, setupArguments, workspaceGlob } from "./setup";
+import { artifactPath, ClientCapability, LSP_CLIENT_ID, LSP_DEFAULT_PATH, machineExecutable, parseCapabilities, requireTrust, sentinelArguments, setupArguments, workspaceExecutable, workspaceGlob } from "./setup";
 
 let client: LanguageClient | undefined;
 let output: vscode.OutputChannel;
@@ -11,8 +13,42 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(output);
   registerCommands(context);
   setupStatusBar(context);
-  context.subscriptions.push(vscode.workspace.onDidGrantWorkspaceTrust(() => { void startOptionalLSP(context); }));
+  const mcp = registerMcpProvider(context);
+  context.subscriptions.push(vscode.workspace.onDidGrantWorkspaceTrust(() => { mcp?.refresh(); void startOptionalLSP(context); }));
   await startOptionalLSP(context);
+}
+
+// serverFolder is the folder the LSP and the MCP server bind to: the only workspace folder, or
+// the active editor's folder in a multi-root window, never an arbitrary first folder.
+function serverFolder(): vscode.WorkspaceFolder | undefined {
+  const folders = vscode.workspace.workspaceFolders;
+  const active = vscode.window.activeTextEditor && vscode.workspace.getWorkspaceFolder(vscode.window.activeTextEditor.document.uri);
+  return folders?.length === 1 ? folders[0] : active;
+}
+
+function registerMcpProvider(context: vscode.ExtensionContext): StandardsMcpProvider<vscode.McpStdioServerDefinition, vscode.Uri> | undefined {
+  // An editor that satisfies engines.vscode without this API keeps the commands and the LSP.
+  if (typeof vscode.lm?.registerMcpServerDefinitionProvider !== "function") return undefined;
+  const emitter = new vscode.EventEmitter<void>();
+  const provider = new StandardsMcpProvider({
+    trusted: () => vscode.workspace.isTrusted,
+    folder: () => serverFolder()?.uri,
+    settings: (folder: vscode.Uri) => {
+      const config = vscode.workspace.getConfiguration("standards", folder);
+      return { enabled: config.get<boolean>("mcp.enabled", true), path: config.get<string>("mcp.path") };
+    },
+    isFile: file => stat(file).then(entry => entry.isFile(), () => false),
+    platform: process.platform,
+    define: (launch: McpLaunch) => {
+      const server = new vscode.McpStdioServerDefinition(launch.label, launch.command, launch.args);
+      server.cwd = vscode.Uri.file(launch.cwd);
+      return server;
+    },
+  }, emitter);
+  context.subscriptions.push(emitter, vscode.lm.registerMcpServerDefinitionProvider(MCP_PROVIDER_ID, provider),
+    vscode.workspace.onDidChangeConfiguration(change => provider.configurationChanged(change)),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => provider.refresh()));
+  return provider;
 }
 
 async function selectWorkspaceFolder(): Promise<vscode.WorkspaceFolder | undefined> {
@@ -24,13 +60,11 @@ async function selectWorkspaceFolder(): Promise<vscode.WorkspaceFolder | undefin
 
 async function startOptionalLSP(context: vscode.ExtensionContext): Promise<void> {
   if (!vscode.workspace.isTrusted || client) return;
-  const folders = vscode.workspace.workspaceFolders;
-  const active = vscode.window.activeTextEditor && vscode.workspace.getWorkspaceFolder(vscode.window.activeTextEditor.document.uri);
-  const folder = folders?.length === 1 ? folders[0] : active;
+  const folder = serverFolder();
   if (!folder) return;
   const config = vscode.workspace.getConfiguration("standards", folder.uri);
   if (!config.get<boolean>("lsp.enabled", true)) return;
-  const executable = config.get<string>("lsp.path", "${workspaceFolder}/bin/standards-lsp").replaceAll("${workspaceFolder}", folder.uri.fsPath);
+  const executable = workspaceExecutable(config.get<string>("lsp.path"), LSP_DEFAULT_PATH, folder.uri.fsPath);
   const pattern = new vscode.RelativePattern(folder, "**/*.go");
   const watcher = vscode.workspace.createFileSystemWatcher(pattern);
   context.subscriptions.push(watcher);
@@ -63,9 +97,13 @@ function registerCommands(context: vscode.ExtensionContext): void {
     output.show(true);
   });
   register("standards.setupAgents", setupAgents);
-  context.subscriptions.push(vscode.commands.registerCommand("standards.checkSentinel", () => {
-    void vscode.window.showInformationMessage("Sentinel availability is unverified. A configured threshold is not a measurement.");
-  }));
+  register("standards.checkSentinel", async folder => {
+    const headroom = vscode.workspace.getConfiguration("standards", folder.uri).get<number>("sentinel.headroomMB", 1024);
+    // praetorctl sentinel measures free RAM and exits non-zero below the headroom or without a reading.
+    await execute(folder, cliPath(), sentinelArguments(headroom), "Check sentinel headroom");
+    output.show(true);
+    void vscode.window.showInformationMessage(`Measured free RAM meets the ${headroom} MiB headroom. See the Praetor output for the full sentinel report.`);
+  });
 }
 
 async function withWorkspace(action: (folder: vscode.WorkspaceFolder) => Promise<void>): Promise<void> {

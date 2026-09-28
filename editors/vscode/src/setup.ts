@@ -11,6 +11,30 @@ export type ClientCapability = {
 // standardsLSP.trace.server, a key nothing contributes, so the setting never took effect.
 export const LSP_CLIENT_ID = "standards.lsp";
 
+// Contributed defaults of standards.lsp.path and standards.mcp.path (package.json); setup.test.ts
+// checks they stay equal.
+export const LSP_DEFAULT_PATH = "${workspaceFolder}/bin/standards-lsp";
+export const MCP_DEFAULT_PATH = "${workspaceFolder}/bin/standards-mcp";
+
+// workspaceExecutable resolves a server path setting for one workspace folder: a value that is not
+// a non-blank string falls back to the contributed default, then ${workspaceFolder} becomes the
+// folder path, inserted literally (a replacer function, so `$&` in a path is not a pattern). The
+// LSP and the MCP server resolve their paths through this one function.
+export function workspaceExecutable(configured: unknown, fallback: string, folderPath: string): string {
+  const value = typeof configured === "string" && configured.trim() ? configured : fallback;
+  return value.replaceAll("${workspaceFolder}", () => folderPath);
+}
+
+// sentinelArguments turns standards.sentinel.headroomMB into the praetorctl sentinel call that
+// measures it. Zero would skip the CLI check, so only a positive integer is passed; the CLI refuses
+// values above its MiB limit.
+export function sentinelArguments(headroomMB: unknown): string[] {
+  if (typeof headroomMB !== "number" || !Number.isSafeInteger(headroomMB) || headroomMB < 1) {
+    throw new Error("standards.sentinel.headroomMB must be a positive whole number of MiB.");
+  }
+  return ["sentinel", `--min-free-mb=${headroomMB}`];
+}
+
 export function requireTrust(trusted: boolean): void {
   if (!trusted) throw new Error("Workspace Trust is required before running Praetor.");
 }

@@ -353,7 +353,7 @@ dependencies:
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
     - package: '@types/vscode'
-      version: 1.90.0
+      version: 1.125.0
       language: typescript
       ecosystem: npm
       capability: ui.external.types_vscode

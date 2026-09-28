@@ -1,0 +1,100 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import type { Event } from "vscode";
+import { launchCandidates, MCP_SERVER_LABEL, McpFolder, McpLaunch, mcpLaunch, McpProviderHost, McpSettings, StandardsMcpProvider } from "./mcp";
+
+const root = "/work/repo";
+const defaultCommand = `${root}/bin/standards-mcp`;
+
+function emitter() {
+  const listeners: (() => unknown)[] = [];
+  const event: Event<void> = listener => { listeners.push(() => listener()); return { dispose: () => undefined }; };
+  return { event, fire: () => { for (const listener of listeners) listener(); } };
+}
+
+type Fixture = { trusted?: boolean; folder?: McpFolder | undefined; settings?: McpSettings; files?: string[]; platform?: NodeJS.Platform };
+
+function provider(fixture: Fixture = {}) {
+  const checked: string[] = [];
+  const defined: McpLaunch[] = [];
+  const host: McpProviderHost<McpLaunch> = {
+    trusted: () => fixture.trusted ?? true,
+    folder: () => ("folder" in fixture ? fixture.folder : { fsPath: root }),
+    settings: () => fixture.settings ?? { enabled: true, path: undefined },
+    isFile: async file => { checked.push(file); return (fixture.files ?? [defaultCommand]).includes(file); },
+    platform: fixture.platform ?? "linux",
+    define: launch => { defined.push(launch); return launch; },
+  };
+  const changes = emitter();
+  return { provider: new StandardsMcpProvider(host, changes), checked, defined };
+}
+
+test("the provider offers one stdio definition for the workspace standards-mcp", async () => {
+  const { provider: subject, defined } = provider();
+  const definitions = await subject.provideMcpServerDefinitions();
+  assert.equal(definitions.length, 1);
+  assert.deepEqual(defined, [{ label: MCP_SERVER_LABEL, command: defaultCommand, args: ["-transport=stdio", "-root", root], cwd: root }]);
+});
+
+test("a configured path is resolved against the folder", async () => {
+  const command = `${root}/tools/praetor-mcp`;
+  const { provider: subject } = provider({ settings: { enabled: true, path: "${workspaceFolder}/tools/praetor-mcp" }, files: [command] });
+  const [definition] = await subject.provideMcpServerDefinitions();
+  assert.equal(definition?.command, command);
+});
+
+test("disabled, untrusted, folderless and missing servers are not offered", async () => {
+  const cases: Fixture[] = [
+    { settings: { enabled: false, path: undefined } },
+    { trusted: false },
+    { folder: undefined },
+    { files: [] },
+  ];
+  for (const fixture of cases) {
+    const { provider: subject, defined } = provider(fixture);
+    assert.deepEqual(await subject.provideMcpServerDefinitions(), [], JSON.stringify(fixture));
+    assert.deepEqual(defined, []);
+  }
+  assert.equal(mcpLaunch({ enabled: false, path: defaultCommand }, { fsPath: root }, true), undefined);
+});
+
+test("a blank or unset path falls back to the contributed default", async () => {
+  for (const path of [undefined, "", "   "]) {
+    const { provider: subject } = provider({ settings: { enabled: true, path } });
+    const [definition] = await subject.provideMcpServerDefinitions();
+    assert.equal(definition?.command, defaultCommand, `path ${JSON.stringify(path)}`);
+  }
+});
+
+test("a command name or relative path is left to the host without a file check", async () => {
+  for (const path of ["standards-mcp", "bin/standards-mcp"]) {
+    const { provider: subject, checked } = provider({ settings: { enabled: true, path }, files: [] });
+    const [definition] = await subject.provideMcpServerDefinitions();
+    assert.equal(definition?.command, path);
+    assert.deepEqual(checked, []);
+  }
+});
+
+test("Windows counts the .com and .exe of an extension-less command", async () => {
+  const command = "C:\\work\\repo\\bin\\standards-mcp";
+  assert.deepEqual(launchCandidates(command, "win32"), [command, `${command}.com`, `${command}.exe`]);
+  assert.deepEqual(launchCandidates(`${command}.exe`, "win32"), [`${command}.exe`]);
+  assert.deepEqual(launchCandidates(defaultCommand, "linux"), [defaultCommand]);
+  assert.deepEqual(launchCandidates(defaultCommand, "darwin"), [defaultCommand]);
+  const { provider: subject } = provider({ platform: "win32", files: [`${defaultCommand}.exe`] });
+  assert.equal((await subject.provideMcpServerDefinitions()).length, 1);
+  const { provider: linux } = provider({ platform: "linux", files: [`${defaultCommand}.exe`] });
+  assert.deepEqual(await linux.provideMcpServerDefinitions(), []);
+});
+
+test("a standards.mcp change, trust or folder change fires the definitions event", () => {
+  const { provider: subject } = provider();
+  let fired = 0;
+  subject.onDidChangeMcpServerDefinitions(() => { fired++; });
+  subject.configurationChanged({ affectsConfiguration: section => section === "standards.mcp" });
+  assert.equal(fired, 1);
+  subject.configurationChanged({ affectsConfiguration: section => section === "standards.lsp" });
+  assert.equal(fired, 1, "an unrelated setting fired the MCP event");
+  subject.refresh();
+  assert.equal(fired, 2);
+});
