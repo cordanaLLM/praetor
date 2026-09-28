@@ -85,7 +85,7 @@ func TestHarnessLintScopeStaysInsideTheHarnessBoundary(t *testing.T) {
 	if scope < 0 || end < 0 || scope > end {
 		t.Fatalf("lint scope end at %d, harness end marker at %d", scope, end)
 	}
-	tail, ok := splitHarnessTail(harness + harnessSeparator + "\n# Repository Rules\n")
+	_, tail, ok := splitHarnessTail(harness + harnessSeparator + "\n# Repository Rules\n")
 	if !ok || strings.Contains(tail, "markdownlint") {
 		t.Fatalf("tail after split = %q, %v", tail, ok)
 	}

@@ -209,3 +209,68 @@ func TestParseGatedInvariants_Boundary_SectionEdgesAndCells(t *testing.T) {
 		t.Errorf("a document past the line bound: err = %v, want ErrGatedTableTooLong", err)
 	}
 }
+
+// TestSplitInvariantRow_Positive_AnyBoldID: the splitter reads a catalog row and a
+// repository's own row alike, with the line kept as written and the cells split.
+func TestSplitInvariantRow_Positive_AnyBoldID(t *testing.T) {
+	for line, want := range map[string]InvariantRow{
+		"| **HISS-01** control flow | recursion prohibited | build | immediate build failure |": {
+			ID: "HISS-01", Cells: []string{"control flow", "recursion prohibited", "build", "immediate build failure"},
+		},
+		"  | **ACME-01** secrets | never log tokens | review |  ": {
+			ID: "ACME-01", Cells: []string{"secrets", "never log tokens", "review"},
+		},
+	} {
+		got, ok := SplitInvariantRow(line)
+		want.Line = strings.TrimSpace(line)
+		if !ok || !reflect.DeepEqual(got, want) {
+			t.Errorf("SplitInvariantRow(%q) = %+v, %v; want %+v", line, got, ok, want)
+		}
+	}
+}
+
+// TestSplitInvariantRow_Negative_NotARow: the header, the delimiter row, prose, a row without
+// a bold ID and an unterminated row are no invariant rows.
+func TestSplitInvariantRow_Negative_NotARow(t *testing.T) {
+	for _, line := range []string{
+		"| Invariant | Rule | Adopted check | On fail |",
+		"| :--- | :--- | :--- | :--- |",
+		"old table",
+		"",
+		"|",
+		"| HISS-01 control flow | a | b | c |",
+		"| **HISS-01** control flow | a | b | c",
+		"| **HISS 01** control flow | a | b | c |",
+	} {
+		if row, ok := SplitInvariantRow(line); ok {
+			t.Errorf("SplitInvariantRow(%q) = %+v, want no row", line, row)
+		}
+	}
+}
+
+// TestSplitInvariantRow_Boundary_EscapedPipes: an escaped pipe stays inside its cell and is
+// restored, a closing escaped pipe leaves the row unterminated, and ParseGatedInvariants skips
+// a repository's own row between catalog rows instead of rejecting it.
+func TestSplitInvariantRow_Boundary_EscapedPipes(t *testing.T) {
+	row, ok := SplitInvariantRow(`| **ACME-02** a \| b | c \| d |`)
+	if !ok || row.ID != "ACME-02" || !reflect.DeepEqual(row.Cells, []string{"a | b", "c | d"}) {
+		t.Fatalf("escaped pipes: %+v, %v", row, ok)
+	}
+	if row, ok := SplitInvariantRow(`| **ACME-02** a | b \|`); ok {
+		t.Errorf("a closing escaped pipe must not close the row: %+v", row)
+	}
+	rows, err := ParseGatedInvariants(gatedFixture(
+		"| **HISS-01** control flow | a | b | c |",
+		`| **ACME-01** own \| rule | x | y | z |`,
+		"| **HISS-02** loops | a | b | c |"))
+	if err != nil || len(rows) != 2 || rows[0].ID != "HISS-01" || rows[1].ID != "HISS-02" {
+		t.Fatalf("ParseGatedInvariants = %+v, %v; want HISS-01 and HISS-02 only", rows, err)
+	}
+	table, err := InvariantTableRows(gatedFixture("| **HISS-01** control flow | a | b | c |", "| **ACME-01** own | x | y | z |"))
+	if err != nil || len(table) != 2 || table[1].ID != "ACME-01" {
+		t.Fatalf("InvariantTableRows = %+v, %v; want both rows", table, err)
+	}
+	if table, err := InvariantTableRows("# Harness\n\n| **ACME-01** own | x | y | z |\n"); err != nil || len(table) != 0 {
+		t.Errorf("a row outside the section: %+v, %v", table, err)
+	}
+}

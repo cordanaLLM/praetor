@@ -155,9 +155,13 @@ prints; it does not yet re-parameterise the distillation cap itself.
 
 ## Adopted repositories
 
-`praetorctl adopt` writes the default section into the harness, so a fresh adoption
-verifies. When the adoptee later writes its own `register:` section, its next
-`compile-context` re-splices the block from that manifest. An adoptee without a
+`praetorctl adopt` writes into the harness the section `compile-context` renders from the
+repository's manifest (`compiler.LoadRegisterBlock`): the default section without a
+`register:` section, the manifest's rows with one. A fresh adoption and an
+`adopt --force` refresh therefore verify without a `compile-context` run first
+(`TestAdoptForceHarnessCarriesManifestRegisterBlock` in
+`internal/adopt/harness_register_test.go`). When the adoptee later changes its `register:`
+section, its next `compile-context` re-splices the block from that manifest. An adoptee without a
 `routing.yaml` is validated against the router defaults. If the repository instructions
 kept across a harness refresh already hold a section (because `compile-context` appended
 one earlier), the merge keeps a single copy. `praetorctl init` and harvester onboarding
