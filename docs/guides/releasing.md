@@ -85,7 +85,10 @@ job's `IMAGE` and `CHART_REPOSITORY` stops being the lowercased `.standards.yaml
 GHCR accepts lowercase names only. `internal/supplychain/notices_test.go` fails when an
 archive, `extra_files` or the `Dockerfile` drops one of the license and notices files, and
 when `THIRD-PARTY-NOTICES.md` falls out of step with `go.mod`, the embedded npm lock or the
-image's base. ADR-0013 records the design.
+image's base. After a dependency bump, `praetorctl sbom notices` (`make third-party-notices`)
+regenerates the notices' component tables; a new component or an unreviewed license stops it
+until its row is written by hand (`internal/supplychain/notices.go`). ADR-0013 records the
+design.
 
 A failure in steps 3 to 7 leaves the release a draft, but the image, and after step 7 the
 chart, are already on GHCR. A rerun of the job pushes over the same tags.

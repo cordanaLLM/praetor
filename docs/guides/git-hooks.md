@@ -166,7 +166,8 @@ loaded after `extends` and wins.
 
 ## Remote checkpoints
 
-The owner approved a separate `checkpoint/*` namespace for unfinished audit work.
+The pre-push hook reserves a separate `checkpoint/*` namespace for unfinished audit work
+(`push_check_mode` in `.config/lefthook/scripts/hooks.py`).
 Pushes to it require the same snapshot file checks plus affected Go builds and
 race tests. Full CI runs on every checkpoint push; a checkpoint is a WIP backup,
 not a passing verification receipt or permission to merge. Fixes can therefore be

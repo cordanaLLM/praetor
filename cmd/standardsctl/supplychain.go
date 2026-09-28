@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -15,6 +16,9 @@ import (
 )
 
 func runSBOM(args []string) error {
+	if len(args) > 0 && args[0] == "notices" {
+		return runSBOMNotices(args[1:])
+	}
 	fs := flag.NewFlagSet("sbom", flag.ContinueOnError)
 	path := fs.String("path", ".", "Path to repository to generate SBOM for")
 	out := fs.String("out", "", "Output file path (default stdout)")
@@ -47,6 +51,64 @@ func runSBOM(args []string) error {
 	}
 
 	fmt.Println(string(data))
+	return nil
+}
+
+// sbomNoticesTimeout bounds one notices render: four small file reads and one write (HISS-02).
+const sbomNoticesTimeout = 30 * time.Second
+
+// runSBOMNotices regenerates THIRD-PARTY-NOTICES.md at the top of a Praetor checkout from its
+// go.mod, root Dockerfile and Markdown gate npm lock (supplychain.RenderNotices), or with
+// --check fails when the committed file is not what the render writes. A Renovate or lock
+// maintenance bump is fixed by running it; a new component or an unreviewed license stops it
+// with the row a person has to write.
+func runSBOMNotices(args []string) error {
+	fs := flag.NewFlagSet("sbom notices", flag.ContinueOnError)
+	path := fs.String("path", ".", "Top of the Praetor checkout that holds "+supplychain.NoticesFile)
+	check := fs.Bool("check", false, "Fail when "+supplychain.NoticesFile+" differs from the render instead of writing it")
+	positional, err := parseInterspersed(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(positional) > 0 {
+		return fmt.Errorf("sbom notices accepts no positional arguments, got %q", positional)
+	}
+	ctx, cancel := commandContext(sbomNoticesTimeout)
+	defer cancel()
+	target := filepath.Join(*path, supplychain.NoticesFile)
+	current, err := contextopt.ReadSnapshot(ctx, target)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", target, err)
+	}
+	sources, err := supplychain.ReadNoticeSources(ctx, *path)
+	if err != nil {
+		return err
+	}
+	if *check {
+		if err := supplychain.CheckNotices(string(current), sources); err != nil {
+			return fmt.Errorf("[FAIL] %w", err)
+		}
+		fmt.Printf("[PASS] %s matches go.mod, the Dockerfile and the npm lock.\n", supplychain.NoticesFile)
+		return nil
+	}
+	return writeSBOMNotices(ctx, target, string(current), sources)
+}
+
+// writeSBOMNotices renders the notices at target from sources and writes them through the
+// shared snapshot publisher when they changed.
+func writeSBOMNotices(ctx context.Context, target, current string, sources supplychain.NoticeSources) error {
+	rendered, err := supplychain.RenderNotices(current, sources)
+	if err != nil {
+		return err
+	}
+	if rendered == current {
+		fmt.Printf("[OK] %s is already current.\n", supplychain.NoticesFile)
+		return nil
+	}
+	if err := writeCommandArtifact(ctx, target, []byte(rendered), 0644); err != nil {
+		return fmt.Errorf("failed writing %s: %w", target, err)
+	}
+	fmt.Printf("[OK] %s regenerated from go.mod, the Dockerfile and the npm lock.\n", supplychain.NoticesFile)
 	return nil
 }
 

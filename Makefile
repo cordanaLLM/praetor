@@ -62,6 +62,13 @@ editors-reference-verify:
 editors-verify:
 	go run ./cmd/standardsctl editors verify
 
+# The component tables of THIRD-PARTY-NOTICES.md are rendered from go.mod, the root Dockerfile
+# and tools/markdownlint/package-lock.json (internal/supplychain/notices.go); run this after a
+# dependency bump. `make test` fails while the committed tables are stale.
+.PHONY: third-party-notices
+third-party-notices:
+	go run ./cmd/standardsctl sbom notices
+
 # Nothing regenerates .needs.yaml on its own; this fails when the committed manifest is not
 # what `needs scan --write` would write now. It gates this repository only: adopter audits
 # do not run it, so an adopter's older manifest is not failed by a newer Praetor. The scan

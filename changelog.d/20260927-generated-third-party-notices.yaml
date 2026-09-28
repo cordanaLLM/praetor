@@ -1,0 +1,3 @@
+type: added
+title: Generate the component tables of THIRD-PARTY-NOTICES.md with praetorctl sbom notices (make third-party-notices), which rewrites each row from go.mod, the Dockerfile and the Markdown gate's npm lock and keeps its copyright line, so a Renovate or lock-maintenance bump is regenerated instead of edited by hand; --check, which go test runs, fails on stale rows, and a component without a row or with an unreviewed license stops the command
+breaking: false
