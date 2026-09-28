@@ -514,7 +514,13 @@ which also ran the tests but reported the change as configuration. A
 `.tsx`/`.jsx` file under `docs/` still follows the `docs/` prefix rule
 (`TestClassifyChanges_TsxJsxAreCode`,
 `TestClassifyChanges_TsxUnderDocsStaysDocsOnly` in
-`internal/cifilter/cifilter_test.go`).
+`internal/cifilter/cifilter_test.go`). Zig, the C++ sources and headers
+(`.cc`, `.cxx`, `.hpp`, `.hh`), HIP and shading-language sources (GLSL, HLSL,
+WGSL, Metal) are code as well, and a shader under `docs/` follows the same
+`docs/` prefix rule (`TestSourceKindsHissDoesNotListAreCode` and
+`TestSourceKindBoundaries` in `internal/cifilter/kinds_test.go`). The HISS-18
+section of the [HISS specification](../standards/hiss-spec.md) lists every
+code kind and the test directories.
 
 ## Site build and diagrams
 
