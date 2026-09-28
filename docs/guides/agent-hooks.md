@@ -257,6 +257,15 @@ next launch creates the directory again (`TestCorrelationStoreEvictsOldestAtCapa
 `TestCorrelationStoreFullOfRowsSurvivesDebris`, `TestCorrelationStoreScanBoundIsNotTheRowCap`,
 `TestClaudeDispatchSurvivesAFullStoreOfLeakedBindings`).
 
+Every store operation takes the lock file `.lock` in that directory for one sweep and one
+atomic write, so parallel launches queue on it. A hook waits up to five seconds for the lock
+(`correlationLockWait`, half the 10-second dispatch budget), and its own deadline ends the
+wait earlier. A lock older than the two-minute lease belonged to a hook that died and is
+reclaimed. A wait that runs out is a store failure, `correlation store remained locked for
+5s`, which the pre-launch gate denies. The wait used to be a fixed 400 ms, which 16 parallel
+launches outlasted on a Windows runner (#558; `TestCorrelationStoreWaitsForASlowHolder`,
+`TestCorrelationStoreLockWaitEndsAtItsBound`, `TestCorrelationStoreReclaimsStaleLock`).
+
 Claude Code 2.1.271 and later can deliver an auto-mode report through the documented
 `SubagentHandback.tool_input.message` field. The `pre-handback` hook checks that message
 before delivery, using the `session_id`, `agent_id`, and `tool_use_id` supplied to subagent
