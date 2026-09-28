@@ -20,16 +20,19 @@ export default {
     'internal/gating/pipeline.go:runFlavorStage',
     'internal/flavor/audit.go:passingScore',
     'internal/gating/pipeline.go:runTestStage',
+    'internal/gating/cargo.go:runCargoTests',
     'internal/gating/pipeline.go:runReceiptStage',
+    'internal/gating/languages.go:requireVerification',
     'internal/lockdown/keys.go:LoadSigningKey',
     'internal/lockdown/receipts.go:GateOutputVersion',
   ],
   describe: [
     'Only a failed stage stops the pipeline; a stage that ran nothing is skipped or not_applicable.',
-    'Stage failures: 1, a missing or empty manifest or lockfile, or a failed go mod verify or download; ' +
-      '2, debt beyond the baseline, an incomplete scan or an unreadable baseline; 3, a govulncheck or gosec finding, ' +
-      'or a missing scanner or .gosec.json; 4, a flavor score below 80% or a missing template; 5, a failing go test -race; ' +
-      '6, no signing key.',
+    'Stages 1, 3 and 5 run Go where a go.mod is present and Cargo where a Cargo.lock is.',
+    'Stage failures: 1, a missing or empty manifest or lockfile, or a failed go mod verify, go mod download or cargo fetch --locked; ' +
+      '2, debt beyond the baseline, an incomplete scan or an unreadable baseline; 3, a govulncheck, gosec or cargo audit finding, ' +
+      'or a missing Go scanner or .gosec.json; 4, a flavor score below 80% or a missing template; ' +
+      '5, a failing go test -race, cargo test or cargo clippy; 6, no signing key, or no toolchain stage ran for any language.',
   ],
   props: {
     speed: 1100,

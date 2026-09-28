@@ -251,7 +251,9 @@ The hook bounds the `gate run` and `gate verify` subprocesses by the gate's own 
 not by a figure of its own. `run_full_gate` in
 [`checks.py`](https://github.com/cordanaLLM/praetor/blob/main/.config/lefthook/scripts/checks.py) first runs `gate deadline --json`, which
 resolves `PRAETOR_TEST_STAGE_TIMEOUT` through the pipeline's parser: the race-stage bound, clamped
-to its 30-minute ceiling, plus the allowance for the other stages. It then adds a two-minute
+to its 30-minute ceiling, once per test suite the repository holds, plus the allowance for the
+other stages. It runs from the repository root, so a root holding both a `go.mod` and a
+`Cargo.lock` gets the two-suite deadline `gate run` grants itself. It then adds a two-minute
 launch margin (`GATE_LAUNCH_MARGIN`) for `go run` to rebuild the CLI. With the variable unset that
 is 8 + 2 = 10 minutes; at the ceiling it is 37 minutes, so a raised bound takes effect on a push
 (#314). A deadline report the hook cannot use fails the

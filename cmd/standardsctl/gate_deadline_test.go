@@ -151,3 +151,66 @@ func TestGateDeadline_3D(t *testing.T) {
 	_, err = captureStdout(t, func() error { return dispatchCommand("gate", []string{"deadline", "extra"}) })
 	mustErrContain(t, err, "no positional arguments")
 }
+
+// writeMarkers creates a repository root holding the named marker files.
+func writeMarkers(t *testing.T, markers ...string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, marker := range markers {
+		writeFixtureFile(t, dir, marker, "\n")
+	}
+	return dir
+}
+
+// `gate deadline --path` sizes the deadline to the repository `gate run --path` gates, so the
+// pre-push hook bounds a mixed repository's gate by what that gate grants itself.
+func TestGateDeadline_RepositorySized_3D(t *testing.T) {
+	cargoAllowance := gating.OtherStagesAllowance + gating.CargoStagesAllowance
+	cases := []struct {
+		name      string
+		markers   []string
+		suites    int
+		allowance time.Duration
+	}{
+		// Positive: go.mod and Cargo.lock reserve two suite bounds and the Cargo stages' bounds.
+		{"go and cargo", []string{"go.mod", gating.CargoLockFile}, 2, cargoAllowance},
+		// Negative: a Go repository reports the budget it had before Cargo support.
+		{"go only", []string{"go.mod"}, 1, gating.OtherStagesAllowance},
+		// Boundary: a Cargo-only repository runs one suite but still adds the Cargo stages.
+		{"cargo only", []string{gating.CargoLockFile}, 1, cargoAllowance},
+	}
+	t.Setenv(gating.TestStageTimeoutEnv, "")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := writeMarkers(t, tc.markers...)
+			out, err := captureStdout(t, func() error {
+				return dispatchCommand("gate", []string{"deadline", "--json", "--path=" + repo})
+			})
+			if err != nil {
+				t.Fatalf("gate deadline --json --path: %v", err)
+			}
+			var got gateDeadlineReport
+			if err := json.Unmarshal([]byte(out), &got); err != nil {
+				t.Fatalf("gate deadline --json printed non-JSON %q: %v", out, err)
+			}
+			want := int64((time.Duration(tc.suites)*gating.TestStageTimeout + tc.allowance).Seconds())
+			if got.TimeoutSeconds != want || got.TestSuites != tc.suites || got.OtherStagesAllowance != tc.allowance.String() {
+				t.Errorf("gate deadline = %+v, want %ds over %d suites + %s", got, want, tc.suites, tc.allowance)
+			}
+		})
+	}
+}
+
+// Positive: `gate run` over a mixed repository hands the pipeline the two-suite deadline.
+func TestGateRun_Positive_MixedRepositoryRunDeadline(t *testing.T) {
+	seen := stubPipeline(t)
+	t.Setenv(gating.TestStageTimeoutEnv, "12m")
+	repo := writeMarkers(t, "go.mod", gating.CargoLockFile)
+	out, err := captureStdout(t, func() error { return dispatchCommand("gate", []string{"run", "--path=" + repo}) })
+	if err != nil {
+		t.Fatalf("gate run: %v", err)
+	}
+	want := 2*12*time.Minute + gating.OtherStagesAllowance + gating.CargoStagesAllowance
+	mustLeave(t, *seen, want)
+	mustContain(t, out, "Run Deadline: "+want.String(), "2 test suites at a 12m0s stage bound each")
+}

@@ -233,7 +233,7 @@ never recorded as passed:
 | :--- | :--- | :--- |
 | `passed` | `[PASS]` | the stage ran its checks and they held |
 | `failed` | `[FAIL]` | the stage rejected the repository or could not run; the pipeline stops |
-| `skipped` | `[SKIP]` | the stage applies here but deliberately ran nothing: a dry run, or no race detector |
+| `skipped` | `[SKIP]` | the stage applies here but did not run all its checks: a dry run, no race detector, no `cargo` or `cargo-audit`, or it ran for one language and not the other |
 | `not_applicable` | `[N/A]` | the repository has nothing this stage checks |
 
 `--json` carries the verdict as `stages[].status`, and the stage output the Exit-0 receipt signs
@@ -254,10 +254,12 @@ refuse it.
 
 A skipped or not-applicable stage names its reason and does not fail the repository:
 
-- The module prefetch, Go security scanners and race-detector stages are **not applicable** where
-  there is no `go.mod`. Without this a TypeScript or Python repository failed its own pre-push gate
-  at `FAIL ./... [setup failed]`, which reads as a broken repository rather than an inapplicable
-  stage.
+- The prefetch, security and race-detector stages -- the toolchain stages -- are **not
+  applicable** where the repository root holds neither a `go.mod` nor a `Cargo.lock`
+  ([Cargo repositories](#cargo-repositories)). Without this a TypeScript or Python repository failed
+  its own pre-push gate at `FAIL ./... [setup failed]`, which reads as a broken repository rather
+  than an inapplicable stage. Such a repository still gets no receipt
+  ([below](#no-receipt-when-no-toolchain-stage-ran)).
 - Flavor conformance is **not applicable** where the repository's declared profile has no
   flavor implementing it -- an OS image forge is not a Go service and should not be measured as one.
 - The race-detector stage is **skipped** where the race detector cannot build, naming what is
@@ -285,16 +287,105 @@ how a gate comes to certify what it never examined. The verdicts are pinned by
 `TestExecuteStage_SkipVerdicts` and `TestStageOutput_3D` in
 [`internal/gating/gating_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/gating_test.go).
 
+### Cargo repositories
+
+Where the repository root holds a `Cargo.lock`, the toolchain stages run Cargo besides Go, or
+instead of it ([`internal/gating/cargo.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/cargo.go)):
+
+| Stage | Cargo command | Runs in | Bound |
+| :--- | :--- | :--- | :--- |
+| Prefetch & Lockfiles | `cargo fetch --locked` | the repository | `DefaultPrefetchTimeout`, 60 s |
+| Security & SCA Scan | `cargo audit`, when `cargo-audit` is on `PATH` | the repository | `CargoAuditTimeout`, 3 min |
+| Race-Detector Tests | `cargo test --workspace --locked`, then `cargo clippy --workspace --all-targets -- -D warnings` | the isolated worktree | a race stage bound of its own |
+
+- A `Cargo.toml` without a committed `Cargo.lock` runs no Cargo command: every command is held to
+  the lockfile with `--locked`, and without one there is nothing to hold it to.
+- A missing toolchain is reported, never passed. Without `cargo` on `PATH` each Cargo part reads
+  `not run: cargo is not on PATH (install the Rust toolchain from https://rustup.rs)`. Unlike the
+  Go scanners, `cargo audit` is optional: without `cargo-audit` the part reads
+  `cargo audit not run: cargo-audit is not installed (cargo install cargo-audit --locked)`.
+- Where a `Cargo.lock` is present, each toolchain stage's reason names every language's outcome,
+  and that reason is part of the signed stage output. A stage that ran for one language and not
+  the other is recorded as skipped, not passed:
+
+  ```text
+  3. [SKIP] Security & SCA Scan       (4.1s)
+     Reason: go: passed; cargo: cargo audit not run: cargo-audit is not installed (cargo install cargo-audit --locked)
+  ```
+
+- A repository without a `Cargo.lock` runs the same commands and records the same verdicts and
+  reasons as before Cargo support, so its signed output is unchanged
+  (`TestToolchainStages_Positive_GoPathUnchanged`).
+- The Cargo suite runs in a worktree of its own under a whole race stage bound (default 3 min),
+  not what the Go suite left of one. The run deadline reserves that bound beside the Go suite's
+  and adds the `cargo fetch` and `cargo audit` bounds to the other stages' allowance
+  ([the whole run's deadline](#the-whole-runs-deadline)). Raise `PRAETOR_TEST_STAGE_TIMEOUT` as
+  [the race stage's bound](#the-race-stages-bound-and-what-firing-it-means) describes; it applies
+  to each suite.
+- `cargo test` and `cargo clippy` build into `praetor/cargo-target` under the repository's git
+  common directory (`cargoTargetDir` in `cargo.go`), passed as `--target-dir`. The test worktree is
+  removed after every run, and Cargo's default `target/` inside it went with it, so every run
+  compiled every dependency twice inside the bound. The shared directory outlives the worktree, is
+  the same for every linked worktree of the clone, sits outside every working tree (the tree the
+  receipt certifies stays clean), and does not contend with your own `target/`. Only the first run
+  in a clone builds cold; give that run a raised bound on a large workspace.
+  - An absolute `CARGO_TARGET_DIR` is used instead, without a flag. A relative one would resolve
+    inside the removed worktree, so the gate's directory is used.
+  - Where no git common directory resolves, for example when `--path` names a subdirectory of the
+    checkout, the commands run without the flag, and the stage reason says the run compiled every
+    dependency.
+  - The directory grows like any `target/`; delete it to reclaim the space, and the next run
+    rebuilds it.
+- A failing command's standard output is cut at 64 KiB in the stage reason; `util.RunCommand`
+  already bounds its standard error the same way.
+
+[`internal/gating/cargo_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/cargo_test.go) replays each outcome
+through a recording command runner, and the `TestCargoTargetDir_*` cases pin the shared directory.
+[`internal/gating/cargo_path_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/cargo_path_test.go) builds a
+stand-in `cargo` with `testsupport.BuildExecutable`, puts it first on `PATH`, and runs the stages
+through the production runner: all commands passing mints a receipt that verifies and leaves the
+build output in the shared directory after the worktree is gone, and a clippy failure mints none.
+
+### No receipt when no toolchain stage ran
+
+The receipt stage signs only after at least one toolchain stage ran and passed for some language
+(`requireVerification` in
+[`internal/gating/languages.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/languages.go)). When the prefetch,
+security and test stages were each not applicable or skipped, it fails, the run is rejected with
+exit status 1, and the reason names what the repository holds:
+
+```text
+6. [FAIL] Ed25519 Exit-0 Receipt    (1ms)
+   Reason: no verification stage ran for any language: Prefetch & Lockfiles, Security & SCA Scan
+           and Race-Detector Tests each ran nothing, so no Exit-0 receipt is signed; the gate runs
+           the toolchains of Go (go.mod) and Cargo (Cargo.lock); unsupported languages at the
+           repository root: node (package.json), python (pyproject.toml)
+```
+
+The reason says instead that a `Cargo.lock` is present but its stages could not run on this host,
+or that no language marker at the root is recognised. Before this check such a repository received
+a receipt that certified nothing beyond the HISS scan.
+
+**Migration.** A repository with neither a `go.mod` nor a `Cargo.lock` at its root no longer
+receives a receipt, so the `gate` job of its pre-push hook fails. Commit the `Cargo.lock` of a
+Cargo workspace; for any other language no receipt can be minted until the gate runs its
+toolchain. The `lefthook.yml` adoption writes states this in its header, and adoption replaces an
+unedited earlier rendering with it ([Migration and activation limits](#migration-and-activation-limits)).
+A dry run is never refused, because it mints nothing. `TestRunReceiptStage_Boundary_NothingVerifiedIsRefused`
+and `TestToolchainStages_Boundary_CargoAbsentFromPath` in
+[`internal/gating/cargo_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/cargo_test.go) pin the refusal.
+
 ### A dry run changes nothing
 
 `praetorctl gate run --dry-run` runs only the read-only stages: lockfile verification, the HISS
 scan and flavor conformance. It records the module prefetch (`go mod verify`, `go mod download`),
 the security scanners (`go list`, govulncheck, gosec), the race-detector tests and the receipt as
-**skipped**, and mints no receipt. `go mod download` writes the module cache and the scanners can
-fetch modules and query the vulnerability database, so a dry run that started them was not one.
-`TestExecuteStages_DryRunInvokesNoCommand` in
+**skipped**, and mints no receipt, and it skips every Cargo command the same way. `go mod download`
+writes the module cache and the scanners can fetch modules and query the vulnerability database,
+so a dry run that started them was not one. `TestExecuteStages_DryRunInvokesNoCommand` in
 [`internal/gating/gating_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/gating_test.go) runs a whole dry run
-through a recording command runner and fails if any command starts through the stage runner.
+through a recording command runner and fails if any command starts through the stage runner;
+`TestExecuteStages_DryRunWithCargoLockInvokesNoCommand` does the same with a `Cargo.lock`.
 
 The gatekeeper persona that adoption writes (`.agents/agents/repo-gatekeeper.md`) and the
 pre-migration epic's verification task both run the full gate, `praetorctl gate run --path=.`,
@@ -495,6 +586,24 @@ The run deadline used to be a fixed five minutes, so no value of `PRAETOR_TEST_S
 give the race stage more than what was left of those five minutes (#314). The `praetor-gatekeeper`
 agent helper runs the same pipeline and takes the same derived deadline.
 
+The deadline is sized to the repository `--path` names (`ResolveRepoRunBudget` in `deadline.go`):
+
+| Repository root holds | Test suites, one bound each | Allowance for the other stages |
+| :--- | :--- | :--- |
+| `go.mod`, no `Cargo.lock` | 1 | 5 min |
+| `Cargo.lock`, no `go.mod` | 1 | 5 min + 1 min `cargo fetch` + 3 min `cargo audit` = 9 min |
+| `go.mod` and `Cargo.lock` | 2 | 9 min |
+
+A mixed repository therefore gets 2 × 3 + 9 = 15 minutes by default. Sized for one suite, the run
+deadline let the Go suite and the Cargo commands spend the time the Cargo suite needed, and no value
+of the variable could fix it. `gate deadline` takes the same `--path` (default `.`) and reports the
+suite count as `test_suites` in its JSON:
+
+```text
+$ praetorctl gate deadline --path=.
+Run Deadline: 15m0s (2 test suites at a 3m0s stage bound each + 9m0s for the other stages)
+```
+
 Two deadlines can now stop the race stage, and the stage names the one that actually fired. Only
 when the stage's own bound fired does it report `hit the … stage bound`. When the run deadline
 fired first — which means the stages before it used more than their allowance — it reports the
@@ -604,7 +713,10 @@ same expression as the generated Makefile's `PRAETORCTL` variable
 commit or push; a `./cmd/standardsctl` source tree no longer stands in for one. The
 `govet` and `security` jobs run only where the repository root holds a `go.mod` and
 otherwise print `no go.mod at the repository root, skipping <tool>`, matching the gate
-stages above. A module kept in a subdirectory is not scanned by these jobs. Tests:
+stages above. A module kept in a subdirectory is not scanned by these jobs. The `gate` job runs
+`praetorctl gate run --path=.`, which fails where no toolchain stage ran for a `go.mod` or a
+`Cargo.lock` ([no receipt](#no-receipt-when-no-toolchain-stage-ran)); the file's header comment
+says so, and its two previous renderings are recognised as earlier Praetor output. Tests:
 `internal/adopt/lefthook_identity_test.go`, `internal/adopt/checkpoint_test.go`,
 `internal/adopt/hooks_gomod_test.go`, `internal/adopt/cli_name_test.go`.
 Generated Makefiles run `caveman-sources` (`praetorctl caveman check

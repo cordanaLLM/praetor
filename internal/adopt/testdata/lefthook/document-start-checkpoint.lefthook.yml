@@ -1,7 +1,6 @@
 # Lefthook Configuration (Go 1.27+ & HISS Governance)
 # Governance commands fail closed: a failing or missing praetorctl blocks the
-# commit or push. The pre-push gate job signs a receipt only after a Go
-# (go.mod) or Cargo (Cargo.lock) toolchain stage ran, and fails otherwise.
+# commit or push.
 ---
 agent-checkpoint-tool:
   commands:
