@@ -28,6 +28,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 	figureassets "github.com/cordanaLLM/praetor/tools/figures"
 	markdownassets "github.com/cordanaLLM/praetor/tools/markdownlint"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -39,6 +40,8 @@ const (
 	MaxWorkflowLines = 4096
 	// MaxAttributes bounds the .gitattributes rules one family declares (HISS-02).
 	MaxAttributes = 8
+	// MaxActionlintLabels bounds the runner labels one family declares to actionlint (HISS-02).
+	MaxActionlintLabels = 8
 	// DocumentationFacet is the manifest facet that enables documentation governance.
 	DocumentationFacet = "docs:seo-portal"
 )
@@ -87,6 +90,13 @@ type Family struct {
 	// naming the license. Both are empty for a family that vendors nothing.
 	VendoredTree    string
 	VendoredLicense string
+	// ActionlintLabels are runs-on labels of Workflow that actionlint's built-in table of
+	// GitHub-hosted runners does not know. Adoption declares them under self-hosted-runner.labels
+	// in the repository's actionlint configuration (internal/adopt/actionlint.go), so a
+	// repository that lints its workflows with actionlint accepts a workflow it may not edit.
+	// Each is a runs-on value of Workflow and reads back from YAML as the same plain string.
+	// Empty for a family without a hosted gate or whose runners actionlint knows.
+	ActionlintLabels []string
 	// Prior maps the SHA-256, in lowercase hex, of every text an earlier Praetor shipped at
 	// one of the family's managed paths to that path; the digest covers the text with LF line
 	// endings (util.CanonicalTextDigest). A file holding exactly such a text is Praetor's own unedited output, so
@@ -118,6 +128,8 @@ func markdown() Family {
 		StatusContext: markdownassets.StatusContext,
 		Workflow:      markdownassets.Workflow,
 		Prior:         markdownassets.PriorDigests(),
+
+		ActionlintLabels: markdownassets.ActionlintLabels(),
 	}
 }
 
@@ -180,6 +192,21 @@ func AttributesOf(families []Family) []string {
 		rules = append(rules, attributes[:min(len(attributes), MaxAttributes)]...)
 	}
 	return rules
+}
+
+// ActionlintLabelsOf returns the actionlint labels of families, each once, in family and
+// declaration order, and at most MaxActionlintLabels of them.
+func ActionlintLabelsOf(families []Family) []string {
+	labels := make([]string, 0, MaxActionlintLabels)
+	for index := 0; index < len(families) && index < MaxFamilies; index++ {
+		declared := families[index].ActionlintLabels
+		for item := 0; item < len(declared) && item < MaxActionlintLabels && len(labels) < MaxActionlintLabels; item++ {
+			if !slices.Contains(labels, declared[item]) {
+				labels = append(labels, declared[item])
+			}
+		}
+	}
+	return labels
 }
 
 // Names returns a copy of the inventory, cut at MaxAssets.
@@ -257,8 +284,9 @@ func (f Family) EmbedDirective() string {
 
 // Validate reports the first structural defect of a family declaration: a missing label, an
 // inventory that is empty, over its bound, duplicated or not a clean relative path, a Source
-// outside Directory, a partial hosted-gate declaration, or a Prior entry that is not a digest
-// of an earlier text at one of its managed paths.
+// outside Directory, a partial hosted-gate declaration, an actionlint label its workflow does
+// not run on, or a Prior entry that is not a digest of an earlier text at one of its managed
+// paths.
 func (f Family) Validate() error {
 	for _, field := range [][2]string{
 		{"name", f.Name}, {"kind", f.Kind}, {"asset noun", f.AssetNoun}, {"facet", f.Facet},
@@ -275,6 +303,9 @@ func (f Family) Validate() error {
 		return err
 	}
 	if err := f.validateWorkflow(); err != nil {
+		return err
+	}
+	if err := f.validateActionlintLabels(); err != nil {
 		return err
 	}
 	if err := f.validateAttributes(); err != nil {
@@ -382,6 +413,55 @@ func unpinnedActions(workflow string) ([]string, error) {
 		}
 	}
 	return unpinned, nil
+}
+
+// validateActionlintLabels requires at most MaxActionlintLabels labels, each declared once, each
+// a runs-on value of Workflow, and each one YAML reads back as the same plain string, so the
+// label adoption writes into an actionlint configuration is the label the workflow names.
+func (f Family) validateActionlintLabels() error {
+	if len(f.ActionlintLabels) > MaxActionlintLabels {
+		return fmt.Errorf("managed asset family %q declares %d actionlint labels, want at most %d", f.Name, len(f.ActionlintLabels), MaxActionlintLabels)
+	}
+	runners := workflowRunners(f.Workflow)
+	for index := 0; index < len(f.ActionlintLabels) && index < MaxActionlintLabels; index++ {
+		label := f.ActionlintLabels[index]
+		if slices.Index(f.ActionlintLabels, label) != index || !slices.Contains(runners, label) || !plainYAMLString(label) {
+			return fmt.Errorf("managed asset family %q actionlint label %q is repeated, not a runs-on value of its workflow, or not a plain YAML string", f.Name, label)
+		}
+	}
+	return nil
+}
+
+// workflowRunners returns the scalar runs-on values of workflow, in order, reading at most
+// MaxWorkflowLines lines; a trailing comment is not part of the value.
+func workflowRunners(workflow string) []string {
+	lines := strings.Split(workflow, "\n")
+	var runners []string
+	for index := 0; index < len(lines) && index < MaxWorkflowLines; index++ {
+		value, found := strings.CutPrefix(strings.TrimSpace(lines[index]), "runs-on:")
+		if !found {
+			continue
+		}
+		value, _, _ = strings.Cut(value, " #")
+		if value = strings.TrimSpace(value); value != "" {
+			runners = append(runners, value)
+		}
+	}
+	return runners
+}
+
+// plainYAMLString reports whether label is a plain YAML scalar that decodes to label itself:
+// not a number, boolean or null, and free of quoting, flow and comment characters.
+func plainYAMLString(label string) bool {
+	if label == "" || strings.ContainsAny(label, " \t\r\n\"'#:,[]{}&*!|>%@`") {
+		return false
+	}
+	var decoded any
+	if err := yaml.Unmarshal([]byte(label), &decoded); err != nil {
+		return false
+	}
+	text, isString := decoded.(string)
+	return isString && text == label
 }
 
 // validatePrior requires every Prior key to be a lowercase hex SHA-256 naming one of the
