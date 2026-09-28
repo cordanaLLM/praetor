@@ -217,9 +217,11 @@ Profiles represent the primary technology stack or architecture. Create `.config
 The shipped `.config/archetypes/native-gpu-systems.yaml`, in full:
 
 ```yaml
+---
 id: "native-gpu-systems"
 name: "Native GPU & Compute Systems"
-description: "High-performance C/C++/Rust/CUDA/Vulkan systems with deterministic memory bounds and zero dynamic frame allocations"
+description: "High-performance C/C++/Rust/CUDA/Vulkan systems with deterministic
+  memory bounds and zero dynamic frame allocations"
 runtime: "native"
 
 complexity:
@@ -263,9 +265,11 @@ Facets are cross-cutting policy modifiers. Create a YAML file under `.config/arc
 The shipped `.config/archetypes/facets/security-high.yaml`, in full:
 
 ```yaml
+---
 id: "security:high"
 name: "High-Security Provenance & Hardening"
-description: "SLSA Level 3 attestations, keyless Cosign signatures, SBOM generation, and non-root execution"
+description: "SLSA Level 3 attestations, keyless Cosign signatures, SBOM
+  generation, and non-root execution"
 
 supply_chain:
   slsa_level: 3

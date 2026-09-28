@@ -1,6 +1,9 @@
+---
 id: "planning-artifacts"
 name: "Governed Planning Artifacts"
-description: "Research and concept repositories with bounded preparation governance; runtime, build, boot, and release evidence remain explicitly unverified until supplied by the repository."
+description: "Research and concept repositories with bounded preparation
+  governance; runtime, build, boot, and release evidence remain explicitly
+  unverified until supplied by the repository."
 runtime: "planning"
 
 # Keep the repository's preparation and future implementation within the strict

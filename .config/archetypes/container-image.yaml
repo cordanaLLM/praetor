@@ -1,6 +1,8 @@
+---
 id: "container-image"
 name: "Hermetic Container Image"
-description: "Minimal, non-root, multi-arch container image recipes with vulnerability scanning and cryptographic provenance attestations"
+description: "Minimal, non-root, multi-arch container image recipes with
+  vulnerability scanning and cryptographic provenance attestations"
 runtime: "container"
 
 complexity:

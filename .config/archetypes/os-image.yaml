@@ -1,6 +1,9 @@
+---
 id: "os-image"
 name: "OS & Boot Artifact Forge"
-description: "Reproducible pipelines producing bootable artifacts -- OS images, kernels, initramfs and UKIs -- from declarative version manifests, with shell provisioners under Power-of-10 bounds and signed outputs"
+description: "Reproducible pipelines producing bootable artifacts -- OS images,
+  kernels, initramfs and UKIs -- from declarative version manifests, with shell
+  provisioners under Power-of-10 bounds and signed outputs"
 runtime: "image"
 
 complexity:
