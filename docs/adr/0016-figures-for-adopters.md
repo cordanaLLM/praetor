@@ -153,7 +153,7 @@ Praetor consolidates the figure engine into `tools/figures/` and ports the Pytho
 | Today | After |
 | :-- | :-- |
 | `scripts/docs_diagrams.py`: the `site`, `sources` and `portable` commands | the `site`, `sources` and `portable` commands of `tools/figures/build.mjs`, implemented in `tools/figures/checks.mjs` |
-| `scripts/test_docs_diagrams.py`: the checker's fixtures | `tools/figures/figures.test.mjs`, replayed in both directions |
+| `scripts/test_docs_diagrams.py`: the checker's fixtures | `tools/figures/checks.test.mjs`, replayed in both directions |
 | `scripts/mkdocs_figures_hook.py`, which imports `docs_diagrams` | `tools/figures/mkdocs_hook.py`, self-contained (section 6) |
 | `docs/stylesheets/figures.css` | `tools/figures/figures.css` |
 | `third_party/interfig/` | `tools/figures/third_party/interfig/` |
@@ -196,8 +196,8 @@ player without code splitting, and the loader imports the player by the fixed na
 never the list, and the go:embed patterns and asset names need no hand edit.
 
 Praetor-only, never emitted: `package.json`, `package-lock.json`, `loader.ts`, `player.tsx`,
-`keyboard.ts`, `bundle.mjs`, `smoke.mjs`, `figures.test.mjs`, `test_mkdocs_hook.py`,
-`fence-fixtures.json`, `tsconfig.json`.
+`keyboard.ts`, `bundle.mjs`, `smoke.mjs`, `figures.test.mjs`, `checks.test.mjs`,
+`test_mkdocs_hook.py`, `fence-fixtures.json`, `markup-fixtures.json`, `tsconfig.json`.
 
 Owned by the adopter: `docs/figures/<slug>.ts` (specs), `docs/assets/figures/*` (committed
 outputs), and one line of site configuration (the MkDocs `hooks:` entry or the Astro integration
@@ -384,7 +384,7 @@ moves to figures in one change.
     `test_repository_site_enables_only_figures_and_preset_only_mermaid`
     (`scripts/test_docs_diagrams.py`) require the preset to declare the mermaid fence and to enable
     `mermaid` only. Both flip to require `figure` only for the preset, keep their root-site
-    assertions, and move with the checker into `tools/figures/figures.test.mjs` (section 1).
+    assertions, and move with the checker into `tools/figures/checks.test.mjs` (section 1).
   - **Preset README.** Its "Mermaid Diagrams" section (`docs/presets/mkdocs/README.md`) describes
     the hook and the adopted engine instead of the `mermaid` custom fence. Its closing paragraph,
     added by 54812c7d ("The preset stays on Mermaid" … "a separate decision"), contradicts this

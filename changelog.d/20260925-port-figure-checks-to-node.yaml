@@ -1,0 +1,3 @@
+type: changed
+title: "The figure checks run in the Node figure engine: `node tools/figures/build.mjs sources`, `site` and `portable` (tools/figures/checks.mjs, Node 22.18 or later, no npm package) replace tools/figures/docs_diagrams.py with the same findings, and also fail a fractional image size or a JSON `html` that differs from the markup core.mjs renders; `site_url: !ENV NAME` is read from the environment, the MkDocs hook no longer imports a checker, and the Makefile, CI, Pages, Platform Neutrality and wiki sync run the Node commands (ADR-0016)"
+breaking: false

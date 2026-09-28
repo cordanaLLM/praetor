@@ -670,7 +670,7 @@ func TestGenerateWiki_Positive(t *testing.T) {
 
 	// Every page but the moved stub draws its diagram as an interactive figure, and no page
 	// carries a Mermaid fence: the root site no longer renders Mermaid, so a Mermaid fence in
-	// docs/wiki fails tools/figures/docs_diagrams.py (ADR-0015, section 9).
+	// docs/wiki fails the figure checks in tools/figures/checks.mjs (ADR-0015, section 9).
 	expectedFigures := map[string]string{
 		"Home.md":                 "governance-lifecycle",
 		"HISS-Invariants.md":      "verification-ladder",

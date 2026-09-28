@@ -376,14 +376,16 @@ The published site is built from the root `mkdocs.yml` by
 step, and the adopter preset from `docs/presets/mkdocs/mkdocs.yml` by the CI
 `docs-presets` job. All of them run `mkdocs build --strict`. A strict build
 still passes when a diagram ships as a code listing, so each build is followed
-by the diagram check in `tools/figures/docs_diagrams.py`:
+by the diagram check, `site`, a command of the Node figure engine
+(`tools/figures/build.mjs`, implemented in `tools/figures/checks.mjs`; Node
+22.18 or later, no npm package):
 
 ```bash
 npm ci --prefix tools/figures --ignore-scripts
 npm --prefix tools/figures run bundle
 mkdocs build --strict -d /tmp/site
-python3 -B tools/figures/docs_diagrams.py site --config mkdocs.yml --docs docs --site /tmp/site
-python3 -B tools/figures/docs_diagrams.py sources
+node tools/figures/build.mjs site --config mkdocs.yml --docs docs --site /tmp/site
+node tools/figures/build.mjs sources
 ```
 
 The configuration decides which diagram kind a build accepts:
@@ -404,8 +406,8 @@ The configuration decides which diagram kind a build accepts:
 The preset's pages live in `docs/presets/mkdocs/docs/`, inside the root
 `docs_dir`. The root `mkdocs.yml` lists that directory under `exclude_docs`,
 so the root site neither builds nor links the preset's example page; the
-preset README stays in the root navigation. The checker reads `exclude_docs`
-and skips the same pages MkDocs skips. It matches the way MkDocs does through
+preset README stays in the root navigation. The checks read `exclude_docs`
+and skip the same pages MkDocs skips. It matches the way MkDocs does through
 pathspec's gitignore rules: a leading or middle `/` anchors a pattern at
 `docs_dir`, a trailing `/` matches directories only, and `*`, `?` and `[...]`
 never match a `/`. It fails on a pattern with a leading `!`, `**` or a
@@ -421,25 +423,27 @@ nested inside a longer fence is source text and is not expected to render. The
 mapping from a page to its HTML file assumes the default
 `use_directory_urls: true`.
 
-`sources` needs neither a site nor Node. It checks the pages the root
+`sources` needs no site and no npm package. It checks the pages the root
 configuration builds and fails on a fence of a kind that configuration does
 not enable, when a figure's JSON no longer matches its spec, the vendored
-engine or its SVGs, when the JSON lacks the size of either SVG, when a spec
-and its JSON are not both present, when a fence names an unknown figure, when
-the README's portable figure block differs from the renderer, or when an
-evidence anchor's file or symbol is gone.
+engine or its SVGs, when the JSON lacks a positive whole-number size for
+either SVG, when its `html` is not the markup `tools/figures/core.mjs` renders
+from it, when a spec and its JSON are not both present, when a fence names an
+unknown figure, when the README's portable figure block differs from the
+renderer, or when an evidence anchor's file or symbol is gone.
 
-`make docs-diagrams-test` (part of `make verify-all`) replays the checker's
-fixtures in `scripts/test_docs_diagrams.py` in both directions, tests the
-hook, and asserts the
-diagram kind each configuration enables (figures only at the root, Mermaid
-only in the preset), so adding the mermaid fence back to the root site or
-dropping the figures hook fails without a site build. `make docs-figures-check`
-(also part of `make verify-all`) runs the figure engine's tests and type
-check, rebuilds every figure and compares it byte for byte with the committed
-files (`node tools/figures/build.mjs check`, which needs no npm package), holds
-the player bundle to its size budget (`node tools/figures/bundle.mjs --check`),
-and runs `sources`. The Pages workflow also runs the Chromium smoke test, which
+`make docs-figures-check` (part of `make verify-all`) runs the figure engine's
+tests, among them `tools/figures/checks.test.mjs`, which replays the checks'
+fixtures in both directions and asserts the diagram kind each configuration
+enables (figures only at the root, Mermaid only in the preset), so adding the
+mermaid fence back to the root site or dropping the figures hook fails without
+a site build. It also runs the type check, rebuilds every figure and compares
+it byte for byte with the committed files (`node tools/figures/build.mjs
+check`, which needs no npm package), holds the player bundle to its size
+budget (`node tools/figures/bundle.mjs --check`), and runs `sources`.
+`make docs-diagrams-test` (also part of `make verify-all`) tests the MkDocs
+hook, the one Python part of the figure engine, with
+`tools/figures/test_mkdocs_hook.py`. The Pages workflow also runs the Chromium smoke test, which
 fails when a figure does not mount the player, when autoplay does not advance
 a figure's active step, or when a figure shows no packet.
 

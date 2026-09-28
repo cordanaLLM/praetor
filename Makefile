@@ -200,19 +200,20 @@ docs-lint-test:
 	node tools/markdownlint/verify.mjs --self-test
 	node tools/docsurface/verify.mjs --self-test
 
-# The rendered half of tools/figures/docs_diagrams.py (`site`) runs after mkdocs build in pages.yml
-# and the CI docs audit; this replays its Mermaid and figure fixtures, both directions, checks both
-# mkdocs.yml files declare the diagram kinds their pages use, and tests the MkDocs figures hook.
+# The MkDocs figures hook is the one Python part of the figure engine (ADR-0016, section 6): this
+# tests it, replaying the fence and markup fixtures the Node checks replay. The checks themselves,
+# `site` included, are Node and run under docs-figures-check.
 .PHONY: docs-diagrams-test
 verify-all: docs-diagrams-test
 docs-diagrams-test:
-	python3 -B scripts/test_docs_diagrams.py
+	python3 -B tools/figures/test_mkdocs_hook.py
 
 # Interactive figures (docs/adr/0015-interactive-figures-from-vendored-interfig.md): the engine's
-# unit tests and type check, a fresh render compared byte for byte with the committed SVG and JSON
-# (`build.mjs check`, plain Node), the player bundle held to its size budget (`bundle.mjs --check`,
-# the one step that needs esbuild), and the Node-free source check (hashes, spec/JSON pairs, fence
-# slugs, evidence, the README block). A hand-edited or stale SVG fails both `check` and `sources`.
+# unit tests (render core and checks) and type check, a fresh render compared byte for byte with
+# the committed SVG and JSON (`build.mjs check`), the player bundle held to its size budget
+# (`bundle.mjs --check`, the one step that needs esbuild), and the source check (hashes, sizes,
+# markup, spec/JSON pairs, fence slugs, evidence, the README block; `build.mjs sources`). `check`
+# and `sources` need Node and no npm package. A hand-edited or stale SVG fails both.
 .PHONY: docs-figures-check
 verify-all: docs-figures-check
 docs-figures-check:
@@ -221,7 +222,7 @@ docs-figures-check:
 	npm --prefix tools/figures run typecheck
 	node tools/figures/build.mjs check
 	node tools/figures/bundle.mjs --check
-	python3 -B tools/figures/docs_diagrams.py sources
+	node tools/figures/build.mjs sources
 
 # The presets' JSON-LD must read identity from the site's config, never name this project:
 # a source check always, and rendered MkDocs builds when mkdocs-material is installed.

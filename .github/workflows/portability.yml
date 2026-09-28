@@ -278,10 +278,10 @@ jobs:
       # `make docs-figures-check` is a verify-all gate, so it must run on every platform, and make
       # is not on the Windows image: these are its commands. esbuild and TypeScript arrive as
       # per-platform npm optional dependencies, so this leg proves the locked --ignore-scripts
-      # install works, that a rebuild is byte-identical to the committed SVG and JSON, and that the
-      # player bundles within its budget, on each OS (the hashed files are pinned to LF in
-      # .gitattributes). The Chromium smoke test needs a built site and runs in pages.yml on Linux
-      # only.
+      # install works, that a rebuild is byte-identical to the committed SVG and JSON, that the
+      # player bundles within its budget, and that the Node figure checks and their tests pass, on
+      # each OS (the hashed files are pinned to LF in .gitattributes). The Chromium smoke test
+      # needs a built site and runs in pages.yml on Linux only.
       - name: Figure Build Check
         if: ${{ !cancelled() }}
         shell: bash
@@ -291,9 +291,7 @@ jobs:
           npm --prefix tools/figures run typecheck
           node tools/figures/build.mjs check
           node tools/figures/bundle.mjs --check
-          "$PYTHON" -B tools/figures/docs_diagrams.py sources
-        env:
-          PYTHON: ${{ steps.python.outputs.python-path }}
+          node tools/figures/build.mjs sources
 
       # `make interfig-verify` is a verify-all gate too; these are its commands. The script's
       # suite and `verify` use pathlib and the standard library only, the vendored files are

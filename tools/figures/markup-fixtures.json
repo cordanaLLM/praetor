@@ -1,5 +1,5 @@
 {
-  "about": "Figure markup, replayed in both languages: markup() in tools/figures/core.mjs must turn meta into html (tools/figures/figures.test.mjs), and render_block in tools/figures/docs_diagrams.py must fill html into each case's html (scripts/test_docs_diagrams.py). Each case's html is the output of the Python renderer that core.mjs replaced (docs/adr/0016-figures-for-adopters.md, section 4).",
+  "about": "Figure markup, replayed in both languages: markup() in tools/figures/core.mjs must turn meta into html (tools/figures/figures.test.mjs); fillSlots in tools/figures/checks.mjs must fill html into each case's html (tools/figures/checks.test.mjs), and render_block in tools/figures/mkdocs_hook.py into each case without a link (tools/figures/test_mkdocs_hook.py). Each case's html is the output of the Python renderer that core.mjs replaced (docs/adr/0016-figures-for-adopters.md, section 4).",
   "meta": {
     "slug": "demo",
     "title": "Demo & <co>",
