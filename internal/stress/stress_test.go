@@ -154,6 +154,70 @@ func TestStress_ConcurrentWorktreeOperations(t *testing.T) {
 	}
 }
 
+const (
+	// stressWorkers and stressIterations shape the concurrent compiler and scanner run.
+	stressWorkers    = 20
+	stressIterations = 10
+	// stressBudgetFloor is each worker's deadline wherever the measured schedule fits inside
+	// it: the fixed deadline the test had before it scaled (#558).
+	stressBudgetFloor = 5 * time.Second
+	// stressBudgetCeiling caps a scaled deadline, so a host that measures pathologically slow
+	// still fails well inside go test's default ten-minute timeout.
+	stressBudgetCeiling = 2 * time.Minute
+	// stressSlack is the headroom over the ideal schedule for process-start and scheduler
+	// contention between the workers and the other test binaries go test runs beside them.
+	stressSlack = 4
+	// stressCalibrationRuns is how many serial iterations the budget is measured over; the
+	// slowest counts, so a cold first scan cannot understate the cost.
+	stressCalibrationRuns = 3
+)
+
+// stressWorkerBudget is the deadline each worker gets for its iterations. The deadline is a
+// hang guard (HISS-02), not a latency assertion, so it follows the host: the slowest measured
+// serial iteration, times the iterations, times the rounds in which the workers share the
+// CPUs, times stressSlack, clamped to [stressBudgetFloor, stressBudgetCeiling]. One scan is
+// dominated by the Git file listing it starts (hiss.gitVisiblePaths): about half a
+// millisecond on Linux, where the floor wins by orders of magnitude, and a process start on
+// the Windows runner that is far slower, where the fixed 5 s let 20 workers time out (#558).
+func stressWorkerBudget(serial time.Duration, workers, iterations, cpus int) time.Duration {
+	cpus = max(cpus, 1)
+	rounds := (max(workers, 0) + cpus - 1) / cpus
+	scaled := serial * time.Duration(iterations*rounds*stressSlack)
+	return min(max(scaled, stressBudgetFloor), stressBudgetCeiling)
+}
+
+// stressIteration is one worker iteration: a scan of dir, then a compile of a small context.
+func stressIteration(ctx context.Context, tr *compiler.Transpiler, dir string, workerID, iter int) error {
+	rep, err := hiss.Scan(ctx, dir, hiss.ScanOptions{MaxFuncLOC: 60})
+	if err != nil {
+		return fmt.Errorf("worker %d scan failed: %w", workerID, err)
+	}
+	if rep == nil {
+		return fmt.Errorf("worker %d scan returned no report", workerID)
+	}
+	content := fmt.Sprintf("# Agent Worker %d-%d\nmake verify-all\n", workerID, iter)
+	if _, err := tr.CompileContent(content); err != nil {
+		return fmt.Errorf("worker %d compile failed: %w", workerID, err)
+	}
+	return nil
+}
+
+// measureStressIteration returns the slowest of stressCalibrationRuns serial iterations.
+func measureStressIteration(t *testing.T, tr *compiler.Transpiler, dir string) time.Duration {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), stressBudgetCeiling)
+	defer cancel()
+	var slowest time.Duration
+	for run := 0; run < stressCalibrationRuns; run++ {
+		began := time.Now()
+		if err := stressIteration(ctx, tr, dir, -1, run); err != nil {
+			t.Fatalf("calibration: %v", err)
+		}
+		slowest = max(slowest, time.Since(began))
+	}
+	return slowest
+}
+
 func TestStress_ConcurrentCompilerAndScanner(t *testing.T) {
 	tmpDir := t.TempDir()
 	goCode := "package stress\n\nfunc Worker() int { return 42 }\n"
@@ -162,29 +226,22 @@ func TestStress_ConcurrentCompilerAndScanner(t *testing.T) {
 	}
 
 	tr := compiler.NewTranspiler()
+	serial := measureStressIteration(t, tr, tmpDir)
+	budget := stressWorkerBudget(serial, stressWorkers, stressIterations, runtime.GOMAXPROCS(0))
+	t.Logf("slowest serial iteration %s, worker budget %s", serial, budget)
 	var wg sync.WaitGroup
-	errCh := make(chan error, 20)
+	errCh := make(chan error, stressWorkers)
 
-	for i := 0; i < 20; i++ {
+	for i := 0; i < stressWorkers; i++ {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), budget)
 			defer cancel()
 
-			for iter := 0; iter < 10; iter++ {
-				rep, err := hiss.Scan(ctx, tmpDir, hiss.ScanOptions{MaxFuncLOC: 60})
-				if err != nil {
-					errCh <- fmt.Errorf("worker %d scan failed: %w", workerID, err)
-					return
-				}
-				if rep == nil {
-					errCh <- fmt.Errorf("worker %d scan returned no report", workerID)
-					return
-				}
-				content := fmt.Sprintf("# Agent Worker %d-%d\nmake verify-all\n", workerID, iter)
-				if _, err := tr.CompileContent(content); err != nil {
-					errCh <- fmt.Errorf("worker %d compile failed: %w", workerID, err)
+			for iter := 0; iter < stressIterations; iter++ {
+				if err := stressIteration(ctx, tr, tmpDir, workerID, iter); err != nil {
+					errCh <- err
 					return
 				}
 			}
@@ -195,6 +252,34 @@ func TestStress_ConcurrentCompilerAndScanner(t *testing.T) {
 	close(errCh)
 	for err := range errCh {
 		t.Errorf("stress failure: %v", err)
+	}
+}
+
+// TestStressWorkerBudget: a slow host's measured cost scales the deadline above the floor
+// (positive); a fast host's stays at the floor, never looser (negative); the floor crossing,
+// the ceiling, the round boundary at the CPU count, a zero CPU count and a zero cost are
+// exact (boundary).
+func TestStressWorkerBudget(t *testing.T) {
+	cases := []struct {
+		name                 string
+		serial               time.Duration
+		workers, iters, cpus int
+		want                 time.Duration
+	}{
+		{"windows runner", 100 * time.Millisecond, 20, 10, 4, 20 * time.Second},
+		{"linux host", 600 * time.Microsecond, 20, 10, 32, stressBudgetFloor},
+		{"just under the floor", 124 * time.Millisecond, 1, 10, 1, stressBudgetFloor},
+		{"just over the floor", 126 * time.Millisecond, 1, 10, 1, 5040 * time.Millisecond},
+		{"ceiling", 10 * time.Second, 20, 10, 4, stressBudgetCeiling},
+		{"workers equal cpus", 200 * time.Millisecond, 4, 10, 4, 8 * time.Second},
+		{"one worker more", 200 * time.Millisecond, 5, 10, 4, 16 * time.Second},
+		{"no cpu count", 200 * time.Millisecond, 2, 10, 0, 16 * time.Second},
+		{"no cost", 0, 20, 10, 4, stressBudgetFloor},
+	}
+	for _, tc := range cases {
+		if got := stressWorkerBudget(tc.serial, tc.workers, tc.iters, tc.cpus); got != tc.want {
+			t.Errorf("%s: budget %s, want %s", tc.name, got, tc.want)
+		}
 	}
 }
 
