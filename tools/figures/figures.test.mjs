@@ -21,7 +21,7 @@ import {
 import { svgSpecError } from './checks.mjs';
 import { nextTab } from './keyboard.ts';
 import { MAX_SVG_BYTES, fetchSpec, figureTitle, readCapped, specFromSvg } from './loader.ts';
-import { holdsFigure, stepAdvanced } from './smoke.mjs';
+import { holdsFigure, main as smokeMain, parseCommandLine, stepAdvanced } from './smoke.mjs';
 import { capture, withTempDir, write } from './testkit.mjs';
 
 const VENDOR = JSON.parse(readFileSync(join(ROOT, VENDOR_JSON), 'utf8'));
@@ -364,6 +364,8 @@ test('dist/ holds exactly the three player files, committed, and no chunk, spec 
   assert.deepEqual(readdirSync(join(ROOT, DIST_DIR)).sort(), [...DIST_FILES]);
   const loader = readFileSync(join(ROOT, DIST_DIR, 'loader.js'), 'utf8');
   assert.ok(loader.includes('import("./player.js")'), 'the loader imports the player by its fixed name');
+  // The player host opts out of Starlight's Markdown typography, which would space the scenario tabs apart.
+  assert.ok(loader.includes('"praetor-figure__player not-content"'), 'the player host carries not-content');
   assert.doesNotMatch(loader, /registry\.json|specs\//);
   // The interfig notice leads both files; React's legal comments stay at the end of the player.
   for (const name of ['loader.js', 'player.js']) {
@@ -671,4 +673,16 @@ test('autoplay counts only a new selected tab or a longer progress line', () => 
   assert.ok(!stepAdvanced(at(-1, Number.NaN), at(-1, Number.NaN)));
   assert.ok(!stepAdvanced(at(0, 0), at(-1, Number.NaN)));
   assert.ok(!stepAdvanced(undefined, at(0, 0.3)));
+});
+
+test('the smoke command line takes a site, a base path and --require-browser, and nothing else', async () => {
+  assert.deepEqual(parseCommandLine([]), { site: join(ROOT, 'site'), base: '/', requireBrowser: false });
+  assert.deepEqual(parseCommandLine(['--site', 'dist', '--base', 'docs', '--require-browser']),
+    { site: join(ROOT, 'dist'), base: '/docs/', requireBrowser: true });
+  assert.equal(parseCommandLine(['--site', join(ROOT, 'elsewhere')]).site, join(ROOT, 'elsewhere'));
+  // Boundary: an empty site, a missing value, an unknown flag or a positional argument is misuse.
+  for (const argv of [['--site', ''], ['--site'], ['--base'], ['--headed'], ['site']]) assert.equal(parseCommandLine(argv), null, argv.join(' '));
+  const { result, output } = await capture(() => smokeMain(['--nope']));
+  assert.equal(result, 2);
+  assert.equal(output, 'usage: node smoke.mjs [--site <dir>] [--base <path>] [--require-browser]');
 });

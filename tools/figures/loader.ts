@@ -115,7 +115,10 @@ async function mountFigure(figure: HTMLElement): Promise<void> {
   if (!picture || !source) throw new Error('the figure holds no <picture> with an <img>');
   const [props, player] = await Promise.all([fetchSpec(source), import('./player.js')]);
   const host = document.createElement('div');
-  host.className = 'praetor-figure__player';
+  // not-content is Starlight's opt-out from its Markdown typography: without it, its rule that
+  // spaces every block after a sibling (margin-top: 1rem) pushes all but the first scenario tab
+  // down. Material has no such class and ignores it.
+  host.className = 'praetor-figure__player not-content';
   picture.replaceWith(host);
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const unmount = player.mount(host, props, { autoplay: !reduced, label: `${figureTitle(figure)}: scenarios` });
