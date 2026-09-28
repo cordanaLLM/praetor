@@ -5,6 +5,7 @@ import (
 	"path"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -126,7 +127,7 @@ func TestReconcileAgentHooks_Negative_UnignoredBackupRootTakesNoBackup(t *testin
 	}
 	action, _ := actionOf(s.report, claudeHookFile)
 	if !strings.Contains(action.Details, "no backup: ") || len(s.report.Warnings) != 1 ||
-		!strings.Contains(s.report.Warnings[0], claudeHookFile+": no backup of the replaced bytes: git does not ignore") {
+		!strings.Contains(s.report.Warnings[0], claudeHookFile+": no backup of the prior bytes: git does not ignore") {
 		t.Fatalf("report %+v, warnings %v", action, s.report.Warnings)
 	}
 
@@ -319,6 +320,86 @@ func TestScaffoldFile_Boundary_CRLFOnlyDifferenceIsNotReplaced(t *testing.T) {
 	if err != nil || state != scaffoldWritten || len(m.report.Replaced()) != 1 || mustRead(t, backupFile(m, rel)) != mixed {
 		t.Fatalf("mixed endings: state %v, err %v, report %+v", state, err, m.report.ActionDetails)
 	}
+	if detail := m.report.Replaced()[0].Details; !strings.Contains(detail, "(-0/+0 lines, line endings only)") {
+		t.Fatalf("mixed-ending replace detail %q does not name the line-ending change", detail)
+	}
+}
+
+// Positive, negative and boundary: describeLineDelta names a line-ending-only change when the LF
+// texts match, and never when a line changed.
+func TestDescribeLineDelta_LineEndingsOnly(t *testing.T) {
+	if got := describeLineDelta([]byte("one\r\ntwo\n"), []byte("one\ntwo\n")); got != "-0/+0 lines, line endings only" {
+		t.Fatalf("mixed endings = %q", got)
+	}
+	if got := describeLineDelta([]byte("one\ntwo\n"), []byte("one\nthree\n")); got != `-1/+1 lines, removed "two"` {
+		t.Fatalf("edited line = %q", got)
+	}
+	if got := describeLineDelta([]byte("one\n"), []byte("one\nadded\n")); got != "-0/+1 lines" {
+		t.Fatalf("added line = %q", got)
+	}
+}
+
+// Positive: a backup written while the private ledger directory is still absent (a fresh clone
+// whose .gitignore already ignores it) creates the directory owner-only, as the ledger
+// initialisation would, instead of at the writer's 0755 default.
+func TestBackupExisting_Positive_CreatesPrivateWorkingDir(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no POSIX permission bits to check")
+	}
+	s := backupSession(t, map[string]string{manifestFile: claudeOnlyManifest, claudeHookFile: foreignSettings}, true, AdoptOptions{})
+	if err := reconcileAgentHooks(t.Context(), s); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(s.repoPath, workingDirPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got&0o077 != 0 {
+		t.Fatalf("%s created with mode %v, want owner-only", workingDirPath, got)
+	}
+	if got := mustRead(t, backupFile(s, claudeHookFile)); got != foreignSettings {
+		t.Fatalf("backup = %q", got)
+	}
+}
+
+// Negative: an existing private ledger directory keeps its mode; adoption never changes the
+// permissions of a directory it did not create.
+func TestBackupExisting_Negative_KeepsExistingWorkingDirMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no POSIX permission bits to check")
+	}
+	s := backupSession(t, map[string]string{manifestFile: claudeOnlyManifest, claudeHookFile: foreignSettings}, true, AdoptOptions{})
+	dir := filepath.Join(s.repoPath, workingDirPath)
+	if err := os.Mkdir(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := reconcileAgentHooks(t.Context(), s); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(dir)
+	if err != nil || info.Mode().Perm() != 0o750 {
+		t.Fatalf("existing %s mode changed: %v, %v", workingDirPath, info, err)
+	}
+}
+
+// Boundary: when git cannot answer (no work tree), the report note says the ignore rule could
+// not be confirmed rather than claiming git does not ignore the backup path, and the warning
+// carries git's error.
+func TestBackupExisting_Boundary_GitFailureNamedInNote(t *testing.T) {
+	s := hookSession(t, true)
+	note, err := s.backupExisting(t.Context(), claudeHookFile, []byte(foreignSettings))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(note, "no backup: git could not confirm ") || strings.Contains(note, "is not ignored by git") {
+		t.Fatalf("note = %q", note)
+	}
+	if len(s.report.Warnings) != 1 || !strings.Contains(s.report.Warnings[0], "is ignored: ") {
+		t.Fatalf("warnings = %v", s.report.Warnings)
+	}
 }
 
 // Positive, negative and boundary: Replaced returns the replace entries alone, in order, and an
@@ -338,6 +419,47 @@ func TestAdoptReport_Replaced(t *testing.T) {
 	}
 	if got := (&AdoptReport{}).Replaced(); got == nil || len(got) != 0 {
 		t.Fatalf("empty report replaced = %#v", got)
+	}
+}
+
+// Positive: ReconciledNotReplaced drops every file with a replace entry and keeps the merged,
+// verified and refreshed files in report order.
+func TestAdoptReport_Positive_ReconciledNotReplacedDropsReplaced(t *testing.T) {
+	rep := &AdoptReport{}
+	rep.recordReplaced("a", "first")
+	rep.recordReconciledAs("c", actionMerge, "merged")
+	rep.recordReconciled("e", "verified")
+	rep.recordReplaced("d", "second")
+	if got := rep.ReconciledNotReplaced(); !reflect.DeepEqual(got, []string{"c", "e"}) {
+		t.Fatalf("reconciled not replaced = %v", got)
+	}
+	if !reflect.DeepEqual(rep.ReconciledFiles, []string{"a", "c", "e", "d"}) {
+		t.Fatalf("report reconciled files changed: %v", rep.ReconciledFiles)
+	}
+}
+
+// Negative: a report without a replace entry keeps every reconciled file; a created file never
+// appears among them.
+func TestAdoptReport_Negative_ReconciledNotReplacedWithoutReplace(t *testing.T) {
+	rep := &AdoptReport{}
+	rep.recordCreated("b", "created")
+	rep.recordReconciledAs("c", actionMerge, "merged")
+	rep.recordReconciled("e", "verified")
+	if got := rep.ReconciledNotReplaced(); !reflect.DeepEqual(got, []string{"c", "e"}) {
+		t.Fatalf("reconciled not replaced = %v", got)
+	}
+}
+
+// Boundary: an empty report, and one whose every reconciled file was replaced, yield an empty,
+// non-nil list.
+func TestAdoptReport_Boundary_ReconciledNotReplacedEmpty(t *testing.T) {
+	if got := (&AdoptReport{}).ReconciledNotReplaced(); got == nil || len(got) != 0 {
+		t.Fatalf("empty report = %#v", got)
+	}
+	rep := &AdoptReport{}
+	rep.recordReplaced("a", "first")
+	if got := rep.ReconciledNotReplaced(); got == nil || len(got) != 0 {
+		t.Fatalf("all replaced = %#v", got)
 	}
 }
 

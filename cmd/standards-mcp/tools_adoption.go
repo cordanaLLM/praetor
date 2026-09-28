@@ -153,22 +153,7 @@ func formatAdoptMCPResult(r *adopt.AdoptReport, dryRun bool) mcpGovernedText {
 	sb.Template("adoption: Praetor repository; mode: %s.\nstate: %s; archetype: %s.\nfacets: %s.\n",
 		adoptModes[outcomeReport.Outcome()], r.State, r.Archetype, strings.Join(r.Facets, ", "))
 	formatAdoptDebt(&sb, r, dryRun)
-	fileLabel := "Created Files"
-	if dryRun {
-		fileLabel = "Planned Files"
-	}
-	sb.Template("%s: %d\n", fileLabel, len(r.CreatedFiles))
-	for _, f := range r.CreatedFiles {
-		sb.Template("  + %s\n", f)
-	}
-	reconciledLabel := "Reconciled Files"
-	if dryRun {
-		reconciledLabel = "Planned Reconciliations"
-	}
-	sb.Template("%s: %d\n", reconciledLabel, len(r.ReconciledFiles))
-	for _, f := range r.ReconciledFiles {
-		sb.Template("  ~ %s\n", f)
-	}
+	formatAdoptFiles(&sb, r, dryRun)
 	for _, preview := range r.Previews {
 		// The adopt package's shared preview text, the same one the CLI prints for a dry run.
 		sb.External(preview.Text(), mcpTextShared)
@@ -185,6 +170,45 @@ func formatAdoptMCPResult(r *adopt.AdoptReport, dryRun bool) mcpGovernedText {
 		sb.Template("[WARN] %s\n", warning)
 	}
 	return sb.Text()
+}
+
+// adoptFileLabels names the file sections of a standards_adopt result, for a run that wrote
+// (appliedAdoptFileLabels) or a dry run that only plans (plannedAdoptFileLabels).
+type adoptFileLabels struct {
+	created, reconciled, replaced string
+}
+
+var (
+	appliedAdoptFileLabels = adoptFileLabels{created: "Created Files", reconciled: "Reconciled Files", replaced: "Replaced Files"}
+	plannedAdoptFileLabels = adoptFileLabels{created: "Planned Files", reconciled: "Planned Reconciliations", replaced: "Planned Replacements"}
+)
+
+// formatAdoptFiles lists the created, reconciled and replaced files, as the CLI's adopt report
+// does. A replaced file, whose adopter bytes a --force run overwrote, carries its replace entry
+// (line delta, backup location or the reason there is none) and is left out of the reconciled
+// files, so a caller never mistakes it for a file that was only verified.
+func formatAdoptFiles(sb *mcpTextBuilder, r *adopt.AdoptReport, dryRun bool) {
+	labels := appliedAdoptFileLabels
+	if dryRun {
+		labels = plannedAdoptFileLabels
+	}
+	sb.Template("%s: %d\n", labels.created, len(r.CreatedFiles))
+	for _, f := range r.CreatedFiles {
+		sb.Template("  + %s\n", f)
+	}
+	reconciled := r.ReconciledNotReplaced()
+	sb.Template("%s: %d\n", labels.reconciled, len(reconciled))
+	for _, f := range reconciled {
+		sb.Template("  ~ %s\n", f)
+	}
+	replaced := r.Replaced()
+	if len(replaced) == 0 {
+		return
+	}
+	sb.Template("%s: %d\n", labels.replaced, len(replaced))
+	for _, entry := range replaced {
+		sb.Template("  ! %s: %s\n", entry.Path, entry.Details)
+	}
 }
 
 var adoptModes = map[adopt.AdoptOutcome]string{

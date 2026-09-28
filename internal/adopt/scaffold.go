@@ -60,6 +60,25 @@ func (r *AdoptReport) Replaced() []ActionDetail {
 	return replaced
 }
 
+// ReconciledNotReplaced returns the reconciled files that have no replace entry, in report
+// order: the files adoption verified, merged or refreshed without overwriting adopter bytes.
+// Every report surface (CLI, MCP) lists these apart from Replaced, so a replaced file shows
+// once, with its line delta and backup, and never beside a file that was only verified.
+func (r *AdoptReport) ReconciledNotReplaced() []string {
+	replaced := r.Replaced()
+	skip := make(map[string]bool, len(replaced))
+	for _, entry := range replaced {
+		skip[entry.Path] = true
+	}
+	kept := make([]string, 0, len(r.ReconciledFiles))
+	for i := 0; i < len(r.ReconciledFiles) && i < maxReportActions; i++ {
+		if !skip[r.ReconciledFiles[i]] {
+			kept = append(kept, r.ReconciledFiles[i])
+		}
+	}
+	return kept
+}
+
 // recordSkipped records a deliberate safety skip as both an action and a warning.
 func (r *AdoptReport) recordSkipped(path, details string) {
 	r.recordNotApplicable(path, details)

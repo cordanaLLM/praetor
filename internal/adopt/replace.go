@@ -26,6 +26,10 @@ const adoptBackupRoot = workingDirPath + "/adopt-backups"
 // share one, with no character a Windows path refuses (HISS-21).
 const backupStampLayout = "20060102T150405.000000000Z"
 
+// workingDirPerm is the owner-only mode of the private session ledger directory, the mode the
+// ledger initialisation (internal/state) creates it with.
+const workingDirPerm os.FileMode = 0o700
+
 // Bounds of the line delta a replace entry carries: how many removed lines it quotes, and how
 // many bytes of each.
 const (
@@ -75,19 +79,42 @@ func (s *adoptSession) backupExisting(ctx context.Context, rel string, before []
 	}
 	ignored, err := util.GitIgnoredPaths(ctx, s.repoPath, []string{target}, false)
 	if err != nil || !slices.Contains(ignored, target) {
+		note := target + " is not ignored by git"
 		reason := "git does not ignore " + target
 		if err != nil {
-			reason = "git could not confirm " + target + " is ignored: " + err.Error()
+			note = "git could not confirm " + target + " is ignored"
+			reason = note + ": " + err.Error()
 		}
-		s.report.addWarning("%s: no backup of the replaced bytes: %s", rel, reason)
-		return "no backup: " + target + " is not ignored by git", nil
+		s.report.addWarning("%s: no backup of the prior bytes: %s", rel, reason)
+		return "no backup: " + note, nil
 	}
 	if !s.opts.DryRun {
+		if err := ensurePrivateWorkingDir(ctx, s.repoPath); err != nil {
+			return "", fmt.Errorf("back up %s: %w", rel, err)
+		}
 		if err := contextopt.WriteSnapshotIn(ctx, s.repoPath, filepath.FromSlash(target), before, filePerm); err != nil {
 			return "", fmt.Errorf("back up %s to %s: %w", rel, target, err)
 		}
 	}
 	return "backup: " + target, nil
+}
+
+// ensurePrivateWorkingDir creates the private session ledger directory with owner-only access
+// when it is still absent, so a backup written before the working-dir step (a fresh clone of an
+// adopted repository, where /.workingdir/ is already ignored) does not create it world-readable
+// at the writer's 0755 default; the ledger initialisation keeps an existing directory's mode.
+// An existing entry is left as it is: the root-pinned backup writer refuses one that is a
+// symlink or not a directory.
+func ensurePrivateWorkingDir(ctx context.Context, repoPath string) error {
+	root, err := contextopt.OpenDirectory(ctx, repoPath)
+	if err != nil {
+		return fmt.Errorf("open repository root: %w", err)
+	}
+	err = root.Mkdir(workingDirPath, workingDirPerm)
+	if err != nil && !errors.Is(err, os.ErrExist) {
+		return errors.Join(fmt.Errorf("create %s: %w", workingDirPath, err), root.Close())
+	}
+	return root.Close()
 }
 
 // backupPath returns where this run keeps the backup of rel, fixing the run's stamp on first use.
@@ -140,6 +167,10 @@ func preflightForceBackupRoot(ctx context.Context, s *adoptSession) error {
 func describeLineDelta(before, after []byte) string {
 	delta := util.LineDeltaOf(string(before), string(after), maxDeltaQuotedLines)
 	summary := "-" + strconv.Itoa(delta.Removed) + "/+" + strconv.Itoa(delta.Added) + " lines"
+	if !delta.Changed() {
+		// LineDeltaOf compares LF text, so a replace with no line delta changed line endings alone.
+		return summary + ", line endings only"
+	}
 	if len(delta.RemovedLines) == 0 {
 		return summary
 	}

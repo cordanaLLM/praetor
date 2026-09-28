@@ -25,9 +25,11 @@ func (d LineDelta) Changed() bool {
 // Both texts are compared as LF text (NormalizeLineEndings), so a text and its CRLF checkout
 // differ in nothing. The lines both texts share at the start and at the end are unchanged;
 // between them a line is unchanged as often as it occurs on both sides, so one edited line
-// counts once rather than shifting every line after it. Lines that only changed order match
-// nothing that way; they count as removed and added again. A lost final newline is one removed
-// empty line. The walk is linear and bounded, a summary for a report rather than a minimal diff.
+// counts once rather than shifting every line after it. The counts are that multiset summary: a
+// line that moved beside other changes still matches its twin and does not count. Only a middle
+// that changed nothing but its order, where every line matches, is counted whole as removed and
+// added again. A lost final newline is one removed empty line. The walk is linear and bounded, a
+// summary for a report rather than a minimal diff.
 func LineDeltaOf(before, after string, limit int) LineDelta {
 	oldLines, newLines := splitDeltaLines(before), splitDeltaLines(after)
 	oldMiddle, newMiddle := trimCommonLines(oldLines, newLines)

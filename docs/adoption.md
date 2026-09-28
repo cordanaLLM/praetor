@@ -214,7 +214,14 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
   root that is a symlink or sits behind one fails the run before the first write
   (`preflightForceBackupRoot` in `internal/adopt/replace.go`,
   `TestAdopt_Negative_ForceRefusesSymlinkedBackupRootBeforeAnyWrite`). Agent hook merges keep
-  their copy in the same place ([agent hooks](guides/agent-hooks.md)).
+  their copy in the same place ([agent hooks](guides/agent-hooks.md)). A backup written before
+  the private `.workingdir/` exists creates it owner-only (`0700`), as the ledger setup does
+  (`TestBackupExisting_Positive_CreatesPrivateWorkingDir`). The `standards_adopt` MCP result
+  lists the same entries under `Replaced Files` (`Planned Replacements` in a dry run), and
+  neither report repeats a replaced file among the reconciled ones
+  (`AdoptReport.ReconciledNotReplaced` in `internal/adopt/scaffold.go`,
+  `TestServer_Positive_AdoptForceReportsReplacedFile`). The `--all-missing` summary counts
+  replaced files on their own line.
 - **Earlier Praetor output.** The manifest, lock, label taxonomy, pinned catalog, flavor
   YAML (`.clang-format` and `.clang-tidy` included) and the `docs:seo-portal` documentation
   gate's YAML that adoption writes pass `yamllint --strict` with its default rules
@@ -263,7 +270,7 @@ Under the hood, the agent executes the `standards_adopt` tool:
 }
 ```
 
-The tool returns a detailed summary of created and reconciled files, detected archetypes, and recorded legacy debt.
+The tool returns a detailed summary of created, reconciled and replaced files, detected archetypes, and recorded legacy debt.
 
 ---
 

@@ -197,13 +197,15 @@ func printBatchResult(repoName string, dryRun bool, rep *adopt.AdoptReport, err 
 	if err != nil {
 		fmt.Printf("[FAIL] %s: %v\n", repoName, err)
 		if rep != nil {
-			fmt.Printf("  Written before failure: %d created, %d reconciled\n", len(rep.CreatedFiles), len(rep.ReconciledFiles))
+			fmt.Printf("  Written before failure: %d created, %d reconciled, %d replaced\n",
+				len(rep.CreatedFiles), len(rep.ReconciledNotReplaced()), len(rep.Replaced()))
 		}
 		return false
 	}
 	fmt.Printf("\n[ADOPTED] %s (State: %s, Archetype: %s, DryRun: %v)\n", repoName, rep.State, rep.Archetype, dryRun)
 	fmt.Printf("  Created:    %d files\n", len(rep.CreatedFiles))
-	fmt.Printf("  Reconciled: %d files\n", len(rep.ReconciledFiles))
+	fmt.Printf("  Reconciled: %d files\n", len(rep.ReconciledNotReplaced()))
+	fmt.Printf("  Replaced:   %d files\n", len(rep.Replaced()))
 	if rep.LegacyDebtCount > 0 {
 		fmt.Printf("  Legacy Debt Baselined: %d infractions\n", rep.LegacyDebtCount)
 	}
@@ -359,7 +361,7 @@ func printAdoptedFiles(rep *adopt.AdoptReport) {
 		}
 	}
 	replaced := rep.Replaced()
-	reconciled := withoutReplaced(rep.ReconciledFiles, replaced)
+	reconciled := rep.ReconciledNotReplaced()
 	if len(reconciled) > 0 {
 		fmt.Printf("\n%s (%d):\n", sections.reconciled, len(reconciled))
 		for _, f := range reconciled {
@@ -372,24 +374,6 @@ func printAdoptedFiles(rep *adopt.AdoptReport) {
 			printAdoptedFile(sections.replacedTag, entry.Path, entry.Details)
 		}
 	}
-}
-
-// withoutReplaced returns the reconciled files that have no replace entry.
-func withoutReplaced(reconciled []string, replaced []adopt.ActionDetail) []string {
-	if len(replaced) == 0 {
-		return reconciled
-	}
-	skip := make(map[string]bool, len(replaced))
-	for _, entry := range replaced {
-		skip[entry.Path] = true
-	}
-	kept := make([]string, 0, len(reconciled))
-	for _, f := range reconciled {
-		if !skip[f] {
-			kept = append(kept, f)
-		}
-	}
-	return kept
 }
 
 // printAdoptPreviews prints what a dry run found each previewed file would come to
