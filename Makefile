@@ -188,10 +188,13 @@ github-app-test:
 	python3 -B scripts/test_github_app_permissions.py
 
 # BEGIN praetor documentation gate
-.PHONY: docs-lint
-verify-all: docs-lint
+.PHONY: docs-lint docs-figures
+verify-all: docs-lint docs-figures
 docs-lint:
 	@node tools/markdownlint/verify.mjs
+docs-figures:
+	@node tools/figures/build.mjs check
+	@node tools/figures/build.mjs sources
 # END praetor documentation gate
 
 docs-lint: docs-surface
@@ -203,30 +206,29 @@ docs-lint-test:
 	node tools/docsurface/verify.mjs --self-test
 
 # The MkDocs figures hook is the one Python part of the figure engine (ADR-0016, section 6): this
-# tests it, replaying the fence and markup fixtures the Node checks replay. The checks themselves,
-# `site` included, are Node and run under docs-figures-check.
+# tests it, replaying the fence and markup fixtures the Node checks replay. The checks themselves
+# are Node: their tests run under docs-figures-check, `check` and `sources` under docs-figures.
 .PHONY: docs-diagrams-test
 verify-all: docs-diagrams-test
 docs-diagrams-test:
 	python3 -B tools/figures/test_mkdocs_hook.py
 
-# Interactive figures (docs/adr/0015-interactive-figures-from-vendored-interfig.md): the engine's
-# unit tests (render core and checks) and type check, a fresh render compared byte for byte with
-# the committed SVG and JSON (`build.mjs check`), the committed player in tools/figures/dist/
-# rebuilt from the lock and compared byte for byte, within its size budget (`bundle.mjs --check`,
-# the one step that needs esbuild; docs/adr/0016-figures-for-adopters.md, section 3), and the
-# source check (hashes, sizes, markup, spec/JSON pairs, fence slugs, evidence, the README block;
-# `build.mjs sources`). `check` and `sources` need Node and no npm package. A hand-edited or stale
-# SVG fails both; a hand-edited or stale player file fails `bundle.mjs --check`.
+# Interactive figures (docs/adr/0015-interactive-figures-from-vendored-interfig.md): the steps
+# only this repository runs, because they need the npm lock adopters never receive: the engine's
+# unit tests (render core and checks) and type check, and the committed player in
+# tools/figures/dist/ rebuilt from the lock and compared byte for byte, within its size budget
+# (`bundle.mjs --check`; docs/adr/0016-figures-for-adopters.md, section 3). A hand-edited or stale
+# player file fails it. The render check (`build.mjs check`: a fresh render compared byte for byte
+# with the committed SVG and JSON) and the source check (`build.mjs sources`: hashes, sizes, markup,
+# spec/JSON pairs, fence slugs, evidence, the README block) run once, in the managed docs-figures
+# target above, which every adopter receives too (ADR-0016, sections 5 and 8).
 .PHONY: docs-figures-check
 verify-all: docs-figures-check
 docs-figures-check:
 	npm ci --prefix tools/figures --ignore-scripts --no-audit --no-fund
 	npm --prefix tools/figures test
 	npm --prefix tools/figures run typecheck
-	node tools/figures/build.mjs check
 	node tools/figures/bundle.mjs --check
-	node tools/figures/build.mjs sources
 
 # The presets' JSON-LD must read identity from the site's config, never name this project:
 # a source check always, and rendered MkDocs builds when mkdocs-material is installed.

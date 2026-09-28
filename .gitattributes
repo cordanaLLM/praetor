@@ -108,27 +108,27 @@ editors/jetbrains/inspectionProfiles/standards.xml text eol=lf
 #                      the fixtures, so the rule could never be pinned at all.
 .config/hiss/testdata/**/crlf-* -text whitespace=cr-at-eol
 
-# tools/figures/assets.go embeds the figure engine into the adopter binary, and
-# internal/managedasset's TestShippedTextLedger records the digest of every embedded text. Keep
-# Praetor's checkout bytes LF so the embedded bytes, the ledger digests and the bootstrap
-# fingerprint cannot vary by platform, as for tools/markdownlint/* above. The upstream rule
-# below comes later and wins for the vendored files: with text unset, eol has no effect.
+# The figure engine's rules are the managed attribute block at the end of this file, which
+# `praetorctl adopt` writes for docs:seo-portal in every adopting repository
+# (internal/adopt/gitattributes.go, rules from Attributes in tools/figures/assets.go):
+#
+#   tools/figures/** text eol=lf   tools/figures/assets.go embeds the engine into the adopter
+#                                  binary, internal/managedasset's TestShippedTextLedger records
+#                                  the digest of every embedded text, and `bundle.mjs --check`
+#                                  compares a rebuild of the committed player in dist/ byte for
+#                                  byte, so a CRLF checkout would fail all three on Windows only.
+#   docs/figures/*.ts, docs/assets/figures/* text eol=lf
+#                                  each figure's JSON binds the SHA-256 of its spec, the engine
+#                                  files (ENGINE_FILES in tools/figures/core.mjs) and both SVGs.
+#   tools/figures/third_party/interfig/upstream/** -text
+#                                  the vendored interfig subset is byte-identical to upstream at
+#                                  the pin, and vendor.json records the SHA-256 of every file. It
+#                                  comes last and wins: with text unset, eol has no effect.
+
+# BEGIN praetor managed attributes (praetorctl adopt)
+# praetorctl audit hashes these files; keep their checkout bytes the same on every platform.
 tools/figures/** text eol=lf
-
-# The vendored interfig subset is byte-identical to upstream at the pin, and vendor.json
-# records the SHA-256 of every file. -text keeps checkout and add from converting line
-# endings on any platform, so the hashes hold on a Windows checkout too.
-tools/figures/third_party/interfig/upstream/** -text
-
-# docs/assets/figures/<slug>.json binds each figure to the SHA-256 of its spec, the engine
-# files (ENGINE_FILES in tools/figures/core.mjs, hashed by `node tools/figures/build.mjs sources`)
-# and both SVGs. A CRLF checkout would change those bytes and report every figure stale on
-# Windows only.
-tools/figures/core.mjs text eol=lf
 docs/figures/*.ts text eol=lf
 docs/assets/figures/* text eol=lf
-
-# tools/figures/dist/ holds the committed figure player, and `node tools/figures/bundle.mjs --check`
-# compares a rebuild with it byte for byte on Linux, macOS and Windows. esbuild writes LF, so a
-# CRLF checkout would fail that comparison on Windows only.
-tools/figures/dist/** text eol=lf
+tools/figures/third_party/interfig/upstream/** -text
+# END praetor managed attributes

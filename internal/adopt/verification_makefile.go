@@ -3,6 +3,7 @@ package adopt
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
@@ -15,14 +16,45 @@ const (
 	maxMakefileLines           = 4096
 )
 
-// DocumentationMakefileBlock is the exact local-gate wiring audit requires.
+// documentationMakefileTargets are the targets the documentation block defines: the Markdown
+// gate and the figure checks (docs/adr/0016-figures-for-adopters.md, section 5).
+var documentationMakefileTargets = []string{"docs-lint", "docs-figures"}
+
+// DocumentationMakefileBlock is the exact local-gate wiring audit requires. docs-figures runs the
+// figure engine's check and sources commands, which skip, saying why, in a repository without a
+// figure, so the target needs no condition of its own.
 func DocumentationMakefileBlock() string {
 	return documentationMakefileBegin + "\n" +
+		".PHONY: docs-lint docs-figures\n" +
+		"verify-all: docs-lint docs-figures\n" +
+		"docs-lint:\n" +
+		"\t@node tools/markdownlint/verify.mjs\n" +
+		"docs-figures:\n" +
+		"\t@node tools/figures/build.mjs check\n" +
+		"\t@node tools/figures/build.mjs sources\n" +
+		documentationMakefileEnd + "\n"
+}
+
+// priorDocumentationMakefileBlocks are the exact blocks an earlier Praetor wrote. Adoption
+// replaces one without --force and removes one on disable, as it does the current block; an
+// edited block matches none and keeps the --force contract.
+var priorDocumentationMakefileBlocks = []string{
+	// The Markdown gate alone, before the figure checks joined it.
+	documentationMakefileBegin + "\n" +
 		".PHONY: docs-lint\n" +
 		"verify-all: docs-lint\n" +
 		"docs-lint:\n" +
 		"\t@node tools/markdownlint/verify.mjs\n" +
-		documentationMakefileEnd + "\n"
+		documentationMakefileEnd + "\n",
+}
+
+// documentationMakefileBlockPraetors reports whether state holds exactly one complete block
+// whose text is the current block or an earlier Praetor one.
+func documentationMakefileBlockPraetors(state documentationMarkerState) bool {
+	return documentationMakefileBlockExact(state, DocumentationMakefileBlock()) ||
+		slices.ContainsFunc(priorDocumentationMakefileBlocks, func(prior string) bool {
+			return documentationMakefileBlockExact(state, prior)
+		})
 }
 
 type documentationMarkerState struct {
@@ -86,10 +118,12 @@ func mergeDocumentationMakefileLF(existing string, force bool) (string, error) {
 		return "", fmt.Errorf("makefile contains duplicate Praetor documentation gate markers")
 	}
 	if state.beginCount == 1 || state.endCount == 1 {
-		return replaceDocumentationMakefileBlock(existing, block, force)
+		return replaceDocumentationMakefileBlock(existing, block, force || documentationMakefileBlockPraetors(state))
 	}
-	if mayDefineTarget(existing, "docs-lint") {
-		return "", fmt.Errorf("makefile may define target docs-lint outside the Praetor-managed block")
+	for _, target := range documentationMakefileTargets {
+		if mayDefineTarget(existing, target) {
+			return "", fmt.Errorf("makefile may define target %s outside the Praetor-managed block", target)
+		}
 	}
 	base := strings.TrimRight(existing, "\n")
 	if base == "" {
@@ -143,9 +177,7 @@ func removeDocumentationMakefileBlockLF(existing string) (string, bool, error) {
 	if state.beginCount == 0 && state.endCount == 0 {
 		return existing, false, nil
 	}
-	block := DocumentationMakefileBlock()
-	if state.beginCount != 1 || state.endCount != 1 || state.end < state.begin || state.end >= len(state.lines)-1 ||
-		strings.Join(state.lines[state.begin:state.end+1], "\n") != strings.TrimSuffix(block, "\n") {
+	if !documentationMakefileBlockPraetors(state) {
 		return "", false, fmt.Errorf("refusing to remove ambiguous or edited Praetor documentation gate block")
 	}
 	prefix := strings.TrimRight(strings.Join(state.lines[:state.begin], "\n"), "\n")

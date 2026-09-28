@@ -37,6 +37,8 @@ const (
 	MaxPriorTexts = 64
 	// MaxWorkflowLines bounds the action scan of one hosted workflow (HISS-02).
 	MaxWorkflowLines = 4096
+	// MaxAttributes bounds the .gitattributes rules one family declares (HISS-02).
+	MaxAttributes = 8
 	// DocumentationFacet is the manifest facet that enables documentation governance.
 	DocumentationFacet = "docs:seo-portal"
 )
@@ -74,11 +76,17 @@ type Family struct {
 	// managed path while none of the family's paths yet holds its canonical bytes: such a
 	// file predates adoption and belongs to the repository, not to Praetor.
 	RefuseForeign bool
-	// Staged registers a family whose facet wiring has not landed yet: praetorctl embeds its
-	// assets and the devcontainer bootstrap captures them, but ForFacet skips it, so adoption
-	// neither writes nor removes its files and audit does not check them. The change that
-	// wires the family into its facet drops the flag.
-	Staged bool
+	// Attributes are the .gitattributes rules the family's files need, in order. Adoption
+	// writes the rules of every enabled family into one managed block at the tail of
+	// .gitattributes and removes the block once no enabled family declares a rule; audit
+	// requires the block. Empty for a family whose files survive a line-ending conversion.
+	Attributes []string
+	// VendoredTree is a glob, relative to Directory, of vendored files that keep their
+	// upstream license, and VendoredLicense that license's SPDX identifier. Audit warns when a
+	// repository declares its licensing in REUSE.toml but labels the tree with no annotation
+	// naming the license. Both are empty for a family that vendors nothing.
+	VendoredTree    string
+	VendoredLicense string
 	// Prior maps the SHA-256, in lowercase hex, of every text an earlier Praetor shipped at
 	// one of the family's managed paths to that path; the digest covers the text with LF line
 	// endings (util.CanonicalTextDigest). A file holding exactly such a text is Praetor's own unedited output, so
@@ -116,8 +124,10 @@ func markdown() Family {
 // figureEngine is the interactive figure engine of the documentation facet
 // (docs/adr/0016-figures-for-adopters.md, sections 2 and 5). tools/figures is a name a
 // repository may already use, so adoption refuses to overwrite a file it finds there first.
-// It has no hosted workflow of its own: the Markdown family's workflow is to run its checks
-// once the facet wiring lands, and until then the family is Staged.
+// It has no hosted workflow of its own: the Markdown family's workflow runs its checks, under
+// the one Documentation Governance context. Its engine files, specs and outputs are hashed, so
+// its attribute rules keep them LF on every platform and the vendored interfig files unconverted,
+// and audit warns while a REUSE.toml does not label those files MIT.
 //
 // Prior budget: Validate allows MaxPriorTexts (64) earlier texts per family, and every managed
 // file a change rewrites costs one entry. A React, react-dom or scheduler bump rebuilds
@@ -126,35 +136,47 @@ func markdown() Family {
 // one. A change that would pass the bound fails TestFamiliesRegistryIsValid.
 func figureEngine() Family {
 	return Family{
-		Name:          "Figure engine",
-		Kind:          "documentation",
-		AssetNoun:     "figure engine asset",
-		Facet:         DocumentationFacet,
-		Directory:     figureassets.Directory,
-		Source:        figureassets.SourceFile,
-		FS:            figureassets.FS(),
-		Assets:        figureassets.Names(),
-		MaxAssets:     figureassets.MaxAssets,
-		RefuseForeign: true,
-		Staged:        true,
-		Prior:         figureassets.PriorDigests(),
+		Name:            "Figure engine",
+		Kind:            "documentation",
+		AssetNoun:       "figure engine asset",
+		Facet:           DocumentationFacet,
+		Directory:       figureassets.Directory,
+		Source:          figureassets.SourceFile,
+		FS:              figureassets.FS(),
+		Assets:          figureassets.Names(),
+		MaxAssets:       figureassets.MaxAssets,
+		RefuseForeign:   true,
+		Attributes:      figureassets.Attributes(),
+		VendoredTree:    figureassets.VendoredTree,
+		VendoredLicense: figureassets.VendoredLicense,
+		Prior:           figureassets.PriorDigests(),
 	}
 }
 
-// ForFacet returns the families facet enables, in registry order, leaving out Staged ones.
+// ForFacet returns the families facet enables, in registry order.
 func ForFacet(facet string) []Family {
 	return selectFacet(Families(), facet)
 }
 
-// selectFacet returns the families of all that facet enables and that are not Staged.
+// selectFacet returns the families of all that facet enables, reading at most MaxFamilies.
 func selectFacet(all []Family, facet string) []Family {
 	selected := make([]Family, 0, len(all))
 	for index := 0; index < len(all) && index < MaxFamilies; index++ {
-		if all[index].Facet == facet && !all[index].Staged {
+		if all[index].Facet == facet {
 			selected = append(selected, all[index])
 		}
 	}
 	return selected
+}
+
+// AttributesOf returns the .gitattributes rules of families, family by family in order.
+func AttributesOf(families []Family) []string {
+	rules := make([]string, 0, len(families)*MaxAttributes)
+	for index := 0; index < len(families) && index < MaxFamilies; index++ {
+		attributes := families[index].Attributes
+		rules = append(rules, attributes[:min(len(attributes), MaxAttributes)]...)
+	}
+	return rules
 }
 
 // Names returns a copy of the inventory, cut at MaxAssets.
@@ -252,7 +274,40 @@ func (f Family) Validate() error {
 	if err := f.validateWorkflow(); err != nil {
 		return err
 	}
+	if err := f.validateAttributes(); err != nil {
+		return err
+	}
 	return f.validatePrior()
+}
+
+// validateAttributes requires at most MaxAttributes rules, each one non-blank line that is not a
+// comment, and a VendoredTree declared together with its license as a clean relative glob.
+func (f Family) validateAttributes() error {
+	if len(f.Attributes) > MaxAttributes {
+		return fmt.Errorf("managed asset family %q declares %d attribute rules, want at most %d", f.Name, len(f.Attributes), MaxAttributes)
+	}
+	for index := 0; index < len(f.Attributes) && index < MaxAttributes; index++ {
+		rule := f.Attributes[index]
+		if strings.TrimSpace(rule) != rule || rule == "" || strings.HasPrefix(rule, "#") || strings.ContainsAny(rule, "\r\n\x00") {
+			return fmt.Errorf("managed asset family %q attribute rule %q is not one trimmed, non-comment line", f.Name, rule)
+		}
+	}
+	if (f.VendoredTree == "") != (f.VendoredLicense == "") {
+		return fmt.Errorf("managed asset family %q declares a vendored tree without its license, or the reverse", f.Name)
+	}
+	if f.VendoredTree != "" && (!cleanRelative(f.VendoredTree) || strings.ContainsAny(f.VendoredLicense, " \t\r\n\x00")) {
+		return fmt.Errorf("managed asset family %q vendored tree %q or license %q is malformed", f.Name, f.VendoredTree, f.VendoredLicense)
+	}
+	return nil
+}
+
+// VendoredGlob returns the repository-relative glob of the family's vendored tree, or "" when it
+// vendors nothing.
+func (f Family) VendoredGlob() string {
+	if f.VendoredTree == "" {
+		return ""
+	}
+	return f.AssetPath(f.VendoredTree)
 }
 
 func (f Family) validateInventory() error {

@@ -306,6 +306,47 @@ func TestImportViolationsNegativeAndBoundary(t *testing.T) {
 	}
 }
 
+// Positive: SpecDirectory and OutputDirectory are the directories checks.mjs reads, so the
+// attribute rules cover exactly the files the checks hash.
+func TestDirectoriesMatchTheChecks(t *testing.T) {
+	checks, err := Read("checks.mjs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(checks), "\n")
+	for _, want := range []string{
+		"export const SPEC_DIR = '" + SpecDirectory + "';",
+		"export const OUT_DIR = '" + OutputDirectory + "';",
+	} {
+		if !slices.Contains(lines, want) {
+			t.Fatalf("checks.mjs does not declare %q", want)
+		}
+	}
+}
+
+// Negative and boundary: every rule is one pattern and its attributes, the LF rules come first,
+// and the vendored tree's -text rule comes last, so git applies it over the LF rule of the whole
+// engine directory; no rule covers the vendored tree after it.
+func TestAttributesOrderLetsVendoredBytesWin(t *testing.T) {
+	rules := Attributes()
+	if len(rules) != 4 {
+		t.Fatalf("Attributes() = %q, want four rules", rules)
+	}
+	for index, rule := range rules {
+		fields := strings.Fields(rule)
+		if len(fields) < 2 || strings.Join(fields, " ") != rule {
+			t.Fatalf("rule %q is not a pattern followed by attributes", rule)
+		}
+		lastRule := index == len(rules)-1
+		if lastRule != (fields[0] == Directory+"/"+VendoredTree) || lastRule != (fields[1] == "-text") {
+			t.Fatalf("rule %d %q: only the last rule names the vendored tree, as -text", index, rule)
+		}
+	}
+	if rules[0] != Directory+"/** text eol=lf" {
+		t.Fatalf("the first rule %q does not pin the engine directory to LF", rules[0])
+	}
+}
+
 // lfDigest spells a digest the way PriorDigests keys are spelled, computed here rather than
 // through the code under test.
 func lfDigest(data []byte) string {

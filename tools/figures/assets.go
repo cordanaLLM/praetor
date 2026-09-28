@@ -31,7 +31,29 @@ const (
 	SourceFile = Directory + "/assets.go"
 	// MaxAssets bounds all asset iteration: the inventory's exact size.
 	MaxAssets = 18
+	// SpecDirectory and OutputDirectory hold a repository's figure specs and their committed
+	// outputs: SPEC_DIR and OUT_DIR in checks.mjs, which assets_test.go holds to these values.
+	SpecDirectory   = "docs/figures"
+	OutputDirectory = "docs/assets/figures"
+	// VendoredTree is the Directory-relative glob of the vendored interfig files, which keep
+	// upstream's bytes and its MIT terms (VendoredLicense).
+	VendoredTree    = "third_party/interfig/upstream/**"
+	VendoredLicense = "MIT"
 )
+
+// Attributes returns the .gitattributes rules adoption writes for the engine
+// (docs/adr/0016-figures-for-adopters.md, section 5). The engine hash, the spec and SVG hashes in
+// each figure's JSON and the committed player are compared byte for byte, so the engine, the specs
+// and the outputs keep LF on every platform, and the vendored files, whose SHA-256 vendor.json
+// records, are never converted: the -text rule comes last and wins for them.
+func Attributes() []string {
+	return []string{
+		Directory + "/** text eol=lf",
+		SpecDirectory + "/*.ts text eol=lf",
+		OutputDirectory + "/* text eol=lf",
+		Directory + "/" + VendoredTree + " -text",
+	}
+}
 
 // assetNames is the inventory in emission order: render and check, the vendored render source,
 // the committed player and the stylesheet, the site generators, then the authoring guide.

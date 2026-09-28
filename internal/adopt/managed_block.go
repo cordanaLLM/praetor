@@ -16,8 +16,8 @@ import (
 // canonical lines, an end marker. Every line outside the markers belongs to the operator and
 // is kept, in order. The block always moves to the tail, so a later operator rule cannot
 // override it, and a re-run replaces it instead of appending a second one, so the file
-// converges. .gitignore (gitignore.go) and the formatter inventory (managed_artifacts.go) are
-// merged through it; a .gitattributes block takes the same shape.
+// converges. .gitignore (gitignore.go), the formatter inventory (managed_artifacts.go) and
+// .gitattributes (gitattributes.go) are merged through it.
 type managedTailBlock struct {
 	// file names the file in errors.
 	file string
@@ -47,23 +47,46 @@ func (b managedTailBlock) render(lines []string) string {
 // text keeps its one consistent line-ending style; mixed endings, a file over maxLines, and
 // ambiguous markers are refused rather than guessed at.
 func (b managedTailBlock) merge(text, block string) (string, error) {
-	normalized, crlf, err := util.NormalizeLineEndingsStrict(text)
-	if err != nil {
-		return "", fmt.Errorf("%s line endings are inconsistent: %w", b.file, err)
-	}
-	lines := strings.Split(normalized, "\n")
-	if len(lines) > b.maxLines {
-		return "", fmt.Errorf("%s exceeds %d lines", b.file, b.maxLines)
-	}
-	kept, err := b.operatorLines(lines)
+	body, _, crlf, err := b.split(text)
 	if err != nil {
 		return "", err
 	}
-	body := strings.TrimRight(strings.Join(kept, "\n"), "\n")
 	if body != "" {
 		body += "\n\n"
 	}
 	return util.RestoreLineEndings(body+block, crlf), nil
+}
+
+// strip returns text without the block: the operator's lines, in order and in the file's
+// line-ending style, and removed reports whether there was a block. It refuses what merge
+// refuses, and text without a block comes back unchanged.
+func (b managedTailBlock) strip(text string) (stripped string, removed bool, err error) {
+	body, removed, crlf, err := b.split(text)
+	if err != nil || !removed {
+		return text, false, err
+	}
+	if body != "" {
+		body += "\n"
+	}
+	return util.RestoreLineEndings(body, crlf), true, nil
+}
+
+// split returns the operator's lines of text joined with LF and without trailing newlines,
+// whether text held the block, and whether text used CRLF endings.
+func (b managedTailBlock) split(text string) (body string, held, crlf bool, err error) {
+	normalized, crlf, err := util.NormalizeLineEndingsStrict(text)
+	if err != nil {
+		return "", false, false, fmt.Errorf("%s line endings are inconsistent: %w", b.file, err)
+	}
+	lines := strings.Split(normalized, "\n")
+	if len(lines) > b.maxLines {
+		return "", false, false, fmt.Errorf("%s exceeds %d lines", b.file, b.maxLines)
+	}
+	kept, held, err := b.operatorLines(lines)
+	if err != nil {
+		return "", false, false, err
+	}
+	return strings.TrimRight(strings.Join(kept, "\n"), "\n"), held, crlf, nil
 }
 
 // tailBlockScan walks a file once, keeping the operator's lines and checking the markers.
@@ -73,17 +96,18 @@ type tailBlockScan struct {
 	inBlock, seen bool
 }
 
-func (b managedTailBlock) operatorLines(lines []string) ([]string, error) {
+// operatorLines returns the lines outside the block and whether the block was found.
+func (b managedTailBlock) operatorLines(lines []string) ([]string, bool, error) {
 	scan := tailBlockScan{block: b, kept: make([]string, 0, len(lines))}
 	for index := 0; index < len(lines) && index < b.maxLines; index++ {
 		if err := scan.consume(lines[index], index); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 	}
 	if scan.inBlock {
-		return nil, fmt.Errorf("%s contains an unterminated managed block", b.file)
+		return nil, false, fmt.Errorf("%s contains an unterminated managed block", b.file)
 	}
-	return scan.kept, nil
+	return scan.kept, scan.seen, nil
 }
 
 func (scan *tailBlockScan) consume(line string, index int) error {
