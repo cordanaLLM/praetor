@@ -65,6 +65,10 @@ type commandStreams struct {
 // It respects WithCommandEnvironment and WithCommandStdin, cancels on overflow, and
 // preserves whitespace. Without WithCommandEnvironment the child inherits the ambient
 // environment minus the variables that bind git to a repository (commandEnvironment).
+// On Windows a name that resolves to a batch file (.bat, .cmd), such as the npm shim
+// pnpm.cmd, runs through cmd.exe with a command line quoted for cmd.exe (prepareBatchFile),
+// so every argument reaches the batch file as given; one that cannot is refused with
+// ErrBatchFileArgument before anything starts.
 func RunCommandBytes(ctx context.Context, dir, name string, maxBytes int, args ...string) (CommandBytes, error) {
 	return runBoundedCommand(ctx, dir, name, maxBytes, commandStreams{}, args)
 }
@@ -92,16 +96,9 @@ func runBoundedCommand(ctx context.Context, dir, name string, maxBytes int, stre
 	defer deadlineCancel()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	// #nosec G204 -- audited execution boundary; internal callers supply validated executable/argv without a shell.
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir = dir
-	cmd.WaitDelay = CommandWaitDelay
-	cmd.Env = commandEnvironment(ctx, cmd)
-	cmd.Stdin = streams.stdin
-	if cmd.Stdin == nil {
-		if input, ok := ctx.Value(commandStdinKey{}).([]byte); ok {
-			cmd.Stdin = bytes.NewReader(input)
-		}
+	cmd, err := boundedCommand(ctx, dir, name, streams.stdin, args)
+	if err != nil {
+		return CommandBytes{}, err
 	}
 	start, cleanup := commandBytesCleanup(cmd)
 	defer func() { resultErr = errors.Join(resultErr, cleanup()) }()
@@ -111,7 +108,7 @@ func runBoundedCommand(ctx context.Context, dir, name string, maxBytes int, stre
 	if streams.stdout != nil {
 		cmd.Stdout = streams.stdout
 	}
-	err := start()
+	err = start()
 	if err == nil {
 		err = cmd.Wait()
 	}
@@ -122,4 +119,25 @@ func runBoundedCommand(ctx context.Context, dir, name string, maxBytes int, stre
 		err = errors.Join(err, ctx.Err())
 	}
 	return CommandBytes{Stdout: out.buffer.Bytes(), Stderr: diagnostic.buffer.Bytes()}, err
+}
+
+// boundedCommand builds the command runBoundedCommand starts: name with args in dir, a batch
+// file routed through cmd.exe (prepareBatchFile), the environment commandEnvironment selects,
+// and stdin, or else the input WithCommandStdin put in ctx.
+func boundedCommand(ctx context.Context, dir, name string, stdin io.Reader, args []string) (*exec.Cmd, error) {
+	// #nosec G204 -- audited execution boundary; internal callers supply validated executable/argv without a shell.
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = dir
+	if err := prepareBatchFile(cmd); err != nil {
+		return nil, err
+	}
+	cmd.WaitDelay = CommandWaitDelay
+	cmd.Env = commandEnvironment(ctx, cmd)
+	cmd.Stdin = stdin
+	if cmd.Stdin == nil {
+		if input, ok := ctx.Value(commandStdinKey{}).([]byte); ok {
+			cmd.Stdin = bytes.NewReader(input)
+		}
+	}
+	return cmd, nil
 }

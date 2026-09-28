@@ -48,10 +48,10 @@ func isBatchFile(path string) bool {
 // other non-ASCII characters and batchUnquoted is quoted too, so cmd.exe reads each one as
 // literal text. A quoted region stays literal however often cmd.exe parses it, so the result
 // does not depend on how many times the batch file re-reads its arguments: an npm or corepack
-// shim forwarding %* to node, a batch file passing %1 or "%~1" on, or one storing them in a
-// variable first all hand the program the same argv. Two constructs still change them, and
-// only inside the batch file: CALL, which doubles every caret, and delayed expansion enabled
-// there, which expands !NAME!.
+// shim forwarding %* to node and a batch file passing %1 or "%~1" on hand the program the
+// same argv (TestRunCommandBytes_Positive_BatchFileForwardsArgvUnchanged). Two constructs
+// still change them, and only inside the batch file: CALL, which doubles every caret, and
+// delayed expansion enabled there, which expands !NAME!.
 //
 // Refused with ErrBatchFileArgument: an empty script, a script path ending in a separator, and
 // a script path or argument holding a quote, a carriage return, a line feed or NUL. A line
