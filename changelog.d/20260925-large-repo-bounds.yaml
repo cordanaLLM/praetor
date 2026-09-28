@@ -1,0 +1,4 @@
+type: fixed
+title: adopt --verification-max-entries now raises the editor language scan too, and paperclip harness takes the same --verification-max-entries, --verification-max-files and --verification-max-depth flags, so neither stops a large repository at a fixed 4096-entry bound; the 200000 ceiling stays, and an exceeded bound names the flag that raises it
+issue: "#535"
+breaking: false

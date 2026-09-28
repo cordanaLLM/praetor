@@ -105,8 +105,14 @@ fix tracked on the issue that requested this key.
 The shared resolver combines supported project markers and source formats with
 explicit caller options. It excludes private state, dependency/build directories
 and nested agent worktrees. An incomplete scan is an error rather than a claim
-that the unexamined part of the repository has no relevant languages. The initial
-scan limit is 4096 files.
+that the unexamined part of the repository has no relevant languages. The scan
+walks at most 4096 files by default (`Options.MaxWorkspaceFiles`, zero selects the
+default). `praetorctl adopt` passes the entry bound its verification walk resolved,
+so `--verification-max-entries` raises this scan too, up to the same 200000 ceiling.
+A bound past the ceiling is refused, and adoption names the flag when the scan
+stops at the bound ([large repositories](../adoption.md#large-repositories);
+`internal/editor/workspace_bound_test.go`,
+`internal/adopt/large_repo_bounds_test.go`). `praetorctl editors` keeps the default.
 
 Every renderer reads the resolved plan and nothing else (`Plan` in
 `internal/editor/capabilities.go`); a capability the resolver rejected is omitted,
