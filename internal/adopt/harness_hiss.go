@@ -8,15 +8,17 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 )
 
-// runtimeLanguages maps the runtimes the verification plan detects to the languages a HISS
-// directive clause can name. A native build (meson, CMake) is C or C++. Every other detected
-// runtime (Node, .NET, the JVM builds, Flutter) is a language no clause names.
+// runtimeLanguages maps the runtimes and source languages the verification plan detects to the
+// languages a HISS directive clause can name. A native build (meson, CMake) is C or C++, and so
+// are C or C++ sources without one (sourceLanguageC). Every other detected runtime (Node, .NET,
+// the JVM builds, Flutter) is a language no clause names.
 var runtimeLanguages = map[string]hisscatalog.Language{
 	"go":               hisscatalog.LanguageGo,
 	"cargo":            hisscatalog.LanguageRust,
@@ -24,16 +26,17 @@ var runtimeLanguages = map[string]hisscatalog.Language{
 	"meson.build":      hisscatalog.LanguageC,
 	"core/meson.build": hisscatalog.LanguageC,
 	"CMakeLists.txt":   hisscatalog.LanguageC,
+	sourceLanguageC:    hisscatalog.LanguageC,
 }
 
-// planLanguages returns the languages of the runtimes plan detected; none detected is the
-// unknown set (zero), under which every language clause renders with its label.
+// planLanguages returns the languages of the runtimes and source languages plan detected; none
+// detected is the unknown set (zero), under which every language clause renders with its label.
 func planLanguages(plan *VerificationPlan) hisscatalog.Language {
 	var languages hisscatalog.Language
 	if plan == nil {
 		return languages
 	}
-	for _, runtime := range plan.Runtimes {
+	for _, runtime := range slices.Concat(plan.Runtimes, plan.SourceLanguages) {
 		language, ok := runtimeLanguages[runtime]
 		if !ok {
 			language = hisscatalog.LanguageOther
@@ -73,9 +76,9 @@ func harnessExceptions(cleanupGoto hiss.CleanupGoto) hisscatalog.Exception {
 
 // RepositoryHISSFacts reports what the HISS directives of the repository at root depend on, for
 // a caller outside an adoption run (`praetorctl paperclip harness`) that renders them the way
-// adoption does: the languages the verification planner detects from project markers, the
-// exceptions the manifest declares and documents, and the function length the audit enforces,
-// resolved by config.ResolveRepositoryPolicy as `praetorctl audit` resolves it. A repository
+// adoption does: the languages the verification planner detects from project markers and C/C++
+// sources, the exceptions the manifest declares and documents, and the function length the audit
+// enforces, resolved by config.ResolveRepositoryPolicy as `praetorctl audit` resolves it. A repository
 // whose policy does not resolve (no manifest, no lock, or a resolution error) states the audit
 // ceiling instead; each returned warning names a declaration or policy that was not read.
 //

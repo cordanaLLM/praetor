@@ -106,7 +106,7 @@ func conflictingPins(pins []imagePin) map[string][]imagePin {
 //
 // The listing is the seam this repository already uses for exactly that scoping question --
 // same argv and the same bounded, configuration-isolated probe as internal/hiss/hiss.go's
-// gitVisiblePaths and internal/dedupe/scope.go's gitSourceFiles -- rather than a third
+// GitVisiblePaths and internal/dedupe/scope.go's gitSourceFiles -- rather than a third
 // mechanism that would have to be kept in step with them (HISS-19).
 func repositoryFiles(ctx context.Context, root string) ([]string, error) {
 	out, err := util.RunGitProbe(ctx, root, maxScopeBytes,

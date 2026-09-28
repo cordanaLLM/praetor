@@ -152,7 +152,7 @@ func Scan(ctx context.Context, repoPath string, opts ScanOptions) (*ScanReport, 
 	w := &scanWalker{
 		ctx: ctx, root: repoPath, opts: opts, rep: rep,
 		extra:   ignoreSet(opts.IgnoreDirs),
-		visible: gitVisiblePaths(ctx, repoPath),
+		visible: GitVisiblePaths(ctx, repoPath),
 	}
 	if err := filepath.Walk(repoPath, w.visit); err != nil {
 		return nil, fmt.Errorf("hiss: scan %q: %w", repoPath, err)
@@ -206,7 +206,7 @@ type scanWalker struct {
 	opts    ScanOptions
 	rep     *ScanReport
 	extra   map[string]struct{}
-	visible *gitVisibleTree
+	visible *GitVisibleTree
 	// goFiles accumulates the Go sources this walk read, so the call-graph pass can close
 	// cycles that span files. No single file's AST shows a two-function loop closing.
 	goFiles []string
@@ -226,15 +226,15 @@ const maxGitPathDepth = 64
 // (HISS-02).
 const maxGitVisibleFiles = 200000
 
-// gitVisibleTree is the set of paths git reports as belonging to the repository, plus the
+// GitVisibleTree is the set of paths git reports as belonging to the repository, plus the
 // directories on the way to them. A nil tree means git gave no answer, and every path is
 // then treated as visible.
-type gitVisibleTree struct {
+type GitVisibleTree struct {
 	files map[string]struct{}
 	dirs  map[string]struct{}
 }
 
-// gitVisiblePaths asks git which paths belong to the repository: tracked files plus
+// GitVisiblePaths asks git which paths belong to the repository: tracked files plus
 // untracked files that are not ignored. Gitignored material — vendored caches, build
 // output, an audit clone of another repository — is therefore never counted as this
 // repository's own debt, which is what inflated a downstream baseline more than tenfold.
@@ -242,13 +242,16 @@ type gitVisibleTree struct {
 // Any failure (not a work tree, git absent, output over the cap) returns nil and the scan
 // falls back to walking everything. Failing open over-reports; failing closed on a
 // truncated list would under-report, and for a gate that is the worse error.
-func gitVisiblePaths(ctx context.Context, repoPath string) *gitVisibleTree {
+//
+// It is exported so that a caller outside the scan deciding which files are the repository's
+// own (adopt's C source detection) reads the scan's own answer instead of a second listing.
+func GitVisiblePaths(ctx context.Context, repoPath string) *GitVisibleTree {
 	out, err := util.RunGitProbe(ctx, repoPath, maxGitFileListBytes,
 		"ls-files", "--cached", "--others", "--exclude-standard", "-z")
 	if err != nil {
 		return nil
 	}
-	tree := &gitVisibleTree{files: make(map[string]struct{}), dirs: make(map[string]struct{})}
+	tree := &GitVisibleTree{files: make(map[string]struct{}), dirs: make(map[string]struct{})}
 	entries := strings.Split(string(out.Stdout), "\x00")
 	for i := 0; i < len(entries) && i < maxGitVisibleFiles; i++ {
 		rel := entries[i]
@@ -263,7 +266,7 @@ func gitVisiblePaths(ctx context.Context, repoPath string) *gitVisibleTree {
 
 // addAncestors records every parent directory of rel so the walk still descends into a
 // directory whose own name git never prints.
-func (t *gitVisibleTree) addAncestors(rel string) {
+func (t *GitVisibleTree) addAncestors(rel string) {
 	dir := slashpath.Dir(rel)
 	for i := 0; i < maxGitPathDepth && dir != "." && dir != "/" && dir != ""; i++ {
 		t.dirs[dir] = struct{}{}
@@ -271,9 +274,10 @@ func (t *gitVisibleTree) addAncestors(rel string) {
 	}
 }
 
-// hasFile reports whether a file belongs to the repository. Without a git answer every
-// file is in scope, preserving the pre-git behaviour outside a work tree.
-func (t *gitVisibleTree) hasFile(rel string) bool {
+// HasFile reports whether a file, a slash-separated path relative to the listed directory,
+// belongs to the repository. Without a git answer every file is in scope, preserving the
+// pre-git behaviour outside a work tree.
+func (t *GitVisibleTree) HasFile(rel string) bool {
 	if t == nil {
 		return true
 	}
@@ -283,7 +287,7 @@ func (t *gitVisibleTree) hasFile(rel string) bool {
 
 // hasDir reports whether a directory can contain repository files. The scan root itself is
 // always entered; otherwise a directory git never mentioned holds only ignored material.
-func (t *gitVisibleTree) hasDir(rel string) bool {
+func (t *GitVisibleTree) hasDir(rel string) bool {
 	if t == nil || rel == "." {
 		return true
 	}
@@ -361,7 +365,7 @@ func (w *scanWalker) skipFile(rel string, info os.FileInfo) bool {
 	switch {
 	// A file git does not report is not this repository's source, so it is neither
 	// scanned nor counted as unscanned coverage.
-	case !w.visible.hasFile(filepath.ToSlash(rel)), ShouldIgnorePath(rel):
+	case !w.visible.HasFile(filepath.ToSlash(rel)), ShouldIgnorePath(rel):
 		return true
 	case !isScannableExt(strings.ToLower(filepath.Ext(rel))):
 		w.rep.Coverage.recordUnscanned(rel)
@@ -530,6 +534,15 @@ func readBounded(root, rel string) (data []byte, err error) {
 		return nil, errOversize
 	}
 	return data, nil
+}
+
+// IsNativeExtension reports whether ext, in any case as filepath.Ext returns it, names a file the
+// native (C and C++) scanner reads, the files HISS-01's `goto` and HISS-08's banned-libc checks
+// cover. Scan folds the extension to lower case and dispatches on the same set, so a caller
+// deciding which files make a repository C/C++ (adopt's source detection) reads the audit's own
+// scope instead of a second extension table.
+func IsNativeExtension(ext string) bool {
+	return isNativeExt(strings.ToLower(ext))
 }
 
 // isNativeExt is the one C-family table: C, C++ (sources and the .h/.hpp/.hh headers), CUDA

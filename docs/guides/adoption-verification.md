@@ -709,7 +709,31 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
     `error` returns, Rust's `.unwrap()` / `.expect()` ban, C and C++'s `goto` and banned libc
     calls, the `// SAFETY:` proof for Go and Rust `unsafe`. A rule left with no clause, such as
     HISS-09 in a TypeScript repository, says it has no analogue there. With no detected
-    runtime, every clause renders with its label.
+    runtime or source language, every clause renders with its label.
+  - C/C++ (one language for the clauses, labelled `C/C++`) is detected from a native build
+    marker (`meson.build`, `core/meson.build`, `CMakeLists.txt`) or from C/C++ sources, so a
+    repository that compiles C or C++ from a `Makefile`, Bazel or a script still reads the
+    C/C++ clauses. The verification walk records the file names it already visits, under the
+    same `--verification-max-*` bounds, and the plan lists them as `source_languages: ["c"]` in
+    the JSON report, also when a build marker declares the language too. Every extension the
+    audit's native scan reads (`.c`, `.cpp`, `.cc`, `.cxx`, `.hpp`, `.cu`, `.hip`, in any case;
+    `hiss.IsNativeExtension`) makes the repository C/C++, the same files the scan runs the
+    `goto` and banned-libc checks on. A `.h` file does too, unless an Objective-C source (`.m`,
+    `.mm`) sits beside it: `.h` is Objective-C's header as well, and the audit does not scan
+    Objective-C. Files under a directory the scan ignores (`vendor`, `third_party`, `testdata`,
+    build output; `hiss.ShouldIgnorePath`) never count. In a work tree a file must also be one
+    git reports as the repository's own: tracked, or untracked and not ignored
+    (`hiss.GitVisiblePaths`, the scan's own listing, asked once and only when the walk saw a
+    C/C++ or Objective-C file). An in-place Cython `.c` a `*.c` rule ignores, or C under ignored
+    IDE build output, therefore selects no clause, and a fresh clone and a built checkout render
+    the same table. Outside a work tree git gives no answer and every walked file counts. The
+    walk visits a subset of what the scan reads: it also skips `bin`, `obj`, `dist` and
+    `__pycache__`, which the scan enters, so C/C++ sources found only there select no clause
+    ([`internal/adopt/verification_sources.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/verification_sources.go),
+    `TestCSourceObservationDecidesC`, `TestRepositoryHISSFactsDetectsCSources`,
+    `TestCSourceDetectionFollowsTheAuditScan`, `TestRepositoryHISSFactsReadsOnlyGitVisibleCSources`,
+    `TestGitVisiblePathsAnswersTheScanScope`, `TestIsNativeExtensionMatchesTheScanDispatch`,
+    `TestCSourceDetectionStaysInsideTheWalkBounds`, `TestAdoptedHarnessRendersCClausesFromSources`).
   - HISS-04 states the function length the repository's audit enforces, read from the policy
     the policy-catalog step resolved (container-image, for example, enforces 50). At the 60-line
     audit ceiling it adds `(audit ceiling)`: a pinned profile snapshot such as

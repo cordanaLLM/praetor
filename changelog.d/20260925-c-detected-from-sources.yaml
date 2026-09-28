@@ -1,0 +1,4 @@
+type: fixed
+title: "adopt and paperclip harness detect C and C++ from the sources the HISS audit's native scan reads (`.c`, `.cpp`, `.cc`, `.cxx`, `.hpp`, `.cu`, `.hip`, and `.h` unless Objective-C sources claim it), found by the bounded verification walk outside the scan's ignored directories and, in a work tree, tracked or untracked-and-not-ignored per git, so a repository compiling C or C++ from a Makefile, Bazel or a script without meson or CMake keeps HISS-01's zero-goto and HISS-08's banned-libc clauses; the adoption report's verification plan lists them as `source_languages`"
+issue: "#549"
+breaking: false

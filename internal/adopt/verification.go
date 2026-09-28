@@ -18,6 +18,12 @@ type VerificationPlan struct {
 	// custom verify-all replaces Build and Test, so the harness still lists the project's real
 	// commands after a --force refresh instead of only the preserved target (BUG-949).
 	Declared [][]string `json:"declared,omitempty"`
+	// SourceLanguages names the languages the walk found sources of, whether or not a build
+	// marker in Runtimes also declares them: sourceLanguageC for C or C++ sources the audit's
+	// native scan reads, so C/C++ a Makefile or script compiles is detected too (#549). Only
+	// files git reports as the repository's own count. It selects the HISS clauses the harness
+	// renders (planLanguages), never a build or test command.
+	SourceLanguages []string `json:"source_languages,omitempty"`
 }
 
 const (
@@ -56,6 +62,7 @@ func resolveVerificationPlanWithLimits(ctx context.Context, root string, request
 		return nil, err
 	}
 	addStandardVerification(plan, inputs)
+	plan.SourceLanguages = inputs.cSources.languages(ctx, root)
 	if len(plan.Runtimes) == 0 {
 		plan.unavailable("No supported build-system marker or explicit test runner was found; define and exercise a project verify-all target.")
 	}

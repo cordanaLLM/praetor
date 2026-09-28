@@ -26,6 +26,7 @@ const (
 type verificationInputs struct {
 	files             map[string][]byte
 	pythonDirectories map[string]bool
+	cSources          cSourceObservation
 }
 
 func (v verificationInputs) has(path string) bool {
@@ -133,6 +134,7 @@ func skipVerificationDirectory(name string) bool {
 }
 
 func (v *verificationInputs) capture(ctx context.Context, root, rel string, entry fs.DirEntry, total *int, limits VerificationLimits) error {
+	v.cSources.observe(rel)
 	if strings.HasPrefix(rel, "tests/") && strings.HasPrefix(entry.Name(), "test") && strings.HasSuffix(rel, ".py") {
 		if entry.Type()&fs.ModeSymlink != 0 {
 			return errors.New("verification discovery refuses symlinked Python tests")
