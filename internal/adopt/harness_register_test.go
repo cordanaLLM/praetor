@@ -92,7 +92,7 @@ func TestHarnessRefreshKeepsOneRegisterSection(t *testing.T) {
 				t.Fatal(err)
 			}
 			s := &adoptSession{repoPath: repo, repoName: "fixture", arch: "framework", report: &AdoptReport{}, verification: registerTestPlan(), opts: AdoptOptions{Force: tc.force}}
-			merged, err := mergeExistingAgentsContent(s, path, tc.initial, harness)
+			merged, err := mergeExistingAgentsContent(context.Background(), s, path, tc.initial, harness)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -101,6 +101,49 @@ func TestHarnessRefreshKeepsOneRegisterSection(t *testing.T) {
 			}
 			if changed, err := compiler.SyncRegisterBlock(context.Background(), repo, path, false); err != nil || changed {
 				t.Fatalf("merged context must verify: changed=%v err=%v", changed, err)
+			}
+		})
+	}
+}
+
+// TestAdoptForceHarnessCarriesManifestRegisterBlock: the harness carries the block
+// compile-context splices from the manifest (compiler.LoadRegisterBlock), so an AGENTS.md that
+// --force refreshes under a register.tasks override verifies without a compile-context run
+// (#502, probe502b). Positive: the override row is in the refreshed file and verifies.
+// Negative: the default block the old harness carried is gone. Boundary: without a manifest
+// the harness still carries the default block and verifies.
+func TestAdoptForceHarnessCarriesManifestRegisterBlock(t *testing.T) {
+	const override = "version: 1\nregister:\n  tasks:\n    ci_debugging: {register: social, max_tokens: 256}\n"
+	stale, err := buildAgentHarness(adoptedFacts("", "widget", "framework", registerTestPlan()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, manifest := range map[string]string{"register.tasks override": override, "no manifest": ""} {
+		t.Run(name, func(t *testing.T) {
+			repo := newTestRepo(t, "widget")
+			mustWrite(t, filepath.Join(repo, "go.mod"), "module example.com/widget\n\ngo 1.27\n")
+			if manifest != "" {
+				mustWrite(t, filepath.Join(repo, manifestFile), manifest)
+			}
+			agents := filepath.Join(repo, agentsFile)
+			mustWrite(t, agents, stale+harnessSeparator+"\nKeep project instructions.\n")
+			opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo, Profile: "framework", Force: true}
+			if _, err := Adopt(context.Background(), opts); err != nil {
+				t.Fatalf("Adopt --force: %v", err)
+			}
+			if changed, err := compiler.SyncRegisterBlock(context.Background(), repo, agents, false); err != nil || changed {
+				t.Fatalf("refreshed register block does not verify: changed=%v err=%v", changed, err)
+			}
+			_, want, err := compiler.LoadRegisterBlock(context.Background(), repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			content := mustRead(t, agents)
+			if !strings.Contains(content, want) || !strings.Contains(content, "Keep project instructions.") {
+				t.Fatalf("refreshed AGENTS.md must carry the manifest block and keep the tail:\n%s", content)
+			}
+			if overridden := strings.Contains(content, "ci_debugging"); overridden != (manifest != "") {
+				t.Errorf("override row present = %v, want %v", overridden, manifest != "")
 			}
 		})
 	}

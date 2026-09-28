@@ -358,25 +358,88 @@ type GatedInvariant struct {
 	OnFail      string
 }
 
-// gatedInvariantRow matches one row of that table, for example
-// "| **HISS-01** control flow | recursion prohibited; call graph = DAG | build | immediate
-// build failure |". A cell may carry an escaped pipe.
-var gatedInvariantRow = regexp.MustCompile(
-	`^\|\s*\*\*(HISS-\d+)\*\*\s*((?:\\\||[^|])*?)\s*\|\s*((?:\\\||[^|])*?)\s*\|\s*((?:\\\||[^|])*?)\s*\|\s*((?:\\\||[^|])*?)\s*\|$`)
+// InvariantRow is one row of the invariant table as SplitInvariantRow splits it.
+type InvariantRow struct {
+	// Line is the row as written, surrounding whitespace trimmed.
+	Line string
+	// ID is the bold identifier that opens the first cell, such as HISS-02 or AEGIS-01.
+	ID string
+	// Cells are the text after the ID in the first cell (the scope), then every further cell,
+	// each trimmed, escaped pipes restored.
+	Cells []string
+}
 
-// ParseGatedInvariants reads the invariant rows of agentsMD's "Core Directives &
-// Invariants" section, in source order. The section ends at the next heading; fenced code
-// is skipped through util.MarkdownFence, so a shell comment in an example never reads as a
-// heading. Every row must name an invariant the catalog defines, exactly once, and the
-// section must hold at least one row: a table that cannot be read is an error, never an
-// empty result.
-func ParseGatedInvariants(agentsMD string) ([]GatedInvariant, error) {
+// invariantIDCell matches the first cell of an invariant row: a bold identifier without
+// whitespace, then the scope, for example "**HISS-01** control flow".
+var invariantIDCell = regexp.MustCompile(`^\*\*([^*\s]+)\*\*\s*(.*)$`)
+
+// gatedInvariantID is the ID grammar of a catalog row. A row under any other ID, such as a
+// repository's own AEGIS-01, is the repository's and never gated.
+var gatedInvariantID = regexp.MustCompile(`^HISS-\d+$`)
+
+// gatedInvariantCells is the cell count of a catalog row: scope, rule, enforcement, on fail.
+const gatedInvariantCells = 4
+
+// SplitInvariantRow reads line as a row of the invariant table: a line that opens and closes
+// with a pipe and whose first cell opens with a bold ID, for example "| **HISS-01** control
+// flow | recursion prohibited | build | immediate build failure |". A backslash before a pipe
+// escapes it. It reports false for any other line (the header, the delimiter row, prose) and
+// checks no catalog, so a repository's own row, such as "| **AEGIS-01** ... |", splits too.
+// ParseGatedInvariants and the adopt harness refresh both read rows through it.
+func SplitInvariantRow(line string) (InvariantRow, bool) {
+	line = strings.TrimSpace(line)
+	if len(line) < 2 || line[0] != '|' {
+		return InvariantRow{}, false
+	}
+	cells, ok := splitTableCells(line[1:])
+	if !ok {
+		return InvariantRow{}, false
+	}
+	m := invariantIDCell.FindStringSubmatch(cells[0])
+	if m == nil {
+		return InvariantRow{}, false
+	}
+	cells[0] = m[2]
+	for i := range cells {
+		cells[i] = unescapeTableCell(cells[i])
+	}
+	return InvariantRow{Line: line, ID: m[1], Cells: cells}, true
+}
+
+// splitTableCells splits rest, a row after its opening pipe, at every unescaped pipe into
+// trimmed cells. It reports false when rest does not close with a pipe or holds no cell.
+func splitTableCells(rest string) ([]string, bool) {
+	var cells []string
+	start, escaped := 0, false
+	for i := 0; i < len(rest); i++ {
+		switch {
+		case escaped:
+			escaped = false
+		case rest[i] == '\\':
+			escaped = i+1 < len(rest) && rest[i+1] == '|'
+		case rest[i] == '|':
+			cells = append(cells, strings.TrimSpace(rest[start:i]))
+			start = i + 1
+		}
+	}
+	if start != len(rest) || len(cells) == 0 {
+		return nil, false
+	}
+	return cells, true
+}
+
+// InvariantTableRows returns every row of agentsMD's "Core Directives & Invariants" section
+// that SplitInvariantRow reads, in source order, whatever its ID. The section ends at the next
+// heading; fenced code is skipped through util.MarkdownFence, so a shell comment in an example
+// never reads as a heading. It checks no catalog: a document without the section, or without a
+// row in it, returns no rows and no error.
+func InvariantTableRows(agentsMD string) ([]InvariantRow, error) {
 	lines := strings.Split(agentsMD, "\n")
 	if len(lines) > maxGatedTableLines {
 		return nil, fmt.Errorf("%w: %d lines, limit %d", ErrGatedTableTooLong, len(lines), maxGatedTableLines)
 	}
 	var (
-		rows      []GatedInvariant
+		rows      []InvariantRow
 		fence     util.MarkdownFence
 		inSection bool
 	)
@@ -392,8 +455,27 @@ func ParseGatedInvariants(agentsMD string) ([]GatedInvariant, error) {
 			inSection = strings.HasPrefix(line, GatedInvariantsHeading)
 			continue
 		}
-		if row, ok := parseGatedInvariantRow(line); ok && inSection {
+		if row, ok := SplitInvariantRow(line); ok && inSection {
 			rows = append(rows, row)
+		}
+	}
+	return rows, nil
+}
+
+// ParseGatedInvariants reads the catalog rows of agentsMD's "Core Directives & Invariants"
+// section (InvariantTableRows), in source order: rows under a HISS ID with the four cells of
+// the table. A row under another ID is the repository's own and is skipped. Every catalog row
+// must name an invariant the catalog defines, exactly once, and the section must hold at least
+// one: a table that cannot be read is an error, never an empty result.
+func ParseGatedInvariants(agentsMD string) ([]GatedInvariant, error) {
+	table, err := InvariantTableRows(agentsMD)
+	if err != nil {
+		return nil, err
+	}
+	var rows []GatedInvariant
+	for _, row := range table {
+		if gated, ok := gatedInvariant(row); ok {
+			rows = append(rows, gated)
 		}
 	}
 	if err := validateGatedInvariants(rows); err != nil {
@@ -402,20 +484,21 @@ func ParseGatedInvariants(agentsMD string) ([]GatedInvariant, error) {
 	return rows, nil
 }
 
-// parseGatedInvariantRow decodes one table line, reporting false for any line that is not
-// an invariant row (the header, the delimiter row, prose).
-func parseGatedInvariantRow(line string) (GatedInvariant, bool) {
-	m := gatedInvariantRow.FindStringSubmatch(line)
-	if m == nil {
+// InCatalogNamespace reports whether id has the ID grammar of a catalog row (HISS-<n>), whether
+// or not the catalog defines it. A row under such an ID is the catalog's: ParseGatedInvariants
+// reads it and refuses one the catalog does not define. A row under any other ID is the
+// repository's own.
+func InCatalogNamespace(id string) bool {
+	return gatedInvariantID.MatchString(id)
+}
+
+// gatedInvariant returns row as a catalog row, reporting false for a row under another ID or
+// with another cell count.
+func gatedInvariant(row InvariantRow) (GatedInvariant, bool) {
+	if !InCatalogNamespace(row.ID) || len(row.Cells) != gatedInvariantCells {
 		return GatedInvariant{}, false
 	}
-	return GatedInvariant{
-		ID:          m[1],
-		Scope:       unescapeTableCell(m[2]),
-		Rule:        unescapeTableCell(m[3]),
-		Enforcement: unescapeTableCell(m[4]),
-		OnFail:      unescapeTableCell(m[5]),
-	}, true
+	return GatedInvariant{ID: row.ID, Scope: row.Cells[0], Rule: row.Cells[1], Enforcement: row.Cells[2], OnFail: row.Cells[3]}, true
 }
 
 func unescapeTableCell(cell string) string {

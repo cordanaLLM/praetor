@@ -327,6 +327,30 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
   fails the run before its first write when a vendor file holds a hand edit
   (`preflightVendorBackupRoot` in `internal/adopt/vendor_targets.go`,
   `TestAdopt_Negative_PlainRunRefusesSymlinkedBackupRootForVendorEdit`).
+- **`AGENTS.md` harness under `--force`.** An existing harness is kept without `--force`.
+  With it, the harness is regenerated and what the repository added around it stays:
+  - the preamble: every line above the harness start, which is the first
+    `# ... Agent Operating Harness` title (else the `## Core Directives & Invariants`
+    heading) together with a `<!-- markdownlint-disable ... -->` line directly above it,
+    for example an SPDX header;
+  - invariant rows under an ID of the repository's own, such as `**AEGIS-01**`, appended
+    after the catalog rows in their original order and byte for byte, escaped pipes
+    included. `hisscatalog.InvariantTableRows` reads both tables through
+    `SplitInvariantRow`, the splitter `ParseGatedInvariants` uses. A `HISS-<n>` row
+    belongs to the catalog, so it is regenerated;
+  - the instructions below the harness boundary: the end marker, the footer of an older
+    harness, or a `---` line, searched only below the harness start.
+
+  Every other harness line is regenerated. An edited one, such as reworded `HISS-02` text, is
+  reported as `replace` with its line delta and backup, as above. The text register block
+  comes from the manifest, as `compile-context` renders it. The file keeps its CRLF
+  convention, and a second `--force` run leaves it byte-identical. A file whose harness has no
+  boundary is left untouched and the run records an error. Prose that only mentions the
+  harness is not a harness: the harness is merged above it and every line is kept
+  (`TestAdopt_AgentsMD_ForceKeepsRepositoryAdditions`,
+  `TestAdopt_AgentsMD_ForceKeepsCRLFPreamble`,
+  `TestAdopt_AgentsMD_ForceRefusesUnknownBoundary`,
+  `TestAdopt_AgentsMD_ForceKeepsProseNamingTheHarness` in `internal/adopt/adopt_test.go`).
 - **Earlier Praetor output.** The manifest, lock, label taxonomy, pinned catalog, flavor
   YAML (`.clang-format` and `.clang-tidy` included) and the `docs:seo-portal` documentation
   gate's YAML that adoption writes pass `yamllint --strict` with its default rules

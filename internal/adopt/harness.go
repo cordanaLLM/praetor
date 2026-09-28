@@ -6,9 +6,9 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/agentcontext"
-	"github.com/cordanaLLM/praetor/internal/agenthook"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"github.com/cordanaLLM/praetor/templates"
@@ -112,11 +112,12 @@ type harnessFacts struct {
 	workflows []scaffoldedWorkflow
 	// hiss is what the invariant rows depend on: languages and the enforced function length.
 	hiss hisscatalog.Facts
-	// dispatchGated reports a registered pre-dispatch hook (agenthook.DispatchGateRegistered);
-	// only then does the text register section say a hook denies a brief without `task:`.
-	// Adoption registers only the pre-tool row, so the agent-hooks step that runs later
-	// cannot change the answer.
-	dispatchGated bool
+	// register is the text register block compile-context splices for this repository
+	// (compiler.LoadRegisterBlock): the manifest's register policy, and the dispatch hook
+	// sentence only where a pre-dispatch hook is registered. Adoption registers only the
+	// pre-tool row, so the agent-hooks step that runs later cannot change it. Empty renders the
+	// block of a repository with no manifest policy and no dispatch hook.
+	register string
 }
 
 // buildAgentHarness renders the canonical harness, terminated by harnessEndMarker.
@@ -141,7 +142,7 @@ func buildAgentHarness(facts harnessFacts) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("render harness footer: %w", err)
 	}
-	register, err := harnessRegisterSection(facts.dispatchGated)
+	register, err := harnessRegisterSection(facts.register)
 	if err != nil {
 		return "", err
 	}
@@ -165,15 +166,17 @@ func (s *adoptSession) harnessIdentity() (owner, name string) {
 	return "", s.repoName
 }
 
-// harnessRegisterSection renders the default text register section. Adoption needs neither
-// the adoptee's manifest nor its routing file here: the adoptee's own compile-context
-// re-splices the block from its manifest, and audit reports the difference until it does. The
-// dispatch hook sentence follows harnessFacts.dispatchGated, read the way compile-context reads
-// it.
-func harnessRegisterSection(dispatchGated bool) (string, error) {
-	block, err := config.RenderRegisterBlock(config.DefaultRegisterPolicy(), dispatchGated)
-	if err != nil {
-		return "", fmt.Errorf("render harness text register: %w", err)
+// harnessRegisterSection renders the text register section around block, the block
+// compile-context splices for the repository (harnessFacts.register), so an adopted AGENTS.md
+// verifies against the manifest's register policy without a compile-context run first (#502).
+// An empty block renders the default policy without the dispatch hook sentence.
+func harnessRegisterSection(block string) (string, error) {
+	if block == "" {
+		rendered, err := config.RenderRegisterBlock(config.DefaultRegisterPolicy(), false)
+		if err != nil {
+			return "", fmt.Errorf("render harness text register: %w", err)
+		}
+		block = rendered
 	}
 	return config.RegisterSectionPrefix + block + "\n\n", nil
 }
@@ -303,37 +306,87 @@ const harnessAntiLoopRule = `6. **Anti-loop interception.** Same AST diff + erro
 
 `
 
-// hasHarness reports whether content already carries a praetor harness.
+// harnessTitleSuffix ends the H1 of every harness praetor writes (agentHarnessTemplate).
+const harnessTitleSuffix = "Agent Operating Harness"
+
+// harnessLintDisable opens the markdownlint comment every praetor harness has written on the
+// line above its H1, whatever rules it named (MD013 now; MD013 MD025, or none, earlier).
+const harnessLintDisable = "<!-- markdownlint-disable"
+
+// maxHarnessLines bounds the line walk over an existing AGENTS.md (HISS-02). readRepoFile caps
+// the file at contextopt.MaxSourceBytes, so no file it returns comes near it.
+const maxHarnessLines = 1 << 20
+
+// hasHarness reports whether content already carries a praetor harness: a harness H1 or the
+// invariant heading on a line of its own, outside fenced code (harnessStart). Prose that only
+// names the harness is repository text, so a forced refresh never takes its first "---" for a
+// harness boundary.
 func hasHarness(content string) bool {
-	return strings.Contains(content, "Agent Operating Harness") ||
-		strings.Contains(content, "## Core Directives & Invariants")
+	return harnessStart(content) >= 0
 }
 
-// splitHarnessTail returns the repository-specific instructions that follow an existing
-// harness. It recognises, in order, the end marker written by current versions, the
-// footer of harnesses written before the marker existed, and a bare "---" separator.
-// ok is false when no boundary can be identified.
-func splitHarnessTail(existing string) (tail string, ok bool) {
-	if idx := strings.Index(existing, harnessEndMarker); idx >= 0 {
-		return trimSeparator(existing[idx+len(harnessEndMarker):]), true
-	}
-	if idx := strings.Index(existing, harnessFooterHeading); idx >= 0 {
-		rest := existing[idx:]
-		open := strings.Index(rest, codeFence)
-		if open < 0 {
-			return "", false
+// harnessStart returns the byte offset of the line an existing harness starts at, or -1 when
+// content carries none. The harness opens at its first H1 ending in harnessTitleSuffix, else at
+// the invariant heading, and a markdownlint-disable comment on the line directly above that
+// line is part of it. Text above the start is the repository's preamble, such as an SPDX header.
+func harnessStart(content string) int {
+	lines := strings.SplitN(content, "\n", maxHarnessLines)
+	var fence util.MarkdownFence
+	offset, previous := 0, -1
+	for i := 0; i < len(lines) && i < maxHarnessLines; i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if !fence.Inside(trimmed) && isHarnessLine(trimmed) {
+			if previous >= 0 && strings.HasPrefix(strings.TrimSpace(lines[i-1]), harnessLintDisable) {
+				return previous
+			}
+			return offset
 		}
-		closing := strings.Index(rest[open+len(codeFence):], codeFence)
-		if closing < 0 {
-			return "", false
-		}
-		end := open + len(codeFence) + closing + len(codeFence)
-		return trimSeparator(rest[end:]), true
+		previous = offset
+		offset += len(lines[i]) + 1
 	}
-	if parts := strings.SplitN(existing, harnessSeparator, 2); len(parts) == 2 {
-		return trimSeparator(parts[1]), true
+	return -1
+}
+
+// isHarnessLine reports whether trimmed opens a harness: its H1 or the invariant heading.
+func isHarnessLine(trimmed string) bool {
+	return (strings.HasPrefix(trimmed, "# ") && strings.HasSuffix(trimmed, harnessTitleSuffix)) ||
+		strings.HasPrefix(trimmed, hisscatalog.GatedInvariantsHeading)
+}
+
+// splitHarnessTail splits body, text that opens with an existing harness, at the harness
+// boundary: head is the harness text before it, tail the repository-specific instructions
+// after it. It recognises, in order, the end marker written by current versions, the footer
+// of harnesses written before the marker existed, and a bare "---" separator. ok is false
+// when no boundary can be identified.
+func splitHarnessTail(body string) (head, tail string, ok bool) {
+	headEnd, tailStart := -1, -1
+	if idx := strings.Index(body, harnessEndMarker); idx >= 0 {
+		headEnd, tailStart = idx, idx+len(harnessEndMarker)
+	} else if idx := strings.Index(body, harnessFooterHeading); idx >= 0 {
+		headEnd = footerEnd(body, idx)
+		tailStart = headEnd
+	} else if idx := strings.Index(body, harnessSeparator); idx >= 0 {
+		headEnd, tailStart = idx, idx+len(harnessSeparator)
 	}
-	return "", false
+	if headEnd < 0 {
+		return "", "", false
+	}
+	return body[:headEnd], trimSeparator(body[tailStart:]), true
+}
+
+// footerEnd returns where the footer section opening at start ends, after the closing fence of
+// its shell block, or -1 when the block is not closed.
+func footerEnd(body string, start int) int {
+	rest := body[start:]
+	open := strings.Index(rest, codeFence)
+	if open < 0 {
+		return -1
+	}
+	closing := strings.Index(rest[open+len(codeFence):], codeFence)
+	if closing < 0 {
+		return -1
+	}
+	return start + open + len(codeFence) + closing + len(codeFence)
 }
 
 // trimSeparator drops surrounding whitespace and one leading "---" separator line.
@@ -360,7 +413,7 @@ func reconcileAgentHarness(ctx context.Context, s *adoptSession) error {
 	if err != nil {
 		return err
 	}
-	agentsContent, err := resolveAgentsContent(s, facts)
+	agentsContent, err := resolveAgentsContent(ctx, s, facts)
 	if err != nil {
 		return err
 	}
@@ -387,16 +440,16 @@ func (s *adoptSession) harnessFacts(ctx context.Context, clients []string) (harn
 	if err != nil {
 		return harnessFacts{}, err
 	}
-	gated, err := agenthook.DispatchGateRegistered(ctx, s.repoPath)
+	_, register, err := compiler.LoadRegisterBlock(ctx, s.repoPath)
 	if err != nil {
-		return harnessFacts{}, fmt.Errorf("read dispatch hook registration for the harness: %w", err)
+		return harnessFacts{}, fmt.Errorf("resolve the text register block for the harness: %w", err)
 	}
 	owner, name := s.harnessIdentity()
 	return harnessFacts{owner: owner, name: name, arch: s.arch, plan: s.verification, pipelines: pipelines,
-		hooks: hooks, targets: targets, workflows: workflows, hiss: s.hissFacts(), dispatchGated: gated}, nil
+		hooks: hooks, targets: targets, workflows: workflows, hiss: s.hissFacts(), register: register}, nil
 }
 
-func resolveAgentsContent(s *adoptSession, facts harnessFacts) (string, error) {
+func resolveAgentsContent(ctx context.Context, s *adoptSession, facts harnessFacts) (string, error) {
 	full, err := repoFile(s.repoPath, agentsFile)
 	if err != nil {
 		return "", err
@@ -419,7 +472,7 @@ func resolveAgentsContent(s *adoptSession, facts harnessFacts) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return mergeExistingAgentsContent(s, full, string(existingBytes), harness)
+	return mergeExistingAgentsContent(ctx, s, full, string(existingBytes), harness)
 }
 
 func validateHarnessProjection(content string) error {
@@ -430,11 +483,9 @@ func validateHarnessProjection(content string) error {
 }
 
 // mergeExistingAgentsContent prepends the harness to a foreign AGENTS.md, leaves an
-// existing harness alone without Force, and with Force replaces only the harness part
-// while keeping everything after its boundary. When the boundary of an existing harness
-// cannot be identified the file is left untouched and an error is recorded rather than
-// silently discarding repository instructions.
-func mergeExistingAgentsContent(s *adoptSession, full, existing, harness string) (string, error) {
+// existing harness alone without Force, and with Force regenerates the harness while keeping
+// what the repository added around it (refreshAgentHarness).
+func mergeExistingAgentsContent(ctx context.Context, s *adoptSession, full, existing, harness string) (string, error) {
 	if !hasHarness(existing) {
 		merged := harness + harnessSeparator + "\n" + foreignInstructions(existing)
 		if err := validateHarnessProjection(merged); err != nil {
@@ -453,25 +504,175 @@ func mergeExistingAgentsContent(s *adoptSession, full, existing, harness string)
 		}
 		return existing, nil
 	}
-	tail, ok := splitHarnessTail(existing)
+	return refreshAgentHarness(ctx, s, existing, harness)
+}
+
+// refreshAgentHarness regenerates the harness of existing under --force and keeps what the
+// repository added around it (harnessAdditions): the preamble above the harness start line,
+// invariant rows under IDs of its own, and the instructions after the harness boundary. Every
+// other harness line is praetor's and is regenerated; an edited one is reported through
+// replaceExisting, with the line delta and the backup of the prior bytes. The work runs on LF
+// text and the result keeps the file's CRLF convention (util.NormalizeLineEndings), as
+// compile-context splices the register block. When the boundary of the harness cannot be
+// identified the file is left untouched and an error is recorded rather than silently
+// discarding repository instructions.
+func refreshAgentHarness(ctx context.Context, s *adoptSession, existing, harness string) (string, error) {
+	lf, crlf := util.NormalizeLineEndings(existing)
+	kept, ok, err := splitHarnessAdditions(lf, harness)
+	if err != nil {
+		return "", err
+	}
 	if !ok {
 		s.report.addError("%s: cannot locate the end of the existing harness; file left untouched (separate repository instructions from the harness with a '---' line and re-run)", agentsFile)
 		s.report.recordReconciled(agentsFile, "Existing harness left untouched: boundary to repository instructions not found")
 		return existing, nil
 	}
-	tail = dropRegisterSection(tail)
-	merged := strings.TrimSpace(harness) + "\n"
-	if tail != "" {
-		merged = strings.TrimSpace(harness) + "\n" + harnessSeparator + "\n" + tail + "\n"
+	merged, err := kept.join(harness)
+	if err != nil {
+		return "", err
 	}
+	merged = util.RestoreLineEndings(merged, crlf)
 	if err := validateHarnessProjection(merged); err != nil {
 		return "", err
 	}
-	if err := s.write(full, []byte(merged), filePerm); err != nil {
+	if merged == existing {
+		s.report.recordReconciled(agentsFile, "Praetor Agent Operating Harness already current"+kept.describe())
+		return existing, nil
+	}
+	err = s.replaceExisting(ctx, replacement{
+		rel: agentsFile, before: []byte(existing), after: []byte(merged),
+		detail: "Refreshed Praetor Agent Operating Harness" + kept.describe(),
+		publish: func(ctx context.Context) error {
+			return contextopt.ReplaceSnapshotIn(ctx, s.repoPath, agentsFile, []byte(merged),
+				contextopt.ReplaceOptions{Expected: []byte(existing), Exists: true, Mode: filePerm})
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("refresh %s: %w", agentsFile, err)
+	}
+	return merged, nil
+}
+
+// harnessAdditions is what a forced refresh keeps of an existing AGENTS.md around the harness it
+// regenerates.
+type harnessAdditions struct {
+	// preamble is the text above the harness start line (harnessStart), as written.
+	preamble string
+	// rows are the invariant rows the repository added (repositoryInvariantRows).
+	rows []hisscatalog.InvariantRow
+	// tail is the instructions after the harness boundary, a text register section dropped.
+	tail string
+}
+
+// splitHarnessAdditions splits lf, an existing AGENTS.md as LF text, around its harness, with
+// harness the one that replaces it. ok is false when lf carries no harness or no boundary
+// after its start can be identified.
+func splitHarnessAdditions(lf, harness string) (harnessAdditions, bool, error) {
+	start := harnessStart(lf)
+	if start < 0 {
+		return harnessAdditions{}, false, nil
+	}
+	head, tail, ok := splitHarnessTail(lf[start:])
+	if !ok {
+		return harnessAdditions{}, false, nil
+	}
+	rows, err := repositoryInvariantRows(head, harness)
+	if err != nil {
+		return harnessAdditions{}, false, err
+	}
+	return harnessAdditions{preamble: lf[:start], rows: rows, tail: dropRegisterSection(tail)}, true, nil
+}
+
+// repositoryInvariantRows returns the rows of head's invariant table the repository added:
+// rows under an ID the table of harness lacks and outside the catalog's ID grammar, in their
+// order. Both tables are read by the one row splitter (hisscatalog.InvariantTableRows). A HISS
+// row the catalog does not define is praetor's, and hisscatalog.ParseGatedInvariants refuses
+// it, so it is regenerated away rather than kept.
+func repositoryInvariantRows(head, harness string) ([]hisscatalog.InvariantRow, error) {
+	existing, err := hisscatalog.InvariantTableRows(head)
+	if err != nil {
+		return nil, fmt.Errorf("read the invariant table of %s: %w", agentsFile, err)
+	}
+	generated, err := hisscatalog.InvariantTableRows(harness)
+	if err != nil {
+		return nil, fmt.Errorf("read the generated invariant table: %w", err)
+	}
+	have := make(map[string]bool, len(generated))
+	for _, row := range generated {
+		have[row.ID] = true
+	}
+	var kept []hisscatalog.InvariantRow
+	for _, row := range existing {
+		if !have[row.ID] && !hisscatalog.InCatalogNamespace(row.ID) {
+			kept = append(kept, row)
+		}
+	}
+	return kept, nil
+}
+
+// join renders the refreshed file: the preamble, harness with the kept rows after its last
+// generated row, then the separator and the tail.
+func (a harnessAdditions) join(harness string) (string, error) {
+	body, err := insertInvariantRows(harness, a.rows)
+	if err != nil {
 		return "", err
 	}
-	s.report.recordReconciled(agentsFile, "Updated Praetor Agent Operating Harness while preserving repository-specific instructions")
+	merged := a.preamble + strings.TrimSpace(body) + "\n"
+	if a.tail != "" {
+		merged += harnessSeparator + "\n" + a.tail + "\n"
+	}
 	return merged, nil
+}
+
+// insertInvariantRows returns harness with rows appended, as written, after the last row of its
+// invariant table.
+func insertInvariantRows(harness string, rows []hisscatalog.InvariantRow) (string, error) {
+	if len(rows) == 0 {
+		return harness, nil
+	}
+	generated, err := hisscatalog.InvariantTableRows(harness)
+	if err != nil {
+		return "", fmt.Errorf("read the generated invariant table: %w", err)
+	}
+	if len(generated) == 0 {
+		return "", fmt.Errorf("generated harness carries no invariant row to keep %s rows after", agentsFile)
+	}
+	last := generated[len(generated)-1].Line + "\n"
+	at := strings.Index(harness, last)
+	if at < 0 {
+		return "", fmt.Errorf("generated harness does not carry its last invariant row on a line of its own")
+	}
+	at += len(last)
+	lines := make([]string, 0, len(rows))
+	for _, row := range rows {
+		lines = append(lines, row.Line+"\n")
+	}
+	return harness[:at] + strings.Join(lines, "") + harness[at:], nil
+}
+
+// describe names what the refresh kept, for the report entry.
+func (a harnessAdditions) describe() string {
+	var kept []string
+	if a.preamble != "" {
+		kept = append(kept, fmt.Sprintf("preamble (%d lines)", strings.Count(a.preamble, "\n")))
+	}
+	if len(a.rows) > 0 {
+		ids := make([]string, 0, len(a.rows))
+		for i := 0; i < len(a.rows) && i < maxDeltaQuotedLines; i++ {
+			ids = append(ids, a.rows[i].ID)
+		}
+		if more := len(a.rows) - len(ids); more > 0 {
+			ids = append(ids, fmt.Sprintf("%d more", more))
+		}
+		kept = append(kept, fmt.Sprintf("%d repository invariant rows (%s)", len(a.rows), strings.Join(ids, ", ")))
+	}
+	if a.tail != "" {
+		kept = append(kept, "repository-specific instructions")
+	}
+	if len(kept) == 0 {
+		return ""
+	}
+	return "; kept " + strings.Join(kept, ", ")
 }
 
 // transpileAgentTargets compiles AGENTS.md into the vendor context files of the selected

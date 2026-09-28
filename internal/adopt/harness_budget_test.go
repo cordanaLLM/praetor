@@ -72,7 +72,7 @@ func TestMergeAgentsProjectionAcceptsShortTail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	merged, err := mergeExistingAgentsContent(s, path, initial, harness)
+	merged, err := mergeExistingAgentsContent(context.Background(), s, path, initial, harness)
 	if err != nil || !strings.Contains(merged, "Keep project instructions.") || mustRead(t, path) != merged {
 		t.Fatalf("short context merge failed: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestResolveAgentsContentPreflightHonorsDryRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := resolveAgentsContent(s, facts); err == nil {
+	if _, err := resolveAgentsContent(context.Background(), s, facts); err == nil {
 		t.Fatal("dry-run oversized context accepted")
 	}
 	if got := mustRead(t, path); got != initial {

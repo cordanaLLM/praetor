@@ -686,8 +686,10 @@ old echo-only `verify-all` stub. Custom or edited Makefiles are preserved even w
 `--force`; includes, generated target names and pattern rules are treated as
 ambiguous ownership. A missing target can be appended to a simple existing
 Makefile without replacing its recipes. Existing AGENTS.md is preserved by default
-with a command-synchronization warning. Review the declared plan; `--force` can
-refresh a recognized generated harness boundary while retaining project content.
+with a command-synchronization warning. Review the declared plan; `--force`
+regenerates a recognized harness and keeps its preamble, the repository's own invariant
+rows and the instructions below it
+([adoption](../adoption.md#what-adoption-reads-before-it-writes)).
 Malformed or oversized command metadata now fails before any adoption writes.
 
 `lefthook.yml` follows the same rule (`internal/adopt/lefthook_identity.go`):

@@ -70,7 +70,7 @@ func TestHarnessDropsDiagramKeepsAnchors(t *testing.T) {
 	if !hasHarness(harness) {
 		t.Error("hasHarness no longer recognises the harness")
 	}
-	if tail, ok := splitHarnessTail(harness + harnessSeparator + "\nkept\n"); !ok || tail != "kept" {
+	if _, tail, ok := splitHarnessTail(harness + harnessSeparator + "\nkept\n"); !ok || tail != "kept" {
 		t.Errorf("splitHarnessTail = %q, %v", tail, ok)
 	}
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/classify"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"gopkg.in/yaml.v3"
 )
 
@@ -1274,8 +1275,13 @@ func TestAdopt_AgentsMD_ForcePreservesCustomInstructions(t *testing.T) {
 		if !strings.Contains(content, "# Custom Repo Instructions") || !strings.Contains(content, "Don't touch this proprietary text!") {
 			t.Errorf("%s: expected custom repo instructions to be preserved, got:\n%s", name, content)
 		}
+		// The old harness body is replaced and reported as replaced, the removed line quoted,
+		// never passed off as a reconcile (#502).
 		if strings.Contains(content, "old table") {
 			t.Errorf("%s: the old harness body must be replaced", name)
+		}
+		if !hasAction(rep, agentsFile, actionReplace) || !strings.Contains(findActionDetail(rep.ActionDetails, agentsFile), `"old table"`) {
+			t.Errorf("%s: the replaced harness body must be reported with its removed lines, got %v", name, rep.ActionDetails)
 		}
 
 		// A second --force run is idempotent.
@@ -1288,34 +1294,203 @@ func TestAdopt_AgentsMD_ForcePreservesCustomInstructions(t *testing.T) {
 	}
 }
 
+// TestAdopt_AgentsMD_ForceRefusesUnknownBoundary: without a boundary after the harness start
+// the file is left untouched and an error is recorded. A "---" in the preamble, such as front
+// matter, is above the harness start and never taken for its boundary.
 func TestAdopt_AgentsMD_ForceRefusesUnknownBoundary(t *testing.T) {
-	repoPath := newTestRepo(t, "unknown-boundary")
-	initial := "# Something Agent Operating Harness\nhand written rules without any separator\n"
-	mustWrite(t, filepath.Join(repoPath, "AGENTS.md"), initial)
+	for name, initial := range map[string]string{
+		"no separator":            "# Something Agent Operating Harness\nhand written rules without any separator\n",
+		"separator only above it": "---\ntitle: rules\n---\n# Something Agent Operating Harness\nhand written rules without any separator\n",
+	} {
+		repoPath := newTestRepo(t, "unknown-boundary")
+		mustWrite(t, filepath.Join(repoPath, "AGENTS.md"), initial)
 
-	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Force: true})
+		rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Force: true})
+		if err != nil {
+			t.Fatalf("%s: Adopt failed: %v", name, err)
+		}
+		if got := mustRead(t, filepath.Join(repoPath, "AGENTS.md")); got != initial {
+			t.Fatalf("%s: AGENTS.md must be left untouched when the harness boundary is unknown, got:\n%s", name, got)
+		}
+		if len(rep.Errors) == 0 || !strings.Contains(rep.Errors[0], "AGENTS.md") {
+			t.Fatalf("%s: expected a report error naming AGENTS.md, got %v", name, rep.Errors)
+		}
+	}
+}
+
+// harnessAdditionsFixture turns the harness a plain adoption wrote into one a repository
+// extended: a preamble in eol line endings above it, the HISS-02 wording edited, two rows of
+// its own (one with an escaped pipe) between the catalog rows, and instructions below it.
+func harnessAdditionsFixture(t *testing.T, harness, eol string) (edited string, own []string) {
+	t.Helper()
+	own = []string{
+		"| **AEGIS-01** secrets | never log tokens | review | blocker |",
+		`| **AEGIS-02** paths | allow a \| b only | review | blocker |`,
+	}
+	var lines []string
+	for _, line := range strings.Split(harness, "\n") {
+		switch {
+		case strings.HasPrefix(line, "| **HISS-02**"):
+			line = "| **HISS-02** loops, I/O | loops may run forever | none | ignored |"
+		case strings.HasPrefix(line, "| **HISS-01**"):
+			line += "\n" + own[0]
+		case strings.HasPrefix(line, "| **HISS-05**"):
+			line += "\n" + own[1]
+		}
+		lines = append(lines, line)
+	}
+	preamble := "<!-- SPDX-FileCopyrightText: 2026 Example Maintainers -->" + eol + "<!-- SPDX-License-Identifier: MIT -->" + eol + eol
+	tail := harnessSeparator + "\n# Repository Rules\n\nKeep this.\n"
+	return preamble + strings.TrimSpace(strings.Join(lines, "\n")) + "\n" + tail, own
+}
+
+// TestAdopt_AgentsMD_ForceKeepsRepositoryAdditions: --force regenerates the harness and keeps
+// what the repository added around it: the preamble above the harness start line, rows under
+// IDs of its own, appended after the catalog rows in their order and as written (an escaped
+// pipe included), and the instructions below it. The edited HISS-02 wording is praetor's, so it
+// is replaced and quoted in the replace entry (#502). A second --force is byte-identical.
+func TestAdopt_AgentsMD_ForceKeepsRepositoryAdditions(t *testing.T) {
+	repoPath := newTestRepo(t, "harness-additions")
+	agents := filepath.Join(repoPath, agentsFile)
+	opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Profile: "framework"}
+	if _, err := Adopt(context.Background(), opts); err != nil {
+		t.Fatalf("Adopt: %v", err)
+	}
+	generated := mustRead(t, agents)
+	edited, own := harnessAdditionsFixture(t, generated, "\n")
+	mustWrite(t, agents, edited)
+
+	opts.Force = true
+	rep, err := Adopt(context.Background(), opts)
 	if err != nil {
-		t.Fatalf("Adopt failed: %v", err)
+		t.Fatalf("Adopt --force: %v", err)
 	}
-	if got := mustRead(t, filepath.Join(repoPath, "AGENTS.md")); got != initial {
-		t.Fatalf("AGENTS.md must be left untouched when the harness boundary is unknown, got:\n%s", got)
+	assertNoIssues(t, rep)
+	content := mustRead(t, agents)
+	if !strings.HasPrefix(content, "<!-- SPDX-FileCopyrightText: 2026 Example Maintainers -->\n<!-- SPDX-License-Identifier: MIT -->\n\n<!-- markdownlint-disable MD013 -->\n") {
+		t.Errorf("the preamble must stay above the harness start line:\n%s", content)
 	}
-	if len(rep.Errors) == 0 || !strings.Contains(rep.Errors[0], "AGENTS.md") {
-		t.Fatalf("expected a report error naming AGENTS.md, got %v", rep.Errors)
+	if !strings.HasSuffix(content, "\n---\n\n# Repository Rules\n\nKeep this.\n") {
+		t.Errorf("the repository instructions must stay below the harness:\n%s", content)
+	}
+	last := strings.Index(content, "| **HISS-21**")
+	first, second := strings.Index(content, own[0]+"\n"), strings.Index(content, own[1]+"\n")
+	if last < 0 || first < last || second < first {
+		t.Errorf("own rows must follow the catalog rows in their order (HISS-21 %d, AEGIS-01 %d, AEGIS-02 %d):\n%s", last, first, second, content)
+	}
+	if strings.Contains(content, "loops may run forever") || !strings.Contains(content, "| **HISS-02** loops, I/O | scalar upper bound") {
+		t.Errorf("the edited HISS-02 row must be regenerated:\n%s", content)
+	}
+	detail := findActionDetail(rep.ActionDetails, agentsFile)
+	for _, want := range []string{`"| **HISS-02** loops, I/O | loops may run forever | none | ignored |"`, "preamble (3 lines)", "2 repository invariant rows (AEGIS-01, AEGIS-02)", "repository-specific instructions"} {
+		if !hasAction(rep, agentsFile, actionReplace) || !strings.Contains(detail, want) {
+			t.Errorf("replace entry must carry %q, got %q", want, detail)
+		}
+	}
+	if _, err := hisscatalog.ParseGatedInvariants(content); err != nil {
+		t.Errorf("refreshed table must stay readable by the wiki parser: %v", err)
+	}
+
+	again, err := Adopt(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("second Adopt --force: %v", err)
+	}
+	if got := mustRead(t, agents); got != content || hasAction(again, agentsFile, actionReplace) {
+		t.Errorf("a second --force must be byte-identical and replace nothing (replace=%v):\n%s", hasAction(again, agentsFile, actionReplace), got)
+	}
+}
+
+// TestAdopt_AgentsMD_ForceKeepsCRLFPreamble: the harness start is found below a CRLF preamble,
+// the preamble survives, the file keeps its CRLF convention, and a second --force is
+// byte-identical, for a whole CRLF checkout and for a file whose preamble alone is CRLF.
+func TestAdopt_AgentsMD_ForceKeepsCRLFPreamble(t *testing.T) {
+	for name, wholeCRLF := range map[string]bool{"crlf checkout": true, "crlf preamble only": false} {
+		t.Run(name, func(t *testing.T) {
+			repoPath := newTestRepo(t, "harness-crlf")
+			agents := filepath.Join(repoPath, agentsFile)
+			opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Profile: "framework"}
+			if _, err := Adopt(context.Background(), opts); err != nil {
+				t.Fatalf("Adopt: %v", err)
+			}
+			edited, own := harnessAdditionsFixture(t, mustRead(t, agents), "\r\n")
+			if wholeCRLF {
+				edited = strings.ReplaceAll(strings.ReplaceAll(edited, "\r\n", "\n"), "\n", "\r\n")
+			}
+			mustWrite(t, agents, edited)
+			opts.Force = true
+			rep, err := Adopt(context.Background(), opts)
+			if err != nil {
+				t.Fatalf("Adopt --force: %v", err)
+			}
+			assertNoIssues(t, rep)
+			content := mustRead(t, agents)
+			if !strings.HasPrefix(content, "<!-- SPDX-FileCopyrightText: 2026 Example Maintainers -->\r\n<!-- SPDX-License-Identifier: MIT -->\r\n\r\n<!-- markdownlint-disable MD013 -->\r\n") {
+				t.Errorf("the CRLF preamble must stay above the harness:\n%q", content[:min(len(content), 200)])
+			}
+			if strings.Count(content, "\n") != strings.Count(content, "\r\n") || !strings.Contains(content, own[1]+"\r\n") {
+				t.Errorf("the refreshed file must keep CRLF throughout and the escaped-pipe row as written")
+			}
+			if _, err := Adopt(context.Background(), opts); err != nil {
+				t.Fatalf("second Adopt --force: %v", err)
+			}
+			if got := mustRead(t, agents); got != content {
+				t.Errorf("a second --force must be byte-identical")
+			}
+		})
+	}
+}
+
+// TestAdopt_AgentsMD_ForceKeepsProseNamingTheHarness: text that only names the harness in
+// prose is not a harness, so --force merges the harness above it and keeps every line, rather
+// than taking its first "---" for a harness boundary and dropping the text above it.
+func TestAdopt_AgentsMD_ForceKeepsProseNamingTheHarness(t *testing.T) {
+	repoPath := newTestRepo(t, "harness-prose")
+	initial := "# Team Notes\n\nWe follow the Agent Operating Harness idea and the ## Core Directives & Invariants list.\n\n---\n\nKeep all of this.\n"
+	mustWrite(t, filepath.Join(repoPath, agentsFile), initial)
+	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Profile: "framework", Force: true})
+	if err != nil {
+		t.Fatalf("Adopt --force: %v", err)
+	}
+	content := mustRead(t, filepath.Join(repoPath, agentsFile))
+	if !hasAction(rep, agentsFile, actionMerge) || !strings.HasSuffix(content, harnessSeparator+"\n"+initial) {
+		t.Errorf("prose naming the harness must be kept whole below a merged harness, got:\n%s", content)
+	}
+}
+
+func TestHarnessStart(t *testing.T) {
+	cases := map[string]struct {
+		content string
+		want    int
+	}{
+		"no harness":              {"# Rules\nThe Agent Operating Harness is elsewhere.\n", -1},
+		"fenced title":            {"```md\n# x Agent Operating Harness\n```\n", -1},
+		"title at the top":        {"# x Agent Operating Harness\n", 0},
+		"lint comment above":      {"<!-- SPDX -->\n<!-- markdownlint-disable MD013 MD025 -->\n# x Agent Operating Harness\n", len("<!-- SPDX -->\n")},
+		"preamble above title":    {"<!-- SPDX -->\n\n# x Agent Operating Harness\n", len("<!-- SPDX -->\n\n")},
+		"invariant heading alone": {"# Rules\n\n## Core Directives & Invariants\n", len("# Rules\n\n")},
+	}
+	for name, tc := range cases {
+		if got := harnessStart(tc.content); got != tc.want {
+			t.Errorf("%s: harnessStart = %d, want %d", name, got, tc.want)
+		}
 	}
 }
 
 func TestSplitHarnessTail_Boundary(t *testing.T) {
-	if tail, ok := splitHarnessTail("no harness here"); ok || tail != "" {
+	if _, tail, ok := splitHarnessTail("no harness here"); ok || tail != "" {
 		t.Fatalf("expected no boundary, got ok=%v tail=%q", ok, tail)
 	}
-	if tail, ok := splitHarnessTail("x " + harnessEndMarker); !ok || tail != "" {
-		t.Fatalf("marker with empty tail must be ok with empty tail, got ok=%v tail=%q", ok, tail)
+	if head, tail, ok := splitHarnessTail("x " + harnessEndMarker); !ok || tail != "" || head != "x " {
+		t.Fatalf("marker with empty tail must be ok with empty tail, got ok=%v head=%q tail=%q", ok, head, tail)
 	}
-	if tail, ok := splitHarnessTail("## Primary Verification Commands\n```bash\nunterminated"); ok || tail != "" {
+	footer := "# h\n" + harnessFooterHeading + "\n```bash\nmake verify-all\n```"
+	if head, tail, ok := splitHarnessTail(footer + "\n\n# Rules\n"); !ok || head != footer || tail != "# Rules" {
+		t.Fatalf("an older footer ends the head after its closing fence, got ok=%v head=%q tail=%q", ok, head, tail)
+	}
+	if _, tail, ok := splitHarnessTail("## Primary Verification Commands\n```bash\nunterminated"); ok || tail != "" {
 		t.Fatalf("unterminated footer fence must not be a boundary, got ok=%v tail=%q", ok, tail)
 	}
-	if tail, ok := splitHarnessTail("a\n---\n---\nfront matter\n"); !ok || tail != "front matter" {
+	if _, tail, ok := splitHarnessTail("a\n---\n---\nfront matter\n"); !ok || tail != "front matter" {
 		t.Fatalf("only one separator is stripped, got ok=%v tail=%q", ok, tail)
 	}
 }
