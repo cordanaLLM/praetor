@@ -1,0 +1,39 @@
+== canonical without REUSE.toml
+stdout "[PASS] Locked documentation gate verified (23 assets, local verify-all, hosted required context, private scratch ignores, formatter inventory, checkout attributes).\n"
+== canonical, REUSE.toml without the override
+stdout "[PASS] Locked documentation gate verified (23 assets, local verify-all, hosted required context, private scratch ignores, formatter inventory, checkout attributes).\n[WARN] REUSE.toml has no annotation labelling tools/figures/third_party/interfig/upstream/** MIT; add an override annotation for that path after every table that also covers it, such as a whole-tree ** table (tools/figures/README.md, Credit)\n"
+== canonical, REUSE.toml with the override
+stdout "[PASS] Locked documentation gate verified (23 assets, local verify-all, hosted required context, private scratch ignores, formatter inventory, checkout attributes).\n"
+== figure asset drift
+stdout ""
+error [FAIL] Documentation gate asset tools/figures/build.mjs differs from the locked Praetor asset; run 'praetorctl adopt --force'
+== vendored file missing
+stdout ""
+error [FAIL] Documentation gate asset tools/figures/third_party/interfig/upstream/LICENSE is missing or unreadable: <os error>
+== Makefile block without docs-figures
+stdout ""
+error [FAIL] Makefile does not attach the locked docs-lint and docs-figures targets to verify-all; run 'praetorctl adopt'
+== attribute block missing
+stdout ""
+error [FAIL] .gitattributes must end with the canonical Praetor attribute block; run 'praetorctl adopt'
+== attribute block not at the tail
+stdout ""
+error [FAIL] .gitattributes must end with the canonical Praetor attribute block; run 'praetorctl adopt'
+== attribute block twice
+stdout ""
+error [FAIL] .gitattributes attribute block is ambiguous (repair it, then run 'praetorctl adopt'): .gitattributes contains duplicate managed attribute blocks
+== canonical, REUSE.toml override before the whole-tree table
+stdout "[PASS] Locked documentation gate verified (23 assets, local verify-all, hosted required context, private scratch ignores, formatter inventory, checkout attributes).\n[WARN] REUSE.toml has no annotation labelling tools/figures/third_party/interfig/upstream/** MIT; add an override annotation for that path after every table that also covers it, such as a whole-tree ** table (tools/figures/README.md, Credit)\n"
+== attribute block CRLF
+stdout "[PASS] Locked documentation gate verified (23 assets, local verify-all, hosted required context, private scratch ignores, formatter inventory, checkout attributes).\n"
+== disabled retains figure asset
+stdout ""
+error [FAIL] Disabled documentation facet retains Praetor asset tools/figures/dist/player.js
+== disabled retains attribute block
+stdout ""
+error [FAIL] Disabled documentation facet retains the Praetor .gitattributes block
+== disabled with ambiguous attribute markers
+stdout ""
+error [FAIL] Inspect disabled documentation .gitattributes block: .gitattributes contains an unmatched managed end marker
+== disabled with the operator's own figure rules
+stdout ""

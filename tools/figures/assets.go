@@ -18,6 +18,7 @@ package figures
 import (
 	"embed"
 	"io/fs"
+	"maps"
 	"slices"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -30,7 +31,29 @@ const (
 	SourceFile = Directory + "/assets.go"
 	// MaxAssets bounds all asset iteration: the inventory's exact size.
 	MaxAssets = 18
+	// SpecDirectory and OutputDirectory hold a repository's figure specs and their committed
+	// outputs: SPEC_DIR and OUT_DIR in checks.mjs, which assets_test.go holds to these values.
+	SpecDirectory   = "docs/figures"
+	OutputDirectory = "docs/assets/figures"
+	// VendoredTree is the Directory-relative glob of the vendored interfig files, which keep
+	// upstream's bytes and its MIT terms (VendoredLicense).
+	VendoredTree    = "third_party/interfig/upstream/**"
+	VendoredLicense = "MIT"
 )
+
+// Attributes returns the .gitattributes rules adoption writes for the engine
+// (docs/adr/0016-figures-for-adopters.md, section 5). The engine hash, the spec and SVG hashes in
+// each figure's JSON and the committed player are compared byte for byte, so the engine, the specs
+// and the outputs keep LF on every platform, and the vendored files, whose SHA-256 vendor.json
+// records, are never converted: the -text rule comes last and wins for them.
+func Attributes() []string {
+	return []string{
+		Directory + "/** text eol=lf",
+		SpecDirectory + "/*.ts text eol=lf",
+		OutputDirectory + "/* text eol=lf",
+		Directory + "/" + VendoredTree + " -text",
+	}
+}
 
 // assetNames is the inventory in emission order: render and check, the vendored render source,
 // the committed player and the stylesheet, the site generators, then the authoring guide.
@@ -55,6 +78,22 @@ var assetNames = [...]string{
 	"README.md",
 }
 
+// priorDigests maps the SHA-256, taken with LF line endings, of every text an earlier Praetor
+// shipped at one of the family's managed paths to that path: the family's Prior
+// (internal/managedasset). Adoption refreshes a file holding exactly one of these texts without
+// --force. internal/managedasset/testdata/shipped/figure-engine.sha256 records every text ever
+// shipped, and TestShippedTextLedger fails until each outgoing text is listed here. The texts are
+// not kept as fixtures, since one player is about 240 kB; git history holds each of them, and the
+// ledger line was appended from the text itself. The registry allows 64 entries per family
+// (managedasset.MaxPriorTexts); the family's declaration states what each kind of change costs.
+var priorDigests = map[string]string{
+	// build.mjs before check and sources skipped a repository without a figure spec.
+	"f75975e7f7cbb147b156c3a8f4a00bffef985aa18fa4ee67f6505479fd8e730c": Directory + "/build.mjs",
+	// README.md before it named make docs-figures, the .gitattributes block and the REUSE
+	// override.
+	"043ff416cab0a7536c0816f564e2f44ea0e8daa7d294ef7722d1878b1c0962de": Directory + "/README.md",
+}
+
 //go:embed core.mjs checks.mjs build.mjs types.ts third_party/interfig/vendor.json third_party/interfig/VENDOR.md third_party/interfig/upstream/LICENSE third_party/interfig/upstream/src/svg.ts third_party/interfig/upstream/src/geometry.ts third_party/interfig/upstream/src/model.ts dist/loader.js dist/player.js dist/THIRD-PARTY-LICENSES.txt figures.css mkdocs_hook.py astro.mjs serve.mjs README.md
 var assets embed.FS
 
@@ -66,6 +105,11 @@ func FS() fs.FS {
 // Names returns the complete deterministic asset inventory.
 func Names() []string {
 	return slices.Clone(assetNames[:min(len(assetNames), MaxAssets)])
+}
+
+// PriorDigests returns a copy of the digests of every earlier text of a managed path.
+func PriorDigests() map[string]string {
+	return maps.Clone(priorDigests)
 }
 
 // Read returns one canonical asset without exposing mutable embedded storage.

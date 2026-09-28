@@ -30,7 +30,11 @@ const (
 )
 
 // Workflow is the dedicated, required hosted documentation gate adoption writes to
-// WorkflowFile. Its job name is StatusContext.
+// WorkflowFile. Its job name is StatusContext. After the Markdown check it runs the figure
+// engine's check and sources commands (docs/adr/0016-figures-for-adopters.md, operator decision
+// 4), which the documentation facet writes beside this gate and which skip, saying why, in a
+// repository without a figure; the job stays on Linux, where the Node set up for the Markdown
+// gate runs them.
 //
 // Audit locks an adopter's copy to these bytes, so the text holds to the policies an adopter
 // may enforce without being able to edit it: every action is pinned by full commit SHA with
@@ -72,6 +76,10 @@ jobs:
           cache-dependency-path: tools/markdownlint/package-lock.json
       - name: Verify public Markdown
         run: node tools/markdownlint/verify.mjs
+      - name: Verify figures
+        run: |
+          node tools/figures/build.mjs check
+          node tools/figures/build.mjs sources
 `
 
 // priorDigests maps the SHA-256 of every text an earlier Praetor shipped at one of the
@@ -87,6 +95,8 @@ var priorDigests = map[string]string{
 	"c474aa586d9e96f354027fc507543850bc7cf6e31fe927075604856649caff3a": WorkflowFile,
 	// Actions on the v7 tags, before SHA pinning and the yamllint document start.
 	"97d1fad8184587e73dfa25af2cc4e30cf9fa278abf5868fdc0dc27c7a222c95e": WorkflowFile,
+	// The SHA-pinned gate before it ran the figure engine's check and sources commands.
+	"938c1926d853a57149b0ede1cc6b9b7ce68eba62f6af30e8d0768458df98a62e": WorkflowFile,
 	// The markdownlint configuration before its yamllint document start.
 	"67aad4771daac4e6db3c2f8b65dfbd93f72c4067c9187ec759014bbc71bbfd0d": Directory + "/markdownlint-cli2.yaml",
 	// The first verify.mjs, before its self-test ran the scratch rule through a symlinked

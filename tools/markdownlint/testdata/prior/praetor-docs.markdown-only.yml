@@ -28,7 +28,3 @@ jobs:
           cache-dependency-path: tools/markdownlint/package-lock.json
       - name: Verify public Markdown
         run: node tools/markdownlint/verify.mjs
-      - name: Verify figures
-        run: |
-          node tools/figures/build.mjs check
-          node tools/figures/build.mjs sources

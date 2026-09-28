@@ -13,12 +13,14 @@ import (
 
 // TestWorkflowRuns_Positive: one-line commands are listed verbatim, a multi-line script by its
 // step name, an unnamed one by its first line, both marked as steps and carrying the whole
-// script, jobs in ID order, and `uses:` steps not at all.
+// script, jobs in ID order, and `uses:` steps not at all. Each run carries its step name, its
+// job's ID and name, and its position among the job's steps, the `uses:` step counted.
 func TestWorkflowRuns_Positive(t *testing.T) {
 	const doc = `name: CI
 on: pull_request
 jobs:
   test:
+    name: Test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -40,9 +42,10 @@ jobs:
 		t.Fatal(err)
 	}
 	want := []WorkflowRun{
-		{Label: "make build", Step: true, Script: "make build\nmake package"},
-		{Label: "Install toolchain", Step: true, Script: "rustup toolchain install stable\nrustup default stable"},
-		{Label: "cargo clippy -- -D warnings", Script: "cargo clippy -- -D warnings"},
+		{Label: "make build", Step: true, Script: "make build\nmake package", Job: "build"},
+		{Label: "Install toolchain", Step: true, Script: "rustup toolchain install stable\nrustup default stable",
+			Name: "Install toolchain", Job: "test", JobName: "Test", Index: 1},
+		{Label: "cargo clippy -- -D warnings", Script: "cargo clippy -- -D warnings", Name: "Lint", Job: "test", JobName: "Test", Index: 2},
 	}
 	if !slices.Equal(runs, want) {
 		t.Fatalf("WorkflowRuns = %+v, want %+v", runs, want)
@@ -56,6 +59,11 @@ func TestWorkflowRuns_Negative(t *testing.T) {
 	}
 	if _, err := WorkflowRuns([]byte("jobs:\n  test:\n    steps: {}\n")); err == nil {
 		t.Fatal("steps of the wrong type must be an error")
+	}
+	// A blank step or job name is no name: a caller finding a step by name never matches it.
+	runs, err := WorkflowRuns([]byte("jobs:\n  test:\n    name: '  '\n    steps:\n      - name: ' '\n        run: make\n"))
+	if err != nil || len(runs) != 1 || runs[0].Name != "" || runs[0].JobName != "" {
+		t.Fatalf("blank names: %+v, %v", runs, err)
 	}
 }
 
@@ -74,8 +82,12 @@ func TestWorkflowRuns_Boundary(t *testing.T) {
 		}
 		return []byte(b.String())
 	}
-	if runs, err := WorkflowRuns(stepsDoc(maxStepsPerJob)); err != nil || len(runs) != maxStepsPerJob {
+	runs, err = WorkflowRuns(stepsDoc(maxStepsPerJob))
+	if err != nil || len(runs) != maxStepsPerJob {
 		t.Fatalf("job at the bound: %d runs, %v", len(runs), err)
+	}
+	if last := runs[len(runs)-1]; last.Index != maxStepsPerJob-1 || last.Job != "test" {
+		t.Fatalf("last step at the bound sits at %s[%d], want test[%d]", last.Job, last.Index, maxStepsPerJob-1)
 	}
 	if _, err := WorkflowRuns(stepsDoc(maxStepsPerJob + 1)); err == nil {
 		t.Fatal("job past the step bound must be refused")

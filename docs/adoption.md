@@ -160,6 +160,16 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
 5. **`.devcontainer/devcontainer.json`**: Multi-architecture container configuration pinned to verified base images.
 6. **Multi-IDE Configs**: Workspace settings for every supported editor, or only the ones `editors` in `.standards.yaml` names ([editor selection](guides/editor-capabilities.md#selecting-editors)).
 7. **Makefile & LeftHook**: Automated pre-commit hooks and standard verification targets (`make verify-all`).
+8. **Documentation gate** (the `docs:seo-portal` facet, in the default facet set): the locked
+   Markdown gate under `tools/markdownlint/`, the interactive figure engine under
+   `tools/figures/`, `docs-lint` and `docs-figures` targets on `verify-all`, a managed block at
+   the end of `.gitattributes`, and `.github/workflows/praetor-docs.yml` with its required
+   **Documentation Governance** context
+   ([documentation governance](guides/documentation-governance.md#adoption-audit-and-ci),
+   [figures](guides/figures.md#in-adopting-repositories)). The figure checks skip, saying why,
+   until the repository adds its first spec under `docs/figures/`. Adoption stops, even with
+   `--force`, when a file the repository already had at one of the engine's paths under
+   `tools/figures/` differs from it; move that file aside and rerun. Remove the facet to opt out.
 
 ### What Adoption Reads Before It Writes
 
@@ -270,14 +280,19 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
 - **Audit-locked files.** Files whose exact bytes audit checks are rewritten, and an overwrite
   of edited bytes is a replace with its delta and backup, never a create. Under `--force` that
   covers `.standards.lock`, a pinned file under `.config/archetypes/`, a DevContainer bundle
-  file, a documentation family file such as `tools/markdownlint/markdownlint-cli2.yaml`, and
-  an edited documentation gate block in the `Makefile`, whose delta lists only the lines inside
-  the block. On every run, `--force` or not, it covers a vendor context file such as
-  `CLAUDE.md` that holds a hand edit. A file that already holds its bytes is verified. Three
-  earlier Praetor texts are refreshed, not replaced: a vendor file that is the projection of
-  `AGENTS.md` as the run found it, Praetor's own unedited DevContainer placeholder, and a
-  catalog text with a layout-only successor (tests in `internal/adopt/locked_replace_test.go`
-  and `internal/adopt/vendor_targets_test.go`). Without `--force`, a symlinked backup root
+  file, a documentation family file such as `tools/markdownlint/markdownlint-cli2.yaml`, an
+  edited documentation gate block in the `Makefile`, whose delta lists only the lines inside
+  the block, and an edited managed attribute block at the end of `.gitattributes`; without
+  `--force` either edited block fails the run, and a disable of `docs:seo-portal` refuses to
+  remove it. On every run, `--force` or not, it covers a vendor context file such as
+  `CLAUDE.md` that holds a hand edit. A file that already holds its bytes is verified. Earlier
+  Praetor texts are refreshed, not replaced: a vendor file that is the projection of
+  `AGENTS.md` as the run found it, Praetor's own unedited DevContainer placeholder, a catalog
+  text with a layout-only successor, an earlier text of a documentation family file, and the
+  documentation gate block an earlier Praetor wrote (tests in
+  `internal/adopt/locked_replace_test.go`, `internal/adopt/vendor_targets_test.go`,
+  `internal/adopt/documentation_makefile_refresh_test.go` and
+  `internal/adopt/gitattributes_edit_test.go`). Without `--force`, a symlinked backup root
   fails the run before its first write when a vendor file holds a hand edit
   (`preflightVendorBackupRoot` in `internal/adopt/vendor_targets.go`,
   `TestAdopt_Negative_PlainRunRefusesSymlinkedBackupRootForVendorEdit`).

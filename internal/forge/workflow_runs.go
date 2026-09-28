@@ -22,13 +22,23 @@ type WorkflowRun struct {
 	// Script is the step's whole `run:` script, trimmed, for a caller that must read every
 	// command it runs rather than the one line Label shows.
 	Script string
+	// Name is the step's own `name:`, trimmed, or empty for an unnamed step. A one-line step's
+	// Label is its command, so a caller that finds a step by name reads it here.
+	Name string
+	// Job is the ID of the job the step belongs to, and JobName that job's `name:`, the status
+	// context a job without a matrix reports under.
+	Job     string
+	JobName string
+	// Index is the step's position among all steps of its job, from 0, `uses:` steps counted,
+	// so two runs are adjacent steps exactly when they share Job and their Index differs by one.
+	Index int
 }
 
 // WorkflowRuns lists what a workflow document runs, job by job in job ID order and step by
 // step in file order: the command of a one-line `run:` step, and the name of a step whose script
 // spans several lines (a toolchain install or a shell branch reads better by its name; an
-// unnamed one by its first line). A `uses:` step runs an action rather than a command and is not
-// listed. The document is read through the parser every workflow audit here uses
+// unnamed one by its first line), each with the job it runs in and its place there. A `uses:`
+// step runs an action rather than a command and is not listed. The document is read through the parser every workflow audit here uses
 // (workflowSpec), so a claim about what a workflow runs is taken from the file itself rather
 // than restated beside it. A document with more jobs or steps than the package bounds
 // (maxJobsPerFile, maxStepsPerJob) is refused rather than read in part.
@@ -43,12 +53,13 @@ func WorkflowRuns(data []byte) ([]WorkflowRun, error) {
 	ids := sortedJobIDs(spec.Jobs)
 	var runs []WorkflowRun
 	for i := 0; i < len(ids) && i < maxJobsPerFile; i++ {
-		steps := spec.Jobs[ids[i]].Steps
-		if len(steps) > maxStepsPerJob {
+		job := spec.Jobs[ids[i]]
+		if len(job.Steps) > maxStepsPerJob {
 			return nil, fmt.Errorf("workflow job %s exceeds %d steps", ids[i], maxStepsPerJob)
 		}
-		for j := 0; j < len(steps) && j < maxStepsPerJob; j++ {
-			if run, ok := stepRun(steps[j]); ok {
+		for j := 0; j < len(job.Steps) && j < maxStepsPerJob; j++ {
+			if run, ok := stepRun(job.Steps[j]); ok {
+				run.Job, run.JobName, run.Index = ids[i], strings.TrimSpace(job.Name), j
 				runs = append(runs, run)
 			}
 		}
@@ -63,13 +74,14 @@ func stepRun(step workflowStep) (WorkflowRun, bool) {
 	if script == "" {
 		return WorkflowRun{}, false
 	}
+	name := strings.TrimSpace(step.Name)
 	first, _, multiline := strings.Cut(script, "\n")
 	if !multiline {
-		return WorkflowRun{Label: script, Script: script}, true
+		return WorkflowRun{Label: script, Script: script, Name: name}, true
 	}
-	label := strings.TrimSpace(step.Name)
+	label := name
 	if label == "" {
 		label = strings.TrimSpace(first)
 	}
-	return WorkflowRun{Label: label, Step: true, Script: script}, true
+	return WorkflowRun{Label: label, Step: true, Script: script, Name: name}, true
 }

@@ -80,8 +80,8 @@ func TestFamiliesRegistryIsValid(t *testing.T) {
 // Positive: the Markdown family declares the documentation gate's paths in emission order.
 func TestMarkdownFamilyDeclaration(t *testing.T) {
 	families := ForFacet(DocumentationFacet)
-	if len(families) != 1 || families[0].Name != "Markdown" || families[0].RefuseForeign {
-		t.Fatalf("documentation families = %+v, want the Markdown family with refuse-on-first-adopt off", families)
+	if len(families) != 2 || families[0].Name != "Markdown" || families[0].RefuseForeign || len(families[0].Attributes) != 0 {
+		t.Fatalf("documentation families = %+v, want the Markdown family first, with refuse-on-first-adopt off and no attribute rule", families)
 	}
 	want := []string{
 		".github/workflows/praetor-docs.yml",
@@ -99,19 +99,25 @@ func TestMarkdownFamilyDeclaration(t *testing.T) {
 	}
 }
 
-// Positive: the figure engine family is registered under the documentation facet with its
-// nested inventory, refuse-on-first-adopt on, no hosted workflow and no earlier texts, and it
-// stays Staged, so the facet does not select it before its wiring lands.
+// Positive: the figure engine family is registered under the documentation facet, which
+// selects it after the Markdown family, with its nested inventory, refuse-on-first-adopt on, no
+// hosted workflow, earlier texts of its managed files only, the attribute rules that keep its
+// hashed files LF and its vendored files unconverted, and its vendored MIT tree.
 func TestFigureFamilyDeclaration(t *testing.T) {
-	families := Families()
+	families := ForFacet(DocumentationFacet)
 	index := slices.IndexFunc(families, func(f Family) bool { return f.Name == "Figure engine" })
-	if index < 0 {
-		t.Fatalf("the registry holds no figure engine family: %+v", families)
+	if index != 1 {
+		t.Fatalf("the documentation facet does not select the figure engine family second: %+v", families)
 	}
 	figures := families[index]
 	if figures.Facet != DocumentationFacet || figures.Directory != "tools/figures" || figures.Source != "tools/figures/assets.go" ||
-		!figures.RefuseForeign || figures.WorkflowFile != "" || len(figures.Prior) != 0 {
+		!figures.RefuseForeign || figures.WorkflowFile != "" || len(figures.Prior) == 0 {
 		t.Fatalf("figure engine family = %+v", figures)
+	}
+	for digest, rel := range figures.Prior {
+		if !slices.Contains(figures.AssetPaths(), rel) {
+			t.Fatalf("figure engine prior text %s names %s, which is not one of its assets", digest, rel)
+		}
 	}
 	paths := figures.ManagedPaths()
 	for _, want := range []string{"tools/figures/core.mjs", "tools/figures/dist/player.js", "tools/figures/third_party/interfig/upstream/LICENSE", "tools/figures/README.md"} {
@@ -119,17 +125,25 @@ func TestFigureFamilyDeclaration(t *testing.T) {
 			t.Fatalf("figure engine managed paths %v lack %s", paths, want)
 		}
 	}
-	if !figures.Staged || slices.ContainsFunc(ForFacet(DocumentationFacet), func(f Family) bool { return f.Name == figures.Name }) {
-		t.Fatal("the figure engine family is selected by the documentation facet before its facet wiring lands")
+	wantRules := []string{
+		"tools/figures/** text eol=lf",
+		"docs/figures/*.ts text eol=lf",
+		"docs/assets/figures/* text eol=lf",
+		"tools/figures/third_party/interfig/upstream/** -text",
+	}
+	if !slices.Equal(figures.Attributes, wantRules) || !slices.Equal(AttributesOf(families), wantRules) {
+		t.Fatalf("figure attribute rules = %q, documentation rules = %q, want %q", figures.Attributes, AttributesOf(families), wantRules)
+	}
+	if figures.VendoredGlob() != "tools/figures/third_party/interfig/upstream/**" || figures.VendoredLicense != "MIT" {
+		t.Fatalf("vendored tree = %q under %q", figures.VendoredGlob(), figures.VendoredLicense)
 	}
 }
 
-// Positive, negative and boundary: selectFacet keeps an unstaged family of the facet, skips a
-// Staged one and one of another facet, and reads no further than MaxFamilies.
-func TestSelectFacetSkipsStagedFamilies(t *testing.T) {
-	enabled, staged, other := fixtureFamily(), fixtureFamily(), fixtureFamily()
-	enabled.Name, staged.Name, other.Name = "enabled", "staged", "other"
-	staged.Staged = true
+// Positive, negative and boundary: selectFacet keeps every family of the facet in order, skips
+// one of another facet, and reads no further than MaxFamilies.
+func TestSelectFacetKeepsItsFacet(t *testing.T) {
+	first, second, other := fixtureFamily(), fixtureFamily(), fixtureFamily()
+	first.Name, second.Name, other.Name = "first", "second", "other"
 	other.Facet = "custom:other"
 	names := func(families []Family) []string {
 		var out []string
@@ -138,18 +152,82 @@ func TestSelectFacetSkipsStagedFamilies(t *testing.T) {
 		}
 		return out
 	}
-	if got := names(selectFacet([]Family{staged, enabled, other}, DocumentationFacet)); !slices.Equal(got, []string{"enabled"}) {
-		t.Fatalf("selected %v, want only the unstaged documentation family", got)
+	if got := names(selectFacet([]Family{first, other, second}, DocumentationFacet)); !slices.Equal(got, []string{"first", "second"}) {
+		t.Fatalf("selected %v, want both documentation families in order", got)
 	}
-	if got := selectFacet([]Family{staged}, DocumentationFacet); len(got) != 0 {
-		t.Fatalf("a Staged family was selected: %v", names(got))
+	if got := selectFacet([]Family{other}, DocumentationFacet); len(got) != 0 {
+		t.Fatalf("a family of another facet was selected: %v", names(got))
 	}
 	many := make([]Family, MaxFamilies+1)
 	for index := range many {
-		many[index] = enabled
+		many[index] = first
 	}
 	if got := selectFacet(many, DocumentationFacet); len(got) != MaxFamilies {
 		t.Fatalf("selected %d of %d families, want the MaxFamilies bound %d", len(got), len(many), MaxFamilies)
+	}
+}
+
+// Positive: attribute rules and a vendored tree with its license validate, and AttributesOf
+// joins the rules of several families in order.
+func TestFamilyAttributesPositive(t *testing.T) {
+	family := fixtureFamily()
+	family.Attributes = []string{"tools/fixture/** text eol=lf", "tools/fixture/third_party/** -text"}
+	family.VendoredTree, family.VendoredLicense = "third_party/**", "MIT"
+	if err := family.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if family.VendoredGlob() != "tools/fixture/third_party/**" {
+		t.Fatalf("vendored glob = %q", family.VendoredGlob())
+	}
+	other := fixtureFamily()
+	other.Attributes = []string{"docs/fixture/* text eol=lf"}
+	got := AttributesOf([]Family{family, fixtureFamily(), other})
+	if !slices.Equal(got, append(slices.Clone(family.Attributes), other.Attributes...)) {
+		t.Fatalf("joined rules = %q", got)
+	}
+}
+
+// Negative: a blank, padded, commented or multi-line rule, a vendored tree without its license
+// or the reverse, and an escaping tree fail validation.
+func TestFamilyAttributesNegative(t *testing.T) {
+	for name, mutate := range map[string]func(*Family){
+		"blank rule":       func(f *Family) { f.Attributes = []string{""} },
+		"padded rule":      func(f *Family) { f.Attributes = []string{" a text"} },
+		"comment rule":     func(f *Family) { f.Attributes = []string{"# a text"} },
+		"two lines":        func(f *Family) { f.Attributes = []string{"a text\nb text"} },
+		"tree alone":       func(f *Family) { f.VendoredTree = "third_party/**" },
+		"license alone":    func(f *Family) { f.VendoredLicense = "MIT" },
+		"escaping tree":    func(f *Family) { f.VendoredTree, f.VendoredLicense = "../vendor/**", "MIT" },
+		"license with gap": func(f *Family) { f.VendoredTree, f.VendoredLicense = "third_party/**", "MIT OR"+"\n" },
+	} {
+		broken := fixtureFamily()
+		mutate(&broken)
+		if err := broken.Validate(); err == nil {
+			t.Fatalf("%s: malformed family validated", name)
+		}
+	}
+	if fixtureFamily().VendoredGlob() != "" {
+		t.Fatal("a family without a vendored tree names a glob")
+	}
+}
+
+// Boundary: MaxAttributes rules validate and one more does not; AttributesOf reads no more than
+// MaxAttributes rules of one family and nothing of a family without rules.
+func TestFamilyAttributesBoundary(t *testing.T) {
+	family := fixtureFamily()
+	family.Attributes = slices.Repeat([]string{"x text"}, MaxAttributes)
+	if err := family.Validate(); err != nil {
+		t.Fatalf("rules at the bound failed validation: %v", err)
+	}
+	family.Attributes = append(family.Attributes, "y text")
+	if err := family.Validate(); err == nil {
+		t.Fatal("rules above the bound validated")
+	}
+	if got := AttributesOf([]Family{family}); len(got) != MaxAttributes {
+		t.Fatalf("AttributesOf read %d rules, want the bound %d", len(got), MaxAttributes)
+	}
+	if got := AttributesOf([]Family{fixtureFamily()}); len(got) != 0 {
+		t.Fatalf("a family without rules yielded %q", got)
 	}
 }
 

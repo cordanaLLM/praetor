@@ -1,0 +1,35 @@
+== foreign first adoption force=false
+report-error refusing to adopt the Figure engine family over tools/figures/build.mjs: the file predates adoption and differs from the Praetor asset; move it aside, then rerun adopt
+error refusing to adopt the Figure engine family over tools/figures/build.mjs: the file predates adoption and differs from the Praetor asset; move it aside, then rerun adopt
+file tools/figures/build.mjs sha256:97e6549ca5f114c81faa69757a0b3af4186cd692986c8c3b6af2f32c9bdbf2e4
+file tools/figures/dist/player.js absent
+file tools/figures/third_party/interfig/upstream/LICENSE absent
+file tools/figures/README.md absent
+file .gitattributes "* text=auto\n"
+== foreign first adoption force=true
+report-error refusing to adopt the Figure engine family over tools/figures/build.mjs: the file predates adoption and differs from the Praetor asset; move it aside, then rerun adopt
+error refusing to adopt the Figure engine family over tools/figures/build.mjs: the file predates adoption and differs from the Praetor asset; move it aside, then rerun adopt
+file tools/figures/build.mjs sha256:97e6549ca5f114c81faa69757a0b3af4186cd692986c8c3b6af2f32c9bdbf2e4
+file tools/figures/dist/player.js absent
+file tools/figures/third_party/interfig/upstream/LICENSE absent
+file tools/figures/README.md absent
+file .gitattributes "* text=auto\n"
+== unmanaged file under tools/figures
+action create tools/figures/build.mjs :: Scaffolded locked figure engine asset
+action create tools/figures/third_party/interfig/upstream/LICENSE :: Scaffolded locked figure engine asset
+action create tools/figures/dist/player.js :: Scaffolded locked figure engine asset
+action create tools/figures/README.md :: Scaffolded locked figure engine asset
+action create .gitattributes :: Created the managed attribute block that keeps hashed documentation files unconverted
+file tools/figures/build.mjs sha256:47beb62eee90e992412312cdccbd0d91f54f090dbb342916efdf1eb08a816ac5
+file tools/figures/dist/player.js sha256:2db2e3bfda05a3776f165530a519b6c4a5def717b4dd4192484f8d86076a4a94
+file tools/figures/third_party/interfig/upstream/LICENSE sha256:01fde0bedf83bdc185065d7af524a61690efe576a67f922eaff3a1280c17b63a
+file tools/figures/README.md sha256:1ee2a92653faea8a36e8e11a788ffa7004bb8b3e8844cb360a113bff5501b66f
+file .gitattributes "# BEGIN praetor managed attributes (praetorctl adopt)\n# praetorctl audit hashes these files; keep their checkout bytes the same on every platform.\ntools/figures/** text eol=lf\ndocs/figures/*.ts text eol=lf\ndocs/assets/figures/* text eol=lf\ntools/figures/third_party/interfig/upstream/** -text\n# END praetor managed attributes\n"
+== disable over a drifted figure asset
+report-error refusing to remove drifted documentation asset tools/figures/dist/player.js
+error refusing to remove drifted documentation asset tools/figures/dist/player.js
+file tools/figures/build.mjs sha256:47beb62eee90e992412312cdccbd0d91f54f090dbb342916efdf1eb08a816ac5
+file tools/figures/dist/player.js sha256:2d2100d97834f203c29e566efb8be317d351fea80646f01fe2e1f0ac336c7676
+file tools/figures/third_party/interfig/upstream/LICENSE sha256:01fde0bedf83bdc185065d7af524a61690efe576a67f922eaff3a1280c17b63a
+file tools/figures/README.md sha256:1ee2a92653faea8a36e8e11a788ffa7004bb8b3e8844cb360a113bff5501b66f
+file .gitattributes "# BEGIN praetor managed attributes (praetorctl adopt)\n# praetorctl audit hashes these files; keep their checkout bytes the same on every platform.\ntools/figures/** text eol=lf\ndocs/figures/*.ts text eol=lf\ndocs/assets/figures/* text eol=lf\ntools/figures/third_party/interfig/upstream/** -text\n# END praetor managed attributes\n"

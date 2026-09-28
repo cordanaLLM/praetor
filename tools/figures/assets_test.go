@@ -6,6 +6,8 @@ package figures
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io/fs"
 	"maps"
 	"os"
@@ -301,5 +303,104 @@ func TestImportViolationsNegativeAndBoundary(t *testing.T) {
 	}
 	if violations, _ := importViolations(map[string]string{"README.md": "import x from './gone.mjs'"}, nil); len(violations) != 0 {
 		t.Fatalf("a non-script asset was scanned: %q", violations)
+	}
+}
+
+// Positive: SpecDirectory and OutputDirectory are the directories checks.mjs reads, so the
+// attribute rules cover exactly the files the checks hash.
+func TestDirectoriesMatchTheChecks(t *testing.T) {
+	checks, err := Read("checks.mjs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(checks), "\n")
+	for _, want := range []string{
+		"export const SPEC_DIR = '" + SpecDirectory + "';",
+		"export const OUT_DIR = '" + OutputDirectory + "';",
+	} {
+		if !slices.Contains(lines, want) {
+			t.Fatalf("checks.mjs does not declare %q", want)
+		}
+	}
+}
+
+// Negative and boundary: every rule is one pattern and its attributes, the LF rules come first,
+// and the vendored tree's -text rule comes last, so git applies it over the LF rule of the whole
+// engine directory; no rule covers the vendored tree after it.
+func TestAttributesOrderLetsVendoredBytesWin(t *testing.T) {
+	rules := Attributes()
+	if len(rules) != 4 {
+		t.Fatalf("Attributes() = %q, want four rules", rules)
+	}
+	for index, rule := range rules {
+		fields := strings.Fields(rule)
+		if len(fields) < 2 || strings.Join(fields, " ") != rule {
+			t.Fatalf("rule %q is not a pattern followed by attributes", rule)
+		}
+		lastRule := index == len(rules)-1
+		if lastRule != (fields[0] == Directory+"/"+VendoredTree) || lastRule != (fields[1] == "-text") {
+			t.Fatalf("rule %d %q: only the last rule names the vendored tree, as -text", index, rule)
+		}
+	}
+	if rules[0] != Directory+"/** text eol=lf" {
+		t.Fatalf("the first rule %q does not pin the engine directory to LF", rules[0])
+	}
+}
+
+// lfDigest spells a digest the way PriorDigests keys are spelled, computed here rather than
+// through the code under test.
+func lfDigest(data []byte) string {
+	sum := sha256.Sum256([]byte(strings.ReplaceAll(string(data), "\r\n", "\n")))
+	return hex.EncodeToString(sum[:])
+}
+
+// Positive: every earlier text names one of the family's assets by a lowercase SHA-256, and the
+// outgoing build.mjs this repository replaced is listed.
+func TestPriorDigestsNameManagedAssets(t *testing.T) {
+	digests := PriorDigests()
+	for digest, rel := range digests {
+		name, below := strings.CutPrefix(rel, Directory+"/")
+		if decoded, err := hex.DecodeString(digest); err != nil || len(decoded) != sha256.Size || strings.ToLower(digest) != digest {
+			t.Errorf("prior digest %q is not a lowercase SHA-256", digest)
+		}
+		if !below || !slices.Contains(Names(), name) {
+			t.Errorf("prior digest %s names %s, which is not a managed asset", digest, rel)
+		}
+	}
+	if digests["f75975e7f7cbb147b156c3a8f4a00bffef985aa18fa4ee67f6505479fd8e730c"] != Directory+"/build.mjs" {
+		t.Fatal("the build.mjs text before the no-spec skip is not a prior text")
+	}
+}
+
+// Negative: no current asset text is listed as an earlier one, and PriorDigests hands out a copy.
+func TestPriorDigestsExcludeCurrentTexts(t *testing.T) {
+	digests := PriorDigests()
+	for _, name := range Names() {
+		data, err := Read(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, listed := digests[lfDigest(data)]; listed {
+			t.Fatalf("the current text of %s is listed as an earlier text", name)
+		}
+	}
+	clear(digests)
+	if len(PriorDigests()) == 0 {
+		t.Fatal("PriorDigests exposed its map for mutation")
+	}
+}
+
+// Boundary: a current text differing by one trailing byte is not an earlier text, and the CRLF
+// form of a text reduces to the same digest as its LF form.
+func TestPriorDigestsBoundary(t *testing.T) {
+	data, err := Read("build.mjs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, listed := PriorDigests()[lfDigest(append(data, '\n'))]; listed {
+		t.Fatal("a text one byte longer than the current build.mjs is listed")
+	}
+	if lfDigest([]byte(strings.ReplaceAll(string(data), "\n", "\r\n"))) != lfDigest(data) {
+		t.Fatal("the CRLF form of a text does not reduce to its LF digest")
 	}
 }

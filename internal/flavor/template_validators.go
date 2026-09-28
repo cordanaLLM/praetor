@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // Content validators for required templates. Each one checks the shape its format makes
@@ -91,7 +93,7 @@ func validGitleaksConfig(content []byte) bool {
 	for i := 0; i < len(lines) && i < maxValidatedLines; i++ {
 		line := strings.TrimSpace(lines[i])
 		if strings.HasPrefix(line, "[") {
-			table = tomlTableName(line)
+			table = util.TOMLTableName(line)
 			if table == "[rules]" {
 				return true
 			}
@@ -102,15 +104,6 @@ func validGitleaksConfig(content []byte) bool {
 		}
 	}
 	return false
-}
-
-// tomlTableName normalizes a table header to its name with the spaces TOML permits
-// removed: "[ extend ]" is "extend" and "[[ rules ]]" is "[rules]".
-func tomlTableName(header string) string {
-	name, _, _ := strings.Cut(header, "#")
-	name = strings.ReplaceAll(strings.TrimSpace(name), " ", "")
-	name = strings.TrimSuffix(strings.TrimPrefix(name, "["), "]")
-	return strings.Trim(name, `"'`)
 }
 
 // gitleaksExtendsRules reports whether one key line, read inside table, makes gitleaks load

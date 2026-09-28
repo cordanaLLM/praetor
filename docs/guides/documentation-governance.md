@@ -306,8 +306,14 @@ copy an entire scratch directory to make the diagnostic disappear.
 ## Adoption, audit, and CI
 
 Repositories declaring the `docs:seo-portal` facet receive the five canonical
-assets under `tools/markdownlint/`, a `docs-lint` prerequisite on `verify-all`,
-and `.github/workflows/praetor-docs.yml`. The marker-owned README block gains an
+assets under `tools/markdownlint/`, the figure engine's 18 files under
+`tools/figures/` ([figures guide](figures.md#in-adopting-repositories)),
+`docs-lint` and `docs-figures` prerequisites on `verify-all`, a managed block at
+the end of `.gitattributes` that keeps the engine, the figure specs and their
+outputs at LF, and `.github/workflows/praetor-docs.yml`, whose one job runs the
+Markdown gate and then `node tools/figures/build.mjs check` and `sources`. Both
+figure commands skip, saying why, in a repository without a figure spec or
+output. The marker-owned README block gains an
 exact **Documentation Governance** workflow badge and `make docs-lint` gate entry,
 using the repository identity declared by the effective manifest. A manifest
 without `repository.owner` and `repository.name` leaves the README block
@@ -324,25 +330,40 @@ marked block when `docs-lint` is provably available; includes, generated target
 names, `eval`, pattern rules, an operator-owned target collision, or an edited
 managed block fail for review. `praetorctl adopt --force` repairs an edited
 managed block while the facet remains enabled and refreshes the content-locked
-assets, but still refuses symbolic links.
+assets, but still refuses symbolic links; the report lists that repair as a
+replace with its line delta and a backup. The block an earlier Praetor wrote,
+with `docs-lint` alone, is recognised exactly: plain `praetorctl adopt`
+refreshes it to the current block, reported as a reconcile with no backup, and
+a disable removes it (`priorDocumentationMakefileBlocks` in
+`internal/adopt/verification_makefile.go`). A refresh or repair that adds a
+target, such as `docs-figures`, stops when the rest of the Makefile may already
+define it, as a first attachment does. The `.gitattributes` block follows the
+same contract: an edited block fails a plain run, `--force` restores it as a
+replace with a backup, and a disable refuses to remove it
+(`internal/adopt/gitattributes.go`).
 
 The tool assets and the workflow form the Markdown entry of the managed asset
 family registry (`managedasset.Families`, `internal/managedasset/family.go`).
 Adoption (`internal/adopt/managed_family.go`), audit
 (`cmd/standardsctl/audit_documentation.go`), and the DevContainer bootstrap all
 walk every family the facet enables, so a further embedded family joins the
-facet as one registry entry. A family may set `RefuseForeign`: until one of its
-paths holds the canonical text, a file already at any of its paths predates
-adoption, and adoption fails naming it, even with `--force`, instead of
-overwriting it. The Markdown entry leaves it off, so `--force` replaces those
-files as described above (`TestManagedFamilyRefusesForeignFilesOnFirstAdopt`,
-`TestMarkdownFamilyForeignFilesGolden` in `internal/adopt`).
+facet as one registry entry; the figure engine is the second. A family may set
+`RefuseForeign`: until one of its paths holds the canonical text, a file
+already at any of its paths predates adoption, and adoption fails naming it,
+even with `--force`, instead of overwriting it. The Markdown entry leaves it
+off, so `--force` replaces those files as described above; the figure engine
+sets it (`TestManagedFamilyRefusesForeignFilesOnFirstAdopt`,
+`TestMarkdownFamilyForeignFilesGolden` and `TestFigureFamilyForeignFilesGolden`
+in `internal/adopt`). A family may also declare `.gitattributes` rules
+(`Family.Attributes`); adoption writes the rules of every enabled family as one
+tail block and removes the block once no enabled family declares one.
 
 Disabling `docs:seo-portal` is a convergent transition. Run
 `praetorctl adopt --force` so the generated branch ruleset can drop its hosted
 status context; without that authorization, adoption refuses before deleting
 local assets. The transition removes only canonical-equivalent workflow/tool assets, earlier
-Praetor texts of them, and the exact managed Makefile block, strips the README badge and gate entry, removes
+Praetor texts of them, the exact managed Makefile block and the `.gitattributes`
+attribute block (deleting the file when it held nothing else), strips the README badge and gate entry, removes
 the required status context, and rebuilds the formatter-ignore inventory without
 documentation paths. Operator files beside the tool assets and bytes outside
 managed blocks are preserved.
@@ -353,9 +374,13 @@ authorized one. Re-enabling the facet restores the same canonical surfaces.
 
 `praetorctl audit` verifies the assets, workflow, Makefile attachment, README
 badge and gate entry, effective scratch ignore rules, any configured formatter's
-inventory, and the required hosted context, and records any declared
-[repository settings](#repository-settings). When the facet is disabled, audit rejects stale Praetor
-documentation assets, exact Makefile marker lines, README contract text,
+inventory, the `.gitattributes` block at the end of the file, and the required
+hosted context, and records any declared
+[repository settings](#repository-settings). It warns, without failing, when
+the repository declares its licensing in `REUSE.toml` but no annotation labels
+`tools/figures/third_party/interfig/upstream/**` MIT, or a later table that
+also covers those files, such as `**`, relabels them. When the facet is disabled, audit rejects stale Praetor
+documentation assets, exact Makefile marker lines, the `.gitattributes` block, README contract text,
 formatter paths, or a structurally declared hosted status context instead of
 silently treating them as active. Operator-owned files at the same paths, prose
 that mentions a marker, and unrelated ruleset metadata are not claimed by the
@@ -464,8 +489,9 @@ The documentation gate itself cannot be declined:
 removing the `docs:seo-portal` facet is the one switch that converges every
 documentation surface.
 
-Praetor's DevContainer bootstrap snapshot explicitly carries these five embedded
-assets. The adopted CLI therefore emits the same locked gate when it is built
+Praetor's DevContainer bootstrap snapshot explicitly carries the embedded assets
+of both families, the five Markdown gate files and the 18 figure engine files.
+The adopted CLI therefore emits the same locked gate when it is built
 inside a generated development container; undeclared `go:embed` inputs remain a
 bootstrap error.
 
@@ -560,11 +586,13 @@ tests, among them `tools/figures/checks.test.mjs`, which replays the checks'
 fixtures in both directions and asserts the diagram kind each configuration
 enables (figures only at the root, Mermaid only in the preset), so adding the
 mermaid fence back to the root site or dropping the figures hook fails without
-a site build. It also runs the type check, rebuilds every figure and compares
-it byte for byte with the committed files (`node tools/figures/build.mjs
-check`, which needs no npm package), rebuilds the committed player in
+a site build. It also runs the type check and rebuilds the committed player in
 `tools/figures/dist/` from the lock and compares it byte for byte within its
-size budget (`node tools/figures/bundle.mjs --check`), and runs `sources`.
+size budget (`node tools/figures/bundle.mjs --check`). The managed
+`make docs-figures` target, also part of `make verify-all` and the one every
+adopting repository receives, rebuilds every figure and compares it byte for
+byte with the committed files (`node tools/figures/build.mjs check`, which
+needs no npm package) and runs `sources`.
 `make docs-diagrams-test` (also part of `make verify-all`) tests the MkDocs
 hook, the one Python part of the figure engine, with
 `tools/figures/test_mkdocs_hook.py`. The Pages workflow also runs the Chromium smoke test, which

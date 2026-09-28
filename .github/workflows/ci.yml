@@ -192,12 +192,14 @@ jobs:
           echo "Documentation change detected. Running MkDocs verification."
           python3 -m pip install --require-hashes -r docs/presets/mkdocs/requirements.txt
           # A documentation-only pull request skips verify-all, so its figure gate runs here: the
-          # engine's own tests and typecheck, `check` (a hand-edited committed SVG, static SVG or
-          # JSON no longer matches its spec), the committed player (`bundle.mjs --check`: a
-          # byte-for-byte rebuild from the lock within its budget) and `sources` (ADR-0015,
+          # engine's own tests and typecheck and the committed player (`bundle.mjs --check`: a
+          # byte-for-byte rebuild from the lock within its budget) in docs-figures-check, then
+          # the managed docs-figures target every adopter runs: `check` (a hand-edited committed
+          # SVG, static SVG or JSON no longer matches its spec) and `sources` (ADR-0015,
           # ADR-0016). The site serves that committed player through the MkDocs hook, so nothing
           # is bundled before the build.
           make -s docs-figures-check
+          make -s docs-figures
           mkdocs build --strict
           # A strict build still passes when a ```figure fence does not become a figure. The root
           # site renders figures only, so this also fails any Mermaid fence it builds, and every

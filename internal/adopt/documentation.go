@@ -42,8 +42,8 @@ func DocumentationFamilies() []managedasset.Family {
 	return managedasset.ForFacet(managedasset.DocumentationFacet)
 }
 
-// reconcileDocumentationGate emits every documentation family while the facet is enabled and
-// removes their canonical files once it is disabled.
+// reconcileDocumentationGate emits every documentation family, and the attribute block their
+// hashed files need, while the facet is enabled, and removes both once it is disabled.
 func reconcileDocumentationGate(ctx context.Context, s *adoptSession) error {
 	enabled, err := documentationEnabledForSession(s)
 	if err != nil {
@@ -58,7 +58,7 @@ func reconcileDocumentationGate(ctx context.Context, s *adoptSession) error {
 			return err
 		}
 	}
-	return nil
+	return reconcileGitAttributes(ctx, s, DocumentationAttributes())
 }
 
 // DocumentationAssetPaths returns every canonical text file owned only by the documentation facet.
@@ -83,7 +83,10 @@ func removeDocumentationGate(ctx context.Context, s *adoptSession) error {
 	if err := preflightDocumentationDeprovision(ctx, s); err != nil {
 		return err
 	}
-	return removeManagedFamilies(ctx, s, DocumentationFamilies())
+	if err := removeManagedFamilies(ctx, s, DocumentationFamilies()); err != nil {
+		return err
+	}
+	return reconcileGitAttributes(ctx, s, nil)
 }
 
 func preflightDocumentationDeprovision(ctx context.Context, s *adoptSession) error {
@@ -93,7 +96,29 @@ func preflightDocumentationDeprovision(ctx context.Context, s *adoptSession) err
 	if err := preflightDocumentationMakefile(ctx, s); err != nil {
 		return err
 	}
+	if err := preflightDocumentationAttributes(ctx, s); err != nil {
+		return err
+	}
 	return preflightDocumentationFormatter(ctx, s)
+}
+
+// preflightDocumentationAttributes refuses a disable, before anything is removed, while
+// .gitattributes carries ambiguous attribute-block markers or an edited attribute block.
+func preflightDocumentationAttributes(ctx context.Context, s *adoptSession) error {
+	full, err := repoFile(s.repoPath, gitAttributesFile)
+	if err != nil {
+		return err
+	}
+	data, exists, err := contextopt.ObserveSnapshot(ctx, full)
+	if err != nil {
+		return fmt.Errorf("inspect %s before documentation disable: %w", gitAttributesFile, err)
+	}
+	if exists {
+		if _, err := mergeGitAttributes(string(data), nil); err != nil {
+			return fmt.Errorf("%s blocks documentation disable: %w", gitAttributesFile, err)
+		}
+	}
+	return nil
 }
 
 func preflightDocumentationRuleset(ctx context.Context, s *adoptSession) error {

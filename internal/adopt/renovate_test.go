@@ -28,6 +28,24 @@ var renovateManagedFixturePaths = []string{
 	"tools/markdownlint/markdownlint-cli2.yaml",
 	"tools/markdownlint/verify.mjs",
 	"tools/markdownlint/no-private-scratch-links.mjs",
+	"tools/figures/core.mjs",
+	"tools/figures/checks.mjs",
+	"tools/figures/build.mjs",
+	"tools/figures/types.ts",
+	"tools/figures/third_party/interfig/vendor.json",
+	"tools/figures/third_party/interfig/VENDOR.md",
+	"tools/figures/third_party/interfig/upstream/LICENSE",
+	"tools/figures/third_party/interfig/upstream/src/svg.ts",
+	"tools/figures/third_party/interfig/upstream/src/geometry.ts",
+	"tools/figures/third_party/interfig/upstream/src/model.ts",
+	"tools/figures/dist/loader.js",
+	"tools/figures/dist/player.js",
+	"tools/figures/dist/THIRD-PARTY-LICENSES.txt",
+	"tools/figures/figures.css",
+	"tools/figures/mkdocs_hook.py",
+	"tools/figures/astro.mjs",
+	"tools/figures/serve.mjs",
+	"tools/figures/README.md",
 }
 
 // adopterRenovateConfig is an adopter's own configuration: a preset, an ignorePaths list and
@@ -264,8 +282,19 @@ func TestFindRenovateConfigNegativePropagatesCancellation(t *testing.T) {
 }
 
 // Boundary: in the repository that holds a family's Source the managed files are sources its
-// own Renovate updates, so adoption adds no rule there and removes one it added before.
+// own Renovate updates, so adoption adds no rule for them there: the origin of one family keeps
+// the rule over the other's files only, and the origin of both removes a rule it added before.
 func TestRenovateIgnoreBoundarySkipsTheFamilyOrigin(t *testing.T) {
+	markdownOrigin := newTestRepo(t, "renovate-markdown-origin")
+	mustWrite(t, filepath.Join(markdownOrigin, "tools", "markdownlint", "assets.go"), "package markdownlint\n")
+	mustWrite(t, filepath.Join(markdownOrigin, "renovate.json"), "{\"extends\": [\"config:recommended\"]}\n")
+	if _, err := Adopt(t.Context(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: markdownOrigin}); err != nil {
+		t.Fatalf("adopt at the Markdown origin: %v", err)
+	}
+	if _, managed, _ := renovateTestRules(t, mustRead(t, filepath.Join(markdownOrigin, "renovate.json"))); len(managed) != 1 ||
+		!slices.Equal(managed[0].MatchFileNames, renovateManagedFixturePaths[6:]) {
+		t.Fatalf("the Markdown origin's rule = %+v, want the figure engine's files only", managed)
+	}
 	repo := newTestRepo(t, "renovate-origin")
 	path := filepath.Join(repo, "renovate.json")
 	withRule, changed, err := mergeRenovateRule(t.Context(), []byte("{\"extends\": [\"config:recommended\"]}\n"), renovateManagedFixturePaths)
@@ -274,6 +303,7 @@ func TestRenovateIgnoreBoundarySkipsTheFamilyOrigin(t *testing.T) {
 	}
 	mustWrite(t, path, string(withRule))
 	mustWrite(t, filepath.Join(repo, "tools", "markdownlint", "assets.go"), "package markdownlint\n")
+	mustWrite(t, filepath.Join(repo, "tools", "figures", "assets.go"), "package figures\n")
 	opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo}
 	report, err := Adopt(t.Context(), opts)
 	if err != nil {

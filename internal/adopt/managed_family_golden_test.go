@@ -38,11 +38,20 @@ var markdownFamilyGoldenPaths = []string{
 }
 
 // quotedGoldenPaths are recorded as their full text; every other path as a digest.
-var quotedGoldenPaths = []string{".gitignore", ".prettierignore"}
+var quotedGoldenPaths = []string{".gitignore", ".prettierignore", ".gitattributes"}
 
 type familyGolden struct {
 	t  *testing.T
 	sb strings.Builder
+	// paths are the paths the golden records; nil records markdownFamilyGoldenPaths.
+	paths []string
+}
+
+func (g *familyGolden) goldenPaths() []string {
+	if g.paths == nil {
+		return markdownFamilyGoldenPaths
+	}
+	return g.paths
 }
 
 func (g *familyGolden) adopt(label, root string, opts AdoptOptions) {
@@ -60,12 +69,12 @@ func (g *familyGolden) adopt(label, root string, opts AdoptOptions) {
 
 func (g *familyGolden) recordReport(root string, report *AdoptReport) {
 	for _, detail := range report.ActionDetails {
-		if slices.Contains(markdownFamilyGoldenPaths, detail.Path) {
+		if slices.Contains(g.goldenPaths(), detail.Path) {
 			fmt.Fprintf(&g.sb, "action %s %s :: %s\n", detail.Action, detail.Path, scrubBackupStamp(detail.Details))
 		}
 	}
 	for _, message := range report.Errors {
-		for _, rel := range markdownFamilyGoldenPaths {
+		for _, rel := range g.goldenPaths() {
 			if strings.Contains(message, rel) {
 				fmt.Fprintf(&g.sb, "report-error %s\n", strings.ReplaceAll(message, root, "<root>"))
 				break
@@ -76,7 +85,7 @@ func (g *familyGolden) recordReport(root string, report *AdoptReport) {
 
 func (g *familyGolden) recordFiles(root string) {
 	g.t.Helper()
-	for _, rel := range markdownFamilyGoldenPaths {
+	for _, rel := range g.goldenPaths() {
 		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
