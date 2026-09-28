@@ -22,6 +22,10 @@ section 7). Standard library only, so it runs on whichever interpreter a CI job 
   `--wiki PAGE...` does the same with the `site_url` of mkdocs.yml as the base. `--write FILE...`
   refreshes `<!-- figure:SLUG -->` blocks with repository-relative paths.
 
+The figure markup itself comes from tools/figures/core.mjs, which writes it into each figure's JSON
+as `html`; `portable` and the MkDocs hook only fill its `{{base}}` and `{{link}}` slots
+(docs/adr/0016-figures-for-adopters.md, section 4).
+
 The page mapping assumes MkDocs' default `use_directory_urls: true`, which the site and the preset
 both use. The configuration reader handles the block-style YAML both files are written in; it is a
 check on a third-party tool's file, not a loader for praetor configuration. Its `exclude_docs`
@@ -92,6 +96,9 @@ REPLACEMENT = {"mermaid": ("figure", "draw it as a ```figure fence naming a spec
 FENCE_LINE = re.compile(r"^(\s*)(`{3,}|~{3,})\s*([^\s`{]*)(.*)$")
 SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 MARKER = re.compile(r"<!-- figure:([a-z0-9-]+) -->\n(.*?)<!-- /figure -->", re.DOTALL)
+# The slots of a figure's JSON `html` (SLOTS and markup in tools/figures/core.mjs).
+SLOT = re.compile(r"\{\{(base|link)\}\}")
+LINK_SLOT = "{{link}}"
 ENGINE_BLOCK = re.compile(r"export const ENGINE_FILES = \[(.*?)\];", re.DOTALL)
 
 
@@ -347,35 +354,21 @@ def image_size(meta: dict, prefix: str = "") -> tuple[int, int]:
     return int(size[0]), int(size[1])
 
 
-def render_block(slug: str, base: str, meta: dict, link: str | None = None) -> str:
-    """The HTML for one figure: a <picture> of the committed SVGs, the caption and the text.
+def render_block(meta: dict, base: str, link: str | None = None) -> str:
+    """The figure's markup: its JSON `html`, rendered by tools/figures/core.mjs, with the slots filled.
 
-    `base` is the URL prefix of docs/assets/figures for the reader: relative on the site and in
-    the README, absolute in the wiki. `link`, when given, points at the interactive version.
-    The static SVG has no scenario area, so it is shorter than the animated one: each image
-    carries its own size, and the browser reserves the size of the one it picks, with no
-    letterboxing or layout shift under reduced motion (BUG-1002).
+    This fills slots and renders nothing itself; `markup` in core.mjs documents the slots. `base`
+    replaces `{{base}}` as given, `link` replaces `{{link}}` HTML-escaped, and without a `link` the
+    line that holds `{{link}}` is dropped. The slots are filled in one pass, so a value that looks
+    like a slot stays literal.
     """
-    esc = html.escape
-    alt, title = esc(meta["alt"]), esc(meta["title"])
-    width, height = image_size(meta)
-    still_width, still_height = image_size(meta, "static_")
-    items = "\n".join(f"<li>{esc(line)}</li>" for line in meta.get("text", []))
-    parts = [
-        f'<figure class="praetor-figure" id="fig-{slug}" data-figure="{slug}" aria-describedby="fig-{slug}-text">',
-        "<picture>",
-        f'<source media="(prefers-reduced-motion: reduce)" srcset="{base}/{slug}.static.svg" '
-        f'width="{still_width}" height="{still_height}">',
-        f'<img src="{base}/{slug}.svg" alt="{alt}" width="{width}" height="{height}" loading="lazy">',
-        "</picture>",
-        f"<figcaption>{title}</figcaption>",
-        "</figure>",
-    ]
-    if link:
-        parts.append(f'<p><a href="{esc(link)}">Open the interactive figure</a></p>')
-    parts += [f'<details class="praetor-figure__text" id="fig-{slug}-text"><summary>Text description</summary>',
-              f"<ul>\n{items}\n</ul>", "</details>"]
-    return "\n".join(parts)
+    template = meta.get("html")
+    if not isinstance(template, str) or not template:
+        raise CheckError(f"figure {meta.get('slug')!r}: its JSON records no html; rebuild with: {REBUILD}")
+    if not link:
+        template = "\n".join(line for line in template.split("\n") if LINK_SLOT not in line)
+    values = {"base": base, "link": html.escape(link or "")}
+    return SLOT.sub(lambda match: values[match.group(1)], template)
 
 
 def expand(markdown: str, base: str, figures_dir: Path, link: str | None = None) -> tuple[str, list[str]]:
@@ -389,7 +382,7 @@ def expand(markdown: str, base: str, figures_dir: Path, link: str | None = None)
     for block in reversed([b for b in fence_blocks(markdown) if b.info == "figure"]):
         slug = figure_slug(block.body)
         try:
-            rendered = render_block(slug, base, figure_meta(figures_dir, slug), link.format(slug=slug) if link else None)
+            rendered = render_block(figure_meta(figures_dir, slug), base, link.format(slug=slug) if link else None)
         except CheckError as error:
             errors.append(str(error))
             continue
@@ -643,7 +636,7 @@ def refresh_markers(text: str, base: str, figures_dir: Path) -> tuple[str, list[
 
     def replace(match: re.Match) -> str:
         try:
-            block = render_block(match.group(1), base, figure_meta(figures_dir, match.group(1)))
+            block = render_block(figure_meta(figures_dir, match.group(1)), base)
         except CheckError as error:
             errors.append(str(error))
             return match.group(0)

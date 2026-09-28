@@ -1,7 +1,8 @@
 // Tests for the render core (core.mjs), its command-line wrapper (build.mjs), the player bundler
 // (bundle.mjs), the keyboard shim (keyboard.ts) and the smoke test's pure helpers (smoke.mjs):
-// positive, negative and boundary cases for every validation rule, the derived text, the engine
-// hash, the stale-output check, the bundle budget, the built-figure marker and the autoplay assertion.
+// positive, negative and boundary cases for every validation rule, the derived text, the figure
+// markup and its escaper, the engine hash, the stale-output check, the bundle budget, the
+// built-figure marker and the autoplay assertion.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -9,8 +10,8 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  ENGINE_FILES, LIMITS, capLines, decorate, describe, describeEdges, normalizedEdges, render, sha256, svgSize,
-  validate, walkLayout,
+  ENGINE_FILES, LIMITS, SLOTS, capLines, decorate, describe, describeEdges, escapeHtml, markup, normalizedEdges, render,
+  sha256, svgSize, validate, walkLayout,
 } from './core.mjs';
 import { OUT_DIR, ROOT, VENDOR_JSON, compareOutputs, engineHash, listSpecs, main, renderAll } from './build.mjs';
 import { MAX_BUNDLE_FILES, PLAYER_BUDGET, budget, main as bundleMain, playerBytes } from './bundle.mjs';
@@ -18,6 +19,9 @@ import { nextTab } from './keyboard.ts';
 import { holdsFigure, stepAdvanced } from './smoke.mjs';
 
 const VENDOR = JSON.parse(readFileSync(join(ROOT, VENDOR_JSON), 'utf8'));
+/** The markup fixture scripts/test_docs_diagrams.py replays against the Python slot filler. */
+const MARKUP = JSON.parse(readFileSync(join(ROOT, 'tools/figures/markup-fixtures.json'), 'utf8'));
+const count = (text, part) => text.split(part).length - 1;
 const box = (id, label = id.toUpperCase()) => ({ id, label });
 
 /** A small valid figure; `patch` edits a deep copy. */
@@ -179,6 +183,55 @@ test('the JSON records the static SVG size apart from the animated one (BUG-1002
   // Fractional sizes round up to whole pixels; a tag without a size is refused.
   assert.deepEqual(svgSize('<svg xmlns="x" width="10.2" height="3">'), { width: 11, height: 3 });
   assert.throws(() => svgSize('<svg xmlns="x">'), /without width and height/);
+});
+
+test('the markup is the block the Python renderer wrote, with a {{base}} and a {{link}} slot', () => {
+  // The fixture's html is the pre-change render_block output with the slot names as its values,
+  // so a byte change here is a change to every page, README block and wiki page that shows a figure.
+  assert.equal(markup(MARKUP.meta), MARKUP.html);
+  assert.deepEqual(SLOTS, { base: '{{base}}', link: '{{link}}' });
+  const html = markup(MARKUP.meta);
+  assert.equal(count(html, SLOTS.base), 2);
+  assert.deepEqual(html.split('\n').filter((line) => line.includes(SLOTS.link)),
+    ['<p><a href="{{link}}">Open the interactive figure</a></p>']);
+  // Boundary: a figure without text lines keeps an empty list, as before.
+  assert.match(markup({ ...MARKUP.meta, text: [] }), /<ul>\n\n<\/ul>/);
+});
+
+test('each image in the markup carries its own recorded size (BUG-1002)', () => {
+  // The static SVG is shorter than the animated one; a <source> without a size made the browser
+  // reserve the animated size and letterbox the static image.
+  const lines = markup(MARKUP.meta).split('\n');
+  assert.match(lines.find((line) => line.startsWith('<source')), /srcset="\{\{base\}\}\/demo\.static\.svg" width="600" height="180">$/);
+  assert.match(lines.find((line) => line.startsWith('<img')), /alt="A &quot;demo&quot; figure\." width="600" height="300" loading="lazy">$/);
+  // Boundary: equal sizes still go on both, so the choice never depends on a missing value.
+  assert.equal(count(markup({ ...MARKUP.meta, static_height: 300 }), 'width="600" height="300"'), 2);
+});
+
+test('the escaper escapes as html.escape does, and no text forms a slot', () => {
+  assert.equal(escapeHtml(`a&b<c>d"e'f`), 'a&amp;b&lt;c&gt;d&quot;e&#x27;f');
+  assert.equal(escapeHtml('&amp;'), '&amp;amp;');
+  assert.equal(escapeHtml(''), '');
+  // A lone brace stays; a brace another brace follows becomes &#123;, so no "{{" survives.
+  assert.equal(escapeHtml('{a} }}'), '{a} }}');
+  assert.equal(escapeHtml('{{base}}'), '&#123;{base}}');
+  assert.equal(escapeHtml('{{{'), '&#123;&#123;{');
+  const hostile = markup({ ...MARKUP.meta, title: '{{link}}', alt: '{{base}}', text: ['{{base}}/{{link}}'] });
+  assert.equal(count(hostile, SLOTS.base), 2);
+  assert.equal(count(hostile, SLOTS.link), 1);
+  assert.throws(() => markup({ ...MARKUP.meta, text: undefined }), TypeError);
+});
+
+test('the JSON carries its figure markup, escaped like the SVG title', () => {
+  const outputs = render(figure((f) => { f.title = `It's <A> & {{B}}`; }), 'fixture', Buffer.from('spec'), { vendor: VENDOR, engine: 'e' });
+  const meta = JSON.parse(outputs['fixture.json']);
+  assert.equal(meta.html, markup(meta));
+  assert.match(meta.html, /^<figure class="praetor-figure" id="fig-fixture" data-figure="fixture" aria-describedby="fig-fixture-text">\n/);
+  assert.match(meta.html, /<li>A → B \(reads\)\.<\/li>/);
+  const title = 'It&#x27;s &lt;A&gt; &amp; &#123;{B}}';
+  assert.ok(meta.html.includes(`<figcaption>${title}</figcaption>`), meta.html);
+  assert.ok(outputs['fixture.svg'].includes(`<title id="figure-title">${title}</title>`));
+  assert.ok(outputs['fixture.static.svg'].includes(`<title id="figure-title">${title}</title>`));
 });
 
 test('the engine hash is stable and moves when an engine file changes', () => {

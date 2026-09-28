@@ -1,0 +1,39 @@
+{
+  "about": "Figure markup, replayed in both languages: markup() in tools/figures/core.mjs must turn meta into html (tools/figures/figures.test.mjs), and render_block in tools/figures/docs_diagrams.py must fill html into each case's html (scripts/test_docs_diagrams.py). Each case's html is the output of the Python renderer that core.mjs replaced (docs/adr/0016-figures-for-adopters.md, section 4).",
+  "meta": {
+    "slug": "demo",
+    "title": "Demo & <co>",
+    "alt": "A \"demo\" figure.",
+    "text": [
+      "A → B (reads).",
+      "It's <b> & 'c'."
+    ],
+    "width": 600,
+    "height": 300,
+    "static_width": 600,
+    "static_height": 180
+  },
+  "html": "<figure class=\"praetor-figure\" id=\"fig-demo\" data-figure=\"demo\" aria-describedby=\"fig-demo-text\">\n<picture>\n<source media=\"(prefers-reduced-motion: reduce)\" srcset=\"{{base}}/demo.static.svg\" width=\"600\" height=\"180\">\n<img src=\"{{base}}/demo.svg\" alt=\"A &quot;demo&quot; figure.\" width=\"600\" height=\"300\" loading=\"lazy\">\n</picture>\n<figcaption>Demo &amp; &lt;co&gt;</figcaption>\n</figure>\n<p><a href=\"{{link}}\">Open the interactive figure</a></p>\n<details class=\"praetor-figure__text\" id=\"fig-demo-text\"><summary>Text description</summary>\n<ul>\n<li>A → B (reads).</li>\n<li>It&#x27;s &lt;b&gt; &amp; &#x27;c&#x27;.</li>\n</ul>\n</details>",
+  "cases": [
+    {
+      "base": "../assets/figures",
+      "link": null,
+      "html": "<figure class=\"praetor-figure\" id=\"fig-demo\" data-figure=\"demo\" aria-describedby=\"fig-demo-text\">\n<picture>\n<source media=\"(prefers-reduced-motion: reduce)\" srcset=\"../assets/figures/demo.static.svg\" width=\"600\" height=\"180\">\n<img src=\"../assets/figures/demo.svg\" alt=\"A &quot;demo&quot; figure.\" width=\"600\" height=\"300\" loading=\"lazy\">\n</picture>\n<figcaption>Demo &amp; &lt;co&gt;</figcaption>\n</figure>\n<details class=\"praetor-figure__text\" id=\"fig-demo-text\"><summary>Text description</summary>\n<ul>\n<li>A → B (reads).</li>\n<li>It&#x27;s &lt;b&gt; &amp; &#x27;c&#x27;.</li>\n</ul>\n</details>"
+    },
+    {
+      "base": "docs/assets/figures",
+      "link": "",
+      "html": "<figure class=\"praetor-figure\" id=\"fig-demo\" data-figure=\"demo\" aria-describedby=\"fig-demo-text\">\n<picture>\n<source media=\"(prefers-reduced-motion: reduce)\" srcset=\"docs/assets/figures/demo.static.svg\" width=\"600\" height=\"180\">\n<img src=\"docs/assets/figures/demo.svg\" alt=\"A &quot;demo&quot; figure.\" width=\"600\" height=\"300\" loading=\"lazy\">\n</picture>\n<figcaption>Demo &amp; &lt;co&gt;</figcaption>\n</figure>\n<details class=\"praetor-figure__text\" id=\"fig-demo-text\"><summary>Text description</summary>\n<ul>\n<li>A → B (reads).</li>\n<li>It&#x27;s &lt;b&gt; &amp; &#x27;c&#x27;.</li>\n</ul>\n</details>"
+    },
+    {
+      "base": "https://example.org/p/assets/figures",
+      "link": "https://example.org/p/wiki/Home/#fig-demo",
+      "html": "<figure class=\"praetor-figure\" id=\"fig-demo\" data-figure=\"demo\" aria-describedby=\"fig-demo-text\">\n<picture>\n<source media=\"(prefers-reduced-motion: reduce)\" srcset=\"https://example.org/p/assets/figures/demo.static.svg\" width=\"600\" height=\"180\">\n<img src=\"https://example.org/p/assets/figures/demo.svg\" alt=\"A &quot;demo&quot; figure.\" width=\"600\" height=\"300\" loading=\"lazy\">\n</picture>\n<figcaption>Demo &amp; &lt;co&gt;</figcaption>\n</figure>\n<p><a href=\"https://example.org/p/wiki/Home/#fig-demo\">Open the interactive figure</a></p>\n<details class=\"praetor-figure__text\" id=\"fig-demo-text\"><summary>Text description</summary>\n<ul>\n<li>A → B (reads).</li>\n<li>It&#x27;s &lt;b&gt; &amp; &#x27;c&#x27;.</li>\n</ul>\n</details>"
+    },
+    {
+      "base": "https://example.org/p/assets/figures",
+      "link": "https://example.org/p/wiki/A&B/?q=\"1\"#fig-demo",
+      "html": "<figure class=\"praetor-figure\" id=\"fig-demo\" data-figure=\"demo\" aria-describedby=\"fig-demo-text\">\n<picture>\n<source media=\"(prefers-reduced-motion: reduce)\" srcset=\"https://example.org/p/assets/figures/demo.static.svg\" width=\"600\" height=\"180\">\n<img src=\"https://example.org/p/assets/figures/demo.svg\" alt=\"A &quot;demo&quot; figure.\" width=\"600\" height=\"300\" loading=\"lazy\">\n</picture>\n<figcaption>Demo &amp; &lt;co&gt;</figcaption>\n</figure>\n<p><a href=\"https://example.org/p/wiki/A&amp;B/?q=&quot;1&quot;#fig-demo\">Open the interactive figure</a></p>\n<details class=\"praetor-figure__text\" id=\"fig-demo-text\"><summary>Text description</summary>\n<ul>\n<li>A → B (reads).</li>\n<li>It&#x27;s &lt;b&gt; &amp; &#x27;c&#x27;.</li>\n</ul>\n</details>"
+    }
+  ]
+}

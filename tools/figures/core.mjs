@@ -1,6 +1,8 @@
-// The render core of the figure engine: spec validation, the derived text description and the
+// The render core of the figure engine: spec validation, the derived text description, the
 // three committed outputs of one figure (docs/adr/0015-interactive-figures-from-vendored-interfig.md,
-// sections 2, 3 and 6). Pure functions over a spec object; it reads and writes no file.
+// sections 2, 3 and 6) and the figure markup every page, README and wiki shows
+// (docs/adr/0016-figures-for-adopters.md, section 4). Pure functions over a spec object; it reads
+// and writes no file.
 //
 // Its bytes are hashed with the vendored render files (ENGINE_FILES), so an edit here marks every
 // committed figure stale. The command-line wrapper, build.mjs, is not hashed: editing it leaves the
@@ -281,7 +283,14 @@ export function normalizedEdges(figure) {
   return out;
 }
 
-const xml = (s) => s.replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[c]);
+const ENTITIES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#x27;' };
+
+/**
+ * Text escaped for HTML and XML content and attribute values, as Python's `html.escape` escapes it
+ * (quote=True). A brace that another brace follows is also written as `&#123;`, so figure text can
+ * never form a `{{slot}}` of the markup; a browser reads both the same.
+ */
+export const escapeHtml = (s) => s.replace(/[&<>"']/g, (c) => ENTITIES[c]).replace(/\{(?=\{)/g, '&#123;');
 
 /** Adds the accessibility markup, the credit and the embedded spec after the opening <svg> tag. */
 export function decorate(svg, figure, vendor) {
@@ -290,9 +299,46 @@ export function decorate(svg, figure, vendor) {
   const tag = open[0].replace('<svg ', '<svg role="img" aria-labelledby="figure-title figure-desc" ');
   const credit = `interfig (c) 2025 Vectorize AI, Inc. MIT ${vendor.repo}/tree/${vendor.commit}/${vendor.path}`;
   const spec = JSON.stringify({ props: figure.props }).replaceAll(']]>', ']]\\u003e');
-  const head = `<title id="figure-title">${xml(figure.title)}</title>\n<desc id="figure-desc">${xml(figure.alt)}</desc>\n` +
-    `<!-- ${credit} -->\n${SPEC_OPEN}${spec}${SPEC_CLOSE}\n`;
+  const head = `<title id="figure-title">${escapeHtml(figure.title)}</title>\n` +
+    `<desc id="figure-desc">${escapeHtml(figure.alt)}</desc>\n<!-- ${credit} -->\n${SPEC_OPEN}${spec}${SPEC_CLOSE}\n`;
   return tag + head + svg.slice(open[0].length);
+}
+
+/** The slots of the figure markup; see `markup`. */
+export const SLOTS = Object.freeze({ base: '{{base}}', link: '{{link}}' });
+
+/**
+ * The HTML of one figure outside the player: a <figure> with a <picture> of both SVGs and the
+ * caption, a link to the interactive figure, and a <details> text description
+ * (docs/adr/0016-figures-for-adopters.md, section 4). This is the one markup source: every caller
+ * reads it from the figure's JSON `html` and only fills the slots.
+ *
+ * - `{{base}}` is the URL prefix of docs/assets/figures for the reader, inserted as given:
+ *   relative on the site and in the README, absolute in the wiki.
+ * - `{{link}}` is the URL of the interactive figure, HTML-escaped. It sits on a line of its own;
+ *   a caller without such a URL drops that line.
+ *
+ * The static SVG has no scenario area, so it is shorter than the animated one: each image carries
+ * its own size, and the browser reserves the size of the one it picks, with no letterboxing or
+ * layout shift under reduced motion (BUG-1002).
+ */
+export function markup(meta) {
+  const { slug } = meta;
+  const items = meta.text.map((line) => `<li>${escapeHtml(line)}</li>`).join('\n');
+  return [
+    `<figure class="praetor-figure" id="fig-${slug}" data-figure="${slug}" aria-describedby="fig-${slug}-text">`,
+    '<picture>',
+    `<source media="(prefers-reduced-motion: reduce)" srcset="${SLOTS.base}/${slug}.static.svg" ` +
+      `width="${meta.static_width}" height="${meta.static_height}">`,
+    `<img src="${SLOTS.base}/${slug}.svg" alt="${escapeHtml(meta.alt)}" width="${meta.width}" height="${meta.height}" loading="lazy">`,
+    '</picture>',
+    `<figcaption>${escapeHtml(meta.title)}</figcaption>`,
+    '</figure>',
+    `<p><a href="${SLOTS.link}">Open the interactive figure</a></p>`,
+    `<details class="praetor-figure__text" id="fig-${slug}-text"><summary>Text description</summary>`,
+    `<ul>\n${items}\n</ul>`,
+    '</details>',
+  ].join('\n');
 }
 
 /** The intrinsic size of an SVG's opening tag, rounded up to whole pixels. */
@@ -305,7 +351,7 @@ export function svgSize(svg) {
 /**
  * The three committed outputs for one validated figure. The static SVG drops the steps, and with
  * them the narration and card area, so its intrinsic size differs from the animated one: the JSON
- * records both, and docs_diagrams.render_block gives each <picture> source its own size.
+ * records both, and its `html` (see `markup`) gives each <picture> source its own size.
  */
 export function render(figure, slug, specBytes, context) {
   const svg = decorate(toSvg(figure.props), figure, context.vendor);
@@ -326,5 +372,6 @@ export function render(figure, slug, specBytes, context) {
     static_height: stillSize.height,
     edges: normalizedEdges(figure),
   };
+  meta.html = markup(meta);
   return { [`${slug}.svg`]: svg, [`${slug}.static.svg`]: still, [`${slug}.json`]: `${JSON.stringify(meta, null, 2)}\n` };
 }

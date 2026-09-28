@@ -16,11 +16,11 @@ Everything the figures need sits in one tree, `tools/figures/`:
 
 | Path | Role |
 | :-- | :-- |
-| `core.mjs` | The render core: spec validation, the text description and the three outputs of one figure. Hashed. |
+| `core.mjs` | The render core: spec validation, the text description, the figure markup and the three outputs of one figure. Hashed. |
 | `build.mjs` | The `build` and `check` commands. Node 22.18 or later, no npm package. |
 | `bundle.mjs` | Bundles the player for this site with esbuild and holds its size budget. Needs the locked npm install. |
 | `types.ts` | The spec type a `docs/figures/<slug>.ts` file checks against. |
-| `docs_diagrams.py` | The `site`, `sources` and `portable` checks. Python standard library only. |
+| `docs_diagrams.py` | The `site`, `sources` and `portable` checks, and the slot filling of the figure markup. Python standard library only. |
 | `mkdocs_hook.py` | The MkDocs hook that renders each `figure` fence and publishes `figures.css`. |
 | `third_party/interfig/` | The vendored engine, byte-identical to its pin. |
 
@@ -128,10 +128,17 @@ bundle.
 longer fence stays source text. A slug without JSON logs a warning, which fails
 `mkdocs build --strict`.
 
+The markup has one source: `markup` in `core.mjs` writes it into each figure's JSON as `html`,
+with a `{{base}}` slot for the URL prefix of the SVGs and a `{{link}}` slot for the interactive
+figure. The hook and `docs_diagrams.py portable` only fill the slots (`render_block`); a caller
+without a link drops the line that holds `{{link}}`. `tools/figures/markup-fixtures.json` pins the
+markup for both languages: `tools/figures/figures.test.mjs` renders it and
+`scripts/test_docs_diagrams.py` fills it.
+
 The static SVG has no scenario area, so it is usually shorter than the animated one. The
 reduced-motion `<source>` carries the static size and the `<img>` the animated size, so the
 browser reserves the height of the image it shows: no letterboxing and no layout shift
-(`test_each_image_carries_its_own_recorded_size` in `scripts/test_docs_diagrams.py`).
+(the BUG-1002 test in `tools/figures/figures.test.mjs`).
 
 The loader then mounts the player in place of the `<picture>` when the figure nears the viewport.
 Under reduced motion it starts paused on each step's last beat. The caption and the text
@@ -165,7 +172,7 @@ GitHub keeps `figure`, `figcaption`, `picture`, `img` and `details`, and strips 
 
 | Command | Fails when |
 | :-- | :-- |
-| `npm --prefix tools/figures test` | a validation rule, the text derivation, the stale check or the keyboard shim regresses |
+| `npm --prefix tools/figures test` | a validation rule, the text derivation, the figure markup, the stale check or the keyboard shim regresses |
 | `npm --prefix tools/figures run typecheck` | a spec or the player code does not type-check against `tools/figures/types.ts` and interfig |
 | `node tools/figures/build.mjs check` | a spec breaks a rule, or a committed output differs from a fresh build; needs no npm package |
 | `node tools/figures/bundle.mjs --check` | the player chunk exceeds 250 kB minified; needs the locked npm install |

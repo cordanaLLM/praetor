@@ -235,9 +235,10 @@ HOOKED = DECLARED + "\nhooks:\n  - tools/figures/mkdocs_hook.py\n"
 # The root site's shape: the figures hook, superfences without the mermaid fence.
 FIGURES_ONLY = "hooks:\n  - tools/figures/mkdocs_hook.py\nmarkdown_extensions:\n  - pymdownx.superfences\n"
 FIGURE = "```figure\ndemo\n```\n"
-META = {"slug": "demo", "title": "Demo & co", "alt": 'A "demo" figure.', "text": ["A → B."],
-        "width": 600.4, "height": 300, "static_width": 600, "static_height": 180,
-        "evidence": ["src/app.go:Serve"]}
+# The markup fixture tools/figures/figures.test.mjs replays against core.mjs: its html is what
+# markup() writes into a figure's JSON, and each case records the filled block.
+MARKUP = json.loads((FIGURES / "markup-fixtures.json").read_text(encoding="utf-8"))
+META = dict(MARKUP["meta"], html=MARKUP["html"], evidence=["src/app.go:Serve"])
 
 
 def sha(data):
@@ -438,43 +439,53 @@ class FigureFences(unittest.TestCase):
             with self.subTest(url=url):
                 self.assertEqual(docs_diagrams.site_base(url), base)
 
-    def test_render_block_escapes_and_links(self):
-        block = docs_diagrams.render_block("demo", "../..", META)
-        self.assertIn('<figure class="praetor-figure" id="fig-demo" data-figure="demo" aria-describedby="fig-demo-text">', block)
-        self.assertIn('<source media="(prefers-reduced-motion: reduce)" srcset="../../demo.static.svg" '
-                      'width="600" height="180">', block)
-        self.assertIn('alt="A &quot;demo&quot; figure." width="600" height="300" loading="lazy"', block)
-        self.assertIn("<figcaption>Demo &amp; co</figcaption>", block)
-        self.assertIn("<li>A → B.</li>", block)
+    def test_render_block_fills_the_slots_as_the_fixture_records(self):
+        """The filled block is byte for byte what the Python renderer wrote before core.mjs took
+        over the markup: relative and absolute bases, no link, an empty link, an escaped link."""
+        for case in MARKUP["cases"]:
+            with self.subTest(base=case["base"], link=case["link"]):
+                self.assertEqual(docs_diagrams.render_block(META, case["base"], case["link"]), case["html"])
+
+    def test_render_block_drops_only_the_link_line_without_a_link(self):
+        block = docs_diagrams.render_block(META, ".")
         self.assertNotIn("<p><a", block)
+        self.assertNotIn("{{", block)
         self.assertNotIn("\n\n", block)
-        linked = docs_diagrams.render_block("demo", "https://x/assets/figures", META, "https://x/wiki/Home/#fig-demo")
-        self.assertIn('<p><a href="https://x/wiki/Home/#fig-demo">Open the interactive figure</a></p>', linked)
+        self.assertEqual(len(block.split("\n")), len(MARKUP["html"].split("\n")) - 1)
+        self.assertEqual(block.count('src="./demo.svg"') + block.count('srcset="./demo.static.svg"'), 2)
 
-    def test_each_image_carries_its_own_recorded_size(self):
-        """BUG-1002: the static SVG is shorter than the animated one; a <source> without a size
-        made the browser reserve the animated size and letterbox the static image."""
-        block = docs_diagrams.render_block("demo", ".", META)
-        source = next(line for line in block.split("\n") if line.startswith("<source"))
-        image = next(line for line in block.split("\n") if line.startswith("<img"))
-        self.assertIn('width="600" height="180"', source)
-        self.assertIn('width="600" height="300"', image)
-        # Boundary: equal sizes still go on both, so the choice never depends on a missing value.
-        same = docs_diagrams.render_block("demo", ".", dict(META, static_height=300))
-        self.assertEqual(same.count('width="600" height="300"'), 2)
+    def test_render_block_fills_in_one_pass(self):
+        """A slot value that looks like a slot stays literal; the link is escaped, the base is not."""
+        block = docs_diagrams.render_block(META, "{{link}}", "{{base}}&x")
+        self.assertIn('srcset="{{link}}/demo.static.svg"', block)
+        self.assertIn('<a href="{{base}}&amp;x">', block)
+        # Boundary: a template without slots comes back as it is.
+        self.assertEqual(docs_diagrams.render_block({"html": "<p>plain</p>"}, "b", "l"), "<p>plain</p>")
 
-    def test_a_json_without_an_image_size_is_refused(self):
-        for missing in ({"static_width": None}, {"static_height": 0}, {"width": "wide"}, {"height": True}):
-            meta = {key: value for key, value in dict(META, **missing).items() if value is not None}
-            with self.subTest(missing=missing), self.assertRaises(docs_diagrams.CheckError) as raised:
-                docs_diagrams.render_block("demo", ".", meta)
-            self.assertIn("rebuild with", str(raised.exception))
+    def test_a_json_without_html_is_refused(self):
+        for html_value in (None, "", 42, ["<figure>"]):
+            meta = dict(META, html=html_value)
+            if html_value is None:
+                del meta["html"]
+            with self.subTest(html=html_value), self.assertRaises(docs_diagrams.CheckError) as raised:
+                docs_diagrams.render_block(meta, ".")
+            self.assertIn("records no html; rebuild with: node tools/figures/build.mjs build", str(raised.exception))
         with tempfile.TemporaryDirectory() as directory:
-            stale = {key: value for key, value in META.items() if not key.startswith("static_")}
+            stale = {key: value for key, value in META.items() if key != "html"}
             write(Path(directory) / "demo.json", json.dumps(stale))
             text, errors = docs_diagrams.expand(FIGURE, ".", Path(directory))
         self.assertEqual(text, FIGURE)
-        self.assertIn("no positive static_width and static_height", errors[0])
+        self.assertIn("figure 'demo': its JSON records no html", errors[0])
+
+    def test_a_json_without_an_image_size_is_reported(self):
+        self.assertEqual(docs_diagrams.size_errors("demo", META), [])
+        self.assertEqual(docs_diagrams.size_errors("demo", dict(META, width=600.4)), [])
+        for missing in ({"static_width": None}, {"static_height": 0}, {"width": "wide"}, {"height": True}):
+            meta = {key: value for key, value in dict(META, **missing).items() if value is not None}
+            with self.subTest(missing=missing):
+                errors = docs_diagrams.size_errors("demo", meta)
+                self.assertEqual(len(errors), 1)
+                self.assertIn("rebuild with", errors[0])
 
     def test_expand_replaces_top_level_fences_only(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -529,7 +540,7 @@ class FigureSite(unittest.TestCase):
         write(self.site / "assets/javascripts/figures/registry.json", '{"demo": "specs/demo.js"}')
         self.page = self.site / "guide" / "index.html"
         self.loader = '<script src="../assets/javascripts/figures/loader.js" type="module"></script>'
-        write(self.page, docs_diagrams.render_block("demo", "../assets/figures", META) + self.loader)
+        write(self.page, docs_diagrams.render_block(META, "../assets/figures") + self.loader)
 
     def check(self):
         return docs_diagrams.check(self.config, self.docs, self.site)
@@ -554,12 +565,12 @@ class FigureSite(unittest.TestCase):
         self.assertIn("demo.static.svg does not resolve", errors[0])
 
     def test_absolute_image_url_fails(self):
-        write(self.page, docs_diagrams.render_block("demo", "https://example.org", META) + self.loader)
+        write(self.page, docs_diagrams.render_block(META, "https://example.org") + self.loader)
         errors, _ = self.check()
         self.assertEqual(len(errors), 2)
 
     def test_page_without_loader_fails(self):
-        write(self.page, docs_diagrams.render_block("demo", "../assets/figures", META))
+        write(self.page, docs_diagrams.render_block(META, "../assets/figures"))
         errors, _ = self.check()
         self.assertIn("loads no assets/javascripts/figures/loader.js", errors[0])
 
