@@ -19,12 +19,18 @@ const adoptFixtureVersion = "v9.8.7"
 // content. It does not use the lock builder being exercised by adoption.
 func newAdoptLockSource(t *testing.T) string {
 	t.Helper()
-	root := t.TempDir()
-	manifest := &config.Manifest{Version: 1,
+	return newCatalogLockSource(t, &config.Manifest{Version: 1,
 		Profiles: []string{"framework", "template-seed", "native-gpu-systems", "app-service", "os-image"},
-		Facets:   []string{"security:high", "api:public-contract", "docs:seo-portal", "agent:sandboxed", "custom:facet"}}
-	profiles, profileLines := writeAdoptSourceEntries(t, root, "profile", manifest.Profiles)
-	facets, facetLines := writeAdoptSourceEntries(t, root, "facet", manifest.Facets)
+		Facets:   []string{"security:high", "api:public-contract", "docs:seo-portal", "agent:sandboxed", "custom:facet"}}, nil)
+}
+
+// newCatalogLockSource is newAdoptLockSource for manifest, with bodies naming the catalog text
+// of an id; an id without one gets a synthetic fixture body.
+func newCatalogLockSource(t *testing.T, manifest *config.Manifest, bodies map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+	profiles, profileLines := writeAdoptSourceEntries(t, root, "profile", manifest.Profiles, bodies)
+	facets, facetLines := writeAdoptSourceEntries(t, root, "facet", manifest.Facets, bodies)
 	lines := append(profileLines, facetLines...)
 	sort.Strings(lines)
 	lock := map[string]any{"version": 1, "pinned_version": adoptFixtureVersion,
@@ -43,7 +49,7 @@ func newAdoptLockSource(t *testing.T) string {
 	return root
 }
 
-func writeAdoptSourceEntries(t *testing.T, root, kind string, ids []string) ([]map[string]string, []string) {
+func writeAdoptSourceEntries(t *testing.T, root, kind string, ids []string, bodies map[string]string) ([]map[string]string, []string) {
 	t.Helper()
 	directory := filepath.Join(root, ".config", "archetypes")
 	if kind == "facet" {
@@ -52,7 +58,10 @@ func writeAdoptSourceEntries(t *testing.T, root, kind string, ids []string) ([]m
 	var entries []map[string]string
 	var lines []string
 	for _, id := range ids {
-		body := fmt.Sprintf("id: %q\nname: %q\n", id, "Adoption fixture "+id)
+		body, ok := bodies[id]
+		if !ok {
+			body = fmt.Sprintf("id: %q\nname: %q\n", id, "Adoption fixture "+id)
+		}
 		digest := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(body)))
 		mustWrite(t, filepath.Join(directory, strings.ReplaceAll(id, ":", "-")+".yaml"), body)
 		entries = append(entries, map[string]string{"id": id, "version": adoptFixtureVersion, "digest": digest})

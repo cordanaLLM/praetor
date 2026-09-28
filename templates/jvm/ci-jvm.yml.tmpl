@@ -1,6 +1,7 @@
+---
 name: CI
 
-on:
+'on':
   push:
     branches: [main]
   pull_request:
@@ -16,8 +17,9 @@ jobs:
           distribution: temurin
           java-version: '25'
 
-      # jvm-service matches Maven and Gradle builds alike, so the step runs whichever the
-      # repository carries, preferring a checked-in wrapper over the runner's own install.
+      # jvm-service matches Maven and Gradle builds alike, so the step runs
+      # whichever the repository carries, preferring a checked-in wrapper over
+      # the runner's own install.
       - name: Build and verify
         run: |
           if [ -x ./mvnw ]; then

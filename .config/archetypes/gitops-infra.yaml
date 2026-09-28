@@ -1,6 +1,8 @@
+---
 id: "gitops-infra"
 name: "GitOps & Infrastructure as Code"
-description: "Declarative cluster state, Kubernetes manifests, Helm charts, and Terraform definitions under automated reconciler governance"
+description: "Declarative cluster state, Kubernetes manifests, Helm charts, and
+  Terraform definitions under automated reconciler governance"
 runtime: "iac"
 
 complexity:

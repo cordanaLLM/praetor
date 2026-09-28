@@ -18,6 +18,22 @@ Fourteen profiles ship in `.config/archetypes/`:
 
 Six facets ship in `.config/archetypes/facets/`.
 
+**Every catalog file passes yamllint's default rules.** Adoption copies the pinned files byte for
+byte into an adopter's `.config/archetypes`, where the adopter's own lint may run, so each file
+opens with the `---` document start and keeps every line within 80 columns. Wrap a long quoted
+`description` across lines at single spaces, which YAML folds back into one space. `make
+hooks-lint` lints the whole catalog (`scripts/test_emitted_yaml_lint.py`).
+
+**Changing a file moves its digest.** Re-pin `.standards.lock` with the digests `praetorctl
+audit` reports, as the lock's header describes. An adopter's lock pins the earlier text, and a
+re-run of `praetorctl adopt` against the new catalog fails on it until `--force`. The exception
+is a layout-only change listed in `priorCatalogDigests` (`internal/adopt/policy_catalog.go`):
+a lock that pins only those texts is re-pinned without `--force`
+(`TestAdoptRepinsAnUnmodifiedEarlierCatalog`), and only while the new catalog decodes to
+exactly the values of each earlier text (`isLayoutOnlySuccessor`). Once a later change moves
+a value, adopters still on an earlier text need `--force` again
+(`TestAdoptDoesNotRepinAnEarlierCatalogToChangedValues`).
+
 **A profile is not a flavor.** A profile says what governance applies; a flavor says which templates,
 settings and toolchains a repository of that kind requires. Five profiles currently have any flavor
 implementing them — `app-service`, `framework`, `native-gpu-systems`, `container-image` and
@@ -217,9 +233,11 @@ Profiles represent the primary technology stack or architecture. Create `.config
 The shipped `.config/archetypes/native-gpu-systems.yaml`, in full:
 
 ```yaml
+---
 id: "native-gpu-systems"
 name: "Native GPU & Compute Systems"
-description: "High-performance C/C++/Rust/CUDA/Vulkan systems with deterministic memory bounds and zero dynamic frame allocations"
+description: "High-performance C/C++/Rust/CUDA/Vulkan systems with deterministic
+  memory bounds and zero dynamic frame allocations"
 runtime: "native"
 
 complexity:
@@ -263,9 +281,11 @@ Facets are cross-cutting policy modifiers. Create a YAML file under `.config/arc
 The shipped `.config/archetypes/facets/security-high.yaml`, in full:
 
 ```yaml
+---
 id: "security:high"
 name: "High-Security Provenance & Hardening"
-description: "SLSA Level 3 attestations, keyless Cosign signatures, SBOM generation, and non-root execution"
+description: "SLSA Level 3 attestations, keyless Cosign signatures, SBOM
+  generation, and non-root execution"
 
 supply_chain:
   slsa_level: 3

@@ -1,6 +1,8 @@
+---
 id: "pages-site"
 name: "Pages & Documentation Site"
-description: "High-performance static documentation, developer portals, and marketing sites with automated SEO and Core Web Vitals optimization"
+description: "High-performance static documentation, developer portals, and
+  marketing sites with automated SEO and Core Web Vitals optimization"
 runtime: "node"
 
 complexity:

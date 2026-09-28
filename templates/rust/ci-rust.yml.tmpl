@@ -1,6 +1,7 @@
+---
 name: CI
 
-on:
+'on':
   push:
     branches: [main]
   pull_request:
@@ -12,10 +13,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # rustup ships on the hosted runner image, so the toolchain needs no third-party action.
+      # rustup ships on the hosted runner image, so the toolchain needs no
+      # third-party action.
       - name: Install the stable toolchain
         run: |
-          rustup toolchain install stable --profile minimal --component clippy,rustfmt
+          rustup toolchain install stable --profile minimal \
+            --component clippy,rustfmt
           rustup default stable
 
       - name: Check formatting

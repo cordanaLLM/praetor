@@ -76,9 +76,10 @@ VERSION = re.compile(r"(\d+(?:\.\d+)+)")
 
 
 def go_constant(relative, name):
-    """Return the string value of the Go constant `name` declared in `relative`."""
+    """Return the string value of the Go constant `name` declared in `relative`, inside a
+    const block or on its own `const` line."""
     source = (ROOT / relative).read_text(encoding="utf-8")
-    match = re.search(rf'^\s*{name}\s*=\s*"([^"]+)"', source, re.M)
+    match = re.search(rf'^\s*(?:const\s+)?{name}\s*=\s*"([^"]+)"', source, re.M)
     if match is None:
         raise AssertionError(f"{relative} no longer declares the string constant {name}")
     return match.group(1)
@@ -192,7 +193,10 @@ class LintCase(unittest.TestCase):
                 "black": [executable, "--check", "--config", str(empty_config), *paths],
                 "flake8": [executable, "--isolated", f"--max-line-length={FLAKE8_MAX_LINE}",
                            *paths],
-                "yamllint": [executable, "--strict", "-d", "default", *paths],
+                # -f parsable: on GitHub Actions yamllint switches to its annotation format
+                # (rule names in brackets), so an output assertion that passes locally fails
+                # in CI; one fixed format keeps the output the same everywhere.
+                "yamllint": [executable, "--strict", "-f", "parsable", "-d", "default", *paths],
             }
             return run_tool(commands[name], work)
 

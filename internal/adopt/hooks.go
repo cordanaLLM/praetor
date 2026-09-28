@@ -364,7 +364,10 @@ func reconcileGitHooks(ctx context.Context, s *adoptSession) error {
 
 // writeLefthookConfig writes the current rendering over an earlier Praetor rendering, and
 // otherwise scaffolds it under the usual --force contract. It reports whether it wrote; an
-// existing configuration that differs from the rendering is kept and reported as drift.
+// existing configuration that differs from the rendering is kept and reported as drift. The
+// migration writes the rendering's own LF bytes even over a CRLF checkout of an earlier one:
+// activation trusts only those exact bytes (lefthookConfigIsPraetor), and git stores the
+// working-tree LF text unchanged under core.autocrlf.
 func (s *adoptSession) writeLefthookConfig(ctx context.Context, current string, prior bool) (bool, error) {
 	if !prior {
 		state, err := s.scaffoldFile(ctx, scaffold{

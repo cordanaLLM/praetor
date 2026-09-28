@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -172,10 +173,15 @@ func sourcesBlock(sources *config.RegisterSources, unit int, indent, eol string)
 	var out strings.Builder
 	for _, line := range strings.SplitAfter(buffer.String(), "\n") {
 		if line != "" {
-			out.WriteString(indent + strings.TrimSuffix(line, "\n") + eol)
+			out.WriteString(indent + line)
 		}
 	}
-	return out.String(), nil
+	// The block is Praetor's text, so its long digest is fitted the way a new manifest's is.
+	fitted, err := util.FitYAMLLines([]byte(out.String()), unit)
+	if err != nil {
+		return "", err
+	}
+	return strings.ReplaceAll(string(fitted), "\n", eol), nil
 }
 
 // manifestIndentUnit is the indentation of the first nested block mapping, so a new block

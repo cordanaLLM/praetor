@@ -1,6 +1,8 @@
+---
 id: "app-service"
 name: "Application Backend Service"
-description: "Production backend services and microservices exposing HTTP/gRPC APIs with structured telemetry and bounded concurrency"
+description: "Production backend services and microservices exposing HTTP/gRPC
+  APIs with structured telemetry and bounded concurrency"
 runtime: "go"
 
 complexity:

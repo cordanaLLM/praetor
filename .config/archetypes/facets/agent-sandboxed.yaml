@@ -1,6 +1,10 @@
+---
 id: "agent:sandboxed"
 name: "Autonomous Agent Sandboxing & Fleet Governance"
-description: "Selects the semgrep linter, the devcontainer common-utils feature, the Copilot editor extension and workspace trust for repositories driven by autonomous agents; it provides no resource caps, network isolation or loop interception"
+description: "Selects the semgrep linter, the devcontainer common-utils feature,
+  the Copilot editor extension and workspace trust for repositories driven by
+  autonomous agents; it provides no resource caps, network isolation or loop
+  interception"
 
 linters:
   - "semgrep"

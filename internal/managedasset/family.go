@@ -75,7 +75,7 @@ type Family struct {
 	RefuseForeign bool
 	// Prior maps the SHA-256, in lowercase hex, of every text an earlier Praetor shipped at
 	// one of the family's managed paths to that path; the digest covers the text with LF line
-	// endings. A file holding exactly such a text is Praetor's own unedited output, so
+	// endings (util.CanonicalTextDigest). A file holding exactly such a text is Praetor's own unedited output, so
 	// adoption refreshes it without --force and a disabled facet removes it. Audit still
 	// fails on it, naming plain adoption as the repair. An edited file matches no digest and
 	// keeps the --force contract.
@@ -173,18 +173,18 @@ func (f Family) Canonical(rel string) (data []byte, owned bool, err error) {
 // PriorText reports whether actual is, in one consistent line-ending style, a text the family
 // shipped at rel before its current canonical text (Prior).
 func (f Family) PriorText(rel string, actual []byte) bool {
-	normalized, _, err := util.NormalizeLineEndingsStrict(string(actual))
-	if err != nil {
-		return false
-	}
-	owner, known := f.Prior[textDigest(normalized)]
-	return known && owner == rel
+	known, _ := f.PriorRendering(rel, actual)
+	return known
 }
 
-// textDigest is the lowercase hex SHA-256 of text, the key of Family.Prior.
-func textDigest(text string) string {
-	sum := sha256.Sum256([]byte(text))
-	return hex.EncodeToString(sum[:])
+// PriorRendering reports whether actual is a text the family shipped at rel before its current
+// canonical text (Prior), and whether actual is its CRLF checkout, so a refresh can keep the
+// file's style. Prior is read with util.LookupCanonicalText, the lookup adoption applies to
+// every other earlier-text set: an LF text and its CRLF checkout match, while an edit, mixed
+// line endings or a lone carriage return match nothing.
+func (f Family) PriorRendering(rel string, actual []byte) (known, crlf bool) {
+	owner, known, crlf := util.LookupCanonicalText(actual, f.Prior)
+	return known && owner == rel, crlf
 }
 
 // EmbedDirective returns the exact go:embed line Source must carry: the inventory, in order.
@@ -302,7 +302,7 @@ func (f Family) validatePrior() error {
 	return nil
 }
 
-// isTextDigest reports whether digest is spelled as textDigest spells one.
+// isTextDigest reports whether digest is spelled as util.CanonicalTextDigest spells one.
 func isTextDigest(digest string) bool {
 	decoded, err := hex.DecodeString(digest)
 	return err == nil && len(decoded) == sha256.Size && hex.EncodeToString(decoded) == digest

@@ -18,6 +18,10 @@ import (
 // families of a disabled facet. The documentation gate (documentation.go) drives it for every
 // family behind docs:seo-portal; nothing here names a family.
 
+// refreshedFamilyDetail is the action detail when an earlier Praetor text of a managed asset
+// family is refreshed.
+const refreshedFamilyDetail = "Refreshed an earlier Praetor text to the current locked text"
+
 // reconcileManagedFamily writes every asset of family and then its hosted workflow. An
 // existing file with the canonical text, in one consistent line-ending style, is verified
 // and left alone; one holding an earlier Praetor text of that path (Family.Prior) is
@@ -72,30 +76,13 @@ func reconcileManagedFamilyFile(ctx context.Context, s *adoptSession, family man
 			s.report.recordReconciled(sc.rel, sc.verified)
 			return scaffoldIdentical, nil
 		}
-		if family.PriorText(sc.rel, actual) {
-			return refreshPriorFamilyFile(ctx, s, full, actual, sc)
+		// An exact earlier Praetor text is refreshed in its own line-ending style, bound to
+		// the observed bytes, by the refresh the scaffold earlier-text sets use.
+		if known, crlf := family.PriorRendering(sc.rel, actual); known {
+			return scaffoldWritten, s.replacePriorText(ctx, full, actual, crlf, sc, refreshedFamilyDetail)
 		}
 	}
 	return s.scaffoldFile(ctx, sc)
-}
-
-// refreshPriorFamilyFile replaces actual, an exact earlier Praetor text at full, with the
-// current canonical text in the same line-ending style. The replacement is bound to the
-// observed bytes, so a file edited in between is not overwritten.
-func refreshPriorFamilyFile(ctx context.Context, s *adoptSession, full string, actual []byte, sc scaffold) (scaffoldState, error) {
-	_, crlf, err := util.NormalizeLineEndingsStrict(string(actual))
-	if err != nil {
-		return 0, fmt.Errorf("%s has invalid line endings: %w", sc.rel, err)
-	}
-	if !s.opts.DryRun {
-		content := []byte(util.RestoreLineEndings(string(sc.content), crlf))
-		options := contextopt.ReplaceOptions{Expected: actual, Exists: true, Mode: sc.perm}
-		if err := contextopt.ReplaceSnapshot(ctx, full, content, options); err != nil {
-			return 0, fmt.Errorf("refresh %s: %w", sc.rel, err)
-		}
-	}
-	s.report.recordReconciled(sc.rel, "Refreshed an earlier Praetor text to the current locked text")
-	return scaffoldWritten, nil
 }
 
 // refuseForeignFamilyFiles is refuse-on-first-adopt. The family counts as adopted once any of

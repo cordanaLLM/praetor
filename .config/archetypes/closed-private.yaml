@@ -1,6 +1,8 @@
+---
 id: "closed-private"
 name: "Closed Source & Confidential Systems"
-description: "Proprietary internal systems with strict confidentiality, leak prevention, IP isolation, and multi-party review requirements"
+description: "Proprietary internal systems with strict confidentiality, leak
+  prevention, IP isolation, and multi-party review requirements"
 runtime: "polyglot"
 
 complexity:

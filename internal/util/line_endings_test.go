@@ -98,3 +98,91 @@ func TestNormalizeLineEndingsBoundaryKeepsLoneCRAndRoundTrips(t *testing.T) {
 		}
 	}
 }
+
+func TestCanonicalTextDigestPositiveSharesOneDigestAcrossStyles(t *testing.T) {
+	lf, lfCRLF, err := CanonicalTextDigest([]byte("version: 1\nname: x\n"))
+	if err != nil || lfCRLF {
+		t.Fatalf("LF text: crlf=%v err=%v", lfCRLF, err)
+	}
+	crlf, crlfCRLF, err := CanonicalTextDigest([]byte("version: 1\r\nname: x\r\n"))
+	if err != nil || !crlfCRLF {
+		t.Fatalf("CRLF text: crlf=%v err=%v", crlfCRLF, err)
+	}
+	if lf != crlf {
+		t.Fatalf("a CRLF checkout must share the LF digest: %s != %s", crlf, lf)
+	}
+	if len(lf) != 64 || strings.Trim(lf, "0123456789abcdef") != "" {
+		t.Fatalf("digest is not a lowercase hexadecimal SHA-256: %q", lf)
+	}
+}
+
+func TestCanonicalTextDigestNegativeSeparatesEditsAndRejectsMixedEndings(t *testing.T) {
+	original, _, err := CanonicalTextDigest([]byte("version: 1\r\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	edited, _, err := CanonicalTextDigest([]byte("version: 2\r\n"))
+	if err != nil || edited == original {
+		t.Fatalf("an edited CRLF text must digest differently: err=%v", err)
+	}
+	for _, text := range []string{"a\r\nb\n", "a\rb\n"} {
+		if digest, _, err := CanonicalTextDigest([]byte(text)); err == nil || digest != "" {
+			t.Errorf("%q: mixed or lone carriage returns must be an error, got %q", text, digest)
+		}
+	}
+}
+
+func TestCanonicalTextDigestBoundaryEmptyAndUnterminatedText(t *testing.T) {
+	empty, crlf, err := CanonicalTextDigest(nil)
+	if err != nil || crlf || empty != "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" {
+		t.Fatalf("empty text: digest=%s crlf=%v err=%v", empty, crlf, err)
+	}
+	unterminated, _, err := CanonicalTextDigest([]byte("x"))
+	if err != nil || unterminated == empty {
+		t.Fatalf("a text without a line ending digests its bytes: %s err=%v", unterminated, err)
+	}
+	terminated, _, err := CanonicalTextDigest([]byte("x\n"))
+	if err != nil || terminated == unterminated {
+		t.Fatalf("a final line ending is content, not layout: err=%v", err)
+	}
+}
+
+func TestLookupCanonicalTextPositiveFindsBothStyles(t *testing.T) {
+	digest, _, err := CanonicalTextDigest([]byte("version: 1\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorded := map[string]string{digest: "labels"}
+	if value, known, crlf := LookupCanonicalText([]byte("version: 1\n"), recorded); !known || crlf || value != "labels" {
+		t.Fatalf("LF text: value=%q known=%v crlf=%v", value, known, crlf)
+	}
+	if value, known, crlf := LookupCanonicalText([]byte("version: 1\r\n"), recorded); !known || !crlf || value != "labels" {
+		t.Fatalf("CRLF checkout: value=%q known=%v crlf=%v", value, known, crlf)
+	}
+}
+
+func TestLookupCanonicalTextNegativeMissesEditsAndMixedEndings(t *testing.T) {
+	digest, _, err := CanonicalTextDigest([]byte("a\nb\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorded := map[string]string{digest: "labels"}
+	for _, text := range []string{"a\nc\n", "a\r\nb\n", "a\rb\n", "a\nb"} {
+		if value, known, crlf := LookupCanonicalText([]byte(text), recorded); known || crlf || value != "" {
+			t.Errorf("%q: value=%q known=%v crlf=%v, want no entry", text, value, known, crlf)
+		}
+	}
+}
+
+func TestLookupCanonicalTextBoundaryEmptyInputs(t *testing.T) {
+	if _, known, _ := LookupCanonicalText([]byte("x\n"), nil); known {
+		t.Fatal("a nil record set must find nothing")
+	}
+	empty, _, err := CanonicalTextDigest(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value, known, crlf := LookupCanonicalText(nil, map[string]string{empty: "empty"}); !known || crlf || value != "empty" {
+		t.Fatalf("an empty text is a text: value=%q known=%v crlf=%v", value, known, crlf)
+	}
+}

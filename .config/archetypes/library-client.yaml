@@ -1,6 +1,8 @@
+---
 id: "library-client"
 name: "Library & SDK Client"
-description: "Reusable, polyglot client libraries and SDK packages designed for minimal dependency footprint and append-only API stability"
+description: "Reusable, polyglot client libraries and SDK packages designed for
+  minimal dependency footprint and append-only API stability"
 runtime: "library"
 
 complexity:

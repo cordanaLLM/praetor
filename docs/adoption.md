@@ -87,6 +87,30 @@ unset flag keeps the default. The flags apply to single-repository adoption; bat
   a match is reported as verified, a difference as `differs from the scaffold` with a
   warning, and the file is kept. `--force` regenerates only the scaffolds it owns
   (`TestScaffoldFile_ReportsDriftInsteadOfVerified`).
+- **Earlier Praetor output.** The manifest, lock, label taxonomy, pinned catalog, flavor
+  YAML (`.clang-format` and `.clang-tidy` included) and the `docs:seo-portal` documentation
+  gate's YAML that adoption writes pass `yamllint --strict` with its default rules
+  (`make hooks-lint`, [git hooks](guides/git-hooks.md)). YAML written by other commands is not
+  covered yet: `.needs.yaml`, `FRAMEWORK_DEMAND.yaml`, `changelog.d` fragments and
+  `.github/FUNDING.yml` still fail `yamllint --strict`. Files an earlier release wrote
+  before that layout, and nobody edited since, are refreshed on a plain re-run with every value
+  unchanged: a manifest that is exactly `yaml.Marshal` of what it declares
+  (`TestAdoptMigratesAnEarlierManifestRendering`), the earlier label taxonomy
+  (`TestReconcileLabels_Positive_RefreshesPriorTaxonomy`), and a lock that pins only earlier
+  catalog texts, which is re-pinned to `--lock-source-root` while the pinned catalog files are
+  replaced (`TestAdoptRepinsAnUnmodifiedEarlierCatalog`). The catalog re-pin happens only when
+  every source file decodes to exactly the values of the earlier text it replaces; a source
+  that changes even one value keeps failing until `--force`
+  (`TestAdoptDoesNotRepinAnEarlierCatalogToChangedValues`). An earlier text is recognised in
+  either consistent line-ending style, so a CRLF checkout of the manifest or label taxonomy
+  (`core.autocrlf` on Windows) is refreshed too and keeps CRLF
+  (`TestAdoptMigratesACRLFEarlierManifestInItsOwnStyle`,
+  `TestReconcileLabels_Positive_RefreshesCRLFPriorInItsOwnStyle`). The catalog is the
+  exception: `.standards.lock` pins the exact LF bytes of each file, so a CRLF checkout of it
+  fails lock verification before and after this refresh; keep `.config/archetypes` at
+  `eol=lf` in `.gitattributes`. An edited copy of any of them, or one with mixed line endings,
+  is left as it is and keeps the contract above
+  (`TestAdoptDoesNotRepinAnEditedOrForeignCatalog`).
 
 ---
 

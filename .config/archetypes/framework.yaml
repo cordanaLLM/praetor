@@ -1,6 +1,8 @@
+---
 id: "framework"
 name: "Core Framework & SDK Systems"
-description: "Foundational developer platforms, compilers, and universal SDK libraries enforcing strict HISS invariants"
+description: "Foundational developer platforms, compilers, and universal SDK
+  libraries enforcing strict HISS invariants"
 runtime: "go"
 
 complexity:

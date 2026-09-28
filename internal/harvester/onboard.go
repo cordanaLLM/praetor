@@ -13,7 +13,6 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/editor"
 	"github.com/cordanaLLM/praetor/internal/util"
-	"gopkg.in/yaml.v3"
 )
 
 // ErrNotADirectory is returned when an onboarding target exists but is not a directory.
@@ -306,9 +305,9 @@ func ensureOnboardingManifest(ctx context.Context, repoPath, repoName, arch stri
 		Profiles: []string{arch},
 		Facets:   facets,
 	}
-	data, err := yaml.Marshal(&manifest)
+	data, err := config.RenderManifest(&manifest)
 	if err != nil {
-		return fmt.Errorf("marshal manifest: %w", err)
+		return err
 	}
 	if err := writeOnboardFile(ctx, repoPath, ".standards.yaml", data); err != nil {
 		return fmt.Errorf("write %s: %w", manifestPath, err)

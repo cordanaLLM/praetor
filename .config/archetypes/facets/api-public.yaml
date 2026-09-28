@@ -1,6 +1,9 @@
+---
 id: "api:public-contract"
 name: "Public API Contract & Stability"
-description: "Append-only ABI evolution per HISS-14 of the extended spec (docs/standards/hiss-spec.md; only its Migration: footer is gated, by forge check-commits), OpenAPI schema drift checks, and breaking change PR footers"
+description: "Append-only ABI evolution per HISS-14 of the extended spec
+  (docs/standards/hiss-spec.md; only its Migration: footer is gated, by forge
+  check-commits), OpenAPI schema drift checks, and breaking change PR footers"
 
 branch_protection:
   enforce_linear_history: true

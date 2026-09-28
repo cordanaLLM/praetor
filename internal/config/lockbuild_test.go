@@ -53,6 +53,16 @@ func TestBuildLockfileRealContentAndDeterministicReplay(t *testing.T) {
 	if strings.Contains(string(first), "generated_at") {
 		t.Fatalf("deterministic lock must not declare an always-empty generated_at:\n%s", first)
 	}
+	// yamllint's default rules, which an adopter's lint may apply (BUG-782): a document start,
+	// and each digest, 71 columns alone, on its own line below its key at every depth.
+	if !strings.HasPrefix(string(first), "---\n") {
+		t.Errorf("the lock must open with a document start:\n%s", first)
+	}
+	for _, line := range strings.Split(string(first), "\n") {
+		if len(line) > 80 && strings.Contains(strings.TrimLeft(line, " "), " ") {
+			t.Errorf("line past 80 columns: %q", line)
+		}
+	}
 }
 
 func TestBuildLockfileRequiresVerifiableSourceBundle(t *testing.T) {

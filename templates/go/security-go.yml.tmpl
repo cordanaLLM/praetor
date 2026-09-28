@@ -1,6 +1,7 @@
+---
 name: Security Scan
 
-on:
+'on':
   schedule:
     - cron: '0 4 * * *'
   push:
@@ -14,10 +15,14 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
-          # See ci.yml: setup-go's cache key carries no job name, so every job in the
-          # repository would share one build cache entry.
+          # See ci.yml: setup-go's cache key carries no job name, so every job
+          # in the repository would share one build cache entry.
           cache: false
 
+      # A cache key joins the runner, the go.sum hash and, for the build cache,
+      # the commit, and runs past 80 columns, so yamllint's line-length rule is
+      # off for the two cache steps alone.
+      # yamllint disable rule:line-length
       - name: Restore Go module cache
         uses: actions/cache@v6
         with:
@@ -26,7 +31,8 @@ jobs:
           restore-keys: |
             gomod-${{ runner.os }}-${{ runner.arch }}-
 
-      # `vulncheck` names this job's build cache and must differ from every other job's.
+      # `vulncheck` names this job's build cache and must differ from every
+      # other job's.
       - name: Restore Go build cache
         uses: actions/cache@v6
         with:
@@ -35,6 +41,7 @@ jobs:
           restore-keys: |
             gobuild-${{ runner.os }}-${{ runner.arch }}-vulncheck-${{ hashFiles('**/go.sum') }}-
             gobuild-${{ runner.os }}-${{ runner.arch }}-vulncheck-
+      # yamllint enable rule:line-length
 
       - name: Install Tools
         run: |

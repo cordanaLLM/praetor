@@ -1,0 +1,30 @@
+version: 1
+repository:
+    owner: acme
+    name: goapp
+    visibility: ""
+    description: ""
+    homepage: ""
+    topics: []
+profiles:
+    - framework
+facets:
+    - security:high
+    - api:public-contract
+    - docs:seo-portal
+    - agent:sandboxed
+register:
+    sources:
+        expected: 13
+        sha256: sha256:4c7b874749da032aacc4828175306035b1e432097b03793b3f406333ab37b3c6
+        inputs:
+            - path: .paperclip/harness.json
+              surface: prompts
+              kind: message
+              format: json
+              selector: operating_contract.*
+            - path: .paperclip/harness.json
+              surface: prompts
+              kind: message
+              format: json
+              selector: invariants.*

@@ -8,9 +8,10 @@ repository's own code. Adoption makes the test job a required check, so a step t
 must need only what that requirement checks; TestNodeCIJobIsScaffoldedOnlyWhereItRunsAsWritten
 fails on any command it does not model.
 */ -%>
+---
 name: CI
 
-on:
+'on':
   push:
     branches: [main]
   pull_request:
@@ -26,7 +27,8 @@ jobs:
           node-version: lts/*
           cache: npm
 
-      # npm ci installs exactly what package-lock.json records and fails when the two disagree.
+      # npm ci installs exactly what package-lock.json records and fails when
+      # the two disagree.
       - name: Install dependencies
         run: npm ci
 

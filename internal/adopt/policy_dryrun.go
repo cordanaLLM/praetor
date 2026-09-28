@@ -11,7 +11,6 @@ import (
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/paperclip"
 	"github.com/cordanaLLM/praetor/internal/util"
-	"gopkg.in/yaml.v3"
 )
 
 // newAdoptionManifest builds the manifest adoption writes, plus the harness plan its
@@ -195,15 +194,15 @@ func plannedPolicyInputs(ctx context.Context, s *adoptSession) ([]byte, []byte, 
 	if err != nil {
 		return nil, nil, err
 	}
-	if exists && !s.opts.Force {
+	decoded, err := config.DecodeManifest(manifest)
+	if err != nil {
+		return nil, nil, err
+	}
+	if exists && !s.opts.Force && !repinsEarlierCatalog(ctx, s, decoded) {
 		return manifest, lock, nil
 	}
 	if s.opts.LockSourceRoot == "" {
 		return nil, nil, ErrLockSourceRequired
-	}
-	decoded, err := config.DecodeManifest(manifest)
-	if err != nil {
-		return nil, nil, err
 	}
 	lock, err = config.BuildLockfile(ctx, s.opts.LockSourceRoot, decoded)
 	return manifest, lock, err
@@ -228,7 +227,7 @@ func plannedManifestBytes(ctx context.Context, s *adoptSession) ([]byte, error) 
 	if err != nil {
 		return nil, err
 	}
-	return yaml.Marshal(manifest)
+	return config.RenderManifest(manifest)
 }
 
 func observeAdoptionInput(ctx context.Context, s *adoptSession, name string) ([]byte, bool, error) {

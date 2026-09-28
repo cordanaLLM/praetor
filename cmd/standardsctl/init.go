@@ -13,7 +13,6 @@ import (
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/util"
-	"gopkg.in/yaml.v3"
 )
 
 // initFilePerm is the mode of the scaffolded, tracked configuration files.
@@ -127,9 +126,9 @@ func createInitialManifest(outputPath, profile string, facets []string, identity
 		Facets:     facets,
 	}
 
-	data, err := yaml.Marshal(&manifest)
+	data, err := config.RenderManifest(&manifest)
 	if err != nil {
-		return fmt.Errorf("failed to marshal manifest: %w", err)
+		return fmt.Errorf("failed to render manifest: %w", err)
 	}
 
 	if err := util.WriteFileSecure(outputPath, data, initFilePerm); err != nil {

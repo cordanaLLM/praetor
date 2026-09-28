@@ -9,6 +9,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/cavemansource"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -20,9 +21,63 @@ type manifestPlan struct {
 	note string
 }
 
+// isPriorManifestRendering reports whether data is the text an earlier adoption wrote for the
+// manifest it decodes to, yaml.Marshal's rendering before config.RenderManifest, in one
+// consistent line-ending style (util.CanonicalTextEquivalent, the rule priorRendering digests
+// with). An operator's edit, comment or reordering makes it differ, and the manifest is then
+// left as written.
+func isPriorManifestRendering(data []byte) bool {
+	manifest, err := config.DecodeManifest(data)
+	if err != nil {
+		return false
+	}
+	prior, err := yaml.Marshal(manifest)
+	if err != nil {
+		return false
+	}
+	equivalent, err := util.CanonicalTextEquivalent(data, prior)
+	return err == nil && equivalent
+}
+
 // planExistingManifest adds or re-binds register.sources in an existing manifest and leaves
-// every other declaration as written.
+// every other declaration as written. A manifest that is exactly an earlier Praetor rendering
+// is re-rendered in the current layout with the same declarations (migratePriorManifest).
 func planExistingManifest(ctx context.Context, s *adoptSession, full string, data []byte) (manifestPlan, bool, error) {
+	plan, changed, err := planManifestSources(ctx, s, full, data)
+	if err != nil || !isPriorManifestRendering(data) {
+		return plan, changed, err
+	}
+	return migratePriorManifest(ctx, plan, changed)
+}
+
+// migratePriorManifest renders the planned manifest in the current layout, in the planned
+// text's own line-ending style. It keeps the plan when the rendering is already current or
+// would decode to anything else.
+func migratePriorManifest(ctx context.Context, plan manifestPlan, changed bool) (manifestPlan, bool, error) {
+	manifest, err := config.DecodeManifest(plan.data)
+	if err != nil {
+		return manifestPlan{}, false, fmt.Errorf("existing %s: %w", manifestFile, err)
+	}
+	_, crlf, err := util.NormalizeLineEndingsStrict(string(plan.data))
+	if err != nil {
+		return manifestPlan{}, false, fmt.Errorf("existing %s: %w", manifestFile, err)
+	}
+	lf, err := config.RenderManifest(manifest)
+	if err != nil {
+		return manifestPlan{}, false, err
+	}
+	rendered := []byte(util.RestoreLineEndings(string(lf), crlf))
+	if bytes.Equal(rendered, plan.data) || !sameManifest(ctx, plan.data, rendered) {
+		return plan, changed, nil
+	}
+	note := "Migrated the unmodified earlier Praetor manifest to the current layout (document start, " +
+		"long values on their own line); declarations unchanged. " + plan.note
+	return manifestPlan{data: rendered, note: note}, true, nil
+}
+
+// planManifestSources adds or re-binds register.sources in an existing manifest and leaves
+// every other declaration as written.
+func planManifestSources(ctx context.Context, s *adoptSession, full string, data []byte) (manifestPlan, bool, error) {
 	// An existing manifest is an input: one the config loader rejects fails adoption here
 	// and is never reported as verified present on existence alone (BUG-853).
 	manifest, err := config.LoadManifest(full)
@@ -234,14 +289,14 @@ func encodeRegisterSourcesNode(sources *config.RegisterSources) (*yaml.Node, err
 	return &sourceNode, nil
 }
 
+// encodeAdoptManifest re-encodes a manifest tree, comments and key order kept, as one
+// lint-clean document (util.EncodeYAMLDocument).
 func encodeAdoptManifest(document *yaml.Node) ([]byte, error) {
-	var output bytes.Buffer
-	encoder := yaml.NewEncoder(&output)
-	encoder.SetIndent(2)
-	if err := errors.Join(encoder.Encode(document), encoder.Close()); err != nil {
+	output, err := util.EncodeYAMLDocument(document)
+	if err != nil {
 		return nil, fmt.Errorf("encode manifest with register sources: %w", err)
 	}
-	return output.Bytes(), nil
+	return output, nil
 }
 
 func decodeAdoptManifestNode(ctx context.Context, data []byte) (*yaml.Node, error) {

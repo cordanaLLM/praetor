@@ -69,7 +69,12 @@ func validateLabelEntries(labels []Label) error {
 // never create them (BUG-548). bug, enhancement and dependencies keep the colors and
 // descriptions GitHub and Dependabot give them by default, so reconciling a repository that
 // already has them changes nothing.
-const defaultLabelTaxonomy = `# Canonical Repository Label Taxonomy
+//
+// It opens with the "---" document start, so an adopter whose own yamllint runs its default
+// rules in strict mode over the whole tree accepts the file adoption writes (BUG-782).
+// Adoption refreshes the earlier text without the marker (internal/adopt/ruleset.go).
+const defaultLabelTaxonomy = `---
+# Canonical Repository Label Taxonomy
 version: 1
 labels:
   - name: "hiss-violation"

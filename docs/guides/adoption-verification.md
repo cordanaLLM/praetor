@@ -516,10 +516,13 @@ Malformed or oversized command metadata now fails before any adoption writes.
 
 `lefthook.yml` follows the same rule (`internal/adopt/lefthook_identity.go`):
 
-- A byte-exact earlier Praetor rendering is replaced by the current one and activated,
-  `--force` or not. The recognised renderings are listed by SHA-256 in
-  `priorLefthookDigests`; `internal/adopt/testdata/lefthook/` reproduces each one.
-  An edited copy is not exact: it is preserved and not activated.
+- An exact earlier Praetor rendering is replaced by the current one and activated,
+  `--force` or not. The recognised renderings are listed by SHA-256 of their LF text in
+  `priorLefthookDigests`; `internal/adopt/testdata/lefthook/` reproduces each one. A CRLF
+  checkout of one (`core.autocrlf` on Windows) is recognised too and replaced by the current
+  rendering's LF bytes, the only bytes activation trusts
+  (`TestAdopt_Positive_CRLFPriorLefthookMigratedAndActivated`). An edited copy, or one with
+  mixed line endings, is not exact: it is preserved and not activated.
 - A configuration that reaches `.config/lefthook/praetor.yml`, the vendorable canonical
   policy, through `extends` or through the `configs` of a `remotes` entry is never
   replaced, `--force` included. Neither are the files vendored beside it:

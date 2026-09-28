@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -274,12 +275,13 @@ func overlay(files map[string][]byte, owner identity) (map[string][]byte, error)
 	return result, nil
 }
 
+// equivalent compares the owner manifest by its decoded values (util.YAMLEquivalent) and every
+// other owner file byte for byte.
 func equivalent(path string, a, b []byte) bool {
 	if path != ownerPaths[0] {
 		return bytes.Equal(a, b)
 	}
-	var av, bv any
-	return yaml.Unmarshal(a, &av) == nil && yaml.Unmarshal(b, &bv) == nil && reflect.DeepEqual(av, bv)
+	return util.YAMLEquivalent(a, b) == nil
 }
 
 // addableManifestRepositoryFields lists repository.* keys a later overlay may start writing

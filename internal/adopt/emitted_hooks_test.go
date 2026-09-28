@@ -10,26 +10,31 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// emittedFixtureRoot holds the two hook files adoption renders from templates, at the paths
-// adoption writes them. scripts/test_emitted_hook_lint.py lints them with the downstream
-// defaults (make hooks-lint); TestEmittedHookFixturesMatchTheRendering keeps them equal to
-// the rendering, so the lint covers what adoption writes (BUG-782).
+// emittedFixtureRoot holds the two hook files adoption renders from templates and the
+// manifest it renders, at the paths adoption writes them. scripts/test_emitted_hook_lint.py
+// and scripts/test_emitted_yaml_lint.py lint them with the downstream defaults (make
+// hooks-lint); TestEmittedHookFixturesMatchTheRendering keeps them equal to the rendering, so
+// the lint covers what adoption writes (BUG-782).
 const emittedFixtureRoot = "testdata/emitted"
 
 // updateEmittedFixturesEnv rewrites the fixtures from the rendering instead of comparing.
 const updateEmittedFixturesEnv = "PRAETOR_UPDATE_EMITTED_FIXTURES"
 
-// emittedHookRenderings maps each rendered hook file to the bytes adoption writes. The
-// lefthook.yml fixture is the rendering with checkpoint jobs, the superset adopters get.
-func emittedHookRenderings() map[string]string {
+// emittedHookRenderings maps each rendered file to the bytes adoption writes. The
+// lefthook.yml fixture is the rendering with checkpoint jobs, the superset adopters get; the
+// manifest is the current rendering of the declarations an earlier adoption wrote
+// (renderedPriorManifest).
+func emittedHookRenderings(t *testing.T) map[string]string {
+	t.Helper()
 	return map[string]string{
 		lefthookFile:    buildLefthookYAMLFor(true),
 		evasionHookFile: buildBlockEvasionPY(),
+		manifestFile:    renderedPriorManifest(t),
 	}
 }
 
 func TestEmittedHookFixturesMatchTheRendering(t *testing.T) {
-	for rel, want := range emittedHookRenderings() {
+	for rel, want := range emittedHookRenderings(t) {
 		path := filepath.Join(emittedFixtureRoot, filepath.FromSlash(rel))
 		if os.Getenv(updateEmittedFixturesEnv) == "1" {
 			mustWrite(t, path, want)

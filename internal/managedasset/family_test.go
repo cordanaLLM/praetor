@@ -351,3 +351,40 @@ func TestFamilyPriorTextBoundary(t *testing.T) {
 		t.Fatal("Prior above its bound validated")
 	}
 }
+
+// Positive: PriorRendering reports the line-ending style of a recognised earlier text, so a
+// refresh writes the current text back in the file's own style.
+func TestFamilyPriorRenderingPositiveReportsStyle(t *testing.T) {
+	family := priorFixtureFamily()
+	if known, crlf := family.PriorRendering(family.WorkflowFile, []byte(priorWorkflow)); !known || crlf {
+		t.Fatalf("LF earlier text: known=%v crlf=%v", known, crlf)
+	}
+	crlfText := strings.ReplaceAll(priorWorkflow, "\n", "\r\n")
+	if known, crlf := family.PriorRendering(family.WorkflowFile, []byte(crlfText)); !known || !crlf {
+		t.Fatalf("CRLF checkout of an earlier text: known=%v crlf=%v", known, crlf)
+	}
+}
+
+// Negative: a CRLF edit, and a CRLF earlier text at a path its digest does not name, are not
+// earlier texts, so no refresh style is reported for them.
+func TestFamilyPriorRenderingNegativeRefusesEditsAndOtherPaths(t *testing.T) {
+	family := priorFixtureFamily()
+	edited := strings.ReplaceAll(priorWorkflow+"# edited\n", "\n", "\r\n")
+	if known, _ := family.PriorRendering(family.WorkflowFile, []byte(edited)); known {
+		t.Fatal("an edited CRLF copy was taken for an earlier Praetor text")
+	}
+	crlfText := strings.ReplaceAll(priorWorkflow, "\n", "\r\n")
+	if known, _ := family.PriorRendering("tools/fixture/core.mjs", []byte(crlfText)); known {
+		t.Fatal("an earlier text was recognised at a path its digest does not name")
+	}
+}
+
+// Boundary: mixed endings and a lone carriage return match nothing and report no CRLF style.
+func TestFamilyPriorRenderingBoundaryMixedEndings(t *testing.T) {
+	family := priorFixtureFamily()
+	for _, text := range []string{"name: Fixture Gate\r\non: push\n", "name: Fixture Gate\ron: push\n"} {
+		if known, crlf := family.PriorRendering(family.WorkflowFile, []byte(text)); known || crlf {
+			t.Fatalf("%q: known=%v crlf=%v, want neither", text, known, crlf)
+		}
+	}
+}
