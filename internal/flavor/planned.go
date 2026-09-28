@@ -27,7 +27,7 @@ type PlannedTemplate struct {
 	Content string
 }
 
-// PlannedWorkflows returns the CI workflows of the flavor Detect names under repoPath that
+// PlannedWorkflows returns the CI workflows of the flavor Resolve names under repoPath that
 // ApplyFlavor without --force leaves as the flavor's own rendering: an absent workflow it
 // writes, and a present one canonically equal to that rendering (an earlier apply's). A present
 // workflow that differs is the repository's own, and one a requirement or an alternative
@@ -38,9 +38,9 @@ func PlannedWorkflows(ctx context.Context, repoPath string) ([]PlannedTemplate, 
 	if ctx == nil {
 		return nil, errors.New("planned workflows require a context")
 	}
-	name, ok := Detect(repoPath)
-	if !ok {
-		return nil, nil
+	name, err := plannedFlavorName(repoPath)
+	if name == "" {
+		return nil, err
 	}
 	flv, err := Get(name)
 	if err != nil {
@@ -65,6 +65,20 @@ func PlannedWorkflows(ctx context.Context, repoPath string) ([]PlannedTemplate, 
 		}
 	}
 	return planned, nil
+}
+
+// plannedFlavorName resolves the flavor ApplyFlavor scaffolds for repoPath, as Resolve does for
+// apply and audit. A repository no flavor matches, or whose profile has none, yields an empty
+// name and no error, like the skipped flavor step in adoption; any other failure is returned.
+func plannedFlavorName(repoPath string) (string, error) {
+	name, err := Resolve(repoPath)
+	switch {
+	case errors.Is(err, ErrNoFlavorMatched), errors.Is(err, ErrFlavorNotApplicable):
+		return "", nil
+	case err != nil:
+		return "", fmt.Errorf("planned workflows: %w", err)
+	}
+	return name, nil
 }
 
 // plannedBody renders one template and reports whether an apply without --force leaves that
