@@ -73,17 +73,24 @@ func manifestEditions(manifest string) map[string]string {
 			table = util.TOMLTableName(line)
 			continue
 		}
-		key, value, ok := util.TOMLKeyValue(line)
-		if !ok || strings.HasPrefix(line, "#") || (key != "edition" && !strings.HasSuffix(key, ".edition")) {
-			continue
-		}
-		if table != "" {
-			key = table + "." + key
-		}
-		edition, isString := util.TOMLStringValue(value)
-		if _, seen := editions[key]; !seen && isString && rustEdition.MatchString(edition) {
+		key, edition, ok := editionAssignment(table, line)
+		if _, seen := editions[key]; ok && !seen {
 			editions[key] = edition
 		}
 	}
 	return editions
+}
+
+// editionAssignment returns the full key line assigns under table and the edition it assigns,
+// when the key ends in "edition" and the value is a well-formed edition string (rustEdition).
+func editionAssignment(table, line string) (key, edition string, ok bool) {
+	key, value, ok := util.TOMLKeyValue(line)
+	if !ok || strings.HasPrefix(line, "#") || (key != "edition" && !strings.HasSuffix(key, ".edition")) {
+		return "", "", false
+	}
+	if table != "" {
+		key = table + "." + key
+	}
+	edition, ok = util.TOMLStringValue(value)
+	return key, edition, ok && rustEdition.MatchString(edition)
 }
