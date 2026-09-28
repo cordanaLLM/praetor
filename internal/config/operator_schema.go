@@ -265,9 +265,18 @@ func matching(pattern *regexp.Regexp, want string) settingCheck {
 	}
 }
 
+// branchNameRule describes the names ValidBranchName accepts, for an error message.
+const branchNameRule = "a branch name of 1..128 letters, digits, '.', '_', '/' or '-' without '..'"
+
+// ValidBranchName reports whether name is a branch name Praetor accepts in configuration: the
+// operator setting update.branch and the manifest's repository.default_branch alike.
+func ValidBranchName(name string) bool {
+	return branchPattern.MatchString(name) && !strings.Contains(name, "..")
+}
+
 func branchName(_ string, setting OperatorSetting) error {
-	if !branchPattern.MatchString(setting.Value) || strings.Contains(setting.Value, "..") {
-		return fmt.Errorf("%s must be a branch name of 1..128 letters, digits, '.', '_', '/' or '-' without '..'", setting.Path)
+	if !ValidBranchName(setting.Value) {
+		return fmt.Errorf("%s must be %s", setting.Path, branchNameRule)
 	}
 	return nil
 }

@@ -32,11 +32,11 @@ func TestRenderRulesetForRepository_Positive_ChecksComeFromTheWorkflows(t *testi
 	if !slices.Equal(contexts, []string{"verify"}) {
 		t.Fatalf("contexts = %v, want [verify]", contexts)
 	}
-	want, err := RenderRepositoryRuleset(policy, contexts)
+	want, err := RenderRepositoryRuleset("main", policy, contexts)
 	if err != nil || !bytes.Equal(data, want) {
 		t.Fatalf("rendering differs from RenderRepositoryRuleset: %v\n%s", err, data)
 	}
-	if err := ValidateRepositoryRuleset(data, policy, contexts); err != nil {
+	if err := ValidateRepositoryRuleset(data, "main", policy, contexts); err != nil {
 		t.Fatalf("the rendering does not validate: %v", err)
 	}
 }
@@ -101,11 +101,11 @@ func renderingInputCases() map[string]struct {
 func TestPriorRulesetDigests_Positive_FindsTheBaselineRendering(t *testing.T) {
 	for name, tc := range renderingInputCases() {
 		t.Run(name, func(t *testing.T) {
-			data, err := RenderRepositoryRuleset(tc.policy, tc.contexts)
+			data, err := RenderRepositoryRuleset("main", tc.policy, tc.contexts)
 			if err != nil {
 				t.Fatal(err)
 			}
-			current, err := RenderRepositoryRuleset(tc.policy, append(slices.Clone(tc.contexts), "added"))
+			current, err := RenderRepositoryRuleset("main", tc.policy, append(slices.Clone(tc.contexts), "added"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -126,7 +126,7 @@ func TestPriorRulesetDigests_Positive_FindsTheBaselineRendering(t *testing.T) {
 func TestPriorRulesetDigests_Negative_ValueEditsMatchNothing(t *testing.T) {
 	policy := config.DefaultPolicy().BranchProtection
 	contexts := []string{"test"}
-	current, err := RenderRepositoryRuleset(policy, append(slices.Clone(contexts), "Documentation Governance"))
+	current, err := RenderRepositoryRuleset("main", policy, append(slices.Clone(contexts), "Documentation Governance"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func TestPriorRulesetDigests_Negative_ValueEditsMatchNothing(t *testing.T) {
 	stale.DismissStaleReviews = !policy.DismissStaleReviews
 	linear.EnforceLinearHistory = !policy.EnforceLinearHistory
 	render := func(p config.BranchProtectionPolicy, c []string) string {
-		data, err := RenderRepositoryRuleset(p, c)
+		data, err := RenderRepositoryRuleset("main", p, c)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -174,7 +174,7 @@ func TestPriorRulesetDigests_Negative_ValueEditsMatchNothing(t *testing.T) {
 // the renderer refuses (a negative review count, a duplicated check) yields no digest.
 func TestPriorRulesetDigests_Boundary_CurrentOrUnrenderableBaseline(t *testing.T) {
 	policy := config.DefaultPolicy().BranchProtection
-	current, err := RenderRepositoryRuleset(policy, []string{"test"})
+	current, err := RenderRepositoryRuleset("main", policy, []string{"test"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +270,7 @@ func TestRenderRulesetForRepository_Positive_PlannedWorkflowsAreRequired(t *test
 	if !slices.Equal(contexts, []string{"verify", "docs"}) {
 		t.Fatalf("contexts = %v, want [verify docs]", contexts)
 	}
-	if err := ValidateRepositoryRuleset(data, policy, contexts); err != nil {
+	if err := ValidateRepositoryRuleset(data, "main", policy, contexts); err != nil {
 		t.Fatalf("the rendering does not validate: %v", err)
 	}
 }

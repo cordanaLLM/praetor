@@ -259,7 +259,7 @@ func signedPolicy() config.BranchProtectionPolicy {
 
 func renderAuditRuleset(t *testing.T, policy config.BranchProtectionPolicy, contexts []string) string {
 	t.Helper()
-	data, err := forge.RenderRepositoryRuleset(policy, contexts)
+	data, err := forge.RenderRepositoryRuleset("main", policy, contexts)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -14,7 +14,7 @@ import (
 // branch-ruleset step renders through forge.RenderRulesetForRepository, which derives contexts
 // from the workflows on disk; tests that fix the contexts themselves render through this.
 func buildRulesetJSON(policy config.BranchProtectionPolicy, contexts []string) (string, error) {
-	data, err := forge.RenderRepositoryRuleset(policy, contexts)
+	data, err := forge.RenderRepositoryRuleset("main", policy, contexts)
 	return string(data), err
 }
 

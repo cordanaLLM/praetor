@@ -112,7 +112,9 @@ func reconcileLabelDescriptions(ctx context.Context, labelsPath string, data []b
 	return updated, nil
 }
 
-func reconcileRuleset(ctx context.Context, rootDir string, bp config.BranchProtectionPolicy, contexts []string) error {
+// reconcileRuleset writes the ruleset for the default branch branch when it is absent, then
+// validates the one on disk against it.
+func reconcileRuleset(ctx context.Context, rootDir, branch string, bp config.BranchProtectionPolicy, contexts []string) error {
 	rulesetPath := filepath.Join(rootDir, ".github", "rulesets", "main.json")
 	data, exists, err := contextopt.ObserveSnapshot(ctx, rulesetPath)
 	if err != nil {
@@ -120,7 +122,7 @@ func reconcileRuleset(ctx context.Context, rootDir string, bp config.BranchProte
 	}
 	if !exists {
 		fmt.Println("  [FIX] Synthesizing declarative branch protection ruleset (.github/rulesets/main.json)...")
-		if err := synthesizeRuleset(rulesetPath, bp, contexts); err != nil {
+		if err := synthesizeRuleset(rulesetPath, branch, bp, contexts); err != nil {
 			return fmt.Errorf("failed synthesizing ruleset: %w", err)
 		}
 		data, err = contextopt.ReadSnapshot(ctx, rulesetPath)
@@ -128,10 +130,10 @@ func reconcileRuleset(ctx context.Context, rootDir string, bp config.BranchProte
 			return fmt.Errorf("ruleset readback failed: %w", err)
 		}
 	}
-	if err := forge.ValidateRepositoryRuleset(data, bp, contexts); err != nil {
-		return fmt.Errorf(".github/rulesets/main.json validation failed: %w", err)
+	if err := forge.ValidateRepositoryRuleset(data, branch, bp, contexts); err != nil {
+		return fmt.Errorf(".github/rulesets/main.json validation failed for default branch %s: %w", branch, err)
 	}
-	fmt.Println("  [OK] Branch protection ruleset verified (.github/rulesets/main.json: matches declared policy)")
+	fmt.Printf("  [OK] Branch protection ruleset verified (.github/rulesets/main.json: matches declared policy for default branch %s)\n", branch)
 	return nil
 }
 
@@ -185,6 +187,8 @@ func verifyOriginIdentity(ctx context.Context, rootDir, host, owner, name string
 // remoteSyncInputs is the locally verified state a --remote sync writes to the forge.
 type remoteSyncInputs struct {
 	manifest *config.Manifest
+	// branch is the default branch the local ruleset was verified for (forge.RepositoryDefaultBranch).
+	branch   string
 	policy   *config.BranchProtectionPolicy
 	contexts []string
 	// labels is the taxonomy from .config/labels.yaml, as forge.ParseLabelTaxonomy read it.
@@ -224,14 +228,14 @@ func reconcileRemoteForge(ctx context.Context, rootDir string, in remoteSyncInpu
 	gh.SetRepository(owner, name)
 	// The remote ruleset is the local .github/rulesets/main.json one: same name, same refs.
 	gh.RulesetName = forge.RepositoryRulesetName
-	gh.ProtectedRefs = forge.RepositoryRulesetRefs()
+	gh.ProtectedRefs = forge.RepositoryRulesetRefs(in.branch)
 	gh.RequiredStatusChecks = append([]string(nil), in.contexts...)
 	gh.StrictStatusChecks = true
 	fmt.Printf("  [SYNC] Reconciling branch protection ruleset on GitHub for %s/%s...\n", owner, name)
-	if err := gh.ReconcileProtection(ctx, "main", in.policy); err != nil {
+	if err := gh.ReconcileProtection(ctx, in.branch, in.policy); err != nil {
 		return err
 	}
-	fmt.Println("  [OK] Remote branch protection synchronized on GitHub (main and lts-*, read back; live rules praetor does not render kept)")
+	fmt.Printf("  [OK] Remote branch protection synchronized on GitHub (%s and lts-*, read back; live rules praetor does not render kept)\n", in.branch)
 	fmt.Printf("  [SYNC] Reconciling %d labels from .config/labels.yaml on GitHub...\n", len(in.labels))
 	if err := gh.ReconcileLabels(ctx, in.labels); err != nil {
 		return fmt.Errorf("reconcile labels: %w", err)
@@ -317,6 +321,11 @@ func runSync(args []string) error {
 	if err != nil {
 		return fmt.Errorf("discover repository workflow checks: %w", err)
 	}
+	// One resolution serves the local ruleset and the remote one, so they protect the same branch.
+	branch, err := forge.RepositoryDefaultBranch(ctx, rootDir, manifest)
+	if err != nil {
+		return err
+	}
 
 	fmt.Printf("Reconciling configuration for %s/%s...\n", manifest.Repository.Owner, manifest.Repository.Name)
 
@@ -324,7 +333,7 @@ func runSync(args []string) error {
 	if err != nil {
 		return err
 	}
-	policy, missing, err := verifySyncLocal(ctx, flags.configPath, flags.catalogRoot, manifest, contexts)
+	policy, missing, err := verifySyncLocal(ctx, flags.configPath, flags.catalogRoot, manifest, branch, contexts)
 	if err != nil {
 		return err
 	}
@@ -333,7 +342,7 @@ func runSync(args []string) error {
 	}
 
 	if flags.remote {
-		in := remoteSyncInputs{manifest: manifest, policy: &policy.BranchProtection, contexts: contexts, labels: labels}
+		in := remoteSyncInputs{manifest: manifest, branch: branch, policy: &policy.BranchProtection, contexts: contexts, labels: labels}
 		if err := reconcileRemoteForge(ctx, rootDir, in, flags.remoteOpts); err != nil {
 			return fmt.Errorf("remote forge sync failed: %w", err)
 		}
@@ -345,9 +354,9 @@ func runSync(args []string) error {
 	return nil
 }
 
-// verifySyncLocal verifies the companion files, then reconciles the ruleset against the
-// branch protection adopt renders, resolved through the resolver plan uses. It returns how
-// many checks are missing or unverified.
+// verifySyncLocal verifies the companion files, then reconciles the ruleset of the default
+// branch branch against the branch protection adopt renders, resolved through the resolver plan
+// uses. It returns how many checks are missing or unverified.
 //
 // A policy that does not resolve has no stand-in: the ruleset is then neither synthesized
 // nor validated, because a file checked against built-in defaults plus overrides would be
@@ -355,7 +364,7 @@ func runSync(args []string) error {
 // The cause is counted once: a lock the selected catalog cannot verify is also why its
 // policy does not resolve, so it is not counted again for the ruleset. A nil policy is only
 // returned with a positive count, so the caller never reaches the forge without one.
-func verifySyncLocal(ctx context.Context, configPath, catalogRoot string, manifest *config.Manifest, contexts []string) (*config.ResolvedPolicy, int, error) {
+func verifySyncLocal(ctx context.Context, configPath, catalogRoot string, manifest *config.Manifest, branch string, contexts []string) (*config.ResolvedPolicy, int, error) {
 	rootDir := filepath.Dir(configPath)
 	companions, err := verifySyncCompanions(ctx, rootDir, catalogRoot, manifest)
 	if err != nil {
@@ -363,7 +372,7 @@ func verifySyncLocal(ctx context.Context, configPath, catalogRoot string, manife
 	}
 	policy, _, cause := config.ResolveRepositoryPolicyFromCatalog(ctx, configPath, catalogRoot, manifest)
 	if cause == nil && policy != nil {
-		return policy, companions.incomplete, reconcileRuleset(ctx, rootDir, policy.BranchProtection, contexts)
+		return policy, companions.incomplete, reconcileRuleset(ctx, rootDir, branch, policy.BranchProtection, contexts)
 	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, 0, fmt.Errorf("resolve effective policy: %w", ctxErr)
@@ -380,12 +389,12 @@ func verifySyncLocal(ctx context.Context, configPath, catalogRoot string, manife
 	return nil, companions.incomplete + counted, nil
 }
 
-func synthesizeRuleset(targetPath string, bp config.BranchProtectionPolicy, contexts []string) error {
+func synthesizeRuleset(targetPath, branch string, bp config.BranchProtectionPolicy, contexts []string) error {
 	if err := util.MkdirSecure(filepath.Dir(targetPath), syncDirPerm); err != nil {
 		return err
 	}
 
-	data, err := forge.RenderRepositoryRuleset(bp, contexts)
+	data, err := forge.RenderRepositoryRuleset(branch, bp, contexts)
 	if err != nil {
 		return err
 	}

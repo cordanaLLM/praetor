@@ -121,7 +121,7 @@ func auditDocumentationGate(ctx context.Context, manifest *config.Manifest, root
 	if err := auditDocumentationLocalWiring(ctx, rootDir, declines); err != nil {
 		return err
 	}
-	if err := auditDocumentationHostedWiring(ctx, branch, rootDir, declines.ruleset); err != nil {
+	if err := auditDocumentationHostedWiring(ctx, manifest, branch, rootDir, declines.ruleset); err != nil {
 		return err
 	}
 	fmt.Printf("[PASS] Locked documentation gate verified (%d assets, %s).\n", count, declines.summary())
@@ -354,8 +354,11 @@ func auditManagedGitIgnoreBlock(ctx context.Context, rootDir string) error {
 	return nil
 }
 
+// auditDocumentationHostedWiring checks that the hosted documentation workflows report their
+// contexts and, unless declined, that the ruleset is the one protection renders for the
+// repository's default branch (forge.RepositoryDefaultBranch) and those contexts.
 func auditDocumentationHostedWiring(
-	ctx context.Context, branch config.BranchProtectionPolicy, rootDir string, rulesetDeclined bool,
+	ctx context.Context, manifest *config.Manifest, protection config.BranchProtectionPolicy, rootDir string, rulesetDeclined bool,
 ) error {
 	contexts, err := forge.RequiredStatusContexts(ctx, rootDir)
 	if err != nil {
@@ -376,7 +379,11 @@ func auditDocumentationHostedWiring(
 	if err != nil {
 		return fmt.Errorf("[FAIL] Read documentation branch ruleset: %w", err)
 	}
-	if err := forge.ValidateRepositoryRuleset(ruleset, branch, contexts); err != nil {
+	defaultBranch, err := forge.RepositoryDefaultBranch(ctx, rootDir, manifest)
+	if err != nil {
+		return fmt.Errorf("[FAIL] Documentation branch ruleset audit failed: %w", err)
+	}
+	if err := forge.ValidateRepositoryRuleset(ruleset, defaultBranch, protection, contexts); err != nil {
 		return fmt.Errorf("[FAIL] Documentation required status context is not reconciled in the branch ruleset: %w", err)
 	}
 	return nil

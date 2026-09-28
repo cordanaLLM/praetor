@@ -49,7 +49,7 @@ func assertRenderedRuleset(t *testing.T, dir string, policy config.BranchProtect
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := forge.ValidateRepositoryRuleset(data, policy, contexts); err != nil {
+	if err := forge.ValidateRepositoryRuleset(data, "main", policy, contexts); err != nil {
 		t.Fatalf("ruleset is not the rendering of the effective policy: %v\n%s", err, data)
 	}
 }
@@ -191,7 +191,7 @@ func TestApplyFlavor_Boundary_TemplatesOnlyLeavesSettingsAlone(t *testing.T) {
 // declared, a rendering an adopter edited.
 func writeEarlierRendering(t *testing.T, dir string, policy config.BranchProtectionPolicy, contexts []string, crlf bool) string {
 	t.Helper()
-	data, err := forge.RenderRepositoryRuleset(policy, contexts)
+	data, err := forge.RenderRepositoryRuleset("main", policy, contexts)
 	if err != nil {
 		t.Fatal(err)
 	}

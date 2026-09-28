@@ -21,7 +21,7 @@ func newSyncValidationFixture(t *testing.T) *auditFixture {
 	if err := synthesizeDefaultLabels(filepath.Join(f.dir, ".config/labels.yaml")); err != nil {
 		t.Fatal(err)
 	}
-	if err := synthesizeRuleset(filepath.Join(f.dir, ".github/rulesets/main.json"), config.DefaultPolicy().BranchProtection, nil); err != nil {
+	if err := synthesizeRuleset(filepath.Join(f.dir, ".github/rulesets/main.json"), "main", config.DefaultPolicy().BranchProtection, nil); err != nil {
 		t.Fatal(err)
 	}
 	return f
@@ -41,7 +41,7 @@ func TestSyncRulesetFollowsTheJoinedProfileBranchProtection(t *testing.T) {
 	// Positive: the ruleset rendered from the joined policy verifies.
 	joined := config.DefaultPolicy().BranchProtection
 	joined.RequireSignedCommits, joined.RequiredApprovingReviewers = true, 2
-	if err := synthesizeRuleset(filepath.Join(f.dir, ".github/rulesets/main.json"), joined, nil); err != nil {
+	if err := synthesizeRuleset(filepath.Join(f.dir, ".github/rulesets/main.json"), "main", joined, nil); err != nil {
 		t.Fatal(err)
 	}
 	out, err := runSyncCmd(t, "--config="+f.manifestPath)

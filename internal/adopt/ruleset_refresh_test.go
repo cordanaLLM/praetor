@@ -71,7 +71,7 @@ func TestAdopt_Positive_RefreshesTheRulesetFlavorApplyWrote(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := forge.ValidateRepositoryRuleset(before, config.DefaultPolicy().BranchProtection, contexts); err != nil {
+	if err := forge.ValidateRepositoryRuleset(before, "main", config.DefaultPolicy().BranchProtection, contexts); err != nil {
 		t.Fatalf("flavor apply must leave the built-in policy's rendering: %v\n%s", err, before)
 	}
 
@@ -110,7 +110,7 @@ func TestAdopt_Negative_ValueEditAfterFlavorApplyIsKept(t *testing.T) {
 	}
 	signed := config.DefaultPolicy().BranchProtection
 	signed.RequireSignedCommits = true
-	data, err := forge.RenderRepositoryRuleset(signed, append(slices.Clone(contexts), "e2e"))
+	data, err := forge.RenderRepositoryRuleset("main", signed, append(slices.Clone(contexts), "e2e"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestAdopt_Positive_FlavorApplyAfterAdoptionRefreshesTheRuleset(t *testing.T
 // repository's: adoption keeps it and warns, as it keeps any other differing ruleset.
 func TestAdopt_Negative_EditedRenderingIsKept(t *testing.T) {
 	repo := newTestRepo(t, "edited-rendering")
-	data, err := forge.RenderRepositoryRuleset(config.DefaultPolicy().BranchProtection, nil)
+	data, err := forge.RenderRepositoryRuleset("main", config.DefaultPolicy().BranchProtection, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +217,7 @@ func TestAdoptDryRun_Positive_FirstAdoptionPreviewIsTheWrittenRuleset(t *testing
 // bytes: every added line of its diff keeps the file's line ending.
 func TestAdopt_Boundary_CRLFRenderingRefreshesInItsOwnLineEndings(t *testing.T) {
 	repo := newTestRepo(t, "crlf-rendering")
-	data, err := forge.RenderRepositoryRuleset(config.DefaultPolicy().BranchProtection, nil)
+	data, err := forge.RenderRepositoryRuleset("main", config.DefaultPolicy().BranchProtection, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,5 +239,122 @@ func TestAdopt_Boundary_CRLFRenderingRefreshesInItsOwnLineEndings(t *testing.T) 
 	}
 	if _, err := auditAdoptedRuleset(t, repo); err != nil {
 		t.Fatalf("the refreshed CRLF ruleset must pass the audit: %v", err)
+	}
+}
+
+// recordOriginHead points the test checkout's origin HEAD at branch, as git clone records it.
+func recordOriginHead(t *testing.T, repo, branch string) {
+	t.Helper()
+	mustWrite(t, filepath.Join(repo, ".git", "refs", "remotes", "origin", "HEAD"), "ref: refs/remotes/origin/"+branch+"\n")
+}
+
+// readRuleset returns the ruleset adoption left in repo.
+func readRuleset(t *testing.T, repo string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(repo, rulesetFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// A repository whose default branch is master gets a ruleset protecting master, and the audit
+// passes. A checkout without the origin HEAD, as CI checks out, passes once .standards.yaml
+// declares the branch, and fails as drift before, since it would render main.
+func TestAdopt_Positive_MasterRepositoryRulesetProtectsMaster(t *testing.T) {
+	repo := newTestRepo(t, "master-default")
+	recordOriginHead(t, repo, "master")
+	adoptForRuleset(t, repo, false)
+	if written := readRuleset(t, repo); !strings.Contains(written, `"refs/heads/master"`) || strings.Contains(written, `"refs/heads/main"`) {
+		t.Fatalf("a master repository's ruleset must protect master and not main:\n%s", written)
+	}
+	if summary, err := auditAdoptedRuleset(t, repo); err != nil || !strings.HasPrefix(summary, "[PASS]") {
+		t.Fatalf("the audit must pass for a master repository: %q, %v", summary, err)
+	}
+
+	if err := os.Remove(filepath.Join(repo, ".git", "refs", "remotes", "origin", "HEAD")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := auditAdoptedRuleset(t, repo); err == nil || !strings.Contains(err.Error(), forge.ErrRulesetDrift.Error()) {
+		t.Fatalf("without origin HEAD or a declaration the audit renders main and must report drift, got %v", err)
+	}
+	manifestPath := filepath.Join(repo, config.ManifestFileName)
+	manifest, err := config.LoadManifest(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.Repository.DefaultBranch = "master"
+	declared, err := config.RenderManifest(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, manifestPath, string(declared))
+	if summary, err := auditAdoptedRuleset(t, repo); err != nil || !strings.HasPrefix(summary, "[PASS]") {
+		t.Fatalf("a declared master must pass the audit without origin HEAD: %q, %v", summary, err)
+	}
+}
+
+// The ruleset every Praetor before this one wrote for a master repository protects main. It is
+// Praetor's unedited rendering, so a plain adoption refreshes it to master without --force and
+// the audit passes; the dry run previews that update. The same file in a main repository is
+// current and stays unchanged.
+func TestAdopt_Positive_RefreshesTheEarlierMainRulesetOfAMasterRepository(t *testing.T) {
+	earlier, err := forge.RenderRepositoryRuleset(forge.FallbackDefaultBranch, config.DefaultPolicy().BranchProtection, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := newTestRepo(t, "master-earlier-main")
+	recordOriginHead(t, repo, "master")
+	mustWrite(t, filepath.Join(repo, rulesetFile), string(earlier))
+	if preview := dryRunRulesetPreview(t, repo, false); preview.Action != PreviewUpdate ||
+		!strings.Contains(preview.Diff, "\n+        \"refs/heads/master\",\n") {
+		t.Fatalf("the dry run must preview the refresh to master, got %+v", preview)
+	}
+	rep := adoptForRuleset(t, repo, false)
+	if warnings := rulesetWarnings(rep); len(warnings) != 0 {
+		t.Fatalf("the earlier main rendering was reported as drift: %v", warnings)
+	}
+	if written := readRuleset(t, repo); !strings.Contains(written, `"refs/heads/master"`) || strings.Contains(written, `"refs/heads/main"`) {
+		t.Fatalf("the earlier main rendering must be refreshed to master:\n%s", written)
+	}
+	if _, err := auditAdoptedRuleset(t, repo); err != nil {
+		t.Fatalf("the refreshed ruleset must pass the audit: %v", err)
+	}
+
+	mainRepo := newTestRepo(t, "main-earlier-main")
+	recordOriginHead(t, mainRepo, "main")
+	mustWrite(t, filepath.Join(mainRepo, rulesetFile), string(earlier))
+	if preview := dryRunRulesetPreview(t, mainRepo, false); preview.Action != PreviewUpdate {
+		t.Fatalf("a main repository refreshes its earlier rendering to the adopted policy, got %+v", preview)
+	}
+	adoptForRuleset(t, mainRepo, false)
+	if written := readRuleset(t, mainRepo); !strings.Contains(written, `"refs/heads/main"`) {
+		t.Fatalf("a main repository's ruleset must keep protecting main:\n%s", written)
+	}
+}
+
+// A declared custom default branch beats the origin HEAD, and a ruleset edited to protect
+// another branch is the repository's: kept with a warning, not refreshed.
+func TestAdopt_Negative_DeclaredBranchWinsAndAnEditedBranchIsKept(t *testing.T) {
+	repo := newTestRepo(t, "declared-trunk")
+	recordOriginHead(t, repo, "master")
+	mustWrite(t, filepath.Join(repo, config.ManifestFileName), "version: 1\nrepository:\n  owner: acme\n  name: declared-trunk\n  default_branch: trunk\n")
+	edited, err := forge.RenderRepositoryRuleset("develop", config.DefaultPolicy().BranchProtection, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(repo, rulesetFile), string(edited))
+	rep := adoptForRuleset(t, repo, false)
+	if len(rulesetWarnings(rep)) != 1 || readRuleset(t, repo) != string(edited) {
+		t.Fatalf("a ruleset for another branch must be kept with one warning: %v", rep.Warnings)
+	}
+	if _, err := Adopt(t.Context(), AdoptOptions{Path: repo, Force: true, SkipGitValidation: true, LockSourceRoot: newAdoptLockSource(t)}); err != nil {
+		t.Fatalf("adopt --force: %v", err)
+	}
+	if written := readRuleset(t, repo); !strings.Contains(written, `"refs/heads/trunk"`) || strings.Contains(written, `"refs/heads/master"`) {
+		t.Fatalf("the declared branch must win over origin HEAD:\n%s", written)
+	}
+	if summary, err := auditAdoptedRuleset(t, repo); err != nil || !strings.HasPrefix(summary, "[PASS]") {
+		t.Fatalf("the audit must pass for the declared branch: %q, %v", summary, err)
 	}
 }
