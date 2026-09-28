@@ -123,17 +123,11 @@ func editionValue(value string) string {
 // inheritsWorkspace reports whether value is an inline table setting workspace = true, the
 // edition = { workspace = true } spelling of an inherited edition.
 func inheritsWorkspace(value string) bool {
-	body, opened := strings.CutPrefix(value, "{")
-	body, _, closed := strings.Cut(body, "}")
-	if !opened || !closed {
-		return false
-	}
-	for _, field := range strings.Split(body, ",") {
-		if key, fieldValue, ok := util.TOMLKeyValue(field); ok && key == "workspace" && tomlTrue(fieldValue) {
-			return true
-		}
-	}
-	return false
+	inherits := false
+	util.TOMLInlineTableFields(value, func(key, fieldValue string) {
+		inherits = inherits || (key == "workspace" && tomlTrue(fieldValue))
+	})
+	return inherits
 }
 
 // tomlTrue reports whether value is the boolean true, a comment after it aside.

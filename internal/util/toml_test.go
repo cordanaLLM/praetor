@@ -78,6 +78,60 @@ func TestTOMLKeyValueBoundary(t *testing.T) {
 	}
 }
 
+// inlineFields collects what TOMLInlineTableFields visits, each field as "key=value".
+func inlineFields(value string) ([]string, bool) {
+	var fields []string
+	opened := util.TOMLInlineTableFields(value, func(key, fieldValue string) {
+		fields = append(fields, key+"="+fieldValue)
+	})
+	return fields, opened
+}
+
+// Positive: the fields of an inline table as Cargo dependencies and inherited editions are
+// written, in order, keys padded or dotted, values raw and trimmed.
+func TestTOMLInlineTableFieldsPositive(t *testing.T) {
+	for value, want := range map[string][]string{
+		`{ workspace = true }`:                     {"workspace=true"},
+		`{ version = "1.0", path = "../core" }`:    {`version="1.0"`, `path="../core"`},
+		`{version="1",default-features=false}`:     {`version="1"`, "default-features=false"},
+		`{ "version" = '2', a . b = 1 } # comment`: {`"version"='2'`, "a.b=1"},
+	} {
+		if got, opened := inlineFields(value); !opened || !slices.Equal(got, want) {
+			t.Errorf("TOMLInlineTableFields(%q) visited %q (opened %v), want %q", value, got, opened, want)
+		}
+	}
+}
+
+// Negative: a value that opens no inline table visits nothing, and a fragment with no equals
+// sign or no key is no field.
+func TestTOMLInlineTableFieldsNegative(t *testing.T) {
+	for _, value := range []string{`"1.0"`, "true", `["a"]`, ` { workspace = true }`, ""} {
+		if got, opened := inlineFields(value); opened || len(got) != 0 {
+			t.Errorf("TOMLInlineTableFields(%q) visited %q (opened %v), want no inline table", value, got, opened)
+		}
+	}
+	if got, opened := inlineFields(`{ optional, = 1, workspace = true }`); !opened || !slices.Equal(got, []string{"workspace=true"}) {
+		t.Errorf("fragments without a key: visited %q (opened %v)", got, opened)
+	}
+}
+
+// Boundary: an empty table visits nothing, the fields stop at the first closing brace, so a
+// comment holding one is not read, an unclosed table runs to the end of the line, and an array
+// field yields its first fragment only.
+func TestTOMLInlineTableFieldsBoundary(t *testing.T) {
+	for value, want := range map[string][]string{
+		"{}":                                   nil,
+		`{ workspace = true } # {x = 1}`:       {"workspace=true"},
+		`{ version = "1",`:                     {`version="1"`},
+		`{ features = ["a", "b"], x = 1 }`:     {`features=["a"`, "x=1"},
+		`{ git = "https://host/r", tag = "" }`: {`git="https://host/r"`, `tag=""`},
+	} {
+		if got, opened := inlineFields(value); !opened || !slices.Equal(got, want) {
+			t.Errorf("TOMLInlineTableFields(%q) visited %q (opened %v), want %q", value, got, opened, want)
+		}
+	}
+}
+
 // Positive: basic and literal single-line strings, with or without a trailing comment.
 func TestTOMLStringValuePositive(t *testing.T) {
 	for value, want := range map[string]string{

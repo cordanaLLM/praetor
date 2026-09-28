@@ -252,8 +252,8 @@ func parseCargoDependency(value string) cargoDependency {
 		return cargoDependency{version: tomlScalar(value)}
 	}
 	var dep cargoDependency
-	inlineTableFields(value, func(key, fieldValue string) {
-		dep = dep.with(key, fieldValue)
+	util.TOMLInlineTableFields(value, func(key, fieldValue string) {
+		dep = dep.with(unquoteTOMLKey(key), tomlScalar(fieldValue))
 	})
 	return dep
 }
@@ -299,17 +299,12 @@ func unquoteTOMLKey(key string) string {
 	return strings.Trim(strings.TrimSpace(key), `"'`)
 }
 
-// splitTOMLKey splits `key = value` into the unquoted key and the trimmed raw value.
+// splitTOMLKey splits `key = value` as util.TOMLKeyValue does and unquotes the key; a key
+// that unquotes to nothing is no assignment.
 func splitTOMLKey(line string) (string, string, bool) {
-	idx := strings.Index(line, "=")
-	if idx <= 0 {
-		return "", "", false
-	}
-	name := unquoteTOMLKey(line[:idx])
-	if name == "" {
-		return "", "", false
-	}
-	return name, strings.TrimSpace(line[idx+1:]), true
+	key, value, ok := util.TOMLKeyValue(line)
+	key = unquoteTOMLKey(key)
+	return key, value, ok && key != ""
 }
 
 // tomlScalar normalises a raw TOML value: a trailing comment is dropped and a string
@@ -333,25 +328,10 @@ func splitTOMLAssignment(line string) (string, string, bool) {
 		return name, tomlScalar(value), true
 	}
 	version := ""
-	inlineTableFields(value, func(key, fieldValue string) {
-		if key == "version" {
-			version = fieldValue
+	util.TOMLInlineTableFields(value, func(key, fieldValue string) {
+		if unquoteTOMLKey(key) == "version" {
+			version = tomlScalar(fieldValue)
 		}
 	})
 	return name, version, true
-}
-
-// inlineTableFields applies visit to each `key = value` field of a single-line TOML
-// inline table, the value normalised by tomlScalar. It reads flat fields only: an array
-// value such as `features = ["a", "b"]` yields its first fragment and nothing else.
-func inlineTableFields(value string, visit func(key, fieldValue string)) {
-	body := strings.TrimPrefix(value, "{")
-	if end := strings.LastIndex(body, "}"); end >= 0 {
-		body = body[:end]
-	}
-	for _, field := range strings.Split(body, ",") {
-		if key, fieldValue, ok := splitTOMLKey(strings.TrimSpace(field)); ok {
-			visit(key, tomlScalar(fieldValue))
-		}
-	}
 }
