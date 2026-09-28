@@ -57,6 +57,16 @@ written. Where it reports something missing, `flavor apply` writes nothing, `--f
 lists the path and what is missing under *Unmet Requirement*; `praetorctl adopt` turns each into a
 warning. The audit still requires the file.
 
+A template whose body changed may carry `Prior`: the digests (`util.CanonicalTextDigest`) of the
+texts earlier releases scaffolded at its path. Without `--force`, `flavor apply`, and so a plain
+`praetorctl adopt`, refreshes a file that holds one of them in one consistent line-ending style to
+the current rendering, keeping that style. It lists the file under *Refreshed Earlier Praetor Text*
+(`refreshed_templates` in the apply report), and adoption records it as reconciled. An edited copy
+matches no digest and stays until `--force`, and the manifest, the lock and the ledger are never
+refreshed (`internal/flavor/target_write_internal_test.go`). Every recorded text needs a fixture
+that reproduces its digest, as `TestRustfmtPriorTextsAreEarlierRenderings`
+(`internal/flavor/rustfmt_test.go`) holds for `rustfmt.toml`.
+
 A template with neither is an apply error, not a placeholder. `flavor apply` used to write a one-line
 `# <file> configuration for <owner>/<repo>` comment for every template it had no body for, which
 disabled every built-in gitleaks rule (#410) and scaffolded workflows that ran nothing.
@@ -163,7 +173,13 @@ against each layout with stub build tools. The Flutter analyzer config
 dependency (`internal/flavor/dart_lints.go`). Otherwise it has no include, because `flutter analyze`
 fails on an include pub cannot resolve, and keeps its core linter rules, which need no package.
 `TestScaffoldedDartAnalysisConfigIncludesOnlyADeclaredLintPackage` (`internal/flavor/dart_lints_test.go`)
-covers each case.
+covers each case. The Rust formatter config (`templates/rust/rustfmt.toml.tmpl`) declares the
+edition the root `Cargo.toml` gives `[workspace.package]`, else `[package]`
+(`internal/flavor/rustfmt.go`), and no edition when it gives neither, since rustfmt and Cargo then
+both default to 2015. `cargo fmt` passes each crate's edition to rustfmt, but rustfmt run directly,
+as a hook on staged files does, reads it from `rustfmt.toml`, so any other edition makes the two
+disagree (#567). `TestScaffoldedRustfmtFollowsTheCrateEdition` (`internal/flavor/rustfmt_test.go`)
+covers workspace, single-crate and edition-less manifests.
 
 A body that depends on the repository declares `Resolve`. The Node CI job installs from the committed
 lockfile and runs the `test` script, and `typescript-node` matches any `package.json` in an
