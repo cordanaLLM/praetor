@@ -44,7 +44,8 @@ type replacement struct {
 	before []byte // the bytes adoption observed at rel
 	after  []byte // the bytes that replace them
 	detail string // what adoption writes, leading the report entry
-	// publish writes after; replaceExisting calls it only outside a dry run.
+	// publish writes after; replaceExisting calls it only outside a dry run. replaceExistingAll
+	// takes one publish for the whole set instead.
 	publish func(ctx context.Context) error
 }
 
@@ -55,17 +56,37 @@ type replacement struct {
 // with r.after as the bytes rel comes to (planDryRunWrite), so a later step, the branch ruleset
 // preview among them, reads the file the run leaves rather than the one on disk.
 func (s *adoptSession) replaceExisting(ctx context.Context, r replacement) error {
-	note, err := s.backupExisting(ctx, r.rel, r.before)
-	if err != nil {
-		return err
+	return s.replaceExistingAll(ctx, []replacement{r}, r.publish)
+}
+
+// replaceExistingAll is replaceExisting for files one write publishes together, such as the
+// DevContainer bundle or the vendor context files: it keeps a backup of every rs[i].before
+// first, then runs publish once, then records each file as replaced. publish may also write
+// files that replace nothing (created or unchanged ones), which the caller records itself, so
+// it runs even when rs is empty. A refused backup leaves every file as it was; a dry run takes
+// no backup, writes nothing and records the replacements it plans. rs[i].publish is unused.
+func (s *adoptSession) replaceExistingAll(ctx context.Context, rs []replacement, publish func(ctx context.Context) error) error {
+	if len(rs) > maxReportActions {
+		return fmt.Errorf("adoption would replace %d files, above the %d a run reports", len(rs), maxReportActions)
+	}
+	notes := make([]string, len(rs))
+	for i := 0; i < len(rs); i++ {
+		note, err := s.backupExisting(ctx, rs[i].rel, rs[i].before)
+		if err != nil {
+			return err
+		}
+		notes[i] = note
 	}
 	if !s.opts.DryRun {
-		if err := r.publish(ctx); err != nil {
+		if err := publish(ctx); err != nil {
 			return err
 		}
 	}
-	s.planDryRunWrite(r.rel, r.after)
-	s.report.recordReplaced(r.rel, r.detail+"; replaced existing content ("+describeLineDelta(r.before, r.after)+"); "+note)
+	for i := 0; i < len(rs); i++ {
+		s.planDryRunWrite(rs[i].rel, rs[i].after)
+		s.report.recordReplaced(rs[i].rel, rs[i].detail+"; replaced existing content ("+
+			describeLineDelta(rs[i].before, rs[i].after)+"); "+notes[i])
+	}
 	return nil
 }
 
@@ -154,7 +175,8 @@ func checkBackupRoot(ctx context.Context, repoPath string) error {
 // backs up to that root, and the scaffolds it may replace belong to nearly every step, so the
 // root is checked whenever --force is set instead of per planned replace; checked only at the
 // replace, the refusal came after every earlier step had written. Without --force only a hook
-// merge takes a backup, and preflightAgentHooks checks the root for it.
+// merge and a hand-edited vendor context file take a backup, and preflightAgentHooks and
+// preflightVendorBackupRoot check the root for them.
 func preflightForceBackupRoot(ctx context.Context, s *adoptSession) error {
 	if !s.opts.Force {
 		return nil

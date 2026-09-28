@@ -1,10 +1,12 @@
 package adopt
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -74,7 +76,9 @@ type AdoptOptions struct {
 // ActionDetail describes a specific planned or executed action on a target file.
 //
 // "replace" marks existing bytes that were neither the content adoption writes nor an earlier
-// Praetor text of it, overwritten all the same (--force over a drifted scaffold). Its Details
+// Praetor text of it, overwritten all the same: --force over a drifted scaffold or an edited
+// audit-locked file (lock, pinned catalog, DevContainer bundle, Makefile documentation block),
+// and, on any run, a hand-edited vendor context file (vendor_targets.go). Its Details
 // carry a bounded line delta and where the prior bytes were kept, or why they were not
 // (replaceExisting); the path is listed in ReconciledFiles, never in CreatedFiles.
 type ActionDetail struct {
@@ -454,10 +458,15 @@ func executeAdoptSteps(ctx context.Context, s *adoptSession) error {
 // pull request template and the workflows were written, and left a half-adopted repository.
 // A declined step's files are not checked, and a dry run is checked too, so its preview does
 // not report a run that would fail. Under --force the backup root is checked whatever the steps
-// (preflightForceBackupRoot): a replaced scaffold is backed up there from any step.
+// (preflightForceBackupRoot): a replaced scaffold is backed up there from any step. Without it,
+// the root is checked when the agent-harness step may replace a hand-edited vendor file
+// (preflightVendorBackupRoot).
 func preflightAgentSurfaces(ctx context.Context, s *adoptSession, declined map[string]bool) error {
 	if !declined["agent-harness"] {
 		if err := compiler.CheckVendorTargets(ctx, s.repoPath); err != nil {
+			return fmt.Errorf("agent-harness preflight: %w", err)
+		}
+		if err := preflightVendorBackupRoot(ctx, s); err != nil {
 			return fmt.Errorf("agent-harness preflight: %w", err)
 		}
 	}
@@ -689,16 +698,82 @@ func reconcileDevContainer(ctx context.Context, s *adoptSession) error {
 	if bundle.Spec().State == devcontainer.BootstrapUnavailable {
 		s.report.addWarning("DevContainer bootstrap unavailable: %s", bundle.Spec().Reason)
 	}
-	if !s.opts.DryRun {
-		if err := devcontainer.WriteBundle(ctx, full, bundle, s.opts.Force); err != nil {
-			return err
+	plan, err := devcontainer.PlanBundle(ctx, full, bundle, s.opts.Force)
+	if err != nil {
+		return err
+	}
+	configDetail := fmt.Sprintf("Prepared DevContainer for archetype '%s'; bootstrap %s, execution unverified", s.arch, bundle.Spec().State)
+	return publishDevContainerPlan(ctx, s, plan, configDetail)
+}
+
+// publishDevContainerPlan publishes a planned DevContainer bundle (a dry run writes nothing)
+// and records each of its files: an existing file holding operator bytes, which only --force
+// admits, is replaced with a backup (replaceExistingAll), Praetor's own unedited unavailable
+// placeholder is refreshed, a file already holding its bytes is verified and an absent one is
+// created. The plan binds every write to the bytes it observed.
+func publishDevContainerPlan(ctx context.Context, s *adoptSession, plan *devcontainer.BundlePlan, configDetail string) error {
+	files := plan.Files()
+	replaced := make([]replacement, 0, len(files))
+	for _, file := range files {
+		if devContainerFileStateOf(file) == devContainerReplaced {
+			replaced = append(replaced, replacement{rel: devContainerRel(file), before: file.Before, after: file.After,
+				detail: devContainerDetail(file, configDetail)})
 		}
 	}
-	s.report.recordCreated(devcontainerFile, fmt.Sprintf("Prepared DevContainer for archetype '%s'; bootstrap %s, execution unverified", s.arch, bundle.Spec().State))
-	for _, artifact := range bundle.Artifacts {
-		s.report.recordCreated(filepath.ToSlash(filepath.Join(".devcontainer", artifact.Name)), "Prepared exact DevContainer bootstrap companion")
+	if err := s.replaceExistingAll(ctx, replaced, plan.Publish); err != nil {
+		return err
+	}
+	for _, file := range files {
+		rel, detail := devContainerRel(file), devContainerDetail(file, configDetail)
+		switch devContainerFileStateOf(file) {
+		case devContainerCreated:
+			s.report.recordCreated(rel, detail)
+		case devContainerUnchanged:
+			s.report.recordReconciled(rel, "Verified unchanged: "+lowerFirst(detail))
+		case devContainerRefreshed:
+			s.report.recordReconciled(rel, "Refreshed Praetor's own unedited unavailable placeholder: "+lowerFirst(detail))
+		case devContainerReplaced:
+			// Recorded by replaceExistingAll with its line delta and backup.
+		}
 	}
 	return nil
+}
+
+// devContainerFileState is what a bundle write does with one planned file.
+type devContainerFileState int
+
+const (
+	devContainerCreated   devContainerFileState = iota + 1 // absent, created
+	devContainerUnchanged                                  // already holds its planned bytes
+	devContainerRefreshed                                  // Praetor's own unedited placeholder
+	devContainerReplaced                                   // operator bytes, replaced under --force
+)
+
+// devContainerFileStateOf classifies one planned bundle file.
+func devContainerFileStateOf(file devcontainer.BundleFile) devContainerFileState {
+	switch {
+	case !file.Existed:
+		return devContainerCreated
+	case bytes.Equal(file.Before, file.After):
+		return devContainerUnchanged
+	case file.Placeholder:
+		return devContainerRefreshed
+	}
+	return devContainerReplaced
+}
+
+// devContainerRel is the repository path of a planned bundle file, all of which lie in the
+// DevContainer directory.
+func devContainerRel(file devcontainer.BundleFile) string {
+	return path.Join(path.Dir(devcontainerFile), filepath.Base(file.Path))
+}
+
+// devContainerDetail is what adoption writes at a planned bundle file.
+func devContainerDetail(file devcontainer.BundleFile, configDetail string) string {
+	if devContainerRel(file) == devcontainerFile {
+		return configDetail
+	}
+	return "Prepared exact DevContainer bootstrap companion"
 }
 
 // reconcileEditors writes IDE configurations that do not exist yet. Existing files are

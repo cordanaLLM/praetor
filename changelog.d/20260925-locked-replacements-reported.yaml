@@ -1,0 +1,4 @@
+type: fixed
+title: 'Adoption reports every overwrite of an audit-locked file as action replace with a line delta and a backup, never as a created file: under --force the lock, a pinned catalog file, a DevContainer bundle file, a documentation family file and an edited Makefile documentation gate block (its delta lists only in-block lines), and on every run a hand-edited vendor context file such as CLAUDE.md; an unchanged locked file is verified, and a vendor file that is the projection of AGENTS.md as the run found it, the own DevContainer placeholder and a layout-only catalog successor are refreshed; a plain run with a hand-edited vendor file refuses a symlinked backup root before its first write; adopt --dry-run plans these replacements, the DevContainer ones included, without writing a backup'
+issue: "#502"
+breaking: true

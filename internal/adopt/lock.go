@@ -7,6 +7,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // ErrLockSourceRequired prevents adoption from claiming placeholder pins are valid.
@@ -31,21 +32,45 @@ func reconcileLockfile(ctx context.Context, s *adoptSession) error {
 		}
 		return ErrLockSourceRequired
 	}
-	if err := writeBuiltLock(ctx, s, path, manifest); err != nil {
-		return err
-	}
-	s.report.recordCreated(lockFile, "Pinned profiles and facets to verified source content digests")
-	return nil
+	return writeBuiltLock(ctx, s, path, manifest)
 }
 
+// lockPinnedDetail is the action detail of a lock pinned to the selected source bundle.
+const lockPinnedDetail = "Pinned profiles and facets to verified source content digests"
+
 // writeBuiltLock pins manifest to the selected source bundle and writes the lock unless the
-// session is a dry run.
+// session is a dry run. An absent lock is created. An existing one (--force) that already holds
+// the rebuilt text, line endings aside, is verified and left alone; any other is replaced
+// through replaceExisting, bound to the bytes observed before the rebuild, so the report lists
+// it as replaced with its line delta and backup, never as created.
 func writeBuiltLock(ctx context.Context, s *adoptSession, path string, manifest *config.Manifest) error {
+	before, exists, err := contextopt.ObserveSnapshot(ctx, path)
+	if err != nil {
+		return fmt.Errorf("read %s before rebuilding it: %w", lockFile, err)
+	}
 	data, err := buildLock(ctx, s, manifest)
 	if err != nil {
 		return err
 	}
-	return s.write(path, data, filePerm)
+	if !exists {
+		if err := s.write(path, data, filePerm); err != nil {
+			return err
+		}
+		s.report.recordCreated(lockFile, lockPinnedDetail)
+		return nil
+	}
+	if identical, err := util.CanonicalTextEquivalent(before, data); err == nil && identical {
+		s.report.recordReconciled(lockFile, "Verified the lock already pins the selected source bundle")
+		return nil
+	}
+	return s.replaceExisting(ctx, replacement{
+		rel: lockFile, before: before, after: data, detail: lockPinnedDetail,
+		publish: func(ctx context.Context) error {
+			return contextopt.ReplaceSnapshot(ctx, path, data, contextopt.ReplaceOptions{
+				Expected: before, Exists: true, Mode: filePerm,
+			})
+		},
+	})
 }
 
 // buildLock pins manifest to the selected source bundle.

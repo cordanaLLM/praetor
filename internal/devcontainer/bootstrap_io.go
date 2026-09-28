@@ -21,34 +21,102 @@ type bootstrapWrite struct {
 	// config marks the devcontainer.json write, the only one that can hold a recorded
 	// bootstrap specification.
 	config bool
+	// placeholder marks an existing config that is Praetor's own unedited unavailable
+	// placeholder (isOwnUnavailablePlaceholder), which the write replaces without force.
+	placeholder bool
+}
+
+// BundleFile is one file a planned bundle write publishes: where, whether it existed and the
+// bytes it held (Before), and the bytes the write leaves (After).
+type BundleFile struct {
+	Path    string
+	Existed bool
+	Before  []byte
+	After   []byte
+	// Placeholder marks Praetor's own unedited unavailable placeholder config: an earlier
+	// Praetor text the write refreshes without force, not operator bytes it replaces.
+	Placeholder bool
+}
+
+// BundlePlan is a bundle write with every file observed, every replacement admitted and
+// nothing written yet (PlanBundle). A caller that keeps a copy of what the write replaces
+// reads Files first and then calls Publish, which writes each file only while it still holds
+// the bytes observed here.
+type BundlePlan struct {
+	dir    string
+	writes []bootstrapWrite
 }
 
 // WriteBundle preflights every exact companion and publishes the JSON last.
 // Existing differing files require explicit force; unrelated files remain intact.
 func WriteBundle(ctx context.Context, path string, bundle *Bundle, force bool) error {
+	plan, err := PlanBundle(ctx, path, bundle, force)
+	if err != nil {
+		return err
+	}
+	return plan.Publish(ctx)
+}
+
+// PlanBundle validates bundle, observes every file WriteBundle writes at path and beside it,
+// and admits each replacement of an existing, differing file (admitReplacement), writing
+// nothing. A refused replacement fails the plan.
+func PlanBundle(ctx context.Context, path string, bundle *Bundle, force bool) (*BundlePlan, error) {
+	if ctx == nil {
+		return nil, errors.New("bootstrap write requires context")
+	}
+	ctx, cancel := context.WithTimeout(ctx, contextopt.MaxDuration)
+	defer cancel()
+	if err := validateBundleContents(ctx, bundle); err != nil {
+		return nil, err
+	}
+	data, err := Render(bundle.Config)
+	if err != nil {
+		return nil, err
+	}
+	writes, err := planBootstrapWrites(path, bundle, data)
+	if err != nil {
+		return nil, err
+	}
+	if err := observeBootstrapWrites(ctx, writes, bundle, force); err != nil {
+		return nil, err
+	}
+	return &BundlePlan{dir: filepath.Dir(path), writes: writes}, nil
+}
+
+// Files returns every file the plan writes, the config first and then its companions in
+// bundle order, with copies of the observed and the planned bytes.
+func (p *BundlePlan) Files() []BundleFile {
+	files := make([]BundleFile, 0, len(p.writes))
+	for _, write := range p.writes {
+		if write.config {
+			files = append(files, bundleFile(write))
+		}
+	}
+	for _, write := range p.writes {
+		if !write.config {
+			files = append(files, bundleFile(write))
+		}
+	}
+	return files
+}
+
+func bundleFile(write bootstrapWrite) BundleFile {
+	return BundleFile{Path: write.path, Existed: write.exists, Before: bytes.Clone(write.expected),
+		After: bytes.Clone(write.data), Placeholder: write.placeholder}
+}
+
+// Publish writes the plan's companions and then the JSON, each only while it still holds the
+// bytes PlanBundle observed, and skips a file that already holds its planned bytes.
+func (p *BundlePlan) Publish(ctx context.Context) error {
 	if ctx == nil {
 		return errors.New("bootstrap write requires context")
 	}
 	ctx, cancel := context.WithTimeout(ctx, contextopt.MaxDuration)
 	defer cancel()
-	if err := validateBundleContents(ctx, bundle); err != nil {
+	if err := contextopt.EnsureDirectory(ctx, p.dir, 0755); err != nil {
 		return err
 	}
-	data, err := Render(bundle.Config)
-	if err != nil {
-		return err
-	}
-	writes, err := planBootstrapWrites(path, bundle, data)
-	if err != nil {
-		return err
-	}
-	if err := observeBootstrapWrites(ctx, writes, bundle, force); err != nil {
-		return err
-	}
-	if err := contextopt.EnsureDirectory(ctx, filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	for _, write := range writes {
+	for _, write := range p.writes {
 		if write.exists && bytes.Equal(write.data, write.expected) {
 			continue
 		}
@@ -72,14 +140,17 @@ func observeBootstrapWrites(ctx context.Context, writes []bootstrapWrite, bundle
 		if !exists || bytes.Equal(data, writes[i].data) {
 			continue
 		}
-		if err := admitReplacement(writes[i], bundle, force); err != nil {
+		placeholder, err := admitReplacement(writes[i], bundle, force)
+		if err != nil {
 			return err
 		}
+		writes[i].placeholder = placeholder
 	}
 	return nil
 }
 
-// admitReplacement decides whether an existing, differing artifact may be replaced.
+// admitReplacement decides whether an existing, differing artifact may be replaced, and
+// reports whether it is Praetor's own unedited unavailable placeholder.
 //
 // Praetor's own unedited unavailable placeholder carries no working configuration, so
 // the --source-root rerun that generation advises replaces it without --force; before,
@@ -87,19 +158,19 @@ func observeBootstrapWrites(ctx context.Context, writes []bootstrapWrite, bundle
 // Everything else still needs --force. --force with an unavailable bundle never replaces
 // a ready recorded bootstrap: that would swap a configuration that can start for one
 // that cannot, and strand its Dockerfile.praetor and source parts.
-func admitReplacement(write bootstrapWrite, bundle *Bundle, force bool) error {
+func admitReplacement(write bootstrapWrite, bundle *Bundle, force bool) (bool, error) {
 	if isOwnUnavailablePlaceholder(write, bundle.Config) {
-		return nil
+		return true, nil
 	}
 	if !force {
-		return fmt.Errorf("preserving existing DevContainer artifact %s; review it before explicit replacement with --force", write.path)
+		return false, fmt.Errorf("preserving existing DevContainer artifact %s; review it before explicit replacement with --force", write.path)
 	}
 	recorded := recordedBootstrap(write)
 	if recorded != nil && recorded.State == BootstrapReady && bundle.Spec().State == BootstrapUnavailable {
-		return fmt.Errorf("refusing to replace the ready DevContainer bootstrap at %s with an unavailable placeholder; "+
+		return false, fmt.Errorf("refusing to replace the ready DevContainer bootstrap at %s with an unavailable placeholder; "+
 			"select a complete Praetor source root, or remove the bundle files first to drop the bootstrap deliberately", write.path)
 	}
-	return nil
+	return false, nil
 }
 
 // recordedBootstrap returns the valid bootstrap specification recorded in the config a
