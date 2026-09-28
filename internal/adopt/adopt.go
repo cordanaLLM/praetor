@@ -325,6 +325,7 @@ func adoptSteps() []namedStep {
 		{"makefile", reconcileMakefile},
 		{"git-ignore", reconcileGitIgnore},
 		{"formatter-ignore", reconcileFormatterIgnore},
+		{"renovate-ignore", reconcileRenovateIgnore},
 		{"contributing", reconcileContributing},
 		{"pull-request-template", reconcilePullRequestTemplate},
 		{"security-policy", reconcileSecurityPolicy},
