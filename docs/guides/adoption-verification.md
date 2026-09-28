@@ -709,7 +709,18 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
     `error` returns, Rust's `.unwrap()` / `.expect()` ban, C and C++'s `goto` and banned libc
     calls, the `// SAFETY:` proof for Go and Rust `unsafe`. A rule left with no clause, such as
     HISS-09 in a TypeScript repository, says it has no analogue there. With no detected
-    runtime, every clause renders with its label.
+    runtime or source language, every clause renders with its label.
+  - C is detected from a native build marker (`meson.build`, `core/meson.build`,
+    `CMakeLists.txt`) or from C sources, so a repository that compiles C with clang from a
+    `Makefile` or a script still reads the C clauses. The verification walk records the file
+    names it already visits, under the same `--verification-max-*` bounds, and the plan lists
+    them as `source_languages: ["c"]` in the JSON report. A `.c` file makes the repository C.
+    A `.h` file makes it C only when no C++, Objective-C, CUDA or HIP source sits beside it,
+    since `.h` is their header too. Files under a directory the audit's HISS scan ignores
+    (`vendor`, `third_party`, `testdata`, build output; `hiss.ShouldIgnorePath`) do not count
+    ([`internal/adopt/verification_sources.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/verification_sources.go),
+    `TestCSourceObservationDecidesC`, `TestRepositoryHISSFactsDetectsCSources`,
+    `TestCSourceDetectionStaysInsideTheWalkBounds`, `TestAdoptedHarnessRendersCClausesFromSources`).
   - HISS-04 states the function length the repository's audit enforces, read from the policy
     the policy-catalog step resolved (container-image, for example, enforces 50). At the 60-line
     audit ceiling it adds `(audit ceiling)`: a pinned profile snapshot such as

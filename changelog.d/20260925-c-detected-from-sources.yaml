@@ -1,0 +1,3 @@
+type: fixed
+title: "adopt and paperclip harness detect C from `.c` sources (and from `.h` headers when no C++, Objective-C, CUDA or HIP source sits beside them) found by the bounded verification walk outside the paths the HISS audit ignores, so a repository compiling C from a Makefile or script without meson or CMake keeps HISS-01's zero-goto and HISS-08's banned-libc clauses; the adoption report's verification plan lists them as `source_languages`"
+breaking: false
