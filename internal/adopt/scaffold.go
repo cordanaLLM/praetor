@@ -113,8 +113,13 @@ type scaffold struct {
 	// but not audit-verified: a drifted copy is the repository's and is kept, --force included,
 	// with a warning; deleting it and re-running adopt regenerates it.
 	auditLocked bool
-	created     string // action detail when the file is (or would be) written
-	verified    string // action detail when an existing file matches content
+	// forceable lets --force overwrite a drifted copy of a scaffold audit does not lock. Only
+	// lefthook.yml sets it, whose --force contract is its own: classifyLefthookConfig has kept
+	// every configuration that extends the canonical policy or adds jobs to the generated ones,
+	// --force included, before the scaffold is reached (writeLefthookConfig).
+	forceable bool
+	created   string // action detail when the file is (or would be) written
+	verified  string // action detail when an existing file matches content
 	// confined writes through contextopt.WriteSnapshotIn, the writer compile-context uses, which
 	// follows no symlink below the repository, and refreshes an earlier text through
 	// contextopt.ReplaceSnapshotIn. It is set for the files compile-context also reads (the
@@ -177,9 +182,9 @@ func (s *adoptSession) write(path string, data []byte, perm os.FileMode) error {
 // scaffoldFile creates sc.rel when it is missing. An existing file is compared with sc.content
 // first: an earlier Praetor text of it is refreshed, a match is reported as sc.verified, and a
 // difference is reported as drift rather than overwritten or passed off as verified. Only when
-// Force is set and audit locks the file (scaffold.auditLocked) is a drifted file overwritten,
-// through replaceExisting, so the report lists it as replaced with its line delta and backup,
-// never as created.
+// Force is set and the scaffold allows it (scaffold.forceReplaces) is a drifted file
+// overwritten, through replaceExisting, so the report lists it as replaced with its line delta
+// and backup, never as created.
 func (s *adoptSession) scaffoldFile(ctx context.Context, sc scaffold) (scaffoldState, error) {
 	full, err := repoFile(s.repoPath, sc.rel)
 	if err != nil {
@@ -276,8 +281,8 @@ func (s *adoptSession) writeScaffold(ctx context.Context, full string, sc scaffo
 // recordExistingScaffold classifies an existing file against its scaffold and records the
 // result. A file that cannot be read is preserved and reported as unverified: a file that
 // exists is not evidence of anything until its content has been compared, and there are no
-// bytes to back up. A drifted file is replaced when Force is set and audit locks the file
-// (scaffold.auditLocked), a file with mixed line endings included, since it cannot hold the
+// bytes to back up. A drifted file is replaced when Force is set and the scaffold allows it
+// (scaffold.forceReplaces), a file with mixed line endings included, since it cannot hold the
 // scaffold's text, and preserved otherwise.
 func (s *adoptSession) recordExistingScaffold(ctx context.Context, full string, sc scaffold) (scaffoldState, error) {
 	actual, _, readErr := contextopt.ObserveSnapshot(ctx, full)
@@ -289,7 +294,7 @@ func (s *adoptSession) recordExistingScaffold(ctx context.Context, full string, 
 		identical, err = util.CanonicalTextEquivalent(actual, sc.content)
 	}
 	switch {
-	case readErr == nil && !identical && sc.auditLocked && s.opts.Force:
+	case readErr == nil && !identical && sc.forceReplaces() && s.opts.Force:
 		return s.replaceScaffold(ctx, full, sc, actual)
 	case err != nil:
 		s.report.recordReconciled(sc.rel, "Existing file preserved unverified: "+err.Error())
@@ -299,7 +304,7 @@ func (s *adoptSession) recordExistingScaffold(ctx context.Context, full string, 
 		s.report.recordReconciled(sc.rel, sc.verified)
 		return scaffoldIdentical, nil
 	}
-	note := scaffoldDriftNote(sc.auditLocked, actual, sc.content)
+	note := scaffoldDriftNote(sc.forceReplaces(), actual, sc.content)
 	s.report.recordReconciled(sc.rel, note)
 	s.report.addWarning("%s: %s", sc.rel, lowerFirst(note))
 	return scaffoldDrifted, nil
@@ -318,12 +323,19 @@ func (s *adoptSession) replaceScaffold(ctx context.Context, full string, sc scaf
 	return scaffoldWritten, nil
 }
 
+// forceReplaces reports whether --force overwrites a drifted copy of sc: audit locks it
+// (auditLocked), or its own contract allows it (forceable).
+func (sc scaffold) forceReplaces() bool {
+	return sc.auditLocked || sc.forceable
+}
+
 // scaffoldDriftNote says what an operator can do about a drifted file, which holds actual where
-// the scaffold writes content: --force regenerates only a file audit locks. Every other file is
-// not audit-verified and stays, --force included; the note counts the lines regenerating it
-// would remove and add (lineDeltaCounts) and says how to regenerate it.
-func scaffoldDriftNote(auditLocked bool, actual, content []byte) string {
-	if auditLocked {
+// the scaffold writes content: --force regenerates only a file whose scaffold allows it
+// (scaffold.forceReplaces). Every other file is not audit-verified and stays, --force included;
+// the note counts the lines regenerating it would remove and add (lineDeltaCounts) and says how
+// to regenerate it.
+func scaffoldDriftNote(forceReplaces bool, actual, content []byte) string {
+	if forceReplaces {
 		return "Existing file differs from the scaffold adoption writes; preserved, not verified (--force regenerates it)"
 	}
 	counts := lineDeltaCounts(util.LineDeltaOf(string(actual), string(content), 0))

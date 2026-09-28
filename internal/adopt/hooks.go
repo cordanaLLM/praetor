@@ -373,42 +373,25 @@ func reconcileGitHooks(ctx context.Context, s *adoptSession) error {
 // would leave bytes activation refuses in place.
 //
 // Audit checks only that lefthook.yml exists, so its scaffold is not audit-locked. Its --force
-// contract is classifyLefthookConfig's instead: a configuration the classification does not
-// protect, which reached this point, is replaced under --force (replaceLefthookConfig).
+// contract is its own (scaffold.forceable): a configuration classifyLefthookConfig does not
+// protect, which reached this point, is replaced under --force through the scaffold, which
+// reads it only as a regular file, so a symlinked lefthook.yml is kept and reported unverified.
 func (s *adoptSession) writeLefthookConfig(ctx context.Context, current string, existing []byte, prior bool) (bool, error) {
-	sc := scaffold{
-		rel:      lefthookFile,
-		perm:     filePerm,
-		content:  []byte(current),
-		created:  "Scaffolded Lefthook configuration for local pre-commit and pre-push enforcement",
-		verified: "Existing Lefthook configuration verified present",
-	}
 	switch {
 	case prior:
 		return true, s.migrateLefthookConfig(current, "Migrated an earlier Praetor-generated Lefthook configuration to the current template")
 	case s.opts.Force && isLineEndingCheckout(existing, current):
 		return true, s.migrateLefthookConfig(current, "Rewrote a line-ending checkout of the current Praetor-generated "+
 			"Lefthook configuration with its LF bytes, the only bytes hook activation trusts")
-	case s.opts.Force && !bytes.Equal(existing, []byte(current)):
-		return s.replaceLefthookConfig(ctx, sc, existing)
 	}
-	state, err := s.scaffoldFile(ctx, sc)
-	return state == scaffoldWritten, err
-}
-
-// replaceLefthookConfig replaces, under --force, the existing lefthook.yml holding existing
-// with sc, through replaceScaffold, so the report lists it as replaced with its line delta and
-// backup, and reports whether it wrote. An absent file is scaffoldFile's to create.
-func (s *adoptSession) replaceLefthookConfig(ctx context.Context, sc scaffold, existing []byte) (bool, error) {
-	full, err := repoFile(s.repoPath, sc.rel)
-	if err != nil {
-		return false, err
-	}
-	if !fileExists(full) {
-		state, err := s.scaffoldFile(ctx, sc)
-		return state == scaffoldWritten, err
-	}
-	state, err := s.replaceScaffold(ctx, full, sc, existing)
+	state, err := s.scaffoldFile(ctx, scaffold{
+		rel:       lefthookFile,
+		perm:      filePerm,
+		content:   []byte(current),
+		forceable: true,
+		created:   "Scaffolded Lefthook configuration for local pre-commit and pre-push enforcement",
+		verified:  "Existing Lefthook configuration verified present",
+	})
 	return state == scaffoldWritten, err
 }
 
