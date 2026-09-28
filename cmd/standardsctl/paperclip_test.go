@@ -10,10 +10,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
 	"github.com/cordanaLLM/praetor/internal/paperclip"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // writePaperclipFixtureHarness writes a valid .paperclip harness into dir.
@@ -223,5 +225,38 @@ func TestPaperclipVerify_InReviewReceiptOnDisk(t *testing.T) {
 	}
 	if err := runPaperclip(verify); !errors.Is(err, lockdown.ErrCommitMismatch) {
 		t.Fatalf("a committed receipt attests the parent, not HEAD; want ErrCommitMismatch, got %v", err)
+	}
+}
+
+// TestDogfoodingPaperclipHarness: the repository's own .paperclip/harness.json and rules.md are
+// the bytes `praetorctl paperclip harness` synthesizes for it now. register.sources in
+// .standards.yaml binds both, so a synthesis change that leaves them stale would ship a harness
+// the release no longer writes and a census digest pinned to it. Regenerate with
+// `praetorctl paperclip harness --path=.`, then re-pin register.sources.sha256 from
+// `praetorctl caveman check --root=. --configured-sources`. A CRLF checkout compares as LF.
+func TestDogfoodingPaperclipHarness(t *testing.T) {
+	root := filepath.Join("..", "..")
+	facts, warnings, err := adopt.RepositoryHISSFacts(t.Context(), root)
+	if err != nil || len(warnings) != 0 {
+		t.Fatalf("RepositoryHISSFacts(repository root): warnings=%q err=%v", warnings, err)
+	}
+	harness, err := paperclip.SynthesizeHarness(t.Context(), root, facts)
+	if err != nil {
+		t.Fatalf("SynthesizeHarness(repository root): %v", err)
+	}
+	synthesized := t.TempDir()
+	if err := paperclip.WriteHarness(harness, synthesized); err != nil {
+		t.Fatalf("WriteHarness: %v", err)
+	}
+	for _, name := range []string{"harness.json", "rules.md"} {
+		want, wantErr := os.ReadFile(filepath.Join(synthesized, ".paperclip", name))
+		got, gotErr := os.ReadFile(filepath.Join(root, ".paperclip", name))
+		if wantErr != nil || gotErr != nil {
+			t.Fatalf("read .paperclip/%s: synthesized %v, repository %v", name, wantErr, gotErr)
+		}
+		if normalized, _ := util.NormalizeLineEndings(string(got)); normalized != string(want) {
+			t.Errorf(".paperclip/%s is stale; run `praetorctl paperclip harness --path=.`:\n--- repository\n%s\n--- synthesized\n%s",
+				name, normalized, want)
+		}
 	}
 }
