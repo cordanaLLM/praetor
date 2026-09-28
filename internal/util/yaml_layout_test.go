@@ -93,6 +93,68 @@ func TestEncodeYAMLDocument_Positive_FitsLongDigest(t *testing.T) {
 	}
 }
 
+// longEntry is a line inside a block scalar that looks like a long mapping entry.
+var longEntry = "url: " + strings.Repeat("x", 90)
+
+// Positive: the body of a literal or folded block scalar is text, so a line there that looks
+// like a long mapping entry stays byte for byte, while a long digest after the scalar, back at
+// the parent's indentation, is still fitted. EncodeYAMLDocument, which used to fail on such a
+// value, encodes it.
+func TestFitYAMLLines_Positive_SkipsBlockScalarBodies(t *testing.T) {
+	digest := digestValue + digestValue
+	for _, header := range []string{"reason: |", "reason: >-", "reason: |+2 # kept"} {
+		input := "---\n" + header + "\n    first\n    " + longEntry + "\n\n    last\ndigest: " + digest + "\n"
+		want := "---\n" + header + "\n    first\n    " + longEntry + "\n\n    last\ndigest:\n  " + digest + "\n"
+		fitted, err := FitYAMLLines([]byte(input), 2)
+		if err != nil || string(fitted) != want {
+			t.Errorf("%s: FitYAMLLines() = %q (%v)\nwant %q", header, fitted, err, want)
+		}
+	}
+	value := map[string]string{"reason": "first\n" + longEntry + "\nlast", "sha256": digestValue + digestValue[7:]}
+	data, err := EncodeYAMLDocument(value)
+	if err != nil {
+		t.Fatalf("EncodeYAMLDocument must encode a multi-line value: %v", err)
+	}
+	want := "---\nreason: |-\n  first\n  " + longEntry + "\n  last\nsha256:\n  " + value["sha256"] + "\n"
+	if string(data) != want {
+		t.Errorf("EncodeYAMLDocument() =\n%s\nwant\n%s", data, want)
+	}
+}
+
+// Negative: a block scalar whose header the fitter does not recognise (a tagged one) would be
+// rewritten into a different value; FitYAMLLines then returns the text unchanged instead of an
+// error or a changed document.
+func TestFitYAMLLines_Negative_FallsBackToTheUnfittedText(t *testing.T) {
+	input := "reason: !!str |\n  " + longEntry + "\ndigest: " + digestValue + digestValue + "\n"
+	fitted, err := FitYAMLLines([]byte(input), 2)
+	if err != nil || string(fitted) != input {
+		t.Fatalf("a fit that changes a value must fall back to the input: %q %v", fitted, err)
+	}
+}
+
+// Boundary: a block scalar body ends at the first line back at its parent's indentation, and
+// only its own lines are skipped: a sibling key after a sequence item's keyed block scalar, and
+// the next item after an unkeyed one, are fitted.
+func TestFitYAMLLines_Boundary_BlockScalarEndsAtItsParent(t *testing.T) {
+	path := strings.Repeat("p", 90)
+	cases := map[string][2]string{
+		"keyed item": {
+			"items:\n  - note: |\n      " + longEntry + "\n    path: " + path + "\n",
+			"items:\n  - note: |\n      " + longEntry + "\n    path:\n      " + path + "\n",
+		},
+		"unkeyed item": {
+			"items:\n  - |\n    " + longEntry + "\n  - path: " + path + "\n",
+			"items:\n  - |\n    " + longEntry + "\n  - path:\n      " + path + "\n",
+		},
+	}
+	for name, tc := range cases {
+		fitted, err := FitYAMLLines([]byte(tc[0]), 2)
+		if err != nil || string(fitted) != tc[1] {
+			t.Errorf("%s: FitYAMLLines() = %q (%v)\nwant %q", name, fitted, err, tc[1])
+		}
+	}
+}
+
 func deepEqualYAML(left, right any) bool {
 	leftText, leftErr := yaml.Marshal(left)
 	rightText, rightErr := yaml.Marshal(right)
