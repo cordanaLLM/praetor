@@ -74,3 +74,26 @@ func TestParsePinnedActionBoundary(t *testing.T) {
 		t.Fatalf("bare uses: = %q, %v", ref, uses)
 	}
 }
+
+// Positive, negative and boundary: ScanActionUses returns the lines and each uses: line in
+// order, pinned or not, skips comment and run lines, and refuses one line past its bound.
+func TestScanActionUses(t *testing.T) {
+	workflow := "steps:\n  - uses: actions/checkout@" + pinTestSHA + "  # v7.0.1\n" +
+		"  # - uses: actions/cache@v4\n  - run: echo uses: x\n  - uses: ./local\n"
+	lines, uses, err := ScanActionUses(workflow, 6)
+	if err != nil || len(lines) != 6 || len(uses) != 2 {
+		t.Fatalf("scan = %d lines, %+v, %v", len(lines), uses, err)
+	}
+	if uses[0].Line != 1 || !uses[0].Pinned || uses[0].Pin.Release != "v7.0.1" {
+		t.Fatalf("pinned use = %+v", uses[0])
+	}
+	if uses[1].Line != 4 || uses[1].Pinned || uses[1].Ref != "./local" {
+		t.Fatalf("local use = %+v", uses[1])
+	}
+	if _, _, err := ScanActionUses(workflow, 5); err == nil {
+		t.Fatal("a workflow one line past the bound was scanned")
+	}
+	if lines, uses, err := ScanActionUses("", 1); err != nil || len(lines) != 1 || len(uses) != 0 {
+		t.Fatalf("empty workflow = %v, %+v, %v", lines, uses, err)
+	}
+}

@@ -265,20 +265,15 @@ func (f Family) validateWorkflowPins() error {
 // (util.ParsePinnedAction). An adopter cannot edit a locked workflow, so one tag-
 // or branch-pinned action makes the whole gate fail under a SHA-pinning policy.
 func unpinnedActions(workflow string) ([]string, error) {
-	lines := strings.Split(workflow, "\n")
-	if len(lines) > MaxWorkflowLines {
-		return nil, fmt.Errorf("workflow has %d lines, want at most %d", len(lines), MaxWorkflowLines)
+	lines, uses, err := util.ScanActionUses(workflow, MaxWorkflowLines)
+	if err != nil {
+		return nil, err
 	}
 	var unpinned []string
-	for index := 0; index < len(lines) && index < MaxWorkflowLines; index++ {
-		ref, uses := util.ActionUsesValue(lines[index])
-		if !uses || strings.HasPrefix(ref, "./") {
-			continue
+	for _, use := range uses {
+		if !use.Pinned && !strings.HasPrefix(use.Ref, "./") {
+			unpinned = append(unpinned, strings.TrimSpace(lines[use.Line]))
 		}
-		if _, pinned := util.ParsePinnedAction(ref); pinned {
-			continue
-		}
-		unpinned = append(unpinned, strings.TrimSpace(lines[index]))
 	}
 	return unpinned, nil
 }

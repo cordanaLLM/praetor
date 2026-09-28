@@ -139,8 +139,20 @@ func observeManagedFile(ctx context.Context, s *adoptSession, family managedasse
 	if !exists {
 		return false, false, nil
 	}
-	canonical, err = ManagedFileIsCanonical(family, rel, actual)
-	return canonical || family.PriorText(rel, actual), true, err
+	canonical, err = ManagedFileIsPraetors(family, rel, actual)
+	return canonical, true, err
+}
+
+// ManagedFileIsPraetors reports whether actual is Praetor's own unedited text at rel: the
+// family's canonical text (ManagedFileIsCanonical) or an earlier text of that path
+// (Family.PriorText). Adoption treats either as an adopted file, and audit of a disabled
+// facet as a Praetor file left behind.
+func ManagedFileIsPraetors(family managedasset.Family, rel string, actual []byte) (bool, error) {
+	canonical, err := ManagedFileIsCanonical(family, rel, actual)
+	if err != nil {
+		return false, err
+	}
+	return canonical || family.PriorText(rel, actual), nil
 }
 
 // ManagedFileIsCanonical reports whether actual is family's exact text at rel, allowing one

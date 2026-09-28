@@ -378,3 +378,35 @@ func TestManagedFileIsCanonical(t *testing.T) {
 		t.Fatalf("mixed endings: canonical=%v err=%v", canonical, err)
 	}
 }
+
+// ManagedFileIsPraetors: positive for the canonical text and for an earlier text in either
+// consistent line-ending style, negative for an edited earlier text, for an earlier text at a
+// path its digest does not name and for a path the family does not own, boundary for an
+// earlier text with mixed endings, which is neither and never an error.
+func TestManagedFileIsPraetors(t *testing.T) {
+	family := priorFamily()
+	for rel, text := range map[string]string{
+		"tools/fixture/third_party/lib/LICENSE": "MIT\n",
+		".github/workflows/fixture.yml":         priorFixtureWorkflow,
+		"tools/fixture/core.mjs":                strings.ReplaceAll(priorFixtureCore, "\n", "\r\n"),
+	} {
+		if praetors, err := ManagedFileIsPraetors(family, rel, []byte(text)); err != nil || !praetors {
+			t.Fatalf("%s holding %q: praetors=%v err=%v", rel, text, praetors, err)
+		}
+	}
+	for rel, text := range map[string]string{
+		".github/workflows/fixture.yml": priorFixtureWorkflow + "# edited\n",
+		"tools/fixture/core.mjs":        priorFixtureWorkflow,
+	} {
+		if praetors, err := ManagedFileIsPraetors(family, rel, []byte(text)); err != nil || praetors {
+			t.Fatalf("%s holding %q: praetors=%v err=%v", rel, text, praetors, err)
+		}
+	}
+	if _, err := ManagedFileIsPraetors(family, "tools/fixture/unknown.mjs", nil); err == nil {
+		t.Fatal("a path the family does not own was classified")
+	}
+	mixed := []byte(strings.Replace(priorFixtureWorkflow, "\n", "\r\n", 1))
+	if praetors, err := ManagedFileIsPraetors(family, ".github/workflows/fixture.yml", mixed); err != nil || praetors {
+		t.Fatalf("mixed endings: praetors=%v err=%v", praetors, err)
+	}
+}

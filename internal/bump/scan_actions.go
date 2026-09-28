@@ -188,17 +188,13 @@ const maxWorkflowLines = 100000
 // current SHA pin would read as drift and a SHA pin of a deprecated major would go unflagged.
 // A commented-out step keeps its leading "#" and is stripped as before.
 func withPinnedReleases(content string) (string, error) {
-	lines := strings.Split(content, "\n")
-	if len(lines) > maxWorkflowLines {
-		return "", fmt.Errorf("workflow exceeds %d lines", maxWorkflowLines)
+	lines, uses, err := util.ScanActionUses(content, maxWorkflowLines)
+	if err != nil {
+		return "", err
 	}
-	for i := 0; i < len(lines) && i < maxWorkflowLines; i++ {
-		ref, uses := util.ActionUsesValue(lines[i])
-		if !uses {
-			continue
-		}
-		if pin, pinned := util.ParsePinnedAction(ref); pinned {
-			lines[i] = strings.Replace(lines[i], ref, pin.Action+"@"+pin.Release, 1)
+	for _, use := range uses {
+		if use.Pinned {
+			lines[use.Line] = strings.Replace(lines[use.Line], use.Ref, use.Pin.Action+"@"+use.Pin.Release, 1)
 		}
 	}
 	return strings.Join(lines, "\n"), nil

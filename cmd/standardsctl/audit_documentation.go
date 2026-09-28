@@ -176,14 +176,14 @@ func auditDisabledManagedFamily(ctx context.Context, rootDir string, family mana
 		if err != nil {
 			return fmt.Errorf("[FAIL] Inspect disabled %s asset %s: %w", family.Kind, rel, err)
 		}
-		canonical := false
-		if exists {
-			canonical, err = adopt.ManagedFileIsCanonical(family, rel, actual)
-			if err != nil {
-				return fmt.Errorf("[FAIL] Classify disabled %s asset %s: %w", family.Kind, rel, err)
-			}
+		if !exists {
+			continue
 		}
-		if canonical || (exists && family.PriorText(rel, actual)) {
+		praetors, err := adopt.ManagedFileIsPraetors(family, rel, actual)
+		if err != nil {
+			return fmt.Errorf("[FAIL] Classify disabled %s asset %s: %w", family.Kind, rel, err)
+		}
+		if praetors {
 			return fmt.Errorf("[FAIL] Disabled %s facet retains Praetor asset %s", family.Kind, rel)
 		}
 	}

@@ -28,8 +28,13 @@ of the less precise tag (`bump.ActionPinCurrent`): an exact `v4.1.2` is current 
 baseline `v4`, a moving `v4` is current against `v4.1.2`, and `v3.8.1` drifts behind
 `v4.1.2`. A pin by full commit SHA with its release as a trailing comment, two spaces
 before the `#` (`actions/checkout@<40-hex SHA>  # v7.0.1`, the form of the locked
-documentation gate), is compared at that release, deprecations included
-(`internal/util/action_pin.go`, `internal/bump/scan_actions_pinned_test.go`). Any other
+documentation gate), is compared at that release exactly as a tag pin of that
+release is (`internal/util/action_pin.go`,
+`internal/bump/scan_actions_pinned_test.go`). The deprecation table is keyed by
+major tag, so a comment naming a bare major (`# v4`) carries that major's
+deprecation, while an exact release such as `# v4.2.2`, like the exact tag
+`@v4.2.2`, is not looked up in it
+(`TestScanWorkflowActionsNode24FirstMajorNotDeprecated`). Any other
 pin that is not a version tag, such as a bare commit SHA, is current only when it equals
 the baseline. Commented-out `uses:` lines are not scanned. Tests:
 `internal/bump/version_compare_test.go`.

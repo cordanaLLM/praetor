@@ -3,7 +3,11 @@
 
 package util
 
-import "regexp"
+import (
+	"fmt"
+	"regexp"
+	"strings"
+)
 
 var (
 	// actionUsesLine captures the value of a workflow step's uses: key, trailing comment
@@ -47,4 +51,35 @@ func ParsePinnedAction(ref string) (PinnedAction, bool) {
 		return PinnedAction{}, false
 	}
 	return PinnedAction{Action: match[1], SHA: match[2], Release: match[3]}, true
+}
+
+// ActionUse is one workflow line that declares a uses: key.
+type ActionUse struct {
+	// Line is the zero-based index of the line in the workflow.
+	Line int
+	// Ref is the uses: value, trailing comment included (ActionUsesValue).
+	Ref string
+	// Pin is Ref split into its parts; Pinned reports whether Ref has the SHA-pinned form.
+	Pin    PinnedAction
+	Pinned bool
+}
+
+// ScanActionUses splits workflow into lines and returns them with every line that declares a
+// uses: key, in order. It refuses a workflow of more than maxLines lines (HISS-02); each
+// caller passes the bound that fits the workflows it reads.
+func ScanActionUses(workflow string, maxLines int) ([]string, []ActionUse, error) {
+	lines := strings.Split(workflow, "\n")
+	if len(lines) > maxLines {
+		return nil, nil, fmt.Errorf("workflow has %d lines, want at most %d", len(lines), maxLines)
+	}
+	var uses []ActionUse
+	for index := 0; index < len(lines) && index < maxLines; index++ {
+		ref, declared := ActionUsesValue(lines[index])
+		if !declared {
+			continue
+		}
+		pin, pinned := ParsePinnedAction(ref)
+		uses = append(uses, ActionUse{Line: index, Ref: ref, Pin: pin, Pinned: pinned})
+	}
+	return lines, uses, nil
 }
