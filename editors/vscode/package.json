@@ -91,18 +91,6 @@
           "scope": "machine",
           "description": "Timeout for explicit repository verification; expiration is reported as incomplete."
         },
-        "standards.mcp.enabled": {
-          "type": "boolean",
-          "default": false,
-          "description": "Legacy setting; does not activate MCP or select a running model.",
-          "deprecationMessage": "Use Standards: Prepare Agent MCP Configuration and the shared routing configuration."
-        },
-        "standards.mcp.path": {
-          "type": "string",
-          "default": "",
-          "description": "Legacy setting; does not activate MCP or select a running model.",
-          "deprecationMessage": "Use Standards: Prepare Agent MCP Configuration and the shared routing configuration."
-        },
         "standards.modelTier": {
           "type": "string",
           "default": "",
