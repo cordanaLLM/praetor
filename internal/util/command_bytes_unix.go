@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"sync"
 	"syscall"
+	"time"
 )
 
 // commandBytesCleanup keeps descendants in a process group the command owns and records that
@@ -24,11 +25,57 @@ func commandBytesCleanup(cmd *exec.Cmd) (start func() error, cleanup func() erro
 // signalProcessGroup sends sig to the process group led by pid. A group that no longer exists
 // is reported as os.ErrProcessDone.
 func signalProcessGroup(pid int, sig syscall.Signal) error {
-	err := syscall.Kill(-pid, sig)
-	if errors.Is(err, syscall.ESRCH) {
+	return processGroups.signal(pid, sig)
+}
+
+// groupGonePolls and groupGoneDelay bound how long a signal the kernel refused with EPERM
+// waits for its group to disappear: 100 probes 10 ms apart, one second in all (HISS-02).
+const (
+	groupGonePolls = 100
+	groupGoneDelay = 10 * time.Millisecond
+)
+
+// groupSignaller signals process groups through kill, syscall.Kill's contract, and bounds
+// the wait gone makes. Tests replace kill to replay a kernel's answers on any host.
+type groupSignaller struct {
+	kill  func(pid int, sig syscall.Signal) error
+	polls int
+	delay time.Duration
+}
+
+// processGroups is the groupSignaller signalProcessGroup uses.
+var processGroups = groupSignaller{kill: syscall.Kill, polls: groupGonePolls, delay: groupGoneDelay}
+
+// signal sends sig to the group led by pid. ESRCH, a group that no longer exists, is
+// os.ErrProcessDone. EPERM is too, but only once the group is verifiably gone: Darwin's
+// kill(2) answers EPERM for a group whose members have all exited and are not yet reaped,
+// because killpg1 in xnu's bsd/kern/kern_sig.c skips SZOMB members and returns EPERM when
+// it found none. A group is in that state right after its SIGKILL, until init reaps the
+// orphans (#558). A live member this process may not signal answers EPERM as well, so the
+// error stands unless the group then disappears.
+func (g groupSignaller) signal(pid int, sig syscall.Signal) error {
+	err := g.kill(-pid, sig)
+	if errors.Is(err, syscall.ESRCH) || (errors.Is(err, syscall.EPERM) && g.gone(pid)) {
 		return os.ErrProcessDone
 	}
 	return err
+}
+
+// gone reports whether the group led by pid disappears, which the kernel answers with ESRCH
+// to signal 0, within g.polls probes g.delay apart. A probe that succeeds found a member it
+// may signal, so the group is not gone.
+func (g groupSignaller) gone(pid int) bool {
+	for poll := 0; poll < g.polls; poll++ {
+		err := g.kill(-pid, 0)
+		if errors.Is(err, syscall.ESRCH) {
+			return true
+		}
+		if !errors.Is(err, syscall.EPERM) {
+			return false
+		}
+		time.Sleep(g.delay)
+	}
+	return false
 }
 
 // killProcessGroup kills the process group led by pid. A group that no longer exists is
