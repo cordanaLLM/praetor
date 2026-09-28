@@ -113,8 +113,9 @@ func TestAdoptionDocumentationGateForceRefresh(t *testing.T) {
 }
 
 // Plain adoption refreshes every documentation gate file an earlier Praetor wrote, the texts
-// under tools/markdownlint/testdata/prior, while an edited copy stays preserved without
-// --force (TestAdoptionDocumentationGateForceRefresh).
+// under tools/markdownlint/testdata/prior (the workflow before its figure step among them), as
+// a reconcile with no replace entry, while an edited copy stays preserved without --force
+// (TestAdoptionDocumentationGateForceRefresh).
 func TestAdoptionDocumentationGateRefreshesPriorTexts(t *testing.T) {
 	dir := filepath.Join("..", "..", markdownassets.Directory, "testdata", "prior")
 	entries, err := os.ReadDir(dir)
@@ -145,8 +146,10 @@ func TestAdoptionDocumentationGateRefreshesPriorTexts(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", entry.Name(), err)
 		}
-		if action, _ := actionOf(report, rel); action.Details != "Refreshed an earlier Praetor text to the current locked text" {
-			t.Fatalf("%s: %s action = %+v", entry.Name(), rel, action)
+		// A refresh overwrites no adopter bytes: a reconcile entry, never a replace with a backup.
+		if action, _ := actionOf(report, rel); action.Action != actionReconcile ||
+			action.Details != "Refreshed an earlier Praetor text to the current locked text" || len(report.Replaced()) != 0 {
+			t.Fatalf("%s: %s action = %+v, replaced %+v", entry.Name(), rel, action, report.Replaced())
 		}
 		assertDocumentationAssets(t, root)
 	}

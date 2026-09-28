@@ -216,8 +216,9 @@ const priorDocumentationBlock = "# BEGIN praetor documentation gate\n.PHONY: doc
 	"docs-lint:\n\t@node tools/markdownlint/verify.mjs\n# END praetor documentation gate\n"
 
 // Positive: the managed block attaches docs-figures, running the engine's check and sources,
-// beside docs-lint; the earlier Markdown-only block is replaced without --force, in place, and
-// removed on disable like the current one.
+// beside docs-lint; the earlier Markdown-only block is refreshed without --force, in place, and
+// removed on disable like the current one (the report entry of the refresh:
+// TestReconcileDocumentationMakefile_Positive_PriorBlockIsRefreshed).
 func TestDocumentationMakefileFigureTargetPositive(t *testing.T) {
 	block := DocumentationMakefileBlock()
 	for _, want := range []string{

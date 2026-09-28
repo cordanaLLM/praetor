@@ -7,6 +7,7 @@ package adopt
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/managedasset"
@@ -19,6 +20,14 @@ import (
 // (docs/adr/0016-figures-for-adopters.md, section 5). Adoption writes the rules of every
 // enabled family as one block at the tail of .gitattributes, so a later operator rule cannot
 // override them, and removes the block once no enabled family declares a rule.
+//
+// Audit checks the block byte for byte, so it follows the replace-vs-refresh contract of every
+// audit-locked file: an unedited block is verified, or moved to the tail with every operator
+// line kept; a block whose lines were edited is restored only under --force, as a replace with
+// its line delta and a backup, and a disable refuses to remove it, as it refuses an edited
+// Makefile documentation block. No earlier Praetor release wrote a different block; a change
+// to the rules must keep the outgoing block refreshable, as priorDocumentationMakefileBlocks
+// does for the Makefile.
 
 const (
 	gitAttributesFile         = ".gitattributes"
@@ -54,14 +63,32 @@ func ManagedGitAttributesBlock(rules []string) string {
 }
 
 // mergeGitAttributes returns text with the block of rules as its tail, or without any block
-// when rules is empty. Every line outside the block is the operator's and is kept.
+// when rules is empty. Every line outside the block is the operator's and is kept. Removing a
+// block whose lines differ from the one the documentation families write is refused.
 func mergeGitAttributes(text string, rules []string) (string, error) {
 	block := gitAttributesTailBlock()
-	if len(rules) == 0 {
-		stripped, _, err := block.strip(text)
-		return stripped, err
+	if len(rules) > 0 {
+		return block.merge(text, ManagedGitAttributesBlock(rules))
 	}
-	return block.merge(text, ManagedGitAttributesBlock(rules))
+	edited, err := gitAttributesBlockEdited(text, DocumentationAttributes())
+	if err != nil {
+		return "", err
+	}
+	if edited {
+		return "", fmt.Errorf("refusing to remove the edited managed attribute block of %s; restore or remove it, then rerun adopt", gitAttributesFile)
+	}
+	stripped, _, err := block.strip(text)
+	return stripped, err
+}
+
+// gitAttributesBlockEdited reports whether text holds an attribute block whose lines, line
+// endings aside, are not those of the canonical block of rules: an operator edit.
+func gitAttributesBlockEdited(text string, rules []string) (bool, error) {
+	inner, held, err := gitAttributesTailBlock().held(text)
+	if err != nil || !held {
+		return false, err
+	}
+	return !slices.Equal(inner, append([]string{gitAttributesHeader}, rules...)), nil
 }
 
 // GitAttributesBlockPresent reports whether text carries an exact attribute-block marker line, so
@@ -100,18 +127,50 @@ func reconcileGitAttributes(ctx context.Context, s *adoptSession, rules []string
 	if len(rules) == 0 {
 		return removeGitAttributesBlock(ctx, s, full, data, merged)
 	}
-	return publishGitAttributes(ctx, s, full, data, merged, exists)
+	return publishGitAttributes(ctx, s, gitAttributesWrite{full: full, data: data, merged: merged, exists: exists}, rules)
 }
 
-// publishGitAttributes writes the merged file and reports whether it was created or extended.
-func publishGitAttributes(ctx context.Context, s *adoptSession, full string, data []byte, merged string, exists bool) error {
+// gitAttributesWrite is one planned write of .gitattributes: the bytes observed at full, whether
+// the file existed, and the merged text that replaces them.
+type gitAttributesWrite struct {
+	full   string
+	data   []byte
+	merged string
+	exists bool
+}
+
+// publish writes the merged text, bound to the observed bytes.
+func (w gitAttributesWrite) publish(ctx context.Context) error {
+	if err := contextopt.ReplaceSnapshot(ctx, w.full, []byte(w.merged),
+		contextopt.ReplaceOptions{Expected: w.data, Exists: w.exists, Mode: filePerm}); err != nil {
+		return fmt.Errorf("write %s: %w", gitAttributesFile, err)
+	}
+	return nil
+}
+
+// publishGitAttributes writes the merged file and reports whether it was created, extended or,
+// over an edited block under --force, replaced with a backup. Without --force an edited block
+// is refused and the file stays as it is.
+func publishGitAttributes(ctx context.Context, s *adoptSession, w gitAttributesWrite, rules []string) error {
+	edited, err := gitAttributesBlockEdited(string(w.data), rules)
+	if err != nil {
+		return err
+	}
+	if edited && !s.opts.Force {
+		return fmt.Errorf("%s managed attribute block was edited; review it and rerun adopt --force", gitAttributesFile)
+	}
+	if edited {
+		return s.replaceExisting(ctx, replacement{
+			rel: gitAttributesFile, before: w.data, after: []byte(w.merged),
+			detail: "Restored the managed attribute block at the tail", publish: w.publish,
+		})
+	}
 	if !s.opts.DryRun {
-		if err := contextopt.ReplaceSnapshot(ctx, full, []byte(merged),
-			contextopt.ReplaceOptions{Expected: data, Exists: exists, Mode: filePerm}); err != nil {
-			return fmt.Errorf("write %s: %w", gitAttributesFile, err)
+		if err := w.publish(ctx); err != nil {
+			return err
 		}
 	}
-	if exists {
+	if w.exists {
 		s.report.recordReconciledAs(gitAttributesFile, actionAppend,
 			"Preserved existing rules and placed the managed attribute block at the tail")
 		return nil

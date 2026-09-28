@@ -330,10 +330,17 @@ marked block when `docs-lint` is provably available; includes, generated target
 names, `eval`, pattern rules, an operator-owned target collision, or an edited
 managed block fail for review. `praetorctl adopt --force` repairs an edited
 managed block while the facet remains enabled and refreshes the content-locked
-assets, but still refuses symbolic links. The block an earlier Praetor wrote,
-with `docs-lint` alone, is recognised exactly: plain `praetorctl adopt` replaces
-it with the current block, and a disable removes it
-(`priorDocumentationMakefileBlocks` in `internal/adopt/verification_makefile.go`).
+assets, but still refuses symbolic links; the report lists that repair as a
+replace with its line delta and a backup. The block an earlier Praetor wrote,
+with `docs-lint` alone, is recognised exactly: plain `praetorctl adopt`
+refreshes it to the current block, reported as a reconcile with no backup, and
+a disable removes it (`priorDocumentationMakefileBlocks` in
+`internal/adopt/verification_makefile.go`). A refresh or repair that adds a
+target, such as `docs-figures`, stops when the rest of the Makefile may already
+define it, as a first attachment does. The `.gitattributes` block follows the
+same contract: an edited block fails a plain run, `--force` restores it as a
+replace with a backup, and a disable refuses to remove it
+(`internal/adopt/gitattributes.go`).
 
 The tool assets and the workflow form the Markdown entry of the managed asset
 family registry (`managedasset.Families`, `internal/managedasset/family.go`).
@@ -371,7 +378,8 @@ inventory, the `.gitattributes` block at the end of the file, and the required
 hosted context, and records any declared
 [repository settings](#repository-settings). It warns, without failing, when
 the repository declares its licensing in `REUSE.toml` but no annotation labels
-`tools/figures/third_party/interfig/upstream/**` MIT. When the facet is disabled, audit rejects stale Praetor
+`tools/figures/third_party/interfig/upstream/**` MIT, or a later table that
+also covers those files, such as `**`, relabels them. When the facet is disabled, audit rejects stale Praetor
 documentation assets, exact Makefile marker lines, the `.gitattributes` block, README contract text,
 formatter paths, or a structurally declared hosted status context instead of
 silently treating them as active. Operator-owned files at the same paths, prose

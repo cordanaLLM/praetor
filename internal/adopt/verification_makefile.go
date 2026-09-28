@@ -36,8 +36,9 @@ func DocumentationMakefileBlock() string {
 }
 
 // priorDocumentationMakefileBlocks are the exact blocks an earlier Praetor wrote. Adoption
-// replaces one without --force and removes one on disable, as it does the current block; an
-// edited block matches none and keeps the --force contract.
+// refreshes one without --force, recorded as a reconcile with no backup, and removes one on
+// disable, as it does the current block; an edited block matches none and keeps the --force
+// contract, which records its restoration as a replace with a backup.
 var priorDocumentationMakefileBlocks = []string{
 	// The Markdown gate alone, before the figure checks joined it.
 	documentationMakefileBegin + "\n" +
@@ -52,9 +53,28 @@ var priorDocumentationMakefileBlocks = []string{
 // whose text is the current block or an earlier Praetor one.
 func documentationMakefileBlockPraetors(state documentationMarkerState) bool {
 	return documentationMakefileBlockExact(state, DocumentationMakefileBlock()) ||
-		slices.ContainsFunc(priorDocumentationMakefileBlocks, func(prior string) bool {
-			return documentationMakefileBlockExact(state, prior)
-		})
+		documentationMakefileBlockPrior(state)
+}
+
+// documentationMakefileBlockPrior reports whether state holds exactly one complete block whose
+// text is an earlier Praetor block.
+func documentationMakefileBlockPrior(state documentationMarkerState) bool {
+	return slices.ContainsFunc(priorDocumentationMakefileBlocks, func(prior string) bool {
+		return documentationMakefileBlockExact(state, prior)
+	})
+}
+
+// documentationTargetCollision refuses writing the current block when a target it defines that
+// inside, the block text it replaces ("" on a first attachment), does not define may already be
+// defined by outside, the rest of the Makefile: Make would then warn "overriding recipe" and run
+// only one of the two recipes.
+func documentationTargetCollision(outside, inside string) error {
+	for _, target := range documentationMakefileTargets {
+		if !hasVerificationTarget(inside, target) && mayDefineTarget(outside, target) {
+			return fmt.Errorf("makefile may define target %s outside the Praetor-managed block", target)
+		}
+	}
+	return nil
 }
 
 type documentationMarkerState struct {
@@ -120,10 +140,8 @@ func mergeDocumentationMakefileLF(existing string, force bool) (string, error) {
 	if state.beginCount == 1 || state.endCount == 1 {
 		return replaceDocumentationMakefileBlock(existing, block, force || documentationMakefileBlockPraetors(state))
 	}
-	for _, target := range documentationMakefileTargets {
-		if mayDefineTarget(existing, target) {
-			return "", fmt.Errorf("makefile may define target %s outside the Praetor-managed block", target)
-		}
+	if err := documentationTargetCollision(existing, ""); err != nil {
+		return "", err
 	}
 	base := strings.TrimRight(existing, "\n")
 	if base == "" {
@@ -148,6 +166,11 @@ func replaceDocumentationMakefileBlock(existing, block string, force bool) (stri
 	}
 	if !force {
 		return "", fmt.Errorf("makefile Praetor documentation gate block was edited; review it and rerun adopt --force")
+	}
+	outside := append(append(make([]string, 0, len(state.lines)), state.lines[:state.begin]...), state.lines[state.end+1:]...)
+	if err := documentationTargetCollision(strings.Join(outside, "\n"),
+		strings.Join(state.lines[state.begin:state.end+1], "\n")); err != nil {
+		return "", err
 	}
 	replacement := strings.Split(strings.TrimSuffix(block, "\n"), "\n")
 	lines := make([]string, 0, len(state.lines)-(state.end-state.begin+1)+len(replacement))
@@ -213,17 +236,13 @@ func reconcileDocumentationMakefile(ctx context.Context, s *adoptSession) error 
 		return contextopt.ReplaceSnapshot(ctx, full, []byte(merged),
 			contextopt.ReplaceOptions{Expected: data, Exists: exists, Mode: filePerm})
 	}
-	// With a marker present, mergeDocumentationMakefile changes the file only by replacing an
-	// edited block under --force: that overwrites adopter lines, so it is a replace with a
-	// backup. The delta lists only in-block lines, since every line outside the block is kept.
-	markers, err := DocumentationMakefileMarkersPresent(string(data))
+	action, detail, err := documentationMakefileChange(string(data))
 	if err != nil {
 		return err
 	}
-	if markers {
+	if action == actionReplace {
 		return s.replaceExisting(ctx, replacement{
-			rel: makefileName, before: data, after: []byte(merged),
-			detail: "Restored the locked documentation gate block", publish: publish,
+			rel: makefileName, before: data, after: []byte(merged), detail: detail, publish: publish,
 		})
 	}
 	if !s.opts.DryRun {
@@ -231,8 +250,41 @@ func reconcileDocumentationMakefile(ctx context.Context, s *adoptSession) error 
 			return err
 		}
 	}
-	s.report.recordReconciledAs(makefileName, actionAppend, "Attached locked documentation gate to verify-all")
+	s.planDryRunWrite(makefileName, []byte(merged))
+	s.report.recordReconciledAs(makefileName, action, detail)
 	return nil
+}
+
+// Action details of the documentation gate block's changes (documentationMakefileChange).
+const (
+	documentationMakefileAttached  = "Attached locked documentation gate to verify-all"
+	documentationMakefileRefreshed = "Refreshed an earlier Praetor documentation gate block to the current locked block"
+	documentationMakefileRestored  = "Restored the locked documentation gate block"
+)
+
+// documentationMakefileChange classifies the change reconcileDocumentationMakefile makes to data,
+// a Makefile mergeDocumentationMakefile changes, as a report action and its detail. Without a
+// marker the block is appended. An exact earlier Praetor block is refreshed, as every other
+// earlier Praetor text is (replacePriorText): nobody edited it, so it takes no backup. Any other
+// marker-present change restores an edited block under --force, which overwrites adopter lines,
+// so it is a replace with a backup whose delta lists only in-block lines, since every line
+// outside the block is kept.
+func documentationMakefileChange(data string) (action, detail string, err error) {
+	normalized, _, err := util.NormalizeLineEndingsStrict(data)
+	if err != nil {
+		return "", "", fmt.Errorf("makefile line endings are inconsistent: %w", err)
+	}
+	state, err := scanDocumentationMakefileMarkers(normalized)
+	if err != nil {
+		return "", "", err
+	}
+	switch {
+	case state.beginCount == 0 && state.endCount == 0:
+		return actionAppend, documentationMakefileAttached, nil
+	case documentationMakefileBlockPrior(state):
+		return actionReconcile, documentationMakefileRefreshed, nil
+	}
+	return actionReplace, documentationMakefileRestored, nil
 }
 
 // Only exact historical Praetor output is eligible for automatic replacement.
