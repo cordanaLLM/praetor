@@ -13,6 +13,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/agentcontext"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -43,8 +44,9 @@ type ChangeSet struct {
 	DocsChanged   bool     `json:"docs_changed"`
 	ConfigChanged bool     `json:"config_changed"`
 	AgentChanged  bool     `json:"agent_changed"`
-	// UnclassifiedChanged records a path no classifier recognised. Such a path also sets
-	// ConfigChanged, so an unknown file kind runs tests, linters and security (fail closed).
+	// UnclassifiedChanged records a path whose file kind no classifier recognised, even under a
+	// test directory. Such a path also sets ConfigChanged, so an unknown file kind runs tests,
+	// linters and security (fail closed).
 	UnclassifiedChanged bool `json:"unclassified_changed"`
 	StateOnly           bool `json:"state_only"`
 	DocsOnly            bool `json:"docs_only"`
@@ -196,16 +198,17 @@ func ClassifyChanges(files []string) *ChangeSet {
 	return cs
 }
 
-// classifySource records the domains a non-documentation path belongs to. A path none of
-// them recognises (a shell script, a Dockerfile, a template, an unknown manifest) fails
-// closed as configuration, so it selects tests, linters and security (BUG-236).
+// classifySource records the domains a non-documentation path belongs to. A path whose file
+// kind none of them recognises (a shell script, a Dockerfile, a template, an unknown manifest)
+// fails closed as configuration, so it selects tests, linters and security (BUG-236). A test
+// location names no file kind: a script or fixture under a tests/ directory still fails closed.
 func (cs *ChangeSet) classifySource(path string) {
 	test, code, conf, agent := isTest(path), isCode(path), isConfig(path), isAgent(path)
 	cs.TestsChanged = cs.TestsChanged || test
 	cs.CodeChanged = cs.CodeChanged || code
 	cs.ConfigChanged = cs.ConfigChanged || conf
 	cs.AgentChanged = cs.AgentChanged || agent
-	if !test && !code && !conf && !agent {
+	if !code && !conf && !agent {
 		cs.UnclassifiedChanged = true
 		cs.ConfigChanged = true
 	}
@@ -342,19 +345,37 @@ func isDocumentation(p string) bool {
 		strings.EqualFold(base, "NOTICE")
 }
 
-func isCode(p string) bool {
-	return slices.Contains([]string{
-		".go", ".c", ".cpp", ".h", ".cu", ".rs", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".java", ".dart", ".proto",
-	}, filepath.Ext(p))
+// unscannedCodeExtensions are the source kinds the HISS scanner has no dispatch for. Shading
+// language sources are code: GLSL (.glsl and the stage suffixes glslang infers a stage from),
+// HLSL, WGSL and Metal are compiled into the program, so a change to one selects tests,
+// linters and security, and never context sync.
+var unscannedCodeExtensions = []string{
+	".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".java", ".dart", ".proto", ".zig",
+	".glsl", ".vert", ".frag", ".comp", ".geom", ".tesc", ".tese",
+	".rgen", ".rint", ".rahit", ".rchit", ".rmiss", ".rcall", ".hlsl", ".wgsl", ".metal",
 }
 
+// isCode reports a source file. Every kind the HISS scanner reads (C, C++ with its .h, .hpp and
+// .hh headers, CUDA, HIP, Go, Python, Rust) comes from the scanner's own table (HISS-19), so a
+// file hiss checks for invariants always selects the code gates too.
+func isCode(p string) bool {
+	ext := strings.ToLower(filepath.Ext(p))
+	return hiss.SupportsExtension(ext) || slices.Contains(unscannedCodeExtensions, ext)
+}
+
+// testDirs are directory names whose files are tests at any depth: test/ and tests/ at the root
+// or inside a package (src/test/, a Cargo crate's tests/), and a Cargo crate's benches/.
+var testDirs = []string{"test", "tests", "benches"}
+
 func isTest(p string) bool {
+	segments := strings.Split(p, "/")
 	return strings.HasSuffix(p, "_test.go") ||
 		strings.Contains(p, "_test.") ||
 		strings.Contains(p, ".test.") ||
 		strings.Contains(p, ".spec.") ||
-		strings.HasPrefix(p, "test/") ||
-		strings.HasPrefix(p, "tests/")
+		slices.ContainsFunc(segments[:len(segments)-1], func(dir string) bool {
+			return slices.Contains(testDirs, dir)
+		})
 }
 
 // isBuildManifestText reports whether a .txt path is a dependency or build manifest

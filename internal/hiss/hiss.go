@@ -532,9 +532,12 @@ func readBounded(root, rel string) (data []byte, err error) {
 	return data, nil
 }
 
+// isNativeExt is the one C-family table: C, C++ (sources and the .h/.hpp/.hh headers), CUDA
+// and HIP. ci filter reads it through SupportsExtension, so a file the native scanner reads
+// is always code to the CI gate selection as well.
 func isNativeExt(ext string) bool {
 	return ext == ".c" || ext == ".cpp" || ext == ".cc" || ext == ".cxx" ||
-		ext == ".h" || ext == ".hpp" || ext == ".cu" || ext == ".hip"
+		ext == ".h" || ext == ".hpp" || ext == ".hh" || ext == ".cu" || ext == ".hip"
 }
 
 // recordViolation appends a violation unless the cap is reached, in which case the
