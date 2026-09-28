@@ -186,8 +186,9 @@ func TestApplyFlavor_Boundary_TemplatesOnlyLeavesSettingsAlone(t *testing.T) {
 	}
 }
 
-// writeEarlierRendering writes the ruleset Praetor rendered under policy and contexts, the file
-// an earlier adoption or apply left before the policy or the workflows changed.
+// writeEarlierRendering writes the ruleset RenderRepositoryRuleset renders under policy and
+// contexts: the file an earlier adoption or apply left, or, under inputs the repository never
+// declared, a rendering an adopter edited.
 func writeEarlierRendering(t *testing.T, dir string, policy config.BranchProtectionPolicy, contexts []string, crlf bool) string {
 	t.Helper()
 	data, err := forge.RenderRepositoryRuleset(policy, contexts)
@@ -205,22 +206,35 @@ func writeEarlierRendering(t *testing.T, dir string, policy config.BranchProtect
 	return text
 }
 
-// A ruleset Praetor rendered under an earlier policy or before a workflow existed, and nobody
-// edited, is refreshed to the current rendering without --force, in its own line-ending style:
-// the ruleset adoption wrote before `flavor apply --flavor=<name>` scaffolds that flavor's CI.
-func TestApplyFlavor_Positive_RefreshesAnEarlierPraetorRuleset(t *testing.T) {
-	signed := config.DefaultPolicy().BranchProtection
-	signed.RequireSignedCommits = true
+// docsWorkflow is a workflow the repository carries before apply, whose one job the ruleset an
+// earlier adoption rendered requires.
+const docsWorkflow = "on: pull_request\njobs:\n  docs: {}\n"
+
+// writeDocsWorkflow writes docsWorkflow into dir.
+func writeDocsWorkflow(t *testing.T, dir string) {
+	t.Helper()
+	path := filepath.Join(dir, ".github", "workflows", "docs.yml")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWriteFile(t, path, docsWorkflow)
+}
+
+// The ruleset that was current before apply added workflows, the one adoption wrote before
+// `flavor apply --flavor=<name>` scaffolds that flavor's CI, is refreshed to the current
+// rendering without --force, in its own line-ending style.
+func TestApplyFlavor_Positive_RefreshesTheRulesetCurrentBeforeApply(t *testing.T) {
 	for name, crlf := range map[string]bool{"LF": false, "CRLF": true} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
-			writeEarlierRendering(t, dir, signed, []string{"Documentation Governance"}, crlf)
+			writeDocsWorkflow(t, dir)
+			writeEarlierRendering(t, dir, config.DefaultPolicy().BranchProtection, []string{"docs"}, crlf)
 			report, err := flavor.ApplyFlavor(t.Context(), dir, "go-service", false)
 			if err != nil {
 				t.Fatalf("apply: %+v, %v", report, err)
 			}
 			if got := settingOutcome(t, report, forge.RepositoryRulesetPath); got.Action != flavor.SettingRefreshed {
-				t.Fatalf("an earlier Praetor ruleset must be refreshed, got %+v", got)
+				t.Fatalf("the ruleset current before apply must be refreshed, got %+v", got)
 			}
 			assertRenderedRuleset(t, dir, config.DefaultPolicy().BranchProtection)
 			data, err := os.ReadFile(rulesetPath(dir))
@@ -232,6 +246,73 @@ func TestApplyFlavor_Positive_RefreshesAnEarlierPraetorRuleset(t *testing.T) {
 				t.Fatalf("the refresh did not keep the file's line endings (crlf=%v):\n%q", crlf, data)
 			}
 		})
+	}
+}
+
+// A rendering with only a value edited, a signature rule or a review count raised or a status
+// check added, is the adopter's edit, not an earlier Praetor rendering: kept and reported
+// without --force, replaced with it.
+func TestApplyFlavor_Negative_ValueEditedRulesetIsKeptWithoutForce(t *testing.T) {
+	signed, reviews := config.DefaultPolicy().BranchProtection, config.DefaultPolicy().BranchProtection
+	signed.RequireSignedCommits = true
+	reviews.ReviewMode, reviews.RequiredApprovingReviewers = config.BranchReviewModeIndependent, 3
+	for name, tc := range map[string]struct {
+		policy   config.BranchProtectionPolicy
+		contexts []string
+	}{
+		"signature rule and e2e check added": {signed, []string{"docs", "e2e"}},
+		"review count raised":                {reviews, []string{"docs"}},
+		"status check added":                 {config.DefaultPolicy().BranchProtection, []string{"docs", "e2e"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeDocsWorkflow(t, dir)
+			edited := writeEarlierRendering(t, dir, tc.policy, tc.contexts, false)
+			report, err := flavor.ApplyFlavor(t.Context(), dir, "native-gpu-systems", false)
+			if err != nil {
+				t.Fatalf("apply: %+v, %v", report, err)
+			}
+			if got := settingOutcome(t, report, forge.RepositoryRulesetPath); got.Action != flavor.SettingKept || !strings.Contains(got.Note, "--force replaces it") {
+				t.Fatalf("a value-edited ruleset must be kept and reported, got %+v", got)
+			}
+			if data, err := os.ReadFile(rulesetPath(dir)); err != nil || string(data) != edited {
+				t.Fatalf("the edited ruleset was changed without --force: %q, %v", data, err)
+			}
+			forced, err := flavor.ApplyFlavor(t.Context(), dir, "native-gpu-systems", true)
+			if err != nil || settingOutcome(t, forced, forge.RepositoryRulesetPath).Action != flavor.SettingReplaced {
+				t.Fatalf("--force must replace the edited ruleset: %+v, %v", forced, err)
+			}
+			assertRenderedRuleset(t, dir, config.DefaultPolicy().BranchProtection)
+		})
+	}
+}
+
+// The exact current rendering is left unchanged, and so is its CRLF checkout, byte for byte.
+func TestApplyFlavor_Boundary_CurrentRenderingIsUnchangedInEitherLineEnding(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := flavor.ApplyFlavor(t.Context(), dir, "go-service", false); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	data, err := os.ReadFile(rulesetPath(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, text := range map[string]string{"LF": string(data), "CRLF": strings.ReplaceAll(string(data), "\n", "\r\n")} {
+		mustWriteFile(t, rulesetPath(dir), text)
+		report, err := flavor.ApplyFlavor(t.Context(), dir, "go-service", false)
+		if err != nil || settingOutcome(t, report, forge.RepositoryRulesetPath).Action != flavor.SettingUnchanged {
+			t.Fatalf("%s: the current rendering must be unchanged: %+v, %v", name, report, err)
+		}
+		if got, err := os.ReadFile(rulesetPath(dir)); err != nil || string(got) != text {
+			t.Fatalf("%s: an unchanged ruleset was rewritten: %q, %v", name, got, err)
+		}
+	}
+	// Re-indented, the same ruleset is text that differs: kept, the verdict adoption gives it.
+	tabbed := strings.ReplaceAll(string(data), "  ", "\t")
+	mustWriteFile(t, rulesetPath(dir), tabbed)
+	report, err := flavor.ApplyFlavor(t.Context(), dir, "go-service", false)
+	if err != nil || settingOutcome(t, report, forge.RepositoryRulesetPath).Action != flavor.SettingKept {
+		t.Fatalf("a re-indented ruleset must be kept: %+v, %v", report, err)
 	}
 }
 

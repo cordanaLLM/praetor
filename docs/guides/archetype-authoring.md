@@ -74,14 +74,15 @@ through `flavor apply` (`internal/flavor/settings_apply.go`):
 
 - Settings run after templates, so the ruleset requires the status checks of the workflows apply
   has just written.
-- A ruleset that already validates as the rendering (`forge.ValidateRepositoryRuleset`) is reported
-  `unchanged`. One that is exactly a Praetor rendering under an earlier policy or earlier workflows
-  (`forge.IsRepositoryRulesetRendering`), such as the one adoption wrote before `flavor apply`
-  added a workflow, is `refreshed` without `--force`, in its own line-ending style
-  (`TestApplyFlavor_Positive_RefreshesAnEarlierPraetorRuleset`). Any other one that differs is
-  `kept` and reported, and `--force` replaces it
-  (`TestApplyFlavor_Negative_EditedRulesetIsKeptWithoutForce`,
-  `TestApplyFlavor_Negative_EditedRenderingIsNotRefreshed`). Adoption refreshes the same way
+- A ruleset that already is the rendering, line endings aside, is reported `unchanged`: the text
+  comparison adoption applies to the same file. The rendering that was current before this apply
+  added workflows (`forge.PriorRulesetDigests`), such as the one adoption wrote, is `refreshed`
+  without `--force`, in its own line-ending style
+  (`TestApplyFlavor_Positive_RefreshesTheRulesetCurrentBeforeApply`).
+- Any other ruleset that differs is `kept` and reported, and `--force` replaces it. That includes a
+  rendering with a single value edited, such as a signature rule, a review count or an added status
+  check (`TestApplyFlavor_Negative_ValueEditedRulesetIsKeptWithoutForce`,
+  `TestApplyFlavor_Negative_EditedRulesetIsKeptWithoutForce`). Adoption decides the same way
   ([refreshing a ruleset](../adoption.md#refreshing-a-ruleset-praetor-rendered-earlier)).
 - `adoption.decline: [branch-ruleset]` in `.standards.yaml` stops `flavor apply` too. The decline is
   read through `adopt.RepositoryArtifactDeclined` (`TestFlavorApply_Negative_HonoursAdoptionDecline`).
@@ -92,10 +93,12 @@ through `flavor apply` (`internal/flavor/settings_apply.go`):
 - `praetorctl adopt` applies the flavor with `ApplyOptions.TemplatesOnly`, because its own
   `branch-ruleset` step writes the ruleset once every workflow of the run exists.
 
-After `flavor apply` alone, a repository passes the flavor audit only if its other settings are
-already in place (`TestApplyFlavor_Positive_FreshRepositoryGetsTheRulesetAndPassesTheAudit`). For a
-flavor that also requires `lefthook.yml` or `.vscode/settings.json`, run the producer the report
-names. `flavor inspect` prints that producer next to each deferred setting.
+`flavor apply` alone makes the flavor audit pass only for a flavor whose other required settings are
+already in place. The ruleset is the one setting it renders. `lefthook.yml` and
+`.vscode/settings.json` come from their producers, and `flavor apply` does not render them.
+`TestApplyFlavor_Positive_FreshRepositoryGetsTheRulesetAndPassesTheAudit` holds the audit to a pass
+after `flavor apply` alone for `native-gpu-systems` and `infra-k8s`. For any other flavor, run the
+producer the report names; `flavor inspect` prints it next to each deferred setting.
 
 **The body is the file.** `templates/embed.go` embeds `templates/*/*.tmpl`, so the file under
 `templates/` is byte for byte what an adopter receives. Actions use `<%` and `%>` rather than `{{ }}`,

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -22,9 +21,9 @@ const (
 	SettingCreated SettingAction = "created"
 	// SettingReplaced: the setting differed from the rendering and --force rewrote it.
 	SettingReplaced SettingAction = "replaced"
-	// SettingRefreshed: the setting was Praetor's rendering under earlier inputs, unedited
-	// (forge.IsRepositoryRulesetRendering), and apply rewrote it to the current one without
-	// --force.
+	// SettingRefreshed: the setting held the rendering that was current before this apply
+	// added workflows, unedited (forge.PriorRulesetDigests), and apply rewrote it to the
+	// current one without --force.
 	SettingRefreshed SettingAction = "refreshed"
 	// SettingUnchanged: the setting already is the rendering, so nothing was written.
 	SettingUnchanged SettingAction = "unchanged"
@@ -52,10 +51,30 @@ const rulesetStep = "branch-ruleset"
 // maxSettings bounds the settings one apply walks (HISS-02).
 const maxSettings = 64
 
+// rulesetBaseline is the repository as it stood when one apply began, read before its
+// templates are written (readRulesetBaseline): the policy the ruleset is rendered under, and the
+// ruleset that was current then (forge.PriorRulesetDigests). err is why it could not be read.
+type rulesetBaseline struct {
+	inputs forge.RulesetBaseline
+	err    error
+}
+
+// readRulesetBaseline reads the baseline the ruleset step compares against, before apply writes
+// any template, or nothing under opts.TemplatesOnly, which renders no setting. apply leaves the
+// manifest and the lock alone, so the policy it reads is also the one the ruleset is rendered
+// under; only the workflows change.
+func readRulesetBaseline(ctx context.Context, repoPath string, opts ApplyOptions) rulesetBaseline {
+	if opts.TemplatesOnly {
+		return rulesetBaseline{}
+	}
+	inputs, err := forge.ReadRulesetBaseline(ctx, repoPath)
+	return rulesetBaseline{inputs: inputs, err: err}
+}
+
 // applySettings renders each required setting apply has a renderer for and records every
 // setting's outcome in report, or does nothing under opts.TemplatesOnly. A setting that fails is
 // recorded under report.Errors and the rest still run; only a cancelled context stops the walk.
-func applySettings(ctx context.Context, repoPath string, settings []SettingItem, opts ApplyOptions, report *ApplyReport) error {
+func applySettings(ctx context.Context, repoPath string, settings []SettingItem, opts ApplyOptions, baseline rulesetBaseline, report *ApplyReport) error {
 	if opts.TemplatesOnly {
 		return nil
 	}
@@ -63,7 +82,7 @@ func applySettings(ctx context.Context, repoPath string, settings []SettingItem,
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		outcome, err := applySetting(ctx, repoPath, settings[i], opts)
+		outcome, err := applySetting(ctx, repoPath, settings[i], opts, baseline)
 		if err != nil {
 			report.Errors = append(report.Errors, err.Error())
 			continue
@@ -75,10 +94,10 @@ func applySettings(ctx context.Context, repoPath string, settings []SettingItem,
 
 // applySetting renders the branch ruleset, defers a setting another command produces, and
 // refuses a setting with neither.
-func applySetting(ctx context.Context, repoPath string, setting SettingItem, opts ApplyOptions) (SettingOutcome, error) {
+func applySetting(ctx context.Context, repoPath string, setting SettingItem, opts ApplyOptions, baseline rulesetBaseline) (SettingOutcome, error) {
 	switch {
 	case setting.Path == forge.RepositoryRulesetPath:
-		return applyRuleset(ctx, repoPath, opts)
+		return applyRuleset(ctx, repoPath, opts, baseline)
 	case setting.Producer != "":
 		return SettingOutcome{Path: setting.Path, Action: SettingDeferred, Note: setting.Producer}, nil
 	default:
@@ -87,14 +106,15 @@ func applySetting(ctx context.Context, repoPath string, setting SettingItem, opt
 }
 
 // applyRuleset writes the branch ruleset forge.RenderRulesetForRepository renders under the
-// repository's effective policy, the rendering adoption's branch-ruleset step writes, with the
-// keep and force semantics of a template. An absent ruleset is written. One that already
-// validates as the rendering (forge.ValidateRepositoryRuleset, the check sync and the audit
-// apply) is unchanged. One Praetor rendered under an earlier policy or earlier workflows, such
-// as adoption's before this apply added a workflow, is refreshed (writeRuleset). Any other one
-// that differs is the repository's: kept and reported without --force, replaced with it. A
-// ruleset adoption.decline refuses is never written.
-func applyRuleset(ctx context.Context, repoPath string, opts ApplyOptions) (SettingOutcome, error) {
+// repository's effective policy (forge.RepositoryBranchPolicy, read into baseline), the rendering
+// adoption's branch-ruleset step writes, with the keep and force semantics of a template. An
+// absent ruleset is written. One that already is the rendering, line endings aside, is unchanged:
+// the text comparison adoption applies to the same file. The ruleset that was current before
+// this apply added workflows (forge.PriorRulesetDigests), such as the one adoption wrote, is
+// refreshed. Any other one that differs, a single edited value included, is the repository's:
+// kept and reported without --force, replaced with it. A ruleset adoption.decline refuses is
+// never written.
+func applyRuleset(ctx context.Context, repoPath string, opts ApplyOptions, baseline rulesetBaseline) (SettingOutcome, error) {
 	declined, err := stepDeclined(ctx, opts, rulesetStep)
 	if err != nil {
 		return SettingOutcome{}, err
@@ -102,40 +122,37 @@ func applyRuleset(ctx context.Context, repoPath string, opts ApplyOptions) (Sett
 	if declined {
 		return SettingOutcome{Path: forge.RepositoryRulesetPath, Action: SettingDeclined, Note: "adoption.decline names " + rulesetStep}, nil
 	}
-	policy, err := rulesetPolicy(ctx, repoPath)
-	if err != nil {
-		return SettingOutcome{}, err
+	if baseline.err != nil {
+		return SettingOutcome{}, baseline.err
 	}
-	content, contexts, err := forge.RenderRulesetForRepository(ctx, repoPath, policy, nil)
+	content, contexts, err := forge.RenderRulesetForRepository(ctx, repoPath, baseline.inputs.Policy, nil)
 	if err != nil {
 		return SettingOutcome{}, fmt.Errorf("render %s: %w", forge.RepositoryRulesetPath, err)
 	}
-	return writeRuleset(ctx, repoPath, content, opts.Force, func(existing []byte) bool {
-		return forge.ValidateRepositoryRuleset(existing, policy, contexts) == nil
-	}, len(contexts))
+	return writeRuleset(ctx, repoPath, content, opts.Force, forge.PriorRulesetDigests(baseline.inputs, content), len(contexts))
 }
 
-// writeRuleset writes the rendered ruleset content unless the file on disk already matches it
-// (matches) or is the repository's own and differs without force, and reports which of those
-// it was. A file that is Praetor's rendering under earlier inputs (forge.IsRepositoryRulesetRendering)
-// is not the repository's own: it is refreshed without force, in its own line-ending style.
-func writeRuleset(ctx context.Context, repoPath string, content []byte, force bool, matches func([]byte) bool, checks int) (SettingOutcome, error) {
+// writeRuleset writes the rendered ruleset content unless the file on disk already holds it or
+// is the repository's own and differs without force, and reports which of those it was. A file
+// holding one of the prior digests (util.LookupCanonicalText) is not the repository's own: it is
+// refreshed without force, in its own line-ending style.
+func writeRuleset(ctx context.Context, repoPath string, content []byte, force bool, prior map[string]string, checks int) (SettingOutcome, error) {
 	const rel = forge.RepositoryRulesetPath
 	destPath := filepath.Join(repoPath, filepath.FromSlash(rel))
 	target, err := readTemplateTarget(ctx, destPath, rel, force)
 	if err != nil {
 		return SettingOutcome{}, err
 	}
-	refresh := target.keep && forge.IsRepositoryRulesetRendering(target.before)
-	switch {
-	case target.exists && matches(target.before):
+	if same, err := util.CanonicalTextEquivalent(target.before, content); target.exists && err == nil && same {
 		return SettingOutcome{Path: rel, Action: SettingUnchanged}, nil
-	case target.keep && !refresh:
+	}
+	_, known, crlf := util.LookupCanonicalText(target.before, prior)
+	refresh := target.keep && known
+	if target.keep && !refresh {
 		return SettingOutcome{Path: rel, Action: SettingKept,
 			Note: "differs from the ruleset the effective policy renders; --force replaces it"}, nil
 	}
 	if refresh {
-		_, crlf := util.NormalizeLineEndings(string(target.before))
 		content = []byte(util.RestoreLineEndings(string(content), crlf))
 	}
 	if err := writeTarget(ctx, destPath, rel, content, target); err != nil {
@@ -168,20 +185,4 @@ func stepDeclined(ctx context.Context, opts ApplyOptions, step string) (bool, er
 		return false, fmt.Errorf("resolve adoption.decline for %s: %w", step, err)
 	}
 	return declined, nil
-}
-
-// rulesetPolicy is the branch protection the ruleset is rendered under: the repository's
-// effective policy as sync and the audit resolve it (config.ResolveRepositoryPolicy: the pinned
-// profiles and facets with the manifest's overrides, or defaults plus overrides before a lock
-// exists). A repository without .standards.yaml declares nothing to resolve, so the built-in
-// default applies. A policy that does not resolve has no stand-in: the ruleset is not written.
-func rulesetPolicy(ctx context.Context, repoPath string) (config.BranchProtectionPolicy, error) {
-	policy, _, err := config.ResolveRepositoryPolicy(ctx, filepath.Join(repoPath, config.ManifestFileName), nil)
-	if err != nil {
-		return config.BranchProtectionPolicy{}, fmt.Errorf("resolve the effective policy for %s: %w", forge.RepositoryRulesetPath, err)
-	}
-	if policy == nil {
-		return config.DefaultPolicy().BranchProtection, nil
-	}
-	return policy.BranchProtection, nil
 }

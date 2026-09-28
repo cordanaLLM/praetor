@@ -29,7 +29,7 @@ func TestRequiredSettings_Positive_EveryBuiltinSettingHasARendererOrProducer(t *
 
 // A setting apply cannot render and no command produces is an error, never a silent skip.
 func TestApplySetting_Negative_NoRendererNoProducer(t *testing.T) {
-	_, err := applySetting(t.Context(), t.TempDir(), SettingItem{Path: "config/orphan.json"}, ApplyOptions{})
+	_, err := applySetting(t.Context(), t.TempDir(), SettingItem{Path: "config/orphan.json"}, ApplyOptions{}, rulesetBaseline{})
 	if err == nil || !strings.Contains(err.Error(), "config/orphan.json has no renderer and no producer") {
 		t.Fatalf("expected the no-renderer error, got %v", err)
 	}
@@ -40,7 +40,7 @@ func TestApplySettings_Boundary_CancelledContextStops(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	report := &ApplyReport{}
-	err := applySettings(ctx, t.TempDir(), []SettingItem{{Path: "lefthook.yml", Producer: "x"}}, ApplyOptions{}, report)
+	err := applySettings(ctx, t.TempDir(), []SettingItem{{Path: "lefthook.yml", Producer: "x"}}, ApplyOptions{}, rulesetBaseline{}, report)
 	if err == nil || len(report.Settings) != 0 {
 		t.Fatalf("a cancelled walk recorded %+v, err %v", report.Settings, err)
 	}

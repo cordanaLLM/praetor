@@ -112,7 +112,8 @@ func ApplyFlavorWith(ctx context.Context, repoPath string, targetFlavor string, 
 		report.WorkingDirCreated = true
 	}
 
-	// 2. Scaffold required templates
+	// 2. Scaffold required templates, after reading what the ruleset step compares against
+	baseline := readRulesetBaseline(ctx, repoPath, opts)
 	for _, tmpl := range flv.RequiredTemplates() {
 		if err := ctx.Err(); err != nil {
 			return report, err
@@ -121,7 +122,7 @@ func ApplyFlavorWith(ctx context.Context, repoPath string, targetFlavor string, 
 	}
 
 	// 3. Render required settings (none under opts.TemplatesOnly)
-	if err := applySettings(ctx, repoPath, flv.RequiredSettings(), opts, report); err != nil {
+	if err := applySettings(ctx, repoPath, flv.RequiredSettings(), opts, baseline, report); err != nil {
 		return report, err
 	}
 

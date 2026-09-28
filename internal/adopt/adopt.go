@@ -17,6 +17,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/devcontainer"
 	"github.com/cordanaLLM/praetor/internal/editor"
 	"github.com/cordanaLLM/praetor/internal/flavor"
+	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/state"
@@ -142,6 +143,9 @@ type adoptSession struct {
 	// comes to (planDryRunWrite, planDryRunRemoval), so a later step previews against the tree
 	// the run leaves rather than the one on disk.
 	dryRunWrites map[string][]byte
+	// rulesetBaseline is the policy and the workflows of the repository as this adoption found
+	// it, read before any step writes (readRulesetBaseline); nil without a ruleset on disk.
+	rulesetBaseline *forge.RulesetBaseline
 }
 
 // adoptStep is one reconciliation step of the adoption chain.
@@ -193,6 +197,7 @@ func Adopt(ctx context.Context, opts AdoptOptions) (*AdoptReport, error) {
 		return report, err
 	}
 	report.addWarning("%s", verification.notice())
+	s.rulesetBaseline = readRulesetBaseline(ctx, s)
 
 	if err := executeAdoptSteps(ctx, s); err != nil {
 		report.addError("%s", err)

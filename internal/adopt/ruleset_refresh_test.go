@@ -64,8 +64,15 @@ func TestAdopt_Positive_RefreshesTheRulesetFlavorApplyWrote(t *testing.T) {
 		t.Fatalf("flavor apply: %v", err)
 	}
 	before, err := os.ReadFile(filepath.Join(repo, rulesetFile))
-	if err != nil || !forge.IsRepositoryRulesetRendering(before) {
-		t.Fatalf("flavor apply must leave a Praetor rendering: %v\n%s", err, before)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contexts, err := forge.RequiredStatusContexts(t.Context(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := forge.ValidateRepositoryRuleset(before, config.DefaultPolicy().BranchProtection, contexts); err != nil {
+		t.Fatalf("flavor apply must leave the built-in policy's rendering: %v\n%s", err, before)
 	}
 
 	preview := dryRunRulesetPreview(t, repo, false)
@@ -85,6 +92,77 @@ func TestAdopt_Positive_RefreshesTheRulesetFlavorApplyWrote(t *testing.T) {
 		t.Fatalf("the audit must pass after apply then adopt: %v", err)
 	} else if !strings.HasPrefix(summary, "[PASS]") {
 		t.Fatalf("audit summary = %q", summary)
+	}
+}
+
+// After flavor apply, an adopter who only edits values of the ruleset, here a signature rule and a
+// hand-added status check, keeps them: adoption keeps the file with one warning instead of taking
+// it for the rendering flavor apply wrote, and --force replaces it.
+func TestAdopt_Negative_ValueEditAfterFlavorApplyIsKept(t *testing.T) {
+	repo := newTestRepo(t, "apply-edit-adopt")
+	mustWrite(t, filepath.Join(repo, "meson.build"), "project('x', 'c')\n")
+	if _, err := flavor.ApplyFlavor(t.Context(), repo, "native-gpu-systems", false); err != nil {
+		t.Fatalf("flavor apply: %v", err)
+	}
+	contexts, err := forge.RequiredStatusContexts(t.Context(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed := config.DefaultPolicy().BranchProtection
+	signed.RequireSignedCommits = true
+	data, err := forge.RenderRepositoryRuleset(signed, append(slices.Clone(contexts), "e2e"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	edited := string(data)
+	mustWrite(t, filepath.Join(repo, rulesetFile), edited)
+
+	if preview := dryRunRulesetPreview(t, repo, false); preview.Action != PreviewKeep {
+		t.Fatalf("a value-edited ruleset must preview as keep, got %+v", preview)
+	}
+	rep := adoptForRuleset(t, repo, false)
+	if len(rulesetWarnings(rep)) != 1 {
+		t.Fatalf("a value-edited ruleset must be kept with one warning: %v", rep.Warnings)
+	}
+	if got, err := os.ReadFile(filepath.Join(repo, rulesetFile)); err != nil || string(got) != edited {
+		t.Fatalf("the value-edited ruleset was changed without --force: %q, %v", got, err)
+	}
+	if _, err := Adopt(t.Context(), AdoptOptions{Path: repo, Force: true, SkipGitValidation: true, LockSourceRoot: newAdoptLockSource(t)}); err != nil {
+		t.Fatalf("adopt --force: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(repo, rulesetFile)); err != nil || string(got) == edited {
+		t.Fatalf("--force must replace the value-edited ruleset: %v", err)
+	}
+	if _, err := auditAdoptedRuleset(t, repo); err != nil {
+		t.Fatalf("the replaced ruleset must pass the audit: %v", err)
+	}
+}
+
+// Adoption, then flavor apply of a flavor that adds a workflow: apply refreshes the ruleset
+// adoption wrote, which was current before it ran, and the audit passes.
+func TestAdopt_Positive_FlavorApplyAfterAdoptionRefreshesTheRuleset(t *testing.T) {
+	repo := newTestRepo(t, "adopt-then-apply")
+	mustWrite(t, filepath.Join(repo, "meson.build"), "project('x', 'c')\n")
+	adoptForRuleset(t, repo, false)
+	before, err := forge.RequiredStatusContexts(t.Context(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applied, err := flavor.ApplyFlavor(t.Context(), repo, "go-service", false)
+	if err != nil {
+		t.Fatalf("flavor apply: %+v, %v", applied, err)
+	}
+	after, err := forge.RequiredStatusContexts(t.Context(), repo)
+	if err != nil || len(after) <= len(before) {
+		t.Fatalf("the fixture must add a workflow check: before %v, after %v, %v", before, after, err)
+	}
+	if !slices.ContainsFunc(applied.Settings, func(o flavor.SettingOutcome) bool {
+		return o.Path == rulesetFile && o.Action == flavor.SettingRefreshed
+	}) {
+		t.Fatalf("flavor apply must refresh the ruleset adoption wrote: %+v", applied.Settings)
+	}
+	if summary, err := auditAdoptedRuleset(t, repo); err != nil || !strings.HasPrefix(summary, "[PASS]") {
+		t.Fatalf("the audit must pass after adopt then apply: %q, %v", summary, err)
 	}
 }
 

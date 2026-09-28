@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"strings"
 
@@ -124,90 +125,69 @@ func RenderRulesetForRepository(ctx context.Context, repoPath string, policy con
 	return data, contexts, nil
 }
 
-// renderedRuleset is the part of a RenderRepositoryRuleset rendering its inputs are read back
-// from (rulesetRenderingInputs).
-type renderedRuleset struct {
-	Rules []renderedRule `json:"rules"`
+// RulesetBaseline is the repository state a ruleset rendering is rendered from: the effective
+// branch protection policy (RepositoryBranchPolicy) and the required status contexts of the
+// workflows present (RequiredStatusContexts).
+type RulesetBaseline struct {
+	Policy   config.BranchProtectionPolicy
+	Contexts []string
 }
 
-// renderedRule is one rule of a rendering, with the parameters a policy or the contexts set.
-type renderedRule struct {
-	Type       string `json:"type"`
-	Parameters struct {
-		ReviewCount          int  `json:"required_approving_review_count"`
-		DismissStale         bool `json:"dismiss_stale_reviews_on_push"`
-		CodeOwner            bool `json:"require_code_owner_review"`
-		RequiredStatusChecks []struct {
-			Context string `json:"context"`
-		} `json:"required_status_checks"`
-	} `json:"parameters"`
-}
-
-// IsRepositoryRulesetRendering reports whether data is, in one consistent line-ending style,
-// the exact text RenderRepositoryRuleset renders for some branch protection policy and status
-// contexts: the ones read back from data itself (rulesetRenderingInputs). That is a ruleset
-// Praetor rendered under an earlier policy or an earlier set of workflows, which adoption and
-// flavor apply refresh to the current rendering without --force, as they refresh the recorded
-// earlier texts of a fixed scaffold. The renderer is a function of its inputs, so its earlier
-// texts cannot be listed as digests.
-//
-// A ruleset an operator wrote, or edited in a way the renderer never produces (another name,
-// rule, key order or indentation, a final newline), is not one, and keeps the --force contract.
-// An edit that only changes a value the renderer takes, such as the review count or a status
-// check, reads as a rendering under other inputs and is refreshed: branch protection is declared
-// in .standards.yaml overrides, which the audit holds the file to, and adoption.decline:
-// [branch-ruleset] keeps a ruleset managed by hand.
-func IsRepositoryRulesetRendering(data []byte) bool {
-	policy, contexts, ok := rulesetRenderingInputs(data)
-	if !ok {
-		return false
-	}
-	rendered, err := RenderRepositoryRuleset(policy, contexts)
+// ReadRulesetBaseline reads the baseline of the repository at repoPath as it stands. A writer
+// reads it before it changes the repository, so that PriorRulesetDigests can tell the ruleset
+// that was current then from one an adopter edited.
+func ReadRulesetBaseline(ctx context.Context, repoPath string) (RulesetBaseline, error) {
+	policy, err := RepositoryBranchPolicy(ctx, repoPath)
 	if err != nil {
-		return false
+		return RulesetBaseline{}, err
 	}
-	same, err := util.CanonicalTextEquivalent(data, rendered)
-	return err == nil && same
+	contexts, err := RequiredStatusContexts(ctx, repoPath)
+	if err != nil {
+		return RulesetBaseline{}, fmt.Errorf("read the workflow checks for %s: %w", RepositoryRulesetPath, err)
+	}
+	return RulesetBaseline{Policy: policy, Contexts: contexts}, nil
 }
 
-// rulesetRenderingInputs reads back the policy and status contexts a RenderRepositoryRuleset
-// rendering was rendered from: the linear history and signature rules, the pull request rule's
-// review parameters (a code owner review is the independent review mode with its count, none
-// the single-maintainer mode), and the required status checks in order. Whether data is that
-// rendering is decided by rendering them again (IsRepositoryRulesetRendering).
-func rulesetRenderingInputs(data []byte) (config.BranchProtectionPolicy, []string, bool) {
-	var doc renderedRuleset
-	if err := json.Unmarshal(data, &doc); err != nil || len(doc.Rules) > maxRulesetRules {
-		return config.BranchProtectionPolicy{}, nil, false
+// RepositoryBranchPolicy is the branch protection the repository at repoPath renders its ruleset
+// under: its effective policy as sync and the audit resolve it (config.ResolveRepositoryPolicy:
+// the pinned profiles and facets with the manifest's overrides, or defaults plus overrides before
+// a lock exists). A repository without .standards.yaml declares nothing to resolve, so the
+// built-in default applies. A policy that does not resolve has no stand-in and is an error.
+func RepositoryBranchPolicy(ctx context.Context, repoPath string) (config.BranchProtectionPolicy, error) {
+	policy, _, err := config.ResolveRepositoryPolicy(ctx, filepath.Join(repoPath, config.ManifestFileName), nil)
+	if err != nil {
+		return config.BranchProtectionPolicy{}, fmt.Errorf("resolve the effective policy for %s: %w", RepositoryRulesetPath, err)
 	}
-	policy := config.BranchProtectionPolicy{ReviewMode: config.BranchReviewModeSingleMaintainer}
-	var contexts []string
-	for i := 0; i < len(doc.Rules) && i < maxRulesetRules; i++ {
-		contexts = readRenderedRule(doc.Rules[i], &policy, contexts)
+	if policy == nil {
+		return config.DefaultPolicy().BranchProtection, nil
 	}
-	return policy, contexts, true
+	return policy.BranchProtection, nil
 }
 
-// readRenderedRule folds one rule of a rendering into the policy it was rendered under, and
-// returns contexts with the rule's required status checks appended.
-func readRenderedRule(rule renderedRule, policy *config.BranchProtectionPolicy, contexts []string) []string {
-	switch rule.Type {
-	case "required_linear_history":
-		policy.EnforceLinearHistory = true
-	case "required_signatures":
-		policy.RequireSignedCommits = true
-	case "pull_request":
-		policy.DismissStaleReviews = rule.Parameters.DismissStale
-		if rule.Parameters.CodeOwner {
-			policy.ReviewMode, policy.RequiredApprovingReviewers = config.BranchReviewModeIndependent, rule.Parameters.ReviewCount
-		}
-	case "required_status_checks":
-		checks := rule.Parameters.RequiredStatusChecks
-		for i := 0; i < len(checks) && i < maxRulesetContexts; i++ {
-			contexts = append(contexts, checks[i].Context)
-		}
+// PriorRulesetDigests returns, for a scaffold's earlier-text lookup (util.LookupCanonicalText),
+// the digest (util.CanonicalTextDigest) of the ruleset RenderRepositoryRuleset renders from
+// baseline, the repository as it stood before a writer changed it. That rendering is the ruleset
+// sync and the audit accepted then, so a file holding it in one consistent line-ending style is
+// Praetor's and nobody edited it: adoption and flavor apply refresh it to current, the rendering
+// they write now, without --force. The map is empty when that rendering is current itself, which
+// needs no refresh, or cannot be rendered.
+//
+// Nothing is read back from the file: any other ruleset, a rendering with one value edited (a
+// review count, a signature rule, a status check) as much as an operator's own, matches no digest
+// and keeps the --force contract.
+func PriorRulesetDigests(baseline RulesetBaseline, current []byte) map[string]string {
+	prior, err := RenderRepositoryRuleset(baseline.Policy, baseline.Contexts)
+	if err != nil {
+		return nil
 	}
-	return contexts
+	if same, err := util.CanonicalTextEquivalent(prior, current); err != nil || same {
+		return nil
+	}
+	digest, _, err := util.CanonicalTextDigest(prior)
+	if err != nil {
+		return nil
+	}
+	return map[string]string{digest: "the ruleset of the repository's policy and workflows before this run"}
 }
 
 // ErrRulesetDrift reports a committed ruleset whose content differs from the one the declared
