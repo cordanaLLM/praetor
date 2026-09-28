@@ -53,6 +53,24 @@ type DedupeReport struct {
 	// only, so a repository with none is not clean -- it is unexamined, and the difference
 	// matters to every caller that reads the score.
 	Applicable bool `json:"applicable"`
+	// Unscanned counts, per language (util.SourceLanguage), the repository's source files
+	// this detector cannot read. HISS-19 is not measured for them: a clean verdict over the
+	// Go files of a polyglot repository says nothing about the rest (#161).
+	Unscanned map[string]int `json:"unscanned,omitempty"`
+	// Partial reports a verdict that covers the Go sources only while the repository also
+	// holds source listed in Unscanned.
+	Partial bool `json:"partial"`
+}
+
+// UnscannedLanguages returns the languages in Unscanned, sorted, so a report lists them in
+// the same order on every run.
+func (r *DedupeReport) UnscannedLanguages() []string {
+	languages := make([]string, 0, len(r.Unscanned))
+	for language := range r.Unscanned {
+		languages = append(languages, language)
+	}
+	sort.Strings(languages)
+	return languages
 }
 
 // ScanRepo scans a repository for function-level clones and utility sprawl.
@@ -62,23 +80,25 @@ func ScanRepo(repoPath string) (*DedupeReport, error) {
 	return ScanRepoContext(ctx, repoPath)
 }
 
-// ScanRepoContext scans tracked and nonignored working tree Go sources. Non-Git
-// directories retain a filesystem scan. Incomplete scans return an error.
+// ScanRepoContext scans tracked and nonignored working tree Go sources and counts the source
+// files in other languages it cannot read (DedupeReport.Unscanned). Non-Git directories
+// retain a filesystem scan. Incomplete scans return an error.
 func ScanRepoContext(ctx context.Context, repoPath string) (*DedupeReport, error) {
-	files, err := sourceFiles(ctx, repoPath)
+	scope, err := sourceFiles(ctx, repoPath)
 	if err != nil {
 		return nil, err
 	}
 	report := &DedupeReport{
 		Duplicates:  make([]DuplicateGroup, 0),
 		SprawlItems: make([]SprawlItem, 0),
+		Unscanned:   scope.unscanned,
 	}
 
 	fset := token.NewFileSet()
 	funcHashMap := make(map[string][]FileLocation)
 	funcLocMap := make(map[string]int)
 
-	for _, relPath := range files {
+	for _, relPath := range scope.goFiles {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -385,6 +405,7 @@ func calculateScore(report *DedupeReport) {
 	// Applicable is false instead, the score stays zero, and the caller reports that the check
 	// did not apply rather than that the repository is clean.
 	report.Applicable = report.TotalFilesScanned > 0
+	report.Partial = report.Applicable && len(report.Unscanned) > 0
 	if !report.Applicable {
 		report.CleanlinessScore = 0
 		report.Passed = false

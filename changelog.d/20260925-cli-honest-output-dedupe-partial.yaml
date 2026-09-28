@@ -1,0 +1,3 @@
+type: fixed
+title: "praetorctl dedupe scan no longer reports a plain pass for a polyglot repository whose Go part is clean: it counts the source files in languages it cannot read, lists them under Not Scanned with a note that HISS-19 is not measured for them, marks the verdict partial (Go sources only), and carries unscanned and partial in the --json report"
+breaking: false

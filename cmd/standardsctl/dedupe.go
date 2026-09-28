@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/dedupe"
@@ -102,13 +103,21 @@ func printDedupeReport(dir string, report *dedupe.DedupeReport) error {
 		// Neither a pass nor a failure. The detector reads Go sources and found none, so it
 		// has no verdict to give; printing one would certify a tree it never opened.
 		fmt.Println("  Not applicable: no Go sources found; this detector reads Go only.")
+		printUnscannedLanguages(report)
 		fmt.Println("  Clone detection for other languages is not implemented.")
 		return nil
 	}
 	fmt.Printf("  Files Scanned:     %d\n", report.TotalFilesScanned)
 	fmt.Printf("  Functions Scanned: %d\n", report.TotalFuncsScanned)
 	fmt.Printf("  Cleanliness Score: %.1f%%\n", report.CleanlinessScore)
-	fmt.Printf("  Passed:            %v\n", report.Passed)
+	if report.Partial {
+		// A verdict over the Go files of a polyglot repository used to read as a clean bill
+		// for all of it (#161); the verdict now says what it covers.
+		fmt.Printf("  Passed:            %v (partial: Go sources only)\n", report.Passed)
+		printUnscannedLanguages(report)
+	} else {
+		fmt.Printf("  Passed:            %v\n", report.Passed)
+	}
 
 	if len(report.Duplicates) > 0 {
 		fmt.Printf("\nDuplicate Function Blocks (%d):\n", len(report.Duplicates))
@@ -127,6 +136,26 @@ func printDedupeReport(dir string, report *dedupe.DedupeReport) error {
 		}
 	}
 	return dedupeVerdict(report)
+}
+
+// printUnscannedLanguages names the source languages the scan found but cannot read, with
+// their file counts, and says HISS-19 is not measured for them. It prints nothing for a
+// repository whose source is all Go.
+func printUnscannedLanguages(report *dedupe.DedupeReport) {
+	languages := report.UnscannedLanguages()
+	if len(languages) == 0 {
+		return
+	}
+	counts := make([]string, 0, len(languages))
+	for _, language := range languages {
+		unit := "files"
+		if report.Unscanned[language] == 1 {
+			unit = "file"
+		}
+		counts = append(counts, fmt.Sprintf("%s (%d %s)", language, report.Unscanned[language], unit))
+	}
+	fmt.Printf("  Not Scanned:       %s\n", strings.Join(counts, ", "))
+	fmt.Println("  HISS-19 is not measured for these languages; this detector reads Go only.")
 }
 
 // dedupeVerdict turns a report into the command's exit: nil when the scan passed or did not

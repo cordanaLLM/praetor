@@ -137,6 +137,64 @@ func TestRunDedupeCadence_Boundary_GrowthBelowThresholdStaysQuiet(t *testing.T) 
 	}
 }
 
+// #161: a polyglot repository with a small Go module used to get "Passed: true" with no word
+// about the source the scan never read. The verdict now says partial and names the rest.
+func TestRunDedupeScan_Positive_PolyglotVerdictSaysPartial(t *testing.T) {
+	dir := dedupeFixtureDir(t, "tooling/clean.go", dedupeCleanSource)
+	writeFixtureFile(t, dir, "crates/core/src/lib.rs", "pub fn add() {}\n")
+	writeFixtureFile(t, dir, "crates/core/src/util.rs", "pub fn sub() {}\n")
+	writeFixtureFile(t, dir, "crates/core/native/shim.c", "int shim(void) { return 0; }\n")
+
+	out, err := captureStdout(t, func() error { return runDedupeScan([]string{dir}) })
+	if err != nil {
+		t.Fatalf("a clean Go module beside other languages still passes: %v\n%s", err, out)
+	}
+	mustContain(t, out, "Passed:            true (partial: Go sources only)",
+		"Not Scanned:       c (1 file), rust (2 files)",
+		"HISS-19 is not measured for these languages")
+}
+
+func TestRunDedupeScan_Negative_GoOnlyVerdictIsNotQualified(t *testing.T) {
+	dir := dedupeFixtureDir(t, "clean.go", dedupeCleanSource)
+	writeFixtureFile(t, dir, "README.md", "# docs are not source\n")
+
+	out, err := captureStdout(t, func() error { return runDedupeScan([]string{dir}) })
+	if err != nil {
+		t.Fatalf("a clean Go-only repository must pass: %v", err)
+	}
+	if strings.Contains(out, "partial") || strings.Contains(out, "Not Scanned") {
+		t.Fatalf("a Go-only repository must get an unqualified verdict:\n%s", out)
+	}
+}
+
+// A repository with no Go at all still reports no verdict, now naming what it holds, and the
+// JSON form carries the same coverage fields.
+func TestRunDedupeScan_Boundary_NoGoNamesTheLanguagesAndJSONCarriesThem(t *testing.T) {
+	dir := dedupeFixtureDir(t, "src/app.ts", "export const a = 1;\n")
+	out, err := captureStdout(t, func() error { return runDedupeScan([]string{dir}) })
+	if err != nil {
+		t.Fatalf("a repository without Go is not a failure: %v", err)
+	}
+	mustContain(t, out, "Not applicable: no Go sources found", "Not Scanned:       typescript (1 file)")
+	if strings.Contains(out, "Passed:") {
+		t.Fatalf("no verdict may be printed for a tree the detector never read:\n%s", out)
+	}
+
+	poly := dedupeFixtureDir(t, "clean.go", dedupeCleanSource)
+	writeFixtureFile(t, poly, "scripts/run.py", "print('x')\n")
+	out, err = captureStdout(t, func() error { return runDedupeScan([]string{"--json", poly}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report dedupe.DedupeReport
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatalf("JSON report: %v\n%s", err, out)
+	}
+	if !report.Partial || report.Unscanned["python"] != 1 {
+		t.Fatalf("JSON report must carry partial coverage: %+v", report)
+	}
+}
+
 // #571: `dedupe scan` took args[0] as the directory and dropped the rest, so -h failed as a
 // missing directory, `--json .` scanned a directory named --json, and `. --json` ignored the
 // flag. It now parses its arguments like every other subcommand.
