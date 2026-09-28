@@ -469,7 +469,8 @@ func (f *RustSystemsFlavor) RequiredTemplates() []TemplateItem {
 			Description: "Rust formatting and style guidelines",
 			Source:      "rust/rustfmt.toml.tmpl",
 			Validator:   assignsTOMLKey,
-			// The edition comes from Cargo.toml, so rustfmt run directly agrees with cargo fmt (#567).
+			// The edition is the one every crate of the workspace is on, so rustfmt run directly
+			// agrees with cargo fmt (#567).
 			Resolve: rustfmtFacts,
 			Prior:   priorRustfmtDigests,
 		},

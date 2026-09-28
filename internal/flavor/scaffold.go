@@ -279,15 +279,18 @@ func applySingleTemplate(ctx context.Context, repoPath string, tmpl TemplateItem
 
 // scaffoldTemplate writes one template unless it is covered, owned by another command,
 // unable to work in this repository, or already present without --force. An earlier text of
-// the template (TemplateItem.Prior) is the exception to the last: it is refreshed. The note
-// names the file covering a covered template, the producer of a deferred one and what an
-// unmet one lacks.
+// the template (TemplateItem.Prior) is the exception to the last: it is refreshed, unless the
+// body is withheld, and then the file is kept like any other present one. The note names the
+// file covering a covered template, the producer of a deferred one and what an unmet one lacks.
 func scaffoldTemplate(ctx context.Context, repoPath string, tmpl TemplateItem, repoName, owner string, force bool) (templateOutcome, string, error) {
 	outcome, note, err := templateDisposition(repoPath, tmpl, force)
 	if err != nil || outcome != templateCreated {
 		return outcome, note, err
 	}
 	outcome, note, vars := templateWithheld(ctx, repoPath, tmpl)
+	if outcome == templateUnmet && !force && TemplateSatisfied(repoPath, tmpl) {
+		return templateSkipped, "", nil
+	}
 	if outcome != templateCreated {
 		return outcome, note, nil
 	}

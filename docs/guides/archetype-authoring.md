@@ -63,7 +63,8 @@ texts earlier releases scaffolded at its path. Without `--force`, `flavor apply`
 the current rendering, keeping that style. It lists the file under *Refreshed Earlier Praetor Text*
 (`refreshed_templates` in the apply report), and adoption records it as reconciled. An edited copy
 matches no digest and stays until `--force`, and the manifest, the lock and the ledger are never
-refreshed (`internal/flavor/target_write_internal_test.go`). Every recorded text needs a fixture
+refreshed. While `Resolve` withholds the body, a file already there is kept and reported skipped
+(`internal/flavor/target_write_internal_test.go`). Every recorded text needs a fixture
 that reproduces its digest, as `TestRustfmtPriorTextsAreEarlierRenderings`
 (`internal/flavor/rustfmt_test.go`) holds for `rustfmt.toml`.
 
@@ -173,13 +174,24 @@ against each layout with stub build tools. The Flutter analyzer config
 dependency (`internal/flavor/dart_lints.go`). Otherwise it has no include, because `flutter analyze`
 fails on an include pub cannot resolve, and keeps its core linter rules, which need no package.
 `TestScaffoldedDartAnalysisConfigIncludesOnlyADeclaredLintPackage` (`internal/flavor/dart_lints_test.go`)
-covers each case. The Rust formatter config (`templates/rust/rustfmt.toml.tmpl`) declares the
-edition the root `Cargo.toml` gives `[workspace.package]`, else `[package]`
-(`internal/flavor/rustfmt.go`), and no edition when it gives neither, since rustfmt and Cargo then
-both default to 2015. `cargo fmt` passes each crate's edition to rustfmt, but rustfmt run directly,
-as a hook on staged files does, reads it from `rustfmt.toml`, so any other edition makes the two
-disagree (#567). `TestScaffoldedRustfmtFollowsTheCrateEdition` (`internal/flavor/rustfmt_test.go`)
-covers workspace, single-crate and edition-less manifests.
+covers each case.
+
+The Rust formatter config (`templates/rust/rustfmt.toml.tmpl`) declares the edition every crate of
+the root `Cargo.toml`'s workspace is on (`internal/flavor/rustfmt.go`). `cargo fmt` passes each
+crate's edition to rustfmt, but rustfmt run directly, as a hook on staged files does, reads it from
+`rustfmt.toml`, so any other edition makes the two disagree (#567). The crates are the root package
+and every `[workspace]` member: a listed path, or each directory a `*` or `?` pattern matches that
+no `exclude` entry names or contains. A crate inheriting its edition (`edition.workspace = true`)
+takes the one `[workspace.package]` declares, and a workspace with no crate to read takes that one
+directly. Where no crate declares an edition, the config has none either, since Cargo and rustfmt
+then both use 2015. Where the crates share no edition, or a member cannot be read (no `Cargo.toml`, no
+`[package]`, a `**` or `[...]` pattern, more than 256 members), no single edition agrees with
+`cargo fmt` on every crate: `flavor apply` writes no config and names the reason under *Unmet
+Requirement*, and keeps a `rustfmt.toml` already there, an earlier Praetor text included. Crates
+that only path dependencies pull into the workspace are not read.
+`TestScaffoldedRustfmtFollowsTheCrateEdition` and
+`TestRustfmtApply_Negative_NoCommonEditionWithholdsTheScaffold` (`internal/flavor/rustfmt_test.go`)
+cover each layout.
 
 A body that depends on the repository declares `Resolve`. The Node CI job installs from the committed
 lockfile and runs the `test` script, and `typescript-node` matches any `package.json` in an

@@ -5,10 +5,12 @@
 package flavor
 
 import (
+	"context"
 	"slices"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/util"
+	"github.com/cordanaLLM/praetor/templates"
 )
 
 // earlierText is an earlier Praetor text of a template in the tests below.
@@ -118,5 +120,26 @@ func TestPlannedWorkflowBodies_ListsAWorkflowApplyRefreshes(t *testing.T) {
 		if listed != wantPlanned {
 			t.Errorf("workflow %q: planned %v, want %v (%+v)", body, listed, wantPlanned, planned)
 		}
+	}
+}
+
+// Negative: a withheld body (TemplateItem.Resolve reports something missing) refreshes nothing:
+// apply keeps a file holding an earlier text and reports it skipped, and the workflow plan does
+// not list the rendering apply never writes.
+func TestScaffoldTemplate_Negative_WithheldBodyKeepsAnEarlierText(t *testing.T) {
+	const rel = ".github/workflows/ci.yml"
+	root := seedRepo(t, map[string]string{rel: earlierText})
+	tmpl := withPrior(t, rel)
+	tmpl.Resolve = func(context.Context, string) (templates.Context, string) { return templates.Context{}, "a lockfile" }
+	planned, err := plannedWorkflowBodies(t.Context(), root, []TemplateItem{tmpl}, "widget", "")
+	if err != nil || len(planned) != 0 {
+		t.Errorf("withheld workflow planned: %+v, err %v", planned, err)
+	}
+	outcome, note, err := scaffoldTemplate(t.Context(), root, tmpl, "widget", "", false)
+	if err != nil || outcome != templateSkipped || note != "" {
+		t.Errorf("got outcome %d note %q err %v, want skipped", outcome, note, err)
+	}
+	if got := readRepoFile(t, root, rel); got != earlierText {
+		t.Errorf("left %q, want the earlier text kept", got)
 	}
 }

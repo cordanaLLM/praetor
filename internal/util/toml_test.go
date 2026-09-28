@@ -5,6 +5,7 @@
 package util_test
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -108,5 +109,48 @@ func TestTOMLStringValueBoundary(t *testing.T) {
 		if got, ok := util.TOMLStringValue(value); !ok || got != want {
 			t.Errorf("TOMLStringValue(%q) = %q, %v; want %q", value, got, ok, want)
 		}
+	}
+}
+
+// Positive: single- and multi-line arrays of basic and literal strings, with comments and a
+// trailing comma, as Cargo workspace members are written.
+func TestTOMLStringArrayPositive(t *testing.T) {
+	for text, want := range map[string][]string{
+		`["crates/*", 'tools/c']`:                                 {"crates/*", "tools/c"},
+		"[\n    \"crates/*\", # every crate\n    'tools/c',\n]\n": {"crates/*", "tools/c"},
+		"[\"a\"] # members\n":                                     {"a"},
+		"[ # opened\r\n  \"a\" ,\"b\"\r\n]\r\n":                   {"a", "b"},
+		`['C:\dir']`:                                              {`C:\dir`},
+	} {
+		items, closed, ok := util.TOMLStringArray(text)
+		if !ok || !closed || !slices.Equal(items, want) {
+			t.Errorf("TOMLStringArray(%q) = %q, closed %v, ok %v; want %q", text, items, closed, ok, want)
+		}
+	}
+}
+
+// Negative: a value that is no array, an element that is not a plain single-line string, and
+// text after the closing bracket are refused.
+func TestTOMLStringArrayNegative(t *testing.T) {
+	for _, text := range []string{"", `"a"`, "{ a = 1 }", "[1, 2]", "[true]", `[["a"]]`, `["a\"b"]`,
+		`["""a"""]`, `["a""b"]`, "[\"a\n\"]", `["a"] extra`, `["a" ]]`} {
+		if items, closed, ok := util.TOMLStringArray(text); ok {
+			t.Errorf("TOMLStringArray(%q) = %q, closed %v, true; want refused", text, items, closed)
+		}
+	}
+}
+
+// Boundary: an empty array is closed and holds nothing, and an array whose closing bracket is on
+// a later line is open until that line is appended.
+func TestTOMLStringArrayBoundary(t *testing.T) {
+	if items, closed, ok := util.TOMLStringArray("[]"); !ok || !closed || len(items) != 0 {
+		t.Errorf("[] = %q, closed %v, ok %v; want an empty closed array", items, closed, ok)
+	}
+	open := "[\n  \"a\", # first\n"
+	if items, closed, ok := util.TOMLStringArray(open); !ok || closed || !slices.Equal(items, []string{"a"}) {
+		t.Errorf("open array = %q, closed %v, ok %v; want [a] still open", items, closed, ok)
+	}
+	if items, closed, ok := util.TOMLStringArray(open + "  \"b\"\n]\n"); !ok || !closed || !slices.Equal(items, []string{"a", "b"}) {
+		t.Errorf("closed array = %q, closed %v, ok %v; want [a b] closed", items, closed, ok)
 	}
 }

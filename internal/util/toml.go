@@ -10,8 +10,9 @@ import "strings"
 // removed and a trailing comment dropped: "[ extend ]" is "extend" and "[[ rules ]]  # x" is
 // "[rules]", an array-of-tables header keeping one bracket pair. It reads a line's shape and is
 // not a parser: the module carries no TOML library, and the callers (the gitleaks configuration
-// check and the Cargo.toml edition read in internal/flavor, and the REUSE.toml read of
-// praetorctl audit) need only the header and single-line keys (TOMLKeyValue).
+// check and the Cargo.toml edition and workspace members read in internal/flavor, and the
+// REUSE.toml read of praetorctl audit) need only the header, single-line keys (TOMLKeyValue) and
+// arrays of strings (TOMLStringArray).
 func TOMLTableName(header string) string {
 	name, _, _ := strings.Cut(header, "#")
 	name = strings.ReplaceAll(strings.TrimSpace(name), " ", "")
@@ -39,14 +40,72 @@ func TOMLKeyValue(line string) (key, value string, ok bool) {
 // an inline table, a multi-line string, and a basic string holding an escape sequence, which is
 // not decoded.
 func TOMLStringValue(value string) (string, bool) {
-	if value == "" || (value[0] != '"' && value[0] != '\'') {
-		return "", false
-	}
-	quote := value[:1]
-	text, rest, closed := strings.Cut(value[1:], quote)
+	text, rest, ok := cutTOMLString(value)
 	rest = strings.TrimSpace(rest)
-	if !closed || (rest != "" && !strings.HasPrefix(rest, "#")) || (quote == `"` && strings.Contains(text, `\`)) {
+	if !ok || (rest != "" && !strings.HasPrefix(rest, "#")) {
 		return "", false
 	}
 	return text, true
+}
+
+// TOMLStringArray reads the array of strings text opens, text being what TOMLKeyValue returns
+// after the equals sign followed by the lines after it, each ended by "\n", so an array may
+// span lines. It returns the strings, whether text reaches the closing bracket, and false when
+// text is not such an array: it does not open with "[", an element is not a string
+// TOMLStringValue accepts, or something other than a comment follows the closing bracket.
+// Whitespace, commas and comments between elements are skipped without checking where the
+// commas stand: Cargo parses the file, and this reads only what it accepted. No element spans
+// lines, so a caller reading line by line may instead pass each later line of an open array
+// behind a "[" of its own and collect the strings (Cargo workspace members,
+// internal/flavor/cargo_manifest.go).
+func TOMLStringArray(text string) (items []string, closed, ok bool) {
+	rest, found := strings.CutPrefix(text, "[")
+	if !found {
+		return nil, false, false
+	}
+	// Every pass consumes at least one byte, so len(text) passes read the whole text.
+	for range len(text) {
+		rest = skipTOMLArraySeparators(rest)
+		if rest == "" {
+			return items, false, true
+		}
+		if rest[0] == ']' {
+			trailer := strings.TrimSpace(rest[1:])
+			return items, true, trailer == "" || strings.HasPrefix(trailer, "#")
+		}
+		item, after, good := cutTOMLString(rest)
+		if !good || (after != "" && !strings.ContainsRune(" \t\r\n,]#", rune(after[0]))) {
+			return nil, false, false
+		}
+		items = append(items, item)
+		rest = after
+	}
+	return nil, false, false
+}
+
+// skipTOMLArraySeparators drops the whitespace, commas and comments that open rest.
+func skipTOMLArraySeparators(rest string) string {
+	for range len(rest) + 1 {
+		rest = strings.TrimLeft(rest, " \t\r\n,")
+		if !strings.HasPrefix(rest, "#") {
+			return rest
+		}
+		_, rest, _ = strings.Cut(rest, "\n")
+	}
+	return rest
+}
+
+// cutTOMLString cuts the single-line basic ("...") or literal ('...') string that opens value
+// and returns its text and what follows it. A basic string holding an escape sequence, which is
+// not decoded, and a string running past the end of its line are refused.
+func cutTOMLString(value string) (text, rest string, ok bool) {
+	if value == "" || (value[0] != '"' && value[0] != '\'') {
+		return "", "", false
+	}
+	quote := value[:1]
+	text, rest, closed := strings.Cut(value[1:], quote)
+	if !closed || strings.Contains(text, "\n") || (quote == `"` && strings.Contains(text, `\`)) {
+		return "", "", false
+	}
+	return text, rest, true
 }

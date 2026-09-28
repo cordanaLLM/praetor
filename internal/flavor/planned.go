@@ -93,7 +93,7 @@ func plannedFlavorName(repoPath, profile string) (string, error) {
 // repository facts the body renders against (templateWithheld), and the file already there
 // (readTemplateTarget). A present file canonically equal to the rendering is an earlier apply's,
 // and one holding an earlier text of the template (TemplateItem.Prior) is refreshed to it
-// (planTargetWrite).
+// (planTargetWrite) unless the body is withheld.
 func plannedBody(ctx context.Context, repoPath string, tmpl TemplateItem, repoName, owner string) (string, bool, error) {
 	disposition, _, err := templateDisposition(repoPath, tmpl, false)
 	if err != nil {
@@ -111,7 +111,7 @@ func plannedBody(ctx context.Context, repoPath string, tmpl TemplateItem, repoNa
 	}
 	if target.exists {
 		_, write := planTargetWrite(target, []byte(body), tmpl.Prior)
-		return body, write == targetUnchanged || write == targetRefreshed, nil
+		return body, write == targetUnchanged || (write == targetRefreshed && outcome == templateCreated), nil
 	}
 	if disposition == templateCovered || outcome != templateCreated {
 		return "", false, nil
