@@ -42,7 +42,20 @@ const RULE = '-'.repeat(78);
 const PACKAGE_INPUT = /(?:^|\/)node_modules\/((?:@[^/]+\/)?[^/]+)\//;
 
 const credit = (vendor) => `interfig (c) 2025 Vectorize AI, Inc. MIT ${vendor.repo}/tree/${vendor.commit}/${vendor.path}`;
-const readJson = (path) => JSON.parse(readFileSync(path, 'utf8'));
+/** A JSON file's value; a file that cannot be read or parsed is an error that names it. */
+export function readJson(path) {
+  let text;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch (error) {
+    throw new Error(`cannot read ${path}: ${error.message}`, { cause: error });
+  }
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    throw new Error(`cannot parse ${path}: ${error.message}`, { cause: error });
+  }
+}
 /** Text with LF line ends and exactly one final newline, so the notice file is the same on every OS. */
 const normalized = (text) => `${text.replaceAll('\r\n', '\n').trimEnd()}\n`;
 

@@ -571,8 +571,11 @@ export function starlightOutput(docsDir, siteDir, page, text) {
   return join(siteDir, ...slug, 'index.html');
 }
 
-/** A string literal in an Astro configuration that names the integration: tools/figures/astro.mjs from any directory. */
-const ASTRO_INTEGRATION = /['"`](?:[^'"`\n]*[\\/])?figures[\\/]astro\.mjs['"`]/;
+/**
+ * A string literal in an Astro configuration that names the integration: tools/figures/astro.mjs
+ * from any directory, with forward slashes or (escaped) backslashes.
+ */
+const ASTRO_INTEGRATION = /['"`](?:[^'"`\n]*[\\/])?figures[\\/]+astro\.mjs['"`]/;
 
 /** The diagram kinds an Astro configuration renders: figures when it names the integration, Mermaid never. */
 export const astroKinds = (text) => new Set(ASTRO_INTEGRATION.test(text) ? ['figure'] : []);
@@ -590,7 +593,7 @@ const MKDOCS = Object.freeze({
   output: (docsDir, siteDir, page) => pageOutput(docsDir, siteDir, page),
 });
 const STARLIGHT = Object.freeze({
-  generator: 'Astro', build: 'astro build', publisher: 'the figures integration, tools/figures/astro.mjs', base: true,
+  generator: 'Astro', build: 'astro build', publisher: 'tools/figures/astro.mjs', base: true,
   kinds: astroKinds,
   pages: (docsDir) => starlightPages(docsDir),
   output: starlightOutput,

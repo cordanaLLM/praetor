@@ -16,7 +16,7 @@ import {
 import { OUT_DIR, ROOT, VENDOR_JSON, compareOutputs, engineHash, listSpecs, main, renderAll } from './build.mjs';
 import {
   DIST_DIR, DIST_FILES, MAX_INPUTS, PLAYER_BUDGET, budget, bundle, bundledPackages, bundlesInterfig, compareDist, lockMismatches,
-  main as bundleMain, thirdPartyLicenses, writeDist,
+  main as bundleMain, readJson, thirdPartyLicenses, writeDist,
 } from './bundle.mjs';
 import { svgSpecError } from './checks.mjs';
 import { nextTab } from './keyboard.ts';
@@ -320,7 +320,7 @@ function importsOf(file) {
 }
 
 test('build and the checks need Node only: the engine imports builtins and relative files, never a package', () => {
-  const engine = ['build.mjs', 'checks.mjs', 'core.mjs', 'third_party/interfig/upstream/src/svg.ts',
+  const engine = ['build.mjs', 'checks.mjs', 'core.mjs', 'serve.mjs', 'astro.mjs', 'third_party/interfig/upstream/src/svg.ts',
     'third_party/interfig/upstream/src/geometry.ts', 'third_party/interfig/upstream/src/model.ts'];
   for (const file of engine) {
     const external = importsOf(file).filter((spec) => !spec.startsWith('node:') && !spec.startsWith('./'));
@@ -439,6 +439,22 @@ test('an install that differs from the lock is refused, package by package', () 
   ]);
 }));
 
+test('a JSON file the bundler cannot read or parse is an error naming the file', () => withTempDir((dir) => {
+  const lock = join(dir, 'tools/figures/package-lock.json');
+  write(lock, '{"packages": {}}');
+  assert.deepEqual(readJson(lock), { packages: {} });
+  write(lock, '{"packages": ');
+  assert.throws(() => lockMismatches(dir, ['react']), (error) => {
+    assert.ok(error.message.startsWith(`cannot parse ${lock}: `), error.message);
+    assert.ok(error.cause instanceof SyntaxError);
+    return true;
+  });
+  // Boundary: an empty file is not JSON either; a missing one cannot be read.
+  write(lock, '');
+  assert.throws(() => readJson(lock), /^Error: cannot parse /);
+  assert.throws(() => readJson(join(dir, 'absent.json')), (error) => error.message.startsWith(`cannot read ${join(dir, 'absent.json')}: `) && error.cause?.code === 'ENOENT');
+}));
+
 test('the license file carries interfig and every bundled package in full, LF only; a package without a LICENSE fails', () => withTempDir((dir) => {
   const vendor = { repo: 'https://example.invalid/repo', commit: 'c0ffee', path: 'lib' };
   write(join(dir, 'tools/figures/third_party/interfig/upstream/LICENSE'), 'MIT License\r\n\r\ninterfig text\r\n\r\n');
@@ -488,20 +504,27 @@ test('the loader refuses an SVG without a complete spec, as the site check does'
   ];
   const committed = readdirSync(join(ROOT, OUT_DIR)).filter((n) => n.endsWith('.svg')).map((n) => readFileSync(join(ROOT, OUT_DIR, n), 'utf8'));
   assert.ok(committed.length >= 20);
-  // The browser reader and the Node check agree on every committed SVG and on every broken one.
+  // The browser reader and the Node check agree on every committed SVG and on every broken one, in
+  // the same words; the loader names the SVG it read.
   for (const svg of [...committed, ...cases]) {
     let loaderError = null;
     try {
-      specFromSvg(svg);
+      specFromSvg(svg, 'x.svg');
     } catch (error) {
       loaderError = error.message;
     }
-    assert.equal(loaderError === null, svgSpecError(svg) === null, `${svg.slice(0, 80)}: loader ${loaderError}, check ${svgSpecError(svg)}`);
+    const verdict = svgSpecError(svg);
+    assert.equal(loaderError, verdict === null ? null : `x.svg ${verdict}`, svg.slice(0, 80));
   }
-  assert.throws(() => specFromSvg('<svg/>'), /carries no <metadata id="figure-spec">/);
-  assert.throws(() => specFromSvg(cases[1]), /is not closed/);
-  assert.throws(() => specFromSvg(cases[2]), SyntaxError);
-  assert.throws(() => specFromSvg(cases[3]), /holds no props with a layout and edges/);
+  assert.throws(() => specFromSvg('<svg/>'), /^Error: the SVG carries no <metadata id="figure-spec">$/);
+  assert.throws(() => specFromSvg(cases[1], 'a.svg'), /^Error: a\.svg does not close its <metadata id="figure-spec">$/);
+  // A spec that is not JSON is wrapped with the SVG's name; the parser's error stays the cause.
+  assert.throws(() => specFromSvg(cases[2], 'b.svg'), (error) => {
+    assert.match(error.message, /^b\.svg embeds a figure spec that is not JSON \(/);
+    assert.ok(error.cause instanceof SyntaxError);
+    return true;
+  });
+  assert.throws(() => specFromSvg(cases[3], 'c.svg'), /^Error: c\.svg embeds a figure spec without props\.layout and props\.edges$/);
 });
 
 test('the loader reads at most MAX_SVG_BYTES: exactly the cap passes, one byte more fails', async () => {
@@ -523,7 +546,78 @@ test('the loader fetches the SVG with a timeout signal and fails on an error sta
   assert.deepEqual(await fetchSpec('https://site.invalid/a.svg', ok), figure().props);
   assert.deepEqual(calls, [['https://site.invalid/a.svg', true]]);
   await assert.rejects(fetchSpec('https://site.invalid/b.svg', async () => new Response('gone', { status: 404 })), /b\.svg answered 404/);
-  await assert.rejects(fetchSpec('https://site.invalid/c.svg', async () => new Response('<svg/>')), /carries no <metadata/);
+  await assert.rejects(fetchSpec('https://site.invalid/c.svg', async () => new Response('<svg/>')),
+    /^Error: https:\/\/site\.invalid\/c\.svg carries no <metadata id="figure-spec">$/);
+});
+
+/**
+ * Imports a fresh copy of the loader on a stand-in page and runs `body` with what it recorded: the
+ * listeners the loader added, its scans and the figures it observed. The page is `window` (with
+ * Material's `document$` when `documents` is given, each subscriber pushed onto it), a `document`
+ * whose figures `figures()` returns, and an IntersectionObserver; the globals are restored after.
+ */
+async function loaderOnPage(copy, { readyState = 'complete', documents, figures }, body) {
+  const seen = { listeners: new Map(), scans: 0, observed: [], subscribed: 0 };
+  const page = {
+    readyState,
+    addEventListener: (type, listener) => seen.listeners.set(type, [...(seen.listeners.get(type) ?? []), listener]),
+    querySelectorAll: () => {
+      seen.scans += 1;
+      return figures();
+    },
+  };
+  const window = documents ? { document$: { subscribe: (next) => { seen.subscribed += 1; documents.push(next); } } } : {};
+  const Observer = class { observe(element) { seen.observed.push(element); } unobserve() {} };
+  const saved = Object.fromEntries(['window', 'document', 'IntersectionObserver'].map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
+  Object.assign(globalThis, { window, document: page, IntersectionObserver: Observer });
+  try {
+    await import(`./loader.ts?page=${copy}`);
+    await body(seen);
+  } finally {
+    for (const [name, descriptor] of Object.entries(saved)) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else delete globalThis[name];
+    }
+  }
+}
+
+test('the loader scans again on astro:page-load, and watches each figure once', async () => {
+  const first = { dataset: { figure: 'a' } };
+  const second = { dataset: { figure: 'b' } };
+  let figures = [first];
+  await loaderOnPage('astro', { figures: () => figures }, (seen) => {
+    // A parsed page without Material's document$: one scan at start, and a listener for Astro's
+    // client-side navigation.
+    assert.equal(seen.scans, 1);
+    assert.deepEqual(seen.observed, [first]);
+    assert.equal(first.dataset.figureState, 'waiting');
+    assert.equal(seen.listeners.get('astro:page-load')?.length, 1);
+    assert.equal(seen.listeners.get('DOMContentLoaded'), undefined);
+    // A navigation brings a new figure: it is watched, and the one already watched is not watched twice.
+    figures = [first, second];
+    seen.listeners.get('astro:page-load')[0]();
+    assert.equal(seen.scans, 2);
+    assert.deepEqual(seen.observed, [first, second]);
+  });
+});
+
+test('the loader waits for the parsed page, and follows document$ where Material provides it', async () => {
+  await loaderOnPage('loading', { readyState: 'loading', figures: () => [] }, (seen) => {
+    // Still parsing: no scan yet, one on DOMContentLoaded, and the astro:page-load listener either way.
+    assert.equal(seen.scans, 0);
+    assert.equal(seen.listeners.get('DOMContentLoaded')?.length, 1);
+    assert.equal(seen.listeners.get('astro:page-load')?.length, 1);
+    seen.listeners.get('DOMContentLoaded')[0]();
+    assert.equal(seen.scans, 1);
+  });
+  const documents = [];
+  await loaderOnPage('material', { documents, figures: () => [] }, (seen) => {
+    assert.equal(seen.subscribed, 1);
+    assert.equal(seen.scans, 0, 'document$ emits the first page itself');
+    assert.equal(seen.listeners.get('DOMContentLoaded'), undefined);
+    documents[0]();
+    assert.equal(seen.scans, 1);
+  });
 });
 
 test('the scenario label comes from the caption, or the slug when there is none', () => {

@@ -24,7 +24,12 @@ const MAX_FIGURES = 32;
 const FETCH_TIMEOUT_MS = 10_000;
 /** The largest SVG the loader reads; the committed figures are well under 0.1 MB. */
 export const MAX_SVG_BYTES = 4 * 1024 * 1024;
-/** The markers core.mjs (`decorate`) writes around the spec, as upstream's figure-svg.mjs does. */
+/**
+ * The markers core.mjs (`decorate`) writes around the spec, as upstream's figure-svg.mjs does. They
+ * are a copy of SPEC_OPEN and SPEC_CLOSE in core.mjs: importing core.mjs would bundle node:crypto
+ * and the render engine into the browser loader. figures.test.mjs holds this reader and the `site`
+ * check, which imports core.mjs's markers, to the same verdicts on every committed SVG.
+ */
 const SPEC_OPEN = '<metadata id="figure-spec"><![CDATA[';
 const SPEC_CLOSE = ']]></metadata>';
 const SELECTOR = 'figure.praetor-figure[data-figure]';
@@ -35,15 +40,23 @@ let observer: IntersectionObserver | null = null;
 const isObject = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
 
-/** The props embedded in a figure SVG, or an error naming what is missing. */
-export function specFromSvg(svg: string): FlowProps {
+/**
+ * The props embedded in a figure SVG, or an error that names the SVG (`name`, its URL when fetched)
+ * and says what is wrong in the words of `svgSpecError` in checks.mjs.
+ */
+export function specFromSvg(svg: string, name = 'the SVG'): FlowProps {
   const start = svg.indexOf(SPEC_OPEN);
-  if (start < 0) throw new Error('the SVG carries no <metadata id="figure-spec">');
+  if (start < 0) throw new Error(`${name} carries no <metadata id="figure-spec">`);
   const end = svg.indexOf(SPEC_CLOSE, start + SPEC_OPEN.length);
-  if (end < 0) throw new Error('the figure spec in the SVG is not closed');
-  const spec: unknown = JSON.parse(svg.slice(start + SPEC_OPEN.length, end));
+  if (end < 0) throw new Error(`${name} does not close its <metadata id="figure-spec">`);
+  let spec: unknown;
+  try {
+    spec = JSON.parse(svg.slice(start + SPEC_OPEN.length, end));
+  } catch (error) {
+    throw new Error(`${name} embeds a figure spec that is not JSON (${error instanceof Error ? error.message : String(error)})`, { cause: error });
+  }
   if (!isObject(spec) || !isObject(spec.props) || !isObject(spec.props.layout) || !Array.isArray(spec.props.edges)) {
-    throw new Error('the figure spec in the SVG holds no props with a layout and edges');
+    throw new Error(`${name} embeds a figure spec without props.layout and props.edges`);
   }
   return spec.props as FlowProps;
 }
@@ -83,7 +96,7 @@ export async function fetchSpec(url: string, fetcher: typeof fetch = fetch): Pro
   try {
     const response = await fetcher(url, { signal: controller.signal });
     if (!response.ok) throw new Error(`${url} answered ${response.status}`);
-    return specFromSvg(await readCapped(response, MAX_SVG_BYTES));
+    return specFromSvg(await readCapped(response, MAX_SVG_BYTES), url);
   } finally {
     clearTimeout(timer);
   }
