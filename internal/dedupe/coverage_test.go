@@ -41,6 +41,29 @@ func TestScanRepo_Positive_PolyglotVerdictIsPartial(t *testing.T) {
 	}
 }
 
+// A Go tool beside a JVM and JavaScript tree was still reported as a plain pass while the
+// language table knew only nine languages: every language the scan cannot read has to count.
+func TestScanRepo_Positive_JVMAndModuleSourcesMakeTheVerdictPartial(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "tooling/add.go", polyglotGoSource)
+	writeFile(t, dir, "java/A.java", "class A {}\n")
+	writeFile(t, dir, "java/B.kt", "class B\n")
+	writeFile(t, dir, "tools/build.mjs", "export const x = 1;\n")
+	writeFile(t, dir, "src/Program.cs", "class Program {}\n")
+
+	report, err := dedupe.ScanRepoContext(t.Context(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Passed || !report.Partial {
+		t.Fatalf("a clean Go tool beside Java, Kotlin, JavaScript and C# must pass partially: %+v", report)
+	}
+	want := map[string]int{"java": 1, "kotlin": 1, "javascript": 1, "csharp": 1}
+	if !maps.Equal(report.Unscanned, want) {
+		t.Fatalf("Unscanned = %v, want %v", report.Unscanned, want)
+	}
+}
+
 func TestScanRepo_Negative_GoOnlyRepositoryIsNotPartial(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "add.go", polyglotGoSource)

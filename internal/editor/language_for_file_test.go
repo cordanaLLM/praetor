@@ -14,6 +14,9 @@ func TestLanguageForFile(t *testing.T) {
 		"lib.rs":       "rust",
 		"index.js":     "typescript", // positive: JavaScript maps onto the TypeScript tooling
 		"view.jsx":     "typescript",
+		"build.mjs":    "typescript", // positive: module JavaScript and TypeScript use the same tooling
+		"worker.mts":   "typescript",
+		"Main.java":    "java", // positive: a language with no editor tooling is still observed
 		"values.yml":   "yaml",
 		"README.mdx":   "markdown",
 		"Makefile":     "make",
