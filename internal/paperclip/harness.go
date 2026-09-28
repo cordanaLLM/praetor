@@ -14,6 +14,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -464,9 +465,16 @@ func readHarnessFiles(ctx context.Context, repoPath string) ([]byte, []byte, boo
 // Disposition.Validate and VerifyRun refuse any receipt attached (lockdown.ErrNoPinnedKey). So
 // the row prescribes attaching receipts only when that key is pinned, and otherwise says a run
 // attaches none, instead of prescribing a receipt nothing in the repository can verify (BUG-804).
+// Even with the key pinned, only a gate run without --dry-run mints (gating runReceiptStage),
+// with or without a go.mod: the Go stages then report not_applicable and the receipt stage
+// still signs. Whether a run passes --dry-run is up to its caller, a repository-owned pre-push
+// hook included, and no repository fact the synthesis reads says so. The pinned row therefore
+// states the condition and forbids reporting a receipt the run did not mint, as the AGENTS.md
+// harness does (adopt harnessReceiptLine, #503), instead of promising one per proposal (#550).
 func receiptContract(pinned bool) string {
 	if pinned {
-		return "Ed25519 Exit-0 Receipts: mint via `praetorctl gate run`; attach receipt to every PR proposal."
+		return "Ed25519 Exit-0 Receipts: only `" + gating.ReceiptCommand + "` without `--dry-run` mints one; " +
+			"attach minted receipt to PR proposal; report no unminted receipt."
 	}
 	return "Ed25519 Exit-0 Receipts: none. " + manifestFile + " pins no valid receipt.public_key -> attach no receipt; " +
 		"pin key from `praetorctl gate keygen` to require receipts."

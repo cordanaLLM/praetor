@@ -780,22 +780,34 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
     `config.ResolveRepositoryPolicy`, and writes the same bytes. Only where no policy resolves
     yet, such as a first adoption without `--lock-source-root` or a manifest without a lock,
     does HISS-04 state the 60-line ceiling and that a stricter repository policy wins.
-  - The receipt row prescribes minting a receipt with `praetorctl gate run` and attaching it only
-    when `.standards.yaml` pins a well-formed `receipt.public_key`. Without one, every attached
-    receipt is refused, so the row says to attach none and names `praetorctl gate keygen`
+  - The receipt row prescribes attaching receipts only when `.standards.yaml` pins a well-formed
+    `receipt.public_key`. Without one, every attached receipt is refused, so the row says to
+    attach none and names `praetorctl gate keygen`
     (`TestSynthesizeHarness_Positive_PinnedKeyPrescribesReceipts`,
     `TestSynthesizeHarness_Negative_NoPinnedKeyPrescribesNoReceipt`,
     `TestSynthesizeHarness_Boundary_ReceiptKeyShape`).
-  - An unmodified harness from an earlier release, including the one that prescribed receipts on
-    every repository, still counts as earlier output, so `praetorctl adopt` refreshes it to the
-    current receipt row without `--force`; an edited harness stays operator-owned
-    (`TestPriorGeneratedRecognisesTheCavemanRelease`).
+  - With the key pinned, the row still promises no receipt per proposal. It says only
+    `praetorctl gate run` without `--dry-run` mints one, to attach a minted receipt, and to
+    report none that was not minted, the Paperclip counterpart of the `AGENTS.md` receipt line.
+    A dry run never mints (`runReceiptStage` in
+    [`internal/gating/pipeline.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/pipeline.go)),
+    and a repository-owned pre-push hook may pass `--dry-run`. A missing `go.mod` does not
+    change the row: the gate's Go stages then report `not_applicable` and the receipt stage
+    still signs (`TestSynthesizeHarness_Positive_GoModuleKeepsReceiptRule`,
+    `TestSynthesizeHarness_Negative_NoGoModPromisesNoUnconditionalReceipt`,
+    `TestSynthesizeHarness_Boundary_ReceiptRuleForms`).
+  - An unmodified harness from an earlier release, including the ones that prescribed receipts
+    on every repository or on every pinned one, still counts as earlier output, so
+    `praetorctl adopt` refreshes it to the current receipt row without `--force`; an edited
+    harness stays operator-owned (`TestPriorGeneratedRecognisesTheCavemanRelease`,
+    `TestAdoptRefreshesUnconditionalReceiptRows`).
   - The same holds for this release's own harness after a repository fact it reads changes.
     Pinning `receipt.public_key`, as the unpinned row advises, adding or removing a language,
     declaring or withdrawing an exception, or a policy that resolves the function length the
     harness stated as the unresolved ceiling leaves the harness unmodified output, and the next
     plain `praetorctl adopt` refreshes it. The refresh key compares the harness byte for byte
-    with this release rendered under both receipt states, every language set
+    with this release rendered under both receipt rows and each earlier pinned receipt row
+    (`priorPinnedReceiptRows`), every language set
     (`hisscatalog.AllLanguages`), every exception set (`hisscatalog.AllExceptions`) and the
     HISS-04 statements it accepts: the 60-line ceiling unresolved, the ceiling resolved, and
     the plain number this run states, if any. So an edit to the receipt row or an invariant

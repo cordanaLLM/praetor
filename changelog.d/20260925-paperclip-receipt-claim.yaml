@@ -1,0 +1,4 @@
+type: fixed
+title: The Paperclip harness no longer tells every run on a repository with a pinned receipt key to mint and attach an Ed25519 Exit-0 receipt to each PR proposal; the receipt row says only praetorctl gate run without --dry-run mints one, to attach a minted receipt and to report none that was not minted, in harness.json and rules.md alike, and plain adopt still refreshes an unmodified harness that carries an earlier unconditional receipt row
+issue: "#550"
+breaking: false
