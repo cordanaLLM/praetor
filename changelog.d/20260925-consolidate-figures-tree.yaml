@@ -1,0 +1,3 @@
+type: changed
+title: "The figure engine lives in one tree, tools/figures/: the checker, the MkDocs hook, the stylesheet and the vendored interfig engine moved there, build.mjs split into a hashed render core (core.mjs), the build/check command line and a separate bundler (bundle.mjs), so `node tools/figures/build.mjs check` needs no npm package, `node tools/figures/bundle.mjs --check` holds the 250 kB player budget, and editing the command-line wrapper no longer marks every figure stale"
+breaking: false

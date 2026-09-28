@@ -2,8 +2,8 @@
 
 `upstream/` holds a byte-identical subset of interfig, the figure engine behind the
 animated architecture figures on the Hindsight documentation site. Praetor uses it to draw
-its documentation figures ([figures guide](../../docs/guides/figures.md)). The decision
-record is [ADR-0015](../../docs/adr/0015-interactive-figures-from-vendored-interfig.md).
+its documentation figures ([figures guide](../../../../docs/guides/figures.md)). The decision
+record is [ADR-0015](../../../../docs/adr/0015-interactive-figures-from-vendored-interfig.md).
 
 ## Source and pin
 
@@ -27,11 +27,11 @@ interfig is MIT-licensed, Copyright (c) 2025 Vectorize AI, Inc.
 file of its own in the upstream tree, so `upstream/LICENSE` is the repository-root
 `LICENSE` at the pinned commit, copied verbatim.
 
-- `REUSE.toml` labels `third_party/interfig/upstream/**` as MIT with an override annotation
-  placed after the repository-wide `**` table. This file, `vendor.json` and everything
-  outside `upstream/` stay EUPL-1.2.
+- `REUSE.toml` labels `tools/figures/third_party/interfig/upstream/**` as MIT with an override
+  annotation placed after the repository-wide `**` table. This file, `vendor.json` and
+  everything outside `upstream/` stay EUPL-1.2.
 - The deployed player bundle carries an `interfig (c) 2025 Vectorize AI, Inc. MIT` banner,
-  because the upstream source has no header of its own (`tools/figures/build.mjs`).
+  because the upstream source has no header of its own (`tools/figures/bundle.mjs`).
 - Every exported SVG carries a credit comment, and the site footer credits Vectorize
   (`copyright` in `mkdocs.yml`).
 
@@ -60,10 +60,10 @@ Files under `upstream/` are never edited. Praetor's adaptations live outside it:
 
 | Adaptation | Where |
 | :-- | :-- |
-| `role="img"`, `<title>`, `<desc>` and a credit comment injected into each exported SVG | `tools/figures/build.mjs` |
-| A static SVG variant (`steps: []`) for reduced motion | `tools/figures/build.mjs` |
+| `role="img"`, `<title>`, `<desc>` and a credit comment injected into each exported SVG | `tools/figures/core.mjs` |
+| A static SVG variant (`steps: []`) for reduced motion | `tools/figures/core.mjs` |
 | Arrow, Home and End keys across the scenario tabs, and a tab-list label | `tools/figures/keyboard.ts` |
-| Theme colours mapped to Material for MkDocs variables, and a focus outline | `docs/stylesheets/figures.css` |
+| Theme colours mapped to Material for MkDocs variables, and a focus outline | `tools/figures/figures.css` |
 
 Each adaptation is offered upstream (ADR-0015, section 6). A later sync that brings in the
 upstream fix retires the local shim.
@@ -71,13 +71,13 @@ upstream fix retires the local shim.
 ## Tests
 
 ```bash
-node --test third_party/interfig/upstream/src/*.test.ts
+node --test 'tools/figures/third_party/interfig/upstream/src/*.test.ts'
 ```
 
 All 13 upstream tests pass at the pin. On Node 26 the run prints
 `[DEP0205] DeprecationWarning: module.register() is deprecated`. The warning comes from
 upstream's `scripts/figure-svg.mjs`, which `src/figure-svg.test.ts` starts as a child
-process. Praetor's build never calls that script: `tools/figures/build.mjs` imports
+process. Praetor's build never calls that script: `tools/figures/core.mjs` imports
 `toSvg` from `src/svg.ts` directly.
 
 ## Updating the pin
@@ -108,8 +108,8 @@ upstream has moved. To update the pin:
    removes the new upstream files and figure outputs that `git checkout` leaves behind:
 
    ```bash
-   git checkout -- third_party/interfig docs/assets/figures
-   git clean -fd -- third_party/interfig/upstream docs/assets/figures
+   git checkout -- tools/figures/third_party/interfig docs/assets/figures
+   git clean -fd -- tools/figures/third_party/interfig/upstream docs/assets/figures
    ```
 
 2. Add a new upstream file to the include or exclude list in `vendor.json` first, when step 1

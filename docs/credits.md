@@ -53,7 +53,7 @@ is credited until its source is confirmed.
 
 | Project | Use | License |
 | :-- | :-- | :-- |
-| [interfig](https://github.com/vectorize-io/hindsight/tree/ccfe85b4851957ac2adf88b4a9ddf9668b2882f1/hindsight-interfig) (`hindsight-interfig/` in vectorize-io/hindsight) | Draws the interactive figures on this site; vendored byte-identical at commit `ccfe85b4851957ac2adf88b4a9ddf9668b2882f1` in `third_party/interfig/` | MIT, © 2025 Vectorize AI, Inc. |
+| [interfig](https://github.com/vectorize-io/hindsight/tree/ccfe85b4851957ac2adf88b4a9ddf9668b2882f1/hindsight-interfig) (`hindsight-interfig/` in vectorize-io/hindsight) | Draws the interactive figures on this site; vendored byte-identical at commit `ccfe85b4851957ac2adf88b4a9ddf9668b2882f1` in `tools/figures/third_party/interfig/` | MIT, © 2025 Vectorize AI, Inc. |
 
 ## Specifications and standards
 

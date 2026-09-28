@@ -79,10 +79,11 @@ up, or given a condition that could skip it on some legs.
 
 Every leg also runs the figure build check, the commands `make docs-figures-check` runs, since
 `make` is not on the Windows image: the locked `npm ci --prefix tools/figures --ignore-scripts`,
-the build's tests and type check, `npm --prefix tools/figures run check` and
-`scripts/docs_diagrams.py sources`. esbuild and TypeScript arrive as per-platform npm optional
-dependencies, so the leg proves that the install works without install scripts on each OS, and
-`check` proves that a rebuild there is byte-identical to the committed SVG and JSON. The hashed
+the engine's tests and type check, `node tools/figures/build.mjs check`,
+`node tools/figures/bundle.mjs --check` and `tools/figures/docs_diagrams.py sources`. esbuild and
+TypeScript arrive as per-platform npm optional dependencies, so the leg proves that the install
+works without install scripts on each OS, `check` proves that a rebuild there is byte-identical to
+the committed SVG and JSON, and `bundle.mjs --check` holds the player to its size budget. The hashed
 files are pinned to LF in `.gitattributes`, so a Windows checkout reads the same bytes. The
 Chromium smoke test needs a built site and runs in `pages.yml` on Linux only
 ([figures guide](../guides/figures.md#checks)).
@@ -98,7 +99,7 @@ build, or is given a condition that could skip it on some legs.
 
 Every leg also runs the Interfig Verify Gate, the commands of `make interfig-verify`:
 `python3 -B scripts/test_sync_interfig.py`, `python3 -B scripts/sync_interfig.py verify` and
-`node --test 'third_party/interfig/upstream/src/*.test.ts'`. The script resolves every path from
+`node --test 'tools/figures/third_party/interfig/upstream/src/*.test.ts'`. The script resolves every path from
 its own location through `pathlib`, so it answers the same from any working directory; the
 vendored files are `-text` in `.gitattributes`, so a Windows checkout hashes the same bytes as
 `vendor.json` records; and the test glob is quoted, so `node` expands it rather than the shell.
