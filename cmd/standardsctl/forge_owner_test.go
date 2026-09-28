@@ -362,6 +362,55 @@ func TestInit_3D_RepositoryIdentity(t *testing.T) {
 	}
 }
 
+// initManifestAt runs init for a manifest in dir and returns its output and the manifest text.
+func initManifestAt(t *testing.T, dir string) (string, string) {
+	t.Helper()
+	path := filepath.Join(dir, config.ManifestFileName)
+	out, err := runInitCmd(t, "--output="+path)
+	if err != nil {
+		t.Fatalf("init in %s: %v\n%s", dir, err, out)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out, string(data)
+}
+
+// init declares the origin HEAD only this checkout records as repository.default_branch when it
+// is not main, so a CI checkout without it renders the same ruleset (#71). An origin HEAD at main
+// or none declares nothing; one the ruleset cannot carry fails init before it writes a manifest.
+func TestInit_3D_DefaultBranch(t *testing.T) {
+	master := remoteRepo(t, "acme", "kit")
+	testsupport.RecordOriginHead(t, master, "master")
+	out, _ := initManifestAt(t, master)
+	manifest, err := config.LoadManifest(filepath.Join(master, config.ManifestFileName))
+	if err != nil || manifest.Repository.DefaultBranch != "master" {
+		t.Fatalf("a master checkout must declare master: %+v, %v", manifest, err)
+	}
+	mustContain(t, out, "[INFO] repository.default_branch: master recorded from the origin remote's HEAD")
+
+	for name, head := range map[string]string{"main": "main", "none": ""} {
+		dir := remoteRepo(t, "acme", "kit-"+name)
+		if head != "" {
+			testsupport.RecordOriginHead(t, dir, head)
+		}
+		out, text := initManifestAt(t, dir)
+		if strings.Contains(text, "default_branch") || strings.Contains(out, "default_branch") {
+			t.Fatalf("origin HEAD %q must declare nothing:\n%s\n%s", head, text, out)
+		}
+	}
+
+	unusable := remoteRepo(t, "acme", "kit-unusable")
+	testsupport.RecordOriginHead(t, unusable, "_private")
+	path := filepath.Join(unusable, config.ManifestFileName)
+	_, err = runInitCmd(t, "--output="+path)
+	mustErrContain(t, err, "repository.default_branch")
+	if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("a failed default-branch read must leave no manifest: %v", statErr)
+	}
+}
+
 func TestForgeSyncWiki_3D_PortalOwner(t *testing.T) {
 	agents, err := os.ReadFile(filepath.Join("..", "..", "AGENTS.md"))
 	if err != nil {

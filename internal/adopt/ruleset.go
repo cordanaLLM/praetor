@@ -90,6 +90,33 @@ func readRulesetBaseline(ctx context.Context, s *adoptSession) *forge.RulesetBas
 	return &baseline
 }
 
+// resolveDefaultBranch reads, before any step writes, the default branch only this checkout
+// records (forge.DefaultBranchToDeclare): an origin HEAD that is not main, which a CI checkout
+// without it would not resolve. Without a manifest, the one the manifest step creates declares it
+// (declaredAdoptionManifest), so every checkout renders and audits the ruleset for the same
+// branch. An existing manifest that declares none is never rewritten and is warned about instead.
+// A manifest that declares the branch, or declines the branch-ruleset step, needs no read.
+func (s *adoptSession) resolveDefaultBranch(ctx context.Context, declared *config.Manifest) error {
+	if declared != nil && (declared.Repository.DefaultBranch != "" || s.declines("branch-ruleset")) {
+		return nil
+	}
+	branch, err := forge.DefaultBranchToDeclare(ctx, s.repoPath)
+	if err != nil {
+		return fmt.Errorf("read the default branch to declare: %w", err)
+	}
+	if declared == nil {
+		s.defaultBranch = branch
+		return nil
+	}
+	if branch != "" {
+		s.report.addWarning("%s declares no repository.default_branch: this checkout's origin HEAD names %s, so the "+
+			"ruleset renders for %s here, but a checkout without it (CI usually has none) renders %s and the audit "+
+			"reports drift. Declare repository.default_branch: %s in %s; adoption never rewrites an existing manifest",
+			manifestFile, branch, branch, forge.FallbackDefaultBranch, branch, manifestFile)
+	}
+	return nil
+}
+
 // priorRulesetDigests is the earlier-text set of the ruleset scaffold (scaffold.prior): the
 // digest of the ruleset current for the repository as this adoption found it, unless that is
 // content, or none without a baseline.

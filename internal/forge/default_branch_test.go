@@ -7,12 +7,12 @@ package forge
 import (
 	"context"
 	"errors"
-	"os/exec"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -21,17 +21,10 @@ import (
 // read through git, and a host without git cannot answer).
 func defaultBranchRepo(t *testing.T, originHead string) string {
 	t.Helper()
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skipf("git unavailable: %v", err)
-	}
 	root := t.TempDir()
-	if _, err := util.RunGit(t.Context(), root, "init", "-q"); err != nil {
-		t.Fatalf("git init: %v", err)
-	}
+	testsupport.InitGitRepoWithOrigin(t, root, "")
 	if originHead != "" {
-		if _, err := util.RunGit(t.Context(), root, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/"+originHead); err != nil {
-			t.Fatalf("record origin HEAD: %v", err)
-		}
+		testsupport.RecordOriginHead(t, root, originHead)
 	}
 	return root
 }
@@ -190,5 +183,55 @@ func TestPriorRulesetDigests_Boundary_TheEarlierMainRenderingIsRecognised(t *tes
 	}
 	if got := PriorRulesetDigests(mainBaseline, current); len(got) != 1 {
 		t.Fatalf("a main repository has exactly one prior rendering, got %v", got)
+	}
+}
+
+// A manifest records the origin HEAD a checkout without it would not resolve: master and a
+// custom name, whatever the manifest on disk declares, since the caller writes the declaration.
+func TestDefaultBranchToDeclare_Positive_OriginHeadThatIsNotMain(t *testing.T) {
+	for _, head := range []string{"master", "release/stable"} {
+		root := defaultBranchRepo(t, head)
+		writeManifestFixture(t, root, "version: 1\nrepository:\n  default_branch: trunk\n")
+		if got, err := DefaultBranchToDeclare(t.Context(), root); err != nil || got != head {
+			t.Fatalf("origin HEAD %s: DefaultBranchToDeclare = %q, %v", head, got, err)
+		}
+	}
+}
+
+// Nothing is declared where every checkout resolves the same branch anyway: an origin HEAD at
+// main, a checkout recording none, a directory outside any checkout. A 128-character branch, the
+// longest config.ValidBranchName takes, is declared.
+func TestDefaultBranchToDeclare_Boundary_NothingToDeclare(t *testing.T) {
+	for name, root := range map[string]string{
+		"origin HEAD at main": defaultBranchRepo(t, FallbackDefaultBranch),
+		"no origin HEAD":      defaultBranchRepo(t, ""),
+		"outside a checkout":  t.TempDir(),
+	} {
+		if got, err := DefaultBranchToDeclare(t.Context(), root); err != nil || got != "" {
+			t.Fatalf("%s: DefaultBranchToDeclare = %q, %v, want nothing to declare", name, got, err)
+		}
+	}
+	long := strings.Repeat("b", 128)
+	if got, err := DefaultBranchToDeclare(t.Context(), defaultBranchRepo(t, long)); err != nil || got != long {
+		t.Fatalf("a 128-character origin HEAD: DefaultBranchToDeclare = %q, %v", got, err)
+	}
+}
+
+// An origin HEAD the ruleset cannot carry, a missing context and a cancelled read are errors, never
+// "nothing to declare" a manifest writer would silently leave out.
+func TestDefaultBranchToDeclare_Negative_UnreadableOriginHeadIsAnError(t *testing.T) {
+	if got, err := DefaultBranchToDeclare(t.Context(), defaultBranchRepo(t, "_private")); err == nil ||
+		!strings.Contains(err.Error(), "repository.default_branch") {
+		t.Fatalf("an origin HEAD the ruleset cannot carry must ask for a declaration, got %q, %v", got, err)
+	}
+	root := defaultBranchRepo(t, "master")
+	var missing context.Context
+	if _, err := DefaultBranchToDeclare(missing, root); err == nil {
+		t.Fatal("a nil context must be refused")
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if got, err := DefaultBranchToDeclare(ctx, root); !errors.Is(err, context.Canceled) || got != "" {
+		t.Fatalf("a cancelled origin HEAD read must be an error, got %q, %v", got, err)
 	}
 }

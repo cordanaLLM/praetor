@@ -41,12 +41,45 @@ func RepositoryDefaultBranch(ctx context.Context, repoPath string, manifest *con
 	if err != nil || declared != "" {
 		return declared, err
 	}
+	recorded, err := recordedDefaultBranch(ctx, repoPath)
+	if err != nil || recorded != "" {
+		return recorded, err
+	}
+	return FallbackDefaultBranch, nil
+}
+
+// DefaultBranchToDeclare returns the branch a manifest for the repository at repoPath declares as
+// repository.default_branch so that every checkout resolves the default branch this one does
+// (RepositoryDefaultBranch): the origin remote's HEAD as this checkout records it, when that is
+// not FallbackDefaultBranch. A CI checkout usually records no origin HEAD and would resolve
+// FallbackDefaultBranch, so a ruleset rendered here from the origin HEAD alone fails its audit.
+//
+// It is "" when the checkout records no origin HEAD or records FallbackDefaultBranch, which every
+// checkout resolves without a declaration. An origin HEAD git did not answer or that names a
+// branch config.ValidBranchName refuses is an error, as in RepositoryDefaultBranch. The manifest
+// writers (adoption, init, harvester onboarding) record it in the manifest they create; adoption
+// warns about an existing manifest that leaves it undeclared.
+func DefaultBranchToDeclare(ctx context.Context, repoPath string) (string, error) {
+	if ctx == nil {
+		return "", errors.New("reading the default branch to declare requires a context")
+	}
+	recorded, err := recordedDefaultBranch(ctx, repoPath)
+	if err != nil || recorded == FallbackDefaultBranch {
+		return "", err
+	}
+	return recorded, nil
+}
+
+// recordedDefaultBranch returns the origin remote's HEAD as the checkout at repoPath records it
+// (util.ReadOriginHeadBranch), or "" when it records none. One config.ValidBranchName refuses is
+// an error that asks for a declaration.
+func recordedDefaultBranch(ctx context.Context, repoPath string) (string, error) {
 	recorded, ok, err := util.ReadOriginHeadBranch(ctx, repoPath)
 	if err != nil {
 		return "", fmt.Errorf("resolve the default branch of %s: %w", repoPath, err)
 	}
 	if !ok {
-		return FallbackDefaultBranch, nil
+		return "", nil
 	}
 	if !config.ValidBranchName(recorded) {
 		return "", fmt.Errorf("resolve the default branch of %s: the origin remote's HEAD names %q, which cannot be rendered; "+
