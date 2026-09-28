@@ -34,10 +34,19 @@ func TestFormatAdoptMCPResult_Positive_ReplacedSection(t *testing.T) {
 	if strings.Contains(got, "~ lefthook.yml") {
 		t.Fatalf("replaced file listed as reconciled:\n%s", got)
 	}
-	planned := string(formatAdoptMCPResult(replacedAdoptReport(), true))
+	plannedReport := replacedAdoptReport()
+	preview := adopt.FilePreview{Path: ".github/rulesets/main.json", Action: adopt.PreviewUpdate, Diff: "--- a\n+++ b\n"}
+	plannedReport.Previews = []adopt.FilePreview{preview}
+	planned := string(formatAdoptMCPResult(plannedReport, true))
 	if !strings.Contains(planned, "Planned Reconciliations: 1\n") || !strings.Contains(planned, "Planned Replacements: 1\n  ! lefthook.yml: ") ||
 		strings.Contains(planned, "Replaced Files") {
 		t.Fatalf("dry run replaced section:\n%s", planned)
+	}
+	// A dry run under --force carries both: the file sections first, then the previews, as the
+	// CLI prints them (printAdoptedFiles, then printAdoptPreviews).
+	replacedAt, previewAt := strings.Index(planned, "Planned Replacements"), strings.Index(planned, preview.Text())
+	if previewAt < 0 || replacedAt > previewAt {
+		t.Fatalf("the preview must follow the replaced section (replaced at %d, preview at %d):\n%s", replacedAt, previewAt, planned)
 	}
 }
 

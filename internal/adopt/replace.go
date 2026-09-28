@@ -51,7 +51,9 @@ type replacement struct {
 // replaceExisting is the one path for overwriting adopter bytes: it keeps a backup of r.before
 // (backupExisting), publishes r.after, and records the file as replaced with a bounded line
 // delta and the backup location. The backup comes first, so a refused backup leaves the file
-// as it was. A dry run takes no backup, writes nothing and records the replacement it plans.
+// as it was. A dry run takes no backup, writes nothing and records the replacement it plans,
+// with r.after as the bytes rel comes to (planDryRunWrite), so a later step, the branch ruleset
+// preview among them, reads the file the run leaves rather than the one on disk.
 func (s *adoptSession) replaceExisting(ctx context.Context, r replacement) error {
 	note, err := s.backupExisting(ctx, r.rel, r.before)
 	if err != nil {
@@ -62,6 +64,7 @@ func (s *adoptSession) replaceExisting(ctx context.Context, r replacement) error
 			return err
 		}
 	}
+	s.planDryRunWrite(r.rel, r.after)
 	s.report.recordReplaced(r.rel, r.detail+"; replaced existing content ("+describeLineDelta(r.before, r.after)+"); "+note)
 	return nil
 }

@@ -37,7 +37,9 @@ The preview takes its action from the same keep-or-replace decision as the real 
 (`internal/adopt/preview_test.go`). Its status checks come from the workflows the run leaves
 before its `branch-ruleset` step, not only the ones on disk:
 
-- workflows the dry run records as written or removed, such as the documentation gate's;
+- workflows the dry run records as written, replaced under `--force` or removed, such as the
+  documentation gate's (`TestReplaceExisting_3D_DryRunPlansTheReplacedBytes` in
+  `internal/adopt/replace_test.go`);
 - the workflows of the flavor the run applies for the profile it records
   (`flavor.PlannedWorkflows`), which a dry run does not apply.
 

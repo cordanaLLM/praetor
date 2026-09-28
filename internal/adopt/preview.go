@@ -131,8 +131,9 @@ func filePreview(sc scaffold, state scaffoldState, before []byte, readable, exis
 }
 
 // planDryRunWrite records, in a dry run, that rel would hold content once the run it previews
-// has written it; a real run records nothing. The scaffold writes (scaffoldFile) and the earlier
-// text refresh (replacePriorText) call it, which covers every workflow adoption writes itself.
+// has written it; a real run records nothing. The scaffold writes (scaffoldFile), the earlier
+// text refresh (replacePriorText) and the --force replace (replaceExisting) call it, which
+// covers every workflow adoption writes itself.
 func (s *adoptSession) planDryRunWrite(rel string, content []byte) {
 	if !s.opts.DryRun {
 		return

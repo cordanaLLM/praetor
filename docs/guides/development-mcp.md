@@ -359,9 +359,9 @@ A dry run that recorded an error is reported `[INCOMPLETE]`, not
 error or by recording one), was declined or never ran names that status instead
 of a success mark. A dry run against a fresh
 repository without `source_root` shows both: the DevContainer pillar reads
-`warned` and the result is `[INCOMPLETE]`. Both also list a file that `force`
-overwrote in its own replaced section, with its line delta and backup location,
-and never among the reconciled files (`formatAdoptFiles` in
+`warned` and the result is `[INCOMPLETE]`. `standards_adopt` and `praetorctl adopt`
+also list a file that `force` overwrote in its own replaced section, with its line
+delta and backup location, and never among the reconciled files (`formatAdoptFiles` in
 `cmd/standards-mcp/tools_adoption.go`, `TestFormatAdoptMCPResult_Positive_ReplacedSection`).
 
 A dry run also prints the branch ruleset preview the CLI prints: the action

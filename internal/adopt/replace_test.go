@@ -325,6 +325,44 @@ func TestScaffoldFile_Boundary_CRLFOnlyDifferenceIsNotReplaced(t *testing.T) {
 	}
 }
 
+// Positive, negative and boundary: a --force replace in a dry run records the bytes the run
+// would write (planDryRunWrite), so the branch ruleset preview renders over the workflow the
+// run leaves, not the drifted one on disk; a real run records nothing, and a dry run without
+// --force, which keeps the drifted file, plans no write for it.
+func TestReplaceExisting_3D_DryRunPlansTheReplacedBytes(t *testing.T) {
+	const drifted = "name: docs\non: push\njobs: {}\n"
+	workflow := scaffold{rel: DocumentationWorkflowFile, perm: filePerm, content: []byte(DocumentationWorkflow()),
+		force: true, created: "Scaffolded fixture", verified: "verified"}
+
+	dry := backupSession(t, map[string]string{workflow.rel: drifted}, true, AdoptOptions{Force: true, DryRun: true})
+	if state, err := dry.scaffoldFile(t.Context(), workflow); err != nil || state != scaffoldWritten {
+		t.Fatalf("dry run: state %v, err %v", state, err)
+	}
+	planned, err := dry.previewWorkflows(t.Context())
+	if err != nil || string(planned[workflow.rel]) != DocumentationWorkflow() {
+		t.Fatalf("the ruleset preview must read the replacing workflow, got %q, %v", planned[workflow.rel], err)
+	}
+	if got := mustRead(t, filepath.Join(dry.repoPath, filepath.FromSlash(workflow.rel))); got != drifted {
+		t.Fatalf("dry run wrote %q", got)
+	}
+
+	applied := backupSession(t, map[string]string{workflow.rel: drifted}, true, AdoptOptions{Force: true})
+	if state, err := applied.scaffoldFile(t.Context(), workflow); err != nil || state != scaffoldWritten {
+		t.Fatalf("real run: state %v, err %v", state, err)
+	}
+	if applied.dryRunWrites != nil || mustRead(t, filepath.Join(applied.repoPath, filepath.FromSlash(workflow.rel))) != DocumentationWorkflow() {
+		t.Fatalf("a real run writes the file and plans nothing: %v", applied.dryRunWrites)
+	}
+
+	kept := backupSession(t, map[string]string{workflow.rel: drifted}, true, AdoptOptions{DryRun: true})
+	if state, err := kept.scaffoldFile(t.Context(), workflow); err != nil || state != scaffoldDrifted {
+		t.Fatalf("dry run without --force: state %v, err %v", state, err)
+	}
+	if _, recorded := kept.dryRunWrites[workflow.rel]; recorded {
+		t.Fatalf("a kept drifted file must plan no write: %q", kept.dryRunWrites[workflow.rel])
+	}
+}
+
 // Positive, negative and boundary: describeLineDelta names a line-ending-only change when the LF
 // texts match, and never when a line changed.
 func TestDescribeLineDelta_LineEndingsOnly(t *testing.T) {
