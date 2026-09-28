@@ -329,10 +329,14 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
   `TestAdopt_Negative_PlainRunRefusesSymlinkedBackupRootForVendorEdit`).
 - **`AGENTS.md` harness under `--force`.** An existing harness is kept without `--force`.
   With it, the harness is regenerated and what the repository added around it stays:
-  - the preamble: every line above the harness start, which is the first
-    `# ... Agent Operating Harness` title (else the `## Core Directives & Invariants`
-    heading) together with a `<!-- markdownlint-disable ... -->` line directly above it,
-    for example an SPDX header;
+  - the preamble: every line above the harness start, for example an SPDX header. The
+    harness starts at the first `# ... Agent Operating Harness` title, together with a
+    `<!-- markdownlint-disable ... -->` line directly above it. A harness whose title was
+    renamed is found by its `## Core Directives & Invariants` heading and starts at the
+    nearest H1 above that heading, or at the top of the file when no H1 precedes it, so the
+    renamed title and its intro are regenerated rather than kept above a second copy
+    (`harnessStart` in `internal/adopt/harness.go`,
+    `TestAdopt_AgentsMD_ForceReplacesRenamedHarnessTitle`);
   - invariant rows under an ID of the repository's own, such as `**AEGIS-01**`, appended
     after the catalog rows in their original order and byte for byte, escaped pipes
     included. `hisscatalog.InvariantTableRows` reads both tables through

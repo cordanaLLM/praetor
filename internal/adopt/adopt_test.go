@@ -1440,6 +1440,51 @@ func TestAdopt_AgentsMD_ForceKeepsCRLFPreamble(t *testing.T) {
 	}
 }
 
+// TestAdopt_AgentsMD_ForceReplacesRenamedHarnessTitle: a harness whose H1 was renamed is found
+// by its invariant heading and opens at that H1, so --force regenerates the whole intro (the
+// renamed title quoted in the replace entry) and keeps only the preamble above the title. It
+// never keeps the old intro as preamble above a second one, and a second --force is
+// byte-identical.
+func TestAdopt_AgentsMD_ForceReplacesRenamedHarnessTitle(t *testing.T) {
+	repoPath := newTestRepo(t, "harness-renamed")
+	agents := filepath.Join(repoPath, agentsFile)
+	opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Profile: "framework"}
+	if _, err := Adopt(context.Background(), opts); err != nil {
+		t.Fatalf("Adopt: %v", err)
+	}
+	generated := mustRead(t, agents)
+	title := generated[strings.Index(generated, "\n# ")+1:]
+	title = title[:strings.Index(title, "\n")]
+	edited, _ := harnessAdditionsFixture(t, strings.Replace(generated, title, "# Our Agent Rules", 1), "\n")
+	mustWrite(t, agents, edited)
+
+	opts.Force = true
+	rep, err := Adopt(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("Adopt --force: %v", err)
+	}
+	assertNoIssues(t, rep)
+	content := mustRead(t, agents)
+	for want, count := range map[string]int{"Before concluding any turn:": 1, "<!-- markdownlint-disable MD013 -->": 1, title + "\n": 1, "# Our Agent Rules": 0} {
+		if got := strings.Count(content, want); got != count {
+			t.Errorf("%q occurs %d times, want %d:\n%s", want, got, count, content)
+		}
+	}
+	if !strings.HasPrefix(content, "<!-- SPDX-FileCopyrightText: 2026 Example Maintainers -->\n<!-- SPDX-License-Identifier: MIT -->\n\n<!-- markdownlint-disable MD013 -->\n"+title+"\n") {
+		t.Errorf("the preamble must stay directly above the regenerated harness:\n%s", content)
+	}
+	if detail := findActionDetail(rep.ActionDetails, agentsFile); !hasAction(rep, agentsFile, actionReplace) || !strings.Contains(detail, `"# Our Agent Rules"`) {
+		t.Errorf("the renamed title must be quoted in a replace entry, got %q", detail)
+	}
+	again, err := Adopt(context.Background(), opts)
+	if err != nil {
+		t.Fatalf("second Adopt --force: %v", err)
+	}
+	if got := mustRead(t, agents); got != content || hasAction(again, agentsFile, actionReplace) {
+		t.Errorf("a second --force must be byte-identical and replace nothing:\n%s", got)
+	}
+}
+
 // TestAdopt_AgentsMD_ForceKeepsProseNamingTheHarness: text that only names the harness in
 // prose is not a harness, so --force merges the harness above it and keeps every line, rather
 // than taking its first "---" for a harness boundary and dropping the text above it.
@@ -1467,7 +1512,12 @@ func TestHarnessStart(t *testing.T) {
 		"title at the top":        {"# x Agent Operating Harness\n", 0},
 		"lint comment above":      {"<!-- SPDX -->\n<!-- markdownlint-disable MD013 MD025 -->\n# x Agent Operating Harness\n", len("<!-- SPDX -->\n")},
 		"preamble above title":    {"<!-- SPDX -->\n\n# x Agent Operating Harness\n", len("<!-- SPDX -->\n\n")},
-		"invariant heading alone": {"# Rules\n\n## Core Directives & Invariants\n", len("# Rules\n\n")},
+		"renamed title":           {"<!-- SPDX -->\n\n# Rules\n\nBefore concluding any turn:\n\n## Core Directives & Invariants\n", len("<!-- SPDX -->\n\n")},
+		"renamed title with lint": {"<!-- SPDX -->\n<!-- markdownlint-disable MD013 -->\n# Rules\n\n## Core Directives & Invariants\n", len("<!-- SPDX -->\n")},
+		"nearest title wins":      {"# Project\n\ntext\n\n# Rules\n\n## Core Directives & Invariants\n", len("# Project\n\ntext\n\n")},
+		"fenced title skipped":    {"<!-- SPDX -->\n\n# Rules\n\n```sh\n# comment\n```\n\n## Core Directives & Invariants\n", len("<!-- SPDX -->\n\n")},
+		"heading without title":   {"<!-- SPDX -->\n\nBefore concluding any turn:\n\n## Core Directives & Invariants\n", 0},
+		"lint comment not above":  {"<!-- markdownlint-disable MD041 -->\n\n# Rules\n\n## Core Directives & Invariants\n", len("<!-- markdownlint-disable MD041 -->\n\n")},
 	}
 	for name, tc := range cases {
 		if got := harnessStart(tc.content); got != tc.want {

@@ -326,31 +326,44 @@ func hasHarness(content string) bool {
 }
 
 // harnessStart returns the byte offset of the line an existing harness starts at, or -1 when
-// content carries none. The harness opens at its first H1 ending in harnessTitleSuffix, else at
-// the invariant heading, and a markdownlint-disable comment on the line directly above that
-// line is part of it. Text above the start is the repository's preamble, such as an SPDX header.
+// content carries none. The harness opens at its first H1 ending in harnessTitleSuffix. A
+// harness whose H1 was renamed is found by its invariant heading and opens at the nearest H1
+// above that heading, or at the top of content when no H1 precedes it: every harness praetor
+// writes opens with an H1, so the text between that H1 and the heading is harness intro. Kept
+// as preamble, it would sit above the regenerated intro on every later --force, with its
+// edited lines never replaced. A markdownlint-disable comment on the line directly above the
+// start line is part of the harness. Text above the start is the repository's preamble, such
+// as an SPDX header. H1s and headings inside fenced code are skipped.
 func harnessStart(content string) int {
 	lines := strings.SplitN(content, "\n", maxHarnessLines)
 	var fence util.MarkdownFence
-	offset, previous := 0, -1
+	offset, nearestTitle := 0, 0
 	for i := 0; i < len(lines) && i < maxHarnessLines; i++ {
 		trimmed := strings.TrimSpace(lines[i])
-		if !fence.Inside(trimmed) && isHarnessLine(trimmed) {
-			if previous >= 0 && strings.HasPrefix(strings.TrimSpace(lines[i-1]), harnessLintDisable) {
-				return previous
-			}
-			return offset
-		}
-		previous = offset
+		start := lineStartWithLint(lines, i, offset)
 		offset += len(lines[i]) + 1
+		if fence.Inside(trimmed) {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(trimmed, "# ") && strings.HasSuffix(trimmed, harnessTitleSuffix):
+			return start
+		case strings.HasPrefix(trimmed, hisscatalog.GatedInvariantsHeading):
+			return nearestTitle
+		case strings.HasPrefix(trimmed, "# "):
+			nearestTitle = start
+		}
 	}
 	return -1
 }
 
-// isHarnessLine reports whether trimmed opens a harness: its H1 or the invariant heading.
-func isHarnessLine(trimmed string) bool {
-	return (strings.HasPrefix(trimmed, "# ") && strings.HasSuffix(trimmed, harnessTitleSuffix)) ||
-		strings.HasPrefix(trimmed, hisscatalog.GatedInvariantsHeading)
+// lineStartWithLint returns offset, where line i of lines starts, or where line i-1 starts
+// when that line is a markdownlint-disable comment (harnessLintDisable).
+func lineStartWithLint(lines []string, i, offset int) int {
+	if i > 0 && strings.HasPrefix(strings.TrimSpace(lines[i-1]), harnessLintDisable) {
+		return offset - len(lines[i-1]) - 1
+	}
+	return offset
 }
 
 // splitHarnessTail splits body, text that opens with an existing harness, at the harness
