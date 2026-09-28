@@ -1,0 +1,3 @@
+type: changed
+title: "The interactive figure player is generic and committed: the loader reads each figure's props from the `<metadata id=\"figure-spec\">` of the SVG it shows (byte-capped, 10 s timeout) and takes its label from the caption, so registry.json and the per-spec chunks are gone; `node tools/figures/bundle.mjs` writes loader.js, player.js and THIRD-PARTY-LICENSES.txt to tools/figures/dist/, `bundle.mjs --check` rebuilds them from the lock and compares byte for byte on Linux, macOS and Windows, the MkDocs hook serves them so no docs build bundles, and the `site` check verifies each figure SVG's embedded spec and the loader's player instead of the registry (ADR-0016)"
+breaking: false

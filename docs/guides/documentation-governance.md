@@ -381,12 +381,13 @@ by the diagram check, `site`, a command of the Node figure engine
 22.18 or later, no npm package):
 
 ```bash
-npm ci --prefix tools/figures --ignore-scripts
-npm --prefix tools/figures run bundle
 mkdocs build --strict -d /tmp/site
 node tools/figures/build.mjs site --config mkdocs.yml --docs docs --site /tmp/site
 node tools/figures/build.mjs sources
 ```
+
+No step bundles before the build: the figures hook publishes the committed
+player from `tools/figures/dist/`.
 
 The configuration decides which diagram kind a build accepts:
 
@@ -394,7 +395,7 @@ The configuration decides which diagram kind a build accepts:
   `docs/figures/`. The root `mkdocs.yml` lists
   `tools/figures/mkdocs_hook.py` under `hooks:`, which renders each fence as
   the committed SVGs, a caption and a text description, and publishes the
-  figure stylesheet; the player loads on top. The root site declares no mermaid fence, so figures are its only
+  figure stylesheet and the committed player; the player loads on top. The root site declares no mermaid fence, so figures are its only
   diagram kind. The [figures guide](figures.md) covers authoring and the build.
 - **Mermaid: the adopter preset.** Material for MkDocs draws a diagram only
   from a `<pre class="mermaid">` element, which `pymdownx.superfences` emits
@@ -417,8 +418,9 @@ backslash instead of guessing.
 enable (on the root site, a Mermaid fence, with a finding that says to draw it
 as a `figure` fence), when a built page holds fewer mermaid `<pre>` elements
 than its source has `mermaid` fences, or when a `figure` fence did not become
-a `figure.praetor-figure` whose images resolve under the site, on a page that
-loads the figure loader, with its slug in the bundle's `registry.json`. A fence
+a `figure.praetor-figure` whose images resolve under the site to SVGs that
+embed the player's props (`<metadata id="figure-spec">`), on a page that loads
+the figure loader with `player.js` beside it. A fence
 nested inside a longer fence is source text and is not expected to render. The
 mapping from a page to its HTML file assumes the default
 `use_directory_urls: true`.
@@ -439,8 +441,9 @@ enables (figures only at the root, Mermaid only in the preset), so adding the
 mermaid fence back to the root site or dropping the figures hook fails without
 a site build. It also runs the type check, rebuilds every figure and compares
 it byte for byte with the committed files (`node tools/figures/build.mjs
-check`, which needs no npm package), holds the player bundle to its size
-budget (`node tools/figures/bundle.mjs --check`), and runs `sources`.
+check`, which needs no npm package), rebuilds the committed player in
+`tools/figures/dist/` from the lock and compares it byte for byte within its
+size budget (`node tools/figures/bundle.mjs --check`), and runs `sources`.
 `make docs-diagrams-test` (also part of `make verify-all`) tests the MkDocs
 hook, the one Python part of the figure engine, with
 `tools/figures/test_mkdocs_hook.py`. The Pages workflow also runs the Chromium smoke test, which

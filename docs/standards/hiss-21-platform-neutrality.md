@@ -83,8 +83,10 @@ the engine's tests and type check, `node tools/figures/build.mjs check`,
 `node tools/figures/bundle.mjs --check` and `node tools/figures/build.mjs sources`. esbuild and
 TypeScript arrive as per-platform npm optional dependencies, so the leg proves that the install
 works without install scripts on each OS, `check` proves that a rebuild there is byte-identical to
-the committed SVG and JSON, and `bundle.mjs --check` holds the player to its size budget. The hashed
-files are pinned to LF in `.gitattributes`, so a Windows checkout reads the same bytes. The
+the committed SVG and JSON, and `bundle.mjs --check` proves that the platform's esbuild rebuilds
+the committed player in `tools/figures/dist/` byte for byte from the lock, within its size budget.
+The hashed files and the player are pinned to LF in `.gitattributes`, so a Windows checkout reads
+the same bytes. The
 Chromium smoke test needs a built site and runs in `pages.yml` on Linux only
 ([figures guide](../guides/figures.md#checks)).
 

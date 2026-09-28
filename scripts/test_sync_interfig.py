@@ -414,6 +414,11 @@ class TestUpdate(TreeCase):
         commands = [c.args[0] for c in mock_run.call_args_list]
         self.assertEqual(commands[0][:2], ["/usr/bin/node", "--test"])
         self.assertEqual(commands[1][-2:], ["run", "build"])
+        # The committed player is rebuilt from the locked install, after the figures.
+        self.assertEqual(commands[2][:2], ["/usr/bin/npm", "ci"])
+        self.assertIn("--ignore-scripts", commands[2])
+        self.assertEqual(commands[3][-2:], ["run", "bundle"])
+        self.assertEqual(len(commands), 4)
         # The log lists the interfig commits after the pin and stops there.
         log = out.splitlines()[-2:]
         self.assertEqual(log, [f"  {NEW[:8]} feat: bbbb", "  01234567 feat: 0123"])
@@ -560,6 +565,7 @@ class TestUpdate(TreeCase):
         fetcher = DummyFetcher(self.responses())
         err = self.assertFails(self.run_update, fetcher, contains="git checkout -- tools/figures/third_party/interfig ")
         self.assertIn("docs/assets/figures", str(err))
+        self.assertIn(" tools/figures/dist && ", str(err))
         self.assertIn("git clean -fd -- tools/figures/third_party/interfig/upstream ", str(err))
         self.assertIsInstance(err.__cause__, sync_interfig.SyncError)
 
