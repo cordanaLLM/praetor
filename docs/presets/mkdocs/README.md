@@ -6,12 +6,18 @@ Documentation preset powered by [Material for MkDocs](https://squidfunk.github.i
 - **Identity from your `mkdocs.yml`**: the template names no project of its own. The `TechArticle` author is `site_author`, or `site_name` when that is unset. The `SoftwareSourceCode` block needs a repository (`extra.source_code.repository`, else `repo_url`) and `extra.source_code.programming_language`; `extra.source_code.name` (default `site_name`), `license` and `runtime_platform` are optional. Without a language the block is left out, and `404.html`, which has no page and therefore no `TechArticle`, then carries no JSON-LD. The shipped `mkdocs.yml` holds placeholders (`example-org/example-repo`, `PlaceholderLang`): replace them with your project's values. `scripts/test_docs_seo_presets.py` builds the template against sample configs.
 - **Automated Sitemap Generation**: `site/sitemap.xml` and `site/sitemap.xml.gz` are written by MkDocs core from the `nav` tree, so no sitemap plugin is installed or configured. Entries need `DOCS_SITE_URL` (see [Site URL](#site-url)).
 - **HTML/CSS/JS Minification**: Configured with `mkdocs-minify-plugin`.
-- **Mermaid Diagrams & PyMdown SuperFences**: Native diagrams rendered directly in documentation markdown.
+- **Interactive Figures**: `mkdocs.yml` lists the figure hook, so a `figure` fence becomes an interactive figure with a static SVG and a text description (see [Figures](#figures)).
 
 ## Quickstart
 
+The preset is the root of your documentation: copy it into the root of a repository that
+`praetorctl adopt` has adopted with the `docs:seo-portal` facet, which the default facet set
+includes. Adoption writes the figure engine to `tools/figures/`, where `mkdocs.yml` expects its
+hook.
+
 ```bash
-cd docs/presets/mkdocs
+# from your repository root, with this directory at <preset>
+cp -R <preset>/. .
 python3 -m venv .venv
 source .venv/bin/activate
 pip install --require-hashes -r requirements.txt
@@ -25,8 +31,12 @@ mkdocs serve
 ```bash
 DOCS_SITE_URL=https://<owner>.github.io/<repo>/ mkdocs build --strict
 # Built artifacts in site/ with sitemap.xml and minified HTML
+node tools/figures/build.mjs site --config mkdocs.yml --docs docs --site site
 praetorctl seo audit site
 ```
+
+`site` fails when a `figure` fence did not become a figure, which a strict build does not catch
+(`tools/figures/README.md`, "Checks").
 
 `praetorctl seo audit` (`cmd/standardsctl/seo.go`) reads the built `site/`: every page head must carry
 valid JSON-LD, and every root `sitemap*.xml` and any `robots.txt` must validate. It exits non-zero on
@@ -64,19 +74,27 @@ Renovate's `lib/modules/manager/pip-compile/common.ts`). The `docs-presets` job 
 
 Renovate runs the same command: `renovate.json` enables its `pip-compile` manager for this lock
 and groups the updates as `mkdocs docs preset`. The `docs-presets` job in
-`.github/workflows/ci.yml` installs the lock and builds this preset with `--strict` whenever a
-file under `docs/presets/` changes.
+`.github/workflows/ci.yml` installs the lock and builds this preset with `--strict`, in a
+temporary repository adopted with `docs:seo-portal`, whenever a file under `docs/presets/` or
+`tools/figures/` changes.
 
-## Mermaid Diagrams
+## Figures
 
-Diagrams render only because `mkdocs.yml` declares the `mermaid` custom fence under
-`pymdownx.superfences`. In the praetor repository, CI checks the built preset with
-`node tools/figures/build.mjs site` (see the
-[documentation governance guide](../../guides/documentation-governance.md#site-build-and-diagrams)).
+`mkdocs.yml` lists `tools/figures/mkdocs_hook.py` under `hooks:` and excludes `/figures/` from
+the pages. The hook replaces each `figure` fence with the figure rendered from
+`docs/assets/figures/<slug>.json` and publishes the figure stylesheet and the player, so the
+configuration needs no `extra_css`, `extra_javascript` or Mermaid fence. `tools/figures/README.md`,
+which adoption writes beside the hook, explains how to write a spec and render it.
 
-The preset stays on Mermaid. It builds with Python alone: no Node, npm or bundler, and no
-committed SVGs. Praetor's own site has replaced Mermaid with interactive figures
-([ADR-0015](../../adr/0015-interactive-figures-from-vendored-interfig.md), the
-[figures guide](../../guides/figures.md)), but offering those figures to adopters is a separate
-decision, so this preset ships none of the figure tooling. Its `docs/` directory is built only by
-its own `mkdocs.yml`: the root site excludes it (`exclude_docs` in praetor's root `mkdocs.yml`).
+`docs/index.md` draws the example figure `site-build`: its spec is `docs/figures/site-build.ts`,
+its committed outputs are `docs/assets/figures/site-build.{svg,static.svg,json}`, and its evidence
+anchors name this preset's `mkdocs.yml`, `docs/index.md` and `overrides/main.html`. Replace it with
+a figure of your own code, or delete the spec, its three outputs and the page section.
+
+The preset needs the figure engine that `praetorctl adopt` writes under `docs:seo-portal`
+([ADR-0016](../../adr/0016-figures-for-adopters.md), section 9). Its site build still needs
+Python and MkDocs only: rendering and checking a figure needs Node 22.18 or later, with no npm
+package. In the praetor repository, the root site does not build this preset's `docs/` directory
+(`exclude_docs` in the root `mkdocs.yml`), and the
+[documentation governance guide](../../guides/documentation-governance.md#site-build-and-diagrams)
+describes how CI builds the preset and how the example figure is rebuilt.

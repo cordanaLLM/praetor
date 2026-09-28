@@ -1,0 +1,119 @@
+<svg role="img" aria-labelledby="figure-title figure-desc" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="795" height="355" viewBox="0 0 795 355" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+<title id="figure-title">Site Build</title>
+<desc id="figure-desc">A committed figure and a page with its fence pass through the figure hook and the theme override into site/.</desc>
+<!-- interfig (c) 2025 Vectorize AI, Inc. MIT https://github.com/vectorize-io/hindsight/tree/ccfe85b4851957ac2adf88b4a9ddf9668b2882f1/hindsight-interfig -->
+<metadata id="figure-spec"><![CDATA[{"props":{"layout":{"direction":"row","gap":56,"align":"center","children":[{"direction":"column","gap":28,"children":[{"id":"spec","label":"docs/figures/site-build.ts","sub":"figure spec","shape":"store"},{"id":"figure","label":"docs/assets/figures/","sub":"two SVGs and a JSON file","shape":"store"},{"id":"page","label":"docs/index.md","sub":"page with a figure fence","shape":"store"}]},{"id":"hook","label":"Figure hook","sub":"mkdocs_hook.py"},{"id":"theme","label":"Theme override","sub":"overrides/main.html"},{"id":"site","label":"site/","sub":"built pages","shape":"store"}]},"edges":[{"from":"spec","to":"figure","label":"build"},{"from":"figure","to":"hook","label":"markup"},{"from":"page","to":"hook","label":"fence"},{"from":"hook","to":"theme","label":"HTML"},{"from":"theme","to":"site","label":"page"}],"steps":[{"label":"render","caption":"The figure is rendered once and committed with its spec.","flow":[{"edges":"spec->figure","say":"node tools/figures/build.mjs build writes site-build.svg, site-build.static.svg and site-build.json."}]},{"label":"build","caption":"mkdocs build turns each page into a site page.","flow":[{"edges":"page->hook","say":"The hook, listed under hooks in mkdocs.yml, finds the fence that names site-build."},{"edges":"figure->hook","say":"It replaces the fence with the markup recorded in site-build.json."},{"edges":"hook->theme","say":"MkDocs renders the page, and the theme override adds the JSON-LD head.","show":{"theme":[{"tag":"JSON-LD","tone":"green","text":"TechArticle","meta":"every page"},{"tag":"JSON-LD","tone":"green","text":"SoftwareSourceCode","meta":"with a language set"}]}},{"edges":"theme->site","say":"MkDocs writes the page, the figure stylesheet and the player files to site/."}]}]}}]]></metadata>
+<style>
+svg { --accent:#0074d9; --fg:#1c1e21; --muted:#606770; --bg:#ffffff; --surface:#f5f7fa; --border:#d0d7de; --card-on:#eef5fd; }
+@media (prefers-color-scheme: dark) { svg { --accent:#3396e8; --fg:#e3e3e3; --muted:#9aa0a6; --bg:#1b1b1d; --surface:#242526; --border:#3a3b3c; --card-on:#1d2733; } }
+.label { fill: var(--fg); font-size: 14px; font-weight: 500; text-anchor: middle; }
+.sub { fill: var(--muted); font-size: 12px; text-anchor: middle; }
+.frame { fill: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .04em; }
+.edgelabel { fill: var(--muted); font-size: 11px; text-anchor: middle; font-family: ui-monospace, Menlo, monospace; }
+.row { fill: var(--fg); font-size: 11px; }
+.row.mono { font-size: 10.5px; font-family: ui-monospace, Menlo, monospace; }
+.muted { fill: var(--muted); }
+.tag { font-size: 9px; font-weight: 600; letter-spacing: .03em; text-anchor: middle; }
+.mark { fill: var(--accent); font-size: 11px; font-weight: 600; text-anchor: end; }
+.chip { fill: #fff; font-size: 11.5px; text-anchor: middle; }
+.steplabel { fill: var(--fg); font-size: 13px; font-weight: 600; text-anchor: middle; font-family: ui-monospace, Menlo, monospace; }
+.caption { fill: var(--muted); font-size: 13.5px; text-anchor: middle; }
+@keyframes a0 { 0%,31.2% { stroke: var(--accent) } 31.3%,43.7% { stroke: var(--border) } 43.8%,56.2% { stroke: var(--border) } 56.3%,68.7% { stroke: var(--border) } 68.8%,100% { stroke: var(--border) } }
+.a0 { animation: a0 5.8s infinite step-end; }
+@keyframes a1 { 0%,31.2% { stroke: var(--accent) } 31.3%,43.7% { stroke: var(--border) } 43.8%,56.2% { stroke: var(--accent) } 56.3%,68.7% { stroke: var(--accent) } 68.8%,100% { stroke: var(--accent) } }
+.a1 { animation: a1 5.8s infinite step-end; }
+@keyframes a2 { 0%,31.2% { stroke: var(--border) } 31.3%,43.7% { stroke: var(--accent) } 43.8%,56.2% { stroke: var(--accent) } 56.3%,68.7% { stroke: var(--accent) } 68.8%,100% { stroke: var(--accent) } }
+.a2 { animation: a2 5.8s infinite step-end; }
+@keyframes a3 { 0%,31.2% { stroke: var(--border) } 31.3%,43.7% { stroke: var(--border) } 43.8%,56.2% { stroke: var(--border) } 56.3%,68.7% { stroke: var(--accent) } 68.8%,100% { stroke: var(--accent) } }
+.a3 { animation: a3 5.8s infinite step-end; }
+@keyframes a4 { 0%,31.2% { stroke: var(--border); fill: var(--surface) } 31.3%,43.7% { stroke: var(--border); fill: var(--surface) } 43.8%,56.2% { stroke: var(--border); fill: var(--surface) } 56.3%,68.7% { stroke: var(--accent); fill: var(--card-on) } 68.8%,100% { stroke: var(--accent); fill: var(--card-on) } }
+.a4 { animation: a4 5.8s infinite step-end; }
+@keyframes a5 { 0%,31.2% { opacity: 0 } 31.3%,43.7% { opacity: 0 } 43.8%,56.2% { opacity: 0 } 56.3%,68.7% { opacity: 1 } 68.8%,100% { opacity: 1 } }
+.a5 { animation: a5 5.8s infinite step-end; }
+@keyframes a6 { 0%,31.2% { opacity: 1 } 31.3%,43.7% { opacity: 1 } 43.8%,56.2% { opacity: 1 } 56.3%,68.7% { opacity: 0 } 68.8%,100% { opacity: 0 } }
+.a6 { animation: a6 5.8s infinite step-end; }
+@keyframes a7 { 0%,31.2% { stroke: var(--border) } 31.3%,43.7% { stroke: var(--border) } 43.8%,56.2% { stroke: var(--border) } 56.3%,68.7% { stroke: var(--border) } 68.8%,100% { stroke: var(--accent) } }
+.a7 { animation: a7 5.8s infinite step-end; }
+@keyframes a8 { 0%,31.2% { stroke: var(--accent); stroke-width: 2 } 31.3%,43.7% { stroke: var(--muted); stroke-width: 1.25 } 43.8%,56.2% { stroke: var(--muted); stroke-width: 1.25 } 56.3%,68.7% { stroke: var(--muted); stroke-width: 1.25 } 68.8%,100% { stroke: var(--muted); stroke-width: 1.25 } }
+.a8 { animation: a8 5.8s infinite step-end; }
+@keyframes a9 { 0%,31.2% { fill: var(--accent); stroke: var(--accent) } 31.3%,43.7% { fill: var(--bg); stroke: var(--border) } 43.8%,56.2% { fill: var(--bg); stroke: var(--border) } 56.3%,68.7% { fill: var(--bg); stroke: var(--border) } 68.8%,100% { fill: var(--bg); stroke: var(--border) } }
+.a9 { animation: a9 5.8s infinite step-end; }
+@keyframes a10 { 0%,31.2% { fill: #fff } 31.3%,43.7% { fill: var(--muted) } 43.8%,56.2% { fill: var(--muted) } 56.3%,68.7% { fill: var(--muted) } 68.8%,100% { fill: var(--muted) } }
+.a10 { animation: a10 5.8s infinite step-end; }
+@keyframes a11 { 0%,31.2% { stroke: var(--muted); stroke-width: 1.25 } 31.3%,43.7% { stroke: var(--muted); stroke-width: 1.25 } 43.8%,56.2% { stroke: var(--accent); stroke-width: 2 } 56.3%,68.7% { stroke: var(--accent); stroke-width: 2 } 68.8%,100% { stroke: var(--accent); stroke-width: 2 } }
+.a11 { animation: a11 5.8s infinite step-end; }
+@keyframes a12 { 0%,31.2% { fill: var(--bg); stroke: var(--border) } 31.3%,43.7% { fill: var(--bg); stroke: var(--border) } 43.8%,56.2% { fill: var(--accent); stroke: var(--accent) } 56.3%,68.7% { fill: var(--accent); stroke: var(--accent) } 68.8%,100% { fill: var(--accent); stroke: var(--accent) } }
+.a12 { animation: a12 5.8s infinite step-end; }
+@keyframes a13 { 0%,31.2% { fill: var(--muted) } 31.3%,43.7% { fill: var(--muted) } 43.8%,56.2% { fill: #fff } 56.3%,68.7% { fill: #fff } 68.8%,100% { fill: #fff } }
+.a13 { animation: a13 5.8s infinite step-end; }
+@keyframes a14 { 0%,31.2% { stroke: var(--muted); stroke-width: 1.25 } 31.3%,43.7% { stroke: var(--accent); stroke-width: 2 } 43.8%,56.2% { stroke: var(--accent); stroke-width: 2 } 56.3%,68.7% { stroke: var(--accent); stroke-width: 2 } 68.8%,100% { stroke: var(--accent); stroke-width: 2 } }
+.a14 { animation: a14 5.8s infinite step-end; }
+@keyframes a15 { 0%,31.2% { fill: var(--bg); stroke: var(--border) } 31.3%,43.7% { fill: var(--accent); stroke: var(--accent) } 43.8%,56.2% { fill: var(--accent); stroke: var(--accent) } 56.3%,68.7% { fill: var(--accent); stroke: var(--accent) } 68.8%,100% { fill: var(--accent); stroke: var(--accent) } }
+.a15 { animation: a15 5.8s infinite step-end; }
+@keyframes a16 { 0%,31.2% { fill: var(--muted) } 31.3%,43.7% { fill: #fff } 43.8%,56.2% { fill: #fff } 56.3%,68.7% { fill: #fff } 68.8%,100% { fill: #fff } }
+.a16 { animation: a16 5.8s infinite step-end; }
+@keyframes a17 { 0%,31.2% { stroke: var(--muted); stroke-width: 1.25 } 31.3%,43.7% { stroke: var(--muted); stroke-width: 1.25 } 43.8%,56.2% { stroke: var(--muted); stroke-width: 1.25 } 56.3%,68.7% { stroke: var(--accent); stroke-width: 2 } 68.8%,100% { stroke: var(--accent); stroke-width: 2 } }
+.a17 { animation: a17 5.8s infinite step-end; }
+@keyframes a18 { 0%,31.2% { fill: var(--bg); stroke: var(--border) } 31.3%,43.7% { fill: var(--bg); stroke: var(--border) } 43.8%,56.2% { fill: var(--bg); stroke: var(--border) } 56.3%,68.7% { fill: var(--accent); stroke: var(--accent) } 68.8%,100% { fill: var(--accent); stroke: var(--accent) } }
+.a18 { animation: a18 5.8s infinite step-end; }
+@keyframes a19 { 0%,31.2% { fill: var(--muted) } 31.3%,43.7% { fill: var(--muted) } 43.8%,56.2% { fill: var(--muted) } 56.3%,68.7% { fill: #fff } 68.8%,100% { fill: #fff } }
+.a19 { animation: a19 5.8s infinite step-end; }
+@keyframes a20 { 0%,31.2% { stroke: var(--muted); stroke-width: 1.25 } 31.3%,43.7% { stroke: var(--muted); stroke-width: 1.25 } 43.8%,56.2% { stroke: var(--muted); stroke-width: 1.25 } 56.3%,68.7% { stroke: var(--muted); stroke-width: 1.25 } 68.8%,100% { stroke: var(--accent); stroke-width: 2 } }
+.a20 { animation: a20 5.8s infinite step-end; }
+@keyframes a21 { 0%,31.2% { fill: var(--bg); stroke: var(--border) } 31.3%,43.7% { fill: var(--bg); stroke: var(--border) } 43.8%,56.2% { fill: var(--bg); stroke: var(--border) } 56.3%,68.7% { fill: var(--bg); stroke: var(--border) } 68.8%,100% { fill: var(--accent); stroke: var(--accent) } }
+.a21 { animation: a21 5.8s infinite step-end; }
+@keyframes a22 { 0%,31.2% { fill: var(--muted) } 31.3%,43.7% { fill: var(--muted) } 43.8%,56.2% { fill: var(--muted) } 56.3%,68.7% { fill: var(--muted) } 68.8%,100% { fill: #fff } }
+.a22 { animation: a22 5.8s infinite step-end; }
+@keyframes p0 { 0%,0% { opacity: 0 } 0%,12.5% { opacity: 1 } 12.5%,100% { opacity: 0 } }
+.p0 { animation: p0 5.8s infinite step-end; }
+@keyframes p1 { 0%,31.3% { opacity: 0 } 31.3%,43.7% { opacity: 1 } 43.8%,100% { opacity: 0 } }
+.p1 { animation: p1 5.8s infinite step-end; }
+@keyframes p2 { 0%,43.8% { opacity: 0 } 43.8%,56.2% { opacity: 1 } 56.3%,100% { opacity: 0 } }
+.p2 { animation: p2 5.8s infinite step-end; }
+@keyframes p3 { 0%,56.3% { opacity: 0 } 56.3%,68.7% { opacity: 1 } 68.8%,100% { opacity: 0 } }
+.p3 { animation: p3 5.8s infinite step-end; }
+@keyframes p4 { 0%,68.8% { opacity: 0 } 68.8%,81.2% { opacity: 1 } 81.3%,100% { opacity: 0 } }
+.p4 { animation: p4 5.8s infinite step-end; }
+@keyframes a23 { 0%,31.2% { opacity: 1 } 31.3%,43.7% { opacity: 0 } 43.8%,56.2% { opacity: 0 } 56.3%,68.7% { opacity: 0 } 68.8%,100% { opacity: 0 } }
+.a23 { animation: a23 5.8s infinite step-end; }
+@keyframes a24 { 0%,31.2% { opacity: 0 } 31.3%,43.7% { opacity: 1 } 43.8%,56.2% { opacity: 1 } 56.3%,68.7% { opacity: 1 } 68.8%,100% { opacity: 1 } }
+.a24 { animation: a24 5.8s infinite step-end; }
+@keyframes a25 { 0%,31.2% { opacity: 1 } 31.3%,43.7% { opacity: 0 } 43.8%,56.2% { opacity: 0 } 56.3%,68.7% { opacity: 0 } 68.8%,100% { opacity: 0 } }
+.a25 { animation: a25 5.8s infinite step-end; }
+@keyframes a26 { 0%,31.2% { opacity: 0 } 31.3%,43.7% { opacity: 1 } 43.8%,56.2% { opacity: 0 } 56.3%,68.7% { opacity: 0 } 68.8%,100% { opacity: 0 } }
+.a26 { animation: a26 5.8s infinite step-end; }
+@keyframes a27 { 0%,31.2% { opacity: 0 } 31.3%,43.7% { opacity: 0 } 43.8%,56.2% { opacity: 1 } 56.3%,68.7% { opacity: 0 } 68.8%,100% { opacity: 0 } }
+.a27 { animation: a27 5.8s infinite step-end; }
+@keyframes a28 { 0%,31.2% { opacity: 0 } 31.3%,43.7% { opacity: 0 } 43.8%,56.2% { opacity: 0 } 56.3%,68.7% { opacity: 1 } 68.8%,100% { opacity: 0 } }
+.a28 { animation: a28 5.8s infinite step-end; }
+@keyframes a29 { 0%,31.2% { opacity: 0 } 31.3%,43.7% { opacity: 0 } 43.8%,56.2% { opacity: 0 } 56.3%,68.7% { opacity: 0 } 68.8%,100% { opacity: 1 } }
+.a29 { animation: a29 5.8s infinite step-end; }
+</style>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 1 L 9 5 L 0 9 z" fill="var(--muted)"/></marker></defs>
+<rect width="100%" height="100%" fill="var(--bg)"/>
+<g transform="translate(0 0)">
+<path d="M24 36 a 95 12 0 0 1 190 0 v 43 a 95 12 0 0 1 -190 0 z" fill="var(--bg)" stroke="var(--border)" class="a0"/><path d="M24 36 a 95 12 0 0 0 190 0" fill="none" stroke="var(--border)" class="a0"/><text x="119" y="61" class="label">docs/figures/site-build.ts</text><text x="119" y="76" class="sub">figure spec</text>
+<path d="M26.7 131 a 92.3 12 0 0 1 184.6 0 v 43 a 92.3 12 0 0 1 -184.6 0 z" fill="var(--bg)" stroke="var(--border)" class="a1"/><path d="M26.7 131 a 92.3 12 0 0 0 184.6 0" fill="none" stroke="var(--border)" class="a1"/><text x="119" y="156" class="label">docs/assets/figures/</text><text x="119" y="171" class="sub">two SVGs and a JSON file</text>
+<path d="M26.7 226 a 92.3 12 0 0 1 184.6 0 v 43 a 92.3 12 0 0 1 -184.6 0 z" fill="var(--bg)" stroke="var(--border)" class="a2"/><path d="M26.7 226 a 92.3 12 0 0 0 184.6 0" fill="none" stroke="var(--border)" class="a2"/><text x="119" y="251" class="label">docs/index.md</text><text x="119" y="266" class="sub">page with a figure fence</text>
+<rect x="270" y="126" width="121" height="53" rx="10" fill="var(--bg)" stroke="var(--border)" class="a2"/><text x="330.5" y="150.5" class="label">Figure hook</text><text x="330.5" y="165.5" class="sub">mkdocs_hook.py</text>
+<rect x="447" y="69" width="166" height="167" rx="10" fill="var(--bg)" stroke="var(--border)" class="a3"/><text x="530" y="92" class="label">Theme override</text><text x="530" y="107" class="sub">overrides/main.html</text><rect x="457" y="120" width="146" height="106" rx="6" fill="var(--surface)" stroke="var(--border)" stroke-dasharray="3 3" class="a4"/><g opacity="0" class="a5"><rect x="465" y="127" width="41.4" height="14" rx="4" fill="#10b981" fill-opacity="0.15"/><text x="485.7" y="137.5" class="tag" fill="#10b981">JSON-LD</text><text x="465" y="152" class="row">TechArticle · every</text><text x="465" y="167" class="row">page</text><rect x="465" y="176" width="41.4" height="14" rx="4" fill="#10b981" fill-opacity="0.15"/><text x="485.7" y="186.5" class="tag" fill="#10b981">JSON-LD</text><text x="465" y="201" class="row">SoftwareSourceCode ·</text><text x="465" y="216" class="row">with a language set</text></g><text x="465" y="137" opacity="0" class="row muted a6">—</text>
+<path d="M669 131 a 51 12 0 0 1 102 0 v 43 a 51 12 0 0 1 -102 0 z" fill="var(--bg)" stroke="var(--border)" class="a7"/><path d="M669 131 a 51 12 0 0 0 102 0" fill="none" stroke="var(--border)" class="a7"/><text x="720" y="156" class="label">site/</text><text x="720" y="171" class="sub">built pages</text>
+<path id="p-spec-&gt;figure" d="M 119 91 C 119 105, 119 105, 119 119" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a8"/><rect x="97.4" y="96" width="43.2" height="18" rx="9" fill="var(--bg)" stroke="var(--border)" class="a9"/><text x="119" y="109" class="edgelabel a10">build</text>
+<path id="p-figure-&gt;hook" d="M 211.32 152.5 C 240.66 152.5, 240.66 143.66666666666666, 270 143.66666666666666" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a11"/><rect x="216.2" y="139.1" width="49" height="18" rx="9" fill="var(--bg)" stroke="var(--border)" class="a12"/><text x="240.7" y="152.1" class="edgelabel a13">markup</text>
+<path id="p-page-&gt;hook" d="M 211.32 247.5 C 240.66 247.5, 240.66 161.33333333333331, 270 161.33333333333331" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a14"/><rect x="219.1" y="195.4" width="43.2" height="18" rx="9" fill="var(--bg)" stroke="var(--border)" class="a15"/><text x="240.7" y="208.4" class="edgelabel a16">fence</text>
+<path id="p-hook-&gt;theme" d="M 391.04 152.5 C 419.04 152.5, 419.04 152.5, 447.04 152.5" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a17"/><rect x="400.4" y="143.5" width="37.3" height="18" rx="9" fill="var(--bg)" stroke="var(--border)" class="a18"/><text x="419" y="156.5" class="edgelabel a19">HTML</text>
+<path id="p-theme-&gt;site" d="M 613.04 152.5 C 641.04 152.5, 641.04 152.5, 669.04 152.5" fill="none" stroke="var(--muted)" stroke-width="1.25" marker-end="url(#arrow)" class="a20"/><rect x="622.4" y="143.5" width="37.3" height="18" rx="9" fill="var(--bg)" stroke="var(--border)" class="a21"/><text x="641" y="156.5" class="edgelabel a22">page</text>
+<g class="p0" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="5.8s" repeatCount="indefinite" keyTimes="0;0;0.1;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-spec-&gt;figure" xlink:href="#p-spec-&gt;figure"/></animateMotion></g>
+<g class="p1" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="5.8s" repeatCount="indefinite" keyTimes="0;0.3;0.4;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-page-&gt;hook" xlink:href="#p-page-&gt;hook"/></animateMotion></g>
+<g class="p2" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="5.8s" repeatCount="indefinite" keyTimes="0;0.4;0.6;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-figure-&gt;hook" xlink:href="#p-figure-&gt;hook"/></animateMotion></g>
+<g class="p3" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="5.8s" repeatCount="indefinite" keyTimes="0;0.6;0.7;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-hook-&gt;theme" xlink:href="#p-hook-&gt;theme"/></animateMotion></g>
+<g class="p4" opacity="0"><circle r="10" fill="var(--accent)" opacity="0.2"/><circle r="4.5" fill="var(--accent)"/><animateMotion dur="5.8s" repeatCount="indefinite" keyTimes="0;0.7;0.8;1" keyPoints="0;0;1;1" calcMode="linear"><mpath href="#p-theme-&gt;site" xlink:href="#p-theme-&gt;site"/></animateMotion></g>
+</g>
+<text x="397.5" y="321" opacity="0" class="steplabel a23">render</text>
+<text x="397.5" y="321" opacity="0" class="steplabel a24">build</text>
+<g opacity="0" class="a25"><text x="397.5" y="347" class="caption">node tools/figures/build.mjs build writes site-build.svg, site-build.static.svg and site-build.json.</text></g>
+<g opacity="0" class="a26"><text x="397.5" y="347" class="caption">The hook, listed under hooks in mkdocs.yml, finds the fence that names site-build.</text></g>
+<g opacity="0" class="a27"><text x="397.5" y="347" class="caption">It replaces the fence with the markup recorded in site-build.json.</text></g>
+<g opacity="0" class="a28"><text x="397.5" y="347" class="caption">MkDocs renders the page, and the theme override adds the JSON-LD head.</text></g>
+<g opacity="0" class="a29"><text x="397.5" y="347" class="caption">MkDocs writes the page, the figure stylesheet and the player files to site/.</text></g>
+</svg>

@@ -22,7 +22,7 @@ import {
 import { svgSpecError } from './checks.mjs';
 import { nextTab } from './keyboard.ts';
 import { MAX_SVG_BYTES, fetchSpec, figureTitle, readCapped, specFromSvg } from './loader.ts';
-import { holdsFigure, main as smokeMain, parseCommandLine, stepAdvanced } from './smoke.mjs';
+import { holdsFigure, main as smokeMain, onSite, parseCommandLine, stepAdvanced } from './smoke.mjs';
 import { capture, withTempDir, write } from './testkit.mjs';
 
 const VENDOR = JSON.parse(readFileSync(join(ROOT, VENDOR_JSON), 'utf8'));
@@ -761,6 +761,21 @@ test('autoplay counts only a new selected tab or a longer progress line', () => 
   assert.ok(!stepAdvanced(at(-1, Number.NaN), at(-1, Number.NaN)));
   assert.ok(!stepAdvanced(at(0, 0), at(-1, Number.NaN)));
   assert.ok(!stepAdvanced(undefined, at(0, 0.3)));
+});
+
+test('the smoke run keeps requests and console errors of the served origin and blocks every other origin', () => {
+  const origin = 'http://127.0.0.1:4173/preset';
+  assert.ok(onSite('http://127.0.0.1:4173/preset/assets/javascripts/figures/player.js', origin));
+  assert.ok(onSite('http://127.0.0.1:4173/elsewhere/', origin));
+  // A theme's repository widget and a web font are other origins, as is another port or scheme.
+  for (const url of ['https://api.github.com/repos/example-org/example-repo', 'https://fonts.googleapis.com/css',
+    'http://127.0.0.1:4174/preset/', 'https://127.0.0.1:4173/preset/', 'http://localhost:4173/preset/']) {
+    assert.ok(!onSite(url, origin), url);
+  }
+  // Boundary: an error with no source URL, or one that does not parse, still fails the run.
+  assert.ok(onSite('', origin));
+  assert.ok(onSite(undefined, origin));
+  assert.ok(onSite('not a url', origin));
 });
 
 test('the smoke command line takes a site, a base path and --require-browser, and nothing else', async () => {

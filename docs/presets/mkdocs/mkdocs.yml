@@ -56,14 +56,20 @@ plugins:
       minify_js: true
       minify_css: true
 
+# Figures: `praetorctl adopt` writes the figure engine to tools/figures/ with the docs:seo-portal
+# facet. The hook turns each ```figure fence into the figure rendered from
+# docs/assets/figures/<slug>.json and publishes the stylesheet and the player itself, so the site
+# build needs Python and MkDocs only. docs/figures/ holds the TypeScript specs, which are not
+# pages. tools/figures/README.md explains how to add a figure.
+hooks:
+  - tools/figures/mkdocs_hook.py
+exclude_docs: |
+  /figures/
+
 markdown_extensions:
   - admonition
   - pymdownx.details
-  - pymdownx.superfences:
-      custom_fences:
-        - name: mermaid
-          class: mermaid
-          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.superfences
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.inlinehilite

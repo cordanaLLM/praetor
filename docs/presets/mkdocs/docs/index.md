@@ -1,23 +1,26 @@
 ---
-title: Welcome to cordanaLLM/praetor
-description: Enterprise Fleet Governance, Repository-as-Code & Universal AI Agent Engineering Engine
+title: Project documentation
+description: Start page of the project documentation, with an example figure of how this site is built.
 ---
 
-# cordanaLLM/praetor Documentation
+# Project Documentation
 
-Welcome to the official documentation portal for `cordanaLLM/praetor`.
+Replace this page with your project's overview. The front matter's `title` and `description`
+become the page title and the description in its head.
 
-## Architecture Overview
+## How This Site Is Built
 
-```mermaid
-flowchart TD
-    AGENTS["AGENTS.md (Canonical)"] --> COMPILER["praetorctl compile-context"]
-    COMPILER --> VENDORS["CLAUDE.md / Cursor / Copilot"]
-    CONFIG[".standards.yaml"] --> CI["CI Status Checks (HISS)"]
+```figure
+site-build
 ```
 
-## Highlights
+The figure above is an example. Its spec is `docs/figures/site-build.ts`, and
+`node tools/figures/build.mjs build` renders it into `docs/assets/figures/`. Replace it with a
+figure of your own code, or delete the spec, its outputs and this section.
 
-- **High-Integrity Systems Standard (HISS)**: Aerospace-derived software invariants.
-- **Composable Lattice Architecture**: Highest standard wins deterministic join-semilattice.
-- **SEO & Search Optimized**: Automated sitemaps, JSON-LD Schema.org metadata, and zero CLS styling.
+## Page Features
+
+- **Structured data**: every page head carries Schema.org JSON-LD from `overrides/main.html`.
+- **Sitemap**: MkDocs writes `sitemap.xml` from the navigation when `DOCS_SITE_URL` is set.
+- **Interactive figures**: a `figure` fence names a spec under `docs/figures/`, and the figure hook
+  renders it with scenario tabs, narration and a text description.
