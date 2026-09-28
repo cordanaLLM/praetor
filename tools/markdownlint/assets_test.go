@@ -9,8 +9,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
 func TestLockedAssetInventory(t *testing.T) {
@@ -82,9 +86,11 @@ func containsExactLFLine(text, want string) bool {
 
 func TestPackageLockPinsEveryInstalledPackage(t *testing.T) {
 	wantDirect := map[string]string{
+		"js-yaml":                   "5.2.2",
 		"markdownlint-cli2":         "0.23.2",
 		"micromark":                 "4.0.2",
 		"micromark-extension-mdxjs": "3.0.0",
+		"micromatch":                "4.0.8",
 		"parse5":                    "8.0.1",
 	}
 	manifestData, err := Read("package.json")
@@ -142,6 +148,13 @@ func TestPackageLockPinsEveryInstalledPackage(t *testing.T) {
 	if lock.Packages["node_modules/parse5"].Version != "8.0.1" {
 		t.Fatal("parse5 is not pinned to 8.0.1")
 	}
+	// verify.mjs requires js-yaml (the .standards.yaml documentation block) and micromatch
+	// (declared style exclusions) from the locked install, so both are direct dependencies.
+	for name, version := range map[string]string{"js-yaml": "5.2.2", "micromatch": "4.0.8"} {
+		if lock.Packages["node_modules/"+name].Version != version {
+			t.Fatalf("%s is not installed at the top level pinned to %s", name, version)
+		}
+	}
 }
 
 func assertDirectDependencies(t *testing.T, got, want map[string]string) {
@@ -174,8 +187,9 @@ func TestRunnerUsesLockedInstallWithoutNpx(t *testing.T) {
 		t.Fatal("runner must not resolve tools through npx")
 	}
 	for _, required := range []string{
-		"const scratchFiles = inventory(root)",
-		"const styleFiles = scratchFiles.filter(isStyleSelected)",
+		"const scratchFiles = inventory(root, settings)",
+		"const selection = styleSelection(scratchFiles, settings, ",
+		"const styleFiles = selection.styled",
 		"runScratchRule(root, temporary, scratchFiles, false)",
 		"runMarkdownlint(root, temporary, styleFiles)",
 	} {
@@ -183,6 +197,81 @@ func TestRunnerUsesLockedInstallWithoutNpx(t *testing.T) {
 			t.Fatalf("runner does not keep privacy scanning broader than style lint: missing %q", required)
 		}
 	}
+}
+
+// markdownlint-cli2 reads .markdownlint* and .markdownlint-cli2.* files from its working directory
+// and every directory down to a linted file, and a .markdownlint.* file there replaces the locked
+// rules (#533). The runner must lint a staged copy of the selected files from an empty directory;
+// the self-test (make docs-lint-test) proves loosening and tightening files have no effect.
+func TestRunnerLintsAStagedCopy(t *testing.T) {
+	data, err := Read("verify.mjs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, required := range []string{
+		"const tree = stageStyleTree(root, temporary, files);",
+		"fs.copyFileSync(path.join(root, files[index]), target);",
+		"[cli, \"--config\", config, \"--no-globs\", ...batch], {\n      cwd: tree,",
+		"hermeticConfigSelfTest(temporary);",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("runner does not lint a hermetic staged copy: missing %q", required)
+		}
+	}
+	if strings.Contains(text, "...batch], {\n      cwd: root,") {
+		t.Fatal("runner lints from the repository root, where markdownlint-cli2 discovers repository configuration")
+	}
+}
+
+// The gate validates the .standards.yaml documentation block itself because the hosted workflow
+// runs it without praetorctl, and audit validates it through internal/config. Both must apply
+// the same ranges: every bound verify.mjs and the private-link rule declare equals its Go twin.
+func TestDocumentationSettingsMirrorConfig(t *testing.T) {
+	want := map[string]map[string]int{
+		"verify.mjs": {
+			"DEFAULT_MAX_FILES":         config.DefaultDocumentationMaxFiles,
+			"MAX_FILES_CEILING":         config.DocumentationMaxFilesCeiling,
+			"DEFAULT_MAX_FILE_BYTES":    config.DefaultDocumentationMaxFileBytes,
+			"MAX_FILE_BYTES_CEILING":    config.DocumentationMaxFileBytesCeiling,
+			"MAX_STYLE_EXCLUSIONS":      config.MaxDocumentationStyleExclusions,
+			"MAX_STYLE_EXCLUSION_BYTES": config.MaxDocumentationStyleExclusionBytes,
+			"MAX_MANIFEST_BYTES":        contextopt.MaxSourceBytes,
+		},
+		"no-private-scratch-links.mjs": {
+			"MAX_FILES":      config.DocumentationMaxFilesCeiling,
+			"MAX_FILE_BYTES": config.DocumentationMaxFileBytesCeiling,
+		},
+	}
+	for name, constants := range want {
+		declared := scriptConstants(t, name)
+		for constant, value := range constants {
+			got, found := declared[constant]
+			if !found || got != value {
+				t.Errorf("%s declares %s = %d (found=%v), want %d", name, constant, got, found, value)
+			}
+		}
+	}
+	if _, found := scriptConstants(t, "verify.mjs")["MAX_FILES"]; found {
+		t.Error("verify.mjs still declares a fixed MAX_FILES beside the declared bounds")
+	}
+}
+
+func scriptConstants(t *testing.T, name string) map[string]int {
+	t.Helper()
+	data, err := Read(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	constants := map[string]int{}
+	for _, match := range regexp.MustCompile(`(?m)^const ([A-Z_]+) = ([0-9_]+);$`).FindAllStringSubmatch(string(data), -1) {
+		value, err := strconv.Atoi(strings.ReplaceAll(match[2], "_", ""))
+		if err != nil {
+			t.Fatalf("%s constant %s: %v", name, match[1], err)
+		}
+		constants[match[1]] = value
+	}
+	return constants
 }
 
 // Windows refuses to spawn a .cmd or .bat file without a shell (CVE-2024-27980), and a shell

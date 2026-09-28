@@ -97,9 +97,20 @@ var priorDigests = map[string]string{
 	// verify.mjs while the vendored interfig tree sat at the repository root, before it moved
 	// under tools/figures.
 	"a74e1e4f30edb5edb32d5e54b0d21d0d1d7dcfb1984293275ae6ddb6092c77de": Directory + "/verify.mjs",
+	// verify.mjs with fixed 4,096-file and 1 MiB per-file bounds, no .standards.yaml style
+	// exclusions, and markdownlint-cli2 run from the repository root, where it discovered
+	// repository configuration files.
+	"fa82c6380aaf001bab89f25c5dbdceecfa2c2ce59ffc4b3e2ad157693bc1b245": Directory + "/verify.mjs",
+	// package.json and package-lock.json before js-yaml and micromatch became direct
+	// dependencies for the .standards.yaml documentation block.
+	"9eec2a40bdaff8ec72019d859c7c4f5a969ddd3b816106eb9629c54de52f71f2": Directory + "/package.json",
+	"7b2c98f403f05acb4cb6a9645ae2ef9dac9e824ec83eb6b19281e1fd55dda1c7": Directory + "/package-lock.json",
 	// The first scratch-link rule, which compared process.argv[1] by spelling and skipped
 	// main() under a symlinked temporary directory.
 	"56d7c5a15f5622e6ecf4e6fc2877bb796fd0db4fb73c6f07a41bec637830242c": Directory + "/no-private-scratch-links.mjs",
+	// The scratch-link rule with a fixed 4,096-file inventory and a fixed 262,144-event parse
+	// bound, before either grew with the bounds a repository declares.
+	"fec9b4f1b48f5847c91fb64e52483a51ae3c1cc4b2574af6eedce7210cad0d5f": Directory + "/no-private-scratch-links.mjs",
 }
 
 var assetNames = [...]string{

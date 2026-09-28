@@ -135,6 +135,45 @@ func TestAuditDocumentationGatePriorText(t *testing.T) {
 	}
 }
 
+// Positive: a declared documentation block is recorded on its own audit line with the effective
+// bounds and every glob. Negative: a manifest without the block records nothing past the gate
+// line. Boundary: a bound exactly at its ceiling is recorded as declared, and an empty block
+// records the defaults and no exclusions.
+func TestAuditDocumentationGateRecordsDeclaredSettings(t *testing.T) {
+	root := documentationAuditFixture(t)
+	maxFiles := config.DocumentationMaxFilesCeiling
+	facets := []string{"docs:seo-portal"}
+	for name, tc := range map[string]struct {
+		policy *config.DocumentationPolicy
+		want   string
+	}{
+		"declared": {
+			&config.DocumentationPolicy{MaxFiles: &maxFiles, StyleExclude: []string{"changelog.d/**", "docs/generated/*.md"}},
+			"[PASS] Documentation gate settings from .standards.yaml: max_files 16384, max_file_bytes 1048576, " +
+				"2 style exclusions (changelog.d/**, docs/generated/*.md).\n",
+		},
+		"empty block": {
+			&config.DocumentationPolicy{},
+			"[PASS] Documentation gate settings from .standards.yaml: max_files 4096, max_file_bytes 1048576, no style exclusions.\n",
+		},
+		"absent block": {nil, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			manifest := &config.Manifest{Facets: facets, Documentation: tc.policy}
+			out, err := captureStdout(t, func() error { return docGate(t.Context(), manifest, root) })
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.want == "" && strings.Contains(out, "Documentation gate settings") {
+				t.Fatalf("audit recorded settings no manifest declared:\n%s", out)
+			}
+			if tc.want != "" && !strings.Contains(out, tc.want) {
+				t.Fatalf("audit output lacks %q:\n%s", tc.want, out)
+			}
+		})
+	}
+}
+
 func TestAuditDocumentationGateBoundary(t *testing.T) {
 	if err := docGate(t.Context(), &config.Manifest{}, t.TempDir()); err != nil {
 		t.Fatalf("repository without documentation facet was gated: %v", err)

@@ -125,7 +125,21 @@ func auditDocumentationGate(ctx context.Context, manifest *config.Manifest, root
 		return err
 	}
 	fmt.Printf("[PASS] Locked documentation gate verified (%d assets, %s).\n", count, declines.summary())
+	if manifest.Documentation != nil {
+		fmt.Printf("[PASS] Documentation gate settings from .standards.yaml: %s.\n", documentationSettingsSummary(manifest.Documentation))
+	}
 	return nil
+}
+
+// documentationSettingsSummary records the bounds and style exclusions a repository declares
+// for the gate, which reads them from .standards.yaml at run time (#532, #534). LoadManifest has
+// validated them against the gate's ranges and glob rules.
+func documentationSettingsSummary(policy *config.DocumentationPolicy) string {
+	exclusions := "no style exclusions"
+	if len(policy.StyleExclude) > 0 {
+		exclusions = fmt.Sprintf("%d style exclusions (%s)", len(policy.StyleExclude), strings.Join(policy.StyleExclude, ", "))
+	}
+	return fmt.Sprintf("max_files %d, max_file_bytes %d, %s", policy.EffectiveMaxFiles(), policy.EffectiveMaxFileBytes(), exclusions)
 }
 
 func auditDocumentationGateDisabled(ctx context.Context, rootDir string, declines documentationDeclines) error {

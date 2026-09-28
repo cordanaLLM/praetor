@@ -4,22 +4,15 @@
 
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
 
 import { parse, postprocess, preprocess } from "micromark";
 import { mdxjs } from "micromark-extension-mdxjs";
 import { parseFragment } from "parse5";
 
-// MAX_EVENTS is the per-file floor of the Markdown parse bound. A file may parse to one event
-// per byte above it (parseEventLimit): verify.mjs bounds every file's size, 1 MiB by default and
-// raisable in .standards.yaml, and a larger document would otherwise fail on its size alone.
-// Ordinary documentation parses to 0.2-0.3 events per byte.
 const MAX_EVENTS = 262_144;
-const MAX_EVENTS_PER_BYTE = 1;
 const MAX_HTML_NODES = 65_536;
 const MAX_HTML_DEPTH = 8;
 const MAX_SRCSET_CANDIDATES = 4_096;
@@ -91,31 +84,7 @@ const HTML_CSS_URL_ATTRIBUTES = new Set([
   "stroke",
 ]);
 const SCRATCH_ROOTS = new Set([".workingdir", ".workingdir2"]);
-// The hard ceilings of documentation.max_files and documentation.max_file_bytes. verify.mjs
-// enforces the repository's declared bounds, which never exceed these, before it writes the
-// inventory this rule reads.
-const MAX_FILES = 16_384;
-const MAX_FILE_BYTES = 4_194_304;
-// The event bound above is checked only after micromark has built a file's whole event array, at
-// 350 to 1,100 heap bytes per event, and dense Markdown reaches four events per byte: a 1 MiB
-// list of one-word items needs more than 3 GB. Every file is therefore scanned in one worker
-// thread whose V8 old generation is capped at PARSE_HEAP_BUDGET_MB. A file that exhausts it ends
-// the worker, not the process, and the rule fails naming the file and the budget. The budget is
-// twice what a MAX_FILE_BYTES file of linked, code-spanned bullets needs (0.4 events per byte,
-// twice the density of this repository's documentation), and the self-test scans that file.
-const PARSE_HEAP_BUDGET_MB = 1_536;
-// Node ends a worker at its heap limit by granting 16 MB more and stopping it. With V8's default
-// young generation a single scavenge could promote more than that, and V8 then aborted the whole
-// process instead (17 of 40 runs of the self-test's 64 MiB list fixture). A 16 MiB young
-// generation keeps promotions below the grant: no abort in 130 runs of that fixture or in 32 runs
-// of dense 4 MiB files at the production budget. Should V8 still abort, verify.mjs fails the gate
-// on the signal.
-const SCAN_YOUNG_GENERATION_MB = 16;
-// Parse time is superlinear for some inline constructs (a run of `*a*` doubles in size and takes
-// four times as long), so each file's scan also has a deadline.
-const SCAN_DEADLINE_MS = 60_000;
-const SCAN_BOUNDS = Object.freeze({ heapBudgetMb: PARSE_HEAP_BUDGET_MB, deadlineMs: SCAN_DEADLINE_MS });
-const SCAN_WORKER_ROLE = "praetor-private-scratch-link-scan";
+const MAX_FILES = 4_096;
 const MAX_FINDINGS = 64;
 const MAX_DIAGNOSTIC_FIELD_CHARS = 256;
 const MAX_SOURCE_PATH_BYTES = 4_096;
@@ -1005,18 +974,14 @@ function collectAttributeLists(markdown, start, end, startLine, state, found, li
   }
 }
 
-function parseEventLimit(markdown) {
-  return Math.max(MAX_EVENTS, Buffer.byteLength(markdown) * MAX_EVENTS_PER_BYTE);
-}
-
-function snippetDestinations(markdown, limit, maxLines) {
+function snippetDestinations(markdown, limit) {
   const lines = markdown.split("\n");
-  if (lines.length > maxLines) {
-    throw new Error(`snippet input exceeds ${maxLines} lines`);
+  if (lines.length > MAX_EVENTS) {
+    throw new Error(`snippet input exceeds ${MAX_EVENTS} lines`);
   }
   const found = [];
   let inBlock = false;
-  for (let index = 0; index < lines.length && index < maxLines; index += 1) {
+  for (let index = 0; index < lines.length && index < MAX_EVENTS; index += 1) {
     const trimmed = lines[index].trim();
     if (trimmed.startsWith(";")) {
       continue;
@@ -1047,14 +1012,13 @@ export function findPrivateScratchLinks(source, markdown, limit = MAX_FINDINGS +
   }
   const options = isMDXSource(source) ? { extensions: [mdxjs()] } : {};
   const events = postprocess(parse(options).document().write(preprocess()(markdown, undefined, true)));
-  const eventLimit = parseEventLimit(markdown);
-  if (events.length > eventLimit) {
-    throw new Error(`${source}: Markdown parse exceeds ${eventLimit} events`);
+  if (events.length > MAX_EVENTS) {
+    throw new Error(`${source}: Markdown parse exceeds ${MAX_EVENTS} events`);
   }
-  const destinations = snippetDestinations(markdown, MAX_EVENTS, eventLimit);
+  const destinations = snippetDestinations(markdown, MAX_EVENTS);
   const htmlState = createHTMLState();
   const mdxPropertyExpressions = new Map();
-  for (let index = 0; index < events.length && index < eventLimit; index += 1) {
+  for (let index = 0; index < events.length && index < MAX_EVENTS; index += 1) {
     const [phase, token] = events[index];
     if (phase !== "enter") {
       continue;
@@ -1324,18 +1288,7 @@ function selfTest() {
   assert.equal(boundary.length, 1);
   assert.equal(boundary[0].resolved, ".workingdir/STATE.md");
   assert.doesNotThrow(() => validateFileList(new Array(MAX_FILES).fill("fixture.md")));
-  assert.throws(() => validateFileList(new Array(MAX_FILES + 1).fill("fixture.md")), /maximum is 16384/u);
-  // The parse bound grows with the file: a document past the MAX_EVENTS floor that parses to
-  // fewer events than its bytes passes, one that parses to more fails, and the limit is counted
-  // in UTF-8 bytes, not characters.
-  assert.equal(parseEventLimit("a".repeat(MAX_EVENTS)), MAX_EVENTS);
-  assert.equal(parseEventLimit("a".repeat(MAX_EVENTS + 1)), MAX_EVENTS + 1);
-  assert.equal(parseEventLimit("\u00e9".repeat(MAX_EVENTS)), 2 * MAX_EVENTS);
-  const sparseLines = "abcdef\n".repeat(70_000);
-  assert.deepEqual(findPrivateScratchLinks("docs/large.md", sparseLines), []);
-  const denseLines = "x\n".repeat(70_000);
-  assert.throws(() => findPrivateScratchLinks("docs/dense.md", denseLines),
-    /docs\/dense\.md: Markdown parse exceeds 262144 events/u);
+  assert.throws(() => validateFileList(new Array(MAX_FILES + 1).fill("fixture.md")), /maximum is 4096/u);
   const findingFixture = new Array(MAX_FINDINGS + 1).fill(findings[0]);
   assert.equal(capFindings(findingFixture.slice(0, MAX_FINDINGS), MAX_FINDINGS).firstOmitted, null);
   assert.equal(capFindings(findingFixture, MAX_FINDINGS).firstOmitted, findings[0]);
@@ -1424,121 +1377,14 @@ function validateFileList(files) {
   }
 }
 
-// Worker side: read one inventory file at a time, refusing one past the per-file ceiling before
-// reading it, and reply with its findings or the error that stopped the scan.
-function readBoundedSource(root, source) {
-  const full = path.join(root, source);
-  const size = fs.statSync(full).size;
-  if (size > MAX_FILE_BYTES) {
-    throw new Error(`${source} is ${size} bytes; per-file maximum is ${MAX_FILE_BYTES}`);
-  }
-  return fs.readFileSync(full, "utf8");
-}
-
-function serveScans(root) {
-  parentPort.on("message", (request) => {
-    try {
-      const markdown = readBoundedSource(root, request.source);
-      parentPort.postMessage({ findings: findPrivateScratchLinks(request.source, markdown, request.limit) });
-    } catch (error) {
-      parentPort.postMessage({ error: error.message });
-    }
-  });
-}
-
-function workerFailure(source, error, bounds) {
-  if (error?.code === "ERR_WORKER_OUT_OF_MEMORY") {
-    return new Error(`${source}: Markdown parse exceeds the ${bounds.heapBudgetMb} MiB parse memory budget`);
-  }
-  return new Error(`${source}: scan worker failed: ${error?.message ?? error}`);
-}
-
-// Main side: one request in flight at a time, so a worker that runs out of heap, dies or misses
-// the deadline is always attributed to the file it was scanning.
-class ScanWorker {
-  #bounds;
-  #retired = false;
-  #pending = null;
-  #worker;
-
-  constructor(root, bounds) {
-    this.#bounds = bounds;
-    this.#worker = new Worker(new URL(import.meta.url), {
-      workerData: { role: SCAN_WORKER_ROLE, root },
-      resourceLimits: {
-        maxOldGenerationSizeMb: bounds.heapBudgetMb,
-        maxYoungGenerationSizeMb: SCAN_YOUNG_GENERATION_MB,
-      },
-    });
-    this.#worker.on("message", (reply) => {
-      this.#settle(reply.error === undefined ? null : new Error(reply.error), reply.findings);
-    });
-    this.#worker.on("error", (error) => {
-      this.#settle(workerFailure(this.#pending?.source, error, this.#bounds));
-    });
-    this.#worker.on("exit", (code) => {
-      this.#retired = true;
-      this.#settle(new Error(`${this.#pending?.source}: scan worker exited ${code}`));
-    });
-  }
-
-  scan(source, limit) {
-    if (this.#retired) {
-      return Promise.reject(new Error(`${source}: scan worker has stopped`));
-    }
-    if (this.#pending !== null) {
-      return Promise.reject(new Error(`${source}: scan requested while ${this.#pending.source} is in flight`));
-    }
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => this.#expire(source), this.#bounds.deadlineMs);
-      this.#pending = { source, resolve, reject, timer };
-      this.#worker.postMessage({ source, limit });
-    });
-  }
-
-  // A worker past its deadline is still parsing, and its late reply would answer the next
-  // request, so it is stopped and takes no further file.
-  #expire(source) {
-    this.#retired = true;
-    this.#settle(new Error(`${source}: Markdown scan exceeds ${this.#bounds.deadlineMs} ms`));
-    this.#worker.terminate().catch(() => {});
-  }
-
-  // A late event for a request already settled (the exit after a memory failure or after the
-  // deadline) finds no pending request and is dropped.
-  #settle(error, findings) {
-    const pending = this.#pending;
-    if (pending === null) {
-      return;
-    }
-    this.#pending = null;
-    clearTimeout(pending.timer);
-    if (error === null) {
-      pending.resolve(findings);
-    } else {
-      pending.reject(error);
-    }
-  }
-
-  close() {
-    return this.#worker.terminate();
-  }
-}
-
-async function withScanWorker(root, bounds, action) {
-  const scanner = new ScanWorker(root, bounds);
-  try {
-    return await action(scanner);
-  } finally {
-    await scanner.close();
-  }
-}
-
-async function reportFindings(files, scanner) {
+function runFileList(root, inventoryPath) {
+  const files = JSON.parse(fs.readFileSync(inventoryPath, "utf8"));
+  validateFileList(files);
   let emitted = 0;
   for (let index = 0; index < files.length && index < MAX_FILES; index += 1) {
+    const source = files[index];
     const remaining = MAX_FINDINGS - emitted;
-    const found = await scanner.scan(files[index], remaining + 1);
+    const found = findPrivateScratchLinks(source, fs.readFileSync(path.join(root, source), "utf8"), remaining + 1);
     found.sort((left, right) => left.line - right.line || left.original.localeCompare(right.original));
     const capped = capFindings(found, remaining);
     for (let findingIndex = 0; findingIndex < capped.emitted.length &&
@@ -1553,80 +1399,6 @@ async function reportFindings(files, scanner) {
     }
   }
   return emitted === 0 ? 0 : 1;
-}
-
-function runFileList(root, inventoryPath, bounds = SCAN_BOUNDS) {
-  const files = JSON.parse(fs.readFileSync(inventoryPath, "utf8"));
-  validateFileList(files);
-  return withScanWorker(root, bounds, (scanner) => reportFindings(files, scanner));
-}
-
-function ceilingFixture(tail) {
-  const bullet = "- Lorem ipsum dolor sit amet, [consectetur](https://example.invalid/x) `adipiscing` elit.\n";
-  const count = Math.floor((MAX_FILE_BYTES - tail.length - 16) / bullet.length);
-  const headingBytes = MAX_FILE_BYTES - tail.length - count * bullet.length;
-  return { markdown: `# ${"a".repeat(headingBytes - 4)}\n\n${bullet.repeat(count)}${tail}`, line: count + 3 };
-}
-
-function writeScanFixture(root, source, markdown) {
-  fs.mkdirSync(path.dirname(path.join(root, source)), { recursive: true });
-  fs.writeFileSync(path.join(root, source), markdown);
-}
-
-// Positive: a file exactly at the per-file ceiling, of linked and code-spanned bullets, scans
-// inside the production budget and deadline, and the private link on its last line comes back
-// as a finding. Negative: a list of one-word items exhausts a small budget and a run of `*a*`
-// misses a short deadline, and each failure names the file and the bound while this process
-// keeps running; a worker that ran out of heap or time takes no further file, and a second
-// request while one is in flight is refused. Boundary: a file one byte past the ceiling is refused
-// before it is read, and the worker then scans the next file.
-async function scanWorkerSelfTest(root) {
-  const ceiling = ceilingFixture("- [private](../.workingdir/OPEN.md)\n");
-  assert.equal(Buffer.byteLength(ceiling.markdown), MAX_FILE_BYTES);
-  writeScanFixture(root, "docs/ceiling.md", ceiling.markdown);
-  writeScanFixture(root, "docs/over.md", `${ceiling.markdown}a`);
-  writeScanFixture(root, "docs/small.md", "# Small\n\n[public](../README.md)\n");
-  writeScanFixture(root, "docs/list.md", "- a\n".repeat(65_536));
-  writeScanFixture(root, "docs/slow.md", "*a* ".repeat(16_384));
-  await withScanWorker(root, SCAN_BOUNDS, async (scanner) => {
-    const found = await scanner.scan("docs/ceiling.md", MAX_FINDINGS + 1);
-    assert.deepEqual(found.map((finding) => [finding.line, finding.resolved]), [[ceiling.line, ".workingdir/OPEN.md"]]);
-    await assert.rejects(scanner.scan("docs/over.md", 1), (error) =>
-      error.message === `docs/over.md is ${MAX_FILE_BYTES + 1} bytes; per-file maximum is ${MAX_FILE_BYTES}`);
-    const inFlight = scanner.scan("docs/small.md", 1);
-    await assert.rejects(scanner.scan("docs/ceiling.md", 1),
-      /docs\/ceiling\.md: scan requested while docs\/small\.md is in flight/u);
-    assert.deepEqual(await inFlight, []);
-  });
-  await withScanWorker(root, { heapBudgetMb: 64, deadlineMs: SCAN_DEADLINE_MS }, async (scanner) => {
-    assert.deepEqual(await scanner.scan("docs/small.md", 1), []);
-    await assert.rejects(scanner.scan("docs/list.md", 1), (error) =>
-      error.message === "docs/list.md: Markdown parse exceeds the 64 MiB parse memory budget");
-    await assert.rejects(scanner.scan("docs/small.md", 1), /docs\/small\.md: scan worker has stopped/u);
-  });
-  const inventory = path.join(root, "inventory.json");
-  fs.writeFileSync(inventory, JSON.stringify(["docs/small.md", "docs/list.md"]));
-  await assert.rejects(runFileList(root, inventory, { heapBudgetMb: 64, deadlineMs: SCAN_DEADLINE_MS }),
-    /^Error: docs\/list\.md: Markdown parse exceeds the 64 MiB parse memory budget$/u);
-  fs.writeFileSync(inventory, JSON.stringify(["docs/small.md"]));
-  assert.equal(await runFileList(root, inventory), 0);
-  await withScanWorker(root, { heapBudgetMb: PARSE_HEAP_BUDGET_MB, deadlineMs: 50 }, async (scanner) => {
-    await assert.rejects(scanner.scan("docs/slow.md", 1), (error) =>
-      error.message === "docs/slow.md: Markdown scan exceeds 50 ms");
-    await assert.rejects(scanner.scan("docs/small.md", 1), /docs\/small\.md: scan worker has stopped/u);
-  });
-  process.stdout.write("private-scratch-link scan worker fixtures: ceiling file inside the parse memory budget, " +
-    "budget and deadline failures name the file, one byte past the ceiling refused\n");
-}
-
-async function runSelfTests() {
-  selfTest();
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "praetor-scratch-scan-"));
-  try {
-    await scanWorkerSelfTest(root);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
 }
 
 // Node loads a main module from its real path (symlinks resolved), while process.argv[1] keeps
@@ -1644,18 +1416,12 @@ export function invokedAsScript(scriptPath, modulePath) {
   }
 }
 
-async function main() {
-  if (!isMainThread) {
-    if (workerData?.role === SCAN_WORKER_ROLE) {
-      serveScans(workerData.root);
-    }
-    return;
-  }
+function main() {
   if (!invokedAsScript(process.argv[1], fileURLToPath(import.meta.url))) {
     return;
   }
   if (process.argv[2] === "--self-test" && process.argv.length === 3) {
-    await runSelfTests();
+    selfTest();
     return;
   }
   if (process.argv.length !== 4) {
@@ -1663,10 +1429,12 @@ async function main() {
     process.exitCode = 2;
     return;
   }
-  process.exitCode = await runFileList(path.resolve(process.argv[2]), path.resolve(process.argv[3]));
+  process.exitCode = runFileList(path.resolve(process.argv[2]), path.resolve(process.argv[3]));
 }
 
-main().catch((error) => {
+try {
+  main();
+} catch (error) {
   process.stderr.write(`markdown-scratch-links: ${error.message}\n`);
   process.exitCode = 2;
-});
+}
