@@ -99,7 +99,8 @@ func buildLefthookYAMLFor(checkpoint bool) string {
 	}
 	return "# Lefthook Configuration (Go 1.27+ & HISS Governance)\n" +
 		"# Governance commands fail closed: a failing or missing praetorctl blocks the\n" +
-		"# commit or push.\n" +
+		"# commit or push. The pre-push gate job signs a receipt only after a Go\n" +
+		"# (go.mod) or Cargo (Cargo.lock) toolchain stage ran, and fails otherwise.\n" +
 		"---\n" +
 		checkpointJobs + "pre-commit:\n" +
 		"  parallel: true\n" +
