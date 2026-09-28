@@ -8,10 +8,15 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/compiler"
+	"github.com/cordanaLLM/praetor/internal/workstation"
 )
 
 // compileContextTimeout bounds the transpilation and persona projection I/O (HISS-02).
 const compileContextTimeout = 2 * time.Minute
+
+// engineBuild describes the running binary for the engine-build check; tests substitute a
+// fake stale build.
+var engineBuild = workstation.RunningBuild
 
 func runCompileContext(args []string) error {
 	fs := flag.NewFlagSet("compile-context", flag.ContinueOnError)
@@ -32,6 +37,13 @@ func runCompileContext(args []string) error {
 	tr := compiler.NewTranspiler()
 	if *verify {
 		return compiler.VerifyCompiledContext(ctx, os.Stdout, tr, *source, *targetDir)
+	}
+	// A client wrapper runs this write at every session start with whatever praetorctl is
+	// installed; an install older than the engine checkout rewrote the register block and every
+	// vendor file with its own stale text (BUG-1004). Verification never writes, so only the
+	// write is refused.
+	if err := workstation.CheckBuildCurrent(ctx, *targetDir, engineBuild()); err != nil {
+		return fmt.Errorf("compile-context wrote nothing: %w", err)
 	}
 	return compiler.CompileContextProjections(ctx, os.Stdout, tr, *source, *targetDir)
 }

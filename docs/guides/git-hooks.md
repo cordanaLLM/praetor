@@ -106,7 +106,7 @@ every file and requires yamllint to reject each one, so the rule is proven to be
 | `commit-msg` | Verify the live state synchronization after Lefthook restores partially staged worktree files, then require a conventional subject and DCO sign-off; accept Git merge/revert subjects. |
 | `pre-push` | Audit and verify live state before inspecting each actual pushed commit. `checkpoint/*` destinations run file checks, affected Go builds and race tests. Other destinations also require lint, security, vulnerability, governance, flavor and signed-receipt gates. |
 | `post-commit` | Synchronize and read back the private state for the new commit, then print the dedupe cadence reminder when due. Sync failures are reported. |
-| `post-checkout`, `post-merge`, `post-rewrite` | Warm changed module dependencies in an isolated clone, rebuild the local CLI for source changes, verify affected agent outputs, report governance changes. File-only checkouts do nothing. |
+| `post-checkout`, `post-merge`, `post-rewrite` | Warm changed module dependencies in an isolated clone, rebuild the local CLI for source changes, verify affected agent outputs, report governance changes. `post-merge` then runs `praetorctl workstation install --if-stale`, which rebuilds a lagging engine install from this checkout on the update branch and otherwise skips silently ([refresh a lagging install](workstation-update.md#refresh-a-lagging-install)). File-only checkouts do nothing. |
 | `pre-rebase` | Check the hook environment before replay begins. |
 
 Pre-commit exports the index into a temporary directory. Unstaged edits, untracked

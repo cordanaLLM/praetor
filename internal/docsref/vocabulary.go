@@ -16,7 +16,6 @@ import (
 	"path"
 	"slices"
 	"strconv"
-	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/gomanifest"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -26,7 +25,6 @@ import (
 const (
 	maxSourceBytes   = 4 << 20
 	maxGoModBytes    = 1 << 20
-	maxGoModLines    = 1 << 14
 	maxClosureNodes  = 1 << 17
 	maxClosurePops   = 1 << 23
 	maxClosureRounds = 64
@@ -109,11 +107,8 @@ func modulePath(root string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("read go.mod: %w", err)
 	}
-	lines := strings.Split(string(data), "\n")
-	for index := 0; index < len(lines) && index < maxGoModLines; index++ {
-		if module, ok := gomanifest.ModulePath(lines[index]); ok {
-			return module, nil
-		}
+	if module, ok := gomanifest.ModuleDirective(data); ok {
+		return module, nil
 	}
 	return "", errors.New("go.mod declares no module path")
 }

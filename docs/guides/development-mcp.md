@@ -7,9 +7,12 @@ Run from the repository root with Python 3, Git, and the Go version required by
 python3 scripts/dev_mcp.py probe
 ```
 
-This builds the current Go sources into a temporary binary, initializes its real
-stdio MCP transport, and checks `serverInfo.version` against
-`provenance.server_version` (`dev-<source_sha256>`). The report includes the checkout,
+This builds the current Go sources into a temporary binary under the checkout's
+git-ignored `bin/`, initializes its real stdio MCP transport, and checks
+`serverInfo.version` against `provenance.server_version` (`dev-<source_sha256>`). The
+build stays inside the checkout so the
+[engine build check](workstation-update.md#engine-build-check) accepts its context writes
+even when an untracked file stamps it `-dirty`. The report includes the checkout,
 source and binary hashes, Git revision, dirty state, and Go version. Keep that
 provenance with defect evidence. A source change during the build or probe fails
 the run; retry against the completed edit.
@@ -36,7 +39,9 @@ standalone executables already on `PATH`. `scripts/dev_install.py` runs the MCP
 behavior probe against a fresh build, then delegates the atomic install itself to
 `praetorctl workstation install` (HISS-19: one installer, not two): it builds all
 three Praetor binaries from current source and installs them into `~/.local/bin`
-with the three legacy aliases. `python3 scripts/dev_install.py --help` lists
+with the three legacy aliases. With no tracked file modified, current source is a
+clean clone of HEAD, so untracked files stay out of the build; see
+[install step 4](workstation-update.md#workstation-install). `python3 scripts/dev_install.py --help` lists
 destination overrides for isolated installations.
 
 `workstation install` rejects an unexpected symlink or special file at an
@@ -404,8 +409,15 @@ A tool call and the CLI therefore check and write the same things:
   writes themselves, such as a full disk, or a target changed between the
   check and the write: the writer applies the same refusals again when it
   reaches each file, but the files written before a refusal stay written.
+- Before a write, both check that the running engine matches the engine checkout they
+  write into (`workstation.CheckBuildCurrent`, `internal/workstation/freshness.go`). An
+  installed server or CLI built from an older revision refuses the write with
+  `engine build does not match this checkout` instead of rendering its own stale text into
+  `AGENTS.md` and the vendor files; `verify_only` is never refused. The rules are in
+  [the engine build check](workstation-update.md#engine-build-check).
 
 Tests: `cmd/standards-mcp/server_projection_test.go`,
+`cmd/standards-mcp/compile_context_engine_test.go`,
 `TestCompileContextRejectsSymlinkedOutputDescendants` and
 `TestCompileContextWritesRealOutputDescendants` in
 `cmd/standards-mcp/server_path_test.go`, `internal/compiler/output_paths_test.go`,

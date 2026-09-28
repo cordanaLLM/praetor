@@ -42,6 +42,7 @@ type StatusReport struct {
 	ManifestSHA256 string                  `json:"manifest_sha256,omitempty"`
 	CheckoutHead   string                  `json:"checkout_head,omitempty"`
 	UpToDate       bool                    `json:"up_to_date"`
+	CommitsBehind  *int                    `json:"commits_behind,omitempty"`
 	LockHeld       bool                    `json:"lock_held"`
 	Clients        []ClientStatus          `json:"clients"`
 }
@@ -62,12 +63,9 @@ func Status(ctx context.Context, opts StatusOptions) (StatusReport, error) {
 		return StatusReport{}, err
 	}
 	if opts.Checkout != "" {
-		head, err := engineCommit(ctx, opts.Checkout)
-		if err != nil {
+		if err := fillCheckoutStatus(ctx, &report, opts.Checkout); err != nil {
 			return StatusReport{}, err
 		}
-		report.CheckoutHead = head
-		report.UpToDate = report.Manifest != nil && report.Manifest.EngineCommit == head
 	}
 	if binDir := effectiveBinDir(opts, report.Manifest); binDir != "" {
 		report.LockHeld = LockHeld(binDir)
@@ -76,15 +74,9 @@ func Status(ctx context.Context, opts StatusOptions) (StatusReport, error) {
 }
 
 func resolveStatusManifestPath(opts StatusOptions) (StatusOptions, error) {
-	if opts.ManifestPath != "" {
-		return opts, nil
-	}
-	path, err := config.DefaultInstallManifestPath()
-	if err != nil {
-		return opts, fmt.Errorf("workstation: resolve default manifest path: %w", err)
-	}
+	path, err := manifestPathOrDefault(opts.ManifestPath)
 	opts.ManifestPath = path
-	return opts, nil
+	return opts, err
 }
 
 func fillManifestStatus(ctx context.Context, report *StatusReport, path string) error {
@@ -102,6 +94,28 @@ func fillManifestStatus(ctx context.Context, report *StatusReport, path string) 
 	report.Installed = true
 	report.Manifest = &manifest
 	report.ManifestSHA256 = digestBytes(data)
+	return nil
+}
+
+// fillCheckoutStatus compares the installed commit with checkout's HEAD: equality, and how
+// many commits the install lags when the checkout descends from it (InstallLag).
+func fillCheckoutStatus(ctx context.Context, report *StatusReport, checkout string) error {
+	head, err := engineCommit(ctx, checkout)
+	if err != nil {
+		return err
+	}
+	report.CheckoutHead = head
+	if report.Manifest == nil {
+		return nil
+	}
+	report.UpToDate = report.Manifest.EngineCommit == head
+	behind, ancestor, err := InstallLag(ctx, checkout, report.Manifest.EngineCommit)
+	if err != nil {
+		return err
+	}
+	if ancestor {
+		report.CommitsBehind = &behind
+	}
 	return nil
 }
 

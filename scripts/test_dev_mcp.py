@@ -63,6 +63,55 @@ class SourceIdentityTests(unittest.TestCase):
             dev_mcp.check_identity(Client(), {"server_version": "new"})
 
 
+class BuildDirectoryTests(unittest.TestCase):
+    """The build lands inside the checkout, where the engine-build check accepts a -dirty
+    build for a context write (internal/workstation/freshness.go)."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="praetor-build-directory-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.override = patch.object(dev_mcp, "ROOT", self.root)
+        self.override.start()
+        self.addCleanup(self.override.stop)
+
+    def test_build_directory_lies_under_the_checkout_bin_and_is_removed(self):
+        with dev_mcp.build_directory() as directory:
+            path = Path(directory)
+            self.assertEqual(path.parent, self.root / "bin")
+            self.assertTrue(path.is_dir())
+        self.assertFalse(path.exists())
+
+    def test_existing_bin_contents_survive(self):
+        (self.root / "bin").mkdir()
+        kept = self.root / "bin" / "praetorctl"
+        kept.write_bytes(b"binary")
+        with dev_mcp.build_directory() as directory:
+            self.assertNotEqual(Path(directory), self.root / "bin")
+        self.assertEqual(kept.read_bytes(), b"binary")
+
+    def test_bin_occupied_by_a_file_fails(self):
+        (self.root / "bin").write_text("not a directory\n")
+        with self.assertRaises(OSError):
+            dev_mcp.build_directory()
+
+    def test_main_builds_inside_the_checkout(self):
+        seen = []
+
+        def fake_build(directory):
+            seen.append(directory)
+            raise RuntimeError("stop after the build directory is chosen")
+
+        args = dev_mcp.argparse.Namespace(action="call", root=self.root, tool="t", arguments={},
+                                          allow_remote_benchmarks=False, timeout=30)
+        with patch.object(dev_mcp, "parse_args", return_value=args), \
+                patch.object(dev_mcp, "build", side_effect=fake_build):
+            with self.assertRaisesRegex(RuntimeError, "stop after"):
+                dev_mcp.main()
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(seen[0].parent, self.root / "bin")
+
+
 class PublicLoopLauncherTests(unittest.TestCase):
     def test_remote_clones_require_explicit_launcher_opt_in(self):
         command = dev_mcp.server_command(Path("binary"), Path("root"))
