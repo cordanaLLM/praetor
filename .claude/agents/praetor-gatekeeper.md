@@ -17,6 +17,7 @@ Stage order = `gate run` order. Verdict per stage: `passed`, `failed`, `skipped`
 1. **Prefetch & Lockfiles**:
    - `.standards.yaml` + `.standards.lock` present, non-empty.
    - `go.mod` present -> `go mod verify` + `go mod download`; absent -> not applicable.
+   - `Cargo.lock` present -> `cargo fetch --locked`.
 
 2. **HISS Invariant Scan**:
    - Scan vs `.standards-baseline.json` ratchet; function-length limit from repository policy.
@@ -24,6 +25,7 @@ Stage order = `gate run` order. Verdict per stage: `passed`, `failed`, `skipped`
 
 3. **Security & SCA Scan**:
    - `govulncheck ./...` + `gosec -conf .gosec.json`; missing scanner or missing `.gosec.json` -> fail, never pass.
+   - `Cargo.lock` present -> `cargo audit`; no `cargo-audit` -> not run, install hint, stage skipped, never pass.
 
 4. **Flavor Conformance**:
    - Flavor audit; declared profile without flavor -> not applicable.
@@ -31,8 +33,11 @@ Stage order = `gate run` order. Verdict per stage: `passed`, `failed`, `skipped`
 5. **Race-Detector Tests**:
    - `go test -race ./...` against HEAD in temporary git worktree (`internal/worktree/`).
    - No cgo or C toolchain -> skipped with reason; CI runs leg on Linux.
+   - `Cargo.lock` present -> `cargo test --workspace --locked` + `cargo clippy --workspace --all-targets -- -D warnings`, same worktree isolation + bound.
+   - Toolchain stage, both languages: reason names each (`go: ...; cargo: ...`); one ran, other not -> skipped. No `cargo` on PATH -> Cargo part not run.
 
 6. **Ed25519 Exit-0 Receipt**:
+   - Prefetch, security, tests all not applicable or skipped -> refuse, name unsupported languages, exit 1; no receipt.
    - All stages clear -> sign `.standards-receipt.json` over `praetor-gate-output/v2` stage output; key from `PRAETOR_RECEIPT_KEY` or per-user `receipt.key`; no key -> fail.
    - `gate verify` + `forge validate-pr` refuse receipt signed by unpinned key, bound to other commit, tampered, or not `praetor-gate-output/v2` -> merge blocked.
 
