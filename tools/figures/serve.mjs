@@ -33,14 +33,20 @@ export function basePath(base = '/') {
   return inner ? `/${inner}/` : '/';
 }
 
-function statOf(path) {
+/**
+ * The file status of `path`, or null when nothing readable is there (missing, under a file, a
+ * symbolic-link loop, a name too long); any other failure is an error that names the path. The
+ * figure checks (`statOf` in checks.mjs) read paths through this too.
+ */
+export function statOrNull(path) {
   try {
     return statSync(path);
   } catch (error) {
-    if (['ENOENT', 'ENOTDIR', 'ENAMETOOLONG'].includes(error.code)) return null;
+    if (['ENOENT', 'ENOTDIR', 'ELOOP', 'ENAMETOOLONG'].includes(error.code)) return null;
     throw new Error(`cannot read ${path}: ${error.message}`, { cause: error });
   }
 }
+
 
 /**
  * What a request for `pathname` gets from `mounts` under `base`: `{ status: 0 }` when no mount's
@@ -61,8 +67,8 @@ export function locate(mounts, base, pathname) {
   const rest = decoded.slice(mount.uri ? root.length + mount.uri.length + 1 : root.length);
   let file = resolve(dir, `.${sep}${rest}`);
   if (file !== dir && !file.startsWith(dir + sep)) return { status: 403 };
-  if (statOf(file)?.isDirectory()) file = join(file, 'index.html');
-  if (!statOf(file)?.isFile()) return { status: 404 };
+  if (statOrNull(file)?.isDirectory()) file = join(file, 'index.html');
+  if (!statOrNull(file)?.isFile()) return { status: 404 };
   return { status: 200, file, type: TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream' };
 }
 
@@ -100,7 +106,7 @@ export function serve(site, base = '/') {
 
 /** The regular files directly in `dir`, sorted; none when it does not exist. */
 export function mountFiles(dir) {
-  if (!statOf(dir)?.isDirectory()) return [];
+  if (!statOrNull(dir)?.isDirectory()) return [];
   const names = readdirSync(dir, { withFileTypes: true }).filter((entry) => entry.isFile()).map((entry) => entry.name).sort();
   if (names.length > MAX_MOUNT_FILES) throw new Error(`${dir} holds more than ${MAX_MOUNT_FILES} files`);
   return names;
@@ -120,7 +126,7 @@ export function publish(mounts, outDir) {
     for (const name of names) {
       const uri = mount.uri ? `${mount.uri}/${name}` : name;
       const target = join(outDir, mount.uri, name);
-      if (statOf(target)) {
+      if (statOrNull(target)) {
         kept.push(uri);
         continue;
       }

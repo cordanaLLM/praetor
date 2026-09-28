@@ -48,7 +48,7 @@ import { readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ENGINE_FILES, SLOTS, SPEC_CLOSE, SPEC_OPEN, escapeHtml, markup, sha256 } from './core.mjs';
-import { PLAYER_URI, basePath } from './serve.mjs';
+import { PLAYER_URI, basePath, statOrNull } from './serve.mjs';
 
 /** The repository root, two levels above this file; every repository path below is relative to it. */
 export const ROOT = fileURLToPath(new URL('../../', import.meta.url));
@@ -143,12 +143,12 @@ function clean(path) {
   return normal.length > 1 && normal.endsWith(sep) && !/^[A-Za-z]:\\$/.test(normal) ? normal.slice(0, -1) : normal;
 }
 
+/** `statOrNull` in serve.mjs, its read failure turned into a CheckError. */
 function statOf(path) {
   try {
-    return statSync(path);
+    return statOrNull(path);
   } catch (error) {
-    if (['ENOENT', 'ENOTDIR', 'ELOOP', 'ENAMETOOLONG'].includes(error.code)) return null;
-    throw new CheckError(`cannot read ${path}: ${error.message}`);
+    throw new CheckError(error.message, { cause: error });
   }
 }
 

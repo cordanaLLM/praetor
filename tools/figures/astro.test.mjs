@@ -13,7 +13,7 @@ import figures, {
   MAX_NODES, NAME, figureBase, figureMounts, loaderScript, publishFigures, remarkFigures, replaceFigures, rootPath,
 } from './astro.mjs';
 import { ROOT, fillSlots } from './checks.mjs';
-import { FIGURES_URI, MAX_MOUNT_FILES, PLAYER_URI, basePath, locate, mountFiles, publish, serve, staticHandler } from './serve.mjs';
+import { FIGURES_URI, MAX_MOUNT_FILES, PLAYER_URI, basePath, locate, mountFiles, publish, serve, staticHandler, statOrNull } from './serve.mjs';
 import { withTempDir, write } from './testkit.mjs';
 
 /** The markup fixture: each case records the block its base and link fill in. */
@@ -259,6 +259,15 @@ test('serve answers a built site over HTTP under its base path', () => withTempD
   } finally {
     server.close();
   }
+}));
+
+test('statOrNull: a file has a status, a missing path none, and any other failure names the path', () => withTempDir((dir) => {
+  write(join(dir, 'a.txt'), 'a');
+  assert.ok(statOrNull(join(dir, 'a.txt')).isFile());
+  assert.equal(statOrNull(join(dir, 'absent')), null);
+  // Boundary: a path under a file (ENOTDIR) is missing too.
+  assert.equal(statOrNull(join(dir, 'a.txt', 'below')), null);
+  assert.throws(() => statOrNull(`${dir}\0x`), (error) => error.message.startsWith(`cannot read ${dir}\0x: `) && error.cause !== undefined);
 }));
 
 test('a mount lists its regular files, sorted, up to MAX_MOUNT_FILES', () => withTempDir((dir) => {
