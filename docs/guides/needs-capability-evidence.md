@@ -356,8 +356,9 @@ What counts as a repository:
   are never collapsed, even when they sit in a worktree.
 - **Outside every checkout, a directory holding an analyzer manifest or a
   declaration starts a repository.** Manifests are `go.mod`, `package.json`,
-  `pyproject.toml`, `requirements.txt`, `setup.py`, `Cargo.toml`, `meson.build`
-  and `CMakeLists.txt`; declarations are `.standards.yaml` and `.needs.yaml`.
+  `pyproject.toml`, `requirements.txt`, `setup.py`, `Cargo.toml`, `meson.build`,
+  `CMakeLists.txt`, `build.zig` and `build.zig.zon`; declarations are
+  `.standards.yaml` and `.needs.yaml`.
   Neither stops the walk: a checkout below such a directory, or below a fleet
   root that is itself a checkout, is still its own row
   (`TestDiscoverFleetDeclarationsNeverSwallowCheckouts`).
@@ -394,6 +395,31 @@ declares stays a third-party demand without a version
 `TestCargoWorkspaceMembersAreFirstParty_3D` in
 `internal/needs/analyzer_rust_test.go`).
 
+A Zig build is a native project: the native analyzer detects `build.zig` or
+`build.zig.zon` beside `meson.build` and `CMakeLists.txt`, and reports the
+language `zig` for it (`c`, `cpp` and `cuda` only for meson or CMake). A Cargo
+workspace with a `build.zig` at its root is one row carrying the crates and the
+Zig packages, Rust and Zig (`TestScanRepoZigBesideCargoWorkspace_Positive`). The
+demands come from the `.dependencies` of `build.zig.zon`, read in the format of
+Zig 0.16.0 (`doc/build.zig.zon.md` in the Zig source): each entry names a
+package fetched by `url` (with its `hash`) or found in the tree by `path`. A url
+package is a third-party demand. A path package is one only when it sits under a
+directory discovery prunes (`vendor/`, `third_party/`, `zig-pkg/` and the other names below),
+where it is vendored; any other path package is the repository's own, scanned as
+a sub-project when it holds a `build.zig`, like a Cargo path crate. Demands take
+the native catalog's capability or `native.external.<name>`. `build.zig` itself
+is a program, so libraries it compiles from vendored sources without a
+`build.zig.zon` entry are not demands.
+
+A malformed `build.zig.zon` fails the scan with the line and the reason: text
+that is not ZON, a file that is not one struct literal, a `.dependencies` or
+dependency entry that is not a struct, a `url` or `path` that is not a string,
+and a dependency that sets both `url` and `path` or neither. The parser reads
+nothing else of the manifest and nests at most 64 literals deep
+(`internal/needs/zon.go`; `TestParseZon_Negative_MalformedManifestRefused`,
+`TestParseZon_Boundary` in `internal/needs/zon_test.go`). The pre-migration epic
+phrases no C/C++ step for a Zig build without C/C++ markers.
+
 A nested sub-project whose scan fails, such as a template `package.json`
 under `examples/`, does not fail the repository. The row keeps the root
 project and every other sub-project, and the failure is listed with its error
@@ -417,6 +443,15 @@ The walk never enters:
 - directories named exactly `vendor`, `node_modules`, `third_party`, `build`,
   `target` or `testdata`. Matching is exact and case-sensitive, so
   first-party trees such as `Build-tools/` or `build_scripts/` are walked;
+- the trees Zig writes inside a checkout, named exactly `zig-pkg`, `zig-out` or
+  `.zig-cache` (`util.IsToolchainTreeDir`, the list every repository walker
+  shares). Zig 0.16 copies each package it fetches into
+  `zig-pkg/<name>-<version>-<hash>/` with the package's own `build.zig` and
+  `build.zig.zon`, so a built checkout would otherwise list every fetched
+  package as a sub-project and its url dependencies as the repository's demands
+  (`TestScanRepoZigToolchainTreesPruned_Positive`,
+  `TestDiscoverFleetZigToolchainTreesPruned_Negative`,
+  `TestScanRepoZigToolchainTreeLookalikes_Boundary`);
 - `scratch/` and `cache/` directly under the walk root or directly under a
   repository root. Deeper, as in `<repo>/internal/cache/`, they are ordinary sources.
 

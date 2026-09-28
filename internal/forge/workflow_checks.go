@@ -241,14 +241,17 @@ type workflowJob struct {
 // `${{ fromJSON(vars.X) }}` that evaluates to one (the workflow schema gives step env a
 // context). A typed map rejects the second shape and would fail the whole document for a key
 // no production check reads.
+//
+// Shell is the step's `shell:`; empty is the runner default, which is pwsh on Windows.
 type workflowStep struct {
-	Name string         `yaml:"name"`
-	ID   string         `yaml:"id"`
-	If   string         `yaml:"if"`
-	Uses string         `yaml:"uses"`
-	Run  string         `yaml:"run"`
-	With map[string]any `yaml:"with"`
-	Env  yaml.Node      `yaml:"env"`
+	Name  string         `yaml:"name"`
+	ID    string         `yaml:"id"`
+	If    string         `yaml:"if"`
+	Uses  string         `yaml:"uses"`
+	Run   string         `yaml:"run"`
+	Shell string         `yaml:"shell"`
+	With  map[string]any `yaml:"with"`
+	Env   yaml.Node      `yaml:"env"`
 }
 
 // workflowStrategy carries the matrix legs a job expands into. A matrix job reports one

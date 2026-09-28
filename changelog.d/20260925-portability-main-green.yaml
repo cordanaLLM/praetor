@@ -1,0 +1,4 @@
+type: fixed
+title: The Platform Neutrality matrix passes on macOS and Windows again; subagent dispatches wait for a busy correlation store for up to half the dispatch budget instead of a fixed 400 ms, command cleanup on macOS no longer reports a killed process group whose exited members are not yet reaped as a failure, and the Windows leg installs gosec under bash, where PowerShell no longer splits its -modfile argument
+issue: "558"
+breaking: false

@@ -88,6 +88,46 @@ func TestObserveCapabilitiesNativeMesonAndGPUExtensions(t *testing.T) {
 	}
 }
 
+// TestObserveCapabilitiesZigBuild: a Zig build is a needs marker of the native analyzer (#566).
+// Positive: beside a Cargo manifest its verification plan is declared. Negative: alone it declares
+// no test command, so its verification plan is unavailable. Boundary: build.zig.zon alone is still
+// a needs marker, whose directory the analyzer detects.
+func TestObserveCapabilitiesZigBuild(t *testing.T) {
+	policyPath := filepath.Join("..", "..", ".config", "dogfood", "discovery-policy.json")
+	policy, _, err := loadDiscoveryPolicy(context.Background(), policyPath)
+	if err != nil {
+		t.Fatalf("load default policy: %v", err)
+	}
+	for name, tc := range map[string]struct {
+		files               map[string]string
+		needs               int
+		verification, basis string
+	}{
+		"beside cargo":  {map[string]string{"Cargo.toml": "[package]\nname = \"engine\"\n", "build.zig": "const std = @import(\"std\");\n", "build.zig.zon": ".{}\n"}, 2, "available", "verification-plan-declared"},
+		"alone":         {map[string]string{"build.zig": "const std = @import(\"std\");\n"}, 1, "unknown", "verification-plan-declared-unavailable"},
+		"manifest only": {map[string]string{"build.zig.zon": ".{}\n"}, 1, "", ""},
+	} {
+		root := t.TempDir()
+		for rel, body := range tc.files {
+			writeDiscoveryFile(t, root, rel, body)
+		}
+		report, err := ObserveCapabilities(context.Background(), root, policy)
+		if err != nil {
+			t.Fatalf("%s: observe: %v", name, err)
+		}
+		observations := make(map[string]CapabilityObservation, len(report.Observations))
+		for _, observation := range report.Observations {
+			observations[observation.Key] = observation
+		}
+		if zig := observations["needs:zig"]; zig.Status != "available" || zig.EvidenceCount != tc.needs {
+			t.Errorf("%s: needs:zig = %+v", name, zig)
+		}
+		if verification := observations["verification:native"]; tc.verification != "" && (verification.Status != tc.verification || verification.Basis != tc.basis) {
+			t.Errorf("%s: verification:native = %+v", name, verification)
+		}
+	}
+}
+
 func TestObserveCapabilitiesNoMatchAndInvalidPolicy(t *testing.T) {
 	root := t.TempDir()
 	writeDiscoveryFile(t, root, "README.md", "hello\n")

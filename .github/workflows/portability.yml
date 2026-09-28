@@ -140,8 +140,16 @@ jobs:
       # is the right call for a security regression -- so the tool is a real dependency of this
       # job, not an optional extra. The first run of this matrix failed here for exactly that
       # reason, which is the intended behaviour working.
+      #
+      # bash, not the Windows default pwsh: PowerShell splits an unquoted native argument that
+      # starts with a dash at its period (PowerShell/PowerShell#6291), so go received
+      # `-modfile=tools/go/go` and `.mod`, refused the file name, and the Windows leg lost
+      # gosec and with it the harness self-tests below (#558).
+      # TestPortabilityPassesNoDottedDashArgumentThroughPowerShell keeps such an argument out
+      # of the default shell.
       - name: Install Security Scanner
         if: ${{ !cancelled() }}
+        shell: bash
         run: go install -modfile=tools/go/go.mod github.com/securego/gosec/v2/cmd/gosec
 
       # `make` is not on PATH on the Windows runner image (MSYS2 ships it but is unlisted),

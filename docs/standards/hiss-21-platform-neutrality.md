@@ -123,7 +123,14 @@ linter that is pinned on one leg and floating on another is not a narrower gate,
 whose red runs cannot be attributed. The `gosec` the security-scope
 suite needs is installed on every leg from `tools/go/go.mod`
 (`go install -modfile=tools/go/go.mod github.com/securego/gosec/v2/cmd/gosec`), the one version
-source the Makefile and the CI and security workflows also read.
+source the Makefile and the CI and security workflows also read. That step runs under bash on
+every leg: the Windows default shell, PowerShell, splits an unquoted argument that starts with a
+dash at its period ([PowerShell#6291](https://github.com/PowerShell/PowerShell/issues/6291)), so
+go received the module file name without its `.mod` extension, refused it, and the Windows leg
+ran without gosec (#558).
+`TestPortabilityPassesNoDottedDashArgumentThroughPowerShell`
+(`internal/forge/powershell_argument_guard_test.go`) refuses such an argument in any workflow
+step that runs under PowerShell on a Windows leg.
 
 The driver exists because the suites' exit codes are not a sufficient pass condition. It
 requires that every suite exited zero **and** that at least `--min-executed` tests actually ran,

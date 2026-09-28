@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func TestRegistrationsPerClient(t *testing.T) {
@@ -421,15 +423,76 @@ func launcherSeconds(t *testing.T, name string) time.Duration {
 	if err != nil {
 		t.Fatal(err)
 	}
-	match := regexp.MustCompile(`(?m)^` + name + ` = (\d+)$`).FindSubmatch(source)
-	if match == nil {
-		t.Fatalf("%s: no %s = <seconds> line", launcherScript, name)
+	seconds, err := launcherConstant(source, name)
+	if err != nil {
+		t.Fatalf("%s: %v", launcherScript, err)
 	}
-	seconds, err := strconv.Atoi(string(match[1]))
+	return seconds
+}
+
+// launcherConstant reads the integer seconds constant name from launcher source. The launcher
+// is text=auto in .gitattributes, so a Windows checkout with core.autocrlf holds it with CRLF
+// line endings, which CPython runs as the same program (#558). The constant is read from the
+// LF text; mixed endings and a lone carriage return stay an error
+// (util.NormalizeLineEndingsStrict), never a match.
+func launcherConstant(source []byte, name string) (time.Duration, error) {
+	text, _, err := util.NormalizeLineEndingsStrict(string(source))
+	if err != nil {
+		return 0, err
+	}
+	match := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(name) + ` = (\d+)$`).FindStringSubmatch(text)
+	if match == nil {
+		return 0, fmt.Errorf("no %s = <seconds> line", name)
+	}
+	seconds, err := strconv.Atoi(match[1])
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", name, err)
+	}
+	return time.Duration(seconds) * time.Second, nil
+}
+
+// TestLauncherConstantReadsEitherCheckoutLineEnding: the tracked launcher's constants read the
+// same from an LF and a CRLF checkout (positive); a missing constant, mixed endings and a lone
+// carriage return are errors (negative); a last line without a newline, a zero value and a
+// longer name sharing the prefix are read exactly (boundary).
+func TestLauncherConstantReadsEitherCheckoutLineEnding(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(launcherScript)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return time.Duration(seconds) * time.Second
+	lf, _, err := util.NormalizeLineEndingsStrict(string(source))
+	if err != nil {
+		t.Fatalf("%s: %v", launcherScript, err)
+	}
+	crlf := util.RestoreLineEndings(lf, true)
+	for _, name := range []string{"RUN_TIMEOUT", "PROBE_TIMEOUT"} {
+		fromLF, lfErr := launcherConstant([]byte(lf), name)
+		fromCRLF, crlfErr := launcherConstant([]byte(crlf), name)
+		if lfErr != nil || crlfErr != nil || fromLF <= 0 || fromLF != fromCRLF {
+			t.Errorf("%s: LF %s (%v), CRLF %s (%v)", name, fromLF, lfErr, fromCRLF, crlfErr)
+		}
+	}
+	for _, tc := range []struct {
+		source string
+		want   time.Duration
+		ok     bool
+	}{
+		{"A = 1\nRUN_TIMEOUT = 45\n", 45 * time.Second, true},
+		{"A = 1\r\nRUN_TIMEOUT = 45\r\n", 45 * time.Second, true},
+		{"A = 1\r\nRUN_TIMEOUT = 45", 45 * time.Second, true},
+		{"RUN_TIMEOUT = 0\n", 0, true},
+		{"RUN_TIMEOUT_MAX = 9\nRUN_TIMEOUT = 3\n", 3 * time.Second, true},
+		{"PROBE_TIMEOUT = 5\n", 0, false},
+		{"RUN_TIMEOUT_MAX = 9\n", 0, false},
+		{"  RUN_TIMEOUT = 45\n", 0, false},
+		{"A = 1\nRUN_TIMEOUT = 45\r\n", 0, false},
+		{"A = 1\rRUN_TIMEOUT = 45\r", 0, false},
+	} {
+		got, err := launcherConstant([]byte(tc.source), "RUN_TIMEOUT")
+		if (err == nil) != tc.ok || got != tc.want {
+			t.Errorf("%q: got %s (%v), want %s ok=%t", tc.source, got, err, tc.want, tc.ok)
+		}
+	}
 }
 
 // launcherTimeoutProblems lists how the launcher's run and probe timeouts break the timing of

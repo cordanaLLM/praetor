@@ -22,12 +22,22 @@ const (
 	MaxCorrelationEntries   = 128
 	MaxCorrelationIDBytes   = 1024
 	correlationFileMaxBytes = 4096
-	correlationLockAttempts = 40
 	correlationLockDelay    = 10 * time.Millisecond
-	correlationLockTTL      = 2 * time.Minute
-	correlationPendingTTL   = 5 * time.Minute
-	correlationActiveTTL    = 24 * time.Hour
-	correlationDirRel       = "praetor/agenthook-correlations"
+	// correlationLockWait bounds how long one call waits for the store lock. Holders
+	// serialise, so a caller waits behind every holder queued before it: n concurrent
+	// dispatches wait up to n-1 holds, and one hold is a directory sweep plus an fsynced
+	// atomic write. On the Windows runner 16 concurrent reservations outlasted the earlier
+	// fixed 400 ms (40 attempts of 10 ms), a wait the 10 s dispatch budget had room for
+	// (#558). Every row that reaches the store runs under at least dispatchBudget; half of
+	// it leaves the other half to the hold and the rest of the evaluation, and the caller's
+	// own deadline still ends the wait earlier.
+	correlationLockWait = dispatchBudget / 2
+	correlationLockTTL  = 2 * time.Minute
+	// correlationLockName is the lock file's name inside the store.
+	correlationLockName   = ".lock"
+	correlationPendingTTL = 5 * time.Minute
+	correlationActiveTTL  = 24 * time.Hour
+	correlationDirRel     = "praetor/agenthook-correlations"
 	// correlationScanLimit bounds one sweep's directory read (HISS-02). Only live rows count
 	// against MaxCorrelationEntries, and eviction keeps them there; the rest of the bound is
 	// room for the lock, temporary files the sweep removes once stale, and entries Praetor
@@ -50,6 +60,8 @@ type correlationEntry struct {
 
 type correlationStore struct {
 	dir string
+	// lockWait bounds the wait for the store lock; zero means correlationLockWait.
+	lockWait time.Duration
 }
 
 func newCorrelationStore(ctx context.Context, root, override string) (correlationStore, error) {
@@ -310,20 +322,33 @@ func (s correlationStore) withLock(ctx context.Context, action func() error) (re
 		return fmt.Errorf("open correlation store: %w", err)
 	}
 	defer func() { resultErr = errors.Join(resultErr, root.Close()) }()
-	const lock = ".lock"
-	for attempt := 0; attempt < correlationLockAttempts; attempt++ {
-		file, err := root.OpenFile(lock, os.O_CREATE|os.O_EXCL|os.O_WRONLY, util.SecureFilePerm)
-		if err == nil {
-			if closeErr := file.Close(); closeErr != nil {
-				return errors.Join(closeErr, removeCorrelationLock(root, lock))
-			}
-			defer func() { resultErr = errors.Join(resultErr, removeCorrelationLock(root, lock)) }()
-			return action()
+	if err := acquireCorrelationLock(ctx, root, s.lockWaitBound()); err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, removeCorrelationLock(root, correlationLockName)) }()
+	return action()
+}
+
+// lockWaitBound is how long withLock waits for the lock: lockWait, or correlationLockWait
+// when unset.
+func (s correlationStore) lockWaitBound() time.Duration {
+	if s.lockWait > 0 {
+		return s.lockWait
+	}
+	return correlationLockWait
+}
+
+// acquireCorrelationLock creates the lock file in root, retrying every correlationLockDelay
+// while another caller holds it. It tries at least once, and at most wait/correlationLockDelay
+// times (HISS-02); ctx ends the wait earlier. A lock older than correlationLockTTL is a
+// holder that died and is reclaimed.
+func acquireCorrelationLock(ctx context.Context, root *os.Root, wait time.Duration) error {
+	attempts := max(1, int(wait/correlationLockDelay))
+	for attempt := 0; attempt < attempts; attempt++ {
+		if held, err := tryCorrelationLock(root); err != nil || held {
+			return err
 		}
-		if !errors.Is(err, os.ErrExist) {
-			return fmt.Errorf("acquire correlation lock: %w", err)
-		}
-		if staleErr := removeStaleCorrelationLock(root, lock, time.Now().UTC()); staleErr != nil {
+		if staleErr := removeStaleCorrelationLock(root, correlationLockName, time.Now().UTC()); staleErr != nil {
 			return staleErr
 		}
 		timer := time.NewTimer(correlationLockDelay)
@@ -334,7 +359,23 @@ func (s correlationStore) withLock(ctx context.Context, action func() error) (re
 		case <-timer.C:
 		}
 	}
-	return errors.New("correlation store remained locked")
+	return fmt.Errorf("correlation store remained locked for %s", wait)
+}
+
+// tryCorrelationLock creates the lock file once and reports whether this call now holds it.
+// A lock another caller holds is not an error.
+func tryCorrelationLock(root *os.Root) (bool, error) {
+	file, err := root.OpenFile(correlationLockName, os.O_CREATE|os.O_EXCL|os.O_WRONLY, util.SecureFilePerm)
+	if errors.Is(err, os.ErrExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("acquire correlation lock: %w", err)
+	}
+	if closeErr := file.Close(); closeErr != nil {
+		return false, errors.Join(closeErr, removeCorrelationLock(root, correlationLockName))
+	}
+	return true, nil
 }
 
 func removeCorrelationLock(root *os.Root, name string) error {

@@ -226,7 +226,9 @@ var epicLanguageSteps = []languageSteps{
 		audit: "bare `except:` clauses, swallowed exceptions and `sys.exit` outside entry points"},
 	{ids: []string{"typescript", "svelte"}, name: "TypeScript", tests: "the package's `test` script", cycles: true,
 		audit: "unhandled promise rejections, empty `catch` blocks and `process.exit` outside entry points"},
-	{ids: []string{"native", "c", "cpp", "cuda"}, name: "C/C++", cycles: true,
+	// The native analyzer's own id is left out: it reports c, cpp and cuda for a meson or CMake
+	// build and zig for a Zig build (NativeLanguages), which is not C/C++ by itself.
+	{ids: []string{"c", "cpp", "cuda"}, name: "C/C++", cycles: true,
 		tests: "the build system's test target, such as `ctest` or `meson test`, under ThreadSanitizer",
 		audit: "unchecked return codes and `abort()` or `exit()` in library code"},
 }

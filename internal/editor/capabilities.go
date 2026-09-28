@@ -137,7 +137,7 @@ func DetectWorkspaceLanguages(root string) ([]string, error) {
 func detectWorkspaceLanguages(ctx context.Context, root string, fileBound int) ([]string, error) {
 	scan := workspaceLanguageScan{ctx: ctx, root: root, fileBound: fileBound, languages: make([]string, 0, 12)}
 	for _, analyzer := range needs.DefaultRegistry().DetectAll(root) {
-		scan.languages = append(scan.languages, analyzer.Language())
+		scan.languages = append(scan.languages, analyzerLanguages(root, analyzer.Language())...)
 		if analyzer.Language() == "typescript" && isRegularFile(filepath.Join(root, "svelte.config.js")) {
 			scan.languages = append(scan.languages, "svelte")
 		}
@@ -181,17 +181,32 @@ func (scan *workspaceLanguageScan) visit(path string, entry fs.DirEntry, walkErr
 	return nil
 }
 
+// analyzerLanguages returns the languages a needs analyzer detected at root adds to the plan: its
+// id, except for the native analyzer, whose id covers meson, CMake and Zig builds alike. There the
+// builds root holds decide (needs.NativeLanguages): c and cpp for meson or CMake, zig for a Zig
+// build, so a pure-Zig repository is given no C/C++ tooling. needs names cuda for every meson or
+// CMake build, since either can compile it; the plan adds cuda only from the .cu sources the scan
+// meets, as it did when it read the id itself.
+func analyzerLanguages(root, id string) []string {
+	if id != "native" {
+		return []string{id}
+	}
+	return slices.DeleteFunc(needs.NativeLanguages(root), func(language string) bool { return language == "cuda" })
+}
+
 // ignoredWorkspaceDir skips version-control, dependency and build-output trees, and the scratch
 // directories every repository walker shares through util.IsScratchDir: agent state and linked
 // worktrees under .claude, Praetor's cache and gate worktrees under .standards, and the private
 // ledgers. A worktree is a whole copy of the checkout, so entering one exhausts the file bound
 // on an ordinary working checkout; skipping only .claude/worktrees left .standards/worktrees in.
+// The toolchain trees (util.IsToolchainTreeDir) hold the C sources and headers of the packages
+// Zig fetched and installed, which are no language of the workspace's own.
 func ignoredWorkspaceDir(name string) bool {
 	switch name {
 	case ".git", ".worktrees", "node_modules", "vendor", "dist", "build", "target":
 		return true
 	default:
-		return util.IsScratchDir(name)
+		return util.IsScratchDir(name) || util.IsToolchainTreeDir(name)
 	}
 }
 

@@ -18,7 +18,8 @@ import (
 // runtimeLanguages maps the runtimes and source languages the verification plan detects to the
 // languages a HISS directive clause can name. A native build (meson, CMake) is C or C++, and so
 // are C or C++ sources without one (sourceLanguageC). Every other detected runtime (Node, .NET,
-// the JVM builds, Flutter) is a language no clause names.
+// the JVM builds, Flutter, Zig) is a language no clause names. A Zig build that compiles C or
+// C++ is C/C++ through those sources, since build.zig is a program that declares no language.
 var runtimeLanguages = map[string]hisscatalog.Language{
 	"go":               hisscatalog.LanguageGo,
 	"cargo":            hisscatalog.LanguageRust,

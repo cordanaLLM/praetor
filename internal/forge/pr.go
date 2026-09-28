@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path"
 	"regexp"
 	"slices"
 	"sort"
@@ -357,43 +356,14 @@ func matchPattern(pattern, filePath string) bool {
 // rule has to match the path in full.
 func matchFrom(patSegs, pathSegs []string, dirRule bool) bool {
 	if !dirRule {
-		return segmentsMatch(patSegs, pathSegs)
+		return util.MatchGlobSegments(patSegs, pathSegs)
 	}
 	for k := 1; k < len(pathSegs); k++ {
-		if segmentsMatch(patSegs, pathSegs[:k]) {
+		if util.MatchGlobSegments(patSegs, pathSegs[:k]) {
 			return true
 		}
 	}
 	return false
-}
-
-// segmentsMatch evaluates the pattern segments against the path segments iteratively
-// (HISS-01: no recursion), treating "**" as "any number of segments".
-func segmentsMatch(patSegs, pathSegs []string) bool {
-	reached := make([]bool, len(patSegs)+1)
-	reached[0] = true
-	for j := 0; j < len(patSegs) && patSegs[j] == "**"; j++ {
-		reached[j+1] = true
-	}
-
-	for i := 0; i < len(pathSegs); i++ {
-		next := make([]bool, len(patSegs)+1)
-		for j := 1; j <= len(patSegs); j++ {
-			if patSegs[j-1] == "**" {
-				next[j] = next[j-1] || reached[j]
-				continue
-			}
-			next[j] = reached[j-1] && matchSegment(patSegs[j-1], pathSegs[i])
-		}
-		reached = next
-	}
-	return reached[len(patSegs)]
-}
-
-// matchSegment matches a single glob segment against a single path segment.
-func matchSegment(pattern, segment string) bool {
-	matched, err := path.Match(pattern, segment)
-	return err == nil && matched
 }
 
 // AnalyzeCommit checks conventional commits for breaking indicators and mandatory HISS-14 footers.

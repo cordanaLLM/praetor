@@ -62,6 +62,7 @@ func resolveVerificationPlanWithLimits(ctx context.Context, root string, request
 		return nil, err
 	}
 	addStandardVerification(plan, inputs)
+	addZigVerification(plan, inputs)
 	plan.SourceLanguages = inputs.cSources.languages(ctx, root)
 	if len(plan.Runtimes) == 0 {
 		plan.unavailable("No supported build-system marker or explicit test runner was found; define and exercise a project verify-all target.")
@@ -102,8 +103,37 @@ func addStandardVerification(p *VerificationPlan, inputs verificationInputs) {
 	for _, marker := range []string{"meson.build", "core/meson.build", "CMakeLists.txt", "pom.xml", "build.gradle", "build.gradle.kts", "pubspec.yaml"} {
 		if inputs.has(marker) {
 			p.Runtimes = append(p.Runtimes, marker)
-			p.unavailable("Select and exercise the project's configured native test/build commands for " + marker + "; a governance profile cannot select them.")
+			p.nativeStepUnavailable(marker, "test/build")
 		}
+	}
+}
+
+// nativeStepUnavailable records that the project's own steps for marker, a build whose steps
+// a governance profile cannot select, are missing from the plan.
+func (p *VerificationPlan) nativeStepUnavailable(marker, steps string) {
+	p.unavailable("Select and exercise the project's configured native " + steps + " commands for " + marker + "; a governance profile cannot select them.")
+}
+
+// zigBuildMarker is a Zig build script at the repository root; zigRuntime is its runtime.
+const (
+	zigBuildMarker = "build.zig"
+	zigRuntime     = "zig"
+)
+
+// addZigVerification runs `zig build`, the build script's default install step, ahead of every
+// other build and test command: a language build such as Cargo's links the native libraries the
+// Zig build produces, so the native step comes first. build.zig is a program, and `zig build test`
+// runs only where it declares a test step, so the Zig build supplies no test command of its own:
+// without a language marker that declares one the plan is unavailable and names the missing
+// native test step, as for a meson or CMake marker.
+func addZigVerification(p *VerificationPlan, inputs verificationInputs) {
+	if !inputs.has(zigBuildMarker) {
+		return
+	}
+	p.Runtimes = append(p.Runtimes, zigRuntime)
+	p.Build = append([][]string{{"zig", "build"}}, p.Build...)
+	if len(p.Test) == 0 {
+		p.nativeStepUnavailable(zigBuildMarker, "test")
 	}
 }
 

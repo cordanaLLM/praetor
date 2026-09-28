@@ -122,10 +122,12 @@ func ScanRepoContext(ctx context.Context, repoPath string) (*DedupeReport, error
 //
 // The scratch directories come from util.IsScratchDir, the list the HISS scanner and adopt's
 // verification planner share: a .claude/worktrees copy of the checkout is the same source
-// again, and scanning it reported every function as its own duplicate.
+// again, and scanning it reported every function as its own duplicate. The toolchain trees
+// (util.IsToolchainTreeDir: zig-pkg/, zig-out/, .zig-cache/) hold fetched third-party packages
+// and build output, not the repository's source.
 func shouldSkipDir(name string) bool {
 	return name == ".git" || name == "vendor" || name == "node_modules" ||
-		name == "testdata" || util.IsScratchDir(name)
+		name == "testdata" || util.IsScratchDir(name) || util.IsToolchainTreeDir(name)
 }
 
 func scanGoFile(ctx context.Context, fset *token.FileSet, path, relPath string, hashMap map[string][]FileLocation, locMap map[string]int, report *DedupeReport) error {

@@ -224,12 +224,13 @@
     },
     {
       "key": "needs:zig",
-      "title": "Zig needs analyzer",
+      "title": "Zig build needs analyzer",
       "kind": "needs_marker",
       "matches": [
-        "build.zig"
+        "build.zig",
+        "build.zig.zon"
       ],
-      "analyzer": "zig"
+      "analyzer": "native"
     },
     {
       "key": "verification:project",
@@ -246,6 +247,7 @@
       "kind": "verification_marker",
       "matches": [
         "CMakeLists.txt",
+        "build.zig",
         "meson.build"
       ],
       "analyzer": "adopt"

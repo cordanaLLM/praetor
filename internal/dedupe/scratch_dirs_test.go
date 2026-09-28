@@ -67,3 +67,17 @@ func TestScanRepo_Boundary_EveryLedgerDirectoryIsSkipped(t *testing.T) {
 		}
 	}
 }
+
+// TestScanRepo_Positive_ZigToolchainTreesAreNotClones: a package Zig fetched into zig-pkg/, and
+// the zig-out/ and .zig-cache/ trees it writes, are third-party copies and build output, not
+// clones of the repository's source. The skip is by exact name: zig-pkg-tools/ is first-party.
+func TestScanRepo_Positive_ZigToolchainTreesAreNotClones(t *testing.T) {
+	for _, dir := range []string{"zig-pkg/dep-0.0.1-h", "zig-out/lib", ".zig-cache/o"} {
+		if got := duplicatesWithCopyUnder(t, dir); got != 0 {
+			t.Fatalf("copy under %s reported %d duplicate group(s)", dir, got)
+		}
+	}
+	if got := duplicatesWithCopyUnder(t, "zig-pkg-tools"); got != 1 {
+		t.Fatalf("a first-party zig-pkg-tools copy must be one duplicate group, got %d", got)
+	}
+}

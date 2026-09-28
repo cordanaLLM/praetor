@@ -120,9 +120,10 @@ func visitVerificationInput(ctx context.Context, root, rel string, entry fs.DirE
 // skipVerificationDirectory reports a directory that holds no verification input of the
 // repository's own. The scratch directories come from util.IsScratchDir: a .claude/worktrees
 // tree alone holds whole copies of the checkout and ran the walk past its entry bound on an
-// ordinary working checkout.
+// ordinary working checkout. The toolchain trees come from util.IsToolchainTreeDir: the C
+// sources of a package Zig fetched into zig-pkg/ made a pure-Zig repository C/C++.
 func skipVerificationDirectory(name string) bool {
-	if util.IsScratchDir(name) {
+	if util.IsScratchDir(name) || util.IsToolchainTreeDir(name) {
 		return true
 	}
 	switch name {
@@ -147,8 +148,21 @@ func (v *verificationInputs) capture(ctx context.Context, root, rel string, entr
 	if !verificationMarker(rel) {
 		return nil
 	}
+	return v.captureMarker(ctx, root, rel, entry, total, limits)
+}
+
+// captureMarker records the verification marker at rel within the file and byte bounds. A
+// presence marker is recorded without its content, which no planner reads.
+func (v *verificationInputs) captureMarker(ctx context.Context, root, rel string, entry fs.DirEntry, total *int, limits VerificationLimits) error {
 	if len(v.files) >= limits.MaxFiles {
 		return filesBound.exceeded(limits.MaxFiles, fmt.Errorf("verification discovery exceeds %d metadata files", limits.MaxFiles))
+	}
+	if presenceMarker(rel) {
+		if !entry.Type().IsRegular() {
+			return fmt.Errorf("verification discovery refuses %s that is not a regular file", rel)
+		}
+		v.files[rel] = nil
+		return nil
 	}
 	data, err := contextopt.ReadSnapshot(ctx, filepath.Join(root, filepath.FromSlash(rel)))
 	if err != nil {
@@ -168,9 +182,17 @@ func verificationMarker(rel string) bool {
 	}
 	switch rel {
 	case "Makefile", "go.mod", "Cargo.toml", "package.json", "global.json", "pyproject.toml", "pytest.ini", ".pytest.ini", ".python-version",
-		"meson.build", "core/meson.build", "CMakeLists.txt", "pom.xml", "build.gradle", "build.gradle.kts", "pubspec.yaml":
+		"meson.build", "core/meson.build", "CMakeLists.txt", "pom.xml", "build.gradle", "build.gradle.kts", "pubspec.yaml", zigBuildMarker:
 		return true
 	default:
 		return false
 	}
+}
+
+// presenceMarker reports a verification marker whose presence alone selects a plan step. The
+// walk records it without reading it, so a build script of any size spends none of the byte
+// budget: build.zig is Zig source, often longer than the metadata byte bound, and no planner
+// reads it.
+func presenceMarker(rel string) bool {
+	return rel == zigBuildMarker
 }

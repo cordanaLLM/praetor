@@ -262,6 +262,106 @@ func TestCorrelationStoreConcurrentReservations(t *testing.T) {
 	}
 }
 
+// holdCorrelationLock takes the store lock in dir as a live holder would and releases it after
+// hold. The returned channel yields the release's error.
+func holdCorrelationLock(t *testing.T, dir string, hold time.Duration) <-chan error {
+	t.Helper()
+	if err := util.MkdirSecure(dir, util.SecureDirPerm); err != nil {
+		t.Fatal(err)
+	}
+	lock := filepath.Join(dir, correlationLockName)
+	if err := os.WriteFile(lock, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	released := make(chan error, 1)
+	time.AfterFunc(hold, func() { released <- os.Remove(lock) })
+	return released
+}
+
+// A holder that keeps the lock past the earlier fixed 400 ms is waited for, not reported as a
+// store that "remained locked", as long as the lock comes free inside the wait bound (#558).
+func TestCorrelationStoreWaitsForASlowHolder(t *testing.T) {
+	dir := t.TempDir()
+	store, err := newCorrelationStore(t.Context(), "", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const hold = 700 * time.Millisecond
+	if store.lockWaitBound() <= hold {
+		t.Fatalf("lock wait %s does not outlast the %s hold", store.lockWaitBound(), hold)
+	}
+	released := holdCorrelationLock(t, dir, hold)
+	resolution := config.Resolution{Register: config.TextRegisterInternal, Source: "surfaces.agent"}
+	began := time.Now()
+	if err := store.reserve(t.Context(), "claude", "session", "tool", resolution); err != nil {
+		t.Fatalf("reserve behind a %s holder: %v", hold, err)
+	}
+	if took := time.Since(began); took < hold {
+		t.Fatalf("reserve took %s and so did not wait for the %s holder", took, hold)
+	}
+	if err := <-released; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A lock held past the wait bound, or past the caller's deadline, is an error, and the wait
+// ends at whichever comes first.
+func TestCorrelationStoreLockWaitEndsAtItsBound(t *testing.T) {
+	resolution := config.Resolution{Register: config.TextRegisterInternal, Source: "surfaces.agent"}
+	cases := []struct {
+		name     string
+		lockWait time.Duration
+		deadline time.Duration
+		want     func(error) bool
+	}{
+		{"wait bound", 150 * time.Millisecond, time.Minute, func(err error) bool {
+			return err != nil && strings.Contains(err.Error(), "remained locked for 150ms")
+		}},
+		{"caller deadline", time.Minute, 150 * time.Millisecond, func(err error) bool {
+			return errors.Is(err, context.DeadlineExceeded)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			released := holdCorrelationLock(t, dir, 600*time.Millisecond)
+			store := correlationStore{dir: dir, lockWait: tc.lockWait}
+			ctx, cancel := context.WithTimeout(t.Context(), tc.deadline)
+			defer cancel()
+			// The holder releases at 600 ms, so an error proves the wait ended at its bound.
+			if err := store.reserve(ctx, "claude", "session", "tool", resolution); !tc.want(err) {
+				t.Fatalf("reserve against a held lock: %v", err)
+			}
+			if err := <-released; err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+// A wait bound shorter than one retry delay still tries the lock once: a free lock is taken,
+// a held one is reported without waiting.
+func TestCorrelationStoreLockWaitBelowOneDelayTriesOnce(t *testing.T) {
+	resolution := config.Resolution{Register: config.TextRegisterInternal, Source: "surfaces.agent"}
+	free := correlationStore{dir: t.TempDir(), lockWait: time.Nanosecond}
+	if err := free.reserve(t.Context(), "claude", "session", "tool", resolution); err != nil {
+		t.Fatalf("a free lock was not taken: %v", err)
+	}
+	dir := t.TempDir()
+	released := holdCorrelationLock(t, dir, 300*time.Millisecond)
+	held := correlationStore{dir: dir, lockWait: time.Nanosecond}
+	err := held.reserve(t.Context(), "claude", "session", "tool", resolution)
+	if err == nil || !strings.Contains(err.Error(), "remained locked") {
+		t.Fatalf("a held lock was not reported: %v", err)
+	}
+	if err := <-released; err != nil {
+		t.Fatal(err)
+	}
+	if (correlationStore{}).lockWaitBound() != correlationLockWait {
+		t.Fatalf("an unset lock wait is %s, want %s", (correlationStore{}).lockWaitBound(), correlationLockWait)
+	}
+}
+
 func TestCorrelationStoreReclaimsStaleLock(t *testing.T) {
 	dir := t.TempDir()
 	store, err := newCorrelationStore(t.Context(), "", dir)
