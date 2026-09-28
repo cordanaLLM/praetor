@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"unicode"
 
@@ -207,7 +209,11 @@ func applyNodeUpdate(ctx context.Context, targetDir string, cand UpgradeCandidat
 		return fmt.Errorf("update %s in %s: %w", cand.Package, filepath.Join(targetDir, "package.json"), err)
 	}
 	spec := cand.Package + "@" + raised
-	if _, err := util.RunCommand(ctx, targetDir, "pnpm", "update", spec); err != nil {
+	name, args, err := pnpmUpdateCommand(runtime.GOOS, exec.LookPath, spec)
+	if err == nil {
+		_, err = util.RunCommand(ctx, targetDir, name, args...)
+	}
+	if err != nil {
 		return fmt.Errorf("pnpm update %s (package.json left unchanged to match pnpm-lock.yaml): %w", spec, err)
 	}
 	return nil
