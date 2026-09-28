@@ -127,11 +127,29 @@ to drop the bootstrap deliberately. Invalid explicit source paths, mutable image
 bundles, symlinks, and altered companions are errors. Optional `--builder-image`
 and `--base-image` overrides must include lowercase SHA-256 digests.
 
+Regeneration keeps the images the output file records. Without `--base-image`
+or `--builder-image`, generation reads the bootstrap specification already
+recorded there. An image from another repository than the reviewed default is
+the adopter's choice and is kept, so `--force` does not swap it for the
+reviewed base. An earlier pin of the reviewed default repository, such as the
+`ubuntu-24.04` base, is refreshed to the current reviewed pin. An explicit flag
+always wins. Each image kept, refreshed or replaced against its recorded value
+is printed as a `[RECORDED IMAGE KEPT]`, `[RECORDED IMAGE REFRESHED]` or
+`[RECORDED IMAGE REPLACED]` line naming the recorded image, the selected one and
+the flag that changes it. A missing file, a custom DevContainer or an invalid
+specification records no choice, so the reviewed defaults apply
+(`InheritRecordedImages` in `internal/devcontainer/bootstrap_recorded.go`,
+tests in `internal/devcontainer/bootstrap_recorded_test.go` and
+`TestDevContainerCLIForceKeepsRecordedBaseImage` in
+`cmd/standardsctl/devcontainer_bootstrap_test.go`).
+
 Adoption uses its explicit `--lock-source-root` as the bootstrap source and the
 same planned or preserved manifest that audit consumes. A config-only catalog
 can supply governance policy while bootstrap remains visibly unavailable.
 Dry-run lists planned companion paths without writing them. Existing custom
-DevContainers are preserved and reported as execution-unverified.
+DevContainers are preserved and reported as execution-unverified. Forced
+adoption keeps recorded images by the same rule and lists each note as a
+warning.
 
 ## Migration
 

@@ -23,8 +23,8 @@ func parseDevContainerOptions(args []string) (devContainerOptions, error) {
 	fs.StringVar(&opts.outputPath, "output", ".devcontainer/devcontainer.json", "Target path for devcontainer.json")
 	fs.BoolVar(&opts.verify, "verify", false, "Verify configuration against declared standards and recorded bootstrap inputs")
 	fs.StringVar(&opts.sourceRoot, "source-root", "", "Explicit complete Praetor source checkout for a portable bootstrap bundle")
-	fs.StringVar(&opts.builderImage, "builder-image", "", "Digest-pinned Go builder image (defaults to the reviewed bootstrap image)")
-	fs.StringVar(&opts.baseImage, "base-image", "", "Digest-pinned DevContainer base image (defaults to the reviewed base)")
+	fs.StringVar(&opts.builderImage, "builder-image", "", "Digest-pinned Go builder image (default: the recorded image unless it is an earlier reviewed pin, else the reviewed bootstrap image)")
+	fs.StringVar(&opts.baseImage, "base-image", "", "Digest-pinned DevContainer base image (default: the recorded image unless it is an earlier reviewed pin, else the reviewed base)")
 	fs.BoolVar(&opts.force, "force", false, "Replace only the reviewed generated DevContainer bundle files")
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
@@ -73,12 +73,21 @@ func runDevContainer(args []string) error {
 }
 
 func generateDevContainerBundle(ctx context.Context, manifest *config.Manifest, dc *devcontainer.DevContainer, features []config.DevContainerFeature, opts devContainerOptions) error {
-	bundle, err := devcontainer.PrepareBundle(ctx, dc.Name, manifest.Profiles, manifest.Facets, devcontainer.BootstrapOptions{SourceRoot: opts.sourceRoot, BuilderImage: opts.builderImage, BaseImage: opts.baseImage, Features: features})
+	// A flag left unset keeps the image the replaced bundle records (#536).
+	selected := devcontainer.BootstrapOptions{SourceRoot: opts.sourceRoot, BuilderImage: opts.builderImage, BaseImage: opts.baseImage, Features: features}
+	selected, notes, err := devcontainer.InheritRecordedImages(ctx, opts.outputPath, selected)
+	if err != nil {
+		return err
+	}
+	bundle, err := devcontainer.PrepareBundle(ctx, dc.Name, manifest.Profiles, manifest.Facets, selected)
 	if err != nil {
 		return fmt.Errorf("prepare devcontainer bootstrap: %w", err)
 	}
 	if err := devcontainer.WriteBundle(ctx, opts.outputPath, bundle, opts.force); err != nil {
 		return fmt.Errorf("write devcontainer bundle: %w", err)
+	}
+	for _, note := range notes {
+		fmt.Println(note)
 	}
 	if bundle.Spec().State == devcontainer.BootstrapUnavailable {
 		return fmt.Errorf("%w: %s; rerun generate with --source-root <complete Praetor checkout> before rebuilding the container "+

@@ -180,7 +180,14 @@ func recordedBootstrap(write bootstrapWrite) *BootstrapSpec {
 	if !write.config {
 		return nil
 	}
-	dc, err := decodeManagedConfig(write.expected, write.path)
+	return decodeRecordedBootstrap(write.expected, write.path)
+}
+
+// decodeRecordedBootstrap returns the valid bootstrap specification recorded in the
+// config bytes data read from path, or nil when data is not a managed config carrying a
+// valid specification.
+func decodeRecordedBootstrap(data []byte, path string) *BootstrapSpec {
+	dc, err := decodeManagedConfig(data, path)
 	if err != nil {
 		return nil
 	}

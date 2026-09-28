@@ -112,3 +112,37 @@ func TestAdoptDevContainerUsesActualManifestIdentityAndProfiles(t *testing.T) {
 		t.Fatalf("adoption generated a container rejected by its own manifest audit: %v", err)
 	}
 }
+
+// TestAdoptDevContainerForceKeepsRecordedBaseImage pins #536 for adoption: a forced
+// re-adoption keeps the adopter's recorded base image by the rule devcontainer generate
+// applies and reports it; a first adoption takes the reviewed default without a note.
+func TestAdoptDevContainerForceKeepsRecordedBaseImage(t *testing.T) {
+	adopterBase := "registry.example/team/dev-toolchains@sha256:" + strings.Repeat("d", 64)
+	fresh := bootstrapAdoptSession(t, adoptBootstrapSource(t), false)
+	if err := reconcileDevContainer(t.Context(), fresh); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.Join(fresh.report.Warnings, "\n"), "RECORDED IMAGE") {
+		t.Fatalf("first adoption reported a recorded image: %v", fresh.report.Warnings)
+	}
+	session := bootstrapAdoptSession(t, adoptBootstrapSource(t), false)
+	path := filepath.Join(session.repoPath, devcontainerFile)
+	recorded, err := devcontainer.PrepareBundle(t.Context(), "adopted/app", nil, nil, devcontainer.BootstrapOptions{SourceRoot: adoptBootstrapSource(t), BaseImage: adopterBase})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := devcontainer.WriteBundle(t.Context(), path, recorded, false); err != nil {
+		t.Fatal(err)
+	}
+	session.opts.Force = true
+	if err := reconcileDevContainer(t.Context(), session); err != nil {
+		t.Fatal(err)
+	}
+	dc, err := devcontainer.LoadDevContainer(t.Context(), path)
+	if err != nil || dc.Customizations.Praetor.Bootstrap.BaseImage != adopterBase {
+		t.Fatalf("forced re-adoption replaced the recorded base image: %v", err)
+	}
+	if !strings.Contains(strings.Join(session.report.Warnings, "\n"), "[RECORDED IMAGE KEPT] base image "+adopterBase) {
+		t.Fatalf("kept image not reported: %v", session.report.Warnings)
+	}
+}
