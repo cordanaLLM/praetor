@@ -72,7 +72,7 @@ func currentTextDigests(f Family) (map[string]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		current[rel] = textDigest(string(data))
+		current[rel] = sha256Hex(string(data))
 	}
 	return current, nil
 }
@@ -200,11 +200,11 @@ func TestShippedTextLedgerNegative(t *testing.T) {
 	assertLedgerProblem(t, ledgerProblems(family, appended, current), "is not in Prior")
 	family = Families()[0]
 	current = mustCurrentDigests(t, family)
-	family.Prior[textDigest("never shipped\n")] = family.WorkflowFile
+	family.Prior[sha256Hex("never shipped\n")] = family.WorkflowFile
 	assertLedgerProblem(t, ledgerProblems(family, entries, current), "records no such earlier text")
-	stray := append(slices.Clone(entries), shippedText{digest: textDigest("x"), rel: "README.md"})
+	stray := append(slices.Clone(entries), shippedText{digest: sha256Hex("x"), rel: "README.md"})
 	assertLedgerProblem(t, ledgerProblems(Families()[0], stray, current), "is not a managed path")
-	for _, malformed := range []string{"abc  " + family.WorkflowFile, textDigest("x"), textDigest("x") + "  a  b"} {
+	for _, malformed := range []string{"abc  " + family.WorkflowFile, sha256Hex("x"), sha256Hex("x") + "  a  b"} {
 		if _, err := parseLedger(malformed); err == nil {
 			t.Fatalf("malformed ledger line %q parsed", malformed)
 		}

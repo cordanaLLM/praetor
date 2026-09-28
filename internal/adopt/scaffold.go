@@ -83,17 +83,13 @@ type scaffold struct {
 }
 
 // priorRendering reports whether data is one of the earlier Praetor texts digests names, and
-// whether data is its CRLF checkout. It is the one rule every earlier-text set in adoption
-// (labels, lefthook.yml, the pinned catalog) is read with: a key is util.CanonicalTextDigest of
-// the recorded LF text, so a checkout that converted it to CRLF (core.autocrlf on Windows) is
-// still recognised, while an edit, a lost final newline or mixed line endings match nothing
-// (HISS-21).
+// whether data is its CRLF checkout. Every earlier-text set in adoption (labels, lefthook.yml,
+// the pinned catalog) is read with it, and the managed asset families' Prior with the same
+// util.LookupCanonicalText: a key is util.CanonicalTextDigest of the recorded LF text, so a
+// checkout that converted it to CRLF (core.autocrlf on Windows) is still recognised, while an
+// edit, a lost final newline or mixed line endings match nothing (HISS-21).
 func priorRendering(data []byte, digests map[string]string) (known, crlf bool) {
-	digest, crlf, err := util.CanonicalTextDigest(data)
-	if err != nil {
-		return false, false
-	}
-	_, known = digests[digest]
+	_, known, crlf = util.LookupCanonicalText(data, digests)
 	return known, crlf
 }
 
@@ -164,16 +160,25 @@ func (s *adoptSession) refreshPriorScaffold(ctx context.Context, full string, sc
 	if !known {
 		return false, nil
 	}
+	return true, s.replacePriorText(ctx, full, actual, crlf, sc, sc.refreshed)
+}
+
+// replacePriorText replaces actual, an unedited earlier Praetor text of sc at full, with
+// sc.content in actual's line-ending style (crlf) and records detail. The replacement is bound
+// to the observed bytes, so a file edited in between is not overwritten. A dry run records the
+// refresh it would make. It is the one refresh both the scaffold earlier-text sets
+// (refreshPriorScaffold) and the managed asset families (reconcileManagedFamilyFile) use.
+func (s *adoptSession) replacePriorText(ctx context.Context, full string, actual []byte, crlf bool, sc scaffold, detail string) error {
 	if !s.opts.DryRun {
 		content := []byte(util.RestoreLineEndings(string(sc.content), crlf))
 		if err := contextopt.ReplaceSnapshot(ctx, full, content, contextopt.ReplaceOptions{
 			Expected: actual, Exists: true, Mode: sc.perm,
 		}); err != nil {
-			return false, fmt.Errorf("refresh %s: %w", sc.rel, err)
+			return fmt.Errorf("refresh %s: %w", sc.rel, err)
 		}
 	}
-	s.report.recordReconciled(sc.rel, sc.refreshed)
-	return true, nil
+	s.report.recordReconciled(sc.rel, detail)
+	return nil
 }
 
 // writeScaffold persists sc at full unless the session is a dry run, through the root-pinned

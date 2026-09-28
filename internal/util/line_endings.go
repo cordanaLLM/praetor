@@ -65,8 +65,8 @@ func CanonicalTextEquivalent(actual, expected []byte) (bool, error) {
 // data used CRLF. It is the digest form of CanonicalTextEquivalent's rule: one consistent
 // checkout line-ending style is allowed, so an LF text and its CRLF checkout share one digest,
 // while mixed endings and lone carriage returns are an error, never repaired into a match.
-// Digests of recorded texts compare with it, and crlf lets a caller that rewrites such a text
-// keep the file's own style (RestoreLineEndings).
+// Digests of recorded texts compare with it (LookupCanonicalText), and crlf lets a caller that
+// rewrites such a text keep the file's own style (RestoreLineEndings).
 func CanonicalTextDigest(data []byte) (digest string, crlf bool, err error) {
 	normalized, crlf, err := NormalizeLineEndingsStrict(string(data))
 	if err != nil {
@@ -74,4 +74,18 @@ func CanonicalTextDigest(data []byte) (digest string, crlf bool, err error) {
 	}
 	sum := sha256.Sum256([]byte(normalized))
 	return hex.EncodeToString(sum[:]), crlf, nil
+}
+
+// LookupCanonicalText returns the value recorded maps data's CanonicalTextDigest to, whether
+// there is one, and whether data used CRLF. It is the one lookup for a set of recorded texts
+// keyed by the SHA-256 of their LF text, such as the earlier texts Praetor once wrote at a path:
+// an LF text and its CRLF checkout find the same entry, while an edit, mixed endings or a lone
+// carriage return find none (known is false, never an error to repair).
+func LookupCanonicalText(data []byte, recorded map[string]string) (value string, known, crlf bool) {
+	digest, crlf, err := CanonicalTextDigest(data)
+	if err != nil {
+		return "", false, false
+	}
+	value, known = recorded[digest]
+	return value, known, crlf
 }

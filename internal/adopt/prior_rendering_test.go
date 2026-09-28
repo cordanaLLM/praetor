@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/managedasset"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -106,5 +107,30 @@ func TestIsPriorRendering_Boundary_MixedEndingsAndEmptyInputs(t *testing.T) {
 	}
 	if isPriorRendering(nil, digests) || isPriorRendering([]byte(text), nil) {
 		t.Error("empty data and an empty digest set match nothing")
+	}
+}
+
+// Positive: the managed asset families' Prior is read by the same rule as adoption's
+// earlier-text sets (HISS-19). Every earlier documentation-gate text reproduces a Prior key
+// through fixtureDigest, and priorRendering and Family.PriorRendering agree on it, CRLF flag
+// included, in both line-ending styles; an edited copy is refused by both.
+func TestPriorRendering_Positive_SharesTheManagedFamilyRule(t *testing.T) {
+	family := managedasset.ForFacet(managedasset.DocumentationFacet)[0]
+	dir := filepath.Join("..", "..", "tools", "markdownlint", "testdata", "prior")
+	assertPriorDigestsReproduced(t, dir, family.Prior)
+	for name, data := range readFixtureDir(t, dir) {
+		lf, _, err := util.NormalizeLineEndingsStrict(string(data))
+		if err != nil {
+			t.Fatalf("fixture %s: %v", name, err)
+		}
+		rel := family.Prior[fixtureDigest(t, name, data)]
+		for _, text := range []string{lf, crlfText(lf), crlfText(lf + "# edited\n")} {
+			known, crlf := priorRendering([]byte(text), family.Prior)
+			familyKnown, familyCRLF := family.PriorRendering(rel, []byte(text))
+			if known != familyKnown || crlf != familyCRLF {
+				t.Errorf("%s: adoption says known=%v crlf=%v, the family says known=%v crlf=%v",
+					name, known, crlf, familyKnown, familyCRLF)
+			}
+		}
 	}
 }
