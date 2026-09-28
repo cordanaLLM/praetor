@@ -104,7 +104,9 @@ func validateInstallOptions(opts Options) (Options, error) {
 	return opts, err
 }
 
-func install(ctx context.Context, opts Options) (Result, error) {
+// install builds from a prepared source and places the binaries. A scratch clone that cannot
+// be removed afterwards is reported in the returned error beside the result.
+func install(ctx context.Context, opts Options) (result Result, err error) {
 	states, err := inspectTargets(opts.BinDir)
 	if err != nil {
 		return Result{}, err
@@ -113,7 +115,7 @@ func install(ctx context.Context, opts Options) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	defer source.cleanup()
+	defer func() { err = errors.Join(err, source.cleanup()) }()
 	var backupDir string
 	if !allAbsent(states) {
 		if backupDir, err = backupTargets(opts.BinDir, states); err != nil {

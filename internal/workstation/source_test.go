@@ -86,7 +86,9 @@ func TestPrepareBuildSource_Positive_UntrackedFilesStayOut(t *testing.T) {
 			t.Fatalf("untracked %s entered the build source: %v", rel, err)
 		}
 	}
-	source.cleanup()
+	if err := source.cleanup(); err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
 	if _, err := os.Stat(source.dir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("cleanup left the clone behind: %v", err)
 	}
@@ -104,7 +106,9 @@ func TestPrepareBuildSource_Negative_ModifiedOrNoCheckout(t *testing.T) {
 	if err != nil || source.dir != c.root {
 		t.Fatalf("modified tracked file: want the checkout itself, got %+v, %v", source, err)
 	}
-	source.cleanup()
+	if err := source.cleanup(); err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
 	if _, err := os.Stat(filepath.Join(c.root, "cmd", "engine", "main.go")); err != nil {
 		t.Fatalf("cleanup of the checkout source must remove nothing: %v", err)
 	}
@@ -135,7 +139,9 @@ func TestPrepareBuildSource_Negative_GlobalHooksDoNotRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source.cleanup()
+	if err := source.cleanup(); err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
 	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the global post-checkout hook ran against the scratch clone: %v", err)
 	}
@@ -192,4 +198,33 @@ func TestInstall_Negative_WorkInProgressBuildIsRefusedByCheck(t *testing.T) {
 		t.Fatalf("a work-in-progress install must be stamped modified: %+v", installed)
 	}
 	requireStale(t, CheckBuildCurrent(context.Background(), c.root, installed), "modified tree outside this checkout")
+}
+
+// TestCloneCommitCleanupReportsAFailedRemoval: a scratch clone the cleanup cannot remove is
+// reported, never dropped (HISS-07); the caller joins it into Install's error.
+func TestCloneCommitCleanupReportsAFailedRemoval(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("directory permissions cannot stop removal on Windows or as root")
+	}
+	c := newEngineCheckout(t)
+	dir, cleanup, err := cloneCommit(context.Background(), c.root, c.git("rev-parse", "HEAD"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := filepath.Dir(dir)
+	if err := os.Chmod(parent, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(parent, 0o700); err != nil {
+			t.Error(err)
+		}
+		if err := os.RemoveAll(parent); err != nil {
+			t.Error(err)
+		}
+	})
+	err = cleanup()
+	if err == nil || !strings.Contains(err.Error(), "remove source clone") {
+		t.Fatalf("cleanup of an unremovable clone: want a reported failure, got %v", err)
+	}
 }

@@ -6,6 +6,7 @@ package workstation
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,10 +16,12 @@ import (
 )
 
 // buildSource is the tree Install compiles and the commit the install manifest records for it.
+// cleanup removes a scratch clone and reports a removal that failed; for a checkout built in
+// place it does nothing.
 type buildSource struct {
 	dir     string
 	commit  string
-	cleanup func()
+	cleanup func() error
 }
 
 // sourceSnapshotTimeout bounds the clone and checkout of one commit (HISS-02).
@@ -49,7 +52,7 @@ func prepareBuildSource(ctx context.Context, checkout string) (buildSource, erro
 		return buildSource{}, err
 	}
 	if modified {
-		return buildSource{dir: checkout, commit: commit, cleanup: func() {}}, nil
+		return buildSource{dir: checkout, commit: commit, cleanup: func() error { return nil }}, nil
 	}
 	dir, cleanup, err := cloneCommit(ctx, checkout, commit)
 	if err != nil {
@@ -61,13 +64,16 @@ func prepareBuildSource(ctx context.Context, checkout string) (buildSource, erro
 // cloneCommit checks commit out, detached, into a fresh clone under a new temporary directory
 // and returns the clone and a cleanup that removes it. The clone borrows checkout's object
 // store (--shared), so nothing is copied but the checked-out files.
-func cloneCommit(ctx context.Context, checkout, commit string) (string, func(), error) {
+func cloneCommit(ctx context.Context, checkout, commit string) (string, func() error, error) {
 	parent, err := os.MkdirTemp("", "praetor-workstation-source-")
 	if err != nil {
 		return "", nil, fmt.Errorf("workstation: create source directory: %w", err)
 	}
-	cleanup := func() {
-		os.RemoveAll(parent) //nolint:errcheck // best-effort scratch cleanup; the build already read the clone
+	cleanup := func() error {
+		if err := os.RemoveAll(parent); err != nil {
+			return fmt.Errorf("workstation: remove source clone %s: %w", parent, err)
+		}
+		return nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, sourceSnapshotTimeout)
 	defer cancel()
@@ -77,8 +83,7 @@ func cloneCommit(ctx context.Context, checkout, commit string) (string, func(), 
 		err = snapshotGit(ctx, dir, "checkout", "--quiet", "--detach", commit)
 	}
 	if err != nil {
-		cleanup()
-		return "", nil, fmt.Errorf("workstation: snapshot %s from %s: %w", shortCommit(commit), checkout, err)
+		return "", nil, errors.Join(fmt.Errorf("workstation: snapshot %s from %s: %w", shortCommit(commit), checkout, err), cleanup())
 	}
 	return dir, cleanup, nil
 }
