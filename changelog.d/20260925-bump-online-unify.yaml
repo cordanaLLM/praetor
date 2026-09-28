@@ -1,0 +1,4 @@
+type: fixed
+title: Stop bump unify from raising a capped package.json range past its cap when pnpm is online; a comparator range such as <9.0.0, >=5.0.0 or =5.0.0 now keeps its declared spec through the pnpm outdated overlay, stays unranked and is never rewritten, while a bare, caret or tilde range is raised to the target version under its own operator on both the manifest-edit and the pnpm update path, so a tilde range stays tilde and a bare version stays bare under a caret catalog pin
+issue: "459"
+breaking: false

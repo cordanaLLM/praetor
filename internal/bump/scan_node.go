@@ -72,13 +72,27 @@ func ScanNodeDependencies(ctx context.Context, repoPath string, opts ScanOptions
 
 // scanNodePackage returns one package's inventory. The dependencies its package.json
 // declares are the inventory; `pnpm outdated` lists only outdated packages, so it can
-// supply upgrade targets but never the count of what was scanned.
+// supply upgrade targets but never the count of what was scanned. A declared range that is
+// not bare, caret or tilde keeps its declared spec even when pnpm reports the package
+// (unrankedNodeRange), so it stays unranked online exactly as it is offline.
 func scanNodePackage(ctx context.Context, repoPath, dirRel string, opts ScanOptions) ([]UpgradeCandidate, error) {
 	return manifestInventory(ctx,
 		func() ([]UpgradeCandidate, error) { return scanPackageJSONStatic(ctx, repoPath, dirRel) },
 		func() ([]UpgradeCandidate, error) {
 			return scanNodePackageDir(ctx, filepath.Join(repoPath, dirRel), dirRel, opts)
-		})
+		},
+		unrankedNodeRange)
+}
+
+// unrankedNodeRange reports whether a declared package.json entry carries a range that is
+// not bare, caret or tilde. declaredNodeDependency keeps such a range verbatim, so it is
+// exactly the declared form rankedVersion refuses. `pnpm outdated` reports the installed
+// version and the latest release, and neither is the version such a range names: an
+// overlaid "<9.0.0" would be ranked by the 8.x it installed and offered a 10.x target past
+// its own cap.
+func unrankedNodeRange(dep UpgradeCandidate) bool {
+	_, ranked := rankedVersion(dep.CurrentVersion)
+	return !ranked
 }
 
 // extractJSONObject returns the outermost JSON object embedded in combined command
@@ -175,7 +189,8 @@ func scanPackageJSONStatic(ctx context.Context, repoPath, dirRel string) ([]Upgr
 // tilde range contributes the version it names (rankedVersion); any other spec (a comparator
 // such as "<9.0.0" or ">=5.0.0", a workspace: or file: reference, a tag, a compound range) is
 // carried verbatim, so catalog ranking leaves it unranked instead of ordering a version the
-// range does not resolve to.
+// range does not resolve to, and the pnpm outdated overlay leaves it as declared
+// (unrankedNodeRange).
 func declaredNodeDependency(pkg, spec, dirRel string) UpgradeCandidate {
 	version := spec
 	if ranked, ok := rankedVersion(spec); ok {

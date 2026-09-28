@@ -190,40 +190,76 @@ func requirementVersionOffset(line, pkg string) int {
 // its failure is returned, never followed by a manual package.json edit, because an edited
 // manifest next to an unchanged pnpm-lock.yaml resolves the old version while declaring
 // the new one. Without a lockfile the manifest is the whole record and is edited in place.
+// Both paths raise to the same range, each declaration's own operator over the target
+// version (raisedRange), and both refuse a range that operator cannot carry before anything
+// runs or is written.
 func applyNodeUpdate(ctx context.Context, targetDir string, cand UpgradeCandidate) error {
+	data, ranges, err := declaredRanges(ctx, targetDir, cand.Package)
+	if err != nil {
+		return err
+	}
 	pnpmLock := filepath.Join(targetDir, "pnpm-lock.yaml")
 	if !util.FileExists(pnpmLock) && !util.FileExists(filepath.Join(targetDir, "..", "pnpm-lock.yaml")) {
-		return updatePackageManifest(ctx, targetDir, cand)
+		return updatePackageManifest(ctx, targetDir, cand, data, ranges)
 	}
-	spec := fmt.Sprintf("%s@%s", cand.Package, cand.TargetVersion)
+	raised, err := pnpmUpdateRange(ranges, cand.TargetVersion)
+	if err != nil {
+		return fmt.Errorf("update %s in %s: %w", cand.Package, filepath.Join(targetDir, "package.json"), err)
+	}
+	spec := cand.Package + "@" + raised
 	if _, err := util.RunCommand(ctx, targetDir, "pnpm", "update", spec); err != nil {
 		return fmt.Errorf("pnpm update %s (package.json left unchanged to match pnpm-lock.yaml): %w", spec, err)
 	}
 	return nil
 }
 
+// pnpmUpdateRange returns the one range `pnpm update` is asked for: every declaration of the
+// package raised to target under its own operator. pnpm takes a single range per package,
+// so declarations that would be raised to different ranges are refused.
+func pnpmUpdateRange(ranges []objectMember, target string) (string, error) {
+	raised := ""
+	for _, member := range ranges {
+		spec, err := raisedRange(member.value, target)
+		if err != nil {
+			return "", err
+		}
+		if raised != "" && spec != raised {
+			return "", fmt.Errorf("declarations raise to %q and %q, and pnpm update takes one range; update them by hand", raised, spec)
+		}
+		raised = spec
+	}
+	return raised, nil
+}
+
 // dependencySections are the package.json sections a bump rewrites.
 var dependencySections = map[string]bool{"dependencies": true, "devDependencies": true}
 
-// updatePackageManifest raises cand.Package's range in targetDir's package.json to
-// cand.TargetVersion. Only the range strings change: key order, indentation and every other
-// byte of the file are kept. Each range keeps its own operator unless the target names one.
-func updatePackageManifest(ctx context.Context, targetDir string, cand UpgradeCandidate) error {
+// declaredRanges reads targetDir's package.json and returns it with the range values that
+// declare pkg in its dependency sections, in document order. A package declared in none of
+// them is an error: there is no range to raise.
+func declaredRanges(ctx context.Context, targetDir, pkg string) ([]byte, []objectMember, error) {
 	pkgFile := filepath.Join(targetDir, "package.json")
 	data, err := readManifest(ctx, targetDir, "package.json")
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-	ranges, err := dependencyRanges(data, cand.Package)
+	ranges, err := dependencyRanges(data, pkg)
 	if err != nil {
-		return fmt.Errorf("parse %s: %w", pkgFile, err)
+		return nil, nil, fmt.Errorf("parse %s: %w", pkgFile, err)
 	}
 	if len(ranges) == 0 {
-		return fmt.Errorf("package %s not found in %s", cand.Package, pkgFile)
+		return nil, nil, fmt.Errorf("package %s not found in %s", pkg, pkgFile)
 	}
+	return data, ranges, nil
+}
+
+// updatePackageManifest raises cand.Package's ranges, read from targetDir's package.json as
+// data, to cand.TargetVersion. Only the range strings change: key order, indentation and
+// every other byte of the file are kept, and each range keeps its own operator.
+func updatePackageManifest(ctx context.Context, targetDir string, cand UpgradeCandidate, data []byte, ranges []objectMember) error {
 	edited, err := rewriteRanges(data, ranges, cand.TargetVersion)
 	if err != nil {
-		return fmt.Errorf("update %s in %s: %w", cand.Package, pkgFile, err)
+		return fmt.Errorf("update %s in %s: %w", cand.Package, filepath.Join(targetDir, "package.json"), err)
 	}
 	return writeManifest(ctx, targetDir, "package.json", data, edited)
 }
@@ -300,7 +336,8 @@ func objectMembers(object []byte, base int) ([]objectMember, error) {
 }
 
 // rewriteRanges returns data with each range value replaced by target under that range's
-// operator. ranges are in document order and never overlap.
+// operator. ranges are in document order and never overlap. Operators and SemVer versions
+// contain no character JSON escapes, so each raised range is written as its quoted text.
 func rewriteRanges(data []byte, ranges []objectMember, target string) ([]byte, error) {
 	var out bytes.Buffer
 	last := 0
@@ -310,43 +347,37 @@ func rewriteRanges(data []byte, ranges []objectMember, target string) ([]byte, e
 			return nil, err
 		}
 		out.Write(data[last:member.start])
-		out.WriteString(replacement)
+		out.WriteString(`"` + replacement + `"`)
 		last = member.start + len(member.value)
 	}
 	out.Write(data[last:])
 	return out.Bytes(), nil
 }
 
-// raisedRange returns the JSON string literal for current raised to target. A target
-// that names its own operator (a fleet catalog pin such as "^5.7.3") sets it; otherwise
-// current's operator is kept. A strict comparator is refused: ">2.1.0" or "<2.1.0" would
-// exclude the very version it was raised to. A target that is not a SemVer version (a
-// dist-tag such as "latest") is refused before any operator is chosen. Operators and SemVer
-// versions contain no character JSON escapes, so the literal is the quoted text.
+// raisedRange returns the range current, a JSON string value, reads once raised to target:
+// current's operator over target's version. Only a bare, caret or tilde range is raised,
+// the forms catalog ranking orders (rankedRangeOperators). Every other comparator bounds the
+// range differently: moving the version of "<9.0.0" would lift its cap, and of ">=5.0.0" or
+// "=5.0.0" shift its floor or its pin, so such a range is refused for a hand edit. The
+// operator is always current's: a target that names one, as a fleet catalog pin such as
+// "^5.7.3" does, contributes only its version, so a tilde range stays tilde and a bare
+// version stays bare. A target that is not a bare, caret or tilde SemVer version (a
+// dist-tag such as "latest", a comparator) is refused.
 func raisedRange(current json.RawMessage, target string) (string, error) {
 	var spec string
 	if err := json.Unmarshal(current, &spec); err != nil {
 		return "", fmt.Errorf("range %s is not a string: %w", current, err)
 	}
 	operator, _, ok := splitRangeOperator(spec)
+	if !ok || !rankedRangeOperators[operator] {
+		return "", fmt.Errorf("range %q is not a bare, caret or tilde version; update it by hand", spec)
+	}
+	version, ok := rankedVersion(target)
 	if !ok {
-		return "", fmt.Errorf("range %q is not a single-version range; update it by hand", spec)
+		return "", fmt.Errorf("target %q is not a bare, caret or tilde SemVer version", target)
 	}
-	targetOperator, version, ok := splitRangeOperator(target)
-	if !ok {
-		return "", fmt.Errorf("target %q is not a SemVer version", target)
-	}
-	if targetOperator != "" {
-		operator = targetOperator
-	}
-	if strictRangeOperators[operator] {
-		return "", fmt.Errorf("range %q raised to %s would read %q and exclude %s; update it by hand", spec, target, operator+version, version)
-	}
-	return `"` + operator + version + `"`, nil
+	return operator + version, nil
 }
-
-// strictRangeOperators are the comparators whose range excludes the version they name.
-var strictRangeOperators = map[string]bool{">": true, "<": true}
 
 // rangeOperators are the comparator prefixes a single-version npm range may carry, longest
 // first so ">=" is not read as ">".

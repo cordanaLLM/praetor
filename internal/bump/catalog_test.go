@@ -8,6 +8,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -149,6 +150,97 @@ func TestReconcileCatalogReportScansRepository(t *testing.T) {
 	candidates, err := ReconcileCatalog(t.Context(), repo)
 	if err != nil || len(candidates) != 2 {
 		t.Fatalf("ReconcileCatalog returned %+v, %v; want the two upgrades only", candidates, err)
+	}
+}
+
+// onlineUnifyPackageJSON declares one catalog package in each range form bump unify must
+// tell apart: a capped comparator, a caret, a tilde and a bare version.
+const onlineUnifyPackageJSON = `{"dependencies":{"eslint":"<9.0.0","prettier":"^3.0.0"},"devDependencies":{"vite":"~7.0.0","typescript":"6.0.0"}}` + "\n"
+
+// onlineUnifyOutdated is a pnpm outdated report naming every package at an installed
+// version behind its pin, eslint included: installed at 8.57.0 under its "<9.0.0" cap.
+const onlineUnifyOutdated = `{"eslint":{"current":"8.57.0","latest":"10.11.0"},"prettier":{"current":"3.0.5","latest":"3.9.9"},` +
+	`"typescript":{"current":"6.0.3","latest":"7.0.2"},"vite":{"current":"7.0.4","latest":"8.3.1"}}`
+
+// pinVersion is the version a FleetCatalog pin names, without its operator.
+func pinVersion(t *testing.T, pkg string) string {
+	t.Helper()
+	version, ok := rankedVersion(FleetCatalog[pkg].Version)
+	if !ok {
+		t.Fatalf("FleetCatalog pin for %s is %q, not a bare, caret or tilde version", pkg, FleetCatalog[pkg].Version)
+	}
+	return version
+}
+
+// onlineUnify runs the path bump unify --apply takes, ReconcileCatalogReport then UpdateAll,
+// over dir with the stand-in toolchain already on PATH, and fails unless eslint's capped
+// range is reported unranked and the three other packages are the only upgrades.
+func onlineUnify(t *testing.T, dir string) {
+	t.Helper()
+	report, err := ReconcileCatalogReport(testDeadline(t), dir)
+	if err != nil {
+		t.Fatalf("ReconcileCatalogReport: %v", err)
+	}
+	upgrades := make([]string, 0, len(report.Upgrades))
+	for _, c := range report.Upgrades {
+		upgrades = append(upgrades, c.Package+":"+c.CurrentVersion)
+	}
+	if got := strings.Join(upgrades, " "); got != "prettier:3.0.5 typescript:6.0.3 vite:7.0.4" {
+		t.Fatalf("upgrades = %s, want prettier, typescript and vite at their installed versions", got)
+	}
+	if len(report.Ahead) != 0 || len(report.Unranked) != 1 || report.Unranked[0].Package != "eslint" || report.Unranked[0].CurrentVersion != "<9.0.0" {
+		t.Fatalf("ahead = %+v, unranked = %+v; want eslint alone unranked at its declared <9.0.0", report.Ahead, report.Unranked)
+	}
+	if applied, err := UpdateAll(testDeadline(t), dir, report.Upgrades); err != nil || applied != 3 {
+		t.Fatalf("UpdateAll = %d, %v; want 3 applied", applied, err)
+	}
+}
+
+// Positive, issue #459: online, pnpm outdated reports eslint at its installed 8.57.0, which
+// ranked against the eslint pin used to make "<9.0.0" an upgrade that --apply rewrote to the
+// pin's caret range, past its cap. It stays unranked and untouched; the caret, tilde and
+// bare versions are raised to their pin's version under their own operator.
+func TestReconcileCatalogReport_Positive_OnlineKeepsDeclaredRangeForms(t *testing.T) {
+	dir := writePackageJSON(t, onlineUnifyPackageJSON)
+	bin, log := standInToolchain(t, map[string]standInReply{pnpmOutdate: {Out: onlineUnifyOutdated, Code: 1}}, "pnpm")
+	t.Setenv("PATH", bin)
+	onlineUnify(t, dir)
+	want := strings.NewReplacer(
+		`"prettier":"^3.0.0"`, `"prettier":"^`+pinVersion(t, "prettier")+`"`,
+		`"vite":"~7.0.0"`, `"vite":"~`+pinVersion(t, "vite")+`"`,
+		`"typescript":"6.0.0"`, `"typescript":"`+pinVersion(t, "typescript")+`"`,
+	).Replace(onlineUnifyPackageJSON)
+	if got := readPackageJSON(t, dir); got != want {
+		t.Fatalf("package.json =\n%s\nwant eslint untouched and each other range under its own operator:\n%s", got, want)
+	}
+	if got := callNames(standInCalls(t, log)); len(got) != 1 || got[0] != pnpmOutdate {
+		t.Fatalf("calls = %q, want only pnpm outdated", got)
+	}
+}
+
+// Negative: under a pnpm lockfile the capped eslint range is never handed to pnpm update,
+// and each other package is updated to its pin's version under its declared operator. The
+// stand-in pnpm refuses any call it was not given, so an eslint update would fail the run.
+func TestReconcileCatalogReport_Negative_OnlineCappedRangeNeverReachesPnpm(t *testing.T) {
+	dir := lockedPackageJSON(t, onlineUnifyPackageJSON)
+	updates := []string{
+		"pnpm update prettier@^" + pinVersion(t, "prettier"),
+		"pnpm update typescript@" + pinVersion(t, "typescript"),
+		"pnpm update vite@~" + pinVersion(t, "vite"),
+	}
+	replies := map[string]standInReply{pnpmOutdate: {Out: onlineUnifyOutdated, Code: 1}}
+	for _, call := range updates {
+		replies[call] = standInReply{}
+	}
+	bin, log := standInToolchain(t, replies, "pnpm")
+	t.Setenv("PATH", bin)
+	onlineUnify(t, dir)
+	want := pnpmOutdate + "; " + strings.Join(updates, "; ")
+	if got := strings.Join(callNames(standInCalls(t, log)), "; "); got != want {
+		t.Fatalf("calls = %s\nwant    %s", got, want)
+	}
+	if got := readPackageJSON(t, dir); got != onlineUnifyPackageJSON {
+		t.Fatalf("package.json changed behind pnpm's back:\n%s", got)
 	}
 }
 

@@ -55,32 +55,36 @@ func nodeCandidate(pkg, target string) UpgradeCandidate {
 }
 
 // Only the range strings change: key order, indentation, escapes and the peer range stay
-// byte for byte, and each range keeps its ~ or >= operator.
+// byte for byte, and each range keeps its ~ operator. The ">=" comparator beside them is
+// not a range bump raises, so raising it is refused and leaves the manifest as it was.
 func TestUpdatePackageManifest_Positive_PreservesLayoutAndOperators(t *testing.T) {
 	dir := writePackageJSON(t, layoutManifest)
 	if err := ApplyUpdate(t.Context(), dir, nodeCandidate("typescript", "5.7.3")); err != nil {
 		t.Fatal(err)
 	}
-	if err := ApplyUpdate(t.Context(), dir, nodeCandidate("zod", "3.23.8")); err != nil {
-		t.Fatal(err)
-	}
 	want := strings.NewReplacer(
-		`"zod": ">=3.0.0"`, `"zod": ">=3.23.8"`,
 		`"typescript": "~5.0.0"`+"\n    },", `"typescript": "~5.7.3"`+"\n    },",
 		`"typescript":    "~5.0.0"`, `"typescript":    "~5.7.3"`,
 	).Replace(layoutManifest)
 	if got := readPackageJSON(t, dir); got != want {
 		t.Fatalf("package.json =\n%s\nwant\n%s", got, want)
 	}
+	if err := ApplyUpdate(t.Context(), dir, nodeCandidate("zod", "3.23.8")); err == nil || !strings.Contains(err.Error(), `">=3.0.0"`) {
+		t.Fatalf("raising the >= comparator: %v; want a refusal naming the range", err)
+	}
+	if got := readPackageJSON(t, dir); got != want {
+		t.Fatalf("refused comparator raise changed package.json:\n%s", got)
+	}
 }
 
-// A target that names its own operator, as a fleet catalog pin does, sets it.
-func TestUpdatePackageManifest_Positive_TargetOperatorWins(t *testing.T) {
+// The declared operator is kept even when the target names another, as a fleet catalog pin
+// does: the pin contributes only its version.
+func TestUpdatePackageManifest_Positive_DeclaredOperatorWins(t *testing.T) {
 	dir := writePackageJSON(t, `{"dependencies":{"typescript":"~5.0.0"}}`+"\n")
 	if err := ApplyUpdate(t.Context(), dir, nodeCandidate("typescript", "^5.7.3")); err != nil {
 		t.Fatal(err)
 	}
-	if got := readPackageJSON(t, dir); got != `{"dependencies":{"typescript":"^5.7.3"}}`+"\n" {
+	if got := readPackageJSON(t, dir); got != `{"dependencies":{"typescript":"~5.7.3"}}`+"\n" {
 		t.Fatalf("package.json = %s", got)
 	}
 }
@@ -110,20 +114,26 @@ func TestApplyNodeUpdate_Negative_PnpmFailureWithOutputIsAnError(t *testing.T) {
 	}
 }
 
-// A range that is not a single version, a strict comparator that would exclude its own
-// target, an undeclared package and a target that is not a version are refused, and the
-// manifest is left as it was.
+// A range that is not a single version, every comparator (strict or inclusive, whose
+// version bounds the range instead of naming it), an undeclared package and a target that
+// is not a bare, caret or tilde version are refused, and the manifest is left as it was.
 func TestUpdatePackageManifest_Negative_RefusesWhatItCannotRaise(t *testing.T) {
 	cases := map[string]struct{ body, pkg, target string }{
-		"workspace protocol":  {`{"dependencies":{"lib":"workspace:^1.0.0"}}`, "lib", "2.0.0"},
-		"x-range":             {`{"dependencies":{"lib":"1.x"}}`, "lib", "2.0.0"},
-		"compound range":      {`{"dependencies":{"lib":">=1.0.0 <2.0.0"}}`, "lib", "2.0.0"},
-		"strict greater than": {`{"dependencies":{"lib":">1.0.0"}}`, "lib", "2.1.0"},
-		"strict less than":    {`{"dependencies":{"lib":"<2.0.0"}}`, "lib", "2.1.0"},
-		"not declared":        {`{"dependencies":{"lib":"^1.0.0"}}`, "other", "2.0.0"},
-		"peer only":           {`{"peerDependencies":{"lib":"^1.0.0"}}`, "lib", "2.0.0"},
-		"target is a tag":     {`{"dependencies":{"lib":"^1.0.0"}}`, "lib", "latest"},
-		"invalid json":        {`{"dependencies":{"lib":"^1.0.0"}`, "lib", "2.0.0"},
+		"workspace protocol":       {`{"dependencies":{"lib":"workspace:^1.0.0"}}`, "lib", "2.0.0"},
+		"x-range":                  {`{"dependencies":{"lib":"1.x"}}`, "lib", "2.0.0"},
+		"compound range":           {`{"dependencies":{"lib":">=1.0.0 <2.0.0"}}`, "lib", "2.0.0"},
+		"strict greater than":      {`{"dependencies":{"lib":">1.0.0"}}`, "lib", "2.1.0"},
+		"strict less than":         {`{"dependencies":{"lib":"<2.0.0"}}`, "lib", "2.1.0"},
+		"inclusive upper cap":      {`{"dependencies":{"lib":"<=1.0.0"}}`, "lib", "2.1.0"},
+		"inclusive lower bound":    {`{"dependencies":{"lib":">=1.0.0"}}`, "lib", "2.1.0"},
+		"exact comparator":         {`{"dependencies":{"lib":"=1.0.0"}}`, "lib", "2.1.0"},
+		"caret target over a cap":  {`{"dependencies":{"lib":"<2.0.0"}}`, "lib", "^2.1.0"},
+		"not declared":             {`{"dependencies":{"lib":"^1.0.0"}}`, "other", "2.0.0"},
+		"peer only":                {`{"peerDependencies":{"lib":"^1.0.0"}}`, "lib", "2.0.0"},
+		"target is a tag":          {`{"dependencies":{"lib":"^1.0.0"}}`, "lib", "latest"},
+		"target is a comparator":   {`{"dependencies":{"lib":"^1.0.0"}}`, "lib", "=2.0.0"},
+		"target doubles operators": {`{"dependencies":{"lib":"^1.0.0"}}`, "lib", "^^2.0.0"},
+		"invalid json":             {`{"dependencies":{"lib":"^1.0.0"}`, "lib", "2.0.0"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -150,14 +160,17 @@ func TestUpdatePackageManifest_Boundary_DevDependencyOnly(t *testing.T) {
 	}
 }
 
-// Inclusive comparators keep their operator, and a target operator replaces a strict one,
-// so every written range still contains the version it was raised to.
-func TestUpdatePackageManifest_Boundary_InclusiveAndReplacedStrictOperators(t *testing.T) {
+// Every pairing of a bare, caret or tilde range with a bare, caret or tilde target keeps
+// the declared operator: a bare version stays bare under a caret pin, a tilde range stays
+// tilde, and a prerelease target keeps its prerelease.
+func TestUpdatePackageManifest_Boundary_DeclaredOperatorForms(t *testing.T) {
 	cases := map[string]struct{ spec, target, want string }{
-		"less than or equal":       {"<=1.0.0", "2.1.0", "<=2.1.0"},
-		"exact":                    {"=1.0.0", "2.1.0", "=2.1.0"},
-		"strict replaced by caret": {">1.0.0", "^2.1.0", "^2.1.0"},
-		"strict replaced by tilde": {"<2.0.0", "~2.1.0", "~2.1.0"},
+		"caret under a bare target":  {"^1.0.0", "2.1.0", "^2.1.0"},
+		"caret under a tilde target": {"^1.0.0", "~2.1.0", "^2.1.0"},
+		"tilde under a caret pin":    {"~1.0.0", "^2.1.0", "~2.1.0"},
+		"bare under a caret pin":     {"1.0.0", "^2.1.0", "2.1.0"},
+		"bare under a tilde target":  {"1.0.0", "~2.1.0", "2.1.0"},
+		"prerelease target":          {"^1.0.0", "2.0.0-rc.1", "^2.0.0-rc.1"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -172,25 +185,100 @@ func TestUpdatePackageManifest_Boundary_InclusiveAndReplacedStrictOperators(t *t
 	}
 }
 
-// A target operator decides the written range, so a strict one is refused even over an
-// inclusive current range, and an inclusive one is written. ApplyUpdate already rejects
-// '<' and '>' in a target as exec-argument metacharacters; this pins raisedRange on its own.
+// A target contributes only its version, so no target operator reaches the written range,
+// and a target that is itself a comparator is refused. ApplyUpdate already rejects '<' and
+// '>' in a target as exec-argument metacharacters; this pins raisedRange on its own.
 func TestRaisedRange_Boundary_TargetOperator(t *testing.T) {
-	for target, want := range map[string]string{">=2.1.0": `">=2.1.0"`, "<=2.1.0": `"<=2.1.0"`, "=2.1.0": `"=2.1.0"`} {
-		if got, err := raisedRange(json.RawMessage(`"^1.0.0"`), target); err != nil || got != want {
-			t.Errorf("raisedRange(^1.0.0, %s) = %s, %v; want %s", target, got, err, want)
+	for _, target := range []string{"2.1.0", "^2.1.0", "~2.1.0"} {
+		if got, err := raisedRange(json.RawMessage(`"~1.0.0"`), target); err != nil || got != "~2.1.0" {
+			t.Errorf("raisedRange(~1.0.0, %s) = %s, %v; want ~2.1.0", target, got, err)
 		}
 	}
-	for _, target := range []string{">2.1.0", "<2.1.0"} {
+	for _, target := range []string{">=2.1.0", "<=2.1.0", "=2.1.0", ">2.1.0", "<2.1.0", "latest", ""} {
 		if got, err := raisedRange(json.RawMessage(`"^1.0.0"`), target); err == nil {
-			t.Errorf("raisedRange(^1.0.0, %s) = %s; want refused", target, got)
+			t.Errorf("raisedRange(^1.0.0, %q) = %s; want refused", target, got)
 		}
 	}
 }
 
+// lockedPackageJSON writes body as package.json beside a pnpm-lock.yaml, so updates go
+// through pnpm instead of the manifest edit.
+func lockedPackageJSON(t *testing.T, body string) string {
+	t.Helper()
+	dir := writePackageJSON(t, body)
+	if err := os.WriteFile(filepath.Join(dir, "pnpm-lock.yaml"), []byte("lockfileVersion: '9.0'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// Under a lockfile pnpm is asked for the range the manifest edit would write: the declared
+// operator over the target's version, never the operator a catalog pin names.
+func TestApplyNodeUpdate_Positive_PnpmUpdateKeepsDeclaredOperator(t *testing.T) {
+	cases := []struct{ spec, target, call string }{
+		{"~5.0.0", "^5.7.3", "pnpm update lib@~5.7.3"},
+		{"5.0.0", "^5.7.3", "pnpm update lib@5.7.3"},
+		{"^5.0.0", "5.7.3", "pnpm update lib@^5.7.3"},
+	}
+	replies := map[string]standInReply{}
+	for _, tc := range cases {
+		replies[tc.call] = standInReply{}
+	}
+	bin, log := standInToolchain(t, replies, "pnpm")
+	t.Setenv("PATH", bin)
+	for i, tc := range cases {
+		dir := lockedPackageJSON(t, `{"dependencies":{"lib":"`+tc.spec+`"}}`)
+		if err := ApplyUpdate(testDeadline(t), dir, nodeCandidate("lib", tc.target)); err != nil {
+			t.Fatalf("%s raised to %s: %v", tc.spec, tc.target, err)
+		}
+		if got := callNames(standInCalls(t, log)); len(got) != i+1 || got[i] != tc.call {
+			t.Fatalf("%s raised to %s: calls = %q, want %q last", tc.spec, tc.target, got, tc.call)
+		}
+	}
+}
+
+// Under a lockfile a range bump does not raise is refused before pnpm runs, so pnpm can
+// neither rewrite a capped range nor move the lockfile under it.
+func TestApplyNodeUpdate_Negative_PnpmNeverAskedForAnUnrankedRange(t *testing.T) {
+	bin, log := standInToolchain(t, map[string]standInReply{}, "pnpm")
+	t.Setenv("PATH", bin)
+	for _, spec := range []string{"<9.0.0", "<=9.0.0", ">=8.0.0", ">8.0.0", "=8.0.0", "8.x", "workspace:*"} {
+		body := `{"dependencies":{"eslint":"` + spec + `"}}`
+		dir := lockedPackageJSON(t, body)
+		if err := ApplyUpdate(testDeadline(t), dir, nodeCandidate("eslint", "^10.11.0")); err == nil {
+			t.Errorf("%s: update accepted", spec)
+		}
+		if got := readPackageJSON(t, dir); got != body {
+			t.Errorf("%s: package.json = %s", spec, got)
+		}
+	}
+	if calls := standInCalls(t, log); len(calls) != 0 {
+		t.Fatalf("pnpm ran for an unranked range: %q", callNames(calls))
+	}
+}
+
+// pnpm update takes one range per package. Two declarations that raise to the same range
+// are one call; two that would raise to different ranges are refused before pnpm runs.
+func TestApplyNodeUpdate_Boundary_PnpmUpdateTakesOneRange(t *testing.T) {
+	const call = "pnpm update lib@^2.0.0"
+	bin, log := standInToolchain(t, map[string]standInReply{call: {}}, "pnpm")
+	t.Setenv("PATH", bin)
+	agreeing := lockedPackageJSON(t, `{"dependencies":{"lib":"^1.0.0"},"devDependencies":{"lib":"^1.2.0"}}`)
+	if err := ApplyUpdate(testDeadline(t), agreeing, nodeCandidate("lib", "2.0.0")); err != nil {
+		t.Fatal(err)
+	}
+	disagreeing := lockedPackageJSON(t, `{"dependencies":{"lib":"^1.0.0"},"devDependencies":{"lib":"~1.0.0"}}`)
+	if err := ApplyUpdate(testDeadline(t), disagreeing, nodeCandidate("lib", "2.0.0")); err == nil || !strings.Contains(err.Error(), "one range") {
+		t.Fatalf("disagreeing declarations: %v; want a refusal", err)
+	}
+	if got := callNames(standInCalls(t, log)); len(got) != 1 || got[0] != call {
+		t.Fatalf("calls = %q, want only %q", got, call)
+	}
+}
+
 // splitRangeOperator only parses: it reads every comparator, strict ">" and "<" included.
-// raisedRange refuses to raise a strict one, and rankedVersion admits only the bare, caret
-// and tilde forms for catalog ranking; neither decision belongs to the parser.
+// rankedVersion admits only the bare, caret and tilde forms for catalog ranking, and
+// raisedRange raises only those; neither decision belongs to the parser.
 func TestSplitRangeOperator_Boundaries(t *testing.T) {
 	valid := map[string][2]string{
 		"1.2.3": {"", "1.2.3"}, "^1.2.3": {"^", "1.2.3"}, "~1.2.3": {"~", "1.2.3"},
