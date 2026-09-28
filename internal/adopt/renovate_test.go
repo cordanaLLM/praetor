@@ -9,6 +9,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -393,7 +394,7 @@ const adopterOwnRenovateRule = `{"matchManagers": ["github-actions"], "pinDigest
 
 // equivalentRenovateRule is an adopter's own rule with the managed entry's effect: globs that
 // cover every managed path, and enabled false.
-const equivalentRenovateRule = `{"description": "keep update bots off vendored lint tooling", "matchFileNames": [".github/workflows/praetor-*.yml", "tools/markdownlint/**"], "enabled": false}`
+const equivalentRenovateRule = `{"description": "keep update bots off vendored lint tooling", "matchFileNames": [".github/workflows/praetor-*.yml", "tools/markdownlint/**", "tools/figures/**"], "enabled": false}`
 
 // adopterRenovateConfigWith returns adopterRenovateConfig with rules appended to its own rule.
 func adopterRenovateConfigWith(rules ...string) string {
@@ -444,7 +445,7 @@ func TestRenovateIgnorePositiveAcceptsAnEquivalentAdopterRule(t *testing.T) {
 // managed entry. Adoption appends one listing just the paths that rule leaves out, keeps the
 // adopter's rules first and unchanged, and the rerun is a no-op.
 func TestRenovateIgnoreNegativeDeclaresOnlyUncoveredPaths(t *testing.T) {
-	partial := `{"matchFileNames": ["tools/markdownlint/**"], "enabled": false}`
+	partial := `{"matchFileNames": ["tools/markdownlint/**", "tools/figures/**"], "enabled": false}`
 	repo := newTestRepo(t, "renovate-partial")
 	path := filepath.Join(repo, "renovate.json")
 	mustWrite(t, path, adopterRenovateConfigWith(partial))
@@ -461,7 +462,7 @@ func TestRenovateIgnoreNegativeDeclaresOnlyUncoveredPaths(t *testing.T) {
 	if len(rules) != 3 || !sameJSON(rules[0], jsontext.Value(adopterOwnRenovateRule)) || !sameJSON(rules[1], jsontext.Value(partial)) {
 		t.Fatalf("adopter rules reordered or changed:\n%s", got)
 	}
-	if detail := findActionDetail(report.ActionDetails, "renovate.json"); !strings.Contains(detail, "the 1 of 6 Praetor-managed files") {
+	if detail := findActionDetail(report.ActionDetails, "renovate.json"); !strings.Contains(detail, fmt.Sprintf("the 1 of %d Praetor-managed files", len(renovateManagedFixturePaths))) {
 		t.Fatalf("partial declaration not reported: %q", detail)
 	}
 	if _, err := Adopt(t.Context(), opts); err != nil || mustRead(t, path) != got {
@@ -490,7 +491,7 @@ func TestUncoveredRenovatePathsBoundary(t *testing.T) {
 	}{
 		"globstar covers every path":     {`[{"matchFileNames": ["**"], "enabled": false}]`, nil},
 		"star is every file":             {`[{"description": "all", "matchFileNames": ["*"], "enabled": false}]`, nil},
-		"rules cover together":           {`[{"matchFileNames": ["tools/markdownlint/*"], "enabled": false}, {"matchFileNames": [".github/**/praetor-docs.yml"], "enabled": false}]`, nil},
+		"rules cover together":           {`[{"matchFileNames": ["tools/markdownlint/*"], "enabled": false}, {"matchFileNames": [".github/**/praetor-docs.yml"], "enabled": false}, {"matchFileNames": ["tools/figures/**"], "enabled": false}]`, nil},
 		"earlier re-enabling rule":       {`[{"matchPackageNames": ["left-pad"], "enabled": true}, {"matchFileNames": ["**"], "enabled": false}]`, nil},
 		"patterns at the bound":          {renovatePatternRule(maxRenovatePatterns), nil},
 		"enabled true":                   {`[{"matchFileNames": ["**"], "enabled": true}]`, all},
@@ -506,7 +507,7 @@ func TestUncoveredRenovatePathsBoundary(t *testing.T) {
 		"empty pattern list":             {`[{"matchFileNames": [], "enabled": false}]`, all},
 		"patterns past the bound":        {renovatePatternRule(maxRenovatePatterns + 1), all},
 		"managed entry":                  {`[` + string(managed) + `]`, all},
-		"trailing globstar below a file": {`[{"matchFileNames": [".github/workflows/praetor-docs.yml/**", "tools/markdownlint/**"], "enabled": false}]`, all[:1]},
+		"trailing globstar below a file": {`[{"matchFileNames": [".github/workflows/praetor-docs.yml/**", "tools/markdownlint/**", "tools/figures/**"], "enabled": false}]`, all[:1]},
 	} {
 		var rules []jsontext.Value
 		if err := json.Unmarshal([]byte(tc.rules), &rules); err != nil {
