@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -61,10 +62,11 @@ func metacharacterDirectory(t *testing.T) string {
 	return dir
 }
 
-// batchHelperContext returns a context whose commands run TestBatchFileHelper in argv mode.
-func batchHelperContext(t *testing.T) context.Context {
+// batchHelperContext returns a context whose commands run TestBatchFileHelper in mode: argv
+// prints the arguments, fail prints them and exits 3.
+func batchHelperContext(t *testing.T, mode string) context.Context {
 	t.Helper()
-	ctx, err := WithCommandEnvironment(t.Context(), append(os.Environ(), batchHelperEnv+"=argv", "GOCOVERDIR="+t.TempDir()))
+	ctx, err := WithCommandEnvironment(t.Context(), append(os.Environ(), batchHelperEnv+"="+mode, "GOCOVERDIR="+t.TempDir()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +77,7 @@ func batchHelperContext(t *testing.T) context.Context {
 // TestBatchFileHelper received.
 func runBatchHelper(t *testing.T, dir, name string, args []string) ([]string, error) {
 	t.Helper()
-	result, err := RunCommandBytes(batchHelperContext(t), dir, name, 1<<16, args...)
+	result, err := RunCommandBytes(batchHelperContext(t, "argv"), dir, name, 1<<16, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -113,15 +115,21 @@ func TestRunCommandBytes_Positive_BatchFileForwardsArgvUnchanged(t *testing.T) {
 	}
 }
 
-// An argument no quoting carries through cmd.exe is refused before the batch file starts.
-func TestRunCommandBytes_Negative_BatchFileRefusesQuoteAndLineBreak(t *testing.T) {
+// An argument no quoting carries through cmd.exe is refused before the batch file starts, and
+// a program that fails behind the batch file reports its exit status through cmd.exe.
+func TestRunCommandBytes_Negative_BatchFileRefusalAndFailure(t *testing.T) {
 	skipOffWindows(t)
 	shim := writeBatchShim(t, metacharacterDirectory(t), "star.cmd", "%*")
 	for _, arg := range []string{`lib"x`, "a\nb", "a\rb"} {
-		result, err := RunCommandBytes(batchHelperContext(t), "", shim, 1<<16, "update", arg)
+		result, err := RunCommandBytes(batchHelperContext(t, "argv"), "", shim, 1<<16, "update", arg)
 		if !errors.Is(err, ErrBatchFileArgument) || len(result.Stdout) != 0 {
 			t.Errorf("%q: stdout %q, err %v; want a refusal before the shim runs", arg, result.Stdout, err)
 		}
+	}
+	result, err := RunCommandBytes(batchHelperContext(t, "fail"), "", shim, 1<<16, "lib@^1.0.0")
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 3 || string(result.Stdout) != "[\"lib@^1.0.0\"]\n" {
+		t.Errorf("failing program: stdout %q, err %v; want its argv and exit status 3", result.Stdout, err)
 	}
 }
 
@@ -144,9 +152,10 @@ func TestRunCommandBytes_Boundary_BatchFileResolution(t *testing.T) {
 }
 
 // TestBatchFileHelper is the program behind the test batch files: it prints the arguments
-// after "--" as a JSON array and exits.
+// after "--" as a JSON array and exits, with status 3 in fail mode.
 func TestBatchFileHelper(t *testing.T) {
-	if os.Getenv(batchHelperEnv) != "argv" {
+	mode := os.Getenv(batchHelperEnv)
+	if mode != "argv" && mode != "fail" {
 		return
 	}
 	args := flag.Args()
@@ -155,6 +164,9 @@ func TestBatchFileHelper(t *testing.T) {
 	}
 	if err := json.NewEncoder(os.Stdout).Encode(args); err != nil {
 		os.Exit(7)
+	}
+	if mode == "fail" {
+		os.Exit(3)
 	}
 	os.Exit(0)
 }
