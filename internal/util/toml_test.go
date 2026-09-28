@@ -42,3 +42,71 @@ func TestTOMLTableNameBoundary(t *testing.T) {
 		}
 	}
 }
+
+// Positive: a key line splits into its key, dotted keys padded or not, and its trimmed value.
+func TestTOMLKeyValuePositive(t *testing.T) {
+	for line, want := range map[string][2]string{
+		`edition = "2021"`:             {"edition", `"2021"`},
+		"package . edition='2021' # c": {"package.edition", "'2021' # c"},
+		"  useDefault=true  ":          {"useDefault", "true"},
+		`edition.workspace = true`:     {"edition.workspace", "true"},
+	} {
+		key, value, ok := util.TOMLKeyValue(line)
+		if !ok || key != want[0] || value != want[1] {
+			t.Errorf("TOMLKeyValue(%q) = %q, %q, %v; want %q, %q", line, key, value, ok, want[0], want[1])
+		}
+	}
+}
+
+// Negative: a line without an equals sign, or with no key before it, assigns nothing.
+func TestTOMLKeyValueNegative(t *testing.T) {
+	for _, line := range []string{"[package]", "# a comment", `= "2021"`, "   =  "} {
+		if key, value, ok := util.TOMLKeyValue(line); ok {
+			t.Errorf("TOMLKeyValue(%q) = %q, %q, true; want no assignment", line, key, value)
+		}
+	}
+}
+
+// Boundary: an empty value is still an assignment, and only the first equals sign splits.
+func TestTOMLKeyValueBoundary(t *testing.T) {
+	if key, value, ok := util.TOMLKeyValue("name ="); !ok || key != "name" || value != "" {
+		t.Errorf("empty value: got %q, %q, %v", key, value, ok)
+	}
+	if key, value, ok := util.TOMLKeyValue(`args = "a=b"`); !ok || key != "args" || value != `"a=b"` {
+		t.Errorf("equals sign in the value: got %q, %q, %v", key, value, ok)
+	}
+}
+
+// Positive: basic and literal single-line strings, with or without a trailing comment.
+func TestTOMLStringValuePositive(t *testing.T) {
+	for value, want := range map[string]string{
+		`"2021"`:             "2021",
+		`'2021'`:             "2021",
+		`"2021" # workspace`: "2021",
+		`'C:\path'`:          `C:\path`,
+	} {
+		if got, ok := util.TOMLStringValue(value); !ok || got != want {
+			t.Errorf("TOMLStringValue(%q) = %q, %v; want %q", value, got, ok, want)
+		}
+	}
+}
+
+// Negative: numbers, booleans, inline tables, unterminated and multi-line strings, text after
+// the string, and basic strings holding an escape are refused, never guessed at.
+func TestTOMLStringValueNegative(t *testing.T) {
+	for _, value := range []string{"2021", "true", "{ workspace = true }", `"2021`, `"""2021"""`,
+		`"2021" extra`, `"20\"21"`, `"2021\n"`, ""} {
+		if got, ok := util.TOMLStringValue(value); ok {
+			t.Errorf("TOMLStringValue(%q) = %q, true; want refused", value, got)
+		}
+	}
+}
+
+// Boundary: the empty string is a string, and a comment may follow without a space.
+func TestTOMLStringValueBoundary(t *testing.T) {
+	for value, want := range map[string]string{`""`: "", `''`: "", `'x'#c`: "x"} {
+		if got, ok := util.TOMLStringValue(value); !ok || got != want {
+			t.Errorf("TOMLStringValue(%q) = %q, %v; want %q", value, got, ok, want)
+		}
+	}
+}

@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 
 	"github.com/cordanaLLM/praetor/internal/forge"
-	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // SettingAction is what flavor apply did with one required setting.
@@ -135,7 +134,7 @@ func applyRuleset(ctx context.Context, repoPath string, opts ApplyOptions, basel
 // writeRuleset writes the rendered ruleset content unless the file on disk already holds it or
 // is the repository's own and differs without force, and reports which of those it was. A file
 // holding one of the prior digests (util.LookupCanonicalText) is not the repository's own: it is
-// refreshed without force, in its own line-ending style.
+// refreshed without force, in its own line-ending style (planTargetWrite).
 func writeRuleset(ctx context.Context, repoPath string, content []byte, force bool, prior map[string]string, checks int) (SettingOutcome, error) {
 	const rel = forge.RepositoryRulesetPath
 	destPath := filepath.Join(repoPath, filepath.FromSlash(rel))
@@ -143,22 +142,18 @@ func writeRuleset(ctx context.Context, repoPath string, content []byte, force bo
 	if err != nil {
 		return SettingOutcome{}, err
 	}
-	if same, err := util.CanonicalTextEquivalent(target.before, content); target.exists && err == nil && same {
+	content, write := planTargetWrite(target, content, prior)
+	switch write {
+	case targetUnchanged:
 		return SettingOutcome{Path: rel, Action: SettingUnchanged}, nil
-	}
-	_, known, crlf := util.LookupCanonicalText(target.before, prior)
-	refresh := target.keep && known
-	if target.keep && !refresh {
+	case targetKept:
 		return SettingOutcome{Path: rel, Action: SettingKept,
 			Note: "differs from the ruleset the effective policy renders; --force replaces it"}, nil
-	}
-	if refresh {
-		content = []byte(util.RestoreLineEndings(string(content), crlf))
 	}
 	if err := writeTarget(ctx, destPath, rel, content, target); err != nil {
 		return SettingOutcome{}, err
 	}
-	return SettingOutcome{Path: rel, Action: rulesetWriteAction(target.exists, refresh),
+	return SettingOutcome{Path: rel, Action: rulesetWriteAction(target.exists, write == targetRefreshed),
 		Note: fmt.Sprintf("%d required status checks derived from workflows", checks)}, nil
 }
 

@@ -464,7 +464,15 @@ func (f *RustSystemsFlavor) Detect(repoPath string) bool {
 
 func (f *RustSystemsFlavor) RequiredTemplates() []TemplateItem {
 	return []TemplateItem{
-		{Path: "rustfmt.toml", Description: "Rust formatting and style guidelines", Source: "rust/rustfmt.toml.tmpl", Validator: assignsTOMLKey},
+		{
+			Path:        "rustfmt.toml",
+			Description: "Rust formatting and style guidelines",
+			Source:      "rust/rustfmt.toml.tmpl",
+			Validator:   assignsTOMLKey,
+			// The edition comes from Cargo.toml, so rustfmt run directly agrees with cargo fmt (#567).
+			Resolve: rustfmtFacts,
+			Prior:   priorRustfmtDigests,
+		},
 		{Path: "clippy.toml", Description: "Rust AST and idiomatic static linting configuration", Source: "rust/clippy.toml.tmpl", Validator: assignsTOMLKey},
 		{Path: ".github/workflows/ci.yml", Description: "Continuous integration cargo build, test, and clippy", Source: "rust/ci-rust.yml.tmpl", Validator: validWorkflow},
 	}

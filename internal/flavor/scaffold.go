@@ -28,7 +28,11 @@ var ErrApplyIncomplete = errors.New("flavor apply: one or more templates failed"
 type ApplyReport struct {
 	Flavor           string   `json:"flavor"`
 	CreatedTemplates []string `json:"created_templates"`
-	SkippedTemplates []string `json:"skipped_templates"`
+	// RefreshedTemplates names each required template whose file held an unedited text of an
+	// earlier release (TemplateItem.Prior) and now holds the current rendering, written without
+	// --force in the file's own line-ending style.
+	RefreshedTemplates []string `json:"refreshed_templates,omitempty"`
+	SkippedTemplates   []string `json:"skipped_templates"`
 	// DeferredTemplates names each required template flavor apply does not write because
 	// another command produces it, as "<path> (<producer>)". The flavor audit still
 	// requires these files, so a deferred template is work left for the named command.
@@ -185,7 +189,10 @@ func forceProtected(rel string) bool {
 
 // templateDisposition decides, before any filesystem mutation, whether a template is safe to
 // write (templateCreated), already present (templateSkipped), configured under another name
-// (templateCovered, with that name as the note), or must be refused outright.
+// (templateCovered, with that name as the note), or must be refused outright. A template
+// declaring earlier texts (TemplateItem.Prior) present only under its own name is safe to
+// write: scaffoldTemplate refreshes an earlier text there and keeps any other file
+// (planTargetWrite).
 func templateDisposition(repoPath string, tmpl TemplateItem, force bool) (templateOutcome, string, error) {
 	// A template path is declared in slash form (".github/workflows/ci.yml"), so its
 	// cleanliness is a slash-path property. filepath.Clean returns backslashes on Windows
@@ -211,7 +218,7 @@ func templateDisposition(repoPath string, tmpl TemplateItem, force bool) (templa
 	}
 	// Past this point any file present is the canonical one, first in lookup order; a second
 	// entry is an alternative beside it, which blocks a rewrite the same way.
-	if len(present) > 1 || TemplateSatisfied(repoPath, tmpl) {
+	if len(present) > 1 || (len(tmpl.Prior) == 0 && TemplateSatisfied(repoPath, tmpl)) {
 		return templateSkipped, "", nil
 	}
 	return templateCreated, "", nil
@@ -247,6 +254,7 @@ const (
 	templateDeferred
 	templateUnmet
 	templateCovered
+	templateRefreshed
 )
 
 func applySingleTemplate(ctx context.Context, repoPath string, tmpl TemplateItem, repoName, owner string, force bool, report *ApplyReport) {
@@ -256,6 +264,8 @@ func applySingleTemplate(ctx context.Context, repoPath string, tmpl TemplateItem
 		report.Errors = append(report.Errors, err.Error())
 	case outcome == templateSkipped:
 		report.SkippedTemplates = append(report.SkippedTemplates, tmpl.Path)
+	case outcome == templateRefreshed:
+		report.RefreshedTemplates = append(report.RefreshedTemplates, tmpl.Path)
 	case outcome == templateCovered:
 		report.CoveredTemplates = append(report.CoveredTemplates, CoveredTemplate{Path: tmpl.Path, InUse: note})
 	case outcome == templateDeferred:
@@ -268,8 +278,10 @@ func applySingleTemplate(ctx context.Context, repoPath string, tmpl TemplateItem
 }
 
 // scaffoldTemplate writes one template unless it is covered, owned by another command,
-// unable to work in this repository, or already present without --force. The note names the
-// file covering a covered template, the producer of a deferred one and what an unmet one lacks.
+// unable to work in this repository, or already present without --force. An earlier text of
+// the template (TemplateItem.Prior) is the exception to the last: it is refreshed. The note
+// names the file covering a covered template, the producer of a deferred one and what an
+// unmet one lacks.
 func scaffoldTemplate(ctx context.Context, repoPath string, tmpl TemplateItem, repoName, owner string, force bool) (templateOutcome, string, error) {
 	outcome, note, err := templateDisposition(repoPath, tmpl, force)
 	if err != nil || outcome != templateCreated {
@@ -281,7 +293,7 @@ func scaffoldTemplate(ctx context.Context, repoPath string, tmpl TemplateItem, r
 	}
 	destPath := filepath.Join(repoPath, tmpl.Path)
 	target, err := readTemplateTarget(ctx, destPath, tmpl.Path, force)
-	if err != nil || target.keep {
+	if err != nil || (target.keep && len(tmpl.Prior) == 0) {
 		return templateSkipped, "", err
 	}
 	vars.RepoName, vars.Owner = repoName, owner
@@ -289,10 +301,63 @@ func scaffoldTemplate(ctx context.Context, repoPath string, tmpl TemplateItem, r
 	if err != nil {
 		return templateSkipped, "", err
 	}
-	if err := writeTarget(ctx, destPath, tmpl.Path, []byte(content), target); err != nil {
+	return writeTemplateBody(ctx, destPath, tmpl, []byte(content), target)
+}
+
+// writeTemplateBody writes content, a template's rendering, over the file target observed at
+// destPath as planTargetWrite decides: a kept file, and one that already holds the rendering
+// without --force, stay (templateSkipped); an earlier text is refreshed (templateRefreshed);
+// anything else is written (templateCreated).
+func writeTemplateBody(ctx context.Context, destPath string, tmpl TemplateItem, content []byte, target templateTarget) (templateOutcome, string, error) {
+	body, write := planTargetWrite(target, content, tmpl.Prior)
+	if write == targetKept || (write == targetUnchanged && target.keep) {
+		return templateSkipped, "", nil
+	}
+	if err := writeTarget(ctx, destPath, tmpl.Path, body, target); err != nil {
 		return templateSkipped, "", err
 	}
+	if write == targetRefreshed {
+		return templateRefreshed, "", nil
+	}
 	return templateCreated, "", nil
+}
+
+// targetWrite is what writing a rendering does to the file readTemplateTarget observed.
+type targetWrite int
+
+const (
+	// targetWritten: no file was there, or --force replaces the one that was.
+	targetWritten targetWrite = iota
+	// targetUnchanged: the file already holds the rendering, line endings aside.
+	targetUnchanged
+	// targetKept: the file differs and stays, since no --force was given or the path is one
+	// --force never replaces (forceProtected).
+	targetKept
+	// targetRefreshed: the file held an earlier Praetor text and takes the rendering in its own
+	// line-ending style, without --force.
+	targetRefreshed
+)
+
+// planTargetWrite decides what writing content over the file target observed does, and returns
+// the bytes to write: content, or for a refresh content in the file's line-ending style. A kept
+// file holding one of the earlier texts prior names (util.LookupCanonicalText) is refreshed,
+// except at a path --force never replaces. Templates (TemplateItem.Prior), the branch ruleset
+// (forge.PriorRulesetDigests) and the workflow plan all decide through it.
+func planTargetWrite(target templateTarget, content []byte, prior map[string]string) ([]byte, targetWrite) {
+	if !target.exists {
+		return content, targetWritten
+	}
+	if same, err := util.CanonicalTextEquivalent(target.before, content); err == nil && same {
+		return content, targetUnchanged
+	}
+	if !target.keep {
+		return content, targetWritten
+	}
+	_, known, crlf := util.LookupCanonicalText(target.before, prior)
+	if !known || target.protected {
+		return content, targetKept
+	}
+	return []byte(util.RestoreLineEndings(string(content), crlf)), targetRefreshed
 }
 
 // writeTarget writes content at destPath, creating its directory, bound to the bytes
@@ -336,6 +401,9 @@ type templateTarget struct {
 	// forceProtected names (the session ledger, the manifest, the lock), which --force
 	// never replaces.
 	keep bool
+	// protected reports that the existing file is one forceProtected names, which no apply
+	// replaces, not even to refresh an earlier text (planTargetWrite).
+	protected bool
 }
 
 // readTemplateTarget snapshots a template's destination, so the later write replaces
@@ -346,6 +414,7 @@ func readTemplateTarget(ctx context.Context, destPath, rel string, force bool) (
 	if err != nil && exists {
 		return templateTarget{}, fmt.Errorf("read %s: %w", rel, err)
 	}
-	keep := exists && (!force || forceProtected(rel))
-	return templateTarget{before: before, exists: exists, keep: keep}, nil
+	protected := exists && forceProtected(rel)
+	keep := exists && (!force || protected)
+	return templateTarget{before: before, exists: exists, keep: keep, protected: protected}, nil
 }

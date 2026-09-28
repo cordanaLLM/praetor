@@ -179,16 +179,6 @@ func TestScaffoldedBodiesAreTheShippedTemplates(t *testing.T) {
 	}
 }
 
-func TestScaffoldedRustfmtNamesThe2024Edition(t *testing.T) {
-	body := scaffoldInto(t, "rust-systems", "rustfmt.toml")["rustfmt.toml"]
-	if !strings.Contains(body, "edition = \"2024\"\n") {
-		t.Errorf("rustfmt.toml is not on the 2024 edition: %q", body)
-	}
-	if strings.Contains(body, "edition = \"2021\"") {
-		t.Errorf("rustfmt.toml still carries the 2021 edition: %q", body)
-	}
-}
-
 // BUG-028/BUG-029: the workflows were one-line comments. They are workflows now, and the
 // GitHub expressions in them reach the adopter verbatim rather than as template actions.
 func TestScaffoldedWorkflowsCarryJobsAndGitHubExpressions(t *testing.T) {

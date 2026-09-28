@@ -10,8 +10,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-
-	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
@@ -93,7 +91,9 @@ func plannedFlavorName(repoPath, profile string) (string, error) {
 // rendering at its path. It asks the questions scaffoldTemplate asks, through the same helpers,
 // in the same order: path containment and cover (templateDisposition), a withheld body and the
 // repository facts the body renders against (templateWithheld), and the file already there
-// (readTemplateTarget). A present file canonically equal to the rendering is an earlier apply's.
+// (readTemplateTarget). A present file canonically equal to the rendering is an earlier apply's,
+// and one holding an earlier text of the template (TemplateItem.Prior) is refreshed to it
+// (planTargetWrite).
 func plannedBody(ctx context.Context, repoPath string, tmpl TemplateItem, repoName, owner string) (string, bool, error) {
 	disposition, _, err := templateDisposition(repoPath, tmpl, false)
 	if err != nil {
@@ -110,8 +110,8 @@ func plannedBody(ctx context.Context, repoPath string, tmpl TemplateItem, repoNa
 		return "", false, err
 	}
 	if target.exists {
-		same, err := util.CanonicalTextEquivalent(target.before, []byte(body))
-		return body, err == nil && same, nil
+		_, write := planTargetWrite(target, []byte(body), tmpl.Prior)
+		return body, write == targetUnchanged || write == targetRefreshed, nil
 	}
 	if disposition == templateCovered || outcome != templateCreated {
 		return "", false, nil

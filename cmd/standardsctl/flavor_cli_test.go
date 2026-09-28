@@ -67,6 +67,35 @@ func TestFlavorApply_Boundary_ReportsTemplatesWithAnUnmetRequirement(t *testing.
 	}
 }
 
+// earlierRustfmt is the rustfmt.toml earlier releases scaffolded for every crate (#567).
+const earlierRustfmt = "edition = \"2024\"\nmax_width = 100\nnewline_style = \"Unix\"\nuse_small_heuristics = \"Default\"\n"
+
+// Positive: apply names the earlier Praetor text it refreshed without --force, apart from the
+// templates it created; an edited copy is only skipped, and a fresh one is created (#567).
+func TestFlavorApply_ReportsTheEarlierTextItRefreshed(t *testing.T) {
+	for existing, want := range map[string]string{
+		earlierRustfmt: "Refreshed Earlier Praetor Text (1):\n    - rustfmt.toml",
+		earlierRustfmt + "imports_granularity = \"Crate\"\n": "Skipped Existing  (1): rustfmt.toml",
+		"": "Created Templates (3): rustfmt.toml",
+	} {
+		dir := t.TempDir()
+		writeFixtureFile(t, dir, "Cargo.toml", "[workspace.package]\nedition = \"2021\"\n")
+		if existing != "" {
+			writeFixtureFile(t, dir, "rustfmt.toml", existing)
+		}
+		out, err := captureStdout(t, func() error {
+			return dispatchCommand("flavor", []string{"apply", dir, "--flavor=rust-systems"})
+		})
+		if err != nil {
+			t.Fatalf("flavor apply: %v\n%s", err, out)
+		}
+		mustContain(t, out, want)
+		if refreshed := strings.Contains(out, "Refreshed Earlier Praetor Text"); refreshed != (existing == earlierRustfmt) {
+			t.Errorf("existing %q: refreshed line present = %v:\n%s", existing, refreshed, out)
+		}
+	}
+}
+
 // imageForgeFixture writes an os-image repository whose settings conform, plus one YAML
 // mapping under each given yamllint configuration name.
 func imageForgeFixture(t *testing.T, yamllintNames ...string) string {
