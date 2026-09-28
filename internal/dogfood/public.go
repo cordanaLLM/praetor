@@ -118,7 +118,7 @@ func RunPublicLoop(ctx context.Context, opts PublicLoopOptions) (*PublicLoopRepo
 
 func runPublicRepository(ctx context.Context, opts PublicLoopOptions, source publicSource, dir string) PublicRepositoryResult {
 	result := PublicRepositoryResult{Repository: source.url, RequestedSHA: source.sha, Checkout: filepath.Join(dir, "checkout"), Status: "failed"}
-	if err := util.MkdirSecure(dir, 0o700); err != nil {
+	if err := mkdirEvidenceDir(dir); err != nil {
 		result.Error = err.Error()
 		return result
 	}
@@ -241,6 +241,15 @@ func savePublicJSON(path string, value any) error {
 		return fmt.Errorf("retain evidence: %w", err)
 	}
 	return nil
+}
+
+// mkdirEvidenceDir creates dir, an owner-only directory directly below an existing run or
+// artifact directory, through a pinned handle on that parent (util.MkdirConfined): a link
+// already planted at dir is followed only while it stays inside the parent, so a case,
+// repository or clone-home directory cannot land elsewhere, and the owner-only mode is never
+// applied to a directory outside it (BUG-826).
+func mkdirEvidenceDir(dir string) error {
+	return util.MkdirConfined(filepath.Dir(dir), filepath.Base(dir), 0o700)
 }
 
 func createPublicRun(root string) (string, error) {

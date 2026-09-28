@@ -39,8 +39,8 @@ func TestRecordModeWritesABoundedZeroSixHundredFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// util.WriteFileSecure (record.go) requests recordFilePerm (0o600) through the portable
-	// os.OpenFile API; that part is proven by internal/util's own WriteFileSecure tests.
+	// util.WriteFileConfined (record.go) requests recordFilePerm (0o600) through the portable
+	// os.Root API; that part is proven by internal/util's own WriteFileConfined tests.
 	// What this assertion can actually check differs by platform: os.FileInfo.Mode() on
 	// Windows is synthesised from the read-only attribute alone, so an ordinary (non-read-only)
 	// file always reports 0o666 there regardless of what permission was requested at creation

@@ -100,7 +100,9 @@ func pullArchive(ctx context.Context, opts PullOptions, target string, archive R
 		return failed(outcome, err)
 	}
 	dir := filepath.Join(target, rel)
-	if err := util.MkdirSecure(dir, util.SecureDirPerm); err != nil {
+	// Created through a pinned handle on target, so a link already inside the pull target
+	// cannot place an archive's directory outside it (BUG-826).
+	if err := util.MkdirConfined(target, rel, util.SecureDirPerm); err != nil {
 		return failed(outcome, err)
 	}
 	err = opts.Rclone.download(ctx, remotePath(opts.Remote, opts.Host, archive.Path), func(r io.Reader) error {
