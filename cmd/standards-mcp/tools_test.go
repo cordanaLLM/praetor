@@ -69,7 +69,8 @@ func TestServer_CompileContextRegisterBlock(t *testing.T) {
 }
 
 // The MCP verify and audit mirror the CLI caveman gate: a terse AGENTS.md passes with its
-// counts, prose written below the harness fails both, and a writing compile still succeeds.
+// counts, and prose written below the harness fails both. A writing compile still writes the
+// targets, then fails on the same lint instead of reporting success.
 func TestServer_CompileContextCavemanLint(t *testing.T) {
 	srv, root := newFixtureServer(t)
 	verify := callTool(t, srv, "standards_compile_context", map[string]any{"verify_only": true})
@@ -84,7 +85,10 @@ func TestServer_CompileContextCavemanLint(t *testing.T) {
 		"and extend the code that is already there. Two implementations of one behavior are a defect: they " +
 		"drift, and the second one stops matching the first.\n"
 	writeFixtureFile(t, root, "AGENTS.md", string(agents)+prose)
-	expectText(t, "prose compile", callTool(t, srv, "standards_compile_context", nil), "[COMPILED] CLAUDE.md")
+	expectError(t, "prose compile", callTool(t, srv, "standards_compile_context", nil), "context written, but compile-context --verify will fail")
+	if claude, err := os.ReadFile(filepath.Join(root, "CLAUDE.md")); err != nil || !strings.Contains(string(claude), "Two implementations") {
+		t.Fatalf("a prose compile must still write the targets: %v", err)
+	}
 	expectError(t, "prose verify", callTool(t, srv, "standards_compile_context", map[string]any{"verify_only": true}), "fails the caveman lint")
 	expectError(t, "prose audit", callTool(t, srv, "standards_audit", nil), "fails the caveman lint")
 }
