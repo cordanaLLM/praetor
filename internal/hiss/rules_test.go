@@ -161,9 +161,9 @@ func TestGitVisiblePathsAnswersTheScanScope(t *testing.T) {
 // extension, and a lone dot, are not native.
 func TestIsNativeExtensionMatchesTheScanDispatch(t *testing.T) {
 	cases := map[string]bool{
-		".c": true, ".cpp": true, ".cc": true, ".cxx": true, ".h": true, ".hpp": true, ".cu": true, ".hip": true,
-		".C": true, ".CPP": true, ".H": true,
-		".m": false, ".mm": false, ".hh": false, ".hxx": false, ".cuh": false, ".txt": false,
+		".c": true, ".cpp": true, ".cc": true, ".cxx": true, ".h": true, ".hpp": true, ".hh": true, ".cu": true, ".hip": true,
+		".C": true, ".CPP": true, ".H": true, ".HH": true,
+		".m": false, ".mm": false, ".hxx": false, ".cuh": false, ".txt": false,
 		"": false, ".": false,
 	}
 	const source = "void copy(char *d, const char *s) { strcpy(d, s); }\n"
