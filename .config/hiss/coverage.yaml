@@ -45,10 +45,14 @@ rules:
           receiver's type, and guessing it would invent edges that do not exist.
       - language: c
         state: partial
-        mechanism: internal/hiss rules.go native goto matcher
+        mechanism: internal/hiss cleanup_goto.go nativeGotos, driven by rules.go scanNativeLines
         rationale: >-
-          Only goto is reported. Recursion in native code is not decided by the line scanner
-          and is held as a gap.
+          Only goto is reported. Under a declared and documented hiss.exceptions.c_goto_cleanup
+          (hiss.CleanupGoto), a forward goto to the sole label of its function, sitting directly
+          in the function body under a cleanup name, is not; every other goto still is, which
+          cleanup_goto_test.go replays in both directions. The fixtures below scan without a
+          manifest, so they replay the undeclared direction. Recursion in native code is not
+          decided by the line scanner and is held as a gap.
       - language: rust
         state: partial
         mechanism: internal/hiss selfcall.go rustSelfCalls, driven by scanRustLines

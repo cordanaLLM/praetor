@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/hiss"
@@ -155,31 +157,58 @@ func ResolveRepositoryPolicyFromCatalog(ctx context.Context, configPath, catalog
 // An error is returned only for a nil context or a resolution the caller's ctx interrupted;
 // an interrupted resolution is never reported as a policy the repository declares.
 func ResolveRepositoryComplexity(ctx context.Context, root string) (ComplexityPolicy, string, error) {
+	complexity, _, warning, err := resolveRepositoryComplexity(ctx, root)
+	return complexity, warning, err
+}
+
+// ResolveRepositoryScanOptions returns opts with every scan input the repository at root
+// imposes: the complexity limits ResolveRepositoryComplexity resolves and the HISS exceptions
+// its manifest declares and documents (Manifest.CleanupGotoException). The gate's HISS stage
+// and `praetorctl baseline` scan with it, so they judge the tree as `praetorctl audit` does
+// (EffectivePolicy.HISSScanOptions). The warning joins the unresolved-policy notice and an
+// unhonoured exception; an error is returned only when ResolveRepositoryComplexity returns one.
+func ResolveRepositoryScanOptions(ctx context.Context, root string, opts hiss.ScanOptions) (hiss.ScanOptions, string, error) {
+	complexity, manifest, warning, err := resolveRepositoryComplexity(ctx, root)
+	if err != nil {
+		return opts, "", err
+	}
+	opts = complexity.ScanOptions(opts)
+	cleanupGoto, exceptionWarning := manifest.CleanupGotoException(root)
+	opts.CleanupGoto = cleanupGoto
+	warnings := slices.DeleteFunc([]string{warning, exceptionWarning}, func(w string) bool { return w == "" })
+	return opts, strings.Join(warnings, "; "), nil
+}
+
+// resolveRepositoryComplexity is ResolveRepositoryComplexity returning, too, the manifest it
+// read at root, or nil when there is none or it does not parse.
+func resolveRepositoryComplexity(ctx context.Context, root string) (ComplexityPolicy, *Manifest, string, error) {
 	if ctx == nil {
-		return ComplexityPolicy{}, "", errors.New("resolving repository complexity requires a context")
+		return ComplexityPolicy{}, nil, "", errors.New("resolving repository complexity requires a context")
 	}
 	if root == "" {
 		root = "."
 	}
 	configPath := filepath.Join(root, ManifestFileName)
 	if !util.FileExists(configPath) {
-		return HISSComplexityCeiling(), "", nil
+		return HISSComplexityCeiling(), nil, "", nil
 	}
 	manifest, err := LoadManifest(configPath)
 	if err != nil {
-		return unresolvedComplexity(ctx, nil, err)
+		complexity, warning, err := unresolvedComplexity(ctx, nil, err)
+		return complexity, nil, warning, err
 	}
 	policy, notice, err := ResolveRepositoryPolicy(ctx, configPath, manifest)
 	switch {
 	case err != nil:
-		return unresolvedComplexity(ctx, manifest, err)
+		complexity, warning, err := unresolvedComplexity(ctx, manifest, err)
+		return complexity, manifest, warning, err
 	case policy == nil:
 		// The manifest vanished between the two reads: the workspace is unadopted now.
-		return HISSComplexityCeiling(), "", nil
+		return HISSComplexityCeiling(), nil, "", nil
 	case notice == NoLockNotice:
-		return ceilingWithOverrides(manifest), "", nil
+		return ceilingWithOverrides(manifest), manifest, "", nil
 	}
-	return policy.Complexity.WithHISSDefaults(), "", nil
+	return policy.Complexity.WithHISSDefaults(), manifest, "", nil
 }
 
 // ceilingWithOverrides is HISSComplexityCeiling tightened by the manifest's complexity

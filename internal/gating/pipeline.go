@@ -399,13 +399,16 @@ func runHissStage(ctx context.Context, cfg *stageConfig) (string, error) {
 // limit pass the gate with functions its audit rejects (BUG-638). A policy that does not
 // resolve still scans with the ceiling, and the returned warning names the cause so the stage
 // message shows it.
+//
+// The HISS exceptions the manifest declares and documents ride along
+// (config.ResolveRepositoryScanOptions), so the gate accepts exactly the cleanup gotos the
+// audit accepts.
 func hissScanOptions(ctx context.Context, cfg *stageConfig) (hiss.ScanOptions, string, error) {
-	opts := cfg.scanOpts
-	complexity, warning, err := config.ResolveRepositoryComplexity(ctx, cfg.repoDir)
+	opts, warning, err := config.ResolveRepositoryScanOptions(ctx, cfg.repoDir, cfg.scanOpts)
 	if err != nil {
 		return opts, "", fmt.Errorf("resolve repository complexity policy: %w", err)
 	}
-	return complexity.ScanOptions(opts), warning, nil
+	return opts, warning, nil
 }
 
 // runSecurityStage runs govulncheck and gosec. A missing scanner fails the stage: a

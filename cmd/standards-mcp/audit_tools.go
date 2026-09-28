@@ -54,7 +54,7 @@ func (s *Server) runAuditGates(ctx context.Context, p auditPaths) *mcp.ToolResul
 			return auditLockfile(ctx, s.rootDir, p.policy.CatalogRoot, manifest)
 		},
 		func(ctx context.Context) (string, error) {
-			return auditBaselineRatchetWithPolicy(ctx, s.rootDir, p.baseline, effective.Policy.Complexity)
+			return auditBaselineRatchetWithPolicy(ctx, s.rootDir, p.baseline, effective)
 		},
 		func(ctx context.Context) (string, error) { return auditContextSync(ctx, p.agents, s.rootDir) },
 		func(ctx context.Context) (string, error) {
@@ -101,19 +101,22 @@ func auditLockfile(ctx context.Context, root, catalogRoot string, manifest *conf
 // auditBaselineRatchet loads the debt baseline, scans the tree for HISS violations and
 // enforces the monotonic ratchet exactly like the CLI audit does.
 func auditBaselineRatchet(ctx context.Context, root, baselinePath string) (string, error) {
-	return auditBaselineRatchetWithPolicy(ctx, root, baselinePath, config.HISSComplexityCeiling())
+	return auditBaselineRatchetWithPolicy(ctx, root, baselinePath, nil)
 }
 
 // auditBaselineRatchetWithPolicy scans under the policy's function-length limit, which the
-// ratchet enforces, and its complexity limits, whose measurements follow the verdict line as
-// report-only lines.
-func auditBaselineRatchetWithPolicy(ctx context.Context, root, baselinePath string, policy config.ComplexityPolicy) (string, error) {
+// ratchet enforces, its complexity limits, whose measurements follow the verdict line as
+// report-only lines, and the HISS exceptions its manifest declares and documents
+// (config.EffectivePolicy.HISSScanOptions), as the CLI audit does. A nil policy scans under the
+// audit ceiling and no exception.
+func auditBaselineRatchetWithPolicy(ctx context.Context, root, baselinePath string, policy *config.EffectivePolicy) (string, error) {
 	base, err := baseline.LoadBaseline(baselinePath)
 	if err != nil {
 		return "", fmt.Errorf("[FAIL] Baseline audit failed: %w", err)
 	}
 
-	scanRep, err := hiss.Scan(ctx, root, policy.ScanOptions(hiss.ScanOptions{}))
+	scanOpts, warning := policy.HISSScanOptions(root, hiss.ScanOptions{})
+	scanRep, err := hiss.Scan(ctx, root, scanOpts)
 	if err != nil {
 		return "", fmt.Errorf("[FAIL] Invariant audit failed: %w", err)
 	}
@@ -133,7 +136,11 @@ func auditBaselineRatchetWithPolicy(ctx context.Context, root, baselinePath stri
 	}
 	verdict := fmt.Sprintf("[PASS] Technical debt baseline verified: %d recorded legacy infractions; HISS scan found %d active violations within the baselined limit. %s",
 		base.TotalInfractions, ratchet.CurrentCount, scanRep.CoverageEvidence())
-	return strings.Join(append([]string{verdict}, scanRep.Complexity.Lines()...), "\n"), nil
+	lines := append([]string{verdict}, scanRep.Complexity.Lines()...)
+	if warning != "" {
+		lines = append(lines, "[WARN] "+warning)
+	}
+	return strings.Join(lines, "\n"), nil
 }
 
 // auditContextSync verifies the compiled vendor targets match the canonical AGENTS.md.

@@ -91,20 +91,41 @@ unset flag keeps the default. The flags apply to single-repository adoption; bat
   hiss:
     exceptions:
       c_goto_cleanup: docs/adr/0003-cleanup-goto.md
+      c_goto_cleanup_labels: [unwind] # optional, beside cleanup, out, err and fail
   ```
 
-  Adoption honours it only while that document exists. HISS-01 in the `AGENTS.md` and
-  Paperclip harnesses then states the exception in place of the C/C++ zero-`goto` clause,
-  keeps Go's own ban, and says the HISS-01 audit ignores the exception, so each new `goto` still
-  fails the gate: the HISS-01 scan (`internal/hiss/rules.go`, `scanNativeLineInvariants`) does
-  not read the declaration, and a new cleanup `goto` is a finding the baseline ratchet counts.
-  A declaration whose document is missing keeps the ban and adds a report warning naming the
-  document (`TestAdoptHonoursDocumentedCleanupGotoException`); `praetorctl paperclip harness`
-  prints the same warning. The value must be a clean repository-relative path of at most 256
-  bytes, and an exception key praetor does not know fails the manifest
-  (`TestHISSExceptions_Negative_BadDeclarationsFail`). The section is repository-only: no
-  profile or fleet layer declares an exception, and the effective policy does not change with
-  it ([`internal/config/hiss_exceptions.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/config/hiss_exceptions.go)).
+  The exception holds only while that document is a regular file in the repository. The audit's
+  native HISS-01 scan then reports every `goto` except one that meets all five conditions
+  ([`internal/hiss/cleanup_goto.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hiss/cleanup_goto.go)):
+
+  1. **Forward.** The `goto` line comes before its label.
+  2. **Same function.** The label is in the function body that holds the `goto`.
+  3. **Single level.** That function defines exactly one label, so it has one cleanup exit.
+  4. **Body level.** The label sits directly in the function body, outside every nested block,
+     so the jump leaves blocks and never enters one.
+  5. **Name.** The label is `cleanup`, `out`, `err` or `fail`, or is listed in
+     `c_goto_cleanup_labels`: C identifiers of at most 64 bytes, at most 8 of them, declared
+     only beside `c_goto_cleanup`.
+
+  A backward `goto`, a jump to a label inside a nested block, a second label, another name and
+  a computed `goto` all stay findings (`TestCleanupGoto_Negative_OtherGotosStillFail`). The scan
+  reads a `goto` or a label only where it opens a line, as it always has. `praetorctl audit`, the
+  gate's HISS stage, `praetorctl baseline`, the MCP audit, public-repository verification and
+  adoption's legacy-debt scan all read the declaration through
+  `config.Manifest.CleanupGotoException`, so they judge the same tree the same way
+  (`TestCleanupGotoExceptionReachesTheAudit`, `TestRunHissStage_CleanupGotoException`). HISS-01
+  in the `AGENTS.md` and Paperclip harnesses states that rule in place of the C/C++ zero-`goto`
+  clause, rendered from the scan's own text (`hiss.CleanupGotoRule`), and keeps Go's own ban.
+  Without the declaration every `goto` is a finding and the ban stays. A declaration whose
+  document is missing keeps both and warns, naming the document, in the adopt report,
+  `praetorctl paperclip harness`, `praetorctl audit`, `praetorctl baseline`, the gate stage and
+  the MCP audit (`TestAdoptHonoursDocumentedCleanupGotoException`,
+  `TestPaperclipHarness_WarnsOnUndocumentedException`). The document path must be a clean
+  repository-relative path of at most 256 bytes, and an exception key praetor does not know
+  fails the manifest (`TestHISSExceptions_Negative_BadDeclarationsFail`,
+  `TestHISSExceptions_Labels`). The section is repository-only: no profile or fleet layer
+  declares an exception, and the effective policy does not change with it
+  ([`internal/config/hiss_exceptions.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/config/hiss_exceptions.go)).
 - **Existing files.** An existing manifest must parse, or adoption fails and leaves it
   unchanged. Every other existing scaffold is compared with what adoption would write:
   a match is reported as verified, a difference as `differs from the scaffold` with a

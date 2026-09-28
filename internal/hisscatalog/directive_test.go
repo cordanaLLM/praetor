@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/caveman"
+	"github.com/cordanaLLM/praetor/internal/hiss"
 )
 
 // directiveOf renders one rule's adopted directive for f.
@@ -123,16 +124,20 @@ func TestAllLanguages(t *testing.T) {
 }
 
 // cleanupGoto is HISS-01's exception clause as a C repository declaring it reads it.
-const cleanupGoto = "C/C++: `goto` only single-level forward jump to function cleanup label (declared exception); HISS-01 audit ignores exception: each new `goto` still fails gate"
+const cleanupGoto = "C/C++: `goto` only forward jump to sole label of same function; label directly in function body, outside nested blocks; label named `cleanup` / `out` / `err` / `fail` or listed in `hiss.exceptions.c_goto_cleanup_labels` (declared exception); audit reports every other `goto`"
 
 // TestAdoptedDirective_Positive_DeclaredExceptionReplacesTheBan: a C repository that declares
-// its single-level cleanup `goto` reads that exception, not the blanket zero-`goto` ban, and is
-// told the HISS-01 audit ignores the exception, so each new `goto` still fails the gate; one
-// that declares nothing keeps the ban (#68).
+// its single-level cleanup `goto` reads that exception, not the blanket zero-`goto` ban: the
+// exact rule the audit's native scan applies, rendered from the scan's own text
+// (hiss.CleanupGotoRule), and that every other `goto` is reported. One that declares nothing
+// keeps the ban (#68).
 func TestAdoptedDirective_Positive_DeclaredExceptionReplacesTheBan(t *testing.T) {
 	declared := directiveOf(t, "HISS-01", Facts{Languages: LanguageC, Exceptions: ExceptionCleanupGoto})
 	if want := "recursion prohibited; call graph = DAG; " + cleanupGoto; declared != want {
 		t.Errorf("HISS-01 for C declaring the exception = %q, want %q", declared, want)
+	}
+	if !strings.Contains(declared, "C/C++: "+hiss.CleanupGotoRule()+" (declared exception)") {
+		t.Errorf("HISS-01 exception clause %q does not state hiss.CleanupGotoRule() %q", declared, hiss.CleanupGotoRule())
 	}
 	if plain := directiveOf(t, "HISS-01", Facts{Languages: LanguageC}); plain != "recursion prohibited; call graph = DAG; C/C++: zero `goto`" {
 		t.Errorf("HISS-01 for C declaring nothing = %q", plain)

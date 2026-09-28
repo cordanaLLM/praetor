@@ -50,14 +50,15 @@ var languageNames = [...]struct {
 // Exception is a set of exceptions to adopted directives that a repository declares and
 // documents itself. A declared exception replaces the clause it waives, for the languages it
 // names, with the exception's own clause, so a repository whose standard allows a construct is
-// not handed a blanket ban contradicting it (#68). It changes the directive text only: every
-// check the audit runs stays as it is, and the exception's clause says so.
+// not handed a blanket ban contradicting it (#68). The audit honours the same declaration, and
+// the exception's clause renders the rule text the audit's check publishes (hiss.CleanupGotoRule),
+// so the harness states exactly what the audit accepts.
 type Exception uint8
 
 const (
 	// ExceptionCleanupGoto is a C/C++ `goto` jumping forward to the one cleanup label of its
 	// function (single-level error unwinding), declared as hiss.exceptions.c_goto_cleanup in
-	// .standards.yaml.
+	// .standards.yaml; hiss.CleanupGoto is the exact rule.
 	ExceptionCleanupGoto Exception = 1 << iota
 	// exceptionEnd follows the last exception bit; one added above it joins AllExceptions.
 	exceptionEnd

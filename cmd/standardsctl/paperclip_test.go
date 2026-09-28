@@ -260,3 +260,30 @@ func TestDogfoodingPaperclipHarness(t *testing.T) {
 		}
 	}
 }
+
+// TestPaperclipHarness_WarnsOnUndocumentedException pins the CLI output of `praetorctl paperclip
+// harness` for a declared exception. Negative: a declaration whose document is missing prints one
+// [WARN] line naming it before the [OK] line. Positive: with the document there is no warning.
+func TestPaperclipHarness_WarnsOnUndocumentedException(t *testing.T) {
+	for _, documented := range []bool{false, true} {
+		repo := t.TempDir()
+		writeFixtureFile(t, repo, ".standards.yaml", "version: 1\nrepository:\n  owner: acme\n  name: widget\n"+
+			"hiss:\n  exceptions:\n    c_goto_cleanup: cleanup-goto.md\n")
+		if documented {
+			writeFixtureFile(t, repo, "cleanup-goto.md", "# Cleanup goto\n")
+		}
+		out, err := captureStdout(t, func() error {
+			return runPaperclipHarness(t.Context(), []string{"--path=" + repo})
+		})
+		if err != nil {
+			t.Fatalf("documented=%v: %v", documented, err)
+		}
+		warn := "[WARN] .standards.yaml hiss.exceptions.c_goto_cleanup names cleanup-goto.md, which is no regular file in the repository;"
+		if got := strings.Contains(out, warn); got == documented || strings.Count(out, "[WARN]") != strings.Count(out, warn) {
+			t.Errorf("documented=%v: output\n%s\nwant the undocumented warning only when the document is missing", documented, out)
+		}
+		if !strings.Contains(out, "[OK] Synthesized Paperclip harness") || strings.Index(out, "[OK]") < strings.LastIndex(out, "[WARN]") {
+			t.Errorf("documented=%v: output\n%s\nwant every warning before the [OK] line", documented, out)
+		}
+	}
+}

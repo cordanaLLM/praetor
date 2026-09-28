@@ -63,6 +63,9 @@ type ScanOptions struct {
 	// scalar bound and not only a deadline (HISS-02). Zero applies DefaultMaxScanFiles.
 	// Crossing the bound stops the walk and marks the report Truncated.
 	MaxFiles int
+	// CleanupGoto is the C/C++ cleanup-goto exception the repository declares and documents.
+	// The zero value reports every native `goto`.
+	CleanupGoto CleanupGoto
 }
 
 // InvariantViolation captures an individual HISS infraction.

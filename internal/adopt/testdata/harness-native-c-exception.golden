@@ -16,7 +16,7 @@ Adopted check = check adoption generated here (generated `make verify-all`), as 
 
 | Invariant | Rule | Adopted check | On fail |
 | :--- | :--- | :--- | :--- |
-| **HISS-01** control flow | recursion prohibited; call graph = DAG; C/C++: `goto` only single-level forward jump to function cleanup label (declared exception); HISS-01 audit ignores exception: each new `goto` still fails gate | `praetorctl audit` HISS scan in verify-all: Go `goto`, recursion + plain-function call cycles; Rust, Python direct recursion; C `goto` | new finding fails verify-all |
+| **HISS-01** control flow | recursion prohibited; call graph = DAG; C/C++: `goto` only forward jump to sole label of same function; label directly in function body, outside nested blocks; label named `cleanup` / `out` / `err` / `fail` or listed in `hiss.exceptions.c_goto_cleanup_labels` (declared exception); audit reports every other `goto` | `praetorctl audit` HISS scan in verify-all: Go `goto`, recursion + plain-function call cycles; Rust, Python direct recursion; C `goto` | new finding fails verify-all |
 | **HISS-02** loops, I/O | scalar upper bound on every loop; explicit deadline on every I/O call | `praetorctl audit` HISS scan in verify-all: unbounded loop shapes in Go, C, Rust, Python; I/O deadlines unchecked | new finding fails verify-all |
 | **HISS-03** memory | C/C++: zero heap allocation in hot simulation/tick loops | not enforced | advisory |
 | **HISS-04** complexity | McCabe cyclomatic <= 10, cognitive <= 15, statements <= 50; func LOC <= 60 (audit ceiling; caps profile value) | `praetorctl audit` HISS scan in verify-all: function length only; other caps need repository linter | new finding fails verify-all |

@@ -81,14 +81,14 @@ func parseBaselineMode(args []string) (baselineMode, error) {
 // instead, so in a repository that tightened its function-length limit the recorded baseline
 // and the audit that judges it disagreed on what counts as debt.
 func scanBaselineInfractions(ctx context.Context, root string) ([]baseline.Infraction, error) {
-	complexity, warning, err := config.ResolveRepositoryComplexity(ctx, root)
+	scanOpts, warning, err := config.ResolveRepositoryScanOptions(ctx, root, hiss.ScanOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("resolve complexity policy for %s: %w", root, err)
 	}
 	if warning != "" {
 		fmt.Printf("[WARN] %s\n", warning)
 	}
-	scanRep, err := hiss.Scan(ctx, root, complexity.ScanOptions(hiss.ScanOptions{}))
+	scanRep, err := hiss.Scan(ctx, root, scanOpts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan for baseline infractions: %w", err)
 	}

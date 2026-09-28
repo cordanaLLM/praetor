@@ -698,11 +698,12 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
     comes from `config.AuditMaxFuncLOC`; the catalog keeps no copy of it
     (`TestAdoptHarnessesStateTheAuditFunctionLength`, `TestFuncLOCLimit`).
   - A C or C++ repository that declares `hiss.exceptions.c_goto_cleanup` and carries the
-    document it names reads that exception in HISS-01 instead of the zero-`goto` clause; Go's own
-    ban stays, and the clause says each new `goto` still fails the gate, since the HISS-01 scan
-    does not read the declaration. Without the document the ban stays and the report warns
-    ([declared HISS exceptions](../adoption.md#what-adoption-reads-before-it-writes),
-    `TestAdoptHonoursDocumentedCleanupGotoException`).
+    document it names reads that exception in HISS-01 instead of the zero-`goto` clause: the
+    exact rule the audit's native scan applies, rendered from the scan's own text
+    (`hiss.CleanupGotoRule`), so the harness grants nothing the audit rejects. Go's own ban
+    stays. Without the document the ban stays, the scan reports every `goto` and the report
+    warns ([declared HISS exceptions](../adoption.md#what-adoption-reads-before-it-writes),
+    `TestAdoptHonoursDocumentedCleanupGotoException`, `TestCleanupGotoExceptionReachesTheAudit`).
   - `TestAdoptedHarnessGolden` pins the whole harness for a Go framework, a Rust crate, a
     native C engine and one declaring the cleanup-`goto` exception
     ([`internal/adopt/testdata`](https://github.com/cordanaLLM/praetor/tree/main/internal/adopt/testdata));

@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
-	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // runtimeLanguages maps the runtimes the verification plan detects to the languages a HISS
@@ -61,20 +61,14 @@ func (s *adoptSession) hissFacts() hisscatalog.Facts {
 	return facts
 }
 
-// declaredExceptions returns the HISS exceptions manifest declares whose document exists in the
-// repository at root. A declared exception whose document is missing is not honoured, and the
-// returned warning says so: the harness never states an exception the repository does not
-// document. A nil manifest declares none.
-func declaredExceptions(root string, manifest *config.Manifest) (hisscatalog.Exception, string) {
-	document := manifest.CleanupGotoDocument()
-	if document == "" {
-		return 0, ""
+// harnessExceptions is the HISS exceptions the harnesses state for the cleanup-goto exception the
+// manifest declares and documents (config.Manifest.CleanupGotoException), the reading the audit's
+// scan honours too, so the harness never states an exception the audit does not grant.
+func harnessExceptions(cleanupGoto hiss.CleanupGoto) hisscatalog.Exception {
+	if cleanupGoto.Enabled {
+		return hisscatalog.ExceptionCleanupGoto
 	}
-	if path, err := repoFile(root, filepath.FromSlash(document)); err == nil && util.FileExists(path) {
-		return hisscatalog.ExceptionCleanupGoto, ""
-	}
-	return 0, fmt.Sprintf("%s hiss.exceptions.c_goto_cleanup names %s, which is no regular file in the repository; "+
-		"HISS-01 keeps its zero-goto clause until that document exists", manifestFile, document)
+	return 0
 }
 
 // RepositoryHISSFacts reports what the HISS directives of the repository at root depend on, for
@@ -94,11 +88,11 @@ func RepositoryHISSFacts(ctx context.Context, root string) (hisscatalog.Facts, [
 		return hisscatalog.Facts{}, nil, err
 	}
 	var warnings []string
-	exceptions, warning := declaredExceptions(root, manifest)
+	cleanupGoto, warning := manifest.CleanupGotoException(root)
 	if warning != "" {
 		warnings = append(warnings, warning)
 	}
-	facts := repositoryFacts(plan, exceptions)
+	facts := repositoryFacts(plan, harnessExceptions(cleanupGoto))
 	if manifest == nil {
 		return facts, warnings, nil
 	}

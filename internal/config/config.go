@@ -245,8 +245,9 @@ type Manifest struct {
 	AgentClients []string `yaml:"agent_clients,omitempty"`
 	// HISS declares the exceptions to the adopted HISS directives this repository documents
 	// (hiss.exceptions). It is repository-only and stays out of ResolvedPolicy, like Register:
-	// no fleet or profile layer can loosen a repository's rule. No audit reads it, so an
-	// exception changes the generated harness text only.
+	// no fleet or profile layer can loosen a repository's rule. The audit's scan and the
+	// generated harnesses read it through Manifest.CleanupGotoException, so both grant exactly
+	// the same exception.
 	HISS *HISSPolicy `yaml:"hiss,omitempty"`
 }
 

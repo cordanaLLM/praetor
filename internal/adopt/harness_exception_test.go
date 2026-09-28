@@ -10,13 +10,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/paperclip"
 )
 
 // cleanupGotoClause is HISS-01's exception clause for a C repository declaring it.
-const cleanupGotoClause = "C/C++: `goto` only single-level forward jump to function cleanup label (declared exception); HISS-01 audit ignores exception: each new `goto` still fails gate"
+const cleanupGotoClause = "C/C++: `goto` only forward jump to sole label of same function; label directly in function body, outside nested blocks; label named `cleanup` / `out` / `err` / `fail` or listed in `hiss.exceptions.c_goto_cleanup_labels` (declared exception); audit reports every other `goto`"
 
 // adoptedRules returns the Rule cell of id in the AGENTS.md harness of repo and the Paperclip
 // invariant of id adoption wrote there, without its "id: " prefix.
@@ -99,7 +101,7 @@ func funcLOCProfile(limit string) map[string]string {
 // `praetorctl audit` enforces, resolved by the loader and audit layer the audit uses. Positive:
 // a stricter pinned profile (50) and a stricter repository override (45) are stated alone.
 // Negative: a pinned profile allowing 75 is not restated; the harnesses state the 60-line audit
-// ceiling and that it caps the profile value (#68). Boundary: the default profile resolves to the
+// ceiling (#68). Boundary: the default profile resolves to the
 // ceiling itself. The Paperclip harness adoption bound before the policy resolved is the one
 // `praetorctl paperclip harness` synthesizes afterwards, byte for byte.
 func TestAdoptHarnessesStateTheAuditFunctionLength(t *testing.T) {
@@ -158,5 +160,85 @@ func assertCLIHarnessMatches(t *testing.T, repo string) {
 	}
 	if written := mustRead(t, filepath.Join(repo, filepath.FromSlash(paperclipFile))); written != string(fresh) {
 		t.Fatalf("CLI synthesis differs from adoption:\n%s\nwant\n%s", fresh, written)
+	}
+}
+
+// cleanupGotoSources are C units for the audit-side exception test: the single-level forward
+// cleanup goto the exception accepts, a backward goto, and a goto into a label inside a nested
+// block, each with one goto on line 3.
+var cleanupGotoSources = map[string]string{
+	"forward":     "int f(int n) {\n    if (n < 0)\n        goto out;\n    n = 1;\nout:\n    return n;\n}\n",
+	"backward":    "int f(int n) {\nout:\n    goto out;\n    return n;\n}\n",
+	"cross-block": "int f(int n) {\n    if (n) {\n        goto out;\nout:\n        n = 0;\n    }\n    return n;\n}\n",
+}
+
+// hiss01Count returns how many HISS-01 findings the adoption baseline of repo records and how
+// many `praetorctl audit`'s scan reports there, under the effective policy the audit resolves
+// (config.EffectivePolicy.HISSScanOptions), and the scan's warning.
+func hiss01Count(t *testing.T, repo string) (recorded, audited int, warning string) {
+	t.Helper()
+	base, err := baseline.LoadBaseline(filepath.Join(repo, baselineFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base.Absent {
+		t.Fatal("adoption recorded no baseline")
+	}
+	for _, infraction := range base.Infractions {
+		if infraction.RuleID == "HISS-01" {
+			recorded++
+		}
+	}
+	effective, err := config.LoadEffectivePolicyContext(t.Context(), config.EffectiveOptions{Root: repo, Audit: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts, warning := effective.HISSScanOptions(repo, hiss.ScanOptions{})
+	rep, err := hiss.Scan(t.Context(), repo, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return recorded, rep.Breakdown["HISS-01"], warning
+}
+
+// TestCleanupGotoExceptionReachesTheAudit: the audit judges a C repository by the rule its harness
+// states (#68). Positive: with hiss.exceptions.c_goto_cleanup declared and documented, a
+// single-level forward cleanup goto is neither recorded as legacy debt by adoption nor reported
+// by the audit's scan. Negative: without the declaration, or with it but without its document
+// (which warns), the same goto is a finding in both. Boundary: under the documented exception a
+// backward goto and a goto into a nested block's label are still findings in both.
+func TestCleanupGotoExceptionReachesTheAudit(t *testing.T) {
+	cases := map[string]struct {
+		declared, documented bool
+		source               string
+		want                 int
+	}{
+		"documented forward":     {true, true, "forward", 0},
+		"undeclared forward":     {false, false, "forward", 1},
+		"undocumented forward":   {true, false, "forward", 1},
+		"documented backward":    {true, true, "backward", 1},
+		"documented cross-block": {true, true, "cross-block", 1},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			repo := newTestRepo(t, "widget")
+			if tc.declared {
+				cleanupGotoRepo(t, repo, cMarkers, tc.documented)
+			} else {
+				mustWrite(t, filepath.Join(repo, "meson.build"), cMarkers["meson.build"])
+			}
+			mustWrite(t, filepath.Join(repo, "src", "unit.c"), cleanupGotoSources[tc.source])
+			if _, err := Adopt(t.Context(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo,
+				Profile: "native-gpu-systems", RecordBaseline: true}); err != nil {
+				t.Fatalf("Adopt: %v", err)
+			}
+			recorded, audited, warning := hiss01Count(t, repo)
+			if recorded != tc.want || audited != tc.want {
+				t.Fatalf("HISS-01: baseline records %d, audit scan reports %d; want %d", recorded, audited, tc.want)
+			}
+			if warned := warning != ""; warned != (tc.declared && !tc.documented) {
+				t.Errorf("scan warning %q; want one only for the undocumented declaration", warning)
+			}
+		})
 	}
 }

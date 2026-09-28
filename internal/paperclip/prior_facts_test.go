@@ -109,7 +109,7 @@ func TestPriorGeneratedKeepsEditedFactRows(t *testing.T) {
 		"edited number, ceiling suffix kept": func(h *Harness) *Harness {
 			return editedFuncLOC(t, h, "60 (audit ceiling; stricter", "45 (audit ceiling; stricter")
 		},
-		"edited number, caps suffix": func(h *Harness) *Harness {
+		"edited number, at-ceiling suffix": func(h *Harness) *Harness {
 			return editedFuncLOC(t, h, "60 (audit ceiling; stricter repository policy wins)", "45 (audit ceiling; caps profile value)")
 		},
 		"edited number, plain": func(h *Harness) *Harness {

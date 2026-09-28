@@ -98,8 +98,11 @@ func scanPublicTree(ctx context.Context, dir string, policy *config.EffectivePol
 		return nil, err
 	}
 	// The policy's complexity limits ride along so the retained report measures what the
-	// audit would; the measurements land in report.Complexity and never in the ratchet.
-	report, err := hiss.Scan(ctx, dir, policy.Policy.Complexity.ScanOptions(hiss.ScanOptions{}))
+	// audit would; the measurements land in report.Complexity and never in the ratchet. So do
+	// the HISS exceptions the tree's manifest declares and documents, which the audit honours
+	// too; one left unhonoured scans as undeclared, so its warning changes no verdict.
+	scanOpts, _ := policy.HISSScanOptions(dir, hiss.ScanOptions{})
+	report, err := hiss.Scan(ctx, dir, scanOpts)
 	if err != nil {
 		return report, err
 	}

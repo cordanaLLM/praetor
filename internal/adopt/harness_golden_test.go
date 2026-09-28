@@ -91,7 +91,7 @@ func TestAdoptedHarnessGolden(t *testing.T) {
 			name: "native-c-exception", profile: "native-gpu-systems",
 			markers: map[string]string{"meson.build": "project('widget', 'c')\n", manifestFile: cleanupGotoManifest,
 				"docs/cleanup-goto.md": cleanupGotoDocument},
-			present: []string{"C/C++: `goto` only single-level forward jump to function cleanup label (declared exception); HISS-01 audit ignores exception: each new `goto` still fails gate",
+			present: []string{"C/C++: `goto` only forward jump to sole label of same function; label directly in function body, outside nested blocks; label named `cleanup` / `out` / `err` / `fail` or listed in `hiss.exceptions.c_goto_cleanup_labels` (declared exception); audit reports every other `goto`",
 				"C/C++: zero banned libc (`gets` / `strcpy` / `sprintf`)", "func LOC <= 60"},
 			absent: []string{"zero `goto`", "context.Context", "Go:", ".unwrap()", "Rust:", "`unsafe`"},
 		},
