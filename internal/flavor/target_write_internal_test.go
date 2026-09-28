@@ -124,22 +124,63 @@ func TestPlannedWorkflowBodies_ListsAWorkflowApplyRefreshes(t *testing.T) {
 }
 
 // Negative: a withheld body (TemplateItem.Resolve reports something missing) refreshes nothing:
-// apply keeps a file holding an earlier text and reports it skipped, and the workflow plan does
-// not list the rendering apply never writes.
+// apply keeps a file holding an earlier text and reports it unmet with why it was kept, and the
+// workflow plan does not list the rendering apply never writes.
 func TestScaffoldTemplate_Negative_WithheldBodyKeepsAnEarlierText(t *testing.T) {
 	const rel = ".github/workflows/ci.yml"
 	root := seedRepo(t, map[string]string{rel: earlierText})
-	tmpl := withPrior(t, rel)
-	tmpl.Resolve = func(context.Context, string) (templates.Context, string) { return templates.Context{}, "a lockfile" }
+	tmpl := withheldWithPrior(t, rel)
 	planned, err := plannedWorkflowBodies(t.Context(), root, []TemplateItem{tmpl}, "widget", "")
 	if err != nil || len(planned) != 0 {
 		t.Errorf("withheld workflow planned: %+v, err %v", planned, err)
 	}
 	outcome, note, err := scaffoldTemplate(t.Context(), root, tmpl, "widget", "", false)
-	if err != nil || outcome != templateSkipped || note != "" {
-		t.Errorf("got outcome %d note %q err %v, want skipped", outcome, note, err)
+	if err != nil || outcome != templateUnmet || note != "the earlier Praetor text there is kept: a lockfile" {
+		t.Errorf("got outcome %d note %q err %v, want unmet naming the kept earlier text", outcome, note, err)
 	}
 	if got := readRepoFile(t, root, rel); got != earlierText {
 		t.Errorf("left %q, want the earlier text kept", got)
+	}
+}
+
+// withheldWithPrior is withPrior with a body TemplateItem.Resolve withholds for want of a
+// lockfile.
+func withheldWithPrior(t *testing.T, rel string) TemplateItem {
+	t.Helper()
+	tmpl := withPrior(t, rel)
+	tmpl.Resolve = func(context.Context, string) (templates.Context, string) { return templates.Context{}, "a lockfile" }
+	return tmpl
+}
+
+// Boundary: over a withheld body, an edited file is reported skipped like any present file,
+// with no unmet requirement, and --force reports the requirement unmet as it is without a
+// file, keeping whatever is there; with no file at all the requirement is unmet.
+func TestScaffoldTemplate_Boundary_WithheldBodyOverOtherFiles(t *testing.T) {
+	const rel = "lint.yml"
+	for name, tc := range map[string]struct {
+		existing string
+		force    bool
+		outcome  templateOutcome
+		note     string
+	}{
+		"edited":              {earlierText + "local: true\n", false, templateSkipped, ""},
+		"earlier-text-forced": {earlierText, true, templateUnmet, "a lockfile"},
+		"absent":              {"", false, templateUnmet, "a lockfile"},
+	} {
+		files := map[string]string{}
+		if tc.existing != "" {
+			files[rel] = tc.existing
+		}
+		root := seedRepo(t, files)
+		outcome, note, err := scaffoldTemplate(t.Context(), root, withheldWithPrior(t, rel), "widget", "", tc.force)
+		if err != nil || outcome != tc.outcome || note != tc.note {
+			t.Errorf("%s: got outcome %d note %q err %v, want %d %q", name, outcome, note, err, tc.outcome, tc.note)
+		}
+		if tc.existing == "" {
+			continue
+		}
+		if got := readRepoFile(t, root, rel); got != tc.existing {
+			t.Errorf("%s: left %q, want the file kept", name, got)
+		}
 	}
 }

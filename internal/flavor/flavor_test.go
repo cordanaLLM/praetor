@@ -253,15 +253,18 @@ func TestApplyFlavor_NewArchetypes(t *testing.T) {
 	targets := []struct {
 		flavorName   string
 		expectedFile string
+		// files is what the repository holds before apply: rustfmt.toml needs the root
+		// Cargo.toml it reads the crate editions from.
+		files map[string]string
 	}{
-		{"rust-systems", "rustfmt.toml"},
-		{"typescript-node", "tsconfig.json"},
-		{"jvm-service", "checkstyle.xml"},
-		{"mobile-flutter", "analysis_options.yaml"},
+		{"rust-systems", "rustfmt.toml", rustCrate},
+		{"typescript-node", "tsconfig.json", nil},
+		{"jvm-service", "checkstyle.xml", nil},
+		{"mobile-flutter", "analysis_options.yaml", nil},
 	}
 
 	for _, tc := range targets {
-		tmp := t.TempDir()
+		tmp := repoWithFiles(t, tc.files)
 		rep, err := flavor.ApplyFlavor(ctx, tmp, tc.flavorName, false)
 		if err != nil {
 			t.Fatalf("failed applying flavor %s: %v", tc.flavorName, err)

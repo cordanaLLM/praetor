@@ -89,9 +89,10 @@ func TestScaffoldedRustfmtFollowsTheCrateEdition(t *testing.T) {
 			"Cargo.toml": crate("root", "2021") + "\n[workspace]\nmembers = [\"tools/x\"]\n", "tools/x/Cargo.toml": crate("x", "2021"),
 		}, "2021"},
 		// Boundary: members over several lines with comments, a glob whose excluded directory
-		// and plain files are no members, padded dotted keys, literal strings and CRLF read the
-		// same; a root crate's own edition wins over the [workspace.package] it does not inherit,
-		// and a workspace with no crate to read takes [workspace.package]'s.
+		// and plain files are no members, padded headers and dotted keys, literal strings and
+		// CRLF read the same; a root crate's own edition wins over the [workspace.package] it
+		// does not inherit, and a workspace with no crate to read, no members key or a glob
+		// matching only files, takes [workspace.package]'s, as cargo metadata does.
 		{"multi-line-glob-exclude", map[string]string{
 			"Cargo.toml":            "[workspace]\nmembers = [\n    \"crates/*\", # every crate\n    'tools/c',\n]\nexclude = [\"crates/old\"]\n",
 			"crates/a/Cargo.toml":   crate("a", "2021"),
@@ -101,7 +102,14 @@ func TestScaffoldedRustfmtFollowsTheCrateEdition(t *testing.T) {
 		}, "2021"},
 		{"root-package-inherits", map[string]string{"Cargo.toml": "[package]\nname = \"widget\"\nedition.workspace = true\n\n[workspace.package]\nedition = \"2021\"\n"}, "2021"},
 		{"root-package-own-edition", map[string]string{"Cargo.toml": "[workspace.package]\nedition = \"2021\"\n\n[package]\nname = \"widget\"\nedition = \"2024\"\n"}, "2024"},
-		{"glob-matching-nothing", map[string]string{"Cargo.toml": "[ workspace ]\nmembers = [\"crates/*\"]\n[ workspace . package ]\nedition = \"2021\" # shared by every member\n"}, "2021"},
+		{"padded-headers", map[string]string{
+			"Cargo.toml":          "[ workspace ]\nmembers = [\"crates/*\"]\n[ workspace . package ]\nedition = \"2021\" # shared by every member\n",
+			"crates/a/Cargo.toml": "[ package ]\nname = \"a\"\nedition . workspace = true\n",
+		}, "2021"},
+		{"no-members-key", map[string]string{"Cargo.toml": "[workspace]\nresolver = \"2\"\n\n[workspace.package]\nedition = \"2021\"\n"}, "2021"},
+		{"glob-matching-only-files", map[string]string{
+			"Cargo.toml": "[workspace]\nmembers = [\"crates/*\"]\n[workspace.package]\nedition = \"2021\"\n", "crates/README.md": "not a crate\n",
+		}, "2021"},
 		{"dotted-top-level", map[string]string{"Cargo.toml": "package . edition = '2018' # the crate edition\n"}, "2018"},
 		{"crlf", map[string]string{
 			"Cargo.toml": "[workspace]\r\nmembers = [\r\n  \"a\",\r\n]\r\n", "a/Cargo.toml": "[package]\r\nname = \"a\"\r\nedition = \"2021\"\r\n",
@@ -115,7 +123,6 @@ func TestScaffoldedRustfmtFollowsTheCrateEdition(t *testing.T) {
 		{"not-an-edition", map[string]string{"Cargo.toml": "[package]\nname = \"widget\"\nedition = \"latest\"\n"}, ""},
 		{"escaped-value", map[string]string{"Cargo.toml": "[package]\nname = \"widget\"\nedition = \"2021\\\"\\nmax_width = 1\"\n"}, ""},
 		{"unquoted", map[string]string{"Cargo.toml": "[package]\nname = \"widget\"\nedition = 2021\n"}, ""},
-		{"no-manifest", map[string]string{}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			report, got := applyRust(t, tc.files, false)
@@ -129,13 +136,18 @@ func TestScaffoldedRustfmtFollowsTheCrateEdition(t *testing.T) {
 	}
 }
 
-// withheldRustfmtWorkspaces are workspaces whose crates share no edition, or one of whose crates
-// cannot be read, keyed to the reason apply reports. No single edition in rustfmt.toml agrees
-// with cargo fmt on every crate there.
+// withheldRustfmtWorkspaces are repositories whose crates share no edition, or one of whose
+// crates cannot be read, the root manifest included, keyed to the reason apply reports. No
+// single edition in rustfmt.toml is known to agree with cargo fmt on every crate there.
 var withheldRustfmtWorkspaces = map[string]struct {
 	files  map[string]string
 	reason string
 }{
+	// No root manifest, as where the crate sits in a subdirectory, and one that is no regular
+	// file: the crate editions are unknown, which is not "no crate declares one".
+	"no-manifest":           {map[string]string{"rust/Cargo.toml": crate("widget", "2024")}, "the repository has no root Cargo.toml to read the crate editions from"},
+	"manifest-not-a-file":   {map[string]string{"Cargo.toml/keep": ""}, "the root Cargo.toml cannot be read"},
+	"glob-matching-nothing": {map[string]string{"Cargo.toml": "[workspace]\nmembers = [\"crates/*\"]\n[workspace.package]\nedition = \"2021\"\n"}, `the workspace member pattern "crates/*" matches nothing`},
 	"mixed-members": {map[string]string{
 		"Cargo.toml": "[workspace]\nmembers = [\"a\", \"b\"]\n", "a/Cargo.toml": crate("a", "2021"), "b/Cargo.toml": crate("b", "2024"),
 	}, "the workspace crates are on different editions (2021, 2024)"},
@@ -168,20 +180,82 @@ func TestRustfmtApply_Negative_NoCommonEditionWithholdsTheScaffold(t *testing.T)
 	}
 }
 
-// Boundary: an earlier scaffold in a workspace where no edition holds is kept byte for byte and
-// reported skipped, not refreshed to a rendering that disagrees with cargo fmt on some crate.
+// Boundary: an earlier scaffold where no edition holds is kept byte for byte, not refreshed to a
+// rendering that may disagree with cargo fmt on some crate, and apply names why it was kept
+// under the unmet templates.
 func TestRustfmtApply_Boundary_NoCommonEditionKeepsAnEarlierScaffold(t *testing.T) {
 	for edition, text := range readRustfmtPriors(t) {
 		for name, tc := range withheldRustfmtWorkspaces {
 			files := maps.Clone(tc.files)
 			files["rustfmt.toml"] = text
 			report, got := applyRust(t, files, false)
-			if got != text || len(report.RefreshedTemplates) > 0 || len(report.UnmetTemplates) > 0 ||
-				!slices.Contains(report.SkippedTemplates, "rustfmt.toml") {
-				t.Errorf("edition %s scaffold, %s: got %q, refreshed %v, unmet %v, skipped %v", edition, name, got,
-					report.RefreshedTemplates, report.UnmetTemplates, report.SkippedTemplates)
+			if got != text || len(report.RefreshedTemplates) > 0 || slices.Contains(report.SkippedTemplates, "rustfmt.toml") {
+				t.Errorf("edition %s scaffold, %s: got %q, refreshed %v, skipped %v", edition, name, got,
+					report.RefreshedTemplates, report.SkippedTemplates)
+			}
+			want := "rustfmt.toml: the earlier Praetor text there is kept: " + tc.reason
+			if len(report.UnmetTemplates) != 1 || !strings.HasPrefix(report.UnmetTemplates[0], want) {
+				t.Errorf("edition %s scaffold, %s: unmet %v, want %q", edition, name, report.UnmetTemplates, want)
 			}
 		}
+	}
+}
+
+// Negative: an edited rustfmt.toml where no edition holds is the repository's configuration: it
+// is kept and reported skipped, as anywhere else, with no unmet requirement to act on.
+func TestRustfmtApply_Negative_NoCommonEditionSkipsAnEditedConfig(t *testing.T) {
+	edited := rustfmtFor("2024") + "imports_granularity = \"Crate\"\n"
+	for name, tc := range withheldRustfmtWorkspaces {
+		files := maps.Clone(tc.files)
+		files["rustfmt.toml"] = edited
+		report, got := applyRust(t, files, false)
+		if got != edited || len(report.UnmetTemplates) > 0 || !slices.Contains(report.SkippedTemplates, "rustfmt.toml") {
+			t.Errorf("%s: got %q, unmet %v, skipped %v", name, got, report.UnmetTemplates, report.SkippedTemplates)
+		}
+	}
+}
+
+// Boundary: a root Cargo.toml of exactly the read limit (1 MiB) is read, and one byte more
+// leaves the crate editions unknown, so the scaffold is withheld rather than written without
+// an edition.
+func TestRustfmtApply_Boundary_RootManifestSizeLimit(t *testing.T) {
+	const limit = 1 << 20
+	manifest := crate("widget", "2021") + "# "
+	for _, size := range []int{limit, limit + 1} {
+		padded := manifest + strings.Repeat("x", size-len(manifest)-1) + "\n"
+		report, got := applyRust(t, map[string]string{"Cargo.toml": padded}, false)
+		if size == limit && (got != rustfmtFor("2021") || len(report.UnmetTemplates) > 0) {
+			t.Errorf("%d bytes: rustfmt.toml %q, unmet %v; want edition 2021", size, got, report.UnmetTemplates)
+		}
+		if size > limit && (got != "" || len(report.UnmetTemplates) != 1 ||
+			!strings.HasPrefix(report.UnmetTemplates[0], "rustfmt.toml: the root Cargo.toml cannot be read")) {
+			t.Errorf("%d bytes: rustfmt.toml %q, unmet %v; want withheld", size, got, report.UnmetTemplates)
+		}
+	}
+}
+
+// Positive: members patterns are matched below the repository, so a glob metacharacter in the
+// checkout's own path ("ws[1]") does not turn the members into none.
+func TestRustfmtApply_Positive_GlobBelowACheckoutPathWithMetacharacters(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "ws[1]")
+	for name, body := range map[string]string{
+		"Cargo.toml": "[workspace]\nmembers = [\"crates/*\"]\n", "crates/a/Cargo.toml": crate("a", "2021"),
+	} {
+		full := filepath.Join(repo, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	report, err := flavor.ApplyFlavor(t.Context(), repo, "rust-systems", false)
+	if err != nil {
+		t.Fatalf("apply rust-systems: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(repo, "rustfmt.toml"))
+	if err != nil || string(got) != rustfmtFor("2021") {
+		t.Errorf("rustfmt.toml %q (err %v), unmet %v; want edition 2021", got, err, report.UnmetTemplates)
 	}
 }
 

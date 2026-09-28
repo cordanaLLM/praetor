@@ -280,17 +280,15 @@ func applySingleTemplate(ctx context.Context, repoPath string, tmpl TemplateItem
 // scaffoldTemplate writes one template unless it is covered, owned by another command,
 // unable to work in this repository, or already present without --force. An earlier text of
 // the template (TemplateItem.Prior) is the exception to the last: it is refreshed, unless the
-// body is withheld, and then the file is kept like any other present one. The note names the
-// file covering a covered template, the producer of a deferred one and what an unmet one lacks.
+// body is withheld, and then the file is kept and the note says why (withheldOverFile). The
+// note names the file covering a covered template, the producer of a deferred one and what an
+// unmet one lacks.
 func scaffoldTemplate(ctx context.Context, repoPath string, tmpl TemplateItem, repoName, owner string, force bool) (templateOutcome, string, error) {
 	outcome, note, err := templateDisposition(repoPath, tmpl, force)
 	if err != nil || outcome != templateCreated {
 		return outcome, note, err
 	}
-	outcome, note, vars := templateWithheld(ctx, repoPath, tmpl)
-	if outcome == templateUnmet && !force && TemplateSatisfied(repoPath, tmpl) {
-		return templateSkipped, "", nil
-	}
+	outcome, note, vars := withheldOverFile(ctx, repoPath, tmpl, force)
 	if outcome != templateCreated {
 		return outcome, note, nil
 	}
@@ -394,6 +392,37 @@ func templateWithheld(ctx context.Context, repoPath string, tmpl TemplateItem) (
 		return templateUnmet, missing, templates.Context{}
 	}
 	return templateCreated, "", facts
+}
+
+// withheldOverFile is templateWithheld as scaffoldTemplate reports it for a file already at the
+// template's path. A template declaring earlier texts (TemplateItem.Prior) reaches Resolve with
+// a file the audit accepts still there (templateDisposition), and a withheld body keeps it
+// whatever the outcome. Without --force such a file is reported skipped, as any present file
+// is, unless it holds an earlier text: that one stays unrefreshed, so the outcome remains unmet
+// and the note says why it was kept.
+func withheldOverFile(ctx context.Context, repoPath string, tmpl TemplateItem, force bool) (templateOutcome, string, templates.Context) {
+	outcome, note, vars := templateWithheld(ctx, repoPath, tmpl)
+	if outcome != templateUnmet || force || !TemplateSatisfied(repoPath, tmpl) {
+		return outcome, note, vars
+	}
+	if holdsEarlierText(ctx, repoPath, tmpl) {
+		return templateUnmet, "the earlier Praetor text there is kept: " + note, vars
+	}
+	return templateSkipped, "", vars
+}
+
+// holdsEarlierText reports whether the file at the template's path holds one of its earlier
+// texts (TemplateItem.Prior), as planTargetWrite recognises one.
+func holdsEarlierText(ctx context.Context, repoPath string, tmpl TemplateItem) bool {
+	if len(tmpl.Prior) == 0 {
+		return false
+	}
+	target, err := readTemplateTarget(ctx, filepath.Join(repoPath, tmpl.Path), tmpl.Path, false)
+	if err != nil || !target.exists {
+		return false
+	}
+	_, known, _ := util.LookupCanonicalText(target.before, tmpl.Prior)
+	return known
 }
 
 // templateTarget is the file already at a template's destination.

@@ -55,9 +55,10 @@ type TemplateItem struct {
 	// consistent line-ending style, is Praetor output nobody edited: flavor apply refreshes it
 	// to the current rendering in that style without --force, and lists it under
 	// ApplyReport.RefreshedTemplates, so a plain adoption moves it on. An edited copy matches no
-	// digest and stays until --force, and while Resolve withholds the body any file there is
-	// kept and reported skipped. rust-systems' rustfmt.toml declares the texts that named one
-	// edition for every crate (priorRustfmtDigests, #567).
+	// digest and stays until --force. While Resolve withholds the body any file there is kept:
+	// an earlier text is listed under ApplyReport.UnmetTemplates with why it was not refreshed,
+	// any other file is reported skipped. rust-systems' rustfmt.toml declares the texts that
+	// named one edition for every crate (priorRustfmtDigests, #567).
 	Prior map[string]string `json:"-"`
 
 	// AltPaths lists equally valid alternatives to Path. A repository satisfies the

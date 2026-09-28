@@ -7,7 +7,9 @@ package flavor
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"os"
 	"path"
@@ -48,8 +50,9 @@ var priorRustfmtDigests = map[string]string{
 // rustfmtFacts resolves the edition the scaffolded rustfmt.toml declares (rustEditionOf). cargo
 // fmt passes each crate's edition to rustfmt, and rustfmt run directly reads it from
 // rustfmt.toml, so a scaffold naming any other edition makes the two formatters disagree. When
-// the crates share no edition, or one of them cannot be read, no rendering agrees with cargo fmt
-// on every crate: the body is withheld, and an existing file is kept (scaffoldTemplate).
+// the crates share no edition, or one of them cannot be read, the root manifest included, no
+// rendering is known to agree with cargo fmt on every crate: the body is withheld, and an
+// existing file is kept (withheldOverFile).
 func rustfmtFacts(ctx context.Context, repoPath string) (templates.Context, string) {
 	edition, problem := rustEditionOf(ctx, repoPath)
 	if problem != "" {
@@ -61,13 +64,13 @@ func rustfmtFacts(ctx context.Context, repoPath string) (templates.Context, stri
 // rustEditionOf returns the edition every crate of the root Cargo.toml's workspace is on: the
 // root package and each workspace member (workspaceEditions). A crate that declares none is on
 // Cargo's default, 2015, which rustfmt also formats under without an edition, so "" stands for
-// it. A workspace with no crate to read gives the edition [workspace.package] declares, and a
-// root manifest that cannot be read declares nothing to copy. The second result says why no
-// single edition holds: crates on different editions, or a member that cannot be read.
+// it. A workspace with no crate to read gives the edition [workspace.package] declares. The
+// second result says why no single edition holds: no root manifest to read (rootManifestProblem),
+// crates on different editions, or a member that cannot be read.
 func rustEditionOf(ctx context.Context, repoPath string) (edition, problem string) {
 	data, err := util.ReadConfinedLimited(repoPath, "Cargo.toml", maxSettingBytes)
 	if err != nil {
-		return "", ""
+		return "", rootManifestProblem(err)
 	}
 	root := parseCargoManifest(string(data))
 	editions, problem := workspaceEditions(ctx, repoPath, root)
@@ -78,6 +81,19 @@ func rustEditionOf(ctx context.Context, repoPath string) (edition, problem strin
 		return root.workspaceEdition, ""
 	}
 	return commonEdition(editions)
+}
+
+// rootManifestProblem says why err, the failed read of the root Cargo.toml, leaves the crate
+// editions unknown. A repository whose crates sit in a subdirectory has no root manifest, and
+// one too large, not a regular file, or reaching outside the repository cannot be read; none of
+// them says that no crate declares an edition. Reading it that way wrote the edition-less
+// config, rustfmt's 2015, over crates on a later edition, and refreshed an earlier 2024 text to
+// it without --force.
+func rootManifestProblem(err error) string {
+	if errors.Is(err, fs.ErrNotExist) {
+		return "the repository has no root Cargo.toml to read the crate editions from"
+	}
+	return fmt.Sprintf("the root Cargo.toml cannot be read (%v)", err)
 }
 
 // workspaceEditions returns the edition of every crate cargo fmt formats in the workspace root
@@ -158,9 +174,11 @@ func commonEdition(editions []string) (string, string) {
 // workspaceMemberDirs returns the directory of every member root lists under [workspace]
 // members, slash-separated and relative to the root, in the order Cargo reads them. A path is a
 // member as written. A pattern is every directory it matches, sorted, except one an exclude
-// entry names or lies under; a file it matches is no member, as in Cargo. Only the "*" and "?"
-// patterns the Cargo reference names are expanded: a "**" or "[...]" pattern, one reaching
-// outside the root, and more than maxCargoMembers members leave the members unknown.
+// entry names or lies under; a file it matches is no member, as in Cargo. A pattern matching
+// nothing at all is an error Cargo reports, since it then reads the pattern as a member path.
+// Only the "*" and "?" patterns the Cargo reference names are expanded: a "**" or "[...]"
+// pattern, one reaching outside the root, and more than maxCargoMembers members leave the
+// members unknown.
 func workspaceMemberDirs(repoPath string, root cargoManifest) ([]string, string) {
 	var dirs []string
 	for i := 0; i < len(root.members) && len(dirs) <= maxCargoMembers; i++ {
@@ -177,7 +195,8 @@ func workspaceMemberDirs(repoPath string, root cargoManifest) ([]string, string)
 }
 
 // expandMember returns the member directories one [workspace] members entry names
-// (workspaceMemberDirs).
+// (workspaceMemberDirs). The pattern is matched below repoPath (fs.Glob over os.DirFS), so a
+// glob metacharacter in the checkout's own path, such as a "ws[1]" directory, is no pattern.
 func expandMember(repoPath, member string, exclude []string) ([]string, string) {
 	clean := path.Clean(member)
 	if !strings.ContainsAny(clean, "*?[") {
@@ -186,34 +205,35 @@ func expandMember(repoPath, member string, exclude []string) ([]string, string) 
 	if !expandablePattern(clean) {
 		return nil, fmt.Sprintf("the workspace member pattern %q is not expanded here: only \"*\" and \"?\" inside the workspace are", member)
 	}
-	matches, err := filepath.Glob(filepath.Join(repoPath, filepath.FromSlash(clean)))
-	if err != nil {
+	matches, err := fs.Glob(os.DirFS(repoPath), clean)
+	switch {
+	case err != nil:
 		return nil, fmt.Sprintf("the workspace member pattern %q does not expand: %v", member, err)
-	}
-	if len(matches) > maxMemberMatches {
+	case len(matches) == 0:
+		return nil, fmt.Sprintf("the workspace member pattern %q matches nothing, which Cargo reads as a member path and fails to load", member)
+	case len(matches) > maxMemberMatches:
 		return nil, fmt.Sprintf("the workspace member pattern %q matches more than %d paths", member, maxMemberMatches)
 	}
 	return matchedMemberDirs(repoPath, matches, exclude), ""
 }
 
 // expandablePattern reports whether clean, a cleaned slash-separated members pattern, is one
-// expandMember expands: "*" and "?" only, inside the root. Go's filepath.Glob would read "**"
-// as "*" and "[!...]" as a class holding "!", where Cargo's glob matches any depth and negates.
+// expandMember expands: "*" and "?" only, inside the root. Go's fs.Glob would read "**" as "*"
+// and "[!...]" as a class holding "!", where Cargo's glob matches any depth and negates.
 func expandablePattern(clean string) bool {
 	outside := clean == ".." || strings.HasPrefix(clean, "../") || path.IsAbs(clean)
 	return !outside && !strings.Contains(clean, "**") && !strings.Contains(clean, "[")
 }
 
-// matchedMemberDirs returns each of matches, paths a members pattern matched below repoPath,
-// that is a directory no exclude entry names or contains, slash-separated and relative to
-// repoPath. It stops once past maxCargoMembers directories, which workspaceMemberDirs reports.
+// matchedMemberDirs returns each of matches, slash-separated paths a members pattern matched
+// below repoPath, that is a directory no exclude entry names or contains. It stops once past
+// maxCargoMembers directories, which workspaceMemberDirs reports.
 func matchedMemberDirs(repoPath string, matches, exclude []string) []string {
 	var dirs []string
 	for i := 0; i < len(matches) && i < maxMemberMatches && len(dirs) <= maxCargoMembers; i++ {
-		rel, err := filepath.Rel(repoPath, matches[i])
-		info, statErr := os.Stat(matches[i])
-		if err == nil && statErr == nil && info.IsDir() && !excludedMember(filepath.ToSlash(rel), exclude) {
-			dirs = append(dirs, filepath.ToSlash(rel))
+		info, err := os.Stat(filepath.Join(repoPath, filepath.FromSlash(matches[i])))
+		if err == nil && info.IsDir() && !excludedMember(matches[i], exclude) {
+			dirs = append(dirs, matches[i])
 		}
 	}
 	return dirs
