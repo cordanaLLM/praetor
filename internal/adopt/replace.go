@@ -44,17 +44,21 @@ type replacement struct {
 	before []byte // the bytes adoption observed at rel
 	after  []byte // the bytes that replace them
 	detail string // what adoption writes, leading the report entry
+	// merge marks after as before plus Praetor's entries with every adopter entry kept, such
+	// as an editor JSON merge: the file is recorded as merged rather than replaced.
+	merge bool
 	// publish writes after; replaceExisting calls it only outside a dry run. replaceExistingAll
 	// takes one publish for the whole set instead.
 	publish func(ctx context.Context) error
 }
 
 // replaceExisting is the one path for overwriting adopter bytes: it keeps a backup of r.before
-// (backupExisting), publishes r.after, and records the file as replaced with a bounded line
-// delta and the backup location. The backup comes first, so a refused backup leaves the file
-// as it was. A dry run takes no backup, writes nothing and records the replacement it plans,
-// with r.after as the bytes rel comes to (planDryRunWrite), so a later step, the branch ruleset
-// preview among them, reads the file the run leaves rather than the one on disk.
+// (backupExisting), publishes r.after, and records the file as replaced, or as merged for
+// r.merge, with a bounded line delta and the backup location. The backup comes first, so a
+// refused backup leaves the file as it was. A dry run takes no backup, writes nothing and
+// records the replacement it plans, with r.after as the bytes rel comes to (planDryRunWrite),
+// so a later step, the branch ruleset preview among them, reads the file the run leaves rather
+// than the one on disk.
 func (s *adoptSession) replaceExisting(ctx context.Context, r replacement) error {
 	return s.replaceExistingAll(ctx, []replacement{r}, r.publish)
 }
@@ -84,8 +88,12 @@ func (s *adoptSession) replaceExistingAll(ctx context.Context, rs []replacement,
 	}
 	for i := 0; i < len(rs); i++ {
 		s.planDryRunWrite(rs[i].rel, rs[i].after)
-		s.report.recordReplaced(rs[i].rel, rs[i].detail+"; replaced existing content ("+
-			describeLineDelta(rs[i].before, rs[i].after)+"); "+notes[i])
+		delta := describeLineDelta(rs[i].before, rs[i].after)
+		if rs[i].merge {
+			s.report.recordReconciledAs(rs[i].rel, actionMerge, rs[i].detail+"; merged into existing content ("+delta+"); "+notes[i])
+			continue
+		}
+		s.report.recordReplaced(rs[i].rel, rs[i].detail+"; replaced existing content ("+delta+"); "+notes[i])
 	}
 	return nil
 }
@@ -199,15 +207,28 @@ func describeLineDelta(before, after []byte) string {
 	if len(delta.RemovedLines) == 0 {
 		return summary
 	}
-	quoted := make([]string, 0, len(delta.RemovedLines))
-	for i := 0; i < len(delta.RemovedLines) && i < maxDeltaQuotedLines; i++ {
-		quoted = append(quoted, strconv.Quote(util.TruncateExcerpt(delta.RemovedLines[i], maxDeltaLineBytes)))
+	return summary + ", removed " + quoteFirst(delta.RemovedLines, delta.Removed, maxDeltaQuotedLines, quoteDeltaLine)
+}
+
+// quoteDeltaLine quotes one removed line of a line delta, cut to maxDeltaLineBytes.
+func quoteDeltaLine(line string) string {
+	return strconv.Quote(util.TruncateExcerpt(line, maxDeltaLineBytes))
+}
+
+// quoteFirst is the one bounded listing of a report entry: the first limit items, each rendered
+// by quote and joined with ", ", then " and N more" for the rest of total. total counts the whole
+// list and may exceed len(items) when items is already a bounded prefix of it, as the removed
+// lines of util.LineDeltaOf are.
+func quoteFirst(items []string, total, limit int, quote func(string) string) string {
+	quoted := make([]string, 0, min(len(items), limit))
+	for i := 0; i < len(items) && i < limit; i++ {
+		quoted = append(quoted, quote(items[i]))
 	}
-	summary += ", removed " + strings.Join(quoted, ", ")
-	if more := delta.Removed - len(quoted); more > 0 {
-		summary += " and " + strconv.Itoa(more) + " more"
+	text := strings.Join(quoted, ", ")
+	if more := total - len(quoted); more > 0 {
+		text += " and " + strconv.Itoa(more) + " more"
 	}
-	return summary
+	return text
 }
 
 // legacyHookBackupWarning reports a <file>.bak an earlier adoption wrote beside a hook file.

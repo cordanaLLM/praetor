@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -374,6 +375,29 @@ func TestDescribeLineDelta_LineEndingsOnly(t *testing.T) {
 	}
 	if got := describeLineDelta([]byte("one\n"), []byte("one\nadded\n")); got != "-0/+1 lines" {
 		t.Fatalf("added line = %q", got)
+	}
+}
+
+// Positive, negative and boundary: quoteFirst, the one bounded listing the line delta, the
+// editor merge and the lefthook skip reason share, quotes up to limit items and counts the rest
+// of total, including items a bounded prefix already left out; an empty list is empty and a
+// list of exactly limit items names no remainder.
+func TestQuoteFirst_BoundsAndCountsTheRest(t *testing.T) {
+	cases := []struct {
+		items        []string
+		total, limit int
+		want         string
+	}{
+		{[]string{"a", "b", "c"}, 3, 2, `"a", "b" and 1 more`},
+		{nil, 0, 3, ""},
+		{[]string{"a", "b"}, 2, 2, `"a", "b"`},
+		{[]string{"a", "b"}, 7, 2, `"a", "b" and 5 more`},
+		{[]string{"a"}, 1, 5, `"a"`},
+	}
+	for _, tc := range cases {
+		if got := quoteFirst(tc.items, tc.total, tc.limit, strconv.Quote); got != tc.want {
+			t.Errorf("quoteFirst(%q, %d, %d) = %q, want %q", tc.items, tc.total, tc.limit, got, tc.want)
+		}
 	}
 }
 

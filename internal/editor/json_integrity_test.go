@@ -256,9 +256,9 @@ func TestEditorJSONDecodeBoundaries(t *testing.T) {
 
 func TestEditorJSONMergeKeepsLiteralsAndUnchangedBytes(t *testing.T) {
 	existing := []byte(`{"numbers":[9007199254740993,1e400,-0.000000000000000000001,1.50],"text":"<a&b>"}`)
-	merged, changed, err := mergeJSONDocument(existing, []byte(`{"managed":true}`))
-	if err != nil || !changed {
-		t.Fatalf("merge failed: %v %v", changed, err)
+	merged, added, err := mergeJSONDocument(existing, []byte(`{"managed":true}`))
+	if err != nil || !slices.Equal(added, []string{"/managed"}) {
+		t.Fatalf("merge failed: %v %v", added, err)
 	}
 	for _, literal := range []string{"9007199254740993", "1e400", "-0.000000000000000000001", "1.50", `"<a&b>"`, `"managed": true`} {
 		if !strings.Contains(string(merged), literal) {
@@ -270,9 +270,9 @@ func TestEditorJSONMergeKeepsLiteralsAndUnchangedBytes(t *testing.T) {
 	}
 
 	compact := []byte(`{"b":2,"managed":true,"a":1}`)
-	unchanged, changed, err := mergeJSONDocument(compact, []byte(`{"managed":true}`))
-	if err != nil || changed || !bytes.Equal(unchanged, compact) {
-		t.Fatalf("satisfied document was reformatted: %s %v %v", unchanged, changed, err)
+	unchanged, added, err := mergeJSONDocument(compact, []byte(`{"managed":true}`))
+	if err != nil || len(added) != 0 || !bytes.Equal(unchanged, compact) {
+		t.Fatalf("satisfied document was reformatted: %s %v %v", unchanged, added, err)
 	}
 	if _, _, err := mergeJSONDocument([]byte(`{"n":1.0}`), []byte(`{"n":1}`)); err == nil || !strings.Contains(err.Error(), `"n"`) {
 		t.Fatalf("differing number literal for a managed key did not conflict: %v", err)
@@ -285,9 +285,9 @@ func TestEditorJSONMergeKeepsLiteralsAndUnchangedBytes(t *testing.T) {
 func TestEditorJSONMergeArraysAndTypeConflicts(t *testing.T) {
 	existing := []byte(`[{"label":"Human verify","command":"make","args":["verify-all"]}]`)
 	desired := []byte(`[{"label":"Standards: Verify All","command":"make","args":["verify-all"]},{"label":"Standards: Audit","command":"praetorctl","args":["audit"]}]`)
-	merged, changed, err := mergeJSONDocument(existing, desired)
-	if err != nil || !changed {
-		t.Fatalf("root array merge failed: %v %v", changed, err)
+	merged, added, err := mergeJSONDocument(existing, desired)
+	if err != nil || !slices.Equal(added, []string{"/-"}) {
+		t.Fatalf("root array merge failed: %v %v", added, err)
 	}
 	if !strings.Contains(string(merged), "Human verify") || !strings.Contains(string(merged), "Standards: Audit") || strings.Contains(string(merged), "Standards: Verify All") {
 		t.Fatalf("root array merge duplicated or dropped a task: %s", merged)
@@ -297,8 +297,8 @@ func TestEditorJSONMergeArraysAndTypeConflicts(t *testing.T) {
 	}
 	shellTask := []byte(`{"tasks":[{"label":"Human","type":"shell","command":"make verify-all"}]}`)
 	processTask := []byte(`{"tasks":[{"label":"Standards: Verify All","type":"process","command":"make","args":["verify-all"]}]}`)
-	if _, changed, err := mergeJSONDocument(shellTask, processTask); err != nil || changed {
-		t.Fatalf("shell command string and argument vector for the same command were not matched: %v %v", changed, err)
+	if _, added, err := mergeJSONDocument(shellTask, processTask); err != nil || len(added) != 0 {
+		t.Fatalf("shell command string and argument vector for the same command were not matched: %v %v", added, err)
 	}
 	for _, conflict := range []struct{ have, want, message string }{
 		{have: `{"a":[1]}`, want: `{"a":{"b":1}}`, message: "managed object"},

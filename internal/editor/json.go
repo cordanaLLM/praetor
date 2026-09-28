@@ -25,6 +25,15 @@ const (
 
 var errEditorJSONNodeBound = fmt.Errorf("editor JSON exceeds %d nodes", maxJSONNodes)
 
+// ErrExistingJSONInvalid marks a merge refused because the existing file is not one strict JSON
+// document: JSONC comments or trailing commas, a duplicate key, invalid UTF-8 or a document past
+// the node bound. Re-encoding it would drop what the strict decoder cannot represent, so a
+// caller that keeps such a file (adoption) can say why.
+var ErrExistingJSONInvalid = errors.New("existing JSON is invalid")
+
+// jsonPointerEscaper escapes one object key as an RFC 6901 reference token.
+var jsonPointerEscaper = strings.NewReplacer("~", "~0", "/", "~1")
+
 type editorJSONFrame struct {
 	keys    map[string]bool
 	keyNext bool
@@ -165,108 +174,111 @@ func isJSONEditorFile(path string) bool {
 	return strings.HasSuffix(path, ".json") || strings.HasSuffix(path, ".sublime-project")
 }
 
-// mergeJSONDocument adds the managed values of desired to existing. Unrelated keys
-// and list entries are retained; a managed value that conflicts with an existing one
-// is an error and nothing is returned for writing.
-func mergeJSONDocument(existing, desired []byte) ([]byte, bool, error) {
+// mergeJSONDocument adds the managed values of desired to existing and returns the merged
+// document with the JSON Pointer of every member it added (see Resolution.Added). Unrelated keys
+// and list entries are retained; nothing added returns existing unchanged, and a managed value
+// that conflicts with an existing one is an error and nothing is returned for writing.
+func mergeJSONDocument(existing, desired []byte) ([]byte, []string, error) {
 	have, err := decodeEditorJSON(existing)
 	if err != nil {
-		return nil, false, fmt.Errorf("existing JSON is invalid: %w", err)
+		return nil, nil, fmt.Errorf("%w: %w", ErrExistingJSONInvalid, err)
 	}
 	want, err := decodeEditorJSON(desired)
 	if err != nil {
-		return nil, false, fmt.Errorf("generated JSON is invalid: %w", err)
+		return nil, nil, fmt.Errorf("generated JSON is invalid: %w", err)
 	}
-	merged, changed, err := mergeJSONValue(have, want)
+	merged, added, err := mergeJSONValue(have, want)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, err
 	}
-	if !changed {
-		return existing, false, nil
+	if len(added) == 0 {
+		return existing, nil, nil
 	}
 	data, err := encodeEditorJSON(merged)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, err
 	}
-	return data, true, nil
+	return data, added, nil
 }
 
 type jsonMergeFrame struct {
-	have   any
-	want   any
-	parent map[string]any
-	key    string
+	have    any
+	want    any
+	parent  map[string]any
+	key     string
+	pointer string // RFC 6901 JSON Pointer of have; "" is the whole document
 }
 
-func mergeJSONValue(have, want any) (any, bool, error) {
+func mergeJSONValue(have, want any) (any, []string, error) {
 	root := have
-	changed := false
+	added := []string{}
 	queue := []jsonMergeFrame{{have: have, want: want}}
 	index := 0
 	for ; index < len(queue) && index < maxJSONNodes; index++ {
-		frameChanged, err := mergeJSONFrameValue(&root, queue[index], &queue)
-		if err != nil {
-			return nil, false, err
+		if err := mergeJSONFrameValue(&root, queue[index], &queue, &added); err != nil {
+			return nil, nil, err
 		}
-		changed = changed || frameChanged
 	}
 	if index < len(queue) {
-		return nil, false, errEditorJSONNodeBound
+		return nil, nil, errEditorJSONNodeBound
 	}
-	return root, changed, nil
+	return root, added, nil
 }
 
-func mergeJSONFrameValue(root *any, frame jsonMergeFrame, queue *[]jsonMergeFrame) (bool, error) {
+func mergeJSONFrameValue(root *any, frame jsonMergeFrame, queue *[]jsonMergeFrame, added *[]string) error {
 	switch desired := frame.want.(type) {
 	case map[string]any:
-		return mergeJSONObject(frame, desired, queue)
+		return mergeJSONObject(frame, desired, queue, added)
 	case []any:
-		return mergeJSONArray(root, frame, desired)
+		return mergeJSONArray(root, frame, desired, added)
 	default:
 		if !reflect.DeepEqual(frame.have, frame.want) {
-			return false, fmt.Errorf("managed value for key %q conflicts with the existing value", frame.key)
+			return fmt.Errorf("managed value for key %q conflicts with the existing value", frame.key)
 		}
-		return false, nil
+		return nil
 	}
 }
 
-func mergeJSONObject(frame jsonMergeFrame, desired map[string]any, queue *[]jsonMergeFrame) (bool, error) {
+func mergeJSONObject(frame jsonMergeFrame, desired map[string]any, queue *[]jsonMergeFrame, added *[]string) error {
 	existing, ok := frame.have.(map[string]any)
 	if !ok {
-		return false, fmt.Errorf("managed object for key %q conflicts with the existing value", frame.key)
+		return fmt.Errorf("managed object for key %q conflicts with the existing value", frame.key)
 	}
-	changed := false
 	for _, key := range slices.Sorted(maps.Keys(desired)) {
 		desiredValue := desired[key]
+		pointer := frame.pointer + "/" + jsonPointerEscaper.Replace(key)
 		existingValue, found := existing[key]
 		if !found {
 			existing[key] = desiredValue
-			changed = true
+			*added = append(*added, pointer)
 			continue
 		}
-		*queue = append(*queue, jsonMergeFrame{have: existingValue, want: desiredValue, parent: existing, key: key})
+		*queue = append(*queue, jsonMergeFrame{have: existingValue, want: desiredValue, parent: existing, key: key, pointer: pointer})
 	}
-	return changed, nil
+	return nil
 }
 
-func mergeJSONArray(root *any, frame jsonMergeFrame, desired []any) (bool, error) {
+func mergeJSONArray(root *any, frame jsonMergeFrame, desired []any, added *[]string) error {
 	existing, ok := frame.have.([]any)
 	if !ok {
-		return false, fmt.Errorf("managed array for key %q conflicts with the existing value", frame.key)
+		return fmt.Errorf("managed array for key %q conflicts with the existing value", frame.key)
 	}
-	changed := false
+	appended := false
 	for _, desiredItem := range desired {
 		if !jsonArrayContains(existing, desiredItem) {
 			existing = append(existing, desiredItem)
-			changed = true
+			appended = true
 		}
+	}
+	if appended {
+		*added = append(*added, frame.pointer+"/-")
 	}
 	if frame.parent == nil {
 		*root = existing
 	} else {
 		frame.parent[frame.key] = existing
 	}
-	return changed, nil
+	return nil
 }
 
 // jsonDocumentContains reports whether existing contains every managed value in

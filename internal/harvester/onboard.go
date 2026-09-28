@@ -230,7 +230,10 @@ func writeOnboardEditors(ctx context.Context, repoPath string, declared []string
 	}
 	for i := 0; i < len(set.Files) && i < maxOnboardOutputs; i++ {
 		f := set.Files[i]
-		if (f.Path == ".clang-tidy" || f.Path == ".editorconfig") && util.FileExists(filepath.Join(repoPath, f.Path)) {
+		// The preservation rule is the editor package's one list (HISS-19): a copy here named
+		// only two of its files, so onboarding replaced the .nvim.lua, .dir-locals.el and
+		// .idea/workspace.xml that adoption and `editors generate` keep.
+		if editor.IsPreservedEditorFile(f.Path) && util.FileExists(filepath.Join(repoPath, filepath.FromSlash(f.Path))) {
 			continue
 		}
 		if err := writeOnboardFile(ctx, repoPath, f.Path, []byte(f.Content)); err != nil {

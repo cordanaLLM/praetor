@@ -109,6 +109,10 @@ const (
 	// WritePreserved means a differing or unreadable developer-owned file (see
 	// IsPreservedEditorFile) was left untouched and is not verified.
 	WritePreserved WriteOutcome = "PRESERVED"
+	// WriteKept means an existing non-JSON template file that differed was left untouched
+	// because the caller keeps drift (ResolveExisting with keepDrift, as adoption asks); it is
+	// not verified. WriteWithReport never reports it.
+	WriteKept WriteOutcome = "KEPT"
 )
 
 // WriteResult records the resolved outcome for one generated file.
@@ -1012,33 +1016,70 @@ func prepareEditorWrite(ctx context.Context, file GeneratedFile, fullPath string
 		}
 		return write, fmt.Errorf("read existing %s: %w", file.Path, err)
 	}
-	outcome, content, err := resolveExistingEditorFile(file, existing)
+	resolution, err := ResolveExisting(file, existing, false)
 	if err != nil {
 		return write, err
 	}
-	write.content, write.result.Outcome = content, outcome
-	write.write = outcome == WriteMerged || outcome == WriteRewritten
+	write.content, write.result.Outcome = resolution.Content, resolution.Outcome
+	write.write = resolution.Outcome == WriteMerged || resolution.Outcome == WriteRewritten
 	return write, nil
 }
 
-func resolveExistingEditorFile(file GeneratedFile, existing []byte) (WriteOutcome, string, error) {
+// Resolution is what ResolveExisting decided for one generated file that already exists.
+type Resolution struct {
+	// Outcome is WritePresent, WriteMerged, WriteRewritten, WritePreserved or WriteKept.
+	Outcome WriteOutcome
+	// Content is what to write: the merged document for WriteMerged, the template for
+	// WriteRewritten, empty for every other outcome.
+	Content string
+	// Added names each managed member a JSON merge adds, as an RFC 6901 JSON Pointer; a list
+	// that gains entries is named once, as its pointer followed by "/-". Set for WriteMerged.
+	Added []string
+}
+
+// ResolveExisting decides, before anything is written, what becomes of file when its path
+// already holds existing. It is the one rule `editors generate` (WriteWithReport, keepDrift
+// false) and adoption (keepDrift true) share:
+//
+//   - a JSON file keeps its unrelated keys, list entries and number literals and gains the
+//     missing managed values (WriteMerged with the merged document, or WritePresent); invalid
+//     JSON, JSONC comments, duplicate keys and a conflicting managed value are an error, and
+//     ErrExistingJSONInvalid marks the ones where existing is not strict JSON;
+//   - any other file equal to its template (matchesTemplate: a checkout's CRLF line endings
+//     count as equal) is WritePresent;
+//   - a developer-owned file (IsPreservedEditorFile) that differs is WritePreserved;
+//   - any other differing file is WriteRewritten with the template, or WriteKept when keepDrift
+//     is set: adoption does not overwrite an editor file nothing audits (#502).
+func ResolveExisting(file GeneratedFile, existing []byte, keepDrift bool) (Resolution, error) {
 	switch {
 	case isJSONEditorFile(file.Path):
-		merged, changed, err := mergeJSONDocument(existing, []byte(file.Content))
+		merged, added, err := mergeJSONDocument(existing, []byte(file.Content))
 		if err != nil {
-			return "", "", fmt.Errorf("cannot safely merge existing %s: %w", file.Path, err)
+			return Resolution{}, fmt.Errorf("cannot safely merge existing %s: %w", file.Path, err)
 		}
-		if !changed {
-			return WritePresent, "", nil
+		if len(added) == 0 {
+			return Resolution{Outcome: WritePresent}, nil
 		}
-		return WriteMerged, string(merged), nil
-	case string(existing) == file.Content:
-		return WritePresent, "", nil
+		return Resolution{Outcome: WriteMerged, Content: string(merged), Added: added}, nil
+	case matchesTemplate(existing, file.Content):
+		return Resolution{Outcome: WritePresent}, nil
 	case IsPreservedEditorFile(file.Path):
-		return WritePreserved, "", nil
+		return Resolution{Outcome: WritePreserved}, nil
+	case keepDrift:
+		return Resolution{Outcome: WriteKept}, nil
 	default:
-		return WriteRewritten, file.Content, nil
+		return Resolution{Outcome: WriteRewritten, Content: file.Content}, nil
 	}
+}
+
+// matchesTemplate reports whether existing is template's text, allowing the one consistent
+// line-ending style a checkout may give it (util.CanonicalTextEquivalent): a CRLF checkout of a
+// template under core.autocrlf is the template, not drift (HISS-21). Mixed line endings, a lone
+// carriage return and invalid UTF-8 differ. ResolveExisting and verifyEditorFile share it, so a
+// file generation or adoption counts as present is one verification accepts.
+func matchesTemplate(existing []byte, template string) bool {
+	same, err := util.CanonicalTextEquivalent(existing, []byte(template))
+	return err == nil && same
 }
 
 func validateEditorFiles(set *EditorConfigSet) error {
@@ -1071,7 +1112,8 @@ func Verify(set *EditorConfigSet, rootDir string) error {
 
 // VerifyWithReport checks that every generated file exists in rootDir. A JSON file
 // must contain every managed value, with unrelated keys and list entries allowed;
-// any other file must match its template exactly. A developer-owned file
+// any other file must match its template, a checkout's consistent CRLF line endings
+// allowed (matchesTemplate). A developer-owned file
 // (IsPreservedEditorFile) that differs from its template is preserved by Write, so it is
 // reported as PreservedUnverified instead of being counted as verified.
 func VerifyWithReport(set *EditorConfigSet, rootDir string) (VerificationReport, error) {
@@ -1117,7 +1159,7 @@ func verifyEditorFile(ctx context.Context, rootDir string, file GeneratedFile) (
 			return false, fmt.Errorf("configuration file %s is missing managed standards policy", file.Path)
 		}
 		return true, nil
-	case string(existing) == file.Content:
+	case matchesTemplate(existing, file.Content):
 		return true, nil
 	case IsPreservedEditorFile(file.Path):
 		return false, nil
