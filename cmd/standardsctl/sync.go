@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -227,13 +228,18 @@ func reconcileRemoteForge(ctx context.Context, rootDir string, in remoteSyncInpu
 		return err
 	}
 	owner, name := in.manifest.Repository.Owner, in.manifest.Repository.Name
+	contexts, err := remoteStatusContexts(ctx, rootDir, owner+"/"+name, in.contexts)
+	if err != nil {
+		return err
+	}
 
 	gh := forge.NewGitHubDriver(token, remote.endpoint)
 	gh.SetRepository(owner, name)
-	// The remote ruleset is the local .github/rulesets/main.json one: same name, same refs.
+	// The remote ruleset is the local .github/rulesets/main.json one: same name, same refs, and
+	// the status checks of it that report in this repository.
 	gh.RulesetName = forge.RepositoryRulesetName
 	gh.ProtectedRefs = forge.RepositoryRulesetRefs(in.branch)
-	gh.RequiredStatusChecks = append([]string(nil), in.contexts...)
+	gh.RequiredStatusChecks = contexts
 	gh.StrictStatusChecks = true
 	fmt.Printf("  [SYNC] Reconciling branch protection ruleset on GitHub for %s/%s...\n", owner, name)
 	if err := gh.ReconcileProtection(ctx, in.branch, in.policy); err != nil {
@@ -252,6 +258,29 @@ func reconcileRemoteForge(ctx context.Context, rootDir string, in remoteSyncInpu
 	}
 	printRepositoryMetadataReport(metadata)
 	return nil
+}
+
+// remoteStatusContexts returns the required status checks a --remote sync writes to the forge
+// repository named repository: the jobs that report on every pull request there
+// (forge.RequiredStatusContextsIn). A check of the local ruleset, local, whose job a repository
+// guard keeps out of that repository, such as a Platform Neutrality leg in an operational fork,
+// is left off and named: no run there reports it, so requiring it would block every pull request.
+func remoteStatusContexts(ctx context.Context, rootDir, repository string, local []string) ([]string, error) {
+	contexts, err := forge.RequiredStatusContextsIn(ctx, rootDir, repository)
+	if err != nil {
+		return nil, fmt.Errorf("discover the required status checks of %s: %w", repository, err)
+	}
+	var omitted []string
+	for _, check := range local {
+		if !slices.Contains(contexts, check) {
+			omitted = append(omitted, check)
+		}
+	}
+	if len(omitted) > 0 {
+		fmt.Printf("  [INFO] Not required on GitHub for %s, because a repository guard skips their jobs there: %s\n",
+			repository, strings.Join(omitted, ", "))
+	}
+	return contexts, nil
 }
 
 // printRepositoryMetadataReport prints what the metadata reconciliation wrote, and any

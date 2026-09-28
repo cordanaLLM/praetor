@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"gopkg.in/yaml.v3"
 )
@@ -32,6 +33,8 @@ const (
 	issueCommentEvent = "issue_comment"
 	workflowPathsKey  = "paths"
 	workflowIgnoreKey = "paths-ignore"
+	// workflowDiscoveryTimeout bounds one required-context discovery (HISS-02).
+	workflowDiscoveryTimeout = 30 * time.Second
 )
 
 // RequiredStatusContexts selects the names of the jobs that report on every pull request
@@ -51,7 +54,7 @@ func RequiredStatusContextsPlanned(ctx context.Context, repoPath string, planned
 	if ctx == nil {
 		return nil, errors.New("workflow context discovery requires a context")
 	}
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, workflowDiscoveryTimeout)
 	defer cancel()
 	files, err := readWorkflowFiles(ctx, repoPath)
 	if err != nil {
@@ -65,6 +68,38 @@ func RequiredStatusContextsPlanned(ctx context.Context, repoPath string, planned
 	if err != nil {
 		return nil, err
 	}
+	return filesContextsIn(files, identity)
+}
+
+// RequiredStatusContextsIn is RequiredStatusContexts for the checks that report inside the forge
+// repository named repository ("<owner>/<name>"), the one a remote sync writes its ruleset to. A
+// repository guard holds there only when its literal names that repository.
+//
+// RequiredStatusContexts judges a guard against the manifest identity instead, which an
+// operational fork resolves to the canonical repository (repository.source, #255) so that its
+// checked-in ruleset matches the canonical one. That is right for the file and wrong for the
+// fork's forge: there the guard is false, a matrix job it skips is skipped before its matrix
+// expands, and none of its per-leg contexts is ever reported (actions/runner#952). Requiring them
+// would leave every pull request of the fork waiting forever.
+func RequiredStatusContextsIn(ctx context.Context, repoPath, repository string) ([]string, error) {
+	if ctx == nil {
+		return nil, errors.New("workflow context discovery requires a context")
+	}
+	if !config.ValidRepositoryIdentity(repository) {
+		return nil, fmt.Errorf("required status contexts need an owner/name repository, got %q", repository)
+	}
+	ctx, cancel := context.WithTimeout(ctx, workflowDiscoveryTimeout)
+	defer cancel()
+	files, err := readWorkflowFiles(ctx, repoPath)
+	if err != nil {
+		return nil, err
+	}
+	return filesContextsIn(files, repository)
+}
+
+// filesContextsIn collects, in file order, the required check contexts of every workflow in files
+// inside the repository named identity (workflowContextsIn).
+func filesContextsIn(files []workflowFile, identity string) ([]string, error) {
 	var contexts []string
 	for i := 0; i < len(files) && i < maxWorkflowFiles; i++ {
 		jobs, err := workflowContextsIn(files[i].Data, identity)
@@ -314,14 +349,16 @@ var everyRunConditions = []string{"always()", "!cancelled()", "success()||failur
 // reportsOnEveryPullRequest reports whether a job carrying condition reports its check on every
 // pull request run of its workflow inside the repository named identity: an unconditional job,
 // one whose condition holds on every run (holdsOnEveryRun), such as an aggregate merge gate that
-// needs path-filtered lanes, and one whose only condition is a repository guard that holds there
-// (guardHoldsInRepository).
+// needs path-filtered lanes, one whose condition is a disjunction with a term that holds on every
+// pull request run (holdsOnEveryPullRequestRun), and one whose only condition is a repository
+// guard that holds there (guardHoldsInRepository).
 //
 // Any other condition, such as a lane that runs only when a planner job's output selects it,
 // skips its job on some pull requests. GitHub reports a job a condition skipped as successful, so
 // requiring it would install a check that passes whether or not its work ran.
 func reportsOnEveryPullRequest(condition, identity string) bool {
-	return strings.TrimSpace(condition) == "" || holdsOnEveryRun(condition) || guardHoldsInRepository(condition, identity)
+	return strings.TrimSpace(condition) == "" || holdsOnEveryRun(condition) ||
+		holdsOnEveryPullRequestRun(condition) || guardHoldsInRepository(condition, identity)
 }
 
 // holdsOnEveryRun reports whether a job condition is one of everyRunConditions, bare or as one

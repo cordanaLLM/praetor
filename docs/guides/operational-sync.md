@@ -310,7 +310,7 @@ test replays both checks against a temp copy of the manifest with the owner over
 | `ci.yml`, `compliance.yml`, `security.yml` on push and pull request | runs | runs: verification follows the code, and it gates sync candidates |
 | `security.yml` schedule leg | runs | skipped |
 | `sync-flavors.yml`, `sync-models.yml`, `pages.yml`, `wiki-sync.yml`, `release-binaries.yml` | runs | skipped at job level; the job name says `canonical repository only` |
-| `portability.yml` | runs | skipped with a stated reason unless the repository variable `PRAETOR_FORK_PORTABILITY` is `enabled` |
+| `portability.yml` | runs; its three legs are required checks | skipped with a stated reason unless the repository variable `PRAETOR_FORK_PORTABILITY` is `enabled`; `sync --remote` does not require its legs there ([HISS-21](../standards/hiss-21-platform-neutrality.md#outside-the-canonical-repository-the-matrix-is-opt-in-and-says-so)) |
 | `adopt.yml` | on dispatch or comment | on dispatch or comment: a person asked for it in that repository |
 
 Set `PRAETOR_CANONICAL_REPOSITORY` only when the canonical repository itself moves; the
