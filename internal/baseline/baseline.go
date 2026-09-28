@@ -150,6 +150,11 @@ func ParseBaseline(data []byte) (*Baseline, error) {
 
 // SaveBaseline writes a baseline to disk. It is the raw writer: it does not enforce the
 // HISS-13 ratchet, so callers recording a fresh scan must go through Record first.
+//
+// The write is util.WriteFileConfined anchored at the baseline's own directory, the
+// repository root every caller keeps it in: a link planted at the baseline path is refused
+// instead of written through, and the replace is atomic, so a reader never sees a torn
+// snapshot (BUG-826).
 func SaveBaseline(path string, b *Baseline) error {
 	if b == nil {
 		return ErrNilSnapshot
@@ -162,7 +167,7 @@ func SaveBaseline(path string, b *Baseline) error {
 		return fmt.Errorf("failed to marshal baseline: %w", err)
 	}
 
-	if err := util.WriteFileSecure(path, append(data, '\n'), FilePerm); err != nil {
+	if err := util.WriteFileAt(path, append(data, '\n'), FilePerm); err != nil {
 		return fmt.Errorf("failed to write baseline to %s: %w", path, err)
 	}
 	return nil

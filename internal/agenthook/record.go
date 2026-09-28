@@ -44,7 +44,10 @@ func recordAndAllow(ctx context.Context, dir string, row Registration, dialect D
 
 // writeRecording creates dir if needed (owner-only) and writes payload to one new file
 // named for client, event and the instant of the call, so repeated events of the same
-// kind never collide or overwrite an earlier capture.
+// kind never collide or overwrite an earlier capture. dir is the operator's recording root
+// and is created as given; the capture is written through a pinned handle on it
+// (util.WriteFileConfined), so a client or event name cannot place it elsewhere and a link at
+// the name is refused instead of written through (BUG-826).
 func writeRecording(dir, client string, event Event, payload []byte) error {
 	if err := util.MkdirSecure(dir, util.SecureDirPerm); err != nil {
 		return err
@@ -54,11 +57,7 @@ func writeRecording(dir, client string, event Event, payload []byte) error {
 		return err
 	}
 	name := fmt.Sprintf("%s-%s-%s-%s.json", client, event, time.Now().UTC().Format("20060102T150405.000000000"), suffix)
-	path, err := util.ConfinePath(dir, name)
-	if err != nil {
-		return fmt.Errorf("record mode: %w", err)
-	}
-	if err := util.WriteFileSecure(path, payload, recordFilePerm); err != nil {
+	if err := util.WriteFileConfined(dir, name, payload, recordFilePerm); err != nil {
 		return fmt.Errorf("record mode: %w", err)
 	}
 	return nil

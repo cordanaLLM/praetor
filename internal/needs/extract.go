@@ -530,7 +530,9 @@ func calculateReadiness(repoNeeds *RepoNeeds) {
 // WriteNeedsManifest serializes the RepoNeeds to .needs.yaml.
 //
 // The manifest enumerates a repository's full third-party dependency inventory, so it is
-// written owner-only rather than world-readable.
+// written owner-only rather than world-readable. The write is util.WriteFileConfined
+// anchored at repoPath: a link planted at .needs.yaml is refused instead of written through,
+// and the replace is atomic (BUG-826).
 func WriteNeedsManifest(repoPath string, repoNeeds *RepoNeeds) error {
 	if repoNeeds == nil {
 		return fmt.Errorf("needs: cannot write a nil manifest for %q", repoPath)
@@ -540,7 +542,7 @@ func WriteNeedsManifest(repoPath string, repoNeeds *RepoNeeds) error {
 	if err != nil {
 		return err
 	}
-	if err := util.WriteFileSecure(targetFile, data, util.SecureFilePerm); err != nil {
+	if err := util.WriteFileConfined(repoPath, NeedsManifestName, data, util.SecureFilePerm); err != nil {
 		return fmt.Errorf("failed to write %s: %w", targetFile, err)
 	}
 	return nil

@@ -23,6 +23,10 @@ const (
 	// syncDirPerm and syncFilePerm are the modes of the synthesized, tracked files.
 	syncDirPerm  os.FileMode = util.TrackedDirPerm
 	syncFilePerm os.FileMode = util.TrackedFilePerm
+	// syncLabelsRel and syncRulesetRel name the files sync synthesizes, relative to the
+	// repository root.
+	syncLabelsRel  = ".config/labels.yaml"
+	syncRulesetRel = ".github/rulesets/main.json"
 )
 
 // ErrRemoteTokenMissing reports a --remote sync without any usable credential.
@@ -43,14 +47,14 @@ type remoteSyncOptions struct {
 // reconcileLabels verifies .config/labels.yaml, synthesizing it when missing, and returns
 // the labels now on disk: the taxonomy a --remote sync writes to GitHub.
 func reconcileLabels(ctx context.Context, rootDir string) ([]forge.Label, error) {
-	labelsPath := filepath.Join(rootDir, ".config", "labels.yaml")
+	labelsPath := filepath.Join(rootDir, syncLabelsRel)
 	data, exists, err := contextopt.ObserveSnapshot(ctx, labelsPath)
 	if err != nil {
 		return nil, fmt.Errorf("labels observation failed: %w", err)
 	}
 	if !exists {
 		fmt.Println("  [FIX] Synthesizing missing .config/labels.yaml...")
-		if err := synthesizeDefaultLabels(labelsPath); err != nil {
+		if err := synthesizeDefaultLabels(rootDir); err != nil {
 			return nil, fmt.Errorf("failed creating labels manifest: %w", err)
 		}
 		data, err = contextopt.ReadSnapshot(ctx, labelsPath)
@@ -115,14 +119,14 @@ func reconcileLabelDescriptions(ctx context.Context, labelsPath string, data []b
 // reconcileRuleset writes the ruleset for the default branch branch when it is absent, then
 // validates the one on disk against it.
 func reconcileRuleset(ctx context.Context, rootDir, branch string, bp config.BranchProtectionPolicy, contexts []string) error {
-	rulesetPath := filepath.Join(rootDir, ".github", "rulesets", "main.json")
+	rulesetPath := filepath.Join(rootDir, syncRulesetRel)
 	data, exists, err := contextopt.ObserveSnapshot(ctx, rulesetPath)
 	if err != nil {
 		return fmt.Errorf("ruleset observation failed: %w", err)
 	}
 	if !exists {
 		fmt.Println("  [FIX] Synthesizing declarative branch protection ruleset (.github/rulesets/main.json)...")
-		if err := synthesizeRuleset(rulesetPath, branch, bp, contexts); err != nil {
+		if err := synthesizeRuleset(rootDir, branch, bp, contexts); err != nil {
 			return fmt.Errorf("failed synthesizing ruleset: %w", err)
 		}
 		data, err = contextopt.ReadSnapshot(ctx, rulesetPath)
@@ -389,21 +393,28 @@ func verifySyncLocal(ctx context.Context, configPath, catalogRoot string, manife
 	return nil, companions.incomplete + counted, nil
 }
 
-func synthesizeRuleset(targetPath, branch string, bp config.BranchProtectionPolicy, contexts []string) error {
-	if err := util.MkdirSecure(filepath.Dir(targetPath), syncDirPerm); err != nil {
-		return err
-	}
-
+// synthesizeRuleset writes the ruleset bp renders for branch to .github/rulesets/main.json
+// below rootDir.
+func synthesizeRuleset(rootDir, branch string, bp config.BranchProtectionPolicy, contexts []string) error {
 	data, err := forge.RenderRepositoryRuleset(branch, bp, contexts)
 	if err != nil {
 		return err
 	}
-	return util.WriteFileSecure(targetPath, data, syncFilePerm)
+	return writeSyncFile(rootDir, syncRulesetRel, data)
 }
 
-func synthesizeDefaultLabels(targetPath string) error {
-	if err := util.MkdirSecure(filepath.Dir(targetPath), syncDirPerm); err != nil {
+// synthesizeDefaultLabels writes the default label taxonomy to .config/labels.yaml below rootDir.
+func synthesizeDefaultLabels(rootDir string) error {
+	return writeSyncFile(rootDir, syncLabelsRel, forge.DefaultLabelTaxonomy())
+}
+
+// writeSyncFile creates rel and its directory below rootDir through a pinned handle on rootDir
+// (util.MkdirConfined, util.WriteFileConfined), so a symlinked .github or .config cannot
+// redirect a synthesized file outside the repository, and a link planted at the file is
+// refused instead of written through (BUG-826).
+func writeSyncFile(rootDir, rel string, data []byte) error {
+	if err := util.MkdirConfined(rootDir, filepath.Dir(rel), syncDirPerm); err != nil {
 		return err
 	}
-	return util.WriteFileSecure(targetPath, forge.DefaultLabelTaxonomy(), syncFilePerm)
+	return util.WriteFileConfined(rootDir, rel, data, syncFilePerm)
 }

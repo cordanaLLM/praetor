@@ -126,15 +126,16 @@ func migrateCatalog(cat *DocCatalog, path string) (*DocCatalog, error) {
 }
 
 // SaveCatalog writes the doc catalog to the repo's .workingdir/docs/catalog.json.
+//
+// The directory and the catalog are created through a pinned handle on repoPath
+// (util.MkdirConfined, util.WriteFileConfined), so a symlinked .workingdir or docs directory
+// cannot redirect them, not even one swapped in after a check, and a link planted at the
+// catalog is refused instead of written through (BUG-826).
 func SaveCatalog(repoPath string, cat *DocCatalog) error {
 	if cat == nil {
 		return fmt.Errorf("doc catalog cannot be nil")
 	}
-	dir, err := cachePath(repoPath, DocsDirRel)
-	if err != nil {
-		return err
-	}
-	if err := util.MkdirSecure(dir, cacheDirPerm); err != nil {
+	if err := util.MkdirConfined(repoPath, DocsDirRel, cacheDirPerm); err != nil {
 		return fmt.Errorf("failed to create docs dir: %w", err)
 	}
 
@@ -146,37 +147,26 @@ func SaveCatalog(repoPath string, cat *DocCatalog) error {
 		return fmt.Errorf("failed to marshal doc catalog: %w", err)
 	}
 
-	catPath, err := cachePath(repoPath, CatalogFileRel)
-	if err != nil {
-		return err
-	}
-	// Atomic (BUG-447): WriteFileSecure truncates catPath in place before writing, so a
-	// process interrupted mid-write leaves a zero-length or partial catalog. The rename
-	// below only ever replaces catPath with a fully written file.
-	if err := util.WriteFileAtomic(catPath, data, cacheFilePerm); err != nil {
+	// Atomic (BUG-447): an in-place write truncates the catalog before writing, so a process
+	// interrupted mid-write leaves a zero-length or partial catalog. The confined writer only
+	// ever renames a fully written file onto it.
+	if err := util.WriteFileConfined(repoPath, CatalogFileRel, data, cacheFilePerm); err != nil {
 		return fmt.Errorf("failed to write doc catalog: %w", err)
 	}
 	return nil
 }
 
-// writeDistilledDoc writes the distilled markdown body of doc into the cache directory.
-// It is the single writer shared by SaveCachedDoc and SyncRepositoryDocs.
+// writeDistilledDoc writes the distilled markdown body of doc into the cache directory,
+// confined to repoPath like SaveCatalog. It is the single writer shared by SaveCachedDoc and
+// SyncRepositoryDocs.
 func writeDistilledDoc(repoPath string, doc *DistilledDoc) error {
-	distilledDir, err := cachePath(repoPath, DistilledDirRel)
-	if err != nil {
-		return err
-	}
-	if err := util.MkdirSecure(distilledDir, cacheDirPerm); err != nil {
+	if err := util.MkdirConfined(repoPath, DistilledDirRel, cacheDirPerm); err != nil {
 		return fmt.Errorf("failed creating distilled dir: %w", err)
 	}
 	filename := sanitizeDocFilename(doc.PackageName, doc.Version)
-	filePath, err := cachePath(repoPath, filepath.Join(DistilledDirRel, filename))
-	if err != nil {
-		return err
-	}
 	// Atomic (BUG-447): shared with SaveCatalog so a distilled doc can never be left
 	// truncated by an interrupted write either.
-	if err := util.WriteFileAtomic(filePath, []byte(doc.RawMarkdown), cacheFilePerm); err != nil {
+	if err := util.WriteFileConfined(repoPath, filepath.Join(DistilledDirRel, filename), []byte(doc.RawMarkdown), cacheFilePerm); err != nil {
 		return fmt.Errorf("failed writing distilled doc file: %w", err)
 	}
 	return nil

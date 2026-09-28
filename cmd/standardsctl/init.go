@@ -141,7 +141,9 @@ func createInitialManifest(outputPath, profile string, facets []string, identity
 		return fmt.Errorf("failed to render manifest: %w", err)
 	}
 
-	if err := util.WriteFileSecure(outputPath, data, initFilePerm); err != nil {
+	// Anchored at the manifest's directory, the repository root every companion file shares:
+	// a link planted at the manifest path is refused instead of written through (BUG-826).
+	if err := util.WriteFileAt(outputPath, data, initFilePerm); err != nil {
 		return fmt.Errorf("failed to write %s: %w", outputPath, err)
 	}
 	fmt.Printf("[CREATED] %s (Profile: %s, Facets: %v)\n", outputPath, profile, facets)
@@ -169,7 +171,7 @@ func initBaselineAndLockfile(rootDir string) error {
 		fmt.Printf("[CREATED] %s (0 legacy infractions)\n", baselinePath)
 	}
 
-	lockPath := filepath.Join(rootDir, ".standards.lock")
+	lockPath := filepath.Join(rootDir, config.LockFileName)
 	missing, err = fileMissing(lockPath)
 	if err != nil {
 		return err
@@ -183,7 +185,7 @@ func initBaselineAndLockfile(rootDir string) error {
 				lockPath, pinned)
 		}
 		content := fmt.Appendf(nil, "# SemVer lockfile\nversion: 1\npinned_version: %q\n", pinned)
-		if err := util.WriteFileSecure(lockPath, content, initFilePerm); err != nil {
+		if err := util.WriteFileConfined(rootDir, config.LockFileName, content, initFilePerm); err != nil {
 			return fmt.Errorf("failed to create lockfile: %w", err)
 		}
 		fmt.Printf("[CREATED] %s\n", lockPath)

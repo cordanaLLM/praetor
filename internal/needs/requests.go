@@ -155,6 +155,10 @@ func renderRequestMarkdown(reqID, title string, gap GapDetail, routing, roi stri
 	return sb.String()
 }
 
+// demandManifestName is the consolidated manifest EmitDemandRequests writes beside the
+// request files.
+const demandManifestName = "FRAMEWORK_DEMAND.yaml"
+
 // EmitDemandRequests writes individual RFC files and consolidated manifest to outputDir.
 //
 // The emitted artifacts enumerate every repository of the operator's fleet, its remote
@@ -163,6 +167,10 @@ func renderRequestMarkdown(reqID, title string, gap GapDetail, routing, roi stri
 //
 // HISS-02: ctx is checked before every write, so a cancelled or expired caller deadline
 // stops the emission instead of blocking on a hung mount for the whole request set.
+//
+// outputDir is the operator's chosen root and is created as given; every file below it is
+// written through util.WriteFileConfined anchored at outputDir, so a link planted at a
+// manifest or request file is refused instead of written through (BUG-826).
 func EmitDemandRequests(ctx context.Context, requests []FrameworkDemandRequest, outputDir string) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -174,25 +182,20 @@ func EmitDemandRequests(ctx context.Context, requests []FrameworkDemandRequest, 
 		return fmt.Errorf("failed to create output dir %s: %w", outputDir, err)
 	}
 
-	manifestPath := filepath.Join(outputDir, "FRAMEWORK_DEMAND.yaml")
 	yamlData, err := yaml.Marshal(requests)
 	if err != nil {
 		return fmt.Errorf("failed to serialize demands manifest: %w", err)
 	}
-	if err := util.WriteFileSecure(manifestPath, yamlData, util.SecureFilePerm); err != nil {
-		return fmt.Errorf("failed to write %s: %w", manifestPath, err)
+	if err := util.WriteFileConfined(outputDir, demandManifestName, yamlData, util.SecureFilePerm); err != nil {
+		return fmt.Errorf("failed to write %s: %w", filepath.Join(outputDir, demandManifestName), err)
 	}
 
 	for _, req := range requests {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return fmt.Errorf("demand request emission aborted: %w", ctxErr)
 		}
-		filePath, pErr := util.ConfinePath(outputDir, req.RequestID+".md")
-		if pErr != nil {
-			return fmt.Errorf("invalid request id %q: %w", req.RequestID, pErr)
-		}
-		if err := util.WriteFileSecure(filePath, []byte(req.SpecificationMarkdown), util.SecureFilePerm); err != nil {
-			return fmt.Errorf("failed to write request file %s: %w", filePath, err)
+		if err := util.WriteFileConfined(outputDir, req.RequestID+".md", []byte(req.SpecificationMarkdown), util.SecureFilePerm); err != nil {
+			return fmt.Errorf("failed to write request file for request id %q: %w", req.RequestID, err)
 		}
 	}
 

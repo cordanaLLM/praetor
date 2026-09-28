@@ -146,22 +146,21 @@ func (op *operation) renderedSurfaces() []string {
 	return paths
 }
 
-// writeSurfaces writes the rendered funding surfaces into the candidate and stages them.
+// writeSurfaces writes the rendered funding surfaces into the candidate and stages them. The
+// directories and files are created through a pinned handle on the candidate
+// (util.MkdirConfined, util.WriteFileConfined), so a symlinked .github cannot redirect them
+// (BUG-826).
 func (op *operation) writeSurfaces(ctx context.Context) error {
 	paths := op.renderedSurfaces()
 	if len(paths) == 0 {
 		return nil
 	}
 	for _, path := range paths {
-		target, err := util.ConfinePath(op.opts.Destination, path)
-		if err != nil {
-			return err
-		}
 		// A rendered FUNDING.yml may be the first file of .github/ in the candidate.
-		if err := util.MkdirSecure(filepath.Dir(target), 0o755); err != nil {
+		if err := util.MkdirConfined(op.opts.Destination, filepath.Dir(path), 0o755); err != nil {
 			return err
 		}
-		if err := util.WriteFileSecure(target, op.surfaces[path], 0o644); err != nil {
+		if err := util.WriteFileConfined(op.opts.Destination, path, op.surfaces[path], 0o644); err != nil {
 			return err
 		}
 	}

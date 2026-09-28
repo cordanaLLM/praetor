@@ -15,10 +15,10 @@ func TestSyncSynthesis_Positive_TrackedModes(t *testing.T) {
 	dir := t.TempDir()
 	labels := filepath.Join(dir, ".config", "labels.yaml")
 	ruleset := filepath.Join(dir, ".github", "rulesets", "main.json")
-	if err := synthesizeDefaultLabels(labels); err != nil {
+	if err := synthesizeDefaultLabels(dir); err != nil {
 		t.Fatalf("synthesizeDefaultLabels: %v", err)
 	}
-	if err := synthesizeRuleset(ruleset, "main", config.DefaultPolicy().BranchProtection, nil); err != nil {
+	if err := synthesizeRuleset(dir, "main", config.DefaultPolicy().BranchProtection, nil); err != nil {
 		t.Fatalf("synthesizeRuleset: %v", err)
 	}
 	for _, path := range []string{labels, ruleset} {

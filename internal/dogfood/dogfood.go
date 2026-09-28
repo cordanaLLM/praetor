@@ -309,7 +309,9 @@ func RunDogfood(ctx context.Context, opts DogfoodOptions) (*DogfoodReport, error
 	return report, nil
 }
 
-// writeDogfoodReport serialises the report to an owner-only JSON file.
+// writeDogfoodReport serialises the report to an owner-only JSON file, anchored at the
+// report's own directory: a link planted at the report path is refused instead of written
+// through (BUG-826).
 func writeDogfoodReport(path string, report *DogfoodReport) error {
 	if path == "" {
 		return nil
@@ -318,7 +320,7 @@ func writeDogfoodReport(path string, report *DogfoodReport) error {
 	if mErr != nil {
 		return fmt.Errorf("marshal dogfood report: %w", mErr)
 	}
-	if err := util.WriteFileSecure(path, data, reportFilePerm); err != nil {
+	if err := util.WriteFileAt(path, data, reportFilePerm); err != nil {
 		return fmt.Errorf("write dogfood report: %w", err)
 	}
 	return nil

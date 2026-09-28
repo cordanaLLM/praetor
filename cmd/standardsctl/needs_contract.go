@@ -43,7 +43,7 @@ func runNeedsContractExport(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("needs contract export: %w", err)
 	}
-	if err := util.WriteFileSecure(f.out, export.Data, util.SecureFilePerm); err != nil {
+	if err := util.WriteFileAt(f.out, export.Data, util.SecureFilePerm); err != nil {
 		return fmt.Errorf("needs contract export: write %s: %w", f.out, err)
 	}
 	for _, skipped := range export.Skipped {

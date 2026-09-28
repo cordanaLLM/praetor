@@ -154,10 +154,10 @@ func untrustedCloneContext(ctx context.Context, dir, protocols string) (context.
 		return nil, err
 	}
 	home, tmp := filepath.Join(dir, "home"), filepath.Join(dir, "tmp")
-	if err := util.MkdirSecure(home, 0o700); err != nil {
+	if err := mkdirEvidenceDir(home); err != nil {
 		return nil, err
 	}
-	if err := util.MkdirSecure(tmp, 0o700); err != nil {
+	if err := mkdirEvidenceDir(tmp); err != nil {
 		return nil, err
 	}
 	env := []string{"HOME=" + home, "TMPDIR=" + tmp, "LANG=C.UTF-8", "PATH=" + util.ScrubbedToolPath(git),

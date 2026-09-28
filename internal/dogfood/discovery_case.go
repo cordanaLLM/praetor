@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"sort"
 	"time"
-
-	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func runDiscoveryCase(ctx context.Context, opts DiscoveryOptions, policy DiscoveryPolicy, item *DiscoveryCase) {
@@ -19,7 +17,7 @@ func runDiscoveryCase(ctx context.Context, opts DiscoveryOptions, policy Discove
 	}
 	dir := filepath.Join(opts.ArtifactDir, item.ID)
 	item.ReportPath = filepath.ToSlash(filepath.Join(item.ID, "report.json"))
-	if err := util.MkdirSecure(dir, 0o700); err != nil {
+	if err := mkdirEvidenceDir(dir); err != nil {
 		item.Error = err.Error()
 		return
 	}

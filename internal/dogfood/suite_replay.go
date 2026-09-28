@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 
 	"github.com/cordanaLLM/praetor/internal/harvester"
-	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const maxSuitePages = (harvester.MaxTranscriptRecords + harvester.MaxTranscriptBatchRecords - 1) / harvester.MaxTranscriptBatchRecords
@@ -23,7 +22,7 @@ type SuiteReplayPass struct {
 }
 
 func verifySuiteTranscript(ctx context.Context, dir string, result *SuiteCase) error {
-	if err := util.MkdirSecure(dir, 0o700); err != nil {
+	if err := mkdirEvidenceDir(dir); err != nil {
 		return err
 	}
 	cache := filepath.Join(dir, "events")

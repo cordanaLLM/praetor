@@ -58,6 +58,12 @@ const gateWorktreeCleanKey = "worktree_clean"
 // before its first stage line.
 const maxGateOutputHeaderLines = 32
 
+// maxReceiptFileBytes bounds how much of a receipt envelope LoadReceiptFile reads (HISS-02).
+// An envelope is a few hundred bytes of signed fields plus the gate output: five header lines
+// and one line per stage. 1 MiB leaves room for long stage messages without allocating a
+// planted multi-GB file in full.
+const maxReceiptFileBytes = 1 << 20
+
 // ExecutionReceipt represents an Ed25519-signed verification receipt certifying an Exit-0 run.
 type ExecutionReceipt struct {
 	Version    string    `json:"version"`
@@ -172,10 +178,20 @@ type ReceiptFile struct {
 }
 
 // LoadReceiptFile reads and parses an on-disk receipt envelope.
+//
+// The read is the bounded, root-anchored one the manifest readers share
+// (util.ReadConfinedLimited, anchored at the receipt's own directory): only a regular file
+// is opened, so a FIFO planted at the receipt path fails instead of blocking the verifier
+// past every deadline; a link at the path that resolves outside that directory is refused;
+// and at most maxReceiptFileBytes are read. json.Unmarshal refuses anything after the first
+// JSON value, so a second envelope appended to the file is an error rather than ignored:
+// the single-document rule the manifest readers apply (BUG-857).
 func LoadReceiptFile(path string) (*ReceiptFile, error) {
-	// #nosec G304 -- path is the repository's own receipt location or an operator-supplied
-	// --receipt argument; the file is only parsed as JSON, never executed.
-	data, err := os.ReadFile(path)
+	dir, name, err := util.SplitFilePath(path)
+	if err != nil {
+		return nil, fmt.Errorf("read receipt %s: %w", path, err)
+	}
+	data, err := util.ReadConfinedLimited(dir, name, maxReceiptFileBytes)
 	if err != nil {
 		return nil, fmt.Errorf("read receipt %s: %w", path, err)
 	}
@@ -187,6 +203,11 @@ func LoadReceiptFile(path string) (*ReceiptFile, error) {
 }
 
 // SaveReceiptFile writes a receipt envelope with an explicit file mode.
+//
+// The write is util.WriteFileConfined anchored at the receipt's own directory, the
+// repository root the gate mints it into: a link planted at the receipt path is refused
+// instead of written through, and the envelope is replaced atomically, so LoadReceiptFile
+// never reads a torn one (BUG-826).
 func SaveReceiptFile(path string, rf *ReceiptFile, perm os.FileMode) error {
 	if rf == nil {
 		return ErrNilReceipt
@@ -195,7 +216,7 @@ func SaveReceiptFile(path string, rf *ReceiptFile, perm os.FileMode) error {
 	if err != nil {
 		return fmt.Errorf("marshal receipt: %w", err)
 	}
-	if err := util.WriteFileSecure(path, append(data, '\n'), perm); err != nil {
+	if err := util.WriteFileAt(path, append(data, '\n'), perm); err != nil {
 		return fmt.Errorf("write receipt %s: %w", path, err)
 	}
 	return nil

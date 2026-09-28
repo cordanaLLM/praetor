@@ -2,6 +2,7 @@ package needs
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -18,6 +19,14 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/util"
 )
+
+// maxMigrationFileBytes bounds how much of one Go source or go.mod the migration reads
+// (HISS-02). It is the framework observer's source ceiling (maxFrameworkSourceBytes), so a
+// file the observer could read whole is never too large to plan or rewrite.
+const maxMigrationFileBytes = maxFrameworkSourceBytes
+
+// migrationGuideName is the walkthrough a rewrite leaves at the repository root.
+const migrationGuideName = "MIGRATION.md"
 
 // defaultMigrationBranch is the branch an admitted migration creates when
 // framework.migration_branch is unset.
@@ -124,7 +133,7 @@ func findFileImportReplacements(ctx context.Context, rootDir string, replacement
 			return nil
 		}
 
-		actions = append(actions, scanFileForReplacements(path, replacements, keys)...)
+		actions = append(actions, scanFileForReplacements(root, path, replacements, keys)...)
 		return nil
 	})
 	if err != nil {
@@ -154,9 +163,9 @@ func sortedReplacementKeys(replacements map[string]string) []string {
 // scanFileForReplacements inspects a single file's parsed import specs, read through
 // util.GoImportPaths. Matching on the parsed import path (rather than on any line containing
 // the package name) keeps string literals such as "redis:6379" out of the plan.
-func scanFileForReplacements(filePath string, replacements map[string]string, keys []string) []ReplacementAction {
-	// Unparseable or generated sources carry no rewritable imports.
-	node := parseImportsOnly(filePath)
+func scanFileForReplacements(root, filePath string, replacements map[string]string, keys []string) []ReplacementAction {
+	// Unreadable, unparseable or generated sources carry no rewritable imports.
+	node := parseImportsOnly(root, filePath)
 	if node == nil {
 		return nil
 	}
@@ -184,10 +193,15 @@ func scanFileForReplacements(filePath string, replacements map[string]string, ke
 	return actions
 }
 
-// parseImportsOnly parses just the import block of a Go file, returning nil when the file
-// cannot be parsed.
-func parseImportsOnly(filePath string) *ast.File {
-	node, err := parser.ParseFile(token.NewFileSet(), filePath, nil, parser.ImportsOnly)
+// parseImportsOnly parses just the import block of filePath, a Go file below root, returning
+// nil when the file cannot be read through readMigrationFile or cannot be parsed. The source
+// is read here rather than by go/parser, whose own read is unbounded and blocks on a FIFO.
+func parseImportsOnly(root, filePath string) *ast.File {
+	data, err := readMigrationFile(root, filePath)
+	if err != nil {
+		return nil
+	}
+	node, err := parser.ParseFile(token.NewFileSet(), filePath, data, parser.ImportsOnly)
 	if err != nil {
 		return nil
 	}
@@ -264,11 +278,11 @@ func applyPlannedRewrites(ctx context.Context, repoPath string, plan *MigrationP
 	if err := ctx.Err(); err != nil {
 		return sortedFileList(changed), err
 	}
-	guidePath, err := confineToRepo(repoPath, filepath.Join(repoPath, "MIGRATION.md"))
+	guidePath, err := confineToRepo(repoPath, filepath.Join(repoPath, migrationGuideName))
 	if err != nil {
 		return sortedFileList(changed), err
 	}
-	if err := util.WriteFileSecure(guidePath, []byte(plan.GuideMarkdown), manifestFilePerm); err != nil {
+	if err := util.WriteFileConfined(repoPath, migrationGuideName, []byte(plan.GuideMarkdown), manifestFilePerm); err != nil {
 		return sortedFileList(changed), fmt.Errorf("write migration guide: %w", err)
 	}
 	changed[guidePath] = struct{}{}
@@ -288,7 +302,7 @@ func applyMigrationGoMod(ctx context.Context, repoPath string, plan *MigrationPl
 	} else if err != nil {
 		return fmt.Errorf("inspect go.mod: %w", err)
 	}
-	if err := updateGoMod(goModPath, plan.AddedRequires, plan.DroppedRequires); err != nil {
+	if err := updateGoMod(repoPath, goModPath, plan.AddedRequires, plan.DroppedRequires); err != nil {
 		return err
 	}
 	changed[goModPath] = struct{}{}
@@ -304,6 +318,33 @@ func applyMigrationGoMod(ctx context.Context, repoPath string, plan *MigrationPl
 // sortedFileList flattens the changed-file set into a deterministic slice.
 func sortedFileList(files map[string]struct{}) []string {
 	return slices.Sorted(maps.Keys(files))
+}
+
+// readMigrationFile reads path, a file below root, through the bounded, root-anchored read
+// the manifest readers share (util.ReadConfinedLimited): only a regular file is opened, so a
+// FIFO named like a Go source or go.mod fails instead of blocking the migration past its
+// deadline; a link that resolves outside root is refused; and at most maxMigrationFileBytes
+// are read (BUG-857).
+func readMigrationFile(root, path string) ([]byte, error) {
+	rel, err := migrationRel(root, path)
+	if err != nil {
+		return nil, err
+	}
+	data, err := util.ReadConfinedLimited(root, rel, maxMigrationFileBytes)
+	if err != nil {
+		return nil, fmt.Errorf("read %q: %w", path, err)
+	}
+	return data, nil
+}
+
+// migrationRel returns path relative to root, the member path the confined reader and writer
+// resolve below root.
+func migrationRel(root, path string) (string, error) {
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return "", fmt.Errorf("failed to relativize %q against %q: %w", path, root, err)
+	}
+	return rel, nil
 }
 
 // confineToRepo verifies that a planned target file really resolves inside repoPath, so
@@ -353,10 +394,9 @@ func applyFileImportReplacement(repoRoot, filePath, oldImport, newImport string)
 	if err != nil {
 		return err
 	}
-	// #nosec G304 -- target was confined to repoRoot by confineToRepo.
-	data, err := os.ReadFile(target)
+	data, err := readMigrationFile(repoRoot, target)
 	if err != nil {
-		return fmt.Errorf("read %q: %w", target, err)
+		return err
 	}
 	fset := token.NewFileSet()
 	node, err := parser.ParseFile(fset, target, data, parser.ImportsOnly)
@@ -379,32 +419,41 @@ func applyFileImportReplacement(repoRoot, filePath, oldImport, newImport string)
 	if replaced == string(data) {
 		return nil
 	}
-	return writePreservingMode(target, []byte(replaced))
+	return writePreservingMode(repoRoot, target, []byte(replaced))
 }
 
-// writePreservingMode retains existing permissions except for the world-write bit.
-// Missing files use the secure default, while metadata errors abort before writing.
-func writePreservingMode(path string, data []byte) error {
+// writePreservingMode replaces path, a file below root, through util.WriteFileConfined: every
+// directory between root and the file resolves through a pinned handle on root, so a
+// symlinked ancestor cannot carry the rewrite outside the repository, and a link at the file
+// itself is refused rather than written through (BUG-826). It retains existing permissions
+// except for the world-write bit. Missing files use the secure default, while metadata
+// errors abort before writing.
+func writePreservingMode(root, path string, data []byte) error {
 	perm := util.SecureFilePerm
-	if info, err := os.Stat(path); err == nil {
+	if info, err := os.Lstat(path); err == nil {
 		perm = info.Mode().Perm() &^ 0o002
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("inspect %q before writing: %w", path, err)
 	}
-	if err := util.WriteFileSecure(path, data, perm); err != nil {
+	rel, err := migrationRel(root, path)
+	if err != nil {
+		return err
+	}
+	if err := util.WriteFileConfined(root, rel, data, perm); err != nil {
 		return fmt.Errorf("write %q: %w", path, err)
 	}
 	return nil
 }
 
-// updateGoMod drops superseded modules and appends the target framework's require.
-func updateGoMod(goModPath string, added, dropped []string) error {
+// updateGoMod drops superseded modules from goModPath, the go.mod below repoRoot, and
+// appends the target framework's require.
+func updateGoMod(repoRoot, goModPath string, added, dropped []string) error {
 	dropSet := make(map[string]struct{}, len(dropped))
 	for _, d := range dropped {
 		dropSet[d] = struct{}{}
 	}
 
-	lines, present, err := readGoModLines(goModPath, dropSet)
+	lines, present, err := readGoModLines(repoRoot, goModPath, dropSet)
 	if err != nil {
 		return err
 	}
@@ -422,27 +471,21 @@ func updateGoMod(goModPath string, added, dropped []string) error {
 	}
 
 	body := []byte(strings.Join(lines, "\n") + "\n")
-	return writePreservingMode(goModPath, body)
+	return writePreservingMode(repoRoot, goModPath, body)
 }
 
 // readGoModLines returns the go.mod lines that survive the drop set plus the set of
-// module paths the file still requires. A read error aborts before any write: rewriting
-// go.mod from a truncated scan silently deletes the rest of the file.
-func readGoModLines(goModPath string, dropSet map[string]struct{}) (kept []string, present map[string]struct{}, err error) {
-	// #nosec G304 -- goModPath is filepath.Join(repoPath, "go.mod") for the migration
-	// target; the filename is a constant, not user input.
-	file, openErr := os.Open(goModPath)
-	if openErr != nil {
-		return nil, nil, fmt.Errorf("failed to open %q: %w", goModPath, openErr)
+// module paths the file still requires. goModPath is read through readMigrationFile. A read
+// error aborts before any write: rewriting go.mod from a truncated scan silently deletes
+// the rest of the file.
+func readGoModLines(repoRoot, goModPath string, dropSet map[string]struct{}) (kept []string, present map[string]struct{}, err error) {
+	data, err := readMigrationFile(repoRoot, goModPath)
+	if err != nil {
+		return nil, nil, err
 	}
-	defer func() {
-		if cerr := file.Close(); cerr != nil && err == nil {
-			err = fmt.Errorf("failed to close %q: %w", goModPath, cerr)
-		}
-	}()
 
 	present = make(map[string]struct{})
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(bytes.NewReader(data))
 	inRequire := false
 	scanErr := scanBoundedLines(scanner, func(line string) {
 		module := requireModulePath(line, &inRequire)

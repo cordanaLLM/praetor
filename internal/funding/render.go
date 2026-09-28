@@ -194,20 +194,20 @@ func (d *document) set(next string) bool {
 	return true
 }
 
+// writeDocuments writes every changed surface below root through a pinned handle on root
+// (util.MkdirConfined, util.WriteFileConfined): a symlinked .github cannot redirect a
+// surface, and a link planted at a surface file is refused instead of written through
+// (BUG-826).
 func writeDocuments(root string, files map[string]*document) error {
 	for rel, doc := range files {
 		if !doc.dirty {
 			continue
 		}
-		path, err := util.ConfinePath(root, rel)
-		if err != nil {
-			return err
-		}
 		// A repository directory keeps its mode: 0o755 is a ceiling that never tightens it.
-		if err := util.MkdirSecure(filepath.Dir(path), 0o755); err != nil {
+		if err := util.MkdirConfined(root, filepath.Dir(rel), 0o755); err != nil {
 			return err
 		}
-		if err := util.WriteFileSecure(path, doc.bytes(), surfacePerm); err != nil {
+		if err := util.WriteFileConfined(root, rel, doc.bytes(), surfacePerm); err != nil {
 			return fmt.Errorf("write %s: %w", rel, err)
 		}
 	}

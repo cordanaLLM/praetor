@@ -278,7 +278,10 @@ func chainChildTask(epic *PreMigrationEpic, parent *forge.IssueUpsertResult,
 // WriteEpicMarkdown exports the pre-migration epic to the specified file path.
 //
 // The epic enumerates a repository's dependency inventory and readiness, so the
-// directory and the file are created owner-only rather than world-readable.
+// directory and the file are created owner-only rather than world-readable. The file is
+// written through a pinned handle on its own directory (util.WriteFileConfined), the only
+// root an operator-named path has: a link planted at outputPath is refused instead of
+// written through, and the replace is atomic (BUG-826).
 func WriteEpicMarkdown(ctx context.Context, epic *PreMigrationEpic, outputPath string) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -293,7 +296,7 @@ func WriteEpicMarkdown(ctx context.Context, epic *PreMigrationEpic, outputPath s
 	if err := util.MkdirSecure(filepath.Dir(outputPath), util.SecureDirPerm); err != nil {
 		return fmt.Errorf("failed to create directory for %s: %w", outputPath, err)
 	}
-	if err := util.WriteFileSecure(outputPath, []byte(renderEpicDocument(epic)), util.SecureFilePerm); err != nil {
+	if err := util.WriteFileAt(outputPath, []byte(renderEpicDocument(epic)), util.SecureFilePerm); err != nil {
 		return fmt.Errorf("failed to write %s: %w", outputPath, err)
 	}
 	return nil
