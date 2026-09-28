@@ -122,17 +122,15 @@ func classifyLefthookConfig(existing []byte, current string) lefthookIdentity {
 		return lefthookIdentity{reason: fmt.Sprintf("lefthook.yml defines every generated job plus %d more (%s); "+
 			"adoption does not replace it, --force included, because that would drop them, and does not activate it. "+
 			"Merge the generated jobs by hand, or remove lefthook.yml to regenerate it, then run 'lefthook install'",
-			len(extra), summarizeJobs(extra))}
+			len(extra), quoteFirst(extra, len(extra), maxReportedExtraJobs, bareJobName))}
 	}
 	return lefthookIdentity{}
 }
 
-// summarizeJobs lists at most maxReportedExtraJobs job names for a message.
-func summarizeJobs(jobs []string) string {
-	if len(jobs) > maxReportedExtraJobs {
-		return strings.Join(jobs[:maxReportedExtraJobs], ", ") + ", ..."
-	}
-	return strings.Join(jobs, ", ")
+// bareJobName renders a job name in a skip reason as lefthook spells it, unquoted: the names are
+// slash paths such as pre-commit/commands/lint-docs, never text a quote must delimit.
+func bareJobName(job string) string {
+	return job
 }
 
 // generatedLefthookJobs returns the jobs every generated rendering holds (the one without

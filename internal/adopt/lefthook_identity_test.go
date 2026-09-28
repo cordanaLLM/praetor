@@ -228,7 +228,7 @@ func TestClassifyLefthookConfig_Boundary_ExtendsAndSupersetEdges(t *testing.T) {
 	for _, name := range []string{"a", "b", "c", "d", "e", "f", "g"} {
 		many += "hook-" + name + ":\n  commands:\n    job:\n      run: 'true'\n"
 	}
-	if reason := classifyLefthookConfig([]byte(many), current).reason; !strings.Contains(reason, "plus 7 more") || !strings.Contains(reason, ", ...") {
+	if reason := classifyLefthookConfig([]byte(many), current).reason; !strings.Contains(reason, "plus 7 more") || !strings.Contains(reason, "hook-e/commands/job and 2 more)") {
 		t.Errorf("a long superset is not counted and truncated: %q", reason)
 	}
 }

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/editor"
@@ -61,8 +60,9 @@ func (s *adoptSession) createEditorFile(full string, f editor.GeneratedFile) err
 }
 
 // applyEditorResolution records what editor.ResolveExisting decided for the existing file at
-// full, which held existing, and merges a JSON file under --force. WriteRewritten never occurs:
-// adoption resolves with drift kept.
+// full, which held existing, and merges a JSON file under --force. Adoption resolves with drift
+// kept, so WriteRewritten, or any outcome not listed, is an error rather than a file reported as
+// verified.
 func (s *adoptSession) applyEditorResolution(ctx context.Context, full string, f editor.GeneratedFile, existing []byte, r editor.Resolution) error {
 	switch r.Outcome {
 	case editor.WriteMerged:
@@ -73,8 +73,10 @@ func (s *adoptSession) applyEditorResolution(ctx context.Context, full string, f
 			"re-run adopt, or run `"+util.PraetorCLI+" editors generate`, to regenerate it")
 	case editor.WritePreserved:
 		s.report.recordReconciled(f.Path, fmt.Sprintf("Existing developer-owned %s file preserved, not verified", f.Editor))
-	default:
+	case editor.WritePresent:
 		s.report.recordReconciled(f.Path, fmt.Sprintf("Existing %s IDE configuration holds every managed value", f.Editor))
+	default:
+		return fmt.Errorf("editor file %s: unexpected resolution %s with drift kept", f.Path, r.Outcome)
 	}
 	return nil
 }
@@ -85,7 +87,7 @@ func (s *adoptSession) applyEditorResolution(ctx context.Context, full string, f
 // and the report lists the file as merged with its line delta; the merge re-indents the file
 // and orders its keys, and every adopter key and list entry stays.
 func (s *adoptSession) mergeEditorFile(ctx context.Context, full string, f editor.GeneratedFile, existing []byte, r editor.Resolution) error {
-	members := quoteEditorMembers(r.Added)
+	members := quoteFirst(r.Added, len(r.Added), maxQuotedEditorMembers, strconv.Quote)
 	if !s.opts.Force {
 		s.keepEditorFile(f.Path, "it lacks the managed "+f.Editor+" values "+members+
 			". Re-run adopt with --force to merge them; every other key is kept")
@@ -118,22 +120,10 @@ func (s *adoptSession) keepEditorFile(rel, reason string) {
 // and what the operator can do about it.
 func unmergedEditorReason(err error) string {
 	if errors.Is(err, editor.ErrExistingJSONInvalid) {
-		return "it is not strict JSON (" + err.Error() + "), and a merge would drop its comments or " +
-			"other non-JSON content. Add the managed values by hand, or delete it and re-run adopt"
+		return "it is not strict JSON (" + err.Error() + "). Adoption and `" + util.PraetorCLI + " editors verify` " +
+			"read strict JSON only, and a merge would drop its comments or other non-JSON content, so it never " +
+			"verifies as it is. Make it strict JSON (remove its comments, trailing commas and duplicate keys) and " +
+			"re-run adopt with --force to merge the managed values, or delete it and re-run adopt to regenerate it"
 	}
 	return "its managed values were not merged (" + err.Error() + "). Resolve the conflict, then re-run adopt with --force"
-}
-
-// quoteEditorMembers names the JSON Pointers of the managed members a merge adds, the first
-// maxQuotedEditorMembers quoted and the rest counted.
-func quoteEditorMembers(pointers []string) string {
-	quoted := make([]string, 0, maxQuotedEditorMembers)
-	for i := 0; i < len(pointers) && i < maxQuotedEditorMembers; i++ {
-		quoted = append(quoted, strconv.Quote(pointers[i]))
-	}
-	text := strings.Join(quoted, ", ")
-	if more := len(pointers) - len(quoted); more > 0 {
-		text += " and " + strconv.Itoa(more) + " more"
-	}
-	return text
 }

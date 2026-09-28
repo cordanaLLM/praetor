@@ -72,9 +72,26 @@ func verifyEditors(t *testing.T, repoPath string, editors []string) (editor.Veri
 	return editor.VerifyWithReport(set, repoPath)
 }
 
+// backupOfDetail returns the backup file a report entry's "; backup: <path>" note names, below
+// the run's backup directory, or fails the test when the note is absent or names another file.
+func backupOfDetail(t *testing.T, repoPath, rel, detail string) string {
+	t.Helper()
+	const marker = "; backup: "
+	at := strings.LastIndex(detail, marker)
+	if at < 0 {
+		t.Fatalf("entry for %s carries no backup note: %q", rel, detail)
+	}
+	backup := detail[at+len(marker):]
+	if !strings.HasPrefix(backup, adoptBackupRoot+"/") || !strings.HasSuffix(backup, "/"+rel) {
+		t.Fatalf("backup note %q is not <%s>/<stamp>/%s", backup, adoptBackupRoot, rel)
+	}
+	return filepath.Join(repoPath, filepath.FromSlash(backup))
+}
+
 // Positive: a plain run keeps an adopter's .vscode/settings.json byte for byte and names the
 // managed values it lacks; --force merges them, keeps the adopter's own key, reports a merge
-// (not a replace) with its backup note, and `editors verify` then passes (#502).
+// (not a replace), copies the pre-merge bytes to the run's backup directory the entry names,
+// and `editors verify` then passes (#502).
 func TestAdopt_Positive_ForceMergesEditorJSONKeepingAdopterKeys(t *testing.T) {
 	const rel = ".vscode/settings.json"
 	custom := "{\n    \"adopter.custom\": \"keep\"\n}\n"
@@ -96,8 +113,11 @@ func TestAdopt_Positive_ForceMergesEditorJSONKeepingAdopterKeys(t *testing.T) {
 		t.Fatalf("--force must keep the adopter key and add the managed ones, got:\n%s", got)
 	}
 	detail := actionDetail(rep, rel, actionMerge)
-	if !strings.Contains(detail, "merged into existing content") || !strings.Contains(detail, "backup") {
-		t.Errorf("merge entry must carry the delta and backup note, got %q (actions %v)", detail, rep.ActionDetails)
+	if !strings.Contains(detail, "merged into existing content") {
+		t.Errorf("merge entry must carry the delta, got %q (actions %v)", detail, rep.ActionDetails)
+	}
+	if backup := mustRead(t, backupOfDetail(t, repoPath, rel, detail)); backup != custom {
+		t.Errorf("backup must hold the pre-merge bytes %q, got %q", custom, backup)
 	}
 	for _, entry := range rep.Replaced() {
 		if entry.Path == rel {
@@ -128,8 +148,32 @@ func TestAdopt_Negative_ForceKeepsUnmergeableEditorJSON(t *testing.T) {
 	if !hasWarningContaining(rep, `.vscode/settings.json: kept unchanged`) || !hasWarningContaining(rep, "conflicts with the existing value") {
 		t.Errorf("conflict must be warned about, got %v", rep.Warnings)
 	}
-	if !hasWarningContaining(rep, ".vscode/extensions.json: kept unchanged, not verified: it is not strict JSON") {
-		t.Errorf("JSONC file must be warned about, got %v", rep.Warnings)
+	if !hasWarningContaining(rep, ".vscode/extensions.json: kept unchanged, not verified: it is not strict JSON") ||
+		!hasWarningContaining(rep, "Make it strict JSON") || hasWarningContaining(rep, "by hand") {
+		t.Errorf("JSONC file must be warned about with advice that clears it, got %v", rep.Warnings)
+	}
+
+	// The advice clears each warning: with the comment removed and the conflicting value set to
+	// the managed one, --force keeps neither file with a warning, merging what settings.json
+	// still lacks, and `editors verify` passes both.
+	mustWrite(t, filepath.Join(repoPath, ".vscode", "extensions.json"), "{\n  \"recommendations\": []\n}\n")
+	mustWrite(t, filepath.Join(repoPath, ".vscode", "settings.json"), "{\n  \"standards.sentinel.headroomMB\": 1024\n}\n")
+	rep, err := Adopt(context.Background(), editorAdoptOptions(t, repoPath, true, false))
+	if err != nil {
+		t.Fatalf("Adopt --force after following the advice: %v", err)
+	}
+	for rel := range files {
+		if hasWarningContaining(rep, rel) {
+			t.Errorf("%s still warned about once reconciled: %v", rel, rep.Warnings)
+		}
+	}
+	if !hasAction(rep, ".vscode/settings.json", actionMerge) {
+		t.Errorf("settings.json must merge its missing managed values: %v", rep.ActionDetails)
+	}
+	verification, err := verifyEditors(t, repoPath, []string{editor.EditorVSCode})
+	if err != nil || !slices.Contains(verification.Verified, ".vscode/extensions.json") ||
+		!slices.Contains(verification.Verified, ".vscode/settings.json") {
+		t.Errorf("editors verify after following the advice: %v %+v", err, verification)
 	}
 }
 
@@ -190,5 +234,53 @@ func TestAdopt_Negative_ForceKeepsUnreadableEditorFile(t *testing.T) {
 	}
 	if !hasWarningContaining(rep, ".vscode/settings.json: kept unchanged, not verified: it could not be read") {
 		t.Errorf("unreadable editor file must be warned about, got %v", rep.Warnings)
+	}
+}
+
+// Boundary (HISS-21): a CRLF checkout of a generated non-JSON editor file, as core.autocrlf
+// leaves it on Windows, is the template: --force counts it as holding every managed value
+// without a warning and leaves its bytes alone, while mixed line endings stay drift, kept with
+// a warning.
+func TestAdopt_Boundary_CRLFCheckoutOfEditorTemplateIsNotDrift(t *testing.T) {
+	const module = "lua/standards.lua"
+	repoPath, _ := adoptEditorsFixture(t, "editor-crlf", "neovim", nil, false)
+	full := filepath.Join(repoPath, filepath.FromSlash(module))
+	crlf := crlfText(mustRead(t, full))
+	mustWrite(t, full, crlf)
+	rep, err := Adopt(context.Background(), editorAdoptOptions(t, repoPath, true, false))
+	if err != nil {
+		t.Fatalf("Adopt --force on a CRLF checkout: %v", err)
+	}
+	if hasWarningContaining(rep, module) || !strings.Contains(actionDetail(rep, module, actionReconcile), "holds every managed value") {
+		t.Errorf("CRLF checkout of %s must reconcile silently, got warnings %v actions %v", module, rep.Warnings, rep.ActionDetails)
+	}
+	if got := mustRead(t, full); got != crlf {
+		t.Errorf("CRLF checkout of %s was rewritten:\n%q", module, got)
+	}
+
+	mustWrite(t, full, strings.Replace(crlf, "\r\n", "\n", 1))
+	rep, err = Adopt(context.Background(), editorAdoptOptions(t, repoPath, true, false))
+	if err != nil {
+		t.Fatalf("Adopt --force on mixed line endings: %v", err)
+	}
+	if !hasWarningContaining(rep, module+": kept unchanged") {
+		t.Errorf("mixed line endings in %s must be kept with a warning, got %v", module, rep.Warnings)
+	}
+}
+
+// Positive: a re-run of a fresh adoption finds every editor file the first run wrote holding
+// its template, with no warning and nothing to merge: the editors step renders after the
+// Makefile step, so the first run's editor files already offer the verify-all target it
+// scaffolded.
+func TestAdopt_Positive_RerunKeepsFreshEditorFilesQuiet(t *testing.T) {
+	repoPath, _ := adoptEditorsFixture(t, "editor-rerun", "vscode, neovim", nil, false)
+	rep, err := Adopt(context.Background(), editorAdoptOptions(t, repoPath, false, false))
+	if err != nil {
+		t.Fatalf("re-run adopt: %v", err)
+	}
+	for _, rel := range []string{"lua/standards.lua", ".vscode/tasks.json", ".vscode/settings.json"} {
+		if hasWarningContaining(rep, rel) || !strings.Contains(actionDetail(rep, rel, actionReconcile), "holds every managed value") {
+			t.Errorf("%s must hold its template on a re-run, got warnings %v actions %v", rel, rep.Warnings, rep.ActionDetails)
+		}
 	}
 }

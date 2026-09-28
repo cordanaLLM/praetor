@@ -207,15 +207,28 @@ func describeLineDelta(before, after []byte) string {
 	if len(delta.RemovedLines) == 0 {
 		return summary
 	}
-	quoted := make([]string, 0, len(delta.RemovedLines))
-	for i := 0; i < len(delta.RemovedLines) && i < maxDeltaQuotedLines; i++ {
-		quoted = append(quoted, strconv.Quote(util.TruncateExcerpt(delta.RemovedLines[i], maxDeltaLineBytes)))
+	return summary + ", removed " + quoteFirst(delta.RemovedLines, delta.Removed, maxDeltaQuotedLines, quoteDeltaLine)
+}
+
+// quoteDeltaLine quotes one removed line of a line delta, cut to maxDeltaLineBytes.
+func quoteDeltaLine(line string) string {
+	return strconv.Quote(util.TruncateExcerpt(line, maxDeltaLineBytes))
+}
+
+// quoteFirst is the one bounded listing of a report entry: the first limit items, each rendered
+// by quote and joined with ", ", then " and N more" for the rest of total. total counts the whole
+// list and may exceed len(items) when items is already a bounded prefix of it, as the removed
+// lines of util.LineDeltaOf are.
+func quoteFirst(items []string, total, limit int, quote func(string) string) string {
+	quoted := make([]string, 0, min(len(items), limit))
+	for i := 0; i < len(items) && i < limit; i++ {
+		quoted = append(quoted, quote(items[i]))
 	}
-	summary += ", removed " + strings.Join(quoted, ", ")
-	if more := delta.Removed - len(quoted); more > 0 {
-		summary += " and " + strconv.Itoa(more) + " more"
+	text := strings.Join(quoted, ", ")
+	if more := total - len(quoted); more > 0 {
+		text += " and " + strconv.Itoa(more) + " more"
 	}
-	return summary
+	return text
 }
 
 // legacyHookBackupWarning reports a <file>.bak an earlier adoption wrote beside a hook file.

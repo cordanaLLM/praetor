@@ -386,9 +386,13 @@ func adoptSteps() []namedStep {
 		{"baseline", reconcileBaseline},
 		{"agent-harness", reconcileAgentHarness},
 		{"dev-container", reconcileDevContainer},
-		{"editors", reconcileEditors},
 		{"documentation-gate", reconcileDocumentationGate},
 		{"makefile", reconcileMakefile},
+		// After makefile: an editor template offers `make verify-all` only when the Makefile
+		// holds that target. Run before it, a first adoption rendered its editor files without
+		// the command the same run scaffolded, and every later run found them differing from
+		// the template, a warning adoption never clears because it does not overwrite them.
+		{"editors", reconcileEditors},
 		{"git-ignore", reconcileGitIgnore},
 		{"formatter-ignore", reconcileFormatterIgnore},
 		{"renovate-ignore", reconcileRenovateIgnore},

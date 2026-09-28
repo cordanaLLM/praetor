@@ -1045,7 +1045,8 @@ type Resolution struct {
 //     missing managed values (WriteMerged with the merged document, or WritePresent); invalid
 //     JSON, JSONC comments, duplicate keys and a conflicting managed value are an error, and
 //     ErrExistingJSONInvalid marks the ones where existing is not strict JSON;
-//   - any other file equal to its template is WritePresent;
+//   - any other file equal to its template (matchesTemplate: a checkout's CRLF line endings
+//     count as equal) is WritePresent;
 //   - a developer-owned file (IsPreservedEditorFile) that differs is WritePreserved;
 //   - any other differing file is WriteRewritten with the template, or WriteKept when keepDrift
 //     is set: adoption does not overwrite an editor file nothing audits (#502).
@@ -1060,7 +1061,7 @@ func ResolveExisting(file GeneratedFile, existing []byte, keepDrift bool) (Resol
 			return Resolution{Outcome: WritePresent}, nil
 		}
 		return Resolution{Outcome: WriteMerged, Content: string(merged), Added: added}, nil
-	case string(existing) == file.Content:
+	case matchesTemplate(existing, file.Content):
 		return Resolution{Outcome: WritePresent}, nil
 	case IsPreservedEditorFile(file.Path):
 		return Resolution{Outcome: WritePreserved}, nil
@@ -1069,6 +1070,16 @@ func ResolveExisting(file GeneratedFile, existing []byte, keepDrift bool) (Resol
 	default:
 		return Resolution{Outcome: WriteRewritten, Content: file.Content}, nil
 	}
+}
+
+// matchesTemplate reports whether existing is template's text, allowing the one consistent
+// line-ending style a checkout may give it (util.CanonicalTextEquivalent): a CRLF checkout of a
+// template under core.autocrlf is the template, not drift (HISS-21). Mixed line endings, a lone
+// carriage return and invalid UTF-8 differ. ResolveExisting and verifyEditorFile share it, so a
+// file generation or adoption counts as present is one verification accepts.
+func matchesTemplate(existing []byte, template string) bool {
+	same, err := util.CanonicalTextEquivalent(existing, []byte(template))
+	return err == nil && same
 }
 
 func validateEditorFiles(set *EditorConfigSet) error {
@@ -1101,7 +1112,8 @@ func Verify(set *EditorConfigSet, rootDir string) error {
 
 // VerifyWithReport checks that every generated file exists in rootDir. A JSON file
 // must contain every managed value, with unrelated keys and list entries allowed;
-// any other file must match its template exactly. A developer-owned file
+// any other file must match its template, a checkout's consistent CRLF line endings
+// allowed (matchesTemplate). A developer-owned file
 // (IsPreservedEditorFile) that differs from its template is preserved by Write, so it is
 // reported as PreservedUnverified instead of being counted as verified.
 func VerifyWithReport(set *EditorConfigSet, rootDir string) (VerificationReport, error) {
@@ -1147,7 +1159,7 @@ func verifyEditorFile(ctx context.Context, rootDir string, file GeneratedFile) (
 			return false, fmt.Errorf("configuration file %s is missing managed standards policy", file.Path)
 		}
 		return true, nil
-	case string(existing) == file.Content:
+	case matchesTemplate(existing, file.Content):
 		return true, nil
 	case IsPreservedEditorFile(file.Path):
 		return false, nil
