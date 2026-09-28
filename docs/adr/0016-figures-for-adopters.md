@@ -197,7 +197,8 @@ never the list, and the go:embed patterns and asset names need no hand edit.
 
 Praetor-only, never emitted: `package.json`, `package-lock.json`, `loader.ts`, `player.tsx`,
 `keyboard.ts`, `bundle.mjs`, `smoke.mjs`, `figures.test.mjs`, `checks.test.mjs`,
-`test_mkdocs_hook.py`, `fence-fixtures.json`, `markup-fixtures.json`, `tsconfig.json`.
+`astro.test.mjs`, `testkit.mjs`, `test_mkdocs_hook.py`, `fence-fixtures.json`,
+`markup-fixtures.json`, `exclude-fixtures.json`, `tsconfig.json`.
 
 Owned by the adopter: `docs/figures/<slug>.ts` (specs), `docs/assets/figures/*` (committed
 outputs), and one line of site configuration (the MkDocs `hooks:` entry or the Astro integration

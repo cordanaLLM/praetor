@@ -24,6 +24,9 @@ Everything the figures need sits in one tree, `tools/figures/`:
 | `dist/` | The committed player: `loader.js`, `player.js` and `THIRD-PARTY-LICENSES.txt`. The same files serve every site. |
 | `types.ts` | The spec type a `docs/figures/<slug>.ts` file checks against. |
 | `mkdocs_hook.py` | The MkDocs hook that renders each `figure` fence and publishes `figures.css` and `dist/`. Python standard library and MkDocs only. |
+| `astro.mjs` | The Astro integration for a Starlight site: renders each `figure` code block, loads the loader, and serves and publishes the figure and player files. Node builtins only. |
+| `serve.mjs` | Serves and copies the figure and player files for `astro.mjs`, and serves a built site for the smoke test. Node builtins only. |
+| `figures.css` | The figure stylesheet, reading Material's theme variables with Starlight's as the fallback. |
 | `third_party/interfig/` | The vendored engine, byte-identical to its pin. |
 
 ## Mermaid is retired on the root site
@@ -176,8 +179,9 @@ static SVG, the player mounts all the same and starts paused on each step's last
 and the text description stay. The loader runs again after Material's instant navigation and on
 Astro's `astro:page-load` event.
 
-`tools/figures/figures.css` maps the player's `--fig-*` colours to Material's variables, so the
-palette toggle carries through. It and `dist/` sit outside `docs_dir`, so the hook publishes them,
+`tools/figures/figures.css` maps the player's `--fig-*` colours to Material's variables, falling
+back to Starlight's (`var(--md-…, var(--sl-color-…))`), so the palette toggle carries through on
+either site. It and `dist/` sit outside `docs_dir`, so the hook publishes them,
 the CSS at `assets/stylesheets/figures.css` and the player files under
 `assets/javascripts/figures/`, and links the stylesheet and the loader (as a module script) from
 every page; `mkdocs.yml` lists only the hook
@@ -188,6 +192,52 @@ toggle.
 
 The keyboard reaches every tab, button and the full-screen toggle, and Esc closes full screen.
 `tools/figures/keyboard.ts` adds Left, Right, Home and End across the scenario tabs.
+
+## Figures on an Astro Starlight site
+
+A Starlight site draws the same figures through `tools/figures/astro.mjs`, an Astro integration
+that imports only Node builtins and the engine's own modules, so the site's lockfile does not
+change ([ADR-0016](../adr/0016-figures-for-adopters.md), section 6). Add it and the stylesheet to
+`astro.config.mjs`:
+
+```js
+import figures from './tools/figures/astro.mjs';
+
+export default defineConfig({
+  integrations: [starlight({ customCss: ['./tools/figures/figures.css'] }), figures()],
+});
+```
+
+- A remark plugin turns each `figure` code block, in `.md` and `.mdx` pages alike, into the
+  figure's JSON `html`, with `{{base}}` set to the root-absolute URL of the figures under the
+  site's `base` (`/assets/figures`, or `/docs/assets/figures` for base `/docs/`). A block naming a
+  figure without JSON fails the build.
+- A head script on every page imports `assets/javascripts/figures/loader.js` under the same base.
+- `astro dev` answers the figure files and `dist/` from the repository, and `astro build` copies
+  them into the built site at `assets/figures/` and `assets/javascripts/figures/`, the paths the
+  MkDocs hook uses. A file the built site already holds at one of those paths is kept and reported.
+- `figures({ root })` names the repository root that holds `docs/assets/figures/` when it is not the
+  directory two levels above `astro.mjs`.
+- The loader gives the player host Starlight's `not-content` class, so Starlight's Markdown
+  typography does not reach into the player.
+
+`tools/figures/astro.test.mjs` covers the plugin, the hooks and `serve.mjs`.
+
+Check a Starlight build with its configuration, its docs collection and the base it was built for;
+serve it to the smoke test under the same base:
+
+```bash
+node tools/figures/build.mjs site --config astro.config.mjs --docs src/content/docs --site dist --base /docs/
+node tools/figures/smoke.mjs --site dist --base /docs/ --require-browser
+```
+
+The configuration's name tells the checks which generator built the site: `astro.config.*` is
+Astro, any other file MkDocs (`siteFlavor` in `tools/figures/checks.mjs`). For Astro they read the
+pages Starlight's docs loader reads (every Markdown extension it accepts, without files whose name
+starts with an underscore), map each page to the directory of its slug (the front matter's `slug`,
+else the path as Astro slugs it), enable figures when the configuration names
+`tools/figures/astro.mjs`, and never enable Mermaid. `sources` takes the same `--config` and
+`--docs`. `--base` applies to an Astro site only; the MkDocs hook writes relative URLs.
 
 ## Outside the site
 
@@ -207,14 +257,14 @@ GitHub keeps `figure`, `figcaption`, `picture`, `img` and `details`, and strips 
 
 | Command | Fails when |
 | :-- | :-- |
-| `npm --prefix tools/figures test` | a validation rule, the text derivation, the figure markup, the stale check, a figure check, the loader's spec reader, the committed player or the keyboard shim regresses |
+| `npm --prefix tools/figures test` | a validation rule, the text derivation, the figure markup, the stale check, a figure check, the loader's spec reader, the committed player, the keyboard shim, the Astro integration or the file server regresses |
 | `npm --prefix tools/figures run typecheck` | a spec or the player code does not type-check against `tools/figures/types.ts` and interfig |
 | `node tools/figures/build.mjs check` | a spec breaks a rule, or a committed output differs from a fresh build; needs no npm package |
 | `node tools/figures/bundle.mjs --check` | a file in `tools/figures/dist/` differs from a rebuild from the lock, is missing or is not a bundle output; `player.js` exceeds 250 kB minified; the install differs from the lock; needs the locked npm install |
 | `node tools/figures/build.mjs sources` | a JSON hash no longer matches its spec, the engine or its SVGs; a JSON lacks a positive whole-number size for either SVG; its `html` is not the markup `core.mjs` renders from it; a spec or JSON is missing its pair; a fence names an unknown figure; a root-site page holds a Mermaid fence; the README block differs; an evidence anchor is gone; needs no npm package |
-| `node tools/figures/build.mjs site --config mkdocs.yml --docs docs --site site` | after `mkdocs build`: a figure did not render, an image does not resolve or embeds no usable `<metadata id="figure-spec">`, the page does not load the loader or no `player.js` sits beside it, or a page holds a Mermaid fence; needs no npm package |
+| `node tools/figures/build.mjs site --config mkdocs.yml --docs docs --site site` | after `mkdocs build` (or `astro build`, with `--config astro.config.mjs` and `--base`): a figure did not render, an image does not resolve or embeds no usable `<metadata id="figure-spec">`, the page does not load the loader or no `player.js` sits beside it, or a page holds a Mermaid fence; needs no npm package |
 | `python3 -B tools/figures/test_mkdocs_hook.py` | the hook's fence scanner stops matching the fence fixtures, its slot filling stops matching the markup fixtures, or a site build no longer renders a figure or publishes `figures.css` |
-| `npm --prefix tools/figures run smoke -- --site <dir>` | in Chromium, against a built site: a figure did not mount the player; a figure with scenario tabs did not advance its active step under autoplay within 8 s (another selected tab or a longer progress line, since a paused player still draws its first packets), or showed no packet under autoplay or after starting any of its tabs; a packet showed under reduced motion; or a page logged an error |
+| `npm --prefix tools/figures run smoke -- --site <dir> [--base <path>]` | in Chromium, against a built site served under its base path: a figure did not mount the player; a figure with scenario tabs did not advance its active step under autoplay within 8 s (another selected tab or a longer progress line, since a paused player still draws its first packets), or showed no packet under autoplay or after starting any of its tabs; a packet showed under reduced motion; or a page logged an error |
 
 `make docs-figures-check` runs the tests, the type check, `check`, `bundle.mjs --check` and
 `sources`, and `make docs-diagrams-test` runs the hook's tests; both are part of
