@@ -10,6 +10,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/clientjson"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
@@ -29,6 +30,27 @@ import (
 // contribute, and adding one would re-enable updates in node_modules, test and fixture
 // trees. packageRules merge with presets, and matchFileNames with enabled: false turns
 // updates off for exactly the listed files. The entry is identified by its description.
+//
+// An adopter's own rule may already keep Renovate away from managed files, for example one
+// disabling tools/markdownlint/**. The managed entry then lists only the paths no such rule
+// covers, and is left out when every path is covered (#502). Adoption never reorders or
+// rewrites an adopter rule. A rule counts as covering a path only when it provably has the
+// managed entry's effect on it (uncoveredRenovatePaths):
+//
+//   - its members are description, matchFileNames and enabled alone, with enabled false. Any
+//     other member, a further matcher such as matchManagers or matchUpdateTypes included,
+//     could narrow the rule, so the rule is not counted.
+//   - one of its matchFileNames patterns, at most maxRenovatePatterns of them, matches the path.
+//     Renovate reads each pattern as a regular expression or a minimatch glob with dot and
+//     nocase set, and "*" as every file (lib/util/string-match.ts). Adoption reads the glob
+//     subset of literal text, "*", "?" and whole "**" segments, case-sensitively; a trailing
+//     "**" spans one or more segments, as in minimatch. A list holding any other pattern
+//     (negation, regular expression, class, brace, group or escape) is not counted.
+//   - no later adopter rule sets enabled to anything but false, since Renovate applies
+//     packageRules in order and such a rule may re-enable the path.
+//
+// Each test errs towards keeping the managed entry: a rule adoption cannot read this way costs
+// a redundant entry, never an unprotected file.
 
 const (
 	// renovateRuleDescription marks the one packageRules entry adoption owns.
@@ -41,7 +63,17 @@ const (
 	packageJSONFile = "package.json"
 	// maxRenovateRules bounds the packageRules entries one configuration may hold (HISS-02).
 	maxRenovateRules = 1024
+	// maxRenovatePatterns bounds the matchFileNames patterns read from one adopter rule when
+	// checking whether it covers the managed paths (HISS-02); a longer list is not counted.
+	maxRenovatePatterns = 256
+	// renovateGlobUnsupported are the characters that take a pattern outside the glob subset
+	// adoption reads: classes, braces, extglob groups and escapes.
+	renovateGlobUnsupported = "[]{}()\\"
 )
+
+// renovateEquivalentMembers are the members an adopter rule may hold and still count as having
+// the managed entry's effect.
+var renovateEquivalentMembers = map[string]bool{"description": true, "matchFileNames": true, "enabled": true}
 
 // renovateConfigFiles are Renovate's repository configuration files in its own search order
 // (configFilePatterns in renovatebot/renovate lib/config/app-strings.ts, package.json aside).
@@ -101,7 +133,7 @@ func reconcileRenovateIgnore(ctx context.Context, s *adoptSession) error {
 	if !renovateStrictJSONFiles[rel] {
 		return reportRenovateUnsafe(s, rel, paths, "its file name marks JSONC or JSON5, which a rewrite cannot keep")
 	}
-	merged, changed, err := mergeRenovateRule(ctx, data, paths)
+	merged, declared, changed, err := mergeRenovateRule(ctx, data, paths)
 	var unsafe *renovateUnsafeError
 	if errors.As(err, &unsafe) {
 		return reportRenovateUnsafe(s, rel, paths, unsafe.reason)
@@ -113,7 +145,7 @@ func reconcileRenovateIgnore(ctx context.Context, s *adoptSession) error {
 		recordRenovateUnchanged(s, rel, len(paths) > 0)
 		return nil
 	}
-	return publishRenovateConfig(ctx, s, rel, data, merged, len(paths) > 0)
+	return publishRenovateConfig(ctx, s, rel, data, merged, len(paths), len(declared))
 }
 
 // recordRenovateUnchanged reports a configuration that already holds what adoption wants:
@@ -227,7 +259,9 @@ func renderRenovateRule(paths []string) (jsontext.Value, error) {
 	return raw, nil
 }
 
-func publishRenovateConfig(ctx context.Context, s *adoptSession, rel string, data, merged []byte, present bool) error {
+// publishRenovateConfig writes merged over data and reports the rewrite: managed counts the
+// paths Renovate must leave alone, declared those the managed entry lists.
+func publishRenovateConfig(ctx context.Context, s *adoptSession, rel string, data, merged []byte, managed, declared int) error {
 	if !s.opts.DryRun {
 		full, err := repoFile(s.repoPath, rel)
 		if err != nil {
@@ -238,53 +272,65 @@ func publishRenovateConfig(ctx context.Context, s *adoptSession, rel string, dat
 			return fmt.Errorf("update %s: %w", rel, err)
 		}
 	}
-	if !present {
-		s.report.recordReconciledAs(rel, actionRemove,
-			"Removed the Praetor-managed packageRules entry: no Praetor-managed file needs it")
-		return nil
-	}
-	s.report.recordReconciledAs(rel, actionMerge,
-		"Declared the Praetor-managed files to Renovate in a packageRules entry that disables their updates; the file is re-indented with two spaces")
+	action, detail := renovatePublishDetail(managed, declared)
+	s.report.recordReconciledAs(rel, action, detail)
 	return nil
 }
 
-// mergeRenovateRule returns data with exactly one managed packageRules entry listing paths,
-// or none when paths is empty, and whether that changed anything. An entry already equal to
+// renovatePublishDetail returns the report action and detail of a rewrite whose managed entry
+// lists declared of the managed paths.
+func renovatePublishDetail(managed, declared int) (string, string) {
+	const reindented = "; the file is re-indented with two spaces"
+	switch {
+	case managed == 0:
+		return actionRemove, "Removed the Praetor-managed packageRules entry: no Praetor-managed file needs it"
+	case declared == 0:
+		return actionRemove, "Removed the Praetor-managed packageRules entry: the configuration's own rules already disable Renovate for every Praetor-managed file" + reindented
+	case declared < managed:
+		return actionMerge, fmt.Sprintf("Declared to Renovate, in a packageRules entry that disables their updates, the %d of %d Praetor-managed files its own rules do not already disable", declared, managed) + reindented
+	}
+	return actionMerge, "Declared the Praetor-managed files to Renovate in a packageRules entry that disables their updates" + reindented
+}
+
+// mergeRenovateRule returns data with at most one managed packageRules entry, listing the
+// paths no adopter rule already covers (uncoveredRenovatePaths), or none when that leaves no
+// path; those declared paths; and whether that changed anything. An entry already equal to
 // the rule, in any formatting, is a no-op. Every other member and entry keeps its order and
 // value; the rewritten document is re-indented with two spaces (clientjson.Object.Encode)
 // in data's line-ending style. A *renovateUnsafeError marks a document it will not rewrite.
-func mergeRenovateRule(ctx context.Context, data []byte, paths []string) ([]byte, bool, error) {
+func mergeRenovateRule(ctx context.Context, data []byte, paths []string) ([]byte, []string, bool, error) {
 	text, crlf, err := util.NormalizeLineEndingsStrict(string(data))
 	if err != nil {
-		return nil, false, renovateUnsafe("its line endings are mixed")
+		return nil, nil, false, renovateUnsafe("its line endings are mixed")
 	}
 	if clientjson.Validate(ctx, []byte(text)) != nil {
 		if err := ctx.Err(); err != nil {
-			return nil, false, err
+			return nil, nil, false, err
 		}
-		return nil, false, renovateUnsafe("it is not one strict JSON object of at most 1 MiB; comments, trailing commas and duplicate members cannot survive a rewrite")
+		return nil, nil, false, renovateUnsafe("it is not one strict JSON object of at most 1 MiB; comments, trailing commas and duplicate members cannot survive a rewrite")
 	}
 	root, err := clientjson.DecodeObject([]byte(text))
 	if err != nil {
-		return nil, false, renovateUnsafe("it is not one JSON object")
+		return nil, nil, false, renovateUnsafe("it is not one JSON object")
 	}
 	rules, err := renovatePackageRules(root)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, err
 	}
-	next, changed, err := withRenovateRule(rules, paths)
+	declared := uncoveredRenovatePaths(rules, paths)
+	next, changed, err := withRenovateRule(rules, declared)
 	if err != nil || !changed {
-		return nil, false, err
+		return nil, declared, false, err
 	}
 	encodedRules, err := json.Marshal(next)
 	if err != nil {
-		return nil, false, fmt.Errorf("encode Renovate packageRules: %w", err)
+		return nil, nil, false, fmt.Errorf("encode Renovate packageRules: %w", err)
 	}
 	encoded, err := root.With("packageRules", encodedRules).Encode()
 	if err != nil {
-		return nil, false, fmt.Errorf("encode Renovate configuration: %w", err)
+		return nil, nil, false, fmt.Errorf("encode Renovate configuration: %w", err)
 	}
-	return []byte(util.RestoreLineEndings(string(encoded), crlf)), true, nil
+	return []byte(util.RestoreLineEndings(string(encoded), crlf)), declared, true, nil
 }
 
 // renovatePackageRules returns the packageRules entries of root; none when root declares no
@@ -346,15 +392,138 @@ func withRenovateRule(rules []jsontext.Value, paths []string) ([]jsontext.Value,
 
 // isManagedRenovateRule reports whether rule is an object carrying the managed description.
 func isManagedRenovateRule(rule jsontext.Value) bool {
+	_, managed := decodeRenovateRule(rule)
+	return managed
+}
+
+// decodeRenovateRule returns rule as an object, nil when it is not one, and whether it carries
+// the managed description.
+func decodeRenovateRule(rule jsontext.Value) (clientjson.Object, bool) {
 	if rule.Kind() != '{' {
-		return false
+		return nil, false
 	}
 	object, err := clientjson.DecodeObject(rule)
 	if err != nil {
-		return false
+		return nil, false
 	}
 	description, _ := object.Get("description")
-	return clientjson.StringValue(description) == renovateRuleDescription
+	return object, clientjson.StringValue(description) == renovateRuleDescription
+}
+
+// adopterRenovateRule returns rule as an object when it is one and not the managed entry,
+// which adoption rewrites and so never counts as the adopter's.
+func adopterRenovateRule(rule jsontext.Value) (clientjson.Object, bool) {
+	object, managed := decodeRenovateRule(rule)
+	return object, object != nil && !managed
+}
+
+// uncoveredRenovatePaths returns, in order, the paths no adopter rule already disables the
+// way the managed entry would (the equivalence the comment at the top of this file defines).
+// The work is bounded by maxRenovateRules rules of at most maxRenovatePatterns patterns each.
+func uncoveredRenovatePaths(rules []jsontext.Value, paths []string) []string {
+	covered := make([]bool, len(paths))
+	for index := renovateCoverageStart(rules); index < len(rules) && index < maxRenovateRules; index++ {
+		patterns, disables := disablingRenovatePatterns(rules[index])
+		if !disables {
+			continue
+		}
+		for item := 0; item < len(paths); item++ {
+			covered[item] = covered[item] || renovatePatternsCover(patterns, paths[item])
+		}
+	}
+	uncovered := make([]string, 0, len(paths))
+	for item := 0; item < len(paths); item++ {
+		if !covered[item] {
+			uncovered = append(uncovered, paths[item])
+		}
+	}
+	return uncovered
+}
+
+// renovateCoverageStart returns the index after the last adopter rule that sets enabled to
+// anything but false: Renovate applies packageRules in order, so such a rule may re-enable a
+// path an earlier rule disabled, and only rules after it can cover one.
+func renovateCoverageStart(rules []jsontext.Value) int {
+	start := 0
+	for index := 0; index < len(rules) && index < maxRenovateRules; index++ {
+		object, adopter := adopterRenovateRule(rules[index])
+		if !adopter {
+			continue
+		}
+		if enabled, declared := object.Get("enabled"); declared && enabled.Kind() != 'f' {
+			start = index + 1
+		}
+	}
+	return start
+}
+
+// disablingRenovatePatterns returns the matchFileNames patterns of an adopter rule that
+// disables Renovate for exactly the files they match, and false for any other rule.
+func disablingRenovatePatterns(rule jsontext.Value) ([]string, bool) {
+	object, adopter := adopterRenovateRule(rule)
+	if !adopter {
+		return nil, false
+	}
+	for index := 0; index < len(object); index++ {
+		if !renovateEquivalentMembers[object[index].Name] {
+			return nil, false
+		}
+	}
+	if enabled, _ := object.Get("enabled"); enabled.Kind() != 'f' {
+		return nil, false
+	}
+	raw, _ := object.Get("matchFileNames")
+	return supportedRenovatePatterns(raw)
+}
+
+// supportedRenovatePatterns returns the patterns of a matchFileNames value when it is a
+// non-empty array of at most maxRenovatePatterns strings, each in the glob subset adoption
+// reads (renovateGlobSupported).
+func supportedRenovatePatterns(raw jsontext.Value) ([]string, bool) {
+	var patterns []string
+	if raw.Kind() != '[' || json.Unmarshal(raw, &patterns) != nil || len(patterns) == 0 || len(patterns) > maxRenovatePatterns {
+		return nil, false
+	}
+	for index := 0; index < len(patterns); index++ {
+		if !renovateGlobSupported(patterns[index]) {
+			return nil, false
+		}
+	}
+	return patterns, true
+}
+
+// renovateGlobSupported reports whether pattern is in the glob subset adoption reads: literal
+// text, "*", "?" and "**" in non-empty segments other than "." and "..". A leading "!"
+// (negation), "#" (a minimatch comment) or "/" (a regular expression, or an absolute path) and
+// any character of renovateGlobUnsupported take it outside.
+func renovateGlobSupported(pattern string) bool {
+	if pattern == "" || strings.ContainsAny(pattern[:1], "!#/") || strings.ContainsAny(pattern, renovateGlobUnsupported) {
+		return false
+	}
+	segments := strings.Split(pattern, "/")
+	for index := 0; index < len(segments); index++ {
+		if segments[index] == "" || segments[index] == "." || segments[index] == ".." {
+			return false
+		}
+	}
+	return true
+}
+
+// renovatePatternsCover reports whether one of patterns matches file as Renovate would:
+// Renovate matches "*" against every file, and a trailing "**" spans one or more segments,
+// as in minimatch, so a file path with "/**" appended does not cover the file itself.
+func renovatePatternsCover(patterns []string, file string) bool {
+	segments := strings.Split(file, "/")
+	for index := 0; index < len(patterns); index++ {
+		glob := strings.Split(patterns[index], "/")
+		if last := len(glob) - 1; glob[last] == "**" {
+			glob = append(glob[:last:last], "*", "**")
+		}
+		if patterns[index] == "*" || util.MatchGlobSegments(glob, segments) {
+			return true
+		}
+	}
+	return false
 }
 
 // sameJSON reports whether a and b hold the same JSON value, member order and formatting

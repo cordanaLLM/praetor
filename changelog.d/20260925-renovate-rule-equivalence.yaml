@@ -1,0 +1,3 @@
+type: fixed
+title: "adopt no longer appends a duplicate Renovate packageRules entry when the adopter's own rule already disables Renovate for the managed files: a rule holding only description, matchFileNames and enabled: false, whose glob patterns (literal text, *, ? and whole ** segments) cover a managed path and that no later rule may re-enable, counts in the managed entry's place, so the entry lists only the uncovered paths and is left out, or removed, when every path is covered; adopter rules are never reordered or rewritten"
+breaking: false

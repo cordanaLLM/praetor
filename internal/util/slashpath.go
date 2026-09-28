@@ -4,7 +4,10 @@
 
 package util
 
-import "strings"
+import (
+	"path"
+	"strings"
+)
 
 // NormalizeSlashes rewrites a path to its slash form on every platform.
 //
@@ -20,4 +23,30 @@ import "strings"
 // breaks.
 func NormalizeSlashes(path string) string {
 	return strings.ReplaceAll(path, "\\", "/")
+}
+
+// MatchGlobSegments reports whether the glob segments of a slash-separated pattern match the
+// segments of a slash-separated path in full. A segment that is exactly "**" spans any number
+// of path segments, zero included; every other segment is a path.Match pattern for exactly one
+// path segment, so "*" and "?" never cross a separator. The evaluation is iterative (HISS-01)
+// and bounded by the two slice lengths, which callers bound.
+func MatchGlobSegments(pattern, segments []string) bool {
+	reached := make([]bool, len(pattern)+1)
+	reached[0] = true
+	for j := 0; j < len(pattern) && pattern[j] == "**"; j++ {
+		reached[j+1] = true
+	}
+	for i := 0; i < len(segments); i++ {
+		next := make([]bool, len(pattern)+1)
+		for j := 1; j <= len(pattern); j++ {
+			if pattern[j-1] == "**" {
+				next[j] = next[j-1] || reached[j]
+				continue
+			}
+			matched, err := path.Match(pattern[j-1], segments[i])
+			next[j] = reached[j-1] && err == nil && matched
+		}
+		reached = next
+	}
+	return reached[len(pattern)]
 }

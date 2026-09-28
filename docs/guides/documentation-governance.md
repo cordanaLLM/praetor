@@ -428,6 +428,20 @@ tells the adopter's Renovate to leave the managed files alone
   sets `enabled: false`. It does not use `ignorePaths`: that option is not
   mergeable, so a repository-level list replaces the one `config:recommended`
   contributes and would re-enable updates in test and fixture trees.
+- A rule of the adopter's own that already disables Renovate for managed paths
+  counts in the entry's place: the entry lists only the paths no such rule
+  covers, and is left out, or removed, when every path is covered. A rule
+  counts only when it provably has the entry's effect. Its members are
+  `description`, `matchFileNames` and `enabled` alone, with `enabled: false`,
+  because any other member, a matcher such as `matchManagers` or
+  `matchUpdateTypes` included, could narrow it. One of its at most 256
+  `matchFileNames` patterns matches the path, read as literal text, `*`, `?`
+  and whole `**` segments, case-sensitively; `*` alone matches every file, as
+  in Renovate, and a trailing `**` spans one or more segments, as in minimatch.
+  A list holding a negation, a regular expression, a class, a brace, a group or
+  an escape is not counted. No later rule sets `enabled` to anything but
+  `false`, since Renovate applies `packageRules` in order. A rule adoption
+  cannot read this way costs a redundant entry, never an unprotected file.
 - Every other member and entry keeps its order and value. The file is
   re-indented with two spaces when the entry is added or changed; an entry
   already present, however formatted, leaves the file untouched, so a formatter
@@ -446,10 +460,12 @@ tells the adopter's Renovate to leave the managed files alone
   and an existing one is removed.
 
 `TestRenovateIgnorePositiveDeclaresManagedFilesOnce`,
+`TestRenovateIgnorePositiveAcceptsAnEquivalentAdopterRule`,
 `TestRenovateIgnoreNegativeCreatesNoConfiguration`,
+`TestRenovateIgnoreNegativeDeclaresOnlyUncoveredPaths`,
 `TestRenovateIgnoreNegativeReportsUnreadableConfiguration`, the three
-`TestRenovateIgnoreBoundary*` tests and `TestMergeRenovateRule` in
-`internal/adopt/renovate_test.go` cover these cases. Dependabot and other
+`TestRenovateIgnoreBoundary*` tests, `TestUncoveredRenovatePathsBoundary` and
+`TestMergeRenovateRule` in `internal/adopt/renovate_test.go` cover these cases. Dependabot and other
 update bots are not configured; keep the managed files out of them by hand.
 
 The workflow and `markdownlint-cli2.yaml` pass `yamllint --strict` under its
