@@ -131,9 +131,12 @@ func markdown() Family {
 //
 // Prior budget: Validate allows MaxPriorTexts (64) earlier texts per family, and every managed
 // file a change rewrites costs one entry. A React, react-dom or scheduler bump rebuilds
-// dist/player.js and dist/THIRD-PARTY-LICENSES.txt, two entries; an interfig bump also moves the
-// vendored render files and vendor.json, up to eight; an edit to one script or to README.md costs
-// one. A change that would pass the bound fails TestFamiliesRegistryIsValid.
+// dist/player.js and dist/THIRD-PARTY-LICENSES.txt, two entries; an esbuild bump rebuilds
+// dist/loader.js and dist/player.js, two; an interfig bump also moves the vendored render files
+// and vendor.json, up to eight; an edit to one script or to README.md costs one. A change that
+// would pass the bound fails TestFamiliesRegistryIsValid; the way out is an operator decision,
+// either retiring the oldest entries, whose unedited copies then need --force, or raising
+// MaxPriorTexts.
 func figureEngine() Family {
 	return Family{
 		Name:            "Figure engine",

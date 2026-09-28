@@ -57,6 +57,13 @@ func figureAuditGoldenCases() []auditGoldenCase {
 		{name: "attribute block not at the tail", enabled: true, mutate: func(t *testing.T, root string) {
 			writeFixtureFile(t, root, ".gitattributes", block+"tools/** -text\n")
 		}},
+		{name: "attribute block twice", enabled: true, mutate: func(t *testing.T, root string) {
+			writeFixtureFile(t, root, ".gitattributes", "* text=auto\n\n"+block+block)
+		}},
+		{name: "canonical, REUSE.toml override before the whole-tree table", enabled: true, mutate: func(t *testing.T, root string) {
+			writeFixtureFile(t, root, "REUSE.toml", "version = 1\n"+strings.TrimPrefix(reuseWithOverride, reuseWithoutOverride)+
+				strings.TrimPrefix(reuseWithoutOverride, "version = 1\n"))
+		}},
 		{name: "attribute block CRLF", enabled: true, mutate: func(t *testing.T, root string) {
 			writeFixtureFile(t, root, ".gitattributes", strings.ReplaceAll("* text=auto\n\n"+block, "\n", "\r\n"))
 		}},
@@ -80,9 +87,10 @@ func figureAuditGoldenCases() []auditGoldenCase {
 }
 
 // Positive, negative and boundary: the canonical engine passes with the warning only when a
-// REUSE.toml lacks the override; a drifted or missing engine file, the Markdown-only Makefile
-// block and a missing, misplaced or disabled-but-retained attribute block fail with their remedy;
-// CRLF attribute text and the operator's own rules pass.
+// REUSE.toml lacks the override or places it before the whole-tree table; a drifted or missing
+// engine file, the Markdown-only Makefile block and a missing, misplaced, doubled or
+// disabled-but-retained attribute block fail with their remedy; CRLF attribute text and the
+// operator's own rules pass.
 func TestAuditFigureFamilyGolden(t *testing.T) {
 	var sb strings.Builder
 	for _, test := range figureAuditGoldenCases() {

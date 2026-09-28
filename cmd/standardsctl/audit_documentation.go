@@ -335,6 +335,11 @@ func auditManagedGitAttributesBlock(ctx context.Context, rootDir string) error {
 	if lineErr != nil {
 		return fmt.Errorf("[FAIL] .gitattributes has invalid line endings: %w", lineErr)
 	}
+	// The markers are read as adoption reads them, so a second block or a stray marker fails
+	// here as it fails adoption, even when the file still ends with the canonical block.
+	if _, err := adopt.GitAttributesBlockPresent(normalized); err != nil {
+		return fmt.Errorf("[FAIL] .gitattributes attribute block is ambiguous (repair it, then run 'praetorctl adopt'): %w", err)
+	}
 	if !strings.HasSuffix(normalized, block) {
 		return fmt.Errorf("[FAIL] .gitattributes must end with the canonical Praetor attribute block; run 'praetorctl adopt'")
 	}

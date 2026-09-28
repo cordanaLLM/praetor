@@ -56,8 +56,10 @@ facet disabled, adoption removes the canonical engine files, the `.gitattributes
 Makefile block and the documentation workflow, and refuses to remove an engine file that was
 edited. `praetorctl audit` compares every engine file byte for byte,
 requires the target and the block, and warns when the repository's `REUSE.toml` has no
-annotation labelling `tools/figures/third_party/interfig/upstream/**` MIT
-(`cmd/standardsctl/audit_reuse.go`).
+annotation labelling `tools/figures/third_party/interfig/upstream/**` MIT, or has one that a
+later table covering the same files, such as `**`, overrides (`cmd/standardsctl/audit_reuse.go`).
+An edited `.gitattributes` block fails a plain `praetorctl adopt`; `--force` restores it and
+keeps a backup.
 
 Every change to an embedded file reaches adopters on their next `praetorctl adopt`. The
 shipped-text ledger, `internal/managedasset/testdata/shipped/figure-engine.sha256`, records every
@@ -65,7 +67,8 @@ text the family ever shipped; after such a change, append the new digests with
 `PRAETOR_UPDATE_SHIPPED_TEXTS=1 go test ./internal/managedasset -run 'TestShippedTextLedger$'`
 and add each outgoing digest to `priorDigests` in `assets.go`, so plain adoption refreshes an
 unedited copy. The family holds at most 64 earlier texts; a React bump costs two, one for
-`dist/player.js` and one for `dist/THIRD-PARTY-LICENSES.txt`.
+`dist/player.js` and one for `dist/THIRD-PARTY-LICENSES.txt`, and an esbuild bump two, one for
+each bundle under `dist/`.
 
 ## Mermaid is retired on the root site
 

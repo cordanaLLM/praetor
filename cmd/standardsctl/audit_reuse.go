@@ -73,7 +73,7 @@ func vendoredLicenseWarnings(ctx context.Context, rootDir string, families []man
 	for _, family := range vendoring {
 		if !reuseLabels(tables, family.VendoredGlob(), family.VendoredLicense) {
 			warnings = append(warnings, fmt.Sprintf(
-				"%s has no annotation labelling %s %s; add an override annotation for that path after any table that covers the whole tree (%s/README.md, Credit)",
+				"%s has no annotation labelling %s %s; add an override annotation for that path after every table that also covers it, such as a whole-tree ** table (%s/README.md, Credit)",
 				reuseFile, family.VendoredGlob(), family.VendoredLicense, family.Directory))
 		}
 	}
@@ -105,18 +105,47 @@ func reuseAnnotationTables(text string) ([]string, error) {
 	return tables, nil
 }
 
-// reuseLabels reports whether one annotation table names glob, quoted exactly, in its paths and
-// license among the terms of its SPDX-License-Identifier.
+// reuseLabels reports whether the annotation table that labels glob names glob, quoted exactly,
+// in its paths and license among the terms of its SPDX-License-Identifier. REUSE 3.3 applies
+// only the last table matching a file, so that table is the last one quoting glob or a glob
+// that covers it, "**" or an ancestor directory's "/**" (reuseCoveringGlobs): an override
+// placed before a whole-tree table is relabelled by it, and reuse lint still passes.
 func reuseLabels(tables []string, glob, license string) bool {
-	for _, table := range tables {
-		if !strings.Contains(table, strconv.Quote(glob)) && !strings.Contains(table, "'"+glob+"'") {
-			continue
+	covering := reuseCoveringGlobs(glob)
+	for index := len(tables) - 1; index >= 0; index-- {
+		if reuseQuotes(tables[index], glob) {
+			return reuseTableLicenses(tables[index], license)
 		}
-		for _, line := range strings.Split(table, "\n") {
-			match := reuseLicenseLine.FindStringSubmatch(line)
-			if match != nil && slices.Contains(strings.FieldsFunc(match[1], isSPDXSeparator), license) {
-				return true
-			}
+		if slices.ContainsFunc(covering, func(cover string) bool { return reuseQuotes(tables[index], cover) }) {
+			return false
+		}
+	}
+	return false
+}
+
+// reuseCoveringGlobs returns the globs that cover every file glob does: "**" and "<dir>/**" for
+// each ancestor directory of glob's literal prefix, nearest last.
+func reuseCoveringGlobs(glob string) []string {
+	segments := strings.Split(strings.TrimSuffix(glob, "/**"), "/")
+	covering := []string{"**"}
+	for index := 1; index < len(segments) && index < maxReuseLines; index++ {
+		covering = append(covering, strings.Join(segments[:index], "/")+"/**")
+	}
+	return covering
+}
+
+// reuseQuotes reports whether table names glob in double or single quotes.
+func reuseQuotes(table, glob string) bool {
+	return strings.Contains(table, strconv.Quote(glob)) || strings.Contains(table, "'"+glob+"'")
+}
+
+// reuseTableLicenses reports whether table's SPDX-License-Identifier names license among its
+// terms.
+func reuseTableLicenses(table, license string) bool {
+	for _, line := range strings.Split(table, "\n") {
+		match := reuseLicenseLine.FindStringSubmatch(line)
+		if match != nil && slices.Contains(strings.FieldsFunc(match[1], isSPDXSeparator), license) {
+			return true
 		}
 	}
 	return false
