@@ -4,6 +4,8 @@ import (
 	"math"
 	"slices"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // Layout of the two hook files adoption renders from templates (hooks.go). Adopters lint
@@ -12,8 +14,9 @@ import (
 // lefthook.yml, black and flake8 at 100 columns for block_evasion.py (BUG-782). The helpers
 // below lay generated values out the way those tools leave them untouched.
 const (
-	// yamlLineLimit is the line-length maximum of yamllint's default configuration.
-	yamlLineLimit = 80
+	// yamlLineLimit is the line-length maximum of yamllint's default configuration, the one
+	// util.FitYAMLLines keeps the manifest and lock within.
+	yamlLineLimit = util.YAMLLineLimit
 	// yamlRunKey is a lefthook job's run key at the indentation buildLefthookYAMLFor uses.
 	yamlRunKey = "      run: "
 	// yamlFoldIndent indents the lines of a folded run value one level below its key.

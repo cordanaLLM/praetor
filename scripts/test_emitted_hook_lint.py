@@ -76,9 +76,10 @@ VERSION = re.compile(r"(\d+(?:\.\d+)+)")
 
 
 def go_constant(relative, name):
-    """Return the string value of the Go constant `name` declared in `relative`."""
+    """Return the string value of the Go constant `name` declared in `relative`, inside a
+    const block or on its own `const` line."""
     source = (ROOT / relative).read_text(encoding="utf-8")
-    match = re.search(rf'^\s*{name}\s*=\s*"([^"]+)"', source, re.M)
+    match = re.search(rf'^\s*(?:const\s+)?{name}\s*=\s*"([^"]+)"', source, re.M)
     if match is None:
         raise AssertionError(f"{relative} no longer declares the string constant {name}")
     return match.group(1)

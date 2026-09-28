@@ -19,8 +19,8 @@ into it (BUG-782). This gate covers:
 - every profile and facet under .config/archetypes, which adoption copies byte for byte into
   the adopter's pinned catalog (internal/adopt/policy_catalog.go);
 - the .standards.yaml adoption, init and onboarding render (config.RenderManifest), linted
-  from internal/adopt/testdata/emitted/.standards.yaml, which
-  TestEmittedManifestFixtureMatchesTheRendering keeps equal to the rendering;
+  from its committed rendering under test_emitted_hook_lint.RENDERED, which
+  TestEmittedHookFixturesMatchTheRendering keeps equal to the rendering;
 - every YAML body flavor apply scaffolds, and adoption through it: each .yml or .yaml
   template under templates/ (templates/embed.go), rendered by dropping its leading template
   comment, the one action these bodies carry. A body with any other action fails the gate
@@ -32,18 +32,17 @@ editing this list.
 
 import re
 import unittest
-from pathlib import PurePosixPath
 
-from test_emitted_hook_lint import LintCase, ROOT, go_constant
+from test_emitted_hook_lint import RENDERED, LintCase, ROOT, go_constant
 
 # The Go constant naming each emitted YAML file linted here as praetor's own copy, and the file
 # declaring it.
 OWN_COPIES = (("internal/adopt/ruleset.go", "labelsFile"),)
 # The Go constant naming the archetype catalog directory, and the file declaring it.
 CATALOG = ("internal/config/lockdigest.go", "archetypeDirName")
-# The Go test constant naming each committed rendering, relative to its package directory,
-# and the file declaring it. The rendering is linted under its adopted file name.
-RENDERINGS = (("internal/adopt/manifest_render_test.go", "emittedManifestFixture"),)
+# The Go constant naming each YAML file whose rendering is committed under RENDERED, and the
+# file declaring it. The rendering is linted under its adopted path.
+RENDERINGS = (("internal/config/repository_policy.go", "ManifestFileName"),)
 # The Go constants naming the embedded template directory and its go:embed pattern, and the
 # file declaring them.
 TEMPLATES = ("templates/embed.go", "Directory", "Pattern")
@@ -71,8 +70,8 @@ def rendering_files():
     """Return {adopted path: text} of every committed rendering."""
     files = {}
     for relative, name in RENDERINGS:
-        fixture = PurePosixPath(relative).parent / go_constant(relative, name)
-        files[fixture.name] = (ROOT / fixture).read_text(encoding="utf-8")
+        path = go_constant(relative, name)
+        files[path] = (ROOT / RENDERED / path).read_text(encoding="utf-8")
     return files
 
 

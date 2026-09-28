@@ -84,7 +84,8 @@ repository:
   the adopter's pinned catalog;
 - the `.standards.yaml` rendering (`config.RenderManifest`, which adoption, `praetorctl init` and
   onboarding share), from `internal/adopt/testdata/emitted/.standards.yaml`, which
-  `TestEmittedManifestFixtureMatchesTheRendering` keeps equal to the rendering;
+  `TestEmittedHookFixturesMatchTheRendering` keeps equal to the rendering of the declarations in
+  `internal/adopt/testdata/manifest/prior.standards.yaml`;
 - every `.yml` and `.yaml` body under `templates/` that flavor apply scaffolds, with its leading
   template comment dropped as rendering drops it.
 

@@ -2,7 +2,6 @@ package adopt
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,18 +12,12 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const (
-	// emittedManifestFixture is the current rendering of the declarations in
-	// priorManifestFixture. scripts/test_emitted_yaml_lint.py lints it with yamllint's default
-	// rules (make hooks-lint); TestEmittedManifestFixtureMatchesTheRendering keeps it equal to
-	// what config.RenderManifest writes.
-	emittedManifestFixture = "testdata/emitted/.standards.yaml"
-	// priorManifestFixture is a manifest an earlier adoption wrote (yaml.Marshal's text).
-	priorManifestFixture = "testdata/manifest/prior.standards.yaml"
-	// updateEmittedManifestEnv rewrites the fixture from the rendering instead of comparing.
-	updateEmittedManifestEnv = "PRAETOR_UPDATE_EMITTED_FIXTURES"
-)
+// priorManifestFixture is a manifest an earlier adoption wrote (yaml.Marshal's text). Its
+// current rendering is committed under emittedFixtureRoot and kept equal to
+// config.RenderManifest by TestEmittedHookFixturesMatchTheRendering.
+const priorManifestFixture = "testdata/manifest/prior.standards.yaml"
 
+// renderedPriorManifest renders the declarations of priorManifestFixture as adoption does now.
 func renderedPriorManifest(t *testing.T) string {
 	t.Helper()
 	manifest, err := config.DecodeManifest([]byte(mustRead(t, priorManifestFixture)))
@@ -36,18 +29,6 @@ func renderedPriorManifest(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return string(data)
-}
-
-func TestEmittedManifestFixtureMatchesTheRendering(t *testing.T) {
-	want := renderedPriorManifest(t)
-	if os.Getenv(updateEmittedManifestEnv) == "1" {
-		mustWrite(t, emittedManifestFixture, want)
-		return
-	}
-	if got := strings.ReplaceAll(mustRead(t, emittedManifestFixture), "\r\n", "\n"); got != want {
-		t.Errorf("%s differs from the rendering; regenerate it with %s=1 go test ./internal/adopt -run %s",
-			emittedManifestFixture, updateEmittedManifestEnv, t.Name())
-	}
 }
 
 // assertYamllintLayout checks, without yamllint on PATH, the two rules an earlier manifest
