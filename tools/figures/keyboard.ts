@@ -4,7 +4,7 @@
 // arrow keys do nothing and the tab list has no name. This shim adds the WAI-ARIA tabs pattern's
 // roving tabindex on top, from outside the vendored source: Left and Right move to the previous
 // and next tab, Home and End to the first and last, and moving activates the tab. Retire it once
-// an upstream sync brings the same behaviour in (third_party/interfig/VENDOR.md).
+// an upstream sync brings the same behaviour in (tools/figures/third_party/interfig/VENDOR.md).
 
 /** Tabs per tab list the shim will handle; interfig figures are capped at 12 steps. */
 const MAX_TABS = 64;

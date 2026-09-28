@@ -111,11 +111,12 @@ editors/jetbrains/inspectionProfiles/standards.xml text eol=lf
 # The vendored interfig subset is byte-identical to upstream at the pin, and vendor.json
 # records the SHA-256 of every file. -text keeps checkout and add from converting line
 # endings on any platform, so the hashes hold on a Windows checkout too.
-third_party/interfig/upstream/** -text
+tools/figures/third_party/interfig/upstream/** -text
 
 # docs/assets/figures/<slug>.json binds each figure to the SHA-256 of its spec, the engine
-# files and both SVGs (tools/figures/build.mjs, scripts/docs_diagrams.py sources). A CRLF
-# checkout would change those bytes and report every figure stale on Windows only.
-tools/figures/build.mjs text eol=lf
+# files (ENGINE_FILES in tools/figures/core.mjs, read by tools/figures/docs_diagrams.py sources)
+# and both SVGs. A CRLF checkout would change those bytes and report every figure stale on
+# Windows only.
+tools/figures/core.mjs text eol=lf
 docs/figures/*.ts text eol=lf
 docs/assets/figures/* text eol=lf

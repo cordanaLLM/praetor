@@ -2,14 +2,14 @@
   "name": "@cordanallm/praetor-figures",
   "version": "1.0.0",
   "private": true,
-  "description": "Builds praetor's interactive documentation figures from the vendored interfig engine",
+  "description": "Renders interactive documentation figures with the vendored interfig engine, and bundles their player",
   "type": "module",
   "engines": {
     "node": ">=22.18"
   },
   "scripts": {
     "build": "node build.mjs build",
-    "bundle": "node build.mjs bundle",
+    "bundle": "node bundle.mjs",
     "check": "node build.mjs check",
     "smoke": "node smoke.mjs",
     "test": "node --test figures.test.mjs",

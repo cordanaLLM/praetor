@@ -1,6 +1,7 @@
-// Tests for the figure build (build.mjs), the keyboard shim (keyboard.ts) and the smoke test's pure
-// helpers (smoke.mjs): positive, negative and boundary cases for every validation rule, the derived
-// text, the stale-output check, the built-figure marker and the autoplay assertion.
+// Tests for the render core (core.mjs), its command-line wrapper (build.mjs), the player bundler
+// (bundle.mjs), the keyboard shim (keyboard.ts) and the smoke test's pure helpers (smoke.mjs):
+// positive, negative and boundary cases for every validation rule, the derived text, the engine
+// hash, the stale-output check, the bundle budget, the built-figure marker and the autoplay assertion.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -8,13 +9,15 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  ENGINE_FILES, LIMITS, OUT_DIR, ROOT, capLines, compareOutputs, decorate, describe, describeEdges,
-  engineHash, listSpecs, main, normalizedEdges, render, renderAll, sha256, svgSize, validate, walkLayout,
-} from './build.mjs';
+  ENGINE_FILES, LIMITS, capLines, decorate, describe, describeEdges, normalizedEdges, render, sha256, svgSize,
+  validate, walkLayout,
+} from './core.mjs';
+import { OUT_DIR, ROOT, VENDOR_JSON, compareOutputs, engineHash, listSpecs, main, renderAll } from './build.mjs';
+import { MAX_BUNDLE_FILES, PLAYER_BUDGET, budget, main as bundleMain, playerBytes } from './bundle.mjs';
 import { nextTab } from './keyboard.ts';
 import { holdsFigure, stepAdvanced } from './smoke.mjs';
 
-const VENDOR = JSON.parse(readFileSync(join(ROOT, 'third_party/interfig/vendor.json'), 'utf8'));
+const VENDOR = JSON.parse(readFileSync(join(ROOT, VENDOR_JSON), 'utf8'));
 const box = (id, label = id.toUpperCase()) => ({ id, label });
 
 /** A small valid figure; `patch` edits a deep copy. */
@@ -22,7 +25,7 @@ function figure(patch = (f) => f) {
   const base = {
     title: 'Fixture',
     alt: 'A reads B.',
-    evidence: ['tools/figures/build.mjs:validate'],
+    evidence: ['tools/figures/core.mjs:validate'],
     props: {
       layout: { children: [box('a'), { id: 'g', label: 'Group', children: [box('b'), box('c')] }] },
       edges: [{ id: 'ab', from: 'a', to: 'b', label: 'reads' }, { from: 'a', to: 'g' }],
@@ -156,7 +159,7 @@ test('the SVG gains a title, a description and a credit, and upstream still read
   assert.ok(meta.width > 0 && meta.height > 0);
   withTempDir((dir) => {
     writeFileSync(join(dir, 'f.svg'), svg);
-    const cli = join(ROOT, 'third_party/interfig/upstream/scripts/figure-svg.mjs');
+    const cli = join(ROOT, 'tools/figures/third_party/interfig/upstream/scripts/figure-svg.mjs');
     const out = execFileSync(process.execPath, [cli, '--spec', join(dir, 'f.svg')], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     assert.deepEqual(JSON.parse(out), { props: figure().props });
   });
@@ -225,17 +228,110 @@ test('spec names must be kebab-case', () => {
   });
 });
 
-test('an unknown command is a usage error', async () => {
+/** Runs `fn` with console.error captured; returns what it returned and the captured lines. */
+async function captureErrors(fn) {
   const errors = [];
   const original = console.error;
   console.error = (line) => errors.push(line);
   try {
-    assert.equal(await main([]), 2);
-    assert.equal(await main(['deploy']), 2);
+    return { result: await fn(), errors };
   } finally {
     console.error = original;
   }
-  assert.match(errors[0], /usage: node build\.mjs build\|check\|bundle/);
+}
+
+test('an unknown command is a usage error, bundle included', async () => {
+  const { errors } = await captureErrors(async () => {
+    assert.equal(await main([]), 2);
+    assert.equal(await main(['deploy']), 2);
+    assert.equal(await main(['bundle']), 2);
+    assert.equal(await main(['check', 'extra']), 2);
+  });
+  assert.match(errors[0], /usage: node build\.mjs build\|check$/);
+});
+
+test('the engine hash covers the vendored render files and core.mjs, never the wrapper', () => {
+  assert.deepEqual(ENGINE_FILES, [
+    'tools/figures/third_party/interfig/upstream/src/svg.ts',
+    'tools/figures/third_party/interfig/upstream/src/geometry.ts',
+    'tools/figures/third_party/interfig/upstream/src/model.ts',
+    'tools/figures/core.mjs',
+  ]);
+  withTempDir((dir) => {
+    for (const rel of ENGINE_FILES) {
+      mkdirSync(join(dir, rel, '..'), { recursive: true });
+      cpSync(join(ROOT, rel), join(dir, rel));
+    }
+    const pristine = engineHash(dir);
+    // Editing the command-line wrapper or the bundler leaves every figure current.
+    writeFileSync(join(dir, 'tools/figures/build.mjs'), '// edited wrapper\n');
+    writeFileSync(join(dir, 'tools/figures/bundle.mjs'), '// edited bundler\n');
+    assert.equal(engineHash(dir), pristine);
+    // Editing the render core marks them stale.
+    writeFileSync(join(dir, 'tools/figures/core.mjs'), `${readFileSync(join(dir, 'tools/figures/core.mjs'), 'utf8')}// edit\n`);
+    assert.notEqual(engineHash(dir), pristine);
+  });
+});
+
+/** Every module specifier a JavaScript or TypeScript source imports, static or dynamic. */
+function importsOf(file) {
+  const text = readFileSync(join(ROOT, 'tools/figures', file), 'utf8');
+  return [...text.matchAll(/(?:\bfrom\s+|\bimport\s*\(\s*|^import\s+)'([^']+)'/gm)].map((m) => m[1]);
+}
+
+test('build and check need Node only: the engine imports builtins and relative files, never a package', () => {
+  const engine = ['build.mjs', 'core.mjs', 'third_party/interfig/upstream/src/svg.ts',
+    'third_party/interfig/upstream/src/geometry.ts', 'third_party/interfig/upstream/src/model.ts'];
+  for (const file of engine) {
+    const external = importsOf(file).filter((spec) => !spec.startsWith('node:') && !spec.startsWith('./'));
+    // model.ts imports React as a type only; type imports are erased before Node runs the file.
+    const runtime = external.filter((spec) => !(file.endsWith('model.ts') && spec === 'react'));
+    assert.deepEqual(runtime, [], `${file} imports ${runtime.join(', ')}`);
+  }
+  assert.ok(!importsOf('build.mjs').includes('./bundle.mjs'), 'build.mjs must not load the bundler');
+  // The bundler is the one module that loads esbuild, and it does so lazily.
+  assert.ok(importsOf('bundle.mjs').includes('esbuild'));
+});
+
+test('bundle.mjs takes no argument or --check, nothing else', async () => {
+  const { errors } = await captureErrors(async () => {
+    assert.equal(await bundleMain(['--write']), 2);
+    assert.equal(await bundleMain(['--check', '--check']), 2);
+    assert.equal(await bundleMain(['check']), 2);
+  });
+  assert.match(errors[0], /usage: node bundle\.mjs \[--check\]/);
+});
+
+test('the player budget: exactly the budget passes, one byte more fails', () => {
+  const sizes = (minified) => ({ loader: 1000, player: { minified, gzip: 1 }, slugs: ['a'] });
+  const at = budget(sizes(PLAYER_BUDGET));
+  assert.deepEqual(at.problems, []);
+  assert.match(at.line, /player 250\.0 kB minified, 0\.0 kB gzip \(budget 250\.0 kB\); 1 spec chunk/);
+  assert.match(budget(sizes(PLAYER_BUDGET + 1)).problems.join('\n'), /the player chunk is 250\.0 kB; the budget is 250\.0 kB/);
+  assert.deepEqual(budget(sizes(0)).problems, []);
+});
+
+test('the player size counts its static imports, not dynamic, external or unrelated chunks', () => {
+  withTempDir((dir) => {
+    const files = { 'out/player.js': 10, 'out/chunks/react.js': 100, 'out/chunks/lazy.js': 1000, 'out/specs/a.js': 5000 };
+    for (const [name, size] of Object.entries(files)) {
+      mkdirSync(join(dir, name, '..'), { recursive: true });
+      writeFileSync(join(dir, name), 'x'.repeat(size));
+    }
+    const metafile = { outputs: {
+      'out/player.js': { imports: [
+        { path: 'out/chunks/react.js', kind: 'import-statement' },
+        { path: 'out/chunks/lazy.js', kind: 'dynamic-import' },
+        { path: 'https://cdn.invalid/x.js', kind: 'import-statement', external: true },
+      ] },
+      'out/chunks/react.js': { imports: [{ path: 'out/player.js', kind: 'import-statement' }] },
+      'out/chunks/lazy.js': {},
+      'out/specs/a.js': { imports: [{ path: 'out/chunks/react.js', kind: 'import-statement' }] },
+    } };
+    assert.equal(playerBytes(metafile, dir).minified, 110);
+    assert.throws(() => playerBytes({ outputs: { 'out/loader.js': {} } }, dir), /no player\.js/);
+  });
+  assert.equal(MAX_BUNDLE_FILES, 1024);
 });
 
 test('tab keys rove, wrap at both ends, and ignore everything else', () => {

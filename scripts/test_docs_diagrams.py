@@ -1,22 +1,23 @@
 #!/usr/bin/env python3
-"""Tests for the diagram checker: Mermaid and figure rendering, figure sources, portable blocks."""
+"""Tests for the diagram checker (tools/figures/docs_diagrams.py) and the MkDocs figures hook
+(tools/figures/mkdocs_hook.py): Mermaid and figure rendering, figure sources, portable blocks."""
 
 import contextlib
 import hashlib
 import io
 import json
-import os
 from pathlib import Path
 import shutil
 import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+ROOT = Path(__file__).resolve().parents[1]
+FIGURES = ROOT / "tools" / "figures"
+sys.path.insert(0, str(FIGURES))
 
 import docs_diagrams  # noqa: E402
-
-ROOT = Path(__file__).resolve().parents[1]
+import mkdocs_hook  # noqa: E402
 FENCE_FORMAT = "!!python/name:pymdownx.superfences.fence_code_format"
 DECLARED = f"""\
 markdown_extensions:
@@ -230,9 +231,9 @@ class EndToEnd(unittest.TestCase):
 # Figures
 # ---------------------------------------------------------------------------------------------
 
-HOOKED = DECLARED + "\nhooks:\n  - scripts/mkdocs_figures_hook.py\n"
+HOOKED = DECLARED + "\nhooks:\n  - tools/figures/mkdocs_hook.py\n"
 # The root site's shape: the figures hook, superfences without the mermaid fence.
-FIGURES_ONLY = "hooks:\n  - scripts/mkdocs_figures_hook.py\nmarkdown_extensions:\n  - pymdownx.superfences\n"
+FIGURES_ONLY = "hooks:\n  - tools/figures/mkdocs_hook.py\nmarkdown_extensions:\n  - pymdownx.superfences\n"
 FIGURE = "```figure\ndemo\n```\n"
 META = {"slug": "demo", "title": "Demo & co", "alt": 'A "demo" figure.', "text": ["A → B."],
         "width": 600.4, "height": 300, "static_width": 600, "static_height": 180,
@@ -248,8 +249,9 @@ class FigureRepo:
 
     def __init__(self, root):
         self.root = root
-        shutil.copytree(ROOT / "third_party" / "interfig" / "upstream" / "src", root / "third_party/interfig/upstream/src")
-        write(root / "tools/figures/build.mjs", (ROOT / "tools/figures/build.mjs").read_text(encoding="utf-8"))
+        upstream = "tools/figures/third_party/interfig/upstream/src"
+        shutil.copytree(ROOT / upstream, root / upstream)
+        write(root / "tools/figures/core.mjs", (FIGURES / "core.mjs").read_text(encoding="utf-8"))
         write(root / "src/app.go", "package app\n\nfunc Serve() {}\n")
         write(root / "docs/figures/demo.ts", "export default {};\n")
         write(root / "docs/assets/figures/demo.svg", "<svg>animated</svg>\n")
@@ -277,8 +279,17 @@ class ConfigKinds(unittest.TestCase):
     def test_hook_enables_figures_and_fence_enables_mermaid(self):
         self.assertEqual(docs_diagrams.enabled_kinds(HOOKED), {"mermaid", "figure"})
         self.assertEqual(docs_diagrams.enabled_kinds(DECLARED), {"mermaid"})
-        self.assertEqual(docs_diagrams.enabled_kinds("hooks:\n  - ../scripts/mkdocs_figures_hook.py\n"), {"figure"})
+        self.assertEqual(docs_diagrams.enabled_kinds("hooks:\n  - ../../tools/figures/mkdocs_hook.py\n"), {"figure"})
         self.assertEqual(docs_diagrams.enabled_kinds(""), set())
+
+    def test_only_the_figures_hook_path_enables_figures(self):
+        """The hook is named by its directory and file: a same-named hook elsewhere enables nothing, and
+        the path before the tree moved (scripts/mkdocs_figures_hook.py) no longer counts."""
+        self.assertEqual(docs_diagrams.enabled_kinds("hooks:\n  - figures/mkdocs_hook.py\n"), {"figure"})
+        for other in ("mkdocs_hook.py", "scripts/mkdocs_hook.py", "scripts/mkdocs_figures_hook.py",
+                      "tools/figures/mkdocs_hook.pyc", "tools/figure/mkdocs_hook.py"):
+            with self.subTest(hook=other):
+                self.assertEqual(docs_diagrams.enabled_kinds(f"hooks:\n  - {other}\n"), set())
 
     def test_hook_list_forms(self):
         self.assertEqual(docs_diagrams.declared_hooks("hooks: [a.py, 'b.py']\n"), ["a.py", "b.py"])
@@ -599,14 +610,15 @@ class FigureSources(unittest.TestCase):
         write(self.repo.root / "docs/figures/demo.ts", "export default { changed: true };\n")
         errors = self.repo.sources()
         self.assertEqual(len(errors), 1)
-        self.assertIn("is stale: the spec docs/figures/demo.ts changed; rebuild with: npm ci", errors[0])
+        self.assertIn("is stale: the spec docs/figures/demo.ts changed; rebuild with: node tools/figures/build.mjs build",
+                      errors[0])
 
     def test_hand_edited_svg_is_stale(self):
         write(self.repo.root / "docs/assets/figures/demo.svg", "<svg>edited</svg>\n")
         self.assertIn("the SVG docs/assets/figures/demo.svg changed", self.repo.sources()[0])
 
     def test_engine_change_is_stale(self):
-        svg = self.repo.root / "third_party/interfig/upstream/src/svg.ts"
+        svg = self.repo.root / "tools/figures/third_party/interfig/upstream/src/svg.ts"
         svg.write_text(svg.read_text(encoding="utf-8") + "// local patch\n", encoding="utf-8")
         self.assertIn("the figure engine changed", self.repo.sources()[0])
 
@@ -669,16 +681,22 @@ class FigureSources(unittest.TestCase):
         write(readme, "<!-- figure:nope -->\nx\n<!-- /figure -->\n")
         self.assertIn("figure 'nope' has no", self.repo.sources()[0])
 
-    def test_engine_files_come_from_build_mjs(self):
+    def test_engine_files_come_from_core_mjs(self):
+        """core.mjs holds the one list; the command-line wrapper build.mjs is not hashed."""
         self.assertEqual(docs_diagrams.engine_files(ROOT), [
-            "third_party/interfig/upstream/src/svg.ts",
-            "third_party/interfig/upstream/src/geometry.ts",
-            "third_party/interfig/upstream/src/model.ts",
-            "tools/figures/build.mjs",
+            "tools/figures/third_party/interfig/upstream/src/svg.ts",
+            "tools/figures/third_party/interfig/upstream/src/geometry.ts",
+            "tools/figures/third_party/interfig/upstream/src/model.ts",
+            "tools/figures/core.mjs",
         ])
-        write(self.repo.root / "tools/figures/build.mjs", "// no list\n")
+        write(self.repo.root / "tools/figures/core.mjs", "// no list\n")
         with self.assertRaises(docs_diagrams.CheckError):
             docs_diagrams.engine_files(self.repo.root)
+
+    def test_wrapper_edit_keeps_figures_current(self):
+        """Editing build.mjs, which is not in ENGINE_FILES, leaves the figure consistent."""
+        write(self.repo.root / "tools/figures/build.mjs", "// an edited wrapper\n")
+        self.assertEqual(self.repo.sources(), [])
 
     def test_python_and_node_agree_on_the_engine_hash(self):
         """The committed JSON was written by build.mjs; the checker must compute the same value."""
@@ -687,6 +705,59 @@ class FigureSources(unittest.TestCase):
 
     def test_repository_sources_are_consistent(self):
         self.assertEqual(docs_diagrams.main(["sources", "--root", str(ROOT)]), 0)
+
+
+class _Files:
+    """The part of MkDocs' Files the hook reads before it appends: src_uris and append."""
+
+    def __init__(self, uris=()):
+        self.src_uris = {uri: object() for uri in uris}
+        self.appended = []
+
+    def append(self, file):
+        self.appended.append(file)
+        self.src_uris[file.src_uri] = file
+
+
+class HookStylesheet(unittest.TestCase):
+    """figures.css sits beside the hook, outside docs_dir, so the hook links and publishes it."""
+
+    def test_the_stylesheet_sits_beside_the_hook(self):
+        self.assertEqual(mkdocs_hook.CSS_FILE, FIGURES / "figures.css")
+        self.assertTrue(mkdocs_hook.CSS_FILE.is_file())
+        self.assertFalse((ROOT / "docs/stylesheets/figures.css").exists())
+
+    def test_on_config_links_the_stylesheet_once(self):
+        config = {"extra_css": ["extra.css"]}
+        self.assertIs(mkdocs_hook.on_config(config), config)
+        mkdocs_hook.on_config(config)
+        self.assertEqual(config["extra_css"], ["extra.css", mkdocs_hook.CSS_URI])
+        empty = mkdocs_hook.on_config({"extra_css": []})
+        self.assertEqual(empty["extra_css"], [mkdocs_hook.CSS_URI])
+
+    def test_a_site_build_publishes_and_links_the_stylesheet(self):
+        """A real MkDocs build with only the hook listed: the CSS lands at CSS_URI and every page links it."""
+        try:
+            from mkdocs.commands.build import build
+            from mkdocs.config import load_config
+        except ImportError:
+            self.skipTest("mkdocs is not installed; the hook runs only inside MkDocs")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            write(root / "docs/index.md", "# Home\n")
+            write(root / "mkdocs.yml", f"site_name: Fixture\nhooks:\n  - {(FIGURES / 'mkdocs_hook.py').as_posix()}\n")
+            with contextlib.redirect_stderr(io.StringIO()):
+                build(load_config(str(root / "mkdocs.yml"), site_dir=str(root / "site")))
+            published = root / "site" / mkdocs_hook.CSS_URI
+            self.assertEqual(published.read_bytes(), mkdocs_hook.CSS_FILE.read_bytes())
+            self.assertIn(mkdocs_hook.CSS_URI, (root / "site/index.html").read_text(encoding="utf-8"))
+
+    def test_on_files_keeps_a_docs_file_at_the_same_path_and_warns(self):
+        files = _Files([mkdocs_hook.CSS_URI])
+        with self.assertLogs("mkdocs.plugins.praetor_figures", level="WARNING") as logs:
+            self.assertIs(mkdocs_hook.on_files(files, {}), files)
+        self.assertEqual(files.appended, [])
+        self.assertIn("docs_dir already holds this path", logs.output[0])
 
 
 class Portable(unittest.TestCase):

@@ -6,7 +6,7 @@ section 7). Standard library only, so it runs on whichever interpreter a CI job 
 
 * `site --config --docs --site` runs after `mkdocs build`. The kinds a build accepts come from its
   configuration: the declared mermaid custom fence enables ```mermaid, and the listed
-  scripts/mkdocs_figures_hook.py enables ```figure. A fence of a kind the configuration does not
+  tools/figures/mkdocs_hook.py enables ```figure. A fence of a kind the configuration does not
   enable is an error; the root site enables figures only, so a Mermaid fence there is told to
   become a figure fence, while the adopter preset keeps Mermaid. Every Mermaid fence must appear
   as a `<pre class="mermaid">`; every figure fence as a `figure.praetor-figure[data-figure]`
@@ -14,7 +14,7 @@ section 7). Standard library only, so it runs on whichever interpreter a CI job 
   the bundle's registry.json. Pages the configuration's `exclude_docs` leaves out are skipped,
   as MkDocs skips them.
 * `sources` needs no site and no Node. It fails when a figure's JSON no longer matches its spec,
-  the vendored engine files, tools/figures/build.mjs or its SVGs; when a spec has no JSON or a JSON
+  the vendored engine files, tools/figures/core.mjs or its SVGs; when a spec has no JSON or a JSON
   no spec; when a fence names a figure that does not exist; when the README's portable block
   differs from the renderer; and when an evidence anchor's path or symbol is gone.
 * `portable` renders figures for surfaces that run no JavaScript. `--base URL PAGE...` replaces
@@ -51,14 +51,16 @@ MAX_FILE_BYTES = 8 * 1024 * 1024
 MAX_LINES = 100_000
 MAX_FIGURES = 256
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 SPEC_DIR = Path("docs/figures")
 FIGURE_DIR = Path("docs/assets/figures")
-BUILD_SCRIPT = Path("tools/figures/build.mjs")
+# The render core declares ENGINE_FILES, the files the engine hash covers.
+ENGINE_SOURCE = Path("tools/figures/core.mjs")
 LOADER = "assets/javascripts/figures/loader.js"
 REGISTRY = Path("assets/javascripts/figures/registry.json")
-HOOK_NAME = "mkdocs_figures_hook.py"
-REBUILD = "npm ci --prefix tools/figures --ignore-scripts && npm --prefix tools/figures run build"
+# The figures hook is tools/figures/mkdocs_hook.py; a hooks entry naming it from any directory counts.
+HOOK = ("figures", "mkdocs_hook.py")
+REBUILD = "node tools/figures/build.mjs build"
 KINDS = ("mermaid", "figure")
 
 EXPECTED_FENCE = {
@@ -274,7 +276,7 @@ def enabled_kinds(text: str) -> set[str]:
     kinds = set()
     if config_error(text) is None:
         kinds.add("mermaid")
-    if any(Path(hook).name == HOOK_NAME for hook in declared_hooks(text)):
+    if any(Path(hook).parts[-2:] == HOOK for hook in declared_hooks(text)):
         kinds.add("figure")
     return kinds
 
@@ -556,16 +558,16 @@ def sha256(data: bytes) -> str:
 
 
 def engine_files(root: Path) -> list[str]:
-    """ENGINE_FILES as tools/figures/build.mjs declares it; build.mjs is the one list."""
-    match = ENGINE_BLOCK.search(read_text(root / BUILD_SCRIPT))
+    """ENGINE_FILES as tools/figures/core.mjs declares it; core.mjs is the one list."""
+    match = ENGINE_BLOCK.search(read_text(root / ENGINE_SOURCE))
     files = re.findall(r"'([^']+)'", match.group(1)) if match else []
     if not files:
-        raise CheckError(f"{BUILD_SCRIPT} declares no ENGINE_FILES")
+        raise CheckError(f"{ENGINE_SOURCE} declares no ENGINE_FILES")
     return files
 
 
 def engine_hash(root: Path) -> str:
-    """The same value as engineHash() in build.mjs: a sha256sum-style manifest, hashed."""
+    """The same value as engineHash() in tools/figures/build.mjs: a sha256sum-style manifest, hashed."""
     lines = "".join(f"{sha256(read_bytes(root / rel))}  {rel}\n" for rel in engine_files(root))
     return sha256(lines.encode("utf-8"))
 
@@ -676,7 +678,7 @@ def sources(root: Path, docs: Path, config: Path, readme: Path) -> list[str]:
         errors += [f"{readme}: {message}" for message in failed]
         if refreshed != text:
             errors.append(f"{readme}: a portable figure block differs from the renderer; refresh it with: "
-                          f"python3 -B scripts/docs_diagrams.py portable --write {readme}")
+                          f"python3 -B tools/figures/docs_diagrams.py portable --write {readme}")
     return errors
 
 

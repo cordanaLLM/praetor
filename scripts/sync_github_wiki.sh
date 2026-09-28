@@ -178,7 +178,7 @@ copied_pages=()
 for source_name in "${source_names[@]}"; do
   copied_pages+=("$CLONE_DIR/$source_name")
 done
-if ! python3 -B "$SCRIPT_DIR/docs_diagrams.py" portable --wiki "${copied_pages[@]}"; then
+if ! python3 -B "$SCRIPT_DIR/../tools/figures/docs_diagrams.py" portable --wiki "${copied_pages[@]}"; then
   echo "Wiki figures could not be rendered; nothing was committed." >&2
   exit 1
 fi

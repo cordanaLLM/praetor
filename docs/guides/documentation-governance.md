@@ -315,7 +315,7 @@ matrix rather than the documentation-only path (`internal/cifilter/filter.go`,
 `TestUnclassifiedFileKindsRunHeavyGates` in
 `internal/cifilter/cifilter_test.go`). `.tsx` and `.jsx` are code extensions,
 so a change to a vendored React source file (for example
-`third_party/interfig/upstream/src/index.tsx`) is classified as code and runs
+`tools/figures/third_party/interfig/upstream/src/index.tsx`) is classified as code and runs
 the targeted test matrix. Before, such a file fell through as unclassified,
 which also ran the tests but reported the change as configuration. A
 `.tsx`/`.jsx` file under `docs/` still follows the `docs/` prefix rule
@@ -330,23 +330,23 @@ The published site is built from the root `mkdocs.yml` by
 step, and the adopter preset from `docs/presets/mkdocs/mkdocs.yml` by the CI
 `docs-presets` job. All of them run `mkdocs build --strict`. A strict build
 still passes when a diagram ships as a code listing, so each build is followed
-by the diagram check in `scripts/docs_diagrams.py`:
+by the diagram check in `tools/figures/docs_diagrams.py`:
 
 ```bash
 npm ci --prefix tools/figures --ignore-scripts
 npm --prefix tools/figures run bundle
 mkdocs build --strict -d /tmp/site
-python3 -B scripts/docs_diagrams.py site --config mkdocs.yml --docs docs --site /tmp/site
-python3 -B scripts/docs_diagrams.py sources
+python3 -B tools/figures/docs_diagrams.py site --config mkdocs.yml --docs docs --site /tmp/site
+python3 -B tools/figures/docs_diagrams.py sources
 ```
 
 The configuration decides which diagram kind a build accepts:
 
 - **Interactive figures: the root site.** A `figure` fence names a spec under
   `docs/figures/`. The root `mkdocs.yml` lists
-  `scripts/mkdocs_figures_hook.py` under `hooks:`, which renders each fence as
-  the committed SVGs, a caption and a text description; the player loads on
-  top. The root site declares no mermaid fence, so figures are its only
+  `tools/figures/mkdocs_hook.py` under `hooks:`, which renders each fence as
+  the committed SVGs, a caption and a text description, and publishes the
+  figure stylesheet; the player loads on top. The root site declares no mermaid fence, so figures are its only
   diagram kind. The [figures guide](figures.md) covers authoring and the build.
 - **Mermaid: the adopter preset.** Material for MkDocs draws a diagram only
   from a `<pre class="mermaid">` element, which `pymdownx.superfences` emits
@@ -384,12 +384,15 @@ the README's portable figure block differs from the renderer, or when an
 evidence anchor's file or symbol is gone.
 
 `make docs-diagrams-test` (part of `make verify-all`) replays the checker's
-fixtures in `scripts/test_docs_diagrams.py` in both directions and asserts the
+fixtures in `scripts/test_docs_diagrams.py` in both directions, tests the
+hook, and asserts the
 diagram kind each configuration enables (figures only at the root, Mermaid
 only in the preset), so adding the mermaid fence back to the root site or
 dropping the figures hook fails without a site build. `make docs-figures-check`
-(also part of `make verify-all`) runs the figure build's tests and type check,
-rebuilds every figure and compares it byte for byte with the committed files,
+(also part of `make verify-all`) runs the figure engine's tests and type
+check, rebuilds every figure and compares it byte for byte with the committed
+files (`node tools/figures/build.mjs check`, which needs no npm package), holds
+the player bundle to its size budget (`node tools/figures/bundle.mjs --check`),
 and runs `sources`. The Pages workflow also runs the Chromium smoke test, which
 fails when a figure does not mount the player, when autoplay does not advance
 a figure's active step, or when a figure shows no packet.

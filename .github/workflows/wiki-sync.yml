@@ -9,9 +9,9 @@ name: Wiki Sync
       - 'docs/wiki/**'
       - '.github/workflows/wiki-sync.yml'
       - 'scripts/sync_github_wiki.sh'
-      # The sync renders figure fences from these (docs_diagrams.py portable --wiki).
+      # The sync renders figure fences from these (tools/figures/docs_diagrams.py portable --wiki).
       - 'docs/assets/figures/**'
-      - 'scripts/docs_diagrams.py'
+      - 'tools/figures/docs_diagrams.py'
   workflow_dispatch:
 
 permissions:

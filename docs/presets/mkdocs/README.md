@@ -71,7 +71,7 @@ file under `docs/presets/` changes.
 
 Diagrams render only because `mkdocs.yml` declares the `mermaid` custom fence under
 `pymdownx.superfences`. In the praetor repository, CI checks the built preset with
-`scripts/docs_diagrams.py site` (see the
+`tools/figures/docs_diagrams.py site` (see the
 [documentation governance guide](../../guides/documentation-governance.md#site-build-and-diagrams)).
 
 The preset stays on Mermaid. It builds with Python alone: no Node, npm or bundler, and no

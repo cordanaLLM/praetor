@@ -1,8 +1,8 @@
 // The interactive player: React plus the vendored interfig Flow component. The loader imports this
 // chunk only when a figure nears the viewport, so pages without figures never download React.
 import { createRoot } from 'react-dom/client';
-import { Flow } from '../../third_party/interfig/upstream/src/index.tsx';
-import type { FlowProps } from '../../third_party/interfig/upstream/src/model.ts';
+import { Flow } from './third_party/interfig/upstream/src/index.tsx';
+import type { FlowProps } from './third_party/interfig/upstream/src/model.ts';
 import { enhanceTabs } from './keyboard.ts';
 
 export type MountOptions = {
