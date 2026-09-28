@@ -22,7 +22,6 @@ import (
 	"io/fs"
 	"maps"
 	"path"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -261,18 +260,9 @@ func (f Family) validateWorkflowPins() error {
 	return nil
 }
 
-var (
-	// actionUsesLine captures the reference of a workflow step's uses: key.
-	actionUsesLine = regexp.MustCompile(`^\s*(?:-\s+)?uses:\s*(.*?)\s*$`)
-	// pinnedActionRef is a remote action pinned by full commit SHA and followed, after at
-	// least two spaces as yamllint's comments rule requires, by its release: the form
-	// repositories requiring SHA pinning accept and Renovate's github-actions manager keeps
-	// current, digest and comment together.
-	pinnedActionRef = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[^@\s]+)?@[0-9a-f]{40} {2,}# v?[0-9]+(?:\.[0-9]+)*$`)
-)
-
 // unpinnedActions returns every uses: line of workflow whose reference is neither a local
-// action (./...) nor pinnedActionRef. An adopter cannot edit a locked workflow, so one tag-
+// action (./...) nor pinned by full commit SHA with its release as a trailing comment
+// (util.ParsePinnedAction). An adopter cannot edit a locked workflow, so one tag-
 // or branch-pinned action makes the whole gate fail under a SHA-pinning policy.
 func unpinnedActions(workflow string) ([]string, error) {
 	lines := strings.Split(workflow, "\n")
@@ -281,8 +271,11 @@ func unpinnedActions(workflow string) ([]string, error) {
 	}
 	var unpinned []string
 	for index := 0; index < len(lines) && index < MaxWorkflowLines; index++ {
-		match := actionUsesLine.FindStringSubmatch(lines[index])
-		if match == nil || strings.HasPrefix(match[1], "./") || pinnedActionRef.MatchString(match[1]) {
+		ref, uses := util.ActionUsesValue(lines[index])
+		if !uses || strings.HasPrefix(ref, "./") {
+			continue
+		}
+		if _, pinned := util.ParsePinnedAction(ref); pinned {
 			continue
 		}
 		unpinned = append(unpinned, strings.TrimSpace(lines[index]))
