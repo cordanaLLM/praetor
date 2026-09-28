@@ -207,3 +207,35 @@ func TestReadmeGovernanceOverlayUpToDateBoundaries(t *testing.T) {
 		t.Fatalf("an already rendered fork must stay a clean no-op: %+v %q", r, status)
 	}
 }
+
+// Positive (#506): an engine README whose managed HISS badge links AGENTS.md into the source
+// repository on the forge the block records, with or without the documentation contract, is
+// rendered for the fork on that forge: the candidate links the fork's AGENTS.md on its
+// default branch and passes the fork's own audit.
+func TestReadmeGovernanceOverlayRebindsTheAgentsLink(t *testing.T) {
+	undocumented := sourceGovernance
+	undocumented.DocumentationEnabled = false
+	for name, state := range map[string]readmegovernance.State{"documentation": sourceGovernance, "no documentation": undocumented} {
+		t.Run(name, func(t *testing.T) {
+			state.RepositoryHost = "github.com"
+			body := strings.Replace(readmeBody, "[![HISS policy](https://img.shields.io/badge/Custom-HISS-blue)](policy.md)\n\n", "", 1)
+			source, _, err := readmegovernance.Reconcile(renderedFor(t, "", map[string]string{"README.md": body})["README.md"], state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(source, "https://github.com/public/praetor/blob/HEAD/AGENTS.md") {
+				t.Fatalf("engine README fixture lacks the source AGENTS.md link:\n%s", source)
+			}
+			f := newReadmeFixture(t, source)
+			r, err := Run(context.Background(), "prepare", f.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			readme := verifyForkReadme(t, r.Candidate, state)
+			if strings.Contains(readme, "github.com/public/praetor") ||
+				!strings.Contains(readme, "https://github.com/private/praetor/blob/HEAD/AGENTS.md") {
+				t.Fatalf("candidate README does not link the fork's AGENTS.md:\n%s", readme)
+			}
+		})
+	}
+}

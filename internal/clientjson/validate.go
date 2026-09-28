@@ -1,7 +1,8 @@
 // Package clientjson reads and rewrites agent client configuration JSON under one bound and
 // without disturbing what it does not own. It performs no I/O: clientsetup merges MCP servers
-// through Validate, adoption merges hook registrations through PlanHooks, and each caller
-// reads, writes and reads back through its own confined filesystem path.
+// through Validate, adoption merges hook registrations through PlanHooks and its Renovate
+// packageRules entry through Validate and Object (internal/adopt/renovate.go), and each
+// caller reads, writes and reads back through its own confined filesystem path.
 package clientjson
 
 import (

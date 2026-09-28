@@ -257,10 +257,54 @@ together (`TestRenovateUpdatesTemplatePinsWithWorkflowCopy`). Such a branch
 fails CI until someone finishes it: the outgoing workflow text must be recorded
 as described above, and the `sha256` lines of
 `internal/adopt/testdata/managed-family/*.golden` regenerated with
-`PRAETOR_UPDATE_GOLDEN=1 go test ./internal/adopt`. Adopters keep
-`.github/workflows/praetor-docs.yml` excluded from their own update bots:
-Praetor ships each pin update, and a copy an adopter's bot bumped first fails the
-byte lock until their Praetor catches up.
+`PRAETOR_UPDATE_GOLDEN=1 go test ./internal/adopt`.
+
+Praetor ships every update of the managed files, and a copy an adopter's own
+bot bumped first fails the byte lock until their Praetor catches up: Renovate's
+`pinDigests` rewrites `praetor-docs.yml`, and its npm manager bumps
+`tools/markdownlint/package.json`. The `renovate-ignore` adoption step therefore
+tells the adopter's Renovate to leave the managed files alone
+(`internal/adopt/renovate.go`):
+
+- It edits only the configuration Renovate itself reads, the first of
+  `renovate.json`, `renovate.jsonc`, `renovate.json5`, the same three names
+  under `.github/` and `.gitlab/`, `.renovaterc`, `.renovaterc.json`,
+  `.renovaterc.jsonc` and `.renovaterc.json5`, in that order. A repository
+  without one gets none created. Renovate also filters that list by platform:
+  on GitHub it skips the `.gitlab/` names, on GitLab the `.github/` names, and
+  on other platforms both, where it reads `.<platform>/renovate.json` after
+  `package.json` instead. Adoption does not apply that filter, so keep one
+  configuration file per repository, or check that the one adoption edits is
+  the one your platform reads.
+- It adds one `packageRules` entry, described
+  `praetor-managed files: praetorctl adopt ships their updates and praetorctl audit locks them byte for byte`,
+  whose `matchFileNames` lists every managed path of the enabled families and
+  sets `enabled: false`. It does not use `ignorePaths`: that option is not
+  mergeable, so a repository-level list replaces the one `config:recommended`
+  contributes and would re-enable updates in test and fixture trees.
+- Every other member and entry keeps its order and value. The file is
+  re-indented with two spaces when the entry is added or changed; an entry
+  already present, however formatted, leaves the file untouched, so a formatter
+  and adoption do not take turns rewriting it.
+- A file it cannot read or rewrite without risking the adopter's settings is
+  reported with the entry to add by hand and left byte for byte, and adoption
+  goes on with its other steps: a symbolic link, a directory or other
+  non-regular file, a file over 1 MiB or one it may not read, a `.jsonc` or
+  `.json5` name, comments or trailing commas in a `.json` file, mixed line
+  endings, a `packageRules` that is not an array, two managed entries, a
+  `packageRules` already holding 1024 entries without the managed one, and
+  configuration in the `renovate` member of `package.json`.
+- With `docs:seo-portal` disabled, or in a repository that holds the family's
+  source (`tools/markdownlint/assets.go`, where the managed files are sources
+  its own Renovate updates, as in this repository), no path needs the entry
+  and an existing one is removed.
+
+`TestRenovateIgnorePositiveDeclaresManagedFilesOnce`,
+`TestRenovateIgnoreNegativeCreatesNoConfiguration`,
+`TestRenovateIgnoreNegativeReportsUnreadableConfiguration`, the three
+`TestRenovateIgnoreBoundary*` tests and `TestMergeRenovateRule` in
+`internal/adopt/renovate_test.go` cover these cases. Dependabot and other
+update bots are not configured; keep the managed files out of them by hand.
 
 The workflow and `markdownlint-cli2.yaml` pass `yamllint --strict` under its
 default rules, which an adopter's own lint may apply to every file. Both open
@@ -287,7 +331,9 @@ the ruleset.
 The other declinable steps behind the gate's surfaces follow the same rule.
 Declining `makefile` leaves the `Makefile` to the operator: audit neither
 requires the managed `docs-lint` block nor, with the facet disabled, rejects
-one. Declining `formatter-ignore` does the same for `.prettierignore`. Declining
+one. Declining `formatter-ignore` does the same for `.prettierignore`, and
+declining `renovate-ignore` leaves the Renovate configuration untouched, which
+audit does not read. Declining
 `git-ignore` waives only the managed `.gitignore` tail block; audit still runs
 `git check-ignore` and fails until the operator's own rules exclude both
 private scratch roots. A decline list with an unknown or mandatory name fails

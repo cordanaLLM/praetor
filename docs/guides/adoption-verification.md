@@ -67,19 +67,55 @@ recorded debt baseline and preserves content outside it. The badge says
 debt, while only a commit-bound signed Exit-0 receipt proves that a particular
 verification run passed.
 
-With the `docs:seo-portal` facet the block also links a workflow badge to the
-repository named by `repository.owner` and `repository.name`. When the manifest
-names none, because adoption could not resolve an identity, adoption leaves the
-README unchanged and records a `Governance block not reconciled` warning instead
-of linking to a guessed repository (`TestAdopt_UnresolvedIdentityCompletesWithoutGuessing`).
+The block never links a repository-relative path: a documentation portal that
+includes the README resolves a relative link against its own pages, and
+`mkdocs build --strict` aborts on a target it cannot find (#506). The
+**HISS Adopted** badge links `AGENTS.md` on the default branch of the repository
+that `repository.owner` and `repository.name` name, by that forge's absolute URL,
+only when the forge is known:
+
+| Origin host | Link |
+| :--- | :--- |
+| `github.com` | `https://github.com/<owner>/<name>/blob/HEAD/AGENTS.md` |
+| `gitlab.com` | `https://gitlab.com/<owner>/<name>/-/blob/HEAD/AGENTS.md` |
+| `gitea.com`, `codeberg.org` | `https://<host>/<owner>/<name>/src/branch/HEAD/AGENTS.md` |
+
+Each forge resolves `HEAD` to the default branch, so the link needs no branch
+name. The manifest fields do not say which forge hosts the repository, so
+adoption takes the host from the `origin` remote, and only when that remote's
+path is exactly `<owner>/<name>`. Any other host, including a self-hosted
+instance whose forge software the host name does not reveal, a nested GitLab
+namespace, and a repository without an `origin` remote, gets an unlinked image
+(`TestAdoptReadmeGovernanceLinksTheOriginForge` in
+`internal/adopt/readme_governance_test.go`). The block records the host in the
+link itself. `praetorctl audit` reads it back rather than asking the clone's
+remote, so a mirror verifies the same block; it accepts only the exact link a
+known forge serves for the manifest's repository, and reports a link into
+another repository or onto another host as stale.
+
+With the `docs:seo-portal` facet the block also carries a workflow badge that
+links the `praetor-docs.yml` workflow runs on GitHub, where that workflow runs.
+`TestRenderedBlockBuildsInStrictMkDocsPortal` in
+`internal/readmegovernance/links_test.go` builds a strict MkDocs portal from
+the linked and unlinked renderings when `mkdocs` is on `PATH`, and the
+link-shape tests beside it hold the same contract on hosts without it. A block
+an earlier Praetor wrote with the relative `AGENTS.md` link fails audit as
+stale; plain `praetorctl adopt` re-renders the whole marker region, so it needs
+no `--force` (`TestAdoptReadmeGovernanceRefreshesRelativeAgentsLink`). With the
+facet and a manifest naming no identity, or only half of one, because adoption
+could not resolve it, adoption leaves the README unchanged and records a
+`Governance block not reconciled` warning instead of linking to a guessed
+repository (`TestAdopt_UnresolvedIdentityCompletesWithoutGuessing`,
+`TestReadmeIdentity`).
 Set both fields in `.standards.yaml` and re-run `praetorctl adopt` to reconcile
 the block; adoption never rewrites an existing manifest, so adding an `origin`
 remote alone does not fill them (`TestAdopt_RerunCompletesOnceIdentityIsSet`).
 
 An operational fork carries the engine's README, whose block links the public
-source. `praetorctl operational sync plan` and `prepare` read the recorded state
-back from that block and render it again for the fork's `repository.owner` and
-`repository.name` with the same renderer, so the fork passes its own audit
+source. `praetorctl operational sync plan` and `prepare` read the recorded state,
+the forge host included, back from that block and render it again for the fork's
+`repository.owner` and `repository.name` with the same renderer, so the fork
+passes its own audit
 ([README governance block](operational-sync.md#readme-governance-block),
 `internal/operationalsync/readme_test.go`).
 

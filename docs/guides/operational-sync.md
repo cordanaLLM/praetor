@@ -152,16 +152,19 @@ edits and the `up-to-date` cases.
 ## README governance block
 
 `README.md` also carries the managed governance block that `praetorctl adopt`
-writes and `praetorctl audit` verifies (`internal/readmegovernance`). With the
-documentation contract enabled, the block's badge links to the repository the
-manifest names: the engine's block names the public source, and the fork's own
-audit expects the fork. `plan` and `prepare` render the block for the owner
-with that same renderer:
+writes and `praetorctl audit` verifies (`internal/readmegovernance`). Its
+managed HISS badge links `AGENTS.md` when the block records a known forge, and
+with the documentation contract its workflow badge links the workflow runs, both
+by absolute URL into the repository the manifest names
+([README governance](adoption-verification.md#readme-governance-is-adoption-evidence-not-certification)):
+the engine's block names the public source, and the fork's own audit expects the
+fork. `plan` and `prepare` render the block for the owner with that same
+renderer:
 
 - They read the recorded state back from the reviewed source's block (debt
-  baseline and documentation contract) and render it again for the owner's
-  `repository.owner`/`repository.name`. Every byte outside the block, funding
-  blocks included, stays as the source has it.
+  baseline, documentation contract and forge host) and render it again for the
+  owner's `repository.owner`/`repository.name` on the same forge. Every byte
+  outside the block, funding blocks included, stays as the source has it.
 - The source block must be exactly what the running `praetorctl` renders for
   that state. A hand-edited block, or one another engine version wrote, stops
   the operation before any candidate exists with
@@ -169,8 +172,11 @@ with that same renderer:
   run `prepare` with the `praetorctl` built at `--source-sha`.
 - A source without `README.md` gets none, and a `README.md` without the block
   gets no block inserted: like `adopt`, the overlay never invents a README. A
-  block without the documentation contract names no repository and stays
-  unchanged.
+  block with neither the documentation contract nor an `AGENTS.md` link names
+  no repository and stays unchanged (`TestReadmeGovernanceOverlayInventsNothing`
+  in `internal/operationalsync/readme_test.go`); one with either links the
+  fork's `AGENTS.md` after the overlay
+  (`TestReadmeGovernanceOverlayRebindsTheAgentsLink`).
 - `plan` compares the owner's `README.md` with the block's body left out,
   because the overlay renders that body again. An owner block naming the source
   (a fork synced before this overlay existed), naming the owner, or worded by

@@ -20,6 +20,8 @@ func TestRecordedStatePositiveReadsBackEveryRenderedShape(t *testing.T) {
 		"documentation":    {"# Demo\n\nHuman text.\n", docs},
 		"custom badge":     {"# Demo\n\n[![HISS policy](https://img.shields.io/badge/Custom-HISS-blue)](policy.md)\n", docs},
 		"crlf":             {"# Demo\r\n\r\nHuman text.\r\n", docs},
+		"linked on github": {"# Demo\n", linked(docs, "github.com")},
+		"linked on gitlab": {"# Demo\n", linked(State{BaselineKnown: true}, "gitlab.com")},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -38,10 +40,18 @@ func TestRecordedStatePositiveReadsBackEveryRenderedShape(t *testing.T) {
 	}
 }
 
+// linked returns state naming acme/widgets on host, the identity and forge the HISS badge
+// links AGENTS.md into.
+func linked(state State, host string) State {
+	state.RepositoryOwner, state.RepositoryName, state.RepositoryHost = "acme", "widgets", host
+	return state
+}
+
 // Positive: the read-back state with another identity renders the block for that repository
-// and leaves every byte outside the block alone.
+// on the recorded forge, the AGENTS.md link included, and leaves every byte outside the block
+// alone.
 func TestRecordedStatePositiveRebindsThroughReconcile(t *testing.T) {
-	source := State{BaselineKnown: true, LegacyDebtCount: 2, DocumentationEnabled: true, RepositoryOwner: "acme", RepositoryName: "widgets"}
+	source := linked(State{BaselineKnown: true, LegacyDebtCount: 2, DocumentationEnabled: true}, "github.com")
 	rendered, _, err := Reconcile("# Demo\n\nHuman text.\n", source)
 	if err != nil {
 		t.Fatal(err)
@@ -58,15 +68,20 @@ func TestRecordedStatePositiveRebindsThroughReconcile(t *testing.T) {
 	if want := strings.ReplaceAll(rendered, "github.com/acme/widgets/", "github.com/example/widgets/"); rebound != want {
 		t.Fatalf("rebind changed more than the badge identity:\n%s", rebound)
 	}
-	if err := Verify(rebound, State{BaselineKnown: true, LegacyDebtCount: 2, DocumentationEnabled: true, RepositoryOwner: "example", RepositoryName: "widgets"}); err != nil {
+	if !strings.Contains(rebound, "https://github.com/example/widgets/blob/HEAD/AGENTS.md\n") {
+		t.Fatalf("rebound block does not link the fork's AGENTS.md:\n%s", rebound)
+	}
+	fork := source
+	fork.RepositoryOwner = "example"
+	if err := Verify(rebound, fork); err != nil {
 		t.Fatalf("rebound block fails the fork's own verification: %v", err)
 	}
 }
 
-// Negative: a hand-edited block, a badge linking another repository, a block without its debt
-// row and malformed markers never yield a state.
+// Negative: a hand-edited block, a badge linking another repository or onto an unknown forge,
+// a block without its debt row and malformed markers never yield a state.
 func TestRecordedStateNegativeRefusesUnrenderedBlocks(t *testing.T) {
-	state := State{BaselineKnown: true, LegacyDebtCount: 3, DocumentationEnabled: true, RepositoryOwner: "acme", RepositoryName: "widgets"}
+	state := linked(State{BaselineKnown: true, LegacyDebtCount: 3, DocumentationEnabled: true}, "github.com")
 	rendered, _, err := Reconcile("# Demo\n", state)
 	if err != nil {
 		t.Fatal(err)
@@ -74,6 +89,7 @@ func TestRecordedStateNegativeRefusesUnrenderedBlocks(t *testing.T) {
 	stale := map[string]string{
 		"hand-edited count": strings.Replace(rendered, "3 recorded infractions", "9 recorded infractions", 1),
 		"other repository":  strings.ReplaceAll(rendered, "github.com/acme/widgets/", "github.com/other/widgets/"),
+		"unknown forge":     strings.ReplaceAll(rendered, "https://github.com/acme/widgets/blob/", "https://git.example.org/acme/widgets/blob/"),
 		"no debt row":       strings.Replace(rendered, debtRecordedLine+"\n3 recorded infractions"+debtRecordedSuffix+"\n", "", 1),
 		"unreadable count":  strings.Replace(rendered, "3 recorded infractions", "three recorded infractions", 1),
 	}

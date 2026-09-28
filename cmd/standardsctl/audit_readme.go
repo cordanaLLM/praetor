@@ -28,7 +28,7 @@ func auditReadmeGovernance(ctx context.Context, manifest *config.Manifest, opts 
 		fmt.Println("[INFO] README governance block not applicable: README.md is absent.")
 		return nil
 	}
-	state, err := auditedReadmeState(manifest, opts)
+	state, err := auditedReadmeState(manifest, opts, string(data))
 	if err != nil {
 		return fmt.Errorf("[FAIL] README governance audit failed: %w", err)
 	}
@@ -39,7 +39,14 @@ func auditReadmeGovernance(ctx context.Context, manifest *config.Manifest, opts 
 	return nil
 }
 
-func auditedReadmeState(manifest *config.Manifest, opts *auditOptions) (readmegovernance.State, error) {
+// auditedReadmeState is the state audit verifies the README block against: the recorded
+// baseline, the documentation facet and the manifest identity (adopt.ReadmeIdentity), with
+// the forge host the block's AGENTS.md link records for that identity
+// (readmegovernance.LinkedHost). Adoption takes that host from the origin remote; audit reads
+// it back from content rather than from the clone's remote, so a mirror or a copy without
+// one verifies the same block, and a link into another repository or onto an unknown host
+// is stale.
+func auditedReadmeState(manifest *config.Manifest, opts *auditOptions, content string) (readmegovernance.State, error) {
 	if opts.baseline == nil {
 		return readmegovernance.State{}, fmt.Errorf("baseline gate did not provide a snapshot")
 	}
@@ -51,14 +58,16 @@ func auditedReadmeState(manifest *config.Manifest, opts *auditOptions) (readmego
 			return readmegovernance.State{}, fmt.Errorf("resolve documentation facet: %w", err)
 		}
 	}
-	state := readmegovernance.State{
+	owner, name, err := adopt.ReadmeIdentity(manifest, documentationEnabled)
+	if err != nil {
+		return readmegovernance.State{}, err
+	}
+	return readmegovernance.State{
 		BaselineKnown:        opts.baselineKnown,
 		LegacyDebtCount:      opts.baseline.Count(),
 		DocumentationEnabled: documentationEnabled,
-	}
-	if state.DocumentationEnabled {
-		state.RepositoryOwner = manifest.Repository.Owner
-		state.RepositoryName = manifest.Repository.Name
-	}
-	return state, nil
+		RepositoryOwner:      owner,
+		RepositoryName:       name,
+		RepositoryHost:       readmegovernance.LinkedHost(content, owner, name),
+	}, nil
 }
