@@ -30,17 +30,17 @@ func (a *RustAnalyzer) Detect(repoPath string) bool {
 	return util.FileExists(filepath.Join(repoPath, "Cargo.toml"))
 }
 
-// Analyze extracts dependencies from Cargo.toml and maps them to capabilities of the rust
-// target framework.
+// Analyze extracts the third-party crates Cargo.toml depends on and maps them to
+// capabilities of the rust target framework. Path dependencies are crates of this
+// repository and are left out (cargoManifest.thirdPartyCrates).
 func (a *RustAnalyzer) Analyze(ctx context.Context, repoPath string, target Target) (*RepoNeeds, error) {
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
 
-	repoName := filepath.Base(repoPath)
 	repoNeeds := &RepoNeeds{
 		Version:      1,
-		Repository:   repoName,
+		Repository:   repositoryDirName(repoPath),
 		Language:     "rust",
 		Languages:    []string{"rust"},
 		Capabilities: CapabilityDeclaration{Required: make([]CapabilityKey, 0), Optional: make([]CapabilityKey, 0)},
@@ -48,9 +48,9 @@ func (a *RustAnalyzer) Analyze(ctx context.Context, repoPath string, target Targ
 		UpdatedAt:    time.Now().UTC(),
 	}
 
-	deps, err := parseCargoToml(filepath.Join(repoPath, "Cargo.toml"))
+	deps, err := readCargoDependencies(ctx, repoPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse Cargo.toml in %q: %w", repoPath, err)
+		return nil, err
 	}
 	for _, pkg := range slices.Sorted(maps.Keys(deps)) {
 		demand := rustClassifier.classify(pkg, deps[pkg], target.RoutingKit())
@@ -66,67 +66,226 @@ func (a *RustAnalyzer) Analyze(ctx context.Context, repoPath string, target Targ
 	return repoNeeds, nil
 }
 
-// cargoState tracks which Cargo.toml table the line scanner is inside.
-type cargoState struct {
-	inDepsTable bool   // inside a [*dependencies] table of `name = version` entries
-	subTableFor string // crate name when inside a [dependencies.<crate>] sub-table
+// readCargoDependencies returns the third-party crates the Cargo.toml in crateDir
+// depends on, keyed by name, with the version each declares.
+func readCargoDependencies(ctx context.Context, crateDir string) (map[string]string, error) {
+	manifest, err := parseCargoToml(filepath.Join(crateDir, "Cargo.toml"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse Cargo.toml in %q: %w", crateDir, err)
+	}
+	root, err := cargoWorkspaceRoot(ctx, crateDir, manifest)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find the Cargo workspace of %q: %w", crateDir, err)
+	}
+	return manifest.thirdPartyCrates(root), nil
 }
 
-// parseCargoToml collects crate dependencies from every dependency table spelling Cargo
-// accepts: [dependencies], [dev-dependencies], [build-dependencies],
-// [workspace.dependencies], [target.'cfg(...)'.dependencies] and the
-// [dependencies.<crate>] sub-table form, including inline `{ version = "1" }` tables.
-func parseCargoToml(cargoPath string) (map[string]string, error) {
-	deps := make(map[string]string)
-	st := cargoState{}
-	if err := scanManifestLines(cargoPath, func(line string) {
-		st.consume(line, deps)
-	}); err != nil {
+// maxCargoWorkspaceAscent bounds how many parent directories the workspace-root search
+// visits (HISS-02). Cargo searches every parent directory; the filesystem root ends the
+// search well before the bound on any real path.
+const maxCargoWorkspaceAscent = 64
+
+// cargoDependency is one crate dependency a Cargo.toml declares.
+type cargoDependency struct {
+	version string
+	// local marks a `path` dependency: a crate of this repository, such as a workspace
+	// member, never a registry crate.
+	local bool
+	// inherited marks `workspace = true`: the workspace root's [workspace.dependencies]
+	// holds the declaration.
+	inherited bool
+}
+
+// with applies one dependency key. Every other key (features, optional,
+// default-features, git, ...) leaves the classification unchanged.
+func (d cargoDependency) with(key, value string) cargoDependency {
+	switch key {
+	case "version":
+		d.version = value
+	case "path":
+		d.local = true
+	case "workspace":
+		d.inherited = value == "true"
+	}
+	return d
+}
+
+// cargoManifest is what the Rust analyzer reads from one Cargo.toml.
+type cargoManifest struct {
+	// deps holds every dependency table except [workspace.dependencies].
+	deps map[string]cargoDependency
+	// workspaceDeps holds [workspace.dependencies], the declarations members inherit.
+	workspaceDeps map[string]cargoDependency
+	// workspace is true when the manifest has a [workspace] table: it is a workspace root.
+	workspace bool
+}
+
+// inherits reports whether any dependency takes its declaration from the workspace root.
+func (m *cargoManifest) inherits() bool {
+	for _, dep := range m.deps {
+		if dep.inherited {
+			return true
+		}
+	}
+	return false
+}
+
+// thirdPartyCrates returns the registry and git crates the manifest depends on, with the
+// version each declares. A path dependency is first-party and left out: a workspace
+// member or a sibling crate of the repository is no third-party gap. A dependency
+// inherited with `workspace = true` takes root's [workspace.dependencies] entry, so an
+// inherited path crate is first-party too and an inherited registry crate carries the
+// root's version; an entry root lacks stays third-party without a version. A
+// [workspace.dependencies] entry of this manifest is a demand of its own unless a
+// dependency table of the manifest names the crate.
+func (m *cargoManifest) thirdPartyCrates(root *cargoManifest) map[string]string {
+	crates := make(map[string]string, len(m.deps)+len(m.workspaceDeps))
+	for name, dep := range m.deps {
+		if decl, found := root.workspaceDeps[name]; dep.inherited && found {
+			dep = decl
+		}
+		if !dep.local {
+			crates[name] = dep.version
+		}
+	}
+	for name, dep := range m.workspaceDeps {
+		if _, named := m.deps[name]; !named && !dep.local {
+			crates[name] = dep.version
+		}
+	}
+	return crates
+}
+
+// cargoWorkspaceRoot returns the manifest whose [workspace.dependencies] the crate in
+// crateDir inherits from: the crate's own manifest when it has a [workspace] table or
+// inherits nothing, otherwise the nearest Cargo.toml above crateDir with a [workspace]
+// table, the manifest Cargo searches the parent directories for. Without one it returns
+// an empty manifest, so every inherited dependency stays third-party.
+func cargoWorkspaceRoot(ctx context.Context, crateDir string, crate *cargoManifest) (*cargoManifest, error) {
+	if crate.workspace || !crate.inherits() {
+		return crate, nil
+	}
+	dir, err := filepath.Abs(crateDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve %q: %w", crateDir, err)
+	}
+	for range maxCargoWorkspaceAscent {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+		manifestPath := filepath.Join(dir, "Cargo.toml")
+		if !util.FileExists(manifestPath) {
+			continue
+		}
+		manifest, parseErr := parseCargoToml(manifestPath)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		if manifest.workspace {
+			return manifest, nil
+		}
+	}
+	return &cargoManifest{}, nil
+}
+
+// cargoState tracks which Cargo.toml table the line scanner is inside.
+type cargoState struct {
+	manifest *cargoManifest
+	// table receives the entries of the dependency table the scanner is inside, nil
+	// outside every dependency table.
+	table map[string]cargoDependency
+	// crate names the crate when inside a [dependencies.<crate>] sub-table.
+	crate string
+}
+
+// parseCargoToml reads a Cargo.toml's dependency tables in every spelling Cargo accepts:
+// [dependencies], [dev-dependencies], [build-dependencies], [workspace.dependencies],
+// [target.'cfg(...)'.dependencies] and the [dependencies.<crate>] sub-table, each entry
+// a version string, an inline table (`{ version = "1" }`, `{ path = "../core" }`,
+// `{ workspace = true }`) or dotted keys (`cc.workspace = true`). It also records
+// whether the manifest is a workspace root.
+func parseCargoToml(cargoPath string) (*cargoManifest, error) {
+	st := cargoState{manifest: &cargoManifest{
+		deps:          make(map[string]cargoDependency),
+		workspaceDeps: make(map[string]cargoDependency),
+	}}
+	if err := scanManifestLines(cargoPath, st.consume); err != nil {
 		return nil, err
 	}
-	return deps, nil
+	return st.manifest, nil
 }
 
 // consume classifies a single trimmed Cargo.toml line.
-func (s *cargoState) consume(line string, deps map[string]string) {
+func (s *cargoState) consume(line string) {
 	if strings.HasPrefix(line, "[") {
-		s.enterTable(strings.Trim(line, "[]"), deps)
+		s.enterTable(util.TOMLTableName(line))
 		return
 	}
-	if line == "" || strings.HasPrefix(line, "#") {
+	if s.table == nil || line == "" || strings.HasPrefix(line, "#") {
 		return
 	}
-	if s.subTableFor != "" {
-		if name, value, ok := splitTOMLAssignment(line); ok && name == "version" {
-			deps[s.subTableFor] = value
+	key, value, ok := splitTOMLKey(line)
+	if !ok {
+		return
+	}
+	if s.crate != "" {
+		s.table[s.crate] = s.table[s.crate].with(key, tomlScalar(value))
+		return
+	}
+	if crate, field, dotted := strings.Cut(key, "."); dotted {
+		crate = unquoteTOMLKey(crate)
+		s.table[crate] = s.table[crate].with(unquoteTOMLKey(field), tomlScalar(value))
+		return
+	}
+	s.table[key] = parseCargoDependency(value)
+}
+
+// parseCargoDependency reads the value of a `name = value` dependency entry: a version
+// string or an inline table of dependency keys.
+func parseCargoDependency(value string) cargoDependency {
+	if !strings.HasPrefix(value, "{") {
+		return cargoDependency{version: tomlScalar(value)}
+	}
+	var dep cargoDependency
+	inlineTableFields(value, func(key, fieldValue string) {
+		dep = dep.with(key, fieldValue)
+	})
+	return dep
+}
+
+// enterTable updates the scanner state for a TOML table name in util.TOMLTableName form.
+func (s *cargoState) enterTable(name string) {
+	s.table, s.crate = nil, ""
+	segments := strings.Split(name, ".")
+	for i := range segments {
+		segments[i] = unquoteTOMLKey(segments[i])
+	}
+	if segments[0] == "workspace" {
+		s.manifest.workspace = true
+	}
+	last := len(segments) - 1
+	switch {
+	case isCargoDependencyTable(segments[last]):
+		s.table = s.manifest.tableFor(segments[0])
+	case last >= 1 && isCargoDependencyTable(segments[last-1]):
+		s.table, s.crate = s.manifest.tableFor(segments[0]), segments[last]
+		if _, seen := s.table[s.crate]; !seen {
+			s.table[s.crate] = cargoDependency{}
 		}
-		return
-	}
-	if !s.inDepsTable {
-		return
-	}
-	if name, value, ok := splitTOMLAssignment(line); ok {
-		deps[name] = value
 	}
 }
 
-// enterTable updates the scanner state for a TOML table header.
-func (s *cargoState) enterTable(header string, deps map[string]string) {
-	s.inDepsTable = false
-	s.subTableFor = ""
-
-	segments := strings.Split(header, ".")
-	last := strings.Trim(segments[len(segments)-1], `"'`)
-	if isCargoDependencyTable(last) {
-		s.inDepsTable = true
-		return
+// tableFor returns the map filled by a dependency table whose name starts with first.
+func (m *cargoManifest) tableFor(first string) map[string]cargoDependency {
+	if first == "workspace" {
+		return m.workspaceDeps
 	}
-	if len(segments) >= 2 && isCargoDependencyTable(strings.Trim(segments[len(segments)-2], `"'`)) {
-		s.subTableFor = last
-		if _, exists := deps[last]; !exists {
-			deps[last] = ""
-		}
-	}
+	return m.deps
 }
 
 // isCargoDependencyTable reports whether a table name holds crate dependencies.
@@ -135,50 +294,64 @@ func isCargoDependencyTable(name string) bool {
 		name == "build-dependencies"
 }
 
-// splitTOMLAssignment splits `key = value` and normalises the value: a bare string loses
-// its quotes, an inline table is reduced to its `version` field.
-func splitTOMLAssignment(line string) (string, string, bool) {
+// unquoteTOMLKey trims the white space and quotes around one TOML key segment.
+func unquoteTOMLKey(key string) string {
+	return strings.Trim(strings.TrimSpace(key), `"'`)
+}
+
+// splitTOMLKey splits `key = value` into the unquoted key and the trimmed raw value.
+func splitTOMLKey(line string) (string, string, bool) {
 	idx := strings.Index(line, "=")
 	if idx <= 0 {
 		return "", "", false
 	}
-	name := strings.Trim(strings.TrimSpace(line[:idx]), `"'`)
+	name := unquoteTOMLKey(line[:idx])
 	if name == "" {
 		return "", "", false
 	}
-	value := strings.TrimSpace(line[idx+1:])
-	if strings.HasPrefix(value, "{") {
-		return name, inlineTableVersion(value), true
-	}
+	return name, strings.TrimSpace(line[idx+1:]), true
+}
+
+// tomlScalar normalises a raw TOML value: a trailing comment is dropped and a string
+// loses its quotes.
+func tomlScalar(value string) string {
 	if comment := strings.Index(value, "#"); comment >= 0 {
 		value = strings.TrimSpace(value[:comment])
 	}
-	return name, strings.Trim(value, `"',`), true
+	return strings.Trim(value, `"',`)
 }
 
-// inlineTableVersion extracts the `version` field of a TOML inline table, returning an
-// empty string when the table pins the dependency by path, git revision or workspace.
-func inlineTableVersion(value string) string {
-	body := strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(value), "{"), "}")
+// splitTOMLAssignment splits `key = value` and normalises the value: a bare string loses
+// its quotes, an inline table is reduced to its `version` field, empty when the table
+// pins the dependency by path, git revision or workspace.
+func splitTOMLAssignment(line string) (string, string, bool) {
+	name, value, ok := splitTOMLKey(line)
+	if !ok {
+		return "", "", false
+	}
+	if !strings.HasPrefix(value, "{") {
+		return name, tomlScalar(value), true
+	}
+	version := ""
+	inlineTableFields(value, func(key, fieldValue string) {
+		if key == "version" {
+			version = fieldValue
+		}
+	})
+	return name, version, true
+}
+
+// inlineTableFields applies visit to each `key = value` field of a single-line TOML
+// inline table, the value normalised by tomlScalar. It reads flat fields only: an array
+// value such as `features = ["a", "b"]` yields its first fragment and nothing else.
+func inlineTableFields(value string, visit func(key, fieldValue string)) {
+	body := strings.TrimPrefix(value, "{")
+	if end := strings.LastIndex(body, "}"); end >= 0 {
+		body = body[:end]
+	}
 	for _, field := range strings.Split(body, ",") {
-		name, fieldValue, ok := splitTOMLScalar(field)
-		if ok && name == "version" {
-			return fieldValue
+		if key, fieldValue, ok := splitTOMLKey(strings.TrimSpace(field)); ok {
+			visit(key, tomlScalar(fieldValue))
 		}
 	}
-	return ""
-}
-
-// splitTOMLScalar splits a single `key = "value"` pair without recursing into tables.
-func splitTOMLScalar(field string) (string, string, bool) {
-	idx := strings.Index(field, "=")
-	if idx <= 0 {
-		return "", "", false
-	}
-	name := strings.Trim(strings.TrimSpace(field[:idx]), `"'`)
-	value := strings.Trim(strings.TrimSpace(field[idx+1:]), `"',`)
-	if name == "" {
-		return "", "", false
-	}
-	return name, value, true
 }

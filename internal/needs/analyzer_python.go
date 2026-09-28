@@ -41,7 +41,7 @@ func (a *PythonAnalyzer) Analyze(ctx context.Context, repoPath string, target Ta
 		return nil, ctx.Err()
 	}
 
-	repoName := filepath.Base(repoPath)
+	repoName := repositoryDirName(repoPath)
 	repoNeeds := &RepoNeeds{
 		Version:      1,
 		Repository:   repoName,
@@ -95,9 +95,10 @@ func parsePythonDependencies(repoPath string) (map[string]string, error) {
 
 // readManifest reads a repository-local manifest into memory safely.
 func readManifest(path string) ([]byte, error) {
-	// #nosec G304 -- path is either filepath.Join(repoPath, "<constant filename>") for a
-	// repository the caller already selected, or a path already confined to its bundle
-	// directory by util.ConfinePath; no component is unvalidated user input.
+	// #nosec G304 -- path is filepath.Join(dir, "<constant filename>") for a repository
+	// the caller already selected or, for the Cargo workspace-root search, one of its
+	// parent directories (the search Cargo itself runs), or a path already confined to its
+	// bundle directory by util.ConfinePath; no component is unvalidated user input.
 	data, err := util.ReadFileLimited(path, 1024*1024)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read %q: %w", path, err)

@@ -45,7 +45,7 @@ func (a *NativeAnalyzer) Analyze(ctx context.Context, repoPath string, target Ta
 		return nil, ctx.Err()
 	}
 
-	repoName := filepath.Base(repoPath)
+	repoName := repositoryDirName(repoPath)
 	repoNeeds := &RepoNeeds{
 		Version:      1,
 		Repository:   repoName,
