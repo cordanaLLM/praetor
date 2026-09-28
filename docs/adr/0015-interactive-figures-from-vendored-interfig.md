@@ -4,12 +4,13 @@
 
 Proposed — 2026-09-27.
 
-Amended 2026-09-27 by [ADR-0016](0016-figures-for-adopters.md) while still Proposed
-(`docs/adr/README.md`, rule 4). Each changed passage below says "Amended by ADR-0016" ("added
-by" for a new command) and names the ADR-0016 section or operator decision; the ADR-0016 table
-"Amendments to ADR-0015" lists them all. ADR-0016 §1 also moves the engine files into one
-`tools/figures/` tree and the pure functions of `build.mjs` into `core.mjs`. The paths and file
-names in this record are those before that move.
+Amended by [ADR-0016](0016-figures-for-adopters.md) while still Proposed, on 2026-09-27 and
+2026-09-28 (`docs/adr/README.md`, rule 4). Each changed passage below says "Amended by ADR-0016"
+("added by" for a new command) and names the ADR-0016 section or operator decision; the ADR-0016
+table "Amendments to ADR-0015" lists them all. ADR-0016 §1 also moves the engine files into one
+`tools/figures/` tree, the pure functions of `build.mjs` into `core.mjs`, and the checker's
+`site`, `sources` and `portable` commands from Python into the Node engine. The paths, file names
+and command names in this record are those before that move.
 
 Number note: ADR-0013 is the container image and Helm chart record and ADR-0014 the
 operator-neutral defaults record, so this record takes 0015.
@@ -184,7 +185,8 @@ third_party/interfig/
 - **Bundle.** esbuild builds ES modules with splitting. Amended by ADR-0016 §3:
   `tools/figures/bundle.mjs` writes the generic player to `tools/figures/dist/`, which is
   committed, rebuilt byte for byte by `bundle.mjs --check` on Linux, macOS and Windows, and
-  emitted to adopters. The first version wrote `docs/assets/javascripts/figures/`, gitignored and
+  emitted to adopters. It builds `loader.js` and `player.js` without splitting, so no output name
+  carries a hash. The first version wrote `docs/assets/javascripts/figures/`, gitignored and
   rebuilt in CI.
   - `loader.js` is small and loaded on every page.
   - The player chunk holds React and interfig and is imported only when a figure nears the
@@ -197,10 +199,13 @@ third_party/interfig/
   - A `--banner:js` adds the interfig MIT notice. React's `@license` comments are kept as legal
     comments at the end of the file.
   - Size budget: at most 250 kB minified for the player chunk. Amended by ADR-0016 §3:
-    `bundle.mjs --check` enforces it; `build.mjs check` no longer bundles and needs no esbuild.
+    `bundle.mjs --check` enforces it on `player.js`; `build.mjs check` no longer bundles and
+    needs no esbuild.
 - **Why the SVGs and JSON are committed:**
   - README and wiki need stable URLs.
-  - The docs-only CI path verifies them by hash without Node.
+  - The docs-only CI path verifies them by hash without Node. Amended by ADR-0016 §1 (its
+    operator decision 5): the hash check is a command of the Node engine, so it needs Node, but
+    still no npm package.
   - A `mkdocs serve` without Node still shows every figure.
   - The output does not depend on npm versions, because `toSvg` has no dependencies.
 - **The JS bundle is committed.** Amended by ADR-0016 §3 (its operator decision 2). The first
@@ -260,7 +265,9 @@ export default {
 - **Hook.** The hook is thin. In `on_page_markdown` it calls
   `docs_diagrams.expand(markdown, page.url)`, which reuses the checker's fence scanner, so a fence
   nested in a longer fence is left alone. An unknown slug logs a warning, which fails
-  `mkdocs build --strict`.
+  `mkdocs build --strict`. Amended by ADR-0016 §6 (its operator decision 5): the checker moves to
+  Node, so the hook imports no checker. It substitutes each fence with the JSON `html` and keeps
+  its own fence scanner, which replays the same fence fixtures as the Node scanner.
 - **Markup.** Each fence becomes:
 
   ```html
@@ -309,8 +316,9 @@ export default {
 - **One renderer.** Amended by ADR-0016 §4: `tools/figures/core.mjs` renders the
   `<figure><picture>` block and the `<details>` text description into each `<slug>.json` as
   `html`, with `{{base}}` and `{{link}}` slots, and every caller only substitutes the slots. The
-  first version rendered in Python, in `docs_diagrams.render_block(slug, base, link)`. It serves
-  three callers:
+  first version rendered in Python, in `docs_diagrams.render_block(slug, base, link)`. The
+  `portable` command below becomes `node tools/figures/build.mjs portable` (ADR-0016 §1, its
+  operator decision 5). The renderer serves three callers:
   - the MkDocs hook, with a relative base;
   - the wiki: `scripts/sync_github_wiki.sh` runs
     `python3 -B scripts/docs_diagrams.py portable --base https://cordanallm.github.io/praetor/`
@@ -369,6 +377,12 @@ export default {
 
 ### 7. Checks
 
+Amended by ADR-0016 §1 (its operator decision 5): the checker's `site`, `sources` and `portable`
+commands move from `scripts/docs_diagrams.py` into the Node engine as commands of
+`tools/figures/build.mjs`, and their fixtures into `tools/figures/figures.test.mjs`. Python keeps
+only the MkDocs hook, and `make docs-diagrams-test` runs the hook's tests. The command names
+below are those before the move.
+
 One checker, per HISS-19:
 
 - **Rename.** `git mv scripts/docs_mermaid.py scripts/docs_diagrams.py`, and its test, and
@@ -386,8 +400,8 @@ One checker, per HISS-19:
     - the page loads `loader.js`;
     - every figure's SVG carries the `<metadata id="figure-spec">` the loader reads. Amended by
       ADR-0016 §3; the first version checked that `registry.json` lists every slug.
-- **`docs_diagrams.py sources`** needs no site and no Node. It runs in verify-all and in the
-  docs-only CI audit, and fails on:
+- **`docs_diagrams.py sources`** needs no site and no Node. Amended by ADR-0016 §1: it needs
+  Node, but no npm package. It runs in verify-all and in the docs-only CI audit, and fails on:
   - a JSON hash that no longer matches its spec, the vendored engine files, `build.mjs` or the
     SVGs (reported as stale, with the rebuild command). Amended by ADR-0016 §1: `core.mjs`
     replaces `build.mjs` among the hashed engine files;
@@ -593,10 +607,11 @@ node --test third_party/interfig/upstream/src/*.test.ts
 make docs-figures-check   # npm ci, tests, typecheck, check, sources
                           # amended by ADR-0016 §8: npm ci, tests, typecheck, bundle.mjs --check
 make docs-figures         # added by ADR-0016 §8: build.mjs check, sources
-make docs-diagrams-test
+make docs-diagrams-test   # amended by ADR-0016 §8: the MkDocs hook's tests only
 npm --prefix tools/figures run bundle   # amended by ADR-0016 §3: committed; bundle.mjs --check rebuilds it
 mkdocs build --strict -d site
 python3 -B scripts/docs_diagrams.py site --config mkdocs.yml --docs docs --site site
+                          # amended by ADR-0016 §1: node tools/figures/build.mjs site
 npm --prefix tools/figures run smoke
 reuse lint
 ```
