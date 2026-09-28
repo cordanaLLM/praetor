@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Event } from "vscode";
-import { LaunchFileWatch, MCP_SERVER_LABEL, McpFolder, McpLaunch, mcpLaunch, McpProviderHost, McpSettings, StandardsMcpProvider } from "./mcp";
+import { LaunchFileWatch, MCP_SERVER_LABEL, McpFolder, McpLaunch, mcpLaunch, McpProviderHost, McpSettings, StandardsMcpProvider, stickyFolder } from "./mcp";
 import { launchCandidates } from "./setup";
 
 const root = "/work/repo";
@@ -182,4 +182,25 @@ test("a changed active folder re-announces the definitions, an unchanged one doe
   fixture.folder = { fsPath: "/work/other" };
   subject.activeFolderChanged();
   assert.equal(fired, 2);
+});
+
+const folderA = { uri: { toString: () => "file:///work/a" } };
+const folderB = { uri: { toString: () => "file:///work/b" } };
+
+test("stickyFolder positive: the active editor's root wins in a multi-root window", () => {
+  assert.equal(stickyFolder(folderA, folderB, [folderA, folderB]), folderB);
+  assert.equal(stickyFolder(undefined, folderA, [folderA, folderB]), folderA);
+});
+
+test("stickyFolder negative: an editor outside every root keeps the previous root", () => {
+  assert.equal(stickyFolder(folderA, undefined, [folderA, folderB]), folderA);
+  assert.equal(stickyFolder(undefined, undefined, [folderA, folderB]), undefined);
+  assert.equal(stickyFolder(folderA, undefined, [folderB, { uri: { toString: () => "file:///work/c" } }]), undefined);
+});
+
+test("stickyFolder boundary: one folder always binds, none never does", () => {
+  assert.equal(stickyFolder(undefined, undefined, [folderA]), folderA);
+  assert.equal(stickyFolder(folderB, undefined, [folderA]), folderA);
+  assert.equal(stickyFolder(folderA, folderA, []), undefined);
+  assert.equal(stickyFolder(folderA, folderA, undefined), undefined);
 });

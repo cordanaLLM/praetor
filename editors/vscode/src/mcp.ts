@@ -110,3 +110,15 @@ export class LaunchFileWatch<D, F extends McpFolder = McpFolder> implements Disp
     this.watched = "";
   }
 }
+
+// stickyFolder picks the folder the servers bind to. A single-root window always uses its one
+// folder. In a multi-root window the active editor's folder wins; while the active editor belongs
+// to no folder (Settings, a preview, a chat tab, every editor closed, a file outside every root),
+// the previous choice stays as long as it is still open, so a focus change never withdraws a
+// running server. Switching to another root restarts the server on that root.
+export function stickyFolder<F extends { uri: { toString(): string } }>(previous: F | undefined, active: F | undefined, folders: readonly F[] | undefined): F | undefined {
+  if (!folders || folders.length === 0) return undefined;
+  if (folders.length === 1) return folders[0];
+  if (active) return active;
+  return previous && folders.some(folder => folder.uri.toString() === previous.uri.toString()) ? previous : undefined;
+}

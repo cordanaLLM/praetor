@@ -2,7 +2,7 @@ import { stat } from "node:fs/promises";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { LanguageClient } from "vscode-languageclient/node";
-import { LaunchFileWatch, MCP_PROVIDER_ID, McpLaunch, StandardsMcpProvider } from "./mcp";
+import { LaunchFileWatch, MCP_PROVIDER_ID, McpLaunch, StandardsMcpProvider, stickyFolder } from "./mcp";
 import { DEFAULT_TIMEOUT_MS, runCLI } from "./runner";
 import { artifactPath, boundedIsFile, ClientCapability, commandAvailable, globLiteral, LSP_CLIENT_ID, LSP_DEFAULT_PATH, machineExecutable, parseCapabilities, praetorWorkspace, requireTrust, sentinelArguments, setupArguments, workspaceExecutable, workspaceGlob } from "./setup";
 
@@ -23,12 +23,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   await startOptionalLSP(context);
 }
 
+// selectedFolder is the last folder serverFolder chose; stickyFolder keeps it while the active
+// editor belongs to no workspace folder.
+let selectedFolder: vscode.WorkspaceFolder | undefined;
+
 // serverFolder is the folder the LSP and the MCP server bind to: the only workspace folder, or
-// the active editor's folder in a multi-root window, never an arbitrary first folder.
+// the active editor's folder in a multi-root window, never an arbitrary first folder, and the
+// previous choice while the active editor belongs to none (stickyFolder).
 function serverFolder(): vscode.WorkspaceFolder | undefined {
-  const folders = vscode.workspace.workspaceFolders;
   const active = vscode.window.activeTextEditor && vscode.workspace.getWorkspaceFolder(vscode.window.activeTextEditor.document.uri);
-  return folders?.length === 1 ? folders[0] : active;
+  selectedFolder = stickyFolder(selectedFolder, active, vscode.workspace.workspaceFolders);
+  return selectedFolder;
 }
 
 function registerMcpProvider(context: vscode.ExtensionContext): StandardsMcpProvider<vscode.McpStdioServerDefinition, vscode.Uri> | undefined {

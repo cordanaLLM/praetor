@@ -100,7 +100,10 @@ of these hold:
 - the workspace is trusted. `standards.mcp.path` is a restricted setting, like
   `standards.lsp.path`;
 - a folder is selected by the same rule as the LSP: the only folder, or the
-  active editor's folder in a multi-root window;
+  active editor's folder in a multi-root window. While the active editor belongs
+  to no folder (Settings, a preview, a chat tab, every editor closed), the
+  previous folder stays selected, so a focus change never withdraws a running
+  server (`stickyFolder` in `src/mcp.ts`);
 - an absolute path names an existing file. On Windows `<path>.com` and
   `<path>.exe` also count, so `make build` output `bin/standards-mcp.exe` serves
   the default. A command name or relative path is passed on unchecked.
@@ -111,7 +114,8 @@ when:
 - a `standards.mcp.*` setting changes, Workspace Trust is granted or the folder
   set changes;
 - in a multi-root window, the active editor moves to another folder, including
-  the first editor opened after activation;
+  the first editor opened after activation. VS Code then stops the server on the
+  old root and starts it on the new one;
 - one of the checked files above is created or deleted, for example when
   `make build` writes `bin/standards-mcp` after the window opened.
   `LaunchFileWatch` in `src/mcp.ts` keeps one non-recursive watcher per checked
