@@ -507,7 +507,8 @@ Adoption also registers the engine's own pre-tool call, `praetorctl hook <client
 and the timeout unit of the registration row (`agenthook.NativeHookFile`,
 `internal/agenthook/registrations.go`). The `agent-hooks` step
 (`internal/adopt/agent_hooks.go`) creates a missing file, `hooks` object, event list or
-matcher group, and adds the handler to a group whose matcher equals the row's. The merge
+matcher group, and adds the handler to a group whose matcher selects the same tools as the
+row's (see matcher equivalence below). The merge
 (`internal/clientjson/hooks.go`) keeps every other member in its place and every number
 literal as written, so no key is reordered and no number is rounded; the file is re-indented
 and string escapes are normalised (`"\/"` becomes `"/"`). A file the step changes is first
@@ -515,9 +516,28 @@ copied to `<file>.bak`, then replaced only while it still holds the bytes the pl
 from, and read back; each write goes through the root-pinned `contextopt` writers, which
 refuse a symlink below the repository. A handler that already runs the evaluator (the engine
 call, the skew guard `praetor_hook.py`, or one of the Python pre-tool adapters) counts as
-registered when its group's matcher is the row's or matches every tool (absent, `*`, `.*`),
-and the file stays byte for byte as it was (`Registration.ServedBy`). A handler under another
-matcher, such as `^(Edit|Write)$`, does not guard shell calls, so the row is still registered.
+registered when its group's matcher selects the same tools as the row's or matches every tool
+(absent, `*`, `.*`), and the file stays byte for byte as it was (`Registration.ServedBy`). A
+handler under another matcher, such as `^(Edit|Write)$`, `Bash.*` or `^Bash`, does not guard
+exactly the shell tool, so the row is still registered.
+
+Matcher equivalence follows each client's own matcher reading (`HookFile.ExactLiteral` in
+`internal/agenthook/registrations.go`, `sameSelection` in `internal/clientjson/hooks.go`):
+
+| Client | Matcher reading | `NAME` vs `^NAME$` |
+| :-- | :-- | :-- |
+| Claude Code | letters, digits, `_`, `-`, spaces, `,`, `\|` only: exact names; anything else: unanchored regular expression ([hooks reference](https://code.claude.com/docs/en/hooks), "Matcher patterns") | same tool: `Bash` is `^Bash$` |
+| Codex | ASCII letters, digits, `_`, `\|` only: exact names; anything else: unanchored `regex::Regex` (`codex-rs/hooks/src/events/common.rs`, `matches_matcher`, `rust-v0.145.0`) | same tool |
+| Gemini CLI | every matcher: `new RegExp(matcher).test(toolName)`, unanchored (`packages/core/src/hooks/hookPlanner.ts`, `matchesToolName`, `v0.61.0`) | different: `run_shell_command` also selects any tool whose name contains it |
+
+So for Claude Code and Codex an adopter's `Bash` group that runs `block_evasion.py` serves
+the `^Bash$` row, and a `Bash` group without an evaluator takes the engine call instead of a
+second group. NAME must be a nonempty run of ASCII letters, digits and `_`: `Ba.h` and
+`^Ba.h$` stay apart, as do `^$` and the absent matcher. For Gemini CLI, a
+`^run_shell_command$` group does not serve the `run_shell_command` row, which is registered
+in its own group (`TestPlanHooks_Positive_LiteralAndAnchoredNameAreOneSelection`,
+`TestPlanHooks_Negative_OnlyTheAnchoredLiteralIsEquivalent`,
+`TestPlanHooks_Boundary_LiteralEquivalenceEdges`, `TestReconcileAgentHooks_LiteralMatcherPerClient`).
 
 Before the first step writes anything, adoption plans the registration of every selected
 client (`preflightAgentHooks`, called from `preflightAgentSurfaces` in

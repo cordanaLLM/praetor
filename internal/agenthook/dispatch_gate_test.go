@@ -83,14 +83,20 @@ func TestDispatchGateRegistered_Negative(t *testing.T) {
 	}
 }
 
-// Boundary: a match-all matcher covers the dispatch tool; a file that does not parse, and a
-// Gemini settings file with comments the strict parser refuses, prove no registration and are
-// not an error.
+// Boundary: a match-all matcher covers the dispatch tool, and so does Claude Code's literal
+// Agent, which it reads as the exact tool name ^Agent$ selects; a file that does not parse, and
+// a Gemini settings file with comments the strict parser refuses, prove no registration and
+// are not an error.
 func TestDispatchGateRegistered_Boundary(t *testing.T) {
 	wildcard := t.TempDir()
 	writeHookFile(t, wildcard, ".gemini/settings.json", hookDocument("BeforeTool", "*", "praetorctl hook gemini pre-dispatch"))
 	if !gateRegistered(t, wildcard) {
 		t.Error("match-all matcher not recognised")
+	}
+	literal := t.TempDir()
+	writeHookFile(t, literal, ".claude/settings.json", hookDocument("PreToolUse", "Agent", "praetorctl hook claude pre-dispatch"))
+	if !gateRegistered(t, literal) {
+		t.Error("literal Agent matcher not recognised as the ^Agent$ row")
 	}
 	broken := t.TempDir()
 	writeHookFile(t, broken, ".claude/settings.json", `{"hooks": [`)
@@ -117,11 +123,13 @@ func TestDispatchGateClients(t *testing.T) {
 // the registration table. Positive: Claude Code's pre-tool row becomes its PreToolUse handler
 // with the engine call. Negative: a pair without a row (Codex pre-edit) and an unknown client
 // yield none. Boundary: the timeout is stated in the hook file's unit, seconds for Claude Code
-// and milliseconds for Gemini CLI, one handler per row.
+// and milliseconds for Gemini CLI, one handler per row, and each handler carries its file's
+// matcher reading (exact literal for Claude Code, not for Gemini CLI).
 func TestNativeHooks(t *testing.T) {
 	claudeFile, _ := NativeHookFile("claude")
 	hooks := NativeHooks("claude", claudeFile, EventPreTool)
-	if len(hooks) != 1 || hooks[0].Event != "PreToolUse" || hooks[0].Command != "praetorctl hook claude pre-tool" || hooks[0].Timeout != 15 {
+	if len(hooks) != 1 || hooks[0].Event != "PreToolUse" || hooks[0].Command != "praetorctl hook claude pre-tool" || hooks[0].Timeout != 15 ||
+		!hooks[0].ExactLiteral {
 		t.Fatalf("claude pre-tool handlers = %+v", hooks)
 	}
 	codexFile, _ := NativeHookFile("codex")
@@ -146,6 +154,9 @@ func TestNativeHooks(t *testing.T) {
 		for _, hook := range hooks {
 			if hook.Timeout < 1000 || hook.Timeout%1000 != 0 {
 				t.Errorf("gemini %s timeout %d is not in milliseconds", event, hook.Timeout)
+			}
+			if hook.ExactLiteral {
+				t.Errorf("gemini %s handler reads a literal matcher as exact", event)
 			}
 		}
 	}

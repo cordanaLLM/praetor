@@ -15,9 +15,10 @@ import (
 )
 
 // NativeHooks turns client's registration rows for event into the handlers clientjson merges
-// into, or finds in, the client's hook file, with each timeout in the unit of that file.
-// Adoption registers the pre-tool rows through it, and DispatchGateRegistered looks the
-// pre-dispatch rows up through it, so the two read one handler shape.
+// into, or finds in, the client's hook file, with each timeout in the unit of that file and the
+// file's matcher reading (HookFile.ExactLiteral). Adoption registers the pre-tool rows through
+// it, and DispatchGateRegistered looks the pre-dispatch rows up through it, so the two read one
+// handler shape.
 func NativeHooks(client string, file HookFile, event Event) []clientjson.Hook {
 	var hooks []clientjson.Hook
 	for _, row := range Registrations(client) {
@@ -25,11 +26,12 @@ func NativeHooks(client string, file HookFile, event Event) []clientjson.Hook {
 			continue
 		}
 		hooks = append(hooks, clientjson.Hook{
-			Event:    row.NativeEvent,
-			Matcher:  row.Matcher,
-			Command:  row.Command(),
-			Timeout:  int64(row.Timeout / file.TimeoutUnit),
-			ServedBy: row.ServedBy,
+			Event:        row.NativeEvent,
+			Matcher:      row.Matcher,
+			Command:      row.Command(),
+			Timeout:      int64(row.Timeout / file.TimeoutUnit),
+			ExactLiteral: file.ExactLiteral,
+			ServedBy:     row.ServedBy,
 		})
 	}
 	return hooks

@@ -103,19 +103,20 @@ func TestReconcileAgentHooks_Positive_CreatesMissingHookFiles(t *testing.T) {
 }
 
 // Positive: an existing file is merged, not rewritten: members keep their order and literals
-// (a 20-digit integer, 1.50), a group whose matcher only resembles the row's is left alone,
-// the row's own group is created, and the prior bytes are kept as the backup.
+// (a 20-digit integer, 1.50), a group whose matcher only resembles the row's (^Bash, every tool
+// whose name starts with Bash) is left alone, the row's own group is created, and the prior
+// bytes are kept as the backup.
 func TestReconcileAgentHooks_Positive_MergesPreservingForeignContent(t *testing.T) {
 	s := hookSession(t, false)
 	original := `{"zeta": 12345678901234567890, "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "stop.sh"}]}],` +
-		` "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "lint.sh"}]}]}, "alpha": {"ratio": 1.50}}` + "\n"
+		` "PreToolUse": [{"matcher": "^Bash", "hooks": [{"type": "command", "command": "lint.sh"}]}]}, "alpha": {"ratio": 1.50}}` + "\n"
 	mustWrite(t, hookPath(s, claudeHookFile), original)
 	if err := reconcileAgentHooks(context.Background(), s); err != nil {
 		t.Fatal(err)
 	}
 	merged := mustRead(t, hookPath(s, claudeHookFile))
 	requireHandler(t, []byte(merged), "PreToolUse", "^Bash$", "praetorctl hook claude pre-tool", 15)
-	if got := registeredHandlers(t, []byte(merged), "PreToolUse", "Bash"); len(got) != 1 || got[0]["command"] != "lint.sh" {
+	if got := registeredHandlers(t, []byte(merged), "PreToolUse", "^Bash"); len(got) != 1 || got[0]["command"] != "lint.sh" {
 		t.Errorf("foreign matcher group changed: %v", got)
 	}
 	order := []string{`"zeta": 12345678901234567890`, `"hooks"`, `"Stop"`, `"PreToolUse"`, `"alpha"`, `"ratio": 1.50`}
@@ -147,6 +148,40 @@ func TestReconcileAgentHooks_Positive_JoinsExactMatcherGroup(t *testing.T) {
 	if len(handlers) != 2 || handlers[0]["command"] != "audit.sh" || handlers[1]["command"] != "praetorctl hook claude pre-tool" {
 		t.Fatalf("handlers = %v", handlers)
 	}
+}
+
+// Positive and negative, per client: Claude Code and Codex read the literal Bash as the exact
+// tool ^Bash$ selects, so an adopter group Bash that runs the adopted interceptor serves the
+// row and the file stays byte for byte as it was, and a Bash group without it takes the
+// engine call instead of a second group. Gemini CLI tests every matcher as an unanchored
+// regular expression, so its ^run_shell_command$ group selects less than the row's
+// run_shell_command and the row still gets its own group.
+func TestReconcileAgentHooks_LiteralMatcherPerClient(t *testing.T) {
+	adapter := `{"type": "command", "command": "python3", "args": [".config/agent/hooks/block_evasion.py"]}`
+	s := hookSession(t, false)
+	served := `{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [` + adapter + `]}]}}`
+	joined := `{"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "lint.sh"}]}]}}`
+	gemini := `{"hooks": {"BeforeTool": [{"matcher": "^run_shell_command$", "hooks": [` + adapter + `]}]}}`
+	mustWrite(t, hookPath(s, claudeHookFile), served)
+	mustWrite(t, hookPath(s, ".codex/hooks.json"), joined)
+	mustWrite(t, hookPath(s, ".gemini/settings.json"), gemini)
+	if err := reconcileAgentHooks(context.Background(), s); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustRead(t, hookPath(s, claudeHookFile)); got != served {
+		t.Fatalf("served Claude Code file rewritten:\n%s", got)
+	}
+	if action, ok := actionOf(s.report, claudeHookFile); !ok || action.Action != actionReconcile || !strings.Contains(action.Details, "block_evasion.py") {
+		t.Fatalf("claude report = %+v", action)
+	}
+	codex := []byte(mustRead(t, hookPath(s, ".codex/hooks.json")))
+	if handlers := registeredHandlers(t, codex, "PreToolUse", "Bash"); len(handlers) != 2 || handlers[1]["command"] != "praetorctl hook codex pre-tool" {
+		t.Fatalf("codex handler not joined to the Bash group:\n%s", codex)
+	}
+	if got := registeredHandlers(t, codex, "PreToolUse", "^Bash$"); len(got) != 0 {
+		t.Fatalf("codex got a second group for Bash:\n%s", codex)
+	}
+	requireHandler(t, []byte(mustRead(t, hookPath(s, ".gemini/settings.json"))), "BeforeTool", "run_shell_command", "praetorctl hook gemini pre-tool", 15000)
 }
 
 // Positive: a repository that already runs the evaluator, through the engine call, the skew
