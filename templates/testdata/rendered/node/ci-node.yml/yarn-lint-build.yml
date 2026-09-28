@@ -1,0 +1,39 @@
+---
+name: CI
+
+'on':
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      # Corepack provisions the Yarn packageManager pins, or Yarn 1, which
+      # hands over to the release a .yarnrc.yml yarnPath names; Node 25 and
+      # later ship without Corepack.
+      - name: Enable Yarn
+        run: |
+          npm install --global corepack@latest
+          corepack enable yarn
+
+      # The locked install takes exactly what yarn.lock records and fails
+      # when the two disagree.
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Lint
+        run: yarn run lint
+
+      - name: Build
+        run: yarn run build
+
+      - name: Test
+        run: yarn run test
