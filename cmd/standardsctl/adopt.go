@@ -65,10 +65,7 @@ func runAdopt(args []string) error {
 	allMissing := fs.Bool("all-missing", false, "Adopt all detected unmanaged repositories under --dev-dir")
 	devDir := fs.String("dev-dir", "", "Root directory scanned by --all-missing "+devRootUsageDefault)
 	path := fs.String("path", ".", "Target repository path to adopt")
-	defaults := adopt.DefaultVerificationLimits()
-	maxEntries := fs.Int("verification-max-entries", 0, fmt.Sprintf("Directory entries verification discovery may walk (default %d, ceiling %d)", defaults.MaxEntries, adopt.VerificationEntriesCeiling))
-	maxFiles := fs.Int("verification-max-files", 0, fmt.Sprintf("Verification input files discovery may read (default %d, ceiling %d)", defaults.MaxFiles, adopt.VerificationFilesCeiling))
-	maxDepth := fs.Int("verification-max-depth", 0, fmt.Sprintf("Directory depth verification discovery may descend (default %d, ceiling %d)", defaults.MaxDepth, adopt.VerificationDepthCeiling))
+	limitFlags := registerVerificationLimitFlags(fs)
 
 	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
@@ -97,7 +94,7 @@ func runAdopt(args []string) error {
 		DryRun:             *dryRun,
 		Force:              *force,
 		RecordBaseline:     *recordBaseline,
-		VerificationLimits: verificationLimitsFromFlags(*maxEntries, *maxFiles, *maxDepth),
+		VerificationLimits: limitFlags.limits(),
 	}
 
 	report, err := adopt.Adopt(ctx, opts)
@@ -111,6 +108,29 @@ func runAdopt(args []string) error {
 		return fmt.Errorf("%w: %d error(s) listed above", errAdoptIncomplete, len(report.Errors))
 	}
 	return nil
+}
+
+// verificationLimitFlags holds the --verification-max-* flags. `adopt` and `paperclip harness`
+// both register them through registerVerificationLimitFlags, so the two commands accept the same
+// overrides under the same names and help text (issue #535).
+type verificationLimitFlags struct {
+	entries, files, depth *int
+}
+
+// registerVerificationLimitFlags adds the discovery bound flags to fs. Each defaults to 0, which
+// keeps adoption's default for that bound.
+func registerVerificationLimitFlags(fs *flag.FlagSet) verificationLimitFlags {
+	defaults := adopt.DefaultVerificationLimits()
+	return verificationLimitFlags{
+		entries: fs.Int(adopt.VerificationEntriesFlag, 0, fmt.Sprintf("Directory entries verification discovery and the editor language scan may walk (default %d, ceiling %d)", defaults.MaxEntries, adopt.VerificationEntriesCeiling)),
+		files:   fs.Int(adopt.VerificationFilesFlag, 0, fmt.Sprintf("Verification input files discovery may read (default %d, ceiling %d)", defaults.MaxFiles, adopt.VerificationFilesCeiling)),
+		depth:   fs.Int(adopt.VerificationDepthFlag, 0, fmt.Sprintf("Directory depth verification discovery may descend (default %d, ceiling %d)", defaults.MaxDepth, adopt.VerificationDepthCeiling)),
+	}
+}
+
+// limits returns the parsed flags as adoption limits, nil when none was raised.
+func (f verificationLimitFlags) limits() *adopt.VerificationLimits {
+	return verificationLimitsFromFlags(*f.entries, *f.files, *f.depth)
 }
 
 // verificationLimitsFromFlags returns nil when no discovery bound was raised so adoption

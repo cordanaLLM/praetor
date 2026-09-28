@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	maxVerificationEntries    = 4096
+	maxVerificationEntries    = util.DefaultDiscoveryEntries
 	maxVerificationInputs     = 128
 	maxVerificationInputBytes = 64 * 1024
 	maxVerificationTotalBytes = 2 * 1024 * 1024
@@ -63,7 +63,7 @@ func walkVerificationInputs(ctx context.Context, path string, result *verificati
 		}
 		count += len(entries)
 		if count > limits.MaxEntries {
-			return fmt.Errorf("verification discovery exceeds %d entries", limits.MaxEntries)
+			return entriesBound.exceeded(limits.MaxEntries, fmt.Errorf("verification discovery exceeds %d entries", limits.MaxEntries))
 		}
 		for _, entry := range entries {
 			rel := filepath.ToSlash(filepath.Join(queue[i], entry.Name()))
@@ -104,7 +104,7 @@ func visitVerificationInput(ctx context.Context, root, rel string, entry fs.DirE
 		return errors.New("verification discovery refuses filenames containing line breaks")
 	}
 	if strings.Count(rel, "/") > limits.MaxDepth {
-		return fmt.Errorf("verification discovery exceeds directory depth %d", limits.MaxDepth)
+		return depthBound.exceeded(limits.MaxDepth, fmt.Errorf("verification discovery exceeds directory depth %d", limits.MaxDepth))
 	}
 	if entry.IsDir() {
 		*queue = append(*queue, rel)
@@ -139,14 +139,14 @@ func (v *verificationInputs) capture(ctx context.Context, root, rel string, entr
 		}
 		v.pythonDirectories[filepath.ToSlash(filepath.Dir(rel))] = true
 		if len(v.pythonDirectories) > limits.MaxFiles {
-			return fmt.Errorf("verification discovery exceeds %d Python test directories", limits.MaxFiles)
+			return filesBound.exceeded(limits.MaxFiles, fmt.Errorf("verification discovery exceeds %d Python test directories", limits.MaxFiles))
 		}
 	}
 	if !verificationMarker(rel) {
 		return nil
 	}
 	if len(v.files) >= limits.MaxFiles {
-		return fmt.Errorf("verification discovery exceeds %d metadata files", limits.MaxFiles)
+		return filesBound.exceeded(limits.MaxFiles, fmt.Errorf("verification discovery exceeds %d metadata files", limits.MaxFiles))
 	}
 	data, err := contextopt.ReadSnapshot(ctx, filepath.Join(root, filepath.FromSlash(rel)))
 	if err != nil {

@@ -146,7 +146,7 @@ func TestAdoptHarnessesStateTheAuditFunctionLength(t *testing.T) {
 // paperclip harness` reads and compares it with the one adoption wrote.
 func assertCLIHarnessMatches(t *testing.T, repo string) {
 	t.Helper()
-	facts, warnings, err := RepositoryHISSFacts(t.Context(), repo)
+	facts, warnings, err := RepositoryHISSFacts(t.Context(), repo, nil)
 	if err != nil || len(warnings) != 0 {
 		t.Fatalf("RepositoryHISSFacts: %v %q", err, warnings)
 	}
