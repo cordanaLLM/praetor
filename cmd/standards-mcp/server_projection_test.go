@@ -60,8 +60,9 @@ func TestMCPVerifyFailsOnPersonaDrift(t *testing.T) {
 		"agent persona projection differs from its canonical source: .claude/agents/reviewer.md")
 }
 
-// Negative: MCP verify runs the persona and skill caveman lint the CLI runs. A persona or skill
-// that regressed to prose, with every projection in sync, fails with the file named.
+// Negative: MCP verify and write run the persona and skill caveman lint the CLI runs. A persona
+// or skill that regressed to prose, with every projection in sync, fails both with the file named;
+// the write still writes every projection first.
 func TestMCPVerifyLintsPersonasAndSkills(t *testing.T) {
 	prose := "\nSearch for an existing implementation before adding one. Grep the repository for the capability " +
 		"and extend the code that is already there. Two implementations of one behavior are a defect: they " +
@@ -76,7 +77,9 @@ func TestMCPVerifyLintsPersonasAndSkills(t *testing.T) {
 			writePluginFixture(t, root)
 			path := filepath.Join(root, rel)
 			writePathFixture(t, path, readPathFixture(t, path)+prose)
-			compileInPlace(t, srv)
+			written := callTool(t, srv, "standards_compile_context", nil)
+			expectError(t, "prose "+name+" write", written, "context written, but compile-context --verify will fail")
+			expectError(t, "prose "+name+" write label", written, rel)
 			expectError(t, "prose "+name, verifyInPlace(t, srv), "agent text fails the caveman lint")
 			expectError(t, "prose "+name+" label", verifyInPlace(t, srv), rel)
 		})

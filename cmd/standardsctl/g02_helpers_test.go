@@ -194,6 +194,9 @@ func newAuditFixture(t *testing.T) *auditFixture {
 	writeFixtureFile(t, dir, ".config/labels.yaml", "version: 1\nlabels: []\n")
 	writeDeclaredRuleset(t, dir, config.DefaultPolicy().BranchProtection)
 	writeFixtureFile(t, dir, ".paperclip/harness.json", fixtureHarnessJSON)
+	// The text register block sends agent evidence under .workingdir/; audit fails unless Git
+	// ignores it (compiler.CheckEvidenceIgnored).
+	writeFixtureFile(t, dir, ".gitignore", "/.workingdir/\n")
 	f.gitEnv = initGitFixture(t, dir)
 	hook := writeFixtureFile(t, dir, ".git/hooks/pre-commit", "#!/bin/sh\nexit 0\n")
 	if err := os.Chmod(hook, 0o700); err != nil {

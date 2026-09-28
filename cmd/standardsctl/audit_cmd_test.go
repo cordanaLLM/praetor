@@ -81,10 +81,15 @@ func auditGateFailureCases() []auditGateCase {
 		}, "Agent context text register"},
 		{"prose AGENTS.md", func(t *testing.T, f *auditFixture) {
 			writeFixtureFile(t, f.dir, "AGENTS.md", proseAgentsMD)
-			if out, err := runCompileContextCmd(t, f.dir); err != nil {
-				t.Fatalf("recompile prose fixture: %v\n%s", err, out)
-			}
+			// compile-context writes the targets, then fails on the lint the audit applies.
+			out, err := runCompileContextCmd(t, f.dir)
+			mustErrContain(t, err, "AGENTS.md fails the caveman lint")
+			mustContain(t, out, "[COMPILED] CLAUDE.md")
 		}, "AGENTS.md fails the caveman lint"},
+		{"evidence directory not ignored", func(t *testing.T, f *auditFixture) {
+			// The fixture enables no docs:* facet; the evidence check runs without one.
+			writeFixtureFile(t, f.dir, ".gitignore", ".workingdir/*\n!.workingdir/evidence/\n")
+		}, "Agent context evidence directory: git does not ignore .workingdir/evidence/"},
 		{"empty manifest identity", func(t *testing.T, f *auditFixture) {
 			writeFixtureFile(t, f.dir, ".standards.yaml", "version: 1\nprofiles:\n  - \"framework\"\nfacets:\n  - \"security:high\"\n")
 		}, "owner and name must not be empty"},

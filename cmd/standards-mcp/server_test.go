@@ -155,6 +155,7 @@ func newFixtureRepo(t *testing.T) string {
 		".config/labels.yaml":               "labels: []\n",
 		".github/rulesets/main.json":        fixtureRuleset(t),
 		"lefthook.yml":                      "pre-commit:\n  commands: {}\n",
+		".gitignore":                        "/.workingdir/\n",
 		"go.mod":                            "module fixture\n\ngo 1.27\n",
 		"main.go":                           fixtureMainGo,
 		"complex.go":                        fixtureComplexGo,
