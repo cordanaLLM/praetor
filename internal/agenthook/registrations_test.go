@@ -46,6 +46,28 @@ func TestRegistrationsPerClient(t *testing.T) {
 	}
 }
 
+// TestNativePreToolRowSelectsTheCommandTool: the pre-tool row of every client with a repository
+// hook file selects ^TOOL$ for the one tool its dialect routes to the command policy, the
+// matcher every client reads as that tool alone, so an adopter entry of that anchored form
+// is the registration adoption looks for (#502). AGY registers through its plugin and has no
+// such file.
+func TestNativePreToolRowSelectsTheCommandTool(t *testing.T) {
+	checked := 0
+	for _, row := range registrationTable {
+		if _, ok := NativeHookFile(row.Client); !ok || row.Event != EventPreTool {
+			continue
+		}
+		dialect, _ := DialectFor(row.Client)
+		if len(dialect.commandTools) != 1 || row.Matcher != "^"+dialect.commandTools[0]+"$" {
+			t.Errorf("%s pre-tool matcher %q, command tools %v", row.Client, row.Matcher, dialect.commandTools)
+		}
+		checked++
+	}
+	if checked != len(nativeHookFiles) {
+		t.Fatalf("checked %d pre-tool rows for %d hook files", checked, len(nativeHookFiles))
+	}
+}
+
 func TestRegistrationCommandIsOnePortableCall(t *testing.T) {
 	shape := regexp.MustCompile(`^praetorctl hook [a-z-]+ [a-z-]+$`)
 	for _, row := range registrationTable {

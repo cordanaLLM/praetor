@@ -41,9 +41,14 @@ type Hook struct {
 // write; it equals the input when Changed is false.
 type HookPlan struct {
 	Added   []string // the commands this plan registers
-	Present []string // the existing command lines that already serve a hook
-	Changed bool
-	Content []byte
+	Present []string // the existing command lines that already serve a hook, one per hook
+	// Duplicates are the further existing command lines, in file order, that serve a hook
+	// already present. Each is a redundant entry: a copy of the present command line runs again
+	// only on a client that does not merge identical handlers, a different command line runs the
+	// hook's evaluator a second time. The plan leaves them in place.
+	Duplicates []string
+	Changed    bool
+	Content    []byte
 }
 
 type hookHandler struct {
@@ -59,7 +64,8 @@ type hookGroup struct {
 
 // PlanHooks merges hooks into existing, the bytes of a client's hook file (empty when there is
 // none). A hook already served by a handler in a group of its event whose matcher covers the
-// hook's (coversMatcher) is reported as present and left alone. A missing file, hooks object,
+// hook's (coversMatcher) is reported as present and left alone; every further handler serving
+// it is reported as a duplicate and left alone too. A missing file, hooks object,
 // event list or matcher group is created; a handler is appended to the first group whose
 // matcher selects the same tools as the hook's (sameSelection). Every member the plan does not
 // touch keeps its place and its number literals; the document is re-indented and its string
@@ -76,7 +82,7 @@ func PlanHooks(ctx context.Context, existing []byte, hooks []Hook) (*HookPlan, e
 	if err != nil {
 		return nil, err
 	}
-	plan := &HookPlan{Added: []string{}, Present: []string{}, Content: bytes.Clone(existing)}
+	plan := &HookPlan{Added: []string{}, Present: []string{}, Duplicates: []string{}, Content: bytes.Clone(existing)}
 	for _, hook := range hooks {
 		if err := contextErr(ctx); err != nil {
 			return nil, err
@@ -91,14 +97,16 @@ func PlanHooks(ctx context.Context, existing []byte, hooks []Hook) (*HookPlan, e
 	return plan, encodePlan(plan, root, events)
 }
 
-// planHook registers hook in events unless a handler already serves it, and records which.
+// planHook registers hook in events unless a handler already serves it, and records which: the
+// first serving handler as present, any further one as a duplicate.
 func planHook(plan *HookPlan, events Object, hook Hook) (Object, error) {
 	groups, err := eventGroups(events, hook.Event)
 	if err != nil {
 		return nil, err
 	}
-	if line, ok := servingHandler(groups, hook); ok {
-		plan.Present = append(plan.Present, line)
+	if lines := servingHandlers(groups, hook); len(lines) > 0 {
+		plan.Present = append(plan.Present, lines[0])
+		plan.Duplicates = append(plan.Duplicates, lines[1:]...)
 		return events, nil
 	}
 	groups, err = appendHandler(groups, hook)
@@ -173,12 +181,13 @@ func eventGroups(events Object, event string) ([]jsontext.Value, error) {
 	return groups, nil
 }
 
-// servingHandler returns the command line of the first handler that already serves hook, in a
-// group of the event whose matcher covers hook's. A handler under a narrower or unrelated
-// matcher, such as an evaluator registered only for ^(Edit|Write)$, does not run for the tools
-// hook guards and serves nothing. An entry that is not an object is not a handler of any shape
-// the clients run, so it serves nothing either.
-func servingHandler(groups []jsontext.Value, hook Hook) (string, bool) {
+// servingHandlers returns, in file order, the command line of every handler that already serves
+// hook, in a group of the event whose matcher covers hook's. A handler under a narrower or
+// unrelated matcher, such as an evaluator registered only for ^(Edit|Write)$, does not run for
+// the tools hook guards and serves nothing. An entry that is not an object is not a handler of
+// any shape the clients run, so it serves nothing either.
+func servingHandlers(groups []jsontext.Value, hook Hook) []string {
+	var lines []string
 	for _, raw := range groups {
 		group, err := DecodeObject(raw)
 		if err != nil || !coversMatcher(group, hook) {
@@ -186,15 +195,12 @@ func servingHandler(groups []jsontext.Value, hook Hook) (string, bool) {
 		}
 		for _, handler := range groupHandlers(group) {
 			line := commandLine(handler)
-			if line == "" {
-				continue
-			}
-			if line == hook.Command || (hook.ServedBy != nil && hook.ServedBy(line)) {
-				return line, true
+			if line != "" && (line == hook.Command || (hook.ServedBy != nil && hook.ServedBy(line))) {
+				lines = append(lines, line)
 			}
 		}
 	}
-	return "", false
+	return lines
 }
 
 // matchAllMatchers select every tool of an event: an absent or empty matcher, the "*" wildcard,
@@ -202,8 +208,12 @@ func servingHandler(groups []jsontext.Value, hook Hook) (string, bool) {
 var matchAllMatchers = [...]string{"", "*", ".*"}
 
 // coversMatcher reports whether group runs for every tool hook selects: its matcher selects the
-// same tools as hook's (sameSelection) or selects every tool. A matcher that is present but not
-// a string covers nothing.
+// same tools as hook's (sameSelection), selects every tool, or is the bare NAME of a hook
+// matcher ^NAME$ with NAME literal (anchors). Every client runs a bare NAME group for the tool
+// NAME: a client with exact literal matchers for NAME alone, a client that tests every matcher
+// as an unanchored regular expression for NAME and every tool whose name contains it. The
+// reverse does not hold for the latter, so there a ^NAME$ group does not cover a bare NAME
+// hook. A matcher that is present but not a string covers nothing.
 func coversMatcher(group Object, hook Hook) bool {
 	raw, ok := group.Get("matcher")
 	if !ok {
@@ -213,7 +223,8 @@ func coversMatcher(group Object, hook Hook) bool {
 	if err := json.Unmarshal(raw, &matcher); err != nil {
 		return false
 	}
-	return sameSelection(matcher, hook.Matcher, hook.ExactLiteral) || slices.Contains(matchAllMatchers[:], matcher)
+	return sameSelection(matcher, hook.Matcher, hook.ExactLiteral) || anchors(hook.Matcher, matcher) ||
+		slices.Contains(matchAllMatchers[:], matcher)
 }
 
 // anchoredLiteral matches ^NAME$ where NAME is a nonempty run of ASCII letters, digits and _,

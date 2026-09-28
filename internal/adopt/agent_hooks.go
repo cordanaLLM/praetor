@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/agentcontext"
@@ -117,6 +118,7 @@ func reconcileClientHook(ctx context.Context, s *adoptSession, client string) er
 		return err
 	}
 	legacyHookBackupWarning(s, file.Path)
+	duplicateHookWarning(s, file.Path, target.plan)
 	switch {
 	case target.unmergeable != "":
 		s.report.recordSkipped(file.Path, target.unmergeable)
@@ -130,6 +132,36 @@ func reconcileClientHook(ctx context.Context, s *adoptSession, client string) er
 		recordHookRegistration(s, file.Path, target.exists, target.plan.Added, backup)
 	}
 	return nil
+}
+
+// duplicateHookWarning reports the handlers beyond the first that already serve a pre-tool hook
+// (clientjson.HookPlan.Duplicates), such as a run_shell_command entry beside a
+// ^run_shell_command$ one. An identical copy of the registered command line is redundant, and
+// whether it runs again is up to the client, since some run an identical handler only once. A
+// different command line, such as the skew guard beside the engine call, is a handler of its
+// own, so the client evaluates the policy again. Adoption never removes adopter entries, so it
+// only reports them.
+func duplicateHookWarning(s *adoptSession, rel string, plan *clientjson.HookPlan) {
+	if plan == nil || len(plan.Duplicates) == 0 {
+		return
+	}
+	var copies, others []string
+	for _, line := range plan.Duplicates {
+		if slices.Contains(plan.Present, line) {
+			copies = append(copies, line)
+		} else {
+			others = append(others, line)
+		}
+	}
+	notes := ""
+	if len(copies) > 0 {
+		notes += "; redundant identical copy: " + strings.Join(copies, "; ")
+	}
+	if len(others) > 0 {
+		notes += "; different command line that evaluates the policy again: " + strings.Join(others, "; ")
+	}
+	s.report.addWarning("%s: pre-tool interceptor registered more than once, first by %s%s; adoption leaves every entry in "+
+		"place, so remove the extra ones by hand", rel, strings.Join(plan.Present, "; "), notes)
 }
 
 // planHookTarget observes client's hook file through the confined read the root-pinned writers

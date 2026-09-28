@@ -128,7 +128,7 @@ described under [Rollout](#rollout-engine-skew-never-blocks-a-client).
 | `codex` | `stop` | `Stop` | none | 60 s | `praetorctl hook codex stop` |
 | `codex` | `pre-dispatch` | `PreToolUse` | `^spawn_agent$` | 15 s | `praetorctl hook codex pre-dispatch` |
 | `codex` | `post-return` | `SubagentStop` | none | 60 s | `praetorctl hook codex post-return` |
-| `gemini` | `pre-tool` | `BeforeTool` | `run_shell_command` | 15 s (written as ms) | `praetorctl hook gemini pre-tool` |
+| `gemini` | `pre-tool` | `BeforeTool` | `^run_shell_command$` | 15 s (written as ms) | `praetorctl hook gemini pre-tool` |
 | `gemini` | `pre-edit` | `BeforeTool` | `^(replace\|write_file)$` | 15 s (written as ms) | `praetorctl hook gemini pre-edit` |
 | `gemini` | `post-tool` | `AfterTool` | none | 60 s (written as ms) | `praetorctl hook gemini post-tool` |
 | `gemini` | `stop` | `AfterAgent` | none | 60 s (written as ms) | `praetorctl hook gemini stop` |
@@ -527,10 +527,28 @@ entry and a warning say so (`backupExisting` in `internal/adopt/replace.go`,
 writes `<file>.bak` beside the hook file; a copy an earlier release left there is reported as
 a warning and never removed. A handler that already runs the evaluator (the engine
 call, the skew guard `praetor_hook.py`, or one of the Python pre-tool adapters) counts as
-registered when its group's matcher selects the same tools as the row's or matches every tool
-(absent, `*`, `.*`), and the file stays byte for byte as it was (`Registration.ServedBy`). A
+registered when its group's matcher selects the same tools as the row's, matches every tool
+(absent, `*`, `.*`), or is the bare `NAME` of a `^NAME$` row, and the file stays byte for byte
+as it was (`Registration.ServedBy`, `coversMatcher` in `internal/clientjson/hooks.go`). A
 handler under another matcher, such as `^(Edit|Write)$`, `Bash.*` or `^Bash`, does not guard
-exactly the shell tool, so the row is still registered.
+exactly the shell tool, so the row is still registered. When more than one handler serves the
+row, the first in file order is reported as the registration and each further one in a
+warning, and adoption removes none of them (`duplicateHookWarning` in
+`internal/adopt/agent_hooks.go`, `TestPlanHooks_Boundary_DuplicateServingHandlers`,
+`TestReconcileAgentHooks_Boundary_BareAndAnchoredGeminiEntries`). The warning keeps two kinds
+apart:
+
+- A redundant identical copy repeats the registered command line, such as the engine call
+  under both `run_shell_command` and `^run_shell_command$`. Whether it runs a second time
+  depends on the client. Gemini CLI runs an identical command once (`deduplicateHooks` in
+  `packages/core/src/hooks/hookPlanner.ts`, keyed by name and command in `getHookKey`,
+  `packages/core/src/hooks/types.ts`, `v0.61.0`). The Claude Code
+  [hooks reference](https://code.claude.com/docs/en/hooks) says a handler defined in more
+  than one settings file runs once. Codex runs every copy
+  (`select_handlers_keeps_duplicate_stop_handlers` in `codex-rs/hooks/src/engine/dispatcher.rs`,
+  `rust-v0.145.0`).
+- A different command line that also runs the evaluator, such as the skew guard beside the
+  engine call, is a handler of its own on every client, so the policy is evaluated again.
 
 Matcher equivalence follows each client's own matcher reading (`HookFile.ExactLiteral` in
 `internal/agenthook/registrations.go`, `sameSelection` in `internal/clientjson/hooks.go`):
@@ -544,11 +562,21 @@ Matcher equivalence follows each client's own matcher reading (`HookFile.ExactLi
 So for Claude Code and Codex an adopter's `Bash` group that runs `block_evasion.py` serves
 the `^Bash$` row, and a `Bash` group without an evaluator takes the engine call instead of a
 second group. NAME must be a nonempty run of ASCII letters, digits and `_`: `Ba.h` and
-`^Ba.h$` stay apart, as do `^$` and the absent matcher. For Gemini CLI, a
-`^run_shell_command$` group does not serve the `run_shell_command` row, which is registered
-in its own group (`TestPlanHooks_Positive_LiteralAndAnchoredNameAreOneSelection`,
+`^Ba.h$` stay apart, as do `^$` and the absent matcher
+(`TestPlanHooks_Positive_LiteralAndAnchoredNameAreOneSelection`,
 `TestPlanHooks_Negative_OnlyTheAnchoredLiteralIsEquivalent`,
 `TestPlanHooks_Boundary_LiteralEquivalenceEdges`, `TestReconcileAgentHooks_LiteralMatcherPerClient`).
+
+Every client runs a bare `NAME` group for the tool `NAME`, so such a group serves a `^NAME$`
+row for all three clients (`TestPlanHooks_Positive_BareNameGroupCoversAnchoredHook`). For
+Gemini CLI the reverse does not hold, which is why its pre-tool row is `^run_shell_command$`:
+that is the one tool its dialect routes to the command policy (`commandTools` in
+`internal/agenthook/dialect.go`, `TestNativePreToolRowSelectsTheCommandTool`). An adopter's
+`^run_shell_command$` group that runs the engine call is the registration, and the bare
+`run_shell_command` group an earlier release wrote still serves the row, so neither gets a
+second entry (`TestReconcileAgentHooks_Positive_AnchoredEngineEntryPerClient`). A Gemini CLI
+group of the bare name that holds no evaluator selects more tools than the row, so the engine
+call gets its own `^run_shell_command$` group instead of joining it.
 
 Before the first step writes anything, adoption plans the registration of every selected
 client (`preflightAgentHooks`, called from `preflightAgentSurfaces` in
