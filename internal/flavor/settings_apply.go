@@ -48,9 +48,12 @@ const rulesetStep = "branch-ruleset"
 const maxSettings = 64
 
 // applySettings renders each required setting apply has a renderer for and records every
-// setting's outcome in report. A setting that fails is recorded under report.Errors and the
-// rest still run; only a cancelled context stops the walk.
+// setting's outcome in report, or does nothing under opts.TemplatesOnly. A setting that fails is
+// recorded under report.Errors and the rest still run; only a cancelled context stops the walk.
 func applySettings(ctx context.Context, repoPath string, settings []SettingItem, opts ApplyOptions, report *ApplyReport) error {
+	if opts.TemplatesOnly {
+		return nil
+	}
 	for i := 0; i < len(settings) && i < maxSettings; i++ {
 		if err := ctx.Err(); err != nil {
 			return err

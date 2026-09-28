@@ -120,11 +120,9 @@ func ApplyFlavorWith(ctx context.Context, repoPath string, targetFlavor string, 
 		applySingleTemplate(ctx, repoPath, tmpl, repoName, owner, opts.Force, report)
 	}
 
-	// 3. Render required settings
-	if !opts.TemplatesOnly {
-		if err := applySettings(ctx, repoPath, flv.RequiredSettings(), opts, report); err != nil {
-			return report, err
-		}
+	// 3. Render required settings (none under opts.TemplatesOnly)
+	if err := applySettings(ctx, repoPath, flv.RequiredSettings(), opts, report); err != nil {
+		return report, err
 	}
 
 	if len(report.Errors) > 0 {
