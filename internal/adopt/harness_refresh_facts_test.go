@@ -58,6 +58,11 @@ func TestAdoptRefreshesHarnessAfterFactsChange(t *testing.T) {
 		"Go gains Rust": {func(t *testing.T, repo string) {
 			mustWrite(t, filepath.Join(repo, "Cargo.toml"), cargoManifest)
 		}, rustInvariantClaim},
+		"Go gains C with cleanup-goto exception": {func(t *testing.T, repo string) {
+			mustWrite(t, filepath.Join(repo, "meson.build"), cMarkers["meson.build"])
+			mustWrite(t, filepath.Join(repo, "docs", "cleanup-goto.md"), cleanupGotoDocument)
+			appendManifest(t, repo, "hiss:\n  exceptions:\n    c_goto_cleanup: docs/cleanup-goto.md\n")
+		}, cleanupGotoClause},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

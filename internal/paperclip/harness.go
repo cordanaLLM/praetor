@@ -222,8 +222,8 @@ func matchPrior(harnessText string, current *Harness) (*Harness, error) {
 	if err != nil || harnessText == string(currentText) {
 		return nil, err
 	}
-	var onDisk Harness
-	if err := json.Unmarshal([]byte(harnessText), &onDisk); err != nil {
+	onDisk, decoded := decodedHarness(harnessText)
+	if !decoded {
 		return nil, nil
 	}
 	priors, err := priorHarnesses(current, statedFuncLOCs(current.Invariants, onDisk.Invariants))
@@ -231,6 +231,13 @@ func matchPrior(harnessText string, current *Harness) (*Harness, error) {
 		return nil, err
 	}
 	return renderedPrior(harnessText, &onDisk, priors)
+}
+
+// decodedHarness decodes text as a harness; decoded is false for text that is no harness JSON.
+func decodedHarness(text string) (Harness, bool) {
+	var harness Harness
+	decoded := json.Unmarshal([]byte(text), &harness) == nil
+	return harness, decoded
 }
 
 // renderedPrior returns the prior harnessText renders byte for byte. onDisk is harnessText
@@ -364,13 +371,15 @@ func currentReleaseHarnesses(platform string, limits []int) ([]Harness, error) {
 // (hisscatalog.AllExceptions) times each function-length statement of limitFacts.
 func releaseFacts(limits []int) []hisscatalog.Facts {
 	statements := limitFacts(limits)
-	exceptionSets := int(hisscatalog.AllExceptions) + 1
-	combinations := make([]hisscatalog.Facts, 0, (int(hisscatalog.AllLanguages)+1)*exceptionSets*len(statements))
-	for index := 0; index < cap(combinations); index++ {
-		facts := statements[index%len(statements)]
-		facts.Exceptions = hisscatalog.Exception(index / len(statements) % exceptionSets)
-		facts.Languages = hisscatalog.Language(index / (len(statements) * exceptionSets))
-		combinations = append(combinations, facts)
+	combinations := make([]hisscatalog.Facts, 0,
+		(int(hisscatalog.AllLanguages)+1)*(int(hisscatalog.AllExceptions)+1)*len(statements))
+	for languages := range hisscatalog.AllLanguages + 1 {
+		for exceptions := range hisscatalog.AllExceptions + 1 {
+			for _, facts := range statements {
+				facts.Languages, facts.Exceptions = languages, exceptions
+				combinations = append(combinations, facts)
+			}
+		}
 	}
 	return combinations
 }

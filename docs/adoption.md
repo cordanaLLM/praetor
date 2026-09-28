@@ -82,6 +82,28 @@ unset flag keeps the default. The flags apply to single-repository adoption; bat
 - **Profile.** The profile an existing `.standards.yaml` declares outranks `--profile`,
   which outranks file markers. A conflicting `--profile` is reported as ignored
   (`TestAdopt_DeclaredProfileGovernsAdoption`).
+- **Declared HISS exceptions.** A repository whose own standard allows a construct a HISS
+  directive bans declares that exception under `hiss.exceptions` in `.standards.yaml`, naming
+  the repository document that records it. The one exception is `c_goto_cleanup`: a C or C++
+  `goto` that jumps forward to the one cleanup label of its function.
+
+  ```yaml
+  hiss:
+    exceptions:
+      c_goto_cleanup: docs/adr/0003-cleanup-goto.md
+  ```
+
+  Adoption honours it only while that document exists. HISS-01 in the `AGENTS.md` and
+  Paperclip harnesses then states the exception in place of the C/C++ zero-`goto` clause,
+  keeps Go's own ban, and says the audit still reports every `goto`: the HISS-01 scan does not
+  read the declaration, so a new cleanup `goto` is still a finding the baseline ratchet counts.
+  A declaration whose document is missing keeps the ban and adds a report warning naming the
+  document (`TestAdoptHonoursDocumentedCleanupGotoException`); `praetorctl paperclip harness`
+  prints the same warning. The value must be a clean repository-relative path of at most 256
+  bytes, and an exception key praetor does not know fails the manifest
+  (`TestHISSExceptions_Negative_BadDeclarationsFail`). The section is repository-only: no
+  profile or fleet layer declares an exception, and the effective policy does not change with
+  it ([`internal/config/hiss_exceptions.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/config/hiss_exceptions.go)).
 - **Existing files.** An existing manifest must parse, or adoption fails and leaves it
   unchanged. Every other existing scaffold is compared with what adoption would write:
   a match is reported as verified, a difference as `differs from the scaffold` with a

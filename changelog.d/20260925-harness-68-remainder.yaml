@@ -1,0 +1,4 @@
+type: fixed
+title: A repository can declare its documented single-level C/C++ cleanup goto as hiss.exceptions.c_goto_cleanup in .standards.yaml, naming the document that records it, and the adopted AGENTS.md and Paperclip harnesses then state that exception in HISS-01 instead of the blanket zero-goto clause, keep Go's own ban, and say the audit still reports each goto; a declaration whose document is missing keeps the ban and warns. HISS-04 in both harnesses states the function length the repository's audit enforces, read from the policy the audit resolves, and says the audit ceiling caps the profile value when a pinned profile such as native-gpu-systems declares 75 but the audit enforces 60; the Paperclip harness no longer states the 60-line ceiling where the pinned profile enforces less
+issue: "#68"
+breaking: false

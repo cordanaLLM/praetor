@@ -96,19 +96,30 @@ func TestRepositoryLanguages(t *testing.T) {
 	}
 }
 
-// cleanupGotoRepo writes a C repository whose manifest declares the cleanup-goto exception at
-// docs/cleanup-goto.md, writing that document too when documented.
-func cleanupGotoRepo(t *testing.T, documented bool) string {
+// cleanupGotoManifest declares acme/widget on native-gpu-systems with the cleanup-goto exception
+// recorded in cleanupGotoDocument at docs/cleanup-goto.md.
+const (
+	cleanupGotoManifest = "version: 1\nrepository:\n  owner: acme\n  name: widget\nprofiles:\n  - native-gpu-systems\n" +
+		"hiss:\n  exceptions:\n    c_goto_cleanup: docs/cleanup-goto.md\n"
+	cleanupGotoDocument = "# Cleanup goto\n\nOne forward jump to the cleanup label.\n"
+)
+
+// cleanupGotoRepo writes markers and cleanupGotoManifest into repo, and cleanupGotoDocument too
+// when documented, and returns repo.
+func cleanupGotoRepo(t *testing.T, repo string, markers map[string]string, documented bool) string {
 	t.Helper()
-	repo := t.TempDir()
-	mustWrite(t, filepath.Join(repo, "meson.build"), "project('widget', 'c')\n")
-	mustWrite(t, filepath.Join(repo, manifestFile),
-		"version: 1\nrepository:\n  owner: acme\n  name: widget\nhiss:\n  exceptions:\n    c_goto_cleanup: docs/cleanup-goto.md\n")
+	for rel, body := range markers {
+		mustWrite(t, filepath.Join(repo, filepath.FromSlash(rel)), body)
+	}
+	mustWrite(t, filepath.Join(repo, manifestFile), cleanupGotoManifest)
 	if documented {
-		mustWrite(t, filepath.Join(repo, "docs", "cleanup-goto.md"), "# Cleanup goto\n\nOne forward jump to the cleanup label.\n")
+		mustWrite(t, filepath.Join(repo, "docs", "cleanup-goto.md"), cleanupGotoDocument)
 	}
 	return repo
 }
+
+// cMarkers mark a native C build.
+var cMarkers = map[string]string{"meson.build": "project('widget', 'c')\n"}
 
 // TestRepositoryHISSFactsReadsDeclaredExceptions: Positive: a C repository whose manifest names
 // an existing document for its cleanup-goto exception declares it. Negative: a declaration
@@ -116,16 +127,16 @@ func cleanupGotoRepo(t *testing.T, documented bool) string {
 // error, never an empty declaration. Boundary: a manifest without a lock states the audit
 // ceiling, as the audit cannot resolve its policy yet.
 func TestRepositoryHISSFactsReadsDeclaredExceptions(t *testing.T) {
-	facts, warnings, err := RepositoryHISSFacts(t.Context(), cleanupGotoRepo(t, true))
+	facts, warnings, err := RepositoryHISSFacts(t.Context(), cleanupGotoRepo(t, t.TempDir(), cMarkers, true))
 	want := hisscatalog.Facts{Languages: hisscatalog.LanguageC, CeilingFuncLOC: config.AuditMaxFuncLOC, Exceptions: hisscatalog.ExceptionCleanupGoto}
 	if err != nil || facts != want || len(warnings) != 0 {
 		t.Fatalf("documented exception: %+v, %q, %v; want %+v", facts, warnings, err, want)
 	}
-	facts, warnings, err = RepositoryHISSFacts(t.Context(), cleanupGotoRepo(t, false))
+	facts, warnings, err = RepositoryHISSFacts(t.Context(), cleanupGotoRepo(t, t.TempDir(), cMarkers, false))
 	if err != nil || facts.Exceptions != 0 || len(warnings) != 1 || !strings.Contains(warnings[0], "docs/cleanup-goto.md") {
 		t.Fatalf("undocumented exception: %+v, %q, %v; want no exception and one warning naming the document", facts, warnings, err)
 	}
-	broken := cleanupGotoRepo(t, true)
+	broken := cleanupGotoRepo(t, t.TempDir(), cMarkers, true)
 	mustWrite(t, filepath.Join(broken, manifestFile), "version: 1\nhiss:\n  exceptions:\n    unknown_exception: docs/x.md\n")
 	if _, _, err := RepositoryHISSFacts(t.Context(), broken); err == nil {
 		t.Fatal("malformed manifest read as no exception")
