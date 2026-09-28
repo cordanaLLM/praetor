@@ -37,13 +37,26 @@ const (
 // RequiredStatusContexts selects unconditional job names from repository workflows
 // with unfiltered pull_request triggers. It never substitutes Praetor's own gates.
 // Reads are bounded and reject symlink paths; incomplete inventories fail.
-func RequiredStatusContexts(ctx context.Context, repoPath string) (_ []string, err error) {
+func RequiredStatusContexts(ctx context.Context, repoPath string) ([]string, error) {
+	return RequiredStatusContextsPlanned(ctx, repoPath, nil)
+}
+
+// RequiredStatusContextsPlanned is RequiredStatusContexts over the workflows repoPath holds once
+// planned is applied: planned maps a repository-relative slash path to the content a caller
+// would write there, or to nil for a file it would remove (overlayWorkflowFiles). An entry that
+// is not a workflow document directly under .github/workflows is not read. A nil planned reads
+// the workflows on disk alone.
+func RequiredStatusContextsPlanned(ctx context.Context, repoPath string, planned map[string][]byte) (_ []string, err error) {
 	if ctx == nil {
 		return nil, errors.New("workflow context discovery requires a context")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	files, err := readWorkflowFiles(ctx, repoPath)
+	if err != nil {
+		return nil, err
+	}
+	files, err = overlayWorkflowFiles(files, planned)
 	if err != nil {
 		return nil, err
 	}
@@ -67,6 +80,62 @@ func RequiredStatusContexts(ctx context.Context, repoPath string) (_ []string, e
 type workflowFile struct {
 	Name string
 	Data []byte
+}
+
+// plannedWorkflowDir is the directory whose documents a planned write or removal replaces in a
+// workflow inventory, in the slash form planned paths use.
+const plannedWorkflowDir = ".github/workflows/"
+
+// overlayWorkflowFiles applies planned to files, the workflows on disk in name order: a planned
+// workflow document directly under .github/workflows replaces or adds the file of its name, and
+// a nil one removes it (applyPlannedWorkflows). Every other planned path is not a workflow and
+// is left out. The result is in name order, as readWorkflowFiles returns it, and holds at most
+// maxWorkflowFiles documents.
+func overlayWorkflowFiles(files []workflowFile, planned map[string][]byte) ([]workflowFile, error) {
+	if len(planned) == 0 {
+		return files, nil
+	}
+	byName := make(map[string][]byte, len(files)+len(planned))
+	for i := 0; i < len(files) && i < maxWorkflowFiles; i++ {
+		byName[files[i].Name] = files[i].Data
+	}
+	applyPlannedWorkflows(byName, planned)
+	if len(byName) > maxWorkflowFiles {
+		return nil, fmt.Errorf("workflow inventory exceeds %d entries", maxWorkflowFiles)
+	}
+	names := slices.Sorted(maps.Keys(byName))
+	overlaid := make([]workflowFile, 0, len(names))
+	for i := 0; i < len(names) && i < maxWorkflowFiles; i++ {
+		overlaid = append(overlaid, workflowFile{Name: names[i], Data: byName[names[i]]})
+	}
+	return overlaid, nil
+}
+
+// applyPlannedWorkflows writes each planned workflow document into byName under its file name,
+// or deletes that name for a nil one, in path order.
+func applyPlannedWorkflows(byName map[string][]byte, planned map[string][]byte) {
+	paths := slices.Sorted(maps.Keys(planned))
+	for i := 0; i < len(paths) && i < len(planned); i++ {
+		name, ok := plannedWorkflowName(paths[i])
+		if !ok {
+			continue
+		}
+		if data := planned[paths[i]]; data != nil {
+			byName[name] = data
+		} else {
+			delete(byName, name)
+		}
+	}
+}
+
+// plannedWorkflowName returns the file name of a planned path that is a workflow document
+// directly under .github/workflows, and false for any other path.
+func plannedWorkflowName(path string) (string, bool) {
+	name, ok := strings.CutPrefix(path, plannedWorkflowDir)
+	if !ok || strings.Contains(name, "/") || !isYAMLDocument(name) {
+		return "", false
+	}
+	return name, true
 }
 
 // readWorkflowFiles reads every workflow document under .github/workflows in name order.

@@ -253,6 +253,7 @@ func applyManagedFamilyRemovals(ctx context.Context, s *adoptSession, removals [
 				return fmt.Errorf("remove disabled %s asset %s: %w", removal.family.Kind, removal.rel, err)
 			}
 		}
+		s.planDryRunRemoval(removal.rel)
 		s.report.recordReconciledAs(removal.rel, actionRemove, fmt.Sprintf(
 			"Removed canonical %s asset because %s is disabled", removal.family.Kind, removal.family.Facet))
 	}

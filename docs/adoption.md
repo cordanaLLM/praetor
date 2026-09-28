@@ -28,15 +28,37 @@ praetorctl adopt --force --record-baseline --lock-source-root=/path/to/praetor
 | Action | Meaning | Printed |
 | :--- | :--- | :--- |
 | `create` | no ruleset yet; the run writes one | the rendered ruleset |
-| `update` | the ruleset differs and `--force` replaces it | unified diff from the file on disk to the rendering |
+| `update` | the run replaces the ruleset: an earlier Praetor rendering it refreshes, or any differing ruleset under `--force` | unified diff from the file on disk to the rendering |
 | `unchanged` | the ruleset already is the rendering, line endings aside | nothing more |
 | `keep` | the ruleset differs and stays, because `--force` was not passed | the diff `--force` would apply |
 
-The preview comes from the same rendering and the same keep-or-replace decision as the real run
-(`internal/adopt/preview_test.go`). Its status checks come from the workflows on disk. A dry run does
-not write the workflows the same adoption would scaffold, such as the flavor's CI or the
-documentation gate, so those checks are missing from the preview. The real run derives the checks
-again after it writes those workflows.
+The preview takes its action from the same keep-or-replace decision as the real run
+(`internal/adopt/preview_test.go`). Its status checks come from the workflows the run leaves
+before its `branch-ruleset` step, not only the ones on disk:
+
+- workflows the dry run records as written or removed, such as the documentation gate's;
+- the workflows of the flavor the run applies for the profile it records
+  (`flavor.PlannedWorkflows`), which a dry run does not apply.
+
+On a first adoption the preview is therefore the file the run writes, byte for byte
+(`TestAdoptDryRun_Positive_FirstAdoptionPreviewIsTheWrittenRuleset`).
+
+### Refreshing a ruleset Praetor rendered earlier
+
+The ruleset is rendered from the effective policy and the workflows present, so it goes stale when
+either changes: `flavor apply` before adoption renders it under the built-in policy, and a later
+adoption pins an archetype policy and adds the documentation gate. Adoption and `flavor apply`
+refresh a stale ruleset without `--force` when it is exactly a Praetor rendering, line endings
+aside (`forge.IsRepositoryRulesetRendering`, `TestAdopt_Positive_RefreshesTheRulesetFlavorApplyWrote`).
+
+- A ruleset Praetor never renders, such as another name, rule or indentation, or a final newline an
+  editor added, is kept and reported. Only `--force` replaces it
+  (`TestAdopt_Negative_EditedRenderingIsKept`).
+- An edit that changes only a value the renderer takes, such as the review count or a status check,
+  still reads as a rendering and is refreshed. The audit rejects such an edit anyway
+  ([branch protection audit](guides/adoption-verification.md#branch-protection-rulesets-and-adoption-decline)).
+  Declare branch protection in `.standards.yaml` `overrides`, or keep a hand-managed ruleset with
+  `adoption.decline: [branch-ruleset]`.
 
 ### Large repositories
 

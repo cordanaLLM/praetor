@@ -75,8 +75,14 @@ through `flavor apply` (`internal/flavor/settings_apply.go`):
 - Settings run after templates, so the ruleset requires the status checks of the workflows apply
   has just written.
 - A ruleset that already validates as the rendering (`forge.ValidateRepositoryRuleset`) is reported
-  `unchanged`. One that differs is `kept` and reported, and `--force` replaces it
-  (`TestApplyFlavor_Negative_EditedRulesetIsKeptWithoutForce`).
+  `unchanged`. One that is exactly a Praetor rendering under an earlier policy or earlier workflows
+  (`forge.IsRepositoryRulesetRendering`), such as the one adoption wrote before `flavor apply`
+  added a workflow, is `refreshed` without `--force`, in its own line-ending style
+  (`TestApplyFlavor_Positive_RefreshesAnEarlierPraetorRuleset`). Any other one that differs is
+  `kept` and reported, and `--force` replaces it
+  (`TestApplyFlavor_Negative_EditedRulesetIsKeptWithoutForce`,
+  `TestApplyFlavor_Negative_EditedRenderingIsNotRefreshed`). Adoption refreshes the same way
+  ([refreshing a ruleset](../adoption.md#refreshing-a-ruleset-praetor-rendered-earlier)).
 - `adoption.decline: [branch-ruleset]` in `.standards.yaml` stops `flavor apply` too. The decline is
   read through `adopt.RepositoryArtifactDeclined` (`TestFlavorApply_Negative_HonoursAdoptionDecline`).
 - A policy that does not resolve fails the ruleset alone. The templates are still applied.

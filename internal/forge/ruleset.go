@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -103,14 +104,16 @@ func RenderRepositoryRuleset(policy config.BranchProtectionPolicy, contexts []st
 const RepositoryRulesetPath = ".github/rulesets/main.json"
 
 // RenderRulesetForRepository renders the ruleset for the repository at repoPath under policy.
-// Its required status checks are the workflow jobs RequiredStatusContexts selects from the
-// workflows present now, so a caller that scaffolds workflows renders after writing them. The
-// contexts come back beside the ruleset for a caller that reports or validates against them.
+// Its required status checks are the workflow jobs RequiredStatusContextsPlanned selects from
+// the workflows present now with planned applied over them. A caller that writes its workflows
+// first passes nil; a dry run, which writes none, passes the ones its run would write or remove,
+// so it renders what that run writes. The contexts come back beside the ruleset for a caller
+// that reports or validates against them.
 //
 // Adoption's branch-ruleset step and flavor apply both write this rendering, so a repository
 // either one scaffolded carries the file sync and the audit validate (ValidateRepositoryRuleset).
-func RenderRulesetForRepository(ctx context.Context, repoPath string, policy config.BranchProtectionPolicy) ([]byte, []string, error) {
-	contexts, err := RequiredStatusContexts(ctx, repoPath)
+func RenderRulesetForRepository(ctx context.Context, repoPath string, policy config.BranchProtectionPolicy, planned map[string][]byte) ([]byte, []string, error) {
+	contexts, err := RequiredStatusContextsPlanned(ctx, repoPath, planned)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -119,6 +122,92 @@ func RenderRulesetForRepository(ctx context.Context, repoPath string, policy con
 		return nil, nil, fmt.Errorf("render %s: %w", RepositoryRulesetPath, err)
 	}
 	return data, contexts, nil
+}
+
+// renderedRuleset is the part of a RenderRepositoryRuleset rendering its inputs are read back
+// from (rulesetRenderingInputs).
+type renderedRuleset struct {
+	Rules []renderedRule `json:"rules"`
+}
+
+// renderedRule is one rule of a rendering, with the parameters a policy or the contexts set.
+type renderedRule struct {
+	Type       string `json:"type"`
+	Parameters struct {
+		ReviewCount          int  `json:"required_approving_review_count"`
+		DismissStale         bool `json:"dismiss_stale_reviews_on_push"`
+		CodeOwner            bool `json:"require_code_owner_review"`
+		RequiredStatusChecks []struct {
+			Context string `json:"context"`
+		} `json:"required_status_checks"`
+	} `json:"parameters"`
+}
+
+// IsRepositoryRulesetRendering reports whether data is, in one consistent line-ending style,
+// the exact text RenderRepositoryRuleset renders for some branch protection policy and status
+// contexts: the ones read back from data itself (rulesetRenderingInputs). That is a ruleset
+// Praetor rendered under an earlier policy or an earlier set of workflows, which adoption and
+// flavor apply refresh to the current rendering without --force, as they refresh the recorded
+// earlier texts of a fixed scaffold. The renderer is a function of its inputs, so its earlier
+// texts cannot be listed as digests.
+//
+// A ruleset an operator wrote, or edited in a way the renderer never produces (another name,
+// rule, key order or indentation, a final newline), is not one, and keeps the --force contract.
+// An edit that only changes a value the renderer takes, such as the review count or a status
+// check, reads as a rendering under other inputs and is refreshed: branch protection is declared
+// in .standards.yaml overrides, which the audit holds the file to, and adoption.decline:
+// [branch-ruleset] keeps a ruleset managed by hand.
+func IsRepositoryRulesetRendering(data []byte) bool {
+	policy, contexts, ok := rulesetRenderingInputs(data)
+	if !ok {
+		return false
+	}
+	rendered, err := RenderRepositoryRuleset(policy, contexts)
+	if err != nil {
+		return false
+	}
+	same, err := util.CanonicalTextEquivalent(data, rendered)
+	return err == nil && same
+}
+
+// rulesetRenderingInputs reads back the policy and status contexts a RenderRepositoryRuleset
+// rendering was rendered from: the linear history and signature rules, the pull request rule's
+// review parameters (a code owner review is the independent review mode with its count, none
+// the single-maintainer mode), and the required status checks in order. Whether data is that
+// rendering is decided by rendering them again (IsRepositoryRulesetRendering).
+func rulesetRenderingInputs(data []byte) (config.BranchProtectionPolicy, []string, bool) {
+	var doc renderedRuleset
+	if err := json.Unmarshal(data, &doc); err != nil || len(doc.Rules) > maxRulesetRules {
+		return config.BranchProtectionPolicy{}, nil, false
+	}
+	policy := config.BranchProtectionPolicy{ReviewMode: config.BranchReviewModeSingleMaintainer}
+	var contexts []string
+	for i := 0; i < len(doc.Rules) && i < maxRulesetRules; i++ {
+		contexts = readRenderedRule(doc.Rules[i], &policy, contexts)
+	}
+	return policy, contexts, true
+}
+
+// readRenderedRule folds one rule of a rendering into the policy it was rendered under, and
+// returns contexts with the rule's required status checks appended.
+func readRenderedRule(rule renderedRule, policy *config.BranchProtectionPolicy, contexts []string) []string {
+	switch rule.Type {
+	case "required_linear_history":
+		policy.EnforceLinearHistory = true
+	case "required_signatures":
+		policy.RequireSignedCommits = true
+	case "pull_request":
+		policy.DismissStaleReviews = rule.Parameters.DismissStale
+		if rule.Parameters.CodeOwner {
+			policy.ReviewMode, policy.RequiredApprovingReviewers = config.BranchReviewModeIndependent, rule.Parameters.ReviewCount
+		}
+	case "required_status_checks":
+		checks := rule.Parameters.RequiredStatusChecks
+		for i := 0; i < len(checks) && i < maxRulesetContexts; i++ {
+			contexts = append(contexts, checks[i].Context)
+		}
+	}
+	return contexts
 }
 
 // ErrRulesetDrift reports a committed ruleset whose content differs from the one the declared

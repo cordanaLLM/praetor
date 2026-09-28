@@ -138,6 +138,10 @@ type adoptSession struct {
 		resolved bool
 		limit    int
 	}
+	// dryRunWrites holds, in a dry run only, what each file the run would scaffold or remove
+	// comes to (planDryRunWrite, planDryRunRemoval), so a later step previews against the tree
+	// the run leaves rather than the one on disk.
+	dryRunWrites map[string][]byte
 }
 
 // adoptStep is one reconciliation step of the adoption chain.

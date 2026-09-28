@@ -38,18 +38,31 @@ func (s *adoptSession) scaffoldedWorkflows(ctx context.Context, docsGate bool) (
 	if docsGate {
 		files = append(files, flavor.PlannedTemplate{Path: DocumentationWorkflowFile, Content: DocumentationWorkflow()})
 	}
-	flavorDeclined, err := ArtifactDeclined(s.declined, "working-dir-and-flavor")
+	planned, err := s.plannedFlavorWorkflows(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("resolve adoption.decline for the harness: %w", err)
+		return nil, err
 	}
-	if !flavorDeclined {
-		planned, err := flavor.PlannedWorkflows(ctx, s.repoPath)
-		if err != nil {
-			return nil, fmt.Errorf("plan flavor workflows for the harness: %w", err)
-		}
-		files = append(files, planned...)
+	return workflowRuns(append(files, planned...))
+}
+
+// plannedFlavorWorkflows lists the workflows the flavor step leaves as the own rendering of the
+// flavor it applies, the one of the profile this adoption records (flavor.PlannedWorkflows under
+// s.arch, as applyDetectedFlavor resolves it), or none when adoption.decline names the step. The
+// harness names what they run from it, and a dry run derives the ruleset's status checks from
+// it, since a dry run does not apply the flavor.
+func (s *adoptSession) plannedFlavorWorkflows(ctx context.Context) ([]flavor.PlannedTemplate, error) {
+	declined, err := ArtifactDeclined(s.declined, "working-dir-and-flavor")
+	if err != nil {
+		return nil, fmt.Errorf("resolve adoption.decline for the flavor workflows: %w", err)
 	}
-	return workflowRuns(files)
+	if declined {
+		return nil, nil
+	}
+	planned, err := flavor.PlannedWorkflows(ctx, s.repoPath, s.arch)
+	if err != nil {
+		return nil, fmt.Errorf("plan flavor workflows: %w", err)
+	}
+	return planned, nil
 }
 
 // workflowRuns reads what each workflow body runs.

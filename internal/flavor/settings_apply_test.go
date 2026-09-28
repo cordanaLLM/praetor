@@ -185,3 +185,70 @@ func TestApplyFlavor_Boundary_TemplatesOnlyLeavesSettingsAlone(t *testing.T) {
 		t.Fatalf("a templates-only apply wrote the ruleset: %v", err)
 	}
 }
+
+// writeEarlierRendering writes the ruleset Praetor rendered under policy and contexts, the file
+// an earlier adoption or apply left before the policy or the workflows changed.
+func writeEarlierRendering(t *testing.T, dir string, policy config.BranchProtectionPolicy, contexts []string, crlf bool) string {
+	t.Helper()
+	data, err := forge.RenderRepositoryRuleset(policy, contexts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if crlf {
+		text = strings.ReplaceAll(text, "\n", "\r\n")
+	}
+	if err := os.MkdirAll(filepath.Dir(rulesetPath(dir)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWriteFile(t, rulesetPath(dir), text)
+	return text
+}
+
+// A ruleset Praetor rendered under an earlier policy or before a workflow existed, and nobody
+// edited, is refreshed to the current rendering without --force, in its own line-ending style:
+// the ruleset adoption wrote before `flavor apply --flavor=<name>` scaffolds that flavor's CI.
+func TestApplyFlavor_Positive_RefreshesAnEarlierPraetorRuleset(t *testing.T) {
+	signed := config.DefaultPolicy().BranchProtection
+	signed.RequireSignedCommits = true
+	for name, crlf := range map[string]bool{"LF": false, "CRLF": true} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeEarlierRendering(t, dir, signed, []string{"Documentation Governance"}, crlf)
+			report, err := flavor.ApplyFlavor(t.Context(), dir, "go-service", false)
+			if err != nil {
+				t.Fatalf("apply: %+v, %v", report, err)
+			}
+			if got := settingOutcome(t, report, forge.RepositoryRulesetPath); got.Action != flavor.SettingRefreshed {
+				t.Fatalf("an earlier Praetor ruleset must be refreshed, got %+v", got)
+			}
+			assertRenderedRuleset(t, dir, config.DefaultPolicy().BranchProtection)
+			data, err := os.ReadFile(rulesetPath(dir))
+			if err != nil {
+				t.Fatal(err)
+			}
+			allCRLF := strings.Count(string(data), "\r\n") == strings.Count(string(data), "\n")
+			if allCRLF != crlf {
+				t.Fatalf("the refresh did not keep the file's line endings (crlf=%v):\n%q", crlf, data)
+			}
+		})
+	}
+}
+
+// A Praetor rendering someone edited, here only by saving it with a final newline, is no longer
+// one: it keeps the --force contract of any adopter-edited ruleset.
+func TestApplyFlavor_Negative_EditedRenderingIsNotRefreshed(t *testing.T) {
+	dir := t.TempDir()
+	edited := writeEarlierRendering(t, dir, config.DefaultPolicy().BranchProtection, nil, false) + "\n"
+	mustWriteFile(t, rulesetPath(dir), edited)
+	report, err := flavor.ApplyFlavor(t.Context(), dir, "go-service", false)
+	if err != nil {
+		t.Fatalf("apply: %+v, %v", report, err)
+	}
+	if got := settingOutcome(t, report, forge.RepositoryRulesetPath); got.Action != flavor.SettingKept {
+		t.Fatalf("an edited rendering must be kept, got %+v", got)
+	}
+	if data, err := os.ReadFile(rulesetPath(dir)); err != nil || string(data) != edited {
+		t.Fatalf("the edited rendering was changed without --force: %q, %v", data, err)
+	}
+}

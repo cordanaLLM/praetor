@@ -35,34 +35,46 @@ func adoptionBranchPolicy(ctx context.Context, s *adoptSession) (config.BranchPr
 }
 
 // reconcileBranchRuleset writes the ruleset forge.RenderRulesetForRepository renders under the
-// adoption's branch protection policy, the rendering flavor apply writes too. A dry run writes
-// nothing and previews the file instead (AdoptReport.Previews): the create, update, unchanged or
-// keep it would come to, with the rendered ruleset or the diff from the one on disk.
+// adoption's branch protection policy, the rendering flavor apply writes too. A ruleset Praetor
+// rendered under an earlier policy or earlier workflows and nobody edited
+// (forge.IsRepositoryRulesetRendering), such as the one flavor apply wrote before adoption, is
+// refreshed without --force; any other one that differs is kept unless --force is passed.
+//
+// A dry run writes nothing and previews the file instead (AdoptReport.Previews): the create,
+// update, unchanged or keep it would come to, with the rendered ruleset or the diff from the one
+// on disk. It renders over the workflows the run would have written by now (previewWorkflows),
+// so it previews the checks the run requires.
 func reconcileBranchRuleset(ctx context.Context, s *adoptSession) error {
 	policy, err := adoptionBranchPolicy(ctx, s)
 	if err != nil {
 		return err
 	}
-	content, contexts, err := forge.RenderRulesetForRepository(ctx, s.repoPath, policy)
+	planned, err := s.previewWorkflows(ctx)
 	if err != nil {
 		return err
 	}
+	content, contexts, err := forge.RenderRulesetForRepository(ctx, s.repoPath, policy, planned)
+	if err != nil {
+		return err
+	}
+	checks := len(contexts)
 	return s.scaffoldPreviewed(ctx, scaffold{
-		rel:      rulesetFile,
-		perm:     filePerm,
-		content:  content,
-		force:    true,
-		created:  fmt.Sprintf("Scaffolded declarative branch protection ruleset (%d required status checks derived from workflows)", len(contexts)),
-		verified: "Existing branch protection ruleset verified present",
-	}, rulesetPreviewNote(len(contexts)))
+		rel:       rulesetFile,
+		perm:      filePerm,
+		content:   content,
+		force:     true,
+		created:   fmt.Sprintf("Scaffolded declarative branch protection ruleset (%d required status checks derived from workflows)", checks),
+		verified:  "Existing branch protection ruleset verified present",
+		earlier:   forge.IsRepositoryRulesetRendering,
+		refreshed: fmt.Sprintf("Refreshed the unedited earlier Praetor branch protection ruleset to the current policy and workflows (%d required status checks)", checks),
+	}, rulesetPreviewNote(checks))
 }
 
-// rulesetPreviewNote says where a previewed ruleset's status checks come from. A dry run writes
-// no workflow, so a workflow this adoption would scaffold (the flavor's CI, the documentation
-// gate) is not yet among them: the run that writes it derives the checks again.
+// rulesetPreviewNote says where a previewed ruleset's status checks come from: the workflows on
+// disk with the ones the run writes or removes before its branch-ruleset step applied over them.
 func rulesetPreviewNote(contexts int) string {
-	return fmt.Sprintf("%d required status checks derived from the workflows on disk; "+
-		"workflows this adoption would scaffold are not counted until they are written", contexts)
+	return fmt.Sprintf("%d required status checks derived from the workflows on disk "+
+		"and those this adoption writes or removes before the ruleset step", contexts)
 }
 
 // priorLabelTaxonomyDigests are the digests (priorRendering) of every label taxonomy adoption

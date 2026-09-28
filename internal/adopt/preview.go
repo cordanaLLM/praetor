@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"maps"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -32,8 +33,8 @@ const (
 
 // FilePreview is what a dry run shows for one file adoption renders from repository state, so
 // an operator reads the file before a real run writes it. Only the branch protection ruleset is
-// previewed: its content follows from the effective policy and the workflows present, not from a
-// fixed template.
+// previewed: its content follows from the effective policy and the workflows the run leaves, not
+// from a fixed template.
 type FilePreview struct {
 	Path   string        `json:"path"`
 	Action PreviewAction `json:"action"`
@@ -48,8 +49,9 @@ type FilePreview struct {
 
 // scaffoldPreviewed is scaffoldFile for a file a dry run previews. A real run scaffolds sc. A
 // dry run, which writes nothing, also records in AdoptReport.Previews what sc.rel would come to.
-// The action is read off the state scaffoldFile returns, so the preview and the run it previews
-// cannot decide differently.
+// The action is read off the state scaffoldFile returns for sc, so for the same sc the preview
+// and the run decide alike. The caller renders sc.content from the tree the run leaves at that
+// step (previewWorkflows for the ruleset), not from the disk a dry run left unwritten.
 func (s *adoptSession) scaffoldPreviewed(ctx context.Context, sc scaffold, note string) error {
 	if !s.opts.DryRun {
 		_, err := s.scaffoldFile(ctx, sc)
@@ -101,4 +103,54 @@ func filePreview(sc scaffold, state scaffoldState, before []byte, readable, exis
 		preview.Diff = util.UnifiedDiff(sc.rel, before, sc.content)
 	}
 	return preview
+}
+
+// planDryRunWrite records, in a dry run, that rel would hold content once the run it previews
+// has written it; a real run records nothing. The scaffold writes (scaffoldFile) and the earlier
+// text refresh (replacePriorText) call it, which covers every workflow adoption writes itself.
+func (s *adoptSession) planDryRunWrite(rel string, content []byte) {
+	if !s.opts.DryRun {
+		return
+	}
+	if s.dryRunWrites == nil {
+		s.dryRunWrites = make(map[string][]byte)
+	}
+	s.dryRunWrites[rel] = append([]byte{}, content...)
+}
+
+// planDryRunRemoval records, in a dry run, that the run it previews would remove rel, as the
+// documentation gate removes its canonical files once the facet is disabled.
+func (s *adoptSession) planDryRunRemoval(rel string) {
+	if !s.opts.DryRun {
+		return
+	}
+	if s.dryRunWrites == nil {
+		s.dryRunWrites = make(map[string][]byte)
+	}
+	s.dryRunWrites[rel] = nil
+}
+
+// previewWorkflows is, in a dry run, what the run it previews writes before its branch-ruleset
+// step, for forge.RenderRulesetForRepository to read over the disk: the writes and removals the
+// dry run recorded (planDryRunWrite, planDryRunRemoval), the documentation gate's among them,
+// and the detected flavor's workflows (plannedFlavorWorkflows), which a dry run does not apply,
+// at every path no step recorded. A real run has written all of them by then and gets nil.
+func (s *adoptSession) previewWorkflows(ctx context.Context) (map[string][]byte, error) {
+	if !s.opts.DryRun {
+		return nil, nil
+	}
+	flavorWorkflows, err := s.plannedFlavorWorkflows(ctx)
+	if err != nil {
+		return nil, err
+	}
+	planned := maps.Clone(s.dryRunWrites)
+	if planned == nil {
+		planned = make(map[string][]byte, len(flavorWorkflows))
+	}
+	for i := 0; i < len(flavorWorkflows) && i < maxScaffoldedWorkflows; i++ {
+		if _, recorded := planned[flavorWorkflows[i].Path]; !recorded {
+			planned[flavorWorkflows[i].Path] = []byte(flavorWorkflows[i].Content)
+		}
+	}
+	return planned, nil
 }
