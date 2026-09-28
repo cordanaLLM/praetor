@@ -91,7 +91,7 @@ func TestSynthesizeHarness_Boundary_UnknownLanguagesLabelEveryClause(t *testing.
 // with the note that it caps the profile value (#68).
 func TestSynthesizeHarness_Positive_ExceptionAndLimitFollowFacts(t *testing.T) {
 	declared := invariantsForFacts(t, hisscatalog.Facts{Languages: hisscatalog.LanguageC, Exceptions: hisscatalog.ExceptionCleanupGoto, MaxFuncLOC: 50})
-	for _, want := range []string{"C/C++: `goto` only single-level forward jump to function cleanup label (declared exception); audit still reports each `goto`",
+	for _, want := range []string{"C/C++: `goto` only single-level forward jump to function cleanup label (declared exception); HISS-01 audit ignores exception: each new `goto` still fails gate",
 		"; func LOC <= 50\n"} {
 		if !strings.Contains(declared, want) {
 			t.Errorf("invariants lack %q:\n%s", want, declared)

@@ -95,8 +95,9 @@ unset flag keeps the default. The flags apply to single-repository adoption; bat
 
   Adoption honours it only while that document exists. HISS-01 in the `AGENTS.md` and
   Paperclip harnesses then states the exception in place of the C/C++ zero-`goto` clause,
-  keeps Go's own ban, and says the audit still reports every `goto`: the HISS-01 scan does not
-  read the declaration, so a new cleanup `goto` is still a finding the baseline ratchet counts.
+  keeps Go's own ban, and says the HISS-01 audit ignores the exception, so each new `goto` still
+  fails the gate: the HISS-01 scan (`internal/hiss/rules.go`, `scanNativeLineInvariants`) does
+  not read the declaration, and a new cleanup `goto` is a finding the baseline ratchet counts.
   A declaration whose document is missing keeps the ban and adds a report warning naming the
   document (`TestAdoptHonoursDocumentedCleanupGotoException`); `praetorctl paperclip harness`
   prints the same warning. The value must be a clean repository-relative path of at most 256

@@ -16,7 +16,7 @@ import (
 )
 
 // cleanupGotoClause is HISS-01's exception clause for a C repository declaring it.
-const cleanupGotoClause = "C/C++: `goto` only single-level forward jump to function cleanup label (declared exception); audit still reports each `goto`"
+const cleanupGotoClause = "C/C++: `goto` only single-level forward jump to function cleanup label (declared exception); HISS-01 audit ignores exception: each new `goto` still fails gate"
 
 // adoptedRules returns the Rule cell of id in the AGENTS.md harness of repo and the Paperclip
 // invariant of id adoption wrote there, without its "id: " prefix.

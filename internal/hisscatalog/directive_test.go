@@ -123,11 +123,12 @@ func TestAllLanguages(t *testing.T) {
 }
 
 // cleanupGoto is HISS-01's exception clause as a C repository declaring it reads it.
-const cleanupGoto = "C/C++: `goto` only single-level forward jump to function cleanup label (declared exception); audit still reports each `goto`"
+const cleanupGoto = "C/C++: `goto` only single-level forward jump to function cleanup label (declared exception); HISS-01 audit ignores exception: each new `goto` still fails gate"
 
 // TestAdoptedDirective_Positive_DeclaredExceptionReplacesTheBan: a C repository that declares
 // its single-level cleanup `goto` reads that exception, not the blanket zero-`goto` ban, and is
-// told the audit still reports each `goto`; one that declares nothing keeps the ban (#68).
+// told the HISS-01 audit ignores the exception, so each new `goto` still fails the gate; one
+// that declares nothing keeps the ban (#68).
 func TestAdoptedDirective_Positive_DeclaredExceptionReplacesTheBan(t *testing.T) {
 	declared := directiveOf(t, "HISS-01", Facts{Languages: LanguageC, Exceptions: ExceptionCleanupGoto})
 	if want := "recursion prohibited; call graph = DAG; " + cleanupGoto; declared != want {

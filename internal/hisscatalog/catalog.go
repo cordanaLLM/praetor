@@ -60,7 +60,7 @@ var catalog = []Rule{
 			{Text: "recursion prohibited; call graph = DAG"},
 			{Languages: LanguageGo | LanguageC, Text: "zero `goto`", Waiver: ExceptionCleanupGoto},
 			{Languages: LanguageC, Exception: ExceptionCleanupGoto,
-				Text: "`goto` only single-level forward jump to function cleanup label (declared exception); audit still reports each `goto`"},
+				Text: "`goto` only single-level forward jump to function cleanup label (declared exception); HISS-01 audit ignores exception: each new `goto` still fails gate"},
 		},
 		Adoption: auditCheck(scannedLanguages, "Go `goto`, recursion + plain-function call cycles; Rust, Python direct recursion; C `goto`"),
 	},
