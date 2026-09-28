@@ -1,0 +1,26 @@
+---
+title: Figures
+description: Draw an interactive figure of your code from a spec, with a static SVG for readers without JavaScript.
+---
+
+A figure is a spec under `docs/figures/`. The figure engine in `tools/figures/` renders it into
+an animated SVG, a static SVG and a JSON file under `docs/assets/figures/`. A `figure` code block
+that holds the slug places the figure on a page:
+
+```figure
+site-build
+```
+
+The player adds scenario tabs, narration, pause and speed control on top of the SVG. Without
+JavaScript, and under reduced motion, the page shows the SVG, its caption and the text
+description below it.
+
+After you edit a spec, render the figures again and commit the spec with its three outputs:
+
+```bash
+node tools/figures/build.mjs build
+node tools/figures/build.mjs check
+node tools/figures/build.mjs sources --config astro.config.mjs --docs src/content/docs
+```
+
+`tools/figures/README.md` describes the spec format and every check.

@@ -270,6 +270,11 @@ export default defineConfig({
 
 `tools/figures/astro.test.mjs` covers the plugin, the hooks and `serve.mjs`.
 
+The Starlight preset, `docs/presets/starlight/`, wires both lines and ships an example figure,
+`docs/presets/starlight/docs/figures/site-build.ts`, on an `.mdx` page. The CI `docs-presets` job builds it in an adopter
+fixture and runs the checks below on each of its three builds
+([preset README](../presets/starlight/README.md#figures)).
+
 Check a Starlight build with its configuration, its docs collection and the base it was built for;
 serve it to the smoke test under the same base:
 

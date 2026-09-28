@@ -1,0 +1,3 @@
+type: added
+title: The Starlight preset draws interactive figures; its astro.config.mjs adds the figures integration from tools/figures/astro.mjs and lists tools/figures/figures.css in customCss, so the preset belongs in the root of a repository adopted with docs:seo-portal and its lock stays unchanged, it ships a neutral example figure on an MDX page whose evidence points into the preset's own files, and the docs-presets CI job builds it in an adopter fixture (praetorctl adopt, the figure build, check and sources, three site builds, each followed by the Node site check and the Chromium smoke test under its base) instead of in place
+breaking: false

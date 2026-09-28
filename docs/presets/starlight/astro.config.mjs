@@ -1,6 +1,10 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import sitemap from '@astrojs/sitemap';
+// Interactive figures (tools/figures/README.md). `praetorctl adopt` writes tools/figures/ into the
+// repository root with the docs:seo-portal facet, and this preset sits in that root beside it. The
+// integration imports only Node built-ins and the figure engine, so it adds no npm package.
+import figures from './tools/figures/astro.mjs';
 
 // Operator configuration, not a shipped value: the URL the built site is served from. Set
 // DOCS_SITE_URL at build time (for example https://<owner>.github.io/<repo>/). Unset or empty,
@@ -69,6 +73,8 @@ export default defineConfig({
       social: sourceCode.repository ? { github: sourceCode.repository } : {},
       customCss: [
         './src/styles/custom.css',
+        // Figure colours from Starlight's theme variables, for the light and the dark scheme.
+        './tools/figures/figures.css',
       ],
       components: {
         // Wraps Starlight's default Head and adds a per-page TechArticle JSON-LD block.
@@ -96,6 +102,9 @@ export default defineConfig({
       ],
     }),
     sitemap(),
+    // Renders each ```figure code block in .md and .mdx pages, loads the player on every page, and
+    // publishes the figure and player files under the site's base.
+    figures(),
   ],
   build: {
     inlineStylesheets: 'auto',
