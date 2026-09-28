@@ -41,14 +41,16 @@ TOPOLOGY_PATTERNS = [
     r"(?i)(standardsctl|praetorctl)\s+(adopt|conform|bootstrap|needs\s+(scan|report|migrate|epic))\b.*\bdev/?(\s|$)",
 ]
 
+# Every refusal below is agenthook's wording (internal/agenthook/policy.go), character for
+# character: TestParityRefusalTextWithThePythonGuard compares this guard's full stderr with
+# the engine's for each case, so the two cannot drift apart.
 def scannable(command_str: str) -> bool:
     if len(command_str) <= MAX_SCAN_CHARS:
         if max(len(line) for line in command_str.split("\n")) <= MAX_SCAN_LINE_CHARS:
             return True
     sys.stderr.write(
-        f"\n[BLOCKED BY HISS] Command exceeds scan bound: at most {MAX_SCAN_CHARS} characters, "
-        f"{MAX_SCAN_LINE_CHARS} per line.\n"
-        f"Split command, or write long content to file first.\n\n"
+        f"[BLOCKED BY HISS] command exceeds scan bound: at most {MAX_SCAN_CHARS} characters, "
+        f"{MAX_SCAN_LINE_CHARS} per line; split command or write long content to file first\n"
     )
     return False
 
@@ -59,19 +61,16 @@ def audit_command(command_str: str) -> bool:
     for pattern in BLOCKED_PATTERNS:
         if re.search(pattern, command_str):
             sys.stderr.write(
-                f"\n[BLOCKED BY HISS] verification evasion detected.\n"
-                f"pattern: '{pattern}'; policy: prohibited in governed repositories.\n"
-                f"required: commits, pushes, and tool invocations pass verification gates cleanly.\n\n"
+                f"[BLOCKED BY HISS] verification evasion prohibited; commits, pushes and tool "
+                f"calls pass verification gates; pattern: {pattern}\n"
             )
             return False
 
     for pattern in TOPOLOGY_PATTERNS:
         if re.search(pattern, command_str):
             sys.stderr.write(
-                f"\n[BLOCKED BY DEV-01] adoption/needs target rejects workstation dev root.\n"
-                f"pattern: '{pattern}'; target: dev root.\n"
-                f"required: repositories live inside organization folders as leaf Git repositories.\n"
-                f"prohibited: workstation dev root adoption.\n\n"
+                f"[BLOCKED BY DEV-01] adoption or needs target: workstation dev root; repositories "
+                f"live inside organization folders as leaf Git repositories; pattern: {pattern}\n"
             )
             return False
 

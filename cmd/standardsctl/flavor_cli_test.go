@@ -63,3 +63,62 @@ func TestFlavorApply_Boundary_ReportsTemplatesWithAnUnmetRequirement(t *testing.
 		t.Fatalf("the CI job was reported created:\n%s", out)
 	}
 }
+
+// imageForgeFixture writes an os-image repository whose settings conform, plus one YAML
+// mapping under each given yamllint configuration name.
+func imageForgeFixture(t *testing.T, yamllintNames ...string) string {
+	t.Helper()
+	dir := t.TempDir()
+	writeFixtureFile(t, dir, "mkosi.conf", "[Output]\nFormat=disk\n")
+	writeFixtureFile(t, dir, "lefthook.yml", "pre-commit:\n  jobs: []\n")
+	writeFixtureFile(t, dir, ".github/rulesets/main.json", `{"name": "main"}`)
+	for _, name := range yamllintNames {
+		writeFixtureFile(t, dir, name, "extends: default\n")
+	}
+	return dir
+}
+
+// Positive (#505): with two yamllint configurations present the audit passes and names the
+// one yamllint reads and the one it ignores.
+func TestFlavorAudit_Positive_NamesTheYamllintConfigInUse(t *testing.T) {
+	dir := imageForgeFixture(t, ".yamllint.yaml", ".yamllint.yml")
+	out, err := captureStdout(t, func() error {
+		return dispatchCommand("flavor", []string{"audit", dir, "--flavor=os-image"})
+	})
+	if err != nil {
+		t.Fatalf("flavor audit: %v\n%s", err, out)
+	}
+	mustContain(t, out, "Templates:   1/1 present",
+		"Shadowed Templates (advisory):\n  - yamllint reads .yamllint.yaml; ignored: .yamllint.yml")
+}
+
+// Negative: one configuration shadows nothing, so no such block is printed.
+func TestFlavorAudit_Negative_NoShadowBlockForOneYamllintConfig(t *testing.T) {
+	dir := imageForgeFixture(t, ".yamllint.yaml")
+	out, err := captureStdout(t, func() error {
+		return dispatchCommand("flavor", []string{"audit", dir, "--flavor=os-image"})
+	})
+	if err != nil || strings.Contains(out, "Shadowed Templates") {
+		t.Fatalf("flavor audit: %v\n%s", err, out)
+	}
+}
+
+// Boundary: apply names the configuration it kept instead of writing a rival yamllint would
+// ignore, and inspect lists every name in yamllint's order.
+func TestFlavorApply_Boundary_ReportsTheYamllintConfigItKept(t *testing.T) {
+	dir := imageForgeFixture(t, ".yamllint")
+	out, err := captureStdout(t, func() error {
+		return dispatchCommand("flavor", []string{"apply", dir, "--flavor=os-image"})
+	})
+	if err != nil {
+		t.Fatalf("flavor apply: %v\n%s", err, out)
+	}
+	mustContain(t, out, "Created Templates (0)", "Kept Existing Config (1):\n    - .yamllint (.yamllint.yml not written)")
+	inspect, err := captureStdout(t, func() error {
+		return dispatchCommand("flavor", []string{"inspect", "os-image"})
+	})
+	if err != nil {
+		t.Fatalf("flavor inspect: %v\n%s", err, inspect)
+	}
+	mustContain(t, inspect, "yamllint reads the first of: .yamllint, .yamllint.yaml, .yamllint.yml")
+}

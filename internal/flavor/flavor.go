@@ -57,11 +57,38 @@ type TemplateItem struct {
 	// contradictory config that the toolchain then ignores.
 	AltPaths []string `json:"alt_paths,omitempty"`
 
+	// Search declares a configuration its tool finds by looking for several file names in a
+	// fixed order and reading the first one present. Every name satisfies the template the
+	// way an AltPath does, except that only the first name present is the configuration:
+	// that file alone is validated, a later one is never read, and the audit reports a
+	// shadowed file in FlavorAuditReport.ShadowedTemplates. Path must be one of the names; it
+	// is the one flavor apply scaffolds when the repository carries none of them. A template
+	// declares Search or AltPaths, not both.
+	Search *ConfigSearch `json:"search,omitempty"`
+
 	// Validator decides whether a file at Path or an AltPath satisfies the template, the
 	// way SettingItem.Validator does for settings. A template with no validator is
 	// satisfied by a regular file alone. Presence used to be the whole check, so the
 	// comment-only placeholder the scaffolder wrote scored the template compliant.
 	Validator func(content []byte) bool `json:"-"`
+}
+
+// ConfigSearch is the list of file names a tool looks for, in the order it looks, reading the
+// first one present and ignoring the rest (TemplateItem.Search).
+type ConfigSearch struct {
+	// Tool names the program that searches, as reports name it.
+	Tool string `json:"tool"`
+	// Names lists every name the tool looks for, the one it reads first at the front.
+	Names []string `json:"names"`
+}
+
+// names returns every name t is accepted under, in lookup order: the tool's search order
+// where t declares one, otherwise Path and then its AltPaths.
+func (t TemplateItem) names() []string {
+	if t.Search != nil {
+		return t.Search.Names
+	}
+	return append([]string{t.Path}, t.AltPaths...)
 }
 
 // SettingItem defines a configuration setting required by a flavor.

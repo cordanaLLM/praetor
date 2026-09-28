@@ -9,12 +9,12 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 )
 
-// denyRule is one compiled pattern with its source, the invariant it enforces and its wording.
+// denyRule is one compiled pattern with its source and the refusal a match prints ahead of
+// the source (rulePrefix), which names the invariant the rule enforces.
 type denyRule struct {
-	pattern   *regexp.Regexp
-	source    string
-	invariant string
-	message   string
+	pattern *regexp.Regexp
+	source  string
+	prefix  string
 }
 
 // pythonSpace is what `\s` matches in Python's `re` on text. RE2's `\s` is ASCII only and
@@ -24,14 +24,48 @@ const pythonSpace = `[\s\v\x1c-\x1f\x{85}\p{Z}]`
 // builtinRule compiles a built-in source with Python's whitespace class. The sources use
 // `\s` outside bracket expressions only; a test compiles every rule.
 func builtinRule(source, invariant, message string) denyRule {
-	return denyRule{regexp.MustCompile(strings.ReplaceAll(source, `\s`, pythonSpace)), source, invariant, message}
+	return denyRule{regexp.MustCompile(strings.ReplaceAll(source, `\s`, pythonSpace)), source, rulePrefix(invariant, message)}
 }
 
+// Refusal wording, one source for every engine: this policy, praetor's own Python guard
+// (`.config/agent/hooks/block_evasion.py`) and the interceptor adoption renders
+// (buildBlockEvasionPY in internal/adopt). The interceptor is rendered from these values;
+// the guard carries them as literals its register census lints, and parity_test.go
+// compares its full refusal text with this package's for every case, so neither drifts.
+// The wording is caveman (internal register): the census rejects articles and copulas.
 const (
-	evasionMessage  = "attempted verification evasion; every commit, push and tool call passes the verification gates"
-	topologyMessage = "adoption or needs target is the workstation dev root; repositories are leaf directories inside an organisation folder"
-	operatorMessage = "command matches the operator command policy"
+	evasionMessage  = "verification evasion prohibited; commits, pushes and tool calls pass verification gates"
+	topologyMessage = "adoption or needs target: workstation dev root; repositories live inside organization folders as leaf Git repositories"
+	operatorMessage = "command matches operator command policy"
+	// InvalidInputRefusal prefixes the refusal of hook input no dialect reads; the reason the
+	// input was refused follows it.
+	InvalidInputRefusal = "[BLOCKED BY HISS] Invalid hook input: "
+	// NarrowingRefusal refuses a Lefthook run narrowed by a LefthookNarrowingVariables entry.
+	NarrowingRefusal = "[BLOCKED BY HISS] hook exclusions: prohibited."
 )
+
+// refusal renders one refusal: the invariant marker, then the message.
+func refusal(invariant, message string) string {
+	return "[BLOCKED BY " + invariant + "] " + message
+}
+
+// rulePrefix is the refusal a rule match prints; the rule's source follows it.
+func rulePrefix(invariant, message string) string {
+	return refusal(invariant, message+"; pattern: ")
+}
+
+// ScanBoundRefusal is the refusal of a command over the scan bounds of the Python adapters
+// (MaxScanChars, MaxScanLineChars). The Go policy scans any length in linear time and never
+// prints it; the Python guard and the rendered interceptor do, before any rule runs.
+func ScanBoundRefusal() string {
+	return refusal("HISS", fmt.Sprintf("command exceeds scan bound: at most %d characters, %d per line; "+
+		"split command or write long content to file first", MaxScanChars, MaxScanLineChars))
+}
+
+// LefthookDisabledRefusal refuses a LEFTHOOK value from LefthookDisableValues.
+func LefthookDisabledRefusal(value string) string {
+	return refusal("HISS", "LEFTHOOK="+value+" detected in environment. Evasion prohibited.")
+}
 
 // hooksDir matches the repository hooks directory in either path separator.
 const hooksDir = `\.git[/\\]hooks`
@@ -87,6 +121,17 @@ type BuiltinRule struct {
 	Invariant string
 }
 
+// RefusalPrefix is the refusal a match of the rule prints ahead of its Source: the whole
+// deny reason is RefusalPrefix() + Source. It is empty for an invariant without built-in
+// wording.
+func (r BuiltinRule) RefusalPrefix() string {
+	message, ok := builtinMessages[r.Invariant]
+	if !ok {
+		return ""
+	}
+	return rulePrefix(r.Invariant, message)
+}
+
 // BuiltinRules returns the engine's built-in command rules in evaluation order, evasion
 // first and the dev-root rule last. It is a fresh slice on every call.
 func BuiltinRules() []BuiltinRule {
@@ -123,7 +168,7 @@ func NewPolicy(operatorDeny []string) (*Policy, error) {
 		if err != nil {
 			return nil, fmt.Errorf("operator deny pattern %d: %w", index, err)
 		}
-		rules = append(rules, denyRule{compiled, source, "operator", operatorMessage})
+		rules = append(rules, denyRule{compiled, source, rulePrefix("operator", operatorMessage)})
 	}
 	return &Policy{rules: rules}, nil
 }
@@ -135,7 +180,7 @@ func (p *Policy) Command(command string) Verdict {
 	}
 	for _, rule := range p.rules {
 		if rule.pattern.MatchString(command) {
-			return Verdict{Outcome: Deny, Reason: fmt.Sprintf("[BLOCKED BY %s] %s (pattern %q)", rule.invariant, rule.message, rule.source)}
+			return Verdict{Outcome: Deny, Reason: rule.prefix + rule.source}
 		}
 	}
 	return Verdict{Outcome: Allow}
@@ -163,11 +208,11 @@ func Environment(getenv func(string) string) Verdict {
 		return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] no environment to inspect"}
 	}
 	if value := getenv("LEFTHOOK"); slices.Contains(lefthookDisableValues, value) {
-		return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] LEFTHOOK=" + value + " detected in environment. Evasion prohibited."}
+		return Verdict{Outcome: Deny, Reason: LefthookDisabledRefusal(value)}
 	}
 	for _, name := range lefthookNarrowingVariables {
 		if getenv(name) != "" {
-			return Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] Hook exclusions are prohibited."}
+			return Verdict{Outcome: Deny, Reason: NarrowingRefusal}
 		}
 	}
 	return Verdict{Outcome: Allow}

@@ -3,6 +3,7 @@ package flavor_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/flavor"
@@ -62,6 +63,30 @@ func TestTemplateSatisfied_Boundary(t *testing.T) {
 	empty := flavor.TemplateItem{Path: "tsconfig.json", AltPaths: []string{}}
 	if !flavor.TemplateSatisfied(tmp, empty) {
 		t.Error("empty AltPaths slice changed exact-path behaviour")
+	}
+}
+
+// A searched template scaffolds one of the names its tool reads, and declares no AltPaths
+// beside the search: an AltPath has no place in the tool's order, so the audit could not say
+// which file the tool reads.
+func TestEverySearchedTemplateScaffoldsASearchedName(t *testing.T) {
+	searched := 0
+	for _, flv := range flavor.List() {
+		for _, item := range flv.RequiredTemplates() {
+			if item.Search == nil {
+				continue
+			}
+			searched++
+			if item.Search.Tool == "" || len(item.Search.Names) < 2 || !slices.Contains(item.Search.Names, item.Path) {
+				t.Errorf("%s %s: search %+v must name its tool and at least two names, the path among them", flv.Name(), item.Path, item.Search)
+			}
+			if len(item.AltPaths) != 0 {
+				t.Errorf("%s %s: declares AltPaths %v beside a search order", flv.Name(), item.Path, item.AltPaths)
+			}
+		}
+	}
+	if searched == 0 {
+		t.Fatal("no built-in template declares a search order, so this guard checks nothing")
 	}
 }
 

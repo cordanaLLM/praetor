@@ -1,9 +1,11 @@
 package agenthook
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/caveman"
 	"github.com/cordanaLLM/praetor/internal/config"
 )
 
@@ -160,5 +162,73 @@ func TestEnvironment(t *testing.T) {
 	}
 	if verdict := Environment(nil); verdict.Outcome != Deny {
 		t.Errorf("no environment allowed: %+v", verdict)
+	}
+}
+
+// TestRefusalWording pins the one wording source both Python engines print (BUG-1014): a
+// rule's deny reason is its RefusalPrefix followed by its source, for every built-in rule and
+// for an operator rule; an invariant without built-in wording has no prefix; the scan-bound
+// refusal names both bounds; and every text passes the caveman runtime check the register
+// census applies to praetor's own guard.
+func TestRefusalWording(t *testing.T) {
+	builtin := policy(t)
+	for i, rule := range BuiltinRules() {
+		if compiled := builtin.rules[i]; compiled.source != rule.Source || compiled.prefix != rule.RefusalPrefix() {
+			t.Errorf("rule %d: compiled %q with prefix %q, exported %+v", i, compiled.source, compiled.prefix, rule)
+		}
+	}
+	for command, rule := range map[string]BuiltinRule{
+		"git push --no-verify": BuiltinRules()[0], "praetorctl adopt /srv/dev": BuiltinRules()[len(builtinEvasion)],
+	} {
+		if verdict := builtin.Command(command); verdict.Reason != rule.RefusalPrefix()+rule.Source {
+			t.Errorf("%q: reason %q", command, verdict.Reason)
+		}
+	}
+	for _, rule := range BuiltinRules() {
+		if prefix := rule.RefusalPrefix(); !strings.HasPrefix(prefix, "[BLOCKED BY "+rule.Invariant+"] ") || !strings.HasSuffix(prefix, "; pattern: ") {
+			t.Errorf("rule %q: prefix %q", rule.Source, prefix)
+		}
+	}
+	if prefix := (BuiltinRule{Source: "x", Invariant: "operator"}).RefusalPrefix(); prefix != "" {
+		t.Errorf("an invariant without built-in wording got a prefix: %q", prefix)
+	}
+	if verdict := policy(t, `\bterraform\b`).Command("terraform plan"); verdict.Reason != rulePrefix("operator", operatorMessage)+`\bterraform\b` {
+		t.Errorf("operator reason: %q", verdict.Reason)
+	}
+	scan := ScanBoundRefusal()
+	if !strings.Contains(scan, strconv.Itoa(MaxScanChars)+" characters, "+strconv.Itoa(MaxScanLineChars)+" per line") {
+		t.Errorf("scan-bound refusal does not name both bounds: %q", scan)
+	}
+	texts := []string{scan, InvalidInputRefusal + "x", NarrowingRefusal, rulePrefix("operator", operatorMessage) + "x"}
+	for _, value := range LefthookDisableValues() {
+		texts = append(texts, LefthookDisabledRefusal(value))
+	}
+	for _, rule := range BuiltinRules() {
+		texts = append(texts, rule.RefusalPrefix()+"x")
+	}
+	for _, text := range texts {
+		if report := caveman.CheckRuntime(text, caveman.Options{Kind: caveman.KindMessage}); !report.Passed() {
+			t.Errorf("%q fails the caveman runtime check: %+v", text, report.Findings)
+		}
+	}
+}
+
+// TestEnvironmentRefusals: the environment check prints the exported refusals, the boundary
+// being a LEFTHOOK value that differs from a disabling one only by case.
+func TestEnvironmentRefusals(t *testing.T) {
+	for _, value := range LefthookDisableValues() {
+		verdict := Environment(func(key string) string { return map[string]string{"LEFTHOOK": value}[key] })
+		if verdict.Outcome != Deny || verdict.Reason != LefthookDisabledRefusal(value) {
+			t.Errorf("LEFTHOOK=%s: %+v", value, verdict)
+		}
+	}
+	for _, name := range LefthookNarrowingVariables() {
+		verdict := Environment(func(key string) string { return map[string]string{name: "x"}[key] })
+		if verdict.Outcome != Deny || verdict.Reason != NarrowingRefusal {
+			t.Errorf("%s: %+v", name, verdict)
+		}
+	}
+	if verdict := Environment(func(key string) string { return map[string]string{"LEFTHOOK": "False"}[key] }); verdict.Outcome != Allow {
+		t.Errorf("LEFTHOOK=False does not disable Lefthook: %+v", verdict)
 	}
 }

@@ -77,6 +77,12 @@ tools/markdownlint/* text eol=lf
 # (HISS-21). Same fix, same reason as *.go and .devcontainer/* above (#135).
 templates/** text eol=lf
 
+# internal/adopt/testdata/emitted holds the hook files adoption renders from templates, byte
+# for byte (TestEmittedHookFixturesMatchTheRendering), and make hooks-lint lints exactly these
+# bytes with black, flake8 and yamllint. Adoption writes them LF on every platform, so a CRLF
+# checkout of the Python fixture would lint text no adopter receives (HISS-21).
+internal/adopt/testdata/emitted/** text eol=lf
+
 # internal/astmerge's corpus test splits testdata/probe_corpus.txt into cases on "\n" and
 # matches its "--- base" section headers exactly, and FuzzASTMerge seeds from the same
 # parse. Under "* text=auto" a Windows checkout writes the corpus CRLF, the first header

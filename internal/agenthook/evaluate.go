@@ -54,7 +54,7 @@ func evaluate(ctx context.Context, dialect Dialect, row Registration, in Invocat
 	if err != nil {
 		// Only the event and a return's stop_hook_active survive a decode failure (Decode).
 		canonical = Canonical{Event: row.Event, StopActive: canonical.StopActive}
-		return canonical, returnBoundary(row, canonical, Verdict{Outcome: Deny, Reason: "[BLOCKED BY HISS] Invalid hook input: " + err.Error()})
+		return canonical, returnBoundary(row, canonical, Verdict{Outcome: Deny, Reason: InvalidInputRefusal + err.Error()})
 	}
 	return canonical, returnBoundary(row, canonical, judge(ctx, row, canonical, in))
 }

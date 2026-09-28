@@ -39,11 +39,22 @@ hooks may run: black and yamllint with their built-in defaults (yamllint in stri
 flake8 at 100 columns. The gate lints copies in an empty directory with configuration files
 ignored, and checks negative and boundary fixtures so the policy is proven to be on.
 
-The gate does not yet cover the two hook files adoption renders from templates in
+The gate also lints the two hook files adoption renders from templates in
 `internal/adopt/hooks.go`: the root `lefthook.yml` (`buildLefthookYAMLFor`) and
-`.config/agent/hooks/block_evasion.py` (`blockEvasionTemplate`). Both still fail that policy,
-so an adopter whose hooks lint the whole tree still fails on them. They stay open under
-BUG-782.
+`.config/agent/hooks/block_evasion.py` (`blockEvasionTemplate`). Their renderings are
+committed under `internal/adopt/testdata/emitted`, at the paths adoption writes them, and
+`TestEmittedHookFixturesMatchTheRendering` fails when a fixture differs from the rendering.
+After a template change, regenerate them with
+`PRAETOR_UPDATE_EMITTED_FIXTURES=1 go test ./internal/adopt -run TestEmittedHookFixturesMatchTheRendering`.
+The rendered `lefthook.yml` opens with a document start and folds every `run` line longer than
+80 columns into a `>-` block, which YAML reads back as the same one-line command
+(`TestLefthookRendering_Positive_FoldsWithoutChangingValues`). The rendered interceptor splits
+long rule patterns and refusal texts into adjacent string literals laid out as black leaves
+them (`internal/adopt/emitted_layout.go`), and every function stays within the 35 lines of
+the strictest public dogfood policy (`TestVendoredCheckpointSourcesFitStrictAdopterLOC`).
+A `lefthook.yml` an earlier release rendered with unfolded lines is still recognised and
+migrated on the next adoption (`priorLefthookDigests` in
+`internal/adopt/lefthook_identity.go`).
 
 The tools come from the hash-locked `.config/hook-lint/requirements.txt`, which Renovate
 recompiles from `requirements.in`:

@@ -531,7 +531,21 @@ answers in under a second (`TestEmittedInterceptorScanBounds`,
 `test_guard_answers_the_slowest_admitted_commands_inside_the_bound` in
 `.config/lefthook/scripts/test_hooks.py`). The Go policy uses RE2, which is linear, and has
 no such bound; `TestPythonGuardCarriesTheScanBounds` keeps praetor's guard on the same
-numbers. The Git global-option prefix of the commit rule parses one way only, so the corpus
+numbers.
+
+All three engines refuse in the same words. `internal/agenthook/policy.go` holds the one
+wording source: a rule match prints `BuiltinRule.RefusalPrefix` followed by the rule's
+pattern, and the scan-bound, Lefthook-environment and invalid-input refusals are
+`ScanBoundRefusal`, `LefthookDisabledRefusal`, `NarrowingRefusal` and `InvalidInputRefusal`.
+The adopted interceptor is rendered from them. Praetor's own guard carries them as literals,
+because its register census lints the text it prints, and
+`TestParityRefusalTextWithThePythonGuard` compares its full stderr with the engine's for an
+evasion flag, the dev-root rule, a command over and exactly at the scan bound, and a benign
+command; the corpus and environment replays compare the full text too. Only an invalid-input
+refusal differs after the shared prefix, because each parser words its own error.
+`TestRefusalDriftFailsOnAChangedWord` proves one changed word fails the comparison, and
+`TestEmittedInterceptorRefusesInTheEngineWords` holds the adopted interceptor to the same
+texts. The Git global-option prefix of the commit rule parses one way only, so the corpus
 cases `allow-directory-options-without-commit` and
 `allow-directory-options-split-by-carriage-returns`, which took the earlier rule minutes,
 are answered at once.

@@ -39,13 +39,14 @@ func scanStrict(t *testing.T, files map[string]string) []hiss.InvariantViolation
 	return report.Violations
 }
 
-// TestVendoredCheckpointSourcesFitStrictAdopterLOC keeps the checkpoint scripts adoption
-// vendors clean under the strictest limit the public dogfood suite adopts with. Black
-// formatting once stretched six of their functions past it, and every public adoption
-// under that policy failed on files Praetor itself had written.
+// TestVendoredCheckpointSourcesFitStrictAdopterLOC keeps the Python adoption writes clean
+// under the strictest limit the public dogfood suite adopts with: the checkpoint scripts it
+// vendors and the evasion interceptor it renders. Black formatting once stretched six of the
+// checkpoint functions past it, and every public adoption under that policy failed on files
+// Praetor itself had written.
 func TestVendoredCheckpointSourcesFitStrictAdopterLOC(t *testing.T) {
 	engineRoot := filepath.Join("..", "..")
-	files := map[string]string{}
+	files := map[string]string{evasionHookFile: buildBlockEvasionPY()}
 	for _, name := range []string{checkpointScript, checkpointCommon} {
 		body, err := os.ReadFile(filepath.Join(engineRoot, filepath.FromSlash(name)))
 		if err != nil {
@@ -58,12 +59,18 @@ func TestVendoredCheckpointSourcesFitStrictAdopterLOC(t *testing.T) {
 	}
 }
 
-// TestStrictAdopterLOCGuardBoundary proves the guard above can fail: a function one line
-// over the limit is reported, and one exactly at it is not.
+// TestStrictAdopterLOCGuardBoundary proves the guard above can fail, at both paths it
+// scans: a function one line over the limit is reported, and one exactly at it is not.
 func TestStrictAdopterLOCGuardBoundary(t *testing.T) {
-	for _, test := range []struct{ lines, want int }{{strictAdopterFuncLOC + 1, 1}, {strictAdopterFuncLOC, 0}} {
-		t.Run(fmt.Sprintf("%d-lines", test.lines), func(t *testing.T) {
-			got := scanStrict(t, map[string]string{checkpointScript: pythonFunction(test.lines)})
+	for _, test := range []struct {
+		path        string
+		lines, want int
+	}{
+		{checkpointScript, strictAdopterFuncLOC + 1, 1}, {checkpointScript, strictAdopterFuncLOC, 0},
+		{evasionHookFile, strictAdopterFuncLOC + 1, 1}, {evasionHookFile, strictAdopterFuncLOC, 0},
+	} {
+		t.Run(fmt.Sprintf("%s-%d-lines", filepath.Base(test.path), test.lines), func(t *testing.T) {
+			got := scanStrict(t, map[string]string{test.path: pythonFunction(test.lines)})
 			if len(got) != test.want {
 				t.Fatalf("%d-line function: got %d violations, want %d: %+v", test.lines, len(got), test.want, got)
 			}

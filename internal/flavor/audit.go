@@ -38,6 +38,19 @@ type FlavorAuditReport struct {
 	ToolchainsTotal     int             `json:"toolchains_total"`
 	ToolchainsAvailable int             `json:"toolchains_available"`
 	MissingToolchains   []ToolchainItem `json:"missing_toolchains"`
+	// ShadowedTemplates is advisory and never enters Score or Passed. It names each template
+	// the repository carries under more than one of the names its tool searches.
+	ShadowedTemplates []ShadowedTemplate `json:"shadowed_templates,omitempty"`
+}
+
+// ShadowedTemplate is a template carried under more than one of the names its tool searches
+// (TemplateItem.Search). The tool reads InUse and never reads Ignored, so an edit to an ignored
+// file changes nothing although the file looks like the configuration.
+type ShadowedTemplate struct {
+	Path    string   `json:"path"`
+	Tool    string   `json:"tool"`
+	InUse   string   `json:"in_use"`
+	Ignored []string `json:"ignored"`
 }
 
 // maxReportedSettings bounds the setting paths a one-line verdict carries (HISS-02).
@@ -235,12 +248,43 @@ func auditTemplates(ctx context.Context, repoPath string, templates []TemplateIt
 		} else {
 			report.MissingTemplates = append(report.MissingTemplates, t)
 		}
+		if shadowed, ok := shadowedTemplate(repoPath, t); ok {
+			report.ShadowedTemplates = append(report.ShadowedTemplates, shadowed)
+		}
 	}
 	return nil
 }
 
+// shadowedTemplate reports the searched names beyond the first that the repository carries
+// for t, which t's tool never reads. A template without a search order shadows nothing.
+func shadowedTemplate(repoPath string, t TemplateItem) (ShadowedTemplate, bool) {
+	if t.Search == nil {
+		return ShadowedTemplate{}, false
+	}
+	present := presentNames(repoPath, t)
+	if len(present) < 2 {
+		return ShadowedTemplate{}, false
+	}
+	return ShadowedTemplate{Path: t.Path, Tool: t.Search.Tool, InUse: present[0], Ignored: present[1:]}, true
+}
+
 // maxTemplateCandidates bounds the paths one template is looked up under (HISS-02).
 const maxTemplateCandidates = 32
+
+// presentNames returns, in lookup order, each of t's names the repository carries as a file,
+// whatever its content and wherever a symbolic link there resolves: the files a tool looking
+// for those names finds. The first is the configuration in use when flavor apply decides
+// whether to scaffold, and the file a searched template's tool reads when the audit judges it.
+func presentNames(repoPath string, t TemplateItem) []string {
+	names := t.names()
+	present := make([]string, 0, len(names))
+	for i := 0; i < len(names) && i < maxTemplateCandidates; i++ {
+		if util.FileExists(filepath.Join(repoPath, filepath.FromSlash(names[i]))) {
+			present = append(present, names[i])
+		}
+	}
+	return present
+}
 
 // TemplateSatisfied reports whether the repository carries the template under its
 // canonical path or any accepted alternative, as a regular file whose content satisfies
@@ -251,8 +295,16 @@ const maxTemplateCandidates = 32
 // the gitleaks policy or the agent harness it stood in for (BUG-028, BUG-029). A directory
 // at the path configures nothing either, and a symbolic link counts only where it resolves
 // to a regular file inside the repository: readRequiredFile is the single policy for both.
+//
+// A template with a search order (TemplateItem.Search) is judged on the one file its tool
+// reads, the first of its names present. A valid file under a later name does not satisfy
+// it, because the tool never reads that file.
 func TemplateSatisfied(repoPath string, t TemplateItem) bool {
-	candidates := append([]string{t.Path}, t.AltPaths...)
+	candidates := t.names()
+	if t.Search != nil {
+		candidates = presentNames(repoPath, t)
+		candidates = candidates[:min(len(candidates), 1)]
+	}
 	for i := 0; i < len(candidates) && i < maxTemplateCandidates; i++ {
 		content, ok := readRequiredFile(repoPath, candidates[i])
 		if ok && (t.Validator == nil || t.Validator(content)) {

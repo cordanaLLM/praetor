@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/agenthook"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 // evasionCorpus is agenthook's replay corpus: the payloads praetor's own guard and the Go
@@ -39,11 +40,30 @@ func emittedInterceptor(t *testing.T) (string, string) {
 	return python, script
 }
 
+// interceptorRules loads the emitted script as a module, without running main, and returns
+// its RULES as (pattern, refusal) pairs: the values Python reads back from the adjacent
+// literals the layout splits long patterns into.
+func interceptorRules(t *testing.T, python, script string) [][2]string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), interceptorWallClock)
+	defer cancel()
+	const program = "import json, runpy, sys; module = runpy.run_path(sys.argv[1]); print(json.dumps(module['RULES']))"
+	out, err := exec.CommandContext(ctx, python, "-B", "-c", program, script).Output() //nolint:gosec // fixed interpreter and test script
+	if err != nil {
+		t.Fatalf("load the emitted script's rules: %v", err)
+	}
+	var rules [][2]string
+	if err := json.Unmarshal(out, &rules); err != nil {
+		t.Fatalf("decode the emitted script's rules: %v", err)
+	}
+	return rules
+}
+
 // runInterceptor feeds stdin (and optional argv) to the emitted script under a clean
 // environment plus extra, and returns its exit code.
 func runInterceptor(t *testing.T, python, script string, stdin []byte, extra []string, args ...string) int {
 	t.Helper()
-	code, _ := runInterceptorTimed(t, python, script, stdin, extra, args...)
+	code, _, _ := runInterceptorTimed(t, python, script, stdin, extra, args...)
 	return code
 }
 
@@ -51,10 +71,11 @@ func runInterceptor(t *testing.T, python, script string, stdin []byte, extra []s
 // wall-clock time. The scan-bound test checks CPU time against a tighter budget instead.
 const interceptorWallClock = 30 * time.Second
 
-// runInterceptorTimed runs the emitted interceptor and returns its exit code and the CPU
-// time (user plus system) the interpreter spent. CPU time is what the scan bounds control;
-// wall-clock time on a shared CI runner also counts the time the process waited for a core.
-func runInterceptorTimed(t *testing.T, python, script string, stdin []byte, extra []string, args ...string) (int, time.Duration) {
+// runInterceptorTimed runs the emitted interceptor and returns its exit code, the CPU time
+// (user plus system) the interpreter spent and its stderr as LF text. CPU time is what the
+// scan bounds control; wall-clock time on a shared CI runner also counts the time the process
+// waited for a core.
+func runInterceptorTimed(t *testing.T, python, script string, stdin []byte, extra []string, args ...string) (int, time.Duration, string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), interceptorWallClock)
 	defer cancel()
@@ -73,12 +94,24 @@ func runInterceptorTimed(t *testing.T, python, script string, stdin []byte, extr
 		if strings.Contains(stderr.String(), "Traceback") {
 			t.Errorf("interceptor crashed instead of refusing: %s", stderr.String())
 		}
-		return exitErr.ExitCode(), cpu
+		return exitErr.ExitCode(), cpu, interceptorStderr(t, stderr.Bytes())
 	}
 	if err != nil {
 		t.Fatalf("run interceptor: %v", err)
 	}
-	return 0, cpu
+	return 0, cpu, interceptorStderr(t, stderr.Bytes())
+}
+
+// interceptorStderr reads the interceptor's stderr as text (testsupport.PythonText): CPython
+// writes it with CRLF line endings on Windows, and the engine's refusals end in LF.
+func interceptorStderr(t *testing.T, stderr []byte) string {
+	t.Helper()
+	text, err := testsupport.PythonText(stderr)
+	if err != nil {
+		t.Errorf("interceptor stderr %q: %v", stderr, err)
+		return string(stderr)
+	}
+	return string(text)
 }
 
 // TestEmittedInterceptorReplaysTheEngineCorpus pins BUG-807 and BUG-808: the emitted script
@@ -158,12 +191,18 @@ func TestEmittedInterceptorEnvironmentAndArguments(t *testing.T) {
 // shipped as engine rules). praetor's own guard names none either
 // (TestPythonGuardCarriesTheBuiltinDevRootRule in internal/agenthook).
 func TestBuildBlockEvasionPY_NoOperatorData(t *testing.T) {
-	script := buildBlockEvasionPY()
-	for _, rule := range agenthook.BuiltinRules() {
-		if !strings.Contains(script, `(r"`+rule.Source+`", "`+rule.Invariant+`"),`) {
-			t.Errorf("rendered script lacks rule %q", rule.Source)
+	python, path := emittedInterceptor(t)
+	rules := interceptorRules(t, python, path)
+	builtins := agenthook.BuiltinRules()
+	if len(rules) != len(builtins) {
+		t.Fatalf("rendered script carries %d rules, the engine %d", len(rules), len(builtins))
+	}
+	for i, rule := range builtins {
+		if rules[i][0] != rule.Source || !strings.HasPrefix(rules[i][1], "[BLOCKED BY "+rule.Invariant+"] ") {
+			t.Errorf("rule %d: rendered %q, engine %q (%s)", i, rules[i], rule.Source, rule.Invariant)
 		}
 	}
+	script := buildBlockEvasionPY()
 	for _, operator := range []string{"TOPOLOGY_PATTERNS", "/dev/("} {
 		if strings.Contains(script, operator) {
 			t.Errorf("rendered script ships operator data %q", operator)
@@ -200,12 +239,84 @@ func TestEmittedInterceptorScanBounds(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, cpu := runInterceptorTimed(t, python, script, payload, nil)
+		got, cpu, _ := runInterceptorTimed(t, python, script, payload, nil)
 		if got != tc.want {
 			t.Errorf("%s: exit %d, want %d", name, got, tc.want)
 		}
 		if cpu > 5*time.Second {
 			t.Errorf("%s: interceptor used %v of CPU time, over the 5 s bound", name, cpu)
+		}
+	}
+}
+
+// TestEmittedInterceptorRefusesInTheEngineWords pins BUG-1014 for the interceptor adoption
+// renders: each refusal prints agenthook's text character for character, for an evasion flag,
+// the dev-root rule, a command over the scan bound, a disabled or narrowed Lefthook run and
+// unreadable input (whose parser error after the shared prefix is Python's own). A command
+// exactly at the scan bound and a benign one print nothing.
+func TestEmittedInterceptorRefusesInTheEngineWords(t *testing.T) {
+	python, script := emittedInterceptor(t)
+	builtin, err := agenthook.NewPolicy(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := func(command string) []byte {
+		data, err := json.Marshal(map[string]any{"tool_input": map[string]string{"command": command}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+	benign := payload("go test ./...")
+	for _, tc := range []struct {
+		name  string
+		stdin []byte
+		env   []string
+		want  string
+	}{
+		{"evasion flag", payload("git push --no-verify"), nil, builtin.Command("git push --no-verify").Reason + "\n"},
+		{"dev root", payload("praetorctl adopt /srv/dev"), nil, builtin.Command("praetorctl adopt /srv/dev").Reason + "\n"},
+		{"scan bound exceeded", payload(strings.Repeat("x", agenthook.MaxScanLineChars+1)), nil, agenthook.ScanBoundRefusal() + "\n"},
+		{"scan bound exactly", payload(strings.Repeat("x", agenthook.MaxScanLineChars)), nil, ""},
+		{"benign", benign, nil, ""},
+		{"lefthook disabled", benign, []string{"LEFTHOOK=false"}, agenthook.LefthookDisabledRefusal("false") + "\n"},
+		{"lefthook narrowed", benign, []string{"LEFTHOOK_SKIP=lint"}, agenthook.NarrowingRefusal + "\n"},
+	} {
+		code, _, stderr := runInterceptorTimed(t, python, script, tc.stdin, tc.env)
+		if stderr != tc.want || (code == 0) != (tc.want == "") {
+			t.Errorf("%s: exit %d\ngot  %q\nwant %q", tc.name, code, stderr, tc.want)
+		}
+	}
+	if _, _, stderr := runInterceptorTimed(t, python, script, []byte("not json"), nil); !strings.HasPrefix(stderr, agenthook.InvalidInputRefusal) {
+		t.Errorf("unreadable input: %q lacks the engine's prefix", stderr)
+	}
+}
+
+// TestEmittedInterceptorRefusesInTheEngineWordsUnderTheWindowsNewline runs the emitted
+// interceptor with CPython's Windows newline translation on its standard streams
+// (testsupport.WindowsNewlinePython), so a run on any host shows what the Windows leg sees:
+// a refusal still reads as the engine's text, and an allowed command still prints nothing.
+func TestEmittedInterceptorRefusesInTheEngineWordsUnderTheWindowsNewline(t *testing.T) {
+	python, script := emittedInterceptor(t)
+	launcher := testsupport.WindowsNewlinePython(t, script)
+	builtin, err := agenthook.NewPolicy(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	benign := []byte(`{"tool_input":{"command":"go test ./..."}}`)
+	for _, tc := range []struct {
+		name  string
+		stdin []byte
+		env   []string
+		want  string
+	}{
+		{"evasion flag", []byte(`{"tool_input":{"command":"git push --no-verify"}}`), nil, builtin.Command("git push --no-verify").Reason + "\n"},
+		{"lefthook narrowed", benign, []string{"LEFTHOOK_SKIP=lint"}, agenthook.NarrowingRefusal + "\n"},
+		{"benign", benign, nil, ""},
+	} {
+		code, _, stderr := runInterceptorTimed(t, python, launcher, tc.stdin, tc.env)
+		if stderr != tc.want || (code == 0) != (tc.want == "") {
+			t.Errorf("%s: exit %d\ngot  %q\nwant %q", tc.name, code, stderr, tc.want)
 		}
 	}
 }

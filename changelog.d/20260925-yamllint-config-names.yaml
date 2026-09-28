@@ -1,0 +1,4 @@
+type: fixed
+title: The os-image flavor audit accepts every yamllint configuration name (.yamllint, .yamllint.yaml, .yamllint.yml), judges the one yamllint reads first and names any shadowed file, and flavor apply and adoption keep an existing yamllint configuration and report it instead of writing a .yamllint.yml yamllint never reads
+issue: "505"
+breaking: false

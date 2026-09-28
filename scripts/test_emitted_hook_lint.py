@@ -3,19 +3,20 @@
 #
 # SPDX-License-Identifier: EUPL-1.2
 
-"""Praetor-owned canonical hook sources pass downstream lint policies.
+"""Praetor-owned hook sources and generated hook files pass downstream lint policies.
 
 Adoption copies the checkpoint evaluator and its shared module into an adopted repository
 (internal/adopt/checkpoint.go). .config/lefthook/praetor.yml is the vendorable canonical
 policy: adoption does not write it, but an adopter can vendor it with those scripts and
 extend it from their own lefthook.yml (.config/lefthook/README.md), a setup
-internal/adopt/lefthook_identity.go recognises. A repository whose own hooks run black,
-flake8 or yamllint over its whole tree used to fail on these three files. The paths are read
-from those Go constants, so a moved file is followed without editing this list.
-
-Not covered yet: the two hook files adoption renders from templates in
-internal/adopt/hooks.go, the root lefthook.yml and .config/agent/hooks/block_evasion.py.
-Both still fail this policy and stay open under BUG-782.
+internal/adopt/lefthook_identity.go recognises. Adoption also renders two hook files from
+templates in internal/adopt/hooks.go: the root lefthook.yml and
+.config/agent/hooks/block_evasion.py. Their renderings are committed under
+internal/adopt/testdata/emitted at the paths adoption writes them, and
+TestEmittedHookFixturesMatchTheRendering keeps those fixtures equal to what adoption writes.
+A repository whose own hooks run black, flake8 or yamllint over its whole tree used to fail
+on all five files (BUG-782). The paths are read from the Go constants, so a moved file is
+followed without editing this list.
 
 The policy is the one such a repository gets without configuring anything: black and
 yamllint (in strict mode, so warnings fail too) with their built-in defaults, and flake8
@@ -50,11 +51,17 @@ TOOLS = ("black", "flake8", "yamllint")
 LINT_TIMEOUT_SECONDS = 120
 FLAKE8_MAX_LINE = 100
 YAMLLINT_MAX_LINE = 80
-# The Go constants naming each canonical hook source linted here, and the file declaring each.
+# Where the renderings of the generated hook files are committed, at their adopted paths.
+RENDERED = "internal/adopt/testdata/emitted"
+# The Go constant naming each hook file linted here, the file declaring it, and the directory
+# its content is read from: the repository root for a canonical source, RENDERED for a file
+# adoption renders from a template.
 EMITTED_CONSTANTS = (
-    ("internal/adopt/checkpoint.go", "checkpointScript"),
-    ("internal/adopt/checkpoint.go", "checkpointCommon"),
-    ("internal/adopt/lefthook_identity.go", "canonicalLefthookPolicy"),
+    ("internal/adopt/checkpoint.go", "checkpointScript", ""),
+    ("internal/adopt/checkpoint.go", "checkpointCommon", ""),
+    ("internal/adopt/lefthook_identity.go", "canonicalLefthookPolicy", ""),
+    ("internal/adopt/hooks.go", "lefthookFile", RENDERED),
+    ("internal/adopt/hooks.go", "evasionHookFile", RENDERED),
 )
 VERSION = re.compile(r"(\d+(?:\.\d+)+)")
 
@@ -69,8 +76,12 @@ def go_constant(relative, name):
 
 
 def emitted_sources():
-    """Return the repository-relative path of each canonical hook source linted here."""
-    return [go_constant(relative, name) for relative, name in EMITTED_CONSTANTS]
+    """Return {adopted path: repository-relative file holding its content} for each file."""
+    sources = {}
+    for relative, name, base in EMITTED_CONSTANTS:
+        path = go_constant(relative, name)
+        sources[path] = f"{base}/{path}" if base else path
+    return sources
 
 
 def pinned_versions(text):
@@ -166,13 +177,22 @@ class LintCase(unittest.TestCase):
         self.assertIn(expected, output)
 
 
+def emitted(suffixes):
+    """Return {adopted path: text} of every linted hook file with one of `suffixes`."""
+    return {
+        path: (ROOT / source).read_text(encoding="utf-8")
+        for path, source in emitted_sources().items()
+        if path.endswith(suffixes)
+    }
+
+
 class EmittedSourcesTest(LintCase):
-    """Positive: every canonical hook source passes each tool."""
+    """Positive: every canonical hook source and generated hook file passes each tool."""
 
     def emitted(self, suffixes):
-        sources = [path for path in emitted_sources() if path.endswith(suffixes)]
-        self.assertTrue(sources, f"no canonical {suffixes} hook source is linted")
-        return {path: (ROOT / path).read_text(encoding="utf-8") for path in sources}
+        files = emitted(suffixes)
+        self.assertTrue(files, f"no {suffixes} hook file is linted")
+        return files
 
     def test_black_accepts_emitted_python(self):
         self.assertLintPasses("black", self.emitted((".py",)))
@@ -216,6 +236,24 @@ class PolicyFixtureTest(LintCase):
         self.assertLintFails("yamllint", {"nostart.yml": "key: value\n"}, "document-start")
 
 
+class RenderedTemplateTest(LintCase):
+    """Negative: a long line in a generated hook file fails the gate that passes it clean."""
+
+    def test_yamllint_rejects_a_long_line_in_the_rendered_lefthook_config(self):
+        files = emitted(("lefthook.yml",))
+        self.assertEqual(sorted(files), ["lefthook.yml"])
+        long_job = f"    unfolded:\n      run: echo {'x' * YAMLLINT_MAX_LINE}\n"
+        self.assertLintFails("yamllint", {"lefthook.yml": files["lefthook.yml"] + long_job},
+                             "line-length")
+
+    def test_flake8_rejects_a_long_line_in_the_rendered_interceptor(self):
+        files = emitted(("block_evasion.py",))
+        self.assertEqual(len(files), 1)
+        path, text = next(iter(files.items()))
+        long_line = PolicyFixtureTest.python_line(FLAKE8_MAX_LINE + 1)
+        self.assertLintFails("flake8", {path: text + long_line}, "E501")
+
+
 class ResolutionTest(unittest.TestCase):
     """Tool resolution: skip locally, fail where the pinned toolchain is required."""
 
@@ -255,8 +293,9 @@ class ResolutionTest(unittest.TestCase):
     def test_emitted_sources_come_from_go_constants(self):
         sources = emitted_sources()
         self.assertEqual(len(sources), len(EMITTED_CONSTANTS))
-        for path in sources:
-            self.assertTrue((ROOT / path).is_file(), path)
+        for source in sources.values():
+            self.assertTrue((ROOT / source).is_file(), source)
+        self.assertEqual(sources["lefthook.yml"], f"{RENDERED}/lefthook.yml")
         with self.assertRaises(AssertionError):
             go_constant("internal/adopt/checkpoint.go", "noSuchConstant")
 

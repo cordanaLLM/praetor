@@ -33,6 +33,8 @@ var priorLefthookDigests = map[string]string{
 	"2b94aaf2bb95773724a4ead9dcabad7f5931408b07cf02b11c6768ad384b7413": "HISS-16 labels, root Go jobs, checkpoint jobs",
 	"3fa5b142144df4f5aa06afaf110fc070375709958f1a30e4643f4d21a09347a4": "unguarded root Go jobs, go run fallback",
 	"bcd930633a8229b68880f56f1be10af56d01b39a59033b83b9f01e2fad960022": "unguarded root Go jobs, go run fallback, checkpoint jobs",
+	"9b5222377ace84afd5d37f9a3706984fd4680dfa9d7ed766b49e3d3e48c01895": "unfolded run lines, no document start",
+	"c3ecfea62fcfeec128e8acf13b73ae046c66acb362a919803708d7a4d49ed2ac": "unfolded run lines, no document start, checkpoint jobs",
 }
 
 // lefthookIdentity is what adoption concluded about an existing lefthook.yml.

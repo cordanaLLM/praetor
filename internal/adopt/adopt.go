@@ -737,7 +737,9 @@ func (s *adoptSession) applyDetectedFlavor(ctx context.Context) {
 
 // recordFlavorReport lists the templates a flavor apply created and the existing files it left
 // alone. A skipped template is an action detail only: the file is either the operator's or one
-// an earlier adoption step already listed.
+// an earlier adoption step already listed. So is a covered one, a template the repository
+// configures under another accepted name, such as a .yamllint.yaml where os-image scaffolds
+// .yamllint.yml (flavor.ApplyReport.CoveredTemplates).
 //
 // A detected flavor can still hold back a template whose body cannot work in this repository
 // (flavor.ApplyReport.UnmetTemplates), such as typescript-node's npm CI job in a pnpm project.
@@ -755,6 +757,16 @@ func (s *adoptSession) recordFlavorReport(applied *flavor.ApplyReport) {
 			Path:    rel,
 			Action:  actionSkip,
 			Details: fmt.Sprintf("Existing file kept; the %s flavor template was not written over it", applied.Flavor),
+		})
+	}
+	// A covered template is recorded against the file in use: the canonical name was never
+	// written, so reporting it would name a file the repository does not have.
+	for _, covered := range applied.CoveredTemplates {
+		s.report.ActionDetails = append(s.report.ActionDetails, ActionDetail{
+			Path:   covered.InUse,
+			Action: actionSkip,
+			Details: fmt.Sprintf("Existing configuration kept; the %s flavor template %s was not written beside it",
+				applied.Flavor, covered.Path),
 		})
 	}
 	for _, unmet := range applied.UnmetTemplates {
