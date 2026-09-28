@@ -87,11 +87,12 @@ unset flag keeps the default. The flags apply to single-repository adoption; bat
   a match is reported as verified, a difference as `differs from the scaffold` with a
   warning, and the file is kept. `--force` regenerates only the scaffolds it owns
   (`TestScaffoldFile_ReportsDriftInsteadOfVerified`).
-- **Earlier Praetor output.** The manifest, lock, label taxonomy, pinned catalog and flavor
-  YAML that adoption writes pass `yamllint --strict` with its default rules (`make hooks-lint`,
-  [git hooks](guides/git-hooks.md)). Two files of the `docs:seo-portal` documentation gate do
-  not pass yet: `.github/workflows/praetor-docs.yml` (document start, the unquoted `on` key) and
-  `tools/markdownlint/markdownlint-cli2.yaml` (document start). Files an earlier release wrote
+- **Earlier Praetor output.** The manifest, lock, label taxonomy, pinned catalog, flavor
+  YAML (`.clang-format` and `.clang-tidy` included) and the `docs:seo-portal` documentation
+  gate's YAML that adoption writes pass `yamllint --strict` with its default rules
+  (`make hooks-lint`, [git hooks](guides/git-hooks.md)). YAML written by other commands is not
+  covered yet: `.needs.yaml`, `FRAMEWORK_DEMAND.yaml`, `changelog.d` fragments and
+  `.github/FUNDING.yml` still fail `yamllint --strict`. Files an earlier release wrote
   before that layout, and nobody edited since, are refreshed on a plain re-run with every value
   unchanged: a manifest that is exactly `yaml.Marshal` of what it declares
   (`TestAdoptMigratesAnEarlierManifestRendering`), the earlier label taxonomy

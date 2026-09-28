@@ -86,8 +86,11 @@ repository:
   onboarding share), from `internal/adopt/testdata/emitted/.standards.yaml`, which
   `TestEmittedHookFixturesMatchTheRendering` keeps equal to the rendering of the declarations in
   `internal/adopt/testdata/manifest/prior.standards.yaml`;
-- every `.yml` and `.yaml` body under `templates/` that flavor apply scaffolds, with its leading
-  template comment dropped as rendering drops it.
+- every `.yml` and `.yaml` body under `templates/` that flavor apply scaffolds, and every
+  template `internal/flavor/definitions.go` checks with a YAML validator whatever its name
+  (`.clang-format` and `.clang-tidy`, which the Visual Studio editor target also writes), with
+  its leading template comment dropped as rendering drops it
+  (`test_every_yaml_validated_flavor_template_is_linted`).
 
 Each path comes from the Go constant that names it. The gate also appends an overlong line to
 every file and requires yamllint to reject each one, so the rule is proven to be on.

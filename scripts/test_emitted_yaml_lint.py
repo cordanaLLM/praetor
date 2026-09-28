@@ -22,9 +22,11 @@ into it (BUG-782). This gate covers:
   from its committed rendering under test_emitted_hook_lint.RENDERED, which
   TestEmittedHookFixturesMatchTheRendering keeps equal to the rendering;
 - every YAML body flavor apply scaffolds, and adoption through it: each .yml or .yaml
-  template under templates/ (templates/embed.go), rendered by dropping its leading template
-  comment, the one action these bodies carry. A body with any other action fails the gate
-  instead of being linted as unrendered text.
+  template under templates/ (templates/embed.go), and each template internal/flavor checks
+  with a YAML validator whatever its name (.clang-format and .clang-tidy, which clang reads as
+  YAML; the Visual Studio editor target writes the same .clang-tidy), rendered by dropping its
+  leading template comment, the one action these bodies carry. A body with any other action
+  fails the gate instead of being linted as unrendered text.
 
 Each path is read from the Go constant that names it, so a moved file is followed without
 editing this list.
@@ -46,6 +48,13 @@ RENDERINGS = (("internal/config/repository_policy.go", "ManifestFileName"),)
 # The Go constants naming the embedded template directory and its go:embed pattern, and the
 # file declaring them.
 TEMPLATES = ("templates/embed.go", "Directory", "Pattern")
+# The Go file declaring each flavor file's template (Source) and content check (Validator), and
+# the validators that parse the body as YAML: a template they check is YAML whatever its name.
+FLAVOR_DEFINITIONS = "internal/flavor/definitions.go"
+YAML_VALIDATORS = frozenset(("validYAMLMapping", "validClangTidyConfig", "validWorkflow"))
+# One flavor file: its Source, then its Validator later in the same literal, which may hold
+# one nested literal (Search: &ConfigSearch{...}) in between.
+FLAVOR_ITEM = re.compile(r'Source:\s*"([^"]+)"(?:[^{}]|\{[^{}]*\})*?Validator:\s*(\w+)')
 # A leading template comment, <%- /* ... */ -%>, renders to nothing and trims the white space
 # after it (text/template's "-%>").
 TEMPLATE_COMMENT = re.compile(r"\A<%- /\*.*?\*/ -%>\s*", re.S)
@@ -83,6 +92,15 @@ def render_template(text):
     return body
 
 
+def yaml_validated_templates():
+    """Return the template paths, relative to the template directory, of every flavor file
+    internal/flavor checks with a YAML validator."""
+    items = FLAVOR_ITEM.findall((ROOT / FLAVOR_DEFINITIONS).read_text(encoding="utf-8"))
+    if not items or len(items) > MAX_TEMPLATE_FILES:
+        raise AssertionError(f"{FLAVOR_DEFINITIONS} declares {len(items)} flavor templates")
+    return {source for source, validator in items if validator in YAML_VALIDATORS}
+
+
 def template_files():
     """Return {template path without .tmpl: rendered body} of every YAML template."""
     source, directory_name, pattern_name = TEMPLATES
@@ -90,10 +108,12 @@ def template_files():
     paths = sorted(directory.glob(go_constant(source, pattern_name)))
     if not paths or len(paths) > MAX_TEMPLATE_FILES:
         raise AssertionError(f"{directory} holds {len(paths)} templates")
+    validated = yaml_validated_templates()
     files = {}
     for path in paths:
         target = path.name.removesuffix(".tmpl")
-        if target.endswith((".yml", ".yaml")):
+        yaml_body = path.relative_to(directory).as_posix() in validated
+        if yaml_body or target.endswith((".yml", ".yaml")):
             relative = path.relative_to(ROOT).parent.as_posix()
             files[f"{relative}/{target}"] = render_template(
                 path.read_text(encoding="utf-8")
@@ -147,10 +167,21 @@ class SourceTest(unittest.TestCase):
             ".standards.yaml",
             "templates/go/ci-go.yml",
             "templates/go/.golangci.yml",
+            "templates/native/.clang-format",
+            "templates/native/.clang-tidy",
         ):
             self.assertIn(path, files)
         for path, text in files.items():
             self.assertTrue(text.startswith("---\n"), f"{path} has no document start")
+
+    def test_every_yaml_validated_flavor_template_is_linted(self):
+        validated = yaml_validated_templates()
+        self.assertIn("native/.clang-tidy.tmpl", validated)
+        self.assertIn("osimage/.yamllint.yml.tmpl", validated)
+        self.assertNotIn("native/.gitleaks.toml.tmpl", validated)
+        linted = {path.removeprefix("templates/") for path in template_files()}
+        for template in validated:
+            self.assertIn(template.removesuffix(".tmpl"), linted)
 
     def test_render_template_drops_only_the_leading_comment(self):
         note = "<%- /*\nmaintainer note\n*/ -%>\n"
