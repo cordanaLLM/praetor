@@ -61,11 +61,18 @@ it does not start against an arbitrary first folder. The default is
 `${workspaceFolder}/bin/standards-lsp`. All paths and processes belong to the
 actual extension host, which may be remote or in a container.
 
-Legacy `standards.mcp.enabled`, `standards.mcp.path` and `standards.modelTier`
-settings remain declared for compatibility but do not activate services. Editor
-configuration generation no longer emits them. The Go generator's legacy
-`IncludeMCP` option is retained for source compatibility; use the client setup
-pipeline to produce real MCP configuration.
+The extension registers no MCP server: the declared minimum host (VS Code 1.90,
+`engines.vscode` and the pinned `@types/vscode` in `package.json`) has no MCP
+server registration API. MCP configuration comes only from the setup command
+above. The former `standards.mcp.enabled` and `standards.mcp.path` settings are
+no longer contributed because nothing read them; delete them from settings
+files, where VS Code now reports them as unknown. `src/setup.test.ts` checks
+that every setting the extension reads is contributed with the same default and
+that no `standards.mcp.*` setting returns. The legacy `standards.modelTier`
+setting remains declared for compatibility but does not activate services.
+Editor configuration generation emits none of these keys. The Go generator's
+legacy `IncludeMCP` option is retained for source compatibility; use the client
+setup pipeline to produce real MCP configuration.
 
 Inspect command output in the **Praetor** output channel. A configuration command
 finishing successfully does not establish native trust, tool use, wrapper
