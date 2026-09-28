@@ -619,6 +619,8 @@ func TestRunReceiptStage_Positive_SignsRealStageOutput(t *testing.T) {
 		StageResult{Name: "Prefetch & Lockfiles", Status: StagePassed},
 		StageResult{Name: "HISS Invariant Scan", Status: StagePassed, Message: "0 infractions within the 0 baselined limit"},
 	)
+	// The Go prefetch recorded above ran, which is what lets the receipt stage sign at all.
+	cfg.verified = []string{languageGo}
 
 	msg, err := runReceiptStage(context.Background(), cfg)
 	if err != nil {
@@ -672,10 +674,12 @@ func TestRunReceiptStage_Negative_NoSigningKey(t *testing.T) {
 
 	repoDir := t.TempDir()
 	cfg, _ := newTestConfig(t, repoDir, false)
-	// A clean tree, so the refusal below is the missing key's and not the tree's.
+	// A clean tree and a language that was verified, so the refusal below is the missing key's
+	// and neither the tree's nor the empty verification's.
 	cfg.rep.WorktreeClean = true
+	cfg.verified = []string{languageGo}
 	_, err := runReceiptStage(context.Background(), cfg)
-	if err == nil || errors.Is(err, ErrUncleanTree) {
+	if err == nil || errors.Is(err, ErrUncleanTree) || errors.Is(err, ErrNothingVerified) {
 		t.Fatalf("expected the receipt stage to fail closed on the missing signing key, got %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(repoDir, ReceiptFileName)); !errors.Is(err, os.ErrNotExist) {
