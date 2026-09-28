@@ -201,6 +201,17 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
   a match is reported as verified, a difference as `differs from the scaffold` with a
   warning, and the file is kept. `--force` regenerates only the scaffolds it owns
   (`TestScaffoldFile_ReportsDriftInsteadOfVerified`).
+- **Replaced files.** When `--force` overwrites a drifted scaffold, the report lists it under
+  `Files Replaced` with action `replace`, never as created. The entry carries a line delta
+  (`-removed/+added lines` and the first three removed lines) and where the prior bytes went:
+  `.workingdir/adopt-backups/<UTC stamp>/<path>`, written only when `git check-ignore`
+  confirms that path is ignored. Without that confirmation, for example on a first adoption
+  whose `.gitignore` does not yet carry the managed `/.workingdir/` rule, the file is replaced
+  without a copy and a warning says so. A file that differs only in its line endings is
+  verified, not replaced (`TestScaffoldFile_Positive_ForceReplacesWithBackupAndDelta`,
+  `TestScaffoldFile_Boundary_DryRunPlansReplaceAndDeltaTruncates`,
+  `TestScaffoldFile_Boundary_CRLFOnlyDifferenceIsNotReplaced`). Agent hook merges keep their
+  copy in the same place ([agent hooks](guides/agent-hooks.md)).
 - **Earlier Praetor output.** The manifest, lock, label taxonomy, pinned catalog, flavor
   YAML (`.clang-format` and `.clang-tidy` included) and the `docs:seo-portal` documentation
   gate's YAML that adoption writes pass `yamllint --strict` with its default rules

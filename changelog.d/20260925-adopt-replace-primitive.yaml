@@ -1,0 +1,4 @@
+type: fixed
+title: 'Adoption reports every overwrite of existing adopter bytes as action replace with a bounded line delta, and keeps the prior bytes under .workingdir/adopt-backups/<UTC stamp>/<path> only when git confirms that path is ignored; agent hook merges no longer write <file>.bak beside the hook file, and a leftover one is reported, never removed'
+issue: "#502"
+breaking: true

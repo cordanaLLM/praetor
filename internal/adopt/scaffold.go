@@ -16,6 +16,7 @@ const (
 	actionReconcile = "reconcile"
 	actionMerge     = "merge"
 	actionAppend    = "append"
+	actionReplace   = "replace"
 	actionRemove    = "remove"
 	actionSkip      = "skip"
 )
@@ -35,6 +36,28 @@ func (r *AdoptReport) recordReconciled(path, details string) {
 func (r *AdoptReport) recordReconciledAs(path, action, details string) {
 	r.ReconciledFiles = append(r.ReconciledFiles, path)
 	r.ActionDetails = append(r.ActionDetails, ActionDetail{Path: path, Action: action, Details: details})
+}
+
+// recordReplaced lists path as reconciled with the replace action: existing bytes that were
+// neither current nor earlier Praetor text were overwritten (replaceExisting).
+func (r *AdoptReport) recordReplaced(path, details string) {
+	r.recordReconciledAs(path, actionReplace, details)
+}
+
+// maxReportActions bounds a walk over a report's action entries (HISS-02); a run records a few
+// hundred at most.
+const maxReportActions = 1 << 16
+
+// Replaced returns the replace entries of the report, in the order they were recorded: the
+// existing files whose adopter bytes adoption overwrote, or plans to overwrite in a dry run.
+func (r *AdoptReport) Replaced() []ActionDetail {
+	replaced := make([]ActionDetail, 0)
+	for i := 0; i < len(r.ActionDetails) && i < maxReportActions; i++ {
+		if r.ActionDetails[i].Action == actionReplace {
+			replaced = append(replaced, r.ActionDetails[i])
+		}
+	}
+	return replaced
 }
 
 // recordSkipped records a deliberate safety skip as both an action and a warning.
@@ -106,7 +129,8 @@ func isPriorRendering(data []byte, digests map[string]string) bool {
 type scaffoldState int
 
 const (
-	// scaffoldWritten: the file was created, or regenerated under --force (planned in a dry run).
+	// scaffoldWritten: the file was created, refreshed from an earlier Praetor text, or replaced
+	// under --force (planned in a dry run).
 	scaffoldWritten scaffoldState = iota + 1
 	// scaffoldIdentical: an existing file matches the scaffold, line endings aside.
 	scaffoldIdentical
@@ -124,16 +148,17 @@ func (s *adoptSession) write(path string, data []byte, perm os.FileMode) error {
 	return writeRepoFile(path, data, perm)
 }
 
-// scaffoldFile creates sc.rel when it is missing (or when Force is set and the scaffold
-// allows overwriting). An existing file it leaves in place is compared with sc.content
-// first: only a match is reported as sc.verified, and a difference is reported as drift
-// rather than overwritten or passed off as verified.
+// scaffoldFile creates sc.rel when it is missing. An existing file is compared with sc.content
+// first: an earlier Praetor text of it is refreshed, a match is reported as sc.verified, and a
+// difference is reported as drift rather than overwritten or passed off as verified. Only when
+// Force is set and the scaffold allows it is a drifted file overwritten, through replaceExisting,
+// so the report lists it as replaced with its line delta and backup, never as created.
 func (s *adoptSession) scaffoldFile(ctx context.Context, sc scaffold) (scaffoldState, error) {
 	full, err := repoFile(s.repoPath, sc.rel)
 	if err != nil {
 		return 0, err
 	}
-	if fileExists(full) && (!sc.force || !s.opts.Force) {
+	if fileExists(full) {
 		refreshed, err := s.refreshPriorScaffold(ctx, full, sc)
 		if err != nil || refreshed {
 			return scaffoldWritten, err
@@ -197,19 +222,24 @@ func (s *adoptSession) writeScaffold(ctx context.Context, full string, sc scaffo
 	return nil
 }
 
-// recordExistingScaffold classifies a preserved file against its scaffold and records the
+// recordExistingScaffold classifies an existing file against its scaffold and records the
 // result. A file that cannot be read is preserved and reported as unverified: a file that
-// exists is not evidence of anything until its content has been compared.
+// exists is not evidence of anything until its content has been compared, and there are no
+// bytes to back up. A drifted file is replaced when Force is set and the scaffold allows it,
+// a file with mixed line endings included, since it cannot hold the scaffold's text, and
+// preserved otherwise.
 func (s *adoptSession) recordExistingScaffold(ctx context.Context, full string, sc scaffold) (scaffoldState, error) {
-	actual, _, err := contextopt.ObserveSnapshot(ctx, full)
+	actual, _, readErr := contextopt.ObserveSnapshot(ctx, full)
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return 0, ctxErr
 	}
-	identical := false
-	if err == nil {
+	identical, err := false, readErr
+	if readErr == nil {
 		identical, err = util.CanonicalTextEquivalent(actual, sc.content)
 	}
 	switch {
+	case readErr == nil && !identical && sc.force && s.opts.Force:
+		return s.replaceScaffold(ctx, full, sc, actual)
 	case err != nil:
 		s.report.recordReconciled(sc.rel, "Existing file preserved unverified: "+err.Error())
 		s.report.addWarning("%s: existing file preserved but not compared with the scaffold: %v", sc.rel, err)
@@ -222,6 +252,19 @@ func (s *adoptSession) recordExistingScaffold(ctx context.Context, full string, 
 	s.report.recordReconciled(sc.rel, note)
 	s.report.addWarning("%s: %s", sc.rel, lowerFirst(note))
 	return scaffoldDrifted, nil
+}
+
+// replaceScaffold overwrites the drifted file at full, which held actual, with sc.content under
+// --force, through the writer that creates the scaffold.
+func (s *adoptSession) replaceScaffold(ctx context.Context, full string, sc scaffold, actual []byte) (scaffoldState, error) {
+	err := s.replaceExisting(ctx, replacement{
+		rel: sc.rel, before: actual, after: sc.content, detail: sc.created,
+		publish: func(ctx context.Context) error { return s.writeScaffold(ctx, full, sc) },
+	})
+	if err != nil {
+		return 0, err
+	}
+	return scaffoldWritten, nil
 }
 
 // scaffoldDriftNote says what an operator can do about a drifted file: --force regenerates

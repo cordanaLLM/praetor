@@ -1,0 +1,151 @@
+package adopt
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/util"
+)
+
+// adoptBackupRoot holds the prior bytes of every existing file adoption replaces or merges
+// into, one directory per run: <adoptBackupRoot>/<UTC stamp>/<repository path>. It lies below
+// the private session ledger, which the managed .gitignore block ignores, so a backup never
+// lands in the tree an adopter commits.
+const adoptBackupRoot = workingDirPath + "/adopt-backups"
+
+// backupStampLayout names a run's backup directory: UTC to the nanosecond, so two runs never
+// share one, with no character a Windows path refuses (HISS-21).
+const backupStampLayout = "20060102T150405.000000000Z"
+
+// Bounds of the line delta a replace entry carries: how many removed lines it quotes, and how
+// many bytes of each.
+const (
+	maxDeltaQuotedLines = 3
+	maxDeltaLineBytes   = 80
+)
+
+// replacement is one existing file adoption overwrites with bytes that are neither the file's
+// current content nor an earlier Praetor text of it.
+type replacement struct {
+	rel    string // repository-relative slash path
+	before []byte // the bytes adoption observed at rel
+	after  []byte // the bytes that replace them
+	detail string // what adoption writes, leading the report entry
+	// publish writes after; replaceExisting calls it only outside a dry run.
+	publish func(ctx context.Context) error
+}
+
+// replaceExisting is the one path for overwriting adopter bytes: it keeps a backup of r.before
+// (backupExisting), publishes r.after, and records the file as replaced with a bounded line
+// delta and the backup location. The backup comes first, so a refused backup leaves the file
+// as it was. A dry run takes no backup, writes nothing and records the replacement it plans.
+func (s *adoptSession) replaceExisting(ctx context.Context, r replacement) error {
+	note, err := s.backupExisting(ctx, r.rel, r.before)
+	if err != nil {
+		return err
+	}
+	if !s.opts.DryRun {
+		if err := r.publish(ctx); err != nil {
+			return err
+		}
+	}
+	s.report.recordReplaced(r.rel, r.detail+"; replaced existing content ("+describeLineDelta(r.before, r.after)+"); "+note)
+	return nil
+}
+
+// backupExisting keeps before, the bytes rel held, under this run's backup directory, and
+// returns the report note naming it. The copy is written only when git confirms the backup path
+// is ignored: otherwise a copy of adopter content would sit in the tree waiting to be committed,
+// so there is no backup, the note says so and a warning names the reason. The write goes
+// through the root-pinned writer, so a symlink at or below the backup root is refused before
+// the caller replaces anything. A dry run checks the same and writes nothing.
+func (s *adoptSession) backupExisting(ctx context.Context, rel string, before []byte) (string, error) {
+	target := s.backupPath(rel)
+	if err := checkBackupRoot(ctx, s.repoPath); err != nil {
+		return "", err
+	}
+	ignored, err := util.GitIgnoredPaths(ctx, s.repoPath, []string{target}, false)
+	if err != nil || !slices.Contains(ignored, target) {
+		reason := "git does not ignore " + target
+		if err != nil {
+			reason = "git could not confirm " + target + " is ignored: " + err.Error()
+		}
+		s.report.addWarning("%s: no backup of the replaced bytes: %s", rel, reason)
+		return "no backup: " + target + " is not ignored by git", nil
+	}
+	if !s.opts.DryRun {
+		if err := contextopt.WriteSnapshotIn(ctx, s.repoPath, filepath.FromSlash(target), before, filePerm); err != nil {
+			return "", fmt.Errorf("back up %s to %s: %w", rel, target, err)
+		}
+	}
+	return "backup: " + target, nil
+}
+
+// backupPath returns where this run keeps the backup of rel, fixing the run's stamp on first use.
+func (s *adoptSession) backupPath(rel string) string {
+	if s.backupStamp == "" {
+		s.backupStamp = newBackupStamp()
+	}
+	return path.Join(adoptBackupRoot, s.backupStamp, rel)
+}
+
+// newBackupStamp names a new run's backup directory.
+func newBackupStamp() string {
+	return time.Now().UTC().Format(backupStampLayout)
+}
+
+// checkBackupRoot refuses a backup root that is a symlink, sits behind one or is not a
+// directory, the paths the root-pinned writer refuses at write time. An absent root, or an
+// absent private ledger above it, is accepted: the writer creates it.
+func checkBackupRoot(ctx context.Context, repoPath string) error {
+	ctx, cancel := context.WithTimeout(ctx, contextopt.MaxDuration)
+	defer cancel()
+	dir, err := contextopt.OpenDirectoryIn(ctx, repoPath, filepath.FromSlash(adoptBackupRoot))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("backup root %s: %w", adoptBackupRoot, err)
+	}
+	return dir.Close()
+}
+
+// describeLineDelta renders the line delta from before to after for a report entry: the counts,
+// then the first removed lines, each cut to a bounded length and quoted.
+func describeLineDelta(before, after []byte) string {
+	delta := util.LineDeltaOf(string(before), string(after), maxDeltaQuotedLines)
+	summary := "-" + strconv.Itoa(delta.Removed) + "/+" + strconv.Itoa(delta.Added) + " lines"
+	if len(delta.RemovedLines) == 0 {
+		return summary
+	}
+	quoted := make([]string, 0, len(delta.RemovedLines))
+	for i := 0; i < len(delta.RemovedLines) && i < maxDeltaQuotedLines; i++ {
+		quoted = append(quoted, strconv.Quote(util.TruncateExcerpt(delta.RemovedLines[i], maxDeltaLineBytes)))
+	}
+	summary += ", removed " + strings.Join(quoted, ", ")
+	if more := delta.Removed - len(quoted); more > 0 {
+		summary += " and " + strconv.Itoa(more) + " more"
+	}
+	return summary
+}
+
+// legacyHookBackupWarning reports a <file>.bak an earlier adoption wrote beside a hook file.
+// Adoption no longer writes one and never deletes adopter data, so it only says the copy is
+// there and could be committed by accident.
+func legacyHookBackupWarning(s *adoptSession, rel string) {
+	legacy := rel + hookBackupExt
+	if _, err := os.Lstat(filepath.Join(s.repoPath, filepath.FromSlash(legacy))); err != nil {
+		return
+	}
+	s.report.addWarning("%s: backup an earlier adoption wrote beside %s; adoption no longer writes or removes it. "+
+		"Review it and delete it, or it may be committed by accident (backups now go to %s)", legacy, rel, adoptBackupRoot)
+}

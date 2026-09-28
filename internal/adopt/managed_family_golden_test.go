@@ -61,7 +61,7 @@ func (g *familyGolden) adopt(label, root string, opts AdoptOptions) {
 func (g *familyGolden) recordReport(root string, report *AdoptReport) {
 	for _, detail := range report.ActionDetails {
 		if slices.Contains(markdownFamilyGoldenPaths, detail.Path) {
-			fmt.Fprintf(&g.sb, "action %s %s :: %s\n", detail.Action, detail.Path, detail.Details)
+			fmt.Fprintf(&g.sb, "action %s %s :: %s\n", detail.Action, detail.Path, scrubBackupStamp(detail.Details))
 		}
 	}
 	for _, message := range report.Errors {

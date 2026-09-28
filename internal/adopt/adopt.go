@@ -72,9 +72,14 @@ type AdoptOptions struct {
 }
 
 // ActionDetail describes a specific planned or executed action on a target file.
+//
+// "replace" marks existing bytes that were neither the content adoption writes nor an earlier
+// Praetor text of it, overwritten all the same (--force over a drifted scaffold). Its Details
+// carry a bounded line delta and where the prior bytes were kept, or why they were not
+// (replaceExisting); the path is listed in ReconciledFiles, never in CreatedFiles.
 type ActionDetail struct {
 	Path    string `json:"path"`
-	Action  string `json:"action"` // "create", "reconcile", "merge", "append", "skip"
+	Action  string `json:"action"` // "create", "reconcile", "merge", "append", "replace", "remove", "skip"
 	Details string `json:"details"`
 }
 
@@ -146,6 +151,9 @@ type adoptSession struct {
 	// rulesetBaseline is the policy and the workflows of the repository as this adoption found
 	// it, read before any step writes (readRulesetBaseline); nil without a ruleset on disk.
 	rulesetBaseline *forge.RulesetBaseline
+	// backupStamp names this run's directory below adoptBackupRoot; backupPath fixes it on
+	// first use when the session was built without one.
+	backupStamp string
 }
 
 // adoptStep is one reconciliation step of the adoption chain.
@@ -191,6 +199,7 @@ func Adopt(ctx context.Context, opts AdoptOptions) (*AdoptReport, error) {
 		declined:     manifestDeclines(declared),
 		cleanupGoto:  cleanupGoto,
 		exceptions:   harnessExceptions(cleanupGoto),
+		backupStamp:  newBackupStamp(),
 	}
 	if err := s.resolveIdentity(ctx); err != nil {
 		report.addError("%s", err)
@@ -430,13 +439,13 @@ func executeAdoptSteps(ctx context.Context, s *adoptSession) error {
 // preflightAgentSurfaces refuses, before the first step writes anything, an agent file the
 // agent-harness, agent-definitions or agent-hooks step would refuse to write: a vendor file,
 // canonical persona or persona copy behind a symlinked directory such as .agents or .github, a
-// native hook file or its backup path that is a symlink or sits behind one, or an existing one
-// that is not a regular text file or, for a hook file, cannot be merged. Those steps write
-// through the root-pinned writer, which refuses the same files at write time; checked only
-// there, the refusal came after the manifest, the vendor files, the pull request template and
-// the workflows were written, and left a half-adopted repository. A declined step's files are
-// not checked, and a dry run is checked too, so its preview does not report a run that would
-// fail.
+// native hook file, or the backup root a merge copies it to, that is a symlink or sits behind
+// one, or an existing one that is not a regular text file or, for a hook file, cannot be
+// merged. Those steps write through the root-pinned writer, which refuses the same files at
+// write time; checked only there, the refusal came after the manifest, the vendor files, the
+// pull request template and the workflows were written, and left a half-adopted repository.
+// A declined step's files are not checked, and a dry run is checked too, so its preview does
+// not report a run that would fail.
 func preflightAgentSurfaces(ctx context.Context, s *adoptSession, declined map[string]bool) error {
 	if !declined["agent-harness"] {
 		if err := compiler.CheckVendorTargets(ctx, s.repoPath); err != nil {
