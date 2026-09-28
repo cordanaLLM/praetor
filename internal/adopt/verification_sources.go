@@ -5,6 +5,7 @@
 package adopt
 
 import (
+	"context"
 	"path"
 	"strings"
 
@@ -48,12 +49,14 @@ func cFamilyKindOf(ext string) cFamilyKind {
 	return cFamilyExtensions[strings.ToLower(ext)]
 }
 
-// cSourceObservation records which C-family sources the verification walk visited. It adds no
+// cSourceObservation records the C-family sources the verification walk visited. It adds no
 // walk of its own: the walk's entry and depth bounds (VerificationLimits, the
 // --verification-max-* flags) bound it, and it reads no file content, so it spends none of the
 // file or byte budget.
 type cSourceObservation struct {
-	c, header, other bool
+	// paths holds the slash-separated C-family paths outside the audit's ignored directories,
+	// at most one per walk entry.
+	paths []string
 }
 
 // observe records the file at rel, a slash-separated path under the repository root. A file
@@ -61,23 +64,47 @@ type cSourceObservation struct {
 // testdata, build output and the like) is not the repository's own source and says nothing about
 // its language; the walk itself already skips vendor, build and scratch trees.
 func (o *cSourceObservation) observe(rel string) {
-	kind := cFamilyKindOf(path.Ext(rel))
-	if kind == cFamilyNone || hiss.ShouldIgnorePath(rel) {
+	if cFamilyKindOf(path.Ext(rel)) == cFamilyNone || hiss.ShouldIgnorePath(rel) {
 		return
 	}
-	switch kind {
-	case cFamilyC:
-		o.c = true
-	case cFamilyHeader:
-		o.header = true
-	default:
-		o.other = true
-	}
+	o.paths = append(o.paths, rel)
 }
 
-// carriesC decides whether the observed sources make the repository a C repository: any `.c`
-// source does, and a `.h` header does only when no C++, Objective-C, CUDA or HIP source claims
-// it, since `.h` is the conventional header of all of them.
-func (o cSourceObservation) carriesC() bool {
-	return o.c || (o.header && !o.other)
+// languages returns the source languages the observed files give the repository at root:
+// sourceLanguageC or nothing. Only the files git reports as the repository's own count, the set
+// the audit's HISS scan reads (hiss.GitVisiblePaths: tracked files plus untracked files no ignore
+// rule matches), so an ignored in-place Cython `.c` or C under IDE build output selects no C
+// clause the audit never enforces, and a fresh clone reads the same set as a built checkout.
+// Outside a work tree git gives no answer and every observed file counts. Git is asked only when
+// the walk saw a C-family file.
+func (o cSourceObservation) languages(ctx context.Context, root string) []string {
+	if len(o.paths) == 0 {
+		return nil
+	}
+	if o.carriesC(hiss.GitVisiblePaths(ctx, root)) {
+		return []string{sourceLanguageC}
+	}
+	return nil
+}
+
+// carriesC decides whether the observed sources visible reports make the repository a C
+// repository: any `.c` source does, and a `.h` header does only when no C++, Objective-C, CUDA or
+// HIP source claims it, since `.h` is the conventional header of all of them. A nil visible set
+// (no git answer) keeps every observed file.
+func (o cSourceObservation) carriesC(visible *hiss.GitVisibleTree) bool {
+	var header, other bool
+	for _, rel := range o.paths {
+		if !visible.HasFile(rel) {
+			continue
+		}
+		switch cFamilyKindOf(path.Ext(rel)) {
+		case cFamilyC:
+			return true
+		case cFamilyHeader:
+			header = true
+		default:
+			other = true
+		}
+	}
+	return header && !other
 }

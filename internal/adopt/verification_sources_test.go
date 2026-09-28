@@ -12,6 +12,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 // TestCSourceObservationDecidesC states the C rule (#549). Positive: a `.c` source is C, and so
@@ -43,7 +44,7 @@ func TestCSourceObservationDecidesC(t *testing.T) {
 		for _, rel := range tc.files {
 			observed.observe(rel)
 		}
-		if got := observed.carriesC(); got != tc.want {
+		if got := observed.carriesC(nil); got != tc.want {
 			t.Errorf("%s: carriesC(%q) = %v, want %v", name, tc.files, got, tc.want)
 		}
 	}
@@ -162,6 +163,41 @@ func TestAdoptedHarnessRendersCClausesFromSources(t *testing.T) {
 	for _, word := range []string{"`goto`", "libc", "C/C++:"} {
 		if strings.Contains(cpp, word) {
 			t.Errorf("C++ crate harness carries %q:\n%s", word, cpp)
+		}
+	}
+}
+
+// TestRepositoryHISSFactsReadsOnlyGitVisibleCSources: in a work tree, C counts only from the files
+// git reports as the repository's own, the set the audit's HISS scan reads
+// (hiss.GitVisiblePaths). Positive: a tracked `.c`, and an untracked one git does not ignore, is
+// C. Negative: an in-place Cython `.c` a `*.c` pattern ignores, and C under ignored IDE build
+// output, is not. Boundary: a force-added `.c` an ignore pattern matches is tracked and counts,
+// and ignored C++ build output does not claim the repository's own header.
+func TestRepositoryHISSFactsReadsOnlyGitVisibleCSources(t *testing.T) {
+	const goMod = "module example.com/widget\n\ngo 1.27\n"
+	goC := hisscatalog.LanguageGo | hisscatalog.LanguageC
+	cases := map[string]struct {
+		files map[string]string
+		git   []string
+		want  hisscatalog.Language
+	}{
+		"tracked c":             {map[string]string{"go.mod": goMod, "bpf/probe.c": cSource}, []string{"add", "-A"}, goC},
+		"untracked visible c":   {map[string]string{"go.mod": goMod, "bpf/probe.c": cSource}, nil, goC},
+		"ignored cython c":      {map[string]string{"pyproject.toml": "[project]\nname = \"fast\"\n", ".gitignore": "*.c\n", "pkg/fast.pyx": "", "pkg/fast.c": cSource}, nil, hisscatalog.LanguagePython},
+		"ignored ide build c":   {map[string]string{"go.mod": goMod, ".gitignore": "/cmake-build-debug/\n", "cmake-build-debug/CMakeFiles/probe.c": cSource}, nil, hisscatalog.LanguageGo},
+		"force-added ignored c": {map[string]string{"go.mod": goMod, ".gitignore": "*.c\n", "bpf/probe.c": cSource}, []string{"add", "-f", "bpf/probe.c"}, goC},
+		"ignored c++ output":    {map[string]string{"go.mod": goMod, ".gitignore": "/out/\n", "include/widget.h": "int w;\n", "out/gen.cpp": "int w;\n"}, nil, goC},
+	}
+	for name, tc := range cases {
+		root := writeRepo(t, tc.files)
+		testsupport.InitGitRepoWithOrigin(t, root, "")
+		if tc.git != nil {
+			fixtureGit(t, root, tc.git...)
+		}
+		want := hisscatalog.Facts{Languages: tc.want, CeilingFuncLOC: config.AuditMaxFuncLOC}
+		got, warnings, err := RepositoryHISSFacts(t.Context(), root, nil)
+		if err != nil || got != want || len(warnings) != 0 {
+			t.Errorf("%s: RepositoryHISSFacts = %+v, %q, %v; want %+v", name, got, warnings, err, want)
 		}
 	}
 }

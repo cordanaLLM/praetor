@@ -120,3 +120,35 @@ func TestScanOutsideGitWorkTreeStillWalks(t *testing.T) {
 			rep.Breakdown["HISS-02"], rep.Violations)
 	}
 }
+
+// TestGitVisiblePathsAnswersTheScanScope exercises the exported inventory that adopt's C source
+// detection reads beside the scan. Positive: an untracked file no rule ignores, one directory
+// down, is visible under its slash-separated path. Negative: a file an ignore rule matches is
+// not. Boundary: outside a work tree git gives no answer, the tree is nil, and a nil tree reports
+// every file visible, as the scan's fallback walk does.
+func TestGitVisiblePathsAnswersTheScanScope(t *testing.T) {
+	repo := t.TempDir()
+	initGitRepo(t, repo)
+	for rel, body := range map[string]string{".gitignore": "*.c\n", "src/probe.h": "int p;\n", "src/fast.c": "int f;\n"} {
+		path := filepath.Join(repo, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+			t.Fatalf("create %s: %v", rel, err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
+	visible := GitVisiblePaths(ctx, repo)
+	if visible == nil || !visible.HasFile("src/probe.h") || !visible.HasFile(".gitignore") {
+		t.Fatalf("GitVisiblePaths(work tree) = %+v; want src/probe.h and .gitignore visible", visible)
+	}
+	if visible.HasFile("src/fast.c") {
+		t.Fatalf("an ignored file is visible: %+v", visible)
+	}
+	outside := GitVisiblePaths(ctx, t.TempDir())
+	if outside != nil || !outside.HasFile("src/fast.c") {
+		t.Fatalf("GitVisiblePaths(plain directory) = %+v; want nil, every file visible", outside)
+	}
+}

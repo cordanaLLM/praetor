@@ -19,8 +19,9 @@ type VerificationPlan struct {
 	// commands after a --force refresh instead of only the preserved target (BUG-949).
 	Declared [][]string `json:"declared,omitempty"`
 	// SourceLanguages names the languages the walk found sources of that no build marker in
-	// Runtimes declares: sourceLanguageC for C a Makefile or script compiles (#549). It selects
-	// the HISS clauses the harness renders (planLanguages), never a build or test command.
+	// Runtimes declares: sourceLanguageC for C a Makefile or script compiles (#549), counted
+	// from the files git reports as the repository's own. It selects the HISS clauses the
+	// harness renders (planLanguages), never a build or test command.
 	SourceLanguages []string `json:"source_languages,omitempty"`
 }
 
@@ -60,9 +61,7 @@ func resolveVerificationPlanWithLimits(ctx context.Context, root string, request
 		return nil, err
 	}
 	addStandardVerification(plan, inputs)
-	if inputs.cSources.carriesC() {
-		plan.SourceLanguages = append(plan.SourceLanguages, sourceLanguageC)
-	}
+	plan.SourceLanguages = inputs.cSources.languages(ctx, root)
 	if len(plan.Runtimes) == 0 {
 		plan.unavailable("No supported build-system marker or explicit test runner was found; define and exercise a project verify-all target.")
 	}
