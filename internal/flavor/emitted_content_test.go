@@ -123,7 +123,8 @@ func TestScaffoldedDockerfileBuildsFromSourceOnADigestPinnedDebian13Runtime(t *t
 
 func TestScaffoldedGolangciConfigCarriesTheV2Schema(t *testing.T) {
 	body := scaffoldInto(t, "go-service", ".golangci.yml")[".golangci.yml"]
-	if !strings.HasPrefix(body, "version: \"2\"\n") {
+	// The document start is yamllint's (BUG-782); the version key is still the first key.
+	if !strings.HasPrefix(body, "---\nversion: \"2\"\n") {
 		t.Errorf("golangci-lint v2 rejects a configuration without a leading version key: %q", body)
 	}
 	for _, v1Only := range []string{"exclude-use-default", "max-issues-per-linter", "max-same-issues"} {

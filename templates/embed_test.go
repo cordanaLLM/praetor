@@ -112,7 +112,7 @@ func TestRenderFile_Positive_CommentsVanishAndIdentityRenders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("render golangci config: %v", err)
 	}
-	if !strings.HasPrefix(golangci, "version: \"2\"\n") {
+	if !strings.HasPrefix(golangci, "---\nversion: \"2\"\n") {
 		t.Errorf("template comment leaked into the rendered body: %q", golangci)
 	}
 	gitleaks, err := templates.RenderFile("native/.gitleaks.toml.tmpl", sampleContext)

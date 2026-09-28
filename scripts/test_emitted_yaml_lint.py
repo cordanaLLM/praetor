@@ -18,14 +18,19 @@ into it (BUG-782). This gate covers:
   linted as praetor's own copy, which internal/forge/labels_test.go holds byte-equal to it;
 - every profile and facet under .config/archetypes, which adoption copies byte for byte into
   the adopter's pinned catalog (internal/adopt/policy_catalog.go);
-- the .standards.yaml adoption renders (renderManifest in internal/adopt), linted from
-  internal/adopt/testdata/emitted/.standards.yaml, which
-  TestEmittedManifestFixtureMatchesTheRendering keeps equal to the rendering.
+- the .standards.yaml adoption, init and onboarding render (config.RenderManifest), linted
+  from internal/adopt/testdata/emitted/.standards.yaml, which
+  TestEmittedManifestFixtureMatchesTheRendering keeps equal to the rendering;
+- every YAML body flavor apply scaffolds, and adoption through it: each .yml or .yaml
+  template under templates/ (templates/embed.go), rendered by dropping its leading template
+  comment, the one action these bodies carry. A body with any other action fails the gate
+  instead of being linted as unrendered text.
 
 Each path is read from the Go constant that names it, so a moved file is followed without
 editing this list.
 """
 
+import re
 import unittest
 from pathlib import PurePosixPath
 
@@ -39,8 +44,16 @@ CATALOG = ("internal/config/lockdigest.go", "archetypeDirName")
 # The Go test constant naming each committed rendering, relative to its package directory,
 # and the file declaring it. The rendering is linted under its adopted file name.
 RENDERINGS = (("internal/adopt/manifest_render_test.go", "emittedManifestFixture"),)
+# The Go constants naming the embedded template directory and its go:embed pattern, and the
+# file declaring them.
+TEMPLATES = ("templates/embed.go", "Directory", "Pattern")
+# A leading template comment, <%- /* ... */ -%>, renders to nothing and trims the white space
+# after it (text/template's "-%>").
+TEMPLATE_COMMENT = re.compile(r"\A<%- /\*.*?\*/ -%>\s*", re.S)
 # Bounds the catalog walk: a lock pins at most 256 profiles and 256 facets.
 MAX_CATALOG_FILES = 512
+# Bounds the template walk; templates/ ships a few dozen bodies.
+MAX_TEMPLATE_FILES = 256
 
 
 def catalog_files():
@@ -63,6 +76,32 @@ def rendering_files():
     return files
 
 
+def render_template(text):
+    """Return the body a YAML template renders to, or raise if it carries another action."""
+    body = TEMPLATE_COMMENT.sub("", text, count=1)
+    if "<%" in body:
+        raise AssertionError("template carries an action this gate cannot render")
+    return body
+
+
+def template_files():
+    """Return {template path without .tmpl: rendered body} of every YAML template."""
+    source, directory_name, pattern_name = TEMPLATES
+    directory = ROOT / go_constant(source, directory_name)
+    paths = sorted(directory.glob(go_constant(source, pattern_name)))
+    if not paths or len(paths) > MAX_TEMPLATE_FILES:
+        raise AssertionError(f"{directory} holds {len(paths)} templates")
+    files = {}
+    for path in paths:
+        target = path.name.removesuffix(".tmpl")
+        if target.endswith((".yml", ".yaml")):
+            relative = path.relative_to(ROOT).parent.as_posix()
+            files[f"{relative}/{target}"] = render_template(
+                path.read_text(encoding="utf-8")
+            )
+    return files
+
+
 def emitted_files():
     """Return {path: text} of every emitted YAML file this gate lints."""
     files = {}
@@ -71,6 +110,7 @@ def emitted_files():
         files[path] = (ROOT / path).read_text(encoding="utf-8")
     files.update(catalog_files())
     files.update(rendering_files())
+    files.update(template_files())
     return files
 
 
@@ -79,7 +119,12 @@ class EmittedYamlTest(LintCase):
 
     def test_yamllint_accepts_emitted_yaml(self):
         files = emitted_files()
-        expected = len(OWN_COPIES) + len(catalog_files()) + len(RENDERINGS)
+        expected = (
+            len(OWN_COPIES)
+            + len(catalog_files())
+            + len(RENDERINGS)
+            + len(template_files())
+        )
         self.assertEqual(len(files), expected)
         self.assertLintPasses("yamllint", files)
 
@@ -101,10 +146,21 @@ class SourceTest(unittest.TestCase):
             ".config/archetypes/framework.yaml",
             ".config/archetypes/facets/security-high.yaml",
             ".standards.yaml",
+            "templates/go/ci-go.yml",
+            "templates/go/.golangci.yml",
         ):
             self.assertIn(path, files)
         for path, text in files.items():
             self.assertTrue(text.startswith("---\n"), f"{path} has no document start")
+
+    def test_render_template_drops_only_the_leading_comment(self):
+        note = "<%- /*\nmaintainer note\n*/ -%>\n"
+        self.assertEqual(
+            render_template(note + "---\nkey: value\n"), "---\nkey: value\n"
+        )
+        self.assertEqual(render_template("---\nkey: value\n"), "---\nkey: value\n")
+        with self.assertRaises(AssertionError):
+            render_template(note + "---\nowner: <% .Owner %>\n")
 
 
 if __name__ == "__main__":
