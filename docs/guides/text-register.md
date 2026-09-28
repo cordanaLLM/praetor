@@ -178,9 +178,21 @@ A subagent launch brief has no fallback. Text without a task label resolves to
 (`praetorctl hook <client> pre-dispatch`), a Claude `Agent`, Codex `spawn_agent`, Gemini
 `invoke_agent` or AGY `invoke_subagent` brief without a `task:` field is denied, and so is a
 label the routing vocabulary does not declare. The hook resolves the register from that
-label ([subagent text register gate](agent-hooks.md#subagent-text-register-gate)). The
-rendered block says so on its task-row line (`subagentBriefRule` in
-`internal/config/register_render.go`).
+label ([subagent text register gate](agent-hooks.md#subagent-text-register-gate)).
+
+The rendered block states the brief shape on its task-row line (`subagentBriefRule` in
+`internal/config/register_render.go`) and adds "registered dispatch hook denies brief
+missing `task:`" only where the repository registers that hook.
+`agenthook.DispatchGateRegistered` decides it from the repository's client hook files
+(`.claude/settings.json`, `.codex/hooks.json`, `.gemini/settings.json`), recognising a
+registration the way `praetorctl adopt` does: the engine call or the skew guard, under a
+matcher that covers the dispatch tool. A file that is absent or does not parse as strict
+JSON proves no registration. `compile-context` and `adopt` both read it, so the block an
+adopted repository receives verifies without a manual edit
+(`TestLoadRegisterBlockFollowsDispatchHook`, `TestAdoptRegisterBlockFollowsDispatchHook`).
+Adoption registers only the pre-tool row. The dispatch gate also binds dispatch receipts and
+returns through their own rows, so an operator registers it deliberately
+([agent hooks](agent-hooks.md)); until then, the block does not claim it.
 
 ## Caveman: the internal form
 
@@ -356,6 +368,37 @@ the text register block is left out: `compile-context` renders it, nobody edits 
 and its wording belongs to its renderer (`compiler.MaskRegisterBlock`). Compiling without
 `--verify` never lints, so a prose edit still compiles and fails on the next verify.
 
+Article density is a ratio over the text it reads, so a long, article-free harness would dilute
+a paragraph of prose written below it until the whole file passed. The gate therefore also
+judges the text after the harness end marker (`<!-- praetor:harness:end -->`) on its own, and
+reports a failure there as a `C1 article-density` finding at the first line after the marker,
+prefixed `repository text below the harness:`. A file without the marker is judged whole, as
+before. `compiler.CheckContextText` holds the rule, `praetorctl caveman check --kind=context`
+runs the same function on every file it is given, and `TestCheckContextTextJudgesTailAlone` in
+`internal/compiler/caveman_lint_test.go` and `TestCavemanCheckJudgesHarnessTailLikeTheGate` in
+`cmd/standardsctl/caveman_test.go` cover it.
+
+This tail check is a breaking change for adopted repositories. Every harness praetor writes
+ends with the marker, refreshed or not, so an `AGENTS.md` whose own text below the harness
+passed only because the harness diluted it now fails `compile-context --verify`, `audit` and
+the lefthook pre-commit context check, with no configuration change. To find the text, run:
+
+```bash
+praetorctl caveman check --kind=context AGENTS.md
+```
+
+Then fix the part below `<!-- praetor:harness:end -->` in one of two ways:
+
+- Rewrite it in the internal register: fragments, no articles, commands and paths verbatim.
+  `praetorctl caveman floor <before> <after>` proves the rewrite kept every rule id, command
+  and link.
+- Keep text that must stay in full sentences, such as a quoted policy or a legal notice, and
+  wrap it in `<!-- caveman:off -->` and `<!-- caveman:on -->`. The lint reads nothing between
+  the two markers.
+
+`TestCheckContextTextMigrationPaths` in `internal/compiler/caveman_lint_test.go` holds both
+paths.
+
 The gate has no opt-out, no warning mode and no grace period, in praetor and in every
 adopted repository. It reads no manifest, so neither `surfaces.agent` nor any task row can
 switch it off. `register.surfaces.context` is fixed to `internal`: writing `docs` or
@@ -528,7 +571,7 @@ register:
   sources:
     expected: 244
     not_applicable: 123
-    sha256: "sha256:b074c684a8273bb585a3f66ef26b11539644d27ebaeb5e9c5962a735f6ec5a4b"
+    sha256: "sha256:7d3fd6d6906fd255f1c3cf82b8c72675c7cc4f380afc105f0e90568176586952"
     inputs:
       - path: ".paperclip/harness.json"
         surface: prompts

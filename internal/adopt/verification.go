@@ -14,6 +14,10 @@ type VerificationPlan struct {
 	Test     [][]string          `json:"test"`
 	Reasons  []string            `json:"reasons,omitempty"`
 	Limits   *VerificationLimits `json:"verification_limits,omitempty"`
+	// Declared keeps the build and test commands the project markers declare when a preserved
+	// custom verify-all replaces Build and Test, so the harness still lists the project's real
+	// commands after a --force refresh instead of only the preserved target (BUG-949).
+	Declared [][]string `json:"declared,omitempty"`
 }
 
 const (
@@ -145,9 +149,13 @@ func verificationTestText(plan *VerificationPlan) string {
 	if plan.Status == verificationUnavailable {
 		return "# Project verification unavailable: " + strings.Join(plan.Reasons, " ") + "\nexit 1"
 	}
-	lines := make([]string, 0, len(plan.Test)+1)
+	commands := append(append([][]string(nil), plan.Build...), plan.Test...)
+	if plan.Status == verificationPreserved && len(plan.Declared) > 0 {
+		commands = plan.Declared
+	}
+	lines := make([]string, 0, len(commands)+1)
 	lines = append(lines, "# Declared commands only; run them before claiming application verification.")
-	for _, command := range append(append([][]string(nil), plan.Build...), plan.Test...) {
+	for _, command := range commands {
 		lines = append(lines, verificationCommand(command))
 	}
 	return strings.Join(lines, "\n")

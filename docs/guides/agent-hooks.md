@@ -217,10 +217,22 @@ dialect encoder as command hooks. `pre-dispatch` extracts the brief's `task:` fi
 the Caveman scanner, verifies that routing declares the label, resolves
 `register.tasks.<label>`, and calls the shared runtime validator with kind `brief`. An
 internal result must pass Caveman; docs and social results remain full prose by policy.
-The label and the manifest resolve through `compiler.LoadRegisterTaskAuthority`, the same
+The label and the manifest resolve through `config.LoadRegisterTaskAuthority`, the same
 digest-bound `config.RegisterAuthority` snapshot that `compile-context` renders, so every
 resolution names the manifest SHA-256 that `config.ValidateEmission` requires
 (`internal/agenthook/agent_brief_authority_test.go`).
+
+The text register block in `AGENTS.md` tells agents that this gate denies a brief without
+`task:` only where the repository registers it. `agenthook.DispatchGateRegistered`
+(`internal/agenthook/dispatch_gate.go`) reads `.claude/settings.json`, `.codex/hooks.json` and
+`.gemini/settings.json` and counts the `pre-dispatch` row as registered where the adoption
+merge would find it present: the engine call or the skew guard, in a group whose matcher
+covers the dispatch tool. The handler shape comes from `agenthook.NativeHooks`, the helper
+adoption registers the pre-tool row with. A file that is absent, refused by the confined read
+or not strict JSON proves no registration, so a Gemini settings file with comments counts as
+none. `compile-context` and `praetorctl adopt` both ask it, so the block an adopted
+repository receives verifies unchanged (`TestDispatchGateRegistered_Positive`,
+`TestDispatchGateRegistered_Negative`, `TestDispatchGateRegistered_Boundary`).
 
 Claude's pre-tool hook stores only the resolved register row, never the prompt. Its
 post-tool receipt atomically binds that row to the native agent id. The private bounded
@@ -489,7 +501,8 @@ which are the dialects `praetorctl hook` owns. `internal/adopt/evasion_hook_test
 the corpus above against the rendered script.
 
 Adoption also registers the engine's own pre-tool call, `praetorctl hook <client> pre-tool`
-(ADR-0011 decision 1), in the hook file of every agent client that `agent_clients` selects:
+(ADR-0011 decision 1), and no other row, in the hook file of every agent client that
+`agent_clients` selects:
 `.claude/settings.json`, `.codex/hooks.json` and `.gemini/settings.json`, with the matcher
 and the timeout unit of the registration row (`agenthook.NativeHookFile`,
 `internal/agenthook/registrations.go`). The `agent-hooks` step

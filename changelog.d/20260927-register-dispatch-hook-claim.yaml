@@ -1,0 +1,4 @@
+type: fixed
+title: The text register block compile-context and adopt render says "registered dispatch hook denies brief missing task:" only for a repository whose .claude/settings.json, .codex/hooks.json or .gemini/settings.json registers praetorctl hook <client> pre-dispatch, so an adopted repository, where adoption registers only the pre-tool hook, no longer tells agents a hook enforces the task label; config.LoadCheckedRegisterAuthority and config.LoadRegisterTaskAuthority replace the compiler package's register authority loaders
+issue: "#504"
+breaking: false

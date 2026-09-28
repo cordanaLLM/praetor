@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/caveman"
 	"github.com/cordanaLLM/praetor/internal/config"
 )
 
@@ -187,5 +188,70 @@ func TestLintContextLeavesRegisterBlockToRenderer(t *testing.T) {
 	// The same prose outside the markers fails.
 	if _, err := LintContext(context.Background(), lintFixture(t, lintTerseAgents+"\n"+lintProseAgents)); !errors.Is(err, ErrContextProse) {
 		t.Fatalf("prose outside the block must fail: %v", err)
+	}
+}
+
+// harnessBody is article-free agent text long enough to dilute one prose paragraph below the
+// limit when density is judged over the whole file.
+var harnessBody = "# Fixture Agent Operating Harness\n\n" +
+	strings.Repeat("1. **Verify.** Run `make verify-all` before turn end; read source first, then edit; report exit status.\n", 30) +
+	HarnessEndMarker + "\n"
+
+// TestCheckContextTextJudgesTailAlone: density is a whole-text ratio, so the gate judges the
+// repository's text below the harness on its own. Positive: one prose paragraph there fails
+// although the whole file stays under the limit, and LintContext reports it. Negative: a
+// terse tail passes. Boundary: a tail under the density floor, or a file without the marker,
+// gets only the whole-text judgment.
+func TestCheckContextTextJudgesTailAlone(t *testing.T) {
+	content := harnessBody + "\n---\n\n" + lintProseAgents
+	opts := caveman.Options{Kind: caveman.KindContext}
+	if whole := caveman.Check(content, opts); !whole.Passed() || whole.Density() > caveman.DefaultMaxArticleDensity {
+		t.Fatalf("fixture precondition: the whole file must pass on its own: %+v", whole.Findings)
+	}
+	report, _ := CheckContextText(content, opts)
+	tailLine := strings.Count(harnessBody, "\n") + 1
+	if len(report.Findings) != 1 || report.Findings[0].Rule != caveman.RuleArticleDensity ||
+		report.Findings[0].Line != tailLine || !strings.HasPrefix(report.Findings[0].Excerpt, "repository text below the harness: ") {
+		t.Fatalf("tail prose not judged alone: %+v", report.Findings)
+	}
+	if _, err := LintContext(context.Background(), lintFixture(t, content)); !errors.Is(err, ErrContextProse) {
+		t.Fatalf("LintContext passed prose below the harness: %v", err)
+	}
+
+	if report, _ := CheckContextText(harnessBody+lintTerseAgents, opts); !report.Passed() {
+		t.Fatalf("terse tail failed: %+v", report.Findings)
+	}
+	short := harnessBody + "The tail is a short line.\n"
+	if report, _ := CheckContextText(short, opts); !report.Passed() {
+		t.Fatalf("tail under the density floor judged: %+v", report.Findings)
+	}
+	unmarked := strings.Replace(content, HarnessEndMarker, "", 1)
+	if report, _ := CheckContextText(unmarked, opts); !report.Passed() {
+		t.Fatalf("file without the marker judged by section: %+v", report.Findings)
+	}
+}
+
+// TestCheckContextTextMigrationPaths holds the two migrations the breaking tail check names
+// (docs/guides/text-register.md). Negative: the unchanged prose tail fails. Positive: the same
+// tail wrapped in a caveman:off region passes, and so does its rewrite in the internal register.
+// Boundary: an off region left open is still a finding, so the wrap cannot silence the rest of
+// the file.
+func TestCheckContextTextMigrationPaths(t *testing.T) {
+	opts := caveman.Options{Kind: caveman.KindContext}
+	tail := strings.TrimPrefix(lintProseAgents, "# Fixture\n\n")
+	if report, _ := CheckContextText(harnessBody+"\n"+tail, opts); report.Passed() {
+		t.Fatal("fixture precondition: the unchanged prose tail must fail")
+	}
+	wrapped := harnessBody + "\n" + caveman.OffMarker + "\n" + tail + caveman.OnMarker + "\n"
+	if report, _ := CheckContextText(wrapped, opts); !report.Passed() {
+		t.Fatalf("tail wrapped in a caveman:off region failed: %+v", report.Findings)
+	}
+	rewritten := harnessBody + "\n" + strings.TrimPrefix(lintTerseAgents, "# Fixture Agent Operating Harness\n\n")
+	if report, _ := CheckContextText(rewritten, opts); !report.Passed() {
+		t.Fatalf("tail rewritten in the internal register failed: %+v", report.Findings)
+	}
+	unclosed := harnessBody + "\n" + caveman.OffMarker + "\n" + tail
+	if report, _ := CheckContextText(unclosed, opts); report.Passed() {
+		t.Fatal("an unclosed caveman:off region passed")
 	}
 }

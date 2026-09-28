@@ -64,7 +64,7 @@ func printRuleCoverage(catalog *hisscoverage.Catalog, id string) {
 		if rule.ID != id {
 			continue
 		}
-		fmt.Printf("  %s %s\n", rule.ID, rule.Title)
+		fmt.Printf("  %s %s\n", rule.ID, rule.CatalogTitle())
 		for j := 0; j < len(rule.Coverage); j++ {
 			cov := rule.Coverage[j]
 			fmt.Printf("    %-11s %-15s %s\n", cov.Language, cov.State, cov.Mechanism)

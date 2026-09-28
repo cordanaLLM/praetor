@@ -626,6 +626,149 @@ neighboring generators). Archetype catalogs and this downstream consumer still
 require separate reconciliation; a C# command plan does not imply a configured
 .NET development container or complete C# scanning.
 
+## What the generated harness claims
+
+The `AGENTS.md` harness states only what adoption generated. Its source is
+[`internal/adopt/harness.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/harness.go); the tests are in
+[`internal/adopt/harness_truth_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/harness_truth_test.go).
+
+- **Title.** `# <owner>/<name> Agent Operating Harness`, from the origin remote, or from the
+  manifest's `repository.owner` and `repository.name` when no remote resolves. With neither, the
+  title names the checkout directory alone (`TestHarnessTitleNamesOwner`).
+- **Turn-end command.** The block under "Before concluding any turn" names `make verify-all`
+  only when the repository has that target after the run: the one adoption generates, or a
+  repository-owned one it preserved. When `adoption.decline` lists `makefile` and no custom
+  target exists, the block names `praetorctl compile-context --verify`,
+  `praetorctl caveman check --configured-sources` and `praetorctl audit` instead, and the footer
+  drops its `make verify-all` line (`TestHarnessEntrypointFollowsVerifyAll`).
+- **Verification line.** It calls `make verify-all` the repository's own gate and points at the
+  `Makefile` for its steps, without listing them: the repository owns the target and may change
+  it after adoption, so a restated recipe would drift from what runs. Per plan status it adds
+  that adoption generated the target and executed none of it (`declared-unverified`), kept a
+  repository-owned target unread (`preserved-unverified`), or wrote one that fails until the
+  project declares build and test commands (`unavailable`). When `adoption.decline` lists
+  `makefile`, it says no target exists and to run the gates directly
+  (`TestHarnessSummaryDescribesVerifyAllAsRepositoryGate`). A preserved custom target keeps the
+  commands the project markers declare in the report's `verification.declared` list, and the
+  harness footer lists them, so `--force` no longer reduces them to `make verify-all`
+  (`TestAdoptForceKeepsOwnerAndDeclaredCommands`).
+- **Receipt.** Only `praetorctl gate run` mints an Ed25519 Exit-0 receipt. The harness says so,
+  tells agents to report no receipt that command did not mint, and ties none to `verify-all`
+  (`TestHarnessMakesNoUnbackedClaims`).
+- **Server side.** Adoption installs no CI job that runs a `praetorctl` gate; those gates run in
+  the local hooks and targets only. Rule 5 says so and names each CI workflow the run does
+  scaffold, with what it runs as read from the workflow body
+  ([`internal/adopt/harness_ci.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/harness_ci.go),
+  `forge.WorkflowRuns`):
+  - `.github/workflows/praetor-docs.yml`, which runs the Markdown verification, when the
+    `docs:seo-portal` facet is declared;
+  - the detected flavor's workflows that flavor apply leaves as its own rendering
+    (`flavor.PlannedWorkflows`), such as a Go flavor's `ci.yml` running `go vet ./...` and
+    `go test -race ./...`, or a Rust flavor's running `cargo fmt`, `cargo clippy` and
+    `cargo test`. A workflow the repository already owns, and every flavor workflow when
+    `adoption.decline` lists `working-dir-and-flavor`, is not named.
+
+  A one-line `run:` step is named by its command. A multi-line script is named by its step
+  name, or its first line when it has none, and labelled `step` so it never reads as a command
+  to run. Without a scaffolded workflow, rule 5 says the gates run locally only
+  (`TestScaffoldedWorkflowsReadWhatAdoptionWrites`, `TestCIClaimFollowsWhatWorkflowsRun`).
+  `TestNoScaffoldedWorkflowRunsPraetor` checks every line of every step in every flavor workflow
+  and the documentation workflow for a `praetorctl` call; should one ever run a gate, rule 5
+  drops its "no server-side `praetorctl` gate run" sentence.
+- **Invariant table.** One row per rule in the HISS rule catalog
+  ([`internal/hisscatalog/catalog.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hisscatalog/catalog.go)), HISS-01 through
+  HISS-21 (`TestHarnessTableListsEveryRegisteredInvariant`). The rows have the shape
+  `hisscatalog.ParseGatedInvariants` reads, the parser the generated wiki uses for praetor's own
+  table (`TestHarnessDirectives_ParseGatedInvariants`). The `Rule` column is the catalog's
+  adopted directive for this repository
+  ([`internal/hisscatalog/directive.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hisscatalog/directive.go)):
+  - A clause that names one language's construct renders only where the verification plan
+    found that language, labelled with it: Go's `context.Context` deadline and unchecked
+    `error` returns, Rust's `.unwrap()` / `.expect()` ban, C and C++'s `goto` and banned libc
+    calls, the `// SAFETY:` proof for Go and Rust `unsafe`. A rule left with no clause, such as
+    HISS-09 in a TypeScript repository, says it has no analogue there. With no detected
+    runtime, every clause renders with its label.
+  - HISS-04 states the function length the repository's audit enforces, read from the policy
+    the policy-catalog step resolved (container-image, for example, enforces 50).
+  - Still open: the C and C++ `goto` clause of HISS-01 is unconditional, as the audit's HISS-01
+    scan is. A repository whose own standard allows a single-level cleanup `goto` cannot state
+    that exception in the harness or the scan yet.
+  - `TestAdoptedHarnessGolden` pins the whole harness for a Go framework, a Rust crate and a
+    native C engine
+    ([`internal/adopt/testdata`](https://github.com/cordanaLLM/praetor/tree/main/internal/adopt/testdata));
+    regenerate with `go test ./internal/adopt -run TestAdoptedHarnessGolden
+    -update-harness-golden` after reviewing the change.
+
+  The `Adopted check` column names the
+  check and the generated stages that run it, such as `praetorctl audit` HISS scan in verify-all +
+  lefthook pre-commit/pre-push, qualified by language, or `not enforced`. It credits only the
+  pipelines this run generates ([`internal/adopt/harness_pipelines.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/harness_pipelines.go)):
+  - the `verify-all` target, unless `adoption.decline` lists `makefile` or the plan is
+    `preserved-unverified`;
+  - `lefthook.yml`, unless `adoption.decline` lists `git-hooks`, the git-hooks step will keep a
+    file that is not praetor's rendering, or lefthook will not install its hooks. A file the
+    step keeps is one that extends the canonical policy, adds jobs, or is foreign and adoption
+    runs without `--force`. The hooks are installed only when `lefthook version` runs on `PATH`
+    and hook activation is not skipped. Without a runnable lefthook, adoption writes the
+    fallback pre-commit hook, which runs `compile-context --verify` and `audit` alone, so the
+    lefthook stages are not credited.
+
+  A check is also language-bound (`Rule.AdoptedFor` in
+  [`internal/hisscatalog/adopted.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hisscatalog/adopted.go)):
+  the audit's HISS scan reads Go, Rust, Python and C/C++ sources only, and each rule's scan
+  decides a subset of them, so a row reads `not enforced` where the check decides none of the
+  repository's languages or the rule has no analogue there. HISS-09 in a C engine, HISS-01 in a
+  TypeScript repository and the lefthook `go vet` row in a Rust crate are examples
+  (`TestAdoptedFor`).
+
+  The line above the table names the pipelines it read and says the cells describe the files as
+  adoption wrote them; a later edit to the `Makefile` or `lefthook.yml` is not reflected there.
+  Rule 5 claims hooks only when lefthook
+  installs praetor's `lefthook.yml`, and says the file's hooks stay inactive when lefthook did not
+  run (`TestHarnessTableFollowsGeneratedPipelines`,
+  `TestAdoptHarnessDropsDeclinedAndPreservedPipelines`). `TestGeneratedPipelinesPredictGitHooks`
+  replays the prediction against the git-hooks step for each case, including a failing and a
+  missing lefthook binary and skipped activation, and checks which pre-commit hook it installed.
+- **Protected files.** Rule 3 names the files `compile-context` writes under the manifest's
+  `agent_clients`, read from `agentcontext.VendorTargets`, the selection the transpiler itself
+  applies: all six by default, `.gemini/GEMINI.md` and `.codex/rules.md` included, and none for
+  an empty selection (`TestHarnessRule3NamesExactlyTheCompiledFiles`,
+  `TestHarnessNamesEveryProtectedContextFile`, `TestHarnessRule3FollowsAgentClients`).
+- **Paperclip harness.** `.paperclip/harness.json` and `.paperclip/rules.md` come from
+  [`internal/paperclip/harness.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/paperclip/harness.go).
+  - The invariants are the same adopted directives for HISS-01, 02, 04, 07, 10, 15 and 16, for
+    the repository's languages (`TestSynthesizeHarness_Positive_InvariantsFollowLanguages`).
+    Adoption binds the harness in `register.sources` during its manifest step, before the
+    policy that sets the function length is resolved, so HISS-04 there states the 60-line
+    audit ceiling and that a stricter repository policy wins.
+  - The receipt row prescribes minting a receipt with `praetorctl gate run` and attaching it only
+    when `.standards.yaml` pins a well-formed `receipt.public_key`. Without one, every attached
+    receipt is refused, so the row says to attach none and names `praetorctl gate keygen`
+    (`TestSynthesizeHarness_Positive_PinnedKeyPrescribesReceipts`,
+    `TestSynthesizeHarness_Negative_NoPinnedKeyPrescribesNoReceipt`,
+    `TestSynthesizeHarness_Boundary_ReceiptKeyShape`).
+  - An unmodified harness from an earlier release, including the one that prescribed receipts on
+    every repository, still counts as earlier output, so `praetorctl adopt` refreshes it to the
+    current receipt row without `--force`; an edited harness stays operator-owned
+    (`TestPriorGeneratedRecognisesTheCavemanRelease`).
+  - The same holds for this release's own harness after a repository fact it reads changes.
+    Pinning `receipt.public_key`, as the unpinned row advises, or adding or removing a language
+    leaves the harness unmodified output, and the next plain `praetorctl adopt` refreshes it to
+    the row that requires receipts and the new language clauses. The refresh key compares the
+    harness byte for byte with this release rendered under both receipt states and every
+    language set (`hisscatalog.AllLanguages`), so an edit to the receipt row or an invariant
+    still keeps it operator-owned (`TestAdoptRefreshesHarnessAfterFactsChange`,
+    `TestAdoptKeepsHandEditedHarnessAfterFactsChange`, `TestAdoptHarnessRefreshFactBoundary`,
+    `TestPriorGeneratedRecognisesThisReleaseUnderEveryFactCombination`).
+  - Still open: the `## AGit Push Protocol` section (`agit_push_format`) prescribes
+    `git push origin HEAD:refs/for/main -o topic=<issue-id>` whatever forge `origin` names. That
+    push opens a review only on a forge that implements AGit, such as Forgejo or Gitea. The
+    manifest declares no forge kind, and choosing a push form from the remote's host name would
+    be a guess, so the harness does not choose one. On any other forge, push the review branch
+    (the second half of the command) and open the pull request there.
+
+An existing harness keeps its text until `praetorctl adopt --force` refreshes it.
+
 ## Canonical context preparation
 
 Adoption preserves repository-specific `AGENTS.md` instructions when composing

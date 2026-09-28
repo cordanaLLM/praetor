@@ -18,7 +18,7 @@ func registerTestPlan() *VerificationPlan {
 // The harness carries the default block, and that block is byte-for-byte what the
 // adoptee's own compile-context renders without a manifest: a fresh adoption verifies.
 func TestHarnessCarriesTheDefaultRegisterSection(t *testing.T) {
-	harness, err := buildAgentHarness("fixture", "framework", registerTestPlan())
+	harness, err := buildAgentHarness(adoptedFacts("", "fixture", "framework", registerTestPlan()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestHarnessCarriesTheDefaultRegisterSection(t *testing.T) {
 }
 
 func TestDropRegisterSection(t *testing.T) {
-	block, err := config.RenderRegisterBlock(config.DefaultRegisterPolicy())
+	block, err := config.RenderRegisterBlock(config.DefaultRegisterPolicy(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,12 +69,12 @@ func TestDropRegisterSection(t *testing.T) {
 // compile-context appends the section to an AGENTS.md that has none, so instructions kept
 // across a harness refresh can hold one. The refreshed file must carry exactly one.
 func TestHarnessRefreshKeepsOneRegisterSection(t *testing.T) {
-	block, err := config.RenderRegisterBlock(config.DefaultRegisterPolicy())
+	block, err := config.RenderRegisterBlock(config.DefaultRegisterPolicy(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	section := config.RegisterSectionPrefix + block + "\n"
-	harness, err := buildAgentHarness("fixture", "framework", registerTestPlan())
+	harness, err := buildAgentHarness(adoptedFacts("", "fixture", "framework", registerTestPlan()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,5 +103,37 @@ func TestHarnessRefreshKeepsOneRegisterSection(t *testing.T) {
 				t.Fatalf("merged context must verify: changed=%v err=%v", changed, err)
 			}
 		})
+	}
+}
+
+// TestAdoptRegisterBlockFollowsDispatchHook: the harness says a hook denies a subagent brief
+// without `task:` only where the repository registers the pre-dispatch hook, decided the way
+// compile-context decides it, so the adopted AGENTS.md verifies either way (#504). Positive: a
+// repository whose .claude/settings.json already registers it. Negative: a plain repository,
+// where adoption registers only the pre-tool row. Boundary: both results pass compile-context's
+// register block verification unchanged.
+func TestAdoptRegisterBlockFollowsDispatchHook(t *testing.T) {
+	const claim = "registered dispatch hook denies brief missing `task:`"
+	adopt := func(settings string) string {
+		repo := newTestRepo(t, "widget")
+		mustWrite(t, filepath.Join(repo, "go.mod"), "module example.com/widget\n\ngo 1.27\n")
+		if settings != "" {
+			mustWrite(t, filepath.Join(repo, ".claude", "settings.json"), settings)
+		}
+		if _, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo, Profile: "framework"}); err != nil {
+			t.Fatalf("Adopt: %v", err)
+		}
+		agents := filepath.Join(repo, agentsFile)
+		if changed, err := compiler.SyncRegisterBlock(context.Background(), repo, agents, false); err != nil || changed {
+			t.Fatalf("adopted register block does not verify: changed=%v err=%v", changed, err)
+		}
+		return mustRead(t, agents)
+	}
+	registered := `{"hooks": {"PreToolUse": [{"matcher": "^Agent$", "hooks": [{"type": "command", "command": "praetorctl hook claude pre-dispatch"}]}]}}`
+	if content := adopt(registered); !strings.Contains(content, claim) {
+		t.Errorf("registered dispatch hook not stated in the adopted harness")
+	}
+	if content := adopt(""); strings.Contains(content, claim) || !strings.Contains(content, "Subagent launch brief: `caveman` brief shape with `task:` = routing label.") {
+		t.Errorf("plain adoption claims a dispatch hook or drops the brief rule")
 	}
 }

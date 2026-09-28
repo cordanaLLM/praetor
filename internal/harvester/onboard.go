@@ -7,7 +7,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/agentcontext"
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -56,6 +58,17 @@ func OnboardRepository(ctx context.Context, repoPath string, dryRun bool) (*Onbo
 		return nil, fmt.Errorf("%w: %q", ErrNotADirectory, repoPath)
 	}
 
+	// The plan names the vendor files the run will write, so it reads the same agent_clients
+	// selection writeAgentHarness compiles with (#202).
+	declared, err := config.LoadDeclaredTooling(ctx, repoPath)
+	if err != nil {
+		return nil, fmt.Errorf("read editors and agent_clients selection: %w", err)
+	}
+	transpile, err := transpileAction(declared.AgentClients)
+	if err != nil {
+		return nil, fmt.Errorf("agent_clients in .standards.yaml: %w", err)
+	}
+
 	repoName := filepath.Base(repoPath)
 	arch := detectRepoArchetype(repoPath)
 	facets := []string{"security:high", "api:public-contract", "docs:seo-portal"}
@@ -71,7 +84,7 @@ func OnboardRepository(ctx context.Context, repoPath string, dryRun bool) (*Onbo
 	plan.Actions = append(plan.Actions, fmt.Sprintf("Scaffold .standards.yaml (Profile: %s, Facets: %v)", arch, facets))
 	plan.Actions = append(plan.Actions, "Initialize .standards-baseline.json (0 infractions)")
 	plan.Actions = append(plan.Actions, "Verify existing .standards.lock pins and digests (source pin resolution is required if absent)")
-	plan.Actions = append(plan.Actions, "Transpile AGENTS.md -> CLAUDE.md, Cursor, Windsurf, Copilot, Gemini")
+	plan.Actions = append(plan.Actions, transpile)
 	plan.Actions = append(plan.Actions, "Generate IDE settings (.vscode, .idea, .nvim.lua)")
 
 	if dryRun {
@@ -87,6 +100,24 @@ func OnboardRepository(ctx context.Context, repoPath string, dryRun bool) (*Onbo
 	}
 	plan.LockStatus, plan.LockVerified = lock.Status, lock.Verified()
 	return plan, nil
+}
+
+// transpileAction names the vendor files compile-context writes under the manifest's
+// agent_clients selection, from the transpiler's own registry. The hand-kept plan text omitted
+// Codex (BUG-840), and a list that ignored the selection named files the run never writes.
+func transpileAction(clients []string) (string, error) {
+	targets, err := agentcontext.VendorTargets(clients)
+	if err != nil {
+		return "", err
+	}
+	if len(targets) == 0 {
+		return "Transpile AGENTS.md -> no vendor file (agent_clients selects none)", nil
+	}
+	sections := make([]string, 0, len(targets))
+	for _, target := range targets {
+		sections = append(sections, target.Section)
+	}
+	return "Transpile AGENTS.md -> " + strings.Join(sections, ", "), nil
 }
 
 // archetypeMarkers maps a repository marker file to the archetype it implies.

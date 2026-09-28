@@ -6,16 +6,48 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/agentcontext"
+	"github.com/cordanaLLM/praetor/internal/flavor"
 	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 )
 
+// neutralWorkflows is the CI a full adoption of a documented Go library scaffolds: the
+// documentation gate and the go-library flavor's ci.yml, read from their bodies.
+func neutralWorkflows(t *testing.T) []scaffoldedWorkflow {
+	t.Helper()
+	workflows, err := workflowRuns([]flavor.PlannedTemplate{
+		{Path: DocumentationWorkflowFile, Content: DocumentationWorkflow()},
+		{Path: ".github/workflows/ci.yml", Content: renderedTemplate(t, "go/ci-go.yml.tmpl")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return workflows
+}
+
+// neutralDirectives renders the harness directives of a full adoption with the given hook
+// activation and scaffolded CI.
+func neutralDirectives(hooks hookActivation, workflows []scaffoldedWorkflow) string {
+	return buildAgentHarnessDirectives(harnessFacts{pipelines: hisscatalog.AllPipelines, hooks: hooks,
+		targets: agentcontext.AllVendorTargets(), workflows: workflows})
+}
+
 func TestNeutralText_Positive(t *testing.T) {
-	harness := buildAgentHarnessDirectives()
+	harness := neutralDirectives(hooksLefthook, neutralWorkflows(t))
 	if strings.Contains(harness, "[bot]") {
 		t.Errorf("Harness directives contain bot login: %q", harness)
 	}
-	if !strings.Contains(harness, "CI re-checks every pull request in an isolated runner") {
-		t.Errorf("Harness directives missing the neutral CI sentence")
+	// Adoption runs no praetorctl gate on the server, and rule 5 names the CI it does scaffold
+	// with what that CI runs, read from the workflow bodies (BUG-804).
+	for _, want := range []string{
+		"Adoption adds no server-side `praetorctl` gate run. Scaffolded CI: ",
+		"`" + DocumentationWorkflowFile + "` runs `node tools/markdownlint/verify.mjs`",
+		"`.github/workflows/ci.yml` runs `go vet ./...`, `go test -race ./...`",
+	} {
+		if !strings.Contains(harness, want) {
+			t.Errorf("rule 5 lacks %q:\n%s", want, harness)
+		}
 	}
 
 	labels := string(forge.DefaultLabelTaxonomy())
@@ -31,11 +63,20 @@ func TestNeutralText_Positive(t *testing.T) {
 }
 
 func TestNeutralText_Negative(t *testing.T) {
-	// A negative test ensures that an explicitly non-neutral string fails the check.
-	// Since buildAgentHarnessDirectives has no parameters, we just assert its output doesn't match the old text.
-	harness := buildAgentHarnessDirectives()
-	if strings.Contains(harness, "re-checks every pull request in ephemeral isolated sandbox") {
-		t.Errorf("Harness directives contain old non-neutral text")
+	// Neither the old bot sandbox claim, nor a pull request re-check, nor a denial of the CI
+	// adoption does scaffold appears, whatever the hooks.
+	for _, hooks := range []hookActivation{hooksNone, hooksInactive, hooksLefthook} {
+		harness := neutralDirectives(hooks, neutralWorkflows(t))
+		for _, claim := range []string{"re-checks every pull request", "[bot]", "no server-side re-check"} {
+			if strings.Contains(harness, claim) {
+				t.Errorf("hooks %d: harness directives claim %q:\n%s", hooks, claim, harness)
+			}
+		}
+	}
+	// Without a scaffolded workflow, rule 5 says the gates run only locally and names no CI.
+	bare := neutralDirectives(hooksLefthook, nil)
+	if !strings.Contains(bare, "Adoption scaffolds no CI workflow: `praetorctl` gates run local only.") || strings.Contains(bare, "Scaffolded CI:") {
+		t.Errorf("rule 5 without scaffolded CI:\n%s", bare)
 	}
 }
 

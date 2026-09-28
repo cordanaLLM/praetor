@@ -43,7 +43,7 @@ func TestMergeAgentsPreflightsProjectionBeforeWrite(t *testing.T) {
 func TestForceHarnessPreflightPreservesRecognizedTail(t *testing.T) {
 	repo := newTestRepo(t, "harness-force-budget")
 	path := filepath.Join(repo, agentsFile)
-	harness, err := buildAgentHarness("fixture", "framework", &VerificationPlan{Status: verificationDeclared, Build: [][]string{{"make", "build"}}, Test: [][]string{{"make", "test"}}})
+	harness, err := buildAgentHarness(adoptedFacts("", "fixture", "framework", &VerificationPlan{Status: verificationDeclared, Build: [][]string{{"make", "build"}}, Test: [][]string{{"make", "test"}}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestMergeAgentsProjectionAcceptsShortTail(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &adoptSession{repoPath: repo, repoName: "fixture", arch: "framework", report: &AdoptReport{}, opts: AdoptOptions{Force: false}}
-	harness, err := buildAgentHarness(s.repoName, s.arch, &VerificationPlan{Status: verificationDeclared, Build: [][]string{{"make", "build"}}, Test: [][]string{{"make", "test"}}})
+	harness, err := buildAgentHarness(adoptedFacts("", s.repoName, s.arch, &VerificationPlan{Status: verificationDeclared, Build: [][]string{{"make", "build"}}, Test: [][]string{{"make", "test"}}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestMergeAgentsProjectionAcceptsShortTail(t *testing.T) {
 }
 
 func TestValidateHarnessProjectionExactBudget(t *testing.T) {
-	harness, err := buildAgentHarness("fixture", "framework", &VerificationPlan{Status: verificationDeclared, Build: [][]string{{"make", "build"}}, Test: [][]string{{"make", "test"}}})
+	harness, err := buildAgentHarness(adoptedFacts("", "fixture", "framework", &VerificationPlan{Status: verificationDeclared, Build: [][]string{{"make", "build"}}, Test: [][]string{{"make", "test"}}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,11 @@ func TestResolveAgentsContentPreflightHonorsDryRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &adoptSession{repoPath: repo, repoName: "fixture", arch: "framework", report: &AdoptReport{}, verification: &VerificationPlan{Status: verificationDeclared, Build: [][]string{{"make", "build"}}, Test: [][]string{{"make", "test"}}}, opts: AdoptOptions{DryRun: true}}
-	if _, err := resolveAgentsContent(s); err == nil {
+	facts, err := s.harnessFacts(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := resolveAgentsContent(s, facts); err == nil {
 		t.Fatal("dry-run oversized context accepted")
 	}
 	if got := mustRead(t, path); got != initial {

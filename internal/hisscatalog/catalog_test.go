@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -31,7 +32,7 @@ func TestCatalog_Positive_ContiguousAndComplete(t *testing.T) {
 		if rule.Title == "" || rule.Specification == "" || rule.Enforcement == "" || rule.FailureAction == "" {
 			t.Errorf("%s has an empty field: %+v", rule.ID, rule)
 		}
-		if got, ok := LookupRule(rule.ID); !ok || got != rule {
+		if got, ok := LookupRule(rule.ID); !ok || !reflect.DeepEqual(got, rule) {
 			t.Errorf("LookupRule(%s) = %+v, %v", rule.ID, got, ok)
 		}
 	}
@@ -45,8 +46,14 @@ func TestCatalog_Positive_ContiguousAndComplete(t *testing.T) {
 func TestCatalog_Negative_CopyAndUnknownLookup(t *testing.T) {
 	rules := Rules()
 	rules[0].Title = "tampered"
-	if got, _ := LookupRule("HISS-01"); got.Title == "tampered" {
+	rules[0].Directive[0].Text = "tampered"
+	looked, _ := LookupRule("HISS-02")
+	looked.Directive[0].Text = "tampered"
+	if got, _ := LookupRule("HISS-01"); got.Title == "tampered" || got.Directive[0].Text == "tampered" {
 		t.Error("editing Rules()'s result changed the registry")
+	}
+	if got, _ := LookupRule("HISS-02"); got.Directive[0].Text == "tampered" {
+		t.Error("editing LookupRule's result changed the registry")
 	}
 	for _, id := range []string{"", "HISS-00", "HISS-22", "hiss-01", " HISS-01", "HISS-1"} {
 		if _, ok := LookupRule(id); ok {

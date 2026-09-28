@@ -520,11 +520,13 @@ Rule: HISS-05 (Variable Scoping)
 Enforcement: NOT ENFORCED. No executable check exists in this repository, and no configured
 linter decides this rule.
 Failure Action: None today; the rule is advisory until a check is attached.
+Adopted repositories: not enforced; adoption generates no check for this rule.
 ```
 
 The answers come from the HISS rule catalog in `internal/hisscatalog/catalog.go`. The generated
-wiki's HISS Matrix (`docs/wiki/HISS-Matrix.md`) renders the same catalog, so the tool and the
-wiki cannot disagree about which invariants exist.
+wiki's HISS Matrix (`docs/wiki/HISS-Matrix.md`) and the invariant table of every adopted
+`AGENTS.md` render the same catalog, so the tool, the wiki and an adopted harness cannot disagree
+about which invariants exist.
 
 An agent asking about a rule needs to know whether anything will stop it. Returning a formal
 specification with no enforcement note reads as a gate that exists, which is the defect the HISS-20
@@ -537,6 +539,18 @@ plain functions; Rust and Python decide direct recursion only; C and C++ decide 
 line matches a claim in `.config/hiss/coverage.yaml`, and
 `TestServer_ExplainRuleHISS01ScopesEnforcementPerLanguage` in `cmd/standards-mcp/server_test.go`
 fails if the answer drifts back to a universal claim.
+
+The `Enforcement` line describes praetor's own mechanism. Every answer ends with an
+`Adopted repositories:` line that states what an adopted repository gets instead: the check and the
+generated stages that run it, or `not enforced; adoption generates no check for this rule.` For
+HISS-01 the line starts `'praetorctl audit' HISS scan in verify-all + lefthook pre-commit/pre-push:
+Go 'goto', recursion + plain-function call cycles; Rust, Python direct recursion; C 'goto'`. The
+tool answers for no particular repository, so it names every pipeline a full adoption generates
+and adds that the check holds only where adoption generated that pipeline. An adopted `AGENTS.md`
+table credits only the pipelines its own run generated. Both read the `Adoption` field of the
+same catalog entry ([`internal/hisscatalog/adopted.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hisscatalog/adopted.go)),
+so they cannot disagree (`TestAdoptedExplanation_Positive_StatesAdoptedEnforcement` and
+`TestAdopted_Boundary_FollowsGeneratedPipelines` in `internal/hisscatalog/adopted_test.go`).
 
 ## Package docs answer the same way twice
 

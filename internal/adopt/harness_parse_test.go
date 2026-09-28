@@ -1,12 +1,16 @@
 package adopt
 
 import (
-	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 )
 
+// TestHarnessDirectives_ParseGatedInvariants: the invariant table of an adopted AGENTS.md is
+// read by the same parser as praetor's own (hisscatalog.ParseGatedInvariants, which feeds the
+// generated wiki), so every catalog rule parses back with the cells the harness wrote.
 func TestHarnessDirectives_ParseGatedInvariants(t *testing.T) {
-	content, err := buildAgentHarness("owner/repo", "praetor", &VerificationPlan{})
+	content, err := buildAgentHarness(adoptedFacts("owner", "repo", "praetor", &VerificationPlan{}))
 	if err != nil {
 		t.Fatalf("buildAgentHarness failed: %v", err)
 	}
@@ -14,17 +18,15 @@ func TestHarnessDirectives_ParseGatedInvariants(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseGatedInvariants failed on full harness output: %v", err)
 	}
-	if len(gated) == 0 {
-		t.Fatalf("ParseGatedInvariants found no invariants in full harness output")
+	rules := hisscatalog.Rules()
+	if len(gated) != len(rules) {
+		t.Fatalf("parsed %d invariants from the harness, catalog has %d", len(gated), len(rules))
 	}
-	foundHISS01 := false
-	for _, inv := range gated {
-		if inv.ID == "HISS-01" {
-			foundHISS01 = true
-			break
+	for i, rule := range rules {
+		check, failure := rule.Adopted(hisscatalog.AllPipelines)
+		want := hisscatalog.GatedInvariant{ID: rule.ID, Scope: rule.Scope, Rule: rule.AdoptedDirective(hisscatalog.Facts{}), Enforcement: check, OnFail: failure}
+		if gated[i] != want {
+			t.Errorf("row %d parsed as %+v, want %+v", i, gated[i], want)
 		}
-	}
-	if !foundHISS01 {
-		t.Errorf("Did not find HISS-01 in parsed invariants")
 	}
 }

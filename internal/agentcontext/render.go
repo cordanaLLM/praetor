@@ -197,6 +197,41 @@ func targetPaths(targets []vendorTarget) []string {
 	return paths
 }
 
+// VendorTarget is one compiled vendor context file: its slash-separated path relative to the
+// repository root and the name of the AGENTS.md `## <Vendor>` section that belongs to it alone.
+type VendorTarget struct {
+	Path    string
+	Section string
+}
+
+// VendorTargets returns the files CompileContent writes for a client selection, in compile
+// order, under the rules Transpiler.Clients follows: nil selects every file, an empty list
+// none, and an unknown id fails. Prose that names the protected files and scans that discover
+// them read this list instead of restating it; the restated copies had drifted to four of the
+// six targets (BUG-840), and a copy that ignored agent_clients named files compile-context
+// never writes.
+func VendorTargets(clients []string) ([]VendorTarget, error) {
+	selected, _, err := selectTargets(clients)
+	if err != nil {
+		return nil, err
+	}
+	return exportTargets(selected), nil
+}
+
+// AllVendorTargets returns every file CompileContent can write, in compile order: the list a
+// scan of other repositories recognizes, whatever each of them selects.
+func AllVendorTargets() []VendorTarget {
+	return exportTargets(vendorTargets[:])
+}
+
+func exportTargets(selected []vendorTarget) []VendorTarget {
+	targets := make([]VendorTarget, 0, len(selected))
+	for _, target := range selected {
+		targets = append(targets, VendorTarget{Path: target.path, Section: target.section})
+	}
+	return targets
+}
+
 // CompileContent synthesizes vendor-specific files directly from in-memory markdown content.
 // Each target keeps the shared body and its own `## <Vendor>` section in place; every other
 // vendor's section is removed, so guidance written for one agent never reaches another.

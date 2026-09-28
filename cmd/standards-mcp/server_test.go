@@ -482,6 +482,9 @@ func TestServer_Positive_ExplainRuleCoversDocumentedInvariants(t *testing.T) {
 	if len(schema.Enum) != len(hisscatalog.Rules()) {
 		t.Errorf("schema enum lists %d rules, catalog has %d", len(schema.Enum), len(hisscatalog.Rules()))
 	}
+	// The served text is the registry's, adopted-repository line included (BUG-804).
+	unenforced := callTool(t, srv, "standards_explain_rule", map[string]any{"rule_id": "HISS-12"})
+	expectText(t, "unenforced adopted rule", unenforced, "Adopted repositories: not enforced")
 
 	res := callTool(t, srv, "standards_explain_rule", map[string]any{"rule_id": "UNKNOWN-99"})
 	expectError(t, "unknown rule", res, "Unknown rule")

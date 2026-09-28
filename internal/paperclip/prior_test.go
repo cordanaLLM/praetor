@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 )
 
 // priorFixture reads a golden harness file an earlier release wrote. CRLF is folded so a
@@ -28,7 +30,7 @@ func priorRepo(t *testing.T, harness, rules string) (string, *Harness) {
 	if rules != "" {
 		writeRepoFile(t, repo, ".paperclip/rules.md", rules)
 	}
-	current, err := SynthesizeHarness(context.Background(), repo)
+	current, err := SynthesizeHarness(context.Background(), repo, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,14 +59,19 @@ func TestPriorGeneratedRecognisesReleasedHarness(t *testing.T) {
 }
 
 // Every release era is recognised: each register directive form under each push protocol,
-// including the review-branch push #458 added.
+// including the review-branch push #458 added, and the Caveman release. This release's
+// renderings under other repository facts follow them (TestPriorGeneratedRecognisesThisRelease*).
 func TestPriorGeneratedRecognisesEveryReleaseEra(t *testing.T) {
 	_, probe := priorRepo(t, "{}", "")
-	eras := priorHarnesses(probe)
-	if len(eras) != len(priorRegisterDirectives)*len(priorAGitPushFormats) {
-		t.Fatalf("release eras = %d, want every directive under every push protocol", len(eras))
+	eras, err := priorHarnesses(probe)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for index := range eras {
+	earlier := len(priorRegisterDirectives)*len(priorAGitPushFormats) + 1
+	if len(eras) != earlier+len(receiptStates)*(int(hisscatalog.AllLanguages)+1) {
+		t.Fatalf("release eras = %d, want every directive under every push protocol, the Caveman release and every fact combination", len(eras))
+	}
+	for index := range eras[:earlier] {
 		repo, current := priorRepo(t, "{}", "")
 		prior := eras[index]
 		if err := WriteHarness(&prior, repo); err != nil {
@@ -191,6 +198,59 @@ func TestPriorGeneratedAcceptsBothRulesLayoutsOfItsHarness(t *testing.T) {
 				t.Fatalf("%s: prior=%+v err=%v, want generated=%v", tc.name, state, err, tc.generated)
 			}
 		})
+	}
+}
+
+// cavemanFixture reads the harness.json the Caveman release (#487) wrote for praetor itself,
+// with the platform renamed to acme/legacy.
+func cavemanFixture(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("testdata", "harness-714913e0", "harness.json.golden"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.ReplaceAll(string(data), "\r\n", "\n")
+}
+
+// The Caveman release (#487) prescribed receipts on every repository. Its unmodified output
+// still refreshes once the receipt row follows the pinned key. Positive: its harness.json,
+// alone or beside its rules.md, is earlier output. Negative: an edited row is operator-owned.
+// Boundary: the Caveman contract never shipped with the single AGit push, so that pairing is
+// not earlier output, and neither is today's synthesis.
+func TestPriorGeneratedRecognisesTheCavemanRelease(t *testing.T) {
+	harness := cavemanFixture(t)
+	_, probe := priorRepo(t, harness, "")
+	released := cavemanHarness(probe)
+	single := released
+	single.AGitPushFormat = priorAGitPushFormats[0]
+	singleJSON, err := MarshalHarness(&single)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name, harness, rules string
+		generated            bool
+	}{
+		{"harness alone", harness, "", true},
+		{"harness and rules", harness, renderRules(&released), true},
+		{"edited receipt row", strings.Replace(harness, "to all PR proposals", "to some PR proposals", 1), "", false},
+		{"single push", string(singleJSON), "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repo, current := priorRepo(t, tc.harness, tc.rules)
+			state, err := PriorGenerated(context.Background(), repo, current)
+			if err != nil || state.Generated != tc.generated {
+				t.Fatalf("%s: prior=%+v err=%v, want generated=%v", tc.name, state, err, tc.generated)
+			}
+		})
+	}
+	repo, current := priorRepo(t, "{}", "")
+	if err := WriteHarness(current, repo); err != nil {
+		t.Fatal(err)
+	}
+	if state, err := PriorGenerated(context.Background(), repo, current); err != nil || state.Generated {
+		t.Fatalf("current synthesis read as the Caveman release: prior=%+v err=%v", state, err)
 	}
 }
 

@@ -143,14 +143,10 @@ func renderCavemanChecks(inputs []cavemanInput, maxWords, maxTokens int, failure
 	var text strings.Builder
 	failed := 0
 	for _, input := range inputs {
-		lintable, masked := input.text, 0
-		if input.maskRegister {
-			// The same mask the context gate applies, so positional input reproduces its verdict.
-			lintable, masked = compiler.MaskRegisterBlock(input.text)
-		}
 		var report strings.Builder
 		opts := caveman.Options{Kind: input.kind, MaxProseWords: maxWords, MaxTokens: maxTokens}
-		passed := formatCavemanReport(&report, input, caveman.Check(lintable, opts), masked)
+		result, masked := checkCavemanInput(input, opts)
+		passed := formatCavemanReport(&report, input, result, masked)
 		if !passed {
 			failed++
 		}
@@ -159,6 +155,22 @@ func renderCavemanChecks(inputs []cavemanInput, maxWords, maxTokens int, failure
 		}
 	}
 	return text.String(), failed
+}
+
+// checkCavemanInput lints one input and returns the report and the masked line count. A file
+// or stdin input gets the register-block mask the context gate applies; a context input among
+// them goes through the gate's own check (compiler.CheckContextText), which also judges adopter
+// text below the harness end marker on its own, so the command reproduces the gate's verdict on
+// an adopted AGENTS.md. Extracted source values are linted as they are.
+func checkCavemanInput(input cavemanInput, opts caveman.Options) (caveman.Report, int) {
+	if !input.maskRegister {
+		return caveman.Check(input.text, opts), 0
+	}
+	if opts.Kind == caveman.KindContext {
+		return compiler.CheckContextText(input.text, opts)
+	}
+	lintable, masked := compiler.MaskRegisterBlock(input.text)
+	return caveman.Check(lintable, opts), masked
 }
 
 func visitedFlags(flags *flag.FlagSet) map[string]bool {

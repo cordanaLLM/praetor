@@ -239,6 +239,7 @@ func preserveCustomVerification(plan *VerificationPlan, data []byte) {
 	}
 	plan.Status = verificationPreserved
 	plan.Reasons = append(plan.Reasons, "Existing custom verify-all is preserved; execute and review it before claiming project verification.")
+	plan.Declared = append(append([][]string(nil), plan.Build...), plan.Test...)
 	plan.Build = [][]string{}
 	plan.Test = [][]string{{"make", "verify-all"}}
 }

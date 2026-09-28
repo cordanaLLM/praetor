@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/agentcontext"
 	"github.com/cordanaLLM/praetor/internal/classify"
 	"github.com/cordanaLLM/praetor/internal/gc"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -540,25 +541,31 @@ func inspectRepoGovernance(path, name string, report *WorkstationReport) {
 	if len(report.RepositoryObservations) >= MaxRepositoryObservations {
 		return
 	}
-	hasAgents := fileExists(filepath.Join(path, "AGENTS.md"))
-	hasClaude := fileExists(filepath.Join(path, "CLAUDE.md"))
-	hasWindsurf := fileExists(filepath.Join(path, ".windsurfrules"))
-	hasGemini := fileExists(filepath.Join(path, ".gemini/GEMINI.md"))
-	hasCodex := fileExists(filepath.Join(path, ".codex/rules.md"))
-
-	if hasAgents {
-		report.DiscoveredAgentDoc = append(report.DiscoveredAgentDoc, filepath.Join(name, "AGENTS.md"))
+	found := 0
+	for _, rel := range agentRuleFiles() {
+		if !fileExists(filepath.Join(path, filepath.FromSlash(rel))) {
+			continue
+		}
+		found++
+		report.DiscoveredAgentDoc = append(report.DiscoveredAgentDoc, filepath.Join(name, filepath.FromSlash(rel)))
 	}
-	if hasClaude {
-		report.DiscoveredAgentDoc = append(report.DiscoveredAgentDoc, filepath.Join(name, "CLAUDE.md"))
-	}
-	if hasCodex {
-		report.DiscoveredAgentDoc = append(report.DiscoveredAgentDoc, filepath.Join(name, ".codex/rules.md"))
-	}
-
-	if !hasAgents && !hasClaude && !hasWindsurf && !hasGemini && !hasCodex {
+	if found == 0 {
 		report.MissingRulesRepos = append(report.MissingRulesRepos, name)
 	}
+}
+
+// agentRuleFiles lists every agent instruction file discovery recognizes: the canonical
+// AGENTS.md and each vendor file compile-context can write (agentcontext.AllVendorTargets),
+// whatever a scanned repository's agent_clients selects. The hand-kept list this replaced
+// skipped Cursor and Copilot and reported only three of the files it counted (BUG-840).
+func agentRuleFiles() []string {
+	targets := agentcontext.AllVendorTargets()
+	files := make([]string, 0, len(targets)+1)
+	files = append(files, "AGENTS.md")
+	for _, target := range targets {
+		files = append(files, target.Path)
+	}
+	return files
 }
 
 func fileExists(path string) bool {

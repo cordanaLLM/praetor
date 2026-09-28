@@ -173,22 +173,9 @@ func unmergeableReason(client string, hooks []clientjson.Hook) string {
 }
 
 // preToolHooks turns the client's pre-tool registration rows into the handlers PlanHooks
-// merges, with the timeout in the unit of the client's hook file.
+// merges, with the timeout in the unit of the client's hook file (agenthook.NativeHooks).
 func preToolHooks(client string, file agenthook.HookFile) []clientjson.Hook {
-	var hooks []clientjson.Hook
-	for _, row := range agenthook.Registrations(client) {
-		if row.Event != agenthook.EventPreTool {
-			continue
-		}
-		hooks = append(hooks, clientjson.Hook{
-			Event:    row.NativeEvent,
-			Matcher:  row.Matcher,
-			Command:  row.Command(),
-			Timeout:  int64(row.Timeout / file.TimeoutUnit),
-			ServedBy: row.ServedBy,
-		})
-	}
-	return hooks
+	return agenthook.NativeHooks(client, file, agenthook.EventPreTool)
 }
 
 // publishHookFile keeps a copy of an existing hook file beside it, replaces the file only while

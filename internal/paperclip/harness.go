@@ -11,6 +11,8 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/hisscatalog"
+	"github.com/cordanaLLM/praetor/internal/lockdown"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -35,7 +37,10 @@ const (
 // the review; it updates no local ref, so the second push of the same commit to a review branch
 // records a remote-tracking ref that VerifyRun reads as local proof HEAD left the machine. The
 // explicit destination never pushes a local main to the remote main, whatever branch is checked
-// out.
+// out. It is prescribed whatever forge origin names: the AGit refs/for push opens a review only
+// on a forge that implements AGit (Forgejo, Gitea), the manifest declares no forge kind, and a
+// form chosen from the remote's host name would be a guess of the kind BUG-852 removed from
+// identity resolution. That residual of BUG-804 is stated in docs/guides/adoption-verification.md.
 const agitPushFormat = "git push origin HEAD:refs/for/main -o topic=<issue-id> && " +
 	"git push origin HEAD:refs/heads/paperclip/<issue-id>"
 
@@ -48,12 +53,20 @@ type Harness struct {
 	Invariants        []string `json:"invariants"`
 }
 
+// harnessInvariants are the HISS rules a Paperclip run carries, in catalog order.
+var harnessInvariants = [...]string{"HISS-01", "HISS-02", "HISS-04", "HISS-07", "HISS-10", "HISS-15", "HISS-16"}
+
 // SynthesizeHarness generates a Paperclip agent harness embedding fleet contracts. The
 // repository identity lookup (a git subprocess) runs under the caller's context. The
 // platform is the identity .standards.yaml declares, else the origin remote's; with neither
 // the error wraps util.ErrRepoIdentityUnresolved and no harness is returned, because the
-// platform names a repository and none may be guessed.
-func SynthesizeHarness(ctx context.Context, repoPath string) (*Harness, error) {
+// platform names a repository and none may be guessed. The invariants are the HISS catalog's
+// adopted directives for the repository's languages (zero: unknown, every language clause
+// labelled), so a Rust or C repository is not handed Go's context.Context or a Go one Rust's
+// unwrap (#68). They carry no resolved function-length limit: adoption binds the harness in its
+// manifest step, before the policy that sets the limit is resolved, so HISS-04 states the
+// audit ceiling a policy may tighten.
+func SynthesizeHarness(ctx context.Context, repoPath string, languages hisscatalog.Language) (*Harness, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("paperclip: context cannot be nil")
 	}
@@ -61,32 +74,47 @@ func SynthesizeHarness(ctx context.Context, repoPath string) (*Harness, error) {
 	if err != nil {
 		return nil, err
 	}
-	contract := []string{
-		"Branch push != shipping. Open PR required. Work ships after merge.",
-		"Rebase onto main immediately: run git fetch origin && git rebase origin/main before proposing.",
-		"Rule 0 Terminal Disposition: every run ends with structured disposition: in_review or blocked.",
-		"Ed25519 Exit-0 Receipts: attach cryptographic execution receipts to all PR proposals.",
-		"Timeout != failure. Re-check open PRs before retry; prevent duplicate PRs.",
-		// A Paperclip run reports to an orchestrating agent, so its product is internal text.
-		config.RegisterDirective(config.TextRegisterInternal),
+	invariants, err := catalogInvariants(languages)
+	if err != nil {
+		return nil, err
 	}
+	harness := releaseHarness(platform, receiptKeyPinned(ctx, repoPath), invariants)
+	return &harness, nil
+}
 
-	invariants := []string{
-		"HISS-01: Acyclic DAG control flow (no recursion)",
-		"HISS-02: Scalar upper bounds on all loops; context timeout on all input and output",
-		"HISS-04: McCabe Cyclomatic <= 10, Cognitive <= 15, Func LOC <= 75",
-		"HISS-07: Zero .unwrap() / .expect(); all errors handled or wrapped",
-		"HISS-10: Zero-warning tolerance across compiler, linters, and formatters",
-		"HISS-15: 3D testing mandatory (Positive, Negative, Boundary >= 2 checks/dim)",
-		"HISS-16: Canonical AGENTS.md compiled to vendor harnesses",
+// releaseHarness is this release's synthesis for platform under one set of repository facts:
+// whether .standards.yaml pins a receipt key, and the invariants rendered for the languages.
+// SynthesizeHarness and currentReleaseHarnesses both build from it, so the refresh key
+// enumerates exactly the text the synthesis writes.
+func releaseHarness(platform string, pinned bool, invariants []string) Harness {
+	return Harness{
+		Version:  1,
+		Platform: platform,
+		OperatingContract: []string{
+			"Branch push != shipping. Open PR required. Work ships after merge.",
+			"Rebase onto main immediately: run git fetch origin && git rebase origin/main before proposing.",
+			"Rule 0 Terminal Disposition: every run ends with structured disposition: in_review or blocked.",
+			receiptContract(pinned),
+			"Timeout != failure. Re-check open PRs before retry; prevent duplicate PRs.",
+			// A Paperclip run reports to an orchestrating agent, so its product is internal text.
+			config.RegisterDirective(config.TextRegisterInternal),
+		},
+		AGitPushFormat: agitPushFormat,
+		Invariants:     invariants,
 	}
-	return &Harness{
-		Version:           1,
-		Platform:          platform,
-		OperatingContract: contract,
-		AGitPushFormat:    agitPushFormat,
-		Invariants:        invariants,
-	}, nil
+}
+
+// catalogInvariants renders harnessInvariants from the HISS catalog for languages.
+func catalogInvariants(languages hisscatalog.Language) ([]string, error) {
+	invariants := make([]string, 0, len(harnessInvariants))
+	for _, id := range harnessInvariants {
+		rule, ok := hisscatalog.LookupRule(id)
+		if !ok {
+			return nil, fmt.Errorf("paperclip: HISS catalog has no rule %s", id)
+		}
+		invariants = append(invariants, rule.ID+": "+rule.AdoptedDirective(hisscatalog.Facts{Languages: languages}))
+	}
+	return invariants, nil
 }
 
 // priorOperatingContract, priorRegisterDirectives, priorAGitPushFormats and priorInvariants
@@ -94,7 +122,9 @@ func SynthesizeHarness(ctx context.Context, repoPath string) (*Harness, error) {
 // Caveman. The directive row was absent before the text register (#204) and changed form with
 // the caveman skill (#225); the review-branch push joined the AGit push in #458. They are
 // literals, not calls, so a later change to the current text cannot silently rewrite what
-// "earlier output" means.
+// "earlier output" means. cavemanOperatingContract and cavemanInvariants are the one Caveman
+// release (#487) before the receipt row followed the pinned key (receiptContract): its own
+// directive and push protocol, no other combination.
 var (
 	priorOperatingContract = []string{
 		"Pushing a branch is NOT shipping: an open PR is required, but still not shipped work until merged.",
@@ -111,6 +141,23 @@ var (
 	priorAGitPushFormats = []string{
 		"git push origin HEAD:refs/for/main -o topic=<issue-id>",
 		"git push origin HEAD:refs/for/main -o topic=<issue-id> && git push origin HEAD:refs/heads/paperclip/<issue-id>",
+	}
+	cavemanOperatingContract = []string{
+		"Branch push != shipping. Open PR required. Work ships after merge.",
+		"Rebase onto main immediately: run git fetch origin && git rebase origin/main before proposing.",
+		"Rule 0 Terminal Disposition: every run ends with structured disposition: in_review or blocked.",
+		"Ed25519 Exit-0 Receipts: attach cryptographic execution receipts to all PR proposals.",
+		"Timeout != failure. Re-check open PRs before retry; prevent duplicate PRs.",
+		"Text register internal: `caveman` skill: fragments, no filler, verbatim code/paths/errors; facts, paths, commands, verdict.",
+	}
+	cavemanInvariants = []string{
+		"HISS-01: Acyclic DAG control flow (no recursion)",
+		"HISS-02: Scalar upper bounds on all loops; context timeout on all input and output",
+		"HISS-04: McCabe Cyclomatic <= 10, Cognitive <= 15, Func LOC <= 75",
+		"HISS-07: Zero .unwrap() / .expect(); all errors handled or wrapped",
+		"HISS-10: Zero-warning tolerance across compiler, linters, and formatters",
+		"HISS-15: 3D testing mandatory (Positive, Negative, Boundary >= 2 checks/dim)",
+		"HISS-16: Canonical AGENTS.md compiled to vendor harnesses",
 	}
 	priorInvariants = []string{
 		"HISS-01: Acyclic DAG control flow (no recursion)",
@@ -135,8 +182,10 @@ type PriorState struct {
 }
 
 // PriorGenerated compares the harness under repoPath with every earlier synthesis for
-// current's identity. One consistent CRLF checkout style (core.autocrlf on Windows) compares
-// as the LF bytes the release wrote.
+// current's identity: each earlier release's text, and this release's text under repository
+// facts other than current's (currentReleaseHarnesses). A harness equal to current itself is
+// not earlier output. One consistent CRLF checkout style (core.autocrlf on Windows) compares as
+// the LF bytes the release wrote.
 func PriorGenerated(ctx context.Context, repoPath string, current *Harness) (PriorState, error) {
 	if ctx == nil || current == nil {
 		return PriorState{}, fmt.Errorf("paperclip: prior harness check requires context and current harness")
@@ -150,19 +199,35 @@ func PriorGenerated(ctx context.Context, repoPath string, current *Harness) (Pri
 	if !ok {
 		return state, nil
 	}
-	priors := priorHarnesses(current)
+	prior, err := matchPrior(harnessText, current)
+	if err != nil {
+		return PriorState{}, err
+	}
+	state.Generated = prior != nil && (!rulesExist || priorRules(rulesText, prior))
+	return state, nil
+}
+
+// matchPrior returns the earlier synthesis harnessText renders byte for byte, or nil when it
+// renders none of them or current itself.
+func matchPrior(harnessText string, current *Harness) (*Harness, error) {
+	currentText, err := MarshalHarness(current)
+	if err != nil || harnessText == string(currentText) {
+		return nil, err
+	}
+	priors, err := priorHarnesses(current)
+	if err != nil {
+		return nil, err
+	}
 	for index := 0; index < len(priors); index++ {
-		prior := priors[index]
-		rendered, err := MarshalHarness(&prior)
+		rendered, err := MarshalHarness(&priors[index])
 		if err != nil {
-			return PriorState{}, err
+			return nil, err
 		}
 		if harnessText == string(rendered) {
-			state.Generated = !rulesExist || priorRules(rulesText, &prior)
-			return state, nil
+			return &priors[index], nil
 		}
 	}
-	return state, nil
+	return nil, nil
 }
 
 // priorRules reports whether rules is a rendering of prior some release wrote: the current
@@ -199,15 +264,59 @@ func releaseText(harness, rules []byte) (string, string, bool) {
 }
 
 // priorHarnesses is every earlier synthesis for current's identity: each register directive
-// form under each push protocol.
-func priorHarnesses(current *Harness) []Harness {
-	priors := make([]Harness, 0, len(priorRegisterDirectives)*len(priorAGitPushFormats))
+// form under each push protocol, the Caveman release (cavemanHarness), then this release under
+// every repository fact combination (currentReleaseHarnesses).
+func priorHarnesses(current *Harness) ([]Harness, error) {
+	released, err := currentReleaseHarnesses(current.Platform)
+	if err != nil {
+		return nil, err
+	}
+	priors := make([]Harness, 0, len(priorRegisterDirectives)*len(priorAGitPushFormats)+1+len(released))
 	for _, push := range priorAGitPushFormats {
 		for _, directive := range priorRegisterDirectives {
 			priors = append(priors, priorHarness(current, directive, push))
 		}
 	}
-	return priors
+	priors = append(priors, cavemanHarness(current))
+	return append(priors, released...), nil
+}
+
+// receiptStates are both answers receiptKeyPinned can give.
+var receiptStates = [...]bool{false, true}
+
+// currentReleaseHarnesses renders this release for platform under every combination of the
+// repository facts SynthesizeHarness reads: the receipt key pinned or not, times every language
+// set (hisscatalog.AllLanguages). A harness adoption wrote is still unmodified output after the
+// operator pins receipt.public_key, as the unpinned row advises, or the repository's languages
+// change; recognising it lets plain adopt refresh it without --force, which would also rewrite
+// adopter-maintained files (#502). The set is enumerated rather than the fact-dependent rows
+// normalised away, so recognition stays byte for byte: an edit to the receipt row or to one
+// invariant still makes the harness operator-owned. It is bounded: 2 x (AllLanguages+1) values.
+// These are calls, so a later change to this text must first capture the rows as they stand as
+// literals, as cavemanOperatingContract captured #487's.
+func currentReleaseHarnesses(platform string) ([]Harness, error) {
+	sets := int(hisscatalog.AllLanguages) + 1
+	released := make([]Harness, 0, len(receiptStates)*sets)
+	for set := 0; set < sets; set++ {
+		invariants, err := catalogInvariants(hisscatalog.Language(set))
+		if err != nil {
+			return nil, err
+		}
+		for _, pinned := range receiptStates {
+			released = append(released, releaseHarness(platform, pinned, invariants))
+		}
+	}
+	return released, nil
+}
+
+// cavemanHarness is the Caveman release's synthesis for current's identity: its contract with
+// the unconditional receipt row, under the review-branch push protocol it shipped with.
+func cavemanHarness(current *Harness) Harness {
+	prior := *current
+	prior.OperatingContract = append([]string(nil), cavemanOperatingContract...)
+	prior.AGitPushFormat = priorAGitPushFormats[len(priorAGitPushFormats)-1]
+	prior.Invariants = cavemanInvariants
+	return prior
 }
 
 func priorHarness(current *Harness, directive, push string) Harness {
@@ -239,6 +348,32 @@ func readHarnessFiles(ctx context.Context, repoPath string) ([]byte, []byte, boo
 		return nil, nil, false, fmt.Errorf("read %s: %w", rulesFile, err)
 	}
 	return harnessData, rulesData, rulesExist, nil
+}
+
+// receiptContract is the operating-contract row on Exit-0 receipts. A receipt is minted by
+// `praetorctl gate run` and verifies only against the Ed25519 key .standards.yaml pins
+// (receipt.public_key, lockdown.PinnedPublicKey; receiptKeyPinned); without one,
+// Disposition.Validate and VerifyRun refuse any receipt attached (lockdown.ErrNoPinnedKey). So
+// the row prescribes attaching receipts only when that key is pinned, and otherwise says a run
+// attaches none, instead of prescribing a receipt nothing in the repository can verify (BUG-804).
+func receiptContract(pinned bool) string {
+	if pinned {
+		return "Ed25519 Exit-0 Receipts: mint via `praetorctl gate run`; attach receipt to every PR proposal."
+	}
+	return "Ed25519 Exit-0 Receipts: none. " + manifestFile + " pins no valid receipt.public_key -> attach no receipt; " +
+		"pin key from `praetorctl gate keygen` to require receipts."
+}
+
+// receiptKeyPinned reports whether the repository's manifest pins a well-formed receipt key.
+// A missing manifest, a missing key and a malformed one all mean no receipt can verify. The
+// manifest read is bounded by ctx (lockdown.PinnedPublicKey).
+func receiptKeyPinned(ctx context.Context, repoPath string) bool {
+	manifestPath, err := util.ConfinePath(repoPath, manifestFile)
+	if err != nil {
+		return false
+	}
+	_, err = lockdown.PinnedPublicKey(ctx, manifestPath)
+	return err == nil
 }
 
 // resolvePlatform derives owner/name through config.ResolveRepositoryIdentity (ADR-0014 §3):

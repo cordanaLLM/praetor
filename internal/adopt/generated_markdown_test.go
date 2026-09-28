@@ -49,7 +49,7 @@ func TestGeneratedPersonasPassDefaultMarkdownlint(t *testing.T) {
 // adoptionHarness renders the harness for a fixture repository.
 func adoptionHarness(t *testing.T) string {
 	t.Helper()
-	harness, err := buildAgentHarness("fixture", "framework", &VerificationPlan{Status: verificationDeclared, Build: [][]string{{"make", "build"}}, Test: [][]string{{"make", "test"}}})
+	harness, err := buildAgentHarness(adoptedFacts("", "fixture", "framework", &VerificationPlan{Status: verificationDeclared, Build: [][]string{{"make", "build"}}, Test: [][]string{{"make", "test"}}}))
 	if err != nil {
 		t.Fatal(err)
 	}

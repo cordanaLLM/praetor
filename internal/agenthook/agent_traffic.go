@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/caveman"
-	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/router"
 )
@@ -212,7 +211,7 @@ type briefAuthority struct {
 }
 
 func loadBriefAuthority(ctx context.Context, root string) (briefAuthority, error) {
-	register, labels, err := compiler.LoadRegisterTaskAuthority(ctx, root)
+	register, labels, err := config.LoadRegisterTaskAuthority(ctx, root)
 	if err != nil {
 		return briefAuthority{}, fmt.Errorf("load register policy: %w", err)
 	}

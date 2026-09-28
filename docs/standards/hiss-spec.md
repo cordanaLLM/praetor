@@ -197,6 +197,7 @@ A claim of coverage is reproducible, never merely asserted:
 - Every enforcement claim in `.config/hiss/coverage.yaml` is replayed against a fixture corpus by `praetorctl hiss coverage --verify`, run inside `verify-all`.
 - The check runs in both directions: a claim of enforcement must reproduce each of its positive fixtures, and a claim of absence must leave its gap fixtures undetected.
 - A rule that silently *gains* coverage fails the gate exactly as one that silently loses it, so the catalog cannot drift in either direction undetected.
+- The coverage catalog may only declare evidence for a rule the HISS rule catalog defines ([`internal/hisscatalog/catalog.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hisscatalog/catalog.go)); an unregistered identifier fails `Catalog.Validate` (`TestValidateRefusesUnregisteredRule`). A coverage entry takes its name from that catalog too: `title:` may be omitted or repeat the catalog title exactly, and any other title fails `Catalog.Validate` (`TestValidateRefusesADriftedTitle`), so `praetorctl hiss coverage` prints the catalog's name for every rule. The HISS rule catalog also feeds `standards_explain_rule`, the generated wiki's HISS matrix and the invariant table of every adopted `AGENTS.md`, so all of them name the same 21 rules.
 
 ### HISS-21: Platform Neutrality
 

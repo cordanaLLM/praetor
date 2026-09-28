@@ -74,7 +74,7 @@ func TestVerifyPluginSkills_Negative_RejectsADriftedCopy(t *testing.T) {
 // ADR-0010 stays undeclared.
 func TestRegisterBlockSkills_Boundary_DeclaredAndProjected(t *testing.T) {
 	root := filepath.Clean(filepath.Join("..", ".."))
-	block, err := config.RenderRegisterBlock(config.DefaultRegisterPolicy())
+	block, err := config.RenderRegisterBlock(config.DefaultRegisterPolicy(), false)
 	if err != nil {
 		t.Fatalf("render: %v", err)
 	}

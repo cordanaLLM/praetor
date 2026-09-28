@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 )
 
 // recursiveGo is a Go source that HISS-01 reports.
@@ -31,7 +33,7 @@ func corpusRoot(t *testing.T, rule, lang, bucket, name, body string) string {
 // catalogFor builds a one-claim catalog.
 func catalogFor(rule, lang string, state State) *Catalog {
 	return &Catalog{Version: 1, Rules: []Rule{{
-		ID: rule, Title: "test rule",
+		ID:       rule,
 		Coverage: []Coverage{{Language: lang, State: state, Mechanism: "internal/hiss", Rationale: "measured"}},
 	}}}
 }
@@ -308,5 +310,72 @@ func TestVerifyRejectsAMeasuredFixtureThatIsEnforced(t *testing.T) {
 	findings := verifyHISS04(t, bucketMeasured, branchyGo(11, 40))
 	if len(findings) != 1 || !strings.Contains(findings[0].Detail, "never be enforced") {
 		t.Errorf("findings %+v, want the enforced measured fixture", findings)
+	}
+}
+
+// TestValidateRefusesUnregisteredRule: coverage evidence for an identifier the HISS catalog
+// does not define describes enforcement of nothing any other surface names. Positive: the
+// last catalog rule validates. Negative: the next identifier is refused.
+func TestValidateRefusesUnregisteredRule(t *testing.T) {
+	if err := catalogFor("HISS-21", "go", StateManual).Validate(); err != nil {
+		t.Fatalf("the last catalog invariant must validate: %v", err)
+	}
+	err := catalogFor("HISS-22", "go", StateManual).Validate()
+	if !errors.Is(err, ErrInvalidCatalog) || !strings.Contains(err.Error(), "not a registered invariant") {
+		t.Fatalf("an unregistered rule must be refused, got %v", err)
+	}
+}
+
+// titledCatalog is catalogFor with a declared title on its one rule.
+func titledCatalog(rule, title string) *Catalog {
+	catalog := catalogFor(rule, "go", StateManual)
+	catalog.Rules[0].Title = title
+	return catalog
+}
+
+// TestValidateTitleDefersToTheHISSCatalog: a rule's name lives in the HISS catalog, so a
+// coverage entry may omit its title or repeat the catalog's, never state another. Positive: an
+// omitted title and the catalog's own title validate, and CatalogTitle reads the catalog.
+func TestValidateTitleDefersToTheHISSCatalog(t *testing.T) {
+	registered, ok := hisscatalog.LookupRule("HISS-14")
+	if !ok {
+		t.Fatal("HISS-14 missing from the HISS catalog")
+	}
+	for _, title := range []string{"", registered.Title} {
+		catalog := titledCatalog("HISS-14", title)
+		if err := catalog.Validate(); err != nil {
+			t.Fatalf("title %q must validate: %v", title, err)
+		}
+		if got := catalog.Rules[0].CatalogTitle(); got != registered.Title {
+			t.Fatalf("CatalogTitle() = %q, want the catalog's %q", got, registered.Title)
+		}
+	}
+}
+
+// Negative: a title the catalog does not state is refused, including the shortened name
+// coverage.yaml carried before the catalog was the one list ("Append-Only ABI").
+func TestValidateRefusesADriftedTitle(t *testing.T) {
+	err := titledCatalog("HISS-14", "Append-Only ABI").Validate()
+	if !errors.Is(err, ErrInvalidCatalog) || !strings.Contains(err.Error(), "differs from the HISS catalog title") {
+		t.Fatalf("a drifted title must be refused, got %v", err)
+	}
+}
+
+// Boundary: the comparison is exact. A title differing from the catalog's only in case or by
+// surrounding whitespace is still a second spelling and is refused; an unregistered identifier
+// is refused for the identifier, and CatalogTitle falls back to the declared title.
+func TestValidateTitleComparisonIsExact(t *testing.T) {
+	registered, _ := hisscatalog.LookupRule("HISS-01")
+	for _, title := range []string{strings.ToLower(registered.Title), " " + registered.Title} {
+		if err := titledCatalog("HISS-01", title).Validate(); !errors.Is(err, ErrInvalidCatalog) {
+			t.Errorf("title %q must be refused, got %v", title, err)
+		}
+	}
+	unknown := titledCatalog("HISS-22", "Declared Only")
+	if err := unknown.Validate(); err == nil || !strings.Contains(err.Error(), "not a registered invariant") {
+		t.Fatalf("unregistered rule must be refused for its identifier, got %v", err)
+	}
+	if got := unknown.Rules[0].CatalogTitle(); got != "Declared Only" {
+		t.Fatalf("CatalogTitle() of an unregistered rule = %q, want the declared title", got)
 	}
 }

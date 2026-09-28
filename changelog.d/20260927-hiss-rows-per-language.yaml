@@ -1,0 +1,4 @@
+type: fixed
+title: HISS rows in the adopted AGENTS.md harness and the Paperclip harness follow the repository's languages, so Go's context.Context deadline and unchecked-error clauses reach only Go repositories, Rust's unwrap ban only Rust ones, goto and banned libc calls only Go or C/C++ ones, each labelled with its language, and a rule with no analogue says so; the AGENTS.md HISS-04 row states the function length the repository's audit enforces instead of a fixed value, and the Paperclip harness states the 60-line audit ceiling instead of 75
+issue: "#68"
+breaking: false

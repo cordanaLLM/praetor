@@ -11,16 +11,17 @@ import (
 // cavemanPlan is a declared verification plan, the common case of an adopted repository.
 var cavemanPlan = &VerificationPlan{Status: verificationDeclared, Build: [][]string{{"make", "build"}}, Test: [][]string{{"make", "test"}}}
 
-// lintHarness lints text the way the context gate does: register block masked, rest checked.
+// lintHarness lints text through the context gate's own check (compiler.CheckContextText):
+// register block masked, whole text checked, adopter text below the harness judged alone.
 func lintHarness(text string) caveman.Report {
-	masked, _ := compiler.MaskRegisterBlock(text)
-	return caveman.Check(masked, caveman.Options{})
+	report, _ := compiler.CheckContextText(text, caveman.Options{Kind: caveman.KindContext})
+	return report
 }
 
 // TestHarnessPassesCavemanLint: a freshly adopted repository must not fail its own gate on
 // text praetor wrote, so the harness itself lints clean.
 func TestHarnessPassesCavemanLint(t *testing.T) {
-	harness, err := buildAgentHarness("fixture", "framework", cavemanPlan)
+	harness, err := buildAgentHarness(adoptedFacts("", "fixture", "framework", cavemanPlan))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,22 +33,29 @@ func TestHarnessPassesCavemanLint(t *testing.T) {
 // TestHarnessCavemanLintSeesAdopterProse: the adopter's own part below the harness is linted
 // too (operator decision 2026-09-18), so prose there fails.
 func TestHarnessCavemanLintSeesAdopterProse(t *testing.T) {
-	harness, err := buildAgentHarness("fixture", "framework", cavemanPlan)
+	harness, err := buildAgentHarness(adoptedFacts("", "fixture", "framework", cavemanPlan))
 	if err != nil {
 		t.Fatal(err)
 	}
 	prose := "Search for an existing implementation before adding one. Grep the repository for the " +
 		"capability and extend the code that is already there. Two implementations of one behavior are a " +
 		"defect: they drift, and the second one stops matching the first.\n"
-	if report := lintHarness(harness + harnessSeparator + "\n" + prose); report.Passed() {
+	// One passage fails although the article-free harness above it would dilute a whole-file
+	// density below the limit: the gate judges the text after the end marker on its own.
+	report := lintHarness(harness + harnessSeparator + "\n" + prose)
+	if report.Passed() {
 		t.Fatal("adopter prose below the harness must fail the lint")
+	}
+	whole := caveman.Check(harness+harnessSeparator+"\n"+prose, caveman.Options{Kind: caveman.KindContext})
+	if whole.Density() > caveman.DefaultMaxArticleDensity {
+		t.Fatalf("fixture precondition: whole-file density %.1f must stay under the limit, so only the tail judgment fails it", whole.Density())
 	}
 }
 
 // TestHarnessDropsDiagramKeepsAnchors: the mermaid chart is gone, and every anchor the
 // harness parsers depend on is still there byte for byte.
 func TestHarnessDropsDiagramKeepsAnchors(t *testing.T) {
-	harness, err := buildAgentHarness("fixture", "framework", cavemanPlan)
+	harness, err := buildAgentHarness(adoptedFacts("", "fixture", "framework", cavemanPlan))
 	if err != nil {
 		t.Fatal(err)
 	}
