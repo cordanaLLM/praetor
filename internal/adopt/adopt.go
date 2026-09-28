@@ -776,9 +776,8 @@ func devContainerDetail(file devcontainer.BundleFile, configDetail string) strin
 	return "Prepared exact DevContainer bootstrap companion"
 }
 
-// reconcileEditors writes IDE configurations that do not exist yet. Existing files are
-// only regenerated with Force, and developer-owned files (editor.IsPreservedEditorFile:
-// hand-tuned policy and IDE session state) are always preserved.
+// reconcileEditors writes the IDE configurations of the selected editors that do not exist yet
+// and resolves each existing one without overwriting it (reconcileEditorFile).
 func reconcileEditors(ctx context.Context, s *adoptSession) error {
 	declared, err := config.LoadDeclaredTooling(ctx, s.repoPath)
 	if err != nil {
@@ -810,7 +809,7 @@ func reconcileEditors(ctx context.Context, s *adoptSession) error {
 	}
 
 	for i := 0; i < len(set.Files) && i < maxEditorFiles; i++ {
-		if err := s.reconcileEditorFile(set.Files[i]); err != nil {
+		if err := s.reconcileEditorFile(ctx, set.Files[i]); err != nil {
 			return err
 		}
 	}
@@ -838,29 +837,6 @@ func (s *adoptSession) discoveryEntries() int {
 		return maxVerificationEntries
 	}
 	return s.verification.Limits.MaxEntries
-}
-
-func (s *adoptSession) reconcileEditorFile(f editor.GeneratedFile) error {
-	full, err := repoFile(s.repoPath, f.Path)
-	if err != nil {
-		return err
-	}
-	if !fileExists(full) {
-		if err := s.write(full, []byte(f.Content), filePerm); err != nil {
-			return err
-		}
-		s.report.recordCreated(f.Path, fmt.Sprintf("Synthesized %s IDE configuration for archetype '%s'", f.Editor, s.arch))
-		return nil
-	}
-	if s.opts.Force && !editor.IsPreservedEditorFile(f.Path) {
-		if err := s.write(full, []byte(f.Content), filePerm); err != nil {
-			return err
-		}
-		s.report.recordReconciled(f.Path, fmt.Sprintf("Regenerated %s IDE configuration for archetype '%s'", f.Editor, s.arch))
-		return nil
-	}
-	s.report.recordReconciled(f.Path, fmt.Sprintf("Existing %s IDE configuration preserved (use --force to regenerate)", f.Editor))
-	return nil
 }
 
 func reconcileWorkingDirAndFlavor(ctx context.Context, s *adoptSession) error {

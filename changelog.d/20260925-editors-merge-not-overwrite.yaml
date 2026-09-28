@@ -1,0 +1,4 @@
+type: fixed
+title: 'adopt --force no longer overwrites editor files: it merges the managed values into an existing JSON editor file (.vscode/*.json, .zed, .fleet, .sublime-project), keeping every adopter key and reporting a merge with its line delta and backup, keeps a JSONC file, a conflicting managed value and any other differing editor file such as lua/standards.lua with a warning instead of aborting, and a plain run warns with the managed values an existing JSON file lacks; editor.ResolveExisting is the one existing-file rule editors generate and adoption share, and onboarding keeps every developer-owned editor file, .nvim.lua included'
+issue: "#502"
+breaking: true

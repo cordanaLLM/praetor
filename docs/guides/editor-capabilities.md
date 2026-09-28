@@ -282,14 +282,40 @@ Generation reports each of them as `PRESERVED`, and verification lists them as
 preserved but unverified, because their existence is not semantic verification of
 XML, Lua or editor Lisp. Any other existing non-JSON file that differs from its
 template, such as `lua/standards.lua` or the JetBrains inspection profile, belongs
-to Praetor and is rewritten. Missing files are still generated from the resolved
-plan. The list lives in one place,
+to Praetor and `editors generate` rewrites it. Missing files are still generated from
+the resolved plan. The list lives in one place,
 [`internal/editor/editor.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/editor/editor.go)
 (`IsPreservedEditorFile`).
 
-Adoption retains its existing explicit `--force` contract: `--force` regenerates
-existing editor files, except the developer-owned files above. A successful workspace
-configuration check does not imply that an IDE extension, coding-agent wrapper,
-hook or MCP connection is installed and active. Those require the separate
-[client bootstrap](client-bootstrap.md) and
+A successful workspace configuration check does not imply that an IDE extension,
+coding-agent wrapper, hook or MCP connection is installed and active. Those require
+the separate [client bootstrap](client-bootstrap.md) and
 [agent lifecycle](agent-lifecycle.md) checks.
+
+### Adoption and onboarding
+
+`praetorctl adopt` resolves an existing editor file with the rule `editors generate`
+uses, `editor.ResolveExisting` in `internal/editor/editor.go`, with one difference: it
+never overwrites an editor file, because no audit gate verifies one (#502). The
+adoption side is `internal/adopt/editor_files.go`:
+
+| Existing file | Plain run | `--force` |
+| :--- | :--- | :--- |
+| identical, or JSON holding every managed value | verified | verified |
+| developer-owned and different | preserved | preserved |
+| JSON missing managed values | kept; the warning names each one as a JSON Pointer, such as `"/standards.sentinel.headroomMB"` | merged: every adopter key and list entry stays, the managed values are added, and the report lists a `merge` |
+| JSON adoption cannot merge: JSONC comments, a duplicate key, a conflicting managed value | kept, with a warning naming the reason | kept, with a warning; adoption continues |
+| any other file that differs, such as `lua/standards.lua` | kept, with a warning and the line delta regenerating would apply | kept, with a warning |
+
+A merge re-indents the file with two spaces and sorts its keys. Its report entry
+carries the line delta and the backup location that every adoption overwrite records
+([replaced files](../adoption.md)); a dry run plans the merge and writes nothing. To
+regenerate a kept file, delete it and re-run adoption, or run
+`praetorctl editors generate`, which rewrites it. Onboarding
+(`internal/harvester/onboard.go`) skips every existing developer-owned file through
+the same `IsPreservedEditorFile`.
+
+Tests: `internal/adopt/editor_files_test.go`,
+`internal/editor/resolve_existing_test.go` and
+`TestOnboardRepository_Boundary_KeepsDeveloperOwnedNvimLua` in
+`internal/harvester/onboard_selection_test.go`.

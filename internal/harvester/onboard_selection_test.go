@@ -67,6 +67,25 @@ func TestOnboardRepository_Boundary_EmptySelectionWritesNone(t *testing.T) {
 	}
 }
 
+// Boundary: onboarding keeps every developer-owned editor file (editor.IsPreservedEditorFile),
+// not only .editorconfig and .clang-tidy: a developer's own .nvim.lua survives, while the
+// Praetor module beside it, which does not exist yet, is still written.
+func TestOnboardRepository_Boundary_KeepsDeveloperOwnedNvimLua(t *testing.T) {
+	repo := selectionOnboardFixture(t, "editors: [neovim]\nagent_clients: []\n")
+	const own = "vim.opt.number = true\n"
+	mustWriteFile(t, filepath.Join(repo, ".nvim.lua"), own)
+	if _, err := OnboardRepository(context.Background(), repo, false); err != nil {
+		t.Fatalf("onboard: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(repo, ".nvim.lua"))
+	if err != nil || string(data) != own {
+		t.Fatalf("onboarding replaced a developer-owned .nvim.lua: %q %v", data, err)
+	}
+	if !onboardExists(repo, "lua/standards.lua") {
+		t.Error("onboarding skipped the missing Praetor module lua/standards.lua")
+	}
+}
+
 func TestOnboardRepository_FacetsMatchDefault(t *testing.T) {
 	repo := verifiedOnboardFixture(t)
 	plan, err := OnboardRepository(context.Background(), repo, true)

@@ -286,7 +286,10 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
   unchanged. Every other existing scaffold is compared with what adoption would write:
   a match is reported as verified, a difference as `differs from the scaffold` with a
   warning, and the file is kept. `--force` regenerates only the scaffolds it owns
-  (`TestScaffoldFile_ReportsDriftInsteadOfVerified`).
+  (`TestScaffoldFile_ReportsDriftInsteadOfVerified`). It never overwrites an editor
+  file: it merges the managed values into a JSON one, keeping every adopter key, and
+  keeps any other differing file with a warning
+  ([editor capabilities](guides/editor-capabilities.md#adoption-and-onboarding)).
 - **Replaced files.** When `--force` overwrites a drifted scaffold, the report lists it under
   `Files Replaced` with action `replace`, never as created. The entry carries a line delta
   (`-removed/+added lines` and the first three removed lines) and where the prior bytes went:
