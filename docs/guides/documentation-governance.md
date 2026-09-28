@@ -270,7 +270,12 @@ tells the adopter's Renovate to leave the managed files alone
   `renovate.json`, `renovate.jsonc`, `renovate.json5`, the same three names
   under `.github/` and `.gitlab/`, `.renovaterc`, `.renovaterc.json`,
   `.renovaterc.jsonc` and `.renovaterc.json5`, in that order. A repository
-  without one gets none created.
+  without one gets none created. Renovate also filters that list by platform:
+  on GitHub it skips the `.gitlab/` names, on GitLab the `.github/` names, and
+  on other platforms both, where it reads `.<platform>/renovate.json` after
+  `package.json` instead. Adoption does not apply that filter, so keep one
+  configuration file per repository, or check that the one adoption edits is
+  the one your platform reads.
 - It adds one `packageRules` entry, described
   `praetor-managed files: praetorctl adopt ships their updates and praetorctl audit locks them byte for byte`,
   whose `matchFileNames` lists every managed path of the enabled families and
@@ -281,18 +286,22 @@ tells the adopter's Renovate to leave the managed files alone
   re-indented with two spaces when the entry is added or changed; an entry
   already present, however formatted, leaves the file untouched, so a formatter
   and adoption do not take turns rewriting it.
-- A file it cannot rewrite without risking the adopter's settings is reported
-  with the entry to add by hand and left byte for byte: a `.jsonc` or `.json5`
-  name, comments or trailing commas in a `.json` file, mixed line endings, a
-  `packageRules` that is not an array, two managed entries, and configuration
-  in the `renovate` member of `package.json`.
+- A file it cannot read or rewrite without risking the adopter's settings is
+  reported with the entry to add by hand and left byte for byte, and adoption
+  goes on with its other steps: a symbolic link, a directory or other
+  non-regular file, a file over 1 MiB or one it may not read, a `.jsonc` or
+  `.json5` name, comments or trailing commas in a `.json` file, mixed line
+  endings, a `packageRules` that is not an array, two managed entries, a
+  `packageRules` already holding 1024 entries without the managed one, and
+  configuration in the `renovate` member of `package.json`.
 - With `docs:seo-portal` disabled, or in a repository that holds the family's
   source (`tools/markdownlint/assets.go`, where the managed files are sources
   its own Renovate updates, as in this repository), no path needs the entry
   and an existing one is removed.
 
 `TestRenovateIgnorePositiveDeclaresManagedFilesOnce`,
-`TestRenovateIgnoreNegativeCreatesNoConfiguration`, the two
+`TestRenovateIgnoreNegativeCreatesNoConfiguration`,
+`TestRenovateIgnoreNegativeReportsUnreadableConfiguration`, the three
 `TestRenovateIgnoreBoundary*` tests and `TestMergeRenovateRule` in
 `internal/adopt/renovate_test.go` cover these cases. Dependabot and other
 update bots are not configured; keep the managed files out of them by hand.

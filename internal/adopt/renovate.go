@@ -46,6 +46,10 @@ const (
 // renovateConfigFiles are Renovate's repository configuration files in its own search order
 // (configFilePatterns in renovatebot/renovate lib/config/app-strings.ts, package.json aside).
 // Renovate reads the first that exists and ignores the rest, so adoption edits only that one.
+// Upstream getConfigFileNames also filters the list by platform (on GitHub it skips the
+// .gitlab/ names, on GitLab the .github/ names, elsewhere both, adding .<platform>/ names
+// after package.json). Adoption does not know the platform Renovate runs on and keeps the
+// unfiltered order; the documentation governance guide tells adopters so.
 var renovateConfigFiles = []string{
 	"renovate.json", "renovate.jsonc", "renovate.json5",
 	".github/renovate.json", ".github/renovate.jsonc", ".github/renovate.json5",
@@ -82,8 +86,9 @@ type renovateRule struct {
 
 // reconcileRenovateIgnore keeps the managed family files out of the adopter's Renovate
 // updates. It never creates a Renovate configuration: a repository without one is left
-// alone. A configuration it cannot edit safely (JSON5, JSONC comments, package.json, a
-// malformed or ambiguous packageRules) is reported with the rule to add by hand.
+// alone. A configuration it cannot read or edit safely (a symbolic link or unreadable file,
+// JSON5, JSONC comments, package.json, a malformed or ambiguous packageRules) is reported
+// with the rule to add by hand and left untouched.
 func reconcileRenovateIgnore(ctx context.Context, s *adoptSession) error {
 	paths, err := renovateManagedPaths(ctx, s)
 	if err != nil {
@@ -123,23 +128,43 @@ func recordRenovateUnchanged(s *adoptSession, rel string, managed bool) {
 
 // findRenovateConfig returns the first Renovate configuration file in Renovate's search
 // order. Without one it checks package.json, which adoption never edits: a "renovate" member
-// there is reported, and no configuration at all is recorded as not applicable.
+// there is reported, and no configuration at all is recorded as not applicable. A candidate
+// that exists but cannot be read under the adoption read contract stops the search the same
+// way (reportUninspectableRenovate): Renovate may read it, so no later file is edited.
 func findRenovateConfig(ctx context.Context, s *adoptSession, paths []string) (string, []byte, bool, error) {
 	for index := 0; index < len(renovateConfigFiles); index++ {
 		data, exists, err := observeAdoptionInput(ctx, s, renovateConfigFiles[index])
-		if err != nil || exists {
-			return renovateConfigFiles[index], data, exists, err
+		if err != nil {
+			return "", nil, false, reportUninspectableRenovate(ctx, s, renovateConfigFiles[index], paths, err)
+		}
+		if exists {
+			return renovateConfigFiles[index], data, true, nil
 		}
 	}
 	data, exists, err := observeAdoptionInput(ctx, s, packageJSONFile)
 	if err != nil {
-		return "", nil, false, err
+		return "", nil, false, reportUninspectableRenovate(ctx, s, packageJSONFile, paths, err)
 	}
 	if exists && packageJSONConfiguresRenovate(ctx, data) {
 		return "", nil, false, reportRenovateUnsafe(s, packageJSONFile, paths, "Renovate configuration in package.json is deprecated upstream and not edited")
 	}
 	s.report.recordNotApplicable(renovateReportPath, "No Renovate configuration found; none created")
 	return "", nil, false, nil
+}
+
+// reportUninspectableRenovate reports a Renovate configuration candidate that exists but
+// cannot be read safely: a symbolic link, a directory or other non-regular file, a file over
+// 1 MiB, or one the process may not read (contextopt.ObserveSnapshot). Such a file is
+// reported with the entry to add by hand and left untouched; it never fails adoption. Only a
+// cancelled or expired adoption context fails the step, because then nothing was observed.
+func reportUninspectableRenovate(ctx context.Context, s *adoptSession, rel string, paths []string, err error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		if errors.Is(err, ctxErr) {
+			return err
+		}
+		return fmt.Errorf("%w: %w", ctxErr, err)
+	}
+	return reportRenovateUnsafe(s, rel, paths, "it cannot be read safely ("+err.Error()+")")
 }
 
 // packageJSONConfiguresRenovate reports whether data is a strict JSON object with a
@@ -281,7 +306,9 @@ func renovatePackageRules(root clientjson.Object) ([]jsontext.Value, error) {
 
 // withRenovateRule returns rules with the managed entry replaced in place, appended when
 // absent, or removed when paths is empty, and whether that differs from rules. Two managed
-// entries are ambiguous and refused.
+// entries are ambiguous and refused, and so is an append past maxRenovateRules: the written
+// configuration stays within the bound renovatePackageRules reads back, so the rerun finds
+// the entry instead of refusing the file.
 func withRenovateRule(rules []jsontext.Value, paths []string) ([]jsontext.Value, bool, error) {
 	found := -1
 	for index := 0; index < len(rules) && index < maxRenovateRules; index++ {
@@ -304,6 +331,9 @@ func withRenovateRule(rules []jsontext.Value, paths []string) ([]jsontext.Value,
 		return nil, false, err
 	}
 	if found < 0 {
+		if len(rules) >= maxRenovateRules {
+			return nil, false, renovateUnsafe("its packageRules holds %d entries, and the managed entry would exceed %d", len(rules), maxRenovateRules)
+		}
 		return append(rules, rule), true, nil
 	}
 	if sameJSON(rules[found], rule) {

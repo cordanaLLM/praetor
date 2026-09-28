@@ -5,11 +5,13 @@
 package adopt
 
 import (
+	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -177,6 +179,90 @@ func TestRenovateIgnoreBoundaryReportsUneditableConfiguration(t *testing.T) {
 	}
 }
 
+// uninspectableRenovateReport runs adoption on repo and checks that it completes, runs the
+// steps after renovate-ignore, and reports rel as left untouched with the entry to add by hand.
+func uninspectableRenovateReport(t *testing.T, repo, rel string) {
+	t.Helper()
+	mustWrite(t, filepath.Join(repo, readmeFile), "# Demo\n")
+	report, err := Adopt(t.Context(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo})
+	if err != nil {
+		t.Fatalf("an uninspectable %s failed adoption: %v", rel, err)
+	}
+	warnings := strings.Join(report.Warnings, "\n")
+	if !strings.Contains(warnings, rel+": Renovate configuration left untouched: it cannot be read safely") ||
+		!strings.Contains(warnings, `"matchFileNames":[".github/workflows/praetor-docs.yml"`) {
+		t.Fatalf("%s not reported with the entry to add by hand:\n%s", rel, warnings)
+	}
+	if !strings.Contains(mustRead(t, filepath.Join(repo, readmeFile)), testReadmeGovernanceStart) {
+		t.Fatal("the steps after renovate-ignore did not run: README has no governance block")
+	}
+}
+
+// Boundary (review of #497): a Renovate configuration that exists but cannot be read under
+// the adoption read contract, a symbolic link or a directory, is reported with the entry to
+// add by hand and left untouched, and adoption completes; the search stops there, so a later
+// configuration Renovate does not read is not edited either.
+func TestRenovateIgnoreBoundaryReportsUninspectableConfiguration(t *testing.T) {
+	t.Run("symlink", func(t *testing.T) {
+		repo := newTestRepo(t, "renovate-symlink")
+		shared := filepath.Join(repo, "config", "renovate-shared.json")
+		mustWrite(t, shared, adopterRenovateConfig)
+		if err := os.Symlink(filepath.Join("config", "renovate-shared.json"), filepath.Join(repo, "renovate.json")); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		mustWrite(t, filepath.Join(repo, ".github", "renovate.json"), "{}\n")
+		uninspectableRenovateReport(t, repo, "renovate.json")
+		if info, err := os.Lstat(filepath.Join(repo, "renovate.json")); err != nil || info.Mode()&os.ModeSymlink == 0 ||
+			mustRead(t, shared) != adopterRenovateConfig || mustRead(t, filepath.Join(repo, ".github", "renovate.json")) != "{}\n" {
+			t.Fatalf("an uninspectable configuration or a later one was changed: %v", err)
+		}
+	})
+	t.Run("directory", func(t *testing.T) {
+		repo := newTestRepo(t, "renovate-directory")
+		if err := os.MkdirAll(filepath.Join(repo, "renovate.json"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		uninspectableRenovateReport(t, repo, "renovate.json")
+	})
+}
+
+// Negative (review of #497): an unreadable configuration is reported, not fatal. Windows file
+// modes do not deny reads, and root ignores them; the directory case above covers the
+// non-regular path there.
+func TestRenovateIgnoreNegativeReportsUnreadableConfiguration(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("file modes do not deny this process reads here")
+	}
+	repo := newTestRepo(t, "renovate-unreadable")
+	path := filepath.Join(repo, ".renovaterc.json")
+	mustWrite(t, path, adopterRenovateConfig)
+	if err := os.Chmod(path, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { restoreMode(t, path) })
+	uninspectableRenovateReport(t, repo, ".renovaterc.json")
+	restoreMode(t, path)
+	if got := mustRead(t, path); got != adopterRenovateConfig {
+		t.Fatalf("unreadable configuration changed:\n%s", got)
+	}
+}
+
+// Negative: a cancelled adoption context is the one observation failure the search returns,
+// since nothing was observed; it is never reported as an uninspectable configuration.
+func TestFindRenovateConfigNegativePropagatesCancellation(t *testing.T) {
+	repo := t.TempDir()
+	mustWrite(t, filepath.Join(repo, "renovate.json"), "{}\n")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	s := recordingSession(repo, repoIdentity{})
+	if _, _, found, err := findRenovateConfig(ctx, s, renovateManagedFixturePaths); found || !errors.Is(err, context.Canceled) {
+		t.Fatalf("found=%v err=%v, want context.Canceled", found, err)
+	}
+	if len(s.report.Warnings) != 0 {
+		t.Fatalf("cancellation reported as a configuration finding: %v", s.report.Warnings)
+	}
+}
+
 // Boundary: in the repository that holds a family's Source the managed files are sources its
 // own Renovate updates, so adoption adds no rule there and removes one it added before.
 func TestRenovateIgnoreBoundarySkipsTheFamilyOrigin(t *testing.T) {
@@ -209,8 +295,9 @@ func TestRenovateIgnoreBoundarySkipsTheFamilyOrigin(t *testing.T) {
 
 // mergeRenovateRule in isolation. Positive: a stale managed entry is replaced where it
 // stands, and an empty path set removes it and nothing else. Boundary: CRLF text stays CRLF,
-// and no managed entry with no paths is no change. Negative: documents whose rewrite could
-// lose or misread the adopter's settings are refused with *renovateUnsafeError.
+// no managed entry with no paths is no change, and an append that reaches maxRenovateRules is
+// a no-op on the rerun and removable. Negative: documents whose rewrite could lose or misread
+// the adopter's settings, or an append past the bound, are refused with *renovateUnsafeError.
 func TestMergeRenovateRule(t *testing.T) {
 	ctx := t.Context()
 	own := `{"groupName":"adopter"}`
@@ -250,8 +337,23 @@ func TestMergeRenovateRule(t *testing.T) {
 			t.Fatalf("%s: %v, want *renovateUnsafeError", name, err)
 		}
 	}
-	atBound := `{"packageRules": [` + strings.TrimSuffix(strings.Repeat("{},", maxRenovateRules-1), ",") + `]}`
-	if _, changed, err := mergeRenovateRule(ctx, []byte(atBound), []string{"new.yml"}); err != nil || !changed {
+	belowBound := `{"packageRules": [` + strings.TrimSuffix(strings.Repeat("{},", maxRenovateRules-1), ",") + `]}`
+	atBound, changed, err := mergeRenovateRule(ctx, []byte(belowBound), []string{"new.yml"})
+	if err != nil || !changed {
 		t.Fatalf("configuration reaching the rules bound refused: changed=%v err=%v", changed, err)
+	}
+	if _, managed, rules := renovateTestRules(t, string(atBound)); len(rules) != maxRenovateRules || len(managed) != 1 {
+		t.Fatalf("append at the bound wrote %d entries, %d managed", len(rules), len(managed))
+	}
+	if _, changed, err := mergeRenovateRule(ctx, atBound, []string{"new.yml"}); err != nil || changed {
+		t.Fatalf("rerun on a configuration at the bound: changed=%v err=%v, want a no-op", changed, err)
+	}
+	if _, changed, err := mergeRenovateRule(ctx, atBound, nil); err != nil || !changed {
+		t.Fatalf("managed entry at the bound not removable: changed=%v err=%v", changed, err)
+	}
+	full := `{"packageRules": [` + strings.TrimSuffix(strings.Repeat("{},", maxRenovateRules), ",") + `]}`
+	var unsafe *renovateUnsafeError
+	if _, _, err := mergeRenovateRule(ctx, []byte(full), []string{"new.yml"}); !errors.As(err, &unsafe) {
+		t.Fatalf("append past the rules bound: %v, want *renovateUnsafeError", err)
 	}
 }
