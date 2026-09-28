@@ -83,21 +83,33 @@ const skewGuardScript = "praetor_hook.py"
 var preToolAdapters = []string{"command_guard.py", "codex_pre_tool.py", "block_evasion.py"}
 
 // HookFile is where a native client reads the hook registrations of a repository, the unit the
-// timeout field of a registration counts in there, and whether the client strips comments
-// before it parses the file, so a JSONC file a strict merge refuses is still one it reads.
+// timeout field of a registration counts in there, whether the client strips comments before
+// it parses the file, so a JSONC file a strict merge refuses is still one it reads, and whether
+// it reads a matcher of only letters, digits and _ as the exact tool name
+// (clientjson.Hook.ExactLiteral).
 type HookFile struct {
-	Path        string
-	TimeoutUnit time.Duration
-	Comments    bool
+	Path         string
+	TimeoutUnit  time.Duration
+	Comments     bool
+	ExactLiteral bool
 }
 
 // nativeHookFiles are the repository files carrying each native client's registrations. The
 // units are the ones this repository's tracked files use: Claude Code and Codex count seconds
 // (timeout 15), Gemini CLI milliseconds (timeout 15000). Gemini CLI's settings loader parses
 // JSON.parse(stripJsonComments(content)), so its file may carry comments.
+//
+// Matchers: Claude Code evaluates a matcher of only letters, digits, _, -, spaces, `,` and `|`
+// as exact names and any other one as an unanchored JavaScript regular expression
+// (code.claude.com/docs/en/hooks, "Matcher patterns"); Codex takes a matcher of only ASCII
+// letters, digits, _ and `|` as exact names and any other one as an unanchored regex::Regex
+// (openai/codex rust-v0.145.0, codex-rs/hooks/src/events/common.rs, matches_matcher). For both,
+// Bash and ^Bash$ select one tool. Gemini CLI runs new RegExp(matcher).test(toolName) on every
+// matcher (google-gemini/gemini-cli v0.61.0, packages/core/src/hooks/hookPlanner.ts,
+// matchesToolName), so there run_shell_command also selects any tool whose name contains it.
 var nativeHookFiles = map[string]HookFile{
-	string(clientid.Claude): {Path: ".claude/settings.json", TimeoutUnit: time.Second},
-	string(clientid.Codex):  {Path: ".codex/hooks.json", TimeoutUnit: time.Second},
+	string(clientid.Claude): {Path: ".claude/settings.json", TimeoutUnit: time.Second, ExactLiteral: true},
+	string(clientid.Codex):  {Path: ".codex/hooks.json", TimeoutUnit: time.Second, ExactLiteral: true},
 	string(clientid.Gemini): {Path: ".gemini/settings.json", TimeoutUnit: time.Millisecond, Comments: true},
 }
 

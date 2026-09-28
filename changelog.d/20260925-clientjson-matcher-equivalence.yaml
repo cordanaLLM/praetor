@@ -1,0 +1,4 @@
+type: fixed
+title: Adoption treats the hook matchers NAME and ^NAME$ as one tool for Claude Code and Codex, which read a literal matcher as the exact tool name, so an adopter's Bash group running the interceptor serves the ^Bash$ row and a missing handler joins that group instead of a duplicate PreToolUse group; Gemini CLI, which tests every matcher as an unanchored regular expression, keeps the two apart
+issue: "#502"
+breaking: false

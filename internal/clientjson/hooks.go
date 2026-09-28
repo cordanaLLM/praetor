@@ -6,6 +6,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -26,6 +27,11 @@ type Hook struct {
 	Matcher string // the tool matcher; empty where the event takes none
 	Command string
 	Timeout int64 // in the unit of the client's file; zero leaves the field out
+	// ExactLiteral reports that the client reads a matcher made only of letters, digits and _
+	// as the whole tool name, so NAME and ^NAME$ select the same tool (sameSelection). False
+	// keeps the two apart, for a client that tests every matcher as an unanchored regular
+	// expression, where NAME also selects every tool whose name contains NAME.
+	ExactLiteral bool
 	// ServedBy reports whether an existing handler's command line already runs this hook's
 	// evaluator. Nil accepts only a handler whose command line is Command.
 	ServedBy func(commandLine string) bool
@@ -53,8 +59,9 @@ type hookGroup struct {
 
 // PlanHooks merges hooks into existing, the bytes of a client's hook file (empty when there is
 // none). A hook already served by a handler in a group of its event whose matcher covers the
-// hook's (coversMatcher) is reported as present and left alone. A missing file, hooks object, event list or matcher group is created; a handler is
-// appended to the first group whose matcher equals the hook's. Every member the plan does not
+// hook's (coversMatcher) is reported as present and left alone. A missing file, hooks object,
+// event list or matcher group is created; a handler is appended to the first group whose
+// matcher selects the same tools as the hook's (sameSelection). Every member the plan does not
 // touch keeps its place and its number literals; the document is re-indented and its string
 // escapes normalised. A section of the wrong type fails the plan.
 func PlanHooks(ctx context.Context, existing []byte, hooks []Hook) (*HookPlan, error) {
@@ -174,7 +181,7 @@ func eventGroups(events Object, event string) ([]jsontext.Value, error) {
 func servingHandler(groups []jsontext.Value, hook Hook) (string, bool) {
 	for _, raw := range groups {
 		group, err := DecodeObject(raw)
-		if err != nil || !coversMatcher(group, hook.Matcher) {
+		if err != nil || !coversMatcher(group, hook) {
 			continue
 		}
 		for _, handler := range groupHandlers(group) {
@@ -194,10 +201,10 @@ func servingHandler(groups []jsontext.Value, hook Hook) (string, bool) {
 // and the regular expression matching any tool name.
 var matchAllMatchers = [...]string{"", "*", ".*"}
 
-// coversMatcher reports whether group runs for every tool a hook with matcher want selects: its
-// matcher equals want or selects every tool. A matcher that is present but not a string covers
-// nothing.
-func coversMatcher(group Object, want string) bool {
+// coversMatcher reports whether group runs for every tool hook selects: its matcher selects the
+// same tools as hook's (sameSelection) or selects every tool. A matcher that is present but not
+// a string covers nothing.
+func coversMatcher(group Object, hook Hook) bool {
 	raw, ok := group.Get("matcher")
 	if !ok {
 		return true
@@ -206,7 +213,34 @@ func coversMatcher(group Object, want string) bool {
 	if err := json.Unmarshal(raw, &matcher); err != nil {
 		return false
 	}
-	return matcher == want || slices.Contains(matchAllMatchers[:], matcher)
+	return sameSelection(matcher, hook.Matcher, hook.ExactLiteral) || slices.Contains(matchAllMatchers[:], matcher)
+}
+
+// anchoredLiteral matches ^NAME$ where NAME is a nonempty run of ASCII letters, digits and _,
+// the regular expression that selects exactly the tool a client with exact literal matchers
+// (Hook.ExactLiteral) selects for the bare NAME.
+var anchoredLiteral = regexp.MustCompile(`^\^([A-Za-z0-9_]+)\$$`)
+
+// sameSelection reports whether matchers have and want select the same tools: they are equal,
+// or, when exactLiteral holds, one is ^NAME$ of the other with NAME literal (anchoredLiteral).
+// Claude Code and Codex read a literal NAME as that exact tool name; Gemini CLI tests every
+// matcher as an unanchored regular expression, so there NAME is broader than ^NAME$. A
+// metacharacter inside NAME, as in Ba.h, keeps the two apart for every client.
+func sameSelection(have, want string, exactLiteral bool) bool {
+	switch {
+	case have == want:
+		return true
+	case !exactLiteral:
+		return false
+	default:
+		return anchors(have, want) || anchors(want, have)
+	}
+}
+
+// anchors reports whether anchored is ^name$ with name literal (anchoredLiteral).
+func anchors(anchored, name string) bool {
+	match := anchoredLiteral.FindStringSubmatch(anchored)
+	return match != nil && match[1] == name
 }
 
 // groupHandlers returns the handler objects of one matcher group.
@@ -244,8 +278,9 @@ func commandLine(handler Object) string {
 	return strings.Join(parts, " ")
 }
 
-// appendHandler adds hook's handler to the first group whose matcher equals hook.Matcher and
-// whose hooks member is a list, or appends a new group holding only that handler.
+// appendHandler adds hook's handler to the first group whose matcher selects the same tools as
+// hook.Matcher (sameSelection) and whose hooks member is a list, or appends a new group holding
+// only that handler.
 func appendHandler(groups []jsontext.Value, hook Hook) ([]jsontext.Value, error) {
 	handler, err := json.Marshal(hookHandler{Type: "command", Command: hook.Command, Timeout: hook.Timeout})
 	if err != nil {
@@ -253,7 +288,7 @@ func appendHandler(groups []jsontext.Value, hook Hook) ([]jsontext.Value, error)
 	}
 	for i, raw := range groups {
 		group, err := DecodeObject(raw)
-		if err != nil || stringMember(group, "matcher") != hook.Matcher {
+		if err != nil || !sameSelection(stringMember(group, "matcher"), hook.Matcher, hook.ExactLiteral) {
 			continue
 		}
 		extended, ok := appendToList(group, handler)

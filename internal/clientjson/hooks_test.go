@@ -5,7 +5,12 @@ import (
 	"testing"
 )
 
-var bashHook = Hook{Event: "PreToolUse", Matcher: "^Bash$", Command: "engine hook pre-tool", Timeout: 15}
+// bashHook leaves ExactLiteral false, the matcher reading of a client that tests every matcher
+// as an unanchored regular expression; literalHook sets it, as Claude Code and Codex read one.
+var (
+	bashHook    = Hook{Event: "PreToolUse", Matcher: "^Bash$", Command: "engine hook pre-tool", Timeout: 15}
+	literalHook = Hook{Event: "PreToolUse", Matcher: "^Bash$", Command: "engine hook pre-tool", Timeout: 15, ExactLiteral: true}
+)
 
 // Positive: a missing document, hooks section, event list and matcher group are all created,
 // and the plan reports the command it added.
@@ -54,8 +59,9 @@ func TestPlanHooks_Positive_ServedHookIsPresent(t *testing.T) {
 }
 
 // Negative: a serving handler under a matcher that does not cover the hook's, an unrelated
-// tool, a regular expression that merely resembles it or a matcher that is not a string, does
-// not run for the guarded tool, so the hook is still registered in its own group.
+// tool, the bare name for a client that tests every matcher as an unanchored regular
+// expression (bashHook leaves ExactLiteral false) or a matcher that is not a string, does not
+// run for exactly the guarded tool, so the hook is still registered in its own group.
 func TestPlanHooks_Negative_HandlerUnderOtherMatcherServesNothing(t *testing.T) {
 	served := bashHook
 	served.ServedBy = func(line string) bool { return strings.HasSuffix(line, "guard.py") }
@@ -113,5 +119,128 @@ func TestPlanHooks_Boundary_IdempotentAndGroupBound(t *testing.T) {
 	odd, err := PlanHooks(t.Context(), []byte(`{"hooks": {"PreToolUse": [7, {"matcher": "^Bash$", "hooks": "x"}]}}`), []Hook{bashHook})
 	if err != nil || !odd.Changed || !strings.Contains(string(odd.Content), "7,") {
 		t.Fatalf("odd entries plan %+v, %v", odd, err)
+	}
+}
+
+// groupDocument is a PreToolUse hook file holding one group with matcher and the handlers.
+func groupDocument(matcher, handlers string) string {
+	return `{"hooks": {"PreToolUse": [{"matcher": "` + matcher + `", "hooks": [` + handlers + `]}]}}`
+}
+
+const (
+	// evasionAdapter is the adopted interceptor as an adopter registers it by hand.
+	evasionAdapter = `{"type": "command", "command": "python3", "args": [".config/agent/hooks/block_evasion.py"]}`
+	// lintHandler is an unrelated adopter handler that serves no hook.
+	lintHandler = `{"type": "command", "command": "lint.sh"}`
+)
+
+// servedByAdapter is hook served by the adopted interceptor as well as by its own command.
+func servedByAdapter(hook Hook, matcher string) Hook {
+	hook.Matcher = matcher
+	hook.ServedBy = func(line string) bool { return strings.HasSuffix(line, "block_evasion.py") }
+	return hook
+}
+
+// Positive: where the client reads a literal matcher as the exact tool name, Bash and ^Bash$
+// select one tool. A handler serving the hook under the other spelling leaves the file alone
+// (the adopter's Bash group running block_evasion.py for a ^Bash$ row, a ^run_shell_command$
+// group for a run_shell_command row), and a missing handler joins the equivalent group, which
+// keeps its own spelling, instead of opening a second group for the same tool.
+func TestPlanHooks_Positive_LiteralAndAnchoredNameAreOneSelection(t *testing.T) {
+	for want, group := range map[string]string{"^Bash$": "Bash", "run_shell_command": "^run_shell_command$"} {
+		existing := groupDocument(group, evasionAdapter)
+		plan, err := PlanHooks(t.Context(), []byte(existing), []Hook{servedByAdapter(literalHook, want)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if plan.Changed || string(plan.Content) != existing || len(plan.Present) != 1 || len(plan.Added) != 0 {
+			t.Fatalf("hook %s, group %s: plan %+v", want, group, plan)
+		}
+	}
+	for want, group := range map[string]string{"^Bash$": "Bash", "Bash": "^Bash$"} {
+		hook := literalHook
+		hook.Matcher = want
+		plan, err := PlanHooks(t.Context(), []byte(groupDocument(group, lintHandler)), []Hook{hook})
+		if err != nil {
+			t.Fatal(err)
+		}
+		content := string(plan.Content)
+		if !plan.Changed || strings.Count(content, `"matcher"`) != 1 || !strings.Contains(content, `"matcher": "`+group+`"`) ||
+			strings.Index(content, "lint.sh") > strings.Index(content, hook.Command) {
+			t.Fatalf("hook %s, group %s: handler not appended to the one group:\n%s", want, group, content)
+		}
+	}
+}
+
+// Negative: only the anchored literal is equivalent. A pattern that selects other tools as
+// well (Bash.*, a half-anchored ^Bash or Bash$), another tool list, another case and, for a
+// client that tests every matcher as an unanchored regular expression, even the bare name, do
+// not cover ^Bash$, so the hook gets its own group; nor does ^run_shell_command$ take a
+// run_shell_command handler for that client.
+func TestPlanHooks_Negative_OnlyTheAnchoredLiteralIsEquivalent(t *testing.T) {
+	cases := map[string]Hook{
+		"^(Edit|Write)$": literalHook, "Bash.*": literalHook, "^Bash": literalHook, "Bash$": literalHook,
+		"^bash$": literalHook, "Bash": bashHook,
+	}
+	for group, hook := range cases {
+		plan, err := PlanHooks(t.Context(), []byte(groupDocument(group, evasionAdapter)), []Hook{servedByAdapter(hook, "^Bash$")})
+		if err != nil {
+			t.Fatalf("group %s: %v", group, err)
+		}
+		if !plan.Changed || len(plan.Added) != 1 || strings.Count(string(plan.Content), `"matcher"`) != 2 {
+			t.Fatalf("group %s (exact literal %v): plan %+v\n%s", group, hook.ExactLiteral, plan, plan.Content)
+		}
+	}
+	shell := bashHook
+	shell.Matcher = "run_shell_command"
+	plan, err := PlanHooks(t.Context(), []byte(groupDocument("^run_shell_command$", lintHandler)), []Hook{shell})
+	if err != nil || strings.Count(string(plan.Content), `"matcher"`) != 2 {
+		t.Fatalf("unanchored-regex client joined ^run_shell_command$ for run_shell_command: %v\n%s", err, plan.Content)
+	}
+}
+
+// Boundary: a metacharacter inside the name is not normalised (Ba.h and ^Ba.h$ stay apart), an
+// empty anchored name ^$ is not the absent matcher, the match-all spellings still cover every
+// hook, and the appended handler carries the hook's timeout while the existing one keeps its
+// literal.
+func TestPlanHooks_Boundary_LiteralEquivalenceEdges(t *testing.T) {
+	for _, pair := range [][2]string{{"Ba.h", "^Ba.h$"}, {"^Ba.h$", "Ba.h"}, {"^$", ""}} {
+		hook := literalHook
+		hook.Matcher = pair[1]
+		plan, err := PlanHooks(t.Context(), []byte(groupDocument(pair[0], lintHandler)), []Hook{hook})
+		if err != nil || len(plan.Added) != 1 || strings.Count(string(plan.Content), `"hooks": [`) != 2 {
+			t.Fatalf("group %q, hook %q: %v\n%s", pair[0], pair[1], err, plan.Content)
+		}
+	}
+	for _, matcher := range matchAllMatchers {
+		existing := groupDocument(matcher, `{"type": "command", "command": "engine hook pre-tool"}`)
+		if plan, err := PlanHooks(t.Context(), []byte(existing), []Hook{literalHook}); err != nil || plan.Changed {
+			t.Fatalf("match-all %q: %+v, %v", matcher, plan, err)
+		}
+	}
+	existing := groupDocument("Bash", `{"type": "command", "command": "lint.sh", "timeout": 15000}`)
+	plan, err := PlanHooks(t.Context(), []byte(existing), []Hook{literalHook})
+	if err != nil || !strings.Contains(string(plan.Content), `"timeout": 15000`) || !strings.Contains(string(plan.Content), `"timeout": 15`+"\n") {
+		t.Fatalf("timeouts changed: %v\n%s", err, plan.Content)
+	}
+}
+
+// TestSameSelection: positive, equal matchers and, for an exact literal client, NAME against
+// ^NAME$ in either order; negative, the bare and anchored name for an unanchored-regex client
+// and every pattern that is not ^NAME$ of the other; boundary, an empty or metacharacter name.
+func TestSameSelection(t *testing.T) {
+	for _, c := range []struct {
+		have, want  string
+		exact, same bool
+	}{
+		{"^Bash$", "^Bash$", false, true}, {"", "", true, true}, {"Bash", "^Bash$", true, true},
+		{"^run_shell_command$", "run_shell_command", true, true}, {"Bash", "^Bash$", false, false},
+		{"^run_shell_command$", "run_shell_command", false, false}, {"Bash.*", "^Bash$", true, false},
+		{"^Bash", "Bash", true, false}, {"^(Edit|Write)$", "Edit|Write", true, false},
+		{"^$", "", true, false}, {"^Ba.h$", "Ba.h", true, false}, {"^Bash$", "Bash$", true, false},
+	} {
+		if got := sameSelection(c.have, c.want, c.exact); got != c.same {
+			t.Errorf("sameSelection(%q, %q, %v) = %v, want %v", c.have, c.want, c.exact, got, c.same)
+		}
 	}
 }
