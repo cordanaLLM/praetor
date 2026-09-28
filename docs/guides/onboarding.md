@@ -117,7 +117,10 @@ a Go library.
   prints a "Not applicable" warning naming `praetorctl flavor apply --flavor=<name>` instead
   (`internal/adopt/flavor_report_test.go`); a flat Go module with only root `.go` files is one such
   repository.
-- `flavor apply` fails when any template could not be written (`flavor.ErrApplyIncomplete`), and
+- `flavor apply` also renders the branch ruleset (`.github/rulesets/main.json`) and lists every
+  other required setting with the command that writes it
+  ([flavor settings](archetype-authoring.md#flavor-settings-the-ruleset-is-rendered-the-rest-are-deferred)).
+  It fails when any template or the ruleset could not be written (`flavor.ErrApplyIncomplete`), and
   prints what it created before the failure. `--force` refreshes flavor scaffolds but never rewrites
   `.standards.yaml`, `.standards.lock` or the `.workingdir/` ledger
   (`internal/flavor/scaffold_integrity_test.go`).

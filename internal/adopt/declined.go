@@ -87,6 +87,19 @@ func ManifestArtifactDeclined(manifest *config.Manifest, artifact string) (bool,
 	return ArtifactDeclined(manifestDeclines(manifest), artifact)
 }
 
+// RepositoryArtifactDeclined resolves one adoption step against the adoption.decline list of the
+// manifest at repoPath (ManifestArtifactDeclined). A repository without a manifest declines
+// nothing. A manifest that cannot be read or decoded is an error, so a writer outside adoption,
+// such as flavor apply rendering the branch ruleset, fails closed instead of writing a file the
+// repository may have declined.
+func RepositoryArtifactDeclined(ctx context.Context, repoPath, artifact string) (bool, error) {
+	manifest, err := loadDeclaredManifest(ctx, repoPath)
+	if err != nil {
+		return false, err
+	}
+	return ManifestArtifactDeclined(manifest, artifact)
+}
+
 // manifestDeclines is the adoption.decline list a manifest records; nil declines nothing.
 func manifestDeclines(manifest *config.Manifest) []string {
 	if manifest == nil || manifest.Adoption == nil {

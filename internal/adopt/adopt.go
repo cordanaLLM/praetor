@@ -17,6 +17,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/devcontainer"
 	"github.com/cordanaLLM/praetor/internal/editor"
 	"github.com/cordanaLLM/praetor/internal/flavor"
+	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/state"
@@ -94,8 +95,11 @@ type AdoptReport struct {
 	CreatedFiles    []string                `json:"created_files"`
 	ReconciledFiles []string                `json:"reconciled_files"`
 	ActionDetails   []ActionDetail          `json:"action_details,omitempty"`
-	DebtBreakdown   map[string]int          `json:"debt_breakdown,omitempty"`
-	LegacyDebtCount int                     `json:"legacy_debt_count"`
+	// Previews shows, in a dry run only, the content or the diff of each file adoption renders
+	// from repository state (FilePreview): the branch protection ruleset.
+	Previews        []FilePreview  `json:"previews,omitempty"`
+	DebtBreakdown   map[string]int `json:"debt_breakdown,omitempty"`
+	LegacyDebtCount int            `json:"legacy_debt_count"`
 	// BaselineStatus distinguishes an observed zero from a skipped or unevaluated scan.
 	BaselineStatus string   `json:"baseline_status"`
 	DryRun         bool     `json:"dry_run"`
@@ -135,6 +139,13 @@ type adoptSession struct {
 		resolved bool
 		limit    int
 	}
+	// dryRunWrites holds, in a dry run only, what each file the run would scaffold or remove
+	// comes to (planDryRunWrite, planDryRunRemoval), so a later step previews against the tree
+	// the run leaves rather than the one on disk.
+	dryRunWrites map[string][]byte
+	// rulesetBaseline is the policy and the workflows of the repository as this adoption found
+	// it, read before any step writes (readRulesetBaseline); nil without a ruleset on disk.
+	rulesetBaseline *forge.RulesetBaseline
 }
 
 // adoptStep is one reconciliation step of the adoption chain.
@@ -186,6 +197,7 @@ func Adopt(ctx context.Context, opts AdoptOptions) (*AdoptReport, error) {
 		return report, err
 	}
 	report.addWarning("%s", verification.notice())
+	s.rulesetBaseline = readRulesetBaseline(ctx, s)
 
 	if err := executeAdoptSteps(ctx, s); err != nil {
 		report.addError("%s", err)
@@ -767,7 +779,9 @@ func (s *adoptSession) applyDetectedFlavor(ctx context.Context) {
 		s.report.recordSkipped(flavorReportPath, flavorSkipDetail(s.arch, err))
 		return
 	}
-	applied, err := flavor.ApplyFlavor(ctx, s.repoPath, name, false)
+	// Templates only: the branch-ruleset step renders the ruleset once every workflow of the
+	// run exists, under the policy this run pins, and honours adoption.decline.
+	applied, err := flavor.ApplyFlavorWith(ctx, s.repoPath, name, flavor.ApplyOptions{TemplatesOnly: true})
 	s.recordFlavorReport(applied)
 	if err != nil {
 		s.report.addError("apply flavor %s: %v", name, err)

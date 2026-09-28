@@ -62,6 +62,44 @@ A template with neither is an apply error, not a placeholder. `flavor apply` use
 disabled every built-in gitleaks rule (#410) and scaffolded workflows that ran nothing.
 `praetorctl flavor inspect <flavor>` prints the producer beside each producer-owned template.
 
+### Flavor settings: the ruleset is rendered, the rest are deferred
+
+A flavor's `RequiredSettings` (`SettingItem` in `internal/flavor/flavor.go`) take one of two routes
+through `flavor apply` (`internal/flavor/settings_apply.go`):
+
+| Setting | What `flavor apply` does | Test |
+| :--- | :--- | :--- |
+| `.github/rulesets/main.json` | renders it through `forge.RenderRulesetForRepository`, the renderer adoption's `branch-ruleset` step uses, under the effective policy (`config.ResolveRepositoryPolicy`, or the built-in default without `.standards.yaml`) | `TestApplyFlavor_Positive_EffectivePolicyDecidesTheRuleset` |
+| a setting with `Producer` | writes nothing and lists it as `deferred` with the command that writes it: `praetorctl adopt` for `lefthook.yml`, `praetorctl editors generate` for `.vscode/settings.json` | `TestApplyFlavor_Positive_RulesetRequiresTheScaffoldedWorkflows` |
+
+- Settings run after templates, so the ruleset requires the status checks of the workflows apply
+  has just written.
+- A ruleset that already is the rendering, line endings aside, is reported `unchanged`: the text
+  comparison adoption applies to the same file. The rendering that was current before this apply
+  added workflows (`forge.PriorRulesetDigests`), such as the one adoption wrote, is `refreshed`
+  without `--force`, in its own line-ending style
+  (`TestApplyFlavor_Positive_RefreshesTheRulesetCurrentBeforeApply`).
+- Any other ruleset that differs is `kept` and reported, and `--force` replaces it. That includes a
+  rendering with a single value edited, such as a signature rule, a review count or an added status
+  check (`TestApplyFlavor_Negative_ValueEditedRulesetIsKeptWithoutForce`,
+  `TestApplyFlavor_Negative_EditedRulesetIsKeptWithoutForce`). Adoption decides the same way
+  ([refreshing a ruleset](../adoption.md#refreshing-a-ruleset-praetor-rendered-earlier)).
+- `adoption.decline: [branch-ruleset]` in `.standards.yaml` stops `flavor apply` too. The decline is
+  read through `adopt.RepositoryArtifactDeclined` (`TestFlavorApply_Negative_HonoursAdoptionDecline`).
+- A policy that does not resolve fails the ruleset alone. The templates are still applied.
+- A setting with neither a renderer nor a producer is an apply error.
+  `TestRequiredSettings_Positive_EveryBuiltinSettingHasARendererOrProducer` requires one of the two
+  for every built-in flavor.
+- `praetorctl adopt` applies the flavor with `ApplyOptions.TemplatesOnly`, because its own
+  `branch-ruleset` step writes the ruleset once every workflow of the run exists.
+
+`flavor apply` alone makes the flavor audit pass only for a flavor whose other required settings are
+already in place. The ruleset is the one setting it renders. `lefthook.yml` and
+`.vscode/settings.json` come from their producers, and `flavor apply` does not render them.
+`TestApplyFlavor_Positive_FreshRepositoryGetsTheRulesetAndPassesTheAudit` holds the audit to a pass
+after `flavor apply` alone for `native-gpu-systems` and `infra-k8s`. For any other flavor, run the
+producer the report names; `flavor inspect` prints it next to each deferred setting.
+
 **The body is the file.** `templates/embed.go` embeds `templates/*/*.tmpl`, so the file under
 `templates/` is byte for byte what an adopter receives. Actions use `<%` and `%>` rather than `{{ }}`,
 because the workflows carry GitHub expressions such as `${{ runner.os }}`; a maintainer note goes in a

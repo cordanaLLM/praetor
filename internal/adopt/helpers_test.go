@@ -5,7 +5,18 @@ import (
 	"reflect"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/forge"
 )
+
+// buildRulesetJSON renders the ruleset adoption writes for policy and contexts, as text. The
+// branch-ruleset step renders through forge.RenderRulesetForRepository, which derives contexts
+// from the workflows on disk; tests that fix the contexts themselves render through this.
+func buildRulesetJSON(policy config.BranchProtectionPolicy, contexts []string) (string, error) {
+	data, err := forge.RenderRepositoryRuleset(policy, contexts)
+	return string(data), err
+}
 
 // Thin wrappers keep the encoding imports out of the main test file's namespace.
 

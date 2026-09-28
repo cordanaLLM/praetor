@@ -77,6 +77,8 @@ type scaffold struct {
 	// in that style without --force, as it migrates an earlier lefthook.yml
 	// (isPriorLefthookConfig). An edited copy matches no digest and keeps the force contract.
 	// A confined scaffold ignores it: the refresh does not go through the root-pinned writer.
+	// A rendered scaffold computes its one earlier text at run time instead, such as the
+	// branch ruleset of the repository as the run found it (forge.PriorRulesetDigests).
 	prior map[string]string
 	// refreshed is the action detail when an earlier Praetor text is refreshed.
 	refreshed string
@@ -141,6 +143,7 @@ func (s *adoptSession) scaffoldFile(ctx context.Context, sc scaffold) (scaffoldS
 	if err := s.writeScaffold(ctx, full, sc); err != nil {
 		return 0, err
 	}
+	s.planDryRunWrite(sc.rel, sc.content)
 	s.report.recordCreated(sc.rel, sc.created)
 	return scaffoldWritten, nil
 }
@@ -169,14 +172,15 @@ func (s *adoptSession) refreshPriorScaffold(ctx context.Context, full string, sc
 // refresh it would make. It is the one refresh both the scaffold earlier-text sets
 // (refreshPriorScaffold) and the managed asset families (reconcileManagedFamilyFile) use.
 func (s *adoptSession) replacePriorText(ctx context.Context, full string, actual []byte, crlf bool, sc scaffold, detail string) error {
+	content := []byte(util.RestoreLineEndings(string(sc.content), crlf))
 	if !s.opts.DryRun {
-		content := []byte(util.RestoreLineEndings(string(sc.content), crlf))
 		if err := contextopt.ReplaceSnapshot(ctx, full, content, contextopt.ReplaceOptions{
 			Expected: actual, Exists: true, Mode: sc.perm,
 		}); err != nil {
 			return fmt.Errorf("refresh %s: %w", sc.rel, err)
 		}
 	}
+	s.planDryRunWrite(sc.rel, content)
 	s.report.recordReconciled(sc.rel, detail)
 	return nil
 }

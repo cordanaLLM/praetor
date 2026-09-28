@@ -19,6 +19,57 @@ standardsctl adopt --dry-run
 praetorctl adopt --force --record-baseline --lock-source-root=/path/to/praetor
 ```
 
+### Dry-run ruleset preview
+
+`adopt --dry-run` writes nothing. For the branch protection ruleset
+(`.github/rulesets/main.json`), it prints what a real run would do and what the file would contain
+(`AdoptReport.Previews`, `internal/adopt/preview.go`). The MCP `standards_adopt` tool prints the
+same preview text (`adopt.FilePreview.Text`, `TestFormatAdoptMCPResultPrintsPreviews`):
+
+| Action | Meaning | Printed |
+| :--- | :--- | :--- |
+| `create` | no ruleset yet; the run writes one | the rendered ruleset |
+| `update` | the run replaces the ruleset: the rendering current before the run, which it refreshes, or any differing ruleset under `--force` | unified diff from the file on disk to the rendering |
+| `unchanged` | the ruleset already is the rendering, line endings aside | nothing more |
+| `keep` | the ruleset differs and stays, because `--force` was not passed | the diff `--force` would apply |
+
+The preview takes its action from the same keep-or-replace decision as the real run
+(`internal/adopt/preview_test.go`). Its status checks come from the workflows the run leaves
+before its `branch-ruleset` step, not only the ones on disk:
+
+- workflows the dry run records as written or removed, such as the documentation gate's;
+- the workflows of the flavor the run applies for the profile it records
+  (`flavor.PlannedWorkflows`), which a dry run does not apply.
+
+On a first adoption the preview is therefore the file the run writes, byte for byte
+(`TestAdoptDryRun_Positive_FirstAdoptionPreviewIsTheWrittenRuleset`).
+
+### Refreshing a ruleset Praetor rendered earlier
+
+The ruleset is rendered from the effective policy and the workflows present, so it goes stale when
+either changes. `flavor apply` before adoption renders it under the built-in policy; the adoption
+that follows pins an archetype policy and adds the documentation gate.
+
+Each run reads the repository's policy and workflows before it writes anything
+(`forge.ReadRulesetBaseline`). The ruleset rendered from that state is the one sync and the audit
+accepted before the run. A ruleset that is exactly that rendering, line endings aside, is
+refreshed without `--force` (`forge.PriorRulesetDigests`, looked up through
+`util.LookupCanonicalText`). Nothing is read back from the file itself.
+
+| Ruleset on disk | Without `--force` | Test |
+| :--- | :--- | :--- |
+| the current rendering, LF or CRLF | verified, left as is | `TestApplyFlavor_Boundary_CurrentRenderingIsUnchangedInEitherLineEnding` |
+| the rendering current before this run, LF or CRLF | refreshed, in its own line endings | `TestAdopt_Positive_RefreshesTheRulesetFlavorApplyWrote`, `TestAdopt_Positive_FlavorApplyAfterAdoptionRefreshesTheRuleset` |
+| a rendering with one value edited: review count, signature rule, status check | kept and reported | `TestAdopt_Negative_ValueEditAfterFlavorApplyIsKept` |
+| anything else: another name, layout, a final newline | kept and reported | `TestAdopt_Negative_EditedRenderingIsKept` |
+
+`--force` replaces any kept ruleset.
+
+A ruleset rendered for a policy the repository no longer declares is kept too, for example after
+`.standards.yaml` overrides change. `praetorctl sync` then reports it as drift. Pass `--force` to
+adoption or `flavor apply`, or delete the file and run `sync`, which writes the missing ruleset.
+Keep a hand-managed ruleset with `adoption.decline: [branch-ruleset]`.
+
 ### Large repositories
 
 Adoption discovers verification inputs (Makefiles, manifests, scripts) through a bounded

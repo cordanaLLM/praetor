@@ -160,3 +160,45 @@ func TestLoadDeclaredManifest_Boundary_MissingAndValid(t *testing.T) {
 		t.Fatalf("declines = %v, want [git-ignore]", got)
 	}
 }
+
+// RepositoryArtifactDeclined reads adoption.decline from the manifest at the repository root:
+// the step it names is declined, and another step is not.
+func TestRepositoryArtifactDeclined_Positive_ReadsTheManifest(t *testing.T) {
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, manifestFile), "version: 1\nadoption:\n  decline: [branch-ruleset]\n")
+	if declined, err := RepositoryArtifactDeclined(t.Context(), root, "branch-ruleset"); err != nil || !declined {
+		t.Fatalf("branch-ruleset: declined=%v err=%v, want declined", declined, err)
+	}
+	if declined, err := RepositoryArtifactDeclined(t.Context(), root, "labels"); err != nil || declined {
+		t.Fatalf("labels: declined=%v err=%v, want not declined", declined, err)
+	}
+}
+
+// A manifest that does not decode, and a decline list naming no adoption step, are errors, so a
+// writer outside adoption fails closed instead of writing what the repository may have declined.
+func TestRepositoryArtifactDeclined_Negative_FailsClosed(t *testing.T) {
+	for name, manifest := range map[string]string{
+		"undecodable manifest": "version: [\n",
+		"unknown step":         "version: 1\nadoption:\n  decline: [no-such-step]\n",
+	} {
+		root := t.TempDir()
+		mustWrite(t, filepath.Join(root, manifestFile), manifest)
+		if declined, err := RepositoryArtifactDeclined(t.Context(), root, "branch-ruleset"); err == nil || declined {
+			t.Errorf("%s: declined=%v err=%v, want an error", name, declined, err)
+		}
+	}
+}
+
+// A repository without a manifest declines nothing, and a cancelled context reads nothing.
+func TestRepositoryArtifactDeclined_Boundary_NoManifestAndCancelledContext(t *testing.T) {
+	root := t.TempDir()
+	if declined, err := RepositoryArtifactDeclined(t.Context(), root, "branch-ruleset"); err != nil || declined {
+		t.Fatalf("no manifest: declined=%v err=%v, want nothing declined", declined, err)
+	}
+	mustWrite(t, filepath.Join(root, manifestFile), "version: 1\nadoption:\n  decline: [branch-ruleset]\n")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if declined, err := RepositoryArtifactDeclined(ctx, root, "branch-ruleset"); err == nil || declined {
+		t.Fatalf("cancelled context: declined=%v err=%v, want an error", declined, err)
+	}
+}

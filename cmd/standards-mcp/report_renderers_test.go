@@ -40,6 +40,23 @@ func TestFormatAdoptMCPResultOutcomeAndPillars(t *testing.T) {
 	}
 }
 
+// A standards_adopt dry run shows each ruleset preview, the text the CLI prints for it
+// (adopt.FilePreview.Text); a report without previews, a real run's, shows none.
+func TestFormatAdoptMCPResultPrintsPreviews(t *testing.T) {
+	create := adopt.FilePreview{Path: ".github/rulesets/main.json", Action: adopt.PreviewCreate,
+		Content: "{\"name\": \"praetor-main-protection\"}\n", Note: "2 required status checks"}
+	keep := adopt.FilePreview{Path: ".github/rulesets/main.json", Action: adopt.PreviewKeep, Diff: "--- a\n+++ b\n"}
+	got := string(formatAdoptMCPResult(&adopt.AdoptReport{Previews: []adopt.FilePreview{create, keep}}, true))
+	for _, want := range []string{create.Text(), keep.Text()} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing preview %q in:\n%s", want, got)
+		}
+	}
+	if got = string(formatAdoptMCPResult(&adopt.AdoptReport{}, false)); strings.Contains(got, "--- Preview:") {
+		t.Fatalf("a report without previews printed one:\n%s", got)
+	}
+}
+
 // BUG-872: standards_version_audit promises workflow-action auditing, so it lists
 // report.Actions exactly as `bump audit` does.
 func TestFormatVersionAuditListsActions(t *testing.T) {

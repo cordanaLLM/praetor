@@ -209,6 +209,7 @@ func printAdoptReport(rep *adopt.AdoptReport) {
 
 	printDebtSummary(rep)
 	printAdoptedFiles(rep)
+	printAdoptPreviews(rep.Previews)
 	printAdoptIssues(rep)
 
 	// Each pillar line is derived from the step that owns it (adopt.AdoptReport.Pillars), so a
@@ -332,6 +333,15 @@ func printPlannedFiles(rep *adopt.AdoptReport) {
 		for _, f := range rep.ReconciledFiles {
 			printAdoptedFile("~ [PLAN] ", f, findDetail(rep.ActionDetails, f))
 		}
+	}
+}
+
+// printAdoptPreviews prints what a dry run found each previewed file would come to
+// (adopt.FilePreview.Text, the text the MCP adopt tool prints too). A real run records no
+// previews and prints nothing here.
+func printAdoptPreviews(previews []adopt.FilePreview) {
+	for _, p := range previews {
+		fmt.Print(p.Text())
 	}
 }
 

@@ -44,7 +44,10 @@ func TestFlavorInspect_Boundary_NamesTheProducer(t *testing.T) {
 	scaffolded, err := captureStdout(t, func() error {
 		return dispatchCommand("flavor", []string{"inspect", "go-service"})
 	})
-	if err != nil || strings.Contains(scaffolded, "written by:") {
+	// Only the templates are checked: two go-service settings name their producer
+	// (TestFlavorInspect_Boundary_NamesSettingProducers).
+	templates, _, _ := strings.Cut(scaffolded, "Required Settings:")
+	if err != nil || strings.Contains(templates, "written by:") {
 		t.Fatalf("go-service templates are scaffolded, not produced elsewhere: %v\n%s", err, scaffolded)
 	}
 }

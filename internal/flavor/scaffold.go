@@ -42,9 +42,28 @@ type ApplyReport struct {
 	// repository already carries its configuration under another name the template accepts
 	// (AltPaths or Search). A file under the canonical name beside it would be a second
 	// configuration, one the tool ignores or one that contradicts the file in use.
-	CoveredTemplates  []CoveredTemplate `json:"covered_templates,omitempty"`
-	WorkingDirCreated bool              `json:"working_dir_created"`
-	Errors            []string          `json:"errors,omitempty"`
+	CoveredTemplates []CoveredTemplate `json:"covered_templates,omitempty"`
+	// Settings records what apply did with each required setting, in the flavor's order
+	// (SettingOutcome). An apply with ApplyOptions.TemplatesOnly records none.
+	Settings          []SettingOutcome `json:"settings,omitempty"`
+	WorkingDirCreated bool             `json:"working_dir_created"`
+	Errors            []string         `json:"errors,omitempty"`
+}
+
+// ApplyOptions selects what one flavor apply may replace and which of its parts run.
+type ApplyOptions struct {
+	// Force replaces existing templates, and a branch ruleset that differs from the one the
+	// effective policy renders. The ledger, the manifest and the lock are never replaced.
+	Force bool
+	// TemplatesOnly leaves every required setting alone and unreported. Adoption sets it: its
+	// own branch-ruleset step renders the ruleset after every workflow of the run is written,
+	// under the policy the run pins, and honours adoption.decline and its --force contract.
+	TemplatesOnly bool
+	// Declines resolves whether the repository's adoption.decline names an adoption step, such
+	// as "branch-ruleset" for the ruleset. Adoption owns that list and its one parser
+	// (adopt.RepositoryArtifactDeclined); this package cannot import it, so a caller passes it
+	// in. Nil declines nothing.
+	Declines func(ctx context.Context, step string) (bool, error)
 }
 
 // CoveredTemplate is a template flavor apply left unwritten because the repository configures
@@ -54,8 +73,18 @@ type CoveredTemplate struct {
 	InUse string `json:"in_use"`
 }
 
-// ApplyFlavor scaffolds the missing templates and configs for a target flavor.
+// ApplyFlavor scaffolds the missing templates and required settings of a target flavor, and
+// replaces existing ones with force (ApplyOptions.Force). It is ApplyFlavorWith with nothing
+// declined.
 func ApplyFlavor(ctx context.Context, repoPath string, targetFlavor string, force bool) (*ApplyReport, error) {
+	return ApplyFlavorWith(ctx, repoPath, targetFlavor, ApplyOptions{Force: force})
+}
+
+// ApplyFlavorWith scaffolds the missing templates of a target flavor, then renders its required
+// settings (applySettings) unless opts.TemplatesOnly. Settings come after templates because the
+// branch ruleset requires the status checks of the workflows present, the ones apply just wrote
+// among them.
+func ApplyFlavorWith(ctx context.Context, repoPath string, targetFlavor string, opts ApplyOptions) (*ApplyReport, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("apply flavor requires a context")
 	}
@@ -83,12 +112,18 @@ func ApplyFlavor(ctx context.Context, repoPath string, targetFlavor string, forc
 		report.WorkingDirCreated = true
 	}
 
-	// 2. Scaffold required templates
+	// 2. Scaffold required templates, after reading what the ruleset step compares against
+	baseline := readRulesetBaseline(ctx, repoPath, opts)
 	for _, tmpl := range flv.RequiredTemplates() {
 		if err := ctx.Err(); err != nil {
 			return report, err
 		}
-		applySingleTemplate(ctx, repoPath, tmpl, repoName, owner, force, report)
+		applySingleTemplate(ctx, repoPath, tmpl, repoName, owner, opts.Force, report)
+	}
+
+	// 3. Render required settings (none under opts.TemplatesOnly)
+	if err := applySettings(ctx, repoPath, flv.RequiredSettings(), opts, baseline, report); err != nil {
+		return report, err
 	}
 
 	if len(report.Errors) > 0 {
@@ -254,14 +289,24 @@ func scaffoldTemplate(ctx context.Context, repoPath string, tmpl TemplateItem, r
 	if err != nil {
 		return templateSkipped, "", err
 	}
-	if err := contextopt.EnsureDirectory(ctx, filepath.Dir(destPath), 0o755); err != nil {
-		return templateSkipped, "", fmt.Errorf("mkdir %s: %w", tmpl.Path, err)
-	}
-	options := contextopt.ReplaceOptions{Expected: target.before, Exists: target.exists, Mode: 0o644}
-	if err := contextopt.ReplaceSnapshot(ctx, destPath, []byte(content), options); err != nil {
-		return templateSkipped, "", fmt.Errorf("write %s: %w", tmpl.Path, err)
+	if err := writeTarget(ctx, destPath, tmpl.Path, []byte(content), target); err != nil {
+		return templateSkipped, "", err
 	}
 	return templateCreated, "", nil
+}
+
+// writeTarget writes content at destPath, creating its directory, bound to the bytes
+// readTemplateTarget observed there, so a file changed in between is not overwritten. Templates
+// and the rendered settings write through it.
+func writeTarget(ctx context.Context, destPath, rel string, content []byte, target templateTarget) error {
+	if err := contextopt.EnsureDirectory(ctx, filepath.Dir(destPath), 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", rel, err)
+	}
+	options := contextopt.ReplaceOptions{Expected: target.before, Exists: target.exists, Mode: 0o644}
+	if err := contextopt.ReplaceSnapshot(ctx, destPath, content, options); err != nil {
+		return fmt.Errorf("write %s: %w", rel, err)
+	}
+	return nil
 }
 
 // templateWithheld reports why flavor apply writes no body for a template whatever --force

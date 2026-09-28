@@ -12,19 +12,12 @@ import (
 )
 
 const (
-	rulesetFile      = ".github/rulesets/main.json"
+	rulesetFile      = forge.RepositoryRulesetPath
 	labelsFile       = ".config/labels.yaml"
 	paperclipFile    = ".paperclip/harness.json"
 	auditorAgentFile = ".agents/agents/repo-auditor.md"
 	gatekeeperFile   = ".agents/agents/repo-gatekeeper.md"
 )
-
-// buildRulesetJSON delegates policy rendering to the same service as CLI sync and
-// remote forge reconciliation. Context selection remains repository-specific.
-func buildRulesetJSON(policy config.BranchProtectionPolicy, contexts []string) (string, error) {
-	data, err := forge.RenderRepositoryRuleset(policy, contexts)
-	return string(data), err
-}
 
 func adoptionBranchPolicy(ctx context.Context, s *adoptSession) (config.BranchProtectionPolicy, error) {
 	if s.policy != nil {
@@ -41,28 +34,77 @@ func adoptionBranchPolicy(ctx context.Context, s *adoptSession) (config.BranchPr
 	return policy.BranchProtection, nil
 }
 
+// reconcileBranchRuleset writes the ruleset forge.RenderRulesetForRepository renders under the
+// adoption's branch protection policy, the rendering flavor apply writes too. The ruleset that
+// was current for the repository as this adoption found it (s.rulesetBaseline,
+// forge.PriorRulesetDigests), such as the one flavor apply wrote under the built-in policy before
+// adoption pinned one, is refreshed without --force. Any other one that differs, a rendering with
+// one value edited included, is the repository's: kept and warned about unless --force is passed.
+//
+// A dry run writes nothing and previews the file instead (AdoptReport.Previews): the create,
+// update, unchanged or keep it would come to, with the rendered ruleset or the diff from the one
+// on disk. It renders over the workflows the run would have written by now (previewWorkflows),
+// so it previews the checks the run requires.
 func reconcileBranchRuleset(ctx context.Context, s *adoptSession) error {
-	contexts, err := forge.RequiredStatusContexts(ctx, s.repoPath)
-	if err != nil {
-		return err
-	}
 	policy, err := adoptionBranchPolicy(ctx, s)
 	if err != nil {
 		return err
 	}
-	content, err := buildRulesetJSON(policy, contexts)
+	planned, err := s.previewWorkflows(ctx)
 	if err != nil {
 		return err
 	}
-	_, err = s.scaffoldFile(ctx, scaffold{
-		rel:      rulesetFile,
-		perm:     filePerm,
-		content:  []byte(content),
-		force:    true,
-		created:  fmt.Sprintf("Scaffolded declarative branch protection ruleset (%d required status checks derived from workflows)", len(contexts)),
-		verified: "Existing branch protection ruleset verified present",
-	})
-	return err
+	content, contexts, err := forge.RenderRulesetForRepository(ctx, s.repoPath, policy, planned)
+	if err != nil {
+		return err
+	}
+	checks := len(contexts)
+	return s.scaffoldPreviewed(ctx, scaffold{
+		rel:       rulesetFile,
+		perm:      filePerm,
+		content:   content,
+		force:     true,
+		created:   fmt.Sprintf("Scaffolded declarative branch protection ruleset (%d required status checks derived from workflows)", checks),
+		verified:  "Existing branch protection ruleset verified present",
+		prior:     s.priorRulesetDigests(content),
+		refreshed: fmt.Sprintf("Refreshed the unedited earlier Praetor branch protection ruleset to the current policy and workflows (%d required status checks)", checks),
+	}, rulesetPreviewNote(checks))
+}
+
+// readRulesetBaseline reads, before any step writes, what the branch-ruleset step compares an
+// existing ruleset against (forge.ReadRulesetBaseline): the policy and the workflows of the
+// repository as this adoption found it. Only a repository that carries a ruleset needs it. One
+// that cannot be read is warned about and leaves no earlier rendering, so a ruleset that differs
+// is kept, never refreshed.
+func readRulesetBaseline(ctx context.Context, s *adoptSession) *forge.RulesetBaseline {
+	full, err := repoFile(s.repoPath, rulesetFile)
+	if err != nil || !fileExists(full) {
+		return nil
+	}
+	baseline, err := forge.ReadRulesetBaseline(ctx, s.repoPath)
+	if err != nil {
+		s.report.addWarning("%s: the policy and workflows it was rendered for could not be read (%v); "+
+			"a ruleset that differs is kept, not refreshed", rulesetFile, err)
+		return nil
+	}
+	return &baseline
+}
+
+// priorRulesetDigests is the earlier-text set of the ruleset scaffold (scaffold.prior): the
+// digest of the ruleset current for the repository as this adoption found it, unless that is
+// content, or none without a baseline.
+func (s *adoptSession) priorRulesetDigests(content []byte) map[string]string {
+	if s.rulesetBaseline == nil {
+		return nil
+	}
+	return forge.PriorRulesetDigests(*s.rulesetBaseline, content)
+}
+
+// rulesetPreviewNote says where a previewed ruleset's status checks come from: the workflows on
+// disk with the ones the run writes or removes before its branch-ruleset step applied over them.
+func rulesetPreviewNote(contexts int) string {
+	return fmt.Sprintf("%d required status checks derived from the workflows on disk "+
+		"and those this adoption writes or removes before the ruleset step", contexts)
 }
 
 // priorLabelTaxonomyDigests are the digests (priorRendering) of every label taxonomy adoption

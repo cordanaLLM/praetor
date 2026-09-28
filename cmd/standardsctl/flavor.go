@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/flavor"
 )
 
@@ -43,7 +44,7 @@ func printFlavorUsage() {
 	fmt.Println("  list                           List all supported repository engineering flavors")
 	fmt.Println("  inspect <flavor>               Inspect templates, settings, and toolchains for a flavor")
 	fmt.Println("  audit [dir] [--flavor=name]    Audit a repository against its flavor requirements")
-	fmt.Println("  apply [dir] [--flavor=name]    Scaffold required templates and settings for a flavor")
+	fmt.Println("  apply [dir] [--flavor=name]    Scaffold a flavor's templates and branch ruleset; list settings other commands write")
 }
 
 func runFlavorList() error {
@@ -76,6 +77,9 @@ func runFlavorInspect(args []string) error {
 	fmt.Println("\nRequired Settings:")
 	for _, s := range flv.RequiredSettings() {
 		fmt.Printf("  - %-25s : %s\n", s.Name, s.Path)
+		if s.Producer != "" {
+			fmt.Printf("    %-25s   written by: %s\n", "", s.Producer)
+		}
 	}
 
 	fmt.Println("\nRequired Toolchains:")
@@ -177,7 +181,7 @@ func printFlavorAuditFindings(report *flavor.FlavorAuditReport) {
 func runFlavorApply(args []string) error {
 	fs := flag.NewFlagSet("flavor apply", flag.ContinueOnError)
 	targetFlv := fs.String("flavor", "auto", "Target flavor (default: auto-detect)")
-	force := fs.Bool("force", false, "Force overwrite existing templates")
+	force := fs.Bool("force", false, "Overwrite existing templates and a branch ruleset that differs from the rendered one")
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
@@ -191,9 +195,16 @@ func runFlavorApply(args []string) error {
 	return withLedgerIgnore(ctx, dir, func() error { return applyFlavor(ctx, dir, *targetFlv, *force) })
 }
 
-// applyFlavor scaffolds one flavor and prints what it created, skipped and failed.
+// applyFlavor scaffolds one flavor and prints what it created, skipped and failed. The branch
+// ruleset is not written where the repository's adoption.decline names branch-ruleset, resolved
+// by adoption's own decline parser.
 func applyFlavor(ctx context.Context, dir, targetFlv string, force bool) error {
-	report, err := flavor.ApplyFlavor(ctx, dir, targetFlv, force)
+	report, err := flavor.ApplyFlavorWith(ctx, dir, targetFlv, flavor.ApplyOptions{
+		Force: force,
+		Declines: func(ctx context.Context, step string) (bool, error) {
+			return adopt.RepositoryArtifactDeclined(ctx, dir, step)
+		},
+	})
 	if report == nil {
 		return fmt.Errorf("flavor apply failed: %w", err)
 	}
@@ -220,6 +231,7 @@ func printFlavorApplyReport(dir string, report *flavor.ApplyReport) {
 	printApplyEntries("Kept Existing Config", coveredEntries(report.CoveredTemplates))
 	// One per line: each entry names a path and what the repository lacks for its body.
 	printApplyEntries("Unmet Requirement", report.UnmetTemplates)
+	printApplyEntries("Settings", settingEntries(report.Settings))
 	fmt.Printf("  WorkingDir State:     %v\n", report.WorkingDirCreated)
 
 	printApplyEntries("Errors", report.Errors)
@@ -231,6 +243,20 @@ func coveredEntries(covered []flavor.CoveredTemplate) []string {
 	entries := make([]string, 0, len(covered))
 	for _, c := range covered {
 		entries = append(entries, fmt.Sprintf("%s (%s not written)", c.InUse, c.Path))
+	}
+	return entries
+}
+
+// settingEntries renders each required setting apply handled as "<path>: <action>", with the
+// note in parentheses: the producer of a deferred setting, what differs in a kept one.
+func settingEntries(settings []flavor.SettingOutcome) []string {
+	entries := make([]string, 0, len(settings))
+	for _, s := range settings {
+		entry := fmt.Sprintf("%s: %s", s.Path, s.Action)
+		if s.Note != "" {
+			entry += " (" + s.Note + ")"
+		}
+		entries = append(entries, entry)
 	}
 	return entries
 }

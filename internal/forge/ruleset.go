@@ -1,13 +1,16 @@
 package forge
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -95,6 +98,96 @@ func RenderRepositoryRuleset(policy config.BranchProtectionPolicy, contexts []st
 		return nil, err
 	}
 	return json.MarshalIndent(doc, "", "  ")
+}
+
+// RepositoryRulesetPath is where a repository carries the praetor branch protection ruleset,
+// relative to its root and in slash form.
+const RepositoryRulesetPath = ".github/rulesets/main.json"
+
+// RenderRulesetForRepository renders the ruleset for the repository at repoPath under policy.
+// Its required status checks are the workflow jobs RequiredStatusContextsPlanned selects from
+// the workflows present now with planned applied over them. A caller that writes its workflows
+// first passes nil; a dry run, which writes none, passes the ones its run would write or remove,
+// so it renders what that run writes. The contexts come back beside the ruleset for a caller
+// that reports or validates against them.
+//
+// Adoption's branch-ruleset step and flavor apply both write this rendering, so a repository
+// either one scaffolded carries the file sync and the audit validate (ValidateRepositoryRuleset).
+func RenderRulesetForRepository(ctx context.Context, repoPath string, policy config.BranchProtectionPolicy, planned map[string][]byte) ([]byte, []string, error) {
+	contexts, err := RequiredStatusContextsPlanned(ctx, repoPath, planned)
+	if err != nil {
+		return nil, nil, err
+	}
+	data, err := RenderRepositoryRuleset(policy, contexts)
+	if err != nil {
+		return nil, nil, fmt.Errorf("render %s: %w", RepositoryRulesetPath, err)
+	}
+	return data, contexts, nil
+}
+
+// RulesetBaseline is the repository state a ruleset rendering is rendered from: the effective
+// branch protection policy (RepositoryBranchPolicy) and the required status contexts of the
+// workflows present (RequiredStatusContexts).
+type RulesetBaseline struct {
+	Policy   config.BranchProtectionPolicy
+	Contexts []string
+}
+
+// ReadRulesetBaseline reads the baseline of the repository at repoPath as it stands. A writer
+// reads it before it changes the repository, so that PriorRulesetDigests can tell the ruleset
+// that was current then from one an adopter edited.
+func ReadRulesetBaseline(ctx context.Context, repoPath string) (RulesetBaseline, error) {
+	policy, err := RepositoryBranchPolicy(ctx, repoPath)
+	if err != nil {
+		return RulesetBaseline{}, err
+	}
+	contexts, err := RequiredStatusContexts(ctx, repoPath)
+	if err != nil {
+		return RulesetBaseline{}, fmt.Errorf("read the workflow checks for %s: %w", RepositoryRulesetPath, err)
+	}
+	return RulesetBaseline{Policy: policy, Contexts: contexts}, nil
+}
+
+// RepositoryBranchPolicy is the branch protection the repository at repoPath renders its ruleset
+// under: its effective policy as sync and the audit resolve it (config.ResolveRepositoryPolicy:
+// the pinned profiles and facets with the manifest's overrides, or defaults plus overrides before
+// a lock exists). A repository without .standards.yaml declares nothing to resolve, so the
+// built-in default applies. A policy that does not resolve has no stand-in and is an error.
+func RepositoryBranchPolicy(ctx context.Context, repoPath string) (config.BranchProtectionPolicy, error) {
+	policy, _, err := config.ResolveRepositoryPolicy(ctx, filepath.Join(repoPath, config.ManifestFileName), nil)
+	if err != nil {
+		return config.BranchProtectionPolicy{}, fmt.Errorf("resolve the effective policy for %s: %w", RepositoryRulesetPath, err)
+	}
+	if policy == nil {
+		return config.DefaultPolicy().BranchProtection, nil
+	}
+	return policy.BranchProtection, nil
+}
+
+// PriorRulesetDigests returns, for a scaffold's earlier-text lookup (util.LookupCanonicalText),
+// the digest (util.CanonicalTextDigest) of the ruleset RenderRepositoryRuleset renders from
+// baseline, the repository as it stood before a writer changed it. That rendering is the ruleset
+// sync and the audit accepted then, so a file holding it in one consistent line-ending style is
+// Praetor's and nobody edited it: adoption and flavor apply refresh it to current, the rendering
+// they write now, without --force. The map is empty when that rendering is current itself, which
+// needs no refresh, or cannot be rendered.
+//
+// Nothing is read back from the file: any other ruleset, a rendering with one value edited (a
+// review count, a signature rule, a status check) as much as an operator's own, matches no digest
+// and keeps the --force contract.
+func PriorRulesetDigests(baseline RulesetBaseline, current []byte) map[string]string {
+	prior, err := RenderRepositoryRuleset(baseline.Policy, baseline.Contexts)
+	if err != nil {
+		return nil
+	}
+	if same, err := util.CanonicalTextEquivalent(prior, current); err != nil || same {
+		return nil
+	}
+	digest, _, err := util.CanonicalTextDigest(prior)
+	if err != nil {
+		return nil
+	}
+	return map[string]string{digest: "the ruleset of the repository's policy and workflows before this run"}
 }
 
 // ErrRulesetDrift reports a committed ruleset whose content differs from the one the declared
