@@ -72,10 +72,11 @@ func PlannedWorkflows(ctx context.Context, repoPath string) ([]PlannedTemplate, 
 // in the same order: path containment and cover (templateDisposition), the file already there
 // (readTemplateTarget), and a withheld body (templateWithheld).
 func plannedBody(ctx context.Context, repoPath string, tmpl TemplateItem, repoName, owner string) (string, bool, error) {
-	covered, err := templateDisposition(repoPath, tmpl, false)
+	disposition, _, err := templateDisposition(repoPath, tmpl, false)
 	if err != nil {
 		return "", false, err
 	}
+	covered := disposition == templateCovered
 	body, err := templateContent(tmpl, repoName, owner)
 	if err != nil {
 		return "", false, err
