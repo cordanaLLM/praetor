@@ -6,6 +6,8 @@ package figures
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"io/fs"
 	"maps"
 	"os"
@@ -301,5 +303,63 @@ func TestImportViolationsNegativeAndBoundary(t *testing.T) {
 	}
 	if violations, _ := importViolations(map[string]string{"README.md": "import x from './gone.mjs'"}, nil); len(violations) != 0 {
 		t.Fatalf("a non-script asset was scanned: %q", violations)
+	}
+}
+
+// lfDigest spells a digest the way PriorDigests keys are spelled, computed here rather than
+// through the code under test.
+func lfDigest(data []byte) string {
+	sum := sha256.Sum256([]byte(strings.ReplaceAll(string(data), "\r\n", "\n")))
+	return hex.EncodeToString(sum[:])
+}
+
+// Positive: every earlier text names one of the family's assets by a lowercase SHA-256, and the
+// outgoing build.mjs this repository replaced is listed.
+func TestPriorDigestsNameManagedAssets(t *testing.T) {
+	digests := PriorDigests()
+	for digest, rel := range digests {
+		name, below := strings.CutPrefix(rel, Directory+"/")
+		if decoded, err := hex.DecodeString(digest); err != nil || len(decoded) != sha256.Size || strings.ToLower(digest) != digest {
+			t.Errorf("prior digest %q is not a lowercase SHA-256", digest)
+		}
+		if !below || !slices.Contains(Names(), name) {
+			t.Errorf("prior digest %s names %s, which is not a managed asset", digest, rel)
+		}
+	}
+	if digests["f75975e7f7cbb147b156c3a8f4a00bffef985aa18fa4ee67f6505479fd8e730c"] != Directory+"/build.mjs" {
+		t.Fatal("the build.mjs text before the no-spec skip is not a prior text")
+	}
+}
+
+// Negative: no current asset text is listed as an earlier one, and PriorDigests hands out a copy.
+func TestPriorDigestsExcludeCurrentTexts(t *testing.T) {
+	digests := PriorDigests()
+	for _, name := range Names() {
+		data, err := Read(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, listed := digests[lfDigest(data)]; listed {
+			t.Fatalf("the current text of %s is listed as an earlier text", name)
+		}
+	}
+	clear(digests)
+	if len(PriorDigests()) == 0 {
+		t.Fatal("PriorDigests exposed its map for mutation")
+	}
+}
+
+// Boundary: a current text differing by one trailing byte is not an earlier text, and the CRLF
+// form of a text reduces to the same digest as its LF form.
+func TestPriorDigestsBoundary(t *testing.T) {
+	data, err := Read("build.mjs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, listed := PriorDigests()[lfDigest(append(data, '\n'))]; listed {
+		t.Fatal("a text one byte longer than the current build.mjs is listed")
+	}
+	if lfDigest([]byte(strings.ReplaceAll(string(data), "\n", "\r\n"))) != lfDigest(data) {
+		t.Fatal("the CRLF form of a text does not reduce to its LF digest")
 	}
 }

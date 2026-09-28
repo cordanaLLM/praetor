@@ -100,8 +100,9 @@ func TestMarkdownFamilyDeclaration(t *testing.T) {
 }
 
 // Positive: the figure engine family is registered under the documentation facet with its
-// nested inventory, refuse-on-first-adopt on, no hosted workflow and no earlier texts, and it
-// stays Staged, so the facet does not select it before its wiring lands.
+// nested inventory, refuse-on-first-adopt on, no hosted workflow and earlier texts of its
+// managed files only, and it stays Staged, so the facet does not select it before its wiring
+// lands.
 func TestFigureFamilyDeclaration(t *testing.T) {
 	families := Families()
 	index := slices.IndexFunc(families, func(f Family) bool { return f.Name == "Figure engine" })
@@ -110,8 +111,13 @@ func TestFigureFamilyDeclaration(t *testing.T) {
 	}
 	figures := families[index]
 	if figures.Facet != DocumentationFacet || figures.Directory != "tools/figures" || figures.Source != "tools/figures/assets.go" ||
-		!figures.RefuseForeign || figures.WorkflowFile != "" || len(figures.Prior) != 0 {
+		!figures.RefuseForeign || figures.WorkflowFile != "" || len(figures.Prior) == 0 {
 		t.Fatalf("figure engine family = %+v", figures)
+	}
+	for digest, rel := range figures.Prior {
+		if !slices.Contains(figures.AssetPaths(), rel) {
+			t.Fatalf("figure engine prior text %s names %s, which is not one of its assets", digest, rel)
+		}
 	}
 	paths := figures.ManagedPaths()
 	for _, want := range []string{"tools/figures/core.mjs", "tools/figures/dist/player.js", "tools/figures/third_party/interfig/upstream/LICENSE", "tools/figures/README.md"} {

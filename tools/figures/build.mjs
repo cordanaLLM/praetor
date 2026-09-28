@@ -9,6 +9,9 @@
 //   node tools/figures/build.mjs site       after mkdocs build or astro build: every diagram fence became a diagram that resolves
 //   node tools/figures/build.mjs portable   render figures for READMEs and wiki pages, which run no JavaScript
 //
+// In a repository with no spec and no committed output, `check` and `sources` print that they
+// skipped and why, and exit 0.
+//
 // The render core is core.mjs; its bytes and the vendored render files make up the engine hash
 // recorded in every figure's JSON. The checks are checks.mjs. Neither this wrapper nor the checks
 // are hashed, so editing them leaves the figures current.
@@ -82,6 +85,22 @@ function committedOutputs(dir) {
   return readdirSync(dir).filter((n) => /^[a-z0-9-]+(\.static)?\.svg$|^[a-z0-9-]+\.json$/.test(n)).sort();
 }
 
+/** The line `check` and `sources` print when the repository has nothing for them to check. */
+export const NO_FIGURES = `skipped: this repository has no figure spec (${SPEC_DIR}/*.ts) and no figure output (${OUT_DIR})`;
+
+/**
+ * Whether the repository at `root` has a figure to check: a spec under docs/figures or a committed
+ * output under docs/assets/figures. Without either, `check` and `sources` pass with NO_FIGURES, so
+ * the managed Makefile target, the documentation workflow step and a direct run skip alike on
+ * every platform (docs/adr/0016-figures-for-adopters.md, section 5). An output left without its
+ * spec is still checked and fails.
+ */
+export function hasFigures(root = ROOT) {
+  const dir = join(root, SPEC_DIR);
+  const specs = existsSync(dir) ? readdirSync(dir).filter((n) => n.endsWith('.ts')) : [];
+  return specs.length > 0 || committedOutputs(join(root, OUT_DIR)).length > 0;
+}
+
 /** Differences between rendered outputs and the files in `dir`. */
 export function compareOutputs(outputs, dir) {
   const problems = [];
@@ -109,6 +128,7 @@ async function runBuild(root) {
 }
 
 async function runCheck(root) {
+  if (!hasFigures(root)) return report([], NO_FIGURES);
   const { slugs, outputs, errors } = await renderAll(root);
   if (errors.length) return errors;
   const problems = compareOutputs(outputs, join(root, OUT_DIR));
@@ -125,6 +145,7 @@ function report(errors, success) {
 
 function runSources(root, { values }) {
   const repository = resolve(values.root ?? root);
+  if (!hasFigures(repository)) return report([], NO_FIGURES);
   const errors = sources(repository, values.docs, values.config, values.readme);
   return report(errors, 'figure sources, hashes, markup and evidence are consistent.');
 }

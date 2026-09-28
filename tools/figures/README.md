@@ -145,10 +145,17 @@ a JSON file fails the build.
 | `node tools/figures/build.mjs sources` | a JSON no longer matches its spec, the engine or its SVGs; a spec or JSON lacks its pair; a fence names an unknown figure; the README block is stale; an evidence anchor is gone |
 | `node tools/figures/build.mjs site --config mkdocs.yml --docs docs --site site` | after the site build: a fence did not become a figure, an image does not resolve, or a page does not load the player |
 
-Both `check` and `sources` pass in a repository without specs. For a Starlight build, pass
+`make docs-figures` runs `check` and `sources`. `praetorctl adopt` attaches that target to
+`verify-all`, and the documentation workflow, `.github/workflows/praetor-docs.yml`, runs both
+commands after its Markdown check. In a repository with no spec and no committed output, both
+commands print that they skipped and why, and exit 0. For a Starlight build, pass
 `--config astro.config.mjs --docs src/content/docs --site dist` and the site's base path as
 `--base`. Each command exits 0 on a pass, 1 on findings and 2 on a usage error or an input it
 cannot read. `node tools/figures/build.mjs` without a command prints every command and option.
+
+The checks compare hashes of the engine, the specs and the outputs, so `praetorctl adopt` also
+writes a managed block at the end of `.gitattributes` that keeps those files at LF on every
+platform and the vendored interfig files byte for byte.
 
 ## Files
 
@@ -171,4 +178,7 @@ outputs.
 The engine is interfig by Vectorize AI, Inc., under the MIT License
 (`third_party/interfig/upstream/LICENSE`). The player bundles interfig with React, react-dom and
 scheduler, whose license texts are in `dist/THIRD-PARTY-LICENSES.txt`. Every exported SVG and both
-player scripts carry the interfig credit; keep these notices in every copy.
+player scripts carry the interfig credit; keep these notices in every copy. A repository that
+declares its licensing in `REUSE.toml` labels `tools/figures/third_party/interfig/upstream/**` MIT
+in an override annotation placed after any table that covers the whole tree; `praetorctl audit`
+warns while that override is missing.

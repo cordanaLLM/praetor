@@ -13,7 +13,7 @@ import {
   ENGINE_FILES, LIMITS, SLOTS, capLines, decorate, describe, describeEdges, escapeHtml, markup, normalizedEdges, render,
   sha256, svgSize, validate, walkLayout,
 } from './core.mjs';
-import { OUT_DIR, ROOT, VENDOR_JSON, compareOutputs, engineHash, listSpecs, main, renderAll } from './build.mjs';
+import { NO_FIGURES, OUT_DIR, ROOT, SPEC_DIR, VENDOR_JSON, compareOutputs, engineHash, hasFigures, listSpecs, main, renderAll } from './build.mjs';
 import {
   DIST_DIR, DIST_FILES, MAX_INPUTS, PLAYER_BUDGET, budget, bundle, bundledPackages, bundlesInterfig, compareDist, lockMismatches,
   main as bundleMain, readJson, thirdPartyLicenses, writeDist,
@@ -277,6 +277,51 @@ test('spec names must be kebab-case', () => {
     assert.throws(() => listSpecs(dir), /lowercase kebab-case: Bad_Name\.ts/);
   });
 });
+
+/** Copies the files `check` reads besides the specs (the engine and its pin) into `dir`. */
+function copyEngine(dir) {
+  for (const rel of [...ENGINE_FILES, VENDOR_JSON]) {
+    mkdirSync(join(dir, rel, '..'), { recursive: true });
+    cpSync(join(ROOT, rel), join(dir, rel));
+  }
+}
+
+// Positive: a repository without docs/figures, or with an empty one, passes check and sources with
+// the stated reason and reads no engine file, so a repository that draws no figure needs nothing.
+test('check and sources skip with the reason when there is no figure spec and no output', () => withTempDir(async (dir) => {
+  for (const setup of [() => {}, () => mkdirSync(join(dir, SPEC_DIR), { recursive: true })]) {
+    setup();
+    assert.equal(hasFigures(dir), false);
+    const { result: codes, lines } = await capture(async () => [await main(['check'], dir), await main(['sources', '--root', dir])]);
+    assert.deepEqual(codes, [0, 0]);
+    assert.deepEqual(lines, [`figures: ${NO_FIGURES}`, `figures: ${NO_FIGURES}`]);
+  }
+  assert.match(NO_FIGURES, /no figure spec \(docs\/figures\/\*\.ts\)/);
+}));
+
+// Negative: one malformed spec is checked, not skipped, and fails check with its finding.
+test('a malformed spec is checked, not skipped', () => withTempDir(async (dir) => {
+  copyEngine(dir);
+  write(join(dir, SPEC_DIR, 'broken.ts'), "export default { title: 'Broken' };\n");
+  assert.equal(hasFigures(dir), true);
+  const { result, output } = await capture(() => main(['check'], dir));
+  assert.equal(result, 1);
+  assert.match(output, /docs\/figures\/broken\.ts: /);
+  assert.doesNotMatch(output, /skipped/);
+}));
+
+// Boundary: a committed output left without its spec counts as a figure, so check reports it; a
+// non-spec file under docs/figures does not.
+test('an output without its spec is still checked; a non-spec file alone is not a figure', () => withTempDir(async (dir) => {
+  write(join(dir, SPEC_DIR, 'README.md'), 'notes\n');
+  assert.equal(hasFigures(dir), false);
+  copyEngine(dir);
+  write(join(dir, OUT_DIR, 'gone.json'), '{}\n');
+  assert.equal(hasFigures(dir), true);
+  const { result, output } = await capture(() => main(['check'], dir));
+  assert.equal(result, 1);
+  assert.match(output, /docs\/assets\/figures\/gone\.json has no spec/);
+}));
 
 test('an unknown command is a usage error, bundle included', async () => {
   const { lines: errors } = await capture(async () => {

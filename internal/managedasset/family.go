@@ -118,6 +118,12 @@ func markdown() Family {
 // repository may already use, so adoption refuses to overwrite a file it finds there first.
 // It has no hosted workflow of its own: the Markdown family's workflow is to run its checks
 // once the facet wiring lands, and until then the family is Staged.
+//
+// Prior budget: Validate allows MaxPriorTexts (64) earlier texts per family, and every managed
+// file a change rewrites costs one entry. A React, react-dom or scheduler bump rebuilds
+// dist/player.js and dist/THIRD-PARTY-LICENSES.txt, two entries; an interfig bump also moves the
+// vendored render files and vendor.json, up to eight; an edit to one script or to README.md costs
+// one. A change that would pass the bound fails TestFamiliesRegistryIsValid.
 func figureEngine() Family {
 	return Family{
 		Name:          "Figure engine",
@@ -131,6 +137,7 @@ func figureEngine() Family {
 		MaxAssets:     figureassets.MaxAssets,
 		RefuseForeign: true,
 		Staged:        true,
+		Prior:         figureassets.PriorDigests(),
 	}
 }
 
