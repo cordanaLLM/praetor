@@ -1,6 +1,21 @@
+<%- /*
+Scaffolded as analysis_options.yaml by mobile-flutter (internal/flavor/definitions.go), which
+detects any pubspec.yaml. flutter analyze fails on an include pub cannot resolve, and adoption
+makes the test job that runs it a required check, so the include names a lint package
+pubspec.yaml declares (.DartLints, internal/flavor/dart_lints.go) and is left out otherwise. The
+rules below are core linter rules and need no package. TestScaffoldedDartAnalysisConfigIncludesOnlyADeclaredLintPackage
+(internal/flavor/dart_lints_test.go) covers each case.
+*/ -%>
 ---
+<% if eq .DartLints "flutter_lints" -%>
+include: package:flutter_lints/flutter.yaml
+<% else if eq .DartLints "lints" -%>
 include: package:lints/recommended.yaml
-
+<% else -%>
+# pubspec.yaml declares neither lints nor flutter_lints, so no rule set is
+# included: flutter analyze fails on an include pub cannot resolve. Add one
+# as a dev dependency and include its rule set here.
+<% end %>
 linter:
   rules:
     - prefer_const_constructors

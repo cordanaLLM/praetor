@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/templates"
 )
 
 // legacyStub is the body the scaffolder wrote for every template it had no case for, and
@@ -39,7 +41,7 @@ func TestEveryRequiredTemplateStatesItsContent(t *testing.T) {
 			if tmpl.Source == "" {
 				continue
 			}
-			body, err := templateContent(tmpl, "widget", "acme")
+			body, err := templateContent(tmpl, templates.Context{RepoName: "widget", Owner: "acme"})
 			if err != nil {
 				t.Errorf("%s: %v", where, err)
 				continue
@@ -67,7 +69,7 @@ func TestScaffoldTemplate_Negative_NoSourceWritesNothing(t *testing.T) {
 		t.Fatalf("a template without content wrote a file anyway: %v", statErr)
 	}
 	missing := TemplateItem{Path: "x.yml", Source: "go/absent.tmpl"}
-	if _, err := templateContent(missing, "widget", "acme"); err == nil {
+	if _, err := templateContent(missing, templates.Context{RepoName: "widget", Owner: "acme"}); err == nil {
 		t.Fatal("a Source naming no embedded template must fail to render")
 	}
 }

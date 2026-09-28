@@ -38,13 +38,23 @@ func adoptionChecksCases() []adoptionChecksCase {
 		},
 		wantChecks: true, wantTest: true,
 	}, {
-		// Negative: typescript-node resolves under app-service, but its CI job runs `npm ci`
-		// and `npm test` and this pnpm project has no package-lock.json, so the job is withheld
-		// and nothing is required. It used to be scaffolded and required, and could never pass.
+		// Positive: typescript-node resolves under app-service, and this pnpm project gets a CI
+		// job that installs with pnpm, required. It used to get an npm job that could never
+		// pass, and then no job at all (BUG-1011).
 		name: "pnpm-project-without-workflows", profile: "app-service",
 		arrange: func(t *testing.T, dir string) {
 			writeFixtureFile(t, dir, "package.json", `{"name": "widgets", "scripts": {"test": "vitest run"}}`)
 			writeFixtureFile(t, dir, "pnpm-lock.yaml", "lockfileVersion: '9.0'\n")
+		},
+		wantChecks: true, wantTest: true,
+	}, {
+		// Negative: undeclared lockfiles of two package managers leave the choice to the
+		// repository, so the job is withheld and nothing is required.
+		name: "two-lockfiles-without-workflows", profile: "app-service",
+		arrange: func(t *testing.T, dir string) {
+			writeFixtureFile(t, dir, "package.json", `{"name": "widgets", "scripts": {"test": "vitest run"}}`)
+			writeFixtureFile(t, dir, "pnpm-lock.yaml", "lockfileVersion: '9.0'\n")
+			writeFixtureFile(t, dir, "yarn.lock", "# yarn lockfile v1\n")
 		},
 	}, {
 		// Positive: an app-service npm project with a lockfile and a test script gets the job,

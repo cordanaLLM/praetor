@@ -9,6 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/cordanaLLM/praetor/internal/util"
+	"github.com/cordanaLLM/praetor/templates"
 )
 
 // TemplateItem defines a template file required by a flavor.
@@ -38,15 +39,16 @@ type TemplateItem struct {
 
 	ContentFunc func(repoName string, owner string) string `json:"-"`
 
-	// Requires reports what the repository lacks for the scaffolded body to work as written,
-	// or "" when it lacks nothing. flavor apply writes no body whose requirement is unmet,
-	// --force included, and lists it under ApplyReport.UnmetTemplates; the audit still
-	// requires the file. A body is fixed text, so a workflow that runs `npm ci` can only pass
-	// where CI's checkout holds package-lock.json, and adoption makes every job of a
-	// scaffolded workflow a required status check: scaffolding it anywhere else hands the
-	// repository a check no pull request can pass. The context bounds any probe the check
-	// runs, such as asking Git whether a file it needs is committed.
-	Requires func(ctx context.Context, repoPath string) string `json:"-"`
+	// Resolve reads what a body that depends on the repository needs from it. It returns the
+	// facts the body renders against (templates.Context fields beyond Owner and RepoName, such
+	// as Node) and what the repository lacks for the body to work as written, "" when it lacks
+	// nothing. flavor apply writes no body whose requirement is unmet, --force included, and
+	// lists it under ApplyReport.UnmetTemplates; the audit still requires the file. Adoption
+	// makes every job of a scaffolded workflow a required status check, so a workflow that
+	// installs from a lockfile CI's checkout lacks hands the repository a check no pull request
+	// can pass. The context bounds any probe Resolve runs, such as asking Git whether a file
+	// it needs is committed.
+	Resolve func(ctx context.Context, repoPath string) (facts templates.Context, missing string) `json:"-"`
 
 	// AltPaths lists equally valid alternatives to Path. A repository satisfies the
 	// template when Path or any AltPath is present, and scaffolding is skipped in that

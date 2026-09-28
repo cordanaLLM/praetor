@@ -113,8 +113,8 @@ func TestReconcileWorkingDirAndFlavor_Boundary_DryRunWritesNothing(t *testing.T)
 }
 
 // Negative: a resolved flavor holds back a template whose body cannot work here, and adoption
-// says which. A pnpm project resolves to typescript-node, whose CI job runs `npm ci` and
-// `npm test`.
+// says which. A pnpm project whose package.json only carries commit tooling resolves to
+// typescript-node, whose CI job runs the test script it lacks.
 func TestReconcileWorkingDirAndFlavor_Negative_UnrunnableNodeJobIsWithheldAndWarned(t *testing.T) {
 	s := flavorSession(t, false, map[string]string{
 		"pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
@@ -124,11 +124,11 @@ func TestReconcileWorkingDirAndFlavor_Negative_UnrunnableNodeJobIsWithheldAndWar
 		t.Fatal(err)
 	}
 	if scaffoldedCI(t, s) {
-		t.Fatal("adoption scaffolded an npm CI job into a repository with no package-lock.json")
+		t.Fatal("adoption scaffolded a Node CI job into a repository with no test script")
 	}
 	if len(s.report.Warnings) != 1 || !strings.Contains(s.report.Warnings[0], "typescript-node did not scaffold .github/workflows/ci.yml") ||
-		!strings.Contains(s.report.Warnings[0], "package-lock.json") {
-		t.Fatalf("want one warning naming the withheld CI job and its missing lockfile, got %v", s.report.Warnings)
+		!strings.Contains(s.report.Warnings[0], "no test script") {
+		t.Fatalf("want one warning naming the withheld CI job and its missing test script, got %v", s.report.Warnings)
 	}
 }
 

@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/templates"
 )
 
 // legacyESLintNames are the eslintrc spellings ESLint v10 cannot load.
@@ -42,7 +44,7 @@ func TestFlavors_Negative_NoJavaScriptTemplateFallsThroughToACommentDefault(t *t
 			if !scripts[filepath.Ext(tmpl.Path)] || tmpl.ContentFunc != nil {
 				continue
 			}
-			body, err := templateContent(tmpl, "repo", "owner")
+			body, err := templateContent(tmpl, templates.Context{RepoName: "repo", Owner: "owner"})
 			if err != nil {
 				t.Errorf("flavor %s has no body for %s: %v", f.Name(), tmpl.Path, err)
 				continue
@@ -61,7 +63,7 @@ func TestFlavors_Negative_NoJavaScriptTemplateFallsThroughToACommentDefault(t *t
 // Positive: the scaffolded flat config is what @eslint/js documents. plugins must name js or
 // extends: ["js/recommended"] resolves to nothing, so both are asserted, not just the import.
 func TestESLintFlatConfig_Positive_ResolvesTheRecommendedConfig(t *testing.T) {
-	body, err := templateContent(eslintTemplate("eslint"), "repo", "owner")
+	body, err := templateContent(eslintTemplate("eslint"), templates.Context{RepoName: "repo", Owner: "owner"})
 	if err != nil {
 		t.Fatalf("render the scaffolded flat config: %v", err)
 	}

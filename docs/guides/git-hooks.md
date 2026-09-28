@@ -90,7 +90,11 @@ repository:
   template `internal/flavor/definitions.go` checks with a YAML validator whatever its name
   (`.clang-format` and `.clang-tidy`, which the Visual Studio editor target also writes), with
   its leading template comment dropped as rendering drops it
-  (`test_every_yaml_validated_flavor_template_is_linted`).
+  (`test_every_yaml_validated_flavor_template_is_linted`). A body whose actions branch on the
+  repository (the Node CI job per package manager, the Dart analyzer config per lint package) is
+  linted from its committed renderings under `templates/testdata/rendered/`, one per distinct
+  body. `TestBranchingYAMLTemplateRenderingsAreCommitted` (`templates/branching_test.go`) renders
+  every combination of the facts the template reads and keeps those files equal to the result.
 
 Each path comes from the Go constant that names it. The gate also appends an overlong line to
 every file and requires yamllint to reject each one, so the rule is proven to be on.

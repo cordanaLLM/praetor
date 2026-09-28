@@ -1,3 +1,11 @@
+<%- /*
+Scaffolded by jvm-service (internal/flavor/definitions.go), which detects pom.xml, build.gradle,
+build.gradle.kts, mvnw or gradlew. Adoption makes the test job a required check, so the build step
+runs whichever build the repository carries and names what is missing instead of failing on a
+layout it did not model. A wrapper committed without its executable bit (Git records the mode, and
+Windows checkouts often drop it) still runs through sh. TestJVMBuildStepRunsTheRepositorysBuild
+(internal/flavor/jvm_ci_test.go) executes the step against each layout.
+*/ -%>
 ---
 name: CI
 
@@ -24,10 +32,23 @@ jobs:
         run: |
           if [ -x ./mvnw ]; then
             ./mvnw -B verify
+          elif [ -f ./mvnw ]; then
+            sh ./mvnw -B verify
           elif [ -f pom.xml ]; then
             mvn -B verify
           elif [ -x ./gradlew ]; then
             ./gradlew check
+          elif [ -f ./gradlew ]; then
+            sh ./gradlew check
+          elif [ -f build.gradle ] || [ -f build.gradle.kts ] ||
+            [ -f settings.gradle ] || [ -f settings.gradle.kts ]; then
+            if command -v gradle >/dev/null 2>&1; then
+              gradle check
+            else
+              echo "Gradle build has no gradlew wrapper and the runner" \
+                "no gradle; commit one: gradle wrapper" >&2
+              exit 1
+            fi
           else
             echo "no Maven or Gradle build found" >&2
             exit 1

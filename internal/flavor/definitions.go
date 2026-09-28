@@ -517,9 +517,10 @@ func (f *TypeScriptNodeFlavor) RequiredTemplates() []TemplateItem {
 			Path:        ".github/workflows/ci.yml",
 			Description: "Node.js CI test and build matrix",
 			Source:      "node/ci-node.yml.tmpl",
-			// The body installs with `npm ci` and runs `npm test`; outside an npm project with a
-			// real test script that job fails on every run.
-			Requires:  npmCIRequirement,
+			// The body installs from the committed lockfile with the manager packageManager names
+			// or the lockfile implies, and runs the test script; without both that job fails on
+			// every run.
+			Resolve:   nodeCIRequirement,
 			Validator: validWorkflow,
 		},
 	}
@@ -603,7 +604,15 @@ func (f *MobileFlutterFlavor) Detect(repoPath string) bool {
 
 func (f *MobileFlutterFlavor) RequiredTemplates() []TemplateItem {
 	return []TemplateItem{
-		{Path: "analysis_options.yaml", Description: "Dart and Flutter analyzer linter configuration", Source: "flutter/analysis_options.yaml.tmpl", Validator: validYAMLMapping},
+		{
+			Path:        "analysis_options.yaml",
+			Description: "Dart and Flutter analyzer linter configuration",
+			Source:      "flutter/analysis_options.yaml.tmpl",
+			// The body includes a lint package's rule set only where pubspec.yaml declares that
+			// package; flutter analyze fails on an include pub cannot resolve.
+			Resolve:   dartAnalysisFacts,
+			Validator: validYAMLMapping,
+		},
 		{Path: ".github/workflows/ci.yml", Description: "Flutter test and build validation matrix", Source: "flutter/ci-flutter.yml.tmpl", Validator: validWorkflow},
 	}
 }

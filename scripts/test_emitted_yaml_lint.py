@@ -25,15 +25,21 @@ into it (BUG-782). This gate covers:
   template under templates/ (templates/embed.go), and each template internal/flavor checks
   with a YAML validator whatever its name (.clang-format and .clang-tidy, which clang reads as
   YAML; the Visual Studio editor target writes the same .clang-tidy), rendered by dropping its
-  leading template comment, the one action these bodies carry. A body with any other action
-  fails the gate instead of being linted as unrendered text.
+  leading template comment, the one action most of these bodies carry. A body whose actions
+  branch on repository facts (the Node CI job, the Dart analyzer config) is linted from its
+  committed renderings instead, one per distinct body, which
+  TestBranchingYAMLTemplateRenderingsAreCommitted (templates/branching_test.go) keeps equal to
+  every rendering the template can produce. A body with any other action, or a branching one
+  with no committed rendering, fails the gate instead of being linted as unrendered text.
 
 Each path is read from the Go constant that names it, so a moved file is followed without
 editing this list.
 """
 
 import re
+import tempfile
 import unittest
+from pathlib import Path
 
 from test_emitted_hook_lint import RENDERED, LintCase, ROOT, go_constant
 
@@ -48,6 +54,10 @@ RENDERINGS = (("internal/config/repository_policy.go", "ManifestFileName"),)
 # The Go constants naming the embedded template directory and its go:embed pattern, and the
 # file declaring them.
 TEMPLATES = ("templates/embed.go", "Directory", "Pattern")
+# The Go constant naming the directory, relative to the template directory, that holds the
+# committed renderings of each branching template under <template path without .tmpl>/, and
+# the file declaring it.
+BRANCH_RENDERINGS = ("templates/branching_test.go", "renderedRoot")
 # The Go file declaring each flavor file's template (Source) and content check (Validator), and
 # the validators that parse the body as YAML: a template they check is YAML whatever its name.
 FLAVOR_DEFINITIONS = "internal/flavor/definitions.go"
@@ -92,6 +102,18 @@ def render_template(text):
     return body
 
 
+def template_bodies(text, renderings, key):
+    """Return {path: body} of what one YAML template renders to: its body under key, or, when
+    the directory renderings holds committed renderings of it, each of them under key/<name>.
+    """
+    if not renderings.is_dir():
+        return {key: render_template(text)}
+    paths = sorted(p for p in renderings.iterdir() if p.is_file())
+    if not paths or len(paths) > MAX_TEMPLATE_FILES:
+        raise AssertionError(f"{renderings} holds {len(paths)} renderings")
+    return {f"{key}/{p.name}": p.read_text(encoding="utf-8") for p in paths}
+
+
 def yaml_validated_templates():
     """Return the template paths, relative to the template directory, of every flavor file
     internal/flavor checks with a YAML validator."""
@@ -102,9 +124,11 @@ def yaml_validated_templates():
 
 
 def template_files():
-    """Return {template path without .tmpl: rendered body} of every YAML template."""
+    """Return {template path without .tmpl: rendered body} of every YAML template, and
+    {template path without .tmpl/name: body} of each committed rendering of a branching one."""
     source, directory_name, pattern_name = TEMPLATES
     directory = ROOT / go_constant(source, directory_name)
+    rendered = directory / go_constant(*BRANCH_RENDERINGS)
     paths = sorted(directory.glob(go_constant(source, pattern_name)))
     if not paths or len(paths) > MAX_TEMPLATE_FILES:
         raise AssertionError(f"{directory} holds {len(paths)} templates")
@@ -115,8 +139,13 @@ def template_files():
         yaml_body = path.relative_to(directory).as_posix() in validated
         if yaml_body or target.endswith((".yml", ".yaml")):
             relative = path.relative_to(ROOT).parent.as_posix()
-            files[f"{relative}/{target}"] = render_template(
-                path.read_text(encoding="utf-8")
+            renderings = rendered / path.relative_to(directory).parent / target
+            files.update(
+                template_bodies(
+                    path.read_text(encoding="utf-8"),
+                    renderings,
+                    f"{relative}/{target}",
+                )
             )
     return files
 
@@ -169,6 +198,9 @@ class SourceTest(unittest.TestCase):
             "templates/go/.golangci.yml",
             "templates/native/.clang-format",
             "templates/native/.clang-tidy",
+            "templates/node/ci-node.yml/npm.yml",
+            "templates/node/ci-node.yml/pnpm.yml",
+            "templates/flutter/analysis_options.yaml/none.yaml",
         ):
             self.assertIn(path, files)
         for path, text in files.items():
@@ -181,7 +213,9 @@ class SourceTest(unittest.TestCase):
         self.assertNotIn("native/.gitleaks.toml.tmpl", validated)
         linted = {path.removeprefix("templates/") for path in template_files()}
         for template in validated:
-            self.assertIn(template.removesuffix(".tmpl"), linted)
+            target = template.removesuffix(".tmpl")
+            covered = {path for path in linted if path.startswith(target + "/")}
+            self.assertTrue(target in linted or covered, f"{template} is not linted")
 
     def test_render_template_drops_only_the_leading_comment(self):
         note = "<%- /*\nmaintainer note\n*/ -%>\n"
@@ -191,6 +225,30 @@ class SourceTest(unittest.TestCase):
         self.assertEqual(render_template("---\nkey: value\n"), "---\nkey: value\n")
         with self.assertRaises(AssertionError):
             render_template(note + "---\nowner: <% .Owner %>\n")
+
+    def test_template_bodies_reads_committed_renderings(self):
+        branching = "<% if .Node.Lint %>---\nlint: true\n<% end %>"
+        with tempfile.TemporaryDirectory() as tmp:
+            renderings = Path(tmp) / "ci.yml"
+            # Negative: a branching body with no committed rendering fails.
+            with self.assertRaises(AssertionError):
+                template_bodies(branching, renderings, "t/ci.yml")
+            # Boundary: an empty rendering directory fails too.
+            renderings.mkdir()
+            with self.assertRaises(AssertionError):
+                template_bodies(branching, renderings, "t/ci.yml")
+            # Positive: each committed rendering is linted under its own name.
+            (renderings / "a.yml").write_text("---\na: 1\n", encoding="utf-8")
+            (renderings / "b.yml").write_text("---\nb: 2\n", encoding="utf-8")
+            self.assertEqual(
+                template_bodies(branching, renderings, "t/ci.yml"),
+                {"t/ci.yml/a.yml": "---\na: 1\n", "t/ci.yml/b.yml": "---\nb: 2\n"},
+            )
+            # Positive: a body without renderings is linted as itself.
+            self.assertEqual(
+                template_bodies("---\nkey: value\n", Path(tmp) / "x.yml", "t/x.yml"),
+                {"t/x.yml": "---\nkey: value\n"},
+            )
 
 
 if __name__ == "__main__":

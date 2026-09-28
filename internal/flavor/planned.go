@@ -83,15 +83,17 @@ func plannedFlavorName(repoPath string) (string, error) {
 
 // plannedBody renders one template and reports whether an apply without --force leaves that
 // rendering at its path. It asks the questions scaffoldTemplate asks, through the same helpers,
-// in the same order: path containment and cover (templateDisposition), the file already there
-// (readTemplateTarget), and a withheld body (templateWithheld).
+// in the same order: path containment and cover (templateDisposition), a withheld body and the
+// repository facts the body renders against (templateWithheld), and the file already there
+// (readTemplateTarget). A present file canonically equal to the rendering is an earlier apply's.
 func plannedBody(ctx context.Context, repoPath string, tmpl TemplateItem, repoName, owner string) (string, bool, error) {
 	disposition, _, err := templateDisposition(repoPath, tmpl, false)
 	if err != nil {
 		return "", false, err
 	}
-	covered := disposition == templateCovered
-	body, err := templateContent(tmpl, repoName, owner)
+	outcome, _, vars := templateWithheld(ctx, repoPath, tmpl)
+	vars.RepoName, vars.Owner = repoName, owner
+	body, err := templateContent(tmpl, vars)
 	if err != nil {
 		return "", false, err
 	}
@@ -103,10 +105,7 @@ func plannedBody(ctx context.Context, repoPath string, tmpl TemplateItem, repoNa
 		same, err := util.CanonicalTextEquivalent(target.before, []byte(body))
 		return body, err == nil && same, nil
 	}
-	if covered {
-		return "", false, nil
-	}
-	if outcome, _ := templateWithheld(ctx, repoPath, tmpl); outcome != templateCreated {
+	if disposition == templateCovered || outcome != templateCreated {
 		return "", false, nil
 	}
 	return body, true, nil

@@ -1,0 +1,3 @@
+type: fixed
+title: Scaffold flavor CI that runs in the repository it lands in - the Node job installs with pnpm, Yarn or Bun where the repository uses one, the JVM job runs a wrapper committed without its exec bit and a Gradle build without a wrapper, and the Flutter analyzer config includes only a lint package pubspec.yaml declares
+breaking: false

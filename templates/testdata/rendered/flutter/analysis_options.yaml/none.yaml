@@ -1,0 +1,10 @@
+---
+# pubspec.yaml declares neither lints nor flutter_lints, so no rule set is
+# included: flutter analyze fails on an include pub cannot resolve. Add one
+# as a dev dependency and include its rule set here.
+
+linter:
+  rules:
+    - prefer_const_constructors
+    - prefer_final_fields
+    - unawaited_futures

@@ -34,12 +34,12 @@ var npmProject = map[string]string{
 }
 
 // flavorPrerequisites holds, per flavor, the files a repository needs before flavor apply
-// writes every template (TemplateItem.Requires). A flavor absent here scaffolds everything
+// writes every template (TemplateItem.Resolve). A flavor absent here scaffolds everything
 // into an empty repository.
 var flavorPrerequisites = map[string]map[string]string{"typescript-node": npmProject}
 
 // flavorRepo returns a fresh repository holding the flavor's prerequisites. A requirement
-// may ask Git what the repository commits (npmCIRequirement does), so a flavor with
+// may ask Git what the repository commits (nodeCIRequirement does), so a flavor with
 // prerequisites gets a Git work tree.
 func flavorRepo(t *testing.T, flavorName string) string {
 	t.Helper()

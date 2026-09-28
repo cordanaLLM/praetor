@@ -512,7 +512,9 @@ renders both newly generated Makefiles and AGENTS.md. Discovery recognizes:
   pass: not blank, and not the `echo "Error: no test specified" && exit 1`
   placeholder `npm init` writes. Another declared package manager requires an
   explicit project contract. `internal/nodemanifest/scripts.go` holds both
-  decisions, and the `typescript-node` CI scaffold uses the same ones.
+  decisions. The `typescript-node` CI scaffold reads `packageManager` and the
+  test script the same way, and installs with pnpm, Yarn or Bun where the
+  repository uses one ([archetype authoring](archetype-authoring.md)).
 - C# project files: locked restore and Release build with warnings as errors;
   explicit unconditional test projects receive `dotnet test`. Conditional,
   contradictory, or disabled test markers cannot establish a test gate.
