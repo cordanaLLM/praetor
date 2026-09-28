@@ -1,0 +1,3 @@
+type: added
+title: Propose ADR-0016, which delivers the interactive figure engine to adopters as a managed asset family of the docs:seo-portal facet, with a committed, reproducible generic player, figure checks ported into the Node engine as a step of the documentation workflow, and Node-only authoring, and amend the still-Proposed ADR-0015 where it kept the player bundle out of the tree, checked figures in Python and left adopters out
+breaking: false

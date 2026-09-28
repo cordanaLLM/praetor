@@ -201,6 +201,7 @@ nav:
           - ADR-0013 Container Image & Helm Chart Delivery: adr/0013-container-image-and-helm-chart-delivery.md
           - ADR-0014 Operator-Neutral Defaults: adr/0014-operator-neutral-defaults.md
           - ADR-0015 Interactive Figures from Vendored interfig: adr/0015-interactive-figures-from-vendored-interfig.md
+          - ADR-0016 Interactive Figures for Adopters: adr/0016-figures-for-adopters.md
   - Reference:
       - API & CLI Reference: wiki/API-Reference.md
       - Wiki Portal: wiki/Home.md
