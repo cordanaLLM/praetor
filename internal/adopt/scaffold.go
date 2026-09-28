@@ -2,8 +2,6 @@ package adopt
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -73,22 +71,36 @@ type scaffold struct {
 	// follows no symlink below the repository. It is set for the files compile-context also
 	// reads (the canonical personas); every other scaffold goes through writeRepoFile.
 	confined bool
-	// prior holds the SHA-256 of every text an earlier Praetor wrote at rel, keyed to what
-	// produced it. An existing file holding exactly one of them is Praetor output nobody
-	// edited, so adoption refreshes it to content without --force, as it migrates an earlier
-	// lefthook.yml (isPriorLefthookConfig). An edited copy matches no digest and keeps the
-	// force contract. A confined scaffold ignores it: the refresh does not go through the
-	// root-pinned writer.
+	// prior holds the digest (priorRendering) of every text an earlier Praetor wrote at rel,
+	// keyed to what produced it. An existing file holding one of them, in one consistent
+	// line-ending style, is Praetor output nobody edited, so adoption refreshes it to content
+	// in that style without --force, as it migrates an earlier lefthook.yml
+	// (isPriorLefthookConfig). An edited copy matches no digest and keeps the force contract.
+	// A confined scaffold ignores it: the refresh does not go through the root-pinned writer.
 	prior map[string]string
 	// refreshed is the action detail when an earlier Praetor text is refreshed.
 	refreshed string
 }
 
-// isPriorRendering reports whether data is byte for byte one of the earlier Praetor texts
-// digests names: the lowercase hexadecimal SHA-256 of the exact bytes.
+// priorRendering reports whether data is one of the earlier Praetor texts digests names, and
+// whether data is its CRLF checkout. It is the one rule every earlier-text set in adoption
+// (labels, lefthook.yml, the pinned catalog) is read with: a key is util.CanonicalTextDigest of
+// the recorded LF text, so a checkout that converted it to CRLF (core.autocrlf on Windows) is
+// still recognised, while an edit, a lost final newline or mixed line endings match nothing
+// (HISS-21).
+func priorRendering(data []byte, digests map[string]string) (known, crlf bool) {
+	digest, crlf, err := util.CanonicalTextDigest(data)
+	if err != nil {
+		return false, false
+	}
+	_, known = digests[digest]
+	return known, crlf
+}
+
+// isPriorRendering reports whether data is one of the earlier Praetor texts digests names, in
+// either consistent line-ending style (priorRendering).
 func isPriorRendering(data []byte, digests map[string]string) bool {
-	sum := sha256.Sum256(data)
-	_, known := digests[hex.EncodeToString(sum[:])]
+	known, _ := priorRendering(data, digests)
 	return known
 }
 
@@ -137,19 +149,24 @@ func (s *adoptSession) scaffoldFile(ctx context.Context, sc scaffold) (scaffoldS
 	return scaffoldWritten, nil
 }
 
-// refreshPriorScaffold replaces an existing file holding exactly an earlier Praetor text of sc
-// with sc.content, bound to the bytes it observed, and reports whether it did. A dry run
-// reports the refresh it would make.
+// refreshPriorScaffold replaces an existing file holding an earlier Praetor text of sc with
+// sc.content in the file's own line-ending style, bound to the bytes it observed, and reports
+// whether it did. A dry run reports the refresh it would make.
 func (s *adoptSession) refreshPriorScaffold(ctx context.Context, full string, sc scaffold) (bool, error) {
 	if len(sc.prior) == 0 || sc.confined {
 		return false, nil
 	}
 	actual, exists, err := contextopt.ObserveSnapshot(ctx, full)
-	if err != nil || !exists || !isPriorRendering(actual, sc.prior) {
+	if err != nil || !exists {
 		return false, err
 	}
+	known, crlf := priorRendering(actual, sc.prior)
+	if !known {
+		return false, nil
+	}
 	if !s.opts.DryRun {
-		if err := contextopt.ReplaceSnapshot(ctx, full, sc.content, contextopt.ReplaceOptions{
+		content := []byte(util.RestoreLineEndings(string(sc.content), crlf))
+		if err := contextopt.ReplaceSnapshot(ctx, full, content, contextopt.ReplaceOptions{
 			Expected: actual, Exists: true, Mode: sc.perm,
 		}); err != nil {
 			return false, fmt.Errorf("refresh %s: %w", sc.rel, err)

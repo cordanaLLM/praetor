@@ -1,11 +1,11 @@
 package adopt
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // readFixtureDir returns every file directly under dir, keyed by its name.
@@ -34,8 +34,7 @@ func assertPriorDigestsReproduced(t *testing.T, dir string, digests map[string]s
 	fixtures := readFixtureDir(t, dir)
 	seen := make(map[string]bool, len(fixtures))
 	for name, data := range fixtures {
-		sum := sha256.Sum256(data)
-		digest := hex.EncodeToString(sum[:])
+		digest := fixtureDigest(t, name, data)
 		if _, ok := digests[digest]; !ok {
 			t.Errorf("fixture %s (%s) is not a recognised prior rendering", name, digest)
 		}
@@ -48,20 +47,64 @@ func assertPriorDigestsReproduced(t *testing.T, dir string, digests map[string]s
 	}
 }
 
-func TestIsPriorRendering(t *testing.T) {
-	text := []byte("version: 1\n")
-	sum := sha256.Sum256(text)
-	digests := map[string]string{hex.EncodeToString(sum[:]): "fixture"}
-	if !isPriorRendering(text, digests) {
-		t.Error("positive: the exact bytes of a recorded text must be recognised")
+// fixtureDigest is the key priorRendering looks data up by.
+func fixtureDigest(t *testing.T, name string, data []byte) string {
+	t.Helper()
+	digest, _, err := util.CanonicalTextDigest(data)
+	if err != nil {
+		t.Fatalf("fixture %s: %v", name, err)
 	}
-	if isPriorRendering(append(text, '\n'), digests) {
-		t.Error("negative: one byte more is an edited copy, not a prior rendering")
+	return digest
+}
+
+// priorDigestSet records text the way the earlier-text sets do.
+func priorDigestSet(t *testing.T, text string) map[string]string {
+	t.Helper()
+	return map[string]string{fixtureDigest(t, "recorded text", []byte(text)): "fixture"}
+}
+
+// Positive: the recorded LF text and its CRLF checkout (core.autocrlf on Windows) are both
+// recognised, and the CRLF one is reported as such so a refresh can keep its style (HISS-21).
+func TestIsPriorRendering_Positive_EitherConsistentLineEndingStyle(t *testing.T) {
+	const text = "version: 1\nname: x\n"
+	digests := priorDigestSet(t, text)
+	if known, crlf := priorRendering([]byte(text), digests); !known || crlf {
+		t.Errorf("the recorded LF text: known=%v crlf=%v", known, crlf)
 	}
-	if isPriorRendering([]byte("version: 1\r\n"), digests) {
-		t.Error("negative: a CRLF copy is not the recorded LF bytes")
+	if known, crlf := priorRendering([]byte(crlfText(text)), digests); !known || !crlf {
+		t.Errorf("the CRLF checkout of the recorded text: known=%v crlf=%v", known, crlf)
 	}
-	if isPriorRendering(nil, digests) || isPriorRendering(text, nil) {
-		t.Error("boundary: empty data and an empty digest set match nothing")
+	if !isPriorRendering([]byte(crlfText(text)), digests) {
+		t.Error("isPriorRendering must apply the same rule as priorRendering")
+	}
+}
+
+// Negative: an edited copy is not a prior rendering, in either line-ending style.
+func TestIsPriorRendering_Negative_EditedCopies(t *testing.T) {
+	const text = "version: 1\n"
+	digests := priorDigestSet(t, text)
+	for name, edited := range map[string]string{
+		"LF, one line more":   text + "\n",
+		"CRLF, one line more": "version: 1\r\n\r\n",
+		"CRLF, value changed": "version: 2\r\n",
+	} {
+		if isPriorRendering([]byte(edited), digests) {
+			t.Errorf("%s: an edited copy was recognised", name)
+		}
+	}
+}
+
+// Boundary: mixed line endings and lone carriage returns match nothing, even when the LF text
+// underneath is the recorded one, and empty data or an empty digest set match nothing.
+func TestIsPriorRendering_Boundary_MixedEndingsAndEmptyInputs(t *testing.T) {
+	const text = "version: 1\nname: x\n"
+	digests := priorDigestSet(t, text)
+	for _, mixed := range []string{"version: 1\r\nname: x\n", "version: 1\rname: x\n"} {
+		if known, _ := priorRendering([]byte(mixed), digests); known {
+			t.Errorf("%q: mixed line endings were recognised", mixed)
+		}
+	}
+	if isPriorRendering(nil, digests) || isPriorRendering([]byte(text), nil) {
+		t.Error("empty data and an empty digest set match nothing")
 	}
 }

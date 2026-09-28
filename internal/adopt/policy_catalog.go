@@ -17,13 +17,15 @@ import (
 // Each lock permits at most 256 profiles and 256 facets.
 const maxAdoptPolicyFiles = 512
 
-// priorCatalogDigests are the SHA-256 digests of every .config/archetypes file Praetor shipped
-// before the catalog passed yamllint's default rules (BUG-782), keyed to the file. Each decodes
-// to exactly the values of its current text; only the layout moved. Membership alone never
-// authorizes a change: a text listed here is replaced without --force only by a source text
-// with exactly its values (isLayoutOnlySuccessor), both when the lock is re-pinned
-// (pinsEarlierCatalog) and when the file is rewritten (prepareCatalogWrites). testdata/
-// catalog-prior reproduces each digest (policy_catalog_prior_test.go).
+// priorCatalogDigests are the digests (priorRendering) of every .config/archetypes file Praetor
+// shipped before the catalog passed yamllint's default rules (BUG-782), keyed to the file. Each
+// decoded to exactly the values of the text that replaced it then; only the layout moved. A
+// later value change does not carry over: membership alone never authorizes a change, and a
+// text listed here is replaced without --force only by a source text with exactly its values
+// (isLayoutOnlySuccessor), both when the lock is re-pinned (pinsEarlierCatalog) and when the
+// file is rewritten (prepareCatalogWrites). The rewrite writes the pinned source bytes, whose
+// digest the lock checks byte for byte, whatever line-ending style the earlier text had.
+// testdata/catalog-prior reproduces each digest (policy_catalog_prior_test.go).
 var priorCatalogDigests = map[string]string{
 	"0ef3ebf5423873d200e12ba405ca93b3064c57eedf9091852f2d69316dfb7c63": "facets/agent-sandboxed.yaml",
 	"4de328ae5f1c4a993f45c258758d105395b92b2974abf52023fc685b61dafdd9": "facets/api-public.yaml", // gitleaks:allow: a digest, no credential
@@ -52,6 +54,13 @@ var priorCatalogDigests = map[string]string{
 // moves the catalog's layout and never a policy value.
 func isLayoutOnlySuccessor(before, after []byte) bool {
 	return isPriorRendering(before, priorCatalogDigests) && util.YAMLEquivalent(before, after) == nil
+}
+
+// mayReplaceCatalogText reports whether adoption may publish content over the existing catalog
+// text before: it already holds content, --force was given, or before is an unmodified earlier
+// Praetor text whose values content keeps (isLayoutOnlySuccessor).
+func mayReplaceCatalogText(s *adoptSession, before, content []byte) bool {
+	return bytes.Equal(before, content) || s.opts.Force || isLayoutOnlySuccessor(before, content)
 }
 
 type catalogWrite struct {
@@ -126,7 +135,7 @@ func prepareCatalogWrites(ctx context.Context, s *adoptSession, artifacts []conf
 		if err != nil {
 			return nil, err
 		}
-		if exists && !bytes.Equal(before, artifact.Content) && !s.opts.Force && !isLayoutOnlySuccessor(before, artifact.Content) {
+		if exists && !mayReplaceCatalogText(s, before, artifact.Content) {
 			return nil, fmt.Errorf("pinned catalog destination differs: %s; inspect it before explicit forced adoption", artifact.RelativePath)
 		}
 		writes = append(writes, catalogWrite{artifact: artifact, path: path, before: before, exists: exists})

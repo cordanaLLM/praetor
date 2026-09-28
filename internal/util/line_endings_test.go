@@ -98,3 +98,51 @@ func TestNormalizeLineEndingsBoundaryKeepsLoneCRAndRoundTrips(t *testing.T) {
 		}
 	}
 }
+
+func TestCanonicalTextDigestPositiveSharesOneDigestAcrossStyles(t *testing.T) {
+	lf, lfCRLF, err := CanonicalTextDigest([]byte("version: 1\nname: x\n"))
+	if err != nil || lfCRLF {
+		t.Fatalf("LF text: crlf=%v err=%v", lfCRLF, err)
+	}
+	crlf, crlfCRLF, err := CanonicalTextDigest([]byte("version: 1\r\nname: x\r\n"))
+	if err != nil || !crlfCRLF {
+		t.Fatalf("CRLF text: crlf=%v err=%v", crlfCRLF, err)
+	}
+	if lf != crlf {
+		t.Fatalf("a CRLF checkout must share the LF digest: %s != %s", crlf, lf)
+	}
+	if len(lf) != 64 || strings.Trim(lf, "0123456789abcdef") != "" {
+		t.Fatalf("digest is not a lowercase hexadecimal SHA-256: %q", lf)
+	}
+}
+
+func TestCanonicalTextDigestNegativeSeparatesEditsAndRejectsMixedEndings(t *testing.T) {
+	original, _, err := CanonicalTextDigest([]byte("version: 1\r\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	edited, _, err := CanonicalTextDigest([]byte("version: 2\r\n"))
+	if err != nil || edited == original {
+		t.Fatalf("an edited CRLF text must digest differently: err=%v", err)
+	}
+	for _, text := range []string{"a\r\nb\n", "a\rb\n"} {
+		if digest, _, err := CanonicalTextDigest([]byte(text)); err == nil || digest != "" {
+			t.Errorf("%q: mixed or lone carriage returns must be an error, got %q", text, digest)
+		}
+	}
+}
+
+func TestCanonicalTextDigestBoundaryEmptyAndUnterminatedText(t *testing.T) {
+	empty, crlf, err := CanonicalTextDigest(nil)
+	if err != nil || crlf || empty != "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" {
+		t.Fatalf("empty text: digest=%s crlf=%v err=%v", empty, crlf, err)
+	}
+	unterminated, _, err := CanonicalTextDigest([]byte("x"))
+	if err != nil || unterminated == empty {
+		t.Fatalf("a text without a line ending digests its bytes: %s err=%v", unterminated, err)
+	}
+	terminated, _, err := CanonicalTextDigest([]byte("x\n"))
+	if err != nil || terminated == unterminated {
+		t.Fatalf("a final line ending is content, not layout: err=%v", err)
+	}
+}

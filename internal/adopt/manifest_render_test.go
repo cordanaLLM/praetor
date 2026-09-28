@@ -78,6 +78,15 @@ func TestIsPriorManifestRendering(t *testing.T) {
 	if isPriorManifestRendering(nil) || isPriorManifestRendering([]byte("version: [\n")) {
 		t.Error("boundary: an empty or unparsable manifest is not an earlier rendering")
 	}
+	if !isPriorManifestRendering([]byte(crlfText(prior))) {
+		t.Error("positive: a CRLF checkout of the earlier manifest must be recognised (HISS-21)")
+	}
+	if isPriorManifestRendering([]byte(crlfText(prior + "# operator note\n"))) {
+		t.Error("negative: an edited CRLF manifest is the operator's")
+	}
+	if isPriorManifestRendering([]byte(strings.Replace(crlfText(prior), "\r\n", "\n", 1))) {
+		t.Error("boundary: a manifest with mixed line endings is not an earlier rendering")
+	}
 }
 
 // earlierManifest rewrites repo's manifest as an earlier adoption would have written it.
@@ -134,5 +143,28 @@ func TestAdoptMigratesAnEarlierManifestRendering(t *testing.T) {
 	readopt(t, repo, source)
 	if got := mustRead(t, filepath.Join(repo, manifestFile)); got != edited {
 		t.Errorf("negative: an edited manifest was rewritten:\n%s", got)
+	}
+}
+
+// Positive and boundary (HISS-21): a CRLF checkout of an earlier adoption's manifest migrates
+// to the current layout in CRLF, and the next run leaves it byte for byte.
+func TestAdoptMigratesACRLFEarlierManifestInItsOwnStyle(t *testing.T) {
+	repo := newTestRepo(t, "manifest-migration-crlf")
+	mustWrite(t, filepath.Join(repo, "go.mod"), "module github.com/acme/manifest-migration-crlf\n")
+	source := newAdoptLockSource(t)
+	readopt(t, repo, source)
+	want := crlfText(mustRead(t, filepath.Join(repo, manifestFile)))
+
+	mustWrite(t, filepath.Join(repo, manifestFile), crlfText(earlierManifest(t, repo)))
+	report := readopt(t, repo, source)
+	if got := mustRead(t, filepath.Join(repo, manifestFile)); got != want {
+		t.Fatalf("the CRLF earlier rendering was not migrated in CRLF:\n%q", got)
+	}
+	if detail := findActionDetail(report.ActionDetails, manifestFile); !strings.HasPrefix(detail, "Migrated the unmodified earlier Praetor manifest") {
+		t.Errorf("migration not reported: %q", detail)
+	}
+	readopt(t, repo, source)
+	if got := mustRead(t, filepath.Join(repo, manifestFile)); got != want {
+		t.Errorf("boundary: re-adopting the migrated CRLF manifest changed it:\n%q", got)
 	}
 }

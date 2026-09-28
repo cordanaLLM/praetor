@@ -65,9 +65,10 @@ func reconcileBranchRuleset(ctx context.Context, s *adoptSession) error {
 	return err
 }
 
-// priorLabelTaxonomyDigests are the SHA-256 digests of every label taxonomy adoption wrote
-// before the current forge.DefaultLabelTaxonomy, keyed to what produced them. Only these exact
-// bytes are refreshed; testdata/labels reproduces each digest (ruleset_labels_test.go).
+// priorLabelTaxonomyDigests are the digests (priorRendering) of every label taxonomy adoption
+// wrote before the current forge.DefaultLabelTaxonomy, keyed to what produced them. Only these
+// texts are refreshed, in the file's own consistent line-ending style; testdata/labels
+// reproduces each digest (ruleset_labels_test.go).
 var priorLabelTaxonomyDigests = map[string]string{
 	"458258424e4d1f9a0a3cb4c20de5f3c039b44c94a3296f1d0105a5305853ea8c": "fourteen labels, no document start",
 }

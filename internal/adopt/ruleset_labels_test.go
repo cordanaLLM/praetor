@@ -3,6 +3,7 @@ package adopt
 import (
 	"bytes"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/forge"
@@ -100,5 +101,51 @@ func TestReconcileLabels_Boundary_IdempotentDryRunAndMissing(t *testing.T) {
 	}
 	if got := mustRead(t, path); got != string(current) || !contains(s.report.CreatedFiles, labelsFile) {
 		t.Errorf("a missing taxonomy must be created: %v", s.report.CreatedFiles)
+	}
+}
+
+// Positive (HISS-21): a CRLF checkout of the earlier taxonomy (core.autocrlf on Windows) is
+// still Praetor's unedited output. It is refreshed without --force and keeps its CRLF style,
+// and the run after it verifies the refreshed file without a warning.
+func TestReconcileLabels_Positive_RefreshesCRLFPriorInItsOwnStyle(t *testing.T) {
+	prior := crlfText(string(readFixtureDir(t, priorLabelFixtures)["pre-document-start.labels.yaml"]))
+	s, path := labelSession(t, []byte(prior), AdoptOptions{})
+	if err := reconcileLabels(t.Context(), s); err != nil {
+		t.Fatal(err)
+	}
+	want := crlfText(string(forge.DefaultLabelTaxonomy()))
+	if got := mustRead(t, path); got != want {
+		t.Fatalf("the CRLF prior taxonomy was not refreshed in CRLF:\n%q", got)
+	}
+	if detail := findActionDetail(s.report.ActionDetails, labelsFile); !strings.HasPrefix(detail, "Refreshed") || len(s.report.Warnings) != 0 {
+		t.Errorf("the refresh must be reported without a warning: %v %v", s.report.ActionDetails, s.report.Warnings)
+	}
+	s.report = &AdoptReport{}
+	if err := reconcileLabels(t.Context(), s); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustRead(t, path); got != want || len(s.report.Warnings) != 0 {
+		t.Errorf("the refreshed CRLF taxonomy must verify unchanged: %v", s.report.Warnings)
+	}
+}
+
+// Negative and boundary: an edited CRLF copy of the earlier taxonomy, and a copy with mixed
+// line endings, are not Praetor's unedited output. Both stay byte for byte, with a warning.
+func TestReconcileLabels_Negative_EditedOrMixedCRLFPriorStaysUntouched(t *testing.T) {
+	prior := string(readFixtureDir(t, priorLabelFixtures)["pre-document-start.labels.yaml"])
+	for name, text := range map[string]string{
+		"edited CRLF":   crlfText(prior + "  - name: \"local\"\n    color: \"000000\"\n"),
+		"mixed endings": strings.Replace(crlfText(prior), "\r\n", "\n", 1),
+	} {
+		s, path := labelSession(t, []byte(text), AdoptOptions{})
+		if err := reconcileLabels(t.Context(), s); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got := mustRead(t, path); got != text {
+			t.Errorf("%s: the taxonomy was rewritten:\n%q", name, got)
+		}
+		if len(s.report.Warnings) != 1 {
+			t.Errorf("%s: the preserved file must be reported: %v", name, s.report.Warnings)
+		}
 	}
 }

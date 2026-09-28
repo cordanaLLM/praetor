@@ -20,12 +20,12 @@ const (
 	maxReportedExtraJobs = 5
 )
 
-// priorLefthookDigests are the SHA-256 digests of every lefthook.yml Praetor generated before
-// the current template, keyed to what produced them. Like isLegacyVerificationMakefile, only
-// these exact bytes are recognised: adoption migrates them to the current rendering instead of
-// treating its own earlier output as foreign and leaving it unfixed forever (BUG-859). An
-// edited copy is not exact and stays untouched. The files under testdata/lefthook reproduce
-// each digest (lefthook_identity_test.go).
+// priorLefthookDigests are the digests (priorRendering) of every lefthook.yml Praetor generated
+// before the current template, keyed to what produced them. Like isLegacyVerificationMakefile,
+// only these texts are recognised, in either consistent line-ending style: adoption migrates
+// them to the current rendering instead of treating its own earlier output as foreign and
+// leaving it unfixed forever (BUG-859). An edited copy matches no digest and stays untouched.
+// The files under testdata/lefthook reproduce each digest (lefthook_identity_test.go).
 var priorLefthookDigests = map[string]string{
 	"25e9d28b31d2423874042e8c4f9d864bcf970e111a78f2b0b8ad63990081b435": "HISS-16 labels, root Go jobs",
 	"2b94aaf2bb95773724a4ead9dcabad7f5931408b07cf02b11c6768ad384b7413": "HISS-16 labels, root Go jobs, checkpoint jobs",
@@ -45,7 +45,8 @@ type lefthookIdentity struct {
 	reason string
 }
 
-// isPriorLefthookConfig reports whether data is exactly an earlier Praetor rendering.
+// isPriorLefthookConfig reports whether data is an earlier Praetor rendering, in either
+// consistent line-ending style.
 func isPriorLefthookConfig(data []byte) bool {
 	return isPriorRendering(data, priorLefthookDigests)
 }

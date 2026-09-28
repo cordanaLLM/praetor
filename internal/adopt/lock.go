@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
 // ErrLockSourceRequired prevents adoption from claiming placeholder pins are valid.
@@ -40,26 +41,59 @@ func reconcileLockfile(ctx context.Context, s *adoptSession) error {
 // writeBuiltLock pins manifest to the selected source bundle and writes the lock unless the
 // session is a dry run.
 func writeBuiltLock(ctx context.Context, s *adoptSession, path string, manifest *config.Manifest) error {
-	data, err := config.BuildLockfile(ctx, s.opts.LockSourceRoot, manifest)
+	data, err := buildLock(ctx, s, manifest)
 	if err != nil {
-		return fmt.Errorf("generate adoption lock: %w", err)
-	}
-	if err := ctx.Err(); err != nil {
 		return err
 	}
 	return s.write(path, data, filePerm)
 }
 
+// buildLock pins manifest to the selected source bundle.
+func buildLock(ctx context.Context, s *adoptSession, manifest *config.Manifest) ([]byte, error) {
+	data, err := config.BuildLockfile(ctx, s.opts.LockSourceRoot, manifest)
+	if err != nil {
+		return nil, fmt.Errorf("generate adoption lock: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
 // reconcileExistingLock verifies an existing lock, or re-pins it to the selected source bundle
 // when it pins only earlier Praetor catalog texts the source has since re-laid out without
 // changing a value (repinsEarlierCatalog). Any other lock that disagrees with the source keeps
-// failing, as before: re-pinning it is --force.
+// failing, as before: re-pinning it is --force. The lock bytes are observed before they are
+// checked, and the re-pin replaces only those bytes (repinLock), as the label refresh does
+// (refreshPriorScaffold).
 func reconcileExistingLock(ctx context.Context, s *adoptSession, path string, manifest *config.Manifest) error {
+	observed, exists, observeErr := contextopt.ObserveSnapshot(ctx, path)
 	if !repinsEarlierCatalog(ctx, s, manifest) {
 		return verifyExistingLock(ctx, s, manifest)
 	}
-	if err := writeBuiltLock(ctx, s, path, manifest); err != nil {
+	if observeErr != nil {
+		return fmt.Errorf("re-pin %s: read the lock before checking it: %w", lockFile, observeErr)
+	}
+	if !exists {
+		return fmt.Errorf("re-pin %s: the lock was removed while it was checked", lockFile)
+	}
+	return repinLock(ctx, s, path, manifest, observed)
+}
+
+// repinLock replaces the lock at path, which held observed when repinsEarlierCatalog checked
+// it, with one pinned to the selected source bundle. The replacement is bound to observed, so a
+// lock that changed since fails the write and keeps its edit. A dry run writes nothing.
+func repinLock(ctx context.Context, s *adoptSession, path string, manifest *config.Manifest, observed []byte) error {
+	data, err := buildLock(ctx, s, manifest)
+	if err != nil {
 		return err
+	}
+	if !s.opts.DryRun {
+		if err := contextopt.ReplaceSnapshot(ctx, path, data, contextopt.ReplaceOptions{
+			Expected: observed, Exists: true, Mode: filePerm,
+		}); err != nil {
+			return fmt.Errorf("re-pin %s: %w", lockFile, err)
+		}
 	}
 	s.report.recordReconciled(lockFile, "Re-pinned an unmodified earlier Praetor catalog to the selected source bundle; "+
 		"its values are unchanged, only the catalog's layout moved")

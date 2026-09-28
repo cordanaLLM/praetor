@@ -2,6 +2,8 @@ package util
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -57,4 +59,19 @@ func CanonicalTextEquivalent(actual, expected []byte) (bool, error) {
 		return false, fmt.Errorf("canonical text is invalid: %w", err)
 	}
 	return bytes.Equal([]byte(actualLF), []byte(expectedLF)), nil
+}
+
+// CanonicalTextDigest returns the lowercase hexadecimal SHA-256 of data's LF text and whether
+// data used CRLF. It is the digest form of CanonicalTextEquivalent's rule: one consistent
+// checkout line-ending style is allowed, so an LF text and its CRLF checkout share one digest,
+// while mixed endings and lone carriage returns are an error, never repaired into a match.
+// Digests of recorded texts compare with it, and crlf lets a caller that rewrites such a text
+// keep the file's own style (RestoreLineEndings).
+func CanonicalTextDigest(data []byte) (digest string, crlf bool, err error) {
+	normalized, crlf, err := NormalizeLineEndingsStrict(string(data))
+	if err != nil {
+		return "", false, err
+	}
+	sum := sha256.Sum256([]byte(normalized))
+	return hex.EncodeToString(sum[:]), crlf, nil
 }

@@ -2,7 +2,6 @@ package adopt
 
 import (
 	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -11,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -24,30 +24,50 @@ func TestPriorCatalogDigests_Positive_ReproducedByFixtures(t *testing.T) {
 	assertPriorDigestsReproduced(t, priorCatalogFixtures, priorCatalogDigests)
 }
 
-// Positive: every earlier text decodes to exactly the values of the current file it names, so
-// re-pinning an unmodified earlier catalog changes its layout and never a policy value.
-func TestPriorCatalogTexts_Positive_DecodeToTheShippedValues(t *testing.T) {
-	for _, prior := range readFixtureDir(t, priorCatalogFixtures) {
-		sum := sha256.Sum256(prior)
-		rel := priorCatalogDigests[hex.EncodeToString(sum[:])]
+// catalogValuesChangedSinceBUG782 names, by catalog path, every shipped file whose values
+// changed after the BUG-782 layout change. An adopter holding the earlier text of such a file
+// re-pins it only with --force, because isLayoutOnlySuccessor compares values on every run.
+var catalogValuesChangedSinceBUG782 = map[string]bool{}
+
+// Positive and negative, a deliberate tripwire: the shipped text of every earlier catalog file
+// is a layout-only successor of it, so an adopter holding the earlier text re-pins without
+// --force, unless catalogValuesChangedSinceBUG782 lists the file, and then it must not be. A
+// legitimate value change fails here once, naming the file: list it there, which records that
+// its adopters now need --force. The re-pin tests below never read the shipped catalog, so
+// they do not block such a change.
+func TestPriorCatalogTexts_ShippedTextsMatchTheDeclaredValueChanges(t *testing.T) {
+	for name, prior := range readFixtureDir(t, priorCatalogFixtures) {
+		rel := priorCatalogDigests[fixtureDigest(t, name, prior)]
 		current, err := os.ReadFile(filepath.Join(shippedCatalog, filepath.FromSlash(rel)))
 		if err != nil {
 			t.Fatalf("%s: %v", rel, err)
 		}
-		var before, after any
-		if err := yaml.Unmarshal(prior, &before); err != nil {
-			t.Fatalf("%s: prior text: %v", rel, err)
-		}
-		if err := yaml.Unmarshal(current, &after); err != nil {
-			t.Fatalf("%s: shipped text: %v", rel, err)
-		}
-		if !deepEqual(before, after) {
-			t.Errorf("%s: the shipped text changed a value of the earlier one", rel)
-		}
-		if isPriorRendering(current, priorCatalogDigests) {
+		successor, changed := isLayoutOnlySuccessor(prior, current), catalogValuesChangedSinceBUG782[rel]
+		switch {
+		case isPriorRendering(current, priorCatalogDigests):
 			t.Errorf("%s: the shipped text is still an earlier rendering", rel)
+		case !successor && !changed:
+			t.Errorf("%s: the shipped text changes a value of the earlier text; if that is intended, "+
+				"add %q to catalogValuesChangedSinceBUG782 (its adopters then re-pin only with --force)", rel, rel)
+		case successor && changed:
+			t.Errorf("%s: listed in catalogValuesChangedSinceBUG782, but the shipped text keeps every value", rel)
 		}
 	}
+}
+
+// layoutSuccessor re-renders the earlier catalog text at path with every value unchanged: a
+// layout-only successor by construction, whatever values the shipped catalog carries next.
+func layoutSuccessor(t *testing.T, path string) string {
+	t.Helper()
+	var values any
+	if err := yaml.Unmarshal([]byte(mustRead(t, path)), &values); err != nil {
+		t.Fatalf("%s: %v", path, err)
+	}
+	data, err := util.EncodeYAMLDocument(values)
+	if err != nil {
+		t.Fatalf("%s: %v", path, err)
+	}
+	return string(data)
 }
 
 // catalogBodies reads the catalog text of framework and security:high from dir, which holds
@@ -75,11 +95,21 @@ func earlierCatalogRepo(t *testing.T) (*adoptSession, *config.Manifest) {
 	return s, manifest
 }
 
-// currentCatalogSource is a source bundle holding the shipped framework and security:high texts.
+// successorBodies are layout-only successors (layoutSuccessor) of the earlier framework and
+// security:high texts, keyed like catalogBodies.
+func successorBodies(t *testing.T) map[string]string {
+	t.Helper()
+	return map[string]string{
+		"framework":     layoutSuccessor(t, filepath.Join(priorCatalogFixtures, "framework.yaml")),
+		"security:high": layoutSuccessor(t, filepath.Join(priorCatalogFixtures, "security-high.yaml")),
+	}
+}
+
+// currentCatalogSource is a source bundle holding successorBodies, as a later Praetor that
+// re-laid out the catalog without changing a value ships it.
 func currentCatalogSource(t *testing.T, manifest *config.Manifest) string {
 	t.Helper()
-	return newCatalogLockSource(t, manifest, catalogBodies(t,
-		filepath.Join(shippedCatalog, "framework.yaml"), filepath.Join(shippedCatalog, "facets", "security-high.yaml")))
+	return newCatalogLockSource(t, manifest, successorBodies(t))
 }
 
 func runLockAndCatalog(t *testing.T, s *adoptSession) error {
@@ -105,9 +135,10 @@ func TestAdoptRepinsAnUnmodifiedEarlierCatalog(t *testing.T) {
 	if detail := lastLockDetail(t, s); !strings.HasPrefix(detail, "Re-pinned an unmodified earlier Praetor catalog") {
 		t.Errorf("re-pin not reported: %q", detail)
 	}
-	for rel, shipped := range map[string]string{"framework.yaml": "framework.yaml", "facets/security-high.yaml": "facets/security-high.yaml"} {
+	successors := successorBodies(t)
+	for rel, id := range map[string]string{"framework.yaml": "framework", "facets/security-high.yaml": "security:high"} {
 		got := mustRead(t, filepath.Join(s.repoPath, ".config", "archetypes", filepath.FromSlash(rel)))
-		if got != mustRead(t, filepath.Join(shippedCatalog, filepath.FromSlash(shipped))) {
+		if got != successors[id] {
 			t.Errorf("%s was not refreshed to the current text", rel)
 		}
 	}
@@ -162,12 +193,11 @@ func TestAdoptDoesNotRepinAnEditedOrForeignCatalog(t *testing.T) {
 	}
 }
 
-// changedCatalogSource is a source bundle holding the shipped framework and security:high texts
-// with the policy value old replaced by new in the file named by id.
+// changedCatalogSource is a source bundle holding successorBodies with the policy value old
+// replaced by new in the file named by id.
 func changedCatalogSource(t *testing.T, manifest *config.Manifest, id, old, replacement string) string {
 	t.Helper()
-	bodies := catalogBodies(t,
-		filepath.Join(shippedCatalog, "framework.yaml"), filepath.Join(shippedCatalog, "facets", "security-high.yaml"))
+	bodies := successorBodies(t)
 	changed := strings.Replace(bodies[id], old, replacement, 1)
 	if changed == bodies[id] {
 		t.Fatalf("%s holds no %q to change", id, old)
@@ -212,15 +242,20 @@ func TestAdoptDoesNotRepinAnEarlierCatalogToChangedValues(t *testing.T) {
 // refused without --force, and --force still replaces it.
 func TestPrepareCatalogWritesReplacesEarlierTextsOnlyByLayout(t *testing.T) {
 	prior := mustRead(t, filepath.Join(priorCatalogFixtures, "framework.yaml"))
-	shipped := mustRead(t, filepath.Join(shippedCatalog, "framework.yaml"))
-	changed := strings.Replace(shipped, "max_func_loc: 75", "max_func_loc: 400", 1)
+	successor := successorBodies(t)["framework"]
+	changed := strings.Replace(successor, "max_func_loc: 75", "max_func_loc: 400", 1)
+	if changed == successor {
+		t.Fatal("the successor holds no max_func_loc: 75 to change")
+	}
 	cases := []struct {
 		name, onDisk, source string
 		force, replaced      bool
 	}{
-		{"layout-only successor", prior, shipped, false, true},
+		{"layout-only successor", prior, successor, false, true},
+		{"CRLF checkout of the earlier text (HISS-21)", crlfText(prior), successor, false, true},
 		{"changed value", prior, changed, false, false},
-		{"edited earlier text", prior + "# local note\n", shipped, false, false},
+		{"edited earlier text", prior + "# local note\n", successor, false, false},
+		{"mixed line endings", strings.Replace(crlfText(prior), "\r\n", "\n", 1), successor, false, false},
 		{"forced value change", prior, changed, true, true},
 	}
 	for _, tc := range cases {
@@ -236,5 +271,42 @@ func TestPrepareCatalogWritesReplacesEarlierTextsOnlyByLayout(t *testing.T) {
 		if !tc.replaced && err == nil {
 			t.Errorf("%s: must be refused without --force", tc.name)
 		}
+	}
+}
+
+// Negative, boundary and positive: the re-pin replaces only the lock bytes the check saw. A lock
+// edited after the check keeps its edit and the write fails, a dry run writes nothing, and the
+// checked bytes are replaced by a lock that verifies against the source.
+func TestRepinLockReplacesOnlyTheCheckedLock(t *testing.T) {
+	s, manifest := earlierCatalogRepo(t)
+	s.opts.LockSourceRoot = currentCatalogSource(t, manifest)
+	path := filepath.Join(s.repoPath, lockFile)
+	checked := mustRead(t, path)
+	edited := checked + "# edited after the check\n"
+	mustWrite(t, path, edited)
+	if err := repinLock(t.Context(), s, path, manifest, []byte(checked)); err == nil {
+		t.Error("negative: a lock edited after the check must fail the re-pin")
+	}
+	if mustRead(t, path) != edited {
+		t.Fatal("negative: the edit made after the check was overwritten")
+	}
+
+	s.opts.DryRun = true
+	if err := repinLock(t.Context(), s, path, manifest, []byte(checked)); err != nil || mustRead(t, path) != edited {
+		t.Fatalf("boundary: a dry run must plan the re-pin and write nothing: %v", err)
+	}
+
+	s.opts.DryRun = false
+	mustWrite(t, path, checked)
+	if err := repinLock(t.Context(), s, path, manifest, []byte(checked)); err != nil {
+		t.Fatalf("positive: the checked lock must be re-pinned: %v", err)
+	}
+	if mustRead(t, path) == checked {
+		t.Fatal("positive: the lock was not rewritten")
+	}
+	if _, err := config.ValidateLockfileWithOptions(t.Context(), config.LockValidationOptions{
+		Root: s.repoPath, CatalogRoot: s.opts.LockSourceRoot,
+	}, manifest); err != nil {
+		t.Errorf("positive: the re-pinned lock must verify against the source: %v", err)
 	}
 }

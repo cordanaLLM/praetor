@@ -53,6 +53,23 @@ func TestAdopt_Positive_PriorLefthookMigratedAndActivated(t *testing.T) {
 	}
 }
 
+// Positive (HISS-21): a CRLF checkout of an earlier rendering is still Praetor's unedited
+// output. It is migrated to the current rendering's exact LF bytes, the only bytes activation
+// trusts, and activated.
+func TestAdopt_Positive_CRLFPriorLefthookMigratedAndActivated(t *testing.T) {
+	prior := crlfText(string(readPriorLefthookFixtures(t)["root-go.lefthook.yml"]))
+	repoPath, rep := adoptLefthookFixture(t, "prior-crlf", prior, false)
+	if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); got != buildLefthookYAML() {
+		t.Errorf("not migrated to the current rendering:\n%q", got)
+	}
+	if !contains(rep.ReconciledFiles, lefthookFile) {
+		t.Errorf("migration not reported: %v", rep.ReconciledFiles)
+	}
+	if !fileExists(filepath.Join(repoPath, ".git", "hooks", preCommitHook)) {
+		t.Error("the migrated configuration was not activated")
+	}
+}
+
 // Negative: an edited copy of an earlier rendering is not exact, so it is preserved and not
 // activated, exactly like any other configuration Praetor did not write.
 func TestAdopt_Negative_EditedPriorLefthookPreserved(t *testing.T) {
@@ -84,6 +101,9 @@ func TestIsPriorLefthookConfig_Boundary_CurrentAndTruncated(t *testing.T) {
 	prior := readPriorLefthookFixtures(t)["hiss16.lefthook.yml"]
 	if isPriorLefthookConfig(prior[:len(prior)-1]) {
 		t.Error("a truncated prior rendering was recognised")
+	}
+	if isPriorLefthookConfig([]byte(strings.Replace(crlfText(string(prior)), "\r\n", "\n", 1))) {
+		t.Error("a prior rendering with mixed line endings was recognised")
 	}
 }
 

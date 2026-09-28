@@ -21,17 +21,22 @@ type manifestPlan struct {
 	note string
 }
 
-// isPriorManifestRendering reports whether data is exactly the text an earlier adoption wrote
-// for the manifest it decodes to: yaml.Marshal's rendering, before config.RenderManifest. An
-// operator's edit, comment or reordering makes it differ, and the manifest is then left as
-// written.
+// isPriorManifestRendering reports whether data is the text an earlier adoption wrote for the
+// manifest it decodes to, yaml.Marshal's rendering before config.RenderManifest, in one
+// consistent line-ending style (util.CanonicalTextEquivalent, the rule priorRendering digests
+// with). An operator's edit, comment or reordering makes it differ, and the manifest is then
+// left as written.
 func isPriorManifestRendering(data []byte) bool {
 	manifest, err := config.DecodeManifest(data)
 	if err != nil {
 		return false
 	}
 	prior, err := yaml.Marshal(manifest)
-	return err == nil && bytes.Equal(prior, data)
+	if err != nil {
+		return false
+	}
+	equivalent, err := util.CanonicalTextEquivalent(data, prior)
+	return err == nil && equivalent
 }
 
 // planExistingManifest adds or re-binds register.sources in an existing manifest and leaves
@@ -45,17 +50,23 @@ func planExistingManifest(ctx context.Context, s *adoptSession, full string, dat
 	return migratePriorManifest(ctx, plan, changed)
 }
 
-// migratePriorManifest renders the planned manifest in the current layout. It keeps the plan
-// when the rendering is already current or would decode to anything else.
+// migratePriorManifest renders the planned manifest in the current layout, in the planned
+// text's own line-ending style. It keeps the plan when the rendering is already current or
+// would decode to anything else.
 func migratePriorManifest(ctx context.Context, plan manifestPlan, changed bool) (manifestPlan, bool, error) {
 	manifest, err := config.DecodeManifest(plan.data)
 	if err != nil {
 		return manifestPlan{}, false, fmt.Errorf("existing %s: %w", manifestFile, err)
 	}
-	rendered, err := config.RenderManifest(manifest)
+	_, crlf, err := util.NormalizeLineEndingsStrict(string(plan.data))
+	if err != nil {
+		return manifestPlan{}, false, fmt.Errorf("existing %s: %w", manifestFile, err)
+	}
+	lf, err := config.RenderManifest(manifest)
 	if err != nil {
 		return manifestPlan{}, false, err
 	}
+	rendered := []byte(util.RestoreLineEndings(string(lf), crlf))
 	if bytes.Equal(rendered, plan.data) || !sameManifest(ctx, plan.data, rendered) {
 		return plan, changed, nil
 	}
