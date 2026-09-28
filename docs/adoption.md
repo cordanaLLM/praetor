@@ -87,6 +87,16 @@ unset flag keeps the default. The flags apply to single-repository adoption; bat
   a match is reported as verified, a difference as `differs from the scaffold` with a
   warning, and the file is kept. `--force` regenerates only the scaffolds it owns
   (`TestScaffoldFile_ReportsDriftInsteadOfVerified`).
+- **Earlier Praetor output.** Adoption writes YAML that passes `yamllint --strict` with its
+  default rules (`make hooks-lint`, [git hooks](guides/git-hooks.md)). Files an earlier
+  release wrote before that layout, and nobody edited since, are refreshed on a plain re-run
+  with every value unchanged: a manifest that is exactly `yaml.Marshal` of what it declares
+  (`TestAdoptMigratesAnEarlierManifestRendering`), the earlier label taxonomy
+  (`TestReconcileLabels_Positive_RefreshesPriorTaxonomy`), and a lock that pins only earlier
+  catalog texts, which is re-pinned to `--lock-source-root` while the pinned catalog files are
+  replaced (`TestAdoptRepinsAnUnmodifiedEarlierCatalog`). An edited copy of any of them is
+  left as it is and keeps the contract above
+  (`TestAdoptDoesNotRepinAnEditedOrForeignCatalog`).
 
 ---
 

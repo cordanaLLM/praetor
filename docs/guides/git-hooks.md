@@ -74,6 +74,23 @@ Without `PRAETOR_HOOK_LINT_BIN` the gate takes the tools from `PATH`, and each c
 with its reason when its tool is missing or is not the pinned version. With the variable set,
 as CI sets it, a missing or mismatched tool fails the gate.
 
+`make hooks-lint` also runs `scripts/test_emitted_yaml_lint.py`, which reuses that gate's tool
+resolution to run `yamllint --strict -d default` over the other YAML Praetor writes into a
+repository:
+
+- `.config/labels.yaml`, linted as praetor's own copy, which `internal/forge/labels_test.go`
+  holds byte-equal to `forge.DefaultLabelTaxonomy`;
+- every profile and facet under `.config/archetypes`, which adoption copies byte for byte into
+  the adopter's pinned catalog;
+- the `.standards.yaml` rendering (`config.RenderManifest`, which adoption, `praetorctl init` and
+  onboarding share), from `internal/adopt/testdata/emitted/.standards.yaml`, which
+  `TestEmittedManifestFixtureMatchesTheRendering` keeps equal to the rendering;
+- every `.yml` and `.yaml` body under `templates/` that flavor apply scaffolds, with its leading
+  template comment dropped as rendering drops it.
+
+Each path comes from the Go constant that names it. The gate also appends an overlong line to
+every file and requires yamllint to reject each one, so the rule is proven to be on.
+
 | Git stage | Work performed |
 | --- | --- |
 | `pre-commit`, `pre-merge-commit` | Audit the live private ledger, then check the exact index for whitespace, conflict markers, Python/JSON syntax, YAML, shell, workflow and Docker lint; Go formatting and vet on changed packages; verify affected generated agent instructions. |

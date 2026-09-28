@@ -1,0 +1,3 @@
+type: fixed
+title: The .standards.yaml, .standards.lock, .config/labels.yaml, pinned .config/archetypes catalog and flavor YAML templates that adoption writes, and the manifests init and onboarding write, now pass yamllint's default rules in strict mode, so an adopter whose hooks lint the whole tree no longer fails on files Praetor wrote; each opens with a document start, workflows quote their 'on' key, long descriptions and comments are wrapped and long digests sit on their own line without changing any value, plain re-adoption refreshes an unmodified earlier manifest, label taxonomy or pinned catalog (re-pinning the lock) instead of requiring --force, and make hooks-lint lints every one of them
+breaking: false

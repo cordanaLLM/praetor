@@ -18,6 +18,19 @@ Fourteen profiles ship in `.config/archetypes/`:
 
 Six facets ship in `.config/archetypes/facets/`.
 
+**Every catalog file passes yamllint's default rules.** Adoption copies the pinned files byte for
+byte into an adopter's `.config/archetypes`, where the adopter's own lint may run, so each file
+opens with the `---` document start and keeps every line within 80 columns. Wrap a long quoted
+`description` across lines at single spaces, which YAML folds back into one space. `make
+hooks-lint` lints the whole catalog (`scripts/test_emitted_yaml_lint.py`).
+
+**Changing a file moves its digest.** Re-pin `.standards.lock` with the digests `praetorctl
+audit` reports, as the lock's header describes. An adopter's lock pins the earlier text, and a
+re-run of `praetorctl adopt` against the new catalog fails on it until `--force`. The exception
+is a layout-only change listed in `priorCatalogDigests` (`internal/adopt/policy_catalog.go`):
+a lock that pins only those texts is re-pinned without `--force`
+(`TestAdoptRepinsAnUnmodifiedEarlierCatalog`).
+
 **A profile is not a flavor.** A profile says what governance applies; a flavor says which templates,
 settings and toolchains a repository of that kind requires. Five profiles currently have any flavor
 implementing them — `app-service`, `framework`, `native-gpu-systems`, `container-image` and
