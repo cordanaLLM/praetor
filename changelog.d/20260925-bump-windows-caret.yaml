@@ -1,0 +1,4 @@
+type: fixed
+title: Keep the caret of a pnpm update range on Windows when pnpm is the batch-file shim pnpm.cmd; bump update --all and bump unify --apply now write each caret as cmd.exe needs it to survive both parses on the way to pnpm, so the lockfile follows the declared range instead of an exact version, and a spec holding a character cmd.exe would reinterpret is refused before pnpm runs
+issue: "508"
+breaking: false
