@@ -1,10 +1,13 @@
 package markdownlint
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -270,5 +273,190 @@ func TestFamilySurfaceBoundary(t *testing.T) {
 	names[0] = "mutated"
 	if Names()[0] != "package.json" {
 		t.Fatal("Names exposed the inventory for mutation")
+	}
+}
+
+// renovateConfig is the part of renovate.json that keeps the workflow's SHA pins current.
+type renovateConfig struct {
+	GitHubActions struct {
+		ManagerFilePatterns []string `json:"managerFilePatterns"`
+	} `json:"github-actions"`
+	PackageRules []struct {
+		MatchManagers  []string `json:"matchManagers"`
+		MatchFileNames []string `json:"matchFileNames"`
+		PinDigests     bool     `json:"pinDigests"`
+		GroupName      string   `json:"groupName"`
+	} `json:"packageRules"`
+}
+
+func readRenovateConfig(t *testing.T) renovateConfig {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "renovate.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config renovateConfig
+	if err := json.Unmarshal(raw, &config); err != nil {
+		t.Fatal(err)
+	}
+	return config
+}
+
+// githubActionsReads reports whether one of the github-actions manager's added file patterns,
+// a /re2/ literal as Renovate spells it, matches rel.
+func githubActionsReads(t *testing.T, config renovateConfig, rel string) bool {
+	t.Helper()
+	for _, pattern := range config.GitHubActions.ManagerFilePatterns {
+		expr, ok := strings.CutPrefix(pattern, "/")
+		expr, closed := strings.CutSuffix(expr, "/")
+		if !ok || !closed {
+			t.Fatalf("github-actions file pattern %q is not a /regex/ literal", pattern)
+		}
+		if regexp.MustCompile(expr).MatchString(rel) {
+			return true
+		}
+	}
+	return false
+}
+
+// Positive: Renovate's github-actions manager reads the template source as well as the
+// repository's own copy, pins digests, and groups the two files into one branch, so an update
+// never leaves them apart for the audit byte lock to reject. Every uses: line sits on a line of
+// its own in the source, where the manager's line-based extractor finds it.
+func TestRenovateUpdatesTemplatePinsWithWorkflowCopy(t *testing.T) {
+	config := readRenovateConfig(t)
+	if !githubActionsReads(t, config, SourceFile) {
+		t.Fatalf("renovate.json github-actions.managerFilePatterns does not cover %s", SourceFile)
+	}
+	pinned, grouped := false, false
+	for _, rule := range config.PackageRules {
+		if !slices.Contains(rule.MatchManagers, "github-actions") {
+			continue
+		}
+		pinned = pinned || (rule.PinDigests && len(rule.MatchFileNames) == 0)
+		grouped = grouped || (rule.GroupName != "" && slices.Contains(rule.MatchFileNames, WorkflowFile) &&
+			slices.Contains(rule.MatchFileNames, SourceFile))
+	}
+	if !pinned || !grouped {
+		t.Fatalf("renovate.json github-actions rules: pinDigests=%v, one group over %s and %s=%v", pinned, WorkflowFile, SourceFile, grouped)
+	}
+	source, err := os.ReadFile(filepath.Base(SourceFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(source), "\n")
+	for _, line := range strings.Split(Workflow, "\n") {
+		if strings.Contains(line, "uses:") && !slices.Contains(lines, line) {
+			t.Fatalf("uses line %q is not a line of its own in %s", line, SourceFile)
+		}
+	}
+}
+
+// Negative and boundary: the added pattern names the template source alone, not its test or
+// the neighbouring assets, which carry no workflow.
+func TestRenovateTemplatePatternIsExact(t *testing.T) {
+	config := readRenovateConfig(t)
+	for _, rel := range []string{"tools/markdownlint/assets_test.go", Directory + "/verify.mjs", "x" + SourceFile, SourceFile + ".bak"} {
+		if githubActionsReads(t, config, rel) {
+			t.Fatalf("renovate.json github-actions.managerFilePatterns also matches %s", rel)
+		}
+	}
+}
+
+// priorTextDir holds every earlier text a digest in priorDigests names. A file is named after
+// the managed file it once was: praetor-docs.* for WorkflowFile, <asset>.* for an asset.
+var priorTextDir = filepath.Join("testdata", "prior")
+
+// priorTextPath maps a testdata/prior file name to the managed path it was shipped at.
+func priorTextPath(name string) string {
+	if strings.HasPrefix(name, "praetor-docs.") {
+		return WorkflowFile
+	}
+	asset, _, _ := strings.Cut(name, ".")
+	for _, candidate := range Names() {
+		if strings.HasPrefix(candidate, asset+".") {
+			return Directory + "/" + candidate
+		}
+	}
+	return ""
+}
+
+func lfDigest(data []byte) string {
+	sum := sha256.Sum256([]byte(strings.ReplaceAll(string(data), "\r\n", "\n")))
+	return hex.EncodeToString(sum[:])
+}
+
+// Positive: every file under testdata/prior reproduces exactly one digest of PriorDigests,
+// mapped to the managed path the file was shipped at, and every digest is reproduced.
+func TestPriorDigestsReproduce(t *testing.T) {
+	entries, err := os.ReadDir(priorTextDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digests := PriorDigests()
+	if len(entries) != len(digests) {
+		t.Fatalf("testdata/prior holds %d texts for %d digests", len(entries), len(digests))
+	}
+	for _, entry := range entries {
+		data, err := os.ReadFile(filepath.Join(priorTextDir, entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		rel, known := digests[lfDigest(data)]
+		if want := priorTextPath(entry.Name()); !known || want == "" || rel != want {
+			t.Fatalf("%s: digest maps to %q (known=%v), want %q", entry.Name(), rel, known, want)
+		}
+	}
+}
+
+// Negative: the current texts are not prior texts, and PriorDigests hands out a copy.
+func TestPriorDigestsExcludeCurrentTexts(t *testing.T) {
+	digests := PriorDigests()
+	current := map[string][]byte{WorkflowFile: []byte(Workflow)}
+	for _, name := range Names() {
+		data, err := Read(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		current[Directory+"/"+name] = data
+	}
+	for rel, data := range current {
+		if _, listed := digests[lfDigest(data)]; listed {
+			t.Fatalf("the current text of %s is listed as an earlier text", rel)
+		}
+	}
+	for digest := range digests {
+		delete(digests, digest)
+	}
+	if len(PriorDigests()) == 0 {
+		t.Fatal("PriorDigests exposed its map for mutation")
+	}
+}
+
+// Boundary: a text differing from an earlier one by a single trailing byte, or by carriage
+// returns alone, maps as the file-name convention says.
+func TestPriorDigestsBoundary(t *testing.T) {
+	entries, err := os.ReadDir(priorTextDir)
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("no earlier texts: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(priorTextDir, entries[0].Name()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A Windows checkout may convert testdata to CRLF; the fixtures below start from LF.
+	data := []byte(strings.ReplaceAll(string(raw), "\r\n", "\n"))
+	digests := PriorDigests()
+	if _, known := digests[lfDigest(append(data, '\n'))]; known {
+		t.Fatal("an earlier text with one more byte is listed")
+	}
+	if _, known := digests[lfDigest([]byte(strings.ReplaceAll(string(data), "\n", "\r\n")))]; !known {
+		t.Fatal("the CRLF form of an earlier text does not reduce to its listed digest")
+	}
+	if got := priorTextPath("markdownlint-cli2.v1.yaml"); got != Directory+"/markdownlint-cli2.yaml" {
+		t.Fatalf("asset naming convention maps to %q", got)
+	}
+	if got := priorTextPath("unknown.v1.txt"); got != "" {
+		t.Fatalf("an unknown prior file maps to %q", got)
 	}
 }

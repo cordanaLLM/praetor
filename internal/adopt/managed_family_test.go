@@ -5,6 +5,8 @@
 package adopt
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io/fs"
 	"os"
@@ -178,6 +180,105 @@ func TestManagedFamilyRemovalRefusesBeforeDeleting(t *testing.T) {
 	}
 }
 
+const (
+	// priorFixtureWorkflow and priorFixtureCore are earlier texts of secondFamily's workflow
+	// and core.mjs.
+	priorFixtureWorkflow = "name: Fixture Gate\non: push\n"
+	priorFixtureCore     = "export const core = 0;\n"
+	refreshedPriorDetail = "Refreshed an earlier Praetor text to the current locked text"
+)
+
+// priorFamily is secondFamily recognising an earlier text of its workflow and of core.mjs.
+func priorFamily() managedasset.Family {
+	family := secondFamily()
+	family.Prior = map[string]string{}
+	for text, rel := range map[string]string{priorFixtureWorkflow: family.WorkflowFile, priorFixtureCore: "tools/fixture/core.mjs"} {
+		sum := sha256.Sum256([]byte(text))
+		family.Prior[hex.EncodeToString(sum[:])] = rel
+	}
+	return family
+}
+
+// Positive: plain adoption refreshes exact earlier Praetor texts, keeping a file's CRLF
+// style, and a family whose only files are earlier texts counts as adopted, so
+// refuse-on-first-adopt does not fire.
+func TestManagedFamilyRefreshesPriorTextWithoutForce(t *testing.T) {
+	s := familySession(t, false)
+	family := priorFamily()
+	mustWrite(t, filepath.Join(s.repoPath, ".github", "workflows", "fixture.yml"), priorFixtureWorkflow)
+	mustWrite(t, filepath.Join(s.repoPath, "tools", "fixture", "core.mjs"), strings.ReplaceAll(priorFixtureCore, "\n", "\r\n"))
+	if err := reconcileManagedFamily(t.Context(), s, family); err != nil {
+		t.Fatal(err)
+	}
+	for rel, want := range map[string]string{
+		".github/workflows/fixture.yml":         family.Workflow,
+		"tools/fixture/core.mjs":                "export const core = 1;\r\n",
+		"tools/fixture/third_party/lib/LICENSE": "MIT\n",
+	} {
+		if got, _ := familyFile(t, s, rel); got != want {
+			t.Fatalf("%s = %q, want %q", rel, got, want)
+		}
+	}
+	for _, rel := range []string{".github/workflows/fixture.yml", "tools/fixture/core.mjs"} {
+		if action, _ := actionOf(s.report, rel); action.Action != actionReconcile || action.Details != refreshedPriorDetail {
+			t.Fatalf("%s action = %+v", rel, action)
+		}
+	}
+}
+
+// Negative: an edited earlier text is not Praetor's output and keeps the --force contract, and
+// a dry run reports a refresh without writing it.
+func TestManagedFamilyPriorTextKeepsForceContract(t *testing.T) {
+	s := familySession(t, false)
+	family := priorFamily()
+	edited := priorFixtureCore + "// edited\n"
+	mustWrite(t, filepath.Join(s.repoPath, ".github", "workflows", "fixture.yml"), family.Workflow)
+	mustWrite(t, filepath.Join(s.repoPath, "tools", "fixture", "core.mjs"), edited)
+	if err := reconcileManagedFamily(t.Context(), s, family); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := familyFile(t, s, "tools/fixture/core.mjs"); got != edited {
+		t.Fatalf("an edited earlier text was overwritten without --force: %q", got)
+	}
+	dry := familySession(t, false)
+	dry.opts.DryRun = true
+	mustWrite(t, filepath.Join(dry.repoPath, ".github", "workflows", "fixture.yml"), priorFixtureWorkflow)
+	if err := reconcileManagedFamily(t.Context(), dry, family); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := familyFile(t, dry, ".github/workflows/fixture.yml"); got != priorFixtureWorkflow {
+		t.Fatalf("a dry run refreshed an earlier text: %q", got)
+	}
+	if action, _ := actionOf(dry.report, ".github/workflows/fixture.yml"); action.Details != refreshedPriorDetail {
+		t.Fatalf("dry-run action = %+v", action)
+	}
+}
+
+// Boundary: disabling removes an earlier text like the canonical one, while an earlier text
+// at a path its digest does not name is drift and stops the removal.
+func TestManagedFamilyRemovesPriorText(t *testing.T) {
+	s := familySession(t, false)
+	family := priorFamily()
+	if err := reconcileManagedFamily(t.Context(), s, family); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(s.repoPath, ".github", "workflows", "fixture.yml"), priorFixtureWorkflow)
+	mustWrite(t, filepath.Join(s.repoPath, "tools", "fixture", "core.mjs"), priorFixtureWorkflow)
+	err := removeManagedFamilies(t.Context(), s, []managedasset.Family{family})
+	if err == nil || err.Error() != "refusing to remove drifted documentation asset tools/fixture/core.mjs" {
+		t.Fatalf("removal over a misplaced earlier text: %v", err)
+	}
+	mustWrite(t, filepath.Join(s.repoPath, "tools", "fixture", "core.mjs"), priorFixtureCore)
+	if err := removeManagedFamilies(t.Context(), s, []managedasset.Family{family}); err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range family.ManagedPaths() {
+		if _, ok := familyFile(t, s, rel); ok {
+			t.Fatalf("%s survived removal", rel)
+		}
+	}
+}
+
 // Positive and boundary: the documentation facet selects the registry's families, and every
 // documentation asset path belongs to exactly one of them.
 func TestDocumentationFamiliesCoverAssetPaths(t *testing.T) {
@@ -275,5 +376,37 @@ func TestManagedFileIsCanonical(t *testing.T) {
 	mixed := []byte("name: Fixture Gate\r\n\n")
 	if canonical, err := ManagedFileIsCanonical(family, ".github/workflows/fixture.yml", mixed); err != nil || canonical {
 		t.Fatalf("mixed endings: canonical=%v err=%v", canonical, err)
+	}
+}
+
+// ManagedFileIsPraetors: positive for the canonical text and for an earlier text in either
+// consistent line-ending style, negative for an edited earlier text, for an earlier text at a
+// path its digest does not name and for a path the family does not own, boundary for an
+// earlier text with mixed endings, which is neither and never an error.
+func TestManagedFileIsPraetors(t *testing.T) {
+	family := priorFamily()
+	for rel, text := range map[string]string{
+		"tools/fixture/third_party/lib/LICENSE": "MIT\n",
+		".github/workflows/fixture.yml":         priorFixtureWorkflow,
+		"tools/fixture/core.mjs":                strings.ReplaceAll(priorFixtureCore, "\n", "\r\n"),
+	} {
+		if praetors, err := ManagedFileIsPraetors(family, rel, []byte(text)); err != nil || !praetors {
+			t.Fatalf("%s holding %q: praetors=%v err=%v", rel, text, praetors, err)
+		}
+	}
+	for rel, text := range map[string]string{
+		".github/workflows/fixture.yml": priorFixtureWorkflow + "# edited\n",
+		"tools/fixture/core.mjs":        priorFixtureWorkflow,
+	} {
+		if praetors, err := ManagedFileIsPraetors(family, rel, []byte(text)); err != nil || praetors {
+			t.Fatalf("%s holding %q: praetors=%v err=%v", rel, text, praetors, err)
+		}
+	}
+	if _, err := ManagedFileIsPraetors(family, "tools/fixture/unknown.mjs", nil); err == nil {
+		t.Fatal("a path the family does not own was classified")
+	}
+	mixed := []byte(strings.Replace(priorFixtureWorkflow, "\n", "\r\n", 1))
+	if praetors, err := ManagedFileIsPraetors(family, ".github/workflows/fixture.yml", mixed); err != nil || praetors {
+		t.Fatalf("mixed endings: praetors=%v err=%v", praetors, err)
 	}
 }

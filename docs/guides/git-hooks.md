@@ -38,6 +38,11 @@ hand with its scripts and extends it from their own `lefthook.yml`, as
 hooks may run: black and yamllint with their built-in defaults (yamllint in strict mode) and
 flake8 at 100 columns. The gate lints copies in an empty directory with configuration files
 ignored, and checks negative and boundary fixtures so the policy is proven to be on.
+The same yamllint run covers the documentation gate's locked YAML, which audit holds byte-equal
+in every `docs:seo-portal` repository: the workflow text adoption writes to
+`.github/workflows/praetor-docs.yml` and `tools/markdownlint/markdownlint-cli2.yaml`, both read
+through `tools/markdownlint/assets.go`
+(`test_yamllint_accepts_emitted_yaml`).
 
 The gate also lints the two hook files adoption renders from templates in
 `internal/adopt/hooks.go`: the root `lefthook.yml` (`buildLefthookYAMLFor`) and

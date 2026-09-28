@@ -106,6 +106,35 @@ func TestAuditDocumentationGateNegative(t *testing.T) {
 	}
 }
 
+// An earlier Praetor text of the workflow fails the byte lock like any drift, but names plain
+// adoption, which refreshes it, where an edited copy names --force; with the facet disabled
+// the earlier text still counts as a retained Praetor asset.
+func TestAuditDocumentationGatePriorText(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", markdownassets.Directory, "testdata", "prior", "praetor-docs.ubuntu-26.04-v4.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A Windows checkout may convert testdata to CRLF; the edited case must not mix endings.
+	prior := []byte(strings.ReplaceAll(string(raw), "\r\n", "\n"))
+	enabled := &config.Manifest{Facets: []string{"docs:seo-portal"}}
+	for text, want := range map[string]string{
+		string(prior):                                   "holds an earlier Praetor text; run 'praetorctl adopt' to refresh it",
+		string(prior) + "# operator\n":                  "differs from the locked Praetor asset; run 'praetorctl adopt --force'",
+		strings.ReplaceAll(string(prior), "\n", "\r\n"): "holds an earlier Praetor text",
+	} {
+		root := documentationAuditFixture(t)
+		writeFixtureFile(t, root, adopt.DocumentationWorkflowFile, text)
+		if err := docGate(t.Context(), enabled, root); err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("workflow %q: audit = %v, want %q", text[:20], err, want)
+		}
+	}
+	root := t.TempDir()
+	writeFixtureFile(t, root, adopt.DocumentationWorkflowFile, string(prior))
+	if err := docGate(t.Context(), &config.Manifest{}, root); err == nil || !strings.Contains(err.Error(), "retains Praetor asset") {
+		t.Fatalf("disabled facet over an earlier workflow text: %v", err)
+	}
+}
+
 func TestAuditDocumentationGateBoundary(t *testing.T) {
 	if err := docGate(t.Context(), &config.Manifest{}, t.TempDir()); err != nil {
 		t.Fatalf("repository without documentation facet was gated: %v", err)
@@ -383,10 +412,10 @@ func TestAuditReadmeDocumentationContract(t *testing.T) {
 	}
 	for name, stale := range map[string]string{
 		"missing badge": strings.Replace(canonical,
-			"[![Documentation Governance](https://github.com/acme/widgets/actions/workflows/praetor-docs.yml/badge.svg)](https://github.com/acme/widgets/actions/workflows/praetor-docs.yml)\n", "", 1),
+			"[![Documentation Governance][praetor-docs-badge]][praetor-docs-runs]\n", "", 1),
 		"stale badge": strings.Replace(canonical, "github.com/acme/widgets/", "github.com/acme/old-widgets/", 1),
 		"missing row": strings.Replace(canonical,
-			"| **Documentation** | `make docs-lint` | Enforces locked Markdown style and private scratch-link policy |\n", "", 1),
+			"**Documentation**: `make docs-lint` enforces locked Markdown style and the\n", "", 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			writeFixtureFile(t, root, "README.md", stale)

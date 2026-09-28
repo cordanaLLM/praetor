@@ -1,0 +1,28 @@
+# Every text the Markdown family shipped at a managed path, oldest first: "<sha256>  <path>",
+# the digest taken over the text with LF line endings. The last line of a path is its current
+# text; every earlier line must be in the family's Prior (tools/markdownlint/assets.go
+# priorDigests, with the text under tools/markdownlint/testdata/prior).
+# TestShippedTextLedger (internal/managedasset/shipped_texts_test.go) enforces both
+# directions. After a managed text changes, including a Renovate pin update of the workflow:
+#   PRAETOR_UPDATE_SHIPPED_TEXTS=1 go test ./internal/managedasset -run 'TestShippedTextLedger$'
+# appends the new digest; then record the outgoing text in priorDigests and testdata/prior.
+# Never rewrite or drop a line.
+
+d4e893f5fee713d3a13d88277097a8b85adce9a886151a776fe24ee54bfe49fa  .github/workflows/praetor-docs.yml
+c474aa586d9e96f354027fc507543850bc7cf6e31fe927075604856649caff3a  .github/workflows/praetor-docs.yml
+97d1fad8184587e73dfa25af2cc4e30cf9fa278abf5868fdc0dc27c7a222c95e  .github/workflows/praetor-docs.yml
+938c1926d853a57149b0ede1cc6b9b7ce68eba62f6af30e8d0768458df98a62e  .github/workflows/praetor-docs.yml
+
+9eec2a40bdaff8ec72019d859c7c4f5a969ddd3b816106eb9629c54de52f71f2  tools/markdownlint/package.json
+
+7b2c98f403f05acb4cb6a9645ae2ef9dac9e824ec83eb6b19281e1fd55dda1c7  tools/markdownlint/package-lock.json
+
+67aad4771daac4e6db3c2f8b65dfbd93f72c4067c9187ec759014bbc71bbfd0d  tools/markdownlint/markdownlint-cli2.yaml
+42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3  tools/markdownlint/markdownlint-cli2.yaml
+
+8273fa87112eb15cc3382ba23ba894c542d2ae8352042eab253e9c8b503704f2  tools/markdownlint/verify.mjs
+52cce450d5fd46647d2852919fb279122be22134c81353707a4f214f5f59c9c4  tools/markdownlint/verify.mjs
+a74e1e4f30edb5edb32d5e54b0d21d0d1d7dcfb1984293275ae6ddb6092c77de  tools/markdownlint/verify.mjs
+
+56d7c5a15f5622e6ecf4e6fc2877bb796fd0db4fb73c6f07a41bec637830242c  tools/markdownlint/no-private-scratch-links.mjs
+fec9b4f1b48f5847c91fb64e52483a51ae3c1cc4b2574af6eedce7210cad0d5f  tools/markdownlint/no-private-scratch-links.mjs

@@ -97,6 +97,31 @@ lock together. Audit compares emitted assets as canonical text under the line
 ending policy above; adoption preserves existing files unless `--force`
 explicitly refreshes Praetor-owned assets, and reports a preserved asset that
 differs from the canonical text as drift with a warning rather than as verified.
+One exception needs no `--force`: a file holding exactly a text an earlier
+Praetor shipped at that path is Praetor's own unedited output, so plain
+`praetorctl adopt` refreshes it in its line-ending style. Audit fails on such a
+file and names plain adoption as the repair. The family's `Prior` digests
+(`priorDigests` in `tools/markdownlint/assets.go`, read through
+`internal/managedasset/family.go`) list every earlier text of each managed
+path: the workflow, `markdownlint-cli2.yaml`, `verify.mjs` and
+`no-private-scratch-links.mjs`. `tools/markdownlint/testdata/prior/` holds each
+one (`TestPriorDigestsReproduce`,
+`TestAdoptionDocumentationGateRefreshesPriorTexts`).
+
+The list stays complete because every text the family ever shipped is recorded
+in `internal/managedasset/testdata/shipped/markdown.sha256`, oldest first, one
+`<sha256>  <path>` line each. The last line of a path must be its current text,
+and every earlier line must be in `priorDigests`, in both directions
+(`TestShippedTextLedger`). Changing a managed text therefore takes three steps,
+and CI fails until all three are done:
+
+1. Change the text (a Renovate pin update does this for the workflow).
+2. Append its digest:
+   `PRAETOR_UPDATE_SHIPPED_TEXTS=1 go test ./internal/managedasset -run 'TestShippedTextLedger$'`.
+   The step only appends; it never rewrites or drops a line.
+3. Record the outgoing text: add its digest to `priorDigests` and the text to
+   `tools/markdownlint/testdata/prior/`. The test failure names the digest and
+   the file whose history holds the text.
 
 ## Private scratch links
 
@@ -163,7 +188,7 @@ copy an entire scratch directory to make the diagnostic disappear.
 Repositories declaring the `docs:seo-portal` facet receive the five canonical
 assets under `tools/markdownlint/`, a `docs-lint` prerequisite on `verify-all`,
 and `.github/workflows/praetor-docs.yml`. The marker-owned README block gains an
-exact **Documentation Governance** workflow badge and `make docs-lint` gate row,
+exact **Documentation Governance** workflow badge and `make docs-lint` gate entry,
 using the repository identity declared by the effective manifest. A manifest
 without `repository.owner` and `repository.name` leaves the README block
 unreconciled and records the skip as a warning. Adoption runs
@@ -196,8 +221,8 @@ files as described above (`TestManagedFamilyRefusesForeignFilesOnFirstAdopt`,
 Disabling `docs:seo-portal` is a convergent transition. Run
 `praetorctl adopt --force` so the generated branch ruleset can drop its hosted
 status context; without that authorization, adoption refuses before deleting
-local assets. The transition removes only canonical-equivalent workflow/tool assets
-and the exact managed Makefile block, strips the README badge and row, removes
+local assets. The transition removes only canonical-equivalent workflow/tool assets, earlier
+Praetor texts of them, and the exact managed Makefile block, strips the README badge and gate entry, removes
 the required status context, and rebuilds the formatter-ignore inventory without
 documentation paths. Operator files beside the tool assets and bytes outside
 managed blocks are preserved.
@@ -207,7 +232,7 @@ assets are deleted; `--force` does not turn an ambiguous deletion into an
 authorized one. Re-enabling the facet restores the same canonical surfaces.
 
 `praetorctl audit` verifies the assets, workflow, Makefile attachment, README
-badge and row, effective scratch ignore rules, any configured formatter's
+badge and gate entry, effective scratch ignore rules, any configured formatter's
 inventory, and the required hosted context. When the facet is disabled, audit rejects stale Praetor
 documentation assets, exact Makefile marker lines, README contract text,
 formatter paths, or a structurally declared hosted status context instead of
@@ -220,10 +245,36 @@ the facet is disabled; the next `praetorctl adopt` rewrites the comment.
 The hosted workflow (this repository's own `.github/workflows/praetor-docs.yml`)
 and the template `adopt.DocumentationWorkflow()` emits to adopters
 (`markdownlint.Workflow`, `tools/markdownlint/assets.go`) both pin
-`runs-on: ubuntu-26.04`, and actions to `v7`. `DocumentationAssetIsCanonical` compares an adopted
-repository's workflow file byte-for-byte, line-ending normalized, against that
-template, so a workflow generated before these pins changed now fails the
-exact-content check; `praetorctl adopt` regenerates it onto `ubuntu-26.04` and `v7` actions.
+`runs-on: ubuntu-26.04` and every action by full commit SHA, with the release as
+a trailing comment (`actions/checkout@<sha>  # v7.0.1`). A repository whose
+organization requires SHA pinning can run the gate, and it cannot pin the
+actions itself because audit locks the file.
+`managedasset.Family.Validate` refuses a hosted workflow with a tag-, branch- or
+short-SHA-pinned action (`TestWorkflowPinsEveryActionNegative`). Renovate's
+github-actions manager reads `tools/markdownlint/assets.go` as well as the
+workflow (`renovate.json`), and one grouped branch moves both copies' pins
+together (`TestRenovateUpdatesTemplatePinsWithWorkflowCopy`). Such a branch
+fails CI until someone finishes it: the outgoing workflow text must be recorded
+as described above, and the `sha256` lines of
+`internal/adopt/testdata/managed-family/*.golden` regenerated with
+`PRAETOR_UPDATE_GOLDEN=1 go test ./internal/adopt`. Adopters keep
+`.github/workflows/praetor-docs.yml` excluded from their own update bots:
+Praetor ships each pin update, and a copy an adopter's bot bumped first fails the
+byte lock until their Praetor catches up.
+
+The workflow and `markdownlint-cli2.yaml` pass `yamllint --strict` under its
+default rules, which an adopter's own lint may apply to every file. Both open
+with a `---` document start, and the workflow quotes its `'on'` key so the truthy
+rule does not read it as a boolean. The two pin lines carry a
+`# yamllint disable-line rule:line-length` directive, because a 40-hex SHA plus
+its release comment runs past 80 columns at step indentation. `make hooks-lint`
+checks both files (`scripts/test_emitted_hook_lint.py`).
+
+`DocumentationAssetIsCanonical` compares an adopted repository's workflow file
+byte-for-byte, line-ending normalized, against that template, so a workflow
+generated before these pins changed fails the exact-content check. Plain
+`praetorctl adopt` refreshes an unedited earlier text as described above; an
+edited copy needs `praetorctl adopt --force`.
 
 `adoption.decline: [branch-ruleset]` leaves `.github/rulesets/main.json`
 operator-owned, as described in the

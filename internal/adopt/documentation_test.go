@@ -2,6 +2,8 @@ package adopt
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"slices"
@@ -48,8 +50,10 @@ func TestAdoptionDocumentationGatePositive(t *testing.T) {
 		"/actions/workflows/praetor-docs.yml"
 	readme := mustRead(t, filepath.Join(root, readmeFile))
 	for _, want := range []string{
-		"[![Documentation Governance](" + workflowURL + "/badge.svg)](" + workflowURL + ")",
-		"| **Documentation** | `make docs-lint` | Enforces locked Markdown style and private scratch-link policy |",
+		"[![Documentation Governance][praetor-docs-badge]][praetor-docs-runs]\n",
+		"[praetor-docs-badge]: " + workflowURL + "/badge.svg\n",
+		"[praetor-docs-runs]: " + workflowURL + "\n",
+		"**Documentation**: `make docs-lint` enforces locked Markdown style and the\n",
 	} {
 		if strings.Count(readme, want) != 1 {
 			t.Fatalf("adopted README must contain one exact documentation contract %q:\n%s", want, readme)
@@ -105,6 +109,46 @@ func TestAdoptionDocumentationGateForceRefresh(t *testing.T) {
 	}
 	if got := mustRead(t, asset); got != string(want) {
 		t.Fatal("force did not restore the exact locked asset")
+	}
+}
+
+// Plain adoption refreshes every documentation gate file an earlier Praetor wrote, the texts
+// under tools/markdownlint/testdata/prior, while an edited copy stays preserved without
+// --force (TestAdoptionDocumentationGateForceRefresh).
+func TestAdoptionDocumentationGateRefreshesPriorTexts(t *testing.T) {
+	dir := filepath.Join("..", "..", markdownassets.Directory, "testdata", "prior")
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("no earlier documentation gate texts: %v", err)
+	}
+	root := newTestRepo(t, "documentation-prior-refresh")
+	opts := AdoptOptions{Path: root, Profile: "framework", LockSourceRoot: newAdoptLockSource(t)}
+	if _, err := Adopt(t.Context(), opts); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		raw, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		// A Windows checkout may convert testdata to CRLF, which the refresh would keep; the
+		// LF text is refreshed to the exact LF canonical bytes assertDocumentationAssets reads.
+		prior := strings.ReplaceAll(string(raw), "\r\n", "\n")
+		// tools/markdownlint's TestPriorDigestsReproduce holds each text to the path it maps to.
+		sum := sha256.Sum256([]byte(prior))
+		rel, known := markdownassets.PriorDigests()[hex.EncodeToString(sum[:])]
+		if !known {
+			t.Fatalf("%s is no listed earlier text", entry.Name())
+		}
+		mustWrite(t, filepath.Join(root, filepath.FromSlash(rel)), prior)
+		report, err := Adopt(t.Context(), opts)
+		if err != nil {
+			t.Fatalf("%s: %v", entry.Name(), err)
+		}
+		if action, _ := actionOf(report, rel); action.Details != "Refreshed an earlier Praetor text to the current locked text" {
+			t.Fatalf("%s: %s action = %+v", entry.Name(), rel, action)
+		}
+		assertDocumentationAssets(t, root)
 	}
 }
 

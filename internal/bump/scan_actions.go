@@ -145,8 +145,12 @@ func parseWorkflowFile(ctx context.Context, repoPath, fileName string, seen map[
 	if err != nil {
 		return nil, nil, fmt.Errorf("read workflow %s: %w", fileName, err)
 	}
+	released, err := withPinnedReleases(string(content))
+	if err != nil {
+		return nil, nil, fmt.Errorf("read workflow %s: %w", fileName, err)
+	}
 	// A commented-out `uses:` line is an example or a disabled step, not a pin in use.
-	live, err := util.StripHashComments(string(content))
+	live, err := util.StripHashComments(released)
 	if err != nil {
 		return nil, nil, fmt.Errorf("read workflow %s: %w", fileName, err)
 	}
@@ -172,6 +176,28 @@ func parseWorkflowFile(ctx context.Context, repoPath, fileName string, seen map[
 		}
 	}
 	return candidates, deprecations, nil
+}
+
+// maxWorkflowLines bounds the lines withPinnedReleases walks in one workflow (HISS-02).
+const maxWorkflowLines = 100000
+
+// withPinnedReleases rewrites every uses: reference pinned by full commit SHA with its
+// release as a trailing comment (util.ParsePinnedAction) to action@release. The comment
+// names the release the SHA stands for, and Renovate and Dependabot keep the two together.
+// Stripping comments first would leave the bare SHA, which no release tag equals, so a
+// current SHA pin would read as drift and a SHA pin of a deprecated major would go unflagged.
+// A commented-out step keeps its leading "#" and is stripped as before.
+func withPinnedReleases(content string) (string, error) {
+	lines, uses, err := util.ScanActionUses(content, maxWorkflowLines)
+	if err != nil {
+		return "", err
+	}
+	for _, use := range uses {
+		if use.Pinned {
+			lines[use.Line] = strings.Replace(lines[use.Line], use.Ref, use.Pin.Action+"@"+use.Pin.Release, 1)
+		}
+	}
+	return strings.Join(lines, "\n"), nil
 }
 
 func buildActionCandidate(actName, curVer, fileName string) (ActionCandidate, *DeprecationWarning) {

@@ -21,11 +21,13 @@ const (
 	// File is the repository-relative README that carries the managed block.
 	File = "README.md"
 
-	// documentationRow and the debt row parts are shared by renderBlock and blockState, so
-	// the reader cannot drift from the renderer it reads back.
-	documentationRow = "| **Documentation** | `make docs-lint` | Enforces locked Markdown style and private scratch-link policy |"
-	debtRowPrefix    = "| **Debt Baseline** | `.standards-baseline.json` | "
-	debtRowSuffix    = " |"
+	// The documentation paragraph's first line and the debt baseline lines are shared by
+	// renderBlock and blockState, so the reader cannot drift from the renderer it reads back.
+	documentationLine  = "**Documentation**: `make docs-lint` enforces locked Markdown style and the"
+	debtBaselineLead   = "**Debt Baseline**: `.standards-baseline.json` "
+	debtPendingLine    = debtBaselineLead + "is not recorded;"
+	debtRecordedLine   = debtBaselineLead + "anchors the debt ratchet at"
+	debtRecordedSuffix = "; audit forbids growth."
 )
 
 var (
@@ -165,32 +167,57 @@ func hasCustomBadgeOutsideBlock(content string) bool {
 	return customBadge.MatchString(content)
 }
 
+// Reference labels of the block's badge links. Markdown reference labels are document-wide,
+// so the prefix keeps them apart from the adopter's own.
+const (
+	hissBadgeRef    = "praetor-hiss-badge"
+	docsBadgeRef    = "praetor-docs-badge"
+	docsWorkflowRef = "praetor-docs-runs"
+)
+
+// renderBlock renders the managed block so every line passes markdownlint's MD013 at its
+// default 80 columns, tables and strict mode included, for any repository identity: the
+// badges are reference-style images whose URLs sit in link reference definitions, which MD013
+// always exempts, and the prose is wrapped by hand. Each gate is a paragraph of its own, not
+// a list item: MD004 takes a document's list marker style from its first list, and a block
+// near the top would otherwise impose its marker on every list the README keeps.
 func renderBlock(state State, customHISSBadge bool) string {
-	var lines []string
+	var lines, definitions []string
 	lines = append(lines, Start)
 	if !customHISSBadge {
-		lines = append(lines, renderBadge(state))
+		lines = append(lines, "[![HISS Adopted]["+hissBadgeRef+"]](AGENTS.md)")
+		definitions = append(definitions, "["+hissBadgeRef+"]: "+hissBadgeURL(state))
 	}
 	if state.DocumentationEnabled {
-		lines = append(lines, renderDocumentationBadge(state))
+		badge, links := renderDocumentationBadge(state)
+		lines = append(lines, badge)
+		definitions = append(definitions, links...)
 	}
 	if len(lines) > 1 {
 		lines = append(lines, "")
 	}
 	lines = append(lines,
-		"Praetor manages this repository's declared governance policy. This managed block records adoption state; it is not a verification certificate.",
+		"Praetor manages this repository's declared governance policy. This managed",
+		"block records adoption state; it is not a verification certificate.",
 		"",
-		"| Gate | Command | Contract |",
-		"| :--- | :--- | :--- |",
-		"| **Verification** | `make verify-all` | Runs the repository's configured verification cascade |",
-		"| **HISS Audit** | `praetorctl audit` | Enforces policy, generated-surface integrity, and the debt ratchet |",
-		"| **Context Sync** | `praetorctl compile-context --verify` | Verifies every generated agent context against `AGENTS.md` |",
+		"**Verification**: `make verify-all` runs the repository's configured",
+		"verification cascade.",
+		"",
+		"**HISS Audit**: `praetorctl audit` enforces policy, generated-surface",
+		"integrity, and the debt ratchet.",
+		"",
+		"**Context Sync**: `praetorctl compile-context --verify` verifies every",
+		"generated agent context against `AGENTS.md`.",
+		"",
 	)
 	if state.DocumentationEnabled {
-		lines = append(lines, documentationRow)
+		lines = append(lines, documentationLine, "private scratch-link policy.", "")
 	}
-	lines = append(lines, debtRowPrefix+baselineDescription(state)+debtRowSuffix, End)
-	return strings.Join(lines, "\n")
+	lines = append(lines, baselineParagraph(state)...)
+	if len(definitions) > 0 {
+		lines = append(append(lines, ""), definitions...)
+	}
+	return strings.Join(append(lines, End), "\n")
 }
 
 func validateState(state State) error {
@@ -205,32 +232,41 @@ func validateState(state State) error {
 	return nil
 }
 
-func renderDocumentationBadge(state State) string {
+// renderDocumentationBadge returns the documentation gate's badge line and the reference
+// definitions of its image and of the workflow's runs page.
+func renderDocumentationBadge(state State) (string, []string) {
 	workflow := path.Base(markdownassets.WorkflowFile)
 	workflowURL := fmt.Sprintf("https://github.com/%s/%s/actions/workflows/%s",
 		state.RepositoryOwner, state.RepositoryName, workflow)
-	return fmt.Sprintf("[![%s](%s/badge.svg)](%s)", markdownassets.StatusContext, workflowURL, workflowURL)
+	badge := fmt.Sprintf("[![%s][%s]][%s]", markdownassets.StatusContext, docsBadgeRef, docsWorkflowRef)
+	return badge, []string{
+		"[" + docsBadgeRef + "]: " + workflowURL + "/badge.svg",
+		"[" + docsWorkflowRef + "]: " + workflowURL,
+	}
 }
 
-func renderBadge(state State) string {
+func hissBadgeURL(state State) string {
 	switch {
 	case !state.BaselineKnown:
-		return "[![HISS Adopted](https://img.shields.io/badge/Standards-HISS%20Adopted%20(baseline%20pending)-yellow)](AGENTS.md)"
+		return "https://img.shields.io/badge/Standards-HISS%20Adopted%20(baseline%20pending)-yellow"
 	case state.LegacyDebtCount > 0:
-		return fmt.Sprintf("[![HISS Adopted](https://img.shields.io/badge/Standards-HISS%%20Adopted%%20(%d%%20baselined)-yellow)](AGENTS.md)", state.LegacyDebtCount)
+		return fmt.Sprintf("https://img.shields.io/badge/Standards-HISS%%20Adopted%%20(%d%%20baselined)-yellow", state.LegacyDebtCount)
 	default:
-		return "[![HISS Adopted](https://img.shields.io/badge/Standards-HISS%20Adopted-blue)](AGENTS.md)"
+		return "https://img.shields.io/badge/Standards-HISS%20Adopted-blue"
 	}
 }
 
-func baselineDescription(state State) string {
+// baselineParagraph is the debt baseline's paragraph, its count on a line of its own so any
+// count fits in 80 columns.
+func baselineParagraph(state State) []string {
 	if !state.BaselineKnown {
-		return "Not recorded; verification is pending"
+		return []string{debtPendingLine, "verification is pending."}
 	}
+	count := fmt.Sprintf("%d recorded infractions", state.LegacyDebtCount)
 	if state.LegacyDebtCount == 1 {
-		return "1 recorded infraction; audit forbids growth"
+		count = "1 recorded infraction"
 	}
-	return fmt.Sprintf("%d recorded infractions; audit forbids growth", state.LegacyDebtCount)
+	return []string{debtRecordedLine, count + debtRecordedSuffix}
 }
 
 func insertManagedBlock(content, block string) string {

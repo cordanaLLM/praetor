@@ -5,6 +5,9 @@
 package managedasset
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -187,5 +190,164 @@ func TestFamilyAccessorsBoundary(t *testing.T) {
 	family.MaxAssets = 0
 	if family.Names() != nil || len(family.AssetPaths()) != 0 {
 		t.Fatal("a non-positive bound yielded assets")
+	}
+}
+
+const (
+	checkoutSHA  = "3d3c42e5aac5ba805825da76410c181273ba90b1"
+	pinnedStep   = "      - uses: actions/checkout@" + checkoutSHA + "  # v7.0.1\n"
+	workflowHead = "name: Fixture Gate\njobs:\n  gate:\n    runs-on: ubuntu-26.04\n    steps:\n"
+)
+
+// Positive: the Markdown workflow pins every one of its actions by full commit SHA with its
+// release as a trailing comment, and a fixture workflow in the same form validates.
+func TestWorkflowPinsEveryActionPositive(t *testing.T) {
+	markdown := ForFacet(DocumentationFacet)[0]
+	unpinned, err := unpinnedActions(markdown.Workflow)
+	if err != nil || len(unpinned) != 0 {
+		t.Fatalf("the Markdown workflow leaves %q unpinned: %v", unpinned, err)
+	}
+	if uses := strings.Count(markdown.Workflow, " uses: "); uses < 2 {
+		t.Fatalf("the Markdown workflow names %d actions; the pin check saw nothing to hold", uses)
+	}
+	family := fixtureFamily()
+	family.Workflow = workflowHead + pinnedStep +
+		"      - name: Setup\n        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020   # 7.0.0\n"
+	if err := family.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Negative: a tag, a branch, a short or uppercase SHA, a SHA without its release comment, a
+// comment one space from it, and a Docker reference each fail validation.
+func TestWorkflowPinsEveryActionNegative(t *testing.T) {
+	for name, step := range map[string]string{
+		"tag":             "      - uses: actions/checkout@v7\n",
+		"tag and comment": "      - uses: actions/checkout@v7.0.1  # v7.0.1\n",
+		"branch":          "      - uses: owner/action/path@main\n",
+		"short SHA":       "      - uses: actions/checkout@" + checkoutSHA[:39] + "  # v7.0.1\n",
+		"uppercase SHA":   "      - uses: actions/checkout@" + strings.ToUpper(checkoutSHA) + "  # v7.0.1\n",
+		"no comment":      "      - uses: actions/checkout@" + checkoutSHA + "\n",
+		"one space":       "      - uses: actions/checkout@" + checkoutSHA + " # v7.0.1\n",
+		"docker":          "      - uses: docker://alpine:3\n",
+	} {
+		family := fixtureFamily()
+		family.Workflow = workflowHead + pinnedStep + step
+		err := family.Validate()
+		if err == nil || !strings.Contains(err.Error(), "pin every action by full commit SHA") {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+}
+
+// Boundary: a workflow without actions, a local action and a commented-out tag reference
+// pass; a workflow at MaxWorkflowLines is scanned, one line more is refused.
+func TestWorkflowPinsEveryActionBoundary(t *testing.T) {
+	for _, workflow := range []string{
+		"name: Fixture Gate\n",
+		workflowHead + "      - uses: ./.github/actions/local\n",
+		workflowHead + "      # uses: actions/checkout@v7\n" + pinnedStep,
+	} {
+		if unpinned, err := unpinnedActions(workflow); err != nil || len(unpinned) != 0 {
+			t.Fatalf("%q: unpinned=%q err=%v", workflow, unpinned, err)
+		}
+	}
+	atBound := strings.Repeat("\n", MaxWorkflowLines-1)
+	if _, err := unpinnedActions(atBound); err != nil {
+		t.Fatalf("a workflow at the line bound was refused: %v", err)
+	}
+	if _, err := unpinnedActions(atBound + "\n"); err == nil {
+		t.Fatal("a workflow above the line bound was scanned")
+	}
+	family := fixtureFamily()
+	family.Workflow = atBound + "\n"
+	if err := family.Validate(); err == nil {
+		t.Fatal("an unscannable workflow validated")
+	}
+}
+
+// priorWorkflow is an earlier text of the fixture family's workflow.
+const priorWorkflow = "name: Fixture Gate\non: push\n"
+
+// sha256Hex spells a digest the way Family.Prior keys are spelled, computed here rather than
+// through the code under test.
+func sha256Hex(text string) string {
+	sum := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(sum[:])
+}
+
+func priorFixtureFamily() Family {
+	family := fixtureFamily()
+	family.Prior = map[string]string{sha256Hex(priorWorkflow): family.WorkflowFile}
+	return family
+}
+
+// Positive: an exact earlier text of a managed path is recognised in either consistent
+// line-ending style, and the Markdown family declares earlier texts of its own.
+func TestFamilyPriorTextPositive(t *testing.T) {
+	family := priorFixtureFamily()
+	if err := family.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{priorWorkflow, strings.ReplaceAll(priorWorkflow, "\n", "\r\n")} {
+		if !family.PriorText(family.WorkflowFile, []byte(text)) {
+			t.Fatalf("earlier text %q is not recognised", text)
+		}
+	}
+	if markdown := ForFacet(DocumentationFacet)[0]; len(markdown.Prior) == 0 {
+		t.Fatal("the Markdown family recognises no earlier text of its workflow")
+	}
+}
+
+// Negative: the current text, an edited earlier text, mixed endings and an earlier text at a
+// path its digest does not name are not prior texts; a malformed Prior fails validation.
+func TestFamilyPriorTextNegative(t *testing.T) {
+	family := priorFixtureFamily()
+	for _, probe := range []struct{ rel, text string }{
+		{family.WorkflowFile, family.Workflow},
+		{family.WorkflowFile, priorWorkflow + "# edited\n"},
+		{family.WorkflowFile, "name: Fixture Gate\r\non: push\n"},
+		{"tools/fixture/core.mjs", priorWorkflow},
+	} {
+		if family.PriorText(probe.rel, []byte(probe.text)) {
+			t.Fatalf("%s holding %q was taken for an earlier Praetor text", probe.rel, probe.text)
+		}
+	}
+	digest := sha256Hex(priorWorkflow)
+	for name, prior := range map[string]map[string]string{
+		"uppercase digest": {strings.ToUpper(digest): family.WorkflowFile},
+		"short digest":     {digest[:63]: family.WorkflowFile},
+		"unmanaged path":   {digest: "tools/fixture/not-in-the-inventory.json"},
+		"current text":     {sha256Hex(family.Workflow): family.WorkflowFile},
+	} {
+		broken := fixtureFamily()
+		broken.Prior = prior
+		if err := broken.Validate(); err == nil {
+			t.Fatalf("%s: malformed Prior validated", name)
+		}
+	}
+}
+
+// Boundary: a family without Prior recognises nothing, an empty earlier text is recognised
+// like any other, and Prior validates at MaxPriorTexts entries but not one more.
+func TestFamilyPriorTextBoundary(t *testing.T) {
+	family := fixtureFamily()
+	if family.PriorText(family.WorkflowFile, []byte(priorWorkflow)) {
+		t.Fatal("a family without Prior recognised an earlier text")
+	}
+	family.Prior = map[string]string{sha256Hex(""): "tools/fixture/core.mjs"}
+	if err := family.Validate(); err != nil || !family.PriorText("tools/fixture/core.mjs", nil) {
+		t.Fatalf("an empty earlier text: err=%v", err)
+	}
+	family.Prior = map[string]string{}
+	for index := 0; index < MaxPriorTexts; index++ {
+		family.Prior[sha256Hex(fmt.Sprintf("text %d\n", index))] = family.WorkflowFile
+	}
+	if err := family.Validate(); err != nil {
+		t.Fatalf("Prior at its bound failed validation: %v", err)
+	}
+	family.Prior[sha256Hex("one more\n")] = family.WorkflowFile
+	if err := family.Validate(); err == nil {
+		t.Fatal("Prior above its bound validated")
 	}
 }

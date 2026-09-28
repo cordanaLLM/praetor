@@ -2,9 +2,126 @@ package readmegovernance
 
 import (
 	"errors"
+	"math"
+	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
+
+// documentationItem is the documentation gate's paragraph in the rendered block.
+const documentationItem = "**Documentation**: `make docs-lint` enforces locked Markdown style and the\n" +
+	"private scratch-link policy.\n"
+
+// linkReferenceDefinition matches a line MD013 exempts even in strict mode.
+var linkReferenceDefinition = regexp.MustCompile(`^\[[^\]]+\]: \S+$`)
+
+// strictOverlongLines returns every line of the managed block in md longer than MD013's
+// default 80 columns, link reference definitions aside: what MD013 reports with strict: true.
+func strictOverlongLines(md string) []string {
+	start, end := strings.Index(md, Start), strings.Index(md, End)
+	if start < 0 || end < start {
+		return []string{"no managed block"}
+	}
+	var long []string
+	for _, line := range strings.Split(md[start:end+len(End)], "\n") {
+		if len(line) > testsupport.MarkdownLineLimit && !linkReferenceDefinition.MatchString(line) {
+			long = append(long, line)
+		}
+	}
+	return long
+}
+
+// longestIdentityState is the widest rendering GitHub's limits allow: a 39-character owner,
+// a 100-character repository name, the largest debt count, and the documentation gate on.
+func longestIdentityState() State {
+	return State{
+		BaselineKnown: true, LegacyDebtCount: math.MaxInt, DocumentationEnabled: true,
+		RepositoryOwner: strings.Repeat("o", 39), RepositoryName: strings.Repeat("r", 100),
+	}
+}
+
+// Positive: every rendering passes markdownlint's default rules as MarkdownFindings replays
+// them, and MD013's strict mode as well: only link reference definitions, which MD013 always
+// exempts, pass 80 columns.
+func TestRenderedBlockPassesMD013Positive(t *testing.T) {
+	for name, state := range map[string]State{
+		"pending baseline":  {},
+		"one infraction":    {BaselineKnown: true, LegacyDebtCount: 1},
+		"documentation":     {BaselineKnown: true, DocumentationEnabled: true, RepositoryOwner: "acme", RepositoryName: "widgets"},
+		"longest identity":  longestIdentityState(),
+		"custom HISS badge": {BaselineKnown: true},
+	} {
+		input := "# Widgets\n\nHuman text.\n"
+		if name == "custom HISS badge" {
+			input = "# Widgets\n\n[![HISS policy](https://img.shields.io/badge/Custom-HISS-blue)](policy.md)\n"
+		}
+		out, _, err := Reconcile(input, state)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if findings := testsupport.MarkdownFindings(out); len(findings) != 0 {
+			t.Fatalf("%s: rendered README fails markdownlint defaults: %v\n%s", name, findings, out)
+		}
+		if long := strictOverlongLines(out); len(long) != 0 {
+			t.Fatalf("%s: lines past 80 columns under strict MD013: %q", name, long)
+		}
+		// MD004 takes the list marker style from a document's first list; a list in the block
+		// would set it for every list the README keeps below.
+		block := out[strings.Index(out, Start):strings.Index(out, End)]
+		if item := listItem.FindString(block); item != "" {
+			t.Fatalf("%s: the block opens a list with %q", name, item)
+		}
+	}
+}
+
+// listItem matches the first line of a Markdown list item.
+var listItem = regexp.MustCompile(`(?m)^\s*(?:[-*+]|[0-9]+[.)]) .*$`)
+
+// Negative: the block this renderer replaced, a table beside inline badges, fails MD013 at
+// its defaults (the 142-column prose line and the table rows) and under strict mode (the
+// inline badge), so the check above is not vacuous.
+func TestRenderedBlockPassesMD013Negative(t *testing.T) {
+	previous := "# Widgets\n\n" + Start + "\n" +
+		"[![Documentation Governance](https://github.com/acme/widgets/actions/workflows/praetor-docs.yml/badge.svg)](https://github.com/acme/widgets/actions/workflows/praetor-docs.yml)\n\n" +
+		"Praetor manages this repository's declared governance policy. This managed block records adoption state; it is not a verification certificate.\n\n" +
+		"| Gate | Command | Contract |\n| :--- | :--- | :--- |\n" +
+		"| **Documentation** | `make docs-lint` | Enforces locked Markdown style and private scratch-link policy |\n" + End + "\n"
+	if findings := strings.Join(testsupport.MarkdownFindings(previous), "\n"); strings.Count(findings, "MD013") != 2 {
+		t.Fatalf("the previous block's prose line and table row must fail MD013:\n%s", findings)
+	}
+	if long := strictOverlongLines(previous); len(long) != 3 {
+		t.Fatalf("strict MD013 must report the badge, prose and row lines: %q", long)
+	}
+}
+
+// Boundary: the longest identity renders its URLs only into reference definitions, and one
+// character past GitHub's owner or repository limit is refused before rendering.
+func TestRenderedBlockPassesMD013Boundary(t *testing.T) {
+	state := longestIdentityState()
+	out, _, err := Reconcile("# Widgets\n", state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	url := "https://github.com/" + state.RepositoryOwner + "/" + state.RepositoryName + "/actions/workflows/praetor-docs.yml"
+	for _, want := range []string{"[praetor-docs-runs]: " + url + "\n", "\n9223372036854775807 recorded infractions; audit forbids growth.\n"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("longest identity rendering lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Count(out, url) != 2 {
+		t.Fatalf("the workflow URL appears outside its two reference definitions:\n%s", out)
+	}
+	for _, over := range []State{
+		{DocumentationEnabled: true, RepositoryOwner: strings.Repeat("o", 40), RepositoryName: "r"},
+		{DocumentationEnabled: true, RepositoryOwner: "o", RepositoryName: strings.Repeat("r", 101)},
+	} {
+		if _, _, err := Reconcile("# Widgets\n", over); !errors.Is(err, ErrInvalidState) {
+			t.Fatalf("identity past GitHub's limits rendered: %v", err)
+		}
+	}
+}
 
 func TestReconcilePositiveRendersTruthfulRecordedDebt(t *testing.T) {
 	out, changed, err := Reconcile("# Demo\n\nHuman text.\n", State{BaselineKnown: true, LegacyDebtCount: 2})
@@ -37,8 +154,10 @@ func TestReconcilePositiveRendersDocumentationGateContract(t *testing.T) {
 		t.Fatalf("reconcile documentation contract: changed=%v err=%v", changed, err)
 	}
 	for _, want := range []string{
-		"[![Documentation Governance](https://github.com/acme/widgets/actions/workflows/praetor-docs.yml/badge.svg)](https://github.com/acme/widgets/actions/workflows/praetor-docs.yml)",
-		"| **Documentation** | `make docs-lint` | Enforces locked Markdown style and private scratch-link policy |",
+		"[![Documentation Governance][praetor-docs-badge]][praetor-docs-runs]\n",
+		"[praetor-docs-badge]: https://github.com/acme/widgets/actions/workflows/praetor-docs.yml/badge.svg\n",
+		"[praetor-docs-runs]: https://github.com/acme/widgets/actions/workflows/praetor-docs.yml\n",
+		documentationItem,
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("rendered README missing %q:\n%s", want, out)
@@ -150,10 +269,9 @@ func TestVerifyNegativeRejectsMissingOrStaleDocumentationContract(t *testing.T) 
 	}
 	for name, stale := range map[string]string{
 		"missing badge": strings.Replace(out,
-			"[![Documentation Governance](https://github.com/acme/widgets/actions/workflows/praetor-docs.yml/badge.svg)](https://github.com/acme/widgets/actions/workflows/praetor-docs.yml)\n", "", 1),
+			"[![Documentation Governance][praetor-docs-badge]][praetor-docs-runs]\n", "", 1),
 		"stale badge": strings.Replace(out, "github.com/acme/widgets/", "github.com/acme/old-widgets/", 1),
-		"missing row": strings.Replace(out,
-			"| **Documentation** | `make docs-lint` | Enforces locked Markdown style and private scratch-link policy |\n", "", 1),
+		"missing row": strings.Replace(out, documentationItem, "", 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := Verify(stale, state); !errors.Is(err, ErrStale) {

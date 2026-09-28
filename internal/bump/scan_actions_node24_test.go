@@ -103,7 +103,8 @@ var engineWorkflowFiles = []string{
 }
 
 // Positive: no engine workflow, composite action or emitted template pins a deprecated
-// action runtime, and every core action present is at the registry version.
+// action runtime, and every core action present is at the registry version: a tag at its
+// major or a SHA pin whose release comment is (ActionPinCurrent), such as praetor-docs.yml's.
 func TestEngineWorkflowsCarryNoDeprecatedActionPins(t *testing.T) {
 	root := filepath.Join("..", "..")
 	got, deps, err := ScanWorkflowActions(t.Context(), root)
@@ -115,7 +116,11 @@ func TestEngineWorkflowsCarryNoDeprecatedActionPins(t *testing.T) {
 		if readErr != nil {
 			t.Fatalf("read %s: %v", rel, readErr)
 		}
-		for _, m := range workflowActionRegex.FindAllStringSubmatch(string(content), 100) {
+		released, releaseErr := withPinnedReleases(string(content))
+		if releaseErr != nil {
+			t.Fatalf("read %s: %v", rel, releaseErr)
+		}
+		for _, m := range workflowActionRegex.FindAllStringSubmatch(released, 100) {
 			cand, dep := buildActionCandidate(m[1], m[2], rel)
 			got = append(got, cand)
 			if dep != nil {
@@ -127,7 +132,7 @@ func TestEngineWorkflowsCarryNoDeprecatedActionPins(t *testing.T) {
 		t.Errorf("engine files pin deprecated action runtimes: %+v", deps)
 	}
 	for _, cand := range got {
-		if _, core := node20CorePins[cand.Action]; core && cand.CurrentVersion != cand.LatestVersion {
+		if _, core := node20CorePins[cand.Action]; core && !cand.UpToDate {
 			t.Errorf("%s pins %s@%s but the registry names %s", cand.WorkflowFile, cand.Action, cand.CurrentVersion, cand.LatestVersion)
 		}
 	}
