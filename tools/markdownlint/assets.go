@@ -86,6 +86,14 @@ var priorDigests = map[string]string{
 	"97d1fad8184587e73dfa25af2cc4e30cf9fa278abf5868fdc0dc27c7a222c95e": WorkflowFile,
 	// The markdownlint configuration before its yamllint document start.
 	"67aad4771daac4e6db3c2f8b65dfbd93f72c4067c9187ec759014bbc71bbfd0d": Directory + "/markdownlint-cli2.yaml",
+	// The first verify.mjs, before its self-test ran the scratch rule through a symlinked
+	// ancestor.
+	"8273fa87112eb15cc3382ba23ba894c542d2ae8352042eab253e9c8b503704f2": Directory + "/verify.mjs",
+	// verify.mjs before it excluded vendored upstream Markdown from the style rules.
+	"52cce450d5fd46647d2852919fb279122be22134c81353707a4f214f5f59c9c4": Directory + "/verify.mjs",
+	// The first scratch-link rule, which compared process.argv[1] by spelling and skipped
+	// main() under a symlinked temporary directory.
+	"56d7c5a15f5622e6ecf4e6fc2877bb796fd0db4fb73c6f07a41bec637830242c": Directory + "/no-private-scratch-links.mjs",
 }
 
 var assetNames = [...]string{

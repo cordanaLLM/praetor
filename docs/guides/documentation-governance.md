@@ -101,9 +101,12 @@ One exception needs no `--force`: a file holding exactly a text an earlier
 Praetor shipped at that path is Praetor's own unedited output, so plain
 `praetorctl adopt` refreshes it in its line-ending style. Audit fails on such a
 file and names plain adoption as the repair. The family's `Prior` digests
-(`internal/managedasset/family.go`) list those texts, and
-`tools/markdownlint/testdata/prior/` holds each one
-(`TestPriorDigestsReproduce`, `TestAdoptionDocumentationGateRefreshesPriorTexts`).
+(`priorDigests` in `tools/markdownlint/assets.go`, read through
+`internal/managedasset/family.go`) list every earlier text of each managed
+path: the workflow, `markdownlint-cli2.yaml`, `verify.mjs` and
+`no-private-scratch-links.mjs`. `tools/markdownlint/testdata/prior/` holds each
+one (`TestPriorDigestsReproduce`,
+`TestAdoptionDocumentationGateRefreshesPriorTexts`).
 
 ## Private scratch links
 
