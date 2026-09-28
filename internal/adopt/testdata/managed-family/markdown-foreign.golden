@@ -19,9 +19,9 @@ file .prettierignore absent
 action create tools/markdownlint/package.json :: Scaffolded locked Markdown governance asset
 action create tools/markdownlint/package-lock.json :: Scaffolded locked Markdown governance asset
 action create tools/markdownlint/markdownlint-cli2.yaml :: Scaffolded locked Markdown governance asset
-action create tools/markdownlint/verify.mjs :: Scaffolded locked Markdown governance asset
+action replace tools/markdownlint/verify.mjs :: Scaffolded locked Markdown governance asset; replaced existing content (-1/+614 lines, removed "// operator runner"); no backup: .workingdir/adopt-backups/<stamp>/tools/markdownlint/verify.mjs is not ignored by git
 action create tools/markdownlint/no-private-scratch-links.mjs :: Scaffolded locked Markdown governance asset
-action create .github/workflows/praetor-docs.yml :: Scaffolded required documentation governance workflow
+action replace .github/workflows/praetor-docs.yml :: Scaffolded required documentation governance workflow; replaced existing content (-1/+30 lines, removed "name: Operator"); no backup: .workingdir/adopt-backups/<stamp>/.github/workflows/praetor-docs.yml is not ignored by git
 action create .gitignore :: Created ignore rules for build artifacts, private working directory, gate worktrees and the AGY workspace configuration
 action reconcile .prettierignore :: No Prettier configuration found; managed artifacts not declared to a formatter this repository does not run
 file .github/workflows/praetor-docs.yml sha256:938c1926d853a57149b0ede1cc6b9b7ce68eba62f6af30e8d0768458df98a62e

@@ -1,0 +1,3 @@
+type: added
+title: "Astro Starlight sites draw the interactive figures through tools/figures/astro.mjs, an Astro integration with no npm dependency that renders each figure block in .md and .mdx pages (again after a figure rebuild, in a warm build and in `astro dev`), loads the player and serves and publishes the figure files under the site's base; figures.css reads Starlight's theme variables where Material's are absent, the `site` and `sources` checks read a Starlight build (`site --base`), the smoke test serves a site under its base, and the static server moves into tools/figures/serve.mjs (ADR-0016)"
+breaking: false

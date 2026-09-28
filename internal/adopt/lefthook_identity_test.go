@@ -148,6 +148,64 @@ func TestAdopt_Negative_ForceKeepsLefthookJobSuperset(t *testing.T) {
 	}
 }
 
+// Positive (HISS-21): under --force a CRLF checkout of the current rendering is rewritten with
+// the rendering's own LF bytes, the only bytes activation trusts (lefthookConfigIsPraetor), and
+// activated. The text is Praetor's, so it is a reconcile with no backup, never a replace.
+func TestAdopt_Positive_ForceRewritesCRLFCurrentLefthookAndActivates(t *testing.T) {
+	repoPath, rep := adoptLefthookFixture(t, "current-crlf-force", crlfText(buildLefthookYAML()), true)
+	if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); got != buildLefthookYAML() {
+		t.Errorf("not rewritten with the rendering's LF bytes:\n%q", got)
+	}
+	if !hasAction(rep, lefthookFile, actionReconcile) || hasAction(rep, lefthookFile, actionReplace) {
+		t.Errorf("want a reconcile and no replace: %+v", rep.ActionDetails)
+	}
+	if hasAction(rep, lefthookFile, actionSkip) || !fileExists(filepath.Join(repoPath, ".git", "hooks", preCommitHook)) {
+		t.Errorf("the rewritten configuration was not activated: %+v", rep.ActionDetails)
+	}
+}
+
+// Negative: a copy of the current rendering with mixed line endings is no checkout of it, so
+// --force replaces it like any drifted file (replaceExisting), and the LF rendering it leaves
+// is activated.
+func TestAdopt_Negative_ForceReplacesMixedEndingCurrentLefthook(t *testing.T) {
+	mixed := strings.Replace(crlfText(buildLefthookYAML()), "\r\n", "\n", 1)
+	repoPath, rep := adoptLefthookFixture(t, "current-mixed-force", mixed, true)
+	if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); got != buildLefthookYAML() {
+		t.Errorf("mixed line endings not replaced:\n%q", got)
+	}
+	if !hasAction(rep, lefthookFile, actionReplace) {
+		t.Errorf("want a replace: %+v", rep.ActionDetails)
+	}
+	if !fileExists(filepath.Join(repoPath, ".git", "hooks", preCommitHook)) {
+		t.Error("the replaced configuration was not activated")
+	}
+}
+
+// Boundary: without --force a CRLF checkout of the current rendering is verified and kept byte
+// for byte, and a --force dry run records the rewrite it plans and writes nothing.
+func TestAdopt_Boundary_CRLFCurrentLefthookKeptWithoutForceAndInDryRun(t *testing.T) {
+	crlf := crlfText(buildLefthookYAML())
+	repoPath, rep := adoptLefthookFixture(t, "current-crlf", crlf, false)
+	if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); got != crlf {
+		t.Errorf("rewritten without --force:\n%q", got)
+	}
+	if hasAction(rep, lefthookFile, actionReplace) {
+		t.Errorf("a line-ending checkout reported as replaced: %+v", rep.ActionDetails)
+	}
+	dry := newTestRepo(t, "current-crlf-dry")
+	mustWrite(t, filepath.Join(dry, lefthookFile), crlf)
+	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: dry, Force: true, DryRun: true})
+	if err != nil {
+		t.Fatalf("Adopt --force --dry-run: %v", err)
+	}
+	if got := mustRead(t, filepath.Join(dry, lefthookFile)); got != crlf {
+		t.Errorf("the dry run wrote:\n%q", got)
+	}
+	if !hasAction(rep, lefthookFile, actionReconcile) || hasAction(rep, lefthookFile, actionReplace) {
+		t.Errorf("want a planned reconcile and no replace: %+v", rep.ActionDetails)
+	}
+}
+
 // Boundary: extends is recognised as a string, as a list and with a ./ prefix; a different
 // extends target and a configuration missing one generated job keep the --force contract.
 func TestClassifyLefthookConfig_Boundary_ExtendsAndSupersetEdges(t *testing.T) {

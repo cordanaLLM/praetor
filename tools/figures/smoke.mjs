@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 // Proves every figure on a built site mounts the interactive player (ADR-0015, section 7).
 //
-//   node smoke.mjs [--site <dir>] [--require-browser]
+//   node smoke.mjs [--site <dir>] [--base <path>] [--require-browser]
 //
-// The site is served from 127.0.0.1 on a free port by node:http, because module scripts do not
-// load from file://. Each page that holds a figure.praetor-figure is opened in Chromium twice:
+// The site is served from 127.0.0.1 on a free port by serve.mjs, because module scripts do not
+// load from file://, under --base: the path the site is built for ('/' by default; an Astro site
+// built with base '/docs/' is served under /docs/). Each page that holds a figure.praetor-figure is
+// opened in Chromium twice:
 // once normally, where every figure must mount, and every figure with scenario tabs must advance
 // its active step on its own (autoplay) and then show a packet, under autoplay or after starting
 // one of its scenario tabs; and once under prefers-reduced-motion, where every figure must mount
@@ -12,10 +14,11 @@
 //
 // Without an installed Chromium the run exits 0 and says it skipped (HISS-21), unless
 // --require-browser is given, as the Pages workflow does.
-import { createServer } from 'node:http';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { extname, join, relative, resolve, sep } from 'node:path';
+import { join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseArgs } from 'node:util';
+import { basePath, serve } from './serve.mjs';
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 const MAX_FILES = 20_000;
@@ -29,11 +32,6 @@ const MAX_TABS = 48;
 const POLL_MS = 100;
 const SETTLE_MS = 2_000;
 const MAX_SCROLL_STEPS = 400;
-const TYPES = {
-  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon',
-  '.xml': 'application/xml', '.txt': 'text/plain; charset=utf-8', '.woff2': 'font/woff2',
-};
 /**
  * A built figure: a <figure> whose class list holds praetor-figure, with the attribute value in
  * double quotes, single quotes, or bare, as an HTML minifier writes it (htmlmin's
@@ -61,26 +59,6 @@ export function figurePages(site) {
   }
   if (pages.length > MAX_PAGES) throw new Error(`more than ${MAX_PAGES} pages hold figures`);
   return pages.sort();
-}
-
-/** A static file server for `site` on 127.0.0.1 with bounded request timeouts. */
-export function serve(site) {
-  const root = resolve(site);
-  const server = createServer((request, response) => {
-    const url = new URL(request.url ?? '/', 'http://127.0.0.1');
-    let file = resolve(root, `.${decodeURIComponent(url.pathname)}`);
-    if (file !== root && !file.startsWith(root + sep)) return void response.writeHead(403).end();
-    if (existsSync(file) && statSync(file).isDirectory()) file = join(file, 'index.html');
-    if (!existsSync(file)) return void response.writeHead(404).end();
-    response.writeHead(200, { 'content-type': TYPES[extname(file)] ?? 'application/octet-stream' });
-    response.end(readFileSync(file));
-  });
-  server.requestTimeout = 10_000;
-  server.headersTimeout = 5_000;
-  return new Promise((resolveServer, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => resolveServer(server));
-  });
 }
 
 async function scrollThrough(page) {
@@ -176,13 +154,13 @@ async function motionErrors(page) {
 }
 
 /** Findings for one page in one motion mode. */
-async function checkPage(context, base, path, reduced) {
+async function checkPage(context, origin, path, reduced) {
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (error) => errors.push(`page error: ${error.message}`));
   page.on('console', (message) => message.type() === 'error' && errors.push(`console error: ${message.text()}`));
   try {
-    await page.goto(base + path, { waitUntil: 'load', timeout: PAGE_TIMEOUT_MS });
+    await page.goto(origin + path, { waitUntil: 'load', timeout: PAGE_TIMEOUT_MS });
     const expected = await page.locator('figure.praetor-figure').count();
     await scrollThrough(page);
     await page.waitForFunction((n) => document.querySelectorAll('.praetor-figure .interfig').length >= n, expected,
@@ -211,19 +189,19 @@ async function launch(requireBrowser) {
   return null;
 }
 
-async function smoke(site, requireBrowser) {
-  if (!existsSync(join(site, 'index.html'))) throw new Error(`${site} holds no built site; run mkdocs build first`);
+async function smoke(site, base, requireBrowser) {
+  if (!existsSync(join(site, 'index.html'))) throw new Error(`${site} holds no built site; build the site first`);
   const pages = figurePages(site);
   if (pages.length === 0) throw new Error(`no page under ${site} holds a figure.praetor-figure`);
   const browser = await launch(requireBrowser);
   if (!browser) return [];
-  const server = await serve(site);
-  const base = `http://127.0.0.1:${server.address().port}`;
+  const server = await serve(site, base);
+  const origin = `http://127.0.0.1:${server.address().port}${basePath(base).slice(0, -1)}`;
   const errors = [];
   try {
     for (const reduced of [false, true]) {
       const context = await browser.newContext({ reducedMotion: reduced ? 'reduce' : 'no-preference' });
-      for (const path of pages) errors.push(...(await checkPage(context, base, path, reduced)));
+      for (const path of pages) errors.push(...(await checkPage(context, origin, path, reduced)));
       await context.close();
     }
   } finally {
@@ -234,15 +212,25 @@ async function smoke(site, requireBrowser) {
   return errors;
 }
 
+const OPTIONS = { site: { type: 'string', default: 'site' }, base: { type: 'string', default: '/' }, 'require-browser': { type: 'boolean', default: false } };
+
+/** The parsed command line, or null when it is not `[--site DIR] [--base PATH] [--require-browser]`. */
+export function parseCommandLine(argv) {
+  try {
+    const { values } = parseArgs({ args: argv, options: OPTIONS, strict: true, allowPositionals: false });
+    return values.site ? { site: resolve(ROOT, values.site), base: basePath(values.base), requireBrowser: values['require-browser'] } : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function main(argv) {
-  const siteAt = argv.indexOf('--site');
-  const site = resolve(ROOT, siteAt === -1 ? 'site' : (argv[siteAt + 1] ?? ''));
-  const known = new Set(['--site', '--require-browser', ...(siteAt === -1 ? [] : [argv[siteAt + 1]])]);
-  if (argv.some((arg) => !known.has(arg)) || (siteAt !== -1 && !argv[siteAt + 1])) {
-    console.error('usage: node smoke.mjs [--site <dir>] [--require-browser]');
+  const options = parseCommandLine(argv);
+  if (!options) {
+    console.error('usage: node smoke.mjs [--site <dir>] [--base <path>] [--require-browser]');
     return 2;
   }
-  const errors = await smoke(site, argv.includes('--require-browser'));
+  const errors = await smoke(options.site, options.base, options.requireBrowser);
   for (const error of errors) console.error(`figures smoke: ${error}`);
   return errors.length ? 1 : 0;
 }

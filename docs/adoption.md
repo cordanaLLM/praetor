@@ -37,7 +37,9 @@ The preview takes its action from the same keep-or-replace decision as the real 
 (`internal/adopt/preview_test.go`). Its status checks come from the workflows the run leaves
 before its `branch-ruleset` step, not only the ones on disk:
 
-- workflows the dry run records as written or removed, such as the documentation gate's;
+- workflows the dry run records as written, replaced under `--force` or removed, such as the
+  documentation gate's (`TestReplaceExisting_3D_DryRunPlansTheReplacedBytes` in
+  `internal/adopt/replace_test.go`);
 - the workflows of the flavor the run applies for the profile it records
   (`flavor.PlannedWorkflows`), which a dry run does not apply.
 
@@ -201,6 +203,27 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
   a match is reported as verified, a difference as `differs from the scaffold` with a
   warning, and the file is kept. `--force` regenerates only the scaffolds it owns
   (`TestScaffoldFile_ReportsDriftInsteadOfVerified`).
+- **Replaced files.** When `--force` overwrites a drifted scaffold, the report lists it under
+  `Files Replaced` with action `replace`, never as created. The entry carries a line delta
+  (`-removed/+added lines` and the first three removed lines) and where the prior bytes went:
+  `.workingdir/adopt-backups/<UTC stamp>/<path>`, written only when `git check-ignore`
+  confirms that path is ignored. Without that confirmation, for example on a first adoption
+  whose `.gitignore` does not yet carry the managed `/.workingdir/` rule, the file is replaced
+  without a copy and a warning says so. A file that differs only in its line endings is
+  verified, not replaced (`TestScaffoldFile_Positive_ForceReplacesWithBackupAndDelta`,
+  `TestScaffoldFile_Boundary_DryRunPlansReplaceAndDeltaTruncates`,
+  `TestScaffoldFile_Boundary_CRLFOnlyDifferenceIsNotReplaced`). Under `--force`, a backup
+  root that is a symlink or sits behind one fails the run before the first write
+  (`preflightForceBackupRoot` in `internal/adopt/replace.go`,
+  `TestAdopt_Negative_ForceRefusesSymlinkedBackupRootBeforeAnyWrite`). Agent hook merges keep
+  their copy in the same place ([agent hooks](guides/agent-hooks.md)). A backup written before
+  the private `.workingdir/` exists creates it owner-only (`0700`), as the ledger setup does
+  (`TestBackupExisting_Positive_CreatesPrivateWorkingDir`). The `standards_adopt` MCP result
+  lists the same entries under `Replaced Files` (`Planned Replacements` in a dry run), and
+  neither report repeats a replaced file among the reconciled ones
+  (`AdoptReport.ReconciledNotReplaced` in `internal/adopt/scaffold.go`,
+  `TestServer_Positive_AdoptForceReportsReplacedFile`). The `--all-missing` summary counts
+  replaced files on their own line.
 - **Earlier Praetor output.** The manifest, lock, label taxonomy, pinned catalog, flavor
   YAML (`.clang-format` and `.clang-tidy` included) and the `docs:seo-portal` documentation
   gate's YAML that adoption writes pass `yamllint --strict` with its default rules
@@ -249,7 +272,7 @@ Under the hood, the agent executes the `standards_adopt` tool:
 }
 ```
 
-The tool returns a detailed summary of created and reconciled files, detected archetypes, and recorded legacy debt.
+The tool returns a detailed summary of created, reconciled and replaced files, detected archetypes, and recorded legacy debt.
 
 ---
 

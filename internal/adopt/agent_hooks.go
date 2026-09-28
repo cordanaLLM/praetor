@@ -58,10 +58,10 @@ func reconcileAgentHooks(ctx context.Context, s *adoptSession) error {
 
 // preflightAgentHooks plans the registration of every selected client without writing, so a
 // hook file the step would refuse fails adoption before its first write: a symlinked file,
-// backup path or directory, a file that is not a regular text file, and a file whose content
-// cannot be merged. Checked only at the step, the refusal came after every earlier step and
-// every earlier client had written, and left a half-adopted repository. A JSONC file the client
-// reads is not a refusal: the step leaves it untouched and reports it.
+// backup root (adoptBackupRoot) or directory, a file that is not a regular text file, and a
+// file whose content cannot be merged. Checked only at the step, the refusal came after every
+// earlier step and every earlier client had written, and left a half-adopted repository. A
+// JSONC file the client reads is not a refusal: the step leaves it untouched and reports it.
 func preflightAgentHooks(ctx context.Context, repoPath string) error {
 	selected, _, err := hookClientSelection(ctx, repoPath)
 	if err != nil {
@@ -116,26 +116,28 @@ func reconcileClientHook(ctx context.Context, s *adoptSession, client string) er
 	if err != nil {
 		return err
 	}
+	legacyHookBackupWarning(s, file.Path)
 	switch {
 	case target.unmergeable != "":
 		s.report.recordSkipped(file.Path, target.unmergeable)
 	case !target.plan.Changed:
 		s.report.recordReconciled(file.Path, "Pre-tool interceptor already registered: "+strings.Join(target.plan.Present, "; "))
 	default:
-		if err := s.publishHookFile(ctx, target); err != nil {
+		backup, err := s.publishHookFile(ctx, target)
+		if err != nil {
 			return err
 		}
-		recordHookRegistration(s, file.Path, target.exists, target.plan.Added)
+		recordHookRegistration(s, file.Path, target.exists, target.plan.Added, backup)
 	}
 	return nil
 }
 
-// planHookTarget observes client's hook file, and its backup path when the file exists,
-// through the confined read the root-pinned writers make (contextopt.ObserveSnapshotIn), so
-// whatever publishHookFile would refuse is refused here, and plans the pre-tool registration
-// against the file. A file the client reads as JSONC but the strict merge refuses is left
-// untouched: rewriting it would drop its comments, so the target carries the reason instead of
-// a plan.
+// planHookTarget observes client's hook file through the confined read the root-pinned writers
+// make (contextopt.ObserveSnapshotIn) and plans the pre-tool registration against it. When the
+// plan changes an existing file, the backup root its prior bytes would be copied to is checked
+// too (checkBackupRoot), so whatever publishHookFile would refuse is refused here. A file the
+// client reads as JSONC but the strict merge refuses is left untouched: rewriting it would drop
+// its comments, so the target carries the reason instead of a plan.
 func planHookTarget(ctx context.Context, root, client string, file agenthook.HookFile) (hookTarget, error) {
 	target := hookTarget{file: file}
 	var err error
@@ -143,23 +145,22 @@ func planHookTarget(ctx context.Context, root, client string, file agenthook.Hoo
 	if err != nil {
 		return hookTarget{}, fmt.Errorf("hook file %s: %w", file.Path, err)
 	}
-	if target.exists {
-		backup := file.Path + hookBackupExt
-		if _, _, err := contextopt.ObserveSnapshotIn(ctx, root, filepath.FromSlash(backup)); err != nil {
-			return hookTarget{}, fmt.Errorf("hook file backup %s: %w", backup, err)
-		}
-	}
 	hooks := preToolHooks(client, file)
 	target.plan, err = clientjson.PlanHooks(ctx, target.before, hooks)
 	switch {
 	case err == nil:
-		return target, nil
 	case file.Comments && errors.Is(err, clientjson.ErrNotStrictJSON):
 		target.plan, target.unmergeable = nil, unmergeableReason(client, hooks)
 		return target, nil
 	default:
 		return hookTarget{}, fmt.Errorf("register %s pre-tool hook in %s: %w", client, file.Path, err)
 	}
+	if target.exists && target.plan.Changed {
+		if err := checkBackupRoot(ctx, root); err != nil {
+			return hookTarget{}, fmt.Errorf("hook file %s: %w", file.Path, err)
+		}
+	}
+	return target, nil
 }
 
 // unmergeableReason says why a JSONC hook file is left untouched and what to register by hand.
@@ -178,42 +179,45 @@ func preToolHooks(client string, file agenthook.HookFile) []clientjson.Hook {
 	return agenthook.NativeHooks(client, file, agenthook.EventPreTool)
 }
 
-// publishHookFile keeps a copy of an existing hook file beside it, replaces the file only while
-// it still holds the bytes the plan was made from, and reads the result back. Every write and
-// the read-back go through the root-pinned contextopt helpers, so a symlinked file, backup or
-// directory below the repository is refused rather than written through.
-func (s *adoptSession) publishHookFile(ctx context.Context, target hookTarget) error {
-	if s.opts.DryRun {
-		return nil
-	}
+// publishHookFile keeps a backup of an existing hook file under the run's backup directory when
+// git ignores it (backupExisting), replaces the file only while it still holds the bytes the
+// plan was made from, and reads the result back. It returns the backup note for the report.
+// Every write and the read-back go through the root-pinned contextopt helpers, so a symlinked
+// file, backup root or directory below the repository is refused rather than written through. A
+// dry run checks the backup and writes nothing.
+func (s *adoptSession) publishHookFile(ctx context.Context, target hookTarget) (string, error) {
 	rel, content := target.file.Path, target.plan.Content
+	backup := ""
 	if target.exists {
-		if err := contextopt.WriteSnapshotIn(ctx, s.repoPath, filepath.FromSlash(rel+hookBackupExt), target.before, filePerm); err != nil {
-			return fmt.Errorf("back up %s: %w", rel, err)
+		var err error
+		if backup, err = s.backupExisting(ctx, rel, target.before); err != nil {
+			return "", err
 		}
+	}
+	if s.opts.DryRun {
+		return backup, nil
 	}
 	options := contextopt.ReplaceOptions{Expected: target.before, Exists: target.exists, Mode: filePerm}
 	if err := contextopt.ReplaceSnapshotIn(ctx, s.repoPath, filepath.FromSlash(rel), content, options); err != nil {
-		return fmt.Errorf("write %s: %w", rel, err)
+		return "", fmt.Errorf("write %s: %w", rel, err)
 	}
 	actual, _, err := contextopt.ObserveSnapshotIn(ctx, s.repoPath, filepath.FromSlash(rel))
 	if err != nil {
-		return fmt.Errorf("read back %s: %w", rel, err)
+		return "", fmt.Errorf("read back %s: %w", rel, err)
 	}
 	if !bytes.Equal(actual, content) {
-		return fmt.Errorf("%s changed after it was written; compare it with %s%s", rel, rel, hookBackupExt)
+		return "", fmt.Errorf("%s changed after it was written (%s)", rel, backup)
 	}
-	return nil
+	return backup, nil
 }
 
 // recordHookRegistration reports a registration as a created file, or as a merge into an
-// existing one together with the backup taken of it.
-func recordHookRegistration(s *adoptSession, rel string, existed bool, added []string) {
+// existing one together with where its prior bytes were kept (publishHookFile).
+func recordHookRegistration(s *adoptSession, rel string, existed bool, added []string, backup string) {
 	commands := strings.Join(added, "; ")
 	if !existed {
 		s.report.recordCreated(rel, "Registered pre-tool interceptor: "+commands)
 		return
 	}
-	s.report.recordReconciledAs(rel, actionMerge, "Registered pre-tool interceptor: "+commands+"; prior file kept as "+rel+hookBackupExt)
-	s.report.recordCreated(rel+hookBackupExt, "Backup of "+rel+" before the pre-tool interceptor merge")
+	s.report.recordReconciledAs(rel, actionMerge, "Registered pre-tool interceptor: "+commands+"; "+backup)
 }

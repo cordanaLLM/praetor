@@ -512,9 +512,16 @@ row's (see matcher equivalence below). The merge
 (`internal/clientjson/hooks.go`) keeps every other member in its place and every number
 literal as written, so no key is reordered and no number is rounded; the file is re-indented
 and string escapes are normalised (`"\/"` becomes `"/"`). A file the step changes is first
-copied to `<file>.bak`, then replaced only while it still holds the bytes the plan was made
-from, and read back; each write goes through the root-pinned `contextopt` writers, which
-refuse a symlink below the repository. A handler that already runs the evaluator (the engine
+copied to `.workingdir/adopt-backups/<UTC stamp>/<file>`, then replaced only while it still
+holds the bytes the plan was made from, and read back; each write goes through the root-pinned
+`contextopt` writers, which refuse a symlink below the repository. The copy is taken only when
+`git check-ignore` confirms the backup path is ignored, as the managed `.gitignore` rule
+`/.workingdir/` makes it; otherwise the merge goes ahead without a copy, and both the report
+entry and a warning say so (`backupExisting` in `internal/adopt/replace.go`,
+`TestReconcileAgentHooks_Positive_BackupUnderIgnoredRootLeavesTreeClean`,
+`TestReconcileAgentHooks_Negative_UnignoredBackupRootTakesNoBackup`). Adoption no longer
+writes `<file>.bak` beside the hook file; a copy an earlier release left there is reported as
+a warning and never removed. A handler that already runs the evaluator (the engine
 call, the skew guard `praetor_hook.py`, or one of the Python pre-tool adapters) counts as
 registered when its group's matcher selects the same tools as the row's or matches every tool
 (absent, `*`, `.*`), and the file stays byte for byte as it was (`Registration.ServedBy`). A
@@ -541,9 +548,10 @@ in its own group (`TestPlanHooks_Positive_LiteralAndAnchoredNameAreOneSelection`
 
 Before the first step writes anything, adoption plans the registration of every selected
 client (`preflightAgentHooks`, called from `preflightAgentSurfaces` in
-`internal/adopt/adopt.go`). A hook file or `<file>.bak` that is a symlink or sits behind one,
-a file that is not regular UTF-8 text, and a file whose content cannot be merged fail the run
-there, before the manifest or any other file is written. Gemini CLI strips comments from
+`internal/adopt/adopt.go`). A hook file, or the `.workingdir/adopt-backups` root a merge would
+copy it to, that is a symlink or sits behind one, a file that is not regular UTF-8 text, and a
+file whose content cannot be merged fail the run there, before the manifest or any other file
+is written. Gemini CLI strips comments from
 `.gemini/settings.json` before it parses it, so a commented file is valid for Gemini but not
 for the strict merge: the step leaves it untouched, and the report lists it as skipped, with a
 warning naming the handler to add by hand. The registration table has no pre-tool row for

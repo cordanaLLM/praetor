@@ -1,0 +1,4 @@
+type: fixed
+title: 'Adoption reports every --force overwrite of a drifted scaffold, the branch protection ruleset included, as action replace with a bounded line delta, and keeps the prior bytes of those and of every agent hook merge under .workingdir/adopt-backups/<UTC stamp>/<path> only when git confirms that path is ignored; agent hook merges no longer write <file>.bak beside the hook file, and a leftover one is reported, never removed; under --force a symlinked backup root fails adoption before its first write; the standards_adopt MCP result and the --all-missing summary list replaced files apart from reconciled ones; adopt --dry-run --force previews the ruleset over the workflows those replacements would write'
+issue: "#502"
+breaking: true

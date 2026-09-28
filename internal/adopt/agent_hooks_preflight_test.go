@@ -88,8 +88,8 @@ func TestPlanHookTarget_Negative_OnlyGeminiCommentsAreSkipped(t *testing.T) {
 
 // Negative: a hook file the step would refuse fails adoption before its first write, where it
 // used to fail at the last step after the manifest, the vendor files and every earlier client's
-// hook file were written: a symlinked hook file, a symlinked backup path, and a hook file that
-// cannot be merged. A dry run is refused the same way.
+// hook file were written: a symlinked hook file, a symlinked backup root below the private
+// ledger, and a hook file that cannot be merged. A dry run is refused the same way.
 func TestAdopt_Negative_HookFileRefusedBeforeAnyWrite(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -99,9 +99,15 @@ func TestAdopt_Negative_HookFileRefusedBeforeAnyWrite(t *testing.T) {
 		{"symlinked hook file", func(t *testing.T, repoPath string) string {
 			return linkInRootFile(t, repoPath, claudeHookFile, "shared/settings.json", "{}\n")
 		}, false},
-		{"symlinked backup", func(t *testing.T, repoPath string) string {
+		{"symlinked backup root", func(t *testing.T, repoPath string) string {
 			mustWrite(t, filepath.Join(repoPath, filepath.FromSlash(geminiHookFile)), "{}\n")
-			return linkInRootFile(t, repoPath, geminiHookFile+hookBackupExt, "shared/backup.json", "outside\n")
+			if err := os.MkdirAll(filepath.Join(repoPath, workingDirPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			shared := linkInRootDir(t, repoPath, adoptBackupRoot, "shared/backups")
+			kept := filepath.Join(shared, "kept.txt")
+			mustWrite(t, kept, "outside\n")
+			return kept
 		}, false},
 		{"malformed hook file", func(t *testing.T, repoPath string) string {
 			path := filepath.Join(repoPath, ".codex", "hooks.json")

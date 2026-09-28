@@ -50,7 +50,7 @@ file tools/markdownlint/no-private-scratch-links.mjs sha256:fec9b4f1b48f5847c91f
 file .gitignore "bin/\n*.test\n*.out\n.DS_Store\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n# END praetor private artifacts\n"
 file .prettierignore absent
 == drift with force
-action create tools/markdownlint/package.json :: Scaffolded locked Markdown governance asset
+action replace tools/markdownlint/package.json :: Scaffolded locked Markdown governance asset; replaced existing content (-1/+16 lines, removed "{}"); backup: .workingdir/adopt-backups/<stamp>/tools/markdownlint/package.json
 action reconcile tools/markdownlint/package-lock.json :: Existing Markdown governance asset preserved; audit verifies canonical text
 action reconcile tools/markdownlint/markdownlint-cli2.yaml :: Existing Markdown governance asset preserved; audit verifies canonical text
 action reconcile tools/markdownlint/verify.mjs :: Existing Markdown governance asset preserved; audit verifies canonical text

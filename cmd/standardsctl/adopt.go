@@ -197,13 +197,15 @@ func printBatchResult(repoName string, dryRun bool, rep *adopt.AdoptReport, err 
 	if err != nil {
 		fmt.Printf("[FAIL] %s: %v\n", repoName, err)
 		if rep != nil {
-			fmt.Printf("  Written before failure: %d created, %d reconciled\n", len(rep.CreatedFiles), len(rep.ReconciledFiles))
+			fmt.Printf("  Written before failure: %d created, %d reconciled, %d replaced\n",
+				len(rep.CreatedFiles), len(rep.ReconciledNotReplaced()), len(rep.Replaced()))
 		}
 		return false
 	}
 	fmt.Printf("\n[ADOPTED] %s (State: %s, Archetype: %s, DryRun: %v)\n", repoName, rep.State, rep.Archetype, dryRun)
 	fmt.Printf("  Created:    %d files\n", len(rep.CreatedFiles))
-	fmt.Printf("  Reconciled: %d files\n", len(rep.ReconciledFiles))
+	fmt.Printf("  Reconciled: %d files\n", len(rep.ReconciledNotReplaced()))
+	fmt.Printf("  Replaced:   %d files\n", len(rep.Replaced()))
 	if rep.LegacyDebtCount > 0 {
 		fmt.Printf("  Legacy Debt Baselined: %d infractions\n", rep.LegacyDebtCount)
 	}
@@ -323,37 +325,53 @@ func printAdoptIssues(rep *adopt.AdoptReport) {
 	}
 }
 
-func printAdoptedFiles(rep *adopt.AdoptReport) {
-	if rep.DryRun {
-		printPlannedFiles(rep)
-		return
-	}
-	if len(rep.CreatedFiles) > 0 {
-		fmt.Printf("\nFiles Created (%d):\n", len(rep.CreatedFiles))
-		for _, f := range rep.CreatedFiles {
-			printAdoptedFile("+ [NEW] ", f, findDetail(rep.ActionDetails, f))
-		}
-	}
-
-	if len(rep.ReconciledFiles) > 0 {
-		fmt.Printf("\nFiles Reconciled (%d):\n", len(rep.ReconciledFiles))
-		for _, f := range rep.ReconciledFiles {
-			printAdoptedFile("~ [SYNC]", f, findDetail(rep.ActionDetails, f))
-		}
-	}
+// fileSections names the file sections of an adoption report and the tag of each entry, for a
+// run that wrote (appliedFileSections) or a dry run that only plans (plannedFileSections).
+type fileSections struct {
+	created, createdTag       string
+	reconciled, reconciledTag string
+	replaced, replacedTag     string
 }
 
-func printPlannedFiles(rep *adopt.AdoptReport) {
+var (
+	appliedFileSections = fileSections{
+		created: "Files Created", createdTag: "+ [NEW] ",
+		reconciled: "Files Reconciled", reconciledTag: "~ [SYNC]",
+		replaced: "Files Replaced", replacedTag: "! [REPL]",
+	}
+	plannedFileSections = fileSections{
+		created: "Files Planned for Creation", createdTag: "+ [PLAN] ",
+		reconciled: "Files Planned for Reconciliation", reconciledTag: "~ [PLAN] ",
+		replaced: "Files Planned for Replacement", replacedTag: "! [PLAN] ",
+	}
+)
+
+// printAdoptedFiles prints the created, reconciled and replaced files. A replaced file, whose
+// adopter bytes were overwritten, gets its own section with its replace entry (line delta and
+// backup), and is not repeated among the reconciled files.
+func printAdoptedFiles(rep *adopt.AdoptReport) {
+	sections := appliedFileSections
+	if rep.DryRun {
+		sections = plannedFileSections
+	}
 	if len(rep.CreatedFiles) > 0 {
-		fmt.Printf("\nFiles Planned for Creation (%d):\n", len(rep.CreatedFiles))
+		fmt.Printf("\n%s (%d):\n", sections.created, len(rep.CreatedFiles))
 		for _, f := range rep.CreatedFiles {
-			printAdoptedFile("+ [PLAN] ", f, findDetail(rep.ActionDetails, f))
+			printAdoptedFile(sections.createdTag, f, findDetail(rep.ActionDetails, f))
 		}
 	}
-	if len(rep.ReconciledFiles) > 0 {
-		fmt.Printf("\nFiles Planned for Reconciliation (%d):\n", len(rep.ReconciledFiles))
-		for _, f := range rep.ReconciledFiles {
-			printAdoptedFile("~ [PLAN] ", f, findDetail(rep.ActionDetails, f))
+	replaced := rep.Replaced()
+	reconciled := rep.ReconciledNotReplaced()
+	if len(reconciled) > 0 {
+		fmt.Printf("\n%s (%d):\n", sections.reconciled, len(reconciled))
+		for _, f := range reconciled {
+			printAdoptedFile(sections.reconciledTag, f, findDetail(rep.ActionDetails, f))
+		}
+	}
+	if len(replaced) > 0 {
+		fmt.Printf("\n%s (%d):\n", sections.replaced, len(replaced))
+		for _, entry := range replaced {
+			printAdoptedFile(sections.replacedTag, entry.Path, entry.Details)
 		}
 	}
 }

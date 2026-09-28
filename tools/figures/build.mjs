@@ -6,7 +6,7 @@
 //   node tools/figures/build.mjs build      validate every spec, write docs/assets/figures/<slug>.{svg,static.svg,json}
 //   node tools/figures/build.mjs check      validate, render in memory, and compare the bytes with the committed files
 //   node tools/figures/build.mjs sources    check hashes, sizes, markup, spec/JSON pairs, fences, evidence and the README block
-//   node tools/figures/build.mjs site       after mkdocs build: every diagram fence became a diagram that resolves
+//   node tools/figures/build.mjs site       after mkdocs build or astro build: every diagram fence became a diagram that resolves
 //   node tools/figures/build.mjs portable   render figures for READMEs and wiki pages, which run no JavaScript
 //
 // The render core is core.mjs; its bytes and the vendored render files make up the engine hash
@@ -131,7 +131,7 @@ function runSources(root, { values }) {
 
 function runSite(_root, { values }) {
   if (!values.config || !values.docs || !values.site) throw new UsageError('site needs --config, --docs and --site');
-  const { errors, diagrams } = checkSite(values.config, values.docs, values.site);
+  const { errors, diagrams } = checkSite(values.config, values.docs, values.site, values.base);
   return report(errors, `${diagrams} diagram(s) under ${values.docs} render.`);
 }
 
@@ -153,7 +153,7 @@ const COMMANDS = {
     options: { root: STRING, docs: { ...STRING, default: 'docs' }, config: { ...STRING, default: 'mkdocs.yml' }, readme: { ...STRING, default: 'README.md' } },
     run: runSources,
   },
-  site: { options: { config: STRING, docs: STRING, site: STRING }, run: runSite },
+  site: { options: { config: STRING, docs: STRING, site: STRING, base: STRING }, run: runSite },
   portable: {
     options: { base: STRING, wiki: FLAG, write: FLAG, root: STRING, config: { ...STRING, default: 'mkdocs.yml' } },
     files: true,
@@ -163,7 +163,7 @@ const COMMANDS = {
 const USAGE = [
   'usage: node build.mjs build|check',
   '       node build.mjs sources [--root DIR] [--docs DIR] [--config FILE] [--readme FILE]',
-  '       node build.mjs site --config FILE --docs DIR --site DIR',
+  '       node build.mjs site --config FILE --docs DIR --site DIR [--base PATH]',
   '       node build.mjs portable (--base URL | --wiki | --write) [--root DIR] [--config FILE] FILE...',
 ].join('\n');
 

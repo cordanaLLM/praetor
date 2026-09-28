@@ -563,6 +563,13 @@ Malformed or oversized command metadata now fails before any adoption writes.
   rendering's LF bytes, the only bytes activation trusts
   (`TestAdopt_Positive_CRLFPriorLefthookMigratedAndActivated`). An edited copy, or one with
   mixed line endings, is not exact: it is preserved and not activated.
+- A CRLF checkout of the current rendering is verified and kept as it is. Activation trusts
+  only the rendering's exact LF bytes, so the file is not activated; `--force` rewrites it
+  with those bytes, reports a reconcile rather than a replace, and activates it
+  (`TestAdopt_Positive_ForceRewritesCRLFCurrentLefthookAndActivates`,
+  `TestAdopt_Boundary_CRLFCurrentLefthookKeptWithoutForceAndInDryRun`). A copy with mixed line
+  endings is no checkout: `--force` replaces it like any drifted file
+  (`TestAdopt_Negative_ForceReplacesMixedEndingCurrentLefthook`).
 - A configuration that reaches `.config/lefthook/praetor.yml`, the vendorable canonical
   policy, through `extends` or through the `configs` of a `remotes` entry is never
   replaced, `--force` included. Neither are the files vendored beside it:

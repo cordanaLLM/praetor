@@ -348,7 +348,7 @@ func reconcileGitHooks(ctx context.Context, s *adoptSession) error {
 		s.report.recordSkipped(lefthookFile, identity.reason)
 		return reconcileEvasionHook(ctx, s, identity.canonical)
 	}
-	lefthookWritten, err := s.writeLefthookConfig(ctx, current, identity.prior)
+	lefthookWritten, err := s.writeLefthookConfig(ctx, current, existing, identity.prior)
 	if err != nil {
 		return err
 	}
@@ -367,28 +367,51 @@ func reconcileGitHooks(ctx context.Context, s *adoptSession) error {
 // existing configuration that differs from the rendering is kept and reported as drift. The
 // migration writes the rendering's own LF bytes even over a CRLF checkout of an earlier one:
 // activation trusts only those exact bytes (lefthookConfigIsPraetor), and git stores the
-// working-tree LF text unchanged under core.autocrlf.
-func (s *adoptSession) writeLefthookConfig(ctx context.Context, current string, prior bool) (bool, error) {
-	if !prior {
-		state, err := s.scaffoldFile(ctx, scaffold{
-			rel:      lefthookFile,
-			perm:     filePerm,
-			content:  []byte(current),
-			force:    true,
-			created:  "Scaffolded Lefthook configuration for local pre-commit and pre-push enforcement",
-			verified: "Existing Lefthook configuration verified present",
-		})
-		return state == scaffoldWritten, err
+// working-tree LF text unchanged under core.autocrlf. Under --force, existing bytes that are a
+// CRLF checkout of the current rendering take the same path: the scaffold verifies such a copy
+// instead of replacing it, so --force would leave bytes activation refuses in place.
+func (s *adoptSession) writeLefthookConfig(ctx context.Context, current string, existing []byte, prior bool) (bool, error) {
+	switch {
+	case prior:
+		return true, s.migrateLefthookConfig(current, "Migrated an earlier Praetor-generated Lefthook configuration to the current template")
+	case s.opts.Force && isLineEndingCheckout(existing, current):
+		return true, s.migrateLefthookConfig(current, "Rewrote a line-ending checkout of the current Praetor-generated "+
+			"Lefthook configuration with its LF bytes, the only bytes hook activation trusts")
 	}
+	state, err := s.scaffoldFile(ctx, scaffold{
+		rel:      lefthookFile,
+		perm:     filePerm,
+		content:  []byte(current),
+		force:    true,
+		created:  "Scaffolded Lefthook configuration for local pre-commit and pre-push enforcement",
+		verified: "Existing Lefthook configuration verified present",
+	})
+	return state == scaffoldWritten, err
+}
+
+// migrateLefthookConfig writes current, the rendering's own LF bytes, over a Praetor text at
+// lefthook.yml and records detail. A dry run records the rewrite it would make.
+func (s *adoptSession) migrateLefthookConfig(current, detail string) error {
 	full, err := repoFile(s.repoPath, lefthookFile)
 	if err != nil {
-		return false, err
+		return err
 	}
 	if err := s.write(full, []byte(current), filePerm); err != nil {
-		return false, err
+		return err
 	}
-	s.report.recordReconciled(lefthookFile, "Migrated an earlier Praetor-generated Lefthook configuration to the current template")
-	return true, nil
+	s.report.recordReconciled(lefthookFile, detail)
+	return nil
+}
+
+// isLineEndingCheckout reports whether existing holds current's text in another consistent
+// line-ending style: equal to it once line endings are normalised (util.CanonicalTextEquivalent),
+// but not byte for byte. Mixed line endings are no checkout.
+func isLineEndingCheckout(existing []byte, current string) bool {
+	if bytes.Equal(existing, []byte(current)) {
+		return false
+	}
+	equivalent, err := util.CanonicalTextEquivalent(existing, []byte(current))
+	return err == nil && equivalent
 }
 
 // reconcileCheckpointLifecycle installs the checkpoint bundle. With vendored set, the

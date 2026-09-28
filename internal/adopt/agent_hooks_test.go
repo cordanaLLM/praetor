@@ -23,9 +23,10 @@ func hookSession(t *testing.T, dryRun bool) *adoptSession {
 	repoDir := t.TempDir()
 	opts := AdoptOptions{Path: repoDir, SkipGitValidation: true, DryRun: dryRun}
 	return &adoptSession{
-		repoPath: repoDir,
-		report:   newAdoptionReport(repoDir, opts, classify.Result{Archetype: "app-service"}),
-		opts:     opts,
+		repoPath:    repoDir,
+		report:      newAdoptionReport(repoDir, opts, classify.Result{Archetype: "app-service"}),
+		opts:        opts,
+		backupStamp: testBackupStamp,
 	}
 }
 
@@ -104,8 +105,9 @@ func TestReconcileAgentHooks_Positive_CreatesMissingHookFiles(t *testing.T) {
 
 // Positive: an existing file is merged, not rewritten: members keep their order and literals
 // (a 20-digit integer, 1.50), a group whose matcher only resembles the row's (^Bash, every tool
-// whose name starts with Bash) is left alone, the row's own group is created, and the prior
-// bytes are kept as the backup.
+// whose name starts with Bash) is left alone, and the row's own group is created. No copy lands
+// beside the file (BUG-1026); outside a git work tree nothing confirms the backup root is
+// ignored, so the report says there is no backup.
 func TestReconcileAgentHooks_Positive_MergesPreservingForeignContent(t *testing.T) {
 	s := hookSession(t, false)
 	original := `{"zeta": 12345678901234567890, "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "stop.sh"}]}],` +
@@ -125,14 +127,14 @@ func TestReconcileAgentHooks_Positive_MergesPreservingForeignContent(t *testing.
 			t.Fatalf("member order or literal lost (%s before %s):\n%s", order[i-1], order[i], merged)
 		}
 	}
-	if backup := mustRead(t, hookPath(s, claudeHookFile+hookBackupExt)); backup != original {
-		t.Fatalf("backup = %q, want the prior bytes", backup)
+	if fileExists(hookPath(s, claudeHookFile+hookBackupExt)) {
+		t.Fatal("backup written beside the hook file")
 	}
-	if action, ok := actionOf(s.report, claudeHookFile); !ok || action.Action != actionMerge {
+	if action, ok := actionOf(s.report, claudeHookFile); !ok || action.Action != actionMerge || !strings.Contains(action.Details, "; no backup: ") {
 		t.Errorf("merge not reported: %+v", s.report.ActionDetails)
 	}
-	if action, ok := actionOf(s.report, claudeHookFile+hookBackupExt); !ok || action.Action != actionCreate {
-		t.Errorf("backup not reported: %+v", s.report.ActionDetails)
+	if len(s.report.CreatedFiles) != 2 || contains(s.report.CreatedFiles, claudeHookFile+hookBackupExt) {
+		t.Errorf("created = %v, want the two absent client files alone", s.report.CreatedFiles)
 	}
 }
 
@@ -268,25 +270,26 @@ func TestReconcileAgentHooks_Negative_UnknownClientSelection(t *testing.T) {
 	}
 }
 
-// Negative: a backup path that is a symlink out of the repository is refused, and neither its
-// target nor the hook file is written.
-func TestReconcileAgentHooks_Negative_SymlinkedBackupRefused(t *testing.T) {
+// Negative: the former backup path, <file>.bak, is never written again: a symlink planted
+// there out of the repository keeps its target's bytes while the merge goes ahead, and the
+// report names the leftover.
+func TestReconcileAgentHooks_Negative_FormerBackupPathNotWrittenThrough(t *testing.T) {
 	s := hookSession(t, false)
-	original := `{"hooks": {}}`
-	mustWrite(t, hookPath(s, claudeHookFile), original)
+	mustWrite(t, hookPath(s, claudeHookFile), `{"hooks": {}}`)
 	victim := filepath.Join(t.TempDir(), "victim.json")
 	mustWrite(t, victim, "outside\n")
 	if err := os.Symlink(victim, hookPath(s, claudeHookFile+hookBackupExt)); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	if err := reconcileAgentHooks(context.Background(), s); err == nil {
-		t.Fatal("symlinked backup accepted")
+	if err := reconcileAgentHooks(context.Background(), s); err != nil {
+		t.Fatal(err)
 	}
 	if got := mustRead(t, victim); got != "outside\n" {
 		t.Fatalf("symlink target written: %q", got)
 	}
-	if got := mustRead(t, hookPath(s, claudeHookFile)); got != original {
-		t.Fatalf("hook file written after the refused backup: %q", got)
+	requireHandler(t, []byte(mustRead(t, hookPath(s, claudeHookFile))), "PreToolUse", "^Bash$", "praetorctl hook claude pre-tool", 15)
+	if !strings.HasPrefix(strings.Join(s.report.Warnings, "\n"), claudeHookFile+hookBackupExt+": ") {
+		t.Fatalf("leftover not reported: %v", s.report.Warnings)
 	}
 }
 

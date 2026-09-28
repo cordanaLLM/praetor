@@ -12,7 +12,7 @@
     "bundle": "node bundle.mjs",
     "check": "node build.mjs check",
     "smoke": "node smoke.mjs",
-    "test": "node --test figures.test.mjs checks.test.mjs",
+    "test": "node --test figures.test.mjs checks.test.mjs astro.test.mjs",
     "typecheck": "tsc -p tsconfig.json"
   },
   "devDependencies": {

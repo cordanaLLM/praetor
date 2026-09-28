@@ -6,12 +6,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { cpSync, mkdirSync, readFileSync, symlinkSync, unlinkSync } from 'node:fs';
-import { dirname, join, sep } from 'node:path';
+import { dirname, join, relative, sep } from 'node:path';
 import {
-  CheckError, EXPECTED_FENCE, MAX_LINES, OUT_DIR, ROOT, checkSite, configError, declaredFences, declaredHooks, enabledKinds,
-  engineHash, excludedPatterns, expand, fenceBlocks, fences, figureSlug, figureSlugs, fillSlots, globRegExp, htmlErrors, isExcluded,
-  kindErrors, markdownPages, pageOutput, patternMatches, portable, quoted, refreshMarkers, renderedDiagrams, scanPage, siteUrl,
-  sizeErrors, sources, svgSpecError,
+  CheckError, EXPECTED_FENCE, MAX_LINES, OUT_DIR, ROOT, STARLIGHT_SUFFIXES, astroKinds, checkSite, configError, declaredFences,
+  declaredHooks, enabledKinds, engineHash, excludedPatterns, expand, fenceBlocks, fences, figureSlug, figureSlugs, filesDigest, fillSlots,
+  frontmatterSlug, globRegExp, htmlErrors, isExcluded, kindErrors, markdownPages, pageOutput, patternMatches, portable, quoted,
+  refreshMarkers, renderedDiagrams, scanPage, siteFlavor, siteUrl, sizeErrors, sources, starlightOutput, starlightPages, svgSpecError,
 } from './checks.mjs';
 import { ENGINE_FILES, markup, sha256 } from './core.mjs';
 import { main } from './build.mjs';
@@ -447,6 +447,163 @@ test('site: a nested figure fence needs no render', () => withTempDir((dir) => {
 }));
 
 // ---------------------------------------------------------------------------------------------
+// Astro Starlight: the generator, its pages and slugs, and the site check on its build
+// ---------------------------------------------------------------------------------------------
+
+/** An Astro configuration with the figures integration, as the Starlight preset writes one. */
+const ASTRO_CONFIG = "import starlight from '@astrojs/starlight';\nimport figures from './tools/figures/astro.mjs';\n" +
+  'export default { integrations: [starlight(), figures()] };\n';
+/** The head script astro.mjs (`loaderScript`) writes for a site built for `base`. */
+const inlineLoader = (base) => `<script>import("${base}assets/javascripts/figures/loader.js").catch(() => {});</script>`;
+
+/** A Starlight site built for base '/docs/' with one figure page, guides/tour.mdx. */
+function starlightSite(dir) {
+  const paths = { config: join(dir, 'astro.config.mjs'), docs: join(dir, 'src', 'content', 'docs'), site: join(dir, 'dist') };
+  write(paths.config, ASTRO_CONFIG);
+  write(join(paths.docs, 'index.mdx'), '---\ntitle: Home\n---\n');
+  write(join(paths.site, 'index.html'), '<html></html>');
+  write(join(paths.docs, 'guides', 'tour.mdx'), `---\ntitle: Tour\n---\n\n${FIGURE}`);
+  for (const name of ['assets/figures/demo.svg', 'assets/figures/demo.static.svg']) write(join(paths.site, name), SPEC_SVG);
+  for (const name of ['loader.js', 'player.js']) write(join(paths.site, 'assets/javascripts/figures', name), 'export {};\n');
+  const page = join(paths.site, 'guides', 'tour', 'index.html');
+  write(page, `<head>${inlineLoader('/docs/')}</head>${fillSlots(META, '/docs/assets/figures')}`);
+  return { ...paths, page, check: (base) => checkSite(paths.config, paths.docs, paths.site, base) };
+}
+
+test('the configuration name tells the generator: astro.config.* is Astro, any other file MkDocs', () => {
+  for (const name of ['astro.config.mjs', 'astro.config.ts', 'astro.config.js', 'astro.config.cjs', 'astro.config.mts', join('site', 'astro.config.mjs')]) {
+    assert.equal(siteFlavor(name).generator, 'Astro', name);
+  }
+  for (const name of ['mkdocs.yml', join('docs', 'mkdocs.yaml'), 'astro.config.json', 'my-astro.config.mjs', 'astro.mjs']) {
+    assert.equal(siteFlavor(name).generator, 'MkDocs', name);
+  }
+});
+
+test('an Astro configuration enables figures when a string names the integration, and never Mermaid', () => {
+  assert.deepEqual([...astroKinds(ASTRO_CONFIG)], ['figure']);
+  assert.deepEqual([...astroKinds('import figures from "../../tools/figures/astro.mjs";')], ['figure']);
+  assert.deepEqual([...astroKinds('const { default: figures } = await import(`figures/astro.mjs`);')], ['figure']);
+  assert.deepEqual([...astroKinds("import figures from '.\\\\tools\\\\figures\\\\astro.mjs';")], ['figure']);
+  assert.deepEqual([...astroKinds("import figures from './tools/figures/astro.mjs.orig';")], []);
+  assert.deepEqual([...astroKinds("import figures from './tools/myfigures/astro.mjs';")], []);
+  assert.deepEqual([...astroKinds('// tools/figures/astro.mjs is not imported here\n')], []);
+  assert.deepEqual([...astroKinds('')], []);
+});
+
+test('Starlight pages: every docs extension, but no underscore file and no dot-path', () => withTempDir((dir) => {
+  assert.deepEqual([...STARLIGHT_SUFFIXES], ['.markdown', '.mdown', '.mkdn', '.mkd', '.mdwn', '.md', '.mdx']);
+  for (const name of ['index.mdx', 'a.md', 'b.markdown', 'c.mdown', 'd.mkdn', 'e.mkd', 'f.mdwn', '_partial.mdx', '.hidden.md', '.drafts/x.md', '_dir/y.md', 'notes.txt']) {
+    write(join(dir, ...name.split('/')), '# x\n');
+  }
+  const found = starlightPages(dir).map((page) => relative(dir, page).split(sep).join('/'));
+  // The docs loader's glob skips an underscore file name, not an underscore directory.
+  assert.deepEqual(found, ['_dir/y.md', 'a.md', 'b.markdown', 'c.mdown', 'd.mkdn', 'e.mkd', 'f.mdwn', 'index.mdx']);
+}));
+
+test('a Starlight page maps to the directory its slug names, the front matter\'s slug first', () => {
+  const docs = join('repo', 'src', 'content', 'docs');
+  const site = join('repo', 'dist');
+  const out = (rel, text = '') => starlightOutput(docs, site, join(docs, ...rel.split('/')), text);
+  assert.equal(out('index.mdx'), join(site, 'index.html'));
+  assert.equal(out('guides/index.md'), join(site, 'guides', 'index.html'));
+  assert.equal(out('guides/onboarding.mdx'), join(site, 'guides', 'onboarding', 'index.html'));
+  // github-slugger's rules, as Astro applies them per segment: lowercase, punctuation dropped, spaces to hyphens.
+  assert.equal(out('Guides/My Page (Draft)!.md'), join(site, 'guides', 'my-page-draft', 'index.html'));
+  assert.equal(out('guides/über_ß.mdx'), join(site, 'guides', 'über_ß', 'index.html'));
+  assert.equal(out('a.md', '---\ntitle: A\nslug: custom/path\n---\n'), join(site, 'custom', 'path', 'index.html'));
+  assert.equal(out('a.md', "---\nslug: 'quoted' # a comment\n---\n"), join(site, 'quoted', 'index.html'));
+  assert.equal(out('a.md', '---\nslug: index\n---\n'), join(site, 'index.html'));
+  // A slug line outside the front matter is page text.
+  assert.equal(out('b.md', '# B\nslug: nope\n'), join(site, 'b', 'index.html'));
+  assert.equal(out('b.md', '---\ntitle: B\n---\nslug: nope\n'), join(site, 'b', 'index.html'));
+  assert.equal(frontmatterSlug(''), null);
+  assert.equal(frontmatterSlug('---\nslug: ""\n---\n'), '');
+});
+
+test('the page scanner reads the modules inline scripts import as scripts, and nothing else in them', () => {
+  const html = '<script>import("/a/loader.js").catch(() => {}); import(\'./b.js\');</script>' +
+    '<script type="application/ld+json">{"x": "import(\\"c.js\\")"}</script><script src="d.js"></script>' +
+    '<script>const e = "import(e.js)";</script><script src="f.js"/><script>import("g.js")';
+  assert.deepEqual(scanPage(html).scripts, ['/a/loader.js', './b.js', 'd.js', 'f.js', 'g.js']);
+  // The import inside a figure caption is text, not a script.
+  assert.deepEqual(scanPage('<p>import("/x/loader.js")</p>').scripts, []);
+});
+
+test('site: a Starlight build passes under the base path it was built for; the wrong one fails', () => withTempDir((dir) => {
+  const fixture = starlightSite(dir);
+  assert.deepEqual(fixture.check('/docs/'), { errors: [], diagrams: 1 });
+  assert.deepEqual(fixture.check('docs'), { errors: [], diagrams: 1 });
+  // Built for /docs/, checked for the root: neither image nor the loader resolves.
+  const errors = fixture.check().errors;
+  assert.equal(errors.length, 3, errors.join('\n'));
+  assert.match(errors[0], /figure demo: \/docs\/assets\/figures\/demo\.static\.svg does not resolve to a file under/);
+  assert.match(errors[1], /figure demo: \/docs\/assets\/figures\/demo\.svg does not resolve/);
+  assert.match(errors[2], /loads no assets\/javascripts\/figures\/loader\.js \(tools\/figures\/astro\.mjs publishes it from tools\/figures\/dist\/\)$/);
+  // A root-absolute URL outside the base path never resolves, even to a file that exists.
+  write(join(fixture.site, 'elsewhere', 'demo.svg'), SPEC_SVG);
+  write(fixture.page, inlineLoader('/docs/') + fillSlots(META, '/elsewhere'));
+  assert.equal(fixture.check('/docs/').errors.length, 2);
+}));
+
+test('site: a Starlight page loads the loader by a script source too; without the integration it is not enabled', () => withTempDir((dir) => {
+  const fixture = starlightSite(dir);
+  write(fixture.page, `<script type="module" src="/docs/assets/javascripts/figures/loader.js"></script>${fillSlots(META, '/docs/assets/figures')}`);
+  assert.deepEqual(fixture.check('/docs/'), { errors: [], diagrams: 1 });
+  // A page Astro did not write, found by its slug.
+  write(join(fixture.docs, 'guides', 'Next Steps.md'), FIGURE);
+  assert.match(fixture.check('/docs/').errors[0], /1 diagram\(s\) but Astro wrote no .*next-steps.index\.html$/);
+  write(join(fixture.site, 'guides', 'next-steps', 'index.html'), inlineLoader('/docs/') + fillSlots(META, '/docs/assets/figures'));
+  assert.deepEqual(fixture.check('/docs/'), { errors: [], diagrams: 2 });
+  write(fixture.config, "import starlight from '@astrojs/starlight';\n");
+  assert.ok(fixture.check('/docs/').errors.every((error) => error.includes('does not enable figure diagrams')));
+}));
+
+test('site: a Mermaid fence on a Starlight site is told to become a figure; an underscore page is skipped', () => withTempDir((dir) => {
+  const fixture = starlightSite(dir);
+  write(join(fixture.docs, '_draft.mdx'), DIAGRAM);
+  assert.deepEqual(fixture.check('/docs/'), { errors: [], diagrams: 1 });
+  write(join(fixture.docs, 'old.md'), DIAGRAM);
+  write(join(fixture.site, 'old', 'index.html'), RENDERED);
+  const { errors } = fixture.check('/docs/');
+  assert.equal(errors.length, 1, errors.join('\n'));
+  assert.match(errors[0], /does not enable mermaid diagrams; draw it as a ```figure fence/);
+}));
+
+test('site: an MkDocs configuration takes no base path; an unbuilt Astro site names astro build', () => withTempDir((dir) => {
+  const fixture = figureSite(dir);
+  assert.throws(() => checkSite(fixture.config, fixture.docs, fixture.site, '/'), /a base path applies to an Astro site; .* is an MkDocs configuration/);
+  const astro = starlightSite(join(dir, 'astro'));
+  unlinkSync(join(astro.site, 'index.html'));
+  assert.throws(() => astro.check('/docs/'), /holds no built site \(no index\.html\); run astro build first/);
+}));
+
+test('the site command passes --base to an Astro check and refuses it for MkDocs', () => withTempDir(async (dir) => {
+  const astro = starlightSite(join(dir, 'astro'));
+  const mkdocs = figureSite(join(dir, 'mkdocs'));
+  const run = (config, docs, site, ...rest) => capture(() => main(['site', '--config', config, '--docs', docs, '--site', site, ...rest]));
+  const passed = await run(astro.config, astro.docs, astro.site, '--base', '/docs/');
+  assert.equal(passed.result, 0, passed.output);
+  assert.match(passed.output, /1 diagram\(s\) under .* render\./);
+  assert.equal((await run(astro.config, astro.docs, astro.site)).result, 1);
+  const refused = await run(mkdocs.config, mkdocs.docs, mkdocs.site, '--base', '/');
+  assert.equal(refused.result, 2);
+  assert.match(refused.output, /a base path applies to an Astro site/);
+}));
+
+test('sources: the pages of a Starlight docs collection, .mdx included, name only known figures', () => withTempDir((root) => {
+  write(join(root, 'astro.config.mjs'), ASTRO_CONFIG);
+  write(join(root, 'src', 'content', 'docs', 'guides', 'tour.mdx'), `---\ntitle: Tour\n---\n\n\`\`\`figure\nmissing\n\`\`\`\n`);
+  write(join(root, 'src', 'content', 'docs', '_partial.mdx'), '```figure\nalso-missing\n```\n');
+  write(join(root, 'src', 'content', 'docs', 'old.md'), DIAGRAM);
+  const errors = sources(root, join('src', 'content', 'docs'), 'astro.config.mjs', 'README.md');
+  assert.deepEqual(errors, [
+    `${join('src', 'content', 'docs', 'guides', 'tour.mdx')}: \`\`\`figure fence names 'missing', which has no spec and JSON`,
+    `${join('src', 'content', 'docs', 'old.md')}: \`\`\`mermaid fence, but the configuration does not enable mermaid diagrams; ` +
+      'draw it as a ```figure fence naming a spec under docs/figures/ (docs/guides/figures.md)',
+  ]);
+}));
+
+// ---------------------------------------------------------------------------------------------
 // Slots, expansion and portable blocks
 // ---------------------------------------------------------------------------------------------
 
@@ -535,6 +692,22 @@ test('quoted writes strings as Python repr does', () => {
   assert.equal(quoted('a\\b'), "'a\\\\b'");
   assert.equal(quoted(undefined), 'None');
 });
+
+test('filesDigest hashes a sha256sum manifest of the files in order; the engine hash is its ENGINE_FILES case', () => withTempDir((dir) => {
+  write(join(dir, 'a.json'), 'a');
+  write(join(dir, 'sub', 'b.json'), 'b');
+  const manifest = `${sha256('a')}  a.json\n${sha256('b')}  sub/b.json\n`;
+  assert.equal(filesDigest(dir, ['a.json', 'sub/b.json']), sha256(manifest));
+  assert.equal(engineHash(), filesDigest(ROOT, ENGINE_FILES));
+  // The order and the names count, not only the bytes.
+  assert.notEqual(filesDigest(dir, ['sub/b.json', 'a.json']), filesDigest(dir, ['a.json', 'sub/b.json']));
+  write(join(dir, 'c.json'), 'a');
+  assert.notEqual(filesDigest(dir, ['c.json']), filesDigest(dir, ['a.json']));
+  // Boundary: no files hash an empty manifest.
+  assert.equal(filesDigest(dir, []), sha256(''));
+  // Negative: a missing file is an error that names it.
+  assert.throws(() => filesDigest(dir, ['absent.json']), (error) => error.code === 'ENOENT' && error.message.includes('absent.json'));
+}));
 
 // ---------------------------------------------------------------------------------------------
 // The source check

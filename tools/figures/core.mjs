@@ -25,8 +25,14 @@ export const LIMITS = Object.freeze({
   alt: 125, boxes: 40, groups: 40, steps: 12, edges: 80, beats: 32, hops: 8, rows: 16,
   text: 2500, specs: 256, depth: 8,
 });
-const SPEC_OPEN = '<metadata id="figure-spec"><![CDATA[';
-const SPEC_CLOSE = ']]></metadata>';
+/**
+ * The markers `decorate` writes around the props every figure SVG embeds, as upstream's
+ * figure-svg.mjs does. The `site` check (checks.mjs) reads them from here; the browser loader
+ * (loader.ts) keeps its own copy, because importing this module would bundle node:crypto and the
+ * render engine into the player.
+ */
+export const SPEC_OPEN = '<metadata id="figure-spec"><![CDATA[';
+export const SPEC_CLOSE = ']]></metadata>';
 const EVIDENCE = /^[^\s:]+:[A-Za-z_][\w.]*$/;
 const TONES = new Set(['blue', 'purple', 'green', 'orange', 'gray']);
 const SHAPES = new Set(['box', 'decision', 'store']);

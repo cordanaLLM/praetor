@@ -497,8 +497,14 @@ func TestAdopt_Positive_ForceRegeneratesScaffolds(t *testing.T) {
 		t.Fatalf("Adopt --force failed: %v", err)
 	}
 	assertNoIssues(t, rep)
-	if !contains(rep.CreatedFiles, "lefthook.yml") {
-		t.Fatalf("--force must regenerate scaffolds, got created=%v", rep.CreatedFiles)
+	// The replaced configuration is reported as replaced, never as created, and its prior bytes
+	// are kept under the run's backup directory, which the managed .gitignore block ignores.
+	if contains(rep.CreatedFiles, "lefthook.yml") || !hasAction(rep, "lefthook.yml", actionReplace) {
+		t.Fatalf("--force must replace the drifted scaffold, got created=%v actions=%+v", rep.CreatedFiles, rep.ActionDetails)
+	}
+	backups, err := filepath.Glob(filepath.Join(repoPath, filepath.FromSlash(adoptBackupRoot), "*", "lefthook.yml"))
+	if err != nil || len(backups) != 1 || mustRead(t, backups[0]) != "pre-commit:\n  commands:\n    custom:\n      run: echo custom\n" {
+		t.Fatalf("backup of the replaced lefthook.yml = %v (err %v)", backups, err)
 	}
 	if contains(rep.CreatedFiles, ".config/labels.yaml") || mustRead(t, filepath.Join(repoPath, ".config", "labels.yaml")) != labels {
 		t.Errorf("--force must keep the existing label taxonomy, got created=%v", rep.CreatedFiles)

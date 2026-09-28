@@ -1,6 +1,9 @@
 // The figure checks (docs/adr/0016-figures-for-adopters.md, section 1). build.mjs is their command
-// line; this module imports only node: builtins and core.mjs, so the checks, like the render, need
-// Node 22.18 or later and no npm package.
+// line; this module imports only node: builtins, core.mjs and serve.mjs, so the checks, like the
+// render, need Node 22.18 or later and no npm package.
+//
+// Both site generators are checked: MkDocs, configured by an mkdocs.yml, and Astro Starlight,
+// configured by an astro.config.* file (`siteFlavor` tells them apart by the file's name).
 //
 // * `sources` needs no site. It fails when a figure's JSON no longer matches its spec, the engine
 //   files (ENGINE_FILES in core.mjs), its SVGs or the markup core.mjs renders from it; when a JSON
@@ -8,15 +11,20 @@
 //   when a fence names a figure that does not exist or a kind the configuration does not enable;
 //   when the README's portable block differs from the renderer; and when an evidence anchor's path
 //   or symbol is gone.
-// * `site` runs after `mkdocs build`. The kinds a build accepts come from its configuration: the
-//   declared mermaid custom fence enables ```mermaid, and a hooks entry naming
-//   figures/mkdocs_hook.py enables ```figure. A fence of a kind the configuration does not enable is
-//   an error; the root site enables figures only, so a Mermaid fence there is told to become a
-//   figure fence. Every Mermaid fence must appear as a `<pre class="mermaid">`, every figure fence as
-//   a `figure.praetor-figure[data-figure]` whose images resolve under the site to SVGs that embed the
-//   props the player mounts (`<metadata id="figure-spec">`), on a page that loads the figure loader
-//   with player.js beside it. Pages the configuration's `exclude_docs` leaves out are skipped, as
-//   MkDocs skips them.
+// * `site` runs after `mkdocs build` or `astro build`. The kinds a build accepts come from its
+//   configuration: in an mkdocs.yml the declared mermaid custom fence enables ```mermaid and a hooks
+//   entry naming figures/mkdocs_hook.py enables ```figure; an Astro configuration that names
+//   figures/astro.mjs enables ```figure and never Mermaid. A fence of a kind the configuration does
+//   not enable is an error; where figures are enabled, a Mermaid fence is told to become a figure
+//   fence. Every Mermaid fence must appear as a `<pre class="mermaid">`, every figure fence as a
+//   `figure.praetor-figure[data-figure]` whose images resolve under the site to SVGs that embed the
+//   props the player mounts (`<metadata id="figure-spec">`), on a page that loads the figure loader,
+//   by a script source or an inline `import("…")`, with player.js beside it. Pages the
+//   configuration's `exclude_docs` leaves out are skipped, as MkDocs skips them; Starlight pages
+//   (`.md`, `.mdx` and the other extensions of STARLIGHT_SUFFIXES) whose name starts with an
+//   underscore are skipped, as its docs loader skips them. The MkDocs hook writes relative figure
+//   URLs; the Astro integration writes root-absolute ones under the base path the site is built
+//   for, which `site --base` names.
 // * `portable` renders figures for surfaces that run no JavaScript: `--base URL` replaces the figure
 //   fences of wiki pages with absolute image URLs and a link to the interactive figure, `--wiki` does
 //   the same with the `site_url` of mkdocs.yml, and `--write` refreshes `<!-- figure:SLUG -->` blocks
@@ -27,7 +35,9 @@
 // and so scans fences in Python; both scanners replay tools/figures/fence-fixtures.json, and this
 // module splits and strips on Python's whitespace so they find the same fences.
 //
-// Page mapping assumes MkDocs' default `use_directory_urls: true`. The configuration reader handles
+// Page mapping assumes MkDocs' default `use_directory_urls: true` and Astro's default
+// `build.format: 'directory'`; a Starlight page's URL is its slug (`starlightSlug`). The
+// configuration reader handles
 // the block-style YAML the site and the preset are written in; it checks a third-party tool's file
 // and is no loader for praetor configuration. Its `exclude_docs` matcher follows the gitignore rules
 // MkDocs applies through pathspec for the subset it covers: a slash at the start or in the middle
@@ -37,7 +47,8 @@
 import { readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ENGINE_FILES, SLOTS, escapeHtml, markup, sha256 } from './core.mjs';
+import { ENGINE_FILES, SLOTS, SPEC_CLOSE, SPEC_OPEN, escapeHtml, markup, sha256 } from './core.mjs';
+import { PLAYER_URI, basePath, statOrNull } from './serve.mjs';
 
 /** The repository root, two levels above this file; every repository path below is relative to it. */
 export const ROOT = fileURLToPath(new URL('../../', import.meta.url));
@@ -53,12 +64,9 @@ export const MAX_LINES = 100_000;
 const MAX_FIGURES = 256;
 const MAX_ENTRIES = 131_072;
 
-/** Where the figures hook publishes tools/figures/dist/loader.js; the loader imports PLAYER beside it. */
-const LOADER = 'assets/javascripts/figures/loader.js';
+/** Where the figures hook and the Astro integration publish tools/figures/dist/loader.js; the loader imports PLAYER beside it. */
+const LOADER = `${PLAYER_URI}/loader.js`;
 const PLAYER = 'player.js';
-/** The markers core.mjs (`decorate`) writes around the props every figure SVG embeds. */
-const SPEC_OPEN = '<metadata id="figure-spec"><![CDATA[';
-const SPEC_CLOSE = ']]></metadata>';
 /** A hooks entry ending in these two path parts enables figures: tools/figures/mkdocs_hook.py from any directory. */
 const HOOK = ['figures', 'mkdocs_hook.py'];
 const KINDS = Object.freeze(['mermaid', 'figure']);
@@ -135,12 +143,12 @@ function clean(path) {
   return normal.length > 1 && normal.endsWith(sep) && !/^[A-Za-z]:\\$/.test(normal) ? normal.slice(0, -1) : normal;
 }
 
+/** `statOrNull` in serve.mjs, its read failure turned into a CheckError. */
 function statOf(path) {
   try {
-    return statSync(path);
+    return statOrNull(path);
   } catch (error) {
-    if (['ENOENT', 'ENOTDIR', 'ELOOP', 'ENAMETOOLONG'].includes(error.code)) return null;
-    throw new CheckError(`cannot read ${path}: ${error.message}`);
+    throw new CheckError(error.message, { cause: error });
   }
 }
 
@@ -472,8 +480,11 @@ function entries(dir) {
   }
 }
 
-/** Every `*.md` under `dir`, as `Path.rglob('*.md')` finds it (symbolic links to directories are not followed), sorted. */
-function markdownParts(dir) {
+/**
+ * Every file under `dir` whose name ends in one of `suffixes`, as `Path.rglob('*.md')` finds the
+ * `.md` ones (symbolic links to directories are not followed), sorted.
+ */
+function markdownParts(dir, suffixes) {
   const found = [];
   const stack = [[]];
   let seen = 0;
@@ -483,7 +494,7 @@ function markdownParts(dir) {
     seen += listed.length;
     if (seen > MAX_ENTRIES) break;
     for (const entry of listed) {
-      if (hasSuffix(entry.name, '.md')) found.push([...parts, entry.name]);
+      if (suffixes.some((suffix) => hasSuffix(entry.name, suffix))) found.push([...parts, entry.name]);
       if (entry.isDirectory()) stack.push([...parts, entry.name]);
     }
   }
@@ -491,16 +502,19 @@ function markdownParts(dir) {
   return found.sort(compareParts);
 }
 
-/** Every page MkDocs builds from `docsDir`: its default exclusions and `excluded` left out. */
-export function markdownPages(docsDir, excluded = []) {
+/** The pages under `docsDir` whose names end in one of `suffixes` and that `skip` does not leave out. */
+function pagesUnder(docsDir, suffixes, skip) {
   const pages = [];
-  for (const parts of markdownParts(docsDir)) {
-    if (isExcluded(parts, excluded)) continue;
+  for (const parts of markdownParts(docsDir, suffixes)) {
+    if (skip(parts)) continue;
     pages.push(join(docsDir, ...parts));
     if (pages.length > MAX_PAGES) throw new CheckError(`more than ${MAX_PAGES} Markdown pages under ${docsDir}`);
   }
   return pages;
 }
+
+/** Every page MkDocs builds from `docsDir`: its default exclusions and `excluded` left out. */
+export const markdownPages = (docsDir, excluded = []) => pagesUnder(docsDir, ['.md'], (parts) => isExcluded(parts, excluded));
 
 /** The HTML file MkDocs writes for `page` with directory URLs. */
 export function pageOutput(docsDir, siteDir, page) {
@@ -509,6 +523,85 @@ export function pageOutput(docsDir, siteDir, page) {
   if (stem === 'index' || stem === 'README') return join(siteDir, dirname(rel), 'index.html');
   return join(siteDir, dirname(rel), stem, 'index.html');
 }
+
+/**
+ * The file extensions Starlight's docs loader reads (`docsExtensions` in
+ * @astrojs/starlight/loaders.ts, 0.32). Its glob skips a file whose name starts with an underscore
+ * and, as every glob without the `dot` option does, a dot-file or dot-directory.
+ */
+export const STARLIGHT_SUFFIXES = Object.freeze(['.markdown', '.mdown', '.mkdn', '.mkd', '.mdwn', '.md', '.mdx']);
+/** What github-slugger drops from a path segment: all but letters, marks, numbers, connector punctuation, space and hyphen. */
+const SLUG_DROP = /[^\p{L}\p{M}\p{N}\p{Pc} -]/gu;
+const FRONTMATTER_SLUG = /^slug[ \t]*:[ \t]*(['"]?)(.*?)\1[ \t]*(?:#.*)?$/;
+
+/** Every page Starlight builds from its docs collection directory `docsDir`. */
+export const starlightPages = (docsDir) => pagesUnder(docsDir, STARLIGHT_SUFFIXES,
+  (parts) => parts.some((part) => part.startsWith('.')) || parts.at(-1).startsWith('_'));
+
+/** The `slug` a page's front matter declares, or null. */
+export function frontmatterSlug(text) {
+  const lines = boundedLines(text);
+  if (strip(lines[0] ?? '') !== '---') return null;
+  for (const line of lines.slice(1)) {
+    if (strip(line) === '---') return null;
+    const match = FRONTMATTER_SLUG.exec(line);
+    if (match) return match[2];
+  }
+  return null;
+}
+
+/**
+ * The slug Astro's glob loader gives a page (`generateIdDefault` in
+ * astro/dist/content/loaders/glob.js, Astro 5): the front matter's `slug`, else the path without its
+ * extension, each segment lowercased with github-slugger's dropped characters removed and spaces
+ * turned into hyphens, and a final `/index` cut.
+ */
+export function starlightSlug(docsDir, page, text) {
+  const declared = frontmatterSlug(text);
+  if (declared !== null) return declared;
+  const rel = relative(docsDir, page);
+  const segments = rel.slice(0, rel.length - extname(rel).length).split(sep);
+  return segments.map((segment) => segment.toLowerCase().replace(SLUG_DROP, '').replaceAll(' ', '-')).join('/').replace(/\/index$/, '');
+}
+
+/** The HTML file Astro writes for a Starlight page with its default `build.format: 'directory'`. */
+export function starlightOutput(docsDir, siteDir, page, text) {
+  const slug = starlightSlug(docsDir, page, text).split('/').filter(Boolean);
+  if (slug.length === 0 || (slug.length === 1 && slug[0] === 'index')) return join(siteDir, 'index.html');
+  return join(siteDir, ...slug, 'index.html');
+}
+
+/**
+ * A string literal in an Astro configuration that names the integration: tools/figures/astro.mjs
+ * from any directory, with forward slashes or (escaped) backslashes.
+ */
+const ASTRO_INTEGRATION = /['"`](?:[^'"`\n]*[\\/])?figures[\\/]+astro\.mjs['"`]/;
+
+/** The diagram kinds an Astro configuration renders: figures when it names the integration, Mermaid never. */
+export const astroKinds = (text) => new Set(ASTRO_INTEGRATION.test(text) ? ['figure'] : []);
+
+/**
+ * How one site generator builds pages: MkDocs from an mkdocs.yml, Astro Starlight from an
+ * astro.config.* file. `output` names the HTML file a page becomes; `base` says whether figure
+ * URLs are root-absolute under the site's base path (`site --base`); `publisher` names what
+ * publishes the loader.
+ */
+const MKDOCS = Object.freeze({
+  generator: 'MkDocs', build: 'mkdocs build', publisher: 'the figures hook', base: false,
+  kinds: enabledKinds,
+  pages: (docsDir, text) => markdownPages(docsDir, excludedPatterns(text)),
+  output: (docsDir, siteDir, page) => pageOutput(docsDir, siteDir, page),
+});
+const STARLIGHT = Object.freeze({
+  generator: 'Astro', build: 'astro build', publisher: 'tools/figures/astro.mjs', base: true,
+  kinds: astroKinds,
+  pages: (docsDir) => starlightPages(docsDir),
+  output: starlightOutput,
+});
+const ASTRO_CONFIG = /^astro\.config\.[cm]?[jt]s$/i;
+
+/** The generator a configuration file belongs to, told by its name: astro.config.* is Astro, any other file MkDocs. */
+export const siteFlavor = (config) => (ASTRO_CONFIG.test(basename(config)) ? STARLIGHT : MKDOCS);
 
 /** The finding for a disabled `kind`, naming its replacement when the configuration enables it. */
 function kindError(page, kind, kinds) {
@@ -582,6 +675,7 @@ function handleStart(scan, tag, attributes) {
   const classes = words(attributes.get('class') ?? '');
   if (tag === 'pre' && classes.includes('mermaid')) scan.mermaid += 1;
   else if (tag === 'script' && attributes.get('src')) scan.scripts.push(attributes.get('src'));
+  else if (tag === 'script') scan.inline = true;
   else if (tag === 'figure') figureStart(scan, attributes, classes);
   else if (scan.depth && Object.hasOwn(IMAGE_URL, tag)) scan.figures.at(-1).urls.push(attributes.get(IMAGE_URL[tag]) || '');
 }
@@ -671,12 +765,26 @@ function nextMarkup(html, from, raw) {
 }
 
 /**
+ * A module an inline script imports by a string literal, `import("URL")`: the head script the Astro
+ * integration writes to load the figure loader.
+ */
+const INLINE_IMPORT = /\bimport\(\s*(['"])([^'"\n]+)\1\s*\)/g;
+
+/** Records the modules the inline script whose text starts at `from` imports, as script sources. */
+function inlineImports(html, from, scan) {
+  const end = nextMarkup(html, from, 'script');
+  const code = html.slice(from, end < 0 ? html.length : end);
+  scan.scripts.push(...Array.from(code.matchAll(INLINE_IMPORT), (match) => match[2]).slice(0, MAX_FIGURES));
+}
+
+/**
  * What a built page holds that the diagram checks read: Mermaid <pre> elements, figure elements
- * with their image URLs, and script sources. Markup the page ends inside is ignored, as
- * html.parser ignores it at close().
+ * with their image URLs, and the scripts it loads: each script's source and each module an inline
+ * script imports by a string literal. Markup the page ends inside is ignored, as html.parser
+ * ignores it at close().
  */
 export function scanPage(html) {
-  const scan = { mermaid: 0, figures: [], scripts: [], depth: 0 };
+  const scan = { mermaid: 0, figures: [], scripts: [], depth: 0, inline: false };
   let at = 0;
   let raw = null;
   for (let guard = 0; at < html.length && guard <= html.length; guard++) {
@@ -684,6 +792,8 @@ export function scanPage(html) {
     if (start < 0) break;
     const step = markupAt(html, start, scan);
     if (step.next < 0) break;
+    if (step.raw === 'script' && scan.inline) inlineImports(html, step.next, scan);
+    scan.inline = false;
     [at, raw] = [step.next, step.raw];
   }
   return { mermaid: scan.mermaid, figures: scan.figures, scripts: scan.scripts };
@@ -692,14 +802,26 @@ export function scanPage(html) {
 /** How many Mermaid diagrams Material will draw from a built page. */
 export const renderedDiagrams = (html) => scanPage(html).mermaid;
 
-/** The file a relative URL on the page at `output` names, with every symbolic link resolved. */
-const urlTarget = (output, url) => realOrResolved(resolve(dirname(output), url.split('#')[0].split('?')[0]));
+/**
+ * The file a URL on the page at `output` names, with every symbolic link resolved: a relative URL
+ * from the page's directory, a root-absolute one from the site directory once the site's base path
+ * is cut.
+ */
+function urlTarget(output, built, url) {
+  const path = url.split('#')[0].split('?')[0];
+  if (built.base && path.startsWith(built.base)) return realOrResolved(join(built.dir, path.slice(built.base.length)));
+  return realOrResolved(resolve(dirname(output), path));
+}
 
-/** Whether a relative URL on the page at `output` names a file inside `siteDir`. */
-function resolves(output, siteDir, url) {
-  if (!url || url.includes('://') || url.startsWith('/') || url.startsWith('data:')) return false;
-  const target = urlTarget(output, url);
-  return isFile(target) && inside(realOrResolved(siteDir), target);
+/**
+ * Whether a URL on the page at `output` names a file inside the built site: a relative URL, or, on
+ * a site with a base path (Astro), a root-absolute URL under that base path.
+ */
+function resolves(output, built, url) {
+  if (!url || url.includes('://') || url.startsWith('//') || url.startsWith('data:')) return false;
+  if (url.startsWith('/') && !(built.base && url.startsWith(built.base))) return false;
+  const target = urlTarget(output, built, url);
+  return isFile(target) && inside(realOrResolved(built.dir), target);
 }
 
 /**
@@ -722,24 +844,24 @@ export function svgSpecError(svg) {
   return isObject(props) && isObject(props.layout) && Array.isArray(props.edges) ? null : 'embeds a figure spec without props.layout and props.edges';
 }
 
-/** Spec findings for every figure image that resolves; `seen` keeps each SVG's verdict, so it is read once per check. */
-function specErrors(page, output, siteDir, figures, seen) {
+/** Spec findings for every figure image that resolves; `built.seen` keeps each SVG's verdict, so it is read once per check. */
+function specErrors(page, output, built, figures) {
   const errors = [];
   for (const figure of figures) {
-    for (const url of figure.urls.filter((candidate) => resolves(output, siteDir, candidate))) {
-      const target = urlTarget(output, url);
-      if (!seen.has(target)) seen.set(target, svgSpecError(readText(target)));
-      if (seen.get(target)) errors.push(`${page}: figure ${figure.slug}: ${url} ${seen.get(target)}; rebuild with: ${REBUILD}`);
+    for (const url of figure.urls.filter((candidate) => resolves(output, built, candidate))) {
+      const target = urlTarget(output, built, url);
+      if (!built.seen.has(target)) built.seen.set(target, svgSpecError(readText(target)));
+      if (built.seen.get(target)) errors.push(`${page}: figure ${figure.slug}: ${url} ${built.seen.get(target)}; rebuild with: ${REBUILD}`);
     }
   }
   return errors;
 }
 
 /** Why the page cannot mount its figures: no loader script that resolves, or no player.js beside it. */
-function loaderErrors(page, output, siteDir, scripts) {
-  const loader = scripts.find((src) => src.endsWith(LOADER) && resolves(output, siteDir, src));
-  if (!loader) return [`${page}: holds figures but loads no ${LOADER} (the figures hook publishes it from tools/figures/dist/)`];
-  if (isFile(join(dirname(urlTarget(output, loader)), PLAYER))) return [];
+function loaderErrors(page, output, built, scripts) {
+  const loader = scripts.find((src) => src.endsWith(LOADER) && resolves(output, built, src));
+  if (!loader) return [`${page}: holds figures but loads no ${LOADER} (${built.flavor.publisher} publishes it from tools/figures/dist/)`];
+  if (isFile(join(dirname(urlTarget(output, built, loader)), PLAYER))) return [];
   return [`${page}: loads ${loader}, but no ${PLAYER} sits beside it for the loader to import`];
 }
 
@@ -750,44 +872,52 @@ function mermaidError(page, output, expected, scanned) {
 }
 
 /** Why the built page does not show its figures: count, slugs, image URLs, embedded specs and the loader. */
-function figureErrors(page, output, siteDir, slugs, scanned, seen) {
-  const built = scanned.figures.map((figure) => figure.slug);
-  if (built.length !== slugs.length || built.some((slug, index) => slug !== slugs[index])) {
-    return [`${page}: figure fence(s) ${quotedList(slugs)}, but ${output} holds figure.praetor-figure ${quotedList(built)}`];
+function figureErrors(page, output, built, slugs, scanned) {
+  const shown = scanned.figures.map((figure) => figure.slug);
+  if (shown.length !== slugs.length || shown.some((slug, index) => slug !== slugs[index])) {
+    return [`${page}: figure fence(s) ${quotedList(slugs)}, but ${output} holds figure.praetor-figure ${quotedList(shown)}`];
   }
-  const errors = scanned.figures.flatMap((figure) => figure.urls.filter((url) => !resolves(output, siteDir, url))
-    .map((url) => `${page}: figure ${figure.slug}: ${url || '(empty URL)'} does not resolve to a file under ${siteDir}`));
-  return [...errors, ...specErrors(page, output, siteDir, scanned.figures, seen), ...loaderErrors(page, output, siteDir, scanned.scripts)];
+  const errors = scanned.figures.flatMap((figure) => figure.urls.filter((url) => !resolves(output, built, url))
+    .map((url) => `${page}: figure ${figure.slug}: ${url || '(empty URL)'} does not resolve to a file under ${built.dir}`));
+  return [...errors, ...specErrors(page, output, built, scanned.figures), ...loaderErrors(page, output, built, scanned.scripts)];
 }
 
-/** Findings for one page and how many diagrams it holds; `seen` caches each figure SVG's verdict. */
-function pageErrors(docsDir, siteDir, page, kinds, seen) {
+/** Findings for one page and how many diagrams it holds. */
+function pageErrors(built, page) {
   const text = readText(page);
   const expected = fences(text, 'mermaid').length;
   const slugs = figureSlugs(text);
   const count = expected + slugs.length;
   if (count === 0) return { errors: [], count };
-  const errors = kindErrors(page, text, kinds);
-  const output = pageOutput(docsDir, siteDir, page);
-  if (!isFile(output)) return { errors: [...errors, `${page}: ${count} diagram(s) but MkDocs wrote no ${output}`], count };
+  const errors = kindErrors(page, text, built.kinds);
+  const output = built.flavor.output(built.docs, built.dir, page, text);
+  if (!isFile(output)) return { errors: [...errors, `${page}: ${count} diagram(s) but ${built.flavor.generator} wrote no ${output}`], count };
   const scanned = scanPage(readText(output));
   if (expected) errors.push(...mermaidError(page, output, expected, scanned));
-  if (slugs.length) errors.push(...figureErrors(page, output, siteDir, slugs, scanned, seen));
+  if (slugs.length) errors.push(...figureErrors(page, output, built, slugs, scanned));
   return { errors, count };
 }
 
-/** Configuration and rendered-page findings for one built site, and how many diagrams were checked. */
-export function checkSite(config, docs, site) {
+/**
+ * Configuration and rendered-page findings for one built site, and how many diagrams were checked.
+ * The configuration's name tells the generator (`siteFlavor`). `base` is the base path an Astro
+ * site is built for ('/' when omitted); an MkDocs site takes none, because the figures hook writes
+ * relative URLs.
+ */
+export function checkSite(config, docs, site, base = undefined) {
+  const flavor = siteFlavor(config);
+  if (base !== undefined && !flavor.base) {
+    throw new CheckError(`a base path applies to an Astro site; ${config} is an ${flavor.generator} configuration, whose figure URLs are relative`);
+  }
   const [docsDir, siteDir] = [clean(docs), clean(site)];
   if (!isDirectory(docsDir)) throw new CheckError(`${docsDir} is not a directory`);
-  if (!isFile(join(siteDir, 'index.html'))) throw new CheckError(`${siteDir} holds no built site (no index.html); run mkdocs build first`);
+  if (!isFile(join(siteDir, 'index.html'))) throw new CheckError(`${siteDir} holds no built site (no index.html); run ${flavor.build} first`);
   const text = readText(clean(config));
-  const kinds = enabledKinds(text);
+  const built = { flavor, docs: docsDir, dir: siteDir, base: flavor.base ? basePath(base) : null, kinds: flavor.kinds(text), seen: new Map() };
   const errors = [];
-  const seen = new Map();
   let diagrams = 0;
-  for (const page of markdownPages(docsDir, excludedPatterns(text))) {
-    const found = pageErrors(docsDir, siteDir, page, kinds, seen);
+  for (const page of flavor.pages(docsDir, text)) {
+    const found = pageErrors(built, page);
     errors.push(...found.errors);
     diagrams += found.count;
   }
@@ -798,10 +928,18 @@ export function checkSite(config, docs, site) {
 // Sources and portable blocks
 // ---------------------------------------------------------------------------------------------
 
-/** sha256sum-style manifest of ENGINE_FILES, hashed: one value that changes when any of them does. */
-export function engineHash(root = ROOT) {
-  const lines = ENGINE_FILES.map((rel) => `${sha256(readFileSync(join(root, rel)))}  ${rel}\n`);
+/**
+ * sha256sum-style manifest of the files `rels` under `root`, in the order given, hashed: one value
+ * that changes when the bytes or the name of any of them does.
+ */
+export function filesDigest(root, rels) {
+  const lines = rels.map((rel) => `${sha256(readFileSync(join(root, rel)))}  ${rel}\n`);
   return sha256(lines.join(''));
+}
+
+/** The digest of ENGINE_FILES: one value that changes when any of them does. */
+export function engineHash(root = ROOT) {
+  return filesDigest(root, ENGINE_FILES);
 }
 
 /**
@@ -821,7 +959,7 @@ export function fillSlots(meta, base, link = null) {
 }
 
 /** The JSON of figure `slug` under `figuresDir`, or CheckError when there is none. */
-function figureMeta(figuresDir, slug) {
+export function figureMeta(figuresDir, slug) {
   if (!SLUG.test(slug)) throw new CheckError(`figure slug ${quoted(slug)} is not lowercase kebab-case`);
   const path = join(figuresDir, `${slug}.json`);
   if (!isFile(path)) throw new CheckError(`figure ${quoted(slug)} has no ${toPosix(path)}; add docs/figures/${slug}.ts and run ${REBUILD}`);
@@ -961,10 +1099,11 @@ function figureSourceErrors(root) {
 /** Disabled fence kinds and unknown figure slugs on every page the configuration builds. */
 function pageSourceErrors(root, docs, config, known) {
   const configPath = resolve(root, config);
+  const flavor = siteFlavor(configPath);
   const settings = isFile(configPath) ? readText(configPath) : null;
-  const kinds = settings === null ? new Set(KINDS) : enabledKinds(settings);
+  const kinds = settings === null ? new Set(KINDS) : flavor.kinds(settings);
   const errors = [];
-  for (const page of markdownPages(resolve(root, docs), excludedPatterns(settings ?? ''))) {
+  for (const page of flavor.pages(resolve(root, docs), settings ?? '')) {
     const text = readText(page);
     const shown = relative(root, page);
     errors.push(...kindErrors(shown, text, kinds));
