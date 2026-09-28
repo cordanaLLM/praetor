@@ -154,6 +154,10 @@ type adoptSession struct {
 	// backupStamp names this run's directory below adoptBackupRoot; backupPath fixes it on
 	// first use when the session was built without one.
 	backupStamp string
+	// defaultBranch is the repository.default_branch the manifest this adoption creates declares
+	// (resolveDefaultBranch, forge.DefaultBranchToDeclare); empty when there is nothing to declare
+	// or the manifest exists.
+	defaultBranch string
 }
 
 // adoptStep is one reconciliation step of the adoption chain.
@@ -202,6 +206,10 @@ func Adopt(ctx context.Context, opts AdoptOptions) (*AdoptReport, error) {
 		backupStamp:  newBackupStamp(),
 	}
 	if err := s.resolveIdentity(ctx); err != nil {
+		report.addError("%s", err)
+		return report, err
+	}
+	if err := s.resolveDefaultBranch(ctx, declared); err != nil {
 		report.addError("%s", err)
 		return report, err
 	}
@@ -521,6 +529,10 @@ func createAdoptionManifest(ctx context.Context, s *adoptSession, full string) e
 	}
 	note := fmt.Sprintf("Scaffolded standards manifest (Repository: %s, Profile: %s; "+
 		"visibility left unset, adoption cannot observe it)", repository, s.arch)
+	if manifest.Repository.DefaultBranch != "" {
+		note += fmt.Sprintf("; repository.default_branch: %s recorded from the origin remote's HEAD, "+
+			"so a checkout without it renders the same ruleset", manifest.Repository.DefaultBranch)
+	}
 	if manifest.Register == nil {
 		note += "; register.sources not added: " + unboundSourcesReason(harness)
 	}

@@ -14,6 +14,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/editor"
+	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -313,6 +314,8 @@ func resolveGitIdentity(ctx context.Context, repoPath string) (owner, name strin
 // ensureOnboardingManifest writes .standards.yaml when the repository has none. The owner
 // is resolved from the repository's own git identity; it is never invented, and the
 // visibility is left blank for the operator to declare rather than defaulted to "public".
+// repository.default_branch is the origin HEAD only this checkout records, when it is not main
+// (forge.DefaultBranchToDeclare), so a CI checkout without it renders the same ruleset.
 func ensureOnboardingManifest(ctx context.Context, repoPath, repoName, arch string, facets []string) error {
 	manifestPath := filepath.Join(repoPath, ".standards.yaml")
 	if util.PathExists(manifestPath) {
@@ -326,12 +329,17 @@ func ensureOnboardingManifest(ctx context.Context, repoPath, repoName, arch stri
 	if resolvedName == "" {
 		resolvedName = repoName
 	}
+	branch, err := forge.DefaultBranchToDeclare(ctx, repoPath)
+	if err != nil {
+		return fmt.Errorf("onboarding manifest: %w", err)
+	}
 
 	manifest := config.Manifest{
 		Version: 1,
 		Repository: config.RepositoryMetadata{
-			Owner: owner,
-			Name:  resolvedName,
+			Owner:         owner,
+			Name:          resolvedName,
+			DefaultBranch: branch,
 		},
 		Profiles: []string{arch},
 		Facets:   facets,

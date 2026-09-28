@@ -13,6 +13,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -98,6 +99,10 @@ func fileMissing(path string) (bool, error) {
 // rootDir; without one the owner is forge.default_owner and the name stays empty. Nothing is
 // invented: every value left empty is printed as a field to set. A remote read git did not
 // answer, or unreadable settings, fail init instead of writing a guessed identity.
+//
+// repository.default_branch is the origin HEAD only this checkout records, when it is not main
+// (forge.DefaultBranchToDeclare), so a CI checkout without it resolves the same default branch
+// for the ruleset. An origin HEAD git did not answer or that cannot be rendered fails init too.
 func initRepositoryIdentity(ctx context.Context, rootDir string, settings *operatorSettingsFlags) (config.RepositoryMetadata, error) {
 	forgeSettings, err := loadForgeSettings(ctx, settings)
 	if err != nil {
@@ -116,7 +121,11 @@ func initRepositoryIdentity(ctx context.Context, rootDir string, settings *opera
 	if name == "" {
 		fmt.Printf("[WARN] repository.name not detected; set it in %s\n", config.ManifestFileName)
 	}
-	return config.RepositoryMetadata{Owner: owner, Name: name, Visibility: "public"}, nil
+	branch, err := forge.DefaultBranchToDeclare(ctx, rootDir)
+	if err != nil {
+		return config.RepositoryMetadata{}, fmt.Errorf("init: %w", err)
+	}
+	return config.RepositoryMetadata{Owner: owner, Name: name, Visibility: "public", DefaultBranch: branch}, nil
 }
 
 func createInitialManifest(outputPath, profile string, facets []string, identity config.RepositoryMetadata) error {
@@ -136,6 +145,9 @@ func createInitialManifest(outputPath, profile string, facets []string, identity
 		return fmt.Errorf("failed to write %s: %w", outputPath, err)
 	}
 	fmt.Printf("[CREATED] %s (Profile: %s, Facets: %v)\n", outputPath, profile, facets)
+	if identity.DefaultBranch != "" {
+		fmt.Printf("[INFO] repository.default_branch: %s recorded from the origin remote's HEAD\n", identity.DefaultBranch)
+	}
 	return nil
 }
 

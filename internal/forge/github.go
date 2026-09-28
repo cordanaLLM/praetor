@@ -67,7 +67,7 @@ type GitHubDriver struct {
 	// RulesetName overrides the remote ruleset name. Empty means "<branch>-branch-protection".
 	RulesetName string
 	// ProtectedRefs are the ref patterns the remote ruleset must include, such as
-	// RepositoryRulesetRefs(). Empty means "refs/heads/<branch>" alone.
+	// RepositoryRulesetRefs(branch). Empty means "refs/heads/<branch>" alone.
 	ProtectedRefs []string
 	// RequiredStatusChecks are the check contexts pushed into the remote ruleset.
 	RequiredStatusChecks []string

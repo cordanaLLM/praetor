@@ -28,6 +28,12 @@ type RepositoryMetadata struct {
 	// still carry. Empty on the canonical repository and on any manifest that predates
 	// the field.
 	Source string `yaml:"source,omitempty"`
+	// DefaultBranch declares the repository's default branch, the branch the branch protection
+	// ruleset protects. Empty leaves it to the checkout (internal/forge.RepositoryDefaultBranch:
+	// the origin remote's HEAD, then "main"). A checkout without that ref, such as a CI clone,
+	// needs the declaration when the default branch is not main. ValidBranchName decides what
+	// a declared name may be.
+	DefaultBranch string `yaml:"default_branch,omitempty"`
 }
 
 // ComplexityPolicy defines bounds on code complexity and function size.
@@ -300,7 +306,7 @@ func parseManifest(path string, data []byte) (*Manifest, error) {
 	if err := validateManifestRegister(m); err != nil {
 		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
 	}
-	if err := validateManifestRepositorySource(m); err != nil {
+	if err := validateManifestRepository(m); err != nil {
 		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
 	}
 	if err := m.HISS.validate(); err != nil {
@@ -352,6 +358,18 @@ func validateManifestReviewPolicy(m *Manifest) error {
 	}
 	_, _, err := m.Overrides.BranchProtection.EffectiveReviewRequirements()
 	return err
+}
+
+// validateManifestRepository rejects a repository.source or repository.default_branch that is
+// set and malformed.
+func validateManifestRepository(m *Manifest) error {
+	if err := validateManifestRepositorySource(m); err != nil {
+		return err
+	}
+	if m == nil || m.Repository.DefaultBranch == "" || ValidBranchName(m.Repository.DefaultBranch) {
+		return nil
+	}
+	return fmt.Errorf("repository.default_branch %q must be %s", m.Repository.DefaultBranch, branchNameRule)
 }
 
 // validateManifestRepositorySource rejects a repository.source that is not an "<owner>/<name>"

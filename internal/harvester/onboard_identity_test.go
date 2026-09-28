@@ -2,10 +2,13 @@ package harvester
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
@@ -46,5 +49,56 @@ func TestResolveGitIdentity_Boundary_CancelledReadFails(t *testing.T) {
 	cancel()
 	if owner, name, err := resolveGitIdentity(ctx, dir); err == nil || owner != "" || name != "" {
 		t.Fatalf("resolveGitIdentity on a cancelled read = %q/%q (err %v), want an error", owner, name, err)
+	}
+}
+
+// onboardManifest writes the onboarding manifest of dir and returns its text.
+func onboardManifest(t *testing.T, dir string) string {
+	t.Helper()
+	if err := ensureOnboardingManifest(t.Context(), dir, "widget", "framework", nil); err != nil {
+		t.Fatalf("ensureOnboardingManifest: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, config.ManifestFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// Positive: a master checkout's onboarding manifest declares master, so a checkout without the
+// origin HEAD renders the same ruleset.
+func TestEnsureOnboardingManifest_Positive_DeclaresAMasterOriginHead(t *testing.T) {
+	dir := onboardCheckout(t, "acme", "widget", "https://github.com/acme/widget.git")
+	testsupport.RecordOriginHead(t, dir, "master")
+	onboardManifest(t, dir)
+	manifest, err := config.LoadManifest(filepath.Join(dir, config.ManifestFileName))
+	if err != nil || manifest.Repository.DefaultBranch != "master" {
+		t.Fatalf("onboarding a master checkout must declare master: %+v, %v", manifest, err)
+	}
+}
+
+// Negative: an origin HEAD the ruleset cannot carry fails onboarding and writes no manifest.
+func TestEnsureOnboardingManifest_Negative_UnusableOriginHeadFails(t *testing.T) {
+	dir := onboardCheckout(t, "acme", "widget", "https://github.com/acme/widget.git")
+	testsupport.RecordOriginHead(t, dir, "_private")
+	err := ensureOnboardingManifest(t.Context(), dir, "widget", "framework", nil)
+	if err == nil || !strings.Contains(err.Error(), "repository.default_branch") {
+		t.Fatalf("an origin HEAD the ruleset cannot carry must fail onboarding, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, config.ManifestFileName)); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("a failed default-branch read must leave no manifest: %v", statErr)
+	}
+}
+
+// Boundary: an origin HEAD at main, or none, declares no default branch.
+func TestEnsureOnboardingManifest_Boundary_MainOrNoOriginHeadDeclaresNothing(t *testing.T) {
+	for _, head := range []string{"main", ""} {
+		dir := onboardCheckout(t, "acme", "widget-"+head, "https://github.com/acme/widget.git")
+		if head != "" {
+			testsupport.RecordOriginHead(t, dir, head)
+		}
+		if text := onboardManifest(t, dir); strings.Contains(text, "default_branch") {
+			t.Fatalf("origin HEAD %q must declare nothing:\n%s", head, text)
+		}
 	}
 }

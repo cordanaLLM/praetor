@@ -211,7 +211,7 @@ func writeDeclaredRuleset(t *testing.T, dir string, policy config.BranchProtecti
 	if err != nil {
 		t.Fatalf("discover fixture status checks: %v", err)
 	}
-	ruleset, err := forge.RenderRepositoryRuleset(policy, contexts)
+	ruleset, err := forge.RenderRepositoryRuleset("main", policy, contexts)
 	if err != nil {
 		t.Fatalf("render fixture ruleset: %v", err)
 	}

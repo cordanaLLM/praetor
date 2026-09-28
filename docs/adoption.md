@@ -72,6 +72,49 @@ A ruleset rendered for a policy the repository no longer declares is kept too, f
 adoption or `flavor apply`, or delete the file and run `sync`, which writes the missing ruleset.
 Keep a hand-managed ruleset with `adoption.decline: [branch-ruleset]`.
 
+### Protected default branch
+
+The ruleset protects the repository's default branch and every `lts-*` branch
+(`forge.RepositoryRulesetRefs`). Adoption, `flavor apply`, `sync` (local and `--remote`) and the
+audit resolve that branch the same way (`forge.RepositoryDefaultBranch`); the first source that
+names one wins:
+
+| Source | Written by | Applies |
+| :--- | :--- | :--- |
+| `repository.default_branch` in `.standards.yaml` | the operator, or the command that creates the manifest (below) | whenever it is set |
+| `refs/remotes/origin/HEAD` in the checkout | `git clone`, `git remote set-head origin --auto` | no declaration |
+| `main` | built in | neither |
+
+```yaml
+repository:
+  default_branch: master
+```
+
+Nothing asks the forge, so the audit and `adopt --dry-run` stay offline. A CI checkout usually
+has no `refs/remotes/origin/HEAD` and would resolve `main`, so a repository whose default branch
+is not `main` declares `repository.default_branch`; CI then audits the ruleset a local run
+writes. The manifest writers record it for you (`forge.DefaultBranchToDeclare`): adoption,
+`praetorctl init` and harvester onboarding write the checkout's origin HEAD into the
+`.standards.yaml` they create when it is not `main`
+(`TestAdopt_Positive_MasterRepositoryRulesetProtectsMaster`, `TestInit_3D_DefaultBranch`,
+`TestEnsureOnboardingManifest_Positive_DeclaresAMasterOriginHead`). Adoption never rewrites an
+existing manifest: when one declares no branch and the origin HEAD is not `main`, it warns and
+names the line to add (`TestAdopt_Negative_UndeclaredBranchInAnExistingManifestIsWarned`).
+
+A declaration outside `config.ValidBranchName` (1 to 128 letters, digits, `.`, `_`, `/` or `-`,
+no `..`) fails the manifest load. An origin HEAD outside it fails the resolution instead of
+falling back to `main` (`TestRepositoryDefaultBranch_Negative_UnusableSourcesAreErrors`), and
+fails adoption, `init` and onboarding before they write a manifest.
+
+The ruleset name `praetor-main-protection` and the path `.github/rulesets/main.json` are the same
+for every default branch, because a live ruleset is matched by them.
+
+Earlier Praetor versions rendered `main` whatever the default branch was. In a repository whose
+default branch is something else, that file is still Praetor's unedited rendering: adoption and
+`flavor apply` refresh it to the default branch without `--force` (`forge.PriorRulesetDigests`,
+`TestAdopt_Positive_RefreshesTheEarlierMainRulesetOfAMasterRepository`). Until then `sync` and the
+audit report it as drift.
+
 ### Large repositories
 
 Adoption discovers verification inputs (Makefiles, manifests, scripts) through a bounded

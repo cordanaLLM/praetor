@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -49,5 +50,41 @@ func TestInitGitRepoWithOrigin_Boundary_IgnoresInheritedGitDir(t *testing.T) {
 	}
 	if out, err := runGit(t, outer, HermeticGitEnv(t), "config", "--get", "remote.origin.url"); err == nil {
 		t.Fatalf("the origin landed in the inherited repository: %q", out)
+	}
+}
+
+// Positive: the origin HEAD names the given branch, as a clone records it.
+func TestRecordOriginHead_Positive_PointsAtTheBranch(t *testing.T) {
+	requireGit(t)
+	dir := t.TempDir()
+	InitGitRepoWithOrigin(t, dir, "https://github.com/acme/widget.git")
+	RecordOriginHead(t, dir, "master")
+	out, err := runGit(t, dir, HermeticGitEnv(t), "symbolic-ref", "refs/remotes/origin/HEAD")
+	if err != nil || out != "refs/remotes/origin/master" {
+		t.Fatalf("origin HEAD = %q (err %v), want refs/remotes/origin/master", out, err)
+	}
+}
+
+// Negative: outside a repository git refuses, and the refusal fails the test with git's answer.
+func TestRecordOriginHead_Negative_OutsideARepositoryFails(t *testing.T) {
+	requireGit(t)
+	dir := t.TempDir()
+	message := runRecorded(t, func(tb testing.TB) { RecordOriginHead(tb, dir, "master") })
+	if !strings.Contains(message, "testsupport: git [symbolic-ref") {
+		t.Fatalf("a refused origin HEAD was not reported: %q", message)
+	}
+}
+
+// Boundary: a branch with a slash is recorded whole, and recording again moves the origin HEAD.
+func TestRecordOriginHead_Boundary_SlashBranchAndRerecord(t *testing.T) {
+	requireGit(t)
+	dir := t.TempDir()
+	InitGitRepoWithOrigin(t, dir, "")
+	for _, branch := range []string{"release/stable", "trunk"} {
+		RecordOriginHead(t, dir, branch)
+		out, err := runGit(t, dir, HermeticGitEnv(t), "symbolic-ref", "refs/remotes/origin/HEAD")
+		if err != nil || out != "refs/remotes/origin/"+branch {
+			t.Fatalf("origin HEAD = %q (err %v), want refs/remotes/origin/%s", out, err, branch)
+		}
 	}
 }

@@ -38,7 +38,7 @@ func AuditBranchProtectionWithPolicy(ctx context.Context, manifest *config.Manif
 	if !policy.BranchProtection.EnforceLinearHistory && !policy.BranchProtection.RequireSignedCommits {
 		return "[PASS] Branch protection ruleset not required by policy.", nil
 	}
-	if err := auditRulesetContent(ctx, rootDir, policy.BranchProtection); err != nil {
+	if err := auditRulesetContent(ctx, manifest, rootDir, policy.BranchProtection); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("[PASS] Branch protection & merge ruleset %s verified.", rulesetFile), nil
@@ -60,8 +60,10 @@ func auditInputsPresent(ctx context.Context, manifest *config.Manifest, rootDir 
 }
 
 // auditRulesetContent reads the committed ruleset and compares it with the one the policy
-// renders for the repository's workflow-derived required status checks.
-func auditRulesetContent(ctx context.Context, rootDir string, policy config.BranchProtectionPolicy) error {
+// renders for the repository's default branch (forge.RepositoryDefaultBranch, manifest's
+// declaration first) and its workflow-derived required status checks: the rendering adoption
+// and flavor apply write.
+func auditRulesetContent(ctx context.Context, manifest *config.Manifest, rootDir string, policy config.BranchProtectionPolicy) error {
 	data, exists, err := contextopt.ObserveSnapshot(ctx, filepath.Join(rootDir, filepath.FromSlash(rulesetFile)))
 	if err != nil {
 		return fmt.Errorf("[FAIL] Branch protection ruleset %s could not be read: %w", rulesetFile, err)
@@ -73,7 +75,11 @@ func auditRulesetContent(ctx context.Context, rootDir string, policy config.Bran
 	if err != nil {
 		return fmt.Errorf("[FAIL] Branch protection ruleset audit failed: discover required status checks: %w", err)
 	}
-	if err := forge.ValidateRepositoryRuleset(data, policy, contexts); err != nil {
+	branch, err := forge.RepositoryDefaultBranch(ctx, rootDir, manifest)
+	if err != nil {
+		return fmt.Errorf("[FAIL] Branch protection ruleset audit failed: %w", err)
+	}
+	if err := forge.ValidateRepositoryRuleset(data, branch, policy, contexts); err != nil {
 		return fmt.Errorf("[FAIL] Branch protection ruleset %s does not match the declared policy: %w; "+
 			"'praetorctl sync' writes the declared ruleset when the file is absent", rulesetFile, err)
 	}

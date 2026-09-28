@@ -10,7 +10,7 @@ import (
 
 func TestRenderRepositoryRulesetPolicyAndEmptyChecks(t *testing.T) {
 	policy := config.BranchProtectionPolicy{RequireSignedCommits: true, RequiredApprovingReviewers: 3}
-	data, err := RenderRepositoryRuleset(policy, nil)
+	data, err := RenderRepositoryRuleset("main", policy, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestRenderRepositoryRulesetSingleMaintainerReviewMode(t *testing.T) {
 	policy := config.DefaultPolicy().BranchProtection
 	policy.RequireSignedCommits = true
 	policy.ReviewMode = config.BranchReviewModeSingleMaintainer
-	data, err := RenderRepositoryRuleset(policy, []string{"Required Checks Aggregator"})
+	data, err := RenderRepositoryRuleset("main", policy, []string{"Required Checks Aggregator"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestRenderRepositoryRulesetSingleMaintainerReviewMode(t *testing.T) {
 func TestRenderRepositoryRulesetRejectsUnknownReviewMode(t *testing.T) {
 	policy := config.DefaultPolicy().BranchProtection
 	policy.ReviewMode = "unreviewed"
-	if _, err := RenderRepositoryRuleset(policy, nil); err == nil || !strings.Contains(err.Error(), "unsupported branch protection review mode") {
+	if _, err := RenderRepositoryRuleset("main", policy, nil); err == nil || !strings.Contains(err.Error(), "unsupported branch protection review mode") {
 		t.Fatalf("unknown review mode was not rejected: %v", err)
 	}
 }
@@ -61,17 +61,17 @@ func TestRenderRepositoryRulesetContextBoundsAndInvalidSelections(t *testing.T) 
 	for i := range contexts {
 		contexts[i] = fmt.Sprintf("check-%d", i)
 	}
-	if _, err := RenderRepositoryRuleset(policy, contexts); err != nil {
+	if _, err := RenderRepositoryRuleset("main", policy, contexts); err != nil {
 		t.Fatal(err)
 	}
 	invalid := [][]string{append(contexts, "overflow"), {""}, {" spaced "}, {"duplicate", "duplicate"}, {"line\nbreak"}}
 	for _, names := range invalid {
-		if _, err := RenderRepositoryRuleset(policy, names); err == nil {
+		if _, err := RenderRepositoryRuleset("main", policy, names); err == nil {
 			t.Fatal("invalid check selection accepted")
 		}
 	}
 	policy.RequiredApprovingReviewers = -1
-	if _, err := RenderRepositoryRuleset(policy, nil); err == nil {
+	if _, err := RenderRepositoryRuleset("main", policy, nil); err == nil {
 		t.Fatal("negative approval count accepted")
 	}
 }

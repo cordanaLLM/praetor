@@ -123,7 +123,7 @@ func initGitRepo(t *testing.T, dir string) {
 // renderFixtureRuleset renders the ruleset policy declares for a fixture without workflows.
 func renderFixtureRuleset(t *testing.T, policy config.BranchProtectionPolicy) string {
 	t.Helper()
-	data, err := forge.RenderRepositoryRuleset(policy, nil)
+	data, err := forge.RenderRepositoryRuleset("main", policy, nil)
 	if err != nil {
 		t.Fatalf("render fixture ruleset: %v", err)
 	}
@@ -537,7 +537,7 @@ func TestServer_Positive_PlanAndAuditOnSyncedRepo(t *testing.T) {
 	// single-maintainer policy needs its own ruleset (zero approvals, no code-owner review).
 	single := config.DefaultPolicy().BranchProtection
 	single.ReviewMode = config.BranchReviewModeSingleMaintainer
-	ruleset, err := forge.RenderRepositoryRuleset(single, nil)
+	ruleset, err := forge.RenderRepositoryRuleset("main", single, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

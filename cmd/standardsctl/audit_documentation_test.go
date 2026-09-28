@@ -485,7 +485,7 @@ func TestAuditDocumentationGateUsesTheEffectiveBranchProtection(t *testing.T) {
 		t.Fatal("ruleset rendered from the defaults satisfied a stricter effective policy")
 	}
 	// Positive: the ruleset adopt renders from the joined policy passes.
-	ruleset, err := forge.RenderRepositoryRuleset(joined, []string{adopt.DocumentationStatusContext})
+	ruleset, err := forge.RenderRepositoryRuleset("main", joined, []string{adopt.DocumentationStatusContext})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -515,7 +515,7 @@ func documentationAuditFixture(t *testing.T) string {
 	if !strings.Contains(adopt.DocumentationWorkflow(), "name: "+adopt.DocumentationStatusContext) {
 		t.Fatal("fixture workflow lacks its required status context")
 	}
-	ruleset, err := forge.RenderRepositoryRuleset(config.DefaultPolicy().BranchProtection,
+	ruleset, err := forge.RenderRepositoryRuleset("main", config.DefaultPolicy().BranchProtection,
 		[]string{adopt.DocumentationStatusContext})
 	if err != nil {
 		t.Fatal(err)

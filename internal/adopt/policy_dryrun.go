@@ -36,12 +36,14 @@ func newAdoptionManifest(ctx context.Context, s *adoptSession) (*config.Manifest
 }
 
 // declaredAdoptionManifest is the manifest adoption writes before register.sources binds the
-// Paperclip harness: identity, profile and facets, every declaration the effective policy reads.
+// Paperclip harness: identity, the default branch only this checkout records (s.defaultBranch),
+// profile and facets, every declaration the effective policy reads.
 func declaredAdoptionManifest(s *adoptSession) *config.Manifest {
 	return &config.Manifest{
-		Version:    1,
-		Repository: config.RepositoryMetadata{Owner: s.identity.owner, Name: s.identity.name},
-		Profiles:   []string{s.arch}, Facets: s.facets,
+		Version: 1,
+		Repository: config.RepositoryMetadata{Owner: s.identity.owner, Name: s.identity.name,
+			DefaultBranch: s.defaultBranch},
+		Profiles: []string{s.arch}, Facets: s.facets,
 	}
 }
 

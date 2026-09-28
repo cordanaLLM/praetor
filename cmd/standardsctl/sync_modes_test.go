@@ -18,7 +18,7 @@ func TestSyncSynthesis_Positive_TrackedModes(t *testing.T) {
 	if err := synthesizeDefaultLabels(labels); err != nil {
 		t.Fatalf("synthesizeDefaultLabels: %v", err)
 	}
-	if err := synthesizeRuleset(ruleset, config.DefaultPolicy().BranchProtection, nil); err != nil {
+	if err := synthesizeRuleset(ruleset, "main", config.DefaultPolicy().BranchProtection, nil); err != nil {
 		t.Fatalf("synthesizeRuleset: %v", err)
 	}
 	for _, path := range []string{labels, ruleset} {
