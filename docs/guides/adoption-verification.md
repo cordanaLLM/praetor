@@ -771,15 +771,22 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
     (`TestPriorGeneratedRecognisesTheCavemanRelease`).
   - The same holds for this release's own harness after a repository fact it reads changes.
     Pinning `receipt.public_key`, as the unpinned row advises, adding or removing a language,
-    declaring or withdrawing an exception, or a policy that resolves or moves the function
-    length leaves the harness unmodified output, and the next plain `praetorctl adopt`
-    refreshes it. The refresh key compares the harness byte for byte with this release rendered
-    under both receipt states, every language set (`hisscatalog.AllLanguages`), every exception
-    set (`hisscatalog.AllExceptions`) and each way HISS-04 states a function length the current
-    or the existing harness names, so an edit to the receipt row or an invariant still keeps it
-    operator-owned (`TestAdoptRefreshesHarnessAfterFactsChange`,
+    declaring or withdrawing an exception, or a policy that resolves the function length the
+    harness stated as the unresolved ceiling leaves the harness unmodified output, and the next
+    plain `praetorctl adopt` refreshes it. The refresh key compares the harness byte for byte
+    with this release rendered under both receipt states, every language set
+    (`hisscatalog.AllLanguages`), every exception set (`hisscatalog.AllExceptions`) and the
+    HISS-04 statements it accepts: the 60-line ceiling unresolved, the ceiling resolved, and
+    the plain number this run states, if any. So an edit to the receipt row or an invariant
+    still keeps it operator-owned (`TestAdoptRefreshesHarnessAfterFactsChange`,
     `TestAdoptKeepsHandEditedHarnessAfterFactsChange`, `TestAdoptHarnessRefreshFactBoundary`,
     `TestPriorGeneratedRecognisesThisReleaseUnderEveryFactCombination`).
+  - The function length is never read from the harness on disk, since any number found there
+    could be an operator's edit (`TestPriorGeneratedKeepsEditedFactRows`, `TestLimitFacts`).
+    The cost: once a policy has resolved the length, a later move of it (50 to 45, 50 up to
+    the ceiling, or back to unresolved) leaves a harness stating the old plain number
+    operator-owned, and `praetorctl adopt --force` refreshes it
+    (`TestPriorGeneratedKeepsHarnessAfterResolvedLimitMoves`).
   - Still open: the `## AGit Push Protocol` section (`agit_push_format`) prescribes
     `git push origin HEAD:refs/for/main -o topic=<issue-id>` whatever forge `origin` names. That
     push opens a review only on a forge that implements AGit, such as Forgejo or Gitea. The

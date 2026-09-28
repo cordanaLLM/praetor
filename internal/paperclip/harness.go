@@ -226,7 +226,7 @@ func matchPrior(harnessText string, current *Harness) (*Harness, error) {
 	if !decoded {
 		return nil, nil
 	}
-	priors, err := priorHarnesses(current, statedFuncLOCs(current.Invariants, onDisk.Invariants))
+	priors, err := priorHarnesses(current, statedFuncLOCs(current.Invariants))
 	if err != nil {
 		return nil, err
 	}
@@ -301,18 +301,16 @@ func releaseText(harness, rules []byte) (string, string, bool) {
 // statedFuncLOC matches the function length a HISS-04 invariant states (hisscatalog funcLOCLimit).
 var statedFuncLOC = regexp.MustCompile(`func LOC <= ([1-9][0-9]{0,5})\b`)
 
-// statedFuncLOCs returns each function length the invariant lists state, once, in order: for
-// the current harness and the one on disk, the lengths a synthesis of this release under other
-// facts can have rendered the one on disk with (currentReleaseHarnesses). It reads at most
-// maxHarnessValues invariants per list, the most a valid harness carries.
-func statedFuncLOCs(lists ...[]string) []int {
+// statedFuncLOCs returns each function length invariants state, once, in order. matchPrior
+// reads it from the current synthesis only, never from the harness on disk: a number read
+// from the file on disk would make any hand-edited length a candidate, and so earlier output.
+// It reads at most maxHarnessValues invariants, the most a valid harness carries.
+func statedFuncLOCs(invariants []string) []int {
 	var limits []int
-	for _, invariants := range lists {
-		text := strings.Join(invariants[:min(len(invariants), maxHarnessValues)], "\n")
-		for _, match := range statedFuncLOC.FindAllStringSubmatch(text, maxHarnessValues) {
-			if limit, err := strconv.Atoi(match[1]); err == nil && !slices.Contains(limits, limit) {
-				limits = append(limits, limit)
-			}
+	text := strings.Join(invariants[:min(len(invariants), maxHarnessValues)], "\n")
+	for _, match := range statedFuncLOC.FindAllStringSubmatch(text, maxHarnessValues) {
+		if limit, err := strconv.Atoi(match[1]); err == nil && !slices.Contains(limits, limit) {
+			limits = append(limits, limit)
 		}
 	}
 	return limits
@@ -320,8 +318,8 @@ func statedFuncLOCs(lists ...[]string) []int {
 
 // priorHarnesses is every earlier synthesis for current's identity: each register directive
 // form under each push protocol, the Caveman release (cavemanHarness), then this release under
-// every repository fact combination, with each of limits as the stated function length
-// (currentReleaseHarnesses).
+// every repository fact combination, with the function-length statements limitFacts accepts
+// for limits, the lengths the current synthesis states (currentReleaseHarnesses).
 func priorHarnesses(current *Harness, limits []int) ([]Harness, error) {
 	released, err := currentReleaseHarnesses(current.Platform, limits)
 	if err != nil {
@@ -344,11 +342,12 @@ var receiptStates = [...]bool{false, true}
 // repository facts SynthesizeHarness reads: the receipt key pinned or not, times every HISS fact
 // combination releaseFacts builds from limits. A harness adoption wrote is still unmodified
 // output after the operator pins receipt.public_key, as the unpinned row advises, the
-// repository's languages or declared exceptions change, or its policy resolves or moves the
-// function length; recognising it lets plain adopt refresh it without --force, which would
-// also rewrite adopter-maintained files (#502). The set is enumerated rather than the
-// fact-dependent rows normalised away, so recognition stays byte for byte: an edit to the
-// receipt row or to one invariant still makes the harness operator-owned. It is bounded:
+// repository's languages or declared exceptions change, or its policy resolves the function
+// length the harness stated as the audit ceiling; recognising it lets plain adopt refresh it
+// without --force, which would also rewrite adopter-maintained files (#502). The set is
+// enumerated rather than the fact-dependent rows normalised away, so recognition stays byte
+// for byte: an edit to the receipt row or to one invariant, its function length included,
+// still makes the harness operator-owned (limitFacts). It is bounded:
 // 2 x len(releaseFacts(limits)) values. These are calls, so a later change to this text must
 // first capture the rows as they stand as literals, as cavemanOperatingContract captured #487's.
 func currentReleaseHarnesses(platform string, limits []int) ([]Harness, error) {
@@ -366,9 +365,9 @@ func currentReleaseHarnesses(platform string, limits []int) ([]Harness, error) {
 	return released, nil
 }
 
-// releaseFacts is every HISS fact combination a synthesis stating one of limits can have read:
-// every language set (hisscatalog.AllLanguages) times every exception set
-// (hisscatalog.AllExceptions) times each function-length statement of limitFacts.
+// releaseFacts is every HISS fact combination the refresh key accepts when the current
+// synthesis states limits: every language set (hisscatalog.AllLanguages) times every exception
+// set (hisscatalog.AllExceptions) times each function-length statement of limitFacts.
 func releaseFacts(limits []int) []hisscatalog.Facts {
 	statements := limitFacts(limits)
 	combinations := make([]hisscatalog.Facts, 0,
@@ -384,16 +383,23 @@ func releaseFacts(limits []int) []hisscatalog.Facts {
 	return combinations
 }
 
-// limitFacts is every function-length statement funcLOCLimit renders for limits: per limit,
-// that limit resolved below the audit ceiling, resolved at it, and stated as the unresolved
-// ceiling. A synthesis always states a number (SynthesizeHarness completes the ceiling).
-func limitFacts(limits []int) []hisscatalog.Facts {
-	statements := make([]hisscatalog.Facts, 0, 3*len(limits))
-	for _, limit := range limits {
-		statements = append(statements,
-			hisscatalog.Facts{MaxFuncLOC: limit},
-			hisscatalog.Facts{MaxFuncLOC: limit, CeilingFuncLOC: limit},
-			hisscatalog.Facts{CeilingFuncLOC: limit})
+// limitFacts is every function-length statement the refresh key accepts as earlier output, for
+// a current synthesis stating limits. The audit ceiling (config.AuditMaxFuncLOC) comes from
+// config, never from a harness, in both forms: stated unresolved, which a policy that later
+// resolves replaces, and resolved at the ceiling. A plain number is accepted only when the
+// current synthesis states it. Any other plain length is indistinguishable from an operator's
+// edit, so it keeps the harness operator-owned: after the repository's resolved limit moves
+// (50 to 45, or 50 up to the ceiling), `praetorctl adopt --force` refreshes it.
+func limitFacts(stated []int) []hisscatalog.Facts {
+	ceiling := config.AuditMaxFuncLOC
+	statements := make([]hisscatalog.Facts, 0, 2+len(stated))
+	statements = append(statements,
+		hisscatalog.Facts{CeilingFuncLOC: ceiling},
+		hisscatalog.Facts{MaxFuncLOC: ceiling, CeilingFuncLOC: ceiling})
+	for _, limit := range stated {
+		if limit != ceiling {
+			statements = append(statements, hisscatalog.Facts{MaxFuncLOC: limit, CeilingFuncLOC: ceiling})
+		}
 	}
 	return statements
 }

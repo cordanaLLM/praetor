@@ -6,6 +6,7 @@ package paperclip
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -50,8 +51,9 @@ func languageFacts(languages hisscatalog.Language) hisscatalog.Facts {
 // TestPriorGeneratedRecognisesThisReleaseAfterFactsChange: Positive. The unpinned receipt row
 // tells the operator to pin a key; once pinned, the harness adoption wrote is still unmodified
 // output, so plain adopt refreshes it to the row that requires receipts. The same holds when the
-// repository gains a language, declares an exception, or its policy resolves or moves the
-// function length, and in reverse.
+// repository gains a language or declares an exception, and in reverse, and when its policy
+// resolves the function length the harness stated as the unresolved audit ceiling, below the
+// ceiling or at it.
 func TestPriorGeneratedRecognisesThisReleaseAfterFactsChange(t *testing.T) {
 	cFacts := languageFacts(hisscatalog.LanguageC)
 	cException := hisscatalog.Facts{Languages: hisscatalog.LanguageC, Exceptions: hisscatalog.ExceptionCleanupGoto}
@@ -68,7 +70,7 @@ func TestPriorGeneratedRecognisesThisReleaseAfterFactsChange(t *testing.T) {
 		"declare exception":    {"", "", cFacts, cException, "(declared exception)"},
 		"withdraw exception":   {"", "", cException, cFacts, "C/C++: zero `goto`"},
 		"policy resolves":      {"", "", cFacts, hisscatalog.Facts{Languages: hisscatalog.LanguageC, MaxFuncLOC: 50}, "func LOC <= 50"},
-		"limit reaches ceiling": {"", "", hisscatalog.Facts{Languages: hisscatalog.LanguageC, MaxFuncLOC: 50},
+		"policy resolves at ceiling": {"", "", cFacts,
 			hisscatalog.Facts{Languages: hisscatalog.LanguageC, MaxFuncLOC: config.AuditMaxFuncLOC}, "(audit ceiling; caps profile value)"},
 	}
 	for name, tc := range cases {
@@ -86,9 +88,10 @@ func TestPriorGeneratedRecognisesThisReleaseAfterFactsChange(t *testing.T) {
 }
 
 // TestPriorGeneratedKeepsEditedFactRows: Negative. Recognition stays byte for byte, so an edit
-// to the receipt row or to one invariant, including a function length no synthesis states that
-// way, or a rules.md rendered under other facts than its harness.json, keeps the harness
-// operator-owned after the facts change.
+// to the receipt row or to one invariant, or a rules.md rendered under other facts than its
+// harness.json, keeps the harness operator-owned after the facts change. A function length is
+// no exception: an edit to the number alone, in any form HISS-04 renders, stays operator-owned,
+// since the refresh key takes no number from the harness on disk (limitFacts).
 func TestPriorGeneratedKeepsEditedFactRows(t *testing.T) {
 	edits := map[string]func(h *Harness) *Harness{
 		"edited receipt row": func(h *Harness) *Harness {
@@ -102,6 +105,15 @@ func TestPriorGeneratedKeepsEditedFactRows(t *testing.T) {
 		"edited function length": func(h *Harness) *Harness {
 			h.Invariants[2] = strings.Replace(h.Invariants[2], "(audit ceiling; stricter repository policy wins)", "lines", 1)
 			return h
+		},
+		"edited number, ceiling suffix kept": func(h *Harness) *Harness {
+			return editedFuncLOC(t, h, "60 (audit ceiling; stricter", "45 (audit ceiling; stricter")
+		},
+		"edited number, caps suffix": func(h *Harness) *Harness {
+			return editedFuncLOC(t, h, "60 (audit ceiling; stricter repository policy wins)", "45 (audit ceiling; caps profile value)")
+		},
+		"edited number, plain": func(h *Harness) *Harness {
+			return editedFuncLOC(t, h, "60 (audit ceiling; stricter repository policy wins)", "45")
 		},
 	}
 	for name, edit := range edits {
@@ -123,10 +135,53 @@ func TestPriorGeneratedKeepsEditedFactRows(t *testing.T) {
 	}
 }
 
+// editedFuncLOC replaces from with to in h's HISS-04 invariant, as an operator's hand edit of
+// the function length would.
+func editedFuncLOC(t *testing.T, h *Harness, from, to string) *Harness {
+	t.Helper()
+	edited := strings.Replace(h.Invariants[2], "func LOC <= "+from, "func LOC <= "+to, 1)
+	if edited == h.Invariants[2] {
+		t.Fatalf("HISS-04 invariant %q states no %q", h.Invariants[2], from)
+	}
+	h.Invariants[2] = edited
+	return h
+}
+
+// TestPriorGeneratedKeepsHarnessAfterResolvedLimitMoves: Negative. Once a policy has resolved
+// the function length, a harness stating that plain number is operator-owned after the limit
+// moves: to another number, up to the ceiling, or back to the unresolved ceiling. Only the
+// number the current synthesis states is accepted as a plain number, since any other one is
+// indistinguishable from a hand edit, so `praetorctl adopt --force` refreshes it. Boundary: the
+// same plain number with only the receipt row changed is still earlier output.
+func TestPriorGeneratedKeepsHarnessAfterResolvedLimitMoves(t *testing.T) {
+	resolved := func(limit int) hisscatalog.Facts {
+		return hisscatalog.Facts{Languages: hisscatalog.LanguageGo, MaxFuncLOC: limit}
+	}
+	for name, to := range map[string]hisscatalog.Facts{
+		"50 to 45":           resolved(45),
+		"50 to ceiling":      resolved(config.AuditMaxFuncLOC),
+		"50 to unresolved":   languageFacts(hisscatalog.LanguageGo),
+		"50 to one below 50": resolved(49),
+		"50 to one above 50": resolved(51),
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo, current := writtenWidget(t, "", "", resolved(50), to)
+			if state, err := PriorGenerated(context.Background(), repo, current); err != nil || state.Generated {
+				t.Fatalf("harness stating 50 read as earlier output of a synthesis stating %v: prior=%+v err=%v",
+					current.Invariants[2], state, err)
+			}
+		})
+	}
+	repo, current := writtenWidget(t, "", pinnedReceipt, resolved(50), resolved(50))
+	if state, err := PriorGenerated(context.Background(), repo, current); err != nil || !state.Generated {
+		t.Fatalf("harness stating the current limit is not earlier output after pinning the key: prior=%+v err=%v", state, err)
+	}
+}
+
 // TestPriorGeneratedRecognisesThisReleaseUnderEveryFactCombination: Boundary. Every value the
 // synthesis distinguishes (both receipt states times every language set up to AllLanguages,
-// every exception set up to AllExceptions and each function-length statement of the limit the
-// current harness states) is earlier output for the unpinned, unknown-fact synthesis except text
+// every exception set up to AllExceptions and each function-length statement limitFacts accepts
+// for the limit the current harness states) is earlier output for the unpinned, unknown-fact synthesis except text
 // equal to that synthesis. The combinations are matched against one enumeration (renderedPrior),
 // then a sample end to end through PriorGenerated. A language or exception bit above its bound
 // renders as the set without it and adds no new text.
@@ -140,7 +195,7 @@ func TestPriorGeneratedRecognisesThisReleaseUnderEveryFactCombination(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	combinations := (int(hisscatalog.AllLanguages) + 1) * (int(hisscatalog.AllExceptions) + 1) * 3 * len(limits)
+	combinations := (int(hisscatalog.AllLanguages) + 1) * (int(hisscatalog.AllExceptions) + 1) * len(limitFacts(limits))
 	if len(released) != len(receiptStates)*combinations {
 		t.Fatalf("fact combinations = %d, want both receipt states x %d HISS fact combinations", len(released), combinations)
 	}
@@ -182,13 +237,12 @@ func TestPriorGeneratedRecognisesThisReleaseUnderEveryFactCombination(t *testing
 	}
 }
 
-// TestStatedFuncLOCs reads the function lengths a harness states. Positive: each length of the
-// current and the on-disk invariants, once, in order. Negative: text stating no length, or a
-// zero or seven-digit one, yields none. Boundary: a list longer than maxHarnessValues is read
-// only up to that bound.
+// TestStatedFuncLOCs reads the function lengths a harness states. Positive: each length, once,
+// in order. Negative: text stating no length, or a zero or seven-digit one, yields none.
+// Boundary: a list longer than maxHarnessValues is read only up to that bound.
 func TestStatedFuncLOCs(t *testing.T) {
-	got := statedFuncLOCs([]string{"HISS-04: func LOC <= 60 (audit ceiling; caps profile value)"},
-		[]string{"HISS-04: func LOC <= 50", "HISS-04: func LOC <= 60"})
+	got := statedFuncLOCs([]string{"HISS-04: func LOC <= 60 (audit ceiling; caps profile value)",
+		"HISS-04: func LOC <= 50", "HISS-04: func LOC <= 60"})
 	if len(got) != 2 || got[0] != 60 || got[1] != 50 {
 		t.Fatalf("statedFuncLOCs = %v, want [60 50]", got)
 	}
@@ -199,5 +253,45 @@ func TestStatedFuncLOCs(t *testing.T) {
 	long[maxHarnessValues] = "func LOC <= 42"
 	if got := statedFuncLOCs(long); len(got) != 0 {
 		t.Fatalf("statedFuncLOCs read past maxHarnessValues: %v", got)
+	}
+}
+
+// TestLimitFacts states which function lengths the refresh key accepts. Positive: the audit
+// ceiling in both of its forms, whatever the current synthesis states. Negative: no plain number
+// but the current one, so the ceiling itself is never plain. Boundary: a current limit one
+// below the ceiling adds its plain form; one at the ceiling adds nothing.
+func TestLimitFacts(t *testing.T) {
+	ceiling := config.AuditMaxFuncLOC
+	rendered := func(limits []int) []string {
+		var texts []string
+		for _, facts := range limitFacts(limits) {
+			invariants, err := catalogInvariants(facts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			texts = append(texts, invariants[2])
+		}
+		return texts
+	}
+	unresolved := fmt.Sprintf("func LOC <= %d (audit ceiling; stricter repository policy wins)", ceiling)
+	atCeiling := fmt.Sprintf("func LOC <= %d (audit ceiling; caps profile value)", ceiling)
+	below := fmt.Sprintf("func LOC <= %d", ceiling-1)
+	for _, tc := range []struct {
+		limits []int
+		want   []string
+	}{
+		{nil, []string{unresolved, atCeiling}},
+		{[]int{ceiling}, []string{unresolved, atCeiling}},
+		{[]int{ceiling - 1}, []string{unresolved, atCeiling, below}},
+	} {
+		got := rendered(tc.limits)
+		if len(got) != len(tc.want) {
+			t.Fatalf("limitFacts(%v) renders %q, want %q", tc.limits, got, tc.want)
+		}
+		for index, want := range tc.want {
+			if !strings.HasSuffix(got[index], want) {
+				t.Errorf("limitFacts(%v)[%d] renders %q, want suffix %q", tc.limits, index, got[index], want)
+			}
+		}
 	}
 }
