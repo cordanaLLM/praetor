@@ -77,16 +77,19 @@ Linux only. Its Windows-specific path is described in
 `internal/forge/workflow_guard_test.go` fails if the step is removed, moved before Node is set
 up, or given a condition that could skip it on some legs.
 
-Every leg also runs the figure build check, the commands `make docs-figures-check` runs, since
-`make` is not on the Windows image: the locked `npm ci --prefix tools/figures --ignore-scripts`,
-the engine's tests and type check, `node tools/figures/build.mjs check`,
-`node tools/figures/bundle.mjs --check` and `node tools/figures/build.mjs sources`. esbuild and
+Every leg also runs the figure build check, the commands `make docs-figures-check` and the
+managed `make docs-figures` run, since `make` is not on the Windows image: the locked
+`npm ci --prefix tools/figures --ignore-scripts`, the engine's tests and type check,
+`node tools/figures/build.mjs check`, `node tools/figures/bundle.mjs --check` and
+`node tools/figures/build.mjs sources`. `check` and `sources` are the commands every adopting
+repository runs, and they skip with a stated reason where it has no figure. esbuild and
 TypeScript arrive as per-platform npm optional dependencies, so the leg proves that the install
 works without install scripts on each OS, `check` proves that a rebuild there is byte-identical to
 the committed SVG and JSON, and `bundle.mjs --check` proves that the platform's esbuild rebuilds
 the committed player in `tools/figures/dist/` byte for byte from the lock, within its size budget.
-The hashed files and the player are pinned to LF in `.gitattributes`, so a Windows checkout reads
-the same bytes. The
+The hashed files and the player are pinned to LF by the managed block at the end of
+`.gitattributes`, which adoption writes in every adopting repository too, so a Windows checkout
+reads the same bytes. The
 Chromium smoke test needs a built site and runs in `pages.yml` on Linux only
 ([figures guide](../guides/figures.md#checks)).
 
