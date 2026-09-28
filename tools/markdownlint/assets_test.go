@@ -1,6 +1,7 @@
 package markdownlint
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -12,9 +13,11 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/forge"
 )
 
 func TestLockedAssetInventory(t *testing.T) {
@@ -362,6 +365,118 @@ func TestFamilySurfaceBoundary(t *testing.T) {
 	names[0] = "mutated"
 	if Names()[0] != "package.json" {
 		t.Fatal("Names exposed the inventory for mutation")
+	}
+}
+
+// Step names and the figure script the documentation workflow binds (docs/adr/0016-figures-for-
+// adopters.md, operator decision 4 and section 1): the figure step runs check, then sources,
+// right after the Markdown step, in the one job whose name is StatusContext.
+const (
+	markdownStepName = "Verify public Markdown"
+	figureStepName   = "Verify figures"
+	figureScript     = "node tools/figures/build.mjs check\nnode tools/figures/build.mjs sources"
+)
+
+// figureStepFault reads a documentation workflow through forge.WorkflowRuns and names the first
+// way its figure step breaks the binding above, or returns "" when it holds.
+func figureStepFault(doc string) string {
+	runs, err := forge.WorkflowRuns([]byte(doc))
+	if err != nil {
+		return err.Error()
+	}
+	markdown, figures := slices.IndexFunc(runs, stepNamed(markdownStepName)), slices.IndexFunc(runs, stepNamed(figureStepName))
+	switch {
+	case markdown < 0 || figures < 0:
+		return "the workflow lacks the Markdown or the figure step"
+	case runs[markdown].JobName != StatusContext:
+		return "the Markdown step's job is not named " + StatusContext
+	case runs[figures].Job != runs[markdown].Job:
+		return "the figure step runs in job " + runs[figures].Job + ", not in " + runs[markdown].Job
+	case runs[figures].Index != runs[markdown].Index+1:
+		return "the figure step is not the step right after the Markdown step"
+	case runs[figures].Script != figureScript:
+		return "the figure step runs " + strconv.Quote(runs[figures].Script)
+	case slices.ContainsFunc(runs, func(run forge.WorkflowRun) bool { return run.Job != runs[markdown].Job }):
+		return "the workflow runs commands outside the documentation job"
+	}
+	return ""
+}
+
+func stepNamed(name string) func(forge.WorkflowRun) bool {
+	return func(run forge.WorkflowRun) bool { return run.Name == name }
+}
+
+// mutateWorkflow replaces old with replacement in Workflow once, failing when old is absent so
+// a fixture never silently tests the unchanged text.
+func mutateWorkflow(t *testing.T, old, replacement string) string {
+	t.Helper()
+	if !strings.Contains(Workflow, old) {
+		t.Fatalf("Workflow lacks %q", old)
+	}
+	return strings.Replace(Workflow, old, replacement, 1)
+}
+
+const (
+	markdownStep = "      - name: Verify public Markdown\n        run: node tools/markdownlint/verify.mjs\n"
+	figureStep   = "      - name: Verify figures\n        run: |\n          node tools/figures/build.mjs check\n" +
+		"          node tools/figures/build.mjs sources\n"
+)
+
+// Positive: the shipped Workflow holds the binding, and forge derives exactly one required status
+// context from it, StatusContext, so branch-protection reconciliation is unchanged.
+func TestWorkflowFigureStepPositive(t *testing.T) {
+	if fault := figureStepFault(Workflow); fault != "" {
+		t.Fatal(fault)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	contexts, err := forge.RequiredStatusContextsPlanned(ctx, t.TempDir(), map[string][]byte{WorkflowFile: []byte(Workflow)})
+	if err != nil || !slices.Equal(contexts, []string{StatusContext}) {
+		t.Fatalf("required status contexts = %v, %v; want [%s]", contexts, err, StatusContext)
+	}
+}
+
+// Negative: a reordered, trimmed, weakened, relocated, renamed or missing figure step is refused,
+// and so is a second job running commands beside the documentation job.
+func TestWorkflowFigureStepNegative(t *testing.T) {
+	const otherJob = "  figures:\n    name: Figures\n    runs-on: ubuntu-26.04\n    steps:\n"
+	cases := map[string]struct{ doc, fault string }{
+		"reordered":     {mutateWorkflow(t, markdownStep+figureStep, figureStep+markdownStep), "not the step right after"},
+		"sources gone":  {mutateWorkflow(t, "          node tools/figures/build.mjs sources\n", ""), "runs \"node tools/figures/build.mjs check\""},
+		"check gone":    {mutateWorkflow(t, "          node tools/figures/build.mjs check\n", ""), "runs \"node tools/figures/build.mjs sources\""},
+		"sources muted": {mutateWorkflow(t, "build.mjs sources\n", "build.mjs sources || true\n"), "sources || true"},
+		"other job":     {mutateWorkflow(t, figureStep, "") + otherJob + figureStep, "runs in job figures"},
+		"second job":    {Workflow + otherJob + "      - run: make docs\n", "outside the documentation job"},
+		"job renamed":   {mutateWorkflow(t, "    name: "+StatusContext+"\n", "    name: Docs\n"), "not named " + StatusContext},
+		"step missing":  {mutateWorkflow(t, figureStep, ""), "lacks the Markdown or the figure step"},
+		"not YAML":      {"jobs: [\n", "parse workflow"},
+	}
+	for name, test := range cases {
+		t.Run(name, func(t *testing.T) {
+			if fault := figureStepFault(test.doc); !strings.Contains(fault, test.fault) {
+				t.Fatalf("figure step fault = %q, want one naming %q", fault, test.fault)
+			}
+		})
+	}
+}
+
+// Boundary: an action between the two steps breaks "right after" although no run step sits
+// between them, and the two figure commands swapped are not the bound script; the figure step as
+// the job's last step, and a trailing blank line after it, still hold.
+func TestWorkflowFigureStepBoundary(t *testing.T) {
+	between := mutateWorkflow(t, markdownStep, markdownStep+"      - uses: actions/cache@v5\n")
+	swapped := mutateWorkflow(t, figureStep, "      - name: Verify figures\n        run: |\n"+
+		"          node tools/figures/build.mjs sources\n          node tools/figures/build.mjs check\n")
+	for doc, want := range map[string]string{between: "not the step right after", swapped: "build.mjs sources\\nnode"} {
+		if fault := figureStepFault(doc); !strings.Contains(fault, want) {
+			t.Fatalf("figure step fault = %q, want one naming %q", fault, want)
+		}
+	}
+	if !strings.HasSuffix(Workflow, figureStep) {
+		t.Fatal("the figure step is not the job's last step")
+	}
+	if fault := figureStepFault(Workflow + "\n"); fault != "" {
+		t.Fatalf("a trailing blank line breaks the figure step: %s", fault)
 	}
 }
 
