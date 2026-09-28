@@ -60,3 +60,36 @@ func TestRunSentinel_Boundary_MinFreeFlag(t *testing.T) {
 		t.Fatalf("a 1 MiB headroom failed on a measured host: %v", err)
 	}
 }
+
+// TestSentinelReportHelpers_3D: the helpers split out of runSentinel keep its output. A healthy
+// report prints no violations, a breached one lists each violation and advice line, a positive
+// VRAM request prints the verdict, and a zero request (the --check-vram default) prints nothing.
+func TestSentinelReportHelpers_3D(t *testing.T) {
+	printed := func(fn func()) string {
+		t.Helper()
+		out, err := captureStdout(t, func() error { fn(); return nil })
+		if err != nil {
+			t.Fatalf("capture: %v", err)
+		}
+		return out
+	}
+	stats := sentinel.HostStats{RAMTotalBytes: 16384 * testMiB, RAMFreeBytes: 8192 * testMiB}
+	healthy := printed(func() { printHostReport(&sentinel.HostReport{Healthy: true, Stats: stats}) })
+	if !strings.Contains(healthy, "[HEALTHY]") || strings.Contains(healthy, "violated") {
+		t.Fatalf("healthy report output:\n%s", healthy)
+	}
+	breached := printed(func() {
+		printHostReport(&sentinel.HostReport{Stats: stats, ViolatedInvariants: []string{"ram low"}, ThrottlingRecommendations: []string{"stop a model"}})
+	})
+	for _, want := range []string{"[PRESSURE / BREACH]", "  - ram low", "Advice: stop a model"} {
+		if !strings.Contains(breached, want) {
+			t.Fatalf("breached report lacks %q:\n%s", want, breached)
+		}
+	}
+	for vram, want := range map[float64]string{1: "[APPROVED]", 8: "[DENIED]", 0: "", -1: ""} {
+		got := printed(func() { reportModelAllocation(&stats, vram) })
+		if (want == "") != (got == "") || !strings.Contains(got, want) {
+			t.Fatalf("--check-vram=%v printed %q, want %q", vram, got, want)
+		}
+	}
+}

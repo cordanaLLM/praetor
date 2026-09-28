@@ -25,6 +25,16 @@ func runSentinel(args []string) error {
 		return fmt.Errorf("failed inspecting host sentinel: %w", err)
 	}
 
+	printHostReport(report)
+	reportModelAllocation(&report.Stats, *checkVRAM)
+	if *minFreeMB == 0 {
+		return nil
+	}
+	return reportHeadroom(&report.Stats, *minFreeMB)
+}
+
+// printHostReport prints the measured memory, disk and CPU load and the reservation verdict.
+func printHostReport(report *sentinel.HostReport) {
 	fmt.Println("=== Workstation Resource Sentinel ===")
 	fmt.Printf("Memory: %.1f GB free / %.1f GB total (%.1f%% used)\n",
 		float64(report.Stats.RAMFreeBytes)/(1024*1024*1024),
@@ -43,29 +53,28 @@ func runSentinel(args []string) error {
 
 	if report.Healthy {
 		fmt.Println("\nStatus: [HEALTHY] Host reservation invariants satisfied (RAM >= 20%, Disk >= 15%).")
-	} else {
-		fmt.Println("\nStatus: [PRESSURE / BREACH] Host reservation invariants violated:")
-		for _, v := range report.ViolatedInvariants {
-			fmt.Printf("  - %s\n", v)
-		}
-		for _, rec := range report.ThrottlingRecommendations {
-			fmt.Printf("Advice: %s\n", rec)
-		}
+		return
 	}
+	fmt.Println("\nStatus: [PRESSURE / BREACH] Host reservation invariants violated:")
+	for _, v := range report.ViolatedInvariants {
+		fmt.Printf("  - %s\n", v)
+	}
+	for _, rec := range report.ThrottlingRecommendations {
+		fmt.Printf("Advice: %s\n", rec)
+	}
+}
 
-	if *checkVRAM > 0 {
-		canAlloc := sentinel.CanAllocateModel(&report.Stats, *checkVRAM)
-		if canAlloc {
-			fmt.Printf("\nModel Allocation (%.1f GB): [APPROVED] Headroom sufficient.\n", *checkVRAM)
-		} else {
-			fmt.Printf("\nModel Allocation (%.1f GB): [DENIED] Would breach workstation reservation threshold.\n", *checkVRAM)
-		}
+// reportModelAllocation prints whether a model of vramGB fits the reservation; zero or less skips
+// the check, as the --check-vram default does.
+func reportModelAllocation(stats *sentinel.HostStats, vramGB float64) {
+	if vramGB <= 0 {
+		return
 	}
-
-	if *minFreeMB > 0 {
-		return reportHeadroom(&report.Stats, *minFreeMB)
+	if sentinel.CanAllocateModel(stats, vramGB) {
+		fmt.Printf("\nModel Allocation (%.1f GB): [APPROVED] Headroom sufficient.\n", vramGB)
+		return
 	}
-	return nil
+	fmt.Printf("\nModel Allocation (%.1f GB): [DENIED] Would breach workstation reservation threshold.\n", vramGB)
 }
 
 // reportHeadroom prints the free-RAM headroom verdict and fails the command unless measured free

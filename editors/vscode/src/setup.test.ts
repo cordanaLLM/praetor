@@ -5,7 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import test from "node:test";
 import { MCP_PROVIDER_ID } from "./mcp";
-import { artifactPath, LSP_CLIENT_ID, LSP_DEFAULT_PATH, machineExecutable, MCP_DEFAULT_PATH, parseCapabilities, requireTrust, sentinelArguments, setupArguments, workspaceExecutable, workspaceGlob } from "./setup";
+import { artifactPath, commandAvailable, LSP_CLIENT_ID, LSP_DEFAULT_PATH, machineExecutable, MAX_MARKER_FOLDERS, MCP_DEFAULT_PATH, parseCapabilities, PRAETOR_MARKERS, praetorWorkspace, requireTrust, sentinelArguments, setupArguments, workspaceExecutable, workspaceGlob } from "./setup";
 import { runCLI } from "./runner";
 
 const sample = { client: "claude", mode: "merge", documentation: "https://example.invalid/docs", lifecycle: { state: "adapter-defined", definition_paths: [".claude/settings.json"], activation: "unverified" } };
@@ -19,7 +19,7 @@ type Manifest = {
   contributes: {
     commands: { command: string }[];
     configuration: { properties: Record<string, { default?: unknown; enum?: string[] } | undefined> };
-    mcpServerDefinitionProviders?: { id: string; label: string }[];
+    mcpServerDefinitionProviders?: { id: string; label: string; when?: string }[];
   };
 };
 
@@ -88,6 +88,63 @@ test("the MCP server definition provider is contributed under the id the extensi
   // The setup command still prepares configuration for every other client.
   assert.ok(manifest.contributes.commands.some(entry => entry.command === "standards.setupAgents"));
   assert.ok(manifest.activationEvents.includes("onCommand:standards.setupAgents"));
+});
+
+test("VS Code registers the MCP collection, and so activates the extension, only for a trusted, enabled folder", () => {
+  // VS Code turns each contributed collection into an onMcpCollection:<id> activation event and
+  // registers the collection only while its `when` holds (extensionMcpDiscovery.ts), so without a
+  // `when` MCP discovery activates the extension in every workspace.
+  const [collection] = readManifest().contributes.mcpServerDefinitionProviders ?? [];
+  const clauses = collection?.when?.split(" && ") ?? [];
+  assert.deepEqual(clauses, ["isWorkspaceTrusted", "config.standards.mcp.enabled", "workspaceFolderCount > 0"]);
+});
+
+test("the status bar markers are the workspaceContains activation files", () => {
+  const events = readManifest().activationEvents.filter(event => event.startsWith("workspaceContains:"));
+  assert.deepEqual(events.map(event => event.slice("workspaceContains:".length)), [...PRAETOR_MARKERS]);
+});
+
+test("a marker file at a folder root marks a Praetor workspace", async () => {
+  const folders = ["/work/app", "/work/tools"];
+  for (const marker of PRAETOR_MARKERS) {
+    const present = new Set([path.join("/work/tools", marker)]);
+    assert.equal(await praetorWorkspace(folders, async file => present.has(file)), true, marker);
+  }
+  assert.equal(await praetorWorkspace(folders, async () => false), false);
+  assert.equal(await praetorWorkspace([], async () => true), false);
+  // Only the first MAX_MARKER_FOLDERS folders are inspected.
+  const many = Array.from({ length: MAX_MARKER_FOLDERS + 1 }, (_, index) => `/work/f${index}`);
+  const at = (index: number) => new Set([path.join(many[index], "AGENTS.md")]);
+  assert.equal(await praetorWorkspace(many, async file => at(MAX_MARKER_FOLDERS - 1).has(file)), true);
+  assert.equal(await praetorWorkspace(many, async file => at(MAX_MARKER_FOLDERS).has(file)), false);
+});
+
+test("a server command starts only when an absolute path names a file", async () => {
+  const checked: string[] = [];
+  const files = (present: string[]) => async (file: string) => { checked.push(file); return present.includes(file); };
+  assert.equal(await commandAvailable("/r/bin/standards-lsp", "linux", files(["/r/bin/standards-lsp"])), true);
+  assert.equal(await commandAvailable("/r/bin/standards-lsp", "darwin", files([])), false);
+  assert.equal(await commandAvailable("/r/bin/standards-lsp", "linux", files(["/r/bin/standards-lsp.exe"])), false);
+  const windows = "C:\\r\\bin\\standards-lsp";
+  assert.equal(await commandAvailable(windows, "win32", files([`${windows}.exe`])), true);
+  assert.equal(await commandAvailable(windows, "win32", files([])), false);
+  checked.length = 0;
+  for (const command of ["standards-lsp", "bin/standards-lsp", "bin\\standards-lsp"]) {
+    assert.equal(await commandAvailable(command, "win32", files([])), true, command);
+    assert.equal(await commandAvailable(command, "linux", files([])), true, command);
+  }
+  assert.deepEqual(checked, [], "a command name or relative path was checked on disk");
+});
+
+test("the LSP start and the status bar are gated on what exists", () => {
+  const source = extensionSource();
+  // The LSP resolves its command through commandAvailable before a LanguageClient exists, and the
+  // status item is shown only through praetorWorkspace, so an activation by MCP discovery or a Go
+  // file in an unrelated workspace neither pops "Praetor LSP unavailable" nor shows the item.
+  assert.match(source, /commandAvailable\(executable, process\.platform, isFile\)/);
+  assert.ok(source.indexOf("await lspExecutable(folder)") < source.indexOf("new LanguageClient("));
+  assert.deepEqual([...source.matchAll(/status\.show\(\)/g)].length, 1);
+  assert.match(source, /if \(await praetorWorkspace\(folders, isFile\)\) status\.show\(\);/);
 });
 
 test("both server paths are restricted settings and every restricted setting is contributed", () => {

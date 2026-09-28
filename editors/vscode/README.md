@@ -9,7 +9,10 @@ preservation, conflict, backup and readback checks as `praetorctl clients`.
 The complete goal is [IDE-driven agent setup and enforcement](../../docs/plans/ide-agent-setup.md).
 Wrapper installation, native client activation, enforcement receipts and drift
 repair remain open stages. The status bar reports **Unverified** until those
-stages have real evidence.
+stages have real evidence. It shows only while a workspace folder root holds
+`.standards.yaml` or `AGENTS.md`, the files the `workspaceContains` activation
+events name (`PRAETOR_MARKERS` in `src/setup.ts`), so an activation from a Go
+file or from MCP discovery in an unrelated workspace shows nothing.
 
 ## Build and test
 
@@ -60,7 +63,11 @@ termination. This is not a sandbox or proof that detached descendants stopped.
 The optional LSP starts only for a trusted workspace, using its scoped
 `standards.lsp.path`. With multiple roots it binds to the active editor's root;
 it does not start against an arbitrary first folder. The default is
-`${workspaceFolder}/bin/standards-lsp`. All paths and processes belong to the
+`${workspaceFolder}/bin/standards-lsp`. An absolute path that names no file
+starts nothing and logs one line to the **Praetor** output channel; the
+**Praetor LSP unavailable** warning is reserved for a binary that exists but
+fails to start. The existence check is the one the MCP provider uses
+(`commandAvailable` in `src/setup.ts`). All paths and processes belong to the
 actual extension host, which may be remote or in a container.
 
 ## MCP server
@@ -73,12 +80,19 @@ standards-mcp**, started as `<path> -transport=stdio -root <folder>` with the
 folder as its working directory. No `.vscode/mcp.json` entry is needed; adding
 one for the same binary lists the server twice.
 
+VS Code derives an `onMcpCollection:standards.mcp` activation event from the
+contribution and registers the collection only while its `when` clause holds:
+`isWorkspaceTrusted && config.standards.mcp.enabled && workspaceFolderCount > 0`.
+MCP discovery therefore never activates the extension in an untrusted or empty
+window, or with `standards.mcp.enabled` set to `false`.
+
 | Setting | Default | Effect |
 | :-- | :-- | :-- |
 | `standards.mcp.enabled` | `true` | `false` offers no server |
 | `standards.mcp.path` | `${workspaceFolder}/bin/standards-mcp` | server executable; blank falls back to the default |
 
-The provider (`src/mcp.ts`) offers the server only when all of these hold:
+Within that gate, the provider (`src/mcp.ts`) offers the server only when all
+of these hold:
 
 - the workspace is trusted. `standards.mcp.path` is a restricted setting, like
   `standards.lsp.path`;
@@ -107,7 +121,9 @@ API first ships in 1.101.0, and its declarations are unchanged from 1.101.0
 through 1.138.0. The floor sits about one quarter behind VS Code 1.139 (stable
 on 2026-09-28), leaving room for VS Code-based editors that trail upstream. It is
 also later than the September 2025 fix for VS Code activating every MCP provider
-extension in empty workspaces (microsoft/vscode#266221). VS Code and forks older
+extension in empty workspaces (microsoft/vscode#266221): that fix,
+microsoft/vscode#268097, made MCP provider activation lazy and added the
+contribution `when` clause the extension uses. VS Code and forks older
 than 1.125 no longer install updates of this extension. `src/setup.test.ts`
 checks that the floor, the pinned types and the lockfile agree and that the
 floor carries the MCP API.

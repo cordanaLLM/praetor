@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Event } from "vscode";
-import { launchCandidates, MCP_SERVER_LABEL, McpFolder, McpLaunch, mcpLaunch, McpProviderHost, McpSettings, StandardsMcpProvider } from "./mcp";
+import { MCP_SERVER_LABEL, McpFolder, McpLaunch, mcpLaunch, McpProviderHost, McpSettings, StandardsMcpProvider } from "./mcp";
+import { launchCandidates } from "./setup";
 
 const root = "/work/repo";
 const defaultCommand = `${root}/bin/standards-mcp`;

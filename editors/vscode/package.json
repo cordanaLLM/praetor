@@ -51,7 +51,8 @@
     "mcpServerDefinitionProviders": [
       {
         "id": "standards.mcp",
-        "label": "Praetor Standards"
+        "label": "Praetor Standards",
+        "when": "isWorkspaceTrusted && config.standards.mcp.enabled && workspaceFolderCount > 0"
       }
     ],
     "configuration": {

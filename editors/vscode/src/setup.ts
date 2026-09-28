@@ -25,6 +25,48 @@ export function workspaceExecutable(configured: unknown, fallback: string, folde
   return value.replaceAll("${workspaceFolder}", () => folderPath);
 }
 
+// Files whose presence at a workspace folder root marks a Praetor workspace. They are the files the
+// workspaceContains activation events in package.json name; setup.test.ts checks the two agree.
+export const PRAETOR_MARKERS = [".standards.yaml", "AGENTS.md"] as const;
+// MAX_MARKER_FOLDERS bounds the folders praetorWorkspace inspects in one multi-root window.
+export const MAX_MARKER_FOLDERS = 64;
+
+export type IsFile = (file: string) => Promise<boolean>;
+
+// launchCandidates lists the files an absolute command can start. On Windows a command without an
+// extension also names <command>.com and <command>.exe, which libuv's search_path appends
+// (docs/guides/editor-capabilities.md, the same rule the generated LSP settings rely on), so a
+// built bin/standards-mcp.exe counts for the default bin/standards-mcp.
+export function launchCandidates(command: string, platform: NodeJS.Platform): string[] {
+  if (platform !== "win32" || path.win32.extname(command) !== "") return [command];
+  return [command, `${command}.com`, `${command}.exe`];
+}
+
+// commandAvailable reports whether a server command can start: an absolute command must name an
+// existing file (one of its launchCandidates). A command name or relative path is left to the
+// host's own lookup, unchecked. The LSP and the MCP provider both gate on it, so a workspace that
+// never built bin/standards-lsp or bin/standards-mcp starts and lists nothing.
+export async function commandAvailable(command: string, platform: NodeJS.Platform, isFile: IsFile): Promise<boolean> {
+  const flavor = platform === "win32" ? path.win32 : path.posix;
+  if (!flavor.isAbsolute(command)) return true;
+  for (const candidate of launchCandidates(command, platform)) {
+    if (await isFile(candidate)) return true;
+  }
+  return false;
+}
+
+// praetorWorkspace reports whether one of the first MAX_MARKER_FOLDERS workspace folders holds a
+// PRAETOR_MARKERS file at its root. The status bar shows only then, so an activation from another
+// source (a Go file, VS Code's MCP discovery) stays silent in an unrelated workspace.
+export async function praetorWorkspace(folderPaths: readonly string[], isFile: IsFile): Promise<boolean> {
+  for (const folder of folderPaths.slice(0, MAX_MARKER_FOLDERS)) {
+    for (const marker of PRAETOR_MARKERS) {
+      if (await isFile(path.join(folder, marker))) return true;
+    }
+  }
+  return false;
+}
+
 // sentinelArguments turns standards.sentinel.headroomMB into the praetorctl sentinel call that
 // measures it. Zero would skip the CLI check, so only a positive integer is passed; the CLI refuses
 // values above its MiB limit.
