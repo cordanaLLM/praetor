@@ -95,7 +95,9 @@ func TestScaffoldedRustfmtFollowsTheCrateEdition(t *testing.T) {
 	}
 }
 
-// readRustfmtPriors returns every earlier scaffold text by the edition it named.
+// readRustfmtPriors returns every earlier scaffold text by the edition it named, in LF: the
+// texts were written with LF, and a Windows checkout under core.autocrlf may convert the
+// fixtures, which the tests below then turn into CRLF themselves where they mean to.
 func readRustfmtPriors(t *testing.T) map[string]string {
 	t.Helper()
 	entries, err := os.ReadDir(rustfmtPriorFixtures)
@@ -109,7 +111,7 @@ func readRustfmtPriors(t *testing.T) map[string]string {
 			t.Fatalf("read %s: %v", entry.Name(), err)
 		}
 		edition := strings.TrimSuffix(strings.TrimPrefix(entry.Name(), "edition-"), ".rustfmt.toml")
-		priors[edition] = string(data)
+		priors[edition], _ = util.NormalizeLineEndings(string(data))
 	}
 	if len(priors) == 0 {
 		t.Fatalf("%s holds no earlier scaffold", rustfmtPriorFixtures)
