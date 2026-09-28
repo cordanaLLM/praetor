@@ -20,3 +20,17 @@ path = ["tools/figures/third_party/interfig/upstream/**"]
 precedence = "override"
 SPDX-FileCopyrightText = "2025 Vectorize AI, Inc."
 SPDX-License-Identifier = "MIT"
+
+# The committed figure player bundles this repository's loader and player code (EUPL-1.2) with
+# interfig, React, react-dom and scheduler (MIT). dist/THIRD-PARTY-LICENSES.txt carries the full
+# MIT texts (docs/adr/0016-figures-for-adopters.md, section 11). Like the table above, this one
+# must stay after the "**" table.
+[[annotations]]
+path = ["tools/figures/dist/**"]
+precedence = "override"
+SPDX-FileCopyrightText = [
+  "2026 Lusoris <lusoris@proton.me>",
+  "2025 Vectorize AI, Inc.",
+  "Meta Platforms, Inc. and affiliates",
+]
+SPDX-License-Identifier = "EUPL-1.2 AND MIT"

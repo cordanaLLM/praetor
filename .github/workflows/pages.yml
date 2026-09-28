@@ -63,10 +63,12 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --require-hashes -r docs/presets/mkdocs/requirements.txt
 
-      # Interactive figures (docs/adr/0015-interactive-figures-from-vendored-interfig.md). The
-      # player bundle is gitignored, so it is built here from the locked tools/figures install
-      # before MkDocs copies docs/ into the site. `check` first proves the committed SVG and JSON
-      # still match a fresh render; `bundle` fails when the player chunk exceeds its budget.
+      # Interactive figures (docs/adr/0015-interactive-figures-from-vendored-interfig.md,
+      # docs/adr/0016-figures-for-adopters.md). The site serves the committed player from
+      # tools/figures/dist/ through the MkDocs hook, so nothing is bundled for the deploy. `check`
+      # proves the committed SVG and JSON still match a fresh render, and `bundle.mjs --check`
+      # proves the committed player is a byte-for-byte rebuild from the lock within its budget. The
+      # locked install also brings the Playwright the smoke test below drives.
       - name: Setup Node Toolchain
         uses: actions/setup-node@v7
         with:
@@ -74,11 +76,11 @@ jobs:
           cache: npm
           cache-dependency-path: tools/figures/package-lock.json
 
-      - name: Build Figure Player Bundle
+      - name: Verify Committed Figures And Player
         run: |
           npm ci --prefix tools/figures --ignore-scripts --no-audit --no-fund
           node tools/figures/build.mjs check
-          npm --prefix tools/figures run bundle
+          node tools/figures/bundle.mjs --check
 
       - name: Build MkDocs Site (Strict Mode)
         run: mkdocs build --strict
@@ -86,9 +88,10 @@ jobs:
       # A strict build passes with every diagram shipped as a code listing: the mermaid custom
       # fence was once never declared and nothing looked at the output. This fails the build
       # before the artifact is uploaded when a page holds a ```mermaid block (the site renders
-      # figures only), when a ```figure fence did not become a figure whose images resolve, or
-      # when a committed figure no longer matches its spec, the engine, its markup or its
-      # evidence anchors. Both checks are Node commands that need no npm package (ADR-0016).
+      # figures only), when a ```figure fence did not become a figure whose images resolve to SVGs
+      # that embed the player's props, when a page with figures does not load the loader and its
+      # player, or when a committed figure no longer matches its spec, the engine, its markup or
+      # its evidence anchors. Both checks are Node commands that need no npm package (ADR-0016).
       - name: Verify Diagrams Render
         run: |
           node tools/figures/build.mjs site --config mkdocs.yml --docs docs --site site

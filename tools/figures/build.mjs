@@ -22,13 +22,12 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
-import { CheckError, OUT_DIR, REBUILD, ROOT, SPEC_DIR, checkSite, engineHash, portable, readText, siteUrl, sources } from './checks.mjs';
+import { CheckError, OUT_DIR, REBUILD, ROOT, SLUG, SPEC_DIR, checkSite, engineHash, portable, readText, siteUrl, sources } from './checks.mjs';
 import { LIMITS, render, sha256, validate } from './core.mjs';
 
 export { OUT_DIR, REBUILD, ROOT, SPEC_DIR, engineHash };
 export const VENDOR_JSON = 'tools/figures/third_party/interfig/vendor.json';
 const TIMEOUT_MS = 120_000;
-const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /** Rejects when `promise` has not settled within `ms` (HISS-02: every I/O is bounded). */
 export async function withTimeout(promise, ms, what) {

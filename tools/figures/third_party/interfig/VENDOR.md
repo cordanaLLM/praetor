@@ -30,8 +30,10 @@ file of its own in the upstream tree, so `upstream/LICENSE` is the repository-ro
 - `REUSE.toml` labels `tools/figures/third_party/interfig/upstream/**` as MIT with an override
   annotation placed after the repository-wide `**` table. This file, `vendor.json` and
   everything outside `upstream/` stay EUPL-1.2.
-- The deployed player bundle carries an `interfig (c) 2025 Vectorize AI, Inc. MIT` banner,
-  because the upstream source has no header of its own (`tools/figures/bundle.mjs`).
+- The committed player in `tools/figures/dist/` carries an
+  `interfig (c) 2025 Vectorize AI, Inc. MIT` banner, because the upstream source has no header of
+  its own, and `dist/THIRD-PARTY-LICENSES.txt` carries the full license text
+  (`tools/figures/bundle.mjs`).
 - Every exported SVG carries a credit comment, and the site footer credits Vectorize
   (`copyright` in `mkdocs.yml`).
 
@@ -88,7 +90,7 @@ process. Praetor's build never calls that script: `tools/figures/core.mjs` impor
 | :-- | :-- |
 | `python3 scripts/sync_interfig.py verify` | Offline, in `make interfig-verify`: `upstream/` matches the `vendor.json` hashes, the include list covers every file, the LICENSE hash is the reviewed `license_sha256`, and the `REUSE.toml` MIT override is the last annotation covering each vendored file |
 | `python3 scripts/sync_interfig.py check` | Compares the newest upstream commit under `hindsight-interfig/` with `path_commit`; exits 3 on drift with the compare URL and the update command, 1 on any other failure |
-| `python3 scripts/sync_interfig.py update --commit <sha>` | Vendors `<sha>`, a full 40-character commit sha, and runs the upstream tests and the figure build |
+| `python3 scripts/sync_interfig.py update --commit <sha>` | Vendors `<sha>`, a full 40-character commit sha, runs the upstream tests and the figure build, and rebuilds the committed player |
 
 The weekly `interfig-sync.yml` workflow runs `check` and fails with the update command when
 upstream has moved. To update the pin:
@@ -103,18 +105,22 @@ upstream has moved. To update the pin:
    `scripts/` (subdirectories included) holds a file that is neither included nor excluded, or
    if the upstream `react` peer range does not admit the `react` version in
    `tools/figures/package.json`. Otherwise it swaps in the new `upstream/` and `vendor.json`
-   together, restoring the previous tree if the swap fails, then runs the upstream tests and
-   `npm --prefix tools/figures run build`. If either fails, revert the update. `git clean`
-   removes the new upstream files and figure outputs that `git checkout` leaves behind:
+   together, restoring the previous tree if the swap fails, then runs the upstream tests,
+   `npm --prefix tools/figures run build`, the locked
+   `npm ci --prefix tools/figures --ignore-scripts` and `npm --prefix tools/figures run bundle`,
+   which rewrites the committed player in `tools/figures/dist/`. If any of them fails, revert the
+   update. `git clean` removes the new upstream files and figure outputs that `git checkout`
+   leaves behind:
 
    ```bash
-   git checkout -- tools/figures/third_party/interfig docs/assets/figures
+   git checkout -- tools/figures/third_party/interfig docs/assets/figures tools/figures/dist
    git clean -fd -- tools/figures/third_party/interfig/upstream docs/assets/figures
    ```
 
 2. Add a new upstream file to the include or exclude list in `vendor.json` first, when step 1
    stops on one.
-3. Commit the rewritten `upstream/`, `vendor.json` and the regenerated `docs/assets/figures/`.
+3. Commit the rewritten `upstream/`, `vendor.json`, the regenerated `docs/assets/figures/` and
+   the rebuilt `tools/figures/dist/`.
    The command prints the upstream commits under `hindsight-interfig/` since the old pin and
    the compare URL for the pull-request body. The list is best effort: when GitHub rate-limits
    or fails the request, the update still succeeds and prints only the compare URL.

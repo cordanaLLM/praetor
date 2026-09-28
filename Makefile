@@ -210,10 +210,12 @@ docs-diagrams-test:
 
 # Interactive figures (docs/adr/0015-interactive-figures-from-vendored-interfig.md): the engine's
 # unit tests (render core and checks) and type check, a fresh render compared byte for byte with
-# the committed SVG and JSON (`build.mjs check`), the player bundle held to its size budget
-# (`bundle.mjs --check`, the one step that needs esbuild), and the source check (hashes, sizes,
-# markup, spec/JSON pairs, fence slugs, evidence, the README block; `build.mjs sources`). `check`
-# and `sources` need Node and no npm package. A hand-edited or stale SVG fails both.
+# the committed SVG and JSON (`build.mjs check`), the committed player in tools/figures/dist/
+# rebuilt from the lock and compared byte for byte, within its size budget (`bundle.mjs --check`,
+# the one step that needs esbuild; docs/adr/0016-figures-for-adopters.md, section 3), and the
+# source check (hashes, sizes, markup, spec/JSON pairs, fence slugs, evidence, the README block;
+# `build.mjs sources`). `check` and `sources` need Node and no npm package. A hand-edited or stale
+# SVG fails both; a hand-edited or stale player file fails `bundle.mjs --check`.
 .PHONY: docs-figures-check
 verify-all: docs-figures-check
 docs-figures-check:

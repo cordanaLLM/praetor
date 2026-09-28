@@ -12,9 +12,13 @@ hooks in-process: both replay tools/figures/fence-fixtures.json, so a fence nest
 fence is left alone here exactly as the `site` check expects. A fence naming a figure without
 docs/assets/figures/<slug>.json is logged as a warning, which fails `mkdocs build --strict`.
 
-figures.css sits beside this file, outside docs_dir, so the hook publishes it: `on_files` adds it
-to the site as a generated file at CSS_URI and `on_config` links it from every page. A site needs
-no `extra_css` entry for it.
+figures.css and the committed player files under dist/ (loader.js, player.js and their
+THIRD-PARTY-LICENSES.txt, written by tools/figures/bundle.mjs) sit beside this file, outside
+docs_dir, so the hook publishes them: `on_files` adds each to the site as a generated file, the CSS
+at CSS_URI and the player files under DIST_URI, and `on_config` links the stylesheet and the loader,
+as a module script, from every page. A site needs no `extra_css` or `extra_javascript` entry for
+them and no bundling step: the loader reads each figure's props from its SVG
+(docs/adr/0016-figures-for-adopters.md, section 3).
 """
 
 from __future__ import annotations
@@ -29,6 +33,11 @@ log = logging.getLogger("mkdocs.plugins.praetor_figures")
 
 CSS_FILE = Path(__file__).with_name("figures.css")
 CSS_URI = "assets/stylesheets/figures.css"
+DIST_DIR = Path(__file__).with_name("dist")
+DIST_URI = "assets/javascripts/figures"
+LOADER_URI = f"{DIST_URI}/loader.js"
+# dist/ holds three files (DIST_FILES in bundle.mjs); the bound only keeps the listing finite.
+MAX_DIST_FILES = 16
 REBUILD = "node tools/figures/build.mjs build"
 
 # Bounded so a pathological page cannot make the hook unbounded (HISS-02).
@@ -160,21 +169,47 @@ def expand(markdown: str, base: str, figures_dir: Path) -> tuple[str, list[str]]
 
 
 def on_config(config):
-    """Link the figure stylesheet from every page, once."""
+    """Link the figure stylesheet and the loader, as a module script, from every page, once each."""
     if CSS_URI not in config["extra_css"]:
         config["extra_css"].append(CSS_URI)
+    if all(str(script) != LOADER_URI for script in config["extra_javascript"]):
+        from mkdocs.config.config_options import ExtraScriptValue  # imported here so the hook loads without MkDocs in tests
+
+        loader = ExtraScriptValue(LOADER_URI)
+        loader.type = "module"
+        config["extra_javascript"].append(loader)
     return config
 
 
-def on_files(files, config):
-    """Add figures.css to the site at CSS_URI; a docs_dir file already there is kept and reported."""
-    if CSS_URI in files.src_uris:
-        log.warning("%s: docs_dir already holds this path, so the figures hook does not publish %s over it",
-                    CSS_URI, CSS_FILE.name)
-        return files
-    from mkdocs.structure.files import File  # imported here so the hook loads without MkDocs in tests
+def published_files() -> list[tuple[str, Path]]:
+    """Each file the hook publishes, as (site URI, source path): figures.css, then every file in dist/.
 
-    files.append(File.generated(config, CSS_URI, abs_src_path=str(CSS_FILE)))
+    A missing dist/ is not an error here: the site then shows every figure as its SVG, and the
+    `site` check (`node tools/figures/build.mjs site`) reports the loader it cannot find.
+    """
+    names = sorted(path.name for path in DIST_DIR.iterdir() if path.is_file()) if DIST_DIR.is_dir() else []
+    if len(names) > MAX_DIST_FILES:
+        raise CheckError(f"{DIST_DIR.as_posix()} holds more than {MAX_DIST_FILES} files")
+    return [(CSS_URI, CSS_FILE)] + [(f"{DIST_URI}/{name}", DIST_DIR / name) for name in names]
+
+
+def on_files(files, config):
+    """Add figures.css and the player files to the site; a docs_dir file at one of their paths is kept and reported."""
+    try:
+        published = published_files()
+    except CheckError as error:
+        log.warning("%s", error)
+        return files
+    for uri, source in published:
+        if uri in files.src_uris:
+            log.warning("%s: docs_dir already holds this path, so the figures hook does not publish %s over it",
+                        uri, source.name)
+    added = [(uri, source) for uri, source in published if uri not in files.src_uris]
+    if added:
+        from mkdocs.structure.files import File  # imported here so the hook loads without MkDocs in tests
+
+        for uri, source in added:
+            files.append(File.generated(config, uri, abs_src_path=str(source)))
     return files
 
 

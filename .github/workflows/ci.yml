@@ -193,15 +193,15 @@ jobs:
           python3 -m pip install --require-hashes -r docs/presets/mkdocs/requirements.txt
           # A documentation-only pull request skips verify-all, so its figure gate runs here: the
           # engine's own tests and typecheck, `check` (a hand-edited committed SVG, static SVG or
-          # JSON no longer matches its spec), the player budget (`bundle.mjs --check`) and
-          # `sources` (ADR-0015, ADR-0016). It also installs the toolchain the bundle below needs,
-          # so it runs on every pull request this step covers.
+          # JSON no longer matches its spec), the committed player (`bundle.mjs --check`: a
+          # byte-for-byte rebuild from the lock within its budget) and `sources` (ADR-0015,
+          # ADR-0016). The site serves that committed player through the MkDocs hook, so nothing
+          # is bundled before the build.
           make -s docs-figures-check
-          # The figure player bundle is gitignored; build it before MkDocs copies docs/.
-          npm --prefix tools/figures run bundle
           mkdocs build --strict
           # A strict build still passes when a ```figure fence does not become a figure. The root
-          # site renders figures only, so this also fails any Mermaid fence it builds.
+          # site renders figures only, so this also fails any Mermaid fence it builds, and every
+          # figure SVG must embed the props the player mounts.
           node tools/figures/build.mjs site --config mkdocs.yml --docs docs --site site
           python3 -B scripts/test_docs_seo_presets.py
           go run ./cmd/standardsctl seo audit site
@@ -342,7 +342,7 @@ jobs:
         id: changed
         uses: ./.github/actions/changed-paths
         with:
-          paths: "docs/presets .github/workflows/ci.yml internal/seo cmd/standardsctl/seo.go tools/figures/checks.mjs tools/figures/build.mjs"
+          paths: "docs/presets .github/workflows/ci.yml internal/seo cmd/standardsctl/seo.go tools/figures/*.mjs"
 
       - name: Setup Python Toolchain
         if: steps.changed.outputs.run == 'true'

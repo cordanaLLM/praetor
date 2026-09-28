@@ -19,9 +19,11 @@ Everything the figures need sits in one tree, `tools/figures/`:
 | `core.mjs` | The render core: spec validation, the text description, the figure markup and the three outputs of one figure. Hashed. |
 | `build.mjs` | The command line: `build`, `check`, `sources`, `site` and `portable`. Node 22.18 or later, no npm package. |
 | `checks.mjs` | The `sources`, `site` and `portable` checks, and the slot filling of the figure markup. Node builtins only. |
-| `bundle.mjs` | Bundles the player for this site with esbuild and holds its size budget. Needs the locked npm install. |
+| `loader.ts`, `player.tsx`, `keyboard.ts` | The player source: the loader reads each figure's props from its SVG and mounts the React player. |
+| `bundle.mjs` | Builds the committed player in `dist/` with esbuild, checks it byte for byte against a rebuild from the lock, and holds its size budget. Needs the locked npm install. |
+| `dist/` | The committed player: `loader.js`, `player.js` and `THIRD-PARTY-LICENSES.txt`. The same files serve every site. |
 | `types.ts` | The spec type a `docs/figures/<slug>.ts` file checks against. |
-| `mkdocs_hook.py` | The MkDocs hook that renders each `figure` fence and publishes `figures.css`. Python standard library and MkDocs only. |
+| `mkdocs_hook.py` | The MkDocs hook that renders each `figure` fence and publishes `figures.css` and `dist/`. Python standard library and MkDocs only. |
 | `third_party/interfig/` | The vendored engine, byte-identical to its pin. |
 
 ## Mermaid is retired on the root site
@@ -110,16 +112,32 @@ The engine hash covers the three vendored render files and `tools/figures/core.m
 (`ENGINE_FILES` in `core.mjs`). An edit to one of them marks every figure stale; an edit to
 `build.mjs`, `checks.mjs` or `bundle.mjs` does not.
 
-`npm --prefix tools/figures run bundle` (`tools/figures/bundle.mjs`) writes the player bundle to
-`docs/assets/javascripts/figures/`. The directory is gitignored and rebuilt by every docs build:
+## The committed player
+
+The player is the same for every site, because it reads each figure's props from the SVG the
+figure shows. `tools/figures/bundle.mjs` builds it once into `tools/figures/dist/`, which is
+committed ([ADR-0016](../adr/0016-figures-for-adopters.md), section 3):
 
 - `loader.js` loads on every page;
-- `player.js` holds React and interfig and loads only when a figure nears the viewport;
-- `specs/<slug>.js` holds one spec each, listed in `registry.json`.
+- `player.js` holds React and interfig and loads only when a figure nears the viewport; the loader
+  imports it by that fixed name from beside itself;
+- `THIRD-PARTY-LICENSES.txt` holds the full license texts of interfig and of every npm package
+  the player bundles.
 
-The player chunk must stay under 250 kB minified. `node tools/figures/bundle.mjs --check` bundles
-into a temporary directory and fails above it, as `run bundle` does; `build.mjs check` does not
-bundle.
+esbuild builds the two scripts without code splitting, so no file name carries a hash and a
+dependency bump changes bytes, never the file list. No docs build bundles. After a change to the
+player source, the lock or the interfig pin, rebuild and commit `dist/`:
+
+```bash
+npm ci --prefix tools/figures --ignore-scripts
+node tools/figures/bundle.mjs
+```
+
+`node tools/figures/bundle.mjs --check` rebuilds in memory and fails when a committed file differs,
+is missing or is not a bundle output, when `player.js` exceeds 250 kB minified, or when the
+installed esbuild or a bundled package differs from `package-lock.json`. It runs on Linux, macOS
+and Windows; `.gitattributes` pins `dist/` to LF so the comparison holds on a Windows checkout.
+`build.mjs check` does not bundle.
 
 ## How a page shows a figure
 
@@ -148,15 +166,22 @@ reduced-motion `<source>` carries the static size and the `<img>` the animated s
 browser reserves the height of the image it shows: no letterboxing and no layout shift
 (the BUG-1002 test in `tools/figures/figures.test.mjs`).
 
-The loader then mounts the player in place of the `<picture>` when the figure nears the viewport.
-Under reduced motion it starts paused on each step's last beat. The caption and the text
-description stay. Without the bundle, for example under `mkdocs serve` without Node, every figure
-keeps its SVG.
+When a figure nears the viewport, the loader fetches the SVG its `<img>` shows (`currentSrc`, from
+the same origin and normally already cached), reads the props from the SVG's
+`<metadata id="figure-spec">`, and mounts the player in place of the `<picture>`, with the caption
+as the name of its scenario tabs. The fetch reads at most 4 MiB and gives up after 10 seconds
+(`MAX_SVG_BYTES` and `FETCH_TIMEOUT_MS` in `tools/figures/loader.ts`); a figure whose SVG cannot be
+read keeps it. Both SVGs carry the full props, so under reduced motion, where the browser shows the
+static SVG, the player mounts all the same and starts paused on each step's last beat. The caption
+and the text description stay. The loader runs again after Material's instant navigation and on
+Astro's `astro:page-load` event.
 
 `tools/figures/figures.css` maps the player's `--fig-*` colours to Material's variables, so the
-palette toggle carries through. It sits outside `docs_dir`, so the hook publishes it at
-`assets/stylesheets/figures.css` and links it from every page; `mkdocs.yml` lists only the hook
-(`test_a_site_build_renders_figures_and_publishes_the_stylesheet` in
+palette toggle carries through. It and `dist/` sit outside `docs_dir`, so the hook publishes them,
+the CSS at `assets/stylesheets/figures.css` and the player files under
+`assets/javascripts/figures/`, and links the stylesheet and the loader (as a module script) from
+every page; `mkdocs.yml` lists only the hook
+(`test_a_site_build_renders_figures_and_publishes_the_stylesheet_and_the_player` in
 `tools/figures/test_mkdocs_hook.py`). The
 SVGs keep interfig's own palette and follow the operating system's colour scheme, not the site
 toggle.
@@ -182,12 +207,12 @@ GitHub keeps `figure`, `figcaption`, `picture`, `img` and `details`, and strips 
 
 | Command | Fails when |
 | :-- | :-- |
-| `npm --prefix tools/figures test` | a validation rule, the text derivation, the figure markup, the stale check, a figure check or the keyboard shim regresses |
+| `npm --prefix tools/figures test` | a validation rule, the text derivation, the figure markup, the stale check, a figure check, the loader's spec reader, the committed player or the keyboard shim regresses |
 | `npm --prefix tools/figures run typecheck` | a spec or the player code does not type-check against `tools/figures/types.ts` and interfig |
 | `node tools/figures/build.mjs check` | a spec breaks a rule, or a committed output differs from a fresh build; needs no npm package |
-| `node tools/figures/bundle.mjs --check` | the player chunk exceeds 250 kB minified; needs the locked npm install |
+| `node tools/figures/bundle.mjs --check` | a file in `tools/figures/dist/` differs from a rebuild from the lock, is missing or is not a bundle output; `player.js` exceeds 250 kB minified; the install differs from the lock; needs the locked npm install |
 | `node tools/figures/build.mjs sources` | a JSON hash no longer matches its spec, the engine or its SVGs; a JSON lacks a positive whole-number size for either SVG; its `html` is not the markup `core.mjs` renders from it; a spec or JSON is missing its pair; a fence names an unknown figure; a root-site page holds a Mermaid fence; the README block differs; an evidence anchor is gone; needs no npm package |
-| `node tools/figures/build.mjs site --config mkdocs.yml --docs docs --site site` | after `mkdocs build`: a figure did not render, an image does not resolve, the page does not load the loader, `registry.json` lacks the slug, or a page holds a Mermaid fence; needs no npm package |
+| `node tools/figures/build.mjs site --config mkdocs.yml --docs docs --site site` | after `mkdocs build`: a figure did not render, an image does not resolve or embeds no usable `<metadata id="figure-spec">`, the page does not load the loader or no `player.js` sits beside it, or a page holds a Mermaid fence; needs no npm package |
 | `python3 -B tools/figures/test_mkdocs_hook.py` | the hook's fence scanner stops matching the fence fixtures, its slot filling stops matching the markup fixtures, or a site build no longer renders a figure or publishes `figures.css` |
 | `npm --prefix tools/figures run smoke -- --site <dir>` | in Chromium, against a built site: a figure did not mount the player; a figure with scenario tabs did not advance its active step under autoplay within 8 s (another selected tab or a longer progress line, since a paused player still draws its first packets), or showed no packet under autoplay or after starting any of its tabs; a packet showed under reduced motion; or a page logged an error |
 
@@ -196,8 +221,8 @@ GitHub keeps `figure`, `figcaption`, `picture`, `img` and `details`, and strips 
 `make verify-all`. Each check exits 0 on a pass, 1 on findings and 2 on a usage error or an input it
 cannot read. The
 Platform Neutrality workflow runs the same figure commands on Linux, macOS and Windows. The Pages
-workflow bundles, builds, runs `site` and `sources`, then the smoke test with `--require-browser`,
-before it uploads the site. Locally the smoke test needs Chromium
+workflow runs `check` and `bundle.mjs --check`, builds the site with the committed player, runs
+`site` and `sources`, then the smoke test with `--require-browser`, before it uploads the site. Locally the smoke test needs Chromium
 (`npx --prefix tools/figures playwright install chromium`); without it, it exits 0 and says it
 skipped.
 
@@ -213,9 +238,10 @@ python3 scripts/sync_interfig.py update --commit <sha>
 ```
 
 The command refuses a LICENSE change, an unlisted upstream file or an incompatible React peer
-range before it touches the tree, then swaps in the new files, runs the upstream tests and
-rebuilds every figure, because the engine hash changed. Commit `tools/figures/third_party/interfig/`
-and `docs/assets/figures/` together. The full procedure is in
+range before it touches the tree, then swaps in the new files, runs the upstream tests,
+rebuilds every figure, because the engine hash changed, and rebuilds the committed player from the
+locked install, because it bundles interfig. Commit `tools/figures/third_party/interfig/`,
+`docs/assets/figures/` and `tools/figures/dist/` together. The full procedure is in
 [VENDOR.md](https://github.com/cordanaLLM/praetor/blob/main/tools/figures/third_party/interfig/VENDOR.md#updating-the-pin).
 
 ## Credit
@@ -223,5 +249,6 @@ and `docs/assets/figures/` together. The full procedure is in
 The engine is interfig by Vectorize AI, Inc., MIT-licensed, vendored unmodified at a pinned
 commit under `tools/figures/third_party/interfig/`
 ([VENDOR.md](https://github.com/cordanaLLM/praetor/blob/main/tools/figures/third_party/interfig/VENDOR.md)).
-The credit does not imply endorsement. The site footer, every exported SVG and the player bundle
-carry the notice.
+The credit does not imply endorsement. The site footer, every exported SVG and both player scripts
+carry the notice, and `tools/figures/dist/THIRD-PARTY-LICENSES.txt` carries the full license texts
+of interfig, React, react-dom and scheduler. `REUSE.toml` labels `dist/` EUPL-1.2 AND MIT.
