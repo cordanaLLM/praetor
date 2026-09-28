@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -60,7 +61,8 @@ func runFigureEngine(t *testing.T, node, root, command string) (int, string) {
 	cmd := exec.CommandContext(ctx, node, filepath.Join("tools", "figures", "build.mjs"), command)
 	cmd.Dir = root
 	out, err := cmd.CombinedOutput()
-	if exitErr, ok := err.(*exec.ExitError); ok {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
 		return exitErr.ExitCode(), string(out)
 	}
 	if err != nil {

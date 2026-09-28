@@ -28,7 +28,7 @@ func checkoutNoticeSources(t *testing.T) NoticeSources {
 // version the figure lock installs, and a minimal row naming them passes too.
 func TestCreditsNameThePlayerPackagesAtTheirLockVersions(t *testing.T) {
 	sources := checkoutNoticeSources(t)
-	if err := CheckCredits(string(readRepoFile(t, CreditsFile)), sources); err != nil {
+	if err := CheckCredits(string(readRepoFile(t, AcknowledgementsFile)), sources); err != nil {
 		t.Fatal(err)
 	}
 	if err := CheckCredits("| Project | Use | License |\n| :-- | :-- | :-- |\n"+playerCreditsRow+"\n", sources); err != nil {
@@ -47,7 +47,7 @@ func TestCreditsRejectStaleOrMissingPlayerRows(t *testing.T) {
 		"two rows":          playerCreditsRow + "\n" + playerCreditsRow + "\n",
 	} {
 		err := CheckCredits(credits, sources)
-		if err == nil || !strings.HasPrefix(err.Error(), CreditsFile) {
+		if err == nil || !strings.HasPrefix(err.Error(), AcknowledgementsFile) {
 			t.Fatalf("%s: %v", name, err)
 		}
 	}

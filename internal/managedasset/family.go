@@ -287,11 +287,21 @@ func (f Family) validateAttributes() error {
 		return fmt.Errorf("managed asset family %q declares %d attribute rules, want at most %d", f.Name, len(f.Attributes), MaxAttributes)
 	}
 	for index := 0; index < len(f.Attributes) && index < MaxAttributes; index++ {
-		rule := f.Attributes[index]
-		if strings.TrimSpace(rule) != rule || rule == "" || strings.HasPrefix(rule, "#") || strings.ContainsAny(rule, "\r\n\x00") {
-			return fmt.Errorf("managed asset family %q attribute rule %q is not one trimmed, non-comment line", f.Name, rule)
+		if !attributeRuleLine(f.Attributes[index]) {
+			return fmt.Errorf("managed asset family %q attribute rule %q is not one trimmed, non-comment line", f.Name, f.Attributes[index])
 		}
 	}
+	return f.validateVendored()
+}
+
+// attributeRuleLine reports whether rule is one non-blank, trimmed line that is not a comment.
+func attributeRuleLine(rule string) bool {
+	return rule != "" && strings.TrimSpace(rule) == rule && !strings.HasPrefix(rule, "#") && !strings.ContainsAny(rule, "\r\n\x00")
+}
+
+// validateVendored requires VendoredTree and VendoredLicense together, the tree as a clean
+// relative glob and the license as one SPDX term.
+func (f Family) validateVendored() error {
 	if (f.VendoredTree == "") != (f.VendoredLicense == "") {
 		return fmt.Errorf("managed asset family %q declares a vendored tree without its license, or the reverse", f.Name)
 	}
