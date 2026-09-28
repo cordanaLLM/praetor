@@ -178,10 +178,11 @@ bound grows with its size, and every parse runs within a fixed memory budget
 ([Private scratch links](#private-scratch-links)).
 
 `style_exclude` entries are micromatch globs over repository-relative paths,
-matched with dot files included, so `docs/**` also reaches `docs/.hidden/`. A
-glob is refused when it is absolute, drive-lettered, or negated with `!`, when
-it contains a backslash or an empty, `.`, or `..` segment, or when it holds no
-letter or number, so wildcards alone (`**`, `*/**`) cannot stand for every file.
+matched with dot files included, so `docs/**` also reaches dot-directories below
+`docs/`. A glob is refused when it is absolute, drive-lettered, or negated with
+`!`, when it contains a backslash or an empty, `.`, or `..` segment, or when it
+holds no letter or number, so wildcards alone (`**`, `*/**`) cannot stand for
+every file.
 Exclusions apply after the built-in style exclusions and before the style rules
 run. They narrow the style run only: the private-link rule still reads every
 inventory file, excluded or not. When the globs would remove every file the
