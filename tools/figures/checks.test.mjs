@@ -297,6 +297,11 @@ test('mermaid fences are counted at the top level only', () => {
   assert.deepEqual(figureSlugs('```figure\n```\n'), ['']);
 });
 
+test('the site check on the real site is not vacuous: the HISS spec page names a figure', () => {
+  const spec = readFileSync(join(ROOT, 'docs/standards/hiss-spec.md'), 'utf8');
+  assert.ok(mermaidCount(spec) + figureSlugs(spec).length >= 1);
+});
+
 test('the line bound: exactly the bound passes, one more line fails', () => {
   assert.equal(fenceBlocks('\n'.repeat(MAX_LINES)).length, 0);
   assert.throws(() => mermaidCount('\n'.repeat(MAX_LINES + 1)), CheckError);
@@ -536,7 +541,13 @@ test('portable: --write refreshes marker blocks with a path relative to the file
   const text = readFileSync(nested, 'utf8');
   assert.ok(text.includes('<img src="../docs/assets/figures/demo.svg"'), text);
   assert.ok(!text.includes('\r'));
-  assert.throws(() => portable([join(tmpdir(), 'praetor-outside.md')], null, root), CheckError);
+  // Boundary: a file outside the repository has no repository-relative path, so nothing is written.
+  withTempDir((other) => {
+    const outside = join(other, 'Outside.md');
+    write(outside, '<!-- figure:demo -->\nold\n<!-- /figure -->\n');
+    assert.throws(() => portable([outside], null, root), /is outside the repository root/);
+    assert.equal(readFileSync(outside, 'utf8'), '<!-- figure:demo -->\nold\n<!-- /figure -->\n');
+  });
 }));
 
 test('refreshMarkers leaves an unknown figure and reports it', () => withTempDir((dir) => {

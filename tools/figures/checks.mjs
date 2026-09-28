@@ -46,17 +46,17 @@ export const REBUILD = 'node tools/figures/build.mjs build';
 const REFRESH = 'node tools/figures/build.mjs portable --write';
 
 // HISS-02 bounds, so a pathological tree cannot make a check unbounded.
-export const MAX_PAGES = 4096;
-export const MAX_FILE_BYTES = 8 * 1024 * 1024;
+const MAX_PAGES = 4096;
+const MAX_FILE_BYTES = 8 * 1024 * 1024;
 export const MAX_LINES = 100_000;
-export const MAX_FIGURES = 256;
-export const MAX_ENTRIES = 131_072;
+const MAX_FIGURES = 256;
+const MAX_ENTRIES = 131_072;
 
-export const LOADER = 'assets/javascripts/figures/loader.js';
-export const REGISTRY = 'assets/javascripts/figures/registry.json';
+const LOADER = 'assets/javascripts/figures/loader.js';
+const REGISTRY = 'assets/javascripts/figures/registry.json';
 /** A hooks entry ending in these two path parts enables figures: tools/figures/mkdocs_hook.py from any directory. */
 const HOOK = ['figures', 'mkdocs_hook.py'];
-export const KINDS = Object.freeze(['mermaid', 'figure']);
+const KINDS = Object.freeze(['mermaid', 'figure']);
 export const EXPECTED_FENCE = Object.freeze({
   name: 'mermaid', class: 'mermaid', format: '!!python/name:pymdownx.superfences.fence_code_format',
 });
@@ -105,10 +105,10 @@ const FOLD_CASE = process.platform === 'win32';
 /** An input a check cannot read: a usage failure (exit status 2), never a pass. */
 export class CheckError extends Error {}
 
-export const strip = (text) => text.replace(EDGE_SPACE, '');
+const strip = (text) => text.replace(EDGE_SPACE, '');
 const lstrip = (text) => text.replace(LEAD_SPACE, '');
 /** Python's `str.split()` with no argument: the words between runs of whitespace. */
-export const words = (text) => text.split(SPACE_RUN).filter(Boolean);
+const words = (text) => text.split(SPACE_RUN).filter(Boolean);
 const isObject = (value) => value != null && typeof value === 'object' && !Array.isArray(value);
 const toPosix = (path) => path.split(sep).join('/');
 
@@ -138,8 +138,8 @@ function statOf(path) {
   }
 }
 
-export const isFile = (path) => statOf(path)?.isFile() === true;
-export const isDirectory = (path) => statOf(path)?.isDirectory() === true;
+const isFile = (path) => statOf(path)?.isFile() === true;
+const isDirectory = (path) => statOf(path)?.isDirectory() === true;
 
 /** The path with every symbolic link resolved, or the absolute path when it does not exist. */
 function realOrResolved(path) {
@@ -159,7 +159,7 @@ function inside(base, target) {
 }
 
 /** The bytes of `path`, refusing files over MAX_FILE_BYTES. */
-export function readBytes(path) {
+function readBytes(path) {
   let size;
   try {
     size = statSync(path).size;
@@ -188,7 +188,7 @@ export function readText(path) {
 }
 
 /** A JSON object from `path`. */
-export function readJson(path) {
+function readJson(path) {
   let data;
   try {
     data = JSON.parse(readText(path));
@@ -204,7 +204,7 @@ export function readJson(path) {
  * The lines of `text`, refusing more than MAX_LINES. Lines end at "\n" only, as Python-Markdown
  * splits them, with a trailing "\r" dropped; a final newline ends the last line.
  */
-export function boundedLines(text) {
+function boundedLines(text) {
   const lines = text.split('\n').map((line) => (line.endsWith('\r') ? line.slice(0, -1) : line));
   if (lines.length > 0 && lines.at(-1) === '') lines.pop();
   if (lines.length > MAX_LINES) throw new CheckError(`more than ${MAX_LINES} lines`);
@@ -505,7 +505,7 @@ export function pageOutput(docsDir, siteDir, page) {
 }
 
 /** The finding for a disabled `kind`, naming its replacement when the configuration enables it. */
-export function kindError(page, kind, kinds) {
+function kindError(page, kind, kinds) {
   const message = `${page}: \`\`\`${kind} fence, but the configuration does not enable ${kind} diagrams`;
   const [replacement, advice] = REPLACEMENT[kind] ?? ['', ''];
   return kinds.has(replacement) ? `${message}; ${advice}` : message;
@@ -569,14 +569,15 @@ function tagEnd(html, at) {
   return html[TAG_END.lastIndex - 1] === '>' ? TAG_END.lastIndex : -1;
 }
 
+/** The URL attribute of each image element inside a figure. */
+const IMAGE_URL = { img: 'src', source: 'srcset' };
+
 function handleStart(scan, tag, attributes) {
   const classes = words(attributes.get('class') ?? '');
   if (tag === 'pre' && classes.includes('mermaid')) scan.mermaid += 1;
   else if (tag === 'script' && attributes.get('src')) scan.scripts.push(attributes.get('src'));
   else if (tag === 'figure') figureStart(scan, attributes, classes);
-  else if (scan.depth && (tag === 'img' || tag === 'source')) {
-    scan.figures.at(-1).urls.push((tag === 'img' ? attributes.get('src') : attributes.get('srcset')) || '');
-  }
+  else if (scan.depth && Object.hasOwn(IMAGE_URL, tag)) scan.figures.at(-1).urls.push(attributes.get(IMAGE_URL[tag]) || '');
 }
 
 function figureStart(scan, attributes, classes) {
@@ -686,7 +687,7 @@ export function scanPage(html) {
 export const renderedDiagrams = (html) => scanPage(html).mermaid;
 
 /** Whether a relative URL on the page at `output` names a file inside `siteDir`. */
-export function resolves(output, siteDir, url) {
+function resolves(output, siteDir, url) {
   if (!url || url.includes('://') || url.startsWith('/') || url.startsWith('data:')) return false;
   const target = realOrResolved(resolve(dirname(output), url.split('#')[0].split('?')[0]));
   return isFile(target) && inside(realOrResolved(siteDir), target);
@@ -783,7 +784,7 @@ export function fillSlots(meta, base, link = null) {
 }
 
 /** The JSON of figure `slug` under `figuresDir`, or CheckError when there is none. */
-export function figureMeta(figuresDir, slug) {
+function figureMeta(figuresDir, slug) {
   if (!SLUG.test(slug)) throw new CheckError(`figure slug ${quoted(slug)} is not lowercase kebab-case`);
   const path = join(figuresDir, `${slug}.json`);
   if (!isFile(path)) throw new CheckError(`figure ${quoted(slug)} has no ${toPosix(path)}; add docs/figures/${slug}.ts and run ${REBUILD}`);
@@ -831,7 +832,7 @@ export function refreshMarkers(text, base, figuresDir) {
 }
 
 /** The repository-relative URL prefix of docs/assets/figures as seen from `document`. */
-export function relativeBase(root, document) {
+function relativeBase(root, document) {
   const rel = relative(realOrResolved(root), realOrResolved(document));
   if (rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw new CheckError(`${document} is outside the repository root ${root}`);
   const depth = rel ? rel.split(sep).length - 1 : 0;
