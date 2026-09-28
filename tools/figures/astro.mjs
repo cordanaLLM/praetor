@@ -15,6 +15,12 @@
 //   (`fillSlots` in checks.mjs). It works on the Markdown syntax tree, so it needs no fence scanner.
 //   A block naming a figure that has no JSON fails the build, as a strict MkDocs build fails on the
 //   hook's warning.
+// * Astro keeps the rendered .md pages of a content collection in node_modules/.astro/data-store.json
+//   and renders one again only when its own bytes change, or when the Astro configuration does
+//   (the digest check in astro/dist/content/content-layer.js). The plugin's options therefore carry
+//   a digest of the figure JSON (`figuresDigest`): a rebuilt figure changes the configuration, so a
+//   warm `astro build` renders every page again. The development server restarts when a figure JSON
+//   changes, is added or is removed (`watchFigures`), which runs the setup, and so the digest, again.
 // * A head script on every page imports the loader, tools/figures/dist/loader.js, which mounts the
 //   player from the props each SVG embeds; the loader imports player.js beside it.
 // * The development server answers the figure files and the player files from the repository, and
@@ -27,10 +33,10 @@
 //
 // Option `root`: the repository root that holds docs/assets/figures/, as a path or a file: URL. By
 // default it is the directory two levels above this file, where build.mjs writes the figures.
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CheckError, OUT_DIR, ROOT, figureMeta, figureSlug, fillSlots } from './checks.mjs';
-import { FIGURES_URI, PLAYER_URI, basePath, publish, staticHandler } from './serve.mjs';
+import { CheckError, OUT_DIR, ROOT, figureMeta, figureSlug, filesDigest, fillSlots } from './checks.mjs';
+import { FIGURES_URI, PLAYER_URI, basePath, mountFiles, publish, staticHandler } from './serve.mjs';
 
 export const NAME = 'praetor-figures';
 /** The committed player files beside this module, as the MkDocs hook reads them beside itself. */
@@ -38,6 +44,8 @@ const DIST = fileURLToPath(new URL('./dist', import.meta.url));
 const LOADER_URI = `${PLAYER_URI}/loader.js`;
 /** Markdown nodes one page may hold before the walk stops (HISS-02). */
 export const MAX_NODES = 200_000;
+/** How long the development server waits after the last figure JSON event before it restarts: one rebuild writes every JSON. */
+export const RESTART_DELAY_MS = 250;
 
 /** A repository root given as a path or a file: URL, as a path; the default root when none is given. */
 export function rootPath(root) {
@@ -54,6 +62,36 @@ export const figureMounts = (root) => [
 
 /** The URL of docs/assets/figures on a site built for `base`: '/assets/figures', '/docs/assets/figures'. */
 export const figureBase = (base) => `${basePath(base)}${FIGURES_URI}`;
+
+const isFigureJson = (name) => name.endsWith('.json');
+
+/**
+ * One value for the figure JSON in `figuresDir` (`filesDigest` of its .json files) that changes when
+ * a rebuild changes, adds or removes a figure. A missing directory gives the digest of no files.
+ */
+export const figuresDigest = (figuresDir) => filesDigest(figuresDir, mountFiles(figuresDir).filter(isFigureJson));
+
+/**
+ * Restarts the development server `server` (Vite's, which Astro's restart replaces) once the figure
+ * JSON in `figuresDir` has been quiet for `delay` ms after a change, an addition or a removal. The
+ * directory is added to the server's watcher, which watches only the Astro project otherwise.
+ */
+export function watchFigures(server, figuresDir, logger, delay = RESTART_DELAY_MS) {
+  const dir = resolve(figuresDir);
+  let timer = null;
+  const restart = () => {
+    logger?.info(`${dir}: a figure changed, so the development server restarts to render it again`);
+    Promise.resolve(server.restart()).catch((error) => logger?.error(`figures: the development server did not restart: ${error.message}`));
+  };
+  const onEvent = (path) => {
+    if (dirname(resolve(path)) !== dir || !isFigureJson(path)) return;
+    clearTimeout(timer);
+    timer = setTimeout(restart, delay);
+    timer.unref?.();
+  };
+  server.watcher.add(dir);
+  for (const event of ['add', 'change', 'unlink']) server.watcher.on(event, onEvent);
+}
 
 /** The head script that imports the loader on a site built for `base`; a failed import is logged, not thrown. */
 export function loaderScript(base) {
@@ -97,7 +135,11 @@ export function replaceFigures(tree, options) {
   return errors;
 }
 
-/** The remark plugin: figure blocks become figure markup, and a block that cannot fails the page. */
+/**
+ * The remark plugin: figure blocks become figure markup, and a block that cannot fails the page.
+ * `options.digest` is not read here: it is in the options so that the Astro configuration, which
+ * holds them, changes whenever a figure does.
+ */
 export function remarkFigures(options) {
   return (tree, file) => {
     const errors = replaceFigures(tree, options);
@@ -121,14 +163,17 @@ export default function figures(options = {}) {
     hooks: {
       'astro:config:setup': ({ config, updateConfig, injectScript }) => {
         const base = config.base ?? '/';
-        updateConfig({ markdown: { remarkPlugins: [[remarkFigures, { figuresDir: mounts[0].dir, base: figureBase(base) }]] } });
+        const figuresDir = mounts[0].dir;
+        const plugin = { figuresDir, base: figureBase(base), digest: figuresDigest(figuresDir) };
+        updateConfig({ markdown: { remarkPlugins: [[remarkFigures, plugin]] } });
         injectScript('head-inline', loaderScript(base));
       },
       // Astro's development server cuts the site's base path from a request before an
       // integration's middleware sees it (baseMiddleware in astro/dist/vite-plugin-astro-server/base.js),
       // so the mounts are matched from the root.
-      'astro:server:setup': ({ server }) => {
+      'astro:server:setup': ({ server, logger }) => {
         server.middlewares.use(staticHandler(mounts, '/'));
+        watchFigures(server, mounts[0].dir, logger);
       },
       'astro:build:done': ({ dir, logger }) => {
         publishFigures(mounts, dir, logger);

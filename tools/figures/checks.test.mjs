@@ -9,7 +9,7 @@ import { cpSync, mkdirSync, readFileSync, symlinkSync, unlinkSync } from 'node:f
 import { dirname, join, relative, sep } from 'node:path';
 import {
   CheckError, EXPECTED_FENCE, MAX_LINES, OUT_DIR, ROOT, STARLIGHT_SUFFIXES, astroKinds, checkSite, configError, declaredFences,
-  declaredHooks, enabledKinds, engineHash, excludedPatterns, expand, fenceBlocks, fences, figureSlug, figureSlugs, fillSlots,
+  declaredHooks, enabledKinds, engineHash, excludedPatterns, expand, fenceBlocks, fences, figureSlug, figureSlugs, filesDigest, fillSlots,
   frontmatterSlug, globRegExp, htmlErrors, isExcluded, kindErrors, markdownPages, pageOutput, patternMatches, portable, quoted,
   refreshMarkers, renderedDiagrams, scanPage, siteFlavor, siteUrl, sizeErrors, sources, starlightOutput, starlightPages, svgSpecError,
 } from './checks.mjs';
@@ -692,6 +692,22 @@ test('quoted writes strings as Python repr does', () => {
   assert.equal(quoted('a\\b'), "'a\\\\b'");
   assert.equal(quoted(undefined), 'None');
 });
+
+test('filesDigest hashes a sha256sum manifest of the files in order; the engine hash is its ENGINE_FILES case', () => withTempDir((dir) => {
+  write(join(dir, 'a.json'), 'a');
+  write(join(dir, 'sub', 'b.json'), 'b');
+  const manifest = `${sha256('a')}  a.json\n${sha256('b')}  sub/b.json\n`;
+  assert.equal(filesDigest(dir, ['a.json', 'sub/b.json']), sha256(manifest));
+  assert.equal(engineHash(), filesDigest(ROOT, ENGINE_FILES));
+  // The order and the names count, not only the bytes.
+  assert.notEqual(filesDigest(dir, ['sub/b.json', 'a.json']), filesDigest(dir, ['a.json', 'sub/b.json']));
+  write(join(dir, 'c.json'), 'a');
+  assert.notEqual(filesDigest(dir, ['c.json']), filesDigest(dir, ['a.json']));
+  // Boundary: no files hash an empty manifest.
+  assert.equal(filesDigest(dir, []), sha256(''));
+  // Negative: a missing file is an error that names it.
+  assert.throws(() => filesDigest(dir, ['absent.json']), (error) => error.code === 'ENOENT' && error.message.includes('absent.json'));
+}));
 
 // ---------------------------------------------------------------------------------------------
 // The source check

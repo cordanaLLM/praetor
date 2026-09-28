@@ -212,6 +212,11 @@ export default defineConfig({
   figure's JSON `html`, with `{{base}}` set to the root-absolute URL of the figures under the
   site's `base` (`/assets/figures`, or `/docs/assets/figures` for base `/docs/`). A block naming a
   figure without JSON fails the build.
+- Astro keeps the rendered `.md` pages of a content collection in `node_modules/.astro/` and renders
+  one again only when the page or the Astro configuration changes. The plugin's options carry a
+  digest of `docs/assets/figures/*.json` (`figuresDigest`), so after `build.mjs build` a warm
+  `astro build` renders every page again, and `astro dev` restarts when a figure JSON changes, is
+  added or is removed (`watchFigures`).
 - A head script on every page imports `assets/javascripts/figures/loader.js` under the same base.
 - `astro dev` answers the figure files and `dist/` from the repository, and `astro build` copies
   them into the built site at `assets/figures/` and `assets/javascripts/figures/`, the paths the

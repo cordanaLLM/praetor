@@ -928,10 +928,18 @@ export function checkSite(config, docs, site, base = undefined) {
 // Sources and portable blocks
 // ---------------------------------------------------------------------------------------------
 
-/** sha256sum-style manifest of ENGINE_FILES, hashed: one value that changes when any of them does. */
-export function engineHash(root = ROOT) {
-  const lines = ENGINE_FILES.map((rel) => `${sha256(readFileSync(join(root, rel)))}  ${rel}\n`);
+/**
+ * sha256sum-style manifest of the files `rels` under `root`, in the order given, hashed: one value
+ * that changes when the bytes or the name of any of them does.
+ */
+export function filesDigest(root, rels) {
+  const lines = rels.map((rel) => `${sha256(readFileSync(join(root, rel)))}  ${rel}\n`);
   return sha256(lines.join(''));
+}
+
+/** The digest of ENGINE_FILES: one value that changes when any of them does. */
+export function engineHash(root = ROOT) {
+  return filesDigest(root, ENGINE_FILES);
 }
 
 /**

@@ -1,18 +1,20 @@
 // Tests for the Astro integration (astro.mjs) and the file serving it shares with the smoke test
 // (serve.mjs): the remark plugin replays the markup fixture the MkDocs hook and `portable` replay,
-// in both directions (a block that renders and one that cannot), the head loader, the development
-// middleware, the build copy, the base path, and the static server, with positive, negative and
-// boundary cases. Every temporary tree is built with node:path, so the tests run on Linux, macOS
+// in both directions (a block that renders and one that cannot), the head loader, the figure digest
+// that makes Astro render pages again, the development middleware and restart, the build copy, the
+// base path, and the static server, with positive, negative and boundary cases. Every temporary tree is built with node:path, so the tests run on Linux, macOS
 // and Windows.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import figures, {
-  MAX_NODES, NAME, figureBase, figureMounts, loaderScript, publishFigures, remarkFigures, replaceFigures, rootPath,
+  MAX_NODES, NAME, RESTART_DELAY_MS, figureBase, figureMounts, figuresDigest, loaderScript, publishFigures, remarkFigures,
+  replaceFigures, rootPath, watchFigures,
 } from './astro.mjs';
 import { ROOT, fillSlots } from './checks.mjs';
+import { sha256 } from './core.mjs';
 import { FIGURES_URI, MAX_MOUNT_FILES, PLAYER_URI, basePath, locate, mountFiles, publish, serve, staticHandler, statOrNull } from './serve.mjs';
 import { withTempDir, write } from './testkit.mjs';
 
@@ -22,7 +24,7 @@ const META = { ...MARKUP.meta, html: MARKUP.html };
 const DIST = join(ROOT, 'tools', 'figures', 'dist');
 
 /** A figures directory holding the fixture figure `demo`. */
-function figuresDir(dir) {
+function demoFigures(dir) {
   const figures = join(dir, 'docs', 'assets', 'figures');
   write(join(figures, 'demo.json'), JSON.stringify(META));
   return figures;
@@ -30,6 +32,29 @@ function figuresDir(dir) {
 
 const code = (lang, value, line = 3) => ({ type: 'code', lang, value, position: { start: { line }, end: { line: line + 2 } } });
 const root = (...children) => ({ type: 'root', children });
+
+/** A stand-in for Vite's development server: its watcher, its restart and its middleware list. */
+function devServer(restart = () => Promise.resolve()) {
+  const server = { watched: [], listeners: {}, handlers: [], restarts: 0 };
+  server.watcher = {
+    add: (path) => server.watched.push(path),
+    on: (event, listener) => { server.listeners[event] = listener; },
+  };
+  server.restart = () => {
+    server.restarts += 1;
+    return restart();
+  };
+  server.middlewares = { use: (handler) => server.handlers.push(handler) };
+  server.emit = (event, path) => server.listeners[event](path);
+  return server;
+}
+
+/** The remark plugin options `astro:config:setup` adds for a repository at `dir`, as Astro's configuration holds them. */
+function pluginOptions(dir, base = '/') {
+  const updates = [];
+  figures({ root: dir }).hooks['astro:config:setup']({ config: { base }, updateConfig: (update) => updates.push(update), injectScript: () => {} });
+  return updates[0].markdown.remarkPlugins[0][1];
+}
 
 /** A stand-in for a node:http response. */
 function response() {
@@ -52,7 +77,7 @@ function response() {
 // ---------------------------------------------------------------------------------------------
 
 test('the remark plugin fills each markup case without a link, as the MkDocs hook does', () => withTempDir((dir) => {
-  const options = { figuresDir: figuresDir(dir) };
+  const options = { figuresDir: demoFigures(dir) };
   const cases = MARKUP.cases.filter((item) => !item.link);
   assert.ok(cases.length >= 1);
   for (const item of cases) {
@@ -63,7 +88,7 @@ test('the remark plugin fills each markup case without a link, as the MkDocs hoo
 }));
 
 test('the remark plugin replaces figure blocks at any depth, whatever the case of the info string, and nothing else', () => withTempDir((dir) => {
-  const options = { figuresDir: figuresDir(dir), base: '/docs/assets/figures' };
+  const options = { figuresDir: demoFigures(dir), base: '/docs/assets/figures' };
   const expected = fillSlots(META, '/docs/assets/figures');
   const listing = code('js', 'figure');
   const unnamed = { type: 'code', lang: null, value: 'demo' };
@@ -78,7 +103,7 @@ test('the remark plugin replaces figure blocks at any depth, whatever the case o
 }));
 
 test('a figure block that cannot render stays, and the page fails naming the block\'s line', () => withTempDir((dir) => {
-  const options = { figuresDir: figuresDir(dir), base: '/assets/figures' };
+  const options = { figuresDir: demoFigures(dir), base: '/assets/figures' };
   write(join(options.figuresDir, 'bare.json'), '{"slug": "bare"}');
   const blocks = [code('figure', 'absent', 7), code('figure', 'Not A Slug', 9), code('figure', 'bare', 11), { type: 'code', lang: 'figure', value: '' }];
   const tree = root(...blocks);
@@ -151,15 +176,104 @@ test('config setup adds the remark plugin and the head loader for the site\'s ba
     assert.equal(updates.length, 1);
     const [[plugin, options]] = updates[0].markdown.remarkPlugins;
     assert.equal(plugin, remarkFigures);
-    assert.deepEqual(options, { figuresDir: join(dir, 'docs', 'assets', 'figures'), base: `${prefix}assets/figures` });
+    const figuresDir = join(dir, 'docs', 'assets', 'figures');
+    assert.deepEqual(options, { figuresDir, base: `${prefix}assets/figures`, digest: figuresDigest(figuresDir) });
     assert.deepEqual(scripts, [['head-inline', loaderScript(prefix)]]);
   }
 }));
 
+// Astro renders a collection's .md page again only when the page or the configuration changes
+// (astro/dist/content/content-layer.js hashes the configuration with JSON.stringify), so a rebuilt
+// figure has to change the plugin options, or a warm build keeps the old figure markup.
+test('the configuration Astro hashes changes when a figure JSON changes, is added or is removed, and only then', () => withTempDir((dir) => {
+  const figuresDir = demoFigures(dir);
+  const hashed = () => JSON.stringify(pluginOptions(dir));
+  const first = hashed();
+  assert.equal(hashed(), first, 'an unchanged figure keeps Astro\'s rendered pages');
+  write(join(figuresDir, 'demo.svg'), '<svg/>');
+  assert.equal(hashed(), first, 'the SVGs are loaded at run time, so they do not count');
+  write(join(figuresDir, 'demo.json'), JSON.stringify({ ...META, html: META.html.replace('<figure', '<figure data-new') }));
+  const changed = hashed();
+  assert.notEqual(changed, first);
+  write(join(figuresDir, 'other.json'), JSON.stringify(META));
+  const added = hashed();
+  assert.notEqual(added, changed);
+  unlinkSync(join(figuresDir, 'other.json'));
+  assert.equal(hashed(), changed);
+}));
+
+test('the figure digest covers the .json files directly in the directory; a missing directory digests no files', () => withTempDir((dir) => {
+  assert.equal(figuresDigest(join(dir, 'absent')), sha256(''));
+  const figuresDir = demoFigures(dir);
+  const one = figuresDigest(figuresDir);
+  assert.equal(one, sha256(`${sha256(JSON.stringify(META))}  demo.json\n`));
+  write(join(figuresDir, 'nested', 'deep.json'), '{}');
+  write(join(figuresDir, 'demo.static.svg'), '<svg/>');
+  assert.equal(figuresDigest(figuresDir), one);
+}));
+
+test('a figure JSON event restarts the development server once, after the JSON has been quiet for the delay', (t) => withTempDir(async (dir) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const figuresDir = demoFigures(dir);
+  const server = devServer();
+  const logged = [];
+  watchFigures(server, figuresDir, { info: (line) => logged.push(line), error: (line) => logged.push(line) });
+  assert.deepEqual(server.watched, [figuresDir]);
+  assert.deepEqual(Object.keys(server.listeners).sort(), ['add', 'change', 'unlink']);
+  // One rebuild writes every JSON: the events fold into one restart.
+  server.emit('change', join(figuresDir, 'demo.json'));
+  t.mock.timers.tick(RESTART_DELAY_MS - 1);
+  server.emit('add', join(figuresDir, 'new.json'));
+  t.mock.timers.tick(RESTART_DELAY_MS - 1);
+  assert.equal(server.restarts, 0, 'no restart before the JSON is quiet for the delay');
+  t.mock.timers.tick(1);
+  assert.equal(server.restarts, 1);
+  server.emit('unlink', join(figuresDir, 'new.json'));
+  t.mock.timers.tick(RESTART_DELAY_MS);
+  assert.equal(server.restarts, 2);
+  assert.equal(logged.length, 2);
+  assert.match(logged[0], /a figure changed, so the development server restarts to render it again$/);
+}));
+
+test('events for anything but a figure JSON directly in the directory restart nothing', (t) => withTempDir((dir) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const figuresDir = demoFigures(dir);
+  const server = devServer();
+  watchFigures(server, figuresDir, undefined, 10);
+  for (const path of [join(figuresDir, 'demo.svg'), join(figuresDir, 'nested', 'demo.json'), join(dir, 'demo.json'), join(dir, 'src', 'page.md')]) {
+    server.emit('change', path);
+  }
+  t.mock.timers.tick(10_000);
+  assert.equal(server.restarts, 0);
+}));
+
+test('a restart that fails is logged, not thrown', (t) => withTempDir(async (dir) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const figuresDir = demoFigures(dir);
+  const errors = [];
+  const server = devServer(() => Promise.reject(new Error('port in use')));
+  watchFigures(server, figuresDir, { info: () => {}, error: (line) => errors.push(line) }, 5);
+  server.emit('change', join(figuresDir, 'demo.json'));
+  t.mock.timers.tick(5);
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(server.restarts, 1);
+  assert.deepEqual(errors, ['figures: the development server did not restart: port in use']);
+  // Without a logger the failure is still caught.
+  const quiet = devServer(() => Promise.reject(new Error('x')));
+  watchFigures(quiet, figuresDir, undefined, 5);
+  quiet.emit('change', join(figuresDir, 'demo.json'));
+  t.mock.timers.tick(5);
+  await Promise.resolve();
+  assert.equal(quiet.restarts, 1);
+}));
+
 test('the development middleware answers the player and figure files and passes every other request on', () => withTempDir((dir) => {
-  figuresDir(dir);
-  const handlers = [];
-  figures({ root: dir }).hooks['astro:server:setup']({ server: { middlewares: { use: (handler) => handlers.push(handler) } } });
+  const server = devServer();
+  figures({ root: dir }).hooks['astro:server:setup']({ server, logger: undefined });
+  assert.deepEqual(server.watched, [join(dir, 'docs', 'assets', 'figures')], 'the setup watches the figure JSON');
+  demoFigures(dir);
+  const { handlers } = server;
   assert.equal(handlers.length, 1);
   const request = (url) => {
     const { res, sent } = response();
@@ -181,7 +295,7 @@ test('the development middleware answers the player and figure files and passes 
 }));
 
 test('the build copies the figure and player files into the site and keeps a file the site already holds', () => withTempDir((dir) => {
-  const figures = figuresDir(dir);
+  const figures = demoFigures(dir);
   write(join(figures, 'demo.svg'), '<svg/>');
   const site = join(dir, 'dist');
   write(join(site, 'assets', 'figures', 'demo.svg'), '<svg id="public"/>');
