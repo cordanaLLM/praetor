@@ -238,7 +238,10 @@ func TestDocumentationSettingsMirrorConfig(t *testing.T) {
 			"MAX_STYLE_EXCLUSION_BYTES": config.MaxDocumentationStyleExclusionBytes,
 			"MAX_MANIFEST_BYTES":        contextopt.MaxSourceBytes,
 		},
-		"no-private-scratch-links.mjs": {"MAX_FILES": config.DocumentationMaxFilesCeiling},
+		"no-private-scratch-links.mjs": {
+			"MAX_FILES":      config.DocumentationMaxFilesCeiling,
+			"MAX_FILE_BYTES": config.DocumentationMaxFileBytesCeiling,
+		},
 	}
 	for name, constants := range want {
 		declared := scriptConstants(t, name)

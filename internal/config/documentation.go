@@ -20,7 +20,9 @@ const (
 	// DefaultDocumentationMaxFileBytes is the per-file bound when max_file_bytes is unset.
 	DefaultDocumentationMaxFileBytes = 1 << 20
 	// DocumentationMaxFileBytesCeiling is the largest max_file_bytes a repository may declare.
-	DocumentationMaxFileBytesCeiling = 8 << 20
+	// It is a memory bound for the gate's Markdown parsers; tools/markdownlint/verify.mjs records
+	// the measurement.
+	DocumentationMaxFileBytesCeiling = 4 << 20
 	// MaxDocumentationStyleExclusions bounds the style_exclude list.
 	MaxDocumentationStyleExclusions = 64
 	// MaxDocumentationStyleExclusionBytes bounds one style_exclude glob.

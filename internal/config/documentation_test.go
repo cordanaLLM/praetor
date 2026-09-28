@@ -65,7 +65,7 @@ func TestLoadManifestDocumentationNegative(t *testing.T) {
 	cases := map[string]struct{ section, want string }{
 		"files over ceiling":     {"documentation: {max_files: 16385}\n", "documentation.max_files must be an integer from 4096 to 16384; got 16385"},
 		"files under default":    {"documentation: {max_files: 4095}\n", "got 4095"},
-		"bytes over ceiling":     {"documentation: {max_file_bytes: 8388609}\n", "documentation.max_file_bytes must be an integer from 1048576 to 8388608; got 8388609"},
+		"bytes over ceiling":     {"documentation: {max_file_bytes: 4194305}\n", "documentation.max_file_bytes must be an integer from 1048576 to 4194304; got 4194305"},
 		"bytes under default":    {"documentation: {max_file_bytes: 1048575}\n", "got 1048575"},
 		"quoted bound":           {"documentation: {max_files: \"8192\"}\n", "documentation max_files must be an integer"},
 		"fractional bound":       {"documentation: {max_files: 8192.5}\n", "documentation max_files must be an integer"},

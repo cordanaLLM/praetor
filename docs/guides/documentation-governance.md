@@ -165,13 +165,17 @@ documentation:
 | Key | Default | Accepted | Effect |
 | :--- | ---: | :--- | :--- |
 | `max_files` | 4,096 | 4,096 to 16,384 | Markdown inventory file-count bound |
-| `max_file_bytes` | 1,048,576 | 1,048,576 to 8,388,608 | Per-file size bound |
+| `max_file_bytes` | 1,048,576 | 1,048,576 to 4,194,304 | Per-file size bound |
 | `style_exclude` | none | Up to 64 globs of at most 256 bytes | Files the style rules skip |
 
 The bounds can be raised but not removed: HISS-02 requires one, and the
-ceilings are fixed in `tools/markdownlint/verify.mjs`. The private-link rule
-follows a raised bound. It accepts inventories up to the file-count ceiling, and
-each file's parse bound grows with its size ([Private scratch links](#private-scratch-links)).
+ceilings are fixed in `tools/markdownlint/verify.mjs`. The per-file ceiling is a
+memory bound. `markdownlint-cli2` lints a 4 MiB file of linked bullets within a
+1 GiB heap, but at 8 MiB it needed more than 1.5 GiB. That is close to Node's
+default heap on a 7 GB hosted runner. The private-link rule follows a raised
+bound. It accepts inventories up to the file-count ceiling, each file's parse
+bound grows with its size, and every parse runs within a fixed memory budget
+([Private scratch links](#private-scratch-links)).
 
 `style_exclude` entries are micromatch globs over repository-relative paths,
 matched with dot files included, so `docs/**` also reaches `docs/.hidden/`. A
@@ -186,7 +190,7 @@ built-in selection styles, the gate fails instead of styling nothing.
 A declared block is reported before linting, with the count each glob removed:
 
 ```text
-markdown-governance: .standards.yaml documentation bounds 8192 files, 4194304 bytes per file (defaults 4096, 1048576; ceilings 16384, 8388608)
+markdown-governance: .standards.yaml documentation bounds 8192 files, 4194304 bytes per file (defaults 4096, 1048576; ceilings 16384, 4194304)
 markdown-governance: style exclusion "changelog.d/**" matched 17 files
 markdown-governance: style exclusion "docs/adr/_index_fragments/*.md" matched 212 files
 markdown-governance: style exclusion "**/testdata/**" matched 30 files
@@ -251,9 +255,38 @@ is bounded to 65,536 tokens and 64 levels of delimiter/function nesting. The
 aggregate Markdown and HTML destination inventory is bounded to 262,144
 entries. Each file's Markdown parse is bounded to 262,144 events, or to one event
 per byte for a larger file, so the bound follows the per-file size bound;
-ordinary documentation parses to 0.2 to 0.3 events per byte. MDX syntax-tree traversal is bounded to 65,536 nodes, 128 levels, and
-32 properties per node. Exceeding any bound fails the gate instead of truncating
-the scan.
+ordinary documentation parses to 0.2 to 0.3 events per byte. MDX syntax-tree
+traversal is bounded to 65,536 nodes, 128 levels, and 32 properties per node.
+Exceeding any bound fails the gate instead of truncating the scan.
+
+The event bound can only be checked once `micromark` has built the whole event
+array. That costs 350 to 1,100 heap bytes per event, and dense Markdown reaches
+four events per byte, so a 1 MiB list of one-word items needs more than 3 GB.
+The rule therefore scans every file in one worker thread whose V8 old
+generation is capped at 1,536 MiB (`PARSE_HEAP_BUDGET_MB` in
+`tools/markdownlint/no-private-scratch-links.mjs`). A file that exhausts the
+budget stops the worker, not the gate process. The gate then fails with a
+message that names the file:
+
+```text
+markdown-scratch-links: docs/list.md: Markdown parse exceeds the 1536 MiB parse memory budget
+```
+
+Node ends a worker at its heap limit by granting it 16 MB more and then stopping
+it. With V8's default young generation, one garbage-collection pass could
+promote more than that, and V8 then aborted the whole process instead. The
+worker's young generation is therefore capped at 16 MiB
+(`SCAN_YOUNG_GENERATION_MB`), and no abort occurred in the repeated runs recorded
+beside that constant. Should V8 still abort, `verify.mjs` fails the gate on the
+signal.
+
+Some inline constructs parse in superlinear time, so each file's scan also has
+a 60-second deadline (`SCAN_DEADLINE_MS`), and the rule refuses a file past the
+4 MiB per-file ceiling before reading it. The budget is twice what a 4 MiB file
+of linked, code-spanned bullets needs. That is 0.4 events per byte, twice the
+density of this repository's documentation. The rule self-test scans such a
+file at exactly 4 MiB within the production budget. It also shows that a small
+budget and a short deadline each fail with the file's name.
 
 Prose, fenced or inline code, remote URLs, and sibling names such as
 `.workingdirectory/` are not links to private artifacts and remain valid. The

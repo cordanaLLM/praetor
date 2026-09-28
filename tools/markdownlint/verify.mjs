@@ -14,11 +14,13 @@ import { fileURLToPath } from "node:url";
 // Inventory bounds. documentation.max_files and documentation.max_file_bytes in .standards.yaml
 // raise the file-count and per-file bounds from their defaults up to their ceilings; nothing
 // raises the aggregate bound. internal/config/documentation.go validates the same ranges for
-// audit, and TestDocumentationSettingsMirrorConfig keeps the two in step.
+// audit, and TestDocumentationSettingsMirrorConfig keeps the two in step. The per-file ceiling
+// is a memory bound: markdownlint-cli2 lints a 4 MiB file of linked bullets in a 1 GiB heap,
+// while at 8 MiB it needed more than 1.5 GiB, close to Node's default heap on a 7 GB runner.
 const DEFAULT_MAX_FILES = 4_096;
 const MAX_FILES_CEILING = 16_384;
 const DEFAULT_MAX_FILE_BYTES = 1_048_576;
-const MAX_FILE_BYTES_CEILING = 8_388_608;
+const MAX_FILE_BYTES_CEILING = 4_194_304;
 const MAX_TOTAL_BYTES = 67_108_864;
 const MANIFEST_FILE = ".standards.yaml";
 const MAX_MANIFEST_BYTES = 1_048_576;
@@ -780,7 +782,7 @@ function settingsSelfTest(temporary) {
     [`documentation:\n  max_files: ${MAX_FILES_CEILING + 1}\n`, /max_files must be an integer from 4096 to 16384; got 16385/u],
     [`documentation:\n  max_files: ${DEFAULT_MAX_FILES - 1}\n`, /max_files must be an integer from 4096 to 16384; got 4095/u],
     [`documentation:\n  max_file_bytes: ${MAX_FILE_BYTES_CEILING + 1}\n`,
-      /max_file_bytes must be an integer from 1048576 to 8388608; got 8388609/u],
+      /max_file_bytes must be an integer from 1048576 to 4194304; got 4194305/u],
     [`documentation:\n  max_file_bytes: ${DEFAULT_MAX_FILE_BYTES - 1}\n`, /got 1048575/u],
     ["documentation:\n  max_files: \"8192\"\n", /got a string/u],
     ["documentation:\n  max_files: 8192.5\n", /got 8192\.5/u],
@@ -949,7 +951,7 @@ function raisedBoundSelfTest(temporary) {
   command("git", ["init", "--quiet"], { cwd: fixture });
   const real = fs.realpathSync(fixture);
   assert.throws(() => inventory(real), new RegExp("docs/large\\.md is 1052672 bytes; per-file maximum is 1048576; " +
-    "documentation\\.max_file_bytes in \\.standards\\.yaml raises it up to 8388608", "u"));
+    "documentation\\.max_file_bytes in \\.standards\\.yaml raises it up to 4194304", "u"));
   const settings = { ...DEFAULT_SETTINGS, declared: true, maxFileBytes: raised };
   const files = inventory(real, settings);
   assert.deepEqual(files, ["docs/large.md"]);
@@ -967,7 +969,7 @@ function raisedBoundSelfTest(temporary) {
     (error) => error.message === "Markdown inventory has 16385 files; maximum is 16384");
   assert.doesNotThrow(() => checkFileSize("docs/x.md", MAX_FILE_BYTES_CEILING, ceiling));
   assert.throws(() => checkFileSize("docs/x.md", MAX_FILE_BYTES_CEILING + 1, ceiling),
-    (error) => error.message === "docs/x.md is 8388609 bytes; per-file maximum is 8388608");
+    (error) => error.message === "docs/x.md is 4194305 bytes; per-file maximum is 4194304");
   process.stdout.write("raised bound fixtures: exactly at a raised cap passes, one past fails\n");
 }
 
