@@ -366,6 +366,40 @@ test('the Starlight preset fails sources without the figures integration or a fi
   assert.match(output, /evidence 'src\/content\.config\.ts:docsLoader' names no file in the repository/);
 }));
 
+/** The commands the managed docs-figures target and the documentation workflow step run, in order, with no option. */
+const managedTarget = async (dir) => [await main(['check'], dir), await main(['sources', '--root', dir])];
+const EXAMPLE_PAGE = join('src', 'content', 'docs', 'guides', 'figures.mdx');
+
+// Negative, first run: the preset ships the spec without its outputs, so before `build` the managed
+// target's commands fail, and each names the command that renders the figure.
+test('the managed target fails a first run of the Starlight preset with the render command', () => withTempDir(async (dir) => {
+  starlightRepo(dir);
+  const { result: codes, lines } = await capture(() => managedTarget(dir));
+  assert.deepEqual(codes, [1, 1]);
+  for (const name of ['site-build.svg', 'site-build.static.svg', 'site-build.json']) assert.ok(lines.includes(`figures: ${OUT_DIR}/${name} is missing`), name);
+  assert.equal(lines.filter((line) => line === 'figures: rebuild with: node tools/figures/build.mjs build').length, 1);
+  assert.ok(lines.includes(`figures: ${EXAMPLE_PAGE}: \`\`\`figure fence names 'site-build', whose spec ${SPEC_DIR}/site-build.ts has not been ` +
+    'rendered; render it with: node tools/figures/build.mjs build'), lines.join('\n'));
+}));
+
+// Positive: after `build` the managed target's `sources` reads the Starlight pages, found from
+// astro.config.mjs at the root, and passes; boundary: an unknown slug on one of those pages, which
+// the MkDocs defaults never read, fails it, and so does a single missing output for `check`.
+test('the managed target reads the Starlight pages once the preset is rendered', () => withTempDir(async (dir) => {
+  starlightRepo(dir);
+  let run = await capture(async () => [await main(['build'], dir), ...await managedTarget(dir)]);
+  assert.deepEqual(run.result, [0, 0, 0], run.output);
+  assert.match(run.output, /pages read: src\/content\/docs \(astro\.config\.mjs\)\.$/m);
+  write(join(dir, 'src', 'content', 'docs', 'extra.mdx'), '```figure\nnot-drawn\n```\n');
+  run = await capture(() => managedTarget(dir));
+  assert.deepEqual(run.result, [0, 1]);
+  assert.match(run.output, /extra\.mdx: ```figure fence names 'not-drawn', which has no spec and JSON/);
+  rmSync(join(dir, OUT_DIR, 'site-build.static.svg'));
+  run = await capture(() => main(['check'], dir));
+  assert.equal(run.result, 1);
+  assert.deepEqual(run.lines, [`figures: ${OUT_DIR}/site-build.static.svg is missing`, 'figures: rebuild with: node tools/figures/build.mjs build']);
+}));
+
 test('an unknown command is a usage error, bundle included', async () => {
   const { lines: errors } = await capture(async () => {
     assert.equal(await main([]), 2);

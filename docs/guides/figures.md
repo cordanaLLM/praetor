@@ -46,12 +46,24 @@ set, and removing it is the only way to opt out of figures. With the facet enabl
   `docs/assets/figures/*` at LF and the vendored interfig files unconverted
   (`internal/adopt/gitattributes.go`, rules from `Attributes` in `assets.go`);
 - a `docs-figures` target in the managed Makefile block, attached to `verify-all` beside
-  `docs-lint`, running `build.mjs check` and `build.mjs sources`;
+  `docs-lint`, running `build.mjs check` and `build.mjs sources`. `sources` reads the pages of
+  the site configuration at the repository root, an MkDocs `mkdocs.yml` or a Starlight
+  `astro.config.*` (`sourceSites` in `tools/figures/checks.mjs`), so the target checks the
+  figure fences of either site;
 - a "Verify figures" step in `.github/workflows/praetor-docs.yml`, after "Verify public
   Markdown", under the same required `Documentation Governance` context.
 
 In a repository with no spec and no committed output, `check` and `sources` print that they
-skipped and why, and exit 0, so the target and the workflow step cost nothing there. With the
+skipped and why, and exit 0, so the target and the workflow step cost nothing there.
+
+On the first run, a spec has no outputs yet: the Starlight preset ships its example spec without
+them, and a new spec has none until it is rendered. Run `node tools/figures/build.mjs build`
+before the first site build, and commit the outputs; a site build fails on a `figure` fence
+whose JSON is missing. Until then `make docs-figures` fails, and `check` and `sources` name that
+command (the first-run tests in `tools/figures/figures.test.mjs`). The target never renders on
+its own, so a gate cannot pass on outputs nobody committed.
+
+With the
 facet disabled, adoption removes the canonical engine files, the `.gitattributes` block, the
 Makefile block and the documentation workflow, and refuses to remove an engine file that was
 edited. `praetorctl audit` compares every engine file byte for byte,
@@ -291,7 +303,11 @@ pages Starlight's docs loader reads (every Markdown extension it accepts, withou
 starts with an underscore), map each page to the directory of its slug (the front matter's `slug`,
 else the path as Astro slugs it), enable figures when the configuration names
 `tools/figures/astro.mjs`, and never enable Mermaid. `sources` takes the same `--config` and
-`--docs`. `--base` applies to an Astro site only; the MkDocs hook writes relative URLs.
+`--docs`; without `--config` it finds the configuration at the repository root under any name
+Astro loads (`astro.config.mjs`, `.js`, `.ts`, `.mts`, `.cjs` or `.cts`) and reads
+`src/content/docs/`, beside an `mkdocs.yml` and its `docs/` when the root holds both. `--docs`
+without `--config` is refused when the root holds both. `--base` applies to an Astro site only;
+the MkDocs hook writes relative URLs.
 
 ## Outside the site
 
@@ -315,7 +331,7 @@ GitHub keeps `figure`, `figcaption`, `picture`, `img` and `details`, and strips 
 | `npm --prefix tools/figures run typecheck` | a spec or the player code does not type-check against `tools/figures/types.ts` and interfig |
 | `node tools/figures/build.mjs check` | a spec breaks a rule, or a committed output differs from a fresh build; needs no npm package |
 | `node tools/figures/bundle.mjs --check` | a file in `tools/figures/dist/` differs from a rebuild from the lock, is missing or is not a bundle output; `player.js` exceeds 250 kB minified; the install differs from the lock; needs the locked npm install |
-| `node tools/figures/build.mjs sources` | a JSON hash no longer matches its spec, the engine or its SVGs; a JSON lacks a positive whole-number size for either SVG; its `html` is not the markup `core.mjs` renders from it; a spec or JSON is missing its pair; a fence names an unknown figure; a root-site page holds a Mermaid fence; the README block differs; an evidence anchor is gone; needs no npm package |
+| `node tools/figures/build.mjs sources` | a JSON hash no longer matches its spec, the engine or its SVGs; a JSON lacks a positive whole-number size for either SVG; its `html` is not the markup `core.mjs` renders from it; a spec or JSON is missing its pair; a fence on a page of the site configuration at the root (MkDocs or Starlight) names an unknown or unrendered figure; a root-site page holds a Mermaid fence; the README block differs; an evidence anchor is gone; needs no npm package |
 | `node tools/figures/build.mjs site --config mkdocs.yml --docs docs --site site` | after `mkdocs build` (or `astro build`, with `--config astro.config.mjs` and `--base`): a figure did not render, an image does not resolve or embeds no usable `<metadata id="figure-spec">`, the page does not load the loader or no `player.js` sits beside it, or a page holds a Mermaid fence; needs no npm package |
 | `python3 -B tools/figures/test_mkdocs_hook.py` | the hook's fence scanner stops matching the fence fixtures, its slot filling stops matching the markup fixtures, or a site build no longer renders a figure or publishes `figures.css` |
 | `npm --prefix tools/figures run smoke -- --site <dir> [--base <path>]` | in Chromium, against a built site served under its base path: a figure did not mount the player; a figure with scenario tabs did not advance its active step under autoplay within 8 s (another selected tab or a longer progress line, since a paused player still draws its first packets), or showed no packet under autoplay or after starting any of its tabs; a packet showed under reduced motion; or a page logged an error |

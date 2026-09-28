@@ -148,10 +148,22 @@ a JSON file fails the build.
 `make docs-figures` runs `check` and `sources`. `praetorctl adopt` attaches that target to
 `verify-all`, and the documentation workflow, `.github/workflows/praetor-docs.yml`, runs both
 commands after its Markdown check. In a repository with no spec and no committed output, both
-commands print that they skipped and why, and exit 0. For a Starlight build, pass
-`--config astro.config.mjs --docs src/content/docs --site dist` and the site's base path as
-`--base`. Each command exits 0 on a pass, 1 on findings and 2 on a usage error or an input it
-cannot read. `node tools/figures/build.mjs` without a command prints every command and option.
+commands print that they skipped and why, and exit 0.
+
+`sources` reads the pages of the site configuration at the repository root: `mkdocs.yml` (or
+`mkdocs.yaml`) with the pages under `docs/`, and `astro.config.mjs` (or another
+`astro.config.*` name Astro loads) with the pages under `src/content/docs/`. With both, it reads
+both; its success line names the pages it read. `--config` names another configuration and
+`--docs` its pages directory. For a Starlight build, pass
+`--config astro.config.mjs --docs src/content/docs --site dist` to `site`, and the site's base
+path as `--base`. Each command exits 0 on a pass, 1 on findings and 2 on a usage error or an
+input it cannot read. `node tools/figures/build.mjs` without a command prints every command and
+option.
+
+**First run.** A spec has no outputs until `node tools/figures/build.mjs build` renders them,
+and a site build fails on a `figure` fence whose JSON is missing. After you add a spec, or copy
+in a documentation preset that ships one without its outputs, run `build` before the first site
+build and commit the outputs. Until then `check` and `sources` fail and name that command.
 
 The checks compare hashes of the engine, the specs and the outputs, so `praetorctl adopt` also
 writes a managed block at the end of `.gitattributes` that keeps those files at LF on every

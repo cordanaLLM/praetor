@@ -11,7 +11,8 @@ import {
   CheckError, EXPECTED_FENCE, MAX_LINES, OUT_DIR, ROOT, STARLIGHT_SUFFIXES, astroKinds, checkSite, configError, declaredFences,
   declaredHooks, enabledKinds, engineHash, excludedPatterns, expand, fenceBlocks, fences, figureSlug, figureSlugs, filesDigest, fillSlots,
   frontmatterSlug, globRegExp, htmlErrors, isExcluded, kindErrors, markdownPages, pageOutput, patternMatches, portable, quoted,
-  refreshMarkers, renderedDiagrams, scanPage, siteFlavor, siteUrl, sizeErrors, sources, starlightOutput, starlightPages, svgSpecError,
+  refreshMarkers, renderedDiagrams, scanPage, siteConfigs, siteFlavor, siteUrl, sizeErrors, sourceSites, sources, starlightOutput, starlightPages,
+  svgSpecError,
 } from './checks.mjs';
 import { ENGINE_FILES, markup, sha256 } from './core.mjs';
 import { main } from './build.mjs';
@@ -600,6 +601,72 @@ test('sources: the pages of a Starlight docs collection, .mdx included, name onl
     `${join('src', 'content', 'docs', 'guides', 'tour.mdx')}: \`\`\`figure fence names 'missing', which has no spec and JSON`,
     `${join('src', 'content', 'docs', 'old.md')}: \`\`\`mermaid fence, but the configuration does not enable mermaid diagrams; ` +
       'draw it as a ```figure fence naming a spec under docs/figures/ (docs/guides/figures.md)',
+  ]);
+}));
+
+// Positive: each generator's configuration at the root is found under the names it loads, in its
+// own order, and its site reads the generator's default pages directory; both are found together.
+test('sourceSites: an mkdocs.yml reads docs/, an astro.config.* reads src/content/docs, both are read', () => withTempDir((root) => {
+  write(join(root, 'mkdocs.yaml'), HOOKED);
+  assert.deepEqual(sourceSites(root), [{ config: 'mkdocs.yaml', docs: 'docs' }]);
+  write(join(root, 'mkdocs.yml'), HOOKED);
+  write(join(root, 'astro.config.ts'), ASTRO_CONFIG);
+  assert.deepEqual(siteConfigs(root), ['mkdocs.yml', 'astro.config.ts']);
+  write(join(root, 'astro.config.mjs'), ASTRO_CONFIG);
+  assert.deepEqual(sourceSites(root), [{ config: 'mkdocs.yml', docs: 'docs' }, { config: 'astro.config.mjs', docs: 'src/content/docs' }]);
+  // A named configuration is the one site, with its generator's pages unless --docs names others.
+  assert.deepEqual(sourceSites(root, undefined, 'astro.config.ts'), [{ config: 'astro.config.ts', docs: 'src/content/docs' }]);
+  assert.deepEqual(sourceSites(root, 'pages', 'mkdocs.yml'), [{ config: 'mkdocs.yml', docs: 'pages' }]);
+}));
+
+// Negative: --docs without --config names one pages directory for two configurations, which is a
+// usage failure; a directory named like a configuration is not one.
+test('sourceSites: --docs alone is refused when the root holds two site configurations', () => withTempDir((root) => {
+  mkdirSync(join(root, 'astro.config.mjs'));
+  assert.deepEqual(siteConfigs(root), []);
+  write(join(root, 'mkdocs.yml'), HOOKED);
+  write(join(root, 'astro.config.js'), ASTRO_CONFIG);
+  assert.throws(() => sourceSites(root, 'site-pages'), (error) => error instanceof CheckError &&
+    /--docs site-pages names one pages directory, but the repository root holds mkdocs\.yml and astro\.config\.js; name the configuration/.test(error.message));
+  assert.throws(() => sources(root, 'site-pages'), CheckError);
+}));
+
+// Boundary: a root without a configuration keeps MkDocs' defaults, and --docs alone applies to the
+// one configuration found.
+test('sourceSites: no configuration keeps the MkDocs defaults; --docs alone names the one site\'s pages', () => withTempDir((root) => {
+  assert.deepEqual(sourceSites(root), [{ config: 'mkdocs.yml', docs: 'docs' }]);
+  assert.deepEqual(sourceSites(root, 'pages'), [{ config: 'mkdocs.yml', docs: 'pages' }]);
+  write(join(root, 'astro.config.cjs'), ASTRO_CONFIG);
+  assert.deepEqual(sourceSites(root, 'pages'), [{ config: 'astro.config.cjs', docs: 'pages' }]);
+}));
+
+// The managed docs-figures target and the documentation workflow run `sources` with no option, so
+// in a Starlight repository it must read the docs collection: an unknown slug on an .mdx page fails
+// it, a known one passes, and an MkDocs site beside it is read too.
+test('sources: without --config, the pages of an astro.config.* at the root are read', () => withTempDir((root) => {
+  const repo = figureRepo(root);
+  unlinkSync(join(root, 'mkdocs.yml'));
+  write(join(root, 'astro.config.mjs'), ASTRO_CONFIG);
+  write(join(root, 'src', 'content', 'docs', 'guides', 'tour.mdx'), `---\ntitle: Tour\n---\n\n${FIGURE}`);
+  assert.deepEqual(repo.sources(), []);
+  write(join(root, 'src', 'content', 'docs', 'guides', 'more.mdx'), '```figure\nnope\n```\n');
+  const unknown = `${join('src', 'content', 'docs', 'guides', 'more.mdx')}: \`\`\`figure fence names 'nope', which has no spec and JSON`;
+  assert.deepEqual(repo.sources(), [unknown]);
+  write(join(root, 'mkdocs.yml'), HOOKED);
+  write(join(root, 'docs', 'page.md'), '```figure\nalso-nope\n```\n');
+  assert.deepEqual(repo.sources(), [`${join('docs', 'page.md')}: \`\`\`figure fence names 'also-nope', which has no spec and JSON`, unknown]);
+}));
+
+// First run: a fence naming a spec that has not been rendered yet names the command that renders
+// it; a slug without a spec keeps its finding.
+test('sources: a fence naming an unrendered spec names the render command', () => withTempDir((root) => {
+  const repo = figureRepo(root);
+  write(join(root, 'docs/figures/fresh.ts'), 'export default {};\n');
+  write(join(root, 'docs/page.md'), '```figure\nfresh\n```\n');
+  assert.deepEqual(repo.sources(), [
+    `docs/figures/fresh.ts has no ${OUT_DIR}/fresh.json; rebuild with: node tools/figures/build.mjs build`,
+    `${join('docs', 'page.md')}: \`\`\`figure fence names 'fresh', whose spec docs/figures/fresh.ts has not been rendered; ` +
+      'render it with: node tools/figures/build.mjs build',
   ]);
 }));
 

@@ -16,7 +16,9 @@ Production-ready documentation preset powered by [Astro Starlight](https://starl
 The preset imports the figure engine from `tools/figures/`, which `praetorctl adopt` writes with
 the `docs:seo-portal` facet (part of the default facet set). Copy the preset into the root of an
 adopted repository, so that `astro.config.mjs` sits beside `tools/figures/`, then render the
-example figure and start the development server:
+example figure and start the development server. The preset ships the figure's spec without its
+outputs, so render it before the first site build or `make docs-figures`; until then both fail
+and name `node tools/figures/build.mjs build`:
 
 ```bash
 cp -R path/to/docs/presets/starlight/. .
@@ -80,20 +82,21 @@ Check the figures, then the built site under the base it was built for (`/`, or 
 `DOCS_SITE_URL`, such as `/<repo>/`):
 
 ```bash
-node tools/figures/build.mjs check
-node tools/figures/build.mjs sources --config astro.config.mjs --docs src/content/docs
+make docs-figures
 npm run build
 node tools/figures/build.mjs site --config astro.config.mjs --docs src/content/docs --site dist --base /
 ```
 
-`make docs-figures`, which adoption attaches to `verify-all`, runs `check` and `sources` with the
-MkDocs defaults (`--config mkdocs.yml --docs docs`), so it does not read the Starlight pages; the
-`sources` command above does. `npm run build` also fails on a `figure` block that names a figure
+`make docs-figures`, which adoption attaches to `verify-all`, runs `node tools/figures/build.mjs
+check` and `node tools/figures/build.mjs sources`; run those two on a machine without make.
+`sources` finds `astro.config.mjs` at the repository root and reads the pages under
+`src/content/docs/`, so it fails a `figure` block that names an unknown figure; its success line
+names the pages it read. `npm run build` also fails on a `figure` block that names a figure
 without a JSON file.
 
 The `docs-presets` job in `.github/workflows/ci.yml` builds the preset this way (its
 `Build Starlight Preset In An Adopter Fixture` step): a temporary repository adopted with
-`docs:seo-portal`, the preset copied into its root, `build`, `check` and `sources`, then three
+`docs:seo-portal`, the preset copied into its root, `build` and `make docs-figures`, then three
 site builds (without `DOCS_SITE_URL`, with a root host and with a path), each followed by the
 `site` check and the Chromium smoke test, `tools/figures/smoke.mjs`, under that build's base.
 
@@ -105,7 +108,8 @@ when `package.json` and the lock disagree; use `npm install` only to change a ve
 both files. Renovate keeps the exact pins (`rangeStrategy: pin` in `renovate.json`) and groups the
 updates as `starlight docs preset`. The `docs-presets` job in `.github/workflows/ci.yml` runs
 `npm ci` from this lock and builds the preset in an adopter fixture (see [Figures](#figures))
-whenever a file under `docs/presets/` or `tools/figures/` changes.
+whenever a file under `docs/presets/` or `tools/figures/`, or the adoption code that writes the
+engine, changes.
 
 The content collection is configured in `src/content.config.ts` with Starlight's `docsLoader()`
 (the Content Layer layout Starlight 0.30+ requires). The sidebar groups **Standards & Invariants**

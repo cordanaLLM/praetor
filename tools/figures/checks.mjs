@@ -10,7 +10,9 @@
 //   lacks a positive whole-number size for either SVG; when a spec has no JSON or a JSON no spec;
 //   when a fence names a figure that does not exist or a kind the configuration does not enable;
 //   when the README's portable block differs from the renderer; and when an evidence anchor's path
-//   or symbol is gone.
+//   or symbol is gone. Without `--config` it reads the pages of every site configuration at the
+//   repository root, an mkdocs.yml and an astro.config.* alike (`sourceSites`), so one command
+//   checks the page fences of either generator.
 // * `site` runs after `mkdocs build` or `astro build`. The kinds a build accepts come from its
 //   configuration: in an mkdocs.yml the declared mermaid custom fence enables ```mermaid and a hooks
 //   entry naming figures/mkdocs_hook.py enables ```figure; an Astro configuration that names
@@ -584,16 +586,18 @@ export const astroKinds = (text) => new Set(ASTRO_INTEGRATION.test(text) ? ['fig
  * How one site generator builds pages: MkDocs from an mkdocs.yml, Astro Starlight from an
  * astro.config.* file. `output` names the HTML file a page becomes; `base` says whether figure
  * URLs are root-absolute under the site's base path (`site --base`); `publisher` names what
- * publishes the loader.
+ * publishes the loader. `docs` is the pages directory the generator reads by default, relative to
+ * the repository root: MkDocs' `docs_dir`, and the `docs` collection Starlight's docsLoader reads
+ * under Astro's `srcDir`.
  */
 const MKDOCS = Object.freeze({
-  generator: 'MkDocs', build: 'mkdocs build', publisher: 'the figures hook', base: false,
+  generator: 'MkDocs', build: 'mkdocs build', publisher: 'the figures hook', base: false, docs: 'docs',
   kinds: enabledKinds,
   pages: (docsDir, text) => markdownPages(docsDir, excludedPatterns(text)),
   output: (docsDir, siteDir, page) => pageOutput(docsDir, siteDir, page),
 });
 const STARLIGHT = Object.freeze({
-  generator: 'Astro', build: 'astro build', publisher: 'tools/figures/astro.mjs', base: true,
+  generator: 'Astro', build: 'astro build', publisher: 'tools/figures/astro.mjs', base: true, docs: 'src/content/docs',
   kinds: astroKinds,
   pages: (docsDir) => starlightPages(docsDir),
   output: starlightOutput,
@@ -602,6 +606,38 @@ const ASTRO_CONFIG = /^astro\.config\.[cm]?[jt]s$/i;
 
 /** The generator a configuration file belongs to, told by its name: astro.config.* is Astro, any other file MkDocs. */
 export const siteFlavor = (config) => (ASTRO_CONFIG.test(basename(config)) ? STARLIGHT : MKDOCS);
+
+/**
+ * The configuration file names each generator looks for in a project root, in its own order:
+ * MkDocs 1.6 (`_open_config_file` in mkdocs/config/base.py) and Astro 5 (`configPaths` in
+ * astro/dist/core/config/config.js).
+ */
+const SITE_CONFIGS = Object.freeze([
+  Object.freeze(['mkdocs.yml', 'mkdocs.yaml']),
+  Object.freeze(['astro.config.mjs', 'astro.config.js', 'astro.config.ts', 'astro.config.mts', 'astro.config.cjs', 'astro.config.cts']),
+]);
+
+/**
+ * The site configurations at the repository root `root`: for each generator, the file it would load
+ * there, MkDocs first. Empty when the repository has neither.
+ */
+export const siteConfigs = (root) => SITE_CONFIGS.map((names) => names.find((name) => isFile(join(root, name)))).filter(Boolean);
+
+/**
+ * The sites whose pages `sources` reads, each a `config` and a `docs` directory relative to `root`.
+ * A named `config` is the one site; otherwise every configuration `siteConfigs` finds, and MkDocs'
+ * defaults when it finds none. A site's `docs` is the one named, else its generator's default. A
+ * named `docs` without a named `config` is ambiguous when the root holds two configurations.
+ */
+export function sourceSites(root, docs = undefined, config = undefined) {
+  const configs = config === undefined ? siteConfigs(root) : [config];
+  if (configs.length === 0) return [{ config: SITE_CONFIGS[0][0], docs: docs ?? MKDOCS.docs }];
+  if (docs !== undefined && configs.length > 1) {
+    throw new CheckError(`--docs ${docs} names one pages directory, but the repository root holds ${configs.join(' and ')}; ` +
+      'name the configuration it belongs to with --config');
+  }
+  return configs.map((name) => ({ config: name, docs: docs ?? siteFlavor(name).docs }));
+}
 
 /** The finding for a disabled `kind`, naming its replacement when the configuration enables it. */
 function kindError(page, kind, kinds) {
@@ -1093,11 +1129,22 @@ function figureSourceErrors(root) {
     errors.push(...hashErrors(root, slug, meta, engine), ...evidenceErrors(root, slug, meta.evidence || []), ...sizes);
     if (sizes.length === 0) errors.push(...htmlErrors(slug, meta));
   }
-  return { errors, known: new Set(both) };
+  return { errors, known: new Set(both), specs };
+}
+
+/**
+ * The finding for a ```figure fence on `page` naming `slug`, which `figures` does not know: a spec
+ * not rendered yet, as on the first run after a spec or a preset is copied in, names the command
+ * that renders it.
+ */
+function unknownSlugError(page, slug, figures) {
+  const found = `${page}: \`\`\`figure fence names ${quoted(slug)}`;
+  if (figures.specs.has(slug)) return `${found}, whose spec ${SPEC_DIR}/${slug}.ts has not been rendered; render it with: ${REBUILD}`;
+  return `${found}, which has no spec and JSON`;
 }
 
 /** Disabled fence kinds and unknown figure slugs on every page the configuration builds. */
-function pageSourceErrors(root, docs, config, known) {
+function pageSourceErrors(root, docs, config, figures) {
   const configPath = resolve(root, config);
   const flavor = siteFlavor(configPath);
   const settings = isFile(configPath) ? readText(configPath) : null;
@@ -1107,16 +1154,20 @@ function pageSourceErrors(root, docs, config, known) {
     const text = readText(page);
     const shown = relative(root, page);
     errors.push(...kindErrors(shown, text, kinds));
-    errors.push(...figureSlugs(text).filter((slug) => !known.has(slug))
-      .map((slug) => `${shown}: \`\`\`figure fence names ${quoted(slug)}, which has no spec and JSON`));
+    errors.push(...figureSlugs(text).filter((slug) => !figures.known.has(slug)).map((slug) => unknownSlugError(shown, slug, figures)));
   }
   return errors;
 }
 
-/** Every source-side finding: figure bindings, fence slugs, fence kinds and the README block. */
-export function sources(root, docs = 'docs', config = 'mkdocs.yml', readme = 'README.md') {
-  const { errors, known } = figureSourceErrors(root);
-  errors.push(...pageSourceErrors(root, docs, config, known));
+/**
+ * Every source-side finding: figure bindings, fence slugs, fence kinds and the README block. The
+ * pages are those of every site `sourceSites` names: the `config` and `docs` given, or each site
+ * configuration at the repository root.
+ */
+export function sources(root, docs = undefined, config = undefined, readme = 'README.md') {
+  const figures = figureSourceErrors(root);
+  const { errors } = figures;
+  for (const site of sourceSites(root, docs, config)) errors.push(...pageSourceErrors(root, site.docs, site.config, figures));
   const readmePath = resolve(root, readme);
   if (isFile(readmePath)) {
     const text = readText(readmePath);

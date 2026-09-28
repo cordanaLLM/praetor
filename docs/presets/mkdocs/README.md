@@ -10,23 +10,38 @@ Documentation preset powered by [Material for MkDocs](https://squidfunk.github.i
 
 ## Quickstart
 
-The preset is the root of your documentation: copy its files into the root of a repository that
+The preset is the root of your documentation: copy its files into a repository that
 `praetorctl adopt` has adopted with the `docs:seo-portal` facet, which the default facet set
 includes. Adoption writes the figure engine to `tools/figures/`, where `mkdocs.yml` expects its
-hook. Copy every file but this README: the copy replaces a file of the same name, and your
-repository keeps its own `README.md`.
+hook. `mkdocs.yml`, `docs/` and `overrides/` go into the repository root: MkDocs looks for
+`mkdocs.yml` there and resolves the hook, `docs/` and `overrides/` relative to it. The Python
+lock, `requirements.in` and `requirements.txt`, goes into `docs/` beside your pages, so it does
+not replace a `requirements.txt` your repository keeps at its root; the `exclude_docs` list in
+`mkdocs.yml` keeps both files out of the built site. This README stays behind, and your
+repository keeps its own `README.md`. A copied file replaces one of the same name.
+
+<!-- praetor:docs-references:off paths in an adopter's repository after the Quickstart copy -->
 
 ```bash
 # from your adopted repository root, with this directory at <preset>
-cp -R <preset>/mkdocs.yml <preset>/requirements.in <preset>/requirements.txt \
-  <preset>/docs <preset>/overrides .
+cp -R <preset>/mkdocs.yml <preset>/docs <preset>/overrides .
+cp <preset>/requirements.in <preset>/requirements.txt docs/
+node tools/figures/build.mjs build
 python3 -m venv .venv
 source .venv/bin/activate
-pip install --require-hashes -r requirements.txt
+pip install --require-hashes -r docs/requirements.txt
 
 # Run development server
 mkdocs serve
 ```
+
+<!-- praetor:docs-references:on -->
+
+`node tools/figures/build.mjs build` renders the example figure with the engine your adoption
+wrote; the committed outputs change only when that engine differs from the one that rendered
+them. Run it again after every spec change and before the first site build of a new figure:
+`mkdocs build --strict` fails on a `figure` fence whose JSON is missing, and `make docs-figures`
+fails, naming this command, while an output is missing or stale.
 
 ## Build & Verify
 
@@ -62,8 +77,9 @@ is the lock compiled from it: every package the preset installs, pinned with `==
 with environment markers for other Python versions and platforms. `pip install --require-hashes`
 refuses an entry without both, so a hand-added range fails the install.
 
-To change a version, edit `requirements.in` and recompile the lock from this directory with the
-command recorded in the `requirements.txt` header:
+To change a version, edit `requirements.in` and recompile the lock from the directory that holds
+both files (this directory in the preset, `docs/` in your repository) with the command recorded
+in the `requirements.txt` header:
 
 ```bash
 uv pip compile --universal --generate-hashes --python-version=3.10 requirements.in --output-file=requirements.txt
@@ -78,7 +94,9 @@ Renovate runs the same command: `renovate.json` enables its `pip-compile` manage
 and groups the updates as `mkdocs docs preset`. The `docs-presets` job in
 `.github/workflows/ci.yml` installs the lock and builds this preset with `--strict`, in a
 temporary repository adopted with `docs:seo-portal` and set up with the Quickstart copy, whenever
-a file under `docs/presets/` or `tools/figures/` changes.
+a file under `docs/presets/` or `tools/figures/`, or the adoption code that writes the engine,
+changes. It installs the lock from where the Quickstart puts it, the fixture's `docs/`, and fails
+when a build publishes either lock file.
 
 ## Figures
 

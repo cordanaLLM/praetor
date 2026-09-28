@@ -571,11 +571,17 @@ are the only diagram kind of both sites
 The preset's hook entry names the engine `praetorctl adopt` writes to
 `tools/figures/` under `docs:seo-portal`, so the preset does not build in
 place. The `docs-presets` job adopts a temporary repository with
-`docs:seo-portal`, copies every preset file but the README into it, as the
-[preset README's Quickstart](../presets/mkdocs/README.md#quickstart) tells an adopter, and there runs `build` (which must
-reproduce the committed example figure), `make docs-figures`, three strict
-builds (no `DOCS_SITE_URL`, a root URL, a URL with a path), `site` on each,
-and the Chromium smoke test on the two builds with a URL. The example
+`docs:seo-portal` and copies the preset into it as the
+[preset README's Quickstart](../presets/mkdocs/README.md#quickstart) tells an
+adopter: `mkdocs.yml`, `docs/` and `overrides/` into the root, the Python lock
+into `docs/`, where the preset's `exclude_docs` keeps it out of the site. There
+it installs that lock and runs `build` (which must reproduce the committed
+example figure), `make docs-figures`, three strict builds (no
+`DOCS_SITE_URL`, a root URL, a URL with a path), `site` on each, a check that
+no build published the lock, and the Chromium smoke test on the two builds
+with a URL. The job also runs when only the adoption code that sets the
+fixture up changes (`internal/adopt`, `internal/managedasset`,
+`tools/markdownlint`, `cmd/standardsctl`). The example
 figure's spec is `docs/presets/mkdocs/docs/figures/site-build.ts` and its
 evidence anchors name the preset's own files. After a change to
 `tools/figures/core.mjs` or the vendored render files, rebuild its committed
@@ -585,7 +591,7 @@ outputs in such a fixture:
 fixture=$(mktemp -d)
 git -C "$fixture" init -q
 go run ./cmd/standardsctl adopt --path "$fixture" --facets docs:seo-portal --lock-source-root .
-cp -R docs/presets/mkdocs/{mkdocs.yml,requirements.in,requirements.txt,docs,overrides} "$fixture"
+cp -R docs/presets/mkdocs/{mkdocs.yml,docs,overrides} "$fixture"
 node "$fixture/tools/figures/build.mjs" build
 cp "$fixture"/docs/assets/figures/* docs/presets/mkdocs/docs/assets/figures/
 ```
@@ -611,13 +617,17 @@ nested inside a longer fence is source text and is not expected to render. The
 mapping from a page to its HTML file assumes the default
 `use_directory_urls: true`.
 
-`sources` needs no site and no npm package. It checks the pages the root
-configuration builds and fails on a fence of a kind that configuration does
+`sources` needs no site and no npm package. It checks the pages of every
+site configuration at the repository root (`mkdocs.yml` with `docs/`, an
+`astro.config.*` with `src/content/docs/`; `sourceSites` in
+`tools/figures/checks.mjs`), or the `--config` and `--docs` it is given, and
+fails on a fence of a kind that configuration does
 not enable, when a figure's JSON no longer matches its spec, the vendored
 engine or its SVGs, when the JSON lacks a positive whole-number size for
 either SVG, when its `html` is not the markup `tools/figures/core.mjs` renders
 from it, when a spec and its JSON are not both present, when a fence names an
-unknown figure, when the README's portable figure block differs from the
+unknown figure or one whose spec has not been rendered yet (naming
+`node tools/figures/build.mjs build`), when the README's portable figure block differs from the
 renderer, or when an evidence anchor's file or symbol is gone.
 
 `make docs-figures-check` (part of `make verify-all`) runs the figure engine's
