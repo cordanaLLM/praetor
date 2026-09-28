@@ -20,6 +20,9 @@ var kitNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 // names and rules, so a larger file is a mistake, not a kit.
 const maxKitConfigBytes = 1 << 20
 
+// templatesDir holds the starter templates below the output directory.
+const templatesDir = "templates"
+
 // ErrInvalidKitName reports a kit_name that is not one safe file-name component.
 var ErrInvalidKitName = errors.New("kit_name must be 1-64 characters of letters, digits, '.', '_' or '-', starting with a letter or digit")
 
@@ -44,6 +47,12 @@ type CompiledFrameworkAssets struct {
 }
 
 // CompileFrameworkAssets generates dual-surface docs, agent rules, and starter templates.
+//
+// outputDir is the operator's chosen root and is created as given. Everything below it is
+// created through a pinned handle on outputDir (util.MkdirConfined, util.WriteFileConfined),
+// so an existing .agents or templates directory linked outside outputDir cannot redirect a
+// write, and a link planted at a generated file is refused instead of written through
+// (BUG-826).
 func CompileFrameworkAssets(ctx context.Context, kit *FrameworkKitConfig, outputDir string) (*CompiledFrameworkAssets, error) {
 	if ctx == nil {
 		return nil, errors.New("context cannot be nil")
@@ -122,7 +131,7 @@ func generateDocsSurfaces(kit *FrameworkKitConfig, outputDir string, res *Compil
 	}
 
 	llmsPath := filepath.Join(outputDir, "llms.txt")
-	if err := util.WriteFileSecure(llmsPath, []byte(llmsTxt), util.TrackedFilePerm); err != nil {
+	if err := util.WriteFileConfined(outputDir, "llms.txt", []byte(llmsTxt), util.TrackedFilePerm); err != nil {
 		return fmt.Errorf("write llms.txt: %w", err)
 	}
 	res.LLMsTxtPath = llmsPath
@@ -132,7 +141,7 @@ func generateDocsSurfaces(kit *FrameworkKitConfig, outputDir string, res *Compil
 	for _, r := range kit.Rules {
 		fullContent += fmt.Sprintf("- %s\n", r)
 	}
-	if err := util.WriteFileSecure(fullPath, []byte(fullContent), util.TrackedFilePerm); err != nil {
+	if err := util.WriteFileConfined(outputDir, "llms-full.txt", []byte(fullContent), util.TrackedFilePerm); err != nil {
 		return fmt.Errorf("write llms-full.txt: %w", err)
 	}
 	res.LLMsFullTxtPath = fullPath
@@ -140,8 +149,9 @@ func generateDocsSurfaces(kit *FrameworkKitConfig, outputDir string, res *Compil
 }
 
 func generateAgentRules(kit *FrameworkKitConfig, outputDir string, res *CompiledFrameworkAssets) error {
-	rulesDir := filepath.Join(outputDir, ".agents", "rules")
-	if err := util.MkdirSecure(rulesDir, util.TrackedDirPerm); err != nil {
+	rulesRel := filepath.Join(".agents", "rules")
+	rulesDir := filepath.Join(outputDir, rulesRel)
+	if err := util.MkdirConfined(outputDir, rulesRel, util.TrackedDirPerm); err != nil {
 		return fmt.Errorf("mkdir agent rules: %w", err)
 	}
 
@@ -159,13 +169,14 @@ func generateAgentRules(kit *FrameworkKitConfig, outputDir string, res *Compiled
 		}
 	}
 
-	// kit_name is validated as one file-name component; ConfinePath is the second guard
-	// WriteFileSecure's contract asks for, and it also refuses a symlink that leaves rulesDir.
+	// kit_name is validated as one file-name component; ConfinePath is the second guard, and
+	// it names the reported path. The write itself resolves through a pinned handle on
+	// outputDir, so neither a symlinked .agents nor a link at the rule file redirects it.
 	rulePath, err := util.ConfinePath(rulesDir, kit.KitName+".md")
 	if err != nil {
 		return fmt.Errorf("confine agent rule path: %w", err)
 	}
-	if err := util.WriteFileSecure(rulePath, []byte(sb.String()), util.TrackedFilePerm); err != nil {
+	if err := util.WriteFileConfined(outputDir, filepath.Join(rulesRel, kit.KitName+".md"), []byte(sb.String()), util.TrackedFilePerm); err != nil {
 		return fmt.Errorf("write agent rule: %w", err)
 	}
 	res.AgentRulePath = rulePath
@@ -173,21 +184,21 @@ func generateAgentRules(kit *FrameworkKitConfig, outputDir string, res *Compiled
 }
 
 func generateStarterTemplates(kit *FrameworkKitConfig, outputDir string, res *CompiledFrameworkAssets) error {
-	tmplDir := filepath.Join(outputDir, "templates")
-	if err := util.MkdirSecure(tmplDir, util.TrackedDirPerm); err != nil {
+	tmplDir := filepath.Join(outputDir, templatesDir)
+	if err := util.MkdirConfined(outputDir, templatesDir, util.TrackedDirPerm); err != nil {
 		return fmt.Errorf("mkdir templates: %w", err)
 	}
 
 	buildYaml := fmt.Sprintf("version: 1\nproject: %s\noutput_dir: dist\noptimize: true\ntargets:\n  main:\n    runtime: %s\n    entrypoint: ./src\n", kit.KitName, kit.Language)
 	buildPath := filepath.Join(tmplDir, ".framework-build.yaml")
-	if err := util.WriteFileSecure(buildPath, []byte(buildYaml), util.TrackedFilePerm); err != nil {
+	if err := util.WriteFileConfined(outputDir, filepath.Join(templatesDir, ".framework-build.yaml"), []byte(buildYaml), util.TrackedFilePerm); err != nil {
 		return fmt.Errorf("write build template: %w", err)
 	}
 	res.Templates[".framework-build.yaml"] = buildPath
 
 	readmeContent := fmt.Sprintf("# %s Starter Kit\n\n%s\n\nLanguage: %s\n", kit.KitName, kit.Description, kit.Language)
 	readmePath := filepath.Join(tmplDir, "README.md")
-	if err := util.WriteFileSecure(readmePath, []byte(readmeContent), util.TrackedFilePerm); err != nil {
+	if err := util.WriteFileConfined(outputDir, filepath.Join(templatesDir, "README.md"), []byte(readmeContent), util.TrackedFilePerm); err != nil {
 		return fmt.Errorf("write readme template: %w", err)
 	}
 	res.Templates["README.md"] = readmePath

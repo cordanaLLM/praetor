@@ -118,7 +118,9 @@ func (m *Manager) Create(ctx context.Context, taskID, baseBranch string) (*Workt
 
 	wtPath := m.WorktreePath(taskID)
 	parentDir := filepath.Dir(wtPath)
-	if err := util.MkdirSecure(parentDir, worktreeDirPerm); err != nil {
+	// The container is created through a pinned handle on the repository root, so a
+	// symlinked .standards cannot place worktrees outside the repository (BUG-826).
+	if err := util.MkdirConfined(m.rootDir, filepath.FromSlash(WorktreeSubdir), worktreeDirPerm); err != nil {
 		return nil, fmt.Errorf("failed creating parent directory %s: %w", parentDir, err)
 	}
 

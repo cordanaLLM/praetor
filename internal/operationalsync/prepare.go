@@ -127,25 +127,20 @@ func (op *operation) backfillManifestOverlay(ctx context.Context) error {
 	if equivalent(ownerPaths[0], raw, op.expected[ownerPaths[0]]) {
 		return nil
 	}
-	target, err := util.ConfinePath(op.opts.Destination, ownerPaths[0])
-	if err != nil {
-		return err
-	}
-	if err := util.WriteFileSecure(target, op.expected[ownerPaths[0]], 0o644); err != nil {
+	if err := util.WriteFileConfined(op.opts.Destination, ownerPaths[0], op.expected[ownerPaths[0]], 0o644); err != nil {
 		return err
 	}
 	_, err = op.git.run(ctx, op.opts.Destination, "add", "--", ownerPaths[0])
 	return err
 }
 
-// writeOverlayFiles writes the expected overlay into a working tree and touches no index; init shares it.
+// writeOverlayFiles writes the expected overlay into a working tree and touches no index; init
+// shares it. Each file is replaced through a pinned handle on root (util.WriteFileConfined), so
+// a symlinked ancestor such as .paperclip cannot redirect the overlay, and a link at an overlay
+// file is refused instead of written through (BUG-826).
 func (op *operation) writeOverlayFiles(root string) error {
 	for _, path := range ownerPaths {
-		target, err := util.ConfinePath(root, path)
-		if err != nil {
-			return err
-		}
-		if err := util.WriteFileSecure(target, op.expected[path], 0o644); err != nil {
+		if err := util.WriteFileConfined(root, path, op.expected[path], 0o644); err != nil {
 			return err
 		}
 	}
