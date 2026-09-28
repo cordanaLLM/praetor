@@ -129,8 +129,9 @@ func unboundSourcesReason(harness harnessPlan) string {
 // whether they replace the declared contract. A missing contract gets the managed harness
 // rows, or nil when no harness will exist. A declared contract must pass its own gate first, so adoption never re-blesses drift
 // it did not cause; it then keeps every declared input and only recomputes the counts and
-// digest when this run rewrites the harness those inputs select (--force, or a refresh of
-// unmodified earlier output).
+// digest when this run writes the harness those inputs select: a refresh of unmodified earlier
+// output, with or without --force, or the --force platform patch of an operator-owned one. A
+// harness this run keeps binds as it stands on disk, under --force too.
 func reconcileRegisterSources(ctx context.Context, root string, declared *config.RegisterSources,
 	harness harnessPlan,
 ) (*config.RegisterSources, bool, error) {
@@ -144,13 +145,13 @@ func reconcileRegisterSources(ctx context.Context, root string, declared *config
 	if err := verifyDeclaredSources(ctx, root, declared, harness); err != nil {
 		return nil, false, fmt.Errorf("existing register.sources fails its configured gate: %w", err)
 	}
-	if harness.write == nil {
+	if !harness.writes() {
 		return declared, false, nil
 	}
 	result, err := cavemansource.ExtractInputsWithDocuments(ctx, root, declared.Inputs,
 		map[string][]byte{paperclipFile: harness.data})
 	if err != nil {
-		return nil, false, fmt.Errorf("re-bind register.sources to the regenerated harness: %w", err)
+		return nil, false, fmt.Errorf("re-bind register.sources to the rewritten harness: %w", err)
 	}
 	rebound := &config.RegisterSources{Expected: result.Applicable, NotApplicable: result.NotApplicable,
 		SHA256: result.SHA256, Inputs: declared.Inputs}
@@ -169,7 +170,7 @@ func verifyDeclaredSources(ctx context.Context, root string, declared *config.Re
 		current = planned
 	}
 	_, err := cavemansource.ExtractDeclaredContent(ctx, root, declared, current)
-	if err == nil || harness.write == nil || !harness.onDisk {
+	if err == nil || !harness.writes() || !harness.onDisk {
 		return err
 	}
 	if _, plannedErr := cavemansource.ExtractDeclaredContent(ctx, root, declared, planned); plannedErr == nil {
@@ -185,7 +186,7 @@ func manifestSourcesNote(declared, sources *config.RegisterSources, changed, for
 	case declared == nil:
 		return "Added omission-resistant register.sources coverage; preserved existing declarations"
 	}
-	return fmt.Sprintf("Re-bound register.sources to the regenerated Paperclip harness (expected %d, not_applicable %d, %s); "+
+	return fmt.Sprintf("Re-bound register.sources to the rewritten Paperclip harness (expected %d, not_applicable %d, %s); "+
 		"kept every declared input and declaration", sources.Expected, sources.NotApplicable, sources.SHA256)
 }
 

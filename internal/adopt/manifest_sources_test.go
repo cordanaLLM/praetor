@@ -3,6 +3,7 @@ package adopt
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -149,10 +150,18 @@ func TestAdoptKeepsEditedReleasedHarness(t *testing.T) {
 // contract over the managed rows and that hook that passes its gate.
 func extendedSourceRepo(t *testing.T) (string, *config.RegisterSources) {
 	t.Helper()
+	return extendedSourceRepoFor(t, "acme/legacy")
+}
+
+// extendedSourceRepoFor is extendedSourceRepo with the harness naming platform. A platform other
+// than the repository's gets one more operator input selecting it, so the contract binds the
+// value the --force platform patch changes.
+func extendedSourceRepoFor(t *testing.T, platform string) (string, *config.RegisterSources) {
+	t.Helper()
 	repoPath := newTestRepo(t, "legacy")
 	mustWrite(t, filepath.Join(repoPath, paperclipFile), `{
   "version": 1,
-  "platform": "acme/legacy",
+  "platform": "`+platform+`",
   "operating_contract": ["result: custom contract."],
   "agit_push_format": "git push custom",
   "invariants": ["result: custom invariant."]
@@ -161,6 +170,10 @@ func extendedSourceRepo(t *testing.T) (string, *config.RegisterSources) {
 	mustWrite(t, filepath.Join(repoPath, "hooks", "notify.sh"), "echo \"result: hook pass.\"\n")
 	inputs := append(managedHarnessInputs(), config.RegisterSourceInput{Path: "hooks/notify.sh",
 		Surface: config.SurfaceHooks, Kind: "message", Format: config.SourceFormatShell})
+	if platform != "acme/legacy" {
+		inputs = append(inputs, config.RegisterSourceInput{Path: paperclipFile, Surface: config.SurfacePrompts,
+			Kind: "message", Format: config.SourceFormatJSON, Selector: "platform"})
+	}
 	result, err := cavemansource.ExtractInputs(t.Context(), repoPath, inputs)
 	if err != nil {
 		t.Fatal(err)
@@ -172,22 +185,53 @@ func extendedSourceRepo(t *testing.T) (string, *config.RegisterSources) {
 	return repoPath, declared
 }
 
-// TestAdoptForceRebindsExtendedSourceContract: --force regenerates the harness, keeps every
-// declared input (operator rows included) and re-binds only counts and digest.
-func TestAdoptForceRebindsExtendedSourceContract(t *testing.T) {
+// TestAdoptForceKeepsOperatorHarnessAndExtendedContract (#502): --force keeps an operator-owned
+// harness, so the declared contract, operator rows included, stays bound to it as written and
+// the manifest bytes stay.
+func TestAdoptForceKeepsOperatorHarnessAndExtendedContract(t *testing.T) {
 	repoPath, declared := extendedSourceRepo(t)
+	harness := mustRead(t, filepath.Join(repoPath, paperclipFile))
+	manifest := mustRead(t, filepath.Join(repoPath, manifestFile))
 	report, err := Adopt(t.Context(), sourceAdoptOptions(t, repoPath, true))
 	if err != nil {
 		t.Fatalf("--force refused an extended source contract: %v", err)
 	}
-	rebound := requirePassingSourceGate(t, repoPath, paperclipFile, "hooks/notify.sh")
-	if len(rebound.Inputs) != len(declared.Inputs) || rebound.Inputs[2] != declared.Inputs[2] {
-		t.Fatalf("declared inputs not kept: %+v", rebound.Inputs)
+	if got := mustRead(t, filepath.Join(repoPath, paperclipFile)); got != harness {
+		t.Fatalf("--force rewrote the operator-owned harness:\n%s", got)
 	}
-	if rebound.SHA256 == declared.SHA256 {
-		t.Fatal("digest not re-bound to the regenerated harness")
+	if got := mustRead(t, filepath.Join(repoPath, manifestFile)); got != manifest {
+		t.Fatalf("--force re-bound a contract over a kept harness:\n%s", got)
 	}
-	if !strings.Contains(reportDetail(report, manifestFile), "Re-bound register.sources") {
+	if kept := requirePassingSourceGate(t, repoPath, paperclipFile, "hooks/notify.sh"); kept.SHA256 != declared.SHA256 {
+		t.Fatalf("contract digest moved: %s, want %s", kept.SHA256, declared.SHA256)
+	}
+	if strings.Contains(reportDetail(report, manifestFile), "Re-bound register.sources") {
+		t.Fatalf("re-binding reported for a kept harness: %q", reportDetail(report, manifestFile))
+	}
+}
+
+// TestAdoptForcePlatformPatchRebindsExtendedContract (#502): the --force platform patch is the
+// one write --force makes to an operator-owned harness. A declared contract selecting platform
+// is re-bound to the patched bytes, keeping every declared input and the operator comment.
+func TestAdoptForcePlatformPatchRebindsExtendedContract(t *testing.T) {
+	repoPath, declared := extendedSourceRepoFor(t, "acme/renamed")
+	report, err := Adopt(t.Context(), sourceAdoptOptions(t, repoPath, true))
+	if err != nil {
+		t.Fatalf("--force refused an extended source contract: %v", err)
+	}
+	stageAdoptPaths(t, repoPath, paperclipFile, "hooks/notify.sh")
+	manifest, err := config.LoadManifest(filepath.Join(repoPath, manifestFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebound := manifest.Register.Sources
+	if _, err := cavemansource.ExtractDeclared(t.Context(), repoPath, rebound); err != nil {
+		t.Fatalf("contract not bound to the patched harness: %v", err)
+	}
+	if !reflect.DeepEqual(rebound.Inputs, declared.Inputs) || rebound.SHA256 == declared.SHA256 {
+		t.Fatalf("declared inputs not kept or digest not re-bound: %+v", rebound)
+	}
+	if !strings.Contains(reportDetail(report, manifestFile), "Re-bound register.sources to the rewritten Paperclip harness") {
 		t.Fatalf("re-binding not reported: %q", reportDetail(report, manifestFile))
 	}
 	if !strings.Contains(mustRead(t, filepath.Join(repoPath, manifestFile)), "# operator: hook text is governed too") {
@@ -206,8 +250,8 @@ func TestAdoptForceRefusesDriftedSourceContract(t *testing.T) {
 	}
 }
 
-// TestAdoptForceLeavesCurrentContractUntouched: when the regenerated harness matches the one
-// on disk, re-binding computes the same contract and the manifest bytes stay.
+// TestAdoptForceLeavesCurrentContractUntouched: when the harness on disk is the current
+// synthesis, --force writes none, so the contract and the manifest bytes stay.
 func TestAdoptForceLeavesCurrentContractUntouched(t *testing.T) {
 	repoPath := newTestRepo(t, "legacy")
 	mustWrite(t, filepath.Join(repoPath, manifestFile), legacyManifest)

@@ -1017,7 +1017,8 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
     could be an operator's edit (`TestPriorGeneratedKeepsEditedFactRows`, `TestLimitFacts`).
     The cost: once a policy has resolved the length, a later move of it (50 to 45, 50 up to
     the ceiling, or back to unresolved) leaves a harness stating the old plain number
-    operator-owned, and `praetorctl adopt --force` refreshes it
+    operator-owned, under `--force` too. Delete `.paperclip/harness.json` and rerun
+    `praetorctl adopt` to regenerate it
     (`TestPriorGeneratedKeepsHarnessAfterResolvedLimitMoves`).
   - Still open: the `## AGit Push Protocol` section (`agit_push_format`) prescribes
     `git push origin HEAD:refs/for/main -o topic=<issue-id>` whatever forge `origin` names. That
@@ -1026,7 +1027,14 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
     be a guess, so the harness does not choose one. On any other forge, push the review branch
     (the second half of the command) and open the pull request there.
 
-An existing harness keeps its text until `praetorctl adopt --force` refreshes it.
+An existing harness that is neither the current synthesis nor unmodified earlier output is
+operator-owned and keeps its text, under `--force` too
+(`TestAdoptForceKeepsEditedOperatingContract`). `--force` sets only a `platform` that names
+another repository than the identity, the value the audit's Paperclip gate compares, and keeps
+every other member; a plain run keeps the file and warns
+(`TestAdoptForcePatchesOnlyHarnessPlatform`). To regenerate the harness, delete
+`.paperclip/harness.json` and rerun `praetorctl adopt`. A `.paperclip/rules.md` you deleted stays
+deleted, under `--force` too (`TestAdoptForceKeepsDeletedRulesAbsent`).
 
 ## Canonical context preparation
 
@@ -1058,8 +1066,9 @@ repository's own text.
 
 Files adopted before this change open with a file-wide `<!-- markdownlint-disable MD013 -->`
 (an older harness disables MD013 and MD025 together). Adoption with `--force` rewrites the
-personas and `.paperclip/`, and refreshes the `AGENTS.md` harness while keeping the
-repository's own instructions. It never rewrites an existing `CONTRIBUTING.md`, pull
+personas and refreshes the `AGENTS.md` harness while keeping the repository's own
+instructions. `.paperclip/` is refreshed, with or without `--force`, only while it is
+unmodified earlier output; delete an edited one and rerun adoption to regenerate it. It never rewrites an existing `CONTRIBUTING.md`, pull
 request template, `SECURITY.md` or `docs/adr/`: those belong to the repository once
 written (`internal/adopt/governance.go`), so delete their disable line by hand and wrap
 the lines it covered.

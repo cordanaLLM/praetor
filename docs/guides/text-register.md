@@ -660,8 +660,14 @@ who wrote it:
   markdownlint-clean layout since
   (`TestPriorGeneratedAcceptsBothRulesLayoutsOfItsHarness`).
 - Any other harness is operator-owned. Adoption keeps its bytes and binds the
-  contract to its decoded values. When those values fail the lint, edit them or
-  run `praetorctl adopt --force`.
+  contract to its decoded values, under `--force` too
+  (`TestAdoptForceKeepsEditedOperatingContract` in
+  `internal/adopt/adopt_test.go`). `--force` changes one value: a `platform`
+  naming another repository than the identity, which audit rejects, is set to
+  the identity, and every other member stays (`paperclip.PatchPlatform`,
+  `TestAdoptForcePatchesOnlyHarnessPlatform`). When the kept values fail the
+  lint, edit them, or delete `.paperclip/harness.json` and rerun
+  `praetorctl adopt` to regenerate it.
 - With `adoption.decline: [paperclip]`, adoption never writes a harness, in
   either mode. An existing one stays byte for byte and the contract binds it.
   A declined step never writes, so `--force` does not refresh it: when a kept
@@ -684,9 +690,13 @@ who wrote it:
   `TestAdoptFreshManifestReportsUnboundSources` in
   `internal/adopt/harness_plan_test.go`).
 
-`praetorctl adopt --force` regenerates the harness and re-binds an existing
-contract to it. It keeps every declared input, including rows an operator
-added, and recomputes only `expected`, `not_applicable` and `sha256`. Adoption
+When adoption writes the harness, a refresh of earlier output or the `--force`
+platform patch, it re-binds an existing contract to the written bytes. It keeps
+every declared input, including rows an operator added, and recomputes only
+`expected`, `not_applicable` and `sha256`
+(`TestAdoptForcePlatformPatchRebindsExtendedContract`). A harness adoption
+keeps leaves the contract as declared, under `--force` too
+(`TestAdoptForceKeepsOperatorHarnessAndExtendedContract`). Adoption
 never re-blesses drift it did not cause: in both modes, a declared contract that
 fails its own gate before the run stops adoption with `existing
 register.sources fails its configured gate`. Fix the reported drift, then

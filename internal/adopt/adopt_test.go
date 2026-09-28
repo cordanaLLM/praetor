@@ -14,9 +14,11 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/cavemansource"
 	"github.com/cordanaLLM/praetor/internal/classify"
+	"github.com/cordanaLLM/praetor/internal/clientjson"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
+	"github.com/cordanaLLM/praetor/internal/paperclip"
 	"gopkg.in/yaml.v3"
 )
 
@@ -361,6 +363,223 @@ func TestAdoptCustomHarnessPreservesBytesAndBindsActualCoverage(t *testing.T) {
 	result, err := cavemansource.ExtractDeclared(t.Context(), repoPath, manifest.Register.Sources)
 	if err != nil || len(result.Sources) != 2 {
 		t.Fatalf("custom harness source gate: values=%d err=%v", len(result.Sources), err)
+	}
+}
+
+// editedContractRow replaces one row of the current operating contract, the kind of edit that
+// makes a harness operator-owned.
+const editedContractRow = "Timeout != failure. Re-check open PRs and CI before retry; prevent duplicate PRs."
+
+// TestAdoptForceKeepsEditedOperatingContract (#502) Positive: a harness whose operating
+// contract the operator edited is kept byte for byte under --force, rules.md included, and the
+// contract the operator re-bound to it stays bound, so the source gate and the platform check
+// audit runs stay green.
+func TestAdoptForceKeepsEditedOperatingContract(t *testing.T) {
+	repoPath := newTestRepo(t, "legacy")
+	mustWrite(t, filepath.Join(repoPath, manifestFile), legacyManifest)
+	if _, err := Adopt(t.Context(), sourceAdoptOptions(t, repoPath, false)); err != nil {
+		t.Fatal(err)
+	}
+	generated := mustRead(t, filepath.Join(repoPath, paperclipFile))
+	edited := strings.Replace(generated, "Timeout != failure. Re-check open PRs before retry; prevent duplicate PRs.", editedContractRow, 1)
+	if edited == generated {
+		t.Fatal("fixture precondition: the generated harness lacks the timeout row")
+	}
+	bound, err := managedRegisterSources(t.Context(), []byte(edited))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(repoPath, paperclipFile), edited)
+	mustWrite(t, filepath.Join(repoPath, manifestFile), legacyManifest+manifestSourcesYAML(t, bound))
+	rules := mustRead(t, filepath.Join(repoPath, ".paperclip", "rules.md"))
+	report, err := Adopt(t.Context(), sourceAdoptOptions(t, repoPath, true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := mustRead(t, filepath.Join(repoPath, paperclipFile)); got != edited {
+		t.Fatalf("--force rewrote the operator-owned harness:\n%s", got)
+	}
+	if got := mustRead(t, filepath.Join(repoPath, ".paperclip", "rules.md")); got != rules {
+		t.Fatalf("--force rewrote rules.md of a kept harness:\n%s", got)
+	}
+	if hasAction(report, paperclipFile, actionCreate) || hasAction(report, paperclipFile, actionReplace) ||
+		!strings.Contains(reportDetail(report, paperclipFile), "operator-owned Paperclip harness kept") {
+		t.Fatalf("kept harness misreported: %+v", report.ActionDetails)
+	}
+	if got := requirePassingSourceGate(t, repoPath, paperclipFile); got.SHA256 != bound.SHA256 {
+		t.Fatalf("contract re-bound away from the kept harness: %s, want %s", got.SHA256, bound.SHA256)
+	}
+	if h, err := paperclip.LoadHarness(filepath.Join(repoPath, paperclipFile)); err != nil || h.Platform != "acme/legacy" {
+		t.Fatalf("kept harness fails the audit platform check: %+v %v", h, err)
+	}
+}
+
+// TestAdoptInvalidHarnessStillErrors (#502) Negative: --force no longer bypasses the harness
+// check, so an existing harness that does not validate fails adoption in both modes, as a plain
+// run always did, and its bytes stay.
+func TestAdoptInvalidHarnessStillErrors(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		repoPath := newTestRepo(t, "legacy")
+		mustWrite(t, filepath.Join(repoPath, manifestFile), legacyManifest)
+		invalid := `{"version": 1, "platform": "acme/legacy",` + "\n"
+		mustWrite(t, filepath.Join(repoPath, paperclipFile), invalid)
+		_, err := Adopt(t.Context(), sourceAdoptOptions(t, repoPath, force))
+		if err == nil || !strings.Contains(err.Error(), "validate existing source coverage harness") {
+			t.Fatalf("force=%v: invalid harness accepted: %v", force, err)
+		}
+		if got := mustRead(t, filepath.Join(repoPath, paperclipFile)); got != invalid {
+			t.Fatalf("force=%v: invalid harness rewritten:\n%s", force, got)
+		}
+	}
+}
+
+// renamedHarness is an operator-owned harness naming the repository's old identity, with a
+// member this release does not know and an escaped value a released harness carries.
+const renamedHarness = `{
+  "version": 1,
+  "notes": "operator: keep this member",
+  "platform": "acme/renamed",
+  "operating_contract": ["result: custom contract."],
+  "agit_push_format": "git push custom",
+  "invariants": ["result: func LOC <= 75."]
+}
+`
+
+// decodedMembers returns the member names of a harness in document order and its values.
+func decodedMembers(t *testing.T, text string) ([]string, map[string]any) {
+	t.Helper()
+	object, err := clientjson.DecodeObject([]byte(text))
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := make([]string, 0, len(object))
+	for _, member := range object {
+		names = append(names, member.Name)
+	}
+	values := map[string]any{}
+	if err := yaml.Unmarshal([]byte(text), &values); err != nil {
+		t.Fatal(err)
+	}
+	return names, values
+}
+
+// TestAdoptForcePatchesOnlyHarnessPlatform (#502) Boundary: an operator-owned harness naming
+// another repository keeps its bytes on a plain run, with a warning naming --force; --force
+// then sets platform and nothing else, in the file's own line endings, reports the replace with
+// its delta, binds the contract to the patched bytes, and a second --force changes nothing.
+func TestAdoptForcePatchesOnlyHarnessPlatform(t *testing.T) {
+	for name, eol := range map[string]string{"LF": "\n", "CRLF": "\r\n"} {
+		t.Run(name, func(t *testing.T) {
+			repoPath := newTestRepo(t, "legacy")
+			original := strings.ReplaceAll(renamedHarness, "\n", eol)
+			mustWrite(t, filepath.Join(repoPath, manifestFile), legacyManifest)
+			mustWrite(t, filepath.Join(repoPath, paperclipFile), original)
+			plain, err := Adopt(t.Context(), sourceAdoptOptions(t, repoPath, false))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := mustRead(t, filepath.Join(repoPath, paperclipFile)); got != original ||
+				!strings.Contains(strings.Join(plain.Warnings, "\n"), `audit expects "acme/legacy". Re-run adopt with --force`) {
+				t.Fatalf("plain run: harness changed or mismatch not warned: %v", plain.Warnings)
+			}
+			forced, err := Adopt(t.Context(), sourceAdoptOptions(t, repoPath, true))
+			if err != nil {
+				t.Fatal(err)
+			}
+			patched := mustRead(t, filepath.Join(repoPath, paperclipFile))
+			assertOnlyPlatformChanged(t, original, patched, eol)
+			if !hasAction(forced, paperclipFile, actionReplace) ||
+				!strings.Contains(reportDetail(forced, paperclipFile), "Set platform of the operator-owned Paperclip harness to acme/legacy") {
+				t.Fatalf("platform patch not reported as replace: %+v", forced.ActionDetails)
+			}
+			requirePassingSourceGate(t, repoPath, paperclipFile)
+			again, err := Adopt(t.Context(), sourceAdoptOptions(t, repoPath, true))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := mustRead(t, filepath.Join(repoPath, paperclipFile)); got != patched || hasAction(again, paperclipFile, actionReplace) {
+				t.Fatalf("second --force changed the patched harness:\n%s", got)
+			}
+		})
+	}
+}
+
+// TestAdoptForceKeepsHarnessItCannotPatch (#502) Boundary: a harness the loader accepts but
+// PatchPlatform refuses (a duplicate member, which the order-keeping rewrite cannot carry) stays
+// byte for byte under --force, and a warning says the platform was not set. Its contract
+// selects only a hook, so no source extraction reads the harness first.
+func TestAdoptForceKeepsHarnessItCannotPatch(t *testing.T) {
+	repoPath := newTestRepo(t, "legacy")
+	duplicate := strings.Replace(renamedHarness, `"version": 1,`, `"version": 1, "notes": "first",`, 1)
+	mustWrite(t, filepath.Join(repoPath, paperclipFile), duplicate)
+	mustWrite(t, filepath.Join(repoPath, "hooks", "notify.sh"), "echo \"result: hook pass.\"\n")
+	inputs := []config.RegisterSourceInput{{Path: "hooks/notify.sh", Surface: config.SurfaceHooks,
+		Kind: "message", Format: config.SourceFormatShell}}
+	result, err := cavemansource.ExtractInputs(t.Context(), repoPath, inputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(repoPath, manifestFile), legacyManifest+manifestSourcesYAML(t, &config.RegisterSources{
+		Expected: result.Applicable, NotApplicable: result.NotApplicable, SHA256: result.SHA256, Inputs: inputs}))
+	report, err := Adopt(t.Context(), sourceAdoptOptions(t, repoPath, true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := mustRead(t, filepath.Join(repoPath, paperclipFile)); got != duplicate || hasAction(report, paperclipFile, actionReplace) {
+		t.Fatalf("unpatchable harness rewritten:\n%s", got)
+	}
+	if !strings.Contains(strings.Join(report.Warnings, "\n"), "platform not checked or set, harness kept as written") {
+		t.Fatalf("unpatchable harness not warned: %v", report.Warnings)
+	}
+}
+
+// assertOnlyPlatformChanged holds patched to original with only platform set to acme/legacy:
+// same members in the same order, same decoded values, same line-ending style.
+func assertOnlyPlatformChanged(t *testing.T, original, patched, eol string) {
+	t.Helper()
+	beforeNames, before := decodedMembers(t, original)
+	afterNames, after := decodedMembers(t, patched)
+	if after["platform"] != "acme/legacy" {
+		t.Fatalf("platform not set: %v", after["platform"])
+	}
+	delete(before, "platform")
+	delete(after, "platform")
+	if !reflect.DeepEqual(beforeNames, afterNames) || !reflect.DeepEqual(before, after) {
+		t.Fatalf("patch changed more than platform:\n%s", patched)
+	}
+	if strings.Count(patched, eol) != strings.Count(patched, "\n") {
+		t.Fatalf("patch changed the line endings (%q):\n%q", eol, patched)
+	}
+}
+
+// TestAdoptForceKeepsDeletedRulesAbsent (#502) Boundary: --force no longer recreates a rules.md
+// the operator deleted, beside the current harness (verified, nothing written) and beside a
+// released harness it refreshes (PriorState.Rules).
+func TestAdoptForceKeepsDeletedRulesAbsent(t *testing.T) {
+	rulesPath := func(repoPath string) string { return filepath.Join(repoPath, ".paperclip", "rules.md") }
+	current := newTestRepo(t, "legacy")
+	mustWrite(t, filepath.Join(current, manifestFile), legacyManifest)
+	if _, err := Adopt(t.Context(), sourceAdoptOptions(t, current, false)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(rulesPath(current)); err != nil {
+		t.Fatal(err)
+	}
+	released := newTestRepo(t, "legacy")
+	mustWrite(t, filepath.Join(released, manifestFile), legacyManifest)
+	mustWrite(t, filepath.Join(released, paperclipFile), releasedHarness(t, "harness.json.golden"))
+	for name, repoPath := range map[string]string{"current": current, "released": released} {
+		report, err := Adopt(t.Context(), sourceAdoptOptions(t, repoPath, true))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if _, err := os.Stat(rulesPath(repoPath)); !os.IsNotExist(err) {
+			t.Fatalf("%s: --force recreated the deleted rules.md: %v", name, err)
+		}
+		if hasAction(report, paperclipFile, actionCreate) {
+			t.Fatalf("%s: existing harness reported as created: %+v", name, report.ActionDetails)
+		}
+		requirePassingSourceGate(t, repoPath, paperclipFile)
 	}
 }
 

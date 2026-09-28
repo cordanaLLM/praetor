@@ -3,9 +3,11 @@ package adopt
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/gating"
 	"github.com/cordanaLLM/praetor/internal/paperclip"
@@ -162,6 +164,9 @@ func reconcileLabels(ctx context.Context, s *adoptSession) error {
 	return err
 }
 
+// reconcilePaperclip leaves the harness planHarness planned. It writes a synthesis only where
+// none exists or the existing one is unmodified earlier output. An operator-owned harness is
+// kept, under --force too; --force sets only a platform naming another repository.
 func reconcilePaperclip(ctx context.Context, s *adoptSession) error {
 	plan, err := planHarness(ctx, s)
 	if err != nil {
@@ -171,8 +176,11 @@ func reconcilePaperclip(ctx context.Context, s *adoptSession) error {
 		s.report.recordSkipped(paperclipFile, unresolvedHarnessNote(plan.onDisk))
 		return nil
 	}
+	if plan.patched() {
+		return s.patchHarnessPlatform(ctx, plan)
+	}
 	if plan.write == nil {
-		s.report.recordReconciled(paperclipFile, "Existing Paperclip agent runtime harness verified present")
+		s.recordKeptHarness(plan)
 		return nil
 	}
 	if !s.opts.DryRun {
@@ -197,6 +205,46 @@ func unresolvedHarnessNote(onDisk bool) string {
 	}
 	return action + ": its platform needs repository.owner and repository.name in " + manifestFile +
 		" or an origin remote naming <owner>/<repo>; set them, or add the remote, and re-run"
+}
+
+// patchHarnessPlatform writes the operator-owned harness with only its platform set, bound to
+// the bytes the plan read, and records it as replaced with its line delta and backup
+// (replaceExisting). rules.md is not touched: it is generated text audit does not verify, so it
+// keeps whatever heading it has.
+func (s *adoptSession) patchHarnessPlatform(ctx context.Context, plan harnessPlan) error {
+	return s.replaceExisting(ctx, replacement{
+		rel: paperclipFile, before: plan.owned, after: plan.data,
+		detail: "Set platform of the operator-owned Paperclip harness to " + plan.platform +
+			" (--force); every other value kept, .paperclip/rules.md untouched",
+		publish: func(ctx context.Context) error {
+			options := contextopt.ReplaceOptions{Expected: plan.owned, Exists: true, Mode: filePerm}
+			if err := contextopt.ReplaceSnapshotIn(ctx, s.repoPath, filepath.FromSlash(paperclipFile), plan.data, options); err != nil {
+				return fmt.Errorf("set paperclip harness platform: %w", err)
+			}
+			return nil
+		},
+	})
+}
+
+// recordKeptHarness reports an existing harness this run leaves as it is: verified when it is
+// the current synthesis, kept when it is operator-owned. A kept harness whose platform names
+// another repository fails audit, so a plain run warns with the --force that sets it, and a
+// --force run that could not set it warns with the reason.
+func (s *adoptSession) recordKeptHarness(plan harnessPlan) {
+	if plan.owned == nil {
+		s.report.recordReconciled(paperclipFile, "Existing Paperclip agent runtime harness verified present")
+		return
+	}
+	s.report.recordReconciled(paperclipFile, "Existing operator-owned Paperclip harness kept as written: "+
+		"it is neither the current contract nor unmodified earlier Praetor output, so --force keeps it too; "+
+		"delete it and re-run adopt to regenerate it")
+	if plan.platform != "" {
+		s.report.addWarning("%s: platform names another repository; audit expects %q. "+
+			"Re-run adopt with --force to set platform and keep every other value", paperclipFile, plan.platform)
+	}
+	if plan.unpatched != "" {
+		s.report.addWarning("%s: platform not checked or set, harness kept as written: %s", paperclipFile, plan.unpatched)
+	}
 }
 
 func refreshedHarnessNote(rules bool) string {

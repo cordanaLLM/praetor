@@ -1,0 +1,4 @@
+type: fixed
+title: adopt --force keeps an operator-owned Paperclip harness byte for byte and binds register.sources to it, sets only a platform naming another repository (reported as replace with a backup), no longer recreates a deleted .paperclip/rules.md, and fails on an invalid harness as a plain run does; delete .paperclip/harness.json and re-run adopt to regenerate it
+issue: "#502"
+breaking: true

@@ -81,6 +81,16 @@ type harnessPlan struct {
 	// unresolved reports a run without a repository identity: the harness platform names the
 	// repository, so none is synthesized and an existing harness stays as it is (BUG-852).
 	unresolved bool
+	// owned holds the bytes of an operator-owned harness, one that is neither the current
+	// synthesis nor unmodified earlier output. Adoption keeps it, under --force too (#502):
+	// data equals owned unless --force set its platform (patched).
+	owned []byte
+	// platform is the platform the current synthesis names when an operator-owned harness names
+	// another: the value --force sets, which a plain run only reports.
+	platform string
+	// unpatched says why --force could not set the platform of an operator-owned harness
+	// (paperclip.PatchPlatform); the harness then stays as written.
+	unpatched string
 }
 
 // absent reports a harness that neither exists nor is written by this run: the paperclip
@@ -88,6 +98,18 @@ type harnessPlan struct {
 // there is nothing to bind register.sources to.
 func (p harnessPlan) absent() bool {
 	return !p.onDisk && p.write == nil
+}
+
+// patched reports an operator-owned harness whose platform this --force run sets: data holds
+// the patched bytes it writes over owned.
+func (p harnessPlan) patched() bool {
+	return p.owned != nil && !bytes.Equal(p.data, p.owned)
+}
+
+// writes reports whether this run writes harness bytes, a synthesis or a platform patch, so a
+// declared register.sources contract has to follow them.
+func (p harnessPlan) writes() bool {
+	return p.write != nil || p.patched()
 }
 
 func planHarness(ctx context.Context, s *adoptSession) (harnessPlan, error) {
@@ -106,14 +128,41 @@ func planHarness(ctx context.Context, s *adoptSession) (harnessPlan, error) {
 	if err != nil {
 		return harnessPlan{}, err
 	}
-	if !exists || s.opts.Force {
-		return harnessPlan{data: fresh, write: synthesized, rules: true, onDisk: exists}, nil
+	if !exists {
+		return harnessPlan{data: fresh, write: synthesized, rules: true}, nil
 	}
 	existing, err := existingHarness(ctx, path)
 	if err != nil || bytes.Equal(existing, fresh) {
 		return harnessPlan{data: existing, onDisk: true}, err
 	}
-	return planEarlierHarness(ctx, s.repoPath, existing, synthesized, fresh)
+	plan, err := planEarlierHarness(ctx, s.repoPath, existing, synthesized, fresh)
+	if err != nil || plan.owned == nil {
+		return plan, err
+	}
+	return planOwnedHarness(plan, synthesized.Platform, s.opts.Force), nil
+}
+
+// planOwnedHarness compares the platform of an operator-owned harness with the one the current
+// synthesis names, the value audit requires. --force sets a differing platform and nothing
+// else (paperclip.PatchPlatform); a plain run keeps the bytes and records the platform so the
+// paperclip step can say what --force would set. A harness PatchPlatform cannot decode stays
+// as written either way, and under --force the reason is recorded.
+func planOwnedHarness(plan harnessPlan, platform string, force bool) harnessPlan {
+	patched, changed, err := paperclip.PatchPlatform(plan.owned, platform)
+	if err != nil {
+		if force {
+			plan.unpatched = err.Error()
+		}
+		return plan
+	}
+	if !changed {
+		return plan
+	}
+	plan.platform = platform
+	if force {
+		plan.data = patched
+	}
+	return plan
 }
 
 // keptHarnessPlan never plans a write. A declined paperclip step does not run, and a run
@@ -148,7 +197,9 @@ func synthesizeHarness(ctx context.Context, repoPath string, facts hisscatalog.F
 }
 
 // planEarlierHarness refreshes an existing harness only when it is unmodified output of an
-// earlier release; any other harness is operator-owned and stays byte for byte.
+// earlier release, and rewrites rules.md only when it exists (PriorState.Rules), so one the
+// operator removed stays removed. Any other harness is operator-owned: --force does not
+// regenerate it (planOwnedHarness); deleting it and re-running adopt does.
 func planEarlierHarness(ctx context.Context, repoPath string, existing []byte, synthesized *paperclip.Harness,
 	fresh []byte,
 ) (harnessPlan, error) {
@@ -159,7 +210,7 @@ func planEarlierHarness(ctx context.Context, repoPath string, existing []byte, s
 	if prior.Generated {
 		return harnessPlan{data: fresh, write: synthesized, refresh: true, rules: prior.Rules, onDisk: true}, nil
 	}
-	return harnessPlan{data: existing, onDisk: true}, nil
+	return harnessPlan{data: existing, onDisk: true, owned: existing}, nil
 }
 
 func existingHarness(ctx context.Context, path string) ([]byte, error) {
