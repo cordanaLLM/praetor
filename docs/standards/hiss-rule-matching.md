@@ -59,6 +59,38 @@ Test code and function bodies are both brace-delimited items, and one tracker (`
 
 `internal/hiss/rust_scope_test.go` and `internal/hiss/abort_policy_test.go` pin each case.
 
+## Rust: where a SAFETY proof attaches
+
+HISS-09 follows the two clippy lints a Rust workspace already runs, `undocumented_unsafe_blocks`
+and `missing_safety_doc`, so code both accept is not reported. `checkRustUnsafe` in
+`internal/hiss/rust_safety.go` decides each line:
+
+- **An unsafe block** is proven by a `SAFETY:` comment on its line, in the comment block directly
+  above it, or in the comment block directly above the first line of its statement. rustfmt wraps a
+  long `let v = unsafe { .. };` after the `=` and leaves the comment above the `let`; clippy accepts
+  that by default (`accept-comment-above-statement`). A line continues the statement above it while
+  a parenthesis or bracket is open, after a line ending in an operator such as `=`, or when it starts
+  a method chain (`.map(..)`) or a binary operator.
+- **A statement-level proof stops** where clippy's does. It does not reach the next match arm, a
+  block in the head of an `if`, `match`, `while` or `for` statement, a struct literal field, a block
+  inside a brace opened earlier on its line, or the next statement.
+- **An unsafe fn** is a declaration, not a block. It is proven by a rustdoc `# Safety` section (any
+  heading level; also `SAFETY` and `Implementation safety`, from `///`, `/** */` or `#[doc = ".."]`,
+  with attributes between the docs and the header) or by a `SAFETY:` comment above it. Every
+  visibility and qualifier is held to that alike, and so is a method declared in a trait. A method
+  implementing a trait is exempt, because the trait declaration documents its contract. A local
+  `unsafe fn` inside such a method is not. A pointer type such as `unsafe fn(u8)` names no function.
+
+Three spellings are stricter than clippy on purpose: the marker must be the upper-case `SAFETY:`,
+a blank line detaches a comment from the line below it, and the comment block searched is at most
+eight lines. Two shapes clippy accepts are still reported: a block in a statement that only
+continues after a closing brace (`}, unsafe { .. });`), because the statement walk restarts inside
+every brace a line leaves open, and an undocumented foreign function declared `unsafe fn` inside an
+`extern` block, because the scanner does not track `extern` blocks.
+
+`internal/hiss/rust_safety_test.go` pins each case, and the fixtures under
+`.config/hiss/testdata/HISS-09/rust/` replay them in both directions.
+
 ## Python: the entry point follows logical lines
 
 The abort policy allows `sys.exit` inside the top-level `if __name__ == "__main__":` block and the

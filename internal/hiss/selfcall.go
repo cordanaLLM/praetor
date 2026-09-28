@@ -409,6 +409,16 @@ func (s *rustBlockScope) kind() rustBodyKind {
 	return rustFreeBody
 }
 
+// member returns the kind of the body a line at the current depth stands directly in. A line
+// inside a function or block nested in that body is not a member of it: an item declared there
+// is local, so the result is rustFreeBody.
+func (s *rustBlockScope) member() rustBodyKind {
+	if n := len(s.frames); n > 0 && s.frames[n-1].depth == s.depth {
+		return s.frames[n-1].kind
+	}
+	return rustFreeBody
+}
+
 func (s *rustBlockScope) observe(code string) {
 	if !s.pending && rustImplHeader.MatchString(strings.TrimSpace(code)) {
 		s.pending, s.header, s.nesting = true, "", rustHeaderNesting{}

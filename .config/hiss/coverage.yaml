@@ -256,10 +256,21 @@ rules:
     coverage:
       - language: rust
         state: partial
-        mechanism: internal/hiss rules.go rustUnsafeBlock with hasSafetyComment
+        mechanism: >-
+          internal/hiss rust_safety.go checkRustUnsafe: rustUnsafeBlock and rustUnsafeFnHeader,
+          proven by hasSafetyComment on the line, above it or above the first line of its
+          statement (rustProofScope), or for an unsafe fn by a rustdoc # Safety section
         rationale: >-
-          An unsafe block without a preceding SAFETY proof is reported, and one with a proof is
-          not. Whether the proof is truthful is not decided by any check.
+          Follows clippy's undocumented_unsafe_blocks and missing_safety_doc. An unsafe block
+          without a SAFETY proof on its line, directly above it or directly above the statement
+          rustfmt wrapped it in (a let, an assignment, call arguments, a method chain) is
+          reported; a proof above a match, an if condition, a struct literal field or the
+          previous statement does not reach it. An unsafe fn of any visibility or qualifier
+          without a rustdoc # Safety section or a SAFETY comment is reported, including a trait
+          method declaration; a method implementing a trait is not, since the trait documents the
+          contract. The marker must be upper-case SAFETY: and a blank line detaches it, both
+          stricter than clippy. unsafe impl, unsafe trait and unsafe extern blocks are not
+          checked (gap fixtures). Whether a proof is truthful is not decided by any check.
       - language: go
         state: partial
         mechanism: >-

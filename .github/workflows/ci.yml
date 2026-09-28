@@ -344,7 +344,7 @@ jobs:
         id: changed
         uses: ./.github/actions/changed-paths
         with:
-          paths: "docs/presets .github/workflows/ci.yml internal/seo cmd/standardsctl/seo.go tools/figures/*.mjs"
+          paths: "docs/presets .github/workflows/ci.yml internal/seo cmd/standardsctl/seo.go tools/figures"
 
       - name: Setup Python Toolchain
         if: steps.changed.outputs.run == 'true'
@@ -399,19 +399,6 @@ jobs:
           node tools/figures/build.mjs site --config docs/presets/mkdocs/mkdocs.yml \
             --docs docs/presets/mkdocs/docs --site "$RUNNER_TEMP/preset-mkdocs-root"
 
-      - name: Build Starlight Preset From Its Lock
-        if: steps.changed.outputs.run == 'true'
-        working-directory: docs/presets/starlight
-        run: |
-          npm ci --no-audit --no-fund
-          unset DOCS_SITE_URL
-          npm run build
-          mv dist "$RUNNER_TEMP/preset-starlight-unset"
-          DOCS_SITE_URL="$PRESET_ROOT_URL" npm run build
-          mv dist "$RUNNER_TEMP/preset-starlight-root"
-          DOCS_SITE_URL="$PRESET_SUBPATH_URL" npm run build
-          mv dist "$RUNNER_TEMP/preset-starlight-subpath"
-
       - name: Setup Go Toolchain
         if: steps.changed.outputs.run == 'true'
         uses: actions/setup-go@v7
@@ -425,6 +412,43 @@ jobs:
         with:
           job: docs-presets
           go-version: '1.27'
+
+      # The Starlight preset imports the figure integration from tools/figures/, which `praetorctl
+      # adopt` writes with docs:seo-portal, so it is built as an adopter builds it, never in place
+      # (docs/adr/0016-figures-for-adopters.md, section 9): a temporary repository adopted with that
+      # facet, the preset copied into its root, its example figure rendered and checked by the Node
+      # engine, then `npm ci` from the preset's lock and the three builds. After each build the Node
+      # site check and the Chromium smoke test run under the base that build used, so a figure that
+      # did not render, an image or loader URL outside /preset/, or a player that does not mount
+      # fails the job. smoke.mjs resolves --site against this checkout, so it gets an absolute path.
+      - name: Build Starlight Preset In An Adopter Fixture
+        if: steps.changed.outputs.run == 'true'
+        run: |
+          praetor="$PWD"
+          fixture="$RUNNER_TEMP/preset-starlight-fixture"
+          go build -o "$RUNNER_TEMP/praetorctl" ./cmd/standardsctl
+          npm ci --prefix tools/figures --ignore-scripts --no-audit --no-fund
+          npx --prefix tools/figures playwright install --with-deps chromium
+          git init -q "$fixture"
+          "$RUNNER_TEMP/praetorctl" adopt --path "$fixture" --facets docs:seo-portal --lock-source-root "$praetor"
+          cp -R docs/presets/starlight/. "$fixture/"
+          cd "$fixture"
+          node tools/figures/build.mjs build
+          node tools/figures/build.mjs check
+          node tools/figures/build.mjs sources --config astro.config.mjs --docs src/content/docs
+          npm ci --no-audit --no-fund
+          verify() {
+            node tools/figures/build.mjs site --config astro.config.mjs --docs src/content/docs --site dist --base "$2"
+            node "$praetor/tools/figures/smoke.mjs" --site "$fixture/dist" --base "$2" --require-browser
+            mv dist "$RUNNER_TEMP/preset-starlight-$1"
+          }
+          unset DOCS_SITE_URL
+          npm run build
+          verify unset /
+          DOCS_SITE_URL="$PRESET_ROOT_URL" npm run build
+          verify root /
+          DOCS_SITE_URL="$PRESET_SUBPATH_URL" npm run build
+          verify subpath /preset/
 
       # The presets ship placeholder identities (example-org/example-repo, PlaceholderLang)
       # for an adopter to replace, so --allow-placeholders; every other finding fails. The

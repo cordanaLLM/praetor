@@ -3,12 +3,13 @@
 // helpers (smoke.mjs): positive, negative and boundary cases for every validation rule, the derived
 // text, the figure markup and its escaper, the engine hash, the stale-output check, the committed
 // player files and their budget, the spec the loader reads from each SVG, the built-figure marker and
-// the autoplay assertion. The figure checks (checks.mjs) have their own tests in checks.test.mjs.
+// the autoplay assertion, and the Starlight preset's example figure where an adopter copies it. The
+// figure checks (checks.mjs) have their own tests in checks.test.mjs.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import {
   ENGINE_FILES, LIMITS, SLOTS, capLines, decorate, describe, describeEdges, escapeHtml, markup, normalizedEdges, render,
   sha256, svgSize, validate, walkLayout,
@@ -321,6 +322,48 @@ test('an output without its spec is still checked; a non-spec file alone is not 
   const { result, output } = await capture(() => main(['check'], dir));
   assert.equal(result, 1);
   assert.match(output, /docs\/assets\/figures\/gone\.json has no spec/);
+}));
+
+/** The Starlight preset, which an adopter copies into the repository root beside tools/figures/. */
+const STARLIGHT_PRESET = join(ROOT, 'docs', 'presets', 'starlight');
+const PRESET_INTEGRATION = "import figures from './tools/figures/astro.mjs';";
+
+/** A repository root with the engine and a copy of the Starlight preset, without installed packages or build output. */
+function starlightRepo(dir) {
+  copyEngine(dir);
+  cpSync(STARLIGHT_PRESET, dir, { recursive: true, filter: (path) => !['node_modules', 'dist', '.astro'].includes(basename(path)) });
+}
+
+/** `sources` over the preset's configuration and docs collection in `dir`. */
+const presetSources = (dir) => main(['sources', '--root', dir, '--config', 'astro.config.mjs', '--docs', join('src', 'content', 'docs')]);
+
+// Positive: the preset names the integration, and its example figure renders and passes check and
+// sources against the preset's own configuration and pages. Boundary: every evidence anchor names a
+// file the preset ships, so a fresh copy passes before the adopter writes any code, and the text a
+// reader sees names no project.
+test('the Starlight preset renders its example figure and passes check and sources where an adopter copies it', () => withTempDir(async (dir) => {
+  starlightRepo(dir);
+  assert.ok(readFileSync(join(dir, 'astro.config.mjs'), 'utf8').includes(PRESET_INTEGRATION));
+  const { result: codes, output } = await capture(async () => [await main(['build'], dir), await main(['check'], dir), await presetSources(dir)]);
+  assert.deepEqual(codes, [0, 0, 0], output);
+  assert.deepEqual(listSpecs(dir), ['site-build']);
+  const meta = JSON.parse(readFileSync(join(dir, OUT_DIR, 'site-build.json'), 'utf8'));
+  for (const anchor of meta.evidence) assert.ok(existsSync(join(STARLIGHT_PRESET, anchor.split(':')[0])), anchor);
+  assert.doesNotMatch([meta.title, meta.alt, ...meta.text].join('\n'), /praetor/i);
+}));
+
+// Negative: without the integration the example page's figure block is a kind the site does not
+// render, and without a file an evidence anchor names the anchor fails; sources reports both.
+test('the Starlight preset fails sources without the figures integration or a file its evidence names', () => withTempDir(async (dir) => {
+  starlightRepo(dir);
+  await capture(() => main(['build'], dir));
+  const config = join(dir, 'astro.config.mjs');
+  writeFileSync(config, readFileSync(config, 'utf8').replace(PRESET_INTEGRATION, '').replace('figures(),', ''));
+  rmSync(join(dir, 'src', 'content.config.ts'));
+  const { result, output } = await capture(() => presetSources(dir));
+  assert.equal(result, 1);
+  assert.match(output, /figures\.mdx: ```figure fence, but the configuration does not enable figure diagrams/);
+  assert.match(output, /evidence 'src\/content\.config\.ts:docsLoader' names no file in the repository/);
 }));
 
 test('an unknown command is a usage error, bundle included', async () => {
