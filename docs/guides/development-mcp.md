@@ -361,6 +361,13 @@ of a success mark. A dry run against a fresh
 repository without `source_root` shows both: the DevContainer pillar reads
 `warned` and the result is `[INCOMPLETE]`.
 
+A dry run also prints the branch ruleset preview the CLI prints: the action
+(`create`, `update`, `unchanged` or `keep`), its note, and the rendered ruleset or
+the diff. Both print `adopt.FilePreview.Text` (`internal/adopt/preview.go`;
+`TestFormatAdoptMCPResultPrintsPreviews` in
+`cmd/standards-mcp/report_renderers_test.go`). The
+[adoption guide](../adoption.md#dry-run-ruleset-preview) explains the actions.
+
 `standards_version_audit` lists the workflow-action inventory that
 `praetorctl bump audit` prints, rendered by the same
 `bump.FormatActionsInventory`, and counts it in its summary line

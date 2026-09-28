@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -45,6 +46,25 @@ type FilePreview struct {
 	Diff string `json:"diff,omitempty"`
 	// Note says what the rendering was derived from, or why the file could not be compared.
 	Note string `json:"note,omitempty"`
+}
+
+// Text is the preview as the CLI and the MCP adopt tool both print it: a heading naming the path
+// and the action, the note, then the rendered file for a create or the diff for an update or a
+// keep. An unchanged file prints the heading alone.
+func (p FilePreview) Text() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n--- Preview: %s (%s) ---\n", p.Path, p.Action)
+	if p.Note != "" {
+		fmt.Fprintf(&b, "  %s\n", p.Note)
+	}
+	body := p.Content
+	if body == "" {
+		body = p.Diff
+	}
+	if body != "" {
+		b.WriteString(strings.TrimSuffix(body, "\n") + "\n")
+	}
+	return b.String()
 }
 
 // scaffoldPreviewed is scaffoldFile for a file a dry run previews. A real run scaffolds sc. A

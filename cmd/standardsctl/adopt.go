@@ -336,22 +336,12 @@ func printPlannedFiles(rep *adopt.AdoptReport) {
 	}
 }
 
-// printAdoptPreviews prints what a dry run found each previewed file would come to: the action
-// and its note, then the rendered file for a create or the diff from the file on disk for an
-// update or a keep. A real run records no previews and prints nothing here.
+// printAdoptPreviews prints what a dry run found each previewed file would come to
+// (adopt.FilePreview.Text, the text the MCP adopt tool prints too). A real run records no
+// previews and prints nothing here.
 func printAdoptPreviews(previews []adopt.FilePreview) {
 	for _, p := range previews {
-		fmt.Printf("\n--- Preview: %s (%s) ---\n", p.Path, p.Action)
-		if p.Note != "" {
-			fmt.Printf("  %s\n", p.Note)
-		}
-		body := p.Content
-		if body == "" {
-			body = p.Diff
-		}
-		if body != "" {
-			fmt.Println(strings.TrimSuffix(body, "\n"))
-		}
+		fmt.Print(p.Text())
 	}
 }
 

@@ -89,3 +89,19 @@ func TestAdoptDryRun_Boundary_RealRunRecordsNoPreview(t *testing.T) {
 		t.Fatalf("the real run did not write the ruleset: %v", report.CreatedFiles)
 	}
 }
+
+// A preview's text names the path and the action, then the note and the rendered file for a
+// create; a keep prints its diff; an unchanged file prints the heading alone.
+func TestFilePreviewText_3D(t *testing.T) {
+	create := FilePreview{Path: "r.json", Action: PreviewCreate, Content: "{\"a\": 1}\n", Note: "0 required status checks"}
+	if got, want := create.Text(), "\n--- Preview: r.json (create) ---\n  0 required status checks\n{\"a\": 1}\n"; got != want {
+		t.Fatalf("create text = %q, want %q", got, want)
+	}
+	keep := FilePreview{Path: "r.json", Action: PreviewKeep, Diff: "--- a/r.json\n+++ b/r.json"}
+	if got, want := keep.Text(), "\n--- Preview: r.json (keep) ---\n--- a/r.json\n+++ b/r.json\n"; got != want {
+		t.Fatalf("keep text = %q, want %q", got, want)
+	}
+	if got, want := (FilePreview{Path: "r.json", Action: PreviewUnchanged}).Text(), "\n--- Preview: r.json (unchanged) ---\n"; got != want {
+		t.Fatalf("unchanged text = %q, want %q", got, want)
+	}
+}

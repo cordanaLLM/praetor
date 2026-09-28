@@ -570,8 +570,8 @@ exclusion is therefore a gate failure, not an invisible reduction in coverage.
 register:
   sources:
     expected: 245
-    not_applicable: 123
-    sha256: "sha256:6ffdd1729cb87022b29fb28d78efb413ebe3c9ab3ef00764806e5996b3efb62f"
+    not_applicable: 124
+    sha256: "sha256:edc5c4200036587e3fc37f7b84c8e72bda42064b8606a8bc7e7372cf92079dab"
     inputs:
       - path: ".paperclip/harness.json"
         surface: prompts

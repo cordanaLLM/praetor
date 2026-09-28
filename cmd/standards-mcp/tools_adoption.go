@@ -169,6 +169,10 @@ func formatAdoptMCPResult(r *adopt.AdoptReport, dryRun bool) mcpGovernedText {
 	for _, f := range r.ReconciledFiles {
 		sb.Template("  ~ %s\n", f)
 	}
+	for _, preview := range r.Previews {
+		// The adopt package's shared preview text, the same one the CLI prints for a dry run.
+		sb.External(preview.Text(), mcpTextShared)
+	}
 	sb.Template("Governance Pillars:\n")
 	for _, pillar := range outcomeReport.Pillars() {
 		// The adopt package's shared pillar line, the same one the CLI prints.
