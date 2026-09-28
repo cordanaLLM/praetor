@@ -114,7 +114,7 @@ editors/jetbrains/inspectionProfiles/standards.xml text eol=lf
 tools/figures/third_party/interfig/upstream/** -text
 
 # docs/assets/figures/<slug>.json binds each figure to the SHA-256 of its spec, the engine
-# files (ENGINE_FILES in tools/figures/core.mjs, read by tools/figures/docs_diagrams.py sources)
+# files (ENGINE_FILES in tools/figures/core.mjs, hashed by `node tools/figures/build.mjs sources`)
 # and both SVGs. A CRLF checkout would change those bytes and report every figure stale on
 # Windows only.
 tools/figures/core.mjs text eol=lf

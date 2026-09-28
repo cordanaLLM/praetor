@@ -2,7 +2,8 @@
 // (bundle.mjs), the keyboard shim (keyboard.ts) and the smoke test's pure helpers (smoke.mjs):
 // positive, negative and boundary cases for every validation rule, the derived text, the figure
 // markup and its escaper, the engine hash, the stale-output check, the bundle budget, the
-// built-figure marker and the autoplay assertion.
+// built-figure marker and the autoplay assertion. The figure checks (checks.mjs) have their own
+// tests in checks.test.mjs.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -19,7 +20,7 @@ import { nextTab } from './keyboard.ts';
 import { holdsFigure, stepAdvanced } from './smoke.mjs';
 
 const VENDOR = JSON.parse(readFileSync(join(ROOT, VENDOR_JSON), 'utf8'));
-/** The markup fixture scripts/test_docs_diagrams.py replays against the Python slot filler. */
+/** The markup fixture checks.test.mjs and tools/figures/test_mkdocs_hook.py replay against the slot fillers. */
 const MARKUP = JSON.parse(readFileSync(join(ROOT, 'tools/figures/markup-fixtures.json'), 'utf8'));
 const count = (text, part) => text.split(part).length - 1;
 const box = (id, label = id.toUpperCase()) => ({ id, label });
@@ -300,7 +301,8 @@ test('an unknown command is a usage error, bundle included', async () => {
     assert.equal(await main(['bundle']), 2);
     assert.equal(await main(['check', 'extra']), 2);
   });
-  assert.match(errors[0], /usage: node build\.mjs build\|check$/);
+  assert.equal(errors.length, 4);
+  for (const error of errors) assert.match(error, /^usage: node build\.mjs build\|check$/m);
 });
 
 test('the engine hash covers the vendored render files and core.mjs, never the wrapper', () => {
@@ -316,8 +318,9 @@ test('the engine hash covers the vendored render files and core.mjs, never the w
       cpSync(join(ROOT, rel), join(dir, rel));
     }
     const pristine = engineHash(dir);
-    // Editing the command-line wrapper or the bundler leaves every figure current.
+    // Editing the command-line wrapper, the checks or the bundler leaves every figure current.
     writeFileSync(join(dir, 'tools/figures/build.mjs'), '// edited wrapper\n');
+    writeFileSync(join(dir, 'tools/figures/checks.mjs'), '// edited checks\n');
     writeFileSync(join(dir, 'tools/figures/bundle.mjs'), '// edited bundler\n');
     assert.equal(engineHash(dir), pristine);
     // Editing the render core marks them stale.
@@ -332,8 +335,8 @@ function importsOf(file) {
   return [...text.matchAll(/(?:\bfrom\s+|\bimport\s*\(\s*|^import\s+)'([^']+)'/gm)].map((m) => m[1]);
 }
 
-test('build and check need Node only: the engine imports builtins and relative files, never a package', () => {
-  const engine = ['build.mjs', 'core.mjs', 'third_party/interfig/upstream/src/svg.ts',
+test('build and the checks need Node only: the engine imports builtins and relative files, never a package', () => {
+  const engine = ['build.mjs', 'checks.mjs', 'core.mjs', 'third_party/interfig/upstream/src/svg.ts',
     'third_party/interfig/upstream/src/geometry.ts', 'third_party/interfig/upstream/src/model.ts'];
   for (const file of engine) {
     const external = importsOf(file).filter((spec) => !spec.startsWith('node:') && !spec.startsWith('./'));
@@ -342,6 +345,7 @@ test('build and check need Node only: the engine imports builtins and relative f
     assert.deepEqual(runtime, [], `${file} imports ${runtime.join(', ')}`);
   }
   assert.ok(!importsOf('build.mjs').includes('./bundle.mjs'), 'build.mjs must not load the bundler');
+  assert.ok(!importsOf('checks.mjs').includes('./build.mjs'), 'checks.mjs must not import its command line back');
   // The bundler is the one module that loads esbuild, and it does so lazily.
   assert.ok(importsOf('bundle.mjs').includes('esbuild'));
 });

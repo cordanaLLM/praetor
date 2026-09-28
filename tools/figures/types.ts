@@ -81,7 +81,7 @@ export type PraetorProps = {
  * One documentation figure.
  *
  * - `alt` is one sentence of at most 125 characters.
- * - `evidence` lists `path:Symbol` anchors the figure was drawn from; `docs_diagrams.py sources`
+ * - `evidence` lists `path:Symbol` anchors the figure was drawn from; `build.mjs sources`
  *   fails when a path is missing or the symbol no longer occurs in it.
  * - `describe` adds lines to the derived text description.
  */

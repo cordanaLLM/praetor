@@ -9,9 +9,11 @@ name: Wiki Sync
       - 'docs/wiki/**'
       - '.github/workflows/wiki-sync.yml'
       - 'scripts/sync_github_wiki.sh'
-      # The sync renders figure fences from these (tools/figures/docs_diagrams.py portable --wiki).
+      # The sync renders figure fences from these (node tools/figures/build.mjs portable --wiki).
       - 'docs/assets/figures/**'
-      - 'tools/figures/docs_diagrams.py'
+      - 'tools/figures/build.mjs'
+      - 'tools/figures/checks.mjs'
+      - 'tools/figures/core.mjs'
   workflow_dispatch:
 
 permissions:
@@ -30,6 +32,13 @@ jobs:
         uses: actions/checkout@v7
         with:
           persist-credentials: false
+
+      # The sync renders figure fences with tools/figures/build.mjs, which needs Node 22.18 or
+      # later and no npm package.
+      - name: Setup Node Toolchain
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
 
       - name: Sync Wiki
         env:

@@ -14,8 +14,8 @@ site_author: Lusoris
 #
 # docs/presets/mkdocs/docs/ is the adopter preset's own docs_dir: its mkdocs.yml builds it (CI
 # docs-presets job) and keeps Mermaid, which this site no longer renders. The preset's README
-# stays in the navigation. tools/figures/docs_diagrams.py reads this list, so the root checks skip
-# the excluded pages exactly as MkDocs does.
+# stays in the navigation. The figure checks (tools/figures/checks.mjs) read this list, so the root
+# checks skip the excluded pages exactly as MkDocs does.
 exclude_docs: |
   presets/mkdocs/overrides/
   /figures/
@@ -25,9 +25,9 @@ exclude_docs: |
 # each ```figure fence into a <picture> of the committed SVGs and publishes and links
 # tools/figures/figures.css itself; the loader, built by `npm --prefix tools/figures run bundle`
 # before `mkdocs build`, mounts the player near the viewport. Without the bundle every figure still
-# shows its SVG. tools/figures/docs_diagrams.py reads this hooks entry to decide that ```figure
-# fences are enabled for this site. Figures are the only diagram kind here: no mermaid custom fence
-# is declared, so the checker fails a Mermaid fence.
+# shows its SVG. The figure checks (tools/figures/checks.mjs) read this hooks entry to decide that
+# ```figure fences are enabled for this site. Figures are the only diagram kind here: no mermaid
+# custom fence is declared, so the checks fail a Mermaid fence.
 hooks:
   - tools/figures/mkdocs_hook.py
 

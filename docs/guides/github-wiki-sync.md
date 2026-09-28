@@ -8,8 +8,10 @@ refreshes them. The `Wiki Sync` workflow only copies that already-generated
 regenerate-and-commit is still required to keep the published wiki current. The
 workflow triggers on a push to `main` that touches `docs/wiki/**`,
 `.github/workflows/wiki-sync.yml`, `scripts/sync_github_wiki.sh`,
-`docs/assets/figures/**` or `tools/figures/docs_diagrams.py`, and on manual
-`workflow_dispatch`; it does not run on every push.
+`docs/assets/figures/**` or the figure engine files the sync runs
+(`tools/figures/build.mjs`, `checks.mjs` and `core.mjs`), and on manual
+`workflow_dispatch`; it does not run on every push. The workflow sets up Node
+for that step; it needs no npm package.
 
 The generated portal is named after the repository's identity:
 `repository.owner`/`repository.name` in `.standards.yaml`, else the origin remote, with
@@ -40,7 +42,7 @@ diagram as a `figure` fence, and none carries Mermaid: `Home` names
 
 The wiki runs no JavaScript, so it cannot show the site's interactive figures.
 After copying the pages into the wiki clone, `scripts/sync_github_wiki.sh` runs
-`python3 -B tools/figures/docs_diagrams.py portable --wiki` on the copies. Each
+`node tools/figures/build.mjs portable --wiki` on the copies. Each
 `figure` fence becomes a `<figure>` holding a `<picture>` of the figure's
 animated and static SVGs on the published site, each with its own recorded
 width and height, with absolute URLs built from

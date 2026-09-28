@@ -80,7 +80,7 @@ up, or given a condition that could skip it on some legs.
 Every leg also runs the figure build check, the commands `make docs-figures-check` runs, since
 `make` is not on the Windows image: the locked `npm ci --prefix tools/figures --ignore-scripts`,
 the engine's tests and type check, `node tools/figures/build.mjs check`,
-`node tools/figures/bundle.mjs --check` and `tools/figures/docs_diagrams.py sources`. esbuild and
+`node tools/figures/bundle.mjs --check` and `node tools/figures/build.mjs sources`. esbuild and
 TypeScript arrive as per-platform npm optional dependencies, so the leg proves that the install
 works without install scripts on each OS, `check` proves that a rebuild there is byte-identical to
 the committed SVG and JSON, and `bundle.mjs --check` holds the player to its size budget. The hashed

@@ -5,14 +5,14 @@
 // and writes no file.
 //
 // Its bytes are hashed with the vendored render files (ENGINE_FILES), so an edit here marks every
-// committed figure stale. The command-line wrapper, build.mjs, is not hashed: editing it leaves the
-// figures current. `docs_diagrams.py sources` reads ENGINE_FILES out of this file.
+// committed figure stale. The command-line wrapper, build.mjs, and the checks, checks.mjs, are not
+// hashed: editing them leaves the figures current.
 import { createHash } from 'node:crypto';
 import { toSvg } from './third_party/interfig/upstream/src/svg.ts';
 
 /**
  * The files whose bytes decide what an SVG looks like, relative to the repository root.
- * `engineHash` in build.mjs and `docs_diagrams.py sources` hash this one list.
+ * `engineHash` in checks.mjs hashes this one list, for `build` and for `sources`.
  */
 export const ENGINE_FILES = [
   'tools/figures/third_party/interfig/upstream/src/svg.ts',

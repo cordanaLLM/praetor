@@ -1,13 +1,17 @@
 #!/usr/bin/env node
 // Renders this repository's documentation figures from docs/figures/<slug>.ts with the vendored
-// interfig engine under tools/figures/third_party/interfig/. It needs Node and no npm package.
+// interfig engine under tools/figures/third_party/interfig/, and checks them. It needs Node and no
+// npm package.
 //
-//   node tools/figures/build.mjs build   validate every spec, write docs/assets/figures/<slug>.{svg,static.svg,json}
-//   node tools/figures/build.mjs check   validate, render in memory, and compare the bytes with the committed files
+//   node tools/figures/build.mjs build      validate every spec, write docs/assets/figures/<slug>.{svg,static.svg,json}
+//   node tools/figures/build.mjs check      validate, render in memory, and compare the bytes with the committed files
+//   node tools/figures/build.mjs sources    check hashes, sizes, markup, spec/JSON pairs, fences, evidence and the README block
+//   node tools/figures/build.mjs site       after mkdocs build: every diagram fence became a diagram that resolves
+//   node tools/figures/build.mjs portable   render figures for READMEs and wiki pages, which run no JavaScript
 //
 // The render core is core.mjs; its bytes and the vendored render files make up the engine hash
-// recorded in every figure's JSON. This wrapper is not hashed, so editing it leaves the figures
-// current.
+// recorded in every figure's JSON. The checks are checks.mjs. Neither this wrapper nor the checks
+// are hashed, so editing them leaves the figures current.
 //
 // `toSvg` is imported from the vendored source directly. Upstream's scripts/figure-svg.mjs is not
 // called: it registers a module hook that Node 26 reports as deprecated (DEP0205), and it passes
@@ -17,14 +21,12 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { ENGINE_FILES, LIMITS, render, sha256, validate } from './core.mjs';
+import { parseArgs } from 'node:util';
+import { CheckError, OUT_DIR, REBUILD, ROOT, SPEC_DIR, checkSite, engineHash, portable, readText, siteUrl, sources } from './checks.mjs';
+import { LIMITS, render, sha256, validate } from './core.mjs';
 
-/** The repository root, two levels above this file; every path below is relative to it. */
-export const ROOT = fileURLToPath(new URL('../../', import.meta.url));
-export const SPEC_DIR = 'docs/figures';
-export const OUT_DIR = 'docs/assets/figures';
+export { OUT_DIR, REBUILD, ROOT, SPEC_DIR, engineHash };
 export const VENDOR_JSON = 'tools/figures/third_party/interfig/vendor.json';
-export const REBUILD = 'node tools/figures/build.mjs build';
 const TIMEOUT_MS = 120_000;
 const SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -39,12 +41,6 @@ export async function withTimeout(promise, ms, what) {
   } finally {
     clearTimeout(timer);
   }
-}
-
-/** sha256sum-style manifest of ENGINE_FILES, hashed: one value that changes when any of them does. */
-export function engineHash(root = ROOT) {
-  const lines = ENGINE_FILES.map((rel) => `${sha256(readFileSync(join(root, rel)))}  ${rel}\n`);
-  return sha256(lines.join(''));
 }
 
 /** Spec slugs under docs/figures, sorted, each a lowercase kebab-case name. */
@@ -122,18 +118,85 @@ async function runCheck(root) {
   return [];
 }
 
-const COMMANDS = { build: runBuild, check: runCheck };
+/** Prints the success line when there are no findings; returns the findings. */
+function report(errors, success) {
+  if (errors.length === 0) console.log(`figures: ${success}`);
+  return errors;
+}
 
-/** Runs one command against the repository at `root`: exit status 0, 1 on findings, 2 on misuse. */
+function runSources(root, { values }) {
+  const repository = resolve(values.root ?? root);
+  const errors = sources(repository, values.docs, values.config, values.readme);
+  return report(errors, 'figure sources, hashes, markup and evidence are consistent.');
+}
+
+function runSite(_root, { values }) {
+  if (!values.config || !values.docs || !values.site) throw new UsageError('site needs --config, --docs and --site');
+  const { errors, diagrams } = checkSite(values.config, values.docs, values.site);
+  return report(errors, `${diagrams} diagram(s) under ${values.docs} render.`);
+}
+
+function runPortable(root, { values, positionals }) {
+  const modes = [values.base !== undefined, values.wiki, values.write].filter(Boolean);
+  if (modes.length !== 1 || positionals.length === 0) throw new UsageError('portable needs one of --base, --wiki or --write, and a file');
+  const repository = resolve(values.root ?? root);
+  const base = values.wiki ? siteUrl(readText(resolve(repository, values.config))) : values.base ?? null;
+  return report(portable(positionals, base, repository), `rendered figures in ${positionals.length} file(s).`);
+}
+
+const STRING = { type: 'string' };
+const FLAG = { type: 'boolean', default: false };
+/** Each command: its options (node:util parseArgs), whether it takes files, and what it runs. */
+const COMMANDS = {
+  build: { options: {}, run: (root) => runBuild(root) },
+  check: { options: {}, run: (root) => runCheck(root) },
+  sources: {
+    options: { root: STRING, docs: { ...STRING, default: 'docs' }, config: { ...STRING, default: 'mkdocs.yml' }, readme: { ...STRING, default: 'README.md' } },
+    run: runSources,
+  },
+  site: { options: { config: STRING, docs: STRING, site: STRING }, run: runSite },
+  portable: {
+    options: { base: STRING, wiki: FLAG, write: FLAG, root: STRING, config: { ...STRING, default: 'mkdocs.yml' } },
+    files: true,
+    run: runPortable,
+  },
+};
+const USAGE = [
+  'usage: node build.mjs build|check',
+  '       node build.mjs sources [--root DIR] [--docs DIR] [--config FILE] [--readme FILE]',
+  '       node build.mjs site --config FILE --docs DIR --site DIR',
+  '       node build.mjs portable (--base URL | --wiki | --write) [--root DIR] [--config FILE] FILE...',
+].join('\n');
+
+/** A command line this wrapper cannot run. */
+class UsageError extends Error {}
+
+/** The parsed arguments of `command`, or UsageError. */
+function parse(command, args) {
+  try {
+    return parseArgs({ args, options: command.options, allowPositionals: command.files === true, strict: true });
+  } catch (error) {
+    throw new UsageError(error.message);
+  }
+}
+
+/**
+ * Runs one command against the repository at `root`: exit status 0, 1 on findings, 2 on misuse or
+ * on an input a check cannot read.
+ */
 export async function main(argv, root = ROOT) {
-  const command = COMMANDS[argv[0]];
-  if (argv.length !== 1 || !command) {
-    console.error('usage: node build.mjs build|check');
+  const command = Object.hasOwn(COMMANDS, argv[0] ?? '') ? COMMANDS[argv[0]] : null;
+  try {
+    if (!command) throw new UsageError(argv.length ? `unknown command ${argv[0]}` : 'no command');
+    const problems = await command.run(root, parse(command, argv.slice(1)));
+    for (const problem of problems) console.error(`figures: ${problem}`);
+    return problems.length ? 1 : 0;
+  } catch (error) {
+    if (error instanceof UsageError) console.error(`figures: ${error.message}\n${USAGE}`);
+    else if (error instanceof CheckError) console.error(`figures: ${error.message}`);
+    else throw error;
     return 2;
   }
-  const problems = await command(root);
-  for (const problem of problems) console.error(`figures: ${problem}`);
-  return problems.length ? 1 : 0;
 }
 
 if (import.meta.main ?? (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === resolve(process.argv[1]))) {
