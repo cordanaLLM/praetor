@@ -41,7 +41,12 @@ helper used only through `$(call ...)` in recipes leaves the Makefile readable. 
 Make when something can parse its body as rules, which is an eval call anywhere in the file,
 define bodies included, or a top-level bare expansion such as `$(name)`, `$(call name)` or
 `$(call name,$(P)x,A=b)`. A bare expansion needs no define to declare a rule, so one with a colon
-in its arguments, such as `$(if $(X),docs-lint: ; @echo x)`, is left to Make as well. The reader
+in its arguments, such as `$(if $(X),docs-lint: ; @echo x)`, is left to Make as well. That
+includes a colon inside a message argument, such as `$(call check_defined,CC,hint: set it)`, which
+Make only prints: telling the two apart needs the function evaluated, so the reader stays on the
+safe side and the file fails for review, as the
+[documentation governance guide](documentation-governance.md) describes. So does a computed
+target name such as `$(BUILD_DIR):`, even when the variable holds a plain directory. The reader
 evaluates no function except to know that `info`, `warning` and `error` expand to nothing, so
 `$(info ...)` beside a define and a colon inside `$(error ...)` decide nothing, while any other
 bare expansion beside a define counts, `$(if ...)` included. A define that is never closed is
