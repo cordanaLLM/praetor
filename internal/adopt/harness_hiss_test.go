@@ -69,7 +69,8 @@ func TestHarnessComplexityRowStatesTheEnforcedLimit(t *testing.T) {
 // TestRepositoryLanguages reads languages from project markers as adoption does. Positive: a
 // Go module beside a Cargo crate is Go + Rust. Negative: a Node project is the known "other"
 // set, never Go. Boundary: a repository without any marker is the unknown set, and an
-// unreadable root is an error, not a guessed set.
+// unreadable root is an error, not a guessed set. Every set comes with the audit ceiling and no
+// resolved function length, since none of these repositories carries a manifest.
 func TestRepositoryLanguages(t *testing.T) {
 	both := t.TempDir()
 	mustWrite(t, filepath.Join(both, "go.mod"), "module example.com/widget\n\ngo 1.27\n")
@@ -85,11 +86,48 @@ func TestRepositoryLanguages(t *testing.T) {
 		"no marker":   {t.TempDir(), 0},
 	}
 	for name, tc := range cases {
-		if got, err := RepositoryLanguages(t.Context(), tc.root); err != nil || got != tc.want {
-			t.Errorf("%s: RepositoryLanguages = %b, %v; want %b", name, got, err, tc.want)
+		want := hisscatalog.Facts{Languages: tc.want, CeilingFuncLOC: config.AuditMaxFuncLOC}
+		if got, warnings, err := RepositoryHISSFacts(t.Context(), tc.root); err != nil || got != want || len(warnings) != 0 {
+			t.Errorf("%s: RepositoryHISSFacts = %+v, %q, %v; want %+v", name, got, warnings, err, want)
 		}
 	}
-	if _, err := RepositoryLanguages(t.Context(), filepath.Join(t.TempDir(), "missing")); err == nil {
+	if _, _, err := RepositoryHISSFacts(t.Context(), filepath.Join(t.TempDir(), "missing")); err == nil {
 		t.Error("missing root read as a language set")
+	}
+}
+
+// cleanupGotoRepo writes a C repository whose manifest declares the cleanup-goto exception at
+// docs/cleanup-goto.md, writing that document too when documented.
+func cleanupGotoRepo(t *testing.T, documented bool) string {
+	t.Helper()
+	repo := t.TempDir()
+	mustWrite(t, filepath.Join(repo, "meson.build"), "project('widget', 'c')\n")
+	mustWrite(t, filepath.Join(repo, manifestFile),
+		"version: 1\nrepository:\n  owner: acme\n  name: widget\nhiss:\n  exceptions:\n    c_goto_cleanup: docs/cleanup-goto.md\n")
+	if documented {
+		mustWrite(t, filepath.Join(repo, "docs", "cleanup-goto.md"), "# Cleanup goto\n\nOne forward jump to the cleanup label.\n")
+	}
+	return repo
+}
+
+// TestRepositoryHISSFactsReadsDeclaredExceptions: Positive: a C repository whose manifest names
+// an existing document for its cleanup-goto exception declares it. Negative: a declaration
+// whose document is missing is not honoured and a warning names it; a malformed manifest is an
+// error, never an empty declaration. Boundary: a manifest without a lock states the audit
+// ceiling, as the audit cannot resolve its policy yet.
+func TestRepositoryHISSFactsReadsDeclaredExceptions(t *testing.T) {
+	facts, warnings, err := RepositoryHISSFacts(t.Context(), cleanupGotoRepo(t, true))
+	want := hisscatalog.Facts{Languages: hisscatalog.LanguageC, CeilingFuncLOC: config.AuditMaxFuncLOC, Exceptions: hisscatalog.ExceptionCleanupGoto}
+	if err != nil || facts != want || len(warnings) != 0 {
+		t.Fatalf("documented exception: %+v, %q, %v; want %+v", facts, warnings, err, want)
+	}
+	facts, warnings, err = RepositoryHISSFacts(t.Context(), cleanupGotoRepo(t, false))
+	if err != nil || facts.Exceptions != 0 || len(warnings) != 1 || !strings.Contains(warnings[0], "docs/cleanup-goto.md") {
+		t.Fatalf("undocumented exception: %+v, %q, %v; want no exception and one warning naming the document", facts, warnings, err)
+	}
+	broken := cleanupGotoRepo(t, true)
+	mustWrite(t, filepath.Join(broken, manifestFile), "version: 1\nhiss:\n  exceptions:\n    unknown_exception: docs/x.md\n")
+	if _, _, err := RepositoryHISSFacts(t.Context(), broken); err == nil {
+		t.Fatal("malformed manifest read as no exception")
 	}
 }

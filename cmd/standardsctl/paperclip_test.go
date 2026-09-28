@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/gating"
+	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
 	"github.com/cordanaLLM/praetor/internal/paperclip"
 )
@@ -23,7 +24,7 @@ func writePaperclipFixtureHarness(t *testing.T, dir string) {
 	// the repository the fixture's receipts attest.
 	identified := t.TempDir()
 	writeFixtureFile(t, identified, ".standards.yaml", "repository:\n  owner: acme\n  name: widget\n")
-	harness, err := paperclip.SynthesizeHarness(context.Background(), identified, 0)
+	harness, err := paperclip.SynthesizeHarness(context.Background(), identified, hisscatalog.Facts{})
 	if err != nil {
 		t.Fatalf("SynthesizeHarness: %v", err)
 	}

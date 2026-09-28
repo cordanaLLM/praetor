@@ -18,6 +18,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/editor"
 	"github.com/cordanaLLM/praetor/internal/flavor"
 	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/state"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -122,6 +123,15 @@ type adoptSession struct {
 	// declined carries adoption.decline from the repository's existing manifest, read before
 	// the chain runs so a repository's recorded decision applies to the run that follows it.
 	declined []string
+	// exceptions are the HISS exceptions the existing manifest declares and documents
+	// (declaredExceptions), read before the chain runs like declined.
+	exceptions hisscatalog.Exception
+	// paperclipLimit is the function length the Paperclip harness states, resolved once per run
+	// (harnessFuncLOC) so every step renders the harness the manifest step bound.
+	paperclipLimit struct {
+		resolved bool
+		limit    int
+	}
 }
 
 // adoptStep is one reconciliation step of the adoption chain.
@@ -153,6 +163,10 @@ func Adopt(ctx context.Context, opts AdoptOptions) (*AdoptReport, error) {
 	}
 	report.Archetype = adoptionArchetype(decision, verification)
 	report.Verification = verification
+	exceptions, undocumented := declaredExceptions(normPath, declared)
+	if undocumented != "" {
+		report.addWarning("%s", undocumented)
+	}
 	s := &adoptSession{
 		repoPath:     normPath,
 		arch:         report.Archetype,
@@ -161,6 +175,7 @@ func Adopt(ctx context.Context, opts AdoptOptions) (*AdoptReport, error) {
 		report:       report,
 		verification: verification,
 		declined:     manifestDeclines(declared),
+		exceptions:   exceptions,
 	}
 	if err := s.resolveIdentity(ctx); err != nil {
 		report.addError("%s", err)

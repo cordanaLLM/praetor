@@ -23,11 +23,7 @@ func newAdoptionManifest(ctx context.Context, s *adoptSession) (*config.Manifest
 	if err != nil {
 		return nil, harnessPlan{}, err
 	}
-	manifest := &config.Manifest{
-		Version:    1,
-		Repository: config.RepositoryMetadata{Owner: s.identity.owner, Name: s.identity.name},
-		Profiles:   []string{s.arch}, Facets: s.facets,
-	}
+	manifest := declaredAdoptionManifest(s)
 	if plan.absent() {
 		return manifest, plan, nil
 	}
@@ -37,6 +33,16 @@ func newAdoptionManifest(ctx context.Context, s *adoptSession) (*config.Manifest
 	}
 	manifest.Register = &config.RegisterPolicy{Sources: sources}
 	return manifest, plan, nil
+}
+
+// declaredAdoptionManifest is the manifest adoption writes before register.sources binds the
+// Paperclip harness: identity, profile and facets, every declaration the effective policy reads.
+func declaredAdoptionManifest(s *adoptSession) *config.Manifest {
+	return &config.Manifest{
+		Version:    1,
+		Repository: config.RepositoryMetadata{Owner: s.identity.owner, Name: s.identity.name},
+		Profiles:   []string{s.arch}, Facets: s.facets,
+	}
 }
 
 // managedHarnessInputs are the register.sources rows adoption declares for the Paperclip
@@ -91,7 +97,7 @@ func planHarness(ctx context.Context, s *adoptSession) (harnessPlan, error) {
 	if s.declines("paperclip") {
 		return keptHarnessPlan(ctx, path, exists, false)
 	}
-	synthesized, fresh, err := synthesizeHarness(ctx, s.repoPath, planLanguages(s.verification))
+	synthesized, fresh, err := synthesizeHarness(ctx, s.repoPath, s.paperclipFacts(ctx))
 	if errors.Is(err, util.ErrRepoIdentityUnresolved) {
 		return keptHarnessPlan(ctx, path, exists, true)
 	}
@@ -123,12 +129,12 @@ func keptHarnessPlan(ctx context.Context, path string, exists, unresolved bool) 
 	return harnessPlan{data: existing, onDisk: true, unresolved: unresolved}, nil
 }
 
-// synthesizeHarness renders the Paperclip harness for the repository's languages. The languages
-// come from the verification plan resolved before the first step, so the manifest step, which
-// binds register.sources to these bytes, and the paperclip step, which writes them, render the
-// same harness.
-func synthesizeHarness(ctx context.Context, repoPath string, languages hisscatalog.Language) (*paperclip.Harness, []byte, error) {
-	synthesized, err := paperclip.SynthesizeHarness(ctx, repoPath, languages)
+// synthesizeHarness renders the Paperclip harness for the repository's HISS facts
+// (paperclipFacts). Every fact is fixed before or at the run's first harness plan, so the
+// manifest step, which binds register.sources to these bytes, and the paperclip step, which
+// writes them, render the same harness.
+func synthesizeHarness(ctx context.Context, repoPath string, facts hisscatalog.Facts) (*paperclip.Harness, []byte, error) {
+	synthesized, err := paperclip.SynthesizeHarness(ctx, repoPath, facts)
 	if err != nil {
 		return nil, nil, fmt.Errorf("synthesize paperclip harness: %w", err)
 	}
@@ -174,9 +180,7 @@ func planPolicyCatalog(ctx context.Context, s *adoptSession) error {
 	if err != nil {
 		return fmt.Errorf("prepare dry-run audit policy: %w", err)
 	}
-	s.policy, err = config.LoadEffectivePolicyInputsContext(ctx, config.EffectiveOptions{
-		Root: s.repoPath, CatalogRoot: s.opts.LockSourceRoot, Audit: true,
-	}, manifest, lock)
+	s.policy, err = resolvePlannedPolicy(ctx, s, manifest, lock)
 	if err != nil {
 		return err
 	}
@@ -195,22 +199,94 @@ func plannedPolicyInputs(ctx context.Context, s *adoptSession) ([]byte, []byte, 
 	if err != nil {
 		return nil, nil, err
 	}
-	lock, exists, err := observeAdoptionInput(ctx, s, lockFile)
+	lock, err := plannedLock(ctx, s, manifest)
 	if err != nil {
 		return nil, nil, err
+	}
+	return manifest, lock, nil
+}
+
+// plannedLock is the lock the lockfile step leaves on disk for the planned manifest: the
+// existing one, unless --force or a re-pin of an earlier catalog rebuilds it from
+// --lock-source-root, and without either one ErrLockSourceRequired.
+func plannedLock(ctx context.Context, s *adoptSession, manifest []byte) ([]byte, error) {
+	lock, exists, err := observeAdoptionInput(ctx, s, lockFile)
+	if err != nil {
+		return nil, err
 	}
 	decoded, err := config.DecodeManifest(manifest)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if exists && !s.opts.Force && !repinsEarlierCatalog(ctx, s, decoded) {
-		return manifest, lock, nil
+		return lock, nil
 	}
 	if s.opts.LockSourceRoot == "" {
-		return nil, nil, ErrLockSourceRequired
+		return nil, ErrLockSourceRequired
 	}
-	lock, err = config.BuildLockfile(ctx, s.opts.LockSourceRoot, decoded)
-	return manifest, lock, err
+	return config.BuildLockfile(ctx, s.opts.LockSourceRoot, decoded)
+}
+
+// resolvePlannedPolicy resolves the planned manifest and lock with the loader and audit
+// compatibility layer `praetorctl audit` resolves the files on disk with
+// (config.LoadEffectivePolicyInputsContext, Audit), so the plan states the policy that audit
+// will enforce.
+func resolvePlannedPolicy(ctx context.Context, s *adoptSession, manifest, lock []byte) (*config.EffectivePolicy, error) {
+	return config.LoadEffectivePolicyInputsContext(ctx, config.EffectiveOptions{
+		Root: s.repoPath, CatalogRoot: s.opts.LockSourceRoot, Audit: true,
+	}, manifest, lock)
+}
+
+// paperclipFacts is what the Paperclip harness's HISS invariants depend on: repositoryFacts and
+// the function length the audit enforces once this run's policy resolves (harnessFuncLOC).
+func (s *adoptSession) paperclipFacts(ctx context.Context) hisscatalog.Facts {
+	facts := repositoryFacts(s.verification, s.exceptions)
+	facts.MaxFuncLOC = s.harnessFuncLOC(ctx)
+	return facts
+}
+
+// harnessFuncLOC is the function length the audit enforces after this run, for the Paperclip
+// harness. The manifest step binds that harness in register.sources before the policy-catalog
+// step resolves the policy, so the limit is read from the policy the planned manifest and lock
+// resolve to (prospectivePolicy), the one the policy-catalog step then materializes. It is
+// resolved once and kept, so every step of the run renders the bytes the manifest bound. A
+// policy that does not resolve yet, such as a first adoption without --lock-source-root, leaves
+// it zero: the harness then states the audit ceiling, and the policy-catalog step reports the
+// cause.
+func (s *adoptSession) harnessFuncLOC(ctx context.Context) int {
+	if s.paperclipLimit.resolved {
+		return s.paperclipLimit.limit
+	}
+	s.paperclipLimit.resolved = true
+	if s.policy != nil {
+		s.paperclipLimit.limit = adoptionScanLimit(s)
+		return s.paperclipLimit.limit
+	}
+	if policy, err := prospectivePolicy(ctx, s); err == nil {
+		s.paperclipLimit.limit = policy.Policy.Complexity.MaxFuncLOC
+	}
+	return s.paperclipLimit.limit
+}
+
+// prospectivePolicy resolves the policy this run leaves the repository under from the manifest
+// declarations the policy reads, before register.sources is bound: the existing manifest, which
+// adoption never rewrites beyond register.sources and its layout, or the one it creates
+// (declaredAdoptionManifest). register.sources is no policy input (ADR-0010).
+func prospectivePolicy(ctx context.Context, s *adoptSession) (*config.EffectivePolicy, error) {
+	manifest, exists, err := observeAdoptionInput(ctx, s, manifestFile)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		if manifest, err = config.RenderManifest(declaredAdoptionManifest(s)); err != nil {
+			return nil, err
+		}
+	}
+	lock, err := plannedLock(ctx, s, manifest)
+	if err != nil {
+		return nil, err
+	}
+	return resolvePlannedPolicy(ctx, s, manifest, lock)
 }
 
 // plannedManifestBytes is the manifest reconcileManifest leaves on disk. --force never

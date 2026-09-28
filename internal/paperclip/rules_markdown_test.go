@@ -13,7 +13,7 @@ import (
 // and they carry no markdownlint disable at all.
 func TestRenderedRulesPassDefaultMarkdownlint(t *testing.T) {
 	repo := identifiedRepo(t)
-	h, err := SynthesizeHarness(t.Context(), repo, 0)
+	h, err := SynthesizeHarness(t.Context(), repo, unknownFacts)
 	if err != nil {
 		t.Fatal(err)
 	}
