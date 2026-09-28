@@ -77,10 +77,17 @@ func LintContext(ctx context.Context, agentsMdPath string) (ContextLint, error) 
 	if err != nil {
 		return ContextLint{}, fmt.Errorf("caveman lint: read %s: %w", agentsMdPath, err)
 	}
-	report, masked := CheckContextText(string(data), caveman.Options{Kind: caveman.KindContext})
+	return LintContextText(agentsMdPath, string(data))
+}
+
+// LintContextText is LintContext over canonical AGENTS.md text already in memory, for a caller
+// that composed the text itself: adoption lints the AGENTS.md it merged, dry run included,
+// without reading it back. label names the file in the error and in the fix it quotes.
+func LintContextText(label, content string) (ContextLint, error) {
+	report, masked := CheckContextText(content, caveman.Options{Kind: caveman.KindContext})
 	lint := ContextLint{Report: report, MaskedLines: masked}
 	if !lint.Report.Passed() {
-		return lint, fmt.Errorf("%w: %s", ErrContextProse, describeLintFindings(agentsMdPath, lint.Report.Findings))
+		return lint, fmt.Errorf("%w: %s", ErrContextProse, describeLintFindings(label, lint.Report.Findings))
 	}
 	return lint, nil
 }

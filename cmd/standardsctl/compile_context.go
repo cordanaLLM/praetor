@@ -5,8 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/workstation"
 )
@@ -44,6 +46,11 @@ func runCompileContext(args []string) error {
 	// write is refused.
 	if err := workstation.CheckBuildCurrent(ctx, *targetDir, engineBuild()); err != nil {
 		return fmt.Errorf("compile-context wrote nothing: %w", err)
+	}
+	// The text register block sends agent evidence to config.EvidenceDir beside the source; Git
+	// has to ignore it before the rule is rendered (BUG-604).
+	if err := adopt.ReconcileEvidenceIgnore(ctx, os.Stdout, filepath.Dir(*source)); err != nil {
+		return fmt.Errorf("compile-context compiled nothing: %w", err)
 	}
 	return compiler.CompileContextProjections(ctx, os.Stdout, tr, *source, *targetDir)
 }

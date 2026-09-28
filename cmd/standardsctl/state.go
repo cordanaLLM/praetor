@@ -142,14 +142,22 @@ func ignoreStateLedger(ctx context.Context, dir string, warnDecline bool) error 
 	if err != nil {
 		return fmt.Errorf("could not make Git ignore %s/ in %s: %w", state.WorkingDirName, dir, err)
 	}
-	switch {
-	case outcome == adopt.PrivateIgnoreWritten:
-		fmt.Printf("Added the Praetor private-artifact block to .gitignore in %s; Git now ignores %s/\n", dir, state.WorkingDirName)
-	case outcome == adopt.PrivateIgnoreDeclined && warnDecline:
-		fmt.Fprintf(os.Stderr, "Warning: Git does not ignore %s/ in %s and adoption.decline declines git-ignore; add /%s/ to the operator-owned .gitignore\n",
-			state.WorkingDirName, dir, state.WorkingDirName)
-	}
+	printPrivateIgnoreNotice(outcome, dir, warnDecline)
 	return nil
+}
+
+// printPrivateIgnoreNotice prints what an ignore reconciliation did (adopt.PrivateIgnoreNotice):
+// the written block to standard output, and the decline warning to standard error when
+// warnDecline is set.
+func printPrivateIgnoreNotice(outcome adopt.PrivateIgnoreOutcome, dir string, warnDecline bool) {
+	line, warning := adopt.PrivateIgnoreNotice(outcome, dir)
+	switch {
+	case line == "":
+	case !warning:
+		fmt.Println(line)
+	case warnDecline:
+		fmt.Fprintln(os.Stderr, line)
+	}
 }
 
 // withLedgerIgnore runs a command that writes into the private ledger, creating it on
