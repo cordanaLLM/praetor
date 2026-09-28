@@ -17,8 +17,8 @@ import (
 
 // runtimeLanguages maps the runtimes and source languages the verification plan detects to the
 // languages a HISS directive clause can name. A native build (meson, CMake) is C or C++, and so
-// are C sources without one (sourceLanguageC). Every other detected runtime (Node, .NET, the
-// JVM builds, Flutter) is a language no clause names.
+// are C or C++ sources without one (sourceLanguageC). Every other detected runtime (Node, .NET,
+// the JVM builds, Flutter) is a language no clause names.
 var runtimeLanguages = map[string]hisscatalog.Language{
 	"go":               hisscatalog.LanguageGo,
 	"cargo":            hisscatalog.LanguageRust,
@@ -76,9 +76,9 @@ func harnessExceptions(cleanupGoto hiss.CleanupGoto) hisscatalog.Exception {
 
 // RepositoryHISSFacts reports what the HISS directives of the repository at root depend on, for
 // a caller outside an adoption run (`praetorctl paperclip harness`) that renders them the way
-// adoption does: the languages the verification planner detects from project markers and C
-// sources, the exceptions the manifest declares and documents, and the function length the audit enforces,
-// resolved by config.ResolveRepositoryPolicy as `praetorctl audit` resolves it. A repository
+// adoption does: the languages the verification planner detects from project markers and C/C++
+// sources, the exceptions the manifest declares and documents, and the function length the audit
+// enforces, resolved by config.ResolveRepositoryPolicy as `praetorctl audit` resolves it. A repository
 // whose policy does not resolve (no manifest, no lock, or a resolution error) states the audit
 // ceiling instead; each returned warning names a declaration or policy that was not read.
 //

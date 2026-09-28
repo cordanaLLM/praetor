@@ -20,7 +20,7 @@ const (
 	LanguageGo Language = 1 << iota
 	// LanguageRust is Rust (Cargo.toml).
 	LanguageRust
-	// LanguageC is C and C++ (a native build: meson or CMake, or C sources without one).
+	// LanguageC is C and C++ (a native build: meson or CMake, or C/C++ sources without one).
 	LanguageC
 	// LanguagePython is Python.
 	LanguagePython

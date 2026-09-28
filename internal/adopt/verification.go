@@ -18,10 +18,11 @@ type VerificationPlan struct {
 	// custom verify-all replaces Build and Test, so the harness still lists the project's real
 	// commands after a --force refresh instead of only the preserved target (BUG-949).
 	Declared [][]string `json:"declared,omitempty"`
-	// SourceLanguages names the languages the walk found sources of that no build marker in
-	// Runtimes declares: sourceLanguageC for C a Makefile or script compiles (#549), counted
-	// from the files git reports as the repository's own. It selects the HISS clauses the
-	// harness renders (planLanguages), never a build or test command.
+	// SourceLanguages names the languages the walk found sources of, whether or not a build
+	// marker in Runtimes also declares them: sourceLanguageC for C or C++ sources the audit's
+	// native scan reads, so C/C++ a Makefile or script compiles is detected too (#549). Only
+	// files git reports as the repository's own count. It selects the HISS clauses the harness
+	// renders (planLanguages), never a build or test command.
 	SourceLanguages []string `json:"source_languages,omitempty"`
 }
 

@@ -536,6 +536,15 @@ func readBounded(root, rel string) (data []byte, err error) {
 	return data, nil
 }
 
+// IsNativeExtension reports whether ext, in any case as filepath.Ext returns it, names a file the
+// native (C and C++) scanner reads, the files HISS-01's `goto` and HISS-08's banned-libc checks
+// cover. Scan folds the extension to lower case and dispatches on the same set, so a caller
+// deciding which files make a repository C/C++ (adopt's source detection) reads the audit's own
+// scope instead of a second extension table.
+func IsNativeExtension(ext string) bool {
+	return isNativeExt(strings.ToLower(ext))
+}
+
 // isNativeExt is the one C-family table: C, C++ (sources and the .h/.hpp/.hh headers), CUDA
 // and HIP. ci filter reads it through SupportsExtension, so a file the native scanner reads
 // is always code to the CI gate selection as well.

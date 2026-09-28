@@ -152,3 +152,37 @@ func TestGitVisiblePathsAnswersTheScanScope(t *testing.T) {
 		t.Fatalf("GitVisiblePaths(plain directory) = %+v; want nil, every file visible", outside)
 	}
 }
+
+// TestIsNativeExtensionMatchesTheScanDispatch ties the exported extension answer adopt's C/C++
+// source detection reads to the files Scan actually runs the native checks on, so the two cannot
+// drift. Positive: every native extension, in any case, is reported and scanned (a banned
+// strcpy is a HISS-08 finding). Negative: Objective-C, the C++ spellings and CUDA header the
+// scanner has no dispatch for, and a non-source file, are neither. Boundary: a file with no
+// extension, and a lone dot, are not native.
+func TestIsNativeExtensionMatchesTheScanDispatch(t *testing.T) {
+	cases := map[string]bool{
+		".c": true, ".cpp": true, ".cc": true, ".cxx": true, ".h": true, ".hpp": true, ".cu": true, ".hip": true,
+		".C": true, ".CPP": true, ".H": true,
+		".m": false, ".mm": false, ".hh": false, ".hxx": false, ".cuh": false, ".txt": false,
+		"": false, ".": false,
+	}
+	const source = "void copy(char *d, const char *s) { strcpy(d, s); }\n"
+	for ext, want := range cases {
+		if got := IsNativeExtension(ext); got != want {
+			t.Errorf("IsNativeExtension(%q) = %v, want %v", ext, got, want)
+		}
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "widget"+ext), []byte(source), 0o600); err != nil {
+			t.Fatalf("write widget%s: %v", ext, err)
+		}
+		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+		rep, err := Scan(ctx, dir, ScanOptions{})
+		cancel()
+		if err != nil {
+			t.Fatalf("scan widget%s: %v", ext, err)
+		}
+		if scanned := rep.Breakdown["HISS-08"] > 0; scanned != want {
+			t.Errorf("Scan(widget%s) HISS-08 found = %v, want %v", ext, scanned, want)
+		}
+	}
+}
