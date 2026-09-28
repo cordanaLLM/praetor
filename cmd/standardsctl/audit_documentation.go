@@ -414,11 +414,11 @@ func auditManagedGitIgnoreBlock(ctx context.Context, rootDir string) error {
 func auditDocumentationHostedWiring(
 	ctx context.Context, manifest *config.Manifest, protection config.BranchProtectionPolicy, rootDir string, rulesetDeclined bool,
 ) error {
-	contexts, err := forge.RequiredStatusContexts(ctx, rootDir)
+	families := adopt.DocumentationFamilies()
+	contexts, err := hostedDocumentationContexts(ctx, rootDir, families, rulesetDeclined)
 	if err != nil {
 		return fmt.Errorf("[FAIL] Discover hosted documentation context: %w", err)
 	}
-	families := adopt.DocumentationFamilies()
 	for index := 0; index < len(families) && index < managedasset.MaxFamilies; index++ {
 		family := families[index]
 		if family.StatusContext != "" && !slices.Contains(contexts, family.StatusContext) {
@@ -441,4 +441,24 @@ func auditDocumentationHostedWiring(
 		return fmt.Errorf("[FAIL] Documentation required status context is not reconciled in the branch ruleset: %w", err)
 	}
 	return nil
+}
+
+// hostedDocumentationContexts returns the required contexts the documentation gate compares. The
+// ruleset check needs every workflow's contexts. With the branch ruleset declined there is no
+// ruleset to check, so the gate reads only its own families' workflows
+// (forge.RequiredStatusContextsOf), and a workflow elsewhere whose contexts its file cannot show
+// no longer fails an audit that never compares them (#324).
+func hostedDocumentationContexts(
+	ctx context.Context, rootDir string, families []managedasset.Family, rulesetDeclined bool,
+) ([]string, error) {
+	if !rulesetDeclined {
+		return forge.RequiredStatusContexts(ctx, rootDir)
+	}
+	workflows := make([]string, 0, len(families))
+	for index := 0; index < len(families) && index < managedasset.MaxFamilies; index++ {
+		if families[index].WorkflowFile != "" {
+			workflows = append(workflows, families[index].WorkflowFile)
+		}
+	}
+	return forge.RequiredStatusContextsOf(ctx, rootDir, workflows)
 }

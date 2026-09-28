@@ -17,6 +17,9 @@ import (
 // that shape named, because a required context no run reports leaves every pull request
 // "expected" forever (#324).
 const (
+	// maxMatrixLegs is GitHub's documented ceiling on the jobs one matrix generates in a
+	// workflow run. A matrix beyond it is refused rather than truncated.
+	maxMatrixLegs = 256
 	// maxMatrixProduct bounds the axis combinations built before exclude narrows them (HISS-02).
 	maxMatrixProduct = 4096
 	// maxMatrixKeys bounds the variables of one matrix, include or exclude entry, or leg.
@@ -222,7 +225,7 @@ func parseMatrixEntries(key string, node *yaml.Node) ([][]matrixCell, error) {
 func matrixShape(node *yaml.Node) string {
 	switch {
 	case node.Kind == yaml.ScalarNode && strings.Contains(node.Value, expressionOpen):
-		return fmt.Sprintf("the expression %q, whose value only a workflow run knows", node.Value)
+		return fmt.Sprintf("the expression %q (only a workflow run knows its value)", node.Value)
 	case node.Kind == yaml.ScalarNode && node.ShortTag() == "!!null":
 		return "null"
 	case node.Kind == yaml.ScalarNode:
