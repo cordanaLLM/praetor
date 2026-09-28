@@ -35,6 +35,26 @@ func TestServer_Positive_CompileContextVerifyAndWrite(t *testing.T) {
 	expectText(t, "re-verify", reverify, "100% in sync")
 }
 
+// The MCP write and verify mirror the CLI's evidence ignore check: without a rule, verify fails
+// naming the directory and writes nothing; the write merges the managed block and reports it.
+func TestServer_CompileContextEvidenceIgnore(t *testing.T) {
+	srv, root := newFixtureServer(t)
+	ignore := filepath.Join(root, ".gitignore")
+	if err := os.Remove(ignore); err != nil {
+		t.Fatal(err)
+	}
+	expectError(t, "unignored verify", callTool(t, srv, "standards_compile_context", map[string]any{"verify_only": true}),
+		"git does not ignore .workingdir/evidence/")
+	if _, err := os.Stat(ignore); !os.IsNotExist(err) {
+		t.Fatalf("verify_only wrote .gitignore: %v", err)
+	}
+	expectText(t, "write", callTool(t, srv, "standards_compile_context", nil), "Added the Praetor private-artifact block to .gitignore")
+	if got, err := os.ReadFile(ignore); err != nil || string(got) != adopt.ManagedGitIgnoreBlock() {
+		t.Fatalf(".gitignore = %q, %v; want the managed block", got, err)
+	}
+	expectText(t, "re-verify", callTool(t, srv, "standards_compile_context", map[string]any{"verify_only": true}), "100% in sync")
+}
+
 // A verify-only call reports a stale register block and never writes the source; a
 // writing call repairs it, after which both the tool and the audit agree.
 func TestServer_CompileContextRegisterBlock(t *testing.T) {
