@@ -98,9 +98,9 @@ func TestAudit_Negative_GateFailures(t *testing.T) {
 	}
 }
 
-// auditReadmeFixture is the README block the audit fixture's clean baseline and acme/widgets
-// identity render, spelled out, with badge as its first line and agentsDefinition after the
-// badge image's reference definition.
+// auditReadmeFixture is the README block the audit fixture's clean baseline renders without
+// the documentation gate, spelled out, with badge as its first line and agentsDefinition
+// after the badge image's reference definition.
 func auditReadmeFixture(badge, agentsDefinition string) string {
 	return `# Widgets
 
@@ -137,8 +137,7 @@ func TestAuditReadmeGovernanceGate(t *testing.T) {
 
 	t.Run("current managed content passes", func(t *testing.T) {
 		f := newAuditFixture(t)
-		writeFixtureFile(t, f.dir, "README.md", auditReadmeFixture("[![HISS Adopted][praetor-hiss-badge]][praetor-hiss-agents]",
-			"[praetor-hiss-agents]: https://github.com/acme/widgets/blob/HEAD/AGENTS.md\n"))
+		writeFixtureFile(t, f.dir, "README.md", auditReadmeFixture("![HISS Adopted][praetor-hiss-badge]", ""))
 		out, err := f.audit(t)
 		if err != nil {
 			t.Fatalf("current README governance: %v\n%s", err, out)
@@ -151,6 +150,16 @@ func TestAuditReadmeGovernanceGate(t *testing.T) {
 	t.Run("previous relative AGENTS.md link fails", func(t *testing.T) {
 		f := newAuditFixture(t)
 		writeFixtureFile(t, f.dir, "README.md", auditReadmeFixture("[![HISS Adopted][praetor-hiss-badge]](AGENTS.md)", ""))
+		_, err := f.audit(t)
+		mustErrContain(t, err, "README governance block is stale; run praetorctl adopt")
+	})
+
+	// Without the documentation gate nothing says the manifest's repository is on GitHub,
+	// so a block linking AGENTS.md there is stale even though the manifest names acme/widgets.
+	t.Run("AGENTS.md link without the documentation gate fails", func(t *testing.T) {
+		f := newAuditFixture(t)
+		writeFixtureFile(t, f.dir, "README.md", auditReadmeFixture("[![HISS Adopted][praetor-hiss-badge]][praetor-hiss-agents]",
+			"[praetor-hiss-agents]: https://github.com/acme/widgets/blob/HEAD/AGENTS.md\n"))
 		_, err := f.audit(t)
 		mustErrContain(t, err, "README governance block is stale; run praetorctl adopt")
 	})

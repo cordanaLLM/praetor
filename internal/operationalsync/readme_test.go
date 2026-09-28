@@ -209,10 +209,10 @@ func TestReadmeGovernanceOverlayUpToDateBoundaries(t *testing.T) {
 }
 
 // Positive (#506): an engine README whose managed HISS badge links AGENTS.md into the source
-// repository, documentation gate off, is rendered for the fork: the candidate links the
-// fork's AGENTS.md on its default branch and passes the fork's own audit.
+// repository under the documentation contract is rendered for the fork: the candidate links
+// the fork's AGENTS.md on its default branch and passes the fork's own audit.
 func TestReadmeGovernanceOverlayRebindsTheAgentsLink(t *testing.T) {
-	linked := readmegovernance.State{BaselineKnown: true, RepositoryOwner: "public", RepositoryName: "praetor"}
+	linked := sourceGovernance
 	body := strings.Replace(readmeBody, "[![HISS policy](https://img.shields.io/badge/Custom-HISS-blue)](policy.md)\n\n", "", 1)
 	source, _, err := readmegovernance.Reconcile(renderedFor(t, "", map[string]string{"README.md": body})["README.md"], linked)
 	if err != nil {

@@ -263,37 +263,41 @@ func readmeGovernanceState(s *adoptSession, documentationEnabled bool) (readmego
 		LegacyDebtCount:      s.report.LegacyDebtCount,
 		DocumentationEnabled: documentationEnabled,
 	}
-	var manifest *config.Manifest
-	if s.policy != nil {
-		manifest = s.policy.Manifest
+	if !documentationEnabled {
+		return state, nil
 	}
-	if manifest == nil && documentationEnabled {
+	if s.policy == nil || s.policy.Manifest == nil {
 		return state, fmt.Errorf("reconcile README documentation contract: effective manifest is unavailable")
 	}
-	owner, name, err := ReadmeIdentity(manifest, documentationEnabled)
+	owner, name, err := ReadmeIdentity(s.policy.Manifest, documentationEnabled)
 	state.RepositoryOwner, state.RepositoryName = owner, name
 	return state, err
 }
 
 // ReadmeIdentity returns the manifest identity the README governance block's badges link
-// into by absolute URL (readmegovernance.State); adoption and audit both read it here. A
-// manifest naming no identity, or no manifest, leaves the HISS badge unlinked as long as the
-// documentation gate, whose badge must link its workflow, is off. The gate on, or only half
-// an identity, fails with an error wrapping errReadmeIdentityUnset.
+// into by absolute URL (readmegovernance.State); adoption and audit both read it here. Only
+// the documentation gate links into the repository: its GitHub Actions workflow is what
+// establishes the forge, while a manifest identity recorded from an origin remote on any
+// host does not. With the gate off it returns no identity, so the HISS badge renders
+// unlinked. With the gate on, a manifest naming none or half of an identity fails with an
+// error wrapping errReadmeIdentityUnset.
 func ReadmeIdentity(manifest *config.Manifest, documentationEnabled bool) (owner, name string, err error) {
+	if !documentationEnabled {
+		return "", "", nil
+	}
 	if manifest != nil {
 		owner, name = manifest.Repository.Owner, manifest.Repository.Name
 	}
-	if (owner == "" || name == "") && (documentationEnabled || owner != "" || name != "") {
+	if owner == "" || name == "" {
 		return "", "", errReadmeIdentityUnset
 	}
 	return owner, name, nil
 }
 
-// errReadmeIdentityUnset: the block's badges link into the repository, and the manifest names
-// none or half of one. Adoption leaves the README alone rather than link to a guessed
-// repository.
-var errReadmeIdentityUnset = errors.New("the governance block's badge links need repository.owner and repository.name")
+// errReadmeIdentityUnset: the documentation gate's badges link into the repository, and the
+// manifest names none or half of one. Adoption leaves the README alone rather than link to a
+// guessed repository.
+var errReadmeIdentityUnset = errors.New("the documentation badges need repository.owner and repository.name")
 
 // readmeStateError turns an unset identity into a recorded skip, so an adoption without a
 // resolvable identity completes and says what it left undone; any other error fails the step.

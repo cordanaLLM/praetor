@@ -8,11 +8,12 @@ import (
 )
 
 // The README governance overlay. The engine's README carries the managed governance block
-// (internal/readmegovernance) rendered for the public source; its linked HISS badge and, with
-// the documentation contract enabled, its workflow badge link into the source repository by
-// absolute URL. A fork's own audit verifies the block for the fork's manifest identity, so
-// plan and prepare render it for the owner with the renderer adoption uses (BUG-1023). README.md is already a funding surface: the rebound block rides
-// that flow, rendered into op.surfaces, written, staged and verified byte for byte.
+// (internal/readmegovernance) rendered for the public source; with the documentation contract
+// enabled its HISS and workflow badges link into the source repository by absolute URL. A
+// fork's own audit verifies the block for the fork's manifest identity, so plan and prepare
+// render it for the owner with the renderer adoption uses (BUG-1023). README.md is already a
+// funding surface: the rebound block rides that flow, rendered into op.surfaces, written,
+// staged and verified byte for byte.
 
 // rebindReadme renders the managed governance block of files' README for the owner identity,
 // keeping every fact the source block records (debt baseline, documentation contract) and
@@ -33,9 +34,7 @@ func rebindReadme(files map[string][]byte, source, owner identity) error {
 	if !managed {
 		return nil
 	}
-	// RecordedState names the source identity only when the block links into the repository;
-	// an unlinked block stays unlinked for the owner too.
-	if state.RepositoryOwner != "" {
+	if state.DocumentationEnabled {
 		state.RepositoryOwner, state.RepositoryName = owner.Owner, owner.Name
 	}
 	out, _, err := readmegovernance.Reconcile(string(raw), state)

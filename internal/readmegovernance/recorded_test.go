@@ -7,8 +7,7 @@ import (
 )
 
 // Positive: every state shape Reconcile renders reads back to the same state, including a
-// README whose custom HISS badge suppresses the managed one, a HISS badge linked into the
-// repository without the documentation gate, and a CRLF README.
+// README whose custom HISS badge suppresses the managed one and a CRLF README.
 func TestRecordedStatePositiveReadsBackEveryRenderedShape(t *testing.T) {
 	docs := State{BaselineKnown: true, LegacyDebtCount: 7, DocumentationEnabled: true, RepositoryOwner: "acme", RepositoryName: "widgets"}
 	cases := map[string]struct {
@@ -18,7 +17,6 @@ func TestRecordedStatePositiveReadsBackEveryRenderedShape(t *testing.T) {
 		"baseline pending": {"# Demo\n\nHuman text.\n", State{}},
 		"clean baseline":   {"# Demo\n", State{BaselineKnown: true}},
 		"one infraction":   {"# Demo\n", State{BaselineKnown: true, LegacyDebtCount: 1}},
-		"linked badge":     {"# Demo\n", State{BaselineKnown: true, RepositoryOwner: "acme", RepositoryName: "widgets"}},
 		"documentation":    {"# Demo\n\nHuman text.\n", docs},
 		"custom badge":     {"# Demo\n\n[![HISS policy](https://img.shields.io/badge/Custom-HISS-blue)](policy.md)\n", docs},
 		"crlf":             {"# Demo\r\n\r\nHuman text.\r\n", docs},
@@ -41,35 +39,32 @@ func TestRecordedStatePositiveReadsBackEveryRenderedShape(t *testing.T) {
 }
 
 // Positive: the read-back state with another identity renders the block for that repository,
-// the AGENTS.md link included with or without the documentation gate, and leaves every byte
-// outside the block alone.
+// the AGENTS.md link included, and leaves every byte outside the block alone.
 func TestRecordedStatePositiveRebindsThroughReconcile(t *testing.T) {
-	for _, docs := range []bool{true, false} {
-		source := State{BaselineKnown: true, LegacyDebtCount: 2, DocumentationEnabled: docs, RepositoryOwner: "acme", RepositoryName: "widgets"}
-		rendered, _, err := Reconcile("# Demo\n\nHuman text.\n", source)
-		if err != nil {
-			t.Fatal(err)
-		}
-		state, _, err := RecordedState(rendered, "acme", "widgets")
-		if err != nil {
-			t.Fatal(err)
-		}
-		state.RepositoryOwner = "example"
-		rebound, changed, err := Reconcile(rendered, state)
-		if err != nil || !changed {
-			t.Fatalf("rebind: changed=%v err=%v", changed, err)
-		}
-		if want := strings.ReplaceAll(rendered, "github.com/acme/widgets/", "github.com/example/widgets/"); rebound != want {
-			t.Fatalf("rebind changed more than the badge identity:\n%s", rebound)
-		}
-		if !strings.Contains(rebound, "https://github.com/example/widgets/blob/HEAD/AGENTS.md\n") {
-			t.Fatalf("rebound block does not link the fork's AGENTS.md:\n%s", rebound)
-		}
-		fork := source
-		fork.RepositoryOwner = "example"
-		if err := Verify(rebound, fork); err != nil {
-			t.Fatalf("rebound block fails the fork's own verification: %v", err)
-		}
+	source := State{BaselineKnown: true, LegacyDebtCount: 2, DocumentationEnabled: true, RepositoryOwner: "acme", RepositoryName: "widgets"}
+	rendered, _, err := Reconcile("# Demo\n\nHuman text.\n", source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, _, err := RecordedState(rendered, "acme", "widgets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.RepositoryOwner = "example"
+	rebound, changed, err := Reconcile(rendered, state)
+	if err != nil || !changed {
+		t.Fatalf("rebind: changed=%v err=%v", changed, err)
+	}
+	if want := strings.ReplaceAll(rendered, "github.com/acme/widgets/", "github.com/example/widgets/"); rebound != want {
+		t.Fatalf("rebind changed more than the badge identity:\n%s", rebound)
+	}
+	if !strings.Contains(rebound, "https://github.com/example/widgets/blob/HEAD/AGENTS.md\n") {
+		t.Fatalf("rebound block does not link the fork's AGENTS.md:\n%s", rebound)
+	}
+	fork := source
+	fork.RepositoryOwner = "example"
+	if err := Verify(rebound, fork); err != nil {
+		t.Fatalf("rebound block fails the fork's own verification: %v", err)
 	}
 }
 

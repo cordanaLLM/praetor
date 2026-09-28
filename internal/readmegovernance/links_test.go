@@ -58,35 +58,34 @@ func relativeLinks(links []string) []string {
 	return relative
 }
 
-// Positive: with an identity, documentation gate or not, the HISS badge links AGENTS.md on
-// the default branch of that repository by absolute URL, and a fork's identity renders the
-// fork's URL; the rendering is idempotent.
+// Positive: under the documentation contract, which establishes that the repository lives on
+// GitHub, the HISS badge links AGENTS.md on the default branch of the manifest's repository by
+// absolute URL, and a fork's identity renders the fork's URL; the rendering is idempotent.
 func TestReconcilePositiveLinksAgentsByAbsoluteURL(t *testing.T) {
 	for _, identity := range [][2]string{{"acme", "widgets"}, {"fork-owner", "widgets"}} {
-		for _, docs := range []bool{false, true} {
-			state := State{BaselineKnown: true, DocumentationEnabled: docs, RepositoryOwner: identity[0], RepositoryName: identity[1]}
-			out, _, err := Reconcile("# Widgets\n", state)
-			if err != nil {
-				t.Fatal(err)
-			}
-			want := "[praetor-hiss-agents]: https://github.com/" + identity[0] + "/" + identity[1] + "/blob/HEAD/AGENTS.md\n"
-			if !strings.Contains(out, hissBadgeLink+"\n") || !strings.Contains(out, want) {
-				t.Fatalf("%+v: rendered block lacks the absolute AGENTS.md link %q:\n%s", state, want, out)
-			}
-			if relative := relativeLinks(blockLinks(t, out)); len(relative) != 0 {
-				t.Fatalf("%+v: block links repository-relative paths %q", state, relative)
-			}
-			if again, changed, err := Reconcile(out, state); err != nil || changed || again != out {
-				t.Fatalf("%+v: not idempotent: changed=%v err=%v", state, changed, err)
-			}
+		state := State{BaselineKnown: true, DocumentationEnabled: true, RepositoryOwner: identity[0], RepositoryName: identity[1]}
+		out, _, err := Reconcile("# Widgets\n", state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "[praetor-hiss-agents]: https://github.com/" + identity[0] + "/" + identity[1] + "/blob/HEAD/AGENTS.md\n"
+		if !strings.Contains(out, hissBadgeLink+"\n") || !strings.Contains(out, want) {
+			t.Fatalf("%+v: rendered block lacks the absolute AGENTS.md link %q:\n%s", state, want, out)
+		}
+		if relative := relativeLinks(blockLinks(t, out)); len(relative) != 0 {
+			t.Fatalf("%+v: block links repository-relative paths %q", state, relative)
+		}
+		if again, changed, err := Reconcile(out, state); err != nil || changed || again != out {
+			t.Fatalf("%+v: not idempotent: changed=%v err=%v", state, changed, err)
 		}
 	}
 }
 
 // Negative: the block the previous renderer wrote links AGENTS.md by a relative path, which
-// the link check above detects; audit reports it stale; and a partial or unsafe identity is
-// refused even without the documentation gate, where it now feeds the AGENTS.md link.
-func TestReconcileNegativeRejectsRelativeLinksAndPartialIdentity(t *testing.T) {
+// the link check above detects, and audit reports it stale. An identity without the
+// documentation contract is refused, since nothing then says the repository is on GitHub,
+// and so is a partial or unsafe identity under the contract.
+func TestReconcileNegativeRejectsRelativeLinksAndUnprovenIdentity(t *testing.T) {
 	previous := "# Widgets\n\n" + previousBlock + "\n"
 	if relative := relativeLinks(blockLinks(t, previous)); len(relative) != 1 || relative[0] != "AGENTS.md" {
 		t.Fatalf("link check misses the previous block's relative link: %q", relative)
@@ -94,17 +93,24 @@ func TestReconcileNegativeRejectsRelativeLinksAndPartialIdentity(t *testing.T) {
 	if err := Verify(previous, State{BaselineKnown: true}); !errors.Is(err, ErrStale) {
 		t.Fatalf("previous block verified: %v", err)
 	}
-	for _, identity := range [][2]string{{"acme", ""}, {"", "widgets"}, {"acme/evil", "widgets"}, {"acme", "widgets)evil"}} {
+	for _, identity := range [][2]string{{"acme", "widgets"}, {"acme", ""}, {"", "widgets"}} {
 		state := State{BaselineKnown: true, RepositoryOwner: identity[0], RepositoryName: identity[1]}
 		if _, _, err := Reconcile("# Widgets\n", state); !errors.Is(err, ErrInvalidState) {
 			t.Fatalf("identity %q/%q without documentation rendered: %v", identity[0], identity[1], err)
 		}
 	}
+	for _, identity := range [][2]string{{"acme", ""}, {"acme/evil", "widgets"}, {"acme", "widgets)evil"}} {
+		state := State{BaselineKnown: true, DocumentationEnabled: true, RepositoryOwner: identity[0], RepositoryName: identity[1]}
+		if _, _, err := Reconcile("# Widgets\n", state); !errors.Is(err, ErrInvalidState) {
+			t.Fatalf("identity %q/%q under documentation rendered: %v", identity[0], identity[1], err)
+		}
+	}
 }
 
-// Boundary: without an identity the badge is an unlinked image, so no state renders a
-// repository-relative link; plain Reconcile refreshes the previous block in place, keeping
-// the text around it, with no --force equivalent: the whole marker region is Praetor's.
+// Boundary: without the documentation contract the badge is an unlinked image, so no state
+// renders a repository-relative link or a guessed forge URL; plain Reconcile refreshes the
+// previous block in place, keeping the text around it, with no --force equivalent: the whole
+// marker region is Praetor's.
 func TestReconcileBoundaryUnlinkedBadgeAndPreviousBlockRefresh(t *testing.T) {
 	state := State{BaselineKnown: true}
 	out, _, err := Reconcile("# Widgets\n", state)
@@ -112,10 +118,10 @@ func TestReconcileBoundaryUnlinkedBadgeAndPreviousBlockRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out, "\n"+hissBadgeImage+"\n") || strings.Contains(out, hissAgentsRef) {
-		t.Fatalf("identity-free block must render the badge unlinked:\n%s", out)
+		t.Fatalf("block without the documentation contract must render the badge unlinked:\n%s", out)
 	}
 	if links := blockLinks(t, out); len(links) != 1 || len(relativeLinks(links)) != 0 {
-		t.Fatalf("identity-free block links %q, want only the badge image", links)
+		t.Fatalf("block without the documentation contract links %q, want only the badge image", links)
 	}
 	previous := "# Widgets\n\n" + previousBlock + "\n\nHuman tail.\n"
 	refreshed, changed, err := Reconcile(previous, state)
@@ -167,8 +173,7 @@ func TestRenderedBlockBuildsInStrictMkDocsPortal(t *testing.T) {
 		t.Skip("mkdocs is not on PATH; TestReconcilePositiveLinksAgentsByAbsoluteURL asserts the link shape instead")
 	}
 	for name, state := range map[string]State{
-		"no identity":   {BaselineKnown: true},
-		"identity":      {BaselineKnown: true, RepositoryOwner: "acme", RepositoryName: "widgets"},
+		"unlinked":      {BaselineKnown: true},
 		"documentation": {BaselineKnown: true, DocumentationEnabled: true, RepositoryOwner: "acme", RepositoryName: "widgets"},
 	} {
 		readme, _, err := Reconcile("# Widgets\n\nHuman text.\n", state)

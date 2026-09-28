@@ -11,8 +11,8 @@ import (
 
 // RecordedState reads back the state content's managed block records: the debt baseline
 // paragraph and whether the documentation contract paragraph is present. With the contract
-// or a linked HISS badge present the state names owner/name, the repository the block's
-// links point into. It reports false with no error when content carries no managed block. A state is
+// present the state names owner/name, the repository the block's badges must link to. It
+// reports false with no error when content carries no managed block. A state is
 // returned only when content is exactly Reconcile's output for it, so a hand-edited block, a
 // block another renderer version wrote or a badge linking another repository fails with
 // ErrStale instead of yielding a guessed state. A caller that re-renders the block for
@@ -42,8 +42,9 @@ func RecordedState(content, owner, name string) (State, bool, error) {
 // blockState parses the facts renderBlock writes into the lines between the markers.
 // RecordedState then proves the parse by rendering it again through Verify.
 func blockState(lines []string, owner, name string) (State, error) {
-	state := State{DocumentationEnabled: slices.Contains(lines, documentationLine)}
-	if state.DocumentationEnabled || slices.Contains(lines, hissBadgeLink) {
+	var state State
+	if slices.Contains(lines, documentationLine) {
+		state.DocumentationEnabled = true
 		state.RepositoryOwner, state.RepositoryName = owner, name
 	}
 	for index, line := range lines {
