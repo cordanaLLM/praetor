@@ -252,3 +252,28 @@ func TestLoadManifestRepositorySourceBoundary(t *testing.T) {
 		t.Errorf("source equal to owner/name: %+v, %v", redundant, err)
 	}
 }
+
+// repository.default_branch (#71) declares the branch the ruleset protects. Declared names
+// round-trip, omitting it is the zero value, and a name ValidBranchName refuses fails closed at
+// load time, as update.branch does.
+func TestLoadManifestRepositoryDefaultBranch_3D(t *testing.T) {
+	for _, branch := range []string{"master", "release/stable", "v1.x", strings.Repeat("b", 128)} {
+		m, err := LoadManifest(writeManifest(t, "version: 1\nrepository:\n  default_branch: \""+branch+"\"\n"))
+		if err != nil || m.Repository.DefaultBranch != branch {
+			t.Errorf("repository.default_branch %q: %+v, %v", branch, m, err)
+		}
+	}
+	omitted, err := LoadManifest(writeManifest(t, "version: 1\nrepository:\n  owner: \"acme\"\n"))
+	if err != nil || omitted.Repository.DefaultBranch != "" {
+		t.Errorf("omitted default_branch: %+v, %v", omitted, err)
+	}
+	for _, branch := range []string{"-dash", "a..b", "with space", "_private", strings.Repeat("b", 129)} {
+		if _, err := LoadManifest(writeManifest(t, "version: 1\nrepository:\n  default_branch: \""+branch+"\"\n")); err == nil ||
+			!strings.Contains(err.Error(), "repository.default_branch") {
+			t.Errorf("repository.default_branch %q was accepted or not named: %v", branch, err)
+		}
+	}
+	if ValidBranchName("") || !ValidBranchName("main") {
+		t.Error("ValidBranchName must refuse the empty name and accept main")
+	}
+}

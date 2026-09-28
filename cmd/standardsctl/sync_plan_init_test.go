@@ -587,6 +587,44 @@ func TestSync_Remote_Positive(t *testing.T) {
 	mustErrContain(t, err, "no positional arguments")
 }
 
+// TestSync_Remote_DefaultBranchMaster covers #71: in a checkout whose origin HEAD is master,
+// sync refuses the main ruleset earlier Praetor versions wrote, synthesizes a missing one for
+// master, and pushes that same ruleset, master and lts-*, to GitHub.
+func TestSync_Remote_DefaultBranchMaster(t *testing.T) {
+	f := newSyncValidationFixture(t)
+	env := initGitFixture(t, f.dir)
+	for _, args := range [][]string{
+		{"remote", "add", "origin", "https://github.com/acme/widgets.git"},
+		{"symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/master"},
+	} {
+		if out, gerr := runFixtureGit(t, f.dir, env, args...); gerr != nil {
+			t.Fatalf("git %v: %v (%s)", args, gerr, out)
+		}
+	}
+	_, err := runSyncCmd(t, "--config="+f.manifestPath)
+	mustErrContain(t, err, "validation failed for default branch master")
+
+	rulesetPath := filepath.Join(f.dir, ".github", "rulesets", "main.json")
+	if err := os.Remove(rulesetPath); err != nil {
+		t.Fatal(err)
+	}
+	stub := &forgeStub{}
+	srv := httptest.NewServer(stub.handler())
+	t.Cleanup(srv.Close)
+	out, err := runSyncCmd(t, "--config="+f.manifestPath, "--remote", "--token=ghp_x", "--endpoint="+srv.URL)
+	if err != nil {
+		t.Fatalf("remote sync of a master repository: %v\n%s", err, out)
+	}
+	mustContain(t, out, "matches declared policy for default branch master", "(master and lts-*, read back")
+	local, err := os.ReadFile(rulesetPath)
+	if err != nil || !strings.Contains(string(local), `"refs/heads/master"`) || strings.Contains(string(local), `"refs/heads/main"`) {
+		t.Fatalf("the synthesized ruleset must protect master: %v\n%s", err, local)
+	}
+	if raw := stub.storedRuleset(t, 1); !strings.Contains(raw, `"include":["refs/heads/master","refs/heads/lts-*"]`) {
+		t.Fatalf("the remote ruleset must protect master and lts-*: %s", raw)
+	}
+}
+
 // storedRuleset returns the JSON of the ruleset the stub holds under id.
 func (s *forgeStub) storedRuleset(t *testing.T, id int) string {
 	t.Helper()
