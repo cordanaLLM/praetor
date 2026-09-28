@@ -88,8 +88,8 @@ type harnessPlan struct {
 	// platform is the platform the current synthesis names when an operator-owned harness names
 	// another: the value --force sets, which a plain run only reports.
 	platform string
-	// unpatched says why --force could not set the platform of an operator-owned harness
-	// (paperclip.PatchPlatform); the harness then stays as written.
+	// unpatched says why the platform of an operator-owned harness could be neither compared
+	// nor set (paperclip.PatchPlatform), in either mode; the harness then stays as written.
 	unpatched string
 }
 
@@ -146,13 +146,12 @@ func planHarness(ctx context.Context, s *adoptSession) (harnessPlan, error) {
 // synthesis names, the value audit requires. --force sets a differing platform and nothing
 // else (paperclip.PatchPlatform); a plain run keeps the bytes and records the platform so the
 // paperclip step can say what --force would set. A harness PatchPlatform cannot decode stays
-// as written either way, and under --force the reason is recorded.
+// as written either way, and the reason is recorded in both modes: its platform goes unchecked,
+// so a plain run would otherwise leave a mismatch for audit to find.
 func planOwnedHarness(plan harnessPlan, platform string, force bool) harnessPlan {
 	patched, changed, err := paperclip.PatchPlatform(plan.owned, platform)
 	if err != nil {
-		if force {
-			plan.unpatched = err.Error()
-		}
+		plan.unpatched = err.Error()
 		return plan
 	}
 	if !changed {

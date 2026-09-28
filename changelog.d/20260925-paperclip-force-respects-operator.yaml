@@ -1,4 +1,4 @@
 type: fixed
-title: adopt --force keeps an operator-owned Paperclip harness byte for byte and binds register.sources to it, sets only a platform naming another repository (reported as replace with a backup), no longer recreates a deleted .paperclip/rules.md, and fails on an invalid harness as a plain run does; delete .paperclip/harness.json and re-run adopt to regenerate it
+title: adopt --force keeps an operator-owned Paperclip harness byte for byte, sets only a platform naming another repository (reported as replace with a backup), no longer recreates a deleted .paperclip/rules.md, and fails on an invalid harness as a plain run does; a declared register.sources is never re-bound to an edited harness, so the run stops before writing and names the remedy (recompute the pins with praetorctl caveman check --configured-sources --root=., which now reports every differing value in one run, or delete .paperclip/harness.json and re-run adopt to regenerate it)
 issue: "#502"
 breaking: true

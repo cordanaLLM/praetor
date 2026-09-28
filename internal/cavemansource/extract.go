@@ -92,16 +92,24 @@ func ExtractDeclaredContent(ctx context.Context, root string, declared *config.R
 	return verifyDeclaredResult(result, declared)
 }
 
+// verifyDeclaredResult holds result to the declared counts and digest. A mismatch names every
+// field that differs with its extracted value, so one run of `caveman check
+// --configured-sources` reports all three values a drifted contract needs.
 func verifyDeclaredResult(result Result, declared *config.RegisterSources) (Result, error) {
+	mismatches := make([]string, 0, 3)
 	if result.Applicable != declared.Expected {
-		return Result{}, fmt.Errorf("register.sources expected %d applicable values, extracted %d", declared.Expected, result.Applicable)
+		mismatches = append(mismatches, fmt.Sprintf("expected %d applicable values, extracted %d",
+			declared.Expected, result.Applicable))
 	}
 	if result.NotApplicable != declared.NotApplicable {
-		return Result{}, fmt.Errorf("register.sources expected %d not-applicable values, extracted %d",
-			declared.NotApplicable, result.NotApplicable)
+		mismatches = append(mismatches, fmt.Sprintf("expected %d not-applicable values, extracted %d",
+			declared.NotApplicable, result.NotApplicable))
 	}
 	if result.SHA256 != declared.SHA256 {
-		return Result{}, fmt.Errorf("register.sources sha256 mismatch: declared %s, actual %s", declared.SHA256, result.SHA256)
+		mismatches = append(mismatches, fmt.Sprintf("sha256 mismatch: declared %s, actual %s", declared.SHA256, result.SHA256))
+	}
+	if len(mismatches) > 0 {
+		return Result{}, errors.New("register.sources " + strings.Join(mismatches, "; "))
 	}
 	return result, nil
 }

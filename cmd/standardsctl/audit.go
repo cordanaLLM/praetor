@@ -470,7 +470,9 @@ func auditPaperclipHarness(ctx context.Context, manifest *config.Manifest, rootD
 	expectedPlatform := fmt.Sprintf("%s/%s", manifest.Repository.Owner, manifest.Repository.Name)
 	if h.Platform != expectedPlatform {
 		return fmt.Errorf("[FAIL] Paperclip harness platform mismatch: got %q, expected %q; "+
-			"run 'praetorctl adopt --force' to set platform (every other harness value kept)", h.Platform, expectedPlatform)
+			"run 'praetorctl adopt --force' to set platform (every other harness value kept); "+
+			"with adoption.decline listing paperclip, adopt never writes the harness, so set platform by hand",
+			h.Platform, expectedPlatform)
 	}
 	fmt.Printf("[PASS] Paperclip agent runtime harness verified (%s, %d rules).\n", h.Platform, len(h.OperatingContract))
 	return nil

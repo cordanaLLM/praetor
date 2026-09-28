@@ -369,21 +369,69 @@ func TestAdoptCustomHarnessPreservesBytesAndBindsActualCoverage(t *testing.T) {
 // makes a harness operator-owned.
 const editedContractRow = "Timeout != failure. Re-check open PRs and CI before retry; prevent duplicate PRs."
 
-// TestAdoptForceKeepsEditedOperatingContract (#502) Positive: a harness whose operating
-// contract the operator edited is kept byte for byte under --force, rules.md included, and the
-// contract the operator re-bound to it stays bound, so the source gate and the platform check
-// audit runs stay green.
-func TestAdoptForceKeepsEditedOperatingContract(t *testing.T) {
+// editOperatingContract returns the generated harness with its timeout row replaced by
+// editedContractRow.
+func editOperatingContract(t *testing.T, generated string) string {
+	t.Helper()
+	edited := strings.Replace(generated, "Timeout != failure. Re-check open PRs before retry; prevent duplicate PRs.", editedContractRow, 1)
+	if edited == generated {
+		t.Fatal("fixture precondition: the generated harness lacks the timeout row")
+	}
+	return edited
+}
+
+// TestAdoptEditedHarnessFailsBeforeWritingWithRemedy (#502 U9) Negative: the realistic path.
+// adopt writes the harness and binds register.sources to it; the operator edits a contract row
+// and does not re-bind. Adoption never re-blesses that drift, plain or --force: the run stops
+// before its first write, and the error names both remedies. The second one, deleting the
+// harness and re-running adopt, regenerates the bytes the contract was bound to. The first,
+// recomputing the pins with the named command, is TestAdoptForceEditedHarnessNeedsRecomputedPins
+// in cmd/standardsctl.
+func TestAdoptEditedHarnessFailsBeforeWritingWithRemedy(t *testing.T) {
 	repoPath := newTestRepo(t, "legacy")
 	mustWrite(t, filepath.Join(repoPath, manifestFile), legacyManifest)
 	if _, err := Adopt(t.Context(), sourceAdoptOptions(t, repoPath, false)); err != nil {
 		t.Fatal(err)
 	}
-	generated := mustRead(t, filepath.Join(repoPath, paperclipFile))
-	edited := strings.Replace(generated, "Timeout != failure. Re-check open PRs before retry; prevent duplicate PRs.", editedContractRow, 1)
-	if edited == generated {
-		t.Fatal("fixture precondition: the generated harness lacks the timeout row")
+	harnessPath := filepath.Join(repoPath, paperclipFile)
+	generated := mustRead(t, harnessPath)
+	mustWrite(t, harnessPath, editOperatingContract(t, generated))
+	before := snapshotTree(t, repoPath)
+	for _, force := range []bool{false, true} {
+		_, err := Adopt(t.Context(), sourceAdoptOptions(t, repoPath, force))
+		for _, want := range []string{"register.sources sha256 mismatch",
+			"recompute the pins with `praetorctl caveman check --configured-sources --root=.`",
+			"delete it and re-run praetorctl adopt to regenerate it"} {
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("force=%v: error lacks %q: %v", force, want, err)
+			}
+		}
+		assertTreeUnchanged(t, before, snapshotTree(t, repoPath))
 	}
+	if err := os.Remove(harnessPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Adopt(t.Context(), sourceAdoptOptions(t, repoPath, false)); err != nil {
+		t.Fatalf("adopt after deleting the edited harness: %v", err)
+	}
+	if got := mustRead(t, harnessPath); got != generated {
+		t.Fatalf("deleted harness not regenerated to the bound bytes:\n%s", got)
+	}
+	requirePassingSourceGate(t, repoPath, paperclipFile)
+}
+
+// TestAdoptForceKeepsReboundEditedOperatingContract (#502) Positive, the already re-bound case:
+// once the operator has recomputed the pins for the edited operating contract (the remedy
+// TestAdoptEditedHarnessFailsBeforeWritingWithRemedy names), --force keeps the harness byte for
+// byte, rules.md included, and the re-bound contract stays bound, so the source gate and the
+// platform check audit runs stay green.
+func TestAdoptForceKeepsReboundEditedOperatingContract(t *testing.T) {
+	repoPath := newTestRepo(t, "legacy")
+	mustWrite(t, filepath.Join(repoPath, manifestFile), legacyManifest)
+	if _, err := Adopt(t.Context(), sourceAdoptOptions(t, repoPath, false)); err != nil {
+		t.Fatal(err)
+	}
+	edited := editOperatingContract(t, mustRead(t, filepath.Join(repoPath, paperclipFile)))
 	bound, err := managedRegisterSources(t.Context(), []byte(edited))
 	if err != nil {
 		t.Fatal(err)
@@ -490,30 +538,33 @@ func TestAdoptForcePatchesOnlyHarnessPlatform(t *testing.T) {
 
 // TestAdoptForceKeepsHarnessItCannotPatch (#502) Boundary: a harness the loader accepts but
 // PatchPlatform refuses (a duplicate member, which the order-keeping rewrite cannot carry) stays
-// byte for byte under --force, and a warning says the platform was not set. Its contract
-// selects only a hook, so no source extraction reads the harness first.
+// byte for byte, and a warning says the platform was not checked or set, on a plain run as under
+// --force: its platform goes uncompared, so silence would leave a mismatch for audit to find.
+// Its contract selects only a hook, so no source extraction reads the harness first.
 func TestAdoptForceKeepsHarnessItCannotPatch(t *testing.T) {
-	repoPath := newTestRepo(t, "legacy")
-	duplicate := strings.Replace(renamedHarness, `"version": 1,`, `"version": 1, "notes": "first",`, 1)
-	mustWrite(t, filepath.Join(repoPath, paperclipFile), duplicate)
-	mustWrite(t, filepath.Join(repoPath, "hooks", "notify.sh"), "echo \"result: hook pass.\"\n")
-	inputs := []config.RegisterSourceInput{{Path: "hooks/notify.sh", Surface: config.SurfaceHooks,
-		Kind: "message", Format: config.SourceFormatShell}}
-	result, err := cavemansource.ExtractInputs(t.Context(), repoPath, inputs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	mustWrite(t, filepath.Join(repoPath, manifestFile), legacyManifest+manifestSourcesYAML(t, &config.RegisterSources{
-		Expected: result.Applicable, NotApplicable: result.NotApplicable, SHA256: result.SHA256, Inputs: inputs}))
-	report, err := Adopt(t.Context(), sourceAdoptOptions(t, repoPath, true))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := mustRead(t, filepath.Join(repoPath, paperclipFile)); got != duplicate || hasAction(report, paperclipFile, actionReplace) {
-		t.Fatalf("unpatchable harness rewritten:\n%s", got)
-	}
-	if !strings.Contains(strings.Join(report.Warnings, "\n"), "platform not checked or set, harness kept as written") {
-		t.Fatalf("unpatchable harness not warned: %v", report.Warnings)
+	for _, force := range []bool{false, true} {
+		repoPath := newTestRepo(t, "legacy")
+		duplicate := strings.Replace(renamedHarness, `"version": 1,`, `"version": 1, "notes": "first",`, 1)
+		mustWrite(t, filepath.Join(repoPath, paperclipFile), duplicate)
+		mustWrite(t, filepath.Join(repoPath, "hooks", "notify.sh"), "echo \"result: hook pass.\"\n")
+		inputs := []config.RegisterSourceInput{{Path: "hooks/notify.sh", Surface: config.SurfaceHooks,
+			Kind: "message", Format: config.SourceFormatShell}}
+		result, err := cavemansource.ExtractInputs(t.Context(), repoPath, inputs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mustWrite(t, filepath.Join(repoPath, manifestFile), legacyManifest+manifestSourcesYAML(t, &config.RegisterSources{
+			Expected: result.Applicable, NotApplicable: result.NotApplicable, SHA256: result.SHA256, Inputs: inputs}))
+		report, err := Adopt(t.Context(), sourceAdoptOptions(t, repoPath, force))
+		if err != nil {
+			t.Fatalf("force=%v: %v", force, err)
+		}
+		if got := mustRead(t, filepath.Join(repoPath, paperclipFile)); got != duplicate || hasAction(report, paperclipFile, actionReplace) {
+			t.Fatalf("force=%v: unpatchable harness rewritten:\n%s", force, got)
+		}
+		if !strings.Contains(strings.Join(report.Warnings, "\n"), "platform not checked or set, harness kept as written") {
+			t.Fatalf("force=%v: unpatchable harness not warned: %v", force, report.Warnings)
+		}
 	}
 }
 

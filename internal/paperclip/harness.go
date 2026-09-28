@@ -359,7 +359,7 @@ func releasedReceiptRows() []string {
 // repository's languages or declared exceptions change, its policy resolves the function length
 // the harness stated as the audit ceiling, or the release moved only its pinned receipt row;
 // recognising it is what lets adopt refresh it, since --force keeps any harness it does not
-// recognise as operator-owned (#502). The set is enumerated rather than the fact-dependent rows
+// recognise, as operator-owned (#502). The set is enumerated rather than the fact-dependent rows
 // normalised away, so recognition stays byte for byte: an edit to the receipt row or to one
 // invariant, its function length included, still makes the harness operator-owned
 // (limitFacts). It is bounded: len(releasedReceiptRows()) x len(releaseFacts(limits)) values.

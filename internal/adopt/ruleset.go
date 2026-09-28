@@ -229,7 +229,7 @@ func (s *adoptSession) patchHarnessPlatform(ctx context.Context, plan harnessPla
 // recordKeptHarness reports an existing harness this run leaves as it is: verified when it is
 // the current synthesis, kept when it is operator-owned. A kept harness whose platform names
 // another repository fails audit, so a plain run warns with the --force that sets it, and a
-// --force run that could not set it warns with the reason.
+// run that could not compare or set it, plain or --force, warns with the reason.
 func (s *adoptSession) recordKeptHarness(plan harnessPlan) {
 	if plan.owned == nil {
 		s.report.recordReconciled(paperclipFile, "Existing Paperclip agent runtime harness verified present")

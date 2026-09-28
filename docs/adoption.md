@@ -657,6 +657,30 @@ errors retain the partial report, since earlier scaffolding may already exist.
 The same source option applies to `adopt --all-missing`; integrations invoking
 adoption must supply it or arrange an already valid target lock.
 
+## Migration: `--force` keeps an operator-owned Paperclip harness
+
+`praetorctl adopt --force` no longer regenerates an operator-owned `.paperclip/harness.json` or
+recreates a deleted `.paperclip/rules.md` (#502). It keeps the harness, sets only a `platform`
+that names another repository, and fails on a harness that does not validate, as a plain run
+does. To regenerate the harness, delete `.paperclip/harness.json` (and `rules.md`) and rerun
+`praetorctl adopt`.
+
+Adoption does not re-bind `register.sources` to a harness you edited, under `--force` either.
+A declared contract that no longer matches stops the run before its first write with
+`existing register.sources fails its configured gate`, and the error names two remedies:
+
+1. Keep the edit: run `praetorctl caveman check --configured-sources --root=.`, set `expected`,
+   `not_applicable` and `sha256` under `register.sources` in `.standards.yaml` to the extracted
+   values it reports (one run reports every value that differs), then rerun
+   `praetorctl adopt --force`.
+2. Drop the edit: delete `.paperclip/harness.json` and rerun `praetorctl adopt`. It regenerates
+   the harness, and the contract bound to the generated harness matches again.
+
+Tests: `TestAdoptEditedHarnessFailsBeforeWritingWithRemedy` in `internal/adopt/adopt_test.go`
+and `TestAdoptForceEditedHarnessNeedsRecomputedPins` in
+`cmd/standardsctl/audit_paperclip_force_test.go`. The harness rules in full:
+[text register](guides/text-register.md#upgrading-an-adopted-repository).
+
 ## Lock verification outcomes
 
 Every command that reads `.standards.lock` uses one validator,

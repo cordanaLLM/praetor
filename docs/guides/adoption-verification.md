@@ -1029,11 +1029,14 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
 
 An existing harness that is neither the current synthesis nor unmodified earlier output is
 operator-owned and keeps its text, under `--force` too
-(`TestAdoptForceKeepsEditedOperatingContract`). `--force` sets only a `platform` that names
-another repository than the identity, the value the audit's Paperclip gate compares. It replaces
-that value in place (`clientjson.ReplaceMember`), so every other byte stays, layout, line endings
-and the `\u003c`-style escapes of a released harness included, and the reported delta is that one
-line; a plain run keeps the file and warns (`TestAdoptForcePatchesOnlyHarnessPlatform`,
+(`TestAdoptForceKeepsReboundEditedOperatingContract`). A declared `register.sources` is never
+re-bound to an edited harness, so recompute its pins after an edit
+([text register](text-register.md#upgrading-an-adopted-repository)). `--force` sets only a
+`platform` that names another repository than the identity, the value the audit's Paperclip
+gate compares. It replaces that value in place (`clientjson.ReplaceMember`), so every other byte
+stays, layout, line endings and the `\u003c`-style escapes of a released harness included, and
+the reported delta is that one line; a plain run keeps the file and warns
+(`TestAdoptForcePatchesOnlyHarnessPlatform`,
 `TestPatchPlatform_Positive_ReleasedHarnessChangesOneLine`). To regenerate the harness, delete
 `.paperclip/harness.json` and rerun `praetorctl adopt`. A `.paperclip/rules.md` you deleted stays
 deleted, under `--force` too (`TestAdoptForceKeepsDeletedRulesAbsent`).

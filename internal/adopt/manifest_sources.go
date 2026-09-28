@@ -125,13 +125,23 @@ func unboundSourcesReason(harness harnessPlan) string {
 		"declare register.sources for this repository's agent-facing text before audit passes"
 }
 
+// declaredSourcesRemedy is what an operator does when a declared contract fails its own gate
+// before the run: adoption does not re-bind it, under --force either (#502 U9). The
+// configured-sources check reports every extracted value (cavemansource.verifyDeclaredResult);
+// regenerating the harness returns it to the bytes an earlier adoption bound.
+const declaredSourcesRemedy = "adoption never re-binds a contract to drift it did not cause, --force included: " +
+	"recompute the pins with `praetorctl caveman check --configured-sources --root=.` and set expected, " +
+	"not_applicable and sha256 under register.sources in " + manifestFile + " to the extracted values it reports, " +
+	"or, when the drift is an edited " + paperclipFile + ", delete it and re-run praetorctl adopt to regenerate it"
+
 // reconcileRegisterSources returns the register.sources adoption leaves in the manifest and
 // whether they replace the declared contract. A missing contract gets the managed harness
-// rows, or nil when no harness will exist. A declared contract must pass its own gate first, so adoption never re-blesses drift
-// it did not cause; it then keeps every declared input and only recomputes the counts and
-// digest when this run writes the harness those inputs select: a refresh of unmodified earlier
-// output, with or without --force, or the --force platform patch of an operator-owned one. A
-// harness this run keeps binds as it stands on disk, under --force too.
+// rows, or nil when no harness will exist. A declared contract must pass its own gate first,
+// so adoption never re-blesses drift it did not cause (declaredSourcesRemedy); it then keeps
+// every declared input and only recomputes the counts and digest when this run writes the
+// harness those inputs select: a refresh of unmodified earlier output, with or without
+// --force, or the --force platform patch of an operator-owned one. A harness this run keeps
+// binds as it stands on disk, under --force too.
 func reconcileRegisterSources(ctx context.Context, root string, declared *config.RegisterSources,
 	harness harnessPlan,
 ) (*config.RegisterSources, bool, error) {
@@ -143,7 +153,7 @@ func reconcileRegisterSources(ctx context.Context, root string, declared *config
 		return sources, false, err
 	}
 	if err := verifyDeclaredSources(ctx, root, declared, harness); err != nil {
-		return nil, false, fmt.Errorf("existing register.sources fails its configured gate: %w", err)
+		return nil, false, fmt.Errorf("existing register.sources fails its configured gate: %w; %s", err, declaredSourcesRemedy)
 	}
 	if !harness.writes() {
 		return declared, false, nil
