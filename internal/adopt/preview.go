@@ -74,7 +74,12 @@ func (s *adoptSession) scaffoldPreviewed(ctx context.Context, sc scaffold, note 
 	if err != nil {
 		return err
 	}
-	preview := filePreview(sc, state, before, exists && readErr == nil, exists)
+	previewed := sc
+	if written := s.dryRunWrites[sc.rel]; state == scaffoldWritten && written != nil {
+		// The bytes the run writes: a refresh keeps the file's own line endings (replacePriorText).
+		previewed.content = written
+	}
+	preview := filePreview(previewed, state, before, exists && readErr == nil, exists)
 	preview.Note = note
 	if readErr != nil {
 		preview.Note = fmt.Sprintf("existing file could not be read to compare (%v); %s", readErr, note)

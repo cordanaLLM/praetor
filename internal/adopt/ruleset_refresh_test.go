@@ -134,3 +134,32 @@ func TestAdoptDryRun_Positive_FirstAdoptionPreviewIsTheWrittenRuleset(t *testing
 		t.Fatalf("the dry run previewed a ruleset the run does not write:\npreview:\n%s\nwritten:\n%s", preview.Content, written)
 	}
 }
+
+// A CRLF checkout of an earlier rendering is refreshed in CRLF, and the dry run previews those
+// bytes: every added line of its diff keeps the file's line ending.
+func TestAdopt_Boundary_CRLFRenderingRefreshesInItsOwnLineEndings(t *testing.T) {
+	repo := newTestRepo(t, "crlf-rendering")
+	data, err := forge.RenderRepositoryRuleset(config.DefaultPolicy().BranchProtection, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(repo, rulesetFile), strings.ReplaceAll(string(data), "\n", "\r\n"))
+
+	preview := dryRunRulesetPreview(t, repo, false)
+	if preview.Action != PreviewUpdate {
+		t.Fatalf("a CRLF earlier rendering must preview as update, got %+v", preview)
+	}
+	for _, line := range strings.SplitAfter(preview.Diff, "\n") {
+		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") && !strings.HasSuffix(line, "\r\n") {
+			t.Fatalf("the preview adds a line the run does not write, %q, in:\n%s", line, preview.Diff)
+		}
+	}
+	adoptForRuleset(t, repo, false)
+	written, err := os.ReadFile(filepath.Join(repo, rulesetFile))
+	if err != nil || strings.Count(string(written), "\r\n") != strings.Count(string(written), "\n") {
+		t.Fatalf("the refresh must keep CRLF: %v\n%q", err, written)
+	}
+	if _, err := auditAdoptedRuleset(t, repo); err != nil {
+		t.Fatalf("the refreshed CRLF ruleset must pass the audit: %v", err)
+	}
+}
