@@ -13,6 +13,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/readmegovernance"
+	figureassets "github.com/cordanaLLM/praetor/tools/figures"
 	markdownassets "github.com/cordanaLLM/praetor/tools/markdownlint"
 )
 
@@ -68,6 +69,29 @@ func TestAuditDocumentationGateNegative(t *testing.T) {
 		},
 		"missing Makefile wiring": func(t *testing.T, root string) {
 			writeFixtureFile(t, root, "Makefile", "verify-all:\n\t@true\n")
+		},
+		"Makefile block without docs-figures": func(t *testing.T, root string) {
+			writeFixtureFile(t, root, "Makefile", "# BEGIN praetor documentation gate\n.PHONY: docs-lint\nverify-all: docs-lint\n"+
+				"docs-lint:\n\t@node tools/markdownlint/verify.mjs\n# END praetor documentation gate\n")
+		},
+		"figure engine asset drift": func(t *testing.T, root string) {
+			writeFixtureFile(t, root, "tools/figures/build.mjs", "// operator edit\n")
+		},
+		"missing figure engine asset": func(t *testing.T, root string) {
+			if err := os.Remove(filepath.Join(root, "tools", "figures", "dist", "player.js")); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"missing attribute block": func(t *testing.T, root string) {
+			writeFixtureFile(t, root, ".gitattributes", "* text=auto\n")
+		},
+		"attribute block before an operator rule": func(t *testing.T, root string) {
+			writeFixtureFile(t, root, ".gitattributes", adopt.ManagedGitAttributesBlock(adopt.DocumentationAttributes())+"tools/** -text\n")
+		},
+		"missing .gitattributes": func(t *testing.T, root string) {
+			if err := os.Remove(filepath.Join(root, ".gitattributes")); err != nil {
+				t.Fatal(err)
+			}
 		},
 		"missing second scratch ignore": func(t *testing.T, root string) {
 			writeFixtureFile(t, root, ".gitignore", "/.workingdir/\n")
@@ -195,6 +219,16 @@ func TestAuditDocumentationGateDisabledRejectsStaleSurfaces(t *testing.T) {
 		"Makefile block": func(t *testing.T, root string) {
 			writeFixtureFile(t, root, "Makefile", adopt.DocumentationMakefileBlock())
 		},
+		"figure engine asset": func(t *testing.T, root string) {
+			data, err := figureassets.Read("build.mjs")
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeFixtureFile(t, root, "tools/figures/build.mjs", string(data))
+		},
+		"attribute block": func(t *testing.T, root string) {
+			writeFixtureFile(t, root, ".gitattributes", "* text=auto\n\n"+adopt.ManagedGitAttributesBlock(adopt.DocumentationAttributes()))
+		},
 		"ruleset context": func(t *testing.T, root string) {
 			writeFixtureFile(t, root, ".github/rulesets/main.json",
 				`{"rules":[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"`+
@@ -226,6 +260,8 @@ func TestAuditDocumentationGateDisabledAllowsOperatorLookalikes(t *testing.T) {
 		"# prose mentions "+"# BEGIN praetor documentation gate"+" but owns no marker line\noperator:\n\t@true\n")
 	writeFixtureFile(t, root, ".github/rulesets/main.json",
 		`{"metadata":{"example":"`+adopt.DocumentationStatusContext+`"},"rules":[]}`)
+	writeFixtureFile(t, root, "tools/figures/build.mjs", "// the operator's own build script\n")
+	writeFixtureFile(t, root, ".gitattributes", "* text=auto\ntools/figures/** text eol=lf\n")
 	if err := docGate(t.Context(), &config.Manifest{}, root); err != nil {
 		t.Fatalf("disabled facet rejected operator-owned lookalikes: %v", err)
 	}
@@ -502,16 +538,19 @@ func TestAuditDocumentationGateUsesTheEffectiveBranchProtection(t *testing.T) {
 func documentationAuditFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	for _, name := range markdownassets.Names() {
-		data, err := markdownassets.Read(name)
-		if err != nil {
-			t.Fatal(err)
+	for _, family := range adopt.DocumentationFamilies() {
+		for _, name := range family.Names() {
+			data, err := family.Read(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeFixtureFile(t, root, family.AssetPath(name), string(data))
 		}
-		writeFixtureFile(t, root, filepath.Join(markdownassets.Directory, name), string(data))
 	}
 	writeFixtureFile(t, root, adopt.DocumentationWorkflowFile, adopt.DocumentationWorkflow())
 	writeFixtureFile(t, root, "Makefile", adopt.DocumentationMakefileBlock())
 	writeFixtureFile(t, root, ".gitignore", adopt.ManagedGitIgnoreBlock())
+	writeFixtureFile(t, root, ".gitattributes", "* text=auto\n\n"+adopt.ManagedGitAttributesBlock(adopt.DocumentationAttributes()))
 	if !strings.Contains(adopt.DocumentationWorkflow(), "name: "+adopt.DocumentationStatusContext) {
 		t.Fatal("fixture workflow lacks its required status context")
 	}

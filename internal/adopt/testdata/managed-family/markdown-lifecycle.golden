@@ -7,7 +7,7 @@ action create tools/markdownlint/no-private-scratch-links.mjs :: Scaffolded lock
 action create .github/workflows/praetor-docs.yml :: Scaffolded required documentation governance workflow
 action create .gitignore :: Created ignore rules for build artifacts, private working directory, gate worktrees and the AGY workspace configuration
 action reconcile .prettierignore :: No Prettier configuration found; managed artifacts not declared to a formatter this repository does not run
-file .github/workflows/praetor-docs.yml sha256:938c1926d853a57149b0ede1cc6b9b7ce68eba62f6af30e8d0768458df98a62e
+file .github/workflows/praetor-docs.yml sha256:05d50eae0edd1599f23468e570e0ebf0af3d2e7cc65bf126d4f7976b002b2a84
 file tools/markdownlint/package.json sha256:1ef55cd03a7401bae13927bbca5d85ad601dd2ad4b8b931d79a3317551b83c2a
 file tools/markdownlint/package-lock.json sha256:abbe0b93eb99ce54d6cadc43ecb131a655d1aaf28009aa3804ad2ba97796b479
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3
@@ -24,7 +24,7 @@ action reconcile tools/markdownlint/no-private-scratch-links.mjs :: Existing Mar
 action reconcile .github/workflows/praetor-docs.yml :: Existing documentation governance workflow preserved; audit verifies canonical text
 action reconcile .gitignore :: Private artifact ignore tail block already effective
 action reconcile .prettierignore :: No Prettier configuration found; managed artifacts not declared to a formatter this repository does not run
-file .github/workflows/praetor-docs.yml sha256:938c1926d853a57149b0ede1cc6b9b7ce68eba62f6af30e8d0768458df98a62e
+file .github/workflows/praetor-docs.yml sha256:05d50eae0edd1599f23468e570e0ebf0af3d2e7cc65bf126d4f7976b002b2a84
 file tools/markdownlint/package.json sha256:1ef55cd03a7401bae13927bbca5d85ad601dd2ad4b8b931d79a3317551b83c2a
 file tools/markdownlint/package-lock.json sha256:abbe0b93eb99ce54d6cadc43ecb131a655d1aaf28009aa3804ad2ba97796b479
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3
@@ -41,7 +41,7 @@ action reconcile tools/markdownlint/no-private-scratch-links.mjs :: Existing Mar
 action reconcile .github/workflows/praetor-docs.yml :: Existing documentation governance workflow preserved; audit verifies canonical text
 action reconcile .gitignore :: Private artifact ignore tail block already effective
 action reconcile .prettierignore :: No Prettier configuration found; managed artifacts not declared to a formatter this repository does not run
-file .github/workflows/praetor-docs.yml sha256:938c1926d853a57149b0ede1cc6b9b7ce68eba62f6af30e8d0768458df98a62e
+file .github/workflows/praetor-docs.yml sha256:05d50eae0edd1599f23468e570e0ebf0af3d2e7cc65bf126d4f7976b002b2a84
 file tools/markdownlint/package.json sha256:ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356
 file tools/markdownlint/package-lock.json sha256:abbe0b93eb99ce54d6cadc43ecb131a655d1aaf28009aa3804ad2ba97796b479
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3
@@ -58,7 +58,7 @@ action reconcile tools/markdownlint/no-private-scratch-links.mjs :: Existing Mar
 action reconcile .github/workflows/praetor-docs.yml :: Existing documentation governance workflow preserved; audit verifies canonical text
 action reconcile .gitignore :: Private artifact ignore tail block already effective
 action reconcile .prettierignore :: No Prettier configuration found; managed artifacts not declared to a formatter this repository does not run
-file .github/workflows/praetor-docs.yml sha256:938c1926d853a57149b0ede1cc6b9b7ce68eba62f6af30e8d0768458df98a62e
+file .github/workflows/praetor-docs.yml sha256:05d50eae0edd1599f23468e570e0ebf0af3d2e7cc65bf126d4f7976b002b2a84
 file tools/markdownlint/package.json sha256:1ef55cd03a7401bae13927bbca5d85ad601dd2ad4b8b931d79a3317551b83c2a
 file tools/markdownlint/package-lock.json sha256:abbe0b93eb99ce54d6cadc43ecb131a655d1aaf28009aa3804ad2ba97796b479
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3
@@ -68,7 +68,7 @@ file .gitignore "bin/\n*.test\n*.out\n.DS_Store\n\n# BEGIN praetor private artif
 file .prettierignore absent
 == disable without force
 error disabling documentation removes hosted context "Documentation Governance"; rerun adopt --force
-file .github/workflows/praetor-docs.yml sha256:938c1926d853a57149b0ede1cc6b9b7ce68eba62f6af30e8d0768458df98a62e
+file .github/workflows/praetor-docs.yml sha256:05d50eae0edd1599f23468e570e0ebf0af3d2e7cc65bf126d4f7976b002b2a84
 file tools/markdownlint/package.json sha256:1ef55cd03a7401bae13927bbca5d85ad601dd2ad4b8b931d79a3317551b83c2a
 file tools/markdownlint/package-lock.json sha256:abbe0b93eb99ce54d6cadc43ecb131a655d1aaf28009aa3804ad2ba97796b479
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3
@@ -113,7 +113,7 @@ action create tools/markdownlint/no-private-scratch-links.mjs :: Scaffolded lock
 action create .github/workflows/praetor-docs.yml :: Scaffolded required documentation governance workflow
 action reconcile .gitignore :: Private artifact ignore tail block already effective
 action reconcile .prettierignore :: No Prettier configuration found; managed artifacts not declared to a formatter this repository does not run
-file .github/workflows/praetor-docs.yml sha256:938c1926d853a57149b0ede1cc6b9b7ce68eba62f6af30e8d0768458df98a62e
+file .github/workflows/praetor-docs.yml sha256:05d50eae0edd1599f23468e570e0ebf0af3d2e7cc65bf126d4f7976b002b2a84
 file tools/markdownlint/package.json sha256:1ef55cd03a7401bae13927bbca5d85ad601dd2ad4b8b931d79a3317551b83c2a
 file tools/markdownlint/package-lock.json sha256:abbe0b93eb99ce54d6cadc43ecb131a655d1aaf28009aa3804ad2ba97796b479
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3

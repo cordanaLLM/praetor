@@ -1,7 +1,7 @@
 == canonical
-stdout "[PASS] Locked documentation gate verified (5 assets, local verify-all, hosted required context, private scratch ignores, formatter inventory).\n"
+stdout "[PASS] Locked documentation gate verified (23 assets, local verify-all, hosted required context, private scratch ignores, formatter inventory, checkout attributes).\n"
 == canonical CRLF
-stdout "[PASS] Locked documentation gate verified (5 assets, local verify-all, hosted required context, private scratch ignores, formatter inventory).\n"
+stdout "[PASS] Locked documentation gate verified (23 assets, local verify-all, hosted required context, private scratch ignores, formatter inventory, checkout attributes).\n"
 == asset drift
 stdout ""
 error [FAIL] Documentation gate asset tools/markdownlint/package.json differs from the locked Praetor asset; run 'praetorctl adopt --force'
