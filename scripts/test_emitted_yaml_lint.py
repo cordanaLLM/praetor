@@ -18,9 +18,10 @@ into it (BUG-782). This gate covers:
   linted as praetor's own copy, which internal/forge/labels_test.go holds byte-equal to it;
 - every profile and facet under .config/archetypes, which adoption copies byte for byte into
   the adopter's pinned catalog (internal/adopt/policy_catalog.go);
-- the .standards.yaml adoption, init and onboarding render (config.RenderManifest), linted
-  from its committed rendering under test_emitted_hook_lint.RENDERED, which
-  TestEmittedHookFixturesMatchTheRendering keeps equal to the rendering;
+- the .standards.yaml adoption, init and onboarding render (config.RenderManifest) and the
+  .github/actionlint.yaml adoption creates (internal/adopt/actionlint.go), linted from their
+  committed renderings under test_emitted_hook_lint.RENDERED, which
+  TestEmittedHookFixturesMatchTheRendering keeps equal to the renderings;
 - every YAML body flavor apply scaffolds, and adoption through it: each .yml or .yaml
   template under templates/ (templates/embed.go), and each template internal/flavor checks
   with a YAML validator whatever its name (.clang-format and .clang-tidy, which clang reads as
@@ -50,7 +51,10 @@ OWN_COPIES = (("internal/adopt/ruleset.go", "labelsFile"),)
 CATALOG = ("internal/config/lockdigest.go", "archetypeDirName")
 # The Go constant naming each YAML file whose rendering is committed under RENDERED, and the
 # file declaring it. The rendering is linted under its adopted path.
-RENDERINGS = (("internal/config/repository_policy.go", "ManifestFileName"),)
+RENDERINGS = (
+    ("internal/config/repository_policy.go", "ManifestFileName"),
+    ("internal/adopt/actionlint.go", "actionlintConfigFile"),
+)
 # The Go constants naming the embedded template directory and its go:embed pattern, and the
 # file declaring them.
 TEMPLATES = ("templates/embed.go", "Directory", "Pattern")
