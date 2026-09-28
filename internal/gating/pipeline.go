@@ -724,7 +724,8 @@ func removeWorktree(ctx context.Context, wtMgr *worktree.Manager, taskID string)
 }
 
 // runReceiptStage signs the real concatenated stage output with the long-lived Ed25519
-// key resolved by lockdown.LoadSigningKey. It fails closed when no key is configured, and
+// key resolved by lockdown.LoadSigningKey (signReceipt). It fails closed when no key is
+// configured or when the key is not the receipt.public_key the manifest pins, and
 // it never mints a receipt for a dry run, which by definition did not run the tests. Nor does
 // it mint one unless the tree still matches the HEAD the run started on (confirmTreeUnchanged),
 // or when no toolchain stage ran for any language (requireVerification): a repository whose
@@ -745,15 +746,10 @@ func runReceiptStage(ctx context.Context, cfg *stageConfig) (string, error) {
 		return "", err
 	}
 
-	priv, err := lockdown.LoadSigningKey()
-	if err != nil {
-		return "", fmt.Errorf("Exit-0 receipt cannot be signed: %w", err)
-	}
-
 	output := rep.StageOutput()
-	receipt, err := lockdown.CreateReceipt(ReceiptCommand, 0, output, rep.CommitSHA, rep.Repository, priv)
+	receipt, err := signReceipt(ctx, cfg.repoDir, rep, output)
 	if err != nil {
-		return "", fmt.Errorf("create exit-0 receipt: %w", err)
+		return "", err
 	}
 
 	receiptPath := filepath.Join(cfg.repoDir, ReceiptFileName)
