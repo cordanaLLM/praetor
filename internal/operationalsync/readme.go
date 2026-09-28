@@ -8,20 +8,21 @@ import (
 )
 
 // The README governance overlay. The engine's README carries the managed governance block
-// (internal/readmegovernance) rendered for the public source; with the documentation contract
-// enabled its HISS and workflow badges link into the source repository by absolute URL. A
-// fork's own audit verifies the block for the fork's manifest identity, so plan and prepare
-// render it for the owner with the renderer adoption uses (BUG-1023). README.md is already a
-// funding surface: the rebound block rides that flow, rendered into op.surfaces, written,
-// staged and verified byte for byte.
+// (internal/readmegovernance) rendered for the public source; its workflow badge under the
+// documentation contract, and its HISS badge when the source's forge is known, link into the
+// source repository by absolute URL. A fork's own audit verifies the block for the fork's
+// manifest identity, so plan and prepare render it for the owner with the renderer adoption
+// uses (BUG-1023); the fork keeps the forge host the source block records. README.md is
+// already a funding surface: the rebound block rides that flow, rendered into op.surfaces,
+// written, staged and verified byte for byte.
 
 // rebindReadme renders the managed governance block of files' README for the owner identity,
-// keeping every fact the source block records (debt baseline, documentation contract) and
-// every byte outside the block. A tree without a README, or a README without a managed block,
-// is left alone: like adoption, the overlay never invents a README, and a block the source
-// does not carry has no recorded state to render. A source block this renderer cannot read
-// back, hand-edited or written by another engine version, stops the operation: the fork's
-// audit would refuse whatever the overlay rendered from it.
+// keeping every fact the source block records (debt baseline, documentation contract, forge
+// host) and every byte outside the block. A tree without a README, or a README without a
+// managed block, is left alone: like adoption, the overlay never invents a README, and a
+// block the source does not carry has no recorded state to render. A source block this
+// renderer cannot read back, hand-edited or written by another engine version, stops the
+// operation: the fork's audit would refuse whatever the overlay rendered from it.
 func rebindReadme(files map[string][]byte, source, owner identity) error {
 	raw, ok := files[readmegovernance.File]
 	if !ok {
@@ -34,7 +35,7 @@ func rebindReadme(files map[string][]byte, source, owner identity) error {
 	if !managed {
 		return nil
 	}
-	if state.DocumentationEnabled {
+	if state.RepositoryOwner != "" {
 		state.RepositoryOwner, state.RepositoryName = owner.Owner, owner.Name
 	}
 	out, _, err := readmegovernance.Reconcile(string(raw), state)

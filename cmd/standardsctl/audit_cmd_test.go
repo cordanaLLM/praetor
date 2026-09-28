@@ -154,14 +154,36 @@ func TestAuditReadmeGovernanceGate(t *testing.T) {
 		mustErrContain(t, err, "README governance block is stale; run praetorctl adopt")
 	})
 
-	// Without the documentation gate nothing says the manifest's repository is on GitHub,
-	// so a block linking AGENTS.md there is stale even though the manifest names acme/widgets.
-	t.Run("AGENTS.md link without the documentation gate fails", func(t *testing.T) {
-		f := newAuditFixture(t)
-		writeFixtureFile(t, f.dir, "README.md", auditReadmeFixture("[![HISS Adopted][praetor-hiss-badge]][praetor-hiss-agents]",
-			"[praetor-hiss-agents]: https://github.com/acme/widgets/blob/HEAD/AGENTS.md\n"))
-		_, err := f.audit(t)
-		mustErrContain(t, err, "README governance block is stale; run praetorctl adopt")
+	// The forge host is the one fact the block records that the manifest does not: audit
+	// reads it back from the AGENTS.md link and accepts only the exact link a known forge
+	// serves for the manifest's acme/widgets, so a checkout's remote never changes the verdict.
+	linked := "[![HISS Adopted][praetor-hiss-badge]][praetor-hiss-agents]"
+	t.Run("AGENTS.md link on a known forge passes", func(t *testing.T) {
+		for _, link := range []string{
+			"https://github.com/acme/widgets/blob/HEAD/AGENTS.md",
+			"https://gitlab.com/acme/widgets/-/blob/HEAD/AGENTS.md",
+		} {
+			f := newAuditFixture(t)
+			writeFixtureFile(t, f.dir, "README.md", auditReadmeFixture(linked, "[praetor-hiss-agents]: "+link+"\n"))
+			out, err := f.audit(t)
+			if err != nil {
+				t.Fatalf("%s: %v\n%s", link, err, out)
+			}
+			mustContain(t, out, "[PASS] README governance block verified")
+		}
+	})
+
+	t.Run("AGENTS.md link into another repository or onto an unknown forge fails", func(t *testing.T) {
+		for _, link := range []string{
+			"https://github.com/other/widgets/blob/HEAD/AGENTS.md",
+			"https://git.example.org/acme/widgets/blob/HEAD/AGENTS.md",
+			"https://gitlab.com/acme/widgets/blob/HEAD/AGENTS.md",
+		} {
+			f := newAuditFixture(t)
+			writeFixtureFile(t, f.dir, "README.md", auditReadmeFixture(linked, "[praetor-hiss-agents]: "+link+"\n"))
+			_, err := f.audit(t)
+			mustErrContain(t, err, "README governance block is stale; run praetorctl adopt")
+		}
 	})
 
 	t.Run("explicit decline skips the managed surface", func(t *testing.T) {

@@ -259,12 +259,26 @@ func adoptionArchetype(decision classify.Result, verification *VerificationPlan)
 }
 
 // repoIdentity is the forge identity adoption records: owner and name from the origin remote
-// (util.ResolveRemoteIdentity). Both stay empty without one; adoption substitutes no default
+// (util.ReadOriginRemote). Both stay empty without one; adoption substitutes no default
 // owner and never reads identity from the checkout path, whose parent directory names
-// wherever the checkout happens to sit rather than the repository's owner.
+// wherever the checkout happens to sit rather than the repository's owner. host and path are
+// the remote's host and full repository path, which forgeHost compares with an identity.
 type repoIdentity struct {
 	owner string
 	name  string
+	host  string
+	path  string
+}
+
+// forgeHost returns the origin remote's host when the remote's repository path is exactly
+// owner/name, the identity a manifest records, and "" otherwise: the remote then does not
+// say which forge hosts that repository. A nested namespace such as group/sub/name on
+// GitLab is not owner/name either, so its host is never paired with the last two segments.
+func (id repoIdentity) forgeHost(owner, name string) string {
+	if id.host == "" || owner == "" || name == "" || !strings.EqualFold(id.path, owner+"/"+name) {
+		return ""
+	}
+	return id.host
 }
 
 func (id repoIdentity) resolved() bool {
@@ -286,10 +300,10 @@ func (id repoIdentity) coordinate() string {
 // git did not answer (a cancelled context, a git failure) is an error, not an unresolved
 // identity: adoption must not write an empty identity for a question it never got answered.
 func (s *adoptSession) resolveIdentity(ctx context.Context) error {
-	owner, name, err := util.ResolveRemoteIdentity(ctx, s.repoPath)
+	remote, err := util.ReadOriginRemote(ctx, s.repoPath)
 	if err == nil {
-		s.identity = repoIdentity{owner: owner, name: name}
-		s.repoName = name
+		s.identity = repoIdentity{owner: remote.Owner, name: remote.Repo, host: remote.Host, path: remote.Path}
+		s.repoName = remote.Repo
 		return nil
 	}
 	if !errors.Is(err, util.ErrRepoIdentityUnresolved) {

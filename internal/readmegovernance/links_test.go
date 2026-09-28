@@ -58,34 +58,55 @@ func relativeLinks(links []string) []string {
 	return relative
 }
 
-// Positive: under the documentation contract, which establishes that the repository lives on
-// GitHub, the HISS badge links AGENTS.md on the default branch of the manifest's repository by
-// absolute URL, and a fork's identity renders the fork's URL; the rendering is idempotent.
-func TestReconcilePositiveLinksAgentsByAbsoluteURL(t *testing.T) {
-	for _, identity := range [][2]string{{"acme", "widgets"}, {"fork-owner", "widgets"}} {
-		state := State{BaselineKnown: true, DocumentationEnabled: true, RepositoryOwner: identity[0], RepositoryName: identity[1]}
-		out, _, err := Reconcile("# Widgets\n", state)
-		if err != nil {
-			t.Fatal(err)
+// forgeAgentsLinks are the AGENTS.md links each known forge host renders for acme/widgets,
+// spelled out rather than read from the code under test.
+var forgeAgentsLinks = map[string]string{
+	"github.com":   "https://github.com/acme/widgets/blob/HEAD/AGENTS.md",
+	"gitlab.com":   "https://gitlab.com/acme/widgets/-/blob/HEAD/AGENTS.md",
+	"codeberg.org": "https://codeberg.org/acme/widgets/src/branch/HEAD/AGENTS.md",
+	"gitea.com":    "https://gitea.com/acme/widgets/src/branch/HEAD/AGENTS.md",
+}
+
+// Positive: on every known forge the HISS badge links AGENTS.md on the default branch of the
+// manifest's repository by that forge's absolute URL, with or without the documentation
+// contract; LinkedHost reads the host back, and the rendering is idempotent. A fork's
+// identity renders the fork's URL.
+func TestReconcilePositiveLinksAgentsOnTheKnownForge(t *testing.T) {
+	for host, want := range forgeAgentsLinks {
+		for _, documentation := range []bool{false, true} {
+			state := State{BaselineKnown: true, DocumentationEnabled: documentation,
+				RepositoryOwner: "acme", RepositoryName: "widgets", RepositoryHost: host}
+			out, _, err := Reconcile("# Widgets\n", state)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(out, hissBadgeLink+"\n") || !strings.Contains(out, "[praetor-hiss-agents]: "+want+"\n") {
+				t.Fatalf("%+v: rendered block lacks the AGENTS.md link %q:\n%s", state, want, out)
+			}
+			if relative := relativeLinks(blockLinks(t, out)); len(relative) != 0 {
+				t.Fatalf("%+v: block links repository-relative paths %q", state, relative)
+			}
+			if got := LinkedHost(out, "acme", "widgets"); got != host {
+				t.Fatalf("%+v: LinkedHost = %q", state, got)
+			}
+			if again, changed, err := Reconcile(out, state); err != nil || changed || again != out {
+				t.Fatalf("%+v: not idempotent: changed=%v err=%v", state, changed, err)
+			}
 		}
-		want := "[praetor-hiss-agents]: https://github.com/" + identity[0] + "/" + identity[1] + "/blob/HEAD/AGENTS.md\n"
-		if !strings.Contains(out, hissBadgeLink+"\n") || !strings.Contains(out, want) {
-			t.Fatalf("%+v: rendered block lacks the absolute AGENTS.md link %q:\n%s", state, want, out)
-		}
-		if relative := relativeLinks(blockLinks(t, out)); len(relative) != 0 {
-			t.Fatalf("%+v: block links repository-relative paths %q", state, relative)
-		}
-		if again, changed, err := Reconcile(out, state); err != nil || changed || again != out {
-			t.Fatalf("%+v: not idempotent: changed=%v err=%v", state, changed, err)
-		}
+	}
+	fork := State{BaselineKnown: true, RepositoryOwner: "fork-owner", RepositoryName: "widgets", RepositoryHost: "github.com"}
+	if out, _, err := Reconcile("# Widgets\n", fork); err != nil ||
+		!strings.Contains(out, "https://github.com/fork-owner/widgets/blob/HEAD/AGENTS.md\n") {
+		t.Fatalf("fork identity does not link the fork's AGENTS.md: %v\n%s", err, out)
 	}
 }
 
 // Negative: the block the previous renderer wrote links AGENTS.md by a relative path, which
-// the link check above detects, and audit reports it stale. An identity without the
-// documentation contract is refused, since nothing then says the repository is on GitHub,
-// and so is a partial or unsafe identity under the contract.
-func TestReconcileNegativeRejectsRelativeLinksAndUnprovenIdentity(t *testing.T) {
+// the link check above detects, and audit reports it stale. A host outside the known forges,
+// no host, and a partial or unsafe identity never produce a link, and LinkedHost reads a link
+// into another repository or onto an unknown host as none, so audit reports such a block
+// stale. The documentation contract still refuses a partial or unsafe identity.
+func TestReconcileNegativeRejectsRelativeLinksAndUnknownForges(t *testing.T) {
 	previous := "# Widgets\n\n" + previousBlock + "\n"
 	if relative := relativeLinks(blockLinks(t, previous)); len(relative) != 1 || relative[0] != "AGENTS.md" {
 		t.Fatalf("link check misses the previous block's relative link: %q", relative)
@@ -93,10 +114,31 @@ func TestReconcileNegativeRejectsRelativeLinksAndUnprovenIdentity(t *testing.T) 
 	if err := Verify(previous, State{BaselineKnown: true}); !errors.Is(err, ErrStale) {
 		t.Fatalf("previous block verified: %v", err)
 	}
-	for _, identity := range [][2]string{{"acme", "widgets"}, {"acme", ""}, {"", "widgets"}} {
-		state := State{BaselineKnown: true, RepositoryOwner: identity[0], RepositoryName: identity[1]}
-		if _, _, err := Reconcile("# Widgets\n", state); !errors.Is(err, ErrInvalidState) {
-			t.Fatalf("identity %q/%q without documentation rendered: %v", identity[0], identity[1], err)
+	for _, state := range []State{
+		{BaselineKnown: true, RepositoryOwner: "acme", RepositoryName: "widgets", RepositoryHost: "git.example.org"},
+		{BaselineKnown: true, RepositoryOwner: "acme", RepositoryName: "widgets"},
+		{BaselineKnown: true, RepositoryOwner: "acme", RepositoryHost: "github.com"},
+		{BaselineKnown: true, RepositoryOwner: "acme/evil", RepositoryName: "widgets", RepositoryHost: "gitlab.com"},
+		{BaselineKnown: true, RepositoryOwner: "acme", RepositoryName: "widgets)evil", RepositoryHost: "github.com"},
+	} {
+		out, _, err := Reconcile("# Widgets\n", state)
+		if err != nil || strings.Contains(out, hissAgentsRef) || !strings.Contains(out, "\n"+hissBadgeImage+"\n") {
+			t.Fatalf("%+v: rendered a link or failed: %v\n%s", state, err, out)
+		}
+	}
+	linked, _, err := Reconcile("# Widgets\n", State{BaselineKnown: true, RepositoryOwner: "acme", RepositoryName: "widgets", RepositoryHost: "gitlab.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreignHost := strings.Replace(linked, "https://gitlab.com/", "https://git.example.org/", 1)
+	for name, tc := range map[string]struct{ content, owner string }{
+		"another repository": {linked, "example"},
+		"unknown host":       {foreignHost, "acme"},
+	} {
+		host := LinkedHost(tc.content, tc.owner, "widgets")
+		state := State{BaselineKnown: true, RepositoryOwner: tc.owner, RepositoryName: "widgets", RepositoryHost: host}
+		if host != "" || !errors.Is(Verify(tc.content, state), ErrStale) {
+			t.Fatalf("%s: LinkedHost = %q, and the block must verify as stale", name, host)
 		}
 	}
 	for _, identity := range [][2]string{{"acme", ""}, {"acme/evil", "widgets"}, {"acme", "widgets)evil"}} {
@@ -107,10 +149,11 @@ func TestReconcileNegativeRejectsRelativeLinksAndUnprovenIdentity(t *testing.T) 
 	}
 }
 
-// Boundary: without the documentation contract the badge is an unlinked image, so no state
-// renders a repository-relative link or a guessed forge URL; plain Reconcile refreshes the
-// previous block in place, keeping the text around it, with no --force equivalent: the whole
-// marker region is Praetor's.
+// Boundary: without a known forge the badge is an unlinked image, so no state renders a
+// repository-relative link or a guessed forge URL, with the documentation contract too (its
+// workflow badge is the only link); plain Reconcile refreshes the previous block in place,
+// keeping the text around it, with no --force equivalent: the whole marker region is
+// Praetor's. A README without a block, or with broken markers, has no linked host.
 func TestReconcileBoundaryUnlinkedBadgeAndPreviousBlockRefresh(t *testing.T) {
 	state := State{BaselineKnown: true}
 	out, _, err := Reconcile("# Widgets\n", state)
@@ -118,10 +161,14 @@ func TestReconcileBoundaryUnlinkedBadgeAndPreviousBlockRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out, "\n"+hissBadgeImage+"\n") || strings.Contains(out, hissAgentsRef) {
-		t.Fatalf("block without the documentation contract must render the badge unlinked:\n%s", out)
+		t.Fatalf("block without a known forge must render the badge unlinked:\n%s", out)
 	}
 	if links := blockLinks(t, out); len(links) != 1 || len(relativeLinks(links)) != 0 {
-		t.Fatalf("block without the documentation contract links %q, want only the badge image", links)
+		t.Fatalf("block without a known forge links %q, want only the badge image", links)
+	}
+	documentation := State{BaselineKnown: true, DocumentationEnabled: true, RepositoryOwner: "acme", RepositoryName: "widgets"}
+	if docs, _, err := Reconcile("# Widgets\n", documentation); err != nil || strings.Contains(docs, hissAgentsRef) {
+		t.Fatalf("documentation contract without a known forge linked the HISS badge: %v\n%s", err, docs)
 	}
 	previous := "# Widgets\n\n" + previousBlock + "\n\nHuman tail.\n"
 	refreshed, changed, err := Reconcile(previous, state)
@@ -133,6 +180,11 @@ func TestReconcileBoundaryUnlinkedBadgeAndPreviousBlockRefresh(t *testing.T) {
 	}
 	if err := Verify(refreshed, state); err != nil {
 		t.Fatalf("refreshed block fails audit: %v", err)
+	}
+	for _, content := range []string{"# Widgets\n", Start + "\n" + Start + "\n" + End + "\n", "a\r\nb\n"} {
+		if host := LinkedHost(content, "acme", "widgets"); host != "" {
+			t.Fatalf("LinkedHost(%q) = %q, want none", content, host)
+		}
 	}
 }
 
@@ -170,11 +222,13 @@ func buildPortal(t *testing.T, mkdocs, readme string) (string, error) {
 func TestRenderedBlockBuildsInStrictMkDocsPortal(t *testing.T) {
 	mkdocs, err := exec.LookPath("mkdocs")
 	if err != nil {
-		t.Skip("mkdocs is not on PATH; TestReconcilePositiveLinksAgentsByAbsoluteURL asserts the link shape instead")
+		t.Skip("mkdocs is not on PATH; TestReconcilePositiveLinksAgentsOnTheKnownForge asserts the link shape instead")
 	}
 	for name, state := range map[string]State{
-		"unlinked":      {BaselineKnown: true},
-		"documentation": {BaselineKnown: true, DocumentationEnabled: true, RepositoryOwner: "acme", RepositoryName: "widgets"},
+		"unlinked": {BaselineKnown: true},
+		"documentation": {BaselineKnown: true, DocumentationEnabled: true, RepositoryOwner: "acme", RepositoryName: "widgets",
+			RepositoryHost: "github.com"},
+		"gitlab": {BaselineKnown: true, RepositoryOwner: "acme", RepositoryName: "widgets", RepositoryHost: "gitlab.com"},
 	} {
 		readme, _, err := Reconcile("# Widgets\n\nHuman text.\n", state)
 		if err != nil {

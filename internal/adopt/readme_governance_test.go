@@ -100,31 +100,25 @@ const previousRelativeBlock = testReadmeGovernanceStart + "\n" +
 	testReadmeGovernanceEnd
 
 // Positive: plain adoption, without --force, refreshes the previous block, keeps the human
-// text and converges on the rerun. With the documentation gate the badge links the
-// repository's AGENTS.md on the default branch by absolute URL; without it the badge renders
-// unlinked, since the gate's workflow is the only evidence that the repository is on GitHub.
+// text and converges on the rerun. The badge links the repository's AGENTS.md on the default
+// branch of the origin's forge by absolute URL, with the documentation gate and without it.
 func TestAdoptReadmeGovernanceRefreshesRelativeAgentsLink(t *testing.T) {
-	const linked = "]: https://github.com/acme/readme-agents-link/blob/HEAD/AGENTS.md\n"
-	for name, tc := range map[string]struct {
-		facets []string
-		badge  string
-	}{
-		"documentation":    {nil, "[![HISS Adopted][praetor-hiss-badge]][praetor-hiss-agents]\n"},
-		"no documentation": {[]string{"security:high"}, "\n![HISS Adopted][praetor-hiss-badge]\n"},
-	} {
+	const linked = "\n[praetor-hiss-agents]: https://github.com/acme/readme-agents-link/blob/HEAD/AGENTS.md\n"
+	for name, facets := range map[string][]string{"documentation": nil, "no documentation": {"security:high"}} {
 		t.Run(name, func(t *testing.T) {
 			repoPath := newTestRepo(t, "readme-agents-link")
 			path := filepath.Join(repoPath, readmeFile)
 			mustWrite(t, path, "# Demo\n\n"+previousRelativeBlock+"\n\nHuman tail.\n")
-			opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Facets: tc.facets}
+			opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Facets: facets}
 			report, err := Adopt(t.Context(), opts)
 			if err != nil {
 				t.Fatalf("adopt: %v", err)
 			}
 			first := mustRead(t, path)
 			if strings.Contains(first, "](AGENTS.md)") || !strings.Contains(first, "Human tail.") ||
-				!strings.Contains(first, tc.badge) || strings.Contains(first, linked) != (tc.facets == nil) {
-				t.Fatalf("previous block not refreshed to %q:\n%s", tc.badge, first)
+				!strings.Contains(first, "\n[![HISS Adopted][praetor-hiss-badge]][praetor-hiss-agents]\n") ||
+				!strings.Contains(first, linked) {
+				t.Fatalf("previous block not refreshed to the absolute AGENTS.md link:\n%s", first)
 			}
 			if detail := findActionDetail(report.ActionDetails, readmeFile); !strings.Contains(detail, "Reconciled the marker-owned") {
 				t.Fatalf("README refresh not reported: %q", detail)
@@ -139,17 +133,19 @@ func TestAdoptReadmeGovernanceRefreshesRelativeAgentsLink(t *testing.T) {
 	}
 }
 
-// ReadmeIdentity in three dimensions. Positive: the documentation gate returns the full
-// manifest identity. Boundary: without the gate no identity is returned, whatever the
-// manifest names, so the HISS badge renders unlinked. Negative: the gate without an identity,
-// or with half of one, is errReadmeIdentityUnset.
+// ReadmeIdentity in three dimensions. Positive: a manifest naming both fields returns them,
+// with the documentation gate and without it. Boundary: without the gate, no identity or half
+// of one returns none, so the HISS badge renders unlinked. Negative: the gate without an
+// identity, or with half of one, is errReadmeIdentityUnset.
 func TestReadmeIdentity(t *testing.T) {
 	full := &config.Manifest{Repository: config.RepositoryMetadata{Owner: "acme", Name: "widgets"}}
-	if owner, name, err := ReadmeIdentity(full, true); err != nil || owner != "acme" || name != "widgets" {
-		t.Fatalf("documentation gate: %q/%q %v", owner, name, err)
+	for _, documentation := range []bool{true, false} {
+		if owner, name, err := ReadmeIdentity(full, documentation); err != nil || owner != "acme" || name != "widgets" {
+			t.Fatalf("documentation gate %v: %q/%q %v", documentation, owner, name, err)
+		}
 	}
 	half := &config.Manifest{Repository: config.RepositoryMetadata{Owner: "acme"}}
-	for _, manifest := range []*config.Manifest{nil, {}, half, full} {
+	for _, manifest := range []*config.Manifest{nil, {}, half} {
 		if owner, name, err := ReadmeIdentity(manifest, false); err != nil || owner != "" || name != "" {
 			t.Fatalf("no documentation gate, manifest %+v: %q/%q %v", manifest, owner, name, err)
 		}
@@ -161,23 +157,60 @@ func TestReadmeIdentity(t *testing.T) {
 	}
 }
 
-// Negative (review of #506): a repository whose origin remote is on another forge records
-// that forge's owner/name in its manifest, and only the documentation gate's GitHub Actions
-// workflow establishes that the repository lives on GitHub. Without the gate the HISS badge
-// renders unlinked rather than point at github.com, where the same owner/name may name an
-// unrelated repository.
-func TestAdoptReadmeGovernanceNeverLinksGitHubForAnotherForge(t *testing.T) {
-	repoPath := newTestRepo(t, "readme-other-forge")
-	writeOriginRemote(t, repoPath, "https://gitlab.com/acme/widgets.git")
-	path := filepath.Join(repoPath, readmeFile)
-	mustWrite(t, path, "# Demo\n\n"+previousRelativeBlock+"\n")
-	opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Facets: []string{"security:high"}}
-	if _, err := Adopt(t.Context(), opts); err != nil {
-		t.Fatalf("adopt: %v", err)
+// hissAgentsDefinition returns the reference definition of the HISS badge's AGENTS.md link in
+// readme, or "" when the badge links nothing.
+func hissAgentsDefinition(readme string) string {
+	for line := range strings.SplitSeq(readme, "\n") {
+		if strings.HasPrefix(line, "[praetor-hiss-agents]: ") {
+			return line
+		}
 	}
-	got := mustRead(t, path)
-	if strings.Contains(got, "github.com") || strings.Contains(got, "](AGENTS.md)") ||
-		!strings.Contains(got, "\n![HISS Adopted][praetor-hiss-badge]\n") {
-		t.Fatalf("badge of a non-GitHub repository must render unlinked:\n%s", got)
+	return ""
+}
+
+// The HISS badge links AGENTS.md on the forge the origin remote names (review of #506), under
+// the default facets, whose documentation gate is on. Positive: github.com, gitlab.com and
+// the Gitea and Forgejo instances gitea.com and codeberg.org each render their own URL shape,
+// never github.com for another forge. Negative: a self-hosted host, whose forge software the
+// host name does not reveal, and a nested GitLab namespace, which the manifest's owner/name
+// does not name, render the badge unlinked. Boundary: a repository without an origin remote,
+// so without an identity, renders it unlinked too (the gate is off there: with it, adoption
+// skips the README, TestAdopt_UnresolvedIdentityCompletesWithoutGuessing).
+func TestAdoptReadmeGovernanceLinksTheOriginForge(t *testing.T) {
+	for name, tc := range map[string]struct{ origin, want string }{
+		"github":        {"https://github.com/acme/widgets.git", "https://github.com/acme/widgets/blob/HEAD/AGENTS.md"},
+		"gitlab":        {"git@gitlab.com:acme/widgets.git", "https://gitlab.com/acme/widgets/-/blob/HEAD/AGENTS.md"},
+		"gitea":         {"https://gitea.com/acme/widgets.git", "https://gitea.com/acme/widgets/src/branch/HEAD/AGENTS.md"},
+		"forgejo":       {"ssh://git@codeberg.org/acme/widgets.git", "https://codeberg.org/acme/widgets/src/branch/HEAD/AGENTS.md"},
+		"unknown host":  {"https://git.example.org/acme/widgets.git", ""},
+		"nested gitlab": {"https://gitlab.com/group/acme/widgets.git", ""},
+		"no identity":   {"", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repoPath := newTestRepo(t, "widgets")
+			var facets []string
+			if tc.origin == "" {
+				mustWrite(t, filepath.Join(repoPath, ".git", "config"), "[core]\n\trepositoryformatversion = 0\n")
+				facets = []string{"security:high"}
+			} else {
+				writeOriginRemote(t, repoPath, tc.origin)
+			}
+			path := filepath.Join(repoPath, readmeFile)
+			mustWrite(t, path, "# Demo\n\n"+previousRelativeBlock+"\n")
+			if _, err := Adopt(t.Context(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Facets: facets}); err != nil {
+				t.Fatalf("adopt: %v", err)
+			}
+			got := mustRead(t, path)
+			definition := hissAgentsDefinition(got)
+			if tc.want == "" {
+				if definition != "" || strings.Contains(got, "](AGENTS.md)") || !strings.Contains(got, "\n![HISS Adopted][praetor-hiss-badge]\n") {
+					t.Fatalf("badge must render unlinked, got %q:\n%s", definition, got)
+				}
+				return
+			}
+			if definition != "[praetor-hiss-agents]: "+tc.want {
+				t.Fatalf("AGENTS.md link %q, want %q:\n%s", definition, tc.want, got)
+			}
+		})
 	}
 }

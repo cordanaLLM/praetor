@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -76,19 +77,25 @@ and modernized NASA JPL Power-of-10 rules.
 //
 // The block never links a repository-relative path, because a documentation portal that
 // includes the README resolves such a link against its own pages and a strict MkDocs build
-// aborts on it (#506). It links into the repository only with the documentation contract:
-// the contract's GitHub Actions workflow is what establishes that the repository lives on
-// GitHub, and it requires RepositoryOwner and RepositoryName, the repository the manifest
-// declares (a fork's manifest names the fork). The HISS badge then links AGENTS.md on the
-// default branch and the documentation badge links the workflow runs, both by absolute URL.
-// Without the contract the block names no repository and the HISS badge renders unlinked: a
-// manifest identity alone does not say which forge hosts it.
+// aborts on it (#506). Every link is absolute and names RepositoryOwner/RepositoryName, the
+// repository the manifest declares (a fork's manifest names the fork):
+//
+//   - The HISS badge links AGENTS.md on the default branch only when RepositoryHost is a
+//     forge whose file URL shape is known (agentsLinkFormats). A manifest identity does not
+//     say which forge hosts it, so the host comes from the origin remote adoption reads, and
+//     the block records it in the link: audit and RecordedState read it back (LinkedHost).
+//     Any other host, or no host, renders the badge unlinked.
+//   - The documentation contract's badge links the workflow runs on GitHub, where its
+//     workflow runs, and requires the identity.
 type State struct {
 	BaselineKnown        bool
 	LegacyDebtCount      int
 	DocumentationEnabled bool
 	RepositoryOwner      string
 	RepositoryName       string
+	// RepositoryHost is the lower-case host of the forge that serves RepositoryOwner/
+	// RepositoryName, as the origin remote names it; empty when unknown.
+	RepositoryHost string
 }
 
 // Reconcile returns content with one current managed block. Human-authored content and
@@ -185,7 +192,7 @@ const (
 	docsBadgeRef    = "praetor-docs-badge"
 	docsWorkflowRef = "praetor-docs-runs"
 	// hissBadgeImage is the HISS badge's image. renderHISSBadge links it as hissBadgeLink
-	// under the documentation contract, which names the repository.
+	// when the forge that hosts the repository is known.
 	hissBadgeImage = "![HISS Adopted][" + hissBadgeRef + "]"
 	hissBadgeLink  = "[" + hissBadgeImage + "][" + hissAgentsRef + "]"
 )
@@ -241,10 +248,6 @@ func validateState(state State) error {
 		return fmt.Errorf("%w: negative legacy debt count", ErrInvalidState)
 	}
 	if !state.DocumentationEnabled {
-		if state.RepositoryOwner != "" || state.RepositoryName != "" {
-			return fmt.Errorf("%w: repository identity without the documentation contract, "+
-				"the only evidence that the repository lives on GitHub", ErrInvalidState)
-		}
 		return nil
 	}
 	if err := util.ValidateGitHubRepositoryIdentity(state.RepositoryOwner, state.RepositoryName); err != nil {
@@ -253,17 +256,77 @@ func validateState(state State) error {
 	return nil
 }
 
+// agentsLinkFormats are the forges whose URL of a file on the default branch is known, by
+// the host an origin remote names, each a format of owner and name. Every shape names the
+// default branch HEAD, so the link needs no branch name and follows a renamed default
+// branch: GitHub serves blob/HEAD and GitLab /-/blob/HEAD from the default branch, and
+// Gitea and Forgejo resolve the branch HEAD to it (getRefName in their
+// services/context/repo.go). A host name does not say which software a self-hosted instance
+// runs, so only these public instances are known; any other host renders the badge unlinked.
+var agentsLinkFormats = []struct{ host, format string }{
+	{"github.com", "https://github.com/%s/%s/blob/HEAD/AGENTS.md"},
+	{"gitlab.com", "https://gitlab.com/%s/%s/-/blob/HEAD/AGENTS.md"},
+	{"codeberg.org", "https://codeberg.org/%s/%s/src/branch/HEAD/AGENTS.md"},
+	{"gitea.com", "https://gitea.com/%s/%s/src/branch/HEAD/AGENTS.md"},
+}
+
+// agentsURL returns the URL of AGENTS.md on the default branch of owner/name at host, or ""
+// when host is not in agentsLinkFormats or owner/name is not a pair
+// util.ValidateGitHubRepositoryIdentity accepts, the check that keeps both safe in a URL path
+// and a Markdown link.
+func agentsURL(host, owner, name string) string {
+	if util.ValidateGitHubRepositoryIdentity(owner, name) != nil {
+		return ""
+	}
+	for index := 0; index < len(agentsLinkFormats); index++ {
+		if agentsLinkFormats[index].host == host {
+			return fmt.Sprintf(agentsLinkFormats[index].format, owner, name)
+		}
+	}
+	return ""
+}
+
+// agentsDefinition is the reference definition of the HISS badge's AGENTS.md link.
+func agentsDefinition(url string) string {
+	return "[" + hissAgentsRef + "]: " + url
+}
+
 // renderHISSBadge returns the HISS badge line and its reference definitions: the image,
-// linked to AGENTS.md on the repository's default branch under the documentation contract
-// (State). GitHub resolves blob/HEAD to the default branch, so the link needs no branch name
-// and follows a renamed default branch.
+// linked to AGENTS.md on the repository's default branch when agentsURL knows the forge
+// (State), else unlinked.
 func renderHISSBadge(state State) (string, []string) {
 	image := "[" + hissBadgeRef + "]: " + hissBadgeURL(state)
-	if !state.DocumentationEnabled {
+	link := agentsURL(state.RepositoryHost, state.RepositoryOwner, state.RepositoryName)
+	if link == "" {
 		return hissBadgeImage, []string{image}
 	}
-	agentsURL := fmt.Sprintf("https://github.com/%s/%s/blob/HEAD/AGENTS.md", state.RepositoryOwner, state.RepositoryName)
-	return hissBadgeLink, []string{image, "[" + hissAgentsRef + "]: " + agentsURL}
+	return hissBadgeLink, []string{image, agentsDefinition(link)}
+}
+
+// LinkedHost returns the host whose AGENTS.md link for owner/name content's managed block
+// carries, or "" when the block carries none, content has no readable block, or its link is
+// not exactly one agentsURL renders for owner/name. The host is the one fact the block
+// records that the manifest does not: adoption reads it from the origin remote, and audit
+// reads it back here, so audit stays a function of the checkout's content. A link into
+// another repository or onto an unknown host reads as none, and the block then verifies as
+// stale.
+func LinkedHost(content, owner, name string) string {
+	lines, managed, err := blockBody(content)
+	if err != nil || !managed {
+		return ""
+	}
+	return linkedHost(lines, owner, name)
+}
+
+// linkedHost is LinkedHost over the lines between the block's markers.
+func linkedHost(lines []string, owner, name string) string {
+	for index := 0; index < len(agentsLinkFormats); index++ {
+		host := agentsLinkFormats[index].host
+		if link := agentsURL(host, owner, name); link != "" && slices.Contains(lines, agentsDefinition(link)) {
+			return host
+		}
+	}
+	return ""
 }
 
 // renderDocumentationBadge returns the documentation gate's badge line and the reference

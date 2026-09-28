@@ -10,26 +10,20 @@ import (
 )
 
 // RecordedState reads back the state content's managed block records: the debt baseline
-// paragraph and whether the documentation contract paragraph is present. With the contract
-// present the state names owner/name, the repository the block's badges must link to. It
-// reports false with no error when content carries no managed block. A state is
-// returned only when content is exactly Reconcile's output for it, so a hand-edited block, a
-// block another renderer version wrote or a badge linking another repository fails with
-// ErrStale instead of yielding a guessed state. A caller that re-renders the block for
-// another repository changes the identity and calls Reconcile, the one renderer.
+// paragraph, whether the documentation contract paragraph is present, and the forge host the
+// HISS badge's AGENTS.md link names (LinkedHost). With the contract or the link present the
+// state names owner/name, the repository the block's badges must link to. It reports false
+// with no error when content carries no managed block. A state is returned only when content
+// is exactly Reconcile's output for it, so a hand-edited block, a block another renderer
+// version wrote or a badge linking another repository fails with ErrStale instead of
+// yielding a guessed state. A caller that re-renders the block for another repository
+// changes the identity and calls Reconcile, the one renderer.
 func RecordedState(content, owner, name string) (State, bool, error) {
-	normalized, _, err := util.NormalizeLineEndingsStrict(content)
-	if err != nil {
-		return State{}, false, fmt.Errorf("README line endings are inconsistent: %w", err)
+	lines, managed, err := blockBody(content)
+	if err != nil || !managed {
+		return State{}, false, err
 	}
-	first, last, err := util.FindMarkedBlock(normalized, Start, End)
-	if err != nil {
-		return State{}, false, fmt.Errorf("README governance markers: %w", err)
-	}
-	if first < 0 {
-		return State{}, false, nil
-	}
-	state, err := blockState(strings.Split(normalized, "\n")[first+1:last], owner, name)
+	state, err := blockState(lines, owner, name)
 	if err != nil {
 		return State{}, false, err
 	}
@@ -39,6 +33,23 @@ func RecordedState(content, owner, name string) (State, bool, error) {
 	return state, true, nil
 }
 
+// blockBody returns the lines between content's managed block markers, line endings
+// normalized to LF, and false with no error when content carries no managed block.
+func blockBody(content string) ([]string, bool, error) {
+	normalized, _, err := util.NormalizeLineEndingsStrict(content)
+	if err != nil {
+		return nil, false, fmt.Errorf("README line endings are inconsistent: %w", err)
+	}
+	first, last, err := util.FindMarkedBlock(normalized, Start, End)
+	if err != nil {
+		return nil, false, fmt.Errorf("README governance markers: %w", err)
+	}
+	if first < 0 {
+		return nil, false, nil
+	}
+	return strings.Split(normalized, "\n")[first+1 : last], true, nil
+}
+
 // blockState parses the facts renderBlock writes into the lines between the markers.
 // RecordedState then proves the parse by rendering it again through Verify.
 func blockState(lines []string, owner, name string) (State, error) {
@@ -46,6 +57,9 @@ func blockState(lines []string, owner, name string) (State, error) {
 	if slices.Contains(lines, documentationLine) {
 		state.DocumentationEnabled = true
 		state.RepositoryOwner, state.RepositoryName = owner, name
+	}
+	if host := linkedHost(lines, owner, name); host != "" {
+		state.RepositoryOwner, state.RepositoryName, state.RepositoryHost = owner, name, host
 	}
 	for index, line := range lines {
 		switch {
