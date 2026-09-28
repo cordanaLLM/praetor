@@ -32,7 +32,10 @@ var (
 	// Outer attributes may precede the header on the same line (`#[tokio::main] async fn
 	// main() {`); anchoring the grammar at fn's visibility left such a function unmeasured and,
 	// for fn main, not recognised as the entry point.
-	rustFnHeader = regexp.MustCompile(`^(?:#\s*\[[^\]]*\]\s*)*(?:pub\s*(?:\([^)]*\))?\s+)?(?:(?:const|async|unsafe|safe|default|extern)\s+)*fn\s+(?:r#)?([A-Za-z_]\w*)`)
+	//
+	// The first group is the qualifier run, which says whether the function is unsafe (HISS-09);
+	// the second is the name.
+	rustFnHeader = regexp.MustCompile(`^(?:#\s*\[[^\]]*\]\s*)*(?:pub\s*(?:\([^)]*\))?\s+)?((?:(?:const|async|unsafe|safe|default|extern)\s+)*)fn\s+(?:r#)?([A-Za-z_]\w*)`)
 	// rustTestAttr opens an item compiled only for tests: #[cfg(test)], #[test] and a
 	// path-qualified test attribute such as #[tokio::test].
 	rustTestAttr = regexp.MustCompile(`^#\s*\[\s*(?:cfg\s*\(\s*test\s*\)|(?:[A-Za-z_]\w*\s*::\s*)*test\s*[\](])`)
@@ -835,6 +838,8 @@ type rustScanner struct {
 	// bodies around it.
 	calls  rustSelfCalls
 	blocks rustBlockScope
+	// proof follows the statement and the rustdoc a HISS-09 proof may attach to.
+	proof rustProofScope
 }
 
 func scanRustLines(lines []string, rel string, rep *ScanReport, opts ScanOptions) {
@@ -859,6 +864,8 @@ func (s *rustScanner) scanLine(lines []string, idx int) {
 	code := s.strip.strip(line)
 	codeTrimmed := strings.TrimSpace(code)
 	scope := rustLineScope{test: s.test.observe(code, codeTrimmed, idx), entry: s.inEntry()}
+	site := s.proof.observe(line, codeTrimmed, idx)
+	member := s.blocks.member()
 	name, isHeader := "", false
 	if !s.fn.inFunc && !s.fn.pending {
 		name, isHeader = rustFnHeaderName(codeTrimmed)
@@ -876,7 +883,8 @@ func (s *rustScanner) scanLine(lines []string, idx int) {
 	// The header line of fn main is part of it even when the body closes on that same line
 	// (`fn main() { std::process::exit(run()) }`), where the tracker is done before and after.
 	scope.entry = scope.entry || s.inEntry() || (isHeader && s.entry)
-	scanRustLineInvariants(code, lines, idx, s.rel, s.rep, scope)
+	scanRustLineInvariants(code, idx, s.rel, s.rep, scope)
+	checkRustUnsafe(lines, idx, code, site, member, s.rel, s.rep)
 }
 
 func (s *rustScanner) inEntry() bool {
@@ -890,7 +898,7 @@ func rustFnHeaderName(code string) (string, bool) {
 	if m == nil {
 		return "", false
 	}
-	return m[1], true
+	return m[2], true
 }
 
 // rustTestScope decides which lines are test code. A Cargo test path or an inner
@@ -948,21 +956,16 @@ type rustLineScope struct {
 	entry bool
 }
 
-// scanRustLineInvariants inspects code, which is lines[idx] already stripped by the caller
-// so that block-comment state carries across lines; the raw surrounding lines are consulted
-// only for the SAFETY: proof comment.
-func scanRustLineInvariants(code string, lines []string, idx int, rel string, rep *ScanReport, scope rustLineScope) {
-	trimmed := strings.TrimSpace(code)
+// scanRustLineInvariants inspects code, which is line idx already stripped by the caller so
+// that block-comment state carries across lines. HISS-09 is checkRustUnsafe's, which also
+// needs the raw lines around the line.
+func scanRustLineInvariants(code string, idx int, rel string, rep *ScanReport, scope rustLineScope) {
 	lineNum := idx + 1
 	if rustUnboundedLoop.MatchString(code) {
 		recordViolation(rep, "HISS-02", rel, lineNum, "", "Legacy unbounded loop {} in Rust without explicit scalar bound")
 	}
 	if !scope.test {
 		checkRustErrorForms(code, rel, lineNum, rep, scope.entry)
-	}
-	isUnsafe := rustUnsafeBlock.MatchString(code) || strings.HasPrefix(trimmed, "unsafe fn")
-	if isUnsafe && !hasSafetyComment(lines, idx) {
-		recordViolation(rep, "HISS-09", rel, lineNum, "", "unsafe block without a preceding // SAFETY: proof comment")
 	}
 }
 
