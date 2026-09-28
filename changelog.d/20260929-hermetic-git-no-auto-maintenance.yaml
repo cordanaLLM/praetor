@@ -1,0 +1,3 @@
+type: fixed
+title: "Test fixtures that commit under testsupport.HermeticGitEnv run with automatic maintenance and automatic gc off, so no detached git maintenance process writes .git/objects/maintenance.lock while t.TempDir cleans up; the dedupe cadence fixture commits under that environment instead of the workstation configuration, which had made it fail intermittently with directory not empty and made it sign fixture commits with the developer's key"
+breaking: false
