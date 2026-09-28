@@ -1,0 +1,4 @@
+type: fixed
+title: The documentation gate reads a documentation block from .standards.yaml that raises its file-count and per-file bounds up to fixed ceilings and excludes partial, generated and fixture Markdown from the style rules (never every file, never from the private-link rule), and it lints a staged copy so a repository's own markdownlint configuration can neither loosen nor tighten the locked rules
+issue: "532, #533, #534"
+breaking: false
