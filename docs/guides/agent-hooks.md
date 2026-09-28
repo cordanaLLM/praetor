@@ -666,7 +666,11 @@ nothing. A read or write failure denies closed rather than silently dropping the
 Each file is named `<client>-<event>-<UTC timestamp>-<random suffix>.json` and written
 `0600` (owner read-write only); the directory is created `0700` if it does not exist. The
 random suffix only guards against a same-nanosecond collision; the timestamp already
-makes one exceedingly unlikely on its own.
+makes one exceedingly unlikely on its own. The file is written through a pinned handle on
+the recording directory: a client or event name that would leave the directory is refused,
+and the write is atomic (`writeRecording` in `internal/agenthook/record.go`, covered by
+`internal/agenthook/record_confined_test.go`). The directory itself may be a symbolic link;
+it is resolved once, when it is opened.
 
 Record mode exists to build a fixture a client's own docs do not cover — the exact
 process shell and working directory, real exit-code behaviour, an argument key besides

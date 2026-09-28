@@ -92,3 +92,15 @@ func TestNeedsConfinedWrites_Boundary_InRootLinkedAncestor(t *testing.T) {
 	}
 	assertFileBody(t, real, "package pkg\n\nimport \"example.com/acme/kit/b\"\n")
 }
+
+// Negative: an epic output path that is a link is refused instead of written through, so the
+// operator's link target keeps its content (BUG-826).
+func TestWriteEpicMarkdown_Negative_LinkedOutputRefused(t *testing.T) {
+	dir := t.TempDir()
+	target := writeFixture(t, dir, "notes.md", "kept\n")
+	symlinkOrSkip(t, "notes.md", filepath.Join(dir, "epic.md"))
+	if err := WriteEpicMarkdown(context.Background(), &PreMigrationEpic{}, filepath.Join(dir, "epic.md")); !errors.Is(err, util.ErrSymlinkDestination) {
+		t.Fatalf("linked epic output = %v, want ErrSymlinkDestination", err)
+	}
+	assertFileBody(t, target, "kept\n")
+}
