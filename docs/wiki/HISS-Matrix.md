@@ -57,19 +57,11 @@ rejected, because everything after the opening delimiter renders as code. The ru
 
 ## The Verification Ladder
 
-```mermaid
-flowchart TD
-    subgraph Local["Local Workstation"]
-        LSP["1. IDE / standards-lsp"] --> HOOK["2. Pre-Commit / lefthook"]
-        HOOK --> AUDIT["3. Pre-Push / standardsctl audit"]
-    end
-    subgraph Remote["Remote CI & Admission"]
-        AUDIT --> CI["4. Ephemeral Isolated Sandbox"]
-        CI --> ADMIT["5. PR Admission / standardsctl forge validate-pr"]
-    end
+```figure
+verification-ladder
 ```
 
-Layer 5 is the "Validate PR Governance Checklist & Exit-0 Receipts" step in
+Tier 4, the CI re-check, is the "Validate PR Governance Checklist & Exit-0 Receipts" step in
 `.github/workflows/ci.yml`, which runs `standardsctl forge validate-pr` as described under
 [Pull Request Admission](#pull-request-admission). Adopter CI runs the checks:
 `.config/github-app/manifest.json` specifies an example app but nothing provisions it, and

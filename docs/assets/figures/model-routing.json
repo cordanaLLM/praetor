@@ -32,15 +32,17 @@
     "cmd/standardsctl/models_route.go:modelRouteRequest",
     "cmd/standardsctl/models_route.go:modelRouteTracker"
   ],
-  "spec_sha256": "1f4519bc60578f3b5f10928151252262744dd071246e4bb4baeb96bf17065205",
+  "spec_sha256": "9139d361d285d5008b137d4ee9e204be3b5271fcbc03c1633144e6d990923cf4",
   "engine": {
     "commit": "ccfe85b4851957ac2adf88b4a9ddf9668b2882f1",
-    "sha256": "047b4bcb30562cca709be7175d11995cdda45cf4b89db1f6906c5805b26c6452"
+    "sha256": "947c16f2d382b4ed4374ba8a368c4468114b97e5ec6323c4ecb785c11658d96e"
   },
-  "svg_sha256": "16dc1875fe14942332b526526b565908a9a1e63a606573a1873dae4ffafb275d",
-  "static_sha256": "44a71a6b81e49fcae14bda9ffd41253c5f19ef05b1a96ec588d1d7d3fbd41773",
-  "width": 890,
-  "height": 919,
+  "svg_sha256": "3e86d0fea6f61e3f8aa5ce9d2c5655d0f9ba12eabe34b3918b1dd3735157e983",
+  "static_sha256": "5e198554b2b449b29986ea9cd5f9959537aad6c9f188ed49dc4c34f7f3d39a62",
+  "width": 1174,
+  "height": 1149,
+  "static_width": 1174,
+  "static_height": 472,
   "edges": [
     {
       "from": "models route",

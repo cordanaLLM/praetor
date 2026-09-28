@@ -138,9 +138,10 @@ func writeWikiPages(ctx context.Context, out generatedDir, pages []WikiPage) err
 	return nil
 }
 
-// generateHomeWiki renders the portal page. Its diagram follows the real data flow:
-// AGENTS.md is compile-context's input (its --source default) and the vendor files are the
-// output; .standards.yaml feeds the audit, not the transpiler.
+// generateHomeWiki renders the portal page. Its figure, governance-lifecycle
+// (docs/figures/governance-lifecycle.ts), follows the real data flow: AGENTS.md is
+// compile-context's input (its --source default) and the vendor files are the output;
+// .standards.yaml resolves the effective policy and is not the transpiler's input.
 func generateHomeWiki(repoName string, rules []hisscatalog.Rule) WikiPage {
 	content := fmt.Sprintf(`# %s Wiki Portal
 
@@ -148,15 +149,13 @@ Welcome to the official repository governance wiki for %s.
 
 ## Governance Lifecycle Architecture
 
-`+"```mermaid"+`
-flowchart LR
-    AGENTS["AGENTS.md\n(canonical source)"] --> TRANSPILER["praetorctl compile-context"]
-    TRANSPILER --> VENDORS["CLAUDE.md, .cursor/rules, copilot-instructions,\n.windsurfrules, GEMINI.md, .codex/rules.md"]
-    MANIFEST[".standards.yaml\n+ .standards.lock"] --> AUDIT["praetorctl audit"]
-    VENDORS --> GATES["Verification Cascade\n(make verify-all)"]
-    AUDIT --> GATES
-    GATES --> RECEIPT["Ed25519 Exit-0 Receipt"]
-`+"```"+`
+`+figureFence("governance-lifecycle")+`
+
+The lifecycle has three flows. `+"`praetorctl compile-context`"+` reads `+"`AGENTS.md`"+` and writes
+the vendor instruction files. `+"`.standards.yaml`"+` and `+"`.standards.lock`"+` resolve to one
+effective policy, which the devcontainer toolchain, `+"`praetorctl audit`"+` and `+"`praetorctl plan`"+`
+apply. `+"`praetorctl gate run`"+` runs the gate stages, and a passing run mints the Ed25519
+Exit-0 receipt.
 
 ## Quick Navigation
 
@@ -195,6 +194,20 @@ func catalogRange(rules []hisscatalog.Rule) string {
 	default:
 		return fmt.Sprintf("%d invariants, %s through %s", len(rules), rules[0].ID, rules[len(rules)-1].ID)
 	}
+}
+
+// A figure fence names an interactive figure by slug: docs/figures/<slug>.ts is its spec, and
+// the site hook and the wiki sync render the fence from docs/assets/figures/<slug>.json
+// (docs/adr/0015-interactive-figures-from-vendored-interfig.md). The two halves are constants
+// so a constant page section can name a figure too; the fence ends without a newline.
+const (
+	figureFenceOpen  = "```figure\n"
+	figureFenceClose = "\n```"
+)
+
+// figureFence returns the fence that names the figure slug.
+func figureFence(slug string) string {
+	return figureFenceOpen + slug + figureFenceClose
 }
 
 // markdownTable renders a GitHub-flavored markdown table with a left-aligned delimiter row.
@@ -248,15 +261,16 @@ copies them from its "Core Directives & Invariants" table each time it regenerat
 
 ` + renderGatedInvariantTable(gated) + `
 
-## Zero-Warning Cascade
+## Verification Ladder
 
-` + "```mermaid" + `
-flowchart TD
-    IDE["1. IDE / standards-lsp"] --> HOOKS["2. Pre-Commit / lefthook"]
-    HOOKS --> PUSH["3. Pre-Push / audit"]
-    PUSH --> CI["4. CI Ephemeral Sandbox"]
-    CI --> ADMIT["5. PR Admission\n(standardsctl forge validate-pr in CI)"]
-` + "```\n"
+` + figureFence("verification-ladder") + `
+
+A change climbs four tiers: diagnostics from ` + "`standards-lsp`" + ` in the editor, the lefthook
+pre-commit and pre-push hooks, the six-stage gate pipeline that signs the Exit-0 receipt, and pull
+request admission, where CI re-checks that receipt with ` + "`standardsctl forge validate-pr`" + `. A
+failing hook blocks the change locally; a missing or invalid receipt fails admission.
+[` + hissMatrixPage + `](` + hissMatrixPage + `.md) states the admission rules.
+`
 
 	return WikiPage{
 		Name:    hissInvariantsPage + ".md",
@@ -330,19 +344,9 @@ rejected, because everything after the opening delimiter renders as code. The ru
 
 ## The Verification Ladder
 
-` + "```mermaid" + `
-flowchart TD
-    subgraph Local["Local Workstation"]
-        LSP["1. IDE / standards-lsp"] --> HOOK["2. Pre-Commit / lefthook"]
-        HOOK --> AUDIT["3. Pre-Push / standardsctl audit"]
-    end
-    subgraph Remote["Remote CI & Admission"]
-        AUDIT --> CI["4. Ephemeral Isolated Sandbox"]
-        CI --> ADMIT["5. PR Admission / standardsctl forge validate-pr"]
-    end
-` + "```" + `
+` + figureFenceOpen + "verification-ladder" + figureFenceClose + `
 
-Layer 5 is the "Validate PR Governance Checklist & Exit-0 Receipts" step in
+Tier 4, the CI re-check, is the "Validate PR Governance Checklist & Exit-0 Receipts" step in
 ` + "`.github/workflows/ci.yml`" + `, which runs ` + "`standardsctl forge validate-pr`" + ` as described under
 [Pull Request Admission](#pull-request-admission). Adopter CI runs the checks:
 ` + "`.config/github-app/manifest.json`" + ` specifies an example app but nothing provisions it, and
@@ -383,12 +387,18 @@ $$\mathcal{P}_{\text{resolved}} = \mathcal{P}_1 \sqcup \mathcal{P}_2 \sqcup \dot
 - **Linters & Features**: Cumulative deduplicated set union ($\cup$).
 - **Memory & Error Unwraps**: The stricter setting wins (ZeroFrameMalloc, StrictBan).
 
-` + "```mermaid" + `
-flowchart TD
-    PROFILE["Profile: framework\n(Cyclomatic <= 10, Approvals: 1)"] --> LATTICE["Lattice Join Engine\n(internal/config)"]
-    FACET["Facet: security:high\n(SLSA Level 3, Approvals: 2)"] --> LATTICE
-    LATTICE --> RESOLVED["Resolved Policy\n(Cyclomatic <= 10, Approvals: 2, SLSA 3)"]
-` + "```\n"
+## Layer Order
+
+` + figureFence("lattice-join") + `
+
+` + "`ResolvePolicy`" + ` folds the layers in a fixed order: the built-in defaults, the profiles and
+facets pinned in ` + "`.standards.lock`" + `, the external fleet, organization, deployment and
+workstation layers, the repository's ` + "`overrides.complexity`" + `, and, for an audit, the
+audit-compatibility ceiling. A profile or facet whose file no longer matches its lock digest is
+rejected. The repository's branch-protection and supply-chain overrides apply after the join
+(` + "`ApplyOverrides`" + `), so they can only tighten it; ` + "`review_mode`" + ` may relax to
+` + "`single_maintainer`" + ` there and nowhere else.
+`
 
 	return WikiPage{
 		Name:    "Architecture-Lattice.md",
@@ -442,7 +452,7 @@ func generateAPIReferenceWiki() WikiPage {
 ` + frameworkKitReference + `
 ## Multi-Forge Federation
 
-` + "```figure\nforge-federation\n```" + `
+` + figureFence("forge-federation") + `
 
 praetorctl builds only the GitHub driver: ` + "`sync --remote`" + `, ` + "`issue reconcile`" + ` and ` + "`needs epic --publish`" + ` call ` + "`forge.NewGitHubDriver`" + ` directly. ` + "`forge.NewForge`" + ` is internal and has no production caller, so the GitLab and Gitea drivers are reached only from tests. They check that a token is set and return ` + "`ErrNotImplemented`" + ` from every enforcement method.
 `

@@ -73,3 +73,10 @@ Diagrams render only because `mkdocs.yml` declares the `mermaid` custom fence un
 `pymdownx.superfences`. In the praetor repository, CI checks the built preset with
 `scripts/docs_diagrams.py site` (see the
 [documentation governance guide](../../guides/documentation-governance.md#site-build-and-diagrams)).
+
+The preset stays on Mermaid. It builds with Python alone: no Node, npm or bundler, and no
+committed SVGs. Praetor's own site has replaced Mermaid with interactive figures
+([ADR-0015](../../adr/0015-interactive-figures-from-vendored-interfig.md), the
+[figures guide](../../guides/figures.md)), but offering those figures to adopters is a separate
+decision, so this preset ships none of the figure tooling. Its `docs/` directory is built only by
+its own `mkdocs.yml`: the root site excludes it (`exclude_docs` in praetor's root `mkdocs.yml`).

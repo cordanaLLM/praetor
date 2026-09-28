@@ -90,10 +90,10 @@ jobs:
         run: mkdocs build --strict
 
       # A strict build passes with every diagram shipped as a code listing: the mermaid custom
-      # fence was never declared and nothing looked at the output. This fails the build before
-      # the artifact is uploaded when a ```mermaid block is not a <pre class="mermaid">, when a
-      # ```figure fence did not become a figure whose images resolve, or when a committed figure
-      # no longer matches its spec, the engine or its evidence anchors.
+      # fence was once never declared and nothing looked at the output. This fails the build
+      # before the artifact is uploaded when a page holds a ```mermaid block (the site renders
+      # figures only), when a ```figure fence did not become a figure whose images resolve, or
+      # when a committed figure no longer matches its spec, the engine or its evidence anchors.
       - name: Verify Diagrams Render
         run: |
           python3 -B scripts/docs_diagrams.py site --config mkdocs.yml --docs docs --site site

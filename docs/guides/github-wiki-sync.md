@@ -30,11 +30,20 @@ network process have explicit time limits.
 
 ## Figures
 
+Every generated page except the moved `HISS-16-Invariants` stub draws its
+diagram as a `figure` fence, and none carries Mermaid: `Home` names
+`governance-lifecycle`, `HISS-Invariants` and `HISS-Matrix` name
+`verification-ladder`, `Architecture-Lattice` names `lattice-join`, and
+`API-Reference` names `forge-federation` (`TestGenerateWiki_Positive` and
+`TestGenerateWiki_Boundary_EveryFigureHasCommittedOutputs` in
+`internal/forge/forge_test.go`).
+
 The wiki runs no JavaScript, so it cannot show the site's interactive figures.
 After copying the pages into the wiki clone, `scripts/sync_github_wiki.sh` runs
 `python3 -B scripts/docs_diagrams.py portable --wiki` on the copies. Each
 `figure` fence becomes a `<figure>` holding a `<picture>` of the figure's
-animated and static SVGs on the published site, with absolute URLs built from
+animated and static SVGs on the published site, each with its own recorded
+width and height, with absolute URLs built from
 the `site_url` in `mkdocs.yml`, then a link to the interactive figure on the
 site (`<site_url>wiki/<Page>/#fig-<slug>`) and the text description. The pages
 under `docs/wiki/` keep their fences; only the wiki copies change. A fence that

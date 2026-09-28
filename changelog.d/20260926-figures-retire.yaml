@@ -1,0 +1,3 @@
+type: changed
+title: Draw every generated wiki page with an interactive figure, retire Mermaid on the root site (the adopter preset keeps it), and give each figure image its own size so reduced motion shows no letterboxing
+breaking: false

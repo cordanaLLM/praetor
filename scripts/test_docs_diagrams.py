@@ -44,12 +44,13 @@ def write(path, text):
 
 
 class ConfigDeclaration(unittest.TestCase):
-    def test_repository_configs_declare_the_mermaid_fence(self):
-        """The site and the adopter preset: without the fence every diagram ships as code."""
-        for config in ("mkdocs.yml", "docs/presets/mkdocs/mkdocs.yml"):
-            with self.subTest(config=config):
-                text = (ROOT / config).read_text(encoding="utf-8")
-                self.assertIsNone(docs_diagrams.config_error(text))
+    def test_preset_declares_the_mermaid_fence_and_the_site_does_not(self):
+        """The adopter preset keeps Mermaid, so without the fence its diagram ships as code. The
+        root site retired Mermaid for figures (ADR-0015, section 9) and declares no fence."""
+        preset = (ROOT / "docs/presets/mkdocs/mkdocs.yml").read_text(encoding="utf-8")
+        self.assertIsNone(docs_diagrams.config_error(preset))
+        site = (ROOT / "mkdocs.yml").read_text(encoding="utf-8")
+        self.assertIn("no custom fence", docs_diagrams.config_error(site))
 
     def test_declared_fence_passes(self):
         self.assertIsNone(docs_diagrams.config_error(DECLARED))
@@ -230,9 +231,12 @@ class EndToEnd(unittest.TestCase):
 # ---------------------------------------------------------------------------------------------
 
 HOOKED = DECLARED + "\nhooks:\n  - scripts/mkdocs_figures_hook.py\n"
+# The root site's shape: the figures hook, superfences without the mermaid fence.
+FIGURES_ONLY = "hooks:\n  - scripts/mkdocs_figures_hook.py\nmarkdown_extensions:\n  - pymdownx.superfences\n"
 FIGURE = "```figure\ndemo\n```\n"
 META = {"slug": "demo", "title": "Demo & co", "alt": 'A "demo" figure.', "text": ["A → B."],
-        "width": 600.4, "height": 300, "evidence": ["src/app.go:Serve"]}
+        "width": 600.4, "height": 300, "static_width": 600, "static_height": 180,
+        "evidence": ["src/app.go:Serve"]}
 
 
 def sha(data):
@@ -283,10 +287,12 @@ class ConfigKinds(unittest.TestCase):
         self.assertEqual(docs_diagrams.declared_hooks("nav:\n  - hooks.md\n"), [])
         self.assertEqual(docs_diagrams.declared_hooks("hooks: []\n"), [])
 
-    def test_repository_site_enables_figures_and_preset_does_not(self):
-        self.assertIn("figure", docs_diagrams.enabled_kinds((ROOT / "mkdocs.yml").read_text(encoding="utf-8")))
+    def test_repository_site_enables_only_figures_and_preset_only_mermaid(self):
+        """Root: the figures hook without the mermaid fence. Preset: the mermaid fence, no hook."""
+        self.assertEqual(docs_diagrams.enabled_kinds((ROOT / "mkdocs.yml").read_text(encoding="utf-8")), {"figure"})
         preset = (ROOT / "docs/presets/mkdocs/mkdocs.yml").read_text(encoding="utf-8")
         self.assertEqual(docs_diagrams.enabled_kinds(preset), {"mermaid"})
+        self.assertEqual(docs_diagrams.enabled_kinds(FIGURES_ONLY), {"figure"})
 
     def test_disabled_kind_is_reported(self):
         page = Path("p.md")
@@ -296,6 +302,115 @@ class ConfigKinds(unittest.TestCase):
         self.assertIn("does not enable figure diagrams", errors[0])
         # A nested fence is source text, so it needs no enabled kind.
         self.assertEqual(docs_diagrams.kind_errors(page, "````markdown\n" + FIGURE + "````\n", set()), [])
+
+    def test_mermaid_on_a_figures_only_site_names_the_figure_fence(self):
+        """The root site: a Mermaid fence fails and the finding says what to write instead."""
+        errors = docs_diagrams.kind_errors(Path("p.md"), DIAGRAM, docs_diagrams.enabled_kinds(FIGURES_ONLY))
+        self.assertEqual(len(errors), 1)
+        self.assertIn("does not enable mermaid diagrams; draw it as a ```figure fence", errors[0])
+        self.assertIn("docs/guides/figures.md", errors[0])
+        # With neither kind enabled there is no replacement to name.
+        bare = docs_diagrams.kind_errors(Path("p.md"), DIAGRAM, set())
+        self.assertEqual(bare, ["p.md: ```mermaid fence, but the configuration does not enable mermaid diagrams"])
+        # The preset keeps Mermaid, and a figure there names no replacement either.
+        preset = docs_diagrams.kind_errors(Path("p.md"), FIGURE, {"mermaid"})
+        self.assertNotIn("draw it as", preset[0])
+
+
+class ExcludeDocs(unittest.TestCase):
+    """The exclude_docs patterns MkDocs honours, so the checks skip what the site does not build."""
+
+    def excluded(self, relative, *patterns):
+        return docs_diagrams.is_excluded(Path(relative).parts, list(patterns))
+
+    def test_patterns_are_read_from_a_block_scalar_or_one_line(self):
+        block = "site_name: x\nexclude_docs: |\n  a/b/\n  # note\n\n  /c/\nnav:\n  - index.md\n"
+        self.assertEqual(docs_diagrams.excluded_patterns(block), ["a/b/", "/c/"])
+        self.assertEqual(docs_diagrams.excluded_patterns("exclude_docs: '/drafts/'  # wip\n"), ["/drafts/"])
+        self.assertEqual(docs_diagrams.excluded_patterns("exclude_docs: >-\n  one.md\n"), ["one.md"])
+        self.assertEqual(docs_diagrams.excluded_patterns("nav:\n  - exclude_docs.md\n"), [])
+        self.assertEqual(docs_diagrams.excluded_patterns("exclude_docs:\n"), [])
+        self.assertEqual(docs_diagrams.excluded_patterns(""), [])
+
+    def test_anchored_unanchored_and_directory_patterns(self):
+        self.assertTrue(self.excluded("presets/mkdocs/docs/index.md", "/presets/mkdocs/docs/"))
+        self.assertTrue(self.excluded("presets/mkdocs/overrides/x.md", "presets/mkdocs/overrides/"))
+        self.assertTrue(self.excluded("a/drafts/x.md", "drafts/"))
+        self.assertTrue(self.excluded("guides/wip.md", "wip.md"))
+        self.assertTrue(self.excluded("guides/x.tmp.md", "*.tmp.md"))
+        # Anchored patterns match from docs_dir only.
+        self.assertFalse(self.excluded("other/presets/mkdocs/docs/index.md", "/presets/mkdocs/docs/"))
+        self.assertFalse(self.excluded("presets/mkdocs/README.md", "/presets/mkdocs/docs/"))
+        # A directory pattern never matches a file of the same name.
+        self.assertFalse(self.excluded("drafts", "drafts/"))
+        self.assertFalse(self.excluded("guides/figures.md", "/figures/"))
+
+    def test_wildcards_stay_within_one_path_component(self):
+        """BUG-1030: `*`, `?` and `[...]` never match a `/`, as in gitignore and pathspec."""
+        self.assertTrue(self.excluded("a/x.md", "/a/*.md"))
+        self.assertTrue(self.excluded("a/b.md", "/a/?.md"))
+        self.assertTrue(self.excluded("guides/x.md", "/*/x.md"))
+        self.assertTrue(self.excluded("a/c/x.md", "/a/[bc]/"))
+        self.assertFalse(self.excluded("a/b/x.md", "/a/*.md"))
+        self.assertFalse(self.excluded("a/b.md", "/a?b.md"))
+        self.assertFalse(self.excluded("a/b.md", "a?b.md"))
+        self.assertFalse(self.excluded("b/a/x.md", "*/x.md"))
+        self.assertFalse(self.excluded("a/b.md", "a[/]b.md"))
+        # A matched directory excludes everything under it, however deep.
+        self.assertTrue(self.excluded("a/b/c/x.md", "/a/*"))
+        self.assertTrue(self.excluded("a/b/c/x.md", "/a/*/"))
+        # gitignore negates a bracket with `^` as well as `!`.
+        self.assertTrue(self.excluded("b.md", "[^a].md"))
+        self.assertFalse(self.excluded("a.md", "[^a].md"))
+        self.assertFalse(self.excluded("a.md", "[!a].md"))
+
+    def test_a_leading_or_middle_slash_anchors(self):
+        self.assertTrue(self.excluded("x.md", "/x.md"))
+        self.assertFalse(self.excluded("sub/x.md", "/x.md"))
+        self.assertTrue(self.excluded("sub/x.md", "x.md"))
+        self.assertTrue(self.excluded("a/b.md", "a/b.md"))
+        self.assertFalse(self.excluded("x/a/b.md", "a/b.md"))
+        # Boundaries: a bare or doubled slash names no path; an empty component matches none.
+        self.assertFalse(self.excluded("x.md", "/"))
+        self.assertFalse(self.excluded("a/x.md", "//"))
+        self.assertFalse(self.excluded("a/b.md", "a//b.md"))
+
+    def test_matcher_agrees_with_the_pathspec_mkdocs_uses(self):
+        """Replays a pattern and path matrix against pathspec's GitIgnoreSpec when it is installed."""
+        try:
+            from pathspec.gitignore import GitIgnoreSpec
+        except ImportError:
+            self.skipTest("pathspec is not installed (it comes with mkdocs)")
+        patterns = ("/a/*.md", "/a/?.md", "a?b.md", "*/x.md", "/*/x.md", "/a/*", "/a/[bc]/", "[^a].md", "[!a].md",
+                    "x.md", "/x.md", "a/b.md", "drafts/", "/presets/mkdocs/docs/", "*.tmp.md", "/", "a//b.md")
+        paths = ("a/x.md", "a/b.md", "a/b/x.md", "a/c/x.md", "a/b/c/x.md", "b/a/x.md", "x.md", "sub/x.md", "x/a/b.md",
+                 "a.md", "b.md", "drafts/x.md", "p/drafts/x.md", "drafts", "presets/mkdocs/docs/index.md",
+                 "presets/mkdocs/README.md", "g/x.tmp.md")
+        for pattern in patterns:
+            spec = GitIgnoreSpec.from_lines([pattern])
+            for path in paths:
+                with self.subTest(pattern=pattern, path=path):
+                    self.assertEqual(docs_diagrams.pattern_matches(Path(path).parts, pattern), spec.match_file(path))
+
+    def test_mkdocs_defaults_always_apply(self):
+        self.assertTrue(self.excluded(".drafts/wip.md"))
+        self.assertTrue(self.excluded("guides/.hidden.md"))
+        self.assertTrue(self.excluded("templates/page.md"))
+        self.assertFalse(self.excluded("guides/templates/page.md"))
+        self.assertFalse(self.excluded("index.md"))
+
+    def test_unsupported_gitignore_syntax_is_refused(self):
+        for pattern in ("!keep.md", "**/x.md", "a\\ b.md"):
+            with self.subTest(pattern=pattern), self.assertRaises(docs_diagrams.CheckError):
+                self.excluded("index.md", pattern)
+
+    def test_repository_site_excludes_the_preset_docs_but_not_its_readme(self):
+        docs = ROOT / "docs"
+        patterns = docs_diagrams.excluded_patterns((ROOT / "mkdocs.yml").read_text(encoding="utf-8"))
+        pages = {page.relative_to(docs).as_posix() for page in docs_diagrams.markdown_pages(docs, patterns)}
+        self.assertNotIn("presets/mkdocs/docs/index.md", pages)
+        self.assertIn("presets/mkdocs/README.md", pages)
+        self.assertIn("wiki/Home.md", pages)
 
 
 class FigureFences(unittest.TestCase):
@@ -315,7 +430,8 @@ class FigureFences(unittest.TestCase):
     def test_render_block_escapes_and_links(self):
         block = docs_diagrams.render_block("demo", "../..", META)
         self.assertIn('<figure class="praetor-figure" id="fig-demo" data-figure="demo" aria-describedby="fig-demo-text">', block)
-        self.assertIn('<source media="(prefers-reduced-motion: reduce)" srcset="../../demo.static.svg">', block)
+        self.assertIn('<source media="(prefers-reduced-motion: reduce)" srcset="../../demo.static.svg" '
+                      'width="600" height="180">', block)
         self.assertIn('alt="A &quot;demo&quot; figure." width="600" height="300" loading="lazy"', block)
         self.assertIn("<figcaption>Demo &amp; co</figcaption>", block)
         self.assertIn("<li>A → B.</li>", block)
@@ -323,6 +439,31 @@ class FigureFences(unittest.TestCase):
         self.assertNotIn("\n\n", block)
         linked = docs_diagrams.render_block("demo", "https://x/assets/figures", META, "https://x/wiki/Home/#fig-demo")
         self.assertIn('<p><a href="https://x/wiki/Home/#fig-demo">Open the interactive figure</a></p>', linked)
+
+    def test_each_image_carries_its_own_recorded_size(self):
+        """BUG-1002: the static SVG is shorter than the animated one; a <source> without a size
+        made the browser reserve the animated size and letterbox the static image."""
+        block = docs_diagrams.render_block("demo", ".", META)
+        source = next(line for line in block.split("\n") if line.startswith("<source"))
+        image = next(line for line in block.split("\n") if line.startswith("<img"))
+        self.assertIn('width="600" height="180"', source)
+        self.assertIn('width="600" height="300"', image)
+        # Boundary: equal sizes still go on both, so the choice never depends on a missing value.
+        same = docs_diagrams.render_block("demo", ".", dict(META, static_height=300))
+        self.assertEqual(same.count('width="600" height="300"'), 2)
+
+    def test_a_json_without_an_image_size_is_refused(self):
+        for missing in ({"static_width": None}, {"static_height": 0}, {"width": "wide"}, {"height": True}):
+            meta = {key: value for key, value in dict(META, **missing).items() if value is not None}
+            with self.subTest(missing=missing), self.assertRaises(docs_diagrams.CheckError) as raised:
+                docs_diagrams.render_block("demo", ".", meta)
+            self.assertIn("rebuild with", str(raised.exception))
+        with tempfile.TemporaryDirectory() as directory:
+            stale = {key: value for key, value in META.items() if not key.startswith("static_")}
+            write(Path(directory) / "demo.json", json.dumps(stale))
+            text, errors = docs_diagrams.expand(FIGURE, ".", Path(directory))
+        self.assertEqual(text, FIGURE)
+        self.assertIn("no positive static_width and static_height", errors[0])
 
     def test_expand_replaces_top_level_fences_only(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -417,6 +558,28 @@ class FigureSite(unittest.TestCase):
         (self.site / "assets/javascripts/figures/registry.json").unlink()
         self.assertIn("registry.json is missing", self.check()[0][0])
 
+    def test_mermaid_on_the_figures_only_site_fails_with_the_figure_fence_named(self):
+        """The root site's shape: a Mermaid fence fails even when the page drew it."""
+        write(self.config, FIGURES_ONLY)
+        self.assertEqual(self.check(), ([], 1))
+        write(self.docs / "old.md", DIAGRAM)
+        write(self.site / "old" / "index.html", RENDERED)
+        errors, _ = self.check()
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("draw it as a ```figure fence", errors[0])
+
+    def test_pages_the_configuration_excludes_are_skipped(self):
+        """The preset's docs_dir sits inside the root docs_dir, excluded, with its Mermaid page."""
+        write(self.docs / "preset/docs/index.md", DIAGRAM)
+        write(self.config, FIGURES_ONLY + "exclude_docs: |\n  /preset/docs/\n")
+        self.assertEqual(self.check(), ([], 1))
+        # Not excluded: a disabled kind, and a page MkDocs was expected to write but did not.
+        write(self.config, FIGURES_ONLY)
+        errors, _ = self.check()
+        self.assertEqual(len(errors), 2, errors)
+        self.assertIn("does not enable mermaid diagrams", errors[0])
+        self.assertIn("MkDocs wrote no", errors[1])
+
     def test_nested_figure_fence_needs_no_render(self):
         write(self.docs / "guide.md", "# Guide\n\n````markdown\n" + FIGURE + "````\n")
         write(self.page, "<pre><code>```figure</code></pre>")
@@ -468,6 +631,23 @@ class FigureSources(unittest.TestCase):
         write(self.repo.root / "mkdocs.yml", DECLARED)
         write(self.repo.root / "docs/page.md", FIGURE)
         self.assertIn("does not enable figure diagrams", self.repo.sources()[0])
+
+    def test_mermaid_fails_on_a_figures_only_site_unless_excluded(self):
+        write(self.repo.root / "mkdocs.yml", FIGURES_ONLY)
+        write(self.repo.root / "docs/presets/demo/docs/index.md", DIAGRAM)
+        errors = self.repo.sources()
+        self.assertEqual(len(errors), 1)
+        self.assertIn("draw it as a ```figure fence", errors[0])
+        write(self.repo.root / "mkdocs.yml", FIGURES_ONLY + "exclude_docs: |\n  /presets/demo/docs/\n")
+        self.assertEqual(self.repo.sources(), [])
+
+    def test_json_without_the_static_size_is_reported(self):
+        del self.repo.meta["static_height"]
+        self.repo.rebind()
+        errors = self.repo.sources()
+        self.assertEqual(len(errors), 1)
+        self.assertIn("demo.json: figure 'demo': its JSON records no positive static_width and static_height",
+                      errors[0])
 
     def test_evidence_must_resolve(self):
         self.repo.meta["evidence"] = ["src/app.go:Serve", "src/app.go:Handle", "src/gone.go:X", "../outside.go:Y"]

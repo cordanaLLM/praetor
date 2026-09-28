@@ -10,9 +10,16 @@ $$\mathcal{P}_{\text{resolved}} = \mathcal{P}_1 \sqcup \mathcal{P}_2 \sqcup \dot
 - **Linters & Features**: Cumulative deduplicated set union ($\cup$).
 - **Memory & Error Unwraps**: The stricter setting wins (ZeroFrameMalloc, StrictBan).
 
-```mermaid
-flowchart TD
-    PROFILE["Profile: framework\n(Cyclomatic <= 10, Approvals: 1)"] --> LATTICE["Lattice Join Engine\n(internal/config)"]
-    FACET["Facet: security:high\n(SLSA Level 3, Approvals: 2)"] --> LATTICE
-    LATTICE --> RESOLVED["Resolved Policy\n(Cyclomatic <= 10, Approvals: 2, SLSA 3)"]
+## Layer Order
+
+```figure
+lattice-join
 ```
+
+`ResolvePolicy` folds the layers in a fixed order: the built-in defaults, the profiles and
+facets pinned in `.standards.lock`, the external fleet, organization, deployment and
+workstation layers, the repository's `overrides.complexity`, and, for an audit, the
+audit-compatibility ceiling. A profile or facet whose file no longer matches its lock digest is
+rejected. The repository's branch-protection and supply-chain overrides apply after the join
+(`ApplyOverrides`), so they can only tighten it; `review_mode` may relax to
+`single_maintainer` there and nowhere else.

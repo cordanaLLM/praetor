@@ -348,11 +348,18 @@ func figureEdges(t *testing.T, path string) [][2]string {
 }
 
 // TestHomeWiki_Positive_CompileContextFlowsFromAGENTS pins BUG-680: compile-context reads
-// AGENTS.md (its --source default) and writes the vendor files. The preset landing page
-// carried the same inverted diagram and is held to the same rule.
+// AGENTS.md (its --source default) and writes the vendor files. The generated Home page
+// draws the governance-lifecycle figure, so the check reads that figure's build output, the
+// edges with box labels in docs/assets/figures/governance-lifecycle.json, and the page must
+// name that figure. The preset landing page carried the same inverted diagram, keeps Mermaid,
+// and is held to the same rule.
 func TestHomeWiki_Positive_CompileContextFlowsFromAGENTS(t *testing.T) {
-	if got := compileContextFlowViolations(flowEdges(generateHomeWiki("cordanaLLM/praetor", hisscatalog.Rules()).Content)); len(got) != 0 {
-		t.Errorf("generated Home diagram: %v", got)
+	home := generateHomeWiki("cordanaLLM/praetor", hisscatalog.Rules()).Content
+	if !strings.Contains(home, figureFence("governance-lifecycle")) {
+		t.Errorf("generated Home page does not draw the governance-lifecycle figure:\n%s", home)
+	}
+	if got := compileContextFlowViolations(figureEdges(t, filepath.Join("..", "..", "docs", "assets", "figures", "governance-lifecycle.json"))); len(got) != 0 {
+		t.Errorf("governance-lifecycle figure diagram: %v", got)
 	}
 	preset, err := os.ReadFile(filepath.Join("..", "..", "docs", "presets", "mkdocs", "docs", "index.md"))
 	if err != nil {
@@ -360,9 +367,6 @@ func TestHomeWiki_Positive_CompileContextFlowsFromAGENTS(t *testing.T) {
 	}
 	if got := compileContextFlowViolations(flowEdges(string(preset))); len(got) != 0 {
 		t.Errorf("mkdocs preset index diagram: %v", got)
-	}
-	if got := compileContextFlowViolations(figureEdges(t, filepath.Join("..", "..", "docs", "assets", "figures", "governance-lifecycle.json"))); len(got) != 0 {
-		t.Errorf("governance-lifecycle figure diagram: %v", got)
 	}
 }
 

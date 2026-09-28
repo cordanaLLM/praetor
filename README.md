@@ -56,7 +56,7 @@ Praetor resolves context compilation and lattice configuration through a single-
 <!-- figure:governance-lifecycle -->
 <figure class="praetor-figure" id="fig-governance-lifecycle" data-figure="governance-lifecycle" aria-describedby="fig-governance-lifecycle-text">
 <picture>
-<source media="(prefers-reduced-motion: reduce)" srcset="docs/assets/figures/governance-lifecycle.static.svg">
+<source media="(prefers-reduced-motion: reduce)" srcset="docs/assets/figures/governance-lifecycle.static.svg" width="678" height="662">
 <img src="docs/assets/figures/governance-lifecycle.svg" alt="The governance lifecycle spans context compilation, policy resolution, and verification gating." width="678" height="712" loading="lazy">
 </picture>
 <figcaption>Governance Lifecycle</figcaption>

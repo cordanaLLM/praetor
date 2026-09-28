@@ -668,32 +668,80 @@ func TestGenerateWiki_Positive(t *testing.T) {
 		t.Fatalf("expected 6 wiki pages, got %d", len(manifest.Pages))
 	}
 
-	// Every page but the moved stub carries a diagram: a Mermaid fence, or the figure fence
-	// of the one page whose diagram is an interactive figure.
-	const mermaidFence = "```mermaid"
-	expectedFences := map[string]string{
-		"Home.md":                 mermaidFence,
-		"HISS-Invariants.md":      mermaidFence,
+	// Every page but the moved stub draws its diagram as an interactive figure, and no page
+	// carries a Mermaid fence: the root site no longer renders Mermaid, so a Mermaid fence in
+	// docs/wiki fails scripts/docs_diagrams.py (ADR-0015, section 9).
+	expectedFigures := map[string]string{
+		"Home.md":                 "governance-lifecycle",
+		"HISS-Invariants.md":      "verification-ladder",
 		"HISS-16-Invariants.md":   "",
-		"HISS-Matrix.md":          mermaidFence,
-		"Architecture-Lattice.md": mermaidFence,
-		"API-Reference.md":        "```figure\nforge-federation\n```",
+		"HISS-Matrix.md":          "verification-ladder",
+		"Architecture-Lattice.md": "lattice-join",
+		"API-Reference.md":        "forge-federation",
 	}
 
-	for ef, fence := range expectedFences {
+	for ef, slug := range expectedFigures {
 		data, err := os.ReadFile(filepath.Join(tempDir, ef))
 		if err != nil {
 			t.Errorf("missing expected wiki page %s: %v", ef, err)
 			continue
 		}
-		if fence != "" && !strings.Contains(string(data), fence) {
-			t.Errorf("wiki page %s lacks its diagram fence %q", ef, fence)
+		page := string(data)
+		if got := strings.Count(page, "```figure\n"); (slug == "" && got != 0) || (slug != "" && got != 1) {
+			t.Errorf("wiki page %s holds %d figure fences, want exactly the %q figure", ef, got, slug)
 		}
-		if strings.Contains(string(data), mermaidFence) != (fence == mermaidFence) {
-			t.Errorf("wiki page %s: Mermaid diagram present = %v, want %v", ef, fence != mermaidFence, fence == mermaidFence)
+		if slug != "" && !strings.Contains(page, "```figure\n"+slug+"\n```\n") {
+			t.Errorf("wiki page %s lacks the figure fence for %q", ef, slug)
+		}
+		if strings.Contains(page, "```mermaid") {
+			t.Errorf("wiki page %s still carries a Mermaid fence", ef)
 		}
 	}
 }
+
+// TestGenerateWiki_Boundary_EveryFigureHasCommittedOutputs holds each figure the generator
+// names to a committed spec and build output, so a generated page can never name a figure
+// the site hook and the wiki sync would refuse to render. The fence parser is exercised on
+// the smallest shapes too: a page without a fence names nothing, and an unclosed fence
+// is not a figure.
+func TestGenerateWiki_Boundary_EveryFigureHasCommittedOutputs(t *testing.T) {
+	manifest, err := GenerateWiki(t.Context(), wikiRepoRoot(t, "my-repo", canonicalAgentsMD(t)), t.TempDir(), "")
+	if err != nil {
+		t.Fatalf("GenerateWiki: %v", err)
+	}
+	named := 0
+	for _, page := range manifest.Pages {
+		for _, slug := range figureSlugs(page.Content) {
+			named++
+			for _, rel := range []string{"docs/figures/" + slug + ".ts", "docs/assets/figures/" + slug + ".json"} {
+				if _, err := os.Stat(filepath.Join("..", "..", filepath.FromSlash(rel))); err != nil {
+					t.Errorf("%s names figure %q, but %s is missing: %v", page.Name, slug, rel, err)
+				}
+			}
+		}
+	}
+	if named != 5 {
+		t.Errorf("generated pages name %d figures, want 5", named)
+	}
+	if got := figureSlugs("# Plain\n"); len(got) != 0 {
+		t.Errorf("figureSlugs(plain page) = %v, want none", got)
+	}
+	if got := figureSlugs("```figure\nopen-ended\n"); len(got) != 0 {
+		t.Errorf("figureSlugs(unclosed fence) = %v, want none", got)
+	}
+}
+
+// figureSlugs returns the slug of every closed ```figure fence in content, in page order.
+func figureSlugs(content string) []string {
+	var slugs []string
+	for _, m := range figureFencePattern.FindAllStringSubmatch(content, -1) {
+		slugs = append(slugs, m[1])
+	}
+	return slugs
+}
+
+// figureFencePattern matches one closed figure fence holding a single kebab-case slug.
+var figureFencePattern = regexp.MustCompile("(?m)^```figure\\n([a-z0-9-]+)\\n```$")
 
 // stubEnforcementClaim matches a GitLab, Gitea or Forgejo name followed, within three words of
 // the same clause, by an enforcement verb: the shape of a sentence that credits a stub driver

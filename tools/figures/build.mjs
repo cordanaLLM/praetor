@@ -332,16 +332,22 @@ export function decorate(svg, figure, vendor) {
   return tag + head + svg.slice(open[0].length);
 }
 
-function svgSize(svg) {
+/** The intrinsic size of an SVG's opening tag, rounded up to whole pixels. */
+export function svgSize(svg) {
   const size = /^<svg [^>]*?width="([\d.]+)" height="([\d.]+)"/.exec(svg);
   if (!size) throw new Error('toSvg returned an <svg> tag without width and height');
   return { width: Math.ceil(Number(size[1])), height: Math.ceil(Number(size[2])) };
 }
 
-/** The three committed outputs for one validated figure. */
+/**
+ * The three committed outputs for one validated figure. The static SVG drops the steps, and with
+ * them the narration and card area, so its intrinsic size differs from the animated one: the JSON
+ * records both, and docs_diagrams.render_block gives each <picture> source its own size.
+ */
 export function render(figure, slug, specBytes, context) {
   const svg = decorate(toSvg(figure.props), figure, context.vendor);
   const still = decorate(toSvg({ ...figure.props, steps: [] }), figure, context.vendor);
+  const stillSize = svgSize(still);
   const meta = {
     slug,
     title: figure.title,
@@ -353,6 +359,8 @@ export function render(figure, slug, specBytes, context) {
     svg_sha256: sha256(svg),
     static_sha256: sha256(still),
     ...svgSize(svg),
+    static_width: stillSize.width,
+    static_height: stillSize.height,
     edges: normalizedEdges(figure),
   };
   return { [`${slug}.svg`]: svg, [`${slug}.static.svg`]: still, [`${slug}.json`]: `${JSON.stringify(meta, null, 2)}\n` };

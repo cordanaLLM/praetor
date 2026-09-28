@@ -26,20 +26,39 @@ export default {
   ],
   props: {
     speed: 1000,
+    // The ladder reads top to bottom: tiers 1-3 run down the workstation card, tier 4 down the
+    // remote card below it, and the receipt drops straight into the pull request. A hook failure
+    // stops on the workstation (lefthook exits 1 before anything is pushed), so it has its own box
+    // beside the hooks; the signing key sits beside the gate that loads it. Neighbouring boxes keep
+    // every edge short, so no edge crosses a box or another label.
     layout: {
-      direction: 'row',
-      gap: 36,
+      direction: 'column',
+      gap: 48,
       children: [
         {
           id: 'workstation',
           label: 'Local Workstation',
           direction: 'column',
-          gap: 20,
+          align: 'end',
+          gap: 26,
           children: [
             { id: 'editor', label: '1. Editor LSP', sub: 'cmd/standards-lsp', width: 220 },
-            { id: 'hooks', label: '2. Git Hooks', sub: 'lefthook pre-commit & pre-push', width: 220 },
-            { id: 'gate', label: '3. Gate Pipeline', sub: '6 stages in internal/gating', width: 220 },
-            { id: 'key', label: 'Signing Key', sub: 'PRAETOR_RECEIPT_KEY', shape: 'store', width: 220 },
+            {
+              direction: 'row',
+              gap: 110,
+              children: [
+                { id: 'blocked', label: 'Blocked locally', sub: 'commit or push refused', width: 190 },
+                { id: 'hooks', label: '2. Git Hooks', sub: 'lefthook pre-commit & pre-push', width: 220 },
+              ],
+            },
+            {
+              direction: 'row',
+              gap: 110,
+              children: [
+                { id: 'key', label: 'Signing Key', sub: 'env var or key file', shape: 'store', width: 190 },
+                { id: 'gate', label: '3. Gate Pipeline', sub: '6 stages in internal/gating', width: 220 },
+              ],
+            },
             { id: 'receipt', label: '.standards-receipt.json', sub: 'Exit-0 receipt', shape: 'store', width: 220 },
           ],
         },
@@ -47,12 +66,18 @@ export default {
           id: 'remote',
           label: 'Remote CI & Admission',
           direction: 'column',
-          gap: 20,
+          gap: 30,
           children: [
             { id: 'pr', label: 'Pull Request', sub: 'checklist & ```receipt block', width: 220 },
             { id: 'ci', label: '4. CI Re-check', sub: 'standardsctl forge validate-pr', width: 220 },
-            { id: 'admit', label: 'Admitted', sub: 'PR status check passes', width: 220 },
-            { id: 'reject', label: 'Rejected', sub: 'hook block or CI exit 1', width: 220 },
+            {
+              direction: 'row',
+              gap: 24,
+              children: [
+                { id: 'admit', label: 'Admitted', sub: 'PR check passes', width: 170 },
+                { id: 'reject', label: 'Rejected', sub: 'validate-pr exits 1', width: 170 },
+              ],
+            },
           ],
         },
       ],
@@ -65,8 +90,8 @@ export default {
       { from: 'receipt', to: 'pr', label: 'fenced in body' },
       { from: 'pr', to: 'ci', label: 'validate-pr' },
       { from: 'ci', to: 'admit', label: 'valid receipt' },
-      { id: 'hook-fail', from: 'hooks', to: 'reject', label: 'hook exit 1', quiet: true },
-      { id: 'ci-fail', from: 'ci', to: 'reject', label: 'receipt invalid', quiet: true },
+      { id: 'hook-fail', from: 'hooks', to: 'blocked', label: 'hook exit 1' },
+      { id: 'ci-fail', from: 'ci', to: 'reject', label: 'receipt invalid' },
     ],
     steps: [
       {
@@ -98,7 +123,7 @@ export default {
           {
             edges: 'hook-fail',
             say: 'Lefthook pre-commit or pre-push hook rejects the change locally.',
-            show: { reject: [{ tag: 'failed', tone: 'orange', text: 'Lefthook Hook Error', meta: 'blocked locally' }] },
+            show: { blocked: [{ tag: 'failed', tone: 'orange', text: 'lefthook exit 1', meta: 'nothing pushed' }] },
           },
         ],
       },
