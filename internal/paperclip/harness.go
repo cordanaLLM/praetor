@@ -85,15 +85,15 @@ func SynthesizeHarness(ctx context.Context, repoPath string, facts hisscatalog.F
 	if err != nil {
 		return nil, err
 	}
-	harness := releaseHarness(platform, receiptKeyPinned(ctx, repoPath), invariants)
+	harness := releaseHarness(platform, receiptContract(receiptKeyPinned(ctx, repoPath)), invariants)
 	return &harness, nil
 }
 
 // releaseHarness is this release's synthesis for platform under one set of repository facts:
-// whether .standards.yaml pins a receipt key, and the invariants rendered for the HISS facts.
-// SynthesizeHarness and currentReleaseHarnesses both build from it, so the refresh key
-// enumerates exactly the text the synthesis writes.
-func releaseHarness(platform string, pinned bool, invariants []string) Harness {
+// the receipt row (receiptContract of whether .standards.yaml pins a receipt key), and the
+// invariants rendered for the HISS facts. SynthesizeHarness and currentReleaseHarnesses both
+// build from it, so the refresh key enumerates exactly the text the synthesis writes.
+func releaseHarness(platform, receiptRow string, invariants []string) Harness {
 	return Harness{
 		Version:  1,
 		Platform: platform,
@@ -101,7 +101,7 @@ func releaseHarness(platform string, pinned bool, invariants []string) Harness {
 			"Branch push != shipping. Open PR required. Work ships after merge.",
 			"Rebase onto main immediately: run git fetch origin && git rebase origin/main before proposing.",
 			"Rule 0 Terminal Disposition: every run ends with structured disposition: in_review or blocked.",
-			receiptContract(pinned),
+			receiptRow,
 			"Timeout != failure. Re-check open PRs before retry; prevent duplicate PRs.",
 			// A Paperclip run reports to an orchestrating agent, so its product is internal text.
 			config.RegisterDirective(config.TextRegisterInternal),
@@ -174,6 +174,13 @@ var (
 		"HISS-10: Zero-warning tolerance across compiler, linters, and formatters",
 		"HISS-15: 3D testing mandatory (Positive, Negative, Boundary >= 2 checks/dim)",
 		"HISS-16: Canonical AGENTS.md compiled to vendor harnesses",
+	}
+	// priorPinnedReceiptRows are the pinned-key receipt rows earlier releases wrote beside this
+	// release's other rows. The row #523 introduced told every run on a pinned repository to mint
+	// and attach a receipt, which a gate run with --dry-run never mints (#550). A harness carrying
+	// one is unmodified earlier output under every fact combination (currentReleaseHarnesses).
+	priorPinnedReceiptRows = []string{
+		"Ed25519 Exit-0 Receipts: mint via `praetorctl gate run`; attach receipt to every PR proposal.",
 	}
 )
 
@@ -335,31 +342,37 @@ func priorHarnesses(current *Harness, limits []int) ([]Harness, error) {
 	return append(priors, released...), nil
 }
 
-// receiptStates are both answers receiptKeyPinned can give.
-var receiptStates = [...]bool{false, true}
+// releasedReceiptRows is every receipt row the refresh key accepts beside this release's other
+// rows: both rows receiptContract writes, one per answer receiptKeyPinned can give, then each
+// pinned row an earlier release wrote (priorPinnedReceiptRows).
+func releasedReceiptRows() []string {
+	return append([]string{receiptContract(false), receiptContract(true)}, priorPinnedReceiptRows...)
+}
 
 // currentReleaseHarnesses renders this release for platform under every combination of the
-// repository facts SynthesizeHarness reads: the receipt key pinned or not, times every HISS fact
-// combination releaseFacts builds from limits. A harness adoption wrote is still unmodified
-// output after the operator pins receipt.public_key, as the unpinned row advises, the
-// repository's languages or declared exceptions change, or its policy resolves the function
-// length the harness stated as the audit ceiling; recognising it lets plain adopt refresh it
-// without --force, which would also rewrite adopter-maintained files (#502). The set is
-// enumerated rather than the fact-dependent rows normalised away, so recognition stays byte
-// for byte: an edit to the receipt row or to one invariant, its function length included,
-// still makes the harness operator-owned (limitFacts). It is bounded:
-// 2 x len(releaseFacts(limits)) values. These are calls, so a later change to this text must
-// first capture the rows as they stand as literals, as cavemanOperatingContract captured #487's.
+// repository facts SynthesizeHarness reads: each receipt row (releasedReceiptRows), times every
+// HISS fact combination releaseFacts builds from limits. A harness adoption wrote is still
+// unmodified output after the operator pins receipt.public_key, as the unpinned row advises, the
+// repository's languages or declared exceptions change, its policy resolves the function length
+// the harness stated as the audit ceiling, or the release moved only its pinned receipt row;
+// recognising it lets plain adopt refresh it without --force, which would also rewrite
+// adopter-maintained files (#502). The set is enumerated rather than the fact-dependent rows
+// normalised away, so recognition stays byte for byte: an edit to the receipt row or to one
+// invariant, its function length included, still makes the harness operator-owned
+// (limitFacts). It is bounded: len(releasedReceiptRows()) x len(releaseFacts(limits)) values.
+// These are calls, so a later change to this text must first capture the rows as they stand as
+// literals, as cavemanOperatingContract captured #487's and priorPinnedReceiptRows #523's.
 func currentReleaseHarnesses(platform string, limits []int) ([]Harness, error) {
 	combinations := releaseFacts(limits)
-	released := make([]Harness, 0, len(receiptStates)*len(combinations))
+	rows := releasedReceiptRows()
+	released := make([]Harness, 0, len(rows)*len(combinations))
 	for _, facts := range combinations {
 		invariants, err := catalogInvariants(facts)
 		if err != nil {
 			return nil, err
 		}
-		for _, pinned := range receiptStates {
-			released = append(released, releaseHarness(platform, pinned, invariants))
+		for _, row := range rows {
+			released = append(released, releaseHarness(platform, row, invariants))
 		}
 	}
 	return released, nil

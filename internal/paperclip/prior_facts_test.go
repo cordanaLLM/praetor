@@ -179,7 +179,7 @@ func TestPriorGeneratedKeepsHarnessAfterResolvedLimitMoves(t *testing.T) {
 }
 
 // TestPriorGeneratedRecognisesThisReleaseUnderEveryFactCombination: Boundary. Every value the
-// synthesis distinguishes (both receipt states times every language set up to AllLanguages,
+// synthesis distinguishes (every released receipt row times every language set up to AllLanguages,
 // every exception set up to AllExceptions and each function-length statement limitFacts accepts
 // for the limit the current harness states) is earlier output for the unpinned, unknown-fact synthesis except text
 // equal to that synthesis. The combinations are matched against one enumeration (renderedPrior),
@@ -196,8 +196,8 @@ func TestPriorGeneratedRecognisesThisReleaseUnderEveryFactCombination(t *testing
 		t.Fatal(err)
 	}
 	combinations := (int(hisscatalog.AllLanguages) + 1) * (int(hisscatalog.AllExceptions) + 1) * len(limitFacts(limits))
-	if len(released) != len(receiptStates)*combinations {
-		t.Fatalf("fact combinations = %d, want both receipt states x %d HISS fact combinations", len(released), combinations)
+	if len(released) != len(releasedReceiptRows())*combinations {
+		t.Fatalf("fact combinations = %d, want every released receipt row x %d HISS fact combinations", len(released), combinations)
 	}
 	self := 0
 	for index := range released {
