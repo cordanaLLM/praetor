@@ -193,10 +193,13 @@ verbatim, or a constant name without its leg values, would permanently block the
 believed it was protecting. `forge.RequiredStatusContexts` therefore refuses, with the shape
 named, every matrix whose contexts the file cannot show: an unresolved expression, a matrix,
 axis or `include` list that is itself an expression, a value whose printed form differs from its
-spelling (an unquoted `3.10` is the number 3.1), a name that is empty or begins or ends with
-whitespace once evaluated (`Build ${{ matrix.suffix }}` with an empty suffix), and the YAML merge
+spelling (an unquoted `3.10` is the number 3.1), a name that is empty or begins with
+whitespace once evaluated (`${{ matrix.prefix }} Build` with an empty prefix), and the YAML merge
 key `<<`, which GitHub Actions does not read. None is ever passed through as a literal
-(`TestMatrixContexts_Negative_RefusesWhatTheFileCannotShow`).
+(`TestMatrixContexts_Negative_RefusesWhatTheFileCannotShow`). Whitespace an empty value leaves at
+the end of an evaluated name is dropped, as GitHub drops it: `Build ${{ matrix.suffix }}` with an
+empty suffix reports `Build`, the way tokio's `features exclude ${{ matrix.name }}` reports
+`features exclude`.
 
 An advisory leg — one carrying `continue-on-error` — is **excluded** from the required
 contexts. The forge reports such a job as successful whether or not it passed, so requiring it

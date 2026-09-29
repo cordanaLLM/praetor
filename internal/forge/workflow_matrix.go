@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -527,12 +528,18 @@ func (leg *matrixLeg) addCells(entry []matrixCell) error {
 // expression is evaluated against the leg and GitHub appends nothing to it; any other name, the
 // job id included, gets the leg's base values appended (legSuffix). Either name must be one
 // whose reported form the file shows (reportableName).
+//
+// GitHub drops the whitespace an empty value leaves at the end of an evaluated name: tokio's
+// ci.yml job features, named `features exclude ${{ matrix.name }}` with an include entry whose
+// name is "", reports its check run as `features exclude`. The evaluated name is trimmed at its
+// end the same way before it is checked.
 func legContext(name string, leg matrixLeg) (string, error) {
 	if strings.Contains(name, expressionOpen) {
 		evaluated, err := evaluateMatrixName(name, leg)
 		if err != nil {
 			return "", err
 		}
+		evaluated = strings.TrimRightFunc(evaluated, unicode.IsSpace)
 		if err := reportableName(evaluated); err != nil {
 			return "", err
 		}
@@ -550,8 +557,10 @@ func legContext(name string, leg matrixLeg) (string, error) {
 
 // reportableName refuses a job name that is empty or begins or ends with whitespace, because the
 // file cannot show which check name GitHub reports for it, and a guess that misses leaves the
-// required context expected forever. A matrix value evaluated at an end of the name is the usual
-// way to arrive at one: `Build ${{ matrix.suffix }}` with an empty suffix reads `Build `.
+// required context expected forever. An evaluated name reaches it already trimmed at its end
+// (legContext), so what remains is an empty name, whitespace at the start
+// (`${{ matrix.prefix }} Build` with an empty prefix reads ` Build`), or a constant name spelled
+// with surrounding whitespace.
 func reportableName(name string) error {
 	if name == "" || strings.TrimSpace(name) != name {
 		return fmt.Errorf("the name reads %q, and the file cannot show which check name GitHub reports for a name that is empty or begins or ends with whitespace", name)
