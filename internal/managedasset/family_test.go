@@ -332,7 +332,8 @@ const (
 )
 
 // Positive: the Markdown workflow pins every one of its actions by full commit SHA with its
-// release as a trailing comment, and a fixture workflow in the same form validates.
+// release as a trailing comment, and a fixture workflow in the same form validates, whatever
+// whitespace separates the comment from the SHA (#610).
 func TestWorkflowPinsEveryActionPositive(t *testing.T) {
 	markdown := ForFacet(DocumentationFacet)[0]
 	unpinned, err := unpinnedActions(markdown.Workflow)
@@ -344,14 +345,16 @@ func TestWorkflowPinsEveryActionPositive(t *testing.T) {
 	}
 	family := fixtureFamily()
 	family.Workflow = workflowHead + pinnedStep +
-		"      - name: Setup\n        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020   # 7.0.0\n"
+		"      - name: Setup\n        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020   # 7.0.0\n" +
+		"      - uses: actions/cache@" + checkoutSHA + " # v5.0.1\n" +
+		"      - uses: actions/setup-go@" + checkoutSHA + "\t# v6\n"
 	if err := family.Validate(); err != nil {
 		t.Fatal(err)
 	}
 }
 
-// Negative: a tag, a branch, a short or uppercase SHA, a SHA without its release comment, a
-// comment one space from it, and a Docker reference each fail validation.
+// Negative: a tag, a branch, a short or uppercase SHA, a SHA without its release comment or
+// with a comment that names no release, and a Docker reference each fail validation.
 func TestWorkflowPinsEveryActionNegative(t *testing.T) {
 	for name, step := range map[string]string{
 		"tag":             "      - uses: actions/checkout@v7\n",
@@ -360,7 +363,7 @@ func TestWorkflowPinsEveryActionNegative(t *testing.T) {
 		"short SHA":       "      - uses: actions/checkout@" + checkoutSHA[:39] + "  # v7.0.1\n",
 		"uppercase SHA":   "      - uses: actions/checkout@" + strings.ToUpper(checkoutSHA) + "  # v7.0.1\n",
 		"no comment":      "      - uses: actions/checkout@" + checkoutSHA + "\n",
-		"one space":       "      - uses: actions/checkout@" + checkoutSHA + " # v7.0.1\n",
+		"not a release":   "      - uses: actions/checkout@" + checkoutSHA + " # pinned\n",
 		"docker":          "      - uses: docker://alpine:3\n",
 	} {
 		family := fixtureFamily()
