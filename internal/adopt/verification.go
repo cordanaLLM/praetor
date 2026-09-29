@@ -18,6 +18,11 @@ type VerificationPlan struct {
 	// custom verify-all replaces Build and Test, so the harness still lists the project's real
 	// commands after a --force refresh instead of only the preserved target (BUG-949).
 	Declared [][]string `json:"declared,omitempty"`
+	// SelectedBy names the configuration that selected a command where the marker's presence alone
+	// does not say which one did: the pytest configuration file, and the table or section in it,
+	// that selected python3 -m pytest. The adoption report names it (notice), so an adopter can
+	// check the file pytest itself will read (#594).
+	SelectedBy []string `json:"selected_by,omitempty"`
 	// SourceLanguages names the languages the walk found sources of, whether or not a build
 	// marker in Runtimes also declares them: sourceLanguageC for C or C++ sources the audit's
 	// native scan reads, so C/C++ a Makefile or script compiles is detected too (#549). Only
@@ -157,9 +162,15 @@ func verificationRecipe(plan *VerificationPlan, commands [][]string) string {
 	return verificationRecipeWith(plan, commands, verificationRecipePrefix)
 }
 
+// unavailableVerificationRecipe is the recipe a generated rule gets when the plan selects no
+// runnable command for it: it names the report and fails. A Makefile adoption does not recognise
+// as its own current output that still holds this recipe has a verify-all that can only exit 1
+// (preserveCustomVerification).
+const unavailableVerificationRecipe = "\t@printf '%s\\n' 'Project verification unavailable; see the adoption report and AGENTS.md.' >&2\n\t@exit 1\n"
+
 func verificationRecipeWith(plan *VerificationPlan, commands [][]string, prefix string) string {
 	if plan.Status == verificationUnavailable || emptyVerificationCommands(commands) {
-		return "\t@printf '%s\\n' 'Project verification unavailable; see the adoption report and AGENTS.md.' >&2\n\t@exit 1\n"
+		return unavailableVerificationRecipe
 	}
 	var result strings.Builder
 	for _, command := range commands {
@@ -182,7 +193,7 @@ func verificationTestText(plan *VerificationPlan) string {
 	if plan.Status == verificationUnavailable {
 		return "# Project verification unavailable: " + strings.Join(plan.Reasons, " ") + "\nexit 1"
 	}
-	commands := append(append([][]string(nil), plan.Build...), plan.Test...)
+	commands := plan.commands()
 	if plan.Status == verificationPreserved && len(plan.Declared) > 0 {
 		commands = plan.Declared
 	}
@@ -206,10 +217,53 @@ func emptyVerificationCommands(commands [][]string) bool {
 	return false
 }
 
+// commands returns the plan's build commands followed by its test commands, the order verify-all
+// runs them in.
+func (p *VerificationPlan) commands() [][]string {
+	return append(append([][]string(nil), p.Build...), p.Test...)
+}
+
+// notice is the report's warning for the plan. For an unavailable plan it also says what the
+// verify-all adoption writes does, which of the build and test commands is missing, and every
+// command discovery found that the failing recipe does not run, so the adopter can wire them into
+// the project's own contract. For any plan it names the configuration that selected a command
+// (SelectedBy) (#594).
 func (p *VerificationPlan) notice() string {
 	reason := "Selected commands have not been executed by adoption."
 	if len(p.Reasons) > 0 {
 		reason = strings.Join(p.Reasons, " ")
 	}
-	return "Project verification " + p.Status + ": " + reason
+	parts := []string{"Project verification " + p.Status + ": " + reason}
+	if p.Status == verificationUnavailable {
+		parts = append(parts, p.unavailableDetail()...)
+	}
+	if len(p.SelectedBy) > 0 {
+		parts = append(parts, "Selected by: "+strings.Join(p.SelectedBy, "; ")+".")
+	}
+	return strings.Join(parts, " ")
+}
+
+// unavailableDetail says what an unavailable plan's verify-all runs, which of the build and test
+// commands the plan is missing, and which discovered commands verify-all does not run.
+func (p *VerificationPlan) unavailableDetail() []string {
+	detail := []string{"Adoption's verify-all runs the governance checks and then exits 1."}
+	var missing []string
+	if len(p.Build) == 0 {
+		missing = append(missing, "a build command")
+	}
+	if len(p.Test) == 0 {
+		missing = append(missing, "a test command")
+	}
+	if len(missing) > 0 {
+		detail = append(detail, "Missing: "+strings.Join(missing, " and ")+".")
+	}
+	commands := p.commands()
+	if len(commands) == 0 {
+		return detail
+	}
+	quoted := make([]string, 0, len(commands))
+	for _, command := range commands {
+		quoted = append(quoted, verificationCommand(command))
+	}
+	return append(detail, "Discovered but not written to verify-all: "+strings.Join(quoted, "; ")+".")
 }
