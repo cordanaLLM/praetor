@@ -488,8 +488,9 @@ accepts for it (`internal/adopt/actionlint.go`):
   `internal/adopt/testdata/emitted/.github/actionlint.yaml`).
 - It only adds a missing label, after the adopter's own. A label counts as
   declared when the list holds it, or when one of its patterns matches it under
-  Go's `path.Match`. actionlint also reads brace patterns; adoption does not, so
-  a brace pattern costs a redundant label, never a missing one. Adoption never
+  Go's `path.Match`, the matching actionlint applies too: `ubuntu-2?.04` declares
+  `ubuntu-26.04`, and a brace pattern such as `ubuntu-{26,27}.04` declares nothing,
+  in actionlint v1.7.12 as in adoption. Adoption never
   removes a label, including one it added, because the adopter's own workflows
   may run on it too.
 - The edit changes only the lines it inserts, and it is kept only when the
