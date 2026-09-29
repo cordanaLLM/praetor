@@ -18,6 +18,11 @@ type pytestConfigFile struct {
 	name     string
 	tables   []string
 	sections []string
+	// optional marks a file that is verification input only as possible pytest configuration:
+	// tox.ini and setup.cfg also configure tools that are not pytest, in repositories with no
+	// Python at all. One the walk cannot read within its bounds is not pytest configuration, and
+	// the report names it, instead of failing adoption (verificationInputs.captureMarker).
+	optional bool
 }
 
 // pytestConfigFiles lists the files pytest reads its configuration from, at the repository root,
@@ -33,30 +38,39 @@ var pytestConfigFiles = [...]pytestConfigFile{
 	{name: "pytest.ini"},
 	{name: ".pytest.ini"},
 	{name: "pyproject.toml", tables: []string{"tool.pytest", "tool.pytest.ini_options"}},
-	{name: "tox.ini", sections: []string{"pytest"}},
-	{name: "setup.cfg", sections: []string{"tool:pytest"}},
+	{name: "tox.ini", sections: []string{"pytest"}, optional: true},
+	{name: "setup.cfg", sections: []string{"tool:pytest"}, optional: true},
+}
+
+// pytestConfigFileAt returns the entry of pytestConfigFiles for the root file rel.
+func pytestConfigFileAt(rel string) (pytestConfigFile, bool) {
+	for _, candidate := range pytestConfigFiles {
+		if candidate.name == rel {
+			return candidate, true
+		}
+	}
+	return pytestConfigFile{}, false
 }
 
 // pytestConfigMarker reports a root file pytestConfigFiles names, which the verification walk
 // records for pytestConfiguration.
 func pytestConfigMarker(rel string) bool {
-	for _, candidate := range pytestConfigFiles {
-		if candidate.name == rel {
-			return true
-		}
-	}
-	return false
+	_, found := pytestConfigFileAt(rel)
+	return found
 }
 
 // pytestPresenceMarker reports a pytest configuration file whose presence alone makes it pytest's
 // configuration, so the walk records it without reading it.
 func pytestPresenceMarker(rel string) bool {
-	for _, candidate := range pytestConfigFiles {
-		if candidate.name == rel {
-			return len(candidate.tables) == 0 && len(candidate.sections) == 0
-		}
-	}
-	return false
+	candidate, found := pytestConfigFileAt(rel)
+	return found && len(candidate.tables) == 0 && len(candidate.sections) == 0
+}
+
+// pytestOptionalMarker reports a pytest configuration file the walk reads only as possible pytest
+// configuration (pytestConfigFile.optional).
+func pytestOptionalMarker(rel string) bool {
+	candidate, found := pytestConfigFileAt(rel)
+	return found && candidate.optional
 }
 
 // pytestConfiguration names the configuration pytest would use at the repository root: the file

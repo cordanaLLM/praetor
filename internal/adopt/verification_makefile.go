@@ -316,9 +316,15 @@ func isPriorGeneratedMakefile(data string, plan *VerificationPlan) bool {
 }
 
 // isReplaceableVerificationMakefile reports whether data is earlier Praetor output that adoption
-// replaces with the current rendering.
+// replaces with the current rendering, in either consistent line-ending style: a CRLF checkout
+// (core.autocrlf on Windows) holds the same output, so Linux, macOS and Windows re-runs agree. A
+// text mixing both styles has been edited and is not replaceable.
 func isReplaceableVerificationMakefile(data string, plan *VerificationPlan) bool {
-	return isLegacyVerificationMakefile(data) || isPriorGeneratedMakefile(data, plan) || data == priorSourceGateMakefile(plan)
+	normalized, _, err := util.NormalizeLineEndingsStrict(data)
+	if err != nil {
+		return false
+	}
+	return isLegacyVerificationMakefile(normalized) || isPriorGeneratedMakefile(normalized, plan) || normalized == priorSourceGateMakefile(plan)
 }
 
 const legacyVerificationStub = "\n.PHONY: all verify-all audit compile-context build test\n\nverify-all:\n\t@echo \"Running verification...\"\n\ncompile-context:\n\t@standardsctl compile-context\n\naudit:\n\t@standardsctl audit\n\ntest:\n\t@go test -v -race ./...\n\nbuild:\n\t@go build -v ./...\n"
@@ -335,9 +341,15 @@ func legacyVerificationMakefile(test, build string) string {
 // contract. One that still holds the failing recipe adoption writes for an unavailable plan is
 // not a contract: it is the placeholder an earlier adoption left, rendered for another plan or
 // appended to an existing Makefile, so the plan stays unavailable and says so, rather than
-// reporting a preserved verify-all that can only exit 1 (#594).
+// reporting a preserved verify-all that can only exit 1 (#594). Earlier and current output are
+// recognised in either consistent line-ending style, so a CRLF checkout of the current rendering
+// is not mistaken for a custom verify-all or for a leftover placeholder.
 func preserveCustomVerification(plan *VerificationPlan, data []byte) {
-	text := withoutDocumentationMakefileBlock(string(data))
+	text := string(data)
+	if normalized, _, err := util.NormalizeLineEndingsStrict(text); err == nil {
+		text = normalized
+	}
+	text = withoutDocumentationMakefileBlock(text)
 	if !mayDefineVerificationTarget(text) || isReplaceableVerificationMakefile(text, plan) || text == buildMakefile(plan) {
 		return
 	}

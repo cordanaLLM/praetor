@@ -257,9 +257,11 @@ func printAdoptReport(rep *adopt.AdoptReport) {
 	}
 }
 
-// printAppliedOutcome closes an applied run. A pillar left warned, such as a Verification Gate
-// whose verify-all can only exit 1, qualifies the line, so the run never ends with an
-// unqualified success the pillar lines contradict (#594).
+// printAppliedOutcome closes an applied run. A Verification Gate left short of ready, such as one
+// whose verify-all can only exit 1, qualifies the line, so the run never ends with an unqualified
+// success its verify-all contradicts (#594). An informational warning on another pillar, such as a
+// preserved DevContainer, stays on that pillar's line and leaves the success line as it is
+// (PendingPillars).
 func printAppliedOutcome(rep *adopt.AdoptReport) {
 	if pending := rep.PendingPillars(); len(pending) > 0 {
 		fmt.Printf("\nRepository adopted into cordanaLLM/praetor governance; not ready yet: %s. See the warnings above.\n",

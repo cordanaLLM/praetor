@@ -6,6 +6,7 @@ package adopt
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -165,6 +166,36 @@ func TestPreservedVerifyAllWithPlaceholderStaysUnavailable(t *testing.T) {
 	if custom.Status != verificationPreserved {
 		t.Fatalf("custom verify-all not preserved: %+v", custom)
 	}
+	// Adoption's own current rendering for an unavailable plan, LF or a CRLF checkout, with or
+	// without the documentation block, is its output, not a leftover placeholder: the plan keeps
+	// its own reasons, and the harness text is the same on every platform.
+	unavailable := func() *VerificationPlan {
+		return &VerificationPlan{Status: verificationUnavailable, Build: [][]string{}, Test: [][]string{pytestCommand}, Reasons: []string{"A required build or test command is absent."}}
+	}
+	current := buildMakefile(unavailable())
+	documented, err := mergeDocumentationMakefile(current, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := verificationTestText(unavailable())
+	for name, data := range map[string]string{
+		"current-lf": current, "current-crlf": strings.ReplaceAll(current, "\n", "\r\n"),
+		"documented-crlf": strings.ReplaceAll(documented, "\n", "\r\n"),
+	} {
+		plan := unavailable()
+		preserveCustomVerification(plan, []byte(data))
+		if len(plan.Reasons) != 1 || plan.Status != verificationUnavailable || verificationTestText(plan) != want {
+			t.Fatalf("%s: current rendering read as a placeholder or custom verify-all: %+v", name, plan)
+		}
+	}
+	// Earlier output is replaceable in either consistent line-ending style, never in mixed ones.
+	legacy := legacyVerificationMakefile("go test -v -race ./...", "go build -v ./...")
+	if !isReplaceableVerificationMakefile(strings.ReplaceAll(legacy, "\n", "\r\n"), custom) {
+		t.Fatal("a CRLF checkout of earlier output is not replaceable")
+	}
+	if isReplaceableVerificationMakefile(strings.Replace(legacy, "\n", "\r\n", 1), custom) {
+		t.Fatal("earlier output with mixed line endings is replaceable")
+	}
 }
 
 // #594: the Verification Gate follows the verify-all adoption writes. An unavailable plan warns
@@ -219,6 +250,21 @@ func TestVerificationPillarFollowsThePlan(t *testing.T) {
 	declined.recordStep("editors", StepDeclined, declined.mark())
 	if slices.Contains(declined.PendingPillars(), "IDE Ecosystem") {
 		t.Fatalf("declined pillar pending: %q", declined.PendingPillars())
+	}
+	// Only the Verification Gate is pending: an informational warning, such as a preserved
+	// DevContainer's, warns its own pillar and leaves nothing pending, and a failed or unreached
+	// pillar other than the Verification Gate is not pending either.
+	informational := &AdoptReport{Verification: &VerificationPlan{Status: verificationDeclared}, Steps: []StepOutcome{
+		{Name: "dev-container", Status: StepCompleted, Warnings: []string{"Existing DevContainer preserved; bootstrap readiness requires separate verification."}},
+		{Name: "agent-harness", Status: StepFailed},
+		{Name: verificationStep, Status: StepCompleted},
+	}}
+	if got := pillarNamed(t, informational, "DevContainer"); got.Status != PillarWarned || len(informational.PendingPillars()) != 0 {
+		t.Fatalf("DevContainer = %s, PendingPillars() = %q", got.Status, informational.PendingPillars())
+	}
+	informational.Verification = unavailable
+	if got := informational.PendingPillars(); !slices.Equal(got, []string{"Verification Gate"}) {
+		t.Fatalf("PendingPillars() beside a warned DevContainer = %q, want only the Verification Gate", got)
 	}
 }
 
@@ -355,4 +401,106 @@ func TestVerificationTargetRecipe(t *testing.T) {
 			}
 		})
 	}
+}
+
+// pytestSectionFixture is the optional pytest configuration file rel holding its pytest section,
+// padded with comment bytes to size bytes when size is larger.
+func pytestSectionFixture(rel string, size int) string {
+	section := map[string]string{"tox.ini": "[pytest]\ntestpaths = tests\n", "setup.cfg": "[tool:pytest]\ntestpaths = tests\n"}[rel]
+	return section + strings.Repeat("#", max(0, size-len(section)))
+}
+
+// unreadablePytestConfig writes the optional pytest configuration file rel into root, holding its
+// pytest section, in the unreadable shape kind names, and returns the prefix of the reason
+// recorded for it. Where the process reads a mode-0 file anyway, as root or on Windows, and where
+// it may not create a symlink, the case is skipped.
+func unreadablePytestConfig(t *testing.T, root, rel, kind string) string {
+	t.Helper()
+	section := pytestSectionFixture(rel, 0)
+	path := filepath.Join(root, rel)
+	switch kind {
+	case "symlink":
+		target := filepath.Join(t.TempDir(), rel)
+		mustWrite(t, target, section)
+		if err := os.Symlink(target, path); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+	case "latin-1":
+		mustWrite(t, path, section+"description = caf\xe9\n")
+	case "oversized":
+		mustWrite(t, path, pytestSectionFixture(rel, maxVerificationInputBytes+1))
+	case "mode-0":
+		mustWrite(t, path, section)
+		if err := os.Chmod(path, 0); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.ReadFile(path); err == nil {
+			t.Skip("this process reads a mode-0 file, as root or on Windows")
+		}
+	}
+	return "verification input " + rel + ": "
+}
+
+// #594 review: tox.ini and setup.cfg are read only as possible pytest configuration, and a
+// repository with no Python at all may carry them. One the walk cannot read (a symlink, a file that
+// is not UTF-8 text, one byte past the per-file bound, one the process may not read) is not pytest
+// configuration: discovery goes on, the plan selects no pytest from it, and the notice names the
+// file, with Python and without it (negative). Boundary: a file of exactly the per-file bound is
+// read, and its pytest section selects pytest.
+func TestVerificationUnreadablePytestConfigurationIsNotConfiguration(t *testing.T) {
+	projects := map[string]map[string]string{
+		"go":     {"go.mod": "module fixture\n"},
+		"python": {"pyproject.toml": "[project]\nname = \"pytool\"\n"},
+	}
+	for _, rel := range []string{"tox.ini", "setup.cfg"} {
+		for _, kind := range []string{"symlink", "latin-1", "oversized", "mode-0"} {
+			for project, files := range projects {
+				t.Run(rel+"/"+kind+"/"+project, func(t *testing.T) {
+					root := t.TempDir()
+					for path, data := range files {
+						mustWrite(t, filepath.Join(root, path), data)
+					}
+					reason := unreadablePytestConfig(t, root, rel, kind)
+					plan, err := resolveVerificationPlan(t.Context(), root)
+					if err != nil {
+						t.Fatalf("an unreadable %s failed discovery: %v", rel, err)
+					}
+					if planRunsPytest(plan) || len(plan.SelectedBy) != 0 || len(plan.Unreadable) != 1 || !strings.HasPrefix(plan.Unreadable[0], reason) {
+						t.Fatalf("unreadable %s read as pytest configuration: %+v", rel, plan)
+					}
+					if notice := plan.notice(); !strings.Contains(notice, "Not read, so not pytest configuration: "+reason) {
+						t.Fatalf("notice does not name %s: %s", rel, notice)
+					}
+					if wantPython := project == "python"; slices.Contains(plan.Runtimes, "python") != wantPython || (plan.Status == verificationDeclared) == wantPython {
+						t.Fatalf("plan changed by an unreadable %s: %+v", rel, plan)
+					}
+				})
+			}
+		}
+		t.Run(rel+"/exact-bound", func(t *testing.T) {
+			root := t.TempDir()
+			mustWrite(t, filepath.Join(root, "go.mod"), "module fixture\n")
+			mustWrite(t, filepath.Join(root, rel), pytestSectionFixture(rel, maxVerificationInputBytes))
+			plan, err := resolveVerificationPlan(t.Context(), root)
+			if err != nil || !planRunsPytest(plan) || len(plan.Unreadable) != 0 {
+				t.Fatalf("a %s of exactly the byte bound was not read: %v %+v", rel, err, plan)
+			}
+		})
+	}
+}
+
+// #594 review, end to end: adopting a repository with no Python at all whose setup.cfg is not
+// UTF-8 text succeeds, as it did before setup.cfg was read, and the report's warning names the file.
+func TestAdoptWithUnreadableSetupCfgWarnsInsteadOfFailing(t *testing.T) {
+	repoPath := newTestRepo(t, "gotool")
+	mustWrite(t, filepath.Join(repoPath, "go.mod"), "module example.com/gotool\n\ngo 1.27\n")
+	mustWrite(t, filepath.Join(repoPath, "setup.cfg"), "[flake8]\nmax-line-length = 100\n# caf\xe9\n")
+	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath})
+	if err != nil {
+		t.Fatalf("adopt with a Latin-1 setup.cfg: %v", err)
+	}
+	if rep.Verification.Status != verificationDeclared {
+		t.Fatalf("plan = %+v", rep.Verification)
+	}
+	assertWarningContains(t, rep, "Not read, so not pytest configuration: verification input setup.cfg: ")
 }

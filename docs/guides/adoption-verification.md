@@ -21,11 +21,17 @@ contract. A `test` target whose recipe is that failing pair is adoption's own, s
 one in a Makefile adoption generated earlier, so a re-run does not name it. A Makefile
 adoption does not recognise as its own current output, but that still holds the failing
 pair, keeps the plan `unavailable` on the next run rather than being preserved as a custom
-`verify-all`. The tests are in `internal/adopt/verification_pillar_test.go`:
+`verify-all`. Adoption recognises its earlier and current Makefile output in either
+consistent line-ending style, so a CRLF checkout (`core.autocrlf` on Windows) gets the same
+plan and report as an LF one, and earlier output it replaces keeps its CRLF endings; a
+Makefile mixing both styles counts as edited. The tests are in
+`internal/adopt/verification_pillar_test.go`:
 `TestAdoptPythonProjectWithoutBuildWarnsVerificationGate`,
 `TestNoteExistingTestTargetNamesOnlyTheAdoptersTarget`,
 `TestAdoptRerunOnGeneratedMakefileDoesNotNameItsTestTarget` and
-`TestPreservedVerifyAllWithPlaceholderStaysUnavailable`. A plan's `selected_by` list names the
+`TestPreservedVerifyAllWithPlaceholderStaysUnavailable`, with the CRLF migration in
+`TestVerificationLegacyMigrationAndCustomPreservation`
+(`internal/adopt/verification_scaffold_test.go`). A plan's `selected_by` list names the
 configuration that selected a command where the marker alone does not, such as the
 pytest configuration file and table, and the warning repeats it.
 
@@ -89,14 +95,19 @@ that recorded an error is incomplete even when it was a dry run
 `internal/adopt/report_test.go`). The **Verification Gate** also follows
 the verification plan: when the plan is `unavailable`, the `verify-all`
 adoption writes can only exit 1, so the pillar is `warned`, never `✓` or
-`planned`, and carries the plan's warning. An applied run with a warned,
-failed or unreached pillar ends with `not ready yet:` and the pillar names
-instead of the success line; a declined pillar does not count
+`planned`, and carries the plan's warning. An applied run whose Verification
+Gate is warned, failed or unreached ends with `not ready yet: Verification
+Gate` instead of the success line. Only the Verification Gate counts: a
+warning on another pillar is informational and stays on that pillar's line,
+such as the notice that an existing `.devcontainer` was preserved, which every
+plain re-run repeats, and a declined pillar does not count either
 (`PendingPillars` in `internal/adopt/report.go`,
 `TestVerificationPillarFollowsThePlan` in
 `internal/adopt/verification_pillar_test.go`,
 `TestPrintAdoptReportQualifiesSuccessWithPendingPillars` in
-`cmd/standardsctl/adopt_test.go`).
+`cmd/standardsctl/adopt_test.go`, and end to end
+`TestAdoptExistingDevContainerKeepsTheSuccessLine` in
+`cmd/standardsctl/adopt_success_line_test.go`).
 
 Repositories declaring `docs:seo-portal` also receive a locked Markdown gate,
 its dedicated required CI workflow, and private scratch-link protection. The
@@ -892,7 +903,15 @@ renders both newly generated Makefiles and AGENTS.md. Discovery recognizes:
   or `[ pytest ]` is not the section (`pytestConfiguration` in
   `internal/adopt/verification_pytest.go`, tested by
   `TestVerificationPytestConfigurationPositive` and
-  `TestVerificationPytestConfigurationNegative`). Unittest commands check the
+  `TestVerificationPytestConfigurationNegative`). `tox.ini` and `setup.cfg` also
+  configure other tools, in repositories with no Python at all, so one that
+  discovery cannot read (a symlink, a file that is not UTF-8 text, one past the
+  per-file byte bound, one the process may not read) is not pytest
+  configuration: adoption goes on, the plan's `unreadable` list says why, and
+  the report's verification warning names the file
+  (`TestVerificationUnreadablePytestConfigurationIsNotConfiguration` and
+  `TestAdoptWithUnreadableSetupCfgWarnsInsteadOfFailing` in
+  `internal/adopt/verification_pillar_test.go`). Unittest commands check the
   interpreter version before discovery. Python 3.14 fails when discovery finds no
   tests. A separate build command remains necessary; a Python-only project without
   one needs a custom contract rather than a generated no-op build.
