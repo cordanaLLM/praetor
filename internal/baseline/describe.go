@@ -99,7 +99,7 @@ func (r *RatchetResult) classes(p newPartition) []violationClass {
 		{items: p.changed, tag: "check added or changed since the baseline",
 			one: "violation from a changed check", many: "violations from changed checks", lister: verifyLister},
 		{items: p.unknown, tag: "not in the baseline",
-			one: "violation not in the baseline", many: "violations not in the baseline", lister: verifyLister},
+			one: "unbaselined violation", many: "unbaselined violations", lister: verifyLister},
 		{items: r.TouchedCleanViolations, tag: "touched file must be clean",
 			one: "touched-file violation", many: "touched-file violations", lister: auditLister},
 	}

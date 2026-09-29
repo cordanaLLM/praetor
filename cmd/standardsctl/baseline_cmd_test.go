@@ -233,7 +233,7 @@ func TestBaselineVerify_Negative_NewDebtAndMissingBaselineFail(t *testing.T) {
 	f.addViolation(t)
 	data, mod := fileSnapshot(t, f.baselinePath)
 	_, err := runBaselineCmd(t, f, "--verify")
-	mustErrContain(t, err, "1 new unbaselined")
+	mustErrContain(t, err, "1 unbaselined")
 	mustErrContain(t, err, "legacy.go:4")
 	assertUnchanged(t, f.baselinePath, data, mod)
 
@@ -261,7 +261,7 @@ func TestBaselineVerify_Boundary_EqualCountAndPolicyLimit(t *testing.T) {
 	f.addViolation(t)
 	f.writeBaseline(t, []baseline.Infraction{{RuleID: "HISS-07", FilePath: "other.go", LineNumber: 9, Fingerprint: "other.go:9:HISS-07"}}, "")
 	_, err := runBaselineCmd(t, f, "--verify")
-	mustErrContain(t, err, "1 new unbaselined")
+	mustErrContain(t, err, "1 unbaselined")
 
 	tight := newAuditFixture(t)
 	writeFixtureFile(t, tight.dir, ".standards.yaml",
