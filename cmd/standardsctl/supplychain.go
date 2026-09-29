@@ -137,11 +137,12 @@ func writeSBOMNotices(ctx context.Context, target, current string, sources suppl
 const unsignedProvenanceWarning = "warning: the SLSA provenance statement is UNSIGNED; it is not an attestation " +
 	"until it is wrapped in a signed DSSE envelope whose signature and signer identity are verified"
 
-// provenanceFlags are the provenance command's subject sources, builder, content check and
-// output.
+// provenanceFlags are the provenance command's subject sources, builder, content check,
+// UKI declarations and output.
 type provenanceFlags struct {
 	file, artifact, builder, digest, checksums, out string
 	contentCheck                                    supplychain.ContentCheck
+	uki                                             repeatedStringFlag
 }
 
 // contentCheckHint names the opt-out on a refusal for content that is not what its name says.
@@ -203,6 +204,9 @@ func parseProvenanceFlags(args []string) (provenanceFlags, error) {
 	contentCheck := fs.String("content-check", string(supplychain.ContentCheckEnforce),
 		"What a file whose bytes are not the type its name declares (.deb, .udeb, .ddeb, .efi, a Unified Kernel Image) does: "+
 			"enforce refuses the statement, report attests the file and warns that its content is unverified")
+	fs.Var(&f.uki, "uki",
+		"Glob declaring every subject whose name it matches a Unified Kernel Image, which then needs a .linux section "+
+			"whatever its name; slash-separated, * stays in one segment, ** spans segments, each glob must match a subject (repeatable)")
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
 		return f, err
@@ -261,12 +265,12 @@ func resolveBuilder(flagValue string) (string, error) {
 func provenanceStatement(ctx context.Context, f provenanceFlags) (*supplychain.SLSAStatement, []supplychain.ContentVerdict, error) {
 	if f.checksums != "" {
 		return supplychain.GenerateSLSAProvenanceFromChecksums(ctx, supplychain.ChecksumsRequest{
-			ManifestPath: f.checksums, BuilderID: f.builder, ContentCheck: f.contentCheck,
+			ManifestPath: f.checksums, BuilderID: f.builder, ContentCheck: f.contentCheck, UKIGlobs: f.uki,
 		})
 	}
 	return supplychain.GenerateSLSAProvenance(ctx, supplychain.ProvenanceRequest{
 		ArtifactPath: f.file, ArtifactName: f.artifact, BuilderID: f.builder, ExpectedSHA256: f.digest,
-		ContentCheck: f.contentCheck,
+		ContentCheck: f.contentCheck, UKIGlobs: f.uki,
 	})
 }
 

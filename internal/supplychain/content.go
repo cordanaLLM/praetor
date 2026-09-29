@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"path/filepath"
 	"strings"
-	"unicode"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // ContentCheck selects what a provenance run does with an artifact whose bytes are not the
@@ -102,17 +104,15 @@ var (
 	}
 )
 
-// ukiNameWords are the file name words that present an .efi file as a kernel, and so as a
-// Unified Kernel Image: an .efi kernel without the .linux section is a bare EFI-stub
-// kernel, not a UKI.
-var ukiNameWords = map[string]bool{"uki": true, "vmlinuz": true, "linux": true, "kernel": true}
-
 // contentFormatFor returns the file type a subject name declares, and false when
-// provenance has no content rule for the name. Only the extension and, for .efi, the
-// words of the base name, an .addon.efi suffix and whether the file sits directly in the
-// EFI/Linux directory are read; the comparison ignores case.
-func contentFormatFor(name string) (contentFormat, bool) {
-	slashed := strings.ToLower(strings.ReplaceAll(name, `\`, "/"))
+// provenance has no content rule for the name. A subject declared a Unified Kernel Image
+// (a ProvenanceRequest.UKIGlobs match) gets the UKI rule whatever its name. Otherwise only
+// the extension and, for .efi, what presentsUKI reads are compared, without regard to case.
+func contentFormatFor(name string, declaredUKI bool) (contentFormat, bool) {
+	if declaredUKI {
+		return ukiFormat, true
+	}
+	slashed := strings.ToLower(util.NormalizeSlashes(name))
 	switch path.Ext(slashed) {
 	case ".deb", ".udeb", ".ddeb":
 		return debFormat, true
@@ -126,38 +126,10 @@ func contentFormatFor(name string) (contentFormat, bool) {
 	}
 }
 
-// ukiAddonSuffix ends the name of a systemd-stub addon, a PE image that carries .cmdline,
-// .dtb, .initrd or .ucode sections for a UKI and never a .linux section. systemd-stub(7)
-// loads addons from foo.efi.extra.d/ next to a UKI, inside EFI/Linux/, and from
-// loader/addons/, so neither the directory nor a kernel word makes an addon a UKI.
-const ukiAddonSuffix = ".addon.efi"
-
-// presentsUKI reports whether a lower-case, slash-separated .efi subject name presents the
-// file as a Unified Kernel Image: it is not an addon, and it sits directly in an EFI/Linux
-// directory, where the Boot Loader Specification puts Type #2 images, or a word of its base
-// name is one of ukiNameWords (vmlinuz-7.2.4.efi, arch-linux.efi, foo.uki.efi).
-func presentsUKI(slashed string) bool {
-	base := path.Base(slashed)
-	if strings.HasSuffix(base, ukiAddonSuffix) {
-		return false
-	}
-	if strings.HasSuffix(path.Dir("/"+slashed), "/efi/linux") {
-		return true
-	}
-	stem := strings.TrimSuffix(base, ".efi")
-	words := strings.FieldsFunc(stem, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
-	for _, word := range words {
-		if ukiNameWords[word] {
-			return true
-		}
-	}
-	return false
-}
-
 // contentProbeFor returns the probe for a subject name, or nil when no content rule
 // covers it.
-func contentProbeFor(name string) (contentFormat, contentProbe) {
-	format, ok := contentFormatFor(name)
+func contentProbeFor(name string, declaredUKI bool) (contentFormat, contentProbe) {
+	format, ok := contentFormatFor(name, declaredUKI)
 	if !ok {
 		return contentFormat{}, nil
 	}
@@ -181,8 +153,25 @@ func judgeContent(req ProvenanceRequest, name string, format contentFormat, prob
 		return verdict, nil
 	default:
 		return ContentVerdict{}, fmt.Errorf("slsa: artifact %s: %w: expected %s, but %w",
-			req.ArtifactPath, ErrContentMismatch, format.name, mismatch)
+			artifactLabel(req, name), ErrContentMismatch, format.name, mismatch)
 	}
+}
+
+// artifactLabel names the artifact in a refusal: its path, then what chose the rule its
+// bytes failed when the path does not show it, namely a subject name other than the path's
+// base name and the UKI glob that declared the subject a Unified Kernel Image.
+func artifactLabel(req ProvenanceRequest, name string) string {
+	var chose []string
+	if name != filepath.Base(req.ArtifactPath) {
+		chose = append(chose, "subject "+name)
+	}
+	if glob := matchingUKIGlob(req.UKIGlobs, name); glob != "" {
+		chose = append(chose, fmt.Sprintf("declared a Unified Kernel Image by UKI glob %q", glob))
+	}
+	if len(chose) == 0 {
+		return req.ArtifactPath
+	}
+	return req.ArtifactPath + " (" + strings.Join(chose, ", ") + ")"
 }
 
 // window collects the bytes of one stream range, [start, start+len(buf)), from the chunks

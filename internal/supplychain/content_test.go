@@ -123,7 +123,7 @@ func bareKernelFixture() []byte {
 // digest stream does, and returns the probe's finding.
 func probeInChunks(t *testing.T, name string, content []byte, size int) error {
 	t.Helper()
-	_, probe := contentProbeFor(name)
+	_, probe := contentProbeFor(name, false)
 	if probe == nil {
 		t.Fatalf("no content rule for %s", name)
 	}
@@ -165,25 +165,31 @@ func TestParseContentCheck(t *testing.T) {
 
 func TestContentFormatFor_NamesSelectRules(t *testing.T) {
 	cases := map[string]string{
-		"linux-image-7.2.4_amd64.deb":                debFormat.name,
-		"PKG.DEB":                                    debFormat.name,
-		"installer.udeb":                             debFormat.name,
-		"tool-dbgsym_1.0_amd64.ddeb":                 debFormat.name,
-		"BOOTX64.EFI":                                efiFormat.name,
-		"systemd-bootx64.efi":                        efiFormat.name,
-		"linuxx64.efi":                               efiFormat.name,
-		"vmlinuz-7.2.4.efi":                          ukiFormat.name,
-		"arch-linux.efi":                             ukiFormat.name,
-		"image.uki.efi":                              ukiFormat.name,
-		"Kernel.EFI":                                 ukiFormat.name,
-		"EFI/Linux/example-7.2.4.efi":                ukiFormat.name,
-		`EFI\Linux\example.efi`:                      ukiFormat.name,
-		"boot/EFI/Linux/example.efi":                 ukiFormat.name,
-		"EFI/Linux/nested/entry.efi":                 efiFormat.name,
-		"notEFI/Linux/entry.efi":                     efiFormat.name,
+		"linux-image-7.2.4_amd64.deb": debFormat.name,
+		"PKG.DEB":                     debFormat.name,
+		"installer.udeb":              debFormat.name,
+		"tool-dbgsym_1.0_amd64.ddeb":  debFormat.name,
+		"BOOTX64.EFI":                 efiFormat.name,
+		"systemd-bootx64.efi":         efiFormat.name,
+		"linuxx64.efi":                efiFormat.name,
+		"vmlinuz.efi":                 efiFormat.name,
+		"vmlinuz-7.2.4.efi":           efiFormat.name,
+		"vmlinuz-linux.efi":           efiFormat.name,
+		"arch-linux.efi":              efiFormat.name,
+		"Kernel.EFI":                  efiFormat.name,
+		"ukify.efi":                   efiFormat.name,
+		"image.uki.efi":               ukiFormat.name,
+		"arch-linux-UKI.efi":          ukiFormat.name,
+		"uki.efi":                     ukiFormat.name,
+		"EFI/Linux/example-7.2.4.efi": ukiFormat.name,
+		`EFI\Linux\example.efi`:       ukiFormat.name,
+		"boot/EFI/Linux/example.efi":  ukiFormat.name,
+		"EFI/Linux/nested/entry.efi":  efiFormat.name,
+		"notEFI/Linux/entry.efi":      efiFormat.name,
 		"EFI/Linux/test.efi.extra.d/quiet.addon.efi": efiFormat.name,
+		"EFI/Linux/direct.addon.efi":                 efiFormat.name,
 		"loader/addons/kernel-cmdline.addon.efi":     efiFormat.name,
-		"kernel-cmdline.addon.efi":                   efiFormat.name,
+		"uki-cmdline.addon.efi":                      efiFormat.name,
 		"Linux-Debug.Addon.EFI":                      efiFormat.name,
 		"vmlinuz.addon.efi.sig":                      "",
 		"praetor_1.0.0_linux_amd64.tar.gz":           "",
@@ -192,9 +198,15 @@ func TestContentFormatFor_NamesSelectRules(t *testing.T) {
 		"efi":                                        "",
 	}
 	for name, want := range cases {
-		format, ok := contentFormatFor(name)
+		format, ok := contentFormatFor(name, false)
 		if format.name != want || ok != (want != "") {
 			t.Errorf("contentFormatFor(%q) = %q, %v; want %q", name, format.name, ok, want)
+		}
+	}
+	// A declared UKI gets the UKI rule whatever its name, extension and addon suffix.
+	for _, name := range []string{"vmlinuz-7.2.4.efi", "BOOTX64.EFI", "kernel.img", "quiet.addon.efi"} {
+		if format, ok := contentFormatFor(name, true); !ok || format.name != ukiFormat.name {
+			t.Errorf("contentFormatFor(%q, declared) = %q, %v; want the UKI rule", name, format.name, ok)
 		}
 	}
 }
@@ -286,7 +298,10 @@ func TestPEProbe_Positive_EFIImagesAndUKI(t *testing.T) {
 		"driver.efi":          peFixture(11, peSectionFixture{".text", []byte{1}}),
 		"option-rom.efi":      peFixture(peEFIROM, peSectionFixture{".text", []byte{1}}),
 		"stub.efi":            bareKernelFixture(),
+		"vmlinuz-7.efi":       bareKernelFixture(),
+		"vmlinuz-linux.efi":   bareKernelFixture(),
 		"vmlinuz-7.2.4.efi":   ukiFixture(),
+		"image.uki.efi":       ukiFixture(),
 		"EFI/Linux/entry.efi": ukiFixture(),
 		"EFI/Linux/test.efi.extra.d/quiet.addon.efi": addonFixture(),
 		"loader/addons/kernel-cmdline.addon.efi":     addonFixture(),
@@ -315,16 +330,18 @@ func TestPEProbe_Negative_NotAnEFIImage(t *testing.T) {
 		content []byte
 		want    string
 	}{
-		"random bytes":          {"vmlinuz-7.2.4.efi", random, "MZ"},
-		"bare EFI-stub kernel":  {"vmlinuz-7.2.4.efi", bareKernelFixture(), "no .linux section"},
-		"empty .linux":          {"vmlinuz-7.2.4.efi", peFixture(peEFIApplication, peSectionFixture{".linux", nil}), "no .linux section"},
-		"Windows console app":   {"BOOTX64.EFI", peFixture(3, peSectionFixture{".text", []byte{1}}), "subsystem is 3"},
-		"subsystem below EFI":   {"BOOTX64.EFI", peFixture(peEFIApplication-1, peSectionFixture{".text", []byte{1}}), "subsystem is 9"},
-		"subsystem above EFI":   {"BOOTX64.EFI", peFixture(peEFIROM+1, peSectionFixture{".text", []byte{1}}), "subsystem is 14"},
-		"no PE signature":       {"BOOTX64.EFI", badSignature, "no PE signature"},
-		"unknown magic":         {"BOOTX64.EFI", badMagic, "neither PE32"},
-		"short optional header": {"BOOTX64.EFI", shortOptional, "too short to name a subsystem"},
-		"no sections":           {"BOOTX64.EFI", peFixture(peEFIApplication), "declares no sections"},
+		"random bytes":             {"vmlinuz-7.2.4.efi", random, "MZ"},
+		"text placeholder":         {"vmlinuz-7.2.4.efi", []byte(strings.Repeat("placeholder kernel image\n", 4)), "MZ"},
+		"bare kernel in EFI/Linux": {"EFI/Linux/x.efi", bareKernelFixture(), "no .linux section"},
+		"bare kernel, uki word":    {"vmlinuz-7.2.4-uki.efi", bareKernelFixture(), "no .linux section"},
+		"empty .linux":             {"image.uki.efi", peFixture(peEFIApplication, peSectionFixture{".linux", nil}), "no .linux section"},
+		"Windows console app":      {"BOOTX64.EFI", peFixture(3, peSectionFixture{".text", []byte{1}}), "subsystem is 3"},
+		"subsystem below EFI":      {"BOOTX64.EFI", peFixture(peEFIApplication-1, peSectionFixture{".text", []byte{1}}), "subsystem is 9"},
+		"subsystem above EFI":      {"BOOTX64.EFI", peFixture(peEFIROM+1, peSectionFixture{".text", []byte{1}}), "subsystem is 14"},
+		"no PE signature":          {"BOOTX64.EFI", badSignature, "no PE signature"},
+		"unknown magic":            {"BOOTX64.EFI", badMagic, "neither PE32"},
+		"short optional header":    {"BOOTX64.EFI", shortOptional, "too short to name a subsystem"},
+		"no sections":              {"BOOTX64.EFI", peFixture(peEFIApplication), "declares no sections"},
 	}
 	for label, tc := range cases {
 		err := probeAllChunkings(t, tc.name, tc.content)
@@ -336,7 +353,7 @@ func TestPEProbe_Negative_NotAnEFIImage(t *testing.T) {
 
 func TestPEProbe_Boundary_TruncatedAndDistantHeaders(t *testing.T) {
 	uki := ukiFixture()
-	if err := probeAllChunkings(t, "vmlinuz.efi", uki); err != nil {
+	if err := probeAllChunkings(t, "image.uki.efi", uki); err != nil {
 		t.Fatalf("a UKI whose .linux section ends exactly at the end of the file is refused: %v", err)
 	}
 	distant := append(ukiFixture(), make([]byte, peHeaderWindow)...)
@@ -352,7 +369,7 @@ func TestPEProbe_Boundary_TruncatedAndDistantHeaders(t *testing.T) {
 		"headers past the window": {distant, "lies past the first 65536 bytes"},
 	}
 	for label, tc := range cases {
-		err := probeAllChunkings(t, "vmlinuz.efi", tc.content)
+		err := probeAllChunkings(t, "image.uki.efi", tc.content)
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: got %v, want an error containing %q", label, err, tc.want)
 		}
@@ -361,7 +378,7 @@ func TestPEProbe_Boundary_TruncatedAndDistantHeaders(t *testing.T) {
 
 func TestGenerateSLSAProvenance_ContentVerdicts(t *testing.T) {
 	deb, _ := writeArtifact(t, "tool_1.0_amd64.deb", arArchive(false, debMembers()...))
-	uki, _ := writeArtifact(t, "vmlinuz-7.2.4.efi", ukiFixture())
+	uki, _ := writeArtifact(t, "image.uki.efi", ukiFixture())
 	other, _ := writeArtifact(t, "tool.tar.gz", []byte("archive bytes"))
 	want := map[string]ContentStatus{deb: ContentVerified, uki: ContentVerified, other: ContentUnchecked}
 	for path, status := range want {

@@ -285,3 +285,56 @@ func TestContentVerdictReport_Boundary(t *testing.T) {
 		t.Errorf("no verdicts printed %q", report)
 	}
 }
+
+// Negative: a refusal names the subject when it is not the file's base name, and -uki
+// refuses an empty value, a malformed glob and, in a repeat, a glob that matches no subject.
+func TestRunProvenance_Negative_UKIDeclarations(t *testing.T) {
+	kernel := writeFixtureFile(t, t.TempDir(), "modules/vmlinuz", "placeholder kernel\n")
+	err := runProvenance([]string{"-file", kernel, "-artifact", "image.uki.efi", "-builder", "b"})
+	if err == nil || !strings.Contains(err.Error(), "(subject image.uki.efi)") || !strings.Contains(err.Error(), "Unified Kernel Image") {
+		t.Errorf("extensionless file attested as image.uki.efi: got %v, want a refusal naming the subject", err)
+	}
+	cases := map[string]struct {
+		globs []string
+		want  string
+	}{
+		"malformed glob":              {[]string{"vmlinuz-[.efi"}, "syntax error in pattern"},
+		"second glob matches nothing": {[]string{"vmlinuz-*.efi", "other-*.efi"}, `"other-*.efi" matches no subject name`},
+		"empty value":                 {[]string{""}, "cannot be empty"},
+	}
+	for label, tc := range cases {
+		args := []string{"-file", kernel, "-artifact", "vmlinuz-7.efi", "-builder", "b", "-content-check=report"}
+		for _, glob := range tc.globs {
+			args = append(args, "-uki", glob)
+		}
+		if _, err := captureStderr(t, func() error { return runProvenance(args) }); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: got %v, want an error containing %q", label, err, tc.want)
+		}
+	}
+}
+
+// Positive and boundary: a kernel-named .efi without a declaration gets the EFI rule, and
+// repeated -uki globs that both match declare it a Unified Kernel Image.
+func TestRunProvenance_Positive_UKIGlobsReachTheCheck(t *testing.T) {
+	kernel := writeFixtureFile(t, t.TempDir(), "dist/vmlinuz-7.efi", "placeholder kernel\n")
+	cases := map[string]struct {
+		globs  []string
+		format string
+	}{
+		"undeclared":     {nil, "expected an EFI image"},
+		"declared twice": {[]string{"vmlinuz-*.efi", "**/*.efi"}, "expected a Unified Kernel Image"},
+	}
+	for label, tc := range cases {
+		args := []string{"-file", kernel, "-builder", "b", "-out", filepath.Join(t.TempDir(), "p.json"), "-content-check=report"}
+		for _, glob := range tc.globs {
+			args = append(args, "-uki", glob)
+		}
+		stderr, err := captureStderr(t, func() error {
+			_, runErr := captureStdout(t, func() error { return runProvenance(args) })
+			return runErr
+		})
+		if err != nil || !strings.Contains(stderr, "warning: content of vmlinuz-7.efi is UNVERIFIED: "+tc.format) {
+			t.Errorf("%s: err %v, stderr %q; want an UNVERIFIED warning saying %q", label, err, stderr, tc.format)
+		}
+	}
+}

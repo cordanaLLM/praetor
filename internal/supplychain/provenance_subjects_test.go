@@ -34,6 +34,12 @@ func TestParseChecksumsBuildsOneSubjectPerLine(t *testing.T) {
 // it with the digest of its bytes, and returns the manifest path and the digests by name.
 func releaseManifest(t *testing.T, names []string) (string, map[string]string) {
 	t.Helper()
+	return releaseManifestOf(t, names, func(name string) []byte { return []byte("bytes of " + name) })
+}
+
+// releaseManifestOf is releaseManifest with each file's bytes taken from content.
+func releaseManifestOf(t *testing.T, names []string, content func(name string) []byte) (string, map[string]string) {
+	t.Helper()
 	dir := t.TempDir()
 	digests := make(map[string]string, len(names))
 	var manifest strings.Builder
@@ -42,10 +48,10 @@ func releaseManifest(t *testing.T, names []string) (string, map[string]string) {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(path, []byte("bytes of "+name), 0o600); err != nil {
+		if err := os.WriteFile(path, content(name), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		sum := sha256.Sum256([]byte("bytes of " + name))
+		sum := sha256.Sum256(content(name))
 		digests[name] = hex.EncodeToString(sum[:])
 		manifest.WriteString(digests[name] + "  " + name + "\n")
 	}

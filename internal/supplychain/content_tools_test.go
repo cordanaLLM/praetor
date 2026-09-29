@@ -1,10 +1,13 @@
 package supplychain
 
 import (
+	"debug/pe"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -47,34 +50,67 @@ func TestGenerateSLSAProvenance_Positive_DpkgDebPackage(t *testing.T) {
 }
 
 // TestGenerateSLSAProvenance_UkifyImageAndBareKernel builds a Unified Kernel Image with
-// ukify from an installed kernel and attests it, then refuses that kernel copied to a UKI
-// name, which is the placeholder the content check exists for. It needs ukify and a
-// readable kernel image under /usr/lib/modules, so it runs on Linux hosts that have both
-// and is skipped elsewhere.
+// ukify from an installed kernel and attests it as a declared UKI. It then attests that
+// kernel copied to vmlinuz-bare.efi, which a bare EFI-stub kernel may be called, and refuses
+// the same file once a UKI glob declares it, which is the placeholder the check exists for.
+// It needs ukify, its linux stub and a readable kernel image under /usr/lib/modules, so it
+// runs on Linux hosts that have all three and is skipped elsewhere with the reason.
 func TestGenerateSLSAProvenance_UkifyImageAndBareKernel(t *testing.T) {
 	if _, err := exec.LookPath("ukify"); err != nil {
 		t.Skipf("ukify is not installed (it ships with systemd on Linux): %v", err)
 	}
+	systemdStub(t, "linux")
 	kernel := readableKernel(t)
 	dir := t.TempDir()
 	uki := filepath.Join(dir, "vmlinuz-test.efi")
 	if _, err := util.RunCommand(t.Context(), dir, "ukify", "build", "--linux="+kernel, "--output="+uki); err != nil {
 		t.Fatalf("ukify build: %v", err)
 	}
-	if _, verdicts, err := GenerateSLSAProvenance(t.Context(), ProvenanceRequest{ArtifactPath: uki, BuilderID: "b"}); err != nil || verdicts[0].Status != ContentVerified {
-		t.Fatalf("a UKI ukify built is not verified: %+v, %v", verdicts, err)
+	declared := ProvenanceRequest{ArtifactPath: uki, BuilderID: "b", UKIGlobs: []string{"vmlinuz-*.efi"}}
+	if _, verdicts, err := GenerateSLSAProvenance(t.Context(), declared); err != nil || verdicts[0].Status != ContentVerified || verdicts[0].Format != ukiFormat.name {
+		t.Fatalf("a UKI ukify built is not verified as a UKI: %+v, %v", verdicts, err)
 	}
-	bare := filepath.Join(dir, "vmlinuz-bare.efi")
+	bare := copyEFIStubKernel(t, kernel, filepath.Join(dir, "vmlinuz-bare.efi"))
+	if _, verdicts, err := GenerateSLSAProvenance(t.Context(), ProvenanceRequest{ArtifactPath: bare, BuilderID: "b"}); err != nil || verdicts[0].Format != efiFormat.name {
+		t.Fatalf("a bare EFI-stub kernel named vmlinuz-bare.efi is not verified as an EFI image: %+v, %v", verdicts, err)
+	}
+	declared.ArtifactPath = bare
+	if _, _, err := GenerateSLSAProvenance(t.Context(), declared); !errors.Is(err, ErrContentMismatch) || !strings.Contains(err.Error(), "no .linux section") {
+		t.Fatalf("a bare EFI-stub kernel declared a UKI: got %v, want a content mismatch naming the missing .linux section", err)
+	}
+}
+
+// copyEFIStubKernel copies kernel to target and returns target, or skips the test when
+// debug/pe, a parser independent of the content probe, does not read the kernel as a PE
+// image with an EFI subsystem: some distributions install a compressed kernel that is no
+// EFI-stub kernel at all.
+func copyEFIStubKernel(t *testing.T, kernel, target string) string {
+	t.Helper()
+	image, err := pe.Open(kernel)
+	if err != nil {
+		t.Skipf("installed kernel %s is not a PE image: %v", kernel, err)
+	}
+	var subsystem uint16
+	switch header := image.OptionalHeader.(type) {
+	case *pe.OptionalHeader64:
+		subsystem = header.Subsystem
+	case *pe.OptionalHeader32:
+		subsystem = header.Subsystem
+	}
+	if closeErr := image.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if subsystem < peEFIApplication || subsystem > peEFIROM {
+		t.Skipf("installed kernel %s has PE subsystem %d, not an EFI one", kernel, subsystem)
+	}
 	data, err := os.ReadFile(kernel)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(bare, data, 0o600); err != nil {
+	if err := os.WriteFile(target, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := GenerateSLSAProvenance(t.Context(), ProvenanceRequest{ArtifactPath: bare, BuilderID: "b"}); err == nil {
-		t.Fatal("a bare EFI-stub kernel under a UKI name was attested")
-	}
+	return target
 }
 
 // TestGenerateSLSAProvenance_Positive_UkifyAddon builds a systemd-stub addon with ukify and
@@ -87,7 +123,7 @@ func TestGenerateSLSAProvenance_Positive_UkifyAddon(t *testing.T) {
 	if _, err := exec.LookPath("ukify"); err != nil {
 		t.Skipf("ukify is not installed (it ships with systemd on Linux): %v", err)
 	}
-	stub := addonStub(t)
+	stub := systemdStub(t, "addon")
 	addon := filepath.Join(t.TempDir(), "quiet.addon.efi")
 	if _, err := util.RunCommand(t.Context(), "", "ukify", "build", "--stub="+stub, "--cmdline=quiet", "--output="+addon); err != nil {
 		t.Fatalf("ukify build addon: %v", err)
@@ -100,16 +136,18 @@ func TestGenerateSLSAProvenance_Positive_UkifyAddon(t *testing.T) {
 	}
 }
 
-// addonStub returns systemd's addon stub for the running architecture, or skips the test.
-func addonStub(t *testing.T) string {
+// systemdStub returns systemd's kind stub for the running architecture, "linux" for a UKI
+// or "addon" for an addon, at the path ukify defaults to, or skips the test: some
+// distributions package the stubs apart from ukify.
+func systemdStub(t *testing.T, kind string) string {
 	t.Helper()
 	arch, ok := map[string]string{"amd64": "x64", "arm64": "aa64", "386": "ia32", "riscv64": "riscv64", "loong64": "loongarch64"}[runtime.GOARCH]
 	if !ok {
-		t.Skipf("systemd ships no addon stub for %s", runtime.GOARCH)
+		t.Skipf("systemd ships no %s stub for %s", kind, runtime.GOARCH)
 	}
-	stub := filepath.Join("/usr/lib/systemd/boot/efi", "addon"+arch+".efi.stub")
+	stub := filepath.Join("/usr/lib/systemd/boot/efi", kind+arch+".efi.stub")
 	if _, err := os.Stat(stub); err != nil {
-		t.Skipf("no systemd addon stub (systemd-boot not installed): %v", err)
+		t.Skipf("no systemd %s stub (systemd-boot not installed): %v", kind, err)
 	}
 	return stub
 }

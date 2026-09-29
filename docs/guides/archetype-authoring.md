@@ -294,9 +294,10 @@ or `mkosi.conf` (#615). The `[^.]` keeps hidden files out: Go's `*` matches a le
 `internal/gating/flavor_stage_test.go`).
 
 The profile promises signed outputs, and `praetorctl provenance` refuses to attest a `.deb` that
-is not a Debian package, an `.efi` that is not an EFI image, or a kernel-named `.efi` without the
-`.linux` section of a Unified Kernel Image, so a placeholder a build left behind fails before it
-is signed ([content checks](releasing.md#content-checks)).
+is not a Debian package, an `.efi` that is not an EFI image, or a Unified Kernel Image without its
+`.linux` section, so a placeholder a build left behind fails before it is signed
+([content checks](releasing.md#content-checks)). A UKI named like a kernel, such as
+`vmlinuz-7.2.4.efi`, is declared with `--uki` ([declaring a UKI](releasing.md#declaring-a-uki)).
 
 **The glob marker rule.** Most markers are a fixed path: `go.mod` either exists or it does not. A
 Packer tree cannot be written that way, because what identifies the forge is holding *some*

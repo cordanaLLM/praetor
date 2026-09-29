@@ -93,6 +93,11 @@ type ProvenanceRequest struct {
 	// and ContentCheckEnforce refuse the statement, ContentCheckReport attests the artifact
 	// and returns its verdict as ContentUnverified.
 	ContentCheck ContentCheck
+	// UKIGlobs declares the subject a Unified Kernel Image when its name matches one of
+	// these slash-separated globs (matchingUKIGlob): it then needs the .linux section a UKI
+	// carries whatever its name, where a name such as vmlinuz-7.2.4.efi alone only needs to
+	// be an EFI image. Every glob must match the subject.
+	UKIGlobs []string
 }
 
 // GenerateSLSAProvenance constructs an unsigned in-toto SLSA v1.0 provenance statement
@@ -106,6 +111,9 @@ func GenerateSLSAProvenance(ctx context.Context, req ProvenanceRequest) (*SLSASt
 	}
 	subject, verdict, err := artifactSubject(ctx, req)
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := checkUKIGlobsMatched(req.UKIGlobs, []Subject{subject}); err != nil {
 		return nil, nil, err
 	}
 	return newStatement([]Subject{subject}, req.BuilderID), []ContentVerdict{verdict}, nil
@@ -124,6 +132,9 @@ type ChecksumsRequest struct {
 	// ContentCheck applies to each listed artifact as ProvenanceRequest.ContentCheck does;
 	// under the zero value one mismatching file refuses the whole statement.
 	ContentCheck ContentCheck
+	// UKIGlobs declares every listed file whose name matches one of these globs a Unified
+	// Kernel Image, as ProvenanceRequest.UKIGlobs does; each glob must match a listed name.
+	UKIGlobs []string
 }
 
 // GenerateSLSAProvenanceFromChecksums constructs one unsigned in-toto SLSA v1.0 provenance
@@ -144,6 +155,9 @@ func GenerateSLSAProvenanceFromChecksums(ctx context.Context, req ChecksumsReque
 	if err := req.ContentCheck.validate(); err != nil {
 		return nil, nil, err
 	}
+	if err := validateUKIGlobs(req.UKIGlobs); err != nil {
+		return nil, nil, err
+	}
 	data, err := contextopt.ReadSnapshot(ctx, req.ManifestPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("slsa: read checksum manifest %s: %w", req.ManifestPath, err)
@@ -154,6 +168,9 @@ func GenerateSLSAProvenanceFromChecksums(ctx context.Context, req ChecksumsReque
 	}
 	subjects, verdicts, err := checksummedSubjects(ctx, filepath.Dir(req.ManifestPath), listed, req)
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := checkUKIGlobsMatched(req.UKIGlobs, subjects); err != nil {
 		return nil, nil, err
 	}
 	return newStatement(subjects, req.BuilderID), verdicts, nil
@@ -172,6 +189,7 @@ func checksummedSubjects(ctx context.Context, dir string, listed []Subject, req 
 		subject, verdict, err := artifactSubject(ctx, ProvenanceRequest{
 			ArtifactPath: filepath.Join(dir, rel), ArtifactName: listed[i].Name,
 			ExpectedSHA256: listed[i].Digest["sha256"], MaxBytes: req.MaxBytes, ContentCheck: req.ContentCheck,
+			UKIGlobs: req.UKIGlobs,
 		})
 		if err != nil {
 			return nil, nil, fmt.Errorf("slsa: checksum line %d: %w", i+1, err)
@@ -241,7 +259,7 @@ func artifactSubject(ctx context.Context, req ProvenanceRequest) (Subject, Conte
 		name = filepath.Base(req.ArtifactPath)
 	}
 	// A nil probe converts to a nil observer: a name no content rule covers is only digested.
-	format, probe := contentProbeFor(name)
+	format, probe := contentProbeFor(name, matchingUKIGlob(req.UKIGlobs, name) != "")
 	digest, size, err := contextopt.DigestBinarySnapshotTo(ctx, req.ArtifactPath, limit, probe)
 	if err != nil {
 		return Subject{}, ContentVerdict{}, fmt.Errorf("slsa: digest artifact %s: %w", req.ArtifactPath, err)
@@ -269,6 +287,9 @@ func validateProvenanceRequest(req ProvenanceRequest) (int64, error) {
 		return 0, fmt.Errorf("slsa: expected sha256 hex digest must be exactly 64 lowercase hex characters, got %q", req.ExpectedSHA256)
 	}
 	if err := req.ContentCheck.validate(); err != nil {
+		return 0, err
+	}
+	if err := validateUKIGlobs(req.UKIGlobs); err != nil {
 		return 0, err
 	}
 	switch {
