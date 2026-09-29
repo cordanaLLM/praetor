@@ -55,6 +55,14 @@ func (s sourceFile) lines() []string {
 	return strings.Split(string(s.data), "\n")
 }
 
+// lfLines splits the file into its physical lines with a CRLF checkout, which `* text=auto`
+// gives every text file on Windows, read as LF. A scanner whose rules look at the end of a line
+// then reads a file identically on every platform (HISS-21).
+func (s sourceFile) lfLines() []string {
+	text, _ := util.NormalizeLineEndings(string(s.data))
+	return strings.Split(text, "\n")
+}
+
 // languageScanners is the one dispatch table. No two scanners claim one extension.
 var languageScanners = [...]languageScanner{
 	goLanguage{}, nativeLanguage{}, pythonLanguage{}, rustLanguage{}, scriptLanguage{},

@@ -214,6 +214,34 @@ func TestScriptScanner_PatternParameters(t *testing.T) {
 	assertScriptFindings(t, "exit.js", "export function cli({ argv }) {\n  process.exit(argv.length);\n}\n", "HISS-07@2")
 }
 
+// Positive, negative and boundary (review of #589): a CRLF checkout, which `* text=auto` gives
+// every script on Windows, reads exactly like its LF form. A carriage return left on each line
+// kept `export function visit(` and `export function Card({` from starting a wrapped signature,
+// so the function's length, recursion and process.exit went untracked on Windows only.
+func TestScriptScanner_CRLFReadsLikeLF(t *testing.T) {
+	body := strings.Repeat("  work();\n", 58)
+	wrapped := "export function Card({\n  a,\n  b,\n}: Props) {\n"
+	for name, c := range map[string]struct {
+		src  string
+		want []string
+	}{
+		"at-limit.tsx":   {wrapped + body + "}\n", nil},
+		"over-limit.tsx": {wrapped + body + "  work();\n}\n", []string{"HISS-04@4"}},
+		"arrow.tsx":      {"export const Card = ({\n  a,\n}: Props): JSX.Element => {\n" + body + "  work();\n};\n", []string{"HISS-04@3"}},
+		"recursion.ts":   {"export function visit(\n  node: Node,\n): number {\n  return visit(node.next);\n}\n", []string{"HISS-01@4"}},
+		"exit.js":        {"export function cli(\n  argv,\n) {\n  process.exit(argv.length);\n}\n", []string{"HISS-07@4"}},
+		"continued.js":   {"const s = 'a \\\n  b';\nfunction f() {\n  return f();\n}\n", []string{"HISS-01@4"}},
+		"jsx.tsx":        {"export function View() {\n  return <div>{open && <p>Don't close</p>}</div>;\n}\n" + scriptFuncOfLOC("after", 61), []string{"HISS-04@4"}},
+		"Visit.svelte":   {"<script lang=\"ts\">\n  export function visit(\n    n: N,\n  ): number {\n    return visit(n);\n  }\n</script>\n", []string{"HISS-01@5"}},
+	} {
+		assertScriptFindings(t, name, c.src, c.want...)
+		rep := assertScriptFindings(t, "crlf-"+name, strings.ReplaceAll(c.src, "\n", "\r\n"), c.want...)
+		if rep.Coverage.FilesRead != 1 {
+			t.Errorf("crlf-%s: a CRLF checkout must be read, got %+v", name, rep.Coverage)
+		}
+	}
+}
+
 // Boundary: closeParen nests braces and brackets inside the list and closes on the parenthesis
 // that brings the depth to zero; a brace or bracket that would close the list itself is not a
 // parameter list, and an unclosed list reports the depth still open.

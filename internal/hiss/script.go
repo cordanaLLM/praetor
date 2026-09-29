@@ -69,7 +69,7 @@ func (scriptLanguage) handles(ext string) bool {
 func (scriptLanguage) name() string { return "javascript" }
 
 func (scriptLanguage) scan(src sourceFile, rep *ScanReport, opts ScanOptions) bool {
-	lines := src.lines()
+	lines := src.lfLines()
 	if util.SourceLanguage(src.rel) == "svelte" {
 		lines = svelteScriptLines(lines)
 	}

@@ -47,6 +47,14 @@ at end of line — by accident rather than by design, which is why four CRLF fix
 corpus assert it, with `.gitattributes` marking them `-text whitespace=cr-at-eol` so a checkout
 cannot normalise away the bytes they exist to carry.
 
+The script scanner holds the property by design: its rules look at what a line ends with (a
+parameter list left open, a quote that does not close), so it reads a CRLF file as LF before any
+rule runs (`sourceFile.lfLines` in `internal/hiss/engine.go`). Under `* text=auto` every script is
+a CRLF checkout on Windows. `TestScriptScanner_CRLFReadsLikeLF` in `internal/hiss/script_test.go`
+replays its cases in both forms, and two more pinned fixtures,
+`HISS-01/typescript/positive/crlf-wrapped-signature.ts` and
+`HISS-04/typescript/positive/crlf-wrapped-props.tsx`, keep a wrapped signature tracked on Linux too.
+
 ## What a text matcher cannot do
 
 It cannot follow a call into another function or know a type, and it resolves a name only as far
