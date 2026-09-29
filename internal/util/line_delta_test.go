@@ -18,12 +18,13 @@ func TestLineDeltaOf_Positive_CountsEditsOnce(t *testing.T) {
 	}
 }
 
-// Positive: lines that only changed order count as removed and added again, and a lost final
-// newline is one removed empty line, so a changed text never reads as unchanged.
+// Positive: lines that only changed order drop and add nothing and count the line that moved,
+// and a lost final newline is one removed empty line, so a changed text never reads as
+// unchanged.
 func TestLineDeltaOf_Positive_ReorderAndFinalNewlineAreChanges(t *testing.T) {
 	got := LineDeltaOf("head\nb\na\ntail\n", "head\na\nb\ntail\n", 5)
-	want := LineDelta{Removed: 2, Added: 2, RemovedLines: []string{"b", "a"}}
-	if !reflect.DeepEqual(got, want) {
+	want := LineDelta{Moved: 1, MovedLines: []string{"b"}}
+	if !reflect.DeepEqual(got, want) || !got.Changed() {
 		t.Fatalf("reorder = %+v, want %+v", got, want)
 	}
 	got = LineDeltaOf("x\n", "x", 5)
@@ -65,5 +66,46 @@ func TestLineDeltaOf_Boundary_QuotesStopAtLimit(t *testing.T) {
 	}
 	if got := LineDeltaOf("a\nb\n", "", 2); got.Removed != 2 || got.Added != 0 {
 		t.Fatalf("empty new text = %+v", got)
+	}
+}
+
+// Positive: one row moved from the top of a table to its bottom counts as that one row, not as
+// every row of the table dropped and added again.
+func TestLineDeltaOf_Positive_MovedRowCountsOnce(t *testing.T) {
+	before := "| h |\n| r1 |\n| r2 |\n| r3 |\n| r4 |\n| r5 |\n"
+	after := "| h |\n| r2 |\n| r3 |\n| r4 |\n| r5 |\n| r1 |\n"
+	got := LineDeltaOf(before, after, 3)
+	want := LineDelta{Moved: 1, MovedLines: []string{"| r1 |"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("moved row = %+v, want %+v", got, want)
+	}
+}
+
+// Negative: an order change beside an edit is the multiset summary alone, with no moved count,
+// and a reorder quotes no moved line under a limit of zero or less.
+func TestLineDeltaOf_Negative_MovesBesideEditsAndZeroLimit(t *testing.T) {
+	got := LineDeltaOf("a\nb\nc\n", "b\na\nC\n", 3)
+	want := LineDelta{Removed: 1, Added: 1, RemovedLines: []string{"c"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("move beside edit = %+v, want %+v", got, want)
+	}
+	for _, limit := range []int{0, -1} {
+		if got := LineDeltaOf("b\na\n", "a\nb\n", limit); got.Moved != 1 || got.MovedLines != nil || got.Removed != 0 {
+			t.Errorf("limit %d: reorder = %+v", limit, got)
+		}
+	}
+}
+
+// Boundary: equal lines never cross, so duplicated rows around a moved one stay in place; a
+// reversed table keeps one line and moves the rest, quoting only up to the limit.
+func TestLineDeltaOf_Boundary_DuplicatesAndReversal(t *testing.T) {
+	got := LineDeltaOf("x\ndup\ny\ndup\n", "dup\nx\ndup\ny\n", 5)
+	if got.Removed != 0 || got.Added != 0 || got.Moved != 2 {
+		t.Fatalf("duplicates = %+v, want two moved lines", got)
+	}
+	got = LineDeltaOf("1\n2\n3\n4\n5\n", "5\n4\n3\n2\n1\n", 2)
+	want := LineDelta{Moved: 4, MovedLines: []string{"1", "2"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("reversal = %+v, want %+v", got, want)
 	}
 }

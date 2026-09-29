@@ -51,9 +51,14 @@ func mergeGitIgnore(text string) (string, error) {
 const adoptGitIgnoreSeed = "bin/\n*.test\n*.out\n.DS_Store\n"
 
 // reconcileGitIgnore appends the managed rules that are absent after any older opt-ins,
-// preserving existing bytes. It never untracks or removes existing private files.
+// preserving existing bytes. It never untracks or removes existing private files. A dry run
+// that plans the block records it (adoptSession.privateIgnorePlanned), so the backups it plans
+// for later steps match the ones the real run takes once the block is written.
 func reconcileGitIgnore(ctx context.Context, s *adoptSession) error {
 	existed, changed, err := writeManagedGitIgnore(ctx, s.repoPath, adoptGitIgnoreSeed, s.opts.DryRun)
+	if err == nil && changed && s.opts.DryRun {
+		s.privateIgnorePlanned = true
+	}
 	switch {
 	case err != nil:
 		return err

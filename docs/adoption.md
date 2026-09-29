@@ -323,11 +323,20 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
   ([the lefthook.yml adoption writes](guides/git-hooks.md#the-lefthookyml-adoption-writes)).
 - **Replaced files.** When `--force` overwrites a drifted scaffold, the report lists it under
   `Files Replaced` with action `replace`, never as created. The entry carries a line delta
-  (`-removed/+added lines` and the first three removed lines) and where the prior bytes went:
+  (`-removed/+added lines` and the first three removed lines; a replace that only reorders
+  lines reads `-0/+0 lines, N moved` with the first three moved lines, so a reordered table
+  names the rows that moved: `util.LineDeltaOf`, tests in `internal/util/line_delta_test.go`)
+  and where the prior bytes went:
   `.workingdir/adopt-backups/<UTC stamp>/<path>`, written only when `git check-ignore`
-  confirms that path is ignored. Without that confirmation, for example on a first adoption
-  whose `.gitignore` does not yet carry the managed `/.workingdir/` rule, the file is replaced
-  without a copy and a warning says so. A file that differs only in its line endings is
+  confirms that path is ignored. The `git-ignore` step, which writes the managed
+  `/.workingdir/` rule, runs right after the manifest step and before every step that can
+  replace a file, so a first adoption keeps a backup of every file it replaces, editor merges
+  included, and a dry run plans the same backups without writing the rule or a copy
+  (`adoptSteps` in `internal/adopt/adopt.go`, `backupIgnored` in `internal/adopt/replace.go`,
+  tests in `internal/adopt/first_adoption_backup_test.go`). Without that confirmation, for
+  example when `adoption.decline` names `git-ignore` and the repository's own rules do not
+  ignore `.workingdir/`, the file is replaced without a copy, its entry says `no backup`, and
+  one warning per run gives the reason. A file that differs only in its line endings is
   verified, not replaced (`TestScaffoldFile_Positive_ForceReplacesWithBackupAndDelta`,
   `TestScaffoldFile_Boundary_DryRunPlansReplaceAndDeltaTruncates`,
   `TestScaffoldFile_Boundary_CRLFOnlyDifferenceIsNotReplaced`). Under `--force`, a backup
@@ -350,17 +359,27 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
   the block, and an edited managed attribute block at the end of `.gitattributes`; without
   `--force` either edited block fails the run, and a disable of `docs:seo-portal` refuses to
   remove it. On every run, `--force` or not, it covers a vendor context file such as
-  `CLAUDE.md` that holds a hand edit. A file that already holds its bytes is verified. Earlier
+  `CLAUDE.md` and a persona copy such as `.claude/agents/praetor-auditor.md` that holds a hand
+  edit (`recordProjections` in `internal/adopt/vendor_targets.go`,
+  `internal/adopt/persona_copies.go`). A file that already holds its bytes is verified. Earlier
   Praetor texts are refreshed, not replaced: a vendor file that is the projection of
-  `AGENTS.md` as the run found it, Praetor's own unedited DevContainer placeholder, a catalog
+  `AGENTS.md` as the run found it or as the `HEAD` commit holds it (an `AGENTS.md` edited
+  after the last `compile-context`; without a commit only the first counts), a persona copy
+  that is the copy of its canonical persona as the run found it, Praetor's own
+  unedited DevContainer placeholder, a catalog
   text with a layout-only successor, an earlier text of a documentation family file, and the
   documentation gate block an earlier Praetor wrote (tests in
   `internal/adopt/locked_replace_test.go`, `internal/adopt/vendor_targets_test.go`,
+  `internal/adopt/vendor_head_projection_test.go`,
   `internal/adopt/documentation_makefile_refresh_test.go` and
   `internal/adopt/gitattributes_edit_test.go`). Without `--force`, a symlinked backup root
-  fails the run before its first write when a vendor file holds a hand edit
+  fails the run before its first write when a vendor file or a persona copy holds a hand edit
   (`preflightVendorBackupRoot` in `internal/adopt/vendor_targets.go`,
-  `TestAdopt_Negative_PlainRunRefusesSymlinkedBackupRootForVendorEdit`).
+  `preflightPersonaBackupRoot` in `internal/adopt/persona_copies.go`,
+  `TestAdopt_Negative_PlainRunRefusesSymlinkedBackupRootForVendorEdit`,
+  `TestAdopt_Boundary_PlainRunRefusesSymlinkedBackupRootForPersonaCopyEdit`). A re-run lists
+  an existing persona copy and the pre-commit hook adoption installed as reconciled, never as
+  created (`internal/adopt/rerun_report_test.go`).
 - **`AGENTS.md` harness under `--force`.** An existing harness is kept without `--force`.
   With it, the harness is regenerated and what the repository added around it stays:
   - the preamble: every line above the harness start, for example an SPDX header. The
@@ -389,6 +408,12 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
   `TestAdopt_AgentsMD_ForceKeepsCRLFPreamble`,
   `TestAdopt_AgentsMD_ForceRefusesUnknownBoundary`,
   `TestAdopt_AgentsMD_ForceKeepsProseNamingTheHarness` in `internal/adopt/adopt_test.go`).
+- **Text register policy.** Every run renders the harness's text register block from the
+  manifest, `--force` or not. A policy the renderer rejects, such as a `register.tasks`
+  entry that is not a `target_tasks` label ([text register](guides/text-register.md)), fails
+  adoption before its first write, a dry run included; a manifest that declines
+  `agent-harness` is not checked (`preflightAgentHarness` in `internal/adopt/adopt.go`,
+  tests in `internal/adopt/register_preflight_test.go`).
 - **Earlier Praetor output.** The manifest, lock, label taxonomy, pinned catalog, flavor
   YAML (`.clang-format` and `.clang-tidy` included) and the `docs:seo-portal` documentation
   gate's YAML that adoption writes pass `yamllint --strict` with its default rules

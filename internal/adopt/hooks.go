@@ -603,9 +603,14 @@ func (s *adoptSession) activateGitHooks(ctx context.Context, lefthookWritten boo
 		return nil
 	}
 	hookPath := filepath.Join(hooksDir, preCommitHook)
+	installed := fileExists(hookPath)
 	if _, err := util.RunCommand(ctx, s.repoPath, "lefthook", "install"); err == nil {
 		if !fileExists(hookPath) {
 			s.report.addError("git hooks: lefthook install completed but %s was not created", hookPath)
+			return nil
+		}
+		if installed {
+			s.report.recordReconciled(displayHookPath(s.repoPath, hookPath), "Re-activated local Git hooks via lefthook install over the existing hook")
 			return nil
 		}
 		s.report.recordCreated(displayHookPath(s.repoPath, hookPath), "Activated local Git hooks via lefthook install")
@@ -648,26 +653,38 @@ const foreignPreCommitNote = "existing pre-commit hook was not written by praeto
 
 // installFallbackHook writes the praetor pre-commit hook. An existing hook that praetor did
 // not write is kept, --force included: audit checks only that a pre-commit hook exists, so
-// the hook is the repository's, and adoption neither replaces nor moves it. A pre-commit.bak
-// an earlier adoption left under --force is reported, never removed.
+// the hook is the repository's, and adoption neither replaces nor moves it. An existing
+// praetor hook is rewritten, which restores its mode, and listed as reconciled, never as
+// created. A pre-commit.bak an earlier adoption left under --force is reported, never removed.
 func (s *adoptSession) installFallbackHook(hookPath string) error {
 	display := displayHookPath(s.repoPath, hookPath)
 	warnLegacyHookBackup(s, hookPath, display)
-	if fileExists(hookPath) {
+	script := []byte(buildFallbackPreCommitScript())
+	var existing []byte
+	installed := fileExists(hookPath)
+	if installed {
 		// #nosec G304 -- hookPath is the hooks directory git reported for this repository.
-		existing, err := os.ReadFile(hookPath)
+		data, err := os.ReadFile(hookPath)
 		if err != nil {
 			return fmt.Errorf("read existing hook %s: %w", hookPath, err)
 		}
-		if !bytes.Contains(existing, []byte(fallbackPreCommitMarker)) {
+		if !bytes.Contains(data, []byte(fallbackPreCommitMarker)) {
 			s.report.recordSkipped(display, foreignPreCommitNote)
 			return nil
 		}
+		existing = data
 	}
-	if err := writeRepoFile(hookPath, []byte(buildFallbackPreCommitScript()), execPerm); err != nil {
+	if err := writeRepoFile(hookPath, script, execPerm); err != nil {
 		return err
 	}
-	s.report.recordCreated(display, "Installed fallback pre-commit hook (lefthook is not available)")
+	switch {
+	case !installed:
+		s.report.recordCreated(display, "Installed fallback pre-commit hook (lefthook is not available)")
+	case bytes.Equal(existing, script):
+		s.report.recordReconciled(display, "Fallback pre-commit hook already installed (lefthook is not available)")
+	default:
+		s.report.recordReconciled(display, "Refreshed the praetor fallback pre-commit hook (lefthook is not available)")
+	}
 	return nil
 }
 

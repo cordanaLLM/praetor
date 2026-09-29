@@ -158,6 +158,13 @@ type adoptSession struct {
 	// backupStamp names this run's directory below adoptBackupRoot; backupPath fixes it on
 	// first use when the session was built without one.
 	backupStamp string
+	// privateIgnorePlanned records, in a dry run only, that the git-ignore step planned the
+	// managed block the real run writes before any replacing step, so a planned backup counts
+	// as ignored although the .gitignore on disk does not carry the rule yet (backupIgnored).
+	privateIgnorePlanned bool
+	// backupRefused records that a backup was already refused this run, so the reason is
+	// warned once rather than once per replaced file (refuseBackup).
+	backupRefused bool
 	// defaultBranch is the repository.default_branch the manifest this adoption creates declares
 	// (resolveDefaultBranch, forge.DefaultBranchToDeclare); empty when there is nothing to declare
 	// or the manifest exists.
@@ -381,6 +388,12 @@ func resolveFacets(input []string) []string {
 func adoptSteps() []namedStep {
 	return []namedStep{
 		{"manifest", reconcileManifest},
+		// Ahead of every step that can replace a file: a replace keeps its backup below the
+		// private ledger only when git ignores it (backupExisting), and this step writes the
+		// managed rule that ignores it. Run later, a first adoption replaced the lock, the
+		// catalog, vendor files and editor files before the rule existed and kept no backup of
+		// any of them (#597). The manifest step before it never replaces a file.
+		{"git-ignore", reconcileGitIgnore},
 		{"lockfile", reconcileLockfile},
 		{"policy-catalog", reconcilePolicyCatalog},
 		{"baseline", reconcileBaseline},
@@ -393,7 +406,6 @@ func adoptSteps() []namedStep {
 		// the command the same run scaffolded, and every later run found them differing from
 		// the template, a warning adoption never clears because it does not overwrite them.
 		{"editors", reconcileEditors},
-		{"git-ignore", reconcileGitIgnore},
 		{"formatter-ignore", reconcileFormatterIgnore},
 		{"renovate-ignore", reconcileRenovateIgnore},
 		{"actionlint-labels", reconcileActionlintLabels},
@@ -461,6 +473,7 @@ func executeAdoptSteps(ctx context.Context, s *adoptSession) error {
 // merged. Those steps write through the root-pinned writer, which refuses the same files at
 // write time; checked only there, the refusal came after the manifest, the vendor files, the
 // pull request template and the workflows were written, and left a half-adopted repository.
+// The agent-harness step's text register policy is checked here too (preflightAgentHarness).
 // A declined step's files are not checked, and a dry run is checked too, so its preview does
 // not report a run that would fail. Under --force the backup root is checked whatever the steps
 // (preflightForceBackupRoot): a replaced scaffold is backed up there from any step. Without it,
@@ -468,15 +481,12 @@ func executeAdoptSteps(ctx context.Context, s *adoptSession) error {
 // (preflightVendorBackupRoot).
 func preflightAgentSurfaces(ctx context.Context, s *adoptSession, declined map[string]bool) error {
 	if !declined["agent-harness"] {
-		if err := compiler.CheckVendorTargets(ctx, s.repoPath); err != nil {
-			return fmt.Errorf("agent-harness preflight: %w", err)
-		}
-		if err := preflightVendorBackupRoot(ctx, s); err != nil {
+		if err := preflightAgentHarness(ctx, s); err != nil {
 			return fmt.Errorf("agent-harness preflight: %w", err)
 		}
 	}
 	if !declined["agent-definitions"] {
-		if err := preflightPersonas(ctx, s.repoPath); err != nil {
+		if err := preflightPersonas(ctx, s); err != nil {
 			return fmt.Errorf("agent-definitions preflight: %w", err)
 		}
 	}
@@ -488,15 +498,39 @@ func preflightAgentSurfaces(ctx context.Context, s *adoptSession, declined map[s
 	return preflightForceBackupRoot(ctx, s)
 }
 
+// preflightAgentHarness runs the agent-harness step's refusals before the first step writes:
+// a refused vendor file, a refused backup root for a hand-edited one, and a text register
+// policy compiler.LoadRegisterBlock rejects, such as a register.tasks entry that is no
+// target_tasks label. The step renders the register block from the manifest adoption never
+// rewrites and from a routing configuration it never writes, so the policy it loads mid-run is
+// the one checked here; checked only there, the refusal came after the lock was written and
+// left AGENTS.md unwritten.
+func preflightAgentHarness(ctx context.Context, s *adoptSession) error {
+	if err := compiler.CheckVendorTargets(ctx, s.repoPath); err != nil {
+		return err
+	}
+	if err := preflightVendorBackupRoot(ctx, s); err != nil {
+		return err
+	}
+	if _, _, err := compiler.LoadRegisterBlock(ctx, s.repoPath); err != nil {
+		return fmt.Errorf("resolve the text register block for the harness: %w", err)
+	}
+	return nil
+}
+
 // preflightPersonas runs the persona writer's refusals over every persona agent-definitions
-// writes, before any is written.
-func preflightPersonas(ctx context.Context, repoPath string) error {
+// writes, before any is written, and checks the backup root a hand-edited persona copy would
+// be backed up to (preflightPersonaBackupRoot).
+func preflightPersonas(ctx context.Context, s *adoptSession) error {
 	personas := generatedPersonas()
 	names := make([]string, 0, len(personas))
 	for i := 0; i < len(personas) && i < maxTranspileTargets; i++ {
 		names = append(names, filepath.Base(personas[i].rel))
 	}
-	return compiler.CheckPersonaTargets(ctx, repoPath, names)
+	if err := compiler.CheckPersonaTargets(ctx, s.repoPath, names); err != nil {
+		return err
+	}
+	return preflightPersonaBackupRoot(ctx, s)
 }
 
 // forcedManifestNote explains why --force left the manifest alone, and says what to do instead.

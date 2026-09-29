@@ -378,6 +378,22 @@ func TestDescribeLineDelta_LineEndingsOnly(t *testing.T) {
 	}
 }
 
+// Positive, negative and boundary: a replace that only reordered rows names the rows that moved,
+// not every row as removed; a reorder beside an edit names the removed line alone; a reversal
+// quotes up to the bound and counts the rest.
+func TestDescribeLineDelta_ReorderNamesMovedLines(t *testing.T) {
+	before := []byte("| h |\n| r1 |\n| r2 |\n| r3 |\n")
+	if got := describeLineDelta(before, []byte("| h |\n| r2 |\n| r3 |\n| r1 |\n")); got != `-0/+0 lines, 1 moved: "| r1 |"` {
+		t.Fatalf("moved row = %q", got)
+	}
+	if got := describeLineDelta(before, []byte("| h |\n| r2 |\n| r1 |\n| R3 |\n")); got != `-1/+1 lines, removed "| r3 |"` {
+		t.Fatalf("reorder beside edit = %q", got)
+	}
+	if got := describeLineDelta([]byte("a\nb\nc\nd\ne\n"), []byte("e\nd\nc\nb\na\n")); got != `-0/+0 lines, 4 moved: "a", "b", "c" and 1 more` {
+		t.Fatalf("reversal = %q", got)
+	}
+}
+
 // Positive, negative and boundary: quoteFirst, the one bounded listing the line delta, the
 // editor merge and the lefthook skip reason share, quotes up to limit items and counts the rest
 // of total, including items a bounded prefix already left out; an empty list is empty and a

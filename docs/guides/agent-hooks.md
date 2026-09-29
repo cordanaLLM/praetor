@@ -529,8 +529,10 @@ copied to `.workingdir/adopt-backups/<UTC stamp>/<file>`, then replaced only whi
 holds the bytes the plan was made from, and read back; each write goes through the root-pinned
 `contextopt` writers, which refuse a symlink below the repository. The copy is taken only when
 `git check-ignore` confirms the backup path is ignored, as the managed `.gitignore` rule
-`/.workingdir/` makes it; otherwise the merge goes ahead without a copy, and both the report
-entry and a warning say so (`backupExisting` in `internal/adopt/replace.go`,
+`/.workingdir/` makes it; the `git-ignore` step writes that rule before any step that
+replaces a file, a first adoption included. Otherwise the merge goes ahead without a copy, the
+report entry says so, and one warning per run gives the reason (`backupExisting` in
+`internal/adopt/replace.go`,
 `TestReconcileAgentHooks_Positive_BackupUnderIgnoredRootLeavesTreeClean`,
 `TestReconcileAgentHooks_Negative_UnignoredBackupRootTakesNoBackup`). Adoption no longer
 writes `<file>.bak` beside the hook file; a copy an earlier release left there is reported as

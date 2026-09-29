@@ -313,6 +313,16 @@ var priorPersonaDigests = map[string]map[string]string{
 // directory of every agent client agent_clients selects; the directories it leaves out are
 // reported not applicable and never written.
 func reconcileAgentDefinitions(ctx context.Context, s *adoptSession) error {
+	// Read before the canonical personas below are refreshed: the copies an unedited earlier
+	// run left are the copies of the canonical personas as this run found them.
+	var prior priorVendorProjections
+	if !s.opts.DryRun {
+		found, err := priorPersonaCopies(ctx, s.repoPath)
+		if err != nil {
+			return err
+		}
+		prior = found
+	}
 	personas := generatedPersonas()
 	for i := 0; i < len(personas) && i < maxTranspileTargets; i++ {
 		if _, err := s.scaffoldFile(ctx, personas[i]); err != nil {
@@ -329,14 +339,7 @@ func reconcileAgentDefinitions(ctx context.Context, s *adoptSession) error {
 	if s.opts.DryRun {
 		return nil
 	}
-	projected, err := compiler.CompileAgents(ctx, s.repoPath)
-	if err != nil {
-		return fmt.Errorf("compile agent definitions: %w", err)
-	}
-	for i := 0; i < len(projected) && i < maxTranspileTargets; i++ {
-		s.report.recordCreated(projected[i].VendorTarget, "Projected canonical agent definition to vendor target")
-	}
-	return nil
+	return projectPersonaCopies(ctx, s, prior)
 }
 
 const defaultAuditorAgentMD = `---

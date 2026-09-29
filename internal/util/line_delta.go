@@ -1,6 +1,9 @@
 package util
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 // maxLineDeltaLines bounds every line walk of LineDeltaOf (HISS-02). It sits well above the
 // line count of the largest text the repository writers accept (contextopt.MaxSourceBytes); a
@@ -9,33 +12,41 @@ const maxLineDeltaLines = 1 << 21
 
 // LineDelta summarises how a replacement text differs from the text it replaces, line by line:
 // how many lines of the old text it drops, how many lines it adds, and the first dropped lines
-// in their old order.
+// in their old order. A replacement that keeps every line and changes only their order drops
+// and adds none; it counts the lines that left their place instead.
 type LineDelta struct {
 	Removed      int
 	Added        int
 	RemovedLines []string
+	// Moved counts, for a replacement that changes only the order of its lines, the lines
+	// outside the longest run of lines the two orders share; it is zero for any other change.
+	Moved int
+	// MovedLines are the first moved lines, in their old order.
+	MovedLines []string
 }
 
-// Changed reports whether the replacement drops or adds any line.
+// Changed reports whether the replacement drops, adds or moves any line.
 func (d LineDelta) Changed() bool {
-	return d.Removed != 0 || d.Added != 0
+	return d.Removed != 0 || d.Added != 0 || d.Moved != 0
 }
 
-// LineDeltaOf returns the LineDelta from before to after, keeping at most limit removed lines.
-// Both texts are compared as LF text (NormalizeLineEndings), so a text and its CRLF checkout
-// differ in nothing. The lines both texts share at the start and at the end are unchanged;
-// between them a line is unchanged as often as it occurs on both sides, so one edited line
-// counts once rather than shifting every line after it. The counts are that multiset summary: a
-// line that moved beside other changes still matches its twin and does not count. Only a middle
-// that changed nothing but its order, where every line matches, is counted whole as removed and
-// added again. A lost final newline is one removed empty line. The walk is linear and bounded, a
-// summary for a report rather than a minimal diff.
+// LineDeltaOf returns the LineDelta from before to after, keeping at most limit removed or
+// moved lines. Both texts are compared as LF text (NormalizeLineEndings), so a text and its
+// CRLF checkout differ in nothing. The lines both texts share at the start and at the end are
+// unchanged; between them a line is unchanged as often as it occurs on both sides, so one
+// edited line counts once rather than shifting every line after it. The counts are that
+// multiset summary: a line that moved beside other changes still matches its twin and does not
+// count. A middle that changed nothing but its order, where every line matches, drops and adds
+// nothing and counts its moved lines (movedLines), so a reordered table reads as the rows that
+// moved rather than as a replacement of every row. A lost final newline is one removed empty
+// line. The walk is bounded and at most log-linear, a summary for a report rather than a
+// minimal diff.
 func LineDeltaOf(before, after string, limit int) LineDelta {
 	oldLines, newLines := splitDeltaLines(before), splitDeltaLines(after)
 	oldMiddle, newMiddle := trimCommonLines(oldLines, newLines)
 	delta := countLineChanges(oldMiddle, newMiddle, limit)
 	if !delta.Changed() && len(oldMiddle) > 0 {
-		delta = LineDelta{Removed: len(oldMiddle), Added: len(newMiddle), RemovedLines: firstLines(oldMiddle, limit)}
+		delta = movedLines(oldMiddle, newMiddle, limit)
 	}
 	return delta
 }
@@ -84,13 +95,75 @@ func countLineChanges(oldLines, newLines []string, limit int) LineDelta {
 	return delta
 }
 
-// firstLines returns a copy of at most limit leading lines.
-func firstLines(lines []string, limit int) []string {
-	if limit <= 0 {
-		return nil
+// movedLines is the LineDelta of a middle whose lines changed only their order: newLines holds
+// every line of oldLines as often. Each old line is paired with the same occurrence of it in
+// newLines (pairedPositions); the old lines whose pairs keep their relative order along the
+// longest such run stay in place (longestIncreasingRun) and every other one moved. The first
+// and last lines of a trimmed middle differ, so at least one line moved.
+func movedLines(oldLines, newLines []string, limit int) LineDelta {
+	kept := longestIncreasingRun(pairedPositions(oldLines, newLines))
+	var delta LineDelta
+	for i := 0; i < len(oldLines) && i < maxLineDeltaLines; i++ {
+		if kept[i] {
+			continue
+		}
+		delta.Moved++
+		if len(delta.MovedLines) < limit {
+			delta.MovedLines = append(delta.MovedLines, oldLines[i])
+		}
 	}
-	if len(lines) > limit {
-		lines = lines[:limit]
+	return delta
+}
+
+// pairedPositions returns, for each old line, the index in newLines of the occurrence it pairs
+// with: the k-th occurrence of a line in oldLines pairs with its k-th occurrence in newLines,
+// which never crosses two equal lines, so no pairing keeps more lines in place. A line newLines
+// lacks pairs with nothing and gets -1.
+func pairedPositions(oldLines, newLines []string) []int {
+	at := make(map[string][]int, len(newLines))
+	for i := 0; i < len(newLines) && i < maxLineDeltaLines; i++ {
+		at[newLines[i]] = append(at[newLines[i]], i)
 	}
-	return append([]string(nil), lines...)
+	positions := make([]int, len(oldLines))
+	for i := 0; i < len(oldLines) && i < maxLineDeltaLines; i++ {
+		queue := at[oldLines[i]]
+		if len(queue) == 0 {
+			positions[i] = -1
+			continue
+		}
+		positions[i], at[oldLines[i]] = queue[0], queue[1:]
+	}
+	return positions
+}
+
+// longestIncreasingRun marks the entries of positions on one longest strictly increasing
+// subsequence, skipping negative ones. It keeps, for each run length, the entry ending the
+// run with the smallest last value and each entry's predecessor, then walks back from the end
+// of the longest run.
+func longestIncreasingRun(positions []int) []bool {
+	tails := make([]int, 0, len(positions))
+	prev := make([]int, len(positions))
+	for i := 0; i < len(positions) && i < maxLineDeltaLines; i++ {
+		prev[i] = -1
+		if positions[i] < 0 {
+			continue
+		}
+		length := sort.Search(len(tails), func(k int) bool { return positions[tails[k]] >= positions[i] })
+		if length > 0 {
+			prev[i] = tails[length-1]
+		}
+		if length == len(tails) {
+			tails = append(tails, i)
+		} else {
+			tails[length] = i
+		}
+	}
+	kept := make([]bool, len(positions))
+	if len(tails) == 0 {
+		return kept
+	}
+	for i, steps := tails[len(tails)-1], 0; i >= 0 && steps < maxLineDeltaLines; i, steps = prev[i], steps+1 {
+		kept[i] = true
+	}
+	return kept
 }
