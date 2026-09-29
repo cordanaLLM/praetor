@@ -375,6 +375,39 @@ A dry run is never refused, because it mints nothing. `TestRunReceiptStage_Bound
 and `TestToolchainStages_Boundary_CargoAbsentFromPath` in
 [`internal/gating/cargo_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/cargo_test.go) pin the refusal.
 
+### A receipt is signed only by the pinned key
+
+When `.standards.yaml` pins `receipt.public_key`, the receipt stage signs only with that key's
+private half. It reads the pin through `lockdown.PinnedPublicKey`, the read `praetorctl gate
+verify` resolves its default key with, and checks the signed receipt with
+`lockdown.VerifyPinnedReceipt`, the check `gate verify` applies (`signReceipt` in
+[`internal/gating/receipt_key.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/receipt_key.go)).
+A signing key from `PRAETOR_RECEIPT_KEY` or the per-user key file that is not the pinned key fails
+the stage, writes no receipt, and names both keys:
+
+```text
+6. [FAIL] Ed25519 Exit-0 Receipt    (4ms)
+   Reason: Exit-0 receipt not written, gate verify would reject it: receipt was not signed by the
+           pinned receipt.public_key: signing key <signing>, pinned key <pinned> in .standards.yaml;
+           sign with the pinned key's private half (PRAETOR_RECEIPT_KEY, or the key file
+           'praetorctl gate keygen' wrote) or pin the signing key instead
+```
+
+Before this check the stage reported `[PASS]` and pointed at `gate verify`, which then rejected
+the receipt. A repository without a manifest, or whose manifest pins no key, still receives a
+receipt signed by whichever key is configured; only `gate verify --public-key` verifies it. A
+malformed pin and a manifest that cannot be read, such as one with a second YAML document, fail the
+stage before the signing key is loaded, as they fail `gate verify`.
+
+**Migration.** A workstation whose signing key is not the pinned key no longer receives a receipt,
+so the `gate` job of its pre-push hook fails. Point `PRAETOR_RECEIPT_KEY` or the per-user key file
+at the pinned key's private half, or, when this workstation's key is meant to be the repository's
+trust anchor, pin its public half as `receipt.public_key`. `TestRunReceiptStage_Positive_PinnedSigningKeySigns`,
+`TestRunReceiptStage_Negative_UnpinnedSigningKeyRefused` and
+`TestRunReceiptStage_Boundary_PinnedKeyResolution` in
+[`internal/gating/receipt_key_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/receipt_key_test.go)
+pin each case.
+
 ### A dry run changes nothing
 
 `praetorctl gate run --dry-run` runs only the read-only stages: lockfile verification, the HISS

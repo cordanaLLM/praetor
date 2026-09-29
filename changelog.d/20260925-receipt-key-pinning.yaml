@@ -1,0 +1,4 @@
+type: fixed
+title: "`praetorctl gate run` signs the Exit-0 receipt only with the key .standards.yaml pins as receipt.public_key: it reads the pin the way `gate verify` does and checks the signed receipt with the same verifier, so a signing key other than the pinned one fails the receipt stage, writes no receipt and names both keys, instead of reporting a receipt that `gate verify` then rejects; a malformed pin or an unreadable manifest fails the stage too, and a repository that pins no key signs as before. Migration: on a workstation whose PRAETOR_RECEIPT_KEY or per-user key file is not the pinned key, gate run (and a pre-push gate job) now fails; sign with the pinned key's private half, or pin that workstation's public key as receipt.public_key"
+issue: "#590"
+breaking: true

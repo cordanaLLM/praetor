@@ -594,8 +594,35 @@ shell bodies against a stub binary and reads the input defaults out of `action.y
 Live adoption no longer creates the old placeholder lock. Pass
 `--lock-source-root=/path/to/praetor` (MCP: `source_root`) when a target has no
 valid lock. The source must have a valid manifest/lock and every selected local
-archetype source. Version pins come from that validated bundle, and digests come
-from actual source bytes. The MCP source path obeys server root confinement.
+archetype source. Digests come from actual source bytes. The MCP source path obeys
+server root confinement.
+
+### Lock version: the source catalog's identity
+
+A built lock's `pinned_version`, and every entry's `version`, name the source catalog
+rather than copying the source lock's own `pinned_version`:
+
+```yaml
+pinned_version: "v0.0.0+catalog.<12 hex digits>"
+```
+
+The hex digits start the aggregate digest over every archetype and facet under the
+source's `.config/archetypes`, computed as a lock's top-level digest is, but over the
+whole catalog instead of the target's selection. The source lock is still validated
+first; its declared version is not trusted because nothing moves it when the catalog
+changes. So:
+
+- re-pinning against changed catalog content writes a new version, even when the
+  target's own digests are unchanged;
+- the same catalog content writes the same version, wherever the source lives;
+- a source whose `.config/archetypes` defines nothing fails lock generation instead of
+  writing a version it cannot back.
+
+`internal/config/lockbuild_test.go` pins all three. `praetorctl init` renders its
+unreleased build versions (`v0.0.0+<revision>`) through the same
+`config.UnreleasedLockVersion` in `internal/config/lockbuild.go`. An existing lock is
+not rewritten for its version alone: validation compares digests, not versions, so the
+catalog version arrives with the next rebuild (`--force`, or a layout-only re-pin).
 
 An existing valid target lock is preserved. An invalid lock fails unless both
 `--force` and an explicit source permit rebuilding it. A dry run without a source
@@ -633,7 +660,7 @@ Each command handles `unverifiable` as follows:
   `--catalog-root` (MCP: `catalog_root`) selects a catalog.
 - `praetorctl adopt` records the outcome with a warning; `--lock-source-root` verifies against that bundle.
 - `praetorctl harvest onboard` completes with `lock_verified: false` and `lock_status: unverifiable`.
-- Lock generation refuses a source bundle without a catalog.
+- Lock generation refuses a source bundle without a catalog, or with one that defines no archetypes.
 
 Generated locks omit `generated_at`; a lock that sets it still validates. The
 behavior is pinned by `internal/config/lock_test.go`,

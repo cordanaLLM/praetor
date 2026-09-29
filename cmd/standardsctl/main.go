@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"github.com/cordanaLLM/praetor/internal/workstation"
 )
@@ -69,19 +70,19 @@ func lockVersion() (string, bool) {
 
 // formatDevLockVersion renders an unreleased build's pinned_version.
 //
-// The revision goes in SemVer build metadata, where a dot separates identifiers and a second
-// plus sign would be invalid. Getting that wrong produces a lock the validator rejects, so the
-// shape is pinned by a test rather than left to inspection.
+// The revision goes in SemVer build metadata through config.UnreleasedLockVersion, the one
+// renderer adoption's catalog versions use too. Getting the shape wrong produces a lock the
+// validator rejects, so it is pinned by a test rather than left to inspection.
 func formatDevLockVersion(revision string, modified bool) string {
 	if modified {
-		return "v0.0.0+" + revision + ".dirty"
+		return config.UnreleasedLockVersion(revision, "dirty")
 	}
-	return "v0.0.0+" + revision
+	return config.UnreleasedLockVersion(revision)
 }
 
 // unidentifiedLockVersion is written only when the build can prove nothing about itself. It is
 // deliberately the zero version rather than a plausible release number.
-const unidentifiedLockVersion = "v0.0.0"
+const unidentifiedLockVersion = config.UnidentifiedLockVersion
 
 // vcsStamp extracts the revision, shortened for output, and the dirty flag Go embeds at build
 // time, through the one build-stamp reader the engine-build check also uses.
