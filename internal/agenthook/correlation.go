@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -366,7 +367,7 @@ func acquireCorrelationLock(ctx context.Context, root *os.Root, wait time.Durati
 // A lock another caller holds is not an error.
 func tryCorrelationLock(root *os.Root) (bool, error) {
 	file, err := root.OpenFile(correlationLockName, os.O_CREATE|os.O_EXCL|os.O_WRONLY, util.SecureFilePerm)
-	if errors.Is(err, os.ErrExist) {
+	if lockContended(err, runtime.GOOS) {
 		return false, nil
 	}
 	if err != nil {
@@ -376,6 +377,16 @@ func tryCorrelationLock(root *os.Root) (bool, error) {
 		return false, errors.Join(closeErr, removeCorrelationLock(root, correlationLockName))
 	}
 	return true, nil
+}
+
+// lockContended reports whether an exclusive create of the lock file failed because another
+// caller holds the lock. Windows refuses to create a file whose deletion is still pending,
+// which is the previous holder's Remove a moment earlier, with ERROR_ACCESS_DENIED, reported as
+// os.ErrPermission; that is the same contention one release later, so it is retried like
+// os.ErrExist. TestCorrelationStoreConcurrentReservations failed on windows-latest with
+// "openat .lock: Access is denied" before this.
+func lockContended(err error, goos string) bool {
+	return errors.Is(err, os.ErrExist) || (goos == "windows" && errors.Is(err, os.ErrPermission))
 }
 
 func removeCorrelationLock(root *os.Root, name string) error {

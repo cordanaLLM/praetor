@@ -451,3 +451,28 @@ func TestCorrelationStoreFullOfRowsSurvivesDebris(t *testing.T) {
 		t.Fatalf("foreign entries = %d (%v), want all %d kept", len(matches), err, 2*MaxCorrelationEntries)
 	}
 }
+
+// TestLockContended_3D: positive, an existing lock file is contention on every platform and a
+// pending-delete refusal is contention on Windows; negative, the same permission error elsewhere
+// and any other error are real failures; boundary, no error is not contention.
+func TestLockContended_3D(t *testing.T) {
+	exist := &os.PathError{Op: "openat", Path: ".lock", Err: os.ErrExist}
+	denied := &os.PathError{Op: "openat", Path: ".lock", Err: os.ErrPermission}
+	for _, tc := range []struct {
+		name string
+		err  error
+		goos string
+		want bool
+	}{
+		{"existing lock on linux", exist, "linux", true},
+		{"existing lock on windows", exist, "windows", true},
+		{"pending delete on windows", denied, "windows", true},
+		{"permission denied on linux", denied, "linux", false},
+		{"other error on windows", &os.PathError{Op: "openat", Path: ".lock", Err: os.ErrInvalid}, "windows", false},
+		{"no error", nil, "windows", false},
+	} {
+		if got := lockContended(tc.err, tc.goos); got != tc.want {
+			t.Errorf("%s: lockContended = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
