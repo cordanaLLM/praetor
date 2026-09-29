@@ -48,8 +48,10 @@ const (
 	artifactV3Sunset = "Artifact v3 sunset"
 )
 
-// Deprecated action versions known to target obsolete runtimes. From v3 on, each entry is
-// the runtime that major's action.yml declares under runs.using; buildActionCandidate
+// Deprecated action versions known to target obsolete runtimes, keyed by major tag. From v3
+// on, each entry is the runtime that major's action.yml declares under runs.using; the first
+// and the last release of every Node.js 20 major listed declare the same one. So
+// deprecatedRuntime looks an exact release up under its major, and buildActionCandidate
 // appends the upgrade target from knownActionLatest.
 var deprecatedActionVersions = map[string]map[string]string{
 	"actions/checkout": {
@@ -289,9 +291,24 @@ func buildActionCandidate(actName, curVer, fileName string) (ActionCandidate, *D
 }
 
 // deprecatedRuntime returns the deprecation deprecatedActionVersions records for action at
-// exactly version.
+// version. An exact entry wins, so a major whose runtime changed between releases can
+// record the releases that differ; any other version tag carries its major's entry, so
+// "v4.2.2", "4.2.2" and "v4.2" read as "v4" does, whether the version comes from a tag or
+// from a SHA pin's release comment (#614). A version that is not a tag, such as a commit
+// SHA or a branch, is never deprecated.
 func deprecatedRuntime(action, version string) (string, bool) {
-	reason, found := deprecatedActionVersions[action][version]
+	byVersion, ok := deprecatedActionVersions[action]
+	if !ok {
+		return "", false
+	}
+	if reason, exact := byVersion[version]; exact {
+		return reason, true
+	}
+	parsed, _, isTag := semver.ParseTag(version)
+	if !isTag {
+		return "", false
+	}
+	reason, found := byVersion[fmt.Sprintf("v%d", parsed.Major)]
 	return reason, found
 }
 
