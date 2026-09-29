@@ -184,6 +184,29 @@ func TestWorkflowRunHistory_Negative_RefusedUnknownAndInvalid(t *testing.T) {
 	}
 }
 
+// Negative (#612): when the branch has no completed run, a refused second request is
+// ErrActionsNotReadable, a server error is another error, and a 404 is a workflow the forge
+// does not know; none of them returns a partial history.
+func TestWorkflowRunHistory_Negative_SecondQuestionRefused(t *testing.T) {
+	empty := respond(t, http.StatusOK, runsBody(0))
+	gh, _ := runsForge(t, empty, respond(t, http.StatusForbidden, nil))
+	history, err := gh.WorkflowRunHistory(t.Context(), "release.yml", "main")
+	if !errors.Is(err, ErrActionsNotReadable) || history.Known {
+		t.Fatalf("a refused second request returned %+v, %v", history, err)
+	}
+	gh, _ = runsForge(t, empty, respond(t, http.StatusServiceUnavailable, nil))
+	history, err = gh.WorkflowRunHistory(t.Context(), "release.yml", "main")
+	if err == nil || errors.Is(err, ErrActionsNotReadable) || !strings.Contains(err.Error(), "release.yml") || history.Known {
+		t.Fatalf("a failed second request returned %+v, %v", history, err)
+	}
+	gh, fake := runsForge(t, empty, respond(t, http.StatusNotFound, nil))
+	history, err = gh.WorkflowRunHistory(t.Context(), "release.yml", "main")
+	if err != nil || history.Known || len(fake.requests) != 2 {
+		t.Fatalf("an unknown workflow on the second request returned %+v, %v after %d requests",
+			history, err, len(fake.requests))
+	}
+}
+
 // Boundary (#612): with no completed run on the branch, a second request on every branch tells
 // a workflow that never ran (total 0) from one that runs elsewhere; a page longer than the
 // window is cut to it; a workflow name is escaped into one path segment.

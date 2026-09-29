@@ -159,6 +159,13 @@ func (g *GitHubDriver) WorkflowRunHistory(ctx context.Context, workflow, branch 
 	if len(history.Completed) > 0 {
 		return history, nil
 	}
+	return g.readRunsAnywhere(ctx, workflow, base, history)
+}
+
+// readRunsAnywhere asks base, on every branch and in every state, for one run of a workflow with
+// no completed run on the branch, and fills Total and Latest of history. A 404 here returns a
+// history that is not Known, as on the first question.
+func (g *GitHubDriver) readRunsAnywhere(ctx context.Context, workflow, base string, history WorkflowRunHistory) (WorkflowRunHistory, error) {
 	anywhere, known, err := g.readWorkflowRuns(ctx, base+"?per_page=1")
 	if err != nil || !known {
 		return WorkflowRunHistory{}, wrapRunsError(workflow, err)
