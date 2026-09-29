@@ -180,8 +180,12 @@ func verificationMarker(rel string) bool {
 	if strings.HasSuffix(rel, ".csproj") || strings.HasSuffix(rel, ".sln") || strings.HasSuffix(rel, ".slnx") {
 		return true
 	}
+	// The pytest configuration files include pyproject.toml, the Python runtime marker.
+	if pytestConfigMarker(rel) {
+		return true
+	}
 	switch rel {
-	case "Makefile", "go.mod", "Cargo.toml", "package.json", "global.json", "pyproject.toml", "pytest.ini", ".pytest.ini", ".python-version",
+	case "Makefile", "go.mod", "Cargo.toml", "package.json", "global.json", ".python-version",
 		"meson.build", "core/meson.build", "CMakeLists.txt", "pom.xml", "build.gradle", "build.gradle.kts", "pubspec.yaml", zigBuildMarker:
 		return true
 	default:
@@ -192,7 +196,8 @@ func verificationMarker(rel string) bool {
 // presenceMarker reports a verification marker whose presence alone selects a plan step. The
 // walk records it without reading it, so a build script of any size spends none of the byte
 // budget: build.zig is Zig source, often longer than the metadata byte bound, and no planner
-// reads it.
+// reads it. pytest.toml, .pytest.toml, pytest.ini and .pytest.ini are pytest's configuration
+// even when empty, so their content is not read either (pytestPresenceMarker).
 func presenceMarker(rel string) bool {
-	return rel == zigBuildMarker
+	return rel == zigBuildMarker || pytestPresenceMarker(rel)
 }
