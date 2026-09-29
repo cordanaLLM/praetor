@@ -361,10 +361,13 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
   remove it. On every run, `--force` or not, it covers a vendor context file such as
   `CLAUDE.md` that holds a hand edit. A file that already holds its bytes is verified. Earlier
   Praetor texts are refreshed, not replaced: a vendor file that is the projection of
-  `AGENTS.md` as the run found it, Praetor's own unedited DevContainer placeholder, a catalog
+  `AGENTS.md` as the run found it or as the `HEAD` commit holds it (an `AGENTS.md` edited
+  after the last `compile-context`; without a commit only the first counts), Praetor's own
+  unedited DevContainer placeholder, a catalog
   text with a layout-only successor, an earlier text of a documentation family file, and the
   documentation gate block an earlier Praetor wrote (tests in
   `internal/adopt/locked_replace_test.go`, `internal/adopt/vendor_targets_test.go`,
+  `internal/adopt/vendor_head_projection_test.go`,
   `internal/adopt/documentation_makefile_refresh_test.go` and
   `internal/adopt/gitattributes_edit_test.go`). Without `--force`, a symlinked backup root
   fails the run before its first write when a vendor file holds a hand edit

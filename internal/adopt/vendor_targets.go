@@ -16,12 +16,18 @@ import (
 // projections of AGENTS.md). audit demands their exact bytes, so the agent-harness step always
 // rewrites them, on a plain run too; what differs is how the report lists an existing one. A
 // file that already holds its new projection, or the projection of AGENTS.md as the run found
-// it (compile-context output nobody edited), is synchronized. Any other existing file holds a
-// hand edit the rewrite drops, so it is replaced with a backup (replaceExistingAll).
+// it or as HEAD holds it (compile-context output nobody edited, AGENTS.md edited since), is
+// synchronized. Any other existing file holds a hand edit the rewrite drops, so it is replaced
+// with a backup (replaceExistingAll).
 
-// priorVendorProjections maps each vendor path to the digest (util.CanonicalTextDigest) of
-// the projection of AGENTS.md as the run found it, in the form util.LookupCanonicalText reads.
+// priorVendorProjections maps each vendor path to the digests (util.CanonicalTextDigest) of
+// the projections of AGENTS.md as the run found it and as HEAD holds it, in the form
+// util.LookupCanonicalText reads.
 type priorVendorProjections map[string]map[string]string
+
+// headAgentsRevision names AGENTS.md in the HEAD commit, relative to the repository directory
+// git runs in, which is the adoption target.
+const headAgentsRevision = "HEAD:./" + agentsFile
 
 // vendorTarget is one vendor context file the agent-harness step writes, with the bytes it
 // held before the write.
@@ -31,30 +37,61 @@ type vendorTarget struct {
 	exists bool
 }
 
-// priorVendorTexts compiles AGENTS.md as it is on disk for the vendor files clients selects
-// and returns the digest of each projection. It runs before the agent-harness step rewrites
-// AGENTS.md. An absent AGENTS.md, or one that does not compile (a foreign file adoption has
-// not merged yet), yields none, so every existing vendor file that differs from the new
-// projection counts as edited.
+// priorVendorTexts compiles AGENTS.md as it is on disk and as HEAD holds it
+// (committedAgentsText) for the vendor files clients selects and returns the digests of their
+// projections. It runs before the agent-harness step rewrites AGENTS.md. The HEAD text covers
+// an AGENTS.md edited after the last compile-context: its vendor files are still the
+// projection of the committed text. An absent AGENTS.md, or one that does not compile (a
+// foreign file adoption has not merged yet), yields none, so every existing vendor file that
+// differs from the new projection and from the HEAD one counts as edited.
 func priorVendorTexts(ctx context.Context, repoPath string, clients []string) (priorVendorProjections, error) {
 	prior := make(priorVendorProjections)
 	data, exists, err := contextopt.ObserveSnapshotIn(ctx, repoPath, agentsFile)
 	if err != nil {
 		return nil, fmt.Errorf("read %s before compiling it: %w", agentsFile, err)
 	}
-	if !exists {
-		return prior, nil
+	if exists {
+		prior.add(data, clients)
 	}
-	tr := compiler.NewTranspiler()
-	tr.Clients = clients
-	if res, compileErr := tr.CompileContent(string(data)); compileErr == nil {
-		for i := 0; i < len(res.Files) && i < maxTranspileTargets; i++ {
-			if digest, _, digestErr := util.CanonicalTextDigest([]byte(res.Files[i].Content)); digestErr == nil {
-				prior[res.Files[i].RelativePath] = map[string]string{digest: agentsFile}
-			}
-		}
+	if committed, ok := committedAgentsText(ctx, repoPath); ok {
+		prior.add(committed, clients)
 	}
 	return prior, nil
+}
+
+// add records the digest of each projection of source, an AGENTS.md text, for the vendor files
+// clients selects. A source that does not compile adds none.
+func (prior priorVendorProjections) add(source []byte, clients []string) {
+	tr := compiler.NewTranspiler()
+	tr.Clients = clients
+	res, err := tr.CompileContent(string(source))
+	if err != nil {
+		return
+	}
+	for i := 0; i < len(res.Files) && i < maxTranspileTargets; i++ {
+		digest, _, digestErr := util.CanonicalTextDigest([]byte(res.Files[i].Content))
+		if digestErr != nil {
+			continue
+		}
+		rel := res.Files[i].RelativePath
+		if prior[rel] == nil {
+			prior[rel] = make(map[string]string, 2)
+		}
+		prior[rel][digest] = agentsFile
+	}
+}
+
+// committedAgentsText returns AGENTS.md as the HEAD commit holds it, read through the isolated
+// git probe (util.RunGitProbe) and bounded like every text the writers accept. A repository
+// without a commit, a HEAD without AGENTS.md, or a git that cannot answer yields none: an
+// existing vendor file that matches no other projection then counts as edited and is backed
+// up, the reading that loses nothing.
+func committedAgentsText(ctx context.Context, repoPath string) ([]byte, bool) {
+	result, err := util.RunGitProbe(ctx, repoPath, contextopt.MaxSourceBytes, "cat-file", "blob", headAgentsRevision)
+	if err != nil {
+		return nil, false
+	}
+	return result.Stdout, true
 }
 
 // isPriorProjection reports whether data is the projection of AGENTS.md as the run found it at
