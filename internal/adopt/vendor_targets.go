@@ -138,8 +138,8 @@ func (t vendorTarget) replacesEdit(prior priorVendorProjections) bool {
 }
 
 // projectionLabels names the report details of one kind of compiled projection: the vendor
-// context files compiled from AGENTS.md (vendorContextLabels) or the persona copies projected
-// from .agents/agents (personaCopyLabels). The two share one record (projectionReplacements,
+// context files compiled from AGENTS.md (vendorContextLabels) or the persona and plugin copies
+// projected from .agents (agentSurfaceLabels). The two share one record (projectionReplacements,
 // recordProjections), so a file of either kind is created, synchronized or replaced by the same
 // rule.
 type projectionLabels struct {

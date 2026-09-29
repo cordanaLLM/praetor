@@ -15,7 +15,7 @@ export default {
     'internal/router/models.go:LoadRoutingConfig',
     'cmd/standards-mcp/main.go:main',
     'cmd/standards-lsp/main.go:main',
-    'internal/compiler/agents.go:CompileAgents',
+    'internal/compiler/projection.go:CompileAgentSurfaces',
     'internal/config/hierarchy.go:LoadCascadingRunnerConfigContext',
     'internal/config/hierarchy.go:DefaultRunnerPolicy',
     'cmd/standardsctl/models.go:runModels',

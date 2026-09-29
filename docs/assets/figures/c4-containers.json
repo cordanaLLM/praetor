@@ -38,7 +38,7 @@
     "internal/router/models.go:LoadRoutingConfig",
     "cmd/standards-mcp/main.go:main",
     "cmd/standards-lsp/main.go:main",
-    "internal/compiler/agents.go:CompileAgents",
+    "internal/compiler/projection.go:CompileAgentSurfaces",
     "internal/config/hierarchy.go:LoadCascadingRunnerConfigContext",
     "internal/config/hierarchy.go:DefaultRunnerPolicy",
     "cmd/standardsctl/models.go:runModels",
@@ -47,7 +47,7 @@
     "Dockerfile:ENTRYPOINT",
     ".github/workflows/release-binaries.yml:workflow_dispatch"
   ],
-  "spec_sha256": "4f4cd6f0a5545ae4065fdb2bc5d0fbc59b83ec45cea4f47d207495e2cb3efb3f",
+  "spec_sha256": "503dfbfc549c95d69d5c175ee47f20e20245ff3dececadf7e0289750ab86dc4b",
   "engine": {
     "commit": "ccfe85b4851957ac2adf88b4a9ddf9668b2882f1",
     "sha256": "6a70b89b2d53c73fa79cb881a89e709622b2cfd2e8568b8e9797a328993dd0fc"

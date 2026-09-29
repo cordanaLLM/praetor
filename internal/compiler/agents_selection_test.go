@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,15 +36,15 @@ func personaDirWritten(root, dir string) bool {
 
 // Positive: agent_clients in the manifest at the target root limits the persona copies to the
 // selected clients' directories, reported as slash paths.
-func TestCompileAgents_Positive_ManifestSelectsPersonaDirs(t *testing.T) {
+func TestCompileAgentSurfaces_Positive_ManifestSelectsPersonaDirs(t *testing.T) {
 	root := writePersonaFixture(t, "version: 1\nagent_clients: [codex, copilot]\n")
-	files, err := CompileAgents(context.Background(), root)
+	files, err := CompileAgentSurfaces(context.Background(), io.Discard, root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var got []string
 	for _, f := range files {
-		got = append(got, f.VendorTarget)
+		got = append(got, f.RelativePath)
 	}
 	if want := ".github/agents/helper.md,.codex/agents/helper.md"; strings.Join(got, ",") != want {
 		t.Fatalf("projected %v, want %s", got, want)
@@ -62,11 +63,11 @@ func TestCompileAgents_Positive_ManifestSelectsPersonaDirs(t *testing.T) {
 
 // Negative: an unknown client fails before any persona is written, and a manifest that does
 // not parse is not read as "every client".
-func TestCompileAgents_Negative_InvalidSelectionWritesNothing(t *testing.T) {
+func TestCompileAgentSurfaces_Negative_InvalidSelectionWritesNothing(t *testing.T) {
 	for _, manifest := range []string{"version: 1\nagent_clients: [claude, vim]\n", "version: 1\nagent_clients: [claude\n"} {
 		root := writePersonaFixture(t, manifest)
-		if _, err := CompileAgents(context.Background(), root); err == nil {
-			t.Fatalf("CompileAgents accepted %q", manifest)
+		if _, err := CompileAgentSurfaces(context.Background(), io.Discard, root); err == nil {
+			t.Fatalf("CompileAgentSurfaces accepted %q", manifest)
 		}
 		if personaDirWritten(root, ".claude/agents") {
 			t.Errorf("%q: a rejected selection still wrote a persona", manifest)
@@ -76,15 +77,15 @@ func TestCompileAgents_Negative_InvalidSelectionWritesNothing(t *testing.T) {
 
 // Boundary: no manifest keeps every client's directory (the behaviour before selection), and
 // an empty list or one naming only clients without a persona directory writes none.
-func TestCompileAgents_Boundary_AbsentEmptyAndPersonalessSelections(t *testing.T) {
+func TestCompileAgentSurfaces_Boundary_AbsentEmptyAndPersonalessSelections(t *testing.T) {
 	root := writePersonaFixture(t, "")
-	files, err := CompileAgents(context.Background(), root)
+	files, err := CompileAgentSurfaces(context.Background(), io.Discard, root)
 	if err != nil || len(files) != 4 {
 		t.Fatalf("no manifest: %d files, %v; want 4", len(files), err)
 	}
 	for _, manifest := range []string{"version: 1\nagent_clients: []\n", "version: 1\nagent_clients: [cursor, windsurf]\n"} {
 		root := writePersonaFixture(t, manifest)
-		files, err := CompileAgents(context.Background(), root)
+		files, err := CompileAgentSurfaces(context.Background(), io.Discard, root)
 		if err != nil || len(files) != 0 {
 			t.Fatalf("%q: %d files, %v; want 0", manifest, len(files), err)
 		}

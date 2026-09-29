@@ -199,10 +199,68 @@ func CompileContextProjections(ctx context.Context, w io.Writer, tr *Transpiler,
 	return sw.err
 }
 
+// PlanAgentSurfaces returns every copy CompileAgentSurfaces would write below targetDir as it
+// is now, after the same refusals, and writes nothing. A caller that reports on the copies,
+// such as adoption, reads what each target holds before CompileAgentSurfaces replaces it.
+func PlanAgentSurfaces(ctx context.Context, targetDir string) ([]TargetFile, error) {
+	plan, err := checkedAgentSurfaces(ctx, targetDir)
+	if err != nil {
+		return nil, err
+	}
+	return plan.targetFiles(), nil
+}
+
+// CompileAgentSurfaces writes what CompileContextProjections writes after the vendor files: the
+// copy of every canonical persona in the persona directory of each agent client agent_clients
+// selects (SelectPersonaDirs), and the plugin persona and skill copies when the repository ships
+// the plugin (PluginManifestRel). A directory the selection leaves out is neither written nor
+// removed. Every target is checked before the first is written, through the confined walk
+// compile-context --verify reads through, so a symlinked persona or plugin directory is refused
+// with nothing written. It returns the copies it wrote, in order. Adoption's agent-definitions
+// step writes its copies here, so adopt and compile-context project the same set (#359).
+func CompileAgentSurfaces(ctx context.Context, w io.Writer, targetDir string) ([]TargetFile, error) {
+	plan, err := checkedAgentSurfaces(ctx, targetDir)
+	if err != nil {
+		return nil, err
+	}
+	sw := &syncWriter{w: w}
+	if err := writeAgentSurfaces(ctx, sw, targetDir, plan); err != nil {
+		return nil, err
+	}
+	return plan.targetFiles(), sw.err
+}
+
+// checkedAgentSurfaces is the plan PlanAgentSurfaces and CompileAgentSurfaces share: every copy,
+// with every target checked, after refusing a nil or cancelled context.
+func checkedAgentSurfaces(ctx context.Context, targetDir string) (agentSurfacePlan, error) {
+	if ctx == nil {
+		return agentSurfacePlan{}, errors.New("agent projection: context cannot be nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return agentSurfacePlan{}, fmt.Errorf("agent projection cancelled: %w", err)
+	}
+	plan, err := planAgentSurfaces(ctx, targetDir, nil)
+	if err != nil {
+		return agentSurfacePlan{}, fmt.Errorf("agent projection failed: %w", err)
+	}
+	return plan, nil
+}
+
 // agentSurfacePlan holds every persona and plugin copy one compile writes: the persona copies
 // agent_clients selects, and the plugin persona and skill copies when the plugin ships.
 type agentSurfacePlan struct {
 	personas, pluginPersonas, pluginSkills []projectionFile
+}
+
+// targetFiles lists every copy of the plan in write order, as the compiled files a report reads.
+func (p agentSurfacePlan) targetFiles() []TargetFile {
+	files := make([]TargetFile, 0, len(p.personas)+len(p.pluginPersonas)+len(p.pluginSkills))
+	for _, set := range [][]projectionFile{p.personas, p.pluginPersonas, p.pluginSkills} {
+		for _, file := range set {
+			files = append(files, TargetFile{RelativePath: file.rel, Content: string(file.data)})
+		}
+	}
+	return files
 }
 
 // planAgentSurfaces reads every canonical persona and skill and checks the target of every

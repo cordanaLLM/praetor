@@ -439,7 +439,8 @@ func adoptSteps() []namedStep {
 
 // executeAdoptSteps runs the reconciliation chain in order, stopping at the first
 // failure and observing context cancellation between steps. A chain that ran to the end has
-// every file it wrote checked against the repository's ignore rules (reportIgnoredWrites).
+// every file it wrote checked against the repository's ignore rules (reportIgnoredWrites), and
+// is then checked by compile-context --verify (verifyAgentContext) before the run reports success.
 func executeAdoptSteps(ctx context.Context, s *adoptSession) error {
 	steps := adoptSteps()
 	known := make([]string, 0, len(steps))
@@ -476,6 +477,7 @@ func executeAdoptSteps(ctx context.Context, s *adoptSession) error {
 		s.report.recordStep(name, StepCompleted, from)
 	}
 	reportIgnoredWrites(ctx, s)
+	verifyAgentContext(ctx, s, declined)
 	return nil
 }
 

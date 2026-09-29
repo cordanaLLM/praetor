@@ -85,6 +85,25 @@ func (r *AdoptReport) addStepWarning(step int, text string) {
 	}
 }
 
+// attachToStep records warnings and errors a check after the chain found in the output of step
+// name, on the report and on that step's outcome, which an error marks failed: the pillars that
+// read the step then never claim what the check refuted. A step the chain did not record gets
+// the findings on the report alone.
+func (r *AdoptReport) attachToStep(name string, warnings, errs []string) {
+	r.Warnings = append(r.Warnings, warnings...)
+	r.Errors = append(r.Errors, errs...)
+	for i := 0; i < len(r.Steps) && i < maxAdoptSteps; i++ {
+		if r.Steps[i].Name != name {
+			continue
+		}
+		r.Steps[i].Warnings = append(r.Steps[i].Warnings, warnings...)
+		r.Steps[i].Errors = append(r.Steps[i].Errors, errs...)
+		if len(r.Steps[i].Errors) > 0 {
+			r.Steps[i].Status = StepFailed
+		}
+	}
+}
+
 // since copies list from offset from; an offset outside the list selects nothing.
 func since(list []string, from int) []string {
 	if from < 0 || from >= len(list) {
