@@ -195,11 +195,11 @@ func identityCheckout(t *testing.T, dir, remote, manifest string) func(string, .
 func TestRepositoryNameFollowsIdentity_Positive(t *testing.T) {
 	registry := acmeRegistry(t)
 	parent := t.TempDir()
-	checkout := filepath.Join(parent, "kernel-forge-checkout")
-	identityCheckout(t, checkout, "https://github.com/acme/other.git", "repository:\n  owner: acme\n  name: nucleus\n")
+	checkout := filepath.Join(parent, "renamed-checkout")
+	identityCheckout(t, checkout, "https://github.com/acme/other.git", "repository:\n  owner: acme\n  name: platform\n")
 	row := scanRowWith(t, registry, checkout)
-	if row.Repository != "nucleus" || row.RepositoryFallback != "" || FormatRepositoryFallback(row) != "" {
-		t.Fatalf("row = %q (fallback %q), want nucleus from .standards.yaml", row.Repository, row.RepositoryFallback)
+	if row.Repository != "platform" || row.RepositoryFallback != "" || FormatRepositoryFallback(row) != "" {
+		t.Fatalf("row = %q (fallback %q), want platform from .standards.yaml", row.Repository, row.RepositoryFallback)
 	}
 	epic, err := GeneratePreMigrationEpic(t.Context(), checkout, acmeSource(""), registry)
 	if err != nil {
@@ -213,17 +213,17 @@ func TestRepositoryNameFollowsIdentity_Positive(t *testing.T) {
 		titles = append(titles, omitted.Title)
 	}
 	for _, title := range titles {
-		if !strings.HasSuffix(title, ": nucleus") {
-			t.Errorf("epic title %q does not name nucleus", title)
+		if !strings.HasSuffix(title, ": platform") {
+			t.Errorf("epic title %q does not name platform", title)
 		}
 	}
-	if !strings.HasPrefix(epic.ChecklistMarkdown, "# Pre-Migration Epic: nucleus\n") || strings.Contains(epic.ChecklistMarkdown, "Repository Name") {
+	if !strings.HasPrefix(epic.ChecklistMarkdown, "# Pre-Migration Epic: platform\n") || strings.Contains(epic.ChecklistMarkdown, "Repository Name") {
 		t.Errorf("checklist header:\n%s", epic.ChecklistMarkdown)
 	}
 	if err := WriteNeedsManifest(checkout, row); err != nil {
 		t.Fatal(err)
 	}
-	renamed := filepath.Join(parent, "nucleus")
+	renamed := filepath.Join(parent, "platform")
 	if err := os.Rename(checkout, renamed); err != nil {
 		t.Fatal(err)
 	}
@@ -233,9 +233,9 @@ func TestRepositoryNameFollowsIdentity_Positive(t *testing.T) {
 
 	// The origin remote names the repository when .standards.yaml does not.
 	remoteOnly := filepath.Join(parent, "ci-workspace")
-	identityCheckout(t, remoteOnly, "git@github.com:acme/nucleus.git", "")
-	if row := scanRowWith(t, registry, remoteOnly); row.Repository != "nucleus" || row.RepositoryFallback != "" {
-		t.Errorf("remote-only row = %q (fallback %q), want nucleus", row.Repository, row.RepositoryFallback)
+	identityCheckout(t, remoteOnly, "git@github.com:acme/platform.git", "")
+	if row := scanRowWith(t, registry, remoteOnly); row.Repository != "platform" || row.RepositoryFallback != "" {
+		t.Errorf("remote-only row = %q (fallback %q), want platform", row.Repository, row.RepositoryFallback)
 	}
 }
 
@@ -274,7 +274,7 @@ func TestRepositoryNameFallbackIsNamed_Negative(t *testing.T) {
 	// module path whatever the checkout's directory or repository.name says.
 	module := filepath.Join(t.TempDir(), "svc-checkout")
 	writeRepoFile(t, filepath.Join(module, "go.mod"), "module example.com/acme/svc\ngo 1.24\n")
-	writeRepoFile(t, filepath.Join(module, ".standards.yaml"), "repository:\n  name: nucleus\n")
+	writeRepoFile(t, filepath.Join(module, ".standards.yaml"), "repository:\n  name: platform\n")
 	if row := scanRowWith(t, registry, module); row.Repository != "example.com/acme/svc" || row.RepositoryFallback != "" {
 		t.Errorf("Go module row = %q (fallback %q), want its module path", row.Repository, row.RepositoryFallback)
 	}
@@ -287,20 +287,20 @@ func TestRepositoryNameFallbackIsNamed_Negative(t *testing.T) {
 func TestRepositoryNameIdentity_Boundary(t *testing.T) {
 	registry := acmeRegistry(t)
 	parent := t.TempDir()
-	primary := filepath.Join(parent, "nucleus")
-	run := identityCheckout(t, primary, "https://github.com/acme/nucleus.git", "repository:\n  name: nucleus\n")
+	primary := filepath.Join(parent, "platform")
+	run := identityCheckout(t, primary, "https://github.com/acme/platform.git", "repository:\n  name: platform\n")
 	run(primary, "add", "requirements.txt", ".standards.yaml")
 	run(primary, "commit", "-q", "-m", "init")
 	worktree := filepath.Join(parent, "review-4711")
 	run(primary, "worktree", "add", "-q", "-b", "review", worktree)
-	if row := scanRowWith(t, registry, worktree); row.Repository != "nucleus" || row.RepositoryFallback != "" {
-		t.Errorf("linked worktree row = %q (fallback %q), want nucleus", row.Repository, row.RepositoryFallback)
+	if row := scanRowWith(t, registry, worktree); row.Repository != "platform" || row.RepositoryFallback != "" {
+		t.Errorf("linked worktree row = %q (fallback %q), want platform", row.Repository, row.RepositoryFallback)
 	}
 
 	dotNamed := filepath.Join(parent, "dot-clone")
-	identityCheckout(t, dotNamed, "https://github.com/acme/.", "repository:\n  name: nucleus\n")
-	if row := scanRowWith(t, registry, dotNamed); row.Repository != "nucleus" {
-		t.Errorf("clone with a /. origin = %q, want the manifest's nucleus", row.Repository)
+	identityCheckout(t, dotNamed, "https://github.com/acme/.", "repository:\n  name: platform\n")
+	if row := scanRowWith(t, registry, dotNamed); row.Repository != "platform" {
+		t.Errorf("clone with a /. origin = %q, want the manifest's platform", row.Repository)
 	}
 	dotOnly := filepath.Join(parent, "dot-only")
 	identityCheckout(t, dotOnly, "https://github.com/acme/.", "")
@@ -315,8 +315,8 @@ func TestRepositoryNameIdentity_Boundary(t *testing.T) {
 	if row := scanRowWith(t, registry, nested); row.Repository != "api" || row.RepositoryFallback != config.ErrRepositoryNameUnknown.Error() {
 		t.Errorf("nested directory row = %q (fallback %q), want api named after its directory", row.Repository, row.RepositoryFallback)
 	}
-	writeRepoFile(t, filepath.Join(nested, ".standards.yaml"), "repository:\n  name: nucleus-api\n")
-	if row := scanRowWith(t, registry, nested); row.Repository != "nucleus-api" || row.RepositoryFallback != "" {
-		t.Errorf("nested directory with a manifest = %q (fallback %q), want nucleus-api", row.Repository, row.RepositoryFallback)
+	writeRepoFile(t, filepath.Join(nested, ".standards.yaml"), "repository:\n  name: platform-api\n")
+	if row := scanRowWith(t, registry, nested); row.Repository != "platform-api" || row.RepositoryFallback != "" {
+		t.Errorf("nested directory with a manifest = %q (fallback %q), want platform-api", row.Repository, row.RepositoryFallback)
 	}
 }

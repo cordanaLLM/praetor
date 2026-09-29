@@ -75,15 +75,15 @@ func TestNeedsScanNamesRepositoryFallback_3D(t *testing.T) {
 		t.Fatalf("needs scan --check of a fallback row: %v\n%s", err, out)
 	}
 	// Positive: repository.name names it, and no fallback line is printed.
-	writeFixtureFile(t, repo, ".standards.yaml", "repository:\n  name: nucleus\n")
+	writeFixtureFile(t, repo, ".standards.yaml", "repository:\n  name: platform\n")
 	out, err = runNeedsCapture(t, "scan", "--path="+repo)
-	if err != nil || !strings.Contains(out, "=== Framework Needs Scan: nucleus ===\n") || strings.Contains(out, "Repository name:") {
+	if err != nil || !strings.Contains(out, "=== Framework Needs Scan: platform ===\n") || strings.Contains(out, "Repository name:") {
 		t.Fatalf("needs scan of a named repository: %v\n%s", err, out)
 	}
 	// Boundary: the manifest written under the directory name is stale against the name
 	// .standards.yaml now gives.
 	_, err = runNeedsCapture(t, "scan", "--check", "--path="+repo)
-	if err == nil || !strings.Contains(err.Error(), "+ generated:2: repository: nucleus") {
+	if err == nil || !strings.Contains(err.Error(), "+ generated:2: repository: platform") {
 		t.Fatalf("check after naming the repository: %v", err)
 	}
 }

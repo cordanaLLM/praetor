@@ -111,10 +111,10 @@ func TestResolveRepositoryIdentity_Boundary(t *testing.T) {
 // owner: the manifest's repository.name, then the origin remote, never the directory (#606).
 func TestResolveRepositoryName_Positive(t *testing.T) {
 	cases := []struct{ name, dir, remote, manifest, want string }{
-		{"manifest wins over remote and directory", "kernel-forge-checkout", "https://github.com/acme/other.git", "repository:\n  name: nucleus\n", "nucleus"},
-		{"remote when the manifest names none", "kernel-forge-checkout", "git@github.com:acme/nucleus.git", "repository:\n  owner: acme\n", "nucleus"},
-		{"no owner anywhere is no error", "checkout", "", "repository:\n  name: nucleus\n", "nucleus"},
-		{"manifest name despite a remote ending in /.", "checkout", "https://github.com/acme/.", "repository:\n  name: nucleus\n", "nucleus"},
+		{"manifest wins over remote and directory", "renamed-checkout", "https://github.com/acme/other.git", "repository:\n  name: platform\n", "platform"},
+		{"remote when the manifest names none", "renamed-checkout", "git@github.com:acme/platform.git", "repository:\n  owner: acme\n", "platform"},
+		{"no owner anywhere is no error", "checkout", "", "repository:\n  name: platform\n", "platform"},
+		{"manifest name despite a remote ending in /.", "checkout", "https://github.com/acme/.", "repository:\n  name: platform\n", "platform"},
 	}
 	for _, tc := range cases {
 		repo := identityRepo(t, tc.dir, tc.remote, tc.manifest)
@@ -122,9 +122,9 @@ func TestResolveRepositoryName_Positive(t *testing.T) {
 			t.Errorf("%s: ResolveRepositoryName = %q, %v; want %q", tc.name, got, err, tc.want)
 		}
 	}
-	named := identityRepo(t, "checkout", "https://github.com/acme/other.git", "repository:\n  name: nucleus\n")
-	if got, err := ManifestRepositoryName(named); err != nil || got != "nucleus" {
-		t.Errorf("ManifestRepositoryName = %q, %v; want nucleus", got, err)
+	named := identityRepo(t, "checkout", "https://github.com/acme/other.git", "repository:\n  name: platform\n")
+	if got, err := ManifestRepositoryName(named); err != nil || got != "platform" {
+		t.Errorf("ManifestRepositoryName = %q, %v; want platform", got, err)
 	}
 }
 
