@@ -602,23 +602,32 @@ Praetor upgrade can add a check that reports code nobody changed. `praetorctl au
 before rendering (`hiss.AttributeRatchet` in
 [`internal/hiss/attribution.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hiss/attribution.go)). They copy the violations' files, as
 the commit `commit_sha` in the baseline names holds them, into a temporary directory and scan that
-copy with the current checks and the same policy. A Go call cycle brings its whole package:
+copy with the current checks and the same policy. A Go call cycle brings its whole package. The
+copy is scanned as its own scope, without asking git which files belong, so a temporary directory
+inside a work tree that ignores it changes nothing. A copy scan that leaves a file unread, or a
+file of the commit that does not parse, traces nothing:
 
 | Class tag | Meaning |
 | :--- | :--- |
 | `(new)` | The checks do not report it at that commit: the code changed since the baseline was recorded. |
 | `(check added or changed since the baseline)` | The checks report the same rule, file, symbol and message at that commit, yet the baseline does not record it: a check or limit changed, not the code. |
-| `(not in the baseline)` | Not traced. The baseline records no commit, the clone lacks it, the violations span more than 200 files, or the rejection comes from a surface that does not attribute (the gate's HISS stage, dogfood verification). The rejection states the reason. |
+| `(recorded in the baseline at line N)` | The baseline records the same rule, file, symbol and message at line N, which no current violation occupies: lines above it moved, the debt did not. Needs no commit, so a baseline without `commit_sha` gets it too. |
+| `(not in the baseline)` | Not traced. The baseline records no commit, the clone lacks it, the violations span more than 200 files, the copy scan was incomplete, or the rejection comes from a surface that does not attribute (the gate's HISS stage, dogfood verification). The rejection states the reason. |
 
 Only a rejection whose every unbaselined violation is `(new)` keeps the header `HISS invariant
-violations introduced`. Every other rejection reads `HISS invariant violations the baseline does
-not record` and names the deliberate re-record, `praetorctl baseline --record --allow-increase
---reason=<why>`. A finding the baseline records at another line was known to the recorder and is
-never blamed on a changed check. Matching ignores line numbers, so when one file holds several
-identical findings, the count per class is exact but which line gets `(new)` follows scan order.
+violations introduced`. One whose every unbaselined violation only moved reads `HISS invariant
+violations the baseline records at other lines` and names the plain re-record, `praetorctl
+baseline --record`: the count did not rise, so it needs no `--allow-increase`. Every other
+rejection reads `HISS invariant violations the baseline does not record` and names the deliberate
+re-record, `praetorctl baseline --record --allow-increase --reason=<why>`, for the findings a
+changed check or an untraced cause explains. Matching ignores line numbers, so when one file holds
+several identical findings, the count per class is exact but which line gets `(new)` follows scan
+order.
 The verdict never changes: HISS-13 still refuses the higher count
 ([`internal/hiss/attribution_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hiss/attribution_test.go),
-`TestRatchetResultAttribute_*` in `internal/baseline/describe_test.go`).
+`TestRatchetResultAttribute*` in `internal/baseline/describe_test.go`,
+`TestBaselineVerify_Positive_MovedFindingNeedsOnlyARerecord` in
+`cmd/standardsctl/baseline_ratchet_report_test.go`).
 
 A ratchet can also fail with both lists empty: every violation matches a baselined fingerprint
 and no file was touched, yet the total rose above the baseline's. `RatchetResult.CountRegressed`

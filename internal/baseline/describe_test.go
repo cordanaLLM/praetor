@@ -186,9 +186,94 @@ func TestRatchetResultAttribute_Negative_ChangedCodeAndMovedFinding(t *testing.T
 	_, _, atCommit := attributionFixture()
 	res = EvaluateRatchet(recorded, current, nil)
 	res.Attribute(recorded, current, atCommit, recorded.CommitSHA)
-	want := []Attribution{AttributionNone, AttributionCheckChanged, AttributionIntroduced}
-	if !slices.Equal(res.Attribution, want) {
-		t.Fatalf("Attribution with a moved recorded finding = %v, want %v", res.Attribution, want)
+	want := []Attribution{AttributionMoved, AttributionCheckChanged, AttributionIntroduced}
+	if !slices.Equal(res.Attribution, want) || !slices.Equal(res.RecordedLine, []int{40, 0, 0}) {
+		t.Fatalf("Attribution with a moved recorded finding = %v at %v, want %v at [40 0 0]", res.Attribution, res.RecordedLine, want)
+	}
+	got := res.Summary()
+	for _, line := range []string{
+		"(3 total infractions, 3 unbaselined (1 introduced, 1 from checks added or changed since the baseline, 1 recorded at another line), 0 in touched files):",
+		"[HISS-07] hooks/guard.py:50 - sys.exit ends the process from library code (recorded in the baseline at line 40)",
+		"[HISS-07] hooks/guard.py:58 - sys.exit ends the process from library code (check added or changed since the baseline)",
+		"1 of them the baseline records at another line of the same file",
+	} {
+		if !strings.Contains(got, line) {
+			t.Errorf("Summary() missing %q:\n%s", line, got)
+		}
+	}
+	if strings.Contains(got, "not traced") || strings.Contains(got, "(not in the baseline)") {
+		t.Errorf("a moved finding is described as untraced although a commit was compared:\n%s", got)
+	}
+}
+
+// movedFixture is the line drift of #29: the baseline records one finding at line 10, and lines
+// added above it moved it to line 12. The debt did not change.
+func movedFixture() (b *Baseline, current []Infraction) {
+	msg := "sys.exit ends the process from library code"
+	b = &Baseline{CommitSHA: "0123456789abcdef0123456789abcdef01234567", TotalInfractions: 1, Infractions: []Infraction{
+		{RuleID: "HISS-07", FilePath: "a.py", LineNumber: 10, Message: msg, Fingerprint: "a.py:10:HISS-07"},
+	}}
+	current = []Infraction{{RuleID: "HISS-07", FilePath: "a.py", LineNumber: 12, Message: msg, Fingerprint: "a.py:12:HISS-07"}}
+	return b, current
+}
+
+// Positive (#29, #599): a finding the baseline records at another line is tagged with that line,
+// the header says the baseline records it elsewhere, and the remedy is the plain re-record: the
+// count did not rise, so neither --allow-increase nor an untraced reason is named.
+func TestRatchetResultAttribute_Positive_MovedFindingNeedsOnlyARerecord(t *testing.T) {
+	b, current := movedFixture()
+	res := EvaluateRatchet(b, current, nil)
+	res.Attribute(b, current, []Infraction{b.Infractions[0]}, b.CommitSHA)
+	if res.Passed || !slices.Equal(res.Attribution, []Attribution{AttributionMoved}) {
+		t.Fatalf("passed=%v attribution=%v, want a rejection tagged moved", res.Passed, res.Attribution)
+	}
+	want := strings.Join([]string{
+		"HISS invariant violations the baseline records at other lines (1 total infractions, 1 moved, 0 in touched files):",
+		"  [HISS-07] a.py:12 - sys.exit ends the process from library code (recorded in the baseline at line 10)",
+		"  1 of them the baseline records at another line of the same file: lines above them were added or removed, " +
+			"and the debt did not change; re-record the baseline with 'praetorctl baseline --record', which needs no --allow-increase for them",
+	}, "\n")
+	if got := res.Summary(); got != want {
+		t.Errorf("Summary() =\n%s\nwant\n%s", got, want)
+	}
+}
+
+// Boundary (#29): moving needs no commit to tell. A baseline without commit_sha still tags the
+// moved finding and gives every other one the reason, and an untraced attribution with nothing
+// moved leaves Attribution nil; a nil result or baseline is left alone.
+func TestRatchetResultAttributeUntraced_Boundary_MovedNeedsNoCommit(t *testing.T) {
+	b, current := movedFixture()
+	b.CommitSHA = ""
+	added := Infraction{RuleID: "HISS-02", FilePath: "b.py", LineNumber: 3, Message: "unbounded loop", Fingerprint: "b.py:3:HISS-02"}
+	current = append(current, added)
+	note := "the baseline records no commit to compare against"
+	res := EvaluateRatchet(b, current, nil)
+	res.AttributeUntraced(b, current, note)
+	if !slices.Equal(res.Attribution, []Attribution{AttributionMoved, AttributionNone}) || res.AttributionNote != note || res.AttributionCommit != "" {
+		t.Fatalf("attribution %v note %q commit %q, want [moved none] with the note", res.Attribution, res.AttributionNote, res.AttributionCommit)
+	}
+	got := res.Summary()
+	for _, line := range []string{
+		"(2 total infractions, 2 unbaselined (1 recorded at another line, 1 unattributed), 0 in touched files):",
+		"(recorded in the baseline at line 10)",
+		"[HISS-02] b.py:3 - unbounded loop (not in the baseline)",
+		"1 of them were not traced to a code change (" + note + ")",
+	} {
+		if !strings.Contains(got, line) {
+			t.Errorf("Summary() missing %q:\n%s", line, got)
+		}
+	}
+
+	res = EvaluateRatchet(b, []Infraction{added}, nil)
+	res.AttributeUntraced(b, []Infraction{added}, note)
+	if res.Attribution != nil || res.RecordedLine != nil || res.AttributionNote != note {
+		t.Errorf("nothing moved: attribution %v lines %v note %q, want nil, nil and the note", res.Attribution, res.RecordedLine, res.AttributionNote)
+	}
+	res.AttributeUntraced(nil, current, "other")
+	var nilResult *RatchetResult
+	nilResult.AttributeUntraced(b, current, note)
+	if res.Attribution != nil || res.AttributionNote != "other" {
+		t.Errorf("a nil baseline tagged findings or dropped the note: %v %q", res.Attribution, res.AttributionNote)
 	}
 }
 

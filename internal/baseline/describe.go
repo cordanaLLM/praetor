@@ -2,6 +2,7 @@ package baseline
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -10,9 +11,9 @@ type Attribution string
 
 const (
 	// AttributionNone means nothing traced the violation: no attribution ran, or it could not
-	// read the commit the baseline was recorded at, or the baseline records the same finding at
-	// another line. Summary describes it as not in the baseline, never as introduced, because a
-	// check added after the baseline was recorded reports unchanged code exactly this way.
+	// read the commit the baseline was recorded at. Summary describes it as not in the baseline,
+	// never as introduced, because a check added after the baseline was recorded reports
+	// unchanged code exactly this way.
 	AttributionNone Attribution = ""
 	// AttributionIntroduced means the current checks do not report the violation in the files as
 	// the baseline's commit holds them: the code changed after the baseline was recorded.
@@ -21,6 +22,11 @@ const (
 	// commit too, yet the baseline does not record it: the code is unchanged, and a check or limit
 	// added or changed after the baseline was recorded reports it.
 	AttributionCheckChanged Attribution = "check-changed"
+	// AttributionMoved means the baseline records the same rule, file, symbol and message at a
+	// line no current violation occupies: lines above it were added or removed since the
+	// baseline was recorded, and the debt did not change (#29). The baseline and the scan tell
+	// it without a commit, and a plain re-record, without --allow-increase, clears it.
+	AttributionMoved Attribution = "moved"
 )
 
 // Commands a rejection names: the read-only listings and the deliberate re-record.
@@ -28,19 +34,30 @@ const (
 	verifyLister = "'praetorctl baseline --verify --all-violations'"
 	auditLister  = "'praetorctl audit --all-violations'"
 	recordRemedy = "'praetorctl baseline --record --allow-increase --reason=<why>'"
+	reRecord     = "'praetorctl baseline --record'"
 )
 
 // shortCommitLen is how many characters of the compared commit a rejection prints.
 const shortCommitLen = 12
 
 // violationClass is one listed class of a rejection: the tag each line carries, how its
-// hidden-remainder marker counts it, and the read-only command that lists every member.
+// hidden-remainder marker counts it, and the read-only command that lists every member. A
+// non-empty entry of tags replaces tag for the item at its index.
 type violationClass struct {
 	items  []Infraction
+	tags   []string
 	tag    string
 	one    string
 	many   string
 	lister string
+}
+
+// tagOf is the tag the class's item i carries.
+func (c violationClass) tagOf(i int) string {
+	if i < len(c.tags) && c.tags[i] != "" {
+		return c.tags[i]
+	}
+	return c.tag
 }
 
 // lines renders the class as [rule] file:line - message (tag) lines. A positive limit bounds
@@ -54,7 +71,7 @@ func (c violationClass) lines(limit int) []string {
 	out := make([]string, 0, shown+1)
 	for i := 0; i < shown; i++ {
 		v := c.items[i]
-		out = append(out, fmt.Sprintf("  [%s] %s:%d - %s (%s)", v.RuleID, v.FilePath, v.LineNumber, v.Message, c.tag))
+		out = append(out, fmt.Sprintf("  [%s] %s:%d - %s (%s)", v.RuleID, v.FilePath, v.LineNumber, v.Message, c.tagOf(i)))
 	}
 	hidden := len(c.items) - shown
 	if hidden == 0 {
@@ -70,7 +87,9 @@ func (c violationClass) lines(limit int) []string {
 // newPartition splits NewViolations by attribution. Without an attribution for every entry,
 // all of them are unattributed.
 type newPartition struct {
-	introduced, changed, unknown []Infraction
+	introduced, changed, moved, unknown []Infraction
+	// movedTags holds, per moved entry, the tag naming the line the baseline records it at.
+	movedTags []string
 }
 
 func (r *RatchetResult) partitionNew() newPartition {
@@ -85,11 +104,31 @@ func (r *RatchetResult) partitionNew() newPartition {
 			p.introduced = append(p.introduced, r.NewViolations[i])
 		case AttributionCheckChanged:
 			p.changed = append(p.changed, r.NewViolations[i])
+		case AttributionMoved:
+			p.moved = append(p.moved, r.NewViolations[i])
+			p.movedTags = append(p.movedTags, movedTag(r.recordedLine(i)))
 		default:
 			p.unknown = append(p.unknown, r.NewViolations[i])
 		}
 	}
 	return p
+}
+
+// recordedLine is the line the baseline records new violation i at, or zero when unknown.
+func (r *RatchetResult) recordedLine(i int) int {
+	if i < len(r.RecordedLine) {
+		return r.RecordedLine[i]
+	}
+	return 0
+}
+
+// movedTag names the line the baseline records a moved violation at; a baseline entry without a
+// line number gets the generic tag.
+func movedTag(line int) string {
+	if line > 0 {
+		return fmt.Sprintf("recorded in the baseline at line %d", line)
+	}
+	return "recorded in the baseline at another line"
 }
 
 // classes lists the rejection's classes in the order Summary prints them.
@@ -98,6 +137,8 @@ func (r *RatchetResult) classes(p newPartition) []violationClass {
 		{items: p.introduced, tag: "new", one: "new violation", many: "new violations", lister: verifyLister},
 		{items: p.changed, tag: "check added or changed since the baseline",
 			one: "violation from a changed check", many: "violations from changed checks", lister: verifyLister},
+		{items: p.moved, tags: p.movedTags, tag: movedTag(0),
+			one: "violation the baseline records at another line", many: "violations the baseline records at other lines", lister: verifyLister},
 		{items: p.unknown, tag: "not in the baseline",
 			one: "unbaselined violation", many: "unbaselined violations", lister: verifyLister},
 		{items: r.TouchedCleanViolations, tag: "touched file must be clean",
@@ -126,12 +167,18 @@ func (r *RatchetResult) render(limit int) string {
 }
 
 // header names the counts. Only a rejection whose every unbaselined violation is traced to a
-// code change is called introduced; any other says the baseline does not record them.
+// code change is called introduced, and one whose every unbaselined violation only moved says
+// the baseline records them at other lines; any other says the baseline does not record them.
 func (r *RatchetResult) header(p newPartition) string {
 	touched := len(r.TouchedCleanViolations)
-	if len(p.changed) == 0 && len(p.unknown) == 0 {
+	untraced := len(p.changed) + len(p.unknown)
+	switch {
+	case untraced == 0 && len(p.moved) == 0:
 		return fmt.Sprintf("HISS invariant violations introduced (%d total infractions, %d new unbaselined, %d in touched files):",
 			r.CurrentCount, len(p.introduced), touched)
+	case untraced == 0 && len(p.introduced) == 0:
+		return fmt.Sprintf("HISS invariant violations the baseline records at other lines (%d total infractions, %d moved, %d in touched files):",
+			r.CurrentCount, len(p.moved), touched)
 	}
 	return fmt.Sprintf("HISS invariant violations the baseline does not record (%d total infractions, %d unbaselined%s, %d in touched files):",
 		r.CurrentCount, len(r.NewViolations), r.breakdown(p), touched)
@@ -149,6 +196,9 @@ func (r *RatchetResult) breakdown(p newPartition) string {
 	if n := len(p.changed); n > 0 {
 		parts = append(parts, fmt.Sprintf("%d from checks added or changed since the baseline", n))
 	}
+	if n := len(p.moved); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d recorded at another line", n))
+	}
 	if n := len(p.unknown); n > 0 {
 		parts = append(parts, fmt.Sprintf("%d unattributed", n))
 	}
@@ -163,6 +213,10 @@ func (r *RatchetResult) explanations(p newPartition) []string {
 		out = append(out, fmt.Sprintf("  %d of them sit in code the current checks flag at %s, the commit the baseline was recorded at, "+
 			"and the baseline does not record them: a check or limit added or changed since the baseline was recorded reports them, "+
 			"not a code change; fix them or record them with %s", n, shortCommit(r.AttributionCommit), recordRemedy))
+	}
+	if n := len(p.moved); n > 0 {
+		out = append(out, fmt.Sprintf("  %d of them the baseline records at another line of the same file: lines above them were added or removed, "+
+			"and the debt did not change; re-record the baseline with %s, which needs no --allow-increase for them", n, reRecord))
 	}
 	if n := len(p.unknown); n > 0 {
 		reason := "no commit was compared"
@@ -188,38 +242,69 @@ func shortCommit(commit string) string {
 // commit the baseline b was recorded at. current is the scan the ratchet judged.
 //
 // A violation the baseline records at another line (a moved fingerprint) was known to the
-// recorder and stays AttributionNone. One the current checks also report at commit sits in code
-// that has not changed since, so a recorder that had the check would have recorded it:
-// AttributionCheckChanged. Anything else is AttributionIntroduced. Findings match on rule, file,
-// symbol and message, never on the line, and each finding explains at most one violation.
+// recorder: AttributionMoved, with that line in RecordedLine. One the current checks also report
+// at commit sits in code that has not changed since, so a recorder that had the check would have
+// recorded it: AttributionCheckChanged. Anything else is AttributionIntroduced. Findings match on
+// rule, file, symbol and message, never on the line, and each finding explains at most one
+// violation.
 func (r *RatchetResult) Attribute(b *Baseline, current, atCommit []Infraction, commit string) {
 	if r == nil || b == nil {
 		return
 	}
-	moved := movedRecorded(b.Infractions, current)
-	existed := countFindings(atCommit)
-	r.Attribution = make([]Attribution, len(r.NewViolations))
-	for i := 0; i < len(r.NewViolations); i++ {
-		r.Attribution[i] = attributeOne(findingKey(r.NewViolations[i]), moved, existed)
-	}
+	r.attribute(b, current, countFindings(atCommit))
 	r.AttributionCommit = commit
 	r.AttributionNote = ""
 }
 
-// attributeOne classifies one new violation and consumes the findings that explain it.
-func attributeOne(key string, moved, existed map[string]int) Attribution {
-	atCommit := take(existed, key)
-	switch {
-	case take(moved, key):
-		return AttributionNone
-	case atCommit:
-		return AttributionCheckChanged
-	default:
-		return AttributionIntroduced
+// AttributeUntraced records note, why no commit could be compared, and still tags the new
+// violations the baseline records at another line: the baseline b and current, the scan the
+// ratchet judged, tell those without a commit. Every other new violation stays AttributionNone,
+// and Attribution stays nil when none moved.
+func (r *RatchetResult) AttributeUntraced(b *Baseline, current []Infraction, note string) {
+	if r == nil {
+		return
+	}
+	r.AttributionCommit = ""
+	r.AttributionNote = note
+	if b == nil {
+		return
+	}
+	r.attribute(b, current, nil)
+	if !slices.Contains(r.Attribution, AttributionMoved) {
+		r.Attribution, r.RecordedLine = nil, nil
 	}
 }
 
-// take consumes one count of key and reports whether there was one.
+// attribute fills Attribution and RecordedLine. existed counts the findings at the compared
+// commit; nil means no commit was compared, and a violation that did not move stays
+// AttributionNone.
+func (r *RatchetResult) attribute(b *Baseline, current []Infraction, existed map[string]int) {
+	moved := movedRecorded(b.Infractions, current)
+	r.Attribution = make([]Attribution, len(r.NewViolations))
+	r.RecordedLine = make([]int, len(r.NewViolations))
+	for i := 0; i < len(r.NewViolations); i++ {
+		r.Attribution[i], r.RecordedLine[i] = attributeOne(findingKey(r.NewViolations[i]), moved, existed)
+	}
+}
+
+// attributeOne classifies one new violation, consumes the findings that explain it and returns
+// the line the baseline records a moved one at.
+func attributeOne(key string, moved map[string][]int, existed map[string]int) (Attribution, int) {
+	atCommit := take(existed, key)
+	if line, ok := takeLine(moved, key); ok {
+		return AttributionMoved, line
+	}
+	switch {
+	case existed == nil:
+		return AttributionNone, 0
+	case atCommit:
+		return AttributionCheckChanged, 0
+	default:
+		return AttributionIntroduced, 0
+	}
+}
+
+// take consumes one count of key and reports whether there was one. A nil counts has none.
 func take(counts map[string]int, key string) bool {
 	if counts[key] <= 0 {
 		return false
@@ -228,17 +313,28 @@ func take(counts map[string]int, key string) bool {
 	return true
 }
 
-// movedRecorded counts, per finding, the recorded infractions whose fingerprint no current
-// violation carries: findings the recorder saw at a line they no longer occupy.
-func movedRecorded(recorded, current []Infraction) map[string]int {
+// takeLine consumes the first recorded line of key and reports whether there was one.
+func takeLine(lines map[string][]int, key string) (int, bool) {
+	queue := lines[key]
+	if len(queue) == 0 {
+		return 0, false
+	}
+	lines[key] = queue[1:]
+	return queue[0], true
+}
+
+// movedRecorded lists, per finding, the lines of the recorded infractions whose fingerprint no
+// current violation carries: findings the recorder saw at a line they no longer occupy.
+func movedRecorded(recorded, current []Infraction) map[string][]int {
 	present := make(map[string]struct{}, len(current))
 	for i := 0; i < len(current); i++ {
 		present[NormalizePath(current[i].Fingerprint)] = struct{}{}
 	}
-	moved := make(map[string]int)
+	moved := make(map[string][]int)
 	for i := 0; i < len(recorded); i++ {
 		if _, ok := present[NormalizePath(recorded[i].Fingerprint)]; !ok {
-			moved[findingKey(recorded[i])]++
+			key := findingKey(recorded[i])
+			moved[key] = append(moved[key], recorded[i].LineNumber)
 		}
 	}
 	return moved

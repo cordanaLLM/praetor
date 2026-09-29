@@ -67,9 +67,13 @@ type RatchetResult struct {
 	// record it (#599). Attribute fills it; nil means no attribution ran, and Summary then
 	// describes every new violation as not in the baseline rather than as introduced.
 	Attribution []Attribution `json:",omitempty"`
+	// RecordedLine holds, at the index of each AttributionMoved entry, the line the baseline
+	// records that finding at; every other index is zero.
+	RecordedLine []int `json:",omitempty"`
 	// AttributionCommit is the commit Attribute compared the new violations against.
 	AttributionCommit string `json:",omitempty"`
-	// AttributionNote says why an attribution a caller attempted could not run.
+	// AttributionNote says why an attribution a caller attempted could not compare a commit
+	// (AttributeUntraced).
 	AttributionNote string `json:",omitempty"`
 }
 

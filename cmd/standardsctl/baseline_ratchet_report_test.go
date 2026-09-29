@@ -144,3 +144,32 @@ func TestBaselineVerify_Boundary_NoRecordedCommitIsNeutral(t *testing.T) {
 		t.Errorf("a baseline without a commit blamed the change:\n%v", err)
 	}
 }
+
+// Positive (#29, #599): lines added above a recorded finding move its fingerprint, not its debt.
+// The rejection names the line the baseline records, never an untraced reason or
+// --allow-increase, and the plain re-record it names does clear it.
+func TestBaselineVerify_Positive_MovedFindingNeedsOnlyARerecord(t *testing.T) {
+	f := newAuditFixture(t)
+	f.addViolation(t)
+	if out, err := runBaselineCmd(t, f, "--record", "--allow-increase", "--reason=legacy debt inventory"); err != nil {
+		t.Fatalf("record the legacy finding: %v\n%s", err, out)
+	}
+	writeFixtureFile(t, f.dir, "legacy.go", strings.Replace(legacyGoSource, "func legacy", "// moved\n// down\nfunc legacy", 1))
+
+	_, err := runBaselineCmd(t, f, "--verify")
+	mustErrContain(t, err, "HISS invariant violations the baseline records at other lines (1 total infractions, 1 moved, 0 in touched files):")
+	mustErrContain(t, err, "[HISS-07] legacy.go:6 - Legacy unchecked error assignment (recorded in the baseline at line 4)")
+	mustErrContain(t, err, "re-record the baseline with 'praetorctl baseline --record', which needs no --allow-increase for them")
+	for _, wrong := range []string{"not traced", "(not in the baseline)", "(new)", "--reason=<why>"} {
+		if strings.Contains(err.Error(), wrong) {
+			t.Errorf("a moved finding's rejection contains %q:\n%v", wrong, err)
+		}
+	}
+
+	if out, err := runBaselineCmd(t, f, "--record"); err != nil {
+		t.Fatalf("the plain re-record the rejection names failed: %v\n%s", err, out)
+	}
+	if out, err := runBaselineCmd(t, f, "--verify"); err != nil {
+		t.Fatalf("verify after the re-record: %v\n%s", err, out)
+	}
+}

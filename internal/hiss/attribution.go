@@ -42,19 +42,21 @@ const (
 //
 // It never changes the verdict. A baseline that records no commit, a commit this clone does not
 // hold, or any read or scan that fails leaves every new violation unattributed and says why in
-// r.AttributionNote, so Summary describes them as not in the baseline rather than as introduced.
+// r.AttributionNote, so Summary describes them as not in the baseline rather than as introduced;
+// only a finding the baseline records at another line, which needs no commit to tell, is still
+// tagged moved (RatchetResult.AttributeUntraced).
 func AttributeRatchet(ctx context.Context, root string, opts ScanOptions, b *baseline.Baseline, current []baseline.Infraction, r *baseline.RatchetResult) {
 	if r == nil || b == nil || len(r.NewViolations) == 0 {
 		return
 	}
 	commit := strings.TrimSpace(b.CommitSHA)
 	if commit == "" {
-		r.AttributionNote = "the baseline records no commit to compare against"
+		r.AttributeUntraced(b, current, "the baseline records no commit to compare against")
 		return
 	}
 	atCommit, err := findingsAtCommit(ctx, root, commit, r.NewViolations, opts)
 	if err != nil {
-		r.AttributionNote = err.Error()
+		r.AttributeUntraced(b, current, err.Error())
 		return
 	}
 	r.Attribute(b, current, atCommit, commit)
@@ -71,8 +73,8 @@ func findingsAtCommit(ctx context.Context, root, commit string, violations []bas
 	if err != nil {
 		return nil, err
 	}
-	if rep.Truncated {
-		return nil, fmt.Errorf("the scan at commit %s stopped at an analysis bound", commit)
+	if rep.Incomplete() {
+		return nil, fmt.Errorf("the scan at commit %s left part of its files unexamined (an analysis bound, or a file that does not parse)", commit)
 	}
 	return ConvertToBaseline(rep.Violations), nil
 }
@@ -102,6 +104,11 @@ type committedFile struct {
 // scanAtCommit copies files and the Go files of packages, as commit holds them, into a
 // temporary root and scans it with opts. A file the commit does not hold is simply absent, so
 // nothing is reported for it there.
+//
+// The copy is scanned as its own scope, never through git: when the temporary directory lies in
+// a work tree that ignores it, git lists none of the copied files. Every copied file must then be
+// read, or the scan fails: a file the scan skipped would report nothing at the commit and turn
+// unchanged code into a new finding.
 func scanAtCommit(ctx context.Context, root, commit string, files, packages map[string]bool, opts ScanOptions) (rep *ScanReport, err error) {
 	entries, err := committedFiles(ctx, root, commit, files, packages)
 	if err != nil {
@@ -119,7 +126,14 @@ func scanAtCommit(ctx context.Context, root, commit string, files, packages map[
 	if err := stageCommittedFiles(ctx, root, staged, entries); err != nil {
 		return nil, err
 	}
-	return Scan(ctx, staged, opts)
+	rep, err = scanTree(ctx, staged, opts, everyPathVisible)
+	if err != nil {
+		return nil, err
+	}
+	if rep.Coverage.FilesRead != len(entries) {
+		return nil, fmt.Errorf("the scan at commit %s read %d of the %d files copied from it", commit, rep.Coverage.FilesRead, len(entries))
+	}
+	return rep, nil
 }
 
 // committedFiles resolves commit and lists the regular, scannable files it holds at the given
@@ -142,7 +156,7 @@ func committedFiles(ctx context.Context, root, commit string, files, packages ma
 	if err != nil {
 		return nil, fmt.Errorf("list the files of commit %s: %w", commit, err)
 	}
-	return selectCommittedFiles(string(out.Stdout), files, packages), nil
+	return selectCommittedFiles(string(out.Stdout), files, packages)
 }
 
 // directoryPathspec is the pathspec that lists the entries of dir, a slash-separated directory
@@ -156,21 +170,29 @@ func directoryPathspec(dir string) string {
 
 // selectCommittedFiles keeps the records of an `ls-tree -z -l` listing the scan reads: regular
 // blobs within MaxScanFileSize whose path stays below the root, that are either a named file or
-// a Go file of a named package.
-func selectCommittedFiles(listing string, files, packages map[string]bool) []committedFile {
+// a Go file of a named package. More than maxAttributedBlobs of them is an error, never a cut
+// list: a package copied in part can miss the call cycle the commit holds.
+func selectCommittedFiles(listing string, files, packages map[string]bool) ([]committedFile, error) {
 	records := strings.Split(listing, "\x00")
-	selected := make([]committedFile, 0, len(records))
-	for i := 0; i < len(records) && len(selected) < maxAttributedBlobs; i++ {
+	selected := make([]committedFile, 0, min(len(records), maxAttributedBlobs))
+	for i := 0; i < len(records); i++ {
 		entry, ok := parseTreeRecord(records[i])
-		if !ok {
+		if !ok || !inAttributionScope(entry.path, files, packages) {
 			continue
 		}
-		ext := strings.ToLower(slashpath.Ext(entry.path))
-		if files[entry.path] || (ext == ".go" && packages[slashpath.Dir(entry.path)]) {
-			selected = append(selected, entry)
+		if len(selected) == maxAttributedBlobs {
+			return nil, fmt.Errorf("they need more than the %d committed files one attribution copies", maxAttributedBlobs)
 		}
+		selected = append(selected, entry)
 	}
-	return selected
+	return selected, nil
+}
+
+// inAttributionScope reports whether a committed path is a named file or a Go file of a named
+// package.
+func inAttributionScope(path string, files, packages map[string]bool) bool {
+	ext := strings.ToLower(slashpath.Ext(path))
+	return files[path] || (ext == ".go" && packages[slashpath.Dir(path)])
 }
 
 // parseTreeRecord reads one `<mode> <type> <object> <size>\t<path>` record and accepts only a

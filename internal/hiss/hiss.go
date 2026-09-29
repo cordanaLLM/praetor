@@ -138,6 +138,22 @@ func (r *ScanReport) Incomplete() bool {
 // own deadline, or DefaultScanTimeout). HISS-07: an unreadable root or subtree fails
 // the scan instead of producing an empty, error-free report.
 func Scan(ctx context.Context, repoPath string, opts ScanOptions) (*ScanReport, error) {
+	return scanTree(ctx, repoPath, opts, GitVisiblePaths)
+}
+
+// pathVisibility answers which paths below a scanned root belong to it; a nil tree means every
+// path does.
+type pathVisibility func(ctx context.Context, root string) *GitVisibleTree
+
+// everyPathVisible gives no git answer, so the walk reads every file below the root. A tree the
+// scan stages itself, such as the copy of a commit AttributeRatchet scans, is its own scope: a
+// git work tree around the temporary directory, one that ignores it included, must not narrow it.
+func everyPathVisible(context.Context, string) *GitVisibleTree {
+	return nil
+}
+
+// scanTree is Scan with the answer to which paths belong to the root taken from visibility.
+func scanTree(ctx context.Context, repoPath string, opts ScanOptions, visibility pathVisibility) (*ScanReport, error) {
 	if ctx == nil {
 		return nil, errors.New("hiss: context cannot be nil")
 	}
@@ -152,7 +168,7 @@ func Scan(ctx context.Context, repoPath string, opts ScanOptions) (*ScanReport, 
 	w := &scanWalker{
 		ctx: ctx, root: repoPath, opts: opts, rep: rep,
 		extra:   ignoreSet(opts.IgnoreDirs),
-		visible: GitVisiblePaths(ctx, repoPath),
+		visible: visibility(ctx, repoPath),
 	}
 	if err := filepath.Walk(repoPath, w.visit); err != nil {
 		return nil, fmt.Errorf("hiss: scan %q: %w", repoPath, err)
