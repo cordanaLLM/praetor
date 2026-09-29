@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/harvester"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -57,7 +58,8 @@ func splitCommaList(value string) []string {
 func runAdopt(args []string) error {
 	fs := flag.NewFlagSet("adopt", flag.ContinueOnError)
 	profile := fs.String("profile", "", "Primary repository profile (auto-detected if empty)")
-	facets := fs.String("facets", "", "Comma-separated list of facets")
+	facets := fs.String("facets", "", "Comma-separated list of facets for a repository whose .standards.yaml declares none "+
+		"(default when omitted: "+strings.Join(config.DefaultFacets(), ",")+"); change them later with praetorctl profile set --facets")
 	dryRun := fs.Bool("dry-run", false, "Simulate adoption without writing files")
 	force := fs.Bool("force", false, "Overwrite existing standards configurations")
 	recordBaseline := fs.Bool("record-baseline", true, "Record or estimate legacy debt using verified local pins and catalog, or --lock-source-root (including --dry-run)")
