@@ -10,6 +10,9 @@ none is maintained as current documentation. For how Praetor behaves today, read
 
 - [Bidirectional module contracts](../plans/bidirectional-contracts.md): audited design
   proposal for contracts between generated configuration, observations and repairs.
+- [Fleet drift and schema conformance](../plans/fleet-drift-and-schema-conformance.md):
+  design proposal for declared copies and cross-repository payload schema checks, with the
+  read-only `harvest drift` survey that ships first.
 - [IDE-driven agent setup](../plans/ide-agent-setup.md): the goal of IDE extensions that set
   up and reconcile every agent effective policy selects.
 - [Infrastructure development environments](../plans/infrastructure-development-environments.md):
