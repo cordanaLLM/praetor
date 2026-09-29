@@ -359,9 +359,12 @@ func (f *OSImageFlavor) RequiredSettings() []SettingItem {
 	}
 }
 
+// RequiredToolchains asks for packer only where a Packer template tree is: a kernel forge or an
+// mkosi image builds without it (#615). The marker is the os-image rule's own, which
+// TestOSImageToolchainMarkersAreForgeMarkers checks against internal/classify.
 func (f *OSImageFlavor) RequiredToolchains() []ToolchainItem {
 	return []ToolchainItem{
-		{Binary: "packer", Purpose: "Image template build engine", InstallGuide: "https://developer.hashicorp.com/packer/install"},
+		{Binary: "packer", Purpose: "Image template build engine", InstallGuide: "https://developer.hashicorp.com/packer/install", Markers: []string{"packer/*.pkr.hcl"}},
 		{Binary: "shellcheck", Purpose: "Shell provisioner static analysis", InstallGuide: "https://github.com/koalaman/shellcheck#installing"},
 		{Binary: "yamllint", Purpose: "YAML definition lint", InstallGuide: "pip install yamllint"},
 	}

@@ -170,6 +170,18 @@ type ToolchainItem struct {
 	// devDependencies and invoke them through the package manager, so requiring a
 	// global install reports a missing toolchain for a repository that builds fine.
 	ProjectLocal bool `json:"project_local,omitempty"`
+
+	// Markers limits the item to a repository holding at least one of these detection markers,
+	// matched as util.MarkerExists matches them; an item without Markers applies to every
+	// repository of the flavor. A flavor spanning several build engines names an engine only
+	// where its input is: os-image asks for packer in a Packer template tree, not in a kernel
+	// forge or an mkosi image that builds without it (#615).
+	Markers []string `json:"markers,omitempty"`
+}
+
+// appliesTo reports whether the item concerns the repository at repoPath (Markers).
+func (tc ToolchainItem) appliesTo(repoPath string) bool {
+	return len(tc.Markers) == 0 || util.AnyMarkerExists(repoPath, tc.Markers)
 }
 
 // Flavor represents an authoritative repository engineering archetype.

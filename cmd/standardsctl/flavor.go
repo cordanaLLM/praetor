@@ -84,15 +84,24 @@ func runFlavorInspect(args []string) error {
 
 	fmt.Println("\nRequired Toolchains:")
 	for _, tc := range flv.RequiredToolchains() {
-		fmt.Printf("  - %-15s : %s\n", tc.Binary, tc.Purpose)
-		if len(tc.AltBinaries) > 0 {
-			fmt.Printf("    %-15s   or: %s\n", "", strings.Join(tc.AltBinaries, ", "))
-		}
-		if tc.ProjectLocal {
-			fmt.Printf("    %-15s   (project-local node_modules/.bin accepted)\n", "")
-		}
+		printInspectToolchain(tc)
 	}
 	return nil
+}
+
+// printInspectToolchain prints one required toolchain, the binaries that also satisfy it, and
+// the repositories it applies to when it does not apply to all (flavor.ToolchainItem.Markers).
+func printInspectToolchain(tc flavor.ToolchainItem) {
+	fmt.Printf("  - %-15s : %s\n", tc.Binary, tc.Purpose)
+	if len(tc.AltBinaries) > 0 {
+		fmt.Printf("    %-15s   or: %s\n", "", strings.Join(tc.AltBinaries, ", "))
+	}
+	if tc.ProjectLocal {
+		fmt.Printf("    %-15s   (project-local node_modules/.bin accepted)\n", "")
+	}
+	if len(tc.Markers) > 0 {
+		fmt.Printf("    %-15s   only where: %s\n", "", strings.Join(tc.Markers, ", "))
+	}
 }
 
 // printInspectTemplate prints one required template, its producer and the other names it is

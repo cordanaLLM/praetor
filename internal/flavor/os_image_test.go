@@ -4,8 +4,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/classify"
 	"github.com/cordanaLLM/praetor/internal/flavor"
 )
 
@@ -137,5 +139,73 @@ func TestOSImageKernelMarkerBoundary(t *testing.T) {
 	}
 	if (&flavor.OSImageFlavor{}).Detect("") {
 		t.Error("an empty repository path was detected as a forge")
+	}
+}
+
+// auditedToolchains audits repo against os-image and returns the binaries the audit counted,
+// available or not.
+func auditedToolchains(t *testing.T, repo string) (int, []string) {
+	t.Helper()
+	report, err := flavor.AuditFlavor(repo, "os-image")
+	if err != nil || report == nil {
+		t.Fatalf("AuditFlavor = %+v, %v", report, err)
+	}
+	missing := make([]string, 0, len(report.MissingToolchains))
+	for _, tc := range report.MissingToolchains {
+		missing = append(missing, tc.Binary)
+	}
+	return report.ToolchainsTotal, missing
+}
+
+// TestOSImageAsksForPackerOnlyInAPackerForge: the advisory toolchain list of a kernel forge
+// named packer, which it does not use (#615). Now a kernel or mkosi forge is counted against
+// shellcheck and yamllint alone, while a Packer forge is still counted against packer.
+func TestOSImageAsksForPackerOnlyInAPackerForge(t *testing.T) {
+	for name, files := range map[string]map[string]string{
+		"kernel forge": kernelForgeFiles(),
+		"mkosi forge":  {"mkosi.conf": "[Output]\nFormat=disk\n"},
+	} {
+		total, missing := auditedToolchains(t, repoWithFiles(t, files))
+		if total != 2 || slices.Contains(missing, "packer") {
+			t.Errorf("%s: %d toolchains counted, missing %v; want shellcheck and yamllint only", name, total, missing)
+		}
+	}
+	if total, _ := auditedToolchains(t, repoWithFiles(t, map[string]string{"packer/ubuntu.pkr.hcl": "x\n"})); total != 3 {
+		t.Errorf("a Packer forge counted %d toolchains; want packer, shellcheck and yamllint", total)
+	}
+}
+
+// TestOSImageToolchainBoundary: a forge holding both a Packer tree and Kconfig fragments is
+// asked for packer, and an item without Markers, such as yamllint, applies everywhere.
+func TestOSImageToolchainBoundary(t *testing.T) {
+	files := kernelForgeFiles()
+	files["packer/ubuntu.pkr.hcl"] = "x\n"
+	if total, _ := auditedToolchains(t, repoWithFiles(t, files)); total != 3 {
+		t.Errorf("a forge with a Packer tree counted %d toolchains; want 3", total)
+	}
+	f, err := flavor.Get("os-image")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range f.RequiredToolchains() {
+		if tc.Binary != "packer" && len(tc.Markers) != 0 {
+			t.Errorf("%s is limited to %v; only a build engine is", tc.Binary, tc.Markers)
+		}
+	}
+}
+
+// TestOSImageToolchainMarkersAreForgeMarkers keeps the toolchain markers inside the os-image
+// rule of the classification table, so no toolchain waits on a file that marks no forge.
+func TestOSImageToolchainMarkersAreForgeMarkers(t *testing.T) {
+	f, err := flavor.Get("os-image")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range f.RequiredToolchains() {
+		for _, marker := range tc.Markers {
+			if archetype, ok := classify.ArchetypeFor(marker); !ok || archetype != f.HISSProfile() {
+				t.Errorf("%s marker %q is not an os-image marker (%q, %v)", tc.Binary, marker, archetype, ok)
+			}
+		}
 	}
 }

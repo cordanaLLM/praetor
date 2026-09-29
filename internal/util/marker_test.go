@@ -62,3 +62,42 @@ func TestMarkerExistsBoundedExpansion(t *testing.T) {
 		t.Fatal("a regular file within the bound was not found")
 	}
 }
+
+func TestAnyMarkerExistsMatchesOneOfSeveral(t *testing.T) {
+	root := t.TempDir()
+	writeMarkerFile(t, filepath.Join(root, "kconfig", "base.config"))
+	if !AnyMarkerExists(root, []string{"mkosi.conf", "packer/*.pkr.hcl", "kconfig/[^.]*.config"}) {
+		t.Fatal("the one marker present, last in the list, was not found")
+	}
+}
+
+func TestAnyMarkerExistsRejectsAbsentAndEmptyLists(t *testing.T) {
+	root := t.TempDir()
+	writeMarkerFile(t, filepath.Join(root, "kconfig", ".config"))
+	for name, markers := range map[string][]string{
+		"none present": {"mkosi.conf", "kconfig/[^.]*.config"},
+		"empty list":   {},
+		"nil list":     nil,
+	} {
+		if AnyMarkerExists(root, markers) {
+			t.Errorf("%s: matched", name)
+		}
+	}
+}
+
+func TestAnyMarkerExistsBoundedList(t *testing.T) {
+	root := t.TempDir()
+	writeMarkerFile(t, filepath.Join(root, "present"))
+	markers := make([]string, 0, maxMarkerList+1)
+	for i := 0; i < maxMarkerList; i++ {
+		markers = append(markers, fmt.Sprintf("absent-%02d", i))
+	}
+	// The one present marker sits just past the bound, so the bound is what stops it.
+	if AnyMarkerExists(root, append(markers, "present")) {
+		t.Fatal("a marker past the list bound was inspected")
+	}
+	markers[maxMarkerList-1] = "present"
+	if !AnyMarkerExists(root, markers) {
+		t.Fatal("a marker at the last place within the bound was not found")
+	}
+}

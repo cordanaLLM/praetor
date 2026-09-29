@@ -336,11 +336,17 @@ func readRequiredFile(repoPath, rel string) ([]byte, bool) {
 }
 
 func auditToolchains(ctx context.Context, repoPath string, toolchains []ToolchainItem, report *FlavorAuditReport) error {
-	report.ToolchainsTotal = len(toolchains)
+	report.ToolchainsTotal = 0
 	for _, tc := range toolchains {
 		if err := auditCancelled(ctx, "toolchain", tc.Binary); err != nil {
 			return err
 		}
+		// An item for another build engine than this repository's is neither counted nor
+		// reported missing (ToolchainItem.Markers).
+		if !tc.appliesTo(repoPath) {
+			continue
+		}
+		report.ToolchainsTotal++
 		if toolchainAvailable(repoPath, tc) {
 			report.ToolchainsAvailable++
 		} else {

@@ -56,6 +56,20 @@ func TestFlavorInspect_Boundary_NamesTheProducer(t *testing.T) {
 	}
 }
 
+// Boundary: inspect names the repositories a limited toolchain applies to, and nothing for a
+// toolchain every repository of the flavor needs.
+func TestFlavorInspect_Boundary_NamesWhereAToolchainApplies(t *testing.T) {
+	out, err := captureStdout(t, func() error { return dispatchCommand("flavor", []string{"inspect", "os-image"}) })
+	if err != nil {
+		t.Fatalf("flavor inspect: %v\n%s", err, out)
+	}
+	_, toolchains, _ := strings.Cut(out, "Required Toolchains:")
+	mustContain(t, toolchains, "- packer          : Image template build engine\n                      only where: packer/*.pkr.hcl")
+	if strings.Count(toolchains, "only where:") != 1 {
+		t.Fatalf("only packer is limited to a build input:\n%s", toolchains)
+	}
+}
+
 // Boundary: a template whose body cannot work in the repository is named with what the
 // repository lacks, one per line, instead of being written or silently dropped.
 func TestFlavorApply_Boundary_ReportsTemplatesWithAnUnmetRequirement(t *testing.T) {

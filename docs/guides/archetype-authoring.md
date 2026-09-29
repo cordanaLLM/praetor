@@ -254,10 +254,16 @@ does not pass its own validator or the old comment placeholder does.
 
 ### The `os-image` flavor: a forge is what it builds
 
-`os-image` is the first profile whose flavor is not a language stack. It requires `packer`,
-`shellcheck` and `yamllint`, plus a yamllint policy for the image and workflow definitions,
-because an image forge is audited on the pipeline that produces a bootable artifact rather than on a
-compiler toolchain.
+`os-image` is the first profile whose flavor is not a language stack. It requires `shellcheck` and
+`yamllint`, plus a yamllint policy for the image and workflow definitions, because an image forge is
+audited on the pipeline that produces a bootable artifact rather than on a compiler toolchain.
+
+**A build engine only where its input is.** `packer` is asked for only in a repository holding a
+Packer template (`ToolchainItem.Markers` in `internal/flavor/flavor.go`): a kernel forge or an mkosi
+image builds without it, and an item it cannot use is neither counted nor reported missing.
+`praetorctl flavor inspect os-image` prints the limit as `only where: packer/*.pkr.hcl`. A limit may
+name only the flavor's own detection markers (`TestOSImageToolchainMarkersAreForgeMarkers` in
+`internal/flavor/os_image_test.go`). The toolchain check is advisory and never scored.
 
 **Any yamllint configuration name counts.** yamllint reads the first of `.yamllint`,
 `.yamllint.yaml` and `.yamllint.yml` it finds (`find_project_config_filepath` in yamllint's `cli.py`,
@@ -268,14 +274,24 @@ With two present, the audit passes and names the file in use under `Shadowed Tem
 `flavor apply` and adoption scaffold `.yamllint.yml` only for a repository with none of the three
 (`internal/flavor/yamllint_config_test.go`, `internal/adopt/flavor_report_test.go`).
 
-**What marks a forge.** Three markers, in `internal/flavor/definitions.go` and in the unified
-classification table in `internal/classify/classify.go`:
+**What marks a forge.** Four markers, stated once in the `os-image` rule of the classification
+table in `internal/classify/classify.go`. `OSImageFlavor.Detect` (`internal/flavor/definitions.go`)
+reads that rule through `classify.HasMarkerOf` instead of keeping its own copy, so the profile a
+checkout classifies as and the flavor it resolves to cannot disagree about what a forge is:
 
 | Marker | Kind | What it identifies |
 | :--- | :--- | :--- |
 | `packer/*.pkr.hcl` | glob | a Packer template tree |
 | `mkosi.conf` | fixed path | an mkosi image definition |
 | `build/mkosi.conf` | fixed path | the same, under a build directory |
+| `kconfig/[^.]*.config` | glob | Kconfig fragments of a kernel forge |
+
+The archetype names kernels, initramfs and UKIs beside disk images (`.config/archetypes/os-image.yaml`),
+and a forge that builds a kernel keeps its Kconfig fragments under `kconfig/` with no Packer template
+or `mkosi.conf` (#615). The `[^.]` keeps hidden files out: Go's `*` matches a leading dot, and
+`kconfig/.config` is the configuration Kconfig writes, not a fragment. A root `.config` or an empty
+`kconfig/` does not mark a forge either (`internal/classify/os_image_test.go`,
+`internal/gating/flavor_stage_test.go`).
 
 **The glob marker rule.** Most markers are a fixed path: `go.mod` either exists or it does not. A
 Packer tree cannot be written that way, because what identifies the forge is holding *some*

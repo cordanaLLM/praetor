@@ -102,7 +102,8 @@ a Go library.
 - `python-ml` requires a declared machine-learning dependency. It previously fired on any
   `pyproject.toml`, so every Python repository was reported as a PyTorch pipeline and then audited
   against ML tooling it had no reason to install.
-- `os-image` is matched by `packer/*.pkr.hcl`, `mkosi.conf` or `build/mkosi.conf`, and is tried
+- `os-image` is matched by `packer/*.pkr.hcl`, `mkosi.conf`, `build/mkosi.conf` or Kconfig
+  fragments under `kconfig/` (a kernel forge), and is tried
   **before** the language flavors. An image forge carries a `go.mod` for its build CLI and a
   `pyproject.toml` for its verification suite, so whichever language flavor claimed it first would
   describe the tooling rather than the product. The Packer marker is a glob and matches only regular
@@ -113,7 +114,10 @@ a Go library.
   the governance tool rather than the repository.
 - Where nothing matches, `flavor audit` and `flavor apply` refuse with `ErrNoFlavorMatched` instead
   of scoring the repository against a flavor that describes nothing about it. Pass `--flavor=<name>`
-  to audit against one deliberately. `praetorctl adopt` scaffolds no flavor templates there and
+  to audit against one deliberately. `gate run` fails its Flavor Conformance stage the same way and
+  names the flavors of the profile it tried; it takes no `--flavor`, so there the remedy is the
+  marker a flavor detects or a declared profile that fits (`internal/gating/flavor_stage_test.go`).
+  `praetorctl adopt` scaffolds no flavor templates there and
   prints a "Not applicable" warning naming `praetorctl flavor apply --flavor=<name>` instead
   (`internal/adopt/flavor_report_test.go`); a flat Go module with only root `.go` files is one such
   repository.

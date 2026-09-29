@@ -128,12 +128,7 @@ func ByMarkers(repoPath string) Result {
 
 // ruleMatches reports whether any of the rule's markers is present.
 func ruleMatches(repoPath string, r rule) bool {
-	for i := 0; i < len(r.markers) && i < maxMarkers; i++ {
-		if util.MarkerExists(repoPath, r.markers[i]) {
-			return true
-		}
-	}
-	return false
+	return util.AnyMarkerExists(repoPath, r.markers)
 }
 
 // HasMarkerOf reports whether the working tree holds any marker the table maps to archetype,
