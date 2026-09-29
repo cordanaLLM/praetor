@@ -475,4 +475,9 @@ func TestLockContended_3D(t *testing.T) {
 			t.Errorf("%s: lockContended = %v, want %v", tc.name, got, tc.want)
 		}
 	}
+	// The stat and remove paths use windowsPendingDelete alone: an existing file is no
+	// pending delete, and only Windows answers one with a permission error.
+	if !windowsPendingDelete(denied, "windows") || windowsPendingDelete(denied, "darwin") || windowsPendingDelete(exist, "windows") {
+		t.Error("windowsPendingDelete must hold for a permission error on windows only")
+	}
 }

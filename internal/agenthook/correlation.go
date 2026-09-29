@@ -379,18 +379,26 @@ func tryCorrelationLock(root *os.Root) (bool, error) {
 	return true, nil
 }
 
+// windowsPendingDelete reports whether err is Windows refusing access to the lock file while
+// its deletion is still pending, which is another caller's Remove a moment earlier: Windows
+// answers a create, a stat or a remove of such a file with ERROR_ACCESS_DENIED, reported as
+// os.ErrPermission, where other platforms report the file as existing or already gone.
+// TestCorrelationStoreConcurrentReservations failed on windows-latest with "openat .lock:
+// Access is denied" and "statat .lock: Access is denied" before this.
+func windowsPendingDelete(err error, goos string) bool {
+	return goos == "windows" && errors.Is(err, os.ErrPermission)
+}
+
 // lockContended reports whether an exclusive create of the lock file failed because another
-// caller holds the lock. Windows refuses to create a file whose deletion is still pending,
-// which is the previous holder's Remove a moment earlier, with ERROR_ACCESS_DENIED, reported as
-// os.ErrPermission; that is the same contention one release later, so it is retried like
-// os.ErrExist. TestCorrelationStoreConcurrentReservations failed on windows-latest with
-// "openat .lock: Access is denied" before this.
+// caller holds the lock: the file exists, or on Windows its deletion is still pending, which is
+// the same contention one release later. Either is retried.
 func lockContended(err error, goos string) bool {
-	return errors.Is(err, os.ErrExist) || (goos == "windows" && errors.Is(err, os.ErrPermission))
+	return errors.Is(err, os.ErrExist) || windowsPendingDelete(err, goos)
 }
 
 func removeCorrelationLock(root *os.Root, name string) error {
-	if err := root.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
+	// A Windows lock file whose deletion is pending is already on its way out.
+	if err := root.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) && !windowsPendingDelete(err, runtime.GOOS) {
 		return fmt.Errorf("remove correlation lock: %w", err)
 	}
 	return nil
@@ -398,7 +406,8 @@ func removeCorrelationLock(root *os.Root, name string) error {
 
 func removeStaleCorrelationLock(root *os.Root, name string, now time.Time) error {
 	info, err := root.Lstat(name)
-	if errors.Is(err, os.ErrNotExist) {
+	// Gone, or on Windows being deleted: either way no stale lock is left to reclaim.
+	if errors.Is(err, os.ErrNotExist) || windowsPendingDelete(err, runtime.GOOS) {
 		return nil
 	}
 	if err != nil {
