@@ -98,7 +98,8 @@ so an upload after it fails; the flow never makes one (#43).
 4. `praetorctl provenance -checksums dist/checksums.txt` writes one in-toto SLSA v1.0
    statement whose subjects are every line of `checksums.txt`, with the workflow identity
    as the builder. Each subject digest is recomputed from the file in `dist/` and must
-   match its line (`internal/supplychain/slsa.go`).
+   match its line (`internal/supplychain/slsa.go`), and each file's content is checked
+   against its name ([content checks](#content-checks)).
 5. `cosign attest-blob --statement` signs that statement into
    `provenance.intoto.json.sigstore.json`, and `cosign verify-blob-attestation` checks the
    bundle against every file `checksums.txt` names.
@@ -224,6 +225,7 @@ which the release flow above does with `cosign attest-blob`.
 ```bash
 praetorctl provenance --file dist/praetorctl_linux_amd64.tar.gz --out provenance.json
 praetorctl provenance --checksums dist/checksums.txt --out provenance.json
+praetorctl provenance --checksums dist/checksums.txt --uki 'boot/vmlinuz-*.efi' --out provenance.json
 ```
 
 | Flag | Default | Effect |
@@ -233,6 +235,8 @@ praetorctl provenance --checksums dist/checksums.txt --out provenance.json
 | `--artifact` | base name of `--file` | Subject name |
 | `--digest` | none | Expected SHA-256 (64 lowercase hex characters); the run fails unless `--file` hashes to it |
 | `--builder` | `$GITHUB_SERVER_URL/$GITHUB_WORKFLOW_REF` in GitHub Actions; required elsewhere | Builder ID recorded in the predicate |
+| `--content-check` | `enforce` | What a file whose bytes are not the type its name declares does: `enforce` refuses the statement, `report` attests the file and prints an `UNVERIFIED` warning ([content checks](#content-checks)) |
+| `--uki` | none | Glob declaring every subject whose name it matches a Unified Kernel Image, which then needs a `.linux` section whatever its name; repeatable, and each glob must match a subject ([declaring a UKI](#declaring-a-uki)) |
 | `--out` | stdout | Output file |
 
 The subject digest always comes from the file's bytes, never from `--digest`, so a
@@ -247,7 +251,77 @@ statement cannot name a digest nobody computed. The run is refused when:
   (`supplychain.MaxArtifactBytes`), a symlink, not a regular file, or changes while it is
   read;
 - `--digest` is malformed or differs from the computed digest. The error names the
-  computed digest.
+  computed digest;
+- under `--content-check=enforce`, a file's bytes are not the type its name declares, or
+  `--content-check` is neither `enforce` nor `report`;
+- a `--uki` glob is empty, malformed, or matches no subject name.
+
+### Content checks
+
+A checksum and a signature prove that a file is the one that was built, not that the build
+produced what the file's name promises: a text file named `.deb` or random bytes named `.efi`
+pass both. Before a file becomes a subject, `praetorctl provenance` therefore checks its bytes
+against the type its subject name declares. The check reads the same bytes the digest streams
+(`contextopt.DigestBinarySnapshotTo`), so what was checked is what was attested.
+
+| Subject name | Required content |
+| :--- | :--- |
+| `*.deb`, `*.udeb`, `*.ddeb` | An `ar` archive ([deb(5)](https://man7.org/linux/man-pages/man5/deb.5.html)) whose first member is `debian-binary` holding a `2.x` format version. After it, skipping members whose names start with `_`, the next member is `control.tar` or `control.tar.<ext>`, and after that, again skipping `_` members, `data.tar` or `data.tar.<ext>`. Members after `data.tar` are accepted whatever their names. No member header or member data may be cut off |
+| `*.efi` | A complete PE/COFF image (DOS header, PE signature, COFF and optional headers, section table, every section's raw data inside the file) whose subsystem is an EFI application, driver or ROM (10 to 13) |
+| `*.efi` presented as a UKI, or any subject declared one with `--uki` | The same, plus a non-empty `.linux` section, the one section the [UAPI Unified Kernel Image specification](https://uapi-group.org/specifications/specs/unified_kernel_image/) requires. A bare EFI-stub kernel has none |
+
+An `.efi` name is presented as a Unified Kernel Image in two cases. The first is a file
+directly in an `EFI/Linux/` directory, where the
+[Boot Loader Specification](https://uapi-group.org/specifications/specs/boot_loader_specification/)
+puts Type #2 images. The second is a base name with the word `uki`, a word being a run of
+letters and digits (`image.uki.efi`, `arch-linux-uki.efi`, but not `ukify.efi`). Kernel words
+do not count: `vmlinuz.efi`, `vmlinuz-7.2.4.efi` and `vmlinuz-linux.efi` only have to be EFI
+images, because upstream Linux builds a bare EFI-stub kernel as `vmlinuz.efi` under
+`CONFIG_EFI_ZBOOT` and EFISTUB setups copy the kernel to such names, neither with a `.linux`
+section (#616).
+
+A systemd-stub addon (`*.addon.efi`) is never presented as a UKI: it carries `.cmdline`,
+`.dtb`, `.initrd` or `.ucode` sections and no `.linux`, and
+[systemd-stub(7)](https://man7.org/linux/man-pages/man7/systemd-stub.7.html) loads it from
+`foo.efi.extra.d/` inside `EFI/Linux/` or from `loader/addons/`. So
+`EFI/Linux/foo.efi.extra.d/quiet.addon.efi` and `uki-cmdline.addon.efi` only have to be EFI
+images, as do `BOOTX64.EFI` and `systemd-bootx64.efi`. The extension, the suffix and the
+word are compared without regard to case.
+
+#### Declaring a UKI
+
+A UKI whose name matches neither case, for example `vmlinuz-7.2.4.efi` built by `ukify`, is
+declared with `--uki`. Each subject whose name matches a `--uki` glob gets the UKI rule
+whatever its name or extension, so a placeholder or a bare kernel under that name is refused.
+The flag is repeatable and works with `--file` (matched against `--artifact` or the file's
+base name) and with `--checksums` (matched against each manifest name).
+
+A glob is slash-separated and matched against the whole subject name, case included, after
+backslashes in the name become slashes. Each segment is a `path.Match` pattern for one name
+segment, so `*` and `?` never cross a `/`, and a segment that is exactly `**` spans any number
+of segments: `vmlinuz-*.efi` matches `vmlinuz-7.2.4.efi` but not `boot/vmlinuz-7.2.4.efi`,
+which `**/vmlinuz-*.efi` matches. A glob that is empty or malformed is refused before any file
+is read. A glob that matches no subject refuses the statement, so a mistyped declaration does
+not leave a UKI unchecked (`internal/supplychain/content_uki.go`, `content_uki_test.go`).
+
+With the default `--content-check=enforce`, one mismatching file refuses the whole statement,
+and the error names the file, the expected format and what was found instead, for example
+`the EFI image has no .linux section`. When the subject name is not the file's base name, or
+a `--uki` glob declared the subject, the error names that too, since it chose the rule. `--content-check=report` attests the file anyway and
+prints `warning: content of <name> is UNVERIFIED: ...` on stderr; use it only while a broken
+build is being repaired. A file type without a rule is attested as before and named in one
+`note: content unchecked for N subject(s) ...` line on stderr, never counted as verified.
+Praetor's own release archives (`.tar.gz`, `.zip`) and SBOMs (`.json`) are in that group.
+
+`internal/supplychain/content_test.go` covers each rule with valid layouts, mismatches and
+truncated files fed in chunk sizes that split every header;
+`internal/supplychain/content_tools_test.go` attests a package `dpkg-deb` builds, a UKI
+`ukify` builds (declared with a UKI glob) and an addon `ukify` builds under both addon
+locations. It also attests the installed kernel as `vmlinuz-bare.efi` and refuses it once a UKI
+glob declares it. Each test runs where its tools are installed: `dpkg-deb`; `ukify` with
+systemd's stub for the running architecture; for the kernel test, a kernel under
+`/usr/lib/modules` that `debug/pe` reads as an EFI-subsystem PE image. Elsewhere it is skipped
+with the reason.
 
 Every statement records the `buildDefinition.buildType`
 `https://cordanallm.github.io/praetor/slsa/build/v1` (`supplychain.DefaultBuildType`). Every

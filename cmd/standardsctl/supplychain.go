@@ -137,10 +137,16 @@ func writeSBOMNotices(ctx context.Context, target, current string, sources suppl
 const unsignedProvenanceWarning = "warning: the SLSA provenance statement is UNSIGNED; it is not an attestation " +
 	"until it is wrapped in a signed DSSE envelope whose signature and signer identity are verified"
 
-// provenanceFlags are the provenance command's subject sources, builder and output.
+// provenanceFlags are the provenance command's subject sources, builder, content check,
+// UKI declarations and output.
 type provenanceFlags struct {
 	file, artifact, builder, digest, checksums, out string
+	contentCheck                                    supplychain.ContentCheck
+	uki                                             repeatedStringFlag
 }
+
+// contentCheckHint names the opt-out on a refusal for content that is not what its name says.
+const contentCheckHint = "rerun with -content-check=report to attest the file and report its content as unverified"
 
 func runProvenance(args []string) error {
 	flags, err := parseProvenanceFlags(args)
@@ -151,7 +157,10 @@ func runProvenance(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), contextopt.MaxDigestDuration+contextopt.MaxDuration)
 	defer cancel()
 
-	stmt, err := provenanceStatement(ctx, flags)
+	stmt, verdicts, err := provenanceStatement(ctx, flags)
+	if errors.Is(err, supplychain.ErrContentMismatch) {
+		return fmt.Errorf("failed generating SLSA provenance: %w (%s)", err, contentCheckHint)
+	}
 	if err != nil {
 		return fmt.Errorf("failed generating SLSA provenance: %w", err)
 	}
@@ -163,6 +172,7 @@ func runProvenance(args []string) error {
 	if err := supplychain.CheckInTotoStatement(data); err != nil {
 		return fmt.Errorf("refusing a statement cosign verify-blob-attestation would reject: %w", err)
 	}
+	fmt.Fprint(os.Stderr, contentVerdictReport(verdicts))
 	fmt.Fprintln(os.Stderr, unsignedProvenanceWarning)
 
 	if flags.out != "" {
@@ -191,18 +201,21 @@ func parseProvenanceFlags(args []string) (provenanceFlags, error) {
 		"sha256sum manifest, such as GoReleaser's checksums.txt: every listed file beside it becomes a subject, "+
 			"digested from its bytes and cross-checked against its line (excludes -file, -artifact and -digest)")
 	fs.StringVar(&f.out, "out", "", "Output file path (default stdout)")
+	contentCheck := fs.String("content-check", string(supplychain.ContentCheckEnforce),
+		"What a file whose bytes are not the type its name declares (.deb, .udeb, .ddeb, .efi, a Unified Kernel Image) does: "+
+			"enforce refuses the statement, report attests the file and warns that its content is unverified")
+	fs.Var(&f.uki, "uki",
+		"Glob declaring every subject whose name it matches a Unified Kernel Image, which then needs a .linux section "+
+			"whatever its name; slash-separated, * stays in one segment, ** spans segments, each glob must match a subject (repeatable)")
 	positional, err := parseInterspersed(fs, args)
 	if err != nil {
 		return f, err
 	}
-	switch {
-	case len(positional) > 0:
-		return f, fmt.Errorf("provenance accepts no positional arguments, got %q", positional)
-	case f.checksums != "" && (f.file != "" || f.artifact != "" || f.digest != ""):
-		return f, fmt.Errorf("flag -checksums names every subject itself and excludes -file, -artifact and -digest")
-	case f.checksums == "" && f.file == "":
-		return f, fmt.Errorf("flag -file is required (or -checksums for every file a sha256sum manifest lists): " +
-			"the subject digest is computed from the artifact bytes, and -digest is only a cross-check against them")
+	if f.contentCheck, err = supplychain.ParseContentCheck(*contentCheck); err != nil {
+		return f, fmt.Errorf("flag -content-check: %w", err)
+	}
+	if err := checkProvenanceSources(f, positional); err != nil {
+		return f, err
 	}
 	builder, err := resolveBuilder(f.builder)
 	if err != nil {
@@ -210,6 +223,22 @@ func parseProvenanceFlags(args []string) (provenanceFlags, error) {
 	}
 	f.builder = builder
 	return f, nil
+}
+
+// checkProvenanceSources refuses a positional argument, a run with no subject source, and
+// -checksums beside the single-artifact flags it replaces.
+func checkProvenanceSources(f provenanceFlags, positional []string) error {
+	switch {
+	case len(positional) > 0:
+		return fmt.Errorf("provenance accepts no positional arguments, got %q", positional)
+	case f.checksums != "" && (f.file != "" || f.artifact != "" || f.digest != ""):
+		return fmt.Errorf("flag -checksums names every subject itself and excludes -file, -artifact and -digest")
+	case f.checksums == "" && f.file == "":
+		return fmt.Errorf("flag -file is required (or -checksums for every file a sha256sum manifest lists): " +
+			"the subject digest is computed from the artifact bytes, and -digest is only a cross-check against them")
+	default:
+		return nil
+	}
 }
 
 // resolveBuilder returns the -builder value, or in GitHub Actions the running workflow's
@@ -231,16 +260,39 @@ func resolveBuilder(flagValue string) (string, error) {
 	return "", fmt.Errorf("flag -builder is required outside GitHub Actions (GITHUB_SERVER_URL and GITHUB_WORKFLOW_REF are unset)")
 }
 
-// provenanceStatement builds the statement from the one subject source f names.
-func provenanceStatement(ctx context.Context, f provenanceFlags) (*supplychain.SLSAStatement, error) {
+// provenanceStatement builds the statement from the one subject source f names, with each
+// subject's content check verdict.
+func provenanceStatement(ctx context.Context, f provenanceFlags) (*supplychain.SLSAStatement, []supplychain.ContentVerdict, error) {
 	if f.checksums != "" {
 		return supplychain.GenerateSLSAProvenanceFromChecksums(ctx, supplychain.ChecksumsRequest{
-			ManifestPath: f.checksums, BuilderID: f.builder,
+			ManifestPath: f.checksums, BuilderID: f.builder, ContentCheck: f.contentCheck, UKIGlobs: f.uki,
 		})
 	}
 	return supplychain.GenerateSLSAProvenance(ctx, supplychain.ProvenanceRequest{
 		ArtifactPath: f.file, ArtifactName: f.artifact, BuilderID: f.builder, ExpectedSHA256: f.digest,
+		ContentCheck: f.contentCheck, UKIGlobs: f.uki,
 	})
+}
+
+// contentVerdictReport returns one warning line per subject whose content is unverified and
+// one note naming every subject no content rule covers, so a checksummed file of an unknown
+// type is never mistaken for a verified one. Verified subjects need no line.
+func contentVerdictReport(verdicts []supplychain.ContentVerdict) string {
+	var report strings.Builder
+	var unchecked []string
+	for _, verdict := range verdicts {
+		switch verdict.Status {
+		case supplychain.ContentUnverified:
+			report.WriteString("warning: content of " + verdict.Name + " is UNVERIFIED: expected " + verdict.Format + ", but " + verdict.Reason + "\n")
+		case supplychain.ContentUnchecked:
+			unchecked = append(unchecked, verdict.Name)
+		}
+	}
+	if len(unchecked) > 0 {
+		fmt.Fprintf(&report, "note: content unchecked for %d subject(s) of a file type praetorctl has no content rule for: %s\n",
+			len(unchecked), strings.Join(unchecked, ", "))
+	}
+	return report.String()
 }
 
 // subjectSummary names the one subject of a single-artifact statement, or counts the

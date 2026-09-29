@@ -34,6 +34,12 @@ func TestParseChecksumsBuildsOneSubjectPerLine(t *testing.T) {
 // it with the digest of its bytes, and returns the manifest path and the digests by name.
 func releaseManifest(t *testing.T, names []string) (string, map[string]string) {
 	t.Helper()
+	return releaseManifestOf(t, names, func(name string) []byte { return []byte("bytes of " + name) })
+}
+
+// releaseManifestOf is releaseManifest with each file's bytes taken from content.
+func releaseManifestOf(t *testing.T, names []string, content func(name string) []byte) (string, map[string]string) {
+	t.Helper()
 	dir := t.TempDir()
 	digests := make(map[string]string, len(names))
 	var manifest strings.Builder
@@ -42,10 +48,10 @@ func releaseManifest(t *testing.T, names []string) (string, map[string]string) {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(path, []byte("bytes of "+name), 0o600); err != nil {
+		if err := os.WriteFile(path, content(name), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		sum := sha256.Sum256([]byte("bytes of " + name))
+		sum := sha256.Sum256(content(name))
 		digests[name] = hex.EncodeToString(sum[:])
 		manifest.WriteString(digests[name] + "  " + name + "\n")
 	}
@@ -61,7 +67,7 @@ func releaseManifest(t *testing.T, names []string) (string, map[string]string) {
 func TestGenerateSLSAProvenanceFromChecksumsNamesEveryFile(t *testing.T) {
 	names := []string{"standards_1.0.0_linux_amd64.tar.gz", "sboms/standards_1.0.0_linux_amd64.tar.gz.cyclonedx.json"}
 	manifest, digests := releaseManifest(t, names)
-	stmt, err := GenerateSLSAProvenanceFromChecksums(t.Context(), ChecksumsRequest{ManifestPath: manifest, BuilderID: "https://github.com/acme/tool/.github/workflows/release.yml@refs/tags/v1.0.0"})
+	stmt, _, err := GenerateSLSAProvenanceFromChecksums(t.Context(), ChecksumsRequest{ManifestPath: manifest, BuilderID: "https://github.com/acme/tool/.github/workflows/release.yml@refs/tags/v1.0.0"})
 	if err != nil {
 		t.Fatalf("GenerateSLSAProvenanceFromChecksums: %v", err)
 	}
@@ -105,13 +111,13 @@ func TestGenerateSLSAProvenanceFromChecksumsRefusesUntrustedLines(t *testing.T) 
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			_, err := GenerateSLSAProvenanceFromChecksums(t.Context(), ChecksumsRequest{ManifestPath: tc.manifest, BuilderID: "b"})
+			_, _, err := GenerateSLSAProvenanceFromChecksums(t.Context(), ChecksumsRequest{ManifestPath: tc.manifest, BuilderID: "b"})
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want %q", err, tc.want)
 			}
 		})
 	}
-	if _, err := GenerateSLSAProvenanceFromChecksums(t.Context(), ChecksumsRequest{BuilderID: "b"}); err == nil {
+	if _, _, err := GenerateSLSAProvenanceFromChecksums(t.Context(), ChecksumsRequest{BuilderID: "b"}); err == nil {
 		t.Error("request without a manifest path accepted")
 	}
 }
@@ -190,14 +196,14 @@ func TestChecksumSubjectsValidation(t *testing.T) {
 	}
 	manifest, _ := releaseManifest(t, []string{"a.tar.gz"})
 	size := int64(len("bytes of a.tar.gz"))
-	if _, err := GenerateSLSAProvenanceFromChecksums(t.Context(), ChecksumsRequest{ManifestPath: manifest, BuilderID: "b", MaxBytes: size}); err != nil {
+	if _, _, err := GenerateSLSAProvenanceFromChecksums(t.Context(), ChecksumsRequest{ManifestPath: manifest, BuilderID: "b", MaxBytes: size}); err != nil {
 		t.Errorf("file of exactly the byte bound refused: %v", err)
 	}
-	if _, err := GenerateSLSAProvenanceFromChecksums(t.Context(), ChecksumsRequest{ManifestPath: manifest, BuilderID: "b", MaxBytes: size - 1}); err == nil {
+	if _, _, err := GenerateSLSAProvenanceFromChecksums(t.Context(), ChecksumsRequest{ManifestPath: manifest, BuilderID: "b", MaxBytes: size - 1}); err == nil {
 		t.Error("file one byte over the bound accepted")
 	}
 	var absent context.Context
-	if _, err := GenerateSLSAProvenanceFromChecksums(absent, ChecksumsRequest{ManifestPath: manifest, BuilderID: "b"}); err == nil {
+	if _, _, err := GenerateSLSAProvenanceFromChecksums(absent, ChecksumsRequest{ManifestPath: manifest, BuilderID: "b"}); err == nil {
 		t.Error("nil context accepted")
 	}
 }

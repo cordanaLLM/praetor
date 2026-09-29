@@ -1,0 +1,4 @@
+type: added
+title: "praetorctl provenance checks every artifact's bytes against the file type its name declares before attesting it, over the same bytes the digest reads: a .deb, .udeb or .ddeb must be an ar archive of debian-binary (format 2.x), control.tar and data.tar with no member cut off, an .efi file a complete PE/COFF image with an EFI subsystem, and an .efi presented as a Unified Kernel Image (directly in an EFI/Linux directory or with a uki word in its name, never a systemd-stub .addon.efi) or any subject a new repeatable -uki glob declares must also carry a .linux section, while kernel names such as vmlinuz.efi only need to be EFI images so a bare EFI-stub kernel passes; a mismatch exits 1 naming the file, the expected format and the reason, -content-check=report attests it with an UNVERIFIED warning instead, and a file type without a rule is listed as unchecked on stderr rather than passed as verified"
+issue: "#616"
+breaking: true

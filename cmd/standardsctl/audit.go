@@ -151,7 +151,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error { return auditCavemanConfiguredSources(ctx, manifest, rootDir) },
 		func() error { return auditRunnerMatrix(ctx, manifest, rootDir) },
 		func() error { return auditPreMigrationTracking(rootDir) },
-		func() error { return auditAgentDefinitions(rootDir) },
+		func() error { return auditAgentDefinitions(ctx, manifest, rootDir) },
 		func() error { return auditGitHooks(ctx, rootDir) },
 	}
 
@@ -562,27 +562,6 @@ func resolvePreMigrationEpic(rootDir string) string {
 		}
 	}
 	return ""
-}
-
-func auditAgentDefinitions(rootDir string) error {
-	agentsDir := filepath.Join(rootDir, ".agents", "agents")
-	if util.DirExists(agentsDir) {
-		entries, err := os.ReadDir(agentsDir)
-		if err != nil {
-			return fmt.Errorf("[FAIL] Failed to inspect .agents/agents: %w", err)
-		}
-		count := 0
-		for _, e := range entries {
-			if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
-				count++
-			}
-		}
-		if count == 0 {
-			return fmt.Errorf("[FAIL] .agents/agents directory exists but contains zero agent definitions")
-		}
-		fmt.Printf("[PASS] Agent definitions verified (%d agents registered).\n", count)
-	}
-	return nil
 }
 
 func auditGitHooks(ctx context.Context, rootDir string) error {

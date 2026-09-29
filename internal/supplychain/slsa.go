@@ -88,21 +88,35 @@ type ProvenanceRequest struct {
 	// MaxBytes bounds the artifact size; zero means MaxArtifactBytes, and a value above
 	// MaxArtifactBytes is refused.
 	MaxBytes int64
+	// ContentCheck decides what happens when the artifact's bytes are not the file type its
+	// subject name declares (a .deb, an .efi image, a Unified Kernel Image): the zero value
+	// and ContentCheckEnforce refuse the statement, ContentCheckReport attests the artifact
+	// and returns its verdict as ContentUnverified.
+	ContentCheck ContentCheck
+	// UKIGlobs declares the subject a Unified Kernel Image when its name matches one of
+	// these slash-separated globs (matchingUKIGlob): it then needs the .linux section a UKI
+	// carries whatever its name, where a name such as vmlinuz-7.2.4.efi alone only needs to
+	// be an EFI image. Every glob must match the subject.
+	UKIGlobs []string
 }
 
 // GenerateSLSAProvenance constructs an unsigned in-toto SLSA v1.0 provenance statement
-// whose subject digest is the SHA-256 of the artifact file's bytes. It does not sign the
-// statement: a bare statement is never an attestation, and it becomes one only when a signer
-// wraps it in a DSSE envelope that a verifier checks.
-func GenerateSLSAProvenance(ctx context.Context, req ProvenanceRequest) (*SLSAStatement, error) {
+// whose subject digest is the SHA-256 of the artifact file's bytes, and returns the verdict
+// of the content check that ran over the same bytes. It does not sign the statement: a bare
+// statement is never an attestation, and it becomes one only when a signer wraps it in a
+// DSSE envelope that a verifier checks.
+func GenerateSLSAProvenance(ctx context.Context, req ProvenanceRequest) (*SLSAStatement, []ContentVerdict, error) {
 	if err := checkProvenanceContext(ctx); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	subject, err := artifactSubject(ctx, req)
+	subject, verdict, err := artifactSubject(ctx, req)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return newStatement([]Subject{subject}, req.BuilderID), nil
+	if err := checkUKIGlobsMatched(req.UKIGlobs, []Subject{subject}); err != nil {
+		return nil, nil, err
+	}
+	return newStatement([]Subject{subject}, req.BuilderID), []ContentVerdict{verdict}, nil
 }
 
 // ChecksumsRequest names a sha256sum manifest, such as the checksums.txt GoReleaser writes,
@@ -115,56 +129,75 @@ type ChecksumsRequest struct {
 	BuilderID string
 	// MaxBytes bounds each listed artifact as ProvenanceRequest.MaxBytes does.
 	MaxBytes int64
+	// ContentCheck applies to each listed artifact as ProvenanceRequest.ContentCheck does;
+	// under the zero value one mismatching file refuses the whole statement.
+	ContentCheck ContentCheck
+	// UKIGlobs declares every listed file whose name matches one of these globs a Unified
+	// Kernel Image, as ProvenanceRequest.UKIGlobs does; each glob must match a listed name.
+	UKIGlobs []string
 }
 
 // GenerateSLSAProvenanceFromChecksums constructs one unsigned in-toto SLSA v1.0 provenance
 // statement naming every file a sha256sum manifest lists. The manifest supplies the names;
 // each digest is computed from the listed file's bytes, and the manifest's digest is only
 // the cross-check ProvenanceRequest.ExpectedSHA256 is, so a manifest line that no longer
-// matches its file refuses the whole statement instead of attesting either value. The
-// release workflow signs the statement with `cosign attest-blob --statement`
+// matches its file refuses the whole statement instead of attesting either value. Each
+// listed file's content check verdict is returned in manifest order. The release workflow
+// signs the statement with `cosign attest-blob --statement`
 // (.github/workflows/release-binaries.yml).
-func GenerateSLSAProvenanceFromChecksums(ctx context.Context, req ChecksumsRequest) (*SLSAStatement, error) {
+func GenerateSLSAProvenanceFromChecksums(ctx context.Context, req ChecksumsRequest) (*SLSAStatement, []ContentVerdict, error) {
 	if err := checkProvenanceContext(ctx); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if req.ManifestPath == "" {
-		return nil, fmt.Errorf("slsa: checksum manifest path is required")
+		return nil, nil, fmt.Errorf("slsa: checksum manifest path is required")
+	}
+	if err := req.ContentCheck.validate(); err != nil {
+		return nil, nil, err
+	}
+	if err := validateUKIGlobs(req.UKIGlobs); err != nil {
+		return nil, nil, err
 	}
 	data, err := contextopt.ReadSnapshot(ctx, req.ManifestPath)
 	if err != nil {
-		return nil, fmt.Errorf("slsa: read checksum manifest %s: %w", req.ManifestPath, err)
+		return nil, nil, fmt.Errorf("slsa: read checksum manifest %s: %w", req.ManifestPath, err)
 	}
 	listed, err := ParseChecksums(data)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	subjects, err := checksummedSubjects(ctx, filepath.Dir(req.ManifestPath), listed, req.MaxBytes)
+	subjects, verdicts, err := checksummedSubjects(ctx, filepath.Dir(req.ManifestPath), listed, req)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return newStatement(subjects, req.BuilderID), nil
+	if err := checkUKIGlobsMatched(req.UKIGlobs, subjects); err != nil {
+		return nil, nil, err
+	}
+	return newStatement(subjects, req.BuilderID), verdicts, nil
 }
 
 // checksummedSubjects digests every listed file under dir, cross-checking each against the
-// digest its manifest line records.
-func checksummedSubjects(ctx context.Context, dir string, listed []Subject, maxBytes int64) ([]Subject, error) {
+// digest its manifest line records and checking its content against its name.
+func checksummedSubjects(ctx context.Context, dir string, listed []Subject, req ChecksumsRequest) ([]Subject, []ContentVerdict, error) {
 	subjects := make([]Subject, 0, len(listed))
+	verdicts := make([]ContentVerdict, 0, len(listed))
 	for i := 0; i < len(listed) && i < maxProvenanceSubjects; i++ {
 		rel := filepath.FromSlash(listed[i].Name)
 		if !filepath.IsLocal(rel) {
-			return nil, fmt.Errorf("slsa: checksum line %d names %q, which is not a path inside %s", i+1, listed[i].Name, dir)
+			return nil, nil, fmt.Errorf("slsa: checksum line %d names %q, which is not a path inside %s", i+1, listed[i].Name, dir)
 		}
-		subject, err := artifactSubject(ctx, ProvenanceRequest{
+		subject, verdict, err := artifactSubject(ctx, ProvenanceRequest{
 			ArtifactPath: filepath.Join(dir, rel), ArtifactName: listed[i].Name,
-			ExpectedSHA256: listed[i].Digest["sha256"], MaxBytes: maxBytes,
+			ExpectedSHA256: listed[i].Digest["sha256"], MaxBytes: req.MaxBytes, ContentCheck: req.ContentCheck,
+			UKIGlobs: req.UKIGlobs,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("slsa: checksum line %d: %w", i+1, err)
+			return nil, nil, fmt.Errorf("slsa: checksum line %d: %w", i+1, err)
 		}
 		subjects = append(subjects, subject)
+		verdicts = append(verdicts, verdict)
 	}
-	return subjects, nil
+	return subjects, verdicts, nil
 }
 
 // checkProvenanceContext refuses a nil or already cancelled context before any file is read.
@@ -211,29 +244,37 @@ func newStatement(subjects []Subject, builderID string) *SLSAStatement {
 	}
 }
 
-// artifactSubject digests the artifact file and returns the subject that names it. An
-// empty file, a file over the byte bound, and a file whose digest differs from a supplied
-// expected digest are all refused.
-func artifactSubject(ctx context.Context, req ProvenanceRequest) (Subject, error) {
+// artifactSubject digests the artifact file, checks the same bytes against the file type
+// the subject name declares, and returns the subject that names it with the content
+// verdict. An empty file, a file over the byte bound, a file whose digest differs from a
+// supplied expected digest, and under an enforced content check a file that is not what
+// its name says are all refused.
+func artifactSubject(ctx context.Context, req ProvenanceRequest) (Subject, ContentVerdict, error) {
 	limit, err := validateProvenanceRequest(req)
 	if err != nil {
-		return Subject{}, err
-	}
-	digest, size, err := contextopt.DigestBinarySnapshot(ctx, req.ArtifactPath, limit)
-	if err != nil {
-		return Subject{}, fmt.Errorf("slsa: digest artifact %s: %w", req.ArtifactPath, err)
-	}
-	if size == 0 {
-		return Subject{}, fmt.Errorf("slsa: artifact %s is empty; a zero-byte file is not a build output to attest", req.ArtifactPath)
-	}
-	if req.ExpectedSHA256 != "" && req.ExpectedSHA256 != digest {
-		return Subject{}, fmt.Errorf("slsa: artifact %s hashes to sha256 %s, not the expected %s", req.ArtifactPath, digest, req.ExpectedSHA256)
+		return Subject{}, ContentVerdict{}, err
 	}
 	name := req.ArtifactName
 	if name == "" {
 		name = filepath.Base(req.ArtifactPath)
 	}
-	return Subject{Name: name, Digest: map[string]string{"sha256": digest}}, nil
+	// A nil probe converts to a nil observer: a name no content rule covers is only digested.
+	format, probe := contentProbeFor(name, matchingUKIGlob(req.UKIGlobs, name) != "")
+	digest, size, err := contextopt.DigestBinarySnapshotTo(ctx, req.ArtifactPath, limit, probe)
+	if err != nil {
+		return Subject{}, ContentVerdict{}, fmt.Errorf("slsa: digest artifact %s: %w", req.ArtifactPath, err)
+	}
+	if size == 0 {
+		return Subject{}, ContentVerdict{}, fmt.Errorf("slsa: artifact %s is empty; a zero-byte file is not a build output to attest", req.ArtifactPath)
+	}
+	if req.ExpectedSHA256 != "" && req.ExpectedSHA256 != digest {
+		return Subject{}, ContentVerdict{}, fmt.Errorf("slsa: artifact %s hashes to sha256 %s, not the expected %s", req.ArtifactPath, digest, req.ExpectedSHA256)
+	}
+	verdict, err := judgeContent(req, name, format, probe, size)
+	if err != nil {
+		return Subject{}, ContentVerdict{}, err
+	}
+	return Subject{Name: name, Digest: map[string]string{"sha256": digest}}, verdict, nil
 }
 
 // validateProvenanceRequest checks the request before any file is read and returns the
@@ -244,6 +285,12 @@ func validateProvenanceRequest(req ProvenanceRequest) (int64, error) {
 	}
 	if req.ExpectedSHA256 != "" && !sha256HexPattern.MatchString(req.ExpectedSHA256) {
 		return 0, fmt.Errorf("slsa: expected sha256 hex digest must be exactly 64 lowercase hex characters, got %q", req.ExpectedSHA256)
+	}
+	if err := req.ContentCheck.validate(); err != nil {
+		return 0, err
+	}
+	if err := validateUKIGlobs(req.UKIGlobs); err != nil {
+		return 0, err
 	}
 	switch {
 	case req.MaxBytes == 0:

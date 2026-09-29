@@ -56,7 +56,9 @@ func printDocsUsage() {
 	fmt.Println("  audit [path]                        Audit documentation coverage for declared packages")
 	fmt.Println("  lookup <package> [path]             Retrieve and print distilled documentation")
 	fmt.Println("  funding [path] [--config=f] [--check]  Render funding surfaces from operator configuration")
-	fmt.Println("  references [--path=.]               Check that README.md and docs/ name only existing commands, flags and paths (Praetor checkout)")
+	fmt.Println("  references [--path=.]               Check that README.md and docs/ name only existing commands, flags and paths (Praetor checkout),")
+	fmt.Println("    [--base=<rev> [--head=HEAD]         and that a change to a docs_surfaces surface of .standards.yaml edits its documentation")
+	fmt.Println("    [--pr-body-file=<file>]]            or carries a waiver")
 }
 
 func runDocsSync(ctx context.Context, args []string) error {

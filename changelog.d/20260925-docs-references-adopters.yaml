@@ -1,0 +1,3 @@
+type: added
+title: "Let any repository declare its user-facing surfaces under docs_surfaces in .standards.yaml and run `praetorctl docs references --base=<rev>` to fail a change that touches a surface without its documentation, with Docs-Waiver: trailers and 'no docs needed: <reason>' pull request lines as reasoned waivers and unmapped surfaces reported; Praetor's own surface map moves from scripts/docs_drift.py, which is removed, into the same declaration"
+breaking: true
