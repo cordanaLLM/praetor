@@ -23,9 +23,9 @@ praetorctl harvest drift --dir /path/to/dev --path scripts/ --path .githooks/ --
   `git cat-file` reads them, both through the isolated probe environment of
   `util.RunGitProbe`. Working-tree edits, clean or smudge filters and hooks take no part.
   Symbolic links and submodules are not copies and are skipped.
-- **Scope.** `.agents/hooks-scripts/`, `.githooks/` and `scripts/`, the directories that
-  conventionally hold hand-copied governance and privacy scripts, unless `--path` names
-  other repository-relative prefixes (at most 32).
+- **Scope.** `.githooks/` and `scripts/`, the directories that conventionally hold
+  hand-copied governance and privacy scripts, unless `--path` names other
+  repository-relative prefixes (at most 32), such as a directory of agent hook scripts.
 - **Findings.** A path two or more repositories carry is *drifted* when the copies differ and
   *identical* when they agree. Each variant carries its sha256 digest, line count, the
   repositories that hold it, and the lines it removes and adds relative to the most common
@@ -51,10 +51,10 @@ file:
 
 ```yaml
 copies:
-  - path: .agents/hooks-scripts/guard.py
+  - path: scripts/guard.py
     source:
       repository: <owner>/<repository>
-      path: .agents/hooks-scripts/guard.py
+      path: scripts/guard.py
       revision: <full commit id>
     digest: sha256:<hex of the source file at that revision>
 ```
