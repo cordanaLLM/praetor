@@ -83,10 +83,10 @@ func TestLefthookRendering_Positive_FoldsWithoutChangingValues(t *testing.T) {
 // decodedJob returns the commands entry job of hook in a decoded rendering.
 func decodedJob(t *testing.T, decoded map[string]any, hook, job string) map[string]any {
 	t.Helper()
-	section, _ := decoded[hook].(map[string]any)
-	commands, _ := section["commands"].(map[string]any)
-	entry, ok := commands[job].(map[string]any)
-	if !ok {
+	section, isSection := decoded[hook].(map[string]any)
+	commands, isCommands := section["commands"].(map[string]any)
+	entry, isEntry := commands[job].(map[string]any)
+	if !isSection || !isCommands || !isEntry {
 		t.Fatalf("the rendering has no %s job %s", hook, job)
 	}
 	return entry
