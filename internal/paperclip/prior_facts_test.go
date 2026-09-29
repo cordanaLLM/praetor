@@ -151,8 +151,9 @@ func editedFuncLOC(t *testing.T, h *Harness, from, to string) *Harness {
 // the function length, a harness stating that plain number is operator-owned after the limit
 // moves: to another number, up to the ceiling, or back to the unresolved ceiling. Only the
 // number the current synthesis states is accepted as a plain number, since any other one is
-// indistinguishable from a hand edit, so `praetorctl adopt --force` refreshes it. Boundary: the
-// same plain number with only the receipt row changed is still earlier output.
+// indistinguishable from a hand edit, so the harness stays operator-owned, under --force too;
+// deleting it and re-running adopt regenerates it. Boundary: the same plain number with only
+// the receipt row changed is still earlier output.
 func TestPriorGeneratedKeepsHarnessAfterResolvedLimitMoves(t *testing.T) {
 	resolved := func(limit int) hisscatalog.Facts {
 		return hisscatalog.Facts{Languages: hisscatalog.LanguageGo, MaxFuncLOC: limit}

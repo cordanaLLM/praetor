@@ -3,6 +3,7 @@ package paperclip
 import (
 	"context"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/clientjson"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/gating"
@@ -356,8 +358,8 @@ func releasedReceiptRows() []string {
 // unmodified output after the operator pins receipt.public_key, as the unpinned row advises, the
 // repository's languages or declared exceptions change, its policy resolves the function length
 // the harness stated as the audit ceiling, or the release moved only its pinned receipt row;
-// recognising it lets plain adopt refresh it without --force, which would also rewrite
-// adopter-maintained files (#502). The set is enumerated rather than the fact-dependent rows
+// recognising it is what lets adopt refresh it, since --force keeps any harness it does not
+// recognise, as operator-owned (#502). The set is enumerated rather than the fact-dependent rows
 // normalised away, so recognition stays byte for byte: an edit to the receipt row or to one
 // invariant, its function length included, still makes the harness operator-owned
 // (limitFacts). It is bounded: len(releasedReceiptRows()) x len(releaseFacts(limits)) values.
@@ -402,8 +404,9 @@ func releaseFacts(limits []int) []hisscatalog.Facts {
 // config, never from a harness, in both forms: stated unresolved, which a policy that later
 // resolves replaces, and resolved at the ceiling. A plain number is accepted only when the
 // current synthesis states it. Any other plain length is indistinguishable from an operator's
-// edit, so it keeps the harness operator-owned: after the repository's resolved limit moves
-// (50 to 45, or 50 up to the ceiling), `praetorctl adopt --force` refreshes it.
+// edit, so it keeps the harness operator-owned, under --force too: after the repository's
+// resolved limit moves (50 to 45, or 50 up to the ceiling), delete .paperclip/harness.json and
+// re-run `praetorctl adopt` to regenerate it.
 func limitFacts(stated []int) []hisscatalog.Facts {
 	ceiling := config.AuditMaxFuncLOC
 	statements := make([]hisscatalog.Facts, 0, 2+len(stated))
@@ -530,11 +533,12 @@ func WriteHarness(h *Harness, repoPath string) error {
 }
 
 // WriteHarnessFiles writes .paperclip/harness.json and, when rules is set, .paperclip/rules.md.
-// A refresh of earlier output passes PriorState.Rules, so it never recreates a rules.md the
-// operator removed. The directory and both files are created through a pinned handle on
-// repoPath (util.MkdirConfined, util.WriteFileConfined), so a symlinked .paperclip cannot
-// redirect them, not even one swapped in after a check, and a link planted at either file is
-// refused instead of written through (BUG-826).
+// Adoption rewrites an existing harness only as a refresh of earlier output, with or without
+// --force, and passes PriorState.Rules, so it never recreates a rules.md the operator removed.
+// The directory and both files are created through a pinned handle on repoPath
+// (util.MkdirConfined, util.WriteFileConfined), so a symlinked .paperclip cannot redirect them,
+// not even one swapped in after a check, and a link planted at either file is refused instead of
+// written through (BUG-826).
 func WriteHarnessFiles(h *Harness, repoPath string, rules bool) error {
 	data, err := MarshalHarness(h)
 	if err != nil {
@@ -559,6 +563,61 @@ func writeHarnessFile(repoPath, name string, data []byte) error {
 		return fmt.Errorf("write %s: %w", filepath.Join(repoPath, rel), err)
 	}
 	return nil
+}
+
+// PatchPlatform returns the harness text data with only its platform member set to platform,
+// and whether that changed anything. It is how adoption --force reconciles an operator-owned
+// harness whose platform names another repository. The member's value is replaced where it
+// stands (clientjson.ReplaceMember), so every other byte stays as written: members this release
+// does not know, layout, the \u003c-style escapes json.MarshalIndent wrote into a released
+// harness, and line endings. The member is the one LoadHarnessContext reads (platformMember), so
+// a case-variant key such as "Platform" keeps its spelling. data must hold one JSON object
+// without a duplicate member name, and platform must be a value LoadHarnessContext accepts.
+func PatchPlatform(data []byte, platform string) ([]byte, bool, error) {
+	if err := validateHarnessValues([]string{platform}); err != nil {
+		return nil, false, fmt.Errorf("paperclip: harness platform: %w", err)
+	}
+	object, err := clientjson.DecodeObject(data)
+	if err != nil {
+		return nil, false, fmt.Errorf("paperclip: harness is not one JSON object with unique member names: %w", err)
+	}
+	member, err := platformMember(object)
+	if err != nil {
+		return nil, false, err
+	}
+	if clientjson.StringValue(member.Value) == platform {
+		return data, false, nil
+	}
+	value, err := jsontext.AppendQuote(nil, platform)
+	if err != nil {
+		return nil, false, fmt.Errorf("paperclip: encode harness platform: %w", err)
+	}
+	patched, err := clientjson.ReplaceMember(data, member.Name, value)
+	if err != nil {
+		return nil, false, fmt.Errorf("paperclip: set harness platform: %w", err)
+	}
+	return patched, true, nil
+}
+
+// platformMember returns the member of a harness object LoadHarnessContext reads as its
+// platform. encoding/json matches member names case-insensitively (strings.EqualFold), so a
+// "Platform" key is the platform. Exactly one such member is required: with none the loader
+// refuses the harness, and with two in different case ("platform" and "Platform") the loader
+// reads the last, so replacing either value alone could leave the platform audit reads as it was.
+func platformMember(object clientjson.Object) (clientjson.Member, error) {
+	var found []clientjson.Member
+	for _, member := range object {
+		if strings.EqualFold(member.Name, "platform") {
+			found = append(found, member)
+		}
+	}
+	switch len(found) {
+	case 1:
+		return found[0], nil
+	case 0:
+		return clientjson.Member{}, errors.New("paperclip: harness has no platform member")
+	}
+	return clientjson.Member{}, fmt.Errorf("paperclip: harness holds %d platform members that differ only in case", len(found))
 }
 
 // renderRules renders the human-readable operating rules of a harness.

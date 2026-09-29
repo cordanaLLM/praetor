@@ -657,6 +657,43 @@ errors retain the partial report, since earlier scaffolding may already exist.
 The same source option applies to `adopt --all-missing`; integrations invoking
 adoption must supply it or arrange an already valid target lock.
 
+## Migration: `--force` keeps an operator-owned Paperclip harness
+
+`praetorctl adopt --force` no longer regenerates an operator-owned `.paperclip/harness.json` or
+recreates a deleted `.paperclip/rules.md` (#502). It keeps the harness, sets only a `platform`
+that names another repository, and fails on a harness that does not validate, as a plain run
+does. To regenerate the harness, delete `.paperclip/harness.json` (and `rules.md`) and rerun
+`praetorctl adopt`.
+
+Adoption does not re-bind `register.sources` to a harness you edited, under `--force` either.
+A declared contract that no longer matches stops the run before its first write with
+`existing register.sources fails its configured gate`. The error names every value that
+differs, extracted from the files as they stand, and two remedies:
+
+1. Keep the edit: set `expected`, `not_applicable` and `sha256` under `register.sources` in
+   `.standards.yaml` to the extracted values the error reports, then rerun
+   `praetorctl adopt --force`. `praetorctl caveman check --configured-sources --root=.` reports
+   the same values once every input is staged with `git add`; it refuses untracked inputs.
+2. Drop the edit: delete `.paperclip/harness.json` and rerun `praetorctl adopt`. This works only
+   when adoption writes a harness: with `adoption.decline: [paperclip]` or an unresolved
+   repository identity it writes none, so restore the bound bytes with `git checkout` instead,
+   as the error then says. A harness
+   adoption writes where none existed is Praetor output. When every `register.sources` input
+   selects `.paperclip/harness.json`, as the rows adoption declares do, adoption binds the pins
+   to the harness it writes and reports `Re-bound register.sources to the Paperclip harness
+   this run writes where none existed`. That includes pins an earlier release bound to the
+   harness it wrote. A contract that also selects another file keeps its gate, because its one
+   digest cannot tell that file's drift from the new harness. The error then reports values
+   that cover the harness the run would write: set them and rerun.
+
+Tests: `TestAdoptEditedHarnessFailsBeforeWritingWithRemedy` in `internal/adopt/adopt_test.go`,
+`TestAdoptDeletedHarnessRebindsPinsAcrossReleases` and
+`TestAdoptAbsentHarnessKeepsGateOfMixedContract` in
+`internal/adopt/absent_harness_rebind_test.go`, and
+`TestAdoptForceEditedHarnessNeedsRecomputedPins` in
+`cmd/standardsctl/audit_paperclip_force_test.go`. The harness rules in full:
+[text register](guides/text-register.md#upgrading-an-adopted-repository).
+
 ## Lock verification outcomes
 
 Every command that reads `.standards.lock` uses one validator,

@@ -1017,7 +1017,8 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
     could be an operator's edit (`TestPriorGeneratedKeepsEditedFactRows`, `TestLimitFacts`).
     The cost: once a policy has resolved the length, a later move of it (50 to 45, 50 up to
     the ceiling, or back to unresolved) leaves a harness stating the old plain number
-    operator-owned, and `praetorctl adopt --force` refreshes it
+    operator-owned, under `--force` too. Delete `.paperclip/harness.json` and rerun
+    `praetorctl adopt` to regenerate it
     (`TestPriorGeneratedKeepsHarnessAfterResolvedLimitMoves`).
   - Still open: the `## AGit Push Protocol` section (`agit_push_format`) prescribes
     `git push origin HEAD:refs/for/main -o topic=<issue-id>` whatever forge `origin` names. That
@@ -1026,7 +1027,22 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
     be a guess, so the harness does not choose one. On any other forge, push the review branch
     (the second half of the command) and open the pull request there.
 
-An existing harness keeps its text until `praetorctl adopt --force` refreshes it.
+An existing harness that is neither the current synthesis nor unmodified earlier output is
+operator-owned and keeps its text, under `--force` too
+(`TestAdoptForceKeepsReboundEditedOperatingContract`). A declared `register.sources` is never
+re-bound to an edited harness, so recompute its pins after an edit
+([text register](text-register.md#upgrading-an-adopted-repository)). `--force` sets only a
+`platform` that names another repository than the identity, the value the audit's Paperclip
+gate compares. It replaces that value in place (`clientjson.ReplaceMember`), so every other byte
+stays, layout, line endings and the `\u003c`-style escapes of a released harness included, and
+the reported delta is that one line; a plain run keeps the file and warns
+(`TestAdoptForcePatchesOnlyHarnessPlatform`,
+`TestPatchPlatform_Positive_ReleasedHarnessChangesOneLine`). To regenerate the harness, delete
+`.paperclip/harness.json` and rerun `praetorctl adopt`. A harness written where none existed is
+Praetor output, so a contract whose every input selects it is bound to the written bytes, pins
+an earlier release bound included (`TestAdoptDeletedHarnessRebindsPinsAcrossReleases`). A
+`.paperclip/rules.md` you deleted stays deleted, under `--force` too
+(`TestAdoptForceKeepsDeletedRulesAbsent`).
 
 ## Canonical context preparation
 
@@ -1058,11 +1074,12 @@ repository's own text.
 
 Files adopted before this change open with a file-wide `<!-- markdownlint-disable MD013 -->`
 (an older harness disables MD013 and MD025 together). Adoption with `--force` rewrites the
-personas and `.paperclip/`, and refreshes the `AGENTS.md` harness while keeping the
-repository's own instructions. It never rewrites an existing `CONTRIBUTING.md`, pull
-request template, `SECURITY.md` or `docs/adr/`: those belong to the repository once
-written (`internal/adopt/governance.go`), so delete their disable line by hand and wrap
-the lines it covered.
+personas and refreshes the `AGENTS.md` harness while keeping the repository's own
+instructions. `.paperclip/` is refreshed, with or without `--force`, only while it is
+unmodified earlier output; delete an edited one and rerun adoption to regenerate it. It
+never rewrites an existing `CONTRIBUTING.md`, pull request template, `SECURITY.md` or
+`docs/adr/`: those belong to the repository once written (`internal/adopt/governance.go`),
+so delete their disable line by hand and wrap the lines it covered.
 
 `internal/adopt/generated_markdown_test.go` and
 `internal/paperclip/rules_markdown_test.go` check each file with

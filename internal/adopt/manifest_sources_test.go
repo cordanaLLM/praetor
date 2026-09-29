@@ -3,12 +3,14 @@ package adopt
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/caveman"
 	"github.com/cordanaLLM/praetor/internal/cavemansource"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/paperclip"
 	"gopkg.in/yaml.v3"
 )
 
@@ -149,10 +151,18 @@ func TestAdoptKeepsEditedReleasedHarness(t *testing.T) {
 // contract over the managed rows and that hook that passes its gate.
 func extendedSourceRepo(t *testing.T) (string, *config.RegisterSources) {
 	t.Helper()
+	return extendedSourceRepoFor(t, "acme/legacy")
+}
+
+// extendedSourceRepoFor is extendedSourceRepo with the harness naming platform. A platform other
+// than the repository's gets one more operator input selecting it, so the contract binds the
+// value the --force platform patch changes.
+func extendedSourceRepoFor(t *testing.T, platform string) (string, *config.RegisterSources) {
+	t.Helper()
 	repoPath := newTestRepo(t, "legacy")
 	mustWrite(t, filepath.Join(repoPath, paperclipFile), `{
   "version": 1,
-  "platform": "acme/legacy",
+  "platform": "`+platform+`",
   "operating_contract": ["result: custom contract."],
   "agit_push_format": "git push custom",
   "invariants": ["result: custom invariant."]
@@ -161,6 +171,10 @@ func extendedSourceRepo(t *testing.T) (string, *config.RegisterSources) {
 	mustWrite(t, filepath.Join(repoPath, "hooks", "notify.sh"), "echo \"result: hook pass.\"\n")
 	inputs := append(managedHarnessInputs(), config.RegisterSourceInput{Path: "hooks/notify.sh",
 		Surface: config.SurfaceHooks, Kind: "message", Format: config.SourceFormatShell})
+	if platform != "acme/legacy" {
+		inputs = append(inputs, config.RegisterSourceInput{Path: paperclipFile, Surface: config.SurfacePrompts,
+			Kind: "message", Format: config.SourceFormatJSON, Selector: "platform"})
+	}
 	result, err := cavemansource.ExtractInputs(t.Context(), repoPath, inputs)
 	if err != nil {
 		t.Fatal(err)
@@ -172,22 +186,53 @@ func extendedSourceRepo(t *testing.T) (string, *config.RegisterSources) {
 	return repoPath, declared
 }
 
-// TestAdoptForceRebindsExtendedSourceContract: --force regenerates the harness, keeps every
-// declared input (operator rows included) and re-binds only counts and digest.
-func TestAdoptForceRebindsExtendedSourceContract(t *testing.T) {
+// TestAdoptForceKeepsOperatorHarnessAndExtendedContract (#502): --force keeps an operator-owned
+// harness, so the declared contract, operator rows included, stays bound to it as written and
+// the manifest bytes stay.
+func TestAdoptForceKeepsOperatorHarnessAndExtendedContract(t *testing.T) {
 	repoPath, declared := extendedSourceRepo(t)
+	harness := mustRead(t, filepath.Join(repoPath, paperclipFile))
+	manifest := mustRead(t, filepath.Join(repoPath, manifestFile))
 	report, err := Adopt(t.Context(), sourceAdoptOptions(t, repoPath, true))
 	if err != nil {
 		t.Fatalf("--force refused an extended source contract: %v", err)
 	}
-	rebound := requirePassingSourceGate(t, repoPath, paperclipFile, "hooks/notify.sh")
-	if len(rebound.Inputs) != len(declared.Inputs) || rebound.Inputs[2] != declared.Inputs[2] {
-		t.Fatalf("declared inputs not kept: %+v", rebound.Inputs)
+	if got := mustRead(t, filepath.Join(repoPath, paperclipFile)); got != harness {
+		t.Fatalf("--force rewrote the operator-owned harness:\n%s", got)
 	}
-	if rebound.SHA256 == declared.SHA256 {
-		t.Fatal("digest not re-bound to the regenerated harness")
+	if got := mustRead(t, filepath.Join(repoPath, manifestFile)); got != manifest {
+		t.Fatalf("--force re-bound a contract over a kept harness:\n%s", got)
 	}
-	if !strings.Contains(reportDetail(report, manifestFile), "Re-bound register.sources") {
+	if kept := requirePassingSourceGate(t, repoPath, paperclipFile, "hooks/notify.sh"); kept.SHA256 != declared.SHA256 {
+		t.Fatalf("contract digest moved: %s, want %s", kept.SHA256, declared.SHA256)
+	}
+	if strings.Contains(reportDetail(report, manifestFile), "Re-bound register.sources") {
+		t.Fatalf("re-binding reported for a kept harness: %q", reportDetail(report, manifestFile))
+	}
+}
+
+// TestAdoptForcePlatformPatchRebindsExtendedContract (#502): the --force platform patch is the
+// one write --force makes to an operator-owned harness. A declared contract selecting platform
+// is re-bound to the patched bytes, keeping every declared input and the operator comment.
+func TestAdoptForcePlatformPatchRebindsExtendedContract(t *testing.T) {
+	repoPath, declared := extendedSourceRepoFor(t, "acme/renamed")
+	report, err := Adopt(t.Context(), sourceAdoptOptions(t, repoPath, true))
+	if err != nil {
+		t.Fatalf("--force refused an extended source contract: %v", err)
+	}
+	stageAdoptPaths(t, repoPath, paperclipFile, "hooks/notify.sh")
+	manifest, err := config.LoadManifest(filepath.Join(repoPath, manifestFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebound := manifest.Register.Sources
+	if _, err := cavemansource.ExtractDeclared(t.Context(), repoPath, rebound); err != nil {
+		t.Fatalf("contract not bound to the patched harness: %v", err)
+	}
+	if !reflect.DeepEqual(rebound.Inputs, declared.Inputs) || rebound.SHA256 == declared.SHA256 {
+		t.Fatalf("declared inputs not kept or digest not re-bound: %+v", rebound)
+	}
+	if !strings.Contains(reportDetail(report, manifestFile), "Re-bound register.sources to the rewritten Paperclip harness") {
 		t.Fatalf("re-binding not reported: %q", reportDetail(report, manifestFile))
 	}
 	if !strings.Contains(mustRead(t, filepath.Join(repoPath, manifestFile)), "# operator: hook text is governed too") {
@@ -206,8 +251,8 @@ func TestAdoptForceRefusesDriftedSourceContract(t *testing.T) {
 	}
 }
 
-// TestAdoptForceLeavesCurrentContractUntouched: when the regenerated harness matches the one
-// on disk, re-binding computes the same contract and the manifest bytes stay.
+// TestAdoptForceLeavesCurrentContractUntouched: when the harness on disk is the current
+// synthesis, --force writes none, so the contract and the manifest bytes stay.
 func TestAdoptForceLeavesCurrentContractUntouched(t *testing.T) {
 	repoPath := newTestRepo(t, "legacy")
 	mustWrite(t, filepath.Join(repoPath, manifestFile), legacyManifest)
@@ -263,4 +308,44 @@ func manifestSourcesYAML(t *testing.T, sources *config.RegisterSources) string {
 		t.Fatal(err)
 	}
 	return string(data)
+}
+
+// TestDeclaredSourcesRemedy_Positive: a plan that would regenerate the harness after deletion
+// keeps offering the delete remedy beside the pins and the configured-sources check.
+func TestDeclaredSourcesRemedy_Positive(t *testing.T) {
+	remedy := declaredSourcesRemedy(harnessPlan{onDisk: true, data: []byte("{}")})
+	for _, want := range []string{"to the extracted values this error reports",
+		"`praetorctl caveman check --configured-sources --root=.`", "delete it and re-run praetorctl adopt"} {
+		if !strings.Contains(remedy, want) {
+			t.Fatalf("remedy lacks %q: %s", want, remedy)
+		}
+	}
+}
+
+// TestDeclaredSourcesRemedy_Negative: a declined paperclip step writes no harness, so the remedy
+// never tells the operator to delete one; it names the restore path and the reason instead.
+func TestDeclaredSourcesRemedy_Negative(t *testing.T) {
+	remedy := declaredSourcesRemedy(harnessPlan{onDisk: true, data: []byte("{}"), neverWrites: true})
+	if strings.Contains(remedy, "delete it") {
+		t.Fatalf("a plan that never writes must not offer the delete remedy: %s", remedy)
+	}
+	for _, want := range []string{"restore the " + paperclipFile + " bytes the pins were bound to (git checkout)",
+		"adoption.decline lists the paperclip step", "to the extracted values this error reports"} {
+		if !strings.Contains(remedy, want) {
+			t.Fatalf("remedy lacks %q: %s", want, remedy)
+		}
+	}
+}
+
+// TestDeclaredSourcesRemedy_Boundary: an unresolved identity names its own reason even with no
+// harness on disk, and a harness this run writes over an absent file keeps the pins-only remedy.
+func TestDeclaredSourcesRemedy_Boundary(t *testing.T) {
+	remedy := declaredSourcesRemedy(harnessPlan{unresolved: true, neverWrites: true})
+	if strings.Contains(remedy, "delete it") || !strings.Contains(remedy, "the repository identity is unresolved") {
+		t.Fatalf("unresolved identity remedy: %s", remedy)
+	}
+	over := declaredSourcesRemedy(harnessPlan{write: &paperclip.Harness{}})
+	if strings.Contains(over, "delete it") || !strings.Contains(over, "which cover the harness this run writes") {
+		t.Fatalf("absent-harness remedy: %s", over)
+	}
 }

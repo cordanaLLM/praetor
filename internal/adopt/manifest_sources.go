@@ -103,7 +103,7 @@ func planManifestSources(ctx context.Context, s *adoptSession, full string, data
 	if err != nil {
 		return manifestPlan{}, false, fmt.Errorf("existing %s: %w", manifestFile, err)
 	}
-	return manifestPlan{data: replacement, note: manifestSourcesNote(declared, sources, changed, s.opts.Force)}, changed, nil
+	return manifestPlan{data: replacement, note: manifestSourcesNote(declared, sources, changed, harness, s.opts.Force)}, changed, nil
 }
 
 // unboundSourcesNote reports an existing manifest left without register.sources.
@@ -125,12 +125,50 @@ func unboundSourcesReason(harness harnessPlan) string {
 		"declare register.sources for this repository's agent-facing text before audit passes"
 }
 
+// declaredSourcesRemedy is what an operator does when a declared contract fails its own gate
+// before the run. Adoption does not re-bind it, under --force either (#502 U9); the one
+// exception is a harness-only contract over a harness this run writes where none existed
+// (rebindsAbsentHarness), which never reaches here. The mismatch error names every extracted
+// value that differs (cavemansource.verifyDeclaredResult), so the pins can be set from it
+// directly; the configured-sources check reports the same values, but only for staged inputs
+// (cavemansource.ExtractDeclared). A contract that also selects another file keeps its gate over
+// an absent harness too: the values it reports then cover the harness this run writes.
+func declaredSourcesRemedy(harness harnessPlan) string {
+	pins := "set expected, not_applicable and sha256 under register.sources in " + manifestFile +
+		" to the extracted values this error reports"
+	if harness.writesOverAbsent() {
+		return "the contract also selects files other than " + paperclipFile + ", whose drift adoption cannot tell " +
+			"from the harness it writes, so it re-binds none: " + pins + ", which cover the harness this run writes, " +
+			"and re-run praetorctl adopt"
+	}
+	remedy := "adoption never re-binds a contract to drift it did not cause, --force included: " + pins +
+		", or recompute the pins with `praetorctl caveman check --configured-sources --root=.` once every input is " +
+		"staged (git add)"
+	if harness.neverWrites {
+		return remedy + "; or restore the " + paperclipFile + " bytes the pins were bound to (git checkout): this " +
+			"run writes no harness, because " + neverWritesReason(harness) + ", so deleting it regenerates nothing"
+	}
+	return remedy + "; or, when the drift is an edited " + paperclipFile + ", delete it and re-run praetorctl adopt " +
+		"to regenerate it, which binds a contract selecting only that harness to the bytes it writes"
+}
+
+// neverWritesReason says why a kept harness plan writes nothing (keptHarnessPlan).
+func neverWritesReason(harness harnessPlan) string {
+	if harness.unresolved {
+		return "the repository identity is unresolved"
+	}
+	return "adoption.decline lists the paperclip step"
+}
+
 // reconcileRegisterSources returns the register.sources adoption leaves in the manifest and
 // whether they replace the declared contract. A missing contract gets the managed harness
-// rows, or nil when no harness will exist. A declared contract must pass its own gate first, so adoption never re-blesses drift
-// it did not cause; it then keeps every declared input and only recomputes the counts and
-// digest when this run rewrites the harness those inputs select (--force, or a refresh of
-// unmodified earlier output).
+// rows, or nil when no harness will exist. A declared contract must pass its own gate first,
+// so adoption never re-blesses drift it did not cause (declaredSourcesRemedy); it then keeps
+// every declared input and only recomputes the counts and digest when this run writes the
+// harness those inputs select: a refresh of unmodified earlier output, with or without
+// --force, or the --force platform patch of an operator-owned one. A harness this run keeps
+// binds as it stands on disk, under --force too. A contract whose every input selects a
+// harness this run writes where none existed skips that gate (rebindsAbsentHarness).
 func reconcileRegisterSources(ctx context.Context, root string, declared *config.RegisterSources,
 	harness harnessPlan,
 ) (*config.RegisterSources, bool, error) {
@@ -141,20 +179,43 @@ func reconcileRegisterSources(ctx context.Context, root string, declared *config
 		sources, err := managedRegisterSources(ctx, harness.data)
 		return sources, false, err
 	}
-	if err := verifyDeclaredSources(ctx, root, declared, harness); err != nil {
-		return nil, false, fmt.Errorf("existing register.sources fails its configured gate: %w", err)
+	if !rebindsAbsentHarness(declared, harness) {
+		if err := verifyDeclaredSources(ctx, root, declared, harness); err != nil {
+			return nil, false, fmt.Errorf("existing register.sources fails its configured gate: %w; %s", err,
+				declaredSourcesRemedy(harness))
+		}
 	}
-	if harness.write == nil {
+	if !harness.writes() {
 		return declared, false, nil
 	}
 	result, err := cavemansource.ExtractInputsWithDocuments(ctx, root, declared.Inputs,
 		map[string][]byte{paperclipFile: harness.data})
 	if err != nil {
-		return nil, false, fmt.Errorf("re-bind register.sources to the regenerated harness: %w", err)
+		return nil, false, fmt.Errorf("re-bind register.sources to the rewritten harness: %w", err)
 	}
 	rebound := &config.RegisterSources{Expected: result.Applicable, NotApplicable: result.NotApplicable,
 		SHA256: result.SHA256, Inputs: declared.Inputs}
 	return rebound, !equalRegisterSources(declared, rebound), nil
+}
+
+// rebindsAbsentHarness reports a declared contract adoption re-binds without holding it to its
+// pins first: this run writes the harness where no file exists, and every declared input selects
+// that harness. The bytes are Praetor output, not an operator's edit, so binding the pins to them
+// re-blesses no drift. The pins may name bytes that are gone: an earlier release's synthesis, or
+// an edited harness the operator deleted to regenerate it; holding the fresh synthesis to them
+// would fail every run, and deleting the harness again would not change that. An edited harness
+// on disk is never re-blessed (verifyDeclaredSources), and neither is a contract that also
+// selects another file, whose text is the operator's.
+func rebindsAbsentHarness(declared *config.RegisterSources, harness harnessPlan) bool {
+	if !harness.writesOverAbsent() {
+		return false
+	}
+	for _, input := range declared.Inputs {
+		if input.Path != paperclipFile {
+			return false
+		}
+	}
+	return true
 }
 
 // verifyDeclaredSources checks a declared contract against the harness as it stands: the
@@ -165,11 +226,11 @@ func reconcileRegisterSources(ctx context.Context, root string, declared *config
 func verifyDeclaredSources(ctx context.Context, root string, declared *config.RegisterSources, harness harnessPlan) error {
 	planned := map[string][]byte{paperclipFile: harness.data}
 	var current map[string][]byte
-	if !harness.onDisk && harness.write != nil {
+	if harness.writesOverAbsent() {
 		current = planned
 	}
 	_, err := cavemansource.ExtractDeclaredContent(ctx, root, declared, current)
-	if err == nil || harness.write == nil || !harness.onDisk {
+	if err == nil || !harness.writes() || !harness.onDisk {
 		return err
 	}
 	if _, plannedErr := cavemansource.ExtractDeclaredContent(ctx, root, declared, planned); plannedErr == nil {
@@ -178,14 +239,21 @@ func verifyDeclaredSources(ctx context.Context, root string, declared *config.Re
 	return err
 }
 
-func manifestSourcesNote(declared, sources *config.RegisterSources, changed, forced bool) string {
+// manifestSourcesNote reports what the manifest step did to register.sources. A re-bind to a
+// harness this run writes where none existed says so, since it replaces pins without holding
+// the contract to them first (rebindsAbsentHarness).
+func manifestSourcesNote(declared, sources *config.RegisterSources, changed bool, harness harnessPlan, forced bool) string {
 	switch {
 	case !changed:
 		return forcedManifestNote(forced)
 	case declared == nil:
 		return "Added omission-resistant register.sources coverage; preserved existing declarations"
+	case harness.writesOverAbsent():
+		return fmt.Sprintf("Re-bound register.sources to the Paperclip harness this run writes where none existed "+
+			"(expected %d, not_applicable %d, %s): Praetor output, so the earlier pins no longer bind; "+
+			"kept every declared input and declaration", sources.Expected, sources.NotApplicable, sources.SHA256)
 	}
-	return fmt.Sprintf("Re-bound register.sources to the regenerated Paperclip harness (expected %d, not_applicable %d, %s); "+
+	return fmt.Sprintf("Re-bound register.sources to the rewritten Paperclip harness (expected %d, not_applicable %d, %s); "+
 		"kept every declared input and declaration", sources.Expected, sources.NotApplicable, sources.SHA256)
 }
 
