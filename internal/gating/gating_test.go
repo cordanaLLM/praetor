@@ -552,8 +552,9 @@ func TestRunTestStage_3D(t *testing.T) {
 		t.Fatalf("expected exactly one test invocation, got %+v", runs)
 	}
 	invocation := runs[0]
-	if invocation.name != "go" || strings.Join(invocation.args, " ") != "test -race ./..." {
-		t.Errorf("expected 'go test -race ./...', got %s %v", invocation.name, invocation.args)
+	wantArgs := "test -race -timeout " + EnvRunBudget(repoDir).StageBound.String() + " ./..."
+	if invocation.name != "go" || strings.Join(invocation.args, " ") != wantArgs {
+		t.Errorf("expected 'go %s', got %s %v", wantArgs, invocation.name, invocation.args)
 	}
 	if invocation.dir == repoDir || !strings.Contains(invocation.dir, "worktrees") {
 		t.Errorf("tests must run in the isolated worktree, ran in %s", invocation.dir)

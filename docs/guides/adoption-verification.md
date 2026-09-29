@@ -596,7 +596,10 @@ prints the same files with their names and descriptions under **Missing or Inval
 
 The race-detector stage is bounded, because an unbounded stage is how a gate hangs instead of
 failing (HISS-02). The default is 180 seconds, and `PRAETOR_TEST_STAGE_TIMEOUT` raises it up to a
-30-minute ceiling.
+30-minute ceiling. The stage passes the same bound to `go test -race -timeout`, so every package
+binary may use the whole stage budget; go test's own default of ten minutes per package would
+otherwise panic a slow package mid-suite while the stage still had budget left
+(`TestRunTestStage_3D` in `internal/gating/gating_test.go` pins the command line).
 
 The override is clamped rather than trusted. An empty, unparseable, zero, negative or
 over-ceiling value falls back to the default or the ceiling and **says which**, so a typo cannot

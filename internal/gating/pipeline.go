@@ -572,7 +572,10 @@ func runGoTests(ctx context.Context, cfg *stageConfig) (string, error) {
 	budget := EnvRunBudget(cfg.repoDir)
 	bound := budget.StageBound
 	err := inStageWorktree(ctx, cfg, bound, func(tCtx context.Context, dir string) error {
-		out, testErr := cfg.run(tCtx, dir, "go", "test", "-race", "./...")
+		// -timeout gives every package binary the stage's own bound. go test's default is ten
+		// minutes per package, and a package that grows past it (internal/dogfood reached 600 s
+		// on the CI runner) panics mid-suite while the stage still has budget left.
+		out, testErr := cfg.run(tCtx, dir, "go", "test", "-race", "-timeout", bound.String(), "./...")
 		if testErr == nil {
 			return nil
 		}

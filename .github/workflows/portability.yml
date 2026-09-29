@@ -61,7 +61,10 @@ jobs:
     # holds the two equal. The names are required status contexts and stay unchanged.
     if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor') || vars.PRAETOR_FORK_PORTABILITY == 'enabled'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    # windows-latest needs about 45 minutes for the whole job (go test alone 27, the harness
+    # self-tests 13); the leg is a required check, so a job limit at that edge cancels a green
+    # run and blocks the pull request.
+    timeout-minutes: 75
     strategy:
       # One platform failing must never cancel the others. Which platforms are broken is
       # the entire output of this job; cancelling the rest discards it.
