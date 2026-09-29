@@ -176,3 +176,39 @@ func TestRecord_Identity(t *testing.T) {
 		t.Fatalf("absent git leaves identity empty, got %q %q", next3.Repository, next3.CommitSHA)
 	}
 }
+
+// TestBaselineSameDebt_3D pins the comparison a writer uses to keep an unchanged baseline:
+// positive, the same debt under another commit and timestamp; negative, one changed field;
+// boundary, nil snapshots and empty debt.
+func TestBaselineSameDebt_3D(t *testing.T) {
+	recorded := &Baseline{Version: 1, GeneratedAt: "2020-01-01T00:00:00Z", Repository: "acme/widgets",
+		CommitSHA: "abc", Infractions: sampleInfractions(2), TotalInfractions: 2}
+	rescanned := &Baseline{Version: 1, GeneratedAt: "2026-09-29T00:00:00Z", Repository: "acme/widgets",
+		CommitSHA: "def", Infractions: sampleInfractions(2)}
+	if !recorded.SameDebt(rescanned) {
+		t.Fatal("the same debt under a later commit and timestamp must compare equal")
+	}
+
+	for name, change := range map[string]func(*Baseline){
+		"version":    func(b *Baseline) { b.Version = 2 },
+		"repository": func(b *Baseline) { b.Repository = "acme/gadgets" },
+		"infraction": func(b *Baseline) { b.Infractions[1].LineNumber = 9 },
+		"count":      func(b *Baseline) { b.Infractions = b.Infractions[:1] },
+	} {
+		next := *rescanned
+		next.Infractions = sampleInfractions(2)
+		change(&next)
+		if recorded.SameDebt(&next) {
+			t.Errorf("a changed %s must not compare equal", name)
+		}
+	}
+
+	var absent *Baseline
+	if !absent.SameDebt(nil) || absent.SameDebt(rescanned) || rescanned.SameDebt(nil) {
+		t.Fatal("nil compares equal only to nil")
+	}
+	empty := &Baseline{Version: 1, Infractions: []Infraction{}}
+	if !empty.SameDebt(&Baseline{Version: 1}) {
+		t.Fatal("an empty infraction list and a missing one record the same (no) debt")
+	}
+}

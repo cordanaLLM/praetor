@@ -611,6 +611,21 @@ func reconcileBaseline(ctx context.Context, s *adoptSession) error {
 	}
 	s.report.BaselineStatus = "scanned"
 	s.report.LegacyDebtCount = base.TotalInfractions
+	return s.saveScannedBaseline(full, base, existed)
+}
+
+// saveScannedBaseline writes the rescanned baseline and reports it. An existing baseline
+// that records the same debt (baseline.SameDebt) is kept byte for byte: rewriting it would
+// change only generated_at, and the commit baseline.Record also keeps, so every re-adoption
+// with --record-baseline, the default, would leave a diff in a repository nothing changed.
+func (s *adoptSession) saveScannedBaseline(full string, base *baseline.Baseline, existed bool) error {
+	if existed {
+		if previous, err := baseline.LoadBaseline(full); err == nil && previous.SameDebt(base) {
+			s.report.recordReconciled(baselineFile, fmt.Sprintf(
+				"Rescanned; baseline unchanged at %d legacy debt infractions", base.TotalInfractions))
+			return nil
+		}
+	}
 	if !s.opts.DryRun {
 		if err := baseline.SaveBaseline(full, base); err != nil {
 			s.report.BaselineStatus = "failed"
