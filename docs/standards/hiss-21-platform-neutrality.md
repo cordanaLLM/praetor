@@ -236,7 +236,8 @@ names each check it left off (`TestSync_Remote_RequiresOnlyChecksThatReportInThe
 
 - `[INFO] Not required on GitHub for <owner>/<name> ...`: the live ruleset does not require it.
 - `[WARN] Still required on GitHub for <owner>/<name> ...`: the live ruleset still requires it,
-  and every pull request waits for it
+  and unless the repository enables the job (for example with `PRAETOR_FORK_PORTABILITY`), every
+  pull request waits for it
   (`TestSync_Remote_WarnsAboutLeftOffChecksTheLiveRulesetStillRequires`).
 
 The warning is the migration path for forks that ran `sync --remote` before this check existed.
@@ -245,7 +246,8 @@ a live required check (`mergeRuleset` in `internal/forge/ruleset_merge.go`), so 
 leaves them in place. Remove the checks the warning names from the `praetor-main-protection`
 ruleset in the fork's repository settings (Settings, Rules, Rulesets). A fork that sets
 `PRAETOR_FORK_PORTABILITY` and wants the legs required adds them to that ruleset the same way,
-and `sync --remote` keeps them.
+and `sync --remote` keeps them. The warning still names them, because the guard skips the jobs
+by default; that fork keeps them regardless.
 
 ## Templating: the matrix shape is per language
 

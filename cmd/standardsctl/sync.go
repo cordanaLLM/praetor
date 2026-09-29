@@ -320,12 +320,13 @@ func reportOmittedStatusChecks(ctx context.Context, gh *forge.GitHubDriver, bran
 // about those a live ruleset still requires.
 func printOmittedStatusChecks(repository string, absent, stale []string) {
 	if len(absent) > 0 {
-		fmt.Printf("  [INFO] Not required on GitHub for %s, because a repository guard skips their jobs there: %s\n",
+		fmt.Printf("  [INFO] Not required on GitHub for %s, because a repository guard skips their jobs there by default: %s\n",
 			repository, strings.Join(absent, ", "))
 	}
 	if len(stale) > 0 {
-		fmt.Printf("  [WARN] Still required on GitHub for %s, although a repository guard skips their jobs there, so every pull request waits for them: %s. "+
-			"sync --remote never removes a live required check; remove them from ruleset %q by hand\n",
+		fmt.Printf("  [WARN] Still required on GitHub for %s, although a repository guard skips their jobs there by default: %s. "+
+			"Unless this repository enables those jobs (for example through a repository variable the guard reads), every pull request waits for them; "+
+			"sync --remote never removes a live required check, so remove them from ruleset %q by hand\n",
 			repository, strings.Join(stale, ", "), forge.RepositoryRulesetName)
 	}
 }
