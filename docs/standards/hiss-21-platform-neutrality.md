@@ -415,4 +415,7 @@ Platform Neutrality became a required check failed two tests that pass on Linux 
 pins that directory to `eol=lf`. The owner-overlay identity suite runs a nested `go test` over
 config, forge and adopt, and adopt alone takes close to three minutes on `windows-latest`; its
 deadline went from four to eight minutes, and `portability.yml` passes `go test -timeout 30m`
-because the package was already near the 10-minute default per package there.
+because the package was already near the 10-minute default per package there. The next Windows
+run passed every test and was still cancelled by the job's own 45-minute limit during the figure
+build check (go test took 27 minutes, the harness self-tests 13), so the job limit is now 75
+minutes.
