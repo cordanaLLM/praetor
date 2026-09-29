@@ -359,10 +359,13 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
   the block, and an edited managed attribute block at the end of `.gitattributes`; without
   `--force` either edited block fails the run, and a disable of `docs:seo-portal` refuses to
   remove it. On every run, `--force` or not, it covers a vendor context file such as
-  `CLAUDE.md` that holds a hand edit. A file that already holds its bytes is verified. Earlier
+  `CLAUDE.md` and a persona copy such as `.claude/agents/repo-auditor.md` that holds a hand
+  edit (`recordProjections` in `internal/adopt/vendor_targets.go`,
+  `internal/adopt/persona_copies.go`). A file that already holds its bytes is verified. Earlier
   Praetor texts are refreshed, not replaced: a vendor file that is the projection of
   `AGENTS.md` as the run found it or as the `HEAD` commit holds it (an `AGENTS.md` edited
-  after the last `compile-context`; without a commit only the first counts), Praetor's own
+  after the last `compile-context`; without a commit only the first counts), a persona copy
+  that is the copy of its canonical persona as the run found it, Praetor's own
   unedited DevContainer placeholder, a catalog
   text with a layout-only successor, an earlier text of a documentation family file, and the
   documentation gate block an earlier Praetor wrote (tests in
@@ -370,9 +373,13 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
   `internal/adopt/vendor_head_projection_test.go`,
   `internal/adopt/documentation_makefile_refresh_test.go` and
   `internal/adopt/gitattributes_edit_test.go`). Without `--force`, a symlinked backup root
-  fails the run before its first write when a vendor file holds a hand edit
+  fails the run before its first write when a vendor file or a persona copy holds a hand edit
   (`preflightVendorBackupRoot` in `internal/adopt/vendor_targets.go`,
-  `TestAdopt_Negative_PlainRunRefusesSymlinkedBackupRootForVendorEdit`).
+  `preflightPersonaBackupRoot` in `internal/adopt/persona_copies.go`,
+  `TestAdopt_Negative_PlainRunRefusesSymlinkedBackupRootForVendorEdit`,
+  `TestAdopt_Boundary_PlainRunRefusesSymlinkedBackupRootForPersonaCopyEdit`). A re-run lists
+  an existing persona copy and the pre-commit hook adoption installed as reconciled, never as
+  created (`internal/adopt/rerun_report_test.go`).
 - **`AGENTS.md` harness under `--force`.** An existing harness is kept without `--force`.
   With it, the harness is regenerated and what the repository added around it stays:
   - the preamble: every line above the harness start, for example an SPDX header. The

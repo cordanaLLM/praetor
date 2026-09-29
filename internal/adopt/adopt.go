@@ -486,7 +486,7 @@ func preflightAgentSurfaces(ctx context.Context, s *adoptSession, declined map[s
 		}
 	}
 	if !declined["agent-definitions"] {
-		if err := preflightPersonas(ctx, s.repoPath); err != nil {
+		if err := preflightPersonas(ctx, s); err != nil {
 			return fmt.Errorf("agent-definitions preflight: %w", err)
 		}
 	}
@@ -519,14 +519,18 @@ func preflightAgentHarness(ctx context.Context, s *adoptSession) error {
 }
 
 // preflightPersonas runs the persona writer's refusals over every persona agent-definitions
-// writes, before any is written.
-func preflightPersonas(ctx context.Context, repoPath string) error {
+// writes, before any is written, and checks the backup root a hand-edited persona copy would
+// be backed up to (preflightPersonaBackupRoot).
+func preflightPersonas(ctx context.Context, s *adoptSession) error {
 	personas := generatedPersonas()
 	names := make([]string, 0, len(personas))
 	for i := 0; i < len(personas) && i < maxTranspileTargets; i++ {
 		names = append(names, filepath.Base(personas[i].rel))
 	}
-	return compiler.CheckPersonaTargets(ctx, repoPath, names)
+	if err := compiler.CheckPersonaTargets(ctx, s.repoPath, names); err != nil {
+		return err
+	}
+	return preflightPersonaBackupRoot(ctx, s)
 }
 
 // forcedManifestNote explains why --force left the manifest alone, and says what to do instead.

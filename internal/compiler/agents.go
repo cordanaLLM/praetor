@@ -32,6 +32,30 @@ type AgentFile struct {
 // through, so a symlink below rootDir that verify refuses is refused here before anything is
 // written.
 func CompileAgents(ctx context.Context, rootDir string) ([]AgentFile, error) {
+	files, err := planAgents(ctx, rootDir)
+	if err != nil {
+		return nil, err
+	}
+	if err := writeProjectionFiles(ctx, rootDir, files); err != nil {
+		return nil, fmt.Errorf("compile-agents: %w", err)
+	}
+	return agentFiles(rootDir, files), nil
+}
+
+// PlanAgents returns the persona copies CompileAgents would write for rootDir as it is now,
+// after the same refusals, and writes nothing. A caller that reports on the copies reads what
+// each target holds before CompileAgents replaces it.
+func PlanAgents(ctx context.Context, rootDir string) ([]AgentFile, error) {
+	files, err := planAgents(ctx, rootDir)
+	if err != nil {
+		return nil, err
+	}
+	return agentFiles(rootDir, files), nil
+}
+
+// planAgents selects the persona directories, renders every copy and runs the writer's
+// refusals over all of them, the part CompileAgents and PlanAgents share.
+func planAgents(ctx context.Context, rootDir string) ([]projectionFile, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("compile-agents: context cannot be nil")
 	}
@@ -49,13 +73,11 @@ func CompileAgents(ctx context.Context, rootDir string) ([]AgentFile, error) {
 	if err := checkProjectionFiles(ctx, rootDir, files); err != nil {
 		return nil, fmt.Errorf("compile-agents: %w", err)
 	}
-	if err := writeProjectionFiles(ctx, rootDir, files); err != nil {
-		return nil, fmt.Errorf("compile-agents: %w", err)
-	}
-	return agentFiles(rootDir, files), nil
+	return files, nil
 }
 
-// agentFiles reports each written persona copy. Every copy's name is its persona's file name.
+// agentFiles reports each written or planned persona copy. Every copy's name is its persona's
+// file name.
 func agentFiles(rootDir string, files []projectionFile) []AgentFile {
 	results := make([]AgentFile, 0, len(files))
 	for _, file := range files {

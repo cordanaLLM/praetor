@@ -723,9 +723,9 @@ func transpileAgentTargets(ctx context.Context, s *adoptSession, agentsContent s
 		}
 		return nil
 	}
-	if err := s.replaceExistingAll(ctx, vendorReplacements(targets, prior), publish); err != nil {
+	if err := s.replaceExistingAll(ctx, projectionReplacements(targets, prior, vendorContextLabels), publish); err != nil {
 		return err
 	}
-	recordVendorTargets(s.report, targets, prior)
+	recordProjections(s.report, targets, prior, vendorContextLabels)
 	return nil
 }

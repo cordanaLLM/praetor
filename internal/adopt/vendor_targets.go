@@ -69,16 +69,22 @@ func (prior priorVendorProjections) add(source []byte, clients []string) {
 		return
 	}
 	for i := 0; i < len(res.Files) && i < maxTranspileTargets; i++ {
-		digest, _, digestErr := util.CanonicalTextDigest([]byte(res.Files[i].Content))
-		if digestErr != nil {
-			continue
-		}
-		rel := res.Files[i].RelativePath
-		if prior[rel] == nil {
-			prior[rel] = make(map[string]string, 2)
-		}
-		prior[rel][digest] = agentsFile
+		prior.record(res.Files[i].RelativePath, res.Files[i].Content, agentsFile)
 	}
+}
+
+// record adds the digest of content, an earlier projection at rel compiled from source, to the
+// texts a write over rel counts as Praetor output nobody edited. A text the digest refuses (not
+// UTF-8, mixed line endings) adds none, so a file holding it counts as edited.
+func (prior priorVendorProjections) record(rel, content, source string) {
+	digest, _, err := util.CanonicalTextDigest([]byte(content))
+	if err != nil {
+		return
+	}
+	if prior[rel] == nil {
+		prior[rel] = make(map[string]string, 2)
+	}
+	prior[rel][digest] = source
 }
 
 // committedAgentsText returns AGENTS.md as the HEAD commit holds it, read through the isolated
@@ -101,17 +107,18 @@ func (prior priorVendorProjections) isPriorProjection(rel string, data []byte) b
 	return known
 }
 
-// observeVendorTargets reads every compiled vendor file as it is before the write, through the
-// root-pinned walk the vendor writer uses, so a symlinked directory is refused here too.
+// observeVendorTargets reads every compiled projection, a vendor context file or a persona
+// copy, as it is before the write, through the root-pinned walk the projection writers use, so
+// a symlinked directory is refused here too.
 func observeVendorTargets(ctx context.Context, repoPath string, files []compiler.TargetFile) ([]vendorTarget, error) {
 	targets := make([]vendorTarget, 0, len(files))
-	for i := 0; i < len(files) && i < maxTranspileTargets; i++ {
+	for i := 0; i < len(files) && i < maxProjectionTargets; i++ {
 		if _, err := repoFile(repoPath, files[i].RelativePath); err != nil {
 			return nil, err
 		}
 		before, exists, err := contextopt.ObserveSnapshotIn(ctx, repoPath, filepath.FromSlash(files[i].RelativePath))
 		if err != nil {
-			return nil, fmt.Errorf("vendor context target %s: %w", files[i].RelativePath, err)
+			return nil, fmt.Errorf("projection target %s: %w", files[i].RelativePath, err)
 		}
 		targets = append(targets, vendorTarget{file: files[i], before: before, exists: exists})
 	}
@@ -130,35 +137,52 @@ func (t vendorTarget) replacesEdit(prior priorVendorProjections) bool {
 	return !prior.isPriorProjection(t.file.RelativePath, t.before)
 }
 
-// vendorReplacements returns a replacement for every target whose write drops a hand edit.
-func vendorReplacements(targets []vendorTarget, prior priorVendorProjections) []replacement {
+// projectionLabels names the report details of one kind of compiled projection: the vendor
+// context files compiled from AGENTS.md (vendorContextLabels) or the persona copies projected
+// from .agents/agents (personaCopyLabels). The two share one record (projectionReplacements,
+// recordProjections), so a file of either kind is created, synchronized or replaced by the same
+// rule.
+type projectionLabels struct {
+	// compiled details a created or replaced file.
+	compiled func(file compiler.TargetFile) string
+	// synchronized details an existing file whose write dropped no hand edit.
+	synchronized func(file compiler.TargetFile) string
+}
+
+// vendorContextLabels labels the vendor context files compiled from AGENTS.md.
+var vendorContextLabels = projectionLabels{
+	compiled: func(file compiler.TargetFile) string {
+		return fmt.Sprintf("Compiled vendor context target (%d LOC)", file.LineCount)
+	},
+	synchronized: func(file compiler.TargetFile) string {
+		return fmt.Sprintf("Synchronized vendor context target (%d LOC)", file.LineCount)
+	},
+}
+
+// projectionReplacements returns a replacement for every target whose write drops a hand edit.
+func projectionReplacements(targets []vendorTarget, prior priorVendorProjections, labels projectionLabels) []replacement {
 	replaced := make([]replacement, 0, len(targets))
-	for i := 0; i < len(targets) && i < maxTranspileTargets; i++ {
+	for i := 0; i < len(targets) && i < maxProjectionTargets; i++ {
 		if targets[i].replacesEdit(prior) {
 			replaced = append(replaced, replacement{rel: targets[i].file.RelativePath, before: targets[i].before,
-				after: []byte(targets[i].file.Content), detail: compiledVendorDetail(targets[i].file)})
+				after: []byte(targets[i].file.Content), detail: labels.compiled(targets[i].file)})
 		}
 	}
 	return replaced
 }
 
-// compiledVendorDetail is the action detail of a vendor file compiled from AGENTS.md.
-func compiledVendorDetail(file compiler.TargetFile) string {
-	return fmt.Sprintf("Compiled vendor context target (%d LOC)", file.LineCount)
-}
-
-// recordVendorTargets lists each vendor file that replaced no hand edit: reconciled when it
-// existed, created otherwise. replaceExistingAll records the others.
-func recordVendorTargets(report *AdoptReport, targets []vendorTarget, prior priorVendorProjections) {
-	for i := 0; i < len(targets) && i < maxTranspileTargets; i++ {
+// recordProjections lists each target that replaced no hand edit: reconciled when it existed,
+// created otherwise. replaceExistingAll records the others.
+func recordProjections(report *AdoptReport, targets []vendorTarget, prior priorVendorProjections, labels projectionLabels) {
+	for i := 0; i < len(targets) && i < maxProjectionTargets; i++ {
 		target := targets[i]
 		switch {
 		case target.replacesEdit(prior):
 			continue
 		case target.exists:
-			report.recordReconciled(target.file.RelativePath, fmt.Sprintf("Synchronized vendor context target (%d LOC)", target.file.LineCount))
+			report.recordReconciled(target.file.RelativePath, labels.synchronized(target.file))
 		default:
-			report.recordCreated(target.file.RelativePath, compiledVendorDetail(target.file))
+			report.recordCreated(target.file.RelativePath, labels.compiled(target.file))
 		}
 	}
 }
