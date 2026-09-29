@@ -61,7 +61,7 @@ var catalog = []Rule{
 		ID:            "HISS-01",
 		Title:         "Control Flow - Acyclic DAG Control Flow",
 		Specification: "Call graphs must form a Directed Acyclic Graph: G = (V, E), ∀v ∈ V, (v, v) ∉ E*\nDirect and mutual recursion are strictly prohibited in production runtimes.",
-		Enforcement:   "The internal/hiss scanner, deciding a subset per language. Go: goto, direct recursion, and mutual or indirect recursion between plain functions (a cycle through methods is not decided). Rust and Python: direct recursion only. C and C++: goto only, less the single-level forward cleanup gotos a declared hiss.exceptions.c_goto_cleanup accepts (hiss.CleanupGoto). Each claim replays against .config/hiss/coverage.yaml via 'praetorctl hiss coverage --verify'.",
+		Enforcement:   "The internal/hiss scanner, deciding a subset per language. Go: goto, direct recursion, and mutual or indirect recursion between plain functions (a cycle through methods is not decided). Rust, Python, JavaScript, TypeScript and Svelte: direct recursion only. C and C++: goto only, less the single-level forward cleanup gotos a declared hiss.exceptions.c_goto_cleanup accepts (hiss.CleanupGoto). Each claim replays against .config/hiss/coverage.yaml via 'praetorctl hiss coverage --verify'.",
 		FailureAction: "Immediate build failure.",
 		Scope:         "control flow",
 		Directive: []Clause{
@@ -76,7 +76,7 @@ var catalog = []Rule{
 		ID:            "HISS-02",
 		Title:         "Loops & I/O - Bounded Loops & Mandatory I/O Timeouts",
 		Specification: "Every loop construct must possess a statically verifiable scalar upper bound: iterations(L) <= N_max.\nUnbounded loops without counter termination are banned. All I/O operations must accept and enforce explicit context.Context deadlines.",
-		Enforcement:   "The internal/hiss scanner, deciding a subset per language. Go: a for statement without a condition, a context without a deadline reaching a call, and the context-less exec.Command, net.Dial and http.Get families, outside tests and main.main. Rust, Python and C: unbounded loop shapes only. Each claim replays against .config/hiss/coverage.yaml via 'praetorctl hiss coverage --verify'.",
+		Enforcement:   "The internal/hiss scanner, deciding a subset per language. Go: a for statement without a condition, a context without a deadline reaching a call, and the context-less exec.Command, net.Dial and http.Get families, outside tests and main.main. Rust, Python, C, JavaScript, TypeScript and Svelte: unbounded loop shapes only. Each claim replays against .config/hiss/coverage.yaml via 'praetorctl hiss coverage --verify'.",
 		FailureAction: "Pre-commit and CI blocker.",
 		Scope:         "loops, I/O",
 		Directive: []Clause{
