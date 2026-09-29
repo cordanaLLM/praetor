@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const maxWorkspaceBytes = 16 << 20
@@ -65,15 +67,15 @@ func extractSource(ctx context.Context, cfg Config, root *os.Root, entries []str
 }
 
 func extractBlob(ctx context.Context, cfg Config, root *os.Root, manifest sourceManifest, entry string, remaining int) (int, error) {
-	header, path, ok := strings.Cut(entry, "\t")
-	fields := strings.Fields(header)
-	if !ok || !archivePath(path) || !validBlobHeader(fields) {
+	record, err := util.ParseGitTreeEntry(entry, false)
+	if err != nil || !archivePath(record.Path) || !validBlob(record) {
 		return 0, errors.New("source tree contains unsafe path, link or special entry")
 	}
+	path := record.Path
 	if _, found := manifest[path]; found {
 		return 0, errors.New("source tree repeats a path")
 	}
-	data, err := runGit(ctx, cfg.SourceRoot, min(8<<20, remaining), "cat-file", "blob", fields[2])
+	data, err := runGit(ctx, cfg.SourceRoot, min(8<<20, remaining), "cat-file", "blob", record.Object)
 	if err != nil {
 		return 0, errors.New("pinned source blob extraction failed")
 	}
@@ -84,7 +86,7 @@ func extractBlob(ctx context.Context, cfg Config, root *os.Root, manifest source
 		return 0, err
 	}
 	mode := uint32(0o600)
-	if fields[0] == "100755" {
+	if record.Mode == "100755" {
 		mode = 0o700
 	}
 	if err := root.Chmod(path, os.FileMode(mode)); err != nil {
@@ -98,8 +100,9 @@ func archivePath(path string) bool {
 	return filepath.IsLocal(path) && filepath.ToSlash(filepath.Clean(path)) == path && path != ".git" && !strings.HasPrefix(path, ".git/")
 }
 
-func validBlobHeader(fields []string) bool {
-	return len(fields) == 3 && (fields[0] == "100644" || fields[0] == "100755") && fields[1] == "blob" && sourceSHA.MatchString(fields[2])
+// validBlob reports whether a pinned tree entry is a regular file named by a full SHA-1 object.
+func validBlob(record util.GitTreeEntry) bool {
+	return record.RegularBlob() && sourceSHA.MatchString(record.Object)
 }
 
 func snapshotCandidate(ctx context.Context, root *os.Root) (sourceManifest, error) {

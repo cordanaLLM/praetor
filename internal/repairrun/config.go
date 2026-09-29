@@ -13,6 +13,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/dogfood"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const maxConfigBytes = 64 << 10
@@ -89,12 +90,11 @@ func loadPinnedRegisterAuthority(ctx context.Context, cfg Config) (config.Regist
 	if len(entry) == 0 {
 		return config.AbsentRegisterAuthority(), nil
 	}
-	header, name, ok := strings.Cut(strings.TrimSuffix(string(entry), "\x00"), "\t")
-	fields := strings.Fields(header)
-	if !ok || name != ".standards.yaml" || !validBlobHeader(fields) || strings.ContainsRune(name, '\x00') {
+	record, err := util.ParseGitTreeEntry(strings.TrimSuffix(string(entry), "\x00"), false)
+	if err != nil || record.Path != ".standards.yaml" || !validBlob(record) {
 		return config.RegisterAuthority{}, errors.New("pinned register manifest is not a regular file")
 	}
-	data, err := runGit(ctx, cfg.SourceRoot, contextopt.MaxSourceBytes, "cat-file", "blob", fields[2])
+	data, err := runGit(ctx, cfg.SourceRoot, contextopt.MaxSourceBytes, "cat-file", "blob", record.Object)
 	if err != nil {
 		return config.RegisterAuthority{}, errors.New("pinned register manifest read failed")
 	}
