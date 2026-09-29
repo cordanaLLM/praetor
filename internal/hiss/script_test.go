@@ -148,16 +148,89 @@ func TestScriptScanner_MinifiedIsUnscannedNotClean(t *testing.T) {
 	}
 }
 
-// Negative: a file whose braces do not balance was misread, so it is counted as not analysed
-// (Skips.Unparsed) rather than reported clean, and the function left open is not measured.
-func TestScriptScanner_UnbalancedFileIsUnparsed(t *testing.T) {
-	rep := assertScriptFindings(t, "open.js", scriptFuncOfLOC("f", 70)[:40])
-	if rep.Skips.Unparsed != 1 || !rep.Incomplete() {
-		t.Errorf("an unbalanced file must be unparsed, got %+v", rep.Skips)
+// Negative: a file whose braces do not balance was misread, so it is declined: counted as
+// unscanned javascript, never as read, with none of its findings reported. It does not make the
+// report incomplete, which would reject every gate run over the tree for a limit of this line
+// scanner. The balanced twin of each file is read and reported (boundary).
+func TestScriptScanner_MisreadFileIsDeclined(t *testing.T) {
+	for name, body := range map[string]string{
+		"open.js":  "eval(x);\n" + scriptFuncOfLOC("f", 70)[:40],
+		"extra.js": "eval(x);\n}\n",
+		"span.js":  "eval(x);\n/* never closed\n",
+	} {
+		rep := assertScriptFindings(t, name, body)
+		c := rep.Coverage
+		if c.FilesRead != 0 || c.UnscannedLanguages["javascript"] != 1 || rep.Incomplete() {
+			t.Errorf("%s: a misread file must be declined as unscanned javascript, got %+v %+v", name, c, rep.Skips)
+		}
 	}
-	rep = assertScriptFindings(t, "extra.js", "}\n")
-	if rep.Skips.Unparsed != 1 {
-		t.Errorf("a stray closing brace must mark the file unparsed, got %+v", rep.Skips)
+	rep := assertScriptFindings(t, "balanced.js", "eval(x);\n"+scriptFuncOfLOC("f", 3), "HISS-08@1")
+	if rep.Coverage.FilesRead != 1 || rep.Incomplete() {
+		t.Errorf("a balanced file must be read: %+v", rep.Coverage)
+	}
+}
+
+// Negative (review of #589): JSX text is not string or comment syntax. An apostrophe in it
+// opens no string, and the // of a URL in it opens no comment, so the braces after either still
+// balance, the file is read, and the function after the component is measured exactly.
+func TestScriptScanner_JSXTextKeepsBracesBalanced(t *testing.T) {
+	for name, jsx := range map[string]string{
+		"apostrophe.tsx":  "  return <div>{open && <p>Don't close</p>}</div>;\n",
+		"ternary.tsx":     "  return <div>{err ? <p>Can't load</p> : <p>ok</p>}</div>;\n",
+		"two-quotes.tsx":  "  return <div>{a && <p>Don't</p>}{b && <p>it's</p>}</div>;\n",
+		"url.tsx":         "  return (\n    <p>see https://x.y {\n      n\n    }</p>\n  );\n",
+		"double-open.jsx": "  return <p>He said \"stop {n}</p>;\n",
+	} {
+		body := "export function View() {\n" + jsx + "}\n"
+		rep := assertScriptFindings(t, name, body+scriptFuncOfLOC("after", 61), "HISS-04@"+strconv.Itoa(strings.Count(body, "\n")+1))
+		if rep.Coverage.FilesRead != 1 || rep.Incomplete() {
+			t.Errorf("%s: JSX text made the component misread: %+v %+v", name, rep.Coverage, rep.Skips)
+		}
+	}
+}
+
+// Positive (review of #589): a parameter list holding a destructuring pattern, an object type
+// or a default object, on one line or wrapped one name per line, still opens a tracked
+// function, so its length, its recursion and its process.exit are decided like any other. A
+// call with an object argument written the same way does not hide the methods of that object.
+func TestScriptScanner_PatternParameters(t *testing.T) {
+	body := strings.Repeat("  work();\n", 58)
+	for name, header := range map[string]string{
+		"props.tsx":         "export function Card({ a, b }: Props) {\n",
+		"arrow.tsx":         "export const Card = ({ a, b }: Props) => {\n",
+		"object-type.ts":    "function f(o: { a: number }, [x, y]: Pair) {\n",
+		"default.js":        "function f(opts = {}, cb = () => {}) {\n",
+		"wrapped.tsx":       "export function Card({\n  a,\n  b,\n}: Props) {\n",
+		"wrapped-arrow.tsx": "export const Card = ({\n  a,\n}: Props): JSX.Element => {\n",
+	} {
+		line := strconv.Itoa(strings.Count(header, "\n"))
+		assertScriptFindings(t, name, header+body+"}\n")
+		assertScriptFindings(t, "over-"+name, header+body+"  work();\n}\n", "HISS-04@"+line)
+	}
+	assertScriptFindings(t, "method.ts", "class A {\n  async handle({\n    request,\n  }: Ctx) {\n"+body+"    work();\n  }\n}\n", "HISS-04@4")
+	assertScriptFindings(t, "object-arg.js", "Page({\n  onLoad() {\n"+body+"    work();\n  },\n});\n", "HISS-04@2")
+	assertScriptFindings(t, "recursion.js", "function walk({ node }) {\n  return walk({ node: node.next });\n}\n", "HISS-01@2")
+	assertScriptFindings(t, "shadowed.js", "function run({ run }) {\n  return run();\n}\n")
+	assertScriptFindings(t, "exit.js", "export function cli({ argv }) {\n  process.exit(argv.length);\n}\n", "HISS-07@2")
+}
+
+// Boundary: closeParen nests braces and brackets inside the list and closes on the parenthesis
+// that brings the depth to zero; a brace or bracket that would close the list itself is not a
+// parameter list, and an unclosed list reports the depth still open.
+func TestCloseParenNestsPatterns(t *testing.T) {
+	for code, want := range map[string][2]int{
+		"{ a, b }: P) {": {11, 0},
+		"o = {}, [x]) {": {11, 0},
+		"a) {":           {1, 0},
+		"a }":            {-1, -1},
+		"a ]":            {-1, -1},
+		"{":              {-1, 2},
+		"{ a":            {-1, 2},
+	} {
+		closing, depth := closeParen(code, 0, 1)
+		if closing != want[0] || depth != want[1] {
+			t.Errorf("closeParen(%q) = %d, %d, want %d, %d", code, closing, depth, want[0], want[1])
+		}
 	}
 }
 
@@ -194,6 +267,11 @@ func TestLiteralStripperScriptSyntax(t *testing.T) {
 		"regex after return":   {[]string{"return /}/.test(s);"}, []string{"return .test(s);"}},
 		"regex class slash":    {[]string{"r = /[/]x/; d();"}, []string{"r = ; d();"}},
 		"apostrophe string":    {[]string{"s = 'it''s'; e();"}, []string{"s = ; e();"}},
+		"quote open at eol":    {[]string{"<p>Don't {x}</p>"}, []string{"<p>Dont {x}</p>"}},
+		"carried string":       {[]string{"s = 'a\\", "{'; f();"}, []string{"s = ", "; f();"}},
+		"url in jsx text":      {[]string{"<a>https://x.y {n}</a>"}, []string{"<a>https:x.y {n}</a>"}},
+		"comment after colon":  {[]string{"a: // {", "b: 1,"}, []string{"a: ", "b: 1,"}},
+		"comment after url":    {[]string{"go(); // https://x.y {"}, []string{"go(); "}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s := &literalStripper{syn: scriptSyntax}

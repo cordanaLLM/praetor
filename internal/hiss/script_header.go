@@ -130,25 +130,36 @@ func submatch(s string, m []int, g int) string {
 	return s[m[2*g]:m[2*g+1]]
 }
 
-// closeParen scans code from `from` with depth parentheses already open and returns the index
-// of the parenthesis that closes them, or -1 with the depth still open at the end of the line.
-// A brace met first means the parameter list holds an object pattern or type this scanner does
-// not follow, and ends the search with depth -1.
+// closeParen scans code from `from` with depth brackets already open, the outermost being the
+// parenthesis that opens a parameter list, and returns the index of the parenthesis that
+// closes the list, or -1 with the depth still open at the end of the line. Parentheses, braces
+// and square brackets nest inside the list: a destructured parameter ({ a, b }), an object
+// type (o: { a: number }) or a default value (opts = {}). A brace or square bracket that would
+// close the list itself means the text is not a parameter list, and ends the search with depth
+// -1.
 func closeParen(code string, from, depth int) (int, int) {
 	for i := from; i < len(code); i++ {
 		switch code[i] {
-		case '(':
+		case '(', '{', '[':
 			depth++
-		case ')':
+		case ')', '}', ']':
 			depth--
-			if depth == 0 {
+			if depth == 0 && code[i] == ')' {
 				return i, 0
 			}
-		case '{', '}':
-			return -1, -1
+			if depth <= 0 {
+				return -1, -1
+			}
 		}
 	}
 	return -1, depth
+}
+
+// opensOnlyPatterns reports whether rest, the text after a header's opening parenthesis that
+// leaves the parameter list open, holds nothing but the brackets that open a destructuring
+// pattern: `function Card({` or `const Card = ([`, whose names follow one per line.
+func opensOnlyPatterns(rest string) bool {
+	return strings.Trim(rest, " \t{[") == ""
 }
 
 // bodyBrace returns the index of the brace that opens the function body in code after the

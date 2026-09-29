@@ -353,7 +353,10 @@ of a `.svelte` component that open at the start of a line, with every other comp
 so line numbers still match. The literal stripper's JavaScript mode removes strings, comments,
 template text and regular expression literals but keeps the code of a template's `${...}`
 substitutions; a slash starts a regular expression only where an expression may, and never in a
-JSX `</` or `/>` (`TestLiteralStripperScriptSyntax`).
+JSX `</` or `/>`. JSX text is not string or comment syntax: a quote that does not close on its line
+(the apostrophe of `<p>Don't</p>`) is text, since a JavaScript string cannot span lines, and the `//`
+of a URL written in JSX text (`https://example.com`) opens no comment
+(`TestLiteralStripperScriptSyntax`, `TestScriptScanner_JSXTextKeepsBracesBalanced`).
 
 - HISS-01: a declared or bound function calling its bare name, and a method or class field calling
   `this.name`. A local binding of the name (a parameter, a declarator, a nested function, a catch or
@@ -367,10 +370,19 @@ JSX `</` or `/>` (`TestLiteralStripperScriptSyntax`).
   file, module scope and a top-level `main`.
 - HISS-08: `eval`, the `Function` constructor and a string passed to `setTimeout` or `setInterval`.
 
+A parameter list may hold a destructuring pattern, an object type or a default value, on one line
+or wrapped one name per line, as a React component's props usually are: `closeParen` in
+`script_header.go` nests braces and brackets inside the list, so the function is tracked for all
+of the rules above (`TestScriptScanner_PatternParameters`). A list still waiting for its closing
+parenthesis never hides a function that opens on one of its lines, so the methods of an object
+passed to a call such as `Page({` are measured too.
+
 A file with a line longer than 1024 bytes is minified output and is declined, so it is reported as
-unscanned source. A file whose braces do not balance, such as a JSX attribute string spanning lines,
-is counted in `Skips.Unparsed`: the report is then incomplete, never clean
-(`TestScriptScanner_MinifiedIsUnscannedNotClean`, `TestScriptScanner_UnbalancedFileIsUnparsed` in
+unscanned source. A file whose braces the scanner misread, so that they do not balance, is declined
+the same way, and none of its findings is reported: its function boundaries are unknown. Neither
+makes the scan incomplete, so neither rejects `gate run`; both show on the audit's `[UNSCANNED]`
+line and in `unscanned_languages`, never as clean
+(`TestScriptScanner_MinifiedIsUnscannedNotClean`, `TestScriptScanner_MisreadFileIsDeclined` in
 `internal/hiss/script_test.go`). `.config/hiss/coverage.yaml` lists each claim and its gaps per
 language (`javascript`, `typescript`, `svelte`).
 

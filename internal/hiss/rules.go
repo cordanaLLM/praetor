@@ -172,13 +172,22 @@ type literalSyntax struct {
 	// regexLiterals skips a JavaScript /.../ regular expression literal where an expression may
 	// start, so a quote or brace inside the pattern is never read as code.
 	regexLiterals bool
+	// quotesEndWithLine reads a quote that does not close on its line, on a line that does not
+	// end in a backslash, as text rather than as a string running to the end of the line. A
+	// JavaScript string cannot span lines, and the apostrophe of JSX text (<p>Don't</p>) opens
+	// none; read as a string, it swallowed the braces after it.
+	quotesEndWithLine bool
+	// urlText reads the // of a URL written in JSX text (<p>see https://example.com {n}</p>) as
+	// text rather than as a line comment: the // follows a word and a colon directly and a
+	// non-blank byte follows it, which a comment written in code does not.
+	urlText bool
 }
 
 var (
 	cLikeSyntax  = literalSyntax{lineComment: "//", blockComments: true}
 	pythonSyntax = literalSyntax{apostropheIsString: true, lineComment: "#", tripleQuotes: true}
 	scriptSyntax = literalSyntax{apostropheIsString: true, lineComment: "//", blockComments: true,
-		templates: true, regexLiterals: true}
+		templates: true, regexLiterals: true, quotesEndWithLine: true, urlText: true}
 )
 
 const (
@@ -228,7 +237,11 @@ func (s *literalStripper) strip(line string) string {
 			continue
 		}
 		if strings.HasPrefix(line[i:], s.syn.lineComment) {
-			return b.String()
+			if !s.urlAt(line, i) {
+				return b.String()
+			}
+			i += len(s.syn.lineComment)
+			continue
 		}
 		i = s.copyOne(line, i, &b)
 	}
@@ -324,15 +337,33 @@ func (s *literalStripper) copyOne(line string, i int, b *strings.Builder) int {
 			b.WriteByte(c)
 			return i + 1
 		}
-		end, _, carried := scanQuoted(line, i+1, line[i:i+1])
-		if carried {
-			s.fence = line[i : i+1]
-		}
-		return end
+		return s.skipQuoted(line, i)
 	default:
 		b.WriteByte(c)
 		return i + 1
 	}
+}
+
+// skipQuoted skips the quoted string opening at i and returns the index past it. A string that
+// does not close on its line either continues on the next, when a backslash escapes the line
+// break, or, under quotesEndWithLine, was never a string: the quote is dropped as text.
+func (s *literalStripper) skipQuoted(line string, i int) int {
+	end, closed, carried := scanQuoted(line, i+1, line[i:i+1])
+	if carried {
+		s.fence = line[i : i+1]
+	}
+	if !closed && !carried && s.syn.quotesEndWithLine {
+		return i + 1
+	}
+	return end
+}
+
+// urlAt reports whether the line comment marker at i is the // of a URL in JSX text under
+// urlText: a word and a colon directly before it (https:) and a non-blank byte after it.
+func (s *literalStripper) urlAt(line string, i int) bool {
+	after := i + len(s.syn.lineComment)
+	return s.syn.urlText && i >= 2 && line[i-1] == ':' && isIdentByte(line[i-2]) &&
+		after < len(line) && line[after] != ' ' && line[after] != '\t'
 }
 
 // copySubstitutionBrace handles a brace inside the code of a template literal's ${...}

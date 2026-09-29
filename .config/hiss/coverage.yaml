@@ -117,16 +117,18 @@ rules:
           a method reaches the module function, a call through another object is delegation, $f is
           a different identifier, and a local binding of the name (a parameter, a const, let or var
           declarator including destructuring, a nested function or class, a catch parameter, an
-          arrow or function-expression parameter) shadows it, so none of those are reported.
-          Mutual recursion, a function assigned to a prototype or an object property, and a
-          function whose parameter list holds an object pattern or type are held as gaps.
+          arrow or function-expression parameter) shadows it, so none of those are reported. A
+          parameter list holding a destructuring pattern, an object type or a default value is
+          read, wrapped or not, so walk({ node }) calling walk is reported. Mutual recursion and a
+          function assigned to a prototype or an object property are held as gaps.
       - language: typescript
         state: partial
         mechanism: internal/hiss script.go scriptScanner and script_header.go, with selfcall.go selfCalls
         rationale: >-
-          The JavaScript rules apply unchanged. Type annotations, generics, access modifiers and a
-          parameter list wrapped one parameter per line are read, and the function is decided from
-          the brace that opens its body. Mutual recursion is held as a gap.
+          The JavaScript rules apply unchanged. Type annotations, object types such as
+          { [key: string]: Field }, generics, access modifiers and a parameter list wrapped one
+          parameter per line are read, and the function is decided from the brace that opens its
+          body. Mutual recursion is held as a gap.
       - language: svelte
         state: partial
         mechanism: >-
@@ -248,17 +250,21 @@ rules:
         rationale: >-
           The length of every named function (a declaration, a bound function or arrow, a method,
           a class field or an object property) is measured from the line its body opens on to its
-          closing brace, as for C and Rust, so exactly 60 lines passes and 61 fails. Anonymous
+          closing brace, as for C and Rust, so exactly 60 lines passes and 61 fails. That includes
+          a function whose parameter list holds a destructuring pattern, an object type or a
+          default object, and a method of an object passed to a call written name({. Anonymous
           callbacks are not measured, like Go function literals, and the cyclomatic, cognitive and
           statement caps have no script check. A file with a line longer than 1024 bytes is
-          minified output: it is declined and reported as unscanned source, never as clean, and a
-          file whose braces do not balance is counted as unparsed.
+          minified output, and a file whose braces the scanner misread does not balance: either is
+          declined and reported as unscanned source, never as clean.
       - language: typescript
         state: partial
         mechanism: internal/hiss script.go scriptScanner brace tracking, headers from script_header.go
         rationale: >-
           Methods are measured like functions, and the signature lines of a wrapped parameter list
-          lend the function no length. The complexity caps are held as a gap.
+          lend the function no length, including the destructured props of a React component
+          wrapped one per line. An apostrophe or a URL in JSX text is text, not a string or a
+          comment, so the component's braces still balance. The complexity caps are held as a gap.
       - language: svelte
         state: partial
         mechanism: internal/hiss script.go scriptScanner over the script blocks svelteScriptLines keeps
@@ -355,9 +361,9 @@ rules:
           holds only a comment, because a comment handles nothing. A promise .catch whose handler
           is empty is reported, and under the abort policy (owner decision Q-014) so are
           process.exit and process.abort outside a test file (*.test.*, *.spec.*, __tests__,
-          test, tests), module scope and a top-level function named main. A wrapped rethrow, a
-          reported rejection and an exit in the entry point are not. A floating promise and a
-          named no-op handler are held as gaps.
+          test, tests), module scope and a top-level function named main, a function with a
+          destructured parameter included. A wrapped rethrow, a reported rejection and an exit in
+          the entry point are not. A floating promise and a named no-op handler are held as gaps.
       - language: typescript
         state: partial
         mechanism: internal/hiss script.go checkErrors

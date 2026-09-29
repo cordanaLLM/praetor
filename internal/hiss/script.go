@@ -28,7 +28,9 @@ import (
 //   - HISS-08 eval, the Function constructor, and setTimeout or setInterval given a string.
 //
 // A file with a line longer than maxScriptLineBytes is minified or generated output and is
-// declined, so the report counts it as unscanned source rather than as clean.
+// declined, so the report counts it as unscanned source rather than as clean. So is a file whose
+// braces this line scanner misread (they do not balance): its function boundaries are unknown,
+// so none of its findings is reported and no rule's silence over it counts as a pass.
 
 const (
 	// maxScriptLineBytes is the longest line a hand-written script file is expected to carry.
@@ -74,12 +76,19 @@ func (scriptLanguage) scan(src sourceFile, rep *ScanReport, opts ScanOptions) bo
 	if isMinified(lines) {
 		return false
 	}
-	s := &scriptScanner{rel: src.rel, rep: rep, maxLOC: opts.MaxFuncLOC,
+	// The findings are collected per file and reported only once the file's braces balance.
+	file := &ScanReport{}
+	s := &scriptScanner{rel: src.rel, rep: file, maxLOC: opts.MaxFuncLOC,
 		strip: literalStripper{syn: scriptSyntax}, test: isScriptTestPath(src.rel)}
 	for idx, line := range lines {
 		s.observe(idx+1, line)
 	}
-	s.close()
+	if s.misread() {
+		return false
+	}
+	for _, v := range file.Violations {
+		recordViolation(rep, v.RuleID, v.FilePath, v.LineNumber, v.Symbol, v.Message)
+	}
 	return true
 }
 
@@ -177,7 +186,7 @@ type scriptScanner struct {
 	// outer is the outermost function open at any point of the current line, or "".
 	outer string
 	// unbalanced records a closing brace with nothing open, which means the structure was
-	// misread and the file is reported as not fully analysed.
+	// misread and the file is declined.
 	unbalanced bool
 }
 
@@ -199,11 +208,23 @@ func (s *scriptScanner) observe(lineNum int, line string) {
 }
 
 // header finds the function whose body opens on this line: its header, the index of the body
-// brace (-1 when none opens), and the parameter text.
+// brace (-1 when none opens), and the parameter text. A wrapped parameter list waiting for its
+// closing parenthesis does not hide a function whose header and body open on one of its lines:
+// `name({` starts both a method with a destructured parameter and a call with an object
+// argument, and the methods of that object are still functions.
 func (s *scriptScanner) header(code string) (scriptHeader, int, string) {
-	if s.sigSet {
-		return s.continueSignature(code)
+	if !s.sigSet {
+		return s.lineHeader(code, true)
 	}
+	if h, bodyAt, params, closed := s.continueSignature(code); closed {
+		return h, bodyAt, params
+	}
+	return s.lineHeader(code, false)
+}
+
+// lineHeader finds a function header written on this line. A header whose parameter list is
+// wrapped onto the lines below starts a pending signature when follow is set.
+func (s *scriptScanner) lineHeader(code string, follow bool) (scriptHeader, int, string) {
 	lead := len(code) - len(strings.TrimLeft(code, " \t"))
 	h, ok := matchScriptHeader(strings.TrimSpace(code))
 	if !ok {
@@ -217,21 +238,23 @@ func (s *scriptScanner) header(code string) (scriptHeader, int, string) {
 	if closing >= 0 {
 		return h, bodyBrace(code, closing+1, h.arrow), code[at:closing]
 	}
-	// A wrapped parameter list starts on the line below its opening parenthesis; any other
+	// A wrapped parameter list starts on the line below its opening parenthesis, or below the
+	// brace or bracket of a destructured parameter that opens right after it; any other
 	// unclosed header line is a call or an expression this scanner does not follow.
-	if depth > 0 && strings.TrimSpace(code[at:]) == "" {
-		s.sig, s.sigSet = scriptSignature{header: h, depth: depth}, true
+	if follow && depth > 0 && opensOnlyPatterns(code[at:]) {
+		s.sig, s.sigSet = scriptSignature{header: h, params: code[at:], depth: depth}, true
 	}
 	return scriptHeader{}, -1, ""
 }
 
-// continueSignature feeds one more line of a wrapped parameter list.
-func (s *scriptScanner) continueSignature(code string) (scriptHeader, int, string) {
+// continueSignature feeds one more line of a wrapped parameter list and reports whether the
+// list closed on it.
+func (s *scriptScanner) continueSignature(code string) (scriptHeader, int, string, bool) {
 	closing, depth := closeParen(code, 0, s.sig.depth)
 	if closing >= 0 {
 		s.sigSet = false
 		params := appendSignature(s.sig.params, code[:closing])
-		return s.sig.header, bodyBrace(code, closing+1, s.sig.header.arrow), params
+		return s.sig.header, bodyBrace(code, closing+1, s.sig.header.arrow), params, true
 	}
 	s.sig.params = appendSignature(s.sig.params, code)
 	s.sig.depth = depth
@@ -239,7 +262,7 @@ func (s *scriptScanner) continueSignature(code string) (scriptHeader, int, strin
 	if depth <= 0 || s.sig.age >= maxPendingHeaderLines {
 		s.sigSet = false
 	}
-	return scriptHeader{}, -1, ""
+	return scriptHeader{}, -1, "", false
 }
 
 // newFunc builds the function a header opens, deciding the spellings that reach it from its
@@ -331,13 +354,11 @@ func (s *scriptScanner) observeBody(fn *scriptFunc, body string, lineNum int) {
 	fn.calls.observeCall(body, lineNum)
 }
 
-// close ends the file. A function or span still open, or a closing brace with nothing open,
-// means the braces were misread somewhere, so the file is counted as not fully analysed rather
-// than reported clean; the functions still open are not measured.
-func (s *scriptScanner) close() {
-	if s.unbalanced || s.depth != 0 || len(s.open) > 0 || s.strip.open() {
-		s.rep.Skips.Unparsed++
-	}
+// misread reports, at the end of the file, whether the braces were misread somewhere: a
+// function or span still open, or a closing brace with nothing open. Such a file is declined
+// rather than counted as read, which a gate would take for clean.
+func (s *scriptScanner) misread() bool {
+	return s.unbalanced || s.depth != 0 || len(s.open) > 0 || s.strip.open()
 }
 
 // checkInvariants inspects one stripped line. defined is the function the line opens, so a
