@@ -176,7 +176,8 @@ func reportIgnoredCatalogWrites(ctx context.Context, s *adoptSession, writes []c
 // observed. A file that already holds the pinned bytes is verified; an absent one is created;
 // an unmodified earlier Praetor text is refreshed to its layout-only successor; any other
 // existing file (--force) is replaced through replaceExisting, so the report lists it as
-// replaced with its line delta and backup.
+// replaced with its line delta and backup. A dry run (profile set --dry-run) records the same
+// entries and writes nothing.
 func publishCatalogFile(ctx context.Context, s *adoptSession, write catalogWrite) error {
 	rel := write.artifact.RelativePath
 	if write.exists && bytes.Equal(write.before, write.artifact.Content) {
@@ -186,8 +187,10 @@ func publishCatalogFile(ctx context.Context, s *adoptSession, write catalogWrite
 	if replace, ok := catalogReplacement(write); ok {
 		return s.replaceExisting(ctx, replace)
 	}
-	if err := write.publish(ctx); err != nil {
-		return err
+	if !s.opts.DryRun {
+		if err := write.publish(ctx); err != nil {
+			return err
+		}
 	}
 	if write.exists {
 		s.report.recordReconciled(rel, "Refreshed an unmodified earlier Praetor catalog text; its values are unchanged, only the layout moved")
