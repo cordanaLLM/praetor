@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/dedupe"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -82,17 +83,23 @@ func TestRunDedupeScan_Boundary_NoGoSourcesIsNotAVerdict(t *testing.T) {
 }
 
 // cadenceFixture returns a repository whose last dedupe sweep is recorded at its first commit
-// and whose second commit adds twelve lines of Go production source.
+// and whose second commit adds twelve lines of Go production source. The commits run under
+// testsupport.HermeticGitEnv: no workstation signing configuration applies, and no detached
+// maintenance process is still writing below .git when t.TempDir cleans up.
 func cadenceFixture(t *testing.T) string {
 	t.Helper()
 	dir := dedupeFixtureDir(t, "clean.go", dedupeCleanSource)
+	ctx, err := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
+	if err != nil {
+		t.Fatal(err)
+	}
 	git := func(args ...string) {
 		t.Helper()
-		if out, err := util.RunGit(t.Context(), dir, args...); err != nil {
+		if out, err := util.RunGit(ctx, dir, args...); err != nil {
 			t.Fatalf("git %v: %v: %s", args, err, out)
 		}
 	}
-	commit := []string{"-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-q", "-m"}
+	commit := []string{"commit", "-q", "-m"}
 	git("init", "-q")
 	git("add", "-A", ".")
 	git(append(commit, "init")...)

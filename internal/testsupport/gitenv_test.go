@@ -79,6 +79,33 @@ func TestHermeticGitEnv_Positive_CommitsUnderAHostileEnvironment(t *testing.T) {
 	}
 }
 
+// TestHermeticGitEnv_Positive_AutomaticMaintenanceIsOff checks what git itself resolves: under
+// the hermetic environment a fixture repository has automatic maintenance and automatic gc
+// off, and without the two pairs both are unset, so git's detaching default applies.
+func TestHermeticGitEnv_Positive_AutomaticMaintenanceIsOff(t *testing.T) {
+	requireGit(t)
+	fixture := t.TempDir()
+	env := HermeticGitEnv(t)
+	if out, err := runGit(t, fixture, env, "init", "-q"); err != nil {
+		t.Fatalf("init fixture: %v: %s", err, out)
+	}
+	for key, want := range map[string]string{"maintenance.auto": "false", "gc.auto": "0"} {
+		if got, err := runGit(t, fixture, env, "config", "--get", key); err != nil || got != want {
+			t.Errorf("git config %s = %q (err %v), want %q", key, got, err, want)
+		}
+	}
+	var unpaired []string
+	for _, entry := range env {
+		if !strings.HasPrefix(entry, "GIT_CONFIG_COUNT=") && !strings.HasPrefix(entry, "GIT_CONFIG_KEY_") &&
+			!strings.HasPrefix(entry, "GIT_CONFIG_VALUE_") {
+			unpaired = append(unpaired, entry)
+		}
+	}
+	if got, err := runGit(t, fixture, unpaired, "config", "--get", "maintenance.auto"); err == nil {
+		t.Fatalf("without the pairs maintenance.auto resolved to %q; the positive check proves nothing", got)
+	}
+}
+
 // TestHermeticGitEnv_Negative_InheritedEnvironmentIsHostile proves the positive case is
 // evidence: the same commit with the inherited environment fails, and the inherited GIT_DIR
 // redirects git to the enclosing repository.
@@ -114,15 +141,16 @@ func TestHermeticGitEnv_Boundary_EnvironmentContents(t *testing.T) {
 		}
 		set[key] = value
 	}
-	for _, key := range []string{"GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0",
-		"GIT_CONFIG_KEY_1", "GIT_CONFIG_VALUE_1", "GIT_CONFIG_PARAMETERS",
-		"GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE"} {
+	for _, key := range []string{"GIT_CONFIG_PARAMETERS", "GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE"} {
 		if value, ok := set[key]; ok {
 			t.Errorf("inherited %s=%q survived", key, value)
 		}
 	}
+	// The inherited signing pairs sit at the same indexes; only the hermetic pairs may remain.
 	required := map[string]string{
 		"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_SYSTEM": os.DevNull, "GIT_CONFIG_GLOBAL": os.DevNull,
+		"GIT_CONFIG_COUNT": "2", "GIT_CONFIG_KEY_0": "maintenance.auto", "GIT_CONFIG_VALUE_0": "false",
+		"GIT_CONFIG_KEY_1": "gc.auto", "GIT_CONFIG_VALUE_1": "0",
 		"GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "", "PRAETOR_TESTSUPPORT_KEEP": "kept",
 		"GIT_AUTHOR_NAME": hermeticGitName, "GIT_COMMITTER_EMAIL": hermeticGitEmail,
 	}

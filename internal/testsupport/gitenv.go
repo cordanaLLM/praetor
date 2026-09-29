@@ -31,11 +31,16 @@ var replacedByHermeticGitEnv = map[string]bool{"HOME": true, "USERPROFILE": true
 // fixture's commands at the enclosing repository. What remains is set here: no system or
 // global configuration, a fixed identity, and no credential or terminal prompt. os.DevNull
 // keeps it correct on Windows, where that path is NUL.
+//
+// Automatic maintenance is off as well. Git's own default, with no configuration at all,
+// makes every commit start a detached `git maintenance run --auto`, which takes
+// .git/objects/maintenance.lock after the commit has returned; when the test ends first,
+// t.TempDir's cleanup meets that lock file and fails with "directory not empty".
 func HermeticGitEnv(t testing.TB) []string {
 	t.Helper()
 	home := t.TempDir()
 	inherited := os.Environ()
-	env := make([]string, 0, len(inherited)+12)
+	env := make([]string, 0, len(inherited)+17)
 	for _, entry := range inherited {
 		key, _, _ := strings.Cut(entry, "=")
 		upper := strings.ToUpper(key)
@@ -48,6 +53,11 @@ func HermeticGitEnv(t testing.TB) []string {
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_CONFIG_SYSTEM="+os.DevNull,
 		"GIT_CONFIG_GLOBAL="+os.DevNull,
+		"GIT_CONFIG_COUNT=2",
+		"GIT_CONFIG_KEY_0=maintenance.auto",
+		"GIT_CONFIG_VALUE_0=false",
+		"GIT_CONFIG_KEY_1=gc.auto",
+		"GIT_CONFIG_VALUE_1=0",
 		"HOME="+home,
 		"USERPROFILE="+home,
 		"GIT_TERMINAL_PROMPT=0",
