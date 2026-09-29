@@ -161,8 +161,10 @@ func privateIgnoreApplies(ctx context.Context, repoPath string) (bool, error) {
 }
 
 // writePrivateIgnore merges the canonical block and proves, through ignored, that Git honours it.
+// It does not probe for a Kconfig-style rule; a block that already re-includes .config/ keeps
+// that rule (mergeGitIgnoreRules).
 func writePrivateIgnore(ctx context.Context, repoPath string, ignored func(context.Context, string) (bool, error)) (PrivateIgnoreOutcome, error) {
-	if _, _, err := writeManagedGitIgnore(ctx, repoPath, "", false); err != nil {
+	if _, _, err := writeManagedGitIgnore(ctx, repoPath, "", false, false); err != nil {
 		return PrivateIgnoreUnknown, fmt.Errorf("write %s: %w", gitIgnoreFile, err)
 	}
 	effective, err := ignored(ctx, repoPath)

@@ -61,8 +61,9 @@ func TestVerificationWalk_Boundary_ScratchMarkersAreNotInputs(t *testing.T) {
 }
 
 // TestCatalogIgnore_Positive_BareConfigIgnoreIsReportedAndStillWritten is the kernel-tree
-// shape: a bare .config rule excludes .config/archetypes, and adoption must say so rather than
-// write files git silently drops.
+// shape with the git-ignore step not run (declined): a bare .config rule excludes
+// .config/archetypes, and adoption says so for each file, names the rule and proposes the
+// directory-only negation, rather than write files git silently drops.
 func TestCatalogIgnore_Positive_BareConfigIgnoreIsReportedAndStillWritten(t *testing.T) {
 	requireGit(t)
 	s, policy := catalogSession(t)
@@ -71,12 +72,15 @@ func TestCatalogIgnore_Positive_BareConfigIgnoreIsReportedAndStillWritten(t *tes
 	if err := reconcilePolicyCatalog(t.Context(), s); err != nil {
 		t.Fatal(err)
 	}
+	reportIgnoredWrites(t.Context(), s)
 	if len(s.report.Errors) != len(policy.CatalogArtifacts) {
 		t.Fatalf("want one error per ignored catalog file, got %q", s.report.Errors)
 	}
+	errors := strings.Join(s.report.Errors, "\n")
 	for _, artifact := range policy.CatalogArtifacts {
-		if !strings.Contains(strings.Join(s.report.Errors, "\n"), artifact.RelativePath+": excluded by the repository's .gitignore") {
-			t.Fatalf("%s not named in %q", artifact.RelativePath, s.report.Errors)
+		want := artifact.RelativePath + ": ignored by .gitignore:1 (.config); adoption writes it, but git will not commit it"
+		if !strings.Contains(errors, want) || !strings.Contains(errors, "Add !.config/ after that rule (directory-only") {
+			t.Fatalf("%s not named with its rule and negation in %q", artifact.RelativePath, errors)
 		}
 		if _, err := os.Stat(filepath.Join(s.repoPath, artifact.RelativePath)); err != nil {
 			t.Fatalf("the local audit still needs %s: %v", artifact.RelativePath, err)
@@ -95,13 +99,14 @@ func TestCatalogIgnore_Negative_UnrelatedIgnoreRulesStaySilent(t *testing.T) {
 	if err := reconcilePolicyCatalog(t.Context(), s); err != nil {
 		t.Fatal(err)
 	}
+	reportIgnoredWrites(t.Context(), s)
 	if len(s.report.Errors) != 0 || len(s.report.Warnings) != warnings {
 		t.Fatalf("unrelated rules reported: errors %q, warnings %q", s.report.Errors, s.report.Warnings[warnings:])
 	}
 }
 
 // TestCatalogIgnore_Boundary_UnanswerableGitIsAStatedSkip: without git, or outside a work tree,
-// the check cannot run; that is a warning naming the catalog, never an error and never silence.
+// the check cannot run; that is a warning, never an error and never silence.
 func TestCatalogIgnore_Boundary_UnanswerableGitIsAStatedSkip(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -111,14 +116,15 @@ func TestCatalogIgnore_Boundary_UnanswerableGitIsAStatedSkip(t *testing.T) {
 		{"not a work tree", func(t *testing.T) { requireGit(t) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s, policy := catalogSession(t)
-			tc.setup(t)
-			warnings := len(s.report.Warnings)
-			if _, err := prepareCatalogWrites(t.Context(), s, policy.CatalogArtifacts); err != nil {
+			s, _ := catalogSession(t)
+			if err := reconcilePolicyCatalog(t.Context(), s); err != nil {
 				t.Fatal(err)
 			}
+			tc.setup(t)
+			warnings := len(s.report.Warnings)
+			reportIgnoredWrites(t.Context(), s)
 			added := strings.Join(s.report.Warnings[warnings:], "\n")
-			if len(s.report.Errors) != 0 || !strings.Contains(added, ".config/archetypes: not checked against .gitignore") {
+			if len(s.report.Errors) != 0 || !strings.Contains(added, "adopted files not checked against .gitignore") {
 				t.Fatalf("want a stated skip, got errors %q, warnings %q", s.report.Errors, added)
 			}
 		})

@@ -41,6 +41,9 @@ action create tools/markdownlint/verify.mjs :: Scaffolded locked Markdown govern
 action create tools/markdownlint/no-private-scratch-links.mjs :: Scaffolded locked Markdown governance asset
 action create .github/workflows/praetor-docs.yml :: Scaffolded required documentation governance workflow
 action reconcile .prettierignore :: No Prettier configuration found; managed artifacts not declared to a formatter this repository does not run
+report-error tools/figures/dist/loader.js: ignored by .gitignore:1 (dist/); adoption writes it, but git will not commit it, so a clean checkout lacks it. Add !/tools/figures/dist/ after that rule, or stop ignoring the path
+report-error tools/figures/dist/player.js: ignored by .gitignore:1 (dist/); adoption writes it, but git will not commit it, so a clean checkout lacks it. Add !/tools/figures/dist/ after that rule, or stop ignoring the path
+report-error tools/figures/dist/THIRD-PARTY-LICENSES.txt: ignored by .gitignore:1 (dist/); adoption writes it, but git will not commit it, so a clean checkout lacks it. Add !/tools/figures/dist/ after that rule, or stop ignoring the path
 file .github/workflows/praetor-docs.yml sha256:05d50eae0edd1599f23468e570e0ebf0af3d2e7cc65bf126d4f7976b002b2a84
 file tools/markdownlint/package.json sha256:ae5668d6a66dfd57f83b298d09a82f5143b0894c0214a5db5e079cf54d6b92b3
 file tools/markdownlint/package-lock.json sha256:3be5e6c9037886cc39192da27e536b9dcefa3860074efed81d3dd9ea4e4a5d72

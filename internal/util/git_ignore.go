@@ -69,7 +69,9 @@ func (m GitIgnoreMatch) DirectoryOnly() bool {
 // GitIgnoreMatches is GitIgnoredPaths with the rule behind each answer: the paths among
 // relPaths that git ignores, in the order git reports them, each with the ignore file, line
 // and pattern that decide it. The same isolation and index semantics apply. A path whose last
-// matching rule is a negation is not ignored and is not returned.
+// matching rule is a negation is not ignored and is not returned. A path asked with a trailing
+// slash is asked as a directory, whether or not it exists yet; ask directories here rather than
+// through GitIgnoredPaths, which cannot drop the empty-pattern match (parseIgnoreMatches).
 func GitIgnoreMatches(ctx context.Context, dir string, relPaths []string, noIndex bool) ([]GitIgnoreMatch, error) {
 	out, err := runCheckIgnore(ctx, dir, relPaths, noIndex, true)
 	if err != nil || out == nil {
@@ -113,7 +115,11 @@ func runCheckIgnore(ctx context.Context, dir string, relPaths []string, noIndex,
 
 // parseIgnoreMatches reads check-ignore -v -z records: source, line, pattern and path, each
 // NUL-terminated. Verbose mode also reports a path whose last matching rule is a negation
-// (the pattern starts with "!"); that path is not ignored and is dropped.
+// (the pattern starts with "!"); that path is not ignored and is dropped. So is a match on an
+// empty pattern, which git makes of a blank line ending in a carriage return (a CRLF
+// .gitignore): it matches only an empty last path component, which no file has and a
+// directory probe with a trailing slash does, and a probed directory a real rule ignores is
+// answered with that rule before git reaches the empty one.
 func parseIgnoreMatches(out []byte) ([]GitIgnoreMatch, error) {
 	fields := strings.Split(string(out), "\x00")
 	if last := len(fields) - 1; fields[last] == "" {
@@ -124,7 +130,7 @@ func parseIgnoreMatches(out []byte) ([]GitIgnoreMatch, error) {
 	}
 	matches := make([]GitIgnoreMatch, 0, len(fields)/4)
 	for i := 0; i+3 < len(fields) && i < 4*maxGitIgnoreQueryPaths; i += 4 {
-		if strings.HasPrefix(fields[i+2], "!") {
+		if fields[i+2] == "" || strings.HasPrefix(fields[i+2], "!") {
 			continue
 		}
 		line, err := strconv.Atoi(fields[i+1])
