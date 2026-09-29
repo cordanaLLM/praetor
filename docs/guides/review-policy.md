@@ -32,7 +32,13 @@ verify it against the manifest, reconcile the hosted review settings, and read
 them back. The retained `required_approving_reviewers` value restores the minimum.
 Do not infer restoration merely from installing an app or adding an account.
 
-Preserve existing ruleset branch scopes and additional parameters when updating
-GitHub. For example, if your hosted ruleset carries extra parameters such as
-last-push approval, restore them too. Hosted readback is required;
-a locally generated ruleset alone does not establish enforcement.
+`praetorctl sync --remote` preserves existing ruleset branch scopes and additional
+parameters, and never lowers a hosted review setting: a live approving review
+count above the declared one, and code-owner review, last-push approval or stale
+review dismissal switched on, are kept and reported as `[STRICTER]`
+([sync --remote](adoption-verification.md#writing-the-ruleset-labels-and-repository-metadata-to-github-with-sync-remote)).
+Switching to `single_maintainer` therefore does not remove the approval
+requirement on GitHub by itself: lower it in the hosted ruleset by hand, then run
+`praetorctl plan --remote` to confirm the readback matches the declaration.
+Hosted readback is required; a locally generated ruleset alone does not establish
+enforcement.

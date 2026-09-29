@@ -41,10 +41,13 @@ func normalizeRuleset(doc map[string]any) (map[string]any, error) {
 }
 
 // mergeRuleset overlays the desired praetor ruleset onto the live one without narrowing
-// it. Name, target, enforcement and every parameter praetor renders come from desired.
-// The live ruleset keeps its bypass actors, other conditions, every ref it includes,
-// every status check context it requires, and every rule and rule parameter praetor
-// does not render. Weakening a live ruleset beyond that is a deliberate manual change.
+// it. Name, target and enforcement come from desired, and so does every parameter praetor
+// renders, except where the live value is stricter (stricterParameters): a higher approving
+// review count or a review requirement switched on stays as it is. The live ruleset keeps its
+// bypass actors, other conditions, every ref it includes, every status check context it
+// requires, and every rule and rule parameter praetor does not render. Weakening a live
+// ruleset is a deliberate manual change; sync --remote reads the result back and names each
+// live setting it kept stricter than declared (EvaluateBranchProtection).
 func mergeRuleset(live, desired map[string]any) (map[string]any, error) {
 	merged := map[string]any{"name": desired["name"], "target": desired["target"], "enforcement": desired["enforcement"]}
 	if actors, present := live["bypass_actors"]; present {
@@ -170,6 +173,7 @@ func mergeRule(live, desired map[string]any, ruleType string) (map[string]any, e
 	params := make(map[string]any, len(liveParams)+len(desiredParams))
 	maps.Copy(params, liveParams)
 	maps.Copy(params, desiredParams)
+	keepStricterParameters(params, liveParams, desiredParams)
 	if ruleType == statusChecksParameter {
 		checks, checkErr := unionStatusChecks(liveParams[statusChecksParameter], desiredParams[statusChecksParameter])
 		if checkErr != nil {
@@ -179,6 +183,58 @@ func mergeRule(live, desired map[string]any, ruleType string) (map[string]any, e
 	}
 	rule["parameters"] = params
 	return rule, nil
+}
+
+// stricterParameters are the rendered rule parameters that only tighten a rule as they grow:
+// a count that is stricter when higher, and requirements that are stricter when true. Each
+// belongs to the pull_request or required_status_checks rule, and their names do not recur in
+// any other rule type.
+var stricterParameters = []string{
+	"required_approving_review_count",
+	"dismiss_stale_reviews_on_push",
+	"require_code_owner_review",
+	"require_last_push_approval",
+	"required_review_thread_resolution",
+	"strict_required_status_checks_policy",
+}
+
+// keepStricterParameters puts back, in params, each live value of stricterParameters that is
+// stricter than the desired one, so a merge never lowers a review count or switches a live
+// requirement off. A value of another JSON type than its counterpart is left as desired set
+// it, because it cannot be ordered.
+func keepStricterParameters(params, live, desired map[string]any) {
+	for i := 0; i < len(stricterParameters); i++ {
+		key := stricterParameters[i]
+		liveValue, inLive := live[key]
+		desiredValue, inDesired := desired[key]
+		if inLive && inDesired && parameterStricter(liveValue, desiredValue) {
+			params[key] = liveValue
+		}
+	}
+}
+
+// parameterStricter reports whether the live value tightens a rule more than the desired one:
+// true against false, or a larger integer. Anything else, mixed types included, is not.
+func parameterStricter(live, desired any) bool {
+	if liveFlag, isBool := live.(bool); isBool {
+		desiredFlag, desiredBool := desired.(bool)
+		return desiredBool && liveFlag && !desiredFlag
+	}
+	liveCount, liveErr := jsonInteger(live)
+	desiredCount, desiredErr := jsonInteger(desired)
+	return liveErr == nil && desiredErr == nil && liveCount > desiredCount
+}
+
+// jsonInteger reads an integer decoded by jsonObject (json.Number) or built in Go (int).
+func jsonInteger(value any) (int64, error) {
+	switch typed := value.(type) {
+	case json.Number:
+		return typed.Int64()
+	case int:
+		return int64(typed), nil
+	default:
+		return 0, fmt.Errorf("%v is not an integer", value)
+	}
 }
 
 // unionStatusChecks keeps every live required check, integration binding included, and

@@ -5,10 +5,12 @@ import (
 	"flag"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/forge"
 )
 
 // planTimeout bounds one plan run: resolving the effective policy from the pinned catalog
@@ -68,26 +70,44 @@ func planEffectivePolicy(ctx context.Context, configPath, catalogRoot string, ma
 	return policy, notice, nil
 }
 
-func runPlan(args []string) error {
+// planFlags are the parsed command-line inputs of plan.
+type planFlags struct {
+	configPath  string
+	catalogRoot string
+	remote      bool
+	remoteOpts  remoteSyncOptions
+}
+
+func parsePlanFlags(args []string) (planFlags, error) {
 	fs := flag.NewFlagSet("plan", flag.ContinueOnError)
 	configPath := fs.String("config", ".standards.yaml", "Path to .standards.yaml; its directory is the planned root")
 	catalogRoot := fs.String("catalog-root", "", "Root containing pinned .config/archetypes (default: planned root)")
+	remote := fs.Bool("remote", false, "Also read the branch protection GitHub enforces on the default branch and compare it with the declared policy (read-only; an explicit opt-in)")
+	remoteOpts := addRemoteFlags(fs)
 
 	if _, err := parseInterspersed(fs, args); err != nil {
-		return err
+		return planFlags{}, err
 	}
 	if fs.NArg() > 0 {
-		return fmt.Errorf("plan accepts no positional arguments, got %q", fs.Args())
+		return planFlags{}, fmt.Errorf("plan accepts no positional arguments, got %q", fs.Args())
+	}
+	return planFlags{configPath: *configPath, catalogRoot: *catalogRoot, remote: *remote, remoteOpts: remoteOpts()}, nil
+}
+
+func runPlan(args []string) error {
+	flags, err := parsePlanFlags(args)
+	if err != nil {
+		return err
 	}
 
-	manifest, err := config.LoadManifest(*configPath)
+	manifest, err := config.LoadManifest(flags.configPath)
 	if err != nil {
 		return fmt.Errorf("failed to load manifest: %w", err)
 	}
 
 	ctx, cancel := commandContext(planTimeout)
 	defer cancel()
-	policy, _, err := planEffectivePolicy(ctx, *configPath, *catalogRoot, manifest)
+	policy, _, err := planEffectivePolicy(ctx, flags.configPath, flags.catalogRoot, manifest)
 	if err != nil {
 		return err
 	}
@@ -96,10 +116,53 @@ func runPlan(args []string) error {
 		return err
 	}
 	// The companion files are inspected next to the manifest, never the cwd.
-	missing, drift, err := adopt.PlanDrift(ctx, filepath.Dir(*configPath), policy)
+	missing, drift, err := adopt.PlanDrift(ctx, filepath.Dir(flags.configPath), policy)
 	if err != nil {
 		return err
 	}
 	fmt.Println(adopt.FormatPlanStatus(missing, drift))
+	if !flags.remote {
+		fmt.Println("[INFO] Live branch protection not read: pass --remote to compare what GitHub enforces with the declared policy")
+		return nil
+	}
+	return planRemoteProtection(ctx, filepath.Dir(flags.configPath), manifest, policy.BranchProtection, flags.remoteOpts)
+}
+
+// planRemoteProtection reads what GitHub enforces on the default branch, from its rulesets and
+// its legacy protection object, and compares it with the declared policy and the status checks
+// sync --remote would require there (remoteStatusContexts). It only reads: the origin remote
+// must name the manifest's repository, as for sync --remote, and nothing is written. Drift is
+// reported with the command that reconciles it; like the local drift above it, it leaves the
+// exit status of this preview at zero.
+func planRemoteProtection(ctx context.Context, rootDir string, manifest *config.Manifest, policy config.BranchProtectionPolicy, remote remoteSyncOptions) error {
+	token := resolveSyncToken(remote.token)
+	if token == "" {
+		return ErrRemoteTokenMissing
+	}
+	if err := verifyRemoteRepository(ctx, rootDir, manifest.Repository, remote.host); err != nil {
+		return err
+	}
+	branch, err := forge.RepositoryDefaultBranch(ctx, rootDir, manifest)
+	if err != nil {
+		return err
+	}
+	repository := manifest.Repository.Owner + "/" + manifest.Repository.Name
+	contexts, _, err := remoteStatusContexts(ctx, rootDir, repository, nil)
+	if err != nil {
+		return err
+	}
+	gh := forge.NewGitHubDriver(token, remote.endpoint)
+	gh.SetRepository(manifest.Repository.Owner, manifest.Repository.Name)
+	target := protectionTarget{repository: repository, branch: branch, policy: policy, contexts: contexts}
+	drifted, err := reportLiveProtection(ctx, gh, target, "compared with the declared policy", false)
+	if err != nil {
+		return err
+	}
+	if len(drifted) == 0 {
+		fmt.Println("\nStatus: GitHub enforces every declared branch protection property.")
+		return nil
+	}
+	fmt.Printf("\n[DRIFT] GitHub does not enforce the declared %s on %s.\n", strings.Join(drifted, ", "), branch)
+	fmt.Println("Action: Run 'praetorctl sync --remote' to reconcile branch protection on GitHub.")
 	return nil
 }

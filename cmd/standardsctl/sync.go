@@ -210,6 +210,17 @@ func preflightRemoteForge(ctx context.Context, rootDir string, repo config.Repos
 	if err := forge.ValidateRepositoryTopics(repo.Topics); err != nil {
 		return fmt.Errorf("reconcile repository metadata: %w", err)
 	}
+	return verifyRemoteRepository(ctx, rootDir, repo, host)
+}
+
+// verifyRemoteRepository checks that a --remote command talks to the repository this checkout
+// is: a set repository identity, a bare forge host, and an origin remote naming the manifest's
+// repository on it. plan --remote reads through it and sync --remote writes after it, so both
+// compare and change the same repository.
+func verifyRemoteRepository(ctx context.Context, rootDir string, repo config.RepositoryMetadata, host string) error {
+	if repo.Owner == "" || repo.Name == "" {
+		return errors.New("manifest repository.owner and repository.name must be set before reading or writing the forge")
+	}
 	if err := validateForgeHost(host); err != nil {
 		return err
 	}
@@ -248,8 +259,13 @@ func reconcileRemoteForge(ctx context.Context, rootDir string, in remoteSyncInpu
 
 // reconcileRemoteRuleset writes the local .github/rulesets/main.json ruleset to GitHub under the
 // same name and refs, requiring the status checks of it that report in the repository gh writes
-// to, and then names the checks it left off.
+// to. It reads what the default branch enforces before and after the write, from every ruleset
+// and the legacy protection object, and fails when a declared property is still not enforced
+// once the ruleset converged. It then names the checks it left off.
 func reconcileRemoteRuleset(ctx context.Context, gh *forge.GitHubDriver, rootDir string, in remoteSyncInputs) error {
+	if in.policy == nil {
+		return errors.New("reconcile branch protection: no resolved policy")
+	}
 	repository := gh.Owner + "/" + gh.Repo
 	contexts, omitted, err := remoteStatusContexts(ctx, rootDir, repository, in.contexts)
 	if err != nil {
@@ -259,9 +275,22 @@ func reconcileRemoteRuleset(ctx context.Context, gh *forge.GitHubDriver, rootDir
 	gh.ProtectedRefs = forge.RepositoryRulesetRefs(in.branch)
 	gh.RequiredStatusChecks = contexts
 	gh.StrictStatusChecks = true
+	target := protectionTarget{repository: repository, branch: in.branch, policy: *in.policy, contexts: contexts}
+	if _, err := reportLiveProtection(ctx, gh, target, "before this sync", true); err != nil {
+		return err
+	}
 	fmt.Printf("  [SYNC] Reconciling branch protection ruleset on GitHub for %s...\n", repository)
 	if err := gh.ReconcileProtection(ctx, in.branch, in.policy); err != nil {
 		return err
+	}
+	drifted, err := reportLiveProtection(ctx, gh, target, "read back", false)
+	if err != nil {
+		return err
+	}
+	if len(drifted) > 0 {
+		return fmt.Errorf("ruleset %q converged, but %s on GitHub still does not enforce the declared %s; "+
+			"another ruleset, legacy branch protection or the repository's plan overrides it",
+			forge.RepositoryRulesetName, in.branch, strings.Join(drifted, ", "))
 	}
 	fmt.Printf("  [OK] Remote branch protection synchronized on GitHub (%s and lts-*, read back; live rules praetor does not render kept)\n", in.branch)
 	return reportOmittedStatusChecks(ctx, gh, in.branch, omitted)
@@ -359,14 +388,23 @@ type syncFlags struct {
 	remoteOpts  remoteSyncOptions
 }
 
+// addRemoteFlags registers the forge connection flags sync --remote and plan --remote share,
+// and returns a reader of their parsed values.
+func addRemoteFlags(fs *flag.FlagSet) func() remoteSyncOptions {
+	token := fs.String("token", "", "Forge API token for --remote (default: GITHUB_TOKEN, then GH_TOKEN; the gh CLI is never consulted)")
+	endpoint := fs.String("endpoint", "", "Forge API endpoint for --remote (default: https://api.github.com)")
+	forgeHost := fs.String("forge-host", defaultForgeHost, "Git host the origin remote must point at for --remote (GitHub Enterprise: the server's host name)")
+	return func() remoteSyncOptions {
+		return remoteSyncOptions{token: *token, endpoint: *endpoint, host: *forgeHost}
+	}
+}
+
 func parseSyncFlags(args []string) (syncFlags, error) {
 	fs := flag.NewFlagSet("sync", flag.ContinueOnError)
 	configPath := fs.String("config", ".standards.yaml", "Path to .standards.yaml; its directory is the reconciled root")
 	remote := fs.Bool("remote", false, "Also reconcile branch protection, labels and repository metadata on GitHub (an explicit opt-in; nothing is pushed without it)")
-	token := fs.String("token", "", "Forge API token for --remote (default: GITHUB_TOKEN, then GH_TOKEN; the gh CLI is never consulted)")
-	endpoint := fs.String("endpoint", "", "Forge API endpoint for --remote (default: https://api.github.com)")
 	catalogRoot := fs.String("catalog-root", "", "Root containing pinned .config/archetypes for lock digest verification (default: reconciled root)")
-	forgeHost := fs.String("forge-host", defaultForgeHost, "Git host the origin remote must point at for --remote (GitHub Enterprise: the server's host name)")
+	remoteOpts := addRemoteFlags(fs)
 
 	if _, err := parseInterspersed(fs, args); err != nil {
 		return syncFlags{}, err
@@ -378,7 +416,7 @@ func parseSyncFlags(args []string) (syncFlags, error) {
 		configPath:  *configPath,
 		catalogRoot: *catalogRoot,
 		remote:      *remote,
-		remoteOpts:  remoteSyncOptions{token: *token, endpoint: *endpoint, host: *forgeHost},
+		remoteOpts:  remoteOpts(),
 	}, nil
 }
 

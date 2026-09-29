@@ -1,0 +1,4 @@
+type: fixed
+title: "sync --remote reads the default branch's live protection from rulesets and legacy branch protection before and after writing the ruleset, prints each declared property with the mechanism that enforces it, and fails when a declared property is still not enforced after the ruleset converged; plan --remote prints the same read-only comparison. Migration: sync --remote no longer lowers a live ruleset setting below the declared policy (a higher approving review count, or code-owner review, last-push approval, stale-review dismissal, thread resolution or the up-to-date check policy switched on); it keeps the setting and marks it [STRICTER], so lower it in the hosted ruleset by hand when the lower value is intended."
+issue: "#154"
+breaking: true

@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -302,14 +304,22 @@ labels:
 // metadata REST API of acme/widgets: it stores what is written, lists and reads it back,
 // and records every write. A writeStatus of 300 or above makes every write fail with that
 // status. repo is the repository object; nil serves a public repository with no metadata.
+//
+// It also answers the two reads of the branch protection readback: the active rules of a
+// branch, which it derives from the stored active rulesets whose refs include the branch
+// unless rulesUnenforced is set, and the legacy protection object, which is legacy, or
+// GitHub's "Branch not protected" 404 while legacy is nil, or a legacyStatus of 300 or above.
 type forgeStub struct {
-	mu          sync.Mutex
-	writes      []string
-	requests    int
-	writeStatus int
-	rulesets    map[int]map[string]any
-	labels      map[string]map[string]any
-	repo        map[string]any
+	mu              sync.Mutex
+	writes          []string
+	requests        int
+	writeStatus     int
+	rulesets        map[int]map[string]any
+	labels          map[string]map[string]any
+	repo            map[string]any
+	legacy          map[string]any
+	legacyStatus    int
+	rulesUnenforced bool
 }
 
 const forgeStubRepo = "/repos/acme/widgets/"
@@ -345,11 +355,89 @@ func (s *forgeStub) handler() http.HandlerFunc {
 			return
 		}
 		resource := strings.TrimPrefix(r.URL.Path, forgeStubRepo)
-		if strings.HasPrefix(resource, "labels") {
+		switch {
+		case strings.HasPrefix(resource, "labels"):
 			s.serveLabel(w, r.Method, strings.TrimPrefix(resource, "labels"), body)
-			return
+		case strings.HasPrefix(resource, "rules/branches/"):
+			s.serveBranchRules(w, strings.TrimPrefix(resource, "rules/branches/"))
+		case strings.HasPrefix(resource, "branches/") && strings.HasSuffix(resource, "/protection"):
+			s.serveLegacyProtection(w)
+		default:
+			s.serveRuleset(w, r.Method, strings.TrimPrefix(resource, "rulesets"), body)
 		}
-		s.serveRuleset(w, r.Method, strings.TrimPrefix(resource, "rulesets"), body)
+	}
+}
+
+// serveBranchRules lists the rules of every stored active ruleset whose ref_name includes
+// refs/heads/branch, each with its ruleset id, as GET .../rules/branches/{branch} does.
+func (s *forgeStub) serveBranchRules(w http.ResponseWriter, branch string) {
+	rules := []map[string]any{}
+	ids := make([]int, 0, len(s.rulesets))
+	for id := range s.rulesets {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	for _, id := range ids {
+		doc := s.rulesets[id]
+		if s.rulesUnenforced || doc["enforcement"] != "active" || !stubRulesetTargets(doc, "refs/heads/"+branch) {
+			continue
+		}
+		list, isList := doc["rules"].([]any)
+		if !isList {
+			continue
+		}
+		for _, raw := range list {
+			rule, isObject := raw.(map[string]any)
+			if !isObject {
+				continue
+			}
+			entry := map[string]any{"type": rule["type"], "ruleset_id": id, "ruleset_source_type": "Repository", "ruleset_source": "acme/widgets"}
+			if params, present := rule["parameters"]; present {
+				entry["parameters"] = params
+			}
+			rules = append(rules, entry)
+		}
+	}
+	stubRespond(w, http.StatusOK, rules)
+}
+
+// stubRulesetTargets reports whether the ruleset's ref_name condition includes ref, exactly or
+// through a glob, and does not exclude it.
+func stubRulesetTargets(doc map[string]any, ref string) bool {
+	conditions, isObject := doc["conditions"].(map[string]any)
+	if !isObject {
+		return false
+	}
+	refName, isObject := conditions["ref_name"].(map[string]any)
+	if !isObject {
+		return false
+	}
+	matches := func(key string) bool {
+		patterns, isList := refName[key].([]any)
+		if !isList {
+			return false
+		}
+		for _, pattern := range patterns {
+			if text, isString := pattern.(string); isString {
+				if matched, err := path.Match(text, ref); err == nil && matched {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return matches("include") && !matches("exclude")
+}
+
+// serveLegacyProtection answers GET .../branches/{branch}/protection.
+func (s *forgeStub) serveLegacyProtection(w http.ResponseWriter) {
+	switch {
+	case s.legacyStatus >= http.StatusMultipleChoices:
+		stubRespond(w, s.legacyStatus, map[string]any{"message": "stub rejection"})
+	case s.legacy == nil:
+		stubRespond(w, http.StatusNotFound, map[string]any{"message": "Branch not protected"})
+	default:
+		stubRespond(w, http.StatusOK, s.legacy)
 	}
 }
 

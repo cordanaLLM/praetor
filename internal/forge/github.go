@@ -300,7 +300,9 @@ func (g *GitHubDriver) protectedRefs(branch string) []string {
 // true reconciler: an existing ruleset of the same name is read, merged and updated in
 // place, never duplicated, and a ruleset that does not read back converged is an error,
 // not a warning. The merge never narrows the live ruleset (see mergeRuleset): refs, status
-// checks, rules and parameters praetor does not render survive the update.
+// checks, rules and parameters praetor does not render survive the update, and a rendered
+// parameter whose live value is stricter keeps it. ReadBranchProtection reads what the branch
+// then enforces, from every ruleset and the legacy protection object alike.
 func (g *GitHubDriver) ReconcileProtection(ctx context.Context, branch string, policy *config.BranchProtectionPolicy) error {
 	if err := g.Authenticate(ctx); err != nil {
 		return err
