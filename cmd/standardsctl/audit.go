@@ -301,8 +301,14 @@ func auditAgentContextAndDevcontainer(ctx context.Context, manifest *config.Mani
 	if err := compiler.CheckEvidenceIgnored(ctx, filepath.Dir(opts.agentsPath)); err != nil {
 		return fmt.Errorf("[FAIL] Agent context evidence directory: %w", err)
 	}
+	return auditDevContainer(ctx, manifest, opts)
+}
 
-	dcPath := filepath.Join(root, ".devcontainer", "devcontainer.json")
+// auditDevContainer verifies a committed .devcontainer/devcontainer.json against the one the
+// declared profiles and facets synthesize from the pinned catalog; a repository without one
+// passes. profile set runs it too (declarationGates).
+func auditDevContainer(ctx context.Context, manifest *config.Manifest, opts *auditOptions) error {
+	dcPath := filepath.Join(opts.rootDir, ".devcontainer", "devcontainer.json")
 	if !util.FileExists(dcPath) {
 		return nil
 	}
@@ -394,11 +400,9 @@ func boundedSourceReport(report string) string {
 // auditBranchProtectionAndSupplyChain checks the committed ruleset against policy, the
 // effective policy the audit resolved and adopt rendered the ruleset from.
 func auditBranchProtectionAndSupplyChain(ctx context.Context, manifest *config.Manifest, rootDir string, policy *config.ResolvedPolicy) error {
-	summary, err := adopt.AuditBranchProtectionWithPolicy(ctx, manifest, rootDir, policy)
-	if err != nil {
+	if err := auditBranchProtection(ctx, manifest, rootDir, policy); err != nil {
 		return err
 	}
-	fmt.Println(summary)
 
 	// Verify .config/labels.yaml
 	labelsPath := filepath.Join(rootDir, ".config", "labels.yaml")
@@ -407,6 +411,17 @@ func auditBranchProtectionAndSupplyChain(ctx context.Context, manifest *config.M
 	}
 	fmt.Println("[PASS] Repository label taxonomy .config/labels.yaml verified.")
 
+	return nil
+}
+
+// auditBranchProtection checks the committed branch protection ruleset against policy, the
+// ruleset the declared profiles and facets select. profile set runs it too (declarationGates).
+func auditBranchProtection(ctx context.Context, manifest *config.Manifest, rootDir string, policy *config.ResolvedPolicy) error {
+	summary, err := adopt.AuditBranchProtectionWithPolicy(ctx, manifest, rootDir, policy)
+	if err != nil {
+		return err
+	}
+	fmt.Println(summary)
 	return nil
 }
 

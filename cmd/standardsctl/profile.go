@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
+	"github.com/cordanaLLM/praetor/internal/baseline"
+	"github.com/cordanaLLM/praetor/internal/config"
 )
 
 // profileTimeout bounds one profile change, including the git checks of its backups (HISS-02).
@@ -30,14 +34,19 @@ func runProfile(args []string) error {
 	case "-h", "--help", "help":
 		fmt.Println(profileUsage)
 		fmt.Println("\nChanges an adopted repository's declared profile or facets, or re-pins them to a newer Praetor")
-		fmt.Println("catalog, rewriting only .standards.yaml, .standards.lock and the vendored catalog texts.")
+		fmt.Println("catalog, rewriting only .standards.yaml, .standards.lock and the vendored catalog texts. It then runs")
+		fmt.Println("the audit gates that check files derived from the declaration (README block, documentation gate,")
+		fmt.Println("DevContainer, branch protection ruleset), leaves those files as they are and names the refresh,")
+		fmt.Println("praetorctl adopt --force, when one no longer matches.")
 		return nil
 	}
 	return fmt.Errorf("unknown profile action %q; %s", args[0], profileUsage)
 }
 
-// runProfileSet declares a profile or facets in an adopted repository (adopt.SetProfile) and
-// prints what it wrote, or in a dry run what it would write.
+// runProfileSet declares a profile or facets in an adopted repository (adopt.SetProfile), prints
+// what it wrote, or in a dry run what it would write, and then which files derived from the
+// declaration audit now fails on (reportDeclarationGates). A failing gate is reported, not an
+// error: profile set wrote what it was asked to, and the refresh is a separate, broader command.
 func runProfileSet(args []string) error {
 	opts, err := parseProfileSetOptions(args)
 	if err != nil {
@@ -55,7 +64,7 @@ func runProfileSet(args []string) error {
 	if len(report.Errors) > 0 {
 		return fmt.Errorf("%w: %d error(s) listed above", errProfileIncomplete, len(report.Errors))
 	}
-	return nil
+	return reportDeclarationGates(ctx, report, opts)
 }
 
 // parseProfileSetOptions reads `profile set [<profile>]` and its flags. --facets given, even
@@ -98,4 +107,77 @@ func printProfileSetReport(rep *adopt.AdoptReport) {
 	printAdoptedFiles(rep)
 	printAdoptPreviews(rep.Previews)
 	printAdoptIssues(rep)
+}
+
+// declarationGate is one audit gate whose verdict follows the declared profiles and facets.
+type declarationGate func(ctx context.Context, manifest *config.Manifest, opts *auditOptions) error
+
+// declarationGates are the audit gates that check files adoption derives from the declared
+// profiles and facets, each one runAuditGates runs: the README block, the documentation gate,
+// the DevContainer and the branch protection ruleset. profile set writes none of those files, so
+// it runs these gates against the declaration it leaves.
+func declarationGates() []declarationGate {
+	return []declarationGate{
+		auditReadmeGovernance,
+		func(ctx context.Context, manifest *config.Manifest, opts *auditOptions) error {
+			return auditDocumentationGate(ctx, manifest, opts.rootDir, opts.effective.Policy.BranchProtection)
+		},
+		auditDevContainer,
+		func(ctx context.Context, manifest *config.Manifest, opts *auditOptions) error {
+			return auditBranchProtection(ctx, manifest, opts.rootDir, &opts.effective.Policy)
+		},
+	}
+}
+
+// reportDeclarationGates runs declarationGates in the repository against the declaration profile
+// set left, or in a dry run would leave (the report's effective policy), and names the refresh
+// when one fails (#123).
+func reportDeclarationGates(ctx context.Context, rep *adopt.AdoptReport, opts adopt.ProfileSetOptions) error {
+	if rep.EffectivePolicy == nil || rep.EffectivePolicy.Manifest == nil {
+		return errors.New("profile set reported no effective policy to check the derived files against")
+	}
+	root, err := filepath.Abs(opts.Path)
+	if err != nil {
+		return fmt.Errorf("resolve repository path %q: %w", opts.Path, err)
+	}
+	subject := "the declaration now written"
+	if rep.DryRun {
+		subject = "the planned declaration"
+	}
+	fmt.Printf("\nAudit gates for files derived from the declaration, checked against %s:\n", subject)
+	failed := checkDeclarationGates(ctx, root, rep.EffectivePolicy)
+	if failed == 0 {
+		return nil
+	}
+	when := "fail: praetorctl audit fails"
+	if rep.DryRun {
+		when = "would fail once profile set runs without --dry-run: praetorctl audit would fail"
+	}
+	fmt.Printf("\n%d gate(s) %s until those files follow the declaration, and profile set does not write them.\n"+
+		"Refresh them with adoption, which also rewrites every other audit-locked file that drifted; preview it first:\n"+
+		"  praetorctl adopt --force --dry-run --lock-source-root=%s --path=%s\n", failed, when, opts.LockSourceRoot, opts.Path)
+	return nil
+}
+
+// checkDeclarationGates runs every declarationGate in root against effective, printing each
+// verdict as the audit prints it, and returns how many failed. The README gate reads the
+// recorded baseline the audit reads (auditBaselineAndInvariants).
+func checkDeclarationGates(ctx context.Context, root string, effective *config.EffectivePolicy) int {
+	opts := &auditOptions{rootDir: root, effective: effective}
+	failed := 0
+	base, err := baseline.LoadBaseline(resolveCompanion(root, "", ".standards-baseline.json"))
+	if err != nil {
+		fmt.Printf("[FAIL] Baseline audit failed: %v\n", err)
+		failed++
+	} else {
+		opts.baseline, opts.baselineKnown = base, !base.Absent
+	}
+	gates := declarationGates()
+	for i := 0; i < len(gates) && i < maxAuditGates; i++ {
+		if err := gates[i](ctx, effective.Manifest, opts); err != nil {
+			fmt.Println(err)
+			failed++
+		}
+	}
+	return failed
 }

@@ -196,6 +196,10 @@ func TestSetProfile_Boundary_EmptyFacetsAndDryRun(t *testing.T) {
 	if want := []string{".config/archetypes/os-image.yaml:create", lockFile + ":update", manifestFile + ":update"}; !slices.Equal(previewed, want) {
 		t.Fatalf("previews %v, want %v", previewed, want)
 	}
+	// The caller checks the files derived from the declaration against the planned policy.
+	if rep.EffectivePolicy == nil || rep.EffectivePolicy.Manifest == nil || !slices.Equal(rep.EffectivePolicy.Manifest.Profiles, []string{"os-image"}) {
+		t.Fatalf("a dry run must report the planned effective policy: %+v", rep.EffectivePolicy)
+	}
 
 	if _, err := SetProfile(t.Context(), ProfileSetOptions{Path: root, SetFacets: true, LockSourceRoot: source}); err != nil {
 		t.Fatalf("declare no facets: %v", err)

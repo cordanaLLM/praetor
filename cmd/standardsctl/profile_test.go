@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/config"
 )
 
@@ -55,7 +56,7 @@ func TestRunProfile_Dispatch_3D(t *testing.T) {
 // End to end through the praetorctl process and the shipped catalog (#123): a repository adopted
 // under one profile moves to another. The dry run previews the change and writes nothing; the
 // real run leaves a manifest and lock the audit's policy and lock gates accept; a profile the
-// source bundle lacks exits non-zero naming the bundle's catalog version.
+// source bundle lacks exits non-zero naming the bundle's catalog version, before any gate runs.
 func TestProfileSetEndToEnd(t *testing.T) {
 	source, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
@@ -86,8 +87,104 @@ func TestProfileSetEndToEnd(t *testing.T) {
 	}
 	readFixtureFile(t, root, archetype)
 	code, out = praetorctl(t, "profile", "set", "no-such-profile", "--path", root, "--lock-source-root", source)
-	if code == 0 || !strings.Contains(out, "catalog v0.0.0+catalog.") {
-		t.Fatalf("an absent profile must fail naming the catalog version: exit %d\n%s", code, out)
+	if code == 0 || !strings.Contains(out, "catalog v0.0.0+catalog.") || strings.Contains(out, declarationGatesHeading) {
+		t.Fatalf("an absent profile must fail naming the catalog version, before any gate runs: exit %d\n%s", code, out)
+	}
+}
+
+// declarationGatesHeading opens the section profile set prints for the declaration gates.
+const declarationGatesHeading = "Audit gates for files derived from the declaration"
+
+// TestProfileSetReportsDerivedDrift_3D (#123 review): profile set writes no file adoption derives
+// from the declaration, so after a profile change it names each audit gate that now fails and the
+// refresh. The dry run predicts the failing DevContainer gate against the planned declaration
+// (boundary); the real run reports it against the written one and exits 0, and the named
+// refresh, adopt --force, clears it, after which a re-pin reports every gate passing (positive).
+// The gate verdicts are the audit's own: the same run's audit fails on the DevContainer
+// (negative).
+func TestProfileSetReportsDerivedDrift_3D(t *testing.T) {
+	source, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	initGitFixture(t, root)
+	if code, out := praetorctl(t, "adopt", "--path", root, "--profile", "planning-artifacts", "--facets", "security:high",
+		"--lock-source-root", source); code != 0 {
+		t.Fatalf("adopt: exit %d\n%s", code, out)
+	}
+	const drift = "[FAIL] DevContainer out of sync with declared standards"
+	refresh := "praetorctl adopt --force --dry-run --lock-source-root=" + source
+	code, out := praetorctl(t, "profile", "set", "os-image", "--path", root, "--lock-source-root", source, "--dry-run")
+	if code != 0 || !strings.Contains(out, "checked against the planned declaration") || !strings.Contains(out, drift) ||
+		!strings.Contains(out, "would fail once profile set runs without --dry-run") {
+		t.Fatalf("the dry run must predict the DevContainer drift: exit %d\n%s", code, out)
+	}
+	code, out = praetorctl(t, "profile", "set", "os-image", "--path", root, "--lock-source-root", source)
+	if code != 0 || !strings.Contains(out, "checked against the declaration now written") || !strings.Contains(out, drift) ||
+		!strings.Contains(out, "1 gate(s) fail") || !strings.Contains(out, refresh) {
+		t.Fatalf("the real run must report the drift and the refresh: exit %d\n%s", code, out)
+	}
+	if err := auditDevContainerQuiet(t, root); err == nil || !strings.Contains(err.Error(), drift) {
+		t.Fatalf("the audit must fail on the reported DevContainer drift: %v", err)
+	}
+	if code, out := praetorctl(t, "adopt", "--force", "--path", root, "--lock-source-root", source); code != 0 {
+		t.Fatalf("adopt --force: exit %d\n%s", code, out)
+	}
+	code, out = praetorctl(t, "profile", "set", "--path", root, "--lock-source-root", source)
+	if code != 0 || !strings.Contains(out, "[PASS] DevContainer configuration verified") || strings.Contains(out, "gate(s) fail") {
+		t.Fatalf("after the refresh every declaration gate must pass: exit %d\n%s", code, out)
+	}
+}
+
+// auditDevContainerQuiet runs the audit's DevContainer gate on root's committed declaration.
+func auditDevContainerQuiet(t *testing.T, root string) error {
+	t.Helper()
+	effective, err := auditManifestAndLockfileQuiet(t, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = captureStdout(t, func() error {
+		return auditDevContainer(t.Context(), effective.Manifest, &auditOptions{rootDir: root, effective: effective})
+	})
+	return err
+}
+
+// TestCheckDeclarationGates_3D: an audit fixture passes every declaration gate (positive); a
+// declared docs:seo-portal without the documentation assets fails that gate alone (negative); an
+// unreadable baseline counts as one failure while the gates that do not read it still run, and a
+// report without an effective policy is refused (boundary).
+func TestCheckDeclarationGates_3D(t *testing.T) {
+	f := newAuditFixture(t)
+	effective, err := auditManifestAndLockfileQuiet(t, f.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gates := func() (string, int) {
+		failed := 0
+		out, err := captureStdout(t, func() error { failed = checkDeclarationGates(t.Context(), f.dir, effective); return nil })
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out, failed
+	}
+	if out, failed := gates(); failed != 0 || !strings.Contains(out, "[PASS] Branch protection") {
+		t.Fatalf("the fixture must pass every declaration gate: %d failed\n%s", failed, out)
+	}
+	declared := effective.Manifest.Facets
+	effective.Manifest.Facets = append(slices.Clone(declared), "docs:seo-portal")
+	if out, failed := gates(); failed != 1 || !strings.Contains(out, "[FAIL] Documentation gate asset") {
+		t.Fatalf("an enabled documentation facet without its assets must fail that gate alone: %d failed\n%s", failed, out)
+	}
+	effective.Manifest.Facets = declared
+	writeFixtureFile(t, f.dir, ".standards-baseline.json", "{")
+	if out, failed := gates(); failed != 1 || !strings.Contains(out, "[FAIL] Baseline audit failed") ||
+		!strings.Contains(out, "[PASS] Branch protection") {
+		t.Fatalf("an unreadable baseline must count once and leave the other gates running: %d failed\n%s", failed, out)
+	}
+	if err := reportDeclarationGates(t.Context(), &adopt.AdoptReport{}, adopt.ProfileSetOptions{Path: f.dir}); err == nil ||
+		!strings.Contains(err.Error(), "no effective policy") {
+		t.Fatalf("a report without an effective policy must be refused: %v", err)
 	}
 }
 
