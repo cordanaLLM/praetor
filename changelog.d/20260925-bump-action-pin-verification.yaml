@@ -1,0 +1,3 @@
+type: fixed
+title: bump audit asks each SHA-pinned action's GitHub repository whether the pinned commit exists and whether its release comment's tag points at it, failing the report with file and line on a missing commit or a moved release and reporting a pin it could not ask about as unverified, never up to date; a release comment is read after any spaces or tabs, a SHA pin without one is reported as unversioned, and an exact release such as v4.2.2 carries its major's runtime deprecation
+breaking: false

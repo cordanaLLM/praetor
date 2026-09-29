@@ -39,3 +39,47 @@ func TestFormatActionsInventory(t *testing.T) {
 		t.Fatalf("empty inventory rendered %q", out)
 	}
 }
+
+// Positive, negative and boundary for SHA pins (#609, #610): a refuted pin is a bad pin even
+// when its version is current or deprecated, an unverified or unversioned pin is never up to
+// date, a verified pin reads by its version, rows name file and line, and each distinct
+// reason a pin went unverified is printed once with its count.
+func TestFormatActionsInventoryPinStatuses(t *testing.T) {
+	pin := func(status PinStatus, detail string) ActionCandidate {
+		return ActionCandidate{
+			WorkflowFile: "ci.yml", Line: 7, Action: "example/action", CurrentVersion: "v1.0.0", LatestVersion: "v1",
+			UpToDate: true, PinnedSHA: "0dceb95e7c4cad8cc7422aee3885998f5cab9c79", Pin: status, PinDetail: detail,
+		}
+	}
+	deprecatedMissing := pin(PinCommitMissing, "gone")
+	deprecatedMissing.Deprecated = true
+	for _, tc := range []struct {
+		action ActionCandidate
+		want   string
+	}{
+		{pin(PinCommitMissing, "gone"), "[BAD-PIN]"},
+		{pin(PinReleaseMismatch, "moved"), "[BAD-PIN]"},
+		{deprecatedMissing, "[BAD-PIN]"},
+		{pin(PinUnverified, "offline"), "[UNVERIFIED]"},
+		{pin(PinUnversioned, "bare"), "[UNVERSIONED]"},
+		{pin(PinVerified, ""), "[UP-TO-DATE]"},
+	} {
+		if got := ActionDriftStatus(tc.action); got != tc.want {
+			t.Errorf("pin %s: status %s, want %s", tc.action.Pin, got, tc.want)
+		}
+	}
+	got := FormatActionsInventory([]ActionCandidate{
+		pin(PinUnverified, "offline"), pin(PinUnverified, "offline"), pin(PinUnverified, "rate limited"), pin(PinVerified, ""),
+	})
+	for _, want := range []string{
+		"[UNVERIFIED]  example/action", "v1.0.0 -> v1 (ci.yml:7)",
+		"  2 SHA pin(s) unverified: offline\n", "  1 SHA pin(s) unverified: rate limited\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("inventory lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Count(got, "unverified:") != 2 {
+		t.Fatalf("each unverified reason must print once:\n%s", got)
+	}
+}
