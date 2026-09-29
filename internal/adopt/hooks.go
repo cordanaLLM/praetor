@@ -153,7 +153,7 @@ func lefthookHeader(languages hisscatalog.Language) string {
 		scope = names + " & " + scope
 	}
 	return "# Lefthook Configuration (" + scope + ")\n" +
-		"# Language jobs cover the languages adoption detected; all when it found none.\n" +
+		"# Go and Rust jobs follow the detected languages; both when none was detected.\n" +
 		"# Governance commands fail closed: a failing or missing praetorctl blocks the\n" +
 		"# commit or push. The pre-push gate job signs a receipt only after a Go\n" +
 		"# (go.mod) or Cargo (Cargo.lock) toolchain stage ran, and fails otherwise.\n"

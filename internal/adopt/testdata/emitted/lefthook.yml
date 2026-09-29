@@ -1,5 +1,5 @@
 # Lefthook Configuration (Go, Rust & HISS Governance)
-# Language jobs cover the languages adoption detected; all when it found none.
+# Go and Rust jobs follow the detected languages; both when none was detected.
 # Governance commands fail closed: a failing or missing praetorctl blocks the
 # commit or push. The pre-push gate job signs a receipt only after a Go
 # (go.mod) or Cargo (Cargo.lock) toolchain stage ran, and fails otherwise.
