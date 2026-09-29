@@ -83,3 +83,23 @@ func TestReadRepoFileAndManifestForLock_Boundary(t *testing.T) {
 		t.Fatalf("decoding a well-formed manifest below the bound failed: %v", err)
 	}
 }
+
+// TestManifestForLock_FacetsScaffoldOnlyANewManifest_3D (#596): the facets adoption resolves
+// from --facets or the defaults pin a repository without a manifest (positive); an existing
+// manifest that declares no facets keeps declaring none, whatever --facets names (negative); one
+// that declares an explicit empty list keeps it too (boundary). adopt --help states this.
+func TestManifestForLock_FacetsScaffoldOnlyANewManifest_3D(t *testing.T) {
+	s := lockAdoptSession(t)
+	s.facets = []string{"security:high"}
+	manifest, err := manifestForLock(t.Context(), s)
+	if err != nil || len(manifest.Facets) != 1 || manifest.Facets[0] != "security:high" {
+		t.Fatalf("a repository without a manifest must pin the resolved facets: %+v, %v", manifest, err)
+	}
+	for _, declared := range []string{"version: 1\nprofiles: [framework]\n", "version: 1\nprofiles: [framework]\nfacets: []\n"} {
+		mustWrite(t, filepath.Join(s.repoPath, manifestFile), declared)
+		manifest, err := manifestForLock(t.Context(), s)
+		if err != nil || len(manifest.Facets) != 0 {
+			t.Fatalf("an existing manifest must keep its facets over --facets:\n%s-> %+v, %v", declared, manifest, err)
+		}
+	}
+}

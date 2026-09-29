@@ -91,15 +91,19 @@ func TestProfileSetEndToEnd(t *testing.T) {
 	}
 }
 
-// TestAdoptHelpStatesTheDefaultFacets (#596): adopt --help names the facets adoption applies
-// when neither --facets nor the manifest declares any, the set config.DefaultFacets holds, and
-// where to change them (positive); --help still exits 0 (boundary); init keeps its own flag
-// default, so the adopt text is the one that states it in prose (negative: no flag default).
+// TestAdoptHelpStatesTheDefaultFacets (#596): adopt --help names the facets adoption writes when
+// it creates .standards.yaml, the set config.DefaultFacets holds when --facets is omitted, says
+// an existing manifest keeps the facets it declares (manifestForLock), and where to change them
+// (positive); --help still exits 0 (boundary); the flag keeps an empty default, so the text is
+// the one that states it in prose (negative: no flag default).
 func TestAdoptHelpStatesTheDefaultFacets(t *testing.T) {
 	code, out := praetorctl(t, "adopt", "--help")
 	want := "default when omitted: " + strings.Join(config.DefaultFacets(), ",")
-	if code != 0 || !strings.Contains(out, want) || !strings.Contains(out, "praetorctl profile set --facets") {
-		t.Fatalf("adopt --help: exit %d, want %q\n%s", code, want, out)
+	for _, phrase := range []string{want, "when adoption creates .standards.yaml", "an existing .standards.yaml keeps the facets it declares",
+		"praetorctl profile set --facets"} {
+		if code != 0 || !strings.Contains(out, phrase) {
+			t.Fatalf("adopt --help: exit %d, want %q\n%s", code, phrase, out)
+		}
 	}
 	_, usage, _ := strings.Cut(out, "-facets string")
 	usage, _, _ = strings.Cut(usage, "\n  -")
