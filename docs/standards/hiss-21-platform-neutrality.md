@@ -180,16 +180,23 @@ syntax rules. A name holding `${{ matrix.<variable> }}` is evaluated against eac
 nothing appended. Any other name, or a job without one (reported under its id), gets the leg's
 axis values appended in declaration order with empty values left out, as
 `Test (ubuntu-latest, 1.22)`; a value an `include` entry merges into an axis combination is not
-appended, while an `include` entry that forms its own leg appends all of its values.
+appended, while an `include` entry that forms its own leg appends all of its values. Legs whose
+names coincide share one context, listed once: `Build (${{ matrix.os }})` over the axes `os` and
+`go` requires one `Build (<os>)` per runner image
+(`TestMatrixContexts_Positive_NamesEveryLegAsGitHubReportsIt`). A YAML alias stands for its
+anchored node anywhere in the matrix, as GitHub Actions reads it
+(`TestMatrixContexts_Positive_ResolvesAnchorsAndAliases`).
 
 This is not cosmetic. A required status check whose context no run ever reports does not fail a
 pull request — it leaves it *expected* forever, so a generator that emitted `${{ matrix.name }}`
 verbatim, or a constant name without its leg values, would permanently block the branch it
 believed it was protecting. `forge.RequiredStatusContexts` therefore refuses, with the shape
 named, every matrix whose contexts the file cannot show: an unresolved expression, a matrix,
-axis or `include` list that is itself an expression, and a value whose printed form differs from
-its spelling (an unquoted `3.10` is the number 3.1). None is ever passed through as a literal
-(`internal/forge/workflow_matrix_test.go`).
+axis or `include` list that is itself an expression, a value whose printed form differs from its
+spelling (an unquoted `3.10` is the number 3.1), a name that is empty or begins or ends with
+whitespace once evaluated (`Build ${{ matrix.suffix }}` with an empty suffix), and the YAML merge
+key `<<`, which GitHub Actions does not read. None is ever passed through as a literal
+(`TestMatrixContexts_Negative_RefusesWhatTheFileCannotShow`).
 
 An advisory leg — one carrying `continue-on-error` — is **excluded** from the required
 contexts. The forge reports such a job as successful whether or not it passed, so requiring it

@@ -75,6 +75,49 @@ func TestMatrixContexts_Positive_NamesEveryLegAsGitHubReportsIt(t *testing.T) {
 		{"canonical numbers and booleans",
 			"    strategy:\n      matrix:\n        node: [20, -1]\n        experimental: [false]\n        ratio: [1.5]\n",
 			"test (20, false, 1.5)|test (-1, false, 1.5)"},
+		{"a name reading some axes names each distinct leg once",
+			"    name: Build (${{ matrix.os }})\n    strategy:\n      matrix:\n        os: [ubuntu-latest, windows-latest]\n        go: [\"1.25\", \"1.26\"]\n",
+			"Build (ubuntu-latest)|Build (windows-latest)"},
+		{"legs appending the same values name one context",
+			"    name: Test\n    strategy:\n      matrix:\n        include:\n          - { os: linux, features: \"\" }\n          - { os: linux }\n",
+			"Test (linux)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := matrixJob(tc.body)
+			if err != nil {
+				t.Fatalf("expand: %v", err)
+			}
+			if want := strings.Split(tc.want, "|"); !slices.Equal(got, want) {
+				t.Fatalf("contexts = %q, want %q", got, want)
+			}
+			if err := validateRulesetInputs(got); err != nil {
+				t.Fatalf("the ruleset refuses contexts %q: %v", got, err)
+			}
+		})
+	}
+}
+
+// Positive: GitHub Actions reads YAML anchors and aliases (changelog 2025-09-18), so an alias
+// stands for its anchored node as the whole matrix, an axis, the include list, one entry or one
+// value, and names every leg as the anchored text would.
+func TestMatrixContexts_Positive_ResolvesAnchorsAndAliases(t *testing.T) {
+	cases := []struct{ name, body, want string }{
+		{"include list",
+			"    name: T (${{ matrix.v }})\n    strategy:\n      matrix:\n        include: &legs\n          - v: a\n          - v: b\n" +
+				"  again:\n    name: U (${{ matrix.v }})\n    strategy:\n      matrix:\n        include: *legs\n",
+			"U (a)|U (b)|T (a)|T (b)"},
+		{"axis",
+			"    strategy:\n      matrix:\n        os: &images [ubuntu-latest, windows-latest]\n" +
+				"  build:\n    strategy:\n      matrix:\n        os: *images\n",
+			"build (ubuntu-latest)|build (windows-latest)|test (ubuntu-latest)|test (windows-latest)"},
+		{"whole matrix",
+			"    strategy:\n      matrix: &shared\n        os: [linux]\n  build:\n    strategy:\n      matrix: *shared\n",
+			"build (linux)|test (linux)"},
+		{"entry and value",
+			"    name: Gate\n    strategy:\n      matrix:\n        os: [&linux linux, macos]\n        include:\n          - &extra { os: windows }\n" +
+				"        exclude:\n          - os: *linux\n  again:\n    name: Again\n    strategy:\n      matrix:\n        include:\n          - *extra\n",
+			"Again (windows)|Gate (macos)|Gate (windows)"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -137,7 +180,15 @@ func TestMatrixContexts_Negative_RefusesWhatTheFileCannotShow(t *testing.T) {
 		{"number spelled otherwise", "    strategy:\n      matrix:\n        python: [3.10]\n", "quote it"},
 		{"mapping axis value appended", "    strategy:\n      matrix:\n        target: [{name: x86_64}]\n", "is a mapping"},
 		{"null axis value appended", "    strategy:\n      matrix:\n        os: [~]\n", "is null"},
-		{"alias axis", "    env:\n      IMAGES: &images [a]\n    strategy:\n      matrix:\n        os: *images\n", "YAML alias"},
+		{"merge key in an include entry", "    strategy:\n      matrix:\n        os: [a]\n        include:\n          - &base { os: a, arch: x }\n          - <<: *base\n            arch: y\n",
+			"entry 1 uses the YAML merge key <<"},
+		{"merge key in the matrix", "    strategy:\n      matrix: &m\n        os: [a]\n  build:\n    strategy:\n      matrix:\n        <<: *m\n",
+			"strategy.matrix uses the YAML merge key <<"},
+		{"list as a matrix key", "    strategy:\n      matrix:\n        ? [a]\n        : [b]\n", "has a key that is a list"},
+		{"empty value at the end of an evaluated name", "    name: Build ${{ matrix.suffix }}\n    strategy:\n      matrix:\n        suffix: [\"\", race]\n",
+			`the name reads "Build "`},
+		{"evaluated name that is empty", "    name: ${{ matrix.label }}\n    strategy:\n      matrix:\n        label: [\"\"]\n", `the name reads ""`},
+		{"constant name with surrounding whitespace", "    name: \" Test\"\n    strategy:\n      matrix:\n        os: [a]\n", `the name reads " Test"`},
 		{"exclude naming no axis", "    strategy:\n      matrix:\n        os: [a]\n        exclude:\n          - build: false\n", "which no axis declares"},
 		{"values differing only in case", "    strategy:\n      matrix:\n        os: [Ubuntu]\n        exclude:\n          - os: ubuntu\n", "differ only in case"},
 		{"empty axis", "    strategy:\n      matrix:\n        os: []\n", "has no values"},
@@ -187,6 +238,47 @@ func TestMatrixContexts_Boundary_Limits(t *testing.T) {
 	atLimit := "    name: " + strings.Repeat("${{ matrix.a }}", maxNameExpressions) + "\n    strategy:\n      matrix:\n        a: [x]\n"
 	if got, err := matrixJob(atLimit); err != nil || len(got) != 1 || got[0] != strings.Repeat("x", maxNameExpressions) {
 		t.Errorf("a name of exactly %d expressions: %q, %v", maxNameExpressions, got, err)
+	}
+}
+
+// Boundary: an alias chain resolves at exactly maxAliasHops hops and is refused one past it, and an
+// alias naming no node is refused; a YAML reader never builds either, so the chain is built here.
+func TestResolveAlias_Boundary_HopLimit(t *testing.T) {
+	chain := func(hops int) *yaml.Node {
+		node := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "linux"}
+		for range hops {
+			node = &yaml.Node{Kind: yaml.AliasNode, Alias: node}
+		}
+		return node
+	}
+	if got, err := resolveAlias(chain(maxAliasHops)); err != nil || got.Value != "linux" {
+		t.Errorf("a chain of exactly %d aliases: %v, %v", maxAliasHops, got, err)
+	}
+	if _, err := resolveAlias(chain(maxAliasHops + 1)); err == nil || !strings.Contains(err.Error(), "exceeds 8 hops") {
+		t.Errorf("a chain of %d aliases: %v; want the hop bound", maxAliasHops+1, err)
+	}
+	if _, err := resolveAlias(&yaml.Node{Kind: yaml.AliasNode}); err == nil || !strings.Contains(err.Error(), "names no anchored node") {
+		t.Errorf("an alias naming no node: %v", err)
+	}
+	if value := newMatrixValue(chain(maxAliasHops + 1)); !strings.Contains(value.unknown, "cannot be read") {
+		t.Errorf("a value past the hop bound = %+v; want it unknown", value)
+	}
+}
+
+// Boundary: at the leg ceiling a name reading one of two axes names each distinct leg once, in the
+// order its first leg runs.
+func TestMatrixContexts_Boundary_DistinctLegsAtTheCeiling(t *testing.T) {
+	body := "    name: B ${{ matrix.a }}\n    strategy:\n      matrix:\n        a: " + axisValues(16) + "\n        b: " + axisValues(16) + "\n"
+	got, err := matrixJob(body)
+	if err != nil {
+		t.Fatalf("expand: %v", err)
+	}
+	want := make([]string, 16)
+	for i := range want {
+		want[i] = fmt.Sprintf("B v%d", i)
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("contexts = %q, want %q", got, want)
 	}
 }
 

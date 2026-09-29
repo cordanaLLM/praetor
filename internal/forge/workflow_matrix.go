@@ -26,11 +26,15 @@ const (
 	maxMatrixKeys = 64
 	// maxNameExpressions bounds the ${{ }} expressions evaluated in one job name.
 	maxNameExpressions = 16
-	matrixIncludeKey   = "include"
-	matrixExcludeKey   = "exclude"
-	matrixContextName  = "matrix."
-	expressionOpen     = "${{"
-	expressionClose    = "}}"
+	// maxAliasHops bounds the YAML aliases followed to reach one anchored node (resolveAlias).
+	maxAliasHops = 8
+	// yamlMergeTag is the tag a YAML reader gives the unquoted merge key `<<`.
+	yamlMergeTag      = "!!merge"
+	matrixIncludeKey  = "include"
+	matrixExcludeKey  = "exclude"
+	matrixContextName = "matrix."
+	expressionOpen    = "${{"
+	expressionClose   = "}}"
 )
 
 // matrixValue is one matrix variable's value as a job name renders it. unknown is empty for a
@@ -95,20 +99,27 @@ func cellIndex(cells []matrixCell, key string) int {
 	return -1
 }
 
-// matrixJobContexts returns the context of every leg of a matrix job: name is the job's name, or
-// its id when it has none (legContext).
+// matrixJobContexts returns the context of every leg of a matrix job, each once, in leg order:
+// name is the job's name, or its id when it has none (legContext). Legs whose names coincide,
+// such as the legs of `Build (${{ matrix.os }})` that differ only in another axis, report checks
+// of one name, which a required context names once; the ruleset refuses a context listed twice
+// (validateRulesetInputs).
 func matrixJobContexts(id, name string, matrix *yaml.Node) ([]string, error) {
 	legs, err := expandMatrix(matrix)
 	if err != nil {
 		return nil, fmt.Errorf("job %q: %w; a required check context that no run reports blocks the branch permanently", id, err)
 	}
 	contexts := make([]string, 0, len(legs))
+	seen := make(map[string]bool, len(legs))
 	for i := 0; i < len(legs) && i < maxMatrixLegs; i++ {
 		reported, err := legContext(name, legs[i])
 		if err != nil {
 			return nil, fmt.Errorf("job %q: leg %d leaves %q unresolved: %w; a required check context that no run reports blocks the branch permanently", id, i, name, err)
 		}
-		contexts = append(contexts, reported)
+		if !seen[reported] {
+			seen[reported] = true
+			contexts = append(contexts, reported)
+		}
 	}
 	return contexts, nil
 }
@@ -147,20 +158,62 @@ func expandMatrix(node *yaml.Node) ([]matrixLeg, error) {
 
 // parseMatrix reads a strategy.matrix mapping. A matrix, axis, or include or exclude list that is
 // one expression is evaluated only when the workflow runs, so it is refused with that shape named.
+// An alias anywhere in the matrix stands for the node its anchor marks (resolveAlias).
 func parseMatrix(node *yaml.Node) (matrixSpec, error) {
-	if node.Kind != yaml.MappingNode {
-		return matrixSpec{}, fmt.Errorf("strategy.matrix is %s, not a mapping of axes", matrixShape(node))
+	matrix, err := resolveAlias(node)
+	if err != nil {
+		return matrixSpec{}, fmt.Errorf("strategy.matrix: %w", err)
 	}
-	if len(node.Content) > 2*maxMatrixKeys {
+	if matrix.Kind != yaml.MappingNode {
+		return matrixSpec{}, fmt.Errorf("strategy.matrix is %s, not a mapping of axes", matrixShape(matrix))
+	}
+	if len(matrix.Content) > 2*maxMatrixKeys {
 		return matrixSpec{}, fmt.Errorf("strategy.matrix exceeds %d variables", maxMatrixKeys)
 	}
 	var spec matrixSpec
-	for i := 0; i+1 < len(node.Content) && i < 2*maxMatrixKeys; i += 2 {
-		if err := spec.add(node.Content[i].Value, node.Content[i+1]); err != nil {
+	for i := 0; i+1 < len(matrix.Content) && i < 2*maxMatrixKeys; i += 2 {
+		key, err := matrixKey("strategy.matrix", matrix.Content[i])
+		if err != nil {
+			return matrixSpec{}, err
+		}
+		if err := spec.add(key, matrix.Content[i+1]); err != nil {
 			return matrixSpec{}, err
 		}
 	}
 	return spec, nil
+}
+
+// resolveAlias returns the node an alias names, following at most maxAliasHops aliases in a loop
+// (HISS-01); any other node is returned as it is. GitHub Actions reads YAML anchors and aliases
+// in a workflow, so an alias stands for its anchored node wherever a matrix holds one.
+func resolveAlias(node *yaml.Node) (*yaml.Node, error) {
+	for hop := 0; hop <= maxAliasHops; hop++ {
+		if node == nil {
+			return nil, errors.New("a YAML alias names no anchored node")
+		}
+		if node.Kind != yaml.AliasNode {
+			return node, nil
+		}
+		node = node.Alias
+	}
+	return nil, fmt.Errorf("a YAML alias chain exceeds %d hops", maxAliasHops)
+}
+
+// matrixKey returns the variable name one key of a matrix mapping spells; where names the
+// mapping. GitHub Actions reads anchors and aliases but not the merge key `<<`, so a workflow
+// that merges one into a matrix does not run, and the key is refused here.
+func matrixKey(where string, node *yaml.Node) (string, error) {
+	key, err := resolveAlias(node)
+	if err != nil {
+		return "", fmt.Errorf("%s key: %w", where, err)
+	}
+	if key.Kind != yaml.ScalarNode {
+		return "", fmt.Errorf("%s has a key that is %s, not a variable name", where, matrixShape(key))
+	}
+	if key.ShortTag() == yamlMergeTag {
+		return "", fmt.Errorf("%s uses the YAML merge key <<, which GitHub Actions does not support", where)
+	}
+	return key.Value, nil
 }
 
 // add reads one strategy.matrix entry: the include or exclude list, or an axis.
@@ -181,50 +234,74 @@ func (spec *matrixSpec) add(key string, value *yaml.Node) error {
 
 // parseMatrixAxis reads one axis, a non-empty list of values.
 func parseMatrixAxis(key string, node *yaml.Node) (matrixAxis, error) {
-	if node.Kind != yaml.SequenceNode {
-		return matrixAxis{}, fmt.Errorf("matrix axis %q is %s, not a list", key, matrixShape(node))
+	list, err := resolveAlias(node)
+	if err != nil {
+		return matrixAxis{}, fmt.Errorf("matrix axis %q: %w", key, err)
 	}
-	if len(node.Content) == 0 {
+	if list.Kind != yaml.SequenceNode {
+		return matrixAxis{}, fmt.Errorf("matrix axis %q is %s, not a list", key, matrixShape(list))
+	}
+	if len(list.Content) == 0 {
 		return matrixAxis{}, fmt.Errorf("matrix axis %q has no values", key)
 	}
-	if len(node.Content) > maxMatrixProduct {
+	if len(list.Content) > maxMatrixProduct {
 		return matrixAxis{}, fmt.Errorf("matrix axis %q exceeds %d values", key, maxMatrixProduct)
 	}
-	axis := matrixAxis{key: key, values: make([]matrixValue, 0, len(node.Content))}
-	for i := 0; i < len(node.Content) && i < maxMatrixProduct; i++ {
-		axis.values = append(axis.values, newMatrixValue(node.Content[i]))
+	axis := matrixAxis{key: key, values: make([]matrixValue, 0, len(list.Content))}
+	for i := 0; i < len(list.Content) && i < maxMatrixProduct; i++ {
+		axis.values = append(axis.values, newMatrixValue(list.Content[i]))
 	}
 	return axis, nil
 }
 
 // parseMatrixEntries reads the include or exclude list: a list of variable mappings.
 func parseMatrixEntries(key string, node *yaml.Node) ([][]matrixCell, error) {
-	if node.Kind != yaml.SequenceNode {
-		return nil, fmt.Errorf("strategy.matrix.%s is %s, not a list", key, matrixShape(node))
+	list, err := resolveAlias(node)
+	if err != nil {
+		return nil, fmt.Errorf("strategy.matrix.%s: %w", key, err)
 	}
-	if len(node.Content) > maxMatrixLegs {
+	if list.Kind != yaml.SequenceNode {
+		return nil, fmt.Errorf("strategy.matrix.%s is %s, not a list", key, matrixShape(list))
+	}
+	if len(list.Content) > maxMatrixLegs {
 		return nil, fmt.Errorf("strategy.matrix.%s exceeds %d entries", key, maxMatrixLegs)
 	}
-	entries := make([][]matrixCell, 0, len(node.Content))
-	for i := 0; i < len(node.Content) && i < maxMatrixLegs; i++ {
-		entry := node.Content[i]
-		if entry.Kind != yaml.MappingNode {
-			return nil, fmt.Errorf("strategy.matrix.%s entry %d is %s, not a mapping", key, i, matrixShape(entry))
-		}
-		if len(entry.Content) > 2*maxMatrixKeys {
-			return nil, fmt.Errorf("strategy.matrix.%s entry %d exceeds %d variables", key, i, maxMatrixKeys)
-		}
-		cells := make([]matrixCell, 0, len(entry.Content)/2)
-		for j := 0; j+1 < len(entry.Content) && j < 2*maxMatrixKeys; j += 2 {
-			cells = append(cells, matrixCell{key: entry.Content[j].Value, value: newMatrixValue(entry.Content[j+1])})
+	entries := make([][]matrixCell, 0, len(list.Content))
+	for i := 0; i < len(list.Content) && i < maxMatrixLegs; i++ {
+		cells, err := parseMatrixEntry(fmt.Sprintf("strategy.matrix.%s entry %d", key, i), list.Content[i])
+		if err != nil {
+			return nil, err
 		}
 		entries = append(entries, cells)
 	}
 	return entries, nil
 }
 
+// parseMatrixEntry reads one include or exclude entry, a mapping of variables; where names it.
+func parseMatrixEntry(where string, node *yaml.Node) ([]matrixCell, error) {
+	entry, err := resolveAlias(node)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", where, err)
+	}
+	if entry.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("%s is %s, not a mapping", where, matrixShape(entry))
+	}
+	if len(entry.Content) > 2*maxMatrixKeys {
+		return nil, fmt.Errorf("%s exceeds %d variables", where, maxMatrixKeys)
+	}
+	cells := make([]matrixCell, 0, len(entry.Content)/2)
+	for j := 0; j+1 < len(entry.Content) && j < 2*maxMatrixKeys; j += 2 {
+		key, err := matrixKey(where, entry.Content[j])
+		if err != nil {
+			return nil, err
+		}
+		cells = append(cells, matrixCell{key: key, value: newMatrixValue(entry.Content[j+1])})
+	}
+	return cells, nil
+}
+
 // matrixShape names a matrix node by its shape, so a refusal says what it met: an expression is
-// evaluated only when the workflow runs, and an alias is not resolved here.
+// evaluated only when the workflow runs. Callers resolve aliases first (resolveAlias).
 func matrixShape(node *yaml.Node) string {
 	switch {
 	case node.Kind == yaml.ScalarNode && strings.Contains(node.Value, expressionOpen):
@@ -238,17 +315,22 @@ func matrixShape(node *yaml.Node) string {
 	case node.Kind == yaml.SequenceNode:
 		return "a list"
 	case node.Kind == yaml.AliasNode:
-		return "a YAML alias"
+		return "an unresolved YAML alias"
 	default:
 		return "an empty node"
 	}
 }
 
 // newMatrixValue records one matrix value as a job name renders it: a string as written, and an
-// integer, boolean or decimal whose YAML spelling is the text its value formats as. Anything else
-// is unknown, with the reason: an expression, a mapping, list, alias or null, or a number spelled
-// otherwise than it formats (3.10 is the number 3.1 to a YAML reader), which quoting settles.
-func newMatrixValue(node *yaml.Node) matrixValue {
+// integer, boolean or decimal whose YAML spelling is the text its value formats as; an alias
+// stands for its anchored value. Anything else is unknown, with the reason: an expression, a
+// mapping, list or null, or a number spelled otherwise than it formats (3.10 is the number 3.1 to
+// a YAML reader), which quoting settles.
+func newMatrixValue(alias *yaml.Node) matrixValue {
+	node, err := resolveAlias(alias)
+	if err != nil {
+		return matrixValue{unknown: "cannot be read: " + err.Error()}
+	}
 	if node.Kind != yaml.ScalarNode || strings.Contains(node.Value, expressionOpen) || node.ShortTag() == "!!null" {
 		return matrixValue{unknown: "is " + matrixShape(node)}
 	}
@@ -443,16 +525,38 @@ func (leg *matrixLeg) addCells(entry []matrixCell) error {
 
 // legContext returns the check context one leg of a matrix job reports under. A name holding an
 // expression is evaluated against the leg and GitHub appends nothing to it; any other name, the
-// job id included, gets the leg's base values appended (legSuffix).
+// job id included, gets the leg's base values appended (legSuffix). Either name must be one
+// whose reported form the file shows (reportableName).
 func legContext(name string, leg matrixLeg) (string, error) {
 	if strings.Contains(name, expressionOpen) {
-		return evaluateMatrixName(name, leg)
+		evaluated, err := evaluateMatrixName(name, leg)
+		if err != nil {
+			return "", err
+		}
+		if err := reportableName(evaluated); err != nil {
+			return "", err
+		}
+		return evaluated, nil
+	}
+	if err := reportableName(name); err != nil {
+		return "", err
 	}
 	suffix, err := legSuffix(leg)
 	if err != nil {
 		return "", err
 	}
 	return name + " (" + suffix + ")", nil
+}
+
+// reportableName refuses a job name that is empty or begins or ends with whitespace, because the
+// file cannot show which check name GitHub reports for it, and a guess that misses leaves the
+// required context expected forever. A matrix value evaluated at an end of the name is the usual
+// way to arrive at one: `Build ${{ matrix.suffix }}` with an empty suffix reads `Build `.
+func reportableName(name string) error {
+	if name == "" || strings.TrimSpace(name) != name {
+		return fmt.Errorf("the name reads %q, and the file cannot show which check name GitHub reports for a name that is empty or begins or ends with whitespace", name)
+	}
+	return nil
 }
 
 // legSuffix joins the leg's base values with ", ", leaving empty ones out: GitHub reports the leg
