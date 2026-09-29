@@ -57,11 +57,11 @@ func BuildLockfile(ctx context.Context, sourceRoot string, target *Manifest) ([]
 	lock := &standardsLock{Version: 1, PinnedVersion: source.version}
 	lock.Profiles, err = buildLockEntries(target.Profiles, source.profiles, source.version, "profile")
 	if err != nil {
-		return nil, err
+		return nil, missingFromSource(sourceRoot, source.version, err)
 	}
 	lock.Facets, err = buildLockEntries(target.Facets, source.facets, source.version, "facet")
 	if err != nil {
-		return nil, err
+		return nil, missingFromSource(sourceRoot, source.version, err)
 	}
 	if err := validateLockMetadata(lock, target); err != nil {
 		return nil, err
@@ -216,13 +216,25 @@ func readLockManifest(ctx context.Context, root string) (*Manifest, error) {
 	return manifest, nil
 }
 
+// missingFromSource names the source bundle and its catalog version in a declared id the bundle
+// does not define (ErrLockSourceMissing). An archetype newer than the bundle reads as absent
+// from it, so the message says which bundle was read and how old its catalog is (#123).
+func missingFromSource(sourceRoot, version string, err error) error {
+	if !errors.Is(err, ErrLockSourceMissing) {
+		return err
+	}
+	return fmt.Errorf("lock source %s, catalog %s: %w; select a Praetor source bundle whose catalog defines it",
+		sourceRoot, version, err)
+}
+
 // buildLockEntries pins each id to its digest in digests, a catalogDigests result, at version.
+// An id digests does not hold is ErrLockSourceMissing, as lock validation reports it.
 func buildLockEntries(ids []string, digests map[string]string, version, kind string) ([]lockEntry, error) {
 	entries := make([]lockEntry, 0, len(ids))
 	for i := 0; i < len(ids) && i < maxLockEntries; i++ {
 		digest, ok := digests[ids[i]]
 		if !ok {
-			return nil, fmt.Errorf("lock source missing %s %q", kind, ids[i])
+			return nil, fmt.Errorf("%s %q: %w", kind, ids[i], ErrLockSourceMissing)
 		}
 		entries = append(entries, lockEntry{ID: ids[i], Version: version, Digest: digest})
 	}
