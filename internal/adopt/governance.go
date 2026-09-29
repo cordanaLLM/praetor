@@ -92,14 +92,17 @@ func reconcileMakefile(ctx context.Context, s *adoptSession) error {
 
 // noteExistingTestTarget names a test target the adopter's own Makefile already defines when the
 // verification plan is unavailable: it is the likely test contract, and the verify-all adoption
-// writes does not run it (#594). A Makefile adoption generated itself is not the adopter's, and
-// its test target is the failing placeholder.
+// writes does not run it (#594). A test target whose recipe is the failing placeholder is
+// adoption's own: the current rendering of a generated Makefile, CRLF or edited elsewhere,
+// holds one, and re-running adoption on it must not name it as the adopter's contract. A
+// Makefile adoption replaces as earlier output (generated) is not the adopter's either.
 func noteExistingTestTarget(s *adoptSession, data string, exists, generated bool) {
 	if !exists || generated || s.verification.Status != verificationUnavailable {
 		return
 	}
 	normalized, _ := util.NormalizeLineEndings(withoutDocumentationMakefileBlock(data))
-	if !hasVerificationTarget(normalized, "test") {
+	recipe, found := verificationTargetRecipe(normalized, "test")
+	if !found || recipe == unavailableVerificationRecipe {
 		return
 	}
 	s.report.addWarning("%s", "Makefile target 'test' already exists and is the likely test contract; "+
