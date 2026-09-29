@@ -1,0 +1,66 @@
+<script>
+  // A 61-line function in a component's script block.
+  function handle(event) {
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+    step(event);
+  }
+</script>
+
+<button on:click={handle}>Go</button>
