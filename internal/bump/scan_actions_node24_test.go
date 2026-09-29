@@ -6,6 +6,7 @@ package bump
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -71,26 +72,89 @@ jobs:
 	}
 }
 
-// Boundary: the first Node.js 24 major below the latest is drift but not deprecated, and an
-// exact tag of a deprecated major is outside the major-keyed table.
+// Boundary: the first Node.js 24 major below the latest is drift but not deprecated, as a
+// tag and as an exact release of that major.
 func TestScanWorkflowActionsNode24FirstMajorNotDeprecated(t *testing.T) {
 	repo := writePagesWorkflow(t, `name: CI
 jobs:
   test:
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-go@v5.4.0
+      - uses: actions/setup-go@v6.0.0
 `)
 	got, deps, err := ScanWorkflowActions(t.Context(), repo)
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
 	if len(deps) != 0 {
-		t.Errorf("checkout@v5 and an exact setup-go tag must not warn, got %+v", deps)
+		t.Errorf("checkout@v5 and setup-go@v6.0.0 must not warn, got %+v", deps)
 	}
 	checkout := findPagesAction(t, got, "actions/checkout")
 	if checkout.Deprecated || checkout.LatestVersion != "v7" {
 		t.Errorf("checkout@v5: want drift to v7 without deprecation, got %+v", checkout)
+	}
+}
+
+// Positive: an exact release carries its major's runtime deprecation, whether a tag names
+// it or a SHA pin's release comment does, with or without its "v" (#614).
+func TestScanWorkflowActionsExactReleaseCarriesMajorDeprecation(t *testing.T) {
+	repo := writePagesWorkflow(t, "name: CI\njobs:\n  test:\n    steps:\n"+
+		"      - uses: actions/checkout@"+pinnedCheckoutSHA+"  # v4.2.2\n"+
+		"      - uses: actions/setup-python@v5.4.0\n"+
+		"      - uses: actions/setup-go@"+pinnedNodeSHA+" # 5.4.0\n"+
+		"      - uses: actions/cache@v4.2\n")
+	got, deps, err := ScanWorkflowActions(t.Context(), repo)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if len(deps) != 4 {
+		t.Fatalf("want four Node.js 20 deprecations, got %+v", deps)
+	}
+	for _, dep := range deps {
+		if dep.Kind != "runner-runtime-deprecated" || !strings.HasPrefix(dep.Details, node20Deprecated+"; upgrade to v") {
+			t.Errorf("deprecation %+v: want the Node.js 20 advisory with its upgrade target", dep)
+		}
+	}
+	for _, name := range []string{"actions/checkout", "actions/setup-python", "actions/setup-go", "actions/cache"} {
+		if cand := findPagesAction(t, got, name); !cand.Deprecated || ActionDriftStatus(cand) != "[DEPRECATED]" {
+			t.Errorf("%s: want deprecated, got %+v", name, cand)
+		}
+	}
+}
+
+// Negative and boundary: an exact release of a major the table does not list is not
+// deprecated (checkout v5.0.0 drifts, setup-go v7.0.1 is current), a version that is no tag
+// is never looked up by major, and an exact entry outranks its major's, so the table can
+// record a major whose runtime changed between releases.
+func TestDeprecatedRuntimeByMajor(t *testing.T) {
+	for version, want := range map[string]bool{
+		"v4": true, "v4.2.2": true, "4.2.2": true, "v4.2": true, "v4.2.2-rc.1": true,
+		"v5.0.0": false, "v7.0.1": false, "main": false, pinnedCheckoutSHA: false,
+	} {
+		if _, got := deprecatedRuntime("actions/checkout", version); got != want {
+			t.Errorf("actions/checkout@%s deprecated = %v, want %v", version, got, want)
+		}
+	}
+	if _, got := deprecatedRuntime("example/unlisted-action", "v1.0.0"); got {
+		t.Error("an action the table does not list was deprecated")
+	}
+	checkout := deprecatedActionVersions["actions/checkout"]
+	checkout["v4.9.9"] = "exact entry"
+	t.Cleanup(func() { delete(checkout, "v4.9.9") })
+	if reason, _ := deprecatedRuntime("actions/checkout", "v4.9.9"); reason != "exact entry" {
+		t.Errorf("exact entry lost to its major: %q", reason)
+	}
+	repo := writePagesWorkflow(t, "name: CI\njobs:\n  test:\n    steps:\n"+
+		"      - uses: actions/checkout@v5.0.0\n      - uses: actions/setup-go@v7.0.1\n")
+	got, deps, err := ScanWorkflowActions(t.Context(), repo)
+	if err != nil || len(deps) != 0 {
+		t.Fatalf("scan = %+v, %v; want no deprecation", deps, err)
+	}
+	if status := ActionDriftStatus(findPagesAction(t, got, "actions/checkout")); status != "[DRIFT]" {
+		t.Errorf("checkout@v5.0.0 = %s, want [DRIFT]", status)
+	}
+	if status := ActionDriftStatus(findPagesAction(t, got, "actions/setup-go")); status != "[UP-TO-DATE]" {
+		t.Errorf("setup-go@v7.0.1 = %s, want [UP-TO-DATE]", status)
 	}
 }
 
