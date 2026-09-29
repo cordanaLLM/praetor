@@ -109,3 +109,29 @@ func TestLineDeltaOf_Boundary_DuplicatesAndReversal(t *testing.T) {
 		t.Fatalf("reversal = %+v, want %+v", got, want)
 	}
 }
+
+// Positive: terminated and unterminated last lines count the same, and CRLF text counts as its
+// LF form.
+func TestCountLines_Positive_LastLineWithAndWithoutNewline(t *testing.T) {
+	for text, want := range map[string]int{"a\nb": 2, "a\nb\n": 2, "a\r\nb\r\n": 2, "one": 1} {
+		if got := CountLines(text); got != want {
+			t.Errorf("CountLines(%q) = %d, want %d", text, got, want)
+		}
+	}
+}
+
+// Negative: an empty text has no line, so a count of zero never hides a one-line file.
+func TestCountLines_Negative_EmptyTextHasNoLine(t *testing.T) {
+	if got := CountLines(""); got != 0 {
+		t.Fatalf("CountLines(\"\") = %d, want 0", got)
+	}
+}
+
+// Boundary: a lone newline is one empty line, and every further newline adds one.
+func TestCountLines_Boundary_BlankLines(t *testing.T) {
+	for text, want := range map[string]int{"\n": 1, "\n\n": 2, "a\n\n": 2, "\na": 2} {
+		if got := CountLines(text); got != want {
+			t.Errorf("CountLines(%q) = %d, want %d", text, got, want)
+		}
+	}
+}
