@@ -267,11 +267,16 @@ against the type its subject name declares. The check reads the same bytes the d
 | `*.efi` | A complete PE/COFF image (DOS header, PE signature, COFF and optional headers, section table, every section's raw data inside the file) whose subsystem is an EFI application, driver or ROM (10 to 13) |
 | `*.efi` presented as a kernel | The same, plus a non-empty `.linux` section, the one section the [UAPI Unified Kernel Image specification](https://uapi-group.org/specifications/specs/unified_kernel_image/) requires. A bare EFI-stub kernel has none |
 
-An `.efi` name is presented as a kernel when it sits under an `EFI/Linux/` directory, where
-the Boot Loader Specification puts Unified Kernel Images, or when a word of its base name is
-`vmlinuz`, `linux`, `kernel` or `uki` (`vmlinuz-7.2.4.efi`, `arch-linux.efi`,
-`image.uki.efi`). `BOOTX64.EFI` or `systemd-bootx64.efi` only has to be an EFI image. The
-extension and the words are compared without regard to case.
+An `.efi` name is presented as a kernel when it sits directly in an `EFI/Linux/` directory,
+where the [Boot Loader Specification](https://uapi-group.org/specifications/specs/boot_loader_specification/)
+puts Type #2 images, or when a word of its base name is `vmlinuz`, `linux`, `kernel` or `uki`
+(`vmlinuz-7.2.4.efi`, `arch-linux.efi`, `image.uki.efi`). A systemd-stub addon
+(`*.addon.efi`) is never presented as a kernel: it carries `.cmdline`, `.dtb`, `.initrd` or
+`.ucode` sections and no `.linux`, and [systemd-stub(7)](https://man7.org/linux/man-pages/man7/systemd-stub.7.html)
+loads it from `foo.efi.extra.d/` inside `EFI/Linux/` or from `loader/addons/`, so
+`EFI/Linux/foo.efi.extra.d/quiet.addon.efi` and `kernel-cmdline.addon.efi` only have to be
+EFI images, as do `BOOTX64.EFI` and `systemd-bootx64.efi`. The extension, the suffix and the
+words are compared without regard to case.
 
 With the default `--content-check=enforce`, one mismatching file refuses the whole statement,
 and the error names the file, the expected format and what was found instead, for example
@@ -283,9 +288,9 @@ Praetor's own release archives (`.tar.gz`, `.zip`) and SBOMs (`.json`) are in th
 
 `internal/supplychain/content_test.go` covers each rule with valid layouts, mismatches and
 truncated files fed in chunk sizes that split every header;
-`internal/supplychain/content_tools_test.go` attests a package `dpkg-deb` builds and a UKI
-`ukify` builds, and refuses the bare kernel under a UKI name, on hosts that have those tools
-(skipped elsewhere with the reason).
+`internal/supplychain/content_tools_test.go` attests a package `dpkg-deb` builds, a UKI
+`ukify` builds and an addon `ukify` builds under both addon locations, and refuses the bare
+kernel under a UKI name, on hosts that have those tools (skipped elsewhere with the reason).
 
 Every statement records the `buildDefinition.buildType`
 `https://cordanallm.github.io/praetor/slsa/build/v1` (`supplychain.DefaultBuildType`). Every

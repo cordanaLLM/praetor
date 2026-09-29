@@ -109,8 +109,8 @@ var ukiNameWords = map[string]bool{"uki": true, "vmlinuz": true, "linux": true, 
 
 // contentFormatFor returns the file type a subject name declares, and false when
 // provenance has no content rule for the name. Only the extension and, for .efi, the
-// words of the name and the EFI/Linux directory the Boot Loader Specification puts
-// Unified Kernel Images in are read; the comparison ignores case.
+// words of the base name, an .addon.efi suffix and whether the file sits directly in the
+// EFI/Linux directory are read; the comparison ignores case.
 func contentFormatFor(name string) (contentFormat, bool) {
 	slashed := strings.ToLower(strings.ReplaceAll(name, `\`, "/"))
 	switch path.Ext(slashed) {
@@ -126,14 +126,25 @@ func contentFormatFor(name string) (contentFormat, bool) {
 	}
 }
 
+// ukiAddonSuffix ends the name of a systemd-stub addon, a PE image that carries .cmdline,
+// .dtb, .initrd or .ucode sections for a UKI and never a .linux section. systemd-stub(7)
+// loads addons from foo.efi.extra.d/ next to a UKI, inside EFI/Linux/, and from
+// loader/addons/, so neither the directory nor a kernel word makes an addon a UKI.
+const ukiAddonSuffix = ".addon.efi"
+
 // presentsUKI reports whether a lower-case, slash-separated .efi subject name presents the
-// file as a Unified Kernel Image: it sits under an EFI/Linux directory, or a word of its
-// base name is one of ukiNameWords (vmlinuz-7.2.4.efi, arch-linux.efi, foo.uki.efi).
+// file as a Unified Kernel Image: it is not an addon, and it sits directly in an EFI/Linux
+// directory, where the Boot Loader Specification puts Type #2 images, or a word of its base
+// name is one of ukiNameWords (vmlinuz-7.2.4.efi, arch-linux.efi, foo.uki.efi).
 func presentsUKI(slashed string) bool {
-	if strings.Contains("/"+slashed, "/efi/linux/") {
+	base := path.Base(slashed)
+	if strings.HasSuffix(base, ukiAddonSuffix) {
+		return false
+	}
+	if strings.HasSuffix(path.Dir("/"+slashed), "/efi/linux") {
 		return true
 	}
-	stem := strings.TrimSuffix(path.Base(slashed), ".efi")
+	stem := strings.TrimSuffix(base, ".efi")
 	words := strings.FieldsFunc(stem, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
 	for _, word := range words {
 		if ukiNameWords[word] {

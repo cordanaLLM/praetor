@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -74,6 +75,43 @@ func TestGenerateSLSAProvenance_UkifyImageAndBareKernel(t *testing.T) {
 	if _, _, err := GenerateSLSAProvenance(t.Context(), ProvenanceRequest{ArtifactPath: bare, BuilderID: "b"}); err == nil {
 		t.Fatal("a bare EFI-stub kernel under a UKI name was attested")
 	}
+}
+
+// TestGenerateSLSAProvenance_Positive_UkifyAddon builds a systemd-stub addon with ukify and
+// attests it under the names systemd-stub(7) loads addons from: foo.efi.extra.d/ inside
+// EFI/Linux/, and loader/addons/ with a kernel word in the name. An addon has no .linux
+// section, so it must get the plain EFI rule, not the UKI rule. It needs ukify and the
+// addon stub for this architecture, so it runs on Linux hosts that have both and is skipped
+// elsewhere.
+func TestGenerateSLSAProvenance_Positive_UkifyAddon(t *testing.T) {
+	if _, err := exec.LookPath("ukify"); err != nil {
+		t.Skipf("ukify is not installed (it ships with systemd on Linux): %v", err)
+	}
+	stub := addonStub(t)
+	addon := filepath.Join(t.TempDir(), "quiet.addon.efi")
+	if _, err := util.RunCommand(t.Context(), "", "ukify", "build", "--stub="+stub, "--cmdline=quiet", "--output="+addon); err != nil {
+		t.Fatalf("ukify build addon: %v", err)
+	}
+	for _, name := range []string{"EFI/Linux/test.efi.extra.d/quiet.addon.efi", "loader/addons/kernel-cmdline.addon.efi"} {
+		_, verdicts, err := GenerateSLSAProvenance(t.Context(), ProvenanceRequest{ArtifactPath: addon, ArtifactName: name, BuilderID: "b"})
+		if err != nil || verdicts[0].Status != ContentVerified || verdicts[0].Format != efiFormat.name {
+			t.Errorf("an addon ukify built, named %s, is not verified as an EFI image: %+v, %v", name, verdicts, err)
+		}
+	}
+}
+
+// addonStub returns systemd's addon stub for the running architecture, or skips the test.
+func addonStub(t *testing.T) string {
+	t.Helper()
+	arch, ok := map[string]string{"amd64": "x64", "arm64": "aa64", "386": "ia32", "riscv64": "riscv64", "loong64": "loongarch64"}[runtime.GOARCH]
+	if !ok {
+		t.Skipf("systemd ships no addon stub for %s", runtime.GOARCH)
+	}
+	stub := filepath.Join("/usr/lib/systemd/boot/efi", "addon"+arch+".efi.stub")
+	if _, err := os.Stat(stub); err != nil {
+		t.Skipf("no systemd addon stub (systemd-boot not installed): %v", err)
+	}
+	return stub
 }
 
 // readableKernel returns the first kernel image under /usr/lib/modules the test can read,

@@ -98,6 +98,17 @@ func ukiFixture() []byte {
 	)
 }
 
+// addonFixture lays out the sections ukify writes for a systemd-stub addon built with
+// --stub=addonx64.efi.stub --cmdline=quiet: no .linux, which addons never carry.
+func addonFixture() []byte {
+	return peFixture(peEFIApplication,
+		peSectionFixture{".text", bytes.Repeat([]byte{0xcc}, 11)},
+		peSectionFixture{".sdmagic", []byte("#### LoaderInfo: systemd-addon ####")},
+		peSectionFixture{".cmdline", []byte("quiet")},
+		peSectionFixture{".sbat", []byte("sbat,1\n")},
+	)
+}
+
 // bareKernelFixture lays out the sections of an EFI-stub kernel, which has no .linux.
 func bareKernelFixture() []byte {
 	return peFixture(peEFIApplication,
@@ -154,23 +165,31 @@ func TestParseContentCheck(t *testing.T) {
 
 func TestContentFormatFor_NamesSelectRules(t *testing.T) {
 	cases := map[string]string{
-		"linux-image-7.2.4_amd64.deb":      debFormat.name,
-		"PKG.DEB":                          debFormat.name,
-		"installer.udeb":                   debFormat.name,
-		"tool-dbgsym_1.0_amd64.ddeb":       debFormat.name,
-		"BOOTX64.EFI":                      efiFormat.name,
-		"systemd-bootx64.efi":              efiFormat.name,
-		"linuxx64.efi":                     efiFormat.name,
-		"vmlinuz-7.2.4.efi":                ukiFormat.name,
-		"arch-linux.efi":                   ukiFormat.name,
-		"image.uki.efi":                    ukiFormat.name,
-		"Kernel.EFI":                       ukiFormat.name,
-		"EFI/Linux/example-7.2.4.efi":      ukiFormat.name,
-		`EFI\Linux\example.efi`:            ukiFormat.name,
-		"praetor_1.0.0_linux_amd64.tar.gz": "",
-		"package.deb.sig":                  "",
-		"deb":                              "",
-		"efi":                              "",
+		"linux-image-7.2.4_amd64.deb":                debFormat.name,
+		"PKG.DEB":                                    debFormat.name,
+		"installer.udeb":                             debFormat.name,
+		"tool-dbgsym_1.0_amd64.ddeb":                 debFormat.name,
+		"BOOTX64.EFI":                                efiFormat.name,
+		"systemd-bootx64.efi":                        efiFormat.name,
+		"linuxx64.efi":                               efiFormat.name,
+		"vmlinuz-7.2.4.efi":                          ukiFormat.name,
+		"arch-linux.efi":                             ukiFormat.name,
+		"image.uki.efi":                              ukiFormat.name,
+		"Kernel.EFI":                                 ukiFormat.name,
+		"EFI/Linux/example-7.2.4.efi":                ukiFormat.name,
+		`EFI\Linux\example.efi`:                      ukiFormat.name,
+		"boot/EFI/Linux/example.efi":                 ukiFormat.name,
+		"EFI/Linux/nested/entry.efi":                 efiFormat.name,
+		"notEFI/Linux/entry.efi":                     efiFormat.name,
+		"EFI/Linux/test.efi.extra.d/quiet.addon.efi": efiFormat.name,
+		"loader/addons/kernel-cmdline.addon.efi":     efiFormat.name,
+		"kernel-cmdline.addon.efi":                   efiFormat.name,
+		"Linux-Debug.Addon.EFI":                      efiFormat.name,
+		"vmlinuz.addon.efi.sig":                      "",
+		"praetor_1.0.0_linux_amd64.tar.gz":           "",
+		"package.deb.sig":                            "",
+		"deb":                                        "",
+		"efi":                                        "",
 	}
 	for name, want := range cases {
 		format, ok := contentFormatFor(name)
@@ -269,6 +288,8 @@ func TestPEProbe_Positive_EFIImagesAndUKI(t *testing.T) {
 		"stub.efi":            bareKernelFixture(),
 		"vmlinuz-7.2.4.efi":   ukiFixture(),
 		"EFI/Linux/entry.efi": ukiFixture(),
+		"EFI/Linux/test.efi.extra.d/quiet.addon.efi": addonFixture(),
+		"loader/addons/kernel-cmdline.addon.efi":     addonFixture(),
 	} {
 		if err := probeAllChunkings(t, name, content); err != nil {
 			t.Errorf("%s refused: %v", name, err)
