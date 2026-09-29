@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"github.com/cordanaLLM/praetor/internal/workstation"
 )
@@ -20,16 +21,20 @@ func commitEngineFixture(t *testing.T, root string) string {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not on PATH; the engine-build check compares revisions through git on this leg")
 	}
+	ctx, err := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
+	if err != nil {
+		t.Fatal(err)
+	}
 	writeFixtureFile(t, root, "go.mod", "module "+fixtureEngineModule+"\n\ngo 1.27\n")
 	for _, args := range [][]string{
 		{"init", "-q"}, {"add", "-A"},
-		{"-c", "user.email=test@example.com", "-c", "user.name=test", "commit", "-q", "-m", "fixture"},
+		{"commit", "-q", "-m", "fixture"},
 	} {
-		if _, err := util.RunGit(t.Context(), root, args...); err != nil {
+		if _, err := util.RunGit(ctx, root, args...); err != nil {
 			t.Fatalf("git %v: %v", args, err)
 		}
 	}
-	head, err := util.RunGit(t.Context(), root, "rev-parse", "HEAD")
+	head, err := util.RunGit(ctx, root, "rev-parse", "HEAD")
 	if err != nil {
 		t.Fatal(err)
 	}

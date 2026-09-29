@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -76,7 +77,11 @@ func TestInspectStateTracksGitWorkingTree(t *testing.T) {
 
 func stateFixtureGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	if output, err := util.RunGit(t.Context(), dir, args...); err != nil {
+	envCtx, err := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output, err := util.RunGit(envCtx, dir, args...); err != nil {
 		t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, output)
 	}
 }

@@ -17,6 +17,8 @@ import (
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/dogfood"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const validInternalRepairSummary = "verdict: candidate\nchanged: internal/fixture/value.go\nran: none\nevidence: proposal.edits\nopen: verification pending"
@@ -54,13 +56,17 @@ func configureRunRegisters(t *testing.T, f *runFixture, register config.TextRegi
 func commitRegisterManifest(t *testing.T, f *runFixture, body []byte) {
 	t.Helper()
 	writeFixture(t, filepath.Join(f.config.SourceRoot, ".standards.yaml"), body)
+	envCtx, err := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, args := range [][]string{{"-C", f.config.SourceRoot, "add", ".standards.yaml"},
-		{"-C", f.config.SourceRoot, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "register fixture"}} {
-		if output, err := runGit(t.Context(), "", maxLogBytes, args...); err != nil {
+		{"-C", f.config.SourceRoot, "commit", "-m", "register fixture"}} {
+		if output, err := util.RunGit(envCtx, "", args...); err != nil {
 			t.Fatalf("commit register fixture: %s %v", output, err)
 		}
 	}
-	sha, err := runGit(t.Context(), f.config.SourceRoot, 128, "rev-parse", "HEAD")
+	sha, err := util.RunGit(envCtx, f.config.SourceRoot, "rev-parse", "HEAD")
 	if err != nil {
 		t.Fatal(err)
 	}

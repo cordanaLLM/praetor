@@ -11,6 +11,7 @@ import (
 	standardsconfig "github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/dogfood"
 	"github.com/cordanaLLM/praetor/internal/repairrun"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -31,12 +32,16 @@ func writeRepairExecutionMCPFixture(t *testing.T, srv *Server, root string) repa
 		t.Fatal(err)
 	}
 	initGitRepo(t, root)
-	for _, args := range [][]string{{"add", "-A"}, {"-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "-m", "fixture"}} {
-		if output, err := util.RunGit(t.Context(), root, args...); err != nil {
+	ctx, err := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"add", "-A"}, {"commit", "-q", "-m", "fixture"}} {
+		if output, err := util.RunGit(ctx, root, args...); err != nil {
 			t.Fatalf("git %v: %v (%s)", args, err, output)
 		}
 	}
-	sha, err := util.RunGit(t.Context(), root, "rev-parse", "HEAD")
+	sha, err := util.RunGit(ctx, root, "rev-parse", "HEAD")
 	if err != nil {
 		t.Fatal(err)
 	}

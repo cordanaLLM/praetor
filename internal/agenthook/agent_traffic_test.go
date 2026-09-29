@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -253,15 +254,18 @@ func TestClaudeHandbackTransitionsAreBoundToTheToolUse(t *testing.T) {
 
 func TestClaudeHandbackCorrelationCrossesAnIsolatedGitWorktree(t *testing.T) {
 	root := repository(t, true)
-	if _, err := util.RunGit(t.Context(), root, "add", manifestName); err != nil {
+	ctx, err := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := util.RunGit(t.Context(), root, "-c", "user.name=Praetor Test", "-c", "user.email=test@example.invalid",
-		"commit", "-q", "-m", "fixture"); err != nil {
+	if _, err := util.RunGit(ctx, root, "add", manifestName); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := util.RunGit(ctx, root, "commit", "-q", "-m", "fixture"); err != nil {
 		t.Fatal(err)
 	}
 	child := filepath.Join(t.TempDir(), "isolated-agent")
-	if _, err := util.RunGit(t.Context(), root, "worktree", "add", "--detach", child, "HEAD"); err != nil {
+	if _, err := util.RunGit(ctx, root, "worktree", "add", "--detach", child, "HEAD"); err != nil {
 		t.Fatal(err)
 	}
 	prepareClaudeCorrelation(t, root, "", "worktree-session", "worktree-tool", "worktree-agent", validBrief)

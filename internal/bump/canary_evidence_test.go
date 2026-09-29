@@ -85,10 +85,12 @@ func goCanaryFixture(t *testing.T) (string, UpgradeCandidate) {
 func canaryRepo(t *testing.T, manifest, body string) string {
 	t.Helper()
 	dir := t.TempDir()
-	for _, args := range [][]string{{"init", "-q"}, {"config", "user.name", "Canary Fixture"}, {"config", "user.email", "fixture@example.test"}} {
-		if _, err := util.RunGit(t.Context(), dir, args...); err != nil {
-			t.Fatal(err)
-		}
+	ctx, err := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := util.RunGit(ctx, dir, "init", "-q"); err != nil {
+		t.Fatal(err)
 	}
 	for name, content := range map[string]string{
 		manifest: body, "README.md": "before\n", ".gitignore": ".standards/\n.workingdir/\n",
@@ -97,10 +99,10 @@ func canaryRepo(t *testing.T, manifest, body string) string {
 			t.Fatal(err)
 		}
 	}
-	if _, err := util.RunGit(t.Context(), dir, "add", "."); err != nil {
+	if _, err := util.RunGit(ctx, dir, "add", "."); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := util.RunGit(t.Context(), dir, "commit", "-q", "-s", "-m", "test: initialize canary fixture"); err != nil {
+	if _, err := util.RunGit(ctx, dir, "commit", "-q", "-s", "-m", "test: initialize canary fixture"); err != nil {
 		t.Fatal(err)
 	}
 	return dir
@@ -110,7 +112,11 @@ func canaryRepo(t *testing.T, manifest, body string) string {
 // means no canary worktree exists.
 func canaryWorktrees(t *testing.T, dir string) int {
 	t.Helper()
-	out, err := util.RunGit(t.Context(), dir, "worktree", "list", "--porcelain")
+	ctx, err := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := util.RunGit(ctx, dir, "worktree", "list", "--porcelain")
 	if err != nil {
 		t.Fatal(err)
 	}

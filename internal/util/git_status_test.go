@@ -16,11 +16,14 @@ import (
 // statusRepo initialises a work tree holding one committed file at a.txt and one at
 // sub/b.txt, or skips the test when git is unavailable (HISS-21: the helper asks git, and a
 // host without git cannot answer).
+// Note: package util cannot import internal/testsupport because testsupport depends on
+// util (import cycle not allowed); fixture commits are configured directly here.
 func statusRepo(t *testing.T) string {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skipf("git unavailable: %v", err)
 	}
+	t.Setenv("GIT_MAINTENANCE_AUTO", "0")
 	dir := t.TempDir()
 	writeStatusFile(t, dir, "a.txt", "a\n")
 	writeStatusFile(t, dir, filepath.Join("sub", "b.txt"), "b\n")

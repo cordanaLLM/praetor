@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
 )
@@ -760,13 +761,13 @@ func TestRenderFrameworkDemandMarkdown_NilReport(t *testing.T) {
 
 func initGitFixture(t *testing.T, dir string) {
 	t.Helper()
-	confDir := t.TempDir()
-	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(confDir, "gitconfig"))
-	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(confDir, "gitconfig-system"))
 	t.Setenv("GOPROXY", "off")
 	t.Setenv("GOFLAGS", "-mod=mod")
 
-	ctx := context.Background()
+	ctx, err := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
+	if err != nil {
+		t.Fatal(err)
+	}
 	run := func(args ...string) {
 		t.Helper()
 		out, err := util.RunCommand(ctx, dir, "git", args...)

@@ -24,7 +24,7 @@ func TestScanLocalWorkstationRepositoryObservations(t *testing.T) {
 	for _, path := range []string{main, local} {
 		initTestRepository(t, path)
 	}
-	if out, err := runTestGit(root, "init", "--bare", bare); err != nil {
+	if out, err := runTestGit(t, root, "init", "--bare", bare); err != nil {
 		t.Fatalf("init bare: %v (%s)", err, out)
 	}
 	if err := os.Mkdir(filepath.Join(bare, ".workingdir"), 0o700); err != nil {
@@ -33,10 +33,10 @@ func TestScanLocalWorkstationRepositoryObservations(t *testing.T) {
 	if err := os.MkdirAll(linkedRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := runTestGit(main, "worktree", "add", "-b", "inventory-linked", filepath.Join(linkedRoot, "linked")); err != nil {
+	if out, err := runTestGit(t, main, "worktree", "add", "-b", "inventory-linked", filepath.Join(linkedRoot, "linked")); err != nil {
 		t.Fatalf("add linked worktree: %v (%s)", err, out)
 	}
-	if out, err := runTestGit(main, "remote", "add", "origin", "https://user:secret@example.invalid/org/repo.git?token=hidden#frag"); err != nil {
+	if out, err := runTestGit(t, main, "remote", "add", "origin", "https://user:secret@example.invalid/org/repo.git?token=hidden#frag"); err != nil {
 		t.Fatalf("add remote: %v (%s)", err, out)
 	}
 	if err := os.Mkdir(filepath.Join(main, ".workingdir"), 0o700); err != nil {
@@ -257,30 +257,31 @@ func TestScanLocalWorkstationCancelled(t *testing.T) {
 
 func initTestRepository(t *testing.T, path string) {
 	t.Helper()
-	if out, err := runTestGit(filepath.Dir(path), "init", path); err != nil {
+	if out, err := runTestGit(t, filepath.Dir(path), "init", path); err != nil {
 		t.Fatalf("init repository: %v (%s)", err, out)
 	}
-	if out, err := runTestGit(path, "config", "user.email", "test@example.invalid"); err != nil {
+	if out, err := runTestGit(t, path, "config", "user.email", "test@example.invalid"); err != nil {
 		t.Fatalf("config email: %v (%s)", err, out)
 	}
-	if out, err := runTestGit(path, "config", "user.name", "Inventory Test"); err != nil {
+	if out, err := runTestGit(t, path, "config", "user.name", "Inventory Test"); err != nil {
 		t.Fatalf("config name: %v (%s)", err, out)
 	}
 	file := filepath.Join(path, "README")
 	if err := os.WriteFile(file, []byte("fixture\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := runTestGit(path, "add", "README"); err != nil {
+	if out, err := runTestGit(t, path, "add", "README"); err != nil {
 		t.Fatalf("add: %v (%s)", err, out)
 	}
-	if out, err := runTestGit(path, "commit", "-m", "fixture"); err != nil {
+	if out, err := runTestGit(t, path, "commit", "-m", "fixture"); err != nil {
 		t.Fatalf("commit: %v (%s)", err, out)
 	}
 }
 
-func runTestGit(dir string, args ...string) (string, error) {
+func runTestGit(t testing.TB, dir string, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
+	cmd.Env = testsupport.HermeticGitEnv(t)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }

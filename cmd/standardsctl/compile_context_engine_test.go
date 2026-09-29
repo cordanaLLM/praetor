@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"github.com/cordanaLLM/praetor/internal/workstation"
 )
@@ -29,15 +30,19 @@ func newEngineContextFixture(t *testing.T) (string, string) {
 
 func commitFixture(t *testing.T, dir string) string {
 	t.Helper()
+	ctx, err := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, args := range [][]string{
 		{"init", "-q"}, {"add", "-A"},
-		{"-c", "user.email=test@example.com", "-c", "user.name=test", "commit", "-q", "-m", "fixture"},
+		{"commit", "-q", "-m", "fixture"},
 	} {
-		if _, err := util.RunGit(t.Context(), dir, args...); err != nil {
+		if _, err := util.RunGit(ctx, dir, args...); err != nil {
 			t.Fatalf("git %v: %v", args, err)
 		}
 	}
-	head, err := util.RunGit(t.Context(), dir, "rev-parse", "HEAD")
+	head, err := util.RunGit(ctx, dir, "rev-parse", "HEAD")
 	if err != nil {
 		t.Fatal(err)
 	}

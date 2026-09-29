@@ -60,23 +60,23 @@ func newSubmoduleFilterFixture(t *testing.T) submoduleFilterFixture {
 	if err := os.WriteFile(filepath.Join(submoduleSource, ".gitattributes"), []byte("README filter=inventory-probe\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := runTestGit(submoduleSource, "add", ".gitattributes"); err != nil {
+	if out, err := runTestGit(t, submoduleSource, "add", ".gitattributes"); err != nil {
 		t.Fatalf("add submodule attributes: %v (%s)", err, out)
 	}
-	if out, err := runTestGit(submoduleSource, "commit", "-m", "configure filter"); err != nil {
+	if out, err := runTestGit(t, submoduleSource, "commit", "-m", "configure filter"); err != nil {
 		t.Fatalf("commit submodule attributes: %v (%s)", err, out)
 	}
 
 	initTestRepository(t, superproject)
-	if out, err := runTestGit(superproject, "-c", "protocol.file.allow=always", "submodule", "add", "-q", submoduleSource, "sub"); err != nil {
+	if out, err := runTestGit(t, superproject, "-c", "protocol.file.allow=always", "submodule", "add", "-q", submoduleSource, "sub"); err != nil {
 		t.Fatalf("add submodule: %v (%s)", err, out)
 	}
-	if out, err := runTestGit(superproject, "commit", "-m", "add submodule"); err != nil {
+	if out, err := runTestGit(t, superproject, "commit", "-m", "add submodule"); err != nil {
 		t.Fatalf("commit submodule: %v (%s)", err, out)
 	}
 
 	submodule := filepath.Join(superproject, "sub")
-	gitDirOutput, err := runTestGit(submodule, "rev-parse", "--git-dir")
+	gitDirOutput, err := runTestGit(t, submodule, "rev-parse", "--git-dir")
 	if err != nil {
 		t.Fatalf("locate submodule git directory: %v (%s)", err, gitDirOutput)
 	}
@@ -90,10 +90,10 @@ func newSubmoduleFilterFixture(t *testing.T) submoduleFilterFixture {
 	if err := os.WriteFile(filter, []byte("#!/bin/sh\n: > "+quotedMarker+"\ncat\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := runTestGit(submodule, "config", "filter.inventory-probe.clean", filter); err != nil {
+	if out, err := runTestGit(t, submodule, "config", "filter.inventory-probe.clean", filter); err != nil {
 		t.Fatalf("configure submodule filter: %v (%s)", err, out)
 	}
-	if out, err := runTestGit(submodule, "config", "filter.inventory-probe.required", "true"); err != nil {
+	if out, err := runTestGit(t, submodule, "config", "filter.inventory-probe.required", "true"); err != nil {
 		t.Fatalf("require submodule filter: %v (%s)", err, out)
 	}
 	if err := os.WriteFile(filepath.Join(submodule, "README"), []byte("changed\n"), 0o600); err != nil {

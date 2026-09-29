@@ -42,7 +42,7 @@ func TestInventoryIdentitySurvivesAnAliasedSpelling(t *testing.T) {
 		t.Fatal(err)
 	}
 	linked := filepath.Join(real, "worktrees", "linked")
-	if out, err := runTestGit(main, "worktree", "add", "-b", "inventory-alias", linked); err != nil {
+	if out, err := runTestGit(t, main, "worktree", "add", "-b", "inventory-alias", linked); err != nil {
 		t.Fatalf("add linked worktree: %v (%s)", err, out)
 	}
 	// Both observations are taken through the alias, exactly as a scan rooted at an aliased

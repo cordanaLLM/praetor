@@ -47,8 +47,8 @@ func TestSetupTestGitRepo_Negative_SurvivesAHostileGlobalConfig(t *testing.T) {
 	}
 }
 
-// commitWithInheritedEnv runs the fixture's own command sequence with whatever environment
-// the process carries, which is what setupTestGitRepo used to do.
+// commitWithInheritedEnv deliberately exercises the inherited environment (without testsupport.HermeticGitEnv)
+// to verify that hostile ambient global git configurations break unisolated fixture commits.
 func commitWithInheritedEnv(dir string) (string, error) {
 	for _, args := range [][]string{
 		{"init"},
