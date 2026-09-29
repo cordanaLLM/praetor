@@ -1,7 +1,25 @@
 # How the HISS rule matchers read source
 
-The Go rules use the AST. The rules for C, C++, Rust and Python match text, and this document
-records what that means, because the difference is load-bearing.
+The Go rules use the AST. The rules for C, C++, Rust, Python, JavaScript, TypeScript and Svelte
+match text, and this document records what that means, because the difference is load-bearing.
+
+## One engine, one scanner per language
+
+`hiss.Scan` owns the walk, the git scope, the ignore policy, the byte-bounded read and the coverage
+record. Each language is one `languageScanner` in the `languageScanners` table of
+[`internal/hiss/engine.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hiss/engine.go):
+Go, C and C++ (with CUDA and HIP), Python, Rust, and the script scanner for JavaScript, TypeScript
+and Svelte. `hiss.SupportsExtension`, the walk's scope test and `ci filter`'s code classification
+read that table, so a language cannot be reported as supported where it is not scanned. A scanner
+may decline a file, which is then counted as unscanned rather than read; a scanner that needs every
+file of a package after the walk (the Go call graph) is a `packageScanner`
+(`TestLanguageScanners_ClaimDisjointExtensions` in `internal/hiss/engine_test.go`).
+
+The coverage record names the languages it read (`languages_read`) and the source languages no
+scanner examined (`unscanned_languages`, named by `util.SourceLanguage`). `praetorctl audit`
+prints its PASS line for the languages it read (`verified for go, typescript:`) and reports every
+other source language on an `[UNSCANNED]` line; a tree whose only source is unscanned gets no PASS
+line (`TestAudit_InvariantVerdictNamesItsLanguages` in `cmd/standardsctl/audit_cmd_test.go`).
 
 ## Whitespace does not silence a rule
 
@@ -326,6 +344,35 @@ corpus pins both sides of each limit. Every fixture in
 `.config/hiss/testdata/HISS-04/go/measured/` sits over a limit and must yield a measurement and
 no violation. The `negative/` fixtures sit exactly at cyclomatic 10, cognitive 15 and statements
 50, and must yield neither.
+
+## JavaScript, TypeScript and Svelte: one line scanner
+
+[`internal/hiss/script.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hiss/script.go)
+reads `.js`, `.jsx`, `.mjs`, `.cjs`, `.ts`, `.tsx`, `.mts` and `.cts` files, and the `<script>` blocks
+of a `.svelte` component that open at the start of a line, with every other component line blanked
+so line numbers still match. The literal stripper's JavaScript mode removes strings, comments,
+template text and regular expression literals but keeps the code of a template's `${...}`
+substitutions; a slash starts a regular expression only where an expression may, and never in a
+JSX `</` or `/>` (`TestLiteralStripperScriptSyntax`).
+
+- HISS-01: a declared or bound function calling its bare name, and a method or class field calling
+  `this.name`. A local binding of the name (a parameter, a declarator, a nested function, a catch or
+  arrow parameter) shadows it. Mutual recursion is not decided.
+- HISS-02: `while (true)`, `while (1)` and `for (;;)`, the pattern C shares. The I/O-timeout half
+  is not decided.
+- HISS-04: the length of every named function, from the line its body opens on, as for C and Rust.
+  Anonymous callbacks and the complexity caps are not measured
+  (`script_header.go` recognises the headers).
+- HISS-07: an empty catch block, a `.catch` with an empty handler, and `process.exit` outside a test
+  file, module scope and a top-level `main`.
+- HISS-08: `eval`, the `Function` constructor and a string passed to `setTimeout` or `setInterval`.
+
+A file with a line longer than 1024 bytes is minified output and is declined, so it is reported as
+unscanned source. A file whose braces do not balance, such as a JSX attribute string spanning lines,
+is counted in `Skips.Unparsed`: the report is then incomplete, never clean
+(`TestScriptScanner_MinifiedIsUnscannedNotClean`, `TestScriptScanner_UnbalancedFileIsUnparsed` in
+`internal/hiss/script_test.go`). `.config/hiss/coverage.yaml` lists each claim and its gaps per
+language (`javascript`, `typescript`, `svelte`).
 
 ## HISS-20: claims are replayed
 
