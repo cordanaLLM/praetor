@@ -263,3 +263,39 @@ func TestUnreleasedLockVersion(t *testing.T) {
 		}
 	}
 }
+
+// #123: a declared id the source bundle does not define names the bundle and its catalog
+// version, so a bundle older than the archetype reads as the stale part. Positive: both named,
+// ErrLockSourceMissing kept. Negative: a facet the catalog lacks names its kind. Boundary: ids
+// the catalog defines build, so the message is never raised for a present one.
+func TestBuildLockfileMissingIDNamesTheSourceCatalog(t *testing.T) {
+	root, manifest := lockBuildSource(t)
+	want := expectedCatalogVersion("profile:framework="+lockTestDigest(lockTestSource),
+		"facet:test:extra="+lockTestDigest(lockBuildExtraFacet))
+	for _, tc := range []struct {
+		name     string
+		profiles []string
+		facets   []string
+		kind     string
+	}{
+		{"profile", []string{"os-image"}, nil, `profile "os-image"`},
+		{"facet", []string{"framework"}, []string{"test:absent"}, `facet "test:absent"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			target := &Manifest{Version: 1, Profiles: tc.profiles, Facets: tc.facets}
+			data, err := BuildLockfile(context.Background(), root, target)
+			if !errors.Is(err, ErrLockSourceMissing) || data != nil {
+				t.Fatalf("a missing id must be ErrLockSourceMissing: %q / %v", data, err)
+			}
+			for _, part := range []string{root, want, tc.kind} {
+				if !strings.Contains(err.Error(), part) {
+					t.Errorf("error %q does not name %q", err, part)
+				}
+			}
+		})
+	}
+	manifest.Facets = []string{"test:extra"}
+	if _, err := BuildLockfile(context.Background(), root, manifest); err != nil {
+		t.Fatalf("declared ids the catalog defines must build: %v", err)
+	}
+}
