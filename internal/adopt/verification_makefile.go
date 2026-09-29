@@ -530,19 +530,39 @@ func makefileTargetNames(line string) []string {
 // text, not rules, so a "target:" line inside one declares nothing; mayDefineTarget reports the
 // files where Make may still parse such a body as rules.
 func hasVerificationTarget(data, target string) bool {
-	lines := strings.Split(data, "\n")
+	return verificationTargetLine(strings.Split(data, "\n"), target) >= 0
+}
+
+// verificationTargetLine returns the index of the first line that declares a rule for target, or
+// -1 when none within the scan bound does.
+func verificationTargetLine(lines []string, target string) int {
 	var define makefileDefineTracker
 	for index := 0; index < len(lines) && index < maxMakefileLines; index++ {
 		if define.body(lines[index]) {
 			continue
 		}
-		for _, name := range makefileTargetNames(lines[index]) {
-			if name == target {
-				return true
-			}
+		if slices.Contains(makefileTargetNames(lines[index]), target) {
+			return index
 		}
 	}
-	return false
+	return -1
+}
+
+// verificationTargetRecipe returns the tab-prefixed recipe lines, each ending in "\n", that follow
+// the first rule data declares for target, and whether data declares one. A rule without recipe
+// lines, such as "test: build" alone, returns an empty recipe.
+func verificationTargetRecipe(data, target string) (string, bool) {
+	lines := strings.Split(data, "\n")
+	index := verificationTargetLine(lines, target)
+	if index < 0 {
+		return "", false
+	}
+	var recipe strings.Builder
+	for next := index + 1; next < len(lines) && next < maxMakefileLines && strings.HasPrefix(lines[next], "\t"); next++ {
+		recipe.WriteString(lines[next])
+		recipe.WriteByte('\n')
+	}
+	return recipe.String(), true
 }
 
 func appendVerificationTargets(existing string, plan *VerificationPlan) (string, error) {

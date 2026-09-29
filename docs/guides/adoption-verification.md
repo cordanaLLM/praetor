@@ -17,11 +17,15 @@ report's `Project verification unavailable` warning says so, names the missing b
 test command, and lists every command discovery found that `verify-all` does not run,
 shell-quoted, so you can wire them into the project's own contract. When the existing
 Makefile already defines a `test` target, a second warning names it as the likely test
-contract. A Makefile adoption does not recognise as its own current output, but that
-still holds the failing pair, keeps the plan `unavailable` on the next run rather than
-being preserved as a custom `verify-all` (`TestAdoptPythonProjectWithoutBuildWarnsVerificationGate`,
-`TestPreservedVerifyAllWithPlaceholderStaysUnavailable` in
-`internal/adopt/verification_pillar_test.go`). A plan's `selected_by` list names the
+contract. A `test` target whose recipe is that failing pair is adoption's own, such as the
+one in a Makefile adoption generated earlier, so a re-run does not name it. A Makefile
+adoption does not recognise as its own current output, but that still holds the failing
+pair, keeps the plan `unavailable` on the next run rather than being preserved as a custom
+`verify-all`. The tests are in `internal/adopt/verification_pillar_test.go`:
+`TestAdoptPythonProjectWithoutBuildWarnsVerificationGate`,
+`TestNoteExistingTestTargetNamesOnlyTheAdoptersTarget`,
+`TestAdoptRerunOnGeneratedMakefileDoesNotNameItsTestTarget` and
+`TestPreservedVerifyAllWithPlaceholderStaysUnavailable`. A plan's `selected_by` list names the
 configuration that selected a command where the marker alone does not, such as the
 pytest configuration file and table, and the warning repeats it.
 

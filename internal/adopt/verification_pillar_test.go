@@ -262,3 +262,97 @@ func assertWarningContains(t *testing.T, rep *AdoptReport, wants ...string) {
 		}
 	}
 }
+
+// Re-run on the Makefile adoption generated itself: its test target is the failing placeholder,
+// not the adopter's test contract, so no run names it, and the Verification Gate stays warned.
+func TestAdoptRerunOnGeneratedMakefileDoesNotNameItsTestTarget(t *testing.T) {
+	repoPath := newTestRepo(t, "pytool")
+	mustWrite(t, filepath.Join(repoPath, "pyproject.toml"), "[project]\nname = \"pytool\"\nversion = \"0.1.0\"\n\n[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n")
+	opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath}
+	for run := 1; run <= 2; run++ {
+		rep, err := Adopt(context.Background(), opts)
+		if err != nil {
+			t.Fatalf("run %d: %v", run, err)
+		}
+		if slices.ContainsFunc(rep.Warnings, func(w string) bool { return strings.Contains(w, "Makefile target 'test' already exists") }) {
+			t.Fatalf("run %d: generated placeholder named as the test contract: %q", run, rep.Warnings)
+		}
+		if pillar := pillarNamed(t, rep, "Verification Gate"); pillar.Status != PillarWarned {
+			t.Fatalf("run %d: Verification Gate = %+v", run, pillar)
+		}
+		if makefile := mustRead(t, filepath.Join(repoPath, "Makefile")); !strings.Contains(makefile, "test: build\n"+unavailableVerificationRecipe) {
+			t.Fatalf("run %d: Makefile is not the generated placeholder:\n%s", run, makefile)
+		}
+	}
+}
+
+// noteExistingTestTarget names only a test target the adopter wrote: one whose recipe is not the
+// failing placeholder adoption renders, in a Makefile adoption does not replace, while the plan is
+// unavailable.
+func TestNoteExistingTestTargetNamesOnlyTheAdoptersTarget(t *testing.T) {
+	unavailable := &VerificationPlan{Status: verificationUnavailable, Build: [][]string{}, Test: [][]string{pytestCommand}}
+	declared := &VerificationPlan{Status: verificationDeclared, Build: [][]string{{"go", "build"}}, Test: [][]string{{"go", "test"}}}
+	adopters := ".PHONY: test\ntest:\n\tpython3 -m pytest\n"
+	appended, err := appendVerificationTargets(adopters, unavailable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated := buildMakefile(unavailable)
+	documented, err := mergeDocumentationMakefile(generated, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name              string
+		data              string
+		plan              *VerificationPlan
+		exists, replaced  bool
+		wantNamedTestRule bool
+	}{
+		{"adopters-target", adopters, unavailable, true, false, true},
+		{"adopters-target-beside-appended-verify-all", appended, unavailable, true, false, true},
+		{"adopters-target-crlf", strings.ReplaceAll(adopters, "\n", "\r\n"), unavailable, true, false, true},
+		{"rule-without-recipe", "test: build\n\nbuild:\n\tpython3 -m build\n", unavailable, true, false, true},
+		{"generated", generated, unavailable, true, false, false},
+		{"generated-with-documentation-block", documented, unavailable, true, false, false},
+		{"generated-crlf", strings.ReplaceAll(generated, "\n", "\r\n"), unavailable, true, false, false},
+		{"generated-edited-elsewhere", generated + "\nlint:\n\truff check .\n", unavailable, true, false, false},
+		{"no-test-target", "build:\n\tpython3 -m build\n", unavailable, true, false, false},
+		{"declared-plan", adopters, declared, true, false, false},
+		{"no-makefile", "", unavailable, false, false, false},
+		{"replaced-earlier-output", adopters, unavailable, true, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &adoptSession{report: &AdoptReport{}, verification: tc.plan}
+			noteExistingTestTarget(s, tc.data, tc.exists, tc.replaced)
+			named := slices.ContainsFunc(s.report.Warnings, func(w string) bool { return strings.Contains(w, "Makefile target 'test' already exists") })
+			if named != tc.wantNamedTestRule {
+				t.Fatalf("named test target = %v, want %v: %q", named, tc.wantNamedTestRule, s.report.Warnings)
+			}
+		})
+	}
+}
+
+// verificationTargetRecipe reads the recipe lines of the first rule for a target, stops at the
+// first line that is not a recipe line, and finds no rule inside a define body.
+func TestVerificationTargetRecipe(t *testing.T) {
+	for _, tc := range []struct {
+		name, data string
+		want       string
+		found      bool
+	}{
+		{"recipe", "test:\n\tpython3 -m pytest\n\tpython3 -m mypy\n\nbuild:\n\techo b\n", "\tpython3 -m pytest\n\tpython3 -m mypy\n", true},
+		{"last-line-without-newline", "test: build\n\tpython3 -m pytest", "\tpython3 -m pytest\n", true},
+		{"first-rule-wins", "test: build\ntest:\n\tpython3 -m pytest\n", "", true},
+		{"absent", "build:\n\techo b\n", "", false},
+		{"define-body", "define rules\ntest:\n\techo t\nendef\n", "", false},
+		{"empty", "", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, found := verificationTargetRecipe(tc.data, "test")
+			if got != tc.want || found != tc.found {
+				t.Fatalf("verificationTargetRecipe = %q, %v; want %q, %v", got, found, tc.want, tc.found)
+			}
+		})
+	}
+}
