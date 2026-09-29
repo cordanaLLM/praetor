@@ -189,6 +189,39 @@ stand-in; every shipped archetype requires signed commits, which the defaults do
 - An unknown decline item, malformed decline entry, or unreadable `.standards.yaml`
   fails closed, ensuring invalid configuration cannot produce a false pass.
 
+### Agent definitions and adoption decline
+
+`praetorctl audit` counts the agent personas `compile-context` projects: one file per agent,
+`.agents/agents/<name>.md`. The gate reads them through `compiler.ReadAgentInventory`
+([`internal/compiler/agent_projection.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/compiler/agent_projection.go)),
+the walk `compile-context` and its `--verify` project from, so the count and the projected set
+cannot differ. A pass prints `[PASS] Agent definitions verified (2 agents registered).`
+
+A subdirectory of `.agents/agents`, such as `<name>/AGENTS.md` next to an `agent.json`, is not
+a persona file: `compile-context` neither projects nor lints it. The gate names every such
+entry with what it holds, and fails even when flat persona files sit beside it:
+
+```text
+[FAIL] .agents/agents holds entries compile-context does not project (2):
+repo-auditor/ (holds AGENTS.md), repo-gatekeeper/ (holds AGENTS.md); praetor reads one
+persona file per agent, .agents/agents/<name>.md; move each definition to that layout, or
+decline agent-definitions in adoption.decline to keep another
+```
+
+The line is wrapped here; audit prints it as one line. A subdirectory holding an `agent.json`
+but no `AGENTS.md` is named the same way, never counted. A directory with neither persona files
+nor subdirectories still fails with `contains zero agent definitions`. A symlinked persona file
+is refused, as `compile-context` refuses it; a symlinked entry without the `.md` suffix is
+named and never followed.
+
+A repository that keeps its own agent layout records `adoption.decline: [agent-definitions]`
+in `.standards.yaml`. Adoption then writes no personas, and audit reports the decline together
+with what `.agents/agents` holds instead of failing. Persona files that do exist are still
+projected and linted by the projection and caveman gates, which have no opt-out
+([the persona and skill gate](text-register.md#the-persona-and-skill-gate)). An unknown or
+malformed decline entry fails closed. `cmd/standardsctl/audit_agent_definitions_test.go` and
+`internal/compiler/agent_inventory_test.go` pin each case.
+
 ### Writing the ruleset, labels and repository metadata to GitHub with `sync --remote`
 
 `standardsctl sync` verifies `.config/labels.yaml` and `.github/rulesets/main.json` locally.

@@ -1,0 +1,3 @@
+type: fixed
+title: "The audit's agent-definitions gate counts the personas compile-context projects through the same reader and names every .agents/agents subdirectory it does not project, such as <name>/AGENTS.md, instead of reporting zero definitions or silently passing a mixed layout; an agent-definitions entry in adoption.decline is now honoured, and audit reports what the directory holds"
+breaking: true

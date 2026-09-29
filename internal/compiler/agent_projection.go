@@ -102,19 +102,117 @@ func listCanonicalAgents(ctx context.Context, rootDir string) ([]string, error) 
 }
 
 // listPersonaDir returns the persona file names in the directory dir below rootDir, by name,
-// through readConfinedDir. An absent directory holds none.
+// through readPersonaDir. An absent directory holds none.
 func listPersonaDir(ctx context.Context, rootDir, dir string) ([]string, error) {
-	entries, err := readConfinedDir(ctx, rootDir, dir, maxAgentProjections)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", dir, err)
-	}
-	if len(entries) > maxAgentProjections {
-		return nil, fmt.Errorf("%s holds more than %d files", dir, maxAgentProjections)
+	entries, present, err := readPersonaDir(ctx, rootDir, dir)
+	if err != nil || !present {
+		return nil, err
 	}
 	return personaNames(dir, entries)
+}
+
+// readPersonaDir lists the persona directory dir below rootDir through readConfinedDir, and
+// reports whether it exists. A directory above the cap is an error.
+func readPersonaDir(ctx context.Context, rootDir, dir string) ([]os.DirEntry, bool, error) {
+	entries, err := readConfinedDir(ctx, rootDir, dir, maxAgentProjections)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("read %s: %w", dir, err)
+	}
+	if len(entries) > maxAgentProjections {
+		return nil, false, fmt.Errorf("%s holds more than %d files", dir, maxAgentProjections)
+	}
+	return entries, true, nil
+}
+
+// agentDirectoryEntry is the file a one-directory-per-agent layout keeps its definition in,
+// .agents/agents/<name>/AGENTS.md. compile-context projects no such file.
+const agentDirectoryEntry = "AGENTS.md"
+
+// AgentInventory is what .agents/agents holds, read by the walk compile-context projects from
+// (readPersonaDir, personaNames), so a count taken from it is the count compile-context
+// projects.
+type AgentInventory struct {
+	// Present reports whether .agents/agents exists.
+	Present bool
+	// Personas are the persona files compile-context projects, by name.
+	Personas []string
+	// Unprojected are the entries that can hold an agent definition but that compile-context
+	// skips: every subdirectory, and every symlink or other non-regular entry without the .md
+	// suffix (one with it is refused, errPersonaNotRegular), by name.
+	Unprojected []UnprojectedAgentEntry
+}
+
+// UnprojectedAgentEntry names one entry of .agents/agents compile-context does not project.
+// Name ends in a slash for a directory; Detail says what the entry holds.
+type UnprojectedAgentEntry struct {
+	Name   string
+	Detail string
+}
+
+// ReadAgentInventory reads .agents/agents below rootDir once: the persona files
+// compile-context projects (listCanonicalAgents reads the same ones, with the same refusals)
+// and the entries it skips. An absent directory is an empty inventory with Present false.
+func ReadAgentInventory(ctx context.Context, rootDir string) (AgentInventory, error) {
+	entries, present, err := readPersonaDir(ctx, rootDir, CanonicalAgentsRel)
+	if err != nil || !present {
+		return AgentInventory{}, err
+	}
+	names, err := personaNames(CanonicalAgentsRel, entries)
+	if err != nil {
+		return AgentInventory{}, err
+	}
+	unprojected, err := unprojectedAgentEntries(ctx, rootDir, entries)
+	if err != nil {
+		return AgentInventory{}, err
+	}
+	return AgentInventory{Present: true, Personas: names, Unprojected: unprojected}, nil
+}
+
+// unprojectedAgentEntries returns the entries of .agents/agents personaNames skips that can
+// hold an agent definition. A regular file without the .md suffix holds none and is left out.
+func unprojectedAgentEntries(ctx context.Context, rootDir string, entries []os.DirEntry) ([]UnprojectedAgentEntry, error) {
+	var out []UnprojectedAgentEntry
+	for i := 0; i < len(entries) && i < maxAgentProjections; i++ {
+		name := entries[i].Name()
+		switch {
+		case entries[i].IsDir():
+			detail, err := agentDirectoryDetail(ctx, rootDir, name)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, UnprojectedAgentEntry{Name: name + "/", Detail: detail})
+		case !entries[i].Type().IsRegular() && !strings.HasSuffix(name, ".md"):
+			out = append(out, UnprojectedAgentEntry{Name: name, Detail: "not a regular file or directory"})
+		}
+	}
+	return out, nil
+}
+
+// agentDirectoryDetail says whether the subdirectory name of .agents/agents holds an
+// AGENTS.md, read through readConfinedDir so a symlink below it is refused, not followed.
+func agentDirectoryDetail(ctx context.Context, rootDir, name string) (string, error) {
+	rel := CanonicalAgentsRel + "/" + name
+	entries, err := readConfinedDir(ctx, rootDir, rel, maxAgentProjections)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", rel, err)
+	}
+	holdsConfig := false
+	for i := 0; i < len(entries) && i <= maxAgentProjections; i++ {
+		if entries[i].Name() == agentDirectoryEntry && entries[i].Type().IsRegular() {
+			return "holds " + agentDirectoryEntry, nil
+		}
+		holdsConfig = holdsConfig || entries[i].Name() == "agent.json"
+	}
+	switch {
+	case len(entries) > maxAgentProjections:
+		return fmt.Sprintf("holds more than %d entries", maxAgentProjections), nil
+	case holdsConfig:
+		return "holds agent.json but no " + agentDirectoryEntry, nil
+	}
+	return "holds no " + agentDirectoryEntry, nil
 }
 
 // personaNames returns the .md entries of one persona directory, refusing any that is not a
