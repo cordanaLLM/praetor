@@ -52,7 +52,7 @@ func changedPaths(before, after map[string]string) []string {
 	for _, snap := range []map[string]string{before, after} {
 		for rel := range snap {
 			slash := filepath.ToSlash(rel)
-			if seen[slash] || strings.HasPrefix(slash, ".git") || strings.HasPrefix(slash, workingDirPath) {
+			if seen[slash] || underDir(slash, ".git") || underDir(slash, workingDirPath) {
 				continue
 			}
 			seen[slash] = true
@@ -63,6 +63,11 @@ func changedPaths(before, after map[string]string) []string {
 	}
 	sort.Strings(changed)
 	return changed
+}
+
+// underDir reports whether the slash path rel is dir or lies below it.
+func underDir(rel, dir string) bool {
+	return rel == dir || strings.HasPrefix(rel, dir+"/")
 }
 
 // assertDeclared decodes root's manifest, requires it to declare profiles and facets, and
