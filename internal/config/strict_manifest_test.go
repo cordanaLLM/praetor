@@ -199,8 +199,7 @@ func assertRepositorySourceShape(t *testing.T, m *Manifest) {
 	public := own
 	if m.Repository.Source != "" {
 		public = m.Repository.Source
-		owner, name, ok := strings.Cut(m.Repository.Source, "/")
-		if !ok || owner == "" || name == "" {
+		if !ValidRepositoryIdentity(m.Repository.Source) {
 			t.Errorf("repository.source %q is not an owner/name identity", m.Repository.Source)
 		}
 		if m.Repository.Source == own {
@@ -275,5 +274,22 @@ func TestLoadManifestRepositoryDefaultBranch_3D(t *testing.T) {
 	}
 	if ValidBranchName("") || !ValidBranchName("main") {
 		t.Error("ValidBranchName must refuse the empty name and accept main")
+	}
+}
+
+// ValidRepositoryIdentity is the one owner/name check behind repository.source and the forge
+// repository a remote sync derives its required checks for. Positive: a plain identity and the
+// shortest one. Negative: a missing part, a missing slash, an extra segment. Boundary: a lone
+// slash and the empty string.
+func TestValidRepositoryIdentity(t *testing.T) {
+	cases := map[string]bool{
+		"cordanaLLM/praetor": true, "a/b": true,
+		"praetor": false, "cordanaLLM/": false, "/praetor": false, "cordanaLLM/praetor/extra": false,
+		"/": false, "": false,
+	}
+	for value, want := range cases {
+		if got := ValidRepositoryIdentity(value); got != want {
+			t.Errorf("ValidRepositoryIdentity(%q) = %v, want %v", value, got, want)
+		}
 	}
 }

@@ -186,10 +186,18 @@ would install a check that can never fail: the same unfalsifiable green this inv
 reached from the other side. Marking a leg advisory is therefore a real statement about what it
 can enforce, not a way to keep a red leg in the required set.
 
-`.github/rulesets/main.json` declares the target protection; it is applied to the branch with
-`gh api`, not by any workflow. Adding a leg to the matrix changes the declared file
-immediately, and the branch only afterwards — so **apply the ruleset once the new legs have
-gone green at least once**, never in the same step that introduces them.
+`.github/rulesets/main.json` declares the target protection, and `praetorctl sync --remote`
+writes it to GitHub ([writing the ruleset with `sync --remote`](../guides/adoption-verification.md#writing-the-ruleset-labels-and-repository-metadata-to-github-with-sync-remote));
+no workflow applies it. Adding a leg to the matrix changes the declared file immediately, and
+the branch only afterwards — so **apply the ruleset once the new legs have gone green at least
+once**, never in the same step that introduces them.
+
+All three legs of this repository are in the declared ruleset, and every pull request of the
+canonical repository waits for them. They became required once all three passed on `main`
+(#558 fixed the last red legs; the pre-merge run of #588 was green on Linux, macOS and Windows).
+`TestCanonicalRulesetRequiresEveryPlatformNeutralityLeg` in
+`internal/forge/required_contexts_in_test.go` fails when the rendered or the committed ruleset
+loses a leg.
 
 ## Outside the canonical repository the matrix is opt-in, and says so
 
@@ -207,8 +215,39 @@ and states that no platform was verified. Exactly one of the two jobs runs for a
 A job condition normally removes a job from the required contexts, because its check may never
 report. A condition that is only a disjunction containing the repository guard for the
 repository's own `.standards.yaml` identity is the exception: it is always true there, so the
-three legs stay required in the canonical repository. Judged from any other identity the same
-jobs are conditional, so a fork is never told to require a check its runs will not report.
+three legs stay required in the canonical repository. The skip job's condition is a negated
+group, which never counts, so it is required nowhere: a check that says no platform was
+verified must not satisfy a ruleset.
+
+`sync --remote` never adds to a fork's GitHub ruleset a check its runs will not report:
+
+| Where | Committed ruleset | Checks `sync --remote` adds on GitHub |
+| :--- | :--- | :--- |
+| canonical repository | the three legs | the three legs |
+| operational fork (`repository.source` names the canonical repository) | the three legs, so the fork's audit accepts the file it carries unchanged (#255) | no leg; a leg an earlier sync added stays required until it is removed by hand (below) |
+| adopter | no leg: `portability.yml` is not emitted to adopters | no leg |
+
+A fork's legs are skipped before their matrix expands, so GitHub never reports
+`Platform Neutrality (Linux)` there (actions/runner#952), and requiring it would leave every
+pull request waiting. `sync --remote` therefore adds only the checks whose jobs report in the
+repository it writes to (`forge.RequiredStatusContextsIn`), reads the live ruleset back, and
+names each check it left off (`TestSync_Remote_RequiresOnlyChecksThatReportInTheRepository` in
+`cmd/standardsctl/sync_remote_guard_test.go`):
+
+- `[INFO] Not required on GitHub for <owner>/<name> ...`: the live ruleset does not require it.
+- `[WARN] Still required on GitHub for <owner>/<name> ...`: the live ruleset still requires it,
+  and unless the repository enables the job (for example with `PRAETOR_FORK_PORTABILITY`), every
+  pull request waits for it
+  (`TestSync_Remote_WarnsAboutLeftOffChecksTheLiveRulesetStillRequires`).
+
+The warning is the migration path for forks that ran `sync --remote` before this check existed.
+Since #258 a fork renders the legs, and those syncs wrote them to GitHub. The merge never removes
+a live required check (`mergeRuleset` in `internal/forge/ruleset_merge.go`), so a later sync
+leaves them in place. Remove the checks the warning names from the `praetor-main-protection`
+ruleset in the fork's repository settings (Settings, Rules, Rulesets). A fork that sets
+`PRAETOR_FORK_PORTABILITY` and wants the legs required adds them to that ruleset the same way,
+and `sync --remote` keeps them. The warning still names them, because the guard skips the jobs
+by default; that fork keeps them regardless.
 
 ## Templating: the matrix shape is per language
 

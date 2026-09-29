@@ -56,8 +56,10 @@ required when the job reports on every pull request:
   does not run on every pull request, and a required check that never reports leaves the pull
   request waiting forever.
 - The job has no `if:`, or a condition that holds on every run: `always()`,
-  `success() || failure()` or `!cancelled()`, bare or as one `${{ }}` expression. A repository
-  guard that holds for the manifest's identity counts too
+  `success() || failure()` or `!cancelled()`, bare or as one `${{ }}` expression. A disjunction
+  containing `github.event_name != 'schedule'`, which holds on every pull request run, counts
+  too (`TestHoldsOnEveryPullRequestRun` in `internal/forge/required_contexts_in_test.go`). So does
+  a repository guard that holds for the manifest's identity
   (see [Which workflows run where](guides/operational-sync.md#which-workflows-run-where)).
 - The job is not advisory: `continue-on-error` is absent or `false`.
 
@@ -65,6 +67,18 @@ Any other condition makes the job optional, a status function joined with anythi
 (`always() && ...`) included. GitHub reports a job its condition skipped as successful, so a lane
 that runs only when a planner job selects it would pass as a required check whether or not its
 work ran.
+
+A repository guard is judged against the manifest identity. An operational fork resolves that
+identity to its `repository.source`, so the ruleset the fork commits equals the canonical one.
+On the fork's forge the guard is false, and a guarded matrix job is skipped before its legs
+exist, so none of their checks is ever reported. `sync --remote` therefore adds only the checks
+whose jobs report in `<repository.owner>/<repository.name>` (`forge.RequiredStatusContextsIn`)
+and prints the ones it left off (`TestSync_Remote_RequiresOnlyChecksThatReportInTheRepository`).
+It never removes a check the live ruleset already requires, so it warns about a left-off check
+an earlier sync added; remove that check from the live ruleset by hand
+(`TestSync_Remote_WarnsAboutLeftOffChecksTheLiveRulesetStillRequires`).
+The Platform Neutrality matrix is the case in point
+([HISS-21](standards/hiss-21-platform-neutrality.md#outside-the-canonical-repository-the-matrix-is-opt-in-and-says-so)).
 
 Path-filtered CI therefore gets its protection from an aggregate job: it `needs` every lane, runs
 with `if: always()`, and fails when a job it needs failed or was cancelled. The ruleset requires

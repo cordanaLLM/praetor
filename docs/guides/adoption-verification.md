@@ -210,7 +210,15 @@ standardsctl sync --remote --forge-host=ghe.example.com \
   (`forge.RepositoryRulesetRefs`). The default branch is the one the local ruleset was verified
   for (`forge.RepositoryDefaultBranch`, see
   [Protected default branch](../adoption.md#protected-default-branch),
-  `TestSync_Remote_DefaultBranchMaster`). An existing ruleset is read, merged, updated and read back. The
+  `TestSync_Remote_DefaultBranchMaster`). The required status checks it adds are the local
+  ruleset's checks whose jobs report in `<repository.owner>/<repository.name>`: a job behind a
+  repository guard that names another repository is left off (`forge.RequiredStatusContextsIn`,
+  `TestSync_Remote_RequiresOnlyChecksThatReportInTheRepository`; see
+  [Which jobs the ruleset requires](../adoption.md#which-jobs-the-ruleset-requires)). After the
+  write, the live ruleset is read back and each left-off check is named: an `[INFO]` line when
+  GitHub does not require it, and a `[WARN]` line when the live ruleset still requires it because
+  an earlier sync added it. The merge below keeps that check, so remove it by hand
+  (`TestSync_Remote_WarnsAboutLeftOffChecksTheLiveRulesetStillRequires`). An existing ruleset is read, merged, updated and read back. The
   merge sets every parameter praetor renders from policy and keeps everything else: extra refs,
   bypass actors, other rules and parameters, and required checks praetor does not list. A
   protected ref is removed from the excludes. The command fails unless the readback includes

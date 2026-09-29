@@ -377,14 +377,17 @@ func validateManifestRepository(m *Manifest) error {
 // manifest had before the field existed. A source equal to owner/name is valid too -- it is
 // redundant, not wrong, and manifestIdentity in internal/forge reads it the same either way.
 func validateManifestRepositorySource(m *Manifest) error {
-	if m == nil || m.Repository.Source == "" {
+	if m == nil || m.Repository.Source == "" || ValidRepositoryIdentity(m.Repository.Source) {
 		return nil
 	}
-	owner, name, ok := strings.Cut(m.Repository.Source, "/")
-	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
-		return fmt.Errorf("repository.source %q is not an owner/name identity", m.Repository.Source)
-	}
-	return nil
+	return fmt.Errorf("repository.source %q is not an owner/name identity", m.Repository.Source)
+}
+
+// ValidRepositoryIdentity reports whether value is an "<owner>/<name>" repository identity: two
+// nonempty parts joined by exactly one slash.
+func ValidRepositoryIdentity(value string) bool {
+	owner, name, ok := strings.Cut(value, "/")
+	return ok && owner != "" && name != "" && !strings.Contains(name, "/")
 }
 
 // DefaultPolicy returns a baseline default policy. Its function-length limit is

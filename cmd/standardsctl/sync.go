@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -226,20 +227,11 @@ func reconcileRemoteForge(ctx context.Context, rootDir string, in remoteSyncInpu
 	if err := preflightRemoteForge(ctx, rootDir, in.manifest.Repository, remote.host); err != nil {
 		return err
 	}
-	owner, name := in.manifest.Repository.Owner, in.manifest.Repository.Name
-
 	gh := forge.NewGitHubDriver(token, remote.endpoint)
-	gh.SetRepository(owner, name)
-	// The remote ruleset is the local .github/rulesets/main.json one: same name, same refs.
-	gh.RulesetName = forge.RepositoryRulesetName
-	gh.ProtectedRefs = forge.RepositoryRulesetRefs(in.branch)
-	gh.RequiredStatusChecks = append([]string(nil), in.contexts...)
-	gh.StrictStatusChecks = true
-	fmt.Printf("  [SYNC] Reconciling branch protection ruleset on GitHub for %s/%s...\n", owner, name)
-	if err := gh.ReconcileProtection(ctx, in.branch, in.policy); err != nil {
+	gh.SetRepository(in.manifest.Repository.Owner, in.manifest.Repository.Name)
+	if err := reconcileRemoteRuleset(ctx, gh, rootDir, in); err != nil {
 		return err
 	}
-	fmt.Printf("  [OK] Remote branch protection synchronized on GitHub (%s and lts-*, read back; live rules praetor does not render kept)\n", in.branch)
 	fmt.Printf("  [SYNC] Reconciling %d labels from .config/labels.yaml on GitHub...\n", len(in.labels))
 	if err := gh.ReconcileLabels(ctx, in.labels); err != nil {
 		return fmt.Errorf("reconcile labels: %w", err)
@@ -252,6 +244,91 @@ func reconcileRemoteForge(ctx context.Context, rootDir string, in remoteSyncInpu
 	}
 	printRepositoryMetadataReport(metadata)
 	return nil
+}
+
+// reconcileRemoteRuleset writes the local .github/rulesets/main.json ruleset to GitHub under the
+// same name and refs, requiring the status checks of it that report in the repository gh writes
+// to, and then names the checks it left off.
+func reconcileRemoteRuleset(ctx context.Context, gh *forge.GitHubDriver, rootDir string, in remoteSyncInputs) error {
+	repository := gh.Owner + "/" + gh.Repo
+	contexts, omitted, err := remoteStatusContexts(ctx, rootDir, repository, in.contexts)
+	if err != nil {
+		return err
+	}
+	gh.RulesetName = forge.RepositoryRulesetName
+	gh.ProtectedRefs = forge.RepositoryRulesetRefs(in.branch)
+	gh.RequiredStatusChecks = contexts
+	gh.StrictStatusChecks = true
+	fmt.Printf("  [SYNC] Reconciling branch protection ruleset on GitHub for %s...\n", repository)
+	if err := gh.ReconcileProtection(ctx, in.branch, in.policy); err != nil {
+		return err
+	}
+	fmt.Printf("  [OK] Remote branch protection synchronized on GitHub (%s and lts-*, read back; live rules praetor does not render kept)\n", in.branch)
+	return reportOmittedStatusChecks(ctx, gh, in.branch, omitted)
+}
+
+// remoteStatusContexts returns the required status checks a --remote sync writes to the forge
+// repository named repository, which are the jobs that report on every pull request there
+// (forge.RequiredStatusContextsIn), and the checks of the local ruleset, local, it leaves off.
+// A check leaves when a repository guard keeps its job out of that repository, such as a
+// Platform Neutrality leg in an operational fork: no run there reports it, so requiring it would
+// block every pull request.
+func remoteStatusContexts(ctx context.Context, rootDir, repository string, local []string) (contexts, omitted []string, err error) {
+	contexts, err = forge.RequiredStatusContextsIn(ctx, rootDir, repository)
+	if err != nil {
+		return nil, nil, fmt.Errorf("discover the required status checks of %s: %w", repository, err)
+	}
+	for _, check := range local {
+		if !slices.Contains(contexts, check) {
+			omitted = append(omitted, check)
+		}
+	}
+	return contexts, omitted, nil
+}
+
+// reportOmittedStatusChecks reads the live ruleset back and names each check a --remote sync left
+// off. The merge never removes a live required check (forge.GitHubDriver.ReconcileProtection),
+// so a check an earlier sync wrote stays required: that is a warning, because every pull request
+// waits for a check no run reports until the operator removes it from the ruleset.
+func reportOmittedStatusChecks(ctx context.Context, gh *forge.GitHubDriver, branch string, omitted []string) error {
+	if len(omitted) == 0 {
+		return nil
+	}
+	live, err := gh.LiveRuleset(ctx, branch)
+	if err != nil {
+		return fmt.Errorf("read back the status checks left off: %w", err)
+	}
+	var absent, stale []string
+	for _, check := range omitted {
+		required := false
+		if live != nil {
+			if required, err = forge.RulesetRequiresStatusContext(live, check); err != nil {
+				return fmt.Errorf("read back status check %q: %w", check, err)
+			}
+		}
+		if required {
+			stale = append(stale, check)
+		} else {
+			absent = append(absent, check)
+		}
+	}
+	printOmittedStatusChecks(gh.Owner+"/"+gh.Repo, absent, stale)
+	return nil
+}
+
+// printOmittedStatusChecks prints the checks left off that GitHub does not require, and warns
+// about those a live ruleset still requires.
+func printOmittedStatusChecks(repository string, absent, stale []string) {
+	if len(absent) > 0 {
+		fmt.Printf("  [INFO] Not required on GitHub for %s, because a repository guard skips their jobs there by default: %s\n",
+			repository, strings.Join(absent, ", "))
+	}
+	if len(stale) > 0 {
+		fmt.Printf("  [WARN] Still required on GitHub for %s, although a repository guard skips their jobs there by default: %s. "+
+			"Unless this repository enables those jobs (for example through a repository variable the guard reads), every pull request waits for them; "+
+			"sync --remote never removes a live required check, so remove them from ruleset %q by hand\n",
+			repository, strings.Join(stale, ", "), forge.RepositoryRulesetName)
+	}
 }
 
 // printRepositoryMetadataReport prints what the metadata reconciliation wrote, and any

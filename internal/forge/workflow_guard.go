@@ -30,14 +30,29 @@ func repositoryGuard(identity string) string {
 // required check context. Any conjunction or negation is treated as conditional, because
 // its value is not knowable from the file.
 func guardHoldsInRepository(condition, identity string) bool {
-	if identity == "" {
-		return false
-	}
+	return identity != "" && disjunctionContains(condition, repositoryGuard(identity))
+}
+
+// pullRequestRunTerm is the job condition term that holds on every pull request run: the one a
+// scheduled leg's guard is joined to (security.yml), so the push and pull request legs run in
+// every repository while the schedule leg stays in the canonical one.
+const pullRequestRunTerm = "github.event_name != 'schedule'"
+
+// holdsOnEveryPullRequestRun reports whether a job condition is a disjunction containing
+// pullRequestRunTerm, and so holds on every pull request run whatever its other terms are.
+func holdsOnEveryPullRequestRun(condition string) bool {
+	return disjunctionContains(condition, pullRequestRunTerm)
+}
+
+// disjunctionContains reports whether condition is a disjunction holding term, so that the
+// condition is true wherever term is. Any conjunction or negated group is refused, because
+// its value is not knowable from the file.
+func disjunctionContains(condition, term string) bool {
 	condition = strings.TrimSpace(condition)
 	if strings.Contains(condition, "&&") || strings.Contains(condition, "!(") {
 		return false
 	}
-	return strings.Contains(condition, repositoryGuard(identity))
+	return strings.Contains(condition, term)
 }
 
 // guardIdentity resolves the repository identity only when a workflow carries a repository

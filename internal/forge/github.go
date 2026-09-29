@@ -375,8 +375,38 @@ func (g *GitHubDriver) sendRuleset(ctx context.Context, method, path string, doc
 	return body, nil
 }
 
-// getRuleset reads one repository ruleset as a generic JSON object.
-func (g *GitHubDriver) getRuleset(ctx context.Context, listPath string, id int) (map[string]any, error) {
+// LiveRuleset returns the ruleset for branch as GitHub reports it now, or nil when the
+// repository has no ruleset of that name. ReconcileProtection never removes a live required
+// check (mergeRuleset), so a caller that left a check off reads this to learn whether an
+// earlier write still requires it.
+func (g *GitHubDriver) LiveRuleset(ctx context.Context, branch string) ([]byte, error) {
+	if err := g.Authenticate(ctx); err != nil {
+		return nil, err
+	}
+	if branch == "" {
+		return nil, errors.New("read live ruleset: branch cannot be empty")
+	}
+	listPath, err := g.repoPath("rulesets")
+	if err != nil {
+		return nil, fmt.Errorf("read live ruleset for %s: %w", branch, err)
+	}
+	name := g.rulesetName(branch)
+	id, err := g.findRulesetID(ctx, listPath, name)
+	if err != nil {
+		return nil, fmt.Errorf("read live ruleset for %s: %w", branch, err)
+	}
+	if id == 0 {
+		return nil, nil
+	}
+	body, err := g.readRuleset(ctx, listPath, id)
+	if err != nil {
+		return nil, fmt.Errorf("read live ruleset %q: %w", name, err)
+	}
+	return body, nil
+}
+
+// readRuleset returns the body of one repository ruleset, as GitHub sent it.
+func (g *GitHubDriver) readRuleset(ctx context.Context, listPath string, id int) ([]byte, error) {
 	path := fmt.Sprintf("%s/%d", listPath, id)
 	body, status, err := g.sendRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
@@ -384,6 +414,15 @@ func (g *GitHubDriver) getRuleset(ctx context.Context, listPath string, id int) 
 	}
 	if status != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status %d from GET %s: %s", status, path, util.BodyPreview(body))
+	}
+	return body, nil
+}
+
+// getRuleset reads one repository ruleset as a generic JSON object.
+func (g *GitHubDriver) getRuleset(ctx context.Context, listPath string, id int) (map[string]any, error) {
+	body, err := g.readRuleset(ctx, listPath, id)
+	if err != nil {
+		return nil, err
 	}
 	ruleset, err := jsonObject(body)
 	if err != nil {
