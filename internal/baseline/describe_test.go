@@ -144,7 +144,7 @@ func attributionFixture() (b *Baseline, current, atCommit []Infraction) {
 func TestRatchetResultAttribute_Positive_ChangedCheckInUnchangedCode(t *testing.T) {
 	b, current, atCommit := attributionFixture()
 	res := EvaluateRatchet(b, current, nil)
-	res.Attribute(b, current, atCommit, b.CommitSHA)
+	res.Attribute(b, current, []CommitFindings{{Commit: b.CommitSHA, Findings: atCommit}})
 	want := []Attribution{AttributionCheckChanged, AttributionCheckChanged, AttributionIntroduced}
 	if !slices.Equal(res.Attribution, want) {
 		t.Fatalf("Attribution = %v, want %v", res.Attribution, want)
@@ -154,7 +154,7 @@ func TestRatchetResultAttribute_Positive_ChangedCheckInUnchangedCode(t *testing.
 		"HISS invariant violations the baseline does not record (3 total infractions, 3 unbaselined (1 introduced, 2 from checks added or changed since the baseline), 0 in touched files):",
 		"[HISS-07] hooks/guard.py:50 - sys.exit ends the process from library code (check added or changed since the baseline)",
 		"[HISS-02] hooks/new.py:3 - unbounded loop (new)",
-		"2 of them sit in code the current checks flag at 0123456789ab, the commit the baseline was recorded at",
+		"2 of them sit in code the current checks flag at 0123456789ab, where the baseline was recorded or committed",
 		recordRemedy,
 	} {
 		if !strings.Contains(got, line) {
@@ -171,7 +171,7 @@ func TestRatchetResultAttribute_Positive_ChangedCheckInUnchangedCode(t *testing.
 func TestRatchetResultAttribute_Negative_ChangedCodeAndMovedFinding(t *testing.T) {
 	b, current, _ := attributionFixture()
 	res := EvaluateRatchet(b, current, nil)
-	res.Attribute(b, current, nil, b.CommitSHA)
+	res.Attribute(b, current, []CommitFindings{{Commit: b.CommitSHA}})
 	for i, got := range res.Attribution {
 		if got != AttributionIntroduced {
 			t.Errorf("Attribution[%d] = %q with nothing at the commit, want introduced", i, got)
@@ -185,7 +185,7 @@ func TestRatchetResultAttribute_Negative_ChangedCodeAndMovedFinding(t *testing.T
 	recorded := &Baseline{CommitSHA: b.CommitSHA, TotalInfractions: 1, Infractions: []Infraction{moved}}
 	_, _, atCommit := attributionFixture()
 	res = EvaluateRatchet(recorded, current, nil)
-	res.Attribute(recorded, current, atCommit, recorded.CommitSHA)
+	res.Attribute(recorded, current, []CommitFindings{{Commit: recorded.CommitSHA, Findings: atCommit}})
 	want := []Attribution{AttributionMoved, AttributionCheckChanged, AttributionIntroduced}
 	if !slices.Equal(res.Attribution, want) || !slices.Equal(res.RecordedLine, []int{40, 0, 0}) {
 		t.Fatalf("Attribution with a moved recorded finding = %v at %v, want %v at [40 0 0]", res.Attribution, res.RecordedLine, want)
@@ -206,6 +206,58 @@ func TestRatchetResultAttribute_Negative_ChangedCodeAndMovedFinding(t *testing.T
 	}
 }
 
+// Positive (#599): a baseline recorded on a work tree and committed with the code it scanned
+// holds that code only at the commit that committed the baseline file, not at commit_sha. A
+// finding either compared commit reports is from a changed check, and the explanation names both.
+func TestRatchetResultAttribute_Positive_EitherCommitExplainsAFinding(t *testing.T) {
+	b, current, atCommit := attributionFixture()
+	committed := "fedcba9876543210fedcba9876543210fedcba98"
+	loop := Infraction{RuleID: "HISS-02", FilePath: "hooks/new.py", LineNumber: 3, Message: "unbounded loop"}
+	res := EvaluateRatchet(b, current, nil)
+	res.Attribute(b, current, []CommitFindings{
+		{Commit: b.CommitSHA, Findings: atCommit},
+		{Commit: committed, Findings: []Infraction{loop}},
+	})
+	want := []Attribution{AttributionCheckChanged, AttributionCheckChanged, AttributionCheckChanged}
+	if !slices.Equal(res.Attribution, want) || !slices.Equal(res.AttributionCommits, []string{b.CommitSHA, committed}) {
+		t.Fatalf("Attribution = %v against %v, want %v against both commits", res.Attribution, res.AttributionCommits, want)
+	}
+	got := res.Summary()
+	for _, line := range []string{
+		"[HISS-02] hooks/new.py:3 - unbounded loop (check added or changed since the baseline)",
+		"3 of them sit in code the current checks flag at 0123456789ab or fedcba987654, where the baseline was recorded or committed",
+	} {
+		if !strings.Contains(got, line) {
+			t.Errorf("Summary() missing %q:\n%s", line, got)
+		}
+	}
+	if strings.Contains(got, "(new)") || strings.Contains(got, "introduced") {
+		t.Errorf("a finding the committed baseline's commit holds is described as introduced:\n%s", got)
+	}
+}
+
+// Boundary (#599): a finding both commits report explains as many violations as the commit
+// holding it most often reports it, never the sum, and no compared commit attributes nothing.
+func TestRatchetResultAttribute_Boundary_UnionCountsTheLargerCommit(t *testing.T) {
+	b, current, atCommit := attributionFixture()
+	once := atCommit[:1]
+	res := EvaluateRatchet(b, current, nil)
+	res.Attribute(b, current, []CommitFindings{{Commit: "a", Findings: once}, {Commit: "b", Findings: once}})
+	want := []Attribution{AttributionCheckChanged, AttributionIntroduced, AttributionIntroduced}
+	if !slices.Equal(res.Attribution, want) {
+		t.Errorf("one finding at each of two commits = %v, want %v (counted once, not twice)", res.Attribution, want)
+	}
+	res.Attribute(b, current, []CommitFindings{{Commit: "a", Findings: once}, {Commit: "b", Findings: atCommit}})
+	want = []Attribution{AttributionCheckChanged, AttributionCheckChanged, AttributionIntroduced}
+	if !slices.Equal(res.Attribution, want) {
+		t.Errorf("one and two findings at the commits = %v, want %v", res.Attribution, want)
+	}
+	res.Attribute(b, current, nil)
+	if slices.Contains(res.Attribution, AttributionIntroduced) || strings.Contains(res.Summary(), "(new)") {
+		t.Errorf("no compared commit introduced a finding: %v\n%s", res.Attribution, res.Summary())
+	}
+}
+
 // movedFixture is the line drift of #29: the baseline records one finding at line 10, and lines
 // added above it moved it to line 12. The debt did not change.
 func movedFixture() (b *Baseline, current []Infraction) {
@@ -223,7 +275,7 @@ func movedFixture() (b *Baseline, current []Infraction) {
 func TestRatchetResultAttribute_Positive_MovedFindingNeedsOnlyARerecord(t *testing.T) {
 	b, current := movedFixture()
 	res := EvaluateRatchet(b, current, nil)
-	res.Attribute(b, current, []Infraction{b.Infractions[0]}, b.CommitSHA)
+	res.Attribute(b, current, []CommitFindings{{Commit: b.CommitSHA, Findings: []Infraction{b.Infractions[0]}}})
 	if res.Passed || !slices.Equal(res.Attribution, []Attribution{AttributionMoved}) {
 		t.Fatalf("passed=%v attribution=%v, want a rejection tagged moved", res.Passed, res.Attribution)
 	}
@@ -249,8 +301,8 @@ func TestRatchetResultAttributeUntraced_Boundary_MovedNeedsNoCommit(t *testing.T
 	note := "the baseline records no commit to compare against"
 	res := EvaluateRatchet(b, current, nil)
 	res.AttributeUntraced(b, current, note)
-	if !slices.Equal(res.Attribution, []Attribution{AttributionMoved, AttributionNone}) || res.AttributionNote != note || res.AttributionCommit != "" {
-		t.Fatalf("attribution %v note %q commit %q, want [moved none] with the note", res.Attribution, res.AttributionNote, res.AttributionCommit)
+	if !slices.Equal(res.Attribution, []Attribution{AttributionMoved, AttributionNone}) || res.AttributionNote != note || res.AttributionCommits != nil {
+		t.Fatalf("attribution %v note %q commits %q, want [moved none] with the note", res.Attribution, res.AttributionNote, res.AttributionCommits)
 	}
 	got := res.Summary()
 	for _, line := range []string{
@@ -299,9 +351,9 @@ func TestRatchetResultAttribute_Boundary_UnattributedIsNeutral(t *testing.T) {
 		}
 	}
 
-	res.Attribute(nil, current, nil, "")
+	res.Attribute(nil, current, nil)
 	var nilResult *RatchetResult
-	nilResult.Attribute(b, current, nil, "")
+	nilResult.Attribute(b, current, nil)
 	if res.Attribution != nil {
 		t.Errorf("Attribute with a nil baseline changed the result: %v", res.Attribution)
 	}

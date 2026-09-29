@@ -332,8 +332,8 @@ A failing HISS ratchet reports `[FAIL]` followed by `baseline.RatchetResult.Summ
 rejection text `praetorctl audit` and the gate print: up to three violations per class by rule,
 file and line with a count of the hidden rest, or both totals when only the count rose. Like
 `praetorctl audit`, the tool first attributes each unbaselined violation against the baseline's
-`commit_sha` (`hiss.AttributeRatchet`), so a finding in code unchanged since then is tagged as
-coming from a changed check, not as new
+commits, `commit_sha` and the last commit that changed the baseline file (`hiss.AttributeRatchet`),
+so a finding in code unchanged since then is tagged as coming from a changed check, not as new
 ([A HISS rejection names the violations](adoption-verification.md#a-hiss-rejection-names-the-violations)).
 The tool takes no listing flag; `praetorctl baseline --verify --all-violations` prints every
 violation.

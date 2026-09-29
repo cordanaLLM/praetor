@@ -600,19 +600,31 @@ A violation in an untouched file that the baseline does not record is not necess
 Praetor upgrade can add a check that reports code nobody changed. `praetorctl audit`,
 `praetorctl baseline --verify` and the `standards_audit` MCP tool therefore attribute each one
 before rendering (`hiss.AttributeRatchet` in
-[`internal/hiss/attribution.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hiss/attribution.go)). They copy the violations' files, as
-the commit `commit_sha` in the baseline names holds them, into a temporary directory and scan that
-copy with the current checks and the same policy. A Go call cycle brings its whole package. The
-copy is scanned as its own scope, without asking git which files belong, so a temporary directory
-inside a work tree that ignores it changes nothing. A copy scan that leaves a file unread, or a
-file of the commit that does not parse, traces nothing:
+[`internal/hiss/attribution.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hiss/attribution.go)). They compare against the
+baseline's commits:
+
+- `commit_sha`, the `HEAD` that `praetorctl baseline --record` ran on;
+- the last commit on `HEAD`'s history that changed the baseline file (`git log -1 HEAD -- <baseline>`).
+
+The recorder scans the work tree, so a baseline recorded before the code it scanned was committed,
+then committed together with that code, holds the code only at the second commit. After a squash
+merge, `commit_sha` names a branch commit a fresh clone does not hold; the second commit is the
+squash commit. A commit the clone lacks is left out, and so is a shallow clone's boundary commit,
+which reads as having added every file whatever it changed. An uncommitted baseline compares
+`commit_sha` alone.
+
+For each commit, they copy the violations' files as that commit holds them into a temporary
+directory and scan the copy with the current checks and the same policy. A Go call cycle brings
+its whole package. The copy is scanned as its own scope, without asking git which files belong, so
+a temporary directory inside a work tree that ignores it changes nothing. A copy scan that leaves a
+file unread, or a file of the commit that does not parse, traces nothing:
 
 | Class tag | Meaning |
 | :--- | :--- |
-| `(new)` | The checks do not report it at that commit: the code changed since the baseline was recorded. |
-| `(check added or changed since the baseline)` | The checks report the same rule, file, symbol and message at that commit, yet the baseline does not record it: a check or limit changed, not the code. |
+| `(new)` | The checks report it at neither commit: the code changed since the baseline was recorded and committed. |
+| `(check added or changed since the baseline)` | The checks report the same rule, file, symbol and message at one of the commits, yet the baseline does not record it: a check or limit changed, not the code. |
 | `(recorded in the baseline at line N)` | The baseline records the same rule, file, symbol and message at line N, which no current violation occupies: lines above it moved, the debt did not. Needs no commit, so a baseline without `commit_sha` gets it too. |
-| `(not in the baseline)` | Not traced. The baseline records no commit, the clone lacks it, the violations span more than 200 files, the copy scan was incomplete, or the rejection comes from a surface that does not attribute (the gate's HISS stage, dogfood verification). The rejection states the reason. |
+| `(not in the baseline)` | Not traced. The baseline records no `commit_sha`, the clone holds neither commit, the violations span more than 200 files, they need more than 1000 committed files (a large Go package a call cycle brings counts whole), the copy scan was incomplete, or the rejection comes from a surface that does not attribute (the gate's HISS stage, dogfood verification). The rejection states the reason. |
 
 Only a rejection whose every unbaselined violation is `(new)` keeps the header `HISS invariant
 violations introduced`. One whose every unbaselined violation only moved reads `HISS invariant
@@ -626,8 +638,18 @@ order.
 The verdict never changes: HISS-13 still refuses the higher count
 ([`internal/hiss/attribution_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hiss/attribution_test.go),
 `TestRatchetResultAttribute*` in `internal/baseline/describe_test.go`,
-`TestBaselineVerify_Positive_MovedFindingNeedsOnlyARerecord` in
+`TestBaselineVerify_Positive_MovedFindingNeedsOnlyARerecord` and
+`TestBaselineVerify_Positive_RecordThenCommitIsNotNew` in
 `cmd/standardsctl/baseline_ratchet_report_test.go`).
+
+Known gaps of the attribution:
+
+- A baseline without `commit_sha`, such as one written before the field was filled, stays
+  untraced even when a commit holds the baseline file.
+- The baseline records no engine version or rule set, so the attribution cannot name the check
+  that changed; it re-scans the baseline's commits instead.
+- The gate's HISS stage and the dogfood public-checkout verification do not attribute; their
+  rejections read `(not in the baseline)`.
 
 A ratchet can also fail with both lists empty: every violation matches a baselined fingerprint
 and no file was touched, yet the total rose above the baseline's. `RatchetResult.CountRegressed`

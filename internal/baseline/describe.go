@@ -11,15 +11,15 @@ type Attribution string
 
 const (
 	// AttributionNone means nothing traced the violation: no attribution ran, or it could not
-	// read the commit the baseline was recorded at. Summary describes it as not in the baseline,
+	// read the baseline's commits. Summary describes it as not in the baseline,
 	// never as introduced, because a check added after the baseline was recorded reports
 	// unchanged code exactly this way.
 	AttributionNone Attribution = ""
 	// AttributionIntroduced means the current checks do not report the violation in the files as
-	// the baseline's commit holds them: the code changed after the baseline was recorded.
+	// any of the baseline's commits holds them: the code changed after the baseline was recorded.
 	AttributionIntroduced Attribution = "introduced"
-	// AttributionCheckChanged means the current checks report the violation at the baseline's
-	// commit too, yet the baseline does not record it: the code is unchanged, and a check or limit
+	// AttributionCheckChanged means the current checks report the violation at one of the
+	// baseline's commits too, yet the baseline does not record it: the code is unchanged, and a check or limit
 	// added or changed after the baseline was recorded reports it.
 	AttributionCheckChanged Attribution = "check-changed"
 	// AttributionMoved means the baseline records the same rule, file, symbol and message at a
@@ -210,9 +210,9 @@ func (r *RatchetResult) breakdown(p newPartition) string {
 func (r *RatchetResult) explanations(p newPartition) []string {
 	var out []string
 	if n := len(p.changed); n > 0 {
-		out = append(out, fmt.Sprintf("  %d of them sit in code the current checks flag at %s, the commit the baseline was recorded at, "+
+		out = append(out, fmt.Sprintf("  %d of them sit in code the current checks flag at %s, where the baseline was recorded or committed, "+
 			"and the baseline does not record them: a check or limit added or changed since the baseline was recorded reports them, "+
-			"not a code change; fix them or record them with %s", n, shortCommit(r.AttributionCommit), recordRemedy))
+			"not a code change; fix them or record them with %s", n, shortCommits(r.AttributionCommits), recordRemedy))
 	}
 	if n := len(p.moved); n > 0 {
 		out = append(out, fmt.Sprintf("  %d of them the baseline records at another line of the same file: lines above them were added or removed, "+
@@ -229,31 +229,63 @@ func (r *RatchetResult) explanations(p newPartition) []string {
 	return out
 }
 
-// shortCommit abbreviates a commit for a rejection line.
-func shortCommit(commit string) string {
-	if len(commit) > shortCommitLen {
-		return commit[:shortCommitLen]
+// shortCommits abbreviates the compared commits for a rejection line, joined by "or": a finding
+// at any of them counts.
+func shortCommits(commits []string) string {
+	short := make([]string, 0, len(commits))
+	for i := 0; i < len(commits); i++ {
+		short = append(short, commits[i][:min(len(commits[i]), shortCommitLen)])
 	}
-	return commit
+	return strings.Join(short, " or ")
 }
 
-// Attribute classifies each new violation against atCommit (#599): what the current checks
-// report, under the same scan policy, in the new violations' files as they stood at commit, the
-// commit the baseline b was recorded at. current is the scan the ratchet judged.
+// CommitFindings is what the current checks report, under the ratchet's scan policy, in the new
+// violations' files as one of the baseline's commits holds them.
+type CommitFindings struct {
+	Commit   string
+	Findings []Infraction
+}
+
+// Attribute classifies each new violation against compared (#599): the findings at the
+// baseline's commits, the one the baseline b was recorded at and the one that last committed the
+// baseline file. A baseline recorded on a work tree and committed with the code it scanned holds
+// that code only at the second; a squash merge leaves only the second in a fresh clone. current
+// is the scan the ratchet judged.
 //
 // A violation the baseline records at another line (a moved fingerprint) was known to the
 // recorder: AttributionMoved, with that line in RecordedLine. One the current checks also report
-// at commit sits in code that has not changed since, so a recorder that had the check would have
-// recorded it: AttributionCheckChanged. Anything else is AttributionIntroduced. Findings match on
-// rule, file, symbol and message, never on the line, and each finding explains at most one
-// violation.
-func (r *RatchetResult) Attribute(b *Baseline, current, atCommit []Infraction, commit string) {
+// at any compared commit sits in code that has not changed since, so a recorder that had the
+// check would have recorded it: AttributionCheckChanged. Anything else is AttributionIntroduced.
+// Findings match on rule, file, symbol and message, never on the line, and each finding explains
+// at most one violation; a finding at several commits counts once, as often as the commit
+// holding it most often reports it. Without a compared commit nothing is attributed beyond the
+// moved violations.
+func (r *RatchetResult) Attribute(b *Baseline, current []Infraction, compared []CommitFindings) {
 	if r == nil || b == nil {
 		return
 	}
-	r.attribute(b, current, countFindings(atCommit))
-	r.AttributionCommit = commit
+	r.attribute(b, current, unionFindings(compared))
+	r.AttributionCommits = make([]string, 0, len(compared))
+	for i := 0; i < len(compared); i++ {
+		r.AttributionCommits = append(r.AttributionCommits, compared[i].Commit)
+	}
 	r.AttributionNote = ""
+}
+
+// unionFindings counts the findings reported at any compared commit by their line-independent
+// identity, each as often as the commit holding it most often reports it. No compared commit is
+// nil: nothing was compared.
+func unionFindings(compared []CommitFindings) map[string]int {
+	if len(compared) == 0 {
+		return nil
+	}
+	union := make(map[string]int)
+	for i := 0; i < len(compared); i++ {
+		for key, n := range countFindings(compared[i].Findings) {
+			union[key] = max(union[key], n)
+		}
+	}
+	return union
 }
 
 // AttributeUntraced records note, why no commit could be compared, and still tags the new
@@ -264,7 +296,7 @@ func (r *RatchetResult) AttributeUntraced(b *Baseline, current []Infraction, not
 	if r == nil {
 		return
 	}
-	r.AttributionCommit = ""
+	r.AttributionCommits = nil
 	r.AttributionNote = note
 	if b == nil {
 		return

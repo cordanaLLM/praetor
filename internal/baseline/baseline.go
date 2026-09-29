@@ -70,8 +70,9 @@ type RatchetResult struct {
 	// RecordedLine holds, at the index of each AttributionMoved entry, the line the baseline
 	// records that finding at; every other index is zero.
 	RecordedLine []int `json:",omitempty"`
-	// AttributionCommit is the commit Attribute compared the new violations against.
-	AttributionCommit string `json:",omitempty"`
+	// AttributionCommits are the commits Attribute compared the new violations against: the one
+	// the baseline was recorded at and the one that last committed the baseline file, each once.
+	AttributionCommits []string `json:",omitempty"`
 	// AttributionNote says why an attribution a caller attempted could not compare a commit
 	// (AttributeUntraced).
 	AttributionNote string `json:",omitempty"`

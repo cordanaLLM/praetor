@@ -124,7 +124,7 @@ func verifyBaseline(path string, b *baseline.Baseline, all bool) error {
 	}
 	ratchet := baseline.EvaluateRatchet(b, current, nil)
 	if !ratchet.Passed {
-		return fmt.Errorf("[FAIL] %s: %s", path, describeRejection(ctx, root, scanOpts, b, current, ratchet, all))
+		return fmt.Errorf("[FAIL] %s: %s", path, describeRejection(ctx, root, path, scanOpts, b, current, ratchet, all))
 	}
 	fmt.Printf("[PASS] HISS-13 debt ratchet: %d active infractions within the %d recorded in %s; the file was not rewritten.\n",
 		ratchet.CurrentCount, b.TotalInfractions, path)

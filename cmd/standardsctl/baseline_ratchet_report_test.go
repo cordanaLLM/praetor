@@ -112,6 +112,29 @@ func TestBaselineVerify_Positive_UnchangedCodeBlamesTheCheck(t *testing.T) {
 	mustErrContain(t, err, "(check added or changed since the baseline)")
 }
 
+// Positive (#599): the usual flow records the baseline on a work tree whose code is not
+// committed yet, then commits code and baseline together, so commit_sha lacks that code. The
+// commit that committed the baseline holds it, and a check added since reports it as a changed
+// check, never as new.
+func TestBaselineVerify_Positive_RecordThenCommitIsNotNew(t *testing.T) {
+	f := newAuditFixture(t)
+	head := f.fixtureHead(t)
+	f.addViolation(t)
+	// An engine without the check recorded nothing in the work tree, with HEAD at head.
+	f.writeBaselineAt(t, head, nil)
+	gitCommitAll(t, f.dir, f.gitEnv, "legacy code and baseline")
+
+	_, err := runBaselineCmd(t, f, "--verify")
+	mustErrContain(t, err, "[HISS-07] legacy.go:4")
+	mustErrContain(t, err, "(check added or changed since the baseline)")
+	mustErrContain(t, err, "sit in code the current checks flag at "+head[:12]+" or "+f.fixtureHead(t)[:12])
+	for _, wrong := range []string{"(new)", "violations introduced", "not traced"} {
+		if strings.Contains(err.Error(), wrong) {
+			t.Errorf("code committed with the baseline is described with %q:\n%v", wrong, err)
+		}
+	}
+}
+
 // Negative (#599): a finding the baseline's commit does not hold is introduced, beside one the
 // commit held; the ratchet still fails.
 func TestBaselineVerify_Negative_ChangedCodeIsIntroduced(t *testing.T) {

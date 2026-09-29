@@ -27,13 +27,13 @@ func fingerprintViolations(violations []hiss.InvariantViolation) []baseline.Infr
 }
 
 // describeRejection renders a failed ratchet for `praetorctl audit` and `praetorctl baseline
-// --verify`: it first attributes each unbaselined finding against the commit the baseline was
-// recorded at (hiss.AttributeRatchet, #599), under the scan policy that produced current, then
-// lists every violation when all is set (--all-violations) and the bounded Summary otherwise
-// (#598).
-func describeRejection(ctx context.Context, root string, scanOpts hiss.ScanOptions, base *baseline.Baseline,
+// --verify`: it first attributes each unbaselined finding against the baseline's commits, the one
+// it was recorded at and the one that last committed baselinePath (hiss.AttributeRatchet, #599),
+// under the scan policy that produced current, then lists every violation when all is set
+// (--all-violations) and the bounded Summary otherwise (#598).
+func describeRejection(ctx context.Context, root, baselinePath string, scanOpts hiss.ScanOptions, base *baseline.Baseline,
 	current []baseline.Infraction, ratchet *baseline.RatchetResult, all bool) string {
-	hiss.AttributeRatchet(ctx, root, scanOpts, base, current, ratchet)
+	hiss.AttributeRatchet(ctx, root, baselinePath, scanOpts, base, current, ratchet)
 	if all {
 		return ratchet.FullSummary()
 	}
