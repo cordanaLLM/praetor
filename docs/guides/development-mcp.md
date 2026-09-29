@@ -376,7 +376,10 @@ the diff. Both print `adopt.FilePreview.Text` (`internal/adopt/preview.go`;
 `praetorctl bump audit` prints, rendered by the same
 `bump.FormatActionsInventory`, and counts it in its summary line
 (`TestFormatVersionAuditListsActions` in
-`cmd/standards-mcp/report_renderers_test.go`). The audit queries upstream
+`cmd/standards-mcp/report_renderers_test.go`). The summary line ends with
+`passed:`, and a report that failed, one holding any deprecation, comes back as
+an error result, the verdict on which `bump audit` exits non-zero
+(`TestVersionAuditResultFollowsPassed`). The audit queries upstream
 registries, so exercise it through a real call only where network access is
 intended.
 

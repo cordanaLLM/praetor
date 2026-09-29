@@ -59,6 +59,15 @@ answer that says the forge cannot be asked stops the remaining questions, and on
 asks at most 300. Tests: `internal/bump/scan_actions_verify_test.go`,
 `internal/forge/commit_lookup_test.go`.
 
+Every row other than `[UP-TO-DATE]` (`[DRIFT]`, `[DEPRECATED]`, `[BAD-PIN]`,
+`[UNVERSIONED]` and `[UNVERIFIED]`) lowers the summary's `Up To Date` count and the
+modernization score by one component; a deprecated or bad pin also carries a deprecation
+and counts once (`internal/bump/audit_actions_test.go`). Drift, unversioned and unverified
+rows alone leave the report passing. Any deprecation fails it, a bad pin, a missing probed
+tool or an unexamined manifest included, and `bump audit` then exits non-zero after
+printing the report (`TestRunBumpAuditExitsNonZeroOnFailedReport` in
+`cmd/standardsctl/bump_audit_verdict_test.go`).
+
 | Tool | Action pin | Installs | Why the pin reads the way it does |
 | :--- | :--- | :--- | :--- |
 | GoReleaser | `goreleaser/goreleaser-action@v7` | GoReleaser `~> v2`, from the step's `version` input | v7 moves the action runtime to node24 and adds only the optional `version-file` input, so the step's inputs are unchanged |

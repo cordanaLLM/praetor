@@ -76,3 +76,21 @@ func TestFormatVersionAuditListsActions(t *testing.T) {
 		t.Fatalf("empty audit:\n%s", got)
 	}
 }
+
+// #613: standards_version_audit states the verdict `bump audit` exits on, and a failed
+// report is an error result. Drift alone lowers the count but does not fail the report.
+func TestVersionAuditResultFollowsPassed(t *testing.T) {
+	passed := versionAuditResult("repo", &bump.VersionAuditReport{TotalScanned: 1, UpToDate: 1, ModernizationScore: 100, Passed: true})
+	if passed.IsError || !strings.Contains(passed.Content[0].Text, "current: 1; actions: 0; deprecations: 0; passed: true.") {
+		t.Fatalf("passing audit: error=%v\n%s", passed.IsError, passed.Content[0].Text)
+	}
+	drift := versionAuditResult("repo", &bump.VersionAuditReport{TotalScanned: 2, UpToDate: 1, ModernizationScore: 50, Passed: true})
+	if drift.IsError || !strings.Contains(drift.Content[0].Text, "current: 1;") {
+		t.Fatalf("drift-only audit: error=%v\n%s", drift.IsError, drift.Content[0].Text)
+	}
+	failed := versionAuditResult("repo", &bump.VersionAuditReport{TotalScanned: 1, ModernizationScore: 0,
+		Deprecations: []bump.DeprecationWarning{{Component: "actions/upload-artifact@v4", Kind: "runner-runtime-deprecated"}}})
+	if !failed.IsError || !strings.Contains(failed.Content[0].Text, "deprecations: 1; passed: false.") {
+		t.Fatalf("failed audit: error=%v\n%s", failed.IsError, failed.Content[0].Text)
+	}
+}
