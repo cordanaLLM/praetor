@@ -359,7 +359,7 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
   the block, and an edited managed attribute block at the end of `.gitattributes`; without
   `--force` either edited block fails the run, and a disable of `docs:seo-portal` refuses to
   remove it. On every run, `--force` or not, it covers a vendor context file such as
-  `CLAUDE.md` and a persona copy such as `.claude/agents/repo-auditor.md` that holds a hand
+  `CLAUDE.md` and a persona copy such as `.claude/agents/praetor-auditor.md` that holds a hand
   edit (`recordProjections` in `internal/adopt/vendor_targets.go`,
   `internal/adopt/persona_copies.go`). A file that already holds its bytes is verified. Earlier
   Praetor texts are refreshed, not replaced: a vendor file that is the projection of
