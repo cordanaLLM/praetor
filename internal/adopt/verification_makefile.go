@@ -331,9 +331,19 @@ func legacyVerificationMakefile(test, build string) string {
 		"audit:\n\t@standardsctl audit\n\ntest:\n\t@" + test + "\n\nbuild:\n\t@" + build + "\n"
 }
 
+// preserveCustomVerification keeps a verify-all adoption did not write as the project's own
+// contract. One that still holds the failing recipe adoption writes for an unavailable plan is
+// not a contract: it is the placeholder an earlier adoption left, rendered for another plan or
+// appended to an existing Makefile, so the plan stays unavailable and says so, rather than
+// reporting a preserved verify-all that can only exit 1 (#594).
 func preserveCustomVerification(plan *VerificationPlan, data []byte) {
 	text := withoutDocumentationMakefileBlock(string(data))
 	if !mayDefineVerificationTarget(text) || isReplaceableVerificationMakefile(text, plan) || text == buildMakefile(plan) {
+		return
+	}
+	if normalized, _ := util.NormalizeLineEndings(text); strings.Contains(normalized, unavailableVerificationRecipe) {
+		plan.Status = verificationUnavailable
+		plan.unavailable("The Makefile still holds the failing placeholder recipe adoption writes; replace it with the project's build and test commands.")
 		return
 	}
 	plan.Status = verificationPreserved
@@ -544,8 +554,9 @@ func appendVerificationTargets(existing string, plan *VerificationPlan) (string,
 	result.WriteString(normalized)
 	result.WriteString("\n# Praetor declared verification; existing project recipes remain unchanged.\n" +
 		util.MakefileCLIVariable + ".PHONY: verify-all\nverify-all:\n\t@$(PRAETORCTL) compile-context --verify\n\t@$(PRAETORCTL) caveman check --configured-sources\n\t@$(PRAETORCTL) audit\n")
-	result.WriteString(verificationRecipe(plan, plan.Build))
-	result.WriteString(verificationRecipe(plan, plan.Test))
+	// One recipe for the build and test commands together: rendered once for each, an
+	// unavailable plan wrote its failing pair twice (#594).
+	result.WriteString(verificationRecipe(plan, plan.commands()))
 	for _, target := range []string{"compile-context", "audit"} {
 		if !hasVerificationTarget(normalized, target) {
 			result.WriteString("\n" + target + ":\n\t@$(PRAETORCTL) " + target + "\n")
