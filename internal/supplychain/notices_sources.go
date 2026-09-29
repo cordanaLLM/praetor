@@ -17,6 +17,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/gomanifest"
 	"github.com/cordanaLLM/praetor/internal/semver"
+	"github.com/cordanaLLM/praetor/internal/util"
 	figureassets "github.com/cordanaLLM/praetor/tools/figures"
 	markdownassets "github.com/cordanaLLM/praetor/tools/markdownlint"
 )
@@ -288,13 +289,12 @@ func finalBaseImage(dockerfile string) (noticeRow, bool, error) {
 			ref = firstNonFlag(fields[1:])
 		}
 	}
-	ref, _, _ = strings.Cut(ref, "@")
-	if ref == "" || ref == "scratch" {
+	name, tag, _ := util.SplitImageReference(ref)
+	if tag == "" && (name == "" || name == "scratch") {
 		return noticeRow{}, false, nil
 	}
-	name, tag := ref, "latest"
-	if colon := strings.LastIndex(ref, ":"); colon > strings.LastIndex(ref, "/") {
-		name, tag = ref[:colon], ref[colon+1:]
+	if tag == "" {
+		tag = "latest"
 	}
 	return noticeRow{name: name, version: tag}, true, nil
 }

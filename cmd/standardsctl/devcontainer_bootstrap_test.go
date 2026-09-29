@@ -162,3 +162,72 @@ func TestDevContainerCLIGenerationBoundaries(t *testing.T) {
 		t.Fatalf("invalid input wrote companions: %v", err)
 	}
 }
+
+// recordedBaseImage returns the base image the bootstrap specification at output records.
+func recordedBaseImage(t *testing.T, output string) string {
+	t.Helper()
+	dc, err := devcontainer.LoadDevContainer(t.Context(), output)
+	if err != nil || dc.Customizations == nil || dc.Customizations.Praetor == nil || dc.Customizations.Praetor.Bootstrap == nil {
+		t.Fatalf("no recorded bootstrap at %s: %v", output, err)
+	}
+	return dc.Customizations.Praetor.Bootstrap.BaseImage
+}
+
+// generateCLI runs devcontainer generate with base plus extra and returns its output.
+func generateCLI(t *testing.T, base []string, extra ...string) (string, error) {
+	t.Helper()
+	args := append(append([]string{}, base...), extra...)
+	return captureStdout(t, func() error { return runDevContainer(args) })
+}
+
+// TestDevContainerCLIForceKeepsRecordedBaseImage pins issue #536: a --force regeneration
+// from a new source keeps the adopter's recorded base image and reports it, whether it
+// names another repository or another tag of the reviewed default repository; an explicit
+// --base-image still replaces it, and a first generation takes the reviewed default.
+func TestDevContainerCLIForceKeepsRecordedBaseImage(t *testing.T) {
+	for name, adopterBase := range map[string]string{
+		"other repository":               "registry.example/team/dev-toolchains@sha256:" + strings.Repeat("c", 64),
+		"reviewed repository, other tag": "mcr.microsoft.com/devcontainers/base:debian-12@sha256:" + strings.Repeat("e", 64),
+	} {
+		t.Run(name, func(t *testing.T) { assertCLIForceKeepsRecordedBase(t, adopterBase) })
+	}
+}
+
+func assertCLIForceKeepsRecordedBase(t *testing.T, adopterBase string) {
+	t.Helper()
+	manifest, output := cliBootstrapPaths(t)
+	base := []string{"generate", "--config", manifest, "--output", output}
+	// Boundary: no recorded specification, so the reviewed default applies silently.
+	first, err := generateCLI(t, base, "--source-root", cliBootstrapSource(t))
+	if err != nil || strings.Contains(first, "RECORDED IMAGE") || recordedBaseImage(t, output) != devcontainer.DefaultBaseImage {
+		t.Fatalf("first generation: %v %q", err, first)
+	}
+	if _, err := generateCLI(t, base, "--force", "--source-root", cliBootstrapSource(t), "--base-image", adopterBase); err != nil {
+		t.Fatal(err)
+	}
+	// Positive: the vendored source moves on; --force without --base-image keeps the image.
+	moved := cliBootstrapSource(t)
+	writeFixtureFile(t, moved, "cmd/standardsctl/main.go", "package main\nfunc main() { println() }\n")
+	kept, err := generateCLI(t, base, "--force", "--source-root", moved)
+	if err != nil || recordedBaseImage(t, output) != adopterBase {
+		t.Fatalf("--force replaced the recorded base image: %v %q", err, kept)
+	}
+	if !strings.Contains(kept, "[RECORDED IMAGE KEPT] base image "+adopterBase+"; reviewed default "+devcontainer.DefaultBaseImage) {
+		t.Fatalf("kept image not reported: %q", kept)
+	}
+	dockerfile, err := os.ReadFile(filepath.Join(filepath.Dir(output), "Dockerfile.praetor"))
+	if err != nil || !strings.Contains(string(dockerfile), "\nFROM "+adopterBase+"\n") {
+		t.Fatalf("Dockerfile does not build on the recorded base: %v", err)
+	}
+	if err := runDevContainer([]string{"verify", "--config", manifest, "--output", output}); err != nil {
+		t.Fatal(err)
+	}
+	// Negative: an explicit --base-image overrides the recorded image and says so.
+	replaced, err := generateCLI(t, base, "--force", "--source-root", moved, "--base-image", devcontainer.DefaultBaseImage)
+	if err != nil || recordedBaseImage(t, output) != devcontainer.DefaultBaseImage {
+		t.Fatalf("explicit --base-image ignored: %v %q", err, replaced)
+	}
+	if !strings.Contains(replaced, "[RECORDED IMAGE REPLACED] base image "+adopterBase+" -> "+devcontainer.DefaultBaseImage+" (--base-image)") {
+		t.Fatalf("replacement not reported: %q", replaced)
+	}
+}

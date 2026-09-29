@@ -710,7 +710,7 @@ func reconcileDevContainer(ctx context.Context, s *adoptSession) error {
 		s.report.addWarning("Existing DevContainer preserved; bootstrap readiness requires separate verification.")
 		return nil
 	}
-	bundle, err := prepareAdoptDevContainer(ctx, s)
+	bundle, err := prepareAdoptDevContainer(ctx, s, full)
 	if err != nil {
 		return fmt.Errorf("prepare devcontainer bootstrap: %w", err)
 	}
