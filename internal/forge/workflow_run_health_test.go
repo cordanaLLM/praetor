@@ -135,7 +135,7 @@ func TestAuditWorkflowRunHealth_Boundary_DeclarationsCoverOnlyTheirState(t *test
 	_, text := auditRuns(t, root, reader, policy)
 	for _, want := range []string{
 		"[WARN] workflow_runs.expected names gone.yml, which is not a workflow under .github/workflows",
-		"[INFO] Workflow build.yml: failing as declared (compile step not implemented): failing on main, failed runs in a row: at least 2",
+		"[INFO] Workflow build.yml: failing as declared (compile step not implemented): failing on main, failed runs in a row: 2 (latest: run #2",
 		"[WARN] Workflow release.yml: failing on main",
 		"[INFO] Workflow fixed.yml: declared failing, but latest run on main succeeded",
 		"1 of 3 workflows failing or never run (release.yml)",
@@ -197,6 +197,32 @@ func TestAuditWorkflowRunHealth_Negative_RefusalsEndTheCheck(t *testing.T) {
 	}
 	if _, err := AuditWorkflowRunHealth(t.Context(), root, "", blind, nil); err == nil {
 		t.Fatal("an empty branch was accepted")
+	}
+}
+
+// Boundary (#612): a history shorter than the window is the workflow's whole completed history
+// on the branch, so an all-failure one is counted exactly, never "at least": the issue's three
+// failed scheduled runs read as 3, and a history one run short of the window reads as 19.
+func TestAuditWorkflowRunHealth_Boundary_ShortFailureHistoryIsExact(t *testing.T) {
+	short := make([]string, workflowRunWindow-1)
+	for i := range short {
+		short[i] = "schedule:failure"
+	}
+	root := runHealthRepo(t, map[string]string{"build-matrix.yml": "schedule", "nightly.yml": "schedule"})
+	reader := &stubActionsReader{histories: map[string]WorkflowRunHistory{
+		"build-matrix.yml": completedRuns("schedule:failure", "schedule:failure", "schedule:failure"),
+		"nightly.yml":      completedRuns(short...),
+	}}
+	report, text := auditRuns(t, root, reader, nil)
+	for i, want := range []int{3, workflowRunWindow - 1} {
+		finding := report.Findings[i]
+		if finding.Health != WorkflowFailing || finding.Streak != want || finding.StreakOpen {
+			t.Errorf("%s: health=%s streak=%d open=%v, want failing, %d, closed", finding.Workflow, finding.Health, finding.Streak, finding.StreakOpen, want)
+		}
+	}
+	if !strings.Contains(text, "[WARN] Workflow build-matrix.yml: failing on main, failed runs in a row: 3 (latest: run #3, schedule, failure,") ||
+		strings.Contains(text, "at least") {
+		t.Fatalf("short history report:\n%s", text)
 	}
 }
 

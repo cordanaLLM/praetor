@@ -440,30 +440,47 @@ func jobCheckContexts(id string, job workflowJob) ([]string, error) {
 	return []string{name}, nil
 }
 
-// eventTrigger reports whether an "on" node declares the named trigger, and returns that
-// trigger's own value node when the declaration is a mapping entry that has one. A trigger
-// declared as a scalar or inside a sequence carries no value node.
-func eventTrigger(on *yaml.Node, event string) (*yaml.Node, bool) {
+// workflowTrigger is one event an "on" node names, with the event's own value node when the
+// declaration is a mapping entry; a trigger declared as a scalar or inside a sequence carries
+// none.
+type workflowTrigger struct {
+	name  string
+	value *yaml.Node
+}
+
+// workflowTriggers lists the events an "on" node names, in file order: the scalar, the sequence
+// entries, or the mapping keys with their values. It is the one walk of the three shapes an
+// "on" key takes, bounded at maxJobsPerFile entries (HISS-02); eventTrigger and triggerNames
+// read its result.
+func workflowTriggers(on *yaml.Node) []workflowTrigger {
+	var triggers []workflowTrigger
 	switch on.Kind {
 	case yaml.ScalarNode:
-		return nil, on.Value == event
+		if on.Value != "" {
+			triggers = append(triggers, workflowTrigger{name: on.Value})
+		}
 	case yaml.SequenceNode:
 		for i := 0; i < len(on.Content) && i < maxJobsPerFile; i++ {
-			if on.Content[i].Value == event {
-				return nil, true
-			}
+			triggers = append(triggers, workflowTrigger{name: on.Content[i].Value})
 		}
-		return nil, false
 	case yaml.MappingNode:
 		for i := 0; i+1 < len(on.Content) && i < 2*maxJobsPerFile; i += 2 {
-			if on.Content[i].Value == event {
-				return on.Content[i+1], true
-			}
+			triggers = append(triggers, workflowTrigger{name: on.Content[i].Value, value: on.Content[i+1]})
 		}
-		return nil, false
-	default:
-		return nil, false
 	}
+	return triggers
+}
+
+// eventTrigger reports whether an "on" node declares the named trigger, and returns that
+// trigger's own value node when the declaration is a mapping entry that has one.
+func eventTrigger(on *yaml.Node, event string) (*yaml.Node, bool) {
+	triggers := workflowTriggers(on)
+	for i := 0; i < len(triggers) && i < maxJobsPerFile; i++ {
+		if triggers[i].name == event {
+			return triggers[i].value, true
+		}
+	}
+	return nil, false
 }
 
 // pullRequestTriggers lists the contributor-triggered pull request events this workflow

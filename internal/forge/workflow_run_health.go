@@ -51,8 +51,10 @@ type WorkflowRunFinding struct {
 	Workflow string
 	Triggers []string
 	Health   WorkflowHealth
-	// Streak counts the failed runs in a row, newest first. StreakOpen says no successful
-	// run ended the streak inside the window, so it may be longer.
+	// Streak counts the failed runs in a row, newest first. StreakOpen says the forge listed a
+	// full window of runs and no successful run ended the streak inside it, so it may be
+	// longer; a listing shorter than the window holds every completed run, so its streak is
+	// exact.
 	Streak     int
 	StreakOpen bool
 	// Latest is the newest failed run of a failing workflow, the newest successful run of a
@@ -164,23 +166,12 @@ func checkWorkflowRuns(ctx context.Context, file workflowFile, branch string, re
 	return finding, nil
 }
 
-// triggerNames lists the events an `on:` node names, in file order: the scalar, the sequence
-// entries, or the mapping keys.
+// triggerNames lists the events an `on:` node names, in file order (workflowTriggers).
 func triggerNames(on *yaml.Node) []string {
+	triggers := workflowTriggers(on)
 	var names []string
-	switch on.Kind {
-	case yaml.ScalarNode:
-		if on.Value != "" {
-			names = append(names, on.Value)
-		}
-	case yaml.SequenceNode:
-		for i := 0; i < len(on.Content) && i < maxJobsPerFile; i++ {
-			names = append(names, on.Content[i].Value)
-		}
-	case yaml.MappingNode:
-		for i := 0; i+1 < len(on.Content) && i < 2*maxJobsPerFile; i += 2 {
-			names = append(names, on.Content[i].Value)
-		}
+	for i := 0; i < len(triggers) && i < maxJobsPerFile; i++ {
+		names = append(names, triggers[i].name)
 	}
 	return names
 }
@@ -202,7 +193,9 @@ func classifyWorkflowRuns(finding *WorkflowRunFinding, history WorkflowRunHistor
 // classifyCompletedRuns walks the completed runs newest first. A pull request's run is skipped:
 // its head branch is the contributor's, which may share the default branch's name. A cancelled,
 // skipped or neutral run neither extends nor ends a streak. The first successful run ends the
-// walk: healthy when nothing failed before it, else failing with the streak counted so far.
+// walk: healthy when nothing failed before it, else failing with the streak counted so far. A
+// streak no success ended is open only when runs fill the window: a shorter listing is the
+// workflow's whole completed history on the branch.
 func classifyCompletedRuns(finding *WorkflowRunFinding, runs []WorkflowRunRecord) {
 	finding.Health, finding.Latest = WorkflowUndecided, &runs[0]
 	for i := 0; i < len(runs) && i < workflowRunWindow; i++ {
@@ -222,7 +215,7 @@ func classifyCompletedRuns(finding *WorkflowRunFinding, runs []WorkflowRunRecord
 			finding.Streak++
 		}
 	}
-	finding.StreakOpen = finding.Streak > 0
+	finding.StreakOpen = finding.Streak > 0 && len(runs) >= workflowRunWindow
 }
 
 // isPullRequestRun reports a run a pull request started.

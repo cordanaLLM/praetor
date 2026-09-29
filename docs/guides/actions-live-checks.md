@@ -106,7 +106,7 @@ or neutral run neither extends nor ends a failure streak.
 | Finding | Line |
 | :--- | :--- |
 | Latest decisive run succeeded | Listed in the summary only. |
-| Latest decisive run failed | `[WARN]` with the number of failed runs in a row and the latest failed run; `at least 20` when no success ends the streak inside the window. |
+| Latest decisive run failed | `[WARN]` with the number of failed runs in a row and the latest failed run; `at least 20` when the forge lists a full window of 20 and no success ends the streak inside it. A shorter history is the whole one, so its streak is exact (`TestAuditWorkflowRunHealth_Boundary_ShortFailureHistoryIsExact`). |
 | No run on any branch | `[WARN]` naming the triggers from the workflow's `on:` key. |
 | No completed run on the default branch, runs elsewhere | `[INFO]` with the newest run, such as a tag-triggered release. |
 | Only cancelled, skipped or neutral runs in the window | `[INFO]` with the newest completed run. |
