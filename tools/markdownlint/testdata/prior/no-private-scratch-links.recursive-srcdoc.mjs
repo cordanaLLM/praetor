@@ -393,113 +393,92 @@ function consumeCSSURL(value, position, state) {
 }
 
 function cssDestinations(value, line, state, allowImport = false) {
-  const scan = { value, line, state, allowImport, found: [], imageSetDepths: new Set(), depth: 0 };
+  const found = [];
+  const imageSetDepths = new Set();
   let position = 0;
+  let depth = 0;
   while (position < value.length) {
-    position = cssStep(scan, position);
-  }
-  return scan.found;
-}
-
-// cssStep reads the CSS token at position for cssDestinations and returns the position after it.
-function cssStep(scan, position) {
-  const { value, state } = scan;
-  const character = value[position];
-  if (isHTMLSpace(character)) {
-    return position + 1;
-  }
-  if (character === "/" && value[position + 1] === "*") {
+    const character = value[position];
+    if (isHTMLSpace(character)) {
+      position += 1;
+      continue;
+    }
+    if (character === "/" && value[position + 1] === "*") {
+      spendCSSToken(state);
+      position = consumeCSSComment(value, position);
+      continue;
+    }
+    if (character === "\"" || character === "'") {
+      spendCSSToken(state);
+      const quoted = consumeCSSString(value, position);
+      if (quoted.valid && quoted.decoded !== "" && imageSetDepths.has(depth)) {
+        found.push({ destination: quoted.decoded, line, context: "html" });
+      }
+      position = quoted.position;
+      continue;
+    }
+    if (character === "@" && allowImport && depth === 0 &&
+      (isCSSName(value[position + 1]) || value[position + 1] === "\\")) {
+      const name = consumeCSSName(value, position + 1);
+      spendCSSToken(state);
+      position = skipCSSSpaceAndComments(value, name.position, state);
+      if (name.decoded.toLowerCase() === "import" &&
+        (value[position] === "\"" || value[position] === "'")) {
+        spendCSSToken(state);
+        const imported = consumeCSSString(value, position);
+        if (imported.valid && imported.decoded !== "") {
+          found.push({ destination: imported.decoded, line, context: "html" });
+        }
+        position = imported.position;
+      }
+      continue;
+    }
+    if (isCSSName(character) || character === "\\") {
+      const name = consumeCSSName(value, position);
+      let afterName = name.position;
+      while (value[afterName] === "/" && value[afterName + 1] === "*") {
+        spendCSSToken(state);
+        afterName = consumeCSSComment(value, afterName);
+      }
+      spendCSSToken(state);
+      if (value[afterName] === "(") {
+        if (depth + 1 > state.bounds.maxCSSDepth) {
+          throw new Error(`embedded CSS depth exceeds ${state.bounds.maxCSSDepth}`);
+        }
+        const functionName = name.decoded.toLowerCase();
+        if (functionName === "url") {
+          const parsed = consumeCSSURL(value, afterName + 1, state);
+          if (parsed.destination !== null && parsed.destination !== "") {
+            found.push({ destination: parsed.destination, line, context: "html" });
+          }
+          position = parsed.position;
+          continue;
+        }
+        depth += 1;
+        if (functionName === "image-set" || functionName === "-webkit-image-set") {
+          imageSetDepths.add(depth);
+        }
+        position = afterName + 1;
+        continue;
+      }
+      position = afterName;
+      continue;
+    }
     spendCSSToken(state);
-    return consumeCSSComment(value, position);
-  }
-  if (character === "\"" || character === "'") {
-    return cssQuotedDestination(scan, position);
-  }
-  if (character === "@" && scan.allowImport && scan.depth === 0 &&
-    (isCSSName(value[position + 1]) || value[position + 1] === "\\")) {
-    return cssImportDestination(scan, position);
-  }
-  if (isCSSName(character) || character === "\\") {
-    return cssNamedToken(scan, position);
-  }
-  spendCSSToken(state);
-  cssBracket(scan, character);
-  return position + 1;
-}
-
-// cssQuotedDestination reads a quoted string, a destination only inside image-set().
-function cssQuotedDestination(scan, position) {
-  spendCSSToken(scan.state);
-  const quoted = consumeCSSString(scan.value, position);
-  if (quoted.valid && quoted.decoded !== "" && scan.imageSetDepths.has(scan.depth)) {
-    scan.found.push({ destination: quoted.decoded, line: scan.line, context: "html" });
-  }
-  return quoted.position;
-}
-
-// cssImportDestination reads an at-rule at the top level; the string of an @import is a
-// destination.
-function cssImportDestination(scan, position) {
-  const { value, state } = scan;
-  const name = consumeCSSName(value, position + 1);
-  spendCSSToken(state);
-  let next = skipCSSSpaceAndComments(value, name.position, state);
-  if (name.decoded.toLowerCase() === "import" && (value[next] === "\"" || value[next] === "'")) {
-    spendCSSToken(state);
-    const imported = consumeCSSString(value, next);
-    if (imported.valid && imported.decoded !== "") {
-      scan.found.push({ destination: imported.decoded, line: scan.line, context: "html" });
+    if (character === "(" || character === "[" || character === "{") {
+      depth += 1;
+      if (depth > state.bounds.maxCSSDepth) {
+        throw new Error(`embedded CSS depth exceeds ${state.bounds.maxCSSDepth}`);
+      }
+    } else if ((character === ")" || character === "]" || character === "}") && depth > 0) {
+      if (character === ")") {
+        imageSetDepths.delete(depth);
+      }
+      depth -= 1;
     }
-    next = imported.position;
+    position += 1;
   }
-  return next;
-}
-
-// cssNamedToken reads an identifier and, when a parenthesis follows it, the function it opens:
-// url() yields its destination, image-set() marks the depth whose strings are destinations.
-function cssNamedToken(scan, position) {
-  const { value, state } = scan;
-  const name = consumeCSSName(value, position);
-  let afterName = name.position;
-  while (value[afterName] === "/" && value[afterName + 1] === "*") {
-    spendCSSToken(state);
-    afterName = consumeCSSComment(value, afterName);
-  }
-  spendCSSToken(state);
-  if (value[afterName] !== "(") {
-    return afterName;
-  }
-  if (scan.depth + 1 > state.bounds.maxCSSDepth) {
-    throw new Error(`embedded CSS depth exceeds ${state.bounds.maxCSSDepth}`);
-  }
-  const functionName = name.decoded.toLowerCase();
-  if (functionName === "url") {
-    const parsed = consumeCSSURL(value, afterName + 1, state);
-    if (parsed.destination !== null && parsed.destination !== "") {
-      scan.found.push({ destination: parsed.destination, line: scan.line, context: "html" });
-    }
-    return parsed.position;
-  }
-  scan.depth += 1;
-  if (functionName === "image-set" || functionName === "-webkit-image-set") {
-    scan.imageSetDepths.add(scan.depth);
-  }
-  return afterName + 1;
-}
-
-// cssBracket follows the nesting depth through an opening or closing bracket.
-function cssBracket(scan, character) {
-  if (character === "(" || character === "[" || character === "{") {
-    scan.depth += 1;
-    if (scan.depth > scan.state.bounds.maxCSSDepth) {
-      throw new Error(`embedded CSS depth exceeds ${scan.state.bounds.maxCSSDepth}`);
-    }
-  } else if ((character === ")" || character === "]" || character === "}") && scan.depth > 0) {
-    if (character === ")") {
-      scan.imageSetDepths.delete(scan.depth);
-    }
-    scan.depth -= 1;
-  }
+  return found;
 }
 
 function srcsetDestinations(value) {
@@ -724,60 +703,37 @@ function collectStyleElement(node, startLine, state, found, limit) {
   }
 }
 
-// collectHTML reads a fragment and every srcdoc document nested in it. A nested document is a
-// frame on an explicit stack rather than a recursive call (HISS-01), and it is read before the
-// rest of the element that holds it, the order a recursive walk would take.
 function collectHTML(fragment, startLine, depth, state, found, limit, mdxJSX) {
-  const frames = [htmlFrame(fragment, startLine, depth, state)];
-  while (frames.length > 0) {
-    const frame = frames[frames.length - 1];
-    if (frame.pending.length === 0) {
-      frames.pop();
-      continue;
-    }
-    const nested = collectHTMLNode(frame, state, found, limit, mdxJSX);
-    if (nested !== null) {
-      frames.push(nested);
-    }
-  }
-}
-
-// htmlFrame parses one fragment at a nesting depth the bounds allow.
-function htmlFrame(fragment, startLine, depth, state) {
   if (depth > state.bounds.maxHTMLDepth) {
     throw new Error(`embedded HTML depth exceeds ${state.bounds.maxHTMLDepth}`);
   }
   const parsed = parseFragment(fragment, { sourceCodeLocationInfo: true, scriptingEnabled: false });
-  return { pending: [...(parsed.childNodes ?? [])], startLine, depth };
-}
-
-// collectHTMLNode reads the next node of a frame, queues its children and returns the frame of
-// the srcdoc document it carries, or null.
-function collectHTMLNode(frame, state, found, limit, mdxJSX) {
-  if (state.nodes >= state.bounds.maxHTMLNodes) {
-    throw new Error(`embedded HTML exceeds ${state.bounds.maxHTMLNodes} nodes`);
+  const pending = [...(parsed.childNodes ?? [])];
+  while (pending.length > 0) {
+    if (state.nodes >= state.bounds.maxHTMLNodes) {
+      throw new Error(`embedded HTML exceeds ${state.bounds.maxHTMLNodes} nodes`);
+    }
+    const node = pending.pop();
+    state.nodes += 1;
+    collectHTMLAttributes(node, startLine, state, found, limit, mdxJSX);
+    collectMetaRefresh(node, startLine, found, limit);
+    collectStyleElement(node, startLine, state, found, limit);
+    const srcdoc = nodeAttribute(node, "srcdoc");
+    if (srcdoc !== null) {
+      const locations = node?.sourceCodeLocation?.attrs ?? {};
+      const location = locations[srcdoc.name] ?? locations.srcdoc;
+      collectHTML(srcdoc.value, startLine + (location?.startLine ?? 1) - 1,
+        depth + 1, state, found, limit, mdxJSX);
+    }
+    const children = node?.childNodes ?? [];
+    for (let index = 0; index < children.length; index += 1) {
+      pending.push(children[index]);
+    }
+    const contentChildren = node?.content?.childNodes ?? [];
+    for (let index = 0; index < contentChildren.length; index += 1) {
+      pending.push(contentChildren[index]);
+    }
   }
-  const node = frame.pending.pop();
-  state.nodes += 1;
-  collectHTMLAttributes(node, frame.startLine, state, found, limit, mdxJSX);
-  collectMetaRefresh(node, frame.startLine, found, limit);
-  collectStyleElement(node, frame.startLine, state, found, limit);
-  let nested = null;
-  const srcdoc = nodeAttribute(node, "srcdoc");
-  if (srcdoc !== null) {
-    const locations = node?.sourceCodeLocation?.attrs ?? {};
-    const location = locations[srcdoc.name] ?? locations.srcdoc;
-    nested = htmlFrame(srcdoc.value, frame.startLine + (location?.startLine ?? 1) - 1, frame.depth + 1, state);
-  }
-  const children = node?.childNodes ?? [];
-  for (let index = 0; index < children.length; index += 1) {
-    frame.pending.push(children[index]);
-  }
-  const contentChildren = node?.content?.childNodes ?? [];
-  for (let index = 0; index < contentChildren.length; index += 1) {
-    frame.pending.push(contentChildren[index]);
-  }
-  return nested;
 }
 
 function htmlDestinations(fragment, startLine, limit = MAX_EVENTS, options = {}, sharedState = null) {
@@ -1095,73 +1051,56 @@ export function findPrivateScratchLinks(source, markdown, limit = MAX_FINDINGS +
   if (events.length > eventLimit) {
     throw new Error(`${source}: Markdown parse exceeds ${eventLimit} events`);
   }
-  const scan = {
-    source,
-    markdown,
-    destinations: snippetDestinations(markdown, MAX_EVENTS, eventLimit),
-    htmlState: createHTMLState(),
-    mdxPropertyExpressions: new Map(),
-  };
+  const destinations = snippetDestinations(markdown, MAX_EVENTS, eventLimit);
+  const htmlState = createHTMLState();
+  const mdxPropertyExpressions = new Map();
   for (let index = 0; index < events.length && index < eventLimit; index += 1) {
     const [phase, token] = events[index];
-    if (phase === "enter") {
-      collectTokenDestinations(scan, token);
+    if (phase !== "enter") {
+      continue;
+    }
+    if (DESTINATION_TYPES.has(token.type)) {
+      if (destinations.length >= MAX_EVENTS) {
+        throw new Error(`${source}: link destinations exceed ${MAX_EVENTS}`);
+      }
+      destinations.push({
+        destination: markdown.slice(token.start.offset, token.end.offset),
+        line: token.start.line,
+        context: "markdown",
+      });
+    } else if (HTML_TYPES.has(token.type)) {
+      const fragment = markdown.slice(token.start.offset, token.end.offset);
+      const embedded = htmlDestinations(fragment, token.start.line,
+        MAX_EVENTS - destinations.length, {}, htmlState);
+      for (let embeddedIndex = 0; embeddedIndex < embedded.length; embeddedIndex += 1) {
+        destinations.push(embedded[embeddedIndex]);
+      }
+    } else if (MDX_JSX_TAG_TYPES.has(token.type)) {
+      const fragment = markdown.slice(token.start.offset, token.end.offset);
+      const embedded = htmlDestinations(fragment, token.start.line,
+        MAX_EVENTS - destinations.length, { mdxJSX: true }, htmlState);
+      for (let embeddedIndex = 0; embeddedIndex < embedded.length; embeddedIndex += 1) {
+        destinations.push(embedded[embeddedIndex]);
+      }
+    } else if (MDX_JSX_ATTRIBUTE_TYPES.has(token.type)) {
+      collectMDXJSXAttribute(markdown, token, destinations, MAX_EVENTS, mdxPropertyExpressions);
+    } else if (MDX_JSX_SPREAD_TYPES.has(token.type)) {
+      throw new Error("unsupported JSX spread attribute may contain a URL");
+    } else if (token.estree !== undefined) {
+      const property = mdxPropertyExpressions.get(token.start.offset);
+      if (property !== undefined) {
+        collectMDXPropertyExpression(token, property, htmlState, destinations, MAX_EVENTS);
+        mdxPropertyExpressions.delete(token.start.offset);
+      }
+      collectMDXESTree(token, destinations, MAX_EVENTS);
+    } else if (token.type === "data") {
+      collectAttributeLists(markdown, token.start.offset, token.end.offset, token.start.line,
+        htmlState, destinations, MAX_EVENTS);
     }
   }
-  if (scan.mdxPropertyExpressions.size > 0) {
+  if (mdxPropertyExpressions.size > 0) {
     throw new Error("MDX property expression lacks a parsed syntax tree");
   }
-  return forbiddenFindings(source, scan.destinations, limit);
-}
-
-// collectTokenDestinations adds the destinations one entered Markdown token carries: a link
-// destination, embedded HTML or MDX JSX, an MDX expression, or an attribute list.
-function collectTokenDestinations(scan, token) {
-  const { markdown, destinations, htmlState, mdxPropertyExpressions } = scan;
-  if (DESTINATION_TYPES.has(token.type)) {
-    if (destinations.length >= MAX_EVENTS) {
-      throw new Error(`${scan.source}: link destinations exceed ${MAX_EVENTS}`);
-    }
-    destinations.push({
-      destination: markdown.slice(token.start.offset, token.end.offset),
-      line: token.start.line,
-      context: "markdown",
-    });
-  } else if (HTML_TYPES.has(token.type)) {
-    collectEmbeddedHTML(scan, token, {});
-  } else if (MDX_JSX_TAG_TYPES.has(token.type)) {
-    collectEmbeddedHTML(scan, token, { mdxJSX: true });
-  } else if (MDX_JSX_ATTRIBUTE_TYPES.has(token.type)) {
-    collectMDXJSXAttribute(markdown, token, destinations, MAX_EVENTS, mdxPropertyExpressions);
-  } else if (MDX_JSX_SPREAD_TYPES.has(token.type)) {
-    throw new Error("unsupported JSX spread attribute may contain a URL");
-  } else if (token.estree !== undefined) {
-    const property = mdxPropertyExpressions.get(token.start.offset);
-    if (property !== undefined) {
-      collectMDXPropertyExpression(token, property, htmlState, destinations, MAX_EVENTS);
-      mdxPropertyExpressions.delete(token.start.offset);
-    }
-    collectMDXESTree(token, destinations, MAX_EVENTS);
-  } else if (token.type === "data") {
-    collectAttributeLists(markdown, token.start.offset, token.end.offset, token.start.line,
-      htmlState, destinations, MAX_EVENTS);
-  }
-}
-
-// collectEmbeddedHTML adds the destinations of the HTML or MDX JSX fragment a token spans.
-function collectEmbeddedHTML(scan, token, options) {
-  const { markdown, destinations } = scan;
-  const fragment = markdown.slice(token.start.offset, token.end.offset);
-  const embedded = htmlDestinations(fragment, token.start.line,
-    MAX_EVENTS - destinations.length, options, scan.htmlState);
-  for (let embeddedIndex = 0; embeddedIndex < embedded.length; embeddedIndex += 1) {
-    destinations.push(embedded[embeddedIndex]);
-  }
-}
-
-// forbiddenFindings resolves every destination and returns those reaching a private scratch
-// root, stopping at limit.
-function forbiddenFindings(source, destinations, limit) {
   const findings = [];
   for (let index = 0; index < destinations.length && index < MAX_EVENTS; index += 1) {
     const destination = destinations[index];
@@ -1196,19 +1135,6 @@ function capFindings(findings, remaining) {
 }
 
 function selfTest() {
-  selfTestClean();
-  selfTestMDXClean();
-  const findings = selfTestBlocked();
-  selfTestStructural();
-  selfTestJSX();
-  selfTestBounds(findings);
-  selfTestSyntaxTreeBounds();
-  selfTestHTMLBounds();
-  selfTestInvocation();
-}
-
-// selfTestClean: public, literal, remote and look-alike destinations are not findings.
-function selfTestClean() {
   const clean = [
     "[guide](../guide.md?view=full#intro)",
     "Literal .workingdir/OPEN.md prose.",
@@ -1245,11 +1171,6 @@ function selfTestClean() {
     assert.deepEqual(findPrivateScratchLinks("docs/meta.md", malformedMetaRefresh[index]), [],
       malformedMetaRefresh[index]);
   }
-}
-
-// selfTestMDXClean: public MDX imports, exports and expressions are not findings; private ones
-// are, on the line that holds them.
-function selfTestMDXClean() {
   assert.deepEqual(findPrivateScratchLinks("docs/page.mdx",
     "<Card href=\"../README.md\">Public</Card>"), []);
   assert.deepEqual(findPrivateScratchLinks("docs/page.mdx",
@@ -1292,11 +1213,7 @@ function selfTestMDXClean() {
     "<Card title={import('../.workingdir2/Private.mdx')} />").length, 1);
   assert.throws(() => findPrivateScratchLinks("docs/page.mdx", "{import(modulePath)}"),
     /unsupported dynamic import target/u);
-}
 
-// selfTestBlocked: every spelling of a private scratch destination is a finding, and the
-// findings name every scratch root. It returns the findings for the bound checks.
-function selfTestBlocked() {
   const blocked = [
     "[direct](../.workingdir/OPEN.md)",
     "![image](../.workingdir2/image.png)",
@@ -1325,11 +1242,7 @@ function selfTestBlocked() {
   const findings = findPrivateScratchLinks("docs/guide.md", blocked);
   assert.equal(findings.length, 23, JSON.stringify(findings));
   assert.deepEqual(new Set(findings.map((finding) => finding.root)), SCRATCH_ROOTS);
-  return findings;
-}
 
-// selfTestStructural: a private destination hidden in Markdown structure is still one finding.
-function selfTestStructural() {
   const structuralBypasses = [
     "[tab](<fi&#x9;le:../.workingdir/OPEN.md>)",
     "[lf](<fi&#xA;le:../.workingdir/OPEN.md>)",
@@ -1377,11 +1290,7 @@ function selfTestStructural() {
     assert.equal(findPrivateScratchLinks("docs/structural.md", structuralBypasses[index]).length, 1,
       structuralBypasses[index]);
   }
-}
 
-// selfTestJSX: literal JSX expressions are read, an expression or spread that may hide a URL is
-// refused, and snippet blocks are read line by line.
-function selfTestJSX() {
   const jsxLiteralExpressions = [
     "<Card href={'../.workingdir/OPEN.md'} />",
     "<img src={\"../.workingdir2/x.png\"} />",
@@ -1410,11 +1319,8 @@ function selfTestJSX() {
     /unsupported JSX spread attribute/u);
   const blockSnippet = "--8<--\n.workingdir/OPEN.md\n../.workingdir2/STATE.md:1:3\n; .workingdir/skip.md\n--8<--";
   assert.equal(findPrivateScratchLinks("docs/snippets.md", blockSnippet).length, 2);
-}
 
-// selfTestBounds pins the file, parse, finding and srcset bounds at and one past each limit.
-function selfTestBounds(findings) {
-  const boundary =findPrivateScratchLinks("docs/deep/guide.md", "[private](../../.workingdir/STATE.md)");
+  const boundary = findPrivateScratchLinks("docs/deep/guide.md", "[private](../../.workingdir/STATE.md)");
   assert.equal(boundary.length, 1);
   assert.equal(boundary[0].resolved, ".workingdir/STATE.md");
   assert.doesNotThrow(() => validateFileList(new Array(MAX_FILES).fill("fixture.md")));
@@ -1442,11 +1348,7 @@ function selfTestBounds(findings) {
   assert.deepEqual(findPrivateScratchLinks("docs/srcset.md", `<img srcset=\"${exactSrcset}\">`), []);
   assert.throws(() => findPrivateScratchLinks("docs/srcset.md", `<source srcset=\"${excessSrcset}\">`),
     /srcset exceeds 4096 candidates/u);
-}
-
-// selfTestSyntaxTreeBounds pins the MDX syntax-tree node, depth and property bounds.
-function selfTestSyntaxTreeBounds() {
-  const estreeToken =(estree) => ({ estree, start: { line: 1 }, type: "fixture" });
+  const estreeToken = (estree) => ({ estree, start: { line: 1 }, type: "fixture" });
   const exactESTreeNodes = new Array(MAX_ESTREE_NODES - 1);
   for (let index = 0; index < exactESTreeNodes.length && index < MAX_ESTREE_NODES; index += 1) {
     exactESTreeNodes[index] = { type: "Identifier" };
@@ -1473,11 +1375,6 @@ function selfTestSyntaxTreeBounds() {
   exactESTreeProperties.overflow = null;
   assert.throws(() => collectMDXESTree(estreeToken(exactESTreeProperties), [], MAX_EVENTS),
     /MDX syntax-tree node exceeds 32 properties/u);
-}
-
-// selfTestHTMLBounds pins the embedded HTML destination, depth and node bounds and the CSS
-// token and depth bounds.
-function selfTestHTMLBounds() {
   assert.equal(htmlDestinations("<img src='one'><img src='two'>", 1, 2).length, 2);
   assert.throws(() => htmlDestinations("<img src='one'><img src='two'>", 1, 1),
     /embedded HTML destinations exceed 1/u);
@@ -1501,10 +1398,6 @@ function selfTestHTMLBounds() {
   assert.equal(htmlDestinations(nestedCSS, 1, MAX_EVENTS, { maxCSSDepth: 2 }).length, 1);
   assert.throws(() => htmlDestinations(nestedCSS, 1, MAX_EVENTS, { maxCSSDepth: 1 }),
     /embedded CSS depth exceeds 1/u);
-}
-
-// selfTestInvocation: the rule runs as a script only when invoked as this file.
-function selfTestInvocation() {
   const self = fileURLToPath(import.meta.url);
   assert.equal(invokedAsScript(self, self), true);
   assert.equal(invokedAsScript(path.dirname(self), self), false);
@@ -1566,7 +1459,6 @@ class ScanWorker {
   #bounds;
   #retired = false;
   #pending = null;
-  #stopFailure = Promise.resolve(null);
   #worker;
 
   constructor(root, bounds) {
@@ -1606,11 +1498,10 @@ class ScanWorker {
 
   // A worker past its deadline is still parsing, and its late reply would answer the next
   // request, so it is stopped and takes no further file.
-  // The stop is not awaited here, so a failure to stop is kept for close() rather than dropped.
   #expire(source) {
     this.#retired = true;
     this.#settle(new Error(`${source}: Markdown scan exceeds ${this.#bounds.deadlineMs} ms`));
-    this.#stopFailure = this.#worker.terminate().then(() => null, (error) => error);
+    this.#worker.terminate().catch(() => {});
   }
 
   // A late event for a request already settled (the exit after a memory failure or after the
@@ -1629,12 +1520,8 @@ class ScanWorker {
     }
   }
 
-  async close() {
-    const stopFailure = await this.#stopFailure;
-    await this.#worker.terminate();
-    if (stopFailure !== null) {
-      throw new Error(`scan worker failed to stop after its deadline: ${String(stopFailure)}`);
-    }
+  close() {
+    return this.#worker.terminate();
   }
 }
 

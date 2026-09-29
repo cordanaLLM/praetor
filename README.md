@@ -41,7 +41,7 @@ generated agent context against `AGENTS.md`.
 private scratch-link policy.
 
 **Debt Baseline**: `.standards-baseline.json` anchors the debt ratchet at
-8 recorded infractions; audit forbids growth.
+2 recorded infractions; audit forbids growth.
 
 [praetor-docs-badge]: https://github.com/cordanaLLM/praetor/actions/workflows/praetor-docs.yml/badge.svg
 [praetor-docs-runs]: https://github.com/cordanaLLM/praetor/actions/workflows/praetor-docs.yml

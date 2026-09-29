@@ -622,20 +622,6 @@ function filesystemSymlinkSkipDiagnostic(platform, code) {
 }
 
 function inventorySelfTest(temporary) {
-  const fixture = writeInventoryFixture(temporary);
-  const allFiles = inventory(fs.realpathSync(fixture));
-  assert.deepEqual(allFiles, ["AGENTS.md", "README.md", "docs/guide.md", "docs/page.mdx",
-    "notes.markdown", "templates/Card.mdx.tmpl", "templates/README.md.tmpl",
-    "tools/figures/third_party/interfig/VENDOR.md", "tools/figures/third_party/interfig/upstream/README.md",
-    "vendor/README.md"]);
-  symlinkInventorySelfTest(fixture);
-  scratchRuleSelfTest(fixture, temporary, allFiles);
-  styleSelectionSelfTest(fixture, temporary, allFiles);
-}
-
-// writeInventoryFixture builds the Git repository the inventory self-test reads: public,
-// generated, template, vendored and private Markdown, some tracked and some not.
-function writeInventoryFixture(temporary) {
   const fixture = path.join(temporary, "inventory-fixture");
   fs.mkdirSync(path.join(fixture, "docs"), { recursive: true });
   fs.mkdirSync(path.join(fixture, "templates"), { recursive: true });
@@ -661,12 +647,11 @@ function writeInventoryFixture(temporary) {
   command("git", ["add", "--", ".gitignore", "AGENTS.md", "README.md", "docs/guide.md",
     "tools/figures/third_party/interfig/VENDOR.md", "tools/figures/third_party/interfig/upstream/README.md",
     "vendor/README.md"], { cwd: fixture });
-  return fixture;
-}
-
-// symlinkInventorySelfTest refuses symbolic-link Markdown and tracked symlinks into a private
-// scratch root, and pins the tracked-inventory bounds.
-function symlinkInventorySelfTest(fixture) {
+  const allFiles = inventory(fs.realpathSync(fixture));
+  assert.deepEqual(allFiles, ["AGENTS.md", "README.md", "docs/guide.md", "docs/page.mdx",
+    "notes.markdown", "templates/Card.mdx.tmpl", "templates/README.md.tmpl",
+    "tools/figures/third_party/interfig/VENDOR.md", "tools/figures/third_party/interfig/upstream/README.md",
+    "vendor/README.md"]);
   for (const code of FILESYSTEM_SYMLINK_UNAVAILABLE) {
     assert.equal(filesystemSymlinkUnavailable({ code }), true);
   }
@@ -712,11 +697,6 @@ function symlinkInventorySelfTest(fixture) {
   assert.equal(privateScratchRoot("x".repeat(MAX_SYMLINK_TARGET_BYTES)), null);
   assert.throws(() => privateScratchRoot("x".repeat(MAX_SYMLINK_TARGET_BYTES + 1)),
     /unsafe or oversized target/u);
-}
-
-// scratchRuleSelfTest runs the scratch-link rule over the fixture, also through a symlinked
-// ancestor, for a private link in Markdown, in MDX and in a JSX attribute.
-function scratchRuleSelfTest(fixture, temporary, allFiles) {
   assert.equal(runScratchRule(fixture, temporary, allFiles, false, false), 1);
   // The same rule reached through a symlinked ancestor, as every macOS temp directory is
   // (/var -> /private/var). A junction needs no privilege on Windows; elsewhere the type is ignored.
@@ -744,11 +724,6 @@ function scratchRuleSelfTest(fixture, temporary, allFiles) {
   assert.equal(runScratchRule(fixture, temporary, allFiles, false, false), 1);
   fs.writeFileSync(path.join(fixture, "docs", "page.mdx"),
     "# MDX page\n\n[public](../README.md)\n\n<Card href=\"../README.md\">Public</Card>\n");
-}
-
-// styleSelectionSelfTest keeps generated and vendored upstream Markdown out of the style run,
-// fails malformed public Markdown, and pins the diagnostic output bounds.
-function styleSelectionSelfTest(fixture, temporary, allFiles) {
   const styleFiles = allFiles.filter(isStyleSelected);
   // The vendored upstream README is malformed on purpose and must stay out of the style run; the
   // praetor-owned VENDOR.md beside it is the boundary and stays in.

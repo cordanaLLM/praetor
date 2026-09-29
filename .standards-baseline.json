@@ -1,10 +1,10 @@
 {
   "version": 1,
-  "generated_at": "2026-09-29T01:52:27Z",
+  "generated_at": "2026-09-29T02:09:31Z",
   "repository": "cordanaLLM/praetor",
-  "commit_sha": "edbb973453170edc3fa13dd6be0dafb0f03e5295",
-  "total_infractions": 8,
-  "increase_rationale": "#589: the JavaScript, TypeScript and Svelte scanner measures praetor's own scripts for the first time; these 8 infractions predate it (tools/markdownlint, editors/vscode) and are recorded, not introduced",
+  "commit_sha": "f8c4c1cee15a95eb2675a303cf9f9ebd409e4b3e",
+  "total_infractions": 2,
+  "increase_rationale": "#589: the JavaScript, TypeScript and Svelte scanner measures praetor's own scripts for the first time; the 2 empty catch blocks in editors/vscode/src/runner.ts predate it and are recorded, not introduced",
   "infractions": [
     {
       "rule_id": "HISS-07",
@@ -19,53 +19,6 @@
       "line_number": 12,
       "message": "Empty catch block swallows the error; handle, rethrow or wrap it",
       "fingerprint": "editors/vscode/src/runner.ts:12:HISS-07"
-    },
-    {
-      "rule_id": "HISS-04",
-      "file_path": "tools/markdownlint/no-private-scratch-links.mjs",
-      "line_number": 395,
-      "symbol": "cssDestinations",
-      "message": "Function 'cssDestinations' (88 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "fingerprint": "tools/markdownlint/no-private-scratch-links.mjs:395:HISS-04"
-    },
-    {
-      "rule_id": "HISS-01",
-      "file_path": "tools/markdownlint/no-private-scratch-links.mjs",
-      "line_number": 725,
-      "symbol": "collectHTML",
-      "message": "Direct recursion in collectHTML; the call graph must form an acyclic DAG",
-      "fingerprint": "tools/markdownlint/no-private-scratch-links.mjs:725:HISS-01"
-    },
-    {
-      "rule_id": "HISS-04",
-      "file_path": "tools/markdownlint/no-private-scratch-links.mjs",
-      "line_number": 1044,
-      "symbol": "findPrivateScratchLinks",
-      "message": "Function 'findPrivateScratchLinks' (73 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "fingerprint": "tools/markdownlint/no-private-scratch-links.mjs:1044:HISS-04"
-    },
-    {
-      "rule_id": "HISS-04",
-      "file_path": "tools/markdownlint/no-private-scratch-links.mjs",
-      "line_number": 1137,
-      "symbol": "selfTest",
-      "message": "Function 'selfTest' (272 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "fingerprint": "tools/markdownlint/no-private-scratch-links.mjs:1137:HISS-04"
-    },
-    {
-      "rule_id": "HISS-07",
-      "file_path": "tools/markdownlint/no-private-scratch-links.mjs",
-      "line_number": 1504,
-      "message": ".catch with an empty handler swallows the rejection; handle it or let it propagate",
-      "fingerprint": "tools/markdownlint/no-private-scratch-links.mjs:1504:HISS-07"
-    },
-    {
-      "rule_id": "HISS-04",
-      "file_path": "tools/markdownlint/verify.mjs",
-      "line_number": 624,
-      "symbol": "inventorySelfTest",
-      "message": "Function 'inventorySelfTest' (125 LOC) exceeds HISS-04 / NASA Rule 4 limit of 60 LOC",
-      "fingerprint": "tools/markdownlint/verify.mjs:624:HISS-04"
     }
   ]
 }
