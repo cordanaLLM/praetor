@@ -102,3 +102,17 @@ func (gt *GiteaDriver) UpdateIssue(ctx context.Context, number int, labels []str
 	}
 	return gt.unsupported("UpdateIssue")
 }
+
+func (gt *GiteaDriver) WorkflowPermissions(ctx context.Context) (LiveWorkflowPermissions, error) {
+	if err := gt.Authenticate(ctx); err != nil {
+		return LiveWorkflowPermissions{}, err
+	}
+	return LiveWorkflowPermissions{}, gt.unsupported("WorkflowPermissions")
+}
+
+func (gt *GiteaDriver) WorkflowRunHistory(ctx context.Context, workflow, branch string) (WorkflowRunHistory, error) {
+	if err := gt.Authenticate(ctx); err != nil {
+		return WorkflowRunHistory{}, err
+	}
+	return WorkflowRunHistory{}, gt.unsupported("WorkflowRunHistory")
+}

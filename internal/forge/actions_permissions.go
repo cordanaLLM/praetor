@@ -30,7 +30,15 @@ const (
 	// ActionsBlockedByOrganisation means the repository declares a capability the organisation
 	// denies. It cannot be granted at the repository at all; the organisation is the blocker.
 	ActionsBlockedByOrganisation ActionsVerdict = "blocked-by-organisation"
+	// ActionsDrifted means the repository differs from its declaration and the organisation's
+	// value was not read, so the source of the difference is not named.
+	ActionsDrifted ActionsVerdict = "drifted"
 )
+
+// Failed reports whether the verdict fails the audit: every verdict but ActionsCompliant.
+func (v ActionsVerdict) Failed() bool {
+	return v != ActionsCompliant
+}
 
 // ActionsFinding is one decided comparison, with the reason a reader needs.
 type ActionsFinding struct {
@@ -68,6 +76,22 @@ func EvaluateActionsPermissions(declared config.ActionsPolicy, repo, org Workflo
 	return ActionsFinding{Verdict: ActionsDriftedAtRepository,
 		Detail: fmt.Sprintf("live value %s differs from both the declaration %s and the organisation %s; "+
 			"it was set on the repository", describe(repo), describeDeclared(declared), describe(org))}
+}
+
+// EvaluateLiveActionsPermissions is EvaluateActionsPermissions over what the forge returned
+// (GitHubDriver.WorkflowPermissions): with the organisation's value when it was read, and
+// without naming a source when it was not, since a guessed source sends the reader to the
+// wrong settings page.
+func EvaluateLiveActionsPermissions(declared config.ActionsPolicy, live LiveWorkflowPermissions) ActionsFinding {
+	if live.Organisation != nil {
+		return EvaluateActionsPermissions(declared, live.Repository, *live.Organisation)
+	}
+	if agrees(declared, live.Repository) {
+		return ActionsFinding{Verdict: ActionsCompliant, Detail: "live workflow permissions match the declaration"}
+	}
+	return ActionsFinding{Verdict: ActionsDrifted,
+		Detail: fmt.Sprintf("live value %s differs from the declaration %s; the organisation value was not read "+
+			"(%s), so the source is not named", describe(live.Repository), describeDeclared(declared), live.OrganisationUnread)}
 }
 
 func agrees(declared config.ActionsPolicy, live WorkflowPermissions) bool {

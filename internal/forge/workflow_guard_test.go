@@ -97,22 +97,6 @@ func hasTrigger(on *yaml.Node, event string) bool {
 	return declared
 }
 
-// triggerNames lists the events of an "on" node in its scalar, sequence or mapping form.
-func triggerNames(on *yaml.Node) []string {
-	if on.Kind == yaml.ScalarNode {
-		return []string{on.Value}
-	}
-	step := 1
-	if on.Kind == yaml.MappingNode {
-		step = 2
-	}
-	var names []string
-	for i := 0; i < len(on.Content) && i < 2*maxJobsPerFile; i += step {
-		names = append(names, on.Content[i].Value)
-	}
-	return names
-}
-
 func engineWorkflows(t *testing.T) (map[string][]byte, string) {
 	t.Helper()
 	files, err := readWorkflowFiles(t.Context(), engineRoot)

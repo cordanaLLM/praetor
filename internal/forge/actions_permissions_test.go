@@ -80,3 +80,41 @@ func TestEvaluateActionsPermissions_Boundary_PermissionLevelAloneIsDrift(t *test
 		t.Fatal("write permissions were accepted where read is declared")
 	}
 }
+
+// Positive (#611): with the organisation read, the live evaluation is EvaluateActionsPermissions;
+// a matching repository is compliant, and compliant is the one verdict that does not fail.
+func TestEvaluateLiveActionsPermissions_Positive_OrganisationReadDelegates(t *testing.T) {
+	org := live("read", true)
+	got := EvaluateLiveActionsPermissions(declared(false, true),
+		LiveWorkflowPermissions{Repository: live("read", true), Organisation: &org})
+	if got.Verdict != ActionsCompliant || got.Verdict.Failed() {
+		t.Fatalf("matching live value reported %s (failed=%t): %s", got.Verdict, got.Verdict.Failed(), got.Detail)
+	}
+	inherited := EvaluateLiveActionsPermissions(declared(false, false),
+		LiveWorkflowPermissions{Repository: live("read", true), Organisation: &org})
+	if inherited.Verdict != ActionsDriftedByOrganisation || !inherited.Verdict.Failed() {
+		t.Fatalf("inherited drift reported %s", inherited.Verdict)
+	}
+}
+
+// Negative (#611): without the organisation value a disagreement is drift with no source named,
+// and the reason the organisation was not read is carried into the finding.
+func TestEvaluateLiveActionsPermissions_Negative_UnreadOrganisationNamesNoSource(t *testing.T) {
+	got := EvaluateLiveActionsPermissions(declared(false, false),
+		LiveWorkflowPermissions{Repository: live("write", true), OrganisationUnread: "acme is not an organisation"})
+	if got.Verdict != ActionsDrifted || !got.Verdict.Failed() {
+		t.Fatalf("drift without an organisation value reported %s", got.Verdict)
+	}
+	if !strings.Contains(got.Detail, "acme is not an organisation") || strings.Contains(got.Detail, "inheriting") {
+		t.Fatalf("the finding guessed a source or dropped the reason: %s", got.Detail)
+	}
+}
+
+// Boundary (#611): without the organisation value, a repository that agrees with its
+// declaration is still compliant; the missing organisation value does not fail it.
+func TestEvaluateLiveActionsPermissions_Boundary_AgreementNeedsNoOrganisation(t *testing.T) {
+	got := EvaluateLiveActionsPermissions(declared(true, false), LiveWorkflowPermissions{Repository: live("write", false)})
+	if got.Verdict != ActionsCompliant {
+		t.Fatalf("agreement without an organisation value reported %s: %s", got.Verdict, got.Detail)
+	}
+}

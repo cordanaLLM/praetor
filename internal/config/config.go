@@ -170,6 +170,8 @@ type Overrides struct {
 	// because it is load-bearing in the same way branch protection is and was not modelled at
 	// all: a bot-opened pull request is either possible or it is not, and a release flow built
 	// on one fails on a red main with nothing reporting the setting that caused it (#153).
+	// The audit compares it with the live value and fails on drift, plan reports it, and
+	// nothing writes it to the forge yet (docs/guides/actions-live-checks.md).
 	Actions *ActionsPolicy `yaml:"actions,omitempty"`
 	// CI governs `ci filter` (HISS-18): internal/cifilter reads it through EffectiveCI, so
 	// setting either switch to false makes the filter run more gates, never fewer.
@@ -263,6 +265,10 @@ type Manifest struct {
 	// describes them; `praetorctl docs references --base=<rev>` fails a change that touches a
 	// surface without its documentation (#608). It is repository-only, like Register and HISS.
 	DocsSurfaces []DocsSurface `yaml:"docs_surfaces,omitempty"`
+	// WorkflowRuns declares the workflows the audit's live run check should expect to fail or
+	// not to have run yet, each with a reason (#612). It is repository-only and stays out of
+	// ResolvedPolicy, like HISS.
+	WorkflowRuns *WorkflowRunsPolicy `yaml:"workflow_runs,omitempty"`
 }
 
 // AdoptionPolicy declares generated artefacts this repository refuses.
@@ -320,6 +326,9 @@ func parseManifest(path string, data []byte) (*Manifest, error) {
 		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
 	}
 	if err := ValidateDocsSurfaces(m.DocsSurfaces); err != nil {
+		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
+	}
+	if err := validateManifestActions(m); err != nil {
 		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
 	}
 

@@ -57,6 +57,14 @@ func (f *fakeForge) UpdateIssue(context.Context, int, []string, string) error {
 	return nil
 }
 
+func (f *fakeForge) WorkflowPermissions(context.Context) (forge.LiveWorkflowPermissions, error) {
+	return forge.LiveWorkflowPermissions{}, forge.ErrNotImplemented
+}
+
+func (f *fakeForge) WorkflowRunHistory(context.Context, string, string) (forge.WorkflowRunHistory, error) {
+	return forge.WorkflowRunHistory{}, forge.ErrNotImplemented
+}
+
 func (f *fakeForge) CreateIssue(_ context.Context, spec forge.IssueSpec) (*forge.IssueResponse, error) {
 	f.created = append(f.created, spec)
 	if f.failOn == len(f.created) {
