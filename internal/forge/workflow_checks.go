@@ -21,7 +21,6 @@ import (
 const (
 	maxWorkflowFiles = 64
 	maxJobsPerFile   = 64
-	maxMatrixLegs    = 64
 	pullRequestEvent = "pull_request"
 	// pull_request_target runs a contributor's branch in the base repository's context
 	// with the base repository's token, so every audit that decides on pull_request has
@@ -50,7 +49,34 @@ func RequiredStatusContexts(ctx context.Context, repoPath string) ([]string, err
 // would write there, or to nil for a file it would remove (overlayWorkflowFiles). An entry that
 // is not a workflow document directly under .github/workflows is not read. A nil planned reads
 // the workflows on disk alone.
-func RequiredStatusContextsPlanned(ctx context.Context, repoPath string, planned map[string][]byte) (_ []string, err error) {
+func RequiredStatusContextsPlanned(ctx context.Context, repoPath string, planned map[string][]byte) ([]string, error) {
+	return requiredStatusContexts(ctx, repoPath, planned, nil)
+}
+
+// RequiredStatusContextsOf is RequiredStatusContexts over the named workflows alone: workflows
+// holds repository-relative slash paths of documents directly under .github/workflows. Every
+// other workflow is inventoried, as the bounded read requires, but never parsed, so a job there
+// whose contexts its file cannot show does not fail a caller that needs only its own workflows'
+// contexts, such as the documentation gate while the branch ruleset is declined (#324). A named
+// workflow the repository lacks contributes nothing.
+func RequiredStatusContextsOf(ctx context.Context, repoPath string, workflows []string) ([]string, error) {
+	if len(workflows) > maxWorkflowFiles {
+		return nil, fmt.Errorf("workflow selection exceeds %d entries", maxWorkflowFiles)
+	}
+	selected := make(map[string]bool, len(workflows))
+	for i := 0; i < len(workflows) && i < maxWorkflowFiles; i++ {
+		name, ok := plannedWorkflowName(workflows[i])
+		if !ok {
+			return nil, fmt.Errorf("%q is not a workflow document directly under %s", workflows[i], plannedWorkflowDir)
+		}
+		selected[name] = true
+	}
+	return requiredStatusContexts(ctx, repoPath, nil, selected)
+}
+
+// requiredStatusContexts is RequiredStatusContextsPlanned over the workflows selected names, or
+// over every workflow when selected is nil.
+func requiredStatusContexts(ctx context.Context, repoPath string, planned map[string][]byte, selected map[string]bool) (_ []string, err error) {
 	if ctx == nil {
 		return nil, errors.New("workflow context discovery requires a context")
 	}
@@ -63,6 +89,9 @@ func RequiredStatusContextsPlanned(ctx context.Context, repoPath string, planned
 	files, err = overlayWorkflowFiles(files, planned)
 	if err != nil {
 		return nil, err
+	}
+	if selected != nil {
+		files = slices.DeleteFunc(files, func(file workflowFile) bool { return !selected[file.Name] })
 	}
 	identity, err := guardIdentity(files, repoPath)
 	if err != nil {
@@ -289,12 +318,16 @@ type workflowStep struct {
 	Env   yaml.Node      `yaml:"env"`
 }
 
-// workflowStrategy carries the matrix legs a job expands into. A matrix job reports one
-// check per leg, so one `name:` here is several required contexts on the forge.
+// workflowStrategy carries the matrix a job expands into. A matrix job reports one check per
+// leg, so one `name:` here is several required contexts on the forge (matrixJobContexts).
+//
+// Matrix is a raw node because the key has several shapes: a mapping of literal axes with
+// include and exclude lists whose values may be mappings, or one expression such as
+// `${{ fromJSON(needs.plan.outputs.matrix) }}` that evaluates to one. A typed decode rejects
+// most of them and would fail the whole document, and every audit that reads it, over a job no
+// check may read; expandMatrix reads the node only for a job that is a required check.
 type workflowStrategy struct {
-	Matrix struct {
-		Include []map[string]string `yaml:"include"`
-	} `yaml:"matrix"`
+	Matrix yaml.Node `yaml:"matrix"`
 }
 
 // workflowPullRequestContexts returns the check contexts of one workflow file, or nil
@@ -384,55 +417,27 @@ func advisoryJob(continueOnError string) bool {
 	return value != "" && value != "false"
 }
 
-// jobCheckContexts returns every check context one job reports under, expanding a matrix
-// name into one context per leg.
-func jobCheckContexts(id string, job workflowJob) ([]string, error) {
-	if job.Name == "" {
-		return []string{id}, nil
-	}
-	if !strings.Contains(job.Name, "${{") {
-		return []string{job.Name}, nil
-	}
-	return expandMatrixName(id, job.Name, job.Strategy.Matrix.Include)
-}
-
-// expandMatrixName substitutes ${{ matrix.<key> }} in a job name from each include leg.
+// jobCheckContexts returns every check context one job reports under: its name, or its id when
+// it has none, and one context per leg for a matrix job (matrixJobContexts).
 //
-// An unresolved expression must never reach the ruleset. A required status check whose
-// context no run can ever report does not fail the pull request, it leaves it "expected"
-// forever -- so the branch would be permanently unmergeable by a generator that thought it
-// was protecting it. Emitting the literal text is the same defect class this repository
-// keeps removing: a value nothing evaluated, presented as one something did.
-func expandMatrixName(id, name string, include []map[string]string) ([]string, error) {
-	if len(include) == 0 {
-		return nil, fmt.Errorf("job %q: name %q references a matrix but declares no strategy.matrix.include", id, name)
+// An unevaluated name must never reach the ruleset. A required status check whose context no
+// run can ever report does not fail the pull request, it leaves it "expected" forever -- so the
+// branch would be permanently unmergeable by a generator that thought it was protecting it.
+// Emitting the literal text is the same defect class this repository keeps removing: a value
+// nothing evaluated, presented as one something did. So a name that holds an expression outside
+// a matrix job is refused: nothing in the file evaluates it.
+func jobCheckContexts(id string, job workflowJob) ([]string, error) {
+	name := job.Name
+	if name == "" {
+		name = id
 	}
-	if len(include) > maxMatrixLegs {
-		return nil, fmt.Errorf("job %q: matrix exceeds %d legs", id, maxMatrixLegs)
+	if matrix := &job.Strategy.Matrix; matrix.ShortTag() != "!!null" {
+		return matrixJobContexts(id, name, matrix)
 	}
-	contexts := make([]string, 0, len(include))
-	for i := 0; i < len(include) && i < maxMatrixLegs; i++ {
-		expanded := substituteMatrixKeys(name, include[i])
-		if strings.Contains(expanded, "${{") {
-			return nil, fmt.Errorf("job %q: leg %d leaves %q unresolved; a required check context that no run reports blocks the branch permanently", id, i, expanded)
-		}
-		contexts = append(contexts, expanded)
+	if strings.Contains(name, expressionOpen) {
+		return nil, fmt.Errorf("job %q: name %q holds an expression but the job declares no strategy.matrix to evaluate it from; a required check context that no run reports blocks the branch permanently", id, name)
 	}
-	return contexts, nil
-}
-
-// substituteMatrixKeys replaces every ${{ matrix.<key> }} form of one leg's keys.
-func substituteMatrixKeys(name string, leg map[string]string) string {
-	keys := make([]string, 0, len(leg))
-	for key := range leg {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for i := 0; i < len(keys) && i < maxMatrixLegs; i++ {
-		name = strings.ReplaceAll(name, "${{ matrix."+keys[i]+" }}", leg[keys[i]])
-		name = strings.ReplaceAll(name, "${{matrix."+keys[i]+"}}", leg[keys[i]])
-	}
-	return name
+	return []string{name}, nil
 }
 
 // eventTrigger reports whether an "on" node declares the named trigger, and returns that

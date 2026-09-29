@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/topology"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -329,10 +330,13 @@ func scanRepository(ctx context.Context, repo *fleetRepo, registry *AnalyzerRegi
 	}
 	row := scan.row
 	if repo.subprojects[0] != repo.root {
-		row.Repository = repositoryDirName(repo.root)
+		row.Repository, row.RepositoryFallback = projectRepositoryName("", repo.root)
 		if declErr := loadExistingDeclarations(ctx, repo.root, row); declErr != nil {
 			return nil, fmt.Errorf("failed to load declarations of repository %q: %w", repo.root, declErr)
 		}
+	}
+	if err := nameRepository(ctx, repo, row); err != nil {
+		return nil, err
 	}
 	// One project may name a package in two spellings too (typing-extensions in
 	// pyproject.toml, typing_extensions in requirements.txt).
@@ -413,12 +417,67 @@ func noSubprojectScannedError(root string, failed []SubprojectFailure) error {
 	return fmt.Errorf("failed to analyze repository %q: no sub-project could be scanned: %s", root, strings.Join(reasons, "; "))
 }
 
+// projectUnnamed is the RepositoryFallback an analyzer records when the project's manifest
+// names no repository and the row is named after the project directory. A scan replaces it
+// (nameRepository) with the repository's resolved name, or with why none resolved.
+const projectUnnamed = "the project manifest names no repository"
+
+// projectRepositoryName returns the name a project's manifest gives the repository: a go.mod
+// module path or a package.json name. A manifest that names none (absent, or the placeholder
+// "unknown"), and every Rust, Python and native project, is named after dir with
+// projectUnnamed as its fallback, for nameRepository to resolve.
+func projectRepositoryName(manifestName, dir string) (name, fallback string) {
+	if manifestName == "" || manifestName == "unknown" {
+		return repositoryDirName(dir), projectUnnamed
+	}
+	return manifestName, ""
+}
+
+// repositoryNameUnread is the RepositoryFallback of a row whose .standards.yaml does not
+// load or whose origin remote git could not read. The error itself names local paths, so it
+// never reaches the row.
+const repositoryNameUnread = "the repository name could not be resolved: .standards.yaml does not load or git cannot read the origin remote"
+
+// nameRepository names a row its scanned project left unnamed (RepoNeeds.RepositoryFallback)
+// the way the publish path names the repository (repositoryName), so the scan header,
+// .needs.yaml and every epic title stay the same in every clone, worktree and CI workspace of
+// one repository (#606). When neither .standards.yaml nor the origin remote names it, when
+// the name they give is invalid, and when either cannot be read, the row keeps the root
+// directory's name and records why: the name is a label of the scan, and a scan whose
+// demand was read is not failed over it. A cancelled or expired context is an error.
+func nameRepository(ctx context.Context, repo *fleetRepo, row *RepoNeeds) error {
+	if row.RepositoryFallback == "" {
+		return nil
+	}
+	name, err := repositoryName(ctx, repo)
+	switch {
+	case err == nil:
+		row.Repository, row.RepositoryFallback = name, ""
+	case ctx.Err() != nil || isContextError(err):
+		return fmt.Errorf("failed to name repository %q: %w", repo.root, errors.Join(ctx.Err(), err))
+	case errors.Is(err, config.ErrRepositoryNameUnknown) || errors.Is(err, config.ErrRepositoryNameInvalid):
+		row.Repository, row.RepositoryFallback = repositoryDirName(repo.root), err.Error()
+	default:
+		row.Repository, row.RepositoryFallback = repositoryDirName(repo.root), repositoryNameUnread
+	}
+	return nil
+}
+
+// repositoryName resolves the name of repo through config.ResolveRepositoryName, the
+// resolver `needs epic --publish` takes its forge coordinates from. A directory outside
+// every checkout has no origin remote of its own, and git would answer with the remote of a
+// checkout above it, so only its .standards.yaml names it (config.ManifestRepositoryName).
+func repositoryName(ctx context.Context, repo *fleetRepo) (string, error) {
+	if repo.checkout {
+		return config.ResolveRepositoryName(ctx, repo.root)
+	}
+	return config.ManifestRepositoryName(repo.root)
+}
+
 // repositoryDirName names a repository after its root directory, made absolute first so
-// that a relative spelling such as the default --path=. names the directory, never ".".
-// Every analyzer without a manifest name (Rust, Python, native, a Go module without a
-// module directive, a package.json without a name), a root that is no project and the
-// pre-migration epic's fallback for an unnamed or "unknown" repository name the
-// repository through it, so every needs command reports one name for one directory.
+// that a relative spelling such as the default --path=. names the directory, never ".". It
+// is the last resort of repository naming (projectRepositoryName, nameRepository), so every
+// needs command reports one name for one directory.
 func repositoryDirName(root string) string {
 	if abs, err := filepath.Abs(root); err == nil {
 		return filepath.Base(abs)

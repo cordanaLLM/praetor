@@ -563,3 +563,45 @@ func documentationAuditFixture(t *testing.T) string {
 	initGitFixture(t, root)
 	return root
 }
+
+// dynamicMatrixWorkflow is a valid workflow whose required job's legs only a run knows.
+const dynamicMatrixWorkflow = "on: pull_request\njobs:\n  analyze:\n    name: Analyze (${{ matrix.language }})\n" +
+	"    strategy:\n      matrix: ${{ fromJSON(vars.LANGUAGES) }}\n"
+
+// Positive: with the branch ruleset declined, the documentation gate compares only its own
+// workflow's context, so a workflow elsewhere whose contexts no file shows does not fail it (#324).
+func TestAuditDocumentationGate_Positive_DeclinedRulesetReadsOnlyItsWorkflow(t *testing.T) {
+	root := documentationAuditFixture(t)
+	writeFixtureFile(t, root, ".github/workflows/analyze.yml", dynamicMatrixWorkflow)
+	if err := docGate(t.Context(), declinedBranchRulesetManifest("docs:seo-portal"), root); err != nil {
+		t.Fatalf("declined ruleset audit read a workflow it never compares: %v", err)
+	}
+}
+
+// Negative: while the ruleset is checked, every workflow's contexts are needed, and one no file
+// shows still fails closed.
+func TestAuditDocumentationGate_Negative_CheckedRulesetNeedsEveryContext(t *testing.T) {
+	root := documentationAuditFixture(t)
+	writeFixtureFile(t, root, ".github/workflows/analyze.yml", dynamicMatrixWorkflow)
+	err := docGate(t.Context(), &config.Manifest{Facets: []string{"docs:seo-portal"}}, root)
+	if err == nil || !strings.Contains(err.Error(), "Discover hosted documentation context") {
+		t.Fatalf("checked ruleset accepted a context no file shows: %v", err)
+	}
+}
+
+// Boundary: a constant-name matrix job's contexts are the per-leg names GitHub reports, and the
+// checked ruleset that requires exactly those passes.
+func TestAuditDocumentationGate_Boundary_RulesetCarriesPerLegMatrixContexts(t *testing.T) {
+	root := documentationAuditFixture(t)
+	writeFixtureFile(t, root, ".github/workflows/ci.yml", "on: pull_request\njobs:\n  test:\n    name: Test\n"+
+		"    strategy:\n      matrix:\n        os: [ubuntu-latest, windows-latest]\n")
+	contexts := []string{"Test (ubuntu-latest)", "Test (windows-latest)", adopt.DocumentationStatusContext}
+	ruleset, err := forge.RenderRepositoryRuleset("main", config.DefaultPolicy().BranchProtection, contexts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixtureFile(t, root, ".github/rulesets/main.json", string(ruleset))
+	if err := docGate(t.Context(), &config.Manifest{Facets: []string{"docs:seo-portal"}}, root); err != nil {
+		t.Fatalf("ruleset requiring the per-leg contexts failed: %v", err)
+	}
+}

@@ -4,6 +4,7 @@
 package dedupe_test
 
 import (
+	"context"
 	"maps"
 	"os"
 	"path/filepath"
@@ -117,5 +118,53 @@ func TestScanRepo_Boundary_UnscannedScopeFollowsTheGoScope(t *testing.T) {
 	}
 	if report.Partial || len(report.Unscanned) != 0 {
 		t.Fatalf("a deleted tracked file and an ignored build output must not be counted: %+v", report)
+	}
+}
+
+// SourceLanguageCounts is the scan's inventory with Go counted too: the pre-migration epic
+// names the languages no needs analyzer detects from it (#296).
+func TestSourceLanguageCounts_3D(t *testing.T) {
+	// Positive: Go production source and every other language, per language.
+	dir := t.TempDir()
+	writeFile(t, dir, "tooling/add.go", polyglotGoSource)
+	writeFile(t, dir, "tooling/add_test.go", "package tooling\n")
+	writeFile(t, dir, "scripts/build.sh", "#!/bin/sh\n")
+	writeFile(t, dir, "scripts/release.sh", "#!/bin/sh\n")
+	writeFile(t, dir, "tests/test_boot.py", "def test_boot(): pass\n")
+	counts, err := dedupe.SourceLanguageCounts(t.Context(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := map[string]int{"go": 1, "shell": 2, "python": 1}; !maps.Equal(counts, want) {
+		t.Fatalf("SourceLanguageCounts = %v, want %v", counts, want)
+	}
+	// Negative: a cancelled context is an error, not an empty inventory.
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := dedupe.SourceLanguageCounts(cancelled, dir); err == nil {
+		t.Fatal("a cancelled inventory returned counts")
+	}
+	// Boundary: a repository holding no source counts nothing, and fixtures stay out.
+	empty := t.TempDir()
+	writeFile(t, empty, "README.md", "# docs\n")
+	writeFile(t, empty, "testdata/case.sh", "#!/bin/sh\n")
+	if counts, err := dedupe.SourceLanguageCounts(t.Context(), empty); err != nil || len(counts) != 0 {
+		t.Fatalf("docs-only inventory = %v, %v; want none", counts, err)
+	}
+}
+
+// LanguageFileCounts renders the Not Scanned line and the epic's unanalyzed languages.
+func TestLanguageFileCounts_3D(t *testing.T) {
+	// Positive: sorted by language, plural counts.
+	if got := dedupe.LanguageFileCounts(map[string]int{"shell": 9, "python": 11}); got != "python (11 files), shell (9 files)" {
+		t.Errorf("LanguageFileCounts = %q", got)
+	}
+	// Negative: no counts render nothing.
+	if got := dedupe.LanguageFileCounts(nil); got != "" {
+		t.Errorf("LanguageFileCounts(nil) = %q, want empty", got)
+	}
+	// Boundary: one file is singular.
+	if got := dedupe.LanguageFileCounts(map[string]int{"zig": 1}); got != "zig (1 file)" {
+		t.Errorf("LanguageFileCounts(one) = %q", got)
 	}
 }

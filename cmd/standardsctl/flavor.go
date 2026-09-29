@@ -84,15 +84,24 @@ func runFlavorInspect(args []string) error {
 
 	fmt.Println("\nRequired Toolchains:")
 	for _, tc := range flv.RequiredToolchains() {
-		fmt.Printf("  - %-15s : %s\n", tc.Binary, tc.Purpose)
-		if len(tc.AltBinaries) > 0 {
-			fmt.Printf("    %-15s   or: %s\n", "", strings.Join(tc.AltBinaries, ", "))
-		}
-		if tc.ProjectLocal {
-			fmt.Printf("    %-15s   (project-local node_modules/.bin accepted)\n", "")
-		}
+		printInspectToolchain(tc)
 	}
 	return nil
+}
+
+// printInspectToolchain prints one required toolchain, the binaries that also satisfy it, and
+// the repositories it applies to when it does not apply to all (flavor.ToolchainItem.Markers).
+func printInspectToolchain(tc flavor.ToolchainItem) {
+	fmt.Printf("  - %-15s : %s\n", tc.Binary, tc.Purpose)
+	if len(tc.AltBinaries) > 0 {
+		fmt.Printf("    %-15s   or: %s\n", "", strings.Join(tc.AltBinaries, ", "))
+	}
+	if tc.ProjectLocal {
+		fmt.Printf("    %-15s   (project-local node_modules/.bin accepted)\n", "")
+	}
+	if len(tc.Markers) > 0 {
+		fmt.Printf("    %-15s   only where: %s\n", "", strings.Join(tc.Markers, ", "))
+	}
 }
 
 // printInspectTemplate prints one required template, its producer and the other names it is
@@ -127,7 +136,7 @@ func runFlavorAudit(args []string) error {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("flavor audit failed: %w", err)
+		return fmt.Errorf("flavor audit failed: %w%s", err, explicitFlavorHint(err))
 	}
 
 	fmt.Printf("=== Flavor Audit: %s (Flavor: %s) ===\n", dir, report.Flavor)
@@ -195,6 +204,16 @@ func runFlavorApply(args []string) error {
 	return withLedgerIgnore(ctx, dir, func() error { return applyFlavor(ctx, dir, *targetFlv, *force) })
 }
 
+// explicitFlavorHint is the remedy flavor audit and flavor apply add to a nothing-matched
+// refusal. They take --flavor; gate run, which surfaces the same flavor.ErrNoFlavorMatched, does
+// not, so the hint is added here rather than carried by the sentinel (#615).
+func explicitFlavorHint(err error) string {
+	if errors.Is(err, flavor.ErrNoFlavorMatched) {
+		return "; pass an explicit --flavor=<name> (praetorctl flavor list names each)"
+	}
+	return ""
+}
+
 // applyFlavor scaffolds one flavor and prints what it created, skipped and failed. The branch
 // ruleset is not written where the repository's adoption.decline names branch-ruleset, resolved
 // by adoption's own decline parser.
@@ -206,7 +225,7 @@ func applyFlavor(ctx context.Context, dir, targetFlv string, force bool) error {
 		},
 	})
 	if report == nil {
-		return fmt.Errorf("flavor apply failed: %w", err)
+		return fmt.Errorf("flavor apply failed: %w%s", err, explicitFlavorHint(err))
 	}
 	// A report beside an error (flavor.ErrApplyIncomplete) still names what was written, so it
 	// is printed before the failure is returned.

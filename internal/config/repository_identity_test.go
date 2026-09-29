@@ -106,3 +106,81 @@ func TestResolveRepositoryIdentity_Boundary(t *testing.T) {
 		}
 	}
 }
+
+// ResolveRepositoryName names a repository the way ResolveRepositoryIdentity does, without an
+// owner: the manifest's repository.name, then the origin remote, never the directory (#606).
+func TestResolveRepositoryName_Positive(t *testing.T) {
+	cases := []struct{ name, dir, remote, manifest, want string }{
+		{"manifest wins over remote and directory", "renamed-checkout", "https://github.com/acme/other.git", "repository:\n  name: platform\n", "platform"},
+		{"remote when the manifest names none", "renamed-checkout", "git@github.com:acme/platform.git", "repository:\n  owner: acme\n", "platform"},
+		{"no owner anywhere is no error", "checkout", "", "repository:\n  name: platform\n", "platform"},
+		{"manifest name despite a remote ending in /.", "checkout", "https://github.com/acme/.", "repository:\n  name: platform\n", "platform"},
+	}
+	for _, tc := range cases {
+		repo := identityRepo(t, tc.dir, tc.remote, tc.manifest)
+		if got, err := ResolveRepositoryName(t.Context(), repo); err != nil || got != tc.want {
+			t.Errorf("%s: ResolveRepositoryName = %q, %v; want %q", tc.name, got, err, tc.want)
+		}
+	}
+	named := identityRepo(t, "checkout", "https://github.com/acme/other.git", "repository:\n  name: platform\n")
+	if got, err := ManifestRepositoryName(named); err != nil || got != "platform" {
+		t.Errorf("ManifestRepositoryName = %q, %v; want platform", got, err)
+	}
+}
+
+func TestResolveRepositoryName_Negative(t *testing.T) {
+	// Neither source names the repository: the directory name is never read.
+	bare := identityRepo(t, "app", "", "")
+	if got, err := ResolveRepositoryName(t.Context(), bare); !errors.Is(err, ErrRepositoryNameUnknown) {
+		t.Fatalf("no source: %q, %v; want ErrRepositoryNameUnknown", got, err)
+	}
+	// ManifestRepositoryName never reads the remote.
+	remoteOnly := identityRepo(t, "app", "https://github.com/acme/app.git", "")
+	if got, err := ManifestRepositoryName(remoteOnly); !errors.Is(err, ErrRepositoryNameUnknown) {
+		t.Fatalf("remote only: ManifestRepositoryName = %q, %v; want ErrRepositoryNameUnknown", got, err)
+	}
+	// An invalid manifest and a remote read that did not complete are errors, not "unknown".
+	broken := identityRepo(t, "app", "https://github.com/acme/app.git", "repository: [\n")
+	for label, resolve := range map[string]func() (string, error){
+		"resolve":  func() (string, error) { return ResolveRepositoryName(t.Context(), broken) },
+		"manifest": func() (string, error) { return ManifestRepositoryName(broken) },
+	} {
+		if _, err := resolve(); err == nil || errors.Is(err, ErrRepositoryNameUnknown) {
+			t.Errorf("%s: invalid manifest: %v, want a parse error", label, err)
+		}
+	}
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := ResolveRepositoryName(cancelled, remoteOnly); err == nil || errors.Is(err, ErrRepositoryNameUnknown) {
+		t.Fatalf("cancelled remote read: %v, want the context error", err)
+	}
+	var nilContext context.Context
+	if _, err := ResolveRepositoryName(nilContext, remoteOnly); err == nil {
+		t.Fatal("a nil context resolved")
+	}
+	missing := filepath.Join(t.TempDir(), "missing")
+	if _, err := ResolveRepositoryName(t.Context(), missing); err == nil {
+		t.Fatal("a missing directory resolved")
+	}
+	if _, err := ManifestRepositoryName(missing); err == nil {
+		t.Fatal("ManifestRepositoryName resolved a missing directory")
+	}
+}
+
+func TestResolveRepositoryName_Boundary(t *testing.T) {
+	// An origin remote ending in "/." or "/.." names no valid repository (#407).
+	for _, remote := range []string{"https://github.com/acme/.", "git@github.com:acme/.."} {
+		repo := identityRepo(t, "checkout", remote, "")
+		if got, err := ResolveRepositoryName(t.Context(), repo); !errors.Is(err, ErrRepositoryNameInvalid) {
+			t.Errorf("remote %s: %q, %v; want ErrRepositoryNameInvalid", remote, got, err)
+		}
+	}
+	// A 100-character name is the limit; one more is invalid.
+	limit := strings.Repeat("r", 100)
+	if got, err := ManifestRepositoryName(identityRepo(t, "kit", "", "repository:\n  name: "+limit+"\n")); err != nil || got != limit {
+		t.Errorf("100-character name: %q, %v", got, err)
+	}
+	if _, err := ManifestRepositoryName(identityRepo(t, "kit", "", "repository:\n  name: "+limit+"r\n")); !errors.Is(err, ErrRepositoryNameInvalid) {
+		t.Errorf("101-character name: %v, want ErrRepositoryNameInvalid", err)
+	}
+}

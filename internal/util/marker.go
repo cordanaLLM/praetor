@@ -37,3 +37,20 @@ func MarkerExists(repoPath, marker string) bool {
 	}
 	return false
 }
+
+// maxMarkerList bounds how many markers one AnyMarkerExists call inspects (HISS-02). Every
+// list in the tree is a handful of entries; a longer one is a table to split, not to scan.
+const maxMarkerList = 32
+
+// AnyMarkerExists reports whether a repository carries at least one of markers, each matched
+// as MarkerExists matches it. An empty list matches nothing. It is the one "any of these
+// markers" check: the classification table (internal/classify) and a flavor's toolchain
+// applicability (internal/flavor) both call it.
+func AnyMarkerExists(repoPath string, markers []string) bool {
+	for i := 0; i < len(markers) && i < maxMarkerList; i++ {
+		if MarkerExists(repoPath, markers[i]) {
+			return true
+		}
+	}
+	return false
+}

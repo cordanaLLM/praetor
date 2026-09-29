@@ -89,7 +89,7 @@ func decodeAliasJSON(newKey, oldKey string) (RepoNeeds, error) {
 // Decoding goes through the struct itself, so no field is dropped: a fleet report row keeps
 // its sub-project lists and standard-library imports across a JSON round trip.
 func TestRepoNeedsDecodeKeepsEveryField(t *testing.T) {
-	row := RepoNeeds{Version: 1, Repository: "example.com/app", Language: "go", Framework: "example.com/acme/kit",
+	row := RepoNeeds{Version: 1, Repository: "example.com/app", RepositoryFallback: "reason", Language: "go", Framework: "example.com/acme/kit",
 		BuilderKits: []string{"acme/kit"}, Path: "/srv/app", Subprojects: []string{"web"}, UnscannedSubprojects: []string{"a/b/c/d/e"},
 		FailedSubprojects:      []SubprojectFailure{{Dir: "tools", Error: "parse"}},
 		Dependencies:           []DependencyDemand{{Package: "github.com/jackc/pgx/v5", Capability: "db.postgres", Status: StatusCovered, FrameworkReplacement: "example.com/acme/kit/db"}},

@@ -274,3 +274,93 @@ func TestResolveRunnerRouting_Negative_CancelledContext(t *testing.T) {
 		t.Fatal(statErr)
 	}
 }
+
+// unanalyzedNote is the checklist line naming source languages no needs analyzer detects.
+const unanalyzedNote = "; no `needs` analyzer detects them, so tasks 1 and 4 name them as unverified\n"
+
+// Positive (#296): shell scripts beside a Python package are named in the checklist with
+// their file count, and tasks 1 and 4 name them as unverified instead of leaving them out.
+func TestGeneratePreMigrationEpic_Positive_UnanalyzedLanguagesAreNamed(t *testing.T) {
+	repo := t.TempDir()
+	writeRepoFile(t, filepath.Join(repo, "requirements.txt"), "pytest\n")
+	writeRepoFile(t, filepath.Join(repo, "tests", "test_boot.py"), "def test_boot():\n    pass\n")
+	for _, script := range []string{"build.sh", "package.sh", "release.sh"} {
+		writeRepoFile(t, filepath.Join(repo, "scripts", script), "#!/bin/sh\nset -eu\n")
+	}
+	epic, err := GeneratePreMigrationEpic(t.Context(), repo, FrameworkSource{}, nil)
+	if err != nil {
+		t.Fatalf("epic generation failed: %v", err)
+	}
+	for _, want := range []string{"- **Detected Languages**: Python\n", "- **Unanalyzed Languages**: shell (3 files)" + unanalyzedNote} {
+		if !strings.Contains(epic.ChecklistMarkdown, want) {
+			t.Errorf("checklist lacks %q:\n%s", want, epic.ChecklistMarkdown)
+		}
+	}
+	wants := map[int]string{
+		1: "Unverified, no `needs` analyzer detects them: shell (3 files). Choose an error-handling audit and a 3D test runner for them.",
+		4: "Unverified, no `needs` analyzer detects them: shell (3 files). The gate checks none of them: run their tests and audits outside the gate.",
+	}
+	for n, want := range wants {
+		if body := epicTaskBody(t, epic, n); !strings.Contains(body, want) {
+			t.Errorf("task %d lacks %q:\n%s", n, want, body)
+		}
+	}
+	if body := epicTaskBody(t, epic, 1); strings.Contains(body, "python (") {
+		t.Errorf("task 1 names the analyzed Python as unverified:\n%s", body)
+	}
+}
+
+// Negative (#296): source every analyzer covers is never named as unanalyzed - JavaScript in
+// a package the Node analyzer reads included - and a failed source listing says so instead
+// of naming nothing.
+func TestGeneratePreMigrationEpic_Negative_AnalyzedSourceIsNotUnverified(t *testing.T) {
+	node := t.TempDir()
+	writeRepoFile(t, filepath.Join(node, "package.json"), "{\"name\":\"web\",\"dependencies\":{\"zod\":\"3\"}}")
+	writeRepoFile(t, filepath.Join(node, "src", "index.js"), "export const a = 1;\n")
+	writeRepoFile(t, filepath.Join(node, "src", "view.vue"), "<template><p/></template>\n")
+	rust := writeRustWorkspaceRepo(t)
+	writeRepoFile(t, filepath.Join(rust, "engine", "src", "lib.rs"), "pub fn run() {}\n")
+	for _, repo := range []string{node, rust} {
+		epic, err := GeneratePreMigrationEpic(t.Context(), repo, FrameworkSource{}, nil)
+		if err != nil {
+			t.Fatalf("epic generation failed: %v", err)
+		}
+		if strings.Contains(renderEpicDocument(epic), "Unanalyzed Languages") || strings.Contains(renderEpicDocument(epic), "Unverified") {
+			t.Errorf("fully analyzed repository names unanalyzed source:\n%s", renderEpicDocument(epic))
+		}
+	}
+	// A .git directory git does not accept as a repository fails the listing.
+	broken := t.TempDir()
+	writeRepoFile(t, filepath.Join(broken, ".git", "HEAD"), "ref: refs/heads/main\n")
+	writeRepoFile(t, filepath.Join(broken, "requirements.txt"), "pytest\n")
+	writeRepoFile(t, filepath.Join(broken, "build.sh"), "#!/bin/sh\n")
+	epic, err := GeneratePreMigrationEpic(t.Context(), broken, FrameworkSource{}, nil)
+	if err != nil {
+		t.Fatalf("epic generation failed: %v", err)
+	}
+	if !strings.Contains(epic.ChecklistMarkdown, "- **Unanalyzed Languages**: not inventoried: the source listing failed") ||
+		strings.Contains(renderEpicDocument(epic), "Unverified") || strings.Contains(epic.ChecklistMarkdown, broken) {
+		t.Errorf("failed listing is not named, or names a local path:\n%s", epic.ChecklistMarkdown)
+	}
+}
+
+// Boundary (#296): one file is counted in the singular, test fixtures are not counted, and a
+// language whose analyzer finds no project (Python without a manifest) is unanalyzed.
+func TestGeneratePreMigrationEpic_Boundary_UnanalyzedCounts(t *testing.T) {
+	repo := writeRustWorkspaceRepo(t)
+	writeRepoFile(t, filepath.Join(repo, "tools", "bump.py"), "print('bump')\n")
+	writeRepoFile(t, filepath.Join(repo, "ci.sh"), "#!/bin/sh\n")
+	writeRepoFile(t, filepath.Join(repo, "testdata", "case.sh"), "#!/bin/sh\n")
+	epic, err := GeneratePreMigrationEpic(t.Context(), repo, FrameworkSource{}, nil)
+	if err != nil {
+		t.Fatalf("epic generation failed: %v", err)
+	}
+	if want := "- **Unanalyzed Languages**: python (1 file), shell (1 file)" + unanalyzedNote; !strings.Contains(epic.ChecklistMarkdown, want) {
+		t.Errorf("checklist lacks %q:\n%s", want, epic.ChecklistMarkdown)
+	}
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := unanalyzedLanguages(cancelled, repo, &RepoNeeds{Language: "rust"}); err == nil {
+		t.Error("a cancelled inventory returned counts")
+	}
+}

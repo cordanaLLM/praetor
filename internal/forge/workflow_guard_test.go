@@ -289,12 +289,10 @@ func TestPortabilityReplaysMarkdownGateSelfTestOnEveryLeg(t *testing.T) {
 	// The leg is identified by its image family, not by one label: the matrix names an
 	// explicit image (windows-2025), never the windows-latest alias, and the next image
 	// bump must not read as the Windows leg disappearing.
-	legs := make([]string, 0, len(harness.Strategy.Matrix.Include))
+	legs := matrixOSLegs(harness)
 	windows := false
-	for i := 0; i < len(harness.Strategy.Matrix.Include) && i < maxMatrixLegs; i++ {
-		leg := harness.Strategy.Matrix.Include[i]["os"]
-		legs = append(legs, leg)
-		windows = windows || strings.HasPrefix(leg, "windows-")
+	for i := 0; i < len(legs) && i < maxMatrixLegs; i++ {
+		windows = windows || strings.HasPrefix(legs[i], "windows-")
 	}
 	if !windows {
 		t.Fatalf("portability harness legs = %v, want a Windows leg", legs)

@@ -41,6 +41,7 @@ func FormatReportHeader(report *RepoNeeds, index *FrameworkIndex) string {
 	}
 	var sb strings.Builder
 	writef(&sb, "=== Framework Migration Report: %s ===\n", report.Repository)
+	sb.WriteString(FormatRepositoryFallback(report))
 	if index.Basis == FrameworkNotConfigured {
 		writef(&sb, "Framework: %s | Mapping availability: %s\n\n", FrameworkNotConfiguredText, mappingNotConfigured)
 	} else {
@@ -57,6 +58,29 @@ func FormatReportHeader(report *RepoNeeds, index *FrameworkIndex) string {
 	sb.WriteString(FormatDeprecations(report))
 	sb.WriteString("\n")
 	return sb.String()
+}
+
+// FormatRepositoryFallback renders the "Repository name:" line of a row named after its
+// directory (RepoNeeds.RepositoryFallback), or nothing for a row a manifest or the origin
+// remote names. `needs scan`, `needs report` and the MCP standards_needs_report print it
+// under their header.
+func FormatRepositoryFallback(report *RepoNeeds) string {
+	note := repositoryFallbackNote(report)
+	if note == "" {
+		return ""
+	}
+	return "Repository name: " + note + "\n"
+}
+
+// repositoryFallbackNote says that a row is named after its directory, and why, or returns
+// "" for a row a manifest or the origin remote names. The pre-migration epic's checklist
+// carries the same note. The reason names no local path.
+func repositoryFallbackNote(report *RepoNeeds) string {
+	if report == nil || report.RepositoryFallback == "" {
+		return ""
+	}
+	return fmt.Sprintf("`%s` is the repository directory's name, which differs between clones, worktrees and CI workspaces (%s)",
+		report.Repository, report.RepositoryFallback)
 }
 
 // FormatDeprecations renders one "Deprecated input:" line per deprecated input the row was

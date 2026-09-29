@@ -1,0 +1,4 @@
+type: fixed
+title: "A kernel forge declaring os-image is now audited as os-image instead of failing flavor audit and the gate's Flavor Conformance stage: Kconfig fragments under kconfig/ (kconfig/[^.]*.config) join the Packer and mkosi markers in the one classification rule the flavor now reads, while an empty kconfig/ or a lone .config still marks nothing; packer is asked for only in a Packer template tree, and a nothing-matched error names the flavors tried and no longer tells gate run operators to pass a --flavor flag it does not have"
+issue: "#615"
+breaking: false

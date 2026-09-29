@@ -52,7 +52,18 @@ func ResolveForProfile(repoPath, profile string) (string, error) {
 			return candidates[i].Name(), nil
 		}
 	}
-	return "", fmt.Errorf("%w: profile %q has flavors but none match %s", ErrNoFlavorMatched, profile, repoPath)
+	return "", fmt.Errorf("%w: profile %q has flavors (%s) but none match %s",
+		ErrNoFlavorMatched, profile, flavorNames(candidates), repoPath)
+}
+
+// flavorNames joins the names of flavors, so a nothing-matched error says which flavors of the
+// profile were tried and the operator can look up what each one detects.
+func flavorNames(flavors []Flavor) string {
+	names := make([]string, 0, len(flavors))
+	for i := 0; i < len(flavors) && i < maxDetectionCandidates; i++ {
+		names = append(names, flavors[i].Name())
+	}
+	return strings.Join(names, ", ")
 }
 
 // declaredProfiles returns the profiles the repository's manifest declares, or nil when it

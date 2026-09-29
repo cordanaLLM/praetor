@@ -71,6 +71,14 @@ const maxRules = 32
 // maxMarkers bounds one rule's marker scan (HISS-02).
 const maxMarkers = 16
 
+// kernelConfigFragments marks a kernel forge: the os-image archetype names kernels,
+// initramfs and UKIs beside disk images (.config/archetypes/os-image.yaml), and a forge that
+// builds a kernel keeps its Kconfig fragments, merged onto a base configuration, under kconfig/
+// with no Packer template or mkosi.conf to mark it (#615). The first character may not be a dot:
+// Go's "*" matches a leading dot, and kconfig/.config is the file Kconfig itself writes, not a
+// fragment anyone declared. As with every glob marker, an empty kconfig/ matches nothing.
+const kernelConfigFragments = "kconfig/[^.]*.config"
+
 // rule maps the presence of any one marker to an archetype.
 type rule struct {
 	markers   []string
@@ -91,7 +99,7 @@ func rules() []rule {
 		// the tooling that builds it. Ahead of go.mod for that reason: an adopter's OS image forge
 		// has a go.mod for its CLI and was classified framework by it, which described the tool
 		// rather than the product.
-		{[]string{"packer/*.pkr.hcl", "mkosi.conf", "build/mkosi.conf"}, "os-image"},
+		{[]string{"packer/*.pkr.hcl", "mkosi.conf", "build/mkosi.conf", kernelConfigFragments}, "os-image"},
 		{[]string{"Chart.yaml", "kustomization.yaml", "helmfile.yaml"}, "container-image"},
 		{[]string{"meson.build", "core/meson.build", "libvmaf/meson.build", "CMakeLists.txt"}, "native-gpu-systems"},
 		{[]string{"Cargo.toml"}, "native-gpu-systems"},
@@ -120,8 +128,21 @@ func ByMarkers(repoPath string) Result {
 
 // ruleMatches reports whether any of the rule's markers is present.
 func ruleMatches(repoPath string, r rule) bool {
-	for i := 0; i < len(r.markers) && i < maxMarkers; i++ {
-		if util.MarkerExists(repoPath, r.markers[i]) {
+	return util.AnyMarkerExists(repoPath, r.markers)
+}
+
+// HasMarkerOf reports whether the working tree holds any marker the table maps to archetype,
+// whatever the more specific rules ahead of it say. A flavor whose detection is exactly its
+// archetype's markers calls this rather than restating them: os-image once kept its own copy of
+// this rule's list, and the two had to be widened together to recognise a kernel forge (#615).
+// An empty repoPath matches nothing, as in ByMarkers.
+func HasMarkerOf(repoPath, archetype string) bool {
+	if strings.TrimSpace(repoPath) == "" {
+		return false
+	}
+	table := rules()
+	for i := 0; i < len(table) && i < maxRules; i++ {
+		if table[i].archetype == archetype && ruleMatches(repoPath, table[i]) {
 			return true
 		}
 	}

@@ -2,11 +2,68 @@ package gating
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/flavor"
 )
+
+// osImageManifest declares the os-image profile, which the os-image flavor implements.
+const osImageManifest = "version: 1\nrepository:\n  owner: fixture\n  name: fixture\nprofiles:\n  - os-image\n"
+
+// kernelForgeRepo builds a kernel forge declaring os-image (#615) that meets the os-image
+// flavor's requirements: a yamllint policy, lefthook.yml and the ruleset, beside the Go tooling
+// goLibraryRepo lays down. extra adds forge files; its Kconfig fragments are what mark it.
+func kernelForgeRepo(t *testing.T, extra map[string]string) string {
+	t.Helper()
+	files := map[string]string{
+		".standards.yaml": osImageManifest,
+		"versions.json":   "{\"stable\": \"6.12\"}\n",
+		".yamllint.yml":   "extends: default\n",
+	}
+	for name, body := range extra {
+		files[name] = body
+	}
+	return goLibraryRepo(t, files)
+}
+
+// TestRunFlavorStage_Positive_KernelForgePasses is #615's acceptance: a kernel forge with no
+// Packer template or mkosi.conf gets an os-image verdict and passes once conforming, where it
+// used to fail on a flavor resolution the operator could not act on.
+func TestRunFlavorStage_Positive_KernelForgePasses(t *testing.T) {
+	repo := kernelForgeRepo(t, map[string]string{"kconfig/base.config": "CONFIG_MODULES=y\n"})
+	if msg, err := runFlavorStage(context.Background(), &stageConfig{repoDir: repo}); err != nil || msg != "" {
+		t.Fatalf("a conforming kernel forge must pass the stage, got %q, %v", msg, err)
+	}
+}
+
+// TestRunFlavorStage_Negative_UnmarkedOSImageStillFails keeps the stage fail-closed: a
+// repository declaring os-image with no forge marker at all is not waved through as a pass or
+// as not applicable. The reason names the flavor tried and no --flavor, which gate run lacks.
+func TestRunFlavorStage_Negative_UnmarkedOSImageStillFails(t *testing.T) {
+	_, err := runFlavorStage(context.Background(), &stageConfig{repoDir: kernelForgeRepo(t, nil)})
+	if skip, skipped := errors.AsType[*stageSkip](err); skipped {
+		t.Fatalf("an unmarked os-image repository was skipped as %s: %s", skip.status, skip.reason)
+	}
+	if !errors.Is(err, flavor.ErrNoFlavorMatched) {
+		t.Fatalf("an unmarked os-image repository must fail with ErrNoFlavorMatched, got %v", err)
+	}
+	if reason := err.Error(); strings.Contains(reason, "--flavor") || !strings.Contains(reason, `profile "os-image" has flavors (os-image)`) {
+		t.Errorf("the reason must name the flavor tried and no flag gate run lacks, got %q", reason)
+	}
+}
+
+// TestRunFlavorStage_Boundary_KconfigOutputIsNoForge: the .config file Kconfig writes, at the
+// root or under kconfig/, is not a fragment, so it still fails the stage like no marker at all.
+func TestRunFlavorStage_Boundary_KconfigOutputIsNoForge(t *testing.T) {
+	repo := kernelForgeRepo(t, map[string]string{".config": "CONFIG_X=y\n", "kconfig/.config": "CONFIG_X=y\n"})
+	if _, err := runFlavorStage(context.Background(), &stageConfig{repoDir: repo}); !errors.Is(err, flavor.ErrNoFlavorMatched) {
+		t.Fatalf("Kconfig output alone must not make a forge, got %v", err)
+	}
+}
 
 // goLibraryRepo builds a repository the flavor catalog detects as go-library: a go.mod and
 // an internal/ directory, all seven required templates, and both required settings. A case

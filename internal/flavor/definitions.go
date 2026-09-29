@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/classify"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -312,21 +313,18 @@ type OSImageFlavor struct{}
 
 func (f *OSImageFlavor) Name() string { return "os-image" }
 func (f *OSImageFlavor) Description() string {
-	return "OS & Boot Artifact Forge: Packer, mkosi and UKI pipelines"
+	return "OS & Boot Artifact Forge: Packer, mkosi, UKI and kernel pipelines"
 }
 func (f *OSImageFlavor) HISSProfile() string { return "os-image" }
 
-// Detect matches an image forge by what it builds. The markers are deliberately not
-// go.mod or pyproject.toml: such a repository usually has both, for the CLI that drives
-// the build and the suite that verifies the result, and being classified by them
-// describes the tooling rather than the product.
+// Detect matches an image forge by what it builds: a Packer template, an mkosi definition or
+// Kconfig fragments, exactly the os-image rule of the classification table, which it reads
+// rather than restates (classify.HasMarkerOf). The markers are deliberately not go.mod or
+// pyproject.toml: such a repository usually has both, for the CLI that drives the build and
+// the suite that verifies the result, and being classified by them describes the tooling
+// rather than the product.
 func (f *OSImageFlavor) Detect(repoPath string) bool {
-	for _, marker := range [...]string{"packer/*.pkr.hcl", "mkosi.conf", "build/mkosi.conf"} {
-		if util.MarkerExists(repoPath, marker) {
-			return true
-		}
-	}
-	return false
+	return classify.HasMarkerOf(repoPath, f.HISSProfile())
 }
 
 // yamllintScaffoldName is the yamllint configuration os-image scaffolds when a repository has
@@ -361,9 +359,12 @@ func (f *OSImageFlavor) RequiredSettings() []SettingItem {
 	}
 }
 
+// RequiredToolchains asks for packer only where a Packer template tree is: a kernel forge or an
+// mkosi image builds without it (#615). The marker is the os-image rule's own, which
+// TestOSImageToolchainMarkersAreForgeMarkers checks against internal/classify.
 func (f *OSImageFlavor) RequiredToolchains() []ToolchainItem {
 	return []ToolchainItem{
-		{Binary: "packer", Purpose: "Image template build engine", InstallGuide: "https://developer.hashicorp.com/packer/install"},
+		{Binary: "packer", Purpose: "Image template build engine", InstallGuide: "https://developer.hashicorp.com/packer/install", Markers: []string{"packer/*.pkr.hcl"}},
 		{Binary: "shellcheck", Purpose: "Shell provisioner static analysis", InstallGuide: "https://github.com/koalaman/shellcheck#installing"},
 		{Binary: "yamllint", Purpose: "YAML definition lint", InstallGuide: "pip install yamllint"},
 	}

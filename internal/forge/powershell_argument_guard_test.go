@@ -25,8 +25,9 @@ const maxArgumentsPerStep = 64
 // windowsLeg reports whether one of job's matrix legs runs on a Windows image. The leg is
 // identified by its image family, not one label, as in the Markdown gate check.
 func windowsLeg(job workflowJob) bool {
-	for i := 0; i < len(job.Strategy.Matrix.Include) && i < maxMatrixLegs; i++ {
-		if strings.HasPrefix(job.Strategy.Matrix.Include[i]["os"], "windows-") {
+	images := matrixOSLegs(job)
+	for i := 0; i < len(images) && i < maxMatrixLegs; i++ {
+		if strings.HasPrefix(images[i], "windows-") {
 			return true
 		}
 	}
@@ -100,7 +101,7 @@ func TestPowerShellSplitArgumentFixtures(t *testing.T) {
 	const install = "go install -modfile=tools/go/go.mod github.com/securego/gosec/v2/cmd/gosec"
 	job := func(os, shell, run string) workflowJob {
 		var spec workflowJob
-		spec.Strategy.Matrix.Include = []map[string]string{{"os": "ubuntu-26.04"}, {"os": os}}
+		spec.Strategy.Matrix = includeOSMatrix("ubuntu-26.04", os)
 		spec.Steps = []workflowStep{{Name: "Install", Shell: shell, Run: run}}
 		return spec
 	}

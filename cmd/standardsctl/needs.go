@@ -95,6 +95,7 @@ func runNeedsScan(ctx context.Context, args []string) error {
 	}
 
 	fmt.Printf("=== Framework Needs Scan: %s ===\n", report.Repository)
+	fmt.Print(needs.FormatRepositoryFallback(report))
 	fmt.Printf("Go Version: %s | Target Framework: %s\n", report.GoVersion, needs.FrameworkDisplay(report.Framework))
 	fmt.Printf("Mapping availability: %s (%d covered, %d gaps, %d total third-party)\n\n",
 		needs.MappingAvailability(report.Readiness), report.Readiness.CoveredDeps, report.Readiness.GapDeps, report.Readiness.TotalThirdPartyDeps)
@@ -114,8 +115,11 @@ func runNeedsScan(ctx context.Context, args []string) error {
 
 // checkNeedsManifest fails when the committed .needs.yaml is not what `needs scan --write`
 // would write now. Nothing regenerates the manifest on its own, so without this gate it
-// silently falls behind every change to the dependencies or to the generator's schema.
+// silently falls behind every change to the dependencies or to the generator's schema. A
+// row named after its directory is named first: its verdict depends on the checkout's
+// directory name.
 func checkNeedsManifest(ctx context.Context, path string, report *needs.RepoNeeds) error {
+	fmt.Print(needs.FormatRepositoryFallback(report))
 	drift, err := needs.CheckNeedsManifest(ctx, path, report)
 	if err != nil {
 		return err
