@@ -48,8 +48,10 @@ const (
 	artifactV3Sunset = "Artifact v3 sunset"
 )
 
-// Deprecated action versions known to target obsolete runtimes. From v3 on, each entry is
-// the runtime that major's action.yml declares under runs.using; buildActionCandidate
+// Deprecated action versions known to target obsolete runtimes, keyed by major tag. From v3
+// on, each entry is the runtime that major's action.yml declares under runs.using; the first
+// and the last release of every Node.js 20 major listed declare the same one. So
+// deprecatedRuntime looks an exact release up under its major, and buildActionCandidate
 // appends the upgrade target from knownActionLatest.
 var deprecatedActionVersions = map[string]map[string]string{
 	"actions/checkout": {
@@ -145,31 +147,34 @@ func parseWorkflowFile(ctx context.Context, repoPath, fileName string, seen map[
 	if err != nil {
 		return nil, nil, fmt.Errorf("read workflow %s: %w", fileName, err)
 	}
-	released, err := withPinnedReleases(string(content))
+	lines, pins, err := releasedLines(string(content))
 	if err != nil {
 		return nil, nil, fmt.Errorf("read workflow %s: %w", fileName, err)
 	}
 	// A commented-out `uses:` line is an example or a disabled step, not a pin in use.
-	live, err := util.StripHashComments(released)
+	live, err := util.StripHashComments(strings.Join(lines, "\n"))
 	if err != nil {
 		return nil, nil, fmt.Errorf("read workflow %s: %w", fileName, err)
 	}
-	matches := workflowActionRegex.FindAllStringSubmatch(live, 100)
 	var candidates []ActionCandidate
 	var deprecations []DeprecationWarning
 
-	for _, m := range matches {
-		if len(m) != 3 || strings.HasPrefix(m[1], ".") {
-			continue
+	for _, ref := range liveActionRefs(live) {
+		pin := pins[ref.line]
+		if pin.Action != ref.action {
+			pin = util.PinnedAction{}
 		}
-		actName, curVer := m[1], m[2]
-		key := actName + "@" + curVer + ":" + fileName
+		key := ref.action + "@" + ref.version + "@" + pin.SHA + ":" + fileName
 		if seen[key] {
 			continue
 		}
 		seen[key] = true
 
-		cand, dep := buildActionCandidate(actName, curVer, fileName)
+		cand, dep := buildActionCandidate(ref.action, ref.version, fileName)
+		cand.Line = ref.line + 1
+		if pin.SHA != "" {
+			markSHAPin(&cand, pin)
+		}
 		candidates = append(candidates, cand)
 		if dep != nil {
 			deprecations = append(deprecations, *dep)
@@ -181,6 +186,32 @@ func parseWorkflowFile(ctx context.Context, repoPath, fileName string, seen map[
 // maxWorkflowLines bounds the lines withPinnedReleases walks in one workflow (HISS-02).
 const maxWorkflowLines = 100000
 
+// maxActionRefsPerWorkflow bounds the action references one workflow contributes (HISS-02).
+const maxActionRefsPerWorkflow = 100
+
+// actionRef is one remote action reference on a live workflow line: the zero-based line
+// index, the action and the version it is compared at.
+type actionRef struct {
+	line            int
+	action, version string
+}
+
+// liveActionRefs returns the remote action references of a workflow whose comments are
+// stripped, line by line and at most maxActionRefsPerWorkflow of them. A local action
+// (./...) is not a pin.
+func liveActionRefs(live string) []actionRef {
+	lines := strings.Split(live, "\n")
+	var refs []actionRef
+	for index := 0; index < len(lines) && index < maxWorkflowLines && len(refs) < maxActionRefsPerWorkflow; index++ {
+		for _, m := range workflowActionRegex.FindAllStringSubmatch(lines[index], maxActionRefsPerWorkflow-len(refs)) {
+			if !strings.HasPrefix(m[1], ".") {
+				refs = append(refs, actionRef{line: index, action: m[1], version: m[2]})
+			}
+		}
+	}
+	return refs
+}
+
 // withPinnedReleases rewrites every uses: reference pinned by full commit SHA with its
 // release as a trailing comment (util.ParsePinnedAction) to action@release. The comment
 // names the release the SHA stands for, and Renovate and Dependabot keep the two together.
@@ -188,16 +219,48 @@ const maxWorkflowLines = 100000
 // current SHA pin would read as drift and a SHA pin of a deprecated major would go unflagged.
 // A commented-out step keeps its leading "#" and is stripped as before.
 func withPinnedReleases(content string) (string, error) {
-	lines, uses, err := util.ScanActionUses(content, maxWorkflowLines)
+	lines, _, err := releasedLines(content)
 	if err != nil {
 		return "", err
 	}
+	return strings.Join(lines, "\n"), nil
+}
+
+// releasedLines splits content into lines, rewriting each SHA pin with a release comment as
+// withPinnedReleases does, and returns every SHA pin (util.ParseSHAPin) by line index, bare
+// ones included, so the scan can still name the commit a rewritten line runs.
+func releasedLines(content string) ([]string, map[int]util.PinnedAction, error) {
+	lines, uses, err := util.ScanActionUses(content, maxWorkflowLines)
+	if err != nil {
+		return nil, nil, err
+	}
+	pins := make(map[int]util.PinnedAction)
 	for _, use := range uses {
+		if !use.SHAPinned {
+			continue
+		}
+		pins[use.Line] = use.Pin
 		if use.Pinned {
 			lines[use.Line] = strings.Replace(lines[use.Line], use.Ref, use.Pin.Action+"@"+use.Pin.Release, 1)
 		}
 	}
-	return strings.Join(lines, "\n"), nil
+	return lines, pins, nil
+}
+
+// markSHAPin records that cand runs the commit pin names. A pin whose comment names a release
+// is compared at that release and stays PinUnverified until VerifyActionPins asks its
+// upstream. A pin that names no release has nothing to compare, so it is PinUnversioned:
+// neither drift from a SHA to a tag nor up to date (#610).
+func markSHAPin(cand *ActionCandidate, pin util.PinnedAction) {
+	cand.PinnedSHA = pin.SHA
+	if pin.Release == "" {
+		cand.Pin = PinUnversioned
+		cand.PinDetail = "no release comment names the pinned commit"
+		cand.UpToDate = false
+		return
+	}
+	cand.Pin = PinUnverified
+	cand.PinDetail = "not checked against the upstream repository"
 }
 
 func buildActionCandidate(actName, curVer, fileName string) (ActionCandidate, *DeprecationWarning) {
@@ -205,33 +268,48 @@ func buildActionCandidate(actName, curVer, fileName string) (ActionCandidate, *D
 	if !hasLatest {
 		latestVer = curVer
 	}
-	isDeprecated := false
-	warningMsg := ""
-	var dep *DeprecationWarning
-	if depMap, ok := deprecatedActionVersions[actName]; ok {
-		if reason, found := depMap[curVer]; found {
-			msg := reason
-			if hasLatest {
-				msg += "; upgrade to " + latestVer
-			}
-			isDeprecated = true
-			warningMsg = msg
-			dep = &DeprecationWarning{
-				Component: actName + "@" + curVer,
-				Kind:      "runner-runtime-deprecated",
-				Details:   msg + " in " + fileName,
-			}
-		}
-	}
-	return ActionCandidate{
+	cand := ActionCandidate{
 		WorkflowFile:   fileName,
 		Action:         actName,
 		CurrentVersion: curVer,
 		LatestVersion:  latestVer,
 		UpToDate:       ActionPinCurrent(curVer, latestVer),
-		Deprecated:     isDeprecated,
-		Warning:        warningMsg,
-	}, dep
+	}
+	reason, found := deprecatedRuntime(actName, curVer)
+	if !found {
+		return cand, nil
+	}
+	if hasLatest {
+		reason += "; upgrade to " + latestVer
+	}
+	cand.Deprecated, cand.Warning = true, reason
+	return cand, &DeprecationWarning{
+		Component: actName + "@" + curVer,
+		Kind:      "runner-runtime-deprecated",
+		Details:   reason + " in " + fileName,
+	}
+}
+
+// deprecatedRuntime returns the deprecation deprecatedActionVersions records for action at
+// version. An exact entry wins, so a major whose runtime changed between releases can
+// record the releases that differ; any other version tag carries its major's entry, so
+// "v4.2.2", "4.2.2" and "v4.2" read as "v4" does, whether the version comes from a tag or
+// from a SHA pin's release comment (#614). A version that is not a tag, such as a commit
+// SHA or a branch, is never deprecated.
+func deprecatedRuntime(action, version string) (string, bool) {
+	byVersion, ok := deprecatedActionVersions[action]
+	if !ok {
+		return "", false
+	}
+	if reason, exact := byVersion[version]; exact {
+		return reason, true
+	}
+	parsed, _, isTag := semver.ParseTag(version)
+	if !isTag {
+		return "", false
+	}
+	reason, found := byVersion[fmt.Sprintf("v%d", parsed.Major)]
+	return reason, found
 }
 
 // ActionPinCurrent reports whether an action pinned at current is at or ahead of latest.

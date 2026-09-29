@@ -26,18 +26,38 @@ fails when the workflows and that baseline disagree.
 `praetorctl bump audit` compares each pin with that baseline by SemVer at the precision
 of the less precise tag (`bump.ActionPinCurrent`): an exact `v4.1.2` is current against a
 baseline `v4`, a moving `v4` is current against `v4.1.2`, and `v3.8.1` drifts behind
-`v4.1.2`. A pin by full commit SHA with its release as a trailing comment, two spaces
-before the `#` (`actions/checkout@<40-hex SHA>  # v7.0.1`, the form of the locked
-documentation gate), is compared at that release exactly as a tag pin of that
-release is (`internal/util/action_pin.go`,
-`internal/bump/scan_actions_pinned_test.go`). The deprecation table is keyed by
-major tag, so a comment naming a bare major (`# v4`) carries that major's
-deprecation, while an exact release such as `# v4.2.2`, like the exact tag
-`@v4.2.2`, is not looked up in it
-(`TestScanWorkflowActionsNode24FirstMajorNotDeprecated`). Any other
-pin that is not a version tag, such as a bare commit SHA, is current only when it equals
-the baseline. Commented-out `uses:` lines are not scanned. Tests:
+`v4.1.2`. A pin by full commit SHA with its release as a trailing comment
+(`actions/checkout@<40-hex SHA> # v7.0.1`) is compared at that release exactly as a tag
+pin of that release is, whatever spaces or tabs separate the comment from the SHA: the
+one-space form Renovate and pinact write reads like the two-space form of the locked
+documentation gate (`util.ParseSHAPin` in `internal/util/action_pin.go`,
+`internal/bump/scan_actions_pinned_test.go`). A SHA pin without a release comment is
+reported `[UNVERSIONED]`, neither drift nor up to date. The deprecation table is keyed
+by major tag, and an exact release carries its major's deprecation, whether a tag
+(`@v4.2.2`, `@4.2.2`) or a release comment (`# v4.2.2`) names it; an exact entry in
+the table would override its major (`deprecatedRuntime`,
+`TestScanWorkflowActionsExactReleaseCarriesMajorDeprecation`,
+`TestScanWorkflowActionsNode24FirstMajorNotDeprecated`). Any other pin that is not a
+version tag, such as a branch, is current only when it equals the baseline.
+Commented-out `uses:` lines are not scanned. Tests:
 `internal/bump/version_compare_test.go`.
+
+`bump audit` then asks each SHA-pinned action's repository on github.com about the pin
+(`bump.VerifyActionPins` in `internal/bump/scan_actions_verify.go`, through
+`GitHubDriver.CommitAt` and `TagsAt` in `internal/forge/commit_lookup.go`):
+
+| Row | The upstream says | Fails the report |
+| :--- | :--- | :--- |
+| drift or `[UP-TO-DATE]` | the release comment's tag, peeled, points at the pinned commit, or the commit carries a tag equal to the release at its precision (`# v4` after `v4` moved on, `# 7.0.0` for tag `v7.0.0`) | no |
+| `[BAD-PIN]` | the commit does not exist (`action-pin-commit-missing`), or the comment's tag points at another commit or does not exist (`action-pin-release-mismatch`, naming the tags the commit carries) | yes, with file and line |
+| `[UNVERSIONED]` | the commit exists; no release comment names it | no |
+| `[UNVERIFIED]` | nothing: no token, offline, rate limited, or the repository is not visible | no; never up to date, and the reason is printed once under the rows |
+
+The audit reads the token from `GITHUB_TOKEN`, `GH_TOKEN` or `gh auth token`, in that
+order (`util.ResolveAuthTokenContext`); without one every SHA pin is `[UNVERIFIED]`. An
+answer that says the forge cannot be asked stops the remaining questions, and one audit
+asks at most 300. Tests: `internal/bump/scan_actions_verify_test.go`,
+`internal/forge/commit_lookup_test.go`.
 
 | Tool | Action pin | Installs | Why the pin reads the way it does |
 | :--- | :--- | :--- | :--- |
