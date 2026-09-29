@@ -17,7 +17,16 @@ standardsctl adopt --dry-run
 
 # Regenerate drifted audit-locked files & record technical debt
 praetorctl adopt --force --record-baseline --lock-source-root=/path/to/praetor
+
+# Change the declared profile or facets later, or re-pin to a newer catalog
+praetorctl profile set os-image --lock-source-root=/path/to/praetor --dry-run
 ```
+
+`--facets` names the facets a repository without a declaration gets. Omitted, adoption applies
+`security:high`, `api:public-contract`, `docs:seo-portal` and `agent:sandboxed`
+(`config.DefaultFacets` in `internal/config/facets.go`); `adopt --help` says so
+(`TestAdoptHelpStatesTheDefaultFacets` in `cmd/standardsctl/profile_test.go`). To change them
+after adoption, see [Changing the profile, facets or catalog](#changing-the-profile-facets-or-catalog).
 
 ### Dry-run ruleset preview
 
@@ -203,7 +212,7 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
 
 1. **`.standards.yaml`**: Declarative repository manifest containing profile, facets, tool versions, and policy locks.
 2. **`.standards.lock`**: Cryptographic SemVer lockfile binding your repo to exact governance standard releases.
-3. **`.standards-baseline.json`**: Technical debt ratcheting baseline. Existing infractions (e.g. legacy loop bounds, unwrapped errors) are recorded so legacy code compiles while new code is strictly gated. A re-adoption with `--record-baseline` (the default) rescans the repository and keeps the recorded file untouched when the rescan finds the same debt for the same repository, so an unchanged repository gets no `generated_at`-only diff; it rewrites the file when the infractions or the repository identity changed (`TestReconcileBaseline_KeepsUnchangedBaseline_3D` in `internal/adopt/baseline_identity_test.go`).
+3. **`.standards-baseline.json`**: Technical debt ratcheting baseline. Existing infractions (e.g. legacy loop bounds, unwrapped errors) are recorded so legacy code compiles while new code is strictly gated. A re-adoption with `--record-baseline` (the default) rescans the repository and keeps the recorded file untouched when the rescan finds the same debt for the same repository, so an unchanged repository gets no `generated_at`-only diff; it rewrites the file when the infractions or the repository identity changed (`TestReconcileBaseline_KeepsUnchangedBaseline_3D` in `internal/adopt/baseline_identity_test.go`). A rescan without a resolved identity keeps the repository the file records instead of blanking it, as `praetorctl baseline --record` does (`TestReconcileBaseline_UnresolvedIdentityKeepsRecordedRepository_3D`).
 4. **`AGENTS.md` + 6 Vendor Targets**: Canonical agent operating harness transpiled to `CLAUDE.md`, `.cursor/rules/*.mdc`, `.github/copilot-instructions.md`, `.windsurfrules`, `.gemini/GEMINI.md` and `.codex/rules.md`. `agent_clients` in `.standards.yaml` limits these to the clients the repository uses ([agent client selection](guides/editor-capabilities.md#selecting-agent-clients)).
 5. **`.devcontainer/devcontainer.json`**: Multi-architecture container configuration pinned to verified base images.
 6. **Multi-IDE Configs**: Workspace settings for every supported editor, or only the ones `editors` in `.standards.yaml` names ([editor selection](guides/editor-capabilities.md#selecting-editors)).
@@ -254,7 +263,9 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
   README as they are (`TestAdopt_RerunCompletesOnceIdentityIsSet`).
 - **Profile.** The profile an existing `.standards.yaml` declares outranks `--profile`,
   which outranks file markers. A conflicting `--profile` is reported as ignored
-  (`TestAdopt_DeclaredProfileGovernsAdoption`).
+  (`TestAdopt_DeclaredProfileGovernsAdoption`). Adoption never rewrites a declared profile;
+  `praetorctl profile set` does
+  ([Changing the profile, facets or catalog](#changing-the-profile-facets-or-catalog)).
 - **Declared HISS exceptions.** A repository whose own standard allows a construct a HISS
   directive bans declares that exception under `hiss.exceptions` in `.standards.yaml`, naming
   the repository document that records it. The one exception is `c_goto_cleanup`: a C or C++
@@ -427,8 +438,10 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
   catalog texts, which is re-pinned to `--lock-source-root` while the pinned catalog files are
   replaced (`TestAdoptRepinsAnUnmodifiedEarlierCatalog`). The catalog re-pin happens only when
   every source file decodes to exactly the values of the earlier text it replaces; a source
-  that changes even one value keeps failing until `--force`
-  (`TestAdoptDoesNotRepinAnEarlierCatalogToChangedValues`). The files `--force` no longer
+  that changes even one value keeps failing plain adoption
+  (`TestAdoptDoesNotRepinAnEarlierCatalogToChangedValues`). The failure names each declared
+  text whose values the source changes and the narrow re-pin, `praetorctl profile set`
+  (`TestExistingLockMismatchNamesTheValueChanges` in `internal/adopt/lock_remedy_test.go`). The files `--force` no longer
   overwrites are refreshed the same way when they hold a text an earlier release wrote: the agent
   anti-evasion interceptor, the checkpoint scripts, which go to the `--lock-source-root` bundle,
   and the two canonical personas, which go through the root-pinned writer `compile-context` uses
@@ -449,6 +462,49 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
   `eol=lf` in `.gitattributes`. An edited copy of any of them, or one with mixed line endings,
   is left as it is and keeps the contract above
   (`TestAdoptDoesNotRepinAnEditedOrForeignCatalog`).
+
+### Changing the profile, facets or catalog
+
+`praetorctl profile set` changes what an adopted repository declares, or re-pins it to a newer
+Praetor catalog, without `adopt --force`:
+
+```bash
+# Move to another profile; preview first, then apply
+praetorctl profile set os-image --lock-source-root=/path/to/praetor --dry-run
+praetorctl profile set os-image --lock-source-root=/path/to/praetor
+
+# Replace the declared facets; --facets= declares none
+praetorctl profile set --facets=security:high --lock-source-root=/path/to/praetor
+
+# Keep the declaration and take up a catalog whose values changed
+praetorctl profile set --lock-source-root=/path/to/praetor
+```
+
+It writes three things and nothing else (`adopt.SetProfile` in `internal/adopt/profile_set.go`):
+
+| File | Change |
+| :-- | :-- |
+| `.standards.yaml` | The `profiles` and `facets` lists, rewritten only when they change. Every other line, comment and key keeps its text; a comment on the list's key line is kept. A `<profile>` replaces the whole profiles list; an omitted `--facets` keeps the declared facets. |
+| `.standards.lock` | Rebuilt from `--lock-source-root` for the new declaration. |
+| `.config/archetypes` | The texts the new lock pins, written or replaced. A text the declaration no longer names is kept; delete it yourself when nothing reads it. |
+
+Hooks, rulesets, personas, editor files and the baseline stay as they are
+(`TestSetProfile_Positive_LeavesAnAdoptedTreeAlone`). Every file is read, built and checked
+before the first one is written, so a refusal leaves the repository as it was
+(`TestSetProfile_Negative_RefusalsWriteNothing`). Each write is bound to the bytes read first, so
+a file edited in between fails the run instead of losing the edit. A replaced lock or catalog
+text is backed up under `.workingdir/adopt-backups/` and listed with its line delta, as adoption
+lists a replaced file. `--dry-run` writes nothing and prints each changed file as a diff, or its
+content when it would be created (`TestSetProfile_Boundary_EmptyFacetsAndDryRun`). A real run
+reads the result back as `praetorctl audit` does: the lock must verify against the vendored
+catalog without the source bundle (`TestProfileSetEndToEnd` in
+`cmd/standardsctl/profile_test.go`).
+
+`--lock-source-root` is required. A profile or facet the source bundle does not define fails
+before anything is written. The error names the bundle and its catalog version, such as
+`lock source /path/to/praetor, catalog v0.0.0+catalog.3536de06c71a: profile "os-image": ...`,
+so a bundle older than the archetype shows up as the stale part
+(`TestBuildLockfileMissingIDNamesTheSourceCatalog` in `internal/config/lockbuild_test.go`).
 
 ---
 
@@ -689,10 +745,11 @@ changes. So:
 unreleased build versions (`v0.0.0+<revision>`) through the same
 `config.UnreleasedLockVersion` in `internal/config/lockbuild.go`. An existing lock is
 not rewritten for its version alone: validation compares digests, not versions, so the
-catalog version arrives with the next rebuild (`--force`, or a layout-only re-pin).
+catalog version arrives with the next rebuild (`praetorctl profile set`, `--force`, or a layout-only re-pin).
 
-An existing valid target lock is preserved. An invalid lock fails unless both
-`--force` and an explicit source permit rebuilding it. A dry run without a source
+An existing valid target lock is preserved. An invalid lock fails adoption unless both
+`--force` and an explicit source permit rebuilding it; `praetorctl profile set` rebuilds the
+lock alone from an explicit source. A dry run without a source
 reports lock generation as skipped; it cannot promise a complete adoption. Live
 errors retain the partial report, since earlier scaffolding may already exist.
 The same source option applies to `adopt --all-missing`; integrations invoking
