@@ -482,14 +482,21 @@ update bots are not configured; keep the managed files out of them by hand.
 actionlint rejects a `runs-on` label missing from its built-in table of
 GitHub-hosted runners, and v1.7.12, its release at the time of writing, has no
 `ubuntu-26.04`. The locked workflow runs on that label, and audit forbids
-editing it, so the `actionlint-labels` adoption step declares the label to
-actionlint under `self-hosted-runner.labels`, the one declaration actionlint
-accepts for it (`internal/adopt/actionlint.go`):
+editing it; so does every CI workflow a flavor scaffolds (the Go, Rust, Node,
+JVM and Flutter templates under `templates/`). The `actionlint-labels`
+adoption step therefore declares the label to actionlint under
+`self-hosted-runner.labels`, the one declaration actionlint accepts for it
+(`internal/adopt/actionlint.go`):
 
-- The labels come from the Markdown family (`actionlintLabels` in
-  `tools/markdownlint/assets.go`, read as `managedasset.Family.ActionlintLabels`).
-  Each must be a `runs-on` value of the workflow (`Family.Validate`). With
-  `docs:seo-portal` disabled, no label is needed and nothing is written.
+- The labels come from the workflows the run writes: this workflow while
+  `docs:seo-portal` is enabled, and the CI workflows of the detected flavor
+  unless the flavor step is declined. The harness names the same list
+  (`adoptedWorkflowFiles` in `internal/adopt/harness_ci.go`). Each workflow's
+  `runs-on` labels are read from its body (`forge.WorkflowRunnerLabels`), and
+  a label is declared when `actionlintUnknownLabels` lists it as one actionlint
+  does not know. A workflow the repository owns, such as a `ci.yml` that
+  differs from the flavor's, is not read; with no workflow that needs a label,
+  nothing is written.
 - It edits the file actionlint reads: `.github/actionlint.yaml`, or
   `.github/actionlint.yml` when the `.yaml` file is absent. With both present,
   actionlint v1.7.12 ignores the `.yml` file, so adoption does too. A
@@ -515,16 +522,19 @@ accepts for it (`internal/adopt/actionlint.go`):
   link, a directory, a file over 1 MiB or one it may not read, mixed line
   endings, several documents, anchors, aliases, duplicate keys, a flow-style
   mapping, a multi-line flow list and a `labels` value of another kind.
-- Once actionlint ships a label, remove it from `actionlintLabels`, and
+- Once actionlint ships a label, remove it from `actionlintUnknownLabels`, and
   adoption stops adding it. Wherever actionlint is on `PATH`,
   `TestActionlintStillRejectsTheDeclaredLabels` fails as soon as actionlint
-  accepts the workflow without the declaration, and
-  `TestActionlintAcceptsTheAdoptedWorkflow` checks that it accepts the workflow
-  beside the file adoption creates. Both skip where actionlint is not
-  installed; Praetor does not pin it (#343).
+  accepts the workflows adoption writes without the declaration, and
+  `TestActionlintAcceptsEveryEmittedWorkflow` checks that it accepts each of
+  them, every committed rendering of the Node template included, beside the
+  file adoption creates for it. Both skip where actionlint is not installed;
+  Praetor does not pin it (#343). `TestActionlintUnknownLabelsBoundary` runs
+  everywhere and fails when a listed label is one no emitted workflow runs on.
 
-The `TestActionlintLabels*` and `TestMergeActionlintLabelsBoundaryLayouts`
-tests in `internal/adopt/actionlint_test.go` cover these cases. This
+The `TestActionlintLabels*`, `TestActionlintLabelsOfBoundary` and
+`TestMergeActionlintLabelsBoundaryLayouts` tests in
+`internal/adopt/actionlint_test.go` cover these cases. This
 repository's own `.github/actionlint.yaml` declares the label for all its
 workflows, which adoption leaves as it is.
 

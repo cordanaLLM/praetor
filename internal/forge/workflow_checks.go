@@ -294,6 +294,9 @@ type workflowJob struct {
 	Permissions     yaml.Node        `yaml:"permissions"`
 	Strategy        workflowStrategy `yaml:"strategy"`
 	Steps           []workflowStep   `yaml:"steps"`
+	// RunsOn is a raw node because the key has three shapes: one label, a list of labels, and
+	// a mapping of a runner group and its labels (WorkflowRunnerLabels).
+	RunsOn yaml.Node `yaml:"runs-on"`
 }
 
 // workflowStep is the step subset the Go cache audit and the portability checks decide on,
