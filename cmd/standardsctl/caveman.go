@@ -16,6 +16,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
@@ -508,20 +509,13 @@ func cavemanEstimate(ctx context.Context, args []string, stdin io.Reader, out io
 	var bytesTotal, tokensTotal int
 	for _, input := range inputs {
 		tokens := caveman.EstimateTokens(input.text)
-		fmt.Fprintf(&text, "%s: bytes=%d lines=%d tokens_est=%d\n", input.name, len(input.text), countLines(input.text), tokens)
+		fmt.Fprintf(&text, "%s: bytes=%d lines=%d tokens_est=%d\n", input.name, len(input.text), util.CountLines(input.text), tokens)
 		bytesTotal += len(input.text)
 		tokensTotal += tokens
 	}
 	fmt.Fprintf(&text, "total: inputs=%d bytes=%d tokens_est=%d\n", len(inputs), bytesTotal, tokensTotal)
 	_, err = io.WriteString(out, text.String())
 	return err
-}
-
-func countLines(text string) int {
-	if text == "" {
-		return 0
-	}
-	return strings.Count(strings.TrimSuffix(text, "\n"), "\n") + 1
 }
 
 // readCavemanInputs reads every named file, the Markdown files below every named directory
