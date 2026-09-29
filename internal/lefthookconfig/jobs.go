@@ -79,8 +79,7 @@ func appendMapJobs(jobs []Job, hook, kind string, group any) []Job {
 	}
 	sort.Strings(names)
 	for i := 0; i < len(names) && len(jobs) < MaxJobs; i++ {
-		body, _ := named[names[i]].(map[string]any)
-		jobs = append(jobs, Job{Hook: hook, Name: kind + "/" + names[i], Run: field(body, "run")})
+		jobs = append(jobs, Job{Hook: hook, Name: kind + "/" + names[i], Run: field(asMap(named[names[i]]), "run")})
 	}
 	return jobs
 }
@@ -92,7 +91,7 @@ func appendListJobs(jobs []Job, hook string, list any) []Job {
 		return jobs
 	}
 	for i := 0; i < len(entries) && len(jobs) < MaxJobs; i++ {
-		entry, _ := entries[i].(map[string]any)
+		entry := asMap(entries[i])
 		jobs = append(jobs, Job{Hook: hook, Name: listJobName(entry, i), Run: listJobRun(entry)})
 	}
 	return jobs
@@ -125,6 +124,16 @@ func listJobRun(job map[string]any) string {
 		return ""
 	}
 	return field(job, "run")
+}
+
+// asMap returns value as a job map, or nil when it is none: a job without a body reads as one
+// with no fields.
+func asMap(value any) map[string]any {
+	job, isMap := value.(map[string]any)
+	if !isMap {
+		return nil
+	}
+	return job
 }
 
 // field returns a string field of a job, or "" when it is absent or not a string.

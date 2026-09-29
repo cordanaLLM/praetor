@@ -28,8 +28,15 @@ exist yet.
 Lefthook also supports a pinned `remotes` entry with `git_url`, `ref` and `configs`,
 but remote YAML does not copy referenced scripts into the consuming repository.
 Remote distribution therefore still requires vendoring the matching scripts or
-a future packaged CLI adapter. The existing Go adoption scaffolder is outside
-this change and must be updated before fleet-wide automatic rollout.
+a future packaged CLI adapter.
+
+`praetorctl adopt` does not write this policy. It writes a smaller root `lefthook.yml`
+whose language jobs follow the languages it detects, and it keeps any root
+configuration that is not one of its own renderings, `--force` included: one that
+extends this policy through `extends` or `remotes`, and every other one. Beside a
+configuration extending this policy it refreshes neither the vendored scripts nor
+`.config/agent/hooks/block_evasion.py`. See
+[the lefthook.yml adoption writes](../../docs/guides/git-hooks.md#the-lefthookyml-adoption-writes).
 
 Verified against pinned Lefthook 2.1.14 with real Git and custom agent-job
 invocations. The policy requires v2 for `agent-pre-tool`; the native Codex adapter

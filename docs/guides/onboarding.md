@@ -141,7 +141,10 @@ same commit therefore scores the same on every machine.
 | Settings | yes | the file exists **and**, where the setting declares a shape, parses |
 | Toolchains | no — advisory | `exec.LookPath` on the machine running the audit |
 
-- **Settings are parsed, not counted.** `lefthook.yml` must parse as a non-empty YAML mapping;
+- **Settings are parsed, not counted.** `lefthook.yml` must parse as a non-empty YAML mapping,
+  and for `rust-systems`, which describes it as clippy and rustfmt enforcement, its `pre-commit`
+  run lines must call `cargo fmt` and `cargo clippy`
+  ([`internal/flavor/lefthook_setting_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/flavor/lefthook_setting_test.go));
   `.github/rulesets/main.json` and `.vscode/settings.json` must parse as non-empty JSON objects
   (strict JSON — comments and trailing commas are rejected, the same line
   [`internal/clientsetup`](https://github.com/cordanaLLM/praetor/blob/main/internal/clientsetup/plan.go) draws for client configuration). A

@@ -151,6 +151,63 @@ The root `.dockerignore` also excludes this directory and Git history from local
 container builds; Docker applies its [build-context ignore rules](https://docs.docker.com/build/concepts/context/#dockerignore-files)
 separately from Git.
 
+## The lefthook.yml adoption writes
+
+`praetorctl adopt` writes a root `lefthook.yml` (`buildLefthookYAMLFor` in
+`internal/adopt/hooks.go`). Its governance jobs are the same in every repository:
+`compile-context --verify` and `audit` before a commit, `state sync` and the dedupe cadence
+after one, and `flavor audit`, `audit` and `gate run` before a push. The language jobs follow
+the languages the adoption verification plan detects from root markers, the set the harness
+rows are rendered for (`lefthookLanguages`, `planLanguages` in `internal/adopt/harness_hiss.go`):
+
+| Detected | Pre-commit jobs | Pre-push jobs | Each runs only where |
+| --- | --- | --- | --- |
+| Go (`go.mod`) | `gofmt` (`gofmt -w` on staged files), `govet` (`go vet ./...`) | `security` (`govulncheck ./...`, skipped when not installed) | Go files are staged, and the root holds `go.mod` for `go vet` and `govulncheck` |
+| Rust (`Cargo.toml`) | `rustfmt` (`cargo fmt --all --check`), `clippy` (the gate's own `cargo clippy --workspace --all-targets -- -D warnings`, `gating.CargoClippyArgs`) | none: `gate run` runs `cargo audit` for a `Cargo.lock` | Rust files are staged and the root holds `Cargo.toml` |
+| none detected | every language's jobs above, as the harness then keeps every HISS clause | as above | as above |
+
+Any other detected language, such as Python, gets the governance jobs alone. A Go module kept
+only in a subdirectory is not detected, so a Cargo workspace with a Go tool under `tooling/`
+gets the Rust jobs. The header comment names the languages the file carries jobs for. Tests:
+`TestAdopt_Positive_LefthookJobsFollowDetectedLanguages` and
+`TestAdopt_Boundary_LefthookJobsForUnknownAndJoblessLanguages` in
+`internal/adopt/lefthook_languages_test.go`, and the `TestCargoJobs_*` and `TestGoModuleJobs_*`
+cases in `internal/adopt/hooks_gomod_test.go`, which run the job lines against stub tools.
+
+The `rust-systems` flavor describes this setting as pre-commit clippy and rustfmt enforcement,
+and `flavor audit` holds it to that: `lefthook.yml` satisfies it only when its `pre-commit` run
+lines call `cargo fmt` (or `rustfmt`) and `cargo clippy`, in the commands map or a jobs list
+(`validRustLefthook` in `internal/flavor/lefthook_setting.go`, tests in
+`internal/flavor/lefthook_setting_test.go`). The other flavors accept any non-empty mapping.
+
+An existing `lefthook.yml` is classified before anything is installed (`classifyLefthookConfig` in
+`internal/adopt/lefthook_identity.go`):
+
+- **A current rendering** for the repository's languages is verified and activated. A CRLF
+  checkout of one is verified and kept without `--force`, and rewritten with its LF bytes under
+  `--force`, since activation trusts only those. The rendering without checkpoint jobs gains them
+  once the checkpoint lifecycle is installed; the one with them is kept by a run that did not
+  install the lifecycle (`internal/adopt/lefthook_keep_test.go`).
+- **An earlier rendering** listed in `priorLefthookDigests`, reproduced by
+  `internal/adopt/testdata/lefthook/`, is migrated to the current one on a plain run and
+  activated. The list holds the two renderings that carried the Go jobs into every repository,
+  so those adopters get the jobs of their own languages without `--force`
+  (`TestAdopt_Negative_GoEveryRepositoryRenderingMigratesToCargoJobs`).
+- **Any other file** is the repository's. It is kept byte for byte, `--force` included, and not
+  activated: the audit checks only that `lefthook.yml` exists, so `--force` has nothing to restore.
+  The skip names the generated jobs the file lacks and the jobs it adds, or says the file does not
+  parse as a YAML mapping. A file that extends `.config/lefthook/praetor.yml` is reported as the
+  canonical policy instead. Beside a kept file adoption writes only the checkpoint files that
+  are absent and refreshes none (`TestAdopt_Negative_ForeignLefthookKeptWithAndWithoutForce`,
+  `TestAdopt_Positive_ForceKeepsAdopterExtendsLefthook`,
+  `TestAdopt_Boundary_UnparsableLefthookKeptAbsentCreated`,
+  `TestAdopt_Positive_KeptLefthookGetsOnlyAbsentCheckpointFiles`).
+
+To regenerate a kept file, remove `lefthook.yml` and re-run adopt, or merge the named jobs by
+hand and run `lefthook install`. After changing the template, record the rendering it replaced:
+copy it under `internal/adopt/testdata/lefthook/` and add its digest to `priorLefthookDigests`
+(`TestPriorLefthookDigests_Positive_ReproducedByFixtures`).
+
 ## Hook files adoption keeps
 
 The audit reads none of the hook files below, so `praetorctl adopt --force` does not overwrite
