@@ -395,6 +395,12 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
   `TestAdopt_AgentsMD_ForceKeepsCRLFPreamble`,
   `TestAdopt_AgentsMD_ForceRefusesUnknownBoundary`,
   `TestAdopt_AgentsMD_ForceKeepsProseNamingTheHarness` in `internal/adopt/adopt_test.go`).
+- **Text register policy.** Every run renders the harness's text register block from the
+  manifest, `--force` or not. A policy the renderer rejects, such as a `register.tasks`
+  entry that is not a `target_tasks` label ([text register](guides/text-register.md)), fails
+  adoption before its first write, a dry run included; a manifest that declines
+  `agent-harness` is not checked (`preflightAgentHarness` in `internal/adopt/adopt.go`,
+  tests in `internal/adopt/register_preflight_test.go`).
 - **Earlier Praetor output.** The manifest, lock, label taxonomy, pinned catalog, flavor
   YAML (`.clang-format` and `.clang-tidy` included) and the `docs:seo-portal` documentation
   gate's YAML that adoption writes pass `yamllint --strict` with its default rules
