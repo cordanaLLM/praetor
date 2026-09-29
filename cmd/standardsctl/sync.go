@@ -260,8 +260,9 @@ func reconcileRemoteForge(ctx context.Context, rootDir string, in remoteSyncInpu
 // reconcileRemoteRuleset writes the local .github/rulesets/main.json ruleset to GitHub under the
 // same name and refs, requiring the status checks of it that report in the repository gh writes
 // to. It reads what the default branch enforces before and after the write, from every ruleset
-// and the legacy protection object, and fails when a declared property is still not enforced
-// once the ruleset converged. It then names the checks it left off.
+// and the legacy protection object, names each ruleset setting the write lowered to the declared
+// value, and fails when a declared property is still not enforced once the ruleset converged.
+// It then names the checks it left off.
 func reconcileRemoteRuleset(ctx context.Context, gh *forge.GitHubDriver, rootDir string, in remoteSyncInputs) error {
 	if in.policy == nil {
 		return errors.New("reconcile branch protection: no resolved policy")
@@ -280,7 +281,9 @@ func reconcileRemoteRuleset(ctx context.Context, gh *forge.GitHubDriver, rootDir
 		return err
 	}
 	fmt.Printf("  [SYNC] Reconciling branch protection ruleset on GitHub for %s...\n", repository)
-	if err := gh.ReconcileProtection(ctx, in.branch, in.policy); err != nil {
+	lowered, err := gh.ReconcileProtectionReport(ctx, in.branch, in.policy)
+	printLoweredParameters(lowered)
+	if err != nil {
 		return err
 	}
 	drifted, err := reportLiveProtection(ctx, gh, target, "read back", false)

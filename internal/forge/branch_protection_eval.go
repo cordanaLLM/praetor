@@ -18,8 +18,10 @@ const (
 	ProtectionEnforced ProtectionVerdict = "enforced"
 	// ProtectionDrift means the property is declared and the branch enforces less or nothing.
 	ProtectionDrift ProtectionVerdict = "drift"
-	// ProtectionStricter means the branch enforces more than declared. sync --remote keeps it,
-	// because it never narrows a live ruleset; lowering it is the operator's change.
+	// ProtectionStricter means the branch enforces more than declared. sync --remote lowers a
+	// parameter it renders into its own ruleset to the declared value and names it
+	// (LoweredParameter); a rule it does not render, another ruleset and the legacy protection
+	// object it leaves as they are, so lowering those is the operator's change.
 	ProtectionStricter ProtectionVerdict = "stricter"
 	// ProtectionNotRequired means the property is neither declared nor enforced.
 	ProtectionNotRequired ProtectionVerdict = "not-required"
