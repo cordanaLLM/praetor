@@ -406,10 +406,10 @@ def repair_status_checks(client, root):
 def discovery_checks(client, root):
     """Exercise local capability discovery plan, observation, readback and replay."""
     policy = {"version": 1, "rules": [{
-        "key": "hiss:typescript", "title": "TypeScript scanner",
-        "kind": "scanner_extension", "matches": [".ts"], "analyzer": "hiss"}]}
+        "key": "hiss:csharp", "title": "C# scanner",
+        "kind": "scanner_extension", "matches": [".cs"], "analyzer": "hiss"}]}
     (root / "discovery-policy.json").write_text(json.dumps(policy))
-    (root / "app.ts").write_text("export const fixture = 1;\n")
+    (root / "App.cs").write_text("class App {}\n")
     args = {"path": ".", "policy_path": "discovery-policy.json", "artifact_dir": "discovery-plan"}
     planned = json.loads(tool_text(client.call("standards_dogfood_discover", args)))
     require(planned["status"] == "planned" and not planned["complete"] and not planned["verified"],
@@ -422,8 +422,8 @@ def discovery_checks(client, root):
             "discovery observation did not complete as unverified")
     report = json.loads((root / "discovery-observed/report.json").read_text())
     require(report["cases"][0]["status"] == "observed" and report["candidates"],
-            "unsupported TypeScript observation did not produce a review candidate")
-    (root / "app.ts").unlink()
+            "unsupported C# observation did not produce a review candidate")
+    (root / "App.cs").unlink()
     (root / "app.go").write_text("package fixture\n")
     args["artifact_dir"] = "discovery-replay"
     replay = json.loads(tool_text(client.call("standards_dogfood_discover", args)))
