@@ -21,8 +21,10 @@ import (
 )
 
 const (
-	// renderTimeout bounds the helm invocation (HISS-02).
-	renderTimeout = 60 * time.Second
+	// renderTimeout bounds the helm invocation (HISS-02). It is not a speed budget: a
+	// cold helm.exe on a loaded windows-latest runner, beside every other package's
+	// tests, took past 60 s for one local template render and was killed mid-run.
+	renderTimeout = 5 * time.Minute
 	// maxDocuments bounds the decode loop over a rendered manifest stream.
 	maxDocuments = 64
 	// maxRootWalk bounds the walk from this package to the repository root.
@@ -65,6 +67,10 @@ func runHelm(t *testing.T, argv ...string) (stdout, stderr []byte, err error) {
 	cmd := exec.CommandContext(ctx, "helm", argv...)
 	cmd.Stderr = &errOut
 	out, err := cmd.Output()
+	if ctx.Err() != nil {
+		// A killed helm exits 1 with nothing on stderr; say that the bound fired.
+		err = fmt.Errorf("helm did not finish within %s: %w", renderTimeout, errors.Join(err, ctx.Err()))
+	}
 	return out, errOut.Bytes(), err
 }
 

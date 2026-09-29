@@ -1,0 +1,3 @@
+type: fixed
+title: "The Helm chart tests give each helm render five minutes instead of sixty seconds and say when that bound fired: a cold helm.exe on a loaded windows-latest runner took past a minute for one local template render, was killed mid-run and reported only exit status 1, failing the required Platform Neutrality (Windows) check"
+breaking: false
