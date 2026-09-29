@@ -44,19 +44,25 @@ type profileSetPlan struct {
 	lockBefore     lockSnapshot
 	lock           []byte
 	catalog        []catalogWrite
+	// policy is the effective policy the planned declaration and lock resolve to, with the
+	// catalog texts read from the source bundle; a dry run reports it (applyProfileSet).
+	policy *config.EffectivePolicy
 }
 
 // SetProfile declares opts.Profile and opts.Facets in an adopted repository and re-pins it to
 // opts.LockSourceRoot. It writes three things and nothing else: the profiles and facets lists of
 // .standards.yaml, every other line kept as written; .standards.lock, rebuilt for that
-// declaration; and the vendored catalog texts under .config/archetypes that lock pins. Hooks,
-// rulesets, personas, editor files and the baseline stay as they are, which is the narrow path
-// adopt --force is not (#123). With the declaration unchanged it re-pins the lock and the
-// vendored texts to the selected source, a routine catalog update. A vendored text the new
-// declaration no longer names is kept. Every file is read, built and checked before the first
-// is written, so a refusal leaves the repository as it was; a dry run writes nothing and
-// previews each changed file. A replaced lock or catalog text is backed up and reported as an
-// adoption reports it (replaceExisting).
+// declaration; and the vendored catalog texts under .config/archetypes that lock pins (#123).
+// With the declaration unchanged it re-pins the lock and the vendored texts to the selected
+// source, a routine catalog update. A vendored text the new declaration no longer names is kept.
+// Every other file stays as it is, including the files adoption derives from the declaration:
+// the DevContainer, the branch protection ruleset, the README block and the documentation
+// assets. After a profile or facet change those can fail praetorctl audit until adopt --force
+// refreshes them; the returned report carries the effective policy, dry run included, that the
+// caller checks them against. Every file is read, built and checked before the first is written,
+// so a refusal leaves the repository as it was; a dry run writes nothing and previews each
+// changed file. A replaced lock or catalog text is backed up and reported as an adoption reports
+// it (replaceExisting).
 func SetProfile(ctx context.Context, opts ProfileSetOptions) (*AdoptReport, error) {
 	if ctx == nil {
 		return nil, errors.New("profile set: context cannot be nil")
@@ -228,6 +234,7 @@ func planPins(ctx context.Context, s *adoptSession, plan *profileSetPlan) error 
 	if plan.catalog, err = prepareCatalogWrites(ctx, s, policy.CatalogArtifacts); err != nil {
 		return err
 	}
+	plan.policy = policy
 	if err := config.ValidateCatalogProjectionContext(ctx, s.repoPath, policy.CatalogArtifacts); err != nil {
 		return fmt.Errorf("validate the prospective catalog: %w", err)
 	}
@@ -237,8 +244,8 @@ func planPins(ctx context.Context, s *adoptSession, plan *profileSetPlan) error 
 // applyProfileSet writes the plan: the catalog texts first, so the lock never pins a text the
 // repository lacks, then the lock, then the manifest. Each write is bound to the bytes planning
 // observed (contextopt.ReplaceSnapshot), so a file changed since fails the run instead of losing
-// the change. A dry run writes nothing and previews each file that would change; a real run
-// reads the result back as audit does (verifyProfileSet).
+// the change. A dry run writes nothing, previews each file that would change and reports the
+// planned effective policy; a real run reads the lock and the policy back (verifyProfileSet).
 func applyProfileSet(ctx context.Context, s *adoptSession, plan *profileSetPlan) error {
 	for i := 0; i < len(plan.catalog) && i < maxAdoptPolicyFiles; i++ {
 		write := plan.catalog[i]
@@ -257,6 +264,7 @@ func applyProfileSet(ctx context.Context, s *adoptSession, plan *profileSetPlan)
 	s.previewProfileWrite(manifestFile, plan.manifestBefore, true, plan.manifestAfter)
 	s.report.Archetype, s.report.Facets = plan.next.Profiles[0], plan.next.Facets
 	if s.opts.DryRun {
+		s.report.EffectivePolicy = plan.policy
 		return nil
 	}
 	return verifyProfileSet(ctx, s, plan.next)
@@ -297,9 +305,10 @@ func (s *adoptSession) previewProfileWrite(rel string, before []byte, exists boo
 		filePreview(scaffold{rel: rel, content: after}, scaffoldWritten, before, exists, exists))
 }
 
-// verifyProfileSet reads the written files back as audit does: the lock must verify against the
-// catalog the repository now vendors, and the effective policy must resolve from the repository
-// alone, without the source bundle.
+// verifyProfileSet reads the lock and the policy back as audit's manifest and lock gates do: the
+// lock must verify against the catalog the repository now vendors, and the effective policy must
+// resolve from the repository alone, without the source bundle. The gates that check files
+// derived from the declaration are the caller's (runProfileSet).
 func verifyProfileSet(ctx context.Context, s *adoptSession, manifest *config.Manifest) error {
 	if _, err := config.ValidateLockfileWithOptions(ctx, config.LockValidationOptions{
 		Root: s.repoPath, RequireSources: true,
