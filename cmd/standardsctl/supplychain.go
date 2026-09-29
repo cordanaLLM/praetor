@@ -210,14 +210,8 @@ func parseProvenanceFlags(args []string) (provenanceFlags, error) {
 	if f.contentCheck, err = supplychain.ParseContentCheck(*contentCheck); err != nil {
 		return f, fmt.Errorf("flag -content-check: %w", err)
 	}
-	switch {
-	case len(positional) > 0:
-		return f, fmt.Errorf("provenance accepts no positional arguments, got %q", positional)
-	case f.checksums != "" && (f.file != "" || f.artifact != "" || f.digest != ""):
-		return f, fmt.Errorf("flag -checksums names every subject itself and excludes -file, -artifact and -digest")
-	case f.checksums == "" && f.file == "":
-		return f, fmt.Errorf("flag -file is required (or -checksums for every file a sha256sum manifest lists): " +
-			"the subject digest is computed from the artifact bytes, and -digest is only a cross-check against them")
+	if err := checkProvenanceSources(f, positional); err != nil {
+		return f, err
 	}
 	builder, err := resolveBuilder(f.builder)
 	if err != nil {
@@ -225,6 +219,22 @@ func parseProvenanceFlags(args []string) (provenanceFlags, error) {
 	}
 	f.builder = builder
 	return f, nil
+}
+
+// checkProvenanceSources refuses a positional argument, a run with no subject source, and
+// -checksums beside the single-artifact flags it replaces.
+func checkProvenanceSources(f provenanceFlags, positional []string) error {
+	switch {
+	case len(positional) > 0:
+		return fmt.Errorf("provenance accepts no positional arguments, got %q", positional)
+	case f.checksums != "" && (f.file != "" || f.artifact != "" || f.digest != ""):
+		return fmt.Errorf("flag -checksums names every subject itself and excludes -file, -artifact and -digest")
+	case f.checksums == "" && f.file == "":
+		return fmt.Errorf("flag -file is required (or -checksums for every file a sha256sum manifest lists): " +
+			"the subject digest is computed from the artifact bytes, and -digest is only a cross-check against them")
+	default:
+		return nil
+	}
 }
 
 // resolveBuilder returns the -builder value, or in GitHub Actions the running workflow's
