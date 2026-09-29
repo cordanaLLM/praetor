@@ -22,8 +22,8 @@ This directory documents all significant architectural and design decisions gove
 | **[ADR-0012](0012-current-delivery-runner-and-pipeline-state.md)** | Context Compilation, Gating, Delivery and Runner Routing as They Stand | **Accepted**; decision 4 **Superseded** by [ADR-0013](0013-container-image-and-helm-chart-delivery.md) | 2026-09-26 |
 | **[ADR-0013](0013-container-image-and-helm-chart-delivery.md)** | Container Image and Helm Chart Delivery | **Accepted** | 2026-09-26 |
 | **[ADR-0014](0014-operator-neutral-defaults.md)** | Operator-Neutral Defaults: Deployment Data Becomes Operator Configuration | **Accepted** | 2026-09-27 |
-| **[ADR-0015](0015-interactive-figures-from-vendored-interfig.md)** | Interactive Documentation Figures from Vendored interfig | **Proposed**; amended by [ADR-0016](0016-figures-for-adopters.md) | 2026-09-27 |
-| **[ADR-0016](0016-figures-for-adopters.md)** | Interactive Figures for Adopters Through a Managed Engine Family | **Proposed** | 2026-09-27 |
+| **[ADR-0015](0015-interactive-figures-from-vendored-interfig.md)** | Interactive Documentation Figures from Vendored interfig | **Accepted**; amended by [ADR-0016](0016-figures-for-adopters.md) | 2026-09-27 |
+| **[ADR-0016](0016-figures-for-adopters.md)** | Interactive Figures for Adopters Through a Managed Engine Family | **Accepted** | 2026-09-27 |
 
 ---
 

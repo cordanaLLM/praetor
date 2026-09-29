@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed — 2026-09-27.
+Accepted — 2026-09-28 (proposed 2026-09-27).
 
 Amended by [ADR-0016](0016-figures-for-adopters.md) while still Proposed, on 2026-09-27 and
 2026-09-28 (`docs/adr/README.md`, rule 4). Each changed passage below says "Amended by ADR-0016"
