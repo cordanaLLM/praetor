@@ -83,6 +83,17 @@ templates/** text eol=lf
 # checkout of the Python fixture would lint text no adopter receives (HISS-21).
 internal/adopt/testdata/emitted/** text eol=lf
 
+# internal/adopt/testdata/{evasion,checkpoint,personas} hold the earlier interceptor, checkpoint
+# script and persona texts adoption refreshes (priorEvasionHookDigests, priorCheckpointDigests,
+# priorPersonaDigests). The tests write these bytes into a repository as they are and derive a
+# CRLF checkout with crlfText, so a CRLF checkout of the fixtures would turn every line ending
+# into \r\r\n and fail those tests on the Windows leg only (HISS-21). They are .py and .md.prior
+# files, which no rule above pins, so each directory is pinned here; gitattributes patterns
+# take no brace expansion.
+internal/adopt/testdata/evasion/** text eol=lf
+internal/adopt/testdata/checkpoint/** text eol=lf
+internal/adopt/testdata/personas/** text eol=lf
+
 # internal/astmerge's corpus test splits testdata/probe_corpus.txt into cases on "\n" and
 # matches its "--- base" section headers exactly, and FuzzASTMerge seeds from the same
 # parse. Under "* text=auto" a Windows checkout writes the corpus CRLF, the first header

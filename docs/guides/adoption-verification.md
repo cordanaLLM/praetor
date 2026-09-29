@@ -755,8 +755,13 @@ Malformed or oversized command metadata now fails before any adoption writes.
   they are declared in `commands` or `scripts` maps or in a `jobs` list. The checkpoint
   jobs are optional here, so a configuration extended before the checkpoint lifecycle
   became available stays protected once it is.
-- Any other existing configuration keeps the `--force` contract: preserved without it,
-  replaced with it.
+- Any other existing configuration keeps the `--force` contract (`scaffold.forceable` in
+  `internal/adopt/scaffold.go`): preserved without it, with a note that `--force` regenerates
+  it, and replaced with it
+  (`TestAdopt_Positive_UnprotectedLefthookNoteNamesForceAndForceReplaces`). Such a
+  configuration behind a symlink is preserved and reported unverified, `--force` included,
+  and its target is left as it is
+  (`TestAdopt_Boundary_ForceKeepsSymlinkedLefthookUnverified`).
 
 The generated hooks resolve `praetorctl` or, failing that, `standardsctl` through the
 same expression as the generated Makefile's `PRAETORCTL` variable

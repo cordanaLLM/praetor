@@ -151,6 +151,34 @@ The root `.dockerignore` also excludes this directory and Git history from local
 container builds; Docker applies its [build-context ignore rules](https://docs.docker.com/build/concepts/context/#dockerignore-files)
 separately from Git.
 
+## Hook files adoption keeps
+
+The audit reads none of the hook files below, so `praetorctl adopt --force` does not overwrite
+them. A file that still holds a text an earlier release wrote is refreshed on a plain run,
+in its own line endings. An edited one is kept, `--force` included, with a warning reading
+`not audit-verified; kept`. To regenerate it, delete it and re-run adopt.
+
+| File | Unedited earlier text | Edited copy | Tests (`internal/adopt`) |
+| --- | --- | --- | --- |
+| `.config/agent/hooks/block_evasion.py` | refreshed to the current rendering (`priorEvasionHookDigests`, `testdata/evasion`) | kept | `TestAdopt_Positive_PriorEvasionHookRefreshedOnPlainRun`, `TestAdopt_Negative_EditedEvasionHookKeptUnderForce` |
+| `.config/lefthook/scripts/checkpoint.py` and `common.py` | refreshed to the `--lock-source-root` bundle (`priorCheckpointDigests`, `testdata/checkpoint`) | kept; the checkpoint lifecycle is unavailable and no other bundle file is written | `TestReconcileCheckpointBundle_Positive_PriorScriptRefreshedOnPlainRun`, `TestReconcileCheckpointBundle_Negative_NoHalfRefreshBesideAKeptFile`, `TestAdopt_Boundary_ForceKeepsDriftedCheckpointScriptLifecycleUnavailable` |
+| the `pre-commit` hook in the directory git reports, written only when lefthook cannot install | not applicable | a hook praetor did not write is kept: the audit requires only that one exists | `TestAdopt_Hooks_ForeignPreCommitKeptWithAndWithoutForce` |
+
+Beside a `lefthook.yml` that extends the canonical policy, the interceptor and the checkpoint
+scripts belong to that vendored bundle and are never refreshed
+(`TestReconcileEvasionHook_Boundary_VendoredPriorKeptAndUnreadableUnverified`,
+`TestReconcileCheckpointBundle_Boundary_VendoredPriorScriptKept`). Earlier releases renamed a
+foreign `pre-commit` hook to `pre-commit.bak` under `--force`. Adoption now reports such a
+file and leaves it in place (`TestAdopt_Hooks_LegacyPreCommitBackupReportedNotRemoved`).
+
+Each set holds the current text too. After changing the interceptor template, an engine rule
+it renders, or either checkpoint script, copy the new text under `internal/adopt/testdata/evasion`
+or `internal/adopt/testdata/checkpoint` and add its digest to the set: the interceptor's is the
+file `TestEmittedHookFixturesMatchTheRendering` regenerates.
+`TestPriorEvasionHookDigests_Boundary_CurrentRenderingRecorded` and
+`TestPriorCheckpointDigests_Boundary_CurrentSourcesRecorded` fail until the text is recorded,
+so the next release still refreshes the copy adopters hold.
+
 ## What a hook run prints
 
 A hook run prints the output of its jobs and, when a job fails, Lefthook's exit

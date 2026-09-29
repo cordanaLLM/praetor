@@ -40,7 +40,7 @@ func reconcileManagedFamily(ctx context.Context, s *adoptSession, family managed
 		}
 		rel := family.AssetPath(names[index])
 		if _, err := reconcileManagedFamilyFile(ctx, s, family, scaffold{
-			rel: rel, perm: filePerm, content: data, force: true,
+			rel: rel, perm: filePerm, content: data, auditLocked: true,
 			created:  "Scaffolded locked " + family.AssetNoun,
 			verified: "Existing " + family.AssetNoun + " preserved; audit verifies canonical text",
 		}); err != nil {
@@ -51,7 +51,7 @@ func reconcileManagedFamily(ctx context.Context, s *adoptSession, family managed
 		return nil
 	}
 	_, err := reconcileManagedFamilyFile(ctx, s, family, scaffold{
-		rel: family.WorkflowFile, perm: filePerm, content: []byte(family.Workflow), force: true,
+		rel: family.WorkflowFile, perm: filePerm, content: []byte(family.Workflow), auditLocked: true,
 		created:  "Scaffolded required " + family.WorkflowNoun,
 		verified: "Existing " + family.WorkflowNoun + " preserved; audit verifies canonical text",
 	})

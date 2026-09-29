@@ -103,24 +103,36 @@ func (r *AdoptReport) addWarning(format string, args ...any) {
 
 // scaffold describes one file that adoption creates when it is missing.
 type scaffold struct {
-	rel      string      // repository-relative path
-	perm     os.FileMode // file mode
-	content  []byte      // payload written when the file is created
-	force    bool        // whether AdoptOptions.Force may overwrite an existing file
-	created  string      // action detail when the file is (or would be) written
-	verified string      // action detail when an existing file matches content
+	rel     string      // repository-relative path
+	perm    os.FileMode // file mode
+	content []byte      // payload written when the file is created
+	// auditLocked marks a file whose bytes praetorctl audit compares with the scaffold: the
+	// managed asset families (managed_family.go) and the branch ruleset while the policy
+	// requires one (rulesetRequired). Audit fails until such a file holds the scaffold, so
+	// --force may overwrite a drifted copy (replaceExisting). Every other scaffold is generated
+	// but not audit-verified: a drifted copy is the repository's and is kept, --force included,
+	// with a warning; deleting it and re-running adopt regenerates it.
+	auditLocked bool
+	// forceable lets --force overwrite a drifted copy of a scaffold audit does not lock. Only
+	// lefthook.yml sets it, whose --force contract is its own: classifyLefthookConfig has kept
+	// every configuration that extends the canonical policy or adds jobs to the generated ones,
+	// --force included, before the scaffold is reached (writeLefthookConfig).
+	forceable bool
+	created   string // action detail when the file is (or would be) written
+	verified  string // action detail when an existing file matches content
 	// confined writes through contextopt.WriteSnapshotIn, the writer compile-context uses, which
-	// follows no symlink below the repository. It is set for the files compile-context also
-	// reads (the canonical personas); every other scaffold goes through writeRepoFile.
+	// follows no symlink below the repository, and refreshes an earlier text through
+	// contextopt.ReplaceSnapshotIn. It is set for the files compile-context also reads (the
+	// canonical personas); every other scaffold goes through writeRepoFile.
 	confined bool
-	// prior holds the digest (priorRendering) of every text an earlier Praetor wrote at rel,
+	// prior holds the digest (priorRendering) of every text a Praetor release wrote at rel,
 	// keyed to what produced it. An existing file holding one of them, in one consistent
 	// line-ending style, is Praetor output nobody edited, so adoption refreshes it to content
 	// in that style without --force, as it migrates an earlier lefthook.yml
-	// (isPriorLefthookConfig). An edited copy matches no digest and keeps the force contract.
-	// A confined scaffold ignores it: the refresh does not go through the root-pinned writer.
-	// A rendered scaffold computes its one earlier text at run time instead, such as the
-	// branch ruleset of the repository as the run found it (forge.PriorRulesetDigests).
+	// (isPriorLefthookConfig). An edited copy matches no digest and keeps the contract above. A
+	// set may hold the current text too: a file that already holds content is verified, never
+	// refreshed. A rendered scaffold computes its one earlier text at run time instead, such as
+	// the branch ruleset of the repository as the run found it (forge.PriorRulesetDigests).
 	prior map[string]string
 	// refreshed is the action detail when an earlier Praetor text is refreshed.
 	refreshed string
@@ -170,8 +182,9 @@ func (s *adoptSession) write(path string, data []byte, perm os.FileMode) error {
 // scaffoldFile creates sc.rel when it is missing. An existing file is compared with sc.content
 // first: an earlier Praetor text of it is refreshed, a match is reported as sc.verified, and a
 // difference is reported as drift rather than overwritten or passed off as verified. Only when
-// Force is set and the scaffold allows it is a drifted file overwritten, through replaceExisting,
-// so the report lists it as replaced with its line delta and backup, never as created.
+// Force is set and the scaffold allows it (scaffold.forceReplaces) is a drifted file
+// overwritten, through replaceExisting, so the report lists it as replaced with its line delta
+// and backup, never as created.
 func (s *adoptSession) scaffoldFile(ctx context.Context, sc scaffold) (scaffoldState, error) {
 	full, err := repoFile(s.repoPath, sc.rel)
 	if err != nil {
@@ -193,40 +206,64 @@ func (s *adoptSession) scaffoldFile(ctx context.Context, sc scaffold) (scaffoldS
 }
 
 // refreshPriorScaffold replaces an existing file holding an earlier Praetor text of sc with
-// sc.content in the file's own line-ending style, bound to the bytes it observed, and reports
-// whether it did. A dry run reports the refresh it would make.
+// sc.content in the file's own line-ending style (replacePriorText), and reports whether it did. A file that already holds sc.content, line endings aside, is left to
+// recordExistingScaffold to verify, and one that cannot be read to report as unverified. A dry
+// run reports the refresh it would make.
 func (s *adoptSession) refreshPriorScaffold(ctx context.Context, full string, sc scaffold) (bool, error) {
-	if len(sc.prior) == 0 || sc.confined {
+	if len(sc.prior) == 0 {
 		return false, nil
 	}
 	actual, exists, err := contextopt.ObserveSnapshot(ctx, full)
 	if err != nil || !exists {
-		return false, err
+		return false, ctx.Err()
 	}
 	known, crlf := priorRendering(actual, sc.prior)
 	if !known {
+		return false, nil
+	}
+	if current, err := util.CanonicalTextEquivalent(actual, sc.content); err == nil && current {
 		return false, nil
 	}
 	return true, s.replacePriorText(ctx, full, actual, crlf, sc, sc.refreshed)
 }
 
 // replacePriorText replaces actual, an unedited earlier Praetor text of sc at full, with
-// sc.content in actual's line-ending style (crlf) and records detail. The replacement is bound
-// to the observed bytes, so a file edited in between is not overwritten. A dry run records the
-// refresh it would make. It is the one refresh both the scaffold earlier-text sets
-// (refreshPriorScaffold) and the managed asset families (reconcileManagedFamilyFile) use.
+// sc.content in actual's line-ending style (crlf) and records detail. A text file's replacement
+// is bound to the observed bytes (publishPriorRefresh), so a file edited in between is not
+// overwritten. A dry run records the refresh it would make. It is the one refresh both the
+// scaffold earlier-text sets (refreshPriorScaffold) and the managed asset families
+// (reconcileManagedFamilyFile) use.
 func (s *adoptSession) replacePriorText(ctx context.Context, full string, actual []byte, crlf bool, sc scaffold, detail string) error {
 	content := []byte(util.RestoreLineEndings(string(sc.content), crlf))
 	if !s.opts.DryRun {
-		if err := contextopt.ReplaceSnapshot(ctx, full, content, contextopt.ReplaceOptions{
-			Expected: actual, Exists: true, Mode: sc.perm,
-		}); err != nil {
+		if err := s.publishPriorRefresh(ctx, full, actual, content, sc); err != nil {
 			return fmt.Errorf("refresh %s: %w", sc.rel, err)
 		}
 	}
 	s.planDryRunWrite(sc.rel, content)
 	s.report.recordReconciled(sc.rel, detail)
 	return nil
+}
+
+// snapshotModeBits are the only mode bits contextopt's snapshot writers accept: they write
+// text files, never an executable one.
+const snapshotModeBits os.FileMode = 0o644
+
+// publishPriorRefresh writes content over actual at full. A text scaffold is replaced bound to
+// actual, so a file edited in between is not overwritten; a confined one goes through the
+// root-pinned writer compile-context uses (contextopt.ReplaceSnapshotIn), so a symlink at or
+// below the repository is refused rather than written through. An executable scaffold, such as
+// the interceptor, is written the way it is created and replaced under --force (writeRepoFile),
+// without that binding: the snapshot writers set no execute bit.
+func (s *adoptSession) publishPriorRefresh(ctx context.Context, full string, actual, content []byte, sc scaffold) error {
+	options := contextopt.ReplaceOptions{Expected: actual, Exists: true, Mode: sc.perm}
+	switch {
+	case sc.confined:
+		return contextopt.ReplaceSnapshotIn(ctx, s.repoPath, filepath.FromSlash(sc.rel), content, options)
+	case sc.perm&^snapshotModeBits != 0:
+		return writeRepoFile(full, content, sc.perm)
+	}
+	return contextopt.ReplaceSnapshot(ctx, full, content, options)
 }
 
 // writeScaffold persists sc at full unless the session is a dry run, through the root-pinned
@@ -244,9 +281,9 @@ func (s *adoptSession) writeScaffold(ctx context.Context, full string, sc scaffo
 // recordExistingScaffold classifies an existing file against its scaffold and records the
 // result. A file that cannot be read is preserved and reported as unverified: a file that
 // exists is not evidence of anything until its content has been compared, and there are no
-// bytes to back up. A drifted file is replaced when Force is set and the scaffold allows it,
-// a file with mixed line endings included, since it cannot hold the scaffold's text, and
-// preserved otherwise.
+// bytes to back up. A drifted file is replaced when Force is set and the scaffold allows it
+// (scaffold.forceReplaces), a file with mixed line endings included, since it cannot hold the
+// scaffold's text, and preserved otherwise.
 func (s *adoptSession) recordExistingScaffold(ctx context.Context, full string, sc scaffold) (scaffoldState, error) {
 	actual, _, readErr := contextopt.ObserveSnapshot(ctx, full)
 	if ctxErr := ctx.Err(); ctxErr != nil {
@@ -257,7 +294,7 @@ func (s *adoptSession) recordExistingScaffold(ctx context.Context, full string, 
 		identical, err = util.CanonicalTextEquivalent(actual, sc.content)
 	}
 	switch {
-	case readErr == nil && !identical && sc.force && s.opts.Force:
+	case readErr == nil && !identical && sc.forceReplaces() && s.opts.Force:
 		return s.replaceScaffold(ctx, full, sc, actual)
 	case err != nil:
 		s.report.recordReconciled(sc.rel, "Existing file preserved unverified: "+err.Error())
@@ -267,7 +304,7 @@ func (s *adoptSession) recordExistingScaffold(ctx context.Context, full string, 
 		s.report.recordReconciled(sc.rel, sc.verified)
 		return scaffoldIdentical, nil
 	}
-	note := scaffoldDriftNote(sc.force)
+	note := scaffoldDriftNote(sc.forceReplaces(), actual, sc.content)
 	s.report.recordReconciled(sc.rel, note)
 	s.report.addWarning("%s: %s", sc.rel, lowerFirst(note))
 	return scaffoldDrifted, nil
@@ -286,11 +323,22 @@ func (s *adoptSession) replaceScaffold(ctx context.Context, full string, sc scaf
 	return scaffoldWritten, nil
 }
 
-// scaffoldDriftNote says what an operator can do about a drifted file: --force regenerates
-// only the scaffolds that allow it, and every other one is the operator's to reconcile.
-func scaffoldDriftNote(forceable bool) string {
-	if forceable {
+// forceReplaces reports whether --force overwrites a drifted copy of sc: audit locks it
+// (auditLocked), or its own contract allows it (forceable).
+func (sc scaffold) forceReplaces() bool {
+	return sc.auditLocked || sc.forceable
+}
+
+// scaffoldDriftNote says what an operator can do about a drifted file, which holds actual where
+// the scaffold writes content: --force regenerates only a file whose scaffold allows it
+// (scaffold.forceReplaces). Every other file is not audit-verified and stays, --force included;
+// the note counts the lines regenerating it would remove and add (lineDeltaCounts) and says how
+// to regenerate it.
+func scaffoldDriftNote(forceReplaces bool, actual, content []byte) string {
+	if forceReplaces {
 		return "Existing file differs from the scaffold adoption writes; preserved, not verified (--force regenerates it)"
 	}
-	return "Existing file differs from the scaffold adoption writes; preserved, not verified"
+	counts := lineDeltaCounts(util.LineDeltaOf(string(actual), string(content), 0))
+	return "Existing file differs from the scaffold adoption writes (" + counts + "); not audit-verified; kept, " +
+		"--force included (delete it and re-run adopt to regenerate it)"
 }

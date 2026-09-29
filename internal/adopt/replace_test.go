@@ -248,7 +248,7 @@ func TestScaffoldFile_Positive_ForceReplacesWithBackupAndDelta(t *testing.T) {
 	const rel = "tools/generated.txt"
 	s := backupSession(t, map[string]string{rel: "keep\nlocal edit\n"}, true, AdoptOptions{Force: true})
 	state, err := s.scaffoldFile(t.Context(), scaffold{rel: rel, perm: filePerm, content: []byte("keep\ngenerated\n"),
-		force: true, created: "Scaffolded fixture", verified: "verified"})
+		auditLocked: true, created: "Scaffolded fixture", verified: "verified"})
 	if err != nil || state != scaffoldWritten {
 		t.Fatalf("state %v, err %v", state, err)
 	}
@@ -275,7 +275,7 @@ func TestScaffoldFile_Boundary_DryRunPlansReplaceAndDeltaTruncates(t *testing.T)
 	long := strings.Repeat("x", maxDeltaLineBytes+10)
 	existing := long + "\nr2\nr3\nr4\nr5\n"
 	s := backupSession(t, map[string]string{rel: existing}, true, AdoptOptions{Force: true, DryRun: true})
-	if _, err := s.scaffoldFile(t.Context(), scaffold{rel: rel, perm: filePerm, content: []byte("generated\n"), force: true, created: "Scaffolded fixture"}); err != nil {
+	if _, err := s.scaffoldFile(t.Context(), scaffold{rel: rel, perm: filePerm, content: []byte("generated\n"), auditLocked: true, created: "Scaffolded fixture"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := mustRead(t, filepath.Join(s.repoPath, filepath.FromSlash(rel))); got != existing {
@@ -302,7 +302,7 @@ func TestScaffoldFile_Boundary_DryRunPlansReplaceAndDeltaTruncates(t *testing.T)
 func TestScaffoldFile_Boundary_CRLFOnlyDifferenceIsNotReplaced(t *testing.T) {
 	const rel = "tools/generated.txt"
 	s := backupSession(t, map[string]string{rel: "one\r\ntwo\r\n"}, true, AdoptOptions{Force: true})
-	state, err := s.scaffoldFile(t.Context(), scaffold{rel: rel, perm: filePerm, content: []byte("one\ntwo\n"), force: true, verified: "verified"})
+	state, err := s.scaffoldFile(t.Context(), scaffold{rel: rel, perm: filePerm, content: []byte("one\ntwo\n"), auditLocked: true, verified: "verified"})
 	if err != nil || state != scaffoldIdentical {
 		t.Fatalf("state %v, err %v", state, err)
 	}
@@ -317,7 +317,7 @@ func TestScaffoldFile_Boundary_CRLFOnlyDifferenceIsNotReplaced(t *testing.T) {
 	// with a backup, instead of preserving it as unverified.
 	const mixed = "one\r\ntwo\n"
 	m := backupSession(t, map[string]string{rel: mixed}, true, AdoptOptions{Force: true})
-	state, err = m.scaffoldFile(t.Context(), scaffold{rel: rel, perm: filePerm, content: []byte("one\ntwo\n"), force: true, created: "Scaffolded fixture"})
+	state, err = m.scaffoldFile(t.Context(), scaffold{rel: rel, perm: filePerm, content: []byte("one\ntwo\n"), auditLocked: true, created: "Scaffolded fixture"})
 	if err != nil || state != scaffoldWritten || len(m.report.Replaced()) != 1 || mustRead(t, backupFile(m, rel)) != mixed {
 		t.Fatalf("mixed endings: state %v, err %v, report %+v", state, err, m.report.ActionDetails)
 	}
@@ -333,7 +333,7 @@ func TestScaffoldFile_Boundary_CRLFOnlyDifferenceIsNotReplaced(t *testing.T) {
 func TestReplaceExisting_3D_DryRunPlansTheReplacedBytes(t *testing.T) {
 	const drifted = "name: docs\non: push\njobs: {}\n"
 	workflow := scaffold{rel: DocumentationWorkflowFile, perm: filePerm, content: []byte(DocumentationWorkflow()),
-		force: true, created: "Scaffolded fixture", verified: "verified"}
+		auditLocked: true, created: "Scaffolded fixture", verified: "verified"}
 
 	dry := backupSession(t, map[string]string{workflow.rel: drifted}, true, AdoptOptions{Force: true, DryRun: true})
 	if state, err := dry.scaffoldFile(t.Context(), workflow); err != nil || state != scaffoldWritten {

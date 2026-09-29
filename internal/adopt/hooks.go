@@ -364,13 +364,18 @@ func reconcileGitHooks(ctx context.Context, s *adoptSession) error {
 }
 
 // writeLefthookConfig writes the current rendering over an earlier Praetor rendering, and
-// otherwise scaffolds it under the usual --force contract. It reports whether it wrote; an
-// existing configuration that differs from the rendering is kept and reported as drift. The
-// migration writes the rendering's own LF bytes even over a CRLF checkout of an earlier one:
-// activation trusts only those exact bytes (lefthookConfigIsPraetor), and git stores the
-// working-tree LF text unchanged under core.autocrlf. Under --force, existing bytes that are a
-// CRLF checkout of the current rendering take the same path: the scaffold verifies such a copy
-// instead of replacing it, so --force would leave bytes activation refuses in place.
+// otherwise scaffolds it. It reports whether it wrote; an existing configuration that differs
+// from the rendering is kept and reported as drift. The migration writes the rendering's own LF
+// bytes even over a CRLF checkout of an earlier one: activation trusts only those exact bytes
+// (lefthookConfigIsPraetor), and git stores the working-tree LF text unchanged under
+// core.autocrlf. Under --force, existing bytes that are a CRLF checkout of the current rendering
+// take the same path: the scaffold verifies such a copy instead of replacing it, so --force
+// would leave bytes activation refuses in place.
+//
+// Audit checks only that lefthook.yml exists, so its scaffold is not audit-locked. Its --force
+// contract is its own (scaffold.forceable): a configuration classifyLefthookConfig does not
+// protect, which reached this point, is replaced under --force through the scaffold, which
+// reads it only as a regular file, so a symlinked lefthook.yml is kept and reported unverified.
 func (s *adoptSession) writeLefthookConfig(ctx context.Context, current string, existing []byte, prior bool) (bool, error) {
 	switch {
 	case prior:
@@ -380,12 +385,12 @@ func (s *adoptSession) writeLefthookConfig(ctx context.Context, current string, 
 			"Lefthook configuration with its LF bytes, the only bytes hook activation trusts")
 	}
 	state, err := s.scaffoldFile(ctx, scaffold{
-		rel:      lefthookFile,
-		perm:     filePerm,
-		content:  []byte(current),
-		force:    true,
-		created:  "Scaffolded Lefthook configuration for local pre-commit and pre-push enforcement",
-		verified: "Existing Lefthook configuration verified present",
+		rel:       lefthookFile,
+		perm:      filePerm,
+		content:   []byte(current),
+		forceable: true,
+		created:   "Scaffolded Lefthook configuration for local pre-commit and pre-push enforcement",
+		verified:  "Existing Lefthook configuration verified present",
 	})
 	return state == scaffoldWritten, err
 }
@@ -444,18 +449,39 @@ func warnPreservedCheckpoint(s *adoptSession, ready, written bool) {
 	}
 }
 
-// reconcileEvasionHook scaffolds the interceptor. With vendored set, the repository carries
-// the canonical hook policy, whose interceptor belongs to that vendored bundle, so --force
-// does not replace it with the generated one.
+// priorEvasionHookDigests are the digests (priorRendering) of every interceptor rendering a
+// Praetor release wrote at evasionHookFile, keyed to what produced them; the current rendering
+// is one of them. Audit does not read the interceptor, so --force keeps an edited copy: these
+// texts are what adoption refreshes to the current rendering without --force, in the file's own
+// consistent line-ending style. testdata/evasion reproduces each digest, and
+// TestPriorEvasionHookDigests_Boundary_CurrentRenderingRecorded fails until a changed rendering
+// is recorded here, so the next release still refreshes it (evasion_prior_test.go).
+var priorEvasionHookDigests = map[string]string{
+	"64fa5045ca8d31b1917383b878a9549960cac8c8b684013369af171f9f2fcd3e": "HISS-16 labels, own pattern list",
+	"15f46f44fcb492f59a63c186196d5be80250af02ac64b51087890094a0087cb5": "HISS labels, own pattern list",
+	"3c0553691766524d3d7c22454e6acb4d6525295aa79f300a783121f329bad800": "engine rules, bounded JSON input",
+	"eb5beb82cfcc85f4f398c504696750d889ffe49171e61956446adbcd0927dbde": "black-clean layout, engine refusal texts",
+	"fed57187eef4b43b8d4810bcad13c1da8339d333ea74b675c0371cf6c93b309b": "abbreviated skip options, Windows hook removal",
+}
+
+// reconcileEvasionHook scaffolds the interceptor. It is generated, not audit-verified, so an
+// edited copy is kept, --force included, and an unedited earlier rendering is refreshed
+// (priorEvasionHookDigests). With vendored set, the repository carries the canonical hook
+// policy, whose interceptor belongs to that vendored bundle: an existing copy is never
+// refreshed, so the policy and its interceptor stay one version.
 func reconcileEvasionHook(ctx context.Context, s *adoptSession, vendored bool) error {
-	_, err := s.scaffoldFile(ctx, scaffold{
-		rel:      evasionHookFile,
-		perm:     execPerm,
-		content:  []byte(buildBlockEvasionPY()),
-		force:    !vendored,
-		created:  "Scaffolded standalone agent PreToolUse anti-evasion interceptor; the agent-hooks step registers the engine call",
-		verified: "Existing agent anti-evasion interceptor verified present",
-	})
+	sc := scaffold{
+		rel:       evasionHookFile,
+		perm:      execPerm,
+		content:   []byte(buildBlockEvasionPY()),
+		created:   "Scaffolded standalone agent PreToolUse anti-evasion interceptor; the agent-hooks step registers the engine call",
+		verified:  "Existing agent anti-evasion interceptor verified present",
+		refreshed: "Refreshed an unedited earlier Praetor agent anti-evasion interceptor to the current rendering",
+	}
+	if !vendored {
+		sc.prior = priorEvasionHookDigests
+	}
+	_, err := s.scaffoldFile(ctx, sc)
 	return err
 }
 
@@ -513,11 +539,19 @@ func (s *adoptSession) resolveHooksDirForInstall(ctx context.Context) (string, e
 	return ResolveGitHooksDir(ctx, s.repoPath)
 }
 
-// installFallbackHook writes the praetor pre-commit hook. An existing hook that praetor
-// did not write is preserved unless Force is set, in which case it is renamed to
-// pre-commit.bak before the praetor hook replaces it.
+// foreignPreCommitNote says why adoption kept a pre-commit hook it did not write and what the
+// operator can do about it.
+const foreignPreCommitNote = "existing pre-commit hook was not written by praetor; kept, --force included, " +
+	"because audit requires only that a pre-commit hook exists. Have it run '" + util.PraetorCLI +
+	" compile-context --verify' and '" + util.PraetorCLI + " audit', or remove it and re-run adopt to install the praetor hook"
+
+// installFallbackHook writes the praetor pre-commit hook. An existing hook that praetor did
+// not write is kept, --force included: audit checks only that a pre-commit hook exists, so
+// the hook is the repository's, and adoption neither replaces nor moves it. A pre-commit.bak
+// an earlier adoption left under --force is reported, never removed.
 func (s *adoptSession) installFallbackHook(hookPath string) error {
 	display := displayHookPath(s.repoPath, hookPath)
+	warnLegacyHookBackup(s, hookPath, display)
 	if fileExists(hookPath) {
 		// #nosec G304 -- hookPath is the hooks directory git reported for this repository.
 		existing, err := os.ReadFile(hookPath)
@@ -525,14 +559,8 @@ func (s *adoptSession) installFallbackHook(hookPath string) error {
 			return fmt.Errorf("read existing hook %s: %w", hookPath, err)
 		}
 		if !bytes.Contains(existing, []byte(fallbackPreCommitMarker)) {
-			if !s.opts.Force {
-				s.report.recordSkipped(display, "existing pre-commit hook was not written by praetor and was preserved; re-run with --force to replace it (a .bak copy is kept)")
-				return nil
-			}
-			if err := os.Rename(hookPath, hookPath+hookBackupExt); err != nil {
-				return fmt.Errorf("back up existing hook %s: %w", hookPath, err)
-			}
-			s.report.addWarning("git hooks: existing %s moved to %s%s", display, display, hookBackupExt)
+			s.report.recordSkipped(display, foreignPreCommitNote)
+			return nil
 		}
 	}
 	if err := writeRepoFile(hookPath, []byte(buildFallbackPreCommitScript()), execPerm); err != nil {

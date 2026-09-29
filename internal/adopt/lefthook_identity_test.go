@@ -2,7 +2,9 @@ package adopt
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -132,6 +134,72 @@ func TestAdopt_Negative_ForceKeepsCanonicalLefthookAndInterceptor(t *testing.T) 
 	}
 	if fileExists(filepath.Join(repoPath, ".git", "hooks", preCommitHook)) {
 		t.Fatal("a configuration adoption did not write was activated")
+	}
+}
+
+// foreignLefthook is a configuration Praetor did not write that classifyLefthookConfig does not
+// protect: it neither extends the canonical policy nor holds every generated job.
+const foreignLefthook = "pre-commit:\n  commands:\n    lint:\n      run: make lint\n"
+
+// lefthookDetails joins every action detail the report records for lefthook.yml: the scaffold
+// entry and the activation entry that follows it.
+func lefthookDetails(rep *AdoptReport) string {
+	var details []string
+	for _, detail := range rep.ActionDetails {
+		if detail.Path == lefthookFile {
+			details = append(details, detail.Details)
+		}
+	}
+	return strings.Join(details, "\n")
+}
+
+// Positive: lefthook.yml keeps its own --force contract (scaffold.forceable). A plain run keeps
+// an unprotected foreign configuration and its note names --force, and --force replaces it with
+// a line delta, since audit locks nothing about the file but its presence.
+func TestAdopt_Positive_UnprotectedLefthookNoteNamesForceAndForceReplaces(t *testing.T) {
+	repoPath, rep := adoptLefthookFixture(t, "foreign-lefthook", foreignLefthook, false)
+	if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); got != foreignLefthook {
+		t.Fatalf("a plain run rewrote the configuration:\n%s", got)
+	}
+	note := lefthookDetails(rep)
+	if !strings.Contains(note, "(--force regenerates it)") || strings.Contains(note, "--force included") {
+		t.Errorf("the drift note does not say --force regenerates the file: %q", note)
+	}
+	repoPath, rep = adoptLefthookFixture(t, "foreign-lefthook-force", foreignLefthook, true)
+	if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); got != buildLefthookYAML() {
+		t.Errorf("--force did not regenerate the configuration:\n%s", got)
+	}
+	if !hasAction(rep, lefthookFile, actionReplace) {
+		t.Errorf("want a replace: %+v", rep.ActionDetails)
+	}
+}
+
+// Boundary: under --force a lefthook.yml that is a symlink, even to a file inside the
+// repository, is preserved and reported unverified, and its target is not written through:
+// the scaffold reads it only through contextopt.ObserveSnapshot, which accepts a regular file
+// alone.
+func TestAdopt_Boundary_ForceKeepsSymlinkedLefthookUnverified(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation needs developer mode on Windows")
+	}
+	repoPath := newTestRepo(t, "symlinked-lefthook-force")
+	target := filepath.Join(repoPath, "real.yml")
+	mustWrite(t, target, foreignLefthook)
+	if err := os.Symlink("real.yml", filepath.Join(repoPath, lefthookFile)); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := Adopt(t.Context(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Force: true})
+	if err != nil {
+		t.Fatalf("Adopt --force: %v", err)
+	}
+	if got := mustRead(t, target); got != foreignLefthook {
+		t.Fatalf("--force wrote through the symlink:\n%s", got)
+	}
+	if info, err := os.Lstat(filepath.Join(repoPath, lefthookFile)); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("lefthook.yml is no longer the symlink: %v", err)
+	}
+	if hasAction(rep, lefthookFile, actionReplace) || !strings.Contains(lefthookDetails(rep), "preserved unverified") {
+		t.Fatalf("want the symlink preserved unverified, no replace: %+v", rep.ActionDetails)
 	}
 }
 

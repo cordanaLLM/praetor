@@ -39,7 +39,9 @@ func adoptionBranchPolicy(ctx context.Context, s *adoptSession) (config.BranchPr
 // was current for the repository as this adoption found it (s.rulesetBaseline,
 // forge.PriorRulesetDigests), such as the one flavor apply wrote under the built-in policy before
 // adoption pinned one, is refreshed without --force. Any other one that differs, a rendering with
-// one value edited included, is the repository's: kept and warned about unless --force is passed.
+// one value edited included, is the repository's: kept and warned about. --force replaces it only
+// while audit compares the ruleset, that is while the policy requires one (rulesetRequired);
+// under any other policy audit never reads it, so --force keeps it too.
 //
 // A dry run writes nothing and previews the file instead (AdoptReport.Previews): the create,
 // update, unchanged or keep it would come to, with the rendered ruleset or the diff from the one
@@ -60,14 +62,14 @@ func reconcileBranchRuleset(ctx context.Context, s *adoptSession) error {
 	}
 	checks := len(contexts)
 	return s.scaffoldPreviewed(ctx, scaffold{
-		rel:       rulesetFile,
-		perm:      filePerm,
-		content:   content,
-		force:     true,
-		created:   fmt.Sprintf("Scaffolded declarative branch protection ruleset (%d required status checks derived from workflows)", checks),
-		verified:  "Existing branch protection ruleset verified present",
-		prior:     s.priorRulesetDigests(content),
-		refreshed: fmt.Sprintf("Refreshed the unedited earlier Praetor branch protection ruleset to the current policy and workflows (%d required status checks)", checks),
+		rel:         rulesetFile,
+		perm:        filePerm,
+		content:     content,
+		auditLocked: rulesetRequired(policy),
+		created:     fmt.Sprintf("Scaffolded declarative branch protection ruleset (%d required status checks derived from workflows)", checks),
+		verified:    "Existing branch protection ruleset verified present",
+		prior:       s.priorRulesetDigests(content),
+		refreshed:   fmt.Sprintf("Refreshed the unedited earlier Praetor branch protection ruleset to the current policy and workflows (%d required status checks)", checks),
 	}, rulesetPreviewNote(checks))
 }
 
@@ -152,7 +154,6 @@ func reconcileLabels(ctx context.Context, s *adoptSession) error {
 		rel:       labelsFile,
 		perm:      filePerm,
 		content:   forge.DefaultLabelTaxonomy(),
-		force:     false,
 		created:   "Scaffolded repository label taxonomy",
 		verified:  "Existing repository label taxonomy preserved (repository configuration; --force does not replace it)",
 		prior:     priorLabelTaxonomyDigests,
@@ -213,24 +214,51 @@ func refreshedHarnessNote(rules bool) string {
 // TestGeneratedPersonasPassCavemanLint catch the next one before an adopter's push does, and
 // TestGeneratedPersonasPassDefaultMarkdownlint hold both to markdownlint's default rules
 // (BUG-806).
+//
+// Audit does not compare a persona with its scaffold, so an edited persona is kept, --force
+// included. An unedited earlier text of it (priorPersonaDigests) is refreshed on a plain run,
+// through the root-pinned writer compile-context uses.
 func generatedPersonas() []scaffold {
 	return []scaffold{{
-		rel:      auditorAgentFile,
-		perm:     filePerm,
-		content:  []byte(defaultAuditorAgentMD),
-		force:    true,
-		created:  "Scaffolded repository auditor agent definition",
-		verified: "Existing repository auditor agent definition verified present",
-		confined: true,
+		rel:       auditorAgentFile,
+		perm:      filePerm,
+		content:   []byte(defaultAuditorAgentMD),
+		created:   "Scaffolded repository auditor agent definition",
+		verified:  "Existing repository auditor agent definition verified present",
+		refreshed: "Refreshed the unedited earlier Praetor repository auditor agent definition to the current text",
+		confined:  true,
+		prior:     priorPersonaDigests[auditorAgentFile],
 	}, {
-		rel:      gatekeeperFile,
-		perm:     filePerm,
-		content:  []byte(defaultGatekeeperAgentMD),
-		force:    true,
-		created:  "Scaffolded repository gatekeeper agent definition",
-		verified: "Existing repository gatekeeper agent definition verified present",
-		confined: true,
+		rel:       gatekeeperFile,
+		perm:      filePerm,
+		content:   []byte(defaultGatekeeperAgentMD),
+		created:   "Scaffolded repository gatekeeper agent definition",
+		verified:  "Existing repository gatekeeper agent definition verified present",
+		refreshed: "Refreshed the unedited earlier Praetor repository gatekeeper agent definition to the current text",
+		confined:  true,
+		prior:     priorPersonaDigests[gatekeeperFile],
 	}}
+}
+
+// priorPersonaDigests are the digests (priorRendering) of every text a Praetor release wrote
+// at each canonical persona path, keyed by path and then to what produced it; the current texts
+// are among them. testdata/personas reproduces each digest, and
+// TestPriorPersonaDigests_Boundary_CurrentTextsRecorded fails until a changed persona is
+// recorded here (persona_prior_test.go).
+var priorPersonaDigests = map[string]map[string]string{
+	auditorAgentFile: {
+		"822b8f7f7915257a41ceaa8f041d0678243e7b0b3c4612add77a24eac3ad82f8": "standardsctl command, prose body",
+		"13559cb2cf69de10840e16e36bb448c156beb29eec92b3bd8f6dde26f9441c50": "praetorctl command, prose body",
+		"fac622020b262d4de75239f0d806ad4ea8321e4f4283bc825db88719ab3f7aeb": "caveman body on one line",
+		"759798422574a1a7f203b7015a168b1222032cf2cd42457ae853c76336de88f4": "caveman body wrapped, fence set off",
+	},
+	gatekeeperFile: {
+		"ee9540a57db9eabaf87a85c89a6f3446a89380d764d247c54aba7ff578fa0342": "standardsctl dry-run command, prose body",
+		"ccbb8a2ed9189359e34c4c2a871d6366789c3362adce910f7acc87ce5e28c76b": "praetorctl dry-run command, prose body",
+		"aff586a20c8a635f7caa3558631b16500c1f1301f7c066154d99e69512c76926": "praetorctl dry-run command, caveman body",
+		"848fcfc4156a8f6b0a41aa777d2ec6296705a9ef810d5cec50a950280abcff2d": "full gate command, stages on one line",
+		"bb05de9e87afa9c39af2f9fcbac3f51af2e6431ccc54f45b27072ae58b91fb71": "full gate command, body wrapped, fence set off",
+	},
 }
 
 // reconcileAgentDefinitions writes the canonical personas and projects them into the persona

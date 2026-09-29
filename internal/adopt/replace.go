@@ -199,7 +199,7 @@ func preflightForceBackupRoot(ctx context.Context, s *adoptSession) error {
 // then the first removed lines, each cut to a bounded length and quoted.
 func describeLineDelta(before, after []byte) string {
 	delta := util.LineDeltaOf(string(before), string(after), maxDeltaQuotedLines)
-	summary := "-" + strconv.Itoa(delta.Removed) + "/+" + strconv.Itoa(delta.Added) + " lines"
+	summary := lineDeltaCounts(delta)
 	if !delta.Changed() {
 		// LineDeltaOf compares LF text, so a replace with no line delta changed line endings alone.
 		return summary + ", line endings only"
@@ -231,14 +231,28 @@ func quoteFirst(items []string, total, limit int, quote func(string) string) str
 	return text
 }
 
+// lineDeltaCounts renders the counts of delta, "-removed/+added lines", the one form every
+// report entry gives them in: a replace entry (describeLineDelta) and a kept drift
+// (scaffoldDriftNote).
+func lineDeltaCounts(delta util.LineDelta) string {
+	return "-" + strconv.Itoa(delta.Removed) + "/+" + strconv.Itoa(delta.Added) + " lines"
+}
+
 // legacyHookBackupWarning reports a <file>.bak an earlier adoption wrote beside a hook file.
 // Adoption no longer writes one and never deletes adopter data, so it only says the copy is
 // there and could be committed by accident.
 func legacyHookBackupWarning(s *adoptSession, rel string) {
-	legacy := rel + hookBackupExt
-	if _, err := os.Lstat(filepath.Join(s.repoPath, filepath.FromSlash(legacy))); err != nil {
+	warnLegacyHookBackup(s, filepath.Join(s.repoPath, filepath.FromSlash(rel)), rel)
+}
+
+// warnLegacyHookBackup is legacyHookBackupWarning for the hook file at full, named display in
+// the report: a client hook file below the repository, or the pre-commit hook in the hooks
+// directory git reports, which an earlier adoption renamed to pre-commit.bak under --force.
+func warnLegacyHookBackup(s *adoptSession, full, display string) {
+	if _, err := os.Lstat(full + hookBackupExt); err != nil {
 		return
 	}
 	s.report.addWarning("%s: backup an earlier adoption wrote beside %s; adoption no longer writes or removes it. "+
-		"Review it and delete it, or it may be committed by accident (backups now go to %s)", legacy, rel, adoptBackupRoot)
+		"Review it and delete it, or it may be committed by accident (backups now go to %s)",
+		display+hookBackupExt, display, adoptBackupRoot)
 }
