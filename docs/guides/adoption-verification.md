@@ -11,6 +11,20 @@ runtimes, status, and any reasons requiring review.
 | `unavailable` | A required build/test command is missing or ambiguous. Generated recipes fail explicitly. |
 | `preserved-unverified` | Existing custom Makefile ownership is preserved. Review and exercise its `verify-all` contract. |
 
+An `unavailable` plan's `verify-all` runs the governance checks and then fails with one
+`printf`/`exit 1` pair, also when adoption appends the rule to an existing Makefile. The
+report's `Project verification unavailable` warning says so, names the missing build or
+test command, and lists every command discovery found that `verify-all` does not run,
+shell-quoted, so you can wire them into the project's own contract. When the existing
+Makefile already defines a `test` target, a second warning names it as the likely test
+contract. A Makefile adoption does not recognise as its own current output, but that
+still holds the failing pair, keeps the plan `unavailable` on the next run rather than
+being preserved as a custom `verify-all` (`TestAdoptPythonProjectWithoutBuildWarnsVerificationGate`,
+`TestPreservedVerifyAllWithPlaceholderStaysUnavailable` in
+`internal/adopt/verification_pillar_test.go`). A plan's `selected_by` list names the
+configuration that selected a command where the marker alone does not, such as the
+pytest configuration file and table, and the warning repeats it.
+
 Ownership means a rule. Make reads a line in two steps, and adoption follows both. First it cuts
 the line at the first unescaped `#`, which opens a comment, or `;`, which opens the inline recipe.
 Then it decides rule versus assignment on what is left, by whichever operator it reaches first: an
@@ -68,7 +82,17 @@ when its step completed without warnings or errors, and otherwise names itself
 `planned` (dry run), `warned`, `declined`, `failed` or `not-run`. A run
 that recorded an error is incomplete even when it was a dry run
 (`Outcome` and `Pillars` in `internal/adopt/report.go`, tested in
-`internal/adopt/report_test.go`).
+`internal/adopt/report_test.go`). The **Verification Gate** also follows
+the verification plan: when the plan is `unavailable`, the `verify-all`
+adoption writes can only exit 1, so the pillar is `warned`, never `✓` or
+`planned`, and carries the plan's warning. An applied run with a warned,
+failed or unreached pillar ends with `not ready yet:` and the pillar names
+instead of the success line; a declined pillar does not count
+(`PendingPillars` in `internal/adopt/report.go`,
+`TestVerificationPillarFollowsThePlan` in
+`internal/adopt/verification_pillar_test.go`,
+`TestPrintAdoptReportQualifiesSuccessWithPendingPillars` in
+`cmd/standardsctl/adopt_test.go`).
 
 Repositories declaring `docs:seo-portal` also receive a locked Markdown gate,
 its dedicated required CI workflow, and private scratch-link protection. The
@@ -852,10 +876,22 @@ renders both newly generated Makefiles and AGENTS.md. Discovery recognizes:
   explicit unconditional test projects receive `dotnet test`. Conditional,
   contradictory, or disabled test markers cannot establish a test gate.
 - Python: explicit pytest configuration, or tests under `tests/` with an exact
-  Python 3.14+ version pin. Unittest commands check the interpreter version before
-  discovery. Python 3.14 fails when discovery finds no tests. A separate build
-  command remains necessary; a Python-only project without one needs a custom
-  contract rather than a generated no-op build.
+  Python 3.14+ version pin. Pytest configuration is any root file pytest itself
+  reads, in pytest's precedence order: `pytest.toml`, `.pytest.toml`, `pytest.ini`
+  or `.pytest.ini` (even empty), a `pyproject.toml` with a `[tool.pytest]` or
+  `[tool.pytest.ini_options]` table, a `tox.ini` with a `[pytest]` section, or a
+  `setup.cfg` with a `[tool:pytest]` section
+  ([pytest configuration reference](https://docs.pytest.org/en/stable/reference/customize.html)).
+  The report names the file and table it used. A `pyproject.toml`, `tox.ini` or
+  `setup.cfg` without that table or section is not pytest configuration; section
+  lines are read the way pytest's INI parser reads them, so an indented `[pytest]`
+  or `[ pytest ]` is not the section (`pytestConfiguration` in
+  `internal/adopt/verification_pytest.go`, tested by
+  `TestVerificationPytestConfigurationPositive` and
+  `TestVerificationPytestConfigurationNegative`). Unittest commands check the
+  interpreter version before discovery. Python 3.14 fails when discovery finds no
+  tests. A separate build command remains necessary; a Python-only project without
+  one needs a custom contract rather than a generated no-op build.
 - Zig builds: a root `build.zig` runs `zig build`, its default install step,
   ahead of every other build and test command, because language builds such as
   Cargo's link the native libraries it produces. `build.zig` is Zig source, not

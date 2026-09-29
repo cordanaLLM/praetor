@@ -61,12 +61,15 @@ func addNodeScript(p *VerificationPlan, name string, exists bool) {
 }
 
 func addPythonVerification(p *VerificationPlan, inputs verificationInputs) {
-	if !inputs.has("pyproject.toml") && !inputs.has("pytest.ini") && !inputs.has(".pytest.ini") && len(inputs.pythonDirectories) == 0 {
+	config, pytest := pytestConfiguration(inputs)
+	if !inputs.has("pyproject.toml") && !pytest && len(inputs.pythonDirectories) == 0 {
 		return
 	}
 	p.Runtimes = append(p.Runtimes, "python")
-	if inputs.has("pytest.ini") || inputs.has(".pytest.ini") {
-		p.Test = append(p.Test, []string{"python3", "-m", "pytest"})
+	if pytest {
+		command := []string{"python3", "-m", "pytest"}
+		p.Test = append(p.Test, command)
+		p.SelectedBy = append(p.SelectedBy, verificationCommand(command)+" from the pytest configuration in "+config)
 		return
 	}
 	if len(inputs.pythonDirectories) > 0 && pinnedModernPython(inputs.files[".python-version"]) {
@@ -83,7 +86,7 @@ func addPythonVerification(p *VerificationPlan, inputs verificationInputs) {
 		}
 		return
 	}
-	p.unavailable("Select the Python test runner explicitly: pytest.ini, or tests/ with a Python 3.14+ pin; pyproject.toml alone does not identify a runnable test gate.")
+	p.unavailable("Select the Python test runner explicitly: a pytest configuration (pytest.toml, pytest.ini, a [tool.pytest] or [tool.pytest.ini_options] table in pyproject.toml, a [pytest] section in tox.ini or a [tool:pytest] section in setup.cfg), or tests/ with a Python 3.14+ pin; a pyproject.toml without a pytest table does not identify a runnable test gate.")
 }
 
 func pinnedModernPython(data []byte) bool {

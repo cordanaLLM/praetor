@@ -78,6 +78,7 @@ func reconcileMakefile(ctx context.Context, s *adoptSession) error {
 		return err
 	}
 	generated := isReplaceableVerificationMakefile(string(data), s.verification)
+	noteExistingTestTarget(s, string(data), exists, generated)
 	handled, err := reconcileExistingVerificationMakefile(ctx, s, string(data), exists, generated, documentationEnabled)
 	if err != nil || handled {
 		return err
@@ -87,6 +88,23 @@ func reconcileMakefile(ctx context.Context, s *adoptSession) error {
 		return err
 	}
 	return publishVerificationMakefile(ctx, s, full, data, replacement, exists)
+}
+
+// noteExistingTestTarget names a test target the adopter's own Makefile already defines when the
+// verification plan is unavailable: it is the likely test contract, and the verify-all adoption
+// writes does not run it (#594). A Makefile adoption generated itself is not the adopter's, and
+// its test target is the failing placeholder.
+func noteExistingTestTarget(s *adoptSession, data string, exists, generated bool) {
+	if !exists || generated || s.verification.Status != verificationUnavailable {
+		return
+	}
+	normalized, _ := util.NormalizeLineEndings(withoutDocumentationMakefileBlock(data))
+	if !hasVerificationTarget(normalized, "test") {
+		return
+	}
+	s.report.addWarning("%s", "Makefile target 'test' already exists and is the likely test contract; "+
+		"if it runs the project's tests, have verify-all run it (for example with @$(MAKE) test) "+
+		"in place of the recipe lines that print 'Project verification unavailable' and exit 1.")
 }
 
 func reconcileDisabledDocumentationMakefile(
