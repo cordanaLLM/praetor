@@ -167,3 +167,14 @@ func longestIncreasingRun(positions []int) []bool {
 	}
 	return kept
 }
+
+// CountLines counts the lines of text the way a reader counts them: an empty text has none, a
+// final newline ends the last line rather than starting another, and a last line without a
+// newline still counts. "a\nb" and "a\nb\n" both have two lines; a CRLF text counts the same
+// as its LF form because only the newline ends a line.
+func CountLines(text string) int {
+	if text == "" {
+		return 0
+	}
+	return strings.Count(strings.TrimSuffix(text, "\n"), "\n") + 1
+}
