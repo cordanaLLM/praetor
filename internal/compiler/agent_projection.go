@@ -20,7 +20,7 @@ const (
 	PluginManifestRel = ".agents/plugins/praetor/plugin.json"
 	// PluginAgentsRel is the plugin copy of the personas.
 	PluginAgentsRel = ".agents/plugins/praetor/agents"
-	// maxAgentProjections bounds the persona loops (HISS-02). It is CompileAgents' own cap, so
+	// maxAgentProjections bounds the persona loops (HISS-02). It is CompileAgentSurfaces' own cap, so
 	// a persona set that verify and audit accept is one compile-context can write.
 	maxAgentProjections = MaxAgentFiles
 	// projectedDirPerm is the mode of tracked, reviewer-readable projection directories.
@@ -37,7 +37,7 @@ var errPersonaNotRegular = errors.New("persona must be a regular file, never a s
 
 // agentProjectionDirs lists every directory a persona is projected into under rootDir: the
 // persona directory of each agent client the manifest selects, resolved by
-// SelectPersonaDirs exactly as CompileAgents resolves it when writing, plus
+// SelectPersonaDirs exactly as CompileAgentSurfaces resolves it when writing, plus
 // the plugin copy when the repository ships the plugin.
 func agentProjectionDirs(ctx context.Context, rootDir string) ([]string, error) {
 	dirs, _, err := SelectPersonaDirs(ctx, rootDir)

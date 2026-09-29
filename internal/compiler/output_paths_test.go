@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -210,9 +211,9 @@ func TestWriteConfinedTextRefusesSymlinkedDirectory(t *testing.T) {
 	expectOutputFixture(t, victim, "victim\n")
 }
 
-// Negative: CompileAgents refuses a symlinked persona directory, and a symlinked canonical
+// Negative: CompileAgentSurfaces refuses a symlinked persona directory, and a symlinked canonical
 // directory, before it writes a single copy, with the error verify returns for the same tree.
-func TestCompileAgentsRefusesSymlinkedDirectoriesBeforeAnyWrite(t *testing.T) {
+func TestCompileAgentSurfacesRefusesSymlinkedDirectoriesBeforeAnyWrite(t *testing.T) {
 	const refused = "path component must be a directory, never a symlink"
 	cases := map[string]struct {
 		link string // root-relative directory replaced by a symlink to its relocated copy
@@ -232,7 +233,7 @@ func TestCompileAgentsRefusesSymlinkedDirectoriesBeforeAnyWrite(t *testing.T) {
 				t.Fatal(err)
 			}
 			symlinkOrSkip(t, moved, filepath.Join(root, tc.link))
-			_, err := CompileAgents(t.Context(), root)
+			_, err := CompileAgentSurfaces(t.Context(), io.Discard, root)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("want %q, got %v", tc.want, err)
 			}

@@ -430,7 +430,7 @@ func reconcileAgentHarness(ctx context.Context, s *adoptSession) error {
 	if err != nil {
 		return err
 	}
-	if err := transpileAgentTargets(ctx, s, agentsContent, declared.AgentClients, prior); err != nil {
+	if err := projectVendorContext(ctx, s, agentsContent, declared.AgentClients, prior); err != nil {
 		return err
 	}
 	// The gate compile-context --verify and audit apply; the text adoption keeps from the
@@ -696,14 +696,18 @@ func (a harnessAdditions) describe() string {
 	return "; kept " + strings.Join(kept, ", ")
 }
 
-// transpileAgentTargets compiles AGENTS.md into the vendor context files of the selected
-// agent clients (nil selects every client). A compile failure is fatal: HISS-16 guarantees
-// that the vendor files mirror AGENTS.md. The files are written by the writer compile-context
-// uses (Transpiler.WriteOutputsContext): every target is checked before the first is written,
-// and no symlink below the repository is followed. An existing file that is neither its new
-// projection nor its prior one (priorVendorTexts) holds a hand edit: it is backed up first and
-// reported as replaced, on a plain run too (vendor_targets.go).
-func transpileAgentTargets(ctx context.Context, s *adoptSession, agentsContent string, clients []string, prior priorVendorProjections) error {
+// projectVendorContext compiles AGENTS.md into the vendor context files of the selected
+// agent clients (nil selects every client): the vendor half of compile-context's projection
+// (compiler.CompileContextProjections), with the renderer and the writer
+// compiler.CompileVendorTargets uses (Transpiler.CompileContent, Transpiler.WriteOutputsContext);
+// the persona and plugin half is the agent-definitions step's (projectAgentSurfaces). It compiles
+// the text the step composed rather than the file, so a dry run plans the same files. A compile
+// failure is fatal: HISS-16 guarantees that the vendor files mirror AGENTS.md. Every target is
+// checked before the first is written, and no symlink below the repository is followed. An
+// existing file that is neither its new projection nor its prior one (priorVendorTexts) holds a
+// hand edit: it is backed up first and reported as replaced, on a plain run too
+// (vendor_targets.go).
+func projectVendorContext(ctx context.Context, s *adoptSession, agentsContent string, clients []string, prior priorVendorProjections) error {
 	tr := compiler.NewTranspiler()
 	tr.Clients = clients
 	res, err := tr.CompileContent(agentsContent)
