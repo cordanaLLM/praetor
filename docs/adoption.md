@@ -325,9 +325,15 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
   `Files Replaced` with action `replace`, never as created. The entry carries a line delta
   (`-removed/+added lines` and the first three removed lines) and where the prior bytes went:
   `.workingdir/adopt-backups/<UTC stamp>/<path>`, written only when `git check-ignore`
-  confirms that path is ignored. Without that confirmation, for example on a first adoption
-  whose `.gitignore` does not yet carry the managed `/.workingdir/` rule, the file is replaced
-  without a copy and a warning says so. A file that differs only in its line endings is
+  confirms that path is ignored. The `git-ignore` step, which writes the managed
+  `/.workingdir/` rule, runs right after the manifest step and before every step that can
+  replace a file, so a first adoption keeps a backup of every file it replaces, editor merges
+  included, and a dry run plans the same backups without writing the rule or a copy
+  (`adoptSteps` in `internal/adopt/adopt.go`, `backupIgnored` in `internal/adopt/replace.go`,
+  tests in `internal/adopt/first_adoption_backup_test.go`). Without that confirmation, for
+  example when `adoption.decline` names `git-ignore` and the repository's own rules do not
+  ignore `.workingdir/`, the file is replaced without a copy, its entry says `no backup`, and
+  one warning per run gives the reason. A file that differs only in its line endings is
   verified, not replaced (`TestScaffoldFile_Positive_ForceReplacesWithBackupAndDelta`,
   `TestScaffoldFile_Boundary_DryRunPlansReplaceAndDeltaTruncates`,
   `TestScaffoldFile_Boundary_CRLFOnlyDifferenceIsNotReplaced`). Under `--force`, a backup

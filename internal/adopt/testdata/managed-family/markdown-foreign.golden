@@ -1,11 +1,11 @@
 == foreign first adoption force=false
+action create .gitignore :: Created ignore rules for build artifacts, private working directory, gate worktrees and the AGY workspace configuration
 action create tools/markdownlint/package.json :: Scaffolded locked Markdown governance asset
 action create tools/markdownlint/package-lock.json :: Scaffolded locked Markdown governance asset
 action create tools/markdownlint/markdownlint-cli2.yaml :: Scaffolded locked Markdown governance asset
 action reconcile tools/markdownlint/verify.mjs :: Existing file differs from the scaffold adoption writes; preserved, not verified (--force regenerates it)
 action create tools/markdownlint/no-private-scratch-links.mjs :: Scaffolded locked Markdown governance asset
 action reconcile .github/workflows/praetor-docs.yml :: Existing file differs from the scaffold adoption writes; preserved, not verified (--force regenerates it)
-action create .gitignore :: Created ignore rules for build artifacts, private working directory, gate worktrees and the AGY workspace configuration
 action reconcile .prettierignore :: No Prettier configuration found; managed artifacts not declared to a formatter this repository does not run
 file .github/workflows/praetor-docs.yml sha256:106fdb43a27f5375606b88d4aa64ad98e6d36d2efb59715f359722851adc4aa1
 file tools/markdownlint/package.json sha256:1ef55cd03a7401bae13927bbca5d85ad601dd2ad4b8b931d79a3317551b83c2a
@@ -16,13 +16,13 @@ file tools/markdownlint/no-private-scratch-links.mjs sha256:93ee4469a98c4d44c19b
 file .gitignore "bin/\n*.test\n*.out\n.DS_Store\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n# END praetor private artifacts\n"
 file .prettierignore absent
 == foreign first adoption force=true
+action create .gitignore :: Created ignore rules for build artifacts, private working directory, gate worktrees and the AGY workspace configuration
 action create tools/markdownlint/package.json :: Scaffolded locked Markdown governance asset
 action create tools/markdownlint/package-lock.json :: Scaffolded locked Markdown governance asset
 action create tools/markdownlint/markdownlint-cli2.yaml :: Scaffolded locked Markdown governance asset
-action replace tools/markdownlint/verify.mjs :: Scaffolded locked Markdown governance asset; replaced existing content (-1/+1107 lines, removed "// operator runner"); no backup: .workingdir/adopt-backups/<stamp>/tools/markdownlint/verify.mjs is not ignored by git
+action replace tools/markdownlint/verify.mjs :: Scaffolded locked Markdown governance asset; replaced existing content (-1/+1107 lines, removed "// operator runner"); backup: .workingdir/adopt-backups/<stamp>/tools/markdownlint/verify.mjs
 action create tools/markdownlint/no-private-scratch-links.mjs :: Scaffolded locked Markdown governance asset
-action replace .github/workflows/praetor-docs.yml :: Scaffolded required documentation governance workflow; replaced existing content (-1/+34 lines, removed "name: Operator"); no backup: .workingdir/adopt-backups/<stamp>/.github/workflows/praetor-docs.yml is not ignored by git
-action create .gitignore :: Created ignore rules for build artifacts, private working directory, gate worktrees and the AGY workspace configuration
+action replace .github/workflows/praetor-docs.yml :: Scaffolded required documentation governance workflow; replaced existing content (-1/+34 lines, removed "name: Operator"); backup: .workingdir/adopt-backups/<stamp>/.github/workflows/praetor-docs.yml
 action reconcile .prettierignore :: No Prettier configuration found; managed artifacts not declared to a formatter this repository does not run
 file .github/workflows/praetor-docs.yml sha256:05d50eae0edd1599f23468e570e0ebf0af3d2e7cc65bf126d4f7976b002b2a84
 file tools/markdownlint/package.json sha256:1ef55cd03a7401bae13927bbca5d85ad601dd2ad4b8b931d79a3317551b83c2a
@@ -33,13 +33,13 @@ file tools/markdownlint/no-private-scratch-links.mjs sha256:93ee4469a98c4d44c19b
 file .gitignore "bin/\n*.test\n*.out\n.DS_Store\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n# END praetor private artifacts\n"
 file .prettierignore absent
 == dry run
+action create .gitignore :: Created ignore rules for build artifacts, private working directory, gate worktrees and the AGY workspace configuration
 action create tools/markdownlint/package.json :: Scaffolded locked Markdown governance asset
 action create tools/markdownlint/package-lock.json :: Scaffolded locked Markdown governance asset
 action create tools/markdownlint/markdownlint-cli2.yaml :: Scaffolded locked Markdown governance asset
 action create tools/markdownlint/verify.mjs :: Scaffolded locked Markdown governance asset
 action create tools/markdownlint/no-private-scratch-links.mjs :: Scaffolded locked Markdown governance asset
 action create .github/workflows/praetor-docs.yml :: Scaffolded required documentation governance workflow
-action create .gitignore :: Created ignore rules for build artifacts, private working directory, gate worktrees and the AGY workspace configuration
 action reconcile .prettierignore :: No Prettier configuration found; managed artifacts not declared to a formatter this repository does not run
 file .github/workflows/praetor-docs.yml absent
 file tools/markdownlint/package.json absent

@@ -158,6 +158,13 @@ type adoptSession struct {
 	// backupStamp names this run's directory below adoptBackupRoot; backupPath fixes it on
 	// first use when the session was built without one.
 	backupStamp string
+	// privateIgnorePlanned records, in a dry run only, that the git-ignore step planned the
+	// managed block the real run writes before any replacing step, so a planned backup counts
+	// as ignored although the .gitignore on disk does not carry the rule yet (backupIgnored).
+	privateIgnorePlanned bool
+	// backupRefused records that a backup was already refused this run, so the reason is
+	// warned once rather than once per replaced file (refuseBackup).
+	backupRefused bool
 	// defaultBranch is the repository.default_branch the manifest this adoption creates declares
 	// (resolveDefaultBranch, forge.DefaultBranchToDeclare); empty when there is nothing to declare
 	// or the manifest exists.
@@ -381,6 +388,12 @@ func resolveFacets(input []string) []string {
 func adoptSteps() []namedStep {
 	return []namedStep{
 		{"manifest", reconcileManifest},
+		// Ahead of every step that can replace a file: a replace keeps its backup below the
+		// private ledger only when git ignores it (backupExisting), and this step writes the
+		// managed rule that ignores it. Run later, a first adoption replaced the lock, the
+		// catalog, vendor files and editor files before the rule existed and kept no backup of
+		// any of them (#597). The manifest step before it never replaces a file.
+		{"git-ignore", reconcileGitIgnore},
 		{"lockfile", reconcileLockfile},
 		{"policy-catalog", reconcilePolicyCatalog},
 		{"baseline", reconcileBaseline},
@@ -393,7 +406,6 @@ func adoptSteps() []namedStep {
 		// the command the same run scaffolded, and every later run found them differing from
 		// the template, a warning adoption never clears because it does not overwrite them.
 		{"editors", reconcileEditors},
-		{"git-ignore", reconcileGitIgnore},
 		{"formatter-ignore", reconcileFormatterIgnore},
 		{"renovate-ignore", reconcileRenovateIgnore},
 		{"actionlint-labels", reconcileActionlintLabels},

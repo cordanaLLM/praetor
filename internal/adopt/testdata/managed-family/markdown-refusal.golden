@@ -1,4 +1,5 @@
 == disable over drifted asset
+action reconcile .gitignore :: Private artifact ignore tail block already effective
 report-error refusing to remove drifted documentation asset tools/markdownlint/package.json
 error refusing to remove drifted documentation asset tools/markdownlint/package.json
 file .github/workflows/praetor-docs.yml sha256:05d50eae0edd1599f23468e570e0ebf0af3d2e7cc65bf126d4f7976b002b2a84
@@ -10,6 +11,7 @@ file tools/markdownlint/no-private-scratch-links.mjs sha256:93ee4469a98c4d44c19b
 file .gitignore "bin/\n*.test\n*.out\n.DS_Store\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n# END praetor private artifacts\n"
 file .prettierignore absent
 == disable over mixed asset
+action reconcile .gitignore :: Private artifact ignore tail block already effective
 report-error refusing to remove documentation asset tools/markdownlint/package.json with invalid line endings: text contains mixed LF and CRLF line endings
 error refusing to remove documentation asset tools/markdownlint/package.json with invalid line endings: text contains mixed LF and CRLF line endings
 file .github/workflows/praetor-docs.yml sha256:05d50eae0edd1599f23468e570e0ebf0af3d2e7cc65bf126d4f7976b002b2a84

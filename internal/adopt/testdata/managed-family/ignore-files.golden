@@ -1,11 +1,11 @@
 == operator ignores
+action append .gitignore :: Preserved existing rules and excluded private working directory, gate worktrees and the AGY workspace configuration
 action create tools/markdownlint/package.json :: Scaffolded locked Markdown governance asset
 action create tools/markdownlint/package-lock.json :: Scaffolded locked Markdown governance asset
 action create tools/markdownlint/markdownlint-cli2.yaml :: Scaffolded locked Markdown governance asset
 action create tools/markdownlint/verify.mjs :: Scaffolded locked Markdown governance asset
 action create tools/markdownlint/no-private-scratch-links.mjs :: Scaffolded locked Markdown governance asset
 action create .github/workflows/praetor-docs.yml :: Scaffolded required documentation governance workflow
-action append .gitignore :: Preserved existing rules and excluded private working directory, gate worktrees and the AGY workspace configuration
 action append .prettierignore :: Preserved existing rules and declared the praetor-managed artifacts
 file .github/workflows/praetor-docs.yml sha256:05d50eae0edd1599f23468e570e0ebf0af3d2e7cc65bf126d4f7976b002b2a84
 file tools/markdownlint/package.json sha256:1ef55cd03a7401bae13927bbca5d85ad601dd2ad4b8b931d79a3317551b83c2a
@@ -16,13 +16,13 @@ file tools/markdownlint/no-private-scratch-links.mjs sha256:93ee4469a98c4d44c19b
 file .gitignore "node_modules/\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n# END praetor private artifacts\n"
 file .prettierignore "operator-output/\n\n# BEGIN praetor-managed artifacts (praetorctl adopt)\n# praetorctl audit owns this canonical content. A formatter rewrite fails;\n# documentation text alone permits consistent LF/CRLF checkout conversion.\n.agents/agents/repo-auditor.md\n.agents/agents/repo-gatekeeper.md\n.config/agent/hooks/block_evasion.py\n.config/labels.yaml\n.devcontainer/devcontainer.json\n.github/rulesets/main.json\n.github/workflows/praetor-docs.yml\n.paperclip/harness.json\n.standards-baseline.json\n.standards.lock\n.standards.yaml\nAGENTS.md\nlefthook.yml\ntools/figures/README.md\ntools/figures/astro.mjs\ntools/figures/build.mjs\ntools/figures/checks.mjs\ntools/figures/core.mjs\ntools/figures/dist/THIRD-PARTY-LICENSES.txt\ntools/figures/dist/loader.js\ntools/figures/dist/player.js\ntools/figures/figures.css\ntools/figures/mkdocs_hook.py\ntools/figures/serve.mjs\ntools/figures/third_party/interfig/VENDOR.md\ntools/figures/third_party/interfig/upstream/LICENSE\ntools/figures/third_party/interfig/upstream/src/geometry.ts\ntools/figures/third_party/interfig/upstream/src/model.ts\ntools/figures/third_party/interfig/upstream/src/svg.ts\ntools/figures/third_party/interfig/vendor.json\ntools/figures/types.ts\ntools/markdownlint/markdownlint-cli2.yaml\ntools/markdownlint/no-private-scratch-links.mjs\ntools/markdownlint/package-lock.json\ntools/markdownlint/package.json\ntools/markdownlint/verify.mjs\n# END praetor-managed artifacts\n"
 == operator ignores after disable
+action reconcile .gitignore :: Private artifact ignore tail block already effective
 action remove .github/workflows/praetor-docs.yml :: Removed canonical documentation asset because docs:seo-portal is disabled
 action remove tools/markdownlint/package.json :: Removed canonical documentation asset because docs:seo-portal is disabled
 action remove tools/markdownlint/package-lock.json :: Removed canonical documentation asset because docs:seo-portal is disabled
 action remove tools/markdownlint/markdownlint-cli2.yaml :: Removed canonical documentation asset because docs:seo-portal is disabled
 action remove tools/markdownlint/verify.mjs :: Removed canonical documentation asset because docs:seo-portal is disabled
 action remove tools/markdownlint/no-private-scratch-links.mjs :: Removed canonical documentation asset because docs:seo-portal is disabled
-action reconcile .gitignore :: Private artifact ignore tail block already effective
 action append .prettierignore :: Preserved existing rules and declared the praetor-managed artifacts
 file .github/workflows/praetor-docs.yml absent
 file tools/markdownlint/package.json absent
@@ -33,13 +33,13 @@ file tools/markdownlint/no-private-scratch-links.mjs absent
 file .gitignore "node_modules/\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n# END praetor private artifacts\n"
 file .prettierignore "operator-output/\n\n# BEGIN praetor-managed artifacts (praetorctl adopt)\n# praetorctl audit owns this canonical content. A formatter rewrite fails;\n# documentation text alone permits consistent LF/CRLF checkout conversion.\n.agents/agents/repo-auditor.md\n.agents/agents/repo-gatekeeper.md\n.config/agent/hooks/block_evasion.py\n.config/labels.yaml\n.devcontainer/devcontainer.json\n.github/rulesets/main.json\n.paperclip/harness.json\n.standards-baseline.json\n.standards.lock\n.standards.yaml\nAGENTS.md\nlefthook.yml\n# END praetor-managed artifacts\n"
 == CRLF gitignore
+action append .gitignore :: Preserved existing rules and excluded private working directory, gate worktrees and the AGY workspace configuration
 action create tools/markdownlint/package.json :: Scaffolded locked Markdown governance asset
 action create tools/markdownlint/package-lock.json :: Scaffolded locked Markdown governance asset
 action create tools/markdownlint/markdownlint-cli2.yaml :: Scaffolded locked Markdown governance asset
 action create tools/markdownlint/verify.mjs :: Scaffolded locked Markdown governance asset
 action create tools/markdownlint/no-private-scratch-links.mjs :: Scaffolded locked Markdown governance asset
 action create .github/workflows/praetor-docs.yml :: Scaffolded required documentation governance workflow
-action append .gitignore :: Preserved existing rules and excluded private working directory, gate worktrees and the AGY workspace configuration
 action reconcile .prettierignore :: No Prettier configuration found; managed artifacts not declared to a formatter this repository does not run
 file .github/workflows/praetor-docs.yml sha256:05d50eae0edd1599f23468e570e0ebf0af3d2e7cc65bf126d4f7976b002b2a84
 file tools/markdownlint/package.json sha256:1ef55cd03a7401bae13927bbca5d85ad601dd2ad4b8b931d79a3317551b83c2a

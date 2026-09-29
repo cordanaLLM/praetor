@@ -1,0 +1,3 @@
+type: fixed
+title: "adopt runs the git-ignore step right after the manifest step, before every step that can replace a file, so a first adoption keeps a backup under .workingdir/adopt-backups of every file it replaces (the lock, the pinned catalog, vendor context files, editor merges) and a dry run plans the same backups without writing; when git still does not ignore the backup root, for example with git-ignore declined, the reason is warned once per run with the remedy instead of once per file"
+breaking: false

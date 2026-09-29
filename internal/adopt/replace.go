@@ -100,8 +100,10 @@ func (s *adoptSession) replaceExistingAll(ctx context.Context, rs []replacement,
 
 // backupExisting keeps before, the bytes rel held, under this run's backup directory, and
 // returns the report note naming it. The copy is written only when git confirms the backup path
-// is ignored: otherwise a copy of adopter content would sit in the tree waiting to be committed,
-// so there is no backup, the note says so and a warning names the reason. The write goes
+// is ignored (backupIgnored): otherwise a copy of adopter content would sit in the tree waiting
+// to be committed, so there is no backup, the note says so and a warning names the reason
+// (refuseBackup). The git-ignore step runs before every step that replaces a file, so on a
+// first adoption the managed rule already ignores the backup root here. The write goes
 // through the root-pinned writer, so a symlink at or below the backup root is refused before
 // the caller replaces anything. A dry run checks the same and writes nothing.
 func (s *adoptSession) backupExisting(ctx context.Context, rel string, before []byte) (string, error) {
@@ -109,16 +111,9 @@ func (s *adoptSession) backupExisting(ctx context.Context, rel string, before []
 	if err := checkBackupRoot(ctx, s.repoPath); err != nil {
 		return "", err
 	}
-	ignored, err := util.GitIgnoredPaths(ctx, s.repoPath, []string{target}, false)
-	if err != nil || !slices.Contains(ignored, target) {
-		note := target + " is not ignored by git"
-		reason := "git does not ignore " + target
-		if err != nil {
-			note = "git could not confirm " + target + " is ignored"
-			reason = note + ": " + err.Error()
-		}
-		s.report.addWarning("%s: no backup of the prior bytes: %s", rel, reason)
-		return "no backup: " + note, nil
+	ignored, err := s.backupIgnored(ctx, target)
+	if err != nil || !ignored {
+		return s.refuseBackup(rel, target, err), nil
 	}
 	if !s.opts.DryRun {
 		if err := ensurePrivateWorkingDir(ctx, s.repoPath); err != nil {
@@ -129,6 +124,41 @@ func (s *adoptSession) backupExisting(ctx context.Context, rel string, before []
 		}
 	}
 	return "backup: " + target, nil
+}
+
+// backupIgnored reports whether git ignores target, a path below this run's backup directory.
+// A dry run whose git-ignore step planned the managed block (privateIgnorePlanned) counts a
+// path git answered as not ignored as ignored: the real run writes that block before its first
+// replacing step, and the block's /.workingdir/ rule sits at the tail of .gitignore, where no
+// earlier negation reaches it, and git reads no ignore file below a directory it ignores.
+func (s *adoptSession) backupIgnored(ctx context.Context, target string) (bool, error) {
+	ignored, err := util.GitIgnoredPaths(ctx, s.repoPath, []string{target}, false)
+	if err != nil {
+		return false, err
+	}
+	return slices.Contains(ignored, target) || (s.opts.DryRun && s.privateIgnorePlanned), nil
+}
+
+// refuseBackup answers backupExisting when git does not confirm that target, the backup of rel,
+// is ignored, or cannot answer (err): no backup, and the report note saying so. The reason is
+// warned once per run, for the first refused file, with the remedy when adoption.decline names
+// git-ignore; each later refused file says "no backup" in its own entry.
+func (s *adoptSession) refuseBackup(rel, target string, err error) string {
+	note := target + " is not ignored by git"
+	reason := "git does not ignore " + target
+	if err != nil {
+		note = "git could not confirm " + target + " is ignored"
+		reason = note + ": " + err.Error()
+	} else if declined, declineErr := ArtifactDeclined(s.declined, "git-ignore"); declineErr == nil && declined {
+		reason += "; adoption.decline in " + manifestFile + " names git-ignore, so adoption does not write the managed " +
+			"/" + workingDirPath + "/ rule: add it to " + gitIgnoreFile + " to keep backups"
+	}
+	if !s.backupRefused {
+		s.backupRefused = true
+		s.report.addWarning("%s: no backup of the prior bytes: %s. Warned once per run: every replaced file's "+
+			"entry names its backup or says no backup", rel, reason)
+	}
+	return "no backup: " + note
 }
 
 // ensurePrivateWorkingDir creates the private session ledger directory with owner-only access
