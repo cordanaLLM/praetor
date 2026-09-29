@@ -3,14 +3,15 @@
 // SPDX-License-Identifier: EUPL-1.2
 
 // Package docsref checks that the repository's own documentation names only CLI commands,
-// subcommands, flags and repository paths that exist.
+// subcommands, flags and repository paths that exist, and that a change to a declared
+// user-facing surface carries a documentation change (drift.go).
 //
 // Documentation drifted without anything reporting it: guides named commands that were
-// renamed, flags that were removed and files that moved (BUG-992). scripts/docs_drift.py
-// asks the opposite question -- whether a changed surface carries a documentation change --
-// so a guide that stops matching unchanged code was never examined. This package reads the
-// references where a reader copies them from, inline code spans and fenced shell blocks, and
-// checks each one against the code instead of against a hand-maintained list.
+// renamed, flags that were removed and files that moved (BUG-992). The drift check asks the
+// opposite question -- whether a changed surface carries a documentation change -- so a guide
+// that stops matching unchanged code was never examined. This package reads the references
+// where a reader copies them from, inline code spans and fenced shell blocks, and checks each
+// one against the code instead of against a hand-maintained list.
 package docsref
 
 import (

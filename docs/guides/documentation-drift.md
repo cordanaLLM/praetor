@@ -1,7 +1,8 @@
 # Documentation drift
 
 A change that alters a user-discoverable surface ships the documentation for it in the same change.
-`scripts/docs_drift.py` enforces that on every pull request.
+`praetorctl docs references --base=<rev>` enforces that on every pull request, in Praetor and in
+any repository that declares its surfaces in `.standards.yaml`.
 
 The opposite direction has its own gate: a guide that names a command, flag or file that no longer
 exists fails `make docs-references`, whether or not the change touched the guide. See
@@ -13,80 +14,140 @@ Praetor already keeps two kinds of text in sync and neither one is this.
 
 `compile-context --verify` proves the *agent* instructions match the canonical `AGENTS.md` across
 thirty projections. `praetorctl docs sync` harvests *dependency* documentation from upstream
-packages. Nothing checked whether this repository's own `docs/` still describes what its code does,
-so documentation drifted and no mechanism reported it.
+packages. Nothing checked whether a repository's own `docs/` still describes what its code does,
+so documentation drifted and no mechanism reported it. An adopter could only state the rule in its
+`AGENTS.md` and have reviewers enforce it from memory (#608).
 
 The design is backported from a downstream adopter's blocking gate.
 
-## What counts as a surface
+## Declaring surfaces
 
-Only what an adopter reads about before using it. The map in `SURFACE_MAP` is deliberately narrow:
+A repository lists its surfaces under `docs_surfaces` in `.standards.yaml`, one entry per surface:
 
-| surface | documentation |
+```yaml
+docs_surfaces:
+  - name: "build script"
+    paths:
+      - "scripts/build.sh"
+    docs:
+      - "docs/onboarding.md"
+  - name: "release workflow"
+    paths:
+      - ".github/workflows/release.yml"
+```
+
+| Key | Meaning |
 | --- | --- |
-| `.config/archetypes/*.yaml`, `facets/*.yaml` | `docs/guides/archetype-authoring.md` |
-| `internal/flavor/definitions.go` | `docs/guides/archetype-authoring.md` or `onboarding.md` |
-| `internal/config/effective*.go` (tests excluded) | `docs/guides/effective-policy.md` |
-| `internal/config/register*.go` (tests excluded) | `docs/guides/text-register.md` |
-| `internal/hiss/rules.go`, `internal/hiss/go_callgraph.go` | `docs/standards/` |
-| `internal/hisscoverage/` | `docs/guides/` or `docs/standards/` |
-| `.config/lefthook/scripts/*.py` (tests excluded), `lefthook.yml` | `docs/guides/git-hooks.md` |
-| `cmd/standards-mcp/` | `docs/guides/development-mcp.md` |
-| `internal/gating/pipeline.go` | `docs/guides/adoption-verification.md` |
-| `internal/readmegovernance/`, the adoption README renderer, and its audit gate | `docs/guides/adoption-verification.md` |
-| `internal/wishes/`, `internal/state/` | their respective guides |
-| `internal/agenthook/*.go` (tests excluded), `cmd/standardsctl/hook.go` | `docs/guides/agent-hooks.md` |
-| `.github/workflows/portability.yml`, `scripts/portability_selftest.py` | `docs/standards/hiss-21-platform-neutrality.md` |
-| `internal/workstation/`, `cmd/standardsctl/workstation.go`, `scripts/dev_install.py` | `docs/guides/workstation-update.md` |
-| `tools/markdownlint/`, `tools/docsurface/`, the adoption emitter, CI selector, and dedicated workflow | `docs/guides/documentation-governance.md` |
-| `internal/docsref/`, `cmd/standardsctl/docs_references.go` | this document |
-| `scripts/docs_drift.py` | this document |
+| `name` | Printed in every finding and waived line: required, unique, one line, at most 128 bytes. |
+| `paths` | Globs that select the surface's files. Required. |
+| `exclude` | Globs removed from `paths`, such as the surface's own tests. |
+| `docs` | Globs of the documents that describe the surface. Without it the surface is *unmapped*. |
 
-Everything else is internal. A refactor that changes no listed surface is never accused, and that
-is what keeps the gate worth reading: one that fires on every change is one people learn to ignore,
-and then it protects nothing.
+A glob is repository-relative: `*` matches inside one directory and a `**` segment spans any
+number of them. The manifest loader refuses an absolute, negated or wildcard-only glob, an empty,
+`.` or `..` segment, more than 128 surfaces and more than 32 globs in one list
+(`internal/config/docs_surfaces.go`).
+
+Praetor's own list is the `docs_surfaces` block of this repository's `.standards.yaml`. It holds
+only what an adopter reads about before using it: the archetype and facet catalogs, the policy
+resolvers, the git and agent hooks, the development MCP server, and the gates and ledgers each
+guide describes. Everything else is internal. A refactor that changes no listed surface is never
+accused, and that is what keeps the gate worth reading: one that fires on every change is one
+people learn to ignore, and then it protects nothing.
+
+## What a change must carry
+
+For every declared surface a changed path belongs to, the check looks for a changed path that
+matches one of the surface's `docs` globs:
+
+- **Found**: the surface passes and is printed as `documented <name>: <document>`.
+- **Not found**: a finding names the surface, the changed paths and the `docs` globs mapped to it.
+- **Unmapped**: a surface without `docs` never passes silently; a change to it is reported as
+  unmapped until its entry names its documents or the change carries a waiver.
+
+A change that touches no surface passes, a documentation-only change included. A file of the
+surface itself never counts as its documentation.
 
 ## When documentation genuinely is not needed
 
-Write `no docs needed: <reason>` in the pull request body. The reason is for the reviewer, not the
-script — the script only looks for the phrase.
+State the reason in one of two places:
+
+- a `Docs-Waiver: <reason>` trailer line in any commit of the checked range;
+- a `no docs needed: <reason>` line in the pull request body, which CI passes with
+  `--pr-body-file`.
+
+A waiver without a reason waives nothing. A waiver admits every finding of the change, and the
+output prints each waiver with its source and each finding it admitted, so the reviewer sees what
+was waived and why.
 
 Use it for a pure internal refactor, a bug fix with no user-visible delta, or a test-only change
 that happens to touch a mapped file.
 
 ## An ADR does not satisfy the gate
 
-Edits under `docs/adr/` are explicitly excluded. An ADR records a *decision*; a guide describes a
-*surface*. Accepting an ADR as documentation coverage would let "I wrote it down somewhere" stand in
-for "the guide still matches the behaviour", which is the drift this exists to catch.
+Edits under `docs/adr/` are explicitly excluded, and a `docs` glob that selects only decision
+records is refused as selecting nothing. An ADR records a *decision*; a guide describes a
+*surface*. Accepting an ADR as documentation coverage would let "I wrote it down somewhere" stand
+in for "the guide still matches the behaviour", which is the drift this exists to catch.
 
 ## Running it
 
 ```bash
-make docs-drift-test          # the check's own tests
-BASE_SHA=origin/main HEAD_SHA=HEAD python3 scripts/docs_drift.py
+go run ./cmd/standardsctl docs references --path=. --base=origin/main
+go test ./internal/docsref/ ./internal/config/ ./cmd/standardsctl/ -run 'Drift|Surfaces|Waivers|DocsReferences'
 ```
 
-It runs inside `make verify-all` and as a pull-request step in `.github/workflows/ci.yml`.
-The changed-path query uses the shared bounded hook runner (`run_bounded` in
-`.config/lefthook/scripts/common.py`): `git diff` has a 10-second deadline, combined standard
-output and error are capped at 1 MiB, and the complete NUL-delimited inventory is capped at 5,000
-paths. Timeout, process-start, non-zero-exit, malformed-output, byte-limit, and path-limit failures
-stop the gate with exit status 2 as infrastructure errors; none can become an empty passing diff.
-`scripts/test_docs_drift.py` replays each failure, the exact path cap, and one path over it.
+Without `--base` the command checks the declaration only: every `paths` glob must select a file of
+the repository and every `docs` glob a document, because a surface mapped to a missing document
+could never be satisfied and would fail every change to it with no way to clear it. That part runs
+in `make docs-references`, inside `make verify-all`, and on every leg of
+`.github/workflows/portability.yml`. The change check runs as the pull-request step "Documentation
+Drift" in `.github/workflows/ci.yml`, with the pull request's base and head commits and its body.
+
+The changed paths come from `git diff --name-only <base>...<head>` through
+`cifilter.GetChangedFiles` (the diff against the merge base; when that fails or lists nothing,
+the diff between the two commits), capped at 5,000 paths; the waiver trailers come from the commits of
+`<base>..<head>`, capped at 1,000. A failed git command stops the check with an error; it never
+becomes an empty, passing diff. The tests replay each case:
+
+- `internal/docsref/drift_test.go`: documented, undocumented, unmapped, waived, excluded and
+  decision-record changes, the path cap and one path over it, and the declaration check.
+- `internal/docsref/drift_praetor_test.go`: this repository's own surfaces.
+- `cmd/standardsctl/docs_references_test.go`: an adopter checkout end to end, waivers included.
+- `internal/config/docs_surfaces_test.go`: the manifest schema and its bounds.
+
+## In an adopted repository
+
+Declare the surfaces as above, then run the check in the pull-request workflow:
+
+```bash
+praetorctl docs references --path=. --base="$BASE_SHA" --head="$HEAD_SHA" --pr-body-file=body.txt
+```
+
+In a checkout without Praetor's CLI source (`cmd/standardsctl`) the command skips the command,
+flag and path reference check described below and says so. A checkout that is neither Praetor's
+nor declares a surface is refused: a gate with nothing to check is not a passing gate.
+
+Adoption does not yet write this step into a workflow or hook; add it to the pull-request workflow
+by hand.
 
 ## Extending the map
 
-Add a row to `SURFACE_MAP` in `scripts/docs_drift.py`. A test asserts that every mapped document
-exists: a surface pointing at a missing file could never be satisfied, so it would fail every change
-to that surface with no way to clear it.
+Add an entry to `docs_surfaces` in `.standards.yaml`. Keep additions narrow. The cost of a wrong
+entry is not a missed document — it is an accusation nobody can act on, which teaches people to
+reach for the waiver.
 
-Keep additions narrow. The cost of a wrong row is not a missed document — it is an accusation
-nobody can act on, which teaches people to reach for the opt-out.
+### Known limits of the change check
+
+- A renamed file is listed under its new path only, so renaming a file out of a surface is not a
+  change to that surface.
+- Under Git's default `core.quotePath`, `git diff` quotes a path with bytes outside ASCII, and a
+  quoted path matches no glob.
+- A waiver admits the whole change, not one surface of it.
 
 ## References that stop resolving
 
-`scripts/docs_drift.py` only examines a change that touches a mapped surface. A guide can go stale
+The change check only examines a change that touches a declared surface. A guide can go stale
 without any such change: a command is renamed, a flag is removed, a file moves, and every guide
 that named it still reads as correct in review because none of them is in the diff (BUG-992).
 

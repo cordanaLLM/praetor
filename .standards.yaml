@@ -130,6 +130,132 @@ register:
         format: go
         selector: "mcp.outputs"
 
+# User-discoverable surfaces and the guide that describes each one. A change that touches a
+# surface without editing its guide fails `praetorctl docs references --base=<rev>` unless it
+# carries a waiver (docs/guides/documentation-drift.md). Everything unlisted is internal: keep
+# the list narrow, so a finding is worth reading.
+docs_surfaces:
+  - name: "archetype catalog"
+    paths:
+      - ".config/archetypes/*.yaml"
+    docs:
+      - "docs/guides/archetype-authoring.md"
+  - name: "facet catalog"
+    paths:
+      - ".config/archetypes/facets/*.yaml"
+    docs:
+      - "docs/guides/archetype-authoring.md"
+  - name: "flavor definitions"
+    paths:
+      - "internal/flavor/definitions.go"
+    docs:
+      - "docs/guides/archetype-authoring.md"
+      - "docs/guides/onboarding.md"
+  - name: "effective policy resolution"
+    paths:
+      - "internal/config/effective*.go"
+    exclude:
+      - "internal/config/*_test.go"
+    docs:
+      - "docs/guides/effective-policy.md"
+  - name: "text register policy"
+    paths:
+      - "internal/config/register*.go"
+    exclude:
+      - "internal/config/*_test.go"
+    docs:
+      - "docs/guides/text-register.md"
+  - name: "HISS rule matchers"
+    paths:
+      - "internal/hiss/rules.go"
+      - "internal/hiss/go_callgraph.go"
+    docs:
+      - "docs/standards/**"
+  - name: "HISS-20 coverage engine"
+    paths:
+      - "internal/hisscoverage/**"
+    docs:
+      - "docs/guides/**"
+      - "docs/standards/**"
+  - name: "git hook scripts"
+    paths:
+      - ".config/lefthook/scripts/*.py"
+    exclude:
+      - ".config/lefthook/scripts/test_*.py"
+    docs:
+      - "docs/guides/git-hooks.md"
+  - name: "hook configuration"
+    paths:
+      - "lefthook.yml"
+    docs:
+      - "docs/guides/git-hooks.md"
+  - name: "development MCP server"
+    paths:
+      - "cmd/standards-mcp/**"
+    docs:
+      - "docs/guides/development-mcp.md"
+  - name: "gating pipeline"
+    paths:
+      - "internal/gating/pipeline.go"
+    docs:
+      - "docs/guides/adoption-verification.md"
+  - name: "managed README governance contract"
+    paths:
+      - "internal/readmegovernance/**"
+      - "internal/adopt/governance.go"
+      - "cmd/standardsctl/audit_readme.go"
+    docs:
+      - "docs/guides/adoption-verification.md"
+  - name: "wish ledger"
+    paths:
+      - "internal/wishes/**"
+    docs:
+      - "docs/guides/wishes-and-polls.md"
+  - name: "state ledger"
+    paths:
+      - "internal/state/**"
+    docs:
+      - "docs/guides/state-ledger-integrity.md"
+  - name: "agent-hook entrypoint"
+    paths:
+      - "internal/agenthook/*.go"
+      - "cmd/standardsctl/hook.go"
+    exclude:
+      - "internal/agenthook/*_test.go"
+    docs:
+      - "docs/guides/agent-hooks.md"
+  - name: "platform neutrality gate"
+    paths:
+      - ".github/workflows/portability.yml"
+      - "scripts/portability_selftest.py"
+    docs:
+      - "docs/standards/hiss-21-platform-neutrality.md"
+  - name: "workstation install/status"
+    paths:
+      - "internal/workstation/**"
+      - "cmd/standardsctl/workstation.go"
+      - "scripts/dev_install.py"
+    docs:
+      - "docs/guides/workstation-update.md"
+  - name: "Markdown documentation governance"
+    paths:
+      - "tools/markdownlint/**"
+      - "tools/docsurface/**"
+      - "internal/adopt/documentation.go"
+      - "internal/cifilter/filter.go"
+      - ".github/workflows/praetor-docs.yml"
+    docs:
+      - "docs/guides/documentation-governance.md"
+  - name: "documentation reference and drift gate"
+    paths:
+      - "internal/docsref/*.go"
+      - "internal/config/docs_surfaces.go"
+      - "cmd/standardsctl/docs_references.go"
+    exclude:
+      - "internal/docsref/*_test.go"
+    docs:
+      - "docs/guides/documentation-drift.md"
+
 # Framework capability demand declarations
 needs:
   required:

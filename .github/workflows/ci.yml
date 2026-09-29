@@ -167,6 +167,9 @@ jobs:
       # compile-context --verify proves the agent instructions stay in sync with AGENTS.md, and
       # docs sync harvests dependency documentation; neither checks whether this repository's own
       # docs still describe what its code does. Nothing did, so documentation drifted silently.
+      # The surfaces are the docs_surfaces of .standards.yaml, the same declaration an adopter
+      # writes, and the check is the one adopters run (docs/guides/documentation-drift.md). The
+      # body is passed through the environment into a file, never interpolated into the script.
       - name: Documentation Drift (user-discoverable surfaces)
         if: github.event_name == 'pull_request'
         env:
@@ -176,7 +179,10 @@ jobs:
         run: |
           git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null || git fetch --no-tags origin "${BASE_SHA}"
           git cat-file -e "${HEAD_SHA}^{commit}" 2>/dev/null || git fetch --no-tags origin "${HEAD_SHA}"
-          python3 -B scripts/docs_drift.py
+          printf '%s' "$PR_BODY" > "$RUNNER_TEMP/docs_drift_body.txt"
+          go run ./cmd/standardsctl docs references --path=. \
+            --base="$BASE_SHA" --head="$HEAD_SHA" \
+            --pr-body-file="$RUNNER_TEMP/docs_drift_body.txt"
 
       - name: Enforce HISS-14 Migration Footers (Commit Lint)
         if: github.event_name == 'pull_request'

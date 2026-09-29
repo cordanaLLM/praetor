@@ -259,6 +259,10 @@ type Manifest struct {
 	// inventory bounds and style exclusions for partial, generated and fixture Markdown. The
 	// gate reads it from this file at run time (#532, #534).
 	Documentation *DocumentationPolicy `yaml:"documentation,omitempty"`
+	// DocsSurfaces maps the repository's user-facing surfaces to the documentation that
+	// describes them; `praetorctl docs references --base=<rev>` fails a change that touches a
+	// surface without its documentation (#608). It is repository-only, like Register and HISS.
+	DocsSurfaces []DocsSurface `yaml:"docs_surfaces,omitempty"`
 }
 
 // AdoptionPolicy declares generated artefacts this repository refuses.
@@ -313,6 +317,9 @@ func parseManifest(path string, data []byte) (*Manifest, error) {
 		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
 	}
 	if err := validateManifestDocumentation(m); err != nil {
+		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
+	}
+	if err := ValidateDocsSurfaces(m.DocsSurfaces); err != nil {
 		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
 	}
 

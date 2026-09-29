@@ -156,7 +156,7 @@ hiss-coverage:
 topology-audit:
 	go run ./cmd/standardsctl topology audit --skip-unconfigured
 
-verify-all: adr-verify semgrep-test docs-drift-test docs-assets-test github-app-test docs-lint-test portability-test notebook-test mcp-test dev-codex-hooks-test dev-install-test dev-schedule-test dev-repair-test wiki-sync-test adopt-sweep-test dco-check-test vscode-test mcp-probe compile-context-verify caveman-sources needs-check editors-reference-verify editors-verify test audit lint vuln sec secrets fuzz hiss-coverage flavor-audit state-audit dedupe topology-audit hooks-test
+verify-all: adr-verify semgrep-test docs-assets-test github-app-test docs-lint-test portability-test notebook-test mcp-test dev-codex-hooks-test dev-install-test dev-schedule-test dev-repair-test wiki-sync-test adopt-sweep-test dco-check-test vscode-test mcp-probe compile-context-verify caveman-sources needs-check editors-reference-verify editors-verify test audit lint vuln sec secrets fuzz hiss-coverage flavor-audit state-audit dedupe topology-audit hooks-test
 	@echo "All standards verification gates passed cleanly."
 
 # Vendored interfig (docs/adr/0015-interactive-figures-from-vendored-interfig.md section 8): the
@@ -169,7 +169,6 @@ interfig-verify:
 	python3 -B scripts/sync_interfig.py verify
 	node --test 'tools/figures/third_party/interfig/upstream/src/*.test.ts'
 
-.PHONY: docs-drift-test
 .PHONY: vscode-test
 vscode-test:
 	npm ci --prefix editors/vscode --ignore-scripts
@@ -180,8 +179,6 @@ semgrep-test:
 	python3 -B scripts/test_hiss_semgrep.py
 
 .PHONY: notebook-test
-docs-drift-test:
-	python3 -B scripts/test_docs_drift.py
 
 .PHONY: docs-assets-test
 docs-assets-test:
@@ -243,7 +240,8 @@ docs-seo-presets-test:
 
 # BUG-992: README.md and docs/ may name only CLI commands, subcommands and flags the code
 # defines and repository paths that exist. A guide that stops matching unchanged code shows up
-# in no diff, so docs-drift cannot see it (docs/guides/documentation-drift.md).
+# in no diff, so the drift check (--base, run on pull requests) cannot see it. Every glob of
+# docs_surfaces in .standards.yaml must select a file (docs/guides/documentation-drift.md).
 .PHONY: docs-references
 verify-all: docs-references
 docs-references:
