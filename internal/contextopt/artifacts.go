@@ -78,11 +78,24 @@ const MaxDigestDuration = 2 * time.Minute
 // without holding the content in memory, so it can digest files far larger than
 // MaxSourceBytes. A file that grows past limit or changes during the read is refused.
 func DigestBinarySnapshot(ctx context.Context, path string, limit int64) (sha256Hex string, size int64, err error) {
+	return DigestBinarySnapshotTo(ctx, path, limit, nil)
+}
+
+// DigestBinarySnapshotTo digests like DigestBinarySnapshot and, when observer is not
+// nil, also writes every digested byte to it in file order. A caller that inspects the
+// content therefore inspects exactly the bytes the digest covers, without a second read
+// the file could change between. An observer write error ends the read and is returned;
+// on any error the observer may hold a partial copy.
+func DigestBinarySnapshotTo(ctx context.Context, path string, limit int64, observer io.Writer) (sha256Hex string, size int64, err error) {
 	if limit < 1 {
 		return "", 0, fmt.Errorf("digest byte limit must be positive, got %d", limit)
 	}
 	hasher := sha256.New()
-	size, err = copyBinarySnapshot(ctx, path, hasher, limit, MaxDigestDuration)
+	var dst io.Writer = hasher
+	if observer != nil {
+		dst = io.MultiWriter(hasher, observer)
+	}
+	size, err = copyBinarySnapshot(ctx, path, dst, limit, MaxDigestDuration)
 	if err != nil {
 		return "", 0, err
 	}
