@@ -104,7 +104,7 @@ func TestDriftBoundary(t *testing.T) {
 		t.Fatalf("one path over the bound: %v", err)
 	}
 	deep := strings.Repeat("d/", maxPathSegments) + "x.sh"
-	if SurfaceFile(config.DocsSurface{Paths: []string{"**/*.sh"}}, deep) {
+	if surfaceFile(config.DocsSurface{Paths: []string{"**/*.sh"}}, deep) {
 		t.Fatal("a path deeper than the segment bound must not match")
 	}
 }

@@ -111,7 +111,7 @@ func Drift(changed []string, surfaces []config.DocsSurface, waived []Waiver) (*D
 func surfaceDrift(surface config.DocsSurface, changed []string) (finding, documented string) {
 	var touched []string
 	for _, rel := range changed {
-		if SurfaceFile(surface, rel) {
+		if surfaceFile(surface, rel) {
 			touched = append(touched, rel)
 		}
 	}
@@ -123,24 +123,24 @@ func surfaceDrift(surface config.DocsSurface, changed []string) (finding, docume
 			surface.Name, namedPaths(touched)), ""
 	}
 	for _, rel := range changed {
-		if Documents(surface, rel) {
+		if documents(surface, rel) {
 			return "", rel
 		}
 	}
 	return fmt.Sprintf("%s: %s changed without an edit to %s", surface.Name, namedPaths(touched), strings.Join(surface.Docs, " or ")), ""
 }
 
-// SurfaceFile reports whether the repository path rel belongs to surface: a paths glob
+// surfaceFile reports whether the repository path rel belongs to surface: a paths glob
 // matches it and no exclude glob does.
-func SurfaceFile(surface config.DocsSurface, rel string) bool {
+func surfaceFile(surface config.DocsSurface, rel string) bool {
 	return matchesAny(surface.Paths, rel) && !matchesAny(surface.Exclude, rel)
 }
 
-// Documents reports whether editing the repository path rel counts as editing the surface's
+// documents reports whether editing the repository path rel counts as editing the surface's
 // documentation: a docs glob matches it, and it is neither a decision record nor a file of the
 // surface itself.
-func Documents(surface config.DocsSurface, rel string) bool {
-	return !strings.HasPrefix(rel, decisionRecords) && !SurfaceFile(surface, rel) && matchesAny(surface.Docs, rel)
+func documents(surface config.DocsSurface, rel string) bool {
+	return !strings.HasPrefix(rel, decisionRecords) && !surfaceFile(surface, rel) && matchesAny(surface.Docs, rel)
 }
 
 // matchesAny reports whether one of globs matches the slash path rel in full.
@@ -186,14 +186,14 @@ func surfaceProblems(surface config.DocsSurface, inventory []string) []string {
 	var problems []string
 	for index := 0; index < len(surface.Paths) && index < config.MaxDocsSurfaceGlobs; index++ {
 		glob := surface.Paths[index]
-		if !selects(inventory, func(rel string) bool { return matchesAny([]string{glob}, rel) && SurfaceFile(surface, rel) }) {
+		if !selects(inventory, func(rel string) bool { return matchesAny([]string{glob}, rel) && surfaceFile(surface, rel) }) {
 			problems = append(problems, fmt.Sprintf("%s: paths glob %q selects no file of the repository", surface.Name, glob))
 		}
 	}
 	for index := 0; index < len(surface.Docs) && index < config.MaxDocsSurfaceGlobs; index++ {
 		glob := surface.Docs[index]
 		mapped := config.DocsSurface{Name: surface.Name, Paths: surface.Paths, Exclude: surface.Exclude, Docs: []string{glob}}
-		if !selects(inventory, func(rel string) bool { return Documents(mapped, rel) }) {
+		if !selects(inventory, func(rel string) bool { return documents(mapped, rel) }) {
 			problems = append(problems, fmt.Sprintf("%s: docs glob %q matches no document of the repository (decision records under %s never count)",
 				surface.Name, glob, decisionRecords))
 		}
