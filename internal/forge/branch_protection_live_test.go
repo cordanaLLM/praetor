@@ -62,7 +62,8 @@ func TestGitHubDriver_ReadBranchProtection_Positive_ReadsRulesetsAndLegacyProtec
 }
 
 // Boundary: GitHub's "Branch not protected" 404 is a branch without a legacy protection object,
-// not an error; with no active rule either, the ruleset listing is not read at all.
+// not an error; with no active rule either, the ruleset listing is not read at all. Its "Branch
+// not found" 404 is a branch that does not exist yet, which has no legacy object either.
 func TestGitHubDriver_ReadBranchProtection_Boundary_NoProtectionObject(t *testing.T) {
 	gh, fake := protectionForge(t, []map[string]any{}, http.StatusNotFound, map[string]any{"message": legacyProtectionAbsent})
 	live, err := gh.ReadBranchProtection(t.Context(), "main")
@@ -75,21 +76,35 @@ func TestGitHubDriver_ReadBranchProtection_Boundary_NoProtectionObject(t *testin
 	if len(fake.requests) != 2 {
 		t.Fatalf("expected the rules and the legacy read only, got %+v", fake.requests)
 	}
+	if live.Missing {
+		t.Fatal("a branch GitHub reports as not protected exists")
+	}
+
+	// A branch GitHub does not have yet, such as a default branch not pushed yet, carries no
+	// legacy protection object, and the rules of the rulesets that target its name still count.
+	rules := []map[string]any{{"type": "deletion", "ruleset_id": 7, "ruleset_source_type": "Repository", "ruleset_source": "acme/widgets"}}
+	gh, _ = protectionForge(t, rules, http.StatusNotFound, map[string]any{"message": legacyBranchAbsent})
+	live, err = gh.ReadBranchProtection(t.Context(), "main")
+	if err != nil {
+		t.Fatalf("ReadBranchProtection of a missing branch: %v", err)
+	}
+	if !live.Missing || live.Legacy != nil || len(live.Rules) != 1 {
+		t.Fatalf("a missing branch read as %+v", live)
+	}
 }
 
-// Negative: any other 404 (an unknown branch, or a token that may not read the object), a
-// refusal, a malformed body, an empty branch and a missing token are errors, never an
-// unprotected branch.
+// Negative: any other 404 (such as a token that may not see the repository), a refusal, a
+// malformed body, an empty branch and a missing token are errors, never an unprotected branch.
 func TestGitHubDriver_ReadBranchProtection_Negative_UnreadableProtection(t *testing.T) {
 	for name, tc := range map[string]struct {
 		status int
 		body   any
 		want   string
 	}{
-		"not found":   {http.StatusNotFound, map[string]any{"message": "Not Found"}, "unexpected status 404"},
-		"forbidden":   {http.StatusForbidden, map[string]any{"message": "Resource not accessible by integration"}, "unexpected status 403"},
-		"malformed":   {http.StatusOK, []string{"not", "an", "object"}, "failed parsing branch protection"},
-		"branch gone": {http.StatusNotFound, map[string]any{"message": "Branch not found"}, "legacy branch protection of main"},
+		"not found":  {http.StatusNotFound, map[string]any{"message": "Not Found"}, "unexpected status 404"},
+		"forbidden":  {http.StatusForbidden, map[string]any{"message": "Resource not accessible by integration"}, "unexpected status 403"},
+		"malformed":  {http.StatusOK, []string{"not", "an", "object"}, "failed parsing branch protection"},
+		"no message": {http.StatusNotFound, []string{"Branch not found"}, "legacy branch protection of main"},
 	} {
 		gh, _ := protectionForge(t, nil, tc.status, tc.body)
 		if _, err := gh.ReadBranchProtection(t.Context(), "main"); err == nil || !strings.Contains(err.Error(), tc.want) {

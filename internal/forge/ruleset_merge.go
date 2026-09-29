@@ -41,29 +41,28 @@ func normalizeRuleset(doc map[string]any) (map[string]any, error) {
 }
 
 // mergeRuleset overlays the desired praetor ruleset onto the live one without narrowing
-// it. Name, target and enforcement come from desired, and so does every parameter praetor
-// renders, except where the live value is stricter (stricterParameters): a higher approving
-// review count or a review requirement switched on stays as it is. The live ruleset keeps its
-// bypass actors, other conditions, every ref it includes, every status check context it
-// requires, and every rule and rule parameter praetor does not render. Weakening a live
-// ruleset is a deliberate manual change; sync --remote reads the result back and names each
-// live setting it kept stricter than declared (EvaluateBranchProtection).
-func mergeRuleset(live, desired map[string]any) (map[string]any, error) {
+// it. Name, target, enforcement and every parameter praetor renders come from desired, a
+// relaxation the policy declares included, and each rendered parameter whose live value was
+// stricter is returned as lowered (loweredParameters) for sync --remote to report. The live
+// ruleset keeps its bypass actors, other conditions, every ref it includes, every status check
+// context it requires, and every rule and rule parameter praetor does not render. Removing
+// any of those from a live ruleset is a deliberate manual change.
+func mergeRuleset(live, desired map[string]any) (map[string]any, []LoweredParameter, error) {
 	merged := map[string]any{"name": desired["name"], "target": desired["target"], "enforcement": desired["enforcement"]}
 	if actors, present := live["bypass_actors"]; present {
 		merged["bypass_actors"] = actors
 	}
 	conditions, err := mergeConditions(live["conditions"], desired["conditions"])
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	merged["conditions"] = conditions
-	rules, err := mergeRules(live["rules"], desired["rules"])
+	rules, lowered, err := mergeRules(live["rules"], desired["rules"])
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	merged["rules"] = rules
-	return merged, nil
+	return merged, lowered, nil
 }
 
 // mergeConditions unions the ref_name includes and drops desired refs from the excludes,
@@ -104,85 +103,109 @@ func mergeConditions(liveRaw, desiredRaw any) (map[string]any, error) {
 }
 
 // mergeRules merges each desired rule into the live rule of the same type and keeps every
-// other live rule, in the live order after the desired ones.
-func mergeRules(liveRaw, desiredRaw any) ([]any, error) {
+// other live rule, in the live order after the desired ones. It also returns the rendered
+// parameters the merge lowered.
+func mergeRules(liveRaw, desiredRaw any) ([]any, []LoweredParameter, error) {
 	live, err := objectList(liveRaw, "rules", maxRulesetRules)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	desired, err := objectList(desiredRaw, "rules", maxRulesetRules)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	merged, consumed, err := mergeDesiredRules(live, desired)
+	merged, err := mergeDesiredRules(live, desired)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for i := 0; i < len(live) && i < maxRulesetRules; i++ {
-		if !consumed[i] {
-			merged = append(merged, live[i])
+		if !merged.consumed[i] {
+			merged.rules = append(merged.rules, live[i])
 		}
 	}
-	if len(merged) > maxRulesetRules {
-		return nil, fmt.Errorf("merged ruleset exceeds %d rules", maxRulesetRules)
+	if len(merged.rules) > maxRulesetRules {
+		return nil, nil, fmt.Errorf("merged ruleset exceeds %d rules", maxRulesetRules)
+	}
+	return merged.rules, merged.lowered, nil
+}
+
+// desiredRulesMerge is what mergeDesiredRules returns: the desired rules, each merged into the
+// first live rule of its type, the indexes of the live rules consumed that way, and the
+// rendered parameters those merges lowered.
+type desiredRulesMerge struct {
+	rules    []any
+	consumed map[int]bool
+	lowered  []LoweredParameter
+}
+
+// mergeDesiredRules merges each desired rule into the first live rule of its type.
+func mergeDesiredRules(live, desired []map[string]any) (desiredRulesMerge, error) {
+	firstLive := firstRuleIndex(live)
+	merged := desiredRulesMerge{rules: make([]any, 0, len(live)+len(desired)), consumed: make(map[int]bool, len(desired))}
+	for i := 0; i < len(desired) && i < maxRulesetRules; i++ {
+		ruleType, isString := desired[i]["type"].(string)
+		if !isString {
+			return desiredRulesMerge{}, fmt.Errorf("desired rule %d has no type", i)
+		}
+		index, found := firstLive[ruleType]
+		if !found {
+			merged.rules = append(merged.rules, desired[i])
+			continue
+		}
+		rule, lowered, err := mergeRule(live[index], desired[i], ruleType)
+		if err != nil {
+			return desiredRulesMerge{}, err
+		}
+		merged.consumed[index] = true
+		merged.rules = append(merged.rules, rule)
+		merged.lowered = append(merged.lowered, lowered...)
 	}
 	return merged, nil
 }
 
-// mergeDesiredRules returns the desired rules, each merged into the first live rule of its
-// type, and the indexes of the live rules consumed that way.
-func mergeDesiredRules(live, desired []map[string]any) ([]any, map[int]bool, error) {
-	firstLive := firstRuleIndex(live)
-	consumed := make(map[int]bool, len(desired))
-	merged := make([]any, 0, len(live)+len(desired))
-	for i := 0; i < len(desired) && i < maxRulesetRules; i++ {
-		ruleType, isString := desired[i]["type"].(string)
-		if !isString {
-			return nil, nil, fmt.Errorf("desired rule %d has no type", i)
-		}
-		index, found := firstLive[ruleType]
-		if !found {
-			merged = append(merged, desired[i])
-			continue
-		}
-		rule, err := mergeRule(live[index], desired[i], ruleType)
-		if err != nil {
-			return nil, nil, err
-		}
-		consumed[index] = true
-		merged = append(merged, rule)
-	}
-	return merged, consumed, nil
-}
-
-// mergeRule keeps the live rule's own keys and parameters and overlays the desired ones.
-func mergeRule(live, desired map[string]any, ruleType string) (map[string]any, error) {
+// mergeRule keeps the live rule's own keys and parameters and overlays the desired ones. It
+// returns the desired parameters that lowered a stricter live value (loweredParameters).
+func mergeRule(live, desired map[string]any, ruleType string) (map[string]any, []LoweredParameter, error) {
 	liveParams, err := optionalObject(live["parameters"], ruleType+".parameters")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	desiredParams, err := optionalObject(desired["parameters"], ruleType+".parameters")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	rule := make(map[string]any, len(live))
 	maps.Copy(rule, live)
 	if len(liveParams) == 0 && len(desiredParams) == 0 {
-		return rule, nil
+		return rule, nil, nil
 	}
 	params := make(map[string]any, len(liveParams)+len(desiredParams))
 	maps.Copy(params, liveParams)
 	maps.Copy(params, desiredParams)
-	keepStricterParameters(params, liveParams, desiredParams)
 	if ruleType == statusChecksParameter {
 		checks, checkErr := unionStatusChecks(liveParams[statusChecksParameter], desiredParams[statusChecksParameter])
 		if checkErr != nil {
-			return nil, checkErr
+			return nil, nil, checkErr
 		}
 		params[statusChecksParameter] = checks
 	}
 	rule["parameters"] = params
-	return rule, nil
+	return rule, loweredParameters(ruleType, liveParams, desiredParams), nil
+}
+
+// LoweredParameter is a rendered ruleset parameter whose live value was stricter than the
+// declared one and that a merge set to the declared value. A relaxation the policy declares,
+// such as review_mode single_maintainer's zero approving reviews, reconciles like any other
+// value; sync --remote names each lowered parameter, so no hosted setting drops silently (#154).
+type LoweredParameter struct {
+	// Rule is the ruleset rule type the parameter belongs to, such as pull_request.
+	Rule string
+	// Parameter is the rule parameter, such as required_approving_review_count.
+	Parameter string
+	// Live is the value the live ruleset carried before the write.
+	Live any
+	// Declared is the value written, which the resolved policy declares.
+	Declared any
 }
 
 // stricterParameters are the rendered rule parameters that only tighten a rule as they grow:
@@ -198,19 +221,20 @@ var stricterParameters = []string{
 	"strict_required_status_checks_policy",
 }
 
-// keepStricterParameters puts back, in params, each live value of stricterParameters that is
-// stricter than the desired one, so a merge never lowers a review count or switches a live
-// requirement off. A value of another JSON type than its counterpart is left as desired set
-// it, because it cannot be ordered.
-func keepStricterParameters(params, live, desired map[string]any) {
+// loweredParameters returns each parameter of stricterParameters whose live value is stricter
+// than the desired one that replaces it, in stricterParameters order. A value of another JSON
+// type than its counterpart cannot be ordered and is not reported.
+func loweredParameters(ruleType string, live, desired map[string]any) []LoweredParameter {
+	var lowered []LoweredParameter
 	for i := 0; i < len(stricterParameters); i++ {
 		key := stricterParameters[i]
 		liveValue, inLive := live[key]
 		desiredValue, inDesired := desired[key]
 		if inLive && inDesired && parameterStricter(liveValue, desiredValue) {
-			params[key] = liveValue
+			lowered = append(lowered, LoweredParameter{Rule: ruleType, Parameter: key, Live: liveValue, Declared: desiredValue})
 		}
 	}
+	return lowered
 }
 
 // parameterStricter reports whether the live value tightens a rule more than the desired one:

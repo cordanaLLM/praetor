@@ -14,10 +14,13 @@ import (
 
 const (
 	// legacyProtectionAbsent is the message GitHub answers GET .../branches/{branch}/protection
-	// with when the branch has no legacy protection object. Any other 404, such as an unknown
-	// branch or a token that may not read the object, does not say the branch is unprotected
-	// and is an error.
+	// with when the branch has no legacy protection object.
 	legacyProtectionAbsent = "Branch not protected"
+	// legacyBranchAbsent is the message of the same GET when the repository has no such branch
+	// yet, such as a default branch not pushed yet: a missing branch carries no legacy
+	// protection object, while a ruleset that targets its name already applies to it. Any
+	// other 404, or a 403, does not say the branch is unprotected and is an error.
+	legacyBranchAbsent = "Branch not found"
 	// LegacyProtectionMechanism names the legacy branch protection object as the mechanism that
 	// enforces a property, beside the rulesets LiveBranchProtection.RulesetLabel names.
 	LegacyProtectionMechanism = "branch protection"
@@ -91,6 +94,9 @@ type LiveBranchProtection struct {
 	RulesetNames map[int]string
 	// Legacy is the legacy protection object, or nil when GitHub reports the branch has none.
 	Legacy *LegacyBranchProtection
+	// Missing reports that the repository on GitHub has no such branch yet. Its rulesets are
+	// still read: GitHub lists the rules of every ruleset that targets the branch's name.
+	Missing bool
 }
 
 // RulesetLabel names the ruleset rule comes from, such as ruleset "praetor-main-protection" #7,
@@ -123,7 +129,9 @@ func (l *LiveBranchProtection) Mechanisms() []string {
 // ReadBranchProtection reads what GitHub enforces on branch from both mechanisms: the active
 // rules of every ruleset that targets it (GET .../rules/branches/{branch}), named from the
 // ruleset listing, and the legacy protection object (GET .../branches/{branch}/protection),
-// where GitHub's "Branch not protected" answer means the branch has none. It only reads.
+// where GitHub's "Branch not protected" answer means the branch has none and its "Branch not
+// found" answer means the branch does not exist yet, so it has none either (Missing). It only
+// reads.
 func (g *GitHubDriver) ReadBranchProtection(ctx context.Context, branch string) (*LiveBranchProtection, error) {
 	if err := g.Authenticate(ctx); err != nil {
 		return nil, err
@@ -141,11 +149,11 @@ func (g *GitHubDriver) ReadBranchProtection(ctx context.Context, branch string) 
 			return nil, fmt.Errorf("name the rulesets of %s: %w", branch, err)
 		}
 	}
-	legacy, err := g.legacyProtection(ctx, branch)
+	legacy, missing, err := g.legacyProtection(ctx, branch)
 	if err != nil {
 		return nil, fmt.Errorf("read the legacy branch protection of %s: %w", branch, err)
 	}
-	return &LiveBranchProtection{Branch: branch, Rules: rules, RulesetNames: names, Legacy: legacy}, nil
+	return &LiveBranchProtection{Branch: branch, Rules: rules, RulesetNames: names, Legacy: legacy, Missing: missing}, nil
 }
 
 // branchRules lists every active rule GitHub enforces on branch, page by page.
@@ -189,29 +197,33 @@ func (g *GitHubDriver) rulesetNames(ctx context.Context) (map[int]string, error)
 	return names, nil
 }
 
-// legacyProtection reads the legacy protection object of branch, or nil when GitHub answers
-// that the branch has none.
-func (g *GitHubDriver) legacyProtection(ctx context.Context, branch string) (*LegacyBranchProtection, error) {
+// legacyProtection reads the legacy protection object of branch. It returns nil when GitHub
+// answers that the branch has none, and nil and true when GitHub has no such branch.
+func (g *GitHubDriver) legacyProtection(ctx context.Context, branch string) (*LegacyBranchProtection, bool, error) {
 	path, err := g.repoPath("branches/" + url.PathEscape(branch) + "/protection")
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	body, status, err := g.sendRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	switch {
-	case status == http.StatusOK:
+	if status == http.StatusOK {
 		var protection LegacyBranchProtection
 		if err := json.Unmarshal(body, &protection); err != nil {
-			return nil, fmt.Errorf("failed parsing branch protection (raw: %q): %w", util.BodyPreview(body), err)
+			return nil, false, fmt.Errorf("failed parsing branch protection (raw: %q): %w", util.BodyPreview(body), err)
 		}
-		return &protection, nil
-	case status == http.StatusNotFound && responseMessage(body) == legacyProtectionAbsent:
-		return nil, nil
-	default:
-		return nil, fmt.Errorf("unexpected status %d from GET %s: %s", status, path, util.BodyPreview(body))
+		return &protection, false, nil
 	}
+	if status == http.StatusNotFound {
+		switch responseMessage(body) {
+		case legacyProtectionAbsent:
+			return nil, false, nil
+		case legacyBranchAbsent:
+			return nil, true, nil
+		}
+	}
+	return nil, false, fmt.Errorf("unexpected status %d from GET %s: %s", status, path, util.BodyPreview(body))
 }
 
 // responseMessage returns the message field of a GitHub error body, or "" when it has none.

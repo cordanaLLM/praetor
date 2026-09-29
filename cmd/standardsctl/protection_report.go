@@ -41,7 +41,7 @@ func reportLiveProtection(ctx context.Context, gh *forge.GitHubDriver, target pr
 	}
 	drifted := forge.ProtectionDrifts(findings)
 	fmt.Printf("  [INFO] Live branch protection of %s on GitHub for %s, %s: %s\n",
-		target.branch, target.repository, heading, describeMechanisms(target.branch, live.Mechanisms()))
+		target.branch, target.repository, heading, describeMechanisms(live))
 	stricter := false
 	for i := 0; i < len(findings); i++ {
 		finding := findings[i]
@@ -51,17 +51,34 @@ func reportLiveProtection(ctx context.Context, gh *forge.GitHubDriver, target pr
 		}
 	}
 	if stricter && !driftOnly {
-		fmt.Println("    Settings marked [STRICTER] are kept: sync --remote never lowers a live setting below the declared policy; lower it on GitHub by hand if that is intended")
+		fmt.Printf("    Settings marked [STRICTER] exceed the declared policy. sync --remote lowers each parameter it renders into ruleset %q "+
+			"to the declared value and prints it as [LOWERED]; it leaves a rule it does not render, other rulesets and %s as they are, "+
+			"so change those on GitHub by hand if the declared policy is intended\n", forge.RepositoryRulesetName, forge.LegacyProtectionMechanism)
 	}
 	return drifted, nil
 }
 
-// describeMechanisms names the mechanisms that protect branch, or says that none does.
-func describeMechanisms(branch string, mechanisms []string) string {
+// describeMechanisms names the mechanisms that protect the branch live describes, or says that
+// none does, and says so when GitHub has no such branch yet.
+func describeMechanisms(live *forge.LiveBranchProtection) string {
+	mechanisms := live.Mechanisms()
+	text := "protected by " + strings.Join(mechanisms, ", ")
 	if len(mechanisms) == 0 {
-		return "no active ruleset rule applies to " + branch + " and it has no " + forge.LegacyProtectionMechanism + " object"
+		text = "no active ruleset rule applies to " + live.Branch + " and it has no " + forge.LegacyProtectionMechanism + " object"
 	}
-	return "protected by " + strings.Join(mechanisms, ", ")
+	if live.Missing {
+		text += " (" + live.Branch + " does not exist on GitHub yet; a ruleset that targets it applies once it is pushed)"
+	}
+	return text
+}
+
+// printLoweredParameters names each rendered parameter a ruleset write lowered from a stricter
+// live value to the declared one (forge.GitHubDriver.ReconcileProtectionReport).
+func printLoweredParameters(lowered []forge.LoweredParameter) {
+	for i := 0; i < len(lowered); i++ {
+		fmt.Printf("  [LOWERED] Ruleset %q rule %s: %s was %v on GitHub, now %v as declared\n",
+			forge.RepositoryRulesetName, lowered[i].Rule, lowered[i].Parameter, lowered[i].Live, lowered[i].Declared)
+	}
 }
 
 // formatProtectionFinding renders one compared property as a report line.

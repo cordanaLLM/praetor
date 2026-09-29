@@ -308,7 +308,8 @@ labels:
 // It also answers the two reads of the branch protection readback: the active rules of a
 // branch, which it derives from the stored active rulesets whose refs include the branch
 // unless rulesUnenforced is set, and the legacy protection object, which is legacy, or
-// GitHub's "Branch not protected" 404 while legacy is nil, or a legacyStatus of 300 or above.
+// GitHub's "Branch not protected" 404 while legacy is nil, or its "Branch not found" 404 while
+// branchMissing is set, or a legacyStatus of 300 or above.
 type forgeStub struct {
 	mu              sync.Mutex
 	writes          []string
@@ -320,6 +321,7 @@ type forgeStub struct {
 	legacy          map[string]any
 	legacyStatus    int
 	rulesUnenforced bool
+	branchMissing   bool
 }
 
 const forgeStubRepo = "/repos/acme/widgets/"
@@ -434,6 +436,8 @@ func (s *forgeStub) serveLegacyProtection(w http.ResponseWriter) {
 	switch {
 	case s.legacyStatus >= http.StatusMultipleChoices:
 		stubRespond(w, s.legacyStatus, map[string]any{"message": "stub rejection"})
+	case s.branchMissing:
+		stubRespond(w, http.StatusNotFound, map[string]any{"message": "Branch not found"})
 	case s.legacy == nil:
 		stubRespond(w, http.StatusNotFound, map[string]any{"message": "Branch not protected"})
 	default:

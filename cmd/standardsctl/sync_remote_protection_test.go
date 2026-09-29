@@ -93,8 +93,10 @@ func TestSync_Remote_ReadsBackBranchProtection_Negative(t *testing.T) {
 	}
 }
 
-// Boundary: a live ruleset stricter than declared keeps its stricter settings, which the
-// readback names with the mechanism, beside a legacy protection object; the sync succeeds.
+// Boundary: a live ruleset stricter than declared takes the declared review settings, and the
+// sync prints each one it lowered as [LOWERED]; a rule the policy does not render stays and reads
+// back as [STRICTER], beside a legacy protection object. A default branch GitHub does not have
+// yet is reconciled like any other: no legacy object can exist on it, and the ruleset applies.
 func TestSync_Remote_ReadsBackBranchProtection_Boundary(t *testing.T) {
 	stub := &forgeStub{
 		rulesets: map[int]map[string]any{1: stricterLiveRuleset()},
@@ -108,15 +110,31 @@ func TestSync_Remote_ReadsBackBranchProtection_Boundary(t *testing.T) {
 	const ruleset = `ruleset "praetor-main-protection" #1`
 	mustContain(t, out,
 		"before this sync: protected by "+ruleset+", branch protection",
-		"[STRICTER] Approving reviews: declared 1, live 3 by "+ruleset,
+		`[LOWERED] Ruleset "praetor-main-protection" rule pull_request: required_approving_review_count was 3 on GitHub, now 1 as declared`,
+		`[LOWERED] Ruleset "praetor-main-protection" rule pull_request: require_last_push_approval was true on GitHub, now false as declared`,
+		"[OK] Approving reviews: declared 1, live 1 by "+ruleset,
 		"[STRICTER] Signed commits: declared not required, live required by "+ruleset,
 		"[OK] Linear history: declared required, live required by "+ruleset+", branch protection",
-		"Settings marked [STRICTER] are kept: sync --remote never lowers a live setting below the declared policy")
+		`Settings marked [STRICTER] exceed the declared policy. sync --remote lowers each parameter it renders into ruleset "praetor-main-protection"`)
 	stored := stub.storedRuleset(t, 1)
-	for _, want := range []string{`"required_approving_review_count":3`, `"require_last_push_approval":true`, `"required_signatures"`} {
+	for _, want := range []string{`"required_approving_review_count":1`, `"require_last_push_approval":false`, `"required_signatures"`} {
 		if !strings.Contains(stored, want) {
-			t.Errorf("the merge narrowed the live ruleset, %s is gone: %s", want, stored)
+			t.Errorf("the stored ruleset lacks %s: %s", want, stored)
 		}
+	}
+
+	unpushed := &forgeStub{branchMissing: true}
+	f2, endpoint2 := remoteProtectionFixture(t, unpushed)
+	out, err = runSyncCmd(t, "--config="+f2.manifestPath, "--remote", "--token=ghp_x", "--endpoint="+endpoint2)
+	if err != nil {
+		t.Fatalf("remote sync of an unpushed default branch: %v\n%s", err, out)
+	}
+	mustContain(t, out,
+		"before this sync: no active ruleset rule applies to main and it has no branch protection object (main does not exist on GitHub yet",
+		"read back: protected by "+ruleset+" (main does not exist on GitHub yet; a ruleset that targets it applies once it is pushed)",
+		"[OK] Remote branch protection synchronized on GitHub")
+	if strings.Contains(out, "[LOWERED]") {
+		t.Errorf("a newly created ruleset lowered nothing:\n%s", out)
 	}
 }
 

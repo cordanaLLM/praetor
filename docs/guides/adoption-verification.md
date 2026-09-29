@@ -252,27 +252,35 @@ standardsctl sync --remote --forge-host=ghe.example.com \
   GitHub does not require it, and a `[WARN]` line when the live ruleset still requires it because
   an earlier sync added it. The merge below keeps that check, so remove it by hand
   (`TestSync_Remote_WarnsAboutLeftOffChecksTheLiveRulesetStillRequires`). An existing ruleset is read, merged, updated and read back. The
-  merge sets every parameter praetor renders from policy, unless the live value is stricter: a
-  higher approving review count, or stale-review dismissal, code-owner review, last-push approval,
-  thread resolution or the up-to-date check policy switched on, stays as it is. It keeps
+  merge sets every parameter praetor renders from policy, a declared relaxation such as
+  `review_mode: single_maintainer` included. Each parameter whose live value was stricter (a
+  higher approving review count, or stale-review dismissal, code-owner review, last-push
+  approval, thread resolution or the up-to-date check policy switched on) is printed on a
+  `[LOWERED]` line that names the rule, the parameter, the live value and the declared one, so no
+  hosted setting drops silently. The merge keeps
   everything else: extra refs, bypass actors, other rules and parameters, and required checks
   praetor does not list. A protected ref is removed from the excludes. The command fails unless
   the readback includes everything written (`internal/forge/ruleset_merge.go`,
   `TestGitHubDriver_ReconcileProtection_Positive_MergesLiveRulesetWithoutNarrowing`,
-  `TestMergeRuleset_Positive_KeepsStricterLiveParameters`). Removing a rule or ref from a live
-  ruleset, or lowering a setting, is a manual change on GitHub.
+  `TestGitHubDriver_ReconcileProtection_Boundary_SingleMaintainerLowersLiveReviews`,
+  `TestMergeRuleset_Positive_AppliesAndReportsLoweredParameters`). Removing a rule or ref from a
+  live ruleset is a manual change on GitHub.
 - **Branch protection readback.** Before and after the ruleset write, sync reads what the default
   branch enforces from both of GitHub's mechanisms: the active rules of every ruleset that targets
   it, organisation rulesets included, and the legacy branch protection object, whose "Branch not
-  protected" answer means the branch has none (`forge.GitHubDriver.ReadBranchProtection`). GitHub
+  protected" answer means the branch has none (`forge.GitHubDriver.ReadBranchProtection`). A
+  default branch not pushed yet ("Branch not found") has no legacy object either; the report says
+  it does not exist on GitHub yet, and the ruleset still applies to it once pushed. GitHub
   enforces the union of the two, so each declared property is compared with that union
   (`forge.EvaluateBranchProtection`): pull requests, approving reviews, code-owner review, stale
   review dismissal, signed commits, linear history, deletion and force pushes blocked, and the
   required status checks. The line before the write lists each `[DRIFT]` and the mechanisms
   found, or says that nothing protects the branch. After the write, every property is printed as
   `[OK]`, `[DRIFT]` or `[STRICTER]` with the mechanism that enforces it, such as
-  `ruleset "praetor-main-protection" #7` or `branch protection`. A setting stricter than declared
-  is kept and marked `[STRICTER]`. If a declared property is still not enforced after the ruleset
+  `ruleset "praetor-main-protection" #7` or `branch protection`. A setting still stricter than
+  declared after the write, marked `[STRICTER]`, comes from something sync does not write: a rule
+  praetor does not render, another ruleset or legacy protection; change it on GitHub by hand if
+  the declared policy is intended. If a declared property is still not enforced after the ruleset
   converged, because another ruleset, legacy protection or the repository's GitHub plan overrides
   it, the command fails instead of reporting success, and a legacy protection object the token
   may not read fails it before any write
