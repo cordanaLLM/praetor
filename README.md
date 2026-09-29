@@ -212,7 +212,8 @@ go run ./cmd/standardsctl baseline            # print the stored snapshot withou
 
 `--record` refuses to raise the count unless `--allow-increase --reason="<why>"`
 records why. `audit` applies the same ratchet and adds the touched-file clean
-rule.
+rule. A rejection lists three violations per class and says how many it hid;
+`--verify --all-violations` lists every one without writing the file.
 
 ---
 

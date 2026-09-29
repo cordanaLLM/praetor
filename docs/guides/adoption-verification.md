@@ -576,10 +576,49 @@ cases are replayed in [`internal/util/git_status_test.go`](https://github.com/co
 
 The gate's HISS stage rejects on the same ratchet as `praetorctl audit`, and both render the
 rejection with `baseline.RatchetResult.Summary`
-([`internal/baseline/baseline.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/baseline/baseline.go)): the counts, then up to
-three new and three touched-file violations as `[rule] file:line - message`. The stage previously
+([`internal/baseline/describe.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/baseline/describe.go)): the counts, then up to
+three violations of each class as `[rule] file:line - message (class)`. The stage previously
 reported only `hiss ratchet failed: N infractions (M new, baseline B)`, so a blocked push named no
 file to open.
+
+A class with more than three violations ends with a line that says how many it hid and which
+read-only command lists them all. `praetorctl baseline --verify` and `praetorctl audit` print the
+whole list with `--all-violations` and never write `.standards-baseline.json`:
+
+```text
+  ... and 3 more unbaselined violations not shown; 'praetorctl baseline --verify --all-violations' lists every one
+  ... and 2 more touched-file violations not shown; 'praetorctl audit --all-violations' lists every one
+```
+
+Touched-file violations need the audit's change set, so their marker names `praetorctl audit`; run
+it with the same `--base` as the failing run. `TestRatchetResultSummary_Boundary_MarkerCountsEachClass`
+in [`internal/baseline/describe_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/baseline/describe_test.go) and
+`TestBaselineVerify_Positive_AllViolationsListsEveryOne` in
+[`cmd/standardsctl/baseline_ratchet_report_test.go`](https://github.com/cordanaLLM/praetor/blob/main/cmd/standardsctl/baseline_ratchet_report_test.go) pin both.
+
+A violation in an untouched file that the baseline does not record is not necessarily new code: a
+Praetor upgrade can add a check that reports code nobody changed. `praetorctl audit`,
+`praetorctl baseline --verify` and the `standards_audit` MCP tool therefore attribute each one
+before rendering (`hiss.AttributeRatchet` in
+[`internal/hiss/attribution.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hiss/attribution.go)). They copy the violations' files, as
+the commit `commit_sha` in the baseline names holds them, into a temporary directory and scan that
+copy with the current checks and the same policy. A Go call cycle brings its whole package:
+
+| Class tag | Meaning |
+| :--- | :--- |
+| `(new)` | The checks do not report it at that commit: the code changed since the baseline was recorded. |
+| `(check added or changed since the baseline)` | The checks report the same rule, file, symbol and message at that commit, yet the baseline does not record it: a check or limit changed, not the code. |
+| `(not in the baseline)` | Not traced. The baseline records no commit, the clone lacks it, the violations span more than 200 files, or the rejection comes from a surface that does not attribute (the gate's HISS stage, dogfood verification). The rejection states the reason. |
+
+Only a rejection whose every unbaselined violation is `(new)` keeps the header `HISS invariant
+violations introduced`. Every other rejection reads `HISS invariant violations the baseline does
+not record` and names the deliberate re-record, `praetorctl baseline --record --allow-increase
+--reason=<why>`. A finding the baseline records at another line was known to the recorder and is
+never blamed on a changed check. Matching ignores line numbers, so when one file holds several
+identical findings, the count per class is exact but which line gets `(new)` follows scan order.
+The verdict never changes: HISS-13 still refuses the higher count
+([`internal/hiss/attribution_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hiss/attribution_test.go),
+`TestRatchetResultAttribute_*` in `internal/baseline/describe_test.go`).
 
 A ratchet can also fail with both lists empty: every violation matches a baselined fingerprint
 and no file was touched, yet the total rose above the baseline's. `RatchetResult.CountRegressed`
