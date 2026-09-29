@@ -61,7 +61,7 @@ func releaseManifest(t *testing.T, names []string) (string, map[string]string) {
 func TestGenerateSLSAProvenanceFromChecksumsNamesEveryFile(t *testing.T) {
 	names := []string{"standards_1.0.0_linux_amd64.tar.gz", "sboms/standards_1.0.0_linux_amd64.tar.gz.cyclonedx.json"}
 	manifest, digests := releaseManifest(t, names)
-	stmt, err := GenerateSLSAProvenanceFromChecksums(t.Context(), ChecksumsRequest{ManifestPath: manifest, BuilderID: "https://github.com/acme/tool/.github/workflows/release.yml@refs/tags/v1.0.0"})
+	stmt, _, err := GenerateSLSAProvenanceFromChecksums(t.Context(), ChecksumsRequest{ManifestPath: manifest, BuilderID: "https://github.com/acme/tool/.github/workflows/release.yml@refs/tags/v1.0.0"})
 	if err != nil {
 		t.Fatalf("GenerateSLSAProvenanceFromChecksums: %v", err)
 	}
@@ -105,13 +105,13 @@ func TestGenerateSLSAProvenanceFromChecksumsRefusesUntrustedLines(t *testing.T) 
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			_, err := GenerateSLSAProvenanceFromChecksums(t.Context(), ChecksumsRequest{ManifestPath: tc.manifest, BuilderID: "b"})
+			_, _, err := GenerateSLSAProvenanceFromChecksums(t.Context(), ChecksumsRequest{ManifestPath: tc.manifest, BuilderID: "b"})
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want %q", err, tc.want)
 			}
 		})
 	}
-	if _, err := GenerateSLSAProvenanceFromChecksums(t.Context(), ChecksumsRequest{BuilderID: "b"}); err == nil {
+	if _, _, err := GenerateSLSAProvenanceFromChecksums(t.Context(), ChecksumsRequest{BuilderID: "b"}); err == nil {
 		t.Error("request without a manifest path accepted")
 	}
 }
@@ -190,14 +190,14 @@ func TestChecksumSubjectsValidation(t *testing.T) {
 	}
 	manifest, _ := releaseManifest(t, []string{"a.tar.gz"})
 	size := int64(len("bytes of a.tar.gz"))
-	if _, err := GenerateSLSAProvenanceFromChecksums(t.Context(), ChecksumsRequest{ManifestPath: manifest, BuilderID: "b", MaxBytes: size}); err != nil {
+	if _, _, err := GenerateSLSAProvenanceFromChecksums(t.Context(), ChecksumsRequest{ManifestPath: manifest, BuilderID: "b", MaxBytes: size}); err != nil {
 		t.Errorf("file of exactly the byte bound refused: %v", err)
 	}
-	if _, err := GenerateSLSAProvenanceFromChecksums(t.Context(), ChecksumsRequest{ManifestPath: manifest, BuilderID: "b", MaxBytes: size - 1}); err == nil {
+	if _, _, err := GenerateSLSAProvenanceFromChecksums(t.Context(), ChecksumsRequest{ManifestPath: manifest, BuilderID: "b", MaxBytes: size - 1}); err == nil {
 		t.Error("file one byte over the bound accepted")
 	}
 	var absent context.Context
-	if _, err := GenerateSLSAProvenanceFromChecksums(absent, ChecksumsRequest{ManifestPath: manifest, BuilderID: "b"}); err == nil {
+	if _, _, err := GenerateSLSAProvenanceFromChecksums(absent, ChecksumsRequest{ManifestPath: manifest, BuilderID: "b"}); err == nil {
 		t.Error("nil context accepted")
 	}
 }

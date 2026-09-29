@@ -27,7 +27,7 @@ const oneSubject = `[{"name":"a.tar.gz","digest":{"sha256":"` + digestA + `"}}]`
 // using every ResourceDescriptor field all pass.
 func TestCheckInTotoStatement_Positive_AcceptsSpecFields(t *testing.T) {
 	path, _ := writeArtifact(t, "artifact.tar.gz", []byte("archive bytes\n"))
-	stmt, err := GenerateSLSAProvenance(t.Context(), ProvenanceRequest{ArtifactPath: path, BuilderID: "b"})
+	stmt, _, err := GenerateSLSAProvenance(t.Context(), ProvenanceRequest{ArtifactPath: path, BuilderID: "b"})
 	if err != nil {
 		t.Fatalf("generate: %v", err)
 	}

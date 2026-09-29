@@ -227,3 +227,64 @@ func TestRunProvenance_BuilderResolution_PNB(t *testing.T) {
 		t.Errorf("runProvenance with whitespace flag: want error, got %v", err)
 	}
 }
+
+// Negative: a file whose bytes are not the type its name declares is refused under the
+// default content check, naming the file, the expected format and the opt-out, and an
+// unknown -content-check value is refused before any file is read.
+func TestRunProvenance_Negative_ContentMismatchRefused(t *testing.T) {
+	deb := writeFixtureFile(t, t.TempDir(), "dist/linux-image-7.2.4_amd64.deb", "not a debian package\n")
+	out := filepath.Join(t.TempDir(), "provenance.json")
+	err := runProvenance([]string{"-file", deb, "-builder", "example.com/acme/builder", "-out", out})
+	if err == nil || !strings.Contains(err.Error(), "linux-image-7.2.4_amd64.deb") ||
+		!strings.Contains(err.Error(), "Debian binary package") || !strings.Contains(err.Error(), "-content-check=report") {
+		t.Errorf("text file named .deb: got %v, want a refusal naming the file, the format and the opt-out", err)
+	}
+	if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+		t.Errorf("a refused run wrote %s (stat: %v)", out, statErr)
+	}
+	if err := runProvenance([]string{"-file", deb, "-builder", "b", "-content-check", "off"}); err == nil || !strings.Contains(err.Error(), "flag -content-check") {
+		t.Errorf("unknown -content-check value: got %v", err)
+	}
+}
+
+// Positive: -content-check=report attests the mismatching file and warns on stderr that its
+// content is unverified, naming the expected format.
+func TestRunProvenance_Positive_ContentReportAttestsUnverified(t *testing.T) {
+	efi := writeFixtureFile(t, t.TempDir(), "dist/BOOTX64.EFI", "MZfake")
+	out := filepath.Join(t.TempDir(), "provenance.json")
+	stderr, err := captureStderr(t, func() error {
+		_, runErr := captureStdout(t, func() error {
+			return runProvenance([]string{"-file", efi, "-builder", "b", "-out", out, "-content-check=report"})
+		})
+		return runErr
+	})
+	if err != nil {
+		t.Fatalf("report mode refused: %v", err)
+	}
+	if !strings.Contains(stderr, "warning: content of BOOTX64.EFI is UNVERIFIED: expected an EFI image") {
+		t.Errorf("stderr lacks the unverified warning: %q", stderr)
+	}
+	if data, readErr := os.ReadFile(out); readErr != nil || !strings.Contains(string(data), `"BOOTX64.EFI"`) {
+		t.Errorf("report mode wrote no statement for the file: %v", readErr)
+	}
+}
+
+// Boundary: a subject no content rule covers is named in one unchecked note, never passed
+// off as verified, and a verified subject adds no line.
+func TestReportContentVerdicts_Boundary(t *testing.T) {
+	var b strings.Builder
+	reportContentVerdicts(&b, []supplychain.ContentVerdict{
+		{Name: "a.tar.gz", Status: supplychain.ContentUnchecked},
+		{Name: "pkg.deb", Format: "a Debian binary package", Status: supplychain.ContentVerified},
+		{Name: "b.spdx.json", Status: supplychain.ContentUnchecked},
+	})
+	want := "note: content unchecked for 2 subject(s) of a file type praetorctl has no content rule for: a.tar.gz, b.spdx.json\n"
+	if b.String() != want {
+		t.Errorf("report = %q, want %q", b.String(), want)
+	}
+	b.Reset()
+	reportContentVerdicts(&b, nil)
+	if b.Len() != 0 {
+		t.Errorf("no verdicts printed %q", b.String())
+	}
+}
