@@ -84,8 +84,8 @@ own completion evidence.
 carry under the same path and reports whether the copies still agree. It reads the
 repositories the inventory above finds, one checkout per `git_common_dir`, at their HEAD
 commits through the same isolated Git probes, and compares the files under
-`.agents/hooks-scripts/`, `.githooks/` and `scripts/`, or under the repository-relative
-prefixes given with repeated `--path` flags.
+`.githooks/` and `scripts/`, or under the repository-relative prefixes given with repeated
+`--path` flags (a directory of agent hook scripts, for example).
 
 The text report lists each *drifted* path with one line per variant (short digest, line
 count, lines removed and added relative to the most common variant, repositories) and each

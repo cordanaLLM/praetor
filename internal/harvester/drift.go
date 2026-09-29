@@ -45,10 +45,11 @@ const (
 )
 
 // DefaultDriftPaths returns the path prefixes SurveyDrift reads when the caller names none: the
-// directories that conventionally hold governance and privacy scripts copied by hand between
-// repositories (agent hook scripts, Git hook scripts and repository scripts).
+// two directories that conventionally hold scripts copied by hand between repositories (Git hook
+// scripts and repository scripts). A layout of the operator's own, such as a directory of agent
+// hook scripts, is named with --path.
 func DefaultDriftPaths() []string {
-	return []string{".agents/hooks-scripts/", ".githooks/", "scripts/"}
+	return []string{".githooks/", "scripts/"}
 }
 
 // DriftOptions selects what SurveyDrift compares. Root is the dev root repository names are
