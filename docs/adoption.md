@@ -454,6 +454,38 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
   `eol=lf` in `.gitattributes`. An edited copy of any of them, or one with mixed line endings,
   is left as it is and keeps the contract above
   (`TestAdoptDoesNotRepinAnEditedOrForeignCatalog`).
+- **Files the repository ignores.** Once every step has run, adoption asks git whether the
+  repository's own ignore rules exclude any file it created, verified, merged or replaced
+  (`reportIgnoredWrites` in `internal/adopt/ignored_writes.go`). An ignored file that git does
+  not track is still written, so the local checkout works, but no commit carries it, so a
+  clean checkout lacks it. Each one is reported on the step that wrote it, naming the rule
+  and the negation that re-includes it, such as
+  `tools/figures/dist/loader.js: ignored by .gitignore:1 (dist/) ... Add !/tools/figures/dist/ after that rule`.
+  The negation names the shallowest ignored parent directory, because git never looks inside an
+  ignored directory. The finding is an error, except for editor files, which audit never reads:
+  those are a warning, and the IDE Ecosystem pillar shows it. The private ledger paths the
+  managed block ignores on purpose and the installed Git hooks are not checked. When git cannot
+  answer, the report warns that the check was skipped
+  (`TestReportIgnoredWrites_Positive_FindingsLandOnTheWritingStep`,
+  `TestReportIgnoredWrites_Negative_PrivateHookRemovedAndSkippedPathsAreNotChecked`,
+  `TestAdopt_Negative_DeclinedGitIgnoreProposesTheNegation`).
+
+  Praetor writes its pinned catalog, label taxonomy, checkpoint policy and hook scripts under
+  `.config/`, the name Kconfig gives its build configuration file. Where a Kconfig-style rule (a
+  bare `.config`, `/.config` or `.*`) hides that directory, the `git-ignore` step adds the
+  directory-only negation `!.config/` to the managed block and the `.gitignore` entry says so.
+  Kconfig `.config` files stay ignored at the root and at every depth, and a later run keeps
+  the negation. A repository that ignores the directory itself with `.config/` gets no
+  negation, only the errors. With `git-ignore` declined, each error proposes `!.config/`, and a
+  dry run plans the negation without writing it (`kconfigConfigRule`,
+  `TestAdopt_Positive_KconfigRuleGetsTheDirectoryNegation`,
+  `TestAdopt_Boundary_DryRunAndRootConfigFile`). A `.config` file at the repository root
+  cannot share its name with that directory: adoption stops before any write and names the
+  collision (`preflightConfigRoot`). Moving Praetor's files out of `.config/` is planned
+  separately. `praetorctl audit` fails a documentation gate file that git ignores and does not
+  track, so a local audit gives the verdict a clean checkout gets
+  (`auditDocumentationFilesCommitted` in `cmd/standardsctl/audit_documentation.go`,
+  `TestAuditDocumentationGate_Negative_IgnoredUntrackedFileFails`).
 
 ---
 
