@@ -25,11 +25,46 @@ func TestParsePinnedActionPositive(t *testing.T) {
 	if !ok || pin.Action != "github/codeql-action/init" || pin.Release != "v4" {
 		t.Fatalf("sub-path pin = %+v, %v", pin, ok)
 	}
+	// #610: the one-space form Renovate and pinact write reads as the two-space form does.
+	pin, ok = ParsePinnedAction("actions/checkout@" + pinTestSHA + " # v7.0.1")
+	if !ok || pin.Release != "v7.0.1" {
+		t.Fatalf("one-space pin = %+v, %v", pin, ok)
+	}
+}
+
+// Positive: ParseSHAPin reads every SHA pin, a bare SHA and one whose comment names no
+// release included, and keeps the release only where the comment names one.
+func TestParseSHAPin(t *testing.T) {
+	for ref, release := range map[string]string{
+		"actions/checkout@" + pinTestSHA:                 "",
+		"actions/checkout@" + pinTestSHA + "  # pinned":  "",
+		"actions/checkout@" + pinTestSHA + " # v7.0.1":   "v7.0.1",
+		"actions/checkout@" + pinTestSHA + "\t# 7.0.1":   "7.0.1",
+		"actions/checkout@" + pinTestSHA + " # v7.0.1 x": "",
+		"actions/checkout@" + pinTestSHA + " #v7.0.1":    "",
+		"actions/checkout@" + pinTestSHA + "  #  \tv7.1": "v7.1",
+	} {
+		pin, ok := ParseSHAPin(ref)
+		if !ok || pin.Action != "actions/checkout" || pin.SHA != pinTestSHA || pin.Release != release {
+			t.Errorf("%q: pin = %+v, %v; want release %q", ref, pin, ok, release)
+		}
+	}
+	for _, ref := range []string{
+		"actions/checkout@v7",
+		"actions/checkout@" + pinTestSHA[:39] + " # v7.0.1",
+		"actions/checkout@" + pinTestSHA + "0",
+		"actions/checkout@" + pinTestSHA + "# v7.0.1",
+		"./.github/actions/local",
+	} {
+		if pin, ok := ParseSHAPin(ref); ok {
+			t.Errorf("%q: parsed %+v", ref, pin)
+		}
+	}
 }
 
 // Negative: a comment line declares no uses: key, and a tag, a branch, a short or
-// uppercase SHA, a SHA without its release comment or one space from it, a non-release
-// comment, a local action and a Docker reference are not the pinned form.
+// uppercase SHA, a SHA without its release comment, a non-release comment, a comment
+// glued to the SHA, a local action and a Docker reference are not the pinned form.
 func TestParsePinnedActionNegative(t *testing.T) {
 	if ref, uses := ActionUsesValue("      # - uses: actions/checkout@v7"); uses {
 		t.Fatalf("a comment line declared %q", ref)
@@ -44,7 +79,8 @@ func TestParsePinnedActionNegative(t *testing.T) {
 		"short SHA":       "actions/checkout@" + pinTestSHA[:39] + "  # v7.0.1",
 		"uppercase SHA":   "actions/checkout@" + strings.ToUpper(pinTestSHA) + "  # v7.0.1",
 		"no comment":      "actions/checkout@" + pinTestSHA,
-		"one space":       "actions/checkout@" + pinTestSHA + " # v7.0.1",
+		"glued comment":   "actions/checkout@" + pinTestSHA + "# v7.0.1",
+		"39-hex, 1 space": "actions/checkout@" + pinTestSHA[:39] + " # v7.0.1",
 		"not a release":   "actions/checkout@" + pinTestSHA + "  # pinned",
 		"local":           "./.github/actions/local",
 		"docker":          "docker://alpine:3",
@@ -55,13 +91,14 @@ func TestParsePinnedActionNegative(t *testing.T) {
 	}
 }
 
-// Boundary: a release without its "v", a single-number release, a wider comment gap and a
-// bare "uses:" with no value hold at the edges of the form.
+// Boundary: a release without its "v", a single-number release, a wider comment gap, a tab
+// before the "#" and a bare "uses:" with no value hold at the edges of the form.
 func TestParsePinnedActionBoundary(t *testing.T) {
 	for ref, release := range map[string]string{
 		"actions/setup-node@" + pinTestSHA + "  # 7.0.0":   "7.0.0",
 		"actions/setup-node@" + pinTestSHA + "  # v7":      "v7",
 		"actions/setup-node@" + pinTestSHA + "     # v7.1": "v7.1",
+		"actions/setup-node@" + pinTestSHA + "\t# v7.1":    "v7.1",
 	} {
 		if pin, ok := ParsePinnedAction(ref); !ok || pin.Release != release {
 			t.Fatalf("%q: pin = %+v, %v", ref, pin, ok)
@@ -87,8 +124,12 @@ func TestScanActionUses(t *testing.T) {
 	if uses[0].Line != 1 || !uses[0].Pinned || uses[0].Pin.Release != "v7.0.1" {
 		t.Fatalf("pinned use = %+v", uses[0])
 	}
-	if uses[1].Line != 4 || uses[1].Pinned || uses[1].Ref != "./local" {
+	if uses[1].Line != 4 || uses[1].Pinned || uses[1].SHAPinned || uses[1].Ref != "./local" {
 		t.Fatalf("local use = %+v", uses[1])
+	}
+	_, bare, err := ScanActionUses("- uses: actions/checkout@"+pinTestSHA+"\n", 2)
+	if err != nil || len(bare) != 1 || !bare[0].SHAPinned || bare[0].Pinned || bare[0].Pin.SHA != pinTestSHA {
+		t.Fatalf("bare SHA use = %+v, %v", bare, err)
 	}
 	if _, _, err := ScanActionUses(workflow, 5); err == nil {
 		t.Fatal("a workflow one line past the bound was scanned")
