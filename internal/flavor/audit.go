@@ -79,19 +79,26 @@ func (r *FlavorAuditReport) InvalidSettingPaths() []string {
 // flavor that does not describe it demands tooling it has no reason to install and reports a
 // score that means nothing. Measured on an adopter's OS image forge audited as a
 // PyTorch pipeline and failed for lacking uv and ruff.
-var ErrNoFlavorMatched = errors.New("flavor: no registered flavor matches this repository; pass an explicit --flavor")
+//
+// The text names no remedy, because the remedy depends on the caller: `flavor audit` and
+// `flavor apply` take --flavor and say so (cmd/standardsctl/flavor.go), while `gate run` has no
+// such flag, and a sentinel telling its operator to pass one sent them to a flag that does not
+// exist (#615).
+var ErrNoFlavorMatched = errors.New("flavor: no registered flavor matches this repository")
 
 // ErrFlavorNotApplicable reports a repository whose declared profile has no flavors at all.
 //
 // This is not a failure and callers must not treat it as one. Profiles and flavors are two
 // taxonomies over the same repositories: a profile says what governance applies, a flavor says
-// which templates, settings and toolchains the language stack requires. Where a profile has no
-// flavor -- os-image, for instance, which describes what a repository builds rather than what it
-// is written in -- there is nothing for this audit to check, and holding the repository to an
-// inferred language flavor demands files that do not follow from anything it declared.
+// which templates, settings and toolchains the stack requires. Where a profile has no flavor --
+// gitops-infra or pages-site, for instance -- there is nothing for this audit to check, and
+// holding the repository to an inferred language flavor demands files that do not follow from
+// anything it declared.
 //
-// Measured on an adopter's OS image forge declaring os-image, which was held to Go
-// service templates and failed its own push gate for lacking a Dockerfile it has no use for.
+// Measured on an adopter's OS image forge declaring os-image before that profile had a flavor:
+// it was held to Go service templates and failed its own push gate for lacking a Dockerfile it
+// has no use for. os-image has had its own flavor since, so a forge declaring it that none of
+// the flavor's markers match is ErrNoFlavorMatched, not this.
 var ErrFlavorNotApplicable = errors.New("flavor: the declared profile has no flavor to audit or scaffold against")
 
 // DefaultAuditTimeout bounds AuditFlavor, whose callers bring no deadline of their own

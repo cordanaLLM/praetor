@@ -1,8 +1,12 @@
 package main
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/flavor"
 )
 
 // Positive: flavor apply names the templates it leaves to their producer, so an operator
@@ -93,6 +97,48 @@ func TestFlavorApply_ReportsTheEarlierTextItRefreshed(t *testing.T) {
 		if refreshed := strings.Contains(out, "Refreshed Earlier Praetor Text"); refreshed != (existing == earlierRustfmt) {
 			t.Errorf("existing %q: refreshed line present = %v:\n%s", existing, refreshed, out)
 		}
+	}
+}
+
+// Positive (#615): a kernel forge, known by its Kconfig fragments and holding no Packer
+// template or mkosi.conf, is audited as os-image without --flavor, and passes once it conforms.
+func TestFlavorAudit_Positive_KernelForgeResolvesWithoutAFlag(t *testing.T) {
+	dir := t.TempDir()
+	writeFixtureFile(t, dir, "kconfig/base.config", "CONFIG_MODULES=y\n")
+	writeFixtureFile(t, dir, "versions.json", "{\"stable\": \"6.12\"}\n")
+	writeFixtureFile(t, dir, ".yamllint.yml", "extends: default\n")
+	writeFixtureFile(t, dir, "lefthook.yml", "pre-commit:\n  jobs: []\n")
+	writeFixtureFile(t, dir, ".github/rulesets/main.json", `{"name": "main"}`)
+	out, err := captureStdout(t, func() error { return dispatchCommand("flavor", []string{"audit", dir}) })
+	if err != nil {
+		t.Fatalf("flavor audit: %v\n%s", err, out)
+	}
+	mustContain(t, out, "(Flavor: os-image)", "Passed:      true")
+}
+
+// Negative: where nothing matches, the flavor commands, which take --flavor, name it as the
+// remedy; the sentinel does not, since gate run surfaces it too and has no such flag.
+func TestFlavorAudit_Negative_NothingMatchedNamesTheFlag(t *testing.T) {
+	dir := t.TempDir()
+	writeFixtureFile(t, dir, "versions.json", "{}\n")
+	for _, sub := range []string{"audit", "apply"} {
+		_, err := captureStdout(t, func() error { return dispatchCommand("flavor", []string{sub, dir}) })
+		if !errors.Is(err, flavor.ErrNoFlavorMatched) || !strings.Contains(err.Error(), "pass an explicit --flavor=<name>") {
+			t.Errorf("flavor %s: want a nothing-matched refusal naming --flavor, got %v", sub, err)
+		}
+	}
+	if strings.Contains(flavor.ErrNoFlavorMatched.Error(), "--flavor") {
+		t.Error("the sentinel names a flag gate run does not have")
+	}
+}
+
+// Boundary: the hint is added to a nothing-matched refusal only, however deeply wrapped.
+func TestExplicitFlavorHint_Boundary(t *testing.T) {
+	if explicitFlavorHint(nil) != "" || explicitFlavorHint(flavor.ErrFlavorNotApplicable) != "" || explicitFlavorHint(errors.New("x")) != "" {
+		t.Error("a hint was added to an error other than nothing-matched")
+	}
+	if explicitFlavorHint(fmt.Errorf("outer: %w", fmt.Errorf("inner: %w", flavor.ErrNoFlavorMatched))) == "" {
+		t.Error("a wrapped nothing-matched refusal got no hint")
 	}
 }
 
