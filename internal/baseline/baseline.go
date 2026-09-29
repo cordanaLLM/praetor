@@ -244,6 +244,17 @@ func Record(previous *Baseline, infractions []Infraction, opts RecordOptions) (*
 	return next, nil
 }
 
+// SameDebt reports whether next records the same debt as b for the same repository: the
+// version, the repository and every infraction match. The commit and the timestamp are not
+// compared, as Record keeps the earlier commit when the infractions did not change; a writer
+// that finds SameDebt true keeps the recorded file instead of leaving a diff of generated_at.
+func (b *Baseline) SameDebt(next *Baseline) bool {
+	if b == nil || next == nil {
+		return b == next
+	}
+	return b.Version == next.Version && b.Repository == next.Repository && sameInfractions(b.Infractions, next.Infractions)
+}
+
 func sameInfractions(a, b []Infraction) bool {
 	if len(a) != len(b) {
 		return false

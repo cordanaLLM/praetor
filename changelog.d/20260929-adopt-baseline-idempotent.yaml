@@ -1,0 +1,3 @@
+type: fixed
+title: "A re-adoption with --record-baseline, the default, keeps .standards-baseline.json byte for byte when the rescan records the same debt for the same repository, instead of rewriting it with a fresh generated_at on every run; the file is still rewritten when an infraction or the repository identity changed, or when the recorded file is unreadable, and the report says Rescanned; baseline unchanged"
+breaking: false
