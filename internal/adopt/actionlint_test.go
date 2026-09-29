@@ -275,6 +275,26 @@ func TestMergeActionlintLabelsBoundaryLayouts(t *testing.T) {
 	}
 }
 
+// Negative: an adoption context that ends while the node contract is checked fails the merge
+// with the context error, never with a refusal the step would report as a finding, for a file
+// it would patch and for one it would refuse alike.
+func TestMergeActionlintLabelsNegativeCancelledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	for name, content := range map[string]string{
+		"patchable": "config-variables: null\n",
+		"anchor":    "self-hosted-runner: &runner\n  labels: [gpu]\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			merged, added, err := mergeActionlintLabels(ctx, []byte(content), []string{"ubuntu-26.04"})
+			var refusal actionlintRefusal
+			if !errors.Is(err, context.Canceled) || errors.As(err, &refusal) || merged != nil || added != nil {
+				t.Fatalf("merged=%q added=%v err=%v, want context.Canceled", merged, added, err)
+			}
+		})
+	}
+}
+
 // Positive (#593 acceptance): wherever actionlint is on PATH, it accepts the adopted
 // documentation workflow beside the configuration adoption creates.
 func TestActionlintAcceptsTheAdoptedWorkflow(t *testing.T) {
