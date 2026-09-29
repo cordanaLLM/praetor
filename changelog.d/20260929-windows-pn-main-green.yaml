@@ -1,0 +1,3 @@
+type: fixed
+title: "Platform Neutrality passes on Windows again: internal/paperclip/testdata is checked out with LF line endings, so the released-harness patch test no longer sees a carriage return on every line, and the owner-overlay identity suite gets eight minutes instead of four for its nested go test, with the portability workflow's go test given an explicit 30-minute package timeout in place of the 10-minute default"
+breaking: false

@@ -49,7 +49,11 @@ func TestIdentitySensitivePackagesPassUnderTheOwnerOverlay(t *testing.T) {
 	if testing.Short() {
 		t.Skip("spawns a nested go test over a repository copy; excluded from -short")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	// The nested run compiles and tests internal/adopt alongside config and forge; on
+	// windows-latest adopt alone takes close to three minutes, so four minutes left the
+	// whole suite a deadline away from failing there (HISS-21). The workflow's go test
+	// -timeout 30m stays above this bound.
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
 
 	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))

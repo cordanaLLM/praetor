@@ -102,6 +102,13 @@ internal/adopt/testdata/personas/** text eol=lf
 # also normalises one consistent CRLF style for a checkout that ignores this file.
 internal/astmerge/testdata/*.txt text eol=lf
 
+# internal/paperclip/testdata holds harness files an earlier release wrote. PatchPlatform
+# must change the platform line alone and keep every other byte, and the tests (paperclip's
+# patch_platform_test.go and prior_test.go, adopt's manifest_sources_test.go) compare those
+# bytes line by line; a CRLF checkout on Windows adds "\r" to every line and fails the
+# comparison on that leg only (HISS-21).
+internal/paperclip/testdata/** text eol=lf
+
 # The editors/ reference integrations are generator output: `praetorctl editors reference
 # --verify` (make verify-all) and internal/editor's TestReferenceSetMatchesTrackedTree compare
 # them byte-exact against the LF text internal/editor renders, so a CRLF checkout would report

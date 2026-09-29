@@ -123,10 +123,13 @@ jobs:
       # Not -race here. The race detector needs a host C toolchain, and whether one exists
       # on each runner image is exactly the kind of thing this matrix is meant to discover
       # rather than assume. The Linux race legs already run in the main CI gate, so nothing
-      # is lost by keeping this job about portability alone.
+      # is lost by keeping this job about portability alone. The explicit -timeout replaces
+      # go test's 10-minute default per package: on windows-latest internal/operationalsync
+      # alone took 557 s, most of it a nested go test over a repository copy, so the default
+      # was one slow runner away from a panic that names no failing test.
       - name: Test Every Package
         if: ${{ !cancelled() }}
-        run: go test ./...
+        run: go test -timeout 30m ./...
 
       # The self-tests drive the real hooks, so they need the pinned hook runner and the
       # binary the hooks invoke. Both are installed per platform rather than assumed present:

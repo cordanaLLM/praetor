@@ -406,3 +406,13 @@ permission on NTFS (`util.ModeIsProtection`); repair execution needs Linux file 
 result panicked and aborted the package's whole test binary). One fixture could not exist at all
 on a case-insensitive filesystem and was rebuilt so that it need not. `common.py` also learned to
 reap a bounded command's descendants on the platform with no process group.
+
+**After the legs became required (#624).** The first Windows run on `main` after
+Platform Neutrality became a required check failed two tests that pass on Linux and macOS.
+`internal/paperclip/testdata` holds harness files an earlier release wrote, and
+`TestPatchPlatform_Positive_ReleasedHarnessChangesOneLine` compares them line by line; under
+`text=auto` the Windows checkout added a carriage return to every line, so `.gitattributes` now
+pins that directory to `eol=lf`. The owner-overlay identity suite runs a nested `go test` over
+config, forge and adopt, and adopt alone takes close to three minutes on `windows-latest`; its
+deadline went from four to eight minutes, and `portability.yml` passes `go test -timeout 30m`
+because the package was already near the 10-minute default per package there.
