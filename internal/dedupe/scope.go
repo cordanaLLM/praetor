@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -45,6 +47,41 @@ func sourceLanguageOf(path string) string {
 		return language
 	}
 	return ""
+}
+
+// SourceLanguageCounts counts the source files of the repository at repoPath per
+// util.SourceLanguage name, over the inventory the dedupe scan reads (sourceFiles): Go
+// production source under "go", every other language's source under its own name, and the
+// Go test surface (_test.go files, testdata trees) nowhere. The pre-migration epic names the
+// languages no needs analyzer detects from it, so the epic and the dedupe scan's Not Scanned
+// line count the same files.
+func SourceLanguageCounts(ctx context.Context, repoPath string) (map[string]int, error) {
+	scope, err := sourceFiles(ctx, repoPath)
+	if err != nil {
+		return nil, err
+	}
+	counts := make(map[string]int, len(scope.unscanned)+1)
+	maps.Copy(counts, scope.unscanned)
+	if len(scope.goFiles) > 0 {
+		counts[goLanguage] = len(scope.goFiles)
+	}
+	return counts, nil
+}
+
+// LanguageFileCounts renders per-language file counts as "shell (9 files), zig (1 file)",
+// in sorted language order so the line is the same on every run. The dedupe scan's Not
+// Scanned line and the pre-migration epic's unanalyzed languages share it. No counts render
+// as "".
+func LanguageFileCounts(counts map[string]int) string {
+	parts := make([]string, 0, len(counts))
+	for _, language := range slices.Sorted(maps.Keys(counts)) {
+		unit := "files"
+		if counts[language] == 1 {
+			unit = "file"
+		}
+		parts = append(parts, fmt.Sprintf("%s (%d %s)", language, counts[language], unit))
+	}
+	return strings.Join(parts, ", ")
 }
 
 // add records path under language, as sourceLanguageOf classified it.

@@ -608,6 +608,7 @@ repository is not handed work that does not fit it (`createChildTasks` in
 | Fact | Read from | Effect on the tasks |
 | :--- | :--- | :--- |
 | Detected languages | the row's `language` and `languages` | task 1 phrases its error-handling audit and 3D test run per language: `go test -race ./...` for Go, `cargo test --workspace` for Rust, the project's test runner for Python, the package's `test` script for TypeScript, the build system's test target under ThreadSanitizer for C/C++. Task 2 asks to break circular module dependencies only for Python, TypeScript and C/C++; the Go compiler and Cargo already reject such cycles |
+| Source languages no analyzer detects | the source inventory `praetorctl dedupe scan` reads (`dedupe.SourceLanguageCounts`: Git-listed or walked files by extension, test fixtures excluded), less the detected languages; JavaScript and Vue count as covered by the Node analyzer | the checklist lists them with file counts under `**Unanalyzed Languages**`, such as `shell (9 files)`, and tasks 1 and 4 name them as unverified: no audit or test runner is phrased for them and the gate checks none of them. A failed source listing is named instead of listing nothing |
 | Go module at the repository root | `go.mod` | the gate's prefetch, security and race-test stages check only that module, so task 4 names every other detected language as tested and audited outside the gate |
 | Kubernetes manifests | `Chart.yaml`, `kustomization.yaml` or `helmfile.yaml` at the root, as the `infra-k8s` flavor detects them | task 2 adds replacing in-cluster DNS names with configured endpoints |
 | Declared runner routing | the fleet and repository tiers `config.LoadCascadingRunnerConfigContext` merges; the organisation tier is keyed by the forge owner, which the scan does not resolve | routing that differs from `DefaultRunnerPolicy` adds a check through `praetorctl audit` to task 5; routing that does not load adds repair work instead of failing the epic |
@@ -625,8 +626,9 @@ because `praetorctl sync` without `--remote` leaves the forge untouched.
 `internal/needs/epic_scope_test.go` pins the scope:
 `TestGeneratePreMigrationEpic_Negative_RustWorkspaceGetsNoForeignWork` (a Cargo
 workspace with no framework, cluster or runner signal),
-`TestGeneratePreMigrationEpic_Positive_SignalsBringTheirSteps` and the
-`Boundary` cases. `TestEpicCommands_Positive_ParseAgainstTheCLI` in
+`TestGeneratePreMigrationEpic_Positive_SignalsBringTheirSteps`,
+`TestGeneratePreMigrationEpic_Positive_UnanalyzedLanguagesAreNamed` (shell scripts
+beside a Python package) and the `Negative` and `Boundary` cases. `TestEpicCommands_Positive_ParseAgainstTheCLI` in
 `cmd/standardsctl/needs_epic_commands_test.go` parses every `praetorctl`
 command an epic names against the real flag sets.
 

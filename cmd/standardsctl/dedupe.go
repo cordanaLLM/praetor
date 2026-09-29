@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/dedupe"
@@ -142,19 +141,10 @@ func printDedupeReport(dir string, report *dedupe.DedupeReport) error {
 // their file counts, and says HISS-19 is not measured for them. It prints nothing for a
 // repository whose source is all Go.
 func printUnscannedLanguages(report *dedupe.DedupeReport) {
-	languages := report.UnscannedLanguages()
-	if len(languages) == 0 {
+	if len(report.Unscanned) == 0 {
 		return
 	}
-	counts := make([]string, 0, len(languages))
-	for _, language := range languages {
-		unit := "files"
-		if report.Unscanned[language] == 1 {
-			unit = "file"
-		}
-		counts = append(counts, fmt.Sprintf("%s (%d %s)", language, report.Unscanned[language], unit))
-	}
-	fmt.Printf("  Not Scanned:       %s\n", strings.Join(counts, ", "))
+	fmt.Printf("  Not Scanned:       %s\n", dedupe.LanguageFileCounts(report.Unscanned))
 	fmt.Println("  HISS-19 is not measured for these languages; this detector reads Go only.")
 }
 

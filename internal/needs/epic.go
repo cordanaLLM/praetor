@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/dedupe"
 	"github.com/cordanaLLM/praetor/internal/flavor"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/gating"
@@ -94,12 +95,20 @@ func epicFromAnalysis(ctx context.Context, repoPath string, analysis *migrationA
 	if err != nil {
 		return nil, fmt.Errorf("resolve pre-migration epic runner routing: %w", err)
 	}
+	// A failed source listing is recorded, not returned: the epic says what it could not
+	// inventory, as it does for runner routing that does not load.
+	unanalyzed, inventoryErr := unanalyzedLanguages(ctx, repoPath, analysis.report)
+	if inventoryErr != nil && ctx.Err() != nil {
+		return nil, fmt.Errorf("inventory pre-migration epic source languages: %w", ctx.Err())
+	}
 	facts := &epicFacts{
-		languages:     detectedLanguageSteps(analysis.report),
-		maxFuncLOC:    complexity.MaxFuncLOC,
-		rootGoModule:  util.FileExists(filepath.Join(repoPath, "go.mod")),
-		kubernetes:    (&flavor.InfraK8sFlavor{}).Detect(repoPath),
-		runnerRouting: routing,
+		languages:       detectedLanguageSteps(analysis.report),
+		unanalyzed:      unanalyzed,
+		inventoryFailed: inventoryErr != nil,
+		maxFuncLOC:      complexity.MaxFuncLOC,
+		rootGoModule:    util.FileExists(filepath.Join(repoPath, "go.mod")),
+		kubernetes:      (&flavor.InfraK8sFlavor{}).Detect(repoPath),
+		runnerRouting:   routing,
 	}
 	return buildEpicStructure(analysis.report, migrationPlan, facts)
 }
@@ -154,6 +163,13 @@ func taskAnchor(n int) string {
 type epicFacts struct {
 	// languages are the step sets of the detected languages (detectedLanguageSteps).
 	languages []languageSteps
+	// unanalyzed counts, per util.SourceLanguage name, the source files in languages no
+	// needs analyzer detected (unanalyzedLanguages). Tasks 1 and 4 name them as unverified.
+	unanalyzed map[string]int
+	// inventoryFailed reports that the source listing failed, so source in a language no
+	// analyzer detected may be missing from unanalyzed. The error names local paths, so it
+	// never reaches the epic.
+	inventoryFailed bool
 	// maxFuncLOC is the function-length limit the repository's resolved policy imposes.
 	maxFuncLOC int
 	// rootGoModule reports a go.mod at the repository root, the only module the gate's
@@ -239,13 +255,56 @@ var genericLanguageSteps = languageSteps{
 	audit: "unhandled panics, unwrapped errors and raw fatal exits",
 }
 
-// detectedLanguageSteps returns the steps of every language the scan detected, in
-// epicLanguageSteps order, or genericLanguageSteps alone when it covers none of them.
-func detectedLanguageSteps(repoNeeds *RepoNeeds) []languageSteps {
+// detectedLanguageIDs returns every language id the scan's analyzers reported
+// (RepoNeeds.Language and .Languages).
+func detectedLanguageIDs(repoNeeds *RepoNeeds) map[string]bool {
 	detected := map[string]bool{repoNeeds.Language: true}
 	for _, language := range repoNeeds.Languages {
 		detected[language] = true
 	}
+	return detected
+}
+
+// sourceLanguageAnalyzer maps a util.SourceLanguage name to the language id the needs
+// analyzer reading its project reports, where the two differ: the Node analyzer reads the
+// package.json of JavaScript and Vue source and reports typescript.
+var sourceLanguageAnalyzer = map[string]string{"javascript": "typescript", "vue": "typescript"}
+
+// unanalyzedLanguages counts, per util.SourceLanguage name, the source files of the
+// repository at repoPath in languages no needs analyzer detected: the inventory the dedupe
+// scan reads (dedupe.SourceLanguageCounts), less every language the scan's analyzers
+// reported. Shell scripts beside a Python package are counted; the package's Python is not.
+func unanalyzedLanguages(ctx context.Context, repoPath string, repoNeeds *RepoNeeds) (map[string]int, error) {
+	counts, err := dedupe.SourceLanguageCounts(ctx, repoPath)
+	if err != nil {
+		return nil, fmt.Errorf("inventory the source languages of %s: %w", repoPath, err)
+	}
+	detected := detectedLanguageIDs(repoNeeds)
+	for language := range counts {
+		id := language
+		if analyzed, ok := sourceLanguageAnalyzer[language]; ok {
+			id = analyzed
+		}
+		if detected[id] {
+			delete(counts, language)
+		}
+	}
+	return counts, nil
+}
+
+// unverifiedLine names the unanalyzed languages of facts with their file counts, prefixed to
+// action, or returns "" when there are none.
+func unverifiedLine(facts *epicFacts, action string) string {
+	if len(facts.unanalyzed) == 0 {
+		return ""
+	}
+	return "Unverified, no `needs` analyzer detects them: " + dedupe.LanguageFileCounts(facts.unanalyzed) + ". " + action
+}
+
+// detectedLanguageSteps returns the steps of every language the scan detected, in
+// epicLanguageSteps order, or genericLanguageSteps alone when it covers none of them.
+func detectedLanguageSteps(repoNeeds *RepoNeeds) []languageSteps {
+	detected := detectedLanguageIDs(repoNeeds)
 	var steps []languageSteps
 	for _, entry := range epicLanguageSteps {
 		if slices.ContainsFunc(entry.ids, func(id string) bool { return detected[id] }) {
@@ -345,6 +404,9 @@ func hygieneTask(facts *epicFacts) epicTask {
 			languageLine(lang.name, "eliminate "+lang.audit+"."),
 			languageLine(lang.name, "add 3D unit tests (positive, negative, boundary) and run them with "+lang.tests+"."))
 	}
+	if line := unverifiedLine(facts, "Choose an error-handling audit and a 3D test runner for them."); line != "" {
+		lines = append(lines, line)
+	}
 	return epicTask{spec: forge.IssueSpec{
 		Title: "Invariant & Complexity Hygiene", Body: scopeBody(lines), Labels: []string{"task", "hiss", "hygiene"},
 	}}
@@ -403,6 +465,9 @@ func verificationTask(facts *epicFacts) epicTask {
 	if ungated != "" {
 		lines = append(lines, "The gate's prefetch, security and race-test stages check only a Go module at the repository root: run the task 1 tests and audits for "+ungated+" outside the gate.")
 	}
+	if line := unverifiedLine(facts, "The gate checks none of them: run their tests and audits outside the gate."); line != "" {
+		lines = append(lines, line)
+	}
 	lines = append(lines, "Sign Ed25519 Exit-0 receipt and submit fast-forward PR.")
 	return epicTask{spec: forge.IssueSpec{
 		Title: "Gated Verification & Ed25519 Receipt", Body: scopeBody(lines), Labels: []string{"task", "verification", "gating"},
@@ -444,6 +509,7 @@ func renderEpicChecklistMarkdown(repoName string, repoNeeds *RepoNeeds, plan *Mi
 	if names := languageNames(facts.languages, func(languageSteps) bool { return true }); names != "" {
 		writef(&sb, "- **Detected Languages**: %s\n", names)
 	}
+	writeUnanalyzedLanguages(&sb, facts)
 	writeMigrationEvidence(&sb, plan)
 	writef(&sb, "- **Third-Party Dependencies**: `%d` total (%d covered, %d gaps)\n\n",
 		repoNeeds.Readiness.TotalThirdPartyDeps, repoNeeds.Readiness.CoveredDeps, repoNeeds.Readiness.GapDeps)
@@ -458,6 +524,19 @@ func renderEpicChecklistMarkdown(repoName string, repoNeeds *RepoNeeds, plan *Mi
 	sb.WriteString("3. Diff-aware CI (HISS-18): CI should call `praetorctl ci filter` so docs-only and state-only changes skip the heavy test and security gates. This epic does not inspect the repository's workflows and does not claim the filter already runs.\n")
 	sb.WriteString("4. Ed25519 Exit-0 receipts mandatory on all pull requests.\n")
 	return sb.String()
+}
+
+// writeUnanalyzedLanguages names the source languages no needs analyzer detected, with
+// their file counts, or says the source listing failed. A repository whose source every
+// analyzer covers gets no line.
+func writeUnanalyzedLanguages(sb *strings.Builder, facts *epicFacts) {
+	switch {
+	case facts.inventoryFailed:
+		sb.WriteString("- **Unanalyzed Languages**: not inventoried: the source listing failed, so tasks 1 and 4 may leave out source in a language no `needs` analyzer detects\n")
+	case len(facts.unanalyzed) > 0:
+		writef(sb, "- **Unanalyzed Languages**: %s; no `needs` analyzer detects them, so tasks 1 and 4 name them as unverified\n",
+			dedupe.LanguageFileCounts(facts.unanalyzed))
+	}
 }
 
 // writeEpicTaskChecklist lists every task slot in order: a planned task as an open item with
