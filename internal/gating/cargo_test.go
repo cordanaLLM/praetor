@@ -426,3 +426,22 @@ func TestCombineParts_3D(t *testing.T) {
 		}
 	}
 }
+
+// CargoClippyArgs is the test stage's clippy run. Positive: it denies warnings on the whole
+// workspace, as the stage outcome states. Negative: a caller that edits the copy leaves the
+// stage's own command unchanged. Boundary: -D warnings follows the -- separator, so a hook that
+// joins the arguments passes it to clippy, not to cargo.
+func TestCargoClippyArgs_3D(t *testing.T) {
+	args := CargoClippyArgs()
+	if got := "cargo " + strings.Join(args, " "); !strings.Contains(cargoTestsPassed, got) {
+		t.Fatalf("%q is not the clippy run the stage reports", got)
+	}
+	args[len(args)-1] = "edited"
+	if !slices.Equal(cargoTestCommands[1], CargoClippyArgs()) || slices.Contains(cargoTestCommands[1], "edited") {
+		t.Fatalf("editing the returned arguments changed the stage command: %v", cargoTestCommands[1])
+	}
+	separator := slices.Index(CargoClippyArgs(), "--")
+	if separator < 0 || !slices.Equal(CargoClippyArgs()[separator+1:], []string{"-D", "warnings"}) {
+		t.Fatalf("-D warnings must follow the -- separator: %v", CargoClippyArgs())
+	}
+}

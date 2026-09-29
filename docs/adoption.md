@@ -317,8 +317,10 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
   `TestAdopt_Negative_EditedPersonaKeptUnderForce`,
   `TestAdopt_Boundary_ForceKeepsDriftedCheckpointScriptLifecycleUnavailable`). So is a
   pre-commit hook praetor did not write ([git hooks](guides/git-hooks.md#hook-files-adoption-keeps)).
-  To regenerate one of them, delete it and re-run adopt. `lefthook.yml` keeps its own contract
-  ([migration and activation limits](guides/adoption-verification.md#migration-and-activation-limits)).
+  To regenerate one of them, delete it and re-run adopt. So is a `lefthook.yml` that is neither a
+  current nor an earlier Praetor rendering: it is kept and not activated, and the skip names the
+  generated jobs it lacks and the jobs it adds
+  ([the lefthook.yml adoption writes](guides/git-hooks.md#the-lefthookyml-adoption-writes)).
 - **Replaced files.** When `--force` overwrites a drifted scaffold, the report lists it under
   `Files Replaced` with action `replace`, never as created. The entry carries a line delta
   (`-removed/+added lines` and the first three removed lines) and where the prior bytes went:

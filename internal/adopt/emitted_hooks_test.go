@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"gopkg.in/yaml.v3"
 )
 
@@ -21,14 +22,14 @@ const emittedFixtureRoot = "testdata/emitted"
 const updateEmittedFixturesEnv = "PRAETOR_UPDATE_EMITTED_FIXTURES"
 
 // emittedHookRenderings maps each rendered file to the bytes adoption writes. The
-// lefthook.yml fixture is the rendering with checkpoint jobs, the superset adopters get; the
-// manifest is the current rendering of the declarations an earlier adoption wrote
-// (renderedPriorManifest); the actionlint configuration is the one adoption creates with the
-// default facets.
+// lefthook.yml fixture is the rendering with every language's jobs and the checkpoint jobs, the
+// superset adopters get; the manifest is the current rendering of the declarations an earlier
+// adoption wrote (renderedPriorManifest); the actionlint configuration is the one adoption
+// creates with the default facets.
 func emittedHookRenderings(t *testing.T) map[string]string {
 	t.Helper()
 	return map[string]string{
-		lefthookFile:         buildLefthookYAMLFor(true),
+		lefthookFile:         buildLefthookYAMLFor(lefthookJobLanguages, true),
 		evasionHookFile:      buildBlockEvasionPY(),
 		manifestFile:         renderedPriorManifest(t),
 		actionlintConfigFile: string(renderActionlintConfig(actionlintManagedFixtureLabels(t))),
@@ -54,8 +55,8 @@ func TestEmittedHookFixturesMatchTheRendering(t *testing.T) {
 }
 
 // Positive: folding changes the layout, never a value. Every earlier unfolded rendering
-// decodes to exactly what the current rendering decodes to, so lefthook runs the same
-// commands and lefthook_identity.go sees the same jobs.
+// decodes to exactly what the current Go rendering decodes to, so lefthook runs the same
+// commands in a Go repository and lefthook_identity.go sees the same jobs.
 func TestLefthookRendering_Positive_FoldsWithoutChangingValues(t *testing.T) {
 	fixtures := readPriorLefthookFixtures(t)
 	for name, checkpoint := range map[string]bool{"unfolded.lefthook.yml": false, "unfolded-checkpoint.lefthook.yml": true} {
@@ -63,7 +64,7 @@ func TestLefthookRendering_Positive_FoldsWithoutChangingValues(t *testing.T) {
 		if err := yaml.Unmarshal(fixtures[name], &prior); err != nil {
 			t.Fatalf("decode %s: %v", name, err)
 		}
-		if err := yaml.Unmarshal([]byte(buildLefthookYAMLFor(checkpoint)), &current); err != nil {
+		if err := yaml.Unmarshal([]byte(buildLefthookYAMLFor(hisscatalog.LanguageGo, checkpoint)), &current); err != nil {
 			t.Fatalf("decode the current rendering (checkpoint=%v): %v", checkpoint, err)
 		}
 		if !reflect.DeepEqual(prior, current) {
@@ -72,17 +73,19 @@ func TestLefthookRendering_Positive_FoldsWithoutChangingValues(t *testing.T) {
 	}
 }
 
-// Boundary: both renderings open with a document start and keep every line within
-// yamllint's default limit, checked here without yamllint on PATH.
+// Boundary: every rendering, for every language set, opens with a document start and keeps
+// every line within yamllint's default limit, checked here without yamllint on PATH.
 func TestLefthookRendering_Boundary_LinesWithinYamllintDefaults(t *testing.T) {
-	for _, checkpoint := range []bool{false, true} {
-		rendered := buildLefthookYAMLFor(checkpoint)
-		if !strings.Contains(rendered, "\n---\n") {
-			t.Errorf("checkpoint=%v: no document start", checkpoint)
-		}
-		for i, line := range strings.Split(rendered, "\n") {
-			if len(line) > yamlLineLimit {
-				t.Errorf("checkpoint=%v line %d: %d columns: %s", checkpoint, i+1, len(line), line)
+	for _, languages := range lefthookLanguageSets {
+		for _, checkpoint := range []bool{false, true} {
+			rendered := buildLefthookYAMLFor(languages, checkpoint)
+			if !strings.Contains(rendered, "\n---\n") {
+				t.Errorf("languages=%v checkpoint=%v: no document start", languages, checkpoint)
+			}
+			for i, line := range strings.Split(rendered, "\n") {
+				if len(line) > yamlLineLimit {
+					t.Errorf("languages=%v checkpoint=%v line %d: %d columns: %s", languages, checkpoint, i+1, len(line), line)
+				}
 			}
 		}
 	}

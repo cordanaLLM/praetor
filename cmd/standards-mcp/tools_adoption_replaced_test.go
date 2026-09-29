@@ -76,9 +76,11 @@ func TestFormatAdoptMCPResult_Boundary_OnlyReplacedFiles(t *testing.T) {
 	}
 }
 
-// Positive, through the real tool: standards_adopt with force over a foreign lefthook.yml
-// plans, then reports, a replace with its line delta, and never lists the file as reconciled;
-// the plan without force keeps the file and plans no replace.
+// Positive, through the real tool: standards_adopt with force over a foreign markdownlint
+// configuration, which the documentation gate's audit locks, plans, then reports, a replace
+// with its line delta, and never lists the file as reconciled; the plan without force keeps
+// the file and plans no replace. A foreign lefthook.yml beside it, which the audit does not
+// lock, is kept by both runs and reported, never replaced.
 func TestServer_Positive_AdoptForceReportsReplacedFile(t *testing.T) {
 	root := t.TempDir()
 	initGitRepo(t, root)
@@ -90,9 +92,11 @@ func TestServer_Positive_AdoptForceReportsReplacedFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	foreign := "pre-commit:\n  commands: {}\n"
-	writeFixtureFile(t, root, "lefthook.yml", foreign)
-	args := map[string]any{"profile": "planning-artifacts", "facets": "agent:sandboxed", "source_root": source, "record_baseline": false, "dry_run": true}
+	const locked = "tools/markdownlint/markdownlint-cli2.yaml"
+	foreign, lefthook := "# project markdownlint rules\nignores:\n  - vendor/**\n", "pre-commit:\n  commands: {}\n"
+	writeFixtureFile(t, root, locked, foreign)
+	writeFixtureFile(t, root, "lefthook.yml", lefthook)
+	args := map[string]any{"profile": "planning-artifacts", "facets": "agent:sandboxed,docs:seo-portal", "source_root": source, "record_baseline": false, "dry_run": true}
 	kept := callTool(t, srv, "standards_adopt", args)
 	expectText(t, "adopt without force", kept, "mode: SIMULATED (DRY RUN)")
 	if strings.Contains(kept.Content[0].Text, "Planned Replacements") {
@@ -101,20 +105,24 @@ func TestServer_Positive_AdoptForceReportsReplacedFile(t *testing.T) {
 	args["force"] = true
 	planned := callTool(t, srv, "standards_adopt", args)
 	expectText(t, "adopt force plan", planned, "Planned Replacements: ")
-	expectText(t, "adopt force plan", planned, "  ! lefthook.yml: ")
-	if after := mustReadFile(t, filepath.Join(root, "lefthook.yml")); after != foreign {
-		t.Fatalf("dry run wrote lefthook.yml: %q", after)
+	expectText(t, "adopt force plan", planned, "  ! "+locked+": ")
+	if after := mustReadFile(t, filepath.Join(root, filepath.FromSlash(locked))); after != foreign {
+		t.Fatalf("dry run wrote %s: %q", locked, after)
 	}
 	args["dry_run"] = false
 	applied := callTool(t, srv, "standards_adopt", args)
 	expectText(t, "adopt force apply", applied, "mode: APPLIED")
 	text := applied.Content[0].Text
-	if !strings.Contains(text, "Replaced Files: ") || !strings.Contains(text, "  ! lefthook.yml: ") ||
-		!strings.Contains(text, "replaced existing content (-") || strings.Contains(text, "  ~ lefthook.yml\n") {
+	if !strings.Contains(text, "Replaced Files: ") || !strings.Contains(text, "  ! "+locked+": ") ||
+		!strings.Contains(text, "replaced existing content (-") || strings.Contains(text, "  ~ "+locked+"\n") {
 		t.Fatalf("force apply did not report the replace:\n%s", text)
 	}
-	if after := mustReadFile(t, filepath.Join(root, "lefthook.yml")); after == foreign {
-		t.Fatal("force apply left the foreign lefthook.yml in place")
+	if after := mustReadFile(t, filepath.Join(root, filepath.FromSlash(locked))); after == foreign {
+		t.Fatalf("force apply left the foreign %s in place", locked)
+	}
+	if after := mustReadFile(t, filepath.Join(root, "lefthook.yml")); after != lefthook ||
+		strings.Contains(text, "  ! lefthook.yml: ") || !strings.Contains(text, "lefthook.yml: existing lefthook.yml differs") {
+		t.Fatalf("force apply did not keep and report the foreign lefthook.yml (%q):\n%s", after, text)
 	}
 }
 

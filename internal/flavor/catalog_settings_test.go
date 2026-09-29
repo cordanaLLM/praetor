@@ -63,9 +63,14 @@ func TestCatalog_Positive_EverySettingWithACheckableShapeCarriesAValidator(t *te
 // rather than only asserting that one is present, so a validator wired to the wrong shape --
 // a YAML mapping check on a .json path -- is caught with the missing one.
 func TestCatalog_Negative_EveryDeclaredValidatorJudgesItsShape(t *testing.T) {
+	// The YAML documents run the pre-commit jobs rust-systems claims for its lefthook.yml, the
+	// one YAML setting whose validator reads content beyond the shape (lefthook_setting_test.go).
 	accepted := map[settingShape][]string{
 		shapeJSON: {"{\"a\": 1}", "{\"a\": {\"b\": [1, 2]}}"},
-		shapeYAML: {"a: 1\n", "pre-commit:\n  commands:\n    x:\n      run: true\n"},
+		shapeYAML: {
+			"pre-commit:\n  commands:\n    fmt:\n      run: cargo fmt --all --check\n    lint:\n      run: cargo clippy -- -D warnings\n",
+			"pre-commit:\n  jobs:\n    - run: cargo fmt --all --check\n    - name: clippy\n      run: cargo clippy\n",
+		},
 	}
 	// Rejected by both shapes: nothing, a container with no members, a non-mapping
 	// document, and JSON with comments, which neither consumer of these paths parses

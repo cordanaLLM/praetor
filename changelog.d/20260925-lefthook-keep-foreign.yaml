@@ -1,0 +1,4 @@
+type: fixed
+title: 'adopt keeps every lefthook.yml that is neither a current nor an earlier Praetor rendering, --force included, and does not activate it: the skip names the generated jobs it lacks and the jobs it adds, a file that does not parse is kept and reported, only absent checkpoint files are installed beside it, and removing lefthook.yml and re-running adopt regenerates it; the generated lefthook.yml carries the jobs of the languages adoption detects (gofmt, go vet and govulncheck for a root go.mod, cargo fmt and the gate''s cargo clippy for a root Cargo.toml, all of them when none is detected) instead of the Go jobs in every repository, the Go-only renderings are migrated without --force, and the rust-systems flavor audit accepts lefthook.yml only when its pre-commit jobs run cargo fmt and cargo clippy'
+issue: "#568"
+breaking: true

@@ -152,7 +152,8 @@ type hookPredictionCase struct {
 // git-hooks step then does: the table credits praetor's hook jobs exactly when adoption leaves
 // praetor's rendering in lefthook.yml and lefthook installs it. Positive: lefthook runs. Negative:
 // lefthook fails or is missing, and the fallback hook runs instead. Boundary: skipped activation
-// installs nothing, and a foreign configuration is never credited.
+// installs nothing, and a foreign or unparsable configuration is never credited, --force
+// included (#502), while --force rewrites a CRLF checkout of the current rendering and credits it.
 func TestGeneratedPipelinesPredictGitHooks(t *testing.T) {
 	prior := string(readPriorLefthookFixtures(t)["root-go.lefthook.yml"])
 	foreign := "pre-commit:\n  commands:\n    lint:\n      run: echo lint\n"
@@ -160,7 +161,10 @@ func TestGeneratedPipelinesPredictGitHooks(t *testing.T) {
 	cases := []hookPredictionCase{
 		{name: "absent", binary: lefthookRuns, owned: true, claimed: true, hook: "lefthook"},
 		{name: "foreign kept", lefthook: foreign, binary: lefthookRuns, hook: "none"},
-		{name: "foreign forced", lefthook: foreign, force: true, binary: lefthookRuns, owned: true, claimed: true, hook: "lefthook"},
+		{name: "foreign forced", lefthook: foreign, force: true, binary: lefthookRuns, hook: "none"},
+		{name: "unparsable forced", lefthook: "pre-commit: [unterminated\n", force: true, binary: lefthookRuns, hook: "none"},
+		{name: "current forced", lefthook: buildLefthookYAML(), force: true, binary: lefthookRuns, owned: true, claimed: true, hook: "lefthook"},
+		{name: "crlf current forced", lefthook: crlfText(buildLefthookYAML()), force: true, binary: lefthookRuns, owned: true, claimed: true, hook: "lefthook"},
 		{name: "superset forced", lefthook: superset, force: true, binary: lefthookRuns, hook: "none"},
 		{name: "canonical forced", lefthook: canonicalRootLefthook, force: true, binary: lefthookRuns, hook: "none"},
 		{name: "prior migrated", lefthook: prior, binary: lefthookRuns, owned: true, claimed: true, hook: "lefthook"},
@@ -185,7 +189,7 @@ func replayHookPrediction(t *testing.T, tc hookPredictionCase) {
 		t.Fatalf("Adopt: %v", err)
 	}
 	harness := mustRead(t, filepath.Join(repo, agentsFile))
-	owned := isCurrentLefthookConfig([]byte(mustRead(t, filepath.Join(repo, lefthookFile))))
+	owned := isCurrentLefthookConfig([]byte(mustRead(t, filepath.Join(repo, lefthookFile))), lefthookJobLanguages)
 	claimed := strings.Contains(harness, lefthookRowClaim)
 	if owned != tc.owned || claimed != tc.claimed {
 		t.Fatalf("praetor rendering after adopt = %v, harness credits lefthook = %v; want %v, %v", owned, claimed, tc.owned, tc.claimed)

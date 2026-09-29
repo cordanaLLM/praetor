@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/hisscatalog"
+	"github.com/cordanaLLM/praetor/internal/lefthookconfig"
 	"gopkg.in/yaml.v3"
 )
 
@@ -15,9 +17,9 @@ const (
 	// ledger gates.
 	canonicalLefthookPolicy = ".config/lefthook/praetor.yml"
 	// maxLefthookJobs bounds the job scan of an existing configuration (HISS-02).
-	maxLefthookJobs = 512
-	// maxReportedExtraJobs bounds how many preserved job names a skip reason lists.
-	maxReportedExtraJobs = 5
+	maxLefthookJobs = lefthookconfig.MaxJobs
+	// maxReportedJobs bounds how many job names a skip reason lists per group.
+	maxReportedJobs = 5
 )
 
 // priorLefthookDigests are the digests (priorRendering) of every lefthook.yml Praetor generated
@@ -25,7 +27,9 @@ const (
 // only these texts are recognised, in either consistent line-ending style: adoption migrates
 // them to the current rendering instead of treating its own earlier output as foreign and
 // leaving it unfixed forever (BUG-859). An edited copy matches no digest and stays untouched.
-// The files under testdata/lefthook reproduce each digest (lefthook_identity_test.go).
+// The files under testdata/lefthook reproduce each digest (lefthook_identity_test.go). The last
+// two are the renderings that carried the Go jobs in every repository, whatever its languages
+// (#568).
 var priorLefthookDigests = map[string]string{
 	"25e9d28b31d2423874042e8c4f9d864bcf970e111a78f2b0b8ad63990081b435": "HISS-16 labels, root Go jobs",
 	"2b94aaf2bb95773724a4ead9dcabad7f5931408b07cf02b11c6768ad384b7413": "HISS-16 labels, root Go jobs, checkpoint jobs",
@@ -35,6 +39,8 @@ var priorLefthookDigests = map[string]string{
 	"c3ecfea62fcfeec128e8acf13b73ae046c66acb362a919803708d7a4d49ed2ac": "unfolded run lines, no document start, checkpoint jobs",
 	"b6c0736f5389b4adb35967e1a5c8a735ebc68a87e8b85639beddafcd895f8403": "document start, no gate refusal note",
 	"d20ed3ba2c21261d98ecfece5982d604c2ff9f476773e6e107ba54cd6848db87": "document start, no gate refusal note, checkpoint jobs",
+	"daf1de1af7779eef3b0dd8a0a5940ef416a4e28ccc606dbc3baa876990cc8934": "Go jobs in every repository",
+	"3d4a25b0269015ca166d92aa0d38e7000ea9d8d95f7529c7ff93577efc186f03": "Go jobs in every repository, checkpoint jobs",
 }
 
 // lefthookIdentity is what adoption concluded about an existing lefthook.yml.
@@ -43,7 +49,7 @@ type lefthookIdentity struct {
 	prior bool
 	// canonical marks a configuration that extends the vendored canonical policy.
 	canonical bool
-	// reason says why adoption must not replace the file; empty when it may.
+	// reason says why adoption keeps the file; empty when it is Praetor's own text.
 	reason string
 }
 
@@ -53,51 +59,66 @@ func isPriorLefthookConfig(data []byte) bool {
 	return isPriorRendering(data, priorLefthookDigests)
 }
 
-// currentLefthookRendering reports whether data is exactly a current Praetor rendering and, when
-// it is, whether it is the one carrying the checkpoint jobs. It is the one byte comparison both
-// classification and hook activation (lefthookConfigIsPraetor) use.
-func currentLefthookRendering(data []byte) (current, checkpoint bool) {
-	switch string(data) {
-	case buildLefthookYAMLFor(false):
-		return true, false
-	case buildLefthookYAMLFor(true):
-		return true, true
+// lefthookMatch is what one comparison of existing bytes with the current renderings found.
+type lefthookMatch struct {
+	// found: the bytes hold a current rendering, line endings aside.
+	found bool
+	// checkpoint: the rendering found is the one carrying the checkpoint lifecycle jobs.
+	checkpoint bool
+	// exact: the bytes are the rendering's own LF bytes, the only bytes activation trusts.
+	exact bool
+}
+
+// matchCurrentLefthook compares data with both current renderings for languages, without and
+// with the checkpoint jobs. It is the one comparison classification, the write and hook
+// activation (lefthookConfigIsPraetor) use. Mixed line endings match neither.
+func matchCurrentLefthook(data []byte, languages hisscatalog.Language) lefthookMatch {
+	for _, checkpoint := range []bool{false, true} {
+		rendering := buildLefthookYAMLFor(languages, checkpoint)
+		if string(data) == rendering {
+			return lefthookMatch{found: true, checkpoint: checkpoint, exact: true}
+		}
+		if isLineEndingCheckout(data, rendering) {
+			return lefthookMatch{found: true, checkpoint: checkpoint}
+		}
 	}
-	return false, false
+	return lefthookMatch{}
 }
 
-// isCurrentLefthookConfig reports whether data is exactly a current Praetor rendering.
-func isCurrentLefthookConfig(data []byte) bool {
-	current, _ := currentLefthookRendering(data)
-	return current
+// isCurrentLefthookConfig reports whether data is exactly a current Praetor rendering for
+// languages.
+func isCurrentLefthookConfig(data []byte, languages hisscatalog.Language) bool {
+	return matchCurrentLefthook(data, languages).exact
 }
 
-// readExistingLefthook returns the bytes of lefthook.yml, or nil when the file is absent.
-func (s *adoptSession) readExistingLefthook() ([]byte, error) {
+// readExistingLefthook returns the bytes of lefthook.yml and whether it exists.
+func (s *adoptSession) readExistingLefthook() ([]byte, bool, error) {
 	full, err := repoFile(s.repoPath, lefthookFile)
 	if err != nil || !fileExists(full) {
-		return nil, err
+		return nil, false, err
 	}
-	return readRepoFile(full)
+	data, err := readRepoFile(full)
+	if err != nil {
+		return nil, false, err
+	}
+	return data, true, nil
 }
 
-// lefthookExtendsCanonical reports whether existing configuration bytes pull in the canonical
-// policy; adoption then leaves the policy's vendored scripts to that policy (BUG-858).
-func lefthookExtendsCanonical(existing []byte) bool {
-	var parsed map[string]any
-	if err := yaml.Unmarshal(existing, &parsed); err != nil {
-		return false
-	}
-	return extendsCanonicalPolicy(parsed)
+// lefthookLanguages returns the languages this run's lefthook.yml carries jobs for.
+func (s *adoptSession) lefthookLanguages() hisscatalog.Language {
+	return lefthookLanguages(s.verification)
 }
 
-// classifyLefthookConfig decides how adoption treats existing bytes. Praetor's own renderings,
-// current or earlier, come first: they are neither user extensions nor foreign. A configuration
-// that extends the canonical policy, or that defines every generated job plus more, is
-// protected, because replacing it would silently drop hooks the repository chose to run
-// (BUG-858). Anything else keeps the existing --force contract.
-func classifyLefthookConfig(existing []byte, current string) lefthookIdentity {
-	if isCurrentLefthookConfig(existing) {
+// classifyLefthookConfig decides how adoption treats an existing lefthook.yml. Praetor's own
+// renderings come first: a current one for languages, line endings aside, is verified and an
+// earlier one (priorLefthookDigests) is migrated, neither needing --force. Every other
+// configuration is the repository's and is kept, --force included, and not activated, because
+// the audit checks only that the file exists and replacing it would drop whatever the
+// repository composed in (#502). The reason says why: a configuration that extends the canonical
+// policy names that policy; one that does not parse as a YAML mapping says so; any other names
+// the generated jobs it lacks and the jobs it adds, so an operator can merge them by hand.
+func classifyLefthookConfig(existing []byte, languages hisscatalog.Language) lefthookIdentity {
+	if matchCurrentLefthook(existing, languages).found {
 		return lefthookIdentity{}
 	}
 	if isPriorLefthookConfig(existing) {
@@ -105,7 +126,8 @@ func classifyLefthookConfig(existing []byte, current string) lefthookIdentity {
 	}
 	var parsed map[string]any
 	if err := yaml.Unmarshal(existing, &parsed); err != nil {
-		return lefthookIdentity{}
+		return lefthookIdentity{reason: "existing lefthook.yml is not a YAML mapping lefthook can read (" + err.Error() +
+			"); kept, --force included, and not activated. " + lefthookRegenerateHint}
 	}
 	if extendsCanonicalPolicy(parsed) {
 		return lefthookIdentity{canonical: true, reason: "lefthook.yml extends the canonical Praetor hook policy " +
@@ -114,17 +136,28 @@ func classifyLefthookConfig(existing []byte, current string) lefthookIdentity {
 			evasionHookFile + " together from one reviewed Praetor commit (" +
 			".config/lefthook/README.md), then run 'lefthook install'"}
 	}
-	required, known, ok := generatedLefthookJobs(current)
-	if !ok {
-		return lefthookIdentity{}
+	missing, extra := lefthookJobDelta(lefthookJobs(parsed), languages)
+	return lefthookIdentity{reason: "existing lefthook.yml differs from the scaffold adoption writes and is no earlier " +
+		"Praetor rendering; kept, --force included, and not activated. " + describeLefthookJobDelta(missing, extra) +
+		" Merge the generated jobs by hand, or " + lefthookRegenerateHint}
+}
+
+// lefthookRegenerateHint is how every note about a kept lefthook.yml ends: what regenerates it.
+const lefthookRegenerateHint = "remove lefthook.yml and re-run adopt to regenerate it, then run 'lefthook install'"
+
+// describeLefthookJobDelta says which generated jobs a kept configuration lacks, every one by
+// name (a rendering holds at most a few dozen), and which jobs it adds, at most maxReportedJobs
+// of them by name.
+func describeLefthookJobDelta(missing, extra []string) string {
+	lacks := "It holds every generated job"
+	if len(missing) > 0 {
+		lacks = fmt.Sprintf("It lacks %d generated jobs (%s)", len(missing),
+			quoteFirst(missing, len(missing), len(missing), bareJobName))
 	}
-	if extra := extraLefthookJobs(lefthookJobs(parsed), required, known); len(extra) > 0 {
-		return lefthookIdentity{reason: fmt.Sprintf("lefthook.yml defines every generated job plus %d more (%s); "+
-			"adoption does not replace it, --force included, because that would drop them, and does not activate it. "+
-			"Merge the generated jobs by hand, or remove lefthook.yml to regenerate it, then run 'lefthook install'",
-			len(extra), quoteFirst(extra, len(extra), maxReportedExtraJobs, bareJobName))}
+	if len(extra) == 0 {
+		return lacks + " and adds none."
 	}
-	return lefthookIdentity{}
+	return fmt.Sprintf("%s and adds %d (%s).", lacks, len(extra), quoteFirst(extra, len(extra), maxReportedJobs, bareJobName))
 }
 
 // bareJobName renders a job name in a skip reason as lefthook spells it, unquoted: the names are
@@ -133,17 +166,41 @@ func bareJobName(job string) string {
 	return job
 }
 
-// generatedLefthookJobs returns the jobs every generated rendering holds (the one without
-// checkpoint jobs) and the jobs the current rendering holds. A configuration needs only the
-// first set to count as an extension, so jobs a user added to a rendering made before the
-// checkpoint lifecycle became available stay protected once it does; the second set is what
-// counts as generated when naming the extra jobs.
-func generatedLefthookJobs(current string) (required, known map[string]bool, ok bool) {
-	var base, rendered map[string]any
-	if yaml.Unmarshal([]byte(buildLefthookYAMLFor(false)), &base) != nil || yaml.Unmarshal([]byte(current), &rendered) != nil {
-		return nil, nil, false
+// lefthookJobDelta returns, sorted, the jobs of the generated rendering without checkpoint jobs
+// that existing lacks, and the jobs existing defines beyond the rendering with them. The
+// checkpoint jobs are optional: a configuration without them lacks nothing the generated one
+// always holds, and one with them adds nothing.
+func lefthookJobDelta(existing map[string]bool, languages hisscatalog.Language) (missing, extra []string) {
+	required, known := generatedLefthookJobs(languages)
+	for job := range required {
+		if !existing[job] {
+			missing = append(missing, job)
+		}
 	}
-	return lefthookJobs(base), lefthookJobs(rendered), true
+	for job := range existing {
+		if !known[job] {
+			extra = append(extra, job)
+		}
+	}
+	sort.Strings(missing)
+	sort.Strings(extra)
+	return missing, extra
+}
+
+// generatedLefthookJobs returns the jobs of the rendering for languages without checkpoint jobs,
+// which every generated configuration holds, and the jobs of the one with them.
+func generatedLefthookJobs(languages hisscatalog.Language) (required, known map[string]bool) {
+	return renderedLefthookJobs(buildLefthookYAMLFor(languages, false)), renderedLefthookJobs(buildLefthookYAMLFor(languages, true))
+}
+
+// renderedLefthookJobs names the jobs of a rendering. A rendering always parses
+// (TestBuildLefthookYAML_FailsClosed); one that did not would name no job.
+func renderedLefthookJobs(rendering string) map[string]bool {
+	var parsed map[string]any
+	if err := yaml.Unmarshal([]byte(rendering), &parsed); err != nil {
+		return map[string]bool{}
+	}
+	return lefthookJobs(parsed)
 }
 
 // extendsCanonicalPolicy reports whether a parsed configuration pulls in the canonical policy,
@@ -178,102 +235,14 @@ func namesCanonicalPolicy(paths any) bool {
 	return false
 }
 
-// lefthookJobs names every job of a parsed configuration as hook/kind/name, where kind is
-// commands or scripts, whichever syntax declares it: the commands and scripts maps or the jobs
-// list (lefthookListJob). Keys that are not hooks (min_version, output, extends) hold no job
-// map and contribute nothing.
+// lefthookJobs names every job of a parsed configuration as hook/kind/name
+// (lefthookconfig.Job.Path), whichever syntax declares it: the commands and scripts maps or the
+// jobs list.
 func lefthookJobs(parsed map[string]any) map[string]bool {
-	jobs := make(map[string]bool)
-	for hook, body := range parsed {
-		section, ok := body.(map[string]any)
-		if !ok {
-			continue
-		}
-		for _, kind := range []string{"commands", "scripts"} {
-			addLefthookJobs(jobs, hook+"/"+kind+"/", section[kind])
-		}
-		addLefthookJobList(jobs, hook+"/", section["jobs"])
-		if len(jobs) >= maxLefthookJobs {
-			break
-		}
+	jobs := lefthookconfig.Jobs(parsed)
+	names := make(map[string]bool, len(jobs))
+	for _, job := range jobs {
+		names[job.Path()] = true
 	}
-	return jobs
-}
-
-// addLefthookJobList names the entries of a hook's jobs list.
-func addLefthookJobList(jobs map[string]bool, prefix string, list any) {
-	entries, ok := list.([]any)
-	if !ok {
-		return
-	}
-	for i := 0; i < len(entries) && len(jobs) < maxLefthookJobs; i++ {
-		job, isMap := entries[i].(map[string]any)
-		if !isMap {
-			job = nil
-		}
-		jobs[prefix+lefthookListJob(job, i)] = true
-	}
-}
-
-// lefthookListJob names one jobs-list entry the way the commands and scripts maps name the
-// same job, so a configuration in either syntax compares with the generated one: a script job
-// is scripts/<script>, a group jobs/<name>, any other job commands/<name>. An unnamed job takes
-// its run line, as lefthook itself names it (config.Job.PrintableName), then its position.
-func lefthookListJob(job map[string]any, index int) string {
-	if script := lefthookJobField(job, "script"); script != "" {
-		return "scripts/" + script
-	}
-	name := lefthookJobField(job, "name")
-	if name == "" {
-		name = lefthookJobField(job, "run")
-	}
-	if name == "" {
-		return fmt.Sprintf("jobs/[%d]", index)
-	}
-	if _, grouped := job["group"]; grouped {
-		return "jobs/" + name
-	}
-	return "commands/" + name
-}
-
-func addLefthookJobs(jobs map[string]bool, prefix string, group any) {
-	named, ok := group.(map[string]any)
-	if !ok {
-		return
-	}
-	for name := range named {
-		if len(jobs) >= maxLefthookJobs {
-			return
-		}
-		jobs[prefix+name] = true
-	}
-}
-
-// extraLefthookJobs returns, sorted, the jobs existing defines beyond known when existing holds
-// every required job; otherwise nil. A configuration missing any required job is not an
-// extension of the generated one, and keeps the --force contract.
-func extraLefthookJobs(existing, required, known map[string]bool) []string {
-	for job := range required {
-		if !existing[job] {
-			return nil
-		}
-	}
-	var extra []string
-	for job := range existing {
-		if !known[job] && !required[job] {
-			extra = append(extra, job)
-		}
-	}
-	sort.Strings(extra)
-	return extra
-}
-
-// lefthookJobField returns a string field of a jobs-list entry, or "" when it is absent or not
-// a string.
-func lefthookJobField(job map[string]any, key string) string {
-	value, isString := job[key].(string)
-	if !isString {
-		return ""
-	}
-	return value
+	return names
 }

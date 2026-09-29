@@ -247,7 +247,7 @@ standardsctl sync --remote --forge-host=ghe.example.com \
 `.config/labels.yaml` into a repository that has none (`forge.DefaultLabelTaxonomy`,
 which `internal/forge/labels_test.go` holds byte-for-byte equal to praetor's own file).
 An existing taxonomy is the repository's configuration: `adopt --force` keeps it
-(`TestAdopt_Positive_ForceRegeneratesScaffolds` in `internal/adopt/adopt_test.go`).
+(`TestAdopt_Positive_ForceKeepsRepositoryConfiguration` in `internal/adopt/adopt_test.go`).
 
 ### Stages that do not apply are skipped, not failed
 
@@ -767,43 +767,42 @@ Malformed or oversized command metadata now fails before any adoption writes.
   only the rendering's exact LF bytes, so the file is not activated; `--force` rewrites it
   with those bytes, reports a reconcile rather than a replace, and activates it
   (`TestAdopt_Positive_ForceRewritesCRLFCurrentLefthookAndActivates`,
-  `TestAdopt_Boundary_CRLFCurrentLefthookKeptWithoutForceAndInDryRun`). A copy with mixed line
-  endings is no checkout: `--force` replaces it like any drifted file
-  (`TestAdopt_Negative_ForceReplacesMixedEndingCurrentLefthook`).
+  `TestAdopt_Boundary_CRLFCurrentLefthookKeptWithoutForceAndInDryRun`).
+- Every other configuration is the repository's and is never replaced, `--force` included,
+  nor activated: the audit checks only that `lefthook.yml` exists. That covers a copy with
+  mixed line endings, which is no checkout, a file that does not parse, and a file behind a
+  symlink, whose target is left as it is
+  (`TestAdopt_Negative_ForeignLefthookKeptWithAndWithoutForce`,
+  `TestAdopt_Negative_ForceKeepsMixedEndingCurrentLefthook`,
+  `TestAdopt_Boundary_ForceKeepsSymlinkedLefthook`). The skip reason names the generated jobs
+  the file lacks and the jobs it adds, whether they are declared in `commands` or `scripts`
+  maps or in a `jobs` list; the checkpoint jobs count as neither. Beside a kept file only
+  absent checkpoint files are installed. To regenerate it, remove `lefthook.yml` and re-run
+  adopt.
 - A configuration that reaches `.config/lefthook/praetor.yml`, the vendorable canonical
-  policy, through `extends` or through the `configs` of a `remotes` entry is never
-  replaced, `--force` included. Neither are the files vendored beside it:
-  `.config/agent/hooks/block_evasion.py` and the checkpoint scripts under
-  `.config/lefthook/scripts/`, so the policy and its scripts stay one version. A missing
-  checkpoint script is still installed. Adoption reports the skip and does not activate
-  the file; update the vendored policy as
+  policy, through `extends` or through the `configs` of a `remotes` entry is kept the same
+  way, and so is `.config/agent/hooks/block_evasion.py` beside it, so the policy and its
+  scripts stay one version. The skip names the policy; update it as
   [`.config/lefthook/README.md`](https://github.com/cordanaLLM/praetor/blob/main/.config/lefthook/README.md)
   describes.
-- A configuration defining every generated job plus others is never replaced either;
-  the skip reason names the extra jobs `--force` would have dropped. Jobs count whether
-  they are declared in `commands` or `scripts` maps or in a `jobs` list. The checkpoint
-  jobs are optional here, so a configuration extended before the checkpoint lifecycle
-  became available stays protected once it is.
-- Any other existing configuration keeps the `--force` contract (`scaffold.forceable` in
-  `internal/adopt/scaffold.go`): preserved without it, with a note that `--force` regenerates
-  it, and replaced with it
-  (`TestAdopt_Positive_UnprotectedLefthookNoteNamesForceAndForceReplaces`). Such a
-  configuration behind a symlink is preserved and reported unverified, `--force` included,
-  and its target is left as it is
-  (`TestAdopt_Boundary_ForceKeepsSymlinkedLefthookUnverified`).
 
 The generated hooks resolve `praetorctl` or, failing that, `standardsctl` through the
 same expression as the generated Makefile's `PRAETORCTL` variable
 (`util.ShellCLIResolution` in `internal/util/clinames.go`). A missing binary blocks the
-commit or push; a `./cmd/standardsctl` source tree no longer stands in for one. The
-`govet` and `security` jobs run only where the repository root holds a `go.mod` and
-otherwise print `no go.mod at the repository root, skipping <tool>`, matching the gate
-stages above. A module kept in a subdirectory is not scanned by these jobs. The `gate` job runs
+commit or push; a `./cmd/standardsctl` source tree no longer stands in for one. The language
+jobs follow the languages the plan detects: `gofmt`, `govet` and `security` for a root
+`go.mod`, `rustfmt` and `clippy` for a root `Cargo.toml`, all of them when no language is
+detected ([the lefthook.yml adoption writes](git-hooks.md#the-lefthookyml-adoption-writes)).
+Each runs only where the root holds its marker and otherwise prints
+`no <marker> at the repository root, skipping <tool>`, matching the gate stages above. A module
+kept in a subdirectory is not scanned by these jobs. The `gate` job runs
 `praetorctl gate run --path=.`, which fails where no toolchain stage ran for a `go.mod` or a
 `Cargo.lock` ([no receipt](#no-receipt-when-no-toolchain-stage-ran)); the file's header comment
-says so, and its two previous renderings are recognised as earlier Praetor output. Tests:
-`internal/adopt/lefthook_identity_test.go`, `internal/adopt/checkpoint_test.go`,
-`internal/adopt/hooks_gomod_test.go`, `internal/adopt/cli_name_test.go`.
+says so, and every earlier rendering, the Go-only ones included, is recognised as earlier
+Praetor output. Tests: `internal/adopt/lefthook_identity_test.go`,
+`internal/adopt/lefthook_languages_test.go`, `internal/adopt/lefthook_keep_test.go`,
+`internal/adopt/checkpoint_test.go`, `internal/adopt/hooks_gomod_test.go`,
+`internal/adopt/cli_name_test.go`.
 Generated Makefiles run `caveman-sources` (`praetorctl caveman check
 --configured-sources`) inside `verify-all`, and `praetorctl audit` fails when
 `.standards.yaml` has no `register.sources`. Re-running adoption on a repository
@@ -965,9 +964,9 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
   - the `verify-all` target, unless `adoption.decline` lists `makefile` or the plan is
     `preserved-unverified`;
   - `lefthook.yml`, unless `adoption.decline` lists `git-hooks`, the git-hooks step will keep a
-    file that is not praetor's rendering, or lefthook will not install its hooks. A file the
-    step keeps is one that extends the canonical policy, adds jobs, or is foreign and adoption
-    runs without `--force`. The hooks are installed only when `lefthook version` runs on `PATH`
+    file that is not praetor's rendering, or lefthook will not install its hooks. The step keeps
+    every existing file that is neither a current nor an earlier Praetor rendering, `--force`
+    included. The hooks are installed only when `lefthook version` runs on `PATH`
     and hook activation is not skipped. Without a runnable lefthook, adoption writes the
     fallback pre-commit hook, which runs `compile-context --verify` and `audit` alone, so the
     lefthook stages are not credited.

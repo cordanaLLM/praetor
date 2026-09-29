@@ -9,10 +9,18 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"gopkg.in/yaml.v3"
 )
 
 const priorLefthookFixtures = "testdata/lefthook"
+
+// buildLefthookYAML is the rendering a fixture repository without a language marker gets: no
+// language detected keeps every language's jobs (lefthookLanguages), and the fixture lock source
+// carries no checkpoint bundle.
+func buildLefthookYAML() string {
+	return buildLefthookYAMLFor(lefthookJobLanguages, false)
+}
 
 func readPriorLefthookFixtures(t *testing.T) map[string][]byte {
 	t.Helper()
@@ -88,16 +96,21 @@ func TestAdopt_Negative_EditedPriorLefthookPreserved(t *testing.T) {
 	}
 }
 
-// Boundary: the current renderings are not prior ones (they need no migration), and a prior
-// rendering that lost its final newline is no longer exact.
+// lefthookLanguageSets are the language sets lefthook.yml renders distinct jobs for.
+var lefthookLanguageSets = []hisscatalog.Language{0, hisscatalog.LanguageGo, hisscatalog.LanguageRust, lefthookJobLanguages}
+
+// Boundary: no current rendering, for any language set, is a prior one (none needs migration),
+// and a prior rendering that lost its final newline is no longer exact.
 func TestIsPriorLefthookConfig_Boundary_CurrentAndTruncated(t *testing.T) {
-	for _, checkpoint := range []bool{false, true} {
-		current := []byte(buildLefthookYAMLFor(checkpoint))
-		if isPriorLefthookConfig(current) {
-			t.Errorf("current rendering (checkpoint=%v) listed as prior", checkpoint)
-		}
-		if classifyLefthookConfig(current, buildLefthookYAML()) != (lefthookIdentity{}) {
-			t.Errorf("current rendering (checkpoint=%v) classified as prior or protected", checkpoint)
+	for _, languages := range lefthookLanguageSets {
+		for _, checkpoint := range []bool{false, true} {
+			current := []byte(buildLefthookYAMLFor(languages, checkpoint))
+			if isPriorLefthookConfig(current) {
+				t.Errorf("current rendering (languages=%v, checkpoint=%v) listed as prior", languages, checkpoint)
+			}
+			if classifyLefthookConfig(current, languages) != (lefthookIdentity{}) {
+				t.Errorf("current rendering (languages=%v, checkpoint=%v) classified as prior or kept", languages, checkpoint)
+			}
 		}
 	}
 	prior := readPriorLefthookFixtures(t)["hiss16.lefthook.yml"]
@@ -137,8 +150,8 @@ func TestAdopt_Negative_ForceKeepsCanonicalLefthookAndInterceptor(t *testing.T) 
 	}
 }
 
-// foreignLefthook is a configuration Praetor did not write that classifyLefthookConfig does not
-// protect: it neither extends the canonical policy nor holds every generated job.
+// foreignLefthook is a configuration Praetor did not write: it neither extends the canonical
+// policy nor holds any generated job.
 const foreignLefthook = "pre-commit:\n  commands:\n    lint:\n      run: make lint\n"
 
 // lefthookDetails joins every action detail the report records for lefthook.yml: the scaffold
@@ -153,32 +166,50 @@ func lefthookDetails(rep *AdoptReport) string {
 	return strings.Join(details, "\n")
 }
 
-// Positive: lefthook.yml keeps its own --force contract (scaffold.forceable). A plain run keeps
-// an unprotected foreign configuration and its note names --force, and --force replaces it with
-// a line delta, since audit locks nothing about the file but its presence.
-func TestAdopt_Positive_UnprotectedLefthookNoteNamesForceAndForceReplaces(t *testing.T) {
-	repoPath, rep := adoptLefthookFixture(t, "foreign-lefthook", foreignLefthook, false)
-	if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); got != foreignLefthook {
-		t.Fatalf("a plain run rewrote the configuration:\n%s", got)
+// assertLefthookKept fails unless adoption left lefthook.yml holding want, recorded the skip that
+// says it keeps the file, --force included, and how to regenerate it, replaced and backed up
+// nothing, and activated no hook.
+func assertLefthookKept(t *testing.T, repoPath string, rep *AdoptReport, want string) {
+	t.Helper()
+	if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); got != want {
+		t.Fatalf("lefthook.yml was rewritten:\n%s", got)
 	}
 	note := lefthookDetails(rep)
-	if !strings.Contains(note, "(--force regenerates it)") || strings.Contains(note, "--force included") {
-		t.Errorf("the drift note does not say --force regenerates the file: %q", note)
+	if !hasAction(rep, lefthookFile, actionSkip) || !strings.Contains(note, "kept, --force included, and not activated") ||
+		!strings.Contains(note, "remove lefthook.yml and re-run adopt to regenerate it") {
+		t.Fatalf("the keep is not reported with its remedy: %+v", rep.ActionDetails)
 	}
-	repoPath, rep = adoptLefthookFixture(t, "foreign-lefthook-force", foreignLefthook, true)
-	if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); got != buildLefthookYAML() {
-		t.Errorf("--force did not regenerate the configuration:\n%s", got)
+	if hasAction(rep, lefthookFile, actionReplace) || strings.Contains(note, "--force regenerates it") {
+		t.Fatalf("a kept lefthook.yml is reported as replaceable or replaced: %q", note)
 	}
-	if !hasAction(rep, lefthookFile, actionReplace) {
-		t.Errorf("want a replace: %+v", rep.ActionDetails)
+	backups, err := filepath.Glob(filepath.Join(repoPath, filepath.FromSlash(adoptBackupRoot), "*", lefthookFile))
+	if err != nil || len(backups) != 0 {
+		t.Fatalf("a kept lefthook.yml was backed up: %v (err %v)", backups, err)
+	}
+	if fileExists(filepath.Join(repoPath, ".git", "hooks", preCommitHook)) {
+		t.Fatal("a kept lefthook.yml was activated")
+	}
+}
+
+// Negative (#502): a configuration that is neither a current nor an earlier Praetor rendering
+// is the repository's. A plain run and --force both keep it byte for byte and do not activate
+// it, and the reason names the generated jobs it lacks and the job it adds; the audit checks
+// only that lefthook.yml exists, so --force has nothing to restore.
+func TestAdopt_Negative_ForeignLefthookKeptWithAndWithoutForce(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		repoPath, rep := adoptLefthookFixture(t, "foreign-lefthook", foreignLefthook, force)
+		assertLefthookKept(t, repoPath, rep, foreignLefthook)
+		note := lefthookDetails(rep)
+		if !strings.Contains(note, "It lacks 12 generated jobs (post-commit/commands/dedupe-cadence, ") ||
+			!strings.Contains(note, "and adds 1 (pre-commit/commands/lint).") {
+			t.Errorf("force=%v: the reason does not name the missing and extra jobs: %q", force, note)
+		}
 	}
 }
 
 // Boundary: under --force a lefthook.yml that is a symlink, even to a file inside the
-// repository, is preserved and reported unverified, and its target is not written through:
-// the scaffold reads it only through contextopt.ObserveSnapshot, which accepts a regular file
-// alone.
-func TestAdopt_Boundary_ForceKeepsSymlinkedLefthookUnverified(t *testing.T) {
+// repository, is kept, and its target is not written through.
+func TestAdopt_Boundary_ForceKeepsSymlinkedLefthook(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink creation needs developer mode on Windows")
 	}
@@ -198,9 +229,7 @@ func TestAdopt_Boundary_ForceKeepsSymlinkedLefthookUnverified(t *testing.T) {
 	if info, err := os.Lstat(filepath.Join(repoPath, lefthookFile)); err != nil || info.Mode()&os.ModeSymlink == 0 {
 		t.Fatalf("lefthook.yml is no longer the symlink: %v", err)
 	}
-	if hasAction(rep, lefthookFile, actionReplace) || !strings.Contains(lefthookDetails(rep), "preserved unverified") {
-		t.Fatalf("want the symlink preserved unverified, no replace: %+v", rep.ActionDetails)
-	}
+	assertLefthookKept(t, repoPath, rep, foreignLefthook)
 }
 
 // Negative: --force never replaces a configuration that holds every generated job plus more,
@@ -208,11 +237,75 @@ func TestAdopt_Boundary_ForceKeepsSymlinkedLefthookUnverified(t *testing.T) {
 func TestAdopt_Negative_ForceKeepsLefthookJobSuperset(t *testing.T) {
 	extended := buildLefthookYAML() + "commit-msg:\n  commands:\n    conventional:\n      run: ./scripts/check-msg {1}\n"
 	repoPath, rep := adoptLefthookFixture(t, "superset-lefthook", extended, true)
-	if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); got != extended {
-		t.Fatal("--force dropped the repository's extra jobs")
-	}
-	if !strings.Contains(strings.Join(rep.Warnings, "\n"), "commit-msg/commands/conventional") {
+	assertLefthookKept(t, repoPath, rep, extended)
+	if !strings.Contains(strings.Join(rep.Warnings, "\n"), "It holds every generated job and adds 1 (commit-msg/commands/conventional).") {
 		t.Fatalf("the preserved job is not named: %v", rep.Warnings)
+	}
+}
+
+// preparationLefthook is an adopter lefthook.yml that extends its own preparation file and
+// defines no job of its own: none of the generated jobs, and not the canonical policy.
+const preparationLefthook = "min_version: 2.1.14\nextends:\n  - .config/lefthook/preparation.yml\n"
+
+// Positive (#502): in a Cargo workspace, an adopter lefthook.yml that extends its own
+// preparation file survives --force byte for byte and is not activated. The reason names the
+// generated jobs it lacks, the Cargo repository's own (clippy, rustfmt) among them, and no Go job.
+func TestAdopt_Positive_ForceKeepsAdopterExtendsLefthook(t *testing.T) {
+	repoPath := newTestRepo(t, "adopter-extends-lefthook")
+	mustWrite(t, filepath.Join(repoPath, "Cargo.toml"), "[package]\nname = \"widget\"\nversion = \"0.1.0\"\nedition = \"2021\"\n")
+	mustWrite(t, filepath.Join(repoPath, lefthookFile), preparationLefthook)
+	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Force: true})
+	if err != nil {
+		t.Fatalf("Adopt --force: %v", err)
+	}
+	assertNoIssues(t, rep)
+	assertLefthookKept(t, repoPath, rep, preparationLefthook)
+	note := lefthookDetails(rep)
+	for _, job := range []string{"pre-commit/commands/clippy", "pre-commit/commands/rustfmt"} {
+		if !strings.Contains(note, job) {
+			t.Errorf("the reason does not name the missing %s: %q", job, note)
+		}
+	}
+	if strings.Contains(note, "gofmt") || strings.Contains(note, "govet") || !strings.Contains(note, "and adds none.") {
+		t.Errorf("the reason names Go jobs a Cargo repository is not generated, or invents extras: %q", note)
+	}
+}
+
+// Boundary: a lefthook.yml that does not parse as a YAML mapping is kept and reported, never
+// overwritten, --force included; an absent one is created and activated.
+func TestAdopt_Boundary_UnparsableLefthookKeptAbsentCreated(t *testing.T) {
+	for _, body := range []string{"pre-commit: [unterminated\n", "- just\n- a list\n"} {
+		repoPath, rep := adoptLefthookFixture(t, "unparsable-lefthook", body, true)
+		assertLefthookKept(t, repoPath, rep, body)
+		if !strings.Contains(lefthookDetails(rep), "is not a YAML mapping lefthook can read") {
+			t.Errorf("%q: the reason does not say the file does not parse: %q", body, lefthookDetails(rep))
+		}
+	}
+	repoPath := newTestRepo(t, "absent-lefthook")
+	rep, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath, Force: true})
+	if err != nil {
+		t.Fatalf("Adopt --force: %v", err)
+	}
+	if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); got != buildLefthookYAML() || !hasAction(rep, lefthookFile, actionCreate) {
+		t.Fatalf("an absent lefthook.yml was not created: %+v\n%s", rep.ActionDetails, got)
+	}
+	if !fileExists(filepath.Join(repoPath, ".git", "hooks", preCommitHook)) {
+		t.Fatal("the created configuration was not activated")
+	}
+}
+
+// Negative: the current rendering under --force is verified in place, not rewritten or
+// replaced, and activated.
+func TestAdopt_Negative_ForceVerifiesCurrentLefthook(t *testing.T) {
+	repoPath, rep := adoptLefthookFixture(t, "current-force", buildLefthookYAML(), true)
+	if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); got != buildLefthookYAML() {
+		t.Fatalf("the current rendering was rewritten:\n%s", got)
+	}
+	if !strings.Contains(lefthookDetails(rep), "Existing Lefthook configuration verified present") || hasAction(rep, lefthookFile, actionReplace) {
+		t.Fatalf("want a verify and no replace: %+v", rep.ActionDetails)
+	}
+	if !fileExists(filepath.Join(repoPath, ".git", "hooks", preCommitHook)) {
+		t.Fatal("the current rendering was not activated")
 	}
 }
 
@@ -232,20 +325,15 @@ func TestAdopt_Positive_ForceRewritesCRLFCurrentLefthookAndActivates(t *testing.
 	}
 }
 
-// Negative: a copy of the current rendering with mixed line endings is no checkout of it, so
-// --force replaces it like any drifted file (replaceExisting), and the LF rendering it leaves
-// is activated.
-func TestAdopt_Negative_ForceReplacesMixedEndingCurrentLefthook(t *testing.T) {
+// Negative: a copy of the current rendering with mixed line endings is no checkout of it and no
+// Praetor text, so --force keeps it like any other configuration; the reason says it holds the
+// generated jobs and adds none.
+func TestAdopt_Negative_ForceKeepsMixedEndingCurrentLefthook(t *testing.T) {
 	mixed := strings.Replace(crlfText(buildLefthookYAML()), "\r\n", "\n", 1)
 	repoPath, rep := adoptLefthookFixture(t, "current-mixed-force", mixed, true)
-	if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); got != buildLefthookYAML() {
-		t.Errorf("mixed line endings not replaced:\n%q", got)
-	}
-	if !hasAction(rep, lefthookFile, actionReplace) {
-		t.Errorf("want a replace: %+v", rep.ActionDetails)
-	}
-	if !fileExists(filepath.Join(repoPath, ".git", "hooks", preCommitHook)) {
-		t.Error("the replaced configuration was not activated")
+	assertLefthookKept(t, repoPath, rep, mixed)
+	if !strings.Contains(lefthookDetails(rep), "It holds every generated job and adds none.") {
+		t.Errorf("the reason does not say the jobs match: %q", lefthookDetails(rep))
 	}
 }
 
@@ -274,31 +362,38 @@ func TestAdopt_Boundary_CRLFCurrentLefthookKeptWithoutForceAndInDryRun(t *testin
 	}
 }
 
-// Boundary: extends is recognised as a string, as a list and with a ./ prefix; a different
-// extends target and a configuration missing one generated job keep the --force contract.
-func TestClassifyLefthookConfig_Boundary_ExtendsAndSupersetEdges(t *testing.T) {
+// assertKeptNotCanonical fails unless classifyLefthookConfig keeps body as a configuration that
+// does not extend the canonical policy, with a reason holding want.
+func assertKeptNotCanonical(t *testing.T, body, want string) {
+	t.Helper()
+	got := classifyLefthookConfig([]byte(body), lefthookJobLanguages)
+	if got.canonical || got.prior || !strings.Contains(got.reason, want) {
+		t.Errorf("want kept with %q, got %+v\n%s", want, got, body)
+	}
+}
+
+// Boundary: extends is recognised as a string, as a list and with a ./ prefix. A different
+// extends target, a configuration missing one generated job and one that does not parse are
+// kept, each reason saying why; a long job list is counted and truncated.
+func TestClassifyLefthookConfig_Boundary_ExtendsAndJobDeltaEdges(t *testing.T) {
 	current := buildLefthookYAML()
 	for _, body := range []string{
 		"extends: .config/lefthook/praetor.yml\n",
 		"extends:\n  - other.yml\n  - ./.config/lefthook/praetor.yml\n",
 	} {
-		if got := classifyLefthookConfig([]byte(body), current); !got.canonical || got.reason == "" {
+		if got := classifyLefthookConfig([]byte(body), lefthookJobLanguages); !got.canonical || got.reason == "" {
 			t.Errorf("extends not recognised in %q: %+v", body, got)
 		}
 	}
+	assertKeptNotCanonical(t, "extends:\n  - .config/lefthook/other.yml\n", "It lacks 12 generated jobs")
 	missingOne := strings.Replace(current, "    gate:\n", "    gate-renamed:\n", 1) + "extra:\n  commands:\n    x:\n      run: 'true'\n"
-	for _, body := range []string{"extends:\n  - .config/lefthook/other.yml\n", missingOne, "not: [valid yaml\n"} {
-		if got := classifyLefthookConfig([]byte(body), current); got != (lefthookIdentity{}) {
-			t.Errorf("%q wrongly protected or migrated: %+v", body, got)
-		}
-	}
+	assertKeptNotCanonical(t, missingOne, "It lacks 1 generated jobs (pre-push/commands/gate) and adds 2 (extra/commands/x, pre-push/commands/gate-renamed).")
+	assertKeptNotCanonical(t, "not: [valid yaml\n", "is not a YAML mapping lefthook can read")
 	many := current
 	for _, name := range []string{"a", "b", "c", "d", "e", "f", "g"} {
 		many += "hook-" + name + ":\n  commands:\n    job:\n      run: 'true'\n"
 	}
-	if reason := classifyLefthookConfig([]byte(many), current).reason; !strings.Contains(reason, "plus 7 more") || !strings.Contains(reason, "hook-e/commands/job and 2 more)") {
-		t.Errorf("a long superset is not counted and truncated: %q", reason)
-	}
+	assertKeptNotCanonical(t, many, "adds 7 (hook-a/commands/job, hook-b/commands/job, hook-c/commands/job, hook-d/commands/job, hook-e/commands/job and 2 more).")
 }
 
 // jobsListRendering rewrites the generated rendering's commands maps as lefthook jobs lists, in
@@ -344,68 +439,46 @@ func jobsListRendering(t *testing.T, extra ...map[string]any) string {
 	return string(data)
 }
 
-// Positive: a configuration written in lefthook's jobs-list syntax that holds every generated
-// job plus more is protected like the commands-map form, and a remotes entry whose configs
+// Positive: a configuration written in lefthook's jobs-list syntax is compared job for job like
+// the commands-map form, so only the job it adds is named, and a remotes entry whose configs
 // name the canonical policy is recognised like extends.
 func TestClassifyLefthookConfig_Positive_JobsListSupersetAndRemotes(t *testing.T) {
-	current := buildLefthookYAML()
 	superset := jobsListRendering(t, map[string]any{"name": "lint-docs", "run": "make docs-lint"})
-	got := classifyLefthookConfig([]byte(superset), current)
-	if got.canonical || !strings.Contains(got.reason, "plus 1 more (pre-commit/commands/lint-docs)") {
-		t.Fatalf("jobs-list superset not protected: %+v\n%s", got, superset)
-	}
+	assertKeptNotCanonical(t, superset, "It holds every generated job and adds 1 (pre-commit/commands/lint-docs).")
 	remote := "remotes:\n  - git_url: https://github.com/cordanaLLM/praetor\n    ref: v1.0.0\n    configs:\n      - ./.config/lefthook/praetor.yml\n"
-	if got := classifyLefthookConfig([]byte(remote), current); !got.canonical || !strings.Contains(got.reason, canonicalLefthookPolicy) {
-		t.Fatalf("remotes entry naming the canonical policy not recognised: %+v", got)
-	}
-	if !lefthookExtendsCanonical([]byte(remote)) || !lefthookExtendsCanonical([]byte(canonicalRootLefthook)) {
-		t.Fatal("lefthookExtendsCanonical missed extends or remotes")
+	for _, body := range []string{remote, canonicalRootLefthook} {
+		if got := classifyLefthookConfig([]byte(body), lefthookJobLanguages); !got.canonical || !strings.Contains(got.reason, canonicalLefthookPolicy) {
+			t.Fatalf("configuration reaching the canonical policy not recognised: %+v\n%s", got, body)
+		}
 	}
 }
 
-// Negative: the jobs-list form of exactly the generated jobs adds nothing to protect, and a
-// remote naming another configuration, or remotes that are not a list, are not the canonical
-// policy; both keep the --force contract.
+// Negative: the jobs-list form of exactly the generated jobs is no Praetor rendering and is kept
+// with nothing missing or added, and a remote naming another configuration, or remotes that are
+// not a list, are not the canonical policy.
 func TestClassifyLefthookConfig_Negative_JobsListEquivalentAndOtherRemotes(t *testing.T) {
-	current := buildLefthookYAML()
+	assertKeptNotCanonical(t, jobsListRendering(t), "It holds every generated job and adds none.")
 	for _, body := range []string{
-		jobsListRendering(t),
 		"remotes:\n  - git_url: https://example.invalid/hooks\n    configs:\n      - lefthook.yml\n",
 		"remotes:\n  git_url: https://example.invalid/hooks\n  configs: [.config/lefthook/praetor.yml]\n",
 	} {
-		if got := classifyLefthookConfig([]byte(body), current); got != (lefthookIdentity{}) {
-			t.Errorf("wrongly protected: %+v\n%s", got, body)
-		}
-	}
-	if lefthookExtendsCanonical(nil) || lefthookExtendsCanonical([]byte("not: [valid yaml\n")) {
-		t.Error("an absent or unparsable lefthook.yml read as extending the canonical policy")
+		assertKeptNotCanonical(t, body, "It lacks 12 generated jobs")
 	}
 }
 
-// Boundary: a user extension of the rendering without checkpoint jobs stays protected once the
-// checkpoint lifecycle is ready and the current rendering carries those jobs, and only the
-// user's job is named. Jobs-list entries are named like lefthook names them: script, name, run
-// line, then position; a group is its own kind.
-func TestClassifyLefthookConfig_Boundary_CheckpointOptionalAndListNames(t *testing.T) {
-	extended := buildLefthookYAML() + "commit-msg:\n  commands:\n    conventional:\n      run: ./scripts/check-msg {1}\n"
-	got := classifyLefthookConfig([]byte(extended), buildLefthookYAMLFor(true))
-	if !strings.Contains(got.reason, "plus 1 more (commit-msg/commands/conventional)") {
-		t.Fatalf("extension lost its protection once checkpoint jobs were generated: %+v", got)
+// Boundary: the checkpoint jobs are optional both ways. A user extension of the rendering
+// without them names only the user's job, and the rendering's checkpoint jobs never count as
+// added; the jobs compared are the ones for the repository's languages.
+func TestClassifyLefthookConfig_Boundary_CheckpointOptionalAndLanguageJobs(t *testing.T) {
+	extension := "commit-msg:\n  commands:\n    conventional:\n      run: ./scripts/check-msg {1}\n"
+	for _, checkpoint := range []bool{false, true} {
+		extended := buildLefthookYAMLFor(lefthookJobLanguages, checkpoint) + extension
+		assertKeptNotCanonical(t, extended, "It holds every generated job and adds 1 (commit-msg/commands/conventional).")
 	}
-	cases := []struct {
-		job  map[string]any
-		want string
-	}{
-		{map[string]any{"name": "fmt", "script": "fmt.sh"}, "scripts/fmt.sh"},
-		{map[string]any{"name": "fmt", "run": "gofmt -l ."}, "commands/fmt"},
-		{map[string]any{"run": "gofmt -l ."}, "commands/gofmt -l ."},
-		{map[string]any{"name": "checks", "group": map[string]any{"jobs": []any{}}}, "jobs/checks"},
-		{map[string]any{}, "jobs/[3]"},
-		{nil, "jobs/[3]"},
-	}
-	for _, tc := range cases {
-		if got := lefthookListJob(tc.job, 3); got != tc.want {
-			t.Errorf("lefthookListJob(%v) = %q, want %q", tc.job, got, tc.want)
-		}
+	goOnly := buildLefthookYAMLFor(hisscatalog.LanguageGo, false) + extension
+	got := classifyLefthookConfig([]byte(goOnly), hisscatalog.LanguageRust)
+	if !strings.Contains(got.reason, "It lacks 2 generated jobs (pre-commit/commands/clippy, pre-commit/commands/rustfmt) and adds 4 "+
+		"(commit-msg/commands/conventional, pre-commit/commands/gofmt, pre-commit/commands/govet, pre-push/commands/security).") {
+		t.Errorf("a Go extension in a Cargo repository names the wrong jobs: %+v", got)
 	}
 }

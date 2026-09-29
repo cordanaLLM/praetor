@@ -71,7 +71,7 @@ func TestAdoptCheckpointBundleAddsJobsAndLocalPolicy(t *testing.T) {
 			t.Fatalf("missing installed checkpoint file %s: %v", name, err)
 		}
 	}
-	yaml := buildLefthookYAMLFor(ready)
+	yaml := buildLefthookYAMLFor(lefthookJobLanguages, ready)
 	if !strings.Contains(yaml, "agent-checkpoint-tool:") || !strings.Contains(yaml, "agent-checkpoint-stop:") {
 		t.Fatal("complete bundle did not enable both lifecycle jobs")
 	}
@@ -90,7 +90,7 @@ func TestAdoptCheckpointBundleMissingSourceFailsClosedWithoutJobs(t *testing.T) 
 	if _, statErr := os.Stat(filepath.Join(session.repoPath, filepath.FromSlash(checkpointScript))); !os.IsNotExist(statErr) {
 		t.Fatalf("partial checkpoint script was installed: %v", statErr)
 	}
-	if strings.Contains(buildLefthookYAMLFor(ready), "agent-checkpoint-tool:") {
+	if strings.Contains(buildLefthookYAMLFor(lefthookJobLanguages, ready), "agent-checkpoint-tool:") {
 		t.Fatal("incomplete source enabled checkpoint job")
 	}
 }
@@ -110,7 +110,7 @@ func TestAdoptCheckpointBundlePreservesNonDefaultPolicy(t *testing.T) {
 	if err != nil || !ready {
 		t.Fatalf("non-default policy disabled lifecycle: ready=%v err=%v", ready, err)
 	}
-	if !strings.Contains(buildLefthookYAMLFor(ready), "agent-checkpoint-stop:") || !strings.Contains(mustRead(t, filepath.Join(session.repoPath, filepath.FromSlash(checkpointPolicy))), `"commit_after_minutes":7`) {
+	if !strings.Contains(buildLefthookYAMLFor(lefthookJobLanguages, ready), "agent-checkpoint-stop:") || !strings.Contains(mustRead(t, filepath.Join(session.repoPath, filepath.FromSlash(checkpointPolicy))), `"commit_after_minutes":7`) {
 		t.Fatal("existing policy was not preserved while enabling jobs")
 	}
 }
@@ -197,7 +197,7 @@ func TestAdopt_Boundary_ForceKeepsDriftedCheckpointScriptLifecycleUnavailable(t 
 	if fileExists(filepath.Join(repoPath, filepath.FromSlash(checkpointCommon))) {
 		t.Error("common.py was installed beside a kept checkpoint.py")
 	}
-	if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); got != buildLefthookYAMLFor(false) {
+	if got := mustRead(t, filepath.Join(repoPath, lefthookFile)); got != buildLefthookYAMLFor(lefthookJobLanguages, false) {
 		t.Error("lefthook.yml carries checkpoint jobs while the lifecycle is unavailable")
 	}
 }

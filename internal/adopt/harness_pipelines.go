@@ -91,27 +91,23 @@ func lefthookRunnable(ctx context.Context) bool {
 
 // plannedLefthookOwned predicts whether reconcileGitHooks leaves praetor's rendering in
 // lefthook.yml: it writes an absent file, migrates an earlier rendering, keeps a current one,
-// and replaces any other only under --force. A configuration it never replaces (one that
-// extends the canonical policy, or defines jobs beyond the generated ones) is not praetor's.
-// The job comparison uses the rendering without checkpoint jobs, so a configuration that
-// carries them counts as praetor's only when it is one of praetor's renderings: when the
-// prediction cannot tell, the harness under-claims rather than credit a gate the repository
+// and rewrites a line-ending checkout of a current one only under --force. Every other
+// configuration is kept, --force included (classifyLefthookConfig), and is not praetor's. When
+// the prediction cannot tell, the harness under-claims rather than credit a gate the repository
 // may not get. TestGeneratedPipelinesPredictGitHooks replays each case against the step.
 func (s *adoptSession) plannedLefthookOwned() (bool, error) {
-	full, err := repoFile(s.repoPath, lefthookFile)
+	existing, exists, err := s.readExistingLefthook()
 	if err != nil {
 		return false, err
 	}
-	if !fileExists(full) {
+	if !exists {
 		return true, nil
 	}
-	existing, err := readRepoFile(full)
-	if err != nil {
-		return false, err
-	}
-	identity := classifyLefthookConfig(existing, buildLefthookYAMLFor(false))
+	languages := s.lefthookLanguages()
+	identity := classifyLefthookConfig(existing, languages)
 	if identity.reason != "" {
 		return false, nil
 	}
-	return s.opts.Force || identity.prior || isCurrentLefthookConfig(existing), nil
+	match := matchCurrentLefthook(existing, languages)
+	return identity.prior || match.exact || (match.found && s.opts.Force), nil
 }
