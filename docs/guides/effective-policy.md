@@ -372,7 +372,7 @@ rules exclude it. An excluded file is still written, so a local audit works, but
 adoption reports an error for it: git will not commit the file, and a clean
 checkout or CI run then audits without its pinned catalog. A kernel-style tree
 that ignores a bare `.config` is the usual cause; there the `git-ignore` step
-re-includes the directory with `!.config/` in the managed block, and a declined
+re-includes the root directory with `!/.config/` in the managed block, and a declined
 step gets the same rule proposed in the error. When git cannot answer (not
 installed, not a work tree) adoption states the skipped check as a warning
 ([files the repository ignores](../adoption.md#what-adoption-reads-before-it-writes)).
