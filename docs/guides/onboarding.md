@@ -18,7 +18,7 @@ Execute the onboarding pipeline in your repository root:
 # 1. Initialize configuration with declared profiles and compile the agent files from AGENTS.md
 praetorctl init --profile framework --facets security:high,api:public-contract
 
-# 2. Recompile the agent files and add persona copies (rerun after every AGENTS.md edit)
+# 2. Recompile the agent files and persona copies (rerun after every AGENTS.md edit)
 praetorctl compile-context
 
 # 3. Snapshot legacy technical debt infractions to prevent CI failure
@@ -69,8 +69,8 @@ activation. Those stages need their own selected checks and execution evidence.
 
 | Step | Action | Command | Expected Output |
 | :--- | :--- | :--- | :--- |
-| **1. Scaffolding** | Create declarative configuration and compile agent files | `praetorctl init` | `.standards.yaml`, `.standards.lock` and a zero-debt `.standards-baseline.json` created; the text register spliced into `AGENTS.md`; the six vendor files `CLAUDE.md`, `.cursor/rules/hiss-invariants.mdc`, `.github/copilot-instructions.md`, `.windsurfrules`, `.gemini/GEMINI.md` and `.codex/rules.md` compiled (`initAgentContext` in `cmd/standardsctl/init.go`). |
-| **2. Context Recompilation** | Recompile vendor files and add persona copies | `praetorctl compile-context` | The vendor files rewritten from `AGENTS.md` (all six unless `agent_clients` in `.standards.yaml` selects fewer); each persona in `.agents/agents` copied to `.claude/agents`, `.github/agents`, `.gemini/agents` and `.codex/agents`. `praetorctl compile-context --verify` checks the same files and writes nothing. |
+| **1. Scaffolding** | Create declarative configuration and compile agent files | `praetorctl init` | `.standards.yaml`, `.standards.lock` and a zero-debt `.standards-baseline.json` created. The agent files are then written the way step 2 writes them (`initAgentContext` in `cmd/standardsctl/init.go`, `adopt.CompileAgentContext`): in a Git work tree the Praetor private-artifact block is merged into `.gitignore` unless Git already ignores `.workingdir/evidence/`; the text register is spliced into `AGENTS.md`; the six vendor files `CLAUDE.md`, `.cursor/rules/hiss-invariants.mdc`, `.github/copilot-instructions.md`, `.windsurfrules`, `.gemini/GEMINI.md` and `.codex/rules.md` and the persona copies are compiled. An `AGENTS.md` the caveman lint rejects fails init after the files are written; fix it and run step 2 (`cmd/standardsctl/init_evidence_test.go`). |
+| **2. Context Recompilation** | Recompile vendor files and persona copies | `praetorctl compile-context` | The vendor files rewritten from `AGENTS.md` (all six unless `agent_clients` in `.standards.yaml` selects fewer); each persona in `.agents/agents` copied to `.claude/agents`, `.github/agents`, `.gemini/agents` and `.codex/agents`. `praetorctl compile-context --verify` checks the same files and writes nothing. |
 | **3. Brownfield Baselining** | Snapshot legacy debt | `praetorctl baseline --record --allow-increase --reason "<why>"` | `.standards-baseline.json` populated with existing debt. |
 | **4. Devcontainer Setup** | Prepare a portable bootstrap | `praetorctl devcontainer generate --source-root /path/to/reviewed/praetor` | JSON and exact source companions prepared; build and startup remain separate checks. |
 | **5. Audit Verification** | Verify configured governance and debt-ratchet gates | `praetorctl audit` | Every executed gate reports pass; skipped or unsupported coverage remains explicit. |
