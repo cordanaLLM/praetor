@@ -15,13 +15,15 @@ import (
 // still line matchers rather than parsers, which bounds what they can claim, but they can no
 // longer be defeated by whitespace alone.
 var (
-	nativeUnboundedLoop = regexp.MustCompile(`\bwhile\s*\(\s*(?:1|true)\s*\)|\bfor\s*\(\s*;\s*;\s*\)`)
-	rustUnboundedLoop   = regexp.MustCompile(`(?:^|[^\w])loop\s*\{|(?:^|[^\w])while\s+true\s*\{`)
-	rustUnwrapCall      = regexp.MustCompile(`\.\s*unwrap\s*\(\s*\)`)
-	rustExpectCall      = regexp.MustCompile(`\.\s*expect\s*\(`)
-	rustUnsafeBlock     = regexp.MustCompile(`(?:^|[^\w])unsafe\s*\{`)
-	pythonWhileTrue     = regexp.MustCompile(`^\s*while\s+True\s*:`)
-	pythonBareExcept    = regexp.MustCompile(`^\s*except\s*:`)
+	// cFamilyUnboundedLoop is the unbounded loop shape shared by C, C++ and JavaScript, whose
+	// while and for statements have the same syntax, so both scanners read one pattern.
+	cFamilyUnboundedLoop = regexp.MustCompile(`\bwhile\s*\(\s*(?:1|true)\s*\)|\bfor\s*\(\s*;\s*;\s*\)`)
+	rustUnboundedLoop    = regexp.MustCompile(`(?:^|[^\w])loop\s*\{|(?:^|[^\w])while\s+true\s*\{`)
+	rustUnwrapCall       = regexp.MustCompile(`\.\s*unwrap\s*\(\s*\)`)
+	rustExpectCall       = regexp.MustCompile(`\.\s*expect\s*\(`)
+	rustUnsafeBlock      = regexp.MustCompile(`(?:^|[^\w])unsafe\s*\{`)
+	pythonWhileTrue      = regexp.MustCompile(`^\s*while\s+True\s*:`)
+	pythonBareExcept     = regexp.MustCompile(`^\s*except\s*:`)
 
 	// rustFnHeader is the Rust function-header grammar, matched against a line with literals
 	// stripped: an optional visibility (pub, pub(crate), pub(super), pub(in path)), any run of
@@ -154,17 +156,37 @@ func (t *braceTracker) finish(endLine int) {
 	}
 }
 
-// literalSyntax describes how a language delimits strings and line comments.
+// literalSyntax describes how a language delimits strings and comments.
 type literalSyntax struct {
-	// apostropheIsString treats '...' as a string (Python) rather than a character
+	// apostropheIsString treats '...' as a string (Python, JavaScript) rather than a character
 	// literal (C, Rust), where a lone apostrophe such as the lifetime 'a is plain text.
 	apostropheIsString bool
 	lineComment        string
+	// tripleQuotes opens Python's """ and ''' strings, which span lines.
+	tripleQuotes bool
+	// blockComments opens a C-style /* */ comment, which spans lines.
+	blockComments bool
+	// templates opens a JavaScript `...` template literal, which spans lines and carries code
+	// in its ${...} substitutions. That code is kept, so a call written there is still seen.
+	templates bool
+	// regexLiterals skips a JavaScript /.../ regular expression literal where an expression may
+	// start, so a quote or brace inside the pattern is never read as code.
+	regexLiterals bool
 }
 
 var (
-	cLikeSyntax  = literalSyntax{apostropheIsString: false, lineComment: "//"}
-	pythonSyntax = literalSyntax{apostropheIsString: true, lineComment: "#"}
+	cLikeSyntax  = literalSyntax{lineComment: "//", blockComments: true}
+	pythonSyntax = literalSyntax{apostropheIsString: true, lineComment: "#", tripleQuotes: true}
+	scriptSyntax = literalSyntax{apostropheIsString: true, lineComment: "//", blockComments: true,
+		templates: true, regexLiterals: true}
+)
+
+const (
+	// templateFence is the delimiter of a JavaScript template literal.
+	templateFence = "`"
+	// maxTemplateNesting bounds the stack of open ${...} substitutions (HISS-02). A deeper
+	// substitution is read as template text.
+	maxTemplateNesting = 32
 )
 
 // blockCommentClose ends a C-style block comment, the one fence that honours no escapes.
@@ -181,6 +203,15 @@ type literalStripper struct {
 	syn literalSyntax
 	// fence is the delimiter that closes the span currently open, or empty outside one.
 	fence string
+	// substitutions holds, per open ${...} of a template literal, the depth of the braces the
+	// substitution's own code opened, so its closing brace is told apart from theirs.
+	substitutions []int
+}
+
+// open reports whether a multi-line span is still open: a comment, a string or a template
+// literal, including one whose ${...} substitution is being read as code.
+func (s *literalStripper) open() bool {
+	return s.fence != "" || len(s.substitutions) > 0
 }
 
 // strip returns line with the contents of literals and comments removed, updating the
@@ -210,6 +241,9 @@ func (s *literalStripper) strip(line string) string {
 // ends with this line unless the line ends in a backslash too, so a string the stripper
 // misreads can never hold the rest of the file.
 func (s *literalStripper) consumeFence(line string, i int) int {
+	if s.fence == templateFence {
+		return s.consumeTemplate(line, i)
+	}
 	if s.fence == blockCommentClose {
 		if idx := strings.Index(line[i:], s.fence); idx >= 0 {
 			s.fence = ""
@@ -228,25 +262,60 @@ func (s *literalStripper) consumeFence(line string, i int) int {
 // Python triple quotes are checked before ordinary quotes so a docstring is never read as an
 // empty string followed by code.
 func (s *literalStripper) openFence(line string, i int) (int, bool) {
-	if s.syn.apostropheIsString {
+	if s.syn.tripleQuotes {
 		for _, fence := range []string{`"""`, `'''`} {
 			if strings.HasPrefix(line[i:], fence) {
 				s.fence = fence
 				return i + len(fence), true
 			}
 		}
-		return i, false
 	}
-	if strings.HasPrefix(line[i:], "/*") {
+	if s.syn.blockComments && strings.HasPrefix(line[i:], "/*") {
 		s.fence = blockCommentClose
 		return i + 2, true
 	}
+	if s.syn.templates && line[i] == '`' {
+		s.fence = templateFence
+		return i + 1, true
+	}
 	return i, false
+}
+
+// consumeTemplate skips template text from i up to the backtick that closes the literal or the
+// ${ that opens a substitution, honouring backslash escapes. The substitution's code is read by
+// strip as ordinary code until its own closing brace, which copyOne recognises.
+func (s *literalStripper) consumeTemplate(line string, i int) int {
+	for j := i; j < len(line); j++ {
+		switch {
+		case line[j] == '\\':
+			j++
+		case line[j] == '`':
+			s.fence = ""
+			return j + 1
+		case strings.HasPrefix(line[j:], "${") && len(s.substitutions) < maxTemplateNesting:
+			s.fence = ""
+			s.substitutions = append(s.substitutions, 0)
+			return j + 2
+		}
+	}
+	return len(line)
 }
 
 // copyOne copies or skips the token at i, blanking the contents of a single-line literal.
 func (s *literalStripper) copyOne(line string, i int, b *strings.Builder) int {
 	switch c := line[i]; c {
+	case '{', '}':
+		if len(s.substitutions) > 0 {
+			return s.copySubstitutionBrace(c, i, b)
+		}
+		b.WriteByte(c)
+		return i + 1
+	case '/':
+		if end := s.regexLiteralEnd(line, i, b.String()); end > i {
+			return end
+		}
+		b.WriteByte(c)
+		return i + 1
 	case '"', '\'':
 		if c == '\'' && !s.syn.apostropheIsString {
 			if width := charLiteralWidth(line, i); width > 0 {
@@ -264,6 +333,72 @@ func (s *literalStripper) copyOne(line string, i int, b *strings.Builder) int {
 		b.WriteByte(c)
 		return i + 1
 	}
+}
+
+// copySubstitutionBrace handles a brace inside the code of a template literal's ${...}
+// substitution. A brace the substitution's code opened is copied and counted; the brace that
+// closes the substitution itself is dropped and resumes the template text, so the braces a
+// caller counts stay balanced across a template.
+func (s *literalStripper) copySubstitutionBrace(c byte, i int, b *strings.Builder) int {
+	top := len(s.substitutions) - 1
+	switch {
+	case c == '{':
+		s.substitutions[top]++
+	case s.substitutions[top] == 0:
+		s.substitutions = s.substitutions[:top]
+		s.fence = templateFence
+		return i + 1
+	default:
+		s.substitutions[top]--
+	}
+	b.WriteByte(c)
+	return i + 1
+}
+
+// regexKeywords are the keywords after which a slash starts a regular expression literal rather
+// than a division.
+var regexKeywords = []string{"return", "typeof", "case", "do", "else", "in", "of", "new", "delete",
+	"void", "throw", "yield", "await", "instanceof"}
+
+// regexLiteralEnd returns the index just past a regular expression literal starting at i, or i
+// when the slash there is a division or the syntax has no regular expression literals. copied
+// is the code copied from the line so far: a slash opens a literal only where an expression may
+// start, which is after an operator, an opening bracket, a keyword such as return, or at the
+// start of the line. A literal that does not close on its line is a division after all.
+func (s *literalStripper) regexLiteralEnd(line string, i int, copied string) int {
+	if !s.syn.regexLiterals || !regexMayStart(copied) {
+		return i
+	}
+	inClass := false
+	for j := i + 1; j < len(line); j++ {
+		switch c := line[j]; {
+		case c == '\\':
+			j++
+		case c == '[':
+			inClass = true
+		case c == ']':
+			inClass = false
+		case c == '/' && !inClass:
+			end := j + 1
+			for end < len(line) && isIdentByte(line[end]) {
+				end++
+			}
+			return end
+		}
+	}
+	return i
+}
+
+// regexMayStart reports whether an expression may start after copied, the code before a slash.
+func regexMayStart(copied string) bool {
+	prev := strings.TrimRight(copied, " \t")
+	if prev == "" {
+		return true
+	}
+	if strings.IndexByte("(,=:[!&|?{};+-*%<>~^", prev[len(prev)-1]) >= 0 {
+		return true
+	}
+	return slices.Contains(regexKeywords, trailingIdent(prev))
 }
 
 // scanQuoted scans a string body from i for its closing delimiter, honouring backslash
@@ -448,7 +583,7 @@ func scanNativeLines(lines []string, rel string, rep *ScanReport, opts ScanOptio
 // `goto` depends on the function around it under the cleanup-goto exception, so nativeGotos
 // decides it.
 func scanNativeLineInvariants(code, rel string, lineNum int, rep *ScanReport) {
-	if nativeUnboundedLoop.MatchString(code) {
+	if cFamilyUnboundedLoop.MatchString(code) {
 		recordViolation(rep, "HISS-02", rel, lineNum, "", "Legacy unbounded loop in native code")
 	}
 	if hasBannedCall(code, "gets") {

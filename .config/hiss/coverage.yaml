@@ -132,7 +132,7 @@ rules:
           reports a deadline-free context, net.Dialer.Dial or os.ReadFile.
       - language: c
         state: partial
-        mechanism: internal/hiss rules.go nativeUnboundedLoop
+        mechanism: internal/hiss rules.go cFamilyUnboundedLoop
         rationale: >-
           Unbounded loop shapes are reported with arbitrary internal spacing. The I/O-timeout
           half of the axiom has no native check.
