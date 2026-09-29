@@ -15,12 +15,17 @@ The player adds scenario tabs, narration, pause and speed control on top of the 
 JavaScript, and under reduced motion, the page shows the SVG, its caption and the text
 description below it.
 
-After you edit a spec, render the figures again and commit the spec with its three outputs:
+After you add or edit a spec, render the figures and commit the spec with its three outputs.
+Render them before the first site build too: the build fails on a `figure` block whose figure has
+no JSON yet.
 
 ```bash
 node tools/figures/build.mjs build
 node tools/figures/build.mjs check
-node tools/figures/build.mjs sources --config astro.config.mjs --docs src/content/docs
+node tools/figures/build.mjs sources
 ```
+
+`sources` finds `astro.config.mjs` at the repository root and checks every `figure` block on the
+pages under `src/content/docs/`. `make docs-figures` runs `check` and `sources` together.
 
 `tools/figures/README.md` describes the spec format and every check.

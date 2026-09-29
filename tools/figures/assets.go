@@ -92,6 +92,12 @@ var priorDigests = map[string]string{
 	// README.md before it named make docs-figures, the .gitattributes block and the REUSE
 	// override.
 	"043ff416cab0a7536c0816f564e2f44ea0e8daa7d294ef7722d1878b1c0962de": Directory + "/README.md",
+	// build.mjs, checks.mjs and README.md while sources read the MkDocs defaults (mkdocs.yml,
+	// docs/) unless --config and --docs named others, so the managed target and the workflow step
+	// never read a Starlight site's pages.
+	"47beb62eee90e992412312cdccbd0d91f54f090dbb342916efdf1eb08a816ac5": Directory + "/build.mjs",
+	"03d1e126c3d583f264d54a646b1f3532b6a5e989edfbf1911353c9dedb97584b": Directory + "/checks.mjs",
+	"1ee2a92653faea8a36e8e11a788ffa7004bb8b3e8844cb360a113bff5501b66f": Directory + "/README.md",
 }
 
 //go:embed core.mjs checks.mjs build.mjs types.ts third_party/interfig/vendor.json third_party/interfig/VENDOR.md third_party/interfig/upstream/LICENSE third_party/interfig/upstream/src/svg.ts third_party/interfig/upstream/src/geometry.ts third_party/interfig/upstream/src/model.ts dist/loader.js dist/player.js dist/THIRD-PARTY-LICENSES.txt figures.css mkdocs_hook.py astro.mjs serve.mjs README.md

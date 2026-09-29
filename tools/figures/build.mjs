@@ -6,6 +6,7 @@
 //   node tools/figures/build.mjs build      validate every spec, write docs/assets/figures/<slug>.{svg,static.svg,json}
 //   node tools/figures/build.mjs check      validate, render in memory, and compare the bytes with the committed files
 //   node tools/figures/build.mjs sources    check hashes, sizes, markup, spec/JSON pairs, fences, evidence and the README block
+//                                           (the pages of every mkdocs.yml or astro.config.* at the root, unless --config names one)
 //   node tools/figures/build.mjs site       after mkdocs build or astro build: every diagram fence became a diagram that resolves
 //   node tools/figures/build.mjs portable   render figures for READMEs and wiki pages, which run no JavaScript
 //
@@ -25,7 +26,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
-import { CheckError, OUT_DIR, REBUILD, ROOT, SLUG, SPEC_DIR, checkSite, engineHash, portable, readText, siteUrl, sources } from './checks.mjs';
+import { CheckError, OUT_DIR, REBUILD, ROOT, SLUG, SPEC_DIR, checkSite, engineHash, portable, readText, siteUrl, sourceSites, sources } from './checks.mjs';
 import { LIMITS, render, sha256, validate } from './core.mjs';
 
 export { OUT_DIR, REBUILD, ROOT, SPEC_DIR, engineHash };
@@ -143,11 +144,17 @@ function report(errors, success) {
   return errors;
 }
 
+/**
+ * `sources` over the pages of the sites `sourceSites` names: `--config` and `--docs` when given,
+ * else every site configuration at the repository root, so the managed target and the workflow step
+ * read a Starlight site's pages as they read an MkDocs site's. The success line names the pages read.
+ */
 function runSources(root, { values }) {
   const repository = resolve(values.root ?? root);
   if (!hasFigures(repository)) return report([], NO_FIGURES);
+  const read = sourceSites(repository, values.docs, values.config).map((site) => `${site.docs} (${site.config})`);
   const errors = sources(repository, values.docs, values.config, values.readme);
-  return report(errors, 'figure sources, hashes, markup and evidence are consistent.');
+  return report(errors, `figure sources, hashes, markup and evidence are consistent; pages read: ${read.join(', ')}.`);
 }
 
 function runSite(_root, { values }) {
@@ -171,7 +178,7 @@ const COMMANDS = {
   build: { options: {}, run: (root) => runBuild(root) },
   check: { options: {}, run: (root) => runCheck(root) },
   sources: {
-    options: { root: STRING, docs: { ...STRING, default: 'docs' }, config: { ...STRING, default: 'mkdocs.yml' }, readme: { ...STRING, default: 'README.md' } },
+    options: { root: STRING, docs: STRING, config: STRING, readme: { ...STRING, default: 'README.md' } },
     run: runSources,
   },
   site: { options: { config: STRING, docs: STRING, site: STRING, base: STRING }, run: runSite },
