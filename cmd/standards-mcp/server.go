@@ -512,7 +512,7 @@ func (s *Server) createCompileContextTool() (mcp.Tool, error) {
 
 // compileContext verifies or (re)writes the vendor targets, persona projections and plugin
 // copies compiled from source, through the implementation the CLI's compile-context runs
-// (compiler.VerifyCompiledContext, compiler.CompileContextProjections). Both reconcile the text
+// (compiler.VerifyCompiledContext, adopt.CompileAgentContext). Both reconcile the text
 // register block themselves: a verify-only call never writes the source and reports a stale or
 // missing block as a verification failure instead.
 func (s *Server) compileContext(ctx context.Context, source, targetDir string, verifyOnly bool) *mcp.ToolResult {
@@ -536,11 +536,8 @@ func (s *Server) compileContext(ctx context.Context, source, targetDir string, v
 	// rendering, as the CLI's compile-context did from client wrappers (BUG-1004).
 	err = workstation.CheckBuildCurrent(ctx, targetDir, engineBuild())
 	if err == nil {
-		// The same ignore reconciliation the CLI's write runs before it renders the block.
-		err = adopt.ReconcileEvidenceIgnore(ctx, &b, filepath.Dir(source))
-	}
-	if err == nil {
-		err = compiler.CompileContextProjections(ctx, &b, tr, source, targetDir)
+		// The CLI's write: the evidence ignore reconciliation, then every projection and the lint.
+		err = adopt.CompileAgentContext(ctx, &b, tr, source, targetDir)
 	}
 	if err != nil {
 		return mcp.ErrorResult(fmt.Sprintf("Context compilation failed: %v", err))
