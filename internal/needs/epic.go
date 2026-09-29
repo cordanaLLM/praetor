@@ -101,15 +101,14 @@ func epicFromAnalysis(ctx context.Context, repoPath string, analysis *migrationA
 		kubernetes:    (&flavor.InfraK8sFlavor{}).Detect(repoPath),
 		runnerRouting: routing,
 	}
-	return buildEpicStructure(repoPath, analysis.report, migrationPlan, facts)
+	return buildEpicStructure(analysis.report, migrationPlan, facts)
 }
 
-func buildEpicStructure(repoPath string, repoNeeds *RepoNeeds, plan *MigrationPlan, facts *epicFacts) (*PreMigrationEpic, error) {
-	repoName := repoNeeds.Repository
-	if repoName == "" || repoName == "unknown" {
-		repoName = repositoryDirName(repoPath)
-	}
-	repoName = strings.TrimPrefix(repoName, "github.com/")
+// buildEpicStructure lays out the epic of a scanned row. The row's name is the scan's
+// (nameRepository): a manifest's or the origin remote's, else the directory's, which the
+// checklist then names as a fallback.
+func buildEpicStructure(repoNeeds *RepoNeeds, plan *MigrationPlan, facts *epicFacts) (*PreMigrationEpic, error) {
+	repoName := strings.TrimPrefix(repoNeeds.Repository, "github.com/")
 
 	tasks := createChildTasks(repoName, plan, facts)
 	children, omitted := splitEpicTasks(tasks)
@@ -432,6 +431,9 @@ func activationTask(facts *epicFacts) epicTask {
 func renderEpicChecklistMarkdown(repoName string, repoNeeds *RepoNeeds, plan *MigrationPlan, facts *epicFacts, tasks []epicTask) string {
 	var sb strings.Builder
 	writef(&sb, "# Pre-Migration Epic: %s\n\n", repoName)
+	if note := repositoryFallbackNote(repoNeeds); note != "" {
+		writef(&sb, "- **Repository Name**: %s\n", note)
+	}
 	if plan.Framework == "" {
 		sb.WriteString("- **Target Framework**: not configured\n")
 		writef(&sb, "- **Mapping Availability**: %s\n", MappingAvailability(repoNeeds.Readiness))

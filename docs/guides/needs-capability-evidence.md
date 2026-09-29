@@ -367,20 +367,35 @@ Inside a repository, every other directory holding an analyzer manifest is a
 **sub-project**. Each is analysed and merged into the repository's row, and the
 report lists them ("Nested sub-projects scanned into this report"). When the
 root itself holds no manifest, as in a checkout whose only project is
-`core/meson.build`, the row is named after the root directory and keeps the
-root's declared capabilities. A package several sub-projects demand is one
+`core/meson.build`, the row is named as the repository (steps 2 to 4 below), not
+after the sub-project, and keeps the root's declared capabilities. A package several sub-projects demand is one
 demand; PyPI names compare after PEP 503 normalisation, so `typing-extensions`
 and `typing_extensions` are one package (`TestDemandIdentityNormalisesPyPINames`).
 
-A row is named after its manifest where the manifest names the project: the Go
-module path, or the `package.json` name. Otherwise it is named after the root
-directory, resolved to an absolute path first, so `--path .`, `--path ./` and an
-absolute path give the same name in scan output, `.needs.yaml` and the
-pre-migration epic (`TestRepositoryNameFromRelativePath_3D`,
-`TestRepositoryNamePrecedenceAndEpic_3D` in
-`internal/needs/repository_name_test.go`). The epic also treats a manifest that
-names its project `unknown` as unnamed and titles the epic after the root
-directory, through the same helper (`TestEpicRepositoryFallbackNamesDirectory_3D`).
+A row is named in this order (`nameRepository` in `internal/needs/discovery.go`):
+
+1. the project's own manifest, where it names the project: the Go module path, or
+   the `package.json` name. A manifest naming its project `unknown` names nothing;
+2. `repository.name` in the root's `.standards.yaml`;
+3. the origin remote of a checkout (`config.ResolveRepositoryName`, the resolver
+   `needs epic --publish` takes its forge coordinates from). A directory that is no
+   checkout skips this step: git would answer with the remote of a checkout around it;
+4. the root directory, resolved to an absolute path first, so `--path .`,
+   `--path ./` and an absolute path give the same name.
+
+The name is the same in scan output, `.needs.yaml` and every pre-migration epic
+title. Steps 2 and 3 keep it the same in every clone, linked worktree and CI
+workspace, so `needs scan --check` passes for one commit under any directory name
+(`TestRepositoryNameFollowsIdentity_Positive`, `TestRepositoryNameIdentity_Boundary`
+in `internal/needs/repository_name_test.go`). A directory name changes with the
+checkout, so a row named by step 4 says so and why: `needs scan`, `needs scan
+--check`, `needs report` and `standards_needs_report` print a `Repository name:` line,
+the epic checklist a `**Repository Name**` line, and JSON output carries
+`repository_fallback`; `.needs.yaml` never does. Step 4 also names a row whose
+`.standards.yaml` does not load, whose origin remote git cannot read, or whose
+remote gives an invalid name such as the `.` of a URL ending in `/.`
+(`TestRepositoryNameFallbackIsNamed_Negative`,
+`TestNeedsScanNamesRepositoryFallback_3D` in `cmd/standardsctl/needs_check_test.go`).
 
 A Cargo dependency declared with `path`, in an inline table, a
 `[dependencies.<crate>]` sub-table or a dotted key (`core.path = "../core"`), is a

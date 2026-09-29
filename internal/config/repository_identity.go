@@ -21,6 +21,11 @@ var ErrOwnerUnknown = errors.New("owner unknown: pass --owner, set repository.ow
 // remote names the repository.
 var ErrRepositoryNameUnknown = errors.New("repository name unknown: set repository.name in .standards.yaml or add an origin remote naming <owner>/<repo>")
 
+// ErrRepositoryNameInvalid is returned by ResolveRepositoryName and ManifestRepositoryName
+// when the name repository.name or the origin remote gives is one GitHub would reject, such
+// as the "." of an origin remote ending in "/.".
+var ErrRepositoryNameInvalid = errors.New("repository name invalid: repository.name in .standards.yaml or the origin remote names no valid repository")
+
 // ResolveRepositoryIdentity resolves the forge owner and repository name of the checkout at
 // repo (ADR-0014 §3). The owner comes from explicitOwner (a --owner flag), then the
 // manifest's repository.owner, then the origin remote (util.ResolveRemoteIdentity), then
@@ -34,11 +39,8 @@ var ErrRepositoryNameUnknown = errors.New("repository name unknown: set reposito
 // naming the repository is ErrRepositoryNameUnknown, and a resolved pair GitHub would reject
 // is an error naming it.
 func ResolveRepositoryIdentity(ctx context.Context, repo, explicitOwner, defaultOwner string) (owner, name string, err error) {
-	if ctx == nil {
-		return "", "", errors.New("repository identity resolution requires a context")
-	}
-	if !util.DirExists(repo) {
-		return "", "", fmt.Errorf("%q is not a repository directory: forge coordinates are resolved from a checkout, not from a repository name", repo)
+	if err := requireIdentityInputs(ctx, repo); err != nil {
+		return "", "", err
 	}
 	owner, name, err = manifestIdentity(repo)
 	if err != nil {
@@ -56,6 +58,62 @@ func ResolveRepositoryIdentity(ctx context.Context, repo, explicitOwner, default
 		owner = defaultOwner
 	}
 	return validatedIdentity(owner, name)
+}
+
+// ResolveRepositoryName resolves the name of the repository checked out at repo the way
+// ResolveRepositoryIdentity resolves it, without an owner: the manifest's repository.name,
+// then the origin remote. A command that only names the repository, such as a needs scan or
+// a pre-migration epic, names it through this resolver, so it gives the name the forge
+// coordinates of the same checkout carry, whatever directory the checkout sits in.
+//
+// Neither source naming the repository is ErrRepositoryNameUnknown and a name GitHub would
+// reject is ErrRepositoryNameInvalid. A manifest that cannot be read or parsed and a remote
+// read git did not answer are errors, as in ResolveRepositoryIdentity.
+func ResolveRepositoryName(ctx context.Context, repo string) (string, error) {
+	if err := requireIdentityInputs(ctx, repo); err != nil {
+		return "", err
+	}
+	_, name, err := manifestIdentity(repo)
+	if err != nil {
+		return "", err
+	}
+	if name == "" {
+		if _, name, err = fillFromRemote(ctx, repo, "", ""); err != nil {
+			return "", err
+		}
+	}
+	return validatedName(name)
+}
+
+// ManifestRepositoryName is the first step of ResolveRepositoryName alone: the manifest's
+// repository.name. A directory that is no checkout has no origin remote of its own (git
+// would read the remote of a checkout above it), so it is named through this step only. The
+// errors are ResolveRepositoryName's.
+func ManifestRepositoryName(repo string) (string, error) {
+	if !util.DirExists(repo) {
+		return "", notRepositoryDirError(repo)
+	}
+	_, name, err := manifestIdentity(repo)
+	if err != nil {
+		return "", err
+	}
+	return validatedName(name)
+}
+
+// requireIdentityInputs refuses a nil context and a repo that is not a directory.
+func requireIdentityInputs(ctx context.Context, repo string) error {
+	if ctx == nil {
+		return errors.New("repository identity resolution requires a context")
+	}
+	if !util.DirExists(repo) {
+		return notRepositoryDirError(repo)
+	}
+	return nil
+}
+
+// notRepositoryDirError refuses to resolve identity from anything but a directory.
+func notRepositoryDirError(repo string) error {
+	return fmt.Errorf("%q is not a repository directory: forge coordinates are resolved from a checkout, not from a repository name", repo)
 }
 
 // manifestIdentity reads repository.owner and repository.name from .standards.yaml. A
@@ -102,4 +160,15 @@ func validatedIdentity(owner, name string) (string, string, error) {
 		return "", "", fmt.Errorf("resolve repository identity: %w", err)
 	}
 	return owner, name, nil
+}
+
+// validatedName returns name when it names a repository GitHub would accept.
+func validatedName(name string) (string, error) {
+	if name == "" {
+		return "", ErrRepositoryNameUnknown
+	}
+	if err := util.ValidateGitHubRepositoryName(name); err != nil {
+		return "", fmt.Errorf("%w: %w", ErrRepositoryNameInvalid, err)
+	}
+	return name, nil
 }

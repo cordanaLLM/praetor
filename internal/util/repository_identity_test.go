@@ -56,6 +56,25 @@ func TestValidateGitHubOwner_3D(t *testing.T) {
 	}
 }
 
+// ValidateGitHubRepositoryName is the name half of ValidateGitHubRepositoryIdentity, which
+// names a repository without an owner (config.ResolveRepositoryName).
+func TestValidateGitHubRepositoryName_3D(t *testing.T) {
+	// Positive and boundary: one character, a leading dot and the 100-character limit.
+	for _, name := range []string{"praetor", "r", ".github", "repo.with_under-score", strings.Repeat("r", maxGitHubRepositoryBytes)} {
+		if err := ValidateGitHubRepositoryName(name); err != nil {
+			t.Errorf("valid name %q: %v", name, err)
+		}
+	}
+	// Negative: empty, the two dot names an origin ending in "/." or "/.." yields, a slash,
+	// whitespace and one byte over the limit.
+	for _, name := range []string{"", ".", "..", "repo/name", "repo name", "repo\nname",
+		strings.Repeat("r", maxGitHubRepositoryBytes+1)} {
+		if err := ValidateGitHubRepositoryName(name); err == nil {
+			t.Errorf("invalid name %q accepted", name)
+		}
+	}
+}
+
 func TestSplitGitHubRepository_Positive(t *testing.T) {
 	owner, repository, err := SplitGitHubRepository("cordanaLLM/praetor")
 	if err != nil || owner != "cordanaLLM" || repository != "praetor" {

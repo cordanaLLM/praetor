@@ -38,14 +38,16 @@ func (a *RustAnalyzer) Analyze(ctx context.Context, repoPath string, target Targ
 		return nil, ctx.Err()
 	}
 
+	repoName, fallback := projectRepositoryName("", repoPath)
 	repoNeeds := &RepoNeeds{
-		Version:      1,
-		Repository:   repositoryDirName(repoPath),
-		Language:     "rust",
-		Languages:    []string{"rust"},
-		Capabilities: CapabilityDeclaration{Required: make([]CapabilityKey, 0), Optional: make([]CapabilityKey, 0)},
-		Dependencies: make([]DependencyDemand, 0),
-		UpdatedAt:    time.Now().UTC(),
+		Version:            1,
+		Repository:         repoName,
+		RepositoryFallback: fallback,
+		Language:           "rust",
+		Languages:          []string{"rust"},
+		Capabilities:       CapabilityDeclaration{Required: make([]CapabilityKey, 0), Optional: make([]CapabilityKey, 0)},
+		Dependencies:       make([]DependencyDemand, 0),
+		UpdatedAt:          time.Now().UTC(),
 	}
 
 	deps, err := readCargoDependencies(ctx, repoPath)

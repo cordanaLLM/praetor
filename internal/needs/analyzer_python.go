@@ -41,15 +41,16 @@ func (a *PythonAnalyzer) Analyze(ctx context.Context, repoPath string, target Ta
 		return nil, ctx.Err()
 	}
 
-	repoName := repositoryDirName(repoPath)
+	repoName, fallback := projectRepositoryName("", repoPath)
 	repoNeeds := &RepoNeeds{
-		Version:      1,
-		Repository:   repoName,
-		Language:     "python",
-		Languages:    []string{"python"},
-		Capabilities: CapabilityDeclaration{Required: make([]CapabilityKey, 0), Optional: make([]CapabilityKey, 0)},
-		Dependencies: make([]DependencyDemand, 0),
-		UpdatedAt:    time.Now().UTC(),
+		Version:            1,
+		Repository:         repoName,
+		RepositoryFallback: fallback,
+		Language:           "python",
+		Languages:          []string{"python"},
+		Capabilities:       CapabilityDeclaration{Required: make([]CapabilityKey, 0), Optional: make([]CapabilityKey, 0)},
+		Dependencies:       make([]DependencyDemand, 0),
+		UpdatedAt:          time.Now().UTC(),
 	}
 
 	deps, err := parsePythonDependencies(repoPath)

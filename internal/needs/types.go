@@ -101,6 +101,12 @@ type RepoNeeds struct {
 	StandardLibraryImports []DependencyDemand `json:"standard_library_imports,omitempty" yaml:"standard_library_imports,omitempty"`
 	Readiness              ReadinessMetrics   `json:"readiness" yaml:"readiness"`
 	UpdatedAt              time.Time          `json:"updated_at" yaml:"updated_at"`
+	// RepositoryFallback is why Repository is the name of the repository's directory, which
+	// changes with every clone, worktree and CI workspace: neither the scanned project's own
+	// manifest (a go.mod module path, a package.json name), the repository.name of
+	// .standards.yaml nor the origin remote names the repository (nameRepository). It is
+	// empty for a row one of them names, and never written into a .needs.yaml manifest.
+	RepositoryFallback string `json:"repository_fallback,omitempty" yaml:"-"`
 	// Path is the repository root a fleet aggregation scanned this row at. It is a local
 	// path and never written into a .needs.yaml manifest.
 	Path string `json:"path,omitempty" yaml:"-"`

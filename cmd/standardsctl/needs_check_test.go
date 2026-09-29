@@ -56,6 +56,38 @@ func TestNeedsScanCheckRejectsStaleOrMissingManifest(t *testing.T) {
 	}
 }
 
+// needs scan and needs scan --check name the repository after .standards.yaml, and say so
+// when they fall back to the checkout's directory name, whose verdict changes with the
+// directory (#606).
+func TestNeedsScanNamesRepositoryFallback_3D(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "py-checkout")
+	writeFixtureFile(t, repo, ".git/HEAD", "ref: refs/heads/main\n")
+	writeFixtureFile(t, repo, "requirements.txt", "click\n")
+	// Negative: nothing names the repository, so the scan and the check name the fallback.
+	note := "Repository name: `py-checkout` is the repository directory's name"
+	out, err := runNeedsCapture(t, "scan", "--write", "--path="+repo)
+	if err != nil {
+		t.Fatalf("needs scan --write: %v\n%s", err, out)
+	}
+	mustContain(t, out, "=== Framework Needs Scan: py-checkout ===\n"+note)
+	out, err = runNeedsCapture(t, "scan", "--check", "--path="+repo)
+	if err != nil || !strings.Contains(out, note) || !strings.Contains(out, "matches a fresh scan") {
+		t.Fatalf("needs scan --check of a fallback row: %v\n%s", err, out)
+	}
+	// Positive: repository.name names it, and no fallback line is printed.
+	writeFixtureFile(t, repo, ".standards.yaml", "repository:\n  name: nucleus\n")
+	out, err = runNeedsCapture(t, "scan", "--path="+repo)
+	if err != nil || !strings.Contains(out, "=== Framework Needs Scan: nucleus ===\n") || strings.Contains(out, "Repository name:") {
+		t.Fatalf("needs scan of a named repository: %v\n%s", err, out)
+	}
+	// Boundary: the manifest written under the directory name is stale against the name
+	// .standards.yaml now gives.
+	_, err = runNeedsCapture(t, "scan", "--check", "--path="+repo)
+	if err == nil || !strings.Contains(err.Error(), "+ generated:2: repository: nucleus") {
+		t.Fatalf("check after naming the repository: %v", err)
+	}
+}
+
 // Boundary: --write and --check together are refused before anything is scanned or
 // written.
 func TestNeedsScanCheckExcludesWrite(t *testing.T) {

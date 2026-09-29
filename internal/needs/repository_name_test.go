@@ -2,9 +2,15 @@ package needs
 
 import (
 	"context"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 // repositoryNameFixtures writes one repository per analyzer that names a repository after
@@ -150,5 +156,167 @@ func TestEpicRepositoryFallbackNamesDirectory_3D(t *testing.T) {
 	writeRepoFile(t, filepath.Join(named, "go.mod"), "module github.com/acme/unknown\ngo 1.24\n")
 	if got := epicFrom(t, named, ".").RepoName; got != "acme/unknown" {
 		t.Errorf("epic of module github.com/acme/unknown RepoName = %q, want acme/unknown", got)
+	}
+}
+
+// identityCheckout creates a real git checkout at dir holding a Python project, with the
+// given origin remote ("" adds none) and .standards.yaml body ("" writes none), and returns
+// the hermetic git runner used to build it.
+func identityCheckout(t *testing.T, dir, remote, manifest string) func(string, ...string) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("git unavailable: %v", err)
+	}
+	env := testsupport.HermeticGitEnv(t)
+	run := func(in string, args ...string) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "git", append([]string{"-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false"}, args...)...)
+		cmd.Dir, cmd.Env = in, env
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	writeRepoFile(t, filepath.Join(dir, "requirements.txt"), "fastapi>=0.111\n")
+	if manifest != "" {
+		writeRepoFile(t, filepath.Join(dir, ".standards.yaml"), manifest)
+	}
+	run(dir, "init", "-q")
+	if remote != "" {
+		run(dir, "remote", "add", "origin", remote)
+	}
+	return run
+}
+
+// Positive (#606): a non-Go checkout is named after the repository its .standards.yaml or
+// origin remote names, not after its directory, in the scan row, .needs.yaml and every epic
+// title, so `needs scan --check` passes for one commit under two directory names.
+func TestRepositoryNameFollowsIdentity_Positive(t *testing.T) {
+	registry := acmeRegistry(t)
+	parent := t.TempDir()
+	checkout := filepath.Join(parent, "kernel-forge-checkout")
+	identityCheckout(t, checkout, "https://github.com/acme/other.git", "repository:\n  owner: acme\n  name: nucleus\n")
+	row := scanRowWith(t, registry, checkout)
+	if row.Repository != "nucleus" || row.RepositoryFallback != "" || FormatRepositoryFallback(row) != "" {
+		t.Fatalf("row = %q (fallback %q), want nucleus from .standards.yaml", row.Repository, row.RepositoryFallback)
+	}
+	epic, err := GeneratePreMigrationEpic(t.Context(), checkout, acmeSource(""), registry)
+	if err != nil {
+		t.Fatalf("GeneratePreMigrationEpic error = %v", err)
+	}
+	titles := []string{epic.ParentEpic.Title}
+	for _, child := range epic.ChildIssues {
+		titles = append(titles, child.Title)
+	}
+	for _, omitted := range epic.OmittedTasks {
+		titles = append(titles, omitted.Title)
+	}
+	for _, title := range titles {
+		if !strings.HasSuffix(title, ": nucleus") {
+			t.Errorf("epic title %q does not name nucleus", title)
+		}
+	}
+	if !strings.HasPrefix(epic.ChecklistMarkdown, "# Pre-Migration Epic: nucleus\n") || strings.Contains(epic.ChecklistMarkdown, "Repository Name") {
+		t.Errorf("checklist header:\n%s", epic.ChecklistMarkdown)
+	}
+	if err := WriteNeedsManifest(checkout, row); err != nil {
+		t.Fatal(err)
+	}
+	renamed := filepath.Join(parent, "nucleus")
+	if err := os.Rename(checkout, renamed); err != nil {
+		t.Fatal(err)
+	}
+	if drift, err := CheckNeedsManifest(t.Context(), renamed, scanRowWith(t, registry, renamed)); err != nil || drift != "" {
+		t.Errorf("check under another directory name: drift %q, err %v", drift, err)
+	}
+
+	// The origin remote names the repository when .standards.yaml does not.
+	remoteOnly := filepath.Join(parent, "ci-workspace")
+	identityCheckout(t, remoteOnly, "git@github.com:acme/nucleus.git", "")
+	if row := scanRowWith(t, registry, remoteOnly); row.Repository != "nucleus" || row.RepositoryFallback != "" {
+		t.Errorf("remote-only row = %q (fallback %q), want nucleus", row.Repository, row.RepositoryFallback)
+	}
+}
+
+// Negative (#606): a checkout neither .standards.yaml nor an origin remote names keeps its
+// directory's name, and the scan, the report header and the epic say so.
+func TestRepositoryNameFallbackIsNamed_Negative(t *testing.T) {
+	registry := acmeRegistry(t)
+	checkout := filepath.Join(t.TempDir(), "py-service")
+	identityCheckout(t, checkout, "", "repository:\n  owner: acme\n")
+	row := scanRowWith(t, registry, checkout)
+	if row.Repository != "py-service" || row.RepositoryFallback != config.ErrRepositoryNameUnknown.Error() {
+		t.Fatalf("row = %q (fallback %q), want py-service with the unknown-name reason", row.Repository, row.RepositoryFallback)
+	}
+	wantNote := "`py-service` is the repository directory's name, which differs between clones, worktrees and CI workspaces (" +
+		config.ErrRepositoryNameUnknown.Error() + ")"
+	if got := FormatRepositoryFallback(row); got != "Repository name: "+wantNote+"\n" {
+		t.Errorf("FormatRepositoryFallback = %q", got)
+	}
+	if header := FormatReportHeader(row, &FrameworkIndex{Basis: FrameworkNotConfigured}); !strings.Contains(header, "Repository name: "+wantNote) {
+		t.Errorf("report header lacks the fallback note:\n%s", header)
+	}
+	if err := WriteNeedsManifest(checkout, row); err != nil {
+		t.Fatal(err)
+	}
+	if written, err := os.ReadFile(filepath.Join(checkout, NeedsManifestName)); err != nil || strings.Contains(string(written), "fallback") {
+		t.Errorf(".needs.yaml carries the fallback reason (err %v):\n%s", err, written)
+	}
+	epic, err := GeneratePreMigrationEpic(t.Context(), checkout, FrameworkSource{}, registry)
+	if err != nil {
+		t.Fatalf("GeneratePreMigrationEpic error = %v", err)
+	}
+	if !strings.Contains(epic.ChecklistMarkdown, "- **Repository Name**: "+wantNote+"\n") || !strings.HasSuffix(epic.ParentEpic.Title, ": py-service") {
+		t.Errorf("epic does not name the directory fallback:\n%s", epic.ChecklistMarkdown)
+	}
+	// A project manifest's own name still wins over .standards.yaml: a Go module keeps its
+	// module path whatever the checkout's directory or repository.name says.
+	module := filepath.Join(t.TempDir(), "svc-checkout")
+	writeRepoFile(t, filepath.Join(module, "go.mod"), "module example.com/acme/svc\ngo 1.24\n")
+	writeRepoFile(t, filepath.Join(module, ".standards.yaml"), "repository:\n  name: nucleus\n")
+	if row := scanRowWith(t, registry, module); row.Repository != "example.com/acme/svc" || row.RepositoryFallback != "" {
+		t.Errorf("Go module row = %q (fallback %q), want its module path", row.Repository, row.RepositoryFallback)
+	}
+}
+
+// Boundary (#606): a linked worktree under another directory name and a clone whose origin
+// ends in "/." (#407) take the manifest's name; without one, the "/." clone keeps its
+// directory's name with the reason; and a directory outside every checkout is never named
+// after the origin remote of the checkout around it.
+func TestRepositoryNameIdentity_Boundary(t *testing.T) {
+	registry := acmeRegistry(t)
+	parent := t.TempDir()
+	primary := filepath.Join(parent, "nucleus")
+	run := identityCheckout(t, primary, "https://github.com/acme/nucleus.git", "repository:\n  name: nucleus\n")
+	run(primary, "add", "requirements.txt", ".standards.yaml")
+	run(primary, "commit", "-q", "-m", "init")
+	worktree := filepath.Join(parent, "review-4711")
+	run(primary, "worktree", "add", "-q", "-b", "review", worktree)
+	if row := scanRowWith(t, registry, worktree); row.Repository != "nucleus" || row.RepositoryFallback != "" {
+		t.Errorf("linked worktree row = %q (fallback %q), want nucleus", row.Repository, row.RepositoryFallback)
+	}
+
+	dotNamed := filepath.Join(parent, "dot-clone")
+	identityCheckout(t, dotNamed, "https://github.com/acme/.", "repository:\n  name: nucleus\n")
+	if row := scanRowWith(t, registry, dotNamed); row.Repository != "nucleus" {
+		t.Errorf("clone with a /. origin = %q, want the manifest's nucleus", row.Repository)
+	}
+	dotOnly := filepath.Join(parent, "dot-only")
+	identityCheckout(t, dotOnly, "https://github.com/acme/.", "")
+	if row := scanRowWith(t, registry, dotOnly); row.Repository != "dot-only" || !strings.HasPrefix(row.RepositoryFallback, config.ErrRepositoryNameInvalid.Error()) {
+		t.Errorf("clone with only a /. origin = %q (fallback %q), want dot-only with the invalid-name reason", row.Repository, row.RepositoryFallback)
+	}
+
+	// services/api scanned on its own is no checkout, so the remote of the checkout around it
+	// names nothing, while its own .standards.yaml does.
+	nested := filepath.Join(primary, "services", "api")
+	writeRepoFile(t, filepath.Join(nested, "requirements.txt"), "click\n")
+	if row := scanRowWith(t, registry, nested); row.Repository != "api" || row.RepositoryFallback != config.ErrRepositoryNameUnknown.Error() {
+		t.Errorf("nested directory row = %q (fallback %q), want api named after its directory", row.Repository, row.RepositoryFallback)
+	}
+	writeRepoFile(t, filepath.Join(nested, ".standards.yaml"), "repository:\n  name: nucleus-api\n")
+	if row := scanRowWith(t, registry, nested); row.Repository != "nucleus-api" || row.RepositoryFallback != "" {
+		t.Errorf("nested directory with a manifest = %q (fallback %q), want nucleus-api", row.Repository, row.RepositoryFallback)
 	}
 }

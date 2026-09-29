@@ -48,19 +48,17 @@ func (a *NodeAnalyzer) Analyze(ctx context.Context, repoPath string, target Targ
 		return nil, fmt.Errorf("failed to read package.json: %w", err)
 	}
 
-	repoName := pkgData.Name
-	if repoName == "" {
-		repoName = repositoryDirName(repoPath)
-	}
+	repoName, fallback := projectRepositoryName(pkgData.Name, repoPath)
 
 	repoNeeds := &RepoNeeds{
-		Version:      1,
-		Repository:   repoName,
-		Language:     "typescript",
-		Languages:    []string{"typescript", "svelte"},
-		Capabilities: CapabilityDeclaration{Required: make([]CapabilityKey, 0), Optional: make([]CapabilityKey, 0)},
-		Dependencies: make([]DependencyDemand, 0),
-		UpdatedAt:    time.Now().UTC(),
+		Version:            1,
+		Repository:         repoName,
+		RepositoryFallback: fallback,
+		Language:           "typescript",
+		Languages:          []string{"typescript", "svelte"},
+		Capabilities:       CapabilityDeclaration{Required: make([]CapabilityKey, 0), Optional: make([]CapabilityKey, 0)},
+		Dependencies:       make([]DependencyDemand, 0),
+		UpdatedAt:          time.Now().UTC(),
 	}
 
 	allDeps := mergeDependencies(pkgData.Dependencies, pkgData.DevDependencies)

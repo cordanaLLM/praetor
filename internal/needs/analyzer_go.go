@@ -40,12 +40,9 @@ func (a *GoAnalyzer) Analyze(ctx context.Context, repoPath string, target Target
 	}
 
 	// The module path is only a valid import prefix when go.mod actually declares one;
-	// the directory base name is a display fallback, never an import-classification
+	// the repository's name is a display fallback, never an import-classification
 	// prefix (a directory called "go" would swallow every golang.org/x import).
-	repoName := module.modulePath
-	if repoName == "" {
-		repoName = repositoryDirName(repoPath)
-	}
+	repoName, fallback := projectRepositoryName(module.modulePath, repoPath)
 
 	astImports, err := scanASTImports(ctx, repoPath, module.modulePath, module.ignore)
 	if err != nil {
@@ -53,14 +50,15 @@ func (a *GoAnalyzer) Analyze(ctx context.Context, repoPath string, target Target
 	}
 
 	repoNeeds := &RepoNeeds{
-		Version:      1,
-		Repository:   repoName,
-		Language:     "go",
-		Languages:    []string{"go"},
-		GoVersion:    module.goVersion,
-		Capabilities: CapabilityDeclaration{Required: make([]CapabilityKey, 0), Optional: make([]CapabilityKey, 0)},
-		Dependencies: make([]DependencyDemand, 0),
-		UpdatedAt:    time.Now().UTC(),
+		Version:            1,
+		Repository:         repoName,
+		RepositoryFallback: fallback,
+		Language:           "go",
+		Languages:          []string{"go"},
+		GoVersion:          module.goVersion,
+		Capabilities:       CapabilityDeclaration{Required: make([]CapabilityKey, 0), Optional: make([]CapabilityKey, 0)},
+		Dependencies:       make([]DependencyDemand, 0),
+		UpdatedAt:          time.Now().UTC(),
 	}
 
 	buildDependencyDemands(module.directDeps, astImports, repoNeeds)
