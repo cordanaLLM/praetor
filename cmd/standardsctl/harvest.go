@@ -19,38 +19,37 @@ import (
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// harvestSubcommands maps each harvest subcommand to its handler. A table rather than a
+// switch keeps runHarvest's complexity flat as subcommands are added (HISS-04).
+var harvestSubcommands = map[string]func(context.Context, []string) error{
+	"bundle":      runHarvestBundle,
+	"ingest":      runHarvestIngest,
+	"workstation": runHarvestWorkstation,
+	"drift":       runHarvestDrift,
+	"skills":      runHarvestSkills,
+	"fleet":       runHarvestFleet,
+	"memory":      runHarvestMemory,
+	"transcript":  runHarvestTranscript,
+	"onboard":     runHarvestOnboard,
+}
+
 func runHarvest(args []string) error {
 	if len(args) < 1 {
 		printHarvestUsage()
 		return nil
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
 	switch args[0] {
 	case "help", "-h", "--help":
 		printHarvestUsage()
 		return nil
-	case "bundle":
-		return runHarvestBundle(ctx, args[1:])
-	case "ingest":
-		return runHarvestIngest(ctx, args[1:])
-	case "workstation":
-		return runHarvestWorkstation(ctx, args[1:])
-	case "skills":
-		return runHarvestSkills(ctx, args[1:])
-	case "fleet":
-		return runHarvestFleet(ctx, args[1:])
-	case "memory":
-		return runHarvestMemory(ctx, args[1:])
-	case "transcript":
-		return runHarvestTranscript(ctx, args[1:])
-	case "onboard":
-		return runHarvestOnboard(ctx, args[1:])
-	default:
+	}
+	handler, ok := harvestSubcommands[args[0]]
+	if !ok {
 		return fmt.Errorf("unknown harvest subcommand: %s", args[0])
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	return handler(ctx, args[1:])
 }
 
 func printHarvestUsage() {
@@ -59,6 +58,7 @@ func printHarvestUsage() {
 	fmt.Println("  bundle [--name=name] [--out=dir] [--home=path] Capture workstation state bundle (memories, skills, logs, patches)")
 	fmt.Println("  ingest [--bundle=dir] [--skills-dir=path] [--dry-run] Analyze or ingest workstation bundle into local agent harness")
 	fmt.Println("  workstation [--dir=path] [--json]            Audit local dev directory and emit repository observations")
+	fmt.Println("  drift [--dir=path] [--path=prefix]... [--json] Compare same-path files across local repositories (read-only)")
 	fmt.Println("  skills [--gemini=path] [--dedupe] [--dry-run] Audit and deduplicate agent skills")
 	fmt.Println("  fleet                                       Display multi-org remote fleet topology")
 	fmt.Println("  memory [--brain=path]                       Extract agent memory insights from transcripts")
