@@ -396,6 +396,7 @@ func adoptSteps() []namedStep {
 		{"git-ignore", reconcileGitIgnore},
 		{"formatter-ignore", reconcileFormatterIgnore},
 		{"renovate-ignore", reconcileRenovateIgnore},
+		{"actionlint-labels", reconcileActionlintLabels},
 		{"contributing", reconcileContributing},
 		{"pull-request-template", reconcilePullRequestTemplate},
 		{"security-policy", reconcileSecurityPolicy},

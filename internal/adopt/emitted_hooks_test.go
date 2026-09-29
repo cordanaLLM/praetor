@@ -10,11 +10,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// emittedFixtureRoot holds the two hook files adoption renders from templates and the
-// manifest it renders, at the paths adoption writes them. scripts/test_emitted_hook_lint.py
-// and scripts/test_emitted_yaml_lint.py lint them with the downstream defaults (make
-// hooks-lint); TestEmittedHookFixturesMatchTheRendering keeps them equal to the rendering, so
-// the lint covers what adoption writes (BUG-782).
+// emittedFixtureRoot holds the two hook files adoption renders from templates, the manifest it
+// renders and the actionlint configuration it creates, at the paths adoption writes them.
+// scripts/test_emitted_hook_lint.py and scripts/test_emitted_yaml_lint.py lint them with the
+// downstream defaults (make hooks-lint); TestEmittedHookFixturesMatchTheRendering keeps them
+// equal to the rendering, so the lint covers what adoption writes (BUG-782).
 const emittedFixtureRoot = "testdata/emitted"
 
 // updateEmittedFixturesEnv rewrites the fixtures from the rendering instead of comparing.
@@ -23,13 +23,15 @@ const updateEmittedFixturesEnv = "PRAETOR_UPDATE_EMITTED_FIXTURES"
 // emittedHookRenderings maps each rendered file to the bytes adoption writes. The
 // lefthook.yml fixture is the rendering with checkpoint jobs, the superset adopters get; the
 // manifest is the current rendering of the declarations an earlier adoption wrote
-// (renderedPriorManifest).
+// (renderedPriorManifest); the actionlint configuration is the one adoption creates with the
+// default facets.
 func emittedHookRenderings(t *testing.T) map[string]string {
 	t.Helper()
 	return map[string]string{
-		lefthookFile:    buildLefthookYAMLFor(true),
-		evasionHookFile: buildBlockEvasionPY(),
-		manifestFile:    renderedPriorManifest(t),
+		lefthookFile:         buildLefthookYAMLFor(true),
+		evasionHookFile:      buildBlockEvasionPY(),
+		manifestFile:         renderedPriorManifest(t),
+		actionlintConfigFile: string(renderActionlintConfig(actionlintManagedFixtureLabels(t))),
 	}
 }
 

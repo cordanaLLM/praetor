@@ -190,13 +190,24 @@ func findRenovateConfig(ctx context.Context, s *adoptSession, paths []string) (s
 // reported with the entry to add by hand and left untouched; it never fails adoption. Only a
 // cancelled or expired adoption context fails the step, because then nothing was observed.
 func reportUninspectableRenovate(ctx context.Context, s *adoptSession, rel string, paths []string, err error) error {
+	reason, err := uninspectableReason(ctx, err)
+	if err != nil {
+		return err
+	}
+	return reportRenovateUnsafe(s, rel, paths, reason)
+}
+
+// uninspectableReason returns the report reason for a third-party configuration candidate the
+// adoption read contract refused, err, or an error when the adoption context ended, because
+// then nothing was observed. The Renovate and actionlint steps both read their candidates so.
+func uninspectableReason(ctx context.Context, err error) (string, error) {
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		if errors.Is(err, ctxErr) {
-			return err
+			return "", err
 		}
-		return fmt.Errorf("%w: %w", ctxErr, err)
+		return "", fmt.Errorf("%w: %w", ctxErr, err)
 	}
-	return reportRenovateUnsafe(s, rel, paths, "it cannot be read safely ("+err.Error()+")")
+	return "it cannot be read safely (" + err.Error() + ")", nil
 }
 
 // packageJSONConfiguresRenovate reports whether data is a strict JSON object with a
