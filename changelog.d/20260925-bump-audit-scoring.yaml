@@ -1,0 +1,3 @@
+type: fixed
+title: "bump audit counts every drifted or deprecated workflow action against Up To Date and the modernization score, a deprecated pin once, and exits non-zero after printing a report that failed; standards_version_audit states passed in its summary line and returns a failed report as an error result"
+breaking: true

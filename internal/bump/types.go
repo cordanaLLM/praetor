@@ -89,7 +89,10 @@ type DeprecationWarning struct {
 // TotalScanned counts every declared dependency and workflow action examined, up-to-date
 // ones included, whether or not the upstream report was reachable. ModernizationScore and
 // PendingUpgrades reflect only the upgrades that report named: offline no upgrade target is
-// known, so an outdated dependency counts as up to date.
+// known, so an outdated dependency counts as up to date. UpToDate leaves out every pending
+// upgrade and every workflow action row that is drifted or deprecated. Passed is false when
+// the report holds any deprecation; `bump audit` then exits non-zero and
+// standards_version_audit returns an error result.
 type VersionAuditReport struct {
 	TotalScanned       int                  `json:"total_scanned"`
 	UpToDate           int                  `json:"up_to_date"`

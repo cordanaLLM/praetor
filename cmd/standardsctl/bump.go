@@ -369,12 +369,24 @@ func runBumpAudit(ctx context.Context, args []string) error {
 	fmt.Printf("  Total Scanned:       %d components\n", report.TotalScanned)
 	fmt.Printf("  Up To Date:          %d components\n", report.UpToDate)
 	fmt.Printf("  Pending Upgrades:    %d\n", len(report.PendingUpgrades))
-	fmt.Printf("  Deprecations:        %d\n\n", len(report.Deprecations))
+	fmt.Printf("  Deprecations:        %d\n", len(report.Deprecations))
+	fmt.Printf("  Passed:              %t\n\n", report.Passed)
 
 	fmt.Print(bump.FormatActionsInventory(report.Actions))
 	printPendingUpgrades(report.PendingUpgrades)
 	printDeprecations(report.Deprecations)
-	return nil
+	return bumpAuditVerdict(report)
+}
+
+// bumpAuditVerdict turns a version audit report into the command's exit: nil when the report
+// passed, an error naming the deprecation count otherwise. Drift alone does not fail the
+// report; it lowers Up To Date and the score.
+func bumpAuditVerdict(report *bump.VersionAuditReport) error {
+	if report.Passed {
+		return nil
+	}
+	return fmt.Errorf("bump audit failed: %d deprecation(s); modernization score %.1f%%",
+		len(report.Deprecations), report.ModernizationScore)
 }
 
 func printPendingUpgrades(upgrades []bump.UpgradeCandidate) {

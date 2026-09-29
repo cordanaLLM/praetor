@@ -461,13 +461,17 @@ func TestServer_PackageDocs_QuotesUpstreamText(t *testing.T) {
 
 func TestServer_VersionAudit(t *testing.T) {
 	// An empty root has no manifests, so the audit stays offline (toolchain probes only).
+	// PATH holds no tool, so every probe adds a deprecation on every host and the report
+	// fails: the tool returns it as an error result (#613).
+	t.Setenv("PATH", t.TempDir())
 	empty, err := NewServer(t.TempDir(), "v")
 	if err != nil {
 		t.Fatal(err)
 	}
 	res := callTool(t, empty, "standards_version_audit", nil)
-	expectText(t, "version audit", res, "audit: codebase versions;")
-	expectText(t, "version audit", res, "scanned: 0")
+	expectError(t, "version audit", res, "audit: codebase versions;")
+	expectError(t, "version audit", res, "scanned: 0")
+	expectError(t, "version audit", res, "deprecations: 4; passed: false.")
 
 	typed := callTool(t, empty, "standards_version_audit", map[string]any{"prerelease": "no"})
 	expectError(t, "version audit typed", typed, "prerelease must be a boolean")

@@ -106,7 +106,7 @@ func (s *Server) createVersionAuditTool() (mcp.Tool, error) {
 			return mcp.ErrorResult(fmt.Sprintf("version audit failed: %v", err)), nil
 		}
 
-		return mcpComposedTextResult(formatVersionAudit(repoPath, report)), nil
+		return versionAuditResult(repoPath, report), nil
 	}
 
 	// The audit queries module proxies and package registries and spawns the local
@@ -121,11 +121,20 @@ func (s *Server) createVersionAuditTool() (mcp.Tool, error) {
 	)
 }
 
+// versionAuditResult returns the rendered report, as an error result when the report
+// failed, so a client sees the verdict `bump audit` exits on.
+func versionAuditResult(repoPath string, report *bump.VersionAuditReport) *mcp.ToolResult {
+	if !report.Passed {
+		return mcpComposedErrorResult(formatVersionAudit(repoPath, report))
+	}
+	return mcpComposedTextResult(formatVersionAudit(repoPath, report))
+}
+
 // formatVersionAudit renders the version audit report.
 func formatVersionAudit(repoPath string, report *bump.VersionAuditReport) mcpGovernedText {
 	var sb mcpTextBuilder
-	sb.Template("audit: codebase versions; repository: %s.\nscore: %.1f%%; scanned: %d; current: %d; actions: %d; deprecations: %d.\n\n",
-		repoPath, report.ModernizationScore, report.TotalScanned, report.UpToDate, len(report.Actions), len(report.Deprecations))
+	sb.Template("audit: codebase versions; repository: %s.\nscore: %.1f%%; scanned: %d; current: %d; actions: %d; deprecations: %d; passed: %t.\n\n",
+		repoPath, report.ModernizationScore, report.TotalScanned, report.UpToDate, len(report.Actions), len(report.Deprecations), report.Passed)
 
 	// The tool promises workflow-action auditing; the inventory is the same one `bump audit`
 	// prints (BUG-872).

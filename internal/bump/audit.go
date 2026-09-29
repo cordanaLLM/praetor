@@ -37,7 +37,7 @@ func AuditCodebaseVersions(ctx context.Context, repoPath string, includePrerelea
 
 	deprecations := slices.Concat(actionDeps, toolDeps, unexamined)
 	totalScanned := len(inventory) + len(actions)
-	upToDate, score := calculateAuditScore(totalScanned, len(pending), len(actionDeps)+len(toolDeps), len(unexamined))
+	upToDate, score := calculateAuditScore(totalScanned, len(pending), actionsBehind(actions)+len(toolDeps), len(unexamined))
 
 	return &VersionAuditReport{
 		TotalScanned:       totalScanned,
@@ -73,8 +73,24 @@ func unexaminedManifests(repoPath string) []DeprecationWarning {
 	return warnings
 }
 
-// calculateAuditScore scores the scanned components. deps is the count of deprecations
-// among or about them, which are not up to date; unexamined is the count of ecosystems
+// actionsBehind counts the workflow action rows that are not up to date: every row
+// ActionDriftStatus labels anything but [UP-TO-DATE], that is drift, a deprecated runtime, a
+// bad pin, and a SHA pin nobody verified or that names no release. A deprecated or bad pin
+// also carries one deprecation warning, so it counts once, not once as a row and again as a
+// deprecation.
+func actionsBehind(actions []ActionCandidate) int {
+	behind := 0
+	for _, action := range actions {
+		if ActionDriftStatus(action) != actionUpToDateLabel {
+			behind++
+		}
+	}
+	return behind
+}
+
+// calculateAuditScore scores the scanned components. deps is the count of scanned
+// components that are not up to date apart from pending upgrades (action rows behind the
+// registry, see actionsBehind), plus toolchain warnings; unexamined is the count of ecosystems
 // whose dependencies were never scanned. Each unexamined ecosystem joins the denominator
 // as one component that is not up to date, so a repository whose only manifests are
 // unexamined scores 0, not a vacuous 100.

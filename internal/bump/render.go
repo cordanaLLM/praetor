@@ -5,6 +5,10 @@ import (
 	"strings"
 )
 
+// actionUpToDateLabel is the ActionDriftStatus of a current, non-deprecated pin; every
+// other label marks a row the audit counts as not up to date (actionsBehind).
+const actionUpToDateLabel = "[UP-TO-DATE]"
+
 // ActionDriftStatus labels one workflow action reference. A SHA pin its upstream refutes
 // (PinCommitMissing, PinReleaseMismatch) is a bad pin, whatever its version says; then come a
 // deprecated runtime, a SHA pin nobody confirmed (PinUnverified) or that names no release
@@ -23,7 +27,7 @@ func ActionDriftStatus(a ActionCandidate) string {
 	case !a.UpToDate:
 		return "[DRIFT]"
 	default:
-		return "[UP-TO-DATE]"
+		return actionUpToDateLabel
 	}
 }
 
