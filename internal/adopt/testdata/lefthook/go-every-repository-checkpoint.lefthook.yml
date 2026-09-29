@@ -1,5 +1,4 @@
-# Lefthook Configuration (Go, Rust & HISS Governance)
-# Language jobs cover the languages adoption detected; all when it found none.
+# Lefthook Configuration (Go 1.27+ & HISS Governance)
 # Governance commands fail closed: a failing or missing praetorctl blocks the
 # commit or push. The pre-push gate job signs a receipt only after a Go
 # (go.mod) or Cargo (Cargo.lock) toolchain stage ran, and fails otherwise.
@@ -28,17 +27,6 @@ pre-commit:
       run: >-
         if [ -f go.mod ]; then go vet ./...; else echo no go.mod at the
         repository root, skipping go vet >&2; fi
-    rustfmt:
-      glob: "*.rs"
-      run: >-
-        if [ -f Cargo.toml ]; then cargo fmt --all --check; else echo no
-        Cargo.toml at the repository root, skipping cargo fmt >&2; fi
-    clippy:
-      glob: "*.rs"
-      run: >-
-        if [ -f Cargo.toml ]; then cargo clippy --workspace --all-targets -- -D
-        warnings; else echo no Cargo.toml at the repository root, skipping cargo
-        clippy >&2; fi
     context-check:
       run: >-
         if praetor_cli=$(command -v praetorctl 2>/dev/null || command -v

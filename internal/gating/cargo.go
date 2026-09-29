@@ -45,10 +45,20 @@ const (
 	cargoTargetDirEnv = "CARGO_TARGET_DIR"
 )
 
+// cargoClippyCommand is the test stage's clippy run, with warnings denied.
+var cargoClippyCommand = []string{"clippy", "--workspace", "--all-targets", "--", "-D", "warnings"}
+
 // cargoTestCommands are the test stage's Cargo commands, run in order in the isolated worktree.
 var cargoTestCommands = [...][]string{
 	{"test", "--workspace", "--locked"},
-	{"clippy", "--workspace", "--all-targets", "--", "-D", "warnings"},
+	cargoClippyCommand,
+}
+
+// CargoClippyArgs returns a copy of the cargo arguments of the test stage's clippy run, warnings
+// denied, so a generated hook runs the lint the gate runs (the pre-commit clippy job of the
+// lefthook.yml adoption writes for a Cargo repository).
+func CargoClippyArgs() []string {
+	return slices.Clone(cargoClippyCommand)
 }
 
 // requireCargo reports the Cargo part of a stage as not run when cargo is not on PATH. A runner

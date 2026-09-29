@@ -482,7 +482,7 @@ func (f *RustSystemsFlavor) RequiredTemplates() []TemplateItem {
 
 func (f *RustSystemsFlavor) RequiredSettings() []SettingItem {
 	return []SettingItem{
-		{Name: "Lefthook Git Hooks", Path: "lefthook.yml", Description: "Pre-commit clippy and rustfmt enforcement", Producer: producerAdopt, Validator: validYAMLMapping},
+		{Name: "Lefthook Git Hooks", Path: "lefthook.yml", Description: "Pre-commit clippy and rustfmt enforcement", Producer: producerAdopt, Validator: validRustLefthook},
 		{Name: "VSCode Rust Settings", Path: ".vscode/settings.json", Description: "Rust-analyzer and clippy editor configuration", Producer: producerEditors, Validator: validJSONObject},
 		{Name: "Branch Protection Ruleset", Path: ".github/rulesets/main.json", Description: "Main branch merge restrictions", Validator: validJSONObject},
 	}

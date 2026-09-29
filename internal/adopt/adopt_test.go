@@ -804,9 +804,10 @@ func TestAdopt_Positive_ExplicitFacetsAndSkipGitValidation(t *testing.T) {
 	}
 }
 
-func TestAdopt_Positive_ForceRegeneratesScaffolds(t *testing.T) {
+func TestAdopt_Positive_ForceKeepsRepositoryConfiguration(t *testing.T) {
 	repoPath := newTestRepo(t, "force-repo")
-	mustWrite(t, filepath.Join(repoPath, "lefthook.yml"), "pre-commit:\n  commands:\n    custom:\n      run: echo custom\n")
+	const custom = "pre-commit:\n  commands:\n    custom:\n      run: echo custom\n"
+	mustWrite(t, filepath.Join(repoPath, "lefthook.yml"), custom)
 	// The label taxonomy is repository configuration, not a scaffold: --force keeps it (BUG-287).
 	const labels = "version: 0\n"
 	mustWrite(t, filepath.Join(repoPath, ".config", "labels.yaml"), labels)
@@ -816,24 +817,12 @@ func TestAdopt_Positive_ForceRegeneratesScaffolds(t *testing.T) {
 		t.Fatalf("Adopt --force failed: %v", err)
 	}
 	assertNoIssues(t, rep)
-	// The replaced configuration is reported as replaced, never as created, and its prior bytes
-	// are kept under the run's backup directory, which the managed .gitignore block ignores.
-	if contains(rep.CreatedFiles, "lefthook.yml") || !hasAction(rep, "lefthook.yml", actionReplace) {
-		t.Fatalf("--force must replace the drifted scaffold, got created=%v actions=%+v", rep.CreatedFiles, rep.ActionDetails)
-	}
-	backups, err := filepath.Glob(filepath.Join(repoPath, filepath.FromSlash(adoptBackupRoot), "*", "lefthook.yml"))
-	if err != nil || len(backups) != 1 || mustRead(t, backups[0]) != "pre-commit:\n  commands:\n    custom:\n      run: echo custom\n" {
-		t.Fatalf("backup of the replaced lefthook.yml = %v (err %v)", backups, err)
-	}
 	if contains(rep.CreatedFiles, ".config/labels.yaml") || mustRead(t, filepath.Join(repoPath, ".config", "labels.yaml")) != labels {
 		t.Errorf("--force must keep the existing label taxonomy, got created=%v", rep.CreatedFiles)
 	}
-	if mustRead(t, filepath.Join(repoPath, "lefthook.yml")) != buildLefthookYAML() {
-		t.Error("--force must replace lefthook.yml with the praetor configuration")
-	}
-	if !contains(rep.CreatedFiles, ".git/hooks/pre-commit") {
-		t.Errorf("praetor-written lefthook.yml must be activated, got %v", rep.CreatedFiles)
-	}
+	// The audit checks only that lefthook.yml exists, so --force keeps a configuration that is no
+	// Praetor rendering, reports it, and does not activate it (#502).
+	assertLefthookKept(t, repoPath, rep, custom)
 }
 
 // =========================================================================

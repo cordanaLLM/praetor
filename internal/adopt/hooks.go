@@ -12,6 +12,8 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/agenthook"
+	"github.com/cordanaLLM/praetor/internal/gating"
+	"github.com/cordanaLLM/praetor/internal/hisscatalog"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -68,27 +70,100 @@ func optionalToolCommand(tool, args string) string {
 		"; else echo " + tool + " is not installed, skipping >&2; fi"
 }
 
-// goModuleCommand renders a lefthook run line for a Go module tool. It runs command only
-// where the repository root holds a go.mod and otherwise skips with the reason, as the
-// gate's own security and test stages already do (internal/gating/pipeline.go). Without the
+// rootMarkerCommand renders a lefthook run line for a language tool. It runs command only where
+// the repository root holds marker (go.mod, Cargo.toml) and otherwise skips with the reason, as
+// the gate's own security and test stages already do (internal/gating/pipeline.go). Without the
 // guard a repository with no root module failed every push on govulncheck and every commit
-// touching a .go file on go vet (#242). The reason avoids ": " so the line stays one plain
-// YAML scalar.
+// touching a .go file on go vet (#242). The reason avoids ": " so the line stays one plain YAML
+// scalar.
+func rootMarkerCommand(marker, skipped, command string) string {
+	return "if [ -f " + marker + " ]; then " + command +
+		"; else echo no " + marker + " at the repository root, skipping " + skipped + " >&2; fi"
+}
+
+// goModuleCommand is rootMarkerCommand for a Go module tool.
 func goModuleCommand(skipped, command string) string {
-	return "if [ -f go.mod ]; then " + command +
-		"; else echo no go.mod at the repository root, skipping " + skipped + " >&2; fi"
+	return rootMarkerCommand("go.mod", skipped, command)
 }
 
-// buildLefthookYAML renders the scaffolded lefthook configuration.
-func buildLefthookYAML() string {
-	return buildLefthookYAMLFor(false)
+// cargoCommand is rootMarkerCommand for a Cargo tool.
+func cargoCommand(skipped, command string) string {
+	return rootMarkerCommand("Cargo.toml", skipped, command)
 }
 
-// buildLefthookYAMLFor renders lefthook.yml, with the checkpoint lifecycle jobs when
-// checkpoint is set. It opens with a document start and folds every run line longer than
-// yamllint's default limit (lefthookRun), so an adopter whose hooks lint the whole tree
-// with yamllint's defaults accepts it (BUG-782).
-func buildLefthookYAMLFor(checkpoint bool) string {
+// lefthookJobLanguages are the languages lefthook.yml carries jobs for: Go (gofmt and go vet
+// before a commit, govulncheck before a push) and Rust (cargo fmt and cargo clippy before a
+// commit). Every other language gets the governance jobs alone.
+const lefthookJobLanguages = hisscatalog.LanguageGo | hisscatalog.LanguageRust
+
+// lefthookLanguages returns the languages whose jobs lefthook.yml carries for a repository whose
+// verification plan is plan: the languages that plan detected (planLanguages), the set the
+// harness rows are rendered for too, so no second detector decides the hooks (#568). An unknown
+// set, nothing detected, keeps every language's jobs, as it keeps every HISS clause and check
+// (hisscatalog.Rule.AdoptedFor): each job runs only on its own staged files and root marker.
+func lefthookLanguages(plan *VerificationPlan) hisscatalog.Language {
+	languages := planLanguages(plan)
+	if languages == 0 {
+		return lefthookJobLanguages
+	}
+	return languages & lefthookJobLanguages
+}
+
+// lefthookLanguageNames names languages for the rendering's header, in a fixed order.
+func lefthookLanguageNames(languages hisscatalog.Language) string {
+	names := make([]string, 0, 2)
+	if languages&hisscatalog.LanguageGo != 0 {
+		names = append(names, "Go")
+	}
+	if languages&hisscatalog.LanguageRust != 0 {
+		names = append(names, "Rust")
+	}
+	return strings.Join(names, ", ")
+}
+
+// lefthookPreCommitJobs renders the pre-commit jobs of languages. The Rust clippy job runs the
+// gate's own clippy command (gating.CargoClippyArgs), so a commit and a push lint alike.
+func lefthookPreCommitJobs(languages hisscatalog.Language) string {
+	jobs := ""
+	if languages&hisscatalog.LanguageGo != 0 {
+		jobs += "    gofmt:\n      glob: \"*.go\"\n" + lefthookRun("gofmt -w {staged_files}") + "      stage_fixed: true\n" +
+			"    govet:\n      glob: \"*.go\"\n" + lefthookRun(goModuleCommand("go vet", "go vet ./..."))
+	}
+	if languages&hisscatalog.LanguageRust != 0 {
+		clippy := "cargo " + strings.Join(gating.CargoClippyArgs(), " ")
+		jobs += "    rustfmt:\n      glob: \"*.rs\"\n" + lefthookRun(cargoCommand("cargo fmt", "cargo fmt --all --check")) +
+			"    clippy:\n      glob: \"*.rs\"\n" + lefthookRun(cargoCommand("cargo clippy", clippy))
+	}
+	return jobs
+}
+
+// lefthookPrePushJobs renders the pre-push jobs of languages: govulncheck for Go. The gate job
+// runs cargo audit for a Cargo.lock itself.
+func lefthookPrePushJobs(languages hisscatalog.Language) string {
+	if languages&hisscatalog.LanguageGo == 0 {
+		return ""
+	}
+	return "    security:\n" + lefthookRun(goModuleCommand("govulncheck", optionalToolCommand("govulncheck", "./...")))
+}
+
+// lefthookHeader is the rendering's leading comment, naming the languages it carries jobs for.
+func lefthookHeader(languages hisscatalog.Language) string {
+	scope := "HISS Governance"
+	if names := lefthookLanguageNames(languages); names != "" {
+		scope = names + " & " + scope
+	}
+	return "# Lefthook Configuration (" + scope + ")\n" +
+		"# Language jobs cover the languages adoption detected; all when it found none.\n" +
+		"# Governance commands fail closed: a failing or missing praetorctl blocks the\n" +
+		"# commit or push. The pre-push gate job signs a receipt only after a Go\n" +
+		"# (go.mod) or Cargo (Cargo.lock) toolchain stage ran, and fails otherwise.\n"
+}
+
+// buildLefthookYAMLFor renders lefthook.yml with the jobs of languages (lefthookLanguages), and
+// with the checkpoint lifecycle jobs when checkpoint is set. It opens with a document start and
+// folds every run line longer than yamllint's default limit (lefthookRun), so an adopter whose
+// hooks lint the whole tree with yamllint's defaults accepts it (BUG-782).
+func buildLefthookYAMLFor(languages hisscatalog.Language, checkpoint bool) string {
 	governed := lefthookGovernedCommand
 	checkpointJobs := ""
 	if checkpoint {
@@ -97,16 +172,12 @@ func buildLefthookYAMLFor(checkpoint bool) string {
 			"agent-checkpoint-stop:\n  commands:\n    checkpoint:\n" +
 			lefthookRun("python3 -B .config/lefthook/scripts/checkpoint.py --event stop --json --marker")
 	}
-	return "# Lefthook Configuration (Go 1.27+ & HISS Governance)\n" +
-		"# Governance commands fail closed: a failing or missing praetorctl blocks the\n" +
-		"# commit or push. The pre-push gate job signs a receipt only after a Go\n" +
-		"# (go.mod) or Cargo (Cargo.lock) toolchain stage ran, and fails otherwise.\n" +
+	return lefthookHeader(languages) +
 		"---\n" +
 		checkpointJobs + "pre-commit:\n" +
 		"  parallel: true\n" +
 		"  commands:\n" +
-		"    gofmt:\n      glob: \"*.go\"\n" + lefthookRun("gofmt -w {staged_files}") + "      stage_fixed: true\n" +
-		"    govet:\n      glob: \"*.go\"\n" + lefthookRun(goModuleCommand("go vet", "go vet ./...")) +
+		lefthookPreCommitJobs(languages) +
 		"    context-check:\n" + lefthookRun(governed("compile-context --verify")) +
 		"    hiss-audit:\n" + lefthookRun(governed("audit")) +
 		"\n" +
@@ -118,7 +189,7 @@ func buildLefthookYAMLFor(checkpoint bool) string {
 		"pre-push:\n" +
 		"  parallel: false\n" +
 		"  commands:\n" +
-		"    security:\n" + lefthookRun(goModuleCommand("govulncheck", optionalToolCommand("govulncheck", "./..."))) +
+		lefthookPrePushJobs(languages) +
 		"    flavor-audit:\n" + lefthookRun(governed("flavor audit .")) +
 		"    audit:\n" + lefthookRun(governed("audit")) +
 		"    gate:\n" + lefthookRun(governed("gate run --path=."))
@@ -329,27 +400,29 @@ func buildFallbackPreCommitScript() string {
 		util.ShellCLI("audit", missing) + "\n"
 }
 
-// reconcileGitHooks scaffolds lefthook.yml and the agent evasion interceptor, then
-// activates local git hooks for configurations praetor itself wrote. An earlier Praetor
-// rendering is migrated to the current one; a configuration that extends the canonical
-// policy or adds jobs to the generated ones is never replaced, --force included, and neither
-// are the checkpoint scripts vendored beside such a policy.
+// reconcileGitHooks classifies an existing lefthook.yml before it installs anything
+// (classifyLefthookConfig). A configuration that is neither a current nor an earlier Praetor
+// rendering is kept, --force included, and not activated (keepLefthookConfig). Otherwise the
+// checkpoint bundle is installed, lefthook.yml is written, migrated or verified, and local git
+// hooks are activated for the rendering praetor wrote.
 func reconcileGitHooks(ctx context.Context, s *adoptSession) error {
-	existing, err := s.readExistingLefthook()
+	existing, exists, err := s.readExistingLefthook()
 	if err != nil {
 		return err
 	}
-	checkpointReady, err := reconcileCheckpointLifecycle(ctx, s, lefthookExtendsCanonical(existing))
-	if err != nil {
-		return err
+	languages := s.lefthookLanguages()
+	var identity lefthookIdentity
+	if exists {
+		identity = classifyLefthookConfig(existing, languages)
 	}
-	current := buildLefthookYAMLFor(checkpointReady)
-	identity := classifyLefthookConfig(existing, current)
 	if identity.reason != "" {
-		s.report.recordSkipped(lefthookFile, identity.reason)
-		return reconcileEvasionHook(ctx, s, identity.canonical)
+		return keepLefthookConfig(ctx, s, identity)
 	}
-	lefthookWritten, err := s.writeLefthookConfig(ctx, current, existing, identity.prior)
+	checkpointReady, err := reconcileCheckpointLifecycle(ctx, s, false)
+	if err != nil {
+		return err
+	}
+	lefthookWritten, err := s.writeLefthookConfig(ctx, lefthookTarget{languages: languages, checkpoint: checkpointReady}, existing, identity.prior)
 	if err != nil {
 		return err
 	}
@@ -363,34 +436,64 @@ func reconcileGitHooks(ctx context.Context, s *adoptSession) error {
 	return s.activateGitHooks(ctx, lefthookWritten)
 }
 
-// writeLefthookConfig writes the current rendering over an earlier Praetor rendering, and
-// otherwise scaffolds it. It reports whether it wrote; an existing configuration that differs
-// from the rendering is kept and reported as drift. The migration writes the rendering's own LF
-// bytes even over a CRLF checkout of an earlier one: activation trusts only those exact bytes
-// (lefthookConfigIsPraetor), and git stores the working-tree LF text unchanged under
-// core.autocrlf. Under --force, existing bytes that are a CRLF checkout of the current rendering
-// take the same path: the scaffold verifies such a copy instead of replacing it, so --force
-// would leave bytes activation refuses in place.
+// keepLefthookConfig records why adoption keeps lefthook.yml and installs beside it only what
+// is absent: the checkpoint files, each on its own, never refreshing one that exists, since the
+// kept configuration may run its own copies; and the interceptor, refreshed from an unedited
+// earlier rendering only when the configuration does not extend the canonical policy, whose
+// vendored bundle owns it (BUG-858).
+func keepLefthookConfig(ctx context.Context, s *adoptSession, identity lefthookIdentity) error {
+	if _, err := reconcileCheckpointLifecycle(ctx, s, true); err != nil {
+		return err
+	}
+	s.report.recordSkipped(lefthookFile, identity.reason)
+	return reconcileEvasionHook(ctx, s, identity.canonical)
+}
+
+// lefthookTarget is the rendering this run writes: the jobs of languages, and the checkpoint
+// lifecycle jobs when checkpoint is set.
+type lefthookTarget struct {
+	languages  hisscatalog.Language
+	checkpoint bool
+}
+
+// writeLefthookConfig writes target's rendering over an earlier Praetor rendering, and otherwise
+// scaffolds it. It reports whether it wrote. classifyLefthookConfig has kept every other
+// configuration, so existing is absent, prior, or a current rendering for target's languages,
+// line endings aside:
 //
-// Audit checks only that lefthook.yml exists, so its scaffold is not audit-locked. Its --force
-// contract is its own (scaffold.forceable): a configuration classifyLefthookConfig does not
-// protect, which reached this point, is replaced under --force through the scaffold, which
-// reads it only as a regular file, so a symlinked lefthook.yml is kept and reported unverified.
-func (s *adoptSession) writeLefthookConfig(ctx context.Context, current string, existing []byte, prior bool) (bool, error) {
+//   - A migration writes the rendering's own LF bytes even over a CRLF checkout of an earlier
+//     one: activation trusts only those exact bytes (lefthookConfigIsPraetor), and git stores the
+//     working-tree LF text unchanged under core.autocrlf.
+//   - The current rendering without checkpoint jobs gains them once the lifecycle is installed.
+//     The one with them is kept when this run did not install the lifecycle, so a run without
+//     --lock-source-root does not strip them.
+//   - Under --force, a CRLF checkout of the current rendering is rewritten with its LF bytes:
+//     the scaffold verifies such a copy, so it would stay bytes activation refuses.
+//
+// The scaffold reads lefthook.yml only as a regular file, so a symlinked one is kept and
+// reported unverified, --force included.
+func (s *adoptSession) writeLefthookConfig(ctx context.Context, target lefthookTarget, existing []byte, prior bool) (bool, error) {
+	current := buildLefthookYAMLFor(target.languages, target.checkpoint)
+	match := matchCurrentLefthook(existing, target.languages)
 	switch {
 	case prior:
 		return true, s.migrateLefthookConfig(current, "Migrated an earlier Praetor-generated Lefthook configuration to the current template")
-	case s.opts.Force && isLineEndingCheckout(existing, current):
+	case match.found && !match.checkpoint && target.checkpoint:
+		return true, s.migrateLefthookConfig(current, "Added the checkpoint lifecycle jobs to the Praetor-generated Lefthook configuration")
+	case match.found && match.checkpoint && !target.checkpoint:
+		s.report.recordReconciled(lefthookFile, "Existing Praetor-generated Lefthook configuration kept with its checkpoint "+
+			"lifecycle jobs; this run did not install the checkpoint lifecycle")
+		return false, nil
+	case match.found && !match.exact && s.opts.Force:
 		return true, s.migrateLefthookConfig(current, "Rewrote a line-ending checkout of the current Praetor-generated "+
 			"Lefthook configuration with its LF bytes, the only bytes hook activation trusts")
 	}
 	state, err := s.scaffoldFile(ctx, scaffold{
-		rel:       lefthookFile,
-		perm:      filePerm,
-		content:   []byte(current),
-		forceable: true,
-		created:   "Scaffolded Lefthook configuration for local pre-commit and pre-push enforcement",
-		verified:  "Existing Lefthook configuration verified present",
+		rel:      lefthookFile,
+		perm:     filePerm,
+		content:  []byte(current),
+		created:  "Scaffolded Lefthook configuration for local pre-commit and pre-push enforcement",
+		verified: "Existing Lefthook configuration verified present",
 	})
 	return state == scaffoldWritten, err
 }
@@ -490,7 +593,8 @@ func reconcileEvasionHook(ctx context.Context, s *adoptSession, vendored bool) e
 // commands are shell executed at the adopter's next commit.
 func (s *adoptSession) activateGitHooks(ctx context.Context, lefthookWritten bool) error {
 	if !lefthookWritten && !s.lefthookConfigIsPraetor() {
-		s.report.recordSkipped(lefthookFile, "existing lefthook.yml was not generated by praetor; hooks were not activated. Review its run: commands and run 'lefthook install' yourself, or re-run adopt with --force to replace it with the praetor configuration")
+		s.report.recordSkipped(lefthookFile, "existing lefthook.yml is not byte for byte a Praetor rendering adoption can activate; "+
+			"hooks were not activated. Review its run: commands and run 'lefthook install' yourself, or "+lefthookRegenerateHint)
 		return nil
 	}
 	hooksDir, err := s.resolveHooksDirForInstall(ctx)
@@ -510,19 +614,16 @@ func (s *adoptSession) activateGitHooks(ctx context.Context, lefthookWritten boo
 	return s.installFallbackHook(hookPath)
 }
 
-// lefthookConfigIsPraetor reports whether the existing lefthook.yml is byte-identical to
-// the configuration praetor scaffolds, i.e. safe to activate without review.
+// lefthookConfigIsPraetor reports whether the existing lefthook.yml is byte-identical to a
+// configuration praetor scaffolds for this repository's languages, i.e. safe to activate
+// without review.
 func (s *adoptSession) lefthookConfigIsPraetor() bool {
-	full, err := repoFile(s.repoPath, lefthookFile)
-	if err != nil {
+	data, exists, err := s.readExistingLefthook()
+	if err != nil || !exists {
 		return false
 	}
-	data, err := readRepoFile(full)
-	if err != nil {
-		return false
-	}
-	current, checkpoint := currentLefthookRendering(data)
-	return current && (!checkpoint || checkpointFilesPresent(s.repoPath))
+	match := matchCurrentLefthook(data, s.lefthookLanguages())
+	return match.exact && (!match.checkpoint || checkpointFilesPresent(s.repoPath))
 }
 
 // resolveHooksDirForInstall asks git for the hooks directory. Without git on PATH it
