@@ -30,14 +30,32 @@ reporting a command the project's `make` answers with `No rule to make target 'v
 Because the cut comes first, an `=` that a comment or a recipe carries decides nothing:
 `verify-all: lint ## run gates (FAST=1)` and `verify-all: ; FOO=1 echo c` are rules and are
 preserved. So are double-colon rules (`verify-all:: dep`), target lists (`all verify-all: dep`) and
-rules whose prerequisites hold a substitution reference (`verify-all: $(SRCS:.c=.o)`), along with
-the forms only Make itself can resolve: an `include` or `define` directive, `$(eval ...)` or
-`${eval ...}`, a target name containing `$` or `%`, a line longer than the 8192-byte scan bound,
-which is read in part, and a Makefile longer than 4096 lines, which is read only in part as well;
-both are left to Make. The documentation gate uses the same reader to decide whether the project
-already owns `docs-lint` (`mayDefineTarget` in `internal/adopt/verification_makefile.go`). The
-table tests behind this contract are in `internal/adopt/verification_makefile_target_test.go`; each
-row was measured against GNU Make 4.4.1.
+rules whose prerequisites hold a substitution reference (`verify-all: $(SRCS:.c=.o)`) or a function
+call with a nested reference (`verify-all: $(filter-out $(X),a=b)`): like Make, the reader counts
+nested brackets, so a colon or `=` anywhere inside a reference is not an operator. Also preserved
+are the forms only Make itself can resolve: an `include` directive, `$(eval ...)` or `${eval ...}`, a
+target name containing `$` or `%`, a line longer than the 8192-byte scan bound, which is read in
+part, and a Makefile longer than 4096 lines, which is read only in part as well; both are left to
+Make. A `define` alone only binds a variable: a rule line inside its body declares nothing, and a
+helper used only through `$(call ...)` in recipes leaves the Makefile readable. A define is left to
+Make when something can parse its body as rules, which is an eval call anywhere in the file,
+define bodies included, or a top-level bare expansion such as `$(name)`, `$(call name)` or
+`$(call name,$(P)x,A=b)`. A bare expansion needs no define to declare a rule, so one with a colon
+in its arguments, such as `$(if $(X),docs-lint: ; @echo x)`, is left to Make as well. That
+includes a colon inside a message argument, such as `$(call check_defined,CC,hint: set it)`, which
+Make only prints: telling the two apart needs the function evaluated, so the reader stays on the
+safe side and the file fails for review, as the
+[documentation governance guide](documentation-governance.md) describes. So does a computed
+target name such as `$(BUILD_DIR):`, even when the variable holds a plain directory. The reader
+evaluates no function except to know that `info`, `warning` and `error` expand to nothing, so
+`$(info ...)` beside a define and a colon inside `$(error ...)` decide nothing, while any other
+bare expansion beside a define counts, `$(if ...)` included. A define that is never closed is
+left to Make too, since it would swallow an appended block. The
+documentation gate uses the same reader to decide whether the project already owns `docs-lint`
+(`mayDefineTarget` in `internal/adopt/verification_makefile.go`, define tracking in
+`internal/adopt/verification_makefile_define.go`). The table tests behind this contract are in
+`internal/adopt/verification_makefile_target_test.go` and
+`internal/adopt/verification_makefile_define_test.go`; each row was measured against GNU Make 4.4.1.
 
 The report's `steps` array records each step of the adoption chain it reached
 (`completed`, `declined` or `failed`) with the warnings and errors that step

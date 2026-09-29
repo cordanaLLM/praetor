@@ -1,0 +1,4 @@
+type: fixed
+title: Adopt writes the documentation gate block, and appends its own verify-all, for a Makefile whose define is only used through $(call ...) in recipes; a define now leaves ownership to Make only when an eval call or a top-level bare expansion can parse its body as rules, or when it is never closed; the reader now counts nested references the way Make does, so an = inside $(call rule,$(P)x,A=b) no longer hides the bare expansion, a verify-all rule whose prerequisite is $(filter-out $(X),a=b) is read as the rule it is, and a top-level bare expansion whose arguments hold a rule colon outside info, warning and error is left to Make
+issue: "#537"
+breaking: false
