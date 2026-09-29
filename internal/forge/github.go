@@ -250,12 +250,10 @@ func (g *GitHubDriver) walkPages(ctx context.Context, base, query, what string, 
 	return fmt.Errorf("%w: %s beyond %d pages of %d entries", errPageCeiling, what, maxPages, issuesPerPage)
 }
 
-// findRulesetID returns the id of the repository ruleset named name, or 0 when absent. It
-// reads every page of the listing: a ruleset past the first page must be updated in place,
-// never duplicated by a second POST.
-func (g *GitHubDriver) findRulesetID(ctx context.Context, listPath, name string) (int, error) {
-	id := 0
-	err := g.walkPages(ctx, listPath, "", "repository rulesets", maxRulesetPages, func(body []byte) (int, bool, error) {
+// walkRulesets visits every entry of the repository ruleset listing at listPath, page by page,
+// until visit reports it is done (walkPages bounds the pages).
+func (g *GitHubDriver) walkRulesets(ctx context.Context, listPath string, visit func(ghRulesetRaw) (done bool)) error {
+	return g.walkPages(ctx, listPath, "", "repository rulesets", maxRulesetPages, func(body []byte) (int, bool, error) {
 		var rulesets []ghRulesetRaw
 		if err := json.Unmarshal(body, &rulesets); err != nil {
 			return 0, false, fmt.Errorf("failed parsing repository rulesets (raw: %q): %w", util.BodyPreview(body), err)
@@ -264,12 +262,25 @@ func (g *GitHubDriver) findRulesetID(ctx context.Context, listPath, name string)
 			return 0, false, fmt.Errorf("ruleset response exceeds %d entries", issuesPerPage)
 		}
 		for i := 0; i < len(rulesets); i++ {
-			if rulesets[i].Name == name {
-				id = rulesets[i].ID
+			if visit(rulesets[i]) {
 				return len(rulesets), true, nil
 			}
 		}
 		return len(rulesets), false, nil
+	})
+}
+
+// findRulesetID returns the id of the repository ruleset named name, or 0 when absent. It
+// reads every page of the listing: a ruleset past the first page must be updated in place,
+// never duplicated by a second POST.
+func (g *GitHubDriver) findRulesetID(ctx context.Context, listPath, name string) (int, error) {
+	id := 0
+	err := g.walkRulesets(ctx, listPath, func(ruleset ghRulesetRaw) bool {
+		if ruleset.Name == name {
+			id = ruleset.ID
+			return true
+		}
+		return false
 	})
 	if err != nil {
 		return 0, err
