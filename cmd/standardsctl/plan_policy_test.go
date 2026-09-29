@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -148,4 +149,31 @@ func TestPlanEffectivePolicy_Boundary_CatalogRootSelectsThePinnedCatalog(t *test
 		t.Fatalf("relative --catalog-root: %v\n%s", err, out)
 	}
 	mustContain(t, out, "Signed Commits Required:   true", "Approving Reviewers:       2")
+}
+
+// Positive: --offline and --remote each parse on their own.
+func TestParsePlanFlags_Positive_OfflineOrRemote(t *testing.T) {
+	offline, err := parsePlanFlags([]string{"--offline"})
+	if err != nil || !offline.offline || offline.remote {
+		t.Fatalf("--offline: flags %+v, err %v", offline, err)
+	}
+	remote, err := parsePlanFlags([]string{"--remote"})
+	if err != nil || !remote.remote || remote.offline {
+		t.Fatalf("--remote: flags %+v, err %v", remote, err)
+	}
+}
+
+// Negative: --offline forbids every forge read, so it cannot be combined with --remote.
+func TestParsePlanFlags_Negative_OfflineWithRemote(t *testing.T) {
+	if _, err := parsePlanFlags([]string{"--offline", "--remote"}); err == nil || !strings.Contains(err.Error(), "pass one of them") {
+		t.Fatalf("err = %v, want the --offline/--remote refusal", err)
+	}
+}
+
+// Boundary: neither flag reads nothing live and leaves both off.
+func TestParsePlanFlags_Boundary_NeitherFlag(t *testing.T) {
+	flags, err := parsePlanFlags(nil)
+	if err != nil || flags.offline || flags.remote {
+		t.Fatalf("flags %+v, err %v", flags, err)
+	}
 }

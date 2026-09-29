@@ -389,7 +389,8 @@ func liveProtectionRuleset() map[string]any {
 
 // TestGitHubDriver_ReconcileProtection_Positive_MergesLiveRulesetWithoutNarrowing covers
 // BUG-761: the live ruleset is read, merged and read back; main and lts-* are both
-// protected and nothing the operator added is dropped.
+// protected and nothing the operator added is dropped. The live three approving reviews stay:
+// the declared one would lower them (#154).
 func TestGitHubDriver_ReconcileProtection_Positive_MergesLiveRulesetWithoutNarrowing(t *testing.T) {
 	gh, fake := rulesetForge(t, &rulesetServer{existing: []map[string]any{liveProtectionRuleset()}})
 	gh.RulesetName = RepositoryRulesetName
@@ -416,7 +417,7 @@ func TestGitHubDriver_ReconcileProtection_Positive_MergesLiveRulesetWithoutNarro
 		t.Fatalf("a protected ref must leave the excludes, others stay: %s", put.Raw)
 	}
 	for _, want := range []string{`"bypass_actors":[{"actor_id":5`, `"code_scanning"`, `"allowed_merge_methods":["squash"]`,
-		`"required_approving_review_count":1`, `{"context":"external/app","integration_id":123}`, `{"context":"CI"}`,
+		`"required_approving_review_count":3`, `{"context":"external/app","integration_id":123}`, `{"context":"CI"}`,
 		`"strict_required_status_checks_policy":true`} {
 		if !strings.Contains(put.Raw, want) {
 			t.Fatalf("merged ruleset lacks %s: %s", want, put.Raw)
