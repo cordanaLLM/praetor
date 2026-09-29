@@ -19,6 +19,8 @@ Read [Fast adoption](../../adoption.md) first for the one-step path, then
   resolve complexity limits from one implementation.
 - [Independent review and single-maintainer operation](../review-policy.md): the
   branch-protection `review_mode` and reviewer minimums.
+- [Live Actions checks](../actions-live-checks.md): how the audit compares the declared Actions
+  workflow permissions with the forge and reports each workflow's recent runs.
 - [Planning-artifact onboarding](../planning-onboarding.md): the `planning-artifacts`
   archetype for research, concept and preparation repositories.
 - [Framework capability evidence](../needs-capability-evidence.md): what
