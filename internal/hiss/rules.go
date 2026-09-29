@@ -366,9 +366,16 @@ var regexKeywords = []string{"return", "typeof", "case", "do", "else", "in", "of
 // start, which is after an operator, an opening bracket, a keyword such as return, or at the
 // start of the line. A literal that does not close on its line is a division after all.
 func (s *literalStripper) regexLiteralEnd(line string, i int, copied string) int {
-	if !s.syn.regexLiterals || !regexMayStart(copied) {
+	if !s.syn.regexLiterals || !regexMayStart(copied) || closesJSXTag(line, i, copied) {
 		return i
 	}
+	return regexBodyEnd(line, i)
+}
+
+// regexBodyEnd returns the index just past the regular expression literal opening at i and its
+// flags, or i when the line ends before the closing slash. A slash inside a character class
+// does not close the literal.
+func regexBodyEnd(line string, i int) int {
 	inClass := false
 	for j := i + 1; j < len(line); j++ {
 		switch c := line[j]; {
@@ -395,10 +402,16 @@ func regexMayStart(copied string) bool {
 	if prev == "" {
 		return true
 	}
-	if strings.IndexByte("(,=:[!&|?{};+-*%<>~^", prev[len(prev)-1]) >= 0 {
+	if strings.IndexByte("(,=:[!&|?{;+-*%<>~^", prev[len(prev)-1]) >= 0 {
 		return true
 	}
 	return slices.Contains(regexKeywords, trailingIdent(prev))
+}
+
+// closesJSXTag reports whether the slash at i belongs to JSX markup rather than starting a
+// regular expression: the `</` of a closing tag or the `/>` of a self-closing one.
+func closesJSXTag(line string, i int, copied string) bool {
+	return strings.HasSuffix(copied, "<") || (i+1 < len(line) && line[i+1] == '>')
 }
 
 // scanQuoted scans a string body from i for its closing delimiter, honouring backslash

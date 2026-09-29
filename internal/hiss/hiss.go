@@ -173,7 +173,7 @@ func scanTree(ctx context.Context, repoPath string, opts ScanOptions, visibility
 	if err := filepath.Walk(repoPath, w.visit); err != nil {
 		return nil, fmt.Errorf("hiss: scan %q: %w", repoPath, err)
 	}
-	reportCallCycles(ctx, rep, w.goFiles, repoPath)
+	w.finish()
 	rep.TotalInfractions = len(rep.Violations)
 	return rep, nil
 }
@@ -223,9 +223,10 @@ type scanWalker struct {
 	rep     *ScanReport
 	extra   map[string]struct{}
 	visible *GitVisibleTree
-	// goFiles accumulates the Go sources this walk read, so the call-graph pass can close
-	// cycles that span files. No single file's AST shows a two-function loop closing.
-	goFiles []string
+	// packages accumulates, per package scanner (languageScanners index), the files this walk
+	// examined, so a pass such as the Go call graph can close cycles that span files. No single
+	// file shows a two-function loop closing.
+	packages [len(languageScanners)][]string
 	// files counts the file entries visited, bounding the walk by ScanOptions.MaxFiles.
 	files int
 }
@@ -362,12 +363,7 @@ func (w *scanWalker) visitFile(path, rel string, info os.FileInfo) error {
 	if w.skipFile(rel, info) {
 		return nil
 	}
-	// Remember Go sources for the call-graph pass. It runs after the walk because a cycle
-	// through two functions is only visible once every file in the package has been read.
-	if strings.EqualFold(filepath.Ext(rel), ".go") && len(w.goFiles) < maxCallGraphFiles {
-		w.goFiles = append(w.goFiles, path)
-	}
-	return scanFile(w.root, rel, w.rep, w.opts)
+	return w.scanFile(path, rel)
 }
 
 // skipFile reports whether a file entry is out of scope for the scan, recording why in
@@ -484,43 +480,10 @@ func ignoreSet(names []string) map[string]struct{} {
 	return set
 }
 
-func isScannableExt(ext string) bool {
-	return isNativeExt(ext) || ext == ".py" || ext == ".go" || ext == ".rs"
-}
-
-// SupportsExtension reports whether the HISS scanner has a language dispatch for ext.
-// The answer is based on the same dispatch table used by Scan.
+// SupportsExtension reports whether a HISS language scanner reads files with ext, in any case.
+// The answer comes from languageScanners, the dispatch table Scan itself uses.
 func SupportsExtension(ext string) bool {
 	return isScannableExt(strings.ToLower(ext))
-}
-
-// scanFile reads one source file under a byte bound and dispatches it to the language
-// scanner. The path is re-confined to the root before it is opened.
-func scanFile(root, rel string, rep *ScanReport, opts ScanOptions) error {
-	data, err := readBounded(root, rel)
-	if err != nil {
-		if errors.Is(err, errOversize) {
-			rep.Skips.Oversize++
-			return nil
-		}
-		return err
-	}
-	rep.Coverage.FilesRead++
-	ext := strings.ToLower(filepath.Ext(rel))
-	if ext == ".go" {
-		scanGoSource(data, rel, rep, opts)
-		return nil
-	}
-	lines := strings.Split(string(data), "\n")
-	switch {
-	case isNativeExt(ext):
-		scanNativeLines(lines, rel, rep, opts)
-	case ext == ".py":
-		scanPythonLines(lines, rel, rep, opts)
-	case ext == ".rs":
-		scanRustLines(lines, rel, rep, opts)
-	}
-	return nil
 }
 
 var errOversize = errors.New("hiss: file exceeds MaxScanFileSize")

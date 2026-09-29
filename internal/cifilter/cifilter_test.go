@@ -535,6 +535,16 @@ func TestClassifyChanges_TsxJsxAreCode(t *testing.T) {
 	}
 }
 
+// Positive (#589): a Svelte component and the TypeScript module suffixes are code because the
+// HISS scanner reads them; they come from its table rather than from a second list here.
+func TestClassifyChanges_ScannedScriptKindsAreCode(t *testing.T) {
+	for _, path := range []string{"ui/src/App.svelte", "lib/index.mts", "lib/index.cts"} {
+		if cs := cifilter.ClassifyChanges([]string{path}); !cs.CodeChanged || cs.UnclassifiedChanged {
+			t.Errorf("%s: want code, got code=%v unclassified=%v", path, cs.CodeChanged, cs.UnclassifiedChanged)
+		}
+	}
+}
+
 // Negative: .md only stays docs-only.
 func TestClassifyChanges_MdStaysDocsOnly(t *testing.T) {
 	cs := cifilter.ClassifyChanges([]string{"docs/guides/figures.md"})

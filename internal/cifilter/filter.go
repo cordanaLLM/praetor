@@ -345,19 +345,21 @@ func isDocumentation(p string) bool {
 		strings.EqualFold(base, "NOTICE")
 }
 
-// unscannedCodeExtensions are the source kinds the HISS scanner has no dispatch for. Shading
+// unscannedCodeExtensions are the source kinds the HISS scanner has no dispatch for; JavaScript,
+// TypeScript and Svelte come from the scanner's own table (hiss.SupportsExtension). Shading
 // language sources are code: GLSL (.glsl and the stage suffixes glslang infers a stage from),
 // HLSL, WGSL and Metal are compiled into the program, so a change to one selects tests,
 // linters and security, and never context sync.
 var unscannedCodeExtensions = []string{
-	".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".java", ".dart", ".proto", ".zig",
+	".java", ".dart", ".proto", ".zig",
 	".glsl", ".vert", ".frag", ".comp", ".geom", ".tesc", ".tese",
 	".rgen", ".rint", ".rahit", ".rchit", ".rmiss", ".rcall", ".hlsl", ".wgsl", ".metal",
 }
 
 // isCode reports a source file. Every kind the HISS scanner reads (C, C++ with its .h, .hpp and
-// .hh headers, CUDA, HIP, Go, Python, Rust) comes from the scanner's own table (HISS-19), so a
-// file hiss checks for invariants always selects the code gates too.
+// .hh headers, CUDA, HIP, Go, Python, Rust, JavaScript, TypeScript, Svelte) comes from the
+// scanner's own table (HISS-19), so a file hiss checks for invariants always selects the code
+// gates too.
 func isCode(p string) bool {
 	ext := strings.ToLower(filepath.Ext(p))
 	return hiss.SupportsExtension(ext) || slices.Contains(unscannedCodeExtensions, ext)
