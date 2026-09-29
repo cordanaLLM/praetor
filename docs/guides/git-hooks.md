@@ -155,10 +155,12 @@ separately from Git.
 
 `praetorctl adopt` writes a root `lefthook.yml` (`buildLefthookYAMLFor` in
 `internal/adopt/hooks.go`). Its governance jobs are the same in every repository:
-`compile-context --verify` and `audit` before a commit, `state sync` and the dedupe cadence
-after one, and `flavor audit`, `audit` and `gate run` before a push. The language jobs follow
-the languages the adoption verification plan detects from root markers, the set the harness
-rows are rendered for (`lefthookLanguages`, `planLanguages` in `internal/adopt/harness_hiss.go`):
+`compile-context --verify` and `audit --offline` before a commit, `state sync` and the dedupe
+cadence after one, and `flavor audit`, `audit` and `gate run` before a push (see
+[Offline before a commit, online before a push](#offline-before-a-commit-online-before-a-push)).
+The language jobs follow the languages the adoption verification plan detects from root markers,
+the set the harness rows are rendered for (`lefthookLanguages`, `planLanguages` in
+`internal/adopt/harness_hiss.go`):
 
 | Detected | Pre-commit jobs | Pre-push jobs | Each runs only where |
 | --- | --- | --- | --- |
@@ -192,7 +194,10 @@ An existing `lefthook.yml` is classified before anything is installed (`classify
   `internal/adopt/testdata/lefthook/`, is migrated to the current one on a plain run and
   activated. The list holds the two renderings that carried the Go jobs into every repository,
   so those adopters get the jobs of their own languages without `--force`
-  (`TestAdopt_Negative_GoEveryRepositoryRenderingMigratesToCargoJobs`).
+  (`TestAdopt_Negative_GoEveryRepositoryRenderingMigratesToCargoJobs`). It also holds the
+  renderings whose pre-commit audit still read the forge, one per language set with and without
+  checkpoint jobs, so those adopters get `audit --offline` before a commit on a plain run
+  (`TestAdopt_Boundary_OnlinePreCommitAuditMigratesWithoutForce`).
 - **Any other file** is the repository's. It is kept byte for byte, `--force` included, and not
   activated: the audit checks only that `lefthook.yml` exists, so `--force` has nothing to restore.
   The skip names the generated jobs the file lacks and the jobs it adds, or says the file does not
@@ -207,6 +212,27 @@ To regenerate a kept file, remove `lefthook.yml` and re-run adopt, or merge the 
 hand and run `lefthook install`. After changing the template, record the rendering it replaced:
 copy it under `internal/adopt/testdata/lefthook/` and add its digest to `priorLefthookDigests`
 (`TestPriorLefthookDigests_Positive_ReproducedByFixtures`).
+
+### Offline before a commit, online before a push
+
+The two audit jobs differ on purpose (`preCommitAuditArgs` and `prePushAuditArgs` in
+`internal/adopt/hooks.go`):
+
+| Job | Command | Reads the forge |
+| --- | --- | --- |
+| `pre-commit` `hiss-audit`, and the fallback pre-commit hook | `praetorctl audit --offline` | never |
+| `pre-push` `audit` | `praetorctl audit` | when the [live Actions checks](actions-live-checks.md) can run |
+
+A commit reads files only, so it never waits on the network and never fails on a forge
+setting. A push runs the live Actions checks when the `origin` remote names the manifest's
+repository on github.com and a token is found. That costs up to 130 GitHub API requests: two
+for the workflow permissions, and one or two for each of at most 64 workflows. Each request is
+bounded at 15 seconds and all of them together at three minutes. Without `GITHUB_TOKEN` or
+`GH_TOKEN` the audit also runs `gh auth token` once. A push whose live workflow permissions
+have drifted from `overrides.actions` is refused until the setting the verdict names is fixed.
+`make verify-all` and CI run the online audit too; whether it reaches the forge there depends
+on the token they provide. Tests: `TestLefthookAudit_Positive_PreCommitOfflinePrePushOnline`
+in `internal/adopt/lefthook_audit_offline_test.go`.
 
 ## Hook files adoption keeps
 

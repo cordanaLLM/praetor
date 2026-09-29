@@ -27,9 +27,11 @@ const (
 // only these texts are recognised, in either consistent line-ending style: adoption migrates
 // them to the current rendering instead of treating its own earlier output as foreign and
 // leaving it unfixed forever (BUG-859). An edited copy matches no digest and stays untouched.
-// The files under testdata/lefthook reproduce each digest (lefthook_identity_test.go). The last
-// two are the renderings that carried the Go jobs in every repository, whatever its languages
-// (#568).
+// The files under testdata/lefthook reproduce each digest (lefthook_identity_test.go). The
+// "Go jobs in every repository" pair carried the Go jobs whatever the repository's languages
+// (#568); the "online pre-commit audit" entries, one per language set with and without
+// checkpoint jobs, ran the pre-commit audit against the forge before it passed --offline
+// (preCommitAuditArgs).
 var priorLefthookDigests = map[string]string{
 	"25e9d28b31d2423874042e8c4f9d864bcf970e111a78f2b0b8ad63990081b435": "HISS-16 labels, root Go jobs",
 	"2b94aaf2bb95773724a4ead9dcabad7f5931408b07cf02b11c6768ad384b7413": "HISS-16 labels, root Go jobs, checkpoint jobs",
@@ -41,6 +43,14 @@ var priorLefthookDigests = map[string]string{
 	"d20ed3ba2c21261d98ecfece5982d604c2ff9f476773e6e107ba54cd6848db87": "document start, no gate refusal note, checkpoint jobs",
 	"daf1de1af7779eef3b0dd8a0a5940ef416a4e28ccc606dbc3baa876990cc8934": "Go jobs in every repository",
 	"3d4a25b0269015ca166d92aa0d38e7000ea9d8d95f7529c7ff93577efc186f03": "Go jobs in every repository, checkpoint jobs",
+	"064c50473d6890c73c230875e6057772cafe6d6752a853ad453031c11ca90aff": "online pre-commit audit, governance jobs only",
+	"95135352d1a8131742dd0f1ef0207616842410c4d56930b0f61ef78b79b2400a": "online pre-commit audit, governance jobs only, checkpoint jobs",
+	"1c3eb49613cbdcbf8fc69ee0b289ae9b7f144da92fa40eb3179ede927cde0e1b": "online pre-commit audit, Go jobs",
+	"095446dfe078ffcfc5dff7c590d12fbc695a3d3b9eabf714f8d36eed9ec3f561": "online pre-commit audit, Go jobs, checkpoint jobs",
+	"cc8b9f422d3a8a139284c1373e479bde924c22025fb6f6f5cea2e18fcb26d41c": "online pre-commit audit, Rust jobs",
+	"a535aa9f8745e41c1929c7d79079ed5bbbfbb03d41e58e3fd4be0d29fe7122ab": "online pre-commit audit, Rust jobs, checkpoint jobs",
+	"419129472238157ea46c5ad26100b273ab46e2ca64d89f51f06bbbc509625ecf": "online pre-commit audit, Go and Rust jobs",
+	"11a1713854b6d98bf5fb9025d001502daca00415ace8ecd3837550f92e2f49e6": "online pre-commit audit, Go and Rust jobs, checkpoint jobs",
 }
 
 // lefthookIdentity is what adoption concluded about an existing lefthook.yml.

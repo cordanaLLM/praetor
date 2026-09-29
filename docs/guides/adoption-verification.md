@@ -1072,8 +1072,8 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
     every existing file that is neither a current nor an earlier Praetor rendering, `--force`
     included. The hooks are installed only when `lefthook version` runs on `PATH`
     and hook activation is not skipped. Without a runnable lefthook, adoption writes the
-    fallback pre-commit hook, which runs `compile-context --verify` and `audit` alone, so the
-    lefthook stages are not credited.
+    fallback pre-commit hook, which runs `compile-context --verify` and `audit --offline` alone,
+    so the lefthook stages are not credited.
 
   A check is also language-bound (`Rule.AdoptedFor` in
   [`internal/hisscatalog/adopted.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hisscatalog/adopted.go)):

@@ -51,6 +51,26 @@ checks print `[SKIP]`.
 `praetorctl plan` previews the permission comparison under the same conditions and never fails on
 it, as it never fails on file drift. `plan --offline` skips it.
 
+### In Git hooks and CI
+
+The `lefthook.yml` adoption writes runs `audit --offline` before a commit and `audit` before a
+push ([Local Git hooks](git-hooks.md#offline-before-a-commit-online-before-a-push)):
+
+- A commit never asks the forge, so it never waits on the network and never fails on a forge
+  setting. The fallback pre-commit hook, written when lefthook cannot install, is offline too.
+- A push asks the forge under the conditions above, since it needs the network anyway. A drifted
+  permission verdict refuses the push until the setting the verdict names is fixed.
+- `make verify-all` and CI run the online audit. Whether they reach the forge depends on the token
+  they provide.
+
+One online audit makes up to 130 requests: two for the workflow permissions, then one or two for
+each workflow, at most 64. Each request is bounded at 15 seconds and all of them at three
+minutes. Without `GITHUB_TOKEN` or `GH_TOKEN` it also runs `gh auth token` once. A forge that
+does not answer costs about 30 seconds, one timed-out request for each check, and both checks
+print `[SKIP]`; an unreachable forge never refuses a push. A `lefthook.yml` an earlier release
+wrote, whose pre-commit audit still read the forge, is migrated to the offline one on a plain
+`praetorctl adopt`, without `--force`.
+
 ## Workflow permissions
 
 With `overrides.actions` declared, the audit reads

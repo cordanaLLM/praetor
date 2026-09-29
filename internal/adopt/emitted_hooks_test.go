@@ -56,7 +56,9 @@ func TestEmittedHookFixturesMatchTheRendering(t *testing.T) {
 
 // Positive: folding changes the layout, never a value. Every earlier unfolded rendering
 // decodes to exactly what the current Go rendering decodes to, so lefthook runs the same
-// commands in a Go repository and lefthook_identity.go sees the same jobs.
+// commands in a Go repository and lefthook_identity.go sees the same jobs. The one value that
+// changed since is the pre-commit audit, which now passes --offline (preCommitAuditArgs); the
+// unfolded renderings still ran it online, and nothing else differs.
 func TestLefthookRendering_Positive_FoldsWithoutChangingValues(t *testing.T) {
 	fixtures := readPriorLefthookFixtures(t)
 	for name, checkpoint := range map[string]bool{"unfolded.lefthook.yml": false, "unfolded-checkpoint.lefthook.yml": true} {
@@ -67,10 +69,27 @@ func TestLefthookRendering_Positive_FoldsWithoutChangingValues(t *testing.T) {
 		if err := yaml.Unmarshal([]byte(buildLefthookYAMLFor(hisscatalog.LanguageGo, checkpoint)), &current); err != nil {
 			t.Fatalf("decode the current rendering (checkpoint=%v): %v", checkpoint, err)
 		}
+		preCommitAudit := decodedJob(t, prior, "pre-commit", "hiss-audit")
+		if preCommitAudit["run"] != lefthookGovernedCommand("audit") {
+			t.Fatalf("%s: the pre-commit audit was not the online one: %v", name, preCommitAudit["run"])
+		}
+		preCommitAudit["run"] = lefthookGovernedCommand(preCommitAuditArgs)
 		if !reflect.DeepEqual(prior, current) {
 			t.Errorf("checkpoint=%v: the current rendering changed a value of %s", checkpoint, name)
 		}
 	}
+}
+
+// decodedJob returns the commands entry job of hook in a decoded rendering.
+func decodedJob(t *testing.T, decoded map[string]any, hook, job string) map[string]any {
+	t.Helper()
+	section, _ := decoded[hook].(map[string]any)
+	commands, _ := section["commands"].(map[string]any)
+	entry, ok := commands[job].(map[string]any)
+	if !ok {
+		t.Fatalf("the rendering has no %s job %s", hook, job)
+	}
+	return entry
 }
 
 // Boundary: every rendering, for every language set, opens with a document start and keeps
