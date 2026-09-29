@@ -28,7 +28,7 @@ func AuditCodebaseVersions(ctx context.Context, repoPath string, includePrerelea
 		return nil, fmt.Errorf("audit language dependencies: %w", err)
 	}
 	pending := pendingUpgrades(inventory)
-	actions, actionDeps, err := ScanWorkflowActions(ctx, repoPath)
+	actions, actionDeps, err := auditWorkflowActions(ctx, repoPath)
 	if err != nil {
 		return nil, fmt.Errorf("audit workflow actions: %w", err)
 	}
