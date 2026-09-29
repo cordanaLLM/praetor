@@ -26,8 +26,10 @@ build:
 	go build -v -o $(PRAETOR_LSP) ./cmd/standards-lsp
 	@ln -sf praetor-lsp$(EXE_SUFFIX) $(STANDARDS_LSP)
 
+# -timeout replaces go test's ten-minute default per package: internal/dogfood reached
+# 600 s under -race on the CI runner and panicked mid-suite.
 test:
-	go test -v -race $(if $(TEST_COVERPROFILE),-covermode=atomic -coverprofile="$(TEST_COVERPROFILE)") ./...
+	go test -v -race -timeout 30m $(if $(TEST_COVERPROFILE),-covermode=atomic -coverprofile="$(TEST_COVERPROFILE)") ./...
 
 stress:
 	go test -v -race ./internal/stress/...
