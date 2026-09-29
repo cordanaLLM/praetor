@@ -271,20 +271,17 @@ func TestRunProvenance_Positive_ContentReportAttestsUnverified(t *testing.T) {
 
 // Boundary: a subject no content rule covers is named in one unchecked note, never passed
 // off as verified, and a verified subject adds no line.
-func TestReportContentVerdicts_Boundary(t *testing.T) {
-	var b strings.Builder
-	reportContentVerdicts(&b, []supplychain.ContentVerdict{
+func TestContentVerdictReport_Boundary(t *testing.T) {
+	report := contentVerdictReport([]supplychain.ContentVerdict{
 		{Name: "a.tar.gz", Status: supplychain.ContentUnchecked},
 		{Name: "pkg.deb", Format: "a Debian binary package", Status: supplychain.ContentVerified},
 		{Name: "b.spdx.json", Status: supplychain.ContentUnchecked},
 	})
 	want := "note: content unchecked for 2 subject(s) of a file type praetorctl has no content rule for: a.tar.gz, b.spdx.json\n"
-	if b.String() != want {
-		t.Errorf("report = %q, want %q", b.String(), want)
+	if report != want {
+		t.Errorf("report = %q, want %q", report, want)
 	}
-	b.Reset()
-	reportContentVerdicts(&b, nil)
-	if b.Len() != 0 {
-		t.Errorf("no verdicts printed %q", b.String())
+	if report := contentVerdictReport(nil); report != "" {
+		t.Errorf("no verdicts printed %q", report)
 	}
 }

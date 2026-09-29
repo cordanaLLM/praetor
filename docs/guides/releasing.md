@@ -98,7 +98,8 @@ so an upload after it fails; the flow never makes one (#43).
 4. `praetorctl provenance -checksums dist/checksums.txt` writes one in-toto SLSA v1.0
    statement whose subjects are every line of `checksums.txt`, with the workflow identity
    as the builder. Each subject digest is recomputed from the file in `dist/` and must
-   match its line (`internal/supplychain/slsa.go`).
+   match its line (`internal/supplychain/slsa.go`), and each file's content is checked
+   against its name ([content checks](#content-checks)).
 5. `cosign attest-blob --statement` signs that statement into
    `provenance.intoto.json.sigstore.json`, and `cosign verify-blob-attestation` checks the
    bundle against every file `checksums.txt` names.
@@ -233,6 +234,7 @@ praetorctl provenance --checksums dist/checksums.txt --out provenance.json
 | `--artifact` | base name of `--file` | Subject name |
 | `--digest` | none | Expected SHA-256 (64 lowercase hex characters); the run fails unless `--file` hashes to it |
 | `--builder` | `$GITHUB_SERVER_URL/$GITHUB_WORKFLOW_REF` in GitHub Actions; required elsewhere | Builder ID recorded in the predicate |
+| `--content-check` | `enforce` | What a file whose bytes are not the type its name declares does: `enforce` refuses the statement, `report` attests the file and prints an `UNVERIFIED` warning ([content checks](#content-checks)) |
 | `--out` | stdout | Output file |
 
 The subject digest always comes from the file's bytes, never from `--digest`, so a
@@ -247,7 +249,43 @@ statement cannot name a digest nobody computed. The run is refused when:
   (`supplychain.MaxArtifactBytes`), a symlink, not a regular file, or changes while it is
   read;
 - `--digest` is malformed or differs from the computed digest. The error names the
-  computed digest.
+  computed digest;
+- under `--content-check=enforce`, a file's bytes are not the type its name declares, or
+  `--content-check` is neither `enforce` nor `report`.
+
+### Content checks
+
+A checksum and a signature prove that a file is the one that was built, not that the build
+produced what the file's name promises: a text file named `.deb` or random bytes named `.efi`
+pass both. Before a file becomes a subject, `praetorctl provenance` therefore checks its bytes
+against the type its subject name declares. The check reads the same bytes the digest streams
+(`contextopt.DigestBinarySnapshotTo`), so what was checked is what was attested.
+
+| Subject name | Required content |
+| :--- | :--- |
+| `*.deb`, `*.udeb`, `*.ddeb` | An `ar` archive whose members are `debian-binary` holding a `2.x` format version, then `control.tar*`, then `data.tar*`, each optionally preceded by `_`-prefixed members ([deb(5)](https://man7.org/linux/man-pages/man5/deb.5.html)); no member header or member data may be cut off |
+| `*.efi` | A complete PE/COFF image (DOS header, PE signature, COFF and optional headers, section table, every section's raw data inside the file) whose subsystem is an EFI application, driver or ROM (10 to 13) |
+| `*.efi` presented as a kernel | The same, plus a non-empty `.linux` section, the one section the [UAPI Unified Kernel Image specification](https://uapi-group.org/specifications/specs/unified_kernel_image/) requires. A bare EFI-stub kernel has none |
+
+An `.efi` name is presented as a kernel when it sits under an `EFI/Linux/` directory, where
+the Boot Loader Specification puts Unified Kernel Images, or when a word of its base name is
+`vmlinuz`, `linux`, `kernel` or `uki` (`vmlinuz-7.2.4.efi`, `arch-linux.efi`,
+`image.uki.efi`). `BOOTX64.EFI` or `systemd-bootx64.efi` only has to be an EFI image. The
+extension and the words are compared without regard to case.
+
+With the default `--content-check=enforce`, one mismatching file refuses the whole statement,
+and the error names the file, the expected format and what was found instead, for example
+`the EFI image has no .linux section`. `--content-check=report` attests the file anyway and
+prints `warning: content of <name> is UNVERIFIED: ...` on stderr; use it only while a broken
+build is being repaired. A file type without a rule is attested as before and named in one
+`note: content unchecked for N subject(s) ...` line on stderr, never counted as verified.
+Praetor's own release archives (`.tar.gz`, `.zip`) and SBOMs (`.json`) are in that group.
+
+`internal/supplychain/content_test.go` covers each rule with valid layouts, mismatches and
+truncated files fed in chunk sizes that split every header;
+`internal/supplychain/content_tools_test.go` attests a package `dpkg-deb` builds and a UKI
+`ukify` builds, and refuses the bare kernel under a UKI name, on hosts that have those tools
+(skipped elsewhere with the reason).
 
 Every statement records the `buildDefinition.buildType`
 `https://cordanallm.github.io/praetor/slsa/build/v1` (`supplychain.DefaultBuildType`). Every

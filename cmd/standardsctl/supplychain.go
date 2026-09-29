@@ -6,7 +6,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -172,7 +171,7 @@ func runProvenance(args []string) error {
 	if err := supplychain.CheckInTotoStatement(data); err != nil {
 		return fmt.Errorf("refusing a statement cosign verify-blob-attestation would reject: %w", err)
 	}
-	reportContentVerdicts(os.Stderr, verdicts)
+	fmt.Fprint(os.Stderr, contentVerdictReport(verdicts))
 	fmt.Fprintln(os.Stderr, unsignedProvenanceWarning)
 
 	if flags.out != "" {
@@ -261,23 +260,25 @@ func provenanceStatement(ctx context.Context, f provenanceFlags) (*supplychain.S
 	})
 }
 
-// reportContentVerdicts writes one warning per subject whose content is unverified and one
-// note naming every subject no content rule covers, so a checksummed file of an unknown
+// contentVerdictReport returns one warning line per subject whose content is unverified and
+// one note naming every subject no content rule covers, so a checksummed file of an unknown
 // type is never mistaken for a verified one. Verified subjects need no line.
-func reportContentVerdicts(w io.Writer, verdicts []supplychain.ContentVerdict) {
+func contentVerdictReport(verdicts []supplychain.ContentVerdict) string {
+	var report strings.Builder
 	var unchecked []string
 	for _, verdict := range verdicts {
 		switch verdict.Status {
 		case supplychain.ContentUnverified:
-			fmt.Fprintf(w, "warning: content of %s is UNVERIFIED: expected %s, but %s\n", verdict.Name, verdict.Format, verdict.Reason)
+			report.WriteString("warning: content of " + verdict.Name + " is UNVERIFIED: expected " + verdict.Format + ", but " + verdict.Reason + "\n")
 		case supplychain.ContentUnchecked:
 			unchecked = append(unchecked, verdict.Name)
 		}
 	}
 	if len(unchecked) > 0 {
-		fmt.Fprintf(w, "note: content unchecked for %d subject(s) of a file type praetorctl has no content rule for: %s\n",
+		fmt.Fprintf(&report, "note: content unchecked for %d subject(s) of a file type praetorctl has no content rule for: %s\n",
 			len(unchecked), strings.Join(unchecked, ", "))
 	}
+	return report.String()
 }
 
 // subjectSummary names the one subject of a single-artifact statement, or counts the
