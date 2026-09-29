@@ -172,10 +172,12 @@ type adoptSession struct {
 	// (resolveDefaultBranch, forge.DefaultBranchToDeclare); empty when there is nothing to declare
 	// or the manifest exists.
 	defaultBranch string
-	// configNegationPlanned records, in a dry run only, that the git-ignore step planned the
-	// directory-only negation that re-includes .config/ (configDirNegation), so the ignored-write
-	// check leaves out the files the real run re-includes (reportIgnoredWrites).
-	configNegationPlanned bool
+	// configNegationAdded records that the git-ignore step added the directory-only negation
+	// that re-includes .config/ (configDirNegation), or planned it in a dry run. The
+	// ignored-write check of a dry run then leaves out the files the real run re-includes, and
+	// every run names the files below .config/ adoption does not write that the negation
+	// re-includes too (reportIgnoredWrites, reportReincludedConfigFiles).
+	configNegationAdded bool
 }
 
 // adoptStep is one reconciliation step of the adoption chain.

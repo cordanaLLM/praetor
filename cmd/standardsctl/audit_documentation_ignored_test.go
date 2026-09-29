@@ -52,13 +52,13 @@ func TestAuditDocumentationGate_Positive_TrackedOrReincludedFilesPass(t *testing
 	}
 }
 
-// Boundary: the managed block adoption writes under a Kconfig-style rule, with !.config/ as
+// Boundary: the managed block adoption writes under a Kconfig-style rule, with !/.config/ as
 // its last rule, is canonical; a block with any other extra rule is not.
 func TestAuditDocumentationGate_Boundary_ConfigNegationBlockIsCanonical(t *testing.T) {
 	root := documentationAuditFixture(t)
 	block := adopt.ManagedGitIgnoreBlock()
 	end := "# END praetor private artifacts\n"
-	writeFixtureFile(t, root, ".gitignore", ".config\n\n"+strings.Replace(block, end, "!.config/\n"+end, 1))
+	writeFixtureFile(t, root, ".gitignore", ".config\n\n"+strings.Replace(block, end, "!/.config/\n"+end, 1))
 	if err := docGate(t.Context(), docsManifest(), root); err != nil {
 		t.Fatalf("the block with the .config negation failed: %v", err)
 	}

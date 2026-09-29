@@ -39,9 +39,13 @@ func gitIgnoreTailBlock() managedTailBlock {
 // configDirNegation re-includes the .config/ directory adoption writes its pinned catalog,
 // label taxonomy, checkpoint policy and hook scripts to, where a Kconfig-style rule (a bare
 // .config, /.config or .*) ignores it. The rule is directory-only, so a Kconfig .config file
-// stays ignored at the root and at every depth. The managed block carries it only where such a
-// rule hides the directory (kconfigConfigRule) and keeps it once written (mergeGitIgnoreRules).
-const configDirNegation = "!" + configDir + "/"
+// stays ignored at the root and at every depth, and anchored, so it re-includes the root
+// directory alone: a .config/ directory deeper in the tree (a vendored tool's) stays ignored.
+// It is the form negationFor proposes for any ignored directory. The managed block carries it
+// only where such a rule hides the directory (kconfigConfigRule) and keeps it once written
+// (mergeGitIgnoreRules); a file below the directory that adoption does not write is re-included
+// with it and named (reportReincludedConfigFiles).
+const configDirNegation = "!/" + configDir + "/"
 
 // managedGitIgnoreRules returns the managed block's rules: managedIgnoreRules, then
 // configDirNegation when negateConfig is set.
@@ -96,9 +100,9 @@ const adoptGitIgnoreSeed = "bin/\n*.test\n*.out\n.DS_Store\n"
 // that plans the block records it (adoptSession.privateIgnorePlanned), so the backups it plans
 // for later steps match the ones the real run takes once the block is written. Where a
 // Kconfig-style rule hides .config/ (kconfigConfigRule), the block also re-includes that
-// directory (configDirNegation) and the report names the rule; a dry run that plans it records
-// it (adoptSession.configNegationPlanned), so the ignored-write check reports what the real run
-// leaves ignored.
+// directory (configDirNegation) and the report names the rule; the session records it
+// (adoptSession.configNegationAdded), so the ignored-write check of a dry run reports what the
+// real run leaves ignored and every run names the other files the negation re-includes.
 func reconcileGitIgnore(ctx context.Context, s *adoptSession) error {
 	rule, negate := kconfigConfigRule(ctx, s.repoPath)
 	existed, changed, err := writeManagedGitIgnore(ctx, s.repoPath, adoptGitIgnoreSeed, s.opts.DryRun, negate)
@@ -107,7 +111,7 @@ func reconcileGitIgnore(ctx context.Context, s *adoptSession) error {
 	}
 	note := ""
 	if negate {
-		s.configNegationPlanned = s.opts.DryRun
+		s.configNegationAdded = err == nil
 		note = "; re-included the " + configDir + "/ directory Praetor writes to with " + configDirNegation +
 			", because " + rule.Rule() + " ignores it (Kconfig " + configDir + " files stay ignored at every depth)"
 	}

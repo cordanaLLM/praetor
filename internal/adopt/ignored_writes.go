@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -103,17 +104,15 @@ func ignoredParents(ctx context.Context, root string, matches []util.GitIgnoreMa
 }
 
 // negationFor returns the rule that re-includes rel after the rule that ignores it: the
-// directory-only negation of its shallowest ignored parent (configDirNegation for .config), or
-// rel's own negation when no parent is ignored.
+// anchored, directory-only negation of its shallowest ignored parent (configDirNegation for
+// .config), or rel's own anchored negation when no parent is ignored. Anchoring keeps the
+// negation to the one path adoption writes; an unanchored one re-includes the same name at
+// every depth.
 func negationFor(rel string, hidden map[string]bool) string {
 	for _, dir := range parentDirs(rel) {
-		if !hidden[dir] {
-			continue
+		if hidden[dir] {
+			return "!/" + dir + "/"
 		}
-		if dir == configDir {
-			return configDirNegation
-		}
-		return "!/" + dir + "/"
 	}
 	return "!/" + rel
 }
@@ -141,9 +140,10 @@ func ignoredWriteProblem(p IgnoredPath, editor bool) string {
 // still writes the file, so the local checkout works. In a dry run that planned
 // configDirNegation, a file only its .config/ directory hides is left out: the real run
 // re-includes it. When git cannot answer (not installed, not a work tree) the check is skipped
-// and the skip is a warning, never passed off as a clean result.
+// and the skip is a warning, never passed off as a clean result. The files the negation
+// re-includes besides adoption's own are named after (reportReincludedConfigFiles).
 func reportIgnoredWrites(ctx context.Context, s *adoptSession) {
-	written := writtenFiles(s.report)
+	written := writtenFiles(s.report, s.repoPath, s.opts.DryRun)
 	ignored, err := IgnoredPaths(ctx, s.repoPath, written.paths)
 	if err != nil {
 		s.report.addWarning("adopted files not checked against .gitignore, so some may be uncommittable: %v", err)
@@ -151,7 +151,7 @@ func reportIgnoredWrites(ctx context.Context, s *adoptSession) {
 	}
 	for i := 0; i < len(ignored) && i < maxReportActions; i++ {
 		found := ignored[i]
-		if s.configNegationPlanned && found.Negation == configDirNegation {
+		if s.opts.DryRun && s.configNegationAdded && found.Negation == configDirNegation {
 			continue
 		}
 		step := s.report.stepOfAction(written.action[found.Path])
@@ -161,6 +161,7 @@ func reportIgnoredWrites(ctx context.Context, s *adoptSession) {
 		}
 		s.report.addStepError(step, ignoredWriteProblem(found, false))
 	}
+	reportReincludedConfigFiles(ctx, s, written)
 }
 
 // writtenPaths lists the work-tree files a run's report names, in report order, each with the
@@ -171,15 +172,12 @@ type writtenPaths struct {
 }
 
 // writtenFiles collects the files r names as created, reconciled, merged, appended or
-// replaced (committablePath).
-func writtenFiles(r *AdoptReport) writtenPaths {
+// replaced (committablePath) that the run left in the work tree at repoPath, or plans to
+// create in a dry run (writtenPath).
+func writtenFiles(r *AdoptReport, repoPath string, dryRun bool) writtenPaths {
 	written := writtenPaths{action: make(map[string]int)}
 	for i := 0; i < len(r.ActionDetails) && i < maxReportActions; i++ {
-		detail := r.ActionDetails[i]
-		if detail.Action == actionSkip || detail.Action == actionRemove {
-			continue
-		}
-		rel, ok := committablePath(detail.Path)
+		rel, ok := writtenPath(repoPath, dryRun, r.ActionDetails[i])
 		if _, seen := written.action[rel]; !ok || seen {
 			continue
 		}
@@ -187,6 +185,24 @@ func writtenFiles(r *AdoptReport) writtenPaths {
 		written.paths = append(written.paths, rel)
 	}
 	return written
+}
+
+// writtenPath returns the committable path detail names when the run wrote or verified that
+// file. A removal and a skipped surface wrote nothing. Neither did an entry whose file is not
+// on disk: the formatter-ignore step records .prettierignore as reconciled where no Prettier
+// configuration asks for it (formatterIgnoreApplicable), and a rule that ignores that name
+// must not fail the step for a file that does not exist. A dry run's planned creation is the
+// one entry kept without its file, which the real run writes.
+func writtenPath(repoPath string, dryRun bool, detail ActionDetail) (string, bool) {
+	if detail.Action == actionSkip || detail.Action == actionRemove {
+		return "", false
+	}
+	rel, ok := committablePath(detail.Path)
+	if !ok || (dryRun && detail.Action == actionCreate) {
+		return rel, ok
+	}
+	_, err := os.Lstat(filepath.Join(repoPath, filepath.FromSlash(rel)))
+	return rel, !errors.Is(err, fs.ErrNotExist)
 }
 
 // committablePath returns rel cleaned when it names a file git could commit: not absolute,
@@ -213,6 +229,85 @@ func privateByDesign(rel string) bool {
 		}
 	}
 	return false
+}
+
+// maxReincludedNamed bounds the files a re-inclusion warning names; the count covers the rest.
+const maxReincludedNamed = 20
+
+// maxConfigListing bounds the untracked files below .config/ one ls-files answer may list and
+// the bytes it may take (HISS-02).
+const (
+	maxConfigListing      = 1024
+	maxConfigListingBytes = 1 << 20
+)
+
+// reportReincludedConfigFiles warns, on the git-ignore step, when the configDirNegation this
+// run added or plans also re-includes files below .config/ that adoption does not write. Git
+// ignored them until now, so the next `git add -A` commits them, credentials a tool keeps there
+// included; the warning names them and how to keep them out. A tracked file is left out (its
+// ignore rules never applied), and so, in a real run, is a file another rule still ignores. A
+// dry run cannot see the rules below a negation it has not written and names every untracked
+// file adoption does not plan to write. When git cannot list the directory, the warning says
+// the check was skipped.
+func reportReincludedConfigFiles(ctx context.Context, s *adoptSession, written writtenPaths) {
+	if !s.configNegationAdded {
+		return
+	}
+	step := -1
+	if index, ok := written.action[gitIgnoreFile]; ok {
+		step = s.report.stepOfAction(index)
+	}
+	foreign, err := reincludedConfigFiles(ctx, s.repoPath, s.opts.DryRun, written.action)
+	switch {
+	case err != nil:
+		s.report.addStepWarning(step, fmt.Sprintf("files below %s/ not checked for re-inclusion by %s: %v", configDir, configDirNegation, err))
+	case len(foreign) > 0:
+		s.report.addStepWarning(step, reincludedProblem(foreign, s.opts.DryRun))
+	}
+}
+
+// reincludedConfigFiles returns the untracked files below .config/ that adoption does not write
+// (written) and configDirNegation re-includes: in a real run, those no other rule still ignores.
+func reincludedConfigFiles(ctx context.Context, repoPath string, dryRun bool, written map[string]int) ([]string, error) {
+	result, err := util.RunGitProbe(ctx, repoPath, maxConfigListingBytes, "ls-files", "-z", "--others", "--", configDir+"/")
+	if err != nil {
+		return nil, fmt.Errorf("git ls-files in %s: %w", repoPath, err)
+	}
+	listed := strings.Split(string(result.Stdout), "\x00")
+	foreign := make([]string, 0, len(listed))
+	for i := 0; i < len(listed) && len(foreign) < maxConfigListing; i++ {
+		if _, own := written[listed[i]]; listed[i] != "" && !own {
+			foreign = append(foreign, listed[i])
+		}
+	}
+	if dryRun || len(foreign) == 0 {
+		return foreign, nil
+	}
+	still, err := IgnoredPaths(ctx, repoPath, foreign)
+	if err != nil {
+		return nil, err
+	}
+	return slices.DeleteFunc(foreign, func(rel string) bool {
+		return slices.ContainsFunc(still, func(p IgnoredPath) bool { return p.Path == rel })
+	}), nil
+}
+
+// reincludedProblem is the warning naming the files configDirNegation re-includes besides
+// adoption's own, the first maxReincludedNamed by name and the rest by count. A dry run's
+// warning says that a rule below the directory may still ignore some of them.
+func reincludedProblem(foreign []string, dryRun bool) string {
+	named := foreign[:min(len(foreign), maxReincludedNamed)]
+	more := ""
+	if rest := len(foreign) - len(named); rest > 0 {
+		more = fmt.Sprintf(" and %d more", rest)
+	}
+	verb := "re-includes"
+	if dryRun {
+		verb = "would re-include, unless another rule still ignores them,"
+	}
+	return fmt.Sprintf("%s %s %d file(s) below %s/ that adoption does not write and git ignored until now: %s%s. "+
+		"The next `git add -A` commits them; ignore each by name above the managed block (for example /%s) or move it out of %s/",
+		configDirNegation, verb, len(foreign), configDir, strings.Join(named, ", "), more, named[0], configDir)
 }
 
 // kconfigConfigRule returns the rule that hides .config/ when it is Kconfig-style: a rule that

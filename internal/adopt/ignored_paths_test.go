@@ -79,7 +79,7 @@ func TestCatalogIgnore_Positive_BareConfigIgnoreIsReportedAndStillWritten(t *tes
 	errors := strings.Join(s.report.Errors, "\n")
 	for _, artifact := range policy.CatalogArtifacts {
 		want := artifact.RelativePath + ": ignored by .gitignore:1 (.config); adoption writes it, but git will not commit it"
-		if !strings.Contains(errors, want) || !strings.Contains(errors, "Add !.config/ after that rule (directory-only") {
+		if !strings.Contains(errors, want) || !strings.Contains(errors, "Add !/.config/ after that rule (directory-only") {
 			t.Fatalf("%s not named with its rule and negation in %q", artifact.RelativePath, errors)
 		}
 		if _, err := os.Stat(filepath.Join(s.repoPath, artifact.RelativePath)); err != nil {
