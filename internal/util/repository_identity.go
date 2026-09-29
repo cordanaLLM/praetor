@@ -39,6 +39,13 @@ func ValidateGitHubRepositoryIdentity(owner, repository string) error {
 	if err := ValidateGitHubOwner(owner); err != nil {
 		return err
 	}
+	return ValidateGitHubRepositoryName(repository)
+}
+
+// ValidateGitHubRepositoryName is the name half of ValidateGitHubRepositoryIdentity: 1..100
+// letters, digits, '.', '_' and '-', and neither "." nor "..", which an origin remote ending
+// in "/." or "/.." yields.
+func ValidateGitHubRepositoryName(repository string) error {
 	if len(repository) > maxGitHubRepositoryBytes || !githubRepositorySegment.MatchString(repository) ||
 		repository == "." || repository == ".." {
 		return fmt.Errorf("invalid GitHub repository name %q", repository)
