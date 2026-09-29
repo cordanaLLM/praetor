@@ -31,9 +31,10 @@ import (
 // .github/actionlint.yml (measured with v1.7.12: with both present, a label declared only in
 // the .yml file is still rejected). Adoption edits the file actionlint reads, and creates
 // .github/actionlint.yaml when there is none. It only adds a missing label. A label counts as
-// declared when the list holds it or a pattern of the adopter's matches it (path.Match);
-// actionlint's own globs also take braces, so a brace pattern costs a redundant label, never a
-// missing one. Adoption never removes a label, one it added included: the adopter's own
+// declared when the list holds it or a pattern of the adopter's matches it (path.Match), the
+// matching actionlint applies too: measured with v1.7.12, `ubuntu-2?.04` declares ubuntu-26.04
+// and the brace pattern `ubuntu-{26,27}.04` does not, since path.Match expands no braces.
+// Adoption never removes a label, one it added included: the adopter's own
 // workflows may run on it too. Once actionlint ships a label and the family stops naming it,
 // adoption stops adding it, and the header of a created file says when a label can go.
 //
