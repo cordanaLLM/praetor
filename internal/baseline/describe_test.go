@@ -1,6 +1,7 @@
 package baseline
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -13,6 +14,7 @@ func TestRatchetResultSummary_Positive_NamesFileLineAndRule(t *testing.T) {
 		CurrentCount:           2,
 		NewViolations:          []Infraction{{RuleID: "HISS-07", FilePath: "pkg/new.go", LineNumber: 12, Message: "panic"}},
 		TouchedCleanViolations: []Infraction{{RuleID: "HISS-04", FilePath: "pkg/old.go", LineNumber: 3, Message: "too long"}},
+		Attribution:            []Attribution{AttributionIntroduced},
 	}
 	got := res.Summary()
 	for _, want := range []string{
@@ -34,11 +36,13 @@ func TestRatchetResultSummary_Negative_NilResult(t *testing.T) {
 	}
 }
 
-// Boundary: the listing is bounded per class, and a count that did not rise is not claimed.
+// Boundary: the listing is bounded per class, a cut class says how many lines it hid and which
+// read-only command lists them (#598), and a count that did not rise is not claimed.
 func TestRatchetResultSummary_Boundary_ListsAtMostThreePerClass(t *testing.T) {
 	res := &RatchetResult{PreviousCount: 5, CurrentCount: 5}
 	for i := 1; i <= maxDescribedViolations+2; i++ {
 		res.NewViolations = append(res.NewViolations, Infraction{RuleID: "HISS-02", FilePath: "a.go", LineNumber: i})
+		res.Attribution = append(res.Attribution, AttributionIntroduced)
 	}
 	got := res.Summary()
 	if n := strings.Count(got, "(new)"); n != maxDescribedViolations {
@@ -46,6 +50,63 @@ func TestRatchetResultSummary_Boundary_ListsAtMostThreePerClass(t *testing.T) {
 	}
 	if !strings.Contains(got, "5 new unbaselined") || strings.Contains(got, "rose from") {
 		t.Errorf("unexpected summary:\n%s", got)
+	}
+	marker := "... and 2 more new violations not shown; " + verifyLister + " lists every one"
+	if !strings.Contains(got, marker) {
+		t.Errorf("Summary() does not say how many it hid, want %q:\n%s", marker, got)
+	}
+}
+
+// Boundary (#598): one line over the bound hides exactly one, in the singular, and the touched
+// class is counted apart from the new class, each naming the command that lists it.
+func TestRatchetResultSummary_Boundary_MarkerCountsEachClass(t *testing.T) {
+	res := &RatchetResult{PreviousCount: 0, CurrentCount: 9}
+	for i := 1; i <= maxDescribedViolations+1; i++ {
+		res.NewViolations = append(res.NewViolations, Infraction{RuleID: "HISS-01", FilePath: "a.py", LineNumber: i})
+		res.Attribution = append(res.Attribution, AttributionIntroduced)
+	}
+	for i := 1; i <= maxDescribedViolations+2; i++ {
+		res.TouchedCleanViolations = append(res.TouchedCleanViolations, Infraction{RuleID: "HISS-04", FilePath: "b.go", LineNumber: i})
+	}
+	got := res.Summary()
+	for _, want := range []string{
+		"... and 1 more new violation not shown; " + verifyLister,
+		"... and 2 more touched-file violations not shown; " + auditLister,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Summary() missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// Negative (#598): a class within the bound prints no marker, and FullSummary never does.
+func TestRatchetResultSummary_Negative_NoMarkerWithinBound(t *testing.T) {
+	res := &RatchetResult{PreviousCount: 0, CurrentCount: maxDescribedViolations}
+	for i := 1; i <= maxDescribedViolations; i++ {
+		res.NewViolations = append(res.NewViolations, Infraction{RuleID: "HISS-02", FilePath: "a.go", LineNumber: i})
+	}
+	if got := res.Summary(); strings.Contains(got, "not shown") {
+		t.Errorf("a listing within the bound claims hidden lines:\n%s", got)
+	}
+	res.NewViolations = append(res.NewViolations, Infraction{RuleID: "HISS-02", FilePath: "a.go", LineNumber: 99})
+	if got := res.FullSummary(); strings.Contains(got, "not shown") {
+		t.Errorf("FullSummary() hid lines:\n%s", got)
+	}
+}
+
+// Positive (#598): FullSummary lists every violation of every class.
+func TestRatchetResultFullSummary_Positive_ListsEveryViolation(t *testing.T) {
+	res := &RatchetResult{PreviousCount: 0, CurrentCount: 12}
+	for i := 1; i <= 2*maxDescribedViolations; i++ {
+		res.NewViolations = append(res.NewViolations, Infraction{RuleID: "HISS-01", FilePath: "a.py", LineNumber: i})
+		res.TouchedCleanViolations = append(res.TouchedCleanViolations, Infraction{RuleID: "HISS-04", FilePath: "b.go", LineNumber: i})
+	}
+	got := res.FullSummary()
+	if n := strings.Count(got, "(not in the baseline)"); n != 2*maxDescribedViolations {
+		t.Errorf("listed %d new violations, want %d:\n%s", n, 2*maxDescribedViolations, got)
+	}
+	if n := strings.Count(got, "(touched file must be clean)"); n != 2*maxDescribedViolations {
+		t.Errorf("listed %d touched violations, want %d:\n%s", n, 2*maxDescribedViolations, got)
 	}
 }
 
@@ -56,5 +117,107 @@ func TestRatchetResultSummary_Positive_CountRegressedNamesTotals(t *testing.T) {
 	got := res.Summary()
 	if !strings.Contains(got, "total infractions rose from 5 to 7") || strings.Contains(got, "0 new unbaselined") {
 		t.Errorf("count-only regression summary = %q", got)
+	}
+}
+
+// attributionFixture is a baseline recorded at a commit, a scan that adds two findings of a check
+// the recorder lacked in unchanged code and one finding in changed code, and what the current
+// checks report at that commit.
+func attributionFixture() (b *Baseline, current, atCommit []Infraction) {
+	exitMsg := "sys.exit ends the process from library code"
+	b = &Baseline{CommitSHA: "0123456789abcdef0123456789abcdef01234567", TotalInfractions: 0, Infractions: []Infraction{}}
+	current = []Infraction{
+		{RuleID: "HISS-07", FilePath: "hooks/guard.py", LineNumber: 50, Message: exitMsg, Fingerprint: "hooks/guard.py:50:HISS-07"},
+		{RuleID: "HISS-07", FilePath: "hooks/guard.py", LineNumber: 58, Message: exitMsg, Fingerprint: "hooks/guard.py:58:HISS-07"},
+		{RuleID: "HISS-02", FilePath: "hooks/new.py", LineNumber: 3, Message: "unbounded loop", Fingerprint: "hooks/new.py:3:HISS-02"},
+	}
+	// The commit holds the same two sys.exit calls, at other lines, and not the new loop.
+	atCommit = []Infraction{
+		{RuleID: "HISS-07", FilePath: "hooks/guard.py", LineNumber: 48, Message: exitMsg},
+		{RuleID: "HISS-07", FilePath: "hooks/guard.py", LineNumber: 56, Message: exitMsg},
+	}
+	return b, current, atCommit
+}
+
+// Positive (#599): findings the current checks also report at the baseline's commit are
+// attributed to a changed check and named with the remediation; the one in changed code is new.
+func TestRatchetResultAttribute_Positive_ChangedCheckInUnchangedCode(t *testing.T) {
+	b, current, atCommit := attributionFixture()
+	res := EvaluateRatchet(b, current, nil)
+	res.Attribute(b, current, atCommit, b.CommitSHA)
+	want := []Attribution{AttributionCheckChanged, AttributionCheckChanged, AttributionIntroduced}
+	if !slices.Equal(res.Attribution, want) {
+		t.Fatalf("Attribution = %v, want %v", res.Attribution, want)
+	}
+	got := res.Summary()
+	for _, line := range []string{
+		"HISS invariant violations the baseline does not record (3 total infractions, 3 unbaselined (1 introduced, 2 from checks added or changed since the baseline), 0 in touched files):",
+		"[HISS-07] hooks/guard.py:50 - sys.exit ends the process from library code (check added or changed since the baseline)",
+		"[HISS-02] hooks/new.py:3 - unbounded loop (new)",
+		"2 of them sit in code the current checks flag at 0123456789ab, the commit the baseline was recorded at",
+		recordRemedy,
+	} {
+		if !strings.Contains(got, line) {
+			t.Errorf("Summary() missing %q:\n%s", line, got)
+		}
+	}
+	if res.Passed {
+		t.Error("an attribution must never pass the ratchet")
+	}
+}
+
+// Negative (#599): a violation the commit does not hold is introduced, and one the baseline
+// records at another line was known to the recorder, so it is never blamed on a changed check.
+func TestRatchetResultAttribute_Negative_ChangedCodeAndMovedFinding(t *testing.T) {
+	b, current, _ := attributionFixture()
+	res := EvaluateRatchet(b, current, nil)
+	res.Attribute(b, current, nil, b.CommitSHA)
+	for i, got := range res.Attribution {
+		if got != AttributionIntroduced {
+			t.Errorf("Attribution[%d] = %q with nothing at the commit, want introduced", i, got)
+		}
+	}
+	if got := res.Summary(); !strings.HasPrefix(got, "HISS invariant violations introduced (3 total infractions, 3 new unbaselined") {
+		t.Errorf("fully introduced rejection = %q", got)
+	}
+
+	moved := Infraction{RuleID: "HISS-07", FilePath: "hooks/guard.py", LineNumber: 40, Message: current[0].Message, Fingerprint: "hooks/guard.py:40:HISS-07"}
+	recorded := &Baseline{CommitSHA: b.CommitSHA, TotalInfractions: 1, Infractions: []Infraction{moved}}
+	_, _, atCommit := attributionFixture()
+	res = EvaluateRatchet(recorded, current, nil)
+	res.Attribute(recorded, current, atCommit, recorded.CommitSHA)
+	want := []Attribution{AttributionNone, AttributionCheckChanged, AttributionIntroduced}
+	if !slices.Equal(res.Attribution, want) {
+		t.Fatalf("Attribution with a moved recorded finding = %v, want %v", res.Attribution, want)
+	}
+}
+
+// Boundary (#599): without an attribution, as for a baseline that records no commit, every new
+// violation is described as not in the baseline with the reason and the remediation, never as
+// introduced; a nil baseline or result leaves the result as it was.
+func TestRatchetResultAttribute_Boundary_UnattributedIsNeutral(t *testing.T) {
+	b, current, _ := attributionFixture()
+	res := EvaluateRatchet(b, current, nil)
+	res.AttributionNote = "the baseline records no commit to compare against"
+	got := res.Summary()
+	if strings.Contains(got, "introduced") || strings.Contains(got, "(new)") {
+		t.Errorf("an unattributed rejection claims the change introduced it:\n%s", got)
+	}
+	for _, line := range []string{
+		"HISS invariant violations the baseline does not record (3 total infractions, 3 unbaselined, 0 in touched files):",
+		"(not in the baseline)",
+		"3 of them were not traced to a code change (the baseline records no commit to compare against)",
+		recordRemedy,
+	} {
+		if !strings.Contains(got, line) {
+			t.Errorf("Summary() missing %q:\n%s", line, got)
+		}
+	}
+
+	res.Attribute(nil, current, nil, "")
+	var nilResult *RatchetResult
+	nilResult.Attribute(b, current, nil, "")
+	if res.Attribution != nil {
+		t.Errorf("Attribute with a nil baseline changed the result: %v", res.Attribution)
 	}
 }

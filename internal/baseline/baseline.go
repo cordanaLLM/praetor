@@ -63,41 +63,39 @@ type RatchetResult struct {
 	// none sits in a touched file, yet the total rose above the baseline's.
 	CountRegressed bool
 	Passed         bool
+	// Attribution holds, at the index of each NewViolations entry, why the baseline does not
+	// record it (#599). Attribute fills it; nil means no attribution ran, and Summary then
+	// describes every new violation as not in the baseline rather than as introduced.
+	Attribution []Attribution `json:",omitempty"`
+	// AttributionCommit is the commit Attribute compared the new violations against.
+	AttributionCommit string `json:",omitempty"`
+	// AttributionNote says why an attribution a caller attempted could not run.
+	AttributionNote string `json:",omitempty"`
 }
 
 // maxDescribedViolations bounds how many violations Summary lists per class (HISS-02).
 const maxDescribedViolations = 3
 
-// Summary renders why the ratchet failed: the counts, then the first few new and
-// touched-file violations as [rule] file:line - message, and whether the total rose. A
-// count-only regression names both totals, since no violation list explains it. It
-// describes a rejection only; callers print their own pass line.
+// Summary renders why the ratchet failed: the counts, then the first few violations of each
+// class as [rule] file:line - message (class), a marker naming how many a class hid and the
+// read-only command that lists them all (#598), why the violations no code change explains
+// fail and how to record them (#599), and whether the total rose. A count-only regression
+// names both totals, since no violation list explains it. It describes a rejection only;
+// callers print their own pass line.
 //
-// It is the one renderer for a ratchet rejection: `praetorctl audit`, the gate's HISS stage,
-// the standards_audit MCP tool and the dogfood public-checkout verification all reject on
-// this result, and the gate used to report only the counts, so the push it had just blocked
-// named no file to open.
+// It is the one renderer for a ratchet rejection: `praetorctl audit`, `praetorctl baseline
+// --verify`, the gate's HISS stage, the standards_audit MCP tool and the dogfood
+// public-checkout verification all reject on this result, and the gate used to report only the
+// counts, so the push it had just blocked named no file to open.
 func (r *RatchetResult) Summary() string {
-	if r == nil {
-		return "no ratchet result"
-	}
-	if r.CountRegressed {
-		return fmt.Sprintf("HISS invariant violations introduced: total infractions rose from %d to %d (no new fingerprints)", r.PreviousCount, r.CurrentCount)
-	}
-	var msgs []string
-	for i := 0; i < len(r.NewViolations) && i < maxDescribedViolations; i++ {
-		v := r.NewViolations[i]
-		msgs = append(msgs, fmt.Sprintf("  [%s] %s:%d - %s (new)", v.RuleID, v.FilePath, v.LineNumber, v.Message))
-	}
-	for i := 0; i < len(r.TouchedCleanViolations) && i < maxDescribedViolations; i++ {
-		v := r.TouchedCleanViolations[i]
-		msgs = append(msgs, fmt.Sprintf("  [%s] %s:%d - %s (touched file must be clean)", v.RuleID, v.FilePath, v.LineNumber, v.Message))
-	}
-	if r.CurrentCount > r.PreviousCount {
-		msgs = append(msgs, fmt.Sprintf("  total infractions rose from %d to %d", r.PreviousCount, r.CurrentCount))
-	}
-	return fmt.Sprintf("HISS invariant violations introduced (%d total infractions, %d new unbaselined, %d in touched files):\n%s",
-		r.CurrentCount, len(r.NewViolations), len(r.TouchedCleanViolations), strings.Join(msgs, "\n"))
+	return r.render(maxDescribedViolations)
+}
+
+// FullSummary is Summary without the per-class bound: every violation, one line each, and no
+// hidden-remainder marker. `--all-violations` on `praetorctl audit` and `praetorctl baseline
+// --verify` prints it, so listing every violation never needs a baseline rewrite (#598).
+func (r *RatchetResult) FullSummary() string {
+	return r.render(0)
 }
 
 // RecordOptions controls how Record treats a snapshot that would raise the count.
