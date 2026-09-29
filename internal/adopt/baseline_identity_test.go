@@ -130,3 +130,36 @@ func TestReconcileBaseline_KeepsUnchangedBaseline_3D(t *testing.T) {
 		t.Fatalf("unreadable baseline not replaced by the rescan: %+v, %v", b, err)
 	}
 }
+
+// TestReconcileBaseline_UnresolvedIdentityKeepsRecordedRepository_3D pins #123: a rescan without
+// a resolved identity never blanks the repository the baseline records. Positive: the same debt
+// keeps the file byte for byte. Boundary: changed debt rewrites the file and carries the
+// repository forward, as baseline.Record does. Negative: a resolved identity still replaces it
+// (TestReconcileBaseline_KeepsUnchangedBaseline_3D).
+func TestReconcileBaseline_UnresolvedIdentityKeepsRecordedRepository_3D(t *testing.T) {
+	root := committedRecordingRepo(t)
+	if err := reconcileBaseline(t.Context(), recordingSession(root, repoIdentity{owner: "acme", name: "widgets"})); err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+	full := filepath.Join(root, baselineFile)
+	recorded := mustRead(t, full)
+	if err := reconcileBaseline(t.Context(), recordingSession(root, repoIdentity{})); err != nil {
+		t.Fatalf("unresolved reconcile: %v", err)
+	}
+	if mustRead(t, full) != recorded {
+		t.Fatalf("an unresolved rescan of the same debt rewrote the baseline:\n%s", mustRead(t, full))
+	}
+
+	planted := strings.Replace(recorded, `"infractions": []`,
+		`"infractions": [{"rule_id": "HISS-04", "file_path": "gone.go", "line_number": 1, "fingerprint": "gone.go:1:HISS-04"}]`, 1)
+	if planted == recorded {
+		t.Fatalf("fixture did not plant the changed debt:\n%s", recorded)
+	}
+	mustWrite(t, full, planted)
+	if err := reconcileBaseline(t.Context(), recordingSession(root, repoIdentity{})); err != nil {
+		t.Fatalf("unresolved reconcile of changed debt: %v", err)
+	}
+	if b, err := baseline.LoadBaseline(full); err != nil || b.Repository != "acme/widgets" || len(b.Infractions) != 0 {
+		t.Fatalf("changed debt must be rewritten with the recorded repository kept: %+v, %v", b, err)
+	}
+}
