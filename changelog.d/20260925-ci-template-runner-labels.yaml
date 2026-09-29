@@ -1,0 +1,3 @@
+type: fixed
+title: "The actionlint-labels adoption step declares the runner labels of every workflow adoption writes, so a Go, Rust, Node, JVM or Flutter CI workflow on ubuntu-26.04 passes actionlint without docs:seo-portal"
+breaking: false

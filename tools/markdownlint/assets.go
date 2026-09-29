@@ -82,16 +82,6 @@ jobs:
           node tools/figures/build.mjs sources
 `
 
-// actionlintLabels are the runs-on labels of Workflow that actionlint does not know. Its
-// built-in table of GitHub-hosted runner labels (rule_runner_label.go) stops at ubuntu-24.04
-// in v1.7.12, and a label missing from that table fails the file unless the repository's
-// actionlint configuration declares it under self-hosted-runner.labels (#593). Adoption
-// declares each label listed here (internal/adopt/actionlint.go); once actionlint ships one,
-// remove it here and adoption stops adding it. internal/adopt's
-// TestActionlintStillRejectsTheDeclaredLabels fails, wherever actionlint is on PATH, as soon as
-// that actionlint accepts Workflow without one of these labels.
-var actionlintLabels = [...]string{"ubuntu-26.04"}
-
 // priorDigests maps the SHA-256 of every text an earlier Praetor shipped at one of the
 // family's managed paths, taken with LF line endings, to that path: the family's Prior
 // (internal/managedasset). Adoption refreshes a file holding exactly one of these texts
@@ -167,12 +157,6 @@ func FS() fs.FS {
 // Names returns the complete deterministic asset inventory.
 func Names() []string {
 	return slices.Clone(assetNames[:min(len(assetNames), MaxAssets)])
-}
-
-// ActionlintLabels returns a copy of the runs-on labels of Workflow that actionlint does not
-// know and adoption therefore declares to it.
-func ActionlintLabels() []string {
-	return slices.Clone(actionlintLabels[:])
 }
 
 // PriorDigests returns a copy of the digests of every earlier text of a managed path.
