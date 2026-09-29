@@ -174,7 +174,10 @@ func renderActionlintConfig(labels []string) []byte {
 func actionlintItems(labels []string, indent, eol string) string {
 	var out strings.Builder
 	for index := 0; index < len(labels) && index < managedasset.MaxActionlintLabels; index++ {
-		out.WriteString(indent + "- " + labels[index] + eol)
+		out.WriteString(indent)
+		out.WriteString("- ")
+		out.WriteString(labels[index])
+		out.WriteString(eol)
 	}
 	return out.String()
 }
@@ -226,11 +229,8 @@ func readActionlintLayout(ctx context.Context, text string) (actionlintLayout, e
 	if document.Kind == 0 || len(document.Content) != 1 || nullYAMLNode(document.Content[0]) {
 		return actionlintLayout{}, nil
 	}
-	if err := config.ValidateYAMLNodes(ctx, &document); err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return actionlintLayout{}, ctxErr
-		}
-		return actionlintLayout{}, actionlintRefusal("it uses anchors, aliases or keys that are not unique strings (" + err.Error() + ")")
+	if err := validateActionlintNodes(ctx, &document); err != nil {
+		return actionlintLayout{}, err
 	}
 	root := document.Content[0]
 	if root.Kind != yaml.MappingNode || root.Style&yaml.FlowStyle != 0 || root.Column != 1 {
@@ -242,6 +242,20 @@ func readActionlintLayout(ctx context.Context, text string) (actionlintLayout, e
 	}
 	layout.runnerKey, layout.runner = root.Content[layout.runnerAt], root.Content[layout.runnerAt+1]
 	return locateActionlintLabels(layout)
+}
+
+// validateActionlintNodes holds document to the adoption YAML node contract. It returns the
+// context error when the adoption context ended, because then nothing was observed, and an
+// actionlintRefusal for a document that uses anchors, aliases or keys that are not unique strings.
+func validateActionlintNodes(ctx context.Context, document *yaml.Node) error {
+	err := config.ValidateYAMLNodes(ctx, document)
+	if err == nil {
+		return nil
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
+	}
+	return actionlintRefusal("it uses anchors, aliases or keys that are not unique strings (" + err.Error() + ")")
 }
 
 // locateActionlintLabels fills the labels key and value of a layout whose self-hosted-runner
