@@ -27,6 +27,9 @@ type verificationInputs struct {
 	files             map[string][]byte
 	pythonDirectories map[string]bool
 	cSources          cSourceObservation
+	// unreadable holds, for each optional pytest configuration file the walk found but could not
+	// read within its bounds, why it could not (pytestOptionalMarker).
+	unreadable []string
 }
 
 func (v verificationInputs) has(path string) bool {
@@ -152,7 +155,11 @@ func (v *verificationInputs) capture(ctx context.Context, root, rel string, entr
 }
 
 // captureMarker records the verification marker at rel within the file and byte bounds. A
-// presence marker is recorded without its content, which no planner reads.
+// presence marker is recorded without its content, which no planner reads. An optional pytest
+// configuration file that cannot be read, such as a symlink, a file that is not UTF-8 text or one
+// past the byte bounds, is not pytest configuration: it is recorded as unreadable, for the
+// report to name, and the walk goes on, as it did before tox.ini and setup.cfg were read (#594).
+// A cancelled or expired walk still fails.
 func (v *verificationInputs) captureMarker(ctx context.Context, root, rel string, entry fs.DirEntry, total *int, limits VerificationLimits) error {
 	if len(v.files) >= limits.MaxFiles {
 		return filesBound.exceeded(limits.MaxFiles, fmt.Errorf("verification discovery exceeds %d metadata files", limits.MaxFiles))
@@ -164,16 +171,30 @@ func (v *verificationInputs) captureMarker(ctx context.Context, root, rel string
 		v.files[rel] = nil
 		return nil
 	}
-	data, err := contextopt.ReadSnapshot(ctx, filepath.Join(root, filepath.FromSlash(rel)))
+	data, err := readVerificationMarker(ctx, root, rel, *total, limits)
+	if err != nil && ctx.Err() == nil && pytestOptionalMarker(rel) {
+		v.unreadable = append(v.unreadable, err.Error())
+		return nil
+	}
 	if err != nil {
-		return fmt.Errorf("verification input %s: %w", rel, err)
+		return err
 	}
 	*total += len(data)
-	if int64(len(data)) > limits.MaxFileBytes || int64(*total) > limits.MaxTotalBytes {
-		return fmt.Errorf("verification metadata exceeds byte bounds (file=%d total=%d)", limits.MaxFileBytes, limits.MaxTotalBytes)
-	}
 	v.files[rel] = data
 	return nil
+}
+
+// readVerificationMarker reads the verification marker at rel when it fits the per-file byte
+// bound and, with total bytes already read, the total byte bound.
+func readVerificationMarker(ctx context.Context, root, rel string, total int, limits VerificationLimits) ([]byte, error) {
+	data, err := contextopt.ReadSnapshot(ctx, filepath.Join(root, filepath.FromSlash(rel)))
+	if err != nil {
+		return nil, fmt.Errorf("verification input %s: %w", rel, err)
+	}
+	if int64(len(data)) > limits.MaxFileBytes || int64(total)+int64(len(data)) > limits.MaxTotalBytes {
+		return nil, fmt.Errorf("verification input %s: metadata exceeds byte bounds (file=%d total=%d)", rel, limits.MaxFileBytes, limits.MaxTotalBytes)
+	}
+	return data, nil
 }
 
 func verificationMarker(rel string) bool {

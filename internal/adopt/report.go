@@ -189,13 +189,20 @@ func (r *AdoptReport) qualifyVerificationPillar(pillar *Pillar) {
 	}
 }
 
-// PendingPillars names the pillars the run left short of ready, or of planned in a dry run: a
-// warned, failed or unreached pillar. A declined pillar is the manifest's decision and is not
-// pending. A renderer closing an applied run with a success line qualifies it with these names,
-// so the last line never claims more than the pillar lines above it (#594).
+// PendingPillars names the pillars that hold back an applied run's success line: the Verification
+// Gate when the run left it warned, failed or unreached. A renderer closing an applied run
+// qualifies the success line with these names (#594). Only the Verification Gate counts: its
+// verify-all is the contract the success line vouches for, and an unavailable plan leaves it able
+// only to exit 1. Every other pillar's warning is informational and stays on its own pillar line,
+// such as the notice that an existing DevContainer was preserved, which every plain re-run
+// repeats and which leaves the adopter nothing to fix. A declined pillar is the manifest's
+// decision and is not pending either.
 func (r *AdoptReport) PendingPillars() []string {
 	var names []string
 	for _, pillar := range r.Pillars() {
+		if pillar.Step != verificationStep {
+			continue
+		}
 		switch pillar.Status {
 		case PillarReady, PillarPlanned, PillarDeclined:
 		default:

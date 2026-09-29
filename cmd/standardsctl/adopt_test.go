@@ -157,7 +157,7 @@ func TestPrintAdoptReportDerivesPillarLinesFromSteps(t *testing.T) {
 
 // #594: an applied run whose verification plan is unavailable warns the Verification Gate and
 // ends with a qualified line naming it, never the unqualified success line; a clean applied run
-// keeps that line, and a declined pillar does not qualify it.
+// keeps that line, and neither a declined pillar nor a warned DevContainer qualifies it.
 func TestPrintAdoptReportQualifiesSuccessWithPendingPillars(t *testing.T) {
 	allSteps := func(declined string) []adopt.StepOutcome {
 		steps := make([]adopt.StepOutcome, 0, 4)
@@ -182,9 +182,12 @@ func TestPrintAdoptReportQualifiesSuccessWithPendingPillars(t *testing.T) {
 	if strings.Contains(out, "successfully adopted") || strings.Contains(out, "✓ Verification Gate") {
 		t.Fatalf("unavailable verification reported as a clean adoption:\n%s", out)
 	}
+	preserved := allSteps("")
+	preserved[2].Warnings = []string{"Existing DevContainer preserved; bootstrap readiness requires separate verification."}
 	for _, rep := range []*adopt.AdoptReport{
 		{BaselineStatus: "scanned", Steps: allSteps(""), Verification: &adopt.VerificationPlan{Status: "declared-unverified"}},
 		{BaselineStatus: "scanned", Steps: allSteps("editors")},
+		{BaselineStatus: "scanned", Steps: preserved, Verification: &adopt.VerificationPlan{Status: "declared-unverified"}},
 	} {
 		out, err = captureStdout(t, func() error { printAdoptReport(rep); return nil })
 		if err != nil {

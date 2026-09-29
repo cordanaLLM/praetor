@@ -23,6 +23,10 @@ type VerificationPlan struct {
 	// that selected python3 -m pytest. The adoption report names it (notice), so an adopter can
 	// check the file pytest itself will read (#594).
 	SelectedBy []string `json:"selected_by,omitempty"`
+	// Unreadable says, for each tox.ini or setup.cfg the walk found but could not read within its
+	// bounds, why it could not. Such a file is not pytest configuration, so it selects no test
+	// command, and the adoption report names it (notice) rather than failing adoption (#594).
+	Unreadable []string `json:"unreadable,omitempty"`
 	// SourceLanguages names the languages the walk found sources of, whether or not a build
 	// marker in Runtimes also declares them: sourceLanguageC for C or C++ sources the audit's
 	// native scan reads, so C/C++ a Makefile or script compiles is detected too (#549). Only
@@ -59,7 +63,7 @@ func resolveVerificationPlanWithLimits(ctx context.Context, root string, request
 	if err != nil {
 		return nil, err
 	}
-	plan := &VerificationPlan{Status: verificationDeclared, Runtimes: []string{}, Build: [][]string{}, Test: [][]string{}, Limits: &limits}
+	plan := &VerificationPlan{Status: verificationDeclared, Runtimes: []string{}, Build: [][]string{}, Test: [][]string{}, Limits: &limits, Unreadable: inputs.unreadable}
 	if err := addNodeVerification(plan, inputs); err != nil {
 		return nil, err
 	}
@@ -227,7 +231,7 @@ func (p *VerificationPlan) commands() [][]string {
 // verify-all adoption writes does, which of the build and test commands is missing, and every
 // command discovery found that the failing recipe does not run, so the adopter can wire them into
 // the project's own contract. For any plan it names the configuration that selected a command
-// (SelectedBy) (#594).
+// (SelectedBy) and each tox.ini or setup.cfg the walk could not read (Unreadable) (#594).
 func (p *VerificationPlan) notice() string {
 	reason := "Selected commands have not been executed by adoption."
 	if len(p.Reasons) > 0 {
@@ -239,6 +243,9 @@ func (p *VerificationPlan) notice() string {
 	}
 	if len(p.SelectedBy) > 0 {
 		parts = append(parts, "Selected by: "+strings.Join(p.SelectedBy, "; ")+".")
+	}
+	if len(p.Unreadable) > 0 {
+		parts = append(parts, "Not read, so not pytest configuration: "+strings.Join(p.Unreadable, "; ")+".")
 	}
 	return strings.Join(parts, " ")
 }

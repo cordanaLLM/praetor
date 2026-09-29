@@ -154,7 +154,12 @@ func verificationMakefileReplacement(
 	s *adoptSession, data string, exists, generated, documentationEnabled bool,
 ) (string, error) {
 	replacement := buildMakefile(s.verification)
-	if exists && !generated {
+	switch {
+	case exists && generated:
+		// Earlier output in a CRLF checkout keeps its line-ending style (isReplaceableVerificationMakefile).
+		_, crlf := util.NormalizeLineEndings(data)
+		replacement = util.RestoreLineEndings(replacement, crlf)
+	case exists:
 		var err error
 		replacement, err = appendVerificationTargets(data, s.verification)
 		if err != nil {

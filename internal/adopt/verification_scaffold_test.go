@@ -13,6 +13,7 @@ func TestVerificationLegacyMigrationAndCustomPreservation(t *testing.T) {
 		"old-stub-rendered": mustRead(t, filepath.Join("testdata", "legacy-echo.Makefile")),
 		"old-go":            legacyVerificationMakefile("go test -v -race ./...", "go build -v ./..."),
 		"old-meson":         legacyVerificationMakefile("meson test -C core/build --suite=fast", "meson compile -C core/build"),
+		"old-go-crlf":       strings.ReplaceAll(legacyVerificationMakefile("go test -v -race ./...", "go build -v ./..."), "\n", "\r\n"),
 		"custom-echo":       "verify-all:\n\t@echo claimed\n",
 		"edited-old-stub":   "# operator changes\n" + legacyVerificationStub,
 		"multi-target":      "verify-all other:\n\t@echo custom\n",
@@ -43,6 +44,9 @@ func TestVerificationLegacyMigrationAndCustomPreservation(t *testing.T) {
 				}
 				if applied.Verification.Status != verificationDeclared {
 					t.Fatalf("known migrated plan mislabeled: %+v", applied.Verification)
+				}
+				if crlf := strings.HasSuffix(name, "-crlf"); crlf != strings.Contains(got, "\r\n") || (crlf && strings.Count(got, "\n") != strings.Count(got, "\r\n")) {
+					t.Fatalf("migrated Makefile changed its line-ending style: %q", got)
 				}
 			} else {
 				want, mergeErr := mergeDocumentationMakefile(existing, false)
