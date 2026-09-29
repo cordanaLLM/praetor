@@ -13,8 +13,8 @@ import (
 func TestDiscoveryLocalRetentionAndReplay(t *testing.T) {
 	parent := t.TempDir()
 	source := filepath.Join(parent, "source")
-	writeDiscoveryFile(t, source, "main.ts", "export {}\n")
-	writeDiscoveryFile(t, parent, "policy.json", `{"version":1,"rules":[{"key":"ts","title":"TypeScript","kind":"scanner_extension","matches":[".ts"],"analyzer":"hiss"}]}`)
+	writeDiscoveryFile(t, source, "Main.cs", "class Main {}\n")
+	writeDiscoveryFile(t, parent, "policy.json", `{"version":1,"rules":[{"key":"cs","title":"C#","kind":"scanner_extension","matches":[".cs"],"analyzer":"hiss"}]}`)
 	opts := DiscoveryOptions{Path: source, PolicyPath: filepath.Join(parent, "policy.json"), ArtifactDir: filepath.Join(parent, "run"), Stage: "observe"}
 	report, err := RunDiscovery(context.Background(), opts)
 	if err != nil {
@@ -42,14 +42,14 @@ func TestDiscoveryLocalRetentionAndReplay(t *testing.T) {
 			t.Fatalf("evidence mode %s: %v", path, info.Mode())
 		}
 	}
-	data, err := os.ReadFile(filepath.Join(source, "main.ts"))
-	if err != nil || string(data) != "export {}\n" {
+	data, err := os.ReadFile(filepath.Join(source, "Main.cs"))
+	if err != nil || string(data) != "class Main {}\n" {
 		t.Fatalf("source modified: %q %v", data, err)
 	}
 	if _, err := RunDiscovery(context.Background(), opts); err == nil {
 		t.Fatal("overwrote evidence run")
 	}
-	if err := os.Rename(filepath.Join(source, "main.ts"), filepath.Join(source, "main.go")); err != nil {
+	if err := os.Rename(filepath.Join(source, "Main.cs"), filepath.Join(source, "main.go")); err != nil {
 		t.Fatal(err)
 	}
 	opts.ArtifactDir = filepath.Join(parent, "replay")
