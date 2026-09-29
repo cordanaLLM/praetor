@@ -323,7 +323,10 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
   ([the lefthook.yml adoption writes](guides/git-hooks.md#the-lefthookyml-adoption-writes)).
 - **Replaced files.** When `--force` overwrites a drifted scaffold, the report lists it under
   `Files Replaced` with action `replace`, never as created. The entry carries a line delta
-  (`-removed/+added lines` and the first three removed lines) and where the prior bytes went:
+  (`-removed/+added lines` and the first three removed lines; a replace that only reorders
+  lines reads `-0/+0 lines, N moved` with the first three moved lines, so a reordered table
+  names the rows that moved: `util.LineDeltaOf`, tests in `internal/util/line_delta_test.go`)
+  and where the prior bytes went:
   `.workingdir/adopt-backups/<UTC stamp>/<path>`, written only when `git check-ignore`
   confirms that path is ignored. The `git-ignore` step, which writes the managed
   `/.workingdir/` rule, runs right after the manifest step and before every step that can

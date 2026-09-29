@@ -226,18 +226,22 @@ func preflightForceBackupRoot(ctx context.Context, s *adoptSession) error {
 }
 
 // describeLineDelta renders the line delta from before to after for a report entry: the counts,
-// then the first removed lines, each cut to a bounded length and quoted.
+// then the first removed lines, or for a replace that only reordered lines the first moved
+// ones, each cut to a bounded length and quoted.
 func describeLineDelta(before, after []byte) string {
 	delta := util.LineDeltaOf(string(before), string(after), maxDeltaQuotedLines)
 	summary := lineDeltaCounts(delta)
-	if !delta.Changed() {
+	switch {
+	case !delta.Changed():
 		// LineDeltaOf compares LF text, so a replace with no line delta changed line endings alone.
 		return summary + ", line endings only"
-	}
-	if len(delta.RemovedLines) == 0 {
+	case len(delta.RemovedLines) > 0:
+		return summary + ", removed " + quoteFirst(delta.RemovedLines, delta.Removed, maxDeltaQuotedLines, quoteDeltaLine)
+	case len(delta.MovedLines) > 0:
+		return summary + ": " + quoteFirst(delta.MovedLines, delta.Moved, maxDeltaQuotedLines, quoteDeltaLine)
+	default:
 		return summary
 	}
-	return summary + ", removed " + quoteFirst(delta.RemovedLines, delta.Removed, maxDeltaQuotedLines, quoteDeltaLine)
 }
 
 // quoteDeltaLine quotes one removed line of a line delta, cut to maxDeltaLineBytes.
@@ -261,11 +265,15 @@ func quoteFirst(items []string, total, limit int, quote func(string) string) str
 	return text
 }
 
-// lineDeltaCounts renders the counts of delta, "-removed/+added lines", the one form every
-// report entry gives them in: a replace entry (describeLineDelta) and a kept drift
-// (scaffoldDriftNote).
+// lineDeltaCounts renders the counts of delta, "-removed/+added lines", followed by ", N moved"
+// for a delta that only reordered lines, the one form every report entry gives them in: a
+// replace entry (describeLineDelta) and a kept drift (scaffoldDriftNote).
 func lineDeltaCounts(delta util.LineDelta) string {
-	return "-" + strconv.Itoa(delta.Removed) + "/+" + strconv.Itoa(delta.Added) + " lines"
+	counts := "-" + strconv.Itoa(delta.Removed) + "/+" + strconv.Itoa(delta.Added) + " lines"
+	if delta.Moved > 0 {
+		counts += ", " + strconv.Itoa(delta.Moved) + " moved"
+	}
+	return counts
 }
 
 // legacyHookBackupWarning reports a <file>.bak an earlier adoption wrote beside a hook file.
