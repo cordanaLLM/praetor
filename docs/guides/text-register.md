@@ -149,9 +149,10 @@ output and fetched web pages are always artifacts, whatever their length.
 
 Every rendered block names that directory, so the repository has to keep it out of Git:
 
-- `praetorctl compile-context` and the `standards_compile_context` write make Git ignore it
-  before they render the rule, through the writer `praetorctl state init` uses
-  (`adopt.EnsureEvidenceIgnore`). A repository whose rules already exclude it is left byte for
+- `praetorctl compile-context`, `praetorctl init` and the `standards_compile_context` write
+  make Git ignore it before they render the rule. All three run one write
+  (`adopt.CompileAgentContext`), which reconciles the ignore rule through the writer
+  `praetorctl state init` uses (`adopt.EnsureEvidenceIgnore`). A repository whose rules already exclude it is left byte for
   byte alone. Otherwise the Praetor private-artifact block is merged into `.gitignore` and the
   run prints `Added the Praetor private-artifact block to .gitignore`. With `git-ignore` in
   `adoption.decline`, it prints the warning `state` prints and leaves `.gitignore` alone.
@@ -165,8 +166,9 @@ about a file inside the directory, so it answers before the directory exists. `.
 followed by `!.workingdir/evidence/` reads as not ignored. `/.workingdir/` followed by the same
 negation still reads as ignored, because Git cannot re-include anything under an excluded
 directory. A directory outside any Git work tree passes, since no commit can publish it.
-`internal/compiler/evidence_ignore_test.go`, `internal/adopt/private_ignore_test.go` and
-`cmd/standardsctl/compile_context_evidence_test.go` cover each case.
+`internal/compiler/evidence_ignore_test.go`, `internal/adopt/private_ignore_test.go`,
+`internal/adopt/context_write_test.go`, `cmd/standardsctl/compile_context_evidence_test.go`
+and `cmd/standardsctl/init_evidence_test.go` cover each case.
 `config.EvidencePointer` produces the line, and the SARIF distillation of
 `internal/lockdown` ends its summary with it. The defaults originate there: 58 lines and
 1500 tokens are the distillation cap, and `lockdown.MaxDistillLines` and `MaxDistillTokens`
@@ -399,10 +401,10 @@ The whole file is linted, including what a repository wrote below the praetor ha
 the text register block is left out: `compile-context` renders it, nobody edits it by hand,
 and its wording belongs to its renderer (`compiler.MaskRegisterBlock`).
 
-Compiling without `--verify` writes every target first and lints afterwards, AGENTS.md and
-every canonical persona and skill: a prose edit still compiles, and the run then exits non-zero
-with `context written, but compile-context --verify will fail:` and the findings instead of
-printing success. `--verify` runs every check, register block, evidence ignore rule, vendor
+Compiling without `--verify`, and `praetorctl init`, write every target first and lint
+afterwards, AGENTS.md and every canonical persona and skill: a prose edit still compiles, and
+the run then exits non-zero with `context written, but compile-context --verify will fail:`
+and the findings instead of printing success. `--verify` runs every check, register block, evidence ignore rule, vendor
 files, lint and projections, and reports every failure together, so a missing register block no
 longer hides a lint failure behind it (`VerifyCompiledContext` and `lintAgentText` in
 `internal/compiler/projection.go`; `TestVerifyCompiledContext_Negative_ReportsEveryFailure` and
