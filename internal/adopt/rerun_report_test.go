@@ -17,20 +17,20 @@ const personaCopy = ".claude/agents/repo-auditor.md"
 // report names it.
 const fallbackHook = ".git/hooks/pre-commit"
 
-// Positive: a forced re-run over an unchanged adoption lists no persona copy and no pre-commit
-// hook as created; each is reconciled.
+// Positive: a forced re-run over an unchanged adoption lists no file as created, persona copies,
+// the pre-commit hook and the Paperclip harness included; each is reconciled.
 func TestAdopt_Positive_ForcedRerunListsNoExistingCopyOrHookAsCreated(t *testing.T) {
 	repoPath, source := adoptedRepo(t, "rerun-created")
-	if !fileExists(filepath.Join(repoPath, filepath.FromSlash(personaCopy))) || !fileExists(filepath.Join(repoPath, filepath.FromSlash(fallbackHook))) {
-		t.Fatal("fixture lacks the persona copy or the fallback hook")
-	}
-	rep := readoptWith(t, repoPath, source, AdoptOptions{Force: true})
-	for _, rel := range rep.CreatedFiles {
-		if strings.Contains(rel, "/agents/") || rel == fallbackHook {
-			t.Errorf("existing %s listed as created", rel)
+	for _, rel := range []string{personaCopy, fallbackHook, paperclipFile} {
+		if !fileExists(filepath.Join(repoPath, filepath.FromSlash(rel))) {
+			t.Fatalf("fixture lacks %s", rel)
 		}
 	}
-	for _, rel := range []string{personaCopy, fallbackHook} {
+	rep := readoptWith(t, repoPath, source, AdoptOptions{Force: true})
+	if len(rep.CreatedFiles) != 0 {
+		t.Errorf("existing files listed as created: %v", rep.CreatedFiles)
+	}
+	for _, rel := range []string{personaCopy, fallbackHook, paperclipFile} {
 		if !hasAction(rep, rel, actionReconcile) {
 			t.Errorf("%s not reconciled: %+v", rel, rep.ActionDetails)
 		}
