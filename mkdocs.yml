@@ -211,6 +211,7 @@ nav:
           - project-records/index.md
           - Plans:
               - Bidirectional Module Contracts: plans/bidirectional-contracts.md
+              - Fleet Drift and Schema Conformance: plans/fleet-drift-and-schema-conformance.md
               - IDE Agent Setup: plans/ide-agent-setup.md
               - Infrastructure Development Environments: plans/infrastructure-development-environments.md
               - Lifecycle Management: plans/lifecycle-management.md
