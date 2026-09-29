@@ -286,6 +286,10 @@ func auditAgentContextAndDevcontainer(ctx context.Context, manifest *config.Mani
 		return fmt.Errorf("[FAIL] Agent context: %w", err)
 	}
 	fmt.Printf("[PASS] Agent context %s.\n", lint.Summary())
+	// Whatever facets the manifest enables: the block sends agent evidence there in every repository.
+	if err := compiler.CheckEvidenceIgnored(ctx, filepath.Dir(opts.agentsPath)); err != nil {
+		return fmt.Errorf("[FAIL] Agent context evidence directory: %w", err)
+	}
 
 	dcPath := filepath.Join(root, ".devcontainer", "devcontainer.json")
 	if !util.FileExists(dcPath) {

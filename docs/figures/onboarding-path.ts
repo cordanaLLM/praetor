@@ -20,6 +20,8 @@ export default {
     'cmd/standardsctl/init.go:createInitialManifest',
     'cmd/standardsctl/init.go:initBaselineAndLockfile',
     'cmd/standardsctl/init.go:initAgentContext',
+    'internal/adopt/context_write.go:CompileAgentContext',
+    'internal/adopt/private_ignore.go:EnsureEvidenceIgnore',
     'internal/compiler/projection.go:CompileVendorTargets',
     'internal/agentcontext/render.go:vendorTargets',
     'cmd/standardsctl/compile_context.go:runCompileContext',
@@ -41,7 +43,7 @@ export default {
     'internal/adopt/harness.go:resolveAgentsContent',
   ],
   describe: [
-    'A repository that already carries AGENTS.md runs five commands in order. init writes the manifest, lockfile and a zero-debt baseline, then compiles the six vendor files from AGENTS.md. compile-context repeats that compile and adds persona copies. baseline records existing debt, devcontainer generate prepares the container bundle, and audit verifies the result.',
+    'A repository that already carries AGENTS.md runs five commands in order. init writes the manifest, lockfile and a zero-debt baseline, then runs the compile-context write: Git ignores the evidence directory, and the six vendor files and persona copies are compiled from AGENTS.md. compile-context repeats that write after every AGENTS.md edit. baseline records existing debt, devcontainer generate prepares the container bundle, and audit verifies the result.',
     'praetorctl adopt is an alternate entry, not a step before init: one run writes what steps 1 to 4 write, AGENTS.md included when it is missing, and the path continues at step 5. init refuses to run afterwards because .standards.yaml already exists.',
   ],
   props: {
@@ -100,14 +102,16 @@ export default {
             },
           },
           {
-            say: 'initAgentContext splices the text register into AGENTS.md and compiles the six vendor files.',
+            say: 'initAgentContext runs the compile-context write: Git ignores .workingdir/evidence/, the text register is spliced into AGENTS.md, and the six vendor files and persona copies are compiled and linted.',
             show: {
               init: [
                 { tag: 'created', tone: 'green', text: '.standards.yaml', mono: true },
                 { tag: 'created', tone: 'green', text: '.standards.lock', mono: true },
                 { tag: 'created', tone: 'green', text: '.standards-baseline.json', meta: '0 infractions', mono: true },
+                { tag: 'updated', tone: 'blue', text: '.gitignore', meta: 'evidence ignored', mono: true },
                 { tag: 'updated', tone: 'blue', text: 'AGENTS.md', meta: 'register block', mono: true },
                 ...vendorFiles.map((text) => ({ tag: 'created', tone: 'green' as const, text, mono: true })),
+                { tag: 'created', tone: 'green', text: 'persona copies', meta: 'per persona' },
               ],
             },
           },
@@ -115,18 +119,18 @@ export default {
       },
       {
         label: 'compile-context',
-        caption: 'Recompile the vendor files and add persona copies; rerun after every AGENTS.md edit.',
+        caption: 'Recompile the vendor files and persona copies; rerun after every AGENTS.md edit.',
         flow: [
-          { edges: 'init->compile', say: 'compile-context runs the same splice and compile that init ran.' },
+          { edges: 'init->compile', say: 'compile-context runs the same write that init ran.' },
           {
-            say: 'writeAgentSurfaces then copies every .agents/agents persona into each client persona directory.',
+            say: 'writeAgentSurfaces copies every .agents/agents persona into each client persona directory, then the caveman lint runs.',
             show: {
               compile: [
                 { tag: 'rebuilt', tone: 'blue', text: 'the six vendor files', meta: 'same as init' },
-                { tag: 'created', tone: 'green', text: '.claude/agents/', meta: 'per persona', mono: true },
-                { tag: 'created', tone: 'green', text: '.github/agents/', meta: 'per persona', mono: true },
-                { tag: 'created', tone: 'green', text: '.gemini/agents/', meta: 'per persona', mono: true },
-                { tag: 'created', tone: 'green', text: '.codex/agents/', meta: 'per persona', mono: true },
+                { tag: 'rebuilt', tone: 'blue', text: '.claude/agents/', meta: 'per persona', mono: true },
+                { tag: 'rebuilt', tone: 'blue', text: '.github/agents/', meta: 'per persona', mono: true },
+                { tag: 'rebuilt', tone: 'blue', text: '.gemini/agents/', meta: 'per persona', mono: true },
+                { tag: 'rebuilt', tone: 'blue', text: '.codex/agents/', meta: 'per persona', mono: true },
                 { tag: 'check', tone: 'gray', text: 'compile-context --verify', meta: 'writes nothing', mono: true },
               ],
             },

@@ -137,9 +137,8 @@ not, so a repository with its own labels is never failed by rows it did not writ
 ## Evidence
 
 Evidence longer than `inline_max_lines` lines or `inline_max_tokens` estimated tokens never
-travels inline. Write it to a file under `.workingdir/evidence/` (private and Git-ignored,
-AGENTS.md rule 10) or to the ephemeral directory a gate already uses, and return one
-pointer line:
+travels inline. Write it to a file under `.workingdir/evidence/` (`config.EvidenceDir`) or to
+the ephemeral directory a gate already uses, and return one pointer line:
 
 ```text
 evidence: <path> sha256:<12 hex> lines:<n>
@@ -147,6 +146,29 @@ evidence: <path> sha256:<12 hex> lines:<n>
 
 The reader fetches the file only when a decision depends on it. Logs, transcripts, full test
 output and fetched web pages are always artifacts, whatever their length.
+
+Every rendered block names that directory, so the repository has to keep it out of Git:
+
+- `praetorctl compile-context`, `praetorctl init` and the `standards_compile_context` write
+  make Git ignore it before they render the rule. All three run one write
+  (`adopt.CompileAgentContext`), which reconciles the ignore rule through the writer
+  `praetorctl state init` uses (`adopt.EnsureEvidenceIgnore`). A repository whose rules already exclude it is left byte for
+  byte alone. Otherwise the Praetor private-artifact block is merged into `.gitignore` and the
+  run prints `Added the Praetor private-artifact block to .gitignore`. With `git-ignore` in
+  `adoption.decline`, it prints the warning `state` prints and leaves `.gitignore` alone.
+- `praetorctl compile-context --verify`, `praetorctl audit` and their MCP mirrors fail with
+  `git does not ignore .workingdir/evidence/` while Git does not ignore it, whichever facets
+  the manifest enables and whether or not `git-ignore` is declined
+  (`compiler.CheckEvidenceIgnored`).
+
+Only the repository's own ignore rules count; a personal excludes file does not. The probe asks
+about a file inside the directory, so it answers before the directory exists. `.workingdir/*`
+followed by `!.workingdir/evidence/` reads as not ignored. `/.workingdir/` followed by the same
+negation still reads as ignored, because Git cannot re-include anything under an excluded
+directory. A directory outside any Git work tree passes, since no commit can publish it.
+`internal/compiler/evidence_ignore_test.go`, `internal/adopt/private_ignore_test.go`,
+`internal/adopt/context_write_test.go`, `cmd/standardsctl/compile_context_evidence_test.go`
+and `cmd/standardsctl/init_evidence_test.go` cover each case.
 `config.EvidencePointer` produces the line, and the SARIF distillation of
 `internal/lockdown` ends its summary with it. The defaults originate there: 58 lines and
 1500 tokens are the distillation cap, and `lockdown.MaxDistillLines` and `MaxDistillTokens`
@@ -366,10 +388,10 @@ the repository gates call the context profile.
 
 ### The context gate
 
-`praetorctl compile-context --verify` and `praetorctl audit` run the lint over the
-canonical AGENTS.md, and so do their MCP mirrors (`standards_compile_context` with
-`verify_only`, `standards_audit`). Any finding fails the gate; the error quotes the first
-five findings and names the fix. A pass prints the counts behind it:
+`praetorctl compile-context`, `praetorctl compile-context --verify` and `praetorctl audit` run
+the lint over the canonical AGENTS.md, and so do their MCP mirrors (`standards_compile_context`
+with and without `verify_only`, `standards_audit`). Any finding fails the gate; the error quotes
+the first five findings and names the fix. A pass prints the counts behind it:
 
 ```text
 AGENTS.md: caveman lint passed: 917 prose words, 0.2 articles per 100 (limit 2.0), 13 register block lines left to the renderer.
@@ -377,8 +399,23 @@ AGENTS.md: caveman lint passed: 917 prose words, 0.2 articles per 100 (limit 2.0
 
 The whole file is linted, including what a repository wrote below the praetor harness. Only
 the text register block is left out: `compile-context` renders it, nobody edits it by hand,
-and its wording belongs to its renderer (`compiler.MaskRegisterBlock`). Compiling without
-`--verify` never lints, so a prose edit still compiles and fails on the next verify.
+and its wording belongs to its renderer (`compiler.MaskRegisterBlock`).
+
+Compiling without `--verify`, and `praetorctl init`, write every target first and lint
+afterwards, AGENTS.md and every canonical persona and skill: a prose edit still compiles, and
+the run then exits non-zero with `context written, but compile-context --verify will fail:`
+and the findings instead of printing success. `--verify` runs every check, register block, evidence ignore rule, vendor
+files, lint and projections, and reports every failure together, so a missing register block no
+longer hides a lint failure behind it (`VerifyCompiledContext` and `lintAgentText` in
+`internal/compiler/projection.go`; `TestVerifyCompiledContext_Negative_ReportsEveryFailure` and
+`TestCompileContextProjections_Negative_LintsTheWrittenSource` in
+`internal/compiler/evidence_ignore_test.go`).
+
+`praetorctl adopt` lints the AGENTS.md it merged, dry run included
+(`compiler.LintContextText`). The text it keeps from the repository is never rewritten, so a
+finding is recorded as a warning on the `agent-harness` step and the Universal Harness pillar
+prints `[warned: 1 warning(s)]` instead of a success mark
+(`internal/adopt/harness_lint_test.go`).
 
 Article density is a ratio over the text it reads, so a long, article-free harness would dilute
 a paragraph of prose written below it until the whole file passed. The gate therefore also

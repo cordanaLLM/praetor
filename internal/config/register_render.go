@@ -24,6 +24,10 @@ const (
 	evidencePointerDigestHex = 12
 	// maxEvidencePointerPathBytes bounds the path embedded in a pointer line.
 	maxEvidencePointerPathBytes = 4096
+	// EvidenceDir is where the rendered evidence rule sends agent evidence, relative to the
+	// directory of the AGENTS.md that carries the block. compile-context makes Git ignore it,
+	// and compile-context --verify and audit fail while Git does not (compiler.EvidenceIgnored).
+	EvidenceDir = ".workingdir/evidence/"
 )
 
 // registerOrder fixes the row order of every rendered list.
@@ -143,9 +147,9 @@ func renderEvidenceRule(e EvidenceBounds) string {
 	bounds := DefaultRegisterPolicy().Evidence
 	tightenPositive(&bounds.InlineMaxLines, e.InlineMaxLines)
 	tightenPositive(&bounds.InlineMaxTokens, e.InlineMaxTokens)
-	return fmt.Sprintf("Evidence above %d lines or %d tokens leaves the message as a file under `.workingdir/evidence/`; "+
+	return fmt.Sprintf("Evidence above %d lines or %d tokens leaves the message as a file under `%s`; "+
 		"return `evidence: <path> sha256:<12 hex> lines:<n>` and fetch it only when a decision needs it.",
-		bounds.InlineMaxLines, bounds.InlineMaxTokens)
+		bounds.InlineMaxLines, bounds.InlineMaxTokens, EvidenceDir)
 }
 
 // EvidencePointer renders the one pointer format for evidence that left the token path:

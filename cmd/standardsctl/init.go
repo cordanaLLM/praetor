@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
@@ -202,12 +203,14 @@ func initAgentContext(rootDir string) error {
 	if missing {
 		return nil
 	}
-	// The same splice-then-compile step as compile-context, so a freshly initialised
-	// repository carries the text register block and passes compile-context --verify.
+	// compile-context's write: Git ignores the evidence directory the text register block names,
+	// every agent context surface is written and the caveman lint runs over it, so a freshly
+	// initialised repository passes compile-context --verify or init fails saying why (BUG-604).
 	ctx, cancel := context.WithTimeout(context.Background(), compileContextTimeout)
 	defer cancel()
-	if err := compiler.CompileVendorTargets(ctx, os.Stdout, compiler.NewTranspiler(), agentsPath, rootDir); err != nil {
-		return fmt.Errorf("failed to compile AGENTS.md: %w", err)
+	if err := adopt.CompileAgentContext(ctx, os.Stdout, compiler.NewTranspiler(), agentsPath, rootDir); err != nil {
+		return fmt.Errorf("failed to compile AGENTS.md; the manifest is already written, so fix the cause and run "+
+			"'praetorctl compile-context': %w", err)
 	}
 	fmt.Println("[TRANSPILED] Cross-agent context targets initialized from AGENTS.md.")
 	return nil

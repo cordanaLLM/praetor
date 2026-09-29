@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/workstation"
 )
@@ -45,5 +46,7 @@ func runCompileContext(args []string) error {
 	if err := workstation.CheckBuildCurrent(ctx, *targetDir, engineBuild()); err != nil {
 		return fmt.Errorf("compile-context wrote nothing: %w", err)
 	}
-	return compiler.CompileContextProjections(ctx, os.Stdout, tr, *source, *targetDir)
+	// The text register block sends agent evidence to config.EvidenceDir beside the source; Git
+	// has to ignore it before the rule is rendered (BUG-604).
+	return adopt.CompileAgentContext(ctx, os.Stdout, tr, *source, *targetDir)
 }

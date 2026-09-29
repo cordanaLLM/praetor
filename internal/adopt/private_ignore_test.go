@@ -177,3 +177,101 @@ func TestEnsurePrivateIgnoreBoundaryOutsideRepository(t *testing.T) {
 		t.Fatalf("no-repository call created .gitignore: %v", statErr)
 	}
 }
+
+// evidenceIgnoreRepo is a Git work tree with no private working directory, holding the
+// .gitignore given as existing unless absent is true.
+func evidenceIgnoreRepo(t *testing.T, name, existing string, absent bool) (root, ignorePath string) {
+	t.Helper()
+	root = newTestRepo(t, name)
+	ignorePath = filepath.Join(root, ".gitignore")
+	if !absent {
+		mustWrite(t, ignorePath, existing)
+	}
+	return root, ignorePath
+}
+
+// Positive: the evidence directory need not exist. A repository whose rules miss it gains the
+// canonical block and a notice saying so; an effective rule is left byte for byte alone and
+// prints nothing.
+func TestEnsureEvidenceIgnore_Positive(t *testing.T) {
+	root, path := evidenceIgnoreRepo(t, "evidence-written", "user-output/\n", false)
+	var out strings.Builder
+	if err := ReconcileEvidenceIgnore(t.Context(), &out, root); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if got := mustRead(t, path); !strings.HasSuffix(got, ManagedGitIgnoreBlock()) || !strings.Contains(got, "user-output/") {
+		t.Fatalf("managed block not merged: %q", got)
+	}
+	if !strings.Contains(out.String(), "Added the Praetor private-artifact block to .gitignore") {
+		t.Fatalf("written block not reported: %q", out.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, ".workingdir")); !os.IsNotExist(err) {
+		t.Fatalf("reconciliation created the private directory: %v", err)
+	}
+	effective, effectivePath := evidenceIgnoreRepo(t, "evidence-effective", "/.workingdir/\n", false)
+	outcome, err := EnsureEvidenceIgnore(t.Context(), effective)
+	if err != nil || outcome != PrivateIgnoreEffective {
+		t.Fatalf("outcome = %q, err = %v; want effective", outcome, err)
+	}
+	out.Reset()
+	if err := ReconcileEvidenceIgnore(t.Context(), &out, effective); err != nil || out.Len() != 0 {
+		t.Fatalf("an effective rule must print nothing: %q %v", out.String(), err)
+	}
+	if got := mustRead(t, effectivePath); got != "/.workingdir/\n" {
+		t.Fatalf("effective .gitignore rewritten: %q", got)
+	}
+}
+
+// Negative: a declined git-ignore step writes nothing and prints the warning state prints, and
+// an unmergeable .gitignore is an error that leaves the file alone.
+func TestEnsureEvidenceIgnore_Negative(t *testing.T) {
+	root, path := evidenceIgnoreRepo(t, "evidence-declined", "", true)
+	mustWrite(t, filepath.Join(root, manifestFile), "adoption:\n  decline:\n    - git-ignore\n")
+	var out strings.Builder
+	if err := ReconcileEvidenceIgnore(t.Context(), &out, root); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("declined git-ignore still wrote .gitignore: %v", err)
+	}
+	want, warning := PrivateIgnoreNotice(PrivateIgnoreDeclined, root)
+	if !warning || out.String() != want+"\n" || !strings.HasPrefix(want, "Warning: Git does not ignore .workingdir/") {
+		t.Fatalf("decline warning = %q (warning %v), printed %q", want, warning, out.String())
+	}
+	unterminated := gitIgnoreManagedBegin + "\n/.workingdir2/\n"
+	broken, brokenPath := evidenceIgnoreRepo(t, "evidence-unterminated", unterminated, false)
+	if err := ReconcileEvidenceIgnore(t.Context(), &out, broken); err == nil || !strings.Contains(err.Error(), ".workingdir/evidence/") {
+		t.Fatalf("an unterminated block must fail naming the directory, got %v", err)
+	}
+	if got := mustRead(t, brokenPath); got != unterminated {
+		t.Fatalf("refused reconciliation changed .gitignore: %q", got)
+	}
+	var nilContext context.Context
+	if _, err := EnsureEvidenceIgnore(nilContext, root); err == nil {
+		t.Fatal("nil context accepted")
+	}
+}
+
+// Boundary: a negation that re-includes the evidence directory is not an effective rule, so the
+// block is merged after it; a directory in no work tree needs nothing and gets no .gitignore.
+func TestEnsureEvidenceIgnore_Boundary(t *testing.T) {
+	root, path := evidenceIgnoreRepo(t, "evidence-reinclude", ".workingdir/*\n!.workingdir/evidence/\n", false)
+	outcome, err := EnsureEvidenceIgnore(t.Context(), root)
+	if err != nil || outcome != PrivateIgnoreWritten || !strings.HasSuffix(mustRead(t, path), ManagedGitIgnoreBlock()) {
+		t.Fatalf("outcome = %q, err = %v; want the block written after the negation", outcome, err)
+	}
+	outside := t.TempDir()
+	if present, err := util.GitWorktreePresent(t.Context(), outside); err != nil || present {
+		t.Skipf("temporary directory sits inside a Git work tree (%v, %v)", present, err)
+	}
+	outcome, err = EnsureEvidenceIgnore(t.Context(), outside)
+	if err != nil || outcome != PrivateIgnoreNoRepository {
+		t.Fatalf("outcome = %q, err = %v; want no-repository", outcome, err)
+	}
+	if line, warning := PrivateIgnoreNotice(outcome, outside); line != "" || warning {
+		t.Fatalf("no-repository must print nothing: %q", line)
+	}
+	if _, statErr := os.Stat(filepath.Join(outside, ".gitignore")); !os.IsNotExist(statErr) {
+		t.Fatalf("no-repository call created .gitignore: %v", statErr)
+	}
+}

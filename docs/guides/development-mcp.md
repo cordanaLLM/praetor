@@ -148,7 +148,14 @@ as `Context verification failed`, and `standards_audit` reports it in its contex
 Both also run the caveman lint over `AGENTS.md`, as `praetorctl compile-context --verify`
 does: prose there fails with `AGENTS.md fails the caveman lint` and the first findings, and a
 pass names its counts (see [the context gate](text-register.md#the-context-gate)). The
+writing call runs the same lint after it writes and returns an error on a finding. The
 fixture above is terse, so it passes.
+
+The block sends agent evidence to `.workingdir/evidence/`. When the root is a Git work tree
+whose rules do not ignore that directory, the writing call merges the Praetor private-artifact
+block into `.gitignore` first and reports it, and a `verify_only` call fails with
+`git does not ignore .workingdir/evidence/` (see [evidence](text-register.md#evidence)). A
+`mktemp -d` root outside any work tree needs neither.
 
 The same manifest selects which vendor files exist. `agent_clients: [claude]` in the
 fixture's `.standards.yaml` makes the writing call compile only `CLAUDE.md` and list the
@@ -397,7 +404,10 @@ A tool call and the CLI therefore check and write the same things:
   `skills/` copies.
 - `verify_only` also runs the caveman lint over every persona and skill and
   fails on a persona or plugin skill copy that differs from its source beyond
-  leading and trailing whitespace.
+  leading and trailing whitespace. It runs every check and returns every failure.
+- A write runs the same lint after writing and fails on a finding, and before it
+  compiles it makes Git ignore `.workingdir/evidence/`. Both steps are
+  `adopt.CompileAgentContext`, the write the CLI's `compile-context` and `init` run.
 - More than 50 files in `.agents/agents` fail both modes instead of being
   truncated.
 - Every file the call writes below `target_dir` (the vendor files, the

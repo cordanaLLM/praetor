@@ -1,0 +1,4 @@
+type: fixed
+title: Lint AGENTS.md, personas and skills on the adopt and compile-context write paths so neither reports success on text compile-context --verify rejects, report every verify failure in one run, and make Git ignore .workingdir/evidence/ before compile-context, init and the MCP write render the rule that sends evidence there, with verify and audit failing while it is not ignored; init now runs the full compile-context write, persona copies and lint included
+issue: "565, #604"
+breaking: true

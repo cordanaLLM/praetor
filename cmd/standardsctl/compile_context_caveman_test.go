@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/compiler"
@@ -11,14 +12,16 @@ import (
 // own part of AGENTS.md looks like before its caveman rewrite.
 const proseAgentsMD = fixtureAgentsMD + "\n" + cavemanProse
 
-// The gate lints on --verify only; compiling a prose AGENTS.md still writes the targets, so
-// the author sees the lint fail on the next verify rather than losing the compile.
+// The write lints too: compiling a prose AGENTS.md still writes the targets, then fails on the
+// lint, so the author loses no compile and never reads success the next verify contradicts.
 func TestCompileContextCaveman_Positive(t *testing.T) {
 	dir := newContextFixture(t, false)
-	if out, err := runCompileContextCmd(t, dir); err != nil {
+	out, err := runCompileContextCmd(t, dir)
+	if err != nil {
 		t.Fatalf("compile-context: %v\n%s", err, out)
 	}
-	out, err := runCompileContextCmd(t, dir, "--verify")
+	mustContain(t, out, "caveman lint passed:", "Cross-agent context transpilation completed successfully.")
+	out, err = runCompileContextCmd(t, dir, "--verify")
 	if err != nil {
 		t.Fatalf("verify: %v\n%s", err, out)
 	}
@@ -28,10 +31,19 @@ func TestCompileContextCaveman_Positive(t *testing.T) {
 func TestCompileContextCaveman_Negative(t *testing.T) {
 	dir := newContextFixture(t, false)
 	writeFixtureFile(t, dir, "AGENTS.md", proseAgentsMD)
-	if out, err := runCompileContextCmd(t, dir); err != nil {
-		t.Fatalf("compiling prose must still write the targets: %v\n%s", err, out)
+	out, err := runCompileContextCmd(t, dir)
+	if !errors.Is(err, compiler.ErrContextProse) {
+		t.Fatalf("compiling prose must fail on the lint, got %v\n%s", err, out)
 	}
-	_, err := runCompileContextCmd(t, dir, "--verify")
+	mustErrContain(t, err, "context written, but compile-context --verify will fail")
+	mustErrContain(t, err, "C1 article-density")
+	if strings.Contains(out, "completed successfully") {
+		t.Fatalf("a failed lint must not print success:\n%s", out)
+	}
+	if !strings.Contains(readFixtureFile(t, dir, "CLAUDE.md"), "Two implementations of one behavior") {
+		t.Fatal("compiling prose must still write the targets")
+	}
+	_, err = runCompileContextCmd(t, dir, "--verify")
 	if !errors.Is(err, compiler.ErrContextProse) {
 		t.Fatalf("prose AGENTS.md must fail --verify, got %v", err)
 	}
@@ -51,8 +63,8 @@ func TestCompileContextCaveman_Boundary(t *testing.T) {
 	}
 
 	writeFixtureFile(t, dir, ".standards.yaml", "version: 1\nregister:\n  surfaces:\n    agent: docs\n")
-	if out, err := runCompileContextCmd(t, dir); err != nil {
-		t.Fatalf("compile-context: %v\n%s", err, out)
+	if out, err := runCompileContextCmd(t, dir); !errors.Is(err, compiler.ErrContextProse) {
+		t.Fatalf("surfaces.agent = docs must not switch the write's gate off, got %v\n%s", err, out)
 	}
 	if _, err := runCompileContextCmd(t, dir, "--verify"); !errors.Is(err, compiler.ErrContextProse) {
 		t.Fatalf("surfaces.agent = docs must not switch the gate off, got %v", err)
