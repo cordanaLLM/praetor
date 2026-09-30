@@ -13,6 +13,7 @@ const report = (clients: unknown[]) => JSON.stringify({ schema_version: 1, runti
 
 type Manifest = {
   engines: { vscode: string };
+  dependencies: Record<string, string>;
   devDependencies: Record<string, string>;
   activationEvents: string[];
   capabilities: { untrustedWorkspaces: { restrictedConfigurations: string[] } };
@@ -36,6 +37,11 @@ const TRAILING_FORK_HOST = [1, 107, 0];
 const compareVersions = (left: number[], right: number[]): number => {
   const index = left.findIndex((part, position) => part !== right[position]);
   return index === -1 ? 0 : left[index] - right[index];
+};
+// caretFloor reads the lowest version a `^major.minor.patch` engines range admits.
+const caretFloor = (range: string | undefined): number[] | undefined => {
+  const floor = /^\^(\d+)\.(\d+)\.(\d+)$/.exec(range ?? "");
+  return floor ? floor.slice(1).map(Number) : undefined;
 };
 const extensionSource = (): string => fs.readFileSync(path.resolve(__dirname, "..", "src", "extension.ts"), "utf8");
 
@@ -205,9 +211,8 @@ test("both server paths are restricted settings and every restricted setting is 
 
 test("the engine floor carries the MCP provider API and equals the pinned host types", () => {
   const manifest = readManifest();
-  const floor = /^\^(\d+)\.(\d+)\.(\d+)$/.exec(manifest.engines.vscode);
-  assert.ok(floor, `engines.vscode ${manifest.engines.vscode} is not a caret floor`);
-  const version = floor.slice(1).map(Number);
+  const version = caretFloor(manifest.engines.vscode);
+  assert.ok(version, `engines.vscode ${manifest.engines.vscode} is not a caret floor`);
   // vsce refuses @types/vscode newer than engines.vscode; equal keeps the typed API and the floor in step.
   assert.equal(manifest.devDependencies["@types/vscode"], version.join("."));
   const lock = readLock();
@@ -217,13 +222,41 @@ test("the engine floor carries the MCP provider API and equals the pinned host t
 });
 
 test("the engine floor honours the MCP when clause and still admits trailing forks", () => {
-  const floor = /^\^(\d+)\.(\d+)\.(\d+)$/.exec(readManifest().engines.vscode);
-  assert.ok(floor);
-  const version = floor.slice(1).map(Number);
+  const version = caretFloor(readManifest().engines.vscode);
+  assert.ok(version);
   assert.ok(compareVersions(version, WHEN_CLAUSE_FLOOR) >= 0, `floor ${version.join(".")} ignores the contribution when clause`);
   assert.ok(compareVersions(version, TRAILING_FORK_HOST) <= 0, `floor ${version.join(".")} drops VS Code ${TRAILING_FORK_HOST.join(".")} forks`);
   assert.equal(compareVersions([1, 107, 0], [1, 107, 0]), 0);
   assert.ok(compareVersions([1, 108, 0], TRAILING_FORK_HOST) > 0 && compareVersions([1, 104, 9], WHEN_CLAUSE_FLOOR) < 0);
+});
+
+// vscode-languageclient declares the lowest host it supports (10.x raised it to ^1.91.0); a client
+// floor above engines.vscode would load in hosts the client does not support.
+test("the locked language client supports every host the engine floor admits", () => {
+  const manifest = readManifest();
+  const pinned = manifest.dependencies["vscode-languageclient"];
+  const locked = readLock().packages["node_modules/vscode-languageclient"];
+  assert.equal(locked?.version, pinned);
+  const host = caretFloor(manifest.engines.vscode);
+  const client = caretFloor(locked?.engines?.vscode);
+  assert.ok(host && client, `engines ${manifest.engines.vscode} and ${locked?.engines?.vscode} are not both caret floors`);
+  assert.ok(compareVersions(client, host) <= 0, `vscode-languageclient ${pinned} needs VS Code ${client.join(".")}, above the ${host.join(".")} floor`);
+  // Boundary: an equal floor is admitted. Negative: one minor above is not; a range without a caret floor yields none.
+  assert.equal(compareVersions(host, host), 0);
+  assert.ok(compareVersions([host[0], host[1] + 1, 0], host) > 0);
+  assert.equal(caretFloor(">=1.91.0"), undefined);
+  assert.equal(caretFloor(undefined), undefined);
+});
+
+// Since 10.0 the client publishes only package `exports` (no main/typings); tsconfig resolves them
+// with node16, and the compiled require must reach the node entry while deep paths stay closed.
+test("the language client entry resolves through its package exports", () => {
+  assert.match(require.resolve("vscode-languageclient/node"), /vscode-languageclient[\\/]lib[\\/]node[\\/]main\.js$/);
+  assert.throws(() => require.resolve("vscode-languageclient/lib/node/main"), { code: "ERR_PACKAGE_PATH_NOT_EXPORTED" });
+  // "node" (node10) ignores exports, so tsc finds no types for vscode-languageclient/node.
+  const tsconfig = JSON.parse(fs.readFileSync(path.resolve(__dirname, "..", "tsconfig.json"), "utf8"));
+  assert.ok(["node16", "node20", "nodenext"].includes(String(tsconfig.compilerOptions.moduleResolution).toLowerCase()),
+    `moduleResolution ${tsconfig.compilerOptions.moduleResolution} ignores package exports`);
 });
 
 test("server paths fall back to the contributed default and bind the folder", () => {

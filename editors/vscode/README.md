@@ -25,7 +25,7 @@ make vscode-test
 This installs the lockfile dependencies without install scripts, compiles strict
 TypeScript, runs subprocess and setup tests, and builds a temporary Go CLI for a
 real configuration prepare/apply test. `make verify-all` includes this gate.
-The runtime dependency is `vscode-languageclient` 9.0.1; the declared minimum host
+The runtime dependency is `vscode-languageclient` 10.1.2; the declared minimum host
 is VS Code 1.107 (see [Minimum host](#minimum-host)). These tests do not launch
 an extension host. With an installed
 VS Code and a working display, run `npm run test:host --prefix editors/vscode`
@@ -153,8 +153,15 @@ that trail upstream on the update path. Everything the extension uses is in
 
 VS Code and forks older than 1.107 no longer install updates of this extension.
 `src/setup.test.ts` checks that the floor, the pinned types and the lockfile
-agree, and that the floor lies between 1.105.0 (the `when` clause) and 1.107.0
-(the trailing fork host).
+agree, that the floor lies between 1.105.0 (the `when` clause) and 1.107.0
+(the trailing fork host), and that the locked `vscode-languageclient` declares
+no higher host floor than the extension (10.x declares `^1.91.0`).
+
+`vscode-languageclient` 10 publishes its entry points only through the
+`package.json` `exports` field, so `tsconfig.json` sets `module` and
+`moduleResolution` to `node16`; under the former `node` resolution `tsc` finds no
+types for `vscode-languageclient/node`. The emitted code stays CommonJS, because
+`package.json` declares no `"type": "module"`.
 
 ## Settings
 

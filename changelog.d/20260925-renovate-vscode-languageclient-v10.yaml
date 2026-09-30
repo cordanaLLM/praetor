@@ -1,0 +1,3 @@
+type: changed
+title: Update the VS Code extension to vscode-languageclient 10.1.2 and resolve its package exports with node16
+breaking: false
