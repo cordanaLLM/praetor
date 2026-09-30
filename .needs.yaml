@@ -409,14 +409,14 @@ dependencies:
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
     - package: js-yaml
-      version: 5.2.2
+      version: 5.4.1
       language: typescript
       ecosystem: npm
       capability: ui.external.js_yaml
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
     - package: markdownlint-cli2
-      version: 0.23.2
+      version: 0.23.3
       language: typescript
       ecosystem: npm
       capability: ui.external.markdownlint_cli2
@@ -456,4 +456,4 @@ readiness:
     total_third_party_deps: 54
     covered_deps: 0
     gap_deps: 54
-updated_at: 2026-09-28T10:39:31.576712558Z
+updated_at: 2026-09-30T13:44:12.438928395Z

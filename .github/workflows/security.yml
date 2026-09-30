@@ -56,3 +56,22 @@ jobs:
 
       - name: Run AST Security Scan (gosec)
         run: python3 -B .config/lefthook/scripts/security_scope.py -- gosec -conf .gosec.json
+
+      # The npm locks Praetor ships or builds from are audited from the lock alone, without an
+      # install; the schedule leg catches an advisory published after a lock last changed.
+      # docs/presets/starlight stays out until #647 clears its critical astro advisory, and the
+      # step says so rather than reporting it as audited.
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Audit npm Locks (npm audit, high and critical)
+        run: |
+          status=0
+          for dir in tools/markdownlint tools/figures editors/vscode; do
+            echo "npm audit --package-lock-only --audit-level=high: $dir"
+            (cd "$dir" && npm audit --package-lock-only --audit-level=high) || status=1
+          done
+          echo "npm audit skipped: docs/presets/starlight (cordanaLLM/praetor#647, astro 7 upgrade)"
+          exit "$status"

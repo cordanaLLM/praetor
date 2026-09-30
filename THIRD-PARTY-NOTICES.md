@@ -224,6 +224,7 @@ as the lock records them, copyright lines as each package's license file states 
 | `acorn-jsx` | 5.3.2 | MIT | `Copyright (C) 2012-2017 by Ingvar Stepanyan` |
 | `ansi-regex` | 6.3.0 | MIT | `Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)` |
 | `argparse` | 2.0.1 | Python-2.0 | `Copyright (c) 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020 Python Software Foundation; All Rights Reserved` |
+| `argparse` | 3.0.2 | PSF-2.0 | `Copyright (c) 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019 Python Software Foundation; All Rights Reserved` |
 | `braces` | 3.0.3 | MIT | `Copyright (c) 2014-present, Jon Schlinkert.` |
 | `character-entities` | 2.0.2 | MIT | `Copyright (c) 2015 Titus Wormer <tituswormer@gmail.com>` |
 | `character-entities-legacy` | 3.0.0 | MIT | `Copyright (c) 2015 Titus Wormer <tituswormer@gmail.com>` |
@@ -233,7 +234,6 @@ as the lock records them, copyright lines as each package's license file states 
 | `decode-named-character-reference` | 1.3.0 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
 | `dequal` | 2.0.3 | MIT | `Copyright (c) Luke Edwards <luke.edwards05@gmail.com> (lukeed.com)` |
 | `devlop` | 1.1.0 | MIT | `Copyright (c) 2023 Titus Wormer <tituswormer@gmail.com>` |
-| `entities` | 4.5.0 | BSD-2-Clause | `Copyright (c) Felix Böhm` |
 | `entities` | 8.1.0 | BSD-2-Clause | `Copyright (c) Felix Böhm` |
 | `estree-util-is-identifier-name` | 3.0.0 | MIT | `Copyright (c) 2020 Titus Wormer <tituswormer@gmail.com>` |
 | `estree-util-visit` | 2.0.0 | MIT | `Copyright (c) 2021 Titus Wormer <tituswormer@gmail.com>` |
@@ -242,8 +242,8 @@ as the lock records them, copyright lines as each package's license file states 
 | `fill-range` | 7.1.1 | MIT | `Copyright (c) 2014-present, Jon Schlinkert.` |
 | `get-east-asian-width` | 1.7.0 | MIT | `Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)` |
 | `glob-parent` | 5.1.2 | ISC | `Copyright (c) 2015, 2019 Elan Shanker` |
-| `globby` | 16.2.2 | MIT | `Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)` |
-| `ignore` | 7.0.9 | MIT | `Copyright (c) 2013 Kael Zhang <i@kael.me>, contributors` |
+| `globby` | 16.2.4 | MIT | `Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)` |
+| `ignore` | 7.0.10 | MIT | `Copyright (c) 2013 Kael Zhang <i@kael.me>, contributors` |
 | `is-alphabetical` | 2.0.1 | MIT | `Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>` |
 | `is-alphanumerical` | 2.0.1 | MIT | `Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>` |
 | `is-decimal` | 2.0.1 | MIT | `Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>` |
@@ -252,14 +252,14 @@ as the lock records them, copyright lines as each package's license file states 
 | `is-hexadecimal` | 2.0.1 | MIT | `Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>` |
 | `is-number` | 7.0.0 | MIT | `Copyright (c) 2014-present, Jon Schlinkert.` |
 | `is-path-inside` | 4.0.0 | MIT | `Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)` |
-| `js-yaml` | 5.2.2 | MIT | `Copyright (C) 2011-2015 by Vitaly Puzrin` |
+| `js-yaml` | 5.4.1 | MIT | `Copyright (C) 2011-2015 by Vitaly Puzrin` |
 | `jsonc-parser` | 3.3.1 | MIT | `Copyright (c) Microsoft` |
 | `jsonpointer` | 5.0.1 | MIT | `Copyright (c) 2011-2015 Jan Lehnardt <jan@apache.org> & Marc Bachmann <https://github.com/marcbachmann>` |
 | `katex` | 0.16.47 | MIT | `Copyright (c) 2013-2020 Khan Academy and other contributors` |
-| `linkify-it` | 5.0.2 | MIT | `Copyright (c) 2015 Vitaly Puzrin.` |
-| `markdown-it` | 14.3.0 | MIT | `Copyright (c) 2014 Vitaly Puzrin, Alex Kocharin.` |
+| `linkify-it` | 6.1.0 | MIT | `Copyright (c) 2015 Vitaly Puzrin.` |
+| `markdown-it` | 15.0.1 | MIT | `Copyright (c) 2014 Vitaly Puzrin, Alex Kocharin.` |
 | `markdownlint` | 0.41.1 | MIT | `Copyright (c) David Anson` |
-| `markdownlint-cli2` | 0.23.2 | MIT | `Copyright (c) David Anson` |
+| `markdownlint-cli2` | 0.23.3 | MIT | `Copyright (c) David Anson` |
 | `markdownlint-cli2-formatter-default` | 0.0.6 | MIT | `Copyright (c) David Anson` |
 | `mdurl` | 2.1.0 | MIT | `Copyright (c) 2015 Vitaly Puzrin, Alex Kocharin.`, `Copyright Joyent, Inc. and other Node contributors. All rights reserved.` |
 | `merge2` | 1.4.1 | MIT | `Copyright (c) 2014-2020 Teambition` |
@@ -305,12 +305,12 @@ as the lock records them, copyright lines as each package's license file states 
 | `reusify` | 1.1.0 | MIT | `Copyright (c) 2015-2024 Matteo Collina` |
 | `run-parallel` | 1.2.0 | MIT | `Copyright (c) Feross Aboukhadijeh` |
 | `slash` | 5.1.0 | MIT | `Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)` |
-| `smol-toml` | 1.7.0 | BSD-3-Clause | `Copyright (c) Squirrel Chat et al., All rights reserved.` |
+| `smol-toml` | 1.8.0 | BSD-3-Clause | `Copyright (c) Squirrel Chat et al., All rights reserved.` |
 | `string-width` | 8.2.1 | MIT | `Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)` |
 | `strip-ansi` | 7.2.0 | MIT | `Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)` |
 | `to-regex-range` | 5.0.1 | MIT | `Copyright (c) 2015-present, Jon Schlinkert.` |
-| `uc.micro` | 2.1.0 | MIT | `Copyright Mathias Bynens <https://mathiasbynens.be/>` |
-| `unicorn-magic` | 0.4.0 | MIT | `Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)` |
+| `uc.micro` | 3.0.0 | MIT | `Copyright Mathias Bynens <https://mathiasbynens.be/>` |
+| `unicorn-magic` | 0.4.1 | MIT | `Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)` |
 | `unist-util-position-from-estree` | 2.0.0 | MIT | `Copyright (c) 2021 Titus Wormer <tituswormer@gmail.com>` |
 | `unist-util-stringify-position` | 4.0.0 | MIT | `Copyright (c) 2016 Titus Wormer <tituswormer@gmail.com>` |
 | `vfile-message` | 4.0.3 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |

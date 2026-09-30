@@ -991,8 +991,8 @@ function runScratchRule(root, temporary, files, selfTest, emitDiagnostics = true
 
 function markdownlintEntry(temporary) {
   const metadata = JSON.parse(fs.readFileSync(path.join(temporary, "node_modules", "markdownlint-cli2", "package.json"), "utf8"));
-  if (metadata.version !== "0.23.3" || metadata.bin?.["markdownlint-cli2"] !== "./markdownlint-cli2-bin.mjs") {
-    fail("installed markdownlint-cli2 package does not match locked 0.23.3 binary contract");
+  if (metadata.version !== "0.23.2" || metadata.bin?.["markdownlint-cli2"] !== "./markdownlint-cli2-bin.mjs") {
+    fail("installed markdownlint-cli2 package does not match locked 0.23.2 binary contract");
   }
   return path.join(temporary, "node_modules", "markdownlint-cli2", metadata.bin["markdownlint-cli2"]);
 }
@@ -1017,7 +1017,7 @@ function batches(files) {
   return result;
 }
 
-// markdownlint-cli2 0.23.3 has no option that turns configuration discovery off. Beside the
+// markdownlint-cli2 0.23.2 has no option that turns configuration discovery off. Beside the
 // --config file it reads .markdownlint-cli2.{jsonc,yaml,cjs,mjs} and
 // .markdownlint.{jsonc,json,yaml,yml,cjs,mjs} from its working directory and from every directory
 // between it and a linted file (getAndProcessDirInfo and enumerateParents in

@@ -58,7 +58,7 @@ const noticeRegenerateHint = "praetorctl sbom notices"
 // release ships it or the Markdown gate installs it, and adding the identifier here records
 // that review.
 var knownNoticeLicenses = map[string]bool{
-	"Apache-2.0": true, "BSD-2-Clause": true, "BSD-3-Clause": true, "ISC": true, "MIT": true, "Python-2.0": true,
+	"Apache-2.0": true, "BSD-2-Clause": true, "BSD-3-Clause": true, "ISC": true, "MIT": true, "PSF-2.0": true, "Python-2.0": true,
 }
 
 // licenseOperators are the SPDX expression keywords, which join identifiers and name none.

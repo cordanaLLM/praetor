@@ -89,8 +89,8 @@ func containsExactLFLine(text, want string) bool {
 
 func TestPackageLockPinsEveryInstalledPackage(t *testing.T) {
 	wantDirect := map[string]string{
-		"js-yaml":                   "5.2.2",
-		"markdownlint-cli2":         "0.23.2",
+		"js-yaml":                   "5.4.1",
+		"markdownlint-cli2":         "0.23.3",
 		"micromark":                 "4.0.2",
 		"micromark-extension-mdxjs": "3.0.0",
 		"micromatch":                "4.0.8",
@@ -136,8 +136,8 @@ func TestPackageLockPinsEveryInstalledPackage(t *testing.T) {
 			t.Fatalf("%s lacks exact version, source, or integrity", name)
 		}
 	}
-	if lock.Packages["node_modules/markdownlint-cli2"].Version != "0.23.2" {
-		t.Fatal("markdownlint-cli2 is not pinned to 0.23.2")
+	if lock.Packages["node_modules/markdownlint-cli2"].Version != "0.23.3" {
+		t.Fatal("markdownlint-cli2 is not pinned to 0.23.3")
 	}
 	if lock.Packages["node_modules/micromark"].Version != "4.0.2" {
 		t.Fatal("micromark is not pinned to 4.0.2")
@@ -153,7 +153,7 @@ func TestPackageLockPinsEveryInstalledPackage(t *testing.T) {
 	}
 	// verify.mjs requires js-yaml (the .standards.yaml documentation block) and micromatch
 	// (declared style exclusions) from the locked install, so both are direct dependencies.
-	for name, version := range map[string]string{"js-yaml": "5.2.2", "micromatch": "4.0.8"} {
+	for name, version := range map[string]string{"js-yaml": "5.4.1", "micromatch": "4.0.8"} {
 		if lock.Packages["node_modules/"+name].Version != version {
 			t.Fatalf("%s is not installed at the top level pinned to %s", name, version)
 		}

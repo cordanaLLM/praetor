@@ -131,6 +131,12 @@ var priorDigests = map[string]string{
 	// The scratch-link rule with a fixed 4,096-file inventory and a fixed 262,144-event parse
 	// bound, before either grew with the bounds a repository declares.
 	"fec9b4f1b48f5847c91fb64e52483a51ae3c1cc4b2574af6eedce7210cad0d5f": Directory + "/no-private-scratch-links.mjs",
+	// package.json, package-lock.json and verify.mjs on markdownlint-cli2 0.23.2 and js-yaml
+	// 5.2.2, whose lock installed smol-toml 1.7.0 (GHSA-7w5x-hrqm-74c2), js-yaml 5.2.2
+	// (GHSA-r3ph-w7gj-g6xm) and markdown-it 14.3.0 (GHSA-253c-mchw-3w2r).
+	"1ef55cd03a7401bae13927bbca5d85ad601dd2ad4b8b931d79a3317551b83c2a": Directory + "/package.json",
+	"abbe0b93eb99ce54d6cadc43ecb131a655d1aaf28009aa3804ad2ba97796b479": Directory + "/package-lock.json",
+	"cdf3f38807fb22c4a59c0e082fc3c94232cd4d691fa5a87df6cc49c1e2c7caba": Directory + "/verify.mjs",
 }
 
 var assetNames = [...]string{
