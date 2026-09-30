@@ -16,7 +16,7 @@ func configuredInputLimits(t *testing.T) *InputLimits {
 		t.Fatal(err)
 	}
 	limits.Snapshot.MaxFileBytes = 32 << 20
-	limits.Verification.MaxEntries = 32768
+	limits.Verification.MaxEntries = 131072
 	limits.Verification.MaxFileBytes = 256 << 10
 	return limits
 }

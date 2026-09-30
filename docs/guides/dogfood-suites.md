@@ -121,7 +121,7 @@ before execution. Limits affect input admission, not HISS compliance thresholds.
     "max_tree_bytes": 268435456
   },
   "verification": {
-    "max_entries": 32768,
+    "max_entries": 131072,
     "max_files": 128,
     "max_depth": 32,
     "max_file_bytes": 262144,
@@ -141,11 +141,16 @@ final tree readback.
 | Snapshot entries, including root | 20,000 | 20,000 |
 | Snapshot bytes per file | 16 MiB | 256 MiB |
 | Snapshot tree bytes | 256 MiB | 1 GiB |
-| Native planning entries | 4,096 | 200,000 |
+| Native planning entries | 65,536 | 200,000 |
 | Native metadata files | 128 | 512 |
 | Native metadata depth | 32 | 64 |
 | Native metadata bytes per file | 64 KiB | 1 MiB |
 | Native metadata total bytes | 2 MiB | 16 MiB |
+
+The native planning defaults and ceilings are adoption's own
+(`adopt.DefaultVerificationLimits` and `adopt.NormalizeVerificationLimits` in
+`internal/adopt/verification_limits.go`), so a suite that omits `input_limits`
+plans with the same bounds as `praetorctl adopt`.
 
 A per-file limit cannot exceed its corresponding total. Snapshot hashes stream
 file contents; symlinks record targets without reading linked content. Snapshots
