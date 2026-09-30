@@ -56,9 +56,10 @@ func TestEmittedHookFixturesMatchTheRendering(t *testing.T) {
 
 // Positive: folding changes the layout, never a value. Every earlier unfolded rendering
 // decodes to exactly what the current Go rendering decodes to, so lefthook runs the same
-// commands in a Go repository and lefthook_identity.go sees the same jobs. The one value that
-// changed since is the pre-commit audit, which now passes --offline (preCommitAuditArgs); the
-// unfolded renderings still ran it online, and nothing else differs.
+// commands in a Go repository and lefthook_identity.go sees the same jobs. The two values that
+// changed since are the pre-commit audit, which now passes --offline (preCommitAuditArgs), and
+// the pre-push gate, which now passes --admit-unsupported (prePushGateArgs); the unfolded
+// renderings ran both without, and nothing else differs.
 func TestLefthookRendering_Positive_FoldsWithoutChangingValues(t *testing.T) {
 	fixtures := readPriorLefthookFixtures(t)
 	for name, checkpoint := range map[string]bool{"unfolded.lefthook.yml": false, "unfolded-checkpoint.lefthook.yml": true} {
@@ -74,6 +75,11 @@ func TestLefthookRendering_Positive_FoldsWithoutChangingValues(t *testing.T) {
 			t.Fatalf("%s: the pre-commit audit was not the online one: %v", name, preCommitAudit["run"])
 		}
 		preCommitAudit["run"] = lefthookGovernedCommand(preCommitAuditArgs)
+		gate := decodedJob(t, prior, "pre-push", "gate")
+		if gate["run"] != lefthookGovernedCommand("gate run --path=.") {
+			t.Fatalf("%s: the pre-push gate was not the strict one: %v", name, gate["run"])
+		}
+		gate["run"] = lefthookGovernedCommand(prePushGateArgs)
 		if !reflect.DeepEqual(prior, current) {
 			t.Errorf("checkpoint=%v: the current rendering changed a value of %s", checkpoint, name)
 		}
