@@ -147,8 +147,8 @@ func TestAdopt_Negative_SymlinkedPluginAgentsRefusedBeforeAnyWrite(t *testing.T)
 
 // Negative: a projection adoption cannot repair, a plugin persona copy of a persona the
 // repository does not define, is never deleted (adopter data), and the compile-context --verify
-// after the chain rejects it: the run is incomplete, the error is on the agent-harness step, and
-// the AI Context Sync pillar fails instead of claiming a synchronized context.
+// after the chain rejects it: the run is incomplete, and the error is on the agent-definitions
+// step, which writes the plugin copies, not on the agent-harness step or its pillars.
 func TestAdopt_Negative_UnverifiableContextFailsTheRun(t *testing.T) {
 	repoPath := newPluginRepo(t, "plugin-orphan")
 	orphan := compiler.PluginAgentsRel + "/retired.md"
@@ -160,16 +160,15 @@ func TestAdopt_Negative_UnverifiableContextFailsTheRun(t *testing.T) {
 	if rep.Outcome() != OutcomeIncomplete || len(rep.Errors) != 1 {
 		t.Fatalf("outcome = %s, errors = %v; want one verification error", rep.Outcome(), rep.Errors)
 	}
-	for _, want := range []string{"compile-context --verify rejects", orphan, "projects no canonical persona"} {
+	for _, want := range []string{verifyRejection + ": ", orphan, "projects no canonical persona"} {
 		if !strings.Contains(rep.Errors[0], want) {
 			t.Errorf("error lacks %q: %s", want, rep.Errors[0])
 		}
 	}
-	for _, pillar := range rep.Pillars() {
-		if pillar.Name == "AI Context Sync" && (pillar.Status != PillarFailed || len(pillar.Errors) != 1) {
-			t.Errorf("AI Context Sync = %s %v; want failed with the verification error", pillar.Status, pillar.Errors)
-		}
+	if defs := stepOutcome(t, rep, "agent-definitions"); defs.Status != StepFailed || len(defs.Errors) != 1 {
+		t.Errorf("agent-definitions = %+v, want failed with the verification error", defs)
 	}
+	assertHarnessPillarsClean(t, rep)
 	if got := mustRead(t, filepath.Join(repoPath, filepath.FromSlash(orphan))); got != "# Retired\n" {
 		t.Errorf("adoption rewrote the orphaned copy: %q", got)
 	}
@@ -250,7 +249,8 @@ func TestVerifyFailures(t *testing.T) {
 
 // Negative and its remedy: a manifest that declines git-ignore leaves .gitignore to the
 // operator, and compile-context --verify requires Git to ignore .workingdir/evidence/ (#631).
-// Without an operator rule the run is incomplete and the error names the remedy; with
+// Without an operator rule the run is incomplete and the error names the remedy; it lands on the
+// declined git-ignore step, which owns the rule, and leaves the harness pillars alone. With
 // /.workingdir/ in the operator's .gitignore the same run is applied.
 func TestAdopt_DeclinedGitIgnoreNeedsTheOperatorWorkingDirRule(t *testing.T) {
 	for _, tc := range []struct {
@@ -280,11 +280,15 @@ func TestAdopt_DeclinedGitIgnoreNeedsTheOperatorWorkingDirRule(t *testing.T) {
 			if len(rep.Errors) != 1 {
 				t.Fatalf("errors = %v, want the one verification error", rep.Errors)
 			}
-			for _, want := range []string{"compile-context --verify rejects", ".workingdir/evidence/", "add /.workingdir/ to the operator-owned .gitignore"} {
+			for _, want := range []string{verifyRejection + ": ", ".workingdir/evidence/", "add /.workingdir/ to the operator-owned .gitignore"} {
 				if !strings.Contains(rep.Errors[0], want) {
 					t.Errorf("error lacks %q: %s", want, rep.Errors[0])
 				}
 			}
+			if ignore := stepOutcome(t, rep, "git-ignore"); ignore.Status != StepDeclined || len(ignore.Errors) != 1 {
+				t.Errorf("git-ignore = %+v, want declined carrying the verification error", ignore)
+			}
+			assertHarnessPillarsClean(t, rep)
 		})
 	}
 }

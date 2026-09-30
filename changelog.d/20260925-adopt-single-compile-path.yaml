@@ -1,4 +1,4 @@
 type: fixed
-title: "adopt writes the plugin persona and skill copies through the compile-context writer and exits non-zero (outcome incomplete) whenever compile-context --verify rejects the agent context it wrote, instead of exiting 0 with stale plugin copies; a manifest declining git-ignore now needs /.workingdir/ in the repository's own .gitignore, and a plain run splices the text register block into an AGENTS.md it keeps"
+title: "adopt writes the plugin persona and skill copies through the compile-context writer and exits non-zero (outcome incomplete) whenever compile-context --verify rejects the repository's agent context after adoption, instead of exiting 0 with stale plugin copies; a hand-written file in a persona directory (.claude/.codex/.github/.gemini agents or the plugin agents) that projects no canonical persona now fails the run (move it into .agents/agents or remove it), a manifest declining git-ignore now needs /.workingdir/ in the repository's own .gitignore, and a plain run splices the text register block into an AGENTS.md it keeps, with a backup"
 issue: "#359"
 breaking: true

@@ -21,20 +21,22 @@ const contextVerifyTimeout = 2 * time.Minute
 // persona and plugin skill projections), so the bound is never reached by a real run.
 const maxVerifyFailures = 64
 
-// contextVerifiedStep is the step whose outcome carries the verification's findings: the one the
-// AI Context Sync pillar reads, so that pillar never claims a context the verification rejected.
-const contextVerifiedStep = "agent-harness"
+// verifyRejection leads every error the verification after the chain records. The verification
+// reads the whole repository, not only what the run wrote: a file the repository placed in a
+// persona directory, or an ignore rule a declined git-ignore step left to the operator, fails it
+// too, so the error never says adoption wrote what it rejects.
+const verifyRejection = "compile-context --verify rejects the repository's agent context after adoption"
 
 // verifyAgentContext runs compile-context --verify (compiler.VerifyCompiledContext) over the
 // repository once the chain has written it, so adoption never reports success on an agent context
 // the next compile-context --verify and audit reject: a forced run once exited 0 with stale plugin
-// persona copies (#359). Each rejection is an error on the report and on the agent-harness step,
-// so the run is incomplete and the CLI exits non-zero. A caveman finding on text adoption keeps as
-// written is a warning instead, as the agent-harness step already treats AGENTS.md
-// (compiler.ErrContextProse, warned there, not repeated): a persona or skill the repository wrote
-// (compiler.ErrAgentTextProse) is warned here. A dry run wrote nothing and verifies nothing, and
-// neither does a run that declines agent-harness or agent-definitions: adoption then leaves part
-// of the agent context to the repository.
+// persona copies (#359). Each rejection is an error on the report and on the step that owns what
+// it rejects (verifyOwner), so the run is incomplete and the CLI exits non-zero. A caveman
+// finding on text adoption keeps as written is a warning instead, as the agent-harness step
+// already treats AGENTS.md (compiler.ErrContextProse, warned there, not repeated): a persona or
+// skill the repository wrote (compiler.ErrAgentTextProse) is warned here. A dry run wrote nothing
+// and verifies nothing, and neither does a run that declines agent-harness or agent-definitions:
+// adoption then leaves part of the agent context to the repository.
 func verifyAgentContext(ctx context.Context, s *adoptSession, declined map[string]bool) {
 	if s.opts.DryRun || declined["agent-harness"] || declined["agent-definitions"] {
 		return
@@ -46,15 +48,32 @@ func verifyAgentContext(ctx context.Context, s *adoptSession, declined map[strin
 	if err == nil {
 		return
 	}
-	step := s.report.stepNamed(contextVerifiedStep)
 	for _, failure := range verifyFailures(err) {
+		step := s.report.stepNamed(verifyOwner(failure))
 		switch {
 		case errors.Is(failure, compiler.ErrContextProse):
 		case errors.Is(failure, compiler.ErrAgentTextProse):
 			s.report.addStepWarning(step, fmt.Sprintf("%v; adoption keeps the repository's text as written", failure))
 		default:
-			s.report.addStepError(step, fmt.Sprintf("compile-context --verify rejects the agent context adoption wrote: %v", failure))
+			s.report.addStepError(step, fmt.Sprintf("%s: %v", verifyRejection, failure))
 		}
+	}
+}
+
+// verifyOwner names the step that writes what failure rejects, so the step outcomes and the
+// pillars they feed point at it: the evidence ignore rule is the git-ignore step's
+// (compiler.ErrEvidenceNotIgnored), a persona or plugin skill copy (compiler.ErrAgentSurface) and
+// the canonical persona and skill text (compiler.ErrAgentTextProse) are the agent-definitions
+// step's, and everything else, AGENTS.md with its register block and the vendor files, is the
+// agent-harness step's.
+func verifyOwner(failure error) string {
+	switch {
+	case errors.Is(failure, compiler.ErrEvidenceNotIgnored):
+		return "git-ignore"
+	case errors.Is(failure, compiler.ErrAgentSurface), errors.Is(failure, compiler.ErrAgentTextProse):
+		return "agent-definitions"
+	default:
+		return "agent-harness"
 	}
 }
 
