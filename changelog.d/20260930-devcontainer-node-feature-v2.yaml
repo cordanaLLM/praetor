@@ -1,0 +1,3 @@
+type: changed
+title: Move the Node.js DevContainer feature to node:2 and name both digests of a moved lock pin
+breaking: true
