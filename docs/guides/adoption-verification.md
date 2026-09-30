@@ -580,7 +580,10 @@ malformed pin and a manifest that cannot be read, such as one with a second YAML
 stage before the signing key is loaded, as they fail `gate verify`.
 
 **Migration.** A workstation whose signing key is not the pinned key no longer receives a receipt,
-so the `gate` job of its pre-push hook fails. Point `PRAETOR_RECEIPT_KEY` or the per-user key file
+so the `gate` job of its pre-push hook fails in a repository whose root holds a `go.mod` or a
+`Cargo.lock`. A root holding neither is admitted without a receipt before any key is loaded
+([admission](#the-pre-push-hook-admits-languages-the-gate-has-no-runner-for)), so a key mismatch
+does not fail its push. Point `PRAETOR_RECEIPT_KEY` or the per-user key file
 at the pinned key's private half, or, when this workstation's key is meant to be the repository's
 trust anchor, pin its public half as `receipt.public_key`. `TestRunReceiptStage_Positive_PinnedSigningKeySigns`,
 `TestRunReceiptStage_Negative_UnpinnedSigningKeyRefused` and
