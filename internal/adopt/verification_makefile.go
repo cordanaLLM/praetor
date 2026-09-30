@@ -315,6 +315,23 @@ func isPriorGeneratedMakefile(data string, plan *VerificationPlan) bool {
 	return data == prior && prior != buildMakefile(plan)
 }
 
+// isPlaceholderVerificationMakefile reports whether data is exactly the placeholder Makefile
+// adoption writes for a plan with no runnable command -- the current rendering or the one from
+// before the configured-sources gate joined verify-all -- while plan renders a different Makefile.
+// An unavailable plan's recipes print a pointer to the report and exit 1 whatever commands it
+// names, so each rendering has one placeholder text. Once the repository gains a runnable plan the
+// placeholder is earlier Praetor output and is replaced like the historical forms above (#638);
+// while the plan is still unavailable it is the current rendering and stays. An edited copy is
+// not exact and stays untouched.
+func isPlaceholderVerificationMakefile(data string, plan *VerificationPlan) bool {
+	data = withoutDocumentationMakefileBlock(data)
+	if data == buildMakefile(plan) {
+		return false
+	}
+	placeholder := &VerificationPlan{Status: verificationUnavailable}
+	return data == buildMakefile(placeholder) || data == priorSourceGateMakefile(placeholder)
+}
+
 // isReplaceableVerificationMakefile reports whether data is earlier Praetor output that adoption
 // replaces with the current rendering, in either consistent line-ending style: a CRLF checkout
 // (core.autocrlf on Windows) holds the same output, so Linux, macOS and Windows re-runs agree. A
@@ -324,7 +341,8 @@ func isReplaceableVerificationMakefile(data string, plan *VerificationPlan) bool
 	if err != nil {
 		return false
 	}
-	return isLegacyVerificationMakefile(normalized) || isPriorGeneratedMakefile(normalized, plan) || normalized == priorSourceGateMakefile(plan)
+	return isLegacyVerificationMakefile(normalized) || isPriorGeneratedMakefile(normalized, plan) || normalized == priorSourceGateMakefile(plan) ||
+		isPlaceholderVerificationMakefile(normalized, plan)
 }
 
 const legacyVerificationStub = "\n.PHONY: all verify-all audit compile-context build test\n\nverify-all:\n\t@echo \"Running verification...\"\n\ncompile-context:\n\t@standardsctl compile-context\n\naudit:\n\t@standardsctl audit\n\ntest:\n\t@go test -v -race ./...\n\nbuild:\n\t@go build -v ./...\n"

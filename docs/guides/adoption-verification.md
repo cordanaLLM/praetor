@@ -993,8 +993,14 @@ and [Python 3.14 unittest behavior](https://docs.python.org/3.14/library/unittes
 ## Migration and activation limits
 
 Re-run adoption to replace byte-exact historical Praetor Makefiles, including the
-old echo-only `verify-all` stub. Custom or edited Makefiles are preserved even with
-`--force`; includes, generated target names and pattern rules are treated as
+old echo-only `verify-all` stub. The placeholder Makefile written for an `unavailable`
+plan, whose recipes fail explicitly, counts as earlier Praetor output once the
+repository declares build and test commands: a plain re-run replaces it with the
+runnable `verify-all` and the Verification Gate reports ready; while the plan stays
+`unavailable` the placeholder is current and kept
+(`isPlaceholderVerificationMakefile` in `internal/adopt/verification_makefile.go`,
+`internal/adopt/verification_placeholder_test.go`). Custom or edited Makefiles are
+preserved even with `--force`; includes, generated target names and pattern rules are treated as
 ambiguous ownership. A missing target can be appended to a simple existing
 Makefile without replacing its recipes. Existing AGENTS.md is preserved by default
 with a command-synchronization warning. Review the declared plan; `--force`

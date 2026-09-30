@@ -1,0 +1,4 @@
+type: fixed
+title: Regenerate the placeholder verify-all Makefile once a repository gains a runnable verification plan
+issue: "#638"
+breaking: false
