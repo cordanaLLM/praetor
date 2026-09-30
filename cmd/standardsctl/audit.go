@@ -173,7 +173,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error { return auditRunnerMatrix(ctx, manifest, rootDir) },
 		func() error { return auditPreMigrationTracking(rootDir) },
 		func() error { return auditAgentDefinitions(ctx, manifest, rootDir) },
-		func() error { return auditGitHooks(ctx, rootDir) },
+		func() error { return auditGitHooks(ctx, manifest, rootDir) },
 		func() error { return auditLiveActions(ctx, manifest, rootDir, opts.offline) },
 	}
 
@@ -315,32 +315,60 @@ func verifiedTargetList(res *compiler.CompileResult) string {
 }
 
 func auditAgentContextAndDevcontainer(ctx context.Context, manifest *config.Manifest, opts *auditOptions) error {
+	if err := auditAgentContext(ctx, manifest, opts); err != nil {
+		return err
+	}
+	return auditDevContainer(ctx, manifest, opts)
+}
+
+// auditAgentContext verifies the text register block, the vendor projections and the caveman lint
+// of AGENTS.md, and that the agent evidence directory is ignored. A declined agent-harness step
+// keeps adoption from writing the harness and covers none of these (ADR-0010 decisions 5 and
+// 11): a failure says so, and the pass names the decline (adopt.AuditDecline, #600).
+func auditAgentContext(ctx context.Context, manifest *config.Manifest, opts *auditOptions) error {
+	harness, err := adopt.AuditDecline(manifest, "agent-harness")
+	if err != nil {
+		return fmt.Errorf("[FAIL] Agent context audit failed: %w", err)
+	}
 	root := opts.rootDir
 	tr := compiler.NewTranspiler()
 	if _, err := compiler.SyncRegisterBlock(ctx, root, opts.agentsPath, false); err != nil {
-		return fmt.Errorf("[FAIL] Agent context text register: %w", err)
+		return fmt.Errorf("[FAIL] Agent context text register: %w", harness.Narrow(err))
 	}
 	res, err := tr.VerifyCompiled(ctx, opts.agentsPath, root)
 	if err != nil {
-		return fmt.Errorf("[FAIL] Agent context targets out of sync: %w", err)
+		return fmt.Errorf("[FAIL] Agent context targets out of sync: %w", harness.Narrow(err))
 	}
 	fmt.Printf("[PASS] Cross-agent context targets verified in sync: %s.\n", verifiedTargetList(res))
 	lint, err := compiler.LintContext(ctx, opts.agentsPath)
 	if err != nil {
-		return fmt.Errorf("[FAIL] Agent context: %w", err)
+		return fmt.Errorf("[FAIL] Agent context: %w", harness.Narrow(err))
 	}
 	fmt.Printf("[PASS] Agent context %s.\n", lint.Summary())
 	// Whatever facets the manifest enables: the block sends agent evidence there in every repository.
 	if err := compiler.CheckEvidenceIgnored(ctx, filepath.Dir(opts.agentsPath)); err != nil {
 		return fmt.Errorf("[FAIL] Agent context evidence directory: %w", err)
 	}
-	return auditDevContainer(ctx, manifest, opts)
+	if harness.Declined {
+		fmt.Println(harness.Line("Agent harness"))
+	}
+	return nil
 }
 
 // auditDevContainer verifies a committed .devcontainer/devcontainer.json against the one the
 // declared profiles and facets synthesize from the pinned catalog; a repository without one
-// passes. profile set runs it too (declarationGates).
+// passes. profile set runs it too (declarationGates). With dev-container in adoption.decline,
+// adoption never writes it, so a file the repository keeps is its own and passes with the
+// decline named (#600).
 func auditDevContainer(ctx context.Context, manifest *config.Manifest, opts *auditOptions) error {
+	devContainer, err := adopt.AuditDecline(manifest, "dev-container")
+	if err != nil {
+		return fmt.Errorf("[FAIL] DevContainer audit failed: %w", err)
+	}
+	if devContainer.Declined {
+		fmt.Println(devContainer.Line("DevContainer configuration"))
+		return nil
+	}
 	dcPath := filepath.Join(opts.rootDir, ".devcontainer", "devcontainer.json")
 	if !util.FileExists(dcPath) {
 		return nil
@@ -398,14 +426,22 @@ func auditCavemanAgentSurfaces(ctx context.Context, rootDir string) error {
 
 // auditCavemanConfiguredSources enforces the omission-resistant register.sources inventory
 // through the same checker as `caveman check --configured-sources`. An omitted register or
-// sources contract is zero verified work and fails closed.
+// sources contract is zero verified work and fails closed; a contract that declares no text
+// (config.RegisterSources.DeclaresNone) passes with its reason while no Paperclip harness, the
+// text adoption binds, exists (#601).
 func auditCavemanConfiguredSources(ctx context.Context, manifest *config.Manifest, rootDir string) error {
 	if manifest == nil || manifest.Register == nil || manifest.Register.Sources == nil {
-		return errors.New("[FAIL] Caveman non-Markdown source coverage: audit requires register.sources")
+		return errors.New("[FAIL] Caveman non-Markdown source coverage: audit requires register.sources; declare the " +
+			"repository's agent-facing text, or expected: 0 with a reason when it has none")
 	}
-	inputs, result, err := configuredCavemanInputs(ctx, rootDir, manifest.EffectiveRegister())
+	register := manifest.EffectiveRegister()
+	inputs, result, err := configuredCavemanInputs(ctx, rootDir, register)
 	if err != nil {
 		return fmt.Errorf("[FAIL] Caveman non-Markdown source coverage: %w", err)
+	}
+	if register.Sources.DeclaresNone() {
+		fmt.Printf("[PASS] Caveman non-Markdown source coverage: %s.\n", declaredNoSources(register.Sources))
+		return nil
 	}
 	if report, failed := renderCavemanChecks(inputs, 0, 0, true); failed > 0 {
 		return fmt.Errorf("[FAIL] Caveman non-Markdown source lint (%d of %d values):\n%s",
@@ -437,13 +473,12 @@ func auditBranchProtectionAndSupplyChain(ctx context.Context, manifest *config.M
 		return err
 	}
 
-	// Verify .config/labels.yaml
-	labelsPath := filepath.Join(rootDir, ".config", "labels.yaml")
-	if !util.FileExists(labelsPath) {
-		return fmt.Errorf("[FAIL] Required label taxonomy .config/labels.yaml is missing")
+	// The label taxonomy gate standards_audit runs too; it honours a labels decline (#600).
+	labels, err := adopt.AuditLabelTaxonomy(manifest, rootDir)
+	if err != nil {
+		return err
 	}
-	fmt.Println("[PASS] Repository label taxonomy .config/labels.yaml verified.")
-
+	fmt.Println(labels)
 	return nil
 }
 
@@ -521,10 +556,25 @@ func repoFileContains(rootDir, rel, needle string) (bool, error) {
 	return strings.Contains(string(data), needle), nil
 }
 
+// paperclipHarnessRel is the Paperclip harness adoption writes, audit validates, and a
+// register.sources contract that declares no text requires absent.
+const paperclipHarnessRel = ".paperclip/harness.json"
+
+// auditPaperclipHarness validates .paperclip/harness.json. With paperclip in adoption.decline,
+// adoption never writes it, so an absent harness passes with the decline named (#600); one the
+// repository keeps is still validated, since register.sources binds its text.
 func auditPaperclipHarness(ctx context.Context, manifest *config.Manifest, rootDir string) error {
-	harnessPath := filepath.Join(rootDir, ".paperclip", "harness.json")
+	decline, err := adopt.AuditDecline(manifest, "paperclip")
+	if err != nil {
+		return fmt.Errorf("[FAIL] Paperclip harness audit failed: %w", err)
+	}
+	harnessPath := filepath.Join(rootDir, filepath.FromSlash(paperclipHarnessRel))
+	if !util.FileExists(harnessPath) && decline.Declined {
+		fmt.Println(decline.Line("Paperclip agent runtime harness " + paperclipHarnessRel))
+		return nil
+	}
 	if !util.FileExists(harnessPath) {
-		return fmt.Errorf("[FAIL] Paperclip agent runtime harness .paperclip/harness.json is missing; run 'praetorctl adopt' to reconcile")
+		return fmt.Errorf("[FAIL] Paperclip agent runtime harness %s is missing; run 'praetorctl adopt' to reconcile", paperclipHarnessRel)
 	}
 	h, err := paperclip.LoadHarnessContext(ctx, harnessPath)
 	if err != nil {
@@ -623,15 +673,22 @@ func resolvePreMigrationEpic(rootDir string) string {
 	return ""
 }
 
-func auditGitHooks(ctx context.Context, rootDir string) error {
+// auditGitHooks requires lefthook.yml and an active pre-commit hook in a Git checkout. With
+// git-hooks in adoption.decline the repository owns its hooks, so neither is required; the
+// configuration check is the one standards_audit runs too (adopt.AuditGitHookConfig, #600).
+func auditGitHooks(ctx context.Context, manifest *config.Manifest, rootDir string) error {
 	gitDir := filepath.Join(rootDir, ".git")
 	if !util.DirExists(gitDir) && !util.FileExists(gitDir) {
 		return nil
 	}
 
-	lhPath := filepath.Join(rootDir, "lefthook.yml")
-	if !util.FileExists(lhPath) {
-		return fmt.Errorf("[FAIL] lefthook.yml configuration is missing from repository root")
+	line, declined, err := adopt.AuditGitHookConfig(manifest, rootDir)
+	if err != nil {
+		return err
+	}
+	if declined {
+		fmt.Println(line)
+		return nil
 	}
 
 	if os.Getenv("CI") == "true" || os.Getenv("GITHUB_ACTIONS") == "true" {

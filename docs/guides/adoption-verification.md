@@ -268,6 +268,76 @@ projected and linted by the projection and caveman gates, which have no opt-out
 malformed decline entry fails closed. `cmd/standardsctl/audit_agent_definitions_test.go` and
 `internal/compiler/agent_inventory_test.go` pin each case.
 
+### What audit does with a declined step
+
+`adoption.decline` in `.standards.yaml` lists adoption steps a repository keeps for itself.
+Adoption skips each one and reports it `declined`. `manifest`, `lockfile`, `baseline` and
+`documentation-gate` cannot be declined: adoption refuses the list before its first write
+(`mandatoryArtifacts` in
+[`internal/adopt/declined.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/declined.go)).
+Every other step has an audit contract in the same file (`declineContracts`). Every audit gate
+that reads a decline, in `praetorctl audit` and in `standards_audit`, reads it through
+`adopt.AuditDecline`, which applies the list the way adoption does: an unknown or mandatory
+name fails adoption and each of those gates.
+
+| Step | Audit with the step declined |
+| :--- | :--- |
+| `git-ignore` | retained: Git must still ignore the agent evidence directory `.workingdir/evidence/`, and with `docs:seo-portal` the documentation gate's private paths, through the repository's own rules |
+| `policy-catalog` | retained: the catalog the lock pins under `.config/archetypes`, which adoption and audit resolve the effective policy from |
+| `agent-harness` | retained: the text register block in `AGENTS.md`, its caveman lint, and the projection of every `agent_clients` target |
+| `dev-container` | skipped: a `.devcontainer/devcontainer.json` the repository keeps is not compared |
+| `makefile` | skipped by the documentation gate |
+| `editors` | none |
+| `formatter-ignore` | skipped by the documentation gate |
+| `renovate-ignore` | none |
+| `actionlint-labels` | none |
+| `contributing` | none |
+| `pull-request-template` | none |
+| `security-policy` | none |
+| `adr` | none |
+| `readme` | skipped: the README governance block is not required |
+| `working-dir-and-flavor` | none |
+| `branch-ruleset` | skipped, in both audits |
+| `labels` | skipped, in both audits: `.config/labels.yaml` is not required |
+| `paperclip` | skipped: an absent `.paperclip/harness.json` passes; one the repository keeps is still validated |
+| `agent-definitions` | skipped: `.agents/agents` is reported, not required |
+| `git-hooks` | skipped, in both audits: neither `lefthook.yml` nor an active pre-commit hook is required |
+| `agent-hooks` | none |
+
+- **none**: no audit gate reads the step's artefact, so the decline changes no verdict.
+- **skipped**: the gate that reads the artefact passes and names the decline, for example
+  `[PASS] Label taxonomy .config/labels.yaml declined by adoption.decline.`
+- **retained**: the decline stops adoption writing the artefact, and nothing more. Adoption's
+  report entry for the step ends with `audit still requires` and what that is. A failing check
+  the decline does not cover says so, for example `... (adoption.decline lists agent-harness,
+  which does not cover this check: audit still requires the text register block in AGENTS.md,
+  ...)`. A passing audit prints `[INFO] Agent harness declined by adoption.decline; audit still
+  requires ...` after those checks.
+
+A repository that declines `agent-harness` to keep its own `AGENTS.md` runs
+`praetorctl compile-context` once. That renders the register block between its markers and
+leaves the rest of the file as written; `agent_clients: []` in `.standards.yaml` selects no
+vendor file to project. ADR-0010 keeps the block (decision 5) and the caveman gate (decision
+11) mandatory, so no decline removes them.
+
+A declined `policy-catalog` step writes no `.config/archetypes`, and adoption still renders the
+ruleset, the documentation gate, the README block and the harness from the effective policy.
+Before its first write, adoption resolves that policy read-only from the catalog on disk,
+under the lock the lockfile step leaves. A missing catalog, or one a lock re-pinned by
+`--force` or `--lock-source-root` no longer matches, stops adoption before it writes anything,
+naming the decline. After the lockfile step, the declined step reads the policy back from disk
+as audit does. A dry run previews the ruleset rendered from the same policy; it falls back to
+the built-in defaults only when the lock cannot be planned without `--lock-source-root`, and a
+real run never does (`adoptionBranchPolicy` in `internal/adopt/ruleset.go`).
+
+Tests: `TestDeclineContracts_Boundary_CoverEveryStep` and
+`TestDeclineContractsTableMatchesTheGuide` (every step is mandatory or contracted, and this
+table matches the contract) and `internal/adopt/policy_catalog_decline_test.go`;
+`TestDeclineContract_Boundary_EveryAuditedStepIsLookedUp` (every skipped step's gate calls the
+reader, in the CLI and, where `standards_audit` reads the artefact, in the MCP server) and the
+declined-artefact tests in `cmd/standardsctl/audit_decline_contract_test.go`;
+`cmd/standards-mcp/audit_decline_test.go`.
+
 ### Writing the ruleset, labels and repository metadata to GitHub with `sync --remote`
 
 `standardsctl sync` verifies `.config/labels.yaml` and `.github/rulesets/main.json` locally.
@@ -375,6 +445,8 @@ at zero (`cmd/standardsctl/plan.go`, `TestPlan_Remote_ComparesLiveBranchProtecti
 which `internal/forge/labels_test.go` holds byte-for-byte equal to praetor's own file).
 An existing taxonomy is the repository's configuration: `adopt --force` keeps it
 (`TestAdopt_Positive_ForceKeepsRepositoryConfiguration` in `internal/adopt/adopt_test.go`).
+With `adoption.decline: [labels]` adoption writes none, and both audits pass without one
+(`adopt.AuditLabelTaxonomy`, [declined steps](#what-audit-does-with-a-declined-step)).
 
 ### Stages that do not apply are skipped, not failed
 

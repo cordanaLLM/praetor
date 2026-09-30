@@ -56,12 +56,12 @@ func (s *Server) runAuditGates(ctx context.Context, p auditPaths) *mcp.ToolResul
 		func(ctx context.Context) (string, error) {
 			return auditBaselineRatchetWithPolicy(ctx, s.rootDir, p.baseline, effective)
 		},
-		func(ctx context.Context) (string, error) { return auditContextSync(ctx, p.agents, s.rootDir) },
+		func(ctx context.Context) (string, error) { return auditContextSync(ctx, manifest, p.agents, s.rootDir) },
 		func(ctx context.Context) (string, error) {
 			return auditBranchProtection(ctx, manifest, s.rootDir, &effective.Policy)
 		},
-		func(context.Context) (string, error) { return auditLabelTaxonomy(s.rootDir) },
-		func(context.Context) (string, error) { return auditHookConfig(s.rootDir) },
+		func(context.Context) (string, error) { return adopt.AuditLabelTaxonomy(manifest, s.rootDir) },
+		func(context.Context) (string, error) { return auditHookConfig(manifest, s.rootDir) },
 	}
 
 	passed := 0
@@ -146,25 +146,34 @@ func auditBaselineRatchetWithPolicy(ctx context.Context, root, baselinePath stri
 	return strings.Join(lines, "\n"), nil
 }
 
-// auditContextSync verifies the compiled vendor targets match the canonical AGENTS.md.
-func auditContextSync(ctx context.Context, agentsPath, root string) (string, error) {
-	tr := compiler.NewTranspiler()
-	if _, err := compiler.SyncRegisterBlock(ctx, root, agentsPath, false); err != nil {
-		return "", fmt.Errorf("[FAIL] Agent context text register: %w", err)
+// auditContextSync verifies the compiled vendor targets match the canonical AGENTS.md. A
+// declined agent-harness step does not cover these checks (adopt.DeclineAuditRetained): a
+// failure says so, and a pass names the decline, as the CLI audit does (#600).
+func auditContextSync(ctx context.Context, manifest *config.Manifest, agentsPath, root string) (string, error) {
+	harness, err := adopt.AuditDecline(manifest, "agent-harness")
+	if err != nil {
+		return "", fmt.Errorf("[FAIL] Agent context audit failed: %w", err)
 	}
-	if err := tr.VerifyContext(ctx, agentsPath, root); err != nil {
-		return "", fmt.Errorf("[FAIL] Agent context targets out of sync: %w", err)
+	if _, err := compiler.SyncRegisterBlock(ctx, root, agentsPath, false); err != nil {
+		return "", fmt.Errorf("[FAIL] Agent context text register: %w", harness.Narrow(err))
+	}
+	if err := compiler.NewTranspiler().VerifyContext(ctx, agentsPath, root); err != nil {
+		return "", fmt.Errorf("[FAIL] Agent context targets out of sync: %w", harness.Narrow(err))
 	}
 	lint, err := compiler.LintContext(ctx, agentsPath)
 	if err != nil {
-		return "", fmt.Errorf("[FAIL] Agent context: %w", err)
+		return "", fmt.Errorf("[FAIL] Agent context: %w", harness.Narrow(err))
 	}
 	// The CLI audit runs the same check: whatever facets the manifest enables, the block sends
 	// agent evidence to the evidence directory in every repository.
 	if err := compiler.CheckEvidenceIgnored(ctx, filepath.Dir(agentsPath)); err != nil {
 		return "", fmt.Errorf("[FAIL] Agent context evidence directory: %w", err)
 	}
-	return "[PASS] Cross-agent context targets verified in sync.\n[PASS] Agent context " + lint.Summary() + ".", nil
+	line := "[PASS] Cross-agent context targets verified in sync.\n[PASS] Agent context " + lint.Summary() + "."
+	if harness.Declined {
+		line += "\n" + harness.Line("Agent harness")
+	}
+	return line, nil
 }
 
 // auditBranchProtection delegates branch protection ruleset audit to the shared authority
@@ -174,22 +183,13 @@ func auditBranchProtection(ctx context.Context, manifest *config.Manifest, root 
 	return adopt.AuditBranchProtectionWithPolicy(ctx, manifest, root, policy)
 }
 
-// auditLabelTaxonomy requires the repository label taxonomy.
-func auditLabelTaxonomy(root string) (string, error) {
-	if !util.FileExists(filepath.Join(root, ".config", "labels.yaml")) {
-		return "", fmt.Errorf("[FAIL] Required label taxonomy .config/labels.yaml is missing")
-	}
-	return "[PASS] Repository label taxonomy .config/labels.yaml verified.", nil
-}
-
-// auditHookConfig requires lefthook.yml in git repositories; hook activation itself is
+// auditHookConfig requires lefthook.yml in git repositories unless adoption.decline lists
+// git-hooks (adopt.AuditGitHookConfig, the gate the CLI audit shares); hook activation itself is
 // a workstation concern verified by the CLI audit.
-func auditHookConfig(root string) (string, error) {
+func auditHookConfig(manifest *config.Manifest, root string) (string, error) {
 	if !util.PathExists(filepath.Join(root, ".git")) {
 		return "[PASS] Not a git checkout: hook configuration gate skipped.", nil
 	}
-	if !util.FileExists(filepath.Join(root, "lefthook.yml")) {
-		return "", fmt.Errorf("[FAIL] lefthook.yml configuration is missing from repository root")
-	}
-	return "[PASS] Git hook configuration lefthook.yml verified.", nil
+	line, _, err := adopt.AuditGitHookConfig(manifest, root)
+	return line, err
 }

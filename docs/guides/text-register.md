@@ -698,6 +698,39 @@ same contract for its generated Paperclip harness and adds the source target to
 the generated Makefile. Both `audit` and the dedicated command fail closed when
 `register.sources` is absent.
 
+#### A repository with no agent-facing text outside Markdown
+
+A repository that has none says so explicitly, with `expected: 0` and a one-line reason, and
+no `inputs`, `not_applicable` or `sha256`:
+
+```yaml
+register:
+  sources:
+    expected: 0
+    reason: "no hook, prompt or MCP text outside Markdown"
+```
+
+`praetorctl audit` then passes the gate with a line naming the declaration and its reason:
+
+```text
+[PASS] Caveman non-Markdown source coverage: register.sources declares no agent-facing text (reason: no hook, prompt or MCP text outside Markdown).
+```
+
+`praetorctl caveman check --configured-sources` prints the same declaration followed by
+`nothing to check`. The manifest
+decoder refuses `expected: 0` without a reason, or with inputs or pins, and a reason on any
+other contract; binding a first input means setting `expected` and `sha256` to the values it
+extracts, as for any contract (`config.RegisterSources.DeclaresNone`, tests in
+`internal/config/register_sources_test.go`). The declaration holds only while
+`.paperclip/harness.json`, the text adoption binds, is absent: with a harness on disk both
+checks fail and name it. Adoption keeps the declaration byte for byte, `--force` included,
+while `paperclip` stays declined; a run that would write a harness refuses before its first
+write (`TestAuditDeclinedPaperclipNoSources_Positive`,
+`TestAuditDeclinedPaperclipNoSources_Negative` and
+`TestAdoptDeclinedPaperclipKeepsNoSources_Boundary` in
+`cmd/standardsctl/audit_decline_contract_test.go`). `standards_audit` runs no
+`register.sources` gate.
+
 #### Upgrading an adopted repository
 
 Run `praetorctl adopt`. It adds `register.sources` to an existing manifest
@@ -759,7 +792,9 @@ who wrote it:
   `praetorctl caveman check --configured-sources --root=.`. With no harness on
   disk, adoption adds no `register.sources` and reports `preserved without
   register.sources`; declare the contract for the repository's own agent-facing
-  text, or audit keeps failing.
+  text, or [declare that it has none](#a-repository-with-no-agent-facing-text-outside-markdown),
+  or audit keeps failing. Audit passes the absent harness itself, naming the
+  decline ([declined steps](adoption-verification.md#what-audit-does-with-a-declined-step)).
 - Without a repository identity (no `repository.owner` and `repository.name`
   in `.standards.yaml` and no origin remote), adoption cannot name the harness
   platform, so it writes no harness, in either mode (BUG-852). An existing

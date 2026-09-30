@@ -35,6 +35,172 @@ var mandatoryArtifacts = map[string]string{
 	"api-compatibility-gate": "remove the api:public-contract facet instead; it removes the gate and its workflow",
 }
 
+// DeclineAudit is what audit does with the artefact of a declined adoption step.
+type DeclineAudit string
+
+const (
+	// DeclineAuditNone marks a step whose artefact no audit gate reads: its decline changes no
+	// verdict.
+	DeclineAuditNone DeclineAudit = "none"
+	// DeclineAuditSkipped marks a step whose artefact an audit gate reads: that gate looks the
+	// decline up (AuditDecline) and passes, naming it, instead of requiring the artefact.
+	DeclineAuditSkipped DeclineAudit = "skipped"
+	// DeclineAuditRetained marks a step whose artefact, or the effect it has, audit requires
+	// whatever the decline (declineContract.retains). The decline only stops adoption writing it,
+	// and adoption and audit both say what stays required.
+	DeclineAuditRetained DeclineAudit = "retained"
+)
+
+// declineContract is the audit side of one declinable adoption step.
+type declineContract struct {
+	audit DeclineAudit
+	// mcp reports that standards_audit reads the artefact too; its gate honours the decline as
+	// the CLI gate does.
+	mcp bool
+	// retains names what audit still requires while the step is declined (DeclineAuditRetained).
+	retains string
+}
+
+// declineContracts is the audit contract of every declinable step. Every step of the chain is
+// here or in mandatoryArtifacts, never both (TestDeclineContracts_Boundary_CoverEveryStep), so
+// adoption cannot accept a decline that audit then fails on without saying so (#600).
+var declineContracts = map[string]declineContract{
+	"git-ignore": {audit: DeclineAuditRetained,
+		retains: "Git to ignore the agent evidence directory .workingdir/evidence/, and the documentation gate's " +
+			"private paths, through the repository's own ignore rules"},
+	"policy-catalog": {audit: DeclineAuditRetained, mcp: true,
+		retains: "the catalog the lock pins under .config/archetypes, which adoption and audit resolve the effective policy from"},
+	"agent-harness": {audit: DeclineAuditRetained, mcp: true,
+		retains: "the text register block in AGENTS.md, its caveman lint, and the compile-context projection of every " +
+			"agent_clients target, none with agent_clients: [] (ADR-0010 decisions 5 and 11)"},
+	"dev-container":          {audit: DeclineAuditSkipped},
+	"makefile":               {audit: DeclineAuditSkipped},
+	"editors":                {audit: DeclineAuditNone},
+	"formatter-ignore":       {audit: DeclineAuditSkipped},
+	"renovate-ignore":        {audit: DeclineAuditNone},
+	"actionlint-labels":      {audit: DeclineAuditNone},
+	"contributing":           {audit: DeclineAuditNone},
+	"pull-request-template":  {audit: DeclineAuditNone},
+	"security-policy":        {audit: DeclineAuditNone},
+	"adr":                    {audit: DeclineAuditNone},
+	"readme":                 {audit: DeclineAuditSkipped},
+	"working-dir-and-flavor": {audit: DeclineAuditNone},
+	"branch-ruleset":         {audit: DeclineAuditSkipped, mcp: true},
+	"labels":                 {audit: DeclineAuditSkipped, mcp: true},
+	"paperclip":              {audit: DeclineAuditSkipped},
+	"agent-definitions":      {audit: DeclineAuditSkipped},
+	"git-hooks":              {audit: DeclineAuditSkipped, mcp: true},
+	"agent-hooks":            {audit: DeclineAuditNone},
+}
+
+// DeclineContract is the audit contract of one declinable adoption step.
+type DeclineContract struct {
+	Step  string
+	Audit DeclineAudit
+	// MCP reports that standards_audit reads the step's artefact too.
+	MCP bool
+	// Retains names what audit still requires while the step is declined.
+	Retains string
+}
+
+// DeclineContracts lists the audit contract of every declinable step in chain order. The CLI and
+// MCP audit tests enumerate it, so a step that becomes declinable has to say what audit does with
+// its artefact, and a gate that reads that artefact has to look the decline up.
+func DeclineContracts() []DeclineContract {
+	names := adoptStepNames()
+	contracts := make([]DeclineContract, 0, len(names))
+	for i := 0; i < len(names) && i < maxAdoptSteps; i++ {
+		if contract, ok := declineContracts[names[i]]; ok {
+			contracts = append(contracts, DeclineContract{Step: names[i], Audit: contract.audit,
+				MCP: contract.mcp, Retains: contract.retains})
+		}
+	}
+	return contracts
+}
+
+// DeclineVerdict is what an audit gate reads from adoption.decline for the step whose artefact it
+// checks (AuditDecline).
+type DeclineVerdict struct {
+	Step     string
+	Declined bool
+	// Retains names what audit still requires under the decline; empty when the step is not
+	// declined or its decline covers every check of the gate.
+	Retains string
+}
+
+// AuditDecline is the reader every audit gate, CLI and MCP, looks a decline up through: the step
+// resolved by ManifestArtifactDeclined, the policy adoption applies to its own run, joined with
+// the step's audit contract. An unknown or mandatory name anywhere in the list fails the gate
+// closed, as it fails adoption, and so does asking for a step that cannot be declined.
+func AuditDecline(manifest *config.Manifest, step string) (DeclineVerdict, error) {
+	declined, err := ManifestArtifactDeclined(manifest, step)
+	if err != nil {
+		return DeclineVerdict{}, err
+	}
+	name := declinedName(step)
+	contract, ok := declineContracts[name]
+	if !ok {
+		return DeclineVerdict{}, fmt.Errorf("adoption artefact %q cannot be declined", name)
+	}
+	verdict := DeclineVerdict{Step: name, Declined: declined}
+	if declined {
+		verdict.Retains = contract.retains
+	}
+	return verdict, nil
+}
+
+// Line is the report line of a gate whose step is declined. A skipped artefact passes with the
+// decline named; a retained decline is information, printed once the checks it leaves required
+// have passed.
+func (v DeclineVerdict) Line(subject string) string {
+	if v.Retains == "" {
+		return "[PASS] " + subject + " declined by adoption.decline."
+	}
+	return "[INFO] " + subject + " declined by adoption.decline; audit still requires " + v.Retains + "."
+}
+
+// Narrow adds to err, the failure of a check the declined step does not cover, that the decline
+// does not cover it and what audit still requires, so the failure never reads as a decline audit
+// ignored. Any other err, nil included, is returned unchanged.
+func (v DeclineVerdict) Narrow(err error) error {
+	if err == nil || !v.Declined || v.Retains == "" {
+		return err
+	}
+	return fmt.Errorf("%w (adoption.decline lists %s, which does not cover this check: audit still requires %s)",
+		err, v.Step, v.Retains)
+}
+
+// declinedDetail is the report entry of a step adoption skips because the manifest declines it,
+// naming what audit still requires when the decline is retained.
+func declinedDetail(step string) string {
+	detail := "Declined by adoption.decline in " + manifestFile
+	if retains := declineContracts[step].retains; retains != "" {
+		detail += "; audit still requires " + retains
+	}
+	return detail
+}
+
+// declinedReaders resolve, read-only, what a declined step leaves the steps after it without.
+// Only the policy-catalog step has such an output: the effective policy (#603).
+var declinedReaders = map[string]adoptStep{"policy-catalog": readDeclinedPolicyCatalog}
+
+// skipDeclinedStep records a step the manifest declines instead of running it. A decline is
+// recorded, not silent: the report says the manifest refused the artefact, so a reader can tell a
+// declined surface from one adoption forgot. A step whose output later steps read resolves it
+// read-only first (declinedReaders).
+func skipDeclinedStep(ctx context.Context, s *adoptSession, name string) error {
+	from := s.report.mark()
+	if read, ok := declinedReaders[name]; ok {
+		if err := read(ctx, s); err != nil {
+			s.report.recordStep(name, StepFailed, from)
+			return err
+		}
+	}
+	s.report.recordSkipped(name, declinedDetail(name))
+	s.report.recordStep(name, StepDeclined, from)
+	return nil
+}
+
 // declinedArtifacts resolves the manifest's decline list into a lookup, rejecting names that
 // match no artefact and names that may not be declined.
 //

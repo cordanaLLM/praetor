@@ -114,7 +114,8 @@ func unboundSourcesNote(harness harnessPlan) string {
 // unboundSourcesReason says why a manifest has no register.sources: no harness exists and
 // this run writes none, because the paperclip step is declined or the repository identity is
 // unresolved, so adoption has no managed text to bind and the audit stays red until the
-// operator resolves the identity and re-runs, or declares the repository's own sources.
+// operator resolves the identity and re-runs, or declares the repository's own sources, or
+// declares that it has none (config.RegisterSources.DeclaresNone, #601).
 func unboundSourcesReason(harness harnessPlan) string {
 	reason, remedy := "paperclip is declined", ""
 	if harness.unresolved {
@@ -122,7 +123,8 @@ func unboundSourcesReason(harness harnessPlan) string {
 		remedy = "set repository.owner and repository.name or add an origin remote and re-run, or "
 	}
 	return reason + " and .paperclip/harness.json does not exist, so adoption has no managed text to bind; " + remedy +
-		"declare register.sources for this repository's agent-facing text before audit passes"
+		"declare register.sources for this repository's agent-facing text before audit passes, " +
+		"or, when it has none, declare register.sources with expected: 0 and a reason"
 }
 
 // declaredSourcesRemedy is what an operator does when a declared contract fails its own gate
@@ -179,6 +181,9 @@ func reconcileRegisterSources(ctx context.Context, root string, declared *config
 		sources, err := managedRegisterSources(ctx, harness.data)
 		return sources, false, err
 	}
+	if declared.DeclaresNone() {
+		return declared, false, declaredNoneHolds(declared, harness)
+	}
 	if !rebindsAbsentHarness(declared, harness) {
 		if err := verifyDeclaredSources(ctx, root, declared, harness); err != nil {
 			return nil, false, fmt.Errorf("existing register.sources fails its configured gate: %w; %s", err,
@@ -196,6 +201,22 @@ func reconcileRegisterSources(ctx context.Context, root string, declared *config
 	rebound := &config.RegisterSources{Expected: result.Applicable, NotApplicable: result.NotApplicable,
 		SHA256: result.SHA256, Inputs: declared.Inputs}
 	return rebound, !equalRegisterSources(declared, rebound), nil
+}
+
+// declaredNoneHolds keeps an explicit empty contract (config.RegisterSources.DeclaresNone) while
+// it is true: no harness exists and this run writes none, which --force does not change (#601).
+// Over a harness on disk, or one this run writes, the declaration would pass the audit with the
+// harness text unlinted, so adoption refuses before its first write.
+func declaredNoneHolds(declared *config.RegisterSources, harness harnessPlan) error {
+	if harness.absent() {
+		return nil
+	}
+	where := paperclipFile + " exists"
+	if !harness.onDisk {
+		where = "this run writes " + paperclipFile
+	}
+	return fmt.Errorf("register.sources declares no agent-facing text (reason: %s), but %s; remove the empty "+
+		"declaration so adoption binds the harness text, or decline paperclip and remove the harness", declared.Reason, where)
 }
 
 // rebindsAbsentHarness reports a declared contract adoption re-binds without holding it to its

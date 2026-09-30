@@ -351,6 +351,14 @@ default branch (`forge.ValidateRepositoryRuleset`, branch from
 `forge.RepositoryDefaultBranch`), matching CLI behavior with byte-for-byte verdict
 parity (`cmd/standards-mcp/audit_branch_ruleset_test.go`).
 
+The context, label taxonomy and hook configuration gates read `adoption.decline` through the
+reader the CLI gates use, `adopt.AuditDecline`, and the label and hook gates are the CLI's own
+(`adopt.AuditLabelTaxonomy`, `adopt.AuditGitHookConfig`). A declined `labels` or `git-hooks`
+step passes with the decline named; a declined `agent-harness` step still requires the register
+block, the projections and the caveman lint, and a failure says so
+([declined steps](adoption-verification.md#what-audit-does-with-a-declined-step),
+`cmd/standards-mcp/audit_decline_test.go`).
+
 The lock digest gate inside `standards_audit` resolves its catalog from the same
 `catalog_root` tool argument the effective-policy gate uses
 (`p.policy.CatalogRoot` in `cmd/standards-mcp/audit_tools.go`), not the repository

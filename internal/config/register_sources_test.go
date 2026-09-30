@@ -53,8 +53,9 @@ func TestRegisterSourcesNegative(t *testing.T) {
 }
 
 func TestRegisterSourcesBoundary(t *testing.T) {
+	// expected: 0 declares no text (DeclaresNone), so a contract that also binds inputs is refused.
 	body := "register:\n  sources:\n    expected: 0\n    sha256: " + testSourceDigest + "\n    inputs:\n      - path: hooks/a.py\n        surface: hooks\n        kind: message\n        format: python\n"
-	if _, err := LoadManifest(writeManifest(t, body)); err == nil || !strings.Contains(err.Error(), "expected must be 1") {
+	if _, err := LoadManifest(writeManifest(t, body)); err == nil || !strings.Contains(err.Error(), "takes no inputs") {
 		t.Fatalf("zero expected coverage accepted: %v", err)
 	}
 	body = strings.Replace(body, "expected: 0", "expected: 1", 1)
@@ -101,5 +102,70 @@ func TestRegisterSourcesCountBoundaries(t *testing.T) {
 	})
 	if err := aboveInputs.validate(); err == nil || !strings.Contains(err.Error(), "1..64 rows") {
 		t.Fatalf("%d inputs accepted: %v", MaxRegisterSourceInputs+1, err)
+	}
+}
+
+// Positive (#601): a repository with no non-Markdown agent-facing text declares so explicitly,
+// expected: 0 with a reason, and the decoder keeps the reason DeclaresNone reports.
+func TestRegisterSourcesDeclaresNone_Positive(t *testing.T) {
+	m, err := loadRegisterManifest(t, "register:\n  sources:\n    expected: 0\n    reason: no hook, prompt or MCP text outside Markdown\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sources := m.Register.Sources
+	if !sources.DeclaresNone() || sources.Reason != "no hook, prompt or MCP text outside Markdown" {
+		t.Fatalf("empty contract not recognised: %+v", sources)
+	}
+	withEmptyInputs, err := loadRegisterManifest(t, "register:\n  sources:\n    expected: 0\n    inputs: []\n    reason: none\n")
+	if err != nil || !withEmptyInputs.Register.Sources.DeclaresNone() {
+		t.Fatalf("explicit empty inputs list refused: %v", err)
+	}
+}
+
+// Negative (#601): an empty contract without a reason, or with pins or inputs, is refused, and a
+// reason on a contract that binds text is refused too; an absent contract declares nothing.
+func TestRegisterSourcesDeclaresNone_Negative(t *testing.T) {
+	cases := map[string]string{
+		"no reason":        "    expected: 0\n",
+		"blank reason":     "    expected: 0\n    reason: '  '\n",
+		"padded reason":    "    expected: 0\n    reason: ' none'\n",
+		"multiline reason": "    expected: 0\n    reason: \"none\\nat all\"\n",
+		"sha256":           "    expected: 0\n    sha256: " + testSourceDigest + "\n    reason: none\n",
+		"not_applicable":   "    expected: 0\n    not_applicable: 1\n    reason: none\n",
+		"reason on text": "    expected: 1\n    sha256: " + testSourceDigest + "\n    reason: none\n    inputs:\n" +
+			"      - path: hooks/a.py\n        surface: hooks\n        kind: message\n        format: python\n",
+	}
+	for name, body := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := loadRegisterManifest(t, "register:\n  sources:\n"+body); err == nil {
+				t.Fatal("invalid empty contract accepted")
+			}
+		})
+	}
+	var absent *RegisterSources
+	if absent.DeclaresNone() || (&RegisterSources{}).DeclaresNone() {
+		t.Fatal("an absent or unvalidated zero contract reads as a declared empty one")
+	}
+}
+
+// Boundary (#601): the reason is bounded at MaxRegisterSourcesReason bytes, and adding one input
+// to an empty contract needs expected and sha256 like any other contract.
+func TestRegisterSourcesDeclaresNone_Boundary(t *testing.T) {
+	exact := &RegisterSources{Reason: strings.Repeat("r", MaxRegisterSourcesReason)}
+	if err := exact.validate(); err != nil {
+		t.Fatalf("%d-byte reason refused: %v", MaxRegisterSourcesReason, err)
+	}
+	above := &RegisterSources{Reason: strings.Repeat("r", MaxRegisterSourcesReason+1)}
+	if err := above.validate(); err == nil || !strings.Contains(err.Error(), "1..256 bytes") {
+		t.Fatalf("%d-byte reason accepted: %v", MaxRegisterSourcesReason+1, err)
+	}
+	input := RegisterSourceInput{Path: "hooks/a.py", Surface: SurfaceHooks, Kind: "message", Format: SourceFormatPython}
+	oneInput := &RegisterSources{Reason: "none", Inputs: []RegisterSourceInput{input}}
+	if err := oneInput.validate(); err == nil || !strings.Contains(err.Error(), "set expected and sha256") {
+		t.Fatalf("an input added to an empty contract without pins accepted: %v", err)
+	}
+	pinned := &RegisterSources{Expected: 1, SHA256: testSourceDigest, Inputs: []RegisterSourceInput{input}}
+	if err := pinned.validate(); err != nil || pinned.DeclaresNone() {
+		t.Fatalf("pinned contract: err=%v none=%v", err, pinned.DeclaresNone())
 	}
 }

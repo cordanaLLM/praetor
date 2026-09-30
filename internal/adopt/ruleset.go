@@ -2,6 +2,7 @@ package adopt
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 
@@ -27,6 +28,11 @@ const (
 func adoptionBranchPolicy(ctx context.Context, s *adoptSession) (config.BranchProtectionPolicy, error) {
 	if s.policy != nil {
 		return s.policy.Policy.BranchProtection, nil
+	}
+	// A real run renders only from the effective policy: built-in defaults drop what the
+	// declared profiles and facets require (#603).
+	if !s.opts.DryRun {
+		return config.BranchProtectionPolicy{}, errors.New("render the branch ruleset: the effective policy is unresolved")
 	}
 	// A dry-run without pinned catalog inputs still has a selected manifest. Only
 	// branch defaults and its explicit overrides are claimed by this fallback.

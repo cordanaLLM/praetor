@@ -94,7 +94,7 @@ func cavemanCheck(ctx context.Context, args []string, stdin io.Reader, out io.Wr
 	if !kind.Valid() {
 		return fmt.Errorf("caveman check: unsupported kind %q (want message, brief, return, or context)", *kindName)
 	}
-	inputs, err := prepareCavemanCheckInputs(ctx, stdin, cavemanCheckRequest{
+	inputs, note, err := prepareCavemanCheckInputs(ctx, stdin, cavemanCheckRequest{
 		root: *root, surface: *surface, kind: kind, extensions: *extensions,
 		selectors: selectors, configured: *configured, args: fset.Args(), explicit: explicit,
 	})
@@ -102,7 +102,7 @@ func cavemanCheck(ctx context.Context, args []string, stdin io.Reader, out io.Wr
 		return err
 	}
 	text, failed := renderCavemanChecks(inputs, *maxWords, *maxTokens, false)
-	if _, err := io.WriteString(out, text); err != nil {
+	if _, err := io.WriteString(out, note+text); err != nil {
 		return fmt.Errorf("caveman check: write report: %w", err)
 	}
 	if failed > 0 {
@@ -120,10 +120,12 @@ type cavemanCheckRequest struct {
 	explicit                  map[string]bool
 }
 
-func prepareCavemanCheckInputs(ctx context.Context, stdin io.Reader, request cavemanCheckRequest) ([]cavemanInput, error) {
-	inputs, err := cavemanCheckInputs(ctx, stdin, request)
+// prepareCavemanCheckInputs returns the inputs to lint and a note the report opens with: under
+// --configured-sources, the line naming a contract that declares no text.
+func prepareCavemanCheckInputs(ctx context.Context, stdin io.Reader, request cavemanCheckRequest) ([]cavemanInput, string, error) {
+	inputs, note, err := cavemanCheckInputs(ctx, stdin, request)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if !request.configured {
 		for index := range inputs {
@@ -132,10 +134,10 @@ func prepareCavemanCheckInputs(ctx context.Context, stdin io.Reader, request cav
 	}
 	if request.surface != "" {
 		if err := requireCavemanSurface(ctx, request.root, config.RegisterSurface(request.surface)); err != nil {
-			return nil, err
+			return nil, "", err
 		}
 	}
-	return inputs, nil
+	return inputs, note, nil
 }
 
 // renderCavemanChecks lints every input and returns the report and the failure count. With
@@ -180,32 +182,58 @@ func visitedFlags(flags *flag.FlagSet) map[string]bool {
 	return visited
 }
 
-func cavemanCheckInputs(ctx context.Context, stdin io.Reader, request cavemanCheckRequest) ([]cavemanInput, error) {
-	if request.configured {
-		if len(request.args) != 0 || request.explicit["kind"] || request.explicit["surface"] ||
-			request.explicit["ext"] || request.explicit["selector"] {
-			return nil, errors.New("--configured-sources owns kind, surface, extensions, and selectors; positional input and overrides are unsupported")
-		}
-		policy, _, err := compiler.LoadRegisterBlock(ctx, request.root)
-		if err != nil {
-			return nil, err
-		}
-		inputs, _, err := configuredCavemanInputs(ctx, request.root, policy)
-		return inputs, err
+func cavemanCheckInputs(ctx context.Context, stdin io.Reader, request cavemanCheckRequest) ([]cavemanInput, string, error) {
+	if !request.configured {
+		inputs, err := readCavemanCheckInputs(ctx, stdin, request)
+		return inputs, "", err
 	}
-	return readCavemanCheckInputs(ctx, stdin, request)
+	if len(request.args) != 0 || request.explicit["kind"] || request.explicit["surface"] ||
+		request.explicit["ext"] || request.explicit["selector"] {
+		return nil, "", errors.New("--configured-sources owns kind, surface, extensions, and selectors; positional input and overrides are unsupported")
+	}
+	policy, _, err := compiler.LoadRegisterBlock(ctx, request.root)
+	if err != nil {
+		return nil, "", err
+	}
+	inputs, _, err := configuredCavemanInputs(ctx, request.root, policy)
+	if err != nil || !policy.Sources.DeclaresNone() {
+		return inputs, "", err
+	}
+	return nil, declaredNoSources(policy.Sources) + "; nothing to check.\n", nil
+}
+
+// declaredNoSources names a register.sources contract that declares no text, with its reason,
+// for the audit line and `caveman check --configured-sources`.
+func declaredNoSources(sources *config.RegisterSources) string {
+	return "register.sources declares no agent-facing text (reason: " + sources.Reason + ")"
 }
 
 // configuredCavemanInputs extracts policy's register.sources contract and returns the values
 // to lint. `caveman check --configured-sources` and the audit both call it, so the two gates
-// cannot disagree about which values are checked.
+// cannot disagree about which values are checked. A contract that declares no text
+// (config.RegisterSources.DeclaresNone) has none, and holds only while the Paperclip harness,
+// the text adoption binds, is absent (#601).
 func configuredCavemanInputs(ctx context.Context, root string, policy config.RegisterPolicy) ([]cavemanInput, cavemansource.Result, error) {
+	if policy.Sources.DeclaresNone() {
+		return nil, cavemansource.Result{}, requireNoBoundHarness(root, policy.Sources)
+	}
 	result, err := cavemansource.ExtractDeclared(ctx, root, policy.Sources)
 	if err != nil {
 		return nil, cavemansource.Result{}, err
 	}
 	inputs, err := cavemanSourceInputs(policy, result.Sources)
 	return inputs, result, err
+}
+
+// requireNoBoundHarness fails a contract that declares no text while .paperclip/harness.json
+// exists: its text would pass unlinted. Adoption binds a harness it finds when register.sources
+// is absent, and refuses the empty declaration over one (adopt.declaredNoneHolds).
+func requireNoBoundHarness(root string, sources *config.RegisterSources) error {
+	if !util.FileExists(filepath.Join(root, filepath.FromSlash(paperclipHarnessRel))) {
+		return nil
+	}
+	return fmt.Errorf("%s, but %s exists; declare inputs that bind its text, or remove register.sources and run "+
+		"'praetorctl adopt', which binds the harness it finds", declaredNoSources(sources), paperclipHarnessRel)
 }
 
 func filterCavemanSources(ctx context.Context, root string, declared []cavemansource.Source) ([]cavemanInput, error) {
