@@ -1147,6 +1147,9 @@ CI gate on the host with that reason.
   own.
 - The container path is exercised against a real runtime with docker; rootless podman's
   `--userns=keep-id` mapping and rootless docker are covered by the command-line tests only.
+- The mounts carry no SELinux relabel option, so a host enforcing SELinux may deny the container
+  access to the checkout; the stage then fails, and `PRAETOR_GATE_DEVCONTAINER=off` runs it on
+  the host.
 
 The seams are replayed without a runtime in
 [`internal/gating/devcontainer_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/devcontainer_test.go)

@@ -136,8 +136,8 @@ func resolveExecution(ctx context.Context, cfg *stageConfig) error {
 	start := time.Now()
 	entered, err := enterDevcontainer(ctx, cfg, plan)
 	if err != nil {
-		err = fmt.Errorf("the devcontainer %s declares could not be used: %w; fix it, or set %s=off to run "+
-			"the toolchain stages on the host", devcontainer.ConfigPath, err, DevcontainerEnv)
+		err = fmt.Errorf("the devcontainer that %s declares could not be used: %w; fix it, or set %s=off to "+
+			"run the toolchain stages on the host", devcontainer.ConfigPath, err, DevcontainerEnv)
 		cfg.rep.Stages = append(cfg.rep.Stages, StageResult{Name: DevcontainerStage, Status: StageFailed,
 			Duration: time.Since(start), Message: err.Error()})
 		return err
@@ -206,7 +206,7 @@ func newDevcontainerExec(ctx context.Context, repoDir string, img devcontainer.I
 	if err != nil {
 		return nil, fmt.Errorf("resolve the git common dir to mount: %w", err)
 	}
-	if common, err = filepath.EvalSymlinks(common); err != nil {
+	if common, err = util.ResolveExistingPath(gitCtx, common); err != nil {
 		return nil, fmt.Errorf("resolve the git common dir to mount: %w", err)
 	}
 	home, err := util.ConfinePath(common, filepath.FromSlash(devcontainerHomeRel))
@@ -254,7 +254,7 @@ func (d *devcontainerExec) toolchain(base commandRunner) toolchain {
 // does not stop the container its daemon runs, and --rm removes only a container that exited.
 func (d *devcontainerExec) runner(base commandRunner) commandRunner {
 	return func(ctx context.Context, dir, name string, args ...string) (string, error) {
-		workdir, err := d.workdir(dir)
+		workdir, err := d.workdir(ctx, dir)
 		if err != nil {
 			return "", err
 		}
@@ -274,12 +274,9 @@ func (d *devcontainerExec) runner(base commandRunner) commandRunner {
 
 // workdir resolves dir to the path the container sees it at, which is its own resolved path, and
 // refuses one outside every mount.
-func (d *devcontainerExec) workdir(dir string) (string, error) {
-	abs, err := filepath.Abs(dir)
+func (d *devcontainerExec) workdir(ctx context.Context, dir string) (string, error) {
+	abs, err := util.ResolveExistingPath(ctx, dir)
 	if err != nil {
-		return "", fmt.Errorf("resolve %s for the devcontainer: %w", dir, err)
-	}
-	if abs, err = filepath.EvalSymlinks(abs); err != nil {
 		return "", fmt.Errorf("resolve %s for the devcontainer: %w", dir, err)
 	}
 	for i := 0; i < len(d.mounts); i++ {

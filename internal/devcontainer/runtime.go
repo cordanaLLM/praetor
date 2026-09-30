@@ -108,7 +108,7 @@ func PlanImage(ctx context.Context, repoDir string, host Host) (*ImagePlan, erro
 	if host.GOOS == "windows" {
 		return nil, unavailable("a Linux container cannot mount a Windows checkout at its own path")
 	}
-	root, err := resolvedDir(repoDir)
+	root, err := util.ResolveExistingPath(ctx, repoDir)
 	if err != nil {
 		return nil, unavailable("the repository path cannot be resolved: %v", err)
 	}
@@ -124,9 +124,6 @@ func PlanImage(ctx context.Context, repoDir string, host Host) (*ImagePlan, erro
 	if err != nil {
 		return nil, unavailable("%s is not a configuration praetor builds: %v", ConfigPath, err)
 	}
-	if err := verifyRecordedCompanions(ctx, path, dc); err != nil {
-		return nil, unavailable("%s: %v", ConfigPath, err)
-	}
 	plan := &ImagePlan{RepoDir: root, ConfigPath: path, Config: dc, Runtime: runtime}
 	if err := plan.resolveBuild(); err != nil {
 		return nil, err
@@ -134,16 +131,11 @@ func PlanImage(ctx context.Context, repoDir string, host Host) (*ImagePlan, erro
 	if err := plan.resolveCLI(host.LookPath); err != nil {
 		return nil, err
 	}
-	return plan, nil
-}
-
-// resolvedDir returns dir as an absolute path with its symbolic links resolved.
-func resolvedDir(dir string) (string, error) {
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		return "", err
+	// Last, because it decodes the whole source archive: every cheaper refusal comes first.
+	if err := verifyRecordedCompanions(ctx, path, dc); err != nil {
+		return nil, unavailable("%s: %v", ConfigPath, err)
 	}
-	return filepath.EvalSymlinks(abs)
+	return plan, nil
 }
 
 // findRuntime returns the first container CLI on PATH, in containerRuntimes order.
