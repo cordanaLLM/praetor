@@ -19,6 +19,8 @@ type pipelineCall struct {
 	deadline time.Time
 	repoDir  string
 	dryRun   bool
+	// admitUnsupported is the call's RunOptions.AdmitUnsupported.
+	admitUnsupported bool
 }
 
 // recordPipeline replaces the gating pipeline for one test and records the call it receives.
@@ -26,13 +28,14 @@ func recordPipeline(t *testing.T) *pipelineCall {
 	t.Helper()
 	call := &pipelineCall{}
 	original := gatedPipeline
-	gatedPipeline = func(ctx context.Context, repoDir string, dryRun bool) (*gating.PipelineReport, error) {
+	gatedPipeline = func(ctx context.Context, repoDir string, opts gating.RunOptions) (*gating.PipelineReport, error) {
 		deadline, ok := ctx.Deadline()
 		if !ok {
 			t.Error("the pipeline must be handed a bounded context (HISS-02)")
 		}
-		*call = pipelineCall{called: true, deadline: deadline, repoDir: repoDir, dryRun: dryRun}
-		return &gating.PipelineReport{Status: gating.StatusAdmitted, RepoDir: repoDir, DryRun: dryRun}, nil
+		*call = pipelineCall{called: true, deadline: deadline, repoDir: repoDir, dryRun: opts.DryRun,
+			admitUnsupported: opts.AdmitUnsupported}
+		return &gating.PipelineReport{Status: gating.StatusAdmitted, RepoDir: repoDir, DryRun: opts.DryRun}, nil
 	}
 	t.Cleanup(func() { gatedPipeline = original })
 	return call
