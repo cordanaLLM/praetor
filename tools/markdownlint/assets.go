@@ -136,6 +136,13 @@ var priorDigests = map[string]string{
 	// stop with an empty .catch and carried functions over the HISS-04 length, before the HISS
 	// script scanner read it.
 	"93ee4469a98c4d44c19b74ca75b06391c2f360add39dd19b5120dbb7645520a9": Directory + "/no-private-scratch-links.mjs",
+	// package.json and package-lock.json on markdownlint-cli2 0.23.3, js-yaml 5.4.1 and
+	// micromark 4.0.2.
+	"ae5668d6a66dfd57f83b298d09a82f5143b0894c0214a5db5e079cf54d6b92b3": Directory + "/package.json",
+	"3be5e6c9037886cc39192da27e536b9dcefa3860074efed81d3dd9ea4e4a5d72": Directory + "/package-lock.json",
+	// verify.mjs once the HISS script scanner read the documentation gate's scripts, before the
+	// non-major dependency update.
+	"b39f736a108e13579aa25249ef2ccb0fec28981f9fe86027f15793be6b2443e6": Directory + "/verify.mjs",
 }
 
 var assetNames = [...]string{

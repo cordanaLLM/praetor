@@ -82,6 +82,13 @@
       "groupName": "mkdocs docs preset"
     },
     {
+      "description": "VS Code extension: @types/vscode moves only with engines.vscode. vsce refuses host types newer than the engine floor, and the ^1.107.0 floor keeps Antigravity IDE and other trailing VS Code forks on the update path (editors/vscode/README.md, Minimum host; editors/vscode/src/setup.test.ts). Raising the floor is a deliberate change made by hand.",
+      "matchManagers": ["npm"],
+      "matchFileNames": ["editors/vscode/package.json"],
+      "matchPackageNames": ["@types/vscode"],
+      "enabled": false
+    },
+    {
       "description": "tools/figures React cluster: keep React and its typings together.",
       "matchManagers": ["npm"],
       "matchFileNames": ["tools/figures/**"],

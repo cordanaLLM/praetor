@@ -15,10 +15,10 @@ puts the same versions on `PATH` for the hooks.
 temporary positive, negative and boundary fixtures. The engine version comes from
 `.config/semgrep/requirements.txt`; missing or mismatched engines fail the check.
 This is rule regression coverage, not a replacement for repository source scans.
-For an isolated installation, use the tested 1.177.0 release (Python 3.14 locally):
+For an isolated installation, use the tested 1.178.0 release (Python 3.14 locally):
 
 ```bash
-PRAETOR_TOOL_DIR="$HOME/.local/share/praetor-tools/semgrep-1.177.0"
+PRAETOR_TOOL_DIR="$HOME/.local/share/praetor-tools/semgrep-1.178.0"
 python3 -m venv "$PRAETOR_TOOL_DIR"
 "$PRAETOR_TOOL_DIR/bin/python" -m pip install -r .config/semgrep/requirements.txt
 mkdir -p "$HOME/.local/bin"
@@ -27,7 +27,7 @@ semgrep --version
 ```
 
 Keep `$HOME/.local/bin` on `PATH`. The symlink command deliberately refuses to
-replace an existing executable. See the [Semgrep package installation guidance](https://pypi.org/project/semgrep/1.177.0/).
+replace an existing executable. See the [Semgrep package installation guidance](https://pypi.org/project/semgrep/1.178.0/).
 
 `make verify-all` also runs `make hooks-lint` (`scripts/test_emitted_hook_lint.py`). It lints
 the Praetor-owned canonical hook sources: `.config/lefthook/scripts/checkpoint.py` and
