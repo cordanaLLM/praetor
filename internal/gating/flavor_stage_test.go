@@ -14,6 +14,10 @@ import (
 // osImageManifest declares the os-image profile, which the os-image flavor implements.
 const osImageManifest = "version: 1\nrepository:\n  owner: fixture\n  name: fixture\nprofiles:\n  - os-image\n"
 
+// pagesSiteManifest declares the pages-site profile, which no flavor implements, so the flavor
+// stage records it as not applicable.
+const pagesSiteManifest = "version: 1\nrepository:\n  owner: fixture\n  name: fixture\nprofiles:\n  - pages-site\n"
+
 // kernelForgeRepo builds a kernel forge declaring os-image (#615) that meets the os-image
 // flavor's requirements: a yamllint policy, lefthook.yml and the ruleset, beside the Go tooling
 // goLibraryRepo lays down. extra adds forge files; its Kconfig fragments are what mark it.
@@ -151,9 +155,7 @@ func TestRunFlavorStage_Boundary_OneInvalidSettingStillClearsTheBar(t *testing.T
 // implements it.
 func TestRunFlavorStage_Boundary_ProfileWithoutFlavorIsNotApplicable(t *testing.T) {
 	const profileWithoutFlavor = "pages-site"
-	repo := goLibraryRepo(t, map[string]string{
-		".standards.yaml": "version: 1\nrepository:\n  owner: fixture\n  name: fixture\nprofiles:\n  - " + profileWithoutFlavor + "\n",
-	})
+	repo := goLibraryRepo(t, map[string]string{".standards.yaml": pagesSiteManifest})
 	_, err := runFlavorStage(context.Background(), &stageConfig{repoDir: repo})
 	if reason := wantSkip(t, err, StageNotApplicable); !strings.Contains(reason, profileWithoutFlavor) {
 		t.Errorf("the verdict must name the profile, got %q", reason)
