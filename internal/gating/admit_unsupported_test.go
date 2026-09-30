@@ -5,11 +5,13 @@
 package gating
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // admitRepo gives a fresh directory the standards lockfiles and markers, each with a placeholder
@@ -136,5 +138,120 @@ func TestRunReceiptStage_Boundary_AdmitUnsupportedDryRunAndUnlockedCargo(t *test
 	want := "unsupported languages at the repository root: cargo without a committed Cargo.lock (Cargo.toml)"
 	if err != nil || got.Status != StageNotApplicable || !strings.Contains(got.Message, want) {
 		t.Fatalf("Cargo.toml without Cargo.lock: %s %q (%v), want not applicable naming %q", got.Status, got.Message, err, want)
+	}
+}
+
+// committedAdmitRepo commits the standards lockfiles and each marker, with a placeholder body, to
+// a fresh hermetic repository, so a real pipeline run finds its tree clean at HEAD and reaches the
+// receipt stage. The manifest declares pages-site, whose flavor stage is not applicable, so no
+// stage before the receipt fails on the fixture.
+func committedAdmitRepo(t *testing.T, markers ...string) string {
+	t.Helper()
+	dir := newHermeticGitRepo(t)
+	writeLockfiles(t, dir)
+	writeFile(t, filepath.Join(dir, ".standards.yaml"), pagesSiteManifest)
+	for _, marker := range markers {
+		writeFile(t, filepath.Join(dir, marker), "placeholder\n")
+	}
+	treeGit(t, dir, append([]string{"add", "-f", "--", ".standards.yaml", ".standards.lock"}, markers...)...)
+	treeGit(t, dir, "commit", "-q", "-m", "admit fixture")
+	return dir
+}
+
+// gatedRun runs the real pipeline over dir with opts and no signing key, and fails when the run
+// carries a receipt signature or left a receipt file: none of these runs may sign one.
+func gatedRun(t *testing.T, dir string, opts RunOptions) *PipelineReport {
+	t.Helper()
+	t.Setenv("PRAETOR_RECEIPT_KEY", "")
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	rep, err := RunGatedPipeline(ctx, dir, opts)
+	if err != nil {
+		t.Fatalf("RunGatedPipeline: %v", err)
+	}
+	if rep.ReceiptSignature != "" {
+		t.Fatal("the run carries a receipt signature")
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, ReceiptFileName)); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("the run wrote a receipt: %v", statErr)
+	}
+	return rep
+}
+
+// receiptOf returns the receipt stage the run recorded last, failing when the run stopped before it.
+func receiptOf(t *testing.T, rep *PipelineReport) StageResult {
+	t.Helper()
+	if len(rep.Stages) == 0 || rep.Stages[len(rep.Stages)-1].Name != stageReceipt {
+		t.Fatalf("want every stage through the receipt stage, got %+v", rep.Stages)
+	}
+	return rep.Stages[len(rep.Stages)-1]
+}
+
+// Positive (#648): RunGatedPipeline hands RunOptions.AdmitUnsupported to the receipt stage, so the
+// flag `gate run --admit-unsupported` sets admits a committed Meson root through the real stages:
+// admitted, marked admitted unverified, the receipt stage not applicable and naming Meson, and no
+// receipt written.
+func TestRunGatedPipeline_Positive_AdmitUnsupportedAdmitsMesonRoot(t *testing.T) {
+	rep := gatedRun(t, committedAdmitRepo(t, "meson.build"), RunOptions{AdmitUnsupported: true})
+	if rep.Status != StatusAdmitted || !rep.AdmittedUnverified || !rep.WorktreeClean {
+		t.Fatalf("status %s, admitted unverified %v, clean %v; want an admitted, unverified run on a clean tree: %+v",
+			rep.Status, rep.AdmittedUnverified, rep.WorktreeClean, rep.Stages)
+	}
+	got := receiptOf(t, rep)
+	if got.Status != StageNotApplicable {
+		t.Fatalf("receipt stage = %s %q, want not applicable", got.Status, got.Message)
+	}
+	for _, want := range []string{"meson (meson.build)", admittedUnsupportedNote} {
+		if !strings.Contains(got.Message, want) {
+			t.Errorf("receipt reason %q does not name %q", got.Message, want)
+		}
+	}
+}
+
+// Negative: without the flag the same committed Meson root is rejected at the receipt stage, and
+// with it a root that also holds a go.mod is still rejected, by its failing Go prefetch: the flag
+// turns no failed stage into an admission and admits only a root holding neither toolchain marker.
+// The receipt stage's own go.mod refusal under the flag is
+// TestRunReceiptStage_Negative_AdmitUnsupportedKeepsToolchainRefusals; reaching it here would run
+// govulncheck, which queries the vulnerability database.
+func TestRunGatedPipeline_Negative_AdmitUnsupportedIsNeededAndNarrow(t *testing.T) {
+	strict := gatedRun(t, committedAdmitRepo(t, "meson.build"), RunOptions{})
+	got := receiptOf(t, strict)
+	if strict.Status != StatusRejected || strict.AdmittedUnverified || got.Status != StageFailed ||
+		!strings.Contains(got.Message, "meson (meson.build)") || strings.Contains(got.Message, admittedUnsupportedNote) {
+		t.Fatalf("without the flag: status %s, admitted unverified %v, receipt %s %q; want the receipt stage failed naming meson",
+			strict.Status, strict.AdmittedUnverified, got.Status, got.Message)
+	}
+
+	withGo := gatedRun(t, committedAdmitRepo(t, "go.mod", "meson.build"), RunOptions{AdmitUnsupported: true})
+	last := withGo.Stages[len(withGo.Stages)-1]
+	if withGo.Status != StatusRejected || withGo.AdmittedUnverified || last.Name != stagePrefetch || !last.Failed() {
+		t.Fatalf("go.mod under the flag: status %s, admitted unverified %v; want rejected at the failed Go prefetch: %+v",
+			withGo.Status, withGo.AdmittedUnverified, withGo.Stages)
+	}
+	for _, s := range withGo.Stages {
+		if strings.Contains(s.Message, admittedUnsupportedNote) {
+			t.Errorf("stage %q of a go.mod root reads as admitted: %q", s.Name, s.Message)
+		}
+	}
+}
+
+// Boundary: under the flag a dry run is recorded as a dry run, not as an admission, and a
+// Cargo.toml without its Cargo.lock holds no toolchain marker, so the flag admits it and names the
+// missing lockfile.
+func TestRunGatedPipeline_Boundary_AdmitUnsupportedDryRunAndUnlockedCargo(t *testing.T) {
+	dry := gatedRun(t, committedAdmitRepo(t, "meson.build"), RunOptions{DryRun: true, AdmitUnsupported: true})
+	if got := receiptOf(t, dry); dry.Status != StatusAdmitted || dry.AdmittedUnverified || got.Status != StageSkipped {
+		t.Fatalf("dry run: status %s, admitted unverified %v, receipt %s %q; want a skipped receipt, not an admission",
+			dry.Status, dry.AdmittedUnverified, got.Status, got.Message)
+	}
+
+	unlocked := gatedRun(t, committedAdmitRepo(t, "Cargo.toml"), RunOptions{AdmitUnsupported: true})
+	got := receiptOf(t, unlocked)
+	want := "cargo without a committed Cargo.lock (Cargo.toml)"
+	if unlocked.Status != StatusAdmitted || !unlocked.AdmittedUnverified || got.Status != StageNotApplicable ||
+		!strings.Contains(got.Message, want) {
+		t.Fatalf("Cargo.toml without Cargo.lock: status %s, admitted unverified %v, receipt %s %q; want admitted naming %q",
+			unlocked.Status, unlocked.AdmittedUnverified, got.Status, got.Message, want)
 	}
 }
