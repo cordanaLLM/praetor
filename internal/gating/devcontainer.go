@@ -134,7 +134,7 @@ func hostMachine() devcontainer.Host {
 // repository's devcontainer, and otherwise why they run on the host: the operator opted out, a dry
 // run builds nothing, the repository has no go.mod, the user has no cache directory to keep the
 // container's HOME and the pinned devcontainer CLI in (praetorCacheDir), or devcontainer.PlanImage
-// refused the host or the configuration. EnvRunBudget reserves the image build exactly when this
+// refused the host or the configuration. PlanRun reserves the image build exactly when this
 // returns a plan.
 func planDevcontainer(ctx context.Context, repoDir string, dryRun bool, host devcontainer.Host) (*devcontainer.ImagePlan, string) {
 	switch mode := strings.TrimSpace(os.Getenv(DevcontainerEnv)); mode {
@@ -170,9 +170,7 @@ func planDevcontainer(ctx context.Context, repoDir string, dryRun bool, host dev
 // or setup fails rejects the run through a failed DevcontainerStage, with the opt-out named. A run
 // that entered the devcontainer releases its image tag through releaseDevcontainer.
 func resolveExecution(ctx context.Context, cfg *stageConfig) error {
-	host := devcontainer.Host{GOOS: cfg.goos, GOARCH: cfg.goarch, LookPath: cfg.lookPath, Run: devcontainer.CommandRunner(cfg.run),
-		Tools: devcontainer.ToolCache{Fetch: cfg.fetch}}
-	plan, reason := planDevcontainer(ctx, cfg.repoDir, cfg.dryRun, host)
+	plan, reason := executionPlan(ctx, cfg)
 	if plan == nil {
 		cfg.rep.Execution = hostExecution(reason)
 		return nil
@@ -196,6 +194,18 @@ func resolveExecution(ctx context.Context, cfg *stageConfig) error {
 	cfg.rep.Execution = &Execution{Environment: executionDevcontainer, Runtime: entered.image.Runtime.Name,
 		Image: entered.image.Ref, ImageID: entered.image.ID, Builder: entered.image.Builder, Stages: devcontainerStages}
 	return nil
+}
+
+// executionPlan is the devcontainer decision for the run: the one its RunPlan made and carried on
+// ctx (RunPlan.WithDeadline), so the image built is the one the deadline reserved time for, or a
+// decision made now for a run started without one.
+func executionPlan(ctx context.Context, cfg *stageConfig) (*devcontainer.ImagePlan, string) {
+	if planned, ok := plannedFor(ctx, cfg.repoDir, cfg.dryRun); ok {
+		return planned.plan, planned.reason
+	}
+	host := devcontainer.Host{GOOS: cfg.goos, GOARCH: cfg.goarch, LookPath: cfg.lookPath, Run: devcontainer.CommandRunner(cfg.run),
+		Tools: devcontainer.ToolCache{Fetch: cfg.fetch}}
+	return planDevcontainer(ctx, cfg.repoDir, cfg.dryRun, host)
 }
 
 // enterDevcontainer builds the planned image and prepares how commands run in it. It returns nil

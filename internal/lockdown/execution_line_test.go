@@ -18,9 +18,9 @@ func TestExecutionLine_Positive_RoundTripsAndVerifies(t *testing.T) {
 		t.Fatalf("ExecutionLine = %q; the signed format must not drift", line)
 	}
 	output := gateOutputWith(WorktreeCleanLine(true), line)
-	got, ok := CertifiedExecution(output)
-	if !ok || got != "devcontainer\truntime=docker\timage=sha256:abc\tstages=Race-Detector Tests (go)" {
-		t.Fatalf("CertifiedExecution = %q, %v", got, ok)
+	got, err := CertifiedExecution(output)
+	if err != nil || got != "devcontainer\truntime=docker\timage=sha256:abc\tstages=Race-Detector Tests (go)" {
+		t.Fatalf("CertifiedExecution = %q, %v", got, err)
 	}
 	pub, priv, err := GenerateKeyPair()
 	if err != nil {
@@ -31,12 +31,13 @@ func TestExecutionLine_Positive_RoundTripsAndVerifies(t *testing.T) {
 	}
 }
 
-// Negative: output that records no execution, as every receipt minted before the line existed,
-// or records two, yields none; the older receipt still verifies.
+// Negative: output that records no execution, as every receipt minted before the line existed, is
+// unrecorded, and output that records two is ambiguous, not unrecorded; the older receipt still
+// verifies.
 func TestExecutionLine_Negative_AbsentOrAmbiguous(t *testing.T) {
 	older := gateOutputWith(WorktreeCleanLine(true))
-	if got, ok := CertifiedExecution(older); ok || got != "" {
-		t.Errorf("output without the line must yield none, got %q", got)
+	if got, err := CertifiedExecution(older); !errors.Is(err, ErrExecutionUnrecorded) || got != "" {
+		t.Errorf("output without the line must be unrecorded, got %q %v", got, err)
 	}
 	pub, priv, err := GenerateKeyPair()
 	if err != nil {
@@ -46,12 +47,13 @@ func TestExecutionLine_Negative_AbsentOrAmbiguous(t *testing.T) {
 		t.Errorf("a receipt minted before the line existed must still verify: %v", err)
 	}
 	twice := gateOutputWith(WorktreeCleanLine(true), ExecutionLine("host", "reason=a"), ExecutionLine("devcontainer"))
-	if _, ok := CertifiedExecution(twice); ok {
-		t.Error("two execution lines must yield none")
+	if _, err := CertifiedExecution(twice); !errors.Is(err, ErrExecutionAmbiguous) || errors.Is(err, ErrExecutionUnrecorded) ||
+		!strings.Contains(err.Error(), "2 execution lines") {
+		t.Errorf("two execution lines must be ambiguous, naming the count, got %v", err)
 	}
 	afterStage := GateOutputVersion + "\nstage\tHISS\tpassed\t\n" + ExecutionLine("host") + "\n"
-	if _, ok := CertifiedExecution(afterStage); ok {
-		t.Error("a line after the first stage line is not header and must not be read")
+	if _, err := CertifiedExecution(afterStage); !errors.Is(err, ErrExecutionUnrecorded) {
+		t.Errorf("a line after the first stage line is not header and must not be read, got %v", err)
 	}
 }
 

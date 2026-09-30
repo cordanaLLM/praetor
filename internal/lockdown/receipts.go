@@ -48,6 +48,12 @@ var (
 	// ErrWorktreeUnrecorded reports gate output that does not state the scanned tree's
 	// cleanliness exactly once, so nothing binds the receipt to a scan of HEAD alone.
 	ErrWorktreeUnrecorded = errors.New("receipt gate output does not record whether the scanned working tree was clean")
+	// ErrExecutionUnrecorded reports gate output without an execution header line, as every
+	// receipt minted before the gate recorded where its toolchain stages ran.
+	ErrExecutionUnrecorded = errors.New("receipt gate output does not record where the toolchain stages ran")
+	// ErrExecutionAmbiguous reports gate output with more than one execution header line, which
+	// the gate never writes, so no single line says where the stages ran.
+	ErrExecutionAmbiguous = errors.New("receipt gate output records more than one place the toolchain stages ran")
 )
 
 // gateWorktreeCleanKey names the gate-output header field recording whether the scanned
@@ -324,15 +330,19 @@ func headerField(s string) string {
 	return strings.NewReplacer("\t", " ", "\r", " ", "\n", " ").Replace(s)
 }
 
-// CertifiedExecution returns the fields of gateOutput's execution header line, tab-separated, and
-// whether the output carries exactly one. A receipt minted before the gate recorded where its
-// toolchain stages ran carries none; it still verifies, because the line was added within
-// GateOutputVersion and nothing it certifies depends on it. Call it on output the receipt's hash
-// has already been verified against.
-func CertifiedExecution(gateOutput string) (string, bool) {
+// CertifiedExecution returns the fields of gateOutput's execution header line, tab-separated. Output
+// without the line is ErrExecutionUnrecorded: a receipt minted before the gate recorded where its
+// toolchain stages ran carries none, and it still verifies, because the line was added within
+// GateOutputVersion and nothing it certifies depends on it. Output with more than one is
+// ErrExecutionAmbiguous, naming the count. Call it on output the receipt's hash has already been
+// verified against.
+func CertifiedExecution(gateOutput string) (string, error) {
 	values := gateOutputHeaderValues(gateOutput, gateExecutionKey)
-	if len(values) != 1 {
-		return "", false
+	switch len(values) {
+	case 0:
+		return "", ErrExecutionUnrecorded
+	case 1:
+		return values[0], nil
 	}
-	return values[0], true
+	return "", fmt.Errorf("%w: the header holds %d %s lines", ErrExecutionAmbiguous, len(values), gateExecutionKey)
 }

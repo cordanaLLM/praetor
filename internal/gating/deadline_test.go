@@ -75,11 +75,11 @@ func TestRunBudgetTimeoutSecondsRoundsUp(t *testing.T) {
 func TestEnvRunBudgetReadsTheStageVariable(t *testing.T) {
 	repo := t.TempDir()
 	t.Setenv(TestStageTimeoutEnv, "12m")
-	if got, want := EnvRunBudget(repo), ResolveRunBudget("12m"); got != want {
+	if got, want := EnvRunBudget(repo, false), ResolveRunBudget("12m"); got != want {
 		t.Errorf("EnvRunBudget() = %+v, want %+v", got, want)
 	}
 	t.Setenv(TestStageTimeoutEnv, "")
-	if got := EnvRunBudget(repo).StageBound; got != TestStageTimeout {
+	if got := EnvRunBudget(repo, false).StageBound; got != TestStageTimeout {
 		t.Errorf("unset variable must keep the %s default, got %s", TestStageTimeout, got)
 	}
 }
@@ -130,7 +130,7 @@ func TestTestStageHonoursABoundBeyondTheOldRunCap(t *testing.T) {
 	}
 
 	t.Setenv(TestStageTimeoutEnv, "12m")
-	ctx, cancel := WithRunDeadline(context.Background(), EnvRunBudget(repoDir))
+	ctx, cancel := WithRunDeadline(context.Background(), EnvRunBudget(repoDir, false))
 	defer cancel()
 	if _, err := runTestStage(ctx, cfg); err != nil {
 		t.Fatalf("stage failed: %v", err)
@@ -296,7 +296,7 @@ func TestTestStageStillBlamesItsOwnBoundUnderARunDeadline(t *testing.T) {
 	cfg.run = blockedSuite(&ran, holdStageBound(cfg))
 
 	t.Setenv(TestStageTimeoutEnv, "50ms")
-	ctx, cancel := WithRunDeadline(context.Background(), EnvRunBudget(repoDir))
+	ctx, cancel := WithRunDeadline(context.Background(), EnvRunBudget(repoDir, false))
 	defer cancel()
 	_, err := runTestStage(ctx, cfg)
 	if err == nil || !ran {
@@ -469,7 +469,7 @@ func TestRunTestStage_MixedRepositoryReservesABoundPerSuite(t *testing.T) {
 	}
 
 	t.Setenv(TestStageTimeoutEnv, "12m")
-	ctx, cancel := WithRunDeadline(context.Background(), EnvRunBudget(repoDir))
+	ctx, cancel := WithRunDeadline(context.Background(), EnvRunBudget(repoDir, false))
 	defer cancel()
 	if _, err := runTestStage(ctx, cfg); err != nil {
 		t.Fatalf("stage failed: %v", err)

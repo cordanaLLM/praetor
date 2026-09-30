@@ -422,7 +422,7 @@ func TestEnvRunBudgetReservesTheImageBuild(t *testing.T) {
 	if hostMachine().GOOS == "windows" {
 		want = 0 // a Windows host runs the stages on the host and builds nothing
 	}
-	budget := EnvRunBudget(repo)
+	budget := EnvRunBudget(repo, false)
 	if budget.Devcontainer != want || budget.Timeout() != budget.StageBound+budget.Allowance+want {
 		t.Errorf("budget = %+v, want %s reserved for the image build", budget, want)
 	}
@@ -430,7 +430,7 @@ func TestEnvRunBudgetReservesTheImageBuild(t *testing.T) {
 		t.Errorf("the deadline must say it includes the image build: %s", budget)
 	}
 	t.Setenv(DevcontainerEnv, "off")
-	if off := EnvRunBudget(repo); off.Devcontainer != 0 || off != stageBudget(repo) {
+	if off := EnvRunBudget(repo, false); off.Devcontainer != 0 || off != stageBudget(repo) {
 		t.Errorf("an opted-out run must reserve nothing: %+v", off)
 	}
 }
@@ -571,7 +571,7 @@ func TestUnansweringRuntimeRunsOnTheHost(t *testing.T) {
 	bin := t.TempDir()
 	testsupport.BuildExecutable(t, bin, "docker", "package main\n\nimport \"os\"\n\nfunc main() { os.Exit(1) }\n")
 	t.Setenv("PATH", bin)
-	if budget := EnvRunBudget(repo); budget.Devcontainer != 0 {
+	if budget := EnvRunBudget(repo, false); budget.Devcontainer != 0 {
 		t.Errorf("a runtime that does not answer builds nothing, so reserves nothing: %+v", budget)
 	}
 }
@@ -738,5 +738,85 @@ func TestContainerEnvForwardsModuleAndProxySettings(t *testing.T) {
 		if !slices.Contains(call.runArgs, "GOPROXY=https://proxy.corp.example") {
 			t.Errorf("go %q ran without the host's GOPROXY: %q", call.args, call.runArgs)
 		}
+	}
+}
+
+// dockerStandIn is a docker that answers every command and, when DOCKER_STAND_IN_RECORD names a
+// directory, records that it was asked.
+const dockerStandIn = `package main
+
+import (
+	"os"
+	"path/filepath"
+)
+
+func main() {
+	if dir := os.Getenv("DOCKER_STAND_IN_RECORD"); dir != "" {
+		if err := os.WriteFile(filepath.Join(dir, "asked"), []byte("docker"), 0o600); err != nil {
+			os.Exit(2)
+		}
+	}
+}
+`
+
+// A dry run builds nothing, so its plan reserves no image build and asks no container runtime;
+// the same repository planned for a real run asks docker and reserves the build.
+func TestPlanRunDryRunAsksNoRuntime(t *testing.T) {
+	if hostMachine().GOOS == "windows" {
+		t.Skip("a Windows host runs the toolchain stages on the host and asks no runtime for any run")
+	}
+	repo, _ := devcontainerRepo(t)
+	isolateUserCache(t)
+	bin, record := t.TempDir(), t.TempDir()
+	testsupport.BuildExecutable(t, bin, "docker", dockerStandIn)
+	t.Setenv("PATH", bin)
+	t.Setenv("DOCKER_STAND_IN_RECORD", record)
+	t.Setenv(DevcontainerEnv, "")
+	asked := filepath.Join(record, "asked")
+	if dry := PlanRun(repo, true); dry.Budget.Devcontainer != 0 || util.FileExists(asked) ||
+		!strings.Contains(dry.execution.reason, "dry run") || strings.Contains(dry.Budget.String(), "devcontainer") {
+		t.Errorf("a dry run must reserve nothing and ask no runtime: %+v, asked %v", dry.Budget, util.FileExists(asked))
+	}
+	if real := PlanRun(repo, false); real.Budget.Devcontainer != devcontainer.ImageBuildTimeout || !util.FileExists(asked) {
+		t.Errorf("a real run must ask docker and reserve the build: %+v, asked %v", real.Budget, util.FileExists(asked))
+	}
+}
+
+// The pipeline started under a RunPlan's deadline builds the image that plan reserved time for,
+// even when the runtime could no longer be found by then; a plan made for another kind of run
+// (a dry run) is not reused, and the run plans afresh.
+func TestPipelineReusesTheRunPlan(t *testing.T) {
+	if hostMachine().GOOS == "windows" {
+		t.Skip("a Windows host plans no devcontainer, so there is no plan to carry")
+	}
+	repo, _ := devcontainerRepo(t)
+	fake := newFakeRuntime("go", "gcc")
+	cfg := devcontainerConfig(t, repo, fake)
+	bin := t.TempDir()
+	testsupport.BuildExecutable(t, bin, "docker", dockerStandIn)
+	t.Setenv("PATH", bin)
+	plan := PlanRun(repo, false)
+	if plan.Budget.Devcontainer == 0 {
+		t.Fatalf("the fixture must plan a build: %+v", plan.Budget)
+	}
+	cfg.lookPath = func(name string) (string, error) { return "", errors.New(name + " is gone") }
+	ctx, cancel := plan.WithDeadline(t.Context())
+	defer cancel()
+	if err := resolveExecution(ctx, cfg); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if exec := cfg.rep.Execution; exec.Environment != executionDevcontainer || len(fake.built) != 1 {
+		t.Errorf("the run must build the planned image: %+v, builds %q", exec, fake.built)
+	}
+
+	other := devcontainerConfig(t, repo, newFakeRuntime("go"))
+	other.lookPath = cfg.lookPath
+	dryCtx, dryCancel := PlanRun(repo, true).WithDeadline(t.Context())
+	defer dryCancel()
+	if err := resolveExecution(dryCtx, other); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if exec := other.rep.Execution; exec.Environment != executionHost || !strings.Contains(exec.Reason, "neither docker nor podman") {
+		t.Errorf("a dry run's plan must not be reused for a real run: %+v", exec)
 	}
 }

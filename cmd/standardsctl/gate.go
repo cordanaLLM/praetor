@@ -96,8 +96,11 @@ func runGateRun(args []string) error {
 	// The run deadline follows the race stage's resolved bound, once per test suite the
 	// repository holds. A fixed five minutes cut the stage short whatever
 	// PRAETOR_TEST_STAGE_TIMEOUT asked for (#314).
-	budget := gating.EnvRunBudget(*path)
-	ctx, cancel := gating.WithRunDeadline(rootContext(), budget)
+	// The plan also carries where the toolchain stages run, so the pipeline builds exactly the
+	// devcontainer image the deadline reserved time for, and a dry run asks no container runtime.
+	plan := gating.PlanRun(*path, *dryRun)
+	budget := plan.Budget
+	ctx, cancel := plan.WithDeadline(rootContext())
 	defer cancel()
 
 	if !*asJSON {
@@ -161,7 +164,7 @@ func runGateDeadline(args []string) error {
 		return fmt.Errorf("gate deadline accepts no positional arguments, got %q", fs.Args())
 	}
 
-	budget := gating.EnvRunBudget(*path)
+	budget := gating.EnvRunBudget(*path, false)
 	if *asJSON {
 		report := gateDeadlineReport{
 			TimeoutSeconds:       budget.TimeoutSeconds(),
@@ -249,11 +252,16 @@ func runGateVerify(args []string) error {
 }
 
 // certifiedExecution renders where a verified receipt says the toolchain stages ran: the fields of
-// its execution header line, or a note that a receipt minted before the gate recorded it has none.
+// its execution header line; a note that a receipt minted before the gate recorded it has none; or,
+// for signed output holding more than one such line, which the gate never writes, that it is
+// ambiguous and how many it holds.
 func certifiedExecution(gateOutput string) string {
-	execution, ok := lockdown.CertifiedExecution(gateOutput)
-	if !ok {
+	execution, err := lockdown.CertifiedExecution(gateOutput)
+	switch {
+	case errors.Is(err, lockdown.ErrExecutionUnrecorded):
 		return "not recorded (minted before the gate recorded where its toolchain stages ran)"
+	case err != nil:
+		return "ambiguous (" + err.Error() + ")"
 	}
 	return strings.ReplaceAll(execution, "\t", " ")
 }
