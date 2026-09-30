@@ -46,17 +46,16 @@ func verifyAgentContext(ctx context.Context, s *adoptSession, declined map[strin
 	if err == nil {
 		return
 	}
-	var warnings, errs []string
+	step := s.report.stepNamed(contextVerifiedStep)
 	for _, failure := range verifyFailures(err) {
 		switch {
 		case errors.Is(failure, compiler.ErrContextProse):
 		case errors.Is(failure, compiler.ErrAgentTextProse):
-			warnings = append(warnings, fmt.Sprintf("%v; adoption keeps the repository's text as written", failure))
+			s.report.addStepWarning(step, fmt.Sprintf("%v; adoption keeps the repository's text as written", failure))
 		default:
-			errs = append(errs, fmt.Sprintf("compile-context --verify rejects the agent context adoption wrote: %v", failure))
+			s.report.addStepError(step, fmt.Sprintf("compile-context --verify rejects the agent context adoption wrote: %v", failure))
 		}
 	}
-	s.report.attachToStep(contextVerifiedStep, warnings, errs)
 }
 
 // verifyFailures lists the separate failures err joins (errors.Join, or fmt.Errorf with several
