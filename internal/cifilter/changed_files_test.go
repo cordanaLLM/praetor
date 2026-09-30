@@ -20,6 +20,13 @@ import (
 // gitSandbox isolates git from the host configuration and returns an empty directory.
 func gitSandbox(t *testing.T) string {
 	t.Helper()
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	t.Setenv("GIT_AUTHOR_NAME", "praetor-test")
+	t.Setenv("GIT_AUTHOR_EMAIL", "test@example.invalid")
+	t.Setenv("GIT_COMMITTER_NAME", "praetor-test")
+	t.Setenv("GIT_COMMITTER_EMAIL", "test@example.invalid")
 	return t.TempDir()
 }
 

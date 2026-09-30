@@ -761,6 +761,9 @@ func TestRenderFrameworkDemandMarkdown_NilReport(t *testing.T) {
 
 func initGitFixture(t *testing.T, dir string) {
 	t.Helper()
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	t.Setenv("GOPROXY", "off")
 	t.Setenv("GOFLAGS", "-mod=mod")
 
