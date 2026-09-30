@@ -85,29 +85,6 @@ func (r *AdoptReport) addStepWarning(step int, text string) {
 	}
 }
 
-// addStepError records text as an error of the run and of step, the index in Steps of the step
-// it concerns, after that step's outcome was recorded. The error fails a completed step, as
-// recordStep fails a step that recorded one itself. A step outside Steps gets the error on the
-// run alone.
-func (r *AdoptReport) addStepError(step int, text string) {
-	r.Errors = append(r.Errors, text)
-	if step < 0 || step >= len(r.Steps) {
-		return
-	}
-	r.Steps[step].Errors = append(r.Steps[step].Errors, text)
-	if r.Steps[step].Status == StepCompleted {
-		r.Steps[step].Status = StepFailed
-	}
-}
-
-// addStepWarning records text as a warning of the run and of step, like addStepError.
-func (r *AdoptReport) addStepWarning(step int, text string) {
-	r.Warnings = append(r.Warnings, text)
-	if step >= 0 && step < len(r.Steps) {
-		r.Steps[step].Warnings = append(r.Steps[step].Warnings, text)
-	}
-}
-
 // since copies list from offset from; an offset outside the list selects nothing.
 func since(list []string, from int) []string {
 	if from < 0 || from >= len(list) {
