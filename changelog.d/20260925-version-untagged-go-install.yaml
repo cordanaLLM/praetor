@@ -1,0 +1,4 @@
+type: fixed
+title: "praetorctl version and init identify a go install module@<commit> or @<tag> build by its module version instead of reporting it unknown"
+issue: "#642"
+breaking: false
