@@ -17,7 +17,7 @@ GO_EXTENSIONS = {".go", ".c", ".cc", ".cpp", ".cxx", ".m", ".h", ".hh", ".hpp", 
                  ".f", ".F", ".for", ".f90", ".s", ".S", ".sx", ".swig", ".swigcxx", ".syso"}
 # What `compile-context --verify` reads or checks: canonical AGENTS.md and .agents/ (personas,
 # skills, plugin copies), the six vendor files (internal/agentcontext/render.go
-# vendorTargets) and the vendor persona directories (compiler.CompileAgents).
+# vendorTargets) and the vendor persona directories (compiler.CompileAgentSurfaces).
 # test_context_changed_covers_every_compile_context_path runs the real compile-context and
 # fails if it writes a path these do not match.
 CONTEXT = {"AGENTS.md", "CLAUDE.md", ".windsurfrules",
