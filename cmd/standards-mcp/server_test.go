@@ -599,8 +599,10 @@ func TestServer_Negative_PlanDriftAndAuditFailures(t *testing.T) {
 	// A new HISS-02 violation must trip the ratchet even though the baseline is empty.
 	writeFixtureFile(t, root, "bad.go", "package main\n\nfunc spin() {\n\tfor {\n\t}\n}\n")
 	audit = callTool(t, srv, "standards_audit", nil)
-	expectError(t, "audit ratchet", audit, "[FAIL] HISS invariant violations introduced")
+	expectError(t, "audit ratchet", audit, "[FAIL] HISS invariant violations the baseline does not record")
 	expectError(t, "audit ratchet", audit, "bad.go")
+	// The tool attributes the rejection as the CLI does (#599); this baseline names no commit.
+	expectError(t, "audit ratchet", audit, "(the baseline records no commit to compare against)")
 	if err := os.Remove(filepath.Join(root, "bad.go")); err != nil {
 		t.Fatal(err)
 	}

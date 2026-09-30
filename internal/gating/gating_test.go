@@ -479,7 +479,9 @@ func TestRunHissStage_3D(t *testing.T) {
 	}
 
 	// Negative: no baseline recorded, so the legacy debt is a new violation, and the rejection
-	// names it as [rule] file:line rather than only counting it.
+	// names it as [rule] file:line rather than only counting it. The stage traces no finding to
+	// a code change, so it says the baseline does not record it rather than that the push
+	// introduced it (#599).
 	cfg, _ := newTestConfig(t, repoDir, false)
 	_, err = runHissStage(ctx, cfg)
 	if err == nil {
@@ -487,7 +489,7 @@ func TestRunHissStage_3D(t *testing.T) {
 	}
 	first := scan.Violations[0]
 	named := fmt.Sprintf("[%s] %s:%d", first.RuleID, first.FilePath, first.LineNumber)
-	if !strings.Contains(err.Error(), named) || !strings.Contains(err.Error(), "(new)") {
+	if !strings.Contains(err.Error(), named) || !strings.Contains(err.Error(), "(not in the baseline)") {
 		t.Errorf("the rejection must name %q, got %q", named, err)
 	}
 

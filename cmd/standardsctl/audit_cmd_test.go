@@ -62,7 +62,7 @@ func auditGateFailureCases() []auditGateCase {
 			"with adoption.decline listing paperclip, adopt never writes the harness, so set platform by hand"},
 		{"new violation", func(t *testing.T, f *auditFixture) {
 			f.addViolation(t)
-		}, "HISS invariant violations introduced"},
+		}, "HISS invariant violations the baseline does not record"},
 		{"missing labels", func(t *testing.T, f *auditFixture) {
 			if err := os.Remove(filepath.Join(f.dir, ".config", "labels.yaml")); err != nil {
 				t.Fatal(err)

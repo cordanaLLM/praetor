@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"reflect"
-	"strconv"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -455,25 +454,13 @@ func (op *operation) treeEntries(ctx context.Context, dir, tree string) (map[str
 
 // parseTreeEntries reads `ls-tree -r -z -l` records: "<mode> <type> <object> <size>\t<path>".
 func parseTreeEntries(out []byte) (map[string]treeEntry, error) {
-	entries := make(map[string]treeEntry)
-	for _, record := range strings.Split(string(out), "\x00") {
-		if record == "" {
-			continue
-		}
-		meta, path, found := strings.Cut(record, "\t")
-		fields := strings.Fields(meta)
-		if !found || path == "" || len(fields) != 4 {
-			return nil, errors.New("unexpected ls-tree record")
-		}
-		entry := treeEntry{mode: fields[0], kind: fields[1], size: -1}
-		if fields[3] != "-" {
-			size, err := strconv.ParseInt(fields[3], 10, 64)
-			if err != nil || size < 0 {
-				return nil, errors.New("unexpected ls-tree object size")
-			}
-			entry.size = size
-		}
-		entries[path] = entry
+	records, err := util.ParseGitTreeListing(out, true, maxGitOutput/util.MinGitTreeRecordBytes)
+	if err != nil {
+		return nil, err
+	}
+	entries := make(map[string]treeEntry, len(records))
+	for i := 0; i < len(records); i++ {
+		entries[records[i].Path] = treeEntry{mode: records[i].Mode, kind: records[i].Type, size: records[i].Size}
 	}
 	return entries, nil
 }

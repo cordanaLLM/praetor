@@ -576,10 +576,80 @@ cases are replayed in [`internal/util/git_status_test.go`](https://github.com/co
 
 The gate's HISS stage rejects on the same ratchet as `praetorctl audit`, and both render the
 rejection with `baseline.RatchetResult.Summary`
-([`internal/baseline/baseline.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/baseline/baseline.go)): the counts, then up to
-three new and three touched-file violations as `[rule] file:line - message`. The stage previously
+([`internal/baseline/describe.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/baseline/describe.go)): the counts, then up to
+three violations of each class as `[rule] file:line - message (class)`. The stage previously
 reported only `hiss ratchet failed: N infractions (M new, baseline B)`, so a blocked push named no
 file to open.
+
+A class with more than three violations ends with a line that says how many it hid and which
+read-only command lists them all. `praetorctl baseline --verify` and `praetorctl audit` print the
+whole list with `--all-violations` and never write `.standards-baseline.json`:
+
+```text
+  ... and 3 more unbaselined violations not shown; 'praetorctl baseline --verify --all-violations' lists every one
+  ... and 2 more touched-file violations not shown; 'praetorctl audit --all-violations' lists every one
+```
+
+Touched-file violations need the audit's change set, so their marker names `praetorctl audit`; run
+it with the same `--base` as the failing run. `TestRatchetResultSummary_Boundary_MarkerCountsEachClass`
+in [`internal/baseline/describe_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/baseline/describe_test.go) and
+`TestBaselineVerify_Positive_AllViolationsListsEveryOne` in
+[`cmd/standardsctl/baseline_ratchet_report_test.go`](https://github.com/cordanaLLM/praetor/blob/main/cmd/standardsctl/baseline_ratchet_report_test.go) pin both.
+
+A violation in an untouched file that the baseline does not record is not necessarily new code: a
+Praetor upgrade can add a check that reports code nobody changed. `praetorctl audit`,
+`praetorctl baseline --verify` and the `standards_audit` MCP tool therefore attribute each one
+before rendering (`hiss.AttributeRatchet` in
+[`internal/hiss/attribution.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hiss/attribution.go)). They compare against the
+baseline's commits:
+
+- `commit_sha`, the `HEAD` that `praetorctl baseline --record` ran on;
+- the last commit on `HEAD`'s history that changed the baseline file (`git log -1 HEAD -- <baseline>`).
+
+The recorder scans the work tree, so a baseline recorded before the code it scanned was committed,
+then committed together with that code, holds the code only at the second commit. After a squash
+merge, `commit_sha` names a branch commit a fresh clone does not hold; the second commit is the
+squash commit. A commit the clone lacks is left out, and so is a shallow clone's boundary commit,
+which reads as having added every file whatever it changed. An uncommitted baseline compares
+`commit_sha` alone.
+
+For each commit, they copy the violations' files as that commit holds them into a temporary
+directory and scan the copy with the current checks and the same policy. A Go call cycle brings
+its whole package. The copy is scanned as its own scope, without asking git which files belong, so
+a temporary directory inside a work tree that ignores it changes nothing. A copy scan that leaves a
+file unread, or a file of the commit that does not parse, traces nothing:
+
+| Class tag | Meaning |
+| :--- | :--- |
+| `(new)` | The checks report it at neither commit: the code changed since the baseline was recorded and committed. |
+| `(check added or changed since the baseline)` | The checks report the same rule, file, symbol and message at one of the commits, yet the baseline does not record it: a check or limit changed, not the code. |
+| `(recorded in the baseline at line N)` | The baseline records the same rule, file, symbol and message at line N, which no current violation occupies: lines above it moved, the debt did not. Needs no commit, so a baseline without `commit_sha` gets it too. |
+| `(not in the baseline)` | Not traced. The baseline records no `commit_sha`, the clone holds neither commit, the violations span more than 200 files, they need more than 1000 committed files (a large Go package a call cycle brings counts whole), the copy scan was incomplete, or the rejection comes from a surface that does not attribute (the gate's HISS stage, dogfood verification). The rejection states the reason. |
+
+Only a rejection whose every unbaselined violation is `(new)` keeps the header `HISS invariant
+violations introduced`. One whose every unbaselined violation only moved reads `HISS invariant
+violations the baseline records at other lines` and names the plain re-record, `praetorctl
+baseline --record`: the count did not rise, so it needs no `--allow-increase`. Every other
+rejection reads `HISS invariant violations the baseline does not record` and names the deliberate
+re-record, `praetorctl baseline --record --allow-increase --reason=<why>`, for the findings a
+changed check or an untraced cause explains. Matching ignores line numbers, so when one file holds
+several identical findings, the count per class is exact but which line gets `(new)` follows scan
+order.
+The verdict never changes: HISS-13 still refuses the higher count
+([`internal/hiss/attribution_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hiss/attribution_test.go),
+`TestRatchetResultAttribute*` in `internal/baseline/describe_test.go`,
+`TestBaselineVerify_Positive_MovedFindingNeedsOnlyARerecord` and
+`TestBaselineVerify_Positive_RecordThenCommitIsNotNew` in
+`cmd/standardsctl/baseline_ratchet_report_test.go`).
+
+Known gaps of the attribution:
+
+- A baseline without `commit_sha`, such as one written before the field was filled, stays
+  untraced even when a commit holds the baseline file.
+- The baseline records no engine version or rule set, so the attribution cannot name the check
+  that changed; it re-scans the baseline's commits instead.
+- The gate's HISS stage and the dogfood public-checkout verification do not attribute; their
+  rejections read `(not in the baseline)`.
 
 A ratchet can also fail with both lists empty: every violation matches a baselined fingerprint
 and no file was touched, yet the total rose above the baseline's. `RatchetResult.CountRegressed`

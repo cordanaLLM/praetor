@@ -117,6 +117,9 @@ type AdoptReport struct {
 	// Steps records each reached step of the chain; Pillars derives the governance pillar
 	// lines from it.
 	Steps []StepOutcome `json:"steps,omitempty"`
+	// stepActions holds, for each entry of Steps, the index of the first action entry that step
+	// recorded (recordStep), so a finding about a file lands on the step that wrote it.
+	stepActions []int
 }
 
 // adoptSession carries the resolved inputs of one adoption run through the step chain.
@@ -169,6 +172,12 @@ type adoptSession struct {
 	// (resolveDefaultBranch, forge.DefaultBranchToDeclare); empty when there is nothing to declare
 	// or the manifest exists.
 	defaultBranch string
+	// configNegationAdded records that the git-ignore step added the directory-only negation
+	// that re-includes .config/ (configDirNegation), or planned it in a dry run. The
+	// ignored-write check of a dry run then leaves out the files the real run re-includes, and
+	// every run names the files below .config/ adoption does not write that the negation
+	// re-includes too (reportIgnoredWrites, reportReincludedConfigFiles).
+	configNegationAdded bool
 }
 
 // adoptStep is one reconciliation step of the adoption chain.
@@ -429,7 +438,8 @@ func adoptSteps() []namedStep {
 }
 
 // executeAdoptSteps runs the reconciliation chain in order, stopping at the first
-// failure and observing context cancellation between steps.
+// failure and observing context cancellation between steps. A chain that ran to the end has
+// every file it wrote checked against the repository's ignore rules (reportIgnoredWrites).
 func executeAdoptSteps(ctx context.Context, s *adoptSession) error {
 	steps := adoptSteps()
 	known := make([]string, 0, len(steps))
@@ -438,6 +448,9 @@ func executeAdoptSteps(ctx context.Context, s *adoptSession) error {
 	}
 	declined, err := declinedArtifacts(s.declined, known)
 	if err != nil {
+		return err
+	}
+	if err := preflightConfigRoot(s.repoPath); err != nil {
 		return err
 	}
 	if err := preflightAgentSurfaces(ctx, s, declined); err != nil {
@@ -462,6 +475,7 @@ func executeAdoptSteps(ctx context.Context, s *adoptSession) error {
 		}
 		s.report.recordStep(name, StepCompleted, from)
 	}
+	reportIgnoredWrites(ctx, s)
 	return nil
 }
 

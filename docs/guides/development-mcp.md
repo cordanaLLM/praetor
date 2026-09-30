@@ -329,8 +329,14 @@ with the production extractor. The form rules are in the
 
 The `standards_audit` tool executes the same gates as CLI `standardsctl audit`.
 A failing HISS ratchet reports `[FAIL]` followed by `baseline.RatchetResult.Summary`, the
-rejection text `praetorctl audit` and the gate print: new and touched-file violations by rule,
-file and line, or both totals when only the count rose.
+rejection text `praetorctl audit` and the gate print: up to three violations per class by rule,
+file and line with a count of the hidden rest, or both totals when only the count rose. Like
+`praetorctl audit`, the tool first attributes each unbaselined violation against the baseline's
+commits, `commit_sha` and the last commit that changed the baseline file (`hiss.AttributeRatchet`),
+so a finding in code unchanged since then is tagged as coming from a changed check, not as new
+([A HISS rejection names the violations](adoption-verification.md#a-hiss-rejection-names-the-violations)).
+The tool takes no listing flag; `praetorctl baseline --verify --all-violations` prints every
+violation.
 Both tools share the same authority implementations for artifact checks. When
 verifying branch protection rulesets, `standards_audit` consults
 `adopt.AuditBranchProtectionWithPolicy` with the effective policy it resolved

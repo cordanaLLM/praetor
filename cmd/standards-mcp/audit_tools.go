@@ -132,6 +132,9 @@ func auditBaselineRatchetWithPolicy(ctx context.Context, root, baselinePath stri
 
 	ratchet := baseline.EvaluateRatchet(base, current, nil)
 	if !ratchet.Passed {
+		// Attributed as the CLI audit attributes it, so a finding in code unchanged since the
+		// baseline's commit is not reported as introduced (#599).
+		hiss.AttributeRatchet(ctx, root, baselinePath, scanOpts, base, current, ratchet)
 		return "", fmt.Errorf("[FAIL] %s", ratchet.Summary())
 	}
 	verdict := fmt.Sprintf("[PASS] Technical debt baseline verified: %d recorded legacy infractions; HISS scan found %d active violations within the baselined limit. %s",

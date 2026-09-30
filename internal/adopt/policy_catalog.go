@@ -116,7 +116,8 @@ func adoptionScanLimit(s *adoptSession) int {
 // Inspect every destination before publishing any catalog entry. Force permits
 // explicit replacement, and an unmodified earlier Praetor text is replaced without it by a
 // text holding exactly its values (isLayoutOnlySuccessor); otherwise differing user files are
-// always preserved.
+// always preserved. Whether git ignores a destination is checked with every other written file
+// once the chain has run (reportIgnoredWrites), after the git-ignore step's rules exist.
 func prepareCatalogWrites(ctx context.Context, s *adoptSession, artifacts []config.PolicyArtifact) ([]catalogWrite, error) {
 	if len(artifacts) > maxAdoptPolicyFiles {
 		return nil, errors.New("adoption catalog exceeds 512 pinned files")
@@ -140,36 +141,7 @@ func prepareCatalogWrites(ctx context.Context, s *adoptSession, artifacts []conf
 		}
 		writes = append(writes, catalogWrite{artifact: artifact, path: path, before: before, exists: exists})
 	}
-	reportIgnoredCatalogWrites(ctx, s, writes)
 	return writes, nil
-}
-
-// reportIgnoredCatalogWrites records an error for every pinned catalog destination the target
-// repository's own ignore rules exclude. Adoption still writes the file, so a local audit
-// works, but git will not commit it and a clean checkout or CI run audits without its pinned
-// catalog. A kernel-style tree that ignores a bare .config swallows .config/archetypes this way,
-// and git cannot re-include a path under an ignored directory, so the operator has to change
-// the ignore rule itself. When git cannot answer (not installed, not a work tree) the check is
-// skipped and the skip is stated as a warning, never passed off as a clean result.
-func reportIgnoredCatalogWrites(ctx context.Context, s *adoptSession, writes []catalogWrite) {
-	if len(writes) == 0 {
-		return
-	}
-	paths := make([]string, 0, len(writes))
-	for i := 0; i < len(writes) && i < maxAdoptPolicyFiles; i++ {
-		paths = append(paths, writes[i].artifact.RelativePath)
-	}
-	ignored, err := util.GitIgnoredPaths(ctx, s.repoPath, paths, false)
-	if err != nil {
-		s.report.addWarning("%s: not checked against .gitignore, so the pinned catalog may be uncommittable: %v",
-			".config/archetypes", err)
-		return
-	}
-	for i := 0; i < len(ignored); i++ {
-		s.report.addError("%s: excluded by the repository's .gitignore; adoption writes it but git will not commit it, "+
-			"so a clean checkout audits without its pinned catalog. Stop ignoring the path (a negation cannot "+
-			"re-include a file under an ignored directory)", ignored[i])
-	}
 }
 
 // publishCatalogFile writes one pinned catalog file bound to the bytes prepareCatalogWrites

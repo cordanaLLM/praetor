@@ -367,14 +367,16 @@ subdirectory; every declared profile/facet must match the repository lock digest
 The default catalog root is the audited repository.
 
 Adoption writes the pinned catalog into the repository's own `.config/archetypes`
-and asks git whether the repository's ignore rules exclude each file. An excluded
-file is still written, so a local audit works, but adoption reports an error for
-it: git will not commit the file, and a clean checkout or CI run then audits
-without its pinned catalog. A kernel-style tree that ignores a bare `.config` is
-the usual cause, and a negation cannot re-include a path under an ignored
-directory, so the ignore rule itself has to change. When git cannot answer (not
-installed, not a work tree) adoption states the skipped check as a warning.
-Tests: `internal/adopt/ignored_paths_test.go`.
+and, like every other file it writes, asks git whether the repository's ignore
+rules exclude it. An excluded file is still written, so a local audit works, but
+adoption reports an error for it: git will not commit the file, and a clean
+checkout or CI run then audits without its pinned catalog. A kernel-style tree
+that ignores a bare `.config` is the usual cause; there the `git-ignore` step
+re-includes the root directory with `!/.config/` in the managed block, and a declined
+step gets the same rule proposed in the error. When git cannot answer (not
+installed, not a work tree) adoption states the skipped check as a warning
+([files the repository ignores](../adoption.md#what-adoption-reads-before-it-writes)).
+Tests: `internal/adopt/ignored_paths_test.go`, `internal/adopt/ignored_writes_test.go`.
 
 The same explicit configuration can be mounted into a container, bot, plugin or
 workstation. A private GitOps fork can own these files while consuming the public

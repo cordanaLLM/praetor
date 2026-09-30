@@ -26,6 +26,20 @@ func fingerprintViolations(violations []hiss.InvariantViolation) []baseline.Infr
 	return current
 }
 
+// describeRejection renders a failed ratchet for `praetorctl audit` and `praetorctl baseline
+// --verify`: it first attributes each unbaselined finding against the baseline's commits, the one
+// it was recorded at and the one that last committed baselinePath (hiss.AttributeRatchet, #599),
+// under the scan policy that produced current, then lists every violation when all is set
+// (--all-violations) and the bounded Summary otherwise (#598).
+func describeRejection(ctx context.Context, root, baselinePath string, scanOpts hiss.ScanOptions, base *baseline.Baseline,
+	current []baseline.Infraction, ratchet *baseline.RatchetResult, all bool) string {
+	hiss.AttributeRatchet(ctx, root, baselinePath, scanOpts, base, current, ratchet)
+	if all {
+		return ratchet.FullSummary()
+	}
+	return ratchet.Summary()
+}
+
 // resolveTouchedFiles returns the change set the touched-file clean rule applies to,
 // relative to the audited root: the --touched list when given, otherwise the files git
 // reports as changed (uncommitted changes plus, when --base is set, everything on HEAD

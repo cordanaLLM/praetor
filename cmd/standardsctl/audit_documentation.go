@@ -121,6 +121,9 @@ func auditDocumentationGate(ctx context.Context, manifest *config.Manifest, root
 	if err := auditDocumentationLocalWiring(ctx, rootDir, declines); err != nil {
 		return err
 	}
+	if err := auditDocumentationFilesCommitted(ctx, rootDir); err != nil {
+		return err
+	}
 	if err := auditDocumentationHostedWiring(ctx, manifest, branch, rootDir, declines.ruleset); err != nil {
 		return err
 	}
@@ -266,6 +269,32 @@ func auditDocumentationAssets(ctx context.Context, rootDir string) (int, error) 
 	return count, nil
 }
 
+// auditDocumentationFilesCommitted fails while git ignores a documentation gate file and does
+// not track it. The byte comparison reads the file from disk and passes here, but no commit
+// carries it, so a clean checkout, CI included, fails the gate; this check gives the local run
+// the same verdict (adopt.IgnoredPaths, the question adoption asks of every file it writes).
+// When git cannot answer, the gate fails closed, as the scratch ignore check before it does.
+func auditDocumentationFilesCommitted(ctx context.Context, rootDir string) error {
+	families := adopt.DocumentationFamilies()
+	rels := make([]string, 0)
+	for index := 0; index < len(families) && index < managedasset.MaxFamilies; index++ {
+		rels = append(rels, families[index].ManagedPaths()...)
+	}
+	ignored, err := adopt.IgnoredPaths(ctx, rootDir, rels)
+	if err != nil {
+		return fmt.Errorf("[FAIL] cannot prove git commits the documentation gate's files: %w", err)
+	}
+	if len(ignored) == 0 {
+		return nil
+	}
+	found := make([]string, 0, len(ignored))
+	for _, file := range ignored {
+		found = append(found, fmt.Sprintf("%s (ignored by %s; add %s after that rule)", file.Path, file.Rule, file.Negation))
+	}
+	return fmt.Errorf("[FAIL] Documentation gate files are ignored by git and not tracked, so a clean checkout lacks them: %s; "+
+		"re-include and commit them", strings.Join(found, ", "))
+}
+
 // auditManagedFamily compares every asset of family, then its workflow, with the canonical
 // text and returns the number of assets verified.
 func auditManagedFamily(ctx context.Context, rootDir string, family managedasset.Family) (int, error) {
@@ -402,7 +431,7 @@ func auditManagedGitIgnoreBlock(ctx context.Context, rootDir string) error {
 	if ignoreLineErr != nil {
 		return fmt.Errorf("[FAIL] .gitignore documentation privacy rules have invalid line endings: %w", ignoreLineErr)
 	}
-	if !strings.HasSuffix(normalized, adopt.ManagedGitIgnoreBlock()) {
+	if !adopt.HasManagedGitIgnoreTail(normalized) {
 		return fmt.Errorf("[FAIL] .gitignore must end with the canonical Praetor private-artifact block")
 	}
 	return nil

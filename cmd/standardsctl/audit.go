@@ -53,6 +53,9 @@ type auditOptions struct {
 	effective       *config.EffectivePolicy
 	baseline        *baseline.Baseline
 	baselineKnown   bool
+
+	// allViolations lists every violation of a ratchet rejection instead of a bounded few (#598).
+	allViolations bool
 }
 
 func runAudit(args []string) error {
@@ -94,6 +97,7 @@ func parseAuditOptions(args []string) (*auditOptions, error) {
 	touched := fs.String("touched", "", "Comma-separated files, relative to the audited root, to treat as touched instead of asking git")
 	debtDelta := fs.String("touched-debt-delta-reason", "",
 		"Judge touched files on whether their debt grew rather than on whether they were touched, for a provably mechanical change; the value is the recorded reason. Also read from "+debtDeltaReasonEnv)
+	allViolations := fs.Bool("all-violations", false, "List every violation of a HISS ratchet rejection instead of the first three per class")
 	var policy config.EffectiveOptions
 	fs.StringVar(&policy.CatalogRoot, "catalog-root", "", "Root containing pinned .config/archetypes (default: audited root)")
 	fs.StringVar(&policy.FleetPath, "fleet-config", "", "Explicit fleet complexity policy file")
@@ -118,6 +122,7 @@ func parseAuditOptions(args []string) (*auditOptions, error) {
 		baseRef:         *baseRef,
 		touched:         splitCSV(*touched),
 		debtDeltaReason: resolveDebtDeltaReason(*debtDelta),
+		allViolations:   *allViolations,
 		policy:          policy,
 	}, nil
 }
@@ -196,7 +201,8 @@ func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
 	opts.baselineKnown = !base.Absent
 	opts.baseline = base
 
-	scanRep, err := hiss.Scan(ctx, opts.rootDir, auditScanOptions(opts))
+	scanOpts := auditScanOptions(opts)
+	scanRep, err := hiss.Scan(ctx, opts.rootDir, scanOpts)
 	if err != nil {
 		return fmt.Errorf("[FAIL] Invariant audit failed: %w", err)
 	}
@@ -224,7 +230,7 @@ func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
 		return missingBaselineFailure(opts.baselinePath, len(current))
 	}
 	if !ratchet.Passed {
-		return fmt.Errorf("[FAIL] %s", ratchet.Summary())
+		return fmt.Errorf("[FAIL] %s", describeRejection(ctx, opts.rootDir, opts.baselinePath, scanOpts, base, current, ratchet, opts.allViolations))
 	}
 	fmt.Printf("[PASS] HISS invariant scan verified: %d active violations within %d baselined limit (%d touched files clean) (skipped: %d ignored directories, %d symlinks, %d oversize files, %d non-regular files).\n",
 		ratchet.CurrentCount, base.TotalInfractions, len(touched), scanRep.Skips.DirCount,

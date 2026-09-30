@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -19,6 +20,10 @@ const maxGitTrackedQueryPaths = 64
 // gitIgnoreOutputLimit bounds each stream of a check-ignore or ls-files answer.
 const gitIgnoreOutputLimit = 1 << 20
 
+// gitIgnoreVerboseOutputLimit bounds a check-ignore -v answer, which adds the ignore file, line
+// and pattern to every path.
+const gitIgnoreVerboseOutputLimit = 4 << 20
+
 // GitIgnoredPaths returns the subset of relPaths, slash-separated and relative to the work
 // tree at dir, that git ignores. The answer comes from the repository's own .gitignore files
 // and .git/info/exclude: RunGitProbe isolates the global and system configuration, so an
@@ -28,6 +33,56 @@ const gitIgnoreOutputLimit = 1 << 20
 // patterns say; noIndex asks about the patterns alone, for a probe path that is never tracked.
 // Paths travel on standard input, so the query length never meets a command-line limit.
 func GitIgnoredPaths(ctx context.Context, dir string, relPaths []string, noIndex bool) ([]string, error) {
+	out, err := runCheckIgnore(ctx, dir, relPaths, noIndex, false)
+	if err != nil || out == nil {
+		return nil, err
+	}
+	return splitNUL(out), nil
+}
+
+// GitIgnoreMatch is one path git ignores and the rule that ignores it, as check-ignore -v
+// reports it. When a parent directory of Path is ignored, the rule is the one that ignores
+// that directory: git never looks inside it.
+type GitIgnoreMatch struct {
+	// Path is the queried path, as it was asked.
+	Path string
+	// Source is the file holding the rule, relative to the work tree (.gitignore, a nested
+	// .gitignore, .git/info/exclude).
+	Source string
+	// Line is the rule's 1-based line in Source.
+	Line int
+	// Pattern is the rule as git parsed it; a directory-only rule keeps its trailing slash.
+	Pattern string
+}
+
+// Rule names the match's rule for a report: "<source>:<line> (<pattern>)".
+func (m GitIgnoreMatch) Rule() string {
+	return fmt.Sprintf("%s:%d (%s)", m.Source, m.Line, m.Pattern)
+}
+
+// DirectoryOnly reports whether the rule matches directories alone (a trailing slash), so it
+// never ignores a file of the same name.
+func (m GitIgnoreMatch) DirectoryOnly() bool {
+	return strings.HasSuffix(m.Pattern, "/")
+}
+
+// GitIgnoreMatches is GitIgnoredPaths with the rule behind each answer: the paths among
+// relPaths that git ignores, in the order git reports them, each with the ignore file, line
+// and pattern that decide it. The same isolation and index semantics apply. A path whose last
+// matching rule is a negation is not ignored and is not returned. A path asked with a trailing
+// slash is asked as a directory, whether or not it exists yet; ask directories here rather than
+// through GitIgnoredPaths, which cannot drop the empty-pattern match (parseIgnoreMatches).
+func GitIgnoreMatches(ctx context.Context, dir string, relPaths []string, noIndex bool) ([]GitIgnoreMatch, error) {
+	out, err := runCheckIgnore(ctx, dir, relPaths, noIndex, true)
+	if err != nil || out == nil {
+		return nil, err
+	}
+	return parseIgnoreMatches(out)
+}
+
+// runCheckIgnore is the one check-ignore query behind GitIgnoredPaths and GitIgnoreMatches.
+// It returns git's NUL-separated answer, or nil when git ignores none of relPaths.
+func runCheckIgnore(ctx context.Context, dir string, relPaths []string, noIndex, verbose bool) ([]byte, error) {
 	if len(relPaths) == 0 {
 		return nil, nil
 	}
@@ -40,17 +95,51 @@ func GitIgnoredPaths(ctx context.Context, dir string, relPaths []string, noIndex
 		return nil, err
 	}
 	args := []string{"check-ignore", "-z", "--stdin"}
+	limit := gitIgnoreOutputLimit
+	if verbose {
+		args = append(args, "-v")
+		limit = gitIgnoreVerboseOutputLimit
+	}
 	if noIndex {
 		args = append(args, "--no-index")
 	}
-	result, status, err := RunGitProbeStatus(stdinCtx, dir, gitIgnoreOutputLimit, args...)
+	result, status, err := RunGitProbeStatus(stdinCtx, dir, limit, args...)
 	if err != nil {
 		return nil, fmt.Errorf("git check-ignore in %s: %w", dir, err)
 	}
 	if status == 1 {
 		return nil, nil
 	}
-	return splitNUL(result.Stdout), nil
+	return result.Stdout, nil
+}
+
+// parseIgnoreMatches reads check-ignore -v -z records: source, line, pattern and path, each
+// NUL-terminated. Verbose mode also reports a path whose last matching rule is a negation
+// (the pattern starts with "!"); that path is not ignored and is dropped. So is a match on an
+// empty pattern, which git makes of a blank line ending in a carriage return (a CRLF
+// .gitignore): it matches only an empty last path component, which no file has and a
+// directory probe with a trailing slash does, and a probed directory a real rule ignores is
+// answered with that rule before git reaches the empty one.
+func parseIgnoreMatches(out []byte) ([]GitIgnoreMatch, error) {
+	fields := strings.Split(string(out), "\x00")
+	if last := len(fields) - 1; fields[last] == "" {
+		fields = fields[:last]
+	}
+	if len(fields)%4 != 0 {
+		return nil, fmt.Errorf("git check-ignore -v answered %d fields, not whole records of 4", len(fields))
+	}
+	matches := make([]GitIgnoreMatch, 0, len(fields)/4)
+	for i := 0; i+3 < len(fields) && i < 4*maxGitIgnoreQueryPaths; i += 4 {
+		if fields[i+2] == "" || strings.HasPrefix(fields[i+2], "!") {
+			continue
+		}
+		line, err := strconv.Atoi(fields[i+1])
+		if err != nil {
+			return nil, fmt.Errorf("git check-ignore -v answered line %q for %q: %w", fields[i+1], fields[i+3], err)
+		}
+		matches = append(matches, GitIgnoreMatch{Path: fields[i+3], Source: fields[i], Line: line, Pattern: fields[i+2]})
+	}
+	return matches, nil
 }
 
 // GitUntrackedPaths returns the subset of relPaths, slash-separated file paths relative to

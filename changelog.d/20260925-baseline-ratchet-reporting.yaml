@@ -1,0 +1,4 @@
+type: fixed
+title: "A HISS ratchet rejection says how many violations each class hid and names 'praetorctl baseline --verify --all-violations' to list them all; findings in code unchanged since the baseline was recorded or committed are tagged '(check added or changed since the baseline)' instead of '(new)'"
+issue: "#598"
+breaking: false
