@@ -468,7 +468,11 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
   the report and on the `agent-harness` step, so the run is incomplete and `praetorctl adopt`
   exits non-zero; a caveman finding on text adoption keeps as written stays a warning. A dry
   run, and a manifest that declines `agent-harness` or `agent-definitions`, skip the check
-  (tests in `internal/adopt/plugin_projection_test.go`).
+  (tests in `internal/adopt/plugin_projection_test.go`). The check also requires Git to ignore
+  `.workingdir/evidence/`: a manifest that declines `git-ignore` needs `/.workingdir/` in the
+  repository's own `.gitignore`, or the run is incomplete
+  (`TestAdopt_DeclinedGitIgnoreNeedsTheOperatorWorkingDirRule`). Earlier releases exited 0 in
+  these cases.
 - **Earlier Praetor output.** The manifest, lock, label taxonomy, pinned catalog, flavor
   YAML (`.clang-format` and `.clang-tidy` included) and the `docs:seo-portal` documentation
   gate's YAML that adoption writes pass `yamllint --strict` with its default rules
