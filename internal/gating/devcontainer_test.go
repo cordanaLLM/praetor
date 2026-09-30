@@ -244,6 +244,14 @@ func TestExecutionRunsOnTheHostWithAReason(t *testing.T) {
 		{name: "unknown value", env: "of", goos: "linux", want: `"of" is neither auto nor off`},
 		{name: "dry run", goos: "linux", dryRun: true, want: "dry run"},
 		{name: "windows", goos: "windows", want: "Windows checkout"},
+		{name: "no user cache directory", goos: "linux", want: "no user cache directory", prepare: func(t *testing.T) {
+			for _, key := range []string{"XDG_CACHE_HOME", "HOME", "LocalAppData", "home"} {
+				t.Setenv(key, "")
+			}
+			if _, err := os.UserCacheDir(); err == nil {
+				t.Skip("this platform names a user cache directory without the environment")
+			}
+		}},
 		{name: "no go.mod", goos: "linux", want: "no go.mod", prepare: func(t *testing.T) {
 			if err := os.Remove(filepath.Join(repo, "go.mod")); err != nil {
 				t.Fatal(err)

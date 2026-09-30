@@ -115,7 +115,7 @@ func ResolveRepoRunBudget(raw, repoDir string) RunBudget {
 // hook that bounds the gate by it agree on the deadline.
 func EnvRunBudget(repoDir string) RunBudget {
 	budget := stageBudget(repoDir)
-	ctx, cancel := context.WithTimeout(context.Background(), GitQueryTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), devcontainerPlanTimeout)
 	defer cancel()
 	if plan, _ := planDevcontainer(ctx, repoDir, false, hostMachine()); plan != nil {
 		budget.Devcontainer = devcontainer.ImageBuildTimeout

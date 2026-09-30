@@ -114,8 +114,9 @@ func hostMachine() devcontainer.Host {
 
 // planDevcontainer decides, building nothing, whether the run's Go toolchain stages run in the
 // repository's devcontainer, and otherwise why they run on the host: the operator opted out, a dry
-// run builds nothing, the repository has no go.mod, or devcontainer.PlanImage refused the host or
-// the configuration. EnvRunBudget reserves the image build exactly when this returns a plan.
+// run builds nothing, the repository has no go.mod, the user has no cache directory to keep the
+// container's HOME in (devcontainerHome), or devcontainer.PlanImage refused the host or the
+// configuration. EnvRunBudget reserves the image build exactly when this returns a plan.
 func planDevcontainer(ctx context.Context, repoDir string, dryRun bool, host devcontainer.Host) (*devcontainer.ImagePlan, string) {
 	switch mode := strings.TrimSpace(os.Getenv(DevcontainerEnv)); mode {
 	case "", "auto":
@@ -129,6 +130,9 @@ func planDevcontainer(ctx context.Context, repoDir string, dryRun bool, host dev
 	}
 	if !util.FileExists(filepath.Join(repoDir, "go.mod")) {
 		return nil, "no go.mod: the devcontainer runs the Go toolchain stages only"
+	}
+	if _, err := os.UserCacheDir(); err != nil {
+		return nil, fmt.Sprintf("no user cache directory to keep the devcontainer's HOME in: %v", err)
 	}
 	pCtx, cancel := context.WithTimeout(ctx, devcontainerPlanTimeout)
 	defer cancel()

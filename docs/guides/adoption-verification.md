@@ -1070,6 +1070,7 @@ and `devcontainer.PlanImage` check, building nothing, that:
 
 - `PRAETOR_GATE_DEVCONTAINER` is unset or `auto`, and the run is not a dry run;
 - the repository root holds a `go.mod` and `.devcontainer/devcontainer.json`;
+- the user has a cache directory (`os.UserCacheDir`) to keep the container's `HOME` in;
 - the host is not Windows, and `docker` or `podman` is on `PATH` and answers `<runtime> info`
   within `devcontainer.RuntimeProbeTimeout` (10 s), docker first (`devcontainer.FindRuntime`). A
   CLI whose daemon is stopped, whose socket this user may not open, or whose podman machine is
