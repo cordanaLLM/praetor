@@ -29,12 +29,35 @@ func (sw *syncWriter) println(args ...any) {
 	_, sw.err = fmt.Fprintln(sw.w, args...)
 }
 
+// ErrAgentSurface marks every persona and plugin skill projection failure VerifyCompiledContext
+// returns, whatever its cause, so a caller tells a persona or plugin copy apart from AGENTS.md and
+// the vendor files without matching text (errors.Is): adoption records it on the
+// agent-definitions step, which writes those copies.
+var ErrAgentSurface = errors.New("agent persona or plugin skill projection rejected")
+
+// agentSurfaceError is a projection failure marked ErrAgentSurface. Its text and its chain are
+// the failure's own, so errors.Is still reaches ErrAgentProjectionDrift below it.
+type agentSurfaceError struct{ err error }
+
+func (e agentSurfaceError) Error() string        { return e.err.Error() }
+func (e agentSurfaceError) Unwrap() error        { return e.err }
+func (e agentSurfaceError) Is(target error) bool { return target == ErrAgentSurface }
+
+// markAgentSurface marks err ErrAgentSurface, and leaves nil nil so errors.Join drops it.
+func markAgentSurface(err error) error {
+	if err == nil {
+		return nil
+	}
+	return agentSurfaceError{err: err}
+}
+
 // VerifyCompiledContext checks the text register block, the ignore rule for the evidence
 // directory the block names (CheckEvidenceIgnored), the six transpiled vendor files, the caveman
 // lint over AGENTS.md and every canonical persona and skill, and every persona and plugin skill
 // projection, without writing anything. Every check runs and every failure is returned, so one
-// run names each fix instead of hiding the later failures behind the first. The CLI's
-// compile-context --verify and the MCP standards_compile_context verify_only call both run it.
+// run names each fix instead of hiding the later failures behind the first; each projection
+// failure is marked ErrAgentSurface. The CLI's compile-context --verify and the MCP
+// standards_compile_context verify_only call both run it.
 func VerifyCompiledContext(ctx context.Context, w io.Writer, tr *Transpiler, source, targetDir string) error {
 	sw := &syncWriter{w: w}
 	sw.printf("Verifying agent context synchronization against %s...\n", source)
@@ -90,7 +113,8 @@ func lintAgentText(ctx context.Context, sw *syncWriter, source, targetDir string
 }
 
 // verifyAgentSurfaces verifies every persona and plugin skill projection under targetDir and
-// returns every failure. It returns the number of persona copies verified.
+// returns every failure, each marked ErrAgentSurface. It returns the number of persona copies
+// verified.
 func verifyAgentSurfaces(ctx context.Context, sw *syncWriter, targetDir string) (int, error) {
 	verified, personaErr := VerifyAgentProjections(ctx, targetDir)
 	if personaErr == nil {
@@ -100,8 +124,8 @@ func verifyAgentSurfaces(ctx context.Context, sw *syncWriter, targetDir string) 
 	if skillErr == nil && skills > 0 {
 		sw.printf("  %d plugin skill projections verified (%s).\n", skills, PluginSkillsRel)
 	}
-	return verified, errors.Join(prefixError("agent persona verification failed", personaErr),
-		prefixError("plugin skill verification failed", skillErr))
+	return verified, errors.Join(markAgentSurface(prefixError("agent persona verification failed", personaErr)),
+		markAgentSurface(prefixError("plugin skill verification failed", skillErr)))
 }
 
 // prefixError wraps err with prefix, and leaves nil nil so errors.Join drops it.

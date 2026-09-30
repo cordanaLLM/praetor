@@ -464,15 +464,28 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
   hand-edited plugin copy is replaced with its line delta and backup like any persona copy, and
   a symlinked plugin directory fails adoption before its first write. After the last step,
   adoption runs the check `compile-context --verify` runs (`compiler.VerifyCompiledContext`,
-  `verifyAgentContext` in `internal/adopt/context_verify.go`). Each rejection is an error on
-  the report and on the `agent-harness` step, so the run is incomplete and `praetorctl adopt`
-  exits non-zero; a caveman finding on text adoption keeps as written stays a warning. A dry
-  run, and a manifest that declines `agent-harness` or `agent-definitions`, skip the check
-  (tests in `internal/adopt/plugin_projection_test.go`). The check also requires Git to ignore
-  `.workingdir/evidence/`: a manifest that declines `git-ignore` needs `/.workingdir/` in the
-  repository's own `.gitignore`, or the run is incomplete
-  (`TestAdopt_DeclinedGitIgnoreNeedsTheOperatorWorkingDirRule`). Earlier releases exited 0 in
-  these cases.
+  `verifyAgentContext` in `internal/adopt/context_verify.go`). The check reads the whole
+  repository, not only the files adoption wrote. Each rejection is an error on the report,
+  led by "compile-context --verify rejects the repository's agent context after adoption", and
+  on the step that writes what it rejects: `agent-definitions` for a persona or plugin copy,
+  `git-ignore` for the evidence ignore rule, `agent-harness` for `AGENTS.md` and the vendor
+  files. The run is then incomplete and `praetorctl adopt` exits non-zero; a caveman finding on
+  text adoption keeps as written stays a warning. A dry run, and a manifest that declines
+  `agent-harness` or `agent-definitions`, skip the check (tests in
+  `internal/adopt/plugin_projection_test.go` and `internal/adopt/context_verify_test.go`).
+  Earlier releases exited 0 in these cases, which now fail the run:
+  - A file in a persona directory that projects no canonical persona. `compile-context
+    --verify` treats every `.md` file in `.claude/agents`, `.codex/agents`, `.github/agents`,
+    `.gemini/agents` and `.agents/plugins/praetor/agents` as compiled output, so a subagent
+    written there by hand fails the run. Move it into `.agents/agents`, from where adoption
+    projects it to every selected client, or remove it
+    (`TestAdopt_Negative_ClientPersonaDirFileWithoutCanonicalPersona`). Adoption never rewrites
+    or removes such a file.
+  - A manifest that declines `git-ignore` while Git does not ignore `.workingdir/evidence/`.
+    Add `/.workingdir/` to the repository's own `.gitignore`
+    (`TestAdopt_DeclinedGitIgnoreNeedsTheOperatorWorkingDirRule`).
+  - Any other failure `compile-context --verify` names: fix what it names, or run
+    `praetorctl compile-context`.
 - **Earlier Praetor output.** The manifest, lock, label taxonomy, pinned catalog, flavor
   YAML (`.clang-format` and `.clang-tidy` included) and the `docs:seo-portal` documentation
   gate's YAML that adoption writes pass `yamllint --strict` with its default rules
