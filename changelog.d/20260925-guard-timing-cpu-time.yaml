@@ -1,4 +1,0 @@
-type: fixed
-title: "Guard scan-bound timing tests measure child CPU time on POSIX with a wall-clock fallback on Windows"
-breaking: false
-issue: "#662"

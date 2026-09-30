@@ -1,0 +1,4 @@
+type: fixed
+title: "Guard timing tests measure child CPU time, so host load no longer fails them"
+breaking: false
+issue: "#662"

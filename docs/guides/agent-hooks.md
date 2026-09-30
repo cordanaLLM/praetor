@@ -611,9 +611,12 @@ backtracks, so the find and `sed -i` rules cost cubic time in the length of one 
 16 KiB line held the find rule for 16 s, long enough to outlive a client's hook timeout. A
 command is refused, never truncated, because a truncated scan allows what lies past the cut;
 split it, or write the long content to a file first. Within both bounds the slowest rule
-answers in under a second of child CPU time (`TestEmittedInterceptorScanBounds`,
+needs under a second of child CPU time on an idle host, and the tests hold it under 5 s
+(`TestEmittedInterceptorScanBounds`,
 `test_guard_answers_the_slowest_admitted_commands_inside_the_bound` in
-`.config/lefthook/scripts/test_hooks.py`). The Go policy uses RE2, which is linear, and has
+`.config/lefthook/scripts/test_hooks.py`). The Python test measures CPU time, so host load
+does not fail it; on Windows, which reports no child CPU time, it measures wall clock against
+8 s instead. The Go policy uses RE2, which is linear, and has
 no such bound; `TestPythonGuardCarriesTheScanBounds` keeps praetor's guard on the same
 numbers.
 

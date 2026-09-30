@@ -2079,13 +2079,27 @@ class ScopeAndGuard(unittest.TestCase):
             run(["python3", "-c", "import time; time.sleep(10)"], timeout=0.01)
 
     def test_timeout_kills_child_process_group(self):
+        """The timeout stops the command and the child it started.
+
+        The parent records when it started the child, before the timeout fires, so the test
+        proves the group stop and not a race with interpreter start-up: with a 0.05 s timeout
+        the stop signal could reach the group before the child existed, and the child then
+        wrote its marker inside the stop grace (#668).
+        """
         with tempfile.TemporaryDirectory(prefix="praetor-child-") as temp:
+            spawned = Path(temp) / "child-spawned"
             marker = Path(temp) / "child-survived"
-            child = f"import time; from pathlib import Path; time.sleep(0.2); Path({str(marker)!r}).touch()"
-            parent = f"import subprocess,time; subprocess.Popen(['python3','-c',{child!r}]); time.sleep(10)"
+            child = f"import time; from pathlib import Path; time.sleep(5); Path({str(marker)!r}).touch()"
+            parent = (
+                "import subprocess, time; from pathlib import Path; "
+                f"subprocess.Popen(['python3', '-c', {child!r}]); "
+                f"Path({str(spawned)!r}).write_text(repr(time.time())); time.sleep(30)"
+            )
             with self.assertRaises(HookError):
-                run(["python3", "-c", parent], timeout=0.05)
-            time.sleep(0.3)
+                run(["python3", "-c", parent], timeout=3)
+            self.assertTrue(spawned.exists(), "the parent did not start its child within the timeout")
+            started = float(spawned.read_text())
+            time.sleep(max(0.0, started + 5.5 - time.time()))
             self.assertFalse(marker.exists())
 
     def test_timeout_reaps_the_tree_where_no_process_group_exists(self):
