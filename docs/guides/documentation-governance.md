@@ -61,8 +61,12 @@ is bounded to 4,096 bytes.
 The runner copies the canonical tool assets to a temporary directory, executes
 `npm ci --ignore-scripts --no-audit --no-fund`, and invokes the installed
 `markdownlint-cli2` binary directly. It does not use `npx` or leave a source-tree
-`node_modules/` directory. Every subprocess has a timeout, and the temporary
-installation is removed after success or failure.
+`node_modules/` directory. Before it lints, it checks that the installed
+`markdownlint-cli2` is the version the lock pins and exposes the expected binary
+(`markdownlintBinary` in `tools/markdownlint/verify.mjs`). The runner reads that
+version from the lock, so a pin update leaves `verify.mjs` unchanged. Every
+subprocess has a timeout, and the temporary installation is removed after success
+or failure.
 
 The lock installs no package with a known high or critical advisory. The
 `Go Vulnerability & AST Security Scan` job in `.github/workflows/security.yml`
@@ -75,9 +79,9 @@ ships as a new Praetor text, and a plain `praetorctl adopt` replaces an
 unedited earlier lock, `package.json` and `verify.mjs` without `--force`
 (`priorDigests` in `tools/markdownlint/assets.go`).
 
-The locked configuration is hermetic. `markdownlint-cli2` 0.23.3 has no option
-that turns configuration discovery off: beside the `--config` file it reads
-`.markdownlint-cli2.{jsonc,yaml,cjs,mjs}` and
+The locked configuration is hermetic. `markdownlint-cli2` (read through 0.23.3)
+has no option that turns configuration discovery off: beside the `--config` file
+it reads `.markdownlint-cli2.{jsonc,yaml,cjs,mjs}` and
 `.markdownlint.{jsonc,json,yaml,yml,cjs,mjs}` from its working directory and
 from every directory down to a linted file (`getAndProcessDirInfo` and
 `enumerateParents` in its `markdownlint-cli2.mjs`). A `.markdownlint.*` file
@@ -150,13 +154,24 @@ and every earlier line must be in `priorDigests`, in both directions
 (`TestShippedTextLedger`). Changing a managed text therefore takes three steps,
 and CI fails until all three are done:
 
-1. Change the text (a Renovate pin update does this for the workflow).
+1. Change the text (a Renovate pin update does this for the workflow, and for
+   `package.json` and `package-lock.json`).
 2. Append its digest:
    `PRAETOR_UPDATE_SHIPPED_TEXTS=1 go test ./internal/managedasset -run 'TestShippedTextLedger$'`.
    The step only appends; it never rewrites or drops a line.
 3. Record the outgoing text: add its digest to `priorDigests` and the text to
    `tools/markdownlint/testdata/prior/`. The test failure names the digest and
    the file whose history holds the text.
+
+An npm pin update also moves what records the lock's contents, so a Renovate
+pin pull request for the gate fails CI until these follow: the adoption
+goldens under `internal/adopt/testdata/managed-family/` (rewrite them with
+`PRAETOR_UPDATE_GOLDEN=1 go test ./internal/adopt -run Golden`), the direct pins
+in `TestPackageLockPinsEveryInstalledPackage`
+(`tools/markdownlint/assets_test.go`), `.needs.yaml`
+(`praetorctl needs scan --write`), and the npm table of `THIRD-PARTY-NOTICES.md`
+(`praetorctl sbom notices`, which stops on a package without a row or under a
+license outside `knownNoticeLicenses` in `internal/supplychain/notices.go`).
 
 ## Repository settings
 

@@ -25,7 +25,7 @@ CONTEXT = {"AGENTS.md", "CLAUDE.md", ".windsurfrules",
 CONTEXT_PREFIXES = (".agents/", ".cursor/rules/", ".claude/agents/", ".codex/agents/",
                     ".gemini/agents/", ".github/agents/")
 # The extensions semgrep assigns each language a rule can target, from semgrep's language
-# table (semgrep_interfaces/lang.json, "exts", semgrep 1.177.0). Keyed by the names
+# table (semgrep_interfaces/lang.json, "exts", semgrep 1.178.0). Keyed by the names
 # .config/semgrep/hiss-invariants.yml uses; test_semgrep_suffixes_cover_every_rule_language
 # fails when a rule names a language missing here.
 SEMGREP_LANGUAGE_EXTENSIONS = {

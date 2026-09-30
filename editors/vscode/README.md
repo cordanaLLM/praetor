@@ -154,7 +154,9 @@ that trail upstream on the update path. Everything the extension uses is in
 VS Code and forks older than 1.107 no longer install updates of this extension.
 `src/setup.test.ts` checks that the floor, the pinned types and the lockfile
 agree, and that the floor lies between 1.105.0 (the `when` clause) and 1.107.0
-(the trailing fork host).
+(the trailing fork host). Renovate leaves `@types/vscode` alone (the
+`editors/vscode/package.json` rule in `renovate.json`), so the pin moves only
+when someone raises the floor with it.
 
 ## Settings
 
