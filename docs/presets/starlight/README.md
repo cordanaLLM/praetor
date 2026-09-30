@@ -98,9 +98,12 @@ without its content, so keep `make docs-figures` in the gate.
 
 The `docs-presets` job in `.github/workflows/ci.yml` builds the preset this way (its
 `Build Starlight Preset In An Adopter Fixture` step): a temporary repository adopted with
-`docs:seo-portal`, the preset copied into its root, `build` and `make docs-figures`, then three
-site builds (without `DOCS_SITE_URL`, with a root host and with a path), each followed by the
-`site` check and the Chromium smoke test, `tools/figures/smoke.mjs`, under that build's base.
+`docs:seo-portal`, the preset copied into its root, `build` and `make docs-figures`, then four
+site builds (without `DOCS_SITE_URL`, with a root host, with a path, and with a configuration that
+adds its own `mdx()` after the preset's integrations), each followed by the `site` check and the
+Chromium smoke test, `tools/figures/smoke.mjs`, under that build's base. Starlight adds `mdx()`
+with static optimization only when the site registers none, so the fourth build covers a site that
+registers its own: a figure on an `.mdx` page renders the same there.
 
 ## Pinned Dependencies
 

@@ -157,10 +157,28 @@ function pageError(path, errors) {
 }
 
 /**
+ * The node that puts the figure markup `html` on a page Sätteri compiles as `format`. A Markdown
+ * page takes an `html` node, which Sätteri writes out unchanged. Sätteri's MDX compiler refuses an
+ * `html` node unless the MDX integration optimizes static content, which Starlight's own mdx() does
+ * and an mdx() the site registers itself does not by default. An MDX page therefore takes
+ * `<Fragment set:html>` with the markup as a string: the element Astro's static optimization writes
+ * itself, from the Fragment every MDX page receives (the `components` of Content in
+ * @astrojs/mdx/dist/vite-plugin-mdx-postprocess.js). The markup stays one string, byte for byte:
+ * re-parsed as JSX, its unclosed <source> and <img> would swallow the elements after them, and its
+ * braces would become expressions.
+ */
+function figureMarkupNode(html, format) {
+  if (format !== 'mdx') return { type: 'html', value: html };
+  const markup = { type: 'mdxJsxAttribute', name: 'set:html', value: html };
+  return { type: 'mdxJsxFlowElement', name: 'Fragment', attributes: [markup], children: [] };
+}
+
+/**
  * The Sätteri plugin, for Astro 7's default Markdown processor: each figure block becomes its figure
- * markup, and a block that cannot fails the page, as `remarkFigures` does. Sätteri reports a node's
- * line only to a plugin that asks for positions. The options ride on the plugin as `figures`, which
- * Sätteri does not read, so that the Astro configuration changes whenever a figure does.
+ * markup (`figureMarkupNode`, by the page's `ctx.sourceFormat`), and a block that cannot fails the
+ * page, as `remarkFigures` does. Sätteri reports a node's line only to a plugin that asks for
+ * positions. The options ride on the plugin as `figures`, which Sätteri does not read, so that the
+ * Astro configuration changes whenever a figure does.
  */
 export function satteriFigures(options) {
   return {
@@ -172,7 +190,7 @@ export function satteriFigures(options) {
       const errors = [];
       const replaced = figureNode(node, options, errors);
       if (!replaced) throw pageError(ctx?.fileURL, errors);
-      return { type: 'html', value: replaced.value };
+      return figureMarkupNode(replaced.value, ctx?.sourceFormat);
     },
   };
 }

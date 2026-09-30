@@ -515,11 +515,15 @@ jobs:
       # facet and the preset copied into its root. The preset ships its example spec without
       # outputs, so the managed docs-figures target must first fail and name the render command;
       # after `build` it must pass, and its `sources` must read the pages under src/content/docs,
-      # found from astro.config.mjs. Then `npm ci` from the preset's lock and the three builds.
-      # After each build the Node site check and the Chromium smoke test run under the base that
-      # build used, so a figure that did not render, an image or loader URL outside /preset/, or a
-      # player that does not mount fails the job. smoke.mjs resolves --site against this checkout,
-      # so it gets an absolute path.
+      # found from astro.config.mjs. Then `npm ci` from the preset's lock and four builds: the
+      # preset's three (no DOCS_SITE_URL, a root host, a path), and one whose configuration adds its
+      # own mdx() after the preset's integrations. Starlight registers mdx() with static optimization
+      # only when the site has none, and Sätteri's MDX compiler without it refuses an HTML node, so
+      # the fourth build proves a figure on an .mdx page renders either way. After each build the
+      # Node site check and the Chromium smoke test run under the base that build used, so a figure
+      # that did not render, an image or loader URL outside /preset/, or a player that does not
+      # mount fails the job. smoke.mjs resolves --site against this checkout, so it gets an
+      # absolute path.
       - name: Build Starlight Preset In An Adopter Fixture
         if: steps.changed.outputs.run == 'true'
         run: |
@@ -554,6 +558,15 @@ jobs:
           verify root /
           DOCS_SITE_URL="$PRESET_SUBPATH_URL" npm run build
           verify subpath /preset/
+          # mdx() goes after Starlight, whose expressive-code integration must precede it.
+          cat > astro.mdx.config.mjs <<'EOF'
+          import mdx from '@astrojs/mdx';
+          import config from './astro.config.mjs';
+
+          export default { ...config, integrations: [...config.integrations, mdx()] };
+          EOF
+          npm run build -- --config astro.mdx.config.mjs
+          verify mdx /
 
       # The presets ship placeholder identities (example-org/example-repo, PlaceholderLang)
       # for an adopter to replace, so --allow-placeholders; every other finding fails. The
