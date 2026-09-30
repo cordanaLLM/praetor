@@ -208,9 +208,9 @@ func stateGitString(ctx context.Context, root string, args ...string) (string, e
 	return strings.TrimSpace(string(result.Stdout)), err
 }
 
-// rejectStateGitFilters refuses a repository whose own configuration names clean or process
-// filters, through the one probe util.GitWorkingTreeChanges uses: state observations run
-// status and diff, which would execute them.
+// rejectStateGitFilters refuses a repository in which a tracked path selects a clean or process
+// filter that its own configuration defines, through the one probe util.GitWorkingTreeChanges
+// uses: state observations run status and diff, which would execute it.
 func rejectStateGitFilters(ctx context.Context, root string) error {
 	err := util.RefuseGitStatusFilters(ctx, root)
 	if errors.Is(err, util.ErrGitStatusFilters) {
