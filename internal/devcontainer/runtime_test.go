@@ -7,6 +7,7 @@ package devcontainer
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -28,9 +29,16 @@ func onPath(names ...string) func(string) (string, error) {
 // answers is a runner whose every command succeeds, as a runtime whose daemon answers.
 func answers(context.Context, string, string, ...string) (string, error) { return "", nil }
 
-// hostWith is a host on goos with exactly the named commands on PATH, each runtime answering.
+// noFetch is a fetcher for plans that must fetch nothing.
+func noFetch(context.Context, string, io.Writer) error {
+	return errors.New("this test fetches nothing")
+}
+
+// hostWith is a host on goos/amd64 with exactly the named commands on PATH, each runtime
+// answering, and a tool cache that fetches nothing.
 func hostWith(goos string, names ...string) Host {
-	return Host{GOOS: goos, LookPath: onPath(names...), Run: answers}
+	return Host{GOOS: goos, GOARCH: "amd64", LookPath: onPath(names...), Run: answers,
+		Tools: ToolCache{Dir: "/nonexistent/praetor-tools", Fetch: noFetch}}
 }
 
 // writeConfigRepo writes a repository holding config as its devcontainer.json, plus each extra
@@ -60,17 +68,17 @@ func writeConfigRepo(t *testing.T, config string, extra map[string]string) strin
 
 const dockerfileConfig = `{"name": "fixture", "build": {"dockerfile": "Dockerfile", "context": ".", "args": {"B": "2", "A": "1"}}}`
 
-var linux = hostWith("linux", "docker", "podman", CLIName)
+var linux = hostWith("linux", "docker", "podman")
 
 // Positive: a Dockerfile configuration without features plans a runtime build of confined inputs,
-// with docker preferred over podman, and needs no devcontainer CLI.
+// with docker preferred over podman, and plans no devcontainer CLI.
 func TestPlanImagePlansARuntimeBuild(t *testing.T) {
 	root := writeConfigRepo(t, dockerfileConfig, map[string]string{"Dockerfile": "FROM scratch\n"})
 	plan, err := PlanImage(t.Context(), root, linux)
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
-	if plan.Runtime.Name != "docker" || plan.CLI != "" || plan.RepoDir != root {
+	if plan.Runtime.Name != "docker" || plan.CLI != nil || plan.RepoDir != root {
 		t.Errorf("plan = %+v, want docker, no CLI, repo %s", plan, root)
 	}
 	if want := filepath.Join(root, ".devcontainer", "Dockerfile"); plan.dockerfile != want {
@@ -89,20 +97,28 @@ func TestPlanImagePlansARuntimeBuild(t *testing.T) {
 // ErrImageUnavailable and a reason naming the cause.
 func TestPlanImageRefusesWithAReason(t *testing.T) {
 	built := writeConfigRepo(t, dockerfileConfig, nil)
+	withFeatures := writeConfigRepo(t, `{"name": "x", "image": "a@sha256:`+strings.Repeat("0", 64)+
+		`", "features": {"ghcr.io/devcontainers/features/node:1": {}, "ghcr.io/devcontainers/features/go:1": {}}}`, nil)
+	riscv := hostWith("linux", "docker")
+	riscv.GOARCH = "riscv64"
+	noCache := hostWith("linux", "docker")
+	noCache.Tools.Dir = ""
 	cases := []struct {
 		name, root string
 		host       Host
 		want       string
 	}{
-		{"windows", built, hostWith("windows", "docker", "podman", CLIName), "Windows"},
+		{"windows", built, hostWith("windows", "docker", "podman"), "Windows"},
 		{"no config", t.TempDir(), linux, "has no " + ConfigPath},
-		{"no runtime", built, hostWith("linux", CLIName), "neither docker nor podman"},
+		{"no runtime", built, hostWith("linux"), "neither docker nor podman"},
 		{"unmanaged key", writeConfigRepo(t, `{"name": "x", "image": "a@sha256:`+strings.Repeat("0", 64)+`", "runArgs": []}`, nil), linux, "runArgs"},
 		{"neither image nor build", writeConfigRepo(t, `{"name": "x"}`, nil), linux, "neither an image nor a build"},
 		{"dockerfile escapes", writeConfigRepo(t, `{"name": "x", "build": {"dockerfile": "../../outside", "context": "."}}`, nil), linux, "outside the repository"},
 		{"context escapes", writeConfigRepo(t, `{"name": "x", "build": {"dockerfile": "Dockerfile", "context": "../.."}}`, nil), linux, "build.context"},
-		{"features without the CLI", writeConfigRepo(t, `{"name": "x", "image": "a@sha256:`+strings.Repeat("0", 64)+`", "features": {"ghcr.io/devcontainers/features/node:1": {}, "ghcr.io/devcontainers/features/go:1": {}}}`, nil),
-			hostWith("linux", "docker"), "(ghcr.io/devcontainers/features/go:1, ghcr.io/devcontainers/features/node:1), which only the devcontainer CLI applies"},
+		{"features on a platform without a pinned Node", withFeatures, riscv, "(ghcr.io/devcontainers/features/go:1, ghcr.io/devcontainers/features/node:1), " +
+			"which only the devcontainer CLI applies, and the gate cannot run its pinned CLI here: the gate pins Node for " +
+			"darwin-arm64, darwin-x64, linux-arm64, linux-x64 only, not linux/riscv64"},
+		{"features without a tool cache", withFeatures, noCache, "no tool cache"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -117,9 +133,9 @@ func TestPlanImageRefusesWithAReason(t *testing.T) {
 	}
 }
 
-// Boundary: a recorded Praetor bootstrap declares features, so it plans only where the
-// devcontainer CLI is on PATH, and its companions are verified first: one edited byte in the
-// Dockerfile refuses the plan through the same check Verify applies.
+// Boundary: a recorded Praetor bootstrap declares features, so it plans the pinned devcontainer
+// CLI, and its companions are verified first: one edited byte in the Dockerfile refuses the plan
+// through the same check Verify applies.
 func TestPlanImageVerifiesARecordedBootstrap(t *testing.T) {
 	path := writeRecordedBundle(t, BootstrapOptions{SourceRoot: bootstrapSourceFixture(t)})
 	root := filepath.Dir(filepath.Dir(path))
@@ -127,8 +143,8 @@ func TestPlanImageVerifiesARecordedBootstrap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
-	if plan.CLI != "/usr/bin/"+CLIName || plan.dockerfile == "" {
-		t.Errorf("a recorded bootstrap with features must plan a devcontainer CLI build: %+v", plan)
+	if plan.CLI == nil || plan.CLI.Platform != "linux-x64" || plan.dockerfile == "" {
+		t.Errorf("a recorded bootstrap with features must plan a pinned devcontainer CLI build: %+v", plan)
 	}
 	dockerfile := filepath.Join(filepath.Dir(path), bootstrapDockerfile)
 	data, err := os.ReadFile(dockerfile)
@@ -143,15 +159,24 @@ func TestPlanImageVerifiesARecordedBootstrap(t *testing.T) {
 	}
 }
 
-// Praetor's own devcontainer declares features, so a host without the devcontainer CLI runs the
-// gate on the host and says which features need it.
+// Praetor's own devcontainer declares features (#652). It plans the pinned devcontainer CLI on a
+// host with docker alone, no CLI on PATH, and on a platform the Node pins do not cover it runs the
+// gate on the host and names the features.
 func TestPlanImageNamesPraetorsOwnFeatures(t *testing.T) {
-	_, err := PlanImage(t.Context(), filepath.Join("..", ".."), hostWith("linux", "docker"))
-	if !errors.Is(err, ErrImageUnavailable) || !strings.Contains(err.Error(), "ghcr.io/devcontainers/features/go:1") {
-		t.Fatalf("praetor's devcontainer without the CLI: %v", err)
+	for _, arch := range []string{"amd64", "arm64"} {
+		host := hostWith("linux", "docker")
+		host.GOARCH = arch
+		plan, err := PlanImage(t.Context(), filepath.Join("..", ".."), host)
+		if err != nil || plan.CLI == nil || plan.CLI.Platform != "linux-"+map[string]string{"amd64": "x64", "arm64": "arm64"}[arch] {
+			t.Fatalf("praetor's devcontainer on linux/%s must plan the pinned CLI with docker alone: %+v %v", arch, plan, err)
+		}
 	}
-	if _, err := PlanImage(t.Context(), filepath.Join("..", ".."), linux); err != nil {
-		t.Fatalf("praetor's devcontainer must plan where the CLI is present: %v", err)
+	host := hostWith("darwin", "podman")
+	host.GOARCH = "386"
+	_, err := PlanImage(t.Context(), filepath.Join("..", ".."), host)
+	if !errors.Is(err, ErrImageUnavailable) || !strings.Contains(err.Error(), "ghcr.io/devcontainers/features/go:1") ||
+		!strings.Contains(err.Error(), "not darwin/386") {
+		t.Fatalf("praetor's devcontainer where no Node is pinned: %v", err)
 	}
 }
 
@@ -202,15 +227,30 @@ func TestBuildUsesThePlannedBuilder(t *testing.T) {
 		t.Errorf("the ID must be read through the per-run tag, got %q", inspect)
 	}
 
-	plan.CLI = "/usr/bin/" + CLIName
+	plan.CLI = provisionedCLI(t)
 	runner = &recordingRunner{id: "sha256:" + hexID}
-	if img, err = plan.Build(t.Context(), runner.run, testRefs); err != nil || img.Builder != CLIName+" build" {
+	if img, err = plan.Build(t.Context(), runner.run, testRefs); err != nil || img.Builder != plan.CLI.String() ||
+		!strings.HasPrefix(img.Builder, CLIName+" build (@devcontainers/cli ") {
 		t.Fatalf("CLI build: %+v %v", img, err)
 	}
-	wantCLI := []string{CLIName, "build", "--workspace-folder", root, "--config", plan.ConfigPath,
-		"--image-name", testRefs.Stable, "--image-name", testRefs.Run, "--docker-path", "/usr/bin/podman"}
+	wantCLI := []string{"node", cliScript(plan.CLI.installDir()), "build", "--workspace-folder", root, "--config", plan.ConfigPath,
+		"--no-lockfile", "--image-name", testRefs.Stable, "--image-name", testRefs.Run, "--docker-path", "/usr/bin/podman"}
 	if !slices.Equal(runner.commands[0], wantCLI) {
 		t.Errorf("CLI build command = %q, want %q", runner.commands[0], wantCLI)
+	}
+
+	// Boundary: a committed feature lockfile is enforced, never rewritten, and the CLI still
+	// writes nothing into the checkout.
+	lock := filepath.Join(root, ".devcontainer", featureLockfile)
+	if err := os.WriteFile(lock, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runner = &recordingRunner{id: hexID}
+	if _, err := plan.Build(t.Context(), runner.run, testRefs); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(runner.commands[0], "--frozen-lockfile") || slices.Contains(runner.commands[0], "--no-lockfile") {
+		t.Errorf("a committed lockfile must be built --frozen-lockfile: %q", runner.commands[0])
 	}
 }
 
@@ -256,6 +296,12 @@ func TestRunArgsMapTheHostUserPerRuntime(t *testing.T) {
 	if !slices.Contains(podman, "--userns=keep-id") || slices.Contains(podman, "--user") {
 		t.Errorf("podman must map the user with keep-id, got %q", podman)
 	}
+	// Rootless docker maps the container's root to the host user: as the host UID the command
+	// would be a subordinate user inside, unable to write the checkout or HOME.
+	rootless := Image{Runtime: Runtime{Name: "docker", Rootless: true}, ID: id}.RunArgs(opts, "go")
+	if at := slices.Index(rootless, "--user"); at < 0 || rootless[at+1] != "0:0" || slices.Contains(rootless, "1000:1001") {
+		t.Errorf("rootless docker must run as the container root, the host user, got %q", rootless)
+	}
 	opts.UID, opts.GID = -1, -1
 	none := Image{Runtime: Runtime{Name: "docker"}, ID: id}.RunArgs(opts, "go")
 	if slices.Contains(none, "--user") || slices.Contains(none, "--userns=keep-id") {
@@ -272,6 +318,7 @@ func TestRunArgsMapTheHostUserPerRuntime(t *testing.T) {
 // probingRunner answers `<runtime> info` per runtime: an error for the named ones, success for the
 // rest, and records each probe with the time its context allowed.
 type probingRunner struct {
+	answer string
 	down   map[string]error
 	probed []string
 	bounds []time.Duration
@@ -279,11 +326,11 @@ type probingRunner struct {
 
 func (r *probingRunner) run(ctx context.Context, _, name string, args ...string) (string, error) {
 	base := filepath.Base(name)
-	r.probed = append(r.probed, base+" "+strings.Join(args, " "))
+	r.probed = append(r.probed, base+" "+args[0])
 	if deadline, ok := ctx.Deadline(); ok {
 		r.bounds = append(r.bounds, time.Until(deadline))
 	}
-	return "", r.down[base]
+	return r.answer, r.down[base]
 }
 
 // Positive: a runtime counts only once `<runtime> info` answers, docker before podman, each probe
@@ -301,6 +348,43 @@ func TestFindRuntimeProbesEachRuntime(t *testing.T) {
 	rt, err = FindRuntime(t.Context(), t.TempDir(), Host{GOOS: "linux", LookPath: onPath("docker", "podman"), Run: daemonDown.run})
 	if err != nil || rt.Name != "podman" || !slices.Equal(daemonDown.probed, []string{"docker info", "podman info"}) {
 		t.Errorf("a stopped docker must fall through to podman: %+v %v, probes %q", rt, err, daemonDown.probed)
+	}
+}
+
+// Positive, negative and boundary: docker's security options say whether its daemon is rootless. A
+// daemon reporting name=rootless plans a rootless runtime, one without it a rootful one, an empty
+// answer carries no options, and an answer that is not a JSON list refuses docker, which is then
+// passed over like a daemon that does not answer.
+func TestFindRuntimeDetectsRootlessDocker(t *testing.T) {
+	for _, tc := range []struct {
+		answer   string
+		rootless bool
+	}{
+		{`["name=seccomp,profile=builtin","name=rootless","name=cgroupns"]`, true},
+		{`["name=seccomp,profile=builtin","name=cgroupns"]`, false},
+		{`["name=rootlessish"]`, false},
+		{"", false},
+		{"null\n", false},
+	} {
+		runner := &probingRunner{answer: tc.answer}
+		rt, err := FindRuntime(t.Context(), t.TempDir(), Host{GOOS: "linux", LookPath: onPath("docker"), Run: runner.run})
+		if err != nil || rt.Name != "docker" || rt.Rootless != tc.rootless {
+			t.Errorf("security options %q: runtime %+v %v, want rootless=%v", tc.answer, rt, err, tc.rootless)
+		}
+	}
+	garbled := &probingRunner{answer: "Security Options: rootless"}
+	if _, err := FindRuntime(t.Context(), t.TempDir(), Host{GOOS: "linux", LookPath: onPath("docker"), Run: garbled.run}); err == nil ||
+		!strings.Contains(err.Error(), "not a JSON list") {
+		t.Errorf("an answer that is not a JSON list must refuse docker, got %v", err)
+	}
+	var asked []string
+	record := func(_ context.Context, _, name string, args ...string) (string, error) {
+		asked = append(asked, filepath.Base(name)+" "+strings.Join(args, " "))
+		return "", nil
+	}
+	if _, err := FindRuntime(t.Context(), t.TempDir(), Host{GOOS: "linux", LookPath: onPath("docker"), Run: record}); err != nil ||
+		!slices.Equal(asked, []string{"docker info --format {{json .SecurityOptions}}"}) {
+		t.Errorf("docker must be asked for its security options, asked %q (%v)", asked, err)
 	}
 }
 

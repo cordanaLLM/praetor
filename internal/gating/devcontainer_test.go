@@ -7,6 +7,7 @@ package gating
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -32,14 +33,16 @@ type containerCall struct {
 // fakeRuntime stands in for docker: it builds, inspects, runs and removes containers without a
 // runtime, and answers the commands run inside them the way the image under test would.
 type fakeRuntime struct {
-	calls    []containerCall
-	host     []recordedCommand
-	removed  []string
-	built    [][]string      // the build command lines
-	released []string        // the image tags removed
-	has      map[string]bool // commands on the image's PATH
-	failTest error           // what go test fails with inside the container
-	failRun  map[string]error
+	calls     []containerCall
+	host      []recordedCommand
+	removed   []string
+	built     [][]string       // the build command lines
+	released  []string         // the image tags removed
+	has       map[string]bool  // commands on the image's PATH
+	failTest  error            // what go test fails with inside the container
+	failEnv   error            // what go env fails with inside the container
+	failWhich map[string]error // what the PATH probe for a command fails with inside the container
+	failRun   map[string]error
 }
 
 func newFakeRuntime(onImagePath ...string) *fakeRuntime {
@@ -47,13 +50,13 @@ func newFakeRuntime(onImagePath ...string) *fakeRuntime {
 	for _, name := range onImagePath {
 		has[name] = true
 	}
-	return &fakeRuntime{has: has, failRun: map[string]error{}}
+	return &fakeRuntime{has: has, failRun: map[string]error{}, failWhich: map[string]error{}}
 }
 
 func (f *fakeRuntime) run(_ context.Context, dir, name string, args ...string) (string, error) {
 	if filepath.Base(name) != "docker" || len(args) == 0 {
 		f.host = append(f.host, recordedCommand{dir: dir, name: name, args: args})
-		return "", nil
+		return "", installCLI(dir, args)
 	}
 	if err := f.failRun[args[0]]; err != nil {
 		return "", err
@@ -77,6 +80,26 @@ func (f *fakeRuntime) run(_ context.Context, dir, name string, args ...string) (
 	return "", nil
 }
 
+// installCLI stands in for the pinned Node's `npm ci`: it installs the pinned devcontainer CLI into
+// dir, as the locked install would. Any other host command does nothing.
+func installCLI(dir string, args []string) error {
+	if len(args) < 2 || args[1] != "ci" {
+		return nil
+	}
+	pins, err := devcontainer.LoadCLIPins()
+	if err != nil {
+		return err
+	}
+	pkg := filepath.Join(dir, "node_modules", "@devcontainers", "cli")
+	if err := os.MkdirAll(pkg, 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(pkg, "package.json"), []byte(`{"version": "`+pins.CLIVersion+`"}`), 0o600); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(pkg, "devcontainer.js"), []byte("cli"), 0o600)
+}
+
 // inContainer answers the command a `docker run` line carries after its --workdir and image.
 func (f *fakeRuntime) inContainer(args []string) (string, error) {
 	at := slices.Index(args, "--workdir")
@@ -87,12 +110,15 @@ func (f *fakeRuntime) inContainer(args []string) (string, error) {
 	f.calls = append(f.calls, call)
 	switch {
 	case call.name == "sh":
+		if err := f.failWhich[call.args[len(call.args)-1]]; err != nil {
+			return "", err
+		}
 		if f.has[call.args[len(call.args)-1]] {
 			return "/usr/bin/" + call.args[len(call.args)-1] + "\n", nil
 		}
 		return "", nil
 	case call.name == "go" && len(call.args) == 2 && call.args[0] == "env":
-		return map[string]string{"CGO_ENABLED": "1\n", "CC": "gcc\n"}[call.args[1]], nil
+		return map[string]string{"CGO_ENABLED": "1\n", "CC": "gcc\n"}[call.args[1]], f.failEnv
 	case call.name == "go" && call.args[0] == "test":
 		return "FAIL example.test", f.failTest
 	}
@@ -166,7 +192,8 @@ func devcontainerConfig(t *testing.T, repo string, runtime *fakeRuntime) *stageC
 	t.Setenv(DevcontainerEnv, "")
 	t.Setenv("CGO_ENABLED", "")
 	cfg, _ := newTestConfig(t, repo, false)
-	cfg.goos = "linux"
+	cfg.goos, cfg.goarch = "linux", "amd64"
+	cfg.fetch = func(context.Context, string, io.Writer) error { return errors.New("the fixture fetches nothing") }
 	cfg.run = runtime.run
 	cfg.lookPath = func(name string) (string, error) {
 		if name == "docker" {
@@ -303,9 +330,37 @@ func TestDevcontainerToolchainBoundaries(t *testing.T) {
 		t.Fatalf("resolve: %v", err)
 	}
 	t.Setenv("CGO_ENABLED", "0")
-	available, reason := raceDetectorAvailable(t.Context(), noCC)
-	if available || reason != `the C compiler "gcc" named by go env is not on PATH in the devcontainer` {
-		t.Errorf("race detector in an image without gcc = %v %q", available, reason)
+	available, reason, err := raceDetectorAvailable(t.Context(), noCC)
+	if available || err != nil || reason != `the C compiler "gcc" named by go env is not on PATH in the devcontainer` {
+		t.Errorf("race detector in an image without gcc = %v %q %v", available, reason, err)
+	}
+}
+
+// Negative: in the devcontainer a race probe the container does not answer fails the race stage
+// instead of skipping it, so the receipt cannot certify a run whose container broke; the host
+// keeps reporting such a probe as the skip reason it always was.
+func TestDevcontainerRaceProbeFailureFailsTheStage(t *testing.T) {
+	repo, _ := devcontainerRepo(t)
+	for name, broken := range map[string]func(*fakeRuntime){
+		"go env":         func(f *fakeRuntime) { f.failEnv = errors.New("OCI runtime exec failed") },
+		"compiler probe": func(f *fakeRuntime) { f.failWhich["gcc"] = errors.New("OCI runtime exec failed") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			runtime := newFakeRuntime("go", "gcc")
+			cfg := devcontainerConfig(t, repo, runtime)
+			if err := resolveExecution(t.Context(), cfg); err != nil {
+				t.Fatalf("resolve: %v", err)
+			}
+			broken(runtime)
+			_, err := runTestStage(t.Context(), cfg)
+			if err == nil || errors.As(err, new(*stageSkip)) || !strings.Contains(err.Error(), "in the devcontainer: OCI runtime exec failed") {
+				t.Fatalf("a race probe the container did not answer must fail the stage, got %v", err)
+			}
+		})
+	}
+	host := &stageConfig{run: func(context.Context, string, string, ...string) (string, error) { return "", errors.New("go missing") }}
+	if available, reason, err := raceDetectorAvailable(t.Context(), host); available || err != nil || !strings.Contains(reason, "go missing") {
+		t.Errorf("on the host an unreadable go env stays a skip reason: %v %q %v", available, reason, err)
 	}
 }
 
@@ -518,5 +573,170 @@ func TestUnansweringRuntimeRunsOnTheHost(t *testing.T) {
 	t.Setenv("PATH", bin)
 	if budget := EnvRunBudget(repo); budget.Devcontainer != 0 {
 		t.Errorf("a runtime that does not answer builds nothing, so reserves nothing: %+v", budget)
+	}
+}
+
+// featuresRepo turns a devcontainer fixture into one that declares a feature, so only the pinned
+// devcontainer CLI can build it, and returns the tool cache the gate keeps that CLI in.
+func featuresRepo(t *testing.T, repo string) string {
+	t.Helper()
+	writeFile(t, filepath.Join(repo, ".devcontainer", "devcontainer.json"),
+		`{"name": "fixture", "build": {"dockerfile": "Dockerfile"}, "features": {"ghcr.io/devcontainers/features/go:1": {}}}`)
+	treeGit(t, repo, "add", "-A")
+	treeGit(t, repo, "commit", "-q", "-m", "declare a feature")
+	tools, err := praetorCacheDir(devcontainerToolsRel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tools
+}
+
+// Positive: a devcontainer that declares features, as Praetor's own does (#652), is built by the
+// pinned devcontainer CLI, installed from the pinned lock by the pinned Node, with docker as its
+// runtime and no lockfile written into the checkout; the receipt names the CLI and Node versions.
+func TestFeaturesBuildThroughThePinnedCLI(t *testing.T) {
+	repo, resolved := devcontainerRepo(t)
+	runtime := newFakeRuntime("go", "gcc")
+	cfg := devcontainerConfig(t, repo, runtime)
+	tools := featuresRepo(t, repo)
+	pins, err := devcontainer.LoadCLIPins()
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := filepath.Join(tools, "node-v"+pins.Node.Version+"-linux-x64", "bin", "node")
+	if err := os.MkdirAll(filepath.Dir(node), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, node, "an earlier run published the pinned Node")
+
+	if err := resolveExecution(t.Context(), cfg); err != nil {
+		t.Fatalf("resolve: %v (%+v)", err, cfg.rep.Stages)
+	}
+	want := "devcontainer build (@devcontainers/cli " + pins.CLIVersion + ", Node " + pins.Node.Version + ")"
+	if exec := cfg.rep.Execution; exec == nil || exec.Environment != executionDevcontainer || exec.Builder != want {
+		t.Fatalf("execution = %+v, want the devcontainer built by %s", exec, want)
+	}
+	var install, build []string
+	for _, command := range runtime.host {
+		if command.name != node || len(command.args) < 2 {
+			continue
+		}
+		switch command.args[1] {
+		case "ci":
+			install = command.args
+		case "build":
+			build = command.args
+		}
+	}
+	if !slices.Equal(install[1:], []string{"ci", "--ignore-scripts", "--no-audit", "--no-fund"}) {
+		t.Errorf("the CLI must be installed with the locked npm ci, got %q", install)
+	}
+	if !slices.Contains(build, "--no-lockfile") || build[slices.Index(build, "--docker-path")+1] != "/usr/bin/docker" ||
+		build[slices.Index(build, "--workspace-folder")+1] != resolved {
+		t.Errorf("the CLI must build the checkout with docker and write no lockfile, got %q", build)
+	}
+	if status, err := util.RunGit(t.Context(), repo, "status", "--porcelain"); err != nil || status != "" {
+		t.Errorf("the build must leave the checkout clean, got %q %v", status, err)
+	}
+}
+
+// Negative: a pinned Node download whose checksum is not the pinned one fails closed. The run is
+// rejected through a failed Devcontainer Image stage naming the mismatch and the opt-out, and the
+// stages never fall back to the host.
+func TestPinnedCLIChecksumFailureRejectsTheRun(t *testing.T) {
+	repo, _ := devcontainerRepo(t)
+	runtime := newFakeRuntime("go", "gcc")
+	cfg := devcontainerConfig(t, repo, runtime)
+	featuresRepo(t, repo)
+	cfg.fetch = func(_ context.Context, _ string, w io.Writer) error {
+		_, err := w.Write([]byte("not the pinned release"))
+		return err
+	}
+	rep := runPipeline(t.Context(), cfg, time.Now())
+	if rep.Status != StatusRejected || len(rep.Stages) != 1 || rep.Execution != nil {
+		t.Fatalf("a checksum mismatch must reject the run before any stage and record no host run: %+v", rep)
+	}
+	stage := rep.Stages[0]
+	for _, want := range []string{"checksum mismatch", "the pinned value is", DevcontainerEnv + "=off"} {
+		if stage.Name != DevcontainerStage || stage.Status != StageFailed || !strings.Contains(stage.Message, want) {
+			t.Errorf("stage = %+v, want a failed %s naming %q", stage, DevcontainerStage, want)
+		}
+	}
+	if len(runtime.built) != 0 || len(runtime.calls) != 0 {
+		t.Errorf("nothing may be built or run after the refused download: builds %q, calls %+v", runtime.built, runtime.calls)
+	}
+}
+
+// Boundary: where no Node is pinned for the host platform, a devcontainer with features cannot be
+// built as declared, so the stages run on the host and the reason names the features and the
+// platform; no download is attempted.
+func TestFeaturesOnAnUnpinnedPlatformRunOnTheHost(t *testing.T) {
+	repo, _ := devcontainerRepo(t)
+	runtime := newFakeRuntime("go")
+	cfg := devcontainerConfig(t, repo, runtime)
+	featuresRepo(t, repo)
+	cfg.goarch = "riscv64"
+	fetched := false
+	cfg.fetch = func(context.Context, string, io.Writer) error { fetched = true; return nil }
+	if err := resolveExecution(t.Context(), cfg); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	exec := cfg.rep.Execution
+	if exec.Environment != executionHost || !strings.Contains(exec.Reason, "ghcr.io/devcontainers/features/go:1") ||
+		!strings.Contains(exec.Reason, "not linux/riscv64") || fetched {
+		t.Errorf("execution = %+v (fetched %v), want the host with the features and the platform named", exec, fetched)
+	}
+}
+
+// Positive, negative and boundary: the container gets the host's module and proxy settings, in
+// both proxy spellings, with the host's GOFLAGS joined to the gate's; nothing outside the
+// allowlist, credentials included, crosses; a variable set empty still crosses, and an unset
+// GOFLAGS leaves the gate's flag alone.
+func TestContainerEnvForwardsModuleAndProxySettings(t *testing.T) {
+	host := map[string]string{
+		"GOPROXY": "https://proxy.corp.example", "GOPRIVATE": "git.corp.example/*", "GONOSUMDB": "git.corp.example",
+		"GOTOOLCHAIN": "local", "GOFLAGS": "-tags=integration", "HTTPS_PROXY": "http://proxy:3128",
+		"https_proxy": "http://proxy:3128", "NO_PROXY": "", "GITHUB_TOKEN": "secret", "SSH_AUTH_SOCK": "/run/agent",
+		"HOME": "/home/host", "NETRC": "/home/host/.netrc",
+	}
+	lookup := func(name string) (string, bool) {
+		value, ok := host[name]
+		return value, ok
+	}
+	env := containerEnv("/cache/praetor/devcontainer-home", lookup)
+	for _, want := range []string{
+		"HOME=/cache/praetor/devcontainer-home", "GOFLAGS=-tags=integration -modcacherw", "GOPROXY=https://proxy.corp.example",
+		"GOPRIVATE=git.corp.example/*", "GONOSUMDB=git.corp.example", "GOTOOLCHAIN=local", "HTTPS_PROXY=http://proxy:3128",
+		"https_proxy=http://proxy:3128", "NO_PROXY=", DevcontainerEnv + "=off",
+	} {
+		if !slices.Contains(env, want) {
+			t.Errorf("container env %q lacks %q", env, want)
+		}
+	}
+	for _, entry := range env {
+		name, _, _ := strings.Cut(entry, "=")
+		if slices.Contains([]string{"GITHUB_TOKEN", "SSH_AUTH_SOCK", "NETRC"}, name) || entry == "HOME=/home/host" {
+			t.Errorf("%q must not cross into the container", entry)
+		}
+	}
+	if bare := containerEnv("/h", func(string) (string, bool) { return "", false }); !slices.Contains(bare, "GOFLAGS=-modcacherw") ||
+		len(bare) != 4 {
+		t.Errorf("a host setting nothing gets the gate's four variables alone, got %q", bare)
+	}
+
+	repo, _ := devcontainerRepo(t)
+	runtime := newFakeRuntime("go", "gcc")
+	cfg := devcontainerConfig(t, repo, runtime)
+	t.Setenv("GOPROXY", "https://proxy.corp.example")
+	if err := resolveExecution(t.Context(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runPrefetchStage(t.Context(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range runtime.inside("go") {
+		if !slices.Contains(call.runArgs, "GOPROXY=https://proxy.corp.example") {
+			t.Errorf("go %q ran without the host's GOPROXY: %q", call.args, call.runArgs)
+		}
 	}
 }

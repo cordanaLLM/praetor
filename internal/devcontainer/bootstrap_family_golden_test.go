@@ -18,7 +18,8 @@ import (
 // (the template family's asset list is left out: it grows with every shipped template) and
 // the verdicts of the asset and directive rules on the Markdown gate's paths. The figure engine
 // family added its declaration and turned tools/figures/build.mjs into an admitted asset, while
-// its repository-only files, such as bundle.mjs and the npm lock, stay refused.
+// its repository-only files, such as bundle.mjs and the npm lock, stay refused. The gate's
+// devcontainer CLI pins added the family embedded by internal/devcontainer/cli.go.
 func TestBootstrapAssetFamiliesGolden(t *testing.T) {
 	families, err := bootstrapAssetFamilies()
 	if err != nil {
@@ -27,14 +28,15 @@ func TestBootstrapAssetFamiliesGolden(t *testing.T) {
 	var sb strings.Builder
 	for _, family := range families {
 		fmt.Fprintf(&sb, "family %q source %q directive %q\n", family.name, family.source, family.directive)
-		if strings.HasPrefix(family.source, "tools/") {
+		if family.name != "template" {
 			fmt.Fprintf(&sb, "  assets %q\n", family.assets)
 		}
 	}
 	for _, name := range []string{
 		"tools/markdownlint/verify.mjs", "tools/markdownlint/package-lock.json", "tools/markdownlint/README.md",
 		"tools/markdownlint/assets.go", "tools/figures/build.mjs", "tools/figures/bundle.mjs",
-		"tools/figures/package-lock.json", "templates/go/ci-go.yml.tmpl",
+		"tools/figures/package-lock.json", "templates/go/ci-go.yml.tmpl", "internal/devcontainer/cli/node.json",
+		"internal/devcontainer/cli/other.json",
 	} {
 		asset, assetErr := isBootstrapAsset(name)
 		fmt.Fprintf(&sb, "asset %s %t %v\n", name, asset, assetErr)
@@ -46,6 +48,8 @@ func TestBootstrapAssetFamiliesGolden(t *testing.T) {
 		{"tools/markdownlint/assets.go", "//go:embed verify.mjs"},
 		{"tools/markdownlint/other.go", markdownDirective},
 		{"tools/markdownlint/assets.go", "// go:embed is only prose"},
+		{cliSourceFile, "//go:embed " + cliEmbedPatterns},
+		{cliSourceFile, "//go:embed cli/node.json"},
 	} {
 		fmt.Fprintf(&sb, "directive %s %q %v\n", probe.source, probe.text, validateEmbedDirective(probe.source, probe.text))
 	}

@@ -133,6 +133,61 @@ func TestRaceStageRunsInARealDevcontainer(t *testing.T) {
 	}
 }
 
+// praetorDevcontainerE2EEnv opts into TestPraetorsOwnDevcontainerRunsTheGoStages, which fetches
+// the pinned Node and devcontainer CLI, pulls the base images and installs the features: minutes
+// and a few hundred megabytes on a first run.
+const praetorDevcontainerE2EEnv = "PRAETOR_DEVCONTAINER_E2E"
+
+// The case that motivated #652, end to end: Praetor's own devcontainer declares the common-utils,
+// go and node features, so only the devcontainer CLI builds it as declared. The gate fetches the
+// pinned Node and CLI into the user's tool cache, builds the image with the real runtime, and runs
+// the prefetch stage and a race-detector test in it, with the node feature's Node 24 on the
+// container's PATH. It uses the real user cache directory, as the gate does, and removes only its
+// per-run tag.
+func TestPraetorsOwnDevcontainerRunsTheGoStages(t *testing.T) {
+	if os.Getenv(praetorDevcontainerE2EEnv) != "1" {
+		t.Skipf("set %s=1 to build Praetor's own devcontainer with the pinned CLI and run the Go stages in it", praetorDevcontainerE2EEnv)
+	}
+	if rt, reason := realRuntime(t); rt.Path == "" {
+		t.Skip(reason)
+	}
+	repo, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(DevcontainerEnv, "")
+	ctx, cancel := context.WithTimeout(t.Context(), devcontainer.ImageBuildTimeout+DefaultPrefetchTimeout+TestStageTimeout)
+	defer cancel()
+	rep := &PipelineReport{Stages: make([]StageResult, 0, maxStages)}
+	cfg := newStageConfig(repo, false, rep)
+	if err := resolveExecution(ctx, cfg); err != nil {
+		t.Fatalf("resolve: %v (%+v)", err, rep.Stages)
+	}
+	t.Cleanup(func() { releaseDevcontainer(context.Background(), cfg) })
+	pins, err := devcontainer.LoadCLIPins()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Execution.Environment != executionDevcontainer || !strings.Contains(rep.Execution.Builder, "@devcontainers/cli "+pins.CLIVersion) {
+		t.Fatalf("execution = %+v, want praetor's devcontainer built by the pinned CLI", rep.Execution)
+	}
+	t.Logf("execution: %s", rep.Execution)
+	if _, err := runPrefetchStage(ctx, cfg); err != nil {
+		t.Fatalf("prefetch in the devcontainer: %v", err)
+	}
+	run := cfg.goToolchain().run
+	for _, command := range [][]string{{"go", "version"}, {"node", "--version"}, {"go", "test", "-race", "-count=1", "./internal/lockdown"}} {
+		out, err := run(ctx, cfg.repoDir, command[0], command[1:]...)
+		if err != nil {
+			t.Fatalf("%s in the devcontainer: %v\n%s", strings.Join(command, " "), err, out)
+		}
+		t.Logf("%s: %s", strings.Join(command, " "), util.TruncateExcerpt(out, 400))
+		if command[0] == "node" && !strings.HasPrefix(out, "v24.") {
+			t.Errorf("the node feature must put Node 24 on the container's PATH, got %q", out)
+		}
+	}
+}
+
 // realRuntime returns the container runtime this host would build with, asked the way the gate asks
 // (devcontainer.FindRuntime), or the reason the test cannot run here.
 func realRuntime(t *testing.T) (devcontainer.Runtime, string) {

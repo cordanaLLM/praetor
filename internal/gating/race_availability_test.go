@@ -33,7 +33,10 @@ func TestRaceDetectorAvailableWhenCgoAndCompilerResolve(t *testing.T) {
 		run:      goEnvRunner(map[string]string{"CGO_ENABLED": "1", "CC": "gcc"}),
 		lookPath: func(string) (string, error) { return "/usr/bin/gcc", nil },
 	}
-	available, reason := raceDetectorAvailable(t.Context(), cfg)
+	available, reason, err := raceDetectorAvailable(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("a host probe reports a reason, not an error: %v", err)
+	}
 	if !available || reason != "" {
 		t.Fatalf("race detector reported unavailable: %q", reason)
 	}
@@ -49,7 +52,10 @@ func TestRaceDetectorUnavailableWhenNamedCompilerIsAbsent(t *testing.T) {
 		run:      goEnvRunner(map[string]string{"CGO_ENABLED": "1", "CC": "gcc"}),
 		lookPath: func(string) (string, error) { return "", os.ErrNotExist },
 	}
-	available, reason := raceDetectorAvailable(t.Context(), cfg)
+	available, reason, err := raceDetectorAvailable(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("a host probe reports a reason, not an error: %v", err)
+	}
 	if available {
 		t.Fatal("race detector reported available with no compiler on PATH")
 	}
@@ -64,7 +70,10 @@ func TestRaceDetectorUnavailableWhenCgoIsDisabled(t *testing.T) {
 		run:      goEnvRunner(map[string]string{"CGO_ENABLED": "0", "CC": "gcc"}),
 		lookPath: func(string) (string, error) { return "/usr/bin/gcc", nil },
 	}
-	available, reason := raceDetectorAvailable(t.Context(), cfg)
+	available, reason, err := raceDetectorAvailable(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("a host probe reports a reason, not an error: %v", err)
+	}
 	if available {
 		t.Fatal("race detector reported available with CGO_ENABLED=0")
 	}
@@ -94,7 +103,10 @@ func TestRaceDetectorSkipAlwaysStatesAReason(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			available, reason := raceDetectorAvailable(t.Context(), cfg)
+			available, reason, err := raceDetectorAvailable(t.Context(), cfg)
+			if err != nil {
+				t.Fatalf("a host probe reports a reason, not an error: %v", err)
+			}
 			if available {
 				t.Fatal("expected unavailable")
 			}

@@ -5,6 +5,8 @@ family "Figure engine" source "tools/figures/assets.go" directive "//go:embed co
 family "API compatibility" source "tools/apicompat/assets.go" directive "//go:embed gate/main.go"
   assets ["tools/apicompat/gate/main.go"]
 family "template" source "templates/embed.go" directive "//go:embed */*.tmpl"
+family "devcontainer CLI pins" source "internal/devcontainer/cli.go" directive "//go:embed cli/package.json cli/package-lock.json cli/node.json"
+  assets ["internal/devcontainer/cli/package.json" "internal/devcontainer/cli/package-lock.json" "internal/devcontainer/cli/node.json"]
 asset tools/markdownlint/verify.mjs true <nil>
 name tools/markdownlint/verify.mjs <nil>
 asset tools/markdownlint/package-lock.json true <nil>
@@ -21,7 +23,13 @@ asset tools/figures/package-lock.json false <nil>
 name tools/figures/package-lock.json unsupported bootstrap source file; non-Go build inputs require explicit capture support
 asset templates/go/ci-go.yml.tmpl true <nil>
 name templates/go/ci-go.yml.tmpl <nil>
+asset internal/devcontainer/cli/node.json true <nil>
+name internal/devcontainer/cli/node.json <nil>
+asset internal/devcontainer/cli/other.json false <nil>
+name internal/devcontainer/cli/other.json unsupported bootstrap source file; non-Go build inputs require explicit capture support
 directive tools/markdownlint/assets.go "//go:embed package.json package-lock.json markdownlint-cli2.yaml verify.mjs no-private-scratch-links.mjs" <nil>
 directive tools/markdownlint/assets.go "//go:embed verify.mjs" bootstrap source tools/markdownlint/assets.go embeds assets; explicit asset capture is required
 directive tools/markdownlint/other.go "//go:embed package.json package-lock.json markdownlint-cli2.yaml verify.mjs no-private-scratch-links.mjs" bootstrap source tools/markdownlint/other.go embeds assets; explicit asset capture is required
 directive tools/markdownlint/assets.go "// go:embed is only prose" <nil>
+directive internal/devcontainer/cli.go "//go:embed cli/package.json cli/package-lock.json cli/node.json" <nil>
+directive internal/devcontainer/cli.go "//go:embed cli/node.json" bootstrap source internal/devcontainer/cli.go embeds assets; explicit asset capture is required

@@ -1,0 +1,9 @@
+{
+  "name": "@cordanallm/praetor-devcontainer-cli",
+  "version": "1.0.0",
+  "private": true,
+  "description": "The devcontainer CLI the Praetor gate builds a repository's devcontainer with",
+  "dependencies": {
+    "@devcontainers/cli": "0.89.0"
+  }
+}

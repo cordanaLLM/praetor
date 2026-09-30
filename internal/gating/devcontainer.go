@@ -40,6 +40,10 @@ const (
 	// after it. One HOME serves every repository, as the host's own Go caches do: both caches are
 	// content-addressed and safe for concurrent builds.
 	devcontainerHomeRel = "praetor/devcontainer-home"
+	// devcontainerToolsRel is the tool cache below the user's cache directory: the pinned Node and
+	// devcontainer CLI a configuration with features is built with (devcontainer.PinnedCLI). Like
+	// the HOME it outlives every checkout, so only the first build on a machine fetches them.
+	devcontainerToolsRel = "praetor/devcontainer-cli"
 	// devcontainerPlanTimeout bounds planning: the git and file reads, plus one probe per runtime.
 	devcontainerPlanTimeout = GitQueryTimeout + devcontainer.RuntimeProbeBudget
 	// localImageKey keys the stable image tag of a repository without an origin remote. All such
@@ -56,6 +60,19 @@ const (
 // devcontainerStages are the stages whose Go part runs in the devcontainer. The HISS scan, the
 // security scanners, the flavor audit, the Cargo parts and the receipt still run on the host.
 var devcontainerStages = []string{stagePrefetch, stageTests}
+
+// forwardedEnv are the host variables that decide how the container's go commands reach modules:
+// the module proxy and checksum database settings, the private-module patterns, the toolchain
+// selection and the HTTP proxies in both spellings. The container starts from the image's
+// environment, so without them a host that needs a proxy or private modules would pass the host
+// gate and fail the container's prefetch. GOFLAGS is forwarded too, joined with the gate's own
+// flag (containerGoFlags). GONOSUMCHECK is read by no current go command (Go 1.27's cmd/go has no
+// such variable) and is carried for wrappers that still honour it. Credentials are not forwarded:
+// HOME is the gate's, so ~/.netrc, git credential helpers and SSH keys do not reach the container.
+var forwardedEnv = [...]string{
+	"GOPROXY", "GOPRIVATE", "GONOPROXY", "GONOSUMDB", "GONOSUMCHECK", "GOSUMDB", "GOINSECURE", "GOTOOLCHAIN",
+	"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
+}
 
 // errNotOnPath reports a command a toolchain does not have on its PATH.
 var errNotOnPath = errors.New("not on PATH")
@@ -109,14 +126,16 @@ func hostExecution(reason string) *Execution {
 
 // hostMachine is the real machine a plan is made for.
 func hostMachine() devcontainer.Host {
-	return devcontainer.Host{GOOS: runtime.GOOS, LookPath: exec.LookPath, Run: util.RunCommand}
+	return devcontainer.Host{GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, LookPath: exec.LookPath, Run: util.RunCommand,
+		Tools: devcontainer.ToolCache{Fetch: devcontainer.HTTPFetch}}
 }
 
 // planDevcontainer decides, building nothing, whether the run's Go toolchain stages run in the
 // repository's devcontainer, and otherwise why they run on the host: the operator opted out, a dry
 // run builds nothing, the repository has no go.mod, the user has no cache directory to keep the
-// container's HOME in (devcontainerHome), or devcontainer.PlanImage refused the host or the
-// configuration. EnvRunBudget reserves the image build exactly when this returns a plan.
+// container's HOME and the pinned devcontainer CLI in (praetorCacheDir), or devcontainer.PlanImage
+// refused the host or the configuration. EnvRunBudget reserves the image build exactly when this
+// returns a plan.
 func planDevcontainer(ctx context.Context, repoDir string, dryRun bool, host devcontainer.Host) (*devcontainer.ImagePlan, string) {
 	switch mode := strings.TrimSpace(os.Getenv(DevcontainerEnv)); mode {
 	case "", "auto":
@@ -131,9 +150,11 @@ func planDevcontainer(ctx context.Context, repoDir string, dryRun bool, host dev
 	if !util.FileExists(filepath.Join(repoDir, "go.mod")) {
 		return nil, "no go.mod: the devcontainer runs the Go toolchain stages only"
 	}
-	if _, err := os.UserCacheDir(); err != nil {
-		return nil, fmt.Sprintf("no user cache directory to keep the devcontainer's HOME in: %v", err)
+	tools, err := praetorCacheDir(devcontainerToolsRel)
+	if err != nil {
+		return nil, fmt.Sprintf("no user cache directory to keep the devcontainer's HOME and tools in: %v", err)
 	}
+	host.Tools.Dir = tools
 	pCtx, cancel := context.WithTimeout(ctx, devcontainerPlanTimeout)
 	defer cancel()
 	plan, err := devcontainer.PlanImage(pCtx, repoDir, host)
@@ -149,7 +170,8 @@ func planDevcontainer(ctx context.Context, repoDir string, dryRun bool, host dev
 // or setup fails rejects the run through a failed DevcontainerStage, with the opt-out named. A run
 // that entered the devcontainer releases its image tag through releaseDevcontainer.
 func resolveExecution(ctx context.Context, cfg *stageConfig) error {
-	host := devcontainer.Host{GOOS: cfg.goos, LookPath: cfg.lookPath, Run: devcontainer.CommandRunner(cfg.run)}
+	host := devcontainer.Host{GOOS: cfg.goos, GOARCH: cfg.goarch, LookPath: cfg.lookPath, Run: devcontainer.CommandRunner(cfg.run),
+		Tools: devcontainer.ToolCache{Fetch: cfg.fetch}}
 	plan, reason := planDevcontainer(ctx, cfg.repoDir, cfg.dryRun, host)
 	if plan == nil {
 		cfg.rep.Execution = hostExecution(reason)
@@ -268,10 +290,8 @@ type devcontainerExec struct {
 
 // newDevcontainerExec mounts the checkout and, when it lies elsewhere, its git common dir, each at
 // its own path, so the stage worktrees' gitdir links resolve inside the container as they do on
-// the host. HOME is the persistent devcontainerHome, mounted at its own path too. GOPATH follows
-// it, overriding an image's shared /go, and GOFLAGS leaves the module cache writable so the cache
-// can be deleted without first restoring write permission. The container runs the gate off, so a
-// gate a test starts inside never looks for a runtime there.
+// the host. HOME is the persistent devcontainerHome, mounted at its own path too; the environment
+// is containerEnv's.
 func newDevcontainerExec(ctx context.Context, repoDir string, img devcontainer.Image) (*devcontainerExec, error) {
 	gitCtx, cancel := context.WithTimeout(ctx, GitQueryTimeout)
 	defer cancel()
@@ -298,19 +318,46 @@ func newDevcontainerExec(ctx context.Context, repoDir string, img devcontainer.I
 			return nil, fmt.Errorf("%q cannot be bind-mounted: a comma or line break splits the mount option", mounts[i])
 		}
 	}
-	return &devcontainerExec{image: img, mounts: mounts, uid: os.Getuid(), gid: os.Getgid(), env: []string{
-		"HOME=" + home, "GOPATH=" + filepath.Join(home, "go"), "GOFLAGS=-modcacherw", DevcontainerEnv + "=off",
-	}}, nil
+	return &devcontainerExec{image: img, mounts: mounts, uid: os.Getuid(), gid: os.Getgid(), env: containerEnv(home, os.LookupEnv)}, nil
+}
+
+// containerEnv is the environment the container's commands get beyond the image's own: HOME, with
+// GOPATH below it, overriding an image's shared /go; GOFLAGS (containerGoFlags); the gate off, so a
+// gate a test starts inside never looks for a runtime there; and each forwardedEnv variable the
+// host sets, read through lookup, even when set empty, since an empty GOPROXY or NO_PROXY is a
+// setting too.
+func containerEnv(home string, lookup func(string) (string, bool)) []string {
+	env := make([]string, 0, 4+len(forwardedEnv))
+	env = append(env, "HOME="+home, "GOPATH="+filepath.Join(home, "go"), "GOFLAGS="+containerGoFlags(lookup), DevcontainerEnv+"=off")
+	for i := 0; i < len(forwardedEnv); i++ {
+		if value, ok := lookup(forwardedEnv[i]); ok {
+			env = append(env, forwardedEnv[i]+"="+value)
+		}
+	}
+	return env
+}
+
+// containerGoFlags is the host's GOFLAGS, build tags and all, followed by -modcacherw, which leaves
+// the module cache in HOME writable so it can be deleted without first restoring write permission.
+func containerGoFlags(lookup func(string) (string, bool)) string {
+	host, _ := lookup("GOFLAGS")
+	return strings.TrimSpace(host + " -modcacherw")
+}
+
+// praetorCacheDir is rel below the user's cache directory (os.UserCacheDir), confined to it. It
+// creates nothing.
+func praetorCacheDir(rel string) (string, error) {
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return "", fmt.Errorf("no user cache directory: %w", err)
+	}
+	return util.ConfinePath(cache, filepath.FromSlash(rel))
 }
 
 // devcontainerHome creates the container's HOME below the user's cache directory, on the host so
 // it belongs to the host user, and returns its resolved path, which is where it is mounted.
 func devcontainerHome(ctx context.Context) (string, error) {
-	cache, err := os.UserCacheDir()
-	if err != nil {
-		return "", fmt.Errorf("place the devcontainer home: no user cache directory: %w", err)
-	}
-	home, err := util.ConfinePath(cache, filepath.FromSlash(devcontainerHomeRel))
+	home, err := praetorCacheDir(devcontainerHomeRel)
 	if err != nil {
 		return "", fmt.Errorf("place the devcontainer home: %w", err)
 	}
@@ -399,6 +446,16 @@ type toolchain struct {
 	have func(ctx context.Context, dir, name string) error
 	// where is empty on the host and names the devcontainer otherwise, for messages.
 	where string
+}
+
+// unanswered is a race-detector probe the toolchain did not answer. On the host it is the reason
+// the race tests are skipped, as it always was. In the devcontainer it is an error: the container
+// failed a command, and the stage fails with it rather than skipping.
+func (tc toolchain) unanswered(what string, err error) (bool, string, error) {
+	if tc.where == "" {
+		return false, fmt.Sprintf("%s: %v", what, err), nil
+	}
+	return false, "", fmt.Errorf("%s%s: %w", what, tc.where, err)
 }
 
 // goToolchain returns where the run's Go toolchain stages run: the devcontainer the run entered, or

@@ -13,6 +13,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/devcontainer"
 	"github.com/cordanaLLM/praetor/internal/flavor"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
@@ -213,9 +214,13 @@ type stageConfig struct {
 	verified []string
 	// admitUnsupported is RunOptions.AdmitUnsupported (requireVerification).
 	admitUnsupported bool
-	// goos is the host operating system the devcontainer plan is made for. Production uses
-	// runtime.GOOS; tests set another to reach the Windows refusal on every platform.
-	goos string
+	// goos and goarch are the host platform the devcontainer plan is made for. Production uses
+	// runtime.GOOS and runtime.GOARCH; tests set others to reach the Windows refusal and the
+	// Node platforms on every host.
+	goos, goarch string
+	// fetch downloads the pinned Node release the devcontainer CLI runs on. Production uses
+	// devcontainer.HTTPFetch; tests serve a crafted archive.
+	fetch devcontainer.Fetcher
 	// container is the devcontainer the Go toolchain stages run in, nil when they run on the
 	// host (resolveExecution, goToolchain). Its commands start through run, so a test's fake
 	// runner sees the container runtime's command lines.
@@ -233,6 +238,8 @@ func newStageConfig(repoDir string, dryRun bool, rep *PipelineReport) *stageConf
 		boundStage:  withStageBound,
 		inspectTree: inspectTree,
 		goos:        runtime.GOOS,
+		goarch:      runtime.GOARCH,
+		fetch:       devcontainer.HTTPFetch,
 	}
 }
 
@@ -603,7 +610,11 @@ func runGoTests(ctx context.Context, cfg *stageConfig) (string, error) {
 	// fixing Windows support, so the gate could not be repaired from the platform it
 	// was broken on. `.config/lefthook/scripts/test_hooks.py` already reasons exactly
 	// this way for the harness self-tests; this is the same rule for the Go gate.
-	if available, absent := raceDetectorAvailable(ctx, cfg); !available {
+	available, absent, err := raceDetectorAvailable(ctx, cfg)
+	if err != nil {
+		return "", fmt.Errorf("the race detector probe failed: %w", err)
+	}
+	if !available {
 		return "", skipped(fmt.Sprintf(
 			"race detector unavailable (%s): race-detector tests skipped; "+
 				"CI runs this leg on Linux with cgo", absent))
@@ -612,7 +623,7 @@ func runGoTests(ctx context.Context, cfg *stageConfig) (string, error) {
 	budget := stageBudget(cfg.repoDir)
 	bound := budget.StageBound
 	run := cfg.goToolchain().run
-	err := inStageWorktree(ctx, cfg, bound, func(tCtx context.Context, dir string) error {
+	err = inStageWorktree(ctx, cfg, bound, func(tCtx context.Context, dir string) error {
 		// -timeout gives every package binary the stage's own bound. go test's default is ten
 		// minutes per package, and a package that grows past it (internal/dogfood reached 600 s
 		// on the CI runner) panics mid-suite while the stage still has budget left.
@@ -707,31 +718,36 @@ func stageBoundError(what string, bound time.Duration, dir, output string) error
 //
 // The toolchain asked is the one the stage runs (goToolchain). In the devcontainer the host's
 // environment does not reach the commands, so its CGO_ENABLED is not consulted there, and the
-// compiler is looked up on the container's PATH.
-func raceDetectorAvailable(ctx context.Context, cfg *stageConfig) (bool, string) {
+// compiler is looked up on the container's PATH. There a probe the container did not answer is
+// the error, not a skip reason (toolchain.unanswered): the run planned the devcontainer, and a
+// devcontainer that fails rejects the run rather than skipping the stage it was built for.
+func raceDetectorAvailable(ctx context.Context, cfg *stageConfig) (bool, string, error) {
 	tc := cfg.goToolchain()
 	if tc.where == "" && os.Getenv("CGO_ENABLED") == "0" {
-		return false, "CGO_ENABLED=0 in the environment"
+		return false, "CGO_ENABLED=0 in the environment", nil
 	}
 	enabled, err := tc.run(ctx, cfg.repoDir, "go", "env", "CGO_ENABLED")
 	if err != nil {
-		return false, fmt.Sprintf("go env CGO_ENABLED could not be read%s: %v", tc.where, err)
+		return tc.unanswered("go env CGO_ENABLED could not be read", err)
 	}
 	if strings.TrimSpace(enabled) == "0" {
-		return false, "go env reports CGO_ENABLED=0" + tc.where
+		return false, "go env reports CGO_ENABLED=0" + tc.where, nil
 	}
 	compiler, err := tc.run(ctx, cfg.repoDir, "go", "env", "CC")
 	if err != nil {
-		return false, fmt.Sprintf("go env CC could not be read%s: %v", tc.where, err)
+		return tc.unanswered("go env CC could not be read", err)
 	}
 	compiler = strings.TrimSpace(compiler)
 	if compiler == "" {
-		return false, "go env names no C compiler" + tc.where
+		return false, "go env names no C compiler" + tc.where, nil
 	}
 	if err := tc.have(ctx, cfg.repoDir, compiler); err != nil {
-		return false, fmt.Sprintf("the C compiler %q named by go env is not on PATH%s", compiler, tc.where)
+		if !errors.Is(err, errNotOnPath) {
+			return tc.unanswered(fmt.Sprintf("the C compiler %q named by go env could not be looked up", compiler), err)
+		}
+		return false, fmt.Sprintf("the C compiler %q named by go env is not on PATH%s", compiler, tc.where), nil
 	}
-	return true, ""
+	return true, "", nil
 }
 
 // testStageTimeout resolves the race stage's bound from the environment.

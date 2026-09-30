@@ -6,10 +6,12 @@ package devcontainer
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -24,9 +26,12 @@ const ConfigPath = ".devcontainer/devcontainer.json"
 const (
 	// CLIName is the reference devcontainer CLI (@devcontainers/cli). It is the only builder that
 	// applies a configuration's features: a docker or podman build of the Dockerfile ignores them.
+	// The gate runs the version it pins (PinnedCLI), never one found on PATH.
 	CLIName = "devcontainer"
 	// ImageBuildTimeout bounds one image build, pull and inspection (HISS-02). A first build pulls
-	// the base images and installs the features; later builds reuse the runtime's layer cache.
+	// the base images and installs the features, and a first build with features also fetches the
+	// pinned Node and devcontainer CLI (CLIProvisionTimeout); later builds reuse the runtime's
+	// layer cache and the tool cache.
 	ImageBuildTimeout = 15 * time.Minute
 	// RuntimeProbeTimeout bounds the `<runtime> info` call that asks one container runtime on
 	// PATH whether it can serve a build (HISS-02): a stopped daemon or podman machine answers
@@ -53,30 +58,38 @@ var ErrImageUnavailable = errors.New("devcontainer image unavailable here")
 // error in the error. util.RunCommand is the production runner.
 type CommandRunner func(ctx context.Context, dir, name string, args ...string) (string, error)
 
-// Host is what planning an image reads from the machine: its operating system, its PATH, and
-// the runner that asks each container runtime on PATH whether it answers.
+// Host is what planning an image reads from the machine: its operating system and architecture,
+// its PATH, the runner that asks each container runtime on PATH whether it answers, and the tool
+// cache the pinned devcontainer CLI is kept in.
 type Host struct {
-	GOOS     string
-	LookPath func(string) (string, error)
+	GOOS, GOARCH string
+	LookPath     func(string) (string, error)
 	// Run starts the `<runtime> info` probe. util.RunCommand is the production runner.
 	Run CommandRunner
+	// Tools is where a configuration with features gets the pinned devcontainer CLI from.
+	Tools ToolCache
 }
 
-// Runtime is a container CLI resolved on PATH.
+// Runtime is a container CLI resolved on PATH. Rootless reports a docker daemon running in
+// rootless mode, which maps the container's root to the host user (FindRuntime reads it from the
+// daemon's security options).
 type Runtime struct {
-	Name string
-	Path string
+	Name     string
+	Path     string
+	Rootless bool
 }
 
 // ImagePlan is a devcontainer image this host can build: the checked configuration, the runtime
-// that builds and runs it, and the devcontainer CLI when the configuration declares features.
+// that builds and runs it, and the pinned devcontainer CLI when the configuration declares
+// features.
 type ImagePlan struct {
 	RepoDir    string
 	ConfigPath string
 	Config     *DevContainer
 	Runtime    Runtime
-	// CLI is the devcontainer CLI's path, set when the configuration declares features.
-	CLI string
+	// CLI is the pinned devcontainer CLI, set when the configuration declares features. Planning
+	// fetches nothing; Build provisions it.
+	CLI *PinnedCLI
 	// dockerfile and context are the confined absolute build inputs, empty for an image-only
 	// configuration.
 	dockerfile, context string
@@ -126,8 +139,8 @@ func unavailable(format string, args ...any) error {
 // host (a Linux container cannot mount a Windows path at its own path), a repository without
 // ConfigPath, a host where neither docker nor podman is on PATH and answers, a configuration
 // outside the managed schema, a recorded Praetor bootstrap whose companions fail verification or
-// that is unavailable, build inputs outside the repository, and features without the devcontainer
-// CLI to apply them.
+// that is unavailable, build inputs outside the repository, and features on a host where the
+// pinned devcontainer CLI cannot run: a platform the Node pins do not cover, or no tool cache.
 func PlanImage(ctx context.Context, repoDir string, host Host) (*ImagePlan, error) {
 	if host.GOOS == "windows" {
 		return nil, unavailable("a Linux container cannot mount a Windows checkout at its own path")
@@ -152,7 +165,7 @@ func PlanImage(ctx context.Context, repoDir string, host Host) (*ImagePlan, erro
 	if err := plan.resolveBuild(); err != nil {
 		return nil, err
 	}
-	if err := plan.resolveCLI(host.LookPath); err != nil {
+	if err := plan.resolveCLI(host); err != nil {
 		return nil, err
 	}
 	// Last, because it decodes the whole source archive: every cheaper refusal comes first.
@@ -166,7 +179,8 @@ func PlanImage(ctx context.Context, repoDir string, host Host) (*ImagePlan, erro
 // answers `<runtime> info`, run in dir under RuntimeProbeTimeout. A CLI on PATH is not a working
 // runtime: its daemon may be stopped, its socket closed to this user, or its podman machine down,
 // and a plan made with it would fail every build. A runtime that does not answer is passed over
-// for the next, and when none answers the refusal names each one and why.
+// for the next, and when none answers the refusal names each one and why. docker is asked for its
+// security options, which say whether its daemon runs rootless.
 func FindRuntime(ctx context.Context, dir string, host Host) (Runtime, error) {
 	if host.Run == nil {
 		return Runtime{}, unavailable("no command runner was given to ask docker or podman whether it answers")
@@ -181,12 +195,13 @@ func FindRuntime(ctx context.Context, dir string, host Host) (Runtime, error) {
 			continue
 		}
 		onPath++
-		if err := probeRuntime(ctx, host.Run, dir, path); err != nil {
+		rootless, err := probeRuntime(ctx, host.Run, dir, name, path)
+		if err != nil {
 			notes = append(notes, fmt.Sprintf("%s is on PATH but `%s info` failed: %s", name, name,
 				util.TruncateExcerpt(err.Error(), probeExcerptBytes)))
 			continue
 		}
-		return Runtime{Name: name, Path: path}, nil
+		return Runtime{Name: name, Path: path, Rootless: rootless}, nil
 	}
 	if onPath == 0 {
 		return Runtime{}, unavailable("neither docker nor podman is on PATH")
@@ -194,13 +209,45 @@ func FindRuntime(ctx context.Context, dir string, host Host) (Runtime, error) {
 	return Runtime{}, unavailable("no container runtime answers: %s", strings.Join(notes, "; "))
 }
 
-// probeRuntime asks the runtime at path for its system information under RuntimeProbeTimeout. It
-// fails when the daemon or machine behind the CLI cannot be reached.
-func probeRuntime(ctx context.Context, run CommandRunner, dir, path string) error {
+// probeRuntime asks the runtime at path for its system information under RuntimeProbeTimeout and
+// reports whether it is a rootless docker. It fails when the daemon or machine behind the CLI
+// cannot be reached. podman's user mapping (--userns=keep-id) does not depend on the answer.
+func probeRuntime(ctx context.Context, run CommandRunner, dir, name, path string) (bool, error) {
 	pCtx, cancel := context.WithTimeout(ctx, RuntimeProbeTimeout)
 	defer cancel()
-	_, err := run(pCtx, dir, path, "info")
-	return err
+	if name != "docker" {
+		_, err := run(pCtx, dir, path, "info")
+		return false, err
+	}
+	out, err := run(pCtx, dir, path, dockerSecurityProbe...)
+	if err != nil {
+		return false, err
+	}
+	return rootlessDocker(out)
+}
+
+// dockerSecurityProbe asks docker for its daemon's security options as JSON: a list such as
+// ["name=seccomp,profile=builtin","name=rootless","name=cgroupns"].
+var dockerSecurityProbe = []string{"info", "--format", "{{json .SecurityOptions}}"}
+
+// rootlessDocker reports whether docker's security options include name=rootless, the option a
+// rootless daemon reports (moby daemon/info.go). An empty answer carries no options; one that is
+// not a JSON list of strings is refused.
+func rootlessDocker(out string) (bool, error) {
+	out = strings.TrimSpace(out)
+	if out == "" || out == "null" {
+		return false, nil
+	}
+	var options []string
+	if err := json.Unmarshal([]byte(out), &options); err != nil {
+		return false, fmt.Errorf("docker reported its security options as %q, not a JSON list: %w", util.TruncateExcerpt(out, probeExcerptBytes), err)
+	}
+	for i := 0; i < len(options) && i < MaxLoopLimit; i++ {
+		if slices.Contains(strings.Split(options[i], ","), "name=rootless") {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // resolveBuild confines the configuration's build inputs to the repository. The dockerfile and
@@ -230,17 +277,17 @@ func (p *ImagePlan) resolveBuild() error {
 	return nil
 }
 
-// resolveCLI finds the devcontainer CLI when the configuration declares features. A runtime build
-// of the Dockerfile would leave them out, and an image without its declared features is not the
-// repository's devcontainer, so without the CLI there is no plan.
-func (p *ImagePlan) resolveCLI(lookPath func(string) (string, error)) error {
+// resolveCLI plans the pinned devcontainer CLI when the configuration declares features. A runtime
+// build of the Dockerfile would leave them out, and an image without its declared features is not
+// the repository's devcontainer, so where the pinned CLI cannot run there is no plan.
+func (p *ImagePlan) resolveCLI(host Host) error {
 	if len(p.Config.Features) == 0 {
 		return nil
 	}
-	cli, err := lookPath(CLIName)
+	cli, err := planCLI(host)
 	if err != nil {
-		return unavailable("%s declares features (%s), which only the devcontainer CLI applies, and %s is not on PATH",
-			ConfigPath, strings.Join(featureRefs(p.Config.Features), ", "), CLIName)
+		return unavailable("%s declares features (%s), which only the devcontainer CLI applies, and the gate cannot run its pinned CLI here: %v",
+			ConfigPath, strings.Join(featureRefs(p.Config.Features), ", "), err)
 	}
 	p.CLI = cli
 	return nil
@@ -257,19 +304,18 @@ func featureRefs(features map[string]interface{}) []string {
 }
 
 // Build builds the planned image under ImageBuildTimeout, tagged with both refs, and returns it
-// with the ID its runtime assigned, read through refs.Run: through the devcontainer CLI when the
-// configuration declares features, else a runtime build of the Dockerfile, else a pull of the
-// named image when it is not present, which is tagged with neither ref.
+// with the ID its runtime assigned, read through refs.Run: through the pinned devcontainer CLI
+// when the configuration declares features, else a runtime build of the Dockerfile, else a pull
+// of the named image when it is not present, which is tagged with neither ref.
 func (p *ImagePlan) Build(ctx context.Context, run CommandRunner, refs ImageRefs) (Image, error) {
 	bCtx, cancel := context.WithTimeout(ctx, ImageBuildTimeout)
 	defer cancel()
 	img := Image{Runtime: p.Runtime, Ref: refs.Stable, RunRef: refs.Run}
 	var err error
 	switch {
-	case p.CLI != "":
-		img.Builder = CLIName + " build"
-		_, err = run(bCtx, p.RepoDir, p.CLI, "build", "--workspace-folder", p.RepoDir, "--config", p.ConfigPath,
-			"--image-name", refs.Stable, "--image-name", refs.Run, "--docker-path", p.Runtime.Path)
+	case p.CLI != nil:
+		img.Builder = p.CLI.String()
+		err = p.buildWithCLI(bCtx, run, refs)
 	case p.dockerfile != "":
 		img.Builder = p.Runtime.Name + " build"
 		_, err = run(bCtx, p.RepoDir, p.Runtime.Path, p.buildArgs(refs)...)
@@ -284,6 +330,18 @@ func (p *ImagePlan) Build(ctx context.Context, run CommandRunner, refs ImageRefs
 		return Image{}, err
 	}
 	return img, nil
+}
+
+// buildWithCLI provisions the pinned devcontainer CLI and builds the image with it, the runtime
+// passed as its docker path. The CLI writes nothing into the checkout (lockfileFlag).
+func (p *ImagePlan) buildWithCLI(ctx context.Context, run CommandRunner, refs ImageRefs) error {
+	cli, err := p.CLI.provision(ctx, run)
+	if err != nil {
+		return err
+	}
+	_, err = run(ctx, p.RepoDir, cli.node, cli.script, "build", "--workspace-folder", p.RepoDir, "--config", p.ConfigPath,
+		lockfileFlag(p.ConfigPath), "--image-name", refs.Stable, "--image-name", refs.Run, "--docker-path", p.Runtime.Path)
+	return err
 }
 
 // inspectID reads the ID of the image a build or pull produced: through its per-run tag when it
@@ -346,18 +404,12 @@ func normalizeImageID(raw string) (string, error) {
 }
 
 // RunArgs is the runtime command line that runs name with args in a disposable container of the
-// image, by its ID so the command runs in exactly the image that was inspected. docker runs it as
-// the host UID:GID; rootless podman maps the host user into the container with keep-id, which
-// --user alone does not. Either way files it writes into a mount stay the host user's.
+// image, by its ID so the command runs in exactly the image that was inspected. The command runs
+// as the host user, so files it writes into a mount stay the host user's and the host user's
+// files are writable to it (userArgs).
 func (img Image) RunArgs(opts RunOptions, name string, args ...string) []string {
 	argv := []string{"run", "--rm", "--name", opts.Name}
-	if opts.UID >= 0 && opts.GID >= 0 {
-		if img.Runtime.Name == "podman" {
-			argv = append(argv, "--userns=keep-id")
-		} else {
-			argv = append(argv, "--user", strconv.Itoa(opts.UID)+":"+strconv.Itoa(opts.GID))
-		}
-	}
+	argv = append(argv, img.userArgs(opts)...)
 	for i := 0; i < len(opts.Mounts) && i < MaxLoopLimit; i++ {
 		argv = append(argv, "--mount", "type=bind,src="+opts.Mounts[i]+",dst="+opts.Mounts[i])
 	}
@@ -366,6 +418,24 @@ func (img Image) RunArgs(opts RunOptions, name string, args ...string) []string 
 	}
 	argv = append(argv, "--workdir", opts.Workdir, img.ID, name)
 	return append(argv, args...)
+}
+
+// userArgs maps the host user into the container. Rootful docker runs the command as the host
+// UID:GID. Rootless docker maps the container's root to the host user and every other container
+// UID to a subordinate one, so the command runs as root (0:0): as UID:GID the checkout and HOME
+// would be another user's inside and the stages could not write them. Rootless podman maps the
+// host user to itself with keep-id, which --user alone does not. A host without a user, as on
+// Windows, passes no mapping.
+func (img Image) userArgs(opts RunOptions) []string {
+	switch {
+	case opts.UID < 0 || opts.GID < 0:
+		return nil
+	case img.Runtime.Name == "podman":
+		return []string{"--userns=keep-id"}
+	case img.Runtime.Rootless:
+		return []string{"--user", "0:0"}
+	}
+	return []string{"--user", strconv.Itoa(opts.UID) + ":" + strconv.Itoa(opts.GID)}
 }
 
 // RemoveArgs is the runtime command line that removes a named container, running or not. Both

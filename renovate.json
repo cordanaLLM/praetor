@@ -33,13 +33,16 @@
       "/^tools/apicompat/assets\\.go$/"
     ]
   },
-  "pip-compile": {
-    "managerFilePatterns": [
-      "/^docs/presets/mkdocs/requirements\\.txt$/",
-      "/^\\.config/hook-lint/requirements\\.txt$/"
-    ]
-  },
   "customManagers": [
+    {
+      "customType": "regex",
+      "description": "The pinned Node release the gate runs the devcontainer CLI with. Renovate moves the version; the per-platform checksums beside it must then be refreshed from the release's SHASUMS256.txt (PRAETOR_UPDATE_NODE_PINS=1 go test ./internal/devcontainer -run TestPinnedNodeMatchesTheRelease), and that test fails the branch until they are.",
+      "managerFilePatterns": ["/^internal/devcontainer/cli/node\\.json$/"],
+      "matchStrings": ["\"version\": \"(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)\""],
+      "depNameTemplate": "node",
+      "datasourceTemplate": "node-version",
+      "versioningTemplate": "node"
+    },
     {
       "customType": "regex",
       "description": "The renovate release CI validates this file with: the exact RENOVATE_VERSION pin in .github/workflows/ci.yml. An update that cannot be installed or that rejects this configuration fails on its own pull request (#709).",
@@ -49,6 +52,12 @@
       "datasourceTemplate": "npm"
     }
   ],
+  "pip-compile": {
+    "managerFilePatterns": [
+      "/^docs/presets/mkdocs/requirements\\.txt$/",
+      "/^\\.config/hook-lint/requirements\\.txt$/"
+    ]
+  },
   "packageRules": [
     {
       "matchPackageNames": ["*"],
@@ -97,6 +106,21 @@
       "matchFileNames": ["editors/vscode/package.json"],
       "matchPackageNames": ["@types/vscode"],
       "enabled": false
+    },
+    {
+      "description": "Gate devcontainer CLI: package.json pins @devcontainers/cli exactly and package-lock.json moves with it; the gate installs it from the embedded lock with npm ci (internal/devcontainer/cli.go).",
+      "matchManagers": ["npm"],
+      "matchFileNames": ["internal/devcontainer/cli/**"],
+      "rangeStrategy": "pin",
+      "groupName": "gate devcontainer cli"
+    },
+    {
+      "description": "Gate devcontainer CLI: the Node release it runs on stays on the Node 24 line the gate pins.",
+      "matchManagers": ["custom.regex"],
+      "matchFileNames": ["internal/devcontainer/cli/**"],
+      "matchDepNames": ["node"],
+      "allowedVersions": "<25",
+      "groupName": "gate devcontainer cli"
     },
     {
       "description": "tools/figures React cluster: keep React and its typings together.",
