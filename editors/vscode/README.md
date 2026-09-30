@@ -169,6 +169,13 @@ Every contributed setting has a reader in `src/extension.ts`, except
 `standards.lsp.trace.server`, which vscode-languageclient reads itself.
 `src/setup.test.ts` fails on a contributed setting nothing reads.
 
+The LSP message trace appears only while the **Praetor LSP** output channel is at
+log level **Trace** (**Developer: Set Log Level...**). The setting then picks the
+detail: `messages` (default) or `verbose`; `off` traces like `messages`, because
+vscode-languageclient 10 no longer lets the setting switch tracing off. At any
+other log level nothing is traced. Details:
+[VS Code extension trace level](../../docs/guides/editor-capabilities.md#vs-code-extension-trace-level).
+
 **Standards: Check Sentinel Host Headroom** runs
 `praetorctl sentinel --min-free-mb=<standards.sentinel.headroomMB>` (default
 1024 MiB) in a trusted workspace. The CLI measures free RAM

@@ -6,10 +6,16 @@ export type ClientCapability = {
 };
 
 // The LanguageClient id is also the configuration section vscode-languageclient reads the trace
-// level from: `<id>.trace.server`, re-read on every configuration change. With this id that key is
+// detail from: `<id>.trace.server`, re-read on every configuration change. With this id that key is
 // the contributed standards.lsp.trace.server. The former id "standardsLSP" made the client read
 // standardsLSP.trace.server, a key nothing contributes, so the setting never took effect.
 export const LSP_CLIENT_ID = "standards.lsp";
+
+// The LanguageClient name is also the name of the log output channel the client creates. Since
+// vscode-languageclient 10 the client traces only while that channel's log level is Trace;
+// <id>.trace.server then picks the detail, and `off` counts as `messages` (refreshTrace in
+// lib/common/client.js, pinned by setup.test.ts).
+export const LSP_CLIENT_NAME = "Praetor LSP";
 
 // Contributed defaults of standards.lsp.path and standards.mcp.path (package.json); setup.test.ts
 // checks they stay equal.

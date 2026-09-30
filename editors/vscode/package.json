@@ -76,8 +76,13 @@
             "messages",
             "verbose"
           ],
+          "enumDescriptions": [
+            "Same as messages. This setting cannot switch tracing off; set the channel's log level above Trace instead.",
+            "Method names, request ids and response times.",
+            "Messages with their parameters and results."
+          ],
           "default": "messages",
-          "description": "LSP trace communication level."
+          "description": "Detail of the LSP message trace in the Praetor LSP output channel. The client traces only while that channel's log level is Trace (Developer: Set Log Level...); at any other log level nothing is traced, whatever this setting says."
         },
         "standards.mcp.enabled": {
           "type": "boolean",

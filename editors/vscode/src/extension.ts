@@ -4,7 +4,7 @@ import * as vscode from "vscode";
 import { LanguageClient } from "vscode-languageclient/node";
 import { LaunchFileWatch, MCP_PROVIDER_ID, McpLaunch, StandardsMcpProvider, stickyFolder } from "./mcp";
 import { DEFAULT_TIMEOUT_MS, runCLI } from "./runner";
-import { artifactPath, boundedIsFile, ClientCapability, commandAvailable, globLiteral, LSP_CLIENT_ID, LSP_DEFAULT_PATH, machineExecutable, parseCapabilities, praetorWorkspace, requireTrust, sentinelArguments, setupArguments, workspaceExecutable, workspaceGlob } from "./setup";
+import { artifactPath, boundedIsFile, ClientCapability, commandAvailable, globLiteral, LSP_CLIENT_ID, LSP_CLIENT_NAME, LSP_DEFAULT_PATH, machineExecutable, parseCapabilities, praetorWorkspace, requireTrust, sentinelArguments, setupArguments, workspaceExecutable, workspaceGlob } from "./setup";
 
 let client: LanguageClient | undefined;
 let lspStarting = false;
@@ -108,7 +108,7 @@ async function startOptionalLSP(context: vscode.ExtensionContext): Promise<void>
   const pattern = new vscode.RelativePattern(folder, "**/*.go");
   const watcher = vscode.workspace.createFileSystemWatcher(pattern);
   context.subscriptions.push(watcher);
-  client = new LanguageClient(LSP_CLIENT_ID, "Praetor LSP", { command: executable, args: [], options: { cwd: folder.uri.fsPath } }, {
+  client = new LanguageClient(LSP_CLIENT_ID, LSP_CLIENT_NAME, { command: executable, args: [], options: { cwd: folder.uri.fsPath } }, {
     documentSelector: [{ scheme: "file", language: "go", pattern: workspaceGlob(folder.uri.fsPath) }], workspaceFolder: folder, synchronize: { fileEvents: watcher },
   });
   context.subscriptions.push(client);

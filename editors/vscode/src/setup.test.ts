@@ -3,9 +3,10 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import Module from "node:module";
 import test from "node:test";
 import { MCP_PROVIDER_ID } from "./mcp";
-import { artifactPath, boundedIsFile, checkedLaunchFiles, commandAvailable, globLiteral, LSP_CLIENT_ID, LSP_DEFAULT_PATH, machineExecutable, MAX_MARKER_FOLDERS, MCP_DEFAULT_PATH, parseCapabilities, PRAETOR_MARKERS, praetorWorkspace, requireTrust, sentinelArguments, setupArguments, workspaceExecutable, workspaceGlob } from "./setup";
+import { artifactPath, boundedIsFile, checkedLaunchFiles, commandAvailable, globLiteral, LSP_CLIENT_ID, LSP_CLIENT_NAME, LSP_DEFAULT_PATH, machineExecutable, MAX_MARKER_FOLDERS, MCP_DEFAULT_PATH, parseCapabilities, PRAETOR_MARKERS, praetorWorkspace, requireTrust, sentinelArguments, setupArguments, workspaceExecutable, workspaceGlob } from "./setup";
 import { runCLI } from "./runner";
 
 const sample = { client: "claude", mode: "merge", documentation: "https://example.invalid/docs", lifecycle: { state: "adapter-defined", definition_paths: [".claude/settings.json"], activation: "unverified" } };
@@ -19,7 +20,7 @@ type Manifest = {
   capabilities: { untrustedWorkspaces: { restrictedConfigurations: string[] } };
   contributes: {
     commands: { command: string }[];
-    configuration: { properties: Record<string, { default?: unknown; enum?: string[] } | undefined> };
+    configuration: { properties: Record<string, { default?: unknown; enum?: string[]; enumDescriptions?: string[]; description?: string } | undefined> };
     mcpServerDefinitionProviders?: { id: string; label: string; when?: string }[];
   };
 };
@@ -276,10 +277,73 @@ test("the language client reads its trace level from the contributed setting", (
   const trace = properties[`${LSP_CLIENT_ID}.trace.server`];
   assert.ok(trace, `${LSP_CLIENT_ID}.trace.server is not a contributed setting`);
   assert.deepEqual(trace.enum, ["off", "messages", "verbose"]);
+  // The setting only picks the detail; the log level of the client's output channel decides whether
+  // anything is traced, so the description must name that channel and the Trace level.
+  assert.match(trace.description ?? "", new RegExp(`${LSP_CLIENT_NAME} output channel.*log level is Trace`));
+  assert.equal(trace.enumDescriptions?.length, trace.enum?.length);
+  assert.match(trace.enumDescriptions?.[0] ?? "", /^Same as messages\./);
   // The former client id read a key nothing contributes, so the setting had no effect.
   assert.equal(properties["standardsLSP.trace.server"], undefined);
   // Every other LSP setting is read from the "standards" section; the id stays inside it.
   assert.ok(LSP_CLIENT_ID.startsWith("standards."));
+});
+
+// vscode.LogLevel values (@types/vscode): the level a log output channel reports.
+const LogLevel = { Off: 0, Trace: 1, Debug: 2, Info: 3, Warning: 4, Error: 5 } as const;
+type TraceClient = {
+  Trace: { Off: number; Messages: number; Verbose: number };
+  BaseLanguageClient: { prototype: { refreshTrace(this: object, connection: object): void } };
+};
+
+// loadTraceClient loads the locked vscode-languageclient node entry outside a VS Code host. The
+// "vscode" module resolves to a stub holding LogLevel and workspace.getConfiguration, the host API
+// refreshTrace reads, answered from `settings` with each section recorded in `sections`. Every
+// other export is an empty class, enough for the client's `class ... extends vscode.X` lines.
+function loadTraceClient(settings: Map<string, unknown>, sections: string[]): TraceClient {
+  const classes = new Map<PropertyKey, unknown>();
+  const workspace = { getConfiguration: (section: string) => {
+    sections.push(section);
+    return { get: (key: string, fallback: unknown) => (settings.has(key) ? settings.get(key) : fallback) };
+  } };
+  const known: Record<PropertyKey, unknown> = { __esModule: true, LogLevel, workspace };
+  const host = new Proxy(known, { get: (target, name) => {
+    if (name in target) return target[name];
+    if (!classes.has(name)) classes.set(name, class {});
+    return classes.get(name);
+  } });
+  const loader = Module as unknown as { _resolveFilename(request: string, ...rest: unknown[]): string };
+  const resolve = loader._resolveFilename;
+  const stub = path.join(__dirname, "vscode-host-stub");
+  require.cache[stub] = { id: stub, filename: stub, loaded: true, exports: host } as unknown as NodeJS.Module;
+  loader._resolveFilename = function (request, ...rest) { return request === "vscode" ? stub : resolve.call(this, request, ...rest); };
+  try { return require("vscode-languageclient/node") as TraceClient; } finally { loader._resolveFilename = resolve; }
+}
+
+// Since vscode-languageclient 10, refreshTrace traces only while the client's output channel is at
+// log level Trace, and there maps `off` to messages; 9.x read the setting alone. A client update that
+// changes this must update the trace text in docs/guides/editor-capabilities.md, the README
+// "Settings" section and the standards.lsp.trace.server description.
+test("the locked language client traces only at the Trace log level", () => {
+  const settings = new Map<string, unknown>();
+  const sections: string[] = [];
+  const client = loadTraceClient(settings, sections);
+  const traced = (level: number, value: string): number | undefined => {
+    settings.set("trace.server", value);
+    let sent: number | undefined;
+    const connection = { trace: (trace: number) => { sent = trace; return Promise.resolve(); } };
+    client.BaseLanguageClient.prototype.refreshTrace.call({ _id: LSP_CLIENT_ID, _traceLogLevel: level, error: () => undefined }, connection);
+    return sent;
+  };
+  const { Off, Messages, Verbose } = client.Trace;
+  // Positive: at Trace the setting picks the detail, read from the client id's section.
+  assert.equal(traced(LogLevel.Trace, "verbose"), Verbose);
+  assert.equal(traced(LogLevel.Trace, "messages"), Messages);
+  assert.deepEqual([...new Set(sections)], [LSP_CLIENT_ID]);
+  // Negative: at the default Info level no value traces, and `off` does not stop tracing at Trace.
+  assert.equal(traced(LogLevel.Info, "verbose"), Off);
+  assert.equal(traced(LogLevel.Trace, "off"), Messages);
+  // Boundary: Debug, the level next to Trace, traces nothing.
+  assert.equal(traced(LogLevel.Debug, "verbose"), Off);
 });
 
 test("configuration authority and strict capability boundaries", () => {
