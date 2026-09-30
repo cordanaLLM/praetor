@@ -7,14 +7,13 @@ package gating
 import (
 	"context"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
+	"github.com/cordanaLLM/praetor/internal/devcontainer"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -71,8 +70,9 @@ func test(args []string) error {
 
 // The race stage end to end through a real container runtime: the gate builds the repository's
 // devcontainer from its Dockerfile, finds go in it, and runs the suite in the stage worktree, mounted
-// at its own path with its git common dir, as the host user, with HOME in the persistent directory.
-// The image is FROM scratch around a stand-in toolchain, so the test pulls nothing.
+// at its own path with its git common dir, as the host user, with HOME in the persistent user-cache
+// directory. Releasing the run removes its per-run tag and keeps the stable one. The image is FROM
+// scratch around a stand-in toolchain, so the test pulls nothing.
 func TestRaceStageRunsInARealDevcontainer(t *testing.T) {
 	if testing.Short() {
 		t.Skip("-short: this test builds and runs a container image")
@@ -80,17 +80,22 @@ func TestRaceStageRunsInARealDevcontainer(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("the stand-in toolchain is built for the host, and only a Linux host runs it inside a Linux container")
 	}
-	plan, reason := realRuntimePlan(t)
-	if plan == "" {
+	rt, reason := realRuntime(t)
+	if rt.Path == "" {
 		t.Skip(reason)
 	}
 	repo, resolved := devcontainerRepo(t)
+	// A unique origin gives the test a stable tag of its own, which its cleanup removes.
+	treeGit(t, repo, "remote", "add", "origin", "https://forge.example/praetor-test/"+filepath.Base(resolved)+".git")
+	home := isolateUserCache(t)
 	t.Setenv("CGO_ENABLED", "0")
 	testsupport.BuildExecutable(t, filepath.Join(repo, ".devcontainer"), "toolchain", standInToolchain)
 	writeFile(t, filepath.Join(repo, ".devcontainer", "Dockerfile"), "FROM scratch\n"+
 		"COPY toolchain /usr/local/bin/go\nCOPY toolchain /usr/local/bin/sh\nCOPY toolchain /usr/local/bin/gcc\n"+
 		"ENV PATH=/usr/local/bin\n")
-	t.Cleanup(func() { removeImage(t, plan, imageRef(resolved)) })
+	// Named now: t.Context is already canceled when cleanups run, and the origin cannot be read then.
+	stable := imageRefs(t.Context(), resolved).Stable
+	t.Cleanup(func() { removeImage(t, rt.Path, stable) })
 	t.Setenv(DevcontainerEnv, "")
 
 	rep := &PipelineReport{Stages: make([]StageResult, 0, maxStages)}
@@ -104,9 +109,9 @@ func TestRaceStageRunsInARealDevcontainer(t *testing.T) {
 	if _, err := runTestStage(t.Context(), cfg); err != nil {
 		t.Fatalf("race stage in the devcontainer: %v", err)
 	}
-	record, err := os.ReadFile(filepath.Join(resolved, ".git", "praetor", "devcontainer-home", "gate-ran"))
+	record, err := os.ReadFile(filepath.Join(home, "gate-ran"))
 	if err != nil {
-		t.Fatalf("the suite left no record in the persistent HOME: %v", err)
+		t.Fatalf("the suite left no record in the persistent HOME %s: %v", home, err)
 	}
 	lines := strings.Split(string(record), "\n")
 	worktrees := filepath.Join(resolved, ".standards", "worktrees") + string(filepath.Separator)
@@ -114,26 +119,29 @@ func TestRaceStageRunsInARealDevcontainer(t *testing.T) {
 		lines[2] != strconv.Itoa(os.Getuid()) {
 		t.Errorf("the suite ran as %q; want the stage worktree under %s, go test -race and uid %d", lines, worktrees, os.Getuid())
 	}
+
+	image := cfg.container.image
+	releaseDevcontainer(t.Context(), cfg)
+	if rep.Execution.Cleanup != "" {
+		t.Fatalf("release: %s", rep.Execution.Cleanup)
+	}
+	if _, err := util.RunCommand(t.Context(), resolved, rt.Path, "image", "inspect", image.RunRef); err == nil {
+		t.Errorf("the per-run tag %s must be gone after the release", image.RunRef)
+	}
+	if _, err := util.RunCommand(t.Context(), resolved, rt.Path, "image", "inspect", image.Ref); err != nil {
+		t.Errorf("the stable tag %s must survive the release: %v", image.Ref, err)
+	}
 }
 
-// realRuntimePlan returns the container runtime this host would build with and whose daemon
-// answers, or the reason the test cannot run here.
-func realRuntimePlan(t *testing.T) (string, string) {
+// realRuntime returns the container runtime this host would build with, asked the way the gate asks
+// (devcontainer.FindRuntime), or the reason the test cannot run here.
+func realRuntime(t *testing.T) (devcontainer.Runtime, string) {
 	t.Helper()
-	for _, name := range []string{"docker", "podman"} {
-		path, err := exec.LookPath(name)
-		if err != nil {
-			continue
-		}
-		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
-		_, err = util.RunCommand(ctx, t.TempDir(), path, "info")
-		cancel()
-		if err != nil {
-			return "", name + " is on PATH but its daemon does not answer: " + err.Error()
-		}
-		return path, ""
+	rt, err := devcontainer.FindRuntime(t.Context(), t.TempDir(), hostMachine())
+	if err != nil {
+		return devcontainer.Runtime{}, err.Error()
 	}
-	return "", "neither docker nor podman is on PATH: the devcontainer path cannot run here"
+	return rt, ""
 }
 
 // removeImage removes the image the test built.

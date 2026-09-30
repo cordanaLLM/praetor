@@ -28,6 +28,14 @@ const (
 	// ImageBuildTimeout bounds one image build, pull and inspection (HISS-02). A first build pulls
 	// the base images and installs the features; later builds reuse the runtime's layer cache.
 	ImageBuildTimeout = 15 * time.Minute
+	// RuntimeProbeTimeout bounds the `<runtime> info` call that asks one container runtime on
+	// PATH whether it can serve a build (HISS-02): a stopped daemon or podman machine answers
+	// within it with an error, and a hung one is cut off by it.
+	RuntimeProbeTimeout = 10 * time.Second
+	// RuntimeProbeBudget is the longest planning spends asking runtimes: one probe per runtime.
+	RuntimeProbeBudget = RuntimeProbeTimeout * time.Duration(len(containerRuntimes))
+	// probeExcerptBytes bounds how much of a failed probe's diagnostic a refusal quotes.
+	probeExcerptBytes = 200
 )
 
 // containerRuntimes are the container CLIs an image is built and run with, in preference order.
@@ -45,10 +53,13 @@ var ErrImageUnavailable = errors.New("devcontainer image unavailable here")
 // error in the error. util.RunCommand is the production runner.
 type CommandRunner func(ctx context.Context, dir, name string, args ...string) (string, error)
 
-// Host is what planning an image reads from the machine: its operating system and its PATH.
+// Host is what planning an image reads from the machine: its operating system, its PATH, and
+// the runner that asks each container runtime on PATH whether it answers.
 type Host struct {
 	GOOS     string
 	LookPath func(string) (string, error)
+	// Run starts the `<runtime> info` probe. util.RunCommand is the production runner.
+	Run CommandRunner
 }
 
 // Runtime is a container CLI resolved on PATH.
@@ -71,11 +82,23 @@ type ImagePlan struct {
 	dockerfile, context string
 }
 
+// ImageRefs are the two names a build gives its image. Stable is the repository's lasting tag: the
+// next build reuses the layers it keeps, and moving it to a newer image leaves the old one dangling
+// for the runtime's own prune, so one tag per repository is all that accumulates. Run is unique to
+// one gate run: the image ID is read through it, so a concurrent build that moves Stable cannot
+// hand this run another image, and the run removes it when it finishes (Image.ReleaseArgs).
+type ImageRefs struct {
+	Stable, Run string
+}
+
 // Image is a built devcontainer image, identified by the ID its runtime assigned.
 type Image struct {
 	Runtime Runtime
-	Ref     string
-	ID      string
+	// Ref is the image's lasting name: the stable tag of a build, the configured image of a pull.
+	Ref string
+	// RunRef is the per-run tag the run removes when it finishes; empty for a pulled image.
+	RunRef string
+	ID     string
 	// Builder says what produced the image: the devcontainer CLI, a runtime build or a pull.
 	Builder string
 }
@@ -98,12 +121,13 @@ func unavailable(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrImageUnavailable, fmt.Sprintf(format, args...))
 }
 
-// PlanImage checks that repoDir's devcontainer can be built here, writing and running nothing. It
-// refuses, with ErrImageUnavailable and the reason, a Windows host (a Linux container cannot mount
-// a Windows path at its own path), a repository without ConfigPath, a host without docker or
-// podman, a configuration outside the managed schema, a recorded Praetor bootstrap whose
-// companions fail verification or that is unavailable, build inputs outside the repository, and
-// features without the devcontainer CLI to apply them.
+// PlanImage checks that repoDir's devcontainer can be built here, writing nothing and running only
+// the runtime probe (FindRuntime). It refuses, with ErrImageUnavailable and the reason, a Windows
+// host (a Linux container cannot mount a Windows path at its own path), a repository without
+// ConfigPath, a host where neither docker nor podman is on PATH and answers, a configuration
+// outside the managed schema, a recorded Praetor bootstrap whose companions fail verification or
+// that is unavailable, build inputs outside the repository, and features without the devcontainer
+// CLI to apply them.
 func PlanImage(ctx context.Context, repoDir string, host Host) (*ImagePlan, error) {
 	if host.GOOS == "windows" {
 		return nil, unavailable("a Linux container cannot mount a Windows checkout at its own path")
@@ -116,7 +140,7 @@ func PlanImage(ctx context.Context, repoDir string, host Host) (*ImagePlan, erro
 	if !util.FileExists(path) {
 		return nil, unavailable("the repository has no %s", ConfigPath)
 	}
-	runtime, err := findRuntime(host.LookPath)
+	runtime, err := FindRuntime(ctx, root, host)
 	if err != nil {
 		return nil, err
 	}
@@ -138,14 +162,45 @@ func PlanImage(ctx context.Context, repoDir string, host Host) (*ImagePlan, erro
 	return plan, nil
 }
 
-// findRuntime returns the first container CLI on PATH, in containerRuntimes order.
-func findRuntime(lookPath func(string) (string, error)) (Runtime, error) {
-	for i := 0; i < len(containerRuntimes); i++ {
-		if path, err := lookPath(containerRuntimes[i]); err == nil {
-			return Runtime{Name: containerRuntimes[i], Path: path}, nil
-		}
+// FindRuntime returns the first container runtime, in containerRuntimes order, that is on PATH and
+// answers `<runtime> info`, run in dir under RuntimeProbeTimeout. A CLI on PATH is not a working
+// runtime: its daemon may be stopped, its socket closed to this user, or its podman machine down,
+// and a plan made with it would fail every build. A runtime that does not answer is passed over
+// for the next, and when none answers the refusal names each one and why.
+func FindRuntime(ctx context.Context, dir string, host Host) (Runtime, error) {
+	if host.Run == nil {
+		return Runtime{}, unavailable("no command runner was given to ask docker or podman whether it answers")
 	}
-	return Runtime{}, unavailable("neither docker nor podman is on PATH")
+	notes := make([]string, 0, len(containerRuntimes))
+	onPath := 0
+	for i := 0; i < len(containerRuntimes); i++ {
+		name := containerRuntimes[i]
+		path, err := host.LookPath(name)
+		if err != nil {
+			notes = append(notes, name+" is not on PATH")
+			continue
+		}
+		onPath++
+		if err := probeRuntime(ctx, host.Run, dir, path); err != nil {
+			notes = append(notes, fmt.Sprintf("%s is on PATH but `%s info` failed: %s", name, name,
+				util.TruncateExcerpt(err.Error(), probeExcerptBytes)))
+			continue
+		}
+		return Runtime{Name: name, Path: path}, nil
+	}
+	if onPath == 0 {
+		return Runtime{}, unavailable("neither docker nor podman is on PATH")
+	}
+	return Runtime{}, unavailable("no container runtime answers: %s", strings.Join(notes, "; "))
+}
+
+// probeRuntime asks the runtime at path for its system information under RuntimeProbeTimeout. It
+// fails when the daemon or machine behind the CLI cannot be reached.
+func probeRuntime(ctx context.Context, run CommandRunner, dir, path string) error {
+	pCtx, cancel := context.WithTimeout(ctx, RuntimeProbeTimeout)
+	defer cancel()
+	_, err := run(pCtx, dir, path, "info")
+	return err
 }
 
 // resolveBuild confines the configuration's build inputs to the repository. The dockerfile and
@@ -201,43 +256,54 @@ func featureRefs(features map[string]interface{}) []string {
 	return refs
 }
 
-// Build builds the planned image under ImageBuildTimeout, tagged ref, and returns it with the ID
-// its runtime assigned: through the devcontainer CLI when the configuration declares features,
-// else a runtime build of the Dockerfile, else a pull of the named image when it is not present.
-func (p *ImagePlan) Build(ctx context.Context, run CommandRunner, ref string) (Image, error) {
+// Build builds the planned image under ImageBuildTimeout, tagged with both refs, and returns it
+// with the ID its runtime assigned, read through refs.Run: through the devcontainer CLI when the
+// configuration declares features, else a runtime build of the Dockerfile, else a pull of the
+// named image when it is not present, which is tagged with neither ref.
+func (p *ImagePlan) Build(ctx context.Context, run CommandRunner, refs ImageRefs) (Image, error) {
 	bCtx, cancel := context.WithTimeout(ctx, ImageBuildTimeout)
 	defer cancel()
-	img := Image{Runtime: p.Runtime, Ref: ref}
+	img := Image{Runtime: p.Runtime, Ref: refs.Stable, RunRef: refs.Run}
 	var err error
 	switch {
 	case p.CLI != "":
 		img.Builder = CLIName + " build"
-		_, err = run(bCtx, p.RepoDir, p.CLI, "build", "--workspace-folder", p.RepoDir,
-			"--config", p.ConfigPath, "--image-name", ref, "--docker-path", p.Runtime.Path)
+		_, err = run(bCtx, p.RepoDir, p.CLI, "build", "--workspace-folder", p.RepoDir, "--config", p.ConfigPath,
+			"--image-name", refs.Stable, "--image-name", refs.Run, "--docker-path", p.Runtime.Path)
 	case p.dockerfile != "":
 		img.Builder = p.Runtime.Name + " build"
-		_, err = run(bCtx, p.RepoDir, p.Runtime.Path, p.buildArgs(ref)...)
+		_, err = run(bCtx, p.RepoDir, p.Runtime.Path, p.buildArgs(refs)...)
 	default:
-		img.Ref, img.Builder = p.Config.Image, p.Runtime.Name+" pull"
+		img.Ref, img.RunRef, img.Builder = p.Config.Image, "", p.Runtime.Name+" pull"
 		err = p.pullIfMissing(bCtx, run)
 	}
 	if err != nil {
 		return Image{}, buildError(bCtx, img.Builder, err)
 	}
-	id, err := run(bCtx, p.RepoDir, p.Runtime.Path, "image", "inspect", "--format", "{{.Id}}", img.Ref)
-	if err != nil {
-		return Image{}, buildError(bCtx, p.Runtime.Name+" image inspect", err)
-	}
-	if img.ID, err = normalizeImageID(id); err != nil {
+	if img.ID, err = inspectID(bCtx, run, p.RepoDir, img); err != nil {
 		return Image{}, err
 	}
 	return img, nil
 }
 
-// buildArgs is the runtime build command line: the Dockerfile, the tag, the build arguments in
+// inspectID reads the ID of the image a build or pull produced: through its per-run tag when it
+// has one, else its configured name.
+func inspectID(ctx context.Context, run CommandRunner, dir string, img Image) (string, error) {
+	ref := img.RunRef
+	if ref == "" {
+		ref = img.Ref
+	}
+	id, err := run(ctx, dir, img.Runtime.Path, "image", "inspect", "--format", "{{.Id}}", ref)
+	if err != nil {
+		return "", buildError(ctx, img.Runtime.Name+" image inspect", err)
+	}
+	return normalizeImageID(id)
+}
+
+// buildArgs is the runtime build command line: the Dockerfile, both tags, the build arguments in
 // key order and the context.
-func (p *ImagePlan) buildArgs(ref string) []string {
-	args := []string{"build", "--file", p.dockerfile, "--tag", ref}
+func (p *ImagePlan) buildArgs(refs ImageRefs) []string {
+	args := []string{"build", "--file", p.dockerfile, "--tag", refs.Stable, "--tag", refs.Run}
 	keys := make([]string, 0, len(p.Config.Build.Args))
 	for key := range p.Config.Build.Args {
 		keys = append(keys, key)
@@ -306,4 +372,15 @@ func (img Image) RunArgs(opts RunOptions, name string, args ...string) []string 
 // runtimes exit zero when the container is already gone.
 func (img Image) RemoveArgs(container string) []string {
 	return []string{"rm", "--force", container}
+}
+
+// ReleaseArgs is the runtime command line that removes the image's per-run tag, nil for an image
+// without one. While the stable tag still names the image this only untags it. Once a newer build
+// has moved the stable tag the image itself goes, and --no-prune keeps its untagged parent layers,
+// which podman's layer cache is made of, for the runtime's own prune to decide.
+func (img Image) ReleaseArgs() []string {
+	if img.RunRef == "" {
+		return nil
+	}
+	return []string{"image", "rm", "--no-prune", img.RunRef}
 }

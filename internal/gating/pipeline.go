@@ -295,6 +295,7 @@ func runPipeline(ctx context.Context, cfg *stageConfig, start time.Time) *Pipeli
 		rep.TotalElapsed = time.Since(start)
 		return rep
 	}
+	defer releaseDevcontainer(ctx, cfg)
 
 	if err := executeStages(ctx, cfg); err != nil {
 		// A rejection is a pipeline outcome, not a pipeline failure: the failing stage and

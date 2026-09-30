@@ -1070,7 +1070,10 @@ and `devcontainer.PlanImage` check, building nothing, that:
 
 - `PRAETOR_GATE_DEVCONTAINER` is unset or `auto`, and the run is not a dry run;
 - the repository root holds a `go.mod` and `.devcontainer/devcontainer.json`;
-- the host is not Windows, and `docker` or `podman` is on `PATH` (docker first);
+- the host is not Windows, and `docker` or `podman` is on `PATH` and answers `<runtime> info`
+  within `devcontainer.RuntimeProbeTimeout` (10 s), docker first (`devcontainer.FindRuntime`). A
+  CLI whose daemon is stopped, whose socket this user may not open, or whose podman machine is
+  down is passed over for the next runtime, so it cannot plan a build that then fails every run;
 - the configuration is inside the managed schema, and a recorded Praetor bootstrap's companions
   verify — the check `praetorctl devcontainer verify` applies (`verifyRecordedCompanions` in
   [`internal/devcontainer/bootstrap_io.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/devcontainer/bootstrap_io.go));
@@ -1086,11 +1089,21 @@ features, so on a host without the devcontainer CLI Praetor's gate runs on the h
 features.
 
 **How the image is built.** With features, `devcontainer build --workspace-folder <repo> --config
-<config> --image-name praetor-gate-<hash>:latest --docker-path <runtime>`; without, `<runtime> build
---file <dockerfile> --tag … <context>` with the configuration's build arguments; an image-only
-configuration is pulled when the runtime does not hold it. The build runs under the 15-minute bound,
-and the runtime's layer cache makes a rebuild of an unchanged definition quick. The built image must
-have `go` on its `PATH`; one without it runs the stages on the host and says so.
+<config> --image-name <stable> --image-name <run> --docker-path <runtime>`; without, `<runtime> build
+--file <dockerfile> --tag <stable> --tag <run> <context>` with the configuration's build arguments;
+an image-only configuration is pulled when the runtime does not hold it, and tagged with neither.
+The build runs under the 15-minute bound, and the runtime's layer cache makes a rebuild of an
+unchanged definition quick. The built image must have `go` on its `PATH`; one without it runs the
+stages on the host and says so.
+
+The two tags (`imageRefs` in
+[`internal/gating/devcontainer.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/devcontainer.go))
+keep the image store from growing with every push:
+
+| Tag | Form | Lifetime |
+| :--- | :--- | :--- |
+| Stable | `praetor-gate-<hash>:latest`, the hash of the origin remote's host and path; every repository without an origin shares one | kept. Every clone and worktree of one repository reuses it, the pre-push hook's temporary clone included; a rebuild of a changed definition moves it and leaves the old image dangling for `docker image prune` or `podman image prune` |
+| Per run | `praetor-gate-<hash>:run-<pid>-<time>-<n>` | the image ID is read through it, so a concurrent build that moves the stable tag cannot hand this run another image. It is removed with `<runtime> image rm --no-prune` once the stages are done, or at once when the image is not entered |
 
 **How commands run in it.** Each command runs in a disposable container of the image, named by the
 image ID the runtime reported, so every command runs in exactly the image the receipt names:
@@ -1100,8 +1113,8 @@ image ID the runtime reported, so every command runs in exactly the image the re
 | Checkout | bind-mounted at its own path, so the paths in stage messages are the host's |
 | Git common dir | bind-mounted at its own path when it lies outside the checkout, so a stage worktree's `gitdir` link resolves inside the container |
 | User | the host user: `--user <uid>:<gid>` on docker, `--userns=keep-id` on rootless podman; files the stages write stay the host user's |
-| `HOME` | `<git common dir>/praetor/devcontainer-home`, created on the host; Go's build and module caches persist there across runs, beside the Cargo target directory |
-| Environment | `GOPATH=$HOME/go` (not an image's shared `/go`), `GOFLAGS=-modcacherw` so removing the clone removes the cache, `PRAETOR_GATE_DEVCONTAINER=off` so a gate a test starts inside never looks for a runtime there |
+| `HOME` | `<user cache dir>/praetor/devcontainer-home` (`os.UserCacheDir`: `$XDG_CACHE_HOME` or `~/.cache` on Linux, `~/Library/Caches` on macOS), created on the host and bind-mounted at its own path. It lies outside every checkout, so Go's build and module caches persist across runs, including the pre-push hook's runs in a temporary clone. One `HOME` serves every repository, as the host's own Go caches do, and the prefetch stage's `go mod verify` re-checks the module cache against `go.sum` |
+| Environment | `GOPATH=$HOME/go` (not an image's shared `/go`), `GOFLAGS=-modcacherw` so the cache can be deleted without restoring write permission first, `PRAETOR_GATE_DEVCONTAINER=off` so a gate a test starts inside never looks for a runtime there |
 | Cleanup | a container whose command failed is removed by name, because a runtime CLI killed by the stage bound leaves its container running |
 
 The race stage keeps its bound and its worktree (`inStageWorktree`); the worktree is created by the
@@ -1135,7 +1148,8 @@ host, and the reason quotes the value.
 **Platforms (HISS-21).** A Windows host runs the stages on the host: a Linux container cannot mount
 a Windows checkout at its own path, and the reason says so. A macOS or Linux host without docker or
 podman, such as a GitHub-hosted macOS runner, runs them on the host and records
-`neither docker nor podman is on PATH`. GitHub-hosted Linux runners carry docker but not the
+`neither docker nor podman is on PATH`; one whose runtime is on `PATH` but does not answer records
+`no container runtime answers:` with each runtime's reply. GitHub-hosted Linux runners carry docker but not the
 devcontainer CLI, so a repository whose devcontainer declares features, Praetor included, runs its
 CI gate on the host with that reason.
 
@@ -1147,6 +1161,10 @@ CI gate on the host with that reason.
   own.
 - The container path is exercised against a real runtime with docker; rootless podman's
   `--userns=keep-id` mapping and rootless docker are covered by the command-line tests only.
+- A gate killed before its stages finish (`SIGKILL`, a lost machine) leaves its per-run tag;
+  `<runtime> image ls --filter 'reference=praetor-gate-*'` lists it for `<runtime> image rm`. A removal that fails in a run
+  that finished is printed after `Toolchain stages ran in:` as `cleanup:` and carried as
+  `execution.cleanup` in `--json`, outside the signed line.
 - The mounts carry no SELinux relabel option, so a host enforcing SELinux may deny the container
   access to the checkout; the stage then fails, and `PRAETOR_GATE_DEVCONTAINER=off` runs it on
   the host.

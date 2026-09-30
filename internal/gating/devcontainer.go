@@ -33,10 +33,18 @@ const (
 	// built or entered. The run is rejected: a planned devcontainer that fails is reported, never
 	// replaced by the host.
 	DevcontainerStage = "Devcontainer Image"
-	// devcontainerHomeRel is the container's HOME below the git common dir, where the cargo stage
-	// keeps its target directory too: outside every working tree, shared by the clone's worktrees,
-	// so Go's build and module caches outlive the run.
+	// devcontainerHomeRel is the container's HOME below the user's cache directory
+	// (os.UserCacheDir): outside every checkout, so Go's build and module caches outlive the run
+	// and the checkout. The pre-push hook gates a fresh clone in a temporary directory, so a HOME
+	// kept below the checkout or its git common dir would start empty on every push and be deleted
+	// after it. One HOME serves every repository, as the host's own Go caches do: both caches are
+	// content-addressed and safe for concurrent builds.
 	devcontainerHomeRel = "praetor/devcontainer-home"
+	// devcontainerPlanTimeout bounds planning: the git and file reads, plus one probe per runtime.
+	devcontainerPlanTimeout = GitQueryTimeout + devcontainer.RuntimeProbeBudget
+	// localImageKey keys the stable image tag of a repository without an origin remote. All such
+	// repositories share one tag, so a clone without an origin cannot add a tag per push.
+	localImageKey = "local"
 	// devcontainerProbe asks a container's shell for a command's path. It exits zero either way,
 	// so an empty answer means absent and a failure means the container could not run the shell.
 	devcontainerProbe = `command -v "$1" || true`
@@ -57,7 +65,9 @@ var containerSeq atomic.Uint64
 
 // Execution records where a run's toolchain stages ran. Environment is "devcontainer", with the
 // runtime, the image ID, what built it and the stages that ran in it, or "host", with the reason.
-// The receipt certifies it as the execution header line (lockdown.ExecutionLine).
+// The receipt certifies it as the execution header line (lockdown.ExecutionLine). Cleanup is
+// outside that line: it says what the run could not remove after its stages, such as its per-run
+// image tag, and is reported, not signed.
 type Execution struct {
 	Environment string   `json:"environment"`
 	Runtime     string   `json:"runtime,omitempty"`
@@ -66,6 +76,7 @@ type Execution struct {
 	Builder     string   `json:"builder,omitempty"`
 	Stages      []string `json:"stages,omitempty"`
 	Reason      string   `json:"reason,omitempty"`
+	Cleanup     string   `json:"cleanup,omitempty"`
 }
 
 // Line renders the execution header line of the signed gate output.
@@ -77,13 +88,18 @@ func (e *Execution) Line() string {
 	return lockdown.ExecutionLine(executionHost, "reason="+e.Reason)
 }
 
-// String is the report form of the execution: where the stages ran, and the image or the reason.
+// String is the report form of the execution: where the stages ran, the image or the reason, and
+// what the run could not clean up.
 func (e *Execution) String() string {
+	where := "host: " + e.Reason
 	if e.Environment == executionDevcontainer {
-		return fmt.Sprintf("devcontainer %s (%s, %s) for the Go part of %s", e.ImageID, e.Runtime, e.Builder,
+		where = fmt.Sprintf("devcontainer %s (%s, %s) for the Go part of %s", e.ImageID, e.Runtime, e.Builder,
 			strings.Join(e.Stages, ", "))
 	}
-	return "host: " + e.Reason
+	if e.Cleanup != "" {
+		return where + "; cleanup: " + e.Cleanup
+	}
+	return where
 }
 
 // hostExecution records a run whose toolchain stages run on the host, and why.
@@ -93,7 +109,7 @@ func hostExecution(reason string) *Execution {
 
 // hostMachine is the real machine a plan is made for.
 func hostMachine() devcontainer.Host {
-	return devcontainer.Host{GOOS: runtime.GOOS, LookPath: exec.LookPath}
+	return devcontainer.Host{GOOS: runtime.GOOS, LookPath: exec.LookPath, Run: util.RunCommand}
 }
 
 // planDevcontainer decides, building nothing, whether the run's Go toolchain stages run in the
@@ -114,7 +130,7 @@ func planDevcontainer(ctx context.Context, repoDir string, dryRun bool, host dev
 	if !util.FileExists(filepath.Join(repoDir, "go.mod")) {
 		return nil, "no go.mod: the devcontainer runs the Go toolchain stages only"
 	}
-	pCtx, cancel := context.WithTimeout(ctx, GitQueryTimeout)
+	pCtx, cancel := context.WithTimeout(ctx, devcontainerPlanTimeout)
 	defer cancel()
 	plan, err := devcontainer.PlanImage(pCtx, repoDir, host)
 	if err != nil {
@@ -126,15 +142,17 @@ func planDevcontainer(ctx context.Context, repoDir string, dryRun bool, host dev
 // resolveExecution decides where the run's Go toolchain stages run, before any stage does. Without
 // a plan they run on the host and the report records why. With one the image is built and must
 // carry go; an image without go is recorded as the reason they run on the host. A plan whose build
-// or setup fails rejects the run through a failed DevcontainerStage, with the opt-out named.
+// or setup fails rejects the run through a failed DevcontainerStage, with the opt-out named. A run
+// that entered the devcontainer releases its image tag through releaseDevcontainer.
 func resolveExecution(ctx context.Context, cfg *stageConfig) error {
-	plan, reason := planDevcontainer(ctx, cfg.repoDir, cfg.dryRun, devcontainer.Host{GOOS: cfg.goos, LookPath: cfg.lookPath})
+	host := devcontainer.Host{GOOS: cfg.goos, LookPath: cfg.lookPath, Run: devcontainer.CommandRunner(cfg.run)}
+	plan, reason := planDevcontainer(ctx, cfg.repoDir, cfg.dryRun, host)
 	if plan == nil {
 		cfg.rep.Execution = hostExecution(reason)
 		return nil
 	}
 	start := time.Now()
-	entered, err := enterDevcontainer(ctx, cfg, plan)
+	entered, cleanup, err := enterDevcontainer(ctx, cfg, plan)
 	if err != nil {
 		err = fmt.Errorf("the devcontainer that %s declares could not be used: %w; fix it, or set %s=off to "+
 			"run the toolchain stages on the host", devcontainer.ConfigPath, err, DevcontainerEnv)
@@ -145,6 +163,7 @@ func resolveExecution(ctx context.Context, cfg *stageConfig) error {
 	if entered == nil {
 		cfg.rep.Execution = hostExecution(fmt.Sprintf("the devcontainer image built from %s has no go on its PATH",
 			devcontainer.ConfigPath))
+		cfg.rep.Execution.Cleanup = cleanup
 		return nil
 	}
 	cfg.container = entered
@@ -154,33 +173,83 @@ func resolveExecution(ctx context.Context, cfg *stageConfig) error {
 }
 
 // enterDevcontainer builds the planned image and prepares how commands run in it. It returns nil
-// and no error when the image has no go on its PATH.
-func enterDevcontainer(ctx context.Context, cfg *stageConfig, plan *devcontainer.ImagePlan) (*devcontainerExec, error) {
-	img, err := plan.Build(ctx, devcontainer.CommandRunner(cfg.run), imageRef(plan.RepoDir))
+// and no error when the image has no go on its PATH. An image it built but did not enter has its
+// per-run tag released here: a failure to do so joins the error, or, with no error, is returned
+// as the cleanup note.
+func enterDevcontainer(ctx context.Context, cfg *stageConfig, plan *devcontainer.ImagePlan) (entered *devcontainerExec, cleanup string, err error) {
+	img, err := plan.Build(ctx, devcontainer.CommandRunner(cfg.run), imageRefs(ctx, plan.RepoDir))
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	entered, err := newDevcontainerExec(ctx, plan.RepoDir, img)
+	defer func() {
+		if entered != nil {
+			return
+		}
+		if relErr := releaseImage(ctx, cfg.run, plan.RepoDir, img); relErr != nil && err != nil {
+			err = errors.Join(err, relErr)
+		} else if relErr != nil {
+			cleanup = relErr.Error()
+		}
+	}()
+	dc, err := newDevcontainerExec(ctx, plan.RepoDir, img)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, GitQueryTimeout)
 	defer cancel()
-	err = entered.toolchain(cfg.run).have(probeCtx, plan.RepoDir, "go")
+	err = dc.toolchain(cfg.run).have(probeCtx, plan.RepoDir, "go")
 	if errors.Is(err, errNotOnPath) {
-		return nil, nil
+		return nil, "", nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("probing image %s for go failed: %w", img.ID, err)
+		return nil, "", fmt.Errorf("probing image %s for go failed: %w", img.ID, err)
 	}
-	return entered, nil
+	return dc, "", nil
 }
 
-// imageRef tags a repository's gate image by its resolved path, so two clones never overwrite each
-// other's tag. The image the stages run in is named by its ID, not by this tag.
-func imageRef(repoDir string) string {
-	sum := sha256.Sum256([]byte(repoDir))
-	return "praetor-gate-" + hex.EncodeToString(sum[:6]) + ":latest"
+// imageRefs names the image a run builds. The stable tag is keyed by the repository's origin
+// remote (host and path), so every clone and worktree of one repository, the pre-push hook's
+// temporary clone included, reuses one tag instead of adding one per checkout; a repository
+// without an origin shares localImageKey. The per-run tag adds the process and the time.
+func imageRefs(ctx context.Context, repoDir string) devcontainer.ImageRefs {
+	key := localImageKey
+	gitCtx, cancel := context.WithTimeout(ctx, GitQueryTimeout)
+	defer cancel()
+	if remote, err := util.ReadOriginRemote(gitCtx, repoDir); err == nil {
+		key = remote.Host + "/" + remote.Path
+	}
+	sum := sha256.Sum256([]byte(key))
+	name := "praetor-gate-" + hex.EncodeToString(sum[:6])
+	return devcontainer.ImageRefs{
+		Stable: name + ":latest",
+		Run:    fmt.Sprintf("%s:run-%d-%d-%d", name, os.Getpid(), time.Now().UnixNano(), containerSeq.Add(1)),
+	}
+}
+
+// releaseImage removes the image's per-run tag under CleanupTimeout, which runs on even when the
+// run's own context has ended. An image without one, a pull, needs nothing.
+func releaseImage(ctx context.Context, run commandRunner, dir string, img devcontainer.Image) error {
+	args := img.ReleaseArgs()
+	if args == nil {
+		return nil
+	}
+	rmCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), CleanupTimeout)
+	defer cancel()
+	if _, err := run(rmCtx, dir, img.Runtime.Path, args...); err != nil {
+		return fmt.Errorf("could not remove the per-run image tag %s: %w", img.RunRef, err)
+	}
+	return nil
+}
+
+// releaseDevcontainer removes the per-run tag of the image a run entered, once its stages are
+// done, and records a failure as the execution's cleanup note. A run on the host has none.
+func releaseDevcontainer(ctx context.Context, cfg *stageConfig) {
+	if cfg.container == nil {
+		return
+	}
+	if err := releaseImage(ctx, cfg.run, cfg.repoDir, cfg.container.image); err != nil && cfg.rep.Execution != nil {
+		cfg.rep.Execution.Cleanup = err.Error()
+	}
 }
 
 // devcontainerExec is how a run's commands reach its devcontainer: the image, the host directories
@@ -195,10 +264,10 @@ type devcontainerExec struct {
 
 // newDevcontainerExec mounts the checkout and, when it lies elsewhere, its git common dir, each at
 // its own path, so the stage worktrees' gitdir links resolve inside the container as they do on
-// the host. HOME is a persistent directory below the git common dir, created on the host so it
-// belongs to the host user. GOPATH follows it, overriding an image's shared /go, and GOFLAGS
-// leaves the module cache writable so removing the clone removes it. The container runs the gate
-// off, so a gate a test starts inside never looks for a runtime there.
+// the host. HOME is the persistent devcontainerHome, mounted at its own path too. GOPATH follows
+// it, overriding an image's shared /go, and GOFLAGS leaves the module cache writable so the cache
+// can be deleted without first restoring write permission. The container runs the gate off, so a
+// gate a test starts inside never looks for a runtime there.
 func newDevcontainerExec(ctx context.Context, repoDir string, img devcontainer.Image) (*devcontainerExec, error) {
 	gitCtx, cancel := context.WithTimeout(ctx, GitQueryTimeout)
 	defer cancel()
@@ -209,16 +278,16 @@ func newDevcontainerExec(ctx context.Context, repoDir string, img devcontainer.I
 	if common, err = util.ResolveExistingPath(gitCtx, common); err != nil {
 		return nil, fmt.Errorf("resolve the git common dir to mount: %w", err)
 	}
-	home, err := util.ConfinePath(common, filepath.FromSlash(devcontainerHomeRel))
+	home, err := devcontainerHome(gitCtx)
 	if err != nil {
-		return nil, fmt.Errorf("place the devcontainer home: %w", err)
-	}
-	if err := os.MkdirAll(home, 0o700); err != nil {
-		return nil, fmt.Errorf("create the devcontainer home %s: %w", home, err)
+		return nil, err
 	}
 	mounts := []string{repoDir}
-	if !util.WithinRoot(repoDir, common) {
-		mounts = append(mounts, common)
+	outside := [...]string{common, home}
+	for i := 0; i < len(outside); i++ {
+		if !util.WithinRoot(repoDir, outside[i]) {
+			mounts = append(mounts, outside[i])
+		}
 	}
 	for i := 0; i < len(mounts); i++ {
 		if strings.ContainsAny(mounts[i], ",\n\r") {
@@ -228,6 +297,26 @@ func newDevcontainerExec(ctx context.Context, repoDir string, img devcontainer.I
 	return &devcontainerExec{image: img, mounts: mounts, uid: os.Getuid(), gid: os.Getgid(), env: []string{
 		"HOME=" + home, "GOPATH=" + filepath.Join(home, "go"), "GOFLAGS=-modcacherw", DevcontainerEnv + "=off",
 	}}, nil
+}
+
+// devcontainerHome creates the container's HOME below the user's cache directory, on the host so
+// it belongs to the host user, and returns its resolved path, which is where it is mounted.
+func devcontainerHome(ctx context.Context) (string, error) {
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return "", fmt.Errorf("place the devcontainer home: no user cache directory: %w", err)
+	}
+	home, err := util.ConfinePath(cache, filepath.FromSlash(devcontainerHomeRel))
+	if err != nil {
+		return "", fmt.Errorf("place the devcontainer home: %w", err)
+	}
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		return "", fmt.Errorf("create the devcontainer home %s: %w", home, err)
+	}
+	if home, err = util.ResolveExistingPath(ctx, home); err != nil {
+		return "", fmt.Errorf("resolve the devcontainer home to mount: %w", err)
+	}
+	return home, nil
 }
 
 // toolchain is a Go toolchain whose commands run in the devcontainer, started through base.

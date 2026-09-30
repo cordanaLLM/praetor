@@ -17,6 +17,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/devcontainer"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 var fakeImageID = "sha256:" + strings.Repeat("7", 64)
@@ -34,6 +35,8 @@ type fakeRuntime struct {
 	calls    []containerCall
 	host     []recordedCommand
 	removed  []string
+	built    [][]string      // the build command lines
+	released []string        // the image tags removed
 	has      map[string]bool // commands on the image's PATH
 	failTest error           // what go test fails with inside the container
 	failRun  map[string]error
@@ -56,7 +59,14 @@ func (f *fakeRuntime) run(_ context.Context, dir, name string, args ...string) (
 		return "", err
 	}
 	switch args[0] {
+	case "build":
+		f.built = append(f.built, args)
+		return "", nil
 	case "image":
+		if args[1] == "rm" {
+			f.released = append(f.released, args[len(args)-1])
+			return "", f.failRun["image rm"]
+		}
 		return fakeImageID + "\n", nil
 	case "rm":
 		f.removed = append(f.removed, args[len(args)-1])
@@ -120,10 +130,39 @@ func devcontainerRepo(t *testing.T) (string, string) {
 	return repo, resolved
 }
 
+// isolateUserCache points the user cache directory (os.UserCacheDir) at a temporary directory on
+// every platform and returns the resolved devcontainer HOME the gate places below it.
+func isolateUserCache(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	switch hostMachine().GOOS {
+	case "windows":
+		t.Setenv("LocalAppData", dir)
+	case "darwin", "ios":
+		t.Setenv("HOME", dir)
+	default:
+		t.Setenv("XDG_CACHE_HOME", dir)
+	}
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(cache, filepath.FromSlash(devcontainerHomeRel))
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := filepath.EvalSymlinks(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved
+}
+
 // devcontainerConfig is a stage configuration for repo on a Linux host with docker on PATH,
-// starting every command through runtime.
+// starting every command through runtime, with the user cache directory isolated.
 func devcontainerConfig(t *testing.T, repo string, runtime *fakeRuntime) *stageConfig {
 	t.Helper()
+	isolateUserCache(t)
 	t.Setenv(DevcontainerEnv, "")
 	t.Setenv("CGO_ENABLED", "")
 	cfg, _ := newTestConfig(t, repo, false)
@@ -139,12 +178,13 @@ func devcontainerConfig(t *testing.T, repo string, runtime *fakeRuntime) *stageC
 }
 
 // Positive: with a devcontainer this host can build, the Go prefetch and race stages run inside
-// the built image by its ID, the race stage in the stage worktree mounted at its own path, and
-// the signed stage output names the image.
+// the built image by its ID, the race stage in the stage worktree mounted at its own path with
+// HOME in the user cache directory, and the signed stage output names the image.
 func TestGoStagesRunInTheDevcontainer(t *testing.T) {
 	repo, resolved := devcontainerRepo(t)
 	runtime := newFakeRuntime("go", "gcc")
 	cfg := devcontainerConfig(t, repo, runtime)
+	home := isolateUserCache(t)
 
 	if err := resolveExecution(t.Context(), cfg); err != nil {
 		t.Fatalf("resolve: %v", err)
@@ -169,8 +209,8 @@ func TestGoStagesRunInTheDevcontainer(t *testing.T) {
 			if !slices.Contains(call.runArgs, "type=bind,src="+resolved+",dst="+resolved) {
 				t.Errorf("the checkout must be mounted at its own path: %q", call.runArgs)
 			}
-			if !slices.Contains(call.runArgs, "HOME="+filepath.Join(resolved, ".git", "praetor", "devcontainer-home")) {
-				t.Errorf("HOME must persist below the git common dir: %q", call.runArgs)
+			if !slices.Contains(call.runArgs, "HOME="+home) || !slices.Contains(call.runArgs, "type=bind,src="+home+",dst="+home) {
+				t.Errorf("HOME must persist, mounted, in the user cache directory %s: %q", home, call.runArgs)
 			}
 		}
 	}
@@ -341,5 +381,134 @@ func TestExecutionString(t *testing.T) {
 	}
 	if got := hostExecution("no go.mod").String(); got != "host: no go.mod" {
 		t.Errorf("host execution renders as %q", got)
+	}
+}
+
+// The pre-push hook gates a fresh clone in a temporary directory. Two clones of one origin, at
+// different paths, share the stable image tag and the container HOME, so neither piles up nor
+// starts cold per push, while each run reads its image through a per-run tag of its own; a
+// repository without an origin shares the local tag, and another origin gets another tag.
+func TestImageTagAndHomeOutliveTheCheckout(t *testing.T) {
+	first, _ := devcontainerRepo(t)
+	second, _ := devcontainerRepo(t)
+	other, _ := devcontainerRepo(t)
+	noOrigin, _ := devcontainerRepo(t)
+	for repo, url := range map[string]string{first: "https://forge.example/acme/app.git", second: "git@forge.example:acme/app.git",
+		other: "https://forge.example/acme/other.git"} {
+		treeGit(t, repo, "remote", "add", "origin", url)
+	}
+	a, b := imageRefs(t.Context(), first), imageRefs(t.Context(), second)
+	if a.Stable != b.Stable || !strings.HasPrefix(a.Stable, "praetor-gate-") || !strings.HasSuffix(a.Stable, ":latest") {
+		t.Errorf("two clones of one origin must share one stable tag: %q, %q", a.Stable, b.Stable)
+	}
+	if a.Run == b.Run || !strings.HasPrefix(a.Run, strings.TrimSuffix(a.Stable, ":latest")+":run-") {
+		t.Errorf("each run needs a per-run tag of its own beside the stable one: %q, %q", a.Run, b.Run)
+	}
+	if o := imageRefs(t.Context(), other); o.Stable == a.Stable {
+		t.Errorf("another origin must get another stable tag: %q", o.Stable)
+	}
+	local, again := imageRefs(t.Context(), noOrigin), imageRefs(t.Context(), t.TempDir())
+	if local.Stable != again.Stable || local.Stable == a.Stable {
+		t.Errorf("repositories without an origin share one local tag: %q, %q", local.Stable, again.Stable)
+	}
+
+	home := isolateUserCache(t)
+	for _, repo := range []string{first, second} {
+		resolved, err := filepath.EvalSymlinks(repo)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dc, err := newDevcontainerExec(t.Context(), resolved, devcontainer.Image{})
+		if err != nil {
+			t.Fatalf("enter %s: %v", repo, err)
+		}
+		if !slices.Contains(dc.env, "HOME="+home) || !slices.Contains(dc.mounts, home) || util.WithinRoot(resolved, home) {
+			t.Errorf("HOME must be the user-cache directory %s, mounted, outside the checkout: %q %q", home, dc.env, dc.mounts)
+		}
+	}
+}
+
+// Positive and negative: a run that entered the devcontainer removes its per-run tag once the
+// stages are done, whatever they concluded; a removal that fails is reported as the execution's
+// cleanup note, outside the signed line, and does not change the verdict.
+func TestPipelineReleasesTheRunTag(t *testing.T) {
+	repo, _ := devcontainerRepo(t)
+	runtime := newFakeRuntime("go", "gcc")
+	cfg := devcontainerConfig(t, repo, runtime)
+	rep := runPipeline(t.Context(), cfg, time.Now())
+	if len(runtime.built) != 1 || len(runtime.released) != 1 {
+		t.Fatalf("one build and one release, got builds %q and releases %q", runtime.built, runtime.released)
+	}
+	build := runtime.built[0]
+	runTag := build[slices.Index(build, "--tag")+3]
+	if runtime.released[0] != runTag || !strings.Contains(runTag, ":run-") {
+		t.Errorf("the release must remove the per-run tag %s, removed %q", runTag, runtime.released)
+	}
+	if rep.Execution == nil || rep.Execution.Cleanup != "" {
+		t.Errorf("a clean release leaves no cleanup note: %+v", rep.Execution)
+	}
+
+	failing := newFakeRuntime("go", "gcc")
+	failing.failRun["image rm"] = errors.New("daemon went away")
+	cfg = devcontainerConfig(t, repo, failing)
+	failed := runPipeline(t.Context(), cfg, time.Now())
+	if failed.Status != rep.Status || !strings.Contains(failed.Execution.Cleanup, "daemon went away") {
+		t.Errorf("a failed release is a cleanup note, not a verdict: status %s vs %s, %+v", failed.Status, rep.Status, failed.Execution)
+	}
+	if strings.Contains(string(failed.StageOutput()), "daemon went away") {
+		t.Errorf("the cleanup note must stay out of the signed output:\n%s", failed.StageOutput())
+	}
+	if !strings.Contains(failed.Execution.String(), "; cleanup: ") {
+		t.Errorf("the report must print the cleanup note: %s", failed.Execution)
+	}
+}
+
+// Boundary: an image that was built but not entered, one without go or one whose go probe could
+// not run, has its per-run tag removed at once, since no later stage will.
+func TestUnenteredImageReleasesItsRunTag(t *testing.T) {
+	repo, _ := devcontainerRepo(t)
+	runtime := newFakeRuntime()
+	cfg := devcontainerConfig(t, repo, runtime)
+	if err := resolveExecution(t.Context(), cfg); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if cfg.container != nil || len(runtime.released) != 1 || !strings.Contains(runtime.released[0], ":run-") {
+		t.Errorf("an image without go must release its run tag at once: container %v, released %q", cfg.container, runtime.released)
+	}
+
+	broken := newFakeRuntime("go")
+	broken.failRun["run"] = errors.New("OCI runtime create failed")
+	broken.failRun["image rm"] = errors.New("image is in use")
+	cfg = devcontainerConfig(t, repo, broken)
+	err := resolveExecution(t.Context(), cfg)
+	if err == nil || !strings.Contains(err.Error(), "OCI runtime create failed") || !strings.Contains(err.Error(), "image is in use") ||
+		len(broken.released) != 1 {
+		t.Errorf("a failed go probe must reject the run and release the tag, joining a failed release: %v, released %q",
+			err, broken.released)
+	}
+}
+
+// Negative: docker on PATH whose daemon does not answer is no runtime. Nothing is built, the
+// stages run on the host with the probe's answer as the reason, and the run deadline reserves no
+// image build.
+func TestUnansweringRuntimeRunsOnTheHost(t *testing.T) {
+	repo, _ := devcontainerRepo(t)
+	runtime := newFakeRuntime("go")
+	runtime.failRun["info"] = errors.New("exit status 1: failed to connect to the docker API")
+	cfg := devcontainerConfig(t, repo, runtime)
+	if err := resolveExecution(t.Context(), cfg); err != nil {
+		t.Fatalf("a runtime that does not answer must not reject the run: %v", err)
+	}
+	exec := cfg.rep.Execution
+	if exec.Environment != executionHost || !strings.Contains(exec.Reason, "docker is on PATH but `docker info` failed") ||
+		len(runtime.built) != 0 {
+		t.Errorf("execution = %+v, builds %q; want the host and the probe's answer", exec, runtime.built)
+	}
+
+	bin := t.TempDir()
+	testsupport.BuildExecutable(t, bin, "docker", "package main\n\nimport \"os\"\n\nfunc main() { os.Exit(1) }\n")
+	t.Setenv("PATH", bin)
+	if budget := EnvRunBudget(repo); budget.Devcontainer != 0 {
+		t.Errorf("a runtime that does not answer builds nothing, so reserves nothing: %+v", budget)
 	}
 }
