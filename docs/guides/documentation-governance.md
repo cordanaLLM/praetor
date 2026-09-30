@@ -64,7 +64,18 @@ The runner copies the canonical tool assets to a temporary directory, executes
 `node_modules/` directory. Every subprocess has a timeout, and the temporary
 installation is removed after success or failure.
 
-The locked configuration is hermetic. `markdownlint-cli2` 0.23.2 has no option
+The lock installs no package with a known high or critical advisory. The
+`Go Vulnerability & AST Security Scan` job in `.github/workflows/security.yml`
+runs `npm audit --package-lock-only --audit-level=high` on it for every pull
+request and daily, and `TestMarkdownGateLockClearsFixedAdvisories` in
+`internal/supplychain/npm_advisories_test.go` keeps `smol-toml`, `js-yaml` and
+`markdown-it` at or above the versions that fixed their advisories (#643).
+Because audit locks the lock byte for byte, an adopter cannot patch it: a fix
+ships as a new Praetor text, and a plain `praetorctl adopt` replaces an
+unedited earlier lock, `package.json` and `verify.mjs` without `--force`
+(`priorDigests` in `tools/markdownlint/assets.go`).
+
+The locked configuration is hermetic. `markdownlint-cli2` 0.23.3 has no option
 that turns configuration discovery off: beside the `--config` file it reads
 `.markdownlint-cli2.{jsonc,yaml,cjs,mjs}` and
 `.markdownlint.{jsonc,json,yaml,yml,cjs,mjs}` from its working directory and

@@ -8,10 +8,10 @@ action create tools/markdownlint/no-private-scratch-links.mjs :: Scaffolded lock
 action create .github/workflows/praetor-docs.yml :: Scaffolded required documentation governance workflow
 action append .prettierignore :: Preserved existing rules and declared the praetor-managed artifacts
 file .github/workflows/praetor-docs.yml sha256:05d50eae0edd1599f23468e570e0ebf0af3d2e7cc65bf126d4f7976b002b2a84
-file tools/markdownlint/package.json sha256:1ef55cd03a7401bae13927bbca5d85ad601dd2ad4b8b931d79a3317551b83c2a
-file tools/markdownlint/package-lock.json sha256:abbe0b93eb99ce54d6cadc43ecb131a655d1aaf28009aa3804ad2ba97796b479
+file tools/markdownlint/package.json sha256:ae5668d6a66dfd57f83b298d09a82f5143b0894c0214a5db5e079cf54d6b92b3
+file tools/markdownlint/package-lock.json sha256:3be5e6c9037886cc39192da27e536b9dcefa3860074efed81d3dd9ea4e4a5d72
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3
-file tools/markdownlint/verify.mjs sha256:cdf3f38807fb22c4a59c0e082fc3c94232cd4d691fa5a87df6cc49c1e2c7caba
+file tools/markdownlint/verify.mjs sha256:4736fa57692bd9a585e4ecb94b00b1762e8fa53e8222bcd987c96878c31f79e1
 file tools/markdownlint/no-private-scratch-links.mjs sha256:93ee4469a98c4d44c19b74ca75b06391c2f360add39dd19b5120dbb7645520a9
 file .gitignore "node_modules/\n\n# BEGIN praetor private artifacts (praetorctl adopt)\n/.workingdir/\n/.workingdir2/\n/.standards/worktrees/\n/.agents/mcp_config.json\n# END praetor private artifacts\n"
 file .prettierignore "operator-output/\n\n# BEGIN praetor-managed artifacts (praetorctl adopt)\n# praetorctl audit owns this canonical content. A formatter rewrite fails;\n# documentation text alone permits consistent LF/CRLF checkout conversion.\n.agents/agents/repo-auditor.md\n.agents/agents/repo-gatekeeper.md\n.config/agent/hooks/block_evasion.py\n.config/labels.yaml\n.devcontainer/devcontainer.json\n.github/rulesets/main.json\n.github/workflows/praetor-docs.yml\n.paperclip/harness.json\n.standards-baseline.json\n.standards.lock\n.standards.yaml\nAGENTS.md\nlefthook.yml\ntools/figures/README.md\ntools/figures/astro.mjs\ntools/figures/build.mjs\ntools/figures/checks.mjs\ntools/figures/core.mjs\ntools/figures/dist/THIRD-PARTY-LICENSES.txt\ntools/figures/dist/loader.js\ntools/figures/dist/player.js\ntools/figures/figures.css\ntools/figures/mkdocs_hook.py\ntools/figures/serve.mjs\ntools/figures/third_party/interfig/VENDOR.md\ntools/figures/third_party/interfig/upstream/LICENSE\ntools/figures/third_party/interfig/upstream/src/geometry.ts\ntools/figures/third_party/interfig/upstream/src/model.ts\ntools/figures/third_party/interfig/upstream/src/svg.ts\ntools/figures/third_party/interfig/vendor.json\ntools/figures/types.ts\ntools/markdownlint/markdownlint-cli2.yaml\ntools/markdownlint/no-private-scratch-links.mjs\ntools/markdownlint/package-lock.json\ntools/markdownlint/package.json\ntools/markdownlint/verify.mjs\n# END praetor-managed artifacts\n"
@@ -42,10 +42,10 @@ action create tools/markdownlint/no-private-scratch-links.mjs :: Scaffolded lock
 action create .github/workflows/praetor-docs.yml :: Scaffolded required documentation governance workflow
 action reconcile .prettierignore :: No Prettier configuration found; managed artifacts not declared to a formatter this repository does not run
 file .github/workflows/praetor-docs.yml sha256:05d50eae0edd1599f23468e570e0ebf0af3d2e7cc65bf126d4f7976b002b2a84
-file tools/markdownlint/package.json sha256:1ef55cd03a7401bae13927bbca5d85ad601dd2ad4b8b931d79a3317551b83c2a
-file tools/markdownlint/package-lock.json sha256:abbe0b93eb99ce54d6cadc43ecb131a655d1aaf28009aa3804ad2ba97796b479
+file tools/markdownlint/package.json sha256:ae5668d6a66dfd57f83b298d09a82f5143b0894c0214a5db5e079cf54d6b92b3
+file tools/markdownlint/package-lock.json sha256:3be5e6c9037886cc39192da27e536b9dcefa3860074efed81d3dd9ea4e4a5d72
 file tools/markdownlint/markdownlint-cli2.yaml sha256:42060c67164def939447628db4fab88d58a2c706ea6cb1204e36afb1aa25eef3
-file tools/markdownlint/verify.mjs sha256:cdf3f38807fb22c4a59c0e082fc3c94232cd4d691fa5a87df6cc49c1e2c7caba
+file tools/markdownlint/verify.mjs sha256:4736fa57692bd9a585e4ecb94b00b1762e8fa53e8222bcd987c96878c31f79e1
 file tools/markdownlint/no-private-scratch-links.mjs sha256:93ee4469a98c4d44c19b74ca75b06391c2f360add39dd19b5120dbb7645520a9
 file .gitignore "dist/\r\ncoverage/\r\n\r\n# BEGIN praetor private artifacts (praetorctl adopt)\r\n/.workingdir/\r\n/.workingdir2/\r\n/.standards/worktrees/\r\n/.agents/mcp_config.json\r\n# END praetor private artifacts\r\n"
 file .prettierignore absent

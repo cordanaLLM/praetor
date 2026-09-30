@@ -1,0 +1,4 @@
+type: security
+title: "The documentation gate installs markdownlint-cli2 0.23.3 and js-yaml 5.4.1, so its locked npm lock no longer carries smol-toml 1.7.0 (GHSA-7w5x-hrqm-74c2, high), js-yaml 5.2.2 (GHSA-r3ph-w7gj-g6xm) or markdown-it 14.3.0 (GHSA-253c-mchw-3w2r); a plain praetorctl adopt refreshes an unedited earlier package.json, package-lock.json and verify.mjs, and the Security Scan now runs npm audit --package-lock-only --audit-level=high on the tools/markdownlint, tools/figures and editors/vscode locks (editors/vscode moves brace-expansion to 2.1.7)"
+issue: "#643"
+breaking: false
