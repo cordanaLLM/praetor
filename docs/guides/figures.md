@@ -269,10 +269,10 @@ export default defineConfig({
 - A Markdown plugin turns each `figure` code block, in `.md` and `.mdx` pages alike, into the
   figure's JSON `html`, with `{{base}}` set to the root-absolute URL of the figures under the
   site's `base` (`/assets/figures`, or `/docs/assets/figures` for base `/docs/`). `addFigurePlugin`
-  adds it to the Markdown processor the site runs: on Astro 7, Sätteri (the default,
-  `satteriFigures`) or `unified()` from `@astrojs/markdown-remark` (`remarkFigures`); on an earlier
-  Astro, which has no processor, `markdown.remarkPlugins`. A processor that runs neither fails the
-  setup. On an `.mdx` page `satteriFigures` hands the markup to Astro's `<Fragment set:html>` as
+  adds it to the Markdown processor the site runs, `markdown.processor` from Astro 6.4: Sätteri,
+  Astro 7's default (`satteriFigures`), or `unified()` from `@astrojs/markdown-remark`, Astro 6's
+  default and an option on Astro 7 (`remarkFigures`). Astro 6.3 and earlier have no processor and
+  take `remarkFigures` in `markdown.remarkPlugins`. A processor that runs neither fails the setup. On an `.mdx` page `satteriFigures` hands the markup to Astro's `<Fragment set:html>` as
   one string, because Sätteri's MDX compiler refuses a raw HTML node unless MDX optimizes static
   content. Starlight's own `mdx()` optimizes; an `mdx()` the site registers itself does not by
   default, and the figure renders byte for byte the same under both. A block naming a figure

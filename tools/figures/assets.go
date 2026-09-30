@@ -101,9 +101,15 @@ var priorDigests = map[string]string{
 	// README.md while its restore command named adopt --force without the lock source a forced
 	// run needs (#502).
 	"1879a244bd33b2fb50e95d848f65bf1bab2ca09fcc0507d997d0e11e8d5a6fd0": Directory + "/README.md",
-	// astro.mjs while it added its remark plugin only to markdown.remarkPlugins, which Astro 7's
-	// default Sätteri processor does not run, so an Astro 7 site kept every figure block as code.
+	// astro.mjs while it added its remark plugin only to markdown.remarkPlugins. Without
+	// @astrojs/markdown-remark, Astro 7 refuses that list at config setup
+	// (coerceLegacyMarkdownPlugins in astro/dist/core/config/validate.js), so the site did not
+	// build; with it installed, the default Sätteri processor does not run the list, so every
+	// figure block stayed a code block.
 	"b767cd0c78901610f3f35e7a983e73eaad62b5b1d0f6f2a0e369213abb80ef05": Directory + "/astro.mjs",
+	// README.md while it said a block naming a figure without JSON fails an Astro build; an .md
+	// page only logs the error and builds without its content.
+	"5c4f4f5eb3e714fd2b3fee90505ef73b147c943cea8cc99a3aaec9096e5c0572": Directory + "/README.md",
 }
 
 //go:embed core.mjs checks.mjs build.mjs types.ts third_party/interfig/vendor.json third_party/interfig/VENDOR.md third_party/interfig/upstream/LICENSE third_party/interfig/upstream/src/svg.ts third_party/interfig/upstream/src/geometry.ts third_party/interfig/upstream/src/model.ts dist/loader.js dist/player.js dist/THIRD-PARTY-LICENSES.txt figures.css mkdocs_hook.py astro.mjs serve.mjs README.md

@@ -13,11 +13,14 @@
 //   markup tools/figures/core.mjs wrote into docs/assets/figures/<slug>.json as `html`: `{{base}}`
 //   becomes the root-absolute URL of the figures under the site's `base`, and the `{{link}}` line is
 //   dropped (`fillSlots` in checks.mjs). It works on the Markdown syntax tree, so it needs no fence
-//   scanner. A block naming a figure that has no JSON fails the build, as a strict MkDocs build
-//   fails on the hook's warning. `addFigurePlugin` picks the plugin the site's Markdown processor
-//   runs: Astro 7 renders Markdown and MDX through `markdown.processor`, Sätteri by default
-//   (`satteriFigures`) or `unified()` from @astrojs/markdown-remark (`remarkFigures`), and an
-//   earlier Astro, which has no processor, takes `remarkFigures` in `markdown.remarkPlugins`.
+//   scanner. A block naming a figure that has no JSON fails the build of an .mdx page; on an .md
+//   page Astro's content loader logs the error and builds the page without its content, so
+//   `make docs-figures`, whose `sources` check fails on the block, is the gate for both.
+//   `addFigurePlugin` picks the plugin the site's Markdown processor runs. From Astro 6.4, Markdown
+//   and MDX render through `markdown.processor`: Sätteri, Astro 7's default (`satteriFigures`), or
+//   `unified()` from @astrojs/markdown-remark, Astro 6's default and an option on Astro 7
+//   (`remarkFigures`). Astro 6.3 and earlier have no processor and take `remarkFigures` in
+//   `markdown.remarkPlugins`.
 // * Astro keeps the rendered .md pages of a content collection in node_modules/.astro/data-store.json
 //   and renders one again only when its own bytes change, or when the Astro configuration does
 //   (the digest check in astro/dist/content/content-layer.js). The plugin's options therefore carry
@@ -198,9 +201,10 @@ export function satteriFigures(options) {
 /**
  * Adds the figure plugin with `options` to the Markdown processor of the site Astro set up with
  * `config`, and returns the plugin kind: 'satteri' or 'unified' into `markdown.processor`, where
- * Astro 7 keeps the plugins its Markdown and MDX pages run, and 'remark' through `updateConfig`
- * into `markdown.remarkPlugins` for an Astro that has no processor. A processor that takes neither
- * plugin fails the setup, since every figure block would stay a code block.
+ * Astro 6.4 and later keep the plugins their Markdown and MDX pages run, and 'remark' through
+ * `updateConfig` into `markdown.remarkPlugins` for Astro 6.3 and earlier, which have no processor.
+ * A processor that takes neither plugin fails the setup, since every figure block would stay a
+ * code block.
  */
 export function addFigurePlugin(config, updateConfig, options) {
   const processor = config.markdown?.processor;

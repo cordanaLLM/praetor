@@ -123,7 +123,8 @@ export default defineConfig({
 
 The integration renders each `figure` code block in `.md` and `.mdx` pages, loads the player on
 every page, and serves and copies the figure and player files. A block that names a figure without
-a JSON file fails the build.
+a JSON file fails the build of an `.mdx` page; on an `.md` page Astro logs the error and builds the
+page without its content, so keep `make docs-figures` in the gate.
 
 ## Outside the site
 
