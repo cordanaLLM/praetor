@@ -67,6 +67,9 @@ func splitGateSubcommand(args []string) (string, []string) {
 	return args[0], args[1:]
 }
 
+// runGateRun runs the gated pipeline. It registers --admit-unsupported as a literal, the form the
+// documentation reference check reads flag names from; it is gating.AdmitUnsupportedFlag, which
+// TestGateRun_Positive_AdmitUnsupportedReachesPipeline dispatches, so the two cannot drift apart.
 func runGateRun(args []string) error {
 	fs := flag.NewFlagSet("gate run", flag.ContinueOnError)
 	path := fs.String("path", ".", "Path to repository to verify against gating pipeline")
@@ -75,9 +78,6 @@ func runGateRun(args []string) error {
 			"prefetch, security scanners and race tests, which write the module cache or reach the "+
 			"network; no receipt is minted")
 	asJSON := fs.Bool("json", false, "Output pipeline results as JSON")
-	// The name is gating.AdmitUnsupportedFlag spelled as a literal, which the documentation
-	// reference check reads flag names from; TestGateRun_Positive_AdmitUnsupportedReachesPipeline
-	// dispatches the constant, so the two cannot drift apart.
 	admitUnsupported := fs.Bool("admit-unsupported", false,
 		"Admit, without a receipt, a repository whose root holds neither a go.mod nor a Cargo.lock: "+
 			"every stage still runs, and the receipt stage names the languages the gate runs no "+
