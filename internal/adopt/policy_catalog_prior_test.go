@@ -27,7 +27,13 @@ func TestPriorCatalogDigests_Positive_ReproducedByFixtures(t *testing.T) {
 // catalogValuesChangedSinceBUG782 names, by catalog path, every shipped file whose values
 // changed after the BUG-782 layout change. An adopter holding the earlier text of such a file
 // re-pins it only with --force, because isLayoutOnlySuccessor compares values on every run.
-var catalogValuesChangedSinceBUG782 = map[string]bool{}
+var catalogValuesChangedSinceBUG782 = map[string]bool{
+	// The Node.js DevContainer feature moved from node:1 to node:2 in every catalog file that
+	// selects it, so a repository declaring several of them still resolves one node feature.
+	"facets/tooling-vscode-extension.yaml": true,
+	"pages-site.yaml":                      true,
+	"web-package.yaml":                     true,
+}
 
 // Positive and negative, a deliberate tripwire: the shipped text of every earlier catalog file
 // is a layout-only successor of it, so an adopter holding the earlier text re-pins without

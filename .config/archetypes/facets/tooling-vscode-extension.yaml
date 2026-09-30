@@ -5,5 +5,5 @@ description: "Provides the maintained Node.js runtime required to compile and
   test the repository VS Code extension"
 
 devcontainer_features:
-  - "ghcr.io/devcontainers/features/node:1":
+  - "ghcr.io/devcontainers/features/node:2":
       version: "24"
