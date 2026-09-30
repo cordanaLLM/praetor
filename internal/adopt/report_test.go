@@ -164,3 +164,47 @@ func TestAdoptForceWithoutHarnessBoundaryFailsItsPillars(t *testing.T) {
 		}
 	}
 }
+
+// A check after the chain (verifyAgentContext) finds its step by name and records on it: an
+// error fails a completed step and its pillars, a warning warns it, and an unknown step or an
+// index outside Steps leaves every step as it was and records on the run alone.
+func TestReportStepNamedCarriesFindingsAfterTheChain(t *testing.T) {
+	r := &AdoptReport{Steps: []StepOutcome{
+		{Name: "editors", Status: StepCompleted},
+		{Name: "agent-harness", Status: StepCompleted},
+		{Name: "makefile", Status: StepDeclined},
+	}}
+	if got := (&AdoptReport{}).stepNamed("agent-harness"); got != -1 {
+		t.Fatalf("stepNamed on an empty report = %d, want -1", got)
+	}
+	if got := r.stepNamed("git-hooks"); got != -1 {
+		t.Fatalf("stepNamed(unrecorded step) = %d, want -1", got)
+	}
+	harness := r.stepNamed("agent-harness")
+	if harness != 1 {
+		t.Fatalf("stepNamed(agent-harness) = %d, want 1", harness)
+	}
+	r.addStepWarning(harness, "soft")
+	if got := pillarNamed(t, r, "AI Context Sync"); got.Status != PillarWarned {
+		t.Fatalf("after a warning AI Context Sync = %s, want warned", got.Status)
+	}
+	r.addStepError(harness, "stale persona copy")
+	r.addStepError(r.stepNamed("makefile"), "declined stays declined")
+	r.addStepError(len(r.Steps), "outside Steps")
+	r.addStepWarning(-1, "run only")
+	if r.Steps[1].Status != StepFailed || len(r.Steps[1].Errors) != 1 || len(r.Steps[1].Warnings) != 1 {
+		t.Fatalf("agent-harness = %+v, want failed with one error and one warning", r.Steps[1])
+	}
+	if r.Steps[0].Status != StepCompleted || len(r.Steps[0].Errors)+len(r.Steps[0].Warnings) != 0 {
+		t.Fatalf("an unrelated step changed: %+v", r.Steps[0])
+	}
+	if r.Steps[2].Status != StepDeclined || len(r.Steps[2].Errors) != 1 {
+		t.Fatalf("makefile = %+v, want declined carrying the error", r.Steps[2])
+	}
+	if len(r.Errors) != 3 || len(r.Warnings) != 2 || r.Outcome() != OutcomeIncomplete {
+		t.Fatalf("run errors %v warnings %v outcome %s; want 3 errors, 2 warnings, incomplete", r.Errors, r.Warnings, r.Outcome())
+	}
+	if got := pillarNamed(t, r, "AI Context Sync"); got.Status != PillarFailed {
+		t.Fatalf("after an error AI Context Sync = %s, want failed", got.Status)
+	}
+}

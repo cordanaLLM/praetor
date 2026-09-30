@@ -85,22 +85,26 @@ func (r *AdoptReport) addStepWarning(step int, text string) {
 	}
 }
 
-// attachToStep records warnings and errors a check after the chain found in the output of step
-// name, on the report and on that step's outcome, which an error marks failed: the pillars that
-// read the step then never claim what the check refuted. A step the chain did not record gets
-// the findings on the report alone.
-func (r *AdoptReport) attachToStep(name string, warnings, errs []string) {
-	r.Warnings = append(r.Warnings, warnings...)
-	r.Errors = append(r.Errors, errs...)
-	for i := 0; i < len(r.Steps) && i < maxAdoptSteps; i++ {
-		if r.Steps[i].Name != name {
-			continue
-		}
-		r.Steps[i].Warnings = append(r.Steps[i].Warnings, warnings...)
-		r.Steps[i].Errors = append(r.Steps[i].Errors, errs...)
-		if len(r.Steps[i].Errors) > 0 {
-			r.Steps[i].Status = StepFailed
-		}
+// addStepError records text as an error of the run and of step, the index in Steps of the step
+// it concerns, after that step's outcome was recorded. The error fails a completed step, as
+// recordStep fails a step that recorded one itself. A step outside Steps gets the error on the
+// run alone.
+func (r *AdoptReport) addStepError(step int, text string) {
+	r.Errors = append(r.Errors, text)
+	if step < 0 || step >= len(r.Steps) {
+		return
+	}
+	r.Steps[step].Errors = append(r.Steps[step].Errors, text)
+	if r.Steps[step].Status == StepCompleted {
+		r.Steps[step].Status = StepFailed
+	}
+}
+
+// addStepWarning records text as a warning of the run and of step, like addStepError.
+func (r *AdoptReport) addStepWarning(step int, text string) {
+	r.Warnings = append(r.Warnings, text)
+	if step >= 0 && step < len(r.Steps) {
+		r.Steps[step].Warnings = append(r.Steps[step].Warnings, text)
 	}
 }
 
@@ -110,6 +114,17 @@ func since(list []string, from int) []string {
 		return nil
 	}
 	return append([]string(nil), list[from:]...)
+}
+
+// stepNamed returns the index in Steps of the step name, for addStepError and addStepWarning, or
+// -1 when the chain did not record that step.
+func (r *AdoptReport) stepNamed(name string) int {
+	for i := 0; i < len(r.Steps) && i < maxAdoptSteps; i++ {
+		if r.Steps[i].Name == name {
+			return i
+		}
+	}
+	return -1
 }
 
 // AdoptOutcome classifies a finished adoption run once, for every renderer.
