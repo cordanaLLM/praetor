@@ -519,13 +519,37 @@ func mergeExistingAgentsContent(ctx context.Context, s *adoptSession, full, exis
 		return merged, nil
 	}
 	if !s.opts.Force {
-		s.report.recordReconciled(agentsFile, "Existing Praetor Agent Operating Harness preserved; command synchronization not verified")
-		if existing != harness {
-			s.report.addWarning("Existing AGENTS.md was preserved; review its commands against the verification plan or use --force to refresh a recognized harness boundary.")
-		}
-		return existing, nil
+		return keepAgentHarness(ctx, s, full, existing, harness)
 	}
 	return refreshAgentHarness(ctx, s, existing, harness)
+}
+
+// keepAgentHarness keeps an existing harness on a run without --force, with its text register
+// block spliced from the manifest (compiler.SpliceRegisterBlock), as compile-context splices it
+// before every compile. The block is rendered, never hand-written, so a kept block that no longer
+// matches the manifest is refreshed rather than left to fail the compile-context --verify that
+// runs after the chain (verifyAgentContext). Every other line stays as written.
+func keepAgentHarness(ctx context.Context, s *adoptSession, full, existing, harness string) (string, error) {
+	_, block, err := compiler.LoadRegisterBlock(ctx, s.repoPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve the text register block for the harness: %w", err)
+	}
+	kept, spliced, err := compiler.SpliceRegisterBlock(existing, block)
+	if err != nil {
+		return "", fmt.Errorf("%s: text register block: %w", agentsFile, err)
+	}
+	detail := "Existing Praetor Agent Operating Harness preserved; command synchronization not verified"
+	if spliced {
+		if err := s.write(full, []byte(kept), filePerm); err != nil {
+			return "", err
+		}
+		detail += "; text register block spliced from the manifest, as compile-context splices it"
+	}
+	s.report.recordReconciled(agentsFile, detail)
+	if kept != harness {
+		s.report.addWarning("Existing AGENTS.md was preserved; review its commands against the verification plan or use --force to refresh a recognized harness boundary.")
+	}
+	return kept, nil
 }
 
 // refreshAgentHarness regenerates the harness of existing under --force and keeps what the

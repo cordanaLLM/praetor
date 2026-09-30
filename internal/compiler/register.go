@@ -69,8 +69,8 @@ func loadRegister(ctx context.Context, root string) (config.RegisterAuthority, s
 
 // SyncRegisterBlock reconciles the text register block of agentsMdPath with the manifest at
 // root. It runs before compilation, so the six vendor files receive the block through the
-// unchanged renderer. With write it splices the block and reports whether the file changed;
-// without write it never touches the file and returns an error matching
+// unchanged renderer. With write it splices the block (spliceRegister) and reports whether the
+// file changed; without write it never touches the file and returns an error matching
 // ErrRegisterBlockOutOfSync on drift.
 func SyncRegisterBlock(ctx context.Context, root, agentsMdPath string, write bool) (changed bool, err error) {
 	authority, block, err := loadRegister(ctx, root)
@@ -81,19 +81,7 @@ func SyncRegisterBlock(ctx context.Context, root, agentsMdPath string, write boo
 	if err != nil {
 		return false, fmt.Errorf("failed to read source %s: %w", agentsMdPath, err)
 	}
-	// A Windows checkout can hold the source with CRLF endings while the block renders
-	// with LF. Compare and splice in LF, then write the file back in its own convention,
-	// so --verify decides the same way on every platform (HISS-21).
-	content, crlf := util.NormalizeLineEndings(string(data))
-	first, _, err := util.FindMarkedBlock(content, config.RegisterBlockStart, config.RegisterBlockEnd)
-	if err != nil {
-		return false, fmt.Errorf("%s: %w", agentsMdPath, err)
-	}
-	if first < 0 {
-		// A document without markers receives the whole section, heading included.
-		block = config.RegisterSectionPrefix + block
-	}
-	out, changed, err := util.ReplaceMarkedBlock(content, config.RegisterBlockStart, config.RegisterBlockEnd, block, MaxLineBudget)
+	out, changed, missing, err := spliceRegister(string(data), block)
 	if err != nil {
 		return false, fmt.Errorf("%s: %w", agentsMdPath, err)
 	}
@@ -101,10 +89,40 @@ func SyncRegisterBlock(ctx context.Context, root, agentsMdPath string, write boo
 		return false, nil
 	}
 	if !write {
-		return true, &registerBlockDrift{file: filepath.Base(agentsMdPath), origin: authority.PolicyOrigin(), missing: first < 0}
+		return true, &registerBlockDrift{file: filepath.Base(agentsMdPath), origin: authority.PolicyOrigin(), missing: missing}
 	}
-	if err := contextopt.WriteSnapshot(ctx, agentsMdPath, []byte(util.RestoreLineEndings(out, crlf)), 0o644); err != nil {
+	if err := contextopt.WriteSnapshot(ctx, agentsMdPath, []byte(out), 0o644); err != nil {
 		return false, fmt.Errorf("failed to write %s: %w", agentsMdPath, err)
 	}
 	return true, nil
+}
+
+// SpliceRegisterBlock returns content, a canonical AGENTS.md text, with block, a rendered text
+// register block (LoadRegisterBlock), in place of the one between its register markers, and
+// whether that changed it. It is the splice SyncRegisterBlock writes, for a caller holding the
+// text in memory: adoption splices the harness it keeps on a run without --force.
+func SpliceRegisterBlock(content, block string) (string, bool, error) {
+	out, changed, _, err := spliceRegister(content, block)
+	return out, changed, err
+}
+
+// spliceRegister splices block into content and reports whether content changed and whether it
+// carried no register block at all. A Windows checkout can hold the source with CRLF endings
+// while the block renders with LF: the splice compares and replaces in LF and returns the text
+// in content's own convention, so --verify decides the same way on every platform (HISS-21).
+func spliceRegister(content, block string) (out string, changed, missing bool, err error) {
+	lf, crlf := util.NormalizeLineEndings(content)
+	first, _, err := util.FindMarkedBlock(lf, config.RegisterBlockStart, config.RegisterBlockEnd)
+	if err != nil {
+		return "", false, false, err
+	}
+	if first < 0 {
+		// A document without markers receives the whole section, heading included.
+		block = config.RegisterSectionPrefix + block
+	}
+	spliced, changed, err := util.ReplaceMarkedBlock(lf, config.RegisterBlockStart, config.RegisterBlockEnd, block, MaxLineBudget)
+	if err != nil {
+		return "", false, false, err
+	}
+	return util.RestoreLineEndings(spliced, crlf), changed, first < 0, nil
 }

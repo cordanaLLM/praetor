@@ -180,3 +180,69 @@ func TestAdoptRegisterBlockFollowsDispatchHook(t *testing.T) {
 		t.Errorf("plain adoption claims a dispatch hook or drops the brief rule")
 	}
 }
+
+// staleRegisterHarness adopts a fresh repository, then edits one line inside the register block
+// of the AGENTS.md it wrote, the state a manifest change leaves until compile-context runs, and
+// returns the repository with the AGENTS.md path. eol is the line ending the edited file keeps.
+func staleRegisterHarness(t *testing.T, name, eol string) (repo, agents string) {
+	t.Helper()
+	repo = newTestRepo(t, name)
+	mustWrite(t, filepath.Join(repo, "go.mod"), "module example.com/widget\n\ngo 1.27\n")
+	opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo, Profile: "framework"}
+	if _, err := Adopt(context.Background(), opts); err != nil {
+		t.Fatalf("first Adopt: %v", err)
+	}
+	agents = filepath.Join(repo, agentsFile)
+	stale := strings.Replace(mustRead(t, agents), config.RegisterBlockStart+"\n", config.RegisterBlockStart+"\nstale register row\n", 1)
+	mustWrite(t, agents, strings.ReplaceAll(stale, "\n", eol))
+	return repo, agents
+}
+
+// TestAdoptKeptHarnessSplicesRegisterBlock: a run without --force keeps the harness and splices
+// its text register block from the manifest, as compile-context does, so the compile-context
+// --verify after the chain passes instead of failing the run. Positive: a stale block is
+// re-rendered and the report says so. Negative: a kept harness whose register block has no end
+// marker fails the step naming AGENTS.md, as compile-context fails on it. Boundary: a CRLF file
+// keeps CRLF, and a block already in sync leaves the file byte-identical.
+func TestAdoptKeptHarnessSplicesRegisterBlock(t *testing.T) {
+	opts := func(repo string) AdoptOptions {
+		return AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo, Profile: "framework"}
+	}
+	for name, eol := range map[string]string{"LF": "\n", "CRLF": "\r\n"} {
+		t.Run(name, func(t *testing.T) {
+			repo, agents := staleRegisterHarness(t, "widget", eol)
+			rep, err := Adopt(context.Background(), opts(repo))
+			if err != nil {
+				t.Fatalf("plain Adopt: %v", err)
+			}
+			assertNoIssues(t, rep)
+			content := mustRead(t, agents)
+			if strings.Contains(content, "stale register row") || strings.Count(content, "\n") != strings.Count(content, eol) {
+				t.Fatalf("stale block kept or line endings mixed:\n%q", content)
+			}
+			if changed, err := compiler.SyncRegisterBlock(context.Background(), repo, agents, false); err != nil || changed {
+				t.Fatalf("spliced block does not verify: changed=%v err=%v", changed, err)
+			}
+			if detail := findActionDetail(rep.ActionDetails, agentsFile); !strings.Contains(detail, "text register block spliced from the manifest") {
+				t.Errorf("AGENTS.md detail = %q", detail)
+			}
+			rep, err = Adopt(context.Background(), opts(repo))
+			if err != nil || mustRead(t, agents) != content {
+				t.Fatalf("an in-sync block must leave AGENTS.md byte-identical: err=%v", err)
+			}
+			if detail := findActionDetail(rep.ActionDetails, agentsFile); strings.Contains(detail, "spliced") {
+				t.Errorf("an in-sync block reported as spliced: %q", detail)
+			}
+		})
+	}
+	repo, agents := staleRegisterHarness(t, "widget", "\n")
+	broken := strings.Replace(mustRead(t, agents), config.RegisterBlockEnd, "", 1)
+	mustWrite(t, agents, broken)
+	_, err := Adopt(context.Background(), opts(repo))
+	if err == nil || !strings.Contains(err.Error(), agentsFile+": text register block") {
+		t.Fatalf("want the unterminated register block refused naming %s, got %v", agentsFile, err)
+	}
+	if got := mustRead(t, agents); got != broken {
+		t.Error("a refused splice must leave AGENTS.md as it was")
+	}
+}
