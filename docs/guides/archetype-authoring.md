@@ -25,14 +25,29 @@ opens with the `---` document start and keeps every line within 80 columns. Wrap
 hooks-lint` lints the whole catalog (`scripts/test_emitted_yaml_lint.py`).
 
 **Changing a file moves its digest.** Re-pin `.standards.lock` with the digests `praetorctl
-audit` reports, as the lock's header describes. An adopter's lock pins the earlier text, and a
+audit` reports, as the lock's header describes. The audit names the entry, the pinned digest,
+the file and the digest it now hashes to, and after that the top-level digest the entries hash
+to (`entryDigestMismatch` in `internal/config/lockdigest.go`, tests in
+`internal/config/lock_mismatch_report_test.go`). An adopter's lock pins the earlier text, and a
 re-run of `praetorctl adopt` against the new catalog fails on it until `--force`. The exception
 is a layout-only change listed in `priorCatalogDigests` (`internal/adopt/policy_catalog.go`):
 a lock that pins only those texts is re-pinned without `--force`
 (`TestAdoptRepinsAnUnmodifiedEarlierCatalog`), and only while the new catalog decodes to
 exactly the values of each earlier text (`isLayoutOnlySuccessor`). Once a later change moves
 a value, adopters still on an earlier text need `--force` again
-(`TestAdoptDoesNotRepinAnEarlierCatalogToChangedValues`).
+(`TestAdoptDoesNotRepinAnEarlierCatalogToChangedValues`). List a file whose values change in
+`catalogValuesChangedSinceBUG782` (`internal/adopt/policy_catalog_prior_test.go`); its test
+names each file that is missing there.
+
+**A DevContainer feature bump moves every file that selects the feature.** Feature resolution
+rejects two references of one feature, such as `node:1` beside `node:2`
+(`ResolveDevContainerFeatures` in `internal/config/devcontainer_features.go`), so a repository
+declaring two of those files would stop resolving. `TestShippedFeatures_Positive_OneReferencePerFeature`
+(`internal/config/shipped_features_test.go`) fails while the catalog names one feature two
+ways. Praetor's own `.devcontainer/devcontainer.json` is verified against the rendering of the
+pinned catalog, so an update of that file alone, as a Renovate DevContainer branch makes it,
+fails `praetorctl devcontainer verify` and the audit until the catalog files, the lock and
+`catalogValuesChangedSinceBUG782` move with it.
 
 **A profile is not a flavor.** A profile says what governance applies; a flavor says which templates,
 settings and toolchains a repository of that kind requires. Five profiles currently have any flavor

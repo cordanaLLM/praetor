@@ -1,0 +1,3 @@
+type: changed
+title: "Move the Node.js DevContainer feature to node:2 in the DevContainer and the pages-site, web-package and tooling:vscode-extension catalog files; audit now names both digests of a moved lock pin"
+breaking: true
