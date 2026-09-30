@@ -405,7 +405,10 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
 - **`AGENTS.md` harness under `--force`.** An existing harness is kept without `--force`,
   apart from its text register block, which is spliced from the manifest as `compile-context`
   splices it (`keepAgentHarness` in `internal/adopt/harness.go`,
-  `TestAdoptKeptHarnessSplicesRegisterBlock` in `internal/adopt/harness_register_test.go`).
+  `TestAdoptKeptHarnessSplicesRegisterBlock` in `internal/adopt/harness_register_test.go`). A
+  splice that changes the file is reported as a replace with its line delta and backup, like a
+  forced refresh. A block with no end marker, or a backup root adoption refuses, fails adoption
+  before its first write (`TestAdoptKeptHarnessSpliceRefusedBeforeAnyWrite`).
   With it, the harness is regenerated and what the repository added around it stays:
   - the preamble: every line above the harness start, for example an SPDX header. The
     harness starts at the first `# ... Agent Operating Harness` title, together with a

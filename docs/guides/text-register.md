@@ -183,7 +183,9 @@ repository's manifest (`compiler.LoadRegisterBlock`): the default section withou
 `adopt --force` refresh therefore verify without a `compile-context` run first
 (`TestAdoptForceHarnessCarriesManifestRegisterBlock` in
 `internal/adopt/harness_register_test.go`). When the adoptee later changes its `register:`
-section, its next `compile-context` re-splices the block from that manifest. An adoptee without a
+section, its next `compile-context` re-splices the block from that manifest, and so does its next
+plain `praetorctl adopt`, which keeps the rest of the harness as written and backs up the prior
+bytes (`TestAdoptKeptHarnessSplicesRegisterBlock`). An adoptee without a
 `routing.yaml` is validated against the router defaults. If the repository instructions
 kept across a harness refresh already hold a section (because `compile-context` appended
 one earlier), the merge keeps a single copy. `praetorctl init` and harvester onboarding
