@@ -1,0 +1,3 @@
+type: fixed
+title: "adopt writes the plugin persona and skill copies through the compile-context writer and fails when compile-context --verify rejects the agent context it wrote, instead of exiting 0 with stale plugin copies"
+breaking: false

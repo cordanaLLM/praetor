@@ -402,7 +402,10 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
   `TestAdopt_Boundary_PlainRunRefusesSymlinkedBackupRootForPersonaCopyEdit`). A re-run lists
   an existing persona copy and the pre-commit hook adoption installed as reconciled, never as
   created (`internal/adopt/rerun_report_test.go`).
-- **`AGENTS.md` harness under `--force`.** An existing harness is kept without `--force`.
+- **`AGENTS.md` harness under `--force`.** An existing harness is kept without `--force`,
+  apart from its text register block, which is spliced from the manifest as `compile-context`
+  splices it (`keepAgentHarness` in `internal/adopt/harness.go`,
+  `TestAdoptKeptHarnessSplicesRegisterBlock` in `internal/adopt/harness_register_test.go`).
   With it, the harness is regenerated and what the repository added around it stays:
   - the preamble: every line above the harness start, for example an SPDX header. The
     harness starts at the first `# ... Agent Operating Harness` title, together with a
@@ -436,6 +439,18 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
   adoption before its first write, a dry run included; a manifest that declines
   `agent-harness` is not checked (`preflightAgentHarness` in `internal/adopt/adopt.go`,
   tests in `internal/adopt/register_preflight_test.go`).
+- **Agent context verification.** The agent-definitions step projects the canonical personas
+  and skills through the writer `compile-context` uses (`compiler.CompileAgentSurfaces`): the
+  persona copy in every persona directory `agent_clients` selects and, when
+  `.agents/plugins/praetor/plugin.json` exists, the plugin persona and skill copies. A
+  hand-edited plugin copy is replaced with its line delta and backup like any persona copy, and
+  a symlinked plugin directory fails adoption before its first write. After the last step,
+  adoption runs the check `compile-context --verify` runs (`compiler.VerifyCompiledContext`,
+  `verifyAgentContext` in `internal/adopt/context_verify.go`). Each rejection is an error on
+  the report and on the `agent-harness` step, so the run is incomplete and `praetorctl adopt`
+  exits non-zero; a caveman finding on text adoption keeps as written stays a warning. A dry
+  run, and a manifest that declines `agent-harness` or `agent-definitions`, skip the check
+  (tests in `internal/adopt/plugin_projection_test.go`).
 - **Earlier Praetor output.** The manifest, lock, label taxonomy, pinned catalog, flavor
   YAML (`.clang-format` and `.clang-tidy` included) and the `docs:seo-portal` documentation
   gate's YAML that adoption writes pass `yamllint --strict` with its default rules
