@@ -6,8 +6,6 @@ import (
 	"slices"
 	"strconv"
 	"testing"
-
-	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func writeScratchFixture(t *testing.T, root, rel string) {
@@ -51,15 +49,16 @@ func TestDetectWorkspaceLanguages_Negative_ScratchTreesAreSkipped(t *testing.T) 
 }
 
 // Boundary: a worktree under .standards is a full checkout copy, so a checkout carrying one no
-// longer trips the file bound that the workspace itself stays well under.
+// longer trips the file bound that the workspace itself stays well under. The bound is set to
+// boundFiles, so the copy stays small whatever the default is.
 func TestDetectWorkspaceLanguages_Boundary_StandardsWorktreeDoesNotExhaustTheBound(t *testing.T) {
 	root := t.TempDir()
 	writeScratchFixture(t, root, "main.go")
-	for i := 0; i <= util.DefaultDiscoveryEntries; i++ {
+	for i := 0; i <= boundFiles; i++ {
 		writeScratchFixture(t, root, filepath.ToSlash(filepath.Join(".standards", "worktrees", "gate", "pkg", "f"+strconv.Itoa(i)+".txt")))
 	}
 
-	languages, err := DetectWorkspaceLanguages(root)
+	languages, err := detectWorkspaceLanguages(t.Context(), root, boundFiles)
 	if err != nil {
 		t.Fatalf("a .standards worktree exhausted the workspace bound: %v", err)
 	}
