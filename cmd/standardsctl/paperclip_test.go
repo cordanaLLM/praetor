@@ -236,9 +236,15 @@ func TestPaperclipVerify_InReviewReceiptOnDisk(t *testing.T) {
 // the release no longer writes and a census digest pinned to it. Regenerate with
 // `praetorctl paperclip harness --path=.`, then re-pin register.sources.sha256 from
 // `praetorctl caveman check --root=. --configured-sources`. A CRLF checkout compares as LF.
+//
+// The language walk runs at the entry ceiling, not the default: it counts generated output it
+// does not skip by name, such as the documentation site CI builds before the tests, so a checkout
+// grown past the default would fail this test for its size rather than for a stale harness.
 func TestDogfoodingPaperclipHarness(t *testing.T) {
 	root := filepath.Join("..", "..")
-	facts, warnings, err := adopt.RepositoryHISSFacts(t.Context(), root, nil)
+	limits := adopt.DefaultVerificationLimits()
+	limits.MaxEntries = adopt.VerificationEntriesCeiling
+	facts, warnings, err := adopt.RepositoryHISSFacts(t.Context(), root, &limits)
 	if err != nil || len(warnings) != 0 {
 		t.Fatalf("RepositoryHISSFacts(repository root): warnings=%q err=%v", warnings, err)
 	}
