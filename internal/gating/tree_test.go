@@ -45,7 +45,7 @@ func refusedRun(t *testing.T, dir, wantInReason string) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	rep, err := RunGatedPipeline(ctx, dir, false)
+	rep, err := RunGatedPipeline(ctx, dir, RunOptions{})
 	if err != nil {
 		t.Fatalf("RunGatedPipeline: %v", err)
 	}
@@ -238,7 +238,7 @@ func TestRunGatedPipeline_Boundary_DryRunReportsButDoesNotRefuse(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "scratch.txt"), "s\n")
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	rep, err := RunGatedPipeline(ctx, dir, true)
+	rep, err := RunGatedPipeline(ctx, dir, RunOptions{DryRun: true})
 	if err != nil {
 		t.Fatalf("RunGatedPipeline: %v", err)
 	}

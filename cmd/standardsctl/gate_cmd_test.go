@@ -118,7 +118,7 @@ func TestGateRun_Boundary_SignalCancellationPropagates(t *testing.T) {
 
 	var observedCtx context.Context
 	origPipeline := gatedPipeline
-	gatedPipeline = func(ctx context.Context, path string, dryRun bool) (*gating.PipelineReport, error) {
+	gatedPipeline = func(ctx context.Context, path string, _ gating.RunOptions) (*gating.PipelineReport, error) {
 		observedCtx = ctx
 		return &gating.PipelineReport{Status: gating.StatusRejected}, nil
 	}

@@ -19,7 +19,7 @@ func stubGatekeeperPipeline(t *testing.T, rep *gating.PipelineReport, err error)
 	t.Helper()
 	calls := &atomic.Int32{}
 	original := gatedPipeline
-	gatedPipeline = func(context.Context, string, bool) (*gating.PipelineReport, error) {
+	gatedPipeline = func(context.Context, string, gating.RunOptions) (*gating.PipelineReport, error) {
 		calls.Add(1)
 		return rep, err
 	}

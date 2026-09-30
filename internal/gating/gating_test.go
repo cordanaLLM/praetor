@@ -746,7 +746,7 @@ func TestRunGatedPipeline_Negative_And_Boundary(t *testing.T) {
 	// Negative: a directory without lockfiles is rejected at the first stage and no
 	// later stage is attempted.
 	tmpDir := t.TempDir()
-	negRep, err := RunGatedPipeline(ctx, tmpDir, true)
+	negRep, err := RunGatedPipeline(ctx, tmpDir, RunOptions{DryRun: true})
 	if err != nil {
 		t.Fatalf("expected pipeline to return a report, not err: %v", err)
 	}
@@ -764,14 +764,14 @@ func TestRunGatedPipeline_Negative_And_Boundary(t *testing.T) {
 	}
 
 	// Boundary: Nil Context
-	if _, nilErr := RunGatedPipeline(nil, tmpDir, true); nilErr == nil { //nolint:staticcheck // exercising the documented nil-context contract
+	if _, nilErr := RunGatedPipeline(nil, tmpDir, RunOptions{DryRun: true}); nilErr == nil { //nolint:staticcheck // exercising the documented nil-context contract
 		t.Error("expected error for nil context, got nil")
 	}
 
 	// Boundary: an already cancelled context is refused before any stage runs.
 	cancelled, cancelNow := context.WithCancel(context.Background())
 	cancelNow()
-	if _, cancelErr := RunGatedPipeline(cancelled, tmpDir, true); cancelErr == nil {
+	if _, cancelErr := RunGatedPipeline(cancelled, tmpDir, RunOptions{DryRun: true}); cancelErr == nil {
 		t.Error("expected error for a cancelled context, got nil")
 	}
 }

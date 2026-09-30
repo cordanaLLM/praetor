@@ -147,6 +147,10 @@ type PipelineReport struct {
 	// Complexity is the HISS stage's complexity report: measured and printed, never part of
 	// a stage verdict or of the signed stage output. Nil when the HISS stage did not scan.
 	Complexity *hiss.ComplexityReport `json:"complexity,omitempty"`
+	// AdmittedUnverified marks a run admitted under RunOptions.AdmitUnsupported although no
+	// toolchain stage ran: no receipt was minted, and the receipt stage's reason names the
+	// languages the gate runs no toolchain for.
+	AdmittedUnverified bool `json:"admitted_unverified,omitempty"`
 }
 
 // StageOutput renders the canonical, deterministic byte stream whose SHA-256 the Exit-0
@@ -199,6 +203,8 @@ type stageConfig struct {
 	// verified lists the languages for which at least one toolchain stage ran its checks and
 	// passed, in the order they first did. The receipt stage refuses to sign while it is empty.
 	verified []string
+	// admitUnsupported is RunOptions.AdmitUnsupported (requireVerification).
+	admitUnsupported bool
 }
 
 // newStageConfig builds a stage configuration backed by the real toolchain.
@@ -219,7 +225,8 @@ func newStageConfig(repoDir string, dryRun bool, rep *PipelineReport) *stageConf
 // conformance, race-detector tests in an isolated worktree, and the Ed25519 Exit-0
 // receipt. The prefetch, security and test stages run the Go toolchain where a go.mod is
 // present and the Cargo toolchain where a Cargo.lock is (cargo.go); the receipt is refused
-// when neither ran any of them (requireVerification).
+// when neither ran any of them (requireVerification), unless opts.AdmitUnsupported admits a root
+// holding neither marker without one.
 //
 // A dry run changes nothing and reaches no network: it runs only the read-only checks --
 // lockfiles, the HISS scan and flavor conformance -- and records the module prefetch, the
@@ -231,7 +238,7 @@ func newStageConfig(repoDir string, dryRun bool, rep *PipelineReport) *stageConf
 // scan stages read the working tree while the receipt certifies the commit. A tree with
 // changes, or an untracked or ignored debt baseline or gosec configuration, is refused before
 // any stage runs (requireCleanTree); a dry run reports the same state and carries on.
-func RunGatedPipeline(ctx context.Context, repoDir string, dryRun bool) (*PipelineReport, error) {
+func RunGatedPipeline(ctx context.Context, repoDir string, opts RunOptions) (*PipelineReport, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("pipeline: context cannot be nil")
 	}
@@ -243,10 +250,11 @@ func RunGatedPipeline(ctx context.Context, repoDir string, dryRun bool) (*Pipeli
 	rep := &PipelineReport{
 		Status:  StatusAdmitted,
 		RepoDir: repoDir,
-		DryRun:  dryRun,
+		DryRun:  opts.DryRun,
 		Stages:  make([]StageResult, 0, maxStages),
 	}
-	cfg := newStageConfig(repoDir, dryRun, rep)
+	cfg := newStageConfig(repoDir, opts.DryRun, rep)
+	cfg.admitUnsupported = opts.AdmitUnsupported
 	describeTree(ctx, cfg)
 	if err := requireCleanTree(cfg); err != nil {
 		rep.Status = StatusRejected
@@ -733,7 +741,8 @@ func removeWorktree(ctx context.Context, wtMgr *worktree.Manager, taskID string)
 // it mint one unless the tree still matches the HEAD the run started on (confirmTreeUnchanged),
 // or when no toolchain stage ran for any language (requireVerification): a repository whose
 // prefetch, security and test stages were all not applicable or skipped is refused with the
-// languages the gate found and cannot run.
+// languages the gate found and cannot run, or, under RunOptions.AdmitUnsupported and with neither
+// a go.mod nor a Cargo.lock at its root, recorded as not applicable with the same reason.
 func runReceiptStage(ctx context.Context, cfg *stageConfig) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", fmt.Errorf("context cancelled before receipt could be minted: %w", err)
