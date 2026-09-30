@@ -23,49 +23,26 @@ var version = ""
 
 // buildVersion reports the version this binary can actually prove it is.
 //
-// A release carries an injected version. Any other build carries the revision Go records in
-// its build information, which identifies the tree exactly. When neither is present the answer
-// is "unknown", never a plausible-looking constant: .standards.lock records this string as
-// pinned_version, and a lock naming a version nothing measured cannot say which praetor
-// governed a repository, which is the whole point of writing it down.
+// A release carries an injected version. Any other build carries what Go records in its build
+// information: the VCS stamp of a checkout build, which identifies the tree exactly, or the tag
+// or pseudo-version a `go install module@version` build records (identifyBuild, #642).
+// When none is present the answer is "unknown", never a plausible-looking constant:
+// .standards.lock records this identity as pinned_version, and a lock naming a version
+// nothing measured cannot say which praetor governed a repository, which is the whole point of
+// writing it down.
 func buildVersion() string {
-	if trimmed := strings.TrimSpace(version); trimmed != "" {
-		return trimmed
-	}
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		return "unknown (no build information)"
-	}
-	revision, modified := vcsStamp(info)
-	if revision == "" {
-		return "unknown (untagged build, no VCS stamp)"
-	}
-	if modified {
-		return revision + "-dirty"
-	}
-	return revision
+	return runningBuildIdentity().display()
 }
 
 // lockVersion is the string init records as .standards.lock pinned_version.
 //
 // The lock is how a repository says which praetor governed it, and the field is validated as
-// SemVer. A release writes its own version. Any other build writes v0.0.0 with the revision as
-// build metadata -- still valid SemVer, and it names the exact tree, which "v1.0.0" never did.
-// A build that can identify nothing returns ok=false so the caller can say so rather than
-// writing a version it cannot stand behind.
+// SemVer. A release, and a `go install` of a tag, writes its own version. Any other build
+// writes v0.0.0 with the revision as build metadata -- still valid SemVer, and it names the
+// exact tree, which "v1.0.0" never did. A build that can identify nothing returns ok=false so
+// the caller can say so rather than writing a version it cannot stand behind.
 func lockVersion() (string, bool) {
-	if trimmed := strings.TrimSpace(version); trimmed != "" {
-		return trimmed, true
-	}
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		return unidentifiedLockVersion, false
-	}
-	revision, modified := vcsStamp(info)
-	if revision == "" {
-		return unidentifiedLockVersion, false
-	}
-	return formatDevLockVersion(revision, modified), true
+	return runningBuildIdentity().lockPin()
 }
 
 // formatDevLockVersion renders an unreleased build's pinned_version.
@@ -88,10 +65,7 @@ const unidentifiedLockVersion = config.UnidentifiedLockVersion
 // time, through the one build-stamp reader the engine-build check also uses.
 func vcsStamp(info *debug.BuildInfo) (revision string, modified bool) {
 	revision, modified = workstation.BuildStamp(info)
-	if len(revision) > shortRevisionLen {
-		revision = revision[:shortRevisionLen]
-	}
-	return revision, modified
+	return shortSHA(revision), modified
 }
 
 // shortRevisionLen is how much of a commit hash identifies a build in output.
