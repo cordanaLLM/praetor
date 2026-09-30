@@ -1,4 +1,4 @@
 type: added
-title: Run the Go part of gate run's prefetch and race-detector stages inside the repository's devcontainer when docker or podman answers and can build it, record the image ID or the reason for the host in the report and the signed receipt, reserve the image build in the run deadline, and opt out with PRAETOR_GATE_DEVCONTAINER=off
+title: Run the Go part of gate run's prefetch and race-detector stages inside the repository's devcontainer when docker or podman answers and can build it, building a configuration with features through a devcontainer CLI and Node release the gate pins, fetches and checks by checksum itself; record the image ID and builder or the reason for the host in the report and the signed receipt, reserve the image build in the run deadline, and opt out with PRAETOR_GATE_DEVCONTAINER=off
 issue: "#652"
 breaking: true
