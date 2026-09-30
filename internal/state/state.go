@@ -14,6 +14,10 @@ import (
 // WorkingDirName is the canonical working directory identifier.
 const WorkingDirName = ".workingdir"
 
+// LegacyWorkingDirName is the second private scratch root an earlier Praetor layout kept beside
+// WorkingDirName. Adoption ignores it by default; a repository may retire it (#641).
+const LegacyWorkingDirName = ".workingdir2"
+
 // StateSnapshot captures the active git and working directory state.
 type StateSnapshot struct {
 	RepoPath       string    `json:"repo_path"`

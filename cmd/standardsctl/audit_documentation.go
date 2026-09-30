@@ -395,21 +395,29 @@ func auditDisabledDocumentationAttributes(ctx context.Context, rootDir string) e
 	return nil
 }
 
-// auditDocumentationScratchIgnores proves both private scratch roots are ignored. A declined
-// git-ignore step leaves the rules' wording to the operator, never the privacy invariant the
-// private-scratch link policy rests on, so the effective check runs either way.
+// auditDocumentationScratchIgnores proves the private scratch roots adoption protects are
+// ignored: .workingdir always, .workingdir2 unless the repository retired it
+// (adopt.PrivateScratchRoots). A declined git-ignore step leaves the rules' wording to the
+// operator, never the privacy invariant the private-scratch link policy rests on, so the
+// effective check runs either way. .gitignore is read once; the roots come from that read.
 //
 // The answer comes from util.GitIgnoredPaths, which reads the repository's own ignore files
 // with the global and system configuration isolated: an operator's personal excludes file
 // hides scratch on one machine only, so it cannot prove the repository keeps it private.
 func auditDocumentationScratchIgnores(ctx context.Context, rootDir string, declined bool) error {
 	remedy := "run 'praetorctl adopt'"
+	var roots []string
 	if declined {
 		remedy = "git-ignore is declined by adoption.decline; add the rule to the operator-owned .gitignore"
-	} else if err := auditManagedGitIgnoreBlock(ctx, rootDir); err != nil {
-		return err
+		roots = declinedScratchRoots(ctx, rootDir)
+	} else {
+		ignore, err := auditManagedGitIgnoreBlock(ctx, rootDir)
+		if err != nil {
+			return err
+		}
+		roots = adopt.PrivateScratchRoots(rootDir, ignore, false)
 	}
-	probes := []string{".workingdir/PRAETOR-AUDIT-PROBE", ".workingdir2/PRAETOR-AUDIT-PROBE"}
+	probes := scratchIgnoreProbes(roots)
 	ignored, err := util.GitIgnoredPaths(ctx, rootDir, probes, true)
 	if err != nil {
 		return fmt.Errorf("[FAIL] cannot prove .gitignore effectively excludes the private scratch roots (%s): %w", remedy, err)
@@ -422,19 +430,44 @@ func auditDocumentationScratchIgnores(ctx context.Context, rootDir string, decli
 	return nil
 }
 
-func auditManagedGitIgnoreBlock(ctx context.Context, rootDir string) error {
+// declinedScratchRoots returns the private scratch roots a repository with git-ignore declined
+// must keep out of Git: .workingdir2 only while it is on disk or the operator's rules name it
+// exactly, so an absent .gitignore demands it only when it is on disk. Git applies the
+// operator-owned file whatever its size or encoding, so one the bounded text read refuses (over
+// 1 MiB, not UTF-8, not a regular file) demands every root, as audit did before a repository
+// could retire one.
+func declinedScratchRoots(ctx context.Context, rootDir string) []string {
+	ignore, _, err := contextopt.ObserveSnapshot(ctx, filepath.Join(rootDir, ".gitignore"))
+	if err != nil {
+		return adopt.EveryPrivateScratchRoot()
+	}
+	return adopt.PrivateScratchRoots(rootDir, string(ignore), true)
+}
+
+// scratchIgnoreProbes returns one path inside each private scratch root.
+func scratchIgnoreProbes(roots []string) []string {
+	probes := make([]string, 0, len(roots))
+	for _, root := range roots {
+		probes = append(probes, root+"/PRAETOR-AUDIT-PROBE")
+	}
+	return probes
+}
+
+// auditManagedGitIgnoreBlock checks that .gitignore ends with the managed block adoption writes
+// for the repository (adopt.HasManagedGitIgnoreTail) and returns its LF-normalized text.
+func auditManagedGitIgnoreBlock(ctx context.Context, rootDir string) (string, error) {
 	ignore, err := contextopt.ReadSnapshot(ctx, filepath.Join(rootDir, ".gitignore"))
 	if err != nil {
-		return fmt.Errorf("[FAIL] Read .gitignore documentation privacy rules: %w", err)
+		return "", fmt.Errorf("[FAIL] Read .gitignore documentation privacy rules: %w", err)
 	}
 	normalized, _, ignoreLineErr := util.NormalizeLineEndingsStrict(string(ignore))
 	if ignoreLineErr != nil {
-		return fmt.Errorf("[FAIL] .gitignore documentation privacy rules have invalid line endings: %w", ignoreLineErr)
+		return "", fmt.Errorf("[FAIL] .gitignore documentation privacy rules have invalid line endings: %w", ignoreLineErr)
 	}
-	if !adopt.HasManagedGitIgnoreTail(normalized) {
-		return fmt.Errorf("[FAIL] .gitignore must end with the canonical Praetor private-artifact block")
+	if !adopt.HasManagedGitIgnoreTail(rootDir, normalized) {
+		return "", fmt.Errorf("[FAIL] .gitignore must end with the canonical Praetor private-artifact block")
 	}
-	return nil
+	return normalized, nil
 }
 
 // auditDocumentationHostedWiring checks that the hosted documentation workflows report their

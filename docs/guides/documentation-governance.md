@@ -227,7 +227,10 @@ fixtures.
 
 Public Markdown must not link into `.workingdir/` or `.workingdir2/`. These
 directories may contain local evidence, cluster details, prompts, or other
-session-only data and are ignored by Git.
+session-only data, and adoption keeps both out of Git by default. A repository
+that retired the legacy `.workingdir2/` can let Git see it again
+([Adoption, audit, and CI](#adoption-audit-and-ci)); the link rule rejects both
+roots either way.
 
 The `PRAETOR-MD001` rule parses Markdown and embedded HTML structurally. It
 checks inline links, images, reference destinations, autolinks, and HTML URL
@@ -331,10 +334,28 @@ without `repository.owner` and `repository.name` leaves the README block
 unreconciled and records the skip as a warning. Adoption runs
 this workflow step before reconciling the branch ruleset, so the unconditional
 **Documentation Governance** job becomes a required status context. It also
-owns a canonical tail block in `.gitignore` for both private scratch directories
+owns a canonical tail block in `.gitignore` for the private scratch directories
 and the other private adoption artifacts. Audit uses `git check-ignore` to prove
 the rules are effective, so a later negation or a visually similar pattern with
 leading spaces cannot pass.
+
+The block ignores `.workingdir/` and, by default, the legacy `.workingdir2/`.
+Adoption writes the full block into a `.gitignore` that holds none yet, so a
+`.workingdir2/` created after adoption is already ignored. A repository that
+retired `.workingdir2/` deletes the `/.workingdir2/` line from the block. While
+no entry of that name is on disk, adoption keeps the line out, audit no longer
+demands it, and Git keeps the path visible
+(`TestLegacyScratch_Positive_RetiredRootStaysVisible`,
+`TestAuditDocumentationGateLegacyScratchRootIsOptional`). If the directory
+reappears, adoption restores the rule and audit fails until it does
+(`TestLegacyScratch_Negative_DefaultAndPresentRootAreIgnored`,
+`TestAuditDocumentationGateLegacyScratchRootOnDiskIsDemanded`). A retired
+block keeps the `!/.config/` negation adoption adds where a Kconfig-style rule
+hides `.config/` ([Adoption](../adoption.md#what-adoption-reads-before-it-writes),
+`TestLegacyScratch_Boundary_RetiredBlockKeepsConfigNegation`). Adoption
+renders the block, and audit checks it and picks the roots it probes, from the
+same answer (`keepsLegacyScratch` in `internal/adopt/legacy_scratch.go`, read
+through `HasManagedGitIgnoreTail` and `PrivateScratchRoots`).
 
 Existing unambiguous custom Makefile recipes stay intact. Adoption appends one
 marked block when `docs-lint` is provably available; includes, generated target
@@ -562,9 +583,13 @@ declining `renovate-ignore` leaves the Renovate configuration untouched, which
 audit does not read. Declining `actionlint-labels` likewise leaves the
 actionlint configuration alone and creates none. Declining
 `git-ignore` waives only the managed `.gitignore` tail block; audit still runs
-`git check-ignore` and fails until the operator's own rules exclude both
-private scratch roots. A decline list with an unknown or mandatory name fails
-audit as it fails adoption, and an undeclined step is still checked in full.
+`git check-ignore` and fails until the operator's own rules exclude
+`.workingdir/`, and `.workingdir2/` while that directory is on disk or the rules
+carry the exact `/.workingdir2/` line. A `.gitignore` that audit cannot read as
+text (over 1 MiB, not UTF-8) still applies in Git, so audit then demands both
+roots (`TestAuditDocumentationGateDeclinedUnreadableIgnoreProbesEveryRoot`). A
+decline list with an unknown or mandatory name fails audit as it fails
+adoption, and an undeclined step is still checked in full.
 The documentation gate itself cannot be declined:
 `adoption.decline: [documentation-gate]` fails adoption and audit, because
 removing the `docs:seo-portal` facet is the one switch that converges every
