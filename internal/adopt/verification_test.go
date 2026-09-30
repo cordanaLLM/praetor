@@ -186,7 +186,13 @@ func TestVerificationActualScaffoldBuildAndTestFailurePropagates(t *testing.T) {
 			root, plan := verificationFixture(t, map[string]string{"go.mod": "module fixture\n"})
 			stubs := t.TempDir()
 			writeStub(t, stubs, "go", "printf '%s\\n' \"$*\" >> calls\n[ \"$1\" != '"+failure+"' ]\n")
-			writeStub(t, stubs, "standardsctl", "printf '%s\\n' \"$*\" >> calls\n[ \"$1\" != '"+failure+"' ]\n")
+			// The scaffold resolves praetorctl before standardsctl (util.ShellCLIResolution), and
+			// hermeticPath keeps git's directory, which may also hold an installed praetorctl, as
+			// /usr/local/bin does in Praetor's own devcontainer. Stubbing both names keeps the
+			// real binary out of the scaffold whichever one it resolves.
+			for _, cli := range []string{util.PraetorCLI, util.LegacyCLI} {
+				writeStub(t, stubs, cli, "printf '%s\\n' \"$*\" >> calls\n[ \"$1\" != '"+failure+"' ]\n")
+			}
 			hermeticPath(t, stubs)
 			mustWrite(t, filepath.Join(root, "Makefile"), buildMakefile(plan))
 			// -j1 pins serial execution: this assertion compares an exact call order, and
