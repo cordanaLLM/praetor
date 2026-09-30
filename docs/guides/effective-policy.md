@@ -371,7 +371,12 @@ Each path is optional. Omission means no external layer: files in a home directo
 or repository are not automatically discovered. An explicitly selected missing
 file fails. The catalog root contains `.config/archetypes` and its `facets`
 subdirectory; every declared profile/facet must match the repository lock digest.
-The default catalog root is the audited repository.
+The default catalog root is the audited repository. A file that no longer matches
+fails with `ErrLockDigestMismatch`, naming the profile or facet, the pinned digest,
+the file and the digest it hashes to, in the same words the lockfile gate uses
+(`entryDigestMismatch` in `internal/config/lockdigest.go`, tests in
+`internal/config/lock_mismatch_report_test.go`), so the lock can be re-pinned from
+the message.
 
 Adoption writes the pinned catalog into the repository's own `.config/archetypes`
 and, like every other file it writes, asks git whether the repository's ignore
