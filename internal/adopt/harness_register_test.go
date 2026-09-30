@@ -201,9 +201,10 @@ func staleRegisterHarness(t *testing.T, name, eol string) (repo, agents string) 
 // TestAdoptKeptHarnessSplicesRegisterBlock: a run without --force keeps the harness and splices
 // its text register block from the manifest, as compile-context does, so the compile-context
 // --verify after the chain passes instead of failing the run. Positive: a stale block is
-// re-rendered and the report says so. Negative: a kept harness whose register block has no end
-// marker fails the step naming AGENTS.md, as compile-context fails on it. Boundary: a CRLF file
-// keeps CRLF, and a block already in sync leaves the file byte-identical.
+// re-rendered through replaceExisting, as a forced refresh is: the report lists AGENTS.md as
+// replaced, says the block was spliced, and the backup holds the bytes the run found. Boundary: a
+// CRLF file keeps CRLF, and a block already in sync leaves the file byte-identical and reported
+// as reconciled.
 func TestAdoptKeptHarnessSplicesRegisterBlock(t *testing.T) {
 	opts := func(repo string) AdoptOptions {
 		return AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo, Profile: "framework"}
@@ -211,6 +212,7 @@ func TestAdoptKeptHarnessSplicesRegisterBlock(t *testing.T) {
 	for name, eol := range map[string]string{"LF": "\n", "CRLF": "\r\n"} {
 		t.Run(name, func(t *testing.T) {
 			repo, agents := staleRegisterHarness(t, "widget", eol)
+			stale := mustRead(t, agents)
 			rep, err := Adopt(context.Background(), opts(repo))
 			if err != nil {
 				t.Fatalf("plain Adopt: %v", err)
@@ -223,26 +225,46 @@ func TestAdoptKeptHarnessSplicesRegisterBlock(t *testing.T) {
 			if changed, err := compiler.SyncRegisterBlock(context.Background(), repo, agents, false); err != nil || changed {
 				t.Fatalf("spliced block does not verify: changed=%v err=%v", changed, err)
 			}
-			if detail := findActionDetail(rep.ActionDetails, agentsFile); !strings.Contains(detail, "text register block spliced from the manifest") {
-				t.Errorf("AGENTS.md detail = %q", detail)
+			detail := findActionDetail(rep.ActionDetails, agentsFile)
+			if !hasAction(rep, agentsFile, actionReplace) || !strings.Contains(detail, "text register block spliced from the manifest") {
+				t.Fatalf("AGENTS.md not reported as replaced by the splice: %q", detail)
+			}
+			if backup := mustRead(t, backupOfDetail(t, repo, agentsFile, detail)); backup != stale {
+				t.Errorf("backup does not hold the bytes the run found:\n%q", backup)
 			}
 			rep, err = Adopt(context.Background(), opts(repo))
 			if err != nil || mustRead(t, agents) != content {
 				t.Fatalf("an in-sync block must leave AGENTS.md byte-identical: err=%v", err)
 			}
-			if detail := findActionDetail(rep.ActionDetails, agentsFile); strings.Contains(detail, "spliced") {
+			if detail := findActionDetail(rep.ActionDetails, agentsFile); strings.Contains(detail, "spliced") || hasAction(rep, agentsFile, actionReplace) {
 				t.Errorf("an in-sync block reported as spliced: %q", detail)
 			}
 		})
 	}
+}
+
+// Negative: the kept harness's splice is checked before the first step writes
+// (preflightKeptHarness). A register block with no end marker, which compile-context fails on
+// too, and a symlinked backup root the splice would back AGENTS.md up to each fail the run in the
+// agent-harness preflight with the tree unchanged; the refusals used to come mid-chain, after the
+// manifest, lock and catalog steps had written.
+func TestAdoptKeptHarnessSpliceRefusedBeforeAnyWrite(t *testing.T) {
 	repo, agents := staleRegisterHarness(t, "widget", "\n")
-	broken := strings.Replace(mustRead(t, agents), config.RegisterBlockEnd, "", 1)
-	mustWrite(t, agents, broken)
-	_, err := Adopt(context.Background(), opts(repo))
-	if err == nil || !strings.Contains(err.Error(), agentsFile+": text register block") {
-		t.Fatalf("want the unterminated register block refused naming %s, got %v", agentsFile, err)
+	mustWrite(t, agents, strings.Replace(mustRead(t, agents), config.RegisterBlockEnd, "", 1))
+	before := snapshotTree(t, repo)
+	_, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo, Profile: "framework"})
+	if err == nil || !strings.Contains(err.Error(), "agent-harness preflight") || !strings.Contains(err.Error(), agentsFile+": text register block") {
+		t.Fatalf("want the unterminated register block refused in preflight naming %s, got %v", agentsFile, err)
 	}
-	if got := mustRead(t, agents); got != broken {
-		t.Error("a refused splice must leave AGENTS.md as it was")
+	assertTreeUnchanged(t, before, snapshotTree(t, repo))
+
+	repo, _ = staleRegisterHarness(t, "widget", "\n")
+	shared := plantBackupRootLink(t, repo)
+	before = snapshotTree(t, repo)
+	_, err = Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo, Profile: "framework"})
+	if err == nil || !strings.Contains(err.Error(), "agent-harness preflight") || !strings.Contains(err.Error(), adoptBackupRoot) {
+		t.Fatalf("want the symlinked backup root refused in preflight, got %v", err)
 	}
+	assertTreeUnchanged(t, before, snapshotTree(t, repo))
+	assertDirEmpty(t, shared)
 }

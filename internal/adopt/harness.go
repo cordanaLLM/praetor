@@ -519,37 +519,88 @@ func mergeExistingAgentsContent(ctx context.Context, s *adoptSession, full, exis
 		return merged, nil
 	}
 	if !s.opts.Force {
-		return keepAgentHarness(ctx, s, full, existing, harness)
+		return keepAgentHarness(ctx, s, existing, harness)
 	}
 	return refreshAgentHarness(ctx, s, existing, harness)
 }
 
 // keepAgentHarness keeps an existing harness on a run without --force, with its text register
-// block spliced from the manifest (compiler.SpliceRegisterBlock), as compile-context splices it
-// before every compile. The block is rendered, never hand-written, so a kept block that no longer
+// block spliced from the manifest (splicedKeptHarness), as compile-context splices it before
+// every compile. The block is rendered, never hand-written, so a kept block that no longer
 // matches the manifest is refreshed rather than left to fail the compile-context --verify that
-// runs after the chain (verifyAgentContext). Every other line stays as written.
-func keepAgentHarness(ctx context.Context, s *adoptSession, full, existing, harness string) (string, error) {
+// runs after the chain (verifyAgentContext). Every other line stays as written. A splice goes
+// through replaceExisting, as refreshAgentHarness does: the prior bytes are backed up, the
+// report lists AGENTS.md as replaced with its line delta, and the write lands only over the
+// bytes this run read (ReplaceSnapshotIn with Expected).
+func keepAgentHarness(ctx context.Context, s *adoptSession, existing, harness string) (string, error) {
 	_, block, err := compiler.LoadRegisterBlock(ctx, s.repoPath)
 	if err != nil {
 		return "", fmt.Errorf("resolve the text register block for the harness: %w", err)
 	}
-	kept, spliced, err := compiler.SpliceRegisterBlock(existing, block)
+	kept, spliced, err := splicedKeptHarness(existing, block)
 	if err != nil {
-		return "", fmt.Errorf("%s: text register block: %w", agentsFile, err)
+		return "", err
 	}
 	detail := "Existing Praetor Agent Operating Harness preserved; command synchronization not verified"
-	if spliced {
-		if err := s.write(full, []byte(kept), filePerm); err != nil {
-			return "", err
-		}
-		detail += "; text register block spliced from the manifest, as compile-context splices it"
+	if !spliced {
+		s.report.recordReconciled(agentsFile, detail)
+	} else if err := s.replaceExisting(ctx, replacement{
+		rel: agentsFile, before: []byte(existing), after: []byte(kept),
+		detail: detail + "; text register block spliced from the manifest, as compile-context splices it",
+		publish: func(ctx context.Context) error {
+			return contextopt.ReplaceSnapshotIn(ctx, s.repoPath, agentsFile, []byte(kept),
+				contextopt.ReplaceOptions{Expected: []byte(existing), Exists: true, Mode: filePerm})
+		},
+	}); err != nil {
+		return "", fmt.Errorf("splice the text register block into %s: %w", agentsFile, err)
 	}
-	s.report.recordReconciled(agentsFile, detail)
 	if kept != harness {
 		s.report.addWarning("Existing AGENTS.md was preserved; review its commands against the verification plan or use --force to refresh a recognized harness boundary.")
 	}
 	return kept, nil
+}
+
+// splicedKeptHarness returns existing, a harness a run without --force keeps, with its text
+// register block spliced from block (compiler.SpliceRegisterBlock), and whether the splice
+// changed it. A changed harness must still compile into valid projections
+// (validateHarnessProjection). keepAgentHarness writes the result and preflightKeptHarness checks
+// it before the first step writes, so both refuse the same file.
+func splicedKeptHarness(existing, block string) (string, bool, error) {
+	kept, spliced, err := compiler.SpliceRegisterBlock(existing, block)
+	if err != nil {
+		return "", false, fmt.Errorf("%s: text register block: %w", agentsFile, err)
+	}
+	if spliced {
+		if err := validateHarnessProjection(kept); err != nil {
+			return "", false, err
+		}
+	}
+	return kept, spliced, nil
+}
+
+// preflightKeptHarness runs keepAgentHarness's refusals before the first step writes, on a run
+// without --force whose AGENTS.md holds a harness: a register block the splice refuses, such as
+// one with no end marker, a spliced harness with no valid projection, and, when the splice
+// changes the file, a backup root checkBackupRoot refuses. Checked only in the step, each came
+// after the manifest, the lock and the catalog were written. Under --force refreshAgentHarness
+// runs instead, and preflightForceBackupRoot checks the backup root.
+func preflightKeptHarness(ctx context.Context, s *adoptSession, block string) error {
+	if s.opts.Force {
+		return nil
+	}
+	full, err := repoFile(s.repoPath, agentsFile)
+	if err != nil || !fileExists(full) {
+		return err
+	}
+	existing, err := readRepoFile(full)
+	if err != nil || !hasHarness(string(existing)) {
+		return err
+	}
+	_, spliced, err := splicedKeptHarness(string(existing), block)
+	if err != nil || !spliced {
+		return err
+	}
+	return checkBackupRoot(ctx, s.repoPath)
 }
 
 // refreshAgentHarness regenerates the harness of existing under --force and keeps what the
