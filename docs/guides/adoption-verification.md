@@ -1041,10 +1041,14 @@ detected ([the lefthook.yml adoption writes](git-hooks.md#the-lefthookyml-adopti
 Each runs only where the root holds its marker and otherwise prints
 `no <marker> at the repository root, skipping <tool>`, matching the gate stages above. A module
 kept in a subdirectory is not scanned by these jobs. The `gate` job runs
-`praetorctl gate run --path=.`, which fails where no toolchain stage ran for a `go.mod` or a
-`Cargo.lock` ([no receipt](#no-receipt-when-no-toolchain-stage-ran)); the file's header comment
-says so, and every earlier rendering, the Go-only ones included, is recognised as earlier
-Praetor output. Tests: `internal/adopt/lefthook_identity_test.go`,
+`praetorctl gate run --path=. --admit-unsupported`: a root with neither a `go.mod` nor a
+`Cargo.lock` is admitted without a receipt and its languages are named, and a root with either
+fails where its toolchain stages did not run
+([no receipt](#no-receipt-when-no-toolchain-stage-ran),
+[admission](#the-pre-push-hook-admits-languages-the-gate-has-no-runner-for)). The file's header
+comment says so, and every earlier rendering, the Go-only ones and the ones running the plain gate
+included, is recognised as earlier Praetor output. Tests:
+`internal/adopt/lefthook_gate_admit_test.go`, `internal/adopt/lefthook_identity_test.go`,
 `internal/adopt/lefthook_languages_test.go`, `internal/adopt/lefthook_keep_test.go`,
 `internal/adopt/checkpoint_test.go`, `internal/adopt/hooks_gomod_test.go`,
 `internal/adopt/cli_name_test.go`.
