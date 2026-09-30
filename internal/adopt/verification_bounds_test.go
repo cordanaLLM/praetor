@@ -38,14 +38,14 @@ func TestVerificationMetadataBounds(t *testing.T) {
 }
 
 func TestVerificationDirectoryBounds(t *testing.T) {
-	for _, count := range []int{maxVerificationEntries, maxVerificationEntries + 1} {
+	for _, count := range []int{fixtureEntries, fixtureEntries + 1} {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {
 			root := t.TempDir()
 			for i := 0; i < count; i++ {
 				mustWrite(t, filepath.Join(root, fmt.Sprintf("unrelated-%d", i)), "")
 			}
-			_, err := loadVerificationInputs(t.Context(), root)
-			if (err != nil) != (count > maxVerificationEntries) {
+			_, err := loadVerificationInputsWithLimits(t.Context(), root, *withEntries(fixtureEntries))
+			if (err != nil) != (count > fixtureEntries) {
 				t.Fatalf("raw entries not bounded before interpretation: %v", err)
 			}
 		})

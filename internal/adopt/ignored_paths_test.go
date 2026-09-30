@@ -27,9 +27,9 @@ func fillEntries(t *testing.T, dir string, count int) {
 func TestVerificationWalk_Positive_ScratchWorktreesDoNotCountAgainstTheBound(t *testing.T) {
 	root := t.TempDir()
 	mustWrite(t, filepath.Join(root, "go.mod"), "module example.com/m\n")
-	fillEntries(t, filepath.Join(root, ".claude", "worktrees", "agent-1"), maxVerificationEntries+1)
-	fillEntries(t, filepath.Join(root, ".standards", "cache"), maxVerificationEntries+1)
-	inputs, err := loadVerificationInputs(t.Context(), root)
+	fillEntries(t, filepath.Join(root, ".claude", "worktrees", "agent-1"), fixtureEntries+1)
+	fillEntries(t, filepath.Join(root, ".standards", "cache"), fixtureEntries+1)
+	inputs, err := loadVerificationInputsWithLimits(t.Context(), root, *withEntries(fixtureEntries))
 	if err != nil {
 		t.Fatalf("scratch trees must not exhaust the verification bound: %v", err)
 	}
@@ -42,8 +42,8 @@ func TestVerificationWalk_Positive_ScratchWorktreesDoNotCountAgainstTheBound(t *
 // loosened bound; the same tree under any other directory still fails.
 func TestVerificationWalk_Negative_OrdinaryDirectoryStillHitsTheBound(t *testing.T) {
 	root := t.TempDir()
-	fillEntries(t, filepath.Join(root, "claude", "worktrees"), maxVerificationEntries+1)
-	if _, err := loadVerificationInputs(t.Context(), root); err == nil {
+	fillEntries(t, filepath.Join(root, "claude", "worktrees"), fixtureEntries+1)
+	if _, err := loadVerificationInputsWithLimits(t.Context(), root, *withEntries(fixtureEntries)); err == nil {
 		t.Fatal("an ordinary directory past the entry bound was accepted")
 	}
 }

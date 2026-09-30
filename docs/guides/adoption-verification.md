@@ -758,9 +758,10 @@ renders both newly generated Makefiles and AGENTS.md. Discovery recognizes:
 Mixed projects retain all detected gates; npm build precedes .NET builds for
 frontend resources, and `zig build` precedes both. A solution marker without projects, or Meson/CMake markers
 without a selected configured build directory, remains unavailable. Discovery is
-bounded to 4,096 entries, 32 directory levels (to cover nested public `src`/test
-project layouts), 128 metadata files, 64 KiB per metadata file and 2 MiB in
-aggregate. Generated dependency/build trees are omitted.
+bounded to 65,536 entries (`util.DefaultDiscoveryEntries` in
+`internal/util/discovery_bounds.go`), 32 directory levels (to cover nested public
+`src`/test project layouts), 128 metadata files, 64 KiB per metadata file and
+2 MiB in aggregate. Generated dependency/build trees are omitted.
 Exceeding a bound is an error, never a truncated successful plan, and the error names
 the `--verification-max-*` flag that raises the entry, depth or file bound
 ([large repositories](../adoption.md#large-repositories)). Selected metadata

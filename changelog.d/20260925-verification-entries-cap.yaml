@@ -1,0 +1,3 @@
+type: fixed
+title: Repository discovery walks default to 65536 entries instead of 4096, so a checkout with a built docs site no longer fails adopt or paperclip harness
+breaking: false

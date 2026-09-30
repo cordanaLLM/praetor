@@ -166,18 +166,23 @@ audit report it as drift.
 ### Large repositories
 
 Adoption discovers verification inputs (Makefiles, manifests, scripts) through a bounded
-walk of the target: 4096 directory entries, 128 files and 32 levels of depth by default. A
-repository above those bounds fails with an error that names the flag raising the bound:
+walk of the target: 65536 directory entries, 128 files and 32 levels of depth by default
+(`util.DefaultDiscoveryEntries` in `internal/util/discovery_bounds.go`). The entry count
+covers every directory the walk enters. Version-control, dependency, build-output and agent
+scratch directories are skipped by name (`skipVerificationDirectory` in
+`internal/adopt/verification_inputs.go`); generated output under any other name, such as a
+built documentation site, counts. A repository above those bounds fails with an error that
+names the flag raising the bound:
 
 ```text
-verification discovery exceeds 4096 entries; raise max_entries with --verification-max-entries, up to 200000
+verification discovery exceeds 65536 entries; raise max_entries with --verification-max-entries, up to 200000
 ```
 
 Raise a bound explicitly instead of trimming the tree:
 
 ```bash
 standardsctl adopt --dry-run --path /path/to/large-repo \
-  --lock-source-root=/path/to/praetor --verification-max-entries=32768
+  --lock-source-root=/path/to/praetor --verification-max-entries=131072
 ```
 
 `--verification-max-entries` also raises the editor language scan, which reads the
@@ -193,7 +198,7 @@ single-repository adoption; batch `--all-missing` keeps the defaults.
 takes the same three flags:
 
 ```bash
-praetorctl paperclip harness --path /path/to/large-repo --verification-max-entries=32768
+praetorctl paperclip harness --path /path/to/large-repo --verification-max-entries=131072
 ```
 
 Tests: `internal/adopt/large_repo_bounds_test.go` and

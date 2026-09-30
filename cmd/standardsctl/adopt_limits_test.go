@@ -52,34 +52,46 @@ func largeHarnessRepo(t *testing.T, entries int) string {
 	return root
 }
 
+// harnessEntries is the entry bound TestPaperclipHarness_VerificationLimitFlags passes through the
+// flag, so its fixtures stay small whatever the default is; the walk applies whichever bound it
+// is given, and no flag leaves the limits nil (TestRegisterVerificationLimitFlags_NamesMatchAdopt),
+// which adoption resolves to its default.
+const harnessEntries = 64
+
+// entriesFlag is --verification-max-entries set to n.
+func entriesFlag(n int) string {
+	return fmt.Sprintf("--%s=%d", adopt.VerificationEntriesFlag, n)
+}
+
 // TestPaperclipHarness_VerificationLimitFlags: `paperclip harness` takes the same
 // --verification-max-* flags as adopt, so a large repository is read as far as adoption reads it
-// (issue #535). Positive: a raised entry bound writes the harness. Negative: the default bound
-// fails naming the flag that raises it, a value past the ceiling is refused naming its range, and
-// a non-numeric value fails flag parsing. Boundary: exactly the default number of entries passes.
+// (issue #535). Positive: a raised entry bound writes the harness, and no flag reads the tree under
+// the default. Negative: a tree past the bound fails naming the flag that raises it, a value past
+// the ceiling is refused naming its range, and a non-numeric value fails flag parsing. Boundary:
+// exactly the bound's number of entries passes.
 func TestPaperclipHarness_VerificationLimitFlags(t *testing.T) {
-	defaults := adopt.DefaultVerificationLimits()
-	large := largeHarnessRepo(t, defaults.MaxEntries+1)
-	err := runPaperclipHarness(t.Context(), []string{"--path", large})
+	large := largeHarnessRepo(t, harnessEntries+1)
+	err := runPaperclipHarness(t.Context(), []string{"--path", large, entriesFlag(harnessEntries)})
 	if err == nil || !strings.Contains(err.Error(), "raise max_entries with --"+adopt.VerificationEntriesFlag) {
-		t.Fatalf("default bound on a large repository = %v; want it to name --%s", err, adopt.VerificationEntriesFlag)
+		t.Fatalf("bound %d on a %d-entry repository = %v; want it to name --%s", harnessEntries, harnessEntries+1, err, adopt.VerificationEntriesFlag)
 	}
-	over := fmt.Sprintf("--%s=%d", adopt.VerificationEntriesFlag, adopt.VerificationEntriesCeiling+1)
-	if err := runPaperclipHarness(t.Context(), []string{"--path", large, over}); err == nil || !strings.Contains(err.Error(), "must be 1..200000") {
+	if err := runPaperclipHarness(t.Context(), []string{"--path", large, entriesFlag(adopt.VerificationEntriesCeiling + 1)}); err == nil || !strings.Contains(err.Error(), "must be 1..200000") {
 		t.Fatalf("over-ceiling flag = %v; want a refusal naming the range", err)
 	}
 	if err := runPaperclipHarness(t.Context(), []string{"--path", large, "--verification-max-files=many"}); err == nil || !strings.Contains(err.Error(), adopt.VerificationFilesFlag) {
 		t.Fatalf("a non-numeric bound must fail flag parsing: %v", err)
 	}
-	raised := fmt.Sprintf("--%s=%d", adopt.VerificationEntriesFlag, 2*defaults.MaxEntries)
-	if err := runPaperclipHarness(t.Context(), []string{"--path", large, raised}); err != nil {
+	if err := runPaperclipHarness(t.Context(), []string{"--path", large, entriesFlag(2 * harnessEntries)}); err != nil {
 		t.Fatalf("raised bound refused: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(large, ".paperclip", "harness.json")); err != nil {
 		t.Fatalf("raised bound wrote no harness: %v", err)
 	}
-	if err := runPaperclipHarness(t.Context(), []string{"--path", largeHarnessRepo(t, defaults.MaxEntries)}); err != nil {
-		t.Fatalf("exactly %d entries refused: %v", defaults.MaxEntries, err)
+	if err := runPaperclipHarness(t.Context(), []string{"--path", largeHarnessRepo(t, harnessEntries+1)}); err != nil {
+		t.Fatalf("the default bound refused a %d-entry repository: %v", harnessEntries+1, err)
+	}
+	if err := runPaperclipHarness(t.Context(), []string{"--path", largeHarnessRepo(t, harnessEntries), entriesFlag(harnessEntries)}); err != nil {
+		t.Fatalf("exactly %d entries refused: %v", harnessEntries, err)
 	}
 }
 

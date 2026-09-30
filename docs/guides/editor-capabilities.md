@@ -111,8 +111,8 @@ native build marker adds `c` and `cpp` for `meson.build` or `CMakeLists.txt` and
 repository gets no C/C++ tooling (`internal/editor/native_languages_test.go`).
 `cuda` comes only from `.cu` and `.cuh` sources. An incomplete scan is an error rather than a claim
 that the unexamined part of the repository has no relevant languages. The scan
-walks at most 4096 files by default (`Options.MaxWorkspaceFiles`, zero selects the
-default). `praetorctl adopt` passes the entry bound its verification walk resolved,
+walks at most 65536 files by default (`Options.MaxWorkspaceFiles`, zero selects the
+default, `util.DefaultDiscoveryEntries`). `praetorctl adopt` passes the entry bound its verification walk resolved,
 so `--verification-max-entries` raises this scan too, up to the same 200000 ceiling.
 A bound past the ceiling is refused, and adoption names the flag when the scan
 stops at the bound ([large repositories](../adoption.md#large-repositories);
