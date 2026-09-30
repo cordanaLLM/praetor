@@ -79,9 +79,12 @@ not. The command acts on the answer:
 
 The block is written by the same function adoption uses, `writeManagedGitIgnore`
 in [`internal/adopt/gitignore.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/gitignore.go),
-so a later `praetorctl adopt` recognizes it as its own. A `.gitignore` that
-cannot be merged, such as one with an unterminated managed block, fails the
-command. The behaviour is covered by
+so a later `praetorctl adopt` recognizes it as its own. The same block also
+ignores the legacy scratch root `.workingdir2/` (`state.LegacyWorkingDirName`)
+unless the repository retired it
+([Adoption, audit, and CI](documentation-governance.md#adoption-audit-and-ci)).
+A `.gitignore` that cannot be merged, such as one with an unterminated managed
+block, fails the command. The behaviour is covered by
 [`internal/adopt/private_ignore_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/private_ignore_test.go),
 [`internal/state/ledger_present_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/state/ledger_present_test.go)
 and

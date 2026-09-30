@@ -377,7 +377,8 @@ func TestAuditDocumentationGateDeclineBoundary(t *testing.T) {
 }
 
 // Negative: declining git-ignore hands the file to the operator, not the privacy invariant.
-// Both scratch roots must still be effectively ignored.
+// Every scratch root adoption would protect must still be effectively ignored: .workingdir
+// always, .workingdir2 while it is on disk or the file carries the rule adoption wrote.
 func TestAuditDocumentationGateGitIgnoreDeclineKeepsScratchPrivacy(t *testing.T) {
 	for name, ignore := range map[string]string{
 		"missing second root": "/.workingdir/\n",
@@ -386,6 +387,9 @@ func TestAuditDocumentationGateGitIgnoreDeclineKeepsScratchPrivacy(t *testing.T)
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := documentationAuditFixture(t)
+			if name == "missing second root" {
+				writeFixtureFile(t, root, ".workingdir2/OPEN.md", "private\n")
+			}
 			if ignore == "" {
 				if err := os.Remove(filepath.Join(root, ".gitignore")); err != nil {
 					t.Fatal(err)
@@ -413,10 +417,69 @@ func TestAuditDocumentationGateIgnoresOperatorGlobalExcludes(t *testing.T) {
 
 	root := documentationAuditFixture(t)
 	writeFixtureFile(t, root, ".gitignore", "/.workingdir/\n")
+	writeFixtureFile(t, root, ".workingdir2/OPEN.md", "private\n")
 	manifest := declinedDocumentationManifest([]string{"git-ignore"}, "docs:seo-portal")
 	err := docGate(t.Context(), manifest, root)
 	if err == nil || !strings.Contains(err.Error(), ".workingdir2/PRAETOR-AUDIT-PROBE") {
 		t.Fatalf("a personal excludes file proved repository scratch privacy: %v", err)
+	}
+}
+
+// Positive (#641): a repository that retired .workingdir2 may keep it visible to Git. Audit
+// accepts the managed block with the rule deleted, or, once git-ignore is declined, operator
+// rules without it; the default block with the rule passes as before.
+func TestAuditDocumentationGateLegacyScratchRootIsOptional(t *testing.T) {
+	for name, fixture := range map[string]struct {
+		ignore   string
+		declines []string
+	}{
+		"managed block with the rule retired":           {ignore: "dist/\n\n" + adopt.RetiredLegacyScratchBlock()},
+		"default managed block":                         {ignore: adopt.ManagedGitIgnoreBlock()},
+		"declined, operator rule for .workingdir alone": {ignore: "/.workingdir/\n", declines: []string{"git-ignore"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := documentationAuditFixture(t)
+			writeFixtureFile(t, root, ".gitignore", fixture.ignore)
+			manifest := declinedDocumentationManifest(fixture.declines, "docs:seo-portal")
+			if err := docGate(t.Context(), manifest, root); err != nil {
+				t.Fatalf("audit demanded the legacy scratch root: %v", err)
+			}
+		})
+	}
+}
+
+// Boundary: with git-ignore declined, Git applies an operator .gitignore that audit's bounded
+// text read refuses (here: not UTF-8). Audit then probes every scratch root, as before a
+// repository could retire one, instead of failing on the read.
+func TestAuditDocumentationGateDeclinedUnreadableIgnoreProbesEveryRoot(t *testing.T) {
+	for name, fixture := range map[string]struct {
+		ignore string
+		fails  bool
+	}{
+		"both rules":             {ignore: "# caf\xe9\n/.workingdir/\n/.workingdir2/\n"},
+		"working directory only": {ignore: "# caf\xe9\n/.workingdir/\n", fails: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := documentationAuditFixture(t)
+			writeFixtureFile(t, root, ".gitignore", fixture.ignore)
+			manifest := declinedDocumentationManifest([]string{"git-ignore"}, "docs:seo-portal")
+			err := docGate(t.Context(), manifest, root)
+			if fixture.fails != (err != nil) || (err != nil && !strings.Contains(err.Error(), ".workingdir2/PRAETOR-AUDIT-PROBE")) {
+				t.Fatalf("declined audit of a non-UTF-8 .gitignore = %v, want failure %t on the .workingdir2 probe", err, fixture.fails)
+			}
+		})
+	}
+}
+
+// Negative: while .workingdir2 is on disk, the managed block must carry its rule even after
+// an adopter deleted it, so private files there stay out of Git.
+func TestAuditDocumentationGateLegacyScratchRootOnDiskIsDemanded(t *testing.T) {
+	root := documentationAuditFixture(t)
+	writeFixtureFile(t, root, ".gitignore", adopt.RetiredLegacyScratchBlock())
+	writeFixtureFile(t, root, ".workingdir2/OPEN.md", "private\n")
+	err := docGate(t.Context(), &config.Manifest{Facets: []string{"docs:seo-portal"}}, root)
+	if err == nil || !strings.Contains(err.Error(), "canonical Praetor private-artifact block") {
+		t.Fatalf("a block without the rule passed while .workingdir2 exists: %v", err)
 	}
 }
 

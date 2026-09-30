@@ -20,12 +20,14 @@ const (
 	maxGitIgnoreLines     = 4096
 )
 
-// managedIgnoreRules are the ignore rules adoption guarantees in every adopted
-// repository: the private session ledger, the container for the isolated gate
-// worktrees, whose leftovers would otherwise be scanned as repository content
-// and would keep the tree dirty for receipt minting, and the per-host AGY
-// workspace configuration.
-var managedIgnoreRules = []string{"/.workingdir/", "/.workingdir2/", "/" + worktree.WorktreeSubdir + "/", agyWorkspaceIgnore}
+// managedIgnoreRules are the ignore rules of the managed block, in block order: the
+// private session ledger, the legacy scratch root, the container for the isolated gate
+// worktrees, whose leftovers would otherwise be scanned as repository content and would
+// keep the tree dirty for receipt minting, and the per-host AGY workspace configuration.
+// Adoption guarantees each in every adopted repository, except that a repository may
+// retire legacyScratchIgnore (keepsLegacyScratch). The whole list is also the set of
+// unmarked lines Praetor's former format wrote.
+var managedIgnoreRules = []string{"/.workingdir/", legacyScratchIgnore, "/" + worktree.WorktreeSubdir + "/", agyWorkspaceIgnore}
 
 // gitIgnoreTailBlock is the private-artifact block adoption owns at the tail of .gitignore.
 // Exact unmarked rules Praetor's former format wrote are migrated into it.
@@ -47,48 +49,67 @@ func gitIgnoreTailBlock() managedTailBlock {
 // with it and named (reportReincludedConfigFiles).
 const configDirNegation = "!/" + configDir + "/"
 
-// managedGitIgnoreRules returns the managed block's rules: managedIgnoreRules, then
-// configDirNegation when negateConfig is set.
-func managedGitIgnoreRules(negateConfig bool) []string {
+// managedGitIgnoreRules returns the managed block's rules: managedIgnoreRules, without
+// legacyScratchIgnore unless keepLegacy is set (privateIgnoreRules), then configDirNegation
+// when negateConfig is set.
+func managedGitIgnoreRules(keepLegacy, negateConfig bool) []string {
+	rules := privateIgnoreRules(keepLegacy)
 	if !negateConfig {
-		return managedIgnoreRules
+		return rules
 	}
-	return append(slices.Clone(managedIgnoreRules), configDirNegation)
+	return append(slices.Clone(rules), configDirNegation)
 }
 
-// ManagedGitIgnoreBlock returns the canonical tail block shared by adoption and audit.
+// renderManagedGitIgnore renders the managed block from managedGitIgnoreRules.
+func renderManagedGitIgnore(keepLegacy, negateConfig bool) string {
+	return gitIgnoreTailBlock().render(managedGitIgnoreRules(keepLegacy, negateConfig))
+}
+
+// ManagedGitIgnoreBlock returns the canonical tail block with every managed rule: the block
+// adoption writes into a .gitignore that holds none yet.
 func ManagedGitIgnoreBlock() string {
-	return gitIgnoreTailBlock().render(managedIgnoreRules)
+	return renderManagedGitIgnore(true, false)
 }
 
-// HasManagedGitIgnoreTail reports whether text, LF-normalized, ends with a canonical managed
-// block: ManagedGitIgnoreBlock, or that block with configDirNegation, which adoption writes
-// where a Kconfig-style rule hides .config/. Audit accepts either.
-func HasManagedGitIgnoreTail(text string) bool {
-	block := gitIgnoreTailBlock()
-	return strings.HasSuffix(text, block.render(managedGitIgnoreRules(false))) ||
-		strings.HasSuffix(text, block.render(managedGitIgnoreRules(true)))
+// RetiredLegacyScratchBlock returns ManagedGitIgnoreBlock without legacyScratchIgnore: the
+// block of a repository that retired the legacy scratch root (keepsLegacyScratch).
+func RetiredLegacyScratchBlock() string {
+	return renderManagedGitIgnore(false, false)
+}
+
+// HasManagedGitIgnoreTail reports whether text, the LF-normalized .gitignore of the repository
+// at repoPath, ends with the canonical managed block adoption writes there: with
+// legacyScratchIgnore while keepsLegacyScratch requires it, and with or without
+// configDirNegation, which adoption adds where a Kconfig-style rule hides .config/. Audit
+// accepts either form.
+func HasManagedGitIgnoreTail(repoPath, text string) bool {
+	keep := keepsLegacyScratch(text, legacyScratchPresent(repoPath), false)
+	return strings.HasSuffix(text, renderManagedGitIgnore(keep, false)) ||
+		strings.HasSuffix(text, renderManagedGitIgnore(keep, true))
 }
 
 // mergeGitIgnore owns one canonical tail block. Tail placement makes the private rules
 // effective even when an adopter previously wrote negations; all bytes outside the block
-// remain operator-owned. Exact unmarked rules are migrated from Praetor's former format.
+// remain operator-owned. Exact unmarked rules are migrated from Praetor's former format. It is
+// mergeGitIgnoreRules with no legacy scratch root on disk and no configDirNegation request.
 func mergeGitIgnore(text string) (string, error) {
-	return mergeGitIgnoreRules(text, false)
+	return mergeGitIgnoreRules(text, false, false)
 }
 
-// mergeGitIgnoreRules is mergeGitIgnore with configDirNegation in the block when negateConfig
-// is set or the block in text already holds it. Once written, the negation stays: a writer
-// that does not probe (EnsurePrivateIgnore), and a probe the negation itself answers, would
-// otherwise drop it and hide the directory again.
-func mergeGitIgnoreRules(text string, negateConfig bool) (string, error) {
+// mergeGitIgnoreRules is mergeGitIgnore for a repository whose legacy scratch root is present
+// or not (legacyPresent), which with text decides whether the block keeps legacyScratchIgnore
+// (keepsLegacyScratch). The block carries configDirNegation when negateConfig is set or the
+// block in text already holds it. Once written, the negation stays: a writer that does not
+// probe (EnsurePrivateIgnore), and a probe the negation itself answers, would otherwise drop it
+// and hide the directory again.
+func mergeGitIgnoreRules(text string, legacyPresent, negateConfig bool) (string, error) {
 	block := gitIgnoreTailBlock()
 	held, _, err := block.held(text)
 	if err != nil {
 		return "", err
 	}
 	negate := negateConfig || slices.Contains(held, configDirNegation)
-	return block.merge(text, block.render(managedGitIgnoreRules(negate)))
+	return block.merge(text, renderManagedGitIgnore(keepsLegacyScratch(text, legacyPresent, false), negate))
 }
 
 // adoptGitIgnoreSeed is the file adoption starts a repository without .gitignore from: the
@@ -130,7 +151,8 @@ func reconcileGitIgnore(ctx context.Context, s *adoptSession) error {
 
 // writeManagedGitIgnore is the one read, merge and publish of the managed tail block;
 // adoption and EnsurePrivateIgnore both go through it (HISS-19). seed is the content a
-// repository without .gitignore starts from; negateConfig adds configDirNegation to the block
+// repository without .gitignore starts from; negateConfig adds configDirNegation to the block,
+// and the legacy scratch rule stays while keepsLegacyScratch requires it for the repository
 // (mergeGitIgnoreRules). It reports whether .gitignore existed and whether the merge changed
 // it; a dry run reports the change without writing it.
 func writeManagedGitIgnore(ctx context.Context, repoPath, seed string, dryRun, negateConfig bool) (existed, changed bool, err error) {
@@ -146,7 +168,7 @@ func writeManagedGitIgnore(ctx context.Context, repoPath, seed string, dryRun, n
 	if !exists {
 		text = seed
 	}
-	merged, err := mergeGitIgnoreRules(text, negateConfig)
+	merged, err := mergeGitIgnoreRules(text, legacyScratchPresent(repoPath), negateConfig)
 	if err != nil {
 		return exists, false, err
 	}
