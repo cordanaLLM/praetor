@@ -477,22 +477,27 @@ func executeAdoptSteps(ctx context.Context, s *adoptSession) error {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("adopt cancelled: %w", err)
 		}
-		name := steps[i].name
-		if declined[name] {
-			if err := skipDeclinedStep(ctx, s, name); err != nil {
-				return err
-			}
-			continue
-		}
-		from := s.report.mark()
-		if err := steps[i].run(ctx, s); err != nil {
-			s.report.recordStep(name, StepFailed, from)
+		if err := runOrSkipStep(ctx, s, steps[i], declined[steps[i].name]); err != nil {
 			return err
 		}
-		s.report.recordStep(name, StepCompleted, from)
 	}
 	reportIgnoredWrites(ctx, s)
 	verifyAgentContext(ctx, s, declined)
+	return nil
+}
+
+// runOrSkipStep runs one adoption step and records its outcome in the report, or, when the
+// manifest declines it, records it declined instead (skipDeclinedStep).
+func runOrSkipStep(ctx context.Context, s *adoptSession, step namedStep, declined bool) error {
+	if declined {
+		return skipDeclinedStep(ctx, s, step.name)
+	}
+	from := s.report.mark()
+	if err := step.run(ctx, s); err != nil {
+		s.report.recordStep(step.name, StepFailed, from)
+		return err
+	}
+	s.report.recordStep(step.name, StepCompleted, from)
 	return nil
 }
 
