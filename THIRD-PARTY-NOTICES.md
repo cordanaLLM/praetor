@@ -253,6 +253,7 @@ as the lock records them, copyright lines as each package's license file states 
 | `is-number` | 7.0.0 | MIT | `Copyright (c) 2014-present, Jon Schlinkert.` |
 | `is-path-inside` | 4.0.0 | MIT | `Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)` |
 | `js-yaml` | 5.4.1 | MIT | `Copyright (C) 2011-2015 by Vitaly Puzrin` |
+| `js-yaml` | 5.4.2 | MIT | `Copyright (C) 2011-2015 by Vitaly Puzrin` |
 | `jsonc-parser` | 3.3.1 | MIT | `Copyright (c) Microsoft` |
 | `jsonpointer` | 5.0.1 | MIT | `Copyright (c) 2011-2015 Jan Lehnardt <jan@apache.org> & Marc Bachmann <https://github.com/marcbachmann>` |
 | `katex` | 0.16.47 | MIT | `Copyright (c) 2013-2020 Khan Academy and other contributors` |
@@ -264,6 +265,7 @@ as the lock records them, copyright lines as each package's license file states 
 | `mdurl` | 2.1.0 | MIT | `Copyright (c) 2015 Vitaly Puzrin, Alex Kocharin.`, `Copyright Joyent, Inc. and other Node contributors. All rights reserved.` |
 | `merge2` | 1.4.1 | MIT | `Copyright (c) 2014-2020 Teambition` |
 | `micromark` | 4.0.2 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
+| `micromark` | 4.0.3 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
 | `micromark-core-commonmark` | 2.0.3 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
 | `micromark-extension-directive` | 4.0.0 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
 | `micromark-extension-gfm-autolink-literal` | 2.1.0 | MIT | `Copyright (c) 2020 Titus Wormer <tituswormer@gmail.com>` |
@@ -286,6 +288,7 @@ as the lock records them, copyright lines as each package's license file states 
 | `micromark-util-classify-character` | 2.0.1 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
 | `micromark-util-combine-extensions` | 2.0.1 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
 | `micromark-util-decode-numeric-character-reference` | 2.0.2 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
+| `micromark-util-edit-map` | 1.0.0 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
 | `micromark-util-encode` | 2.0.1 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
 | `micromark-util-events-to-acorn` | 2.0.3 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
 | `micromark-util-html-tag-name` | 2.0.1 | MIT | `Copyright (c) Titus Wormer <tituswormer@gmail.com>` |
