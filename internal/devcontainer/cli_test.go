@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -60,8 +61,17 @@ func provisionedCLI(t *testing.T) *PinnedCLI {
 	return c
 }
 
-// nodeArchive is a stand-in Node release archive for c: node, npm's CLI script and the bin/npm
-// link a real release carries. c's pinned checksum becomes the archive's.
+// archiveLinks reports whether the test process can unpack the bin/npm symbolic link a Node
+// release carries. On Windows creating one needs Developer Mode or an elevated token, as the
+// extractor's own tests note (util.requireArchiveSymlinks); the pinned CLI runs on Linux and
+// macOS only (nodePlatforms), so the Windows leg replays the archive without the link.
+func archiveLinks() bool {
+	return runtime.GOOS != "windows"
+}
+
+// nodeArchive is a stand-in Node release archive for c: node, npm's CLI script and, where
+// archiveLinks allows, the bin/npm link a real release carries. c's pinned checksum becomes the
+// archive's.
 func nodeArchive(t *testing.T, c *PinnedCLI) []byte {
 	t.Helper()
 	var buffer bytes.Buffer
@@ -72,7 +82,9 @@ func nodeArchive(t *testing.T, c *PinnedCLI) []byte {
 		{Name: top, Typeflag: tar.TypeDir, Mode: 0o755},
 		{Name: top + "bin/node", Typeflag: tar.TypeReg, Mode: 0o755, Size: 4},
 		{Name: top + "lib/node_modules/npm/bin/npm-cli.js", Typeflag: tar.TypeReg, Mode: 0o644, Size: 4},
-		{Name: top + "bin/npm", Typeflag: tar.TypeSymlink, Linkname: "../lib/node_modules/npm/bin/npm-cli.js"},
+	}
+	if archiveLinks() {
+		entries = append(entries, tar.Header{Name: top + "bin/npm", Typeflag: tar.TypeSymlink, Linkname: "../lib/node_modules/npm/bin/npm-cli.js"})
 	}
 	for i := range entries {
 		if err := archive.WriteHeader(&entries[i]); err != nil {
@@ -228,7 +240,9 @@ func TestProvisionFetchesVerifiesAndReuses(t *testing.T) {
 	if got := npm.commands[0]; !slices.Equal(got[1:], want) || !strings.HasPrefix(filepath.Base(got[0]), stagePrefix+"cli-") {
 		t.Errorf("npm command = %q, want %q in a stage", got, want)
 	}
-	if link, err := os.Readlink(filepath.Join(c.nodeDir(), "bin", "npm")); err != nil || link != "../lib/node_modules/npm/bin/npm-cli.js" {
+	if !archiveLinks() {
+		t.Log("the bin/npm link is not replayed on this platform (archiveLinks)")
+	} else if link, err := os.Readlink(filepath.Join(c.nodeDir(), "bin", "npm")); err != nil || link != "../lib/node_modules/npm/bin/npm-cli.js" {
 		t.Errorf("the release's bin/npm link = %q, %v", link, err)
 	}
 	if left := stages(t, c.Cache.Dir); len(left) != 0 {
