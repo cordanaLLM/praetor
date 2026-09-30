@@ -31,7 +31,9 @@ const (
 // "Go jobs in every repository" pair carried the Go jobs whatever the repository's languages
 // (#568); the "online pre-commit audit" entries, one per language set with and without
 // checkpoint jobs, ran the pre-commit audit against the forge before it passed --offline
-// (preCommitAuditArgs).
+// (preCommitAuditArgs); the "strict pre-push gate" entries, one per language set with and
+// without checkpoint jobs, ran the gate without --admit-unsupported, which refused every push
+// from a root with neither go.mod nor Cargo.lock (prePushGateArgs, #648).
 var priorLefthookDigests = map[string]string{
 	"25e9d28b31d2423874042e8c4f9d864bcf970e111a78f2b0b8ad63990081b435": "HISS-16 labels, root Go jobs",
 	"2b94aaf2bb95773724a4ead9dcabad7f5931408b07cf02b11c6768ad384b7413": "HISS-16 labels, root Go jobs, checkpoint jobs",
@@ -51,6 +53,14 @@ var priorLefthookDigests = map[string]string{
 	"a535aa9f8745e41c1929c7d79079ed5bbbfbb03d41e58e3fd4be0d29fe7122ab": "online pre-commit audit, Rust jobs, checkpoint jobs",
 	"419129472238157ea46c5ad26100b273ab46e2ca64d89f51f06bbbc509625ecf": "online pre-commit audit, Go and Rust jobs",
 	"11a1713854b6d98bf5fb9025d001502daca00415ace8ecd3837550f92e2f49e6": "online pre-commit audit, Go and Rust jobs, checkpoint jobs",
+	"fd7d6a64e2672f13865ec7632d909ba492d3366e32c71817e63cab8bc29ea929": "strict pre-push gate, governance jobs only",
+	"8e1e73cf4c9d8e3a605c5b5575ca4bc63c0d2ecde8fd5c2c64d717ef7d66cc71": "strict pre-push gate, governance jobs only, checkpoint jobs",
+	"b92b8c0473a44defde7c0ead9f5151c27c9b899dcfe68aaece5a7c4671259e7e": "strict pre-push gate, Go jobs",
+	"0477b783574c7fc3b648c0c37692ca9fb32fd45f9234b99abd750cdb74b10b9f": "strict pre-push gate, Go jobs, checkpoint jobs",
+	"e7255fc339416d267a023b0534162bcc6f64cef30689d395304ad0e3d9f3009e": "strict pre-push gate, Rust jobs",
+	"5a7e085fb6a1e26b054c7f67fd6ee81dac1407d8128eaed63013c1407dc5c2c6": "strict pre-push gate, Rust jobs, checkpoint jobs",
+	"5d969d0e03af74f7d75025770c98e93d40cd8ac7a14ed1913d958ffd21313cb8": "strict pre-push gate, Go and Rust jobs",
+	"04e116207015f34efad4490a3d8573574b63a054b349463201e2d28f0c061541": "strict pre-push gate, Go and Rust jobs, checkpoint jobs",
 }
 
 // lefthookIdentity is what adoption concluded about an existing lefthook.yml.

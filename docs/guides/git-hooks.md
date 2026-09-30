@@ -176,6 +176,15 @@ gets the Rust jobs. The header comment names the languages the file carries jobs
 `internal/adopt/lefthook_languages_test.go`, and the `TestCargoJobs_*` and `TestGoModuleJobs_*`
 cases in `internal/adopt/hooks_gomod_test.go`, which run the job lines against stub tools.
 
+The pre-push `gate` job runs `gate run --path=. --admit-unsupported` (`prePushGateArgs`). A root
+with neither `go.mod` nor `Cargo.lock`, such as a Meson, CMake, npm or Python repository, gets no
+receipt, because the gate runs no toolchain for it: the job runs every other stage, names the
+languages it could not verify and admits the push instead of refusing every one. A root with either
+marker still fails the job when its toolchain stages did not run
+([The pre-push hook admits languages the gate has no runner for](adoption-verification.md#the-pre-push-hook-admits-languages-the-gate-has-no-runner-for)).
+`TestLefthookGate_Positive_PrePushGateAdmitsUnsupportedLanguages` in
+`internal/adopt/lefthook_gate_admit_test.go` runs the job line against a stub.
+
 The `rust-systems` flavor describes this setting as pre-commit clippy and rustfmt enforcement,
 and `flavor audit` holds it to that: `lefthook.yml` satisfies it only when its `pre-commit` run
 lines call `cargo fmt` (or `rustfmt`) and `cargo clippy`, in the commands map or a jobs list
@@ -197,7 +206,9 @@ An existing `lefthook.yml` is classified before anything is installed (`classify
   (`TestAdopt_Negative_GoEveryRepositoryRenderingMigratesToCargoJobs`). It also holds the
   renderings whose pre-commit audit still read the forge, one per language set with and without
   checkpoint jobs, so those adopters get `audit --offline` before a commit on a plain run
-  (`TestAdopt_Boundary_OnlinePreCommitAuditMigratesWithoutForce`).
+  (`TestAdopt_Boundary_OnlinePreCommitAuditMigratesWithoutForce`), and the renderings whose `gate`
+  job ran without `--admit-unsupported`, so a Meson repository's pushes stop being refused on a
+  plain run (`TestAdopt_Boundary_StrictPrePushGateMigratesWithoutForce`).
 - **Any other file** is the repository's. It is kept byte for byte, `--force` included, and not
   activated: the audit checks only that `lefthook.yml` exists, so `--force` has nothing to restore.
   The skip names the generated jobs the file lacks and the jobs it adds, or says the file does not

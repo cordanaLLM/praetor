@@ -33,6 +33,11 @@ const (
 	// prePushAuditArgs is the audit the generated pre-push hook runs: online, the live checks
 	// included.
 	prePushAuditArgs = "audit"
+	// prePushGateArgs is the gate the generated pre-push hook runs. It passes
+	// gating.AdmitUnsupportedFlag, so a root with neither go.mod nor Cargo.lock (Meson, CMake,
+	// npm, Python) is admitted without a receipt, its unverified languages named, instead of every
+	// push being refused (#648); a Go or Cargo root is refused as before when its stages did not run.
+	prePushGateArgs = "gate run --path=. --" + gating.AdmitUnsupportedFlag
 )
 
 // ErrHooksDirEscapesRepo is returned when git discovers a different top-level directory
@@ -167,7 +172,9 @@ func lefthookHeader(languages hisscatalog.Language) string {
 		"# commit or push. The pre-commit audit runs --offline; the pre-push audit\n" +
 		"# reads the forge's live Actions state when a token and a github.com origin\n" +
 		"# are present. The pre-push gate job signs a receipt only after a Go\n" +
-		"# (go.mod) or Cargo (Cargo.lock) toolchain stage ran, and fails otherwise.\n"
+		"# (go.mod) or Cargo (Cargo.lock) toolchain stage ran. A root with neither\n" +
+		"# gets no receipt: the job names the languages it could not verify and\n" +
+		"# admits the push; a root with either fails when its stages did not run.\n"
 }
 
 // buildLefthookYAMLFor renders lefthook.yml with the jobs of languages (lefthookLanguages), and
@@ -203,7 +210,7 @@ func buildLefthookYAMLFor(languages hisscatalog.Language, checkpoint bool) strin
 		lefthookPrePushJobs(languages) +
 		"    flavor-audit:\n" + lefthookRun(governed("flavor audit .")) +
 		"    audit:\n" + lefthookRun(governed(prePushAuditArgs)) +
-		"    gate:\n" + lefthookRun(governed("gate run --path=."))
+		"    gate:\n" + lefthookRun(governed(prePushGateArgs))
 }
 
 // blockEvasionTemplate is the agent PreToolUse interceptor adoption writes. It is not a git
