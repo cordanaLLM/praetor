@@ -215,11 +215,18 @@ func verifyLockEntries(ctx context.Context, declared []string, entries []lockEnt
 			return 0, err
 		}
 		if actual != digest {
-			return 0, fmt.Errorf("%w: %s %q pins %s%s but %s hashes to %s%s",
-				ErrLockDigestMismatch, kind, entry.id, digestPrefix, digest, entry.path, digestPrefix, actual)
+			return 0, entryDigestMismatch(kind, entry.id, digest, entry.path, actual)
 		}
 	}
 	return unverified, nil
+}
+
+// entryDigestMismatch reports a pinned entry whose catalog source hashes to another digest,
+// naming both digests so the lock can be re-pinned from the message alone. Lock validation
+// and effective policy share this one report.
+func entryDigestMismatch(kind, id, pinned, path, actual string) error {
+	return fmt.Errorf("%w: %s %q pins %s%s but %s hashes to %s%s",
+		ErrLockDigestMismatch, kind, id, digestPrefix, pinned, path, digestPrefix, actual)
 }
 
 // archetypeSources indexes a catalog's archetype and facet definitions. Both indexes

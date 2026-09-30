@@ -81,7 +81,7 @@ func (l *effectiveLoader) pinnedLayer(path, kind string, pin lockEntry) (PolicyL
 		return layer, err
 	}
 	if layer.Source.SHA256 != digest {
-		return layer, fmt.Errorf("%w: %s", ErrLockDigestMismatch, layer.Source.ID)
+		return layer, entryDigestMismatch(kind, pin.ID, digest, path, layer.Source.SHA256)
 	}
 	archetype, err := decodeArchetype(l.ctx, path, data)
 	if err != nil {
