@@ -1,3 +1,4 @@
 type: fixed
-title: "adopt writes the plugin persona and skill copies through the compile-context writer and fails when compile-context --verify rejects the agent context it wrote, instead of exiting 0 with stale plugin copies"
-breaking: false
+title: "adopt writes the plugin persona and skill copies through the compile-context writer and exits non-zero (outcome incomplete) whenever compile-context --verify rejects the agent context it wrote, instead of exiting 0 with stale plugin copies; a manifest declining git-ignore now needs /.workingdir/ in the repository's own .gitignore, and a plain run splices the text register block into an AGENTS.md it keeps"
+issue: "#359"
+breaking: true

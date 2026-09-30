@@ -247,3 +247,44 @@ func TestVerifyFailures(t *testing.T) {
 		t.Fatalf("the unopened rest must stay joined in the last entry: %v", bounded[len(bounded)-1])
 	}
 }
+
+// Negative and its remedy: a manifest that declines git-ignore leaves .gitignore to the
+// operator, and compile-context --verify requires Git to ignore .workingdir/evidence/ (#631).
+// Without an operator rule the run is incomplete and the error names the remedy; with
+// /.workingdir/ in the operator's .gitignore the same run is applied.
+func TestAdopt_DeclinedGitIgnoreNeedsTheOperatorWorkingDirRule(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		gitignore string
+		want      AdoptOutcome
+	}{
+		{name: "no-rule", want: OutcomeIncomplete},
+		{name: "operator-rule", gitignore: "/.workingdir/\n", want: OutcomeApplied},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repoPath := newTestRepo(t, "declined-ignore-"+tc.name)
+			mustWrite(t, filepath.Join(repoPath, manifestFile), "version: 1\nadoption:\n  decline: [git-ignore]\n")
+			if tc.gitignore != "" {
+				mustWrite(t, filepath.Join(repoPath, ".gitignore"), tc.gitignore)
+			}
+			rep, err := Adopt(t.Context(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repoPath})
+			if err != nil {
+				t.Fatalf("Adopt: %v", err)
+			}
+			if rep.Outcome() != tc.want {
+				t.Fatalf("outcome = %s, want %s; errors %v", rep.Outcome(), tc.want, rep.Errors)
+			}
+			if tc.want == OutcomeApplied {
+				return
+			}
+			if len(rep.Errors) != 1 {
+				t.Fatalf("errors = %v, want the one verification error", rep.Errors)
+			}
+			for _, want := range []string{"compile-context --verify rejects", ".workingdir/evidence/", "add /.workingdir/ to the operator-owned .gitignore"} {
+				if !strings.Contains(rep.Errors[0], want) {
+					t.Errorf("error lacks %q: %s", want, rep.Errors[0])
+				}
+			}
+		})
+	}
+}
