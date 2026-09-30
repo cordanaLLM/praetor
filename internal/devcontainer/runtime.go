@@ -134,33 +134,6 @@ func PlanImage(ctx context.Context, repoDir string, host Host) (*ImagePlan, erro
 	return plan, plan.resolveCLI(host.LookPath)
 }
 
-// verifyRecordedCompanions checks a configuration's recorded Praetor bootstrap against the
-// companions beside it: the specification, the Dockerfile rendered from it and the source archive
-// it names. An unavailable bootstrap is ErrBootstrapUnavailable with its recorded reason. A
-// configuration that records no bootstrap has nothing to check. Verify runs it after comparing the
-// configuration with the declared profiles; the gate runs it alone before building the image
-// (PlanImage), which needs no manifest.
-func verifyRecordedCompanions(ctx context.Context, path string, actual *DevContainer) error {
-	spec := (&Bundle{Config: actual}).Spec()
-	if spec == nil {
-		return nil
-	}
-	if err := validateBootstrapSpec(spec); err != nil {
-		return err
-	}
-	artifacts, err := readBootstrapCompanions(ctx, path, spec)
-	if err != nil {
-		return err
-	}
-	if err := validateBundleContents(ctx, &Bundle{Config: actual, Artifacts: artifacts}); err != nil {
-		return err
-	}
-	if spec.State == BootstrapUnavailable {
-		return fmt.Errorf("%w: %s", ErrBootstrapUnavailable, spec.Reason)
-	}
-	return nil
-}
-
 // resolvedDir returns dir as an absolute path with its symbolic links resolved.
 func resolvedDir(dir string) (string, error) {
 	abs, err := filepath.Abs(dir)

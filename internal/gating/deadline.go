@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/devcontainer"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -42,6 +43,9 @@ type RunBudget struct {
 	Suites int
 	// Allowance is the time granted to every other stage.
 	Allowance time.Duration
+	// Devcontainer is the image build bound (devcontainer.ImageBuildTimeout), reserved when the
+	// run plans to build the repository's devcontainer (planDevcontainer), and zero otherwise.
+	Devcontainer time.Duration
 	// Note says why StageBound differs from the default; it is empty when it does not.
 	Note string
 }
@@ -53,20 +57,24 @@ func (b RunBudget) TestSuites() int {
 }
 
 // Timeout is the whole run's deadline: one stage bound per test suite plus the allowance for the
-// other stages.
+// other stages, plus the image build bound when the run builds a devcontainer.
 func (b RunBudget) Timeout() time.Duration {
-	return b.StageBound*time.Duration(b.TestSuites()) + b.Allowance
+	return b.StageBound*time.Duration(b.TestSuites()) + b.Allowance + b.Devcontainer
 }
 
 // String renders the deadline with its composition, the form every report of it uses. A run with
-// one test suite keeps the form it had before a repository could hold two.
+// one test suite and no devcontainer keeps the form it had before either existed.
 func (b RunBudget) String() string {
-	if suites := b.TestSuites(); suites > 1 {
-		return fmt.Sprintf("%s (%d test suites at a %s stage bound each + %s for the other stages)",
-			b.Timeout(), suites, b.StageBound, b.Allowance)
+	image := ""
+	if b.Devcontainer > 0 {
+		image = fmt.Sprintf(" + %s to build the devcontainer image", b.Devcontainer)
 	}
-	return fmt.Sprintf("%s (%s race stage bound + %s for the other stages)",
-		b.Timeout(), b.StageBound, b.Allowance)
+	if suites := b.TestSuites(); suites > 1 {
+		return fmt.Sprintf("%s (%d test suites at a %s stage bound each + %s for the other stages%s)",
+			b.Timeout(), suites, b.StageBound, b.Allowance, image)
+	}
+	return fmt.Sprintf("%s (%s race stage bound + %s for the other stages%s)",
+		b.Timeout(), b.StageBound, b.Allowance, image)
 }
 
 // TimeoutSeconds is Timeout in whole seconds, rounded up so a caller bounding the gate as a
@@ -101,8 +109,23 @@ func ResolveRepoRunBudget(raw, repoDir string) RunBudget {
 	return budget
 }
 
-// EnvRunBudget resolves the budget of a run over repoDir from the process environment.
+// EnvRunBudget resolves the budget of a run over repoDir from the process environment and this
+// machine. It reserves devcontainer.ImageBuildTimeout exactly when the run would build the
+// repository's devcontainer (planDevcontainer), so `gate run`, `gate deadline` and the pre-push
+// hook that bounds the gate by it agree on the deadline.
 func EnvRunBudget(repoDir string) RunBudget {
+	budget := stageBudget(repoDir)
+	ctx, cancel := context.WithTimeout(context.Background(), GitQueryTimeout)
+	defer cancel()
+	if plan, _ := planDevcontainer(ctx, repoDir, false, hostMachine()); plan != nil {
+		budget.Devcontainer = devcontainer.ImageBuildTimeout
+	}
+	return budget
+}
+
+// stageBudget is the budget sized to repoDir from PRAETOR_TEST_STAGE_TIMEOUT alone: the stage bound
+// and note a test stage runs under, which no devcontainer plan changes.
+func stageBudget(repoDir string) RunBudget {
 	return ResolveRepoRunBudget(os.Getenv(TestStageTimeoutEnv), repoDir)
 }
 

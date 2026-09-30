@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -151,13 +152,17 @@ type PipelineReport struct {
 	// toolchain stage ran: no receipt was minted, and the receipt stage's reason names the
 	// languages the gate runs no toolchain for.
 	AdmittedUnverified bool `json:"admitted_unverified,omitempty"`
+	// Execution records where the toolchain stages ran, the repository's devcontainer or the
+	// host and why (resolveExecution). The signed stage output carries it as a header line. Nil
+	// only for a run refused before it was resolved.
+	Execution *Execution `json:"execution,omitempty"`
 }
 
 // StageOutput renders the canonical, deterministic byte stream whose SHA-256 the Exit-0
-// receipt signs. It binds the receipt to the concrete stage results, the scanned commit
-// and the cleanliness of the tree that was actually scanned.
+// receipt signs. It binds the receipt to the concrete stage results, the scanned commit,
+// the cleanliness of the tree that was actually scanned and where the toolchain stages ran.
 func (r *PipelineReport) StageOutput() []byte {
-	lines := make([]string, 0, len(r.Stages)+5)
+	lines := make([]string, 0, len(r.Stages)+6)
 	lines = append(lines,
 		lockdown.GateOutputVersion,
 		fmt.Sprintf("repository\t%s", r.Repository),
@@ -165,6 +170,9 @@ func (r *PipelineReport) StageOutput() []byte {
 		lockdown.WorktreeCleanLine(r.WorktreeClean),
 		fmt.Sprintf("dry_run\t%t", r.DryRun),
 	)
+	if r.Execution != nil {
+		lines = append(lines, r.Execution.Line())
+	}
 	for i := 0; i < len(r.Stages) && i < maxStages; i++ {
 		s := r.Stages[i]
 		lines = append(lines, fmt.Sprintf("stage\t%s\t%s\t%s",
@@ -205,6 +213,13 @@ type stageConfig struct {
 	verified []string
 	// admitUnsupported is RunOptions.AdmitUnsupported (requireVerification).
 	admitUnsupported bool
+	// goos is the host operating system the devcontainer plan is made for. Production uses
+	// runtime.GOOS; tests set another to reach the Windows refusal on every platform.
+	goos string
+	// container is the devcontainer the Go toolchain stages run in, nil when they run on the
+	// host (resolveExecution, goToolchain). Its commands start through run, so a test's fake
+	// runner sees the container runtime's command lines.
+	container *devcontainerExec
 }
 
 // newStageConfig builds a stage configuration backed by the real toolchain.
@@ -217,6 +232,7 @@ func newStageConfig(repoDir string, dryRun bool, rep *PipelineReport) *stageConf
 		rep:         rep,
 		boundStage:  withStageBound,
 		inspectTree: inspectTree,
+		goos:        runtime.GOOS,
 	}
 }
 
@@ -238,6 +254,10 @@ func newStageConfig(repoDir string, dryRun bool, rep *PipelineReport) *stageConf
 // scan stages read the working tree while the receipt certifies the commit. A tree with
 // changes, or an untracked or ignored debt baseline or gosec configuration, is refused before
 // any stage runs (requireCleanTree); a dry run reports the same state and carries on.
+//
+// The Go part of the prefetch and race-detector stages then runs in the repository's
+// devcontainer where this host can build it, and on the host otherwise; the report and the
+// receipt record which, with the image ID or the reason (resolveExecution in devcontainer.go).
 func RunGatedPipeline(ctx context.Context, repoDir string, opts RunOptions) (*PipelineReport, error) {
 	if ctx == nil {
 		return nil, fmt.Errorf("pipeline: context cannot be nil")
@@ -255,24 +275,35 @@ func RunGatedPipeline(ctx context.Context, repoDir string, opts RunOptions) (*Pi
 	}
 	cfg := newStageConfig(repoDir, opts.DryRun, rep)
 	cfg.admitUnsupported = opts.AdmitUnsupported
+	return runPipeline(ctx, cfg, start), nil
+}
+
+// runPipeline runs a configured pipeline: the tree precondition, where the toolchain stages run,
+// then the stages. Every refusal and rejection is carried in the report.
+func runPipeline(ctx context.Context, cfg *stageConfig, start time.Time) *PipelineReport {
+	rep := cfg.rep
 	describeTree(ctx, cfg)
 	if err := requireCleanTree(cfg); err != nil {
 		rep.Status = StatusRejected
 		rep.TotalElapsed = time.Since(start)
-		return rep, nil //nolint:nilerr // the refusal is reported in rep.Status and its stage
+		return rep
+	}
+	// A planned devcontainer that cannot be built or entered is recorded as a failed stage, like
+	// the tree precondition, and rejects the run before any other stage.
+	if err := resolveExecution(ctx, cfg); err != nil {
+		rep.Status = StatusRejected
+		rep.TotalElapsed = time.Since(start)
+		return rep
 	}
 
 	if err := executeStages(ctx, cfg); err != nil {
-		rep.Status = StatusRejected
-		rep.TotalElapsed = time.Since(start)
 		// A rejection is a pipeline outcome, not a pipeline failure: the failing stage and
 		// its message are carried in the report, and the CLI turns StatusRejected into a
 		// non-zero exit code.
-		return rep, nil //nolint:nilerr // the rejection is reported in rep.Status
+		rep.Status = StatusRejected
 	}
-
 	rep.TotalElapsed = time.Since(start)
-	return rep, nil
+	return rep
 }
 
 // describeTree records the repository identity, the HEAD commit and whether the working
@@ -366,7 +397,7 @@ func runGoPrefetch(ctx context.Context, cfg *stageConfig) (string, error) {
 	if cfg.dryRun && util.FileExists(filepath.Join(cfg.repoDir, "go.mod")) {
 		return "", skipped("dry run: lockfiles verified; go mod verify and go mod download not run")
 	}
-	rep, err := prefetchDependencies(ctx, cfg.repoDir, cfg.run)
+	rep, err := prefetchDependencies(ctx, cfg.repoDir, cfg.goToolchain().run)
 	if err != nil {
 		return "", err
 	}
@@ -577,13 +608,14 @@ func runGoTests(ctx context.Context, cfg *stageConfig) (string, error) {
 				"CI runs this leg on Linux with cgo", absent))
 	}
 
-	budget := EnvRunBudget(cfg.repoDir)
+	budget := stageBudget(cfg.repoDir)
 	bound := budget.StageBound
+	run := cfg.goToolchain().run
 	err := inStageWorktree(ctx, cfg, bound, func(tCtx context.Context, dir string) error {
 		// -timeout gives every package binary the stage's own bound. go test's default is ten
 		// minutes per package, and a package that grows past it (internal/dogfood reached 600 s
 		// on the CI runner) panics mid-suite while the stage still has budget left.
-		out, testErr := cfg.run(tCtx, dir, "go", "test", "-race", "-timeout", bound.String(), "./...")
+		out, testErr := run(tCtx, dir, "go", "test", "-race", "-timeout", bound.String(), "./...")
 		if testErr == nil {
 			return nil
 		}
@@ -671,27 +703,32 @@ func stageBoundError(what string, bound time.Duration, dir, output string) error
 // A skip is reported with its reason, never taken silently. A skipped race leg that
 // read as a pass would be an unexamined thing certified as clean, which is the defect
 // this lattice exists to prevent.
+//
+// The toolchain asked is the one the stage runs (goToolchain). In the devcontainer the host's
+// environment does not reach the commands, so its CGO_ENABLED is not consulted there, and the
+// compiler is looked up on the container's PATH.
 func raceDetectorAvailable(ctx context.Context, cfg *stageConfig) (bool, string) {
-	if os.Getenv("CGO_ENABLED") == "0" {
+	tc := cfg.goToolchain()
+	if tc.where == "" && os.Getenv("CGO_ENABLED") == "0" {
 		return false, "CGO_ENABLED=0 in the environment"
 	}
-	enabled, err := cfg.run(ctx, cfg.repoDir, "go", "env", "CGO_ENABLED")
+	enabled, err := tc.run(ctx, cfg.repoDir, "go", "env", "CGO_ENABLED")
 	if err != nil {
-		return false, fmt.Sprintf("go env CGO_ENABLED could not be read: %v", err)
+		return false, fmt.Sprintf("go env CGO_ENABLED could not be read%s: %v", tc.where, err)
 	}
 	if strings.TrimSpace(enabled) == "0" {
-		return false, "go env reports CGO_ENABLED=0"
+		return false, "go env reports CGO_ENABLED=0" + tc.where
 	}
-	compiler, err := cfg.run(ctx, cfg.repoDir, "go", "env", "CC")
+	compiler, err := tc.run(ctx, cfg.repoDir, "go", "env", "CC")
 	if err != nil {
-		return false, fmt.Sprintf("go env CC could not be read: %v", err)
+		return false, fmt.Sprintf("go env CC could not be read%s: %v", tc.where, err)
 	}
 	compiler = strings.TrimSpace(compiler)
 	if compiler == "" {
-		return false, "go env names no C compiler"
+		return false, "go env names no C compiler" + tc.where
 	}
-	if _, err := cfg.lookPath(compiler); err != nil {
-		return false, fmt.Sprintf("the C compiler %q named by go env is not on PATH", compiler)
+	if err := tc.have(ctx, cfg.repoDir, compiler); err != nil {
+		return false, fmt.Sprintf("the C compiler %q named by go env is not on PATH%s", compiler, tc.where)
 	}
 	return true, ""
 }
