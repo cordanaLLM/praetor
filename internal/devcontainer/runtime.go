@@ -131,7 +131,10 @@ func PlanImage(ctx context.Context, repoDir string, host Host) (*ImagePlan, erro
 	if err := plan.resolveBuild(); err != nil {
 		return nil, err
 	}
-	return plan, plan.resolveCLI(host.LookPath)
+	if err := plan.resolveCLI(host.LookPath); err != nil {
+		return nil, err
+	}
+	return plan, nil
 }
 
 // resolvedDir returns dir as an absolute path with its symbolic links resolved.
