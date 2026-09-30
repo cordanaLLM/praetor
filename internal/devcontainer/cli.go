@@ -384,6 +384,8 @@ func cliScript(dir string) string {
 // fetchVerified downloads url into path, at most maxNodeArchiveBytes, and refuses it with
 // ErrChecksumMismatch unless its SHA-256 is want.
 func fetchVerified(ctx context.Context, fetch Fetcher, url, path, want string) (err error) {
+	// #nosec G304 -- path is a new file in the stage this run just created (os.MkdirTemp), and
+	// O_EXCL refuses one that already exists.
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, util.SecureFilePerm)
 	if err != nil {
 		return fmt.Errorf("create %s: %w", path, err)
