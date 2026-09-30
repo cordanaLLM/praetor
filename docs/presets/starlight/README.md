@@ -63,7 +63,8 @@ a path and fails when any of those URLs leaves it.
 lists `tools/figures/figures.css` in Starlight's `customCss`. The integration imports only Node
 built-ins and the figure engine, so `package.json` and `package-lock.json` name no figure package.
 It turns each `figure` code block in a `.md` or `.mdx` page into the figure, loads the player on
-every page under the site's `base`, and copies the figure and player files into `dist/`. The
+every page under the site's `base`, and copies the figure and player files into `dist/`. It runs
+on Astro's default Markdown processor, Sätteri, so the preset sets no `markdown.processor`. The
 [figures guide](../../guides/figures.md#figures-on-an-astro-starlight-site) describes it, and
 `tools/figures/README.md` in an adopted repository covers the spec format.
 
@@ -91,8 +92,9 @@ node tools/figures/build.mjs site --config astro.config.mjs --docs src/content/d
 check` and `node tools/figures/build.mjs sources`; run those two on a machine without make.
 `sources` finds `astro.config.mjs` at the repository root and reads the pages under
 `src/content/docs/`, so it fails a `figure` block that names an unknown figure; its success line
-names the pages it read. `npm run build` also fails on a `figure` block that names a figure
-without a JSON file.
+names the pages it read. `npm run build` also fails on a `figure` block in an `.mdx` page that
+names a figure without a JSON file; in an `.md` page Astro logs the error and builds the page
+without its content, so keep `make docs-figures` in the gate.
 
 The `docs-presets` job in `.github/workflows/ci.yml` builds the preset this way (its
 `Build Starlight Preset In An Adopter Fixture` step): a temporary repository adopted with
@@ -111,7 +113,15 @@ updates as `starlight docs preset`. The `docs-presets` job in `.github/workflows
 whenever a file under `docs/presets/` or `tools/figures/`, or the adoption code that writes the
 engine, changes.
 
-The content collection is configured in `src/content.config.ts` with Starlight's `docsLoader()`
-(the Content Layer layout Starlight 0.30+ requires). The sidebar groups **Standards & Invariants**
-and **Guides** autogenerate from `src/content/docs/standards/` and `src/content/docs/guides/`; a
-group whose directory holds no page renders empty, so keep at least one page in each.
+The lock installs no package with a known high or critical advisory: the
+`Go Vulnerability & AST Security Scan` job in `.github/workflows/security.yml` runs
+`npm audit --package-lock-only --audit-level=high` on it for every pull request and daily. Run the
+same command here before you commit a changed lock.
+
+The preset targets Astro 7 and Starlight 0.42. The content collection is configured in
+`src/content.config.ts` with Starlight's `docsLoader()` (the Content Layer layout Starlight 0.30+
+requires). The sidebar groups **Standards & Invariants** and **Guides** each list the pages of
+`src/content/docs/standards/` and `src/content/docs/guides/` through an `autogenerate` entry in
+their `items` (the group shape Starlight 0.39+ requires); a group whose directory holds no page
+renders empty, so keep at least one page in each. Social links are an array of `icon`, `label`
+and `href` entries (Starlight 0.33+); the GitHub link reads `sourceCode.repository`.

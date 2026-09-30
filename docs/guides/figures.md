@@ -266,10 +266,16 @@ export default defineConfig({
 });
 ```
 
-- A remark plugin turns each `figure` code block, in `.md` and `.mdx` pages alike, into the
+- A Markdown plugin turns each `figure` code block, in `.md` and `.mdx` pages alike, into the
   figure's JSON `html`, with `{{base}}` set to the root-absolute URL of the figures under the
-  site's `base` (`/assets/figures`, or `/docs/assets/figures` for base `/docs/`). A block naming a
-  figure without JSON fails the build.
+  site's `base` (`/assets/figures`, or `/docs/assets/figures` for base `/docs/`). `addFigurePlugin`
+  adds it to the Markdown processor the site runs: on Astro 7, Sätteri (the default,
+  `satteriFigures`) or `unified()` from `@astrojs/markdown-remark` (`remarkFigures`); on an earlier
+  Astro, which has no processor, `markdown.remarkPlugins`. A processor that runs neither fails the
+  setup. A block naming a figure without JSON fails the build of an `.mdx` page; on an `.md` page
+  Astro's content loader logs the error and builds the page without its content
+  (`astro/dist/content/loaders/glob.js`), so `make docs-figures`, whose `sources` check fails on the
+  block, is the gate for both.
 - Astro keeps the rendered `.md` pages of a content collection in `node_modules/.astro/` and renders
   one again only when the page or the Astro configuration changes. The plugin's options carry a
   digest of `docs/assets/figures/*.json` (`figuresDigest`), so after `build.mjs build` a warm
