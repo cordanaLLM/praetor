@@ -33,6 +33,11 @@ import sandbox
 ROOT = Path(__file__).resolve().parents[3]
 RUNNER = Path(".config/lefthook/scripts/hooks.py")
 GUARD = ROOT / ".config/agent/hooks/block_evasion.py"
+# The scan budget is 5 s of child CPU time (user + system) on POSIX, where host
+# load cannot inflate it. On Windows, where os.times() reports no child times,
+# fall back to wall clock with a stated looser bound (8 s) to tolerate scheduler
+# contention while staying inside the 10 s subprocess wall-clock hang guard.
+GUARD_TIMING_BOUND = 8.0 if os.name == "nt" else 5.0
 # Make and Git localize their diagnostics; pin the message catalogue so
 # assertions on tool output hold on workstations with non-English locales.
 LOCALE_ENV = {"LC_ALL": "C", "LANGUAGE": "C"}
@@ -1613,8 +1618,17 @@ class ScopeAndGuard(unittest.TestCase):
                 self.assertNotIn(b"Traceback", result.stderr)
 
     def guard_command(self, command):
+        payload = json.dumps({"tool_input": {"command": command}}).encode()
+        if os.name != "nt":
+            before = os.times()
+            result = self.guard_input(payload)
+            after = os.times()
+            duration = (after.children_user - before.children_user) + (
+                after.children_system - before.children_system
+            )
+            return result, duration
         started = time.monotonic()
-        result = self.guard_input(json.dumps({"tool_input": {"command": command}}).encode())
+        result = self.guard_input(payload)
         return result, time.monotonic() - started
 
     def test_guard_blocks_the_dev_root_and_names_no_organisation_folder(self):
@@ -1657,7 +1671,7 @@ class ScopeAndGuard(unittest.TestCase):
             with self.subTest(name):
                 result, elapsed = self.guard_command(command)
                 self.assertEqual(result.returncode == 0, allowed, result.stderr)
-                self.assertLess(elapsed, 5)
+                self.assertLess(elapsed, GUARD_TIMING_BOUND)
                 if not allowed:
                     self.assertIn(b"exceeds scan bound", result.stderr)
 
@@ -1669,7 +1683,7 @@ class ScopeAndGuard(unittest.TestCase):
                 line = (unit * per_line)[:per_line - 1] + "\n"
                 result, elapsed = self.guard_command(line * (characters // per_line))
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertLess(elapsed, 5)
+                self.assertLess(elapsed, GUARD_TIMING_BOUND)
 
     def test_guard_preserves_argv_and_environment_entry_points(self):
         for args in (("git", "status"), ("--environment",)):
