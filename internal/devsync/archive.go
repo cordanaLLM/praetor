@@ -26,6 +26,8 @@ const (
 	maxDiscoveryDirs = 100000
 	// maxArchiveEntries bounds the entries one archive may hold, both written and read (HISS-02).
 	maxArchiveEntries = 2000000
+	// maxPathSegments bounds the parent folders skipCache walks up from one folder (HISS-02).
+	maxPathSegments = 4096
 )
 
 // cacheDirs are rebuildable build and dependency caches left out of every archive. The lists
@@ -193,7 +195,7 @@ func (u unit) skipCache(rel, name string) bool {
 	if u.ignored == nil {
 		return true
 	}
-	for i := 0; i < maxLinkSegments && rel != "." && rel != string(filepath.Separator); i++ {
+	for i := 0; i < maxPathSegments && rel != "." && rel != string(filepath.Separator); i++ {
 		if u.ignored[rel] {
 			return true
 		}

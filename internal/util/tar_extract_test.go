@@ -1,4 +1,8 @@
-package devsync
+// SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
+//
+// SPDX-License-Identifier: EUPL-1.2
+
+package util
 
 import (
 	"archive/tar"
@@ -6,8 +10,11 @@ import (
 	"compress/gzip"
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -38,6 +45,33 @@ func craftArchive(t *testing.T, entries ...craftedEntry) *bytes.Buffer {
 	return &buffer
 }
 
+// testArchiveEntries is the entry bound the extraction tests pass.
+const testArchiveEntries = 64
+
+// extractTestArchive extracts r into dir under testArchiveEntries.
+func extractTestArchive(r io.Reader, dir string) error {
+	return ExtractTarGz(context.Background(), r, dir, testArchiveEntries)
+}
+
+// requireArchiveSymlinks skips a test on platforms where creating a symbolic link needs a
+// privilege the test process may lack.
+func requireArchiveSymlinks(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symbolic links on Windows needs Developer Mode or an elevated token")
+	}
+}
+
+// readArchiveFile returns the content of an extracted file.
+func readArchiveFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
 func file(name, body string) craftedEntry {
 	return craftedEntry{name: name, body: body, kind: tar.TypeReg}
 }
@@ -45,8 +79,8 @@ func symlink(name, target string) craftedEntry {
 	return craftedEntry{name: name, link: target, kind: tar.TypeSymlink}
 }
 
-func TestExtractArchivePositive(t *testing.T) {
-	requireSymlinks(t)
+func TestExtractTarGz_Positive(t *testing.T) {
+	requireArchiveSymlinks(t)
 	target := t.TempDir()
 	archive := craftArchive(t,
 		craftedEntry{name: "docs/", kind: tar.TypeDir},
@@ -54,15 +88,15 @@ func TestExtractArchivePositive(t *testing.T) {
 		symlink("docs/README.md", "../README.md"),
 		symlink("self", "."),
 	)
-	if err := extractArchive(context.Background(), archive, target); err != nil {
+	if err := extractTestArchive(archive, target); err != nil {
 		t.Fatal(err)
 	}
-	if readTestFile(t, filepath.Join(target, "docs", "README.md")) != "readme" {
+	if readArchiveFile(t, filepath.Join(target, "docs", "README.md")) != "readme" {
 		t.Fatal("link inside the target does not resolve")
 	}
 }
 
-func TestExtractArchiveRefusesEscapes(t *testing.T) {
+func TestExtractTarGz_Negative_RefusesEscapes(t *testing.T) {
 	cases := map[string][]craftedEntry{
 		"parent name":       {file("../escaped", "x")},
 		"absolute name":     {file("/tmp/escaped", "x")},
@@ -82,7 +116,7 @@ func TestExtractArchiveRefusesEscapes(t *testing.T) {
 			if err := os.Mkdir(target, 0o700); err != nil {
 				t.Fatal(err)
 			}
-			if err := extractArchive(context.Background(), craftArchive(t, entries...), target); err == nil {
+			if err := extractTestArchive(craftArchive(t, entries...), target); err == nil {
 				t.Fatal("unsafe archive accepted")
 			}
 			for _, leaked := range []string{"escaped", "x", "y", "b"} {
@@ -94,17 +128,29 @@ func TestExtractArchiveRefusesEscapes(t *testing.T) {
 	}
 }
 
-func TestExtractArchiveBoundary(t *testing.T) {
-	if err := extractArchive(context.Background(), craftArchive(t), t.TempDir()); err != nil {
+func TestExtractTarGz_Boundary(t *testing.T) {
+	if err := extractTestArchive(craftArchive(t), t.TempDir()); err != nil {
 		t.Fatalf("empty archive rejected: %v", err)
 	}
 	whole := craftArchive(t, file("a.txt", strings.Repeat("a", 4096))).Bytes()
 	truncated := bytes.NewReader(whole[:len(whole)-8])
-	if err := extractArchive(context.Background(), truncated, t.TempDir()); err == nil {
+	if err := extractTestArchive(truncated, t.TempDir()); err == nil {
 		t.Fatal("truncated archive accepted")
 	}
-	if err := extractArchive(context.Background(), strings.NewReader("not gzip"), t.TempDir()); err == nil {
+	if err := extractTestArchive(strings.NewReader("not gzip"), t.TempDir()); err == nil {
 		t.Fatal("non-gzip stream accepted")
+	}
+	// The caller's entry bound holds through the exported entry point: exactly the bound
+	// extracts, one entry past it fails.
+	for _, count := range []int{testArchiveEntries, testArchiveEntries + 1} {
+		entries := make([]craftedEntry, 0, count)
+		for i := 0; i < count; i++ {
+			entries = append(entries, file(fmt.Sprintf("f%03d", i), "x"))
+		}
+		err := extractTestArchive(craftArchive(t, entries...), t.TempDir())
+		if (err == nil) != (count == testArchiveEntries) {
+			t.Errorf("%d entries under a bound of %d: %v", count, testArchiveEntries, err)
+		}
 	}
 }
 
@@ -162,16 +208,16 @@ func TestLinkStaysInside(t *testing.T) {
 	}
 }
 
-func TestEntryName(t *testing.T) {
-	if name, err := entryName("dir/file.txt"); err != nil || name != filepath.Join("dir", "file.txt") {
+func TestLocalArchiveName(t *testing.T) {
+	if name, err := LocalArchiveName("dir/file.txt"); err != nil || name != filepath.Join("dir", "file.txt") {
 		t.Fatalf("entryName = %q, %v", name, err)
 	}
-	if name, err := entryName("dir/"); err != nil || name != "dir" {
+	if name, err := LocalArchiveName("dir/"); err != nil || name != "dir" {
 		t.Fatalf("directory entry = %q, %v", name, err)
 	}
 	for _, bad := range []string{"", "/", "..", "a/../b", "/abs"} {
-		if _, err := entryName(bad); !errors.Is(err, ErrUnsafeEntry) {
-			t.Errorf("entryName(%q) accepted", bad)
+		if _, err := LocalArchiveName(bad); !errors.Is(err, ErrUnsafeArchiveEntry) {
+			t.Errorf("LocalArchiveName(%q) accepted", bad)
 		}
 	}
 }
