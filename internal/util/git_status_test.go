@@ -103,6 +103,7 @@ func TestGitWorkingTreeChanges_Negative_RepositorySettingsCannotHideChanges(t *t
 	t.Run("clean filter", func(t *testing.T) {
 		dir := statusRepo(t)
 		statusGit(t, dir, "config", "filter.normalise.clean", "cat")
+		writeStatusFile(t, dir, ".gitattributes", "a.txt filter=normalise\n")
 		_, err := GitWorkingTreeChanges(t.Context(), dir, GitTreeProbeTimeout)
 		if !errors.Is(err, ErrGitStatusFilters) || !strings.Contains(err.Error(), "filter.normalise.clean") {
 			t.Fatalf("a configured clean filter was not refused: %v", err)
@@ -179,21 +180,23 @@ func TestGitWorkingTreeChanges_Boundary_CallerBound(t *testing.T) {
 	}
 }
 
-// TestRefuseGitStatusFilters_3D: no filter passes, a clean or process filter is refused, and a
-// smudge-only filter -- which a status probe never runs -- passes; a probe that cannot run is an
-// error, never an all-clear.
+// TestRefuseGitStatusFilters_3D: no filter passes, a clean or process filter a tracked path
+// selects is refused, and a smudge-only filter -- which a status probe never runs -- passes; a
+// probe that cannot run is an error, never an all-clear.
 func TestRefuseGitStatusFilters_3D(t *testing.T) {
 	dir := statusRepo(t)
 	if err := RefuseGitStatusFilters(t.Context(), dir); err != nil {
 		t.Fatalf("no filters configured: %v", err)
 	}
 	statusGit(t, dir, "config", "filter.lfs.smudge", "cat")
+	writeStatusFile(t, dir, ".gitattributes", "*.txt filter=lfs\n")
 	if err := RefuseGitStatusFilters(t.Context(), dir); err != nil {
 		t.Fatalf("a smudge-only filter must pass: %v", err)
 	}
 	for _, key := range []string{"filter.lfs.clean", "filter.lfs.process"} {
 		probe := statusRepo(t)
 		statusGit(t, probe, "config", key, "cat")
+		writeStatusFile(t, probe, ".gitattributes", "*.txt filter=lfs\n")
 		if err := RefuseGitStatusFilters(t.Context(), probe); !errors.Is(err, ErrGitStatusFilters) || !strings.Contains(err.Error(), key) {
 			t.Fatalf("%s must be refused by name, got %v", key, err)
 		}

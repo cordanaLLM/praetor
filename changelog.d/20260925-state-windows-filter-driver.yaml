@@ -1,0 +1,4 @@
+type: fixed
+title: State commands and clean-tree probes refuse a clean or process filter only when a tracked path's attributes select it, so an unused driver such as stock Git for Windows' filter.lfs no longer blocks them
+issue: "#640"
+breaking: false
