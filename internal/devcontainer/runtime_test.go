@@ -281,26 +281,34 @@ func TestBuildFailsNamingTheStep(t *testing.T) {
 	}
 }
 
-// RunArgs maps the host user per runtime and names the image by ID; a host without a user, as on
-// Windows, passes no mapping.
+// RunArgs maps the host user per runtime, starts the runtime's init as PID 1 on every runtime so
+// orphaned processes are reaped, puts /tmp on a tmpfs unless the checkout is mounted there, and
+// names the image by ID; a host without a user, as on Windows, passes no mapping.
 func TestRunArgsMapTheHostUserPerRuntime(t *testing.T) {
 	id := "sha256:" + strings.Repeat("e", 64)
 	opts := RunOptions{Name: "c1", Mounts: []string{"/repo"}, Env: []string{"HOME=/repo/h"}, Workdir: "/repo/wt", UID: 1000, GID: 1001}
 	docker := Image{Runtime: Runtime{Name: "docker"}, ID: id}.RunArgs(opts, "go", "test")
-	want := []string{"run", "--rm", "--name", "c1", "--user", "1000:1001", "--mount", "type=bind,src=/repo,dst=/repo",
+	want := []string{"run", "--rm", "--init", "--name", "c1", "--user", "1000:1001", "--tmpfs", "/tmp:exec", "--mount", "type=bind,src=/repo,dst=/repo",
 		"--env", "HOME=/repo/h", "--workdir", "/repo/wt", id, "go", "test"}
 	if !slices.Equal(docker, want) {
 		t.Errorf("docker run = %q, want %q", docker, want)
 	}
 	podman := Image{Runtime: Runtime{Name: "podman"}, ID: id}.RunArgs(opts, "go")
-	if !slices.Contains(podman, "--userns=keep-id") || slices.Contains(podman, "--user") {
-		t.Errorf("podman must map the user with keep-id, got %q", podman)
+	if !slices.Contains(podman, "--userns=keep-id") || slices.Contains(podman, "--user") || !slices.Contains(podman, "--init") {
+		t.Errorf("podman must map the user with keep-id and start its init, got %q", podman)
 	}
 	// Rootless docker maps the container's root to the host user: as the host UID the command
 	// would be a subordinate user inside, unable to write the checkout or HOME.
 	rootless := Image{Runtime: Runtime{Name: "docker", Rootless: true}, ID: id}.RunArgs(opts, "go")
 	if at := slices.Index(rootless, "--user"); at < 0 || rootless[at+1] != "0:0" || slices.Contains(rootless, "1000:1001") {
 		t.Errorf("rootless docker must run as the container root, the host user, got %q", rootless)
+	}
+	// A checkout mounted at /tmp itself keeps it: the tmpfs would hide the mount. One below /tmp
+	// still gets the tmpfs, since the runtime mounts the checkout over it.
+	atTmp := Image{Runtime: Runtime{Name: "docker"}, ID: id}.RunArgs(RunOptions{Name: "c1", Mounts: []string{"/tmp"}, Workdir: "/tmp", UID: 1, GID: 1}, "go")
+	belowTmp := Image{Runtime: Runtime{Name: "docker"}, ID: id}.RunArgs(RunOptions{Name: "c1", Mounts: []string{"/tmp/hook/repo"}, Workdir: "/tmp/hook/repo", UID: 1, GID: 1}, "go")
+	if slices.Contains(atTmp, "--tmpfs") || !slices.Contains(belowTmp, "--tmpfs") {
+		t.Errorf("only a mount at /tmp itself keeps /tmp off the tmpfs: at %q, below %q", atTmp, belowTmp)
 	}
 	opts.UID, opts.GID = -1, -1
 	none := Image{Runtime: Runtime{Name: "docker"}, ID: id}.RunArgs(opts, "go")

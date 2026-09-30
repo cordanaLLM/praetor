@@ -406,10 +406,15 @@ func normalizeImageID(raw string) (string, error) {
 // RunArgs is the runtime command line that runs name with args in a disposable container of the
 // image, by its ID so the command runs in exactly the image that was inspected. The command runs
 // as the host user, so files it writes into a mount stay the host user's and the host user's
-// files are writable to it (userArgs).
+// files are writable to it (userArgs). --init starts the runtime's own init (docker-init,
+// podman's catatonit) as the container's PID 1, which reaps orphaned processes as a host's init
+// does: without it the command itself is PID 1, a child that outlives its parent stays a zombie,
+// and code that waits for a process group to disappear, as util.RunCommand's own tests do, waits
+// in vain. /tmp is a tmpfs (scratchTmpfs).
 func (img Image) RunArgs(opts RunOptions, name string, args ...string) []string {
-	argv := []string{"run", "--rm", "--name", opts.Name}
+	argv := []string{"run", "--rm", "--init", "--name", opts.Name}
 	argv = append(argv, img.userArgs(opts)...)
+	argv = append(argv, scratchTmpfs(opts.Mounts)...)
 	for i := 0; i < len(opts.Mounts) && i < MaxLoopLimit; i++ {
 		argv = append(argv, "--mount", "type=bind,src="+opts.Mounts[i]+",dst="+opts.Mounts[i])
 	}
@@ -418,6 +423,23 @@ func (img Image) RunArgs(opts RunOptions, name string, args ...string) []string 
 	}
 	argv = append(argv, "--workdir", opts.Workdir, img.ID, name)
 	return append(argv, args...)
+}
+
+// containerTmp is the container's temporary directory, where go builds its work directory and
+// tests create theirs.
+const containerTmp = "/tmp"
+
+// scratchTmpfs mounts a tmpfs at containerTmp, executable because go test runs the test binaries
+// it links there. Otherwise /tmp is the container's writable layer on the runtime's storage
+// driver, where the temporary-directory traffic of a build and a test suite runs about ten times
+// slower than on the host: a nested go test in the race stage took 218 s there against 19 s on a
+// tmpfs. A mount at containerTmp itself keeps the directory it names, so it gets none; mounts
+// below it land on the tmpfs, since both runtimes mount a parent before its children.
+func scratchTmpfs(mounts []string) []string {
+	if slices.Contains(mounts, containerTmp) {
+		return nil
+	}
+	return []string{"--tmpfs", containerTmp + ":exec"}
 }
 
 // userArgs maps the host user into the container. Rootful docker runs the command as the host

@@ -1173,6 +1173,8 @@ image ID the runtime reported, so every command runs in exactly the image the re
 | User | the host user, so files the stages write stay the host user's and the host user's files are writable inside: `--user <uid>:<gid>` on rootful docker; `--user 0:0` on rootless docker, whose container root is the host user while every other container UID is a subordinate one (`devcontainer.FindRuntime` reads `name=rootless` from `docker info`'s security options); `--userns=keep-id` on rootless podman |
 | `HOME` | `<user cache dir>/praetor/devcontainer-home` (`os.UserCacheDir`: `$XDG_CACHE_HOME` or `~/.cache` on Linux, `~/Library/Caches` on macOS), created on the host and bind-mounted at its own path. It lies outside every checkout, so Go's build and module caches persist across runs, including the pre-push hook's runs in a temporary clone. One `HOME` serves every repository, as the host's own Go caches do, and the prefetch stage's `go mod verify` re-checks the module cache against `go.sum` |
 | Environment | the image's own, plus `GOPATH=$HOME/go` (not an image's shared `/go`), `PRAETOR_GATE_DEVCONTAINER=off` so a gate a test starts inside never looks for a runtime there, and `GOFLAGS` as the host's value followed by `-modcacherw`, so build tags carry over and the cache can be deleted without restoring write permission first. The host's module and network settings are forwarded when set, even empty: `GOPROXY`, `GOPRIVATE`, `GONOPROXY`, `GONOSUMDB`, `GONOSUMCHECK`, `GOSUMDB`, `GOINSECURE`, `GOTOOLCHAIN`, and `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` in both spellings (`forwardedEnv` in [`internal/gating/devcontainer.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/devcontainer.go)). Nothing else crosses, credentials included |
+| Init | `--init`: the runtime's own init (`docker-init`, or podman's `catatonit`) is the container's PID 1 and reaps orphaned processes as a host's init does. Without it the command itself is PID 1, a killed command's children stay behind as zombies, and a test that waits for a process group to disappear, such as `util.RunCommand`'s own, times out |
+| `/tmp` | a tmpfs mounted `exec` (`--tmpfs /tmp:exec`), where go builds its work directory and tests make theirs. On the container's writable layer that traffic runs about ten times slower than on the host: a nested `go test` in the race stage took 218 s there and 19 s on the tmpfs. A checkout mounted at `/tmp` itself keeps it; one below `/tmp`, such as the pre-push hook's temporary clone, is mounted over the tmpfs |
 | Cleanup | a container whose command failed is removed by name, because a runtime CLI killed by the stage bound leaves its container running |
 
 The race stage keeps its bound and its worktree (`inStageWorktree`); the worktree is created by the
@@ -1252,7 +1254,8 @@ checksum, install and reuse are replayed without a network in
 case behind [#652](https://github.com/cordanaLLM/praetor/issues/652) end to end when
 `PRAETOR_DEVCONTAINER_E2E=1` is set: it builds Praetor's
 devcontainer, features included, through the pinned CLI with the real runtime, then runs the
-prefetch stage, `go version`, `node --version` and a race test in it.
+prefetch stage, `go version`, `node --version`, a race test, and the `internal/util` tests that
+wait for a killed process group to disappear, which pass only where an init reaps orphans.
 
 Governance profile names no longer select Go or Meson commands. A shared plan
 renders both newly generated Makefiles and AGENTS.md. Discovery recognizes:

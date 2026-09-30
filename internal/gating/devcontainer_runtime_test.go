@@ -176,7 +176,10 @@ func TestPraetorsOwnDevcontainerRunsTheGoStages(t *testing.T) {
 		t.Fatalf("prefetch in the devcontainer: %v", err)
 	}
 	run := cfg.goToolchain().run
-	for _, command := range [][]string{{"go", "version"}, {"node", "--version"}, {"go", "test", "-race", "-count=1", "./internal/lockdown"}} {
+	// The util tests that wait for a killed process group to disappear pass only where an init
+	// reaps orphans, which the gate's --init provides (Image.RunArgs).
+	for _, command := range [][]string{{"go", "version"}, {"node", "--version"}, {"go", "test", "-race", "-count=1", "./internal/lockdown"},
+		{"go", "test", "-race", "-count=1", "-run", "StubbornCommandKilled", "./internal/util"}} {
 		out, err := run(ctx, cfg.repoDir, command[0], command[1:]...)
 		if err != nil {
 			t.Fatalf("%s in the devcontainer: %v\n%s", strings.Join(command, " "), err, out)
