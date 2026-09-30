@@ -64,7 +64,7 @@ func PlanBundle(ctx context.Context, path string, bundle *Bundle, force bool) (*
 	if ctx == nil {
 		return nil, errors.New("bootstrap write requires context")
 	}
-	ctx, cancel := context.WithTimeout(ctx, contextopt.MaxDuration)
+	ctx, cancel := context.WithTimeout(ctx, bootstrapBound)
 	defer cancel()
 	if err := validateBundleContents(ctx, bundle); err != nil {
 		return nil, err
@@ -111,7 +111,7 @@ func (p *BundlePlan) Publish(ctx context.Context) error {
 	if ctx == nil {
 		return errors.New("bootstrap write requires context")
 	}
-	ctx, cancel := context.WithTimeout(ctx, contextopt.MaxDuration)
+	ctx, cancel := context.WithTimeout(ctx, bootstrapBound)
 	defer cancel()
 	if err := contextopt.EnsureDirectory(ctx, p.dir, 0755); err != nil {
 		return err

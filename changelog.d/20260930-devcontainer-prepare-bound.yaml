@@ -1,0 +1,3 @@
+type: fixed
+title: "Preparing a DevContainer bundle gets five minutes instead of the context optimizer's 30 seconds, so adoption no longer fails with prepare devcontainer bootstrap: context deadline exceeded on a loaded host"
+breaking: false

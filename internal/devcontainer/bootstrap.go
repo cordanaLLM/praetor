@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
-	"github.com/cordanaLLM/praetor/internal/contextopt"
 )
 
 const (
@@ -20,8 +20,13 @@ const (
 	// constant: framing, the Dockerfile COPY lines, spec validation and companion reads.
 	// Part names are zero-padded to three digits, so the image's `cat *.b64` joins them in
 	// order for any cap up to 1000. It was 4 until #501; a spec recorded then stays valid.
-	maxBootstrapParts   = 8
-	bootstrapPartBytes  = 512 * 1024
+	maxBootstrapParts  = 8
+	bootstrapPartBytes = 512 * 1024
+	// bootstrapBound bounds preparing, planning and publishing one bundle (HISS-02). It is not the
+	// context optimizer's 30-second contextopt.MaxDuration: preparing snapshots the whole build
+	// source twice, and on a loaded host that took past 30 seconds and failed adoption with
+	// "prepare devcontainer bootstrap: context deadline exceeded".
+	bootstrapBound      = 5 * time.Minute
 	DefaultBuilderImage = "docker.io/library/golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414"
 	// The 26.04 tag drops the hyphen the 24.04 and earlier tags carried:
 	// mcr.microsoft.com/devcontainers/base publishes "ubuntu26.04", and
@@ -98,7 +103,7 @@ func PrepareBundle(ctx context.Context, name string, profiles, facets []string, 
 	if err := validateBootstrapInputs(ctx, name, profiles, facets); err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, contextopt.MaxDuration)
+	ctx, cancel := context.WithTimeout(ctx, bootstrapBound)
 	defer cancel()
 	if options.BuilderImage == "" {
 		options.BuilderImage = DefaultBuilderImage
