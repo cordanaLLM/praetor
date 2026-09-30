@@ -101,6 +101,9 @@ var priorDigests = map[string]string{
 	// README.md while its restore command named adopt --force without the lock source a forced
 	// run needs (#502).
 	"1879a244bd33b2fb50e95d848f65bf1bab2ca09fcc0507d997d0e11e8d5a6fd0": Directory + "/README.md",
+	// astro.mjs while it added its remark plugin only to markdown.remarkPlugins, which Astro 7's
+	// default Sätteri processor does not run, so an Astro 7 site kept every figure block as code.
+	"b767cd0c78901610f3f35e7a983e73eaad62b5b1d0f6f2a0e369213abb80ef05": Directory + "/astro.mjs",
 }
 
 //go:embed core.mjs checks.mjs build.mjs types.ts third_party/interfig/vendor.json third_party/interfig/VENDOR.md third_party/interfig/upstream/LICENSE third_party/interfig/upstream/src/svg.ts third_party/interfig/upstream/src/geometry.ts third_party/interfig/upstream/src/model.ts dist/loader.js dist/player.js dist/THIRD-PARTY-LICENSES.txt figures.css mkdocs_hook.py astro.mjs serve.mjs README.md
