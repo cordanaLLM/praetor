@@ -389,7 +389,14 @@ var everyRunConditions = []string{"always()", "!cancelled()", "success()||failur
 // Any other condition, such as a lane that runs only when a planner job's output selects it,
 // skips its job on some pull requests. GitHub reports a job a condition skipped as successful, so
 // requiring it would install a check that passes whether or not its work ran.
+//
+// A leading renovateBranchSkip conjunct is the one skip the rest of the condition alone decides
+// on (withoutRenovateBranchSkip). It skips the job on Renovate branches only, whose pull requests
+// are taken over rather than merged, and a matrix job it skips reports no leg at all, so such a
+// pull request cannot satisfy the ruleset. Dropping the job from the required contexts instead
+// would unprotect every other pull request, so the job stays required.
 func reportsOnEveryPullRequest(condition, identity string) bool {
+	condition = withoutRenovateBranchSkip(condition)
 	return strings.TrimSpace(condition) == "" || holdsOnEveryRun(condition) ||
 		holdsOnEveryPullRequestRun(condition) || guardHoldsInRepository(condition, identity)
 }

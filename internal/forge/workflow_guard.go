@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
@@ -54,9 +55,10 @@ const renovateBranchSkip = "!startsWith(github.head_ref, 'renovate/')"
 
 // withoutRenovateBranchSkip returns condition with a leading renovateBranchSkip conjunct removed,
 // so the rest is judged as if the job had no such skip: "" for the term alone, the inside of one
-// parenthesised group that encloses the whole rest, or a rest without a disjunction. Any other
-// shape, such as a rest whose top-level || would bind around the conjunction, returns condition
-// unchanged, and its && then makes the job conditional.
+// parenthesised group that encloses the whole rest, or a rest without a top-level disjunction
+// (topLevelDisjunction). Any other shape, such as a rest whose top-level || would bind around the
+// conjunction or whose parentheses do not pair, returns condition unchanged, and its && then makes
+// the job conditional.
 func withoutRenovateBranchSkip(condition string) string {
 	condition = strings.TrimSpace(condition)
 	if condition == renovateBranchSkip {
@@ -70,31 +72,35 @@ func withoutRenovateBranchSkip(condition string) string {
 	if inner, enclosed := enclosedGroup(rest); enclosed {
 		return inner
 	}
-	if strings.Contains(rest, "||") {
+	if strings.Count(rest, "(") != strings.Count(rest, ")") || topLevelDisjunction(rest) {
 		return condition
 	}
 	return rest
 }
 
+// topLevelDisjunction reports whether expression holds a || outside every parenthesised group,
+// such as "a || b" but not "a == (b || c)".
+func topLevelDisjunction(expression string) bool {
+	for i := 0; i < len(expression); i++ {
+		if expression[i] == '(' {
+			i += len(util.EnclosedParens(expression, i)) + 1
+			continue
+		}
+		if strings.HasPrefix(expression[i:], "||") {
+			return true
+		}
+	}
+	return false
+}
+
 // enclosedGroup returns the inside of expression when one pair of parentheses encloses all of it,
 // so that "(a || b)" yields "a || b" while "(a) || (b)" is no group.
 func enclosedGroup(expression string) (string, bool) {
-	if !strings.HasPrefix(expression, "(") || !strings.HasSuffix(expression, ")") {
+	inner := util.EnclosedParens(expression, 0)
+	if !strings.HasPrefix(expression, "(") || len(inner)+2 != len(expression) {
 		return "", false
 	}
-	depth := 0
-	for i := 0; i < len(expression); i++ {
-		switch expression[i] {
-		case '(':
-			depth++
-		case ')':
-			depth--
-		}
-		if depth == 0 && i < len(expression)-1 {
-			return "", false
-		}
-	}
-	return strings.TrimSpace(expression[1 : len(expression)-1]), depth == 0
+	return strings.TrimSpace(inner), true
 }
 
 // disjunctionContains reports whether condition is a disjunction holding term, so that the

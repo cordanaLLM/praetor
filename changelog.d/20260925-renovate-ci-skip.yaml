@@ -1,0 +1,3 @@
+type: changed
+title: "Renovate pull requests skip the heavy CI jobs, rebase only on conflict and never automerge; the signed-off takeover pull request runs the full CI"
+breaking: false

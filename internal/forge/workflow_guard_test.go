@@ -57,10 +57,11 @@ func workflowGuardViolations(name string, data []byte, identity string) ([]strin
 // confinesToRepository reports whether a condition keeps every unattended run inside the
 // repository: the guard itself, the guard as a further conjunct, or the schedule-leg form
 // that lets push and pull request verification run everywhere. A workflow that can publish
-// never gets the schedule-leg form: its push leg would publish from any copy.
+// never gets the schedule-leg form: its push leg would publish from any copy. A leading Renovate
+// branch skip only narrows the job further, so the rest of the condition decides.
 func confinesToRepository(condition, identity string, publishes bool) bool {
 	guard := repositoryGuard(identity)
-	condition = strings.TrimSpace(condition)
+	condition = withoutRenovateBranchSkip(condition)
 	if condition == guard || strings.HasSuffix(condition, " && "+guard) {
 		return true
 	}
@@ -205,20 +206,137 @@ func TestWorkflowGuardViolationsBounds(t *testing.T) {
 	}
 }
 
-// Boundary: portability outside the canonical repository follows a repository variable,
-// and exactly one of the matrix and its stated-reason job runs for any repository.
+// Boundary: portability outside the canonical repository follows a repository variable, a
+// Renovate pull request skips the matrix everywhere, and exactly one of the matrix and its
+// stated-reason job runs for any repository and branch.
 func TestPortabilityFollowsTheRepositoryVariable(t *testing.T) {
 	workflows, identity := engineWorkflows(t)
 	var spec workflowSpec
 	if err := yaml.Unmarshal(workflows["portability.yml"], &spec); err != nil {
 		t.Fatalf("parse portability.yml: %v", err)
 	}
-	runs := repositoryGuard(identity) + " || " + portabilityVariable
+	runs := renovateBranchSkip + " && (" + repositoryGuard(identity) + " || " + portabilityVariable + ")"
 	if got := spec.Jobs["harness"].If; got != runs {
 		t.Errorf("harness condition = %q, want %q", got, runs)
 	}
 	if got := spec.Jobs["skipped"].If; got != "!("+runs+")" {
 		t.Errorf("skipped condition = %q, want the exact negation of the harness condition", got)
+	}
+}
+
+// renovateSkippingJobs are the engine's pull request jobs that lead their condition with
+// renovateBranchSkip, keyed "<workflow>/<job id>": Go tests, the Platform Neutrality legs, the
+// preset builds, the security scan and the documentation site. Every other job of a pull request
+// workflow keeps running on a Renovate branch, the DCO and REUSE gate included, and the
+// portability stated-reason job runs there because its condition negates the matrix's.
+var renovateSkippingJobs = []string{
+	"ci.yml/docs-presets", "ci.yml/verify", "pages.yml/build", "portability.yml/harness", "security.yml/security",
+}
+
+// renovateSkipJobs lists, keyed "<workflow>/<job id>" and sorted, every job of a workflow that
+// triggers on pull_request whose condition leads with renovateBranchSkip.
+func renovateSkipJobs(t *testing.T, workflows map[string][]byte) []string {
+	t.Helper()
+	var skipping []string
+	for name, data := range workflows {
+		var spec workflowSpec
+		if err := yaml.Unmarshal(data, &spec); err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		if _, declared := eventTrigger(&spec.On, pullRequestEvent); !declared {
+			continue
+		}
+		for id, job := range spec.Jobs {
+			if strings.HasPrefix(strings.TrimSpace(job.If), renovateBranchSkip) {
+				skipping = append(skipping, name+"/"+id)
+			}
+		}
+	}
+	sort.Strings(skipping)
+	return skipping
+}
+
+// Positive: exactly the heavy pull request jobs skip a Renovate branch. Negative: the DCO and
+// REUSE gate, the configuration validation and the documentation governance gate do not.
+// Boundary: every skipping job stays a required context, and the stated-reason job does not
+// become one.
+func TestRenovateBranchesSkipOnlyTheHeavyPullRequestJobs(t *testing.T) {
+	workflows, identity := engineWorkflows(t)
+	if got := renovateSkipJobs(t, workflows); strings.Join(got, ",") != strings.Join(renovateSkippingJobs, ",") {
+		t.Fatalf("jobs skipping Renovate branches = %v, want %v", got, renovateSkippingJobs)
+	}
+	for _, kept := range []string{"compliance.yml", "praetor-docs.yml"} {
+		if strings.Contains(string(workflows[kept]), "github.head_ref") {
+			t.Errorf("%s reads github.head_ref; it must keep running on Renovate branches", kept)
+		}
+	}
+	contexts, err := RequiredStatusContexts(t.Context(), engineRoot)
+	if err != nil {
+		t.Fatalf("RequiredStatusContexts: %v", err)
+	}
+	want := append([]string{"Standards & Invariant Verification Gate", "Documentation Preset Builds",
+		"Release & Bot Configuration Validation", "DCO 1.1 & REUSE Compliance Gate"}, platformNeutralityLegs...)
+	requireContexts(t, "canonical", contexts, append(want, securityScanContext), nil)
+	if canonical, err := workflowContextsIn(workflows["portability.yml"], identity); err != nil || len(canonical) != 3 {
+		t.Errorf("canonical portability contexts = %v, %v; want the three legs", canonical, err)
+	}
+}
+
+// Positive, negative and boundary coverage for withoutRenovateBranchSkip: a leading term is
+// removed with the group it is joined to; a term elsewhere, a negated term or a rest whose ||
+// would bind around the conjunction is left in place; the term alone leaves nothing.
+func TestWithoutRenovateBranchSkip(t *testing.T) {
+	guard := repositoryGuard("acme/engine")
+	cases := []struct {
+		name, condition, want string
+	}{
+		{"positive simple rest", renovateBranchSkip + " && " + guard, guard},
+		{"positive enclosed group", renovateBranchSkip + " && (" + guard + " || " + portabilityVariable + ")", guard + " || " + portabilityVariable},
+		{"positive surrounding space", "  " + renovateBranchSkip + " && ( " + pullRequestRunTerm + " )  ", pullRequestRunTerm},
+		{"negative no term", guard, guard},
+		{"negative term last", guard + " && " + renovateBranchSkip, guard + " && " + renovateBranchSkip},
+		{"negative term in a disjunction", renovateBranchSkip + " || " + guard, renovateBranchSkip + " || " + guard},
+		{"negative ungrouped disjunction", renovateBranchSkip + " && a || " + guard, renovateBranchSkip + " && a || " + guard},
+		{"negative two groups", renovateBranchSkip + " && (a) || (" + guard + ")", renovateBranchSkip + " && (a) || (" + guard + ")"},
+		{"negative negated term", "!(" + renovateBranchSkip + ")", "!(" + renovateBranchSkip + ")"},
+		{"negative other prefix", "!startsWith(github.head_ref, 'dependabot/') && " + guard, "!startsWith(github.head_ref, 'dependabot/') && " + guard},
+		{"boundary term alone", renovateBranchSkip, ""},
+		{"boundary unclosed group", renovateBranchSkip + " && (" + guard, renovateBranchSkip + " && (" + guard},
+		{"boundary empty", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := withoutRenovateBranchSkip(tc.condition); got != strings.TrimSpace(tc.want) {
+				t.Fatalf("withoutRenovateBranchSkip(%q) = %q, want %q", tc.condition, got, tc.want)
+			}
+		})
+	}
+}
+
+// Positive: a leading Renovate branch skip keeps an unconditional job, a guarded matrix and the
+// schedule-leg form required. Negative: joined to a condition that is itself conditional, or
+// trailing, it does not. Boundary: the identity still decides a guarded rest.
+func TestRenovateBranchSkipKeepsAJobRequired(t *testing.T) {
+	guard := repositoryGuard("acme/engine")
+	cases := []struct {
+		name, condition, identity string
+		want                      bool
+	}{
+		{"positive term alone", renovateBranchSkip, "", true},
+		{"positive guarded disjunction", renovateBranchSkip + " && (" + guard + " || " + portabilityVariable + ")", "acme/engine", true},
+		{"positive schedule leg", renovateBranchSkip + " && (" + scheduleLegPrefix + guard + ")", "", true},
+		{"positive every run", renovateBranchSkip + " && !cancelled()", "", true},
+		{"negative conditional rest", renovateBranchSkip + " && needs.plan.outputs.go == 'true'", "", false},
+		{"negative trailing term", guard + " && " + renovateBranchSkip, "acme/engine", false},
+		{"boundary guard of another identity", renovateBranchSkip + " && " + guard, forkIdentity, false},
+		{"boundary guard without identity", renovateBranchSkip + " && " + guard, "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := reportsOnEveryPullRequest(tc.condition, tc.identity); got != tc.want {
+				t.Fatalf("reportsOnEveryPullRequest(%q, %q) = %v, want %v", tc.condition, tc.identity, got, tc.want)
+			}
+		})
 	}
 }
 
