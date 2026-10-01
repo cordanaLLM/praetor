@@ -20,7 +20,7 @@ on:
         required: false
         default: "."
       dry_run:
-        description: "Dry run simulation: adopt and audit on the runner, commit nothing"
+        description: "Dry run: plan the adoption on the runner without writing a file; no ratchet, no commit"
         required: false
         default: "false"
         type: boolean
@@ -80,8 +80,10 @@ jobs:
 
       # HISS-13: a re-recorded baseline must not grow versus the default branch. The audit
       # fails before anything is committed when --record-baseline absorbed new debt without
-      # a recorded rationale.
+      # a recorded rationale. A dry run records no baseline and writes no .standards.yaml, so
+      # there is nothing to ratchet and, on a repository not yet adopted, no manifest to read.
       - name: Enforce Monotonic Debt Ratchet
+        if: inputs.dry_run != true
         shell: bash
         env:
           CI: "true"

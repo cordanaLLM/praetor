@@ -28,6 +28,7 @@ const (
 	adoptHeadQuery        = `.head.repo.full_name // "", .head.sha // ""`
 	adoptTargetPath       = "${{ inputs.target_path }}"
 	adoptDryRun           = "${{ inputs.dry_run }}"
+	adoptNotDryRun        = "inputs.dry_run != true"
 	adoptTestRepository   = "cordanaLLM/praetor"
 	adoptTestHead         = "0123456789abcdef0123456789abcdef01234567"
 	checkoutActionPrefix  = "actions/checkout@"
@@ -156,7 +157,7 @@ func stepCredentialGaps(job string, step workflowStep, commentReaches bool) []st
 	if strings.HasPrefix(step.Uses, checkoutActionPrefix) && stepInput(step, persistCredentialsKey) != "false" {
 		gaps = append(gaps, fmt.Sprintf("job %s: checkout %q persists a credential for the code it checks out", job, step.Name))
 	}
-	pushes := strings.Contains(step.Run, "git push")
+	pushes := isPush(step)
 	if pushes && commentReaches {
 		gaps = append(gaps, fmt.Sprintf("job %s: step %q pushes in a job a comment reaches", job, step.Name))
 	}
@@ -196,7 +197,7 @@ func TestAdoptWorkflow_Positive_CredentialsReachOnlyTheStepsThatUseThem(t *testi
 	if scopes, _ := writeScopes(&dispatch.Permissions); !slices.Equal(scopes, []string{"contents"}) {
 		t.Errorf("the dispatch job writes %v; it commits the adoption and needs contents alone", scopes)
 	}
-	if stepIndex(dispatch, func(step workflowStep) bool { return strings.Contains(step.Run, "git push") }) < 0 {
+	if stepIndex(dispatch, isPush) < 0 {
 		t.Error("the dispatch job no longer pushes, so the credential check above decided nothing")
 	}
 	comment := adoptJob(t, spec, adoptCommentJob)
@@ -286,7 +287,7 @@ func TestAdoptWorkflow_Negative_CredentialGapsAreReported(t *testing.T) {
 func moveCommitStepToCommentJob(t *testing.T, spec *workflowSpec) {
 	t.Helper()
 	dispatch := spec.Jobs[adoptDispatchJob]
-	index := mustStepIndex(t, dispatch, func(step workflowStep) bool { return strings.Contains(step.Run, "git push") })
+	index := mustStepIndex(t, dispatch, isPush)
 	comment := spec.Jobs[adoptCommentJob]
 	comment.Steps = append(comment.Steps, dispatch.Steps[index])
 	spec.Jobs[adoptCommentJob] = comment
@@ -299,6 +300,8 @@ func usesPraetorAdopt(step workflowStep) bool { return step.Uses == adoptActionU
 func isHeadLookup(step workflowStep) bool { return step.ID == adoptHeadStepID }
 
 func isRatchet(step workflowStep) bool { return strings.Contains(step.Run, " audit") }
+
+func isPush(step workflowStep) bool { return strings.Contains(step.Run, "git push") }
 
 // commentCheckoutGap names why the comment job would not run against the pull request head
 // the lookup resolved, or returns "".
@@ -430,7 +433,10 @@ func TestAdoptWorkflow_Positive_TargetPathReachesBothCommands(t *testing.T) {
 	}
 }
 
-// dryRunGap names why the dispatch input dry_run would not reach the adoption step, or returns "".
+// dryRunGap names why the dispatch input dry_run would not reach the adoption step, or why a
+// step that needs what only a real adoption writes would still run in a dry run, or returns "".
+// The debt ratchet reads the .standards.yaml and baseline a dry run never writes; the push
+// would publish nothing.
 func dryRunGap(job workflowJob) string {
 	adopt := stepIndex(job, usesPraetorAdopt)
 	if adopt < 0 {
@@ -439,11 +445,17 @@ func dryRunGap(job workflowJob) string {
 	if stepInput(job.Steps[adopt], "dry-run") != adoptDryRun {
 		return "the adoption step does not take dry_run as its dry-run input"
 	}
+	for what, accept := range map[string]func(workflowStep) bool{"debt ratchet": isRatchet, "push": isPush} {
+		if i := stepIndex(job, accept); i < 0 || job.Steps[i].If != adoptNotDryRun {
+			return fmt.Sprintf("the %s step runs in a dry run", what)
+		}
+	}
 	return ""
 }
 
-// Positive: dry_run reaches the adoption action so a dry-run dispatch plans without writing.
-// Negative and boundary: the input dropped, or wired with another value.
+// Positive: dry_run reaches the adoption action so a dry-run dispatch plans without writing,
+// and skips the ratchet and the push. Negative and boundary: the input dropped, wired with
+// another value, or a step that needs a real adoption left ungated.
 func TestAdoptWorkflow_Positive_DryRunReachesAdoptionAction(t *testing.T) {
 	spec := parseAdoptWorkflow(t)
 	if gap := dryRunGap(adoptJob(t, spec, adoptDispatchJob)); gap != "" {
@@ -460,6 +472,12 @@ func TestAdoptWorkflow_Positive_DryRunReachesAdoptionAction(t *testing.T) {
 		{"boundary: hardcoded false", func(t *testing.T, job *workflowJob) {
 			job.Steps[mustStepIndex(t, *job, usesPraetorAdopt)].With["dry-run"] = "false"
 		}, "the adoption step does not take dry_run as its dry-run input"},
+		{"negative: the ratchet runs in a dry run", func(t *testing.T, job *workflowJob) {
+			job.Steps[mustStepIndex(t, *job, isRatchet)].If = ""
+		}, "the debt ratchet step runs in a dry run"},
+		{"negative: the push runs in a dry run", func(t *testing.T, job *workflowJob) {
+			job.Steps[mustStepIndex(t, *job, isPush)].If = ""
+		}, "the push step runs in a dry run"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -622,21 +622,33 @@ func TestPraetorAdoptAction_Boundary_EmptyBinaryIsRefused(t *testing.T) {
 	}
 }
 
-// TestPraetorAdoptAction_Boundary_DogfoodDryRunSkipsCompileContext covers the other mode, where
-// both the flag set and the follow-up command differ.
-func TestPraetorAdoptAction_Boundary_DogfoodDryRunSkipsCompileContext(t *testing.T) {
-	got := runAdoptStep(t, map[string]string{
-		"PRAETOR_MODE": "dogfood", "PRAETOR_DRY_RUN": "true", "PRAETOR_PATH": "repo",
-	})
-	if got.exitCode != 0 {
-		t.Fatalf("run step exited %d:\n%s", got.exitCode, got.combined)
+// TestPraetorAdoptAction_Boundary_DryRunSkipsCompileContext covers the two runs that end at the
+// command itself. dogfood has no follow-up; an adopt dry run writes nothing, so the verify would
+// check a tree it did not touch, and on a repository not yet adopted it fails reading an
+// AGENTS.md that only a real adopt writes.
+func TestPraetorAdoptAction_Boundary_DryRunSkipsCompileContext(t *testing.T) {
+	cases := map[string]struct {
+		mode string
+		want []string
+	}{
+		"dogfood dry run": {"dogfood", []string{"dogfood", "--path=repo", "--dry-run=true"}},
+		"adopt dry run":   {"adopt", []string{"adopt", "--path=repo", "--dry-run=true", "--force=false", "--record-baseline=true"}},
 	}
-	want := [][]string{{"dogfood", "--path=repo", "--dry-run=true"}}
-	if !equalInvocations(got.invocations, want) {
-		t.Errorf("run step called %v, want %v", got.invocations, want)
-	}
-	if got.outputs["report"] == "" {
-		t.Error("dogfood mode wrote no report output")
+	for name := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := runAdoptStep(t, map[string]string{
+				"PRAETOR_MODE": cases[name].mode, "PRAETOR_DRY_RUN": "true", "PRAETOR_PATH": "repo",
+			})
+			if got.exitCode != 0 {
+				t.Fatalf("run step exited %d:\n%s", got.exitCode, got.combined)
+			}
+			if want := [][]string{cases[name].want}; !equalInvocations(got.invocations, want) {
+				t.Errorf("run step called %v, want %v", got.invocations, want)
+			}
+			if got.outputs["report"] == "" {
+				t.Errorf("%s wrote no report output", name)
+			}
+		})
 	}
 }
 
