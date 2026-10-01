@@ -103,7 +103,8 @@ func TestAuditGoToolchain_Negative_AcceptsActionsThatFixNoStaleVersion(t *testin
 }
 
 // Negative: setup-go's documented version syntax is wider than a dotted number -- its
-// README lists `1.25.x`, `1.x`, `1.24.0-rc.1`, `^1.25.1` and `stable`. A form that
+// README lists `1.25.x`, `1.x`, `1.24.0-rc.1`, `^1.25.1` and `stable`, and a range is any
+// node-semver range: `>`, a spaced operator, a hyphen range, a `||` union, `=`. A form that
 // satisfies the directive must audit clean; refusing it turned an idiomatic pin into a
 // hard gate failure on a repository that was never behind.
 func TestAuditGoToolchain_Negative_AcceptsSetupGoVersionSyntax(t *testing.T) {
@@ -116,6 +117,11 @@ func TestAuditGoToolchain_Negative_AcceptsSetupGoVersionSyntax(t *testing.T) {
 		".github/workflows/tilde.yml":    strings.Replace(mirroredWorkflow, "'1.27'", "'~1.27.0'", 1),
 		".github/workflows/compound.yml": strings.Replace(mirroredWorkflow, "'1.27'", "'>=1.27.0 <1.28.0'", 1),
 		".github/workflows/gte.yml":      strings.Replace(mirroredWorkflow, "'1.27'", "'>=1.27.0'", 1),
+		".github/workflows/gt.yml":       strings.Replace(mirroredWorkflow, "'1.27'", "'>1.26'", 1),
+		".github/workflows/spaced.yml":   strings.Replace(mirroredWorkflow, "'1.27'", "'>=  1.27'", 1),
+		".github/workflows/hyphen.yml":   strings.Replace(mirroredWorkflow, "'1.27'", "'1.27.0 - 1.28.0'", 1),
+		".github/workflows/union.yml":    strings.Replace(mirroredWorkflow, "'1.27'", "'^1.27 || ^1.28'", 1),
+		".github/workflows/equals.yml":   strings.Replace(mirroredWorkflow, "'1.27'", "'=1.27'", 1),
 		".github/workflows/rcdirect.yml": strings.Replace(mirroredWorkflow, "'1.27'", "'1.27.0-rc.1'", 1),
 	}
 	findings, err := AuditGoToolchain(context.Background(), toolchainRepository(t, "1.27", accepted))

@@ -1,4 +1,4 @@
 type: fixed
-title: Audit setup-go SemVer ranges, aliases, and unparseable literals
+title: Audit setup-go version ranges and aliases against go.mod's Go directive, with a reason on every finding
+issue: "#307"
 breaking: false
-issue: 307

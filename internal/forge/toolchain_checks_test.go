@@ -2,6 +2,7 @@ package forge
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -98,8 +99,11 @@ func TestAuditGoToolchain_Positive_ReportsAWorkflowBehindTheDirective(t *testing
 	if findings[0].Line != 10 || findings[1].Line != 15 {
 		t.Errorf("lines %d and %d do not point at the two go-version keys", findings[0].Line, findings[1].Line)
 	}
-	if !strings.Contains(findings[0].String(), "adopt.yml:10: pins Go 1.24") {
-		t.Errorf("finding does not name file, line and pin: %s", findings[0])
+	if findings[0].Reason != ToolchainBelow {
+		t.Errorf("a stale exact pin carries reason %q, want %q", findings[0].Reason, ToolchainBelow)
+	}
+	if got := findings[0].String(); got != ".github/workflows/adopt.yml:10: pins Go 1.24, below go.mod's 1.27 directive" {
+		t.Errorf("finding does not name file, line, pin and reason: %s", got)
 	}
 }
 
@@ -116,50 +120,46 @@ func TestAuditGoToolchain_Positive_ReportsAShippedTemplateBehindTheDirective(t *
 	}
 }
 
-// Positive: setup-go semver ranges below the directive, the oldstable alias, upper-bound-only
-// ranges and unparseable literals are reported as findings naming file, line, and pin.
+// Positive: a setup-go range or alias that admits a toolchain below the directive, and a
+// value the audit cannot read, are each reported at their file and line with the reason the
+// audit established, never with the "below" only a stale version earns.
 func TestAuditGoToolchain_Positive_ReportsStaleRangesAliasesAndUnparseableLiterals(t *testing.T) {
-	stale := map[string]string{
-		".github/workflows/caret.yml":    strings.Replace(mirroredWorkflow, "'1.27'", "'^1.24.1'", 1),
-		".github/workflows/tilde.yml":    strings.Replace(mirroredWorkflow, "'1.27'", "'~1.24.0'", 1),
-		".github/workflows/compound.yml": strings.Replace(mirroredWorkflow, "'1.27'", "'>=1.22.0 <1.24.0'", 1),
-		".github/workflows/alias.yml":    strings.Replace(mirroredWorkflow, "'1.27'", "oldstable", 1),
-		".github/workflows/upper.yml":    strings.Replace(mirroredWorkflow, "'1.27'", "'<1.24'", 1),
-		".github/workflows/literal.yml":  strings.Replace(mirroredWorkflow, "'1.27'", "'bogus-pin'", 1),
+	const (
+		rangeBelow = "a range whose lower bound is below go.mod's 1.27 directive"
+		unreadable = "not a version, range or alias the audit can compare with go.mod's 1.27 directive"
+	)
+	want := map[string]struct {
+		pin    string
+		reason ToolchainReason
+		clause string
+	}{
+		"caret.yml":    {"^1.24.1", ToolchainRangeBelow, rangeBelow},
+		"tilde.yml":    {"~1.24.0", ToolchainRangeBelow, rangeBelow},
+		"compound.yml": {">=1.22.0 <1.24.0", ToolchainRangeBelow, rangeBelow},
+		"hyphen.yml":   {"1.22.0 - 1.24.0", ToolchainRangeBelow, rangeBelow},
+		"union.yml":    {">=1.28 || ~1.24", ToolchainRangeBelow, rangeBelow},
+		"upper.yml":    {"<2.0", ToolchainUpperBoundOnly, "a range with no lower bound, so it admits releases below go.mod's 1.27 directive"},
+		"alias.yml":    {"oldstable", ToolchainAlias, "an alias setup-go resolves only at run time, so it cannot be checked against go.mod's 1.27 directive"},
+		"literal.yml":  {"bogus-pin", ToolchainUnparseable, unreadable},
+		"operator.yml": {"^bogus", ToolchainUnparseable, unreadable},
+		"exact.yml":    {"=1.24", ToolchainBelow, "below go.mod's 1.27 directive"},
 	}
-	findings := auditToolchain(t, "1.27", stale)
-	if len(findings) != 6 {
-		t.Fatalf("expected 6 findings, got %d: %v", len(findings), findings)
+	files := make(map[string]string, len(want))
+	for name, pin := range want {
+		files[".github/workflows/"+name] = strings.Replace(mirroredWorkflow, "'1.27'", "'"+pin.pin+"'", 1)
 	}
-	byFile := make(map[string]ToolchainFinding, len(findings))
-	for _, f := range findings {
-		byFile[f.File] = f
-		if f.Line != 10 {
-			t.Errorf("%s: expected line 10, got %d", f.File, f.Line)
-		}
-		if f.Directive != "1.27" {
-			t.Errorf("%s: expected directive 1.27, got %s", f.File, f.Directive)
-		}
+	findings := auditToolchain(t, "1.27", files)
+	if len(findings) != len(want) {
+		t.Fatalf("expected %d findings, got %d: %v", len(want), len(findings), findings)
 	}
-	expectedPins := map[string]string{
-		".github/workflows/caret.yml":    "^1.24.1",
-		".github/workflows/tilde.yml":    "~1.24.0",
-		".github/workflows/compound.yml": ">=1.22.0 <1.24.0",
-		".github/workflows/alias.yml":    "oldstable",
-		".github/workflows/upper.yml":    "<1.24",
-		".github/workflows/literal.yml":  "bogus-pin",
-	}
-	for file, expectedPin := range expectedPins {
-		f, ok := byFile[file]
-		if !ok {
-			t.Errorf("missing finding for %s", file)
+	for _, finding := range findings {
+		expected, known := want[strings.TrimPrefix(finding.File, ".github/workflows/")]
+		if !known || finding.Pin != expected.pin || finding.Reason != expected.reason || finding.Line != 10 || finding.Directive != "1.27" {
+			t.Errorf("unexpected finding %+v, want pin %q reason %q at line 10", finding, expected.pin, expected.reason)
 			continue
 		}
-		if f.Pin != expectedPin {
-			t.Errorf("%s: expected pin %s, got %s", file, expectedPin, f.Pin)
-		}
-		if !strings.Contains(f.String(), file+":10: pins Go "+expectedPin) {
-			t.Errorf("%s: String() %q does not name file, line and pin", file, f.String())
+		if line := finding.File + ":10: pins Go " + expected.pin + ", " + expected.clause; finding.String() != line {
+			t.Errorf("String() = %q, want %q", finding.String(), line)
 		}
 	}
 }
@@ -213,53 +213,90 @@ func TestAuditGoToolchain_Boundary_ComparesVersionComponents(t *testing.T) {
 	}
 }
 
-// Boundary: semver ranges whose lower bound equals or exceeds the directive are accepted,
-// while ranges whose lower bound is even one patch behind or that specify only an upper
-// bound are reported as findings.
+// Boundary: a range is judged by the lowest release it admits. At a patch-level directive a
+// lower bound one patch behind is a finding and one at the directive is not. `>` admits only
+// the release after its version: `>1.27.0` meets a 1.27.1 directive and `>1.26` (node-semver's
+// `>=1.27.0`) meets 1.27, while `>1.26.9` still admits 1.26.10.
 func TestAuditGoToolchain_Boundary_ComparesRangeLowerBounds(t *testing.T) {
-	satisfying := map[string]string{
-		".github/workflows/equal_caret.yml": strings.Replace(mirroredWorkflow, "'1.27'", "'^1.27.0'", 1),
-		".github/workflows/equal_gte.yml":   strings.Replace(mirroredWorkflow, "'1.27'", "'>=1.27'", 1),
-		".github/workflows/equal_tilde.yml": strings.Replace(mirroredWorkflow, "'1.27'", "'~1.27'", 1),
+	cases := []struct {
+		directive, pin string
+		reason         ToolchainReason
+	}{
+		{"1.27.1", "^1.27.0", ToolchainRangeBelow},
+		{"1.27.1", ">=1.27.0", ToolchainRangeBelow},
+		{"1.27.1", "~1.27.x", ToolchainRangeBelow},
+		{"1.27.1", "^1.27.1", pinSatisfies},
+		{"1.27.1", ">=1.27.1", pinSatisfies},
+		{"1.27.1", ">1.27.0", pinSatisfies},
+		{"1.27", ">1.26", pinSatisfies},
+		{"1.27", ">1.26.9", ToolchainRangeBelow},
+		{"1.27", "^1.26.9", ToolchainRangeBelow},
+		{"1.27", "^1.27.0", pinSatisfies},
+		{"1.27", "~1.27", pinSatisfies},
 	}
-	if findings := auditToolchain(t, "1.27", satisfying); len(findings) != 0 {
-		t.Fatalf("satisfying ranges reported %d findings: %v", len(findings), findings)
-	}
-	behindPatch := auditToolchain(t, "1.27", map[string]string{
-		".github/workflows/behind.yml": strings.Replace(mirroredWorkflow, "'1.27'", "'^1.26.9'", 1),
-	})
-	if len(behindPatch) != 1 || behindPatch[0].Pin != "^1.26.9" {
-		t.Fatalf("expected 1 finding for ^1.26.9, got: %v", behindPatch)
-	}
-	upperBoundOnly := auditToolchain(t, "1.27", map[string]string{
-		".github/workflows/upper.yml": strings.Replace(mirroredWorkflow, "'1.27'", "'<2.0'", 1),
-	})
-	if len(upperBoundOnly) != 1 || upperBoundOnly[0].Pin != "<2.0" {
-		t.Fatalf("expected 1 finding for <2.0, got: %v", upperBoundOnly)
+	for _, c := range cases {
+		findings := auditToolchain(t, c.directive, map[string]string{
+			".github/workflows/ci.yml": strings.Replace(mirroredWorkflow, "'1.27'", "'"+c.pin+"'", 1),
+		})
+		got := pinSatisfies
+		if len(findings) == 1 {
+			got = findings[0].Reason
+		}
+		if len(findings) > 1 || got != c.reason {
+			t.Errorf("%s against %s: findings %v, want reason %q", c.pin, c.directive, findings, c.reason)
+		}
 	}
 }
 
-// Boundary: what the audit cannot decide fails it. A manifest with no directive, a pin
-// that is not a version, a missing manifest and an absent context are errors, never an
-// empty finding list a caller would read as a clean repository.
+// Boundary: one policy for every pin the audit cannot read, whether it opens with a digit,
+// an operator or neither. Each is a finding at its file and line, and the audit goes on to
+// report the stale pin in the file after them rather than stopping with an error.
+func TestAuditGoToolchain_Boundary_ReportsUnreadablePinsWithoutStopping(t *testing.T) {
+	unreadable := []string{
+		"1.27.zz", "1.27beta", "1.2.3.4.5", "^bogus", ">=foo", "latest", "v1.27", "Stable",
+		">=1.27, <1.28", ">=", "1.27 ||", "- 1.27", ">*",
+	}
+	files := map[string]string{
+		".github/workflows/z-stale.yml": strings.Replace(mirroredWorkflow, "'1.27'", "'1.24'", 1),
+	}
+	byFile := make(map[string]string, len(unreadable))
+	for i, pin := range unreadable {
+		name := fmt.Sprintf(".github/workflows/u%02d.yml", i)
+		byFile[name] = pin
+		files[name] = strings.Replace(mirroredWorkflow, "'1.27'", "'"+pin+"'", 1)
+	}
+	findings := auditToolchain(t, "1.27", files)
+	if len(findings) != len(unreadable)+1 {
+		t.Fatalf("expected %d findings, got %d: %v", len(unreadable)+1, len(findings), findings)
+	}
+	for _, finding := range findings {
+		want, pin := ToolchainUnparseable, byFile[finding.File]
+		if finding.File == ".github/workflows/z-stale.yml" {
+			want, pin = ToolchainBelow, "1.24"
+		}
+		if finding.Reason != want || finding.Pin != pin || finding.Line != 10 {
+			t.Errorf("unexpected finding %+v, want pin %q reason %q at line 10", finding, pin, want)
+		}
+	}
+}
+
+// Boundary: what leaves the audit nothing to compare against fails it. A manifest with no
+// directive, a directive that is no version, a missing manifest and an absent context are
+// errors, never an empty finding list a caller would read as a clean repository. A pin the
+// audit cannot read is a finding instead (ReportsUnreadablePinsWithoutStopping).
 func TestAuditGoToolchain_Boundary_RefusesWhatItCannotCompare(t *testing.T) {
 	_, err := AuditGoToolchain(context.Background(), toolchainRepository(t, "", nil))
 	if err == nil {
 		t.Error("a manifest without a go directive was accepted")
 	}
-	malformed := toolchainRepository(t, "1.27", map[string]string{
-		".github/workflows/ci.yml": strings.Replace(mirroredWorkflow, "'1.27'", "'1.27.zz'", 1),
-	})
+	malformed := toolchainRepository(t, "1.27.zz", map[string]string{".github/workflows/ci.yml": mirroredWorkflow})
 	if _, err = AuditGoToolchain(context.Background(), malformed); err == nil {
-		t.Error("a pin that is not a dotted number was accepted")
-	} else if !strings.Contains(err.Error(), "ci.yml:10") {
-		t.Errorf("the error does not point at the pin: %v", err)
+		t.Error("a go directive that is not a dotted number was accepted")
+	} else if !strings.Contains(err.Error(), "go.mod go directive") {
+		t.Errorf("the error does not point at the directive: %v", err)
 	}
-	overlong := toolchainRepository(t, "1.27", map[string]string{
-		".github/workflows/ci.yml": strings.Replace(mirroredWorkflow, "'1.27'", "'1.2.3.4.5'", 1),
-	})
-	if _, err = AuditGoToolchain(context.Background(), overlong); err == nil {
-		t.Error("a version with more components than the comparison holds was accepted")
+	if _, err = AuditGoToolchain(context.Background(), toolchainRepository(t, "1.27.zz", nil)); err == nil {
+		t.Error("a malformed directive was accepted because no pin was compared against it")
 	}
 	if _, err = AuditGoToolchain(context.Background(), filepath.Join(t.TempDir(), "absent")); err == nil {
 		t.Error("a repository without a go.mod was accepted")
