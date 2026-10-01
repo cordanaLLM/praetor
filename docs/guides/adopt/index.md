@@ -18,6 +18,9 @@ Read [Fast adoption](../../adoption.md) first for the one-step path, then
 - [Go API compatibility gate](../api-compatibility.md): the hosted check the
   `api:public-contract` facet adds where git tracks a `go.mod`, which compares every Go module's
   exported API with a base.
+- [Generated artefacts](../generated-artefacts.md): declaring the files a repository renders
+  from other files, why a pull request leaves them alone, and the one regeneration change per
+  batch that renders them.
 - [Effective audit policy](../effective-policy.md): how the CLI, MCP and adoption loops
   resolve complexity limits from one implementation.
 - [Independent review and single-maintainer operation](../review-policy.md): the

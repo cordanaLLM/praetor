@@ -269,6 +269,16 @@ docs_surfaces:
       - "internal/docsref/*_test.go"
     docs:
       - "docs/guides/documentation-drift.md"
+  - name: "generated artefacts"
+    paths:
+      - "internal/generated/*.go"
+      - "internal/config/generated.go"
+      - "cmd/standardsctl/ci_generated.go"
+      - "cmd/standardsctl/docs_readme.go"
+    exclude:
+      - "internal/generated/*_test.go"
+    docs:
+      - "docs/guides/generated-artefacts.md"
 
 # Framework capability demand declarations
 needs:

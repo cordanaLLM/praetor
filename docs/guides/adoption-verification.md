@@ -175,6 +175,16 @@ Set both fields in `.standards.yaml` and re-run `praetorctl adopt` to reconcile
 the block; adoption never rewrites an existing manifest, so adding an `origin`
 remote alone does not fill them (`TestAdopt_RerunCompletesOnceIdentityIsSet`).
 
+The block is a generated artefact
+([generated artefacts](generated-artefacts.md)). `praetorctl docs readme`
+re-renders only the block, from the state `praetorctl audit` verifies it
+against: the recorded baseline, the documentation facet, the manifest identity
+and the forge host the block's link already records (`readmeGovernanceState` in
+`cmd/standardsctl/audit_readme.go`). `--check` writes nothing and fails on a
+stale block. A README without the block, or with the block declined, is left
+alone (`TestDocsReadme_Boundary_NotApplicableDeclinedAndMarkers` in
+`cmd/standardsctl/docs_readme_test.go`).
+
 An operational fork carries the engine's README, whose block links the public
 source. `praetorctl operational sync plan` and `prepare` read the recorded state,
 the forge host included, back from that block and render it again for the fork's
