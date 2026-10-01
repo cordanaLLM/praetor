@@ -59,6 +59,18 @@ type RatchetResult struct {
 	CurrentCount           int
 	NewViolations          []Infraction
 	TouchedCleanViolations []Infraction
+	// TouchedBaselined holds, at the index of each TouchedCleanViolations entry, whether the
+	// baseline records its fingerprint (#348). The touched-file clean rule fails a judged file's
+	// baselined findings together with its new ones, and Summary counts the two apart. The
+	// evaluator fills it; any other length means unknown, and Summary prints one touched count.
+	TouchedBaselined []bool `json:",omitempty"`
+	// DebtDelta records that the touched-file clean rule judged a touched file on whether its debt
+	// grew (RatchetOptions.DebtDelta) rather than on whether it was touched.
+	DebtDelta bool `json:",omitempty"`
+	// Stale counts the baseline entries no current violation accounts for (#349): per file and
+	// rule, how many more infractions the baseline records than the scan found. Each one is room
+	// a new finding can take, so StaleNotice names them and the remedy; the verdict ignores it.
+	Stale int `json:",omitempty"`
 	// CountRegressed is the rejection neither list explains: every violation is baselined and
 	// none sits in a touched file, yet the total rose above the baseline's.
 	CountRegressed bool
@@ -321,6 +333,7 @@ func EvaluateRatchetWithOptions(b *Baseline, currentViolations []Infraction, tou
 
 	var newViolations []Infraction
 	var touchedCleanViolations []Infraction
+	var touchedBaselined []bool
 
 	// Under DebtDelta a touched file is judged on whether it got worse; otherwise any touch
 	// revokes the file's exemptions, which is the default boy-scout rule.
@@ -334,6 +347,7 @@ func EvaluateRatchetWithOptions(b *Baseline, currentViolations []Infraction, tou
 		if isTouched && revokes(file) {
 			// Touched-File Clean Rule: the file's baseline exemptions are revoked.
 			touchedCleanViolations = append(touchedCleanViolations, curr)
+			touchedBaselined = append(touchedBaselined, isBaselined)
 		} else if !isTouched && !isBaselined {
 			// Brand new violation in an untouched file
 			newViolations = append(newViolations, curr)
@@ -348,9 +362,28 @@ func EvaluateRatchetWithOptions(b *Baseline, currentViolations []Infraction, tou
 		CurrentCount:           len(currentViolations),
 		NewViolations:          newViolations,
 		TouchedCleanViolations: touchedCleanViolations,
+		TouchedBaselined:       touchedBaselined,
+		DebtDelta:              opts.DebtDelta,
+		Stale:                  staleEntries(b.Infractions, currentViolations),
 		CountRegressed:         countRegressed,
 		Passed:                 passed,
 	}
+}
+
+// staleEntries counts the recorded infractions no current violation accounts for: per file and
+// rule, how many more the baseline records than the scan found. Like worsenedFiles it compares
+// counts rather than fingerprints, so a line shift above a baselined infraction, which changes
+// its fingerprint and not the debt, is not read as a stale entry.
+func staleEntries(recorded, current []Infraction) int {
+	before := countByFileRule(recorded, nil)
+	after := countByFileRule(current, nil)
+	stale := 0
+	for key, count := range before {
+		if count > after[key] {
+			stale += count - after[key]
+		}
+	}
+	return stale
 }
 
 // ratchetVerdict decides a ratchet from whether any violation was listed and how the current
@@ -390,12 +423,13 @@ type fileRule struct {
 	rule string
 }
 
-// countByFileRule counts infractions per file and rule, restricted to the touched files.
+// countByFileRule counts infractions per file and rule, restricted to the touched files; a nil
+// touched set counts every file.
 func countByFileRule(infractions []Infraction, touched map[string]struct{}) map[fileRule]int {
 	counts := make(map[fileRule]int)
 	for i := 0; i < len(infractions); i++ {
 		file := NormalizePath(infractions[i].FilePath)
-		if _, ok := touched[file]; !ok {
+		if _, ok := touched[file]; touched != nil && !ok {
 			continue
 		}
 		counts[fileRule{file: file, rule: infractions[i].RuleID}]++
