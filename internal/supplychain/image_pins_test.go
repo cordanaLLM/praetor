@@ -2,9 +2,9 @@ package supplychain
 
 // Every container image this repository pins is written down more than once: the
 // distroless runtime appears in Dockerfile and templates/go/Dockerfile.distroless.tmpl (the
-// body internal/flavor scaffolds); the Go builder in docker/dev/Dockerfile,
-// .devcontainer/Dockerfile.praetor, .devcontainer/devcontainer.json and
-// internal/devcontainer/bootstrap.go. Nothing held the
+// body internal/flavor scaffolds); the Go builder in docker/dev/Dockerfile and the
+// reviewed-default comment in internal/devcontainer/bootstrap.go (the generated
+// .devcontainer files carry it digest-only, which this scan skips). Nothing held the
 // copies equal, so a digest refresh that missed one left two digests behind one tag and
 // the miss surfaced as an image that behaves differently from the one that was verified.
 // HISS-19 names config formats explicitly, and a digest literal repeated across YAML, JSON,
