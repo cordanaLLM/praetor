@@ -31,6 +31,7 @@ const (
 	maxTemplateEntries    = 64
 	maxVersionComponents  = 4
 	maxDocumentNodes      = 8192
+	maxRangeClauses       = 8
 	// anyVersionComponent is a wildcard component: setup-go resolves `1.25.x` and `1.x` to
 	// the newest release matching the prefix, so the component cannot be below a directive.
 	anyVersionComponent = -1
@@ -237,16 +238,23 @@ func inputDefaultPin(declaration *yaml.Node) []toolchainPin {
 }
 
 // scalarToolchainPin reads one YAML scalar as a version. The parser has already dropped
-// the quotes and any trailing comment, so only the value itself is judged.
+// the quotes and any trailing comment, so only the value itself is judged. A GitHub
+// expression stays a silent skip, while versions, aliases, ranges and unparseable literals
+// are audited.
 func scalarToolchainPin(value *yaml.Node) []toolchainPin {
 	if value.Kind != yaml.ScalarNode {
 		return nil
 	}
-	version, pinned := numericPin(strings.TrimSpace(value.Value))
-	if !pinned {
+	raw := strings.TrimSpace(value.Value)
+	if raw == "" || isGitHubExpression(raw) {
 		return nil
 	}
-	return []toolchainPin{{Version: version, Line: value.Line}}
+	return []toolchainPin{{Version: raw, Line: value.Line}}
+}
+
+// isGitHubExpression reports whether raw is a GitHub Actions expression (${{ ... }}).
+func isGitHubExpression(raw string) bool {
+	return strings.Contains(raw, "${{")
 }
 
 // imageToolchainPins reads the `FROM golang:<tag>` build stages of a container template.
@@ -281,9 +289,7 @@ func imageTagPin(image string) (string, bool) {
 }
 
 // numericPin accepts only a value beginning with a digit, which is what separates a version
-// from a workflow expression, a template action, a moving tag such as `latest`, a setup-go
-// alias (`stable`, `oldstable`) and a semver range (`^1.25.1`, `>=1.22.0 <1.24.0`). None of
-// those names a version the file itself fixes, so none of them is a pin to compare.
+// from a moving tag such as `latest`.
 func numericPin(value string) (string, bool) {
 	if value == "" || value[0] < '0' || value[0] > '9' {
 		return "", false
@@ -291,11 +297,71 @@ func numericPin(value string) (string, bool) {
 	return value, true
 }
 
-// belowDirective reports whether pin names a Go version older than directive. A component
-// the pin omits counts as zero, so 1.27.1 satisfies a 1.27 directive and 1.27 is below a
-// 1.27.1 one. A wildcard component resolves to the newest release matching the prefix, so
-// it is never below what the directive requires at that position.
+// belowDirective reports whether pin names a Go version older than directive, a range that
+// permits older releases, a setup-go alias or an unparseable literal. A component the pin
+// omits counts as zero, so 1.27.1 satisfies a 1.27 directive and 1.27 is below a 1.27.1 one.
+// A wildcard component resolves to the newest release matching the prefix, so it is never
+// below what the directive requires at that position.
 func belowDirective(pin, directive string) (bool, error) {
+	switch pin {
+	case "stable":
+		return false, nil
+	case "oldstable":
+		return true, nil
+	}
+	if lower, upperOnly, isRange := extractRangeLowerBound(pin); isRange {
+		if upperOnly {
+			return true, nil
+		}
+		return compareVersionComponents(lower, directive)
+	}
+	if len(pin) > 0 && pin[0] >= '0' && pin[0] <= '9' {
+		return compareVersionComponents(pin, directive)
+	}
+	return true, nil
+}
+
+// extractRangeLowerBound extracts the lower-bound version from a SemVer range. It reports
+// whether a lower bound was found, whether only an upper bound was found (< or <= without
+// a lower bound), and whether any range operator was detected.
+func extractRangeLowerBound(val string) (lower string, upperOnly bool, isRange bool) {
+	norm := normalizeRange(val)
+	fields := strings.Fields(norm)
+	var hasUpper bool
+	for i := 0; i < len(fields) && i < maxRangeClauses; i++ {
+		f := fields[i]
+		switch {
+		case strings.HasPrefix(f, "^"):
+			return strings.TrimPrefix(f, "^"), false, true
+		case strings.HasPrefix(f, "~"):
+			return strings.TrimPrefix(f, "~"), false, true
+		case strings.HasPrefix(f, ">="):
+			return strings.TrimPrefix(f, ">="), false, true
+		case strings.HasPrefix(f, ">"):
+			return strings.TrimPrefix(f, ">"), false, true
+		case strings.HasPrefix(f, "<=") || strings.HasPrefix(f, "<"):
+			hasUpper = true
+		}
+	}
+	if hasUpper {
+		return "", true, true
+	}
+	return "", false, false
+}
+
+// normalizeRange strips optional spaces around range operators and replaces commas with spaces.
+func normalizeRange(val string) string {
+	norm := strings.ReplaceAll(val, ",", " ")
+	norm = strings.ReplaceAll(norm, ">= ", ">=")
+	norm = strings.ReplaceAll(norm, "> ", ">")
+	norm = strings.ReplaceAll(norm, "<= ", "<=")
+	norm = strings.ReplaceAll(norm, "< ", "<")
+	norm = strings.ReplaceAll(norm, "^ ", "^")
+	return strings.ReplaceAll(norm, "~ ", "~")
+}
+
+// compareVersionComponents reports whether pin names a Go version older than directive.
+func compareVersionComponents(pin, directive string) (bool, error) {
 	pinned, err := versionComponents(pin)
 	if err != nil {
 		return false, err
