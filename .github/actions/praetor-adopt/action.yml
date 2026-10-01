@@ -12,7 +12,7 @@ inputs:
     required: false
     default: "adopt"
   dry-run:
-    description: "adopt: plan without writing files. dogfood: no effect, since the action runs no target adoptions"
+    description: "adopt: plan without writing files, and skip the compile-context verify that follows a real adopt. dogfood: no effect, since the action runs no target adoptions"
     required: false
     default: "false"
   force:
@@ -282,7 +282,9 @@ runs:
         # compile-context resolves --source and --target-dir against the runner's working
         # directory, not against what adopt just wrote, so both have to name the same repository
         # the adopt run was given or the verify decides the step's exit status on another tree.
-        if [ "$status" -eq 0 ] && [ "$PRAETOR_MODE" != "dogfood" ]; then
+        # A dry run writes nothing, so there is nothing of its own to verify, and on a repository
+        # not yet adopted there is no AGENTS.md to read: the verify runs after a real adopt only.
+        if [ "$status" -eq 0 ] && [ "$PRAETOR_MODE" != "dogfood" ] && [ "$PRAETOR_DRY_RUN" != "true" ]; then
           "$bin" compile-context --verify "--source=$PRAETOR_PATH/AGENTS.md" \
             "--target-dir=$PRAETOR_PATH" 2>&1 | tee -a "$report"
           status=${PIPESTATUS[0]}
