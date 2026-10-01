@@ -48,8 +48,9 @@ const (
 	customShell = "custom"
 	// maxWorkflowRunBlocks bounds the run: blocks scanned in one workflow file (HISS-02).
 	maxWorkflowRunBlocks = 512
-	// maxRunBlockBytes bounds one run: block (HISS-02). GitHub refuses a run: command longer
-	// than 21,000 characters, so every block it runs fits.
+	// maxRunBlockBytes bounds one run: block (HISS-02). The bound is praetor's own, not a GitHub
+	// limit. GitHub's 21,000-character limit is the maximum length of an expression; it reaches a
+	// run: value only through the ${{ }} expressions the value holds.
 	maxRunBlockBytes = 64 << 10
 )
 

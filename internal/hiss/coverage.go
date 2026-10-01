@@ -38,7 +38,8 @@ type ScanCoverage struct {
 	// rule read: a shell the shell scanner does not read (pwsh, python, cmd, a custom command),
 	// "unresolved" for a shell decided only when the workflow runs, and a block of a read shell
 	// the scanner declined or a bound left out (workflow.go). The workflow file itself is counted
-	// in FilesRead, so these blocks are listed here rather than read as clean.
+	// in FilesRead, so these blocks are listed here rather than read as clean. Every block is
+	// counted: a shell past the key bound is counted under "custom" (runBlockKey).
 	UnscannedRunBlocks map[string]int `json:"unscanned_run_blocks,omitempty"`
 }
 
@@ -211,11 +212,31 @@ func (c *ScanCoverage) recordUnscannedAs(path, language string) {
 	c.UnscannedByExtension[ext]++
 }
 
-// recordUnscannedRunBlock counts one workflow run: block no rule read, under its shell.
-func (c *ScanCoverage) recordUnscannedRunBlock(shell string) {
-	if c != nil {
-		c.UnscannedRunBlocks = addLanguage(c.UnscannedRunBlocks, shell)
+// recordUnscannedRunBlock counts one workflow run: block no rule read, under its shell label
+// (runBlockLabel). Every block is counted: a label that would add a key past the bound is counted
+// under custom instead (runBlockKey).
+func (c *ScanCoverage) recordUnscannedRunBlock(label string) {
+	if c == nil {
+		return
 	}
+	if c.UnscannedRunBlocks == nil {
+		c.UnscannedRunBlocks = make(map[string]int)
+	}
+	c.UnscannedRunBlocks[runBlockKey(c.UnscannedRunBlocks, label)]++
+}
+
+// runBlockKey returns the key an unscanned block of label is counted under in blocks. custom and
+// unresolved always keep a key of their own; any other label gets one only while fewer than
+// maxCoverageLanguages-2 keys exist and folds into custom past that, so the map stays within
+// maxCoverageLanguages keys (HISS-02) without dropping a block.
+func runBlockKey(blocks map[string]int, label string) string {
+	if _, known := blocks[label]; known || label == customShell || label == unresolvedShell {
+		return label
+	}
+	if len(blocks) >= maxCoverageLanguages-2 {
+		return customShell
+	}
+	return label
 }
 
 // recordRead counts one file a language scanner examined.

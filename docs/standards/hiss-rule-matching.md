@@ -551,11 +551,15 @@ Every other block is counted in `unscanned_run_blocks` under its shell and liste
 - a block the shell scanner declines, and a block past a bound.
 
 The bounds (HISS-02) are 64 workflow files per scan (`ghworkflow.MaxFiles`, the bound the forge
-audits read under), 512 blocks per file and 64 KiB per block, above GitHub's own 21,000-character
-`run:` limit. A file past the file bound is unscanned `github-actions` source; a document the model
-refuses, malformed or past its job or step bounds, is declined whole
+audits read under), 512 blocks per file and 64 KiB per block. The 64 KiB block bound is praetor's
+own, not a GitHub limit. GitHub's 21,000-character limit (`Exceeded max expression length 21000`)
+is the maximum length of an expression; it reaches a `run:` value only through the `${{ }}`
+expressions the value holds. A file past the file bound is unscanned `github-actions` source; a
+document the model refuses, malformed or past its job or step bounds, is declined whole
 (`TestWorkflowScanner_FileBound`, `TestWorkflowScanner_BlockBounds`,
-`TestWorkflowScanner_DeclinedBlocksAndDocuments`).
+`TestWorkflowScanner_DeclinedBlocksAndDocuments`). The coverage record keeps at most 64 shell
+keys: past 62 named shells a further one is counted under `custom`, which, like `unresolved`,
+always keeps its own key, so no block goes uncounted (`TestWorkflowScanner_RunBlockLabelBound`).
 
 A block has no interpreter line: GitHub starts its shell itself, as `bash -e {0}` when no shell is
 named, `bash --noprofile --norc -eo pipefail {0}` for `shell: bash` and `sh -e {0}` for `shell: sh`.

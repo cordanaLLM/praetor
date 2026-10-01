@@ -292,3 +292,77 @@ func TestScanCoverageValidate_RunBlocks(t *testing.T) {
 		}
 	}
 }
+
+// customShellWorkflow returns a workflow whose shells blocks each run under a distinct custom
+// shell (s000, s001, ...), then unresolved blocks under a shell an expression names.
+func customShellWorkflow(shells, unresolved int) string {
+	var body strings.Builder
+	body.WriteString("jobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n")
+	for i := 0; i < shells; i++ {
+		fmt.Fprintf(&body, "      - run: echo %d\n        shell: s%03d {0}\n", i, i)
+	}
+	for i := 0; i < unresolved; i++ {
+		body.WriteString("      - run: echo u\n        shell: ${{ matrix.shell }}\n")
+	}
+	return body.String()
+}
+
+// sumCounts adds the counts of a coverage map.
+func sumCounts(counts map[string]int) int {
+	total := 0
+	for _, count := range counts {
+		total += count
+	}
+	return total
+}
+
+// Boundary: the coverage record keeps at most maxCoverageLanguages shell keys and still counts
+// every block. Past maxCoverageLanguages-2 named shells a further shell is counted under custom,
+// and unresolved keeps its own key on a full record, so 64 and 65 distinct shells are all counted.
+func TestWorkflowScanner_RunBlockLabelBound(t *testing.T) {
+	named := maxCoverageLanguages - 2
+	for _, tc := range []struct{ shells, unresolved, keys, custom int }{
+		{shells: named, keys: named},
+		{shells: named + 1, keys: named + 1, custom: 1},
+		{shells: maxCoverageLanguages, keys: named + 1, custom: 2},
+		{shells: maxCoverageLanguages + 1, keys: named + 1, custom: 3},
+		{shells: maxCoverageLanguages + 1, unresolved: 1, keys: maxCoverageLanguages, custom: 3},
+	} {
+		rep := scanWorkflows(t, map[string]string{"ci.yml": customShellWorkflow(tc.shells, tc.unresolved)})
+		got := rep.Coverage.UnscannedRunBlocks
+		if total := sumCounts(got); total != tc.shells+tc.unresolved {
+			t.Errorf("%d shells, %d unresolved: %d blocks counted, want every block", tc.shells, tc.unresolved, total)
+		}
+		if len(got) != tc.keys || got[customShell] != tc.custom || got[unresolvedShell] != tc.unresolved {
+			t.Errorf("%d shells, %d unresolved: %d keys, custom %d, unresolved %d; want %d, %d, %d",
+				tc.shells, tc.unresolved, len(got), got[customShell], got[unresolvedShell], tc.keys, tc.custom, tc.unresolved)
+		}
+		if err := rep.Coverage.Validate(); err != nil {
+			t.Errorf("%d shells: recorded coverage fails its own validation: %v", tc.shells, err)
+		}
+	}
+}
+
+// Positive, negative and boundary: runBlockKey keeps a known label and the reserved custom and
+// unresolved keys, admits a new label below the named-key bound and folds one at the bound.
+func TestRunBlockKey(t *testing.T) {
+	full := make(map[string]int, maxCoverageLanguages)
+	for i := 0; i < maxCoverageLanguages-2; i++ {
+		full[fmt.Sprintf("s%03d", i)] = 1
+	}
+	for _, tc := range []struct {
+		name, label, want string
+		blocks            map[string]int
+	}{
+		{"new label below the bound", "pwsh", "pwsh", map[string]int{"python": 1}},
+		{"known label at the bound", "s000", "s000", full},
+		{"new label at the bound", "pwsh", customShell, full},
+		{"unresolved at the bound", unresolvedShell, unresolvedShell, full},
+		{"custom at the bound", customShell, customShell, full},
+		{"first label", "pwsh", "pwsh", nil},
+	} {
+		if got := runBlockKey(tc.blocks, tc.label); got != tc.want {
+			t.Errorf("%s: runBlockKey(%q) = %q, want %q", tc.name, tc.label, got, tc.want)
+		}
+	}
+}
