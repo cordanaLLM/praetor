@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
@@ -42,6 +43,76 @@ const pullRequestRunTerm = "github.event_name != 'schedule'"
 // pullRequestRunTerm, and so holds on every pull request run whatever its other terms are.
 func holdsOnEveryPullRequestRun(condition string) bool {
 	return disjunctionContains(condition, pullRequestRunTerm)
+}
+
+// renovateHeadBranch and renovateAuthor are the two facts that make a pull request a Renovate pull
+// request: its head branch starts with renovate/, and the Renovate app's bot account opened it.
+// github.event.pull_request.user.login is the account that opened the pull request, which a later
+// push or re-run does not change, and no person's account can carry the [bot] suffix. A person's
+// pull request from a branch named renovate/... therefore matches only the first fact.
+const (
+	renovateHeadBranch = "startsWith(github.head_ref, 'renovate/')"
+	renovateAuthor     = "github.event.pull_request.user.login == 'renovate[bot]'"
+)
+
+// renovateBranchSkip is the job condition conjunct that skips a job on a Renovate pull request
+// only: both facts must hold. github.head_ref and github.event.pull_request are set on pull_request
+// and pull_request_target runs only, and a missing property evaluates to an empty string, so the
+// term holds on every push, schedule and dispatch run. The engine's heavy pull request jobs lead
+// their condition with it (ci.yml, portability.yml, security.yml, pages.yml): a Renovate pull
+// request is never merged as opened, the update is taken over on a signed-off branch whose own pull
+// request runs every job.
+const renovateBranchSkip = "!(" + renovateHeadBranch + " && " + renovateAuthor + ")"
+
+// withoutRenovateBranchSkip returns condition with a leading renovateBranchSkip conjunct removed,
+// so the rest is judged as if the job had no such skip. Only the exact two-fact term counts: a
+// looser skip, such as the head branch test alone, stays in place and makes the job conditional.
+// The result is "" for the term alone, the inside of one parenthesised group that encloses the
+// whole rest, or a rest without a top-level disjunction (topLevelDisjunction). Any other shape,
+// such as a rest whose top-level || would bind around the conjunction or whose parentheses do not
+// pair, returns condition unchanged, and its && then makes the job conditional.
+func withoutRenovateBranchSkip(condition string) string {
+	condition = strings.TrimSpace(condition)
+	if condition == renovateBranchSkip {
+		return ""
+	}
+	rest, found := strings.CutPrefix(condition, renovateBranchSkip+" && ")
+	if !found {
+		return condition
+	}
+	rest = strings.TrimSpace(rest)
+	if inner, enclosed := enclosedGroup(rest); enclosed {
+		return inner
+	}
+	if strings.Count(rest, "(") != strings.Count(rest, ")") || topLevelDisjunction(rest) {
+		return condition
+	}
+	return rest
+}
+
+// topLevelDisjunction reports whether expression holds a || outside every parenthesised group,
+// such as "a || b" but not "a == (b || c)".
+func topLevelDisjunction(expression string) bool {
+	for i := 0; i < len(expression); i++ {
+		if expression[i] == '(' {
+			i += len(util.EnclosedParens(expression, i)) + 1
+			continue
+		}
+		if strings.HasPrefix(expression[i:], "||") {
+			return true
+		}
+	}
+	return false
+}
+
+// enclosedGroup returns the inside of expression when one pair of parentheses encloses all of it,
+// so that "(a || b)" yields "a || b" while "(a) || (b)" is no group.
+func enclosedGroup(expression string) (string, bool) {
+	inner := util.EnclosedParens(expression, 0)
+	if !strings.HasPrefix(expression, "(") || len(inner)+2 != len(expression) {
+		return "", false
+	}
+	return strings.TrimSpace(inner), true
 }
 
 // disjunctionContains reports whether condition is a disjunction holding term, so that the

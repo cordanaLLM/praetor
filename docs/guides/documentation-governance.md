@@ -410,10 +410,12 @@ actions itself because audit locks the file.
 short-SHA-pinned action (`TestWorkflowPinsEveryActionNegative`). Renovate's
 github-actions manager reads `tools/markdownlint/assets.go` as well as the
 workflow (`renovate.json`), and one grouped branch moves both copies' pins
-together (`TestRenovateUpdatesTemplatePinsWithWorkflowCopy`). Such a branch
-fails CI until someone finishes it: the outgoing workflow text must be recorded
-as described above, and the `sha256` lines of
-`internal/adopt/testdata/managed-family/*.golden` regenerated with
+together (`TestRenovateUpdatesTemplatePinsWithWorkflowCopy`). The Renovate pull
+request itself skips the Go tests and the audit
+([Renovate pull requests](contributing.md#renovate-pull-requests)), so it is the
+takeover pull request that fails CI until someone finishes the update: the
+outgoing workflow text must be recorded as described above, and the `sha256`
+lines of `internal/adopt/testdata/managed-family/*.golden` regenerated with
 `PRAETOR_UPDATE_GOLDEN=1 go test ./internal/adopt`.
 
 Praetor ships every update of the managed files, and a copy an adopter's own

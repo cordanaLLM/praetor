@@ -311,10 +311,20 @@ stat metadata; staged changes, untracked bytes, and changed text content still s
 Every state observation runs through `util.RunGitTreeProbe`
 ([`internal/util/git_status.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/util/git_status.go)), the same probe the gate's
 clean-tree check uses, so the two cannot drift to different line-ending models. State inspection
-refuses a repository whose own configuration names a clean or process filter through
-`util.RefuseGitStatusFilters`, and refuses assume-unchanged and skip-worktree index entries as
-`util.GitHiddenIndexReason` classifies them; the refusals are replayed in
-`internal/state/sync_binding_test.go`.
+refuses a repository whose own configuration defines a clean or process filter that the filter
+attribute of a tracked path selects, through `util.RefuseGitStatusFilters`, and refuses
+assume-unchanged and skip-worktree index entries as `util.GitHiddenIndexReason` classifies them;
+the refusals are replayed in `internal/state/sync_binding_test.go`.
+
+A defined filter that no tracked path selects never runs, so it passes. Stock Git for Windows
+defines `filter.lfs` in its system gitconfig and `git lfs install` writes it into the global
+one; the probe reads neither file, and `git lfs install --local` puts the same block in the
+repository's own configuration, where it passes until an attribute such as `*.bin filter=lfs`
+selects it for a tracked path (#640). Git resolves the attribute itself, macros,
+`.git/info/attributes` and nested `.gitattributes` files included; an untracked path does not
+count, since status lists it without cleaning it. The Windows default block is replayed by
+`TestStateInspectionSelectedFilterDriver_3D` and by the `TestRefuseGitStatusFilters_*` cases in
+`internal/util/git_filters_test.go`.
 
 The path is canonicalised before it is bound, so one repository reached under two
 spellings of its directory binds to one state. Two callers rarely hold the same

@@ -651,7 +651,8 @@ Cleanliness is read through `util.GitWorkingTreeChanges`
 `praetorctl paperclip verify` and release preparation share. It overrides the repository settings
 that could hide a change (`status.showUntrackedFiles`, submodule ignore settings, `core.fsmonitor`,
 hooks), takes no optional index locks, and refuses a repository whose own configuration names a
-clean or process filter rather than executing it during a read-only probe. Each caller bounds the
+clean or process filter that a tracked path's filter attribute selects, rather than executing it
+during a read-only probe; a driver no tracked path selects never runs and passes. Each caller bounds the
 whole walk: the gate with `gating.GitQueryTimeout`, paperclip verify and release preparation with
 `util.GitTreeProbeTimeout`; a probe that runs out of time is a refusal, never a clean answer. The
 cases are replayed in [`internal/util/git_status_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/util/git_status_test.go) and

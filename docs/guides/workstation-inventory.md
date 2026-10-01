@@ -63,9 +63,14 @@ traverse submodule worktrees, whose local filters might execute commands. A know
 dirty state and complete inventory apply only to the declared scope; neither
 certifies submodule cleanliness. Inspect submodules separately as repository roots
 when their state is required. Bare repositories use `not-applicable` dirty scope.
-When repository configuration declares a clean or process filter, dirty state is
-unavailable: computing it could execute repository-supplied commands. Identity,
-remote and privacy probes still run, with incomplete coverage explicitly reported.
+When repository configuration declares a clean or process filter and the filter
+attribute of a tracked path selects it, dirty state is unavailable: computing it
+could execute repository-supplied commands. A filter that no tracked path selects,
+such as the `filter.lfs` block Git for Windows and `git lfs install` define, never
+runs and leaves dirty state known
+(`TestInventoryReadsDirtyStateBesideUnselectedFilter` in
+`internal/harvester/repository_inventory_safety_test.go`). Identity, remote and
+privacy probes still run, with incomplete coverage explicitly reported.
 
 Use these observations to select a later, explicit dogfood run. The
 [configured suites](dogfood-suites.md) accept pinned public repositories and

@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func syncFixture(t *testing.T) string {
@@ -190,6 +192,46 @@ func TestStateSyncRejectsConfiguredFilterBeforeExecution(t *testing.T) {
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatalf("Git filter executed: %v", err)
+	}
+}
+
+// TestStateInspectionSelectedFilterDriver_3D: the filter.lfs block a stock Git for Windows
+// install defines, configured in the repository itself, leaves status and sync working while
+// no tracked path selects it, and also while only an untracked path does, since status never
+// cleans one; once a tracked path selects it, inspection refuses by key (#640).
+func TestStateInspectionSelectedFilterDriver_3D(t *testing.T) {
+	root := syncFixture(t)
+	writeIntegrityFile(t, filepath.Join(root, "data.bin"), "payload\n")
+	stateFixtureGit(t, root, "add", "data.bin")
+	stateFixtureGit(t, root, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-m", "data")
+	for _, entry := range [][2]string{
+		{"filter.lfs.clean", "git-lfs clean -- %f"},
+		{"filter.lfs.smudge", "git-lfs smudge -- %f"},
+		{"filter.lfs.process", "git-lfs filter-process"},
+		{"filter.lfs.required", "true"},
+	} {
+		stateFixtureGit(t, root, "config", entry[0], entry[1])
+	}
+	if _, err := InspectState(t.Context(), root); err != nil {
+		t.Fatalf("state status refused an unselected driver: %v", err)
+	}
+	if _, err := SyncState(t.Context(), root, "unselected driver"); err != nil {
+		t.Fatalf("state sync refused an unselected driver: %v", err)
+	}
+	if err := VerifyStateSync(t.Context(), root); err != nil {
+		t.Fatalf("sync beside an unselected driver does not verify: %v", err)
+	}
+
+	writeIntegrityFile(t, filepath.Join(root, ".gitattributes"), "*.untracked filter=lfs\n")
+	writeIntegrityFile(t, filepath.Join(root, "new.untracked"), "untracked\n")
+	if _, err := SyncState(t.Context(), root, "untracked selection"); err != nil {
+		t.Fatalf("a selection on an untracked path only was refused: %v", err)
+	}
+
+	writeIntegrityFile(t, filepath.Join(root, ".gitattributes"), "*.bin filter=lfs\n")
+	_, err := InspectState(t.Context(), root)
+	if !errors.Is(err, util.ErrGitStatusFilters) || !strings.Contains(err.Error(), "filter.lfs.clean (filter=lfs on data.bin)") {
+		t.Fatalf("a tracked path selecting the driver was not refused by key: %v", err)
 	}
 }
 

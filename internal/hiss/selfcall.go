@@ -3,6 +3,8 @@ package hiss
 import (
 	"regexp"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // Direct recursion in the line-scanned languages (HISS-01).
@@ -259,28 +261,10 @@ func rustParams(sig string) string {
 	for i := fn; i < len(sig); i++ {
 		angle = rustAngleDepth(sig, i, angle)
 		if sig[i] == '(' && angle == 0 {
-			return enclosedParens(sig, i)
+			return util.EnclosedParens(sig, i)
 		}
 	}
 	return ""
-}
-
-// enclosedParens returns the text inside the parenthesis opening at open, or the rest of text
-// when it never closes.
-func enclosedParens(text string, open int) string {
-	depth := 0
-	for i := open; i < len(text); i++ {
-		switch text[i] {
-		case '(':
-			depth++
-		case ')':
-			depth--
-			if depth == 0 {
-				return text[open+1 : i]
-			}
-		}
-	}
-	return text[open+1:]
 }
 
 // rustHasReceiver reports whether the first parameter is a self receiver in any of its forms:

@@ -31,9 +31,10 @@ const GitTreeProbeTimeout = 3 * GitProbeTimeout
 // maxReportedTreeChanges bounds how many changed paths DescribeWorkingTreeChanges names.
 const maxReportedTreeChanges = 5
 
-// ErrGitStatusFilters reports a repository whose own configuration names clean or process
-// filters. git status runs them to compare a file with its indexed blob, so they would execute
-// during a read-only probe and their output, not the file, would decide what status reports.
+// ErrGitStatusFilters reports a repository whose own configuration defines a clean or process
+// filter that the attributes of a tracked path select. git status runs it to compare that file
+// with its indexed blob, so it would execute during a read-only probe and its output, not the
+// file, would decide what status reports.
 var ErrGitStatusFilters = errors.New("the repository configures git clean or process filters, which a status probe would execute")
 
 // GitWorkingTreeChanges lists every path in dir's repository whose working-tree state differs
@@ -47,8 +48,9 @@ var ErrGitStatusFilters = errors.New("the repository configures git clean or pro
 // Every repository setting that could hide a change is overridden: status.showUntrackedFiles
 // by --untracked-files=all, submodule ignore settings by --ignore-submodules=none, core.fsmonitor
 // and hooks by RunGitProbe. GIT_OPTIONAL_LOCKS=0 keeps the probe from rewriting the index. A
-// repository that configures clean or process filters is refused with ErrGitStatusFilters
-// rather than probed. An empty result means clean.
+// repository whose tracked paths select a clean or process filter it configures is refused
+// with ErrGitStatusFilters (RefuseGitStatusFilters) rather than probed. An empty result means
+// clean.
 func GitWorkingTreeChanges(ctx context.Context, dir string, timeout time.Duration, pathspec ...string) ([]string, error) {
 	if timeout <= 0 {
 		return nil, fmt.Errorf("working-tree probe bound must be positive, got %v", timeout)
@@ -81,21 +83,31 @@ func RunGitTreeProbe(ctx context.Context, dir string, maxBytes int, timeout time
 	return RunGitProbeWithin(ctx, dir, maxBytes, timeout, argv...)
 }
 
-// RefuseGitStatusFilters fails with ErrGitStatusFilters when dir's effective configuration --
-// the repository's own, as RunGitProbe drops the global and system files -- names a clean or
-// process filter, which a status or diff would execute. Any other failure to read the
-// configuration is an error too, never an all-clear.
+// RefuseGitStatusFilters fails with ErrGitStatusFilters when a clean or process filter that
+// dir's effective configuration defines -- the repository's own, as RunGitProbe drops the
+// global and system files -- is selected by the filter attribute of a tracked path, so a status
+// or diff would execute it. The refusal names each such key and the first path selecting it.
+//
+// A driver defined but selected by no tracked path passes: git runs a filter only for a path
+// whose attributes name it. Git for Windows defines filter.lfs in its system gitconfig,
+// `git lfs install` writes it into the global one and `git lfs install --local` into the
+// repository's own, so testing the definition alone refused checkouts that use no filter at
+// all (#640). Any failure to read the configuration or the attributes is an error, never an
+// all-clear.
 func RefuseGitStatusFilters(ctx context.Context, dir string) error {
-	result, status, err := RunGitProbeStatus(ctx, dir, maxGitFilterConfigBytes,
-		"config", "--name-only", "--get-regexp", `^filter\..*\.(clean|process)$`)
-	if err != nil {
-		return fmt.Errorf("inspect git filters in %s: %w", dir, withCommandDiagnostic(err, result.Stderr))
+	keys, err := configuredStatusFilters(ctx, dir)
+	if err != nil || len(keys) == 0 {
+		return err
 	}
-	if status == 1 {
+	selected, err := selectedFilterDrivers(ctx, dir)
+	if err != nil {
+		return err
+	}
+	refused := selectedStatusFilters(keys, selected)
+	if len(refused) == 0 {
 		return nil
 	}
-	names := strings.Fields(string(result.Stdout))
-	return fmt.Errorf("%w: %s in %s", ErrGitStatusFilters, strings.Join(names, ", "), dir)
+	return fmt.Errorf("%w: %s in %s", ErrGitStatusFilters, strings.Join(refused, ", "), dir)
 }
 
 // GitLiteralExclude returns a pathspec that leaves rel out of a GitWorkingTreeChanges probe:

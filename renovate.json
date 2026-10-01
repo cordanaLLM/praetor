@@ -1,5 +1,13 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": [
+    "Renovate pull requests are not merged as opened: the landing pipeline takes each one over on a signed-off fix/renovate-<number> branch with its own pull request, and that pull request runs the full CI and every required check.",
+    "CI on the Renovate pull request itself is therefore skipped: the Go tests, the Platform Neutrality legs, the preset builds, the security scan and the documentation site skip a pull request that renovate[bot] opened from a branch starting with renovate/ (docs/guides/contributing.md). The DCO and REUSE gate, the configuration validation and Documentation Governance still run, and a person's pull request from a renovate/ branch runs every job.",
+    "rebaseWhen conflicted: a branch is rebased only when it conflicts with main. The default, auto, rebases every open branch whenever main moves, because the ruleset requires up-to-date branches, and those runs filled every runner.",
+    "automerge false everywhere: a skipped required check reports success, so an automerging rule could merge a pull request nothing verified."
+  ],
+  "rebaseWhen": "conflicted",
+  "automerge": false,
   "extends": [
     "config:recommended",
     ":dependencyDashboard",
@@ -38,16 +46,11 @@
       "automerge": false
     },
     {
-      "matchManagers": ["gomod"],
-      "matchUpdateTypes": ["pin", "digest"],
-      "automerge": true
-    },
-    {
       "matchManagers": ["github-actions"],
       "pinDigests": true
     },
     {
-      "description": "Documentation gate: audit locks .github/workflows/praetor-docs.yml, here and in every adopted repository, to the template in tools/markdownlint/assets.go. The github-actions manager reads both, and one branch moves their SHA pins and release comments together. The branch fails CI until the outgoing workflow text is recorded in priorDigests and internal/managedasset/testdata/shipped (docs/guides/documentation-governance.md), so adopters holding it still refresh without --force.",
+      "description": "Documentation gate: audit locks .github/workflows/praetor-docs.yml, here and in every adopted repository, to the template in tools/markdownlint/assets.go. The github-actions manager reads both, and one branch moves their SHA pins and release comments together. The Renovate pull request skips the Go tests and the audit, so its takeover pull request fails CI until the outgoing workflow text is recorded in priorDigests and internal/managedasset/testdata/shipped (docs/guides/documentation-governance.md), which lets adopters holding it still refresh without --force.",
       "matchManagers": ["github-actions"],
       "matchFileNames": [".github/workflows/praetor-docs.yml", "tools/markdownlint/assets.go"],
       "groupName": "documentation gate actions"

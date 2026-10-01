@@ -81,6 +81,33 @@ func TestInventoryDoesNotExecuteRepositoryCommands(t *testing.T) {
 	}
 }
 
+// TestInventoryReadsDirtyStateBesideUnselectedFilter: a clean filter the repository defines but
+// no tracked path selects -- the filter.lfs block a stock Git for Windows install carries --
+// leaves dirty state known; the same driver selected for README makes it unavailable (#640).
+func TestInventoryReadsDirtyStateBesideUnselectedFilter(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "repo")
+	initTestRepository(t, repo)
+	for _, entry := range [][2]string{{"filter.lfs.clean", "git-lfs clean -- %f"}, {"filter.lfs.process", "git-lfs filter-process"}} {
+		if out, err := runTestGit(repo, "config", entry[0], entry[1]); err != nil {
+			t.Fatalf("configure fixture: %v %s", err, out)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(repo, "README"), []byte("changed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := inspectRepository(t.Context(), repo)
+	if got.DirtyState != "known" || got.DirtyEntries != 1 {
+		t.Fatalf("an unselected filter hid dirty state: %+v", got)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".gitattributes"), []byte("README filter=lfs\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got = inspectRepository(t.Context(), repo)
+	if got.DirtyState != "unknown" || !strings.Contains(strings.Join(got.ProbeErrors, "; "), "configured filters") {
+		t.Fatalf("a selected filter did not make dirty state unavailable: %+v", got)
+	}
+}
+
 func TestInventoryRemotePrivacyAndMalformedState(t *testing.T) {
 	for _, input := range []string{
 		"git@example.invalid:org/repo#private-fragment",
