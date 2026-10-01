@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -322,49 +321,36 @@ func removalStatusHasOnlyIgnored(status string) bool {
 	return hasRecord
 }
 
+// checkRemovalFilters refuses removal when 'git worktree remove' would execute a filter driver,
+// through the shared rule util.RefuseGitStatusFilters owns.
+//
+// Without --force, git checks the tree with a 'git status' of its own before deleting it, and
+// that status runs under the removal's environment (sanitizedGitEnvironment), which keeps the
+// operator's global and system configuration and attributes files. It cleans every tracked path
+// whose attributes select a clean or process driver, so a driver defined or selected there runs
+// although the cleanliness probe, sealed by util.RunGitProbe, never sees it: the check reads
+// that environment through util.WithEffectiveGitConfig. A smudge driver needs no option, since
+// removal deletes the tree and checks nothing out. A driver no tracked path selects never runs,
+// so a stock filter.lfs block passes (#679).
+//
+// No separate refusal of core.attributesFile, core.excludesFile or core.fsmonitor remains. The
+// global attributes file can make git run a program only by selecting a filter, which the
+// effective check resolves; exclude rules run nothing and cannot hide a path from the
+// cleanliness probe, which lists every untracked file as untracked or ignored and refuses
+// either; and the removal passes core.fsmonitor=false, which git hands to its status.
 func (m *Manager) checkRemovalFilters(ctx context.Context, path string) error {
-	result, err := m.runEffectiveProbe(ctx, path, "config", "--get-regexp", `^core\.(attributesfile|excludesfile|fsmonitor)$`)
-	output := string(result.Stdout)
-	if err != nil && !isConfigNoMatch(result, err) {
-		return fmt.Errorf("cannot inspect worktree filters at %s: %w", path, err)
-	}
-	if strings.TrimSpace(output) != "" {
-		return fmt.Errorf("refusing removal of worktree %s: global Git attributes, excludes, or fsmonitor could change inspection", path)
-	}
-	result, err = m.runEffectiveProbe(ctx, path, "config", "--get-regexp", `^filter\..*\.(clean|process|smudge)$`)
-	output = string(result.Stdout)
-	if err != nil && !isConfigNoMatch(result, err) {
-		return fmt.Errorf("cannot inspect worktree filters at %s: %w", path, err)
-	}
-	if strings.TrimSpace(output) != "" {
-		return fmt.Errorf("refusing removal of worktree %s: configured filters could execute", path)
-	}
-	return nil
-}
-
-func isConfigNoMatch(result util.CommandBytes, err error) bool {
-	if err == nil {
-		return false
-	}
-	if len(result.Stdout) != 0 || len(result.Stderr) != 0 {
-		return false
-	}
-	var exitErr *exec.ExitError
-	return errors.As(err, &exitErr) && exitErr.ExitCode() == 1
-}
-
-func (m *Manager) runEffectiveProbe(ctx context.Context, path string, args ...string) (util.CommandBytes, error) {
 	probeCtx, err := util.WithCommandEnvironment(ctx, sanitizedGitEnvironment())
 	if err != nil {
-		return util.CommandBytes{}, err
+		return fmt.Errorf("cannot inspect worktree filters at %s: %w", path, err)
 	}
-	probeCtx, cancel := context.WithTimeout(probeCtx, 5*time.Second)
-	defer cancel()
-	argv := args
-	if len(args) == 0 || args[0] != "config" {
-		argv = append([]string{"-c", "core.fsmonitor=false"}, args...)
+	err = util.RefuseGitStatusFilters(probeCtx, path, util.WithEffectiveGitConfig())
+	if errors.Is(err, util.ErrGitStatusFilters) {
+		return fmt.Errorf("refusing removal of worktree %s: %w", path, err)
 	}
-	return util.RunGitBytes(probeCtx, path, removalProbeMaxBytes, argv...)
+	if err != nil {
+		return fmt.Errorf("cannot inspect worktree filters at %s: %w", path, err)
+	}
+	return nil
 }
 
 func (m *Manager) checkRemovalGitlinks(ctx context.Context, path string) error {

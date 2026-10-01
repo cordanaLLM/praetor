@@ -1,0 +1,4 @@
+type: fixed
+title: Worktree removal refuses only a clean or process filter that a tracked path selects
+issue: "#679"
+breaking: false
