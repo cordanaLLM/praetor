@@ -381,22 +381,13 @@ func raisedRange(current json.RawMessage, target string) (string, error) {
 	return operator + version, nil
 }
 
-// rangeOperators are the comparator prefixes a single-version npm range may carry, longest
-// first so ">=" is not read as ">".
-var rangeOperators = []string{">=", "<=", "^", "~", ">", "<", "="}
-
 // splitRangeOperator splits a single-version npm range such as "^1.2.3", "~1.2.3" or
 // ">=1.2.3" into its operator and SemVer version; a bare version has no operator. ok is false
 // for anything else: a compound or x-range, a tag such as "latest", a protocol spec such as
-// "workspace:^1.0.0" or "file:../x", or surrounding space.
+// "workspace:^1.0.0" or "file:../x", or surrounding space. The operator split is
+// semver.CutOperator, shared with the Go toolchain audit's setup-go range reader.
 func splitRangeOperator(spec string) (operator, version string, ok bool) {
-	for _, candidate := range rangeOperators {
-		if strings.HasPrefix(spec, candidate) {
-			operator = candidate
-			break
-		}
-	}
-	version = strings.TrimPrefix(spec, operator)
+	operator, version = semver.CutOperator(spec)
 	if _, parsed := semver.Parse(version); !parsed || strings.TrimSpace(version) != version {
 		return "", "", false
 	}

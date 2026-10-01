@@ -101,6 +101,24 @@ func (v Version) IsPrerelease() bool {
 	return v.Prerelease != ""
 }
 
+// comparatorOperators are the operators a node-semver range comparator may open with -- the
+// grammar of npm package.json ranges and of actions/setup-go's go-version -- longest first so
+// ">=" is not read as ">".
+var comparatorOperators = [...]string{">=", "<=", "^", "~", ">", "<", "="}
+
+// CutOperator splits the operator off the front of one range comparator such as "^1.2.3",
+// ">=1.27" or "<2"; a bare version has no operator. rest is everything after the operator,
+// unchecked, because the version syntax a caller accepts differs: npm specs need full SemVer,
+// a Go toolchain pin may stop at major.minor.
+func CutOperator(comparator string) (operator, rest string) {
+	for _, candidate := range comparatorOperators {
+		if after, found := strings.CutPrefix(comparator, candidate); found {
+			return candidate, after
+		}
+	}
+	return "", comparator
+}
+
 // Compare returns -1, 0 or 1 as a orders before, equal to, or after b, following SemVer
 // 2.0.0 precedence rules. Build metadata never affects precedence.
 func Compare(a, b Version) int {
