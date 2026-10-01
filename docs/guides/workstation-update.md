@@ -140,9 +140,11 @@ wrapper that runs `praetorctl compile-context` at session start with a lagging i
 rewrote the `AGENTS.md` register block and every vendor file with that install's older text.
 
 The check applies only when the target directory's `go.mod` declares the binary's own main
-module and the binary carries Go's VCS stamp (`praetorctl version`). Every other repository,
-and a `go run` build, which compiles the checkout on the spot, is not judged. A stamped build
-matches when:
+module and the binary carries Go's VCS stamp. The check reads the stamp through
+`buildid.Stamp` in `internal/buildid/buildid.go`, the reader `praetorctl version`,
+`standards-mcp -version` and `standards-lsp -version` take their revision from. Every other
+repository, and a `go run` build, which compiles the checkout on the spot, is not judged. A
+stamped build matches when:
 
 - it is a clean build and no non-test `.go` file, `go.mod` or `go.sum` differs between its
   revision and the working tree, committed or untracked; or
@@ -156,8 +158,9 @@ avoid a `-dirty` build outside the checkout when nothing tracked changed:
 A work-in-progress install, built from modified tracked files into the bin directory, is
 refused.
 
-Anything else fails with one line naming the build, the reason, and the command that writes
-with the checkout's own compiler:
+Anything else fails with one line naming the build as `praetorctl version` names a stamped
+build (`buildid.FromStamp`), the reason, and the command that writes with the checkout's own
+compiler:
 
 ```text
 compile-context wrote nothing: engine build does not match this checkout: build 0123456789ab lacks 3 changed Go build inputs (first internal/compiler/render.go); rebuild bin/praetorctl from the checkout or run go run ./cmd/standardsctl compile-context
