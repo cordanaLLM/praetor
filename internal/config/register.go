@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 	"unicode"
@@ -432,11 +433,7 @@ func copyConventions(conventions map[TextRegister]string) map[TextRegister]strin
 	if len(conventions) == 0 {
 		return nil
 	}
-	out := make(map[TextRegister]string, len(conventions))
-	for register, convention := range conventions {
-		out[register] = convention
-	}
-	return out
+	return maps.Clone(conventions)
 }
 
 // validateConventions checks every register.conventions entry: a known register as key, and a
