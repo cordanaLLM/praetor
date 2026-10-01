@@ -62,7 +62,7 @@ func runAdopt(args []string) error {
 		"(default when omitted: "+strings.Join(config.DefaultFacets(), ",")+"); an existing .standards.yaml keeps the facets it declares, "+
 		"change them with praetorctl profile set --facets")
 	dryRun := fs.Bool("dry-run", false, "Simulate adoption without writing files")
-	force := fs.Bool("force", false, "Overwrite existing standards configurations")
+	force := fs.Bool("force", false, adopt.ForceContract+". --force needs --lock-source-root, --dry-run included")
 	recordBaseline := fs.Bool("record-baseline", true, "Record or estimate legacy debt using verified local pins and catalog, or --lock-source-root (including --dry-run)")
 	lockSource := fs.String("lock-source-root", "", "Praetor source bundle with validated pins and local archetypes for missing lockfiles")
 	allMissing := fs.Bool("all-missing", false, "Adopt all detected unmanaged repositories under --dev-dir")

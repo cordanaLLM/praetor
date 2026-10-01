@@ -7,6 +7,14 @@ set -euo pipefail
 # targets file, and without one it prints its usage and exits 2. Each target runs three
 # steps: praetorctl adopt --force, needs scan --write, and needs epic --publish --yes.
 #
+# --force is a refresh, not a reset (docs/adoption.md, "What a forced re-adoption changes"): it
+# rebuilds .standards.lock and its pinned catalog, rewrites the drifted files audit compares byte
+# for byte, merges editor JSON and regenerates the AGENTS.md harness with the repository's
+# additions kept, and backs each replaced file up under .workingdir/adopt-backups. It keeps every
+# other file that differs; delete such a file in the target and rerun to regenerate it. The lock
+# rebuild needs a source bundle, so the step passes --lock-source-root naming the praetor
+# checkout this script lives in.
+#
 # A target path that is not absolute resolves against the development root: --dev-root,
 # else PRAETOR_DEV_ROOT, else $HOME/dev. PRAETOR_STANDARDSCTL names an existing binary to
 # run instead of building one.
@@ -143,7 +151,7 @@ failures=0
 # Publication needs --yes, because the forge target is derived from repository content.
 adopt_repo() {
     local repo="$1"
-    if ! "${STANDARDSCTL}" adopt --path="${repo}" --force; then
+    if ! "${STANDARDSCTL}" adopt --path="${repo}" --force --lock-source-root="${PRAETOR_ROOT}"; then
         echo "    [FAIL] ${repo} failed at step: adopt"
         return 1
     fi

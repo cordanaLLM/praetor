@@ -22,6 +22,9 @@ praetorctl adopt --force --record-baseline --lock-source-root=/path/to/praetor
 praetorctl profile set os-image --lock-source-root=/path/to/praetor --dry-run
 ```
 
+`--force` refreshes rather than resets: what it rewrites, merges and keeps is in
+[What a forced re-adoption changes](#what-a-forced-re-adoption-changes).
+
 `--facets` names the facets adoption writes when it creates `.standards.yaml`. Omitted, adoption
 writes `security:high`, `api:public-contract`, `docs:seo-portal` and `agent:sandboxed`
 (`config.DefaultFacets` in `internal/config/facets.go`). An existing `.standards.yaml` keeps the
@@ -319,6 +322,55 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
     untouched, with a warning naming the labels
     ([actionlint runner labels](guides/documentation-governance.md#adoption-audit-and-ci),
     `internal/adopt/actionlint.go`). Decline `actionlint-labels` to opt out.
+
+### What a forced re-adoption changes
+
+`praetorctl adopt --force` (MCP: `"force": true`) refreshes a governed repository; it does not reset
+it to the scaffold. It overwrites a file only when `praetorctl audit` compares that file's bytes, so
+the audit fails until the file holds them, and merges or keeps every other file. `adopt --help`
+states this contract (`adopt.ForceContract` in `internal/adopt/force_contract.go`,
+`TestAdoptHelpStatesTheForceContract` in `cmd/standardsctl/adopt_force_contract_test.go`), and the
+`standards_adopt` schema restates each clause for agents
+(`TestCreateAdoptTool_ForceStatesTheContract` in
+`cmd/standards-mcp/tools_adoption_force_test.go`). `--force` rebuilds the lock, so it needs
+`--lock-source-root` (MCP: `source_root`), a dry run included
+(`TestAdoptForceNeedsLockSourceDryRunIncluded`). Preview a forced run with `--dry-run` first.
+
+Three rules hold on every run, `--force` or not:
+
+- An absent file is created. A file that already holds what adoption writes, line endings aside, is
+  verified. An unedited text an earlier release wrote is refreshed without `--force`
+  (`refreshPriorScaffold` in `internal/adopt/scaffold.go`).
+- Any other overwrite is listed under `Files Replaced` with action `replace`, never as created; an
+  editor JSON merge is listed as `merge`. Both carry the line delta and a backup under
+  `.workingdir/adopt-backups/<UTC stamp>/<path>` when git ignores that path, and a dry run lists
+  them as planned (`replaceExisting` in `internal/adopt/replace.go`; the replaced files item
+  below has the details).
+- Adoption removes no file of the repository's own. A `<file>.bak` an earlier release left beside a
+  hook file is reported and kept (`warnLegacyHookBackup` in `internal/adopt/replace.go`).
+
+| Class | Files | Without `--force` | With `--force` |
+| :--- | :--- | :--- | :--- |
+| Audit-locked, rebuilt under `--force` | `.standards.lock` and the texts it pins under `.config/archetypes/` | a valid lock is kept, and one that pins only unmodified earlier catalog texts is re-pinned to `--lock-source-root` when no value changes; an invalid lock fails the run | rebuilt from `--lock-source-root`, an invalid lock included (`TestReconcileLockfile_Positive_ForcedRebuildOverEditedLockReplacesWithBackup`) |
+| | documentation gate files under `tools/markdownlint/` and `tools/figures/`, and `.github/workflows/praetor-docs.yml` | a drifted file is kept with the warning `preserved, not verified (--force regenerates it)` | replaced; a file under `tools/figures/` that predates adoption still stops the run (`reconcileManagedFamily` in `internal/adopt/managed_family.go`) |
+| | `.github/rulesets/main.json` | kept with a warning; the rendering current before the run is refreshed | replaced while the policy enforces linear history or signed commits, kept under any other policy (`TestReconcileBranchRuleset_Boundary_ForceReplacesOnlyWhilePolicyRequiresIt`) |
+| | the `.devcontainer/` bundle | an existing `devcontainer.json` keeps the bundle as it is, with a warning | regenerated; each image the bundle records is kept or refreshed, and reported (`prepareAdoptDevContainer` in `internal/adopt/devcontainer.go`, `TestReconcileDevContainer_Positive_ForcedEditIsReplacedWithBackup`) |
+| | the documentation gate block in the `Makefile`, the managed block at the end of `.gitattributes` | an edited block fails the run | the block is restored (`TestReconcileDocumentationMakefile_Boundary_DeltaListsOnlyInBlockLines`, `TestReconcileGitAttributes_Positive_EditedBlockReplacedUnderForce`) |
+| Audit-locked, recompiled every run | vendor context files such as `CLAUDE.md`, persona copies such as `.claude/agents/praetor-auditor.md`, plugin copies | compiled from `AGENTS.md` and the canonical personas and skills; a hand edit is replaced | the same (`TestAdopt_Positive_HandEditedVendorFileOnPlainRunReplacedWithBackup`) |
+| Managed block, every run | the `.gitignore` and `.prettierignore` tail blocks, the README governance block, the Renovate rule for the managed files, the text register block in `AGENTS.md` | Praetor's block or rule is written; every line outside it is kept | the same |
+| Merged | agent hook settings: `.claude/settings.json`, `.gemini/settings.json`, `.codex/hooks.json` | missing Praetor handlers are merged in; every other entry is kept | the same (`TestReconcileAgentHooks_Positive_MergesPreservingForeignContent`) |
+| | editor JSON: `.vscode/*.json`, `.zed/*.json`, `.fleet/*.json`, `standards.sublime-project` | kept; the warning names the missing managed values | merged, every repository key kept; a file adoption cannot merge is kept with a warning (`TestAdopt_Positive_ForceMergesEditorJSONKeepingAdopterKeys`) |
+| | the `AGENTS.md` harness | kept; only its text register block is spliced from the manifest | regenerated, keeping the preamble, invariant rows under the repository's own IDs and the instructions below the harness; an edited generated line is a `replace` (`TestAdopt_AgentsMD_ForceKeepsRepositoryAdditions`) |
+| | `.paperclip/harness.json` | a harness the repository edited is kept; a `platform` naming another repository is a warning | only that `platform` is set; `.paperclip/rules.md` stays as it is, a deleted one included (`TestAdoptForcePatchesOnlyHarnessPlatform`) |
+| | `.standards.yaml` | profiles, facets and every other declaration kept (`praetorctl profile set` changes them); `register.sources` added, or re-bound only to a harness the run writes | the same |
+| Generated, not audit-verified | the anti-evasion interceptor, the checkpoint scripts and policy, the personas `.agents/agents/repo-auditor.md` and `repo-gatekeeper.md`, the label taxonomy, `CONTRIBUTING.md`, the pull request template, `SECURITY.md`, editor files that are not JSON | an edited file is kept with a warning that counts the lines regenerating it would change | the same; delete the file and re-run adopt to regenerate it (`TestAdopt_Negative_EditedEvasionHookKeptUnderForce`) |
+| | `lefthook.yml` | a current or earlier Praetor rendering is written, migrated or verified; any other configuration is kept and not activated | the same, and a CRLF checkout of the current rendering is rewritten with LF bytes (`TestAdopt_Negative_ForeignLefthookKeptWithAndWithoutForce`) |
+| | the `pre-commit` hook written when lefthook cannot install | a hook Praetor did not write is kept | the same (`TestAdopt_Hooks_ForeignPreCommitKeptWithAndWithoutForce`) |
+| Written only when absent | flavor templates such as `rustfmt.toml`, developer-owned editor files such as `.nvim.lua`, the ADR directory | an existing file is kept | the same |
+
+A caller that ran `adopt --force` to reset a repository to the scaffold gets this refresh instead:
+delete the files to regenerate, then run adopt. `scripts/adopt_repos.sh` runs
+`adopt --force --lock-source-root=<its checkout>` for every target (`scripts/test_adopt_repos.py`).
 
 ### What Adoption Reads Before It Writes
 
@@ -732,6 +784,8 @@ Under the hood, the agent executes the `standards_adopt` tool:
 }
 ```
 
+`"force": true` is the refresh described in
+[What a forced re-adoption changes](#what-a-forced-re-adoption-changes) and needs `source_root`.
 The tool returns a detailed summary of created, reconciled and replaced files, detected archetypes, and recorded legacy debt.
 
 ---
@@ -778,7 +832,6 @@ jobs:
       - uses: cordanaLLM/praetor/.github/actions/praetor-adopt@main
         with:
           mode: adopt
-          force: true
           cache: false
 ```
 
@@ -854,7 +907,7 @@ which is how a fork head is shown to be refused.
 | `path` | `PRAETOR_PATH` | `--path=<value>`, and the `--source`/`--target-dir` of the `compile-context --verify` that follows an adopt run; an empty value is refused before anything runs |
 | `mode` | `PRAETOR_MODE` | selects the subcommand, `adopt` or `dogfood`; any other value is refused |
 | `dry-run` | `PRAETOR_DRY_RUN` | `--dry-run=<value>`; in `dogfood` mode it changes nothing, because `dogfood` applies adoptions only to `--targets` repositories (`testTargetAdoptions` in `internal/dogfood/dogfood.go`) and the action passes none, so the host is audited either way |
-| `force` | `PRAETOR_FORCE` | `--force=<value>`, adopt only |
+| `force` | `PRAETOR_FORCE` | `--force=<value>`, adopt only: the refresh in [What a forced re-adoption changes](#what-a-forced-re-adoption-changes). `--force` rebuilds `.standards.lock` and needs `--lock-source-root`, which the action does not pass, so `force: true` stops at the lock step with `new lock pins require an explicit verified lock source root` (`reconcileLockfile` in `internal/adopt/lock.go`) |
 | `record-baseline` | `PRAETOR_RECORD_BASELINE` | `--record-baseline=<value>`, adopt only |
 | `go-version` | `actions/setup-go` | the toolchain the step compiles `standardsctl` with; it never reaches `standardsctl`, and it has to satisfy the `go` directive of praetor's `go.mod` |
 | `cache` | `actions/setup-go` | its `cache` input, default `true` as in `setup-go` itself; set `false` in a job a pull request or its comment starts, and in a job that keeps its own Go cache (`TestPraetorAdoptAction_Positive_CacheInputReachesSetupGo`) |

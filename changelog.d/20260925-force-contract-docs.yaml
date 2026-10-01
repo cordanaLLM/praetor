@@ -1,0 +1,4 @@
+type: fixed
+title: 'adopt --help, the standards_adopt schema and docs/adoption.md state what --force rewrites, merges and keeps, and scripts/adopt_repos.sh passes the lock source --force needs'
+issue: "#502"
+breaking: false

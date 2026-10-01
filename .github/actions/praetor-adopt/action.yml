@@ -16,7 +16,7 @@ inputs:
     required: false
     default: "false"
   force:
-    description: "Force overwrite existing configurations"
+    description: "adopt: pass --force, the refresh docs/adoption.md describes under 'What a forced re-adoption changes': it rebuilds .standards.lock and rewrites the drifted files audit compares byte for byte, and overwrites no other file audit does not verify. --force needs a lock source, which this action does not pass, so true stops at the lock step"
     required: false
     default: "false"
   record-baseline:
