@@ -236,6 +236,16 @@ jobs:
         if: steps.filter.outputs.run_docs == 'true' && steps.filter.outputs.skip_heavy_gates == 'true' && github.event_name != 'push'
         run: make docs-references
 
+      # #338: how far the committed .devcontainer bundle is behind the source it was cut from.
+      # The step prints the commit count and age and fails only past the devcontainer.freshness
+      # bounds in .standards.yaml. Heavy runs reach the same target through verify-all; this step
+      # covers the light runs that skip it, because every landed change, documentation included,
+      # moves the bundle one commit further behind. The checkout above fetches full history,
+      # which the commit count needs.
+      - name: DevContainer Bundle Freshness
+        if: steps.filter.outputs.skip_heavy_gates == 'true' && github.event_name != 'push'
+        run: make devcontainer-freshness
+
       # Heavy changes use the complete local authority once, including race tests,
       # context, audit, all configured linters, vulnerability and AST security scans.
       # Lightweight changes retain their selective governance checks below.

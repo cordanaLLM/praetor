@@ -1,0 +1,140 @@
+name: Refresh DevContainer Bundle
+
+# The committed .devcontainer bundle carries a snapshot of the Go source `go build
+# ./cmd/standardsctl` reads. `make devcontainer-freshness`, in verify-all and in CI, reports how
+# far that snapshot is behind and fails past the devcontainer.freshness bounds in .standards.yaml
+# (#338). This job is the owned refresh that keeps it inside them: once a week it regenerates the
+# bundle from main and opens one pull request with the result, or updates the one already open,
+# so the regeneration is a reviewed change of its own instead of a large unrelated diff inside
+# whatever change next touches the bundle.
+#
+# Token. GITHUB_TOKEN can push the refresh branch, but this repository does not let it open pull
+# requests (sync-models.yml), and GitHub starts no workflow for a push or pull request made with
+# GITHUB_TOKEN, so that pull request would carry no checks. The job therefore publishes with the
+# PRAETOR_PR_TOKEN secret, a token with contents and pull-requests write on this repository, when
+# one is configured. Without it the push still succeeds and opening the pull request fails with
+# an error naming the branch, from which an operator opens it.
+#
+# Identity, sign-off and landing follow adopt.yml: the commit is signed off (DCO 1.1) under the
+# PRAETOR_BOT_NAME / PRAETOR_BOT_EMAIL identity. It carries no receipt, so like a Renovate pull
+# request it is landed by the landing pipeline taking it over (docs/guides/contributing.md).
+#
+# Linux only (HISS-21): the job regenerates committed files and opens a pull request; it checks
+# nothing a macOS or Windows leg could disagree about. The checks, Platform Neutrality legs
+# included, run on that pull request.
+on:
+  schedule:
+    - cron: '0 5 * * 1' # Weekly on Monday at 05:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  refresh:
+    # Engine-only: skipped outside the canonical repository (#189). The literal is the
+    # .standards.yaml identity; internal/forge/workflow_guard_test.go holds the two equal.
+    name: Regenerate DevContainer Bundle (canonical repository only)
+    if: github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor')
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      # The regeneration builds and runs praetorctl from this checkout, so the checkout keeps no
+      # credential for it to find; the publishing step is handed the token on its own. The commit
+      # count needs the full history.
+      - name: Checkout Source Code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Go Toolchain
+        uses: actions/setup-go@v7
+        with:
+          go-version: '1.27'
+          cache: false
+
+      - name: Restore Go Module And Build Caches
+        uses: ./.github/actions/go-cache
+        with:
+          job: devcontainer-refresh
+          go-version: '1.27'
+
+      # Past the bound the check exits non-zero, which is when the refresh matters most, so its
+      # report is kept for the pull request body and its exit status does not stop the job.
+      - name: Measure The Committed Bundle
+        run: |
+          status=0
+          go run ./cmd/standardsctl devcontainer freshness > "$RUNNER_TEMP/freshness.txt" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/freshness.txt"
+          echo "devcontainer freshness exited $status before regeneration"
+
+      # --force replaces only the bundle files. The recorded images are kept unless one is an
+      # earlier reviewed default (InheritRecordedImages, docs/guides/devcontainer-bootstrap.md).
+      - name: Regenerate The Bundle From This Checkout
+        run: go run ./cmd/standardsctl devcontainer generate --source-root . --force
+
+      - name: Verify The Regenerated Bundle
+        run: |
+          go run ./cmd/standardsctl devcontainer verify
+          go run ./cmd/standardsctl devcontainer freshness
+
+      # The refresh branch belongs to this job: each run rebuilds it from the default branch and
+      # force-pushes it, so an open refresh pull request always carries one regeneration of the
+      # current tip. The token reaches git only through the environment of the push, as the
+      # authorization header actions/checkout would have persisted.
+      - name: Open Or Update The Refresh Pull Request
+        timeout-minutes: 5
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.PRAETOR_PR_TOKEN || github.token }}
+          GIT_AUTHOR_NAME: ${{ vars.PRAETOR_BOT_NAME || 'github-actions[bot]' }}
+          GIT_AUTHOR_EMAIL: ${{ vars.PRAETOR_BOT_EMAIL || '41898282+github-actions[bot]@users.noreply.github.com' }}
+          BASE_BRANCH: ${{ github.event.repository.default_branch }}
+          REFRESH_BRANCH: chore/devcontainer-bundle-refresh
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- .devcontainer; then
+            echo "devcontainer-refresh: the committed bundle already carries this checkout's source; nothing to publish"
+            exit 0
+          fi
+          base_sha="$(git rev-parse HEAD)"
+          title="chore(devcontainer): regenerate the committed source bundle"
+          git config user.name "$GIT_AUTHOR_NAME"
+          git config user.email "$GIT_AUTHOR_EMAIL"
+          git switch -C "$REFRESH_BRANCH"
+          git add -- .devcontainer
+          git commit --signoff -m "$title" \
+            -m "Regenerated from $base_sha by .github/workflows/devcontainer-refresh.yml, so the bundle carries the build source of that commit again (#338)."
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')"
+          echo "::add-mask::$auth"
+          GIT_CONFIG_COUNT=1 \
+            GIT_CONFIG_KEY_0="http.$GITHUB_SERVER_URL/.extraheader" \
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth" \
+            git push --force origin "HEAD:refs/heads/$REFRESH_BRANCH"
+          {
+            echo "## Summary of Changes"
+            echo
+            echo "Scheduled regeneration of the committed \`.devcontainer\` bundle from $base_sha (#338). Only the bundle files change."
+            echo
+            echo "Freshness before regeneration:"
+            echo
+            echo '```text'
+            cat "$RUNNER_TEMP/freshness.txt"
+            echo '```'
+          } > "$RUNNER_TEMP/body.md"
+          number="$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$REFRESH_BRANCH" --base "$BASE_BRANCH" --state open --json number --jq '.[0].number // empty')"
+          if [ -n "$number" ]; then
+            gh pr edit "$number" --repo "$GITHUB_REPOSITORY" --title "$title" --body-file "$RUNNER_TEMP/body.md"
+            echo "devcontainer-refresh: updated pull request #$number"
+          elif ! gh pr create --repo "$GITHUB_REPOSITORY" --base "$BASE_BRANCH" --head "$REFRESH_BRANCH" --title "$title" --body-file "$RUNNER_TEMP/body.md"; then
+            echo "::error::devcontainer-refresh: pushed $REFRESH_BRANCH but could not open its pull request; configure the PRAETOR_PR_TOKEN secret or open the pull request from that branch"
+            exit 1
+          fi

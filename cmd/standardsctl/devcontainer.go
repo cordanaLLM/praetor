@@ -13,8 +13,12 @@ import (
 
 type devContainerOptions struct {
 	configPath, outputPath, sourceRoot, builderImage, baseImage string
-	verify, force                                               bool
+	verify, force, freshness                                    bool
 }
+
+// devContainerFreshnessBound bounds one freshness check: it recaptures the build source, as
+// preparation does, and reads three git answers.
+const devContainerFreshnessBound = 5 * time.Minute
 
 func parseDevContainerOptions(args []string) (devContainerOptions, error) {
 	var opts devContainerOptions
@@ -30,21 +34,41 @@ func parseDevContainerOptions(args []string) (devContainerOptions, error) {
 	if err != nil {
 		return opts, err
 	}
-	action := positionalAt(positional, 0, "generate")
-	if action != "generate" && action != "verify" {
-		return opts, fmt.Errorf("unknown devcontainer action: %s (supported: generate, verify)", action)
+	return opts, applyDevContainerAction(&opts, positionalAt(positional, 0, "generate"))
+}
+
+// applyDevContainerAction selects verify or freshness from the positional action and refuses
+// options the selected action would ignore.
+func applyDevContainerAction(opts *devContainerOptions, action string) error {
+	switch action {
+	case "freshness":
+		if opts.generationSelected() || opts.verify {
+			return fmt.Errorf("freshness measures the committed bundle; generation and verify options are not accepted")
+		}
+		opts.freshness = true
+	case "generate", "verify":
+		opts.verify = opts.verify || action == "verify"
+		if opts.verify && opts.generationSelected() {
+			return fmt.Errorf("verify uses the recorded bootstrap specification; generation-only options are not accepted")
+		}
+	default:
+		return fmt.Errorf("unknown devcontainer action: %s (supported: generate, verify, freshness)", action)
 	}
-	opts.verify = opts.verify || action == "verify"
-	if opts.verify && (opts.sourceRoot != "" || opts.builderImage != "" || opts.baseImage != "" || opts.force) {
-		return opts, fmt.Errorf("verify uses the recorded bootstrap specification; generation-only options are not accepted")
-	}
-	return opts, nil
+	return nil
+}
+
+// generationSelected reports whether any generation-only option was given.
+func (o devContainerOptions) generationSelected() bool {
+	return o.sourceRoot != "" || o.builderImage != "" || o.baseImage != "" || o.force
 }
 
 func runDevContainer(args []string) error {
 	opts, err := parseDevContainerOptions(args)
 	if err != nil {
 		return err
+	}
+	if opts.freshness {
+		return runDevContainerFreshness(opts)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -94,5 +118,32 @@ func generateDevContainerBundle(ctx context.Context, manifest *config.Manifest, 
 			"(it replaces this unedited placeholder without --force)", devcontainer.ErrBootstrapUnavailable, bundle.Spec().Reason)
 	}
 	fmt.Printf("[PREPARED, NOT EXECUTED] %s for %s; source %s (%d companions)\n", opts.outputPath, bundle.Config.Name, bundle.Spec().SourceSHA256, len(bundle.Artifacts))
+	return nil
+}
+
+// runDevContainerFreshness reports how far the committed bundle at the output path is behind
+// the working tree beside the manifest, and fails past the manifest's devcontainer.freshness
+// bounds (#338).
+func runDevContainerFreshness(opts devContainerOptions) error {
+	manifest, err := config.LoadManifest(opts.configPath)
+	if err != nil {
+		return err
+	}
+	maxCommits, maxAgeDays := manifest.DevContainer.FreshnessBounds()
+	bounds := devcontainer.FreshnessBounds{MaxCommits: maxCommits, MaxAge: time.Duration(maxAgeDays) * 24 * time.Hour}
+	ctx, cancel := context.WithTimeout(context.Background(), devContainerFreshnessBound)
+	defer cancel()
+	report, err := devcontainer.CheckFreshness(ctx, filepath.Dir(opts.configPath), opts.outputPath, bounds, time.Now())
+	if err != nil {
+		return fmt.Errorf("devcontainer freshness check failed: %w", err)
+	}
+	if err := report.Err(); err != nil {
+		return err
+	}
+	label := "[FRESH]"
+	if !report.Fresh() {
+		label = "[DRIFT WITHIN BOUNDS]"
+	}
+	fmt.Println(label, report.String())
 	return nil
 }

@@ -174,6 +174,75 @@ DevContainers are preserved and reported as execution-unverified. Forced
 adoption keeps recorded images by the same rule and lists each note as a
 warning.
 
+## Bundle freshness
+
+`praetorctl devcontainer verify` checks a bundle against its own records, so a
+bundle cut a hundred commits ago verifies as cleanly as one cut a minute ago
+([#338](https://github.com/cordanaLLM/praetor/issues/338)). The freshness check
+compares it with the tree instead:
+
+```bash
+praetorctl devcontainer freshness
+```
+
+It recaptures the build source from the working tree beside `--config` with the
+capture generation uses, and compares its digest with the recorded
+`sourceSHA256`. Equal digests print `[FRESH]`. Otherwise the check finds the
+newest commit reachable from `HEAD` that changed a bundle file
+(`devcontainer.json`, `Dockerfile.praetor` or a `praetor-source.*.b64` part),
+counts the commits from it to `HEAD`, and measures its committer age. Inside the
+bounds it prints both numbers under `[DRIFT WITHIN BOUNDS]` and passes; past
+either bound it fails with them and the regeneration command. A bundle exactly
+at a bound passes (`CheckFreshness` in
+`internal/devcontainer/bootstrap_freshness.go`).
+
+The bounds are declared in `.standards.yaml`; an unset key keeps its default:
+
+```yaml
+devcontainer:
+  freshness:
+    max_commits: 500
+    max_age_days: 21
+```
+
+The commit default is about three weeks of this repository's landing rate in
+September 2026, and the age default is three runs of the weekly refresh below.
+Each value must be an integer from 1 to 100,000 commits or 3,650 days
+(`internal/config/devcontainer_policy.go`).
+
+A missing configuration, one without a bootstrap, an unavailable bundle, a
+source root that does not declare the Praetor module, a shallow clone, a drifted
+bundle no commit records, and any git failure are errors, never a pass. The
+check therefore needs the full history: CI checks out with `fetch-depth: 0`. It
+measures a Praetor source checkout's own bundle; an adopted repository whose
+bundle came from a separate Praetor checkout gets an error rather than a
+measurement. Tests: `internal/devcontainer/bootstrap_freshness_test.go`,
+`internal/config/devcontainer_policy_test.go` and
+`cmd/standardsctl/devcontainer_freshness_test.go`.
+
+`make devcontainer-freshness` runs the check inside `make verify-all`, and the
+`DevContainer Bundle Freshness` step of `.github/workflows/ci.yml` runs it on
+the light CI runs that skip verify-all. It is not part of `verify` on purpose:
+`validateReadyBootstrap` in `internal/devcontainer/bootstrap.go` stays the
+self-consistency check that freshness backstops, so verification needs no Git
+history.
+
+`.github/workflows/devcontainer-refresh.yml` keeps the bundle inside the bounds.
+Every Monday at 05:00 UTC, and on dispatch, in the canonical repository only, it
+records the freshness report, regenerates the bundle with
+`praetorctl devcontainer generate --source-root . --force`, verifies it, and
+force-pushes the result to `chore/devcontainer-bundle-refresh`. It opens one
+pull request from that branch, or updates the open one, with the report in its
+body. The commit is signed off under the `PRAETOR_BOT_NAME` and
+`PRAETOR_BOT_EMAIL` identity `adopt.yml` uses. The job publishes with the
+`PRAETOR_PR_TOKEN` secret when one is configured, because this repository does
+not let `GITHUB_TOKEN` open pull requests and a pull request opened with it runs
+no checks; without the secret the branch is pushed and the job fails naming it.
+The pull request carries no receipt, so the landing pipeline takes it over like
+a [Renovate pull request](contributing.md#renovate-pull-requests). To refresh by
+hand, run the same generate command from a clean checkout and commit the
+`.devcontainer` changes on their own.
+
 ## Migration
 
 This release is breaking for existing adopter files and API callers.

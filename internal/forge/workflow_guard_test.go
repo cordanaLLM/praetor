@@ -142,7 +142,7 @@ func TestEngineWorkflowsGuardEveryScheduledOrPublishingJob(t *testing.T) {
 // the manifest rather than merely present.
 func TestEngineWorkflowGuardsFailForAnotherIdentity(t *testing.T) {
 	workflows, _ := engineWorkflows(t)
-	for _, name := range []string{"sync-flavors.yml", "sync-models.yml", "pages.yml", "wiki-sync.yml", "release-binaries.yml", "security.yml"} {
+	for _, name := range []string{"sync-flavors.yml", "sync-models.yml", "pages.yml", "wiki-sync.yml", "release-binaries.yml", "security.yml", "devcontainer-refresh.yml"} {
 		violations, err := workflowGuardViolations(name, workflows[name], forkIdentity)
 		if err != nil || len(violations) == 0 {
 			t.Errorf("%s: a guard for another repository passed (violations %v, err %v)", name, violations, err)
