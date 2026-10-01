@@ -10,8 +10,10 @@ python3 scripts/dev_mcp.py probe
 This builds the current Go sources into a temporary binary under the checkout's
 git-ignored `bin/`, initializes its real stdio MCP transport, and checks
 `serverInfo.version` against `provenance.server_version` (`dev-<source_sha256>`, written
-into `main.version` with `-X`, the variable a release build sets too). The
-build stays inside the checkout so the
+into `main.version` with `-X`, the variable a release build sets too). Reports the
+`standards_dogfood_suite` and `standards_dogfood_discover` tools write record the same
+string as `engine_build.version` (`ServerOptions.Build` in `cmd/standards-mcp/server.go`).
+The build stays inside the checkout so the
 [engine build check](workstation-update.md#engine-build-check) accepts its context writes
 even when an untracked file stamps it `-dirty`. The report includes the checkout,
 source and binary hashes, Git revision, dirty state, and Go version. Keep that
