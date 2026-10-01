@@ -1,0 +1,4 @@
+type: fixed
+title: One shared strict-JSON reader refuses case-variant duplicate keys and unpaired surrogate escapes
+issue: "310"
+breaking: true

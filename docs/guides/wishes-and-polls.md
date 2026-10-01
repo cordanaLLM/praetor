@@ -134,8 +134,9 @@ private data.
 
 The supported workflow is: initialize, add and moderate a wish, open a local
 poll, collect or withdraw votes, read the status, and close the poll. Each CLI
-request example above is a separate JSON file; strict decoding rejects
-duplicate or unknown JSON fields. Reviewers then decide whether a wish becomes
+request example above is a separate JSON file; strict decoding
+(`internal/strictjson`) rejects duplicate JSON fields, case variants included,
+and unknown ones. Reviewers then decide whether a wish becomes
 a package or governance task. External
 projections may be proposed later, but no current command sends messages,
 creates polls, reads remote votes, or deploys a bot.
