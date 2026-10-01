@@ -80,6 +80,10 @@ documentation gate uses the same reader to decide whether the project already ow
 `internal/adopt/verification_makefile_define.go`). The table tests behind this contract are in
 `internal/adopt/verification_makefile_target_test.go` and
 `internal/adopt/verification_makefile_define_test.go`; each row was measured against GNU Make 4.4.1.
+When an edited documentation gate block stops the run, whether adoption was appending verification
+targets or only attaching the gate, the error names the forced re-adoption that restores the block,
+`praetorctl adopt --force --lock-source-root=<praetor checkout>`, with the run's own lock source
+when it was given one (`documentationMakefile` in `internal/adopt/verification_makefile.go`).
 
 The report's `steps` array records each step of the adoption chain it reached
 (`completed`, `declined` or `failed`) with the warnings and errors that step
