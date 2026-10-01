@@ -170,6 +170,83 @@ func TestResolveFlavorRef_Boundary_PrereleaseBuildMetadataAndNonSemverTagsIgnore
 	}
 }
 
+func TestResolveFlavorRef_Boundary_UnmatchedPatternResolvesToPendingWithoutError(t *testing.T) {
+	f := newTagFixture(t)
+	// A pattern that matches nothing returns ok=false, err=nil: pending flavor, not an error (#671).
+	if got, ok, err := resolveFlavorRef(context.Background(), f.dir, "refs/tags/v*"); ok || err != nil || got != "" {
+		t.Fatalf("unmatched tag pattern must resolve to pending: got=%q ok=%v err=%v", got, ok, err)
+	}
+	if got, ok, err := resolveFlavorRef(context.Background(), f.dir, "refs/heads/lts-*"); ok || err != nil || got != "" {
+		t.Fatalf("unmatched branch pattern must resolve to pending: got=%q ok=%v err=%v", got, ok, err)
+	}
+}
+
+func TestResolveFlavorRef_Negative_FailedGitReadReturnsErrorNamingPatternAndCause(t *testing.T) {
+	f := newTagFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	// A failed git read for a tag pattern must return an error naming the pattern and the cause (#671).
+	got, ok, err := resolveFlavorRef(ctx, f.dir, "refs/tags/v*")
+	if err == nil || ok || got != "" {
+		t.Fatalf("cancelled tag read must fail with error: got=%q ok=%v err=%v", got, ok, err)
+	}
+	mustContain(t, err.Error(), `"refs/tags/v*"`, "context canceled")
+
+	// A failed git read for a branch pattern must also name the pattern and the cause.
+	got, ok, err = resolveFlavorRef(ctx, f.dir, "refs/heads/lts-*")
+	if err == nil || ok || got != "" {
+		t.Fatalf("cancelled branch read must fail with error: got=%q ok=%v err=%v", got, ok, err)
+	}
+	mustContain(t, err.Error(), `"refs/heads/lts-*"`, "context canceled")
+
+	// A failed git read for a concrete ref must also name the ref and the cause (#671).
+	got, ok, err = resolveFlavorRef(ctx, f.dir, "refs/heads/main")
+	if err == nil || ok || got != "" {
+		t.Fatalf("cancelled concrete ref read must fail with error: got=%q ok=%v err=%v", got, ok, err)
+	}
+	mustContain(t, err.Error(), `"refs/heads/main"`, "context canceled")
+
+	// A failed git read during fetchCurrentTags under a cancelled context must record an error (#671).
+	cfg := &flavors.Config{
+		Flavors: map[string]flavors.Flavor{
+			"bleeding": {SourceRef: "refs/heads/main"},
+		},
+	}
+	resolver := &flavorRefResolver{ctx: ctx, dir: f.dir}
+	tags := fetchCurrentTags(cfg, resolver.resolve)
+	if len(tags) != 0 || resolver.err == nil {
+		t.Fatalf("cancelled current-tag read must record error: tags=%v err=%v", tags, resolver.err)
+	}
+	mustContain(t, resolver.err.Error(), `"refs/tags/bleeding"`, "context canceled")
+}
+
+func TestResolveFlavorRef_Negative_CorruptPackedRefsFailsConcreteAndTagReads(t *testing.T) {
+	f := newTagFixture(t)
+	// Corrupt packed-refs so git rev-parse fails on concrete refs and tags.
+	writeFixtureFile(t, f.dir, filepath.Join(".git", "packed-refs"), "corrupt refs garbage\n")
+
+	// Concrete ref read must return a wrapped error, not ok=false, err=nil (#671).
+	got, ok, err := resolveFlavorRef(context.Background(), f.dir, "refs/heads/main")
+	if err == nil || ok || got != "" {
+		t.Fatalf("corrupt ref store concrete read must fail with error: got=%q ok=%v err=%v", got, ok, err)
+	}
+	mustContain(t, err.Error(), `"refs/heads/main"`, "failed to resolve ref")
+
+	// Current tag read via fetchCurrentTags must also record the error.
+	cfg := &flavors.Config{
+		Flavors: map[string]flavors.Flavor{
+			"bleeding": {SourceRef: "refs/heads/main"},
+		},
+	}
+	resolver := &flavorRefResolver{ctx: context.Background(), dir: f.dir}
+	tags := fetchCurrentTags(cfg, resolver.resolve)
+	if len(tags) != 0 || resolver.err == nil {
+		t.Fatalf("corrupt ref store current-tag read must record error: tags=%v err=%v", tags, resolver.err)
+	}
+	mustContain(t, resolver.err.Error(), `"refs/tags/bleeding"`, "failed to resolve ref")
+}
+
 // flavorFixture is a repository shaped like this one before its first release: main has
 // moved past an old `latest` tag, no v* tag and no lts-* branch exist, and a bare
 // repository stands in for the forge.
@@ -326,5 +403,60 @@ func TestPrintFlavorPlan_HeadingIsRepositoryNeutral(t *testing.T) {
 		if len(transitions) > 0 && !strings.Contains(out, "<absent> -> <unresolved>") {
 			t.Errorf("transition line missing: %q", out)
 		}
+	}
+}
+
+func TestRunFlavors_Negative_FailedGitReadFailsPlanAndSync(t *testing.T) {
+	f := newFlavorFixture(t)
+	// Corrupt packed-refs so git for-each-ref fails with an error on pattern reads.
+	writeFixtureFile(t, f.repo, filepath.Join(".git", "packed-refs"), "corrupt refs garbage\n")
+
+	out, err := captureStdout(t, func() error {
+		return runFlavors([]string{"plan", "--config=" + f.config, "--dir=" + f.repo})
+	})
+	if err == nil {
+		t.Fatalf("plan must fail when git read fails:\n%s", out)
+	}
+	mustContain(t, err.Error(), "failed to resolve flavor refs", "failed to resolve ref")
+	if strings.Contains(out, "<unresolved>") {
+		t.Errorf("a failed git read must not print a plan that reads as pending:\n%s", out)
+	}
+
+	if out, err := f.sync(t, "--push"); err == nil {
+		t.Fatalf("sync must fail when git read fails:\n%s", out)
+	}
+	for _, dir := range []string{f.repo, f.remote} {
+		if got := f.tagAt(t, dir, "bleeding"); got != "" {
+			t.Errorf("a failed git read sync moved bleeding in %s to %q", dir, got)
+		}
+	}
+}
+
+func TestRunFlavors_Negative_ConcreteOnlyWithCorruptPackedRefsFails(t *testing.T) {
+	f := newFlavorFixture(t)
+	// Config with only a concrete ref (no glob patterns). Under a corrupt ref store,
+	// resolveRefCommit must not map rev-parse failure to pending (#671).
+	concreteConfig := filepath.Join(f.repo, ".config", "flavors-concrete.yaml")
+	writeFixtureFile(t, f.repo, filepath.Join(".config", "flavors-concrete.yaml"), `version: 1
+flavors:
+  bleeding: {source_ref: "refs/heads/main"}
+`)
+	writeFixtureFile(t, f.repo, filepath.Join(".git", "packed-refs"), "corrupt refs garbage\n")
+
+	out, err := captureStdout(t, func() error {
+		return runFlavors([]string{"plan", "--config=" + concreteConfig, "--dir=" + f.repo})
+	})
+	if err == nil {
+		t.Fatalf("plan must fail on concrete ref under corrupt ref store, got nil err and output:\n%s", out)
+	}
+	mustContain(t, err.Error(), "failed to resolve flavor refs", "failed to resolve ref")
+	if strings.Contains(out, "[UNRESOLVED]") || strings.Contains(out, "<unresolved>") {
+		t.Errorf("corrupt ref store must not produce unresolved/pending output:\n%s", out)
+	}
+
+	if outSync, errSync := captureStdout(t, func() error {
+		return runFlavors([]string{"sync", "--config=" + concreteConfig, "--dir=" + f.repo})
+	}); errSync == nil {
+		t.Fatalf("sync must fail on concrete ref under corrupt ref store, got nil err and output:\n%s", outSync)
 	}
 }

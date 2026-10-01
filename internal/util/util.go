@@ -596,7 +596,7 @@ func ResolveRemoteIdentity(ctx context.Context, repoPath string) (owner, repo st
 // ErrRepoIdentityUnresolved; a read git did not answer is any other error.
 func readOriginURL(ctx context.Context, repoPath string) (string, error) {
 	remote, err := RunGit(ctx, repoPath, "config", "--get", "remote.origin.url")
-	if err != nil && !gitAnsweredUnset(ctx, err) {
+	if err != nil && !GitAnsweredUnset(ctx, err) {
 		return "", fmt.Errorf("util: read the origin remote in %q: %w", repoPath, err)
 	}
 	if strings.TrimSpace(remote) == "" {
@@ -605,10 +605,10 @@ func readOriginURL(ctx context.Context, repoPath string) (string, error) {
 	return remote, nil
 }
 
-// gitAnsweredUnset reports whether err is git config's answer "key not set" (exit status
-// 1) rather than a read that did not complete. A context that ended during the call is
-// never an answer, whatever status the stopped process reported.
-func gitAnsweredUnset(ctx context.Context, err error) bool {
+// GitAnsweredUnset reports whether err is git's answer that a requested key or ref is unset
+// (exit status 1) rather than a read that did not complete. A context that ended during the
+// call is never an answer, whatever status the stopped process reported.
+func GitAnsweredUnset(ctx context.Context, err error) bool {
 	if ctx != nil && ctx.Err() != nil {
 		return false
 	}
