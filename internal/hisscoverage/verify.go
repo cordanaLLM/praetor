@@ -266,8 +266,11 @@ func appendFindings(report *Report, ruleID, lang, bucket string, results []fixtu
 
 // replayBucket scans every fixture in one bucket and reports whether the rule fired on it.
 // An absent bucket is not an error: a claim may legitimately have no negative or gap case.
+// base is the claim's directory, <FixtureDir>/<rule>/<language>, so its name is the language
+// the fixtures are staged as (hiss.FixturePath).
 func replayBucket(ctx context.Context, base, bucket, ruleID string, report *Report) ([]fixtureResult, error) {
 	dir := filepath.Join(base, bucket)
+	staged := fixtureStage{ruleID: ruleID, language: filepath.Base(base)}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if util.DirectoryAbsent(dir, err) {
@@ -280,7 +283,7 @@ func replayBucket(ctx context.Context, base, bucket, ruleID string, report *Repo
 		if entries[i].IsDir() {
 			continue
 		}
-		result, err := fixtureReported(ctx, dir, entries[i].Name(), ruleID)
+		result, err := staged.reported(ctx, dir, entries[i].Name())
 		if err != nil {
 			return nil, err
 		}
@@ -290,13 +293,21 @@ func replayBucket(ctx context.Context, base, bucket, ruleID string, report *Repo
 	return results, nil
 }
 
-// fixtureReported scans one fixture in isolation and reports whether ruleID fired as a
-// violation and whether the scanner measured it over one of the rule's limits.
+// fixtureStage is the rule a bucket's fixtures are replayed for and the language they are
+// staged as.
+type fixtureStage struct {
+	ruleID   string
+	language string
+}
+
+// reported scans one fixture in isolation and reports whether the rule fired as a violation
+// and whether the scanner measured it over one of the rule's limits.
 //
 // Each fixture is scanned alone in a temporary directory so a finding cannot be attributed
 // to a neighbouring file, and so a fixture that fails to parse cannot silently suppress the
-// rest of its bucket.
-func fixtureReported(ctx context.Context, dir, name, ruleID string) (result fixtureResult, err error) {
+// rest of its bucket. It is staged where the scan reads its language (hiss.FixturePath): a
+// GitHub Actions workflow in .github/workflows, any other fixture at the root.
+func (stage fixtureStage) reported(ctx context.Context, dir, name string) (result fixtureResult, err error) {
 	result.name = name
 	data, err := contextopt.ReadSnapshot(ctx, filepath.Join(dir, name))
 	if err != nil {
@@ -310,15 +321,19 @@ func fixtureReported(ctx context.Context, dir, name, ruleID string) (result fixt
 	// rather than discarded: a verifier that silently ignores its own errors is the shape
 	// this package exists to detect.
 	defer func() { err = errors.Join(err, os.RemoveAll(tmp)) }()
-	if err := os.WriteFile(filepath.Join(tmp, name), data, 0o600); err != nil {
+	target := filepath.Join(tmp, filepath.FromSlash(hiss.FixturePath(stage.language, name)))
+	if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
+		return result, fmt.Errorf("stage fixture %s: %w", name, err)
+	}
+	if err := os.WriteFile(target, data, 0o600); err != nil {
 		return result, fmt.Errorf("stage fixture %s: %w", name, err)
 	}
 	rep, scanErr := hiss.Scan(ctx, tmp, hiss.ScanOptions{})
 	if scanErr != nil {
 		return result, fmt.Errorf("scan fixture %s: %w", name, scanErr)
 	}
-	result.detected = rep.Breakdown[ruleID] > 0
-	result.measured = measuresRule(rep.Complexity.Measurements, ruleID)
+	result.detected = rep.Breakdown[stage.ruleID] > 0
+	result.measured = measuresRule(rep.Complexity.Measurements, stage.ruleID)
 	return result, nil
 }
 

@@ -1,0 +1,12 @@
+# The job's defaults.run.shell makes the steps on a Windows runner bash scripts, so || : there is
+# read and reported.
+on: push
+jobs:
+  clean:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - run: |
+          rm -rf dist || :

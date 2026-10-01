@@ -1,0 +1,69 @@
+# A function of 61 lines, header to closing brace, exceeds the HISS-04 limit of 60.
+on: push
+jobs:
+  long:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          build_all() {
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+          }
+          build_all

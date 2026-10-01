@@ -1,0 +1,15 @@
+# The runner is chosen by the matrix, so the block runs under pwsh on the Windows leg and under
+# bash elsewhere. Its shell is decided only when the workflow runs: the block is counted as an
+# unresolved unscanned block and its recursion goes unreported.
+on: push
+jobs:
+  walk:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - run: |
+          countdown() {
+            countdown
+          }

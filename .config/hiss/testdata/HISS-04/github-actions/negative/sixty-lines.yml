@@ -1,0 +1,68 @@
+# A function of exactly 60 lines sits at the HISS-04 limit and is not reported.
+on: push
+jobs:
+  long:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          build_all() {
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+            printf '%s\n' step
+          }
+          build_all

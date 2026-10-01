@@ -84,8 +84,15 @@ func (shellLanguage) scan(src sourceFile, rep *ScanReport, opts ScanOptions) boo
 		return false
 	}
 	interp.bash = interp.bash || strings.HasSuffix(strings.ToLower(src.rel), ".bash")
-	// The findings are collected per file and reported only once the file was read cleanly.
-	s := &shellScanner{rel: src.rel, rep: &ScanReport{}, maxLOC: opts.MaxFuncLOC, interp: interp}
+	return scanShellLines(src.rel, lines, interp, rep, opts)
+}
+
+// scanShellLines applies the shell rules to one script's lines, started as interp says, and
+// reports whether it read them. The findings are collected per script and reported only once
+// the script was read cleanly; a misread script reports none and is declined. A workflow's run:
+// block (workflow.go) is read here too, with the interpreter its step resolves to.
+func scanShellLines(rel string, lines []string, interp shellInterp, rep *ScanReport, opts ScanOptions) bool {
+	s := &shellScanner{rel: rel, rep: &ScanReport{}, maxLOC: opts.MaxFuncLOC, interp: interp}
 	s.strict.observe(interp.args)
 	for idx, line := range lines {
 		s.observe(idx+1, line)
@@ -96,7 +103,7 @@ func (shellLanguage) scan(src sourceFile, rep *ScanReport, opts ScanOptions) boo
 	}
 	s.reportRecursion()
 	s.reportStrictMode()
-	// Recursion and strict mode are decided at the end of the file.
+	// Recursion and strict mode are decided at the end of the script.
 	recordInLineOrder(rep, s.rep)
 	return true
 }
