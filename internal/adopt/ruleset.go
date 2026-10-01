@@ -160,7 +160,9 @@ var priorLabelTaxonomyDigests = map[string]string{
 // into a repository that has none. An existing taxonomy is the repository's configuration, so
 // --force leaves it alone: it used to replace it with a shorter three-label copy. The one
 // exception is an earlier taxonomy text adoption wrote and nobody edited: it holds the same
-// labels and failed yamllint's default document-start rule (BUG-782), so it is refreshed.
+// labels, and either failed yamllint's default document-start rule (BUG-782) or described
+// hiss-waiver as cryptographically signed (#393), so it is refreshed. An edited file is left to
+// sync, which rewrites a drifted managed description in place (cmd/standardsctl/sync.go).
 func reconcileLabels(ctx context.Context, s *adoptSession) error {
 	_, err := s.scaffoldFile(ctx, scaffold{
 		rel:       labelsFile,

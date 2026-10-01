@@ -127,6 +127,25 @@ func TestDefaultLabelTaxonomy_Negative(t *testing.T) {
 	}
 }
 
+// TestDefaultLabelTaxonomy_Negative_NoSignedWaiverClaim: no gate verifies a signature on a
+// waiver, so no label may say one is required, and hiss-waiver says so outright (#393). The
+// earlier text, "Requires cryptographically signed waiver approval", fails both checks.
+func TestDefaultLabelTaxonomy_Negative_NoSignedWaiverClaim(t *testing.T) {
+	waiver := ""
+	for _, label := range parseTaxonomy(t, DefaultLabelTaxonomy()) {
+		text := strings.ToLower(label.Description)
+		if strings.Contains(text, "cryptograph") || strings.Contains(strings.ReplaceAll(text, "not signed", ""), "signed") {
+			t.Errorf("label %s claims a signature: %q", label.Name, label.Description)
+		}
+		if label.Name == "hiss-waiver" {
+			waiver = text
+		}
+	}
+	if !strings.Contains(waiver, "not signed") {
+		t.Errorf("the hiss-waiver description must say waivers are not signed, got %q", waiver)
+	}
+}
+
 // TestDefaultLabelTaxonomy_Boundary asserts every call returns an independent copy, so a
 // caller that mutates the bytes cannot change what the next caller writes.
 func TestDefaultLabelTaxonomy_Boundary(t *testing.T) {
