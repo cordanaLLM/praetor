@@ -1,0 +1,4 @@
+type: fixed
+title: Render repository forge conventions in the social register from register.conventions or a detected changelog.d, never praetor's own
+issue: "#328"
+breaking: true
