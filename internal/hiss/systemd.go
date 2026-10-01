@@ -17,10 +17,10 @@ import (
 // while an empty one resets it. It decides:
 //
 //   - HISS-02 a Type=oneshot service with no TimeoutStartSec= or TimeoutSec=, whose start
-//     timeout systemd disables by default (systemd.service(5)); a start, stop or socket timeout
-//     set to infinity or 0, which both disable it; and a restarting service (Restart= other than
-//     no) whose StartLimitIntervalSec= is 0, which turns off the rate limit that stops a restart
-//     loop (systemd.unit(5)).
+//     timeout systemd disables by default (systemd.service(5)); a start, stop, abort or socket
+//     timeout set to infinity, or to 0 where systemd reads 0 as no timeout (all but the abort
+//     timeout); and a restarting service (Restart= other than no) whose StartLimitIntervalSec=
+//     is 0, which turns off the rate limit that stops a restart loop (systemd.unit(5)).
 //   - HISS-07 an Exec*= command prefixed with "-", whose failure systemd records but otherwise
 //     treats as success.
 //
@@ -37,10 +37,18 @@ const (
 // unitSections are the sections that make a .service or .socket file a unit.
 var unitSections = map[string]bool{"Unit": true, "Service": true, "Socket": true, "Install": true}
 
-// unitTimeouts are the timeout settings whose infinity or 0 disables the timeout, per section.
-var unitTimeouts = []string{
-	"Service.TimeoutStartSec", "Service.TimeoutStopSec", "Service.TimeoutSec", "Service.TimeoutAbortSec",
-	"Socket.TimeoutSec",
+// unitTimeout is a timeout setting, per section, that infinity disables. For all but
+// TimeoutAbortSec= systemd also reads 0 as no timeout (parse_sec_fix_0 in its unit loader); 0
+// there means an immediate abort, which is bounded.
+type unitTimeout struct {
+	key          string
+	zeroDisables bool
+}
+
+// unitTimeouts are the timeout settings checked for a disabled timeout.
+var unitTimeouts = []unitTimeout{
+	{"Service.TimeoutStartSec", true}, {"Service.TimeoutStopSec", true}, {"Service.TimeoutSec", true},
+	{"Service.TimeoutAbortSec", false}, {"Socket.TimeoutSec", true},
 }
 
 // systemdLanguage reads systemd service and socket units.
@@ -157,17 +165,18 @@ func (u unitFile) checkTimeouts(rep *ScanReport, rel string) {
 		recordViolation(rep, "HISS-02", rel, typ.line, "",
 			"Type=oneshot service sets no TimeoutStartSec=; systemd disables the start timeout for oneshot, so a hung command blocks forever")
 	}
-	for _, key := range unitTimeouts {
-		if s := u.last(key); s.value != "" && disablesTimeout(s.value) {
-			name := key[strings.IndexByte(key, '.')+1:]
+	for _, timeout := range unitTimeouts {
+		if s := u.last(timeout.key); s.value != "" && timeout.disabledBy(s.value) {
+			name := timeout.key[strings.IndexByte(timeout.key, '.')+1:]
 			recordViolation(rep, "HISS-02", rel, s.line, "", name+"="+s.value+" disables the timeout; set a finite bound")
 		}
 	}
 }
 
-// disablesTimeout reports a time span of infinity or zero, which systemd reads as no timeout.
-func disablesTimeout(value string) bool {
-	return value == "infinity" || isZeroSpan(value)
+// disabledBy reports a value that turns the timeout off: infinity, or zero where systemd reads it
+// as infinity.
+func (t unitTimeout) disabledBy(value string) bool {
+	return value == "infinity" || (t.zeroDisables && isZeroSpan(value))
 }
 
 // isZeroSpan reports a time span whose every number is zero, such as 0, 0s or 0min.

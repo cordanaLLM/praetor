@@ -47,6 +47,9 @@ func TestSystemdScanner_Boundaries(t *testing.T) {
 	assertScriptFindings(t, "reset.service", "[Service]\nType=oneshot\nTimeoutStartSec=30\nTimeoutStartSec=\nExecStart=/bin/x\n",
 		"HISS-02@2")
 	assertScriptFindings(t, "override.service", "[Service]\nTimeoutStopSec=infinity\nTimeoutStopSec=30\nExecStart=/bin/x\n")
+	// TimeoutAbortSec=0 aborts at once, which is bounded; only infinity disables it.
+	assertScriptFindings(t, "abort.service", "[Service]\nExecStart=/bin/x\nTimeoutAbortSec=0\n")
+	assertScriptFindings(t, "abort-forever.service", "[Service]\nExecStart=/bin/x\nTimeoutAbortSec=infinity\n", "HISS-02@3")
 	assertScriptFindings(t, "wrapped.service", "[Service]\nExecStart=/bin/run \\\n# comment\n  --long-option\nExecStartPre=- \\\n  /bin/prepare\n",
 		"HISS-07@5")
 	body := "[Service]\nType=oneshot\nExecStart=-/bin/x\n"

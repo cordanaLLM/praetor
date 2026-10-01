@@ -76,7 +76,7 @@ var catalog = []Rule{
 		ID:            "HISS-02",
 		Title:         "Loops & I/O - Bounded Loops & Mandatory I/O Timeouts",
 		Specification: "Every loop construct must possess a statically verifiable scalar upper bound: iterations(L) <= N_max.\nUnbounded loops without counter termination are banned. All I/O operations must accept and enforce explicit context.Context deadlines.",
-		Enforcement:   "The internal/hiss scanner, deciding a subset per language. Go: a for statement without a condition, a context without a deadline reaching a call, and the context-less exec.Command, net.Dial and http.Get families, outside tests and main.main. Rust, Python, C, JavaScript, TypeScript and Svelte: unbounded loop shapes only. Shell: unbounded loop shapes and a curl transfer without --max-time. systemd units: a oneshot service without a start timeout, a timeout set to infinity or 0, and a restarting service without a start rate limit. Each claim replays against .config/hiss/coverage.yaml via 'praetorctl hiss coverage --verify'.",
+		Enforcement:   "The internal/hiss scanner, deciding a subset per language. Go: a for statement without a condition, a context without a deadline reaching a call, and the context-less exec.Command, net.Dial and http.Get families, outside tests and main.main. Rust, Python, C, JavaScript, TypeScript and Svelte: unbounded loop shapes only. Shell: unbounded loop shapes and a curl transfer without --max-time. systemd units: a oneshot service without a start timeout, a disabled timeout, and a restarting service without a start rate limit. Each claim replays against .config/hiss/coverage.yaml via 'praetorctl hiss coverage --verify'.",
 		FailureAction: "Pre-commit and CI blocker.",
 		Scope:         "loops, I/O",
 		Directive: []Clause{

@@ -229,7 +229,8 @@ rules:
         rationale: >-
           A Type=oneshot service without TimeoutStartSec= or TimeoutSec= is reported, because
           systemd disables the start timeout for oneshot by default (systemd.service(5)); so is a
-          service or socket timeout set to infinity or 0, which systemd reads as no timeout, and a
+          service or socket timeout set to infinity, or to 0 where systemd reads 0 as no timeout
+          (every one but TimeoutAbortSec=, whose 0 aborts at once), and a
           service with Restart= other than no whose StartLimitIntervalSec= is 0, which turns off
           the rate limit that stops a restart loop (systemd.unit(5)). A bounded oneshot and a
           restarting daemon under a rate limit are not. A drop-in (.conf) that overrides a unit is
