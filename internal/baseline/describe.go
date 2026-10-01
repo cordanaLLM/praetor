@@ -35,6 +35,8 @@ const (
 	auditLister  = "'praetorctl audit --all-violations'"
 	recordRemedy = "'praetorctl baseline --record --allow-increase --reason=<why>'"
 	reRecord     = "'praetorctl baseline --record'"
+	// debtDeltaFlag judges touched files by debt delta (RatchetOptions.DebtDelta).
+	debtDeltaFlag = "'praetorctl audit --touched-debt-delta-reason=<why>'"
 )
 
 // shortCommitLen is how many characters of the compared commit a rejection prints.
@@ -84,16 +86,38 @@ func (c violationClass) lines(limit int) []string {
 	return append(out, fmt.Sprintf("  ... and %d more %s not shown; %s lists every one", hidden, noun, c.lister))
 }
 
-// newPartition splits NewViolations by attribution. Without an attribution for every entry,
-// all of them are unattributed.
-type newPartition struct {
+// rejectionPartition splits NewViolations by attribution and TouchedCleanViolations by whether
+// the baseline records them. Without an attribution for every new entry, all of them are
+// unattributed; without a baselined mark for every touched entry, touchedKnown is false and the
+// touched entries stay one class.
+type rejectionPartition struct {
 	introduced, changed, moved, unknown []Infraction
 	// movedTags holds, per moved entry, the tag naming the line the baseline records it at.
 	movedTags []string
+	// touchedNew and touchedBaselined split the touched-file violations once touchedKnown (#348).
+	touchedNew, touchedBaselined []Infraction
+	touchedKnown                 bool
 }
 
-func (r *RatchetResult) partitionNew() newPartition {
-	var p newPartition
+// partition splits the rejection's violations for Summary.
+func (r *RatchetResult) partition() rejectionPartition {
+	p := r.partitionNew()
+	if len(r.TouchedBaselined) != len(r.TouchedCleanViolations) {
+		return p
+	}
+	p.touchedKnown = true
+	for i := 0; i < len(r.TouchedCleanViolations); i++ {
+		if r.TouchedBaselined[i] {
+			p.touchedBaselined = append(p.touchedBaselined, r.TouchedCleanViolations[i])
+		} else {
+			p.touchedNew = append(p.touchedNew, r.TouchedCleanViolations[i])
+		}
+	}
+	return p
+}
+
+func (r *RatchetResult) partitionNew() rejectionPartition {
+	var p rejectionPartition
 	if len(r.Attribution) != len(r.NewViolations) {
 		p.unknown = r.NewViolations
 		return p
@@ -132,8 +156,8 @@ func movedTag(line int) string {
 }
 
 // classes lists the rejection's classes in the order Summary prints them.
-func (r *RatchetResult) classes(p newPartition) []violationClass {
-	return []violationClass{
+func (r *RatchetResult) classes(p rejectionPartition) []violationClass {
+	return append([]violationClass{
 		{items: p.introduced, tag: "new", one: "new violation", many: "new violations", lister: verifyLister},
 		{items: p.changed, tag: "check added or changed since the baseline",
 			one: "violation from a changed check", many: "violations from changed checks", lister: verifyLister},
@@ -141,8 +165,22 @@ func (r *RatchetResult) classes(p newPartition) []violationClass {
 			one: "violation the baseline records at another line", many: "violations the baseline records at other lines", lister: verifyLister},
 		{items: p.unknown, tag: "not in the baseline",
 			one: "unbaselined violation", many: "unbaselined violations", lister: verifyLister},
-		{items: r.TouchedCleanViolations, tag: "touched file must be clean",
-			one: "touched-file violation", many: "touched-file violations", lister: auditLister},
+	}, r.touchedClasses(p)...)
+}
+
+// touchedClasses lists the touched-file violations: once the evaluator marked each, the ones the
+// baseline does not record first and the baselined ones after them, each class bounded and
+// counted on its own (#348); otherwise one class.
+func (r *RatchetResult) touchedClasses(p rejectionPartition) []violationClass {
+	if !p.touchedKnown {
+		return []violationClass{{items: r.TouchedCleanViolations, tag: "touched file must be clean",
+			one: "touched-file violation", many: "touched-file violations", lister: auditLister}}
+	}
+	return []violationClass{
+		{items: p.touchedNew, tag: "touched file must be clean, not in the baseline",
+			one: "touched-file violation not in the baseline", many: "touched-file violations not in the baseline", lister: auditLister},
+		{items: p.touchedBaselined, tag: "touched file must be clean, baselined",
+			one: "baselined touched-file violation", many: "baselined touched-file violations", lister: auditLister},
 	}
 }
 
@@ -154,7 +192,7 @@ func (r *RatchetResult) render(limit int) string {
 	if r.CountRegressed {
 		return fmt.Sprintf("HISS invariant violations introduced: total infractions rose from %d to %d (no new fingerprints)", r.PreviousCount, r.CurrentCount)
 	}
-	p := r.partitionNew()
+	p := r.partition()
 	var msgs []string
 	for _, class := range r.classes(p) {
 		msgs = append(msgs, class.lines(limit)...)
@@ -169,23 +207,34 @@ func (r *RatchetResult) render(limit int) string {
 // header names the counts. Only a rejection whose every unbaselined violation is traced to a
 // code change is called introduced, and one whose every unbaselined violation only moved says
 // the baseline records them at other lines; any other says the baseline does not record them.
-func (r *RatchetResult) header(p newPartition) string {
-	touched := len(r.TouchedCleanViolations)
+func (r *RatchetResult) header(p rejectionPartition) string {
+	touched := r.touchedFigure(p)
 	untraced := len(p.changed) + len(p.unknown)
 	switch {
 	case untraced == 0 && len(p.moved) == 0:
-		return fmt.Sprintf("HISS invariant violations introduced (%d total infractions, %d new unbaselined, %d in touched files):",
+		return fmt.Sprintf("HISS invariant violations introduced (%d total infractions, %d new unbaselined, %s):",
 			r.CurrentCount, len(p.introduced), touched)
 	case untraced == 0 && len(p.introduced) == 0:
-		return fmt.Sprintf("HISS invariant violations the baseline records at other lines (%d total infractions, %d moved, %d in touched files):",
+		return fmt.Sprintf("HISS invariant violations the baseline records at other lines (%d total infractions, %d moved, %s):",
 			r.CurrentCount, len(p.moved), touched)
 	}
-	return fmt.Sprintf("HISS invariant violations the baseline does not record (%d total infractions, %d unbaselined%s, %d in touched files):",
+	return fmt.Sprintf("HISS invariant violations the baseline does not record (%d total infractions, %d unbaselined%s, %s):",
 		r.CurrentCount, len(r.NewViolations), r.breakdown(p), touched)
 }
 
+// touchedFigure names how many violations sit in touched files and, once the evaluator marked
+// each, how many of them the baseline does not record and how many it does (#348): the touched
+// count alone read as that many new findings when most of them were recorded debt.
+func (r *RatchetResult) touchedFigure(p rejectionPartition) string {
+	n := len(r.TouchedCleanViolations)
+	if !p.touchedKnown || n == 0 {
+		return fmt.Sprintf("%d in touched files", n)
+	}
+	return fmt.Sprintf("%d in touched files (%d not in the baseline, %d baselined)", n, len(p.touchedNew), len(p.touchedBaselined))
+}
+
 // breakdown splits the unbaselined count by attribution, once an attribution ran.
-func (r *RatchetResult) breakdown(p newPartition) string {
+func (r *RatchetResult) breakdown(p rejectionPartition) string {
 	if r.Attribution == nil {
 		return ""
 	}
@@ -206,8 +255,8 @@ func (r *RatchetResult) breakdown(p newPartition) string {
 }
 
 // explanations says why the violations that are not traced to a code change fail, and what
-// records them deliberately.
-func (r *RatchetResult) explanations(p newPartition) []string {
+// records them deliberately, then why the baselined findings in touched files fail too.
+func (r *RatchetResult) explanations(p rejectionPartition) []string {
 	var out []string
 	if n := len(p.changed); n > 0 {
 		out = append(out, fmt.Sprintf("  %d of them sit in code the current checks flag at %s, where the baseline was recorded or committed, "+
@@ -226,7 +275,37 @@ func (r *RatchetResult) explanations(p newPartition) []string {
 		out = append(out, fmt.Sprintf("  %d of them were not traced to a code change (%s); a check added after the baseline was recorded "+
 			"reports unchanged code this way too; fix them or record them with %s", n, reason, recordRemedy))
 	}
+	if n := len(p.touchedBaselined); n > 0 {
+		out = append(out, r.touchedExplanation(n))
+	}
 	return out
+}
+
+// touchedExplanation says why n baselined findings in touched files fail anyway, under the rule
+// that judged their files, and what clears them (#348).
+func (r *RatchetResult) touchedExplanation(n int) string {
+	if r.DebtDelta {
+		return fmt.Sprintf("  %d of the touched-file violations are baselined: they fail because a rule's count in their file rose above "+
+			"the baseline's, and pass again once no rule's count in the file does", n)
+	}
+	return fmt.Sprintf("  %d of the touched-file violations are baselined: touching a file revokes its baseline exemptions, so they fail too; "+
+		"fix them, or judge a provably mechanical change by debt delta with %s", n, debtDeltaFlag)
+}
+
+// StaleNotice says how many baseline entries no current violation accounts for and how to
+// tighten the baseline (#349), or "" when none is stale. A stale entry is debt a cleanup removed
+// without a re-record: the ratchet still passes, and the entry is room a new finding can take.
+// Callers decide whether a count fails; the ratchet verdict never does.
+func (r *RatchetResult) StaleNotice() string {
+	if r == nil || r.Stale <= 0 {
+		return ""
+	}
+	entries := "baseline entries match"
+	if r.Stale == 1 {
+		entries = "baseline entry matches"
+	}
+	return fmt.Sprintf("%d %s nothing in the tree: per file and rule the baseline records more infractions than the scan found, "+
+		"and each stale entry is room for a new finding; tighten the baseline with %s", r.Stale, entries, reRecord)
 }
 
 // shortCommits abbreviates the compared commits for a rejection line, joined by "or": a finding
