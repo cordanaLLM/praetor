@@ -146,6 +146,47 @@ func TestCatalogIndexRejectsUnknownKeyInAnUnselectedArchetype(t *testing.T) {
 	}
 }
 
+// archetypeKeyProbes holds one value of the right type for every key ArchetypeKeys lists.
+var archetypeKeyProbes = map[string]string{
+	"id": `"probe"`, "name": `"Probe"`, "description": `"probe"`, "runtime": `"go"`,
+	"complexity.max_cyclomatic": "8", "complexity.max_cognitive": "8", "complexity.max_func_loc": "40",
+	"complexity.max_statements": "30", "memory.zero_frame_malloc": "true", "memory.banned_alloc_in_ticks": "true",
+	"error_unwraps": "strict_ban", "branch_protection.enforce_linear_history": "true",
+	"branch_protection.require_signed_commits": "true", "branch_protection.required_approving_reviewers": "2",
+	"branch_protection.dismiss_stale_reviews": "true", "branch_protection.review_mode": "independent",
+	"supply_chain.slsa_level": "2", "supply_chain.enforce_cosign": "true", "supply_chain.require_sbom": "true",
+	"linters": "[semgrep]", "devcontainer_features": `["ghcr.io/devcontainers/features/go:1"]`,
+}
+
+// ArchetypeKeys lists the closed schema with sections spelled dotted and never bare, and
+// every key it lists decodes in a catalog file except review_mode, which validate refuses.
+func TestArchetypeKeysListTheClosedSchema(t *testing.T) {
+	keys := ArchetypeKeys()
+	if len(keys) != len(archetypeKeyProbes) || !slices.IsSorted(keys) {
+		t.Fatalf("keys = %v, want the %d probed keys in order", keys, len(archetypeKeyProbes))
+	}
+	for _, section := range []string{"complexity", "memory", "branch_protection", "supply_chain"} {
+		if slices.Contains(keys, section) {
+			t.Errorf("section %s listed bare", section)
+		}
+	}
+	for _, key := range keys {
+		value, ok := archetypeKeyProbes[key]
+		if !ok {
+			t.Errorf("key %s has no probe value", key)
+			continue
+		}
+		document := key + ": " + value + "\n"
+		if section, member, nested := strings.Cut(key, "."); nested {
+			document = section + ":\n  " + member + ": " + value + "\n"
+		}
+		_, err := decodeArchetype(t.Context(), "catalog/probe.yaml", []byte(document))
+		if refused := key == "branch_protection.review_mode"; (err != nil) != refused {
+			t.Errorf("%s: decode error %v, refused %t", key, err, refused)
+		}
+	}
+}
+
 func TestDecodeArchetypeHeaderAndIdentity(t *testing.T) {
 	archetype, err := decodeArchetype(t.Context(), "catalog/app.yaml", []byte("id: \" app \"\nname: App\ndescription: Service\nruntime: go\n"))
 	if err != nil {
