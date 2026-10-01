@@ -377,6 +377,8 @@ delete the files to regenerate, then run adopt. `scripts/adopt_repos.sh` runs
 `adopt --force --lock-source-root=<its checkout>` for every target (`scripts/test_adopt_repos.py`),
 and the praetor-adopt action passes the checkout it builds `standardsctl` from
 (`TestPraetorAdoptAction_ForcedRunCarriesTheLockSource` in `internal/forge/adopt_action_test.go`).
+Loaded remotely, the action has no `.git`, so a forced run first checks out praetor with git
+([Inputs, the binary, and the `report` output](#inputs-the-binary-and-the-report-output)).
 
 ### What Adoption Reads Before It Writes
 
@@ -862,6 +864,18 @@ result in the job summary. It commits nothing. Four parts of the example each cl
   is false, and an `issue_comment` run saves into the default branch's cache scope, which every
   branch restores from. The job saves nothing there.
 
+`force: true` makes the run the refresh described in
+[What a forced re-adoption changes](#what-a-forced-re-adoption-changes), which rebuilds
+`.standards.lock` from a git checkout of praetor. The runner unpacks a remote action without its
+`.git`, so the action's build step runs `git init`, a one-commit `git fetch` of
+`cordanaLLM/praetor` at `main` (the action's own repository and ref, read from
+`github.action_repository` and `github.action_ref`) and a detached checkout. These land in a fresh
+`praetor-source.*` directory under `RUNNER_TEMP`. It builds `standardsctl` from that checkout and
+passes the checkout as `--lock-source-root`. The fetch is anonymous, from `GITHUB_SERVER_URL`, so
+the runner needs to reach it. A fetch that fails, or a checkout that is not praetor, stops the
+step before anything is built. With a branch ref such as `@main`, the checkout is that branch's
+commit when the step runs. A tag or commit pins it.
+
 `standardsctl` itself still comes from the praetor ref the `uses:` line pins, not from the pull
 request (see below). That is why the example accepts a head pushed to a fork: the adoption reads
 the fork's files but never builds or executes them. A job that builds or runs the pull request's
@@ -915,7 +929,7 @@ which is how a fork head is shown to be refused.
 | `path` | `PRAETOR_PATH` | `--path=<value>`, and the `--source`/`--target-dir` of the `compile-context --verify` that follows an adopt run; an empty value is refused before anything runs |
 | `mode` | `PRAETOR_MODE` | selects the subcommand, `adopt` or `dogfood`; any other value is refused |
 | `dry-run` | `PRAETOR_DRY_RUN` | `--dry-run=<value>`; in `dogfood` mode it changes nothing, because `dogfood` applies adoptions only to `--targets` repositories (`testTargetAdoptions` in `internal/dogfood/dogfood.go`) and the action passes none, so the host is audited either way |
-| `force` | `PRAETOR_FORCE` | `--force=<value>`, adopt only: the refresh in [What a forced re-adoption changes](#what-a-forced-re-adoption-changes). `--force` rebuilds `.standards.lock` and needs a lock source, so with `force: true` the action also passes `--lock-source-root=<checkout>`, the praetor checkout the build step compiled `standardsctl` from, and refuses the run when the build step published none (`TestPraetorAdoptAction_ForcedRunCarriesTheLockSource`) |
+| `force` | `PRAETOR_FORCE` | `--force=<value>`, adopt only: the refresh in [What a forced re-adoption changes](#what-a-forced-re-adoption-changes). `--force` rebuilds `.standards.lock` and needs a lock source, so with `force: true` the action also passes `--lock-source-root=<checkout>`, the praetor checkout the build step compiled `standardsctl` from, and refuses the run when the build step published none (`TestPraetorAdoptAction_ForcedRunCarriesTheLockSource`). The rebuild inventories that checkout with `git ls-files`. When the action's own tree has no `.git`, as when loaded remotely, a forced adopt run first checks out the action's repository at the action's ref with git under `RUNNER_TEMP` and builds from it. A tree that already is a git checkout is used as it is (`internal/forge/adopt_action_source_test.go`) |
 | `record-baseline` | `PRAETOR_RECORD_BASELINE` | `--record-baseline=<value>`, adopt only |
 | `go-version` | `actions/setup-go` | the toolchain the step compiles `standardsctl` with; it never reaches `standardsctl`, and it has to satisfy the `go` directive of praetor's `go.mod` |
 | `cache` | `actions/setup-go` | its `cache` input, default `true` as in `setup-go` itself; set `false` in a job a pull request or its comment starts, and in a job that keeps its own Go cache (`TestPraetorAdoptAction_Positive_CacheInputReachesSetupGo`) |
@@ -930,7 +944,9 @@ first: `mode: Dogfod` is a failure, not a silent `adopt` run. Each boolean is pa
 so `record-baseline: "false"` would have had no effect.
 
 The `standardsctl` that runs is the one the action's own ref carries: the step builds
-`cmd/standardsctl` out of the praetor checkout that `GITHUB_ACTION_PATH` points into, so
+`cmd/standardsctl` out of the praetor checkout that `GITHUB_ACTION_PATH` points into, or, on a
+forced adopt run of an action tree with no `.git`, out of a git checkout of the same repository
+and ref (the `force` row above), so
 `praetor-adopt@<tag>` and `@main` differ, and `@latest` builds the commit this repository's moving
 `latest` tag points at ([releasing](guides/releasing.md)). `standardsctl` itself is never
 installed from the module proxy.
@@ -974,7 +990,9 @@ itself is executed by the tests below; the survival of the output is what stays 
 ```
 
 Everything above is pinned by `internal/forge/adopt_action_test.go`, which executes the action's own
-shell bodies against a stub binary and reads the input defaults out of `action.yml`.
+shell bodies against a stub binary and reads the input defaults out of `action.yml`, and by
+`internal/forge/adopt_action_source_test.go`, which runs the build step's checkout with the real
+git against a repository served over `file://`.
 
 ## Migration: explicit sources for missing lockfiles
 

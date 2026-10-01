@@ -39,10 +39,18 @@ func RecordOriginHead(t testing.TB, dir, branch string) {
 	runFixtureGitCommands(t, dir, [][]string{{"symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/" + branch}})
 }
 
+// RunFixtureGit runs each of commands in dir the way InitGitRepoWithOrigin runs its own, and
+// returns the output of the last one, such as the commit id a closing rev-parse prints. It skips
+// the test when git is not installed and fails it at the first command git fails.
+func RunFixtureGit(t testing.TB, dir string, commands ...[]string) string {
+	t.Helper()
+	return runFixtureGitCommands(t, dir, commands)
+}
+
 // runFixtureGitCommands runs each of commands in dir through util.RunGit under HermeticGitEnv,
-// each bounded by fixtureGitTimeout. It skips the test when git is not installed and fails it at
-// the first command git fails.
-func runFixtureGitCommands(t testing.TB, dir string, commands [][]string) {
+// each bounded by fixtureGitTimeout, and returns the output of the last one. It skips the test
+// when git is not installed and fails it at the first command git fails.
+func runFixtureGitCommands(t testing.TB, dir string, commands [][]string) string {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skipf("git is not installed: %v", err)
@@ -51,6 +59,7 @@ func runFixtureGitCommands(t testing.TB, dir string, commands [][]string) {
 	if err != nil {
 		t.Fatalf("testsupport: fixture git environment: %v", err)
 	}
+	last := ""
 	for _, args := range commands {
 		runCtx, cancel := context.WithTimeout(ctx, fixtureGitTimeout)
 		out, runErr := util.RunGit(runCtx, dir, args...)
@@ -58,5 +67,7 @@ func runFixtureGitCommands(t testing.TB, dir string, commands [][]string) {
 		if runErr != nil {
 			t.Fatalf("testsupport: git %v in %s: %v: %s", args, dir, runErr, out)
 		}
+		last = out
 	}
+	return last
 }

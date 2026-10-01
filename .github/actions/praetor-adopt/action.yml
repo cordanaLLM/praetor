@@ -16,7 +16,7 @@ inputs:
     required: false
     default: "false"
   force:
-    description: "adopt: pass --force, the refresh docs/adoption.md describes under 'What a forced re-adoption changes': it rebuilds .standards.lock, rewrites the drifted files audit compares byte for byte, merges editor JSON, regenerates the AGENTS.md harness and resets a Paperclip platform that names another repository, and keeps every other file. --force needs a lock source, so the action passes the praetor checkout it builds standardsctl from as --lock-source-root"
+    description: "adopt: pass --force, the refresh docs/adoption.md describes under 'What a forced re-adoption changes': it rebuilds .standards.lock, rewrites the drifted files audit compares byte for byte, merges editor JSON, regenerates the AGENTS.md harness and resets a Paperclip platform that names another repository, and keeps every other file. --force needs a lock source, so the action passes the praetor checkout it builds standardsctl from as --lock-source-root. Loaded remotely, the action's own tree has no .git, so a forced run first checks out the action's repository at the action's ref with git under the runner's temporary directory and builds from that checkout"
     required: false
     default: "false"
   record-baseline:
@@ -74,9 +74,25 @@ runs:
     # The binary lands in the runner's own temporary directory rather than in /tmp: on a
     # self-hosted runner /tmp is shared between jobs, so a binary a previous job left behind would
     # be picked up here in place of the one this job resolved.
+    #
+    # A forced adoption also rebuilds .standards.lock from this source, and that rebuild inventories
+    # the DevContainer bootstrap source with git ls-files, so it needs a git checkout. Loaded
+    # remotely, the action is a tree the runner unpacked from an archive, with no .git. On a forced
+    # adopt run in such a tree the step checks out the action's own repository at the action's own
+    # ref with git into a fresh directory under the runner's temporary directory, and builds from
+    # that checkout and passes it on as the lock source. actions/checkout cannot do this: it refuses
+    # a path outside GITHUB_WORKSPACE. A tree that already is a git checkout (the action loaded
+    # locally from one) stays as it is. github.action_repository and github.action_ref are empty in
+    # a composite action's run body and work only through its env (GitHub, "Contexts reference",
+    # github context; actions/runner#2473), so they arrive as env variables.
     - name: Build standardsctl
       id: build-standardsctl
       shell: bash
+      env:
+        PRAETOR_MODE: ${{ inputs.mode }}
+        PRAETOR_FORCE: ${{ inputs.force }}
+        PRAETOR_ACTION_REPOSITORY: ${{ github.action_repository }}
+        PRAETOR_ACTION_REF: ${{ github.action_ref }}
       run: |
         set -euo pipefail
 
@@ -97,19 +113,57 @@ runs:
           binary="$binary.exe"
         fi
 
-        # The directory has to *be* praetor, not merely look like a Go module that has a
-        # cmd/standardsctl: with `uses: ./.github/actions/praetor-adopt` the three levels up are
-        # the adopter's own workspace, and building that runs a binary that is not praetor.
-        module=""
-        if [ -f "$source_root/go.mod" ]; then
-          module="$(sed -n 's/^module[[:space:]]\{1,\}\([^[:space:]]*\).*/\1/p' "$source_root/go.mod" | head -n 1 | tr -d '\r')"
-        fi
+        # require_praetor refuses a directory ($1, described by $2) that is not praetor, not merely
+        # one that looks like a Go module with a cmd/standardsctl: with
+        # `uses: ./.github/actions/praetor-adopt` the three levels up are the adopter's own
+        # workspace, and building that runs a binary that is not praetor.
+        require_praetor() {
+          module=""
+          if [ -f "$1/go.mod" ]; then
+            module="$(sed -n 's/^module[[:space:]]\{1,\}\([^[:space:]]*\).*/\1/p' "$1/go.mod" | head -n 1 | tr -d '\r')"
+          fi
+          if [ "$module" != "github.com/cordanaLLM/praetor" ] || [ ! -d "$1/cmd/standardsctl" ]; then
+            echo "praetor-adopt: $2 is not a praetor checkout with" \
+              "cmd/standardsctl (module '${module:-none}'), so there is no praetor ref to build; reference it as" \
+              "cordanaLLM/praetor/.github/actions/praetor-adopt@<tag or commit>" >&2
+            exit 1
+          fi
+        }
 
-        if [ "$module" != "github.com/cordanaLLM/praetor" ] || [ ! -d "$source_root/cmd/standardsctl" ]; then
-          echo "praetor-adopt: the repository this action was loaded from is not a praetor checkout with" \
-            "cmd/standardsctl (module '${module:-none}'), so there is no praetor ref to build; reference it as" \
-            "cordanaLLM/praetor/.github/actions/praetor-adopt@<tag or commit>" >&2
-          exit 1
+        # fetch_source makes $1 a git checkout of the repository at URL $2 at ref $3: a tag, a
+        # branch or a commit id, each fetched alone with no history. A transfer that stalls below
+        # one byte a second for a minute is abandoned, and no credential prompt can hold it.
+        fetch_source() {
+          GIT_TERMINAL_PROMPT=0 git init --quiet "$1" &&
+            GIT_TERMINAL_PROMPT=0 git -C "$1" -c http.lowSpeedLimit=1 -c http.lowSpeedTime=60 \
+              fetch --quiet --depth=1 --no-tags "$2" "$3" &&
+            git -C "$1" checkout --quiet --detach FETCH_HEAD
+        }
+
+        require_praetor "$source_root" "the repository this action was loaded from"
+
+        if [ "${PRAETOR_MODE:-}" = "adopt" ] && [ "${PRAETOR_FORCE:-}" = "true" ] && [ ! -e "$source_root/.git" ]; then
+          repository="${PRAETOR_ACTION_REPOSITORY:-}"
+          ref="${PRAETOR_ACTION_REF:-}"
+          # Both values come from GitHub, not the caller's inputs; the patterns still keep a
+          # value from reaching git as an option or a refspec with a destination.
+          if ! [[ "$repository" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] ||
+            ! [[ "$ref" =~ ^[A-Za-z0-9_][A-Za-z0-9_./+@-]*$ ]]; then
+            echo "praetor-adopt: a forced adoption rebuilds .standards.lock from a git checkout of praetor, the" \
+              "action tree has no .git, and GitHub named no repository ('$repository') and ref ('$ref') to" \
+              "check out" >&2
+            exit 1
+          fi
+          checkout="$(mktemp -d "$bin_dir/praetor-source.XXXXXX")"
+          url="${GITHUB_SERVER_URL:-https://github.com}/$repository"
+          if ! fetch_source "$checkout" "$url" "$ref"; then
+            echo "praetor-adopt: a forced adoption rebuilds .standards.lock from a git checkout of praetor," \
+              "and checking out $url at $ref failed" >&2
+            exit 1
+          fi
+          require_praetor "$checkout" "the checkout of $repository at $ref"
+          echo "praetor-adopt: forced adoption; building and rebuilding the lock from $repository at $ref, checked out into $checkout"
+          source_root="$checkout"
         fi
 
         go build -C "$source_root" -o "$binary" ./cmd/standardsctl

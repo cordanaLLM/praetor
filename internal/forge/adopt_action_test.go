@@ -318,15 +318,20 @@ func runAdoptBuildStep(t *testing.T, actionPath string, source actionSource, run
 }
 
 // buildStepContextEnv resolves the build step's env block the way GitHub would for an action loaded
-// from source, so the tests hand the step exactly what it asked the runner for. Whatever the step
-// chooses to bind, a ref it reads is a ref these tests can catch it installing.
+// from source, with every input at the default action.yml declares, so the tests hand the step
+// exactly what it asked the runner for. A test overrides an input by passing NAME=value through
+// runAdoptBuildStep's runner list, which exec applies after these (the last value of a key wins).
 func buildStepContextEnv(t *testing.T, source actionSource) []string {
 	t.Helper()
+	action := loadAdoptAction(t)
 	contextValues := map[string]string{
 		"${{ github.action_repository }}": source.repository,
 		"${{ github.action_ref }}":        source.ref,
 	}
-	step := adoptStep(t, loadAdoptAction(t), adoptBuildStepID)
+	for name := range action.Inputs {
+		contextValues["${{ inputs."+name+" }}"] = action.Inputs[name].Default
+	}
+	step := adoptStep(t, action, adoptBuildStepID)
 	env := make([]string, 0, len(step.Env))
 	for key := range step.Env {
 		value, modelled := contextValues[step.Env[key]]
