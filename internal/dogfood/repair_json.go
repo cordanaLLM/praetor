@@ -1,87 +1,37 @@
 package dogfood
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
-	"io"
-	"strconv"
-	"unicode/utf8"
+
+	"github.com/cordanaLLM/praetor/internal/strictjson"
 )
 
 const maxRepairReportBytes = 8 * 1024 * 1024
 const maxRepairJSONTokens = 262144
 
-type repairJSONFrame struct {
-	keys    map[string]bool
-	wantKey bool
+// repairJSONOptions words the shared strictjson reader for repair reports, schedules and
+// adopted baselines. Duplicate member names are refused at every depth, free-form diagnostic
+// maps included; a syntax error and a second document keep the bounded-UTF-8 refusal
+// json.Valid gave.
+var repairJSONOptions = strictjson.Options{
+	MaxBytes:  maxRepairReportBytes,
+	MaxDepth:  32,
+	MaxTokens: maxRepairJSONTokens,
+	Messages: strictjson.Messages{
+		Size:      "repair report must be bounded UTF-8 JSON",
+		Syntax:    "repair report must be bounded UTF-8 JSON",
+		Trailing:  "repair report must be bounded UTF-8 JSON",
+		Surrogate: "unpaired repair Unicode surrogate",
+		Depth:     "repair JSON exceeds %d nesting levels",
+		Tokens:    "repair JSON exceeds token bound",
+		Duplicate: "duplicate repair JSON field",
+		Decode:    "repair report schema or field type is invalid",
+	},
 }
 
-// Duplicate keys are rejected at every depth, including free-form diagnostic maps.
 func validateRepairJSON(data []byte) error {
-	if len(data) > maxRepairReportBytes || !utf8.Valid(data) || !json.Valid(data) {
-		return errors.New("repair report must be bounded UTF-8 JSON")
-	}
-	if err := validateRepairEscapes(data); err != nil {
-		return err
-	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
-	stack := []repairJSONFrame{}
-	for i := 0; i < maxRepairJSONTokens; i++ {
-		token, err := decoder.Token()
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-		if err != nil {
-			return errors.New("invalid repair JSON")
-		}
-		stack, err = acceptRepairToken(stack, token)
-		if err != nil {
-			return err
-		}
-	}
-	return errors.New("repair JSON exceeds token bound")
-}
-
-func acceptRepairToken(stack []repairJSONFrame, token json.Token) ([]repairJSONFrame, error) {
-	var frame *repairJSONFrame
-	if len(stack) > 0 {
-		frame = &stack[len(stack)-1]
-	}
-	if delimiter, ok := token.(json.Delim); ok {
-		return repairJSONDelimiter(stack, frame, delimiter)
-	}
-	if frame == nil || frame.keys == nil {
-		return stack, nil
-	}
-	if frame.wantKey {
-		key, ok := token.(string)
-		if !ok || frame.keys[key] {
-			return nil, errors.New("duplicate repair JSON field")
-		}
-		frame.keys[key] = true
-	}
-	frame.wantKey = !frame.wantKey
-	return stack, nil
-}
-
-func repairJSONDelimiter(stack []repairJSONFrame, frame *repairJSONFrame, delimiter json.Delim) ([]repairJSONFrame, error) {
-	if delimiter == '}' || delimiter == ']' {
-		return stack[:len(stack)-1], nil
-	}
-	if frame != nil && frame.keys != nil {
-		frame.wantKey = true
-	}
-	if len(stack) >= 32 {
-		return nil, errors.New("repair JSON exceeds 32 nesting levels")
-	}
-	next := repairJSONFrame{}
-	if delimiter == '{' {
-		next.keys = make(map[string]bool)
-		next.wantKey = true
-	}
-	return append(stack, next), nil
+	return strictjson.Validate(data, repairJSONOptions)
 }
 
 // The typed round-trip below defines exact field spelling and required fields.
@@ -146,57 +96,10 @@ func repairObjectChildren(value any, expected map[string]any) ([][2]any, error) 
 	return children, nil
 }
 
-func validateRepairEscapes(data []byte) error {
-	quoted := false
-	for i := 0; i < len(data) && i < maxRepairReportBytes; i++ {
-		if data[i] == '"' {
-			quoted = !quoted
-			continue
-		}
-		if data[i] != '\\' || !quoted {
-			continue
-		}
-		end, err := repairEscapeEnd(data, i+1)
-		if err != nil {
-			return err
-		}
-		i = end
-	}
-	return nil
-}
-
-// JSON syntax validation precedes this helper, so each first escape is complete.
-func repairEscapeEnd(data []byte, i int) (int, error) {
-	if data[i] != 'u' {
-		return i, nil
-	}
-	value, err := strconv.ParseUint(string(data[i+1:i+5]), 16, 16)
-	if err != nil {
-		return 0, errors.New("invalid repair Unicode escape")
-	}
-	i += 4
-	if value < 0xd800 || value > 0xdfff {
-		return i, nil
-	}
-	if value >= 0xdc00 || i+6 >= len(data) || string(data[i+1:i+3]) != `\u` {
-		return 0, errors.New("unpaired repair Unicode surrogate")
-	}
-	second, err := strconv.ParseUint(string(data[i+3:i+7]), 16, 16)
-	if err != nil || second < 0xdc00 || second > 0xdfff {
-		return 0, errors.New("unpaired repair Unicode surrogate")
-	}
-	return i + 6, nil
-}
-
 func decodeRepairReport(data []byte) (*SuiteReport, error) {
-	if err := validateRepairJSON(data); err != nil {
-		return nil, err
-	}
 	var report SuiteReport
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&report); err != nil {
-		return nil, errors.New("repair report schema or field type is invalid")
+	if err := strictjson.Decode(data, &report, repairJSONOptions); err != nil {
+		return nil, err
 	}
 	canonical, err := json.Marshal(report)
 	if err != nil {

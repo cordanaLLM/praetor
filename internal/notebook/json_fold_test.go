@@ -79,22 +79,28 @@ func TestDecode_Boundary_NonASCIIFoldMatchesEncodingJSON(t *testing.T) {
 	}
 }
 
-// TestFoldKey_MatchesTheEncodingJSONRule documents the fold itself: ASCII upper-cased,
-// other runes folded to the smallest rune in their orbit.
-func TestFoldKey_MatchesTheEncodingJSONRule(t *testing.T) {
-	cases := map[string]string{
-		"quality": "QUALITY",
-		"Quality": "QUALITY",
-		"QUALITY": "QUALITY",
-		"":        "",
-		"snake_1": "SNAKE_1",
-		"K":       "K",
-		"é":       "É",
-		"sigma-σ": "SIGMA-Σ",
+// TestDecode_Boundary_KeepsItsBoundsAndWording pins the notebook's own bounds and wording,
+// which it passes to the shared strictjson reader: 1 MiB, 32 nesting levels.
+func TestDecode_Boundary_KeepsItsBoundsAndWording(t *testing.T) {
+	var value any
+	exact := []byte(`"` + strings.Repeat("x", 1<<20-2) + `"`)
+	if err := Decode(exact, &value); err != nil {
+		t.Errorf("artifact of exactly 1 MiB refused: %v", err)
 	}
-	for in, want := range cases {
-		if got := foldKey(in); got != want {
-			t.Errorf("foldKey(%q) = %q, want %q", in, got, want)
-		}
+	if err := Decode(append(exact, ' '), &value); err == nil || err.Error() != "JSON requires 1..1048576 UTF-8 bytes" {
+		t.Errorf("artifact one byte over 1 MiB returned %v", err)
+	}
+	if err := Decode([]byte(strings.Repeat("[", 32)+strings.Repeat("]", 32)), &value); err != nil {
+		t.Errorf("32 nesting levels refused: %v", err)
+	}
+	if err := Decode([]byte(strings.Repeat("[", 33)+strings.Repeat("]", 33)), &value); err == nil || err.Error() != "JSON nesting exceeds 32" {
+		t.Errorf("33 nesting levels returned %v", err)
+	}
+	var obs observation
+	if err := Decode([]byte(`{"quality": 1, "extra": 2}`), &obs); err == nil || !strings.HasPrefix(err.Error(), "decode artifact: ") {
+		t.Errorf("unknown field returned %v", err)
+	}
+	if err := Decode([]byte(`{"quality": 1, "notes": "\ud800"}`), &obs); err == nil {
+		t.Error("unpaired surrogate escape decoded; encoding/json would have replaced it with U+FFFD")
 	}
 }
