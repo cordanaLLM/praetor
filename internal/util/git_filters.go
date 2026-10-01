@@ -12,12 +12,25 @@ import (
 // checkout.
 const statusFilterKeys = `^filter\..*\.(clean|process)$`
 
+// gitFilterProbe runs one of the read-only inspections RefuseGitStatusFilters makes. RunGitProbe
+// reads the repository's own configuration and attributes; effectiveGitProbe reads what a git
+// command run under the caller's command environment reads.
+type gitFilterProbe func(ctx context.Context, dir string, maxBytes int, args ...string) (CommandBytes, error)
+
+// effectiveGitProbe runs an inspection under the caller's command environment, so git reads the
+// global and system configuration and attributes files that environment selects, with the
+// filesystem monitor and hooks off and within GitProbeTimeout.
+func effectiveGitProbe(ctx context.Context, dir string, maxBytes int, args ...string) (CommandBytes, error) {
+	return runGitInspection(ctx, dir, maxBytes, GitProbeTimeout, args...)
+}
+
 // configuredStatusFilters returns the clean and process keys dir's configuration defines, as
-// RunGitProbe reads it: the repository's own files, without the global and system ones. The
-// keys are sorted and unique, since a key set in more than one file is listed once per file.
-func configuredStatusFilters(ctx context.Context, dir string) ([]string, error) {
-	result, status, err := RunGitProbeStatus(ctx, dir, maxGitFilterConfigBytes,
+// probe reads it. The keys are sorted and unique, since a key set in more than one file is
+// listed once per file.
+func configuredStatusFilters(ctx context.Context, probe gitFilterProbe, dir string) ([]string, error) {
+	answer, runErr := probe(ctx, dir, maxGitFilterConfigBytes,
 		"config", "-z", "--name-only", "--get-regexp", statusFilterKeys)
+	result, status, err := gitAnswerStatus(answer, runErr, maxGitFilterConfigBytes)
 	if err != nil {
 		return nil, fmt.Errorf("inspect git filters in %s: %w", dir, withCommandDiagnostic(err, result.Stderr))
 	}
@@ -30,12 +43,13 @@ func configuredStatusFilters(ctx context.Context, dir string) ([]string, error) 
 }
 
 // selectedFilterDrivers maps each value the filter attribute takes on a tracked path of dir's
-// repository to the first such path, relative to dir. Git resolves the attribute itself --
-// .gitattributes files at every level, $GIT_DIR/info/attributes, macros and a repository
-// core.attributesFile -- in the direction git status uses to clean a file. Untracked paths are
+// repository to the first such path, relative to dir. Git resolves the attribute itself, from
+// the files probe lets it read -- .gitattributes files at every level, $GIT_DIR/info/attributes,
+// macros and core.attributesFile, plus the global and system attributes files under
+// effectiveGitProbe -- in the direction git status uses to clean a file. Untracked paths are
 // left out: status lists them without cleaning them.
-func selectedFilterDrivers(ctx context.Context, dir string) (map[string]string, error) {
-	tracked, err := RunGitProbe(ctx, dir, MaxCommandOutputBytes, "ls-files", "-z", "--", ":/")
+func selectedFilterDrivers(ctx context.Context, probe gitFilterProbe, dir string) (map[string]string, error) {
+	tracked, err := probe(ctx, dir, MaxCommandOutputBytes, "ls-files", "-z", "--", ":/")
 	if err != nil {
 		return nil, fmt.Errorf("list tracked paths in %s: %w", dir, withCommandDiagnostic(err, tracked.Stderr))
 	}
@@ -46,7 +60,7 @@ func selectedFilterDrivers(ctx context.Context, dir string) (map[string]string, 
 	if err != nil {
 		return nil, fmt.Errorf("read filter attributes in %s: %w", dir, err)
 	}
-	attributes, err := RunGitProbe(stdinCtx, dir, MaxCommandOutputBytes, "check-attr", "--stdin", "-z", "filter")
+	attributes, err := probe(stdinCtx, dir, MaxCommandOutputBytes, "check-attr", "--stdin", "-z", "filter")
 	if err != nil {
 		return nil, fmt.Errorf("read filter attributes in %s: %w", dir, withCommandDiagnostic(err, attributes.Stderr))
 	}
