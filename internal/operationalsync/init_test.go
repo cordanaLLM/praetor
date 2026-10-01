@@ -77,7 +77,7 @@ func TestRunInitRefusesUnsafeCheckouts(t *testing.T) {
 		{"subdirectory", func(_ *testing.T, _ *syncFixture, o *Options) { o.OwnerPath = filepath.Join(o.OwnerPath, ".paperclip") }, "checkout roots"},
 		{"local filter", func(t *testing.T, f *syncFixture, o *Options) {
 			testGit(t, f.git, o.OwnerPath, "config", "filter.probe.clean", "cat")
-		}, "filters are unsupported"},
+		}, "clean or process filters"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

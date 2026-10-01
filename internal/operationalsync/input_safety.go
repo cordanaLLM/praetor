@@ -5,14 +5,25 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
+// checkInputConfiguration refuses an input checkout whose own metadata could run a program or
+// substitute ancestry before any status reads it. Git filters go through
+// util.RefuseGitStatusFilters, the one check every clean-tree probe uses (HISS-19, #667): a
+// clean or process filter the repository configures and a tracked path's filter attribute
+// selects is refused, because status runs it. A driver no tracked path selects passes, and so
+// does a smudge-only one: smudge runs on checkout, and no input is ever checked out. init
+// writes the overlay files directly; prepare checks out and merges in a fresh
+// `clone --template= --no-checkout` of the owner, whose configuration holds only what clone
+// and configureCandidate write, under an environment without the system and global files, so
+// no driver an input defines exists where checkout runs.
 func (op *operation) checkInputConfiguration(ctx context.Context) error {
 	for _, dir := range op.inputDirs() {
-		if err := op.rejectFilters(ctx, dir); err != nil {
+		if err := util.RefuseGitStatusFilters(ctx, dir); err != nil {
 			return err
 		}
 		if err := op.rejectGrafts(ctx, dir); err != nil {
@@ -28,21 +39,6 @@ func (op *operation) checkInputConfiguration(ctx context.Context) error {
 				return errors.New("operational sync does not support input submodule worktrees")
 			}
 		}
-	}
-	return nil
-}
-
-func (op *operation) rejectFilters(ctx context.Context, dir string) error {
-	names, err := op.git.text(ctx, dir, "config", "--includes", "--name-only", "--get-regexp", `^filter\.`)
-	if err != nil {
-		var exit *exec.ExitError
-		if errors.As(err, &exit) && exit.ExitCode() == 1 {
-			return nil
-		}
-		return err
-	}
-	if names != "" {
-		return errors.New("repository-local Git filters are unsupported; no status or checkout was executed")
 	}
 	return nil
 }
