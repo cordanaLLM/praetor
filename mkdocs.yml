@@ -110,6 +110,7 @@ nav:
           - Repository Onboarding: guides/onboarding.md
           - Adoption Verification: guides/adoption-verification.md
           - Archetype & Facet Authoring: guides/archetype-authoring.md
+          - Go API Compatibility Gate: guides/api-compatibility.md
           - Effective Audit Policy: guides/effective-policy.md
           - Review Policy: guides/review-policy.md
           - Live Actions Checks: guides/actions-live-checks.md

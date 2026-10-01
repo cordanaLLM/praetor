@@ -15,6 +15,8 @@ Read [Fast adoption](../../adoption.md) first for the one-step path, then
   `verification` object declares, and why adoption never runs a project's own scripts.
 - [Archetype and facet authoring](../archetype-authoring.md): defining profiles and facets,
   and how the lattice joins them.
+- [Go API compatibility gate](../api-compatibility.md): the hosted check the
+  `api:public-contract` facet adds, which compares every Go module's exported API with a base.
 - [Effective audit policy](../effective-policy.md): how the CLI, MCP and adoption loops
   resolve complexity limits from one implementation.
 - [Independent review and single-maintainer operation](../review-policy.md): the

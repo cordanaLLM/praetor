@@ -1,0 +1,4 @@
+type: added
+title: The api:public-contract facet emits and audits a Go API compatibility gate over every Go module
+issue: "#357"
+breaking: true

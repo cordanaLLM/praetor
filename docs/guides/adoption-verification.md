@@ -1189,6 +1189,9 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
   `forge.WorkflowRuns`):
   - `.github/workflows/praetor-docs.yml`, which runs the Markdown verification, when the
     `docs:seo-portal` facet is declared;
+  - `.github/workflows/praetor-api.yml`, which runs the Go API compatibility gate
+    (`go run tools/apicompat/gate/main.go`), when the `api:public-contract` facet is declared
+    ([Go API compatibility gate](api-compatibility.md));
   - the detected flavor's workflows that flavor apply leaves as its own rendering
     (`flavor.PlannedWorkflows`), such as a Go flavor's `ci.yml` running `go vet ./...` and
     `go test -race ./...`, or a Rust flavor's running `cargo fmt`, `cargo clippy` and

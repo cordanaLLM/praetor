@@ -248,14 +248,22 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
    until the repository adds its first spec under `docs/figures/`. Adoption stops, even with
    `--force`, when a file the repository already had at one of the engine's paths under
    `tools/figures/` differs from it; move that file aside and rerun. Remove the facet to opt out.
-9. **actionlint runner labels**: when a workflow adoption writes, the documentation gate's or a
-   flavor's CI workflow, runs on a runner label actionlint does not know, adoption declares it
-   under `self-hosted-runner.labels` in `.github/actionlint.yaml` (or an existing
-   `.github/actionlint.yml`), so a repository that lints its workflows with actionlint accepts
-   them. It only adds labels and leaves a file it cannot patch safely untouched, with a warning
-   naming the labels
-   ([actionlint runner labels](guides/documentation-governance.md#adoption-audit-and-ci),
-   `internal/adopt/actionlint.go`). Decline `actionlint-labels` to opt out.
+9. **Go API compatibility gate** (the `api:public-contract` facet, in the default facet set):
+   the gate program `tools/apicompat/gate/main.go` and `.github/workflows/praetor-api.yml` with
+   its required **Go API Compatibility** context, which compares the exported API of every Go
+   module with the pull request's base or the newest root release tag
+   ([Go API compatibility gate](guides/api-compatibility.md)). In a repository without a Go
+   module the job passes saying there is nothing to compare. Adoption stops, even with `--force`,
+   when a file the repository already had at either path differs from it. Remove the facet to opt
+   out.
+10. **actionlint runner labels**: when a workflow adoption writes, the documentation gate's, the
+    Go API compatibility gate's or a flavor's CI workflow, runs on a runner label actionlint does
+    not know, adoption declares it under `self-hosted-runner.labels` in `.github/actionlint.yaml`
+    (or an existing `.github/actionlint.yml`), so a repository that lints its workflows with
+    actionlint accepts them. It only adds labels and leaves a file it cannot patch safely
+    untouched, with a warning naming the labels
+    ([actionlint runner labels](guides/documentation-governance.md#adoption-audit-and-ci),
+    `internal/adopt/actionlint.go`). Decline `actionlint-labels` to opt out.
 
 ### What Adoption Reads Before It Writes
 

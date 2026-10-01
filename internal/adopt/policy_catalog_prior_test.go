@@ -27,7 +27,11 @@ func TestPriorCatalogDigests_Positive_ReproducedByFixtures(t *testing.T) {
 // catalogValuesChangedSinceBUG782 names, by catalog path, every shipped file whose values
 // changed after the BUG-782 layout change. An adopter holding the earlier text of such a file
 // re-pins it only with --force, because isLayoutOnlySuccessor compares values on every run.
-var catalogValuesChangedSinceBUG782 = map[string]bool{}
+var catalogValuesChangedSinceBUG782 = map[string]bool{
+	// #357: the description stopped claiming OpenAPI drift checks nothing ran and names the Go
+	// API Compatibility workflow adoption now adds.
+	"facets/api-public.yaml": true,
+}
 
 // Positive and negative, a deliberate tripwire: the shipped text of every earlier catalog file
 // is a layout-only successor of it, so an adopter holding the earlier text re-pins without

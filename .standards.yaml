@@ -246,6 +246,16 @@ docs_surfaces:
       - ".github/workflows/praetor-docs.yml"
     docs:
       - "docs/guides/documentation-governance.md"
+  - name: "Go API compatibility gate"
+    paths:
+      - "tools/apicompat/**"
+      - "internal/adopt/api_compat.go"
+      - "cmd/standardsctl/audit_api_compat.go"
+      - ".github/workflows/praetor-api.yml"
+    exclude:
+      - "tools/apicompat/*_test.go"
+    docs:
+      - "docs/guides/api-compatibility.md"
   - name: "documentation reference and drift gate"
     paths:
       - "internal/docsref/*.go"

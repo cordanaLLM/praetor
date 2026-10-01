@@ -8,7 +8,7 @@
 # failure message prints the expected digest.
 version: 1
 pinned_version: "v1.0.0"
-digest: "sha256:b4170715a2d03257599e88548f30accf17098e293b7f2b53ccced4fdd43d2e41"
+digest: "sha256:a73576392663a4c7f2f3d0b74e0951b19195c4e62519f3bba9f2b44d79239ea7"
 generated_at: "2026-09-12T00:00:00Z"
 profiles:
   - id: "framework"
@@ -20,7 +20,7 @@ facets:
     digest: "sha256:9bd59f0725d472b1516ba74556feada0e3868f4642bc08dd2d67a2cc26e87778"
   - id: "api:public-contract"
     version: "v1.0.0"
-    digest: "sha256:5ddb1a0912620e0cd8c6cf6185fd5d4cdf01fe042d10caa043356560fe10824b"
+    digest: "sha256:c04ce8a9fc3e119d12966e7c4a88b03e06535bc21c0b43a79dfc64c2dc115474"
   - id: "docs:seo-portal"
     version: "v1.0.0"
     digest: "sha256:145722c161ed8e436369d573c2b736fe7f579b8a1e33a85119e3b10268563428"
