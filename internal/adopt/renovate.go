@@ -228,7 +228,7 @@ func packageJSONConfiguresRenovate(ctx context.Context, data []byte) bool {
 // except a family whose Source is in the repository: that repository is the family's
 // origin, where the files are sources its own Renovate is meant to update.
 func renovateManagedPaths(ctx context.Context, s *adoptSession) ([]string, error) {
-	families, err := enabledManagedFamiliesForSession(s)
+	families, err := enabledManagedFamiliesForSession(ctx, s)
 	if err != nil {
 		return nil, err
 	}

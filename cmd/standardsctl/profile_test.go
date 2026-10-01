@@ -152,7 +152,8 @@ func auditDevContainerQuiet(t *testing.T, root string) error {
 
 // TestCheckDeclarationGates_3D: an audit fixture passes every declaration gate (positive); a
 // declared docs:seo-portal without the documentation assets, or api:public-contract without the
-// API compatibility gate, fails that gate alone (negative); an
+// API compatibility gate in a repository whose go.mod git tracks, fails that gate alone, while the
+// facet without a tracked go.mod only reports that no checker runs (negative); an
 // unreadable baseline counts as one failure while the gates that do not read it still run, and a
 // report without an effective policy is refused (boundary).
 func TestCheckDeclarationGates_3D(t *testing.T) {
@@ -178,8 +179,18 @@ func TestCheckDeclarationGates_3D(t *testing.T) {
 		t.Fatalf("an enabled documentation facet without its assets must fail that gate alone: %d failed\n%s", failed, out)
 	}
 	effective.Manifest.Facets = append(slices.Clone(declared), "api:public-contract")
+	if out, failed := gates(); failed != 0 || !strings.Contains(out, "[INFO] "+adopt.NoAPICompatibilityChecker) {
+		t.Fatalf("an API contract facet without a tracked go.mod needs no gate: %d failed\n%s", failed, out)
+	}
+	writeFixtureFile(t, f.dir, "go.mod", "module example.com/widget\n\ngo 1.27\n")
+	if out, err := runFixtureGit(t, f.dir, f.gitEnv, "add", "--", "go.mod"); err != nil {
+		t.Fatalf("track go.mod: %v (%s)", err, out)
+	}
 	if out, failed := gates(); failed != 1 || !strings.Contains(out, "[FAIL] API compatibility gate asset") {
 		t.Fatalf("an enabled API contract facet without its gate must fail that gate alone: %d failed\n%s", failed, out)
+	}
+	if out, err := runFixtureGit(t, f.dir, f.gitEnv, "rm", "--quiet", "--force", "--", "go.mod"); err != nil {
+		t.Fatalf("untrack go.mod: %v (%s)", err, out)
 	}
 	effective.Manifest.Facets = declared
 	writeFixtureFile(t, f.dir, ".standards-baseline.json", "{")

@@ -3,8 +3,9 @@ id: "api:public-contract"
 name: "Public API Contract & Stability"
 description: "Append-only API evolution per HISS-14 of the extended spec
   (docs/standards/hiss-spec.md): forge check-commits gates the breaking-change
-  Migration: footer, and adoption adds the Go API Compatibility workflow, which
-  compares the exported API of every Go module with go-apidiff"
+  Migration: footer, and where git tracks a go.mod, adoption adds the Go API
+  Compatibility workflow, which compares the exported API of every Go module
+  with go-apidiff; no other language's API is compared"
 
 branch_protection:
   enforce_linear_history: true

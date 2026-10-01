@@ -1,7 +1,8 @@
 # Go API compatibility gate
 
-The `api:public-contract` facet, part of the default facet set, adds a hosted check that
-compares the exported API of every Go module in a repository with a base revision. A removed or
+The `api:public-contract` facet, part of the default facet set, adds a hosted check to every
+repository whose `go.mod` git tracks. The check compares the exported API of every Go module in
+the repository with a base revision. A removed or
 changed exported identifier in any module, a nested one included, reaches review as a warning
 before the repository's first v1 release and as a failed required check from v1 on. The gate is
 one Go program, [`tools/apicompat/gate/main.go`](https://github.com/cordanaLLM/praetor/blob/main/tools/apicompat/gate/main.go),
@@ -10,8 +11,8 @@ run by the workflow `.github/workflows/praetor-api.yml` under the status context
 
 ## What adoption writes
 
-While the facet is declared, `praetorctl adopt` writes two locked files and
-`praetorctl audit` compares them byte for byte, one consistent line-ending style allowed:
+While the facet is declared and git tracks a `go.mod`, `praetorctl adopt` writes two locked files
+and `praetorctl audit` compares them byte for byte, one consistent line-ending style allowed:
 
 | File | Purpose |
 | :--- | :--- |
@@ -26,6 +27,29 @@ context from the ruleset (`internal/adopt/api_compat.go`,
 `TestAdoptionAPICompatibilityGateRefusals` in `internal/adopt/api_compat_test.go`). The
 actionlint runner labels, the Renovate ignore rule and the Prettier inventory that adoption
 maintains list the gate's files beside the documentation gate's.
+
+## Repositories without Go
+
+The gate compares Go modules only, so adoption writes it only where git tracks a `go.mod`, at the
+root or nested, outside the directories a `./...` pattern skips. That is the module discovery the
+gate itself uses (`TrackedModuleFiles` in `tools/apicompat/modules.go`, kept equal to the gate by
+`TestGate_Boundary_AdoptionDiscoversTheGatesModules`). The index decides, so a `go.mod` counts once
+it is staged or committed, and an untracked one does not.
+
+A repository that declares the facet without such a `go.mod`, a Python or Rust project for
+example, gets nothing: no gate program, no workflow, and no **Go API Compatibility** context in
+the ruleset adoption renders. The adoption report says no API compatibility checker runs for the
+repository's languages, and `praetorctl audit` prints the same as an `[INFO]` line, neither a pass
+nor a failure. The facet stays declared and keeps its other policy, including the `Migration:`
+footer check.
+
+A repository moves between the two states on the next `praetorctl adopt`. Tracking its first
+`go.mod` adds the gate and the required context. Untracking its last one retires them; while the
+ruleset still requires the context, an unforced run stops and names the missing `go.mod`, and
+`--force` removes the gate and the requirement, as removing the facet does
+(`TestAdoptionAPICompatibilityGateFollowsTrackedGoModules` in `internal/adopt/api_compat_test.go`).
+Until that run, audit fails on the gate files or the required context left behind and names the
+adoption run that retires them.
 
 ## Run it locally
 
@@ -116,7 +140,9 @@ status 2, so a future toolchain the checker cannot read is a failure, not a sile
 `praetorctl audit` prints `Locked API compatibility gate verified` once both files hold their
 locked texts, git commits them, and the workflow reports `Go API Compatibility` on every pull
 request (`forge.RequiredStatusContextsOf`); the branch ruleset audit then requires that context.
-With the facet removed, a Praetor file of the gate left behind, or a ruleset still requiring its
+In a repository without a tracked `go.mod` it prints the `[INFO]` line from
+[Repositories without Go](#repositories-without-go) instead. With the facet removed, or with no
+`go.mod` tracked, a Praetor file of the gate left behind, or a ruleset still requiring its
 context, fails the audit unless `adoption.decline` names `branch-ruleset`
 (`cmd/standardsctl/audit_api_compat.go`, `cmd/standardsctl/audit_api_compat_test.go`).
 
@@ -144,7 +170,8 @@ an adopting repository, so the forbidigo rule and the utility-sprawl check of
 ## Limits
 
 - Go only. For every other language HISS-14 is enforced by the `Migration:` footer check alone
-  ([HISS compliance matrix](../wiki/HISS-Matrix.md)).
+  ([HISS compliance matrix](../wiki/HISS-Matrix.md)), and a repository without a tracked `go.mod`
+  gets no gate at all ([Repositories without Go](#repositories-without-go)).
 - The base revision is not built separately: the canary covers a checker that cannot read the
   toolchain's packages, and `go list -export` covers `HEAD`, but a base whose packages no longer
   load with the current toolchain is compared as the checker reads it.

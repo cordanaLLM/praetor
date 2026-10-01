@@ -5,8 +5,10 @@
 package managedasset
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -164,6 +166,48 @@ func TestSelectFacetKeepsItsFacet(t *testing.T) {
 	}
 	if got := selectFacet(many, DocumentationFacet); len(got) != MaxFamilies {
 		t.Fatalf("selected %d of %d families, want the MaxFamilies bound %d", len(got), len(many), MaxFamilies)
+	}
+}
+
+// Positive: a declared family without Applies is enabled, and one whose Applies answers yes is
+// too; the registry's API compatibility family applies by apicompat.TracksModule. Negative: an
+// undeclared family is disabled without asking Applies, and a declared one whose Applies answers
+// no is disabled. Boundary: an Applies error disables nothing silently; it is returned, wrapped.
+func TestFamilyEnabled(t *testing.T) {
+	asked := 0
+	answer := func(applies bool, err error) func(context.Context, string) (bool, error) {
+		return func(context.Context, string) (bool, error) {
+			asked++
+			return applies, err
+		}
+	}
+	family := fixtureFamily()
+	if on, err := family.Enabled(t.Context(), t.TempDir(), true); err != nil || !on {
+		t.Fatalf("declared family without Applies: %v, %v", on, err)
+	}
+	family.Applies = answer(true, nil)
+	if on, err := family.Enabled(t.Context(), t.TempDir(), true); err != nil || !on {
+		t.Fatalf("declared family that applies: %v, %v", on, err)
+	}
+	family.Applies = answer(false, nil)
+	if on, err := family.Enabled(t.Context(), t.TempDir(), true); err != nil || on {
+		t.Fatalf("declared family that does not apply: %v, %v", on, err)
+	}
+	asked = 0
+	if on, err := family.Enabled(t.Context(), t.TempDir(), false); err != nil || on || asked != 0 {
+		t.Fatalf("undeclared family: %v, %v, Applies asked %d times", on, err, asked)
+	}
+	family.Applies = answer(true, errors.New("git did not answer"))
+	if on, err := family.Enabled(t.Context(), t.TempDir(), true); err == nil || on ||
+		!strings.Contains(err.Error(), "git did not answer") || !strings.Contains(err.Error(), family.Name) {
+		t.Fatalf("failing Applies: %v, %v", on, err)
+	}
+	api := ForFacet(APIContractFacet)
+	if len(api) != 1 || api[0].Applies == nil {
+		t.Fatalf("the API compatibility family declares no Applies: %+v", api)
+	}
+	if on, err := api[0].Enabled(t.Context(), t.TempDir(), true); err != nil || on {
+		t.Fatalf("API compatibility family outside a Go repository: %v, %v", on, err)
 	}
 }
 

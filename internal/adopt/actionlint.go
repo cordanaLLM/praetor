@@ -125,11 +125,12 @@ func reconcileActionlintLabels(ctx context.Context, s *adoptSession) error {
 
 // actionlintManagedLabels returns the runner labels actionlint does not know that the workflows
 // this run leaves as adoption's rendering run on (adoptedWorkflowFiles): the hosted workflow of
-// every managed asset family the active facets enable, and the detected flavor's CI workflows
-// unless the flavor step is declined. The step runs before the steps that write them, so it
-// reads what they will write.
+// every managed asset family enabled for the repository (enabledManagedFamiliesForSession), the
+// Go API compatibility gate's only where git tracks a go.mod, and the detected flavor's CI
+// workflows unless the flavor step is declined. The step runs before the steps that write them,
+// so it reads what they will write.
 func actionlintManagedLabels(ctx context.Context, s *adoptSession) ([]string, error) {
-	families, err := enabledManagedFamiliesForSession(s)
+	families, err := enabledManagedFamiliesForSession(ctx, s)
 	if err != nil {
 		return nil, fmt.Errorf("resolve the managed gates for actionlint: %w", err)
 	}

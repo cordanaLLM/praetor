@@ -112,7 +112,7 @@ func auditDocumentationGate(ctx context.Context, manifest *config.Manifest, root
 		return err
 	}
 	// The formatter inventory names the files of every enabled family, not only this gate's.
-	families, err := adopt.EnabledManagedFamilies(manifest.Facets)
+	families, err := adopt.EnabledManagedFamilies(ctx, rootDir, manifest.Facets)
 	if err != nil {
 		return fmt.Errorf("[FAIL] Resolve managed asset families: %w", err)
 	}

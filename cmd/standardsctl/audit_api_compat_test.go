@@ -22,11 +22,14 @@ func apiGateManifest() *config.Manifest {
 	return &config.Manifest{Facets: []string{"api:public-contract"}}
 }
 
-// apiGateFixture is a committed repository holding the gate's locked texts and a ruleset that
-// requires its context.
-func apiGateFixture(t *testing.T) string {
+// apiGateFixture is a committed repository holding the gate's locked texts, a ruleset that
+// requires its context, and a go.mod at gomod unless gomod is empty.
+func apiGateFixture(t *testing.T, gomod string) string {
 	t.Helper()
 	root := t.TempDir()
+	if gomod != "" {
+		writeFixtureFile(t, root, gomod, "module example.com/widget\n\ngo 1.27\n")
+	}
 	for _, family := range adopt.APICompatibilityFamilies() {
 		for _, name := range family.Names() {
 			data, err := family.Read(name)
@@ -49,7 +52,7 @@ func apiGateFixture(t *testing.T) string {
 
 // Positive: the locked, committed gate passes, in LF and in one consistent CRLF style.
 func TestAuditAPICompatibilityGate_Positive_LockedGatePasses(t *testing.T) {
-	root := apiGateFixture(t)
+	root := apiGateFixture(t, "go.mod")
 	if err := auditAPICompatibilityGate(t.Context(), apiGateManifest(), root); err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +92,7 @@ func TestAuditAPICompatibilityGate_Negative_DriftFails(t *testing.T) {
 		}, "API compatibility gate files are ignored by git and not tracked"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			root := apiGateFixture(t)
+			root := apiGateFixture(t, "go.mod")
 			tc.mutate(t, root)
 			err := auditAPICompatibilityGate(t.Context(), apiGateManifest(), root)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -129,7 +132,7 @@ func TestAuditFamilyContextsReported(t *testing.T) {
 // branch ruleset is not read.
 func TestAuditAPICompatibilityGate_Disabled(t *testing.T) {
 	manifest := &config.Manifest{Facets: []string{"docs:seo-portal"}}
-	root := apiGateFixture(t)
+	root := apiGateFixture(t, "go.mod")
 	err := auditAPICompatibilityGate(t.Context(), manifest, root)
 	if err == nil || !strings.Contains(err.Error(), "retains Praetor asset") {
 		t.Fatalf("retained gate files: %v", err)
@@ -147,5 +150,43 @@ func TestAuditAPICompatibilityGate_Disabled(t *testing.T) {
 	writeFixtureFile(t, root, ".github/rulesets/main.json", "{}\n")
 	if err := auditAPICompatibilityGate(t.Context(), manifest, root); err != nil {
 		t.Fatalf("operator files and a ruleset without the context failed: %v", err)
+	}
+}
+
+// Boundary: a repository whose only go.mod is nested gets the gate, which the audit verifies.
+func TestAuditAPICompatibilityGate_Boundary_NestedModuleIsAudited(t *testing.T) {
+	root := apiGateFixture(t, "lib/go.mod")
+	out, err := captureStdout(t, func() error { return auditAPICompatibilityGate(t.Context(), apiGateManifest(), root) })
+	if err != nil || !strings.Contains(out, "[PASS] Locked API compatibility gate verified") {
+		t.Fatalf("nested module audit = %v:\n%s", err, out)
+	}
+}
+
+// Negative: a Python repository declaring the facet, whose only go.mod is a fixture under
+// testdata, needs no gate: the audit says no checker runs for its languages, neither a pass nor
+// a failure. Boundary: gate files and a required context left from a Go past fail it, naming the
+// adoption run that retires them.
+func TestAuditAPICompatibilityGate_Negative_NoGoModuleRunsNoChecker(t *testing.T) {
+	root := t.TempDir()
+	writeFixtureFile(t, root, "pyproject.toml", "[project]\nname = \"widget\"\n")
+	writeFixtureFile(t, root, "testdata/fixture/go.mod", "module example.com/fixture\n")
+	ruleset, err := forge.RenderRepositoryRuleset("main", config.DefaultPolicy().BranchProtection, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixtureFile(t, root, ".github/rulesets/main.json", string(ruleset))
+	initGitFixture(t, root)
+	out, err := captureStdout(t, func() error { return auditAPICompatibilityGate(t.Context(), apiGateManifest(), root) })
+	if err != nil || !strings.Contains(out, "[INFO] "+adopt.NoAPICompatibilityChecker+".") ||
+		strings.Contains(out, "[PASS]") || strings.Contains(out, "[FAIL]") {
+		t.Fatalf("audit without a Go module = %v:\n%s", err, out)
+	}
+
+	stale := apiGateFixture(t, "")
+	out, err = captureStdout(t, func() error { return auditAPICompatibilityGate(t.Context(), apiGateManifest(), stale) })
+	if err == nil || !strings.Contains(err.Error(), "retains Praetor asset") ||
+		!strings.Contains(err.Error(), "git tracks no go.mod, so rerun praetorctl adopt") ||
+		!strings.Contains(out, adopt.NoAPICompatibilityChecker) {
+		t.Fatalf("stale gate without a Go module = %v:\n%s", err, out)
 	}
 }

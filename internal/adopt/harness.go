@@ -453,7 +453,7 @@ func (s *adoptSession) harnessFacts(ctx context.Context, clients []string) (harn
 	if err != nil {
 		return harnessFacts{}, fmt.Errorf("agent_clients in %s: %w", manifestFile, err)
 	}
-	families, err := enabledManagedFamiliesForSession(s)
+	families, err := enabledManagedFamiliesForSession(ctx, s)
 	if err != nil {
 		return harnessFacts{}, fmt.Errorf("resolve the managed gates for the harness: %w", err)
 	}

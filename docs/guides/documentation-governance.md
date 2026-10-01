@@ -473,7 +473,8 @@ tells the adopter's Renovate to leave the managed files alone
   configuration in the `renovate` member of `package.json`.
 - The entry lists the managed files of every family an active facet enables:
   the documentation families under `docs:seo-portal` and the
-  [Go API compatibility gate](api-compatibility.md) under `api:public-contract`.
+  [Go API compatibility gate](api-compatibility.md) under `api:public-contract`, in a
+  repository whose `go.mod` git tracks.
   A family whose source the repository holds (`tools/markdownlint/assets.go`,
   `tools/apicompat/assets.go`, where the managed files are sources its own
   Renovate updates, as in this repository) contributes no path. With no path

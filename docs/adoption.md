@@ -252,10 +252,11 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
    the gate program `tools/apicompat/gate/main.go` and `.github/workflows/praetor-api.yml` with
    its required **Go API Compatibility** context, which compares the exported API of every Go
    module with the pull request's base or the newest root release tag
-   ([Go API compatibility gate](guides/api-compatibility.md)). In a repository without a Go
-   module the job passes saying there is nothing to compare. Adoption stops, even with `--force`,
-   when a file the repository already had at either path differs from it. Remove the facet to opt
-   out.
+   ([Go API compatibility gate](guides/api-compatibility.md)). Adoption writes it only where git
+   tracks a `go.mod`, at the root or nested; a repository declaring the facet without one gets no
+   gate and no required context, and adoption and audit say that no API compatibility checker runs
+   for its languages. Adoption stops, even with `--force`, when a file the repository already had
+   at either path differs from it. Remove the facet to opt out.
 10. **actionlint runner labels**: when a workflow adoption writes, the documentation gate's, the
     Go API compatibility gate's or a flavor's CI workflow, runs on a runner label actionlint does
     not know, adoption declares it under `self-hosted-runner.labels` in `.github/actionlint.yaml`
@@ -622,7 +623,8 @@ as they are. After a profile or facet change they can fail `praetorctl audit`. T
 synthesized from the declaration (`devcontainer.SynthesizeWithFeatures`), turning
 `docs:seo-portal` on or off adds or retires the documentation assets, the README block and the
 documentation context in the ruleset, and turning `api:public-contract` on or off adds or retires
-the [Go API compatibility gate](guides/api-compatibility.md) and its context. So after
+the [Go API compatibility gate](guides/api-compatibility.md) and its context in a repository
+whose `go.mod` git tracks. So after
 writing, or in a dry run against the planned declaration, `profile set` runs the five audit gates
 that check those files: the README block, the documentation gate, the API compatibility gate, the
 DevContainer and the branch protection ruleset (`declarationGates` in
@@ -905,6 +907,17 @@ reports lock generation as skipped; it cannot promise a complete adoption. Live
 errors retain the partial report, since earlier scaffolding may already exist.
 The same source option applies to `adopt --all-missing`; integrations invoking
 adoption must supply it or arrange an already valid target lock.
+
+## Migration: the Go API compatibility gate
+
+Only a Go repository that declares `api:public-contract`, one whose `go.mod` git tracks at the
+root or nested, fails `praetorctl audit` until `praetorctl adopt` writes
+`tools/apicompat/gate/main.go` and `.github/workflows/praetor-api.yml`; its rendered ruleset then
+requires **Go API Compatibility**. A repository declaring the facet without a tracked `go.mod`
+needs no change: adoption writes nothing for the facet, and audit prints an `[INFO]` line saying
+that no API compatibility checker runs for its languages. A repository pinning the earlier
+`facets/api-public.yaml` re-pins it with `praetorctl adopt --force`. Remove the facet to opt out
+([Go API compatibility gate](guides/api-compatibility.md#repositories-without-go)).
 
 ## Migration: `--force` keeps an operator-owned Paperclip harness
 

@@ -178,7 +178,7 @@ func reconcileFormatterIgnore(ctx context.Context, s *adoptSession) error {
 	if err != nil || !applicable {
 		return err
 	}
-	families, err := enabledManagedFamiliesForSession(s)
+	families, err := enabledManagedFamiliesForSession(ctx, s)
 	if err != nil {
 		return fmt.Errorf("resolve the managed families for the formatter inventory: %w", err)
 	}

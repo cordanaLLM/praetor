@@ -34,11 +34,12 @@ func workflowPaths(workflows []scaffoldedWorkflow) []string {
 	return paths
 }
 
-// ciSession is a session over a Go library checkout with the documentation facet declared.
+// ciSession is a session over a Go library checkout, its go.mod tracked, with the documentation
+// facet declared.
 func ciSession(t *testing.T, declined ...string) *adoptSession {
 	t.Helper()
 	repo := newTestRepo(t, "widget")
-	mustWrite(t, filepath.Join(repo, "go.mod"), "module example.com/widget\n\ngo 1.27\n")
+	trackGoModule(t, repo, "go.mod")
 	mustWrite(t, filepath.Join(repo, "internal", "widget.go"), "package widget\n")
 	s := identitySession(t, repo)
 	s.declined = declined
@@ -53,7 +54,7 @@ func ciSession(t *testing.T, declined ...string) *adoptSession {
 // no flavor nothing is scaffolded and rule 5 says the gates run local only.
 func TestScaffoldedWorkflowsReadWhatAdoptionWrites(t *testing.T) {
 	s := ciSession(t)
-	families, err := EnabledManagedFamilies([]string{"docs:seo-portal", "api:public-contract"})
+	families, err := EnabledManagedFamilies(t.Context(), s.repoPath, []string{"docs:seo-portal", "api:public-contract"})
 	if err != nil {
 		t.Fatal(err)
 	}

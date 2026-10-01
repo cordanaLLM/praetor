@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -399,6 +400,49 @@ func TestGate_Boundary_DiscoveryScope(t *testing.T) {
 	same := h.run(t, f.dir, nil, "-base=HEAD")
 	if same.status != 0 || !strings.Contains(same.stdout, "nothing to compare") {
 		t.Fatalf("-base=HEAD: status %d:\n%s", same.status, same.stdout)
+	}
+}
+
+// Boundary: adoption decides by TrackedModuleFiles whether a repository gets the gate, so it
+// must discover exactly the modules the gate does. Every module of HEAD is new against a base
+// without one, so the gate lists each it discovers as added; the two lists must agree, nested
+// modules in, skipped directories out.
+func TestGate_Boundary_AdoptionDiscoversTheGatesModules(t *testing.T) {
+	t.Parallel()
+	h := newGateHarness(t)
+	f := newFixture(t, h)
+	base := f.commit("readme", map[string]string{"README.md": "widget\n"})
+	files := map[string]string{}
+	dirs := []string{".", "lib", "deep/a/b", "v2", "testdata/fixture", "lib/testdata/inner", "vendor/dep", ".hidden/tool", "_scratch/tool"}
+	for _, dir := range dirs {
+		for name, body := range goModule(dir, "example.com/widget/"+strings.ReplaceAll(dir, "/", "-"), "pkg") {
+			files[name] = body
+		}
+	}
+	f.commit("modules", files)
+	run := h.run(t, f.dir, nil, "-base="+base)
+	if run.status != 0 {
+		t.Fatalf("status %d, want 0:\n%s\n%s", run.status, run.stdout, run.stderr)
+	}
+	var added []string
+	for _, line := range strings.Split(strings.ReplaceAll(run.stdout, "\r\n", "\n"), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) > 1 && fields[0] == "added" {
+			added = append(added, fields[1])
+		}
+	}
+	tracked, err := TrackedModuleFiles(t.Context(), f.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	discovered := make([]string, 0, len(tracked))
+	for _, name := range tracked {
+		discovered = append(discovered, path.Dir(name))
+	}
+	slices.Sort(added)
+	slices.Sort(discovered)
+	if want := []string{".", "deep/a/b", "lib", "v2"}; !slices.Equal(added, want) || !slices.Equal(discovered, want) {
+		t.Fatalf("gate added %q, adoption discovered %q, want %q:\n%s", added, discovered, want, run.stdout)
 	}
 }
 

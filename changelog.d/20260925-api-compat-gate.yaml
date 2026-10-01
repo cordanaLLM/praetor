@@ -1,4 +1,4 @@
 type: added
-title: The api:public-contract facet emits and audits a Go API compatibility gate over every Go module
+title: The api:public-contract facet emits and audits a Go API compatibility gate over every Go module in a repository whose go.mod git tracks, and in one without it says that no API compatibility checker runs for the repository's languages
 issue: "#357"
 breaking: true

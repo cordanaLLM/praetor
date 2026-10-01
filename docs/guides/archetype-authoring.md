@@ -458,8 +458,10 @@ or HISS-14, is cited together with `docs/standards/hiss-spec.md`
 checks that enforce them. Two facets also enable managed asset families
 (`Families` in `internal/managedasset/family.go`), files adoption writes while the facet is
 declared, removes once it is not, and audit locks: `docs:seo-portal` the documentation gate and
-`api:public-contract` the [Go API compatibility gate](api-compatibility.md). The latter's
-description names that workflow and the `Migration:` footer check and nothing else; its `linters`
+`api:public-contract` the [Go API compatibility gate](api-compatibility.md). A family may also
+require something of the repository (`Applies`): the API compatibility gate is written only where
+git tracks a `go.mod`. The latter's description names that workflow, the condition and the
+`Migration:` footer check and nothing else; its `linters`
 entries are names in the resolved policy, not commands any adopted repository runs.
 
 ---

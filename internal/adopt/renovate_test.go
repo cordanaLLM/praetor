@@ -21,8 +21,9 @@ import (
 )
 
 // renovateManagedFixturePaths are the managed paths of the families the default facets
-// enable, the documentation families' and then the API compatibility family's
-// (apiCompatibilityFixturePaths), spelled out rather than read from the code under test.
+// enable in a repository whose go.mod git tracks, the documentation families' and then the API
+// compatibility family's (apiCompatibilityFixturePaths), spelled out rather than read from the
+// code under test.
 var renovateManagedFixturePaths = append(slices.Clone(documentationFixturePaths), apiCompatibilityFixturePaths...)
 
 // apiCompatibilityFixturePaths are the managed paths of the api:public-contract family.
@@ -104,6 +105,7 @@ func memberNames(root clientjson.Object) []string {
 // included; the rerun, and a rerun after a formatter compacted the file, change nothing.
 func TestRenovateIgnorePositiveDeclaresManagedFilesOnce(t *testing.T) {
 	repo := newTestRepo(t, "renovate-positive")
+	trackGoModule(t, repo, "go.mod")
 	path := filepath.Join(repo, "renovate.json")
 	mustWrite(t, path, adopterRenovateConfig)
 	opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo}
@@ -294,6 +296,7 @@ func TestFindRenovateConfigNegativePropagatesCancellation(t *testing.T) {
 // the rule over the other's files only, and the origin of both removes a rule it added before.
 func TestRenovateIgnoreBoundarySkipsTheFamilyOrigin(t *testing.T) {
 	markdownOrigin := newTestRepo(t, "renovate-markdown-origin")
+	trackGoModule(t, markdownOrigin, "go.mod")
 	mustWrite(t, filepath.Join(markdownOrigin, "tools", "markdownlint", "assets.go"), "package markdownlint\n")
 	mustWrite(t, filepath.Join(markdownOrigin, "renovate.json"), "{\"extends\": [\"config:recommended\"]}\n")
 	if _, err := Adopt(t.Context(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: markdownOrigin}); err != nil {
@@ -455,6 +458,7 @@ func TestRenovateIgnorePositiveAcceptsAnEquivalentAdopterRule(t *testing.T) {
 func TestRenovateIgnoreNegativeDeclaresOnlyUncoveredPaths(t *testing.T) {
 	partial := `{"matchFileNames": ["tools/markdownlint/**", "tools/figures/**"], "enabled": false}`
 	repo := newTestRepo(t, "renovate-partial")
+	trackGoModule(t, repo, "go.mod")
 	path := filepath.Join(repo, "renovate.json")
 	mustWrite(t, path, adopterRenovateConfigWith(partial))
 	opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo}

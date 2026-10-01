@@ -16,11 +16,14 @@ import (
 )
 
 // auditAPICompatibilityGate verifies the Go API compatibility gate of api:public-contract
-// (#357). While the facet is declared, the gate program and its hosted workflow must hold the
-// locked texts, git must commit them, and the workflow must report its context on every pull
-// request (auditFamilyContextsReported), which is what makes the rendered branch ruleset
-// require it; the branch ruleset audit then checks that requirement. Once the facet is gone, no
-// Praetor file of the gate and no ruleset requirement of its context may remain.
+// (#357). While the facet is declared and git tracks a go.mod, the gate program and its hosted
+// workflow must hold the locked texts, git must commit them, and the workflow must report its
+// context on every pull request (auditFamilyContextsReported), which is what makes the rendered
+// branch ruleset require it; the branch ruleset audit then checks that requirement. A declared
+// facet without a tracked go.mod gets no gate: the audit says that no API compatibility checker
+// runs for the repository's languages, neither a pass nor a failure. Once the facet or the last
+// go.mod is gone, no Praetor file of the gate and no ruleset requirement of its context may
+// remain.
 func auditAPICompatibilityGate(ctx context.Context, manifest *config.Manifest, rootDir string) error {
 	enabled, err := adopt.APICompatibilityEnabled(manifest.Facets)
 	if err != nil {
@@ -30,6 +33,31 @@ func auditAPICompatibilityGate(ctx context.Context, manifest *config.Manifest, r
 	if !enabled {
 		return auditDisabledAPICompatibility(ctx, manifest, rootDir, families)
 	}
+	applies, err := adopt.APICompatibilityApplies(ctx, rootDir)
+	if err != nil {
+		return fmt.Errorf("[FAIL] Resolve whether git tracks a Go module for the API compatibility gate: %w", err)
+	}
+	if !applies {
+		return auditAPICompatibilityWithoutGo(ctx, manifest, rootDir, families)
+	}
+	return auditEnabledAPICompatibility(ctx, rootDir, families)
+}
+
+// auditAPICompatibilityWithoutGo prints, as information, that no API compatibility checker runs
+// for a repository declaring api:public-contract without a tracked go.mod, and then holds it to
+// the disabled facet's terms: a gate file or required context left from a Go past fails, naming
+// the adoption run that retires it.
+func auditAPICompatibilityWithoutGo(ctx context.Context, manifest *config.Manifest, rootDir string, families []managedasset.Family) error {
+	fmt.Printf("[INFO] %s.\n", adopt.NoAPICompatibilityChecker)
+	if err := auditDisabledAPICompatibility(ctx, manifest, rootDir, families); err != nil {
+		return fmt.Errorf("%w; git tracks no go.mod, so rerun praetorctl adopt to retire the gate", err)
+	}
+	return nil
+}
+
+// auditEnabledAPICompatibility verifies the gate of a repository that declares the facet and
+// tracks a go.mod: locked texts, committed files and a context reported on every pull request.
+func auditEnabledAPICompatibility(ctx context.Context, rootDir string, families []managedasset.Family) error {
 	for index := 0; index < len(families) && index < managedasset.MaxFamilies; index++ {
 		if _, err := auditManagedFamily(ctx, rootDir, families[index]); err != nil {
 			return err
