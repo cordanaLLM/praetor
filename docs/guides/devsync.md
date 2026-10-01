@@ -67,8 +67,9 @@ and devices are not copied.
 Push remembers the file count, newest modification time and total size of each archive
 in `<user config dir>/praetor/devsync-state.json` and skips archives whose contents have
 not changed. Delete that file to upload everything again. The agent state bundle is
-uploaded on every push. It is encrypted like every other archive, and its local
-temporary copy is deleted after the upload. Shell history is left out. Agent and MCP
+uploaded on every push unless it exceeds the size cap below. It is encrypted like every
+other archive, and its local temporary copy is deleted once push has uploaded, skipped or
+dry-run it. Shell history is left out. Agent and MCP
 configuration JSON is redacted before it enters the bundle: the value of every
 credential-named key (`token`, `secret`, `password`, `apiKey`, `Authorization` and
 similar), every string in an `env` object, and every string carrying a bearer or basic
@@ -94,6 +95,12 @@ single byte of it: it reuses the same measurement already described above (file 
 newest modification time, total size), the one recorded in the state file, rather than
 buffering an archive just to weigh it.
 
+The agent state bundle is held to the same cap (`pushBundle` in
+`internal/devsync/push.go`): push harvests it into its private temporary folder, measures
+it the same way, and skips it as `too-large` when it exceeds the cap. `--dry-run`
+harvests and measures it too, so its line shows the measured size rather than `0 B`,
+without reaching the remote.
+
 A skipped archive prints one line, `too-large`, with its measured size and the cap, exactly
 like the `uploaded`, `skipped` and `failed` lines; `--dry-run` reports the same skip. Push
 always ends with a summary line stating how many archives it skipped for size and their
@@ -102,7 +109,9 @@ not a failure and does not change the command's exit code.
 
 Accepted sizes are a plain number of bytes, or a number followed by a binary unit —
 `B`, `KiB`, `MiB`, `GiB` or `TiB`, matched case-insensitively, for example `2GiB` or
-`500MiB`. `0` or `none` (any case) disables the cap.
+`500MiB`. `0` or `none` (any case) disables the cap. `NaN` and infinity are refused as
+not a non-negative number, and a size of 2^63 bytes or more as too large, so a malformed
+value never disables the cap (`ParseSize` in `internal/devsync/devsync.go`).
 
 To raise or remove the cap for one push:
 

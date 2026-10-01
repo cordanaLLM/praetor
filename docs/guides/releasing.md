@@ -436,12 +436,21 @@ the flavors declared in the config, not a list of names kept in YAML. A schedule
 holds `edge`; dispatching `.github/workflows/sync-flavors.yml` with the `flavor` input (for
 example `edge`) passes `--flavor` and moves only the flavors named.
 
+A `refs/tags/v*` source reads at most 4096 matching tags (`maxSemverTagCandidates` in
+`cmd/standardsctl/flavors.go`). When the pattern matches more, `plan` and `sync` exit
+non-zero with `matches more than 4096 tags` before printing a plan or moving any tag,
+because the highest stable tag can sort after the first 4096 and pending would claim no
+stable tag exists (#389). A `sync-flavors.yml` run then fails and moves no flavor, not
+even `bleeding` on `refs/heads/main`, until `source_ref` is narrowed, for example to
+`refs/tags/v2.*`.
+
 Moving tags are lightweight tags created with `git tag --no-sign`. A workstation with
 `tag.gpgSign=true` would otherwise turn them into signed annotated tags that need a
 message, and the sync would fail.
 
 `cmd/standardsctl/flavors_cli_test.go` covers pending flavors, `--strict`, the atomic push
 against a bare repository, and the signing configuration.
+`cmd/standardsctl/flavors_overflow_test.go` covers the 4096-tag bound and the overflow error.
 `cmd/standardsctl/flavors_frequency_test.go` and `internal/flavors/frequency_test.go` cover
 held manual flavors, `--flavor`, and the refused frequencies.
 

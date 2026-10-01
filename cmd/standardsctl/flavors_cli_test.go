@@ -89,11 +89,11 @@ func TestFirstOutputLine_3D(t *testing.T) {
 }
 
 func TestResolveFlavorRef_Negative_RejectsShellMetacharacters(t *testing.T) {
-	if _, ok := resolveFlavorRef(context.Background(), t.TempDir(), "refs/tags/$(touch pwned)"); ok {
-		t.Error("a ref carrying shell metacharacters must not resolve")
+	if _, ok, err := resolveFlavorRef(context.Background(), t.TempDir(), "refs/tags/$(touch pwned)"); ok || err != nil {
+		t.Errorf("a ref carrying shell metacharacters must not resolve: ok=%v err=%v", ok, err)
 	}
-	if _, ok := resolveFlavorRef(context.Background(), t.TempDir(), ""); ok {
-		t.Error("an empty ref must not resolve")
+	if _, ok, err := resolveFlavorRef(context.Background(), t.TempDir(), ""); ok || err != nil {
+		t.Errorf("an empty ref must not resolve: ok=%v err=%v", ok, err)
 	}
 }
 
@@ -129,9 +129,9 @@ func TestResolveFlavorRef_Positive_HighestStableTagWins(t *testing.T) {
 	f.commitAndTag(t, "v0.1.0")
 	wantCommit := f.commitAndTag(t, "v0.2.0")
 
-	got, ok := resolveFlavorRef(context.Background(), f.dir, "refs/tags/v*")
-	if !ok {
-		t.Fatal("expected refs/tags/v* to resolve with two stable tags present")
+	got, ok, err := resolveFlavorRef(context.Background(), f.dir, "refs/tags/v*")
+	if !ok || err != nil {
+		t.Fatalf("expected refs/tags/v* to resolve with two stable tags present: %v", err)
 	}
 	if got != wantCommit {
 		t.Errorf("resolved %q, want v0.2.0's commit %q", got, wantCommit)
@@ -142,8 +142,9 @@ func TestResolveFlavorRef_Negative_OnlyPrereleasesLeaveLatestUnresolved(t *testi
 	f := newTagFixture(t)
 	f.commitAndTag(t, "v0.2.0-rc.1")
 
-	if got, ok := resolveFlavorRef(context.Background(), f.dir, "refs/tags/v*"); ok {
-		t.Errorf("expected an rc-only repository to leave latest unresolved (pending), got %q", got)
+	// Pending, not an error: "no stable tag exists" stays distinct from an overflow (#389).
+	if got, ok, err := resolveFlavorRef(context.Background(), f.dir, "refs/tags/v*"); ok || err != nil {
+		t.Errorf("expected an rc-only repository to leave latest unresolved (pending), got %q, %v", got, err)
 	}
 }
 
@@ -160,9 +161,9 @@ func TestResolveFlavorRef_Boundary_PrereleaseBuildMetadataAndNonSemverTagsIgnore
 	// affect precedence or prevent selection.
 	wantCommit := f.commitAndTag(t, "v0.3.0+build.7")
 
-	got, ok := resolveFlavorRef(context.Background(), f.dir, "refs/tags/v*")
-	if !ok {
-		t.Fatal("expected refs/tags/v* to resolve")
+	got, ok, err := resolveFlavorRef(context.Background(), f.dir, "refs/tags/v*")
+	if !ok || err != nil {
+		t.Fatalf("expected refs/tags/v* to resolve: %v", err)
 	}
 	if got != wantCommit {
 		t.Errorf("resolved %q, want v0.3.0+build.7's commit %q", got, wantCommit)

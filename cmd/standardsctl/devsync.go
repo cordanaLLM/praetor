@@ -15,8 +15,9 @@ import (
 // devsyncTimeout bounds a whole devsync run; every rclone call carries its own tighter bound.
 const devsyncTimeout = 24 * time.Hour
 
-// defaultMaxArchiveSize is push's --max-archive-size default: a unit whose measured source
-// exceeds this is skipped, not uploaded. "0" or "none" disables the cap.
+// defaultMaxArchiveSize is push's --max-archive-size default: an archive whose measured
+// source exceeds this, the agent state bundle included, is skipped, not uploaded. "0" or
+// "none" disables the cap.
 const defaultMaxArchiveSize = "2GiB"
 
 // rcloneBinaryEnv selects the rclone executable, so tests and unusual installs can point
@@ -100,7 +101,7 @@ func runDevsyncPush(ctx context.Context, args []string) error {
 	host := fs.String("host", "", "folder name for this workstation (default: host name)")
 	dryRun := fs.Bool("dry-run", false, "report what would be uploaded without uploading")
 	maxArchiveSize := fs.String("max-archive-size", defaultMaxArchiveSize,
-		"skip a unit whose measured source exceeds this size, e.g. 2GiB, 500MiB (0 or \"none\" disables the cap)")
+		"skip an archive, agent state included, whose measured source exceeds this size, e.g. 2GiB, 500MiB (0 or \"none\" disables the cap)")
 	config := fs.String("rclone-config", "", "rclone config file (default: rclone's own)")
 	if err := parseDevsyncFlags(fs, args); err != nil {
 		return err

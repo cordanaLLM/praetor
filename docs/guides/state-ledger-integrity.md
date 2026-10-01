@@ -245,10 +245,27 @@ delimited milestone block of `BACKLOG.md` (`internal/milestone/milestone.go`).
   `contextopt.ReplaceRootSnapshot` against the bytes it was rendered from: the same
   locked writer (`contextopt.ReplaceSnapshot`) `praetorctl state task archive` uses to
   append discharged tasks. A write that finds the file changed fails and leaves the
-  other writer's bytes; `milestones.json` is already saved at that point and the next
-  milestone command re-renders the block. `milestones.json` itself is still written
-  without compare-and-swap: a store at its 10,000-entry bound exceeds the 1 MiB
-  snapshot bound `ReplaceSnapshot` enforces.
+  other writer's bytes. `milestones.json` itself is still written without
+  compare-and-swap: a store at its 10,000-entry bound exceeds the 1 MiB snapshot bound
+  `ReplaceSnapshot` enforces.
+- **A failed command restores the store it changed.** `milestone create`,
+  `close` and `sync` read `milestones.json` (or note its absence) before writing it. When
+  the store write or the `BACKLOG.md` write then fails, `commitStoreAndBacklog` rewrites
+  the prior bytes, or removes the store it created, and the error says
+  `milestones.json restored to its prior state`; a retry starts from the same ledger and
+  creates no duplicate. The restore runs even when the caller's context was cancelled,
+  uses the lock-free store writer so a busy `BACKLOG.md` lock cannot block it, and only
+  replaces a store that still holds the bytes the command wrote: one another writer
+  changed is left as found, and a restore that itself fails is reported with
+  `keeps this change` (issue #412, `internal/milestone/commit_rollback_test.go`).
+- **A `BACKLOG.md` write that landed is not undone.** The compare-and-swap writer can
+  report an error after its rename or link already published the file: a caller
+  cancelled in that window, or a failed directory sync, unlock or staging cleanup.
+  `settleBacklogFailure` reads `BACKLOG.md` back first. When it holds the new render,
+  the store write is not undone, so both ledgers carry the change, and the error says
+  `BACKLOG.md was published before the failure`. When it cannot be read, the store is
+  left with the change and the error says `could not be read back`; it is never
+  restored blind.
 - **BACKLOG.md stays confined.** The read and the compare-and-swap write both open
   `.workingdir` through `util.InConfinedDirectory`, a pinned handle on the repository
   root, like every other milestone ledger write. A `.workingdir` link inside the
@@ -256,7 +273,8 @@ delimited milestone block of `BACKLOG.md` (`internal/milestone/milestone.go`).
   read, fails with `ErrPathEscapesRoot` and writes nothing outside (BUG-826).
 
 The behaviour is covered by `internal/milestone/remote_sync_test.go`,
-`internal/milestone/milestone_test.go` and `cmd/standardsctl/milestone_close_test.go`.
+`internal/milestone/milestone_test.go`, `internal/milestone/commit_rollback_test.go` and
+`cmd/standardsctl/milestone_close_test.go`.
 
 ## STATE.md entries
 

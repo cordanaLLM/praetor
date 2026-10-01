@@ -231,13 +231,30 @@ func bigArchiveBytes(t *testing.T, ctx context.Context, rclone Rclone, dev, arch
 	if err != nil {
 		t.Fatal(err)
 	}
+	return outcomeFor(t, outcomes, archive).Bytes
+}
+
+// outcomeFor returns the outcome Push reported for archive.
+func outcomeFor(t *testing.T, outcomes []Outcome, archive string) Outcome {
+	t.Helper()
 	for _, o := range outcomes {
 		if o.Archive == archive {
-			return o.Bytes
+			return o
 		}
 	}
 	t.Fatalf("archive %s not found in %v", archive, outcomes)
-	return 0
+	return Outcome{}
+}
+
+// isolateTempDir points the process temporary folder at a fresh empty folder and returns it,
+// so a test can check that push leaves no private bundle copy behind.
+func isolateTempDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, name := range []string{"TMPDIR", "TMP", "TEMP"} {
+		t.Setenv(name, dir)
+	}
+	return dir
 }
 
 func TestPushCapAllowsArchiveUnderIt(t *testing.T) {
@@ -252,7 +269,8 @@ func TestPushCapAllowsArchiveUnderIt(t *testing.T) {
 		t.Fatal(err, out.String())
 	}
 	got := statuses(outcomes)
-	if got["ws1/dev/small.tar.gz"] != StatusUploaded || got["ws1/dev/big.tar.gz"] != StatusUploaded {
+	if got["ws1/dev/small.tar.gz"] != StatusUploaded || got["ws1/dev/big.tar.gz"] != StatusUploaded ||
+		got["ws1/agent-state.tar.gz"] != StatusUploaded {
 		t.Fatalf("under-cap push = %v\n%s", got, out.String())
 	}
 	if strings.Contains(out.String(), StatusTooLarge) {
@@ -322,6 +340,110 @@ func TestPushCapBoundaryAndDisabled(t *testing.T) {
 	}
 	if statuses(outcomes)["ws1/dev/big.tar.gz"] == StatusTooLarge {
 		t.Fatalf("MaxArchiveSize=0 did not disable the cap: %v", statuses(outcomes))
+	}
+}
+
+func TestPushMeasuresAgentState(t *testing.T) {
+	// positive (#385): a dry run measures the agent state bundle instead of reporting 0 B, a
+	// cap above it uploads it, and the private bundle copy never outlives either push.
+	temp := isolateTempDir(t)
+	ctx, rclone, store := newFakeRclone(t, "")
+	opts := pushOptions(t, rclone, makeSizeCapTree(t), nil)
+	opts.DryRun = true
+	outcomes, err := Push(ctx, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dry := outcomeFor(t, outcomes, "ws1/agent-state.tar.gz")
+	if dry.Status != StatusWouldUpload || dry.Bytes <= 0 || dry.Note != "before compression" {
+		t.Fatalf("dry run did not measure the agent state: %+v", dry)
+	}
+	opts.DryRun, opts.MaxArchiveSize = false, dry.Bytes*2
+	if outcomes, err = Push(ctx, opts); err != nil {
+		t.Fatal(err)
+	}
+	if got := outcomeFor(t, outcomes, "ws1/agent-state.tar.gz"); got.Status != StatusUploaded {
+		t.Fatalf("agent state under the cap = %+v", got)
+	}
+	if _, err := os.Stat(filepath.Join(store, "data", "ws1", agentStateArchive)); err != nil {
+		t.Fatalf("agent state not on the remote: %v", err)
+	}
+	if left, err := os.ReadDir(temp); err != nil || len(left) != 0 {
+		t.Fatalf("private bundle copy left behind: %v, %v", left, err)
+	}
+}
+
+func TestPushCapHoldsAgentState(t *testing.T) {
+	// negative (#385): over the cap, the agent state bundle is skipped as too-large like every
+	// project archive: nothing reaches the remote, the summary counts it, and a dry run reports
+	// the same decision.
+	ctx, rclone, store := newFakeRclone(t, "")
+	var out bytes.Buffer
+	opts := pushOptions(t, rclone, makeSizeCapTree(t), &out)
+	opts.MaxArchiveSize = 1
+	outcomes, err := Push(ctx, opts)
+	if err != nil {
+		t.Fatal(err, out.String())
+	}
+	agent := outcomeFor(t, outcomes, "ws1/agent-state.tar.gz")
+	if agent.Status != StatusTooLarge || agent.Bytes <= 1 || agent.Note != FormatBytes(agent.Bytes)+" exceeds cap 1 B" {
+		t.Fatalf("agent state over the cap = %+v\n%s", agent, out.String())
+	}
+	if _, err := os.Stat(filepath.Join(store, "data", "ws1", agentStateArchive)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("agent state uploaded over the cap: %v", err)
+	}
+	if !strings.Contains(out.String(), "too-large    ws1/agent-state.tar.gz") ||
+		!strings.Contains(out.String(), "skipped for size: 3 archive(s)") {
+		t.Fatalf("agent state skip not reported or not counted:\n%s", out.String())
+	}
+	opts.DryRun, opts.Out = true, nil
+	if outcomes, err = Push(ctx, opts); err != nil {
+		t.Fatal(err)
+	}
+	// The bundle manifest records its capture time, so its size may differ by a few bytes.
+	if got := outcomeFor(t, outcomes, "ws1/agent-state.tar.gz"); got.Status != StatusTooLarge || got.Bytes <= 1 {
+		t.Fatalf("dry run over the cap = %+v", got)
+	}
+}
+
+func TestPushBundleCapBoundary(t *testing.T) {
+	// boundary (#385): a bundle one byte over the cap is skipped, one exactly at it is measured
+	// for a dry run and uploaded otherwise, and a zero cap never applies.
+	ctx, rclone, store := newFakeRclone(t, "")
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "manifest.json"), strings.Repeat("x", 100))
+	u := unit{rel: "agent-state", dir: dir, keepCaches: true}
+	remote := filepath.Join(store, "data", "ws1", agentStateArchive)
+	for _, tc := range []struct {
+		limit        int64
+		dryRun       bool
+		status, note string
+		bytes        int64
+		onRemote     bool
+	}{
+		{limit: 99, status: StatusTooLarge, note: "100 B exceeds cap 99 B", bytes: 100},
+		{limit: 100, dryRun: true, status: StatusWouldUpload, note: "before compression", bytes: 100},
+		{limit: 100, status: StatusUploaded, onRemote: true},
+		{limit: 0, status: StatusUploaded, onRemote: true},
+	} {
+		opts := pushOptions(t, rclone, t.TempDir(), nil)
+		opts.MaxArchiveSize, opts.DryRun = tc.limit, tc.dryRun
+		got := pushBundle(ctx, opts, Outcome{Archive: "ws1/" + agentStateArchive}, u)
+		_, statErr := os.Stat(remote)
+		if got.Status != tc.status || got.Err != nil || (tc.bytes != 0 && (got.Bytes != tc.bytes || got.Note != tc.note)) ||
+			(statErr == nil) != tc.onRemote {
+			t.Fatalf("cap %d, dry run %v = %+v, on remote %v", tc.limit, tc.dryRun, got, statErr == nil)
+		}
+	}
+}
+
+func TestPushBundleMeasureFailure(t *testing.T) {
+	// negative: a bundle that cannot be measured fails the archive with the cause attached.
+	ctx, rclone, _ := newFakeRclone(t, "")
+	u := unit{rel: "agent-state", dir: filepath.Join(t.TempDir(), "absent"), keepCaches: true}
+	got := pushBundle(ctx, pushOptions(t, rclone, t.TempDir(), nil), Outcome{Archive: "ws1/" + agentStateArchive}, u)
+	if got.Status != StatusFailed || got.Err == nil || !strings.Contains(got.Err.Error(), "measure agent state") {
+		t.Fatalf("unmeasurable bundle = %+v", got)
 	}
 }
 
@@ -445,6 +567,30 @@ func TestParseSizeRejects(t *testing.T) {
 	for _, in := range []string{"", "abc", "2GB", "2XiB", "-1", "-1GiB", "GiB", "2 2GiB"} {
 		if _, err := ParseSize(in); err == nil {
 			t.Errorf("ParseSize(%q) accepted", in)
+		}
+	}
+}
+
+func TestParseSizeRejectsNonFinite(t *testing.T) {
+	// negative (#386): NaN and infinity, in any case, sign or unit, are not non-negative numbers;
+	// none of them may reach the integer conversion and silently disable the cap.
+	for _, in := range []string{"NaN B", "nan KiB", "NaN MiB", "Inf B", "+Inf MiB", "inf GiB", "Infinity B", "+infinity TiB", "-Inf B"} {
+		if got, err := ParseSize(in); err == nil || !strings.Contains(err.Error(), "not a non-negative number") {
+			t.Errorf("ParseSize(%q) = %d, %v, want the not-a-non-negative-number error", in, got, err)
+		}
+	}
+}
+
+func TestParseSizeOverflowBoundary(t *testing.T) {
+	// boundary: the largest whole TiB count int64 holds parses exactly; 2^63 bytes, by unit or as
+	// the plain MaxInt64 spelling float64 rounds up to it, and the largest finite float are too
+	// large rather than wrapping to a negative cap that disables the check.
+	if got, err := ParseSize("8388607TiB"); err != nil || got != 8388607<<40 {
+		t.Fatalf("ParseSize(8388607TiB) = %d, %v", got, err)
+	}
+	for _, in := range []string{"8388608TiB", "9223372036854775807", "1.7976931348623157e308 B"} {
+		if got, err := ParseSize(in); err == nil || !strings.Contains(err.Error(), "too large") {
+			t.Errorf("ParseSize(%q) = %d, %v, want the too-large error", in, got, err)
 		}
 	}
 }

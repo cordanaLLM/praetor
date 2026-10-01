@@ -108,6 +108,8 @@ func TestDevsyncCLIRejectsBadArguments(t *testing.T) {
 		{"push", "--dev=" + filepath.Join(dev, "absent"), "--host=ws1"},
 		{"push", "--unknown"},
 		{"push", "--max-archive-size=bogus"},
+		{"push", "--host=ws1", "--dry-run", "--max-archive-size=NaN B"},
+		{"push", "--host=ws1", "--dry-run", "--max-archive-size=Inf B"},
 		{"pull"},
 		{"pull", "--host=ws1", "--into=" + dev},
 		{"ls", "positional"},
@@ -139,7 +141,10 @@ func TestDevsyncCLIPushSizeCap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err, out)
 	}
-	for _, want := range []string{"too-large", "ws1/dev/org/repo.tar.gz", "skipped for size: 1 archive(s)"} {
+	// The agent state bundle is held to the same cap as every project archive (#385).
+	for _, want := range []string{
+		"too-large    ws1/dev/org/repo.tar.gz", "too-large    ws1/agent-state.tar.gz", "skipped for size: 2 archive(s)",
+	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("size-capped dry run lacks %q:\n%s", want, out)
 		}

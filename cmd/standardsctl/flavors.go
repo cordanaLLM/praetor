@@ -18,26 +18,33 @@ import (
 const flavorsCommandTimeout = 2 * time.Minute
 
 // maxSemverTagCandidates is the scalar upper bound (HISS-02) on the tag refs a single
-// "refs/tags/v*"-style resolution walks.
+// "refs/tags/v*"-style resolution walks. A pattern matching more tags fails the resolution
+// with an overflow error instead of resolving from a truncated prefix (#389).
 const maxSemverTagCandidates = 4096
 
 // resolveFlavorRef resolves a declared source ref to the commit it points at. A version
 // tag pattern ("refs/tags/v*") resolves through newestSemverTag; every other glob keeps
 // git's version-sort behavior. ok is false when nothing matches, which the planner turns
-// into ActionUnresolved.
-func resolveFlavorRef(ctx context.Context, dir, ref string) (string, bool) {
-	if err := util.ValidateExecArg(ref); err != nil {
-		return "", false
-	}
-	if strings.ContainsAny(ref, "*?[") {
-		matched, ok := matchFlavorRefPattern(ctx, dir, ref)
-		if !ok {
-			return "", false
+// into ActionUnresolved. err is non-nil only when the matching tags exceed
+// maxSemverTagCandidates, so "no stable tag exists" and "too many tags to decide" stay
+// distinct.
+func resolveFlavorRef(ctx context.Context, dir, ref string) (string, bool, error) {
+	if strings.ContainsAny(ref, "*?[") && util.ValidateExecArg(ref) == nil {
+		matched, ok, err := matchFlavorRefPattern(ctx, dir, ref)
+		if err != nil || !ok {
+			return "", false, err
 		}
 		ref = matched
-		if err := util.ValidateExecArg(ref); err != nil {
-			return "", false
-		}
+	}
+	commit, ok := resolveRefCommit(ctx, dir, ref)
+	return commit, ok, nil
+}
+
+// resolveRefCommit resolves one concrete ref to the commit it points at. ok is false when
+// the ref is not a usable git argument or names no commit.
+func resolveRefCommit(ctx context.Context, dir, ref string) (string, bool) {
+	if err := util.ValidateExecArg(ref); err != nil {
+		return "", false
 	}
 	// "^{commit}" dereferences annotated tags, so a tag object and a branch head both
 	// yield a commit SHA that can be compared for equality.
@@ -53,11 +60,12 @@ func resolveFlavorRef(ctx context.Context, dir, ref string) (string, bool) {
 // pattern goes through newestSemverTag so a prerelease (v0.2.0-rc.1) never outranks a
 // stable release (v0.1.0) for a flavor like "latest" (#245); every other glob (branch
 // patterns such as "refs/heads/lts-*") keeps the prior highest-sorting-ref behavior.
-func matchFlavorRefPattern(ctx context.Context, dir, pattern string) (string, bool) {
+func matchFlavorRefPattern(ctx context.Context, dir, pattern string) (string, bool, error) {
 	if strings.HasPrefix(pattern, "refs/tags/v") {
 		return newestSemverTag(ctx, dir, pattern)
 	}
-	return newestMatchingRef(ctx, dir, pattern)
+	matched, ok := newestMatchingRef(ctx, dir, pattern)
+	return matched, ok, nil
 }
 
 func newestMatchingRef(ctx context.Context, dir, pattern string) (string, bool) {
@@ -74,14 +82,16 @@ func newestMatchingRef(ctx context.Context, dir, pattern string) (string, bool) 
 // no prerelease component. Tags that do not parse as SemVer (non-version tags matching the
 // glob) are ignored rather than aborting the resolution; a pattern matching only
 // prereleases (or nothing) resolves to ok=false, which the planner reports as pending, not
-// as a prerelease standing in for "latest".
-func newestSemverTag(ctx context.Context, dir, pattern string) (string, bool) {
-	out, err := util.RunGit(ctx, dir, "for-each-ref", "--format=%(refname)", pattern)
-	if err != nil {
-		return "", false
+// as a prerelease standing in for "latest". git lists at most one ref past the bound, and a
+// pattern matching more than maxSemverTagCandidates tags returns an error: the winner can
+// sort anywhere, so a scan of the first maxSemverTagCandidates refs cannot tell "no stable
+// tag" from "stable tag not reached" (#389).
+func newestSemverTag(ctx context.Context, dir, pattern string) (string, bool, error) {
+	lines := semverTagCandidates(ctx, dir, pattern)
+	if len(lines) > maxSemverTagCandidates {
+		return "", false, fmt.Errorf("source ref %q matches more than %d tags, so its highest stable SemVer tag "+
+			"cannot be decided; narrow source_ref (for example refs/tags/v2.*)", pattern, maxSemverTagCandidates)
 	}
-
-	lines := strings.Split(out, "\n")
 	var bestRef string
 	var best semver.Version
 	found := false
@@ -98,7 +108,19 @@ func newestSemverTag(ctx context.Context, dir, pattern string) (string, bool) {
 			best, bestRef, found = v, ref, true
 		}
 	}
-	return bestRef, found
+	return bestRef, found, nil
+}
+
+// semverTagCandidates lists the refs pattern matches, at most maxSemverTagCandidates+1 so
+// an overflow stays detectable without reading every tag. A git failure lists nothing,
+// which newestSemverTag reports as unresolved.
+func semverTagCandidates(ctx context.Context, dir, pattern string) []string {
+	out, err := util.RunGit(ctx, dir, "for-each-ref",
+		fmt.Sprintf("--count=%d", maxSemverTagCandidates+1), "--format=%(refname)", pattern)
+	if err != nil {
+		return nil
+	}
+	return strings.Split(strings.TrimSpace(out), "\n")
 }
 
 func firstOutputLine(out string) string {
@@ -110,17 +132,47 @@ func firstOutputLine(out string) string {
 	return strings.TrimSpace(line)
 }
 
+// flavorRefResolver resolves the refs of one flavors run and keeps the first resolution
+// error, so an overflowing tag scan fails the command instead of reading as a pending flavor.
+type flavorRefResolver struct {
+	ctx context.Context
+	dir string
+	err error
+}
+
+// resolve is a flavors.RefResolver. Calls after an error still answer; planFlavors reports
+// the recorded error before any plan line is printed.
+func (r *flavorRefResolver) resolve(ref string) (string, bool) {
+	commit, ok, err := resolveFlavorRef(r.ctx, r.dir, ref)
+	if err != nil && r.err == nil {
+		r.err = err
+	}
+	return commit, ok
+}
+
 // fetchCurrentTags maps each declared flavor name to the commit its moving tag currently
 // points at. Flavors whose tag does not exist are absent from the map.
-func fetchCurrentTags(ctx context.Context, dir string, cfg *flavors.Config) map[string]string {
+func fetchCurrentTags(cfg *flavors.Config, resolve flavors.RefResolver) map[string]string {
 	names := flavors.FlavorNames(cfg)
 	currentTags := make(map[string]string, len(names))
 	for i := 0; i < len(names) && i < flavors.MaxFlavors; i++ {
-		if commit, ok := resolveFlavorRef(ctx, dir, "refs/tags/"+names[i]); ok {
+		if commit, ok := resolve("refs/tags/" + names[i]); ok {
 			currentTags[names[i]] = commit
 		}
 	}
 	return currentTags
+}
+
+// planFlavors resolves every current tag and declared source ref in dir and plans the
+// selected flavors. A resolution error, such as a tag pattern past maxSemverTagCandidates,
+// fails the plan, so neither plan nor sync proceeds from a truncated scan.
+func planFlavors(ctx context.Context, dir string, cfg *flavors.Config, selected []string) ([]flavors.TagTransition, error) {
+	resolver := &flavorRefResolver{ctx: ctx, dir: dir}
+	transitions := flavors.PlanSelected(cfg, fetchCurrentTags(cfg, resolver.resolve), resolver.resolve, selected)
+	if resolver.err != nil {
+		return nil, fmt.Errorf("failed to resolve flavor refs: %w", resolver.err)
+	}
+	return transitions, nil
 }
 
 // flavorSyncOptions selects how `flavors sync` treats a pending flavor and whether it
@@ -272,8 +324,10 @@ func runFlavors(args []string) error {
 		return fmt.Errorf("--flavor names undeclared flavor(s): %s", strings.Join(unknown, ", "))
 	}
 
-	resolve := func(ref string) (string, bool) { return resolveFlavorRef(ctx, *dir, ref) }
-	transitions := flavors.PlanSelected(cfg, fetchCurrentTags(ctx, *dir, cfg), resolve, selected)
+	transitions, err := planFlavors(ctx, *dir, cfg, selected)
+	if err != nil {
+		return err
+	}
 	printFlavorPlan(transitions)
 
 	switch action {

@@ -1,6 +1,7 @@
 package milestone
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -41,6 +42,11 @@ const (
 	workingDirPerm = util.SecureDirPerm
 	// ledgerFilePerm is the mode applied to milestones.json and BACKLOG.md.
 	ledgerFilePerm = util.SecureFilePerm
+
+	// restoreTimeout bounds the settlement a failed commit runs: the BACKLOG.md read-back
+	// and the store restore (HISS-02). Both run on a context detached from the caller's
+	// cancellation, so this is their only deadline.
+	restoreTimeout = 30 * time.Second
 )
 
 // Milestone represents an epic goal or version deliverable.
@@ -281,18 +287,146 @@ func renderBacklog(content string, milestones []Milestone) (string, error) {
 	return rendered, nil
 }
 
+// storeSnapshot is milestones.json as one read found it: its bytes, or its absence.
+type storeSnapshot struct {
+	data   []byte
+	exists bool
+}
+
+// holds reports whether the snapshot is a present store carrying exactly data.
+func (s storeSnapshot) holds(data []byte) bool {
+	return s.exists && bytes.Equal(s.data, data)
+}
+
+// same reports whether two snapshots agree on existence and bytes.
+func (s storeSnapshot) same(other storeSnapshot) bool {
+	return s.exists == other.exists && bytes.Equal(s.data, other.data)
+}
+
+// ledgerWriters are the file writes a milestone commit makes. Production always uses the
+// writers commitWriters starts with; the indirection is the seam a test fails one commit
+// step through, deterministically and on every platform (#412). A test that swaps it must
+// not run in parallel with another milestone test.
+type ledgerWriters struct {
+	writeStore   func(rootPath string, data []byte) error
+	removeStore  func(rootPath string) error
+	writeBacklog func(ctx context.Context, update *backlogUpdate) error
+}
+
+var commitWriters = ledgerWriters{
+	writeStore:   writeStoreFile,
+	removeStore:  removeStoreFile,
+	writeBacklog: writeBacklog,
+}
+
+// commitStoreAndBacklog persists store and the BACKLOG.md block rendered from it as one
+// unit for create, close and remote sync. Both outputs are rendered and validated before
+// either file changes, and the milestones.json bytes (or its absence) are read first. When
+// the store write fails, restoreStore puts milestones.json back; when the BACKLOG.md write
+// fails, settleBacklogFailure first checks whether BACKLOG.md landed anyway. A retry after
+// a restore starts from the ledger the failed command found (#412). The ledgers can still
+// disagree after a failed restore, a store another writer changed, or an unreadable
+// BACKLOG.md or store; the returned error names each of those cases.
+//
+// Both settle on a context detached from the caller's cancellation, because a cancelled or
+// expired caller is one of the failures they handle, and under their own restoreTimeout.
 func commitStoreAndBacklog(ctx context.Context, rootPath string, store *MilestoneStore) error {
 	update, err := prepareBacklog(ctx, rootPath, store)
 	if err != nil {
 		return fmt.Errorf("sync to backlog: %w", err)
 	}
-	if err := saveStore(ctx, rootPath, store); err != nil {
+	data, err := encodeStore(ctx, store)
+	if err != nil {
 		return err
 	}
-	if err := writeBacklog(ctx, update); err != nil {
-		return fmt.Errorf("sync to backlog (%s is saved; the next milestone command re-renders the block): %w", MilestonesFile, err)
+	prior, err := readStoreSnapshot(ctx, rootPath)
+	if err != nil {
+		return err
+	}
+	if err := commitWriters.writeStore(rootPath, data); err != nil {
+		settle, cancel := context.WithTimeout(context.WithoutCancel(ctx), restoreTimeout)
+		defer cancel()
+		return restoreStore(settle, rootPath, prior, data, err)
+	}
+	if err := commitWriters.writeBacklog(ctx, update); err != nil {
+		settle, cancel := context.WithTimeout(context.WithoutCancel(ctx), restoreTimeout)
+		defer cancel()
+		return settleBacklogFailure(settle, update, prior, data, fmt.Errorf("sync to backlog: %w", err))
 	}
 	return nil
+}
+
+// settleBacklogFailure decides what a failed BACKLOG.md write left behind before it undoes
+// the store write. The locked compare-and-swap writer can fail after its rename or link
+// already published BACKLOG.md: its directory sync reports a caller cancelled in that
+// window, and a failed fsync, unlock or staging cleanup is reported after the publish too.
+// The write error alone therefore does not prove BACKLOG.md is unchanged, so it is read
+// back. Holding this commit's render as a change, BACKLOG.md landed and the store write
+// is not undone, so both carry the change. Holding anything else, nothing of this commit
+// landed there and restoreStore puts the store back. Unreadable, the outcome is unknown
+// and the store is left with its change rather than restored blind; the error says which
+// case applied.
+func settleBacklogFailure(ctx context.Context, update *backlogUpdate, prior storeSnapshot, written []byte, cause error) error {
+	landed, err := backlogLanded(ctx, update)
+	if err != nil {
+		return fmt.Errorf("%w; %s could not be read back, so %s keeps this change: %w", cause, BacklogFile, MilestonesFile, err)
+	}
+	if landed {
+		return fmt.Errorf("%w (%s was published before the failure, so the %s write is not undone)", cause, BacklogFile, MilestonesFile)
+	}
+	return restoreStore(ctx, update.root, prior, written, cause)
+}
+
+// backlogLanded reports whether BACKLOG.md now holds update's render where the file it was
+// rendered from did not. A render byte-identical to that file proves nothing about the
+// write and leaves BACKLOG.md as found either way, so it counts as not landed and the
+// store is restored to match.
+func backlogLanded(ctx context.Context, update *backlogUpdate) (bool, error) {
+	if update.exists && bytes.Equal(update.expected, update.data) {
+		return false, nil
+	}
+	observed, exists, err := observeBacklog(ctx, update.root)
+	if err != nil {
+		return false, err
+	}
+	return exists && bytes.Equal(observed, update.data), nil
+}
+
+// restoreStore undoes the store write of a commit that failed with cause and returns cause
+// together with what the restore did. A store still holding prior needs nothing. A store
+// holding written, the bytes this commit wrote, is put back to prior: rewritten with the
+// prior bytes, or removed when it did not exist before. A store another writer changed in
+// between is left as found and reported, so the restore never discards that writer's
+// update.
+//
+// ctx is the caller's detached settlement context (see commitStoreAndBacklog). The restore
+// uses the lock-free writer every milestones.json write uses, so a BACKLOG.md write that
+// failed on a busy working-directory lock cannot block it.
+func restoreStore(ctx context.Context, rootPath string, prior storeSnapshot, written []byte, cause error) error {
+	current, err := readStoreSnapshot(ctx, rootPath)
+	if err != nil {
+		return fmt.Errorf("%w; %s could not be checked and may keep this change: %w", cause, MilestonesFile, err)
+	}
+	if current.same(prior) {
+		return cause
+	}
+	if !current.holds(written) {
+		return fmt.Errorf("%w; %s changed under this command and was left as found", cause, MilestonesFile)
+	}
+	if err := putStore(rootPath, prior); err != nil {
+		return fmt.Errorf("%w; restoring %s failed and it keeps this change: %w", cause, MilestonesFile, err)
+	}
+	return fmt.Errorf("%w (%s restored to its prior state)", cause, MilestonesFile)
+}
+
+// putStore makes milestones.json match snapshot: its bytes when it existed, absent when it
+// did not. A working directory the failed commit created stays in place, empty of
+// milestone state again.
+func putStore(rootPath string, snapshot storeSnapshot) error {
+	if snapshot.exists {
+		return commitWriters.writeStore(rootPath, snapshot.data)
+	}
+	return commitWriters.removeStore(rootPath)
 }
 
 // writeBacklog publishes the rendered BACKLOG.md through the same locked
@@ -409,26 +543,38 @@ func ensureWorkingDir(rootPath string) error {
 	return nil
 }
 
-func loadStore(ctx context.Context, rootPath string) (*MilestoneStore, error) {
+// readStoreSnapshot reads milestones.json through the confined path and without following
+// a link. It is the one read of the store: loadStore parses it and a commit keeps it to
+// restore from. An absent store is a snapshot, not an error.
+func readStoreSnapshot(ctx context.Context, rootPath string) (storeSnapshot, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, fmt.Errorf("context cancelled before reading the milestone store: %w", err)
+		return storeSnapshot{}, fmt.Errorf("context cancelled before reading the milestone store: %w", err)
 	}
-
 	filePath, err := workingDirFile(rootPath, MilestonesFile)
+	if err != nil {
+		return storeSnapshot{}, err
+	}
+	if !util.FileExists(filePath) {
+		return storeSnapshot{}, nil
+	}
+	data, err := util.ReadFileNoFollow(filePath)
+	if err != nil {
+		return storeSnapshot{}, fmt.Errorf("read milestones store: %w", err)
+	}
+	return storeSnapshot{data: data, exists: true}, nil
+}
+
+func loadStore(ctx context.Context, rootPath string) (*MilestoneStore, error) {
+	snapshot, err := readStoreSnapshot(ctx, rootPath)
 	if err != nil {
 		return nil, err
 	}
-	if !util.FileExists(filePath) {
+	if !snapshot.exists {
 		return &MilestoneStore{Milestones: []Milestone{}}, nil
 	}
 
-	data, err := util.ReadFileNoFollow(filePath)
-	if err != nil {
-		return nil, fmt.Errorf("read milestones store: %w", err)
-	}
-
 	var store MilestoneStore
-	if err := json.Unmarshal(data, &store); err != nil {
+	if err := json.Unmarshal(snapshot.data, &store); err != nil {
 		return nil, fmt.Errorf("unmarshal milestones store: %w", err)
 	}
 	if len(store.Milestones) > MaxMilestonesLimit {
@@ -438,20 +584,46 @@ func loadStore(ctx context.Context, rootPath string) (*MilestoneStore, error) {
 }
 
 func saveStore(ctx context.Context, rootPath string, store *MilestoneStore) error {
+	data, err := encodeStore(ctx, store)
+	if err != nil {
+		return err
+	}
+	return writeStoreFile(rootPath, data)
+}
+
+// encodeStore checks the store against its bound and renders the bytes milestones.json
+// holds. Every store write encodes through it, so a commit can compare what it wrote.
+func encodeStore(ctx context.Context, store *MilestoneStore) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("context cancelled before writing the milestone store: %w", err)
+		return nil, fmt.Errorf("context cancelled before writing the milestone store: %w", err)
 	}
 	if len(store.Milestones) > MaxMilestonesLimit {
-		return fmt.Errorf("milestone store exceeds maximum of %d entries", MaxMilestonesLimit)
+		return nil, fmt.Errorf("milestone store exceeds maximum of %d entries", MaxMilestonesLimit)
 	}
-
 	data, err := json.MarshalIndent(store, "", "  ")
 	if err != nil {
-		return fmt.Errorf("marshal milestones: %w", err)
+		return nil, fmt.Errorf("marshal milestones: %w", err)
 	}
+	return data, nil
+}
 
+// writeStoreFile replaces milestones.json with data through the confined atomic writer.
+func writeStoreFile(rootPath string, data []byte) error {
 	if err := writeWorkingDirFile(rootPath, MilestonesFile, data); err != nil {
 		return fmt.Errorf("write milestones store: %w", err)
+	}
+	return nil
+}
+
+// removeStoreFile deletes milestones.json through a pinned handle on the working
+// directory, so a .workingdir swapped for an escaping link is refused rather than followed
+// (BUG-826). The name itself is removed, never a link's target.
+func removeStoreFile(rootPath string) error {
+	err := util.InConfinedDirectory(rootPath, state.WorkingDirName, func(dir *os.Root) error {
+		return dir.Remove(MilestonesFile)
+	})
+	if err != nil {
+		return fmt.Errorf("remove milestones store: %w", err)
 	}
 	return nil
 }

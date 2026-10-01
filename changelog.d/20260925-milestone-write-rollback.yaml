@@ -1,0 +1,4 @@
+type: fixed
+title: "A failed milestone create, close or sync restores milestones.json instead of leaving it out of step with BACKLOG.md"
+issue: "#412"
+breaking: false
