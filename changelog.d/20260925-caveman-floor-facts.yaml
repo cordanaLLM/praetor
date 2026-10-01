@@ -1,3 +1,3 @@
 type: fixed
-title: "caveman floor checks numbers (F9), source and data fence code outside comments (F10) and shell commands (F2); check and floor read wrapped code spans, quoted fences, front matter and bold sentence ends correctly"
+title: "caveman floor holds numbers, fenced code and session output; check reads Markdown as CommonMark does"
 breaking: true

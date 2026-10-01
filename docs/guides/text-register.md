@@ -565,8 +565,9 @@ shape is at least one top-level `key:` entry, and otherwise only indented lines,
 and `#` comments, so a `description:` holding an unquoted colon and blank, which skill
 loaders read but YAML does not decode, still counts (`TestCheckFrontMatterUnquotedColon` in
 `internal/caveman/check_test.go`). A block with a line of another shape, or one that does
-not start on line one, stays prose, so a thematic break cannot hide a paragraph;
-`CheckRuntime` reads front matter as text. Code spans follow CommonMark: a span closes at
+not start on line one, stays prose, so a thematic break cannot hide a paragraph.
+`CheckRuntime` reads front matter as prose, its wrapped lines one paragraph, and counts no
+`front_matter_lines`. Code spans follow CommonMark: a span closes at
 the next backtick run of the same length, a run that never closes is literal backticks,
 and a span may wrap across the lines of one paragraph. A fence opens inside a blockquote
 (`> ```sh`) and closes when the blockquote ends. Markdown table delimiters
@@ -586,13 +587,13 @@ survive verbatim, anywhere in the new text, and the counts must not fall:
 | Rule | Must survive |
 | :--- | :--- |
 | `F1` | every inline code span with its backticks; a span that wraps across a line break is one fact, joined with one space, so wrapping or unwrapping it loses nothing, and a span of only blanks is no fact |
-| `F2` | every command of a shell fence: each line of a `bash`, `sh`, `shell`, `zsh`, `fish`, `powershell`, `pwsh` or `ps1` fence or of a fence without a language, except blanks and `#` comments; in a `console`, `shell-session` or `terminal` fence only a line after the `$` prompt and its blank, compared without them; a line continuing a command that ends in `\` counts too. Lines of other fences (Go, JSON, YAML, `text`) are examples, not commands: `F9` and `F10` hold them. A fence inside a blockquote compares without its `>` markers |
+| `F2` | every command of a shell fence: each line of a script fence (`bash`, `sh`, `shell`, `zsh`, `ksh`, `csh`, `fish`, `powershell`, `pwsh`, `ps1` and the other names of the table) or of a fence without a language, except blanks and `#` comments; each line of a Windows batch fence (`cmd`, `bat`, `batch`) except `REM` and `::` comments; in a `console`, `shell-session` or `terminal` fence only a line after the `$` prompt and its blank, compared without them; a line continuing a command that ends in `\` counts too. Lines of other fences (Go, JSON, YAML, `text`) are examples, not commands, and the output lines of a session are what its commands printed: `F9` and `F10` hold both. A fence inside a blockquote compares without its `>` markers |
 | `F3` to `F5` | every id such as `HISS-17` or `ADR-0010`, link target, and HTML marker |
 | `F6` | the count of `MUST`, `SHALL` and `REQUIRED` |
 | `F7` | the count of prohibitions: never, do not, don't, must not, no |
 | `F8` | the count of numbered bold rules (`1. **...**`) |
-| `F9` | every number of a line outside fenced code, table cells and front matter included, and of the code of a source or data fence (see `F10`): `557.3` turning into `557` fails. It may move anywhere a reader still finds it: prose, a code span, a command or fenced code, though not into a comment. A unit is not part of it (`24 h` equals `24h`); digits inside a word, dotted or not (`p99`, `sha256`, `p99.94`, `v8.6.0`, `go1.27`), an ordered list marker, and numbers inside a code span, id, link target or URL of the original are not number facts |
-| `F10` | every identifier, key or word of the code of a fence whose language is neither a shell nor `mermaid` (Go, JSON, YAML, `text`), its line comments stripped by the markers of its language (`lineComments` in `internal/caveman/floor.go`, cut by `util.StripLineComment`). Correcting a comment or reformatting passes; renaming a call, changing a key or commenting out an entry fails. It may move into any fenced code or code span |
+| `F9` | every number of a line outside fenced code, table cells and front matter included, of the code of a source or data fence and of the output of a terminal session (see `F10`). A word that holds a digit is one number, whole: `557.3` turning into `557`, `v8.6.0` into `v8.7.0`, `p99.94` into `p99.9` or `-5` into `5` fails, and the digits of `utf-8` are no number of their own. A number followed by a unit and no further digit is the number alone (`24 h` equals `24h`). It may move anywhere a reader still finds it: prose, a code span, a command, fenced code, a list marker or a heading, though not into a comment. Labels of Markdown syntax are no number facts: ordered list markers, quoted ones too, heading section numbers such as `## 3.`, the labels of reference links, reference definitions and footnotes, and HTML entities; nor are numbers inside a code span, id, link target or URL of the original |
+| `F10` | every identifier, key or word of the code of a fence whose language is neither a shell nor `mermaid` (Go, JSON, YAML, `text`) and of the output lines of a terminal session, its comments stripped by the syntax of its language (`commentGroups` in `internal/caveman/fence_comments.go`, by Linguist name or alias, cut by `util.StripComments`): line comments, block comments such as `/* */` and `<!-- -->` across lines, and never a marker inside a quoted string. Correcting a comment or reformatting passes; renaming a call, changing a key or a quoted value or commenting out an entry fails. It may move into any fenced code or code span |
 
 The shell fence table is `util.MarkdownShellFence` (`internal/util/markdown_syntax.go`),
 the one the documentation reference check reads commands from. The fixtures under
