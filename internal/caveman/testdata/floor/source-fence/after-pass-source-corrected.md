@@ -4,8 +4,13 @@ Start service:
 app.New(service.Module) // registers metadata and client
 ```
 
+```yaml
+port: 8080   # metrics endpoint
+retries: 5
+```
+
 ```json
-{"timeout": 45}
+{ "timeout": 30 }
 ```
 
 ```sh

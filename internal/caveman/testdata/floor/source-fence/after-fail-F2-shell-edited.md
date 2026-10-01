@@ -4,6 +4,11 @@ Start service:
 app.New(service.Module) // health probes and metrics
 ```
 
+```yaml
+port: 8080 # health probes
+retries: 5
+```
+
 ```json
 {"timeout": 30}
 ```
@@ -13,6 +18,6 @@ make run
 ```
 
 ```console
-$ make verify
+$ make check
 ok  all tests passed
 ```

@@ -1,7 +1,7 @@
 Start service:
 
 ```go
-app.New(service.Module) // health probes and metrics
+app.Start(service.Module) // health probes and metrics
 ```
 
 ```yaml

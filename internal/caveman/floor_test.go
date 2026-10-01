@@ -114,15 +114,28 @@ func TestFloorWrappedCodeSpan(t *testing.T) {
 	}
 }
 
-// TestFloorCommandFences pins #322: F2 reads shell fences only, a session after its prompt.
+// TestFloorCommandFences pins #322: F2 reads shell fences only, a session after its prompt;
+// a source or data fence holds its code tokens (F10) and numbers (F9) outside comments.
 func TestFloorCommandFences(t *testing.T) {
 	cases := map[string]struct {
 		before, after string
 		want          []Finding
 	}{
 		"go comment corrected": {"```go\nrun() // old\n```", "```go\nrun() // new\n```", nil},
-		"yaml value changed":   {"```yaml\nport: 1\n```", "```yaml\nport: 2\n```", nil},
-		"text output changed":  {"```text\nok 1\n```", "```text\nok 2\n```", nil},
+		"go code reformatted":  {"```go\nrun( a,b )\n```", "```go\nrun(a, b)\n```", nil},
+		"go call renamed": {"```go\nrun() // note\n```", "```go\nstart() // note\n```",
+			[]Finding{{2, RuleFloorCodeToken, "run"}}},
+		"yaml comment corrected": {"```yaml\nport: 1 # old\n```", "```yml\nport: 1 # new\n```", nil},
+		"yaml value changed": {"```yaml\nport: 1\n```", "```yaml\nport: 2\n```",
+			[]Finding{{2, RuleFloorNumber, "1"}}},
+		"yaml entry commented out": {"```yaml\nretries: 5\n```", "```yaml\n# retries: 5\n```",
+			[]Finding{{2, RuleFloorCodeToken, "retries"}, {2, RuleFloorNumber, "5"}}},
+		"json key dropped": {"```json\n{\"a\": true, \"b\": true}\n```", "```json\n{\"a\": true}\n```",
+			[]Finding{{2, RuleFloorCodeToken, "b"}}},
+		"text output changed": {"```text\nok 1\n```", "```text\nok 2\n```",
+			[]Finding{{2, RuleFloorNumber, "1"}}},
+		"mermaid label changed":         {"```mermaid\nA[old 1] --> B\n```", "```mermaid\nA[new] --> B\n```", nil},
+		"source moved into a code span": {"```go\nrun(5)\n```", "Call `run(5)`.", nil},
 		"script edited": {"```bash\nmake serve\n```", "```bash\nmake run\n```",
 			[]Finding{{2, RuleFloorCommand, "make serve"}}},
 		"session prompt dropped into script": {"```console\n$ make check\nok\n```", "```sh\nmake check\n```", nil},
@@ -191,14 +204,47 @@ func TestFloorNumbers(t *testing.T) {
 	}
 }
 
-// TestFloorNumbersBoundary covers what is not a number fact: digits glued to a word, ordered
-// list markers, and numbers inside code spans, ids, link targets and URLs.
+// TestFloorNumbersBoundary covers what is not a number fact: digits glued to a word, dotted
+// or not, ordered list markers, and numbers inside code spans, ids, link targets and URLs.
 func TestFloorNumbersBoundary(t *testing.T) {
-	before := "p99 sha256 x86 F9 (x3)\n2. Second item.\n`port 8080` ADR-0010 [a](b-4.md) https://example.invalid/5"
+	before := "p99 sha256 x86 F9 (x3) v8.6.0 p99.94 go1.27 x1,5\n2. Second item.\n" +
+		"`port 8080` ADR-0010 [a](b-4.md) https://example.invalid/5"
 	if got := extractFacts(before).items[RuleFloorNumber]; len(got) != 0 {
 		t.Fatalf("number facts %v, want none", got)
 	}
-	if got := extractFacts("1,024 and 3.0, then 7.").items[RuleFloorNumber]; len(got) != 3 {
-		t.Fatalf("number facts %v, want 1,024, 3.0 and 7", got)
+	if got := extractFacts("1,024 and 3.0, then 7. (.5) 1..9").items[RuleFloorNumber]; len(got) != 6 {
+		t.Fatalf("number facts %v, want 1,024, 3.0, 7, 5, 1 and 9", got)
+	}
+	// Backticking a dotted token or a bare number loses no number.
+	if got := Floor("Pin v8.6.0, alert at p99.94, built with go1.27.", "Pin `v8.6.0`, `p99.94`, `go1.27`.").Findings; len(got) != 0 {
+		t.Fatalf("dotted token leaked a number: %v", got)
+	}
+	if got := Floor("Limit is 60 lines.", "Limit: `60` lines.").Findings; len(got) != 0 {
+		t.Fatalf("number moved into a code span lost: %v", got)
+	}
+}
+
+// TestFloorNumbersMoveIntoCode pins where a number may move: into a code span, a command or
+// the code of a source fence keeps it; into a comment, where no reader runs it, does not.
+func TestFloorNumbersMoveIntoCode(t *testing.T) {
+	cases := map[string]struct {
+		after string
+		want  []Finding
+	}{
+		"code span":      {"Wait `30` s.", nil},
+		"shell command":  {"```sh\nsleep 30\n```", nil},
+		"session prompt": {"```console\n$ sleep 30\n```", nil},
+		"yaml value":     {"```yaml\nwait: 30\n```", nil},
+		"yaml comment":   {"```yaml\nwait: 0 # 30\n```", []Finding{{1, RuleFloorNumber, "30"}}},
+		"shell comment":  {"```sh\n# 30\n```", []Finding{{1, RuleFloorNumber, "30"}}},
+		"html comment":   {"Wait. <!-- 30 -->", []Finding{{1, RuleFloorNumber, "30"}}},
+		"dropped":        {"Wait.", []Finding{{1, RuleFloorNumber, "30"}}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := Floor("Wait 30 s.", tc.after).Findings; !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("findings\n got %v\nwant %v", got, tc.want)
+			}
+		})
 	}
 }

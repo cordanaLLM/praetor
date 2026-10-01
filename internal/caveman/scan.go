@@ -47,10 +47,20 @@ var (
 	// softBreakRe matches where a wrapped code span crossed a line: the line ending with the
 	// blanks around it and the blockquote markers of the line the span continues on.
 	softBreakRe = regexp.MustCompile(`[ \t]*\n[ \t]*(?:>[ \t]?)*`)
+	// frontMatterKeyRe matches a top-level "key:" entry of YAML front matter, and
+	// frontMatterLineRe any line of the shape front matter is written in: an entry, a line
+	// indented under one, a "- " item or a "#" comment.
+	frontMatterKeyRe  = regexp.MustCompile(`^` + frontMatterKey)
+	frontMatterLineRe = regexp.MustCompile(`^(?:` + frontMatterKey + `|[ \t]|-(?:[ \t]|$)|#)`)
 )
 
+// frontMatterKey is a top-level mapping key with its colon, in the key alphabet of
+// util.FitYAMLLines.
+const frontMatterKey = `[A-Za-z0-9_][A-Za-z0-9_.-]*:(?:[ \t]|$)`
+
 // line is one classified input line; num is 1-based. lang and edge describe fenced code:
-// the info string of the fence and whether the line is a fence delimiter itself. shell says
+// the language of the fence (util.MarkdownFenceLanguage), empty when its info string names
+// none, and whether the line is a fence delimiter itself. shell says
 // how the fence reads as commands (util.MarkdownShellFence) and code is a fenced line
 // without the blockquote markers its fence sits in. spans are the inline code span pieces
 // on a line outside fenced code, in order.
@@ -81,7 +91,7 @@ type lineItem struct {
 
 // scanner carries region state from one line to the next. Fenced code is tracked by
 // util.MarkdownFence, the repository's one fence-tracking implementation (HISS-19); lang
-// holds the info string of the open fence, shell how it reads as commands, fenceOpen the
+// holds the language of the open fence, shell how it reads as commands, fenceOpen the
 // line that opened it, for rule C13, and fenceQuote the blockquote depth it sits in, none of
 // which the tracker carries. frontMatter counts the lines of a leading front matter block.
 type scanner struct {
@@ -117,19 +127,42 @@ func scan(text string) ([]line, scanner) {
 
 // frontMatterLines returns how many lines a leading YAML front matter block takes, 0 when
 // the text opens with none. util.MarkdownFrontMatterEnd finds the delimiters; the block
-// between them must also decode as a YAML mapping, so a thematic break above a paragraph
-// and a second break never passes for front matter and hides that paragraph from the lint.
+// between them must also decode as a YAML mapping or be written in its shape
+// (frontMatterShaped), so a thematic break above a paragraph and a second break never
+// passes for front matter and hides that paragraph from the lint.
 func frontMatterLines(raws []string) int {
 	end := util.MarkdownFrontMatterEnd(raws)
 	if end == 0 {
 		return 0
 	}
+	block := raws[1 : end-1]
 	var mapping map[string]any
-	block := strings.Join(raws[1:end-1], "\n")
-	if err := util.DecodeYAMLDocument([]byte(block), &mapping, util.YAMLDocumentOptions{AllowEmpty: true}); err != nil {
+	err := util.DecodeYAMLDocument([]byte(strings.Join(block, "\n")), &mapping, util.YAMLDocumentOptions{AllowEmpty: true})
+	if err != nil && !frontMatterShaped(block) {
 		return 0
 	}
 	return end
+}
+
+// frontMatterShaped reports a block written as a front matter mapping that YAML does not
+// decode: at least one top-level "key:" entry, and every other line that is not blank an
+// entry, an indented line, a "- " item or a "#" comment. Skill loaders read such a block,
+// for example a description holding an unquoted ": ", so it is a contract with the loader
+// all the same (#374). A paragraph between two thematic breaks has a line of another shape.
+func frontMatterShaped(block []string) bool {
+	keys := 0
+	for _, raw := range block {
+		if strings.TrimSpace(raw) == "" {
+			continue
+		}
+		if !frontMatterLineRe.MatchString(raw) {
+			return false
+		}
+		if frontMatterKeyRe.MatchString(raw) {
+			keys++
+		}
+	}
+	return keys > 0
 }
 
 func (s *scanner) next(num int, raw string) line {
@@ -180,9 +213,8 @@ func (s *scanner) open(num int, raw, trimmed string) lineKind {
 		s.offRegions++
 		return kindOff
 	case s.fence.Inside(fenceLine):
-		marker := s.fence.Marker()
-		s.lang = strings.TrimSpace(strings.TrimPrefix(fenceLine, marker))
-		s.shell = util.MarkdownShellFence(util.MarkdownFenceLanguage(fenceLine, marker))
+		s.lang = util.MarkdownFenceLanguage(fenceLine, s.fence.Marker())
+		s.shell = util.MarkdownShellFence(s.lang)
 		s.fenceOpen, s.fenceQuote = num, depth
 		return kindCode
 	case strings.HasPrefix(trimmed, "<!--"):

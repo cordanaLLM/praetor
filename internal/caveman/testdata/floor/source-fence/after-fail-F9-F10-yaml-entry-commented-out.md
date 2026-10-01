@@ -6,7 +6,7 @@ app.New(service.Module) // health probes and metrics
 
 ```yaml
 port: 8080 # health probes
-retries: 5
+# retries: 5
 ```
 
 ```json

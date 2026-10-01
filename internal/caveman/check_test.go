@@ -305,15 +305,29 @@ func TestCheckFrontMatter(t *testing.T) {
 	}
 }
 
+// TestCheckFrontMatterUnquotedColon pins #374 on the skills it names: a description holding
+// an unquoted ": " is not valid YAML, yet skill loaders read it, so it is front matter too.
+func TestCheckFrontMatterUnquotedColon(t *testing.T) {
+	skill := "---\nname: example\n" +
+		"description: Write forge text (issues, commit bodies): probably the summary a reviewer reads first.\n" +
+		"metadata:\n  source: \"x\"\n# loader note\ntags:\n- one\n---\n\n# Example\n\n- Read ledger first.\n"
+	report := Check(skill, Options{Kind: KindMessage})
+	if !report.Passed() || report.FrontMatterLines != 9 {
+		t.Fatalf("unquoted colon: lines %d, %v", report.FrontMatterLines, report.Findings)
+	}
+}
+
 // TestCheckFrontMatterBoundary keeps the block narrow: only a closed "---" block on line one
-// that decodes as a YAML mapping is front matter, so a thematic break never hides prose.
+// that decodes as a YAML mapping or has its shape is front matter, so a thematic break never
+// hides prose.
 func TestCheckFrontMatterBoundary(t *testing.T) {
 	cases := map[string]string{
 		"not on line one":  "\n---\ndescription: probably\n---\n",
 		"never closed":     "---\ndescription: probably\n",
 		"not a mapping":    "---\nThis is probably prose.\n---\n",
 		"sequence":         "---\n- probably\n---\n",
-		"invalid yaml":     "---\ndescription: probably: broken\n---\n",
+		"indented only":    "---\n  probably indented prose\n---\n",
+		"prose after key":  "---\ndescription: probably: broken\nThis is probably prose.\n---\n",
 		"thematic breaks":  "----\nprobably\n----\n",
 		"indented opening": " ---\ndescription: probably\n---\n",
 	}

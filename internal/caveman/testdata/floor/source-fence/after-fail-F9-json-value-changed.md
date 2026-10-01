@@ -1,7 +1,7 @@
 Start service:
 
 ```go
-app.New(service.Module) // health probes and metrics
+app.New(service.Module) // registers metadata and client
 ```
 
 ```yaml
@@ -10,7 +10,7 @@ retries: 5
 ```
 
 ```json
-{"timeout": 30}
+{"timeout": 45}
 ```
 
 ```bash
