@@ -44,6 +44,30 @@ func TestEditorJSONMergePreservesNumbersAndRejectsDuplicateKeys(t *testing.T) {
 	}
 }
 
+// TestEditorJSONKeepsCaseSensitiveNames pins why editor JSON compares member names exactly
+// while every struct-decoded input folds them (issue #310): an editor document decodes into Go
+// maps, which keep both spellings, and the generator itself writes one files.watcherExclude
+// glob per private directory, so case-variant private directories give case-variant names.
+func TestEditorJSONKeepsCaseSensitiveNames(t *testing.T) {
+	opts := DefaultOptions()
+	opts.PrivateDirs = []string{"Notes", "notes"}
+	set := mustSynthesize(t, opts)
+	generated := fileContent(t, set, ".vscode/settings.json")
+	if !strings.Contains(generated, `"**/Notes/**"`) || !strings.Contains(generated, `"**/notes/**"`) {
+		t.Fatalf("generator did not exclude both private directories: %s", generated)
+	}
+	root := writeFixture(t, map[string]string{
+		".vscode/settings.json": `{"files.associations":{"*.S":"arm","*.s":"asm"}}`,
+	})
+	if err := Write(set, root); err != nil {
+		t.Fatalf("case-variant setting names refused: %v", err)
+	}
+	assertContainsFile(t, root, ".vscode/settings.json", `"*.S": "arm"`, `"*.s": "asm"`, `"**/Notes/**"`, `"**/notes/**"`)
+	if err := Verify(set, root); err != nil {
+		t.Fatalf("verification refused case-variant setting names: %v", err)
+	}
+}
+
 func TestEditorWriteMergesJSONAndPreservesHumanFiles(t *testing.T) {
 	root := writeFixture(t, map[string]string{
 		".vscode/settings.json":   `{"editor.fontSize":42}`,
@@ -244,8 +268,9 @@ func TestEditorJSONDecodeBoundaries(t *testing.T) {
 		"array nodes over":     []byte(jsonArrayOf(maxJSONNodes)),
 		"object nodes over":    []byte(jsonObjectOf(maxJSONNodes)),
 		"nested duplicate key": []byte(`{"a":{"k":1,"k":2}}`),
-		"escaped duplicate":    []byte(`{"a":1,"a":2}`),
+		"escaped duplicate":    []byte(`{"a":1,"\u0061":2}`),
 		"trailing comma":       []byte(`{"a":1,}`),
+		"unpaired surrogate":   []byte(`{"a":"\ud800"}`),
 	}
 	for name, raw := range rejected {
 		if _, err := decodeEditorJSON(raw); err == nil {

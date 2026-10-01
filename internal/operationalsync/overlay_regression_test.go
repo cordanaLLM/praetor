@@ -16,6 +16,11 @@ func TestJSONRejectsNestedReplacementAndDuplicateKeys(t *testing.T) {
 		`{"name":"public/praetor", "nested": {"name": "public/praetor"}}`,
 		`{"name": "public/praetor", "name":"public/praetor"}`,
 		`{"name": "public/praetor", "nested": {"key":1,"key":2}}`,
+		// Issue #310: a case-folded second spelling would survive the exact-name replacement.
+		`{"name": "public/praetor", "Name": "public/praetor"}`,
+		`{"name": "public/praetor", "nested": {"key":1,"KEY":2}}`,
+		`{"name": "public/praetor", "text": "\ud800"}`,
+		`{"name": "public/praetor"} {}`,
 	} {
 		if _, err := ownerJSON([]byte(raw), "name", "public/praetor", "private/praetor"); err == nil {
 			t.Fatalf("accepted ambiguous input: %s", raw)
@@ -29,6 +34,23 @@ func TestJSONRejectsNestedReplacementAndDuplicateKeys(t *testing.T) {
 	want := "{\"name\": \"private/praetor\", \"nested\":{\"name\":\"public/praetor\"},\"integer\":123456789123456789123456789}\n"
 	if string(got) != want {
 		t.Fatalf("unrelated data changed: %s", got)
+	}
+}
+
+// TestJSONKeepsItsNestingBound pins the bound derived JSON passes to the shared reader: the
+// root object and 127 nested arrays are 128 levels, one more is refused.
+func TestJSONKeepsItsNestingBound(t *testing.T) {
+	nested := func(levels int) []byte {
+		return []byte(`{"name": "public/praetor", "deep": ` + strings.Repeat("[", levels) + strings.Repeat("]", levels) + `}`)
+	}
+	if _, err := ownerJSON(nested(127), "name", "public/praetor", "private/praetor"); err != nil {
+		t.Fatalf("128 nesting levels refused: %v", err)
+	}
+	if _, err := ownerJSON(nested(128), "name", "public/praetor", "private/praetor"); err == nil || err.Error() != "JSON nesting exceeds 128" {
+		t.Fatalf("129 nesting levels returned %v", err)
+	}
+	if _, err := ownerJSON([]byte(`{"name": "public/praetor", "Name": "x"}`), "name", "public/praetor", "private/praetor"); err == nil || err.Error() != `duplicate JSON key "Name"` {
+		t.Fatalf("case-folded duplicate returned %v", err)
 	}
 }
 
