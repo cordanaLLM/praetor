@@ -24,6 +24,7 @@ This directory documents all significant architectural and design decisions gove
 | **[ADR-0014](0014-operator-neutral-defaults.md)** | Operator-Neutral Defaults: Deployment Data Becomes Operator Configuration | **Accepted** | 2026-09-27 |
 | **[ADR-0015](0015-interactive-figures-from-vendored-interfig.md)** | Interactive Documentation Figures from Vendored interfig | **Accepted**; amended by [ADR-0016](0016-figures-for-adopters.md) | 2026-09-27 |
 | **[ADR-0016](0016-figures-for-adopters.md)** | Interactive Figures for Adopters Through a Managed Engine Family | **Accepted** | 2026-09-27 |
+| **[ADR-0017](0017-generated-artefacts-in-pull-requests.md)** | Generated Artefacts in Pull Requests | **Accepted** | 2026-10-01 |
 
 ---
 
