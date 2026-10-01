@@ -220,8 +220,9 @@ rules:
         rationale: >-
           while true, while :, until false and for ((;;)) are reported, in an extensionless script
           too, and so is a curl transfer with no --max-time or -m that no timeout command wraps,
-          since curl sets no overall deadline of its own. A counted loop, a loop over input and a
-          bounded transfer are not, nor are the words inside quotes, comments or a here-document.
+          since curl sets no overall deadline of its own. A counted loop, a loop over input, a
+          bounded transfer and a curl that only prints its version or help are not, nor are the
+          words inside quotes, comments or a here-document.
           A loop whose condition always succeeds without being a constant (while sleep 5) and a
           read without -t are held as gaps.
       - language: systemd

@@ -64,6 +64,7 @@ func TestShellScanner_LegitimateShellIsClean(t *testing.T) {
 		"cat <<'EOF'\neval \"$1\"\nwhile true; do :; done\nEOF\n"+
 		"i=0\nwhile [ \"$i\" -lt 10 ]; do i=$((i + 1)); done\nwhile IFS= read -r line; do echo \"$line\"; done < \"$1\"\n"+
 		"curl -fsS -m 10 https://example.com/a -o a\ntimeout 30 curl -fsS https://example.com/b -o b\n"+
+		"curl --version\ncommand -v curl\n"+
 		"fetch() {\n  command fetch \"$@\"\n}\nprintf '%s' \"${HOME}\" | tee out.txt\nfind . -name '*.tmp' -exec rm {} \\;\n"+
 		"echo {a,b}.txt\nrun || handle_failure\n")
 	assertScriptFindings(t, "lib.sh", "helper() {\n  printf '%s\\n' \"$1\"\n}\n")

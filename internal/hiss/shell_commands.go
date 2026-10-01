@@ -347,9 +347,26 @@ func (s *shellScanner) checkInvocation(sep string, inv shellInvocation, line int
 		recordViolation(s.rep, "HISS-08", s.rel, line, "", "Text piped into "+inv.base+" is evaluated as code; run a reviewed script file instead")
 	case runsSubstitution(inv):
 		recordViolation(s.rep, "HISS-08", s.rel, line, "", "A process substitution run as a script evaluates generated text as code")
-	case inv.base == "curl" && !inv.timeout && !curlHasMaxTime(inv.args):
+	case unboundedCurl(inv):
 		recordViolation(s.rep, "HISS-02", s.rel, line, "", "curl without --max-time waits on the network without a deadline")
 	}
+}
+
+// curlInfoOptions make curl print information and exit without a transfer.
+var curlInfoOptions = map[string]bool{"--version": true, "-V": true, "--help": true, "-h": true, "--manual": true, "-M": true}
+
+// unboundedCurl reports a curl transfer that nothing bounds: no timeout command around it, no
+// --max-time, and not an invocation that only prints information.
+func unboundedCurl(inv shellInvocation) bool {
+	if inv.base != "curl" || inv.timeout || curlHasMaxTime(inv.args) {
+		return false
+	}
+	for _, a := range inv.args {
+		if curlInfoOptions[a] {
+			return false
+		}
+	}
+	return true
 }
 
 // readsScriptFromInput reports whether a shell given args reads its script from standard input:

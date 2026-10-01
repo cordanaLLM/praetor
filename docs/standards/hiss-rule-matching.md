@@ -474,7 +474,7 @@ patterns of a `case` statement and the inside of a `[[ ... ]]` test name no comm
   `command`, `builtin` or `exec` runs a program, never the function, so it is not reported.
 - HISS-02: `while true`, `while :`, `until false` and `for ((;;))` carry no bound. A `curl`
   transfer with neither `--max-time` nor `-m`, and no `timeout` command around it, has no overall
-  deadline, which is the I/O half of the rule.
+  deadline, which is the I/O half of the rule; `curl --version` and `curl --help` transfer nothing.
 - HISS-04: function length, from the line the body brace opens on to the line it closes on, as the
   spec measures it.
 - HISS-07: a script with a `#!` line that never enables `errexit` and `nounset` (`set -eu`, the
