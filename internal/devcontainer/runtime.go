@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -295,12 +296,7 @@ func (p *ImagePlan) resolveCLI(host Host) error {
 
 // featureRefs lists the declared feature references in sorted order.
 func featureRefs(features map[string]interface{}) []string {
-	refs := make([]string, 0, len(features))
-	for ref := range features {
-		refs = append(refs, ref)
-	}
-	sort.Strings(refs)
-	return refs
+	return slices.Sorted(maps.Keys(features))
 }
 
 // Build builds the planned image under ImageBuildTimeout, tagged with both refs, and returns it
