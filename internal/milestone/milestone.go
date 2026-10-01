@@ -43,9 +43,9 @@ const (
 	// ledgerFilePerm is the mode applied to milestones.json and BACKLOG.md.
 	ledgerFilePerm = util.SecureFilePerm
 
-	// restoreTimeout bounds the store restore a failed commit runs (HISS-02). The restore
-	// runs on a context detached from the caller's cancellation, so this is its only
-	// deadline.
+	// restoreTimeout bounds the settlement a failed commit runs: the BACKLOG.md read-back
+	// and the store restore (HISS-02). Both run on a context detached from the caller's
+	// cancellation, so this is their only deadline.
 	restoreTimeout = 30 * time.Second
 )
 
@@ -322,9 +322,13 @@ var commitWriters = ledgerWriters{
 // commitStoreAndBacklog persists store and the BACKLOG.md block rendered from it as one
 // unit for create, close and remote sync. Both outputs are rendered and validated before
 // either file changes, and the milestones.json bytes (or its absence) are read first. When
-// the store write or the BACKLOG.md write then fails, restoreStore puts milestones.json
-// back, so a returned error never leaves a changed store beside a stale backlog, and a
-// retry starts from the ledger the failed command found (#412).
+// the store write fails, restoreStore puts milestones.json back; when the BACKLOG.md write
+// fails, settleBacklogFailure first checks whether BACKLOG.md landed anyway. A returned
+// error therefore never leaves the two ledgers disagreeing on this change, and a retry
+// after a restore starts from the ledger the failed command found (#412).
+//
+// Both settle on a context detached from the caller's cancellation, because a cancelled or
+// expired caller is one of the failures they handle, and under their own restoreTimeout.
 func commitStoreAndBacklog(ctx context.Context, rootPath string, store *MilestoneStore) error {
 	update, err := prepareBacklog(ctx, rootPath, store)
 	if err != nil {
@@ -339,12 +343,52 @@ func commitStoreAndBacklog(ctx context.Context, rootPath string, store *Mileston
 		return err
 	}
 	if err := commitWriters.writeStore(rootPath, data); err != nil {
-		return restoreStore(ctx, rootPath, prior, data, err)
+		settle, cancel := context.WithTimeout(context.WithoutCancel(ctx), restoreTimeout)
+		defer cancel()
+		return restoreStore(settle, rootPath, prior, data, err)
 	}
 	if err := commitWriters.writeBacklog(ctx, update); err != nil {
-		return restoreStore(ctx, rootPath, prior, data, fmt.Errorf("sync to backlog: %w", err))
+		settle, cancel := context.WithTimeout(context.WithoutCancel(ctx), restoreTimeout)
+		defer cancel()
+		return settleBacklogFailure(settle, update, prior, data, fmt.Errorf("sync to backlog: %w", err))
 	}
 	return nil
+}
+
+// settleBacklogFailure decides what a failed BACKLOG.md write left behind before it undoes
+// the store write. The locked compare-and-swap writer can fail after its rename or link
+// already published BACKLOG.md: its directory sync reports a caller cancelled in that
+// window, and a failed fsync, unlock or staging cleanup is reported after the publish too.
+// The write error alone therefore does not prove BACKLOG.md is unchanged, so it is read
+// back. Holding this commit's render as a change, BACKLOG.md landed and the store write
+// is not undone, so both carry the change. Holding anything else, nothing of this commit
+// landed there and restoreStore puts the store back. Unreadable, the outcome is unknown
+// and the store is left with its change rather than restored blind; the error says which
+// case applied.
+func settleBacklogFailure(ctx context.Context, update *backlogUpdate, prior storeSnapshot, written []byte, cause error) error {
+	landed, err := backlogLanded(ctx, update)
+	if err != nil {
+		return fmt.Errorf("%w; %s could not be read back, so %s keeps this change: %w", cause, BacklogFile, MilestonesFile, err)
+	}
+	if landed {
+		return fmt.Errorf("%w (%s was published before the failure, so the %s write is not undone)", cause, BacklogFile, MilestonesFile)
+	}
+	return restoreStore(ctx, update.root, prior, written, cause)
+}
+
+// backlogLanded reports whether BACKLOG.md now holds update's render where the file it was
+// rendered from did not. A render byte-identical to that file proves nothing about the
+// write and leaves BACKLOG.md as found either way, so it counts as not landed and the
+// store is restored to match.
+func backlogLanded(ctx context.Context, update *backlogUpdate) (bool, error) {
+	if update.exists && bytes.Equal(update.expected, update.data) {
+		return false, nil
+	}
+	observed, exists, err := observeBacklog(ctx, update.root)
+	if err != nil {
+		return false, err
+	}
+	return exists && bytes.Equal(observed, update.data), nil
 }
 
 // restoreStore undoes the store write of a commit that failed with cause and returns cause
@@ -354,13 +398,10 @@ func commitStoreAndBacklog(ctx context.Context, rootPath string, store *Mileston
 // between is left as found and reported, so the restore never discards that writer's
 // update.
 //
-// The restore runs on a context detached from the caller's cancellation, because a
-// cancelled or expired caller is one of the failures it has to undo, and under its own
-// restoreTimeout. It uses the lock-free writer every milestones.json write uses, so a
-// BACKLOG.md write that failed on a busy working-directory lock cannot block it.
+// ctx is the caller's detached settlement context (see commitStoreAndBacklog). The restore
+// uses the lock-free writer every milestones.json write uses, so a BACKLOG.md write that
+// failed on a busy working-directory lock cannot block it.
 func restoreStore(ctx context.Context, rootPath string, prior storeSnapshot, written []byte, cause error) error {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), restoreTimeout)
-	defer cancel()
 	current, err := readStoreSnapshot(ctx, rootPath)
 	if err != nil {
 		return fmt.Errorf("%w; %s could not be checked and may keep this change: %w", cause, MilestonesFile, err)

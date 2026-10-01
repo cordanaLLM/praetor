@@ -16,17 +16,20 @@ import (
 )
 
 // Issue #412: a create, close or remote sync that fails after milestones.json was written
-// must not leave a changed store beside a stale BACKLOG.md. These tests fail each commit
-// step on purpose, through the commitWriters seam or a busy working-directory lock, and
-// prove the store returns to its prior bytes or absence. commitWriters is package state,
-// so none of them runs in parallel.
+// must not leave the store and BACKLOG.md disagreeing. These tests fail each commit step on
+// purpose, through the commitWriters seam or a busy working-directory lock, and prove the
+// store returns to its prior bytes or absence, or keeps its change when BACKLOG.md landed
+// before the failure. commitWriters is package state, so none of them runs in parallel.
 
 var (
 	errInjected = errors.New("injected commit fault")
 	errRestore  = errors.New("injected restore fault")
 )
 
-const restoredNote = "restored to its prior state"
+const (
+	restoredNote  = "restored to its prior state"
+	publishedNote = "published before the failure"
+)
 
 // injectWriters swaps the commit writers, keeping every writer override leaves nil at its
 // production value. The returned function puts the production writers back at once; the
@@ -227,56 +230,85 @@ func landThenFail() func(string, []byte) error {
 	}
 }
 
-// stepFault is one commit step failed on purpose, and whether the failure leaves a store
-// write behind that the commit has to restore.
-type stepFault struct {
-	override     func() ledgerWriters
-	wantRestored bool
+// backlogLandThenFail publishes BACKLOG.md through the production writer and then reports
+// a failure, as contextopt.ReplaceRootSnapshot does when its directory sync, unlock or
+// staging cleanup fails after the rename or link already published the file.
+func backlogLandThenFail(ctx context.Context, update *backlogUpdate) error {
+	return errors.Join(writeBacklog(ctx, update), errInjected)
 }
 
-// Negative: every commit step that fails leaves both ledgers as the command found them,
-// whether the store existed or not, and the retry converges without a duplicate.
-func TestCommit_Negative_StepFaultsRestoreStore(t *testing.T) {
+// stepFault is one commit step failed on purpose, and the outcome note the error must
+// carry: none when nothing was written, restoredNote when the store write had to be
+// undone, publishedNote when BACKLOG.md landed and the store keeps the matching change.
+type stepFault struct {
+	override func() ledgerWriters
+	note     string
+}
+
+// Negative: every commit step that fails leaves both ledgers agreeing, whether the store
+// existed or not. A step that failed before BACKLOG.md landed leaves both as the command
+// found them and the retry converges without a duplicate; a BACKLOG.md write that landed
+// and then failed leaves both carrying the change.
+func TestCommit_Negative_StepFaultsKeepLedgersAgreeing(t *testing.T) {
 	steps := map[string]stepFault{
 		"store write refused": {func() ledgerWriters {
 			return ledgerWriters{writeStore: func(string, []byte) error { return errInjected }}
-		}, false},
+		}, ""},
 		"store write landed then failed": {func() ledgerWriters {
 			return ledgerWriters{writeStore: landThenFail()}
-		}, true},
+		}, restoredNote},
 		"backlog write failed": {func() ledgerWriters {
 			return ledgerWriters{writeBacklog: func(context.Context, *backlogUpdate) error { return errInjected }}
-		}, true},
+		}, restoredNote},
+		"backlog write landed then failed": {func() ledgerWriters {
+			return ledgerWriters{writeBacklog: backlogLandThenFail}
+		}, publishedNote},
 	}
 	for name, step := range steps {
 		for _, withStore := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/store exists=%v", name, withStore), func(t *testing.T) {
-				assertStepFaultRestores(t, step, withStore)
+				assertStepFaultSettles(t, step, withStore)
 			})
 		}
 	}
 }
 
-func assertStepFaultRestores(t *testing.T, step stepFault, withStore bool) {
+func assertStepFaultSettles(t *testing.T, step stepFault, withStore bool) {
 	t.Helper()
 	ctx := context.Background()
 	dir := seedLedger(t, withStore)
 	before := readLedgers(t, dir)
 	reset := injectWriters(t, step.override())
 	_, err := CreateMilestone(ctx, dir, "new", "", nil)
-	if !errors.Is(err, errInjected) || strings.Contains(err.Error(), restoredNote) != step.wantRestored {
-		t.Fatalf("error = %v, want the injected fault (restored note %v)", err, step.wantRestored)
+	assertOutcomeNote(t, err, step.note)
+	want := 1
+	if withStore {
+		want = 2
+	}
+	if step.note == publishedNote {
+		assertSingleRow(t, dir, "new", want)
+		return
 	}
 	assertLedgersUnchanged(t, dir, before)
 	reset()
 	if _, err := CreateMilestone(ctx, dir, "new", "", nil); err != nil {
 		t.Fatalf("retry after the fault: %v", err)
 	}
-	want := 1
-	if withStore {
-		want = 2
-	}
 	assertSingleRow(t, dir, "new", want)
+}
+
+// assertOutcomeNote fails unless err carries the injected fault and exactly the outcome
+// note named, or no note at all when note is empty.
+func assertOutcomeNote(t *testing.T, err error, note string) {
+	t.Helper()
+	if !errors.Is(err, errInjected) {
+		t.Fatalf("error = %v, want the injected fault", err)
+	}
+	for _, candidate := range []string{restoredNote, publishedNote} {
+		if strings.Contains(err.Error(), candidate) != (candidate == note) {
+			t.Fatalf("error = %v, want outcome note %q", err, note)
+		}
+	}
 }
 
 // Negative: when the restore itself fails, the error carries both failures and says the
@@ -324,6 +356,70 @@ func TestCommit_Boundary_CancelledCallerStillRestores(t *testing.T) {
 		t.Fatalf("error = %v, want the cancellation with the store restored", err)
 	}
 	assertLedgersUnchanged(t, dir, before)
+}
+
+// Boundary: a caller cancelled after BACKLOG.md was published, the window in which the
+// compare-and-swap writer's directory sync reports the cancellation, keeps the store
+// change: restoring it would leave BACKLOG.md rendering a close the store no longer holds.
+func TestCommit_Boundary_CancelledAfterPublishKeepsBothLedgers(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	dir := seedLedger(t, true)
+	injectWriters(t, ledgerWriters{writeBacklog: func(ctx context.Context, update *backlogUpdate) error {
+		if err := writeBacklog(ctx, update); err != nil {
+			return err
+		}
+		cancel()
+		return ctx.Err()
+	}})
+	_, err := CloseMilestone(ctx, dir, "1")
+	if !errors.Is(err, context.Canceled) || !strings.Contains(err.Error(), publishedNote) {
+		t.Fatalf("error = %v, want the cancellation with both ledgers carrying the close", err)
+	}
+	if rows := storeRows(t, dir); len(rows) != 1 || rows[0].State != StateClosed {
+		t.Fatalf("store dropped the close BACKLOG.md renders: %+v", rows)
+	}
+	if !strings.Contains(readBacklog(t, dir), "Closed") {
+		t.Fatal("BACKLOG.md does not render the close")
+	}
+}
+
+// Boundary: a render byte-identical to the BACKLOG.md it was rendered from proves nothing
+// about whether the failed write landed, and either way leaves BACKLOG.md as found, so the
+// store is put back as well. Closing an already closed milestone changes only its
+// timestamp, which the block does not render.
+func TestCommit_Boundary_UnchangedRenderRestoresStore(t *testing.T) {
+	ctx := context.Background()
+	dir := seedLedger(t, true)
+	if _, err := CloseMilestone(ctx, dir, "1"); err != nil {
+		t.Fatalf("first close: %v", err)
+	}
+	before := readLedgers(t, dir)
+	injectWriters(t, ledgerWriters{writeBacklog: backlogLandThenFail})
+	_, err := CloseMilestone(ctx, dir, "1")
+	if !errors.Is(err, errInjected) || strings.Contains(err.Error(), publishedNote) {
+		t.Fatalf("error = %v, want the fault without a published BACKLOG.md change", err)
+	}
+	assertLedgersUnchanged(t, dir, before)
+}
+
+// Negative: a BACKLOG.md the failed write left unreadable cannot show whether the write
+// landed; the store is left holding the change and the error says so, rather than
+// restored blind.
+func TestCommit_Negative_UnreadableBacklogKeepsStoreChange(t *testing.T) {
+	dir := seedLedger(t, true)
+	injectWriters(t, ledgerWriters{writeBacklog: func(_ context.Context, update *backlogUpdate) error {
+		path := filepath.Join(update.root, state.WorkingDirName, BacklogFile)
+		return errors.Join(errInjected, os.WriteFile(path, []byte("# Project Backlog\x00\n"), 0o600))
+	}})
+	_, err := CreateMilestone(context.Background(), dir, "v2", "", nil)
+	if !errors.Is(err, errInjected) || !strings.Contains(err.Error(), "could not be read back") ||
+		strings.Contains(err.Error(), restoredNote) {
+		t.Fatalf("error = %v, want the fault with the unreadable BACKLOG.md reported", err)
+	}
+	if rows := storeRows(t, dir); len(rows) != 2 || rows[1].Title != "v2" {
+		t.Fatalf("the store was restored without evidence the write failed: %+v", rows)
+	}
 }
 
 // Boundary: a store another writer replaced after this commit wrote it is left as found;
