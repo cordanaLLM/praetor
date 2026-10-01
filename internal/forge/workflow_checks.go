@@ -195,13 +195,12 @@ func applyPlannedWorkflows(byName map[string][]byte, planned map[string][]byte) 
 }
 
 // plannedWorkflowName returns the file name of a planned path that is a workflow document
-// directly under .github/workflows, and false for any other path.
+// directly under .github/workflows (ghworkflow.IsWorkflowPath), and false for any other path.
 func plannedWorkflowName(path string) (string, bool) {
-	name, ok := strings.CutPrefix(path, plannedWorkflowDir)
-	if !ok || strings.Contains(name, "/") || !ghworkflow.IsYAMLName(name) {
+	if !ghworkflow.IsWorkflowPath(path) {
 		return "", false
 	}
-	return name, true
+	return strings.TrimPrefix(path, plannedWorkflowDir), true
 }
 
 // readWorkflowFiles reads every workflow document under .github/workflows in name order.
