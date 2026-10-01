@@ -113,6 +113,7 @@ func sourceCheckouts(t *testing.T, got stepOutcome) []string {
 // a commit id and a branch, checks out the commit it names, so the branch case gets main's newer
 // tip and the other two the tagged commit.
 func TestPraetorAdoptBuild_Positive_ForcedRunInAnArchiveTreeChecksOutTheActionRef(t *testing.T) {
+	adoptShell(t) // skips, saying why, before any fixture git runs where the step cannot
 	remote := serveAdoptRemote(t, adoptModule)
 	cases := map[string]struct{ ref, commit, marker string }{
 		"tag":    {adoptRemoteTag, remote.tagged, "tagged\n"},
@@ -144,6 +145,7 @@ func TestPraetorAdoptBuild_Positive_ForcedRunInAnArchiveTreeChecksOutTheActionRe
 // stays the source of a forced run; an unforced run and a forced dogfood run, which rebuild no lock,
 // keep the archive tree too. The server holds no repository, so any fetch would fail the step.
 func TestPraetorAdoptBuild_Negative_GitCheckoutOrUnforcedRunKeepsTheActionTree(t *testing.T) {
+	adoptShell(t) // skips, saying why, before any fixture git runs where the step cannot
 	cases := map[string]struct {
 		dotGit string // "dir", "file" or "" for none
 		runner []string
@@ -180,6 +182,7 @@ func TestPraetorAdoptBuild_Negative_GitCheckoutOrUnforcedRunKeepsTheActionTree(t
 // (refused before git runs), a repository the server does not hold, and a checkout that is not
 // praetor. Boundary: the option-like ref carries a command, and it never runs.
 func TestPraetorAdoptBuild_Negative_ForcedRunWithoutAPraetorCheckoutBuildsNothing(t *testing.T) {
+	adoptShell(t) // skips, saying why, before any fixture git runs where the step cannot
 	remote := serveAdoptRemote(t, adoptModule)
 	other := serveAdoptRemote(t, "example.test/other")
 	absent := "file://" + filepath.ToSlash(t.TempDir())
