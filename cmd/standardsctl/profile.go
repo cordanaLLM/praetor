@@ -114,13 +114,16 @@ type declarationGate func(ctx context.Context, manifest *config.Manifest, opts *
 
 // declarationGates are the audit gates that check files adoption derives from the declared
 // profiles and facets, each one runAuditGates runs: the README block, the documentation gate,
-// the DevContainer and the branch protection ruleset. profile set writes none of those files, so
-// it runs these gates against the declaration it leaves.
+// the API compatibility gate, the DevContainer and the branch protection ruleset. profile set
+// writes none of those files, so it runs these gates against the declaration it leaves.
 func declarationGates() []declarationGate {
 	return []declarationGate{
 		auditReadmeGovernance,
 		func(ctx context.Context, manifest *config.Manifest, opts *auditOptions) error {
 			return auditDocumentationGate(ctx, manifest, opts.rootDir, opts.effective.Policy.BranchProtection)
+		},
+		func(ctx context.Context, manifest *config.Manifest, opts *auditOptions) error {
+			return auditAPICompatibilityGate(ctx, manifest, opts.rootDir)
 		},
 		auditDevContainer,
 		func(ctx context.Context, manifest *config.Manifest, opts *auditOptions) error {

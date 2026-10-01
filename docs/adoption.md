@@ -356,8 +356,8 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
   ([editor capabilities](guides/editor-capabilities.md#adoption-and-onboarding)).
 - **What `--force` overwrites.** Only a file the audit compares byte for byte, so that the audit
   fails until it holds the scaffold (`scaffold.auditLocked` in `internal/adopt/scaffold.go`):
-  the documentation gate's managed files and workflow, and the branch protection ruleset while
-  the policy requires one. Every other generated file is not audit-verified and is kept under
+  the documentation gate's and the Go API compatibility gate's managed files and workflows, and
+  the branch protection ruleset while the policy requires one. Every other generated file is not audit-verified and is kept under
   `--force` too, with the note `differs from the scaffold adoption writes (-N/+M lines); not
   audit-verified; kept` and a warning: the agent anti-evasion interceptor, the checkpoint
   scripts, the canonical personas `.agents/agents/repo-auditor.md` and `repo-gatekeeper.md`,
@@ -619,12 +619,14 @@ verify against the vendored catalog without the source bundle (`TestProfileSetEn
 
 Adoption also renders files from the declared profiles and facets, and `profile set` leaves them
 as they are. After a profile or facet change they can fail `praetorctl audit`. The DevContainer is
-synthesized from the declaration (`devcontainer.SynthesizeWithFeatures`), and turning
+synthesized from the declaration (`devcontainer.SynthesizeWithFeatures`), turning
 `docs:seo-portal` on or off adds or retires the documentation assets, the README block and the
-documentation context in the ruleset. So after
-writing, or in a dry run against the planned declaration, `profile set` runs the four audit gates
-that check those files: the README block, the documentation gate, the DevContainer and the branch
-protection ruleset (`declarationGates` in `cmd/standardsctl/profile.go`). Each prints its verdict
+documentation context in the ruleset, and turning `api:public-contract` on or off adds or retires
+the [Go API compatibility gate](guides/api-compatibility.md) and its context. So after
+writing, or in a dry run against the planned declaration, `profile set` runs the five audit gates
+that check those files: the README block, the documentation gate, the API compatibility gate, the
+DevContainer and the branch protection ruleset (`declarationGates` in
+`cmd/standardsctl/profile.go`). Each prints its verdict
 as `praetorctl audit` prints it. When one fails, `profile set` still exits 0, since it wrote what it
 was asked to, and prints the refresh:
 
@@ -635,7 +637,8 @@ praetorctl adopt --force --lock-source-root=/path/to/praetor
 
 `adopt --force` rewrites every audit-locked file that drifted, not only the ones these gates
 check, so read its preview first. Plain `adopt` does not refresh them: it keeps an existing
-DevContainer and refuses to retire the documentation context without `--force`.
+DevContainer and refuses to retire the documentation or API compatibility context without
+`--force`.
 `TestProfileSetReportsDerivedDrift_3D` in `cmd/standardsctl/profile_test.go` covers the report,
 the refresh and a re-run that passes every gate.
 

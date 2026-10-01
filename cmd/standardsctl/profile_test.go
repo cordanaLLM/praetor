@@ -151,7 +151,8 @@ func auditDevContainerQuiet(t *testing.T, root string) error {
 }
 
 // TestCheckDeclarationGates_3D: an audit fixture passes every declaration gate (positive); a
-// declared docs:seo-portal without the documentation assets fails that gate alone (negative); an
+// declared docs:seo-portal without the documentation assets, or api:public-contract without the
+// API compatibility gate, fails that gate alone (negative); an
 // unreadable baseline counts as one failure while the gates that do not read it still run, and a
 // report without an effective policy is refused (boundary).
 func TestCheckDeclarationGates_3D(t *testing.T) {
@@ -175,6 +176,10 @@ func TestCheckDeclarationGates_3D(t *testing.T) {
 	effective.Manifest.Facets = append(slices.Clone(declared), "docs:seo-portal")
 	if out, failed := gates(); failed != 1 || !strings.Contains(out, "[FAIL] Documentation gate asset") {
 		t.Fatalf("an enabled documentation facet without its assets must fail that gate alone: %d failed\n%s", failed, out)
+	}
+	effective.Manifest.Facets = append(slices.Clone(declared), "api:public-contract")
+	if out, failed := gates(); failed != 1 || !strings.Contains(out, "[FAIL] API compatibility gate asset") {
+		t.Fatalf("an enabled API contract facet without its gate must fail that gate alone: %d failed\n%s", failed, out)
 	}
 	effective.Manifest.Facets = declared
 	writeFixtureFile(t, f.dir, ".standards-baseline.json", "{")
