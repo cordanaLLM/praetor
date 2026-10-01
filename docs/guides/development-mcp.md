@@ -377,6 +377,12 @@ repository without `source_root` shows both: the DevContainer pillar reads
 also list a file that `force` overwrote in its own replaced section, with its line
 delta and backup location, and never among the reconciled files (`formatAdoptFiles` in
 `cmd/standards-mcp/tools_adoption.go`, `TestFormatAdoptMCPResult_Positive_ReplacedSection`).
+The `force` and `source_root` property descriptions restate, in the agent register, the
+`--force` contract `adopt --help` prints: what `force` rewrites, merges and keeps, and that it
+needs `source_root`, a dry run included
+([what a forced re-adoption changes](../adoption.md#what-a-forced-re-adoption-changes),
+`TestCreateAdoptTool_ForceStatesTheContract` in
+`cmd/standards-mcp/tools_adoption_force_test.go`).
 
 A dry run also prints the branch ruleset preview the CLI prints: the action
 (`create`, `update`, `unchanged` or `keep`), its note, and the rendered ruleset or

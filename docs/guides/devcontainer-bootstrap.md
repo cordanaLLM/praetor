@@ -174,6 +174,92 @@ DevContainers are preserved and reported as execution-unverified. Forced
 adoption keeps recorded images by the same rule and lists each note as a
 warning.
 
+## Bundle freshness
+
+`praetorctl devcontainer verify` checks a bundle against its own records, so a
+bundle cut a hundred commits ago verifies as cleanly as one cut a minute ago
+([#338](https://github.com/cordanaLLM/praetor/issues/338)). The freshness check
+compares it with the tree instead:
+
+```bash
+praetorctl devcontainer freshness
+```
+
+It recaptures the build source from the working tree beside `--config` with the
+capture generation uses, and compares its digest with the recorded
+`sourceSHA256`. Equal digests print `[FRESH]`. Otherwise the check finds the
+newest commit reachable from `HEAD` that changed a bundle file
+(`devcontainer.json`, `Dockerfile.praetor` or a `praetor-source.*.b64` part),
+counts the commits from it to `HEAD`, and measures its committer age. Inside the
+bounds it prints both numbers under `[DRIFT WITHIN BOUNDS]` and passes; past
+either bound it fails with them and the regeneration command. A bundle exactly
+at a bound passes (`CheckFreshness` in
+`internal/devcontainer/bootstrap_freshness.go`).
+
+The bounds are declared in `.standards.yaml`; an unset key keeps its default:
+
+```yaml
+devcontainer:
+  freshness:
+    max_commits: 500
+    max_age_days: 21
+```
+
+The commit default is about three weeks of this repository's landing rate in
+September 2026, and the age default is three runs of the weekly refresh below.
+Each value must be an integer from 1 to 100,000 commits or 3,650 days
+(`internal/config/devcontainer_policy.go`).
+
+A missing configuration, one without a bootstrap, an unavailable bundle, a
+source root that does not declare the Praetor module, a shallow clone, a drifted
+bundle no commit records, and any git failure are errors, never a pass. The
+check therefore needs the full history: CI checks out with `fetch-depth: 0`. It
+measures a Praetor source checkout's own bundle; an adopted repository whose
+bundle came from a separate Praetor checkout gets an error rather than a
+measurement. Tests: `internal/devcontainer/bootstrap_freshness_test.go`,
+`internal/config/devcontainer_policy_test.go` and
+`cmd/standardsctl/devcontainer_freshness_test.go`.
+
+`make devcontainer-freshness` runs the check inside `make verify-all`, and the
+`DevContainer Bundle Freshness` step of `.github/workflows/ci.yml` runs it on
+the light CI runs that skip verify-all. It is not part of `verify` on purpose:
+`validateReadyBootstrap` in `internal/devcontainer/bootstrap.go` stays the
+self-consistency check that freshness backstops, so verification needs no Git
+history.
+
+`.github/workflows/devcontainer-refresh.yml` keeps the bundle inside the bounds.
+Every Monday at 05:00 UTC, and on dispatch, in the canonical repository only, it
+records the freshness report, regenerates the bundle with
+`praetorctl devcontainer generate --source-root . --force`, verifies it, and
+commits the `.devcontainer` changes on `chore/devcontainer-bundle-refresh`. The
+commit is signed off under the `PRAETOR_BOT_NAME` and `PRAETOR_BOT_EMAIL`
+identity `adopt.yml` uses. What it publishes depends on the `PRAETOR_PR_TOKEN`
+secret, a token with contents and pull-requests write on the repository:
+
+| `PRAETOR_PR_TOKEN` | Refresh pull request | Result |
+| :--- | :--- | :--- |
+| set | none open | force-pushes the branch and opens the pull request, with the freshness report in its body |
+| set | open | force-pushes the branch and updates that pull request |
+| unset | none open | pushes the branch with `GITHUB_TOKEN`, stays green, and warns with the link that opens the pull request |
+| unset | open | pushes nothing and warns that the open pull request should land |
+
+`GITHUB_TOKEN` cannot stand in for the secret: this repository does not let it
+open pull requests, and GitHub starts no workflow for a push it makes. A pull
+request a person opens from the warning's link runs its checks; a later push
+with `GITHUB_TOKEN` would move it to a head no check ran on, so the job leaves an
+open one alone. Until the secret is configured, someone has to open and land the
+refresh pull request before the bundle passes a bound, or the freshness gate
+fails in verify-all and CI. With the secret set, a refused push or pull request
+fails the run. The warnings also appear in the run's step summary.
+`scripts/devcontainer_refresh_publish.sh` implements this step and
+`scripts/test_devcontainer_refresh_publish.py` (`make devcontainer-refresh-test`,
+part of verify-all) covers each row and the workflow wiring.
+
+The pull request carries no receipt, so the landing pipeline takes it over like
+a [Renovate pull request](contributing.md#renovate-pull-requests). To refresh by
+hand, run the same generate command from a clean checkout and commit the
+`.devcontainer` changes on their own.
+
 ## Migration
 
 This release is breaking for existing adopter files and API callers.

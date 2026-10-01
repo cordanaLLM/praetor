@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
@@ -58,7 +59,7 @@ func auditGateFailureCases() []auditGateCase {
 		}, `Paperclip harness platform mismatch: got "other/repo"`},
 		{"harness mismatch remedy", func(t *testing.T, f *auditFixture) {
 			writeFixtureFile(t, f.dir, ".paperclip/harness.json", `{"version":1,"platform":"other/repo","operating_contract":["x"],"agit_push_format":"fixture push","invariants":["fixture invariant"]}`)
-		}, "run 'praetorctl adopt --force' to set platform (every other harness value kept); " +
+		}, "run '" + adopt.ForceCommand("") + "' to set platform (every other harness value kept); " +
 			"with adoption.decline listing paperclip, adopt never writes the harness, so set platform by hand"},
 		{"new violation", func(t *testing.T, f *auditFixture) {
 			f.addViolation(t)

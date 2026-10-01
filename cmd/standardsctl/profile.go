@@ -20,7 +20,7 @@ const profileTimeout = 2 * time.Minute
 var errProfileIncomplete = errors.New("profile change completed with errors")
 
 // profileUsage is the one usage text of the profile command.
-const profileUsage = "usage: praetorctl profile set [<profile>] [--facets=<id>,...] --lock-source-root=<praetor checkout> " +
+const profileUsage = "usage: praetorctl profile set [<profile>] [--facets=<id>,...] --lock-source-root=" + adopt.LockSourcePlaceholder + " " +
 	"[--path=.] [--dry-run]"
 
 // runProfile dispatches `praetorctl profile <action>`; set is the one action.
@@ -37,7 +37,7 @@ func runProfile(args []string) error {
 		fmt.Println("catalog, rewriting only .standards.yaml, .standards.lock and the vendored catalog texts. It then runs")
 		fmt.Println("the audit gates that check files derived from the declaration (README block, documentation gate,")
 		fmt.Println("DevContainer, branch protection ruleset), leaves those files as they are and names the refresh,")
-		fmt.Println("praetorctl adopt --force, when one no longer matches.")
+		fmt.Println(adopt.ForceCommand("") + ", when one no longer matches.")
 		return nil
 	}
 	return fmt.Errorf("unknown profile action %q; %s", args[0], profileUsage)
@@ -158,7 +158,7 @@ func reportDeclarationGates(ctx context.Context, rep *adopt.AdoptReport, opts ad
 	}
 	fmt.Printf("\n%d gate(s) %s until those files follow the declaration, and profile set does not write them.\n"+
 		"Refresh them with adoption, which also rewrites every other audit-locked file that drifted; preview it first:\n"+
-		"  praetorctl adopt --force --dry-run --lock-source-root=%s --path=%s\n", failed, when, opts.LockSourceRoot, opts.Path)
+		"  %s --path=%s\n", failed, when, adopt.ForceCommand(opts.LockSourceRoot, "--dry-run"), opts.Path)
 	return nil
 }
 

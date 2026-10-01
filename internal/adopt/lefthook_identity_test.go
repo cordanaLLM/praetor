@@ -179,7 +179,7 @@ func assertLefthookKept(t *testing.T, repoPath string, rep *AdoptReport, want st
 		!strings.Contains(note, "remove lefthook.yml and re-run adopt to regenerate it") {
 		t.Fatalf("the keep is not reported with its remedy: %+v", rep.ActionDetails)
 	}
-	if hasAction(rep, lefthookFile, actionReplace) || strings.Contains(note, "--force regenerates it") {
+	if hasAction(rep, lefthookFile, actionReplace) || strings.Contains(note, " regenerates it)") {
 		t.Fatalf("a kept lefthook.yml is reported as replaceable or replaced: %q", note)
 	}
 	backups, err := filepath.Glob(filepath.Join(repoPath, filepath.FromSlash(adoptBackupRoot), "*", lefthookFile))

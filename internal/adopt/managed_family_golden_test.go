@@ -59,25 +59,32 @@ func (g *familyGolden) adopt(label, root string, opts AdoptOptions) {
 	g.t.Helper()
 	report, err := Adopt(g.t.Context(), opts)
 	fmt.Fprintf(&g.sb, "== %s\n", label)
+	// The temporary directories differ on every run: the repository records as <root>, and the
+	// lock source a remedy names (ForceCommand) as <lock source>.
+	pairs := []string{root, "<root>"}
+	if opts.LockSourceRoot != "" {
+		pairs = append(pairs, opts.LockSourceRoot, "<lock source>")
+	}
+	scrub := strings.NewReplacer(pairs...)
 	if report != nil {
-		g.recordReport(root, report)
+		g.recordReport(scrub, report)
 	}
 	if err != nil {
-		fmt.Fprintf(&g.sb, "error %s\n", strings.ReplaceAll(err.Error(), root, "<root>"))
+		fmt.Fprintf(&g.sb, "error %s\n", scrub.Replace(err.Error()))
 	}
 	g.recordFiles(root)
 }
 
-func (g *familyGolden) recordReport(root string, report *AdoptReport) {
+func (g *familyGolden) recordReport(scrub *strings.Replacer, report *AdoptReport) {
 	for _, detail := range report.ActionDetails {
 		if slices.Contains(g.goldenPaths(), detail.Path) {
-			fmt.Fprintf(&g.sb, "action %s %s :: %s\n", detail.Action, detail.Path, scrubBackupStamp(detail.Details))
+			fmt.Fprintf(&g.sb, "action %s %s :: %s\n", detail.Action, detail.Path, scrubBackupStamp(scrub.Replace(detail.Details)))
 		}
 	}
 	for _, message := range report.Errors {
 		for _, rel := range g.goldenPaths() {
 			if strings.Contains(message, rel) {
-				fmt.Fprintf(&g.sb, "report-error %s\n", strings.ReplaceAll(message, root, "<root>"))
+				fmt.Fprintf(&g.sb, "report-error %s\n", scrub.Replace(message))
 				break
 			}
 		}

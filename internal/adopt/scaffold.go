@@ -299,7 +299,7 @@ func (s *adoptSession) recordExistingScaffold(ctx context.Context, full string, 
 		s.report.recordReconciled(sc.rel, sc.verified)
 		return scaffoldIdentical, nil
 	}
-	note := scaffoldDriftNote(sc.auditLocked, actual, sc.content)
+	note := scaffoldDriftNote(sc.auditLocked, actual, sc.content, s.forceCommand())
 	s.report.recordReconciled(sc.rel, note)
 	s.report.addWarning("%s: %s", sc.rel, lowerFirst(note))
 	return scaffoldDrifted, nil
@@ -321,10 +321,11 @@ func (s *adoptSession) replaceScaffold(ctx context.Context, full string, sc scaf
 // scaffoldDriftNote says what an operator can do about a drifted file, which holds actual where
 // the scaffold writes content: --force regenerates only a file audit locks (auditLocked). Every
 // other file is not audit-verified and stays, --force included; the note counts the lines
-// regenerating it would remove and add (lineDeltaCounts) and says how to regenerate it.
-func scaffoldDriftNote(auditLocked bool, actual, content []byte) string {
+// regenerating it would remove and add (lineDeltaCounts) and says how to regenerate it. rerun is
+// the forced re-adoption that regenerates an audit-locked file (ForceCommand).
+func scaffoldDriftNote(auditLocked bool, actual, content []byte, rerun string) string {
 	if auditLocked {
-		return "Existing file differs from the scaffold adoption writes; preserved, not verified (--force regenerates it)"
+		return "Existing file differs from the scaffold adoption writes; preserved, not verified (" + rerun + " regenerates it)"
 	}
 	counts := lineDeltaCounts(util.LineDeltaOf(string(actual), string(content), 0))
 	return "Existing file differs from the scaffold adoption writes (" + counts + "); not audit-verified; kept, " +

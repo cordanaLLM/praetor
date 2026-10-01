@@ -1,0 +1,4 @@
+type: fixed
+title: "caveman check no longer panics on a free-standing quote"
+issue: "#695"
+breaking: false

@@ -143,7 +143,7 @@ func TestAuditDocumentationGatePriorText(t *testing.T) {
 	enabled := &config.Manifest{Facets: []string{"docs:seo-portal"}}
 	for text, want := range map[string]string{
 		string(prior):                                   "holds an earlier Praetor text; run 'praetorctl adopt' to refresh it",
-		string(prior) + "# operator\n":                  "differs from the locked Praetor asset; run 'praetorctl adopt --force'",
+		string(prior) + "# operator\n":                  "differs from the locked Praetor asset; run '" + adopt.ForceCommand("") + "'",
 		strings.ReplaceAll(string(prior), "\n", "\r\n"): "holds an earlier Praetor text",
 	} {
 		root := documentationAuditFixture(t)

@@ -50,6 +50,14 @@ CLAUDE.md text eol=lf
 # so this is a no-op for them, but the whole directory is one bootstrap unit (#135).
 .devcontainer/* text eol=lf
 
+# The bootstrap source capture (bootstrapSourcePathspec in internal/devcontainer) hashes
+# go.mod, go.sum and LICENSE beside the Go sources, and `praetorctl devcontainer freshness`
+# compares that digest with the bundle's recorded sourceSHA256. A CRLF checkout of these
+# three files would report drift on every Windows tree, so they keep LF like *.go.
+go.mod text eol=lf
+go.sum text eol=lf
+LICENSE text eol=lf
+
 # tools/markdownlint assets are embedded into the adopter binary. Keep Praetor's source
 # checkout bytes stable so Go embedding and bootstrap fingerprints cannot vary by platform;
 # adopted copies may still use one consistent CRLF style, which audit normalizes.

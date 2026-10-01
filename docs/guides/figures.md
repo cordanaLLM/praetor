@@ -72,8 +72,8 @@ annotation labelling `tools/figures/third_party/interfig/upstream/**` MIT, or ha
 later table whose `path` globs match all or some of the same files, such as `**` or `**/*.js`,
 relabels (`cmd/standardsctl/audit_reuse.go`; the tables are read by `ReuseLabels` in
 `internal/supplychain/reuse.go`, which matches globs as REUSE 3.3 defines them).
-An edited `.gitattributes` block fails a plain `praetorctl adopt`; `--force` restores it and
-keeps a backup.
+An edited `.gitattributes` block fails a plain `praetorctl adopt`;
+`praetorctl adopt --force --lock-source-root=<praetor checkout>` restores it and keeps a backup.
 
 Every change to an embedded file reaches adopters on their next `praetorctl adopt`. The
 shipped-text ledger, `internal/managedasset/testdata/shipped/figure-engine.sha256`, records every

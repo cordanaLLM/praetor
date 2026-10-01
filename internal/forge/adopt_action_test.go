@@ -24,8 +24,14 @@ const (
 	adoptRunStepID   = "run-praetor"
 	adoptBuildStepID = "build-standardsctl"
 	adoptModule      = "github.com/cordanaLLM/praetor"
-	maxOutputLines   = 4096
-	adoptStepTimeout = 2 * time.Minute
+	// adoptLockSourceVariable carries the build step's source_root output, the praetor checkout
+	// the binary was built from, into the run step, which passes it to a forced adoption.
+	adoptLockSourceVariable = "PRAETOR_LOCK_SOURCE"
+	// adoptLockSourceFixture is the source_root a runner's build step publishes: three levels
+	// above the action inside the praetor checkout GitHub resolved the caller's ref to.
+	adoptLockSourceFixture = "/runner/_actions/cordanaLLM/praetor/v1/.github/actions/praetor-adopt/../../.."
+	maxOutputLines         = 4096
+	adoptStepTimeout       = 2 * time.Minute
 )
 
 // adoptStubSource stands in for the executables the steps call: it records the argument vector it
@@ -162,6 +168,9 @@ func TestPraetorAdoptAction_Positive_EveryRuntimeInputArrivesThroughEnv(t *testi
 	}
 	if envVariableFor(run.Env, "${{ steps."+adoptBuildStepID+".outputs.binary }}") == "" {
 		t.Errorf("the run step does not take its binary from the build step: %v", run.Env)
+	}
+	if envVariableFor(run.Env, "${{ steps."+adoptBuildStepID+".outputs.source_root }}") != adoptLockSourceVariable {
+		t.Errorf("the run step does not take its lock source from the build step as %s: %v", adoptLockSourceVariable, run.Env)
 	}
 }
 
@@ -309,15 +318,20 @@ func runAdoptBuildStep(t *testing.T, actionPath string, source actionSource, run
 }
 
 // buildStepContextEnv resolves the build step's env block the way GitHub would for an action loaded
-// from source, so the tests hand the step exactly what it asked the runner for. Whatever the step
-// chooses to bind, a ref it reads is a ref these tests can catch it installing.
+// from source, with every input at the default action.yml declares, so the tests hand the step
+// exactly what it asked the runner for. A test overrides an input by passing NAME=value through
+// runAdoptBuildStep's runner list, which exec applies after these (the last value of a key wins).
 func buildStepContextEnv(t *testing.T, source actionSource) []string {
 	t.Helper()
+	action := loadAdoptAction(t)
 	contextValues := map[string]string{
 		"${{ github.action_repository }}": source.repository,
 		"${{ github.action_ref }}":        source.ref,
 	}
-	step := adoptStep(t, loadAdoptAction(t), adoptBuildStepID)
+	for name := range action.Inputs {
+		contextValues["${{ inputs."+name+" }}"] = action.Inputs[name].Default
+	}
+	step := adoptStep(t, action, adoptBuildStepID)
 	env := make([]string, 0, len(step.Env))
 	for key := range step.Env {
 		value, modelled := contextValues[step.Env[key]]
@@ -335,6 +349,7 @@ func adoptStepEnv(t *testing.T, values map[string]string, binDir string) []strin
 	t.Helper()
 	declared := adoptRunDefaults(t)
 	declared["PRAETOR_BIN"] = filepath.Join(binDir, testsupport.ExecutableName("standardsctl"))
+	declared[adoptLockSourceVariable] = adoptLockSourceFixture
 	declared["PRAETOR_STUB_EXIT"] = "0"
 	for key := range values {
 		if _, ok := declared[key]; !ok {
@@ -496,7 +511,10 @@ func TestPraetorAdoptAction_Negative_BooleanOptOutsReachTheCommand(t *testing.T)
 		},
 		"force on": {
 			values: map[string]string{"PRAETOR_FORCE": "true"},
-			want:   []string{"adopt", "--path=.", "--dry-run=false", "--force=true", "--record-baseline=true"},
+			want: []string{
+				"adopt", "--path=.", "--dry-run=false", "--force=true", "--record-baseline=true",
+				"--lock-source-root=" + adoptLockSourceFixture,
+			},
 		},
 	}
 	for name := range cases {
@@ -622,6 +640,53 @@ func TestPraetorAdoptAction_Boundary_DogfoodDryRunSkipsCompileContext(t *testing
 	}
 }
 
+// TestPraetorAdoptAction_ForcedRunCarriesTheLockSource (#502): --force rebuilds .standards.lock, and
+// the rebuild needs a lock source, so a forced adopt run without one always stopped at the lock
+// step, praetor's own adopt.yml included. Positive: a forced run passes the checkout the build step
+// compiled as --lock-source-root and still verifies the context after it. Negative: a forced run
+// with no checkout to pass is refused before anything runs, with the reason in the report.
+// Boundary: a checkout path carrying spaces and shell metacharacters stays one argument, and
+// dogfood, which takes no --force, gets no lock source either.
+func TestPraetorAdoptAction_ForcedRunCarriesTheLockSource(t *testing.T) {
+	forced := map[string]string{"PRAETOR_FORCE": "true", "PRAETOR_PATH": "repo"}
+	t.Run("positive: forced adopt", func(t *testing.T) {
+		got := runAdoptStep(t, forced)
+		want := [][]string{
+			{"adopt", "--path=repo", "--dry-run=false", "--force=true", "--record-baseline=true", "--lock-source-root=" + adoptLockSourceFixture},
+			{"compile-context", "--verify", "--source=repo/AGENTS.md", "--target-dir=repo"},
+		}
+		if got.exitCode != 0 || !equalInvocations(got.invocations, want) {
+			t.Fatalf("forced run exited %d calling %v, want %v:\n%s", got.exitCode, got.invocations, want, got.combined)
+		}
+	})
+	t.Run("negative: no checkout to pass", func(t *testing.T) {
+		got := runAdoptStep(t, map[string]string{"PRAETOR_FORCE": "true", adoptLockSourceVariable: ""})
+		if got.exitCode == 0 || len(got.invocations) != 0 {
+			t.Fatalf("a forced run without a lock source exited %d calling %v", got.exitCode, got.invocations)
+		}
+		if !strings.Contains(got.outputs["report"], "--force needs a lock source") {
+			t.Errorf("the report does not say why nothing ran: %q", got.outputs["report"])
+		}
+	})
+	t.Run("boundary: metacharacters stay one argument", func(t *testing.T) {
+		source := `/runner/a b/";touch pwned;echo "`
+		got := runAdoptStep(t, map[string]string{"PRAETOR_FORCE": "true", adoptLockSourceVariable: source})
+		if got.exitCode != 0 || len(got.invocations) == 0 || got.invocations[0][len(got.invocations[0])-1] != "--lock-source-root="+source {
+			t.Fatalf("forced run exited %d calling %v", got.exitCode, got.invocations)
+		}
+		if _, err := os.Stat(filepath.Join(got.workDir, "pwned")); err == nil {
+			t.Fatal("the lock source ran a command of its own")
+		}
+	})
+	t.Run("boundary: dogfood takes no lock source", func(t *testing.T) {
+		got := runAdoptStep(t, map[string]string{"PRAETOR_FORCE": "true", "PRAETOR_MODE": "dogfood"})
+		want := [][]string{{"dogfood", "--path=.", "--dry-run=false"}}
+		if got.exitCode != 0 || !equalInvocations(got.invocations, want) {
+			t.Fatalf("dogfood exited %d calling %v, want %v", got.exitCode, got.invocations, want)
+		}
+	})
+}
+
 // adoptCheckoutFixture writes the directory layout GitHub creates for this action and returns the
 // action's own path inside it together with the checkout root. module is the path the go.mod above
 // the action declares; "" writes no module at all, which is the copy of the action vendored outside
@@ -672,6 +737,10 @@ func TestPraetorAdoptBuild_Positive_BuildsTheCheckoutTheCallerPinned(t *testing.
 			}
 			if got.outputs["binary"] != binary {
 				t.Errorf("binary output is %q, want %q", got.outputs["binary"], binary)
+			}
+			// A forced adoption rebuilds the lock from this same checkout (run step).
+			if source := got.outputs["source_root"]; filepath.Clean(source) != root {
+				t.Errorf("source_root output is %q, want the checkout %q", source, root)
 			}
 		})
 	}
@@ -724,6 +793,9 @@ func assertBuildRefused(t *testing.T, got stepOutcome, want string) {
 	}
 	if _, published := got.outputs["binary"]; published {
 		t.Errorf("a failed build still published a binary output: %v", got.outputs)
+	}
+	if _, published := got.outputs["source_root"]; published {
+		t.Errorf("a failed build still published a lock source: %v", got.outputs)
 	}
 	if !strings.Contains(got.combined, want) {
 		t.Errorf("the failure does not carry %q:\n%s", want, got.combined)

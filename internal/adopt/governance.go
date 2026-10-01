@@ -132,13 +132,34 @@ func reconcileDisabledDocumentationMakefile(
 	return []byte(cleaned), nil
 }
 
+// verificationMakefileRestored leads the replace entry of a Makefile whose edited documentation gate
+// block a forced run restored while appending the declared verification targets.
+const verificationMakefileRestored = "Appended declared verification targets and restored the locked documentation gate block"
+
 func publishVerificationMakefile(
-	ctx context.Context, s *adoptSession, full string, data []byte, replacement string, exists bool,
+	ctx context.Context, s *adoptSession, full string, data []byte, rendered string, exists bool,
 ) error {
-	if !s.opts.DryRun {
-		if err := contextopt.ReplaceSnapshot(ctx, full, []byte(replacement), contextopt.ReplaceOptions{
+	publish := func(ctx context.Context) error {
+		return contextopt.ReplaceSnapshot(ctx, full, []byte(rendered), contextopt.ReplaceOptions{
 			Expected: data, Exists: exists, Mode: filePerm,
-		}); err != nil {
+		})
+	}
+	if exists {
+		edited, err := documentationMakefileBlockEdited(string(data))
+		if err != nil {
+			return err
+		}
+		// The merge admits an edited block only under --force (documentationMakefile), and
+		// restoring it overwrites adopter lines, so the write is a replace with a backup, as the
+		// documentation step's restore is (reconcileDocumentationMakefile).
+		if edited {
+			return s.replaceExisting(ctx, replacement{
+				rel: makefileName, before: data, after: []byte(rendered), detail: verificationMakefileRestored, publish: publish,
+			})
+		}
+	}
+	if !s.opts.DryRun {
+		if err := publish(ctx); err != nil {
 			return err
 		}
 	}
@@ -167,7 +188,7 @@ func verificationMakefileReplacement(
 		}
 	}
 	if documentationEnabled {
-		return mergeDocumentationMakefile(replacement, false)
+		return s.documentationMakefile(replacement, s.opts.Force)
 	}
 	return replacement, nil
 }

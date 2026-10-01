@@ -142,13 +142,14 @@ func preflightContextRemoval(ctx context.Context, s *adoptSession, families []ma
 	if !rulesetExists {
 		return nil
 	}
-	return refuseContextRemoval(rulesetData, s.opts.Force, families)
+	return refuseContextRemoval(rulesetData, s.opts.Force, families, s.forceCommand())
 }
 
 // refuseContextRemoval fails an unforced disable while the branch ruleset still requires the
 // hosted context of one of families. The ruleset is parsed under --force too, so a malformed
-// one is reported rather than rewritten blind.
-func refuseContextRemoval(ruleset []byte, force bool, families []managedasset.Family) error {
+// one is reported rather than rewritten blind. rerun is the forced re-adoption the refusal
+// names (ForceCommand).
+func refuseContextRemoval(ruleset []byte, force bool, families []managedasset.Family, rerun string) error {
 	for index := 0; index < len(families) && index < managedasset.MaxFamilies; index++ {
 		statusContext := families[index].StatusContext
 		if statusContext == "" {
@@ -159,8 +160,8 @@ func refuseContextRemoval(ruleset []byte, force bool, families []managedasset.Fa
 			return fmt.Errorf("inspect branch ruleset status contexts: %w", err)
 		}
 		if required && !force {
-			return fmt.Errorf("disabling %s removes hosted context %q; rerun adopt --force",
-				families[index].Kind, statusContext)
+			return fmt.Errorf("disabling %s removes hosted context %q; rerun %s",
+				families[index].Kind, statusContext, rerun)
 		}
 	}
 	return nil

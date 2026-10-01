@@ -47,6 +47,28 @@ exit 0
 
 STUB_FAILS_EVERYTHING = "#!/bin/sh\n" + STUB_LOG_LINE + 'echo "stub: refused" >&2\nexit 1\n'
 
+# The lock source the adopt step passes: the praetor checkout the script lives in, the bundle
+# its own standardsctl is built from.
+LOCK_SOURCE = f"--lock-source-root={ROOT}"
+
+# Refuses `adopt --force` without a lock source, as praetorctl does: --force rebuilds
+# .standards.lock, and the rebuild needs a source bundle (internal/adopt/lock.go).
+STUB_NEEDS_LOCK_SOURCE = (
+    "#!/bin/sh\n"
+    + STUB_LOG_LINE
+    + """if [ "$1" = "adopt" ]; then
+    case " $* " in
+        *" --lock-source-root="*) ;;
+        *" --force "*)
+            echo "new lock pins require an explicit verified lock source root" >&2
+            exit 1
+            ;;
+    esac
+fi
+exit 0
+"""
+)
+
 
 class Sweep:
     """One temporary development root, stub binary and call log."""
@@ -187,11 +209,42 @@ class AdoptSweepTests(unittest.TestCase):
             self.assertEqual(
                 adopted,
                 [
-                    f"adopt --path={sweep.dev_root / TARGETS[1]} --force",
-                    f"adopt --path={sweep.dev_root / TARGETS[0]} --force",
-                    f"adopt --path={absolute} --force",
+                    f"adopt --path={sweep.dev_root / TARGETS[1]} --force {LOCK_SOURCE}",
+                    f"adopt --path={sweep.dev_root / TARGETS[0]} --force {LOCK_SOURCE}",
+                    f"adopt --path={absolute} --force {LOCK_SOURCE}",
                 ],
             )
+
+    def test_forced_adoption_passes_the_checkout_as_lock_source(self) -> None:
+        """--force rebuilds the lock, so the adopt step names a lock source (#502).
+
+        Positive: against a praetorctl that refuses a forced adoption without a lock source, the
+        sweep passes and the adopt step names the script's own checkout. Negative: that stub
+        refuses a forced adopt call without the source, so a sweep omitting it cannot pass.
+        Boundary: the source does not follow --dev-root, which only resolves relative targets.
+        """
+        with tempfile.TemporaryDirectory(prefix="praetor-sweep-test-") as directory:
+            sweep = Sweep(directory, STUB_NEEDS_LOCK_SOURCE)
+            sweep.make_repos(TARGETS[0])
+
+            result = sweep.run("--dev-root", str(sweep.dev_root), TARGETS[0])
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(result.stdout.count("[PASS]"), 1, result.stdout)
+            adopted = [call for call in sweep.calls() if call.startswith("adopt ")]
+            self.assertEqual(adopted, [f"adopt --path={sweep.dev_root / TARGETS[0]} --force {LOCK_SOURCE}"])
+            self.assertNotIn(str(sweep.dev_root), adopted[0].split("--lock-source-root=", 1)[1])
+
+            refused = subprocess.run(
+                [str(sweep.stub), "adopt", f"--path={sweep.dev_root / TARGETS[0]}", "--force"],
+                capture_output=True,
+                text=True,
+                env={**os.environ, "STUB_LOG": str(sweep.log)},
+                timeout=60,
+                check=False,
+            )
+            self.assertEqual(refused.returncode, 1, refused.stderr)
+            self.assertIn("explicit verified lock source root", refused.stderr)
 
     def test_reconcile_uses_the_configured_scope_or_the_given_list(self) -> None:
         with tempfile.TemporaryDirectory(prefix="praetor-sweep-test-") as directory:

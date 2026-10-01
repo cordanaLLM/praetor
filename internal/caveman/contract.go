@@ -252,6 +252,9 @@ func trimLiteralWrapper(token string) string {
 	}
 	first, firstSize := utf8.DecodeRuneInString(token)
 	last, lastSize := utf8.DecodeLastRuneInString(token)
+	if len(token) < firstSize+lastSize {
+		return token
+	}
 	if literalWrapperPair(first, last) {
 		return token[firstSize : len(token)-lastSize]
 	}

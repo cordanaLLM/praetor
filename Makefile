@@ -252,6 +252,23 @@ verify-all: docs-references
 docs-references:
 	go run ./cmd/standardsctl docs references --path=.
 
+# #338: the committed .devcontainer bundle carries a snapshot of the build source, and verify
+# only checks it against its own records. This recaptures the source from the working tree,
+# reports how many commits and days the bundle is behind, and fails only past the
+# devcontainer.freshness bounds in .standards.yaml; .github/workflows/devcontainer-refresh.yml
+# regenerates the bundle weekly (docs/guides/devcontainer-bootstrap.md).
+.PHONY: devcontainer-freshness
+verify-all: devcontainer-freshness
+devcontainer-freshness:
+	go run ./cmd/standardsctl devcontainer freshness
+
+# The refresh workflow's publishing step. Its cases build throwaway repositories under a
+# temporary directory, stub gh on PATH and contact no remote.
+.PHONY: devcontainer-refresh-test
+verify-all: devcontainer-refresh-test
+devcontainer-refresh-test:
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_devcontainer_refresh_publish.py'
+
 notebook-test:
 	python3 -B scripts/test_notebooklm_export.py
 	python3 -B scripts/test_planning_import.py

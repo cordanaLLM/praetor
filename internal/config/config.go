@@ -269,6 +269,10 @@ type Manifest struct {
 	// not to have run yet, each with a reason (#612). It is repository-only and stays out of
 	// ResolvedPolicy, like HISS.
 	WorkflowRuns *WorkflowRunsPolicy `yaml:"workflow_runs,omitempty"`
+	// DevContainer holds the settings `praetorctl devcontainer` reads beside the profiles and
+	// facets: the freshness bounds of the committed bundle (#338). It is repository-only, like
+	// Documentation.
+	DevContainer *DevContainerPolicy `yaml:"devcontainer,omitempty"`
 }
 
 // AdoptionPolicy declares generated artefacts this repository refuses.
@@ -329,6 +333,9 @@ func parseManifest(path string, data []byte) (*Manifest, error) {
 		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
 	}
 	if err := validateManifestActions(m); err != nil {
+		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
+	}
+	if err := validateManifestDevContainer(m); err != nil {
 		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
 	}
 

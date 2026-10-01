@@ -88,3 +88,45 @@ func TestRecordOriginHead_Boundary_SlashBranchAndRerecord(t *testing.T) {
 		}
 	}
 }
+
+// Positive: RunFixtureGit runs every command in order and returns what the last one printed, here
+// the id of the commit the earlier commands made.
+func TestRunFixtureGit_Positive_ReturnsTheLastOutput(t *testing.T) {
+	requireGit(t)
+	dir := t.TempDir()
+	InitGitRepoWithOrigin(t, dir, "")
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	head := RunFixtureGit(t, dir, []string{"add", "a.txt"}, []string{"commit", "--quiet", "-m", "a"},
+		[]string{"rev-parse", "HEAD"})
+	want, err := runGit(t, dir, HermeticGitEnv(t), "log", "-1", "--format=%H")
+	if err != nil || head != want || len(head) < 40 {
+		t.Fatalf("RunFixtureGit returned %q, want the commit id %q (err %v)", head, want, err)
+	}
+}
+
+// Negative: a command git refuses fails the test with git's answer, and nothing after it runs.
+func TestRunFixtureGit_Negative_RefusedCommandFailsTheTest(t *testing.T) {
+	requireGit(t)
+	dir := t.TempDir()
+	InitGitRepoWithOrigin(t, dir, "")
+	RunFixtureGit(t, dir, []string{"commit", "--quiet", "--allow-empty", "-m", "root"})
+	message := runRecorded(t, func(tb testing.TB) {
+		RunFixtureGit(tb, dir, []string{"rev-parse", "--verify", "refs/heads/absent"}, []string{"tag", "after"})
+	})
+	if !strings.Contains(message, "testsupport: git [rev-parse --verify refs/heads/absent]") {
+		t.Fatalf("a refused command was not reported: %q", message)
+	}
+	if out, err := runGit(t, dir, HermeticGitEnv(t), "tag", "--list"); err != nil || out != "" {
+		t.Fatalf("a command after the refused one still ran: tags %q (err %v)", out, err)
+	}
+}
+
+// Boundary: no commands run nothing and return an empty output.
+func TestRunFixtureGit_Boundary_NoCommandsReturnEmpty(t *testing.T) {
+	requireGit(t)
+	if out := RunFixtureGit(t, t.TempDir()); out != "" {
+		t.Fatalf("RunFixtureGit with no commands returned %q", out)
+	}
+}

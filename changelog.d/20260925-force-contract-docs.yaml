@@ -1,0 +1,4 @@
+type: fixed
+title: 'adopt --force states its contract everywhere and names the lock source it needs; a forced remote praetor-adopt run checks out praetor with git'
+issue: "#502"
+breaking: false
