@@ -664,25 +664,3 @@ func TestPriorDigestsBoundary(t *testing.T) {
 		t.Fatalf("an unknown prior file maps to %q", got)
 	}
 }
-
-// ActionlintLabels (#593). Positive: each label is the runs-on value of a Workflow job.
-// Negative: the returned slice is a private copy. Boundary: the list holds no repeat, and each
-// label is one token a YAML list item carries unquoted.
-func TestActionlintLabelsPositiveNegativeBoundary(t *testing.T) {
-	labels := ActionlintLabels()
-	if len(labels) == 0 {
-		t.Fatal("no label declared; actionlint would then know every runner of Workflow, so drop this test with the list")
-	}
-	for index, label := range labels {
-		if !strings.Contains(Workflow, "\n    runs-on: "+label+"\n") {
-			t.Errorf("Workflow does not run on %s", label)
-		}
-		if slices.Index(labels, label) != index || label == "" || strings.ContainsAny(label, " \t\"'#:,[]{}") {
-			t.Errorf("label %q is repeated or not one plain token", label)
-		}
-	}
-	labels[0] = "mutated"
-	if ActionlintLabels()[0] == "mutated" {
-		t.Fatal("ActionlintLabels exposed the list for mutation")
-	}
-}

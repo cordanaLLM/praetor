@@ -15,17 +15,19 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
-	"github.com/cordanaLLM/praetor/internal/managedasset"
+	"github.com/cordanaLLM/praetor/internal/flavor"
+	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
 )
 
 // actionlint rejects a runs-on label missing from its built-in table of GitHub-hosted runners
 // unless the repository's configuration declares it under self-hosted-runner.labels, the one
-// declaration it accepts for such a label (measured with actionlint v1.7.12, #593). A family
-// whose locked workflow runs on such a label names it in managedasset.Family.ActionlintLabels,
-// and adoption declares it, so a repository that lints its workflows with actionlint stays
-// green without editing a file audit locks.
+// declaration it accepts for such a label (measured with actionlint v1.7.12, #593). Adoption
+// reads the runs-on labels of every workflow it writes, the documentation gate audit locks and
+// the detected flavor's CI workflows alike (adoptedWorkflowFiles), and declares each one
+// actionlint does not know (actionlintUnknownLabels), so a repository that lints its workflows
+// with actionlint stays green without editing what adoption wrote (#622).
 //
 // actionlint reads .github/actionlint.yaml and, only while that file is absent,
 // .github/actionlint.yml (measured with v1.7.12: with both present, a label declared only in
@@ -35,8 +37,8 @@ import (
 // matching actionlint applies too: measured with v1.7.12, `ubuntu-2?.04` declares ubuntu-26.04
 // and the brace pattern `ubuntu-{26,27}.04` does not, since path.Match expands no braces.
 // Adoption never removes a label, one it added included: the adopter's own
-// workflows may run on it too. Once actionlint ships a label and the family stops naming it,
-// adoption stops adding it, and the header of a created file says when a label can go.
+// workflows may run on it too. Once actionlint ships a label and actionlintUnknownLabels stops
+// naming it, adoption stops adding it, and the header of a created file says when a label can go.
 //
 // The edit is a text patch that keeps every other line as written (manifestText). It extends a
 // block-style configuration: an empty one, one without self-hosted-runner, a null or block
@@ -65,14 +67,29 @@ const (
 		"# delete a label once your actionlint accepts .github/workflows without it.\n"
 )
 
+// maxActionlintLabels bounds the labels adoption declares to actionlint in one run (HISS-02).
+const maxActionlintLabels = 8
+
+// actionlintUnknownLabels are the runner labels Praetor-emitted workflows run on that
+// actionlint's built-in table of GitHub-hosted runner labels (rule_runner_label.go) lacks: the
+// table stops at ubuntu-24.04 in v1.7.12. The list records what actionlint does not know, never
+// which workflow runs on what: adoption reads that from each workflow it writes
+// (actionlintManagedLabels), so a template moving to another runner needs no edit here unless
+// actionlint does not know that runner either. Once actionlint ships a label, remove it here and
+// adoption stops adding it. Wherever actionlint is on PATH,
+// TestActionlintStillRejectsTheDeclaredLabels fails as soon as it accepts a label listed here,
+// and TestActionlintAcceptsEveryEmittedWorkflow as soon as an emitted workflow runs on a label
+// it does not know that is missing here.
+var actionlintUnknownLabels = [...]string{"ubuntu-26.04"}
+
 // actionlintConfigFiles are actionlint's repository configuration files in its own search
 // order; it reads the first that exists.
 var actionlintConfigFiles = [...]string{actionlintConfigFile, ".github/actionlint.yml"}
 
-// reconcileActionlintLabels declares to actionlint the runner labels of the enabled families'
-// workflows it does not know.
+// reconcileActionlintLabels declares to actionlint the runner labels of the workflows this run
+// writes that it does not know.
 func reconcileActionlintLabels(ctx context.Context, s *adoptSession) error {
-	labels, err := actionlintManagedLabels(s)
+	labels, err := actionlintManagedLabels(ctx, s)
 	if err != nil {
 		return err
 	}
@@ -106,14 +123,40 @@ func reconcileActionlintLabels(ctx context.Context, s *adoptSession) error {
 	return publishActionlintConfig(ctx, s, rel, data, merged, added)
 }
 
-// actionlintManagedLabels returns the actionlint labels of every family the active facets
-// enable; none while docs:seo-portal is disabled.
-func actionlintManagedLabels(s *adoptSession) ([]string, error) {
-	enabled, err := documentationEnabledForSession(s)
-	if err != nil || !enabled {
+// actionlintManagedLabels returns the runner labels actionlint does not know that the workflows
+// this run leaves as adoption's rendering run on (adoptedWorkflowFiles): the documentation gate
+// while docs:seo-portal is enabled, and the detected flavor's CI workflows unless the flavor step
+// is declined. The step runs before both steps write them, so it reads what they will write.
+func actionlintManagedLabels(ctx context.Context, s *adoptSession) ([]string, error) {
+	docsGate, err := documentationEnabledForSession(s)
+	if err != nil {
+		return nil, fmt.Errorf("resolve the documentation gate for actionlint: %w", err)
+	}
+	files, err := s.adoptedWorkflowFiles(ctx, docsGate)
+	if err != nil {
 		return nil, err
 	}
-	return managedasset.ActionlintLabelsOf(DocumentationFamilies()), nil
+	return actionlintLabelsOf(files)
+}
+
+// actionlintLabelsOf returns the labels of actionlintUnknownLabels, in its order, that any of
+// files runs a job on (forge.WorkflowRunnerLabels).
+func actionlintLabelsOf(files []flavor.PlannedTemplate) ([]string, error) {
+	var runners []string
+	for index := 0; index < len(files) && index < maxScaffoldedWorkflows; index++ {
+		labels, err := forge.WorkflowRunnerLabels([]byte(files[index].Content))
+		if err != nil {
+			return nil, fmt.Errorf("read the runner labels of %s: %w", files[index].Path, err)
+		}
+		runners = append(runners, labels...)
+	}
+	unknown := make([]string, 0, len(actionlintUnknownLabels))
+	for index := 0; index < len(actionlintUnknownLabels) && index < maxActionlintLabels; index++ {
+		if slices.Contains(runners, actionlintUnknownLabels[index]) {
+			unknown = append(unknown, actionlintUnknownLabels[index])
+		}
+	}
+	return unknown, nil
 }
 
 // findActionlintConfig returns the configuration actionlint reads, its bytes, and whether it
@@ -174,7 +217,7 @@ func renderActionlintConfig(labels []string) []byte {
 // actionlintItems renders labels as block sequence items at indent, one line each.
 func actionlintItems(labels []string, indent, eol string) string {
 	var out strings.Builder
-	for index := 0; index < len(labels) && index < managedasset.MaxActionlintLabels; index++ {
+	for index := 0; index < len(labels) && index < maxActionlintLabels; index++ {
 		out.WriteString(indent)
 		out.WriteString("- ")
 		out.WriteString(labels[index])
@@ -288,7 +331,7 @@ func missingActionlintLabels(declared *yaml.Node, labels []string) []string {
 		entries = declared.Content
 	}
 	missing := make([]string, 0, len(labels))
-	for index := 0; index < len(labels) && index < managedasset.MaxActionlintLabels; index++ {
+	for index := 0; index < len(labels) && index < maxActionlintLabels; index++ {
 		covered := slices.ContainsFunc(entries, func(entry *yaml.Node) bool {
 			matched, err := path.Match(entry.Value, labels[index])
 			return entry.Kind == yaml.ScalarNode && (entry.Value == labels[index] || err == nil && matched)
@@ -424,7 +467,7 @@ func withActionlintLabels(document any, missing []string) (any, bool) {
 	if !ok {
 		return nil, false
 	}
-	for index := 0; index < len(missing) && index < managedasset.MaxActionlintLabels; index++ {
+	for index := 0; index < len(missing) && index < maxActionlintLabels; index++ {
 		labels = append(labels, missing[index])
 	}
 	runner[actionlintLabelsKey] = labels

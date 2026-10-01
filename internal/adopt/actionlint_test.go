@@ -16,6 +16,9 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/config"
+	"github.com/cordanaLLM/praetor/internal/flavor"
+	"github.com/cordanaLLM/praetor/templates"
+	"gopkg.in/yaml.v3"
 )
 
 // createdActionlintConfig is the configuration adoption creates, spelled out rather than read
@@ -220,9 +223,8 @@ func TestActionlintLabelsNegativeReportsUninspectableConfiguration(t *testing.T)
 	}
 }
 
-// Boundary: with docs:seo-portal disabled no managed workflow needs a label, so nothing is
-// created and an adopter's configuration stays as written; a dry run reports the creation it
-// would make without writing it.
+// Boundary: with docs:seo-portal disabled and no flavor detected no managed workflow needs a
+// label, so nothing is created; a dry run reports the creation it would make without writing it.
 func TestActionlintLabelsBoundaryFacetAndDryRun(t *testing.T) {
 	repo := t.TempDir()
 	s := actionlintSession(repo, []string{"custom:facet"})
@@ -295,29 +297,159 @@ func TestMergeActionlintLabelsNegativeCancelledContext(t *testing.T) {
 	}
 }
 
-// Positive (#593 acceptance): wherever actionlint is on PATH, it accepts the adopted
-// documentation workflow beside the configuration adoption creates.
-func TestActionlintAcceptsTheAdoptedWorkflow(t *testing.T) {
-	bin := requireActionlint(t)
-	repo := actionlintFixtureRepo(t)
-	mustWrite(t, filepath.Join(repo, ".github", "actionlint.yaml"), string(renderActionlintConfig(actionlintManagedFixtureLabels(t))))
-	if out, err := runActionlint(t, bin, repo); err != nil {
-		t.Fatalf("actionlint rejects the adopted workflow: %v\n%s", err, out)
+// Positive (#622): a Go library adopted without docs:seo-portal writes no documentation gate,
+// yet the CI workflow its flavor writes runs on a label actionlint does not know, so adoption
+// declares that label; the rerun leaves the file as it is.
+func TestActionlintLabelsPositiveDeclaresFlavorWorkflowRunner(t *testing.T) {
+	repo := newTestRepo(t, "actionlint-flavor")
+	for rel, body := range goLibrary {
+		mustWrite(t, filepath.Join(repo, filepath.FromSlash(rel)), body)
+	}
+	opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo, Profile: "framework", Facets: []string{"custom:facet"}}
+	report, err := Adopt(t.Context(), opts)
+	if err != nil {
+		t.Fatalf("adopt: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(repo, filepath.FromSlash(DocumentationWorkflowFile))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("adoption without docs:seo-portal wrote the documentation gate: %v", err)
+	}
+	if !strings.Contains(mustRead(t, filepath.Join(repo, ".github", "workflows", "ci.yml")), "runs-on: ubuntu-26.04") {
+		t.Fatal("the flavor wrote no CI workflow on ubuntu-26.04")
+	}
+	path := filepath.Join(repo, ".github", "actionlint.yaml")
+	if got := mustRead(t, path); got != createdActionlintConfig {
+		t.Fatalf("created configuration:\n%s\nwant:\n%s", got, createdActionlintConfig)
+	}
+	if detail := findActionDetail(report.ActionDetails, actionlintConfigFile); !strings.Contains(detail, "it does not know: ubuntu-26.04") {
+		t.Fatalf("creation not reported: %q", detail)
+	}
+	report, err = Adopt(t.Context(), opts)
+	if err != nil || mustRead(t, path) != createdActionlintConfig ||
+		!strings.Contains(findActionDetail(report.ActionDetails, actionlintConfigFile), "already accepts") {
+		t.Fatalf("rerun is not a no-op: %v\n%s", err, mustRead(t, path))
 	}
 }
 
-// Boundary (#593): wherever actionlint is on PATH, it still rejects the documentation workflow
+// Negative (#622): without docs:seo-portal, a workflow adoption does not write needs no label
+// from it: a declined flavor step writes no CI workflow, and a ci.yml of the repository's own on
+// the same runner is the repository's to declare. Neither creates a configuration.
+func TestActionlintLabelsNegativeSkipsWorkflowsAdoptionDoesNotWrite(t *testing.T) {
+	declined := ciSession(t, "working-dir-and-flavor")
+	owned := ciSession(t)
+	mustWrite(t, filepath.Join(owned.repoPath, ".github", "workflows", "ci.yml"),
+		"name: Own\non: push\njobs:\n  own:\n    runs-on: ubuntu-26.04\n    steps:\n      - run: make ci\n")
+	for name, s := range map[string]*adoptSession{"declined flavor step": declined, "own ci.yml": owned} {
+		t.Run(name, func(t *testing.T) {
+			s.facets = []string{"custom:facet"}
+			if err := reconcileActionlintLabels(t.Context(), s); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Lstat(filepath.Join(s.repoPath, ".github", "actionlint.yaml")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("a configuration was created: %v", err)
+			}
+			if detail := findActionDetail(s.report.ActionDetails, actionlintConfigFile); !strings.Contains(detail, "No Praetor-managed workflow") {
+				t.Fatalf("not reported as not applicable: %q", detail)
+			}
+		})
+	}
+}
+
+// Boundary (#622): the documentation gate and the Go CI workflow both run on ubuntu-26.04, and
+// the label is declared once; a workflow on a runner actionlint knows, or on an expression,
+// needs none; no workflow needs none; and a workflow that is not YAML fails the step, naming it.
+func TestActionlintLabelsOfBoundary(t *testing.T) {
+	docs := flavor.PlannedTemplate{Path: DocumentationWorkflowFile, Content: DocumentationWorkflow()}
+	goCI := flavor.PlannedTemplate{Path: ".github/workflows/ci.yml", Content: renderedTemplate(t, "go/ci-go.yml.tmpl")}
+	known := flavor.PlannedTemplate{Path: "known.yml", Content: "jobs:\n  a:\n    runs-on: ubuntu-24.04\n  b:\n    runs-on: ${{ matrix.os }}\n"}
+	for name, tc := range map[string]struct {
+		files []flavor.PlannedTemplate
+		want  []string
+	}{
+		"docs and flavor": {[]flavor.PlannedTemplate{docs, goCI}, []string{"ubuntu-26.04"}},
+		"flavor only":     {[]flavor.PlannedTemplate{goCI}, []string{"ubuntu-26.04"}},
+		"known runners":   {[]flavor.PlannedTemplate{known}, nil},
+		"no workflow":     {nil, nil},
+	} {
+		got, err := actionlintLabelsOf(tc.files)
+		if err != nil || !slices.Equal(got, tc.want) {
+			t.Errorf("%s: labels = %q (%v), want %q", name, got, err, tc.want)
+		}
+	}
+	broken := flavor.PlannedTemplate{Path: "broken.yml", Content: "jobs: [\n"}
+	if _, err := actionlintLabelsOf([]flavor.PlannedTemplate{goCI, broken}); err == nil || !strings.Contains(err.Error(), "broken.yml") {
+		t.Fatalf("a workflow that is not YAML was not reported by name: %v", err)
+	}
+}
+
+// Boundary (#622): actionlintUnknownLabels holds at least one label, each once and at most
+// maxActionlintLabels of them; every one is a runner some emitted workflow runs on, so the list
+// claims nothing about a runner no workflow uses; and each reads back from the configuration
+// adoption renders as the same string, so the label declared is the label the workflows name.
+func TestActionlintUnknownLabelsBoundary(t *testing.T) {
+	labels := actionlintUnknownLabels[:]
+	if len(labels) == 0 || len(labels) > maxActionlintLabels {
+		t.Fatalf("%d labels, want 1..%d; with none left, drop the step with the list", len(labels), maxActionlintLabels)
+	}
+	used, err := actionlintLabelsOf(emittedWorkflows(t))
+	if err != nil || !slices.Equal(used, labels) {
+		t.Fatalf("labels emitted workflows run on = %q (%v), want every listed label %q", used, err, labels)
+	}
+	for index, label := range labels {
+		var decoded struct {
+			Runner struct {
+				Labels []any `yaml:"labels"`
+			} `yaml:"self-hosted-runner"`
+		}
+		if err := yaml.Unmarshal(renderActionlintConfig([]string{label}), &decoded); err != nil {
+			t.Fatalf("%s: rendered configuration does not decode: %v", label, err)
+		}
+		if slices.Index(labels, label) != index || !slices.Equal(decoded.Runner.Labels, []any{label}) {
+			t.Errorf("label %q is repeated or reads back as %#v", label, decoded.Runner.Labels)
+		}
+	}
+}
+
+// Positive (#593, #622 acceptance): wherever actionlint is on PATH, it accepts every workflow
+// adoption can write, the documentation gate and each flavor's CI workflows in every rendering,
+// beside the configuration adoption creates for that workflow alone, or none when it needs no
+// label.
+func TestActionlintAcceptsEveryEmittedWorkflow(t *testing.T) {
+	bin := requireActionlint(t)
+	repo := actionlintFixtureRepo(t)
+	configPath := filepath.Join(repo, filepath.FromSlash(actionlintConfigFile))
+	for _, workflow := range emittedWorkflows(t) {
+		labels, err := actionlintLabelsOf([]flavor.PlannedTemplate{workflow})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Remove(configPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.Fatal(err)
+		}
+		if len(labels) > 0 {
+			mustWrite(t, configPath, string(renderActionlintConfig(labels)))
+		}
+		if out, err := runActionlint(t, bin, repo, workflow.Content); err != nil {
+			t.Errorf("actionlint rejects %s beside the configuration adoption creates for it: %v\n%s", workflow.Path, err, out)
+		}
+	}
+}
+
+// Boundary (#593, #622): wherever actionlint is on PATH, it still rejects the emitted workflows
 // without the declaration, label by label. Once it accepts a label, actionlint has shipped it:
-// remove the label from tools/markdownlint's actionlintLabels, and adoption stops adding it.
+// remove the label from actionlintUnknownLabels, and adoption stops adding it.
 func TestActionlintStillRejectsTheDeclaredLabels(t *testing.T) {
 	bin := requireActionlint(t)
-	out, err := runActionlint(t, bin, actionlintFixtureRepo(t))
-	if err == nil {
-		t.Fatal("actionlint accepts the documentation workflow without a declaration; remove the labels it knows from actionlintLabels")
+	repo := actionlintFixtureRepo(t)
+	var rejected strings.Builder
+	for _, workflow := range emittedWorkflows(t) {
+		out, err := runActionlint(t, bin, repo, workflow.Content)
+		if err != nil {
+			rejected.WriteString(out)
+		}
 	}
-	for _, label := range actionlintManagedFixtureLabels(t) {
-		if !strings.Contains(out, `label "`+label+`" is unknown`) {
-			t.Errorf("actionlint knows %s now; remove it from tools/markdownlint's actionlintLabels:\n%s", label, out)
+	for _, label := range actionlintUnknownLabels {
+		if !strings.Contains(rejected.String(), `label "`+label+`" is unknown`) {
+			t.Errorf("actionlint knows %s now; remove it from actionlintUnknownLabels:\n%s", label, rejected.String())
 		}
 	}
 }
@@ -336,29 +468,78 @@ func requireActionlint(t *testing.T) string {
 // actionlintManagedFixtureLabels returns the labels the default facets declare to actionlint.
 func actionlintManagedFixtureLabels(t *testing.T) []string {
 	t.Helper()
-	labels, err := actionlintManagedLabels(actionlintSession(t.TempDir(), config.DefaultFacets()))
+	labels, err := actionlintManagedLabels(t.Context(), actionlintSession(t.TempDir(), config.DefaultFacets()))
 	if err != nil || len(labels) == 0 {
 		t.Fatalf("the default facets declare no actionlint label: %v", err)
 	}
 	return labels
 }
 
-// actionlintFixtureRepo returns a checkout holding only the documentation workflow.
+// renderedWorkflowsRoot is templates/branching_test.go's renderedRoot seen from this package: the
+// committed renderings of each template whose actions branch on repository facts.
+var renderedWorkflowsRoot = filepath.Join("..", "..", templates.Directory, "testdata", "rendered")
+
+// emittedWorkflows returns every workflow body adoption can write, each named for messages: the
+// documentation gate and each CI workflow template of every flavor, once per distinct rendering.
+// A template whose actions branch on repository facts is read from its committed renderings,
+// which TestBranchingYAMLTemplateRenderingsAreCommitted keeps equal to every body it renders;
+// any other is rendered as flavor apply renders it.
+func emittedWorkflows(t *testing.T) []flavor.PlannedTemplate {
+	t.Helper()
+	workflows := []flavor.PlannedTemplate{{Path: DocumentationWorkflowFile, Content: DocumentationWorkflow()}}
+	var sources []string
+	for _, flv := range flavor.List() {
+		for _, item := range flv.RequiredTemplates() {
+			if !strings.HasPrefix(item.Path, ".github/workflows/") || item.Source == "" || slices.Contains(sources, item.Source) {
+				continue
+			}
+			sources = append(sources, item.Source)
+			workflows = append(workflows, templateRenderings(t, item.Source)...)
+		}
+	}
+	if len(sources) == 0 {
+		t.Fatal("no flavor declares a CI workflow template")
+	}
+	return workflows
+}
+
+// templateRenderings returns every committed rendering of source, or its one rendering when it
+// has no committed renderings.
+func templateRenderings(t *testing.T, source string) []flavor.PlannedTemplate {
+	t.Helper()
+	dir := filepath.Join(renderedWorkflowsRoot, filepath.FromSlash(strings.TrimSuffix(source, ".tmpl")))
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return []flavor.PlannedTemplate{{Path: source, Content: renderedTemplate(t, source)}}
+	}
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("read the renderings of %s: %d entries (%v)", source, len(entries), err)
+	}
+	renderings := make([]flavor.PlannedTemplate, 0, len(entries))
+	for _, entry := range entries {
+		renderings = append(renderings, flavor.PlannedTemplate{Path: source + " as " + entry.Name(), Content: mustRead(t, filepath.Join(dir, entry.Name()))})
+	}
+	return renderings
+}
+
+// actionlintFixtureRepo returns an empty checkout, the project root actionlint reads its
+// configuration from.
 func actionlintFixtureRepo(t *testing.T) string {
 	t.Helper()
 	repo := t.TempDir()
 	initTestGit(t, repo)
-	mustWrite(t, filepath.Join(repo, filepath.FromSlash(DocumentationWorkflowFile)), DocumentationWorkflow())
 	return repo
 }
 
-// runActionlint runs bin over the documentation workflow of repo, without the shellcheck and
+// runActionlint writes workflow into repo and runs bin over it, without the shellcheck and
 // pyflakes integrations, whose presence varies by host.
-func runActionlint(t *testing.T, bin, repo string) (string, error) {
+func runActionlint(t *testing.T, bin, repo, workflow string) (string, error) {
 	t.Helper()
+	rel := filepath.Join(".github", "workflows", "emitted.yml")
+	mustWrite(t, filepath.Join(repo, rel), workflow)
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, "-no-color", "-oneline", "-shellcheck=", "-pyflakes=", filepath.FromSlash(DocumentationWorkflowFile))
+	cmd := exec.CommandContext(ctx, bin, "-no-color", "-oneline", "-shellcheck=", "-pyflakes=", rel)
 	cmd.Dir = repo
 	out, err := cmd.CombinedOutput()
 	return string(out), err

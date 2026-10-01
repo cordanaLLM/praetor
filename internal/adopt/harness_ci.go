@@ -26,14 +26,25 @@ type scaffoldedWorkflow struct {
 	runs []forge.WorkflowRun
 }
 
-// scaffoldedWorkflows lists the CI workflows this run leaves as adoption's rendering: the
-// documentation gate's workflow, which the documentation step writes whenever the facet is
-// declared (the step cannot be declined; only the facet turns it off), and the workflows of the
-// detected flavor that flavor apply leaves as its own (flavor.PlannedWorkflows), unless the
-// flavor step is declined. The harness step runs before
-// both steps, so it reads what they will write; what each workflow runs is read from its body,
-// never restated, so rule 5 cannot drift from the files (BUG-804).
+// scaffoldedWorkflows lists the CI workflows this run leaves as adoption's rendering
+// (adoptedWorkflowFiles) with what each runs. The harness step runs before the documentation
+// and flavor steps, so it reads what they will write; what each workflow runs is read from its
+// body, never restated, so rule 5 cannot drift from the files (BUG-804).
 func (s *adoptSession) scaffoldedWorkflows(ctx context.Context, docsGate bool) ([]scaffoldedWorkflow, error) {
+	files, err := s.adoptedWorkflowFiles(ctx, docsGate)
+	if err != nil {
+		return nil, err
+	}
+	return workflowRuns(files)
+}
+
+// adoptedWorkflowFiles lists the CI workflows this run leaves as adoption's rendering, with
+// their bodies: the documentation gate's workflow while docsGate holds, which the documentation
+// step writes whenever the facet is declared (the step cannot be declined; only the facet turns
+// it off), and the workflows of the detected flavor that flavor apply leaves as its own
+// (plannedFlavorWorkflows), unless the flavor step is declined. The harness names what they run
+// and the actionlint-labels step declares the runner labels they need, both from this one list.
+func (s *adoptSession) adoptedWorkflowFiles(ctx context.Context, docsGate bool) ([]flavor.PlannedTemplate, error) {
 	var files []flavor.PlannedTemplate
 	if docsGate {
 		files = append(files, flavor.PlannedTemplate{Path: DocumentationWorkflowFile, Content: DocumentationWorkflow()})
@@ -42,7 +53,7 @@ func (s *adoptSession) scaffoldedWorkflows(ctx context.Context, docsGate bool) (
 	if err != nil {
 		return nil, err
 	}
-	return workflowRuns(append(files, planned...))
+	return append(files, planned...), nil
 }
 
 // plannedFlavorWorkflows lists the workflows the flavor step leaves as the own rendering of the
