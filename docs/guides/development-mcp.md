@@ -9,7 +9,8 @@ python3 scripts/dev_mcp.py probe
 
 This builds the current Go sources into a temporary binary under the checkout's
 git-ignored `bin/`, initializes its real stdio MCP transport, and checks
-`serverInfo.version` against `provenance.server_version` (`dev-<source_sha256>`). The
+`serverInfo.version` against `provenance.server_version` (`dev-<source_sha256>`, written
+into `main.version` with `-X`, the variable a release build sets too). The
 build stays inside the checkout so the
 [engine build check](workstation-update.md#engine-build-check) accepts its context writes
 even when an untracked file stamps it `-dirty`. The report includes the checkout,
