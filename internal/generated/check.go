@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // Modes of a report.
@@ -301,7 +303,7 @@ func renderIn(ctx context.Context, run Runner, tree Tree, dir string, artefacts 
 	result := rendering{failures: failures, changed: map[string][]string{}, empty: map[string]bool{}}
 	for index := 0; index < len(artefacts); index++ {
 		name := artefacts[index].Name
-		result.changed[name] = changedPaths(before[name], after[name])
+		result.changed[name] = util.ChangedEntries(before[name], after[name])
 		result.empty[name] = len(after[name]) == 0
 	}
 	return result, nil

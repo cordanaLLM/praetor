@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 	"time"
 
@@ -203,22 +202,4 @@ func artefactState(ctx context.Context, tree Tree, artefact *Artefact) (state, e
 		current[rel] = hex.EncodeToString(sum[:])
 	}
 	return current, nil
-}
-
-// changedPaths lists, sorted, the paths whose digest differs between before and after,
-// appeared or disappeared.
-func changedPaths(before, after state) []string {
-	changed := make([]string, 0)
-	for rel, digest := range before {
-		if after[rel] != digest {
-			changed = append(changed, rel)
-		}
-	}
-	for rel := range after {
-		if _, held := before[rel]; !held {
-			changed = append(changed, rel)
-		}
-	}
-	sort.Strings(changed)
-	return changed
 }
