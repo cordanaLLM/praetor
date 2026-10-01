@@ -2,8 +2,12 @@ package gomanifest
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // maxDirectiveLines bounds the scan for a go directive. A manifest declares it near the
@@ -134,6 +138,23 @@ func ModuleDirective(manifest []byte) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// maxModuleManifestBytes bounds the go.mod ReadModulePath reads (HISS-02).
+const maxModuleManifestBytes = 1 << 20
+
+// ReadModulePath returns the module path root's go.mod declares, read through the bounded
+// confined reader. The docs vocabulary tree and the archetype coverage scan resolve their
+// module through it.
+func ReadModulePath(root string) (string, error) {
+	data, err := util.ReadConfinedLimited(root, "go.mod", maxModuleManifestBytes)
+	if err != nil {
+		return "", fmt.Errorf("read go.mod: %w", err)
+	}
+	if module, ok := ModuleDirective(data); ok {
+		return module, nil
+	}
+	return "", errors.New("go.mod declares no module path")
 }
 
 // ModulePath extracts the module directive's path from a single go.mod line, e.g.

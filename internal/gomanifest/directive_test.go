@@ -1,6 +1,8 @@
 package gomanifest
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -303,5 +305,43 @@ func TestTrimBOM_Boundary_MarkOnlyEmptyAndTruncated(t *testing.T) {
 		if got := TrimBOM([]byte(manifest)); string(got) != want {
 			t.Errorf("TrimBOM(%q) = %q, want %q", manifest, got, want)
 		}
+	}
+}
+
+// writeGoMod writes content as root's go.mod.
+func writeGoMod(t *testing.T, content string) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func TestReadModulePath_Positive_ReadsTheModuleUnderRoot(t *testing.T) {
+	module, err := ReadModulePath(writeGoMod(t, praetorManifest))
+	if err != nil || module != "github.com/cordanaLLM/praetor" {
+		t.Fatalf("ReadModulePath = %q, %v", module, err)
+	}
+}
+
+func TestReadModulePath_Negative_MissingFileOrDirective(t *testing.T) {
+	if _, err := ReadModulePath(t.TempDir()); err == nil || !strings.Contains(err.Error(), "read go.mod") {
+		t.Fatalf("a root without go.mod read: %v", err)
+	}
+	if _, err := ReadModulePath(writeGoMod(t, "go 1.27\n")); err == nil || !strings.Contains(err.Error(), "no module path") {
+		t.Fatalf("a go.mod without a module line read: %v", err)
+	}
+}
+
+// Boundary: a go.mod at the byte bound is read; one byte over is refused unread.
+func TestReadModulePath_Boundary_ByteBound(t *testing.T) {
+	head := "module example.com/m\n//"
+	atBound := head + strings.Repeat("x", maxModuleManifestBytes-len(head))
+	if module, err := ReadModulePath(writeGoMod(t, atBound)); err != nil || module != "example.com/m" {
+		t.Fatalf("go.mod at the bound = %q, %v", module, err)
+	}
+	if _, err := ReadModulePath(writeGoMod(t, atBound+"x")); err == nil {
+		t.Fatal("go.mod over the bound read")
 	}
 }

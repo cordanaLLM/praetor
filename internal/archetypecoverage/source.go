@@ -30,7 +30,6 @@ const (
 	maxWalkEntries  = 1 << 17
 	maxPackages     = 2048
 	maxSourceBytes  = 4 << 20
-	maxGoModBytes   = 64 << 10
 	maxTypeErrors   = 8
 	maxStructFields = 1024
 )
@@ -65,7 +64,7 @@ func scanModule(ctx context.Context, root, schemaDir string) (*sourceIndex, erro
 	if err != nil {
 		return nil, fmt.Errorf("resolve %s: %w", root, err)
 	}
-	module, err := modulePath(abs)
+	module, err := gomanifest.ReadModulePath(abs)
 	if err != nil {
 		return nil, err
 	}
@@ -82,19 +81,6 @@ func scanModule(ctx context.Context, root, schemaDir string) (*sourceIndex, erro
 		return nil, err
 	}
 	return checkModule(ctx, module, schemaDir, fset, packages, order)
-}
-
-// modulePath reads the module path from root's go.mod.
-func modulePath(root string) (string, error) {
-	data, err := util.ReadConfinedLimited(root, "go.mod", maxGoModBytes)
-	if err != nil {
-		return "", fmt.Errorf("read go.mod: %w", err)
-	}
-	module, ok := gomanifest.ModuleDirective(data)
-	if !ok {
-		return "", errors.New("go.mod declares no module path")
-	}
-	return module, nil
 }
 
 // parseModule parses every package directory go build would compile, skipping what it skips:
