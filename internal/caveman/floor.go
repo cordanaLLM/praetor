@@ -22,9 +22,9 @@ const (
 	// outside fenced code or the code of a source or data fence is gone: the Caveman skill
 	// copies numbers verbatim like code and ids (#363).
 	RuleFloorNumber = "F9 number-lost"
-	// RuleFloorCodeToken fires when an identifier, key or word of the code of a source or
+	// RuleFloorCodeWord fires when an identifier, key or word of the code of a source or
 	// data fence is gone. Its comments are prose and may change; its code may not (#322).
-	RuleFloorCodeToken = "F10 code-token-lost"
+	RuleFloorCodeWord = "F10 code-token-lost"
 )
 
 var (
@@ -52,7 +52,7 @@ var (
 // must not fall. Both lists fix the order in which findings are produced.
 var (
 	setRules = []string{RuleFloorCodeSpan, RuleFloorCommand, RuleFloorID, RuleFloorLink, RuleFloorMarker,
-		RuleFloorNumber, RuleFloorCodeToken}
+		RuleFloorNumber, RuleFloorCodeWord}
 	countRules = []string{RuleFloorMust, RuleFloorProhibition, RuleFloorNumbered}
 )
 
@@ -114,7 +114,7 @@ func Floor(before, after string) Report {
 func extractFacts(text string) facts {
 	f := facts{
 		items:  map[string]map[string]int{},
-		kept:   map[string]map[string]bool{RuleFloorNumber: {}, RuleFloorCodeToken: {}},
+		kept:   map[string]map[string]bool{RuleFloorNumber: {}, RuleFloorCodeWord: {}},
 		counts: map[string]int{},
 	}
 	for _, rule := range setRules {
@@ -123,7 +123,7 @@ func extractFacts(text string) facts {
 	lines, _ := scan(text)
 	for _, span := range codeSpanTexts(lines) {
 		f.collect(RuleFloorCodeSpan, span.num, []string{span.text})
-		f.keep(RuleFloorCodeToken, codeTokenRe.FindAllString(span.text, -1))
+		f.keep(RuleFloorCodeWord, codeTokenRe.FindAllString(span.text, -1))
 	}
 	continued := false
 	for _, ln := range lines {
@@ -196,13 +196,13 @@ func (f facts) collectFenced(ln line, continued bool) bool {
 	}
 	code := fencedCode(ln)
 	f.keep(RuleFloorNumber, numbersIn(code))
-	f.keep(RuleFloorCodeToken, codeTokenRe.FindAllString(code, -1))
+	f.keep(RuleFloorCodeWord, codeTokenRe.FindAllString(code, -1))
 	if command, ok := fencedCommand(ln, continued); ok {
 		f.collect(RuleFloorCommand, ln.num, []string{command})
 		return strings.HasSuffix(command, `\`)
 	}
 	if exampleFence(ln) {
-		f.collect(RuleFloorCodeToken, ln.num, codeTokenRe.FindAllString(code, -1))
+		f.collect(RuleFloorCodeWord, ln.num, codeTokenRe.FindAllString(code, -1))
 		f.collect(RuleFloorNumber, ln.num, numbersIn(code))
 	}
 	return false
