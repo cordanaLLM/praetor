@@ -173,7 +173,9 @@ func (c *shellCases) skip(cmd shellCmd) bool {
 		c.depth--
 		c.pattern = false
 	case c.pattern && cmd.sep == ")":
+		// The first command of an item may itself open a case: `x) case $b in`.
 		c.pattern = false
+		c.openCase(cmd.words)
 	case c.pattern:
 		return true
 	case c.depth > 0 && cmd.sep == ";;":

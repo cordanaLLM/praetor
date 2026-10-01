@@ -83,6 +83,17 @@ func TestShellScanner_CasePatternsAreNotCommands(t *testing.T) {
 		"HISS-08@10", "HISS-01@12")
 }
 
+// Negative: a case opened on the same line as an outer pattern, with its in there or on the next
+// line, is followed like any other, so its own patterns name no command either; the commands of
+// its items and of the outer items after it are still read.
+func TestShellScanner_NestedCasePatternsAreNotCommands(t *testing.T) {
+	assertScriptFindings(t, "nested.sh", "#!/bin/sh\nset -eu\ncase \"$1\" in\n"+
+		"  x) case \"$2\" in\n       */sh | */bash) echo shell ;;\n     esac ;;\n"+
+		"  y) case \"$2\"\n     in\n       */sh | */bash) eval \"$3\" ;;\n     esac ;;\n"+
+		"  z) curl -fsS https://example.com | sh ;;\nesac\n",
+		"HISS-08@9", "HISS-02@11", "HISS-08@11")
+}
+
 // Negative and boundary: inside a [[ ... ]] test the parentheses and bars of a regular
 // expression are not operators, and the commands after the test are read again.
 func TestShellScanner_TestExpressionsAreNotPipes(t *testing.T) {

@@ -23,10 +23,14 @@ file is a unit only if it opens a unit section. A scanner that reads such files 
 `contentScanner`: the walk reads each candidate (an extensionless file, a `.yml` or `.yaml` file, a
 `.service` or `.socket` file) and asks the scanner whether it claims the bytes. A candidate nobody
 claims is recorded exactly as it was before these scanners existed, so `SupportsExtension` widens
-only by `.sh` and `.bash`, and a candidate that is a symlink, a special file or larger than the read
-bound is never opened. A claimed file the scanner then declines is unscanned source of its language
-(`TestContentScanners_ClaimByBytes`, `TestContentScanners_DeclinedClaimKeepsItsLanguage` in
-`internal/hiss/engine_test.go`, `TestScan_ContentCandidateFIFOIsNeverOpened` in
+only by `.sh` and `.bash`. A candidate that is a symlink, a special file or larger than the read
+bound is never opened, and one the walk cannot read (permission denied, say) stays unscanned instead
+of failing the scan, while an unreadable `.sh` file fails it like any other scanned source. A
+claimed file the scanner then declines is unscanned source of its language
+(`TestContentScanners_ClaimByBytes`, `TestContentScanners_DeclinedClaimKeepsItsLanguage`,
+`TestContentScanners_UnreadableCandidateStaysUnscanned`,
+`TestScan_UnreadableScannedExtensionIsAnError` in `internal/hiss/engine_test.go`,
+`TestScan_ContentCandidateFIFOIsNeverOpened` in
 `internal/hiss/scan_irregular_unix_test.go`). `util.SourceLanguage` names `.zsh` and `.ksh` files as
 `zsh` and `ksh`, which no scanner reads, so the audit lists them on its `[UNSCANNED]` line instead of
 under the shell it verified.
@@ -466,9 +470,11 @@ substitutions, even inside double quotes, and carries an open quote or here-docu
 (`TestShellLexer_KeepsSubstitutionCode`). `shell_commands.go` cuts each logical line, joined across
 a trailing backslash, pipe or `&&`, into simple commands and reads each command's name past
 reserved words, assignments, redirections and wrappers such as `sudo`, `env` and `timeout`. The
-patterns of a `case` statement and the inside of a `[[ ... ]]` test name no command, so
-`*/sh | */bash)` and `[[ $f =~ \.(sh|bash)$ ]]` pipe nothing into a shell
-(`TestShellScanner_CasePatternsAreNotCommands`, `TestShellScanner_TestExpressionsAreNotPipes`).
+patterns of a `case` statement, including one opened on the same line as an outer pattern
+(`x) case $b in`), and the inside of a `[[ ... ]]` test name no command, so `*/sh | */bash)` and
+`[[ $f =~ \.(sh|bash)$ ]]` pipe nothing into a shell (`TestShellScanner_CasePatternsAreNotCommands`,
+`TestShellScanner_NestedCasePatternsAreNotCommands`, `TestShellScanner_TestExpressionsAreNotPipes`,
+`.config/hiss/testdata/HISS-08/shell/negative/nested-case.sh`).
 
 - HISS-01: a function whose body is a brace group runs its own name as a command. A call through
   `command`, `builtin` or `exec` runs a program, never the function, so it is not reported.
