@@ -245,7 +245,9 @@ var sizeUnits = map[string]int64{
 // ParseSize parses a byte count such as devsync's --max-archive-size flag: a plain integer
 // number of bytes, or a non-negative decimal number followed by a binary unit (B, KiB, MiB,
 // GiB, TiB), the unit matched case-insensitively and optionally separated by a space. "0" and
-// "none", in any case, both parse as 0, which callers treat as no cap at all.
+// "none", in any case, both parse as 0, which callers treat as no cap at all. NaN and infinity
+// are not non-negative numbers, and a size of 2^63 bytes or more is too large: neither ever
+// reaches the integer conversion, whose result would be platform-dependent.
 func ParseSize(s string) (int64, error) {
 	trimmed := strings.TrimSpace(s)
 	if strings.EqualFold(trimmed, "none") {
@@ -257,11 +259,13 @@ func ParseSize(s string) (int64, error) {
 		return 0, fmt.Errorf("size %q: unknown unit %q", s, unit)
 	}
 	value, err := strconv.ParseFloat(number, 64)
-	if err != nil || value < 0 {
+	if err != nil || value < 0 || math.IsNaN(value) || math.IsInf(value, 0) {
 		return 0, fmt.Errorf("size %q: not a non-negative number", s)
 	}
 	bytes := value * float64(multiplier)
-	if bytes > math.MaxInt64 {
+	// float64(math.MaxInt64) rounds up to 2^63, which int64 cannot hold, so 2^63 itself is
+	// refused too.
+	if bytes >= math.MaxInt64 {
 		return 0, fmt.Errorf("size %q: too large", s)
 	}
 	return int64(bytes), nil

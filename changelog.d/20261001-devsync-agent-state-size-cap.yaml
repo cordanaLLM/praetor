@@ -1,0 +1,4 @@
+type: fixed
+title: Hold the devsync agent-state archive to --max-archive-size and refuse NaN, infinite or overflowing sizes
+issue: "385, #386"
+breaking: false
