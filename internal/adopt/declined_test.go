@@ -2,6 +2,7 @@ package adopt
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -200,5 +201,50 @@ func TestRepositoryArtifactDeclined_Boundary_NoManifestAndCancelledContext(t *te
 	cancel()
 	if declined, err := RepositoryArtifactDeclined(ctx, root, "branch-ruleset"); err == nil || declined {
 		t.Fatalf("cancelled context: declined=%v err=%v, want an error", declined, err)
+	}
+}
+
+// runOrSkipStep runs a step the manifest does not decline and records it completed.
+func TestRunOrSkipStep_Positive_RunsAndRecordsCompleted(t *testing.T) {
+	s := &adoptSession{repoPath: t.TempDir(), report: &AdoptReport{}}
+	ran := false
+	step := namedStep{name: "readme", run: func(context.Context, *adoptSession) error { ran = true; return nil }}
+	if err := runOrSkipStep(t.Context(), s, step, false); err != nil {
+		t.Fatalf("runOrSkipStep: %v", err)
+	}
+	if !ran || len(s.report.Steps) != 1 || s.report.Steps[0].Status != StepCompleted {
+		t.Fatalf("ran=%v steps=%+v, want one completed readme step", ran, s.report.Steps)
+	}
+}
+
+// A step that fails returns its error and is recorded failed, not completed.
+func TestRunOrSkipStep_Negative_FailedStepIsRecordedFailed(t *testing.T) {
+	s := &adoptSession{repoPath: t.TempDir(), report: &AdoptReport{}}
+	boom := errors.New("boom")
+	step := namedStep{name: "readme", run: func(context.Context, *adoptSession) error { return boom }}
+	if err := runOrSkipStep(t.Context(), s, step, false); !errors.Is(err, boom) {
+		t.Fatalf("runOrSkipStep error = %v, want %v", err, boom)
+	}
+	if len(s.report.Steps) != 1 || s.report.Steps[0].Status != StepFailed {
+		t.Fatalf("steps=%+v, want one failed readme step", s.report.Steps)
+	}
+}
+
+// A declined step never runs, even one that would fail, and is recorded declined with the
+// decline named in the report.
+func TestRunOrSkipStep_Boundary_DeclinedStepDoesNotRun(t *testing.T) {
+	s := &adoptSession{repoPath: t.TempDir(), report: &AdoptReport{}}
+	step := namedStep{name: "readme", run: func(context.Context, *adoptSession) error {
+		t.Fatal("a declined step ran")
+		return nil
+	}}
+	if err := runOrSkipStep(t.Context(), s, step, true); err != nil {
+		t.Fatalf("runOrSkipStep: %v", err)
+	}
+	if len(s.report.Steps) != 1 || s.report.Steps[0].Status != StepDeclined {
+		t.Fatalf("steps=%+v, want one declined readme step", s.report.Steps)
+	}
+	if len(s.report.ActionDetails) != 1 || !strings.Contains(s.report.ActionDetails[0].Details, "adoption.decline") {
+		t.Fatalf("action details=%+v, want the decline named", s.report.ActionDetails)
 	}
 }

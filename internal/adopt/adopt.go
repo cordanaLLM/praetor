@@ -470,31 +470,45 @@ func executeAdoptSteps(ctx context.Context, s *adoptSession) error {
 	if err := preflightConfigRoot(s.repoPath); err != nil {
 		return err
 	}
-	if err := preflightAgentSurfaces(ctx, s, declined); err != nil {
+	if err := preflightSteps(ctx, s, declined); err != nil {
 		return err
 	}
 	for i := 0; i < len(steps) && i < maxAdoptSteps; i++ {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("adopt cancelled: %w", err)
 		}
-		// A decline is recorded, not silent: the report says the artefact was refused by the
-		// manifest, so a reader can tell a declined surface from one adoption forgot.
-		name := steps[i].name
-		if declined[name] {
-			s.report.recordSkipped(name, "Declined by adoption.decline in "+manifestFile)
-			s.report.recordStep(name, StepDeclined, s.report.mark())
-			continue
-		}
-		from := s.report.mark()
-		if err := steps[i].run(ctx, s); err != nil {
-			s.report.recordStep(name, StepFailed, from)
+		if err := runOrSkipStep(ctx, s, steps[i], declined[steps[i].name]); err != nil {
 			return err
 		}
-		s.report.recordStep(name, StepCompleted, from)
 	}
 	reportIgnoredWrites(ctx, s)
 	verifyAgentContext(ctx, s, declined)
 	return nil
+}
+
+// runOrSkipStep runs one adoption step and records its outcome in the report, or, when the
+// manifest declines it, records it declined instead (skipDeclinedStep).
+func runOrSkipStep(ctx context.Context, s *adoptSession, step namedStep, declined bool) error {
+	if declined {
+		return skipDeclinedStep(ctx, s, step.name)
+	}
+	from := s.report.mark()
+	if err := step.run(ctx, s); err != nil {
+		s.report.recordStep(step.name, StepFailed, from)
+		return err
+	}
+	s.report.recordStep(step.name, StepCompleted, from)
+	return nil
+}
+
+// preflightSteps runs, before the first step writes anything, the refusals of the agent steps
+// (preflightAgentSurfaces) and the read-only policy resolution of a declined policy-catalog
+// step (preflightDeclinedPolicyCatalog), so either stops a run that has written nothing.
+func preflightSteps(ctx context.Context, s *adoptSession, declined map[string]bool) error {
+	if err := preflightAgentSurfaces(ctx, s, declined); err != nil {
+		return err
+	}
+	return preflightDeclinedPolicyCatalog(ctx, s, declined)
 }
 
 // preflightAgentSurfaces refuses, before the first step writes anything, an agent file the

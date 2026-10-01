@@ -253,7 +253,7 @@ func planPolicyCatalog(ctx context.Context, s *adoptSession) error {
 	if err != nil {
 		return fmt.Errorf("prepare dry-run audit policy: %w", err)
 	}
-	s.policy, err = resolvePlannedPolicy(ctx, s, manifest, lock)
+	s.policy, err = resolvePlannedPolicy(ctx, s, s.opts.LockSourceRoot, manifest, lock)
 	if err != nil {
 		return err
 	}
@@ -303,10 +303,10 @@ func plannedLock(ctx context.Context, s *adoptSession, manifest []byte) ([]byte,
 // resolvePlannedPolicy resolves the planned manifest and lock with the loader and audit
 // compatibility layer `praetorctl audit` resolves the files on disk with
 // (config.LoadEffectivePolicyInputsContext, Audit), so the plan states the policy that audit
-// will enforce.
-func resolvePlannedPolicy(ctx context.Context, s *adoptSession, manifest, lock []byte) (*config.EffectivePolicy, error) {
+// will enforce. The pinned catalog is read under catalogRoot, the repository itself when empty.
+func resolvePlannedPolicy(ctx context.Context, s *adoptSession, catalogRoot string, manifest, lock []byte) (*config.EffectivePolicy, error) {
 	return config.LoadEffectivePolicyInputsContext(ctx, config.EffectiveOptions{
-		Root: s.repoPath, CatalogRoot: s.opts.LockSourceRoot, Audit: true,
+		Root: s.repoPath, CatalogRoot: catalogRoot, Audit: true,
 	}, manifest, lock)
 }
 
@@ -335,7 +335,7 @@ func (s *adoptSession) harnessFuncLOC(ctx context.Context) int {
 		s.paperclipLimit.limit = adoptionScanLimit(s)
 		return s.paperclipLimit.limit
 	}
-	if policy, err := prospectivePolicy(ctx, s); err == nil {
+	if policy, err := prospectivePolicy(ctx, s, s.opts.LockSourceRoot); err == nil {
 		s.paperclipLimit.limit = policy.Policy.Complexity.MaxFuncLOC
 	}
 	return s.paperclipLimit.limit
@@ -344,8 +344,10 @@ func (s *adoptSession) harnessFuncLOC(ctx context.Context) int {
 // prospectivePolicy resolves the policy this run leaves the repository under from the manifest
 // declarations the policy reads, before register.sources is bound: the existing manifest, which
 // adoption never rewrites beyond register.sources and its layout, or the one it creates
-// (declaredAdoptionManifest). register.sources is no policy input (ADR-0010).
-func prospectivePolicy(ctx context.Context, s *adoptSession) (*config.EffectivePolicy, error) {
+// (declaredAdoptionManifest). register.sources is no policy input (ADR-0010). The lock is the one
+// the lockfile step leaves (plannedLock), and the pinned catalog is read under catalogRoot
+// (resolvePlannedPolicy).
+func prospectivePolicy(ctx context.Context, s *adoptSession, catalogRoot string) (*config.EffectivePolicy, error) {
 	manifest, exists, err := observeAdoptionInput(ctx, s, manifestFile)
 	if err != nil {
 		return nil, err
@@ -359,7 +361,7 @@ func prospectivePolicy(ctx context.Context, s *adoptSession) (*config.EffectiveP
 	if err != nil {
 		return nil, err
 	}
-	return resolvePlannedPolicy(ctx, s, manifest, lock)
+	return resolvePlannedPolicy(ctx, s, catalogRoot, manifest, lock)
 }
 
 // plannedManifestBytes is the manifest reconcileManifest leaves on disk. --force never

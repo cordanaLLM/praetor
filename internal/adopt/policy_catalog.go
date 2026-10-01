@@ -102,6 +102,54 @@ func reconcilePolicyCatalog(ctx context.Context, s *adoptSession) error {
 	return nil
 }
 
+// preflightDeclinedPolicyCatalog resolves, before the first step writes, the effective policy a
+// run whose manifest declines policy-catalog renders from (#603). The declined step writes no
+// catalog and so reads none back; the ruleset, documentation, README and harness steps then fell
+// back to built-in defaults and the default facet list, and rewrote the ruleset without the
+// declared profile's signature rule and reviewers. The policy is read from the catalog on disk,
+// the one audit reads, under the lock the lockfile step leaves (prospectivePolicy), so a catalog
+// that is missing, or that a re-pinned lock no longer matches, fails the run while nothing is
+// written. A dry run whose lock cannot be planned without --lock-source-root keeps the fallback
+// the policy-catalog step's own plan has (planPolicyCatalog).
+func preflightDeclinedPolicyCatalog(ctx context.Context, s *adoptSession, declined map[string]bool) error {
+	if !declined["policy-catalog"] {
+		return nil
+	}
+	policy, err := prospectivePolicy(ctx, s, "")
+	if s.opts.DryRun && errors.Is(err, ErrLockSourceRequired) {
+		return nil
+	}
+	if err != nil {
+		return declinedCatalogError(err)
+	}
+	s.policy = policy
+	return nil
+}
+
+// readDeclinedPolicyCatalog is the declined policy-catalog step: after the lockfile step, it
+// reads the effective policy back from the files on disk, as the step does after writing the
+// catalog and as audit does, and writes nothing (declinedReaders). A dry run wrote no lock, so its
+// preflight resolution stands.
+func readDeclinedPolicyCatalog(ctx context.Context, s *adoptSession) error {
+	if s.opts.DryRun {
+		return nil
+	}
+	policy, err := config.LoadEffectivePolicyContext(ctx, config.EffectiveOptions{Root: s.repoPath, Audit: true})
+	if err != nil {
+		return declinedCatalogError(err)
+	}
+	s.policy = policy
+	return nil
+}
+
+// declinedCatalogError names why a run that declines policy-catalog cannot resolve its policy
+// and the two ways out.
+func declinedCatalogError(err error) error {
+	return fmt.Errorf("adoption.decline lists policy-catalog, so adoption writes no .config/archetypes and resolves the "+
+		"effective policy from the catalog on disk: %w; restore the catalog the lock pins, or remove policy-catalog from "+
+		"adoption.decline", err)
+}
+
 // Legacy standalone scan callers use the scanner's own default ceiling. Planned and applied
 // adoption use the same resolved ceiling as the generated CLI/MCP audit.
 func adoptionScanLimit(s *adoptSession) int {

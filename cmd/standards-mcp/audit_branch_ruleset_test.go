@@ -86,8 +86,10 @@ adoption:
 `
 	writeFixtureFile(t, root, ".standards.yaml", malformedManifest)
 
+	// The first gate that reads adoption.decline fails closed; since #600 that is the context
+	// gate, which reads the agent-harness decline, ahead of the branch protection gate.
 	result := callTool(t, srv, "standards_audit", nil)
-	expectError(t, "unknown decline", result, "Branch protection ruleset audit failed: adoption cannot decline unknown artefact")
+	expectError(t, "unknown decline", result, "audit failed: adoption cannot decline unknown artefact")
 	if strings.Contains(result.Content[0].Text, "[PASS] Branch protection") {
 		t.Fatalf("malformed decline produced pass evidence: %s", result.Content[0].Text)
 	}
