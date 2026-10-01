@@ -430,7 +430,7 @@ func reconcileAgentHarness(ctx context.Context, s *adoptSession) error {
 	if err != nil {
 		return err
 	}
-	if err := transpileAgentTargets(ctx, s, agentsContent, declared.AgentClients, prior); err != nil {
+	if err := projectVendorContext(ctx, s, agentsContent, declared.AgentClients, prior); err != nil {
 		return err
 	}
 	// The gate compile-context --verify and audit apply; the text adoption keeps from the
@@ -519,13 +519,88 @@ func mergeExistingAgentsContent(ctx context.Context, s *adoptSession, full, exis
 		return merged, nil
 	}
 	if !s.opts.Force {
-		s.report.recordReconciled(agentsFile, "Existing Praetor Agent Operating Harness preserved; command synchronization not verified")
-		if existing != harness {
-			s.report.addWarning("Existing AGENTS.md was preserved; review its commands against the verification plan or use --force to refresh a recognized harness boundary.")
-		}
-		return existing, nil
+		return keepAgentHarness(ctx, s, existing, harness)
 	}
 	return refreshAgentHarness(ctx, s, existing, harness)
+}
+
+// keepAgentHarness keeps an existing harness on a run without --force, with its text register
+// block spliced from the manifest (splicedKeptHarness), as compile-context splices it before
+// every compile. The block is rendered, never hand-written, so a kept block that no longer
+// matches the manifest is refreshed rather than left to fail the compile-context --verify that
+// runs after the chain (verifyAgentContext). Every other line stays as written. A splice goes
+// through replaceExisting, as refreshAgentHarness does: the prior bytes are backed up, the
+// report lists AGENTS.md as replaced with its line delta, and the write lands only over the
+// bytes this run read (ReplaceSnapshotIn with Expected).
+func keepAgentHarness(ctx context.Context, s *adoptSession, existing, harness string) (string, error) {
+	_, block, err := compiler.LoadRegisterBlock(ctx, s.repoPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve the text register block for the harness: %w", err)
+	}
+	kept, spliced, err := splicedKeptHarness(existing, block)
+	if err != nil {
+		return "", err
+	}
+	detail := "Existing Praetor Agent Operating Harness preserved; command synchronization not verified"
+	if !spliced {
+		s.report.recordReconciled(agentsFile, detail)
+	} else if err := s.replaceExisting(ctx, replacement{
+		rel: agentsFile, before: []byte(existing), after: []byte(kept),
+		detail: detail + "; text register block spliced from the manifest, as compile-context splices it",
+		publish: func(ctx context.Context) error {
+			return contextopt.ReplaceSnapshotIn(ctx, s.repoPath, agentsFile, []byte(kept),
+				contextopt.ReplaceOptions{Expected: []byte(existing), Exists: true, Mode: filePerm})
+		},
+	}); err != nil {
+		return "", fmt.Errorf("splice the text register block into %s: %w", agentsFile, err)
+	}
+	if kept != harness {
+		s.report.addWarning("Existing AGENTS.md was preserved; review its commands against the verification plan or use --force to refresh a recognized harness boundary.")
+	}
+	return kept, nil
+}
+
+// splicedKeptHarness returns existing, a harness a run without --force keeps, with its text
+// register block spliced from block (compiler.SpliceRegisterBlock), and whether the splice
+// changed it. A changed harness must still compile into valid projections
+// (validateHarnessProjection). keepAgentHarness writes the result and preflightKeptHarness checks
+// it before the first step writes, so both refuse the same file.
+func splicedKeptHarness(existing, block string) (string, bool, error) {
+	kept, spliced, err := compiler.SpliceRegisterBlock(existing, block)
+	if err != nil {
+		return "", false, fmt.Errorf("%s: text register block: %w", agentsFile, err)
+	}
+	if spliced {
+		if err := validateHarnessProjection(kept); err != nil {
+			return "", false, err
+		}
+	}
+	return kept, spliced, nil
+}
+
+// preflightKeptHarness runs keepAgentHarness's refusals before the first step writes, on a run
+// without --force whose AGENTS.md holds a harness: a register block the splice refuses, such as
+// one with no end marker, a spliced harness with no valid projection, and, when the splice
+// changes the file, a backup root checkBackupRoot refuses. Checked only in the step, each came
+// after the manifest, the lock and the catalog were written. Under --force refreshAgentHarness
+// runs instead, and preflightForceBackupRoot checks the backup root.
+func preflightKeptHarness(ctx context.Context, s *adoptSession, block string) error {
+	if s.opts.Force {
+		return nil
+	}
+	full, err := repoFile(s.repoPath, agentsFile)
+	if err != nil || !fileExists(full) {
+		return err
+	}
+	existing, err := readRepoFile(full)
+	if err != nil || !hasHarness(string(existing)) {
+		return err
+	}
+	_, spliced, err := splicedKeptHarness(string(existing), block)
+	if err != nil || !spliced {
+		return err
+	}
+	return checkBackupRoot(ctx, s.repoPath)
 }
 
 // refreshAgentHarness regenerates the harness of existing under --force and keeps what the
@@ -696,14 +771,18 @@ func (a harnessAdditions) describe() string {
 	return "; kept " + strings.Join(kept, ", ")
 }
 
-// transpileAgentTargets compiles AGENTS.md into the vendor context files of the selected
-// agent clients (nil selects every client). A compile failure is fatal: HISS-16 guarantees
-// that the vendor files mirror AGENTS.md. The files are written by the writer compile-context
-// uses (Transpiler.WriteOutputsContext): every target is checked before the first is written,
-// and no symlink below the repository is followed. An existing file that is neither its new
-// projection nor its prior one (priorVendorTexts) holds a hand edit: it is backed up first and
-// reported as replaced, on a plain run too (vendor_targets.go).
-func transpileAgentTargets(ctx context.Context, s *adoptSession, agentsContent string, clients []string, prior priorVendorProjections) error {
+// projectVendorContext compiles AGENTS.md into the vendor context files of the selected
+// agent clients (nil selects every client): the vendor half of compile-context's projection
+// (compiler.CompileContextProjections), with the renderer and the writer
+// compiler.CompileVendorTargets uses (Transpiler.CompileContent, Transpiler.WriteOutputsContext);
+// the persona and plugin half is the agent-definitions step's (projectAgentSurfaces). It compiles
+// the text the step composed rather than the file, so a dry run plans the same files. A compile
+// failure is fatal: HISS-16 guarantees that the vendor files mirror AGENTS.md. Every target is
+// checked before the first is written, and no symlink below the repository is followed. An
+// existing file that is neither its new projection nor its prior one (priorVendorTexts) holds a
+// hand edit: it is backed up first and reported as replaced, on a plain run too
+// (vendor_targets.go).
+func projectVendorContext(ctx context.Context, s *adoptSession, agentsContent string, clients []string, prior priorVendorProjections) error {
 	tr := compiler.NewTranspiler()
 	tr.Clients = clients
 	res, err := tr.CompileContent(agentsContent)

@@ -67,8 +67,8 @@ func TestCheckPersonaTargets_Positive_RealTreeAccepted(t *testing.T) {
 }
 
 // Negative: a symlinked .agents, a symlinked persona directory, a symlinked canonical persona and
-// a canonical set above CompileAgents' cap are refused before any persona is written.
-func TestCheckPersonaTargets_Negative_RefusesWhatCompileAgentsRefuses(t *testing.T) {
+// a canonical set above CompileAgentSurfaces' cap are refused before any persona is written.
+func TestCheckPersonaTargets_Negative_RefusesWhatCompileAgentSurfacesRefuses(t *testing.T) {
 	const refused = "path component must be a directory, never a symlink"
 	t.Run("canonical dir", func(t *testing.T) {
 		root := t.TempDir()
@@ -84,6 +84,24 @@ func TestCheckPersonaTargets_Negative_RefusesWhatCompileAgentsRefuses(t *testing
 		err := CheckPersonaTargets(t.Context(), root, nil)
 		if err == nil || !strings.Contains(err.Error(), "target .claude/agents/helper.md: "+refused) {
 			t.Fatalf("want the symlinked .claude refused, got %v", err)
+		}
+	})
+	t.Run("plugin persona dir", func(t *testing.T) {
+		root := writePersonaFixture(t, "")
+		shipPluginWithSkill(t, root, "# Lint\n")
+		linkDirInRoot(t, root, PluginAgentsRel)
+		err := CheckPersonaTargets(t.Context(), root, nil)
+		if err == nil || !strings.Contains(err.Error(), "target "+PluginAgentsRel+"/helper.md: "+refused) {
+			t.Fatalf("want the symlinked plugin persona directory refused, got %v", err)
+		}
+	})
+	t.Run("plugin skill dir", func(t *testing.T) {
+		root := writePersonaFixture(t, "")
+		shipPluginWithSkill(t, root, "# Lint\n")
+		linkDirInRoot(t, root, PluginSkillsRel)
+		err := CheckPersonaTargets(t.Context(), root, nil)
+		if err == nil || !strings.Contains(err.Error(), "target "+PluginSkillsRel+"/lint/SKILL.md: "+refused) {
+			t.Fatalf("want the symlinked plugin skill directory refused, got %v", err)
 		}
 	})
 	t.Run("canonical persona", func(t *testing.T) {

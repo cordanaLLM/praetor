@@ -18,17 +18,19 @@ func CheckVendorTargets(ctx context.Context, root string) error {
 	return checkProjectionFiles(ctx, root, files)
 }
 
-// CheckPersonaTargets runs the writer's refusals over every persona file below root that
-// CompileAgents reads or writes once the canonical personas named in added exist, writing
-// nothing: each persona under .agents/agents, those already there and those in added, and its
-// copy in every persona directory agent_clients selects. A symlinked .agents or persona
-// directory, a canonical persona that is not a regular text file, and a canonical set above
-// CompileAgents' cap are refused here, before adoption writes the personas in added.
+// CheckPersonaTargets runs the writer's refusals over every file below root that
+// CompileAgentSurfaces reads or writes once the canonical personas named in added exist, writing
+// nothing: each persona under .agents/agents, those already there and those in added, its copy
+// in every persona directory agent_clients selects and, when the repository ships the plugin,
+// its plugin copy and the plugin copy of every canonical skill. A symlinked .agents, persona or
+// plugin directory, a canonical persona that is not a regular text file, and a canonical set
+// above CompileAgentSurfaces' cap are refused here, before adoption writes the personas in added.
 func CheckPersonaTargets(ctx context.Context, root string, added []string) error {
-	dirs, _, err := SelectPersonaDirs(ctx, root)
+	selected, _, err := SelectPersonaDirs(ctx, root)
 	if err != nil {
 		return err
 	}
+	dirs := slices.Concat(selected, pluginPersonaDirs(root))
 	existing, err := listCanonicalAgents(ctx, root)
 	if err != nil {
 		return err
@@ -40,12 +42,16 @@ func CheckPersonaTargets(ctx context.Context, root string, added []string) error
 	if len(names) > maxAgentProjections {
 		return fmt.Errorf("%s would hold more than %d files", CanonicalAgentsRel, maxAgentProjections)
 	}
-	files := make([]projectionFile, 0, len(names)*(len(dirs)+1))
+	skills, err := pluginSkillProjections(ctx, root)
+	if err != nil {
+		return err
+	}
+	files := make([]projectionFile, 0, len(names)*(len(dirs)+1)+len(skills))
 	for _, name := range names {
 		files = append(files, projectionFile{rel: CanonicalAgentsRel + "/" + name})
 		for _, dir := range dirs {
 			files = append(files, projectionFile{rel: dir + "/" + name})
 		}
 	}
-	return checkProjectionFiles(ctx, root, files)
+	return checkProjectionFiles(ctx, root, append(files, skills...))
 }

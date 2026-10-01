@@ -439,7 +439,8 @@ func adoptSteps() []namedStep {
 
 // executeAdoptSteps runs the reconciliation chain in order, stopping at the first
 // failure and observing context cancellation between steps. A chain that ran to the end has
-// every file it wrote checked against the repository's ignore rules (reportIgnoredWrites).
+// every file it wrote checked against the repository's ignore rules (reportIgnoredWrites), and
+// is then checked by compile-context --verify (verifyAgentContext) before the run reports success.
 func executeAdoptSteps(ctx context.Context, s *adoptSession) error {
 	steps := adoptSteps()
 	known := make([]string, 0, len(steps))
@@ -476,6 +477,7 @@ func executeAdoptSteps(ctx context.Context, s *adoptSession) error {
 		s.report.recordStep(name, StepCompleted, from)
 	}
 	reportIgnoredWrites(ctx, s)
+	verifyAgentContext(ctx, s, declined)
 	return nil
 }
 
@@ -513,9 +515,10 @@ func preflightAgentSurfaces(ctx context.Context, s *adoptSession, declined map[s
 }
 
 // preflightAgentHarness runs the agent-harness step's refusals before the first step writes:
-// a refused vendor file, a refused backup root for a hand-edited one, and a text register
+// a refused vendor file, a refused backup root for a hand-edited one, a text register
 // policy compiler.LoadRegisterBlock rejects, such as a register.tasks entry that is no
-// target_tasks label. The step renders the register block from the manifest adoption never
+// target_tasks label, and the splice into a harness a run without --force keeps
+// (preflightKeptHarness). The step renders the register block from the manifest adoption never
 // rewrites and from a routing configuration it never writes, so the policy it loads mid-run is
 // the one checked here; checked only there, the refusal came after the lock was written and
 // left AGENTS.md unwritten.
@@ -526,10 +529,11 @@ func preflightAgentHarness(ctx context.Context, s *adoptSession) error {
 	if err := preflightVendorBackupRoot(ctx, s); err != nil {
 		return err
 	}
-	if _, _, err := compiler.LoadRegisterBlock(ctx, s.repoPath); err != nil {
+	_, block, err := compiler.LoadRegisterBlock(ctx, s.repoPath)
+	if err != nil {
 		return fmt.Errorf("resolve the text register block for the harness: %w", err)
 	}
-	return nil
+	return preflightKeptHarness(ctx, s, block)
 }
 
 // preflightPersonas runs the persona writer's refusals over every persona agent-definitions

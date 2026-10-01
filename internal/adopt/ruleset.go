@@ -317,7 +317,7 @@ func reconcileAgentDefinitions(ctx context.Context, s *adoptSession) error {
 	// run left are the copies of the canonical personas as this run found them.
 	var prior priorVendorProjections
 	if !s.opts.DryRun {
-		found, err := priorPersonaCopies(ctx, s.repoPath)
+		found, err := priorAgentSurfaces(ctx, s.repoPath)
 		if err != nil {
 			return err
 		}
@@ -339,7 +339,7 @@ func reconcileAgentDefinitions(ctx context.Context, s *adoptSession) error {
 	if s.opts.DryRun {
 		return nil
 	}
-	return projectPersonaCopies(ctx, s, prior)
+	return projectAgentSurfaces(ctx, s, prior)
 }
 
 const defaultAuditorAgentMD = `---

@@ -117,6 +117,48 @@ func TestCompileContextProjections_Negative_UnobservableTargetLeavesTreeUnchange
 	}
 }
 
+// ErrAgentSurface marks the persona and plugin skill failures of VerifyCompiledContext, so a
+// caller such as adoption can tell the step that owns each one without matching text. Positive:
+// a drifted persona copy is marked, keeps ErrAgentProjectionDrift below the mark and its text,
+// and an orphaned plugin skill is marked too. Negative: a vendor file out of sync is not marked.
+// Boundary: a clean write verifies with no error at all, marked or not.
+func TestVerifyCompiledContext_MarksAgentSurfaceFailures(t *testing.T) {
+	verify := func(root string) error {
+		return VerifyCompiledContext(t.Context(), io.Discard, NewTranspiler(), filepath.Join(root, "AGENTS.md"), root)
+	}
+	compiled := func(t *testing.T) string {
+		t.Helper()
+		root := skillFixture(t)
+		writeOutputFixture(t, filepath.Join(root, filepath.FromSlash(CanonicalAgentsRel), "helper.md"), "---\nname: helper\n---\n# Helper\n")
+		if err := compileFixture(t, root); err != nil {
+			t.Fatalf("compile: %v", err)
+		}
+		return root
+	}
+	root := compiled(t)
+	if err := verify(root); err != nil {
+		t.Fatalf("a clean write must verify: %v", err)
+	}
+	writeOutputFixture(t, filepath.Join(root, ".claude", "agents", "helper.md"), "# Drifted helper\n")
+	err := verify(root)
+	if !errors.Is(err, ErrAgentSurface) || !errors.Is(err, ErrAgentProjectionDrift) ||
+		!strings.Contains(err.Error(), "agent persona verification failed") || strings.Contains(err.Error(), ErrAgentSurface.Error()) {
+		t.Fatalf("a drifted persona copy must be marked with its own text and chain, got %v", err)
+	}
+	root = compiled(t)
+	if err := os.MkdirAll(filepath.Join(root, filepath.FromSlash(PluginSkillsRel), "not-declared"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := verify(root); !errors.Is(err, ErrAgentSurface) || !strings.Contains(err.Error(), "not-declared") {
+		t.Fatalf("an orphaned plugin skill must be marked, got %v", err)
+	}
+	root = compiled(t)
+	writeOutputFixture(t, filepath.Join(root, "CLAUDE.md"), "# Hand-edited\n")
+	if err := verify(root); err == nil || errors.Is(err, ErrAgentSurface) {
+		t.Fatalf("a vendor file out of sync must fail unmarked, got %v", err)
+	}
+}
+
 func readFixtureText(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)

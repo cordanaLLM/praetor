@@ -51,7 +51,7 @@ func NewTranspiler() *Transpiler {
 // `## <Vendor>` heading that belongs to that file alone. Every line outside such a section is
 // shared by all targets. Client ids reuse internal/clientid where the client is known there;
 // Cursor, Copilot and Windsurf have a projection but no client setup adapter. personaDir is
-// the directory the client reads agent personas from (compiler.CompileAgents copies
+// the directory the client reads agent personas from (compiler.CompileAgentSurfaces copies
 // .agents/agents there); Cursor and Windsurf read none.
 type vendorTarget struct {
 	client     string

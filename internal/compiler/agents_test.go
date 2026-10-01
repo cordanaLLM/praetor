@@ -2,12 +2,13 @@ package compiler
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
-func TestCompileAgents_Positive(t *testing.T) {
+func TestCompileAgentSurfaces_Positive(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
 
@@ -22,9 +23,9 @@ func TestCompileAgents_Positive(t *testing.T) {
 		t.Fatalf("write test agent: %v", err)
 	}
 
-	files, err := CompileAgents(ctx, tmpDir)
+	files, err := CompileAgentSurfaces(ctx, io.Discard, tmpDir)
 	if err != nil {
-		t.Fatalf("CompileAgents failed: %v", err)
+		t.Fatalf("CompileAgentSurfaces failed: %v", err)
 	}
 
 	if len(files) != 4 {
@@ -39,29 +40,29 @@ func TestCompileAgents_Positive(t *testing.T) {
 	}
 }
 
-func TestCompileAgents_Negative_CancelledContext(t *testing.T) {
+func TestCompileAgentSurfaces_Negative_CancelledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
 	tmpDir := t.TempDir()
-	_, err := CompileAgents(ctx, tmpDir)
+	_, err := CompileAgentSurfaces(ctx, io.Discard, tmpDir)
 	if err == nil {
 		t.Fatal("expected error for cancelled context, got nil")
 	}
 
 	var absentContext context.Context
-	_, nilErr := CompileAgents(absentContext, tmpDir)
+	_, nilErr := CompileAgentSurfaces(absentContext, io.Discard, tmpDir)
 	if nilErr == nil {
 		t.Fatal("expected error for nil context, got nil")
 	}
 }
 
-func TestCompileAgents_Boundary_EmptyAndNonExistent(t *testing.T) {
+func TestCompileAgentSurfaces_Boundary_EmptyAndNonExistent(t *testing.T) {
 	ctx := context.Background()
 	tmpDir := t.TempDir()
 
 	// A root without a canonical persona directory projects nothing, without error.
-	files, err := CompileAgents(ctx, tmpDir)
+	files, err := CompileAgentSurfaces(ctx, io.Discard, tmpDir)
 	if err != nil {
 		t.Fatalf("expected no error on non-existent dir, got %v", err)
 	}
@@ -78,7 +79,7 @@ func TestCompileAgents_Boundary_EmptyAndNonExistent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	files, err = CompileAgents(ctx, tmpDir)
+	files, err = CompileAgentSurfaces(ctx, io.Discard, tmpDir)
 	if err != nil {
 		t.Fatalf("expected no error on empty dir, got %v", err)
 	}

@@ -456,8 +456,10 @@ Tests: `cmd/standards-mcp/server_projection_test.go`,
 `standards_adopt` and `praetorctl adopt` write the vendor files of the selected
 clients and the two canonical personas (`repo-auditor.md`,
 `repo-gatekeeper.md`) through the same writer, and project the personas with
-`compiler.CompileAgents`. Before the first adoption step writes anything, adopt
-runs the same check over those files and every persona copy
+`compiler.CompileAgentSurfaces`, the persona half of the `compile-context` write,
+plugin persona and skill copies included. Before the first adoption step writes
+anything, adopt runs the same check over those files and every persona and
+plugin copy
 (`preflightAgentSurfaces` in `internal/adopt/adopt.go`), so a symlinked
 `.agents` or persona directory fails adoption with nothing written, and so does
 a symlinked `.github` when copilot is a selected client (its vendor file lives
@@ -469,7 +471,8 @@ workflows included, still goes through the older writer (`writeRepoFile`), which
 refuses a link that leaves the repository but follows one that stays inside it:
 with copilot unselected, a symlinked `.github` fails later in the run, after
 files were written behind it.
-Tests: `internal/adopt/agent_surface_preflight_test.go`.
+Tests: `internal/adopt/agent_surface_preflight_test.go`,
+`internal/adopt/plugin_projection_test.go`.
 
 `standards_audit` does not run the persona and skill checks yet; see
 [the persona and skill gate](text-register.md#the-persona-and-skill-gate).

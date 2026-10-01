@@ -229,6 +229,43 @@ func TestSyncRegisterBlockIsLineEndingNeutral(t *testing.T) {
 	}
 }
 
+// SpliceRegisterBlock is the splice SyncRegisterBlock writes, over text held in memory.
+// Positive: a stale block is replaced and the result is what SyncRegisterBlock writes for the
+// same file. Negative: a start marker without its end marker is refused. Boundary: a text
+// already carrying the block is unchanged, and a CRLF text stays CRLF.
+func TestSpliceRegisterBlock(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	_, block, err := LoadRegisterBlock(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := registerTestSource + "\n" + config.RegisterSectionPrefix + config.RegisterBlockStart + "\nhand edit\n" + config.RegisterBlockEnd + "\n"
+	spliced, changed, err := SpliceRegisterBlock(stale, block)
+	if err != nil || !changed || strings.Contains(spliced, "hand edit") {
+		t.Fatalf("stale block: changed=%v err=%v\n%s", changed, err, spliced)
+	}
+	agents := writeRegisterFixture(t, root, "AGENTS.md", stale)
+	if _, err := SyncRegisterBlock(ctx, root, agents, true); err != nil {
+		t.Fatal(err)
+	}
+	if written := readRegisterFixture(t, agents); written != spliced {
+		t.Fatalf("SpliceRegisterBlock and SyncRegisterBlock differ:\n%q\n%q", spliced, written)
+	}
+
+	if _, _, err := SpliceRegisterBlock(registerTestSource+config.RegisterBlockStart+"\n", block); err == nil {
+		t.Fatal("an unterminated register block was accepted")
+	}
+
+	if again, changed, err := SpliceRegisterBlock(spliced, block); err != nil || changed || again != spliced {
+		t.Fatalf("in-sync text: changed=%v err=%v", changed, err)
+	}
+	crlf, changed, err := SpliceRegisterBlock(strings.ReplaceAll(stale, "\n", "\r\n"), block)
+	if err != nil || !changed || crlf != strings.ReplaceAll(spliced, "\n", "\r\n") {
+		t.Fatalf("CRLF text must splice to the CRLF form: changed=%v err=%v\n%q", changed, err, crlf)
+	}
+}
+
 func TestLoadRegisterBlock(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

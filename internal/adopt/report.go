@@ -93,6 +93,17 @@ func since(list []string, from int) []string {
 	return append([]string(nil), list[from:]...)
 }
 
+// stepNamed returns the index in Steps of the step name, for addStepError and addStepWarning, or
+// -1 when the chain did not record that step.
+func (r *AdoptReport) stepNamed(name string) int {
+	for i := 0; i < len(r.Steps) && i < maxAdoptSteps; i++ {
+		if r.Steps[i].Name == name {
+			return i
+		}
+	}
+	return -1
+}
+
 // AdoptOutcome classifies a finished adoption run once, for every renderer.
 type AdoptOutcome string
 

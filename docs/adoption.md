@@ -420,7 +420,13 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
   `TestAdopt_Boundary_PlainRunRefusesSymlinkedBackupRootForPersonaCopyEdit`). A re-run lists
   an existing persona copy and the pre-commit hook adoption installed as reconciled, never as
   created (`internal/adopt/rerun_report_test.go`).
-- **`AGENTS.md` harness under `--force`.** An existing harness is kept without `--force`.
+- **`AGENTS.md` harness under `--force`.** An existing harness is kept without `--force`,
+  apart from its text register block, which is spliced from the manifest as `compile-context`
+  splices it (`keepAgentHarness` in `internal/adopt/harness.go`,
+  `TestAdoptKeptHarnessSplicesRegisterBlock` in `internal/adopt/harness_register_test.go`). A
+  splice that changes the file is reported as a replace with its line delta and backup, like a
+  forced refresh. A block with no end marker, or a backup root adoption refuses, fails adoption
+  before its first write (`TestAdoptKeptHarnessSpliceRefusedBeforeAnyWrite`).
   With it, the harness is regenerated and what the repository added around it stays:
   - the preamble: every line above the harness start, for example an SPDX header. The
     harness starts at the first `# ... Agent Operating Harness` title, together with a
@@ -454,6 +460,35 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
   adoption before its first write, a dry run included; a manifest that declines
   `agent-harness` is not checked (`preflightAgentHarness` in `internal/adopt/adopt.go`,
   tests in `internal/adopt/register_preflight_test.go`).
+- **Agent context verification.** The agent-definitions step projects the canonical personas
+  and skills through the writer `compile-context` uses (`compiler.CompileAgentSurfaces`): the
+  persona copy in every persona directory `agent_clients` selects and, when
+  `.agents/plugins/praetor/plugin.json` exists, the plugin persona and skill copies. A
+  hand-edited plugin copy is replaced with its line delta and backup like any persona copy, and
+  a symlinked plugin directory fails adoption before its first write. After the last step,
+  adoption runs the check `compile-context --verify` runs (`compiler.VerifyCompiledContext`,
+  `verifyAgentContext` in `internal/adopt/context_verify.go`). The check reads the whole
+  repository, not only the files adoption wrote. Each rejection is an error on the report,
+  led by "compile-context --verify rejects the repository's agent context after adoption", and
+  on the step that writes what it rejects: `agent-definitions` for a persona or plugin copy,
+  `git-ignore` for the evidence ignore rule, `agent-harness` for `AGENTS.md` and the vendor
+  files. The run is then incomplete and `praetorctl adopt` exits non-zero; a caveman finding on
+  text adoption keeps as written stays a warning. A dry run, and a manifest that declines
+  `agent-harness` or `agent-definitions`, skip the check (tests in
+  `internal/adopt/plugin_projection_test.go` and `internal/adopt/context_verify_test.go`).
+  Earlier releases exited 0 in these cases, which now fail the run:
+  - A file in a persona directory that projects no canonical persona. `compile-context
+    --verify` treats every `.md` file in `.claude/agents`, `.codex/agents`, `.github/agents`,
+    `.gemini/agents` and `.agents/plugins/praetor/agents` as compiled output, so a subagent
+    written there by hand fails the run. Move it into `.agents/agents`, from where adoption
+    projects it to every selected client, or remove it
+    (`TestAdopt_Negative_ClientPersonaDirFileWithoutCanonicalPersona`). Adoption never rewrites
+    or removes such a file.
+  - A manifest that declines `git-ignore` while Git does not ignore `.workingdir/evidence/`.
+    Add `/.workingdir/` to the repository's own `.gitignore`
+    (`TestAdopt_DeclinedGitIgnoreNeedsTheOperatorWorkingDirRule`).
+  - Any other failure `compile-context --verify` names: fix what it names, or run
+    `praetorctl compile-context`.
 - **Earlier Praetor output.** The manifest, lock, label taxonomy, pinned catalog, flavor
   YAML (`.clang-format` and `.clang-tidy` included) and the `docs:seo-portal` documentation
   gate's YAML that adoption writes pass `yamllint --strict` with its default rules
