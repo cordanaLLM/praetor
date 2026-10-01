@@ -83,20 +83,39 @@ type MarkdownShell int
 const (
 	// ShellNone is any fence that is not a shell: YAML, JSON, Go, Mermaid, plain text, or a
 	// fence without an info string. Its content is data, source or program output, where a
-	// line is not a command a reader runs.
+	// line is not a command a reader runs. The documentation reference check reads no command
+	// from it; the caveman clarity floor still holds a fence without a language to its lines
+	// as commands, since nothing says they are not (internal/caveman/floor.go).
 	ShellNone MarkdownShell = iota
-	// ShellScript is a shell script: every line that is not blank or a comment is a command.
+	// ShellScript is a shell script: every line that is not blank or a "#" comment is a
+	// command.
 	ShellScript
 	// ShellSession is a terminal transcript: only a line after the "$ " prompt is a command;
 	// every other line is the output it printed.
 	ShellSession
+	// ShellBatch is a Windows batch script: every line that is not blank or a REM or "::"
+	// comment is a command.
+	ShellBatch
 )
 
-// shellFences maps the fence languages read as commands to how they are read.
+// shellFences maps the fence languages read as commands to how they are read: the shell
+// names and aliases of GitHub Linguist (Shell, Tcsh, PowerShell, ShellSession, Batchfile),
+// with "cmd" for the Windows command interpreter.
 var shellFences = map[string]MarkdownShell{
-	"bash": ShellScript, "sh": ShellScript, "shell": ShellScript, "zsh": ShellScript,
-	"fish": ShellScript, "powershell": ShellScript, "pwsh": ShellScript, "ps1": ShellScript,
-	"console": ShellSession, "shell-session": ShellSession, "terminal": ShellSession,
+	"bash": ShellScript, "sh": ShellScript, "shell": ShellScript, "shell-script": ShellScript,
+	"zsh": ShellScript, "ksh": ShellScript, "mksh": ShellScript, "dash": ShellScript,
+	"ash": ShellScript, "csh": ShellScript, "tcsh": ShellScript, "fish": ShellScript,
+	"powershell": ShellScript, "pwsh": ShellScript, "posh": ShellScript, "ps1": ShellScript,
+	"console": ShellSession, "shell-session": ShellSession, "shellsession": ShellSession,
+	"terminal": ShellSession, "bat": ShellBatch, "batch": ShellBatch, "batchfile": ShellBatch,
+	"cmd": ShellBatch, "dosbatch": ShellBatch, "winbatch": ShellBatch,
+}
+
+// shellComments are the comment markers of each kind of shell fence (StripComments).
+var shellComments = map[MarkdownShell]CommentSyntax{
+	ShellScript:  {Line: []string{"#"}},
+	ShellSession: {Line: []string{"#"}},
+	ShellBatch:   {Line: []string{"REM", "rem", "@REM", "@rem", "::"}},
 }
 
 // MarkdownFenceLanguage returns the first word of an opening fence's info string,
@@ -118,13 +137,23 @@ func MarkdownShellFence(lang string) MarkdownShell {
 	return shellFences[lang]
 }
 
+// MarkdownShellComments returns the comment syntax of a shell fence: "#" for a script or a
+// session, REM and "::" for a batch script, and none for ShellNone.
+func MarkdownShellComments(shell MarkdownShell) CommentSyntax {
+	return shellComments[shell]
+}
+
 // MarkdownShellCommand reports whether trimmed, one whitespace-trimmed line inside a fence
 // read as shell, starts a command, and returns that command without a "$ " prompt. Blank
-// lines and "#" comments are never commands, and in a session only a line after the prompt
-// is one; a script line may carry the prompt too. A line that continues a command ending in
-// a backslash is the caller's to track: this reads one line alone.
+// lines and whole-line comments (MarkdownShellComments) are never commands, and in a
+// session only a line after the prompt is one; a script line may carry the prompt too. A
+// line that continues a command ending in a backslash is the caller's to track: this reads
+// one line alone.
 func MarkdownShellCommand(shell MarkdownShell, trimmed string) (string, bool) {
-	if shell == ShellNone || trimmed == "" || strings.HasPrefix(trimmed, "#") {
+	if shell == ShellNone || trimmed == "" {
+		return "", false
+	}
+	if code, _ := StripComments(trimmed, MarkdownShellComments(shell), ""); code == "" {
 		return "", false
 	}
 	command, prompted := strings.CutPrefix(trimmed, "$ ")

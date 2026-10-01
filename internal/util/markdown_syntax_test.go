@@ -82,6 +82,15 @@ func TestMarkdownShellFence(t *testing.T) {
 		"```text":           util.ShellNone,
 		"```":               util.ShellNone,
 		"```bash title=x y": util.ShellScript,
+		"```ksh":            util.ShellScript,
+		"```csh":            util.ShellScript,
+		"```tcsh":           util.ShellScript,
+		"```shellsession":   util.ShellSession,
+		"```cmd":            util.ShellBatch,
+		"```bat":            util.ShellBatch,
+		"```batch":          util.ShellBatch,
+		"```BatchFile":      util.ShellBatch,
+		"```kotlin":         util.ShellNone,
 	}
 	for opening, want := range cases {
 		marker := opening[:3]
@@ -106,6 +115,13 @@ func TestMarkdownShellCommand(t *testing.T) {
 		{util.ShellScript, "", "", false},
 		{util.ShellNone, "make test", "", false},
 		{util.ShellSession, "$", "", false},
+		{util.ShellScript, "#!/bin/sh", "", false},
+		{util.ShellBatch, "REM set the path", "", false},
+		{util.ShellBatch, "rem", "", false},
+		{util.ShellBatch, ":: a comment", "", false},
+		{util.ShellBatch, "praetorctl audit", "praetorctl audit", true},
+		{util.ShellBatch, "REMOVE x", "REMOVE x", true},
+		{util.ShellBatch, "# not a batch comment", "# not a batch comment", true},
 	}
 	for _, tc := range cases {
 		command, ok := util.MarkdownShellCommand(tc.shell, tc.line)
