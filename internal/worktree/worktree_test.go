@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cordanaLLM/praetor/internal/testsupport"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 func setupTestGitRepo(t *testing.T) string {
@@ -264,62 +266,299 @@ func TestWorktree_Positive_MutatingGitIgnoresAmbientRepositoryRedirect(t *testin
 	}
 }
 
-func TestWorktree_Negative_ReleasedProbeRejectsAmbientFilterAndFsmonitor(t *testing.T) {
+// operatorHome gives the test process a fresh home: HOME, USERPROFILE and XDG_CONFIG_HOME point
+// into it and GIT_CONFIG_GLOBAL names its .gitconfig, which holds config. Every "MARKER:<name>"
+// in config becomes a quoted path in the home, returned by name, so a test can tell whether git
+// ran the command holding it.
+//
+// The marker is single-quoted for the shell git runs the command in, and written with forward
+// slashes. Unquoted, a space in the path split it into two arguments, so an executed command
+// touched two other files and no marker check could fail; with backslashes, git read a Windows
+// path as escape sequences and refused the configuration. A leading "!" is alias syntax that
+// git runs as a command named "!touch", which can never create a marker either.
+func operatorHome(t *testing.T, config string, markers ...string) (home string, paths map[string]string) {
+	t.Helper()
+	home = t.TempDir()
+	paths = make(map[string]string, len(markers))
+	for _, name := range markers {
+		paths[name] = filepath.Join(home, name+" marker")
+	}
+	writeTestFile(t, filepath.Join(home, ".gitconfig"), expandMarkers(config, paths))
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(home, ".gitconfig"))
+	return home, paths
+}
+
+// expandMarkers replaces each "MARKER:<name>" in config with the quoted path paths names.
+func expandMarkers(config string, paths map[string]string) string {
+	for name, path := range paths {
+		config = strings.ReplaceAll(config, "MARKER:"+name, "'"+filepath.ToSlash(path)+"'")
+	}
+	return config
+}
+
+func writeTestFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("failed creating %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("failed writing %s: %v", path, err)
+	}
+}
+
+// commitSample commits sample.txt, and .gitattributes when attributes is set, in the worktree
+// before any operator configuration exists, then ages the file so the next status cannot trust
+// the index's stat data and must read, and clean, its content.
+func commitSample(t *testing.T, wtPath, attributes string) {
+	t.Helper()
+	if attributes != "" {
+		writeTestFile(t, filepath.Join(wtPath, ".gitattributes"), attributes)
+	}
+	writeTestFile(t, filepath.Join(wtPath, "sample.txt"), "sample\n")
+	runInDir(t, wtPath, "add", "-A")
+	runInDir(t, wtPath, "commit", "-m", "add sample")
+	old := time.Date(2001, time.January, 1, 0, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(filepath.Join(wtPath, "sample.txt"), old, old); err != nil {
+		t.Fatalf("failed ageing sample.txt: %v", err)
+	}
+}
+
+func assertNoMarker(t *testing.T, markers map[string]string) {
+	t.Helper()
+	for name, path := range markers {
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("the %s command ran: %v", name, err)
+		}
+	}
+}
+
+// markerDriver is a filter driver block whose clean, process and smudge commands each create
+// the "filter" marker.
+const markerDriver = "clean = touch MARKER:filter\n\tprocess = touch MARKER:filter\n\tsmudge = touch MARKER:filter\n"
+
+// TestWorktree_Negative_ReleasedRemovalRefusesSelectedOperatorFilter: 'git worktree remove'
+// checks the tree with a status that reads the operator's global and system files, so a
+// driver defined there, or selected by the global attributes file, would run during the
+// removal. Each is refused by the shared check before the removal starts, and nothing runs.
+func TestWorktree_Negative_ReleasedRemovalRefusesSelectedOperatorFilter(t *testing.T) {
+	selection := "*.txt filter=malicious\n"
 	for _, tc := range []struct {
-		name   string
-		config string
-		marker string
-		want   string
-		attrs  bool
+		name       string
+		inSystem   bool
+		attributes string // "tree", "default" or "configured"
 	}{
-		// Both values are shell commands git runs as written. They carried a leading "!", which is
-		// alias syntax: git ran "!touch", the shell reported command not found, and no marker could
-		// ever appear -- so the no-execution check passed whether or not the probe ran them.
-		// Measured without it, git add runs the filter and git status the fsmonitor, and each
-		// creates its marker.
-		{name: "filter", config: "[filter \"malicious\"]\n\tclean = touch MARKER\n", marker: "filter marker", want: "configured filters", attrs: true},
-		{name: "fsmonitor", config: "[core]\n\tfsmonitor = touch MARKER\n", marker: "fsmonitor marker", want: "attributes, excludes, or fsmonitor"},
+		{name: "global driver, tree attributes", attributes: "tree"},
+		{name: "system driver, tree attributes", inSystem: true, attributes: "tree"},
+		{name: "global driver, default global attributes", attributes: "default"},
+		{name: "global driver, configured global attributes", attributes: "configured"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repoDir := setupTestGitRepo(t)
 			mgr := NewManager(repoDir)
-			ctx := context.Background()
-			wt, err := mgr.Create(ctx, "task-ambient-"+tc.name, "main")
+			wt, err := mgr.Create(t.Context(), "task-operator-filter", "main")
 			if err != nil {
 				t.Fatalf("failed creating worktree: %v", err)
 			}
-			if tc.attrs {
-				if err := os.WriteFile(filepath.Join(wt.Path, ".gitattributes"), []byte("*.txt filter=malicious\n"), 0o644); err != nil {
-					t.Fatalf("failed writing attributes: %v", err)
-				}
-				if err := os.WriteFile(filepath.Join(wt.Path, "sample.txt"), []byte("sample\n"), 0o644); err != nil {
-					t.Fatalf("failed writing filtered file: %v", err)
-				}
-				runInDir(t, wt.Path, "add", ".gitattributes")
-				runInDir(t, wt.Path, "add", "sample.txt")
-				runInDir(t, wt.Path, "commit", "-m", "configure filter attribute")
+			treeAttributes := ""
+			if tc.attributes == "tree" {
+				treeAttributes = selection
 			}
-			home := t.TempDir()
-			marker := filepath.Join(home, tc.marker)
-			// The marker is single-quoted for the shell git runs the command in, and written with
-			// forward slashes. Unquoted, the space in the name split it into two arguments, so an
-			// executed command touched two other files and the check below could never fail. With
-			// backslashes, git read the Windows path as escape sequences and refused the config.
-			config := strings.ReplaceAll(tc.config, "MARKER", "'"+filepath.ToSlash(marker)+"'")
-			if err := os.WriteFile(filepath.Join(home, ".gitconfig"), []byte(config), 0o600); err != nil {
-				t.Fatalf("failed writing global Git config: %v", err)
+			commitSample(t, wt.Path, treeAttributes)
+			driver, global := "[filter \"malicious\"]\n\t"+markerDriver, ""
+			if !tc.inSystem {
+				global = driver
 			}
-			t.Setenv("HOME", home)
-			t.Setenv("USERPROFILE", home)
-			t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(home, ".gitconfig"))
-			if err := mgr.CheckRemoval(ctx, wt.Path); err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("expected ambient %s refusal, got %v", tc.name, err)
+			home, markers := operatorHome(t, global, "filter")
+			selectOperatorFilter(t, home, tc.attributes, selection)
+			if tc.inSystem {
+				system := filepath.Join(home, "system-gitconfig")
+				writeTestFile(t, system, expandMarkers(driver, markers))
+				t.Setenv("GIT_CONFIG_NOSYSTEM", "")
+				t.Setenv("GIT_CONFIG_SYSTEM", system)
 			}
-			if _, err := os.Stat(marker); !os.IsNotExist(err) {
-				t.Fatalf("ambient %s command executed unexpectedly: %v", tc.name, err)
+			err = mgr.CheckRemoval(t.Context(), wt.Path)
+			if !errors.Is(err, util.ErrGitStatusFilters) || !strings.Contains(err.Error(), "filter.malicious.clean (filter=malicious on sample.txt)") {
+				t.Fatalf("expected the selected operator driver to be refused by name, got %v", err)
 			}
+			if err := mgr.RemoveReleased(t.Context(), wt.Path); !errors.Is(err, util.ErrGitStatusFilters) {
+				t.Fatalf("expected released removal to refuse the selected operator driver, got %v", err)
+			}
+			if _, err := os.Stat(wt.Path); err != nil {
+				t.Fatalf("worktree should survive the refusal: %v", err)
+			}
+			assertNoMarker(t, markers)
 		})
 	}
+}
+
+// selectOperatorFilter writes selection into the operator-level attributes file where names:
+// the default global attributes file, or one core.attributesFile names in the global
+// configuration. "tree" leaves the selection to the committed .gitattributes.
+func selectOperatorFilter(t *testing.T, home, where, selection string) {
+	t.Helper()
+	switch where {
+	case "default":
+		writeTestFile(t, filepath.Join(home, ".config", "git", "attributes"), selection)
+	case "configured":
+		configureOperatorFile(t, home, "core.attributesFile", selection)
+	}
+}
+
+// TestWorktree_Negative_ReleasedRemovalRefusesRepositoryFilterOperatorFilesHide: removal runs
+// two statuses, git's own under the operator's files and the cleanliness probe without them, so
+// a driver selected in either view would run. Operator files can hide a selection the probe
+// still makes: a global macro that unsets filter on the line selecting it, or a global
+// attr.tree that reads attributes from HEAD while the tree's .gitattributes selects the driver.
+// The repository-only view is checked too, so both are refused before any status runs.
+func TestWorktree_Negative_ReleasedRemovalRefusesRepositoryFilterOperatorFilesHide(t *testing.T) {
+	for _, tc := range []struct {
+		name, committed, uncommitted, global, globalAttributes string
+	}{
+		{
+			name:      "global macro unsets the filter",
+			committed: "*.txt filter=repo nofilt\n", globalAttributes: "[attr]nofilt -filter\n",
+		},
+		{
+			name:        "global attr.tree reads attributes from HEAD",
+			uncommitted: "*.txt filter=repo\n", global: "[attr]\n\ttree = HEAD\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repoDir := setupTestGitRepo(t)
+			mgr := NewManager(repoDir)
+			wt, err := mgr.Create(t.Context(), "task-hidden-filter", "main")
+			if err != nil {
+				t.Fatalf("failed creating worktree: %v", err)
+			}
+			commitSample(t, wt.Path, tc.committed)
+			home, markers := operatorHome(t, tc.global, "filter")
+			selectOperatorFilter(t, home, "default", tc.globalAttributes)
+			if tc.uncommitted != "" {
+				writeTestFile(t, filepath.Join(wt.Path, ".gitattributes"), tc.uncommitted)
+			}
+			runInDir(t, wt.Path, "config", "filter.repo.clean", expandMarkers("touch MARKER:filter", markers))
+			err = mgr.CheckRemoval(t.Context(), wt.Path)
+			if !errors.Is(err, util.ErrGitStatusFilters) || !strings.Contains(err.Error(), "filter.repo.clean (filter=repo on sample.txt)") {
+				t.Fatalf("expected the repository driver the probe would run to be refused by name, got %v", err)
+			}
+			if err := mgr.RemoveReleased(t.Context(), wt.Path); !errors.Is(err, util.ErrGitStatusFilters) {
+				t.Fatalf("expected released removal to refuse the repository driver, got %v", err)
+			}
+			if _, err := os.Stat(wt.Path); err != nil {
+				t.Fatalf("worktree should survive the refusal: %v", err)
+			}
+			assertNoMarker(t, markers)
+		})
+	}
+}
+
+// stockLFSDriver is the filter.lfs block stock Git for Windows defines in its system
+// configuration and `git lfs install` writes into the global one.
+const stockLFSDriver = "[filter \"lfs\"]\n" +
+	"\tclean = git-lfs clean -- %f\n\tsmudge = git-lfs smudge -- %f\n\tprocess = git-lfs filter-process\n\trequired = true\n"
+
+// TestWorktree_Positive_ReleasedRemovalIgnoresUnusedOperatorConfig: operator configuration that
+// runs nothing during removal no longer protects the worktree (#679): the stock filter.lfs block
+// and a marker driver no tracked path selects, a global attributes file that selects no driver,
+// a global excludes file and an fsmonitor hook, each alone and all together. The removal
+// completes, keeps the branch, and runs none of the commands.
+func TestWorktree_Positive_ReleasedRemovalIgnoresUnusedOperatorConfig(t *testing.T) {
+	unused := "[filter \"unused\"]\n\t" + markerDriver
+	fsmonitor := "[core]\n\tfsmonitor = touch MARKER:fsmonitor\n"
+	for _, tc := range []struct {
+		name, config, attributes, excludes string
+	}{
+		{name: "stock filter.lfs block", config: stockLFSDriver},
+		{name: "unselected marker driver", config: unused},
+		{name: "global attributes without a driver", attributes: "*.txt text eol=lf\n"},
+		{name: "global excludes file", excludes: "*.log\n"},
+		{name: "fsmonitor hook", config: fsmonitor},
+		{name: "all together", config: stockLFSDriver + unused + fsmonitor, attributes: "*.txt text eol=lf\n", excludes: "*.log\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repoDir := setupTestGitRepo(t)
+			mgr := NewManager(repoDir)
+			wt, err := mgr.Create(t.Context(), "task-operator-config", "main")
+			if err != nil {
+				t.Fatalf("failed creating worktree: %v", err)
+			}
+			commitSample(t, wt.Path, "")
+			home, markers := operatorHome(t, tc.config, "filter", "fsmonitor")
+			configureOperatorFile(t, home, "core.attributesFile", tc.attributes)
+			configureOperatorFile(t, home, "core.excludesFile", tc.excludes)
+			if err := mgr.CheckRemoval(t.Context(), wt.Path); err != nil {
+				t.Fatalf("operator configuration that runs nothing refused removal: %v", err)
+			}
+			if err := mgr.RemoveReleased(t.Context(), wt.Path); err != nil {
+				t.Fatalf("released removal failed: %v", err)
+			}
+			if _, err := os.Stat(wt.Path); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("expected the worktree directory to be removed, stat error: %v", err)
+			}
+			assertNoMarker(t, markers)
+			runInDir(t, repoDir, "rev-parse", "--verify", wt.Branch)
+		})
+	}
+}
+
+// configureOperatorFile writes content to a file in home and names it as key in the global
+// configuration; empty content configures nothing.
+func configureOperatorFile(t *testing.T, home, key, content string) {
+	t.Helper()
+	if content == "" {
+		return
+	}
+	file := filepath.Join(home, "operator-"+key)
+	writeTestFile(t, file, content)
+	runInDir(t, home, "config", "--file", filepath.Join(home, ".gitconfig"), key, filepath.ToSlash(file))
+}
+
+// TestWorktree_Boundary_ReleasedRemovalOperatorEdges: a smudge driver a tracked path selects
+// passes, since removal checks nothing out, and the removal never runs it; a file only the
+// operator's global excludes ignore is still listed by the cleanliness probe, which reads no
+// operator file, so the removal is refused and the file survives.
+func TestWorktree_Boundary_ReleasedRemovalOperatorEdges(t *testing.T) {
+	t.Run("selected smudge-only driver", func(t *testing.T) {
+		repoDir := setupTestGitRepo(t)
+		mgr := NewManager(repoDir)
+		wt, err := mgr.Create(t.Context(), "task-operator-smudge", "main")
+		if err != nil {
+			t.Fatalf("failed creating worktree: %v", err)
+		}
+		commitSample(t, wt.Path, "*.txt filter=checkout\n")
+		_, markers := operatorHome(t, "[filter \"checkout\"]\n\tsmudge = touch MARKER:smudge\n", "smudge")
+		if err := mgr.RemoveReleased(t.Context(), wt.Path); err != nil {
+			t.Fatalf("a smudge-only driver refused removal: %v", err)
+		}
+		if _, err := os.Stat(wt.Path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("expected the worktree directory to be removed, stat error: %v", err)
+		}
+		assertNoMarker(t, markers)
+	})
+	t.Run("file only the global excludes ignore", func(t *testing.T) {
+		repoDir := setupTestGitRepo(t)
+		mgr := NewManager(repoDir)
+		wt, err := mgr.Create(t.Context(), "task-operator-excludes", "main")
+		if err != nil {
+			t.Fatalf("failed creating worktree: %v", err)
+		}
+		home, _ := operatorHome(t, "")
+		writeTestFile(t, filepath.Join(home, ".config", "git", "ignore"), "*.log\n")
+		kept := filepath.Join(wt.Path, "notes.log")
+		writeTestFile(t, kept, "keep me\n")
+		if err := mgr.CheckRemoval(t.Context(), wt.Path); err == nil || !strings.Contains(err.Error(), "untracked files are present") {
+			t.Fatalf("expected a globally ignored file to refuse removal, got %v", err)
+		}
+		if err := mgr.RemoveReleased(t.Context(), wt.Path); err == nil {
+			t.Fatal("expected released removal to refuse a globally ignored file")
+		}
+		if _, err := os.Stat(kept); err != nil {
+			t.Fatalf("the globally ignored file should survive the refusal: %v", err)
+		}
+	})
 }
 
 func TestWorktree_Positive_DirtyWorktreeForceRemoval(t *testing.T) {

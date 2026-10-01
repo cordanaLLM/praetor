@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/classify"
+	"github.com/cordanaLLM/praetor/internal/config"
 	markdownassets "github.com/cordanaLLM/praetor/tools/markdownlint"
 )
 
@@ -21,7 +22,7 @@ const lockedManifest = "version: 1\nprofiles: [framework]\n"
 func lockedSession(t *testing.T, files map[string]string, opts AdoptOptions) *adoptSession {
 	t.Helper()
 	s := backupSession(t, files, true, opts)
-	s.arch, s.facets, s.repoName = "framework", resolveFacets(nil), "fixture"
+	s.arch, s.facets, s.repoName = "framework", config.DefaultFacets(), "fixture"
 	return s
 }
 

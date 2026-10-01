@@ -57,6 +57,23 @@ func TestFormatAdoptMCPResultPrintsPreviews(t *testing.T) {
 	}
 }
 
+// TestFormatAdoptMCPResultPrintsFacetNotes (#596): standards_adopt prints the default-facet notes
+// after the facets line, one per line, as the CLI prints them under Facets (positive); declared
+// facets print none (negative); notes on an empty facet list still print (boundary).
+func TestFormatAdoptMCPResultPrintsFacetNotes(t *testing.T) {
+	notes := []string{"default facets: --facets was omitted", "security:high raises over template-seed alone: x"}
+	got := string(formatAdoptMCPResult(&adopt.AdoptReport{Facets: []string{"security:high"}, FacetOrigin: adopt.FacetsDefaulted, FacetNotes: notes}, true))
+	if !strings.Contains(got, "facets: security:high.\nfacet note: "+notes[0]+"\nfacet note: "+notes[1]+"\n") {
+		t.Fatalf("default facet notes missing after the facets line:\n%s", got)
+	}
+	if got = string(formatAdoptMCPResult(&adopt.AdoptReport{Facets: []string{"security:high"}, FacetOrigin: adopt.FacetsDeclared}, true)); strings.Contains(got, "facet note:") {
+		t.Fatalf("declared facets printed a default note:\n%s", got)
+	}
+	if got = string(formatAdoptMCPResult(&adopt.AdoptReport{FacetNotes: notes[:1]}, true)); !strings.Contains(got, "facets: .\nfacet note: "+notes[0]+"\n") {
+		t.Fatalf("a note on an empty facet list was dropped:\n%s", got)
+	}
+}
+
 // BUG-872: standards_version_audit promises workflow-action auditing, so it lists
 // report.Actions exactly as `bump audit` does.
 func TestFormatVersionAuditListsActions(t *testing.T) {

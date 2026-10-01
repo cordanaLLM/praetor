@@ -1,6 +1,7 @@
 package util
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -181,6 +182,134 @@ func TestRefuseGitStatusFilters_Boundary_ScopeOfTheScan(t *testing.T) {
 	writeStatusFile(t, empty, "new.txt", "n\n")
 	if err := RefuseGitStatusFilters(t.Context(), empty); err != nil {
 		t.Fatalf("a repository with no tracked path was refused: %v", err)
+	}
+}
+
+// operatorGitFiles points git at a fresh system and global configuration and a fresh home, so
+// a test controls every file an effective-configuration read sees. It returns the system and
+// global configuration paths and the home's default global attributes file.
+func operatorGitFiles(t *testing.T) (system, global, attributes string) {
+	t.Helper()
+	home := t.TempDir()
+	system = filepath.Join(t.TempDir(), "gitconfig")
+	global = filepath.Join(home, ".gitconfig")
+	attributes = filepath.Join(home, ".config", "git", "attributes")
+	for _, file := range []string{system, global} {
+		if err := os.WriteFile(file, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "")
+	t.Setenv("GIT_CONFIG_SYSTEM", system)
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	return system, global, attributes
+}
+
+// TestRefuseGitStatusFilters_Positive_EffectiveConfigPassesUnselectedOperatorDrivers: read as
+// the caller's git commands read it, the stock filter.lfs block in the global configuration and
+// a marker driver in the system one both pass while no tracked path selects them, and neither
+// runs (#679). A nil option is ignored.
+func TestRefuseGitStatusFilters_Positive_EffectiveConfigPassesUnselectedOperatorDrivers(t *testing.T) {
+	dir := statusRepo(t)
+	system, global, _ := operatorGitFiles(t)
+	marker := filepath.Join(t.TempDir(), "filter-ran")
+	configureFilters(t, dir, global, gitForWindowsLFSFilter)
+	configureFilters(t, dir, system, markerFilter("unused", marker))
+	writeStatusFile(t, dir, ".gitattributes", "*.txt text\n")
+	if err := RefuseGitStatusFilters(t.Context(), dir, WithEffectiveGitConfig(), nil); err != nil {
+		t.Fatalf("operator drivers no tracked path selects were refused: %v", err)
+	}
+	assertNotExecuted(t, marker)
+}
+
+// TestRefuseGitStatusFilters_Negative_EffectiveConfigRefusesSelectedOperatorDrivers: a driver
+// the global or system configuration defines, or one the global attributes file selects --
+// named by core.attributesFile or found at its default path -- passes the repository-only read,
+// which never sees it, and is refused by the effective one, before any status could run it.
+func TestRefuseGitStatusFilters_Negative_EffectiveConfigRefusesSelectedOperatorDrivers(t *testing.T) {
+	cases := []struct {
+		name       string
+		inSystem   bool
+		attributes string // "tree", "default" or "configured"
+	}{
+		{"global driver, tree attributes", false, "tree"},
+		{"system driver, tree attributes", true, "tree"},
+		{"global driver, default global attributes", false, "default"},
+		{"global driver, configured global attributes", false, "configured"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := statusRepo(t)
+			system, global, defaultAttributes := operatorGitFiles(t)
+			marker := filepath.Join(t.TempDir(), "filter-ran")
+			definedIn := global
+			if tc.inSystem {
+				definedIn = system
+			}
+			configureFilters(t, dir, definedIn, markerFilter("op", marker))
+			selectOperatorDriver(t, dir, global, defaultAttributes, tc.attributes, "*.txt filter=op\n")
+			if err := RefuseGitStatusFilters(t.Context(), dir); err != nil {
+				t.Fatalf("the repository-only read saw an operator-level selection: %v", err)
+			}
+			err := RefuseGitStatusFilters(t.Context(), dir, WithEffectiveGitConfig())
+			assertRefusedKeys(t, err, []string{"filter.op.clean", "filter.op.process"})
+			if !strings.Contains(err.Error(), "(filter=op on a.txt)") {
+				t.Fatalf("refusal %q does not name the selecting path", err)
+			}
+			assertNotExecuted(t, marker)
+		})
+	}
+}
+
+// selectOperatorDriver writes selection into the attributes file where names: the work tree's
+// .gitattributes, the default global attributes file, or a file core.attributesFile names in
+// the global configuration.
+func selectOperatorDriver(t *testing.T, dir, global, defaultAttributes, where, selection string) {
+	t.Helper()
+	switch where {
+	case "tree":
+		writeStatusFile(t, dir, ".gitattributes", selection)
+	case "default":
+		writeStatusFile(t, filepath.Dir(defaultAttributes), filepath.Base(defaultAttributes), selection)
+	default:
+		configured := filepath.Join(t.TempDir(), "attributes")
+		writeStatusFile(t, filepath.Dir(configured), filepath.Base(configured), selection)
+		configureFilters(t, dir, global, [][2]string{{"core.attributesFile", filepath.ToSlash(configured)}})
+	}
+}
+
+// TestRefuseGitStatusFilters_Boundary_EffectiveConfigFollowsTheCallerEnvironment: the effective
+// read uses the caller's command environment, so the same selected global driver is refused
+// under an environment that names the global file and passes under one that drops it; a smudge
+// driver, which a status never runs, passes either way, and a read that cannot run is an error.
+func TestRefuseGitStatusFilters_Boundary_EffectiveConfigFollowsTheCallerEnvironment(t *testing.T) {
+	dir := statusRepo(t)
+	_, global, _ := operatorGitFiles(t)
+	configureFilters(t, dir, global, [][2]string{{"filter.op.clean", "cat"}, {"filter.side.smudge", "cat"}})
+	writeStatusFile(t, dir, ".gitattributes", "a.txt filter=op\nsub/b.txt filter=side\n")
+	// A test run from a git hook inherits GIT_DIR and friends; they are dropped, as the default
+	// command environment drops them, so the read stays on dir.
+	ambient := FilterEnvironment(os.Environ(), func(name string) bool {
+		return isGitRepositoryVariable(name) || name == "GIT_CONFIG_GLOBAL"
+	})
+	named, err := WithCommandEnvironment(t.Context(), append(ambient, "GIT_CONFIG_GLOBAL="+global))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertRefusedKeys(t, RefuseGitStatusFilters(named, dir, WithEffectiveGitConfig()), []string{"filter.op.clean"})
+	dropped, err := WithCommandEnvironment(t.Context(), append(ambient, "GIT_CONFIG_GLOBAL="+os.DevNull))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertRefusedKeys(t, RefuseGitStatusFilters(dropped, dir, WithEffectiveGitConfig()), nil)
+
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	if err := RefuseGitStatusFilters(cancelled, dir, WithEffectiveGitConfig()); err == nil || errors.Is(err, ErrGitStatusFilters) {
+		t.Fatalf("an effective read that could not run must be an error, not a verdict: %v", err)
 	}
 }
 

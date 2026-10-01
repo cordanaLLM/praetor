@@ -231,12 +231,8 @@ func lockMismatchRemedy(ctx context.Context, s *adoptSession, manifest *config.M
 		return ""
 	}
 	source := s.opts.LockSourceRoot
-	selected := source
-	if selected == "" {
-		selected = "<praetor checkout>"
-	}
-	remedy := fmt.Sprintf("; re-pin the declaration with praetorctl profile set --lock-source-root=%s, which rewrites "+
-		"only %s, %s and the vendored catalog texts", selected, manifestFile, lockFile)
+	remedy := fmt.Sprintf("; re-pin the declaration with %s, which rewrites only %s, %s and the vendored catalog texts",
+		profileSetCommand("", source), manifestFile, lockFile)
 	if changed := valueChangedTexts(ctx, s.repoPath, source, manifest); len(changed) > 0 {
 		remedy = "; the source bundle changes values of " + strings.Join(changed, ", ") + remedy
 	}

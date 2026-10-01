@@ -31,11 +31,11 @@ const GitTreeProbeTimeout = 3 * GitProbeTimeout
 // maxReportedTreeChanges bounds how many changed paths DescribeWorkingTreeChanges names.
 const maxReportedTreeChanges = 5
 
-// ErrGitStatusFilters reports a repository whose own configuration defines a clean or process
-// filter that the attributes of a tracked path select. git status runs it to compare that file
-// with its indexed blob, so it would execute during a read-only probe and its output, not the
-// file, would decide what status reports.
-var ErrGitStatusFilters = errors.New("the repository configures git clean or process filters, which a status probe would execute")
+// ErrGitStatusFilters reports a clean or process filter, defined in the configuration
+// RefuseGitStatusFilters reads, that the attributes of a tracked path select. git status runs it
+// to compare that file with its indexed blob, so it would execute during a read-only probe and
+// its output, not the file, would decide what status reports.
+var ErrGitStatusFilters = errors.New("tracked paths select git clean or process filters, which a status probe would execute")
 
 // GitWorkingTreeChanges lists every path in dir's repository whose working-tree state differs
 // from HEAD, as porcelain records: what git status reports -- staged, unstaged and untracked,
@@ -83,10 +83,30 @@ func RunGitTreeProbe(ctx context.Context, dir string, maxBytes int, timeout time
 	return RunGitProbeWithin(ctx, dir, maxBytes, timeout, argv...)
 }
 
+// GitFilterOption adjusts which configuration RefuseGitStatusFilters reads.
+type GitFilterOption func(*gitFilterProbe)
+
+// WithEffectiveGitConfig makes RefuseGitStatusFilters read filter drivers and the filter
+// attribute as a git command run under ctx's command environment does -- the global and system
+// configuration files, the global attributes file (core.attributesFile or its
+// $XDG_CONFIG_HOME/git/attributes default) and the system attributes file included -- instead of
+// the repository-only view of RunGitProbe. A caller needs it when the git command it guards runs
+// a status of its own under that environment, as `git worktree remove` does to check that the
+// tree is clean: that status cleans a tracked path with an operator-level driver (#679).
+//
+// The effective view does not contain the repository-only one: a global macro that unsets
+// filter, or a global attr.tree, can hide a selection RunGitProbe still makes. A caller that
+// also probes through RunGitProbe runs the default check as well.
+func WithEffectiveGitConfig() GitFilterOption {
+	return func(probe *gitFilterProbe) { *probe = effectiveGitProbe }
+}
+
 // RefuseGitStatusFilters fails with ErrGitStatusFilters when a clean or process filter that
-// dir's effective configuration defines -- the repository's own, as RunGitProbe drops the
-// global and system files -- is selected by the filter attribute of a tracked path, so a status
+// dir's configuration defines is selected by the filter attribute of a tracked path, so a status
 // or diff would execute it. The refusal names each such key and the first path selecting it.
+// By default the configuration and attributes are the repository's own, as RunGitProbe drops
+// the global and system files, which suits a caller that probes through RunGitProbe;
+// WithEffectiveGitConfig reads them as the caller's own git commands do.
 //
 // A driver defined but selected by no tracked path passes: git runs a filter only for a path
 // whose attributes name it. Git for Windows defines filter.lfs in its system gitconfig,
@@ -94,12 +114,18 @@ func RunGitTreeProbe(ctx context.Context, dir string, maxBytes int, timeout time
 // repository's own, so testing the definition alone refused checkouts that use no filter at
 // all (#640). Any failure to read the configuration or the attributes is an error, never an
 // all-clear.
-func RefuseGitStatusFilters(ctx context.Context, dir string) error {
-	keys, err := configuredStatusFilters(ctx, dir)
+func RefuseGitStatusFilters(ctx context.Context, dir string, opts ...GitFilterOption) error {
+	probe := gitFilterProbe(RunGitProbe)
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&probe)
+		}
+	}
+	keys, err := configuredStatusFilters(ctx, probe, dir)
 	if err != nil || len(keys) == 0 {
 		return err
 	}
-	selected, err := selectedFilterDrivers(ctx, dir)
+	selected, err := selectedFilterDrivers(ctx, probe, dir)
 	if err != nil {
 		return err
 	}

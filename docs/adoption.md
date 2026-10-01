@@ -31,6 +31,38 @@ facets it declares, none or an empty list included, and adoption ignores `--face
 `cmd/standardsctl/profile_test.go`). To change the facets of an adopted repository, see
 [Changing the profile, facets or catalog](#changing-the-profile-facets-or-catalog).
 
+The report's `Facets:` line shows the facets the run applies: the declared ones when
+`.standards.yaml` exists, whatever `--facets` names (`TestAdopt_Positive_ReportsTheDeclaredFacets`
+in `internal/adopt/facet_selection_test.go`). A `--facets` that differs from them, `--facets=`
+included, adds a warning naming both lists and the `praetorctl profile set --facets=...` command
+that changes them (`TestAdopt_Negative_WarnsAboutIgnoredFacets`). An overridden `--profile` warns
+the same way and names `praetorctl profile set <profile>`.
+
+When a first adoption falls back to the default facets, notes under `Facets:` say so, say whether
+`--facets` was omitted or given empty (`--facets=` also declares the defaults), and name what each
+default facet raises over the detected profile alone in `branch_protection` and `supply_chain`,
+read from the pinned catalog (`config.EffectivePolicy.FacetEffects` in
+`internal/config/facet_effects.go`). For an empty repository adopted as `template-seed`:
+
+```text
+Facets:             [security:high api:public-contract docs:seo-portal agent:sandboxed]
+  default facets: --facets was omitted, so adoption declares security:high, api:public-contract, docs:seo-portal, agent:sandboxed in the .standards.yaml it creates
+  security:high raises over template-seed alone: branch_protection.required_approving_reviewers 1 -> 2, branch_protection.require_signed_commits false -> true, supply_chain.slsa_level 1 -> 3, supply_chain.enforce_cosign false -> true, supply_chain.require_sbom false -> true
+  api:public-contract raises over template-seed alone: branch_protection.required_approving_reviewers 1 -> 2, branch_protection.require_signed_commits false -> true
+  docs:seo-portal raises over template-seed alone: no branch-protection or supply-chain setting
+  agent:sandboxed raises over template-seed alone: no branch-protection or supply-chain setting
+  choose other facets with --facets=<id>,... on a first adoption, or afterwards with praetorctl profile set --facets=<id>,... --lock-source-root=<praetor checkout> (--facets= declares none)
+```
+
+`TestFacetEffects_Positive_ShippedDefaultsOverTemplateSeed` in
+`internal/config/facet_effects_test.go` pins these values against the shipped catalog. A run that
+resolved no pinned policy, such as `--dry-run --record-baseline=false` without
+`--lock-source-root`, says the effects are not listed instead
+(`TestAdopt_Boundary_EmptyFacetsFlagAndNoPolicy`). The report's JSON carries the same facts as
+`facet_origin` (`declared`, `requested` or `default`) and `facet_notes`, and the MCP
+`standards_adopt` tool prints each note as a `facet note:` line
+(`TestFormatAdoptMCPResultPrintsFacetNotes`).
+
 ### Dry-run ruleset preview
 
 `adopt --dry-run` writes nothing. For the branch protection ruleset

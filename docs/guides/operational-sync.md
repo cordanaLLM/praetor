@@ -26,8 +26,9 @@ praetorctl operational sync init \
 
 `init` requires all of the following and writes nothing until they hold:
 
-- `--owner-path` names a checkout root, with no Git filter drivers, grafts or
-  submodule entries: the same input checks as `plan`.
+- `--owner-path` names a checkout root with no grafts, no submodule entries and
+  no clean or process filter that a tracked path selects: the same input checks
+  as `plan`.
 - The checkout is clean: no modified, staged or untracked files.
 - `.standards.yaml` at HEAD still carries the public source identity:
   `repository.visibility` is `public` and `repository.owner` differs from
@@ -66,9 +67,21 @@ commit SHAs already present in the local repositories. The owner checkout must b
 clean and its HEAD must equal `--owner-sha`. The previous public commit must be an
 ancestor of both the owner and the new source. Missing objects, unrelated history,
 and a changed reviewed owner HEAD are errors.
-Both input paths must name checkout roots. Effective repository configuration,
-including included files and worktree configuration, must contain no Git filter
-drivers. Input submodule worktrees and local `info/grafts` metadata are rejected
+
+Both input paths must name checkout roots. Neither may configure a clean or
+process filter that the filter attribute of a tracked path selects, whether the
+driver sits in the repository's own configuration, an included file or worktree
+configuration, because status on the owner checkout would run it. The check is
+`util.RefuseGitStatusFilters` in `internal/util/git_filters.go`, the one every
+clean-tree probe uses, so a driver no tracked path selects, such as the
+`filter.lfs` block `git lfs install --local` writes, passes here as it does for
+`state sync` (#667). A smudge-only driver passes too: smudge runs on checkout,
+no input is ever checked out, and `prepare` checks out and merges in a fresh
+clone that carries none of the inputs' configuration. The
+`TestRunInputFilters_*` cases in `internal/operationalsync/input_safety_test.go`
+replay each of these.
+
+Input submodule worktrees and local `info/grafts` metadata are rejected
 before status inspection. Replacement objects and automatic fetching of missing
 objects are disabled so local metadata cannot substitute reviewed commit ancestry.
 See Git's [replacement and lazy-fetch controls](https://git-scm.com/docs/git).

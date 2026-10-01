@@ -94,6 +94,7 @@ func runAdopt(args []string) error {
 		LockSourceRoot:     *lockSource,
 		Profile:            *profile,
 		Facets:             splitCommaList(*facets),
+		SetFacets:          flagWasSet(fs, "facets"),
 		DryRun:             *dryRun,
 		Force:              *force,
 		RecordBaseline:     *recordBaseline,
@@ -233,6 +234,9 @@ func printAdoptReport(rep *adopt.AdoptReport) {
 	fmt.Printf("Target State:       %s\n", rep.State)
 	fmt.Printf("Archetype:          %s\n", rep.Archetype)
 	fmt.Printf("Facets:             %v\n", rep.Facets)
+	for _, note := range rep.FacetNotes {
+		fmt.Printf("  %s\n", note)
+	}
 
 	printDebtSummary(rep)
 	printAdoptedFiles(rep)

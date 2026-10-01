@@ -152,6 +152,10 @@ func formatAdoptMCPResult(r *adopt.AdoptReport, dryRun bool) mcpGovernedText {
 	outcomeReport.DryRun = r.DryRun || dryRun
 	sb.Template("adoption: Praetor repository; mode: %s.\nstate: %s; archetype: %s.\nfacets: %s.\n",
 		adoptModes[outcomeReport.Outcome()], r.State, r.Archetype, strings.Join(r.Facets, ", "))
+	for _, note := range r.FacetNotes {
+		// The adopt package's default-facet notes, the same lines the CLI prints under Facets.
+		sb.Template("facet note: %s\n", note)
+	}
 	formatAdoptDebt(&sb, r, dryRun)
 	formatAdoptFiles(&sb, r, dryRun)
 	for _, preview := range r.Previews {

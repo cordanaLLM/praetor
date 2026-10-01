@@ -44,10 +44,18 @@ func RunGitProbeWithin(ctx context.Context, dir string, maxBytes int, timeout ti
 	if err != nil {
 		return CommandBytes{}, err
 	}
-	probeCtx, cancel := context.WithTimeout(probeCtx, timeout)
+	return runGitInspection(probeCtx, dir, maxBytes, timeout, args...)
+}
+
+// runGitInspection is the part of RunGitProbeWithin that does not choose which configuration
+// git reads: it runs a read-only inspection under ctx's command environment within timeout,
+// with the filesystem monitor and hooks switched off on the command line, which outranks every
+// configuration file.
+func runGitInspection(ctx context.Context, dir string, maxBytes int, timeout time.Duration, args ...string) (CommandBytes, error) {
+	inspectCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	argv := append([]string{"-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + os.DevNull}, args...)
-	return RunGitBytes(probeCtx, dir, maxBytes, argv...)
+	return RunGitBytes(inspectCtx, dir, maxBytes, argv...)
 }
 
 // RunGitProbeStatus runs RunGitProbe and accepts both of git's answering statuses: 0 for a
@@ -56,6 +64,12 @@ func RunGitProbeWithin(ctx context.Context, dir string, maxBytes int, timeout ti
 // cancellation and a failure to start git are errors, because none of them is an answer.
 func RunGitProbeStatus(ctx context.Context, dir string, maxBytes int, args ...string) (CommandBytes, int, error) {
 	result, runErr := RunGitProbe(ctx, dir, maxBytes, args...)
+	return gitAnswerStatus(result, runErr, maxBytes)
+}
+
+// gitAnswerStatus classifies one git inspection whose streams were capped at maxBytes, as
+// RunGitProbeStatus describes, whichever environment the inspection ran under.
+func gitAnswerStatus(result CommandBytes, runErr error, maxBytes int) (CommandBytes, int, error) {
 	if runErr == nil {
 		return result, 0, nil
 	}

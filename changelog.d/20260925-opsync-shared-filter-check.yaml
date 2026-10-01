@@ -1,0 +1,4 @@
+type: fixed
+title: Operational sync refuses a git filter through the shared clean-tree check, so an unused driver such as a stock filter.lfs block no longer blocks init, plan or prepare
+issue: "#667"
+breaking: false

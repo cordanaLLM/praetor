@@ -40,11 +40,28 @@ protected; this intentionally also protects otherwise clean symlink-containing
 worktrees.
 
 Released worktrees must be registered linked worktrees belonging to the root
-repository. Primary, bare, detached, locked, prunable, dirty, ignored-only,
-submodule-containing and configured-filter worktrees are refused. Effective
-Git configuration is checked conservatively: even unused global filter commands
-(such as Git LFS defaults) and configured attributes, excludes or filesystem
-monitors currently protect the worktree. Removal uses
+repository. Primary, bare, detached, locked, prunable, dirty, ignored-only and
+submodule-containing worktrees are refused, and so is one where a tracked path
+selects a clean or process filter driver: the cleanliness probe and the
+`git status` that `git worktree remove` runs itself would each run that driver.
+The filter check is the shared `util.RefuseGitStatusFilters`, once in the
+repository-only view the sealed probe reads and once with
+`util.WithEffectiveGitConfig`, so drivers and attributes from the global and
+system Git files count, as they do for the removal itself. Both views are
+needed: a global macro that unsets `filter` or a global `attr.tree` can hide
+from the effective view a driver the probe still runs. A driver no tracked
+path selects, such as the `filter.lfs` block Git for Windows and
+`git lfs install` define, and a smudge-only driver never run, so they do not
+protect the worktree (#679).
+Global attributes, excludes and filesystem-monitor settings do not protect it
+either: the cleanliness probe reads none of them and lists every untracked
+file, and the removal runs with `core.fsmonitor=false`
+([`internal/worktree/worktree.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/worktree/worktree.go),
+`checkRemovalFilters`; fixtures
+`TestWorktree_Positive_ReleasedRemovalIgnoresUnusedOperatorConfig`,
+`TestWorktree_Negative_ReleasedRemovalRefusesSelectedOperatorFilter`,
+`TestWorktree_Negative_ReleasedRemovalRefusesRepositoryFilterOperatorFilesHide`,
+`TestWorktree_Boundary_ReleasedRemovalOperatorEdges`). Removal uses
 Git without force and preserves the branch, including unpublished commits.
 `praetorctl worktree remove` has the same preservation behavior unless explicitly
 forced. `--force` passes `--force` to Git twice, which also removes a locked

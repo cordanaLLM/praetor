@@ -65,6 +65,12 @@ type AdoptOptions struct {
 	Force             bool     `json:"force"`
 	RecordBaseline    bool     `json:"record_baseline"`
 	SkipGitValidation bool     `json:"skip_git_validation"`
+	// SetFacets records that the caller passed Facets explicitly, an empty list included (the
+	// CLI's --facets=). A first adoption still declares the defaults for an empty list and the
+	// report says the flag named none (defaultFacetNotes); against an existing manifest an
+	// explicit list that differs from the declared one is ignored with a warning
+	// (warnIgnoredFacets), as a non-empty one is without SetFacets.
+	SetFacets bool `json:"set_facets,omitempty"`
 	// SkipHookActivation leaves generated hooks inactive in disposable analysis clones.
 	SkipHookActivation bool `json:"skip_hook_activation,omitempty"`
 	// LockSourceRoot selects the verified Praetor bundle used for new lock pins.
@@ -104,6 +110,13 @@ type AdoptReport struct {
 	CreatedFiles    []string                `json:"created_files"`
 	ReconciledFiles []string                `json:"reconciled_files"`
 	ActionDetails   []ActionDetail          `json:"action_details,omitempty"`
+	// FacetOrigin says where Facets, the facets the run applies, come from: the existing
+	// manifest's declaration, else --facets or the defaults the manifest it creates declares
+	// (adoptionFacets). It is empty when an existing manifest could not be read.
+	FacetOrigin FacetOrigin `json:"facet_origin,omitempty"`
+	// FacetNotes says, for default facets only, that adoption chose them, what each one raises
+	// over the profile alone and how to choose others (defaultFacetNotes).
+	FacetNotes []string `json:"facet_notes,omitempty"`
 	// Previews shows, in a dry run only, the content or the diff of each file adoption renders
 	// from repository state (FilePreview): the branch protection ruleset.
 	Previews        []FilePreview  `json:"previews,omitempty"`
@@ -199,9 +212,11 @@ func Adopt(ctx context.Context, opts AdoptOptions) (*AdoptReport, error) {
 	if err != nil {
 		return nil, err
 	}
-	declared := declaredManifest(ctx, normPath)
+	declared, unreadable := declaredManifest(ctx, normPath)
 	decision := resolveArchetype(normPath, opts.Profile, manifestProfiles(declared))
 	report := newAdoptionReport(normPath, opts, decision)
+	report.Facets, report.FacetOrigin = adoptionFacets(declared, unreadable, opts.Facets)
+	warnIgnoredFacets(report, opts, declared)
 	verification, err := resolveVerificationPlanWithLimits(ctx, normPath, opts.VerificationLimits)
 	if err != nil {
 		report.Errors = append(report.Errors, err.Error())
@@ -209,22 +224,7 @@ func Adopt(ctx context.Context, opts AdoptOptions) (*AdoptReport, error) {
 	}
 	report.Archetype = adoptionArchetype(decision, verification)
 	report.Verification = verification
-	cleanupGoto, undocumented := declared.CleanupGotoException(normPath)
-	if undocumented != "" {
-		report.addWarning("%s", undocumented)
-	}
-	s := &adoptSession{
-		repoPath:     normPath,
-		arch:         report.Archetype,
-		facets:       report.Facets,
-		opts:         opts,
-		report:       report,
-		verification: verification,
-		declined:     manifestDeclines(declared),
-		cleanupGoto:  cleanupGoto,
-		exceptions:   harnessExceptions(cleanupGoto),
-		backupStamp:  newBackupStamp(),
-	}
+	s := newAdoptSession(normPath, opts, report, declared)
 	if err := s.resolveIdentity(ctx); err != nil {
 		report.addError("%s", err)
 		return report, err
@@ -236,7 +236,9 @@ func Adopt(ctx context.Context, opts AdoptOptions) (*AdoptReport, error) {
 	report.addWarning("%s", verification.notice())
 	s.rulesetBaseline = readRulesetBaseline(ctx, s)
 
-	if err := executeAdoptSteps(ctx, s); err != nil {
+	err = executeAdoptSteps(ctx, s)
+	report.FacetNotes = defaultFacetNotes(ctx, s)
+	if err != nil {
 		report.addError("%s", err)
 		return report, err
 	}
@@ -244,11 +246,31 @@ func Adopt(ctx context.Context, opts AdoptOptions) (*AdoptReport, error) {
 	return report, nil
 }
 
+// newAdoptSession carries report's resolved archetype, facets and verification plan, and the
+// decisions the existing manifest records (declared, nil without one), through the step chain.
+func newAdoptSession(repoPath string, opts AdoptOptions, report *AdoptReport, declared *config.Manifest) *adoptSession {
+	cleanupGoto, undocumented := declared.CleanupGotoException(repoPath)
+	if undocumented != "" {
+		report.addWarning("%s", undocumented)
+	}
+	return &adoptSession{
+		repoPath:     repoPath,
+		arch:         report.Archetype,
+		facets:       report.Facets,
+		opts:         opts,
+		report:       report,
+		verification: report.Verification,
+		declined:     manifestDeclines(declared),
+		cleanupGoto:  cleanupGoto,
+		exceptions:   harnessExceptions(cleanupGoto),
+		backupStamp:  newBackupStamp(),
+	}
+}
+
 func newAdoptionReport(path string, opts AdoptOptions, decision classify.Result) *AdoptReport {
 	report := &AdoptReport{
 		State:           DetectState(path),
 		Archetype:       decision.Or(classify.FallbackArchetype),
-		Facets:          resolveFacets(opts.Facets),
 		CreatedFiles:    make([]string, 0),
 		ReconciledFiles: make([]string, 0),
 		ActionDetails:   make([]ActionDetail, 0),
@@ -260,8 +282,8 @@ func newAdoptionReport(path string, opts AdoptOptions, decision classify.Result)
 	}
 	if explicit := strings.TrimSpace(opts.Profile); decision.Source == classify.SourceDeclared && explicit != "" &&
 		explicit != decision.Archetype {
-		report.addWarning("--profile %s ignored: %s declares %s, and adoption never rewrites a declared profile",
-			explicit, manifestFile, decision.Archetype)
+		report.addWarning("--profile %s ignored: %s declares %s, and adoption never rewrites a declared profile; "+
+			"change it with %s", explicit, manifestFile, decision.Archetype, profileSetCommand(explicit, opts.LockSourceRoot))
 	}
 	return report
 }
@@ -383,13 +405,6 @@ func (s *adoptSession) resolveIdentity(ctx context.Context) error {
 		"adoption never rewrites an existing manifest, and add an origin remote naming <owner>/<repo> before "+
 		"re-running adoption to install the checkpoint lifecycle", err, manifestFile)
 	return nil
-}
-
-func resolveFacets(input []string) []string {
-	if len(input) > 0 {
-		return input
-	}
-	return config.DefaultFacets()
 }
 
 // adoptSteps is the reconciliation chain, in order. It is a function so the step names

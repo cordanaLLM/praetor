@@ -1,0 +1,4 @@
+type: fixed
+title: "adopt reports the facets it applies, warns when --facets differs from the declared ones and names praetorctl profile set, and says when a first adoption falls back to the default facets and what each one raises (#596)"
+issue: "592"
+breaking: false
