@@ -228,7 +228,11 @@ func reconcileSecurityPolicy(ctx context.Context, s *adoptSession) error {
 	return err
 }
 
-func reconcileADR(_ context.Context, s *adoptSession) error {
+// reconcileADR scaffolds the ADR index and its template into a repository without an index. The
+// template is a scaffold of its own (scaffoldFile): created and reported when absent, and an
+// existing one is compared and kept, --force included, since audit does not read it. It used to
+// be written over whatever the path held and never reported, so neither run named it (#366).
+func reconcileADR(ctx context.Context, s *adoptSession) error {
 	index, err := repoFile(s.repoPath, adrIndexFile)
 	if err != nil {
 		return err
@@ -237,18 +241,18 @@ func reconcileADR(_ context.Context, s *adoptSession) error {
 		s.report.recordReconciled(adrIndexFile, "Architectural Decision Records directory verified present")
 		return nil
 	}
-	tmpl, err := repoFile(s.repoPath, adrTemplateFile)
-	if err != nil {
-		return err
-	}
 	if err := s.write(index, []byte(buildADRIndex()), filePerm); err != nil {
 		return err
 	}
-	if err := s.write(tmpl, []byte(buildADRTemplate()), filePerm); err != nil {
-		return err
-	}
-	s.report.recordCreated(adrIndexFile, "Scaffolded Architectural Decision Records (ADR) directory and template")
-	return nil
+	s.report.recordCreated(adrIndexFile, "Scaffolded Architectural Decision Records (ADR) directory index")
+	_, err = s.scaffoldFile(ctx, scaffold{
+		rel:      adrTemplateFile,
+		perm:     filePerm,
+		content:  []byte(buildADRTemplate()),
+		created:  "Scaffolded Architectural Decision Record (ADR) template",
+		verified: "Existing Architectural Decision Record (ADR) template verified present",
+	})
+	return err
 }
 
 // reconcileReadme refreshes the only README region Praetor owns. A baseline records debt;

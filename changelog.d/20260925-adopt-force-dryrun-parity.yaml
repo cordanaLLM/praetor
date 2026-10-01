@@ -1,0 +1,4 @@
+type: fixed
+title: "adopt --dry-run, --force included, lists every path the real run writes, with the same action"
+issue: "#366"
+breaking: false

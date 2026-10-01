@@ -15,8 +15,9 @@ const (
 	// ImageKept: the recorded image is not a reviewed default, so it is the adopter's choice
 	// and generation reuses it, whatever repository, tag or digest it names.
 	ImageKept = "kept"
-	// ImageRefreshed: the recorded image names the repository and digest of an earlier
-	// reviewed default, so generation takes the current reviewed pin.
+	// ImageRefreshed: the recorded image names the repository and digest of the current or
+	// an earlier reviewed default under another spelling, so generation takes the current
+	// reviewed pin.
 	ImageRefreshed = "refreshed"
 	// ImageReplaced: an explicit option selected another image than the recorded one.
 	ImageReplaced = "replaced"
@@ -57,10 +58,12 @@ type imageRole struct {
 // InheritRecordedImages resolves the images a regeneration of the config at path uses, so
 // --force no longer swaps an adopter's recorded image for the reviewed default (#536). An
 // image options sets explicitly always wins. Otherwise a valid bootstrap specification
-// recorded at path decides: a recorded image naming the repository and digest of an
-// earlier reviewed default is refreshed to the current pin, so reviewed updates still
-// reach default users; any other recorded image, another tag or digest of the default
-// repository included, is the adopter's choice and is kept. A missing, unmanaged or
+// recorded at path decides: a recorded image naming the repository and digest of the
+// current or an earlier reviewed default, under any tag or none, is refreshed to the
+// current pin, so reviewed updates still reach default users and a bundle recorded with
+// the tagged form of today's digest-only default (#333) takes the digest-only form; any
+// other recorded image, another digest of the default repository or the same digest from
+// another repository included, is the adopter's choice and is kept. A missing, unmanaged or
 // invalid config records no choice and leaves options unchanged. The notes list every
 // image kept, refreshed or replaced against its recorded value.
 func InheritRecordedImages(ctx context.Context, path string, options BootstrapOptions) (BootstrapOptions, []ImageNote, error) {
@@ -100,7 +103,7 @@ func inheritImage(role imageRole) (ImageNote, bool) {
 	case *role.selected != "":
 		note.Action, note.Selected = ImageReplaced, *role.selected
 		return note, *role.selected != role.recorded
-	case role.recorded == role.fallback || isPriorDefault(role.recorded, role.prior):
+	case isReviewedPin(role.recorded, role.fallback, role.prior):
 		*role.selected = role.fallback
 		note.Action, note.Selected = ImageRefreshed, role.fallback
 		return note, role.recorded != role.fallback
@@ -109,6 +112,14 @@ func inheritImage(role imageRole) (ImageNote, bool) {
 		note.Action, note.Selected = ImageKept, role.recorded
 		return note, true
 	}
+}
+
+// isReviewedPin reports whether image is the current reviewed default or one of the
+// earlier ones in prior, by repository and digest under any tag or none, so the tagged
+// form the defaults carried before they became digest-only (#333) still matches today's.
+func isReviewedPin(image, current string, prior []string) bool {
+	repository, _, digest := util.SplitImageReference(current)
+	return image == current || isPriorDefault(image, []string{repository + "@" + digest}) || isPriorDefault(image, prior)
 }
 
 // isPriorDefault reports whether image is one of the earlier reviewed defaults in prior,

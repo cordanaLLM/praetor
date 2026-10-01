@@ -231,3 +231,58 @@ func assertCLIForceKeepsRecordedBase(t *testing.T, adopterBase string) {
 		t.Fatalf("replacement not reported: %q", replaced)
 	}
 }
+
+// TestDevContainerCLIDigestOnlyImages pins issue #333 through the command: a first
+// generation records the digest-only reviewed defaults and verifies; a bundle recorded with
+// their earlier tag@digest form is refreshed to digest-only by a --force regeneration that
+// names each refresh; digest-only flags are accepted; tag-only and malformed digests are
+// refused before anything is written.
+func TestDevContainerCLIDigestOnlyImages(t *testing.T) {
+	manifest, output := cliBootstrapPaths(t)
+	base := []string{"generate", "--config", manifest, "--output", output, "--source-root", cliBootstrapSource(t)}
+	verify := []string{"verify", "--config", manifest, "--output", output}
+	// Positive: the reviewed defaults are recorded digest-only and the bundle verifies.
+	if first, err := generateCLI(t, base); err != nil || recordedBaseImage(t, output) != devcontainer.DefaultBaseImage || strings.Contains(first, "RECORDED IMAGE") {
+		t.Fatalf("first generation: %v %q", err, first)
+	}
+	if err := runDevContainer(verify); err != nil {
+		t.Fatal(err)
+	}
+	// Boundary: the tagged form of the same defaults, as recorded before #333, is refreshed.
+	taggedBase := strings.Replace(devcontainer.DefaultBaseImage, "@", ":ubuntu26.04@", 1)
+	taggedBuilder := strings.Replace(devcontainer.DefaultBuilderImage, "@", ":1.27-alpine@", 1)
+	if _, err := generateCLI(t, base, "--force", "--base-image", taggedBase, "--builder-image", taggedBuilder); err != nil || recordedBaseImage(t, output) != taggedBase {
+		t.Fatalf("tagged images not recorded: %v", err)
+	}
+	refreshed, err := generateCLI(t, base, "--force")
+	if err != nil || recordedBaseImage(t, output) != devcontainer.DefaultBaseImage {
+		t.Fatalf("tagged default not refreshed: %v %q", err, refreshed)
+	}
+	for _, line := range []string{
+		"[RECORDED IMAGE REFRESHED] base image " + taggedBase + " -> reviewed default " + devcontainer.DefaultBaseImage,
+		"[RECORDED IMAGE REFRESHED] builder image " + taggedBuilder + " -> reviewed default " + devcontainer.DefaultBuilderImage,
+	} {
+		if !strings.Contains(refreshed, line) {
+			t.Fatalf("refresh not reported, want %q in %q", line, refreshed)
+		}
+	}
+	if err := runDevContainer(verify); err != nil {
+		t.Fatalf("refreshed bundle does not verify: %v", err)
+	}
+	// Positive: explicit digest-only flags naming operator images are accepted and kept.
+	operatorBase := "registry.example/team/dev-toolchains@sha256:" + strings.Repeat("c", 64)
+	operatorBuilder := "registry.example/mirror/golang@sha256:" + strings.Repeat("d", 64)
+	if _, err := generateCLI(t, base, "--force", "--base-image", operatorBase, "--builder-image", operatorBuilder); err != nil || recordedBaseImage(t, output) != operatorBase {
+		t.Fatalf("digest-only flags refused: %v", err)
+	}
+	// Negative: a tag-only reference and a malformed digest are refused before writing.
+	for _, image := range []string{"docker.io/library/golang:1.27-alpine", "docker.io/library/golang@sha256:" + strings.Repeat("a", 63)} {
+		fresh, target := cliBootstrapPaths(t)
+		if err := runDevContainer([]string{"generate", "--config", fresh, "--output", target, "--builder-image", image}); err == nil {
+			t.Fatalf("builder image %q accepted", image)
+		}
+		if _, err := os.Stat(filepath.Dir(target)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("refused image %q wrote companions: %v", image, err)
+		}
+	}
+}

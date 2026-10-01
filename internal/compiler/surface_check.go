@@ -2,7 +2,6 @@ package compiler
 
 import (
 	"context"
-	"fmt"
 	"slices"
 )
 
@@ -31,16 +30,9 @@ func CheckPersonaTargets(ctx context.Context, root string, added []string) error
 		return err
 	}
 	dirs := slices.Concat(selected, pluginPersonaDirs(root))
-	existing, err := listCanonicalAgents(ctx, root)
+	names, err := canonicalAgentNames(ctx, root, added)
 	if err != nil {
 		return err
-	}
-	// Both sets by name, once each: a persona in added may already exist.
-	names := append(slices.Clone(existing), added...)
-	slices.Sort(names)
-	names = slices.Compact(names)
-	if len(names) > maxAgentProjections {
-		return fmt.Errorf("%s would hold more than %d files", CanonicalAgentsRel, maxAgentProjections)
 	}
 	skills, err := pluginSkillProjections(ctx, root)
 	if err != nil {

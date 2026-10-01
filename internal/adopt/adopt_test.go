@@ -787,12 +787,15 @@ func TestAdopt_Positive_ExplicitFacetsAndSkipGitValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// A directory without git has no hooks directory, so the run skips hook activation: a dry
+	// run previews activation like the real run and reports the failure it would hit (#366).
 	rep, err := Adopt(context.Background(), AdoptOptions{
-		LockSourceRoot:    newAdoptLockSource(t),
-		Path:              repoPath,
-		Facets:            []string{"custom:facet"},
-		SkipGitValidation: true,
-		DryRun:            true,
+		LockSourceRoot:     newAdoptLockSource(t),
+		Path:               repoPath,
+		Facets:             []string{"custom:facet"},
+		SkipGitValidation:  true,
+		SkipHookActivation: true,
+		DryRun:             true,
 	})
 	if err != nil {
 		t.Fatalf("Adopt with SkipGitValidation failed: %v", err)

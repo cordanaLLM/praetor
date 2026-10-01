@@ -14,11 +14,14 @@ import (
 )
 
 const (
-	rulesetFile      = forge.RepositoryRulesetPath
-	labelsFile       = ".config/labels.yaml"
-	paperclipFile    = ".paperclip/harness.json"
-	auditorAgentFile = ".agents/agents/repo-auditor.md"
-	gatekeeperFile   = ".agents/agents/repo-gatekeeper.md"
+	rulesetFile   = forge.RepositoryRulesetPath
+	labelsFile    = ".config/labels.yaml"
+	paperclipFile = ".paperclip/harness.json"
+	// paperclipRulesFile is the AGit rules page paperclip.WriteHarnessFiles renders beside the
+	// harness.
+	paperclipRulesFile = ".paperclip/rules.md"
+	auditorAgentFile   = ".agents/agents/repo-auditor.md"
+	gatekeeperFile     = ".agents/agents/repo-gatekeeper.md"
 )
 
 func adoptionBranchPolicy(ctx context.Context, s *adoptSession) (config.BranchProtectionPolicy, error) {
@@ -188,12 +191,26 @@ func reconcilePaperclip(ctx context.Context, s *adoptSession) error {
 			return fmt.Errorf("write paperclip harness: %w", err)
 		}
 	}
+	s.recordHarnessWrite(plan)
+	return nil
+}
+
+// recordHarnessWrite records the harness a plan writes and, when it writes rules.md too
+// (harnessPlan.rules), that file under its own path: refreshed beside a refreshed harness,
+// created beside a new one. rules.md used to go unnamed, so neither run listed it (#366).
+func (s *adoptSession) recordHarnessWrite(plan harnessPlan) {
 	if plan.refresh {
 		s.report.recordReconciled(paperclipFile, refreshedHarnessNote(plan.rules))
-		return nil
+	} else {
+		s.report.recordCreated(paperclipFile, "Scaffolded Paperclip agent runtime harness")
 	}
-	s.report.recordCreated(paperclipFile, "Scaffolded Paperclip agent runtime harness and AGit rules")
-	return nil
+	switch {
+	case !plan.rules:
+	case plan.refresh:
+		s.report.recordReconciled(paperclipRulesFile, "Refreshed the AGit rules rendered from the unmodified earlier Praetor harness")
+	default:
+		s.report.recordCreated(paperclipRulesFile, "Scaffolded AGit rules rendered from the Paperclip harness")
+	}
 }
 
 // unresolvedHarnessNote says why the paperclip step wrote nothing: the harness platform names
@@ -311,17 +328,15 @@ var priorPersonaDigests = map[string]map[string]string{
 
 // reconcileAgentDefinitions writes the canonical personas and projects them into the persona
 // directory of every agent client agent_clients selects; the directories it leaves out are
-// reported not applicable and never written.
+// reported not applicable and never written. A dry run writes nothing and records every copy
+// the real run projects (projectAgentSurfaces); it used to stop before the copies, so the
+// preview never named them nor the hand-edited ones a forced run replaces (#366).
 func reconcileAgentDefinitions(ctx context.Context, s *adoptSession) error {
 	// Read before the canonical personas below are refreshed: the copies an unedited earlier
 	// run left are the copies of the canonical personas as this run found them.
-	var prior priorVendorProjections
-	if !s.opts.DryRun {
-		found, err := priorAgentSurfaces(ctx, s.repoPath)
-		if err != nil {
-			return err
-		}
-		prior = found
+	prior, err := priorAgentSurfaces(ctx, s.repoPath)
+	if err != nil {
+		return err
 	}
 	personas := generatedPersonas()
 	for i := 0; i < len(personas) && i < maxTranspileTargets; i++ {
@@ -335,9 +350,6 @@ func reconcileAgentDefinitions(ctx context.Context, s *adoptSession) error {
 	}
 	for i := 0; i < len(excluded) && i < maxTranspileTargets; i++ {
 		s.report.recordNotApplicable(excluded[i], "Not selected by agent_clients in "+manifestFile)
-	}
-	if s.opts.DryRun {
-		return nil
 	}
 	return projectAgentSurfaces(ctx, s, prior)
 }

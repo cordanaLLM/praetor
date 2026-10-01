@@ -68,7 +68,15 @@ type ApplyOptions struct {
 	// (adopt.RepositoryArtifactDeclined); this package cannot import it, so a caller passes it
 	// in. Nil declines nothing.
 	Declines func(ctx context.Context, step string) (bool, error)
+	// DryRun plans the apply and writes nothing: no template and no session ledger. The report
+	// lists every template as the apply with the same options would, through the same decisions
+	// (scaffoldTemplate), so a caller previews exactly what the apply writes. Adoption's dry run
+	// sets it (#366). Only templates have a plan, so DryRun requires TemplatesOnly.
+	DryRun bool
 }
+
+// ErrDryRunSettings refuses a dry run that would render settings: their writers have no plan.
+var ErrDryRunSettings = errors.New("flavor dry run plans templates only; set TemplatesOnly")
 
 // CoveredTemplate is a template flavor apply left unwritten because the repository configures
 // it under another accepted name: InUse is that file, Path the name apply would have written.
@@ -87,12 +95,9 @@ func ApplyFlavor(ctx context.Context, repoPath string, targetFlavor string, forc
 // ApplyFlavorWith scaffolds the missing templates of a target flavor, then renders its required
 // settings (applySettings) unless opts.TemplatesOnly. Settings come after templates because the
 // branch ruleset requires the status checks of the workflows present, the ones apply just wrote
-// among them.
+// among them. Under opts.DryRun it writes nothing and reports what the apply would write.
 func ApplyFlavorWith(ctx context.Context, repoPath string, targetFlavor string, opts ApplyOptions) (*ApplyReport, error) {
-	if ctx == nil {
-		return nil, fmt.Errorf("apply flavor requires a context")
-	}
-	if err := ctx.Err(); err != nil {
+	if err := checkApplyRequest(ctx, opts); err != nil {
 		return nil, err
 	}
 	flv, err := resolveApplyTarget(repoPath, targetFlavor)
@@ -109,20 +114,18 @@ func ApplyFlavorWith(ctx context.Context, repoPath string, targetFlavor string, 
 	}
 
 	// 1. Initialize .workingdir/
-	if err := state.InitWorkingDirContext(ctx, repoPath); err != nil {
-		report.Errors = append(report.Errors, fmt.Sprintf("workingdir init: %v", err))
-		return report, fmt.Errorf("initialize flavor working directory: %w", err)
-	} else {
-		report.WorkingDirCreated = true
+	if err := initApplyWorkingDir(ctx, repoPath, opts.DryRun, report); err != nil {
+		return report, err
 	}
 
 	// 2. Scaffold required templates, after reading what the ruleset step compares against
 	baseline := readRulesetBaseline(ctx, repoPath, opts)
+	run := templateRun{repoName: repoName, owner: owner, force: opts.Force, dryRun: opts.DryRun}
 	for _, tmpl := range flv.RequiredTemplates() {
 		if err := ctx.Err(); err != nil {
 			return report, err
 		}
-		applySingleTemplate(ctx, repoPath, tmpl, repoName, owner, opts.Force, report)
+		applySingleTemplate(ctx, repoPath, tmpl, run, report)
 	}
 
 	// 3. Render required settings (none under opts.TemplatesOnly)
@@ -134,6 +137,43 @@ func ApplyFlavorWith(ctx context.Context, repoPath string, targetFlavor string, 
 		return report, fmt.Errorf("%w: %d error(s): %s", ErrApplyIncomplete, len(report.Errors), strings.Join(report.Errors, "; "))
 	}
 	return report, nil
+}
+
+// checkApplyRequest refuses an apply before anything is read: a nil or cancelled context, and a
+// dry run that would render settings (ErrDryRunSettings).
+func checkApplyRequest(ctx context.Context, opts ApplyOptions) error {
+	if ctx == nil {
+		return fmt.Errorf("apply flavor requires a context")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if opts.DryRun && !opts.TemplatesOnly {
+		return ErrDryRunSettings
+	}
+	return nil
+}
+
+// initApplyWorkingDir initializes the session ledger an apply seeds and records it in report. A
+// dry run initializes nothing and leaves WorkingDirCreated false.
+func initApplyWorkingDir(ctx context.Context, repoPath string, dryRun bool, report *ApplyReport) error {
+	if dryRun {
+		return nil
+	}
+	if err := state.InitWorkingDirContext(ctx, repoPath); err != nil {
+		report.Errors = append(report.Errors, fmt.Sprintf("workingdir init: %v", err))
+		return fmt.Errorf("initialize flavor working directory: %w", err)
+	}
+	report.WorkingDirCreated = true
+	return nil
+}
+
+// templateRun is what one apply renders every template with and may do: the identity a body
+// renders, whether existing templates are replaced (ApplyOptions.Force), and whether the apply
+// only plans (ApplyOptions.DryRun).
+type templateRun struct {
+	repoName, owner string
+	force, dryRun   bool
 }
 
 // flavorIdentity returns the owner and name templates render. Both come from the origin
@@ -257,8 +297,8 @@ const (
 	templateRefreshed
 )
 
-func applySingleTemplate(ctx context.Context, repoPath string, tmpl TemplateItem, repoName, owner string, force bool, report *ApplyReport) {
-	outcome, note, err := scaffoldTemplate(ctx, repoPath, tmpl, repoName, owner, force)
+func applySingleTemplate(ctx context.Context, repoPath string, tmpl TemplateItem, run templateRun, report *ApplyReport) {
+	outcome, note, err := scaffoldTemplateWith(ctx, repoPath, tmpl, run)
 	switch {
 	case err != nil:
 		report.Errors = append(report.Errors, err.Error())
@@ -284,43 +324,59 @@ func applySingleTemplate(ctx context.Context, repoPath string, tmpl TemplateItem
 // note names the file covering a covered template, the producer of a deferred one and what an
 // unmet one lacks.
 func scaffoldTemplate(ctx context.Context, repoPath string, tmpl TemplateItem, repoName, owner string, force bool) (templateOutcome, string, error) {
-	outcome, note, err := templateDisposition(repoPath, tmpl, force)
+	return scaffoldTemplateWith(ctx, repoPath, tmpl, templateRun{repoName: repoName, owner: owner, force: force})
+}
+
+// scaffoldTemplateWith is scaffoldTemplate under run. A dry run (templateRun.dryRun) decides
+// alike and writes nothing (writeTemplateBody).
+func scaffoldTemplateWith(ctx context.Context, repoPath string, tmpl TemplateItem, run templateRun) (templateOutcome, string, error) {
+	outcome, note, err := templateDisposition(repoPath, tmpl, run.force)
 	if err != nil || outcome != templateCreated {
 		return outcome, note, err
 	}
-	outcome, note, vars := withheldOverFile(ctx, repoPath, tmpl, force)
+	outcome, note, vars := withheldOverFile(ctx, repoPath, tmpl, run.force)
 	if outcome != templateCreated {
 		return outcome, note, nil
 	}
 	destPath := filepath.Join(repoPath, tmpl.Path)
-	target, err := readTemplateTarget(ctx, destPath, tmpl.Path, force)
+	target, err := readTemplateTarget(ctx, destPath, tmpl.Path, run.force)
 	if err != nil || (target.keep && len(tmpl.Prior) == 0) {
 		return templateSkipped, "", err
 	}
-	vars.RepoName, vars.Owner = repoName, owner
+	vars.RepoName, vars.Owner = run.repoName, run.owner
 	content, err := templateContent(tmpl, vars)
 	if err != nil {
 		return templateSkipped, "", err
 	}
-	return writeTemplateBody(ctx, destPath, tmpl, []byte(content), target)
+	return writeTemplateBody(ctx, destPath, tmpl, []byte(content), target, run.dryRun)
 }
 
 // writeTemplateBody writes content, a template's rendering, over the file target observed at
 // destPath as planTargetWrite decides: a kept file, and one that already holds the rendering
 // without --force, stay (templateSkipped); an earlier text is refreshed (templateRefreshed);
-// anything else is written (templateCreated).
-func writeTemplateBody(ctx context.Context, destPath string, tmpl TemplateItem, content []byte, target templateTarget) (templateOutcome, string, error) {
+// anything else is written (templateCreated). A dry run returns the same outcome and writes
+// nothing.
+func writeTemplateBody(ctx context.Context, destPath string, tmpl TemplateItem, content []byte, target templateTarget, dryRun bool) (templateOutcome, string, error) {
 	body, write := planTargetWrite(target, content, tmpl.Prior)
 	if write == targetKept || (write == targetUnchanged && target.keep) {
 		return templateSkipped, "", nil
 	}
+	if dryRun {
+		return writtenOutcome(write), "", nil
+	}
 	if err := writeTarget(ctx, destPath, tmpl.Path, body, target); err != nil {
 		return templateSkipped, "", err
 	}
+	return writtenOutcome(write), "", nil
+}
+
+// writtenOutcome is the outcome of a template write planTargetWrite decided: a refresh of an
+// earlier text, or a written template.
+func writtenOutcome(write targetWrite) templateOutcome {
 	if write == targetRefreshed {
-		return templateRefreshed, "", nil
+		return templateRefreshed
 	}
-	return templateCreated, "", nil
+	return templateCreated
 }
 
 // targetWrite is what writing a rendering does to the file readTemplateTarget observed.

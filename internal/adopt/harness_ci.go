@@ -70,7 +70,7 @@ func familyWorkflows(families []managedasset.Family) []flavor.PlannedTemplate {
 // flavor it applies, the one of the profile this adoption records (flavor.PlannedWorkflows under
 // s.arch, as applyDetectedFlavor resolves it), or none when adoption.decline names the step. The
 // harness names what they run from it, and a dry run derives the ruleset's status checks from
-// it, since a dry run does not apply the flavor.
+// it, since a dry run only plans the flavor and writes no workflow.
 func (s *adoptSession) plannedFlavorWorkflows(ctx context.Context) ([]flavor.PlannedTemplate, error) {
 	declined, err := ArtifactDeclined(s.declined, "working-dir-and-flavor")
 	if err != nil {

@@ -1,0 +1,4 @@
+type: fixed
+title: "The reviewed DevContainer bootstrap images are digest-only, so @devcontainers/cli 0.89.0 builds a generated bundle; a regeneration refreshes a bundle recorded with their tagged form"
+issue: "333"
+breaking: false

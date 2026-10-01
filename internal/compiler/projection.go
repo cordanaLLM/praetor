@@ -206,7 +206,7 @@ func CompileContextProjections(ctx context.Context, w io.Writer, tr *Transpiler,
 	if err != nil {
 		return fmt.Errorf("compilation failed: %w", err)
 	}
-	plan, err := planAgentSurfaces(ctx, targetDir, vendor)
+	plan, err := planAgentSurfaces(ctx, targetDir, vendor, nil)
 	if err != nil {
 		return fmt.Errorf("agent projection failed: %w", err)
 	}
@@ -227,7 +227,17 @@ func CompileContextProjections(ctx context.Context, w io.Writer, tr *Transpiler,
 // is now, after the same refusals, and writes nothing. A caller that reports on the copies,
 // such as adoption, reads what each target holds before CompileAgentSurfaces replaces it.
 func PlanAgentSurfaces(ctx context.Context, targetDir string) ([]TargetFile, error) {
-	plan, err := checkedAgentSurfaces(ctx, targetDir)
+	return PlanAgentSurfacesOver(ctx, targetDir, nil)
+}
+
+// PlanAgentSurfacesOver is PlanAgentSurfaces for the tree a caller is about to leave: pending
+// maps the file name of a canonical persona (repo-auditor.md) to the bytes the caller writes at
+// CanonicalAgentsRel before it projects. A pending persona is planned with those bytes whether or
+// not it exists yet; every other persona is read from disk. Adoption's dry run plans with the
+// personas its real run writes, so it lists the copies that run projects (#366). A pending name
+// that is not a persona file name is refused.
+func PlanAgentSurfacesOver(ctx context.Context, targetDir string, pending map[string][]byte) ([]TargetFile, error) {
+	plan, err := checkedAgentSurfaces(ctx, targetDir, pending)
 	if err != nil {
 		return nil, err
 	}
@@ -243,7 +253,7 @@ func PlanAgentSurfaces(ctx context.Context, targetDir string) ([]TargetFile, err
 // with nothing written. It returns the copies it wrote, in order. Adoption's agent-definitions
 // step writes its copies here, so adopt and compile-context project the same set (#359).
 func CompileAgentSurfaces(ctx context.Context, w io.Writer, targetDir string) ([]TargetFile, error) {
-	plan, err := checkedAgentSurfaces(ctx, targetDir)
+	plan, err := checkedAgentSurfaces(ctx, targetDir, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -254,16 +264,17 @@ func CompileAgentSurfaces(ctx context.Context, w io.Writer, targetDir string) ([
 	return plan.targetFiles(), sw.err
 }
 
-// checkedAgentSurfaces is the plan PlanAgentSurfaces and CompileAgentSurfaces share: every copy,
-// with every target checked, after refusing a nil or cancelled context.
-func checkedAgentSurfaces(ctx context.Context, targetDir string) (agentSurfacePlan, error) {
+// checkedAgentSurfaces is the plan PlanAgentSurfacesOver and CompileAgentSurfaces share: every
+// copy, with every target checked, after refusing a nil or cancelled context. pending holds the
+// canonical personas a caller writes before projecting (PlanAgentSurfacesOver); nil reads disk.
+func checkedAgentSurfaces(ctx context.Context, targetDir string, pending map[string][]byte) (agentSurfacePlan, error) {
 	if ctx == nil {
 		return agentSurfacePlan{}, errors.New("agent projection: context cannot be nil")
 	}
 	if err := ctx.Err(); err != nil {
 		return agentSurfacePlan{}, fmt.Errorf("agent projection cancelled: %w", err)
 	}
-	plan, err := planAgentSurfaces(ctx, targetDir, nil)
+	plan, err := planAgentSurfaces(ctx, targetDir, nil, pending)
 	if err != nil {
 		return agentSurfacePlan{}, fmt.Errorf("agent projection failed: %w", err)
 	}
@@ -290,17 +301,18 @@ func (p agentSurfacePlan) targetFiles() []TargetFile {
 // planAgentSurfaces reads every canonical persona and skill and checks the target of every
 // vendor file in vendor and of every persona and plugin copy (checkProjectionFiles), writing
 // nothing. The persona and plugin directories are the ones verify reads (agentProjectionDirs), so
-// write and verify refuse the same trees.
-func planAgentSurfaces(ctx context.Context, targetDir string, vendor []projectionFile) (agentSurfacePlan, error) {
+// write and verify refuse the same trees. pending overrides or adds canonical personas
+// (personaProjections).
+func planAgentSurfaces(ctx context.Context, targetDir string, vendor []projectionFile, pending map[string][]byte) (agentSurfacePlan, error) {
 	var plan agentSurfacePlan
 	dirs, _, err := SelectPersonaDirs(ctx, targetDir)
 	if err != nil {
 		return plan, err
 	}
-	if plan.personas, err = personaProjections(ctx, targetDir, dirs); err != nil {
+	if plan.personas, err = personaProjections(ctx, targetDir, dirs, pending); err != nil {
 		return plan, err
 	}
-	if plan.pluginPersonas, err = personaProjections(ctx, targetDir, pluginPersonaDirs(targetDir)); err != nil {
+	if plan.pluginPersonas, err = personaProjections(ctx, targetDir, pluginPersonaDirs(targetDir), pending); err != nil {
 		return plan, err
 	}
 	if plan.pluginSkills, err = pluginSkillProjections(ctx, targetDir); err != nil {
