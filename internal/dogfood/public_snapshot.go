@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/hiss"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const (
@@ -302,18 +303,7 @@ func (tree publicTree) digest() string {
 	return hex.EncodeToString(sum[:])
 }
 
+// changed lists the paths whose digest differs from original's (util.ChangedEntries).
 func (tree publicTree) changed(original publicTree) []string {
-	changed := make([]string, 0)
-	for path, digest := range tree {
-		if original[path] != digest {
-			changed = append(changed, path)
-		}
-	}
-	for path := range original {
-		if _, exists := tree[path]; !exists {
-			changed = append(changed, path)
-		}
-	}
-	sort.Strings(changed)
-	return changed
+	return util.ChangedEntries(original, tree)
 }

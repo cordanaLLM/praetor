@@ -102,7 +102,7 @@ func TestNeedsScanWrite_3D_UnchangedManifestKeepsTheFile(t *testing.T) {
 	if out, err = write(); err != nil || !strings.Contains(out, "Wrote") {
 		t.Fatalf("a drifted manifest must be rewritten: %v\n%s", err, out)
 	}
-	if got, _ := os.ReadFile(manifest); !strings.Contains(string(got), "basis: not-configured") {
-		t.Fatalf("the rewrite lost the scan:\n%s", got)
+	if got, err := os.ReadFile(manifest); err != nil || !strings.Contains(string(got), "basis: not-configured") {
+		t.Fatalf("the rewrite lost the scan: %v\n%s", err, got)
 	}
 }
