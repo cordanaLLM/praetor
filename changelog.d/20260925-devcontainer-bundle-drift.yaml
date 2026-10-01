@@ -1,4 +1,4 @@
 type: added
-title: "praetorctl devcontainer freshness reports how many commits and days the committed bundle is behind the working tree and fails past the devcontainer.freshness bounds (default 500 commits, 21 days); make verify-all and CI run it, and a weekly workflow regenerates the bundle into a pull request"
+title: "praetorctl devcontainer freshness reports how many commits and days the committed bundle is behind the working tree and fails past the devcontainer.freshness bounds (default 500 commits, 21 days); make verify-all and CI run it, and a weekly workflow regenerates the bundle into a pull request, opened with the PRAETOR_PR_TOKEN secret or, without it, linked from a warning for a person to open"
 issue: "338"
 breaking: false

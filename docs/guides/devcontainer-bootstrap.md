@@ -231,13 +231,30 @@ history.
 Every Monday at 05:00 UTC, and on dispatch, in the canonical repository only, it
 records the freshness report, regenerates the bundle with
 `praetorctl devcontainer generate --source-root . --force`, verifies it, and
-force-pushes the result to `chore/devcontainer-bundle-refresh`. It opens one
-pull request from that branch, or updates the open one, with the report in its
-body. The commit is signed off under the `PRAETOR_BOT_NAME` and
-`PRAETOR_BOT_EMAIL` identity `adopt.yml` uses. The job publishes with the
-`PRAETOR_PR_TOKEN` secret when one is configured, because this repository does
-not let `GITHUB_TOKEN` open pull requests and a pull request opened with it runs
-no checks; without the secret the branch is pushed and the job fails naming it.
+commits the `.devcontainer` changes on `chore/devcontainer-bundle-refresh`. The
+commit is signed off under the `PRAETOR_BOT_NAME` and `PRAETOR_BOT_EMAIL`
+identity `adopt.yml` uses. What it publishes depends on the `PRAETOR_PR_TOKEN`
+secret, a token with contents and pull-requests write on the repository:
+
+| `PRAETOR_PR_TOKEN` | Refresh pull request | Result |
+| :--- | :--- | :--- |
+| set | none open | force-pushes the branch and opens the pull request, with the freshness report in its body |
+| set | open | force-pushes the branch and updates that pull request |
+| unset | none open | pushes the branch with `GITHUB_TOKEN`, stays green, and warns with the link that opens the pull request |
+| unset | open | pushes nothing and warns that the open pull request should land |
+
+`GITHUB_TOKEN` cannot stand in for the secret: this repository does not let it
+open pull requests, and GitHub starts no workflow for a push it makes. A pull
+request a person opens from the warning's link runs its checks; a later push
+with `GITHUB_TOKEN` would move it to a head no check ran on, so the job leaves an
+open one alone. Until the secret is configured, someone has to open and land the
+refresh pull request before the bundle passes a bound, or the freshness gate
+fails in verify-all and CI. With the secret set, a refused push or pull request
+fails the run. The warnings also appear in the run's step summary.
+`scripts/devcontainer_refresh_publish.sh` implements this step and
+`scripts/test_devcontainer_refresh_publish.py` (`make devcontainer-refresh-test`,
+part of verify-all) covers each row and the workflow wiring.
+
 The pull request carries no receipt, so the landing pipeline takes it over like
 a [Renovate pull request](contributing.md#renovate-pull-requests). To refresh by
 hand, run the same generate command from a clean checkout and commit the

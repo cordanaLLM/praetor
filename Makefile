@@ -262,6 +262,13 @@ verify-all: devcontainer-freshness
 devcontainer-freshness:
 	go run ./cmd/standardsctl devcontainer freshness
 
+# The refresh workflow's publishing step. Its cases build throwaway repositories under a
+# temporary directory, stub gh on PATH and contact no remote.
+.PHONY: devcontainer-refresh-test
+verify-all: devcontainer-refresh-test
+devcontainer-refresh-test:
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p 'test_devcontainer_refresh_publish.py'
+
 notebook-test:
 	python3 -B scripts/test_notebooklm_export.py
 	python3 -B scripts/test_planning_import.py
