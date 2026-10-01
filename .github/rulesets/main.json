@@ -58,6 +58,9 @@
             "context": "Platform Neutrality (Windows)"
           },
           {
+            "context": "Go API Compatibility"
+          },
+          {
             "context": "Documentation Governance"
           },
           {

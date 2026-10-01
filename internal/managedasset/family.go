@@ -26,6 +26,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
+	apiassets "github.com/cordanaLLM/praetor/tools/apicompat"
 	figureassets "github.com/cordanaLLM/praetor/tools/figures"
 	markdownassets "github.com/cordanaLLM/praetor/tools/markdownlint"
 )
@@ -41,6 +42,8 @@ const (
 	MaxAttributes = 8
 	// DocumentationFacet is the manifest facet that enables documentation governance.
 	DocumentationFacet = "docs:seo-portal"
+	// APIContractFacet is the manifest facet that enables the Go API compatibility gate.
+	APIContractFacet = "api:public-contract"
 )
 
 // Family is one managed asset family.
@@ -99,7 +102,33 @@ type Family struct {
 // Families returns the registry in its fixed order: the order adoption emits and audit
 // checks the families in.
 func Families() []Family {
-	return []Family{markdown(), figureEngine()}
+	return []Family{markdown(), figureEngine(), apiCompatibility()}
+}
+
+// apiCompatibility is the Go API compatibility gate of the api:public-contract facet (#357):
+// the gate program under tools/apicompat and the hosted workflow that runs it under the one
+// Go API Compatibility context. tools/apicompat is a name a repository may already use, so
+// adoption refuses to overwrite a file it finds there first. The program is a .go file, which
+// gofmt and audit both accept in one consistent line-ending style, so it declares no attribute
+// rule.
+func apiCompatibility() Family {
+	return Family{
+		Name:          "API compatibility",
+		Kind:          "API compatibility",
+		AssetNoun:     "API compatibility gate program",
+		WorkflowNoun:  "API compatibility workflow",
+		Facet:         APIContractFacet,
+		Directory:     apiassets.Directory,
+		Source:        apiassets.SourceFile,
+		FS:            apiassets.FS(),
+		Assets:        apiassets.Names(),
+		MaxAssets:     apiassets.MaxAssets,
+		WorkflowFile:  apiassets.WorkflowFile,
+		StatusContext: apiassets.StatusContext,
+		Workflow:      apiassets.Workflow,
+		RefuseForeign: true,
+		Prior:         apiassets.PriorDigests(),
+	}
 }
 
 func markdown() Family {

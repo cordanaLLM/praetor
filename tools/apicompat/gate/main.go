@@ -110,7 +110,23 @@ const (
 
 var errOutputLimit = errors.New("output exceeds its bound")
 
+// gitRepositoryVariables bind git to a repository other than the one its working directory
+// names. A gate run from a git hook inherits them, and the canary's git init and commits would
+// then write into that repository. internal/util/command_environment.go strips the same set
+// from Praetor's own child processes; this standalone program cannot import it.
+var gitRepositoryVariables = [...]string{
+	"GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_COMMON_DIR", "GIT_CONFIG", "GIT_DIR", "GIT_GRAFT_FILE",
+	"GIT_IMPLICIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_NO_REPLACE_OBJECTS", "GIT_OBJECT_DIRECTORY",
+	"GIT_PREFIX", "GIT_REPLACE_REF_BASE", "GIT_SHALLOW_FILE", "GIT_WORK_TREE",
+}
+
 func main() {
+	for _, name := range gitRepositoryVariables {
+		if err := os.Unsetenv(name); err != nil {
+			fmt.Fprintf(os.Stderr, "error: the API compatibility comparison did not run: unset %s: %v\n", name, err)
+			os.Exit(exitNotRun)
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
 	status := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
 	cancel()
