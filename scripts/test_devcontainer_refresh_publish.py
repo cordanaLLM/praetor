@@ -76,11 +76,31 @@ def git(*args: str, cwd: Path) -> str:
     return result.stdout.strip()
 
 
+def gnu_timeout() -> bool:
+    """Report whether the `timeout` on PATH is GNU coreutils' (Windows ships an unrelated one)."""
+    path = shutil.which("timeout")
+    if not path:
+        return False
+    try:
+        result = subprocess.run(
+            (path, "--version"),
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return "GNU coreutils" in result.stdout
+
+
 # The publisher is a bash script for a Linux runner that bounds every forge call with GNU
-# timeout. Windows has no POSIX shell and stock macOS has no `timeout`, so the suite says so
-# there rather than reporting a pass it did not earn (HISS-21).
+# timeout. Windows has no POSIX shell and its timeout.exe is a different program, and stock
+# macOS has no `timeout`, so the suite says so there rather than reporting a pass it did not
+# earn (HISS-21).
 @unittest.skipUnless(
-    shutil.which("bash") and shutil.which("timeout"),
+    shutil.which("bash") and gnu_timeout(),
     "the publisher is a bash script for a Linux runner and needs GNU timeout",
 )
 class RefreshPublishTests(unittest.TestCase):

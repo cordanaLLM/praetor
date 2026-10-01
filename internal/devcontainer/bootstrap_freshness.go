@@ -68,7 +68,7 @@ func (r *FreshnessReport) Err() error {
 	}
 	return fmt.Errorf("%w: %d commits behind (bound %d) and %s old (bound %s) since bundle commit %s; "+
 		"regenerate it with praetorctl devcontainer generate --source-root <Praetor checkout> --force",
-		ErrBundleStale, r.Behind, r.Bounds.MaxCommits, formatDays(r.Age), formatDays(r.Bounds.MaxAge), shortCommit(r.Commit))
+		ErrBundleStale, r.Behind, r.Bounds.MaxCommits, formatDays(r.Age), formatDays(r.Bounds.MaxAge), util.ShortCommit(r.Commit))
 }
 
 // String renders the measurement as one line.
@@ -77,7 +77,7 @@ func (r *FreshnessReport) String() string {
 		return fmt.Sprintf("DevContainer bundle source %s matches the working tree", r.Recorded)
 	}
 	return fmt.Sprintf("DevContainer bundle source %s differs from the working tree (%s): %d commits and %s behind since bundle commit %s; bounds %d commits and %s",
-		r.Recorded, r.Current, r.Behind, formatDays(r.Age), shortCommit(r.Commit), r.Bounds.MaxCommits, formatDays(r.Bounds.MaxAge))
+		r.Recorded, r.Current, r.Behind, formatDays(r.Age), util.ShortCommit(r.Commit), r.Bounds.MaxCommits, formatDays(r.Bounds.MaxAge))
 }
 
 // CheckFreshness measures the bundle whose configuration is at path against the Praetor source
@@ -230,12 +230,4 @@ func freshnessGit(ctx context.Context, root string, args ...string) (string, err
 // formatDays renders a duration in days with one decimal.
 func formatDays(d time.Duration) string {
 	return strconv.FormatFloat(d.Hours()/24, 'f', 1, 64) + " days"
-}
-
-// shortCommit abbreviates a commit id for a report line.
-func shortCommit(commit string) string {
-	if len(commit) > 12 {
-		return commit[:12]
-	}
-	return commit
 }
