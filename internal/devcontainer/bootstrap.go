@@ -26,21 +26,32 @@ const (
 	// context optimizer's 30-second contextopt.MaxDuration: preparing snapshots the whole build
 	// source twice, and on a loaded host that took past 30 seconds and failed adoption with
 	// "prepare devcontainer bootstrap: context deadline exceeded".
-	bootstrapBound      = 5 * time.Minute
-	DefaultBuilderImage = "docker.io/library/golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414"
-	// The 26.04 tag drops the hyphen the 24.04 and earlier tags carried:
-	// mcr.microsoft.com/devcontainers/base publishes "ubuntu26.04", and
-	// "ubuntu-26.04" is not a tag on that repository. The digest is what the
-	// bundle actually pulls; the tag is read by humans.
-	DefaultBaseImage = "mcr.microsoft.com/devcontainers/base:ubuntu26.04@sha256:edfb983aab9c579a385dc23c57d7d3703f5ec920124d99c16204a2cac465aab4"
+	bootstrapBound = 5 * time.Minute
+	// The reviewed defaults are digest-only, repository@sha256:<digest>, because
+	// @devcontainers/cli 0.89.0 refuses repository:tag@sha256:<digest> while it
+	// inspects the registry (devcontainers/cli#1307; fixed upstream by #1311, which no
+	// release carries yet), so a bundle built on the tagged form could not be built by
+	// the documented consumer (#333). The digest is what the bundle pulls. The comment
+	// beside each default keeps the full reference it was reviewed at, tag included, so
+	// the repository pin scan still holds that tag to one digest across files;
+	// TestReviewedDefaultCommentsNameTheirDigest binds it to the constant. A recorded
+	// tagged form of the same repository and digest still counts as this default
+	// (isReviewedPin).
+	//
+	// Reviewed at docker.io/library/golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414
+	DefaultBuilderImage = "docker.io/library/golang@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414"
+	// Reviewed at mcr.microsoft.com/devcontainers/base:ubuntu26.04@sha256:edfb983aab9c579a385dc23c57d7d3703f5ec920124d99c16204a2cac465aab4
+	// The 26.04 tag drops the hyphen the 24.04 and earlier tags carried: that repository
+	// publishes "ubuntu26.04", and "ubuntu-26.04" is not a tag on it.
+	DefaultBaseImage = "mcr.microsoft.com/devcontainers/base@sha256:edfb983aab9c579a385dc23c57d7d3703f5ec920124d99c16204a2cac465aab4"
 )
 
 // Every earlier reviewed default, as repository@digest. Moving DefaultBaseImage or
-// DefaultBuilderImage appends the replaced pin here, tag dropped, so a regeneration
-// refreshes a bundle that recorded it (InheritRecordedImages); a pin missing here is kept
-// as the adopter's choice, with a note. The digest names the image and the tag only
-// labels it, and a retired digest written beside its tag would read as a second live pin
-// of that tag to TestRepositoryPinsOneDigestPerImageTag.
+// DefaultBuilderImage appends the replaced pin here, its reviewed tag in the comment, so
+// a regeneration refreshes a bundle that recorded it (InheritRecordedImages); a pin
+// missing here is kept as the adopter's choice, with a note. The digest names the image
+// and the tag only labels it, and a retired digest written beside its tag would read as
+// a second live pin of that tag to TestRepositoryPinsOneDigestPerImageTag.
 var (
 	priorDefaultBaseImages = []string{
 		"mcr.microsoft.com/devcontainers/base@sha256:d94c97dd9cacf183d0a6fd12a8e87b526e9e928307674ae9c94139139c0c6eae", // ubuntu-24.04, before #352

@@ -125,19 +125,38 @@ configuration would stop starting and `Dockerfile.praetor` and the source parts
 would be left orphaned. Select a source root, or remove the bundle files first
 to drop the bootstrap deliberately. Invalid explicit source paths, mutable image references, incomplete
 bundles, symlinks, and altered companions are errors. Optional `--builder-image`
-and `--base-image` overrides must include lowercase SHA-256 digests.
+and `--base-image` overrides must name a lowercase SHA-256 digest, as
+`repository@sha256:<digest>` or `repository:tag@sha256:<digest>`; a tag alone or
+a malformed digest is refused (`validateBootstrapImages` in
+`internal/devcontainer/bootstrap.go`, tests in
+`internal/devcontainer/bootstrap_digest_test.go`).
+
+The reviewed defaults, `DefaultBuilderImage` and `DefaultBaseImage` in
+`internal/devcontainer/bootstrap.go`, are digest-only references. The comment
+beside each keeps the full `repository:tag@sha256:<digest>` reference it was
+reviewed at, and `TestReviewedDefaultCommentsNameTheirDigest` holds that comment
+to the constant's digest. `@devcontainers/cli` 0.89.0 refuses
+a `repository:tag@sha256:<digest>` reference while it inspects the registry
+(devcontainers/cli#1307), so it cannot build a bundle that records one
+([#333](https://github.com/cordanaLLM/praetor/issues/333)). Praetor still
+accepts a tagged override; give the digest-only form to a bundle that CLI builds.
 
 Regeneration keeps the images the output file records. Without `--base-image`
 or `--builder-image`, generation reads the bootstrap specification already
 recorded there. A recorded image that is an earlier reviewed default, such as
 the `ubuntu-24.04` base Praetor shipped before the 26.04 move, is refreshed to
-the current reviewed pin. Earlier defaults are listed as `repository@digest` in
+the current reviewed pin. So is the current default recorded with a tag, such as
+the `ubuntu26.04` form generation recorded before the defaults became
+digest-only. Earlier defaults are listed as `repository@digest` in
 `priorDefaultBaseImages` and `priorDefaultBuilderImages` in
-`internal/devcontainer/bootstrap.go`, and a recorded image matches one when it
-names the same repository and digest. Any other recorded image is the adopter's
-choice and is kept, so `--force` does not swap it for the reviewed default. That
-includes another tag or digest of the reviewed default repository, such as a
-`debian-12` base or a newer `golang` builder. An explicit flag always wins.
+`internal/devcontainer/bootstrap.go`, and a recorded image matches the current or
+an earlier default when it names the same repository and digest, under any tag
+or none (`isReviewedPin` in `internal/devcontainer/bootstrap_recorded.go`). Any
+other recorded image is the adopter's choice and is kept, so `--force` does not
+swap it for the reviewed default. That includes another digest of the reviewed
+default repository, such as a `debian-12` base or a newer `golang` builder, and
+the reviewed digest under another repository, such as a mirror. An explicit flag
+always wins.
 Each image kept, refreshed or replaced against its recorded value is printed as a `[RECORDED IMAGE KEPT]`, `[RECORDED IMAGE REFRESHED]` or
 `[RECORDED IMAGE REPLACED]` line naming the recorded image, the selected one and
 the flag that changes it. A missing file, a custom DevContainer or an invalid
@@ -222,6 +241,19 @@ before this change reports drift in `praetorctl devcontainer verify` and
 `standardsctl audit`; regenerate it with the `--source-root ... --force` command
 above. Adoption keeps an existing `.vscode/settings.json` unless it runs with
 `--force`.
+
+### Digest-only reviewed defaults
+
+A ready bootstrap generated before #333 records the reviewed defaults as
+`repository:tag@sha256:<digest>`. It still passes `praetorctl devcontainer
+verify` and `standardsctl audit`, but `@devcontainers/cli` 0.89.0 cannot build
+it. Regenerate it with the generation command above and `--force`: each image
+is reported as `[RECORDED IMAGE REFRESHED]` and recorded digest-only, which
+changes `Dockerfile.praetor` and the recorded `dockerfileSHA256`. The images
+pulled are unchanged, because the digests are. To keep a tagged reference, pass
+it with `--base-image` or `--builder-image`
+(`TestDevContainerCLIDigestOnlyImages` in
+`cmd/standardsctl/devcontainer_bootstrap_test.go`).
 
 ### Test sources leave the bootstrap archive
 
