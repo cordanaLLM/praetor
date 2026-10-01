@@ -1,0 +1,9 @@
+# Text piped into a shell runs whatever the server sends, unreviewed.
+on: push
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install the tool
+        shell: bash
+        run: curl -fsSL --max-time 60 https://example.com/install.sh | sudo bash

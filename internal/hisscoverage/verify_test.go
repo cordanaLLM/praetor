@@ -73,6 +73,32 @@ func TestVerifyRejectsAnUnmetClaim(t *testing.T) {
 	}
 }
 
+// workflowOrTrue is a GitHub Actions workflow whose run: block discards a failure (HISS-07).
+const workflowOrTrue = "on: push\njobs:\n  j:\n    runs-on: ubuntu-latest\n    steps:\n      - run: make check || true\n"
+
+// TestVerifyStagesWorkflowFixtures: a github-actions fixture is replayed from where GitHub reads
+// workflows (hiss.FixturePath), so its run: block is scanned and the claim holds (positive).
+// The same document replayed as a shell fixture is staged at the root, where it is an unread
+// YAML file, so a claim backed by it fails (negative): the staging, not the bytes, decides.
+func TestVerifyStagesWorkflowFixtures(t *testing.T) {
+	root := corpusRoot(t, "HISS-07", "github-actions", bucketPositive, "or-true.yml", workflowOrTrue)
+	report, err := Verify(t.Context(), root, catalogFor("HISS-07", "github-actions", StatePartial))
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if !report.Passed() || report.Fixtures != 1 {
+		t.Fatalf("a workflow fixture must be staged where its run: block is read: %+v", report.Findings)
+	}
+	root = corpusRoot(t, "HISS-07", "shell", bucketPositive, "or-true.yml", workflowOrTrue)
+	report, err = Verify(t.Context(), root, catalogFor("HISS-07", "shell", StatePartial))
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if report.Passed() {
+		t.Fatal("a workflow staged at the root is not a workflow, so the claim must fail")
+	}
+}
+
 // TestVerifyRejectsOverMatching is the negative dimension for the other failure mode: a rule
 // that reports legitimate code is as unusable as one that reports nothing, because it gets
 // suppressed wholesale.

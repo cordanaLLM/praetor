@@ -150,6 +150,19 @@ rules:
           file and an
           extensionless file whose interpreter line names sh, bash, dash or ash are read. Mutual
           recursion needs a call graph and is held as a gap.
+      - language: github-actions
+        state: partial
+        mechanism: >-
+          internal/hiss workflow.go scanRunBlock over the run: steps ghworkflow.RunSteps lists,
+          read by shell.go scanShellLines under the shell ghworkflow.StepShell resolves
+        rationale: >-
+          A run: block whose shell resolves to sh, bash, dash or ash (a step's shell:, the job's
+          or the workflow's defaults.run.shell, else sh in a container and bash on a Linux or
+          macOS runner) is read with the shell rules, its ${{ }} expressions blanked first, and a
+          function that runs its own name in it is reported at its workflow line. A call through
+          command and a name inside an expression are not calls. A block whose shell is decided
+          only when the workflow runs, such as one on a matrix runner, is counted as an unscanned
+          run block and held as a gap.
   - id: HISS-02
     coverage:
       - language: go
@@ -225,6 +238,17 @@ rules:
           words inside quotes, comments or a here-document.
           A loop whose condition always succeeds without being a constant (while sleep 5) and a
           read without -t are held as gaps.
+      - language: github-actions
+        state: partial
+        mechanism: >-
+          internal/hiss workflow.go scanRunBlock, applying shell_commands.go isUnboundedShellLoop
+          and checkInvocation and shell.go shellForEver to each run: block of a read shell
+        rationale: >-
+          An unbounded loop and a curl transfer without a deadline in a run: block under sh or
+          bash are reported at their workflow line, a container job's default sh included. A
+          counted loop, a bounded transfer and loop words inside an expression are not. A block
+          under pwsh, the Windows runner default, is not read by the shell scanner: it is counted
+          as an unscanned pwsh block and its loop is held as a gap.
       - language: systemd
         state: partial
         mechanism: internal/hiss systemd.go checkTimeouts and checkRestart
@@ -314,6 +338,16 @@ rules:
           the line it closes on, so a header written above the brace adds nothing; 61 lines is
           reported and 60 is not. A function whose body is a subshell, ( ... ), is not measured
           and is held as a gap, and the complexity caps are not measured for shell.
+      - language: github-actions
+        state: partial
+        mechanism: >-
+          internal/hiss workflow.go scanRunBlock, applying shell.go closeDeeper to each run: block
+          of a read shell
+        rationale: >-
+          A function in a run: block under sh or bash is measured as in a script, from the line
+          its brace opens on, and reported at the workflow line of its header: 61 lines is
+          reported and 60 is not. A function in a block of another shell, such as a python step,
+          is not measured and is held as a gap.
   - id: HISS-08
     coverage:
       - language: c
@@ -366,6 +400,17 @@ rules:
           checked and run as a file, and the bars of a case pattern list, also after a ;& or ;;&
           fall-through, or of a [[ ]] regular expression are not. A command string handed to sh -c is evaluated too but is held as a
           gap.
+      - language: github-actions
+        state: partial
+        mechanism: >-
+          internal/hiss workflow.go scanRunBlock, applying shell_commands.go checkInvocation to
+          each run: block of a read shell
+        rationale: >-
+          eval and text piped into a shell in a run: block under sh or bash are reported at
+          their workflow line. A downloaded script that is checked and run as a file, and eval
+          inside an expression, are not. A block under a custom shell template whose command the
+          shell scanner does not read, such as perl {0}, is counted as an unscanned run block and
+          its eval is held as a gap.
       - language: ansible
         state: partial
         mechanism: internal/hiss ansible.go checkAnsibleCommand
@@ -461,6 +506,18 @@ rules:
           || true or || : is reported. A library without an interpreter line runs under the
           options of the script that sources it and is not required to set them. set +e around
           an unchecked command and a failure discarded through a brace group are held as gaps.
+      - language: github-actions
+        state: partial
+        mechanism: >-
+          internal/hiss workflow.go scanRunBlock, applying shell_commands.go checkCommand to each
+          run: block of a read shell
+        rationale: >-
+          || true and || : in a run: block under sh or bash are reported at their workflow line,
+          including a bash block on a Windows runner whose job sets defaults.run.shell. A failure
+          handled by its exit status and || true inside an expression are not. A block has no
+          interpreter line, since GitHub starts its shell itself (bash -e when no shell is named),
+          so the strict-mode rule for scripts does not apply: a pipeline failure under the
+          default shell, which runs without pipefail, is held as a gap.
       - language: systemd
         state: partial
         mechanism: internal/hiss systemd.go checkExec

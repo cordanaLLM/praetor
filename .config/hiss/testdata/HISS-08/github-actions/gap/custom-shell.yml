@@ -1,0 +1,10 @@
+# A custom shell template names its own command; perl is not a shell the scanner reads, so the
+# block is counted as an unscanned perl block and its eval goes unreported.
+on: push
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - shell: perl {0}
+        run: |
+          eval $ENV{COMMAND};

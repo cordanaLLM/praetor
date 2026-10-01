@@ -1,8 +1,9 @@
 # How the HISS rule matchers read source
 
 The Go rules use the AST. The rules for C, C++, Rust, Python, JavaScript, TypeScript, Svelte and
-shell match text, the systemd rules read a unit's settings, and the Ansible rules read a playbook's
-YAML tree. This document records what that means, because the difference is load-bearing.
+shell match text, and the shell rules also read the `run:` blocks of GitHub Actions workflows. The
+systemd rules read a unit's settings, and the Ansible rules read a playbook's YAML tree. This
+document records what that means, because the difference is load-bearing.
 
 ## One engine, one scanner per language
 
@@ -10,18 +11,21 @@ YAML tree. This document records what that means, because the difference is load
 record. Each language is one `languageScanner` in the `languageScanners` table of
 [`internal/hiss/engine.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hiss/engine.go):
 Go, C and C++ (with CUDA and HIP), Python, Rust, the script scanner for JavaScript, TypeScript
-and Svelte, and the shell, systemd and Ansible scanners. `hiss.SupportsExtension`, the walk's scope
-test and `ci filter`'s code classification read that table, so a language cannot be reported as
-supported where it is not scanned. A scanner may decline a file, which is then counted as unscanned
-rather than read; a scanner that needs every file of a package after the walk (the Go call graph) is
-a `packageScanner` (`TestLanguageScanners_ClaimDisjointExtensions` in
-`internal/hiss/engine_test.go`).
+and Svelte, and the shell, GitHub Actions workflow, systemd and Ansible scanners.
+`hiss.SupportsExtension`, the walk's scope test and `ci filter`'s code classification read that
+table, so a language cannot be reported as supported where it is not scanned. A scanner may decline
+a file, which is then counted as unscanned rather than read; a scanner that needs every file of a
+package after the walk (the Go call graph) is a `packageScanner`
+(`TestLanguageScanners_ClaimDisjointExtensions` in `internal/hiss/engine_test.go`). A scanner that
+reads at most a fixed number of files in one scan is a `boundedScanner`: a file past its bound is
+unscanned source of its language, never clean.
 
 Some files are only recognised from their contents: a script without an extension names its shell
-on its `#!` line, a YAML file is a playbook only if it holds a play, and a `.service` or `.socket`
-file is a unit only if it opens a unit section. A scanner that reads such files is a
-`contentScanner`: the walk reads each candidate (an extensionless file, a `.yml` or `.yaml` file, a
-`.service` or `.socket` file) and asks the scanner whether it claims the bytes. A candidate nobody
+on its `#!` line, a YAML file is a workflow only directly in `.github/workflows` and a playbook only
+if it holds a play, and a `.service` or `.socket` file is a unit only if it opens a unit section. A
+scanner that reads such files is a `contentScanner`: the walk reads each candidate (an
+extensionless file, a `.yml` or `.yaml` file, a `.service` or `.socket` file) and asks the scanner
+whether it claims the bytes. A candidate nobody
 claims is recorded exactly as it was before these scanners existed, so `SupportsExtension` widens
 only by `.sh` and `.bash`. A candidate that is a symlink, a special file or larger than the read
 bound is never opened, and one the walk cannot read (permission denied, say) stays unscanned instead
@@ -35,11 +39,13 @@ claimed file the scanner then declines is unscanned source of its language
 `zsh` and `ksh`, which no scanner reads, so the audit lists them on its `[UNSCANNED]` line instead of
 under the shell it verified.
 
-The coverage record names the languages it read (`languages_read`) and the source languages no
-scanner examined (`unscanned_languages`, named by `util.SourceLanguage`). `praetorctl audit`
-prints its PASS line for the languages it read (`verified for go, typescript:`) and reports every
-other source language on an `[UNSCANNED]` line; a tree whose only source is unscanned gets no PASS
-line (`TestAudit_InvariantVerdictNamesItsLanguages` in `cmd/standardsctl/audit_cmd_test.go`).
+The coverage record names the languages it read (`languages_read`), the source languages no
+scanner examined (`unscanned_languages`, named by `util.SourceLanguage`) and, per shell, the
+workflow `run:` blocks no rule read (`unscanned_run_blocks`, see
+[GitHub Actions run: blocks](#github-actions-run-blocks)). `praetorctl audit` prints its PASS line
+for the languages it read (`verified for go, typescript:`) and reports every other source language
+and every unscanned block on an `[UNSCANNED]` line; a tree whose only source is unscanned gets no
+PASS line (`TestAudit_InvariantVerdictNamesItsLanguages` in `cmd/standardsctl/audit_cmd_test.go`).
 
 ## Whitespace does not silence a rule
 
@@ -447,17 +453,18 @@ language (`javascript`, `typescript`, `svelte`).
 
 ## Shell, systemd and Ansible
 
-These three scanners cover the files an operations repository keeps its logic in. Each states
-which HISS rules apply to its language and why; a rule left out has no analogue there or is held as
-a gap in `.config/hiss/coverage.yaml` (languages `shell`, `systemd`, `ansible`).
+These scanners cover the files an operations repository keeps its logic in: shell scripts, the
+`run:` blocks of GitHub Actions workflows, systemd units and Ansible playbooks. Each states which
+HISS rules apply to its language and why; a rule left out has no analogue there or is held as a gap
+in `.config/hiss/coverage.yaml` (languages `shell`, `github-actions`, `systemd`, `ansible`).
 
-| Rule | Shell | systemd unit | Ansible |
-| :--- | :--- | :--- | :--- |
-| HISS-01 | direct recursion | no functions | no functions |
-| HISS-02 | unbounded loops, curl without a deadline | oneshot start timeout, disabled timeouts, restart loops | not decided |
-| HISS-04 | function length | no functions | no functions |
-| HISS-07 | strict mode, `\|\| true` | `-` command prefix | discarded failures, shell pipes |
-| HISS-08 | `eval`, text piped into a shell | not decided | change not determined by state |
+| Rule | Shell | Workflow `run:` block | systemd unit | Ansible |
+| :--- | :--- | :--- | :--- | :--- |
+| HISS-01 | direct recursion | as shell | no functions | no functions |
+| HISS-02 | unbounded loops, curl without a deadline | as shell | oneshot start timeout, disabled timeouts, restart loops | not decided |
+| HISS-04 | function length | as shell | no functions | no functions |
+| HISS-07 | strict mode, `\|\| true` | `\|\| true` (no strict mode) | `-` command prefix | discarded failures, shell pipes |
+| HISS-08 | `eval`, text piped into a shell | as shell | not decided | change not determined by state |
 
 ### Shell
 
@@ -497,9 +504,67 @@ test name no command, so `*/sh | */bash)` and `[[ $f =~ \.(sh|bash)$ ]]` pipe no
 Not decided: mutual recursion, a loop whose condition always succeeds without being a constant
 (`while sleep 5`), `read` without `-t`, a subshell function body `f() ( ... )`, `set +e` around an
 unchecked command, a failure discarded through a brace group, and a command string given to
-`sh -c`; each is a gap fixture. Shell in a workflow's `run:` blocks is not read (#618). A file whose
-quotes, substitutions, here-documents or braces the scanner misread is declined and shows on the
-`[UNSCANNED]` line (`TestShellScanner_DeclinedFilesAreUnscanned` in `internal/hiss/shell_test.go`).
+`sh -c`; each is a gap fixture. A file whose quotes, substitutions, here-documents or braces the
+scanner misread is declined and shows on the `[UNSCANNED]` line
+(`TestShellScanner_DeclinedFilesAreUnscanned` in `internal/hiss/shell_test.go`). The `run:` blocks
+of a GitHub Actions workflow are read with these rules too, as the next section describes.
+
+### GitHub Actions run: blocks
+
+[`internal/hiss/workflow.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hiss/workflow.go)
+reads every YAML document directly in `.github/workflows`, the files GitHub runs as workflows,
+through the workflow model the forge audits read too
+([`internal/ghworkflow`](https://github.com/cordanaLLM/praetor/blob/main/internal/ghworkflow/ghworkflow.go)),
+and hands each `run:` block to the shell scanner when its shell is one that scanner reads. The
+coverage record names a workflow file `github-actions`.
+
+The shell is resolved as GitHub's workflow syntax reference documents it (`ghworkflow.StepShell`,
+`TestStepShell_Precedence` in `internal/ghworkflow/shell_test.go`):
+
+| Source, most specific first | Shell |
+| :--- | :--- |
+| the step's `shell:` | a built-in keyword (`bash`, `sh`, `pwsh`, `powershell`, `cmd`, `python`), or the first word of a custom template such as `perl {0}` |
+| the job's `defaults.run.shell` | the same |
+| the workflow's `defaults.run.shell` | the same |
+| a job with a `container:` | `sh` |
+| a runner whose labels name Windows (`windows-*`, `windows`) | `pwsh` |
+| a runner whose labels name Linux or macOS (`ubuntu-*`, `macos-*`, `linux`, `macOS`) | `bash` |
+
+A block under `sh`, `bash`, `dash` or `ash` is read with the rules of the Shell section above. Its
+`${{ ... }}` expressions are blanked first, line breaks kept, because GitHub substitutes them
+before the shell starts: `|| true` or `eval` inside one is not shell
+(`TestWorkflowScanner_BlanksExpressions` in `internal/hiss/workflow_test.go`). A finding names the
+workflow file. In a literal block (`run: |`) it names the line the command sits on; in any other
+style it names the line the value starts on, because folding and escapes lose the mapping
+(`TestWorkflowScanner_ReportsEachShellRule`). Baseline and ratchet then treat it like any other
+finding.
+
+Every other block is counted in `unscanned_run_blocks` under its shell and listed on the audit's
+`[UNSCANNED]` line as `GitHub Actions run: blocks (2 pwsh, 1 unresolved)`, never read as clean
+(`TestWorkflowScanner_ResolvesTheShell`, `TestWorkflowScanner_UnresolvedAndContainerShells`):
+
+- a shell the shell scanner does not read: `pwsh`, the Windows default, `powershell`, `cmd`,
+  `python`, or a custom command;
+- `unresolved`: a shell an expression names, or a default on a runner whose labels name no single
+  operating system, such as `runs-on: ${{ matrix.os }}` or a self-hosted runner without an OS
+  label, because a Windows leg would run the block under `pwsh`;
+- a block the shell scanner declines, and a block past a bound.
+
+The bounds (HISS-02) are 64 workflow files per scan (`ghworkflow.MaxFiles`, the bound the forge
+audits read under), 512 blocks per file and 64 KiB per block, above GitHub's own 21,000-character
+`run:` limit. A file past the file bound is unscanned `github-actions` source; a document the model
+refuses, malformed or past its job or step bounds, is declined whole
+(`TestWorkflowScanner_FileBound`, `TestWorkflowScanner_BlockBounds`,
+`TestWorkflowScanner_DeclinedBlocksAndDocuments`).
+
+A block has no interpreter line: GitHub starts its shell itself, as `bash -e {0}` when no shell is
+named, `bash --noprofile --norc -eo pipefail {0}` for `shell: bash` and `sh -e {0}` for `shell: sh`.
+The HISS-07 strict-mode rule, which holds a script with an interpreter line to `set -eu`, therefore
+does not apply to a block, and a pipeline failure under the default shell, which runs without
+`pipefail`, is a gap fixture (`HISS-07/github-actions/gap/default-shell-pipe.yml`). Composite
+actions (`action.yml` under `.github/actions`) are not read. The corpus replay stages each
+`github-actions` fixture under `.github/workflows` (`hiss.FixturePath`), where the scan reads
+workflows.
 
 ### systemd units
 
