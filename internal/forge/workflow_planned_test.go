@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 )
 
 // pullRequestJob is a workflow whose one job is a required check named job.
@@ -76,5 +78,27 @@ func TestRequiredStatusContextsPlanned_Boundary_EmptyPlansAndTheInventoryBound(t
 	}
 	if _, err := RequiredStatusContextsPlanned(t.Context(), root, overflow); err == nil || !strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("an inventory past %d workflows must be refused, got %v", maxWorkflowFiles, err)
+	}
+}
+
+// Positive, negative and boundary: plannedWorkflowName names a YAML document directly under
+// .github/workflows, the rule ghworkflow.IsWorkflowPath holds, and refuses every other path.
+func TestPlannedWorkflowName_FollowsTheWorkflowPathRule(t *testing.T) {
+	for path, want := range map[string]string{
+		".github/workflows/ci.yml":       "ci.yml",
+		".github/workflows/ci.yaml":      "ci.yaml",
+		".github/workflows/.yml":         ".yml",
+		".github/workflows/sub/deep.yml": "",
+		".github/workflows/ci.json":      "",
+		".github/workflows/":             "",
+		".github/workflowsx/ci.yml":      "",
+		"sub/.github/workflows/ci.yml":   "",
+		"ci.yml":                         "",
+		"":                               "",
+	} {
+		name, ok := plannedWorkflowName(path)
+		if name != want || ok != (want != "") || ok != ghworkflow.IsWorkflowPath(path) {
+			t.Errorf("plannedWorkflowName(%q) = %q, %v; want %q", path, name, ok, want)
+		}
 	}
 }
