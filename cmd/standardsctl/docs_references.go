@@ -135,10 +135,12 @@ func checkCLIReferences(ctx context.Context, repoPath string) error {
 }
 
 // printDocsReferences prints the counts, every skipped document and suppressed block with
-// its reason, and each finding; it fails when any finding exists.
+// its reason, every flag on an Accepted decision record, and each finding; it fails when any
+// finding exists. A flag never fails it.
 func printDocsReferences(repoPath string, report *docsref.Report) error {
 	fmt.Printf("=== Documentation References: %s ===\n", repoPath)
 	fmt.Printf("  Documents checked:  %d\n", report.Documents)
+	fmt.Printf("  Decision records:   %d (Accepted; repository paths only)\n", report.Records)
 	fmt.Printf("  Documents skipped:  %d\n", len(report.Skipped))
 	fmt.Printf("  Suppressed blocks:  %d\n", len(report.Suppressions))
 	fmt.Printf("  CLI invocations:    %d\n", report.Invocations)
@@ -149,6 +151,7 @@ func printDocsReferences(repoPath string, report *docsref.Report) error {
 	for _, suppressed := range report.Suppressions {
 		fmt.Printf("  suppressed %s\n", suppressed)
 	}
+	printRecordFlags(report.Flagged)
 	if len(report.Findings) == 0 {
 		fmt.Println("[PASS] every documented command, flag and repository path resolves.")
 		return nil
@@ -160,6 +163,21 @@ func printDocsReferences(repoPath string, report *docsref.Report) error {
 		"never has (another repository's file, an adopter's generated file, an illustrative example)\n"+
 		"goes between <!-- praetor:docs-references:off <reason> --> and <!-- praetor:docs-references:on -->.")
 	return fmt.Errorf("[FAIL] %d documentation reference(s) do not resolve", len(report.Findings))
+}
+
+// printRecordFlags prints what an Accepted decision record names that does not resolve. The
+// body is immutable (docs/adr/README.md, rule 4), so the remedy is a superseding record and
+// the flags never fail the check.
+func printRecordFlags(flagged []docsref.Finding) {
+	if len(flagged) == 0 {
+		return
+	}
+	fmt.Printf("  [FLAG] %d reference(s) in Accepted decision records do not resolve:\n", len(flagged))
+	for index := 0; index < len(flagged) && index < maxReportedFindings; index++ {
+		fmt.Printf("    %s\n", flagged[index])
+	}
+	fmt.Println("  An Accepted record's body is not edited: a record that supersedes it states what changed.\n" +
+		"  These flags do not fail the check.")
 }
 
 // checkDocsSurfaces checks that every declared glob selects a file and, with --base, the

@@ -536,3 +536,26 @@ file in `.config/archetypes`, selected or not, so one bad file fails lock verifi
 - an empty linter name, or one with surrounding whitespace or control characters.
 
 A blank or missing `id` defaults to the file name without `.yaml`.
+
+### Every key names its consumer
+
+Reaching the resolved policy is not the same as being acted on. The effective-policy digest
+records every key, and some keys nothing reads. `.config/archetype-coverage.yaml` binds each key
+`config.ArchetypeKeys` decodes to the functions that read its value, saying for each whether it
+acts on the value (renders, gates, selects) or only reports it, or marks the key `unconsumed` or
+`refused` with the reason. That file is the reference for what a key does. Two consequences for
+authors:
+
+- `linters`, `error_unwraps`, both `memory` keys, `name`, `description` and `runtime` are
+  unconsumed: declaring them changes no gate, emitted file or report. A capability that
+  `description` names is enforced only where a consumed key enforces it.
+- `supply_chain.slsa_level`, `supply_chain.enforce_cosign` and `complexity.max_cognitive` are
+  reported: `praetorctl plan` or the HISS-04 measurement prints them, and nothing fails on them.
+
+`TestShippedManifestMatchesTheSource` (`internal/archetypecoverage/shipped_test.go`) type-checks
+the module's Go source and fails when a key has no entry, when an entry names a key the schema
+does not decode, when a listed consumer no longer reads the key, when a function reads a key its
+entry does not list, and when a field of a carrier type no key binds. A new schema key therefore
+needs its entry, and a first consumer of an unconsumed key changes the entry's state in the same
+change. A value read through an accessor is credited to the accessor
+(`ComplexityPolicy.Limits`), and a whole section passed on is credited where its fields are read.

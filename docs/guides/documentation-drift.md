@@ -204,13 +204,24 @@ deep while `hook` has none.
 | Skipped | Reason |
 | --- | --- |
 | `docs/project-records/` | records past events as they were written; never updated to match later code |
-| Accepted, Superseded and Deprecated decision records | the body is immutable ([ADR lifecycle](../adr/README.md)); a changed decision gets a new record |
+| Superseded and Deprecated decision records | the body is immutable ([ADR lifecycle](../adr/README.md)); a changed decision gets a new record |
+| Command lines in Accepted decision records | the body is immutable too; their repository paths are flagged instead (below) |
 | Proposed and Draft decision records | they name surfaces that do not exist until they are implemented |
 | Fences in other languages (`yaml`, `json`, `text`, `mermaid`) and fences without a language | they quote data or program output, where a word after `praetorctl` is not a call |
 | A mention outside command position | `this praetorctl serves no row` is a sentence, not a call |
 
 A record with no readable `## Status` is checked, so an unrecognised status cannot switch the
 check off. Every skipped document is printed with its reason.
+
+### Accepted decision records are flagged, never failed
+
+An Accepted record states a decision as it stood, and a path it names can disappear later. The
+check reads each Accepted record's repository paths under the same rules as any document and
+prints what does not resolve under `[FLAG]`, after the `Decision records:` count. A flag never
+fails the check: the record's body may not be edited to fix it (`docs/adr/README.md`, rule 4),
+so the remedy is a new record that supersedes the stale one. The flagged list is the backlog of
+records that need one. `TestRun_Positive_AcceptedRecordPathIsFlaggedNotFailed` and
+`TestRun_Boundary_AcceptedRecordChecksPathsOnly` (`internal/docsref/run_test.go`) cover it.
 
 ### Paths that exist outside the public tree
 
