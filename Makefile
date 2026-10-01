@@ -96,8 +96,12 @@ caveman-sources:
 fmt-check:
 	$(HOOK_RUNNER) fmt-check
 
+# The API compatibility gate (tools/apicompat/gate) builds only under its own tag, which keeps it
+# out of an adopting module's ./...; vet it with that tag here, and .golangci.yml sets the same
+# tag for the linters.
 lint: fmt-check
 	go vet ./...
+	go vet -tags=apicompatgate ./tools/apicompat/gate/
 	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run
 
 # The security scanners and gitleaks are pinned in one place, tools/go/go.mod, which Renovate
@@ -131,6 +135,7 @@ nosec-justified:
 
 sec: nosec-justified
 	python3 -B .config/lefthook/scripts/security_scope.py -- $(GO_SECURITY_TOOL) gosec -conf .gosec.json
+	$(GO_SECURITY_TOOL) gosec -conf .gosec.json -tags apicompatgate ./tools/apicompat/gate/
 
 flavor-audit: state-init
 	go run ./cmd/standardsctl flavor audit .

@@ -1,0 +1,139 @@
+// SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
+//
+// SPDX-License-Identifier: EUPL-1.2
+
+// Package apicompat exposes the locked Go API compatibility gate the api:public-contract facet
+// emits. The managed asset family registry (internal/managedasset) declares it as the API
+// compatibility family; adoption, audit and the devcontainer bootstrap read it through it.
+//
+// The gate is one Go program, gate/main.go. Its build constraint (BuildTag) keeps it out of
+// every ./... pattern, so an adopting module neither builds, tests, lints nor publishes it as
+// API, while "go run tools/apicompat/gate/main.go", which names the file, still builds it.
+// Praetor lints and vets it with that tag (Makefile lint, .golangci.yml) and tests it by
+// building the embedded bytes (gate_test.go).
+package apicompat
+
+import (
+	"embed"
+	"io/fs"
+	"maps"
+	"slices"
+
+	"github.com/cordanaLLM/praetor/internal/util"
+)
+
+const (
+	// Directory is the repository-relative home of the gate.
+	Directory = "tools/apicompat"
+	// SourceFile is the Go file carrying the go:embed directive over the assets.
+	SourceFile = Directory + "/assets.go"
+	// GateFile is the gate program, relative to Directory.
+	GateFile = "gate/main.go"
+	// BuildTag is the build constraint that keeps GateFile out of ./... patterns.
+	BuildTag = "apicompatgate"
+	// WorkflowFile is the repository-relative hosted API compatibility gate.
+	WorkflowFile = ".github/workflows/praetor-api.yml"
+	// StatusContext is the exact required check emitted by WorkflowFile.
+	StatusContext = "Go API Compatibility"
+	// MaxAssets bounds all asset iteration.
+	MaxAssets = 1
+)
+
+// Workflow is the hosted gate adoption writes to WorkflowFile. Its one job, named
+// StatusContext, runs on every pull request and push without a condition, so the branch ruleset
+// adoption renders from the workflows requires it.
+//
+// A pull request compares its base commit with the merge commit the checkout action checks
+// out; a push compares HEAD with the newest root release tag, and passes saying so while there
+// is none. fetch-depth 0 fetches every commit and tag that comparison may name. setup-go
+// installs the newest stable Go, whose toolchain switching (GOTOOLCHAIN=auto) honours a
+// module's newer go directive. The job keeps module and build caches of its own, keyed by its
+// job name, instead of setup-go's shared one (internal/forge/go_cache_checks.go).
+//
+// Audit locks an adopter's copy to these bytes, so the text holds to the policies an adopter
+// may enforce without being able to edit it: every action is pinned by full commit SHA with its
+// release as a trailing comment, which Renovate's github-actions manager keeps current here and
+// in the repository's own copy (renovate.json); and the text passes yamllint --strict under its
+// default rules, with a line-length exemption for the lines a 40-hex SHA or a cache key carries
+// past 80 columns.
+const Workflow = `---
+name: Praetor API Compatibility
+
+'on':
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  api-compatibility:
+    name: Go API Compatibility
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout source
+        # yamllint disable-line rule:line-length
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Setup Go
+        # yamllint disable-line rule:line-length
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version: stable
+          cache: false
+      # yamllint disable rule:line-length
+      - name: Restore Go module cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/go/pkg/mod
+          key: gomod-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            gomod-${{ runner.os }}-${{ runner.arch }}-
+      - name: Restore Go build cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
+        with:
+          path: ~/.cache/go-build
+          key: gobuild-${{ runner.os }}-${{ runner.arch }}-api-compatibility-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            gobuild-${{ runner.os }}-${{ runner.arch }}-api-compatibility-${{ hashFiles('**/go.sum') }}-
+            gobuild-${{ runner.os }}-${{ runner.arch }}-api-compatibility-
+      # yamllint enable rule:line-length
+      - name: Compare the API of every Go module
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: go run tools/apicompat/gate/main.go -base="$BASE"
+`
+
+// priorDigests maps the SHA-256 of every text an earlier Praetor shipped at one of the family's
+// managed paths, taken with LF line endings, to that path: the family's Prior
+// (internal/managedasset). internal/managedasset/testdata/shipped/api-compatibility.sha256
+// records every text ever shipped, and TestShippedTextLedger fails until each outgoing text is
+// listed here.
+var priorDigests = map[string]string{}
+
+var assetNames = [...]string{GateFile}
+
+//go:embed gate/main.go
+var assets embed.FS
+
+// FS returns the embedded asset tree. It is read-only; Read is the bounded accessor.
+func FS() fs.FS {
+	return assets
+}
+
+// Names returns the complete deterministic asset inventory.
+func Names() []string {
+	return slices.Clone(assetNames[:min(len(assetNames), MaxAssets)])
+}
+
+// PriorDigests returns a copy of the digests of every earlier text of a managed path.
+func PriorDigests() map[string]string {
+	return maps.Clone(priorDigests)
+}
+
+// Read returns one canonical asset without exposing mutable embedded storage.
+func Read(name string) ([]byte, error) {
+	return util.ReadEmbeddedAsset(assets, "apicompat", Names(), name)
+}

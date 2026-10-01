@@ -27,14 +27,17 @@ type harnessProfile struct {
 	present, absent []string
 }
 
-// adoptedHarness adopts a fresh acme/widget checkout carrying markers under profile and
-// returns the harness part of the AGENTS.md adoption wrote.
+// adoptedHarness adopts a fresh acme/widget checkout carrying markers, which git tracks, under
+// profile and returns the harness part of the AGENTS.md adoption wrote.
 func adoptedHarness(t *testing.T, profile string, markers map[string]string) string {
 	t.Helper()
 	repo := newTestRepo(t, "widget")
+	tracked := make([]string, 0, len(markers))
 	for rel, body := range markers {
 		mustWrite(t, filepath.Join(repo, filepath.FromSlash(rel)), body)
+		tracked = append(tracked, rel)
 	}
+	stageAdoptPaths(t, repo, tracked...)
 	adoptFrom(t, repo, profile, newAdoptLockSource(t))
 	return agentsHarness(t, repo)
 }

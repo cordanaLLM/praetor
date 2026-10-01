@@ -16,6 +16,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/managedasset"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
@@ -195,7 +196,7 @@ func TestManagedIgnoreFilesGolden(t *testing.T) {
 // CRLF, mixed endings, an existing block, a legacy unmarked rule, duplicate, nested,
 // unterminated, unmatched and indented markers, and the line bound on both sides.
 func tailBlockGoldenInputs() []struct{ name, text string } {
-	gitBlock, formatterBlock := ManagedGitIgnoreBlock(), ManagedFormatterIgnoreBlock(true)
+	gitBlock, formatterBlock := ManagedGitIgnoreBlock(), ManagedFormatterIgnoreBlock(DocumentationFamilies())
 	bound := strings.Repeat("x\n", 4095)
 	return []struct{ name, text string }{
 		{"empty", ""},
@@ -234,10 +235,14 @@ func TestManagedTailBlockMergeGolden(t *testing.T) {
 		merged, err := mergeGitIgnore(input.text)
 		recordTailBlockResult(&sb, "gitignore", merged, err)
 		for _, enabled := range []bool{true, false} {
-			merged, err = mergeManagedIgnore(input.text, enabled)
+			var families []managedasset.Family
+			if enabled {
+				families = DocumentationFamilies()
+			}
+			merged, err = mergeManagedIgnore(input.text, families)
 			recordTailBlockResult(&sb, fmt.Sprintf("formatter documentation=%t", enabled), merged, err)
 			recordTailBlockResult(&sb, fmt.Sprintf("verify formatter documentation=%t", enabled), "",
-				VerifyManagedFormatterIgnore(input.text, enabled))
+				VerifyManagedFormatterIgnore(input.text, families))
 		}
 	}
 	testsupport.AssertGolden(t, filepath.Join("testdata", "managed-family", "tail-block.golden"), sb.String())

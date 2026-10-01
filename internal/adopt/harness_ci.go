@@ -13,6 +13,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/flavor"
 	"github.com/cordanaLLM/praetor/internal/forge"
+	"github.com/cordanaLLM/praetor/internal/managedasset"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -27,11 +28,11 @@ type scaffoldedWorkflow struct {
 }
 
 // scaffoldedWorkflows lists the CI workflows this run leaves as adoption's rendering
-// (adoptedWorkflowFiles) with what each runs. The harness step runs before the documentation
+// (adoptedWorkflowFiles) with what each runs. The harness step runs before the managed family
 // and flavor steps, so it reads what they will write; what each workflow runs is read from its
 // body, never restated, so rule 5 cannot drift from the files (BUG-804).
-func (s *adoptSession) scaffoldedWorkflows(ctx context.Context, docsGate bool) ([]scaffoldedWorkflow, error) {
-	files, err := s.adoptedWorkflowFiles(ctx, docsGate)
+func (s *adoptSession) scaffoldedWorkflows(ctx context.Context, families []managedasset.Family) ([]scaffoldedWorkflow, error) {
+	files, err := s.adoptedWorkflowFiles(ctx, families)
 	if err != nil {
 		return nil, err
 	}
@@ -39,21 +40,30 @@ func (s *adoptSession) scaffoldedWorkflows(ctx context.Context, docsGate bool) (
 }
 
 // adoptedWorkflowFiles lists the CI workflows this run leaves as adoption's rendering, with
-// their bodies: the documentation gate's workflow while docsGate holds, which the documentation
-// step writes whenever the facet is declared (the step cannot be declined; only the facet turns
-// it off), and the workflows of the detected flavor that flavor apply leaves as its own
-// (plannedFlavorWorkflows), unless the flavor step is declined. The harness names what they run
-// and the actionlint-labels step declares the runner labels they need, both from this one list.
-func (s *adoptSession) adoptedWorkflowFiles(ctx context.Context, docsGate bool) ([]flavor.PlannedTemplate, error) {
-	var files []flavor.PlannedTemplate
-	if docsGate {
-		files = append(files, flavor.PlannedTemplate{Path: DocumentationWorkflowFile, Content: DocumentationWorkflow()})
-	}
+// their bodies: the hosted workflow of every managed asset family the active facets enable
+// (families), which the family's step writes whenever its facet is declared (the step cannot be
+// declined; only the facet turns it off), and the workflows of the detected flavor that flavor
+// apply leaves as its own (plannedFlavorWorkflows), unless the flavor step is declined. The
+// harness names what they run and the actionlint-labels step declares the runner labels they
+// need, both from this one list.
+func (s *adoptSession) adoptedWorkflowFiles(ctx context.Context, families []managedasset.Family) ([]flavor.PlannedTemplate, error) {
 	planned, err := s.plannedFlavorWorkflows(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return append(files, planned...), nil
+	return append(familyWorkflows(families), planned...), nil
+}
+
+// familyWorkflows returns the hosted workflow of each of families that has one, in their order,
+// with its locked body: what the family's step writes to its WorkflowFile.
+func familyWorkflows(families []managedasset.Family) []flavor.PlannedTemplate {
+	var files []flavor.PlannedTemplate
+	for index := 0; index < len(families) && index < managedasset.MaxFamilies; index++ {
+		if families[index].WorkflowFile != "" {
+			files = append(files, flavor.PlannedTemplate{Path: families[index].WorkflowFile, Content: families[index].Workflow})
+		}
+	}
+	return files
 }
 
 // plannedFlavorWorkflows lists the workflows the flavor step leaves as the own rendering of the

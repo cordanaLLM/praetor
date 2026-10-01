@@ -111,14 +111,19 @@ func auditDocumentationGate(ctx context.Context, manifest *config.Manifest, root
 	if err != nil {
 		return err
 	}
+	// The formatter inventory names the files of every enabled family, not only this gate's.
+	families, err := adopt.EnabledManagedFamilies(ctx, rootDir, manifest.Facets)
+	if err != nil {
+		return fmt.Errorf("[FAIL] Resolve managed asset families: %w", err)
+	}
 	if !documentationEnabled {
-		return auditDocumentationGateDisabled(ctx, rootDir, declines)
+		return auditDocumentationGateDisabled(ctx, rootDir, declines, families)
 	}
 	count, err := auditDocumentationAssets(ctx, rootDir)
 	if err != nil {
 		return err
 	}
-	if err := auditDocumentationLocalWiring(ctx, rootDir, declines); err != nil {
+	if err := auditDocumentationLocalWiring(ctx, rootDir, declines, families); err != nil {
 		return err
 	}
 	if err := auditDocumentationFilesCommitted(ctx, rootDir); err != nil {
@@ -146,7 +151,9 @@ func documentationSettingsSummary(policy *config.DocumentationPolicy) string {
 	return fmt.Sprintf("max_files %d, max_file_bytes %d, %s", policy.EffectiveMaxFiles(), policy.EffectiveMaxFileBytes(), exclusions)
 }
 
-func auditDocumentationGateDisabled(ctx context.Context, rootDir string, declines documentationDeclines) error {
+func auditDocumentationGateDisabled(
+	ctx context.Context, rootDir string, declines documentationDeclines, families []managedasset.Family,
+) error {
 	if err := auditDisabledDocumentationAssets(ctx, rootDir); err != nil {
 		return err
 	}
@@ -166,7 +173,7 @@ func auditDocumentationGateDisabled(ctx context.Context, rootDir string, decline
 	if declines.formatter {
 		return nil
 	}
-	if err := adopt.VerifyFormatterIgnore(ctx, rootDir, false); err != nil {
+	if err := adopt.VerifyFormatterIgnore(ctx, rootDir, families); err != nil {
 		return fmt.Errorf("[FAIL] Disabled documentation formatter inventory is stale: %w", err)
 	}
 	return nil
@@ -230,14 +237,19 @@ func auditDisabledDocumentationMakefile(ctx context.Context, rootDir string) err
 }
 
 func auditDisabledDocumentationRuleset(ctx context.Context, rootDir string) error {
+	return auditDisabledFamilyContexts(ctx, rootDir, adopt.DocumentationFamilies())
+}
+
+// auditDisabledFamilyContexts fails while the branch ruleset still requires the hosted context
+// of one of families, the families of a disabled facet.
+func auditDisabledFamilyContexts(ctx context.Context, rootDir string, families []managedasset.Family) error {
 	ruleset, exists, err := contextopt.ObserveSnapshot(ctx, filepath.Join(rootDir, ".github", "rulesets", "main.json"))
 	if err != nil {
-		return fmt.Errorf("[FAIL] Inspect disabled documentation ruleset: %w", err)
+		return fmt.Errorf("[FAIL] Inspect the branch ruleset of a disabled facet: %w", err)
 	}
 	if !exists {
 		return nil
 	}
-	families := adopt.DocumentationFamilies()
 	for index := 0; index < len(families) && index < managedasset.MaxFamilies; index++ {
 		family := families[index]
 		if family.StatusContext == "" {
@@ -275,14 +287,23 @@ func auditDocumentationAssets(ctx context.Context, rootDir string) (int, error) 
 // the same verdict (adopt.IgnoredPaths, the question adoption asks of every file it writes).
 // When git cannot answer, the gate fails closed, as the scratch ignore check before it does.
 func auditDocumentationFilesCommitted(ctx context.Context, rootDir string) error {
-	families := adopt.DocumentationFamilies()
+	return auditFamilyFilesCommitted(ctx, rootDir, adopt.DocumentationFamilies())
+}
+
+// auditFamilyFilesCommitted is auditDocumentationFilesCommitted for the managed paths of
+// families, the families of one facet; its failures name the first family's gate.
+func auditFamilyFilesCommitted(ctx context.Context, rootDir string, families []managedasset.Family) error {
+	if len(families) == 0 {
+		return nil
+	}
+	gate := familyGate(families[0])
 	rels := make([]string, 0)
 	for index := 0; index < len(families) && index < managedasset.MaxFamilies; index++ {
 		rels = append(rels, families[index].ManagedPaths()...)
 	}
 	ignored, err := adopt.IgnoredPaths(ctx, rootDir, rels)
 	if err != nil {
-		return fmt.Errorf("[FAIL] cannot prove git commits the documentation gate's files: %w", err)
+		return fmt.Errorf("[FAIL] cannot prove git commits the %s gate's files: %w", families[0].Kind, err)
 	}
 	if len(ignored) == 0 {
 		return nil
@@ -291,8 +312,8 @@ func auditDocumentationFilesCommitted(ctx context.Context, rootDir string) error
 	for _, file := range ignored {
 		found = append(found, fmt.Sprintf("%s (ignored by %s; add %s after that rule)", file.Path, file.Rule, file.Negation))
 	}
-	return fmt.Errorf("[FAIL] Documentation gate files are ignored by git and not tracked, so a clean checkout lacks them: %s; "+
-		"re-include and commit them", strings.Join(found, ", "))
+	return fmt.Errorf("[FAIL] %s files are ignored by git and not tracked, so a clean checkout lacks them: %s; "+
+		"re-include and commit them", gate, strings.Join(found, ", "))
 }
 
 // auditManagedFamily compares every asset of family, then its workflow, with the canonical
@@ -312,7 +333,9 @@ func auditManagedFamily(ctx context.Context, rootDir string, family managedasset
 	return len(names), nil
 }
 
-func auditDocumentationLocalWiring(ctx context.Context, rootDir string, declines documentationDeclines) error {
+func auditDocumentationLocalWiring(
+	ctx context.Context, rootDir string, declines documentationDeclines, families []managedasset.Family,
+) error {
 	if !declines.makefile {
 		if err := auditDocumentationMakefileWiring(ctx, rootDir); err != nil {
 			return err
@@ -327,7 +350,7 @@ func auditDocumentationLocalWiring(ctx context.Context, rootDir string, declines
 	if declines.formatter {
 		return nil
 	}
-	if err := adopt.VerifyFormatterIgnore(ctx, rootDir, true); err != nil {
+	if err := adopt.VerifyFormatterIgnore(ctx, rootDir, families); err != nil {
 		return fmt.Errorf("[FAIL] Documentation formatter inventory is stale: %w", err)
 	}
 	return nil

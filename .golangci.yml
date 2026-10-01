@@ -10,6 +10,10 @@ version: "2"
 run:
   timeout: 10m
   tests: true
+  # tools/apicompat/gate/main.go builds only under this tag, which keeps the gate out of an
+  # adopting module's ./... patterns; the tag selects that one file and nothing else here.
+  build-tags:
+    - apicompatgate
 
 linters:
   default: none
@@ -113,6 +117,12 @@ linters:
     rules:
       # internal/util owns the audited exec wrapper that everything else must use.
       - path: internal/util/
+        linters:
+          - forbidigo
+      # The API compatibility gate is a standalone program an adopting repository runs with
+      # go run, so it cannot import internal/util; each of its commands is exec.CommandContext
+      # under a deadline of its own (tools/apicompat/gate/main.go).
+      - path: tools/apicompat/gate/
         linters:
           - forbidigo
       # Tests build sandboxed git and PATH fixtures, and table-driven 3D tests are long

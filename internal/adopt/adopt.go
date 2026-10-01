@@ -409,6 +409,7 @@ func adoptSteps() []namedStep {
 		{"agent-harness", reconcileAgentHarness},
 		{"dev-container", reconcileDevContainer},
 		{"documentation-gate", reconcileDocumentationGate},
+		{"api-compatibility-gate", reconcileAPICompatibilityGate},
 		{"makefile", reconcileMakefile},
 		// After makefile: an editor template offers `make verify-all` only when the Makefile
 		// holds that target. Run before it, a first adoption rendered its editor files without

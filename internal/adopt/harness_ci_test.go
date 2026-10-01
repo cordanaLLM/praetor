@@ -34,47 +34,57 @@ func workflowPaths(workflows []scaffoldedWorkflow) []string {
 	return paths
 }
 
-// ciSession is a session over a Go library checkout with the documentation facet declared.
+// ciSession is a session over a Go library checkout, its go.mod tracked, with the documentation
+// facet declared.
 func ciSession(t *testing.T, declined ...string) *adoptSession {
 	t.Helper()
 	repo := newTestRepo(t, "widget")
-	mustWrite(t, filepath.Join(repo, "go.mod"), "module example.com/widget\n\ngo 1.27\n")
+	trackGoModule(t, repo, "go.mod")
 	mustWrite(t, filepath.Join(repo, "internal", "widget.go"), "package widget\n")
 	s := identitySession(t, repo)
 	s.declined = declined
 	return s
 }
 
-// TestScaffoldedWorkflowsReadWhatAdoptionWrites: rule 5 names the workflows the documentation
+// TestScaffoldedWorkflowsReadWhatAdoptionWrites: rule 5 names the workflows the managed family
 // and flavor steps write, with the commands their bodies run. Positive: a documented Go library
-// gets the documentation gate and the flavor's ci.yml. Negative: a declined flavor step and a
+// with a public API contract gets the documentation gate, the API compatibility gate and the
+// flavor's ci.yml. Negative: a declined flavor step and a
 // repository-owned ci.yml are not adoption's, so neither is named. Boundary: with no facet and
 // no flavor nothing is scaffolded and rule 5 says the gates run local only.
 func TestScaffoldedWorkflowsReadWhatAdoptionWrites(t *testing.T) {
 	s := ciSession(t)
-	workflows, err := s.scaffoldedWorkflows(t.Context(), true)
+	families, err := EnabledManagedFamilies(t.Context(), s.repoPath, []string{"docs:seo-portal", "api:public-contract"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := workflowPaths(workflows); !slices.Equal(got, []string{DocumentationWorkflowFile, ".github/workflows/ci.yml"}) {
-		t.Fatalf("scaffolded workflows = %q", got)
+	workflows, err := s.scaffoldedWorkflows(t.Context(), families)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !slices.Equal(runLabels(workflows[1].runs), []string{"go vet ./...", "go test -race ./..."}) {
-		t.Errorf("ci.yml runs = %+v", workflows[1].runs)
+	want := []string{DocumentationWorkflowFile, APICompatibilityWorkflowFile, ".github/workflows/ci.yml"}
+	if got := workflowPaths(workflows); !slices.Equal(got, want) {
+		t.Fatalf("scaffolded workflows = %q, want %q", got, want)
+	}
+	if !slices.Equal(runLabels(workflows[1].runs), []string{`go run tools/apicompat/gate/main.go -base="$BASE"`}) {
+		t.Errorf("%s runs = %+v", APICompatibilityWorkflowFile, workflows[1].runs)
+	}
+	if !slices.Equal(runLabels(workflows[2].runs), []string{"go vet ./...", "go test -race ./..."}) {
+		t.Errorf("ci.yml runs = %+v", workflows[2].runs)
 	}
 
-	declined, err := ciSession(t, "working-dir-and-flavor").scaffoldedWorkflows(t.Context(), false)
+	declined, err := ciSession(t, "working-dir-and-flavor").scaffoldedWorkflows(t.Context(), nil)
 	if err != nil || len(declined) != 0 {
 		t.Errorf("declined flavor step still scaffolds %q (%v)", workflowPaths(declined), err)
 	}
 	owned := ciSession(t)
 	mustWrite(t, filepath.Join(owned.repoPath, ".github", "workflows", "ci.yml"), "name: Own\non: push\njobs:\n  own:\n    runs-on: ubuntu-latest\n    steps:\n      - run: make ci\n")
-	if got, err := owned.scaffoldedWorkflows(t.Context(), false); err != nil || len(got) != 0 {
+	if got, err := owned.scaffoldedWorkflows(t.Context(), nil); err != nil || len(got) != 0 {
 		t.Errorf("repository-owned ci.yml named as scaffolded: %q (%v)", workflowPaths(got), err)
 	}
 
 	bare := identitySession(t, newTestRepo(t, "bare"))
-	none, err := bare.scaffoldedWorkflows(t.Context(), false)
+	none, err := bare.scaffoldedWorkflows(t.Context(), nil)
 	if err != nil || len(none) != 0 {
 		t.Fatalf("bare repository scaffolds %q (%v)", workflowPaths(none), err)
 	}

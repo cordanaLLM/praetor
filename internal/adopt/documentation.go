@@ -25,10 +25,7 @@ func DocumentationEnabled(facets []string) (bool, error) {
 }
 
 func documentationEnabledForSession(s *adoptSession) (bool, error) {
-	if s.policy != nil && s.policy.Manifest != nil {
-		return DocumentationEnabled(s.policy.Manifest.Facets)
-	}
-	return DocumentationEnabled(s.facets)
+	return facetDeclaredForSession(s, managedasset.DocumentationFacet)
 }
 
 // DocumentationWorkflow renders the dedicated, required hosted documentation gate.
@@ -122,8 +119,14 @@ func preflightDocumentationAttributes(ctx context.Context, s *adoptSession) erro
 }
 
 func preflightDocumentationRuleset(ctx context.Context, s *adoptSession) error {
-	// A declined branch ruleset is operator-owned: adoption never rewrites it, so the
-	// documentation transition neither inspects it nor asks --force to rewrite it.
+	return preflightContextRemoval(ctx, s, DocumentationFamilies())
+}
+
+// preflightContextRemoval refuses, before anything is removed, an unforced facet disable that
+// would drop the hosted context of one of families while the branch ruleset still requires it.
+func preflightContextRemoval(ctx context.Context, s *adoptSession, families []managedasset.Family) error {
+	// A declined branch ruleset is operator-owned: adoption never rewrites it, so the facet
+	// transition neither inspects it nor asks --force to rewrite it.
 	rulesetDeclined, err := ArtifactDeclined(s.declined, "branch-ruleset")
 	if err != nil || rulesetDeclined {
 		return err
@@ -134,19 +137,18 @@ func preflightDocumentationRuleset(ctx context.Context, s *adoptSession) error {
 	}
 	rulesetData, rulesetExists, err := contextopt.ObserveSnapshot(ctx, ruleset)
 	if err != nil {
-		return fmt.Errorf("inspect branch ruleset before documentation disable: %w", err)
+		return fmt.Errorf("inspect branch ruleset before a facet disable: %w", err)
 	}
 	if !rulesetExists {
 		return nil
 	}
-	return refuseDocumentationContextRemoval(rulesetData, s.opts.Force)
+	return refuseContextRemoval(rulesetData, s.opts.Force, families)
 }
 
-// refuseDocumentationContextRemoval fails an unforced disable while the branch ruleset still
-// requires the hosted context of a documentation family. The ruleset is parsed under --force
-// too, so a malformed one is reported rather than rewritten blind.
-func refuseDocumentationContextRemoval(ruleset []byte, force bool) error {
-	families := DocumentationFamilies()
+// refuseContextRemoval fails an unforced disable while the branch ruleset still requires the
+// hosted context of one of families. The ruleset is parsed under --force too, so a malformed
+// one is reported rather than rewritten blind.
+func refuseContextRemoval(ruleset []byte, force bool, families []managedasset.Family) error {
 	for index := 0; index < len(families) && index < managedasset.MaxFamilies; index++ {
 		statusContext := families[index].StatusContext
 		if statusContext == "" {
@@ -191,7 +193,7 @@ func preflightDocumentationFormatter(ctx context.Context, s *adoptSession) error
 		return fmt.Errorf("inspect formatter inventory before documentation disable: %w", err)
 	}
 	if exists {
-		if _, err := mergeManagedIgnore(string(data), false); err != nil {
+		if _, err := mergeManagedIgnore(string(data), nil); err != nil {
 			return fmt.Errorf("formatter inventory blocks documentation disable: %w", err)
 		}
 	}

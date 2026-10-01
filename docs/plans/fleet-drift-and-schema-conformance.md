@@ -88,9 +88,10 @@ One repository owns a payload schema and its decoder; other repositories decode 
 payload with their own implementations, and nothing checks that they agree. The
 `api:public-contract` facet (`.config/archetypes/facets/api-public.yaml`) supplies branch
 protection, linter names and a devcontainer feature; in code it is a default facet name
-(`internal/config/facets.go`) and a devcontainer case (`internal/devcontainer/devcontainer.go`).
-Issues #357 (an API compatibility gate inside one repository) and #353 (facet linters that
-never run) stay within one repository. `praetorctl needs contract export` snapshots framework
+(`internal/config/facets.go`), a devcontainer case (`internal/devcontainer/devcontainer.go`) and
+the facet of the Go API compatibility gate, which compares each Go module's exported API inside
+one repository (#357, [guide](../guides/api-compatibility.md)). Issue #353 (facet linters that
+never run) also stays within one repository. `praetorctl needs contract export` snapshots framework
 capabilities and is unrelated.
 
 **Owner.** The owning repository declares the schema id and a vector manifest, data only:

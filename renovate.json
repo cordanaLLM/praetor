@@ -29,7 +29,8 @@
   ],
   "github-actions": {
     "managerFilePatterns": [
-      "/^tools/markdownlint/assets\\.go$/"
+      "/^tools/markdownlint/assets\\.go$/",
+      "/^tools/apicompat/assets\\.go$/"
     ]
   },
   "pip-compile": {
@@ -54,6 +55,12 @@
       "matchManagers": ["github-actions"],
       "matchFileNames": [".github/workflows/praetor-docs.yml", "tools/markdownlint/assets.go"],
       "groupName": "documentation gate actions"
+    },
+    {
+      "description": "API compatibility gate: audit locks .github/workflows/praetor-api.yml, here and in every adopted repository, to the template in tools/apicompat/assets.go. The github-actions manager reads both, and one branch moves their SHA pins and release comments together. The branch fails CI until the outgoing workflow text is recorded in priorDigests and internal/managedasset/testdata/shipped (docs/guides/api-compatibility.md), so adopters holding it still refresh without --force.",
+      "matchManagers": ["github-actions"],
+      "matchFileNames": [".github/workflows/praetor-api.yml", "tools/apicompat/assets.go"],
+      "groupName": "API compatibility gate actions"
     },
     {
       "description": "Starlight preset: package.json stays on exact versions, package-lock.json moves with them, and CI builds the preset from the lock with npm ci.",

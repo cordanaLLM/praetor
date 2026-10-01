@@ -136,12 +136,12 @@ func scanText(text string, frontMatter bool) ([]line, scanner) {
 }
 
 // frontMatterLines returns how many lines a leading YAML front matter block takes, 0 when
-// the text opens with none. util.MarkdownFrontMatterEnd finds the delimiters; the block
+// the text opens with none. util.FrontMatterEnd finds the delimiters; the block
 // between them must also decode as a YAML mapping or be written in its shape
 // (frontMatterShaped), so a thematic break above a paragraph and a second break never
 // passes for front matter and hides that paragraph from the lint.
 func frontMatterLines(raws []string) int {
-	end := util.MarkdownFrontMatterEnd(raws)
+	end, _ := util.FrontMatterEnd(raws, len(raws))
 	if end == 0 {
 		return 0
 	}

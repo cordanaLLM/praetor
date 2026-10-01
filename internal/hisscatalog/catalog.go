@@ -204,7 +204,7 @@ var catalog = []Rule{
 		ID:            "HISS-14",
 		Title:         "Append-Only ABI & Migration Footers",
 		Specification: "Public APIs are append-only. Breaking changes require conventional commit breaking indicator (!) and mandatory Migration: footer.",
-		Enforcement:   "praetorctl forge check-commits in CI (breaking-change marker and Migration: footer).",
+		Enforcement:   "praetorctl forge check-commits in CI rejects a breaking-change marker without a Migration: footer, whatever the language. Where api:public-contract is declared and git tracks a go.mod, the Go API Compatibility workflow (.github/workflows/praetor-api.yml) runs tools/apicompat/gate/main.go, which compares the exported API of every Go module with the base using go-apidiff: before a v1 root release tag it reports an incompatible change, from v1 on it rejects one, and a comparison that did not run fails. No other language's API is compared.",
 		FailureAction: "PR blocker.",
 		Scope:         "append-only ABI",
 		Directive:     []Clause{{Text: "public API append-only; breaking change = `!` subject + `Migration:` footer"}},

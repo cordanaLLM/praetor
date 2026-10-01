@@ -16,6 +16,7 @@
 package managedasset
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -26,6 +27,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
+	apiassets "github.com/cordanaLLM/praetor/tools/apicompat"
 	figureassets "github.com/cordanaLLM/praetor/tools/figures"
 	markdownassets "github.com/cordanaLLM/praetor/tools/markdownlint"
 )
@@ -41,6 +43,8 @@ const (
 	MaxAttributes = 8
 	// DocumentationFacet is the manifest facet that enables documentation governance.
 	DocumentationFacet = "docs:seo-portal"
+	// APIContractFacet is the manifest facet that enables the Go API compatibility gate.
+	APIContractFacet = "api:public-contract"
 )
 
 // Family is one managed asset family.
@@ -56,6 +60,10 @@ type Family struct {
 	WorkflowNoun string
 	// Facet is the manifest facet that enables the family.
 	Facet string
+	// Applies reports whether the family applies to the repository at repoPath once Facet is
+	// declared; nil applies it to every such repository. Adoption emits, and audit locks, only a
+	// family that applies (Enabled), and treats a declared family that does not as disabled.
+	Applies func(ctx context.Context, repoPath string) (bool, error)
 	// Directory is the repository-relative home of the assets, in slash form.
 	Directory string
 	// Source is the Go file below Directory carrying the go:embed directive.
@@ -99,7 +107,36 @@ type Family struct {
 // Families returns the registry in its fixed order: the order adoption emits and audit
 // checks the families in.
 func Families() []Family {
-	return []Family{markdown(), figureEngine()}
+	return []Family{markdown(), figureEngine(), apiCompatibility()}
+}
+
+// apiCompatibility is the Go API compatibility gate of the api:public-contract facet (#357):
+// the gate program under tools/apicompat and the hosted workflow that runs it under the one
+// Go API Compatibility context. tools/apicompat is a name a repository may already use, so
+// adoption refuses to overwrite a file it finds there first. The program is a .go file, which
+// gofmt and audit both accept in one consistent line-ending style, so it declares no attribute
+// rule. The gate compares Go modules alone, so the family applies only where git tracks a go.mod
+// the gate discovers (apiassets.TracksModule); a repository declaring the facet without one gets
+// no gate, and audit says no API compatibility checker runs for its languages.
+func apiCompatibility() Family {
+	return Family{
+		Name:          "API compatibility",
+		Kind:          "API compatibility",
+		AssetNoun:     "API compatibility gate program",
+		WorkflowNoun:  "API compatibility workflow",
+		Facet:         APIContractFacet,
+		Applies:       apiassets.TracksModule,
+		Directory:     apiassets.Directory,
+		Source:        apiassets.SourceFile,
+		FS:            apiassets.FS(),
+		Assets:        apiassets.Names(),
+		MaxAssets:     apiassets.MaxAssets,
+		WorkflowFile:  apiassets.WorkflowFile,
+		StatusContext: apiassets.StatusContext,
+		Workflow:      apiassets.Workflow,
+		RefuseForeign: true,
+		Prior:         apiassets.PriorDigests(),
+	}
 }
 
 func markdown() Family {
@@ -154,6 +191,19 @@ func figureEngine() Family {
 		VendoredLicense: figureassets.VendoredLicense,
 		Prior:           figureassets.PriorDigests(),
 	}
+}
+
+// Enabled reports whether the family is enabled for the repository at repoPath: declared tells
+// whether its Facet is declared, and a declared family is enabled while it applies (Applies).
+func (f Family) Enabled(ctx context.Context, repoPath string, declared bool) (bool, error) {
+	if !declared || f.Applies == nil {
+		return declared, nil
+	}
+	applies, err := f.Applies(ctx, repoPath)
+	if err != nil {
+		return false, fmt.Errorf("resolve whether the %s family applies to %s: %w", f.Name, repoPath, err)
+	}
+	return applies, nil
 }
 
 // ForFacet returns the families facet enables, in registry order.

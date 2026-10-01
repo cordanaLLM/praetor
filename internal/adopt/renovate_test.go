@@ -20,9 +20,17 @@ import (
 	"github.com/cordanaLLM/praetor/internal/clientjson"
 )
 
-// renovateManagedFixturePaths are the documentation family's managed paths, spelled out
-// rather than read from the code under test.
-var renovateManagedFixturePaths = []string{
+// renovateManagedFixturePaths are the managed paths of the families the default facets
+// enable in a repository whose go.mod git tracks, the documentation families' and then the API
+// compatibility family's (apiCompatibilityFixturePaths), spelled out rather than read from the
+// code under test.
+var renovateManagedFixturePaths = append(slices.Clone(documentationFixturePaths), apiCompatibilityFixturePaths...)
+
+// apiCompatibilityFixturePaths are the managed paths of the api:public-contract family.
+var apiCompatibilityFixturePaths = []string{".github/workflows/praetor-api.yml", "tools/apicompat/gate/main.go"}
+
+// documentationFixturePaths are the managed paths of the docs:seo-portal families.
+var documentationFixturePaths = []string{
 	".github/workflows/praetor-docs.yml",
 	"tools/markdownlint/package.json",
 	"tools/markdownlint/package-lock.json",
@@ -97,6 +105,7 @@ func memberNames(root clientjson.Object) []string {
 // included; the rerun, and a rerun after a formatter compacted the file, change nothing.
 func TestRenovateIgnorePositiveDeclaresManagedFilesOnce(t *testing.T) {
 	repo := newTestRepo(t, "renovate-positive")
+	trackGoModule(t, repo, "go.mod")
 	path := filepath.Join(repo, "renovate.json")
 	mustWrite(t, path, adopterRenovateConfig)
 	opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo}
@@ -287,6 +296,7 @@ func TestFindRenovateConfigNegativePropagatesCancellation(t *testing.T) {
 // the rule over the other's files only, and the origin of both removes a rule it added before.
 func TestRenovateIgnoreBoundarySkipsTheFamilyOrigin(t *testing.T) {
 	markdownOrigin := newTestRepo(t, "renovate-markdown-origin")
+	trackGoModule(t, markdownOrigin, "go.mod")
 	mustWrite(t, filepath.Join(markdownOrigin, "tools", "markdownlint", "assets.go"), "package markdownlint\n")
 	mustWrite(t, filepath.Join(markdownOrigin, "renovate.json"), "{\"extends\": [\"config:recommended\"]}\n")
 	if _, err := Adopt(t.Context(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: markdownOrigin}); err != nil {
@@ -294,7 +304,7 @@ func TestRenovateIgnoreBoundarySkipsTheFamilyOrigin(t *testing.T) {
 	}
 	if _, managed, _ := renovateTestRules(t, mustRead(t, filepath.Join(markdownOrigin, "renovate.json"))); len(managed) != 1 ||
 		!slices.Equal(managed[0].MatchFileNames, renovateManagedFixturePaths[6:]) {
-		t.Fatalf("the Markdown origin's rule = %+v, want the figure engine's files only", managed)
+		t.Fatalf("the Markdown origin's rule = %+v, want the figure engine's and the API gate's files only", managed)
 	}
 	repo := newTestRepo(t, "renovate-origin")
 	path := filepath.Join(repo, "renovate.json")
@@ -305,6 +315,7 @@ func TestRenovateIgnoreBoundarySkipsTheFamilyOrigin(t *testing.T) {
 	mustWrite(t, path, string(withRule))
 	mustWrite(t, filepath.Join(repo, "tools", "markdownlint", "assets.go"), "package markdownlint\n")
 	mustWrite(t, filepath.Join(repo, "tools", "figures", "assets.go"), "package figures\n")
+	mustWrite(t, filepath.Join(repo, "tools", "apicompat", "assets.go"), "package apicompat\n")
 	opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo}
 	report, err := Adopt(t.Context(), opts)
 	if err != nil {
@@ -394,7 +405,7 @@ const adopterOwnRenovateRule = `{"matchManagers": ["github-actions"], "pinDigest
 
 // equivalentRenovateRule is an adopter's own rule with the managed entry's effect: globs that
 // cover every managed path, and enabled false.
-const equivalentRenovateRule = `{"description": "keep update bots off vendored lint tooling", "matchFileNames": [".github/workflows/praetor-*.yml", "tools/markdownlint/**", "tools/figures/**"], "enabled": false}`
+const equivalentRenovateRule = `{"description": "keep update bots off vendored lint tooling", "matchFileNames": [".github/workflows/praetor-*.yml", "tools/markdownlint/**", "tools/figures/**", "tools/apicompat/**"], "enabled": false}`
 
 // adopterRenovateConfigWith returns adopterRenovateConfig with rules appended to its own rule.
 func adopterRenovateConfigWith(rules ...string) string {
@@ -447,6 +458,7 @@ func TestRenovateIgnorePositiveAcceptsAnEquivalentAdopterRule(t *testing.T) {
 func TestRenovateIgnoreNegativeDeclaresOnlyUncoveredPaths(t *testing.T) {
 	partial := `{"matchFileNames": ["tools/markdownlint/**", "tools/figures/**"], "enabled": false}`
 	repo := newTestRepo(t, "renovate-partial")
+	trackGoModule(t, repo, "go.mod")
 	path := filepath.Join(repo, "renovate.json")
 	mustWrite(t, path, adopterRenovateConfigWith(partial))
 	opts := AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo}
@@ -456,13 +468,14 @@ func TestRenovateIgnoreNegativeDeclaresOnlyUncoveredPaths(t *testing.T) {
 	}
 	got := mustRead(t, path)
 	_, managed, rules := renovateTestRules(t, got)
-	if len(managed) != 1 || managed[0].Enabled || !slices.Equal(managed[0].MatchFileNames, renovateManagedFixturePaths[:1]) {
-		t.Fatalf("want one disabled entry over the uncovered workflow only, got %+v\n%s", managed, got)
+	uncovered := append([]string{renovateManagedFixturePaths[0]}, apiCompatibilityFixturePaths...)
+	if len(managed) != 1 || managed[0].Enabled || !slices.Equal(managed[0].MatchFileNames, uncovered) {
+		t.Fatalf("want one disabled entry over the uncovered workflows and gate only, got %+v\n%s", managed, got)
 	}
 	if len(rules) != 3 || !sameJSON(rules[0], jsontext.Value(adopterOwnRenovateRule)) || !sameJSON(rules[1], jsontext.Value(partial)) {
 		t.Fatalf("adopter rules reordered or changed:\n%s", got)
 	}
-	if detail := findActionDetail(report.ActionDetails, "renovate.json"); !strings.Contains(detail, fmt.Sprintf("the 1 of %d Praetor-managed files", len(renovateManagedFixturePaths))) {
+	if detail := findActionDetail(report.ActionDetails, "renovate.json"); !strings.Contains(detail, fmt.Sprintf("the %d of %d Praetor-managed files", len(uncovered), len(renovateManagedFixturePaths))) {
 		t.Fatalf("partial declaration not reported: %q", detail)
 	}
 	if _, err := Adopt(t.Context(), opts); err != nil || mustRead(t, path) != got {
@@ -491,7 +504,7 @@ func TestUncoveredRenovatePathsBoundary(t *testing.T) {
 	}{
 		"globstar covers every path":     {`[{"matchFileNames": ["**"], "enabled": false}]`, nil},
 		"star is every file":             {`[{"description": "all", "matchFileNames": ["*"], "enabled": false}]`, nil},
-		"rules cover together":           {`[{"matchFileNames": ["tools/markdownlint/*"], "enabled": false}, {"matchFileNames": [".github/**/praetor-docs.yml"], "enabled": false}, {"matchFileNames": ["tools/figures/**"], "enabled": false}]`, nil},
+		"rules cover together":           {`[{"matchFileNames": ["tools/markdownlint/*"], "enabled": false}, {"matchFileNames": [".github/**/praetor-docs.yml", ".github/**/praetor-api.yml"], "enabled": false}, {"matchFileNames": ["tools/figures/**", "tools/apicompat/*/main.go"], "enabled": false}]`, nil},
 		"earlier re-enabling rule":       {`[{"matchPackageNames": ["left-pad"], "enabled": true}, {"matchFileNames": ["**"], "enabled": false}]`, nil},
 		"patterns at the bound":          {renovatePatternRule(maxRenovatePatterns), nil},
 		"enabled true":                   {`[{"matchFileNames": ["**"], "enabled": true}]`, all},
@@ -507,7 +520,7 @@ func TestUncoveredRenovatePathsBoundary(t *testing.T) {
 		"empty pattern list":             {`[{"matchFileNames": [], "enabled": false}]`, all},
 		"patterns past the bound":        {renovatePatternRule(maxRenovatePatterns + 1), all},
 		"managed entry":                  {`[` + string(managed) + `]`, all},
-		"trailing globstar below a file": {`[{"matchFileNames": [".github/workflows/praetor-docs.yml/**", "tools/markdownlint/**", "tools/figures/**"], "enabled": false}]`, all[:1]},
+		"trailing globstar below a file": {`[{"matchFileNames": [".github/workflows/praetor-docs.yml/**", ".github/workflows/praetor-api.yml", "tools/markdownlint/**", "tools/figures/**", "tools/apicompat/**"], "enabled": false}]`, all[:1]},
 	} {
 		var rules []jsontext.Value
 		if err := json.Unmarshal([]byte(tc.rules), &rules); err != nil {

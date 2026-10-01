@@ -55,7 +55,7 @@ func MarkdownFindings(md string) []string {
 	if len(lines) > maxMarkdownLines {
 		return []string{fmt.Sprintf("document exceeds %d lines", maxMarkdownLines)}
 	}
-	start := util.MarkdownFrontMatterEnd(lines)
+	start, _ := util.FrontMatterEnd(lines, maxMarkdownLines)
 	scan := &markdownScan{lines: lines[start:], offset: start, disabled: map[string]bool{}}
 	if !strings.HasSuffix(md, "\n") || strings.HasSuffix(md, "\n\n") {
 		scan.report(len(scan.lines)-1, "MD047", "document must end with exactly one newline")

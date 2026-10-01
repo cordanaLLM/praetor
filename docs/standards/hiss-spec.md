@@ -80,6 +80,9 @@ Production software must never panic or unwrap:
   block or top-level `def main`. The assert family and exit wrappers such as `log.Fatal` are
   recorded as gaps in [`.config/hiss/coverage.yaml`](https://github.com/cordanaLLM/praetor/blob/main/.config/hiss/coverage.yaml), not
   enforced.
+- Go `panic(http.ErrAbortHandler)` is allowed anywhere: `net/http` documents it as the way a
+  handler aborts its response, and the server recovers it. Only the exact `net/http` sentinel
+  counts; [rule matching](hiss-rule-matching.md#go-the-nethttp-abort-sentinel) lists the shapes.
 
 ### HISS-08: Static Determinism & Banned Functions
 

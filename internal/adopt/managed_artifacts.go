@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/managedasset"
 )
 
 // Adoption writes files whose bytes it later compares, and until now it told the adopter's
@@ -40,11 +41,13 @@ const (
 // FormatterIgnoreFile is the formatter inventory reconciled by adoption when present.
 const FormatterIgnoreFile = prettierIgnoreFile
 
-// managedArtifacts returns every path adoption writes and later compares as owned content.
+// managedArtifacts returns every path adoption writes and later compares as owned content: the
+// fixed set and the managed paths of families, the managed asset families the active facets
+// enable (EnabledManagedFamilies).
 //
 // This is the single source for that set. The paths were previously only constants scattered
 // across the package, which is why nothing could enumerate them for any other purpose.
-func managedArtifacts(documentationEnabled bool) []string {
+func managedArtifacts(families []managedasset.Family) []string {
 	paths := []string{
 		manifestFile,
 		lockFile,
@@ -59,9 +62,7 @@ func managedArtifacts(documentationEnabled bool) []string {
 		auditorAgentFile,
 		gatekeeperFile,
 	}
-	if documentationEnabled {
-		paths = append(paths, DocumentationAssetPaths()...)
-	}
+	paths = append(paths, managedPathsOf(families)...)
 	sort.Strings(paths)
 	return paths
 }
@@ -78,9 +79,10 @@ const (
 		"# them fails the gate with an error that reads like a hand edit.\n"
 )
 
-// ManagedFormatterIgnoreBlock renders the exact formatter inventory for the active facets.
-func ManagedFormatterIgnoreBlock(documentationEnabled bool) string {
-	return renderFormatterIgnoreBlock(managedFormatterHeader, documentationEnabled)
+// ManagedFormatterIgnoreBlock renders the exact formatter inventory for the managed asset
+// families the active facets enable.
+func ManagedFormatterIgnoreBlock(families []managedasset.Family) string {
+	return renderFormatterIgnoreBlock(managedFormatterHeader, families)
 }
 
 // formatterTailBlock is the managed-artifact block adoption owns at the tail of the
@@ -92,9 +94,9 @@ func formatterTailBlock() managedTailBlock {
 	}
 }
 
-func renderFormatterIgnoreBlock(header string, documentationEnabled bool) string {
+func renderFormatterIgnoreBlock(header string, families []managedasset.Family) string {
 	lines := strings.Split(strings.TrimSuffix(header, "\n"), "\n")
-	return formatterTailBlock().render(append(lines, managedArtifacts(documentationEnabled)...))
+	return formatterTailBlock().render(append(lines, managedArtifacts(families)...))
 }
 
 // mergeManagedIgnore returns the ignore file content with the managed block present exactly
@@ -103,26 +105,27 @@ func renderFormatterIgnoreBlock(header string, documentationEnabled bool) string
 // A re-run replaces the block rather than appending a second one, so the file converges instead
 // of growing. An adopter's own entries are never touched: adoption owns the delimited region and
 // nothing else.
-func mergeManagedIgnore(existing string, documentationEnabled bool) (string, error) {
-	return mergeFormatterIgnoreBlock(existing, ManagedFormatterIgnoreBlock(documentationEnabled))
+func mergeManagedIgnore(existing string, families []managedasset.Family) (string, error) {
+	return mergeFormatterIgnoreBlock(existing, ManagedFormatterIgnoreBlock(families))
 }
 
 func mergeFormatterIgnoreBlock(existing, block string) (string, error) {
 	return formatterTailBlock().merge(existing, block)
 }
 
-// VerifyManagedFormatterIgnore accepts only the converged managed block for active facets, or
-// the historical rendering of the pre-documentation inventory that differs only in its comment.
-func VerifyManagedFormatterIgnore(existing string, documentationEnabled bool) error {
-	merged, err := mergeManagedIgnore(existing, documentationEnabled)
+// VerifyManagedFormatterIgnore accepts only the converged managed block for the enabled
+// families, or, while no family is enabled, the historical rendering of the pre-documentation
+// inventory that differs only in its comment.
+func VerifyManagedFormatterIgnore(existing string, families []managedasset.Family) error {
+	merged, err := mergeManagedIgnore(existing, families)
 	if err != nil {
 		return err
 	}
 	if merged == existing {
 		return nil
 	}
-	if !documentationEnabled {
-		historical, err := mergeFormatterIgnoreBlock(existing, renderFormatterIgnoreBlock(historicalFormatterHeader, false))
+	if len(families) == 0 {
+		historical, err := mergeFormatterIgnoreBlock(existing, renderFormatterIgnoreBlock(historicalFormatterHeader, nil))
 		if err != nil {
 			return err
 		}
@@ -135,7 +138,7 @@ func VerifyManagedFormatterIgnore(existing string, documentationEnabled bool) er
 
 // VerifyFormatterIgnore checks the facet-aware inventory when Prettier is configured or an
 // ignore file already exists. A configured formatter without the managed ignore file is stale.
-func VerifyFormatterIgnore(ctx context.Context, repoPath string, documentationEnabled bool) error {
+func VerifyFormatterIgnore(ctx context.Context, repoPath string, families []managedasset.Family) error {
 	full, err := repoFile(repoPath, prettierIgnoreFile)
 	if err != nil {
 		return err
@@ -154,7 +157,7 @@ func VerifyFormatterIgnore(ctx context.Context, repoPath string, documentationEn
 		}
 		return nil
 	}
-	return VerifyManagedFormatterIgnore(string(data), documentationEnabled)
+	return VerifyManagedFormatterIgnore(string(data), families)
 }
 
 // reconcileFormatterIgnore declares the managed artifacts to the adopter's formatter.
@@ -175,11 +178,11 @@ func reconcileFormatterIgnore(ctx context.Context, s *adoptSession) error {
 	if err != nil || !applicable {
 		return err
 	}
-	documentationEnabled, err := documentationEnabledForSession(s)
+	families, err := enabledManagedFamiliesForSession(ctx, s)
 	if err != nil {
-		return fmt.Errorf("resolve documentation facet for formatter inventory: %w", err)
+		return fmt.Errorf("resolve the managed families for the formatter inventory: %w", err)
 	}
-	merged, err := mergeManagedIgnore(string(data), documentationEnabled)
+	merged, err := mergeManagedIgnore(string(data), families)
 	if err != nil {
 		return err
 	}

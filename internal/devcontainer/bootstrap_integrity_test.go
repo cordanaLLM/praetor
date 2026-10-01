@@ -91,7 +91,7 @@ func TestBootstrapCapturesDeclaredFamilyAssets(t *testing.T) {
 				"package main\n\nimport _ \""+praetorModulePath+"/"+family.Directory+"\"\n\nfunc main() {}\n")
 			assets := family.AssetPaths()
 			for _, asset := range assets {
-				writeBootstrapFile(t, root, asset, "fixture\n")
+				writeBootstrapFile(t, root, asset, assetFixture(asset, "fixture\n"))
 			}
 			files, err := captureBootstrapSource(t.Context(), root)
 			if err != nil {

@@ -162,20 +162,3 @@ func MarkdownShellCommand(shell MarkdownShell, trimmed string) (string, bool) {
 	}
 	return command, true
 }
-
-// MarkdownFrontMatterEnd returns the index of the first line after a YAML front matter
-// block that opens the document, or 0 when the document has none or the block is never
-// closed: a "---" first line through the next "---" line, trailing blanks ignored, as
-// markdownlint and the agent skill loaders read it. lines are the document's lines without
-// their line endings.
-func MarkdownFrontMatterEnd(lines []string) int {
-	if len(lines) == 0 || strings.TrimRight(lines[0], " \t") != "---" {
-		return 0
-	}
-	for i := 1; i < len(lines); i++ {
-		if strings.TrimRight(lines[i], " \t") == "---" {
-			return i + 1
-		}
-	}
-	return 0
-}

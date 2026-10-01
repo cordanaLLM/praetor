@@ -130,26 +130,3 @@ func TestMarkdownShellCommand(t *testing.T) {
 		}
 	}
 }
-
-func TestMarkdownFrontMatterEnd(t *testing.T) {
-	cases := map[string]struct {
-		lines []string
-		want  int
-	}{
-		"closed":            {[]string{"---", "name: x", "---", "# Body"}, 3},
-		"trailing blanks":   {[]string{"--- ", "name: x", "---\t", "body"}, 3},
-		"empty block":       {[]string{"---", "---"}, 2},
-		"never closed":      {[]string{"---", "name: x", "body"}, 0},
-		"not on line one":   {[]string{"", "---", "name: x", "---"}, 0},
-		"thematic break":    {[]string{"----", "text", "---"}, 0},
-		"empty document":    {nil, 0},
-		"single delimiter":  {[]string{"---"}, 0},
-		"indented opener":   {[]string{" ---", "name: x", "---"}, 0},
-		"later block stays": {[]string{"---", "a: 1", "---", "---", "b: 2", "---"}, 3},
-	}
-	for name, tc := range cases {
-		if got := util.MarkdownFrontMatterEnd(tc.lines); got != tc.want {
-			t.Errorf("%s: end %d, want %d", name, got, tc.want)
-		}
-	}
-}

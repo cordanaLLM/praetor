@@ -17,6 +17,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/flavor"
+	"github.com/cordanaLLM/praetor/internal/managedasset"
 	"github.com/cordanaLLM/praetor/templates"
 	"gopkg.in/yaml.v3"
 )
@@ -381,6 +382,48 @@ func TestActionlintLabelsOfBoundary(t *testing.T) {
 	}
 }
 
+// Positive (#357): a Go repository adopted with api:public-contract alone and its flavor step
+// declined gets no workflow but the API compatibility gate, which runs on a label actionlint does
+// not know, so adoption declares that label. Negative: without the facet, or with it but a go.mod
+// git does not track, the gate is not emitted and no label is declared for it. Boundary: in every
+// case the label is declared exactly when the gate step emitted the workflow, since both read
+// the same enabled families (enabledManagedFamiliesForSession, adoptedWorkflowFiles).
+func TestActionlintLabelsFollowTheAPICompatibilityGate(t *testing.T) {
+	for name, tc := range map[string]struct {
+		facets  []string
+		tracked bool
+		want    bool
+	}{
+		"facet and tracked go.mod": {[]string{"api:public-contract"}, true, true},
+		"no facet":                 {[]string{"custom:facet"}, true, false},
+		"untracked go.mod":         {[]string{"api:public-contract"}, false, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := newTestRepo(t, "actionlint-api")
+			if tc.tracked {
+				trackGoModule(t, repo, "go.mod")
+			} else {
+				mustWrite(t, filepath.Join(repo, "go.mod"), "module example.com/widget\n\ngo 1.27\n")
+			}
+			s := actionlintSession(repo, tc.facets)
+			s.declined = []string{"working-dir-and-flavor"}
+			if err := reconcileAPICompatibilityGate(t.Context(), s); err != nil {
+				t.Fatalf("reconcile the API compatibility gate: %v", err)
+			}
+			_, err := os.Lstat(filepath.Join(repo, filepath.FromSlash(APICompatibilityWorkflowFile)))
+			emitted := err == nil
+			if err := reconcileActionlintLabels(t.Context(), s); err != nil {
+				t.Fatalf("reconcile actionlint labels: %v", err)
+			}
+			config, err := os.ReadFile(filepath.Join(repo, filepath.FromSlash(actionlintConfigFile)))
+			declared := err == nil && string(config) == createdActionlintConfig
+			if emitted != tc.want || declared != emitted {
+				t.Fatalf("gate emitted=%v, label declared=%v, want both %v (configuration: %q, %v)", emitted, declared, tc.want, config, err)
+			}
+		})
+	}
+}
+
 // Boundary (#622): actionlintUnknownLabels holds at least one label, each once and at most
 // maxActionlintLabels of them; every one is a runner some emitted workflow runs on, so the list
 // claims nothing about a runner no workflow uses; and each reads back from the configuration
@@ -410,7 +453,8 @@ func TestActionlintUnknownLabelsBoundary(t *testing.T) {
 }
 
 // Positive (#593, #622 acceptance): wherever actionlint is on PATH, it accepts every workflow
-// adoption can write, the documentation gate and each flavor's CI workflows in every rendering,
+// adoption can write, every managed family's hosted workflow and each flavor's CI workflows in
+// every rendering,
 // beside the configuration adoption creates for that workflow alone, or none when it needs no
 // label.
 func TestActionlintAcceptsEveryEmittedWorkflow(t *testing.T) {
@@ -480,13 +524,17 @@ func actionlintManagedFixtureLabels(t *testing.T) []string {
 var renderedWorkflowsRoot = filepath.Join("..", "..", templates.Directory, "testdata", "rendered")
 
 // emittedWorkflows returns every workflow body adoption can write, each named for messages: the
-// documentation gate and each CI workflow template of every flavor, once per distinct rendering.
-// A template whose actions branch on repository facts is read from its committed renderings,
-// which TestBranchingYAMLTemplateRenderingsAreCommitted keeps equal to every body it renders;
-// any other is rendered as flavor apply renders it.
+// hosted workflow of every managed asset family, the documentation gate and the Go API
+// compatibility gate among them (familyWorkflows), and each CI workflow template of every flavor,
+// once per distinct rendering. A template whose actions branch on repository facts is read from
+// its committed renderings, which TestBranchingYAMLTemplateRenderingsAreCommitted keeps equal to
+// every body it renders; any other is rendered as flavor apply renders it.
 func emittedWorkflows(t *testing.T) []flavor.PlannedTemplate {
 	t.Helper()
-	workflows := []flavor.PlannedTemplate{{Path: DocumentationWorkflowFile, Content: DocumentationWorkflow()}}
+	workflows := familyWorkflows(managedasset.Families())
+	if !slices.ContainsFunc(workflows, func(workflow flavor.PlannedTemplate) bool { return workflow.Path == APICompatibilityWorkflowFile }) {
+		t.Fatalf("the managed family workflows %v lack %s", workflows, APICompatibilityWorkflowFile)
+	}
 	var sources []string
 	for _, flv := range flavor.List() {
 		for _, item := range flv.RequiredTemplates() {

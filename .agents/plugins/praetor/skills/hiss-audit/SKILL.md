@@ -1,6 +1,6 @@
 ---
 name: hiss-audit
-description: Audit repository source code, AST, and configurations against High-Integrity Systems Standard (HISS): deterministic execution, bounded complexity, error integrity.
+description: "Audit repository source code, AST, and configurations against High-Integrity Systems Standard (HISS): deterministic execution, bounded complexity, error integrity."
 ---
 
 # HISS Invariant Audit (`hiss-audit`)
