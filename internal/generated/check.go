@@ -354,21 +354,22 @@ func checkProblems(report *Report) []string {
 		switch {
 		case len(result.Edited) > 0 && !report.Regeneration:
 			problems = append(problems, fmt.Sprintf("%s: the change edits %s; only a regeneration change (%s) may edit a declared generated artefact",
-				result.Name, namedPaths(result.Edited), report.Marker))
+				result.Name, NamedPaths(result.Edited), report.Marker))
 		case report.Regeneration && len(result.Changed) > 0:
 			problems = append(problems, fmt.Sprintf("%s: the regeneration change commits %s, which differ from their rendering",
-				result.Name, namedPaths(result.Changed)))
+				result.Name, NamedPaths(result.Changed)))
 		}
 	}
 	if len(report.Outside) > 0 {
 		problems = append(problems, fmt.Sprintf("a regeneration change edits only declared generated artefacts, but this one also edits %s",
-			namedPaths(report.Outside)))
+			NamedPaths(report.Outside)))
 	}
 	return problems
 }
 
-// namedPaths names the first paths and counts the rest.
-func namedPaths(paths []string) string {
+// NamedPaths names the first paths and counts the rest, as every problem and result line names
+// paths.
+func NamedPaths(paths []string) string {
 	if len(paths) <= maxNamedPaths {
 		return strings.Join(paths, ", ")
 	}
