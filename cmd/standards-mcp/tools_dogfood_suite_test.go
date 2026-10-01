@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/buildid"
 	"github.com/cordanaLLM/praetor/internal/dogfood"
 )
 
@@ -86,6 +87,57 @@ func TestSuiteMCPRejectsInvalidArguments(t *testing.T) {
 	} {
 		if result := callTool(t, srv, "standards_dogfood_suite", args); !result.IsError {
 			t.Fatalf("accepted %+v", args)
+		}
+	}
+}
+
+// reportEngineVersion reads engine_build.version from a persisted dogfood report.
+func reportEngineVersion(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report struct {
+		Engine map[string]string `json:"engine_build"`
+	}
+	if err := json.Unmarshal(data, &report); err != nil {
+		t.Fatalf("%s: %v", path, err)
+	}
+	return report.Engine["version"]
+}
+
+// Positive and negative: the suite and discovery tools record the server's build identity,
+// the one -version and serverInfo.version render (#689). A server given no identity, as a
+// test fixture is, records what the running build proves rather than an empty version.
+func TestDogfoodMCPReportsRecordTheServerBuild(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		build buildid.Identity
+		want  string
+	}{
+		{name: "release", build: buildid.Identity{Release: "v7.7.7-mcp"}, want: "v7.7.7-mcp"},
+		{name: "unthreaded", want: buildid.Running("").String()},
+	} {
+		root := newFixtureRepo(t)
+		srv, err := NewServerWithOptions(ServerOptions{RootDir: root, Version: tc.want, Build: tc.build})
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeSuiteMCPFixture(t, root, filepath.Join(root, "transcript_full.jsonl"), false)
+		suiteArgs := map[string]any{"config_path": "suite.json", "artifact_dir": "suite-run"}
+		if result := callTool(t, srv, "standards_dogfood_suite", suiteArgs); result.IsError {
+			t.Fatalf("%s suite: %s", tc.name, result.Content[0].Text)
+		}
+		writeDiscoveryMCPFixture(t, root)
+		discoveryArgs := map[string]any{"path": "source", "policy_path": "discovery-policy.json", "artifact_dir": "discovery-run"}
+		if result := callTool(t, srv, "standards_dogfood_discover", discoveryArgs); result.IsError {
+			t.Fatalf("%s discovery: %s", tc.name, result.Content[0].Text)
+		}
+		for _, path := range []string{filepath.Join(root, "suite-run", "report.json"), filepath.Join(root, "discovery-run", "report.json")} {
+			if got := reportEngineVersion(t, path); got != tc.want || got == "" {
+				t.Errorf("%s: %s engine_build.version %q, want %q", tc.name, path, got, tc.want)
+			}
 		}
 	}
 }

@@ -63,7 +63,7 @@ func discoveryToolSummary(report *dogfood.DiscoveryReport, runErr error) map[str
 }
 
 func (s *Server) discoveryArguments(args map[string]any) (dogfood.DiscoveryOptions, error) {
-	opts := dogfood.DiscoveryOptions{Stage: "plan", Concurrency: 4, AllowRemote: s.opts.AllowRemoteBenchmarks}
+	opts := dogfood.DiscoveryOptions{Stage: "plan", Concurrency: 4, AllowRemote: s.opts.AllowRemoteBenchmarks, Engine: s.opts.Build}
 	if err := requireStringArguments(args); err != nil {
 		return opts, err
 	}

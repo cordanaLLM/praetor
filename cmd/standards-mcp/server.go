@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
+	"github.com/cordanaLLM/praetor/internal/buildid"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/hisscatalog"
@@ -86,6 +87,10 @@ type ServerOptions struct {
 	RootDir string
 	// Version is reported in initialize and /health responses.
 	Version string
+	// Build is the binary identity Version renders (buildid.Running), which dogfood suite and
+	// discovery reports record in engine_build (#689). The zero value records what the running
+	// build information proves without an injected release.
+	Build buildid.Identity
 	// AllowOutsideRoot permits path arguments outside RootDir (cross-repository
 	// adoption, workstation harvests). Off by default: every path is confined.
 	AllowOutsideRoot bool

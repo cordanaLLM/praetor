@@ -24,6 +24,7 @@ func runDogfoodSuite(ctx context.Context, args []string) error {
 		return errors.New("dogfood suite requires --config and --artifacts and no positional arguments")
 	}
 	opts.AllowRemote = true // Explicit CLI verify stage authorizes its declared pinned GitHub sources.
+	opts.Engine = runningBuild()
 	report, runErr := dogfood.RunSuite(ctx, opts)
 	if report != nil {
 		return errors.Join(runErr, json.NewEncoder(os.Stdout).Encode(report))
