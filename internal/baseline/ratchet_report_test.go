@@ -168,3 +168,77 @@ func TestEvaluateRatchet_Boundary_StaleCount(t *testing.T) {
 		t.Errorf("zero stale StaleNotice() = %q", got)
 	}
 }
+
+// named is inf with a symbol and a message, the line-independent identity a scan reports.
+func named(file, rule string, line int, symbol, message string) Infraction {
+	v := inf(file, rule, line)
+	v.Symbol, v.Message = symbol, message
+	return v
+}
+
+// shiftFixture records five findings of one file, each with its own symbol, and returns the scan
+// after one line was inserted at the top: every fingerprint changed, the debt did not.
+func shiftFixture() (*Baseline, []Infraction) {
+	var recorded, shifted []Infraction
+	for i := 1; i <= 5; i++ {
+		recorded = append(recorded, named("x.c", "HISS-04", i*10, "f"+itoa(i), "too complex"))
+		shifted = append(shifted, named("x.c", "HISS-04", i*10+1, "f"+itoa(i), "too complex"))
+	}
+	return &Baseline{Version: 1, TotalInfractions: len(recorded), Infractions: recorded}, shifted
+}
+
+// Positive (#348): a line shift above recorded debt changes fingerprints, not the debt, so under
+// the default rule every touched finding still counts as baselined; with one genuinely new
+// finding under DebtDelta only that one is not in the baseline, and the listing names it.
+func TestRatchetResultSummary_Positive_TouchedLineShiftStaysBaselined(t *testing.T) {
+	b, shifted := shiftFixture()
+	got := EvaluateRatchet(b, shifted, []string{"x.c"}).Summary()
+	if !strings.Contains(got, "5 in touched files (0 not in the baseline, 5 baselined)") ||
+		!strings.Contains(got, "5 of the touched-file violations are baselined: touching a file revokes") {
+		t.Errorf("line shift under the default rule:\n%s", got)
+	}
+
+	grown := append([]Infraction{named("x.c", "HISS-04", 2, "g", "too complex")}, shifted...)
+	got = EvaluateRatchetWithOptions(b, grown, []string{"x.c"}, RatchetOptions{DebtDelta: true}).Summary()
+	for _, want := range []string{
+		"6 in touched files (1 not in the baseline, 5 baselined)",
+		"[HISS-04] x.c:2 - too complex (touched file must be clean, not in the baseline)",
+		"[HISS-04] x.c:11 - too complex (touched file must be clean, baselined)",
+		"5 of the touched-file violations are baselined: they fail because a rule's count in their file rose",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("line shift plus one new finding under DebtDelta missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// Negative (#348): recorded debt accounts only for findings of its own file and rule, so a
+// finding of another rule in the same file, or of the same rule in another file, is not in the
+// baseline however much room the baseline records elsewhere.
+func TestRatchetResultSummary_Negative_TouchedRoomIsPerFileAndRule(t *testing.T) {
+	b := &Baseline{Version: 1, TotalInfractions: 2, Infractions: []Infraction{inf("x.c", "HISS-04", 10), inf("y.c", "HISS-07", 10)}}
+	current := []Infraction{inf("x.c", "HISS-07", 11), inf("y.c", "HISS-04", 11)}
+	got := EvaluateRatchet(b, current, []string{"x.c", "y.c"}).Summary()
+	if !strings.Contains(got, "2 in touched files (2 not in the baseline, 0 baselined)") || strings.Contains(got, "are baselined") {
+		t.Errorf("room crossed a file or rule:\n%s", got)
+	}
+}
+
+// Boundary (#348): a recorded finding whose message changed with the shift (its measured value
+// rose) still takes its recorded slot; exactly as many findings as the baseline records stay
+// baselined, and one more is the single finding not in the baseline.
+func TestRatchetResultSummary_Boundary_TouchedSlotsMatchRecordedCount(t *testing.T) {
+	b := &Baseline{Version: 1, TotalInfractions: 1, Infractions: []Infraction{named("x.c", "HISS-04", 10, "f", "complexity 12")}}
+	changed := []Infraction{named("x.c", "HISS-04", 11, "f", "complexity 13")}
+	if got := EvaluateRatchet(b, changed, []string{"x.c"}).Summary(); !strings.Contains(got, "1 in touched files (0 not in the baseline, 1 baselined)") {
+		t.Errorf("a changed message lost its recorded slot:\n%s", got)
+	}
+	plusOne := append(changed, named("x.c", "HISS-04", 30, "h", "complexity 11"))
+	res := EvaluateRatchet(b, plusOne, []string{"x.c"})
+	if got := res.Summary(); !strings.Contains(got, "2 in touched files (1 not in the baseline, 1 baselined)") {
+		t.Errorf("one over the recorded count:\n%s", got)
+	}
+	if len(res.TouchedBaselined) != 2 || !res.TouchedBaselined[0] || res.TouchedBaselined[1] {
+		t.Errorf("marks = %v; want the recorded symbol baselined and the new one not", res.TouchedBaselined)
+	}
+}

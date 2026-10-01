@@ -60,9 +60,11 @@ type RatchetResult struct {
 	NewViolations          []Infraction
 	TouchedCleanViolations []Infraction
 	// TouchedBaselined holds, at the index of each TouchedCleanViolations entry, whether the
-	// baseline records its fingerprint (#348). The touched-file clean rule fails a judged file's
-	// baselined findings together with its new ones, and Summary counts the two apart. The
-	// evaluator fills it; any other length means unknown, and Summary prints one touched count.
+	// baseline accounts for it (#348): per file and rule, as many findings as the baseline records
+	// there are baselined and only the excess is not (touchedMarks), so a line shift is not new
+	// debt. The touched-file clean rule fails a judged file's baselined findings together with its
+	// new ones, and Summary counts the two apart. The evaluator fills it; any other length means
+	// unknown, and Summary prints one touched count.
 	TouchedBaselined []bool `json:",omitempty"`
 	// DebtDelta records that the touched-file clean rule judged a touched file on whether its debt
 	// grew (RatchetOptions.DebtDelta) rather than on whether it was touched.
@@ -333,7 +335,6 @@ func EvaluateRatchetWithOptions(b *Baseline, currentViolations []Infraction, tou
 
 	var newViolations []Infraction
 	var touchedCleanViolations []Infraction
-	var touchedBaselined []bool
 
 	// Under DebtDelta a touched file is judged on whether it got worse; otherwise any touch
 	// revokes the file's exemptions, which is the default boy-scout rule.
@@ -347,7 +348,6 @@ func EvaluateRatchetWithOptions(b *Baseline, currentViolations []Infraction, tou
 		if isTouched && revokes(file) {
 			// Touched-File Clean Rule: the file's baseline exemptions are revoked.
 			touchedCleanViolations = append(touchedCleanViolations, curr)
-			touchedBaselined = append(touchedBaselined, isBaselined)
 		} else if !isTouched && !isBaselined {
 			// Brand new violation in an untouched file
 			newViolations = append(newViolations, curr)
@@ -362,7 +362,7 @@ func EvaluateRatchetWithOptions(b *Baseline, currentViolations []Infraction, tou
 		CurrentCount:           len(currentViolations),
 		NewViolations:          newViolations,
 		TouchedCleanViolations: touchedCleanViolations,
-		TouchedBaselined:       touchedBaselined,
+		TouchedBaselined:       touchedMarks(b.Infractions, touchedCleanViolations),
 		DebtDelta:              opts.DebtDelta,
 		Stale:                  staleEntries(b.Infractions, currentViolations),
 		CountRegressed:         countRegressed,
@@ -435,6 +435,46 @@ func countByFileRule(infractions []Infraction, touched map[string]struct{}) map[
 		counts[fileRule{file: file, rule: infractions[i].RuleID}]++
 	}
 	return counts
+}
+
+// touchedMarks marks, per touched-file violation, whether the baseline accounts for it (#348).
+// Like worsenedFiles and staleEntries it compares counts, not fingerprints: per file and rule the
+// baseline accounts for as many current findings as it records, and only the excess is not in the
+// baseline. A fingerprint is path:line:rule, and a touched file is an edited one, so a line shift
+// above recorded debt is the normal case; comparing fingerprints read every shifted finding as
+// new. Which findings take the recorded slots: those whose fingerprint the baseline records, then
+// those it records at another line (movedRecorded), then the rest in scan order.
+func touchedMarks(recorded, touched []Infraction) []bool {
+	room := countByFileRule(recorded, nil)
+	fingerprints := countBy(recorded, fingerprintOf)
+	moved := movedRecorded(recorded, touched)
+	marks := make([]bool, len(touched))
+	claimSlots(touched, marks, room, func(v Infraction) bool { return take(fingerprints, fingerprintOf(v)) })
+	claimSlots(touched, marks, room, func(v Infraction) bool {
+		_, ok := takeLine(moved, findingKey(v))
+		return ok
+	})
+	claimSlots(touched, marks, room, func(Infraction) bool { return true })
+	return marks
+}
+
+// claimSlots marks each unmarked touched finding that match accepts while its file and rule have
+// a recorded slot left, and consumes that slot. match runs only when a slot is left, so the
+// recorded entry it consumes is spent on a finding that is marked.
+func claimSlots(touched []Infraction, marks []bool, room map[fileRule]int, match func(Infraction) bool) {
+	for i := 0; i < len(touched); i++ {
+		key := fileRule{file: NormalizePath(touched[i].FilePath), rule: touched[i].RuleID}
+		if marks[i] || room[key] <= 0 || !match(touched[i]) {
+			continue
+		}
+		room[key]--
+		marks[i] = true
+	}
+}
+
+// fingerprintOf is a finding's fingerprint with forward slashes, as the ratchet compares it.
+func fingerprintOf(v Infraction) string {
+	return NormalizePath(v.Fingerprint)
 }
 
 // touchedRuleRevokes decides, per touched file, whether the touched-file clean rule revokes its

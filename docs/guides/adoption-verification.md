@@ -790,6 +790,14 @@ tagged `(touched file must be clean, not in the baseline)`, then the baselined o
 `(touched file must be clean, baselined)`, each part with its own bound and hidden-count marker.
 The touched count alone read as N new findings when most of them were recorded debt (#348).
 
+The split compares counts, not fingerprints (`touchedMarks` in
+[`internal/baseline/baseline.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/baseline/baseline.go)).
+Per file and rule, the baseline accounts for as many findings as it records there, and only the
+excess counts as not in the baseline. A fingerprint holds the line, and a touched file is an
+edited one, so a line inserted above recorded debt would otherwise read every finding below it as
+new. The recorded slots go first to findings whose fingerprint the baseline records, then to
+findings it records at another line, then to the rest in scan order.
+
 The baselined findings fail too, and the rejection says why:
 
 - By default, touching a file revokes its baseline exemptions. A re-record does not clear them;
@@ -802,7 +810,7 @@ The baselined findings fail too, and the rejection says why:
 [`internal/baseline/ratchet_report_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/baseline/ratchet_report_test.go)
 and `TestAudit_Positive_TouchedCountNamesBaselined` in
 [`cmd/standardsctl/audit_stale_baseline_test.go`](https://github.com/cordanaLLM/praetor/blob/main/cmd/standardsctl/audit_stale_baseline_test.go)
-pin both.
+pin the split, its line-shift case and the explanations.
 
 ### A baseline looser than the tree is reported
 

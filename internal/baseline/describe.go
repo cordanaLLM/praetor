@@ -360,7 +360,7 @@ func unionFindings(compared []CommitFindings) map[string]int {
 	}
 	union := make(map[string]int)
 	for i := 0; i < len(compared); i++ {
-		for key, n := range countFindings(compared[i].Findings) {
+		for key, n := range countBy(compared[i].Findings, findingKey) {
 			union[key] = max(union[key], n)
 		}
 	}
@@ -439,11 +439,11 @@ func takeLine(lines map[string][]int, key string) (int, bool) {
 func movedRecorded(recorded, current []Infraction) map[string][]int {
 	present := make(map[string]struct{}, len(current))
 	for i := 0; i < len(current); i++ {
-		present[NormalizePath(current[i].Fingerprint)] = struct{}{}
+		present[fingerprintOf(current[i])] = struct{}{}
 	}
 	moved := make(map[string][]int)
 	for i := 0; i < len(recorded); i++ {
-		if _, ok := present[NormalizePath(recorded[i].Fingerprint)]; !ok {
+		if _, ok := present[fingerprintOf(recorded[i])]; !ok {
 			key := findingKey(recorded[i])
 			moved[key] = append(moved[key], recorded[i].LineNumber)
 		}
@@ -451,11 +451,12 @@ func movedRecorded(recorded, current []Infraction) map[string][]int {
 	return moved
 }
 
-// countFindings counts findings by their line-independent identity.
-func countFindings(findings []Infraction) map[string]int {
+// countBy counts findings by key: findingKey for their line-independent identity, fingerprintOf
+// for the line-bound one.
+func countBy(findings []Infraction, key func(Infraction) string) map[string]int {
 	counts := make(map[string]int, len(findings))
 	for i := 0; i < len(findings); i++ {
-		counts[findingKey(findings[i])]++
+		counts[key(findings[i])]++
 	}
 	return counts
 }
