@@ -19,7 +19,7 @@ func TestValidate_Positive_AcceptsOneStrictDocument(t *testing.T) {
 		"surrounding whitespace":     " \n\t{}\r\n ",
 		"same name in sibling scope": `{"a":{"k":1},"b":{"k":1},"k":[{"k":1},{"k":2}]}`,
 		"repeated values":            `{"a":["x","x"],"b":{"c":"x"}}`,
-		"paired surrogate escape":    `{"emoji":"😄"}`,
+		"paired surrogate escape":    `{"emoji":"\ud83d\ude04"}`,
 		"escaped backslash before u": `{"text":"literal \\ud800"}`,
 		"distinct letters":           `{"a":1,"b":2}`,
 	}
@@ -50,10 +50,10 @@ func TestValidate_Negative_RefusesEachKind(t *testing.T) {
 		{"cut inside a surrogate escape", `{"a":"\ud800`, base, ErrSyntax, ""},
 		{"lone high surrogate", `{"a":"\ud800"}`, base, ErrSurrogate, ErrSurrogate.Error()},
 		{"lone low surrogate", `"\udfff"`, base, ErrSurrogate, ErrSurrogate.Error()},
-		{"high surrogate then letter", `"\ud800A"`, base, ErrSurrogate, ErrSurrogate.Error()},
+		{"high surrogate then letter", `"\ud800\u0041"`, base, ErrSurrogate, ErrSurrogate.Error()},
 		{"surrogate in a name", `{"\ud800":1}`, base, ErrSurrogate, ErrSurrogate.Error()},
 		{"exact duplicate", `{"a":1,"a":2}`, base, ErrDuplicate, "invalid or duplicate JSON key"},
-		{"escaped duplicate", `{"a":1,"a":2}`, base, ErrDuplicate, "invalid or duplicate JSON key"},
+		{"escaped duplicate", `{"a":1,"\u0061":2}`, base, ErrDuplicate, "invalid or duplicate JSON key"},
 		{"case variant", `{"quality":1,"Quality":2}`, base, ErrDuplicate, "invalid or duplicate JSON key"},
 		{"nested case variant", `{"inner":[{"a":1,"A":2}]}`, base, ErrDuplicate, "invalid or duplicate JSON key"},
 		{"second document", `{} {}`, base, ErrTrailing, "expected exactly one JSON document"},
@@ -100,7 +100,7 @@ func TestValidate_Positive_ExactNamesKeepsCaseVariants(t *testing.T) {
 	if err := Validate([]byte(`{"**/Build/**":true,"**/build/**":true,"*.S":"asm","*.s":"asm"}`), exact); err != nil {
 		t.Fatalf("case-variant names refused under ExactNames: %v", err)
 	}
-	for _, raw := range []string{`{"a":1,"a":2}`, `{"a":1,"a":2}`, `{"x":{"k":1,"k":2}}`} {
+	for _, raw := range []string{`{"a":1,"a":2}`, `{"a":1,"\u0061":2}`, `{"x":{"k":1,"k":2}}`} {
 		if err := Validate([]byte(raw), exact); !errors.Is(err, ErrDuplicate) {
 			t.Errorf("ExactNames accepted the identical names of %s: %v", raw, err)
 		}

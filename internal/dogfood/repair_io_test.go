@@ -67,6 +67,39 @@ func TestRepairJSONDepthTokensAndEscapes(t *testing.T) {
 	if err := validateRepairJSON([]byte{'"', 0xff, '"'}); err == nil {
 		t.Fatal("invalid UTF8 accepted")
 	}
+	if err := validateRepairJSON([]byte("[" + strings.Repeat("0,", maxRepairJSONTokens-3) + "0]")); err != nil {
+		t.Fatalf("document of exactly %d tokens refused: %v", maxRepairJSONTokens, err)
+	}
+	if err := validateRepairJSON([]byte(strings.Repeat("[", 32) + "0" + strings.Repeat("]", 32))); err != nil {
+		t.Fatalf("32 nesting levels refused: %v", err)
+	}
+}
+
+// TestRepairJSONRefusesCaseFoldedNames covers issue #310. The engine_build map decodes both
+// spellings of a name, so the shape check passed a report holding "revision" and "Revision";
+// the strict reader now refuses case-folded names at every depth, as it refuses exact ones.
+func TestRepairJSONRefusesCaseFoldedNames(t *testing.T) {
+	report := repairTestReport(t, 1)
+	report.Engine = map[string]string{"revision": "recorded"}
+	data, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := string(data)
+	if _, err := LoadRepairReport(context.Background(), repairTestFile(t, valid)); err != nil {
+		t.Fatalf("report with an engine_build map refused: %v", err)
+	}
+	for _, body := range []string{
+		strings.Replace(valid, `"engine_build":{`, `"engine_build":{"Revision":"shadow",`, 1),
+		strings.Replace(valid, `"version":1`, `"version":1,"VERSION":1`, 1),
+	} {
+		if body == valid {
+			t.Fatal("report fixture lost the member this test shadows")
+		}
+		if _, err := LoadRepairReport(context.Background(), repairTestFile(t, body)); err == nil || err.Error() != "duplicate repair JSON field" {
+			t.Errorf("case-folded duplicate returned %v", err)
+		}
+	}
 }
 
 func TestRepairRejectsVerifiedPublicStub(t *testing.T) {
