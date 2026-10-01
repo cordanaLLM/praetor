@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -105,11 +106,28 @@ func runNeedsScan(ctx context.Context, args []string) error {
 	fmt.Print(needs.FormatLibraryRelationships(report))
 
 	if *writeManifest {
-		if err := needs.WriteNeedsManifest(*path, report); err != nil {
-			return fmt.Errorf("failed to write .needs.yaml: %w", err)
-		}
-		fmt.Printf("\n[PASS] Wrote %s/.needs.yaml successfully.\n", *path)
+		return writeNeedsManifest(ctx, *path, report)
 	}
+	return nil
+}
+
+// writeNeedsManifest writes .needs.yaml unless the committed manifest already matches the scan
+// apart from updated_at (needs.CheckNeedsManifest), which it then keeps byte for byte: a rewrite
+// moved only the timestamp, so the manifest, a generated artefact (ADR-0017), never rendered
+// fresh.
+func writeNeedsManifest(ctx context.Context, path string, report *needs.RepoNeeds) error {
+	drift, err := needs.CheckNeedsManifest(ctx, path, report)
+	if err == nil && drift == "" {
+		fmt.Printf("\n[PASS] %s/.needs.yaml already matches the scan; kept the recorded file.\n", path)
+		return nil
+	}
+	if err != nil && !errors.Is(err, needs.ErrNeedsManifestMissing) {
+		return err
+	}
+	if err := needs.WriteNeedsManifest(path, report); err != nil {
+		return fmt.Errorf("failed to write .needs.yaml: %w", err)
+	}
+	fmt.Printf("\n[PASS] Wrote %s/.needs.yaml successfully.\n", path)
 	return nil
 }
 

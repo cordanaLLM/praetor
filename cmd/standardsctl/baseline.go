@@ -175,6 +175,15 @@ func recordBaseline(path string, previous *baseline.Baseline, opts baseline.Reco
 	if err != nil {
 		return fmt.Errorf("refusing to record %s: %w (pass --allow-increase --reason=<why> to record a deliberate increase)", path, err)
 	}
+	// A rescan that finds the same debt keeps the recorded file byte for byte, as adoption does
+	// (unchangedBaseline): rewriting it only moved generated_at and dropped an earlier increase
+	// rationale, so the baseline, a generated artefact (ADR-0017), never rendered fresh. A
+	// baseline that records no commit yet is still written, so it gains one (BUG-801).
+	if !previous.Absent && previous.SameDebt(next) && previous.CommitSHA == next.CommitSHA {
+		fmt.Printf("Baseline unchanged: %s (Total: %d infractions, previously %d); kept the recorded file\n",
+			path, next.TotalInfractions, previous.Count())
+		return nil
+	}
 	if err := baseline.SaveBaseline(path, next); err != nil {
 		return fmt.Errorf("failed to save baseline: %w", err)
 	}
