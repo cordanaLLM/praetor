@@ -471,10 +471,12 @@ substitutions, even inside double quotes, and carries an open quote or here-docu
 a trailing backslash, pipe or `&&`, into simple commands and reads each command's name past
 reserved words, assignments, redirections and wrappers such as `sudo`, `env` and `timeout`. The
 patterns of a `case` statement, including one opened on the same line as an outer pattern
-(`x) case $b in`), and the inside of a `[[ ... ]]` test name no command, so `*/sh | */bash)` and
-`[[ $f =~ \.(sh|bash)$ ]]` pipe nothing into a shell (`TestShellScanner_CasePatternsAreNotCommands`,
-`TestShellScanner_NestedCasePatternsAreNotCommands`, `TestShellScanner_TestExpressionsAreNotPipes`,
-`.config/hiss/testdata/HISS-08/shell/negative/nested-case.sh`).
+(`x) case $b in`) and one after Bash's fall-through `;&` or `;;&`, and the inside of a `[[ ... ]]`
+test name no command, so `*/sh | */bash)` and `[[ $f =~ \.(sh|bash)$ ]]` pipe nothing into a shell
+(`TestShellScanner_CasePatternsAreNotCommands`, `TestShellScanner_NestedCasePatternsAreNotCommands`,
+`TestShellScanner_CaseFallThroughEndsAnItem`, `TestShellScanner_TestExpressionsAreNotPipes`,
+`.config/hiss/testdata/HISS-08/shell/negative/nested-case.sh`,
+`.config/hiss/testdata/HISS-08/shell/negative/case-fall-through.bash`).
 
 - HISS-01: a function whose body is a brace group runs its own name as a command. A call through
   `command`, `builtin` or `exec` runs a program, never the function, so it is not reported.

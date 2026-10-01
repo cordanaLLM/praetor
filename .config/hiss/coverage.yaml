@@ -363,8 +363,8 @@ rules:
           eval, text piped into a shell that reads its script from standard input (curl ... | sh,
           including through sudo), and a process substitution sourced or run as a script are
           reported. A function named evaluate, the word in text, a downloaded script that is
-          checked and run as a file, and the bars of a case pattern list or of a [[ ]] regular
-          expression are not. A command string handed to sh -c is evaluated too but is held as a
+          checked and run as a file, and the bars of a case pattern list, also after a ;& or ;;&
+          fall-through, or of a [[ ]] regular expression are not. A command string handed to sh -c is evaluated too but is held as a
           gap.
       - language: ansible
         state: partial

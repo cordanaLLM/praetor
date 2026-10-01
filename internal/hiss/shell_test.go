@@ -94,6 +94,16 @@ func TestShellScanner_NestedCasePatternsAreNotCommands(t *testing.T) {
 		"HISS-08@9", "HISS-02@11", "HISS-08@11")
 }
 
+// Negative: bash's ;& and ;;& end a case item like ;; does, at the end of a line or before the
+// next pattern on the same one, so the pattern list after them names no command; the commands of
+// every item are still read.
+func TestShellScanner_CaseFallThroughEndsAnItem(t *testing.T) {
+	assertScriptFindings(t, "fallthrough.bash", strictBash+"case \"$1\" in\n"+
+		"  a) echo a ;&\n  */sh | */bash) echo b ;;&\n  */zsh | */ksh) eval \"$2\" ;;\n"+
+		"  b) echo b ;& */dash | */mksh) echo c ;;\nesac\n",
+		"HISS-08@6")
+}
+
 // Negative and boundary: inside a [[ ... ]] test the parentheses and bars of a regular
 // expression are not operators, and the commands after the test are read again.
 func TestShellScanner_TestExpressionsAreNotPipes(t *testing.T) {

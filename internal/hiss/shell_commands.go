@@ -13,7 +13,7 @@ import (
 // The commands of one logical shell line, and the rules the shell scanner reads from them.
 //
 // splitShellCommands cuts the lexer's code into simple commands at the control operators (;, &,
-// &&, ||, |, |&, ;;) and at the parentheses of subshells and substitutions, and splits each
+// &&, ||, |, |&, and the case item ends ;;, ;& and ;;&) and at the parentheses of subshells and substitutions, and splits each
 // command into words at blanks. The rules then read a command's name past the reserved words
 // that open a compound command, its assignments and its redirections, and, for the rules about
 // what actually runs, past the wrappers that start the program named after them (sudo, env,
@@ -36,7 +36,11 @@ var (
 )
 
 // shellOperators are the control operators, longest first.
-var shellOperators = []string{"&&", "||", "|&", ";;", "$(", "<(", ">(", "|", ";", "&", "(", ")"}
+var shellOperators = []string{";;&", "&&", "||", "|&", ";;", ";&", "$(", "<(", ">(", "|", ";", "&", "(", ")"}
+
+// shellCaseEnds are the operators that end a case item: ;; and bash's fall-through ;& and ;;&,
+// after each of which the next pattern list starts.
+var shellCaseEnds = map[string]bool{";;": true, ";&": true, ";;&": true}
 
 // shellOpeners are the reserved words after which the next word starts a command.
 var shellOpeners = map[string]bool{
@@ -178,7 +182,7 @@ func (c *shellCases) skip(cmd shellCmd) bool {
 		c.openCase(cmd.words)
 	case c.pattern:
 		return true
-	case c.depth > 0 && cmd.sep == ";;":
+	case c.depth > 0 && shellCaseEnds[cmd.sep]:
 		c.pattern = true
 		return true
 	case c.awaitIn && first == "in":
