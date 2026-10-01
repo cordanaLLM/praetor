@@ -48,8 +48,9 @@ expected outputs, positive/negative/boundary acceptance proposals, and unique
 TODO/roadmap links. Manual, research and implementation steps are supported;
 their action text is never executed by this command.
 Every schema field must be present with its exact JSON spelling and type.
-Use `[]` for an empty dependency set; omitted fields, `null` and alternate
-capitalization are rejected. A step must reference between 1 and 32 requirements.
+Use `[]` for an empty dependency set; omitted fields, `null`, alternate
+capitalization, a field repeated in any capitalization and unpaired UTF-16
+surrogate escapes are rejected (`internal/strictjson`). A step must reference between 1 and 32 requirements.
 
 Keep missing information visible in the planning work before submission. The
 compiler rejects incomplete structure, unsupported states, duplicate IDs,

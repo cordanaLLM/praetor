@@ -28,9 +28,9 @@ stable applied verification attempts. These are consistency checks on supplied
 local evidence, not a signature or an independent rerun of the original inputs.
 
 The report loader accepts one stable regular file of at most 8 MiB. It rejects
-symlinks, special files, non-UTF-8 JSON, unpaired Unicode surrogates, duplicate or
-case-folded struct fields, unknown fields, missing required fields and explicit
-null required scalars. Optional fields follow the exact representation emitted by
+symlinks, special files, non-UTF-8 JSON, unpaired Unicode surrogates, duplicate
+member names at any depth with case variants included (`internal/strictjson`),
+unknown fields, missing required fields and explicit null required scalars. Optional fields follow the exact representation emitted by
 `RunSuite`: omit empty `omitempty` fields. Parsing is bounded to 32 nesting levels
 and 262,144 JSON tokens. The reader never opens source, checkout or log paths named
 inside the report. A 30-second context bounds each operation; regular filesystem

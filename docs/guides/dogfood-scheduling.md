@@ -25,8 +25,8 @@ Create a private JSON configuration (`0600`) with clean absolute paths:
 
 `version`, `runner_binary`, `suite_config`, `source_root`, `state_dir`, and
 `allow_remote` are required. Numeric limits may be
-omitted to use the illustrated defaults. Nulls, duplicate or unknown fields,
-incorrect types, relative paths and symlink inputs are rejected. The suite
+omitted to use the illustrated defaults. Nulls, duplicate fields (case variants
+included), unknown fields, incorrect types, relative paths and symlink inputs are rejected. The suite
 configuration must also be private. `state_dir` is created with mode `0700`
 under an existing parent. Existing state metadata must be private; updating a
 read-only state file is refused instead of broadening its permissions.
