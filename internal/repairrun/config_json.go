@@ -27,7 +27,7 @@ func repairJSON(allowNull bool) strictjson.Options {
 			Surrogate: "unpaired Unicode surrogate",
 			Null:      "invalid or null repair JSON value",
 			Depth:     "repair JSON nesting bound exceeded",
-			Tokens:    "repair JSON token bound exceeded",
+			Count:     "repair JSON token bound exceeded",
 			Duplicate: "duplicate or aliased repair JSON field",
 			Decode:    "invalid repair JSON schema",
 		},

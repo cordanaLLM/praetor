@@ -15,7 +15,7 @@ var providerJSON = strictjson.Options{
 		Trailing:  "repair provider returned invalid or oversized UTF-8 JSON",
 		Surrogate: "repair provider Unicode surrogate is unpaired",
 		Depth:     "repair provider JSON exceeds nesting bound",
-		Tokens:    "repair provider JSON exceeds token bound",
+		Count:     "repair provider JSON exceeds token bound",
 		Duplicate: "repair provider JSON contains duplicate or case-aliased fields",
 	},
 }

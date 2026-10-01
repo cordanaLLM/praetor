@@ -78,14 +78,14 @@ type Options struct {
 // Messages is the wording of each refusal; an empty field takes the default named beside it.
 // A message may carry one formatting verb for the detail its refusal supplies: the byte bound
 // (Size, %d), the scanner error (Syntax and Surrogate, %w), the nesting bound (Depth, %d), the
-// token bound (Tokens, %d), the repeated member name as written (Duplicate, %q) and the decoder
+// token bound (Count, %d), the repeated member name as written (Duplicate, %q) and the decoder
 // error (Decode, %w). Null and Trailing supply no detail, so their messages carry no verb.
 type Messages struct {
 	Size      string // "JSON requires 1..%d UTF-8 bytes"
 	Syntax    string // "%w"
 	Surrogate string // "JSON string holds an unpaired UTF-16 surrogate escape"
 	Depth     string // "JSON nesting exceeds %d"
-	Tokens    string // "JSON token bound exceeded"
+	Count     string // "JSON token bound exceeded"
 	Null      string // "JSON null is not allowed"
 	Duplicate string // "invalid or duplicate JSON key"
 	Trailing  string // "expected exactly one JSON document"
@@ -97,7 +97,7 @@ func (m Messages) withDefaults() Messages {
 	m.Syntax = cmp.Or(m.Syntax, "%w")
 	m.Surrogate = cmp.Or(m.Surrogate, ErrSurrogate.Error())
 	m.Depth = cmp.Or(m.Depth, "JSON nesting exceeds %d")
-	m.Tokens = cmp.Or(m.Tokens, "JSON token bound exceeded")
+	m.Count = cmp.Or(m.Count, "JSON token bound exceeded")
 	m.Null = cmp.Or(m.Null, ErrNull.Error())
 	m.Duplicate = cmp.Or(m.Duplicate, "invalid or duplicate JSON key")
 	m.Trailing = cmp.Or(m.Trailing, "expected exactly one JSON document")
@@ -146,7 +146,7 @@ func Validate(raw []byte, opts Options) error {
 			return err
 		}
 	}
-	return refuse(ErrTokens, messages.Tokens, limit)
+	return refuse(ErrTokens, messages.Count, limit)
 }
 
 // newDecoder builds the token source of one scan. Duplicate names are left to the scan, which
