@@ -300,13 +300,17 @@ func createsOrRemoves(task, args *yaml.Node) bool {
 }
 
 // pipesWithoutPipefail reports a shell command holding a pipe outside Jinja and quotes and no
-// pipefail, unless PowerShell runs it.
+// pipefail, unless PowerShell runs it. The command is the module's free-form value or, when that
+// is a mapping, null or empty, its cmd argument, as Ansible reads it.
 func pipesWithoutPipefail(task, args *yaml.Node) bool {
 	if strings.Contains(moduleArgument(task, args, "executable"), "pwsh") {
 		return false
 	}
-	command := args.Value
-	if args.Kind == yaml.MappingNode {
+	command := ""
+	if args.Kind == yaml.ScalarNode && args.ShortTag() != "!!null" {
+		command = args.Value
+	}
+	if command == "" {
 		command = moduleArgument(task, args, "cmd")
 	}
 	if strings.Contains(command, "pipefail") {

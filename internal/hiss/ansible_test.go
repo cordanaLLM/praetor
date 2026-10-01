@@ -143,6 +143,36 @@ func TestAnsibleScanner_Boundaries(t *testing.T) {
 	}
 }
 
+// Positive, negative and boundary: a shell module whose own value is null or empty takes its
+// command from the task's args cmd, as Ansible does, so a pipe there is reported and pipefail
+// there is honoured; a free-form command beside other args is read as before.
+func TestAnsibleScanner_ShellCommandFromArgs(t *testing.T) {
+	rep := scanFixtureFile(t, "args.yml", `- hosts: all
+  tasks:
+    - name: Count matches
+      ansible.builtin.shell:
+      args:
+        cmd: grep x /etc/hosts | wc -l
+      changed_when: false
+    - name: Count safely
+      shell: ~
+      args:
+        cmd: set -o pipefail && grep x /etc/hosts | wc -l
+      changed_when: false
+    - name: Empty value
+      shell: ""
+      args:
+        cmd: getent passwd | wc -l
+        creates: /tmp/users
+    - name: Free form
+      shell: echo ready
+      args:
+        chdir: /tmp
+      changed_when: false
+`)
+	ansibleFindings(t, "args.yml", rep, "HISS-07@4", "HISS-07@14")
+}
+
 // nestedBlocks returns depth nested blocks whose innermost task runs a command.
 func nestedBlocks(depth int) string {
 	var sb strings.Builder

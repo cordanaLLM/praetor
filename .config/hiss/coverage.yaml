@@ -480,7 +480,8 @@ rules:
           ignore_errors: true and failed_when: false on a task or block that does not register
           its result discard the failure and are reported (ansible-lint ignore-errors), and so is
           a shell task that pipes without set -o pipefail, whose status is the last command's
-          (ansible-lint risky-shell-pipe). A registered result, a pipe inside quotes or Jinja and
+          (ansible-lint risky-shell-pipe), its command read from the free-form value or, when the
+          module holds a mapping, nothing or an empty string, from cmd. A registered result, a pipe inside quotes or Jinja and
           a PowerShell executable are not. A task file included from outside a role's tasks/ or
           handlers/ directory is not recognised and is held as a gap.
   - id: HISS-09

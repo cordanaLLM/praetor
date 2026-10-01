@@ -539,7 +539,10 @@ section with an explicit stack. The rules follow the matching
 
 - HISS-07: `ignore_errors: true` or `failed_when: false` on a task or block that does not
   `register` its result (ignore-errors), and a `shell` task that pipes without `set -o pipefail`,
-  whose status is then the last command's (risky-shell-pipe). A pipe inside quotes or Jinja is text.
+  whose status is then the last command's (risky-shell-pipe). The command is the module's
+  free-form value or, when the module holds a mapping, nothing or an empty string, its `cmd`
+  argument, from the module or from the task's `args`, as Ansible reads it
+  (`TestAnsibleScanner_ShellCommandFromArgs`). A pipe inside quotes or Jinja is text.
 - HISS-08: a `command`, `shell`, `raw` or `script` task, under its short, `ansible.builtin` or
   `ansible.legacy` name, with no `changed_when`, `creates` or `removes` reports a change on every
   run whatever the host's state, so the play's outcome is not determined by the state it converges
