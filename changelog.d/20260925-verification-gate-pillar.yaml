@@ -1,0 +1,4 @@
+type: fixed
+title: Stop adopt from reporting a ready Verification Gate while its verify-all can only exit 1, and read every pytest configuration file
+issue: "#594"
+breaking: false

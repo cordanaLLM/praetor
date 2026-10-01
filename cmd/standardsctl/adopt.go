@@ -253,8 +253,22 @@ func printAdoptReport(rep *adopt.AdoptReport) {
 	case adopt.OutcomeSimulated:
 		fmt.Println("\nSimulated adoption plan completed. Run without -dry-run to apply.")
 	default:
-		fmt.Println("\nRepository successfully adopted into cordanaLLM/praetor governance!")
+		printAppliedOutcome(rep)
 	}
+}
+
+// printAppliedOutcome closes an applied run. A Verification Gate left short of ready, such as one
+// whose verify-all can only exit 1, qualifies the line, so the run never ends with an unqualified
+// success its verify-all contradicts (#594). An informational warning on another pillar, such as a
+// preserved DevContainer, stays on that pillar's line and leaves the success line as it is
+// (PendingPillars).
+func printAppliedOutcome(rep *adopt.AdoptReport) {
+	if pending := rep.PendingPillars(); len(pending) > 0 {
+		fmt.Printf("\nRepository adopted into cordanaLLM/praetor governance; not ready yet: %s. See the warnings above.\n",
+			strings.Join(pending, ", "))
+		return
+	}
+	fmt.Println("\nRepository successfully adopted into cordanaLLM/praetor governance!")
 }
 
 var pillarHeadings = map[adopt.AdoptOutcome]string{

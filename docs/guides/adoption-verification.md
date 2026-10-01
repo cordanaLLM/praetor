@@ -11,6 +11,30 @@ runtimes, status, and any reasons requiring review.
 | `unavailable` | A required build/test command is missing or ambiguous. Generated recipes fail explicitly. |
 | `preserved-unverified` | Existing custom Makefile ownership is preserved. Review and exercise its `verify-all` contract. |
 
+An `unavailable` plan's `verify-all` runs the governance checks and then fails with one
+`printf`/`exit 1` pair, also when adoption appends the rule to an existing Makefile. The
+report's `Project verification unavailable` warning says so, names the missing build or
+test command, and lists every command discovery found that `verify-all` does not run,
+shell-quoted, so you can wire them into the project's own contract. When the existing
+Makefile already defines a `test` target, a second warning names it as the likely test
+contract. A `test` target whose recipe is that failing pair is adoption's own, such as the
+one in a Makefile adoption generated earlier, so a re-run does not name it. A Makefile
+adoption does not recognise as its own current output, but that still holds the failing
+pair, keeps the plan `unavailable` on the next run rather than being preserved as a custom
+`verify-all`. Adoption recognises its earlier and current Makefile output in either
+consistent line-ending style, so a CRLF checkout (`core.autocrlf` on Windows) gets the same
+plan and report as an LF one, and earlier output it replaces keeps its CRLF endings; a
+Makefile mixing both styles counts as edited. The tests are in
+`internal/adopt/verification_pillar_test.go`:
+`TestAdoptPythonProjectWithoutBuildWarnsVerificationGate`,
+`TestNoteExistingTestTargetNamesOnlyTheAdoptersTarget`,
+`TestAdoptRerunOnGeneratedMakefileDoesNotNameItsTestTarget` and
+`TestPreservedVerifyAllWithPlaceholderStaysUnavailable`, with the CRLF migration in
+`TestVerificationLegacyMigrationAndCustomPreservation`
+(`internal/adopt/verification_scaffold_test.go`). A plan's `selected_by` list names the
+configuration that selected a command where the marker alone does not, such as the
+pytest configuration file and table, and the warning repeats it.
+
 Ownership means a rule. Make reads a line in two steps, and adoption follows both. First it cuts
 the line at the first unescaped `#`, which opens a comment, or `;`, which opens the inline recipe.
 Then it decides rule versus assignment on what is left, by whichever operator it reaches first: an
@@ -68,7 +92,22 @@ when its step completed without warnings or errors, and otherwise names itself
 `planned` (dry run), `warned`, `declined`, `failed` or `not-run`. A run
 that recorded an error is incomplete even when it was a dry run
 (`Outcome` and `Pillars` in `internal/adopt/report.go`, tested in
-`internal/adopt/report_test.go`).
+`internal/adopt/report_test.go`). The **Verification Gate** also follows
+the verification plan: when the plan is `unavailable`, the `verify-all`
+adoption writes can only exit 1, so the pillar is `warned`, never `✓` or
+`planned`, and carries the plan's warning. An applied run whose Verification
+Gate is warned, failed or unreached ends with `not ready yet: Verification
+Gate` instead of the success line. Only the Verification Gate counts: a
+warning on another pillar is informational and stays on that pillar's line,
+such as the notice that an existing `.devcontainer` was preserved, which every
+plain re-run repeats, and a declined pillar does not count either
+(`PendingPillars` in `internal/adopt/report.go`,
+`TestVerificationPillarFollowsThePlan` in
+`internal/adopt/verification_pillar_test.go`,
+`TestPrintAdoptReportQualifiesSuccessWithPendingPillars` in
+`cmd/standardsctl/adopt_test.go`, and end to end
+`TestAdoptExistingDevContainerKeepsTheSuccessLine` in
+`cmd/standardsctl/adopt_success_line_test.go`).
 
 Repositories declaring `docs:seo-portal` also receive a locked Markdown gate,
 its dedicated required CI workflow, and private scratch-link protection. The
@@ -852,10 +891,30 @@ renders both newly generated Makefiles and AGENTS.md. Discovery recognizes:
   explicit unconditional test projects receive `dotnet test`. Conditional,
   contradictory, or disabled test markers cannot establish a test gate.
 - Python: explicit pytest configuration, or tests under `tests/` with an exact
-  Python 3.14+ version pin. Unittest commands check the interpreter version before
-  discovery. Python 3.14 fails when discovery finds no tests. A separate build
-  command remains necessary; a Python-only project without one needs a custom
-  contract rather than a generated no-op build.
+  Python 3.14+ version pin. Pytest configuration is any root file pytest itself
+  reads, in pytest's precedence order: `pytest.toml`, `.pytest.toml`, `pytest.ini`
+  or `.pytest.ini` (even empty), a `pyproject.toml` with a `[tool.pytest]` or
+  `[tool.pytest.ini_options]` table, a `tox.ini` with a `[pytest]` section, or a
+  `setup.cfg` with a `[tool:pytest]` section
+  ([pytest configuration reference](https://docs.pytest.org/en/stable/reference/customize.html)).
+  The report names the file and table it used. A `pyproject.toml`, `tox.ini` or
+  `setup.cfg` without that table or section is not pytest configuration; section
+  lines are read the way pytest's INI parser reads them, so an indented `[pytest]`
+  or `[ pytest ]` is not the section (`pytestConfiguration` in
+  `internal/adopt/verification_pytest.go`, tested by
+  `TestVerificationPytestConfigurationPositive` and
+  `TestVerificationPytestConfigurationNegative`). `tox.ini` and `setup.cfg` also
+  configure other tools, in repositories with no Python at all, so one that
+  discovery cannot read (a symlink, a file that is not UTF-8 text, one past the
+  per-file byte bound, one the process may not read) is not pytest
+  configuration: adoption goes on, the plan's `unreadable` list says why, and
+  the report's verification warning names the file
+  (`TestVerificationUnreadablePytestConfigurationIsNotConfiguration` and
+  `TestAdoptWithUnreadableSetupCfgWarnsInsteadOfFailing` in
+  `internal/adopt/verification_pillar_test.go`). Unittest commands check the
+  interpreter version before discovery. Python 3.14 fails when discovery finds no
+  tests. A separate build command remains necessary; a Python-only project without
+  one needs a custom contract rather than a generated no-op build.
 - Zig builds: a root `build.zig` runs `zig build`, its default install step,
   ahead of every other build and test command, because language builds such as
   Cargo's link the native libraries it produces. `build.zig` is Zig source, not

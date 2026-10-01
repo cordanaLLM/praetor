@@ -316,9 +316,15 @@ func isPriorGeneratedMakefile(data string, plan *VerificationPlan) bool {
 }
 
 // isReplaceableVerificationMakefile reports whether data is earlier Praetor output that adoption
-// replaces with the current rendering.
+// replaces with the current rendering, in either consistent line-ending style: a CRLF checkout
+// (core.autocrlf on Windows) holds the same output, so Linux, macOS and Windows re-runs agree. A
+// text mixing both styles has been edited and is not replaceable.
 func isReplaceableVerificationMakefile(data string, plan *VerificationPlan) bool {
-	return isLegacyVerificationMakefile(data) || isPriorGeneratedMakefile(data, plan) || data == priorSourceGateMakefile(plan)
+	normalized, _, err := util.NormalizeLineEndingsStrict(data)
+	if err != nil {
+		return false
+	}
+	return isLegacyVerificationMakefile(normalized) || isPriorGeneratedMakefile(normalized, plan) || normalized == priorSourceGateMakefile(plan)
 }
 
 const legacyVerificationStub = "\n.PHONY: all verify-all audit compile-context build test\n\nverify-all:\n\t@echo \"Running verification...\"\n\ncompile-context:\n\t@standardsctl compile-context\n\naudit:\n\t@standardsctl audit\n\ntest:\n\t@go test -v -race ./...\n\nbuild:\n\t@go build -v ./...\n"
@@ -331,9 +337,25 @@ func legacyVerificationMakefile(test, build string) string {
 		"audit:\n\t@standardsctl audit\n\ntest:\n\t@" + test + "\n\nbuild:\n\t@" + build + "\n"
 }
 
+// preserveCustomVerification keeps a verify-all adoption did not write as the project's own
+// contract. One that still holds the failing recipe adoption writes for an unavailable plan is
+// not a contract: it is the placeholder an earlier adoption left, rendered for another plan or
+// appended to an existing Makefile, so the plan stays unavailable and says so, rather than
+// reporting a preserved verify-all that can only exit 1 (#594). Earlier and current output are
+// recognised in either consistent line-ending style, so a CRLF checkout of the current rendering
+// is not mistaken for a custom verify-all or for a leftover placeholder.
 func preserveCustomVerification(plan *VerificationPlan, data []byte) {
-	text := withoutDocumentationMakefileBlock(string(data))
+	text := string(data)
+	if normalized, _, err := util.NormalizeLineEndingsStrict(text); err == nil {
+		text = normalized
+	}
+	text = withoutDocumentationMakefileBlock(text)
 	if !mayDefineVerificationTarget(text) || isReplaceableVerificationMakefile(text, plan) || text == buildMakefile(plan) {
+		return
+	}
+	if normalized, _ := util.NormalizeLineEndings(text); strings.Contains(normalized, unavailableVerificationRecipe) {
+		plan.Status = verificationUnavailable
+		plan.unavailable("The Makefile still holds the failing placeholder recipe adoption writes; replace it with the project's build and test commands.")
 		return
 	}
 	plan.Status = verificationPreserved
@@ -520,19 +542,39 @@ func makefileTargetNames(line string) []string {
 // text, not rules, so a "target:" line inside one declares nothing; mayDefineTarget reports the
 // files where Make may still parse such a body as rules.
 func hasVerificationTarget(data, target string) bool {
-	lines := strings.Split(data, "\n")
+	return verificationTargetLine(strings.Split(data, "\n"), target) >= 0
+}
+
+// verificationTargetLine returns the index of the first line that declares a rule for target, or
+// -1 when none within the scan bound does.
+func verificationTargetLine(lines []string, target string) int {
 	var define makefileDefineTracker
 	for index := 0; index < len(lines) && index < maxMakefileLines; index++ {
 		if define.body(lines[index]) {
 			continue
 		}
-		for _, name := range makefileTargetNames(lines[index]) {
-			if name == target {
-				return true
-			}
+		if slices.Contains(makefileTargetNames(lines[index]), target) {
+			return index
 		}
 	}
-	return false
+	return -1
+}
+
+// verificationTargetRecipe returns the tab-prefixed recipe lines, each ending in "\n", that follow
+// the first rule data declares for target, and whether data declares one. A rule without recipe
+// lines, such as "test: build" alone, returns an empty recipe.
+func verificationTargetRecipe(data, target string) (string, bool) {
+	lines := strings.Split(data, "\n")
+	index := verificationTargetLine(lines, target)
+	if index < 0 {
+		return "", false
+	}
+	var recipe strings.Builder
+	for next := index + 1; next < len(lines) && next < maxMakefileLines && strings.HasPrefix(lines[next], "\t"); next++ {
+		recipe.WriteString(lines[next])
+		recipe.WriteByte('\n')
+	}
+	return recipe.String(), true
 }
 
 func appendVerificationTargets(existing string, plan *VerificationPlan) (string, error) {
@@ -544,8 +586,9 @@ func appendVerificationTargets(existing string, plan *VerificationPlan) (string,
 	result.WriteString(normalized)
 	result.WriteString("\n# Praetor declared verification; existing project recipes remain unchanged.\n" +
 		util.MakefileCLIVariable + ".PHONY: verify-all\nverify-all:\n\t@$(PRAETORCTL) compile-context --verify\n\t@$(PRAETORCTL) caveman check --configured-sources\n\t@$(PRAETORCTL) audit\n")
-	result.WriteString(verificationRecipe(plan, plan.Build))
-	result.WriteString(verificationRecipe(plan, plan.Test))
+	// One recipe for the build and test commands together: rendered once for each, an
+	// unavailable plan wrote its failing pair twice (#594).
+	result.WriteString(verificationRecipe(plan, plan.commands()))
 	for _, target := range []string{"compile-context", "audit"} {
 		if !hasVerificationTarget(normalized, target) {
 			result.WriteString("\n" + target + ":\n\t@$(PRAETORCTL) " + target + "\n")

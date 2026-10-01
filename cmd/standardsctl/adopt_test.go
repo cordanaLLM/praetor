@@ -155,6 +155,50 @@ func TestPrintAdoptReportDerivesPillarLinesFromSteps(t *testing.T) {
 	}
 }
 
+// #594: an applied run whose verification plan is unavailable warns the Verification Gate and
+// ends with a qualified line naming it, never the unqualified success line; a clean applied run
+// keeps that line, and neither a declined pillar nor a warned DevContainer qualifies it.
+func TestPrintAdoptReportQualifiesSuccessWithPendingPillars(t *testing.T) {
+	allSteps := func(declined string) []adopt.StepOutcome {
+		steps := make([]adopt.StepOutcome, 0, 4)
+		for _, name := range []string{"agent-harness", "editors", "dev-container", "makefile"} {
+			status := adopt.StepCompleted
+			if name == declined {
+				status = adopt.StepDeclined
+			}
+			steps = append(steps, adopt.StepOutcome{Name: name, Status: status})
+		}
+		return steps
+	}
+	unavailable := &adopt.AdoptReport{
+		BaselineStatus: "scanned", Steps: allSteps(""),
+		Verification: &adopt.VerificationPlan{Status: "unavailable", Reasons: []string{"A required build or test command is absent."}},
+	}
+	out, err := captureStdout(t, func() error { printAdoptReport(unavailable); return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, out, "⚠ Verification Gate", "[warned: 1 warning(s)]", "not ready yet: Verification Gate. See the warnings above.")
+	if strings.Contains(out, "successfully adopted") || strings.Contains(out, "✓ Verification Gate") {
+		t.Fatalf("unavailable verification reported as a clean adoption:\n%s", out)
+	}
+	preserved := allSteps("")
+	preserved[2].Warnings = []string{"Existing DevContainer preserved; bootstrap readiness requires separate verification."}
+	for _, rep := range []*adopt.AdoptReport{
+		{BaselineStatus: "scanned", Steps: allSteps(""), Verification: &adopt.VerificationPlan{Status: "declared-unverified"}},
+		{BaselineStatus: "scanned", Steps: allSteps("editors")},
+		{BaselineStatus: "scanned", Steps: preserved, Verification: &adopt.VerificationPlan{Status: "declared-unverified"}},
+	} {
+		out, err = captureStdout(t, func() error { printAdoptReport(rep); return nil })
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out, "Repository successfully adopted") || strings.Contains(out, "not ready yet") {
+			t.Fatalf("clean adoption qualified:\n%s", out)
+		}
+	}
+}
+
 // adoptArgsFixture is what parseInterspersed made of one adoption argv.
 type adoptArgsFixture struct {
 	profile    string

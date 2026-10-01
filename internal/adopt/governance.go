@@ -78,6 +78,7 @@ func reconcileMakefile(ctx context.Context, s *adoptSession) error {
 		return err
 	}
 	generated := isReplaceableVerificationMakefile(string(data), s.verification)
+	noteExistingTestTarget(s, string(data), exists, generated)
 	handled, err := reconcileExistingVerificationMakefile(ctx, s, string(data), exists, generated, documentationEnabled)
 	if err != nil || handled {
 		return err
@@ -87,6 +88,26 @@ func reconcileMakefile(ctx context.Context, s *adoptSession) error {
 		return err
 	}
 	return publishVerificationMakefile(ctx, s, full, data, replacement, exists)
+}
+
+// noteExistingTestTarget names a test target the adopter's own Makefile already defines when the
+// verification plan is unavailable: it is the likely test contract, and the verify-all adoption
+// writes does not run it (#594). A test target whose recipe is the failing placeholder is
+// adoption's own: the current rendering of a generated Makefile, CRLF or edited elsewhere,
+// holds one, and re-running adoption on it must not name it as the adopter's contract. A
+// Makefile adoption replaces as earlier output (generated) is not the adopter's either.
+func noteExistingTestTarget(s *adoptSession, data string, exists, generated bool) {
+	if !exists || generated || s.verification.Status != verificationUnavailable {
+		return
+	}
+	normalized, _ := util.NormalizeLineEndings(withoutDocumentationMakefileBlock(data))
+	recipe, found := verificationTargetRecipe(normalized, "test")
+	if !found || recipe == unavailableVerificationRecipe {
+		return
+	}
+	s.report.addWarning("%s", "Makefile target 'test' already exists and is the likely test contract; "+
+		"if it runs the project's tests, have verify-all run it (for example with @$(MAKE) test) "+
+		"in place of the recipe lines that print 'Project verification unavailable' and exit 1.")
 }
 
 func reconcileDisabledDocumentationMakefile(
@@ -133,7 +154,12 @@ func verificationMakefileReplacement(
 	s *adoptSession, data string, exists, generated, documentationEnabled bool,
 ) (string, error) {
 	replacement := buildMakefile(s.verification)
-	if exists && !generated {
+	switch {
+	case exists && generated:
+		// Earlier output in a CRLF checkout keeps its line-ending style (isReplaceableVerificationMakefile).
+		_, crlf := util.NormalizeLineEndings(data)
+		replacement = util.RestoreLineEndings(replacement, crlf)
+	case exists:
 		var err error
 		replacement, err = appendVerificationTargets(data, s.verification)
 		if err != nil {

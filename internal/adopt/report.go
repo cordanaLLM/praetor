@@ -1,6 +1,9 @@
 package adopt
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
 // StepStatus is how one step of the adoption chain ended.
 type StepStatus string
@@ -137,18 +140,22 @@ type Pillar struct {
 	Errors   []string     `json:"errors,omitempty"`
 }
 
+// verificationStep is the adoption step that writes verify-all, the Verification Gate's step.
+const verificationStep = "makefile"
+
 // governancePillars names each pillar and the adoption step that produces it.
 var governancePillars = [...]Pillar{
 	{Name: "Universal Harness", Step: "agent-harness", Summary: "Canonical AGENTS.md, caveman-linted by compile-context --verify and audit"},
 	{Name: "AI Context Sync", Step: "agent-harness", Summary: "6 targets (Claude Code, Cursor, Copilot, Windsurf, Codex, Gemini)"},
 	{Name: "IDE Ecosystem", Step: "editors", Summary: "VS Code, JetBrains (CLion/GoLand/PyCharm), Neovim"},
 	{Name: "DevContainer", Step: "dev-container", Summary: "Containerized deterministic dev environment (.devcontainer)"},
-	{Name: "Verification Gate", Step: "makefile", Summary: "Makefile 'verify-all' standard entrypoint"},
+	{Name: "Verification Gate", Step: verificationStep, Summary: "Makefile 'verify-all' standard entrypoint"},
 }
 
 // Pillars derives every governance pillar from the step outcomes, so a renderer never
 // prints a success mark the report does not carry: a step that warned, failed, was declined
-// or never ran says so.
+// or never ran says so, and so does a Verification Gate whose verify-all can only exit 1
+// (qualifyVerificationPillar).
 func (r *AdoptReport) Pillars() []Pillar {
 	pillars := make([]Pillar, 0, len(governancePillars))
 	for _, pillar := range governancePillars {
@@ -159,9 +166,50 @@ func (r *AdoptReport) Pillars() []Pillar {
 				pillar.Warnings, pillar.Errors = step.Warnings, step.Errors
 			}
 		}
+		r.qualifyVerificationPillar(&pillar)
 		pillars = append(pillars, pillar)
 	}
 	return pillars
+}
+
+// qualifyVerificationPillar warns the Verification Gate when the verification plan is unavailable.
+// The verify-all adoption writes for such a plan, or finds an earlier adoption left, runs the
+// governance checks and then exits 1, so the pillar is never ready or planned, and it carries the
+// plan's notice, which names what is missing. The notice is recorded before any step runs, so the
+// makefile step never carries it itself (#594). A failed, declined or unreached step keeps its
+// own status: adoption wrote no verify-all there.
+func (r *AdoptReport) qualifyVerificationPillar(pillar *Pillar) {
+	if pillar.Step != verificationStep || r.Verification == nil || r.Verification.Status != verificationUnavailable {
+		return
+	}
+	switch pillar.Status {
+	case PillarReady, PillarPlanned, PillarWarned:
+		pillar.Status = PillarWarned
+		pillar.Warnings = append(slices.Clone(pillar.Warnings), r.Verification.notice())
+	}
+}
+
+// PendingPillars names the pillars that hold back an applied run's success line: the Verification
+// Gate when the run left it warned, failed or unreached. A renderer closing an applied run
+// qualifies the success line with these names (#594). Only the Verification Gate counts: its
+// verify-all is the contract the success line vouches for, and an unavailable plan leaves it able
+// only to exit 1. Every other pillar's warning is informational and stays on its own pillar line,
+// such as the notice that an existing DevContainer was preserved, which every plain re-run
+// repeats and which leaves the adopter nothing to fix. A declined pillar is the manifest's
+// decision and is not pending either.
+func (r *AdoptReport) PendingPillars() []string {
+	var names []string
+	for _, pillar := range r.Pillars() {
+		if pillar.Step != verificationStep {
+			continue
+		}
+		switch pillar.Status {
+		case PillarReady, PillarPlanned, PillarDeclined:
+		default:
+			names = append(names, pillar.Name)
+		}
+	}
+	return names
 }
 
 func pillarStatus(step StepOutcome, dryRun bool) PillarStatus {
