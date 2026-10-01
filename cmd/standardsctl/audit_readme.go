@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
+	"github.com/cordanaLLM/praetor/internal/baseline"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/readmegovernance"
@@ -39,17 +40,24 @@ func auditReadmeGovernance(ctx context.Context, manifest *config.Manifest, opts 
 	return nil
 }
 
-// auditedReadmeState is the state audit verifies the README block against: the recorded
-// baseline, the documentation facet and the manifest identity (adopt.ReadmeIdentity), with
-// the forge host the block's AGENTS.md link records for that identity
-// (readmegovernance.LinkedHost). Adoption takes that host from the origin remote; audit reads
-// it back from content rather than from the clone's remote, so a mirror or a copy without
-// one verifies the same block, and a link into another repository or onto an unknown host
-// is stale.
+// auditedReadmeState is the state audit verifies the README block against
+// (readmeGovernanceState), from the baseline the audit's baseline gate loaded.
 func auditedReadmeState(manifest *config.Manifest, opts *auditOptions, content string) (readmegovernance.State, error) {
 	if opts.baseline == nil {
 		return readmegovernance.State{}, fmt.Errorf("baseline gate did not provide a snapshot")
 	}
+	return readmeGovernanceState(manifest, opts.baseline, opts.baselineKnown, content)
+}
+
+// readmeGovernanceState is the state of the README governance block: the recorded baseline, the
+// documentation facet and the manifest identity (adopt.ReadmeIdentity), with the forge host the
+// block's AGENTS.md link records for that identity (readmegovernance.LinkedHost). Adoption takes
+// that host from the origin remote; audit and `docs readme` read it back from content rather
+// than from the clone's remote, so a mirror or a copy without one verifies and renders the same
+// block, and a link into another repository or onto an unknown host is stale. Audit verifies
+// the block against it and `docs readme` renders the block from it, so a rendered block passes
+// the audit.
+func readmeGovernanceState(manifest *config.Manifest, base *baseline.Baseline, baselineKnown bool, content string) (readmegovernance.State, error) {
 	documentationEnabled := false
 	if manifest != nil {
 		var err error
@@ -63,8 +71,8 @@ func auditedReadmeState(manifest *config.Manifest, opts *auditOptions, content s
 		return readmegovernance.State{}, err
 	}
 	return readmegovernance.State{
-		BaselineKnown:        opts.baselineKnown,
-		LegacyDebtCount:      opts.baseline.Count(),
+		BaselineKnown:        baselineKnown,
+		LegacyDebtCount:      base.Count(),
 		DocumentationEnabled: documentationEnabled,
 		RepositoryOwner:      owner,
 		RepositoryName:       name,

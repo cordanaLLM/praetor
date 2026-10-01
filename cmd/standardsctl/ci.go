@@ -31,6 +31,10 @@ func runCI(args []string) error {
 		return nil
 	case "filter":
 		return runCIFilter(ctx, subArgs)
+	case "generated":
+		// Renderings run far longer than a diff classification; the subcommand carries its own
+		// deadline (generatedCommandTimeout).
+		return runCIGenerated(subArgs)
 	default:
 		return fmt.Errorf("unknown ci subcommand: %s", sub)
 	}
@@ -40,6 +44,7 @@ func printCIUsage() {
 	fmt.Println("Usage: standardsctl ci <subcommand> [arguments]")
 	fmt.Println("\nSubcommands:")
 	fmt.Println("  filter [--dir=.] [--config=<dir>/.standards.yaml] [--base=ref] [--head=ref] [--json] [--env] [--force]  Analyze diff and filter CI gates")
+	fmt.Println("  generated list|check|render [flags]  List, check in a pull request, or render the declared generated artefacts")
 }
 
 func runCIFilter(ctx context.Context, args []string) error {
