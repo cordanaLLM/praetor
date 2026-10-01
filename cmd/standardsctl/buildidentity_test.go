@@ -7,6 +7,8 @@ package main
 import (
 	"runtime/debug"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/buildid"
 )
 
 // fullRevision is a 40-hex commit as Go's VCS stamp records it; its first 12 characters are
@@ -16,15 +18,12 @@ const fullRevision = "25451d888c8710822dd578907625dc69a0975142"
 // moduleBuild is the build information of a `go install module@version` build: a module
 // version and no vcs.* settings, because the module cache carries no VCS metadata.
 func moduleBuild(moduleVersion string) *debug.BuildInfo {
-	return &debug.BuildInfo{Main: debug.Module{
-		Path:    "example.com/tool",
-		Version: moduleVersion,
-	}}
+	return &debug.BuildInfo{Main: debug.Module{Path: "example.com/tool", Version: moduleVersion}}
 }
 
 // stampedBuild is the build information of a checkout build Go stamped with its commit.
-func stampedBuild(moduleVersion string, modified bool) *debug.BuildInfo {
-	info := moduleBuild(moduleVersion)
+func stampedBuild(modified bool) *debug.BuildInfo {
+	info := moduleBuild("v0.0.0-20260101000000-0123456789ab")
 	dirty := "false"
 	if modified {
 		dirty = "true"
@@ -37,22 +36,17 @@ func stampedBuild(moduleVersion string, modified bool) *debug.BuildInfo {
 	return info
 }
 
-type identityCase struct {
+type pinCase struct {
 	name       string
 	injected   string
 	info       *debug.BuildInfo
-	display    string
 	pinned     string
 	identified bool
 }
 
-func checkIdentity(t *testing.T, tc identityCase) {
+func checkPin(t *testing.T, tc pinCase) {
 	t.Helper()
-	id := identifyBuild(tc.injected, tc.info)
-	if got := id.display(); got != tc.display {
-		t.Errorf("%s: display = %q, want %q", tc.name, got, tc.display)
-	}
-	pinned, identified := id.lockPin()
+	pinned, identified := lockPin(buildid.Identify(tc.injected, tc.info))
 	if pinned != tc.pinned || identified != tc.identified {
 		t.Errorf("%s: lockPin = %q, %v; want %q, %v", tc.name, pinned, identified, tc.pinned, tc.identified)
 	}
@@ -61,88 +55,40 @@ func checkIdentity(t *testing.T, tc identityCase) {
 	}
 }
 
-// Positive: a `go install module@<commit>` build carries no VCS stamp, but its pseudo-version
-// names the commit. It is reported and pinned as the checkout build of that commit is (#642).
-func TestIdentifyBuildReadsThePseudoVersionOfAModuleInstall(t *testing.T) {
-	for _, tc := range []identityCase{
-		{name: "untagged base", info: moduleBuild("v0.0.0-20260929221210-25451d888c87")},
-		{name: "after a release", info: moduleBuild("v1.2.4-0.20260929221210-25451d888c87")},
-		{name: "after a prerelease", info: moduleBuild("v1.2.3-rc.1.0.20260929221210-25451d888c87")},
-		{name: "with build metadata", info: moduleBuild("v2.0.1-0.20260929221210-25451d888c87+incompatible")},
+// Positive: a release, injected or a `go install` of a tag, is pinned verbatim; a revision,
+// from a VCS stamp or the pseudo-version of a `go install module@<commit>` build, is pinned
+// as v0.0.0 with the revision as build metadata, so one commit pins the same however it was
+// built (#642).
+func TestLockPin_Positive_FollowsTheSharedIdentity(t *testing.T) {
+	for _, tc := range []pinCase{
+		{name: "injected", injected: "v1.4.2", info: stampedBuild(true), pinned: "v1.4.2", identified: true},
+		{name: "tag", info: moduleBuild("v2.0.0-rc.1"), pinned: "v2.0.0-rc.1", identified: true},
+		{name: "clean stamp", info: stampedBuild(false), pinned: "v0.0.0+25451d888c87", identified: true},
+		{name: "dirty stamp", info: stampedBuild(true), pinned: "v0.0.0+25451d888c87.dirty", identified: true},
+		{name: "pseudo-version", info: moduleBuild("v1.2.4-0.20260929221210-25451d888c87"),
+			pinned: "v0.0.0+25451d888c87", identified: true},
 	} {
-		tc.display, tc.pinned, tc.identified = "25451d888c87", "v0.0.0+25451d888c87", true
-		checkIdentity(t, tc)
+		checkPin(t, tc)
 	}
 }
 
-// Positive: a `go install module@vX.Y.Z` build records the tag, which is a release version and
-// is reported and pinned verbatim, as an injected release is.
-func TestIdentifyBuildReportsATaggedModuleVersionAsARelease(t *testing.T) {
-	for _, tag := range []string{"v1.4.2", "v2.0.0-rc.1"} {
-		checkIdentity(t, identityCase{name: tag, info: moduleBuild(tag), display: tag, pinned: tag, identified: true})
-	}
-}
-
-// Positive: the stronger sources keep their precedence. An injected release beats everything,
-// and a VCS stamp, which also carries the dirty flag, beats the module version Go derives
-// from it.
-func TestIdentifyBuildPrefersInjectedVersionThenVCSStamp(t *testing.T) {
-	pseudo := "v0.0.0-20260101000000-0123456789ab"
-	for _, tc := range []identityCase{
-		{name: "injected", injected: "v1.4.2", info: stampedBuild(pseudo, true),
-			display: "v1.4.2", pinned: "v1.4.2", identified: true},
-		{name: "clean stamp", info: stampedBuild(pseudo, false),
-			display: "25451d888c87", pinned: "v0.0.0+25451d888c87", identified: true},
-		{name: "dirty stamp", info: stampedBuild(pseudo+"+dirty", true),
-			display: "25451d888c87-dirty", pinned: "v0.0.0+25451d888c87.dirty", identified: true},
-	} {
-		checkIdentity(t, tc)
-	}
-}
-
-// Negative: a build without an injected version, a VCS stamp or a usable module version
-// cannot identify itself. It must say so and pin the zero version, never a version it cannot
-// stand behind.
-func TestIdentifyBuildRefusesAnUnidentifiableBuild(t *testing.T) {
-	const untagged = "unknown (untagged build, no VCS stamp)"
-	for _, tc := range []identityCase{
-		{name: "no build information", info: nil, display: "unknown (no build information)"},
-		{name: "devel", info: moduleBuild("(devel)"), display: untagged},
-		{name: "empty", info: moduleBuild(""), display: untagged},
-		{name: "blank injection", injected: "   ", info: moduleBuild("(devel)"), display: untagged},
-		{name: "not a version", info: moduleBuild("latest"), display: untagged},
-		{name: "leading zero", info: moduleBuild("v01.0.0-20260929221210-25451d888c87"), display: untagged},
+// Negative: a build that identifies nothing pins the zero version and says so, never a
+// version it cannot stand behind.
+func TestLockPin_Negative_UnidentifiableBuild(t *testing.T) {
+	for _, tc := range []pinCase{
+		{name: "no build information", info: nil},
+		{name: "devel", info: moduleBuild("(devel)")},
+		{name: "blank injection", injected: "   ", info: moduleBuild("")},
+		{name: "not a version", info: moduleBuild("latest")},
 	} {
 		tc.pinned, tc.identified = unidentifiedLockVersion, false
-		checkIdentity(t, tc)
+		checkPin(t, tc)
 	}
 }
 
-// Boundary: only Go's pseudo-version grammar yields a revision. A 12-character revision is
-// kept, a longer one is shortened as a VCS stamp is, a shorter one is kept whole, and a
-// timestamp that is not exactly 14 digits is no pseudo-version.
-func TestPseudoVersionRevisionBoundaries(t *testing.T) {
-	for _, tc := range []struct {
-		version  string
-		revision string
-		ok       bool
-	}{
-		{"v0.0.0-20260929221210-25451d888c87", "25451d888c87", true},
-		{"v0.0.0-20260929221210-" + fullRevision, fullRevision, true},
-		{"v0.0.0-20260929221210-abc1234", "abc1234", true},
-		{"v0.0.0-2026092922121-25451d888c87", "", false},
-		{"v0.0.0-202609292212100-25451d888c87", "", false},
-		{"v1.2.3-20260929221210-25451d888c87", "", false},
-		{"v1.4.2", "", false},
-		{"", "", false},
-	} {
-		revision, ok := pseudoVersionRevision(tc.version)
-		if revision != tc.revision || ok != tc.ok {
-			t.Errorf("pseudoVersionRevision(%q) = %q, %v; want %q, %v", tc.version, revision, ok, tc.revision, tc.ok)
-		}
-	}
-	long := identifyBuild("", moduleBuild("  v0.0.0-20260929221210-"+fullRevision+"  "))
-	if got := long.display(); got != "25451d888c87" {
-		t.Errorf("a padded pseudo-version with a full revision must report 12 characters, got %q", got)
-	}
+// Boundary: a pseudo-version carrying a full 40-character revision pins the same 12
+// characters a VCS stamp of that commit pins.
+func TestLockPin_Boundary_FullRevisionPseudoVersion(t *testing.T) {
+	checkPin(t, pinCase{name: "full revision", info: moduleBuild("v0.0.0-20260929221210-" + fullRevision),
+		pinned: "v0.0.0+25451d888c87", identified: true})
 }

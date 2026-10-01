@@ -72,7 +72,7 @@ def build(directory):
     source = source_hash()
     version = "dev-" + source
     binary = directory / "praetor-mcp"
-    command_output(["go", "build", "-ldflags", "-X main.mcpVersion=" + version,
+    command_output(["go", "build", "-ldflags", "-X main.version=" + version,
                     "-o", str(binary), "./cmd/standards-mcp"], BUILD_TIMEOUT)
     if source_hash() != source:
         raise RuntimeError("Go sources changed during build; rerun the preflight")

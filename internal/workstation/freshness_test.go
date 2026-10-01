@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/buildid"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -227,39 +228,30 @@ func TestCheckBuildCurrent_Boundary_BuildInputSet(t *testing.T) {
 	requireStale(t, CheckBuildCurrent(context.Background(), c.root, c.build(head, false, time.Now())), "first go.sum")
 }
 
-// Positive: the stamp reader returns the full revision and the dirty flag.
-func TestBuildStamp_Positive(t *testing.T) {
+// Positive: a build is described from the VCS stamp every praetor surface reads
+// (buildid.Stamp), and labelled as a binary of that build reports itself (#666).
+func TestDescribeBuild_Positive_ReadsTheSharedStamp(t *testing.T) {
 	revision := strings.Repeat("a", 40)
-	info := &debug.BuildInfo{Settings: []debug.BuildSetting{
+	info := &debug.BuildInfo{Main: debug.Module{Path: engineModule}, Settings: []debug.BuildSetting{
 		{Key: "vcs", Value: "git"}, {Key: "vcs.revision", Value: revision}, {Key: "vcs.modified", Value: "true"},
 	}}
-	if got, modified := BuildStamp(info); got != revision || !modified {
-		t.Fatalf("got %q modified=%v", got, modified)
+	build := describeBuild(info, "")
+	if build.Module != engineModule || build.Revision != revision || !build.Modified {
+		t.Fatalf("got %+v", build)
+	}
+	if got, want := buildLabel(build), buildid.Identify("", info).String(); got != want || got != "aaaaaaaaaaaa-dirty" {
+		t.Fatalf("label %q, the build's own identity %q", got, want)
 	}
 }
 
-// Negative: no build information, or none carrying a VCS stamp, stamps nothing.
-func TestBuildStamp_Negative_Unstamped(t *testing.T) {
-	if got, modified := BuildStamp(nil); got != "" || modified {
-		t.Fatalf("nil info: %q %v", got, modified)
+// Negative: no build information, or none carrying a VCS stamp, describes no revision.
+func TestDescribeBuild_Negative_Unstamped(t *testing.T) {
+	if build := describeBuild(nil, ""); build != (Build{}) {
+		t.Fatalf("nil info: %+v", build)
 	}
 	info := &debug.BuildInfo{Settings: []debug.BuildSetting{{Key: "-trimpath", Value: "true"}}}
-	if got, modified := BuildStamp(info); got != "" || modified {
-		t.Fatalf("unstamped info: %q %v", got, modified)
-	}
-}
-
-// Boundary: the scan stops at maxBuildSettings, so a stamp past it is not read.
-func TestBuildStamp_Boundary_ScanBound(t *testing.T) {
-	settings := make([]debug.BuildSetting, maxBuildSettings, maxBuildSettings+1)
-	settings[maxBuildSettings-1] = debug.BuildSetting{Key: "vcs.revision", Value: "last"}
-	info := &debug.BuildInfo{Settings: settings}
-	if got, _ := BuildStamp(info); got != "last" {
-		t.Fatalf("stamp on the last scanned setting: %q", got)
-	}
-	info.Settings = append(settings[:maxBuildSettings-1], debug.BuildSetting{}, debug.BuildSetting{Key: "vcs.revision", Value: "beyond"})
-	if got, _ := BuildStamp(info); got != "" {
-		t.Fatalf("stamp past the bound: %q", got)
+	if build := describeBuild(info, ""); build.Revision != "" || build.Modified {
+		t.Fatalf("unstamped info: %+v", build)
 	}
 }
 
