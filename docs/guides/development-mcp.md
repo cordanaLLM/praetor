@@ -385,6 +385,12 @@ the diff. Both print `adopt.FilePreview.Text` (`internal/adopt/preview.go`;
 `cmd/standards-mcp/report_renderers_test.go`). The
 [adoption guide](../adoption.md#dry-run-ruleset-preview) explains the actions.
 
+The `facets:` line names the facets the run applies, the declared ones for an existing
+`.standards.yaml`. When a first adoption falls back to the default facets, each
+`AdoptReport.FacetNotes` line follows it as `facet note: <note>`, the notes the CLI prints under
+`Facets:` (`TestFormatAdoptMCPResultPrintsFacetNotes`). The
+[adoption guide](../adoption.md) shows them under 1-Step CLI Adoption.
+
 `standards_version_audit` lists the workflow-action inventory that
 `praetorctl bump audit` prints, rendered by the same
 `bump.FormatActionsInventory`, and counts it in its summary line
