@@ -339,7 +339,8 @@ leading spaces cannot pass.
 Existing unambiguous custom Makefile recipes stay intact. Adoption appends one
 marked block when `docs-lint` is provably available; includes, generated target
 names, `eval`, pattern rules, an operator-owned target collision, or an edited
-managed block fail for review. `praetorctl adopt --force` repairs an edited
+managed block fail for review.
+`praetorctl adopt --force --lock-source-root=<praetor checkout>` repairs an edited
 managed block while the facet remains enabled and refreshes the content-locked
 assets, but still refuses symbolic links; the report lists that repair as a
 replace with its line delta and a backup. The block an earlier Praetor wrote,
@@ -370,7 +371,7 @@ in `internal/adopt`). A family may also declare `.gitattributes` rules
 tail block and removes the block once no enabled family declares one.
 
 Disabling `docs:seo-portal` is a convergent transition. Run
-`praetorctl adopt --force` so the generated branch ruleset can drop its hosted
+`praetorctl adopt --force --lock-source-root=<praetor checkout>` so the generated branch ruleset can drop its hosted
 status context; without that authorization, adoption refuses before deleting
 local assets. The transition removes only canonical-equivalent workflow/tool assets, earlier
 Praetor texts of them, the exact managed Makefile block and the `.gitattributes`
@@ -563,7 +564,7 @@ checks both files (`scripts/test_emitted_hook_lint.py`).
 byte-for-byte, line-ending normalized, against that template, so a workflow
 generated before these pins changed fails the exact-content check. Plain
 `praetorctl adopt` refreshes an unedited earlier text as described above; an
-edited copy needs `praetorctl adopt --force`.
+edited copy needs `praetorctl adopt --force --lock-source-root=<praetor checkout>`.
 
 `adoption.decline: [branch-ruleset]` leaves `.github/rulesets/main.json`
 operator-owned, as described in the

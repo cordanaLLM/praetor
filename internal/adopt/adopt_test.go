@@ -549,7 +549,7 @@ func TestAdoptForcePatchesOnlyHarnessPlatform(t *testing.T) {
 				t.Fatal(err)
 			}
 			if got := mustRead(t, filepath.Join(repoPath, paperclipFile)); got != original ||
-				!strings.Contains(strings.Join(plain.Warnings, "\n"), `audit expects "acme/legacy". Re-run adopt with --force`) {
+				!strings.Contains(strings.Join(plain.Warnings, "\n"), `audit expects "acme/legacy". Re-run praetorctl adopt --force --lock-source-root=`) {
 				t.Fatalf("plain run: harness changed or mismatch not warned: %v", plain.Warnings)
 			}
 			forced, err := Adopt(t.Context(), sourceAdoptOptions(t, repoPath, true))
@@ -593,7 +593,7 @@ func TestAdoptCaseVariantPlatformKey(t *testing.T) {
 	}
 	mustWrite(t, harnessPath, strings.Replace(variant, `"Platform": "acme/legacy"`, `"Platform": "acme/renamed"`, 1))
 	plain, err := Adopt(t.Context(), sourceAdoptOptions(t, repoPath, false))
-	if err != nil || !strings.Contains(strings.Join(plain.Warnings, "\n"), `audit expects "acme/legacy". Re-run adopt with --force`) {
+	if err != nil || !strings.Contains(strings.Join(plain.Warnings, "\n"), `audit expects "acme/legacy". Re-run praetorctl adopt --force --lock-source-root=`) {
 		t.Fatalf("case-variant key naming another repository not warned: err=%v warnings=%v", err, plain.Warnings)
 	}
 	if _, err := Adopt(t.Context(), sourceAdoptOptions(t, repoPath, true)); err != nil {

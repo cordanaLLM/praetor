@@ -42,7 +42,7 @@ func auditExactManagedFile(ctx context.Context, rootDir string, family managedas
 	if family.PriorText(rel, actual) {
 		return fmt.Errorf("[FAIL] %s asset %s holds an earlier Praetor text; run 'praetorctl adopt' to refresh it", gate, rel)
 	}
-	return fmt.Errorf("[FAIL] %s asset %s differs from the locked Praetor asset; run 'praetorctl adopt --force'", gate, rel)
+	return fmt.Errorf("[FAIL] %s asset %s differs from the locked Praetor asset; run '%s'", gate, rel, adopt.ForceCommand(""))
 }
 
 // familyGate names a family's gate in audit failures: "Documentation gate" for Kind

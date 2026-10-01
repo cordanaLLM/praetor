@@ -96,7 +96,7 @@ func (s *Server) createAdoptTool() (mcp.Tool, error) {
 			},
 			"force": {
 				Type:        "boolean",
-				Description: "Refresh, not reset. Rebuild .standards.lock + pinned catalog from source_root (required, dry_run included); rewrite drifted files audit compares byte for byte (documentation gate, branch ruleset while policy requires one, DevContainer, edited Makefile or .gitattributes managed block); merge managed values into editor JSON; regenerate AGENTS.md harness, repository additions kept; set Paperclip platform naming another repository. Replaced or merged file: line delta + backup under .workingdir/adopt-backups when git ignores backup path. Other files audit never verifies: kept; delete one, rerun adopt to regenerate (default: false)",
+				Description: "Refresh, not reset. Rebuild .standards.lock + pinned catalog from source_root (required, dry_run included); rewrite drifted files audit compares byte for byte (documentation gate, branch ruleset while policy requires one, DevContainer, edited Makefile or .gitattributes managed block); merge managed values into editor JSON; regenerate AGENTS.md harness, repository additions kept; reset Paperclip platform naming another repository to this repository. Replaced or merged file: line delta + backup under .workingdir/adopt-backups when git ignores backup path. Other files audit never verifies: kept; delete one, rerun adopt to regenerate (default: false)",
 			},
 			"source_root": {Type: "string", Description: "Praetor source bundle; required for missing lock and with force; purpose: real pinned lock; confinement: server root"},
 			"record_baseline": {

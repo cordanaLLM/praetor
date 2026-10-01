@@ -257,7 +257,7 @@ func (s *adoptSession) recordKeptHarness(plan harnessPlan) {
 		"delete it and re-run adopt to regenerate it")
 	if plan.platform != "" {
 		s.report.addWarning("%s: platform names another repository; audit expects %q. "+
-			"Re-run adopt with --force to set platform and keep every other value", paperclipFile, plan.platform)
+			"Re-run %s to set platform and keep every other value", paperclipFile, plan.platform, s.forceCommand())
 	}
 	if plan.unpatched != "" {
 		s.report.addWarning("%s: platform not checked or set, harness kept as written: %s", paperclipFile, plan.unpatched)

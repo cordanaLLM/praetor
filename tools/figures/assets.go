@@ -98,6 +98,9 @@ var priorDigests = map[string]string{
 	"47beb62eee90e992412312cdccbd0d91f54f090dbb342916efdf1eb08a816ac5": Directory + "/build.mjs",
 	"03d1e126c3d583f264d54a646b1f3532b6a5e989edfbf1911353c9dedb97584b": Directory + "/checks.mjs",
 	"1ee2a92653faea8a36e8e11a788ffa7004bb8b3e8844cb360a113bff5501b66f": Directory + "/README.md",
+	// README.md while its restore command named adopt --force without the lock source a forced
+	// run needs (#502).
+	"1879a244bd33b2fb50e95d848f65bf1bab2ca09fcc0507d997d0e11e8d5a6fd0": Directory + "/README.md",
 }
 
 //go:embed core.mjs checks.mjs build.mjs types.ts third_party/interfig/vendor.json third_party/interfig/VENDOR.md third_party/interfig/upstream/LICENSE third_party/interfig/upstream/src/svg.ts third_party/interfig/upstream/src/geometry.ts third_party/interfig/upstream/src/model.ts dist/loader.js dist/player.js dist/THIRD-PARTY-LICENSES.txt figures.css mkdocs_hook.py astro.mjs serve.mjs README.md

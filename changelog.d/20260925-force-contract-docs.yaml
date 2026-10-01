@@ -1,4 +1,4 @@
 type: fixed
-title: 'adopt --help, the standards_adopt schema and docs/adoption.md state what --force rewrites, merges and keeps, and scripts/adopt_repos.sh passes the lock source --force needs'
+title: 'adopt --force states its contract everywhere; its remedies, the praetor-adopt action and adopt_repos.sh name the lock source it needs'
 issue: "#502"
 breaking: false

@@ -459,7 +459,7 @@ switch it off. `register.surfaces.context` is fixed to `internal`: writing `docs
 `internal/config/register_test.go`).
 
 A repository adopted before this gate carries the old prose harness and fails after the
-upgrade. `praetorctl adopt --force` rewrites the harness in caveman and keeps everything
+upgrade. `praetorctl adopt --force --lock-source-root=<praetor checkout>` rewrites the harness in caveman and keeps everything
 below its end marker; `praetorctl caveman check --kind=context AGENTS.md` then lists what is left to
 rewrite in the repository's own part.
 

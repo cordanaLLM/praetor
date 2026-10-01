@@ -2,6 +2,7 @@ package adopt
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -113,6 +114,20 @@ func scanDocumentationMakefileMarkers(data string) (documentationMarkerState, er
 	return state, nil
 }
 
+// errDocumentationBlockEdited refuses an edited documentation gate block in the Makefile without
+// --force; documentationMakefile names the forced re-adoption that restores it.
+var errDocumentationBlockEdited = errors.New("makefile Praetor documentation gate block was edited")
+
+// documentationMakefile is mergeDocumentationMakefile for this session: a refused edited block
+// names the forced re-adoption that restores it (forceCommand).
+func (s *adoptSession) documentationMakefile(existing string, force bool) (string, error) {
+	merged, err := mergeDocumentationMakefile(existing, force)
+	if errors.Is(err, errDocumentationBlockEdited) {
+		return "", fmt.Errorf("%w; review it and rerun %s", err, s.forceCommand())
+	}
+	return merged, err
+}
+
 func mergeDocumentationMakefile(existing string, force bool) (string, error) {
 	normalized, crlf, err := util.NormalizeLineEndingsStrict(existing)
 	if err != nil {
@@ -165,7 +180,7 @@ func replaceDocumentationMakefileBlock(existing, block string, force bool) (stri
 		return "", fmt.Errorf("makefile contains an incomplete Praetor documentation gate block")
 	}
 	if !force {
-		return "", fmt.Errorf("makefile Praetor documentation gate block was edited; review it and rerun adopt --force")
+		return "", errDocumentationBlockEdited
 	}
 	outside := append(append(make([]string, 0, len(state.lines)), state.lines[:state.begin]...), state.lines[state.end+1:]...)
 	if err := documentationTargetCollision(strings.Join(outside, "\n"),
@@ -224,7 +239,7 @@ func reconcileDocumentationMakefile(ctx context.Context, s *adoptSession) error 
 	if err != nil {
 		return err
 	}
-	merged, err := mergeDocumentationMakefile(string(data), s.opts.Force)
+	merged, err := s.documentationMakefile(string(data), s.opts.Force)
 	if err != nil {
 		return err
 	}

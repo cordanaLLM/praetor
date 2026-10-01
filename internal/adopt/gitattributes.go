@@ -157,7 +157,7 @@ func publishGitAttributes(ctx context.Context, s *adoptSession, w gitAttributesW
 		return err
 	}
 	if edited && !s.opts.Force {
-		return fmt.Errorf("%s managed attribute block was edited; review it and rerun adopt --force", gitAttributesFile)
+		return fmt.Errorf("%s managed attribute block was edited; review it and rerun %s", gitAttributesFile, s.forceCommand())
 	}
 	if edited {
 		return s.replaceExisting(ctx, replacement{

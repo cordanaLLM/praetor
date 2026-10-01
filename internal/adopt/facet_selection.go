@@ -62,7 +62,7 @@ func warnIgnoredFacets(report *AdoptReport, opts AdoptOptions, declared *config.
 // source bundle this run selected, or a placeholder naming one when it selected none.
 func profileSetCommand(args, lockSource string) string {
 	if lockSource == "" {
-		lockSource = "<praetor checkout>"
+		lockSource = LockSourcePlaceholder
 	}
 	command := "praetorctl profile set"
 	if args != "" {

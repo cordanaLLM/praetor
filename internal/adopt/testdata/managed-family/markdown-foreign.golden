@@ -3,9 +3,9 @@ action create .gitignore :: Created ignore rules for build artifacts, private wo
 action create tools/markdownlint/package.json :: Scaffolded locked Markdown governance asset
 action create tools/markdownlint/package-lock.json :: Scaffolded locked Markdown governance asset
 action create tools/markdownlint/markdownlint-cli2.yaml :: Scaffolded locked Markdown governance asset
-action reconcile tools/markdownlint/verify.mjs :: Existing file differs from the scaffold adoption writes; preserved, not verified (--force regenerates it)
+action reconcile tools/markdownlint/verify.mjs :: Existing file differs from the scaffold adoption writes; preserved, not verified (praetorctl adopt --force --lock-source-root=<lock source> regenerates it)
 action create tools/markdownlint/no-private-scratch-links.mjs :: Scaffolded locked Markdown governance asset
-action reconcile .github/workflows/praetor-docs.yml :: Existing file differs from the scaffold adoption writes; preserved, not verified (--force regenerates it)
+action reconcile .github/workflows/praetor-docs.yml :: Existing file differs from the scaffold adoption writes; preserved, not verified (praetorctl adopt --force --lock-source-root=<lock source> regenerates it)
 action reconcile .prettierignore :: No Prettier configuration found; managed artifacts not declared to a formatter this repository does not run
 file .github/workflows/praetor-docs.yml sha256:106fdb43a27f5375606b88d4aa64ad98e6d36d2efb59715f359722851adc4aa1
 file tools/markdownlint/package.json sha256:ae5668d6a66dfd57f83b298d09a82f5143b0894c0214a5db5e079cf54d6b92b3

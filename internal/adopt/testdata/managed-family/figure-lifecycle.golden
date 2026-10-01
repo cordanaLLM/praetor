@@ -7,7 +7,7 @@ action append .gitattributes :: Preserved existing rules and placed the managed 
 file tools/figures/build.mjs sha256:e4efaac427bc5ea716b2871c3e7f84366c8954a29e6d71e73a696753b592dfbd
 file tools/figures/dist/player.js sha256:2db2e3bfda05a3776f165530a519b6c4a5def717b4dd4192484f8d86076a4a94
 file tools/figures/third_party/interfig/upstream/LICENSE sha256:01fde0bedf83bdc185065d7af524a61690efe576a67f922eaff3a1280c17b63a
-file tools/figures/README.md sha256:1879a244bd33b2fb50e95d848f65bf1bab2ca09fcc0507d997d0e11e8d5a6fd0
+file tools/figures/README.md sha256:5c4f4f5eb3e714fd2b3fee90505ef73b147c943cea8cc99a3aaec9096e5c0572
 file .gitattributes "* text=auto\n\n# BEGIN praetor managed attributes (praetorctl adopt)\n# praetorctl audit hashes these files; keep their checkout bytes the same on every platform.\ntools/figures/** text eol=lf\ndocs/figures/*.ts text eol=lf\ndocs/assets/figures/* text eol=lf\ntools/figures/third_party/interfig/upstream/** -text\n# END praetor managed attributes\n"
 == rerun
 action reconcile tools/figures/build.mjs :: Existing figure engine asset preserved; audit verifies canonical text
@@ -18,10 +18,10 @@ action reconcile .gitattributes :: Managed attribute block already at the tail
 file tools/figures/build.mjs sha256:e4efaac427bc5ea716b2871c3e7f84366c8954a29e6d71e73a696753b592dfbd
 file tools/figures/dist/player.js sha256:2db2e3bfda05a3776f165530a519b6c4a5def717b4dd4192484f8d86076a4a94
 file tools/figures/third_party/interfig/upstream/LICENSE sha256:01fde0bedf83bdc185065d7af524a61690efe576a67f922eaff3a1280c17b63a
-file tools/figures/README.md sha256:1879a244bd33b2fb50e95d848f65bf1bab2ca09fcc0507d997d0e11e8d5a6fd0
+file tools/figures/README.md sha256:5c4f4f5eb3e714fd2b3fee90505ef73b147c943cea8cc99a3aaec9096e5c0572
 file .gitattributes "* text=auto\n\n# BEGIN praetor managed attributes (praetorctl adopt)\n# praetorctl audit hashes these files; keep their checkout bytes the same on every platform.\ntools/figures/** text eol=lf\ndocs/figures/*.ts text eol=lf\ndocs/assets/figures/* text eol=lf\ntools/figures/third_party/interfig/upstream/** -text\n# END praetor managed attributes\n"
 == drift without force
-action reconcile tools/figures/build.mjs :: Existing file differs from the scaffold adoption writes; preserved, not verified (--force regenerates it)
+action reconcile tools/figures/build.mjs :: Existing file differs from the scaffold adoption writes; preserved, not verified (praetorctl adopt --force --lock-source-root=<lock source> regenerates it)
 action reconcile tools/figures/third_party/interfig/upstream/LICENSE :: Existing figure engine asset preserved; audit verifies canonical text
 action reconcile tools/figures/dist/player.js :: Existing figure engine asset preserved; audit verifies canonical text
 action reconcile tools/figures/README.md :: Existing figure engine asset preserved; audit verifies canonical text
@@ -29,7 +29,7 @@ action reconcile .gitattributes :: Managed attribute block already at the tail
 file tools/figures/build.mjs sha256:2d2100d97834f203c29e566efb8be317d351fea80646f01fe2e1f0ac336c7676
 file tools/figures/dist/player.js sha256:2db2e3bfda05a3776f165530a519b6c4a5def717b4dd4192484f8d86076a4a94
 file tools/figures/third_party/interfig/upstream/LICENSE sha256:01fde0bedf83bdc185065d7af524a61690efe576a67f922eaff3a1280c17b63a
-file tools/figures/README.md sha256:1879a244bd33b2fb50e95d848f65bf1bab2ca09fcc0507d997d0e11e8d5a6fd0
+file tools/figures/README.md sha256:5c4f4f5eb3e714fd2b3fee90505ef73b147c943cea8cc99a3aaec9096e5c0572
 file .gitattributes "* text=auto\n\n# BEGIN praetor managed attributes (praetorctl adopt)\n# praetorctl audit hashes these files; keep their checkout bytes the same on every platform.\ntools/figures/** text eol=lf\ndocs/figures/*.ts text eol=lf\ndocs/assets/figures/* text eol=lf\ntools/figures/third_party/interfig/upstream/** -text\n# END praetor managed attributes\n"
 == drift with force
 action replace tools/figures/build.mjs :: Scaffolded locked figure engine asset; replaced existing content (-1/+234 lines, removed "// operator edit"); backup: .workingdir/adopt-backups/<stamp>/tools/figures/build.mjs
@@ -40,7 +40,7 @@ action reconcile .gitattributes :: Managed attribute block already at the tail
 file tools/figures/build.mjs sha256:e4efaac427bc5ea716b2871c3e7f84366c8954a29e6d71e73a696753b592dfbd
 file tools/figures/dist/player.js sha256:2db2e3bfda05a3776f165530a519b6c4a5def717b4dd4192484f8d86076a4a94
 file tools/figures/third_party/interfig/upstream/LICENSE sha256:01fde0bedf83bdc185065d7af524a61690efe576a67f922eaff3a1280c17b63a
-file tools/figures/README.md sha256:1879a244bd33b2fb50e95d848f65bf1bab2ca09fcc0507d997d0e11e8d5a6fd0
+file tools/figures/README.md sha256:5c4f4f5eb3e714fd2b3fee90505ef73b147c943cea8cc99a3aaec9096e5c0572
 file .gitattributes "* text=auto\n\n# BEGIN praetor managed attributes (praetorctl adopt)\n# praetorctl audit hashes these files; keep their checkout bytes the same on every platform.\ntools/figures/** text eol=lf\ndocs/figures/*.ts text eol=lf\ndocs/assets/figures/* text eol=lf\ntools/figures/third_party/interfig/upstream/** -text\n# END praetor managed attributes\n"
 == disable with force
 action remove tools/figures/build.mjs :: Removed canonical documentation asset because docs:seo-portal is disabled
@@ -68,5 +68,5 @@ action append .gitattributes :: Preserved existing rules and placed the managed 
 file tools/figures/build.mjs sha256:e4efaac427bc5ea716b2871c3e7f84366c8954a29e6d71e73a696753b592dfbd
 file tools/figures/dist/player.js sha256:2db2e3bfda05a3776f165530a519b6c4a5def717b4dd4192484f8d86076a4a94
 file tools/figures/third_party/interfig/upstream/LICENSE sha256:01fde0bedf83bdc185065d7af524a61690efe576a67f922eaff3a1280c17b63a
-file tools/figures/README.md sha256:1879a244bd33b2fb50e95d848f65bf1bab2ca09fcc0507d997d0e11e8d5a6fd0
+file tools/figures/README.md sha256:5c4f4f5eb3e714fd2b3fee90505ef73b147c943cea8cc99a3aaec9096e5c0572
 file .gitattributes "* text=auto\n\n# BEGIN praetor managed attributes (praetorctl adopt)\n# praetorctl audit hashes these files; keep their checkout bytes the same on every platform.\ntools/figures/** text eol=lf\ndocs/figures/*.ts text eol=lf\ndocs/assets/figures/* text eol=lf\ntools/figures/third_party/interfig/upstream/** -text\n# END praetor managed attributes\n"

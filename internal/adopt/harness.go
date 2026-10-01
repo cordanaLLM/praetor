@@ -555,7 +555,8 @@ func keepAgentHarness(ctx context.Context, s *adoptSession, existing, harness st
 		return "", fmt.Errorf("splice the text register block into %s: %w", agentsFile, err)
 	}
 	if kept != harness {
-		s.report.addWarning("Existing AGENTS.md was preserved; review its commands against the verification plan or use --force to refresh a recognized harness boundary.")
+		s.report.addWarning("Existing AGENTS.md was preserved; review its commands against the verification plan or run %s "+
+			"to refresh a recognized harness boundary.", s.forceCommand())
 	}
 	return kept, nil
 }

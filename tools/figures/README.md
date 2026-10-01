@@ -7,8 +7,9 @@ tabs with moving packets, narration, pause and speed control. A README, a wiki p
 without JavaScript shows the same figure as an SVG with a caption and a text description.
 
 `praetorctl adopt` writes the files in this directory. `praetorctl audit` fails when one of them
-differs from the copy the binary carries, and `praetorctl adopt --force` restores it. Edit the
-specs and your site configuration, not these files.
+differs from the copy the binary carries, and
+`praetorctl adopt --force --lock-source-root=<praetor checkout>` restores it. Edit the specs and
+your site configuration, not these files.
 
 ## Requirements
 

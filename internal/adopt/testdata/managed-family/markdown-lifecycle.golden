@@ -34,7 +34,7 @@ file .gitignore "bin/\n*.test\n*.out\n.DS_Store\n\n# BEGIN praetor private artif
 file .prettierignore absent
 == drift without force
 action reconcile .gitignore :: Private artifact ignore tail block already effective
-action reconcile tools/markdownlint/package.json :: Existing file differs from the scaffold adoption writes; preserved, not verified (--force regenerates it)
+action reconcile tools/markdownlint/package.json :: Existing file differs from the scaffold adoption writes; preserved, not verified (praetorctl adopt --force --lock-source-root=<lock source> regenerates it)
 action reconcile tools/markdownlint/package-lock.json :: Existing Markdown governance asset preserved; audit verifies canonical text
 action reconcile tools/markdownlint/markdownlint-cli2.yaml :: Existing Markdown governance asset preserved; audit verifies canonical text
 action reconcile tools/markdownlint/verify.mjs :: Existing Markdown governance asset preserved; audit verifies canonical text
@@ -68,7 +68,7 @@ file .gitignore "bin/\n*.test\n*.out\n.DS_Store\n\n# BEGIN praetor private artif
 file .prettierignore absent
 == disable without force
 action reconcile .gitignore :: Private artifact ignore tail block already effective
-error disabling documentation removes hosted context "Documentation Governance"; rerun adopt --force
+error disabling documentation removes hosted context "Documentation Governance"; rerun praetorctl adopt --force --lock-source-root=<lock source>
 file .github/workflows/praetor-docs.yml sha256:05d50eae0edd1599f23468e570e0ebf0af3d2e7cc65bf126d4f7976b002b2a84
 file tools/markdownlint/package.json sha256:ae5668d6a66dfd57f83b298d09a82f5143b0894c0214a5db5e079cf54d6b92b3
 file tools/markdownlint/package-lock.json sha256:3be5e6c9037886cc39192da27e536b9dcefa3860074efed81d3dd9ea4e4a5d72

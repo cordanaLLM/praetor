@@ -61,7 +61,7 @@ func TestReconcileGitAttributes_Positive_EditedBlockReplacedUnderForce(t *testin
 func TestReconcileGitAttributes_Negative_EditedBlockRefused(t *testing.T) {
 	edited := "* text=auto\n\n" + editedAttributeBlock
 	s, err := reconcileAttributes(t, edited, AdoptOptions{})
-	if err == nil || !strings.Contains(err.Error(), "managed attribute block was edited; review it and rerun adopt --force") {
+	if err == nil || !strings.Contains(err.Error(), "managed attribute block was edited; review it and rerun "+s.forceCommand()) {
 		t.Fatalf("an edited block without --force: %v", err)
 	}
 	if got := mustRead(t, filepath.Join(s.repoPath, gitAttributesFile)); got != edited || fileExists(backupFile(s, gitAttributesFile)) {

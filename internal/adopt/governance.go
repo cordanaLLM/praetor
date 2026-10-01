@@ -167,7 +167,7 @@ func verificationMakefileReplacement(
 		}
 	}
 	if documentationEnabled {
-		return mergeDocumentationMakefile(replacement, false)
+		return s.documentationMakefile(replacement, false)
 	}
 	return replacement, nil
 }

@@ -6,7 +6,7 @@ stdout "[PASS] Locked documentation gate verified (23 assets, local verify-all, 
 stdout "[PASS] Locked documentation gate verified (23 assets, local verify-all, hosted required context, private scratch ignores, formatter inventory, checkout attributes).\n"
 == figure asset drift
 stdout ""
-error [FAIL] Documentation gate asset tools/figures/build.mjs differs from the locked Praetor asset; run 'praetorctl adopt --force'
+error [FAIL] Documentation gate asset tools/figures/build.mjs differs from the locked Praetor asset; run 'praetorctl adopt --force --lock-source-root=<praetor checkout>'
 == vendored file missing
 stdout ""
 error [FAIL] Documentation gate asset tools/figures/third_party/interfig/upstream/LICENSE is missing or unreadable: <os error>

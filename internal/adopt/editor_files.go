@@ -44,7 +44,7 @@ func (s *adoptSession) reconcileEditorFile(ctx context.Context, f editor.Generat
 	}
 	resolution, err := editor.ResolveExisting(f, existing, true)
 	if err != nil {
-		s.keepEditorFile(f.Path, unmergedEditorReason(err))
+		s.keepEditorFile(f.Path, unmergedEditorReason(err, s.forceCommand()))
 		return nil
 	}
 	return s.applyEditorResolution(ctx, full, f, existing, resolution)
@@ -90,7 +90,7 @@ func (s *adoptSession) mergeEditorFile(ctx context.Context, full string, f edito
 	members := quoteFirst(r.Added, len(r.Added), maxQuotedEditorMembers, strconv.Quote)
 	if !s.opts.Force {
 		s.keepEditorFile(f.Path, "it lacks the managed "+f.Editor+" values "+members+
-			". Re-run adopt with --force to merge them; every other key is kept")
+			". Re-run "+s.forceCommand()+" to merge them; every other key is kept")
 		return nil
 	}
 	merged := []byte(r.Content)
@@ -117,13 +117,14 @@ func (s *adoptSession) keepEditorFile(rel, reason string) {
 }
 
 // unmergedEditorReason says why editor.ResolveExisting refused to merge an existing JSON file
-// and what the operator can do about it.
-func unmergedEditorReason(err error) string {
+// and what the operator can do about it: fix it, then run rerun, the forced re-adoption
+// (ForceCommand).
+func unmergedEditorReason(err error, rerun string) string {
 	if errors.Is(err, editor.ErrExistingJSONInvalid) {
 		return "it is not strict JSON (" + err.Error() + "). Adoption and `" + util.PraetorCLI + " editors verify` " +
 			"read strict JSON only, and a merge would drop its comments or other non-JSON content, so it never " +
 			"verifies as it is. Make it strict JSON (remove its comments, trailing commas and duplicate keys) and " +
-			"re-run adopt with --force to merge the managed values, or delete it and re-run adopt to regenerate it"
+			"run " + rerun + " to merge the managed values, or delete it and re-run adopt to regenerate it"
 	}
-	return "its managed values were not merged (" + err.Error() + "). Resolve the conflict, then re-run adopt with --force"
+	return "its managed values were not merged (" + err.Error() + "). Resolve the conflict, then run " + rerun
 }
