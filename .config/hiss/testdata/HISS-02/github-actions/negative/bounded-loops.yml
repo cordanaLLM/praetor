@@ -1,0 +1,15 @@
+# A counted loop, a transfer with a deadline and loop words inside an expression are bounded or
+# not shell at all.
+on: push
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          i=0
+          while [ "$i" -lt 30 ]; do
+            i=$((i + 1))
+            curl -fsS --max-time 10 https://example.com/health && break
+            sleep 2
+          done
+          echo "${{ 'while true' }}"

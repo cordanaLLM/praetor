@@ -3,6 +3,7 @@ package hiss
 import (
 	"errors"
 	"fmt"
+	"math"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -33,6 +34,12 @@ type ScanCoverage struct {
 	// are program source: no rule ran over them, so the invariants are unverified there rather
 	// than satisfied.
 	UnscannedLanguages map[string]int `json:"unscanned_languages,omitempty"`
+	// UnscannedRunBlocks counts, per shell, the run: blocks of GitHub Actions workflows that no
+	// rule read: a shell the shell scanner does not read (pwsh, python, cmd, a custom command),
+	// "unresolved" for a shell decided only when the workflow runs, and a block of a read shell
+	// the scanner declined or a bound left out (workflow.go). The workflow file itself is counted
+	// in FilesRead, so these blocks are listed here rather than read as clean.
+	UnscannedRunBlocks map[string]int `json:"unscanned_run_blocks,omitempty"`
 }
 
 // Validate checks bounded counter consistency, not the authenticity of recorded
@@ -58,11 +65,20 @@ func (c *ScanCoverage) Validate() error {
 	if remaining != 0 {
 		return errors.New("coverage extension counts contradict the unscanned total")
 	}
+	return c.validateLanguages()
+}
+
+// validateLanguages checks each per-language map against the total it breaks down.
+func (c *ScanCoverage) validateLanguages() error {
 	if err := validateLanguageCounts(c.LanguagesRead, c.FilesRead); err != nil {
 		return fmt.Errorf("coverage languages read: %w", err)
 	}
 	if err := validateLanguageCounts(c.UnscannedLanguages, c.UnscannedFiles); err != nil {
 		return fmt.Errorf("coverage unscanned languages: %w", err)
+	}
+	// Blocks are not files, so no file total bounds their counts.
+	if err := validateLanguageCounts(c.UnscannedRunBlocks, math.MaxInt); err != nil {
+		return fmt.Errorf("coverage unscanned run blocks: %w", err)
 	}
 	return nil
 }
@@ -135,20 +151,28 @@ func (c *ScanCoverage) ScannedLanguageNames() []string {
 }
 
 // UnscannedSourceSummary names every source language no scanner examined, with its file
-// count, sorted by language: "java (3 files), shell (1 file)". It is empty when every source
-// file was examined.
+// count, sorted by language, and then the workflow run: blocks no rule read, by shell:
+// "java (3 files), shell (1 file), GitHub Actions run: blocks (2 pwsh, 1 unresolved)". It is
+// empty when every source file and block was examined.
 func (c *ScanCoverage) UnscannedSourceSummary() string {
 	if c == nil {
 		return ""
 	}
 	languages := sortedLanguages(c.UnscannedLanguages)
-	parts := make([]string, 0, len(languages))
+	parts := make([]string, 0, len(languages)+1)
 	for _, language := range languages {
 		unit := "files"
 		if c.UnscannedLanguages[language] == 1 {
 			unit = "file"
 		}
 		parts = append(parts, fmt.Sprintf("%s (%d %s)", language, c.UnscannedLanguages[language], unit))
+	}
+	if shells := sortedLanguages(c.UnscannedRunBlocks); len(shells) > 0 {
+		blocks := make([]string, 0, len(shells))
+		for _, shell := range shells {
+			blocks = append(blocks, fmt.Sprintf("%d %s", c.UnscannedRunBlocks[shell], shell))
+		}
+		parts = append(parts, "GitHub Actions run: blocks ("+strings.Join(blocks, ", ")+")")
 	}
 	return strings.Join(parts, ", ")
 }
@@ -185,6 +209,13 @@ func (c *ScanCoverage) recordUnscannedAs(path, language string) {
 		return
 	}
 	c.UnscannedByExtension[ext]++
+}
+
+// recordUnscannedRunBlock counts one workflow run: block no rule read, under its shell.
+func (c *ScanCoverage) recordUnscannedRunBlock(shell string) {
+	if c != nil {
+		c.UnscannedRunBlocks = addLanguage(c.UnscannedRunBlocks, shell)
+	}
 }
 
 // recordRead counts one file a language scanner examined.

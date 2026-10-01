@@ -1,0 +1,7 @@
+# A curl transfer without --max-time waits on the network without a deadline.
+on: push
+jobs:
+  fetch:
+    runs-on: macos-latest
+    steps:
+      - run: curl -fsSL -o tool.tar.gz https://example.com/tool.tar.gz
