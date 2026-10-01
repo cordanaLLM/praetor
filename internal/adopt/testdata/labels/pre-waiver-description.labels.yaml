@@ -8,7 +8,7 @@ labels:
 
   - name: "hiss-waiver"
     color: "fbca04"
-    description: "Architectural exception to HISS (waivers are not signed)"
+    description: "Requires cryptographically signed waiver approval"
 
   - name: "standards-sync"
     color: "0075ca"

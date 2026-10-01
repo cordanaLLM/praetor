@@ -153,6 +153,7 @@ func rulesetPreviewNote(contexts int) string {
 // reproduces each digest (ruleset_labels_test.go).
 var priorLabelTaxonomyDigests = map[string]string{
 	"458258424e4d1f9a0a3cb4c20de5f3c039b44c94a3296f1d0105a5305853ea8c": "fourteen labels, no document start",
+	"2b6660c577b5860002a6125b1ddf805653207b7d371cba2751c989ca1b953971": "fourteen labels, hiss-waiver described as signed",
 }
 
 // reconcileLabels writes the canonical label taxonomy sync also writes (forge.DefaultLabelTaxonomy)
