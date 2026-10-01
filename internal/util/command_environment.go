@@ -2,10 +2,40 @@ package util
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"runtime"
 	"strings"
 )
+
+// InheritedEnvironment is the environment a child inherits without WithCommandEnvironment -- the
+// ambient one minus gitRepositoryVariables -- with overrides, NAME=value entries, set on top: an
+// inherited entry whose name an override names is dropped and the overrides follow in the order
+// given. PWD is dropped too, because an explicit environment is used exactly and the parent's PWD
+// would name the wrong directory for a child that runs elsewhere. A caller that must add a
+// variable hands the result to WithCommandEnvironment, so the child keeps the BUG-886 scrub
+// instead of an unscrubbed copy of os.Environ.
+func InheritedEnvironment(overrides []string) []string {
+	names := make(map[string]bool, len(overrides)+1)
+	names[foldEnvironmentName("PWD")] = true
+	for _, entry := range overrides {
+		name, _, _ := strings.Cut(entry, "=")
+		names[foldEnvironmentName(name)] = true
+	}
+	inherited := FilterEnvironment(os.Environ(), func(name string) bool {
+		return isGitRepositoryVariable(name) || names[name]
+	})
+	return append(inherited, overrides...)
+}
+
+// foldEnvironmentName folds name the way FilterEnvironment hands names to its predicate: to upper
+// case on Windows, where environment names are case-insensitive, and unchanged elsewhere.
+func foldEnvironmentName(name string) string {
+	if runtime.GOOS == "windows" {
+		return strings.ToUpper(name)
+	}
+	return name
+}
 
 // gitRepositoryVariables bind a git process to a repository other than the one its working
 // directory names. The set is `git rev-parse --local-env-vars` (git 2.55) without
@@ -43,9 +73,7 @@ func FilterEnvironment(environ []string, drop func(name string) bool) []string {
 	filtered := make([]string, 0, len(environ))
 	for _, entry := range environ {
 		name, _, _ := strings.Cut(entry, "=")
-		if runtime.GOOS == "windows" {
-			name = strings.ToUpper(name)
-		}
+		name = foldEnvironmentName(name)
 		if drop == nil || !drop(name) {
 			filtered = append(filtered, entry)
 		}
