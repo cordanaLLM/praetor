@@ -222,7 +222,7 @@ jobs:
             Windows)
               # The zip is flat, so no component is stripped. 7-Zip is what the windows image
               # lists; unzip is not on it, and is kept only for a host that has it instead.
-              curl -fsSL -o "${RUNNER_TEMP}/shellcheck.zip" "${base}/shellcheck-${SHELLCHECK_VERSION}.zip"
+              curl -fsSL --max-time 300 -o "${RUNNER_TEMP}/shellcheck.zip" "${base}/shellcheck-${SHELLCHECK_VERSION}.zip"
               if command -v 7z >/dev/null 2>&1; then
                 7z x -y -bso0 -bsp0 -o"${RUNNER_TEMP}/shellcheck" "${RUNNER_TEMP}/shellcheck.zip"
               else
@@ -237,7 +237,7 @@ jobs:
               machine="$(uname -m)"
               if [ "${machine}" = arm64 ]; then machine=aarch64; fi
               # The tarball carries a shellcheck-<version>/ prefix, unlike the zip.
-              curl -fsSL "${base}/shellcheck-${SHELLCHECK_VERSION}.${platform}.${machine}.tar.xz" \
+              curl -fsSL --max-time 300 "${base}/shellcheck-${SHELLCHECK_VERSION}.${platform}.${machine}.tar.xz" \
                 | tar -xJ -C "${RUNNER_TEMP}/shellcheck" --strip-components=1
               ;;
           esac
