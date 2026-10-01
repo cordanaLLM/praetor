@@ -225,12 +225,10 @@ func CheckRuntime(text string, opts Options) Report {
 
 func checkProfile(text string, opts Options, runtime bool) Report {
 	opts = opts.withDefaults()
-	lines, s := scan(text)
+	lines, s := scanText(text, !runtime)
 	kind := opts.Kind.normalized()
-	report := Report{OffRegions: s.offRegions, EstimatedTokens: EstimateTokens(text), Kind: kind, Coverage: contractCoverage(kind)}
-	if !runtime {
-		report.FrontMatterLines = s.frontMatter
-	}
+	report := Report{OffRegions: s.offRegions, FrontMatterLines: s.frontMatter, EstimatedTokens: EstimateTokens(text),
+		Kind: kind, Coverage: contractCoverage(kind)}
 	var found findings
 	checkProfileLines(&report, &found, lines, kind, runtime)
 	paras := profileParagraphs(lines, runtime)

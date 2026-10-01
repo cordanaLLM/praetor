@@ -54,10 +54,21 @@ func fixtureNames(t *testing.T, pattern string) []string {
 }
 
 func TestCheckFixturesReplayBothWays(t *testing.T) {
+	replayCheckFixtures(t, "check/*.md", Check)
+}
+
+// TestCheckRuntimeFixturesReplayBothWays replays testdata/runtime through CheckRuntime, the
+// adversarial profile: front matter there is prose, so a wrapped sentence in it fails C5.
+func TestCheckRuntimeFixturesReplayBothWays(t *testing.T) {
+	replayCheckFixtures(t, "runtime/*.md", CheckRuntime)
+}
+
+func replayCheckFixtures(t *testing.T, pattern string, check func(string, Options) Report) {
+	t.Helper()
 	var passes, fails int
-	for _, path := range fixtureNames(t, "check/*.md") {
+	for _, path := range fixtureNames(t, pattern) {
 		name := filepath.Base(path)
-		report := Check(readFixture(t, path), Options{})
+		report := check(readFixture(t, path), Options{})
 		want := wantRules(name)
 		if strings.HasPrefix(name, "fail-") {
 			fails++

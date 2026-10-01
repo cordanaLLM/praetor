@@ -22,7 +22,8 @@ const (
 	// kindFrontMatter is a leading YAML front matter block, delimiters included. Its shape
 	// is a contract with the harness that loads the file, such as a skill's description,
 	// not prose its author chose, so Check leaves it out of the prose rules the way it
-	// leaves a table delimiter row out (#374). CheckRuntime still reads it.
+	// leaves a table delimiter row out (#374). CheckRuntime never classifies it (scanText):
+	// there front matter is prose like the rest of the text.
 	kindFrontMatter
 )
 
@@ -111,9 +112,18 @@ type scanner struct {
 // outside fenced code. CRLF input classifies exactly like LF input, so a Windows checkout
 // lints the same as a Linux one (HISS-21).
 func scan(text string) ([]line, scanner) {
+	return scanText(text, true)
+}
+
+// scanText is scan with the front matter rule switchable: without it, a leading front matter
+// block classifies like any other lines, as CheckRuntime reads untrusted runtime text.
+func scanText(text string, frontMatter bool) ([]line, scanner) {
 	raws := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
 	lines := make([]line, 0, len(raws))
-	s := scanner{frontMatter: frontMatterLines(raws)}
+	s := scanner{}
+	if frontMatter {
+		s.frontMatter = frontMatterLines(raws)
+	}
 	for i, raw := range raws {
 		if i < s.frontMatter {
 			lines = append(lines, line{num: i + 1, text: raw, kind: kindFrontMatter})

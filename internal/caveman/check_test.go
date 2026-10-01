@@ -305,6 +305,24 @@ func TestCheckFrontMatter(t *testing.T) {
 	}
 }
 
+// TestCheckRuntimeFrontMatterIsProse pins that CheckRuntime reads front matter as one prose
+// paragraph, as before #374: a sentence wrapped over two of its lines is one sentence for C5,
+// a short one is none, and Check still leaves the same block out.
+func TestCheckRuntimeFrontMatterIsProse(t *testing.T) {
+	long := strings.Repeat("word ", 30)
+	wrapped := "---\ndescription: " + long + "\n  " + long + "end.\n---\n"
+	if got := gotRules(CheckRuntime(wrapped, Options{})); !slices.Contains(got, "C5") {
+		t.Fatalf("wrapped front matter sentence not read as one: %v", got)
+	}
+	short := "---\ndescription: Short.\n  Also short.\n---\n"
+	if got := gotRules(CheckRuntime(short, Options{})); slices.Contains(got, "C5") {
+		t.Fatalf("short front matter sentences reported C5: %v", got)
+	}
+	if report := Check(wrapped, Options{}); !report.Passed() || report.FrontMatterLines != 4 {
+		t.Fatalf("Check linted front matter: lines %d, %v", report.FrontMatterLines, report.Findings)
+	}
+}
+
 // TestCheckFrontMatterUnquotedColon pins #374 on the skills it names: a description holding
 // an unquoted ": " is not valid YAML, yet skill loaders read it, so it is front matter too.
 func TestCheckFrontMatterUnquotedColon(t *testing.T) {
