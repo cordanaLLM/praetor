@@ -1,0 +1,4 @@
+type: added
+title: "praetorctl harvest drift compares the files that local repositories carry under the same path (by default .githooks/ and scripts/, or the prefixes given with --path) at their HEAD commits and reports each drifted path with its variants' digests, line counts and line deltas and each identical path with its repositories; it is read-only and never fails on drift, and docs/plans/fleet-drift-and-schema-conformance.md designs the declared-copy audit check and the cross-repository payload schema gate that come later"
+issue: "#605"
+breaking: false

@@ -78,6 +78,24 @@ engine ships no fleet of its own: an engine checkout without that file prints
 GitHub or Gitea coverage requires a configured remote inventory source and its
 own completion evidence.
 
+## Fleet drift survey
+
+`praetorctl harvest drift --dir /path/to/dev` finds files that several local repositories
+carry under the same path and reports whether the copies still agree. It reads the
+repositories the inventory above finds, one checkout per `git_common_dir`, at their HEAD
+commits through the same isolated Git probes, and compares the files under
+`.githooks/` and `scripts/`, or under the repository-relative prefixes given with repeated
+`--path` flags (a directory of agent hook scripts, for example).
+
+The text report lists each *drifted* path with one line per variant (short digest, line
+count, lines removed and added relative to the most common variant, repositories) and each
+*identical* path with its repositories; `--json` carries full digests and every repository's
+state and revision. A path one repository carries alone is not listed. Drift never fails the
+command; an unreadable repository or copy, a reached bound or an incomplete inventory makes
+it exit nonzero with the report still printed (`cmd/standardsctl/harvest_drift_test.go`,
+`internal/harvester/drift_test.go`). Declared copies and an `audit` check are designed but
+not implemented: see [fleet drift and schema conformance](../plans/fleet-drift-and-schema-conformance.md).
+
 ## Skill-root audit
 
 `praetorctl harvest skills --gemini /path/to/.gemini --repo /path/to/repo`
