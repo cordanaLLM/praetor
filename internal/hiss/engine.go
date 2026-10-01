@@ -175,16 +175,17 @@ func (w *scanWalker) scanFile(path, rel string) error {
 	return nil
 }
 
-// readFailed accounts for a file the bounded read refused. An oversize file of a scanned
-// extension is a skipped input; an oversize content candidate was never known to be source, so
-// it stays an unscanned file, as it was before any scanner could claim one.
+// readFailed accounts for a file the bounded read refused. A content candidate was never known
+// to be source, so any failed read (oversize, permission denied, a confinement refusal) leaves
+// it an unscanned file, as it was before any scanner could claim one. An oversize file of a
+// scanned extension is a skipped input; any other failure on one fails the scan.
 func (w *scanWalker) readFailed(rel string, idx int, err error) error {
-	if !errors.Is(err, errOversize) {
-		return err
-	}
 	if idx < 0 {
 		w.rep.Coverage.recordUnscanned(rel)
 		return nil
+	}
+	if !errors.Is(err, errOversize) {
+		return err
 	}
 	w.rep.Skips.Oversize++
 	return nil

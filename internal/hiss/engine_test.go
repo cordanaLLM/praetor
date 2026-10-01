@@ -5,7 +5,11 @@
 package hiss
 
 import (
+	"context"
 	"math"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -185,6 +189,55 @@ func TestContentScanners_OversizeCandidateStaysUnscanned(t *testing.T) {
 	rep := scanFixture(t, root, ScanOptions{})
 	if rep.Coverage.FilesRead != 0 || rep.Coverage.UnscannedByExtension[""] != 1 || rep.Skips.Oversize != 1 {
 		t.Errorf("want one unscanned candidate and one oversize skip, got %+v / %+v", rep.Coverage, rep.Skips)
+	}
+}
+
+// lockFixture writes body at root/rel and removes every permission bit from it, restoring them
+// when the test ends so TempDir cleanup can remove the file.
+func lockFixture(t *testing.T, root, rel, body string) {
+	t.Helper()
+	writeFixture(t, root, rel, body)
+	path := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(path, 0o600); err != nil {
+			t.Error(err)
+		}
+	})
+}
+
+// Negative: an unreadable content candidate was never known to be source, so it stays an
+// unscanned file, as it was before any scanner could claim one, instead of failing the scan.
+func TestContentScanners_UnreadableCandidateStaysUnscanned(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("permission bits are not enforced for this user")
+	}
+	root := t.TempDir()
+	for _, rel := range []string{"LICENSE_DATA", "notes.yml", "units/x.service", "units/x.socket"} {
+		lockFixture(t, root, rel, "#!/bin/sh\n[Unit]\n- hosts: all\n")
+	}
+	writeFixture(t, root, "ok.go", "package p\n")
+	rep, err := Scan(context.Background(), root, ScanOptions{})
+	if err != nil {
+		t.Fatalf("an unreadable content candidate must not fail the scan: %v", err)
+	}
+	if c := rep.Coverage; c.FilesRead != 1 || c.UnscannedFiles != 4 || len(c.UnscannedLanguages) != 0 {
+		t.Errorf("want the four candidates unscanned with no language, got %+v", c)
+	}
+}
+
+// Boundary: an unreadable file of a scanned extension is source the scan cannot vouch for, so it
+// still fails the scan, unlike an unreadable content candidate.
+func TestScan_UnreadableScannedExtensionIsAnError(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("permission bits are not enforced for this user")
+	}
+	root := t.TempDir()
+	lockFixture(t, root, "deploy.sh", "#!/bin/sh\nset -eu\n")
+	if _, err := Scan(context.Background(), root, ScanOptions{}); err == nil {
+		t.Fatal("an unreadable shell script must fail the scan instead of reporting a clean tree")
 	}
 }
 
