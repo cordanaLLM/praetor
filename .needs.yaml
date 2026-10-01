@@ -360,7 +360,7 @@ dependencies:
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
     - package: vscode-languageclient
-      version: 9.0.1
+      version: 10.1.2
       language: typescript
       ecosystem: npm
       capability: ui.external.vscode_languageclient
@@ -456,4 +456,4 @@ readiness:
     total_third_party_deps: 54
     covered_deps: 0
     gap_deps: 54
-updated_at: 2026-09-30T20:38:40.501767999Z
+updated_at: 2026-10-01T14:56:18.526728652Z
