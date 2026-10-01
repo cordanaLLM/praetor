@@ -289,7 +289,7 @@ func TestAudit_ScriptViolationFailsTheRatchet(t *testing.T) {
 	f := newAuditFixture(t)
 	writeFixtureFile(t, f.dir, "ui/Probe.svelte", "<script>\n  eval(code);\n</script>\n")
 	_, err := f.audit(t)
-	mustErrContain(t, err, "HISS invariant violations introduced")
+	mustErrContain(t, err, "HISS invariant violations the baseline does not record")
 }
 
 func TestAudit_TouchedFileCleanRule(t *testing.T) {
