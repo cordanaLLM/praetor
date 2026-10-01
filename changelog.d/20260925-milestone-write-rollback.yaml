@@ -1,0 +1,3 @@
+type: fixed
+title: "milestone create, close and sync restore milestones.json, or its absence, when the BACKLOG.md write fails"
+breaking: false
