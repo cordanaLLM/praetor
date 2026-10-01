@@ -1,0 +1,4 @@
+type: fixed
+title: "sync --remote reads the default branch's live protection from rulesets and legacy branch protection before and after writing the ruleset, prints each declared property with the mechanism that enforces it, prints every ruleset setting it lowers to a declared relaxation (such as review_mode single_maintainer) as [LOWERED], and fails when a declared property is still not enforced after the ruleset converged; a default branch not pushed yet is reconciled as before. plan --remote prints the same read-only comparison."
+issue: "#154"
+breaking: false

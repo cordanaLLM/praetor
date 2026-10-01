@@ -252,12 +252,39 @@ standardsctl sync --remote --forge-host=ghe.example.com \
   GitHub does not require it, and a `[WARN]` line when the live ruleset still requires it because
   an earlier sync added it. The merge below keeps that check, so remove it by hand
   (`TestSync_Remote_WarnsAboutLeftOffChecksTheLiveRulesetStillRequires`). An existing ruleset is read, merged, updated and read back. The
-  merge sets every parameter praetor renders from policy and keeps everything else: extra refs,
-  bypass actors, other rules and parameters, and required checks praetor does not list. A
-  protected ref is removed from the excludes. The command fails unless the readback includes
-  everything written (`internal/forge/ruleset_merge.go`,
-  `TestGitHubDriver_ReconcileProtection_Positive_MergesLiveRulesetWithoutNarrowing`). Removing a
-  rule or ref from a live ruleset is a manual change on GitHub.
+  merge sets every parameter praetor renders from policy, a declared relaxation such as
+  `review_mode: single_maintainer` included. Each parameter whose live value was stricter (a
+  higher approving review count, or stale-review dismissal, code-owner review, last-push
+  approval, thread resolution or the up-to-date check policy switched on) is printed on a
+  `[LOWERED]` line that names the rule, the parameter, the live value and the declared one, so no
+  hosted setting drops silently. The merge keeps
+  everything else: extra refs, bypass actors, other rules and parameters, and required checks
+  praetor does not list. A protected ref is removed from the excludes. The command fails unless
+  the readback includes everything written (`internal/forge/ruleset_merge.go`,
+  `TestGitHubDriver_ReconcileProtection_Positive_MergesLiveRulesetWithoutNarrowing`,
+  `TestGitHubDriver_ReconcileProtection_Boundary_SingleMaintainerLowersLiveReviews`,
+  `TestMergeRuleset_Positive_AppliesAndReportsLoweredParameters`). Removing a rule or ref from a
+  live ruleset is a manual change on GitHub.
+- **Branch protection readback.** Before and after the ruleset write, sync reads what the default
+  branch enforces from both of GitHub's mechanisms: the active rules of every ruleset that targets
+  it, organisation rulesets included, and the legacy branch protection object, whose "Branch not
+  protected" answer means the branch has none (`forge.GitHubDriver.ReadBranchProtection`). A
+  default branch not pushed yet ("Branch not found") has no legacy object either; the report says
+  it does not exist on GitHub yet, and the ruleset still applies to it once pushed. GitHub
+  enforces the union of the two, so each declared property is compared with that union
+  (`forge.EvaluateBranchProtection`): pull requests, approving reviews, code-owner review, stale
+  review dismissal, signed commits, linear history, deletion and force pushes blocked, and the
+  required status checks. The line before the write lists each `[DRIFT]` and the mechanisms
+  found, or says that nothing protects the branch. After the write, every property is printed as
+  `[OK]`, `[DRIFT]` or `[STRICTER]` with the mechanism that enforces it, such as
+  `ruleset "praetor-main-protection" #7` or `branch protection`. A setting still stricter than
+  declared after the write, marked `[STRICTER]`, comes from something sync does not write: a rule
+  praetor does not render, another ruleset or legacy protection; change it on GitHub by hand if
+  the declared policy is intended. If a declared property is still not enforced after the ruleset
+  converged, because another ruleset, legacy protection or the repository's GitHub plan overrides
+  it, the command fails instead of reporting success, and a legacy protection object the token
+  may not read fails it before any write
+  (`TestSync_Remote_ReadsBackBranchProtection_Positive`, `_Negative`, `_Boundary`).
 - **Labels.** Every label in `.config/labels.yaml` is updated on GitHub, or created when GitHub
   lacks it; labels the taxonomy does not name are left alone (`forge.ParseLabelTaxonomy`,
   `TestSync_Remote_Labels`).
@@ -273,6 +300,27 @@ standardsctl sync --remote --forge-host=ghe.example.com \
   those were written names them in the error. `repository.visibility` is compared and a mismatch
   printed as `[DRIFT]`, but never written: making a repository public or private stays the
   operator's decision (`internal/forge/repo_metadata.go`, `TestSync_Remote_RepositoryMetadata`).
+
+### Comparing live branch protection with `plan --remote`
+
+`standardsctl plan` previews the effective policy, the local files and the live Actions checks
+([Live Actions checks](actions-live-checks.md)); `--offline` skips every forge read. Without
+`--remote` it does not read branch protection and says so on its last line. `--remote` adds a
+read-only comparison of the default branch's live protection with the declared policy, the same
+readback `sync --remote` prints after its write, against the status checks `sync --remote` would
+require there. Plan refuses `--offline` together with `--remote`, since the two contradict:
+
+```bash
+standardsctl plan --remote                              # same --token, --endpoint, --forge-host as sync
+```
+
+The token and repository identity follow `sync --remote`: `--token`, `GITHUB_TOKEN` or `GH_TOKEN`,
+and an `origin` remote that names `<repository.owner>/<repository.name>` on `--forge-host`, checked
+before any request. Nothing is written. When a declared property is not enforced, plan prints
+`[DRIFT] GitHub does not enforce the declared ...` and the command that reconciles it,
+`praetorctl sync --remote`. Like the local drift it reports, this leaves the preview's exit status
+at zero (`cmd/standardsctl/plan.go`, `TestPlan_Remote_ComparesLiveBranchProtection_Positive`,
+`TestPlan_Remote_ComparesLiveBranchProtection_Negative`).
 
 ### Label taxonomy
 

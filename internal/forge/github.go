@@ -250,12 +250,10 @@ func (g *GitHubDriver) walkPages(ctx context.Context, base, query, what string, 
 	return fmt.Errorf("%w: %s beyond %d pages of %d entries", errPageCeiling, what, maxPages, issuesPerPage)
 }
 
-// findRulesetID returns the id of the repository ruleset named name, or 0 when absent. It
-// reads every page of the listing: a ruleset past the first page must be updated in place,
-// never duplicated by a second POST.
-func (g *GitHubDriver) findRulesetID(ctx context.Context, listPath, name string) (int, error) {
-	id := 0
-	err := g.walkPages(ctx, listPath, "", "repository rulesets", maxRulesetPages, func(body []byte) (int, bool, error) {
+// walkRulesets visits every entry of the repository ruleset listing at listPath, page by page,
+// until visit reports it is done (walkPages bounds the pages).
+func (g *GitHubDriver) walkRulesets(ctx context.Context, listPath string, visit func(ghRulesetRaw) (done bool)) error {
+	return g.walkPages(ctx, listPath, "", "repository rulesets", maxRulesetPages, func(body []byte) (int, bool, error) {
 		var rulesets []ghRulesetRaw
 		if err := json.Unmarshal(body, &rulesets); err != nil {
 			return 0, false, fmt.Errorf("failed parsing repository rulesets (raw: %q): %w", util.BodyPreview(body), err)
@@ -264,12 +262,25 @@ func (g *GitHubDriver) findRulesetID(ctx context.Context, listPath, name string)
 			return 0, false, fmt.Errorf("ruleset response exceeds %d entries", issuesPerPage)
 		}
 		for i := 0; i < len(rulesets); i++ {
-			if rulesets[i].Name == name {
-				id = rulesets[i].ID
+			if visit(rulesets[i]) {
 				return len(rulesets), true, nil
 			}
 		}
 		return len(rulesets), false, nil
+	})
+}
+
+// findRulesetID returns the id of the repository ruleset named name, or 0 when absent. It
+// reads every page of the listing: a ruleset past the first page must be updated in place,
+// never duplicated by a second POST.
+func (g *GitHubDriver) findRulesetID(ctx context.Context, listPath, name string) (int, error) {
+	id := 0
+	err := g.walkRulesets(ctx, listPath, func(ruleset ghRulesetRaw) bool {
+		if ruleset.Name == name {
+			id = ruleset.ID
+			return true
+		}
+		return false
 	})
 	if err != nil {
 		return 0, err
@@ -285,82 +296,109 @@ func (g *GitHubDriver) protectedRefs(branch string) []string {
 	return []string{"refs/heads/" + branch}
 }
 
-// ReconcileProtection converges the remote branch ruleset onto the resolved policy. It is a
-// true reconciler: an existing ruleset of the same name is read, merged and updated in
-// place, never duplicated, and a ruleset that does not read back converged is an error,
-// not a warning. The merge never narrows the live ruleset (see mergeRuleset): refs, status
-// checks, rules and parameters praetor does not render survive the update.
+// ReconcileProtection implements Forge: it converges the remote branch ruleset onto the
+// resolved policy (ReconcileProtectionReport) and drops the list of settings the write
+// lowered. A caller that reports what changed, as sync --remote does, calls
+// ReconcileProtectionReport.
 func (g *GitHubDriver) ReconcileProtection(ctx context.Context, branch string, policy *config.BranchProtectionPolicy) error {
-	if err := g.Authenticate(ctx); err != nil {
-		return err
-	}
-	if branch == "" {
-		return errors.New("reconcile protection: branch cannot be empty")
-	}
-	if policy == nil {
-		return errors.New("reconcile protection: policy cannot be nil")
-	}
+	_, err := g.ReconcileProtectionReport(ctx, branch, policy)
+	return err
+}
 
-	listPath, err := g.repoPath("rulesets")
+// ReconcileProtectionReport converges the remote branch ruleset onto the resolved policy. It
+// is a true reconciler: an existing ruleset of the same name is read, merged and updated in
+// place, never duplicated, and a ruleset that does not read back converged is an error, not a
+// warning. The merge never narrows the live ruleset beyond the policy (see mergeRuleset):
+// refs, status checks, rules and parameters praetor does not render survive the update. Every
+// parameter praetor renders takes the declared value, and each one whose live value was
+// stricter is returned, so the caller names every setting the write lowered; it is returned
+// with the readback error too, since the write happened. ReadBranchProtection reads what the
+// branch then enforces, from every ruleset and the legacy protection object alike.
+func (g *GitHubDriver) ReconcileProtectionReport(ctx context.Context, branch string, policy *config.BranchProtectionPolicy) ([]LoweredParameter, error) {
+	listPath, name, desired, err := g.desiredProtection(ctx, branch, policy)
 	if err != nil {
-		return fmt.Errorf("reconcile branch protection for %s: %w", branch, err)
-	}
-	name := g.rulesetName(branch)
-	rendered, err := protectionRuleset(name, g.protectedRefs(branch), *policy, g.RequiredStatusChecks, g.StrictStatusChecks)
-	if err != nil {
-		return err
-	}
-	desired, err := normalizeRuleset(rendered)
-	if err != nil {
-		return err
+		return nil, err
 	}
 	id, err := g.findRulesetID(ctx, listPath, name)
 	if err != nil {
-		return fmt.Errorf("reconcile branch protection for %s: %w", branch, err)
+		return nil, fmt.Errorf("reconcile branch protection for %s: %w", branch, err)
 	}
-	id, want, err := g.writeRuleset(ctx, listPath, id, desired)
+	written, err := g.writeRuleset(ctx, listPath, id, desired)
 	if err != nil {
-		return fmt.Errorf("reconcile ruleset %q for %s: %w", name, branch, err)
+		return nil, fmt.Errorf("reconcile ruleset %q for %s: %w", name, branch, err)
 	}
-	readback, err := g.getRuleset(ctx, listPath, id)
+	readback, err := g.getRuleset(ctx, listPath, written.id)
 	if err != nil {
-		return fmt.Errorf("read back ruleset %q: %w", name, err)
+		return written.lowered, fmt.Errorf("read back ruleset %q: %w", name, err)
 	}
-	if err := rulesetConverged(readback, want); err != nil {
-		return fmt.Errorf("ruleset %q did not converge: %w", name, err)
+	if err := rulesetConverged(readback, written.want); err != nil {
+		return written.lowered, fmt.Errorf("ruleset %q did not converge: %w", name, err)
 	}
-	return nil
+	return written.lowered, nil
+}
+
+// desiredProtection checks the inputs of a protection reconcile and returns the ruleset
+// listing path, the ruleset name and the ruleset the policy renders for branch.
+func (g *GitHubDriver) desiredProtection(ctx context.Context, branch string, policy *config.BranchProtectionPolicy) (listPath, name string, desired map[string]any, err error) {
+	if err := g.Authenticate(ctx); err != nil {
+		return "", "", nil, err
+	}
+	if branch == "" {
+		return "", "", nil, errors.New("reconcile protection: branch cannot be empty")
+	}
+	if policy == nil {
+		return "", "", nil, errors.New("reconcile protection: policy cannot be nil")
+	}
+	if listPath, err = g.repoPath("rulesets"); err != nil {
+		return "", "", nil, fmt.Errorf("reconcile branch protection for %s: %w", branch, err)
+	}
+	name = g.rulesetName(branch)
+	rendered, err := protectionRuleset(name, g.protectedRefs(branch), *policy, g.RequiredStatusChecks, g.StrictStatusChecks)
+	if err != nil {
+		return "", "", nil, err
+	}
+	if desired, err = normalizeRuleset(rendered); err != nil {
+		return "", "", nil, err
+	}
+	return listPath, name, desired, nil
+}
+
+// rulesetWrite is what writeRuleset wrote: the ruleset id, the document the readback must
+// match, and the rendered parameters the merge lowered on the live ruleset.
+type rulesetWrite struct {
+	id      int
+	want    map[string]any
+	lowered []LoweredParameter
 }
 
 // writeRuleset creates the desired ruleset when id is 0, and otherwise merges it into the
-// live ruleset id and updates that in place. It returns the ruleset id and the document
-// written, which is what the readback must match.
-func (g *GitHubDriver) writeRuleset(ctx context.Context, listPath string, id int, desired map[string]any) (int, map[string]any, error) {
+// live ruleset id and updates that in place.
+func (g *GitHubDriver) writeRuleset(ctx context.Context, listPath string, id int, desired map[string]any) (rulesetWrite, error) {
 	if id == 0 {
 		body, err := g.sendRuleset(ctx, http.MethodPost, listPath, desired, http.StatusCreated)
 		if err != nil {
-			return 0, nil, err
+			return rulesetWrite{}, err
 		}
 		var created struct {
 			ID int `json:"id"`
 		}
 		if err := json.Unmarshal(body, &created); err != nil || created.ID <= 0 {
-			return 0, nil, fmt.Errorf("created ruleset response carries no id: %s", util.BodyPreview(body))
+			return rulesetWrite{}, fmt.Errorf("created ruleset response carries no id: %s", util.BodyPreview(body))
 		}
-		return created.ID, desired, nil
+		return rulesetWrite{id: created.ID, want: desired}, nil
 	}
 	live, err := g.getRuleset(ctx, listPath, id)
 	if err != nil {
-		return 0, nil, fmt.Errorf("read live ruleset: %w", err)
+		return rulesetWrite{}, fmt.Errorf("read live ruleset: %w", err)
 	}
-	merged, err := mergeRuleset(live, desired)
+	merged, lowered, err := mergeRuleset(live, desired)
 	if err != nil {
-		return 0, nil, fmt.Errorf("merge live ruleset: %w", err)
+		return rulesetWrite{}, fmt.Errorf("merge live ruleset: %w", err)
 	}
 	if _, err := g.sendRuleset(ctx, http.MethodPut, fmt.Sprintf("%s/%d", listPath, id), merged, http.StatusOK); err != nil {
-		return 0, nil, err
+		return rulesetWrite{}, err
 	}
-	return id, merged, nil
+	return rulesetWrite{id: id, want: merged, lowered: lowered}, nil
 }
 
 // sendRuleset writes a ruleset document and requires the given success status.

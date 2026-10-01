@@ -389,15 +389,21 @@ func liveProtectionRuleset() map[string]any {
 
 // TestGitHubDriver_ReconcileProtection_Positive_MergesLiveRulesetWithoutNarrowing covers
 // BUG-761: the live ruleset is read, merged and read back; main and lts-* are both
-// protected and nothing the operator added is dropped.
+// protected and nothing the operator added is dropped. The live three approving reviews take
+// the declared one, and the lowered count is returned for sync --remote to report (#154).
 func TestGitHubDriver_ReconcileProtection_Positive_MergesLiveRulesetWithoutNarrowing(t *testing.T) {
 	gh, fake := rulesetForge(t, &rulesetServer{existing: []map[string]any{liveProtectionRuleset()}})
 	gh.RulesetName = RepositoryRulesetName
 	gh.ProtectedRefs = RepositoryRulesetRefs("main")
 	gh.RequiredStatusChecks = []string{"CI"}
 
-	if err := gh.ReconcileProtection(context.Background(), "main", &config.BranchProtectionPolicy{RequiredApprovingReviewers: 1}); err != nil {
+	lowered, err := gh.ReconcileProtectionReport(context.Background(), "main", &config.BranchProtectionPolicy{RequiredApprovingReviewers: 1})
+	if err != nil {
 		t.Fatalf("reconcile: %v", err)
+	}
+	if len(lowered) != 1 || lowered[0].Rule != "pull_request" || lowered[0].Parameter != "required_approving_review_count" ||
+		fmt.Sprint(lowered[0].Live, "->", lowered[0].Declared) != "3->1" {
+		t.Fatalf("lowered = %+v, want the review count 3 -> 1 alone (the strict check policy tightens)", lowered)
 	}
 	if len(fake.requests) != 4 || fake.requests[1].Method != http.MethodGet || fake.requests[3].Method != http.MethodGet {
 		t.Fatalf("expected list, live read, PUT and readback, got %+v", fake.requests)
@@ -427,6 +433,34 @@ func TestGitHubDriver_ReconcileProtection_Positive_MergesLiveRulesetWithoutNarro
 	}
 }
 
+// Boundary: review_mode single_maintainer is a declared relaxation, so a live ruleset that
+// still requires approvals and code-owner review is lowered to zero approvals and no code-owner
+// review, and both lowered settings are returned (#154).
+func TestGitHubDriver_ReconcileProtection_Boundary_SingleMaintainerLowersLiveReviews(t *testing.T) {
+	live := liveProtectionRuleset()
+	live["rules"] = []any{map[string]any{"type": "pull_request", "parameters": map[string]any{
+		"required_approving_review_count": 2, "require_code_owner_review": true,
+	}}}
+	gh, fake := rulesetForge(t, &rulesetServer{existing: []map[string]any{live}})
+	gh.RulesetName = RepositoryRulesetName
+	policy := &config.BranchProtectionPolicy{RequiredApprovingReviewers: 2, ReviewMode: config.BranchReviewModeSingleMaintainer}
+	lowered, err := gh.ReconcileProtectionReport(context.Background(), "main", policy)
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	var names []string
+	for _, p := range lowered {
+		names = append(names, fmt.Sprintf("%s=%v->%v", p.Parameter, p.Live, p.Declared))
+	}
+	if got := strings.Join(names, ","); got != "required_approving_review_count=2->0,require_code_owner_review=true->false" {
+		t.Fatalf("lowered = %s", got)
+	}
+	put := fake.requests[2]
+	if !strings.Contains(put.Raw, `"required_approving_review_count":0`) || !strings.Contains(put.Raw, `"require_code_owner_review":false`) {
+		t.Fatalf("single_maintainer did not reconcile the hosted reviews to zero: %s", put.Raw)
+	}
+}
+
 func TestGitHubDriver_ReconcileProtection_Negative_ReadbackAndLiveRuleset(t *testing.T) {
 	policy := &config.BranchProtectionPolicy{}
 	// A forge that accepts the PUT but keeps the stale ruleset fails the readback.
@@ -442,9 +476,13 @@ func TestGitHubDriver_ReconcileProtection_Negative_ReadbackAndLiveRuleset(t *tes
 		}
 	})
 	gh.RulesetName, gh.ProtectedRefs = RepositoryRulesetName, RepositoryRulesetRefs("main")
-	err := gh.ReconcileProtection(context.Background(), "main", policy)
+	lowered, err := gh.ReconcileProtectionReport(context.Background(), "main", policy)
 	if err == nil || !strings.Contains(err.Error(), "did not converge") || !strings.Contains(err.Error(), "refs/heads/lts-*") {
 		t.Fatalf("expected a non-converged readback naming lts-*, got %v", err)
+	}
+	// The PUT happened, so the settings it lowered are reported beside the readback error.
+	if len(lowered) == 0 || lowered[0].Parameter != "required_approving_review_count" {
+		t.Fatalf("a failed readback after the write must still return what it lowered, got %+v", lowered)
 	}
 
 	// A malformed live ruleset is never overwritten.
