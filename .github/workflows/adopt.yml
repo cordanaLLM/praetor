@@ -73,6 +73,7 @@ jobs:
         with:
           path: ${{ inputs.target_path }}
           mode: adopt
+          dry-run: ${{ inputs.dry_run }}
           force: "true"
           record-baseline: "true"
           cache: "false"

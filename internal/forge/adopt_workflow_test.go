@@ -27,6 +27,7 @@ const (
 	adoptHeadRef          = "${{ steps." + adoptHeadStepID + ".outputs.sha }}"
 	adoptHeadQuery        = `.head.repo.full_name // "", .head.sha // ""`
 	adoptTargetPath       = "${{ inputs.target_path }}"
+	adoptDryRun           = "${{ inputs.dry_run }}"
 	adoptTestRepository   = "cordanaLLM/praetor"
 	adoptTestHead         = "0123456789abcdef0123456789abcdef01234567"
 	checkoutActionPrefix  = "actions/checkout@"
@@ -423,6 +424,48 @@ func TestAdoptWorkflow_Positive_TargetPathReachesBothCommands(t *testing.T) {
 			job := adoptJob(t, parseAdoptWorkflow(t), adoptDispatchJob)
 			tc.mutate(t, &job)
 			if gap := targetPathGap(job); !strings.Contains(gap, tc.want) {
+				t.Fatalf("gap = %q, want containing %q", gap, tc.want)
+			}
+		})
+	}
+}
+
+// dryRunGap names why the dispatch input dry_run would not reach the adoption step, or returns "".
+func dryRunGap(job workflowJob) string {
+	adopt := stepIndex(job, usesPraetorAdopt)
+	if adopt < 0 {
+		return "no step uses praetor-adopt"
+	}
+	if stepInput(job.Steps[adopt], "dry-run") != adoptDryRun {
+		return "the adoption step does not take dry_run as its dry-run input"
+	}
+	return ""
+}
+
+// Positive: dry_run reaches the adoption action so a dry-run dispatch plans without writing.
+// Negative and boundary: the input dropped, or wired with another value.
+func TestAdoptWorkflow_Positive_DryRunReachesAdoptionAction(t *testing.T) {
+	spec := parseAdoptWorkflow(t)
+	if gap := dryRunGap(adoptJob(t, spec, adoptDispatchJob)); gap != "" {
+		t.Fatalf("dispatch job: %s", gap)
+	}
+	cases := []struct {
+		name   string
+		mutate func(t *testing.T, job *workflowJob)
+		want   string
+	}{
+		{"negative: the dry-run input dropped", func(t *testing.T, job *workflowJob) {
+			delete(job.Steps[mustStepIndex(t, *job, usesPraetorAdopt)].With, "dry-run")
+		}, "the adoption step does not take dry_run as its dry-run input"},
+		{"boundary: hardcoded false", func(t *testing.T, job *workflowJob) {
+			job.Steps[mustStepIndex(t, *job, usesPraetorAdopt)].With["dry-run"] = "false"
+		}, "the adoption step does not take dry_run as its dry-run input"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			job := adoptJob(t, parseAdoptWorkflow(t), adoptDispatchJob)
+			tc.mutate(t, &job)
+			if gap := dryRunGap(job); !strings.Contains(gap, tc.want) {
 				t.Fatalf("gap = %q, want containing %q", gap, tc.want)
 			}
 		})
