@@ -18,7 +18,6 @@ func TestJSONRejectsNestedReplacementAndDuplicateKeys(t *testing.T) {
 		`{"name": "public/praetor", "nested": {"key":1,"key":2}}`,
 		// Issue #310: a case-folded second spelling would survive the exact-name replacement.
 		`{"name": "public/praetor", "Name": "public/praetor"}`,
-		`{"name": "public/praetor", "nested": {"key":1,"KEY":2}}`,
 		`{"name": "public/praetor", "text": "\ud800"}`,
 		`{"name": "public/praetor"} {}`,
 	} {
@@ -34,6 +33,19 @@ func TestJSONRejectsNestedReplacementAndDuplicateKeys(t *testing.T) {
 	want := "{\"name\": \"private/praetor\", \"nested\":{\"name\":\"public/praetor\"},\"integer\":123456789123456789123456789}\n"
 	if string(got) != want {
 		t.Fatalf("unrelated data changed: %s", got)
+	}
+}
+
+// Boundary: nested names are case-sensitive data, so a pair that differs only in case below the
+// top level is kept byte for byte; only a second spelling of the replaced name is refused.
+func TestJSONKeepsNestedCaseVariantNames(t *testing.T) {
+	raw := []byte(`{"name": "public/praetor", "build": {"args": {"HTTP_PROXY": "a", "http_proxy": "b"}}}`)
+	got, err := ownerJSON(raw, "name", "public/praetor", "private/praetor")
+	if err != nil {
+		t.Fatalf("nested case-variant names refused: %v", err)
+	}
+	if want := `{"name": "private/praetor", "build": {"args": {"HTTP_PROXY": "a", "http_proxy": "b"}}}`; string(got) != want {
+		t.Fatalf("got %s, want %s", got, want)
 	}
 }
 
