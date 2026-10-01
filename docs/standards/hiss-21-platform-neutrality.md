@@ -228,17 +228,26 @@ are billed at a multiple. There the matrix runs only when the repository variabl
 [operational fork synchronization](../guides/operational-sync.md#which-workflows-run-where)
 or that variable.
 
+The matrix also skips a pull request whose head branch starts with `renovate/`, in every
+repository. Such a pull request is taken over on a signed-off branch whose own pull request runs
+the three legs ([Renovate pull requests](../guides/contributing.md#renovate-pull-requests)), so
+the condition leads with `!startsWith(github.head_ref, 'renovate/') && (...)`.
+
 A job skipped by its condition reports nothing, which is the silent skip this invariant forbids.
 The workflow therefore carries a second job with the exact negation of that condition. It runs
-on one Linux runner, writes a notice and a step summary naming the repository and the variable,
-and states that no platform was verified. Exactly one of the two jobs runs for any repository.
+on one Linux runner, writes a notice and a step summary naming the reason, the Renovate branch
+or the repository and the variable, and states that no platform was verified. Exactly one of the
+two jobs runs for any repository and branch (`TestPortabilityFollowsTheRepositoryVariable` in
+`internal/forge/workflow_guard_test.go`).
 
 A job condition normally removes a job from the required contexts, because its check may never
 report. A condition that is only a disjunction containing the repository guard for the
 repository's own `.standards.yaml` identity is the exception: it is always true there, so the
-three legs stay required in the canonical repository. The skip job's condition is a negated
-group, which never counts, so it is required nowhere: a check that says no platform was
-verified must not satisfy a ruleset.
+three legs stay required in the canonical repository. A leading Renovate branch term does not
+change that: the rest of the condition decides (`withoutRenovateBranchSkip` in
+`internal/forge/workflow_guard.go`). The skip job's condition is a negated group, which never
+counts, so it is required nowhere: a check that says no platform was verified must not satisfy
+a ruleset.
 
 `sync --remote` never adds to a fork's GitHub ruleset a check its runs will not report:
 

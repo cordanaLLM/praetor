@@ -49,8 +49,44 @@ make verify-all
    - Commit first, then run `standardsctl gate run --path=.` to verify the ephemeral worktree and generate an Ed25519 Exit-0 receipt. The gate refuses a tree with uncommitted or untracked changes ([details](adoption-verification.md#a-receipt-certifies-only-a-working-tree-that-matches-head)).
 4. **Pull Request Submission**:
    - Submit PR via GitHub. Direct pushes to `main` are declined by repository rules.
-   - All 8 required status checks in `.github/rulesets/main.json` must pass before merge:
-     `Release & Bot Configuration Validation`, `Standards & Invariant Verification Gate`,
-     `DCO 1.1 & REUSE Compliance Gate`, `Platform Neutrality (Linux)`,
-     `Platform Neutrality (macOS)`, `Platform Neutrality (Windows)`,
-     `Documentation Governance`, and `Go Vulnerability & AST Security Scan`.
+   - All 9 required status checks in `.github/rulesets/main.json` must pass before merge:
+     `Release & Bot Configuration Validation`, `Documentation Preset Builds`,
+     `Standards & Invariant Verification Gate`, `DCO 1.1 & REUSE Compliance Gate`,
+     `Platform Neutrality (Linux)`, `Platform Neutrality (macOS)`,
+     `Platform Neutrality (Windows)`, `Documentation Governance`, and
+     `Go Vulnerability & AST Security Scan`.
+
+## Renovate pull requests
+
+A Renovate pull request is not merged as opened. The landing pipeline takes each one over on a
+signed-off `fix/renovate-<number>` branch with its own pull request, and that pull request runs
+the full CI and every required check.
+
+CI on the Renovate pull request itself is skipped. Each of these jobs leads its condition with
+`!startsWith(github.head_ref, 'renovate/')`:
+
+| Workflow | Job skipped on a `renovate/` head branch |
+| :--- | :--- |
+| `.github/workflows/ci.yml` | `Standards & Invariant Verification Gate`, `Documentation Preset Builds` |
+| `.github/workflows/portability.yml` | the three `Platform Neutrality` legs |
+| `.github/workflows/security.yml` | `Go Vulnerability & AST Security Scan` |
+| `.github/workflows/pages.yml` | `Build Documentation Site` |
+
+- `DCO 1.1 & REUSE Compliance Gate`, `Release & Bot Configuration Validation` and
+  `Documentation Governance` still run on the Renovate pull request.
+- The portability workflow's stated-reason job runs instead of the legs and names the Renovate
+  branch as the reason ([HISS-21](../standards/hiss-21-platform-neutrality.md)).
+- Push runs and every other branch are unchanged: `github.head_ref` is set on pull request runs
+  only.
+- The skipped jobs stay required checks (`TestRenovateBranchesSkipOnlyTheHeavyPullRequestJobs`
+  in `internal/forge/workflow_guard_test.go`). GitHub reports a job its condition skipped as
+  successful, but the skipped matrix reports no `Platform Neutrality` leg at all, so the Renovate
+  pull request cannot satisfy the ruleset on its own.
+
+`renovate.json` keeps the bot from refilling the runners and from merging anything:
+
+- `rebaseWhen: conflicted` rebases a branch only when it conflicts with `main`. The default,
+  `auto`, rebases every open branch whenever `main` moves, because the ruleset requires
+  up-to-date branches.
+- `automerge: false` holds for every rule. A skipped check reports success, so an automerging
+  rule could merge an update that nothing verified.

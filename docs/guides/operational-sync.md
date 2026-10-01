@@ -313,6 +313,10 @@ test replays both checks against a temp copy of the manifest with the owner over
 | `portability.yml` | runs; its three legs are required checks | skipped with a stated reason unless the repository variable `PRAETOR_FORK_PORTABILITY` is `enabled`; `sync --remote` does not add its legs there and warns about legs an earlier sync added ([HISS-21](../standards/hiss-21-platform-neutrality.md#outside-the-canonical-repository-the-matrix-is-opt-in-and-says-so)) |
 | `adopt.yml` | on dispatch or comment | on dispatch or comment: a person asked for it in that repository |
 
+In every copy a pull request from a `renovate/` branch also skips the Go tests, the Platform
+Neutrality legs, the preset builds, the security scan and the documentation site build, while
+the DCO and REUSE gate runs ([Renovate pull requests](contributing.md#renovate-pull-requests)).
+
 Set `PRAETOR_CANONICAL_REPOSITORY` only when the canonical repository itself moves; the
 manifest identity and the literal then change in the same commit. Guards limit what a copy
 runs on its own. They do not replace disabling Actions on a fork before its first push.

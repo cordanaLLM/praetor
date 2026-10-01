@@ -73,6 +73,14 @@ required when the job reports on every pull request:
   too (`TestHoldsOnEveryPullRequestRun` in `internal/forge/required_contexts_in_test.go`). So does
   a repository guard that holds for the manifest's identity
   (see [Which workflows run where](guides/operational-sync.md#which-workflows-run-where)).
+- A condition that leads with the conjunct `!startsWith(github.head_ref, 'renovate/')` is judged
+  by the rest alone: the rest must be one parenthesised group or hold no top-level `||`
+  (`TestRenovateBranchSkipKeepsAJobRequired` in `internal/forge/workflow_guard_test.go`). The
+  term skips Renovate pull requests only, and requiring the job keeps every other pull request
+  protected. The engine's heavy jobs use it because its landing pipeline takes Renovate pull
+  requests over ([Renovate pull requests](guides/contributing.md#renovate-pull-requests)). A
+  repository without such a takeover should not use it: a skipped job reports success, so
+  nothing then verifies the Renovate pull request it merges.
 - The job is not advisory: `continue-on-error` is absent or `false`.
 
 Any other condition makes the job optional, a status function joined with anything else
