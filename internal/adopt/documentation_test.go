@@ -447,15 +447,21 @@ func setAdoptionDeclines(t *testing.T, root string, declines ...string) {
 
 func setDocumentationFacet(t *testing.T, root string, enabled bool) {
 	t.Helper()
+	setManifestFacet(t, root, "docs:seo-portal", enabled)
+}
+
+// setManifestFacet adds facet to, or removes it from, the manifest under root.
+func setManifestFacet(t *testing.T, root, target string, enabled bool) {
+	t.Helper()
 	path := filepath.Join(root, manifestFile)
 	manifest, err := config.LoadManifest(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	manifest.Facets = slices.DeleteFunc(manifest.Facets,
-		func(facet string) bool { return facet == "docs:seo-portal" })
+		func(facet string) bool { return facet == target })
 	if enabled {
-		manifest.Facets = append(manifest.Facets, "docs:seo-portal")
+		manifest.Facets = append(manifest.Facets, target)
 	}
 	data, err := yaml.Marshal(manifest)
 	if err != nil {

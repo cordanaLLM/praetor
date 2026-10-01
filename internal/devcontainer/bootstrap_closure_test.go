@@ -23,6 +23,15 @@ func goFile(pkg string, imports ...string) string {
 	return s.String()
 }
 
+// assetFixture is the content a test writes for a family asset: data, or a parseable Go file
+// for a .go asset, which the capture parses as it parses every Go file it carries.
+func assetFixture(asset, data string) string {
+	if strings.HasSuffix(asset, ".go") {
+		return "//go:build fixture\n\n" + goFile("main")
+	}
+	return data
+}
+
 func capturedNames(t *testing.T, root string) []string {
 	t.Helper()
 	files, err := captureBootstrapSource(t.Context(), root)
@@ -130,7 +139,7 @@ func checkClosureFamilyAssets(t *testing.T, family managedasset.Family) {
 		writeBootstrapFile(t, root, "cmd/standardsctl/main.go", goFile("main", mainImports...))
 		writeBootstrapFile(t, root, family.Source, goFile(path.Base(family.Directory), `"embed"`)+"\n"+family.EmbedDirective()+"\nvar assets embed.FS\n")
 		for _, asset := range assets {
-			writeBootstrapFile(t, root, asset, "{}\n")
+			writeBootstrapFile(t, root, asset, assetFixture(asset, "{}\n"))
 		}
 		writeBootstrapFile(t, root, "internal/unreached/embed.go", goFile("unreached", `"embed"`)+"\n//go:embed data.txt\nvar data string\n")
 		writeBootstrapFile(t, root, "internal/unreached/data.txt", "undeclared asset\n")
