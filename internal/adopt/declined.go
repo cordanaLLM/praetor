@@ -126,16 +126,18 @@ func sortedNames(names []string) []string {
 }
 
 // declaredManifest reads the repository's existing manifest once, before the chain runs, so
-// its recorded decisions (adoption.decline, the declared profiles) govern the run that
-// follows rather than the run after next. It returns nil when there is no manifest yet, which
-// is what a first adoption means, and when the manifest cannot be read: the manifest step
-// parses it strictly and fails the run with the reason.
-func declaredManifest(ctx context.Context, repoPath string) *config.Manifest {
+// its recorded decisions (adoption.decline, the declared profiles and facets) govern the run
+// that follows rather than the run after next. It returns nil when there is no manifest yet,
+// which is what a first adoption means, and when the manifest cannot be read: the manifest
+// step parses it strictly and fails the run with the reason. unreadable tells the second case
+// from the first, so the report never presents the facets of a manifest it could not read as
+// the ones a first adoption declares (adoptionFacets).
+func declaredManifest(ctx context.Context, repoPath string) (manifest *config.Manifest, unreadable bool) {
 	manifest, err := loadDeclaredManifest(ctx, repoPath)
 	if err != nil {
-		return nil
+		return nil, true
 	}
-	return manifest
+	return manifest, false
 }
 
 // loadDeclaredManifest reads and strictly decodes the repository's manifest (one bounded

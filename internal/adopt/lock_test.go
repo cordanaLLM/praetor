@@ -13,7 +13,7 @@ import (
 
 func lockAdoptSession(t *testing.T) *adoptSession {
 	t.Helper()
-	return &adoptSession{repoPath: t.TempDir(), arch: "framework", facets: resolveFacets(nil), report: &AdoptReport{}}
+	return &adoptSession{repoPath: t.TempDir(), arch: "framework", facets: config.DefaultFacets(), report: &AdoptReport{}}
 }
 
 func TestAdoptLockRequiresExplicitSource(t *testing.T) {
