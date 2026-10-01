@@ -32,8 +32,8 @@ const reuseOverrideTable = "\n[[annotations]]\npath = [\"tools/figures/third_par
 
 // Positive: an override annotation naming the vendored tree MIT, alone or in an expression, in
 // double or single quotes, on one line or in a multi-line array, satisfies the check, as it does
-// followed by a table for paths that do not cover the vendored tree; a repository without
-// REUSE.toml gets no warning.
+// followed by a table for paths that do not cover the vendored tree, or by one for some of its
+// files that names MIT too; a repository without REUSE.toml gets no warning.
 func TestVendoredLicenseWarningsPositive(t *testing.T) {
 	variants := []string{
 		reuseWithOverride,
@@ -43,6 +43,7 @@ func TestVendoredLicenseWarningsPositive(t *testing.T) {
 		strings.Replace(reuseWithOverride, `path = ["tools/figures/third_party/interfig/upstream/**"]`,
 			"path = [\n  \"tools/figures/dist/**\",\n  \"tools/figures/third_party/interfig/upstream/**\",\n]", 1),
 		strings.ReplaceAll(reuseWithOverride, "\n", "\r\n"),
+		reuseWithOverride + "\n[[annotations]]\npath = \"**/*.js\"\nSPDX-License-Identifier = \"MIT OR Apache-2.0\"\n",
 	}
 	for _, text := range variants {
 		if warnings := reuseWarnings(t, &text); len(warnings) != 0 {
@@ -55,8 +56,9 @@ func TestVendoredLicenseWarningsPositive(t *testing.T) {
 }
 
 // Negative: the whole-tree table alone, an annotation naming the tree under another license, a
-// license in another table than the path, and the path only in a comment each warn, naming the
-// glob, the license and the remedy.
+// license in another table than the path, the path only in a comment, and a later MIT table
+// whose comment quotes the whole-tree glob each warn, naming the glob, the license and the
+// remedy.
 func TestVendoredLicenseWarningsNegative(t *testing.T) {
 	variants := map[string]string{
 		"whole tree only": reuseWithoutOverride,
@@ -68,6 +70,10 @@ func TestVendoredLicenseWarningsNegative(t *testing.T) {
 		// REUSE 3.3 applies only the last matching table, so a later covering table relabels.
 		"override before the whole tree":   "version = 1\n" + reuseOverrideTable + strings.TrimPrefix(reuseWithoutOverride, "version = 1\n"),
 		"override before tools/figures/**": reuseWithOverride + "\n[[annotations]]\npath = ['tools/figures/**']\nSPDX-License-Identifier = \"Apache-2.0\"\n",
+		"override before a star glob":      reuseWithOverride + "\n[[annotations]]\npath = \"tools/*/third_party/**\"\nSPDX-License-Identifier = \"Apache-2.0\"\n",
+		"some files relabelled":            reuseWithOverride + "\n[[annotations]]\npath = \"**/*.js\"\nSPDX-License-Identifier = \"Apache-2.0\"\n",
+		"comment quoting **": reuseWithoutOverride + "\n# Keep this table after the \"**\" table.\n[[annotations]]\n" +
+			"path = [\"other/**\"] # not \"**\"\nSPDX-License-Identifier = \"MIT\"\n",
 	}
 	for name, text := range variants {
 		warnings := reuseWarnings(t, &text)

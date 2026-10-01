@@ -163,7 +163,7 @@ func parseDerivation(upstream compiler.AssetUpstream) (derivation, error) {
 }
 
 // checkDerivationCredit returns the finding for one declaration, or nil when its row answers it.
-func checkDerivationCredit(parsed derivation, rows []adaptedRow, tables []string, texts map[string]bool) error {
+func checkDerivationCredit(parsed derivation, rows []adaptedRow, tables []ReuseAnnotation, texts map[string]bool) error {
 	index := slices.IndexFunc(rows, func(row adaptedRow) bool {
 		return row.url == parsed.url && slices.Contains(row.artifacts, parsed.rel)
 	})
@@ -188,7 +188,7 @@ func checkDerivationCredit(parsed derivation, rows []adaptedRow, tables []string
 
 // checkCopiedLicense returns the finding for a copied upstream whose license is not carried:
 // REUSE.toml must label the file with every license term, and LICENSES/ must hold each text.
-func checkCopiedLicense(parsed derivation, tables []string, texts map[string]bool) error {
+func checkCopiedLicense(parsed derivation, tables []ReuseAnnotation, texts map[string]bool) error {
 	var findings []error
 	for _, id := range licenseTerms(parsed.license) {
 		if !texts[id] {

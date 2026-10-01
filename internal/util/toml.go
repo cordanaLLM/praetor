@@ -10,10 +10,10 @@ import "strings"
 // removed and a trailing comment dropped: "[ extend ]" is "extend" and "[[ rules ]]  # x" is
 // "[rules]", an array-of-tables header keeping one bracket pair. It reads a line's shape and is
 // not a parser: the module carries no TOML library, and the callers (the gitleaks configuration
-// check, the Cargo.toml edition and workspace members read in internal/flavor, the Cargo.toml and
-// pyproject.toml dependency reads in internal/needs, and the REUSE.toml read of praetorctl audit)
-// need only the header, single-line keys (TOMLKeyValue), inline tables (TOMLInlineTableFields)
-// and arrays of strings (TOMLStringArray).
+// check, the Cargo.toml edition and workspace members read in internal/flavor, the Cargo.toml
+// and pyproject.toml dependency reads in internal/needs, and the REUSE.toml read of
+// internal/supplychain) need only the header, single-line keys (TOMLKeyValue), inline tables
+// (TOMLInlineTableFields) and arrays of strings (TOMLStringArray).
 func TOMLTableName(header string) string {
 	name, _, _ := strings.Cut(header, "#")
 	name = strings.ReplaceAll(strings.TrimSpace(name), " ", "")

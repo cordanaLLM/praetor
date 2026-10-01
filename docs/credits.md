@@ -24,8 +24,9 @@ matter as `metadata.derived_from: "<url> (<license>)"`, for example
 declarations and this table together through `CheckUpstreamCredits`
 (`internal/supplychain/upstream_credits.go`). Each declaration needs a row that links the same
 URL, names the declaring file in a code span, and states the declared license first in its
-license cell. A *copied* row also needs `REUSE.toml` to label the file with that license and
-`LICENSES/` to hold its text. A row naming a persona or skill that declares no upstream fails as
+license cell. A *copied* row also needs `LICENSES/` to hold the license text and `REUSE.toml` to
+label the file with the license in the last annotation table whose `path` globs match it, the
+only table REUSE 3.3 applies (`ReuseLabels`, `internal/supplychain/reuse.go`). A row naming a persona or skill that declares no upstream fails as
 well.
 
 | Project | Praetor artifact | Relation | What changed | License |

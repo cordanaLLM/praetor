@@ -79,7 +79,12 @@ func TestCheckUpstreamCreditsNegative(t *testing.T) {
 		"other license":        {upstreamSources(strings.Replace(adaptedCredits, "| MIT, ©", "| Apache-2.0, ©", 1)), `under "Apache-2.0", and the file declares "MIT"`},
 		"unknown relation":     {upstreamSources(strings.Replace(adaptedCredits, "| adapted |", "| ported |", 1)), `the relation "ported"`},
 		"copied, unlabelled":   {upstreamSources(copiedCredits), "REUSE.toml does not label it MIT"},
-		"short row":            {upstreamSources(strings.Replace(adaptedCredits, " Rules rewritten. |", "", 1)), "holds 4 cells, want 5"},
+		"copied, comment quoting **": {func() UpstreamCreditSources {
+			sources := upstreamSources(copiedCredits)
+			sources.Reuse += reuseVendorMIT
+			return sources
+		}(), "REUSE.toml does not label it MIT"},
+		"short row": {upstreamSources(strings.Replace(adaptedCredits, " Rules rewritten. |", "", 1)), "holds 4 cells, want 5"},
 		"malformed value": {func() UpstreamCreditSources {
 			sources := upstreamSources(adaptedCredits)
 			sources.Upstreams[0].DerivedFrom = upstreamURL + " MIT"
