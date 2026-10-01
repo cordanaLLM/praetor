@@ -21,17 +21,25 @@ type bugDocument struct {
 	newline                  string
 	header, table, separator bool
 	fence                    util.MarkdownFence
+	fenceLine                int
 	seen                     map[string]bool
 	// meta is the sidecar index v2 rows read from. Writers update it in place;
 	// it is persisted with the document.
 	meta ledgerMetaIndex
 }
 
+func validateBugLedgerText(text string) error {
+	if len(text) > maxLedgerBytes || !utf8.ValidString(text) || strings.ContainsRune(text, 0) {
+		return fmt.Errorf("bug ledger must be UTF-8 without NUL, at most %d bytes", maxLedgerBytes)
+	}
+	return nil
+}
+
 // parseBugDocument validates a whole ledger. index is the sidecar content, or
 // nil when there is none; a v2 row without an index entry is an error.
 func parseBugDocument(text string, index ledgerMetaIndex) (*bugDocument, error) {
-	if len(text) > maxLedgerBytes || !utf8.ValidString(text) || strings.ContainsRune(text, 0) {
-		return nil, fmt.Errorf("bug ledger must be UTF-8 without NUL, at most %d bytes", maxLedgerBytes)
+	if err := validateBugLedgerText(text); err != nil {
+		return nil, err
 	}
 	doc := &bugDocument{text: text, newline: "\n", seen: make(map[string]bool), meta: index}
 	if strings.Contains(text, "\r\n") {
@@ -43,10 +51,13 @@ func parseBugDocument(text string, index ledgerMetaIndex) (*bugDocument, error) 
 			return nil, fmt.Errorf("bug ledger line bound exceeded")
 		}
 		body := strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
-		if err := doc.readLine(body, start, start+len(body)); err != nil {
+		if err := doc.readLine(body, start, start+len(body), lineNo+1); err != nil {
 			return nil, fmt.Errorf("BUGS.md line %d: %w", lineNo+1, err)
 		}
 		start += len(line)
+	}
+	if doc.fence.Open() {
+		return nil, fmt.Errorf("BUGS.md line %d: code fence opened and never closed", doc.fenceLine)
 	}
 	if !doc.header || doc.separator {
 		return nil, fmt.Errorf("BUGS.md requires a complete six-column ledger header")
@@ -56,20 +67,21 @@ func parseBugDocument(text string, index ledgerMetaIndex) (*bugDocument, error) 
 
 // skipFence advances the shared fence tracker and additionally closes any open
 // table, because a fence always terminates the bug table that preceded it.
-func (doc *bugDocument) skipFence(line string) bool {
+func (doc *bugDocument) skipFence(line string, lineNo int) bool {
 	opening := !doc.fence.Open()
 	if !doc.fence.Inside(line) {
 		return false
 	}
 	if opening {
 		doc.table = false
+		doc.fenceLine = lineNo
 	}
 	return true
 }
 
-func (doc *bugDocument) readLine(body string, start, end int) error {
+func (doc *bugDocument) readLine(body string, start, end, lineNo int) error {
 	line := strings.TrimSpace(body)
-	if doc.skipFence(line) {
+	if doc.skipFence(line, lineNo) {
 		return nil
 	}
 	if isBugHeader(line) {
