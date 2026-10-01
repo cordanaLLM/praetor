@@ -63,8 +63,8 @@ func (f PullRequestPermissionFinding) String() string {
 // A job that no pull request can start may declare whatever it needs, which is why the
 // audit decides reachability rather than reporting every write scope in the file. Only a
 // declared write is reported: a workflow with no permissions key at all inherits the
-// repository default, which the manifest's actions policy governs and
-// EvaluateActionsPermissions audits against the live forge.
+// repository default, which the manifest's actions policy governs and the audit compares with
+// the live forge (GitHubDriver.WorkflowPermissions, EvaluateLiveActionsPermissions).
 func AuditPullRequestPermissions(ctx context.Context, repoPath string) ([]PullRequestPermissionFinding, error) {
 	if ctx == nil {
 		return nil, errors.New("pull request permission audit requires a context")

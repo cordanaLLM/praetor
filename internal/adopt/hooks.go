@@ -24,6 +24,15 @@ const (
 	hookBackupExt   = ".bak"
 	// fallbackPreCommitMarker identifies a pre-commit hook written by praetor.
 	fallbackPreCommitMarker = "# praetor-managed pre-commit hook"
+	// preCommitAuditArgs is the audit every generated pre-commit hook runs. It passes --offline,
+	// so no commit waits on the forge or fails on live Actions drift: the live checks
+	// (cmd/standardsctl/audit_forge.go) ask the GitHub API up to about 130 times, each request
+	// bounded at 15 seconds and the whole read at three minutes. The pre-push audit and CI run
+	// the audit online, since a push needs the network anyway (docs/guides/actions-live-checks.md).
+	preCommitAuditArgs = "audit --offline"
+	// prePushAuditArgs is the audit the generated pre-push hook runs: online, the live checks
+	// included.
+	prePushAuditArgs = "audit"
 )
 
 // ErrHooksDirEscapesRepo is returned when git discovers a different top-level directory
@@ -155,7 +164,9 @@ func lefthookHeader(languages hisscatalog.Language) string {
 	return "# Lefthook Configuration (" + scope + ")\n" +
 		"# Go and Rust jobs follow the detected languages; both when none was detected.\n" +
 		"# Governance commands fail closed: a failing or missing praetorctl blocks the\n" +
-		"# commit or push. The pre-push gate job signs a receipt only after a Go\n" +
+		"# commit or push. The pre-commit audit runs --offline; the pre-push audit\n" +
+		"# reads the forge's live Actions state when a token and a github.com origin\n" +
+		"# are present. The pre-push gate job signs a receipt only after a Go\n" +
 		"# (go.mod) or Cargo (Cargo.lock) toolchain stage ran, and fails otherwise.\n"
 }
 
@@ -179,7 +190,7 @@ func buildLefthookYAMLFor(languages hisscatalog.Language, checkpoint bool) strin
 		"  commands:\n" +
 		lefthookPreCommitJobs(languages) +
 		"    context-check:\n" + lefthookRun(governed("compile-context --verify")) +
-		"    hiss-audit:\n" + lefthookRun(governed("audit")) +
+		"    hiss-audit:\n" + lefthookRun(governed(preCommitAuditArgs)) +
 		"\n" +
 		"post-commit:\n" +
 		"  commands:\n" +
@@ -191,7 +202,7 @@ func buildLefthookYAMLFor(languages hisscatalog.Language, checkpoint bool) strin
 		"  commands:\n" +
 		lefthookPrePushJobs(languages) +
 		"    flavor-audit:\n" + lefthookRun(governed("flavor audit .")) +
-		"    audit:\n" + lefthookRun(governed("audit")) +
+		"    audit:\n" + lefthookRun(governed(prePushAuditArgs)) +
 		"    gate:\n" + lefthookRun(governed("gate run --path=."))
 }
 
@@ -397,7 +408,7 @@ func buildFallbackPreCommitScript() string {
 		fallbackPreCommitMarker + " (installed because lefthook is not available)\n" +
 		"set -euo pipefail\n" +
 		util.ShellCLI("compile-context --verify", missing) + "\n" +
-		util.ShellCLI("audit", missing) + "\n"
+		util.ShellCLI(preCommitAuditArgs, missing) + "\n"
 }
 
 // reconcileGitHooks classifies an existing lefthook.yml before it installs anything
@@ -649,7 +660,7 @@ func (s *adoptSession) resolveHooksDirForInstall(ctx context.Context) (string, e
 // operator can do about it.
 const foreignPreCommitNote = "existing pre-commit hook was not written by praetor; kept, --force included, " +
 	"because audit requires only that a pre-commit hook exists. Have it run '" + util.PraetorCLI +
-	" compile-context --verify' and '" + util.PraetorCLI + " audit', or remove it and re-run adopt to install the praetor hook"
+	" compile-context --verify' and '" + util.PraetorCLI + " " + preCommitAuditArgs + "', or remove it and re-run adopt to install the praetor hook"
 
 // installFallbackHook writes the praetor pre-commit hook. An existing hook that praetor did
 // not write is kept, --force included: audit checks only that a pre-commit hook exists, so

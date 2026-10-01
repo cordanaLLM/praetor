@@ -53,6 +53,8 @@ type auditOptions struct {
 	effective       *config.EffectivePolicy
 	baseline        *baseline.Baseline
 	baselineKnown   bool
+	// offline skips every forge read; the live Actions checks report as not made.
+	offline bool
 
 	// allViolations lists every violation of a ratchet rejection instead of a bounded few (#598).
 	allViolations bool
@@ -98,6 +100,7 @@ func parseAuditOptions(args []string) (*auditOptions, error) {
 	debtDelta := fs.String("touched-debt-delta-reason", "",
 		"Judge touched files on whether their debt grew rather than on whether they were touched, for a provably mechanical change; the value is the recorded reason. Also read from "+debtDeltaReasonEnv)
 	allViolations := fs.Bool("all-violations", false, "List every violation of a HISS ratchet rejection instead of the first three per class")
+	offline := fs.Bool("offline", false, offlineFlagUsage)
 	var policy config.EffectiveOptions
 	fs.StringVar(&policy.CatalogRoot, "catalog-root", "", "Root containing pinned .config/archetypes (default: audited root)")
 	fs.StringVar(&policy.FleetPath, "fleet-config", "", "Explicit fleet complexity policy file")
@@ -123,6 +126,7 @@ func parseAuditOptions(args []string) (*auditOptions, error) {
 		touched:         splitCSV(*touched),
 		debtDeltaReason: resolveDebtDeltaReason(*debtDelta),
 		allViolations:   *allViolations,
+		offline:         *offline,
 		policy:          policy,
 	}, nil
 }
@@ -158,6 +162,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error { return auditPreMigrationTracking(rootDir) },
 		func() error { return auditAgentDefinitions(ctx, manifest, rootDir) },
 		func() error { return auditGitHooks(ctx, rootDir) },
+		func() error { return auditLiveActions(ctx, manifest, rootDir, opts.offline) },
 	}
 
 	for i := 0; i < len(gates) && i < maxAuditGates; i++ {

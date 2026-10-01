@@ -46,8 +46,22 @@ type PRResponse struct {
 	State  string `json:"state"`
 }
 
+// ActionsReader reads a repository's Actions state and changes nothing: its live workflow
+// permissions (#611) and the recent runs of one of its workflows (#612). The audit and plan
+// depend on this interface alone, so a stand-in replaces the forge in their tests.
+type ActionsReader interface {
+	// WorkflowPermissions returns the repository's live Actions workflow permissions and,
+	// when the token can read them, its organisation's. ErrActionsNotReadable marks a forge
+	// that refused to show the repository's value.
+	WorkflowPermissions(ctx context.Context) (LiveWorkflowPermissions, error)
+	// WorkflowRunHistory returns the latest completed runs of workflow, a file name under
+	// .github/workflows, on branch, and whether the workflow has run anywhere at all.
+	WorkflowRunHistory(ctx context.Context, workflow, branch string) (WorkflowRunHistory, error)
+}
+
 // Forge provides a decoupled, vendor-neutral abstraction across Git hosting providers.
 type Forge interface {
+	ActionsReader
 	Name() string
 	Authenticate(ctx context.Context) error
 	ReconcileProtection(ctx context.Context, branch string, policy *config.BranchProtectionPolicy) error

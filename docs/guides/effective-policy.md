@@ -56,6 +56,11 @@ Repository `overrides.branch_protection` and `overrides.supply_chain` apply afte
 the join. They only tighten, except `review_mode: single_maintainer`, the one
 explicit relaxation; a profile or facet cannot set `review_mode`.
 
+`overrides.actions` and `workflow_runs` take no part in the join: the audit reads them from the
+repository manifest and compares them with the live forge ([Live Actions checks](actions-live-checks.md)).
+The loader still holds both to the manifest rules, so a malformed declaration fails the policy
+resolution instead of reaching the forge (`TestActionsPolicy_Negative_EffectiveLoaderValidates`).
+
 Every complexity constraint can only tighten an earlier limit. A later limit of
 `90` cannot override an existing `50`. Omitted fields do not contribute. In
 external files and repository overrides, explicit zero, negative, null,
@@ -78,6 +83,8 @@ dry run previews what the audit will enforce, pinned profiles included: `plan` a
 same limits. Like `sync` and `audit`, `plan --catalog-root` (MCP `standards_plan`: `catalog_root`) reads the
 pinned profiles from a catalog outside the repository; without it a lock whose catalog is not
 materialized fails the preview (`TestPlanEffectivePolicy_Boundary_CatalogRootSelectsThePinnedCatalog`).
+After the policy, `plan` previews the live Actions workflow permission comparison when it can read
+the forge, and never fails on it; `plan --offline` skips it ([Live Actions checks](actions-live-checks.md)).
 
 Resolving the policy needs a lockfile. In a repository that has not been adopted there are no pinned
 profiles, so defaults plus the repository's overrides is the whole policy, and `plan` says so:

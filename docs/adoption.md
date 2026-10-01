@@ -138,10 +138,13 @@ repository:
   default_branch: master
 ```
 
-Nothing asks the forge, so the audit and `adopt --dry-run` stay offline. A CI checkout usually
-has no `refs/remotes/origin/HEAD` and would resolve `main`, so a repository whose default branch
-is not `main` declares `repository.default_branch`; CI then audits the ruleset a local run
-writes. The manifest writers record it for you (`forge.DefaultBranchToDeclare`): adoption,
+Resolving the branch asks nothing of the forge, so `adopt --dry-run` and the audit's ruleset
+check stay offline. The audit's [live Actions checks](guides/actions-live-checks.md) do read the
+forge, but only when the `origin` remote names the repository on github.com and a token is
+found; `praetorctl audit --offline` skips them, as the generated pre-commit hook does. A CI
+checkout usually has no `refs/remotes/origin/HEAD` and would resolve `main`, so a repository
+whose default branch is not `main` declares `repository.default_branch`; CI then audits the
+ruleset a local run writes. The manifest writers record it for you (`forge.DefaultBranchToDeclare`): adoption,
 `praetorctl init` and harvester onboarding write the checkout's origin HEAD into the
 `.standards.yaml` they create when it is not `main`
 (`TestAdopt_Positive_MasterRepositoryRulesetProtectsMaster`, `TestInit_3D_DefaultBranch`,

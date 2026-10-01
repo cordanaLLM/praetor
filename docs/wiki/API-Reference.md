@@ -32,4 +32,4 @@ components: [Button, Modal]
 forge-federation
 ```
 
-praetorctl builds only the GitHub driver: `sync --remote`, `issue reconcile` and `needs epic --publish` call `forge.NewGitHubDriver` directly. `forge.NewForge` is internal and has no production caller, so the GitLab and Gitea drivers are reached only from tests. They check that a token is set and return `ErrNotImplemented` from every enforcement method.
+praetorctl builds only the GitHub driver: `sync --remote`, `issue reconcile` and `needs epic --publish` call `forge.NewGitHubDriver` directly, and `audit` and `plan` read the live Actions state through it. `forge.NewForge` is internal and has no production caller, so the GitLab and Gitea drivers are reached only from tests. They check that a token is set and return `ErrNotImplemented` from every enforcement method and from both Actions reads.

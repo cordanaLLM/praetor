@@ -72,6 +72,7 @@ func runPlan(args []string) error {
 	fs := flag.NewFlagSet("plan", flag.ContinueOnError)
 	configPath := fs.String("config", ".standards.yaml", "Path to .standards.yaml; its directory is the planned root")
 	catalogRoot := fs.String("catalog-root", "", "Root containing pinned .config/archetypes (default: planned root)")
+	offline := fs.Bool("offline", false, offlineFlagUsage)
 
 	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
@@ -101,5 +102,6 @@ func runPlan(args []string) error {
 		return err
 	}
 	fmt.Println(adopt.FormatPlanStatus(missing, drift))
+	printPlanActionsPermissions(ctx, manifest, filepath.Dir(*configPath), *offline)
 	return nil
 }

@@ -175,6 +175,11 @@ func (l *effectiveLoader) manifest(path string) (*Manifest, PolicyLayer, error) 
 	if err := validateManifestReviewPolicy(&manifest); err != nil {
 		return nil, layer, fmt.Errorf("effective policy manifest: %w", err)
 	}
+	// The audit reads overrides.actions and workflow_runs from this manifest, so it holds them
+	// to LoadManifest's rules rather than comparing a malformed declaration with the forge.
+	if err := validateManifestActions(&manifest); err != nil {
+		return nil, layer, fmt.Errorf("effective policy manifest: %w", err)
+	}
 	overrides := policyMember(node, "overrides")
 	if overrides != nil && overrides.Kind != yaml.MappingNode {
 		return nil, layer, errors.New("manifest overrides must be a mapping")

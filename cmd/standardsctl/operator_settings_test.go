@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -12,9 +13,11 @@ import (
 )
 
 // TestMain keeps every test off the operator's own settings: no install manifest and no
-// settings or framework environment variable reaches a command unless a test sets one.
+// settings or framework environment variable reaches a command unless a test sets one, and no
+// forge token, so the audit's live Actions checks never ask the real forge.
 func TestMain(m *testing.M) {
 	installManifestPath = func() (string, error) { return "", nil }
+	resolveActionsToken = func(context.Context) string { return "" }
 	for _, name := range []string{config.FleetConfigEnv, config.WorkstationConfigEnv, frameworkDirEnv} {
 		if err := os.Unsetenv(name); err != nil {
 			fmt.Fprintf(os.Stderr, "isolate %s: %v\n", name, err)

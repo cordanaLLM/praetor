@@ -1,9 +1,7 @@
 # Lefthook Configuration (Go, Rust & HISS Governance)
 # Go and Rust jobs follow the detected languages; both when none was detected.
 # Governance commands fail closed: a failing or missing praetorctl blocks the
-# commit or push. The pre-commit audit runs --offline; the pre-push audit
-# reads the forge's live Actions state when a token and a github.com origin
-# are present. The pre-push gate job signs a receipt only after a Go
+# commit or push. The pre-push gate job signs a receipt only after a Go
 # (go.mod) or Cargo (Cargo.lock) toolchain stage ran, and fails otherwise.
 ---
 agent-checkpoint-tool:
@@ -50,9 +48,9 @@ pre-commit:
     hiss-audit:
       run: >-
         if praetor_cli=$(command -v praetorctl 2>/dev/null || command -v
-        standardsctl 2>/dev/null); then "$praetor_cli" audit --offline; else
-        echo HISS governance hook cannot run because neither praetorctl nor
-        standardsctl is installed >&2; exit 1; fi
+        standardsctl 2>/dev/null); then "$praetor_cli" audit; else echo HISS
+        governance hook cannot run because neither praetorctl nor standardsctl
+        is installed >&2; exit 1; fi
 
 post-commit:
   commands:

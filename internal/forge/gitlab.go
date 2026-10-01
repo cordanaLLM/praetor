@@ -100,3 +100,17 @@ func (gl *GitLabDriver) UpdateIssue(ctx context.Context, number int, labels []st
 	}
 	return gl.unsupported("UpdateIssue")
 }
+
+func (gl *GitLabDriver) WorkflowPermissions(ctx context.Context) (LiveWorkflowPermissions, error) {
+	if err := gl.Authenticate(ctx); err != nil {
+		return LiveWorkflowPermissions{}, err
+	}
+	return LiveWorkflowPermissions{}, gl.unsupported("WorkflowPermissions")
+}
+
+func (gl *GitLabDriver) WorkflowRunHistory(ctx context.Context, workflow, branch string) (WorkflowRunHistory, error) {
+	if err := gl.Authenticate(ctx); err != nil {
+		return WorkflowRunHistory{}, err
+	}
+	return WorkflowRunHistory{}, gl.unsupported("WorkflowRunHistory")
+}

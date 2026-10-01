@@ -169,7 +169,9 @@ func validateForgeHost(host string) error {
 // The host is part of the identity: acme/widgets on gitlab.com, or a local directory
 // whose path ends in acme/widgets, never authorizes a write to acme/widgets on GitHub.
 // The remote is read through util.ReadOriginRemote, the one origin-remote reader; a
-// missing remote, a non-network remote and a read git did not answer all refuse.
+// missing remote, a non-network remote and a read git did not answer all refuse. The audit's
+// live Actions reads (openActionsForge) refuse on the same grounds, so a report never
+// describes another repository's settings.
 func verifyOriginIdentity(ctx context.Context, rootDir, host, owner, name string) error {
 	remote, err := util.ReadOriginRemote(ctx, rootDir)
 	if errors.Is(err, util.ErrGitRemoteNotNetwork) {
@@ -179,11 +181,11 @@ func verifyOriginIdentity(ctx context.Context, rootDir, host, owner, name string
 		return fmt.Errorf("cannot verify manifest repository %s/%s: %w", owner, name, err)
 	}
 	if !strings.EqualFold(remote.Host, host) {
-		return fmt.Errorf("manifest declares %s/%s on %s but origin points at host %s; refusing to modify a foreign repository",
+		return fmt.Errorf("manifest declares %s/%s on %s but origin points at host %s; refusing to act on a foreign repository",
 			owner, name, host, remote.Host)
 	}
 	if !strings.EqualFold(remote.Path, owner+"/"+name) {
-		return fmt.Errorf("manifest declares %s/%s but origin points at %s; refusing to modify a foreign repository",
+		return fmt.Errorf("manifest declares %s/%s but origin points at %s; refusing to act on a foreign repository",
 			owner, name, remote.Path)
 	}
 	return nil
