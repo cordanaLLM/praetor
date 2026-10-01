@@ -20,3 +20,7 @@ make serve
 ```bash
 make check
 ```
+
+```text
+ok    58 claims checked against 424 fixtures
+```

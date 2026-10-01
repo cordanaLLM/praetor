@@ -1,7 +1,9 @@
 package caveman
 
 import (
+	"maps"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -138,7 +140,15 @@ func TestFloorCommandFences(t *testing.T) {
 		"source moved into a code span": {"```go\nrun(5)\n```", "Call `run(5)`.", nil},
 		"script edited": {"```bash\nmake serve\n```", "```bash\nmake run\n```",
 			[]Finding{{2, RuleFloorCommand, "make serve"}}},
-		"session prompt dropped into script": {"```console\n$ make check\nok\n```", "```sh\nmake check\n```", nil},
+		"session prompt dropped into script": {"```console\n$ make check\nok\n```", "```sh\nmake check\n```\nPrints `ok`.", nil},
+		"session output reformatted": {"```console\n$ go test ./...\nok  pkg 0.5s\n```",
+			"```console\n$ go test ./...\nok    pkg    0.5s\n```", nil},
+		"session comment corrected": {"```console\n# run the gate\n$ make check\n```",
+			"```console\n# run every gate\n$ make check\n```", nil},
+		"session output count changed": {"```console\n$ make check\n[PASS] 58 claims\n```",
+			"```console\n$ make check\n[PASS] 57 claims\n```", []Finding{{3, RuleFloorNumber, "58"}}},
+		"session output dropped": {"```console\n$ make check\n[PASS] 58 claims\n```", "```console\n$ make check\n```",
+			[]Finding{{3, RuleFloorCodeWord, "PASS"}, {3, RuleFloorCodeWord, "claims"}, {3, RuleFloorNumber, "58"}}},
 		"session command edited": {"```console\n$ make check\nok\n```", "```console\n$ make test\nok\n```",
 			[]Finding{{2, RuleFloorCommand, "make check"}}},
 		"unlabeled fence edited": {"```\nmake lint\n```", "```\nmake vet\n```",
@@ -147,6 +157,15 @@ func TestFloorCommandFences(t *testing.T) {
 			[]Finding{{3, RuleFloorCommand, "--verbose"}}},
 		"powershell edited": {"```powershell\nGet-Item x\n```", "```powershell\nGet-Item y\n```",
 			[]Finding{{2, RuleFloorCommand, "Get-Item x"}}},
+		"go block comment corrected": {"```go\nrun() /* old */\n```", "```go\nrun() /* new */\n```", nil},
+		"go comment across lines":    {"```go\n/* old\n   note */\nrun()\n```", "```go\n/* new\n   text */\nrun()\n```", nil},
+		"golang alias comment":       {"```golang\nrun() // old\n```", "```golang\nrun() // new\n```", nil},
+		"html comment corrected":     {"```html\n<p>1</p> <!-- old -->\n```", "```xml\n<p>1</p> <!-- new -->\n```", nil},
+		"yaml quoted value changed": {"```yaml\nmsg: \"a # b\"\n```", "```yaml\nmsg: \"a # c\"\n```",
+			[]Finding{{2, RuleFloorCodeWord, "b"}}},
+		"batch comment corrected": {"```cmd\nREM old\nset A=1\n```", "```bat\n:: new\nset A=1\n```", nil},
+		"batch command edited": {"```cmd\nset A=1\n```", "```cmd\nset A=2\n```",
+			[]Finding{{2, RuleFloorCommand, "set A=1"}}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -204,23 +223,69 @@ func TestFloorNumbers(t *testing.T) {
 	}
 }
 
-// TestFloorNumbersBoundary covers what is not a number fact: digits glued to a word, dotted
-// or not, ordered list markers, and numbers inside code spans, ids, link targets and URLs.
-func TestFloorNumbersBoundary(t *testing.T) {
-	before := "p99 sha256 x86 F9 (x3) v8.6.0 p99.94 go1.27 x1,5\n2. Second item.\n" +
-		"`port 8080` ADR-0010 [a](b-4.md) https://example.invalid/5"
-	if got := extractFacts(before).items[RuleFloorNumber]; len(got) != 0 {
-		t.Fatalf("number facts %v, want none", got)
+// TestFloorMarkdownLabels pins that the labels of Markdown syntax are no number facts:
+// ordered list markers, also quoted, heading section numbers, reference and footnote labels
+// and HTML entities. A number a reader sees in the new text, a list marker included, keeps
+// the number of the old one.
+func TestFloorMarkdownLabels(t *testing.T) {
+	cases := map[string]struct {
+		before, after string
+		want          []Finding
+	}{
+		"quoted ordered list":  {"> 1. a\n> 2. b", "> - a\n> - b", nil},
+		"reference link":       {"See [docs][1].\n\n[1]: https://example.invalid/d", "See [docs](https://example.invalid/d).", nil},
+		"footnote":             {"Noted.[^1]\n\n[^1]: Source.", "Noted (source).", nil},
+		"heading number":       {"## 3. Setup\n### 3.1 Install", "## Setup\n### Install", nil},
+		"entity":               {"Wait&#8212;then retry.", "Wait—then retry.", nil},
+		"steps become a list":  {"Step 1: drain. Step 2: restart.", "1. Drain.\n2. Restart.", nil},
+		"footnote value lost":  {"Noted.[^1]\n\n[^1]: Keep 2.", "Noted (keep some).", []Finding{{3, RuleFloorNumber, "2"}}},
+		"heading count lost":   {"## 404 errors", "## Missing pages", []Finding{{1, RuleFloorNumber, "404"}}},
+		"quoted item value":    {"> 1. Keep 3 replicas.", "> - Keep replicas.", []Finding{{1, RuleFloorNumber, "3"}}},
+		"entity next to value": {"Wait 30&nbsp;s.", "Wait a while.", []Finding{{1, RuleFloorNumber, "30"}}},
 	}
-	if got := extractFacts("1,024 and 3.0, then 7. (.5) 1..9").items[RuleFloorNumber]; len(got) != 6 {
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := Floor(tc.before, tc.after).Findings; !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("findings\n got %v\nwant %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestFloorNumbersBoundary covers what a number fact is: a word that holds a digit is one
+// fact, whole, dotted, hyphenated or signed, a number with a unit carries the number alone,
+// and ordered list markers and numbers inside code spans, ids, link targets and URLs are no
+// facts.
+func TestFloorNumbersBoundary(t *testing.T) {
+	before := "p99 sha256 x86 F9 (x3) v8.6.0 p99.94 go1.27 x1,5 utf-8 x86-64 -5 24h 64-bit\n2. Second item.\n" +
+		"`port 8080` ADR-0010 [a](b-4.md) https://example.invalid/5"
+	want := []string{"-5", "24", "64", "F9", "go1.27", "p99", "p99.94", "sha256", "utf-8", "v8.6.0", "x1,5", "x3", "x86", "x86-64"}
+	if got := slices.Sorted(maps.Keys(extractFacts(before).items[RuleFloorNumber])); !reflect.DeepEqual(got, want) {
+		t.Fatalf("number facts\n got %v\nwant %v", got, want)
+	}
+	if got := slices.Sorted(maps.Keys(extractFacts("1,024 and 3.0, then 7. (.5) 1..9").items[RuleFloorNumber])); !reflect.DeepEqual(got,
+		[]string{"1", "1,024", "3.0", "5", "7", "9"}) {
 		t.Fatalf("number facts %v, want 1,024, 3.0, 7, 5, 1 and 9", got)
 	}
 	// Backticking a dotted token or a bare number loses no number.
 	if got := Floor("Pin v8.6.0, alert at p99.94, built with go1.27.", "Pin `v8.6.0`, `p99.94`, `go1.27`.").Findings; len(got) != 0 {
-		t.Fatalf("dotted token leaked a number: %v", got)
+		t.Fatalf("dotted token moved into code lost: %v", got)
 	}
 	if got := Floor("Limit is 60 lines.", "Limit: `60` lines.").Findings; len(got) != 0 {
 		t.Fatalf("number moved into a code span lost: %v", got)
+	}
+	// Changing a version, a percentile or a sign fails; the digits of a word are not loose
+	// numbers another word can keep.
+	changes := map[string][2]string{
+		"version":    {"Pin v8.6.0.", "Pin v8.7.0 (6.0 is gone)."},
+		"percentile": {"Alert at p99.94.", "Alert at p99.9 (94)."},
+		"sign":       {"Offset -5.", "Offset 5."},
+		"dropped":    {"Alert at p99.94.", "Alert at the tail."},
+	}
+	for name, pair := range changes {
+		if got := Floor(pair[0], pair[1]).Findings; len(got) != 1 || got[0].Rule != RuleFloorNumber {
+			t.Errorf("%s: findings %v, want one F9", name, got)
+		}
 	}
 }
 

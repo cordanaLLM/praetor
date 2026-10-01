@@ -19,5 +19,5 @@ make serve
 
 ```console
 $ make check
-ok  58 claims checked against 424 fixtures
+ok  57 claims checked against 424 fixtures
 ```
