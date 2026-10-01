@@ -138,7 +138,7 @@ func runAuditorAgent(ctx context.Context) error {
 // under exit 0. The stage report prints first, so the failing stage and its reason stay
 // visible.
 func runGatekeeperAgent(ctx context.Context) error {
-	rep, err := gatedPipeline(ctx, gatekeeperRepoDir, false)
+	rep, err := gatedPipeline(ctx, gatekeeperRepoDir, gating.RunOptions{})
 	if err != nil {
 		return fmt.Errorf("gatekeeper execution error: %w", err)
 	}

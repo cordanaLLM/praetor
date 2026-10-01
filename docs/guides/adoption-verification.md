@@ -513,13 +513,47 @@ or that no language marker at the root is recognised. Before this check such a r
 a receipt that certified nothing beyond the HISS scan.
 
 **Migration.** A repository with neither a `go.mod` nor a `Cargo.lock` at its root no longer
-receives a receipt, so the `gate` job of its pre-push hook fails. Commit the `Cargo.lock` of a
-Cargo workspace; for any other language no receipt can be minted until the gate runs its
-toolchain. The `lefthook.yml` adoption writes states this in its header, and adoption replaces an
-unedited earlier rendering with it ([Migration and activation limits](#migration-and-activation-limits)).
-A dry run is never refused, because it mints nothing. `TestRunReceiptStage_Boundary_NothingVerifiedIsRefused`
-and `TestToolchainStages_Boundary_CargoAbsentFromPath` in
+receives a receipt. Commit the `Cargo.lock` of a Cargo workspace; for any other language no
+receipt can be minted until the gate runs its toolchain. A dry run is never refused, because it
+mints nothing. `TestRunReceiptStage_Boundary_NothingVerifiedIsRefused` and
+`TestToolchainStages_Boundary_CargoAbsentFromPath` in
 [`internal/gating/cargo_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/cargo_test.go) pin the refusal.
+
+### The pre-push hook admits languages the gate has no runner for
+
+`praetorctl gate run --admit-unsupported` changes one verdict. When no toolchain stage ran and the
+root holds neither a `go.mod` nor a `Cargo.lock`, the receipt stage is recorded as not applicable
+instead of failed, and the run is admitted with exit status 0 and no receipt. Every other stage
+runs as without the flag, so a HISS or flavor failure still rejects the run. The reason is the
+refusal's own text followed by the admission, and the report ends with a line saying so:
+
+```text
+6. [N/A]  Ed25519 Exit-0 Receipt    (1ms)
+   Reason: no verification stage ran for any language: ... the gate runs the toolchains of Go
+           (go.mod) and Cargo (Cargo.lock); unsupported languages at the repository root: meson
+           (meson.build); admitted without a receipt (--admit-unsupported): verify these languages
+           with the repository's own entry point, such as make verify-all
+
+Admitted without an Exit-0 receipt (--admit-unsupported): the gate runs no toolchain for the
+languages at the repository root, so they are unverified here; the receipt stage names them.
+```
+
+`--json` carries the same verdict and `"admitted_unverified": true`. A root that holds a `go.mod`
+or a `Cargo.lock` is refused with the flag exactly as without it when its stages did not run, so a
+missing `cargo` never passes for a Cargo workspace. A `Cargo.toml` without its `Cargo.lock` is a
+language the gate cannot run, so it is admitted and named.
+
+The `gate` job of the `lefthook.yml` adoption writes passes the flag (`prePushGateArgs` in
+[`internal/adopt/hooks.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/hooks.go)),
+and its header states the rule. Before, that job ran the plain gate, so a Meson, CMake, npm or
+Python repository had every push rejected, and the only ways past were editing the generated file,
+which stops adoption from activating it, or skipping hooks, which the agent hook policy refuses
+(#648). Adoption migrates an unedited earlier rendering without `--force`
+([Migration and activation limits](#migration-and-activation-limits)). CI and the gatekeeper need
+a receipt and run the gate without the flag. Tests:
+[`internal/gating/admit_unsupported_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/admit_unsupported_test.go),
+[`cmd/standardsctl/gate_admit_test.go`](https://github.com/cordanaLLM/praetor/blob/main/cmd/standardsctl/gate_admit_test.go) and
+[`internal/adopt/lefthook_gate_admit_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/adopt/lefthook_gate_admit_test.go).
 
 ### A receipt is signed only by the pinned key
 
@@ -546,7 +580,10 @@ malformed pin and a manifest that cannot be read, such as one with a second YAML
 stage before the signing key is loaded, as they fail `gate verify`.
 
 **Migration.** A workstation whose signing key is not the pinned key no longer receives a receipt,
-so the `gate` job of its pre-push hook fails. Point `PRAETOR_RECEIPT_KEY` or the per-user key file
+so the `gate` job of its pre-push hook fails in a repository whose root holds a `go.mod` or a
+`Cargo.lock`. A root holding neither is admitted without a receipt before any key is loaded
+([admission](#the-pre-push-hook-admits-languages-the-gate-has-no-runner-for)), so a key mismatch
+does not fail its push. Point `PRAETOR_RECEIPT_KEY` or the per-user key file
 at the pinned key's private half, or, when this workstation's key is meant to be the repository's
 trust anchor, pin its public half as `receipt.public_key`. `TestRunReceiptStage_Positive_PinnedSigningKeySigns`,
 `TestRunReceiptStage_Negative_UnpinnedSigningKeyRefused` and
@@ -1008,10 +1045,14 @@ detected ([the lefthook.yml adoption writes](git-hooks.md#the-lefthookyml-adopti
 Each runs only where the root holds its marker and otherwise prints
 `no <marker> at the repository root, skipping <tool>`, matching the gate stages above. A module
 kept in a subdirectory is not scanned by these jobs. The `gate` job runs
-`praetorctl gate run --path=.`, which fails where no toolchain stage ran for a `go.mod` or a
-`Cargo.lock` ([no receipt](#no-receipt-when-no-toolchain-stage-ran)); the file's header comment
-says so, and every earlier rendering, the Go-only ones included, is recognised as earlier
-Praetor output. Tests: `internal/adopt/lefthook_identity_test.go`,
+`praetorctl gate run --path=. --admit-unsupported`: a root with neither a `go.mod` nor a
+`Cargo.lock` is admitted without a receipt and its languages are named, and a root with either
+fails where its toolchain stages did not run
+([no receipt](#no-receipt-when-no-toolchain-stage-ran),
+[admission](#the-pre-push-hook-admits-languages-the-gate-has-no-runner-for)). The file's header
+comment says so, and every earlier rendering, the Go-only ones and the ones running the plain gate
+included, is recognised as earlier Praetor output. Tests:
+`internal/adopt/lefthook_gate_admit_test.go`, `internal/adopt/lefthook_identity_test.go`,
 `internal/adopt/lefthook_languages_test.go`, `internal/adopt/lefthook_keep_test.go`,
 `internal/adopt/checkpoint_test.go`, `internal/adopt/hooks_gomod_test.go`,
 `internal/adopt/cli_name_test.go`.

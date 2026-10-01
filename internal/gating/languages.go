@@ -23,7 +23,28 @@ const (
 	languageCargo = "cargo"
 	// supportedLanguages names them with their markers for the refusal message.
 	supportedLanguages = "Go (go.mod) and Cargo (Cargo.lock)"
+	// AdmitUnsupportedFlag names the `gate run` flag (RunOptions.AdmitUnsupported) the pre-push
+	// hook adoption renders passes (internal/adopt/hooks.go), so a rename changes both.
+	AdmitUnsupportedFlag = "admit-unsupported"
+	// admittedUnsupportedNote ends the receipt stage's reason when admitUnsupported applies.
+	admittedUnsupportedNote = "admitted without a receipt (--" + AdmitUnsupportedFlag +
+		"): verify these languages with the repository's own entry point, such as make verify-all"
 )
+
+// RunOptions selects how RunGatedPipeline runs.
+type RunOptions struct {
+	// DryRun runs only the read-only stages and mints no receipt.
+	DryRun bool
+	// AdmitUnsupported admits, without a receipt, a run in which no toolchain stage ran because
+	// the repository root holds neither a go.mod nor a Cargo.lock: the receipt stage is recorded
+	// as not applicable and names the languages the gate runs no toolchain for, instead of
+	// rejecting the run. A root holding either marker is refused as before when nothing ran for
+	// it, so a Go or Cargo repository whose toolchain stages could not run still fails. The
+	// pre-push hook adoption renders passes it, so a repository in a language the gate has no
+	// runner for (Meson, CMake, npm, Python) is not refused on every push (#648); a caller that
+	// needs a receipt, such as CI or the gatekeeper, leaves it unset.
+	AdmitUnsupported bool
+}
 
 // ErrNothingVerified reports a run in which no toolchain stage ran its checks for any language.
 // The receipt stage refuses to sign such a run: a receipt certifying prefetch, security scans
@@ -150,12 +171,25 @@ func combineParts(parts ...languagePart) (string, error) {
 }
 
 // requireVerification refuses a receipt for a run in which no toolchain stage ran for any
-// language: the prefetch, security and test stages were each not applicable or skipped.
+// language: the prefetch, security and test stages were each not applicable or skipped. Under
+// RunOptions.AdmitUnsupported a root holding no toolchain marker is not applicable instead: the
+// same reason, ending in admittedUnsupportedNote, and cfg.rep.AdmittedUnverified set.
 func requireVerification(cfg *stageConfig) error {
 	if len(cfg.verified) > 0 {
 		return nil
 	}
-	return nothingVerifiedError(cfg.repoDir)
+	refusal := nothingVerifiedError(cfg.repoDir)
+	if !cfg.admitUnsupported || holdsToolchainMarker(cfg.repoDir) {
+		return refusal
+	}
+	cfg.rep.AdmittedUnverified = true
+	return notApplicable(refusal.Error() + "; " + admittedUnsupportedNote)
+}
+
+// holdsToolchainMarker reports whether the repository root holds the marker of a language whose
+// toolchain the gate runs: go.mod for Go, Cargo.lock for Cargo.
+func holdsToolchainMarker(repoDir string) bool {
+	return util.FileExists(filepath.Join(repoDir, "go.mod")) || util.FileExists(filepath.Join(repoDir, CargoLockFile))
 }
 
 // nothingVerifiedError names why nothing ran: a Cargo.lock whose stages could not run here, the

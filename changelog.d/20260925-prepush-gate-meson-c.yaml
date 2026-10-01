@@ -1,0 +1,4 @@
+type: fixed
+title: "the generated pre-push gate job admits a repository with neither go.mod nor Cargo.lock without a receipt, naming its unverified languages, instead of refusing every push"
+breaking: false
+issue: "#648"

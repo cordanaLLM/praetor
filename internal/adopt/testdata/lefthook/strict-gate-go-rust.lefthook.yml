@@ -4,22 +4,8 @@
 # commit or push. The pre-commit audit runs --offline; the pre-push audit
 # reads the forge's live Actions state when a token and a github.com origin
 # are present. The pre-push gate job signs a receipt only after a Go
-# (go.mod) or Cargo (Cargo.lock) toolchain stage ran. A root with neither
-# gets no receipt: the job names the languages it could not verify and
-# admits the push; a root with either fails when its stages did not run.
+# (go.mod) or Cargo (Cargo.lock) toolchain stage ran, and fails otherwise.
 ---
-agent-checkpoint-tool:
-  commands:
-    checkpoint:
-      run: >-
-        python3 -B .config/lefthook/scripts/checkpoint.py --event tool --json
-        --marker
-agent-checkpoint-stop:
-  commands:
-    checkpoint:
-      run: >-
-        python3 -B .config/lefthook/scripts/checkpoint.py --event stop --json
-        --marker
 pre-commit:
   parallel: true
   commands:
@@ -95,6 +81,6 @@ pre-push:
     gate:
       run: >-
         if praetor_cli=$(command -v praetorctl 2>/dev/null || command -v
-        standardsctl 2>/dev/null); then "$praetor_cli" gate run --path=.
-        --admit-unsupported; else echo HISS governance hook cannot run because
-        neither praetorctl nor standardsctl is installed >&2; exit 1; fi
+        standardsctl 2>/dev/null); then "$praetor_cli" gate run --path=.; else
+        echo HISS governance hook cannot run because neither praetorctl nor
+        standardsctl is installed >&2; exit 1; fi

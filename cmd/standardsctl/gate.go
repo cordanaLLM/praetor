@@ -67,6 +67,9 @@ func splitGateSubcommand(args []string) (string, []string) {
 	return args[0], args[1:]
 }
 
+// runGateRun runs the gated pipeline. It registers --admit-unsupported as a literal, the form the
+// documentation reference check reads flag names from; it is gating.AdmitUnsupportedFlag, which
+// TestGateRun_Positive_AdmitUnsupportedReachesPipeline dispatches, so the two cannot drift apart.
 func runGateRun(args []string) error {
 	fs := flag.NewFlagSet("gate run", flag.ContinueOnError)
 	path := fs.String("path", ".", "Path to repository to verify against gating pipeline")
@@ -75,13 +78,17 @@ func runGateRun(args []string) error {
 			"prefetch, security scanners and race tests, which write the module cache or reach the "+
 			"network; no receipt is minted")
 	asJSON := fs.Bool("json", false, "Output pipeline results as JSON")
+	admitUnsupported := fs.Bool("admit-unsupported", false,
+		"Admit, without a receipt, a repository whose root holds neither a go.mod nor a Cargo.lock: "+
+			"every stage still runs, and the receipt stage names the languages the gate runs no "+
+			"toolchain for instead of rejecting the run; the pre-push hook adoption renders passes it")
 
 	if _, err := parseInterspersed(fs, args); err != nil {
 		return err
 	}
-	// parseInterspersed binds --path, --dry-run and --json wherever they stand, so any
-	// positional left over is a stray token (a path missing its --path, or a token after
-	// --): refusing it keeps it from being silently ignored.
+	// parseInterspersed binds every flag wherever it stands, so any positional left over is a
+	// stray token (a path missing its --path, or a token after --): refusing it keeps it from
+	// being silently ignored.
 	if fs.NArg() > 0 {
 		return fmt.Errorf("gate run accepts no positional arguments, got %q", fs.Args())
 	}
@@ -99,7 +106,7 @@ func runGateRun(args []string) error {
 		fmt.Printf("Run Deadline: %s\n", budget)
 	}
 
-	rep, err := gatedPipeline(ctx, *path, *dryRun)
+	rep, err := gatedPipeline(ctx, *path, gating.RunOptions{DryRun: *dryRun, AdmitUnsupported: *admitUnsupported})
 	if err != nil {
 		return fmt.Errorf("gating pipeline execution failed: %w", err)
 	}
@@ -338,6 +345,11 @@ func printGatingReport(rep *gating.PipelineReport) {
 	}
 	if rep.DryRun {
 		fmt.Printf("\nDry run: no Exit-0 receipt was minted (prefetch, security scanners, and tests did not run).\n")
+	}
+	if rep.AdmittedUnverified {
+		fmt.Printf("\nAdmitted without an Exit-0 receipt (--%s): the gate runs no toolchain for the "+
+			"languages at the repository root, so they are unverified here; the receipt stage names them.\n",
+			gating.AdmitUnsupportedFlag)
 	}
 }
 
