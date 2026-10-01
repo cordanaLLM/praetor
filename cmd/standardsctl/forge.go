@@ -224,10 +224,11 @@ func runForgeCheckCommits(ctx context.Context, args []string) error {
 	return nil
 }
 
+// shortSHA cuts a commit hash to the length that identifies it in output.
 func shortSHA(sha string) string {
 	trimmed := strings.TrimSpace(sha)
-	if len(trimmed) > 12 {
-		return trimmed[:12]
+	if len(trimmed) > shortRevisionLen {
+		return trimmed[:shortRevisionLen]
 	}
 	return trimmed
 }

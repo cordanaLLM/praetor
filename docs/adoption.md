@@ -879,7 +879,11 @@ changes. So:
 
 `internal/config/lockbuild_test.go` pins all three. `praetorctl init` renders its
 unreleased build versions (`v0.0.0+<revision>`) through the same
-`config.UnreleasedLockVersion` in `internal/config/lockbuild.go`. An existing lock is
+`config.UnreleasedLockVersion` in `internal/config/lockbuild.go`. The revision is the VCS
+stamp of a checkout build or, for `go install .../cmd/standardsctl@<commit>`, the commit
+that build's pseudo-version ends with; `go install ...@<tag>` pins the tag itself
+(`identifyBuild` in `cmd/standardsctl/buildidentity.go`, tested in
+`cmd/standardsctl/buildidentity_test.go`). An existing lock is
 not rewritten for its version alone: validation compares digests, not versions, so the
 catalog version arrives with the next rebuild (`praetorctl profile set`, `--force`, or a layout-only re-pin).
 

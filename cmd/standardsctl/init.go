@@ -181,8 +181,9 @@ func initBaselineAndLockfile(rootDir string) error {
 		pinned, identified := lockVersion()
 		if !identified {
 			fmt.Printf("[WARN] %s records pinned_version %q: this build carries no release "+
-				"version and no VCS stamp, so the lock cannot say which praetor governed this "+
-				"repository. Re-run init from a released binary or a VCS-stamped build.\n",
+				"version, no VCS stamp and no module version, so the lock cannot say which "+
+				"praetor governed this repository. Re-run init from a released binary, a "+
+				"VCS-stamped build or a go install module@version build.\n",
 				lockPath, pinned)
 		}
 		content := fmt.Appendf(nil, "# SemVer lockfile\nversion: 1\npinned_version: %q\n", pinned)
