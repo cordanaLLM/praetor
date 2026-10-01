@@ -668,12 +668,10 @@ func reconcileBaseline(ctx context.Context, s *adoptSession) error {
 // change only generated_at, and the commit baseline.Record also keeps, so every re-adoption
 // with --record-baseline, the default, would leave a diff in a repository nothing changed.
 func (s *adoptSession) saveScannedBaseline(full string, base *baseline.Baseline, existed bool) error {
-	if existed {
-		if previous, err := baseline.LoadBaseline(full); err == nil && previous.SameDebt(base) {
-			s.report.recordReconciled(baselineFile, fmt.Sprintf(
-				"Rescanned; baseline unchanged at %d legacy debt infractions", base.TotalInfractions))
-			return nil
-		}
+	if existed && unchangedBaseline(full, base) {
+		s.report.recordReconciled(baselineFile, fmt.Sprintf(
+			"Rescanned; baseline unchanged at %d legacy debt infractions", base.TotalInfractions))
+		return nil
 	}
 	if !s.opts.DryRun {
 		if err := baseline.SaveBaseline(full, base); err != nil {
@@ -688,6 +686,21 @@ func (s *adoptSession) saveScannedBaseline(full string, base *baseline.Baseline,
 	}
 	s.report.recordCreated(baselineFile, detail)
 	return nil
+}
+
+// unchangedBaseline reports whether the readable baseline at full records the same debt as base
+// (baseline.SameDebt). A rescan without a resolved identity carries no repository; the one the
+// baseline records is carried into base first, as baseline.Record carries it, so a rescan never
+// blanks a recorded repository (#123).
+func unchangedBaseline(full string, base *baseline.Baseline) bool {
+	previous, err := baseline.LoadBaseline(full)
+	if err != nil {
+		return false
+	}
+	if base.Repository == "" {
+		base.Repository = previous.Repository
+	}
+	return previous.SameDebt(base)
 }
 
 // verifyExistingBaseline keeps an existing baseline and exposes its debt count so that

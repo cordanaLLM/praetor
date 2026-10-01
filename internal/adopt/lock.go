@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
@@ -39,19 +41,41 @@ func reconcileLockfile(ctx context.Context, s *adoptSession) error {
 const lockPinnedDetail = "Pinned profiles and facets to verified source content digests"
 
 // writeBuiltLock pins manifest to the selected source bundle and writes the lock unless the
-// session is a dry run. An absent lock is created. An existing one (--force) that already holds
-// the rebuilt text, line endings aside, is verified and left alone; any other is replaced
-// through replaceExisting, bound to the bytes observed before the rebuild, so the report lists
-// it as replaced with its line delta and backup, never as created.
+// session is a dry run (publishLock), bound to the bytes observed before the rebuild.
 func writeBuiltLock(ctx context.Context, s *adoptSession, path string, manifest *config.Manifest) error {
-	before, exists, err := contextopt.ObserveSnapshot(ctx, path)
+	before, exists, err := observeLock(ctx, path)
 	if err != nil {
-		return fmt.Errorf("read %s before rebuilding it: %w", lockFile, err)
+		return err
 	}
 	data, err := buildLock(ctx, s, manifest)
 	if err != nil {
 		return err
 	}
+	return publishLock(ctx, s, path, lockSnapshot{before: before, exists: exists}, data)
+}
+
+// observeLock reads the lock at path before it is rebuilt: its bytes and whether it exists.
+func observeLock(ctx context.Context, path string) ([]byte, bool, error) {
+	before, exists, err := contextopt.ObserveSnapshot(ctx, path)
+	if err != nil {
+		return nil, false, fmt.Errorf("read %s before rebuilding it: %w", lockFile, err)
+	}
+	return before, exists, nil
+}
+
+// lockSnapshot is the lock a rebuild observed before it built the replacement.
+type lockSnapshot struct {
+	before []byte
+	exists bool
+}
+
+// publishLock writes data, a lock built for the selected source bundle, over observed, and
+// writes nothing in a dry run. An absent lock is created. An existing one that already holds
+// data, line endings aside, is verified and left alone; any other is replaced through
+// replaceExisting, bound to observed, so the report lists it as replaced with its line delta and
+// backup, never as created. The lockfile step (--force) and profile set share it.
+func publishLock(ctx context.Context, s *adoptSession, path string, observed lockSnapshot, data []byte) error {
+	before, exists := observed.before, observed.exists
 	if !exists {
 		if err := s.write(path, data, filePerm); err != nil {
 			return err
@@ -184,7 +208,7 @@ func verifyExistingLock(ctx context.Context, s *adoptSession, manifest *config.M
 		Root: s.repoPath, CatalogRoot: s.opts.LockSourceRoot,
 	}, manifest)
 	if err != nil {
-		return fmt.Errorf("verify existing lock: %w", err)
+		return fmt.Errorf("verify existing lock: %w%s", err, lockMismatchRemedy(ctx, s, manifest, err))
 	}
 	if !result.Verified() {
 		s.report.recordReconciled(lockFile, fmt.Sprintf("Verified existing version pins and aggregate digest; %v", config.ErrLockUnverifiable))
@@ -193,6 +217,57 @@ func verifyExistingLock(ctx context.Context, s *adoptSession, manifest *config.M
 	}
 	s.report.recordReconciled(lockFile, "Verified existing version pins and content digests")
 	return nil
+}
+
+// lockMismatchRemedy completes the error of an existing lock that does not pin the declared
+// profiles and facets (config.ErrLockEntryMissing) or whose pins the selected catalog does not
+// hash to (config.ErrLockDigestMismatch). It names each declared text whose values the source
+// bundle changes (valueChangedTexts), which the mismatch itself may not name: it stops at the
+// first differing pin, often one whose layout alone moved. It then names the narrow re-pin,
+// praetorctl profile set, which rewrites only the manifest, the lock and the vendored catalog
+// texts, where --force regenerates every scaffold (#123). Any other error gets no remedy: "".
+func lockMismatchRemedy(ctx context.Context, s *adoptSession, manifest *config.Manifest, err error) string {
+	if !errors.Is(err, config.ErrLockEntryMissing) && !errors.Is(err, config.ErrLockDigestMismatch) {
+		return ""
+	}
+	source := s.opts.LockSourceRoot
+	selected := source
+	if selected == "" {
+		selected = "<praetor checkout>"
+	}
+	remedy := fmt.Sprintf("; re-pin the declaration with praetorctl profile set --lock-source-root=%s, which rewrites "+
+		"only %s, %s and the vendored catalog texts", selected, manifestFile, lockFile)
+	if changed := valueChangedTexts(ctx, s.repoPath, source, manifest); len(changed) > 0 {
+		remedy = "; the source bundle changes values of " + strings.Join(changed, ", ") + remedy
+	}
+	return remedy
+}
+
+// valueChangedTexts names, in manifest order, each declared profile and facet whose text in
+// source holds other values than the one the repository vendors, as `profile "id"` or
+// `facet "id"`: the changes a re-pin takes up. A text whose layout alone moved
+// (util.YAMLEquivalent) is not named. Nothing is named without a source, or when either catalog
+// cannot pair the declaration (config.DeclaredCatalogTexts), such as a declared id the
+// repository does not vendor yet.
+func valueChangedTexts(ctx context.Context, root, source string, manifest *config.Manifest) []string {
+	if source == "" {
+		return nil
+	}
+	local, err := config.DeclaredCatalogTexts(ctx, root, manifest)
+	if err != nil {
+		return nil
+	}
+	next, err := config.DeclaredCatalogTexts(ctx, source, manifest)
+	if err != nil || len(next) != len(local) {
+		return nil
+	}
+	changed := make([]string, 0, len(local))
+	for i := 0; i < len(local) && i < maxAdoptPolicyFiles; i++ {
+		if util.YAMLEquivalent(local[i].Content, next[i].Content) != nil {
+			changed = append(changed, local[i].Kind+" "+strconv.Quote(local[i].ID))
+		}
+	}
+	return changed
 }
 
 func manifestForLock(ctx context.Context, s *adoptSession) (*config.Manifest, error) {
@@ -214,8 +289,13 @@ func manifestForLock(ctx context.Context, s *adoptSession) (*config.Manifest, er
 	if err != nil {
 		return nil, err
 	}
-	// The policy loader's decoder, so the lock is never pinned to a manifest, or to the first
-	// document of one, that the audit then refuses (BUG-857).
+	return decodeTargetManifest(data)
+}
+
+// decodeTargetManifest decodes a repository manifest a lock is pinned to, with the policy
+// loader's decoder, so the lock is never pinned to a manifest, or to the first document of one,
+// that the audit then refuses (BUG-857); only version 1 is accepted.
+func decodeTargetManifest(data []byte) (*config.Manifest, error) {
 	manifest, err := config.DecodeManifest(data)
 	if err != nil {
 		return nil, fmt.Errorf("parse target manifest for lock: %w", err)
