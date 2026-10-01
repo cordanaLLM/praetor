@@ -133,8 +133,9 @@ func (f *fixture) commit(t *testing.T, message string, files map[string]*string)
 func text(s string) *string { return &s }
 
 // fakeRunner renders the fixture's artefacts from the files in dir: "render table" writes the
-// upper-cased sources to out/table.txt, "render block" writes them into the guide's block, and
-// "render fail" fails. It records every command it ran.
+// upper-cased sources to out/table.txt, "render block" writes them into the guide's block,
+// "praetorctl compile-context" keeps the committed projections as they are, and any other command
+// fails. It records every command it ran.
 type fakeRunner struct {
 	ran []string
 }
@@ -153,6 +154,8 @@ func (r *fakeRunner) run(ctx context.Context, dir string, argv, env []string) (u
 		return util.CommandBytes{}, os.WriteFile(filepath.Join(dir, "out", "table.txt"), []byte(rendered+"\n"), 0o644)
 	case "render block":
 		return renderGuideBlock(dir, rendered)
+	case SelfCommand + " compile-context":
+		return util.CommandBytes{}, nil
 	}
 	return util.CommandBytes{Stderr: []byte("generator exploded")}, errors.New("exit status 3")
 }
