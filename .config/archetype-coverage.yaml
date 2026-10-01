@@ -297,6 +297,11 @@ fields:
       - func: cmd/standards-mcp.writePlanHeader
         kind: reports
         effect: prints the setting in the MCP plan
+      - func: internal/forge.EvaluateBranchProtection
+        kind: reports
+        effect: >-
+          compares the setting GitHub enforces on the default branch with the
+          declared one (plan --remote, sync --remote readback)
   - key: branch_protection.require_signed_commits
     go: [BranchProtectionPolicy.RequireSignedCommits]
     state: consumed
@@ -316,6 +321,11 @@ fields:
       - func: cmd/standards-mcp.writePlanHeader
         kind: reports
         effect: prints the setting in the MCP plan
+      - func: internal/forge.EvaluateBranchProtection
+        kind: reports
+        effect: >-
+          compares the setting GitHub enforces on the default branch with the
+          declared one (plan --remote, sync --remote readback)
   - key: branch_protection.required_approving_reviewers
     go: [BranchProtectionPolicy.RequiredApprovingReviewers]
     state: consumed
@@ -341,6 +351,11 @@ fields:
       - func: cmd/standardsctl.printPlanHeader
         kind: reports
         effect: prints the setting in praetorctl plan
+      - func: internal/forge.EvaluateBranchProtection
+        kind: reports
+        effect: >-
+          compares the setting GitHub enforces on the default branch with the
+          declared one (plan --remote, sync --remote readback)
   - key: branch_protection.review_mode
     go: [BranchProtectionPolicy.ReviewMode]
     state: refused
@@ -361,6 +376,11 @@ fields:
       - func: cmd/standards-mcp.writePlanHeader
         kind: reports
         effect: prints the mode in the MCP plan
+      - func: internal/forge.EvaluateBranchProtection
+        kind: reports
+        effect: >-
+          compares the setting GitHub enforces on the default branch with the
+          declared one (plan --remote, sync --remote readback)
   - key: supply_chain.slsa_level
     go: [SupplyChainPolicy.SLSALevel]
     state: reported
