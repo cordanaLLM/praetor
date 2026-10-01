@@ -83,14 +83,19 @@ func reconcileLabels(ctx context.Context, rootDir string) ([]forge.Label, error)
 }
 
 // managedLabelDescriptions holds the canonical description sync.go itself authors for a
-// label, keyed by name. A repository's own labels, colors and comments are never touched;
+// label, keyed by name; each equals the one forge.DefaultLabelTaxonomy carries
+// (sync_labels_test.go). A repository's own labels, colors and comments are never touched;
 // only a drifted managed description is rewritten, and only that description's bytes.
+// hiss-violation lost the HISS-16 wording of the standard rename (#266); hiss-waiver lost
+// the claim that waivers are cryptographically signed, which no gate checks (#393).
 var managedLabelDescriptions = map[string]string{
 	"hiss-violation": "Code introduces a regression against HISS invariants",
+	"hiss-waiver":    "Architectural exception to HISS (waivers are not signed)",
 }
 
 // reconcileLabelDescriptions rewrites a managed label's description in place when the text
-// on disk has drifted from canonical (e.g. wording from before the HISS standard rename),
+// on disk has drifted from canonical (e.g. wording from before the HISS standard rename, or
+// the earlier hiss-waiver signing claim),
 // leaving every other byte of the file untouched. It returns the bytes now on disk so the
 // caller reports against what it actually wrote rather than re-reading. Idempotent: nothing
 // to replace once the canonical text is already present. labels is data already parsed
