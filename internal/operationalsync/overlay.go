@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/strictjson"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
 )
@@ -210,11 +211,8 @@ func sourceIdentity(repo *yaml.Node, current identity) (identity, error) {
 }
 
 func ownerJSON(raw []byte, key, before, after string) ([]byte, error) {
-	if err := validateJSONKeys(raw); err != nil {
-		return nil, err
-	}
 	var value map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &value); err != nil {
+	if err := strictjson.Decode(raw, &value, derivedJSON); err != nil {
 		return nil, err
 	}
 	var old string

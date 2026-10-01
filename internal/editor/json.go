@@ -5,14 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"maps"
 	"reflect"
 	"slices"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/strictjson"
 )
 
 const (
@@ -26,112 +25,48 @@ const (
 var errEditorJSONNodeBound = fmt.Errorf("editor JSON exceeds %d nodes", maxJSONNodes)
 
 // ErrExistingJSONInvalid marks a merge refused because the existing file is not one strict JSON
-// document: JSONC comments or trailing commas, a duplicate key, invalid UTF-8 or a document past
-// the node bound. Re-encoding it would drop what the strict decoder cannot represent, so a
-// caller that keeps such a file (adoption) can say why.
+// document: JSONC comments or trailing commas, a duplicate key, invalid UTF-8, an unpaired
+// surrogate escape or a document past the node bound. Re-encoding it would drop what the strict
+// decoder cannot represent, so a caller that keeps such a file (adoption) can say why.
 var ErrExistingJSONInvalid = errors.New("existing JSON is invalid")
 
 // jsonPointerEscaper escapes one object key as an RFC 6901 reference token.
 var jsonPointerEscaper = strings.NewReplacer("~", "~0", "/", "~1")
 
-type editorJSONFrame struct {
-	keys    map[string]bool
-	keyNext bool
+// editorJSON words the shared strictjson reader for editor configuration. Member names are
+// compared exactly, not case-folded: an editor document decodes into Go maps, which keep every
+// spelling, and settings such as files.watcherExclude and files.associations take
+// case-sensitive glob patterns as names. buildWatcherExclude (editor.go) writes one such name
+// per configured private directory, so "Notes" and "notes" are two settings, not an alias.
+var editorJSON = strictjson.Options{
+	MaxBytes:  contextopt.MaxSourceBytes,
+	MaxDepth:  maxEditorJSONDepth,
+	Names:     strictjson.ExactNames,
+	UseNumber: true,
+	Messages: strictjson.Messages{
+		Size:      "editor JSON requires 1..%d UTF-8 bytes",
+		Syntax:    "decode editor JSON token: %w",
+		Surrogate: "editor JSON holds an unpaired UTF-16 surrogate escape",
+		Depth:     "editor JSON nesting exceeds %d",
+		Count:     "editor JSON token count exceeds byte bound",
+		Duplicate: "editor JSON contains an invalid or duplicate key %q",
+		Trailing:  "editor JSON requires exactly one document",
+		Decode:    "decode editor JSON: %w",
+	},
 }
 
 // decodeEditorJSON decodes exactly one bounded UTF-8 JSON document. Numbers stay
 // json.Number literals so re-encoding never rounds them, and duplicate object keys
 // are rejected because a map decode would silently keep only the last value.
 func decodeEditorJSON(raw []byte) (any, error) {
-	if len(raw) == 0 || len(raw) > contextopt.MaxSourceBytes || !utf8.Valid(raw) {
-		return nil, fmt.Errorf("editor JSON requires 1..%d UTF-8 bytes", contextopt.MaxSourceBytes)
-	}
-	if err := validateEditorJSONTokens(raw); err != nil {
-		return nil, err
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
 	var value any
-	if err := decoder.Decode(&value); err != nil {
-		return nil, fmt.Errorf("decode editor JSON: %w", err)
-	}
-	var extra any
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		return nil, errors.New("editor JSON requires exactly one document")
+	if err := strictjson.Decode(raw, &value, editorJSON); err != nil {
+		return nil, err
 	}
 	if err := validateJSONNodeBound(value); err != nil {
 		return nil, err
 	}
 	return value, nil
-}
-
-func validateEditorJSONTokens(raw []byte) error {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	stack := make([]editorJSONFrame, 0, 16)
-	for tokenCount := 0; tokenCount <= len(raw); tokenCount++ {
-		token, err := decoder.Token()
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("decode editor JSON token: %w", err)
-		}
-		if delimiter, ok := token.(json.Delim); ok {
-			var consumeErr error
-			stack, consumeErr = consumeEditorJSONDelimiter(stack, delimiter)
-			if consumeErr != nil {
-				return consumeErr
-			}
-			continue
-		}
-		if err := consumeEditorJSONToken(stack, token); err != nil {
-			return err
-		}
-	}
-	return errors.New("editor JSON token count exceeds byte bound")
-}
-
-func consumeEditorJSONDelimiter(stack []editorJSONFrame, delimiter json.Delim) ([]editorJSONFrame, error) {
-	if delimiter == '}' || delimiter == ']' {
-		if len(stack) == 0 {
-			return nil, errors.New("invalid editor JSON delimiter")
-		}
-		return stack[:len(stack)-1], nil
-	}
-	consumeEditorJSONValue(stack)
-	frame := editorJSONFrame{}
-	if delimiter == '{' {
-		frame.keys, frame.keyNext = make(map[string]bool), true
-	}
-	stack = append(stack, frame)
-	if len(stack) > maxEditorJSONDepth {
-		return nil, fmt.Errorf("editor JSON nesting exceeds %d", maxEditorJSONDepth)
-	}
-	return stack, nil
-}
-
-func consumeEditorJSONToken(stack []editorJSONFrame, token any) error {
-	if len(stack) == 0 {
-		return nil
-	}
-	frame := &stack[len(stack)-1]
-	if frame.keys != nil && frame.keyNext {
-		key, ok := token.(string)
-		if !ok || frame.keys[key] {
-			return fmt.Errorf("editor JSON contains an invalid or duplicate key %q", key)
-		}
-		frame.keys[key], frame.keyNext = true, false
-		return nil
-	}
-	consumeEditorJSONValue(stack)
-	return nil
-}
-
-func consumeEditorJSONValue(stack []editorJSONFrame) {
-	if len(stack) > 0 {
-		stack[len(stack)-1].keyNext = stack[len(stack)-1].keys != nil
-	}
 }
 
 // validateJSONNodeBound counts the root and every nested value breadth first and
