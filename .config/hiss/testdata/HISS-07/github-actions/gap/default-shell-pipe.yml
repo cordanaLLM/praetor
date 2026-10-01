@@ -1,0 +1,11 @@
+# With no shell named, GitHub runs this block as bash -e: without pipefail and without nounset,
+# so the failure on the left of the pipe is discarded. A block has no interpreter line, so the
+# strict-mode rule for scripts does not apply to it and this goes unreported.
+on: push
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          make coverage | tee coverage.txt
+          echo "$UNSET_VARIABLE"

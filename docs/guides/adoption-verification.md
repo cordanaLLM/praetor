@@ -1591,8 +1591,9 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
   the harness credits the audit's HISS scan in Go, Rust, Python and C/C++ sources only, and each
   rule's scan decides a subset of them. The scan also reads JavaScript, TypeScript and Svelte
   ([`internal/hiss/script.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hiss/script.go)),
-  shell scripts, systemd units and Ansible playbooks
+  shell scripts, the `run:` blocks of GitHub Actions workflows, systemd units and Ansible playbooks
   ([`internal/hiss/shell.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hiss/shell.go),
+  [`workflow.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hiss/workflow.go),
   [`systemd.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hiss/systemd.go),
   [`ansible.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hiss/ansible.go)),
   but no directive clause names those languages yet, so their rows understate what the audit

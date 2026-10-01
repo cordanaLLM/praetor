@@ -1,0 +1,4 @@
+type: added
+title: "The HISS scanner reads GitHub Actions run: blocks with the shell rules"
+issue: "#618"
+breaking: true

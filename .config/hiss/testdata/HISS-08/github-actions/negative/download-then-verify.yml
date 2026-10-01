@@ -1,0 +1,12 @@
+# A script downloaded to a file, checked against its digest and then run is reviewed input, and
+# eval inside an expression is text GitHub substitutes, not shell.
+on: push
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -fsSL --max-time 60 -o install.sh https://example.com/install.sh
+          echo "0123456789abcdef  install.sh" | sha256sum -c -
+          sh install.sh
+          echo "${{ 'eval' }}"
