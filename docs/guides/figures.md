@@ -69,7 +69,8 @@ Makefile block and the documentation workflow, and refuses to remove an engine f
 edited. `praetorctl audit` compares every engine file byte for byte,
 requires the target and the block, and warns when the repository's `REUSE.toml` has no
 annotation labelling `tools/figures/third_party/interfig/upstream/**` MIT, or has one that a
-later table covering the same files, such as `**`, overrides (`cmd/standardsctl/audit_reuse.go`).
+later table covering the same files, such as `**`, overrides (`cmd/standardsctl/audit_reuse.go`;
+the tables are read by `ReuseLabels` in `internal/supplychain/reuse.go`).
 An edited `.gitattributes` block fails a plain `praetorctl adopt`; `--force` restores it and
 keeps a backup.
 

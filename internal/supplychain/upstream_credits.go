@@ -236,25 +236,21 @@ func isCanonicalAsset(artifact string) bool {
 // every table row after the section heading and before the next level-two heading, less the
 // header and delimiter rows. A data row without exactly adaptedWorkColumns cells is an error.
 func adaptedWorkRows(credits string) ([]adaptedRow, error) {
-	lines, err := splitNoticeLines(credits)
+	section, first, err := creditsSection(credits, adaptedWorkHeading)
 	if err != nil {
-		return nil, fmt.Errorf("parse %s: %w", AcknowledgementsFile, err)
-	}
-	start := slices.IndexFunc(lines, func(line string) bool { return strings.TrimSpace(line) == adaptedWorkHeading })
-	if start < 0 {
-		return nil, nil
+		return nil, err
 	}
 	var rows []adaptedRow
 	header := true
-	for index := start + 1; index < len(lines) && !strings.HasPrefix(lines[index], "## "); index++ {
-		line := strings.TrimSpace(lines[index])
+	for index, text := range section {
+		line := strings.TrimSpace(text)
 		switch {
 		case !strings.HasPrefix(line, "|"):
 			header = true
 		case isDelimiterRow(line):
 			header = false
 		case !header:
-			row, err := parseAdaptedRow(index+1, line)
+			row, err := parseAdaptedRow(first+index, line)
 			if err != nil {
 				return nil, err
 			}
@@ -262,6 +258,26 @@ func adaptedWorkRows(credits string) ([]adaptedRow, error) {
 		}
 	}
 	return rows, nil
+}
+
+// creditsSection returns the lines of the credits page section that heading, a level-two
+// heading line, opens: from the line after it to the next level-two heading or the end. first
+// is the 1-based line number of the first returned line. A page without the heading has an empty
+// section.
+func creditsSection(credits, heading string) (section []string, first int, err error) {
+	lines, err := splitNoticeLines(credits)
+	if err != nil {
+		return nil, 0, fmt.Errorf("parse %s: %w", AcknowledgementsFile, err)
+	}
+	start := slices.IndexFunc(lines, func(line string) bool { return strings.TrimSpace(line) == heading })
+	if start < 0 {
+		return nil, 0, nil
+	}
+	end := start + 1
+	for end < len(lines) && !strings.HasPrefix(lines[end], "## ") {
+		end++
+	}
+	return lines[start+1 : end], start + 2, nil
 }
 
 // parseAdaptedRow reads one data row, line its 1-based line number.

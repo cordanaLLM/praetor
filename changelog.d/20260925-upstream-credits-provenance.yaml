@@ -1,0 +1,4 @@
+type: fixed
+title: Fail the tests when a persona or skill declares an upstream the credits page does not credit with its license, and credit the preset packages, GitHub Actions and container images praetor builds on
+issue: "#372"
+breaking: false
