@@ -5,6 +5,7 @@
 package hiss
 
 import (
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -94,7 +95,9 @@ func ansibleTaskRoots(src sourceFile) ([]*yaml.Node, bool) {
 	if lists, ok := playbookTaskLists(root); ok {
 		return lists, true
 	}
-	if isRoleTaskPath(src.rel) && allMappings(root) {
+	// The walk reports paths with the platform separator; the role layout is matched on slashes
+	// so a Windows checkout reads the same files (HISS-21).
+	if isRoleTaskPath(filepath.ToSlash(src.rel)) && allMappings(root) {
 		return []*yaml.Node{root}, true
 	}
 	return nil, false

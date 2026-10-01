@@ -465,7 +465,10 @@ arithmetic expansions and here-document bodies, keeps the code of command and pr
 substitutions, even inside double quotes, and carries an open quote or here-document across lines
 (`TestShellLexer_KeepsSubstitutionCode`). `shell_commands.go` cuts each logical line, joined across
 a trailing backslash, pipe or `&&`, into simple commands and reads each command's name past
-reserved words, assignments, redirections and wrappers such as `sudo`, `env` and `timeout`.
+reserved words, assignments, redirections and wrappers such as `sudo`, `env` and `timeout`. The
+patterns of a `case` statement and the inside of a `[[ ... ]]` test name no command, so
+`*/sh | */bash)` and `[[ $f =~ \.(sh|bash)$ ]]` pipe nothing into a shell
+(`TestShellScanner_CasePatternsAreNotCommands`, `TestShellScanner_TestExpressionsAreNotPipes`).
 
 - HISS-01: a function whose body is a brace group runs its own name as a command. A call through
   `command`, `builtin` or `exec` runs a program, never the function, so it is not reported.

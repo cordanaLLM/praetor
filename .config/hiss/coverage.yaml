@@ -146,7 +146,8 @@ rules:
           name as a command, including on one line, from a header whose brace opens on the next
           line, in a command substitution and in the background. A call through command, builtin
           or exec reaches a program, never a function, so it is not reported, and the name inside
-          quotes, comments and here-document bodies is text. A .sh or .bash file and an
+          quotes, comments, here-document bodies and a case pattern is not a call. A .sh or .bash
+          file and an
           extensionless file whose interpreter line names sh, bash, dash or ash are read. Mutual
           recursion needs a call graph and is held as a gap.
   - id: HISS-02
@@ -360,9 +361,10 @@ rules:
         rationale: >-
           eval, text piped into a shell that reads its script from standard input (curl ... | sh,
           including through sudo), and a process substitution sourced or run as a script are
-          reported. A function named evaluate, the word in text, and a downloaded script that is
-          checked and run as a file are not. A command string handed to sh -c is evaluated too
-          but is held as a gap.
+          reported. A function named evaluate, the word in text, a downloaded script that is
+          checked and run as a file, and the bars of a case pattern list or of a [[ ]] regular
+          expression are not. A command string handed to sh -c is evaluated too but is held as a
+          gap.
       - language: ansible
         state: partial
         mechanism: internal/hiss ansible.go checkAnsibleCommand

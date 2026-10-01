@@ -154,3 +154,19 @@ func nestedBlocks(depth int) string {
 	sb.WriteString(indent + "- command: /bin/true\n")
 	return sb.String()
 }
+
+// Positive, negative and boundary: a role task file sits in roles/<role>/tasks/ or handlers/,
+// at any depth and in a subdirectory; a tasks/ directory directly under roles/ or outside it, and
+// a role's other directories, are not.
+func TestIsRoleTaskPath(t *testing.T) {
+	for rel, want := range map[string]bool{
+		"roles/web/tasks/main.yml": true, "site/roles/db/handlers/main.yaml": true,
+		"roles/web/tasks/install/packages.yml": true,
+		"roles/tasks/main.yml":                 false, "deploy/tasks/main.yml": false, "roles/web/templates/app.yml": false,
+		"roles/web/tasks": false,
+	} {
+		if got := isRoleTaskPath(rel); got != want {
+			t.Errorf("isRoleTaskPath(%q) = %t, want %t", rel, got, want)
+		}
+	}
+}

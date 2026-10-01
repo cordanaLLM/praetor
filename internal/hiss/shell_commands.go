@@ -71,32 +71,76 @@ type shellCmd struct {
 
 // splitShellCommands cuts a logical line of code into its simple commands. A process
 // substitution stays a word ("<(") of the command it is an argument of, so `source <(...)`
-// still names what it sources; the substitution's own code is the next command.
+// still names what it sources; the substitution's own code is the next command. An operator
+// with no words after it still yields an empty command carrying it, so the close of a case
+// pattern list at the end of a line is not lost. Inside a [[ ... ]] test nothing is an
+// operator: the regular expression of `[[ $f =~ \.(sh|bash)$ ]]` pipes nothing anywhere.
 func splitShellCommands(text string) []shellCmd {
-	var cmds []shellCmd
-	cur := shellCmd{}
-	start := -1
-	for i := 0; i < len(text) && len(cmds) < maxShellCommands; {
-		if op := shellOperatorAt(text, i); op != "" {
-			cur.addWord(text, start, i)
-			if op == "<(" || op == ">(" {
-				cur.addWord(text, i, i+2)
-			}
-			cmds = cur.appendTo(cmds)
-			cur, start = shellCmd{sep: op}, -1
-			i += len(op)
-			continue
-		}
-		if text[i] == ' ' || text[i] == '\t' {
-			cur.addWord(text, start, i)
-			start = -1
-		} else if start < 0 {
-			start = i
-		}
-		i++
+	t := shellTokenizer{text: text, start: -1}
+	for i := 0; i < len(text) && len(t.cmds) < maxShellCommands; {
+		i = t.step(i)
 	}
-	cur.addWord(text, start, len(text))
-	return cur.appendTo(cmds)
+	t.cur.addWord(text, t.start, len(text))
+	return append(t.cmds, t.cur)
+}
+
+// shellTokenizer carries splitShellCommands' state through one logical line.
+type shellTokenizer struct {
+	text string
+	cmds []shellCmd
+	cur  shellCmd
+	// start is where the word being read began, or -1 between words.
+	start int
+	// test is true inside [[ ... ]].
+	test bool
+}
+
+// step reads the byte at i and returns the index of the next one to read.
+func (t *shellTokenizer) step(i int) int {
+	if t.start < 0 {
+		if n := t.testBracket(i); n > 0 {
+			t.start = i
+			return i + n
+		}
+	}
+	if !t.test {
+		if op := shellOperatorAt(t.text, i); op != "" {
+			return t.operator(i, op)
+		}
+	}
+	if t.text[i] == ' ' || t.text[i] == '\t' {
+		t.cur.addWord(t.text, t.start, i)
+		t.start = -1
+	} else if t.start < 0 {
+		t.start = i
+	}
+	return i + 1
+}
+
+// testBracket returns the width of the [[ that opens a test or the ]] that closes it at i,
+// toggling the test state, or 0 when neither is there.
+func (t *shellTokenizer) testBracket(i int) int {
+	word := "[["
+	if t.test {
+		word = "]]"
+	}
+	end := i + len(word)
+	if !strings.HasPrefix(t.text[i:], word) || (end < len(t.text) && strings.IndexByte(" \t;&|)", t.text[end]) < 0) {
+		return 0
+	}
+	t.test = !t.test
+	return len(word)
+}
+
+// operator ends the command being read at the operator op at i and starts the next one.
+func (t *shellTokenizer) operator(i int, op string) int {
+	t.cur.addWord(t.text, t.start, i)
+	if op == "<(" || op == ">(" {
+		t.cur.addWord(t.text, i, i+2)
+	}
+	t.cmds = append(t.cmds, t.cur)
+	t.cur, t.start = shellCmd{sep: op}, -1
+	return i + len(op)
 }
 
 // addWord adds text[start:end] as a word when start marks one.
@@ -107,12 +151,59 @@ func (c *shellCmd) addWord(text string, start, end int) {
 	}
 }
 
-// appendTo appends the command when it has words.
-func (c shellCmd) appendTo(cmds []shellCmd) []shellCmd {
-	if len(c.words) == 0 {
-		return cmds
+// shellCases follows case statements across logical lines. Inside one, the words before a
+// pattern list's closing parenthesis are patterns, which name no command: `*/sh | */bash)` pipes
+// nothing into a shell, and a pattern spelled like a function does not call it.
+type shellCases struct {
+	// depth counts the open case statements.
+	depth int
+	// pattern is true while a pattern list is being read; awaitIn while a case head waits for
+	// its `in` on a later line.
+	pattern, awaitIn bool
+}
+
+// skip consumes one command and reports whether it is part of a pattern list.
+func (c *shellCases) skip(cmd shellCmd) bool {
+	first := ""
+	if len(cmd.words) > 0 {
+		first = cmd.words[0]
 	}
-	return append(cmds, c)
+	switch {
+	case c.depth > 0 && first == "esac":
+		c.depth--
+		c.pattern = false
+	case c.pattern && cmd.sep == ")":
+		c.pattern = false
+	case c.pattern:
+		return true
+	case c.depth > 0 && cmd.sep == ";;":
+		c.pattern = true
+		return true
+	case c.awaitIn && first == "in":
+		c.awaitIn, c.pattern = false, true
+		return true
+	default:
+		c.openCase(cmd.words)
+	}
+	return false
+}
+
+// openCase starts a case statement when words are its head: case WORD in, with `in` here or on
+// a later line, and anything after `in` already a pattern.
+func (c *shellCases) openCase(words []string) {
+	i := 0
+	for i < len(words) && shellOpeners[words[i]] {
+		i++
+	}
+	if i >= len(words) || words[i] != "case" || c.depth >= maxShellOpenFunctions {
+		return
+	}
+	c.depth++
+	if i+2 < len(words) && words[i+2] == "in" {
+		c.pattern = true
+		return
+	}
+	c.awaitIn = true
 }
 
 // shellOperatorAt returns the control operator at i, or "". An & or | that is part of a

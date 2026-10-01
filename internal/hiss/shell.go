@@ -209,6 +209,8 @@ type shellScanner struct {
 	segments []shellSegment
 	sites    []shellSite
 	strict   shellStrict
+	// cases follows case statements, whose patterns are not commands.
+	cases shellCases
 }
 
 // observe feeds one physical line.
@@ -355,7 +357,9 @@ func (s *shellScanner) flush() {
 		recordViolation(s.rep, "HISS-02", s.rel, line, "", "Unbounded loop in shell without an explicit scalar bound")
 	}
 	for _, cmd := range splitShellCommands(text) {
-		s.checkCommand(cmd)
+		if !s.cases.skip(cmd) && len(cmd.words) > 0 {
+			s.checkCommand(cmd)
+		}
 	}
 	s.logical.Reset()
 	s.segments = s.segments[:0]

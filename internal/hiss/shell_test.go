@@ -71,6 +71,25 @@ func TestShellScanner_LegitimateShellIsClean(t *testing.T) {
 		"cat script.sh | bash script.sh\n")
 }
 
+// Negative: the patterns of a case statement name no command. A pattern list that spells a
+// shell after a pipe symbol, or the name of the function it sits in, is neither text piped into a
+// shell nor recursion, on one line or across several; the commands of each item are still read.
+func TestShellScanner_CasePatternsAreNotCommands(t *testing.T) {
+	assertScriptFindings(t, "dispatch.sh", "#!/bin/sh\nset -eu\nstart() {\n  case \"$1\" in\n"+
+		"    start) printf '%s\\n' started ;;\n    */sed | */sh | \\\n    */bash)\n      printf '%s\\n' shell\n      ;;\n"+
+		"    (stop | start) eval \"$2\" ;;\n    *)\n      start \"$2\"\n      ;;\n  esac\n}\n"+
+		"case \"$1\" in -h | --help) printf usage ;; esac\n",
+		"HISS-08@10", "HISS-01@12")
+}
+
+// Negative and boundary: inside a [[ ... ]] test the parentheses and bars of a regular
+// expression are not operators, and the commands after the test are read again.
+func TestShellScanner_TestExpressionsAreNotPipes(t *testing.T) {
+	assertScriptFindings(t, "match.bash", strictBash+
+		"if [[ \"$1\" =~ \\.(sh|bash)$ ]]; then eval \"$2\"; fi\n[[ -n \"$1\" ]]&& curl -fsS https://example.com -o x\n",
+		"HISS-08@3", "HISS-02@4")
+}
+
 // Negative: a file the shell scanner does not read, or misread, is never counted as clean
 // shell. A .sh file whose interpreter line names another shell, and one whose quote never
 // closes, are declined and reported as unscanned shell; an extensionless file without a shell
