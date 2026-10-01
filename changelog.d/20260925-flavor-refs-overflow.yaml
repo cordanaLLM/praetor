@@ -1,0 +1,4 @@
+type: fixed
+title: "flavors plan and sync fail with an overflow error when a refs/tags/v* source matches more than 4096 tags, instead of reporting latest as pending from a truncated scan. Migration: a repository whose v* source matches more than 4096 tags now gets a non-zero exit and no flavor moves until source_ref in .config/flavors.yaml is narrowed, for example to refs/tags/v2.*"
+issue: "#389"
+breaking: true
