@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -14,7 +15,42 @@ import (
 const (
 	// maxTouchedFiles bounds the change set considered by the touched-file clean rule.
 	maxTouchedFiles = 10000
+	// maxStaleFlag names the audit flag that bounds stale baseline entries (#349).
+	maxStaleFlag = "max-stale-baseline-entries"
 )
+
+// resolveStaleBound returns the --max-stale-baseline-entries bound: -1 when the flag was not
+// given, so stale entries are only reported, and the value when it was, which must not be
+// negative.
+func resolveStaleBound(fs *flag.FlagSet, value int) (int, error) {
+	if !flagWasSet(fs, maxStaleFlag) {
+		return -1, nil
+	}
+	if value < 0 {
+		return 0, fmt.Errorf("--%s must be 0 or more, got %d", maxStaleFlag, value)
+	}
+	return value, nil
+}
+
+// auditStaleBaseline reports the baseline entries no current violation accounts for (#349): a
+// cleanup that landed without a re-record leaves them, the ratchet passes, and each one is room a
+// new finding can take. It fails only past bound, the stated --max-stale-baseline-entries; a
+// negative bound means none was stated, so it warns and passes.
+func auditStaleBaseline(ratchet *baseline.RatchetResult, bound int) error {
+	notice := ratchet.StaleNotice()
+	if notice == "" {
+		return nil
+	}
+	if bound >= 0 && ratchet.Stale > bound {
+		return fmt.Errorf("[FAIL] %s; --%s=%d allows at most %d", notice, maxStaleFlag, bound, bound)
+	}
+	limit := fmt.Sprintf("reported only; --%s=<n> fails the audit past n", maxStaleFlag)
+	if bound >= 0 {
+		limit = fmt.Sprintf("within --%s=%d", maxStaleFlag, bound)
+	}
+	fmt.Printf("[WARN] %s (%s)\n", notice, limit)
+	return nil
+}
 
 // fingerprintViolations converts scanner violations into baseline infractions carrying
 // the canonical "<file>:<line>:<rule>" fingerprint used by the ratchet.

@@ -784,6 +784,48 @@ MCP tool and the dogfood public-checkout verification render their rejections th
 method (`TestEvaluateRatchet_CountRegressed_3D` and `FuzzBaselineRatchet` in
 `internal/baseline`).
 
+A touched-file rejection counts the findings in touched files in two parts, `N in touched files
+(M not in the baseline, K baselined)`. It lists the findings the baseline does not record first,
+tagged `(touched file must be clean, not in the baseline)`, then the baselined ones, tagged
+`(touched file must be clean, baselined)`, each part with its own bound and hidden-count marker.
+The touched count alone read as N new findings when most of them were recorded debt (#348).
+
+The baselined findings fail too, and the rejection says why:
+
+- By default, touching a file revokes its baseline exemptions. A re-record does not clear them;
+  fixing them does, or, for a provably mechanical change, `praetorctl audit
+  --touched-debt-delta-reason=<why>`.
+- Under `--touched-debt-delta-reason`, a touched file fails only when a rule's count in it rose
+  above the baseline's, and its baselined findings pass again once no rule's count does.
+
+`TestRatchetResultSummary_*Touched*` in
+[`internal/baseline/ratchet_report_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/baseline/ratchet_report_test.go)
+and `TestAudit_Positive_TouchedCountNamesBaselined` in
+[`cmd/standardsctl/audit_stale_baseline_test.go`](https://github.com/cordanaLLM/praetor/blob/main/cmd/standardsctl/audit_stale_baseline_test.go)
+pin both.
+
+### A baseline looser than the tree is reported
+
+A cleanup that lands without `praetorctl baseline --record` leaves baseline entries that match
+nothing in the tree. The ratchet still passes, and each stale entry is room for a new finding the
+ratchet would otherwise refuse (#349). On a pass, `praetorctl audit` and `praetorctl baseline
+--verify` count them: per file and rule, how many more infractions the baseline records than the
+scan found (`RatchetResult.Stale`, set by `staleEntries` in
+[`internal/baseline/baseline.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/baseline/baseline.go)).
+Counts are compared, not fingerprints, so a line shift above a baselined finding is not stale.
+
+```text
+[WARN] 19 baseline entries match nothing in the tree: per file and rule the baseline records more infractions than the scan found, and each stale entry is room for a new finding; tighten the baseline with 'praetorctl baseline --record' (reported only; --max-stale-baseline-entries=<n> fails the audit past n)
+```
+
+The audit fails only past a bound it is given: `--max-stale-baseline-entries=N` fails when more
+than N entries are stale, and `0` holds the baseline as tight as the tree. Without the flag it
+warns and passes, so a repository whose committed baseline is already loose keeps passing after an
+upgrade. `praetorctl baseline --verify` only warns. The gate's HISS stage and the
+`standards_audit` MCP tool do not report stale entries yet. `TestEvaluateRatchet_*Stale*` in
+`internal/baseline/ratchet_report_test.go` and `TestAudit_*StaleBaseline*` in
+`cmd/standardsctl/audit_stale_baseline_test.go` pin the count and the bound.
+
 ### The HISS stage scans with the audit's function-length limit
 
 The gate's HISS stage resolves the function-length limit through

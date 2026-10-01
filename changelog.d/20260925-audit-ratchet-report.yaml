@@ -1,0 +1,4 @@
+type: fixed
+title: "The audit splits its touched-file count into findings not in the baseline and baselined ones, and warns about baseline entries that match nothing in the tree; --max-stale-baseline-entries=N fails past N"
+issue: "#348, #349"
+breaking: false
