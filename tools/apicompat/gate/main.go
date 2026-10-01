@@ -647,6 +647,7 @@ func runChecker(ctx context.Context, checker, root, moduleDir, base, head string
 	ctx, cancel := context.WithTimeout(ctx, moduleTimeout)
 	defer cancel()
 	diagnostics := &boundedBuffer{limit: maxDiagnostics}
+	// #nosec G204 -- the checker is the binary this run installed or the operator's -checker; base and head are resolved commit names; no shell runs.
 	command := exec.CommandContext(ctx, checker, base, head, "--repo-path="+root)
 	command.Dir = moduleDir
 	command.Stdout = stdout
@@ -738,6 +739,7 @@ func short(commit string) string {
 func runTool(ctx context.Context, dir string, stdout, stderr io.Writer, name string, args ...string) error {
 	ctx, cancel := context.WithTimeout(ctx, moduleTimeout)
 	defer cancel()
+	// #nosec G204 -- callers pass the go or git command and fixed arguments; no shell runs.
 	command := exec.CommandContext(ctx, name, args...)
 	command.Dir = dir
 	command.Stdout, command.Stderr = stdout, stderr
@@ -800,6 +802,7 @@ func runGit(ctx context.Context, dir string, consume func(io.Reader) error, args
 	ctx, cancel := context.WithTimeout(ctx, gitTimeout)
 	defer cancel()
 	diagnostics := &boundedBuffer{limit: maxDiagnostics}
+	// #nosec G204 -- git with the gate's fixed subcommands; a revision argument never starts with "-" (parseOptions) and no shell runs.
 	command := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
 	command.Stderr = diagnostics
 	stdout, err := command.StdoutPipe()

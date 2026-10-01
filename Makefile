@@ -135,6 +135,7 @@ nosec-justified:
 
 sec: nosec-justified
 	python3 -B .config/lefthook/scripts/security_scope.py -- $(GO_SECURITY_TOOL) gosec -conf .gosec.json
+	$(GO_SECURITY_TOOL) gosec -conf .gosec.json -tags apicompatgate ./tools/apicompat/gate/
 
 flavor-audit: state-init
 	go run ./cmd/standardsctl flavor audit .

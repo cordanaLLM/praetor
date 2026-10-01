@@ -118,8 +118,12 @@ earlier text refreshes without `--force`:
 PRAETOR_UPDATE_SHIPPED_TEXTS=1 go test ./internal/managedasset -run 'TestShippedTextLedger$'
 ```
 
-Praetor lints and vets the gate with its build tag (`make lint`, `.golangci.yml`
-`run.build-tags`) and tests it by building the embedded bytes (`tools/apicompat/gate_test.go`).
+Praetor lints, vets and scans the gate with its build tag (`make lint`, `make sec`,
+`.golangci.yml` `run.build-tags`) and tests it by building the embedded bytes
+(`tools/apicompat/gate_test.go`). The gate cannot import `internal/util`, which does not exist in
+an adopting repository, so the forbidigo rule and the utility-sprawl check of
+`praetorctl dedupe scan` exempt it (`.golangci.yml`, `managedAsset` in
+`internal/dedupe/dedupe.go`); each of its commands runs under a deadline of its own.
 
 ## Limits
 

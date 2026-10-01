@@ -204,6 +204,30 @@ func TestScanRepo_Boundary_UtilPackageIsExempt(t *testing.T) {
 	}
 }
 
+// TestScanRepo_Boundary_ManagedAssetIsExempt: the source that fails anywhere else passes as a
+// managed asset family's asset, a standalone program adoption writes into a repository without
+// internal/util, and fails again one directory over.
+func TestScanRepo_Boundary_ManagedAssetIsExempt(t *testing.T) {
+	tmp := t.TempDir()
+	writeFile(t, tmp, "tools/apicompat/gate/main.go", utilCommandGitSource)
+	report, err := dedupe.ScanRepo(tmp)
+	if err != nil {
+		t.Fatalf("scan repo failed: %v", err)
+	}
+	if len(report.SprawlItems) != 0 || !report.Passed {
+		t.Fatalf("the managed gate asset reported %+v (passed %v), want it exempt", report.SprawlItems, report.Passed)
+	}
+	other := t.TempDir()
+	writeFile(t, other, "tools/apicompat/other/main.go", utilCommandGitSource)
+	report, err = dedupe.ScanRepo(other)
+	if err != nil {
+		t.Fatalf("scan repo failed: %v", err)
+	}
+	if len(report.SprawlItems) == 0 || report.Passed {
+		t.Fatal("a file beside the managed asset was exempt too")
+	}
+}
+
 // TestScanRepoGitScope_Negative_HostileFsmonitorNeverRuns is the regression for the scan
 // running under the scanned repository's control.
 //

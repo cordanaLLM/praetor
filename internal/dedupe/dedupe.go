@@ -10,12 +10,14 @@ import (
 	"go/printer"
 	"go/token"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/managedasset"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -299,7 +301,7 @@ func placeholder(assigned map[string]string, name string) string {
 }
 
 func checkUtilitySprawl(fset *token.FileSet, node *ast.File, relPath string, report *DedupeReport) {
-	if strings.HasPrefix(relPath, "internal/util") {
+	if strings.HasPrefix(relPath, "internal/util") || managedAsset(relPath) {
 		return
 	}
 
@@ -313,6 +315,21 @@ func checkUtilitySprawl(fset *token.FileSet, node *ast.File, relPath string, rep
 		checkAdHocGit(call, relPath, pos.Line, report)
 		return true
 	})
+}
+
+// managedAsset reports whether relPath is an asset of a managed asset family
+// (internal/managedasset): a file adoption writes into another repository, which has no
+// internal/util, so the audited helpers cannot be called from it. The Go API compatibility
+// gate, tools/apicompat/gate/main.go, is such a standalone program; .golangci.yml exempts the
+// same file from the forbidigo rule this check mirrors.
+func managedAsset(relPath string) bool {
+	families := managedasset.Families()
+	for index := 0; index < len(families) && index < managedasset.MaxFamilies; index++ {
+		if slices.Contains(families[index].AssetPaths(), relPath) {
+			return true
+		}
+	}
+	return false
 }
 
 // gitSprawlReplacement names the audited git entry points because no single one answers for
