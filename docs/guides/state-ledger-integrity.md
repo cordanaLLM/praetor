@@ -248,7 +248,7 @@ delimited milestone block of `BACKLOG.md` (`internal/milestone/milestone.go`).
   other writer's bytes. `milestones.json` itself is still written without
   compare-and-swap: a store at its 10,000-entry bound exceeds the 1 MiB snapshot bound
   `ReplaceSnapshot` enforces.
-- **A failed command never leaves the two ledgers disagreeing.** `milestone create`,
+- **A failed command restores the store it changed.** `milestone create`,
   `close` and `sync` read `milestones.json` (or note its absence) before writing it. When
   the store write or the `BACKLOG.md` write then fails, `commitStoreAndBacklog` rewrites
   the prior bytes, or removes the store it created, and the error says

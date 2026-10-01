@@ -323,9 +323,10 @@ var commitWriters = ledgerWriters{
 // unit for create, close and remote sync. Both outputs are rendered and validated before
 // either file changes, and the milestones.json bytes (or its absence) are read first. When
 // the store write fails, restoreStore puts milestones.json back; when the BACKLOG.md write
-// fails, settleBacklogFailure first checks whether BACKLOG.md landed anyway. A returned
-// error therefore never leaves the two ledgers disagreeing on this change, and a retry
-// after a restore starts from the ledger the failed command found (#412).
+// fails, settleBacklogFailure first checks whether BACKLOG.md landed anyway. A retry after
+// a restore starts from the ledger the failed command found (#412). The ledgers can still
+// disagree after a failed restore, a store another writer changed, or an unreadable
+// BACKLOG.md or store; the returned error names each of those cases.
 //
 // Both settle on a context detached from the caller's cancellation, because a cancelled or
 // expired caller is one of the failures they handle, and under their own restoreTimeout.
