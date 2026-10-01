@@ -160,16 +160,12 @@ func extractBlock(content string, block *Block) (string, bool, error) {
 }
 
 // replaceBlock returns content with its block lines replaced by rendered, which must itself be
-// a whole block. Content without the block is an error: the rendering has nowhere to go.
+// a whole block, through util.ReplaceMarkedBlock. Content without the block is an error, where
+// ReplaceMarkedBlock would append one: the rendering has no place in that file.
 func replaceBlock(content, rendered string, block *Block) (string, error) {
-	first, last, err := util.FindMarkedBlock(content, block.Start, block.End)
-	if err != nil {
-		return "", err
+	if _, found, err := extractBlock(content, block); err != nil || !found {
+		return "", errors.Join(err, fmt.Errorf("no %s .. %s block to replace", block.Start, block.End))
 	}
-	if first < 0 {
-		return "", fmt.Errorf("no %s .. %s block to replace", block.Start, block.End)
-	}
-	lines := strings.Split(content, "\n")
-	replaced := append(append(append([]string(nil), lines[:first]...), rendered), lines[last+1:]...)
-	return strings.Join(replaced, "\n"), nil
+	replaced, _, err := util.ReplaceMarkedBlock(content, block.Start, block.End, rendered, util.MaxMarkedBlockLines)
+	return replaced, err
 }
