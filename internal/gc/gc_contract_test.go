@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 // gcGitFixture creates a real repository and a registered linked worktree in a
@@ -36,9 +38,9 @@ func gcGitFixture(t *testing.T) (root, worktree string) {
 
 func runGCTestGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.CommandContext(context.Background(), "git", args...)
+	cmd := exec.CommandContext(t.Context(), "git", args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "HOME="+t.TempDir(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+	cmd.Env = testsupport.HermeticGitEnv(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %s: %v (%s)", strings.Join(args, " "), err, out)
 	}

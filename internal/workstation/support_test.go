@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -22,14 +23,18 @@ func fakeCheckout(t *testing.T) string {
 		t.Skip("git is not on PATH; workstation install cannot resolve a checkout commit on this leg")
 	}
 	dir := t.TempDir()
+	ctx, err := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
+	if err != nil {
+		t.Fatal(err)
+	}
 	run := func(args ...string) {
 		t.Helper()
-		if _, err := util.RunGit(context.Background(), dir, args...); err != nil {
+		if _, err := util.RunGit(ctx, dir, args...); err != nil {
 			t.Fatalf("git %v: %v", args, err)
 		}
 	}
 	run("init", "-q")
-	run("-c", "user.email=test@example.com", "-c", "user.name=test", "commit", "--allow-empty", "-q", "-m", "init")
+	run("commit", "--allow-empty", "-q", "-m", "init")
 	return dir
 }
 

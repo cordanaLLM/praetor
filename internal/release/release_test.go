@@ -11,6 +11,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/changelog"
 	"github.com/cordanaLLM/praetor/internal/semver"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -177,13 +178,16 @@ func committedReleaseRepo(t *testing.T) string {
 	if _, err := changelog.CreateFragment(dir, changelog.Fragment{Type: changelog.TypeFixed, Title: "Committed fix"}); err != nil {
 		t.Fatal(err)
 	}
+	envCtx, err := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, args := range [][]string{
 		{"init", "-q"},
 		{"add", "-A"},
-		{"-c", "user.name=praetor-test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false",
-			"commit", "-q", "-m", "fixture"},
+		{"commit", "-q", "-m", "fixture"},
 	} {
-		if out, err := util.RunGit(t.Context(), dir, args...); err != nil {
+		if out, err := util.RunGit(envCtx, dir, args...); err != nil {
 			t.Fatalf("git %v: %v (%s)", args, err, out)
 		}
 	}

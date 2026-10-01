@@ -16,18 +16,24 @@ import (
 // statusRepo initialises a work tree holding one committed file at a.txt and one at
 // sub/b.txt, or skips the test when git is unavailable (HISS-21: the helper asks git, and a
 // host without git cannot answer).
+// Note: package util cannot import internal/testsupport because testsupport depends on
+// util (import cycle not allowed); fixture commits are configured directly here.
 func statusRepo(t *testing.T) string {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skipf("git unavailable: %v", err)
 	}
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	dir := t.TempDir()
 	writeStatusFile(t, dir, "a.txt", "a\n")
 	writeStatusFile(t, dir, filepath.Join("sub", "b.txt"), "b\n")
 	statusGit(t, dir, "init", "-q")
 	statusGit(t, dir, "add", "-A")
 	statusGit(t, dir, "-c", "user.name=praetor-test", "-c", "user.email=test@example.invalid",
-		"-c", "commit.gpgsign=false", "commit", "-q", "-m", "fixture")
+		"-c", "commit.gpgsign=false", "-c", "maintenance.auto=false", "-c", "gc.auto=0",
+		"commit", "-q", "-m", "fixture")
 	return dir
 }
 
@@ -306,6 +312,7 @@ func TestGitWorkingTreeChanges_Boundary_ConfiguredExcludesFileWins(t *testing.T)
 	custom := filepath.Join(home, "custom-ignore")
 	writeStatusFile(t, home, "custom-ignore", "*.swp\n")
 	writeStatusFile(t, home, ".gitconfig", "[core]\n\texcludesFile = "+filepath.ToSlash(custom)+"\n")
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(home, ".gitconfig"))
 	writeStatusFile(t, dir, "notes.swp", "swap\n")
 	if changes := mustChanges(t, dir); len(changes) != 0 {
 		t.Fatalf("the configured excludes file was not honoured: %v", changes)
@@ -318,6 +325,7 @@ func TestGitWorkingTreeChanges_Boundary_ConfiguredExcludesFileWins(t *testing.T)
 	}
 	notAFile := t.TempDir()
 	t.Setenv("HOME", notAFile)
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
 	if err := os.MkdirAll(filepath.Join(notAFile, ".config", "git", "ignore"), 0o750); err != nil {
 		t.Fatal(err)
 	}

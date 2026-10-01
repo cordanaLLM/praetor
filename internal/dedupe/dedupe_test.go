@@ -12,6 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/cordanaLLM/praetor/internal/dedupe"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -543,7 +544,11 @@ func runGit(t *testing.T, dir string, args ...string) {
 
 func gitOutput(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	output, err := util.RunGit(t.Context(), dir, args...)
+	ctx, err := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	output, err := util.RunGit(ctx, dir, args...)
 	if err != nil {
 		t.Fatalf("git %v: %v: %s", args, err, output)
 	}

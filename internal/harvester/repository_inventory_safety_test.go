@@ -67,7 +67,7 @@ func TestInventoryDoesNotExecuteRepositoryCommands(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if out, err := runTestGit(repo, "config", key, script); err != nil {
+			if out, err := runTestGit(t, repo, "config", key, script); err != nil {
 				t.Fatalf("configure fixture: %v %s", err, out)
 			}
 			if err := os.WriteFile(filepath.Join(repo, "README"), []byte("changed\n"), 0o600); err != nil {
@@ -88,7 +88,7 @@ func TestInventoryReadsDirtyStateBesideUnselectedFilter(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "repo")
 	initTestRepository(t, repo)
 	for _, entry := range [][2]string{{"filter.lfs.clean", "git-lfs clean -- %f"}, {"filter.lfs.process", "git-lfs filter-process"}} {
-		if out, err := runTestGit(repo, "config", entry[0], entry[1]); err != nil {
+		if out, err := runTestGit(t, repo, "config", entry[0], entry[1]); err != nil {
 			t.Fatalf("configure fixture: %v %s", err, out)
 		}
 	}

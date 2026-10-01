@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 // signalProcessRun selects TestSignalProcessHelper in the re-executed test binary.
@@ -155,12 +157,7 @@ const stubScanner = "#!/bin/sh\nexit 0\n"
 func newHermeticGateRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	env := append(os.Environ(),
-		"GIT_CONFIG_GLOBAL="+filepath.Join(dir, "no-such-gitconfig"),
-		"GIT_CONFIG_SYSTEM="+filepath.Join(dir, "no-such-gitconfig"),
-		"GIT_AUTHOR_NAME=praetor-test", "GIT_AUTHOR_EMAIL=test@example.invalid",
-		"GIT_COMMITTER_NAME=praetor-test", "GIT_COMMITTER_EMAIL=test@example.invalid",
-	)
+	env := testsupport.HermeticGitEnv(t)
 	runGit := func(args ...string) {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = dir

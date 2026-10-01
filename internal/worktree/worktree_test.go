@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 func setupTestGitRepo(t *testing.T) string {
@@ -22,6 +24,7 @@ func setupTestGitRepo(t *testing.T) string {
 	runCmd := func(args ...string) {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = dir
+		cmd.Env = testsupport.HermeticGitEnv(t)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("git %s failed: %v, output: %s", strings.Join(args, " "), err, string(out))
@@ -48,6 +51,7 @@ func runInDir(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = dir
+	cmd.Env = testsupport.HermeticGitEnv(t)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git in %s failed (%s): %v, output: %s", dir, strings.Join(args, " "), err, string(out))

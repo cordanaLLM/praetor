@@ -1,0 +1,3 @@
+type: fixed
+title: "Run git commits in test fixtures under testsupport.HermeticGitEnv across all test packages"
+breaking: false

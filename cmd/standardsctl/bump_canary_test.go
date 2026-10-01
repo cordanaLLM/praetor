@@ -58,8 +58,12 @@ func TestBumpTrainCLIPropagatesFailedCanary(t *testing.T) {
 	dir := t.TempDir()
 	writeFixtureFile(t, dir, "package.json", `{"dependencies":{"fixture-dep":"2.0.0-rc.1"}}`)
 	writeFixtureFile(t, dir, ".gitignore", ".standards/\n.workingdir/\n")
-	for _, args := range [][]string{{"init", "-q"}, {"config", "user.name", "Canary Fixture"}, {"config", "user.email", "fixture@example.test"}, {"add", "."}, {"commit", "-q", "-s", "-m", "test: initialize canary fixture"}} {
-		if _, err := util.RunGit(t.Context(), dir, args...); err != nil {
+	ctx, err := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"init", "-q"}, {"add", "."}, {"commit", "-q", "-s", "-m", "test: initialize canary fixture"}} {
+		if _, err := util.RunGit(ctx, dir, args...); err != nil {
 			t.Fatal(err)
 		}
 	}

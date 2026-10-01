@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 type syncFixture struct {
@@ -87,6 +89,7 @@ func newSyncFixtureCustom(t *testing.T, ignoredBaseFiles map[string]string, owne
 	if err != nil {
 		t.Fatal(err)
 	}
+	g.env = testsupport.HermeticGitEnv(t)
 	dir := t.TempDir()
 	source, owner := filepath.Join(dir, "source"), filepath.Join(dir, "owner")
 	testGit(t, g, "", "init", "--template=", source)

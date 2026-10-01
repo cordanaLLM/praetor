@@ -185,11 +185,11 @@ func publicLoopFixtureWith(t *testing.T, blockEvidence bool, extraFiles ...map[s
 		t.Fatal(err)
 	}
 	fixture := t.TempDir()
-	ctx, err := publicCommandContext(context.Background(), t.TempDir())
+	ctx, err := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, args := range [][]string{{"init", "--template=", fixture}, {"-C", fixture, "config", "user.name", "Fixture"}, {"-C", fixture, "config", "user.email", "fixture@example.invalid"}} {
+	for _, args := range [][]string{{"init", "--template=", fixture}} {
 		if output, err := util.RunCommand(ctx, "", git, args...); err != nil {
 			t.Fatalf("fixture git: %v %s", err, output)
 		}
@@ -203,7 +203,7 @@ func publicLoopFixtureWith(t *testing.T, blockEvidence bool, extraFiles ...map[s
 	if _, err := util.RunCommand(ctx, fixture, git, "add", "."); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := util.RunCommand(ctx, fixture, git, "-c", "commit.gpgsign=false", "commit", "-m", "fixture"); err != nil {
+	if _, err := util.RunCommand(ctx, fixture, git, "commit", "-m", "fixture"); err != nil {
 		t.Fatal(err)
 	}
 	sha, err := util.RunCommand(ctx, fixture, git, "rev-parse", "HEAD")

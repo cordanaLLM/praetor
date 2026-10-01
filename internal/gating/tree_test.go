@@ -9,15 +9,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // treeGit runs a fixture git command in dir with a fixed identity and no signing.
 func treeGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	full := append([]string{"-c", "user.name=praetor-test", "-c", "user.email=test@example.invalid",
-		"-c", "commit.gpgsign=false"}, args...)
-	if out, err := util.RunGit(t.Context(), dir, full...); err != nil {
+	ctx, err := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := util.RunGit(ctx, dir, args...); err != nil {
 		t.Fatalf("git %v: %v (%s)", args, err, out)
 	}
 }
@@ -32,7 +35,11 @@ func commitFile(t *testing.T, dir, rel, content string) {
 
 func headOf(t *testing.T, dir string) string {
 	t.Helper()
-	head, err := util.RunGit(t.Context(), dir, "rev-parse", "HEAD")
+	ctx, err := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := util.RunGit(ctx, dir, "rev-parse", "HEAD")
 	if err != nil {
 		t.Fatalf("rev-parse HEAD: %v", err)
 	}

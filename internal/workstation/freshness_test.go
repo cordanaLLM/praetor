@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -25,6 +26,7 @@ const engineModule = "example.com/engine"
 type engineCheckout struct {
 	t    *testing.T
 	root string
+	ctx  context.Context
 }
 
 func newEngineCheckout(t *testing.T) *engineCheckout {
@@ -36,7 +38,11 @@ func newEngineCheckout(t *testing.T) *engineCheckout {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := &engineCheckout{t: t, root: root}
+	ctx, err := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &engineCheckout{t: t, root: root, ctx: ctx}
 	c.git("init", "-q")
 	c.write("go.mod", "module "+engineModule+"\n\ngo 1.27\n")
 	c.write("cmd/engine/main.go", "package main\n\nfunc main() {}\n")
@@ -46,7 +52,7 @@ func newEngineCheckout(t *testing.T) *engineCheckout {
 
 func (c *engineCheckout) git(args ...string) string {
 	c.t.Helper()
-	out, err := util.RunGit(context.Background(), c.root, args...)
+	out, err := util.RunGit(c.ctx, c.root, args...)
 	if err != nil {
 		c.t.Fatalf("git %v: %v", args, err)
 	}

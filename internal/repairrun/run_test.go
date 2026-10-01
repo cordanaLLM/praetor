@@ -13,6 +13,8 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/dogfood"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 const originalFixture = "package fixture\n\nfunc Value() int { return 1 }\n"
@@ -51,12 +53,16 @@ func newRunFixture(t *testing.T, cases int) *runFixture {
 	writeFixture(t, filepath.Join(source, "go.mod"), []byte("module fixture\n\ngo 1.27\n"))
 	writeFixture(t, filepath.Join(source, "internal/fixture/value.go"), []byte(originalFixture))
 	writeFixture(t, filepath.Join(source, "internal/fixture/value_test.go"), []byte("package fixture\nimport \"testing\"\nfunc TestValue(t *testing.T) { if Value()!=2 { t.Fatal(\"wrong value\") } }\n"))
-	for _, args := range [][]string{{"init", "--template=", source}, {"-C", source, "add", "."}, {"-C", source, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture"}} {
-		if output, err := runGit(t.Context(), "", maxLogBytes, args...); err != nil {
+	envCtx, err := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"init", "--template=", source}, {"-C", source, "add", "."}, {"-C", source, "commit", "-m", "fixture"}} {
+		if output, err := util.RunGit(envCtx, "", args...); err != nil {
 			t.Fatalf("fixture git: %s %v", output, err)
 		}
 	}
-	sha, err := runGit(t.Context(), source, 128, "rev-parse", "HEAD")
+	sha, err := util.RunGit(envCtx, source, "rev-parse", "HEAD")
 	if err != nil {
 		t.Fatal(err)
 	}

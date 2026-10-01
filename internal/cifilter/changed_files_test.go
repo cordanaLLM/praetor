@@ -13,13 +13,15 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/cifilter"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // gitSandbox isolates git from the host configuration and returns an empty directory.
 func gitSandbox(t *testing.T) string {
 	t.Helper()
-	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "gitconfig"))
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	t.Setenv("GIT_AUTHOR_NAME", "praetor-test")
 	t.Setenv("GIT_AUTHOR_EMAIL", "test@example.invalid")
@@ -41,7 +43,11 @@ func writeRepoFile(t *testing.T, dir, name, content string) {
 
 func runRepoGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	envCtx, err := util.WithCommandEnvironment(t.Context(), testsupport.HermeticGitEnv(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(envCtx, 30*time.Second)
 	defer cancel()
 	if out, err := util.RunGit(ctx, dir, args...); err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
