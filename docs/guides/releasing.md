@@ -444,10 +444,13 @@ stable tag exists (#389). A `sync-flavors.yml` run then fails and moves no flavo
 even `bleeding` on `refs/heads/main`, until `source_ref` is narrowed, for example to
 `refs/tags/v2.*`.
 
-A git read failure while resolving a source ref or current tag (such as a timeout, corrupt
-ref store, dubious ownership, permission error, or cancelled context) is likewise an error
-naming the ref or pattern and the cause (#671), and `plan` and `sync` exit non-zero without
-moving any tag; only a successful read that matches nothing, or only prereleases, stays pending.
+A git read failure while resolving a source ref or current tag (such as a timeout, an
+unreadable `packed-refs` file, dubious ownership, a permission error, or a cancelled
+context) is likewise an error naming the ref or pattern and the cause (#671), and `plan`
+and `sync` exit non-zero without moving any tag; only a successful read that matches
+nothing, or only prereleases, stays pending. git itself answers "no such commit" for a
+loose ref with unreadable contents or one naming a missing object, so such a ref still
+reads as pending.
 
 Moving tags are lightweight tags created with `git tag --no-sign`. A workstation with
 `tag.gpgSign=true` would otherwise turn them into signed annotated tags that need a

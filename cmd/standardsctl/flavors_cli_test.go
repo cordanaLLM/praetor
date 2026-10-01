@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/cordanaLLM/praetor/internal/flavors"
+	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
 func TestApplyFlavorTransitions_Negative_StrictRefusesUnresolvedSourceRef(t *testing.T) {
@@ -108,7 +109,7 @@ func newTagFixture(t *testing.T) tagFixture {
 	t.Helper()
 	dir := t.TempDir()
 	writeFixtureFile(t, dir, "README.md", "zero\n")
-	env := initGitFixture(t, dir)
+	env := initGitFixture(t, dir, filesRefStoreArgs(t)...)
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(dir, "no-such-gitconfig"))
 	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(dir, "no-such-gitconfig"))
 	return tagFixture{dir: dir, env: env}
@@ -122,6 +123,30 @@ func (f tagFixture) commitAndTag(t *testing.T, tag string) string {
 	commit := fixtureGit(t, f.dir, f.env, "rev-parse", "HEAD")
 	fixtureGit(t, f.dir, f.env, "tag", tag)
 	return commit
+}
+
+// filesRefStoreArgs returns the git init arguments that keep a fixture's refs in the files
+// backend, so corruptPackedRefs breaks its ref store whatever backend the installed git
+// defaults to: the reftable backend, the planned git 3.0 default, ignores packed-refs. A
+// git that rejects --ref-format predates the reftable backend (git 2.45) and keeps refs as
+// files already, so it gets no argument.
+func filesRefStoreArgs(t *testing.T) []string {
+	t.Helper()
+	if _, err := runFixtureGit(t, t.TempDir(), testsupport.HermeticGitEnv(t), "init", "-q", "--ref-format=files"); err != nil {
+		return nil
+	}
+	return []string{"--ref-format=files"}
+}
+
+// corruptPackedRefs writes garbage into the packed-refs file of the repository dir, which
+// git refuses to read (exit status 128) under the files ref backend, while the context
+// stays live.
+func corruptPackedRefs(t *testing.T, dir string, env []string) {
+	t.Helper()
+	if format, err := runFixtureGit(t, dir, env, "rev-parse", "--show-ref-format"); err == nil && strings.TrimSpace(format) == "reftable" {
+		t.Fatalf("fixture %s uses the reftable backend, which ignores packed-refs", dir)
+	}
+	writeFixtureFile(t, dir, filepath.Join(".git", "packed-refs"), "corrupt refs garbage\n")
 }
 
 func TestResolveFlavorRef_Positive_HighestStableTagWins(t *testing.T) {
@@ -224,7 +249,7 @@ func TestResolveFlavorRef_Negative_FailedGitReadReturnsErrorNamingPatternAndCaus
 func TestResolveFlavorRef_Negative_CorruptPackedRefsFailsConcreteAndTagReads(t *testing.T) {
 	f := newTagFixture(t)
 	// Corrupt packed-refs so git rev-parse fails on concrete refs and tags.
-	writeFixtureFile(t, f.dir, filepath.Join(".git", "packed-refs"), "corrupt refs garbage\n")
+	corruptPackedRefs(t, f.dir, f.env)
 
 	// Concrete ref read must return a wrapped error, not ok=false, err=nil (#671).
 	got, ok, err := resolveFlavorRef(context.Background(), f.dir, "refs/heads/main")
@@ -270,7 +295,7 @@ func newFlavorFixture(t *testing.T) flavorFixture {
 	f := flavorFixture{repo: filepath.Join(root, "repo"), remote: filepath.Join(root, "remote.git")}
 	f.config = writeFixtureFile(t, root, "flavors.yaml", flavorFixtureConfig)
 	writeFixtureFile(t, f.repo, "README.md", "one\n")
-	f.env = initGitFixture(t, f.repo)
+	f.env = initGitFixture(t, f.repo, filesRefStoreArgs(t)...)
 	// The code under test inherits the process environment; keep it off the developer's
 	// git configuration the way the fixture's own git calls are.
 	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(root, "no-such-gitconfig"))
@@ -409,7 +434,7 @@ func TestPrintFlavorPlan_HeadingIsRepositoryNeutral(t *testing.T) {
 func TestRunFlavors_Negative_FailedGitReadFailsPlanAndSync(t *testing.T) {
 	f := newFlavorFixture(t)
 	// Corrupt packed-refs so git for-each-ref fails with an error on pattern reads.
-	writeFixtureFile(t, f.repo, filepath.Join(".git", "packed-refs"), "corrupt refs garbage\n")
+	corruptPackedRefs(t, f.repo, f.env)
 
 	out, err := captureStdout(t, func() error {
 		return runFlavors([]string{"plan", "--config=" + f.config, "--dir=" + f.repo})
@@ -441,7 +466,7 @@ func TestRunFlavors_Negative_ConcreteOnlyWithCorruptPackedRefsFails(t *testing.T
 flavors:
   bleeding: {source_ref: "refs/heads/main"}
 `)
-	writeFixtureFile(t, f.repo, filepath.Join(".git", "packed-refs"), "corrupt refs garbage\n")
+	corruptPackedRefs(t, f.repo, f.env)
 
 	out, err := captureStdout(t, func() error {
 		return runFlavors([]string{"plan", "--config=" + concreteConfig, "--dir=" + f.repo})

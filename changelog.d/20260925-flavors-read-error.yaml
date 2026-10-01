@@ -1,4 +1,4 @@
 type: fixed
-title: "flavors plan and sync fail on git ref read errors instead of reporting pending. Migration: plan and sync now exit non-zero on a failed git ref read (e.g. non-git --dir, dubious-ownership container, timeout), and sync moves no flavor, bleeding included. Remedy the underlying git failure or point --dir at a valid git repository."
+title: Fail flavors plan and sync on a failed git ref read instead of reporting the flavor as pending
 issue: "#671"
 breaking: true

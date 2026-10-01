@@ -39,11 +39,13 @@ func resolveFlavorRef(ctx context.Context, dir, ref string) (string, bool, error
 }
 
 // resolveRefCommit resolves one concrete ref to the commit it points at. ok is false when
-// the ref names no commit (git rev-parse exits 1 with a live context). A failed git read
-// returns an error naming the ref and the cause (#671).
+// the ref is not a usable git argument or names no commit (git rev-parse exits 1 with a
+// live context). A failed git read returns an error naming the ref and the cause (#671).
+// git itself answers 1 for a loose ref with unreadable contents or one naming a missing
+// object, so such a ref reads as naming no commit.
 func resolveRefCommit(ctx context.Context, dir, ref string) (string, bool, error) {
 	if util.ValidateExecArg(ref) != nil {
-		return "", false, nil //nolint:nilerr // an invalid ref argument resolves to no commit
+		return "", false, nil //nolint:nilerr // an invalid ref argument is never passed to git; it names no commit
 	}
 	// "^{commit}" dereferences annotated tags, so a tag object and a branch head both
 	// yield a commit SHA that can be compared for equality.
@@ -142,7 +144,6 @@ func firstOutputLine(out string) string {
 }
 
 // flavorRefResolver resolves the refs of one flavors run and keeps the first resolution
-// flavorRefResolver resolves the refs of one flavors run and keeps the first resolution
 // error, so an overflowing tag scan or a failed git ref read fails the command instead of
 // reading as a pending flavor.
 type flavorRefResolver struct {
@@ -151,14 +152,15 @@ type flavorRefResolver struct {
 	err error
 }
 
-// resolve is a flavors.RefResolver. Calls after an error still answer; planFlavors reports
-// the recorded error before any plan line is printed.
+// resolve is a flavors.RefResolver. After the first error it asks git nothing more and
+// answers "no commit"; planFlavors reports the recorded error before any plan line is
+// printed.
 func (r *flavorRefResolver) resolve(ref string) (string, bool) {
 	if r.err != nil {
 		return "", false
 	}
 	commit, ok, err := resolveFlavorRef(r.ctx, r.dir, ref)
-	if err != nil && r.err == nil {
+	if err != nil {
 		r.err = err
 	}
 	return commit, ok
