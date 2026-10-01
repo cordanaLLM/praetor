@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"gopkg.in/yaml.v3"
 )
 
@@ -15,7 +16,7 @@ const (
 	cacheActionPrefix = "actions/cache@"
 	goCacheActionPath = "./.github/actions/go-cache"
 	goBuildCacheHint  = "go-build"
-	maxStepsPerJob    = 128
+	maxStepsPerJob    = ghworkflow.MaxStepsPerJob
 )
 
 // GoCacheFinding names one job that cannot keep a Go build cache of its own.

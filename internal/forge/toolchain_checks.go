@@ -14,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 	"github.com/cordanaLLM/praetor/internal/gomanifest"
 	"github.com/cordanaLLM/praetor/internal/semver"
 )
@@ -22,7 +23,7 @@ const (
 	goManifestName        = "go.mod"
 	templatesDirectory    = "templates"
 	actionsRelativePath   = ".github/actions"
-	workflowsRelativePath = ".github/workflows"
+	workflowsRelativePath = ghworkflow.Dir
 	dockerfilePrefix      = "Dockerfile"
 	actionManifestPrefix  = "action."
 	goVersionKey          = "go-version"
@@ -226,7 +227,7 @@ func auditToolchainPins(name string, data []byte, directive toolchainDirective) 
 // toolchainPinsIn reads every Go version one document names. A YAML document goes through
 // the parser and a container template is scanned as text, because a Dockerfile is not YAML.
 func toolchainPinsIn(name string, data []byte) ([]toolchainPin, error) {
-	if isYAMLDocument(name) {
+	if ghworkflow.IsYAMLName(name) {
 		return documentToolchainPins(name, data)
 	}
 	return imageToolchainPins(data), nil
@@ -623,7 +624,7 @@ func readActionFiles(ctx context.Context, repoPath string) ([]workflowFile, erro
 // isActionManifest selects the action manifest of one composite action directory.
 func isActionManifest(entry os.DirEntry) bool {
 	name := entry.Name()
-	return !entry.IsDir() && isYAMLDocument(name) && strings.HasPrefix(name, actionManifestPrefix)
+	return !entry.IsDir() && ghworkflow.IsYAMLName(name) && strings.HasPrefix(name, actionManifestPrefix)
 }
 
 // readTreeFiles reads the files of every immediate subdirectory of directory that keep

@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -112,12 +113,12 @@ func playbookTaskLists(root *yaml.Node) ([]*yaml.Node, bool) {
 	playbook := false
 	var lists []*yaml.Node
 	for _, play := range root.Content {
-		if mappingValue(play, "hosts") != nil || mappingValue(play, "import_playbook") != nil ||
-			mappingValue(play, "ansible.builtin.import_playbook") != nil {
+		if util.YAMLMappingValue(play, "hosts") != nil || util.YAMLMappingValue(play, "import_playbook") != nil ||
+			util.YAMLMappingValue(play, "ansible.builtin.import_playbook") != nil {
 			playbook = true
 		}
 		for _, key := range ansibleTaskLists {
-			if list := mappingValue(play, key); list != nil && list.Kind == yaml.SequenceNode {
+			if list := util.YAMLMappingValue(play, key); list != nil && list.Kind == yaml.SequenceNode {
 				lists = append(lists, list)
 			}
 		}
@@ -144,19 +145,6 @@ func allMappings(seq *yaml.Node) bool {
 		}
 	}
 	return true
-}
-
-// mappingValue returns the value of key in a mapping node, or nil.
-func mappingValue(node *yaml.Node, key string) *yaml.Node {
-	if node == nil || node.Kind != yaml.MappingNode {
-		return nil
-	}
-	for i := 0; i+1 < len(node.Content); i += 2 {
-		if node.Content[i].Value == key {
-			return node.Content[i+1]
-		}
-	}
-	return nil
 }
 
 // ansibleTasks flattens the task lists into every task and block they hold, following blocks
@@ -195,7 +183,7 @@ func nestedTaskLists(task *yaml.Node, depth int) []ansibleFrame {
 	}
 	var frames []ansibleFrame
 	for _, key := range ansibleBlockLists {
-		if nested := mappingValue(task, key); nested != nil && nested.Kind == yaml.SequenceNode {
+		if nested := util.YAMLMappingValue(task, key); nested != nil && nested.Kind == yaml.SequenceNode {
 			frames = append(frames, ansibleFrame{list: nested, depth: depth + 1})
 		}
 	}
@@ -211,13 +199,13 @@ func checkAnsibleTask(task *yaml.Node, rel string, rep *ScanReport) {
 // checkAnsibleFailure reports a task or block that discards its failure without registering the
 // result for a later check.
 func checkAnsibleFailure(task *yaml.Node, rel string, rep *ScanReport) {
-	if mappingValue(task, "register") != nil {
+	if util.YAMLMappingValue(task, "register") != nil {
 		return
 	}
-	if v := mappingValue(task, "ignore_errors"); v != nil && ansibleTruth(v) == "true" {
+	if v := util.YAMLMappingValue(task, "ignore_errors"); v != nil && ansibleTruth(v) == "true" {
 		recordViolation(rep, "HISS-07", rel, v.Line, "", "ignore_errors: true discards the task's failure; register the result and handle it, or state the failure condition in failed_when")
 	}
-	if v := mappingValue(task, "failed_when"); v != nil && ansibleTruth(v) == "false" {
+	if v := util.YAMLMappingValue(task, "failed_when"); v != nil && ansibleTruth(v) == "false" {
 		recordViolation(rep, "HISS-07", rel, v.Line, "", "failed_when: false discards the task's failure; state the condition that is a failure")
 	}
 }
@@ -233,7 +221,7 @@ func checkAnsibleCommand(task *yaml.Node, rel string, rep *ScanReport) {
 	if module == "shell" && pipesWithoutPipefail(task, args) {
 		recordViolation(rep, "HISS-07", rel, key.Line, "", "shell task pipes without set -o pipefail, so a failure on the left of the pipe is discarded")
 	}
-	if mappingValue(task, "changed_when") == nil && !createsOrRemoves(task, args) {
+	if util.YAMLMappingValue(task, "changed_when") == nil && !createsOrRemoves(task, args) {
 		recordViolation(rep, "HISS-08", rel, key.Line, "", module+" task reports a change on every run; set changed_when, creates or removes so the result follows the host's state")
 	}
 }
@@ -277,10 +265,10 @@ func ansibleModuleName(key string) string {
 // moduleArgument returns a named argument of a command module: from the module's own mapping,
 // from the task's args mapping, or "" when it has none.
 func moduleArgument(task, args *yaml.Node, name string) string {
-	if v := mappingValue(args, name); v != nil {
+	if v := util.YAMLMappingValue(args, name); v != nil {
 		return v.Value
 	}
-	if v := mappingValue(mappingValue(task, "args"), name); v != nil {
+	if v := util.YAMLMappingValue(util.YAMLMappingValue(task, "args"), name); v != nil {
 		return v.Value
 	}
 	return ""
