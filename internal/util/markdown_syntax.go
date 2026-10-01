@@ -119,18 +119,19 @@ func MarkdownShellFence(lang string) MarkdownShell {
 }
 
 // MarkdownShellCommand reports whether trimmed, one whitespace-trimmed line inside a fence
-// read as shell, starts a command, and returns that command without its session prompt.
-// Blank lines and "#" comments are never commands, and in a session only a line after the
-// "$ " prompt is one. A line that continues a command ending in a backslash is the caller's
-// to track: this reads one line alone.
+// read as shell, starts a command, and returns that command without a "$ " prompt. Blank
+// lines and "#" comments are never commands, and in a session only a line after the prompt
+// is one; a script line may carry the prompt too. A line that continues a command ending in
+// a backslash is the caller's to track: this reads one line alone.
 func MarkdownShellCommand(shell MarkdownShell, trimmed string) (string, bool) {
 	if shell == ShellNone || trimmed == "" || strings.HasPrefix(trimmed, "#") {
 		return "", false
 	}
-	if shell == ShellSession {
-		return strings.CutPrefix(trimmed, "$ ")
+	command, prompted := strings.CutPrefix(trimmed, "$ ")
+	if shell == ShellSession && !prompted {
+		return "", false
 	}
-	return trimmed, true
+	return command, true
 }
 
 // MarkdownFrontMatterEnd returns the index of the first line after a YAML front matter
