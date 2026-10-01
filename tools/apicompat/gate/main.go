@@ -508,7 +508,9 @@ type result struct {
 // compareModules verifies the checker, then builds and compares each compared module in
 // directory order. The first failure stops the comparison: the checker may have left another
 // revision checked out.
-func compareModules(ctx context.Context, repo repository, plan modulePlan, explicit string, stdout, stderr *printer) ([]result, error) {
+func compareModules(
+	ctx context.Context, repo repository, plan modulePlan, explicit string, stdout, stderr *printer,
+) (results []result, err error) {
 	if len(plan.compared) == 0 {
 		return nil, nil
 	}
@@ -516,10 +518,16 @@ func compareModules(ctx context.Context, repo repository, plan modulePlan, expli
 	if err != nil {
 		return nil, err
 	}
-	defer cleanup()
+	defer func() { err = errors.Join(err, cleanup()) }()
 	if err := verifyChecker(ctx, checker, stderr.w); err != nil {
 		return nil, err
 	}
+	return compareEach(ctx, repo, plan, checker, stdout, stderr)
+}
+
+// compareEach builds and compares each compared module in directory order, stopping at the
+// first failure.
+func compareEach(ctx context.Context, repo repository, plan modulePlan, checker string, stdout, stderr *printer) ([]result, error) {
 	results := make([]result, 0, len(plan.compared))
 	for index := 0; index < len(plan.compared) && index < maxModules; index++ {
 		target := plan.compared[index]
@@ -548,15 +556,14 @@ func compareModule(ctx context.Context, checker string, repo repository, moduleD
 // resolveChecker returns the checker binary: the -checker path, or checkerModule installed into
 // a temporary directory the returned cleanup removes. The install runs outside the repository,
 // so no go.mod, go.work or vendor directory of the repository changes what it builds.
-func resolveChecker(ctx context.Context, explicit string, stderr io.Writer) (string, func(), error) {
+func resolveChecker(ctx context.Context, explicit string, stderr io.Writer) (string, func() error, error) {
 	if explicit != "" {
-		return explicit, func() {}, nil
+		return explicit, func() error { return nil }, nil
 	}
 	dir, err := os.MkdirTemp("", "apicompat-checker-")
 	if err != nil {
 		return "", nil, fmt.Errorf("create the checker directory: %w", err)
 	}
-	cleanup := func() { _ = os.RemoveAll(dir) }
 	ctx, cancel := context.WithTimeout(ctx, installTimeout)
 	defer cancel()
 	install := exec.CommandContext(ctx, "go", "install", checkerModule)
@@ -564,26 +571,25 @@ func resolveChecker(ctx context.Context, explicit string, stderr io.Writer) (str
 	install.Env = append(os.Environ(), "GOBIN="+dir)
 	install.Stdout, install.Stderr = stderr, stderr
 	if err := install.Run(); err != nil {
-		cleanup()
-		return "", nil, fmt.Errorf("install %s: %w", checkerModule, err)
+		return "", nil, errors.Join(fmt.Errorf("install %s: %w", checkerModule, err), os.RemoveAll(dir))
 	}
 	name := checkerBinary
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}
-	return filepath.Join(dir, name), cleanup, nil
+	return filepath.Join(dir, name), func() error { return os.RemoveAll(dir) }, nil
 }
 
 // verifyChecker runs the checker on a canary repository whose second commit removes an
 // exported function, and fails unless it reports that change as incompatible. A checker built
 // against a golang.org/x/tools too old for the running toolchain's export data reads every
 // package as empty and passes every module; the canary turns that silent pass into a failure.
-func verifyChecker(ctx context.Context, checker string, stderr io.Writer) error {
+func verifyChecker(ctx context.Context, checker string, stderr io.Writer) (err error) {
 	dir, err := os.MkdirTemp("", "apicompat-canary-")
 	if err != nil {
 		return fmt.Errorf("create the canary repository: %w", err)
 	}
-	defer func() { _ = os.RemoveAll(dir) }()
+	defer func() { err = errors.Join(err, os.RemoveAll(dir)) }()
 	repo := filepath.Join(dir, "repo")
 	base, head, err := commitCanary(ctx, repo, filepath.Join(dir, "no-hooks"))
 	if err != nil {

@@ -161,6 +161,7 @@ func runAuditGates(ctx context.Context, manifest *config.Manifest, opts *auditOp
 		func() error {
 			return auditDocumentationGate(ctx, manifest, rootDir, opts.effective.Policy.BranchProtection)
 		},
+		func() error { return auditAPICompatibilityGate(ctx, manifest, rootDir) },
 		func() error { return auditAgentContextAndDevcontainer(ctx, manifest, opts) },
 		func() error { return auditAgentProjections(ctx, rootDir) },
 		func() error { return auditCavemanAgentSurfaces(ctx, rootDir) },

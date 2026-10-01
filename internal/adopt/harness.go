@@ -453,11 +453,11 @@ func (s *adoptSession) harnessFacts(ctx context.Context, clients []string) (harn
 	if err != nil {
 		return harnessFacts{}, fmt.Errorf("agent_clients in %s: %w", manifestFile, err)
 	}
-	docsGate, err := documentationEnabledForSession(s)
+	families, err := enabledManagedFamiliesForSession(s)
 	if err != nil {
-		return harnessFacts{}, fmt.Errorf("resolve the documentation gate for the harness: %w", err)
+		return harnessFacts{}, fmt.Errorf("resolve the managed gates for the harness: %w", err)
 	}
-	workflows, err := s.scaffoldedWorkflows(ctx, docsGate)
+	workflows, err := s.scaffoldedWorkflows(ctx, families)
 	if err != nil {
 		return harnessFacts{}, err
 	}

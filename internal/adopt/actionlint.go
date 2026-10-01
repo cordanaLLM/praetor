@@ -124,15 +124,16 @@ func reconcileActionlintLabels(ctx context.Context, s *adoptSession) error {
 }
 
 // actionlintManagedLabels returns the runner labels actionlint does not know that the workflows
-// this run leaves as adoption's rendering run on (adoptedWorkflowFiles): the documentation gate
-// while docs:seo-portal is enabled, and the detected flavor's CI workflows unless the flavor step
-// is declined. The step runs before both steps write them, so it reads what they will write.
+// this run leaves as adoption's rendering run on (adoptedWorkflowFiles): the hosted workflow of
+// every managed asset family the active facets enable, and the detected flavor's CI workflows
+// unless the flavor step is declined. The step runs before the steps that write them, so it
+// reads what they will write.
 func actionlintManagedLabels(ctx context.Context, s *adoptSession) ([]string, error) {
-	docsGate, err := documentationEnabledForSession(s)
+	families, err := enabledManagedFamiliesForSession(s)
 	if err != nil {
-		return nil, fmt.Errorf("resolve the documentation gate for actionlint: %w", err)
+		return nil, fmt.Errorf("resolve the managed gates for actionlint: %w", err)
 	}
-	files, err := s.adoptedWorkflowFiles(ctx, docsGate)
+	files, err := s.adoptedWorkflowFiles(ctx, families)
 	if err != nil {
 		return nil, err
 	}

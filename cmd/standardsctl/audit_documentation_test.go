@@ -97,7 +97,7 @@ func TestAuditDocumentationGateNegative(t *testing.T) {
 			writeFixtureFile(t, root, ".gitignore", "/.workingdir/\n")
 		},
 		"stale formatter inventory": func(t *testing.T, root string) {
-			writeFixtureFile(t, root, adopt.FormatterIgnoreFile, adopt.ManagedFormatterIgnoreBlock(false))
+			writeFixtureFile(t, root, adopt.FormatterIgnoreFile, adopt.ManagedFormatterIgnoreBlock(nil))
 		},
 		"missing required formatter inventory": func(t *testing.T, root string) {
 			writeFixtureFile(t, root, ".prettierrc", "{}\n")
@@ -235,7 +235,7 @@ func TestAuditDocumentationGateDisabledRejectsStaleSurfaces(t *testing.T) {
 					adopt.DocumentationStatusContext+`"}]}}]}`)
 		},
 		"formatter inventory": func(t *testing.T, root string) {
-			writeFixtureFile(t, root, adopt.FormatterIgnoreFile, adopt.ManagedFormatterIgnoreBlock(true))
+			writeFixtureFile(t, root, adopt.FormatterIgnoreFile, adopt.ManagedFormatterIgnoreBlock(adopt.DocumentationFamilies()))
 		},
 		"missing formatter inventory": func(t *testing.T, root string) {
 			writeFixtureFile(t, root, ".prettierrc", "{}\n")
@@ -297,13 +297,13 @@ func operatorOwnedDocumentationSteps() []operatorOwnedDocumentationStep {
 		}},
 		{name: "enabled formatter-ignore", step: "formatter-ignore", enabled: true, stale: func(t *testing.T, root string) {
 			writeFixtureFile(t, root, ".prettierrc", "{}\n")
-			writeFixtureFile(t, root, adopt.FormatterIgnoreFile, adopt.ManagedFormatterIgnoreBlock(false))
+			writeFixtureFile(t, root, adopt.FormatterIgnoreFile, adopt.ManagedFormatterIgnoreBlock(nil))
 		}},
 		{name: "disabled makefile", step: "makefile", stale: func(t *testing.T, root string) {
 			writeFixtureFile(t, root, "Makefile", adopt.DocumentationMakefileBlock())
 		}},
 		{name: "disabled formatter-ignore", step: "formatter-ignore", stale: func(t *testing.T, root string) {
-			writeFixtureFile(t, root, adopt.FormatterIgnoreFile, adopt.ManagedFormatterIgnoreBlock(true))
+			writeFixtureFile(t, root, adopt.FormatterIgnoreFile, adopt.ManagedFormatterIgnoreBlock(adopt.DocumentationFamilies()))
 		}},
 	}
 }

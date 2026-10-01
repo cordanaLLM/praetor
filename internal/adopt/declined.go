@@ -25,11 +25,14 @@ type namedStep struct {
 // the baseline is what every later audit compares against. The documentation gate already
 // has one off switch, the docs:seo-portal facet, whose removal converges every surface it
 // owns; a decline would skip only the assets and leave verify-all calling a missing runner.
+// The API compatibility gate's off switch is likewise the api:public-contract facet: audit
+// locks its files while the facet is declared, so a decline would leave audit failing.
 var mandatoryArtifacts = map[string]string{
-	"manifest":           "the manifest is what records the declaration itself",
-	"lockfile":           "the lockfile is what pins the policies the manifest names",
-	"baseline":           "every later audit compares against the baseline",
-	"documentation-gate": "remove the docs:seo-portal facet instead; it converges every documentation surface",
+	"manifest":               "the manifest is what records the declaration itself",
+	"lockfile":               "the lockfile is what pins the policies the manifest names",
+	"baseline":               "every later audit compares against the baseline",
+	"documentation-gate":     "remove the docs:seo-portal facet instead; it converges every documentation surface",
+	"api-compatibility-gate": "remove the api:public-contract facet instead; it removes the gate and its workflow",
 }
 
 // declinedArtifacts resolves the manifest's decline list into a lookup, rejecting names that

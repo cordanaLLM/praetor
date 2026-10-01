@@ -13,7 +13,7 @@ import (
 // is free to rewrite the one that was left out (#116).
 func TestManagedArtifactsNameEveryComparedFile(t *testing.T) {
 	got := make(map[string]bool)
-	for _, path := range managedArtifacts(true) {
+	for _, path := range managedArtifacts(DocumentationFamilies()) {
 		got[path] = true
 	}
 	for _, required := range []string{
@@ -37,7 +37,7 @@ func TestManagedArtifactsNameEveryComparedFile(t *testing.T) {
 
 // Boundary: the set is deterministic, so the emitted block does not churn between runs.
 func TestManagedArtifactsAreSortedAndUnique(t *testing.T) {
-	paths := managedArtifacts(true)
+	paths := managedArtifacts(DocumentationFamilies())
 	seen := make(map[string]bool, len(paths))
 	for i, path := range paths {
 		if seen[path] {
@@ -51,11 +51,11 @@ func TestManagedArtifactsAreSortedAndUnique(t *testing.T) {
 }
 
 func TestManagedArtifactsDocumentationFacetConverges(t *testing.T) {
-	enabled, err := mergeManagedIgnore("operator-output/\n", true)
+	enabled, err := mergeManagedIgnore("operator-output/\n", DocumentationFamilies())
 	if err != nil {
 		t.Fatal(err)
 	}
-	disabled, err := mergeManagedIgnore(enabled, false)
+	disabled, err := mergeManagedIgnore(enabled, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestManagedArtifactsDocumentationFacetConverges(t *testing.T) {
 			t.Fatalf("disabled formatter inventory retained %s:\n%s", path, disabled)
 		}
 	}
-	reenabled, err := mergeManagedIgnore(disabled, true)
+	reenabled, err := mergeManagedIgnore(disabled, DocumentationFamilies())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,14 +80,14 @@ func TestManagedArtifactsDocumentationFacetConverges(t *testing.T) {
 
 // Positive: an empty file gets the block and nothing else.
 func TestMergeManagedIgnoreCreatesTheBlock(t *testing.T) {
-	merged, err := mergeManagedIgnore("", true)
+	merged, err := mergeManagedIgnore("", DocumentationFamilies())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(merged, managedIgnoreBegin) || !strings.Contains(merged, managedIgnoreEnd) {
 		t.Fatalf("the block must be delimited, got:\n%s", merged)
 	}
-	for _, path := range managedArtifacts(true) {
+	for _, path := range managedArtifacts(DocumentationFamilies()) {
 		if !strings.Contains(merged, path) {
 			t.Errorf("merged content must name %q", path)
 		}
@@ -97,7 +97,7 @@ func TestMergeManagedIgnoreCreatesTheBlock(t *testing.T) {
 // Positive: the adopter's own entries survive, which is the whole reason for the markers.
 func TestMergeManagedIgnorePreservesAdopterEntries(t *testing.T) {
 	existing := "node_modules/\ndist/\n# my own note\ncoverage/\n"
-	merged, err := mergeManagedIgnore(existing, true)
+	merged, err := mergeManagedIgnore(existing, DocumentationFamilies())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,14 +109,14 @@ func TestMergeManagedIgnorePreservesAdopterEntries(t *testing.T) {
 }
 
 func TestMergeManagedIgnorePreservesCRLF(t *testing.T) {
-	merged, err := mergeManagedIgnore("node_modules/\r\ndist/\r\n", true)
+	merged, err := mergeManagedIgnore("node_modules/\r\ndist/\r\n", DocumentationFamilies())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Count(merged, "\n") != strings.Count(merged, "\r\n") {
 		t.Fatalf("formatter ignore gained mixed line endings: %q", merged)
 	}
-	second, err := mergeManagedIgnore(merged, true)
+	second, err := mergeManagedIgnore(merged, DocumentationFamilies())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestMergeManagedIgnoreRejectsInconsistentLineEndings(t *testing.T) {
 		"lone CR": "operator/\rcache/",
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := mergeManagedIgnore(input, true); err == nil {
+			if _, err := mergeManagedIgnore(input, DocumentationFamilies()); err == nil {
 				t.Fatal("inconsistent .prettierignore line endings accepted")
 			}
 		})
@@ -141,11 +141,11 @@ func TestMergeManagedIgnoreRejectsInconsistentLineEndings(t *testing.T) {
 // The property that matters: re-running must converge, not append. A second block would grow the
 // file on every adoption and leave the adopter unable to tell which one is authoritative.
 func TestMergeManagedIgnoreIsIdempotent(t *testing.T) {
-	first, err := mergeManagedIgnore("node_modules/\n", true)
+	first, err := mergeManagedIgnore("node_modules/\n", DocumentationFamilies())
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := mergeManagedIgnore(first, true)
+	second, err := mergeManagedIgnore(first, DocumentationFamilies())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestMergeManagedIgnoreIsIdempotent(t *testing.T) {
 // from the managed set stops being ignored.
 func TestMergeManagedIgnoreReplacesAStaleBlock(t *testing.T) {
 	stale := "keep-me/\n" + managedIgnoreBegin + "\nold/removed/artifact.json\n" + managedIgnoreEnd + "\n"
-	merged, err := mergeManagedIgnore(stale, true)
+	merged, err := mergeManagedIgnore(stale, DocumentationFamilies())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestMergeManagedIgnoreReplacesAStaleBlock(t *testing.T) {
 // puts content on both sides of it.
 func TestMergeManagedIgnorePreservesEntriesOnBothSidesOfTheBlock(t *testing.T) {
 	existing := "before/\n" + managedIgnoreBegin + "\n.standards.lock\n" + managedIgnoreEnd + "\nafter/\nalso-after/\n"
-	merged, err := mergeManagedIgnore(existing, true)
+	merged, err := mergeManagedIgnore(existing, DocumentationFamilies())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestMergeManagedIgnorePreservesEntriesOnBothSidesOfTheBlock(t *testing.T) {
 // content, so adoption must refuse the file unchanged.
 func TestMergeManagedIgnoreRejectsAnUnterminatedBlock(t *testing.T) {
 	broken := "mine/\n" + managedIgnoreBegin + "\n.standards.lock\n"
-	if _, err := mergeManagedIgnore(broken, true); err == nil {
+	if _, err := mergeManagedIgnore(broken, DocumentationFamilies()); err == nil {
 		t.Fatal("an unterminated managed block must be rejected")
 	}
 }
@@ -214,7 +214,7 @@ func TestMergeManagedIgnoreRejectsAmbiguousMarkers(t *testing.T) {
 	}
 	for name, existing := range tests {
 		t.Run(name, func(t *testing.T) {
-			if _, err := mergeManagedIgnore(existing, true); err == nil {
+			if _, err := mergeManagedIgnore(existing, DocumentationFamilies()); err == nil {
 				t.Fatalf("ambiguous formatter markers must be rejected:\n%s", existing)
 			}
 		})
@@ -224,7 +224,7 @@ func TestMergeManagedIgnoreRejectsAmbiguousMarkers(t *testing.T) {
 // Negative: an unbounded ignore file is refused rather than read entirely (HISS-02).
 func TestMergeManagedIgnoreRefusesAnOversizedFile(t *testing.T) {
 	flood := strings.Repeat("entry/\n", maxIgnoreLines+10)
-	if _, err := mergeManagedIgnore(flood, true); err == nil {
+	if _, err := mergeManagedIgnore(flood, DocumentationFamilies()); err == nil {
 		t.Error("an ignore file beyond the bound must be refused")
 	}
 }
@@ -235,7 +235,7 @@ func historicalFormatterBlock() string {
 	return managedIgnoreBegin + "\n" +
 		"# praetorctl audit compares these byte for byte. A formatter that rewrites\n" +
 		"# them fails the gate with an error that reads like a hand edit.\n" +
-		strings.Join(managedArtifacts(false), "\n") + "\n" + managedIgnoreEnd + "\n"
+		strings.Join(managedArtifacts(nil), "\n") + "\n" + managedIgnoreEnd + "\n"
 }
 
 // Positive: an earlier adopter's .prettierignore differs from the current rendering only in the
@@ -246,14 +246,14 @@ func TestVerifyManagedFormatterIgnoreAcceptsHistoricalHeader(t *testing.T) {
 		"operator rules kept": "node_modules/\ndist/\n\n" + historicalFormatterBlock(),
 	} {
 		t.Run(name, func(t *testing.T) {
-			if err := VerifyManagedFormatterIgnore(existing, false); err != nil {
+			if err := VerifyManagedFormatterIgnore(existing, nil); err != nil {
 				t.Fatalf("historical formatter inventory rejected as stale: %v", err)
 			}
-			merged, err := mergeManagedIgnore(existing, false)
+			merged, err := mergeManagedIgnore(existing, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if strings.Contains(merged, "compares these byte for byte") || VerifyManagedFormatterIgnore(merged, false) != nil {
+			if strings.Contains(merged, "compares these byte for byte") || VerifyManagedFormatterIgnore(merged, nil) != nil {
 				t.Fatalf("adoption did not converge the historical header to the current one:\n%s", merged)
 			}
 		})
@@ -263,11 +263,11 @@ func TestVerifyManagedFormatterIgnoreAcceptsHistoricalHeader(t *testing.T) {
 // Negative: the historical comment excuses nothing else. A missing path, and the documentation
 // facet whose paths the historical inventory never named, stay stale.
 func TestVerifyManagedFormatterIgnoreHistoricalHeaderKeepsInventoryStrict(t *testing.T) {
-	if err := VerifyManagedFormatterIgnore(historicalFormatterBlock(), true); err == nil {
+	if err := VerifyManagedFormatterIgnore(historicalFormatterBlock(), DocumentationFamilies()); err == nil {
 		t.Fatal("historical inventory without documentation paths passed an enabled facet")
 	}
 	missing := strings.Replace(historicalFormatterBlock(), manifestFile+"\n", "", 1)
-	if err := VerifyManagedFormatterIgnore(missing, false); err == nil {
+	if err := VerifyManagedFormatterIgnore(missing, nil); err == nil {
 		t.Fatal("historical header excused a missing managed path")
 	}
 }
@@ -280,7 +280,7 @@ func TestVerifyManagedFormatterIgnoreHistoricalHeaderBoundary(t *testing.T) {
 		"trailing text": strings.Replace(historicalFormatterBlock(), "hand edit.\n", "hand edit. \n", 1),
 	} {
 		t.Run(name, func(t *testing.T) {
-			if err := VerifyManagedFormatterIgnore(existing, false); err == nil {
+			if err := VerifyManagedFormatterIgnore(existing, nil); err == nil {
 				t.Fatalf("non-historical header accepted:\n%s", existing)
 			}
 		})

@@ -45,10 +45,18 @@ type closureCapture struct {
 // its non-test files, and their imports are followed whatever their tags, so the closure can
 // only be larger than a single platform's build, never smaller. The walk is an iterative
 // worklist (HISS-01) and never uses the go command, so capture needs no Go toolchain.
+//
+// A family asset is never read as package source, even a .go file: the API compatibility
+// gate's program is an asset whose build constraint keeps it out of every package, and the
+// closure captures it, as any asset, when its family's embedding source is reached.
 func captureBootstrapClosure(ctx context.Context, root string, inventory []string) ([]bootstrapSourceFile, error) {
 	capture := &closureCapture{ctx: ctx, root: root, packages: map[string][]string{}, queued: map[string]bool{}}
 	for _, name := range inventory {
-		if util.IsGoNonTestSource(name) {
+		asset, err := isBootstrapAsset(name)
+		if err != nil {
+			return nil, err
+		}
+		if util.IsGoNonTestSource(name) && !asset {
 			dir := path.Dir(name)
 			capture.packages[dir] = append(capture.packages[dir], name)
 			continue
