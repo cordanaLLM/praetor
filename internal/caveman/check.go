@@ -209,8 +209,8 @@ func (f *findings) sorted() []Finding {
 }
 
 // Check lints agent-facing text under Options.Kind. Fenced code, inline code, link targets,
-// URLs, headings, HTML comments, ledger field rows, hook protocol lines, evidence pointers
-// and caveman:off regions never trip a prose rule. Markdown table delimiters stay
+// URLs, headings, HTML comments, ledger field rows, hook protocol lines, evidence pointers,
+// YAML front matter and caveman:off regions never trip a prose rule. Markdown table delimiters stay
 // structured while their cells are prose. Findings are sorted by line, rule and excerpt,
 // so equal input yields an equal report.
 func Check(text string, opts Options) Report {
