@@ -353,10 +353,12 @@ the commit that lands. The tag is therefore made after the merge, on `main`, and
 
    `praetorctl release` (`internal/release/release.go`) checks the version is SemVer and
    the tree is clean, runs `make verify-all`, then renders `changelog.d/` into a new
-   `CHANGELOG.md` section and removes the rendered fragments. With no fragment to render,
-   because `changelog.d/` is missing or empty, it fails with `no changelog fragments to
-   render` and leaves `CHANGELOG.md` untouched. Commit the result and merge it through a
-   pull request.
+   `CHANGELOG.md` section and removes the rendered fragments. It leaves an empty
+   `changelog.d/.gitkeep` so the directory stays in version control
+   ([Text register](text-register.md#repository-conventions)). With no fragment to
+   render, because `changelog.d/` is missing or holds no fragment, it fails with
+   `no changelog fragments to render` and leaves `CHANGELOG.md` untouched. Commit the
+   result, `.gitkeep` included, and merge it through a pull request.
 
 2. Tag the merged commit and push only the tag:
 

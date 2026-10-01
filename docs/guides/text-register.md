@@ -110,8 +110,11 @@ The social clause comes from, in order:
 1. `register.conventions.social` in `.standards.yaml`, as written. An empty value (`""`)
    states that the repository has none, whatever else the tree holds.
 2. Otherwise, `changelog fragment unchanged` (`config.FragmentConvention`) when the
-   repository keeps a `changelog.d/` directory (`changelog.FragmentDirPresent`). A file or
-   a symbolic link of that name does not count.
+   repository keeps a `changelog.d/` directory that holds at least one regular file: a
+   fragment, the `.gitkeep` placeholder or any other file (`changelog.FragmentDirPresent`).
+   An empty directory does not count, because git keeps no empty directory and a fresh
+   clone of the same commit would not have it. A file or a symbolic link named
+   `changelog.d` does not count either.
 3. Otherwise, nothing: the row ends after the universal form.
 
 `docs` and `internal` take a clause from `conventions` only. Praetor states its own social
@@ -120,11 +123,16 @@ receipt fence and the fragment lane. Prompt directives (`config.RegisterDirectiv
 `dogfood repairs`, the repair runner, notebooks and the Paperclip harness) carry the
 universal form only.
 
-Removing a `changelog.d/` directory changes the block, so `compile-context --verify`
-reports drift until `praetorctl compile-context` runs again. Tests:
-`internal/config/register_conventions_test.go`,
-`internal/compiler/register_conventions_test.go`,
-`internal/changelog/fragment_dir_test.go` and
+A release render (`praetorctl release`, `changelog.RenderReleaseContext`) removes the
+rendered fragments and leaves an empty `changelog.d/.gitkeep` (`changelog.FragmentPlaceholder`)
+in their place, and leaves an existing one unchanged. Commit it with the rendered
+`CHANGELOG.md`: the directory then survives the release, and the checkout and every fresh
+clone render the same block. Removing every file from `changelog.d/` changes the block, so
+`compile-context --verify` reports drift until `praetorctl compile-context` runs again.
+Tests: `internal/config/register_conventions_test.go`,
+`internal/compiler/register_conventions_test.go` (`TestRegisterBlockAgreesWithFreshClone`
+covers the release render and the clone), `internal/changelog/fragment_dir_test.go`,
+`internal/changelog/placeholder_test.go` and
 `TestAdoptRegisterBlockFollowsFragmentDirectory` in
 `internal/adopt/harness_register_test.go`.
 

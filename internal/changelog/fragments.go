@@ -47,15 +47,30 @@ func openFragments(ctx context.Context, repoPath string) (*os.Root, bool, error)
 }
 
 // FragmentDirPresent reports whether repoPath keeps a changelog fragment directory: FragmentDir
-// exists there as a directory. A file or a symbolic link of that name is no fragment directory,
-// since the fragment reader refuses to open it (openFragments). The text register renders the
-// changelog fragment convention only for a repository that keeps one (config.FragmentConvention).
-func FragmentDirPresent(ctx context.Context, repoPath string) (bool, error) {
+// exists there as a directory and holds at least one regular file, a fragment or a placeholder
+// such as FragmentPlaceholder. An empty directory does not count: git keeps no empty directory,
+// so a fresh clone of the same commit has none, and the answer must be the same in both trees.
+// A file or a symbolic link of that name is no fragment directory, since the fragment reader
+// refuses to open it (openFragments). The text register renders the changelog fragment
+// convention only for a repository that keeps one (config.FragmentConvention).
+func FragmentDirPresent(ctx context.Context, repoPath string) (present bool, err error) {
 	info, absent, err := statFragmentDir(ctx, repoPath)
 	if err != nil {
 		return false, fmt.Errorf("inspect %s: %w", FragmentDir, err)
 	}
-	return !absent && info.IsDir(), nil
+	if absent || !info.IsDir() {
+		return false, nil
+	}
+	root, err := contextopt.OpenDirectory(ctx, filepath.Join(repoPath, FragmentDir))
+	if err != nil {
+		return false, fmt.Errorf("inspect %s: %w", FragmentDir, err)
+	}
+	defer func() { err = errors.Join(err, root.Close()) }()
+	entries, err := fragmentEntries(root)
+	if err != nil {
+		return false, fmt.Errorf("inspect %s: %w", FragmentDir, err)
+	}
+	return slices.ContainsFunc(entries, func(entry os.DirEntry) bool { return entry.Type().IsRegular() }), nil
 }
 
 // statFragmentDir is the one existence check of FragmentDir below repoPath, shared by the
