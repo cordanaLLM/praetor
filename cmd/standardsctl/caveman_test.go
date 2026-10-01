@@ -512,3 +512,35 @@ func TestCavemanCheckJudgesHarnessTailLikeTheGate(t *testing.T) {
 		t.Fatalf("unmarked file judged by section: err=%v\n%s", err, out)
 	}
 }
+
+// TestCavemanCheckFreeStandingQuote pins #695: a file containing a free-standing quote
+// reports normally (no panic) under --kind=context and --kind=message, including boundary
+// two-rune wrapper pairs.
+func TestCavemanCheckFreeStandingQuote(t *testing.T) {
+	dir := t.TempDir()
+	quoteFile := writeFixtureFile(t, dir, "quote.md", "# Title\n\nQuote ' alone.\n")
+	for _, kind := range []string{"context", "message"} {
+		t.Run("quote_"+kind, func(t *testing.T) {
+			out, err := runCavemanCLI(t, "", "check", "--kind="+kind, quoteFile)
+			if err != nil || !strings.Contains(out, ": PASS") {
+				t.Fatalf("free-standing quote under --kind=%s must pass: err=%v\n%s", kind, err, out)
+			}
+		})
+	}
+
+	failFile := writeFixtureFile(t, dir, "fail.md", "# Title\n\nQuote ' we are alone.\n")
+	out, err := runCavemanCLI(t, "", "check", "--kind=message", failFile)
+	if err == nil || !strings.Contains(out, ": FAIL") || !strings.Contains(out, `C9 grammar: pronoun "we"`) {
+		t.Fatalf("failing file with quote under --kind=message must report findings normally: err=%v\n%s", err, out)
+	}
+
+	emptyPairFile := writeFixtureFile(t, dir, "emptypair.md", "# Title\n\nQuote '' alone.\n")
+	for _, kind := range []string{"context", "message"} {
+		t.Run("empty_pair_"+kind, func(t *testing.T) {
+			out, err := runCavemanCLI(t, "", "check", "--kind="+kind, emptyPairFile)
+			if err != nil || !strings.Contains(out, ": PASS") {
+				t.Fatalf("empty pair under --kind=%s must pass: err=%v\n%s", kind, err, out)
+			}
+		})
+	}
+}

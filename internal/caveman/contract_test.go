@@ -786,3 +786,72 @@ func TestRuntimeProfileProtectsEnumerationMarkers(t *testing.T) {
 		}
 	})
 }
+
+// TestTrimLiteralWrapper pins #695: a one-rune wrapper character must return unchanged without
+// panicking, two-rune pairs strip to empty inner text, and wrapped tokens strip normally.
+func TestTrimLiteralWrapper(t *testing.T) {
+	oneRuneCases := []string{
+		"'", `"`, "`",
+		"(", ")",
+		"[", "]",
+		"{", "}",
+		"<", ">",
+		"‘", "’",
+		"“", "”",
+		".", "!", "?", ",", ";",
+	}
+	for _, tc := range oneRuneCases {
+		t.Run("one_rune_"+tc, func(t *testing.T) {
+			if got := trimLiteralWrapper(tc); got != tc {
+				t.Fatalf("trimLiteralWrapper(%q) = %q, want %q", tc, got, tc)
+			}
+		})
+	}
+
+	pairCases := map[string]struct {
+		input string
+		want  string
+	}{
+		"parens":       {"()", ""},
+		"brackets":     {"[]", ""},
+		"braces":       {"{}", ""},
+		"angles":       {"<>", ""},
+		"single_quote": {"''", ""},
+		"double_quote": {`""`, ""},
+		"curly_single": {"‘’", ""},
+		"curly_double": {"“”", ""},
+	}
+	for name, tc := range pairCases {
+		t.Run("pair_boundary_"+name, func(t *testing.T) {
+			if got := trimLiteralWrapper(tc.input); got != tc.want {
+				t.Fatalf("trimLiteralWrapper(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+
+	generalCases := map[string]struct {
+		input string
+		want  string
+	}{
+		"empty":                {"", ""},
+		"unwrapped":            {"hello", "hello"},
+		"wrapped_parens":       {"(hello)", "hello"},
+		"wrapped_brackets":     {"[hello]", "hello"},
+		"wrapped_braces":       {"{hello}", "hello"},
+		"wrapped_angles":       {"<hello>", "hello"},
+		"wrapped_single":       {"'hello'", "hello"},
+		"wrapped_double":       {`"hello"`, "hello"},
+		"wrapped_curly_single": {"‘hello’", "hello"},
+		"wrapped_curly_double": {"“hello”", "hello"},
+		"trailing_dot":         {"hello.", "hello"},
+		"trailing_comma":       {"hello,", "hello"},
+		"leading_comma":        {",hello", "hello"},
+	}
+	for name, tc := range generalCases {
+		t.Run("general_"+name, func(t *testing.T) {
+			if got := trimLiteralWrapper(tc.input); got != tc.want {
+				t.Fatalf("trimLiteralWrapper(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}

@@ -1,0 +1,4 @@
+type: fixed
+title: Prevent runtime slice bounds panic in caveman trimLiteralWrapper on lone quotes
+issue: "#695"
+breaking: false

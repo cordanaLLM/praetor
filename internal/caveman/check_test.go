@@ -390,3 +390,74 @@ func TestCheckSentenceClosers(t *testing.T) {
 		t.Fatal("a period glued to the next word ended the sentence")
 	}
 }
+
+// TestCheckFreeStandingQuote pins #695: a text containing a free-standing quote reports normally
+// (no panic) under KindContext and KindMessage, and two-rune pairs strip without panic.
+func TestCheckFreeStandingQuote(t *testing.T) {
+	for name, tc := range map[string]struct {
+		text string
+		kind MessageKind
+		pass bool
+	}{
+		"context free-standing quote pass": {
+			text: "# Title\n\nQuote ' alone.\n",
+			kind: KindContext,
+			pass: true,
+		},
+		"message free-standing quote pass": {
+			text: "Quote ' alone.\n",
+			kind: KindMessage,
+			pass: true,
+		},
+		"context free-standing double quote pass": {
+			text: "# Title\n\nQuote \" alone.\n",
+			kind: KindContext,
+			pass: true,
+		},
+		"message free-standing double quote pass": {
+			text: "Quote \" alone.\n",
+			kind: KindMessage,
+			pass: true,
+		},
+		"context empty pair boundary": {
+			text: "# Title\n\nQuote '' alone.\n",
+			kind: KindContext,
+			pass: true,
+		},
+		"message empty pair boundary": {
+			text: "Quote '' alone.\n",
+			kind: KindMessage,
+			pass: true,
+		},
+		"context empty parens boundary": {
+			text: "# Title\n\nQuote () alone.\n",
+			kind: KindContext,
+			pass: true,
+		},
+		"message empty parens boundary": {
+			text: "Quote () alone.\n",
+			kind: KindMessage,
+			pass: true,
+		},
+		"context quote with finding": {
+			text: "# Title\n\nQuote ' alone with please.\n",
+			kind: KindContext,
+			pass: false,
+		},
+		"message quote with finding": {
+			text: "Quote ' we are alone.\n",
+			kind: KindMessage,
+			pass: false,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			report := Check(tc.text, Options{Kind: tc.kind})
+			if tc.pass && !report.Passed() {
+				t.Fatalf("expected pass, got findings: %+v", report.Findings)
+			}
+			if !tc.pass && report.Passed() {
+				t.Fatalf("expected findings, got pass")
+			}
+		})
+	}
+}
