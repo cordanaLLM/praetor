@@ -205,7 +205,7 @@ func describeGeneratedResult(result generated.Result) string {
 		paths []string
 	}{{"edited", result.Edited}, {"sources changed", result.SourcesChanged}, {"differs from its rendering", result.Changed}} {
 		if len(field.paths) > 0 {
-			parts = append(parts, fmt.Sprintf("%s %s", field.label, strings.Join(field.paths, ", ")))
+			parts = append(parts, fmt.Sprintf("%s %s", field.label, generated.NamedPaths(field.paths)))
 		}
 	}
 	return strings.Join(parts, "; ")

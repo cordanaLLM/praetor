@@ -80,7 +80,7 @@ func renderProblems(report *Report, check bool) []string {
 		}
 		if check && len(result.Changed) > 0 {
 			problems = append(problems, fmt.Sprintf("%s: stale: %s differ from their rendering; land a regeneration change",
-				result.Name, namedPaths(result.Changed)))
+				result.Name, NamedPaths(result.Changed)))
 		}
 	}
 	return problems
