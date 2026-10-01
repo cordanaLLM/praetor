@@ -6,9 +6,9 @@
 // every surface reads (#666): standardsctl, standards-mcp and standards-lsp each declare
 // `var version = ""` in package main, which the release config (.goreleaser.yaml) writes with
 // -X main.version, and resolve their identity through Running. The dogfood reports and the
-// workstation engine-build check read the VCS stamp through Stamp, and commits shown in output
-// are shortened through Short, so no two surfaces can report different identities for one
-// binary.
+// workstation engine-build check read the VCS stamp through Stamp, and build commits shown in
+// output are shortened through Short, so no two surfaces report a different build identity for
+// one binary. Worktree heads keep their own 8-character form (worktree.go shortHead).
 package buildid
 
 import (
