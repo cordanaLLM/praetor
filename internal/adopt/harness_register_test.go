@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/changelog"
 	"github.com/cordanaLLM/praetor/internal/compiler"
 	"github.com/cordanaLLM/praetor/internal/config"
 )
@@ -267,4 +268,44 @@ func TestAdoptKeptHarnessSpliceRefusedBeforeAnyWrite(t *testing.T) {
 	}
 	assertTreeUnchanged(t, before, snapshotTree(t, repo))
 	assertDirEmpty(t, shared)
+}
+
+// TestAdoptRegisterBlockFollowsFragmentDirectory: the adopted harness names a changelog
+// fragment only for a repository that keeps the fragment directory, decided the way
+// compile-context decides it, so the adopted AGENTS.md verifies either way (#328). Positive: a
+// repository with the directory. Negative: a repository without one carries none of the clauses
+// the harness used to assert for every adopter. Boundary: an empty conventions.social key
+// declines the clause although the directory exists.
+func TestAdoptRegisterBlockFollowsFragmentDirectory(t *testing.T) {
+	adopt := func(withDir bool, manifest string) string {
+		repo := newTestRepo(t, "widget")
+		mustWrite(t, filepath.Join(repo, "go.mod"), "module example.com/widget\n\ngo 1.27\n")
+		if withDir {
+			mustWrite(t, filepath.Join(repo, changelog.FragmentDir, "0001-entry.yaml"), "type: fixed\ntitle: Fix a defect\n")
+		}
+		if manifest != "" {
+			mustWrite(t, filepath.Join(repo, manifestFile), manifest)
+		}
+		if _, err := Adopt(context.Background(), AdoptOptions{LockSourceRoot: newAdoptLockSource(t), Path: repo, Profile: "framework"}); err != nil {
+			t.Fatalf("Adopt: %v", err)
+		}
+		agents := filepath.Join(repo, agentsFile)
+		if changed, err := compiler.SyncRegisterBlock(context.Background(), repo, agents, false); err != nil || changed {
+			t.Fatalf("adopted register block does not verify: changed=%v err=%v", changed, err)
+		}
+		return mustRead(t, agents)
+	}
+	const clause = "conventional commit subject unchanged; " + config.FragmentConvention + " |"
+	if content := adopt(true, ""); !strings.Contains(content, clause) {
+		t.Errorf("fragment directory not reflected in the adopted harness")
+	}
+	plain := adopt(false, "")
+	for _, word := range []string{"changelog fragment", "receipt fence", "PR template"} {
+		if strings.Contains(plain, word) {
+			t.Errorf("adopted harness without a fragment directory carries %q", word)
+		}
+	}
+	if content := adopt(true, "version: 1\nregister:\n  conventions:\n    social: \"\"\n"); strings.Contains(content, "changelog fragment") {
+		t.Errorf("an empty conventions.social key must decline the detected clause")
+	}
 }

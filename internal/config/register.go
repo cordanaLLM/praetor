@@ -426,9 +426,10 @@ func (p RegisterPolicy) WithDetectedConventions(fragmentDir bool) RegisterPolicy
 	return p
 }
 
-// copyConventions returns an independent copy of conventions; nil stays nil.
+// copyConventions returns an independent copy of conventions. An empty map, such as the one an
+// empty conventions section decodes to, is nil like an absent section.
 func copyConventions(conventions map[TextRegister]string) map[TextRegister]string {
-	if conventions == nil {
+	if len(conventions) == 0 {
 		return nil
 	}
 	out := make(map[TextRegister]string, len(conventions))

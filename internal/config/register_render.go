@@ -33,10 +33,14 @@ const (
 // registerOrder fixes the row order of every rendered list.
 var registerOrder = []TextRegister{TextRegisterSocial, TextRegisterDocs, TextRegisterInternal}
 
-// registerForms is the single statement of what each register demands. The compiled block
-// and the prompt directives both read it, so the two cannot drift apart.
+// registerForms is the single statement of what each register demands in every repository.
+// The compiled block and the prompt directives both read it, so the two cannot drift apart. It
+// holds only what the engine can assert for any repository. A convention of one repository,
+// such as a pull-request template, a receipt fence or a changelog fragment lane, comes from that
+// repository's register.conventions or from what compile-context detects there
+// (RegisterPolicy.form, WithDetectedConventions), never from here (#328).
 var registerForms = map[TextRegister]string{
-	TextRegisterSocial:   "`social-text` skill: BLUF, full sentences, scannable, enough and no more; PR template, receipt fence, conventional commit subject and changelog fragment unchanged",
+	TextRegisterSocial:   "`social-text` skill: BLUF, full sentences, scannable, enough and no more; conventional commit subject unchanged",
 	TextRegisterDocs:     "complete without bloat: newcomer path first, expert reference after; every claim points at a file, command or test; no restated code",
 	TextRegisterInternal: "`caveman` skill: fragments, no filler, verbatim code/paths/errors; facts, paths, commands, verdict",
 }
@@ -52,8 +56,8 @@ var surfaceAudiences = []struct {
 }
 
 // RegisterDirective returns the one-sentence instruction a prompt builder appends for a
-// register. An unknown or empty register yields "", so a caller that appends the result
-// leaves its prompt byte-identical.
+// register: its engine-universal form, without a repository convention. An unknown or empty
+// register yields "", so a caller that appends the result leaves its prompt byte-identical.
 func RegisterDirective(r TextRegister) string {
 	form, ok := registerForms[r]
 	if !ok {
@@ -103,9 +107,20 @@ func renderRegisterTable(p RegisterPolicy) []string {
 		if len(where) == 0 {
 			where = append(where, "task rows only")
 		}
-		rows = append(rows, fmt.Sprintf("| %s | %s | %s |", register, strings.Join(where, "; "), registerForms[register]))
+		rows = append(rows, fmt.Sprintf("| %s | %s | %s |", register, strings.Join(where, "; "), p.form(register)))
 	}
 	return rows
+}
+
+// form returns what register r demands in this repository: the engine-universal form
+// (registerForms), then the repository's own convention for r when it states one
+// (RegisterPolicy.Conventions).
+func (p RegisterPolicy) form(r TextRegister) string {
+	form := registerForms[r]
+	if convention := strings.TrimSpace(p.Conventions[r]); convention != "" {
+		form += "; " + convention
+	}
+	return form
 }
 
 // renderRegisterTaskRows names every row that departs from the agent surface; a row that
