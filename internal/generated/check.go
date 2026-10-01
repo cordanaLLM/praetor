@@ -99,7 +99,8 @@ type rendering struct {
 // differs from its rendering. Every artefact that applies at Head is rendered in a temporary
 // worktree of Head, and an artefact whose command fails, or whose rendering selects no file,
 // fails the check: the gate fails closed. The declared set is the union of the base's and the
-// head's, so a change cannot drop a declaration and edit the artefact at once.
+// head's, and an artefact both declare is guarded under both declarations, so a change cannot
+// drop or narrow a declaration and edit what the base declares at once.
 func Check(ctx context.Context, opts CheckOptions) (report *Report, err error) {
 	repo, err := openRepository(ctx, opts.Root)
 	if err != nil {
@@ -149,7 +150,7 @@ func judgeChange(ctx context.Context, report *Report, opts CheckOptions, in judg
 	report.Marker = baseSet.Marker
 	report.Regeneration = baseSet.Marker.Matches(opts.Branch, opts.Title)
 	guarded := guardedArtefacts(baseSet, headSet)
-	edits, outside, err := classifyChanges(ctx, guarded, in.changed, in.base, in.head)
+	edits, outside, err := classifyChanges(ctx, declaredVersions(baseSet, headSet), in.changed, in.base, in.head)
 	if err != nil {
 		return err
 	}
@@ -174,8 +175,10 @@ func defaultHead(head string) string {
 	return head
 }
 
-// guardedArtefacts is the union of the artefacts that apply at the base and at the head, in the
-// head's order: an artefact the change stops declaring, declines or deactivates stays guarded.
+// guardedArtefacts is the union of the artefacts that apply at the base and at the head, one per
+// name in the head's order, which the report lists: an artefact the change stops declaring,
+// declines or deactivates stays guarded. Which paths and blocks each one guards is
+// declaredVersions' business.
 func guardedArtefacts(base, head *Set) []Artefact {
 	guarded := head.Active()
 	seen := make(map[string]bool, len(guarded))
@@ -191,18 +194,26 @@ func guardedArtefacts(base, head *Set) []Artefact {
 	return guarded
 }
 
-// classifyChanges assigns every changed path to the artefacts it edits. A path a whole-file
-// artefact selects edits it; a path only block artefacts select edits each block whose text
-// differs between base and head, and is outside the artefacts when the rest of the file differs
-// too. Every other path is outside.
-func classifyChanges(ctx context.Context, guarded []Artefact, changed []string, base, head Tree) (map[string][]string, []string, error) {
+// declaredVersions lists every declaration of the guarded artefacts, the head's and then the
+// base's. An artefact both declare is classified under both, so a change that narrows its paths,
+// moves its block markers or deselects an agent client still edits what the base declares; the
+// name-only union of guardedArtefacts would keep the head's narrower paths alone.
+func declaredVersions(base, head *Set) []Artefact {
+	return append(head.Active(), base.Active()...)
+}
+
+// classifyChanges assigns every changed path to the artefacts it edits, under every declaration
+// versions holds. A path a whole-file artefact selects edits it; a path only block artefacts
+// select edits each block whose text differs between base and head, and is outside the artefacts
+// when the rest of the file differs too. Every other path is outside.
+func classifyChanges(ctx context.Context, versions []Artefact, changed []string, base, head Tree) (map[string][]string, []string, error) {
 	edits := make(map[string][]string)
 	var outside []string
 	for index := 0; index < len(changed) && index < MaxTreeFiles; index++ {
 		rel := changed[index]
-		whole, blocks := owners(guarded, rel)
+		whole, blocks := owners(versions, rel)
 		for position := 0; position < len(whole); position++ {
-			edits[whole[position].Name] = append(edits[whole[position].Name], rel)
+			addEdit(edits, whole[position].Name, rel)
 		}
 		if len(whole) > 0 {
 			continue
@@ -216,7 +227,7 @@ func classifyChanges(ctx context.Context, guarded []Artefact, changed []string, 
 			return nil, nil, err
 		}
 		for position := 0; position < len(editedBlocks); position++ {
-			edits[editedBlocks[position]] = append(edits[editedBlocks[position]], rel)
+			addEdit(edits, editedBlocks[position], rel)
 		}
 		if beyond {
 			outside = append(outside, rel)
@@ -225,15 +236,26 @@ func classifyChanges(ctx context.Context, guarded []Artefact, changed []string, 
 	return edits, outside, nil
 }
 
-// owners splits the artefacts selecting rel into whole-file and block artefacts.
-func owners(guarded []Artefact, rel string) (whole, blocks []Artefact) {
-	for index := 0; index < len(guarded); index++ {
+// addEdit records once that rel edits the named artefact, however many of its declarations
+// select rel. classifyChanges handles each changed path in one pass, so a repeat can only be the
+// last path listed.
+func addEdit(edits map[string][]string, name, rel string) {
+	listed := edits[name]
+	if len(listed) > 0 && listed[len(listed)-1] == rel {
+		return
+	}
+	edits[name] = append(listed, rel)
+}
+
+// owners splits the declarations selecting rel into whole-file and block artefacts.
+func owners(versions []Artefact, rel string) (whole, blocks []Artefact) {
+	for index := 0; index < len(versions); index++ {
 		switch {
-		case !guarded[index].owns(rel):
-		case guarded[index].Block == nil:
-			whole = append(whole, guarded[index])
+		case !versions[index].owns(rel):
+		case versions[index].Block == nil:
+			whole = append(whole, versions[index])
 		default:
-			blocks = append(blocks, guarded[index])
+			blocks = append(blocks, versions[index])
 		}
 	}
 	return whole, blocks

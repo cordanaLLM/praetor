@@ -140,8 +140,10 @@ when it cannot render; its standard error is quoted in the failure.
 - **Edits.** A changed path that a whole-file artefact selects edits it, and so does a rename or a
   removal, under the old path. A changed file that only block artefacts select edits each block whose
   text differs; a damaged marker counts as an edit.
-- **Guarded set.** The artefacts that apply at the base or at the head. A change cannot stop
-  declaring an artefact, or decline it, and edit it in the same change.
+- **Guarded set.** The artefacts that apply at the base or at the head. An artefact both declare
+  guards the paths and blocks of both declarations. A change cannot stop declaring an artefact,
+  decline it, narrow its `paths`, move its block markers or drop an `agent_clients` entry, and edit
+  what the base declares, in the same change (`internal/generated/check_test.go`).
 - **Marker.** Read from the base's manifest, never from the change, and checked against `--branch`
   and `--title`. Without both flags the change carries no marker.
 - **Rendering.** Every artefact that applies at the head is rendered; artefacts that share a command

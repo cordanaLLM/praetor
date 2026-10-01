@@ -96,6 +96,57 @@ func TestCheck_Negative_TheBaseDeclarationJudges(t *testing.T) {
 	mustProblem(t, report, "table: the change edits out/table.txt")
 }
 
+// advance commits files on main and makes the commit the base later branches start from.
+func (f *fixture) advance(t *testing.T, message string, files map[string]*string) {
+	t.Helper()
+	f.git(t, "checkout", "-q", "main")
+	f.commit(t, message, files)
+	f.main = strings.TrimSpace(f.git(t, "rev-parse", "HEAD"))
+}
+
+// Positive and negative (#696, ADR-0017 decision 2): a change may narrow the paths of an artefact
+// it keeps declaring, but the path it drops stays guarded by the base's declaration: narrowing
+// the declaration and editing the dropped file in one change is refused, and the edit is named
+// once although both declarations are read.
+func TestCheck_Negative_NarrowedPathsStayGuarded(t *testing.T) {
+	f := newFixture(t)
+	widened := strings.Replace(fixtureManifest, "        - \"out/table.txt\"\n", "        - \"out/table.txt\"\n        - \"out/index.txt\"\n", 1)
+	f.advance(t, "declare the index", map[string]*string{".standards.yaml": text(widened), "out/index.txt": text("INDEX\n")})
+	narrowed := strings.Replace(widened, "        - \"out/table.txt\"\n", "", 1)
+	f.branch(t, "feat/narrow", map[string]*string{".standards.yaml": text(narrowed)})
+	if report := f.check(t, &fakeRunner{}, "feat/narrow", "feat: narrow the table"); !report.Passed {
+		t.Fatalf("narrowing a declaration alone must pass: %+v", report)
+	}
+	f.branch(t, "feat/narrow-edit", map[string]*string{".standards.yaml": text(narrowed), "out/table.txt": text("HAND\n")})
+	report := f.check(t, &fakeRunner{}, "feat/narrow-edit", "feat: narrow the table and edit it")
+	mustProblem(t, report, "table: the change edits out/table.txt", "only a regeneration change")
+	if edited := resultFor(t, report, "table").Edited; strings.Join(edited, ",") != "out/table.txt" {
+		t.Fatalf("the edit must be named once: %q", edited)
+	}
+}
+
+// Negative (#696, ADR-0017 decision 2): moving an artefact's block markers in the declaration
+// does not release the block the base declares, and deselecting an agent client does not release
+// the projection the base compiles for it.
+func TestCheck_Negative_MovedBlocksAndDeselectedClientsStayGuarded(t *testing.T) {
+	f := newFixture(t)
+	moved := strings.NewReplacer("<!-- gen:start -->", "<!-- other:start -->", "<!-- gen:end -->", "<!-- other:end -->").Replace(fixtureManifest)
+	f.branch(t, "feat/move-block", map[string]*string{".standards.yaml": text(moved), "docs/guide.md": text(guideText("Intro.", "HAND"))})
+	report := f.check(t, &fakeRunner{}, "feat/move-block", "feat: move the block and edit it")
+	mustProblem(t, report, "guide block: the change edits docs/guide.md")
+
+	f.advance(t, "compile the context", map[string]*string{"AGENTS.md": text("# Agents\n"), "CLAUDE.md": text("compiled\n"),
+		".cursor/rules/hiss-invariants.mdc": text("compiled\n")})
+	cursorOnly := strings.Replace(fixtureManifest, "version: 1\n", "version: 1\nagent_clients: [cursor]\n", 1)
+	f.branch(t, "feat/cursor", map[string]*string{".standards.yaml": text(cursorOnly)})
+	if report = f.check(t, &fakeRunner{}, "feat/cursor", "feat: compile for cursor only"); !report.Passed {
+		t.Fatalf("deselecting a client alone must pass: %+v", report)
+	}
+	f.branch(t, "feat/cursor-edit", map[string]*string{".standards.yaml": text(cursorOnly), "CLAUDE.md": text("HAND\n")})
+	report = f.check(t, &fakeRunner{}, "feat/cursor-edit", "feat: deselect claude and edit its file")
+	mustProblem(t, report, NameProjections+": the change edits CLAUDE.md")
+}
+
 // Positive (#696): a regeneration change, recognised by the base's marker on both its branch and
 // its title, may commit the renderings, a block included, and passes when they equal the
 // rendering of its sources.
