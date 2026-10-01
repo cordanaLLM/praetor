@@ -16,13 +16,13 @@ import (
 // Each clause is a gate of this package, so a change to one of them changes this text too:
 // reconcileLockfile and prepareCatalogWrites rebuild the lock and its catalog; scaffold.auditLocked
 // marks the scaffolds --force may overwrite (the documentation gate's managed files, the branch
-// ruleset while rulesetRequired holds); reconcileDevContainer, reconcileDocumentationMakefile and
-// publishGitAttributes admit their overwrites only under --force; mergeEditorFile merges editor
-// JSON; refreshAgentHarness regenerates the harness and keeps the repository's additions;
-// planOwnedHarness resets only the platform of an operator-owned Paperclip harness that names
-// another repository to this one; and replaceExisting records every overwrite as replace, or a
-// merge as merge, with its line delta and backup. Every other scaffold is kept when it differs
-// (scaffoldDriftNote).
+// ruleset while rulesetRequired holds); reconcileDevContainer, reconcileDocumentationMakefile,
+// verificationMakefileReplacement and publishGitAttributes admit their overwrites only under
+// --force; mergeEditorFile merges editor JSON; refreshAgentHarness regenerates the harness and
+// keeps the repository's additions; planOwnedHarness resets only the platform of an
+// operator-owned Paperclip harness that names another repository to this one; and replaceExisting
+// records every overwrite as replace, or a merge as merge, with its line delta and backup. Every
+// other scaffold is kept when it differs (scaffoldDriftNote).
 const ForceContract = "Also rebuild .standards.lock and its pinned catalog from the lock source; rewrite each " +
 	"drifted file audit compares byte for byte (documentation gate files, the branch ruleset while the policy " +
 	"requires one, the DevContainer, an edited Makefile or .gitattributes managed block); merge managed values " +

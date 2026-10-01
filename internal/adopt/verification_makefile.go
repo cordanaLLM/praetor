@@ -270,6 +270,21 @@ func reconcileDocumentationMakefile(ctx context.Context, s *adoptSession) error 
 	return nil
 }
 
+// documentationMakefileBlockEdited reports whether data, a Makefile, carries a documentation gate
+// marker around a block that is neither the current block nor an earlier Praetor one: the block
+// only a forced run restores, a run without --force refusing it (errDocumentationBlockEdited).
+func documentationMakefileBlockEdited(data string) (bool, error) {
+	normalized, _, err := util.NormalizeLineEndingsStrict(data)
+	if err != nil {
+		return false, fmt.Errorf("makefile line endings are inconsistent: %w", err)
+	}
+	state, err := scanDocumentationMakefileMarkers(normalized)
+	if err != nil {
+		return false, err
+	}
+	return (state.beginCount > 0 || state.endCount > 0) && !documentationMakefileBlockPraetors(state), nil
+}
+
 // Action details of the documentation gate block's changes (documentationMakefileChange).
 const (
 	documentationMakefileAttached  = "Attached locked documentation gate to verify-all"
