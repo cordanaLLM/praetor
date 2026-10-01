@@ -162,9 +162,17 @@ func sortedLanguages(counts map[string]int) []string {
 	return languages
 }
 
+// recordUnscanned counts one unscanned file under the language its extension names, if any.
 func (c *ScanCoverage) recordUnscanned(path string) {
+	c.recordUnscannedAs(path, util.SourceLanguage(path))
+}
+
+// recordUnscannedAs counts one unscanned file whose source language is language, or "" for a
+// file that is not program source. A file a scanner claimed and then declined is source even
+// where its extension names no language: an extensionless shell script, an Ansible playbook.
+func (c *ScanCoverage) recordUnscannedAs(path, language string) {
 	c.UnscannedFiles++
-	if language := util.SourceLanguage(path); language != "" {
+	if language != "" {
 		c.UnscannedLanguages = addLanguage(c.UnscannedLanguages, language)
 	}
 	ext := strings.ToLower(filepath.Ext(path))

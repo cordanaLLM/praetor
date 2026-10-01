@@ -16,6 +16,11 @@ import (
 // or MATLAB), .fs (F# or a GLSL fragment shader), .v (Verilog or V). A missing language only
 // costs the dedupe scan a Not Scanned line; a wrong one names a language the repository does
 // not have.
+//
+// The POSIX shell family (.sh, plus .bash for Bash) is "shell", the language the HISS shell
+// scanner reads. Zsh and the Korn shell keep their own names, since their syntax goes beyond
+// POSIX and no HISS scanner reads them: a coverage report then lists them as unscanned instead
+// of under the shell it verified.
 var sourceLanguages = map[string]string{
 	".go": "go", ".rs": "rust", ".zig": "zig", ".nim": "nim",
 	".c": "c", ".h": "c",
@@ -32,7 +37,7 @@ var sourceLanguages = map[string]string{
 	".r": "r", ".jl": "julia",
 	".ex": "elixir", ".exs": "elixir", ".erl": "erlang", ".hrl": "erlang",
 	".hs": "haskell", ".ml": "ocaml", ".mli": "ocaml",
-	".sh": "shell", ".bash": "shell", ".zsh": "shell", ".ksh": "shell",
+	".sh": "shell", ".bash": "shell", ".zsh": "zsh", ".ksh": "ksh",
 	".ps1": "powershell", ".psm1": "powershell",
 }
 

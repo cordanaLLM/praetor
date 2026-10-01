@@ -44,7 +44,7 @@ func TestScanCoverage_RecordsLanguages(t *testing.T) {
 	root := t.TempDir()
 	for path, data := range map[string]string{
 		"main.go": "package main\n", "ui/app.ts": "export const a = 1;\n", "ui/App.svelte": "<script>let a = 1;</script>\n",
-		"deploy.sh": "echo hi\n", "Tool.java": "class Tool {}\n", "README.md": "docs\n",
+		"prompt.zsh": "echo hi\n", "Tool.java": "class Tool {}\n", "README.md": "docs\n",
 	} {
 		writeFixture(t, root, path, data)
 	}
@@ -53,16 +53,16 @@ func TestScanCoverage_RecordsLanguages(t *testing.T) {
 	if c.FilesRead != 3 || c.LanguagesRead["go"] != 1 || c.LanguagesRead["typescript"] != 1 || c.LanguagesRead["svelte"] != 1 {
 		t.Errorf("languages read differ: %+v", c)
 	}
-	if c.UnscannedFiles != 3 || c.UnscannedLanguages["shell"] != 1 || c.UnscannedLanguages["java"] != 1 || len(c.UnscannedLanguages) != 2 {
+	if c.UnscannedFiles != 3 || c.UnscannedLanguages["zsh"] != 1 || c.UnscannedLanguages["java"] != 1 || len(c.UnscannedLanguages) != 2 {
 		t.Errorf("unscanned source languages differ: %+v", c)
 	}
-	if got := c.UnscannedSourceSummary(); got != "java (1 file), shell (1 file)" {
+	if got := c.UnscannedSourceSummary(); got != "java (1 file), zsh (1 file)" {
 		t.Errorf("summary = %q", got)
 	}
 	if got := strings.Join(c.ScannedLanguageNames(), ","); got != "go,svelte,typescript" {
 		t.Errorf("scanned names = %q", got)
 	}
-	if !strings.Contains(rep.CoverageEvidence(), "Source no HISS scanner examined: java (1 file), shell (1 file).") {
+	if !strings.Contains(rep.CoverageEvidence(), "Source no HISS scanner examined: java (1 file), zsh (1 file).") {
 		t.Errorf("evidence hides the unscanned source: %s", rep.CoverageEvidence())
 	}
 	if err := c.Validate(); err != nil {
@@ -126,5 +126,78 @@ func TestAddLanguage_Bound(t *testing.T) {
 	counts = addLanguage(counts, "laa")
 	if len(counts) != maxCoverageLanguages || counts["laa"] != 2 {
 		t.Errorf("bound not kept: %d entries, laa=%d", len(counts), counts["laa"])
+	}
+}
+
+// Positive (#182): .sh and .bash are scanned extensions, in any case, read from the same
+// dispatch table Scan uses.
+func TestSupportsExtension_ShellLanguages(t *testing.T) {
+	for _, ext := range []string{".sh", ".bash", ".SH", ".Bash"} {
+		if !SupportsExtension(ext) {
+			t.Errorf("%q is shell source but SupportsExtension rejected it", ext)
+		}
+	}
+}
+
+// Positive and negative (#182): a content scanner claims a file from its bytes. An
+// extensionless script naming bash, a playbook and a unit file are read under their languages,
+// while an extensionless text file and a pipeline YAML stay unscanned exactly as before, with
+// no language.
+func TestContentScanners_ClaimByBytes(t *testing.T) {
+	root := t.TempDir()
+	for path, data := range map[string]string{
+		"bin/provision":     "#!/usr/bin/env bash\nset -euo pipefail\necho ok\n",
+		"site.yml":          "- hosts: all\n  tasks:\n    - ansible.builtin.ping:\n",
+		"units/app.service": "[Unit]\nDescription=App\n[Service]\nExecStart=/usr/bin/app\n",
+		"NOTICE":            "Plain text\n",
+		"ci/pipeline.yml":   "on: push\n",
+	} {
+		writeFixture(t, root, path, data)
+	}
+	c := scanFixture(t, root, ScanOptions{}).Coverage
+	if c.FilesRead != 3 || c.LanguagesRead["shell"] != 1 || c.LanguagesRead["ansible"] != 1 || c.LanguagesRead["systemd"] != 1 {
+		t.Errorf("content-claimed languages differ: %+v", c)
+	}
+	if c.UnscannedFiles != 2 || c.UnscannedByExtension[""] != 1 || c.UnscannedByExtension[".yml"] != 1 || len(c.UnscannedLanguages) != 0 {
+		t.Errorf("unclaimed candidates must stay unscanned non-source files: %+v", c)
+	}
+	if err := c.Validate(); err != nil {
+		t.Errorf("recorded coverage fails its own validation: %v", err)
+	}
+}
+
+// Negative: a content-claimed file the scanner then declines is unscanned source of its
+// language, even though its extension names none.
+func TestContentScanners_DeclinedClaimKeepsItsLanguage(t *testing.T) {
+	rep := scanFixtureFile(t, "provision", "#!/bin/sh\necho \"never closed\n")
+	if c := rep.Coverage; c.FilesRead != 0 || c.UnscannedLanguages["shell"] != 1 || c.UnscannedByExtension[""] != 1 {
+		t.Errorf("a misread extensionless script must be unscanned shell, got %+v", c)
+	}
+}
+
+// Boundary: an oversize candidate is never read and stays an unscanned file rather than an
+// oversize skip, since nothing showed it was source; an oversize scanned extension is a skip.
+func TestContentScanners_OversizeCandidateStaysUnscanned(t *testing.T) {
+	root := t.TempDir()
+	big := "#!/bin/sh\n" + strings.Repeat("echo padding\n", MaxScanFileSize/13+1)
+	writeFixture(t, root, "provision", big)
+	writeFixture(t, root, "big.sh", big)
+	rep := scanFixture(t, root, ScanOptions{})
+	if rep.Coverage.FilesRead != 0 || rep.Coverage.UnscannedByExtension[""] != 1 || rep.Skips.Oversize != 1 {
+		t.Errorf("want one unscanned candidate and one oversize skip, got %+v / %+v", rep.Coverage, rep.Skips)
+	}
+}
+
+// Positive and negative: mayScan, which decides which committed files a ratchet attribution
+// stages, admits every file the scan may read and nothing else.
+func TestMayScan(t *testing.T) {
+	for path, want := range map[string]bool{
+		"main.go": true, "tools/build.sh": true, "bin/provision": true, "deploy/site.yaml": true,
+		"units/app.service": true, "units/app.socket": true,
+		"README.md": false, "prompt.zsh": false, "units/app.timer": false, "data.json": false,
+	} {
+		if got := mayScan(path); got != want {
+			t.Errorf("mayScan(%q) = %t, want %t", path, got, want)
+		}
 	}
 }

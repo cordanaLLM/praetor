@@ -297,12 +297,13 @@ func inAttributionScope(path string, files, packages map[string]bool) bool {
 	return files[path] || (ext == ".go" && packages[slashpath.Dir(path)])
 }
 
-// scannableBlob accepts only a regular blob within MaxScanFileSize below the root with an
-// extension the scan reads; symlinks, submodules, trees and oversize files are refused, as the
-// scan itself skips them.
+// scannableBlob accepts only a regular blob within MaxScanFileSize below the root that the scan
+// may read: an extension a scanner owns, or a path a content scanner may claim from its bytes,
+// such as an extensionless script or an Ansible playbook. Symlinks, submodules, trees and
+// oversize files are refused, as the scan itself skips them.
 func scannableBlob(entry util.GitTreeEntry) bool {
 	return entry.RegularBlob() && entry.Size <= MaxScanFileSize &&
-		filepath.IsLocal(filepath.FromSlash(entry.Path)) && SupportsExtension(slashpath.Ext(entry.Path))
+		filepath.IsLocal(filepath.FromSlash(entry.Path)) && mayScan(entry.Path)
 }
 
 // stageCommittedFiles writes each committed file below staged at its own relative path.
