@@ -215,6 +215,11 @@ func ownerJSON(raw []byte, key, before, after string) ([]byte, error) {
 	if err := strictjson.Decode(raw, &value, derivedJSON); err != nil {
 		return nil, err
 	}
+	for name := range value {
+		if name != key && strings.EqualFold(name, key) {
+			return nil, fmt.Errorf("duplicate JSON key %q", name)
+		}
+	}
 	var old string
 	if err := json.Unmarshal(value[key], &old); err != nil {
 		return nil, err
