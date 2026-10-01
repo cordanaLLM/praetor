@@ -1,0 +1,12 @@
+# Handlers are tasks too.
+- name: Deploy
+  hosts: web
+  tasks:
+    - name: Install the configuration
+      ansible.builtin.copy:
+        src: app.conf
+        dest: /etc/app.conf
+        mode: "0644"
+  handlers:
+    - name: Reload the application
+      ansible.builtin.shell: kill -HUP "$(cat /run/app.pid)"

@@ -506,7 +506,7 @@ func TestServer_ExplainRuleHISS01ScopesEnforcementPerLanguage(t *testing.T) {
 	for _, want := range []string{
 		"Go: goto, direct recursion, and mutual or indirect recursion",
 		"cycle through methods is not decided",
-		"Rust, Python, JavaScript, TypeScript and Svelte: direct recursion only",
+		"Rust, Python, JavaScript, TypeScript, Svelte and shell: direct recursion only",
 		"C and C++: goto only",
 		".config/hiss/coverage.yaml",
 	} {

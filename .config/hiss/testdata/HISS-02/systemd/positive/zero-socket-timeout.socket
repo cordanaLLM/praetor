@@ -1,0 +1,4 @@
+# A socket timeout of 0 disables it, as infinity does.
+[Socket]
+ListenStream=8080
+TimeoutSec=0

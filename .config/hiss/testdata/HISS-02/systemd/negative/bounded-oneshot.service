@@ -1,0 +1,5 @@
+# A oneshot service with an explicit start timeout is bounded.
+[Service]
+Type=oneshot
+TimeoutStartSec=10min
+ExecStart=/usr/local/bin/rotate-archives

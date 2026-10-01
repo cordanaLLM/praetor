@@ -1,0 +1,4 @@
+# A socket's Exec commands take the same prefixes.
+[Socket]
+ListenStream=/run/app.sock
+ExecStopPost=@-/usr/local/bin/cleanup cleanup

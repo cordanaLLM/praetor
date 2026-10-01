@@ -1,0 +1,5 @@
+# Commands without the "-" prefix fail the unit; a "-" inside an argument is not a prefix.
+[Service]
+ExecStartPre=/usr/bin/mkdir -p /var/lib/app
+ExecStart=/usr/local/bin/app --log-level=-1
+# ExecStopPost=-/usr/local/bin/cleanup

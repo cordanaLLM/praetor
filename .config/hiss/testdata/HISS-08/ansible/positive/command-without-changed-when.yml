@@ -1,0 +1,6 @@
+# A command task reports a change on every run, whatever the host's state.
+- name: Rebuild caches
+  hosts: all
+  tasks:
+    - name: Rebuild the font cache
+      ansible.builtin.command: fc-cache -f

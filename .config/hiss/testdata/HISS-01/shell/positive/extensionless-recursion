@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# A script without an extension is read when its interpreter line names a shell.
+walk() {
+  local dir=$1
+  for entry in "$dir"/*; do
+    if [ -d "$entry" ]; then
+      walk "$entry"
+    fi
+  done
+}
+walk "${1:-.}"

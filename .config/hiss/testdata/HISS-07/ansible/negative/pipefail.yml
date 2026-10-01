@@ -1,0 +1,12 @@
+# pipefail makes the pipe fail when any command in it fails; a pipe inside quotes or Jinja is text.
+- name: Count users
+  hosts: all
+  tasks:
+    - name: Count accounts
+      ansible.builtin.shell:
+        cmd: set -o pipefail && getent passwd | wc -l
+        executable: /bin/bash
+      changed_when: false
+    - name: Search
+      ansible.builtin.shell: grep -E 'a|b' /etc/hosts > /tmp/{{ name | default('hosts') }}
+      changed_when: false

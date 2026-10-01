@@ -138,6 +138,17 @@ rules:
           Only the component's script blocks are read, with their line numbers kept, so a call from
           the markup is not a call from the function's own body. Recursion in the markup, such as
           a snippet that renders itself, is held as a gap.
+      - language: shell
+        state: partial
+        mechanism: internal/hiss shell.go reportRecursion over the commands shell_commands.go splits
+        rationale: >-
+          Direct recursion is reported where a function whose body is a brace group runs its own
+          name as a command, including on one line, from a header whose brace opens on the next
+          line, in a command substitution and in the background. A call through command, builtin
+          or exec reaches a program, never a function, so it is not reported, and the name inside
+          quotes, comments and here-document bodies is text. A .sh or .bash file and an
+          extensionless file whose interpreter line names sh, bash, dash or ash are read. Mutual
+          recursion needs a call graph and is held as a gap.
   - id: HISS-02
     coverage:
       - language: go
@@ -202,6 +213,27 @@ rules:
           An unbounded loop in a script block is reported. An {#each} block is markup over a
           finite list, and the loop words in markup text are not script. A fetch without a
           deadline in onMount is held as a gap.
+      - language: shell
+        state: partial
+        mechanism: internal/hiss shell_commands.go isUnboundedShellLoop and checkInvocation, shell.go shellForEver
+        rationale: >-
+          while true, while :, until false and for ((;;)) are reported, in an extensionless script
+          too, and so is a curl transfer with no --max-time or -m that no timeout command wraps,
+          since curl sets no overall deadline of its own. A counted loop, a loop over input and a
+          bounded transfer are not, nor are the words inside quotes, comments or a here-document.
+          A loop whose condition always succeeds without being a constant (while sleep 5) and a
+          read without -t are held as gaps.
+      - language: systemd
+        state: partial
+        mechanism: internal/hiss systemd.go checkTimeouts and checkRestart
+        rationale: >-
+          A Type=oneshot service without TimeoutStartSec= or TimeoutSec= is reported, because
+          systemd disables the start timeout for oneshot by default (systemd.service(5)); so is a
+          service or socket timeout set to infinity or 0, which systemd reads as no timeout, and a
+          service with Restart= other than no whose StartLimitIntervalSec= is 0, which turns off
+          the rate limit that stops a restart loop (systemd.unit(5)). A bounded oneshot and a
+          restarting daemon under a rate limit are not. A drop-in (.conf) that overrides a unit is
+          not read and is held as a gap.
   - id: HISS-04
     coverage:
       - language: go
@@ -271,6 +303,14 @@ rules:
         rationale: >-
           A function in a script block is measured; markup lines never join one. A long inline
           handler written in the markup is held as a gap.
+      - language: shell
+        state: partial
+        mechanism: internal/hiss shell.go closeDeeper
+        rationale: >-
+          A function whose body is a brace group is measured from the line its brace opens on to
+          the line it closes on, so a header written above the brace adds nothing; 61 lines is
+          reported and 60 is not. A function whose body is a subshell, ( ... ), is not measured
+          and is held as a gap, and the complexity caps are not measured for shell.
   - id: HISS-08
     coverage:
       - language: c
@@ -313,6 +353,26 @@ rules:
           eval in a script block, including a reactive statement, is reported; the word in markup
           text is not. eval in a markup expression runs code but is held as a gap, since only
           script blocks are read.
+      - language: shell
+        state: partial
+        mechanism: internal/hiss shell_commands.go checkInvocation
+        rationale: >-
+          eval, text piped into a shell that reads its script from standard input (curl ... | sh,
+          including through sudo), and a process substitution sourced or run as a script are
+          reported. A function named evaluate, the word in text, and a downloaded script that is
+          checked and run as a file are not. A command string handed to sh -c is evaluated too
+          but is held as a gap.
+      - language: ansible
+        state: partial
+        mechanism: internal/hiss ansible.go checkAnsibleCommand
+        rationale: >-
+          A command, shell, raw or script task, under its short or ansible.builtin name, that sets
+          no changed_when, creates or removes reports a change on every run, whatever the host's
+          state, so the play's outcome is not determined by the state it converges (ansible-lint
+          no-changed-when); it is reported in a play's tasks, a block's sections and handlers.
+          changed_when and a creates or removes argument, as a key or a free-form word, are not
+          reported. The Windows command modules, and a task file included from outside a role's
+          tasks/ or handlers/ directory, are held as gaps.
   - id: HISS-07
     coverage:
       - language: go
@@ -386,6 +446,35 @@ rules:
         rationale: >-
           A swallowed rejection in a script block is reported; a rejection shown to the user is
           not. A handler in the markup that drops a promise is held as a gap.
+      - language: shell
+        state: partial
+        mechanism: internal/hiss shell.go reportStrictMode, shell_commands.go checkCommand
+        rationale: >-
+          A script with an interpreter line that never enables errexit and nounset, and under
+          Bash pipefail, is reported once at its first line, whether the options are given to set
+          as -euo pipefail or as long names, or on the interpreter line. POSIX sh is not required
+          to set pipefail, which shells still deployed do not all support. A failure discarded by
+          || true or || : is reported. A library without an interpreter line runs under the
+          options of the script that sources it and is not required to set them. set +e around
+          an unchecked command and a failure discarded through a brace group are held as gaps.
+      - language: systemd
+        state: partial
+        mechanism: internal/hiss systemd.go checkExec
+        rationale: >-
+          An Exec*= command of a service or socket whose prefix holds "-" is reported, alone or
+          combined with other prefixes, because systemd records its failure but treats it as
+          success (systemd.service(5)); a "-" inside an argument and a commented setting are not.
+          Shell inside an Exec command is not read and is held as a gap.
+      - language: ansible
+        state: partial
+        mechanism: internal/hiss ansible.go checkAnsibleFailure and pipesWithoutPipefail
+        rationale: >-
+          ignore_errors: true and failed_when: false on a task or block that does not register
+          its result discard the failure and are reported (ansible-lint ignore-errors), and so is
+          a shell task that pipes without set -o pipefail, whose status is the last command's
+          (ansible-lint risky-shell-pipe). A registered result, a pipe inside quotes or Jinja and
+          a PowerShell executable are not. A task file included from outside a role's tasks/ or
+          handlers/ directory is not recognised and is held as a gap.
   - id: HISS-09
     coverage:
       - language: rust

@@ -1,0 +1,5 @@
+# A task file outside a role's tasks/ or handlers/ directory is not recognised from its contents.
+- name: Refresh the package cache
+  ansible.builtin.apt:
+    update_cache: true
+  ignore_errors: true

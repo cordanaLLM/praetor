@@ -1,0 +1,9 @@
+# StartLimitIntervalSec=0 turns off the rate limit that stops a restart loop.
+[Unit]
+Description=Queue consumer
+StartLimitIntervalSec=0
+
+[Service]
+ExecStart=/usr/local/bin/consume
+Restart=always
+RestartSec=1
