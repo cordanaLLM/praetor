@@ -1,32 +1,37 @@
 ---
 # Declarative coverage of the archetype catalog schema (#353).
 #
-# Every key a profile or facet in .config/archetypes may declare is bound here to the
-# functions that read its value, or marked unconsumed with the reason. The effective-policy
-# digest records every key; recording a value is not acting on it, and a key nothing reads
+# Every key a profile or facet in .config/archetypes may declare is
+# bound here to the functions that read its value, or marked unconsumed
+# with the reason. The effective-policy digest records every key;
+# recording a value is not acting on it, and a key nothing reads
 # advertises enforcement the engine does not have.
 #
-# internal/archetypecoverage type-checks the engine's Go source and replays this file in
-# both directions (TestShippedManifestMatchesTheSource, run by go test and verify-all):
-#   - a key config.ArchetypeKeys decodes without an entry fails, and so does an entry for a
-#     key the schema does not decode;
+# internal/archetypecoverage type-checks the engine's Go source and
+# replays this file in both directions
+# (TestShippedManifestMatchesTheSource, run by go test and verify-all):
+#   - a key config.ArchetypeKeys decodes without an entry fails, and so
+#     does an entry for a key the schema does not decode;
 #   - a listed consumer that no longer reads the key's Go fields fails;
-#   - a function that starts reading them fails until it is listed, so an unconsumed key
-#     that gains a reader must change state here in the same change.
+#   - a function that starts reading them fails until it is listed, so
+#     an unconsumed key that gains a reader changes state here in the
+#     same change.
 #
-# A reader is the function that selects the field. A value read through an accessor is
-# credited to the accessor (ComplexityPolicy.Limits, not each caller); a whole section read
-# and passed on is credited where its fields are selected.
+# A reader is the function that selects the field. A value read through
+# an accessor is credited to the accessor (ComplexityPolicy.Limits, not
+# each caller); a whole section read and passed on is credited where its
+# fields are selected.
 #
 # States:
-#   consumed    at least one consumer acts on the value: renders, gates or selects with it
-#   reported    consumers only print or return the value; nothing acts on it
-#   unconsumed  nothing outside the plumbing reads it; the reason says what that means
-#   refused     a catalog file cannot set it (refused_by rejects it); the consumers read
-#               the same field from the repository manifest
+#   consumed    a consumer acts on the value: renders, gates or selects
+#   reported    consumers only print or return the value
+#   unconsumed  nothing outside the plumbing reads it
+#   refused     a catalog file cannot set it (refused_by rejects it);
+#               the consumers read the field from the repository manifest
 #
-# The Go fields are shared with other sources: ComplexityPolicy and BranchProtectionPolicy
-# also carry .standards.yaml overrides and the HISS-04 ceiling, so an effect may name those.
+# The Go fields are shared with other sources: ComplexityPolicy and
+# BranchProtectionPolicy also carry .standards.yaml overrides and the
+# HISS-04 ceiling, so an effect may name those.
 version: 1
 schema: internal/config
 carriers:
@@ -52,7 +57,7 @@ plumbing:
   - func: internal/config.ArchetypeControls.contribution
     role: copies one catalog layer's controls into its policy layer
   - func: internal/config.ArchetypeControls.validate
-    role: bounds counts and names, and refuses branch_protection.review_mode
+    role: bounds counts and names; refuses branch_protection.review_mode
   - func: internal/config.ResolvedPolicy.validateJoined
     role: bounds the joined linter and feature names
   - func: internal/config.Join
@@ -88,27 +93,33 @@ fields:
     consumers:
       - func: internal/config.indexedArchetypeID
         kind: acts
-        effect: keys the catalog index, so a manifest's profile or facet id selects the file
+        effect: >-
+          keys the catalog index, so a manifest's profile or facet id
+          selects the file
       - func: internal/config.effectiveLoader.pinnedLayer
         kind: acts
-        effect: fails the policy load when a pinned file's id differs from its lock entry
+        effect: >-
+          fails the policy load when a pinned file's id differs from its
+          lock entry
   - key: name
     go: [Archetype.Name]
     state: unconsumed
     reason: >-
-      Decoded into config.Archetype and read by nothing: no command prints it and no gate
-      acts on it. It labels the file for a reader.
+      Decoded into config.Archetype and read by nothing: no command prints
+      it and no gate acts on it. It labels the file for a reader.
   - key: description
     go: [Archetype.Description]
     state: unconsumed
     reason: >-
-      Decoded and read by nothing. A capability the text names is enforced only where a key
-      in this file binds a consumer for it; the text itself promises nothing the engine keeps.
+      Decoded and read by nothing. A capability the text names is enforced
+      only where a key in this file binds a consumer for it; the text
+      itself promises nothing the engine keeps.
   - key: runtime
     go: [Archetype.Runtime]
     state: unconsumed
     reason: >-
-      Decoded and read by nothing; no flavor, scan or emitted file selects on it.
+      Decoded and read by nothing; no flavor, scan or emitted file selects
+      on it.
   - key: complexity.max_cyclomatic
     go: [ComplexityOverride.MaxCyclomatic, ComplexityPolicy.MaxCyclomatic]
     state: consumed
@@ -116,11 +127,11 @@ fields:
       - func: internal/config.ComplexityPolicy.Limits
         kind: reports
         effect: >-
-          passes the limit to the HISS-04 scan, which prints a measurement over it and fails
-          nothing (hiss.SeverityReport)
+          passes the limit to the HISS-04 scan, which prints a measurement
+          over it and fails nothing (hiss.SeverityReport)
       - func: internal/editor.generateJetBrains
         kind: acts
-        effect: writes the limit into the generated JetBrains inspection profile
+        effect: writes the limit into the generated JetBrains profile
       - func: cmd/standardsctl.printPlanHeader
         kind: reports
         effect: prints the limit in praetorctl plan
@@ -129,26 +140,36 @@ fields:
         effect: prints the limit in the MCP plan
       - func: cmd/standards-mcp.writeFuncReport
         kind: reports
-        effect: prints the limit beside each function's measurement in MCP symbol inspection
+        effect: >-
+          prints the limit beside each function's measurement in MCP
+          symbol inspection
       - func: internal/config.unresolvedComplexity
         kind: reports
-        effect: states the HISS-04 ceiling in the warning when no policy resolves
+        effect: >-
+          states the HISS-04 ceiling in the warning when no policy
+          resolves
   - key: complexity.max_cognitive
     go: [ComplexityOverride.MaxCognitive, ComplexityPolicy.MaxCognitive]
     state: reported
     reason: >-
-      The HISS-04 scan measures cognitive complexity against the limit and reports each
-      excess without failing any gate (hiss.SeverityReport).
+      The HISS-04 scan measures cognitive complexity against the limit and
+      reports each excess without failing any gate (hiss.SeverityReport).
     consumers:
       - func: internal/config.ComplexityPolicy.Limits
         kind: reports
-        effect: passes the limit to the HISS-04 scan, which reports and never fails on it
+        effect: >-
+          passes the limit to the HISS-04 scan, which reports and never
+          fails on it
       - func: cmd/standards-mcp.writeFuncReport
         kind: reports
-        effect: prints the limit beside each function's measurement in MCP symbol inspection
+        effect: >-
+          prints the limit beside each function's measurement in MCP
+          symbol inspection
       - func: internal/config.unresolvedComplexity
         kind: reports
-        effect: states the HISS-04 ceiling in the warning when no policy resolves
+        effect: >-
+          states the HISS-04 ceiling in the warning when no policy
+          resolves
   - key: complexity.max_func_loc
     go: [ComplexityOverride.MaxFuncLOC, ComplexityPolicy.MaxFuncLOC]
     state: consumed
@@ -156,29 +177,36 @@ fields:
       - func: internal/config.ComplexityPolicy.ScanOptions
         kind: acts
         effect: >-
-          sets the function length the HISS scanner fails on in audit, the gate and the MCP
-          audit
+          sets the function length the HISS scanner fails on in audit, the
+          gate and the MCP audit
       - func: cmd/standards-lsp.Server.checkHISS04Complexity
         kind: acts
         effect: publishes a language-server diagnostic for a longer function
       - func: internal/editor.neovimLSPBlock
         kind: acts
-        effect: writes the limit into the generated Neovim language-server settings
+        effect: >-
+          writes the limit into the generated Neovim language-server
+          settings
       - func: internal/adopt.adoptionScanLimit
         kind: acts
         effect: bounds adoption's legacy-debt scan
       - func: internal/adopt.RepositoryHISSFacts
         kind: acts
-        effect: states the limit in the HISS facts of the generated agent harness
+        effect: states the limit in the generated agent harness's HISS facts
       - func: internal/adopt.adoptSession.harnessFuncLOC
         kind: acts
-        effect: states the limit in the HISS facts of the generated Paperclip harness
+        effect: >-
+          states the limit in the generated Paperclip harness's HISS facts
       - func: internal/dogfood.validatePublicPolicy
         kind: acts
-        effect: refuses a public verification policy above the 60-line audit ceiling
+        effect: >-
+          refuses a public verification policy above the 60-line audit
+          ceiling
       - func: internal/dogfood.validateRepairPolicyEvidence
         kind: acts
-        effect: refuses repair evidence whose limit differs from the anchored policy
+        effect: >-
+          refuses repair evidence whose limit differs from the anchored
+          policy
       - func: internal/dogfood.verifyPublicCheckout
         kind: reports
         effect: records the limit in the public verification result
@@ -193,10 +221,14 @@ fields:
         effect: prints the limit in the MCP plan
       - func: cmd/standards-mcp.writeFuncReport
         kind: reports
-        effect: prints the limit beside each function's length in MCP symbol inspection
+        effect: >-
+          prints the limit beside each function's length in MCP symbol
+          inspection
       - func: internal/config.unresolvedComplexity
         kind: reports
-        effect: states the HISS-04 ceiling in the warning when no policy resolves
+        effect: >-
+          states the HISS-04 ceiling in the warning when no policy
+          resolves
       - func: internal/needs.epicFromAnalysis
         kind: reports
         effect: states the limit in a migration epic
@@ -209,41 +241,50 @@ fields:
     consumers:
       - func: internal/editor.neovimLSPBlock
         kind: acts
-        effect: writes the limit into the generated Neovim language-server settings
+        effect: >-
+          writes the limit into the generated Neovim language-server
+          settings
       - func: internal/config.ComplexityPolicy.Limits
         kind: reports
-        effect: passes the limit to the HISS-04 scan, which reports and never fails on it
+        effect: >-
+          passes the limit to the HISS-04 scan, which reports and never
+          fails on it
       - func: cmd/standards-mcp.writeFuncReport
         kind: reports
-        effect: prints the limit beside each function's measurement in MCP symbol inspection
+        effect: >-
+          prints the limit beside each function's measurement in MCP
+          symbol inspection
       - func: internal/config.unresolvedComplexity
         kind: reports
-        effect: states the HISS-04 ceiling in the warning when no policy resolves
+        effect: >-
+          states the HISS-04 ceiling in the warning when no policy
+          resolves
   - key: memory.zero_frame_malloc
     go: [MemoryPolicy.ZeroFrameMalloc]
     state: unconsumed
     reason: >-
-      Joined (true wins) and recorded in the effective-policy digest; no scanner, gate or
-      emitted file reads it. HISS-03 is defined only in docs/standards/hiss-spec.md.
+      Joined (true wins) and recorded in the effective-policy digest; no
+      scanner, gate or emitted file reads it. HISS-03 is defined only in
+      docs/standards/hiss-spec.md.
   - key: memory.banned_alloc_in_ticks
     go: [MemoryPolicy.BannedAllocInTicks]
     state: unconsumed
     reason: >-
-      Joined (true wins) and recorded in the effective-policy digest; no scanner, gate or
-      emitted file reads it.
+      Joined (true wins) and recorded in the effective-policy digest; no
+      scanner, gate or emitted file reads it.
   - key: error_unwraps
     go: [ArchetypeControls.ErrorUnwraps, ResolvedPolicy.ErrorUnwraps]
     state: unconsumed
     reason: >-
-      Joined (strict_ban wins) and recorded in the effective-policy digest; no scanner reads
-      the mode, so no HISS-07 check changes with it.
+      Joined (strict_ban wins) and recorded in the effective-policy digest;
+      no scanner reads the mode, so no HISS-07 check changes with it.
   - key: branch_protection.enforce_linear_history
     go: [BranchProtectionPolicy.EnforceLinearHistory]
     state: consumed
     consumers:
       - func: internal/forge.protectionRules
         kind: acts
-        effect: renders the required_linear_history rule into the branch ruleset
+        effect: renders the required_linear_history rule into the ruleset
       - func: internal/adopt.rulesetRequired
         kind: acts
         effect: makes the branch protection audit require a ruleset
@@ -262,7 +303,7 @@ fields:
     consumers:
       - func: internal/forge.protectionRules
         kind: acts
-        effect: renders the required_signatures rule into the branch ruleset
+        effect: renders the required_signatures rule into the ruleset
       - func: internal/adopt.rulesetRequired
         kind: acts
         effect: makes the branch protection audit require a ruleset
@@ -281,7 +322,9 @@ fields:
     consumers:
       - func: internal/config.BranchProtectionPolicy.EffectiveReviewRequirements
         kind: acts
-        effect: sets the approving review count the rendered branch ruleset requires
+        effect: >-
+          sets the approving review count the rendered branch ruleset
+          requires
       - func: cmd/standardsctl.printPlanHeader
         kind: reports
         effect: prints the count in praetorctl plan
@@ -294,7 +337,7 @@ fields:
     consumers:
       - func: internal/forge.protectionRules
         kind: acts
-        effect: sets dismiss_stale_reviews_on_push in the rendered branch ruleset
+        effect: sets dismiss_stale_reviews_on_push in the rendered ruleset
       - func: cmd/standardsctl.printPlanHeader
         kind: reports
         effect: prints the setting in praetorctl plan
@@ -303,12 +346,15 @@ fields:
     state: refused
     refused_by: internal/config.ArchetypeControls.validate
     reason: >-
-      Single-maintainer review is a repository-only relaxation: a catalog file that sets it
-      fails to decode. The consumers read the mode from the .standards.yaml override.
+      Single-maintainer review is a repository-only relaxation: a catalog
+      file that sets it fails to decode. The consumers read the mode from
+      the .standards.yaml override.
     consumers:
       - func: internal/config.BranchProtectionPolicy.EffectiveReviewRequirements
         kind: acts
-        effect: drops the review gate from the rendered ruleset under single_maintainer
+        effect: >-
+          drops the review gate from the rendered ruleset under
+          single_maintainer
       - func: cmd/standardsctl.printPlanHeader
         kind: reports
         effect: prints the mode in praetorctl plan
@@ -319,8 +365,8 @@ fields:
     go: [SupplyChainPolicy.SLSALevel]
     state: reported
     reason: >-
-      Joined (maximum wins) and printed; no workflow, release step or audit attests at the
-      declared level.
+      Joined (maximum wins) and printed; no workflow, release step or audit
+      attests at the declared level.
     consumers:
       - func: cmd/standardsctl.printPlanHeader
         kind: reports
@@ -332,7 +378,8 @@ fields:
     go: [SupplyChainPolicy.EnforceCosign]
     state: reported
     reason: >-
-      Joined (true wins) and printed; nothing signs or verifies a signature because of it.
+      Joined (true wins) and printed; nothing signs or verifies a signature
+      because of it.
     consumers:
       - func: cmd/standardsctl.printPlanHeader
         kind: reports
@@ -357,9 +404,9 @@ fields:
     go: [ArchetypeControls.Linters, ResolvedPolicy.Linters]
     state: unconsumed
     reason: >-
-      Joined into a deduplicated union, bounded by validate and recorded in the
-      effective-policy digest, and never run: no gate, emitted workflow or editor
-      configuration reads the list (#353).
+      Joined into a deduplicated union, bounded by validate and recorded in
+      the effective-policy digest, and never run: no gate, emitted workflow
+      or editor configuration reads the list (#353).
   - key: devcontainer_features
     go: [ArchetypeControls.DevFeatures, ResolvedPolicy.DevFeatures]
     state: consumed
@@ -367,5 +414,6 @@ fields:
       - func: internal/config.decodeArtifactFeatures
         kind: acts
         effect: >-
-          re-reads each pinned file's features for config.ResolveDevContainerFeatures, which
-          the devcontainer command, adoption and audit resolve
+          re-reads each pinned file's features for
+          config.ResolveDevContainerFeatures, which the devcontainer
+          command, adoption and audit resolve
