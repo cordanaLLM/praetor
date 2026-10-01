@@ -26,6 +26,7 @@ func runDogfoodDiscovery(ctx context.Context, args []string) error {
 		return errors.New("dogfood discover accepts flags only")
 	}
 	opts.AllowRemote = true // Explicit CLI observe stage authorizes only the pinned cohort.
+	opts.Engine = runningBuild()
 	report, runErr := dogfood.RunDiscovery(ctx, opts)
 	if report == nil {
 		return runErr

@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/buildid"
 )
 
 // MaxScheduleDuration leaves one minute for bookkeeping around the finite suite.
@@ -14,8 +16,19 @@ const MaxScheduleDuration = MaxSuiteDuration + time.Minute
 
 // RunSchedule executes at most one due suite under a crash-safe advisory lock.
 // It never deletes evidence, changes input pins, calls providers or pushes code.
-func RunSchedule(ctx context.Context, path string) (*ScheduleReport, error) {
-	return scheduleTick(ctx, path, true, time.Now, RunSuite)
+// engine is the running binary's identity, which the suite report records as
+// SuiteOptions.Engine documents.
+func RunSchedule(ctx context.Context, path string, engine buildid.Identity) (*ScheduleReport, error) {
+	return scheduleTick(ctx, path, true, time.Now, suiteRunnerAs(engine))
+}
+
+// suiteRunnerAs runs a scheduled suite as the binary engine identifies, so a scheduled report
+// names the same build as a suite run directly by that binary.
+func suiteRunnerAs(engine buildid.Identity) scheduleRunner {
+	return func(ctx context.Context, opts SuiteOptions) (*SuiteReport, error) {
+		opts.Engine = engine
+		return RunSuite(ctx, opts)
+	}
 }
 
 // ScheduleStatus reads inputs and state without creating files or running cases.

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/buildid"
 )
 
 const (
@@ -25,6 +27,8 @@ type DiscoveryOptions struct {
 	Stage       string `json:"stage"`
 	Concurrency int    `json:"concurrency"`
 	AllowRemote bool   `json:"allow_remote"`
+	// Engine is the running binary's identity, recorded as SuiteOptions.Engine is.
+	Engine buildid.Identity `json:"-"`
 }
 
 type DiscoveryCase struct {
@@ -92,7 +96,7 @@ func RunDiscovery(ctx context.Context, opts DiscoveryOptions) (*DiscoveryReport,
 		return nil, err
 	}
 	report := &DiscoveryReport{Version: 1, Options: opts, ConfigSHA256: configSum,
-		PolicySHA256: policySum, Engine: suiteEngine(), StartedAt: time.Now().UTC(),
+		PolicySHA256: policySum, Engine: suiteEngine(opts.Engine), StartedAt: time.Now().UTC(),
 		Status: "planned", Cases: cases, Candidates: []DiscoveryCandidate{},
 		Scope: "Selected Praetor capability availability from immutable file evidence and current adapters; candidates require review and replay. No upstream commands, application verification, agent dispatch or publication."}
 	if err := savePublicJSON(filepath.Join(opts.ArtifactDir, "plan.json"), report); err != nil {

@@ -22,6 +22,13 @@ import (
 // all three binaries of one build report one identity (#666).
 var version = ""
 
+// runningBuild is the identity of this binary, which the version command prints, init pins
+// in .standards.lock and dogfood suite, schedule and discovery reports record in
+// engine_build (#689).
+func runningBuild() buildid.Identity {
+	return buildid.Running(version)
+}
+
 // buildVersion reports the version this binary can actually prove it is.
 //
 // A release carries an injected version. Any other build carries what Go records in its build
@@ -32,7 +39,7 @@ var version = ""
 // nothing measured cannot say which praetor governed a repository, which is the whole point of
 // writing it down.
 func buildVersion() string {
-	return buildid.Running(version).String()
+	return runningBuild().String()
 }
 
 // lockVersion is the string init records as .standards.lock pinned_version.
@@ -43,7 +50,7 @@ func buildVersion() string {
 // exact tree, which "v1.0.0" never did. A build that can identify nothing returns ok=false so
 // the caller can say so rather than writing a version it cannot stand behind.
 func lockVersion() (string, bool) {
-	return lockPin(buildid.Running(version))
+	return lockPin(runningBuild())
 }
 
 // formatDevLockVersion renders an unreleased build's pinned_version.

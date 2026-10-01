@@ -76,7 +76,7 @@ func (s *Server) dogfoodSuiteArguments(args map[string]any) (dogfood.SuiteOption
 	if stage == "" {
 		stage = "plan"
 	}
-	opts.Stage, opts.AllowRemote = stage, s.opts.AllowRemoteBenchmarks
+	opts.Stage, opts.AllowRemote, opts.Engine = stage, s.opts.AllowRemoteBenchmarks, s.opts.Build
 	if !s.opts.AllowOutsideRoot {
 		opts.InputRoot = s.rootDir
 	}

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/buildid"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -60,9 +61,12 @@ func TestScheduleActualSuiteAndReadOnlyStatus(t *testing.T) {
 	if _, err := os.Lstat(cfg.StateDir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("status created state")
 	}
-	report, err := RunSchedule(context.Background(), path)
+	report, err := RunSchedule(context.Background(), path, buildid.Identity{Release: "v1.9.0-scheduled"})
 	if err != nil || !report.Verified || report.Suite == nil || !report.Suite.Verified || report.Attempts != 1 {
 		t.Fatalf("run: %+v %v", report, err)
+	}
+	if got := report.Suite.Engine["version"]; got != "v1.9.0-scheduled" {
+		t.Fatalf("scheduled suite recorded engine_build.version %q", got)
 	}
 	original, err := os.ReadFile(filepath.Join(cfg.StateDir, "state.json"))
 	if err != nil {
@@ -245,11 +249,11 @@ func TestScheduleCancelledAndNilContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	for _, invalid := range []context.Context{nil, ctx} {
-		if _, err := RunSchedule(invalid, path); err == nil {
+		if _, err := RunSchedule(invalid, path, buildid.Identity{}); err == nil {
 			t.Fatal("invalid context accepted")
 		}
 	}
-	if _, err := RunSchedule(ctx, path); !errors.Is(err, context.Canceled) {
+	if _, err := RunSchedule(ctx, path, buildid.Identity{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancel: %v", err)
 	}
 	if _, err := os.Stat(cfg.StateDir); !errors.Is(err, os.ErrNotExist) {
@@ -405,7 +409,7 @@ func TestScheduleRunnerIdentityMismatchAndStatus(t *testing.T) {
 	if err != nil || status.RunnerSHA256 == "" || status.RunnerIdentity != "configured_binary" {
 		t.Fatalf("configured status %+v %v", status, err)
 	}
-	if _, err := RunSchedule(context.Background(), path); err == nil {
+	if _, err := RunSchedule(context.Background(), path, buildid.Identity{}); err == nil {
 		t.Fatal("actual process mismatch allowed")
 	}
 	if _, err := os.Stat(cfg.StateDir); !errors.Is(err, os.ErrNotExist) {
@@ -463,7 +467,7 @@ func TestScheduleFailureCreatesBoundedPlanAndKeepsBlocked(t *testing.T) {
 		policy.MaxCost = budget
 		cfg.RepairPolicy = &policy
 		writeScheduleFixture(t, path, cfg)
-		report, err := RunSchedule(context.Background(), path)
+		report, err := RunSchedule(context.Background(), path, buildid.Identity{})
 		if err == nil || report == nil || report.Verified || report.Status != "failed" || report.Suite == nil {
 			t.Fatalf("failure %+v %v", report, err)
 		}

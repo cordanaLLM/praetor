@@ -1,0 +1,4 @@
+type: fixed
+title: Dogfood reports record the engine's release version next to its commit
+issue: "#689"
+breaking: false

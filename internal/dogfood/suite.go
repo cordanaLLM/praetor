@@ -24,6 +24,11 @@ type SuiteOptions struct {
 	// InputRoot confines transcript paths embedded in the config for hosted callers.
 	InputRoot   string `json:"input_root,omitempty"`
 	AllowRemote bool   `json:"allow_remote"`
+	// Engine is the identity of the binary running the suite, buildid.Running(version) of its
+	// main package, which a report records as engine_build.version (#689). The zero value
+	// records what the running build information proves without an injected release. It is
+	// not serialized: a report's options stay the caller's request.
+	Engine buildid.Identity `json:"-"`
 }
 
 // SuiteCase retains the requested input and actual bounded results, including errors.
@@ -82,7 +87,7 @@ func RunSuite(ctx context.Context, opts SuiteOptions) (*SuiteReport, error) {
 	if err != nil {
 		return nil, err
 	}
-	report := &SuiteReport{Version: 1, Options: opts, InputLimits: limits, ConfigSHA256: sum, Engine: suiteEngine(), StartedAt: time.Now().UTC(), Status: "planned",
+	report := &SuiteReport{Version: 1, Options: opts, InputLimits: limits, ConfigSHA256: sum, Engine: suiteEngine(opts.Engine), StartedAt: time.Now().UTC(), Status: "planned",
 		Cases: suiteCases(config), Scope: "Plan validates declarations only. Verify checks Praetor public adoption stability and complete observed-event ingestion/replay; no upstream application tests, verified-fact extraction, provider dispatch or promotion"}
 	if err := savePublicJSON(filepath.Join(opts.ArtifactDir, "plan.json"), report); err != nil {
 		return report, err
@@ -159,16 +164,23 @@ func executeSuiteCase(ctx context.Context, opts SuiteOptions, limits *InputLimit
 	return err
 }
 
-// suiteEngine records the engine build a report came from: the VCS stamp of the running
-// binary as every praetor surface reads it (buildid, #666), and the Go toolchain.
-func suiteEngine() map[string]string {
-	return engineBuild(buildid.RunningInfo())
+// suiteEngine records the engine build a report came from: the identity and the VCS stamp of
+// the running binary as every praetor surface reads them (buildid, #666, #689), and the Go
+// toolchain.
+func suiteEngine(engine buildid.Identity) map[string]string {
+	return engineBuild(engine, buildid.RunningInfo())
 }
 
-// engineBuild is the engine_build map of a report for the build information info. A build
-// without information or without a VCS stamp records its revision as "unavailable".
-func engineBuild(info *debug.BuildInfo) map[string]string {
-	result := map[string]string{"revision": "unavailable"}
+// engineBuild is the engine_build map of a report for the binary identity engine and the
+// build information info. version is what `praetorctl version` prints for the same binary;
+// a zero engine is resolved from info alone, so a build without an injected release, a test
+// binary included, names what it can prove or why it cannot. revision is the full VCS stamp,
+// "unavailable" for a build without information or without a stamp.
+func engineBuild(engine buildid.Identity, info *debug.BuildInfo) map[string]string {
+	if engine == (buildid.Identity{}) {
+		engine = buildid.Identify("", info)
+	}
+	result := map[string]string{"version": engine.String(), "revision": "unavailable"}
 	if info == nil {
 		return result
 	}
