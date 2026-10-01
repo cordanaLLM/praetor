@@ -139,13 +139,7 @@ func planHarness(ctx context.Context, s *adoptSession) (harnessPlan, error) {
 		return harnessPlan{}, err
 	}
 	if !exists {
-		// A rules.md without a harness is the operator's: the new harness is written beside it
-		// and the page is kept, rather than overwritten unreported (#366).
-		rules, err := repoFile(s.repoPath, paperclipRulesFile)
-		if err != nil {
-			return harnessPlan{}, err
-		}
-		return harnessPlan{data: fresh, write: synthesized, rules: !fileExists(rules)}, nil
+		return newHarnessPlan(s.repoPath, synthesized, fresh)
 	}
 	existing, err := existingHarness(ctx, path)
 	if err != nil || bytes.Equal(existing, fresh) {
@@ -156,6 +150,17 @@ func planHarness(ctx context.Context, s *adoptSession) (harnessPlan, error) {
 		return plan, err
 	}
 	return planOwnedHarness(plan, synthesized.Platform, s.opts.Force), nil
+}
+
+// newHarnessPlan plans the first harness of a repository that has none. A rules.md without a
+// harness is the operator's: the new harness is written beside it and the page is kept, rather
+// than overwritten unreported (#366).
+func newHarnessPlan(repoPath string, synthesized *paperclip.Harness, fresh []byte) (harnessPlan, error) {
+	rules, err := repoFile(repoPath, paperclipRulesFile)
+	if err != nil {
+		return harnessPlan{}, err
+	}
+	return harnessPlan{data: fresh, write: synthesized, rules: !fileExists(rules)}, nil
 }
 
 // planOwnedHarness compares the platform of an operator-owned harness with the one the current
