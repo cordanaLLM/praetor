@@ -273,6 +273,10 @@ type Manifest struct {
 	// facets: the freshness bounds of the committed bundle (#338). It is repository-only, like
 	// Documentation.
 	DevContainer *DevContainerPolicy `yaml:"devcontainer,omitempty"`
+	// Generated declares the repository's generated artefacts and the marker of the one change
+	// allowed to edit them (ADR-0017). Praetor's own artefacts are built in; this section
+	// declines one of them or adds the repository's own. It is repository-only, like Register.
+	Generated *GeneratedPolicy `yaml:"generated,omitempty"`
 }
 
 // AdoptionPolicy declares generated artefacts this repository refuses.
@@ -309,6 +313,13 @@ func LoadManifest(path string) (*Manifest, error) {
 	return parseManifest(path, data)
 }
 
+// ParseManifest is LoadManifest for manifest bytes the caller already holds, such as the
+// manifest of a base commit read through git: the same decoder and every validation, with name
+// standing for the path in errors.
+func ParseManifest(name string, data []byte) (*Manifest, error) {
+	return parseManifest(name, data)
+}
+
 func parseManifest(path string, data []byte) (*Manifest, error) {
 	m, err := DecodeManifest(data)
 	if err != nil {
@@ -336,6 +347,9 @@ func parseManifest(path string, data []byte) (*Manifest, error) {
 		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
 	}
 	if err := validateManifestDevContainer(m); err != nil {
+		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
+	}
+	if err := ValidateGenerated(m.Generated); err != nil {
 		return nil, fmt.Errorf("failed to validate manifest at %s: %w", path, err)
 	}
 
