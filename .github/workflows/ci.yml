@@ -584,28 +584,35 @@ jobs:
       # home page URL must appear, every site URL must start with the configured one, and
       # every root-absolute href or src must start with its path, which is what a project
       # page (https://<owner>.github.io/<repo>/) breaks when the path is dropped.
+      # shell: bash adds pipefail, so a failed read on the left of a pipe fails it. Bash
+      # clears -e inside a command substitution, so site_urls returns each pipeline's
+      # failure itself and every caller checks the substitution's status. matches is grep
+      # for which status 1, no match, is an empty result; only status 2, an error, fails.
       - name: Check Preset Site URLs
         if: steps.changed.outputs.run == 'true'
+        shell: bash
         run: |
           fail() { echo "::error::$1"; exit 1; }
+          matches() { grep -hoE "$@" || [ $? -eq 1 ]; }
           site_urls() {
-            grep -rhoE '<link[^>]*canonical[^>]*>|<meta[^>]*og:url[^>]*>' --include='*.html' "$1" | grep -oE "https?://[^\"' >]+" || [ $? -eq 1 ]
-            grep -rhoE '"url": ?"[^"]*"' --include='*.html' "$1" | cut -d'"' -f4
-            find "$1" -maxdepth 1 -name 'sitemap*.xml' -exec grep -hoE '<loc>[^<]*</loc>' {} + | sed -E 's#</?loc>##g'
+            matches -r --include='*.html' '<link[^>]*canonical[^>]*>|<meta[^>]*og:url[^>]*>' "$1" | matches "https?://[^\"' >]+" || return
+            matches -r --include='*.html' '"url": ?"[^"]*"' "$1" | cut -d'"' -f4 || return
+            find "$1" -maxdepth 1 -name 'sitemap*.xml' -exec cat {} + | matches '<loc>[^<]*</loc>' | sed -E 's#</?loc>##g'
           }
           outside() { awk -v p="$1" 'NF && index($0, p) != 1'; }
           check_unset() {
             [ -d "$1" ] || fail "$1: build output missing"
-            found=$(site_urls "$1")
+            found=$(site_urls "$1") || fail "$1: reading the site URLs failed"
             [ -z "$found" ] || fail "$1 names a site URL although DOCS_SITE_URL is unset: $(tr '\n' ' ' <<< "$found")"
           }
           check_set() {
             [ -d "$1" ] || fail "$1: build output missing"
-            found=$(site_urls "$1")
+            found=$(site_urls "$1") || fail "$1: reading the site URLs failed"
             grep -qxF "$2" <<< "$found" || fail "$1 names no URL equal to $2"
             stray=$(outside "$2" <<< "$found")
             [ -z "$stray" ] || fail "$1 names site URLs outside $2: $(tr '\n' ' ' <<< "$stray")"
-            links=$(grep -rhoE '(href|src)="?/[^"> ]*' --include='*.html' "$1" | sed -E 's/^(href|src)="?//')
+            links=$(matches -r --include='*.html' '(href|src)="?/[^"> ]*' "$1" | sed -E 's/^(href|src)="?//') ||
+              fail "$1: reading the links failed"
             stray=$(outside "$3" <<< "$links" | sort -u)
             [ -z "$stray" ] || fail "$1 links outside $3: $(tr '\n' ' ' <<< "$stray")"
           }
