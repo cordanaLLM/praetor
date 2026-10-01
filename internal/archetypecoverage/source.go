@@ -169,13 +169,18 @@ func addSourceFile(root, module, file string, fset *token.FileSet, packages map[
 		pkg = &sourcePackage{dir: pkgDir}
 		packages[pkgDir] = pkg
 	}
-	pkg.files = append(pkg.files, parsed)
+	pkg.add(parsed, module)
+	return nil
+}
+
+// add files one parsed file and the module packages it imports.
+func (p *sourcePackage) add(parsed *ast.File, module string) {
+	p.files = append(p.files, parsed)
 	for _, spec := range util.GoImportSpecs(parsed) {
-		if imported, inside := util.ModuleImportDir(spec.Path, module); inside && !slices.Contains(pkg.imports, imported) {
-			pkg.imports = append(pkg.imports, imported)
+		if imported, inside := util.ModuleImportDir(spec.Path, module); inside && !slices.Contains(p.imports, imported) {
+			p.imports = append(p.imports, imported)
 		}
 	}
-	return nil
 }
 
 // dependencyOrder sorts the packages so each follows every module package it imports (Kahn's
