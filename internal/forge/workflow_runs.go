@@ -5,10 +5,9 @@
 package forge
 
 import (
-	"fmt"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"github.com/cordanaLLM/praetor/internal/ghworkflow"
 )
 
 // WorkflowRun is one `run:` step of a workflow.
@@ -35,33 +34,28 @@ type WorkflowRun struct {
 }
 
 // WorkflowRuns lists what a workflow document runs, job by job in job ID order and step by
-// step in file order: the command of a one-line `run:` step, and the name of a step whose script
-// spans several lines (a toolchain install or a shell branch reads better by its name; an
-// unnamed one by its first line), each with the job it runs in and its place there. A `uses:`
-// step runs an action rather than a command and is not listed. The document is read through the parser every workflow audit here uses
-// (workflowSpec), so a claim about what a workflow runs is taken from the file itself rather
-// than restated beside it. A document with more jobs or steps than the package bounds
-// (maxJobsPerFile, maxStepsPerJob) is refused rather than read in part.
+// step in file order (ghworkflow.RunSteps): the command of a one-line `run:` step, and the name of
+// a step whose script spans several lines (a toolchain install or a shell branch reads better by
+// its name; an unnamed one by its first line), each with the job it runs in and its place there.
+// A `uses:` step runs an action rather than a command and is not listed. The document is read
+// through the parser every workflow audit here uses (ghworkflow.Parse), so a claim about what a
+// workflow runs is taken from the file itself rather than restated beside it. A document with
+// more jobs or steps than the package bounds (maxJobsPerFile, maxStepsPerJob) is refused rather
+// than read in part.
 func WorkflowRuns(data []byte) ([]WorkflowRun, error) {
-	var spec workflowSpec
-	if err := yaml.Unmarshal(data, &spec); err != nil {
-		return nil, fmt.Errorf("parse workflow: %w", err)
+	spec, err := ghworkflow.Parse(data)
+	if err != nil {
+		return nil, err
 	}
-	if len(spec.Jobs) > maxJobsPerFile {
-		return nil, fmt.Errorf("workflow exceeds %d jobs", maxJobsPerFile)
+	steps, err := ghworkflow.RunSteps(&spec)
+	if err != nil {
+		return nil, err
 	}
-	ids := sortedJobIDs(spec.Jobs)
-	var runs []WorkflowRun
-	for i := 0; i < len(ids) && i < maxJobsPerFile; i++ {
-		job := spec.Jobs[ids[i]]
-		if len(job.Steps) > maxStepsPerJob {
-			return nil, fmt.Errorf("workflow job %s exceeds %d steps", ids[i], maxStepsPerJob)
-		}
-		for j := 0; j < len(job.Steps) && j < maxStepsPerJob; j++ {
-			if run, ok := stepRun(job.Steps[j]); ok {
-				run.Job, run.JobName, run.Index = ids[i], strings.TrimSpace(job.Name), j
-				runs = append(runs, run)
-			}
+	runs := make([]WorkflowRun, 0, len(steps))
+	for _, step := range steps {
+		if run, ok := stepRun(*step.Step); ok {
+			run.Job, run.JobName, run.Index = step.JobID, strings.TrimSpace(step.Job.Name), step.Index
+			runs = append(runs, run)
 		}
 	}
 	return runs, nil
