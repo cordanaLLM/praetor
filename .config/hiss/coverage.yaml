@@ -465,9 +465,13 @@ rules:
         state: partial
         mechanism: internal/hiss systemd.go checkExec
         rationale: >-
-          An Exec*= command of a service or socket whose prefix holds "-" is reported, alone or
-          combined with other prefixes, because systemd records its failure but treats it as
-          success (systemd.service(5)); a "-" inside an argument and a commented setting are not.
+          A command setting of a service (ExecCondition=, ExecStartPre=, ExecStart=,
+          ExecStartPost=, ExecReload=, ExecReloadPost=, ExecStop=, ExecStopPost=) or socket
+          (ExecStartPre=, ExecStartPost=, ExecStopPre=, ExecStopPost=) whose prefix holds "-" is
+          reported, alone or combined with other prefixes, because systemd records its failure but
+          treats it as success (systemd.service(5)); a "-" inside an argument, a commented setting
+          and the path lists ExecPaths=, NoExecPaths= and ExecSearchPath=, whose "-" ignores a
+          missing path (systemd.exec(5)), are not.
           Shell inside an Exec command is not read and is held as a gap.
       - language: ansible
         state: partial

@@ -512,11 +512,18 @@ a comment line, the last assignment of a setting wins and an empty one resets it
   also reads as no timeout (`TestSystemdScanner_Boundaries`); and a service with
   `Restart=` other than `no` whose `StartLimitIntervalSec=` is `0`, which turns off the rate limit
   that stops a restart loop (`systemd.unit(5)`).
-- HISS-07: an `Exec*=` command whose prefix holds `-`, since systemd records its failure and then
-  treats it as success.
+- HISS-07: a command setting whose prefix holds `-`, since systemd records its failure and then
+  treats it as success. The command settings are the keys systemd parses as command lines:
+  `ExecCondition=`, `ExecStartPre=`, `ExecStart=`, `ExecStartPost=`, `ExecReload=`,
+  `ExecReloadPost=` (systemd 259), `ExecStop=` and `ExecStopPost=` of a service
+  (`systemd.service(5)`), and `ExecStartPre=`, `ExecStartPost=`, `ExecStopPre=` and
+  `ExecStopPost=` of a socket (`systemd.socket(5)`). `ExecPaths=`, `NoExecPaths=` and
+  `ExecSearchPath=` are path lists, whose `-` ignores a missing path (`systemd.exec(5)`), so they
+  are not read (`TestSystemdScanner_OnlyCommandSettingsAreExec`,
+  `.config/hiss/testdata/HISS-07/systemd/negative/exec-path-lists.service`).
 
-Not decided: a drop-in (`.conf`) that overrides a unit, which is a separate file, and shell inside an
-`Exec*=` command. A unit has no functions and evaluates nothing itself, so HISS-01, HISS-04 and
+Not decided: a drop-in (`.conf`) that overrides a unit, which is a separate file, and shell inside a
+command setting. A unit has no functions and evaluates nothing itself, so HISS-01, HISS-04 and
 HISS-08 have no analogue (`internal/hiss/systemd_test.go`).
 
 ### Ansible

@@ -21,8 +21,8 @@ import (
 //     timeout set to infinity, or to 0 where systemd reads 0 as no timeout (all but the abort
 //     timeout); and a restarting service (Restart= other than no) whose StartLimitIntervalSec=
 //     is 0, which turns off the rate limit that stops a restart loop (systemd.unit(5)).
-//   - HISS-07 an Exec*= command prefixed with "-", whose failure systemd records but otherwise
-//     treats as success.
+//   - HISS-07 a command setting (ExecStart= and the other keys unitCommands lists) prefixed
+//     with "-", whose failure systemd records but otherwise treats as success.
 //
 // A drop-in (.conf) that overrides a unit is a separate file the scanner does not read, so a
 // finding, or its absence, is about the unit file as written.
@@ -49,6 +49,18 @@ type unitTimeout struct {
 var unitTimeouts = []unitTimeout{
 	{"Service.TimeoutStartSec", true}, {"Service.TimeoutStopSec", true}, {"Service.TimeoutSec", true},
 	{"Service.TimeoutAbortSec", false}, {"Socket.TimeoutSec", true},
+}
+
+// unitCommands are the settings, per section, that systemd parses as command lines
+// (config_parse_exec in its unit loader; systemd.service(5), systemd.socket(5); ExecReloadPost=
+// since systemd 259). ExecPaths=, NoExecPaths= and ExecSearchPath= are path lists whose "-"
+// ignores a missing path (systemd.exec(5)), and a key the section does not define is never run.
+var unitCommands = map[string]bool{
+	"Service.ExecCondition": true, "Service.ExecStartPre": true, "Service.ExecStart": true,
+	"Service.ExecStartPost": true, "Service.ExecReload": true, "Service.ExecReloadPost": true,
+	"Service.ExecStop": true, "Service.ExecStopPost": true,
+	"Socket.ExecStartPre": true, "Socket.ExecStartPost": true, "Socket.ExecStopPre": true,
+	"Socket.ExecStopPost": true,
 }
 
 // systemdLanguage reads systemd service and socket units.
@@ -210,14 +222,14 @@ func (u unitFile) checkRestart(rep *ScanReport, rel string) {
 	}
 }
 
-// checkExec reports every Exec*= command whose "-" prefix ignores its failure. A setting may
+// checkExec reports every command setting whose "-" prefix ignores its failure. A setting may
 // carry several commands separated by a lone semicolon, each with its own prefix.
 func (u unitFile) checkExec(rep *ScanReport, rel string) {
 	for _, s := range u.settings {
-		section, key, _ := strings.Cut(s.key, ".")
-		if (section != "Service" && section != "Socket") || !strings.HasPrefix(key, "Exec") {
+		if !unitCommands[s.key] {
 			continue
 		}
+		key := s.key[strings.IndexByte(s.key, '.')+1:]
 		for _, command := range strings.Split(s.value, " ; ") {
 			if strings.Contains(execPrefix(command), "-") {
 				recordViolation(rep, "HISS-07", rel, s.line, "",

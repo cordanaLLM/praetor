@@ -41,6 +41,19 @@ func TestSystemdScanner_LegitimateUnitsAreClean(t *testing.T) {
 	}
 }
 
+// Negative and positive: only the settings systemd parses as command lines carry a "-" prefix
+// that ignores a failure. ExecPaths=, NoExecPaths= and ExecSearchPath= are path lists, where "-"
+// ignores a missing path (systemd.exec(5)), and a command key the section does not define is
+// never run; ExecReloadPost= (systemd 259) and the socket's ExecStopPre= are commands.
+func TestSystemdScanner_OnlyCommandSettingsAreExec(t *testing.T) {
+	assertScriptFindings(t, "sandbox.service", "[Service]\nExecPaths=-/opt/app\nNoExecPaths=-/srv/data\n"+
+		"ExecSearchPath=/opt/app/bin\nExecStart=/usr/bin/app\nExecReloadPost=-/usr/bin/app-notify\n",
+		"HISS-07@6")
+	assertScriptFindings(t, "sandbox.socket", "[Socket]\nListenStream=8080\nExecPaths=-/opt/app\n"+
+		"ExecReload=-/bin/reload\nExecStopPre=-/bin/drain\n",
+		"HISS-07@5")
+}
+
 // Boundary: the last assignment wins and an empty one resets, a backslash continues a setting
 // across lines (skipping a comment line inside it), and a CRLF checkout reads like LF (HISS-21).
 func TestSystemdScanner_Boundaries(t *testing.T) {
