@@ -33,26 +33,45 @@ func loadFragmentsContext(ctx context.Context, repoPath string) (fragments []Fra
 		return nil, nil, err
 	}
 	for _, snapshot := range snapshots {
-		files = append(files, filepath.Join(repoPath, "changelog.d", snapshot.Name))
+		files = append(files, filepath.Join(repoPath, FragmentDir, snapshot.Name))
 	}
 	return fragments, files, nil
 }
 
 func openFragments(ctx context.Context, repoPath string) (*os.Root, bool, error) {
+	if _, absent, err := statFragmentDir(ctx, repoPath); err != nil || absent {
+		return nil, absent, err
+	}
+	root, err := contextopt.OpenDirectory(ctx, filepath.Join(repoPath, FragmentDir))
+	return root, false, err
+}
+
+// FragmentDirPresent reports whether repoPath keeps a changelog fragment directory: FragmentDir
+// exists there as a directory. A file or a symbolic link of that name is no fragment directory,
+// since the fragment reader refuses to open it (openFragments). The text register renders the
+// changelog fragment convention only for a repository that keeps one (config.FragmentConvention).
+func FragmentDirPresent(ctx context.Context, repoPath string) (bool, error) {
+	info, absent, err := statFragmentDir(ctx, repoPath)
+	if err != nil {
+		return false, fmt.Errorf("inspect %s: %w", FragmentDir, err)
+	}
+	return !absent && info.IsDir(), nil
+}
+
+// statFragmentDir is the one existence check of FragmentDir below repoPath, shared by the
+// fragment reader and FragmentDirPresent. absent is true when nothing of that name exists.
+func statFragmentDir(ctx context.Context, repoPath string) (info os.FileInfo, absent bool, err error) {
 	if ctx == nil {
 		return nil, false, errors.New("changelog fragments require a context")
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, false, err
 	}
-	dir := filepath.Join(repoPath, "changelog.d")
-	if _, err := os.Lstat(dir); errors.Is(err, os.ErrNotExist) {
+	info, err = os.Lstat(filepath.Join(repoPath, FragmentDir))
+	if errors.Is(err, os.ErrNotExist) {
 		return nil, true, nil
-	} else if err != nil {
-		return nil, false, err
 	}
-	root, err := contextopt.OpenDirectory(ctx, dir)
-	return root, false, err
+	return info, false, err
 }
 
 func fragmentEntries(root *os.Root) ([]os.DirEntry, error) {

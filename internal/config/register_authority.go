@@ -138,6 +138,7 @@ func (a RegisterAuthority) Policy() RegisterPolicy {
 	for task, row := range a.policy.Tasks {
 		policy.Tasks[task] = row
 	}
+	policy.Conventions = copyConventions(a.policy.Conventions)
 	return policy
 }
 

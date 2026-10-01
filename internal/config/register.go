@@ -4,6 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/cordanaLLM/praetor/internal/router"
 	"gopkg.in/yaml.v3"
@@ -143,6 +146,10 @@ type RegisterPolicy struct {
 	Tasks    map[string]RegisterTask          `yaml:"tasks,omitempty"`
 	Evidence EvidenceBounds                   `yaml:"evidence,omitempty"`
 	Sources  *RegisterSources                 `yaml:"sources,omitempty"`
+	// Conventions are the repository's own clauses per register, rendered after the
+	// engine-universal form of that register (RegisterPolicy.form). A written key, an empty
+	// value included, replaces what compile-context would detect (WithDetectedConventions).
+	Conventions map[TextRegister]string `yaml:"conventions,omitempty"`
 }
 
 // Resolution is the register a caller must write in, with the row that decided it.
@@ -278,6 +285,7 @@ func (m *Manifest) EffectiveRegister() RegisterPolicy {
 		policy.Tasks[label] = RegisterTask{Register: row.Register, MaxTokens: row.MaxTokens}
 	}
 	policy.Sources = m.Register.Sources
+	policy.Conventions = copyConventions(m.Register.Conventions)
 	tightenPositive(&policy.Evidence.InlineMaxLines, m.Register.Evidence.InlineMaxLines)
 	tightenPositive(&policy.Evidence.InlineMaxTokens, m.Register.Evidence.InlineMaxTokens)
 	return policy
@@ -388,11 +396,72 @@ func (p RegisterPolicy) validate() error {
 			return err
 		}
 	}
-	return p.validateBoundsAndSources()
+	return p.validateSections()
 }
 
-func (p RegisterPolicy) validateBoundsAndSources() error {
+// MaxRegisterConventionBytes bounds one register.conventions value. It renders inside one table
+// cell of the register block, in AGENTS.md and in every compiled vendor file.
+const MaxRegisterConventionBytes = 160
+
+// FragmentConvention is the social convention compile-context renders for a repository that
+// keeps a changelog fragment directory (changelog.FragmentDirPresent) and whose manifest writes
+// no conventions.social key. A repository without that directory gets no changelog clause: the
+// engine never asserts a release-note lane the repository does not have (#328).
+const FragmentConvention = "changelog fragment unchanged"
+
+// WithDetectedConventions returns p with FragmentConvention as its social convention when
+// fragmentDir reports a changelog fragment directory and the manifest wrote no
+// conventions.social key. A written key wins, an empty value included, so a repository can state
+// that it has no such convention although the directory exists. p itself is not changed.
+func (p RegisterPolicy) WithDetectedConventions(fragmentDir bool) RegisterPolicy {
+	if _, written := p.Conventions[TextRegisterSocial]; written || !fragmentDir {
+		return p
+	}
+	conventions := copyConventions(p.Conventions)
+	if conventions == nil {
+		conventions = make(map[TextRegister]string, 1)
+	}
+	conventions[TextRegisterSocial] = FragmentConvention
+	p.Conventions = conventions
+	return p
+}
+
+// copyConventions returns an independent copy of conventions; nil stays nil.
+func copyConventions(conventions map[TextRegister]string) map[TextRegister]string {
+	if conventions == nil {
+		return nil
+	}
+	out := make(map[TextRegister]string, len(conventions))
+	for register, convention := range conventions {
+		out[register] = convention
+	}
+	return out
+}
+
+// validateConventions checks every register.conventions entry: a known register as key, and a
+// value that renders as one table cell: at most MaxRegisterConventionBytes of valid UTF-8, with
+// no control character such as a line break and no pipe, which the forge reads as a new column.
+func validateConventions(conventions map[TextRegister]string) error {
+	for register, convention := range conventions {
+		if !knownTextRegister(register) {
+			return fmt.Errorf("register conventions: unsupported text register %q", register)
+		}
+		if len(convention) > MaxRegisterConventionBytes {
+			return fmt.Errorf("register conventions.%s exceeds %d bytes", register, MaxRegisterConventionBytes)
+		}
+		if !utf8.ValidString(convention) || strings.ContainsFunc(convention, unicode.IsControl) || strings.Contains(convention, "|") {
+			return fmt.Errorf("register conventions.%s must be one line of UTF-8 text without control characters or '|'", register)
+		}
+	}
+	return nil
+}
+
+// validateSections checks the evidence bounds, the conventions and the tracked sources.
+func (p RegisterPolicy) validateSections() error {
 	if err := p.Evidence.validate(); err != nil {
+		return err
+	}
+	if err := validateConventions(p.Conventions); err != nil {
 		return err
 	}
 	return p.Sources.validate()
