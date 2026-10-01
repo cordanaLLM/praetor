@@ -24,7 +24,7 @@ var repairJSONOptions = strictjson.Options{
 		Trailing:  "repair report must be bounded UTF-8 JSON",
 		Surrogate: "unpaired repair Unicode surrogate",
 		Depth:     "repair JSON exceeds %d nesting levels",
-		Tokens:    "repair JSON exceeds token bound",
+		Count:     "repair JSON exceeds token bound",
 		Duplicate: "duplicate repair JSON field",
 		Decode:    "repair report schema or field type is invalid",
 	},

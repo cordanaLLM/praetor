@@ -12,7 +12,7 @@ var draftJSON = strictjson.Options{
 		Syntax:    "decode planning JSON token: %w",
 		Surrogate: "planning JSON holds an unpaired UTF-16 surrogate escape",
 		Depth:     "planning JSON nesting exceeds %d",
-		Tokens:    "planning JSON token bound exceeded",
+		Count:     "planning JSON token bound exceeded",
 		Duplicate: "invalid or duplicate planning JSON key",
 		Trailing:  "expected exactly one planning JSON document",
 		Decode:    "decode planning draft: %w",
