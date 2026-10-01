@@ -47,17 +47,23 @@ func (s *adoptSession) scaffoldedWorkflows(ctx context.Context, families []manag
 // harness names what they run and the actionlint-labels step declares the runner labels they
 // need, both from this one list.
 func (s *adoptSession) adoptedWorkflowFiles(ctx context.Context, families []managedasset.Family) ([]flavor.PlannedTemplate, error) {
+	planned, err := s.plannedFlavorWorkflows(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return append(familyWorkflows(families), planned...), nil
+}
+
+// familyWorkflows returns the hosted workflow of each of families that has one, in their order,
+// with its locked body: what the family's step writes to its WorkflowFile.
+func familyWorkflows(families []managedasset.Family) []flavor.PlannedTemplate {
 	var files []flavor.PlannedTemplate
 	for index := 0; index < len(families) && index < managedasset.MaxFamilies; index++ {
 		if families[index].WorkflowFile != "" {
 			files = append(files, flavor.PlannedTemplate{Path: families[index].WorkflowFile, Content: families[index].Workflow})
 		}
 	}
-	planned, err := s.plannedFlavorWorkflows(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return append(files, planned...), nil
+	return files
 }
 
 // plannedFlavorWorkflows lists the workflows the flavor step leaves as the own rendering of the

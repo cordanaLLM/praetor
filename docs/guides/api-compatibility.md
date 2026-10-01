@@ -25,8 +25,11 @@ step: remove the facet to opt out, which removes both files and, under `--force`
 context from the ruleset (`internal/adopt/api_compat.go`,
 `TestAdoptionAPICompatibilityGateFacetTransitionConverges` and
 `TestAdoptionAPICompatibilityGateRefusals` in `internal/adopt/api_compat_test.go`). The
-actionlint runner labels, the Renovate ignore rule and the Prettier inventory that adoption
-maintains list the gate's files beside the documentation gate's.
+Renovate ignore rule and the Prettier inventory that adoption maintains list the gate's files
+beside the documentation gate's. The actionlint runner labels adoption declares are read from
+every workflow it writes (`adoptedWorkflowFiles` in `internal/adopt/harness_ci.go`), so the
+runner `praetor-api.yml` runs on is declared exactly while adoption emits the gate
+(`TestActionlintLabelsFollowTheAPICompatibilityGate` in `internal/adopt/actionlint_test.go`).
 
 ## Repositories without Go
 
