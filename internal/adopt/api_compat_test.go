@@ -124,6 +124,24 @@ func TestAdoptionAPICompatibilityGateRefusals(t *testing.T) {
 	}
 }
 
+// Positive: the facet enables the gate. Negative: another facet does not. Boundary: an
+// inventory past the manifest bound is refused, and the facet's families are the gate alone.
+func TestAPICompatibilityEnabled(t *testing.T) {
+	if enabled, err := APICompatibilityEnabled([]string{"docs:seo-portal", "api:public-contract"}); err != nil || !enabled {
+		t.Fatalf("declared facet: enabled=%v err=%v", enabled, err)
+	}
+	if enabled, err := APICompatibilityEnabled([]string{"docs:seo-portal", "api:public"}); err != nil || enabled {
+		t.Fatalf("other facets: enabled=%v err=%v", enabled, err)
+	}
+	if _, err := APICompatibilityEnabled(make([]string, config.MaxManifestEntriesPerKind+1)); err == nil {
+		t.Fatal("a facet inventory past the manifest bound was resolved")
+	}
+	families := APICompatibilityFamilies()
+	if len(families) != 1 || families[0].WorkflowFile != APICompatibilityWorkflowFile || families[0].StatusContext != APICompatibilityStatusContext {
+		t.Fatalf("api:public-contract families = %+v", families)
+	}
+}
+
 // Positive and boundary: the enabled families follow the declared facets in registry order,
 // none for no facet, and a blank entry enables nothing. Negative: a facet inventory past the
 // manifest bound is refused rather than read in part.

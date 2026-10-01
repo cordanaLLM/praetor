@@ -132,5 +132,8 @@ an adopting repository, so the forbidigo rule and the utility-sprawl check of
 - The base revision is not built separately: the canary covers a checker that cannot read the
   toolchain's packages, and `go list -export` covers `HEAD`, but a base whose packages no longer
   load with the current toolchain is compared as the checker reads it.
+- go-apidiff opens the repository with go-git, which does not read a linked worktree
+  (`git worktree add`): it reports every file as staged and exits 2, so the gate fails there
+  without touching the tree. Run it in a clone, as the hosted job does.
 - The hosted job runs on Linux. The gate itself runs on Linux, macOS and Windows, and its tests run
   on all three.
