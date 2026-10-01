@@ -16,7 +16,7 @@ inputs:
     required: false
     default: "false"
   force:
-    description: "adopt: pass --force, the refresh docs/adoption.md describes under 'What a forced re-adoption changes': it rebuilds .standards.lock and rewrites the drifted files audit compares byte for byte, and overwrites no other file audit does not verify. --force needs a lock source, which this action does not pass, so true stops at the lock step"
+    description: "adopt: pass --force, the refresh docs/adoption.md describes under 'What a forced re-adoption changes': it rebuilds .standards.lock, rewrites the drifted files audit compares byte for byte, merges editor JSON, regenerates the AGENTS.md harness and resets a Paperclip platform that names another repository, and keeps every other file. --force needs a lock source, so the action passes the praetor checkout it builds standardsctl from as --lock-source-root"
     required: false
     default: "false"
   record-baseline:
@@ -114,6 +114,9 @@ runs:
 
         go build -C "$source_root" -o "$binary" ./cmd/standardsctl
         echo "binary=$binary" >> "$GITHUB_OUTPUT"
+        # The checkout the binary was built from is also the source bundle a forced adoption
+        # rebuilds .standards.lock from: praetor at the ref the caller pinned.
+        echo "source_root=$source_root" >> "$GITHUB_OUTPUT"
 
     # Every value this step needs arrives through env. An expression written into a run body is
     # substituted into the script *text* before bash parses it, so an adopter's path or mode would
@@ -124,11 +127,16 @@ runs:
     # dogfood's --dry-run and adopt's --record-baseline both default to true in standardsctl, so an
     # omitted flag is an opt-in, not an opt-out, and `record-baseline: "false"` used to record a
     # baseline anyway.
+    #
+    # A forced adoption rebuilds .standards.lock, and the rebuild needs a lock source
+    # (adopt.ForceContract); without one every forced run stopped at the lock step. The source is
+    # the checkout the build step compiled, so the lock pins the praetor the binary came from.
     - name: Execute Praetor Action
       id: run-praetor
       shell: bash
       env:
         PRAETOR_BIN: ${{ steps.build-standardsctl.outputs.binary }}
+        PRAETOR_LOCK_SOURCE: ${{ steps.build-standardsctl.outputs.source_root }}
         PRAETOR_PATH: ${{ inputs.path }}
         PRAETOR_MODE: ${{ inputs.mode }}
         PRAETOR_DRY_RUN: ${{ inputs.dry-run }}
@@ -200,6 +208,12 @@ runs:
               adopt "--path=$PRAETOR_PATH" "--dry-run=$PRAETOR_DRY_RUN"
               "--force=$PRAETOR_FORCE" "--record-baseline=$PRAETOR_RECORD_BASELINE"
             )
+            if [ "$PRAETOR_FORCE" = "true" ]; then
+              if [ -z "${PRAETOR_LOCK_SOURCE:-}" ]; then
+                reject "--force needs a lock source, and the build step published no praetor checkout to pass as one"
+              fi
+              args+=("--lock-source-root=$PRAETOR_LOCK_SOURCE")
+            fi
             ;;
           *)
             reject "the 'mode' input takes adopt or dogfood, not '$PRAETOR_MODE'"
