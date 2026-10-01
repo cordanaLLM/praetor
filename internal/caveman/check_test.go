@@ -281,3 +281,80 @@ func TestCheckIsDeterministic(t *testing.T) {
 		t.Errorf("Finding.String() = %q", got)
 	}
 }
+
+// frontMatterSkill opens with a description that breaks C1, C3 and C5 on its own.
+const frontMatterSkill = "---\nname: example\n" +
+	"description: Use this skill when the user asks for a summary of the work that was done in the session and probably wants a list of the paths with the commands that produced them; it seems the harness matches on it.\n" +
+	"---\n\n# Example\n\n- Read ledger first.\n"
+
+// TestCheckFrontMatter pins #374: Check leaves front matter out of the prose rules, counts its
+// lines, and still judges the body; CheckRuntime reads it as text.
+func TestCheckFrontMatter(t *testing.T) {
+	report := Check(frontMatterSkill, Options{Kind: KindContext})
+	if !report.Passed() || report.FrontMatterLines != 4 || report.ProseWords != 3 {
+		t.Fatalf("front matter linted: lines %d, words %d, %v", report.FrontMatterLines, report.ProseWords, report.Findings)
+	}
+	body := frontMatterSkill + "- Probably fine.\n"
+	want := []Finding{{9, RuleHedge, "probably"}}
+	if got := Check(body, Options{Kind: KindContext}).Findings; !reflect.DeepEqual(got, want) {
+		t.Fatalf("body findings\n got %v\nwant %v", got, want)
+	}
+	runtime := CheckRuntime(frontMatterSkill, Options{Kind: KindMessage})
+	if runtime.Passed() || runtime.FrontMatterLines != 0 {
+		t.Fatalf("runtime profile let front matter through: lines %d, %v", runtime.FrontMatterLines, runtime.Findings)
+	}
+}
+
+// TestCheckFrontMatterBoundary keeps the block narrow: only a closed "---" block on line one
+// that decodes as a YAML mapping is front matter, so a thematic break never hides prose.
+func TestCheckFrontMatterBoundary(t *testing.T) {
+	cases := map[string]string{
+		"not on line one":  "\n---\ndescription: probably\n---\n",
+		"never closed":     "---\ndescription: probably\n",
+		"not a mapping":    "---\nThis is probably prose.\n---\n",
+		"sequence":         "---\n- probably\n---\n",
+		"invalid yaml":     "---\ndescription: probably: broken\n---\n",
+		"thematic breaks":  "----\nprobably\n----\n",
+		"indented opening": " ---\ndescription: probably\n---\n",
+	}
+	for name, text := range cases {
+		t.Run(name, func(t *testing.T) {
+			report := Check(text, Options{Kind: KindContext})
+			if report.FrontMatterLines != 0 || report.Passed() {
+				t.Fatalf("read as front matter: lines %d, %v", report.FrontMatterLines, report.Findings)
+			}
+		})
+	}
+	if report := Check("---\n---\nbody", Options{Kind: KindContext}); report.FrontMatterLines != 2 || !report.Passed() {
+		t.Fatalf("empty front matter: lines %d, %v", report.FrontMatterLines, report.Findings)
+	}
+	crlf := strings.ReplaceAll(frontMatterSkill, "\n", "\r\n")
+	if report := Check(crlf, Options{Kind: KindContext}); report.FrontMatterLines != 4 || !report.Passed() {
+		t.Fatalf("CRLF front matter: lines %d, %v", report.FrontMatterLines, report.Findings)
+	}
+}
+
+// TestCheckSentenceClosers pins #378: a closing delimiter after the final punctuation ends the
+// sentence, so two short sentences never merge into one long one.
+func TestCheckSentenceClosers(t *testing.T) {
+	first := strings.Repeat("alpha ", 21) + "omega"
+	second := strings.Repeat("beta ", 11) + "omega."
+	for _, closer := range []string{"", "**", "_", "*", `"`, "'", ")", "]", "”", "’", "`"} {
+		for _, end := range []string{".", "!", "?", ":"} {
+			text := "- " + first + end + closer + " " + second
+			if report := Check(text, Options{Kind: KindContext}); !report.Passed() {
+				t.Errorf("%q%q: %v", end, closer, report.Findings)
+			}
+		}
+	}
+	long := "- **" + strings.Repeat("alpha ", 30) + "omega.** Next."
+	want := []Finding{{1, RuleLongSentence, "31 words: alpha alpha alpha alpha alpha alpha ..."}}
+	if got := Check(long, Options{Kind: KindContext}).Findings; !reflect.DeepEqual(got, want) {
+		t.Fatalf("long bold sentence\n got %v\nwant %v", got, want)
+	}
+	// A closer with no blank after it is mid-word punctuation, not a sentence end.
+	glued := "- " + first + ".**" + second
+	if report := Check(glued, Options{Kind: KindContext}); report.Passed() {
+		t.Fatal("a period glued to the next word ended the sentence")
+	}
+}

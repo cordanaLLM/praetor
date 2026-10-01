@@ -87,3 +87,22 @@ func TestCompressBoundary(t *testing.T) {
 		t.Errorf("escape-only line = %q", got)
 	}
 }
+
+// TestCompressKeepsSpansAndFrontMatter keeps the bytes the shared scan protects: a code span
+// that wraps onto the next line (#320), a blockquoted fence (#356) and YAML front matter
+// (#374), where collapsing blanks would change a quoted value.
+func TestCompressKeepsSpansAndFrontMatter(t *testing.T) {
+	cases := map[string]struct{ in, want string }{
+		"wrapped span":  {"run `a   b\nc   d`   now", "run `a   b\nc   d` now"},
+		"quoted fence":  {"> ```sh\n>   make   serve\n> ```", "> ```sh\n>   make   serve\n> ```"},
+		"front matter":  {"---\nname: x\ndescription: \"a  b\"\n---\nbody   text", "---\nname: x\ndescription: \"a  b\"\n---\nbody text"},
+		"not a mapping": {"---\nloose   prose\n---", "---\nloose prose\n---"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got, _ := Compress(tc.in); got != tc.want {
+				t.Fatalf("Compress(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}

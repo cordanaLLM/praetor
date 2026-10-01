@@ -342,6 +342,30 @@ func TestCavemanCheckBoundary(t *testing.T) {
 	if out, err = runCavemanCLI(t, cavemanTerse+block, "check", "-"); err != nil || !strings.Contains(out, "PASS") || !strings.Contains(out, "register_block_lines=3") {
 		t.Fatalf("register block: err=%v\n%s", err, out)
 	}
+	// YAML front matter is left out of the prose rules, and the summary counts its lines.
+	front := "---\nname: example\ndescription: Probably the skill a user asks for.\n---\n"
+	if out, err = runCavemanCLI(t, front+cavemanTerse, "check", "--kind=context", "-"); err != nil || !strings.Contains(out, "front_matter_lines=4") {
+		t.Fatalf("front matter: err=%v\n%s", err, out)
+	}
+	if out, err = runCavemanCLI(t, cavemanTerse, "check", "--kind=context", "-"); err != nil || !strings.Contains(out, "front_matter_lines=0") {
+		t.Fatalf("no front matter: err=%v\n%s", err, out)
+	}
+}
+
+// TestCavemanFloorNumbers runs F9 through the command: a dropped number fails with its line in
+// <before>, and a kept one passes.
+func TestCavemanFloorNumbers(t *testing.T) {
+	dir := t.TempDir()
+	before := writeFixtureFile(t, dir, "before.md", "p99 15 s over 1819 requests.\n")
+	kept := writeFixtureFile(t, dir, "kept.md", "1819 requests, p99 15s.\n")
+	lossy := writeFixtureFile(t, dir, "lossy.md", "p99 15 s over many requests.\n")
+	if out, err := runCavemanCLI(t, "", "floor", before, kept); err != nil {
+		t.Fatalf("kept numbers must pass: err=%v\n%s", err, out)
+	}
+	out, err := runCavemanCLI(t, "", "floor", before, lossy)
+	if err == nil || !strings.Contains(out, "before.md:1 F9 number-lost: 1819") {
+		t.Fatalf("a dropped number must fail: err=%v\n%s", err, out)
+	}
 }
 
 // TestCavemanCheckCeilingFlags covers --max-words/--max-tokens: positive (terse text still
