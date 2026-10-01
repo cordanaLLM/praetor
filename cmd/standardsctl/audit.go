@@ -251,11 +251,8 @@ func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
 	printInvariantVerdict(scanRep, fmt.Sprintf("%d active violations within %d baselined limit (%d touched files clean) (skipped: %d ignored directories, %d symlinks, %d oversize files, %d non-regular files)",
 		ratchet.CurrentCount, base.TotalInfractions, len(touched), scanRep.Skips.DirCount,
 		scanRep.Skips.Symlinks, scanRep.Skips.Oversize, scanRep.Skips.Irregular))
-	if err := auditStaleBaseline(ratchet, opts.maxStale); err != nil {
-		return err
-	}
 
-	return auditBaselineGrowth(ctx, opts, base)
+	return auditRatchetPassed(ctx, opts, base, ratchet)
 }
 
 // printInvariantVerdict prints the HISS scan verdict for the languages the scan examined and

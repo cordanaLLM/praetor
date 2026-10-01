@@ -32,6 +32,15 @@ func resolveStaleBound(fs *flag.FlagSet, value int) (int, error) {
 	return value, nil
 }
 
+// auditRatchetPassed runs what a passing ratchet leaves to check: the stale baseline entries
+// against the stated bound, then the growth guard versus --base.
+func auditRatchetPassed(ctx context.Context, opts *auditOptions, base *baseline.Baseline, ratchet *baseline.RatchetResult) error {
+	if err := auditStaleBaseline(ratchet, opts.maxStale); err != nil {
+		return err
+	}
+	return auditBaselineGrowth(ctx, opts, base)
+}
+
 // auditStaleBaseline reports the baseline entries no current violation accounts for (#349): a
 // cleanup that landed without a re-record leaves them, the ratchet passes, and each one is room a
 // new finding can take. It fails only past bound, the stated --max-stale-baseline-entries; a
