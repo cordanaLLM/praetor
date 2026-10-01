@@ -354,7 +354,7 @@ the commit that lands. The tag is therefore made after the merge, on `main`, and
    `praetorctl release` (`internal/release/release.go`) checks the version is SemVer and
    the tree is clean, runs `make verify-all`, then renders `changelog.d/` into a new
    `CHANGELOG.md` section and removes the rendered fragments. It leaves an empty
-   `changelog.d/.gitkeep` so the directory stays in version control
+   `.gitkeep` in `changelog.d/` so the directory stays in version control
    ([Text register](text-register.md#repository-conventions)). With no fragment to
    render, because `changelog.d/` is missing or holds no fragment, it fails with
    `no changelog fragments to render` and leaves `CHANGELOG.md` untouched. Commit the

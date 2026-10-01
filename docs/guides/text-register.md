@@ -124,8 +124,8 @@ receipt fence and the fragment lane. Prompt directives (`config.RegisterDirectiv
 universal form only.
 
 A release render (`praetorctl release`, `changelog.RenderReleaseContext`) removes the
-rendered fragments and leaves an empty `changelog.d/.gitkeep` (`changelog.FragmentPlaceholder`)
-in their place, and leaves an existing one unchanged. Commit it with the rendered
+rendered fragments and leaves an empty `.gitkeep` (`changelog.FragmentPlaceholder`) in
+`changelog.d/` in their place, and leaves an existing one unchanged. Commit it with the rendered
 `CHANGELOG.md`: the directory then survives the release, and the checkout and every fresh
 clone render the same block. Removing every file from `changelog.d/` changes the block, so
 `compile-context --verify` reports drift until `praetorctl compile-context` runs again.
