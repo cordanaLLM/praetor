@@ -8,8 +8,10 @@ the limit. Public-loop reports retain the planned policy and each verification's
 policy digest, applied limit and baseline evidence.
 
 The first migration covers audit function length. Cyclomatic complexity, cognitive
-complexity and statement limits are resolved and retained in the typed policy;
-they are not injected into separate linters or the LSP.
+complexity and statement limits are resolved and retained in the typed policy; the
+HISS-04 scan measures against them and fails on none. `.config/archetype-coverage.yaml`
+names every function that reads each key, including the generated editor settings that
+receive the cyclomatic and statement limits.
 Routing, budgets, credentials and deployment activation are separate consumers.
 
 Pinned profiles and facets contribute every lattice dimension, not only
@@ -28,7 +30,8 @@ same cause and is counted once
 (`TestSyncLeavesTheRulesetUncheckedWhileThePolicyIsUnresolved`,
 `TestSyncCountsAnUnresolvedPolicyOnceBesideAVerifiedLock`). Linters, memory
 and error unwraps are resolved and sealed into the digest; no gate executes the
-linter list yet.
+linter list yet, and the coverage manifest records all three as `unconsumed`
+([Every key names its consumer](archetype-authoring.md#every-key-names-its-consumer)).
 
 Public adoption loops resolve their policy during the dry run, then independently
 scan the original source under that policy before applying changes. Applied
