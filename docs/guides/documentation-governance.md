@@ -376,7 +376,9 @@ local assets. The transition removes only canonical-equivalent workflow/tool ass
 Praetor texts of them, the exact managed Makefile block and the `.gitattributes`
 attribute block (deleting the file when it held nothing else), strips the README badge and gate entry, removes
 the required status context, and rebuilds the formatter-ignore inventory without
-documentation paths. Operator files beside the tool assets and bytes outside
+documentation paths; the inventory keeps the files of every family still enabled, such as the
+[Go API compatibility gate](api-compatibility.md) (`managedArtifacts` in
+`internal/adopt/managed_artifacts.go`). Operator files beside the tool assets and bytes outside
 managed blocks are preserved.
 Drifted or symbolic-link assets and ambiguous, edited, duplicate, or incomplete
 Makefile/formatter markers stop the transition before canonical documentation
@@ -410,7 +412,9 @@ actions itself because audit locks the file.
 short-SHA-pinned action (`TestWorkflowPinsEveryActionNegative`). Renovate's
 github-actions manager reads `tools/markdownlint/assets.go` as well as the
 workflow (`renovate.json`), and one grouped branch moves both copies' pins
-together (`TestRenovateUpdatesTemplatePinsWithWorkflowCopy`). The Renovate pull
+together (`TestRenovateUpdatesTemplatePinsWithWorkflowCopy` in
+`internal/managedasset/renovate_test.go`, which checks every family with a hosted workflow,
+the [Go API compatibility gate](api-compatibility.md) included). The Renovate pull
 request itself skips the Go tests and the audit
 ([Renovate pull requests](contributing.md#renovate-pull-requests)), so it is the
 takeover pull request that fails CI until someone finishes the update: the
@@ -467,10 +471,13 @@ tells the adopter's Renovate to leave the managed files alone
   endings, a `packageRules` that is not an array, two managed entries, a
   `packageRules` already holding 1024 entries without the managed one, and
   configuration in the `renovate` member of `package.json`.
-- With `docs:seo-portal` disabled, or in a repository that holds the family's
-  source (`tools/markdownlint/assets.go`, where the managed files are sources
-  its own Renovate updates, as in this repository), no path needs the entry
-  and an existing one is removed.
+- The entry lists the managed files of every family an active facet enables:
+  the documentation families under `docs:seo-portal` and the
+  [Go API compatibility gate](api-compatibility.md) under `api:public-contract`.
+  A family whose source the repository holds (`tools/markdownlint/assets.go`,
+  `tools/apicompat/assets.go`, where the managed files are sources its own
+  Renovate updates, as in this repository) contributes no path. With no path
+  left, no entry is needed and an existing one is removed.
 
 `TestRenovateIgnorePositiveDeclaresManagedFilesOnce`,
 `TestRenovateIgnorePositiveAcceptsAnEquivalentAdopterRule`,
@@ -490,15 +497,18 @@ adoption step therefore declares the label to actionlint under
 `self-hosted-runner.labels`, the one declaration actionlint accepts for it
 (`internal/adopt/actionlint.go`):
 
-- The labels come from the workflows the run writes: this workflow while
-  `docs:seo-portal` is enabled, and the CI workflows of the detected flavor
-  unless the flavor step is declined. The harness names the same list
-  (`adoptedWorkflowFiles` in `internal/adopt/harness_ci.go`). Each workflow's
-  `runs-on` labels are read from its body (`forge.WorkflowRunnerLabels`), and
-  a label is declared when `actionlintUnknownLabels` lists it as one actionlint
-  does not know. A workflow the repository owns, such as a `ci.yml` that
-  differs from the flavor's, is not read; with no workflow that needs a label,
-  nothing is written.
+- The labels come from the workflows the run writes: the hosted workflow of
+  every managed family an active facet enables (this workflow while
+  `docs:seo-portal` is enabled, and the
+  [Go API compatibility gate](api-compatibility.md)'s while adoption emits it),
+  and the CI workflows of the detected flavor unless the flavor step is
+  declined. The harness names the same list (`adoptedWorkflowFiles` in
+  `internal/adopt/harness_ci.go`). Each workflow's `runs-on` labels are read
+  from its body (`forge.WorkflowRunnerLabels`), and a label is declared when
+  `actionlintUnknownLabels` lists it as one actionlint does not know. A
+  workflow the repository owns, such as a `ci.yml` that differs from the
+  flavor's, is not read; with no workflow that needs a label, nothing is
+  written.
 - It edits the file actionlint reads: `.github/actionlint.yaml`, or
   `.github/actionlint.yml` when the `.yaml` file is absent. With both present,
   actionlint v1.7.12 ignores the `.yml` file, so adoption does too. A
