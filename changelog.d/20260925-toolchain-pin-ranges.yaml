@@ -1,0 +1,4 @@
+type: fixed
+title: Audit setup-go SemVer ranges, aliases, and unparseable literals
+breaking: false
+issue: 307

@@ -116,6 +116,54 @@ func TestAuditGoToolchain_Positive_ReportsAShippedTemplateBehindTheDirective(t *
 	}
 }
 
+// Positive: setup-go semver ranges below the directive, the oldstable alias, upper-bound-only
+// ranges and unparseable literals are reported as findings naming file, line, and pin.
+func TestAuditGoToolchain_Positive_ReportsStaleRangesAliasesAndUnparseableLiterals(t *testing.T) {
+	stale := map[string]string{
+		".github/workflows/caret.yml":    strings.Replace(mirroredWorkflow, "'1.27'", "'^1.24.1'", 1),
+		".github/workflows/tilde.yml":    strings.Replace(mirroredWorkflow, "'1.27'", "'~1.24.0'", 1),
+		".github/workflows/compound.yml": strings.Replace(mirroredWorkflow, "'1.27'", "'>=1.22.0 <1.24.0'", 1),
+		".github/workflows/alias.yml":    strings.Replace(mirroredWorkflow, "'1.27'", "oldstable", 1),
+		".github/workflows/upper.yml":    strings.Replace(mirroredWorkflow, "'1.27'", "'<1.24'", 1),
+		".github/workflows/literal.yml":  strings.Replace(mirroredWorkflow, "'1.27'", "'bogus-pin'", 1),
+	}
+	findings := auditToolchain(t, "1.27", stale)
+	if len(findings) != 6 {
+		t.Fatalf("expected 6 findings, got %d: %v", len(findings), findings)
+	}
+	byFile := make(map[string]ToolchainFinding, len(findings))
+	for _, f := range findings {
+		byFile[f.File] = f
+		if f.Line != 10 {
+			t.Errorf("%s: expected line 10, got %d", f.File, f.Line)
+		}
+		if f.Directive != "1.27" {
+			t.Errorf("%s: expected directive 1.27, got %s", f.File, f.Directive)
+		}
+	}
+	expectedPins := map[string]string{
+		".github/workflows/caret.yml":    "^1.24.1",
+		".github/workflows/tilde.yml":    "~1.24.0",
+		".github/workflows/compound.yml": ">=1.22.0 <1.24.0",
+		".github/workflows/alias.yml":    "oldstable",
+		".github/workflows/upper.yml":    "<1.24",
+		".github/workflows/literal.yml":  "bogus-pin",
+	}
+	for file, expectedPin := range expectedPins {
+		f, ok := byFile[file]
+		if !ok {
+			t.Errorf("missing finding for %s", file)
+			continue
+		}
+		if f.Pin != expectedPin {
+			t.Errorf("%s: expected pin %s, got %s", file, expectedPin, f.Pin)
+		}
+		if !strings.Contains(f.String(), file+":10: pins Go "+expectedPin) {
+			t.Errorf("%s: String() %q does not name file, line and pin", file, f.String())
+		}
+	}
+}
+
 // Negative: a repository whose copies mirror the directive reports nothing, and neither
 // does a workflow that reads the version out of go.mod instead of restating it.
 func TestAuditGoToolchain_Negative_AcceptsMirroredPins(t *testing.T) {
@@ -162,6 +210,32 @@ func TestAuditGoToolchain_Boundary_ComparesVersionComponents(t *testing.T) {
 	behind := auditToolchain(t, "1.27.1", map[string]string{".github/workflows/ci.yml": mirroredWorkflow})
 	if len(behind) != 1 || behind[0].Pin != "1.27" || behind[0].Directive != "1.27.1" {
 		t.Fatalf("a minor-only pin below a patch-level directive was not reported: %v", behind)
+	}
+}
+
+// Boundary: semver ranges whose lower bound equals or exceeds the directive are accepted,
+// while ranges whose lower bound is even one patch behind or that specify only an upper
+// bound are reported as findings.
+func TestAuditGoToolchain_Boundary_ComparesRangeLowerBounds(t *testing.T) {
+	satisfying := map[string]string{
+		".github/workflows/equal_caret.yml": strings.Replace(mirroredWorkflow, "'1.27'", "'^1.27.0'", 1),
+		".github/workflows/equal_gte.yml":   strings.Replace(mirroredWorkflow, "'1.27'", "'>=1.27'", 1),
+		".github/workflows/equal_tilde.yml": strings.Replace(mirroredWorkflow, "'1.27'", "'~1.27'", 1),
+	}
+	if findings := auditToolchain(t, "1.27", satisfying); len(findings) != 0 {
+		t.Fatalf("satisfying ranges reported %d findings: %v", len(findings), findings)
+	}
+	behindPatch := auditToolchain(t, "1.27", map[string]string{
+		".github/workflows/behind.yml": strings.Replace(mirroredWorkflow, "'1.27'", "'^1.26.9'", 1),
+	})
+	if len(behindPatch) != 1 || behindPatch[0].Pin != "^1.26.9" {
+		t.Fatalf("expected 1 finding for ^1.26.9, got: %v", behindPatch)
+	}
+	upperBoundOnly := auditToolchain(t, "1.27", map[string]string{
+		".github/workflows/upper.yml": strings.Replace(mirroredWorkflow, "'1.27'", "'<2.0'", 1),
+	})
+	if len(upperBoundOnly) != 1 || upperBoundOnly[0].Pin != "<2.0" {
+		t.Fatalf("expected 1 finding for <2.0, got: %v", upperBoundOnly)
 	}
 }
 

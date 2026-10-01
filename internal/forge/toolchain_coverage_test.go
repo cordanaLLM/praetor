@@ -113,6 +113,9 @@ func TestAuditGoToolchain_Negative_AcceptsSetupGoVersionSyntax(t *testing.T) {
 		".github/workflows/rc.yml":       strings.Replace(mirroredWorkflow, "'1.27'", "'1.28.0-rc.1'", 1),
 		".github/workflows/alias.yml":    strings.Replace(mirroredWorkflow, "'1.27'", "stable", 1),
 		".github/workflows/range.yml":    strings.Replace(mirroredWorkflow, "'1.27'", "'^1.27.1'", 1),
+		".github/workflows/tilde.yml":    strings.Replace(mirroredWorkflow, "'1.27'", "'~1.27.0'", 1),
+		".github/workflows/compound.yml": strings.Replace(mirroredWorkflow, "'1.27'", "'>=1.27.0 <1.28.0'", 1),
+		".github/workflows/gte.yml":      strings.Replace(mirroredWorkflow, "'1.27'", "'>=1.27.0'", 1),
 		".github/workflows/rcdirect.yml": strings.Replace(mirroredWorkflow, "'1.27'", "'1.27.0-rc.1'", 1),
 	}
 	findings, err := AuditGoToolchain(context.Background(), toolchainRepository(t, "1.27", accepted))
