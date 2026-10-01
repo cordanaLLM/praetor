@@ -493,9 +493,10 @@ func (s *Server) AnalyzeGoSource(uri, code string) ([]Diagnostic, error) {
 	}
 	diags = append(diags, s.checkHISS04Complexity(fset, file)...)
 	diags = append(diags, s.checkHISS01DAG(fset, nodes)...)
-	diags = append(diags, s.checkHISS02BoundedLoops(fset, nodes, hiss.FileImports(file))...)
+	imports := hiss.FileImports(file)
+	diags = append(diags, s.checkHISS02BoundedLoops(fset, nodes, imports)...)
 	if !strings.HasSuffix(uri, "_test.go") {
-		diags = append(diags, s.checkHISS07Errors(fset, nodes)...)
+		diags = append(diags, s.checkHISS07Errors(fset, file, imports, nodes)...)
 	}
 
 	return diags, nil
@@ -687,8 +688,8 @@ func (s *Server) checkLoopIOCalls(fset *token.FileSet, body *ast.BlockStmt, impo
 
 // checkHISS07Errors flags results discarded wholesale (`_ = f()`), empty error
 // branches and panic calls. A partial discard such as `_, err := f()` keeps the checked
-// value and is not reported.
-func (s *Server) checkHISS07Errors(fset *token.FileSet, nodes []ast.Node) []Diagnostic {
+// value and is not reported, and neither is panic(http.ErrAbortHandler) (refusedPanic).
+func (s *Server) checkHISS07Errors(fset *token.FileSet, file *ast.File, imports hiss.GoImports, nodes []ast.Node) []Diagnostic {
 	var diags []Diagnostic
 	for i := 0; i < len(nodes); i++ {
 		switch node := nodes[i].(type) {
@@ -703,13 +704,36 @@ func (s *Server) checkHISS07Errors(fset *token.FileSet, nodes []ast.Node) []Diag
 					"Empty error branch silently swallows the error (HISS-07)"))
 			}
 		case *ast.CallExpr:
-			if ident, ok := node.Fun.(*ast.Ident); ok && ident.Name == "panic" {
+			if refusedPanic(file, imports, node) {
 				diags = append(diags, s.newDiagnostic(fset, node, 1, "HISS-07",
 					"Direct panic invocation detected in code; error handling mandatory (HISS-07)"))
 			}
 		}
 	}
 	return diags
+}
+
+// refusedPanic reports whether call is a panic HISS-07 refuses. Whether its argument is the
+// net/http abort sentinel is decided by the audit's own hiss.AbortsHTTPResponse, so the
+// editor and `praetorctl audit` cannot disagree about it (HISS-19).
+func refusedPanic(file *ast.File, imports hiss.GoImports, call *ast.CallExpr) bool {
+	ident, ok := ast.Unparen(call.Fun).(*ast.Ident)
+	if !ok || ident.Name != "panic" {
+		return false
+	}
+	return !hiss.AbortsHTTPResponse(imports, enclosingFuncDecl(file, call.Pos()), call)
+}
+
+// enclosingFuncDecl returns the function declaration of file whose extent holds pos, or nil
+// when pos lies outside every one. Declarations do not nest, so the first match is the only
+// one; the loop is bounded by the file's declarations (HISS-02).
+func enclosingFuncDecl(file *ast.File, pos token.Pos) *ast.FuncDecl {
+	for i := 0; i < len(file.Decls); i++ {
+		if fn, ok := file.Decls[i].(*ast.FuncDecl); ok && fn.Pos() <= pos && pos < fn.End() {
+			return fn
+		}
+	}
+	return nil
 }
 
 func allBlank(lhs []ast.Expr) bool {

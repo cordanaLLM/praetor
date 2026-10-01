@@ -1,0 +1,4 @@
+type: fixed
+title: HISS-07 and the editor accept panic(http.ErrAbortHandler), the net/http way to abort a response, and keep reporting every other panic
+issue: "#331"
+breaking: false

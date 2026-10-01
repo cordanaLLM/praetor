@@ -318,8 +318,8 @@ rules:
       - language: go
         state: partial
         mechanism: >-
-          internal/hiss go_ast.go checkBlankAssign and checkAbort (os.Exit resolved through
-          go_imports.go), with errcheck in golangci-lint
+          internal/hiss go_ast.go checkBlankAssign and checkAbort (os.Exit and
+          http.ErrAbortHandler resolved through go_imports.go), with errcheck in golangci-lint
         rationale: >-
           A discarded call result is reported. Discarding a non-call value is not, because it
           cannot carry an error. A bare call statement that drops an error needs type
@@ -327,7 +327,15 @@ rules:
           decides that case with types in the same gate. The abort policy (owner decision
           Q-014) reports panic and os.Exit, including os.Exit through an alias or dot import,
           outside test files and main.main; os.Exit passed as a value is not a call and is not
-          reported. log.Fatal and the other wrappers that exit are held as a gap. Measured with
+          reported. A panic whose single argument is net/http.ErrAbortHandler, reached through
+          a plain, aliased or dot import, is not reported, because net/http documents it as
+          the way a handler aborts its response and recovers it (AbortsHTTPResponse, issue
+          #331). A same-named local, another package's ErrAbortHandler, a shadowed package name
+          and a wrapped sentinel are still reported. The sentinel is recovered only on the
+          goroutine net/http runs the handler on, and which goroutine runs a function is not
+          visible in syntax, so gap/abort-handler-goroutine.go records the sentinel panicked
+          on a goroutine the code started itself, which ends the process unreported.
+          log.Fatal and the other wrappers that exit are held as a gap. Measured with
           golangci-lint 2.14.0 and this repository's .golangci.yml: errcheck reports
           gap/bare-call.go as 'Error return value of os.Remove is not checked' and leaves
           gap/log-fatal.go unreported.

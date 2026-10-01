@@ -380,18 +380,50 @@ func (g *goScanner) checkFuncLOC(fn *ast.FuncDecl) {
 // call and a receiver, parameter, named result or local that shadows the package name is
 // not; os.Exit passed as a value is not a call and stays allowed, which is how an entry
 // point hands its exit to a library.
+//
+// panic(http.ErrAbortHandler) is not reported (AbortsHTTPResponse): net/http documents it as
+// the way a handler aborts its response, and the server recovers it.
 func (g *goScanner) checkAbort(call *ast.CallExpr) {
 	if g.isTest || g.inEntryPoint() {
 		return
 	}
 	fun := ast.Unparen(call.Fun)
 	if ident, ok := fun.(*ast.Ident); ok && ident.Name == "panic" {
-		g.record("HISS-07", call.Pos(), "", "Legacy panic invocation in production code path")
+		if !AbortsHTTPResponse(g.imports, g.enclosingFunc(), call) {
+			g.record("HISS-07", call.Pos(), "", "Legacy panic invocation in production code path")
+		}
 		return
 	}
 	if local, ok := g.osExitCallee(fun); ok && !g.shadowed(local) {
 		g.record("HISS-07", call.Pos(), "", "os.Exit ends the process from library code; return an error to main.main instead")
 	}
+}
+
+// httpAbortSentinel is net/http.ErrAbortHandler, the value net/http documents a handler
+// panics with to abort its response.
+var httpAbortSentinel = map[goFunc]struct{}{{"net/http", "ErrAbortHandler"}: {}}
+
+// AbortsHTTPResponse reports whether call, made inside fn (nil outside any function
+// declaration), is a panic whose single argument is net/http.ErrAbortHandler.
+//
+// net/http documents that panic as the way a handler aborts its response: the server
+// recovers it, drops the connection or resets the stream, and logs no stack trace. Recovery
+// middleware needs it once a response is committed, because completing the truncated
+// response instead would hand the client a partial body as a finished one.
+//
+// The argument is resolved through the file's imports im, so an aliased or dot import of
+// net/http is the sentinel. A same-named local or package variable, another package's
+// ErrAbortHandler, a binding in fn that shadows the package name, a wrapped or recovered
+// value and a second argument are not, and the caller keeps reporting those panics.
+func AbortsHTTPResponse(im GoImports, fn *ast.FuncDecl, call *ast.CallExpr) bool {
+	if call == nil || len(call.Args) != 1 || call.Ellipsis.IsValid() {
+		return false
+	}
+	if ident, ok := ast.Unparen(call.Fun).(*ast.Ident); !ok || ident.Name != "panic" {
+		return false
+	}
+	_, _, local, ok := resolvePackageCall(im, call.Args[0], httpAbortSentinel)
+	return ok && !funcDeclares(fn, local)
 }
 
 // osExitCallee reports whether fun names os.Exit, and returns the identifier that reached

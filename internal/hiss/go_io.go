@@ -25,8 +25,8 @@ import (
 // from the other Go rules, and so is main.main: the entry point owns the process lifetime,
 // and the root context it builds for a long-running server is that lifetime.
 
-// goFunc names a package-level function by import path, independent of how a file spells
-// the package.
+// goFunc names a package-level function or variable by import path, independent of how a
+// file spells the package.
 type goFunc struct {
 	Path string
 	Name string
@@ -117,7 +117,8 @@ var osExitFunc = map[goFunc]struct{}{{"os", "Exit"}: {}}
 // resolvePackageCall reports which table entry the callee fun names, and the identifier
 // that reached the package: the package name of a selector, or the function itself under
 // a dot import. A selector on anything but an imported package name resolves to nothing.
-// Whether a local shadows that identifier is left to the caller.
+// Whether a local shadows that identifier is left to the caller. A package-level variable
+// resolves the same way as a function, so AbortsHTTPResponse looks its sentinel up here too.
 func resolvePackageCall[V any](im GoImports, fun ast.Expr, table map[goFunc]V) (goFunc, V, string, bool) {
 	var zero V
 	switch f := ast.Unparen(fun).(type) {
