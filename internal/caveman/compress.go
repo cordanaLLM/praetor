@@ -55,7 +55,7 @@ type compactor struct {
 
 func (c *compactor) push(out []string, ln line) []string {
 	if ln.kind == kindProse {
-		text := squeeze(ln.text)
+		text := squeeze(ln)
 		if c.repeats > 0 && text == c.pending {
 			c.repeats++
 			return out
@@ -89,20 +89,22 @@ func (c *compactor) flush(out []string) []string {
 	return append(out, text)
 }
 
-// squeeze trims trailing blanks and collapses inner blank runs outside code spans. Leading
-// indentation carries list nesting, so it stays.
-func squeeze(text string) string {
-	body := strings.TrimLeft(text, " \t")
-	indent := text[:len(text)-len(body)]
-	body = strings.TrimRight(body, " \t")
+// squeeze trims trailing blanks and collapses inner blank runs outside code spans, a span
+// that wraps onto the line included. Leading indentation carries list nesting, so it stays.
+func squeeze(ln line) string {
+	text := strings.TrimRight(ln.text, " \t")
+	last := len(text) - len(strings.TrimLeft(text, " \t"))
 	var sb strings.Builder
-	sb.WriteString(indent)
-	last := 0
-	for _, span := range inlineCodeRe.FindAllStringIndex(body, -1) {
-		sb.WriteString(spaceRunRe.ReplaceAllString(body[last:span[0]], " "))
-		sb.WriteString(body[span[0]:span[1]])
-		last = span[1]
+	sb.WriteString(text[:last])
+	for _, piece := range ln.spans {
+		lo, hi := min(max(piece.start, last), len(text)), min(piece.end, len(text))
+		if hi <= lo {
+			continue
+		}
+		sb.WriteString(spaceRunRe.ReplaceAllString(text[last:lo], " "))
+		sb.WriteString(text[lo:hi])
+		last = hi
 	}
-	sb.WriteString(spaceRunRe.ReplaceAllString(body[last:], " "))
+	sb.WriteString(spaceRunRe.ReplaceAllString(text[last:], " "))
 	return sb.String()
 }

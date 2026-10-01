@@ -422,9 +422,9 @@ func formatCavemanReport(out *strings.Builder, input cavemanInput, report cavema
 	if input.provenance != "" {
 		provenance = " " + input.provenance
 	}
-	fmt.Fprintf(out, "%s: %s prose_words=%d articles=%d density=%.1f/100 limit=%.1f off_regions=%d register_block_lines=%d tokens_est=%d findings=%d contract=%s mechanical_rules=%s advisory_rules=%s%s\n",
+	fmt.Fprintf(out, "%s: %s prose_words=%d articles=%d density=%.1f/100 limit=%.1f off_regions=%d register_block_lines=%d front_matter_lines=%d tokens_est=%d findings=%d contract=%s mechanical_rules=%s advisory_rules=%s%s\n",
 		input.name, verdict, report.ProseWords, report.Articles, report.Density(), caveman.DefaultMaxArticleDensity,
-		report.OffRegions, masked, report.EstimatedTokens, len(report.Findings), report.Kind,
+		report.OffRegions, masked, report.FrontMatterLines, report.EstimatedTokens, len(report.Findings), report.Kind,
 		coverageRules(report, caveman.EnforcementMechanical), coverageRules(report, caveman.EnforcementAdvisory), provenance)
 	appendCavemanFindingsAt(out, input.name, report.Findings, input.lineOffset)
 	return report.Passed()
@@ -464,7 +464,7 @@ func appendCavemanFindingsAt(out *strings.Builder, name string, findings []cavem
 }
 
 // cavemanFloor compares a rewrite with its original and fails when the rewrite lost a code
-// span, a fenced command, an id, a link target or a marker, or dropped a MUST, a
+// span, a shell command, an id, a link target, a marker or a number, or dropped a MUST, a
 // prohibition or a numbered rule. Exactly two inputs, a file or "-" each (at most one "-");
 // findings name their line in <before>, line 0 for a count.
 func cavemanFloor(ctx context.Context, args []string, stdin io.Reader, out io.Writer) error {

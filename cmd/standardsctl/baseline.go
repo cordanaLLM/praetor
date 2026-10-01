@@ -128,6 +128,11 @@ func verifyBaseline(path string, b *baseline.Baseline, all bool) error {
 	}
 	fmt.Printf("[PASS] HISS-13 debt ratchet: %d active infractions within the %d recorded in %s; the file was not rewritten.\n",
 		ratchet.CurrentCount, b.TotalInfractions, path)
+	if notice := ratchet.StaleNotice(); notice != "" {
+		// Read-only, like the rest of --verify: the audit's --max-stale-baseline-entries is the
+		// bound that fails a run (#349).
+		fmt.Printf("[WARN] %s\n", notice)
+	}
 	return nil
 }
 

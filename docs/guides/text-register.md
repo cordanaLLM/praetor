@@ -360,29 +360,31 @@ praetorctl caveman estimate AGENTS.md
 <excerpt>`, and exits non-zero when any input fails. Line 0 means the whole text. A
 directory expands to the Markdown files below it; `-` reads standard input. The text
 register block is blanked before the lint, exactly as the context gate does it, and the
-summary line counts its lines. It also prints the selected contract plus mechanically
+summary line counts its lines; `front_matter_lines` counts the lines of YAML front matter
+left out of the prose rules (see "Not prose" below). It also prints the selected contract plus mechanically
 checked and advisory Caveman skill-rule numbers; `PASS` covers only the mechanical rows.
 The prose AGENTS.md that the caveman rewrite replaced,
 frozen as `internal/compiler/testdata/agents-floor.txt`, fails:
 
 ```text
-agents-floor.txt: FAIL prose_words=1254 articles=94 density=7.5/100 limit=2.0 off_regions=0 register_block_lines=13 tokens_est=2061 findings=2 contract=context mechanical_rules=none advisory_rules=1,2,3,4,5,6,7,8
-agents-floor.txt:0 C1 article-density: 7.5 articles per 100 prose words (94/1254), limit 2.0
+agents-floor.txt: FAIL prose_words=1253 articles=94 density=7.5/100 limit=2.0 off_regions=0 register_block_lines=13 front_matter_lines=0 tokens_est=2059 findings=2 contract=context mechanical_rules=none advisory_rules=1,2,3,4,5,6,7,8
+agents-floor.txt:0 C1 article-density: 7.5 articles per 100 prose words (94/1253), limit 2.0
 agents-floor.txt:76 C5 long-sentence: 39 words: your pull requests go stale when ...
 ```
 
 The current AGENTS.md passes:
 
 ```text
-AGENTS.md: PASS prose_words=917 articles=2 density=0.2/100 limit=2.0 off_regions=0 register_block_lines=13 tokens_est=1658 findings=0 contract=context mechanical_rules=none advisory_rules=1,2,3,4,5,6,7,8
+AGENTS.md: PASS prose_words=918 articles=3 density=0.3/100 limit=2.0 off_regions=0 register_block_lines=13 front_matter_lines=0 tokens_est=1661 findings=0 contract=context mechanical_rules=none advisory_rules=1,2,3,4,5,6,7,8
 ```
 
 `praetorctl caveman estimate` puts the rewrite at 10,359 bytes and about 1,912 tokens,
 down from 12,308 bytes and about 2,315 tokens; CLAUDE.md went from 168 to 115 lines.
 
 `floor <before> <after>` runs the clarity floor on a rewrite: it exits non-zero when
-`<after>` lost a code span, a fenced command, an id, a link target or an HTML marker of
-`<before>`, or carries fewer MUST-type directives, prohibitions or numbered rules. Findings
+`<after>` lost a code span, a shell command, an id, a link target, an HTML marker or a
+number of `<before>`, or carries fewer MUST-type directives, prohibitions or numbered rules
+(the "Clarity floor" table below). Findings
 name their line in `<before>` (line 0 for a count). Either input can be `-`, not both. A
 rewrite into the internal register is acceptable when `check` passes on it and `floor`
 passes from the original to it. Runtime message, brief and return profiles run on demand;
@@ -396,7 +398,7 @@ with and without `verify_only`, `standards_audit`). Any finding fails the gate; 
 the first five findings and names the fix. A pass prints the counts behind it:
 
 ```text
-AGENTS.md: caveman lint passed: 917 prose words, 0.2 articles per 100 (limit 2.0), 13 register block lines left to the renderer.
+AGENTS.md: caveman lint passed: 918 prose words, 0.3 articles per 100 (limit 2.0), 13 register block lines left to the renderer.
 ```
 
 The whole file is linted, including what a repository wrote below the praetor harness. Only
@@ -463,8 +465,10 @@ rewrite in the repository's own part.
 
 A rewrite of praetor's own AGENTS.md must keep every fact of the prose version:
 `internal/compiler/canonical_floor_test.go` runs the clarity floor below against the frozen
-fixture and fails when a rule id, a `MUST`, a prohibition, a numbered rule, a command or a
-link disappears. The lint and gate code live in `internal/compiler/caveman_lint.go`.
+fixture and fails when a rule id, a `MUST`, a prohibition, a numbered rule, a command, a
+link or a number disappears. The fixture changes only with a deliberate correction of
+AGENTS.md, such as the HISS-04 function length that #539 set to 60. The lint and gate code
+live in `internal/compiler/caveman_lint.go`.
 
 ### The persona and skill gate
 
@@ -513,7 +517,7 @@ comment names for exactly this case.
 | `C2 filler` | "based on", "I think", "note that", "it is important", "it looks like", "in order to", "as requested", "let me", "please" |
 | `C3 hedge` | "probably", "seems", "might", "basically", "simply", "just", "really", "actually" |
 | `C4 terminal-noise` | an ANSI escape, unsafe control character other than tab or Unicode default-ignorable anywhere; box drawing (U+2500-257F) or emoji outside code |
-| `C5 long-sentence` | a sentence over 30 prose words without a `;`, `->` or `:` break |
+| `C5 long-sentence` | a sentence over 30 prose words without a `;`, `->` or `:` break; a sentence ends at `.`, `!`, `?` or `:` before a blank, and closing brackets, quotes or emphasis delimiters may sit in between (`**Done.** Next.` holds two sentences) |
 | `C6 unclosed-off-region` | `<!-- caveman:off -->` without a later `<!-- caveman:on -->` |
 | `C7 word-ceiling` | `Options.MaxProseWords` is set (opt-in, 0 means no ceiling) and `Report.ProseWords` exceeds it |
 | `C8 token-ceiling` | `Options.MaxTokens` is set (opt-in, 0 means no ceiling) and `Report.EstimatedTokens` (the whole input, not prose alone) exceeds it |
@@ -552,7 +556,21 @@ default-ignorable Unicode there), inline
 code, link targets, URLs, headings, HTML comments, ledger field rows such as
 `- **Tasks**: 3 open | **Open Bugs**: 0`, hook protocol lines (`PRAETOR_*`), evidence
 pointers, and anything between `<!-- caveman:off -->` and `<!-- caveman:on -->`. The
-summary line counts the off regions, so an escape stays visible. Markdown table delimiters
+summary line counts the off regions, so an escape stays visible. YAML front matter is not
+prose either: a `---` first line through the next `---` line, when the block between them
+decodes as a YAML mapping or is written in its shape, is a contract with the harness that
+loads the file (a skill's `description:` decides when the skill fires), so `Check` leaves
+it out of every prose rule and the summary counts its lines as `front_matter_lines`. The
+shape is at least one top-level `key:` entry, and otherwise only indented lines, `-` items
+and `#` comments, so a `description:` holding an unquoted colon and blank, which skill
+loaders read but YAML does not decode, still counts (`TestCheckFrontMatterUnquotedColon` in
+`internal/caveman/check_test.go`). A block with a line of another shape, or one that does
+not start on line one, stays prose, so a thematic break cannot hide a paragraph.
+`CheckRuntime` reads front matter as prose, its wrapped lines one paragraph, and counts no
+`front_matter_lines`. Code spans follow CommonMark: a span closes at
+the next backtick run of the same length, a run that never closes is literal backticks,
+and a span may wrap across the lines of one paragraph. A fence opens inside a blockquote
+(`> ```sh`) and closes when the blockquote ends. Markdown table delimiters
 stay structured, but each cell is prose and receives the same phrase, density, sentence and
 strict-grammar checks. Lexically complete paths, URLs, flags and diagnostic tokens stay
 protected from C9; URL schemes are ASCII case-insensitive. Every other Unicode punctuation
@@ -568,17 +586,27 @@ survive verbatim, anywhere in the new text, and the counts must not fall:
 
 | Rule | Must survive |
 | :--- | :--- |
-| `F1` to `F5` | every inline code span, fenced command line (not diagrams, blanks or `#` comments), id such as `HISS-17` or `ADR-0010`, link target, and HTML marker |
+| `F1` | every inline code span with its backticks; a span that wraps across a line break is one fact, joined with one space, so wrapping or unwrapping it loses nothing, and a span of only blanks is no fact |
+| `F2` | every command of a shell fence: each line of a script fence (`bash`, `sh`, `shell`, `zsh`, `ksh`, `csh`, `fish`, `powershell`, `pwsh`, `ps1` and the other names of the table) or of a fence without a language, except blanks and `#` comments; each line of a Windows batch fence (`cmd`, `bat`, `batch`) except `REM` and `::` comments; in a `console`, `shell-session` or `terminal` fence only a line after the `$` prompt and its blank, compared without them; a line continuing a command that ends in `\` counts too. Lines of other fences (Go, JSON, YAML, `text`) are examples, not commands, and the output lines of a session are what its commands printed: `F9` and `F10` hold both. A fence inside a blockquote compares without its `>` markers |
+| `F3` to `F5` | every id such as `HISS-17` or `ADR-0010`, link target, and HTML marker |
 | `F6` | the count of `MUST`, `SHALL` and `REQUIRED` |
 | `F7` | the count of prohibitions: never, do not, don't, must not, no |
 | `F8` | the count of numbered bold rules (`1. **...**`) |
+| `F9` | every number of a line outside fenced code, table cells and front matter included, of the code of a source or data fence and of the output of a terminal session (see `F10`). A word that holds a digit is one number, whole: `557.3` turning into `557`, `v8.6.0` into `v8.7.0`, `p99.94` into `p99.9` or `-5` into `5` fails, and the digits of `utf-8` are no number of their own. A number followed by a unit and no further digit is the number alone (`24 h` equals `24h`). It may move anywhere a reader still finds it: prose, a code span, a command, fenced code, a list marker or a heading, though not into a comment. Labels of Markdown syntax are no number facts: ordered list markers, quoted ones too, heading section numbers such as `## 3.`, the labels of reference links, reference definitions and footnotes, and HTML entities; nor are numbers inside a code span, id, link target or URL of the original |
+| `F10` | every identifier, key or word of the code of a fence whose language is neither a shell nor `mermaid` (Go, JSON, YAML, `text`) and of the output lines of a terminal session, its comments stripped by the syntax of its language (`commentGroups` in `internal/caveman/fence_comments.go`, by Linguist name or alias, cut by `util.StripComments`): line comments, block comments such as `/* */` and `<!-- -->` across lines, and never a marker inside a quoted string. Correcting a comment or reformatting passes; renaming a call, changing a key or a quoted value or commenting out an entry fails. It may move into any fenced code or code span |
+
+The shell fence table is `util.MarkdownShellFence` (`internal/util/markdown_syntax.go`),
+the one the documentation reference check reads commands from. The fixtures under
+`internal/caveman/testdata/floor/<case>/` replay each rule in both directions
+(`TestFloorFixturesReplayBothWays` in `internal/caveman/fixtures_test.go`).
 
 ### Safe compression
 
 `caveman.Compress` removes ANSI escapes, turns CRLF into LF, trims and collapses blanks in
 prose lines outside code spans, collapses blank-line runs and folds identical consecutive
-prose lines into one line ending in `(xN)`. Fenced code, structured lines and off regions
-keep their bytes. It never drops or replaces a word: automatic prose compression saved 1-3%
+prose lines into one line ending in `(xN)`. Fenced code (blockquoted fences included), YAML
+front matter, structured lines and off regions keep their bytes, and so does a code span
+that wraps onto the next line. It never drops or replaces a word: automatic prose compression saved 1-3%
 on real inputs and inverted one sentence's meaning.
 
 ### One token estimator

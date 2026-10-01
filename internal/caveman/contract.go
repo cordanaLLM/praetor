@@ -583,7 +583,7 @@ func checkMessageShape(found *findings, lines []line, kind MessageKind) {
 		if !shapeContent(ln) {
 			continue
 		}
-		lintable := maskQuoted(proseOf(ln.text))
+		lintable := maskQuoted(proseOf(ln))
 		fields := schemaFields(lintable)
 		field := schemaFieldAtStart(lintable)
 		if !firstChecked {

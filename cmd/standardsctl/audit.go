@@ -58,6 +58,10 @@ type auditOptions struct {
 
 	// allViolations lists every violation of a ratchet rejection instead of a bounded few (#598).
 	allViolations bool
+	// maxStale is the --max-stale-baseline-entries bound: the audit fails when more baseline
+	// entries than this match nothing in the tree (#349). Negative, the default, sets no bound,
+	// and stale entries are reported without failing, so a tree that passed keeps passing.
+	maxStale int
 }
 
 func runAudit(args []string) error {
@@ -101,6 +105,8 @@ func parseAuditOptions(args []string) (*auditOptions, error) {
 		"Judge touched files on whether their debt grew rather than on whether they were touched, for a provably mechanical change; the value is the recorded reason. Also read from "+debtDeltaReasonEnv)
 	allViolations := fs.Bool("all-violations", false, "List every violation of a HISS ratchet rejection instead of the first three per class")
 	offline := fs.Bool("offline", false, offlineFlagUsage)
+	maxStale := fs.Int(maxStaleFlag, 0,
+		"Fail when more than N baseline entries match nothing in the tree; unset, stale entries are reported and the audit passes")
 	var policy config.EffectiveOptions
 	fs.StringVar(&policy.CatalogRoot, "catalog-root", "", "Root containing pinned .config/archetypes (default: audited root)")
 	fs.StringVar(&policy.FleetPath, "fleet-config", "", "Explicit fleet complexity policy file")
@@ -113,6 +119,10 @@ func parseAuditOptions(args []string) (*auditOptions, error) {
 	}
 	if fs.NArg() > 0 {
 		return nil, fmt.Errorf("audit accepts no positional arguments, got %q", fs.Args())
+	}
+	staleBound, err := resolveStaleBound(fs, *maxStale)
+	if err != nil {
+		return nil, err
 	}
 
 	rootDir := filepath.Dir(*manifestPath)
@@ -127,6 +137,7 @@ func parseAuditOptions(args []string) (*auditOptions, error) {
 		debtDeltaReason: resolveDebtDeltaReason(*debtDelta),
 		allViolations:   *allViolations,
 		offline:         *offline,
+		maxStale:        staleBound,
 		policy:          policy,
 	}, nil
 }
@@ -241,7 +252,7 @@ func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
 		ratchet.CurrentCount, base.TotalInfractions, len(touched), scanRep.Skips.DirCount,
 		scanRep.Skips.Symlinks, scanRep.Skips.Oversize, scanRep.Skips.Irregular))
 
-	return auditBaselineGrowth(ctx, opts, base)
+	return auditRatchetPassed(ctx, opts, base, ratchet)
 }
 
 // printInvariantVerdict prints the HISS scan verdict for the languages the scan examined and

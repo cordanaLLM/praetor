@@ -11,7 +11,7 @@ import (
 
 // The fixtures replay both ways (HISS-20): every pass-* text must pass and every fail-*
 // text must fail with exactly the rules its file name lists, no fewer and no more.
-var fixtureRuleRe = regexp.MustCompile(`\b[CF]\d\b`)
+var fixtureRuleRe = regexp.MustCompile(`\b[CF]\d+\b`)
 
 func readFixture(t *testing.T, path string) string {
 	t.Helper()
@@ -54,10 +54,21 @@ func fixtureNames(t *testing.T, pattern string) []string {
 }
 
 func TestCheckFixturesReplayBothWays(t *testing.T) {
+	replayCheckFixtures(t, "check/*.md", Check)
+}
+
+// TestCheckRuntimeFixturesReplayBothWays replays testdata/runtime through CheckRuntime, the
+// adversarial profile: front matter there is prose, so a wrapped sentence in it fails C5.
+func TestCheckRuntimeFixturesReplayBothWays(t *testing.T) {
+	replayCheckFixtures(t, "runtime/*.md", CheckRuntime)
+}
+
+func replayCheckFixtures(t *testing.T, pattern string, check func(string, Options) Report) {
+	t.Helper()
 	var passes, fails int
-	for _, path := range fixtureNames(t, "check/*.md") {
+	for _, path := range fixtureNames(t, pattern) {
 		name := filepath.Base(path)
-		report := Check(readFixture(t, path), Options{})
+		report := check(readFixture(t, path), Options{})
 		want := wantRules(name)
 		if strings.HasPrefix(name, "fail-") {
 			fails++
@@ -73,13 +84,31 @@ func TestCheckFixturesReplayBothWays(t *testing.T) {
 	}
 }
 
+// TestFloorFixturesReplayBothWays replays testdata/floor and every case directory below it:
+// each holds one before.md and its after-pass-* and after-fail-F<n>-* rewrites.
 func TestFloorFixturesReplayBothWays(t *testing.T) {
-	before := readFixture(t, filepath.Join("testdata", "floor", "before.md"))
+	cases := fixtureNames(t, "floor/*/before.md")
+	cases = append(cases, filepath.Join("testdata", "floor", "before.md"))
+	for _, before := range cases {
+		dir := filepath.Dir(before)
+		t.Run(filepath.Base(dir), func(t *testing.T) {
+			replayFloorCase(t, dir)
+		})
+	}
+}
+
+func replayFloorCase(t *testing.T, dir string) {
+	t.Helper()
+	before := readFixture(t, filepath.Join(dir, "before.md"))
 	if report := Floor(before, before); !report.Passed() {
 		t.Fatalf("a text must hold its own floor: %v", report.Findings)
 	}
+	rel, err := filepath.Rel("testdata", dir)
+	if err != nil {
+		t.Fatalf("fixture directory %s: %v", dir, err)
+	}
 	var passes, fails int
-	for _, path := range fixtureNames(t, "floor/after-*.md") {
+	for _, path := range fixtureNames(t, filepath.Join(rel, "after-*.md")) {
 		name := filepath.Base(path)
 		report := Floor(before, readFixture(t, path))
 		want := wantRules(name)

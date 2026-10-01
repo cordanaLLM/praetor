@@ -1,0 +1,3 @@
+type: changed
+title: Update the VS Code extension to vscode-languageclient 10; the LSP message trace now follows the output channel log level
+breaking: false

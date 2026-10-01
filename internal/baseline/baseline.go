@@ -59,6 +59,20 @@ type RatchetResult struct {
 	CurrentCount           int
 	NewViolations          []Infraction
 	TouchedCleanViolations []Infraction
+	// TouchedBaselined holds, at the index of each TouchedCleanViolations entry, whether the
+	// baseline accounts for it (#348): per file and rule, as many findings as the baseline records
+	// there are baselined and only the excess is not (touchedMarks), so a line shift is not new
+	// debt. The touched-file clean rule fails a judged file's baselined findings together with its
+	// new ones, and Summary counts the two apart. The evaluator fills it; any other length means
+	// unknown, and Summary prints one touched count.
+	TouchedBaselined []bool `json:",omitempty"`
+	// DebtDelta records that the touched-file clean rule judged a touched file on whether its debt
+	// grew (RatchetOptions.DebtDelta) rather than on whether it was touched.
+	DebtDelta bool `json:",omitempty"`
+	// Stale counts the baseline entries no current violation accounts for (#349): per file and
+	// rule, how many more infractions the baseline records than the scan found. Each one is room
+	// a new finding can take, so StaleNotice names them and the remedy; the verdict ignores it.
+	Stale int `json:",omitempty"`
 	// CountRegressed is the rejection neither list explains: every violation is baselined and
 	// none sits in a touched file, yet the total rose above the baseline's.
 	CountRegressed bool
@@ -348,9 +362,28 @@ func EvaluateRatchetWithOptions(b *Baseline, currentViolations []Infraction, tou
 		CurrentCount:           len(currentViolations),
 		NewViolations:          newViolations,
 		TouchedCleanViolations: touchedCleanViolations,
+		TouchedBaselined:       touchedMarks(b.Infractions, touchedCleanViolations),
+		DebtDelta:              opts.DebtDelta,
+		Stale:                  staleEntries(b.Infractions, currentViolations),
 		CountRegressed:         countRegressed,
 		Passed:                 passed,
 	}
+}
+
+// staleEntries counts the recorded infractions no current violation accounts for: per file and
+// rule, how many more the baseline records than the scan found. Like worsenedFiles it compares
+// counts rather than fingerprints, so a line shift above a baselined infraction, which changes
+// its fingerprint and not the debt, is not read as a stale entry.
+func staleEntries(recorded, current []Infraction) int {
+	before := countByFileRule(recorded, nil)
+	after := countByFileRule(current, nil)
+	stale := 0
+	for key, count := range before {
+		if count > after[key] {
+			stale += count - after[key]
+		}
+	}
+	return stale
 }
 
 // ratchetVerdict decides a ratchet from whether any violation was listed and how the current
@@ -390,17 +423,58 @@ type fileRule struct {
 	rule string
 }
 
-// countByFileRule counts infractions per file and rule, restricted to the touched files.
+// countByFileRule counts infractions per file and rule, restricted to the touched files; a nil
+// touched set counts every file.
 func countByFileRule(infractions []Infraction, touched map[string]struct{}) map[fileRule]int {
 	counts := make(map[fileRule]int)
 	for i := 0; i < len(infractions); i++ {
 		file := NormalizePath(infractions[i].FilePath)
-		if _, ok := touched[file]; !ok {
+		if _, ok := touched[file]; touched != nil && !ok {
 			continue
 		}
 		counts[fileRule{file: file, rule: infractions[i].RuleID}]++
 	}
 	return counts
+}
+
+// touchedMarks marks, per touched-file violation, whether the baseline accounts for it (#348).
+// Like worsenedFiles and staleEntries it compares counts, not fingerprints: per file and rule the
+// baseline accounts for as many current findings as it records, and only the excess is not in the
+// baseline. A fingerprint is path:line:rule, and a touched file is an edited one, so a line shift
+// above recorded debt is the normal case; comparing fingerprints read every shifted finding as
+// new. Which findings take the recorded slots: those whose fingerprint the baseline records, then
+// those it records at another line (movedRecorded), then the rest in scan order.
+func touchedMarks(recorded, touched []Infraction) []bool {
+	room := countByFileRule(recorded, nil)
+	fingerprints := countBy(recorded, fingerprintOf)
+	moved := movedRecorded(recorded, touched)
+	marks := make([]bool, len(touched))
+	claimSlots(touched, marks, room, func(v Infraction) bool { return take(fingerprints, fingerprintOf(v)) })
+	claimSlots(touched, marks, room, func(v Infraction) bool {
+		_, ok := takeLine(moved, findingKey(v))
+		return ok
+	})
+	claimSlots(touched, marks, room, func(Infraction) bool { return true })
+	return marks
+}
+
+// claimSlots marks each unmarked touched finding that match accepts while its file and rule have
+// a recorded slot left, and consumes that slot. match runs only when a slot is left, so the
+// recorded entry it consumes is spent on a finding that is marked.
+func claimSlots(touched []Infraction, marks []bool, room map[fileRule]int, match func(Infraction) bool) {
+	for i := 0; i < len(touched); i++ {
+		key := fileRule{file: NormalizePath(touched[i].FilePath), rule: touched[i].RuleID}
+		if marks[i] || room[key] <= 0 || !match(touched[i]) {
+			continue
+		}
+		room[key]--
+		marks[i] = true
+	}
+}
+
+// fingerprintOf is a finding's fingerprint with forward slashes, as the ratchet compares it.
+func fingerprintOf(v Infraction) string {
+	return NormalizePath(v.Fingerprint)
 }
 
 // touchedRuleRevokes decides, per touched file, whether the touched-file clean rule revokes its

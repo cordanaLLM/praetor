@@ -3,9 +3,10 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import Module from "node:module";
 import test from "node:test";
 import { MCP_PROVIDER_ID } from "./mcp";
-import { artifactPath, boundedIsFile, checkedLaunchFiles, commandAvailable, globLiteral, LSP_CLIENT_ID, LSP_DEFAULT_PATH, machineExecutable, MAX_MARKER_FOLDERS, MCP_DEFAULT_PATH, parseCapabilities, PRAETOR_MARKERS, praetorWorkspace, requireTrust, sentinelArguments, setupArguments, workspaceExecutable, workspaceGlob } from "./setup";
+import { artifactPath, boundedIsFile, checkedLaunchFiles, commandAvailable, globLiteral, LSP_CLIENT_ID, LSP_CLIENT_NAME, LSP_DEFAULT_PATH, machineExecutable, MAX_MARKER_FOLDERS, MCP_DEFAULT_PATH, parseCapabilities, PRAETOR_MARKERS, praetorWorkspace, requireTrust, sentinelArguments, setupArguments, workspaceExecutable, workspaceGlob } from "./setup";
 import { runCLI } from "./runner";
 
 const sample = { client: "claude", mode: "merge", documentation: "https://example.invalid/docs", lifecycle: { state: "adapter-defined", definition_paths: [".claude/settings.json"], activation: "unverified" } };
@@ -13,12 +14,13 @@ const report = (clients: unknown[]) => JSON.stringify({ schema_version: 1, runti
 
 type Manifest = {
   engines: { vscode: string };
+  dependencies: Record<string, string>;
   devDependencies: Record<string, string>;
   activationEvents: string[];
   capabilities: { untrustedWorkspaces: { restrictedConfigurations: string[] } };
   contributes: {
     commands: { command: string }[];
-    configuration: { properties: Record<string, { default?: unknown; enum?: string[] } | undefined> };
+    configuration: { properties: Record<string, { default?: unknown; enum?: string[]; enumDescriptions?: string[]; description?: string } | undefined> };
     mcpServerDefinitionProviders?: { id: string; label: string; when?: string }[];
   };
 };
@@ -36,6 +38,11 @@ const TRAILING_FORK_HOST = [1, 107, 0];
 const compareVersions = (left: number[], right: number[]): number => {
   const index = left.findIndex((part, position) => part !== right[position]);
   return index === -1 ? 0 : left[index] - right[index];
+};
+// caretFloor reads the lowest version a `^major.minor.patch` engines range admits.
+const caretFloor = (range: string | undefined): number[] | undefined => {
+  const floor = /^\^(\d+)\.(\d+)\.(\d+)$/.exec(range ?? "");
+  return floor ? floor.slice(1).map(Number) : undefined;
 };
 const extensionSource = (): string => fs.readFileSync(path.resolve(__dirname, "..", "src", "extension.ts"), "utf8");
 
@@ -205,9 +212,8 @@ test("both server paths are restricted settings and every restricted setting is 
 
 test("the engine floor carries the MCP provider API and equals the pinned host types", () => {
   const manifest = readManifest();
-  const floor = /^\^(\d+)\.(\d+)\.(\d+)$/.exec(manifest.engines.vscode);
-  assert.ok(floor, `engines.vscode ${manifest.engines.vscode} is not a caret floor`);
-  const version = floor.slice(1).map(Number);
+  const version = caretFloor(manifest.engines.vscode);
+  assert.ok(version, `engines.vscode ${manifest.engines.vscode} is not a caret floor`);
   // vsce refuses @types/vscode newer than engines.vscode; equal keeps the typed API and the floor in step.
   assert.equal(manifest.devDependencies["@types/vscode"], version.join("."));
   const lock = readLock();
@@ -217,13 +223,41 @@ test("the engine floor carries the MCP provider API and equals the pinned host t
 });
 
 test("the engine floor honours the MCP when clause and still admits trailing forks", () => {
-  const floor = /^\^(\d+)\.(\d+)\.(\d+)$/.exec(readManifest().engines.vscode);
-  assert.ok(floor);
-  const version = floor.slice(1).map(Number);
+  const version = caretFloor(readManifest().engines.vscode);
+  assert.ok(version);
   assert.ok(compareVersions(version, WHEN_CLAUSE_FLOOR) >= 0, `floor ${version.join(".")} ignores the contribution when clause`);
   assert.ok(compareVersions(version, TRAILING_FORK_HOST) <= 0, `floor ${version.join(".")} drops VS Code ${TRAILING_FORK_HOST.join(".")} forks`);
   assert.equal(compareVersions([1, 107, 0], [1, 107, 0]), 0);
   assert.ok(compareVersions([1, 108, 0], TRAILING_FORK_HOST) > 0 && compareVersions([1, 104, 9], WHEN_CLAUSE_FLOOR) < 0);
+});
+
+// vscode-languageclient declares the lowest host it supports (10.x raised it to ^1.91.0); a client
+// floor above engines.vscode would load in hosts the client does not support.
+test("the locked language client supports every host the engine floor admits", () => {
+  const manifest = readManifest();
+  const pinned = manifest.dependencies["vscode-languageclient"];
+  const locked = readLock().packages["node_modules/vscode-languageclient"];
+  assert.equal(locked?.version, pinned);
+  const host = caretFloor(manifest.engines.vscode);
+  const client = caretFloor(locked?.engines?.vscode);
+  assert.ok(host && client, `engines ${manifest.engines.vscode} and ${locked?.engines?.vscode} are not both caret floors`);
+  assert.ok(compareVersions(client, host) <= 0, `vscode-languageclient ${pinned} needs VS Code ${client.join(".")}, above the ${host.join(".")} floor`);
+  // Boundary: an equal floor is admitted. Negative: one minor above is not; a range without a caret floor yields none.
+  assert.equal(compareVersions(host, host), 0);
+  assert.ok(compareVersions([host[0], host[1] + 1, 0], host) > 0);
+  assert.equal(caretFloor(">=1.91.0"), undefined);
+  assert.equal(caretFloor(undefined), undefined);
+});
+
+// Since 10.0 the client publishes only package `exports` (no main/typings); tsconfig resolves them
+// with node16, and the compiled require must reach the node entry while deep paths stay closed.
+test("the language client entry resolves through its package exports", () => {
+  assert.match(require.resolve("vscode-languageclient/node"), /vscode-languageclient[\\/]lib[\\/]node[\\/]main\.js$/);
+  assert.throws(() => require.resolve("vscode-languageclient/lib/node/main"), { code: "ERR_PACKAGE_PATH_NOT_EXPORTED" });
+  // "node" (node10) ignores exports, so tsc finds no types for vscode-languageclient/node.
+  const tsconfig = JSON.parse(fs.readFileSync(path.resolve(__dirname, "..", "tsconfig.json"), "utf8"));
+  assert.ok(["node16", "node20", "nodenext"].includes(String(tsconfig.compilerOptions.moduleResolution).toLowerCase()),
+    `moduleResolution ${tsconfig.compilerOptions.moduleResolution} ignores package exports`);
 });
 
 test("server paths fall back to the contributed default and bind the folder", () => {
@@ -243,10 +277,73 @@ test("the language client reads its trace level from the contributed setting", (
   const trace = properties[`${LSP_CLIENT_ID}.trace.server`];
   assert.ok(trace, `${LSP_CLIENT_ID}.trace.server is not a contributed setting`);
   assert.deepEqual(trace.enum, ["off", "messages", "verbose"]);
+  // The setting only picks the detail; the log level of the client's output channel decides whether
+  // anything is traced, so the description must name that channel and the Trace level.
+  assert.match(trace.description ?? "", new RegExp(`${LSP_CLIENT_NAME} output channel.*log level is Trace`));
+  assert.equal(trace.enumDescriptions?.length, trace.enum?.length);
+  assert.match(trace.enumDescriptions?.[0] ?? "", /^Same as messages\./);
   // The former client id read a key nothing contributes, so the setting had no effect.
   assert.equal(properties["standardsLSP.trace.server"], undefined);
   // Every other LSP setting is read from the "standards" section; the id stays inside it.
   assert.ok(LSP_CLIENT_ID.startsWith("standards."));
+});
+
+// vscode.LogLevel values (@types/vscode): the level a log output channel reports.
+const LogLevel = { Off: 0, Trace: 1, Debug: 2, Info: 3, Warning: 4, Error: 5 } as const;
+type TraceClient = {
+  Trace: { Off: number; Messages: number; Verbose: number };
+  BaseLanguageClient: { prototype: { refreshTrace(this: object, connection: object): void } };
+};
+
+// loadTraceClient loads the locked vscode-languageclient node entry outside a VS Code host. The
+// "vscode" module resolves to a stub holding LogLevel and workspace.getConfiguration, the host API
+// refreshTrace reads, answered from `settings` with each section recorded in `sections`. Every
+// other export is an empty class, enough for the client's `class ... extends vscode.X` lines.
+function loadTraceClient(settings: Map<string, unknown>, sections: string[]): TraceClient {
+  const classes = new Map<PropertyKey, unknown>();
+  const workspace = { getConfiguration: (section: string) => {
+    sections.push(section);
+    return { get: (key: string, fallback: unknown) => (settings.has(key) ? settings.get(key) : fallback) };
+  } };
+  const known: Record<PropertyKey, unknown> = { __esModule: true, LogLevel, workspace };
+  const host = new Proxy(known, { get: (target, name) => {
+    if (name in target) return target[name];
+    if (!classes.has(name)) classes.set(name, class {});
+    return classes.get(name);
+  } });
+  const loader = Module as unknown as { _resolveFilename(request: string, ...rest: unknown[]): string };
+  const resolve = loader._resolveFilename;
+  const stub = path.join(__dirname, "vscode-host-stub");
+  require.cache[stub] = { id: stub, filename: stub, loaded: true, exports: host } as unknown as NodeJS.Module;
+  loader._resolveFilename = function (request, ...rest) { return request === "vscode" ? stub : resolve.call(this, request, ...rest); };
+  try { return require("vscode-languageclient/node") as TraceClient; } finally { loader._resolveFilename = resolve; }
+}
+
+// Since vscode-languageclient 10, refreshTrace traces only while the client's output channel is at
+// log level Trace, and there maps `off` to messages; 9.x read the setting alone. A client update that
+// changes this must update the trace text in docs/guides/editor-capabilities.md, the README
+// "Settings" section and the standards.lsp.trace.server description.
+test("the locked language client traces only at the Trace log level", () => {
+  const settings = new Map<string, unknown>();
+  const sections: string[] = [];
+  const client = loadTraceClient(settings, sections);
+  const traced = (level: number, value: string): number | undefined => {
+    settings.set("trace.server", value);
+    let sent: number | undefined;
+    const connection = { trace: (trace: number) => { sent = trace; return Promise.resolve(); } };
+    client.BaseLanguageClient.prototype.refreshTrace.call({ _id: LSP_CLIENT_ID, _traceLogLevel: level, error: () => undefined }, connection);
+    return sent;
+  };
+  const { Off, Messages, Verbose } = client.Trace;
+  // Positive: at Trace the setting picks the detail, read from the client id's section.
+  assert.equal(traced(LogLevel.Trace, "verbose"), Verbose);
+  assert.equal(traced(LogLevel.Trace, "messages"), Messages);
+  assert.deepEqual([...new Set(sections)], [LSP_CLIENT_ID]);
+  // Negative: at the default Info level no value traces, and `off` does not stop tracing at Trace.
+  assert.equal(traced(LogLevel.Info, "verbose"), Off);
+  assert.equal(traced(LogLevel.Trace, "off"), Messages);
+  // Boundary: Debug, the level next to Trace, traces nothing.
+  assert.equal(traced(LogLevel.Debug, "verbose"), Off);
 });
 
 test("configuration authority and strict capability boundaries", () => {

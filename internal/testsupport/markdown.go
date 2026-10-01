@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // MarkdownLineLimit is markdownlint's default MD013 line length.
@@ -53,7 +55,7 @@ func MarkdownFindings(md string) []string {
 	if len(lines) > maxMarkdownLines {
 		return []string{fmt.Sprintf("document exceeds %d lines", maxMarkdownLines)}
 	}
-	start := frontMatterEnd(lines)
+	start := util.MarkdownFrontMatterEnd(lines)
 	scan := &markdownScan{lines: lines[start:], offset: start, disabled: map[string]bool{}}
 	if !strings.HasSuffix(md, "\n") || strings.HasSuffix(md, "\n\n") {
 		scan.report(len(scan.lines)-1, "MD047", "document must end with exactly one newline")
@@ -62,20 +64,6 @@ func MarkdownFindings(md string) []string {
 		scan.line(i)
 	}
 	return scan.findings
-}
-
-// frontMatterEnd returns the index of the first line after a YAML front matter block that
-// opens the document, or 0 when the document has none or the block is never closed.
-func frontMatterEnd(lines []string) int {
-	if len(lines) == 0 || strings.TrimRight(lines[0], " \t") != "---" {
-		return 0
-	}
-	for i := 1; i < len(lines) && i < maxMarkdownLines; i++ {
-		if strings.TrimRight(lines[i], " \t") == "---" {
-			return i + 1
-		}
-	}
-	return 0
 }
 
 // report records one finding unless its rule is disabled at this point.

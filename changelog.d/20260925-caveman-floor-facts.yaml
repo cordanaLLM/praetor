@@ -1,0 +1,3 @@
+type: fixed
+title: "caveman floor holds numbers, fenced code and session output; check reads Markdown as CommonMark does"
+breaking: true

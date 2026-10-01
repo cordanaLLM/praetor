@@ -37,26 +37,12 @@ const (
 	minReasonWords = 3
 )
 
-// fenceKind says how a fence's lines are read.
-type fenceKind int
-
-const (
-	// fenceData is any fence that is not a shell: YAML, JSON, Go, Mermaid, plain text. Its
-	// content is data or program output, where a word after "praetorctl" is not a call.
-	fenceData fenceKind = iota
-	// fenceScript is a shell script: every line that is not a comment is a command.
-	fenceScript
-	// fenceSession is a terminal transcript: only a line after the "$ " prompt is a
-	// command; every other line is the output it printed.
-	fenceSession
-)
-
-// shellLanguages maps the fence info strings read as commands to how they are read.
-var shellLanguages = map[string]fenceKind{
-	"bash": fenceScript, "sh": fenceScript, "shell": fenceScript, "zsh": fenceScript,
-	"fish": fenceScript, "powershell": fenceScript, "pwsh": fenceScript, "ps1": fenceScript,
-	"console": fenceSession, "shell-session": fenceSession, "terminal": fenceSession,
-}
+// fenceKind says how a fence's lines are read; util.MarkdownShellFence, the one table of
+// command fences, decides it. util.ShellNone is any fence that is not a shell (YAML, JSON,
+// Go, Mermaid, plain text), where a word after "praetorctl" is not a call; util.ShellScript
+// reads every line that is not a comment as a command; util.ShellSession reads only a line
+// after the "$ " prompt as one, every other line being the output it printed.
+type fenceKind = util.MarkdownShell
 
 // Suppression is one accepted praetor:docs-references:off block.
 type Suppression struct {
@@ -119,10 +105,10 @@ func (s *scanState) line(doc string, number int, raw string) {
 	if s.fence.Inside(trimmed) {
 		switch {
 		case !wasOpen:
-			s.kind = shellLanguages[fenceLanguage(trimmed, s.fence.Marker())]
+			s.kind = util.MarkdownShellFence(util.MarkdownFenceLanguage(trimmed, s.fence.Marker()))
 		case !s.fence.Open():
 			s.flush()
-		case s.kind != fenceData && s.suppressed == 0:
+		case s.kind != util.ShellNone && s.suppressed == 0:
 			s.shellLine(number, trimmed)
 		}
 		return
@@ -172,12 +158,12 @@ func (s *scanState) directive(doc string, number int, trimmed string) bool {
 // prompts are output, such as "praetorctl version dev", and are not read.
 func (s *scanState) shellLine(number int, trimmed string) {
 	if s.pending.Len() == 0 {
-		prompted := strings.HasPrefix(trimmed, "$ ")
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") || (s.kind == fenceSession && !prompted) {
+		command, ok := util.MarkdownShellCommand(s.kind, trimmed)
+		if !ok {
 			return
 		}
 		s.pendingAt = number
-		trimmed = strings.TrimPrefix(trimmed, "$ ")
+		trimmed = command
 	}
 	body, continued := strings.CutSuffix(trimmed, "\\")
 	s.pending.WriteString(body)
@@ -196,69 +182,15 @@ func (s *scanState) flush() {
 	s.pending.Reset()
 }
 
-// fenceLanguage returns the first word of an opening fence's info string, lower-cased.
-func fenceLanguage(trimmed, marker string) string {
-	info := strings.Fields(strings.TrimPrefix(trimmed, marker))
-	if len(info) == 0 {
-		return ""
-	}
-	return strings.ToLower(strings.Trim(info[0], "{}."))
-}
-
-// codeSpans returns the content of every inline code span on one line, following CommonMark:
-// a span opens with a run of backticks and closes at the next run of the same length, and
-// one leading and one trailing space are stripped when both are present.
+// codeSpans returns the content of every inline code span on one line, as
+// util.MarkdownCodeSpans reads it: a span opens with a run of backticks and closes at the
+// next run of the same length, and one leading and one trailing space are stripped when
+// both are present.
 func codeSpans(line string) []string {
-	var spans []string
-	for pos := 0; pos < len(line) && len(spans) < maxSpansPerLine; {
-		open := strings.IndexByte(line[pos:], '`')
-		if open < 0 {
-			break
-		}
-		start := pos + open
-		run := backtickRun(line, start)
-		end := closingRun(line, start+run, run)
-		if end < 0 {
-			pos = start + run
-			continue
-		}
-		spans = append(spans, stripSpanPadding(line[start+run:end]))
-		pos = end + run
+	found := util.MarkdownCodeSpans(line, maxSpansPerLine)
+	spans := make([]string, 0, len(found))
+	for _, span := range found {
+		spans = append(spans, span.Content(line))
 	}
 	return spans
-}
-
-// backtickRun returns the length of the backtick run starting at index.
-func backtickRun(line string, index int) int {
-	run := 0
-	for index+run < len(line) && line[index+run] == '`' {
-		run++
-	}
-	return run
-}
-
-// closingRun returns the index of the next backtick run of exactly length run at or after
-// from, or -1 when the span is never closed on this line.
-func closingRun(line string, from, run int) int {
-	for pos := from; pos < len(line); {
-		next := strings.IndexByte(line[pos:], '`')
-		if next < 0 {
-			return -1
-		}
-		candidate := pos + next
-		length := backtickRun(line, candidate)
-		if length == run {
-			return candidate
-		}
-		pos = candidate + length
-	}
-	return -1
-}
-
-// stripSpanPadding applies CommonMark's single-space stripping to a span's content.
-func stripSpanPadding(content string) string {
-	if len(content) >= 2 && content[0] == ' ' && content[len(content)-1] == ' ' && strings.TrimSpace(content) != "" {
-		return content[1 : len(content)-1]
-	}
-	return content
 }

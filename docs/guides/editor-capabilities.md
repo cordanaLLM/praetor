@@ -242,12 +242,35 @@ platform matrix runs on Linux, macOS and Windows.
 
 ## VS Code extension trace level
 
-The extension starts its language client with the id `standards.lsp`
-(`LSP_CLIENT_ID` in `editors/vscode/src/setup.ts`). vscode-languageclient reads
-the trace level from `<client id>.trace.server` and re-reads it on every
-configuration change, so the contributed `standards.lsp.trace.server` setting
-(`off`, `messages`, `verbose`) now takes effect. The former id `standardsLSP`
-read a key nothing contributes. Test: `editors/vscode/src/setup.test.ts`.
+To see the messages the extension and the Praetor LSP exchange, open the
+command palette, run **Developer: Set Log Level...**, pick the **Praetor LSP**
+output channel and choose **Trace**. The trace then appears in that output
+channel. At any other log level, including the default **Info**, nothing is
+traced.
+
+While the channel is at **Trace**, the `standards.lsp.trace.server` setting picks
+the detail:
+
+| Value | Traced |
+| :--- | :--- |
+| `messages` (default) | method names, request ids and response times |
+| `verbose` | the same, plus parameters and results |
+| `off` | the same as `messages` |
+
+To stop tracing, set the channel's log level back above **Trace**; the setting
+cannot switch tracing off. vscode-languageclient 10 introduced this gate
+(`refreshTrace` in its `lib/common/client.js`); 9.x read the setting alone, so
+`off` disabled tracing and `messages` traced at every log level.
+
+The extension starts its language client with the id `standards.lsp` and the
+name `Praetor LSP` (`LSP_CLIENT_ID` and `LSP_CLIENT_NAME` in
+`editors/vscode/src/setup.ts`). The client reads the setting from
+`<client id>.trace.server` and names its output channel after the client name.
+The former id `standardsLSP` read a key nothing contributes. Tests in
+`editors/vscode/src/setup.test.ts`: "the language client reads its trace level
+from the contributed setting" checks the contributed key and its description;
+"the locked language client traces only at the Trace log level" runs the locked
+client's `refreshTrace` at the Trace, Debug and Info levels.
 
 ## VS Code extension MCP server
 

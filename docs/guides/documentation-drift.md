@@ -156,11 +156,19 @@ each reference a reader would copy:
 
 - **Commands.** Every call of `praetorctl` or `standardsctl` (bare, by path such as
   `./bin/praetorctl`, or as `go run ./cmd/standardsctl`) in an inline code span or a shell fence.
-  In a script fence (`bash`, `sh`, `shell`, `zsh`, `fish`, `powershell`) every line that is not
-  a comment is a command. In a terminal transcript (`console`, `shell-session`, `terminal`) only
-  a line that starts with the `$` prompt and a space is; the lines between prompts are output, such as
-  `praetorctl version dev`, and are not read. The first word must be a command of the binary's
-  own dispatch table, and each subcommand word and flag after it must be one its code defines.
+  In a script fence (`bash`, `sh`, `shell`, `zsh`, `ksh`, `csh`, `tcsh`, `fish`, `powershell`,
+  `pwsh`, `ps1` and the other names of the table) every line that is not a `#` comment is a
+  command, and in a Windows batch fence (`cmd`, `bat`, `batch`) every line that is not a `REM`
+  or `::` comment is. In a terminal transcript (`console`, `shell-session`, `terminal`) only a
+  line that starts with the `$` prompt and a space is; the lines between prompts are output,
+  such as `praetorctl version dev`, and are not read. A fence without a language is not read.
+  The first word must be a command of the binary's own dispatch table, and each subcommand
+  word and flag after it must be one its code defines. The fence table, the per-line command
+  rule and the CommonMark code span reader live in `internal/util/markdown_syntax.go`
+  (`util.MarkdownShellFence`, `util.MarkdownShellCommand`, `util.MarkdownCodeSpans`); the
+  caveman clarity floor reads commands and code spans with the same functions. The two
+  differ on one point: the floor holds the lines of a fence without a language as commands
+  (`F2`), since nothing says they are not, while this check reads none of them.
 - **Repository paths.** Every word with a slash whose first element is a top-level entry of the
   repository, such as `internal/forge/pr.go:37`, `deploy/helm/` or `internal/state.VerifyStateSync`.
   It must exist in `git ls-files`; a package path followed by an identifier, exported or not,
@@ -198,7 +206,7 @@ deep while `hook` has none.
 | `docs/project-records/` | records past events as they were written; never updated to match later code |
 | Accepted, Superseded and Deprecated decision records | the body is immutable ([ADR lifecycle](../adr/README.md)); a changed decision gets a new record |
 | Proposed and Draft decision records | they name surfaces that do not exist until they are implemented |
-| Fences in other languages (`yaml`, `json`, `text`, `mermaid`) | they quote data or program output, where a word after `praetorctl` is not a call |
+| Fences in other languages (`yaml`, `json`, `text`, `mermaid`) and fences without a language | they quote data or program output, where a word after `praetorctl` is not a call |
 | A mention outside command position | `this praetorctl serves no row` is a sentence, not a call |
 
 A record with no readable `## Status` is checked, so an unrecognised status cannot switch the
