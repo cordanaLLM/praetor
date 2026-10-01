@@ -12,6 +12,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/adopt"
 	"github.com/cordanaLLM/praetor/internal/managedasset"
+	"github.com/cordanaLLM/praetor/internal/supplychain"
 )
 
 // reuseWarnings runs the vendored license check of the documentation families over a repository
@@ -20,7 +21,7 @@ func reuseWarnings(t *testing.T, text *string) []string {
 	t.Helper()
 	root := t.TempDir()
 	if text != nil {
-		writeFixtureFile(t, root, reuseFile, *text)
+		writeFixtureFile(t, root, supplychain.ReuseFile, *text)
 	}
 	return vendoredLicenseWarnings(t.Context(), root, adopt.DocumentationFamilies())
 }
@@ -91,11 +92,7 @@ func TestVendoredLicenseWarningsBoundary(t *testing.T) {
 	if warnings := reuseWarnings(t, &again); len(warnings) != 0 {
 		t.Fatalf("the override repeated after the ancestor table warned: %v", warnings)
 	}
-	if got := reuseCoveringGlobs("tools/figures/third_party/interfig/upstream/**"); len(got) != 5 ||
-		got[0] != "**" || got[4] != "tools/figures/third_party/interfig/**" {
-		t.Fatalf("covering globs = %v", got)
-	}
-	atBound := reuseWithOverride + strings.Repeat("\n", maxReuseLines-strings.Count(reuseWithOverride, "\n")-1)
+	atBound := reuseWithOverride + strings.Repeat("\n", supplychain.MaxReuseLines-strings.Count(reuseWithOverride, "\n")-1)
 	if warnings := reuseWarnings(t, &atBound); len(warnings) != 0 {
 		t.Fatalf("a REUSE.toml at the line bound warned: %v", warnings)
 	}
@@ -104,7 +101,7 @@ func TestVendoredLicenseWarningsBoundary(t *testing.T) {
 		t.Fatalf("a REUSE.toml past the line bound: %v", warnings)
 	}
 	root := t.TempDir()
-	if err := os.Mkdir(filepath.Join(root, reuseFile), 0o755); err != nil {
+	if err := os.Mkdir(filepath.Join(root, supplychain.ReuseFile), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	families := adopt.DocumentationFamilies()

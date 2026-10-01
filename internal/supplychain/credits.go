@@ -21,8 +21,9 @@ const AcknowledgementsFile = "docs/credits.md"
 // creditsPlayerAnchor marks that row: the player it names as the packages' use.
 var creditsPlayerAnchor = "`" + figureassets.Directory + "/dist/player.js`"
 
-// creditsLink matches a Markdown link, whose text alone counts when a row names a package.
-var creditsLink = regexp.MustCompile(`\[([^\]]*)\]\([^)]*\)`)
+// creditsLink matches a Markdown link and captures its text, which alone counts when a row
+// names a package, and its target, which CheckUpstreamCredits matches a declared upstream to.
+var creditsLink = regexp.MustCompile(`\[([^\]]*)\]\(([^)]*)\)`)
 
 // CheckCredits fails when the credits row of the figure player does not name every npm package
 // the committed player bundles as "<name> <version>", at the version the figure lock installs

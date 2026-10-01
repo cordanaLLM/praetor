@@ -344,16 +344,22 @@ func checkNoticeLicense(section string, component noticeRow) error {
 }
 
 // unknownLicenseTerms returns each identifier of an SPDX license expression that
-// knownNoticeLicenses does not hold; AND, OR, WITH and parentheses are grammar.
+// knownNoticeLicenses does not hold.
 func unknownLicenseTerms(expression string) []string {
-	terms := strings.FieldsFunc(expression, func(r rune) bool { return r == '(' || r == ')' || unicode.IsSpace(r) })
 	var unknown []string
-	for _, term := range terms {
-		if !licenseOperators[term] && !knownNoticeLicenses[term] {
+	for _, term := range licenseTerms(expression) {
+		if !knownNoticeLicenses[term] {
 			unknown = append(unknown, term)
 		}
 	}
 	return unknown
+}
+
+// licenseTerms returns the identifiers of an SPDX license expression in order; AND, OR, WITH,
+// parentheses and whitespace are grammar.
+func licenseTerms(expression string) []string {
+	fields := strings.FieldsFunc(expression, func(r rune) bool { return r == '(' || r == ')' || unicode.IsSpace(r) })
+	return slices.DeleteFunc(fields, func(term string) bool { return licenseOperators[term] })
 }
 
 // spliceNoticeTables returns lines with the data rows of each table replaced by its rendered
