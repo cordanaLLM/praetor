@@ -391,10 +391,13 @@ var everyRunConditions = []string{"always()", "!cancelled()", "success()||failur
 // requiring it would install a check that passes whether or not its work ran.
 //
 // A leading renovateBranchSkip conjunct is the one skip the rest of the condition alone decides
-// on (withoutRenovateBranchSkip). It skips the job on Renovate branches only, whose pull requests
-// are taken over rather than merged, and a matrix job it skips reports no leg at all, so such a
-// pull request cannot satisfy the ruleset. Dropping the job from the required contexts instead
-// would unprotect every other pull request, so the job stays required.
+// on (withoutRenovateBranchSkip). It skips the job only on a pull request the Renovate app opened
+// from a renovate/ branch, which is taken over rather than merged. Dropping the job from the
+// required contexts instead would unprotect every other pull request, so the job stays required.
+// Where the Platform Neutrality legs are required, the skipped matrix reports no leg at all, so a
+// Renovate pull request cannot satisfy the ruleset. Where they are not, such as an operational
+// fork without PRAETOR_FORK_PORTABILITY, every skipped check reports success and the pull request
+// can merge with no Go test or security scan run (docs/guides/operational-sync.md).
 func reportsOnEveryPullRequest(condition, identity string) bool {
 	condition = withoutRenovateBranchSkip(condition)
 	return strings.TrimSpace(condition) == "" || holdsOnEveryRun(condition) ||

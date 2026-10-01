@@ -2,9 +2,12 @@ package forge
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -233,11 +236,14 @@ var renovateSkippingJobs = []string{
 	"ci.yml/docs-presets", "ci.yml/verify", "pages.yml/build", "portability.yml/harness", "security.yml/security",
 }
 
-// renovateSkipJobs lists, keyed "<workflow>/<job id>" and sorted, every job of a workflow that
-// triggers on pull_request whose condition leads with renovateBranchSkip.
-func renovateSkipJobs(t *testing.T, workflows map[string][]byte) []string {
+// renovateSkipConditions returns, keyed "<workflow>/<job id>", the condition of every job of a
+// workflow that triggers on pull_request and leads its condition with renovateBranchSkip. A job
+// whose condition reads the renovate/ prefix without the whole term fails the test: such a skip is
+// looser than the one the required-context discovery recognises, and would skip a person's pull
+// request from a branch named renovate/... too.
+func renovateSkipConditions(t *testing.T, workflows map[string][]byte) map[string]string {
 	t.Helper()
-	var skipping []string
+	skipping := map[string]string{}
 	for name, data := range workflows {
 		var spec workflowSpec
 		if err := yaml.Unmarshal(data, &spec); err != nil {
@@ -247,12 +253,15 @@ func renovateSkipJobs(t *testing.T, workflows map[string][]byte) []string {
 			continue
 		}
 		for id, job := range spec.Jobs {
-			if strings.HasPrefix(strings.TrimSpace(job.If), renovateBranchSkip) {
-				skipping = append(skipping, name+"/"+id)
+			condition := strings.TrimSpace(job.If)
+			if strings.Contains(condition, "renovate/") && !strings.Contains(condition, renovateBranchSkip) {
+				t.Errorf("%s/%s skips the renovate/ prefix without the Renovate author: %q", name, id, condition)
+			}
+			if strings.HasPrefix(condition, renovateBranchSkip) {
+				skipping[name+"/"+id] = condition
 			}
 		}
 	}
-	sort.Strings(skipping)
 	return skipping
 }
 
@@ -262,8 +271,9 @@ func renovateSkipJobs(t *testing.T, workflows map[string][]byte) []string {
 // become one.
 func TestRenovateBranchesSkipOnlyTheHeavyPullRequestJobs(t *testing.T) {
 	workflows, identity := engineWorkflows(t)
-	if got := renovateSkipJobs(t, workflows); strings.Join(got, ",") != strings.Join(renovateSkippingJobs, ",") {
-		t.Fatalf("jobs skipping Renovate branches = %v, want %v", got, renovateSkippingJobs)
+	got := slices.Sorted(maps.Keys(renovateSkipConditions(t, workflows)))
+	if !slices.Equal(got, renovateSkippingJobs) {
+		t.Fatalf("jobs skipping Renovate pull requests = %v, want %v", got, renovateSkippingJobs)
 	}
 	for _, kept := range []string{"compliance.yml", "praetor-docs.yml"} {
 		if strings.Contains(string(workflows[kept]), "github.head_ref") {
@@ -279,6 +289,98 @@ func TestRenovateBranchesSkipOnlyTheHeavyPullRequestJobs(t *testing.T) {
 	requireContexts(t, "canonical", contexts, append(want, securityScanContext), nil)
 	if canonical, err := workflowContextsIn(workflows["portability.yml"], identity); err != nil || len(canonical) != 3 {
 		t.Errorf("canonical portability contexts = %v, %v; want the three legs", canonical, err)
+	}
+}
+
+// pullRequestRun is one pull request run in the canonical repository with no repository variable
+// set, described by the two facts a Renovate skip reads. An empty headRef and author describe a
+// push run, where github.head_ref and github.event.pull_request are absent.
+type pullRequestRun struct {
+	headRef, author string
+}
+
+// conditionFacts replaces every fact the engine's Renovate-skipping job conditions read with its
+// value for run in the repository named identity. GitHub compares strings and evaluates
+// startsWith ignoring case, and so do the two Renovate facts here.
+func conditionFacts(identity string, run pullRequestRun) *strings.Replacer {
+	return strings.NewReplacer(
+		renovateHeadBranch, strconv.FormatBool(strings.HasPrefix(strings.ToLower(run.headRef), "renovate/")),
+		renovateAuthor, strconv.FormatBool(strings.EqualFold(run.author, "renovate[bot]")),
+		repositoryGuard(identity), "true",
+		portabilityVariable, "false",
+		pullRequestRunTerm, "true",
+	)
+}
+
+// literalReduction rewrites one step of a boolean expression of literals: a negated literal, a
+// parenthesised literal, a conjunction of two literals, or a parenthesised disjunction of two.
+// A conjunction binds tighter than a disjunction, so only an enclosed disjunction is reduced.
+var literalReduction = strings.NewReplacer(
+	"!true", "false", "!false", "true", "(true)", "true", "(false)", "false",
+	"true && true", "true", "true && false", "false", "false && true", "false", "false && false", "false",
+	"(true || true)", "true", "(true || false)", "true", "(false || true)", "true", "(false || false)", "false",
+)
+
+// evaluateJobCondition evaluates condition for run by replacing its facts and reducing the literal
+// expression left in bounded steps. ok is false when a fact is unknown, so no literal remains.
+func evaluateJobCondition(condition, identity string, run pullRequestRun) (value, ok bool) {
+	expression := conditionFacts(identity, run).Replace(strings.TrimSpace(condition))
+	for range 32 {
+		if expression == "true" || expression == "false" {
+			return expression == "true", true
+		}
+		next := literalReduction.Replace(expression)
+		if next == expression {
+			return false, false
+		}
+		expression = next
+	}
+	return false, false
+}
+
+// requireJobRuns fails the test unless condition evaluates for run, and to want.
+func requireJobRuns(t *testing.T, job, condition, identity string, run pullRequestRun, want bool) {
+	t.Helper()
+	runs, ok := evaluateJobCondition(condition, identity, run)
+	if !ok {
+		t.Errorf("%s condition %q does not evaluate", job, condition)
+	} else if runs != want {
+		t.Errorf("%s runs = %v, want %v", job, runs, want)
+	}
+}
+
+// Positive: a pull request the Renovate app opened from a renovate/ branch skips every
+// Renovate-skipping job and runs the stated-reason job. Negative: a person's pull request from a
+// renovate/ branch, a look-alike login and the app's pull request from another branch run every
+// job, and the stated-reason job does not run. Boundary: a push run and a branch named renovate
+// without the slash run every job; a branch prefix in capitals matches as GitHub's startsWith does.
+func TestRenovateSkipRequiresTheRenovateAuthor(t *testing.T) {
+	workflows, identity := engineWorkflows(t)
+	var portability workflowSpec
+	if err := yaml.Unmarshal(workflows["portability.yml"], &portability); err != nil {
+		t.Fatalf("parse portability.yml: %v", err)
+	}
+	conditions := renovateSkipConditions(t, workflows)
+	cases := []struct {
+		name  string
+		run   pullRequestRun
+		skips bool
+	}{
+		{"positive Renovate app on a renovate branch", pullRequestRun{"renovate/go-1.x", "renovate[bot]"}, true},
+		{"negative person on a renovate branch", pullRequestRun{"renovate/go-1.x", "lusoris"}, false},
+		{"negative look-alike login", pullRequestRun{"renovate/go-1.x", "renovate"}, false},
+		{"negative Renovate app on another branch", pullRequestRun{"fix/renovate-12", "renovate[bot]"}, false},
+		{"boundary push run", pullRequestRun{}, false},
+		{"boundary branch without the slash", pullRequestRun{"renovate", "renovate[bot]"}, false},
+		{"boundary prefix in capitals", pullRequestRun{"Renovate/go-1.x", "renovate[bot]"}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, job := range renovateSkippingJobs {
+				requireJobRuns(t, job, conditions[job], identity, tc.run, !tc.skips)
+			}
+			requireJobRuns(t, "portability.yml/skipped", portability.Jobs["skipped"].If, identity, tc.run, tc.skips)
+		})
 	}
 }
 
@@ -300,6 +402,10 @@ func TestWithoutRenovateBranchSkip(t *testing.T) {
 		{"negative two groups", renovateBranchSkip + " && (a) || (" + guard + ")", renovateBranchSkip + " && (a) || (" + guard + ")"},
 		{"negative negated term", "!(" + renovateBranchSkip + ")", "!(" + renovateBranchSkip + ")"},
 		{"negative other prefix", "!startsWith(github.head_ref, 'dependabot/') && " + guard, "!startsWith(github.head_ref, 'dependabot/') && " + guard},
+		{"negative head branch alone", "!" + renovateHeadBranch + " && " + guard, "!" + renovateHeadBranch + " && " + guard},
+		{"negative author alone", "github.event.pull_request.user.login != 'renovate[bot]' && " + guard, "github.event.pull_request.user.login != 'renovate[bot]' && " + guard},
+		{"negative either fact", "!(" + renovateHeadBranch + " || " + renovateAuthor + ") && " + guard, "!(" + renovateHeadBranch + " || " + renovateAuthor + ") && " + guard},
+		{"negative facts not negated", "(" + renovateHeadBranch + " && " + renovateAuthor + ") && " + guard, "(" + renovateHeadBranch + " && " + renovateAuthor + ") && " + guard},
 		{"boundary term alone", renovateBranchSkip, ""},
 		{"boundary unclosed group", renovateBranchSkip + " && (" + guard, renovateBranchSkip + " && (" + guard},
 		{"boundary empty", "", ""},
@@ -328,6 +434,8 @@ func TestRenovateBranchSkipKeepsAJobRequired(t *testing.T) {
 		{"positive every run", renovateBranchSkip + " && !cancelled()", "", true},
 		{"negative conditional rest", renovateBranchSkip + " && needs.plan.outputs.go == 'true'", "", false},
 		{"negative trailing term", guard + " && " + renovateBranchSkip, "acme/engine", false},
+		{"negative head branch alone", "!" + renovateHeadBranch + " && (" + guard + " || " + portabilityVariable + ")", "acme/engine", false},
+		{"negative head branch alone on an unconditional job", "!" + renovateHeadBranch, "", false},
 		{"boundary guard of another identity", renovateBranchSkip + " && " + guard, forkIdentity, false},
 		{"boundary guard without identity", renovateBranchSkip + " && " + guard, "", false},
 	}

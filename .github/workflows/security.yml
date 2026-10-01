@@ -23,13 +23,14 @@ jobs:
   security:
     # Push and pull request legs run everywhere: verification follows the code. Only the
     # schedule leg is engine-only and is skipped outside the canonical repository (#189).
-    # A Renovate pull request skips the scan: the update is taken over on a signed-off branch
-    # whose own pull request runs it. github.head_ref is empty on push and schedule runs, so
+    # A Renovate pull request, one the Renovate app opened from a renovate/ branch, skips the scan:
+    # the update is taken over on a signed-off branch whose own pull request runs it. A person's
+    # branch named renovate/... runs it. github.head_ref is empty on push and schedule runs, so
     # those are unchanged, and the leading term keeps the check required (renovateBranchSkip in
     # internal/forge/workflow_guard.go).
     # The name is a required status context and therefore carries no skip reason.
     name: Go Vulnerability & AST Security Scan
-    if: "!startsWith(github.head_ref, 'renovate/') && (github.event_name != 'schedule' || github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor'))"
+    if: "!(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]') && (github.event_name != 'schedule' || github.repository == (vars.PRAETOR_CANONICAL_REPOSITORY || 'cordanaLLM/praetor'))"
     runs-on: ubuntu-26.04
     timeout-minutes: 15
 

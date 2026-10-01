@@ -23,11 +23,13 @@ permissions:
 jobs:
   verify:
     name: Standards & Invariant Verification Gate
-    # Skipped on a Renovate pull request: the update is taken over on a signed-off branch whose
-    # own pull request runs this job, and a rebase of every open Renovate branch would otherwise
-    # fill every runner. github.head_ref is empty on push, so push runs are unchanged. The skip
-    # keeps the check required (renovateBranchSkip in internal/forge/workflow_guard.go).
-    if: "!startsWith(github.head_ref, 'renovate/')"
+    # Skipped on a Renovate pull request, one the Renovate app (renovate[bot]) opened from a
+    # renovate/ branch: the update is taken over on a signed-off branch whose own pull request runs
+    # this job, and a rebase of every open Renovate branch would otherwise fill every runner. A
+    # person's pull request from a branch named renovate/... runs it. github.head_ref is empty on
+    # push, so push runs are unchanged. The skip keeps the check required (renovateBranchSkip in
+    # internal/forge/workflow_guard.go).
+    if: "!(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]')"
     runs-on: ubuntu-26.04
     # Full verification routinely takes 14-15 minutes; main run 35516836823
     # passed every gate but was canceled during cache cleanup at the 15-minute
@@ -344,7 +346,7 @@ jobs:
   docs-presets:
     name: Documentation Preset Builds
     # Skipped on a Renovate pull request for the reason the verify job states.
-    if: "!startsWith(github.head_ref, 'renovate/')"
+    if: "!(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]')"
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     env:

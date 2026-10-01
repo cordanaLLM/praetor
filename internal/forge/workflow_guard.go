@@ -45,20 +45,32 @@ func holdsOnEveryPullRequestRun(condition string) bool {
 	return disjunctionContains(condition, pullRequestRunTerm)
 }
 
-// renovateBranchSkip is the job condition conjunct that skips a job on a pull request whose head
-// branch is a Renovate branch. github.head_ref is set on pull_request and pull_request_target runs
-// only, so the term holds on every push, schedule and dispatch run. The engine's heavy pull request
-// jobs lead their condition with it (ci.yml, portability.yml, security.yml, pages.yml): a Renovate
-// pull request is never merged as opened, the update is taken over on a signed-off branch whose
-// own pull request runs every job.
-const renovateBranchSkip = "!startsWith(github.head_ref, 'renovate/')"
+// renovateHeadBranch and renovateAuthor are the two facts that make a pull request a Renovate pull
+// request: its head branch starts with renovate/, and the Renovate app's bot account opened it.
+// github.event.pull_request.user.login is the account that opened the pull request, which a later
+// push or re-run does not change, and no person's account can carry the [bot] suffix. A person's
+// pull request from a branch named renovate/... therefore matches only the first fact.
+const (
+	renovateHeadBranch = "startsWith(github.head_ref, 'renovate/')"
+	renovateAuthor     = "github.event.pull_request.user.login == 'renovate[bot]'"
+)
+
+// renovateBranchSkip is the job condition conjunct that skips a job on a Renovate pull request
+// only: both facts must hold. github.head_ref and github.event.pull_request are set on pull_request
+// and pull_request_target runs only, and a missing property evaluates to an empty string, so the
+// term holds on every push, schedule and dispatch run. The engine's heavy pull request jobs lead
+// their condition with it (ci.yml, portability.yml, security.yml, pages.yml): a Renovate pull
+// request is never merged as opened, the update is taken over on a signed-off branch whose own pull
+// request runs every job.
+const renovateBranchSkip = "!(" + renovateHeadBranch + " && " + renovateAuthor + ")"
 
 // withoutRenovateBranchSkip returns condition with a leading renovateBranchSkip conjunct removed,
-// so the rest is judged as if the job had no such skip: "" for the term alone, the inside of one
-// parenthesised group that encloses the whole rest, or a rest without a top-level disjunction
-// (topLevelDisjunction). Any other shape, such as a rest whose top-level || would bind around the
-// conjunction or whose parentheses do not pair, returns condition unchanged, and its && then makes
-// the job conditional.
+// so the rest is judged as if the job had no such skip. Only the exact two-fact term counts: a
+// looser skip, such as the head branch test alone, stays in place and makes the job conditional.
+// The result is "" for the term alone, the inside of one parenthesised group that encloses the
+// whole rest, or a rest without a top-level disjunction (topLevelDisjunction). Any other shape,
+// such as a rest whose top-level || would bind around the conjunction or whose parentheses do not
+// pair, returns condition unchanged, and its && then makes the job conditional.
 func withoutRenovateBranchSkip(condition string) string {
 	condition = strings.TrimSpace(condition)
 	if condition == renovateBranchSkip {
