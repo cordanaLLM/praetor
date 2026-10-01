@@ -595,7 +595,9 @@ which also ran the tests but reported the change as configuration. A
 `.tsx`/`.jsx` file under `docs/` still follows the `docs/` prefix rule
 (`TestClassifyChanges_TsxJsxAreCode`,
 `TestClassifyChanges_TsxUnderDocsStaysDocsOnly` in
-`internal/cifilter/cifilter_test.go`). Zig, the C++ sources and headers
+`internal/cifilter/cifilter_test.go`). Every kind the HISS scanner reads comes from its own table
+(`hiss.SupportsExtension`), so a Svelte component and the `.mts` and `.cts` TypeScript modules
+are code too (`TestClassifyChanges_ScannedScriptKindsAreCode`). Zig, the C++ sources and headers
 (`.cc`, `.cxx`, `.hpp`, `.hh`), HIP and shading-language sources (GLSL, HLSL,
 WGSL, Metal) are code as well, and a shader under `docs/` follows the same
 `docs/` prefix rule (`TestSourceKindsHissDoesNotListAreCode` and

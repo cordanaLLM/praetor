@@ -246,6 +246,52 @@ func TestAudit_Negative_ReadErrorsAndArguments(t *testing.T) {
 	})
 }
 
+// TestAudit_InvariantVerdictNamesItsLanguages is the #589 regression. Positive: the PASS line
+// names the languages the scan examined, TypeScript and Svelte included. Negative: source in a
+// language no scanner reads is reported as unscanned, never folded into the PASS, and a tree
+// whose only source is unscanned gets no PASS line at all. Boundary: a tree with no source keeps
+// the plain PASS, since nothing went unexamined.
+func TestAudit_InvariantVerdictNamesItsLanguages(t *testing.T) {
+	f := newAuditFixture(t)
+	out, err := f.audit(t)
+	if err != nil {
+		t.Fatalf("audit without source: %v\n%s", err, out)
+	}
+	mustContain(t, out, "[PASS] HISS invariant scan verified: 0 active violations")
+	if strings.Contains(out, "[UNSCANNED]") {
+		t.Fatalf("a tree without source reports unscanned source:\n%s", out)
+	}
+
+	writeFixtureFile(t, f.dir, "deploy.sh", "#!/bin/sh\necho deploy\n")
+	out, err = f.audit(t)
+	if err != nil {
+		t.Fatalf("audit with only unscanned source: %v\n%s", err, out)
+	}
+	mustContain(t, out, "[UNSCANNED] HISS invariant scan read no source file: 0 active violations",
+		"[UNSCANNED] No HISS rule examined shell (1 file); the invariants are unverified there, not passed.")
+	if strings.Contains(out, "[PASS] HISS invariant scan verified") {
+		t.Fatalf("a PASS over source no scanner read:\n%s", out)
+	}
+
+	writeFixtureFile(t, f.dir, "ui/app.ts", "export const answer = (): number => {\n  return 42;\n};\n")
+	writeFixtureFile(t, f.dir, "ui/App.svelte", "<script lang=\"ts\">\n  export let label = '';\n</script>\n<p>{label}</p>\n")
+	out, err = f.audit(t)
+	if err != nil {
+		t.Fatalf("audit with scanned and unscanned source: %v\n%s", err, out)
+	}
+	mustContain(t, out, "[PASS] HISS invariant scan verified for svelte, typescript: 0 active violations",
+		"[UNSCANNED] No HISS rule examined shell (1 file)")
+}
+
+// TestAudit_ScriptViolationFailsTheRatchet: Positive (#589): an eval in a Svelte component is
+// now a HISS-08 infraction the ratchet refuses, where it used to pass unscanned.
+func TestAudit_ScriptViolationFailsTheRatchet(t *testing.T) {
+	f := newAuditFixture(t)
+	writeFixtureFile(t, f.dir, "ui/Probe.svelte", "<script>\n  eval(code);\n</script>\n")
+	_, err := f.audit(t)
+	mustErrContain(t, err, "HISS invariant violations the baseline does not record")
+}
+
 func TestAudit_TouchedFileCleanRule(t *testing.T) {
 	f := newAuditFixture(t)
 	inf := f.addViolation(t)

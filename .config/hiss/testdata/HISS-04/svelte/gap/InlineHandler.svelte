@@ -1,0 +1,77 @@
+<script>
+  export let items = [];
+</script>
+
+<!-- A long inline handler lives in the markup, which the scanner does not read. -->
+<button on:click={() => {
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+  items = [...items, items.length];
+}}>Add</button>

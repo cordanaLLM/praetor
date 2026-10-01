@@ -237,11 +237,32 @@ func auditBaselineAndInvariants(ctx context.Context, opts *auditOptions) error {
 	if !ratchet.Passed {
 		return fmt.Errorf("[FAIL] %s", describeRejection(ctx, opts.rootDir, opts.baselinePath, scanOpts, base, current, ratchet, opts.allViolations))
 	}
-	fmt.Printf("[PASS] HISS invariant scan verified: %d active violations within %d baselined limit (%d touched files clean) (skipped: %d ignored directories, %d symlinks, %d oversize files, %d non-regular files).\n",
+	printInvariantVerdict(scanRep, fmt.Sprintf("%d active violations within %d baselined limit (%d touched files clean) (skipped: %d ignored directories, %d symlinks, %d oversize files, %d non-regular files)",
 		ratchet.CurrentCount, base.TotalInfractions, len(touched), scanRep.Skips.DirCount,
-		scanRep.Skips.Symlinks, scanRep.Skips.Oversize, scanRep.Skips.Irregular)
+		scanRep.Skips.Symlinks, scanRep.Skips.Oversize, scanRep.Skips.Irregular))
 
 	return auditBaselineGrowth(ctx, opts, base)
+}
+
+// printInvariantVerdict prints the HISS scan verdict for the languages the scan examined and
+// names every source language it did not. A clean scan used to print an unqualified PASS over
+// a tree whose JavaScript, TypeScript and Svelte no rule had read (#589); now the PASS names its
+// languages, and source no rule examined is reported as unscanned rather than passed. A tree
+// with source in no scanned language gets no PASS line at all.
+func printInvariantVerdict(scanRep *hiss.ScanReport, detail string) {
+	scanned := scanRep.Coverage.ScannedLanguageNames()
+	unscanned := scanRep.Coverage.UnscannedSourceSummary()
+	switch {
+	case len(scanned) > 0:
+		fmt.Printf("[PASS] HISS invariant scan verified for %s: %s.\n", strings.Join(scanned, ", "), detail)
+	case unscanned != "":
+		fmt.Printf("[UNSCANNED] HISS invariant scan read no source file: %s.\n", detail)
+	default:
+		fmt.Printf("[PASS] HISS invariant scan verified: %s.\n", detail)
+	}
+	if unscanned != "" {
+		fmt.Printf("[UNSCANNED] No HISS rule examined %s; the invariants are unverified there, not passed.\n", unscanned)
+	}
 }
 
 // auditScanOptions returns the scan options of the resolved policy: its function-length

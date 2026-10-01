@@ -106,6 +106,38 @@ rules:
           so a nested def's parameter or local does not hide the enclosing function's own
           self-call, and a call from inside that nested def reaches its local. Mutual and
           indirect recursion and recursion through a lambda are held as gaps.
+      - language: javascript
+        state: partial
+        mechanism: internal/hiss script.go scriptScanner and script_header.go, with selfcall.go selfCalls
+        rationale: >-
+          Direct recursion is reported by the spelling that resolves to the function: a declared
+          function, a named function expression (under either of its names) or a function bound to
+          a const, let or var calling its bare name, and a class or object method or a class field
+          calling this.name, including from a promise callback inside the body. A bare call inside
+          a method reaches the module function, a call through another object is delegation, $f is
+          a different identifier, and a local binding of the name (a parameter, a const, let or var
+          declarator including destructuring, a nested function or class, a catch parameter, an
+          arrow or function-expression parameter) shadows it, so none of those are reported. A
+          parameter list holding a destructuring pattern, an object type or a default value is
+          read, wrapped or not, so walk({ node }) calling walk is reported. Mutual recursion and a
+          function assigned to a prototype or an object property are held as gaps.
+      - language: typescript
+        state: partial
+        mechanism: internal/hiss script.go scriptScanner and script_header.go, with selfcall.go selfCalls
+        rationale: >-
+          The JavaScript rules apply unchanged. Type annotations, object types such as
+          { [key: string]: Field }, generics, access modifiers and a parameter list wrapped one
+          parameter per line are read, and the function is decided from the brace that opens its
+          body. Mutual recursion is held as a gap.
+      - language: svelte
+        state: partial
+        mechanism: >-
+          internal/hiss script.go svelteScriptLines, then the JavaScript rules over each script
+          block that opens at the start of a line
+        rationale: >-
+          Only the component's script blocks are read, with their line numbers kept, so a call from
+          the markup is not a call from the function's own body. Recursion in the markup, such as
+          a snippet that renders itself, is held as a gap.
   - id: HISS-02
     coverage:
       - language: go
@@ -132,7 +164,7 @@ rules:
           reports a deadline-free context, net.Dialer.Dial or os.ReadFile.
       - language: c
         state: partial
-        mechanism: internal/hiss rules.go nativeUnboundedLoop
+        mechanism: internal/hiss rules.go cFamilyUnboundedLoop
         rationale: >-
           Unbounded loop shapes are reported with arbitrary internal spacing. The I/O-timeout
           half of the axiom has no native check.
@@ -148,6 +180,28 @@ rules:
         rationale: >-
           while True is reported with arbitrary spacing. Other unbounded shapes such as
           while 1 and the I/O-timeout half are not decided.
+      - language: javascript
+        state: partial
+        mechanism: internal/hiss rules.go cFamilyUnboundedLoop, read by script.go checkInvariants
+        rationale: >-
+          while (true), while (1), for (;;) and the closing while (1) of a do loop are reported
+          with arbitrary spacing, and never inside a string, comment, template literal or regular
+          expression, which the literal stripper removes first. A loop whose condition is not a
+          literal, such as while (!done), and the I/O-timeout half of the axiom (a fetch without
+          an AbortSignal deadline) are held as gaps.
+      - language: typescript
+        state: partial
+        mechanism: internal/hiss rules.go cFamilyUnboundedLoop, read by script.go checkInvariants
+        rationale: >-
+          The JavaScript loop shapes are reported; a counted retry loop is not. A request without
+          a deadline is held as a gap.
+      - language: svelte
+        state: partial
+        mechanism: internal/hiss rules.go cFamilyUnboundedLoop over the script blocks script.go extracts
+        rationale: >-
+          An unbounded loop in a script block is reported. An {#each} block is markup over a
+          finite list, and the loop words in markup text are not script. A fetch without a
+          deadline in onMount is held as a gap.
   - id: HISS-04
     coverage:
       - language: go
@@ -190,6 +244,33 @@ rules:
         rationale: >-
           Function length is decided by brace tracking. The other three caps have no native
           check.
+      - language: javascript
+        state: partial
+        mechanism: internal/hiss script.go scriptScanner brace tracking, headers from script_header.go
+        rationale: >-
+          The length of every named function (a declaration, a bound function or arrow, a method,
+          a class field or an object property) is measured from the line its body opens on to its
+          closing brace, as for C and Rust, so exactly 60 lines passes and 61 fails. That includes
+          a function whose parameter list holds a destructuring pattern, an object type or a
+          default object, and a method of an object passed to a call written name({. Anonymous
+          callbacks are not measured, like Go function literals, and the cyclomatic, cognitive and
+          statement caps have no script check. A file with a line longer than 1024 bytes is
+          minified output, and a file whose braces the scanner misread does not balance: either is
+          declined and reported as unscanned source, never as clean.
+      - language: typescript
+        state: partial
+        mechanism: internal/hiss script.go scriptScanner brace tracking, headers from script_header.go
+        rationale: >-
+          Methods are measured like functions, and the signature lines of a wrapped parameter list
+          lend the function no length, including the destructured props of a React component
+          wrapped one per line. An apostrophe or a URL in JSX text is text, not a string or a
+          comment, so the component's braces still balance. The complexity caps are held as a gap.
+      - language: svelte
+        state: partial
+        mechanism: internal/hiss script.go scriptScanner over the script blocks svelteScriptLines keeps
+        rationale: >-
+          A function in a script block is measured; markup lines never join one. A long inline
+          handler written in the markup is held as a gap.
   - id: HISS-08
     coverage:
       - language: c
@@ -212,6 +293,26 @@ rules:
           The scanner carries no HISS-08 case for Go. plugin.Open, os.StartProcess and the
           syscall exec family are refused by forbidigo in the same gate, so the fixtures are
           held as gaps for the scanner rather than as coverage it does not have.
+      - language: javascript
+        state: partial
+        mechanism: internal/hiss script.go checkInvariants (hasCall and scriptImpliedEval)
+        rationale: >-
+          eval, the Function constructor and setTimeout or setInterval given a string are reported
+          as calls. A method named eval, a call through a selector (interpreter.eval), $eval and
+          the words inside literals are not. Indirect eval through an alias is held as a gap.
+      - language: typescript
+        state: partial
+        mechanism: internal/hiss script.go checkInvariants (hasCall and scriptImpliedEval)
+        rationale: >-
+          The JavaScript calls are reported; a typed interpreter's eval method is not. The
+          indirect (0, eval)(code) is held as a gap.
+      - language: svelte
+        state: partial
+        mechanism: internal/hiss script.go checkInvariants over the script blocks
+        rationale: >-
+          eval in a script block, including a reactive statement, is reported; the word in markup
+          text is not. eval in a markup expression runs code but is held as a gap, since only
+          script blocks are read.
   - id: HISS-07
     coverage:
       - language: go
@@ -252,6 +353,30 @@ rules:
           package's __main__.py, the top-level if __name__ == "__main__" block and the
           top-level def main. raise SystemExit and an exit imported under another name are
           held as a gap.
+      - language: javascript
+        state: partial
+        mechanism: internal/hiss script.go checkErrors
+        rationale: >-
+          An empty catch block, on one line or closed on a later line, is reported even when it
+          holds only a comment, because a comment handles nothing. A promise .catch whose handler
+          is empty is reported, and under the abort policy (owner decision Q-014) so are
+          process.exit and process.abort outside a test file (*.test.*, *.spec.*, __tests__,
+          test, tests), module scope and a top-level function named main, a function with a
+          destructured parameter included. A wrapped rethrow, a reported rejection and an exit in
+          the entry point are not. A floating promise and a named no-op handler are held as gaps.
+      - language: typescript
+        state: partial
+        mechanism: internal/hiss script.go checkErrors
+        rationale: >-
+          A typed catch parameter (catch (error: unknown)) is read like an untyped one, so an
+          empty block with a comment is reported and a logged error is not. A floating promise is
+          held as a gap.
+      - language: svelte
+        state: partial
+        mechanism: internal/hiss script.go checkErrors over the script blocks
+        rationale: >-
+          A swallowed rejection in a script block is reported; a rejection shown to the user is
+          not. A handler in the markup that drops a promise is held as a gap.
   - id: HISS-09
     coverage:
       - language: rust
@@ -365,8 +490,8 @@ rules:
         state: unsupported
         mechanism: >-
           none. No svelte-check, no svelte compiler and no eslint run anywhere (grep for
-          'svelte-check' across the tree returns nothing). internal/hiss has no .svelte dispatch: the
-          scan report counted the fixtures under UnscannedByExtension as .svelte:3.
+          'svelte-check' across the tree returns nothing). internal/hiss reads .svelte script blocks
+          for HISS-01, HISS-02, HISS-04, HISS-07 and HISS-08 only and reports no compiler warning.
         rationale: >-
           positive/ is empty because no mechanism reports any Svelte warning. All 3 gap fixtures
           compiled with the real Svelte 5 compiler (installed into a temp dir) and each returned
@@ -428,9 +553,8 @@ rules:
         mechanism: >-
           none
         rationale: >-
-          internal/hiss never reads TypeScript at all: isScannableExt covers only
-          .c/.cpp/.cc/.cxx/.h/.hpp/.hh/.cu/.hip/.py/.go/.rs, so the scan of HISS-11/typescript reports
-          filesRead=0 with UnscannedByExtension map[.ts:4]. semgrep has a TypeScript rule
+          internal/hiss reads TypeScript for HISS-01, HISS-02, HISS-04, HISS-07 and HISS-08 but has
+          no HISS-11 rule, so these fixtures yield no HISS-11 finding. semgrep has a TypeScript rule
           (hiss-08-banned-eval) but none for HISS-11: 0 findings. No pnpm-lock.yaml /
           --frozen-lockfile check exists. gap/cdn-import-latest.ts imports executable code from a CDN
           at a floati
@@ -439,8 +563,8 @@ rules:
         mechanism: >-
           none
         rationale: >-
-          Same as TypeScript and worse: internal/hiss over HISS-11/svelte reports filesRead=0 with
-          UnscannedByExtension map[.svelte:3], and the repo's semgrep ruleset declares no svelte
+          Same as TypeScript and worse: internal/hiss reads only the script blocks and has no HISS-11
+          rule, and the repo's semgrep ruleset declares no svelte
           language at all, so 0 rules even attempt these files. gitleaks: no leaks. Both gap fixtures
           pull unpinned third-party code into the browser at run time (a CDN script tag without
           subresource integrity, and a floating dynamic import) and neither
@@ -498,28 +622,25 @@ rules:
         state: partial
         runner: gitleaks
         mechanism: >-
-          gitleaks default ruleset via make secrets inside make verify-all. This is the only mechanism
-          in the cluster that covers TypeScript at all, because it reads bytes rather than parsing a
-          language: internal/hiss does not read .ts files (filesRead=0, UnscannedByExtension
-          map[.ts:8]).
+          gitleaks default ruleset via make secrets inside make verify-all. It reads bytes rather
+          than parsing a language; internal/hiss reads .ts files for other rules but has no HISS-12
+          rule.
         rationale: >-
           3/3 positives detected, 2/2 negatives clean, 3/3 gaps undetected — identical to the Go and
-          Python results, confirming the scan is extension-independent. Worth recording explicitly:
-          for a TypeScript codebase, gitleaks is the ONLY HISS mechanism that examines the file
-          contents at all.
+          Python results, confirming the scan is extension-independent. For a TypeScript codebase,
+          gitleaks is the only HISS mechanism that looks for credentials.
       - language: svelte
         state: partial
         runner: gitleaks
         mechanism: >-
           gitleaks default ruleset via make secrets inside make verify-all. As with TypeScript this is
-          the only mechanism that reads .svelte files at all: internal/hiss reports filesRead=0 with
-          UnscannedByExtension map[.svelte:8] and the repo's semgrep ruleset declares no svelte
-          language.
+          the only mechanism that looks for credentials in .svelte files: internal/hiss has no
+          HISS-12 rule and the repo's semgrep ruleset declares no svelte language.
         rationale: >-
           3/3 positives detected inside <script> blocks (aws-access-token, private-key, github-pat via
           base64 decode plus generic-api-key), 2/2 negatives clean, 3/3 gaps undetected. The .svelte
-          extension changed nothing about gitleaks' behaviour, which is the point: the secret scan is
-          the one cluster mechanism whose coverage does not collapse on the two unparsed languages.
+          extension changed nothing about gitleaks' behaviour, which is the point: the secret scan
+          does not depend on a language parser.
   - id: HISS-13
     coverage:
       - language: go
@@ -581,29 +702,31 @@ rules:
           a DAG call graph, and the Go scanner now reports exactly this shape ('Direct recursion in
           ...; the call graph must form an acyclic DAG'), which I c
       - language: typescript
-        state: unsupported
-        runner: semgrep
+        state: partial
+        runner: baseline
         mechanism: >-
-          none. hiss.SupportsExtension covers only .c/.cpp/.cc/.cxx/.h/.hpp/.hh/.cu/.hip/.py/.go/.rs, so
-          .ts files are never scanned and can never contribute to V_total. Semgrep DOES cover
-          TypeScript, but semgrep findings never reach internal/baseline.
+          Same mechanism: baseline.EvaluateRatchet + CheckMonotonic over hiss.Scan, which for .ts,
+          .tsx, .mts and .cts (internal/hiss script.go) implements HISS-01 (direct recursion),
+          HISS-02 (literal unbounded loops), HISS-04 (LOC), HISS-07 (empty catch, swallowed
+          rejection, process.exit outside the entry point) and HISS-08 (eval, Function, string
+          timers).
         rationale: >-
-          positive/ is empty because no amount of TypeScript debt can raise V_total. Both gap fixtures
-          are real violations: the repository's OWN semgrep rule hiss-08-banned-eval (languages:
-          [javascript, typescript]) flags eval-debt.ts with '[HISS-08] Dynamic runtime eval() is
-          strictly prohibited', and unbounded-loop-debt.ts is the HISS-02 shape the scanner reports
-          for Go, Rust, Python and C. Both ratchet replays returned V_tot
+          positive/eval-debt.ts and positive/unbounded-loop-debt.ts were gaps while the scanner had
+          no .ts dispatch. hiss.Scan now reports them as HISS-08 and HISS-02, so each counts toward
+          V_total and fails the touched-file clean rule like the Go, Rust, Python and C positives;
+          negative/clean-addition.ts adds nothing. The repository's semgrep rule hiss-08-banned-eval
+          still reports eval too, but semgrep findings never reach internal/baseline.
       - language: svelte
-        state: unsupported
-        runner: semgrep
+        state: partial
+        runner: baseline
         mechanism: >-
-          none. .svelte is outside every scanner extension, so component debt can never enter
-          .standards-baseline.json. No semgrep rule targets svelte either.
+          Same mechanism over hiss.Scan, which reads the script blocks of a .svelte component with
+          the TypeScript rules (script.go svelteScriptLines).
         rationale: >-
-          positive/ is empty because no amount of Svelte debt can raise V_total. The gap fixture
-          carries the HISS-02 unbounded-loop shape the scanner reports in four other languages; the
-          ratchet replay returned V_total 0 -> 0, monotonic=PASS, ratchet=PASS, and the scan report
-          counted it under UnscannedByExtension as .svelte:1.
+          positive/unbounded-loop-debt.svelte was a gap while .svelte had no dispatch; hiss.Scan now
+          reports its HISS-02 loop, so component debt counts toward V_total, which
+          cmd/standardsctl TestAudit_ScriptViolationFailsTheRatchet replays through praetorctl
+          audit. negative/CleanAddition.svelte adds nothing. Debt written in the markup is not read.
   - id: HISS-14
     coverage:
       - language: go
@@ -662,8 +785,8 @@ rules:
         runner: forge
         mechanism: >-
           standardsctl forge check-commits (commit messages only), PR-CI-only. No .d.ts /
-          api-extractor surface diff exists. internal/hiss does not read .ts files at all
-          (filesRead=0, UnscannedByExtension map[.ts:3]).
+          api-extractor surface diff exists, and internal/hiss, which reads .ts files for other
+          rules, has no HISS-14 rule.
         rationale: >-
           positive/removed-exported-function.ts as 'feat(api)!: ...' -> exit 1;
           gap/required-param-added.ts (a required leading ctx parameter added to an exported function)
@@ -675,8 +798,8 @@ rules:
         runner: forge
         mechanism: >-
           standardsctl forge check-commits (commit messages only), PR-CI-only. No component-contract
-          analyzer exists, and internal/hiss does not read .svelte files (filesRead=0,
-          UnscannedByExtension map[.svelte:3]).
+          analyzer exists, and internal/hiss, which reads .svelte script blocks for other rules, has
+          no HISS-14 rule.
         rationale: >-
           positive/removed-exported-prop.svelte as 'feat(api)!: ...' -> exit 1;
           gap/renamed-exported-prop.svelte as 'fix(api): ...' -> exit 0;
@@ -767,5 +890,5 @@ rules:
           positive/ is empty because nothing mechanical decides this rule for Svelte.
           untested-component.svelte exposes a public prop contract with no positive render assertion,
           no negative case for a missing prop and no boundary case for an empty or maximal label;
-          internal/hiss counted it under UnscannedByExtension as .svelte:1 and no other mechanism
-          reads it.
+          internal/hiss reads its script block for other rules only, and no other mechanism reads
+          it.

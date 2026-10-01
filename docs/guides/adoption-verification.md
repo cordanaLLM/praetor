@@ -1125,8 +1125,11 @@ The `AGENTS.md` harness states only what adoption generated. Its source is
 
   A check is also language-bound (`Rule.AdoptedFor` in
   [`internal/hisscatalog/adopted.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hisscatalog/adopted.go)):
-  the audit's HISS scan reads Go, Rust, Python and C/C++ sources only, and each rule's scan
-  decides a subset of them, so a row reads `not enforced` where the check decides none of the
+  the harness credits the audit's HISS scan in Go, Rust, Python and C/C++ sources only, and each
+  rule's scan decides a subset of them. The scan also reads JavaScript, TypeScript and Svelte
+  ([`internal/hiss/script.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hiss/script.go)),
+  but no directive clause names those languages yet, so their rows understate what the audit
+  checks rather than overstate it. A row reads `not enforced` where the check decides none of the
   repository's languages or the rule has no analogue there. HISS-09 in a C engine, HISS-01 in a
   TypeScript repository and the lefthook `go vet` row in a Rust crate are examples
   (`TestAdoptedFor`).

@@ -11,12 +11,12 @@ import (
 
 func TestObserveCapabilitiesScannerAndNestedEvidence(t *testing.T) {
 	root := t.TempDir()
-	writeDiscoveryFile(t, root, "src/a.ts", "export const answer = 42\n")
+	writeDiscoveryFile(t, root, "src/A.cs", "class A {}\n")
 	writeDiscoveryFile(t, root, "nested/go.mod", "module example.test/nested\n")
 	writeDiscoveryFile(t, root, "nested/main.go", "package main\n")
-	writeDiscoveryFile(t, root, ".workingdir/ignored.ts", "ignored\n")
+	writeDiscoveryFile(t, root, ".workingdir/Ignored.cs", "ignored\n")
 	policy := DiscoveryPolicy{Version: 1, Rules: []DiscoveryRule{
-		{Key: "hiss:typescript", Title: "TypeScript", Kind: discoveryScannerExtension, Matches: []string{".ts"}, Analyzer: "hiss"},
+		{Key: "hiss:csharp", Title: "C#", Kind: discoveryScannerExtension, Matches: []string{".cs"}, Analyzer: "hiss"},
 		{Key: "needs:go", Title: "Go", Kind: discoveryNeedsMarker, Matches: []string{"go.mod"}, Analyzer: "go"},
 	}}
 	report, err := ObserveCapabilities(context.Background(), root, policy)
@@ -30,7 +30,7 @@ func TestObserveCapabilitiesScannerAndNestedEvidence(t *testing.T) {
 		t.Fatalf("one observation per rule: %+v", report.Observations)
 	}
 	if report.Observations[0].Status != "unsupported" || report.Observations[0].EvidenceCount != 1 || len(report.Observations[0].Evidence) != 1 {
-		t.Fatalf("typescript: %+v", report.Observations[0])
+		t.Fatalf("csharp: %+v", report.Observations[0])
 	}
 	if report.Observations[0].Evidence[0].SHA256 == "" || strings.Contains(report.Observations[0].Evidence[0].Path, ".workingdir") {
 		t.Fatalf("evidence: %+v", report.Observations[0])
@@ -169,8 +169,8 @@ func writeDiscoveryFile(t *testing.T, root, rel, body string) {
 func TestDiscoveryMixedExtensionsEvidenceAndUniqueCounts(t *testing.T) {
 	root := t.TempDir()
 	writeDiscoveryFile(t, root, "available.go", "package x\n")
-	writeDiscoveryFile(t, root, "missing.TS", "export {}\n")
-	rule := DiscoveryRule{Key: "mixed", Title: "mixed", Kind: discoveryScannerExtension, Matches: []string{".go", ".ts"}, Analyzer: "hiss"}
+	writeDiscoveryFile(t, root, "missing.CS", "class Missing {}\n")
+	rule := DiscoveryRule{Key: "mixed", Title: "mixed", Kind: discoveryScannerExtension, Matches: []string{".go", ".cs"}, Analyzer: "hiss"}
 	second := rule
 	second.Key = "duplicate-demand"
 	result, err := ObserveCapabilities(context.Background(), root, DiscoveryPolicy{Version: 1, Rules: []DiscoveryRule{rule, second}})
@@ -181,9 +181,26 @@ func TestDiscoveryMixedExtensionsEvidenceAndUniqueCounts(t *testing.T) {
 		t.Fatalf("double counted files: %+v", result)
 	}
 	for _, obs := range result.Observations {
-		if obs.Status != "unsupported" || obs.EvidenceCount != 1 || len(obs.Evidence) != 1 || obs.Evidence[0].Path != "missing.TS" {
+		if obs.Status != "unsupported" || obs.EvidenceCount != 1 || len(obs.Evidence) != 1 || obs.Evidence[0].Path != "missing.CS" {
 			t.Fatalf("available extension masked gap or contaminated evidence: %+v", obs)
 		}
+	}
+}
+
+// TestDiscoveryScriptExtensionsAreAvailable: Positive (#589): TypeScript and Svelte sources now
+// have a HISS scanner, so discovery reports the capability available from hiss.SupportsExtension
+// rather than as a gap.
+func TestDiscoveryScriptExtensionsAreAvailable(t *testing.T) {
+	root := t.TempDir()
+	writeDiscoveryFile(t, root, "src/app.ts", "export const answer = 42;\n")
+	writeDiscoveryFile(t, root, "src/App.svelte", "<script>let a = 1;</script>\n")
+	rule := DiscoveryRule{Key: "hiss:script", Title: "script", Kind: discoveryScannerExtension, Matches: []string{".ts", ".svelte"}, Analyzer: "hiss"}
+	result, err := ObserveCapabilities(context.Background(), root, DiscoveryPolicy{Version: 1, Rules: []DiscoveryRule{rule}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if obs := result.Observations[0]; obs.Status != "available" || obs.EvidenceCount != 2 {
+		t.Fatalf("script sources not reported available: %+v", obs)
 	}
 }
 

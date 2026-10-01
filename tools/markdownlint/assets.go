@@ -121,6 +121,12 @@ var priorDigests = map[string]string{
 	// exclusions, and markdownlint-cli2 run from the repository root, where it discovered
 	// repository configuration files.
 	"fa82c6380aaf001bab89f25c5dbdceecfa2c2ce59ffc4b3e2ad157693bc1b245": Directory + "/verify.mjs",
+	// verify.mjs with one 125-line inventory self-test, before the HISS script scanner held it
+	// to the HISS-04 function length.
+	"cdf3f38807fb22c4a59c0e082fc3c94232cd4d691fa5a87df6cc49c1e2c7caba": Directory + "/verify.mjs",
+	// verify.mjs checking markdownlint-cli2 0.23.3 after the advisory-free lock, before the HISS
+	// script scanner held it to the HISS-04 function length.
+	"4736fa57692bd9a585e4ecb94b00b1762e8fa53e8222bcd987c96878c31f79e1": Directory + "/verify.mjs",
 	// package.json and package-lock.json before js-yaml and micromatch became direct
 	// dependencies for the .standards.yaml documentation block.
 	"9eec2a40bdaff8ec72019d859c7c4f5a969ddd3b816106eb9629c54de52f71f2": Directory + "/package.json",
@@ -136,7 +142,10 @@ var priorDigests = map[string]string{
 	// (GHSA-r3ph-w7gj-g6xm) and markdown-it 14.3.0 (GHSA-253c-mchw-3w2r).
 	"1ef55cd03a7401bae13927bbca5d85ad601dd2ad4b8b931d79a3317551b83c2a": Directory + "/package.json",
 	"abbe0b93eb99ce54d6cadc43ecb131a655d1aaf28009aa3804ad2ba97796b479": Directory + "/package-lock.json",
-	"cdf3f38807fb22c4a59c0e082fc3c94232cd4d691fa5a87df6cc49c1e2c7caba": Directory + "/verify.mjs",
+	// The scratch-link rule that read a srcdoc document by recursion, dropped a failed worker
+	// stop with an empty .catch and carried functions over the HISS-04 length, before the HISS
+	// script scanner read it.
+	"93ee4469a98c4d44c19b74ca75b06391c2f360add39dd19b5120dbb7645520a9": Directory + "/no-private-scratch-links.mjs",
 }
 
 var assetNames = [...]string{

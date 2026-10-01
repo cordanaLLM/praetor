@@ -87,8 +87,10 @@ type AdoptedCheck struct {
 	Languages Language
 }
 
-// scannedLanguages are the languages internal/hiss reads (.go, .rs, .py and native C/C++
-// sources); the audit's HISS scan decides nothing in any other.
+// scannedLanguages are the languages internal/hiss reads that a directive clause can name (.go,
+// .rs, .py and native C/C++ sources). The scan also reads JavaScript, TypeScript and Svelte,
+// which have no language bit yet and count as LanguageOther, so a repository carrying only
+// those renders its scan rows as not enforced: an understatement, never a borrowed claim.
 const scannedLanguages = LanguageGo | LanguageRust | LanguagePython | LanguageC
 
 // auditCheck is an adopted `praetorctl audit` HISS scan qualified by what it decides and the

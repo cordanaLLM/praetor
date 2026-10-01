@@ -19,6 +19,8 @@ var fuzzSeeds = []struct {
 	{[]byte("def bar():\n    pass\n"), "bar.py"},
 	{[]byte("fn baz() -> () {}\n"), "baz.rs"},
 	{[]byte("void qux(void) {}\n"), "qux.c"},
+	{[]byte("export const quux = (a: number): number => {\n  return `${a}` ? a : /}/.exec('') ? 1 : 0;\n};\n"), "quux.ts"},
+	{[]byte("<script lang=\"ts\">\n  export let corge = 1;\n</script>\n<p>{corge}</p>\n"), "Corge.svelte"},
 }
 
 func TestFuzzSeedsAreClean(t *testing.T) {

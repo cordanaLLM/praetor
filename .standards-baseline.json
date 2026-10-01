@@ -1,8 +1,24 @@
 {
   "version": 1,
-  "generated_at": "2026-09-11T00:34:29Z",
+  "generated_at": "2026-09-29T02:09:31Z",
   "repository": "cordanaLLM/praetor",
-  "commit_sha": "HEAD",
-  "total_infractions": 0,
-  "infractions": []
+  "commit_sha": "f8c4c1cee15a95eb2675a303cf9f9ebd409e4b3e",
+  "total_infractions": 2,
+  "increase_rationale": "#589: the JavaScript, TypeScript and Svelte scanner measures praetor's own scripts for the first time; the 2 empty catch blocks in editors/vscode/src/runner.ts predate it and are recorded, not introduced",
+  "infractions": [
+    {
+      "rule_id": "HISS-07",
+      "file_path": "editors/vscode/src/runner.ts",
+      "line_number": 11,
+      "message": "Empty catch block swallows the error; handle, rethrow or wrap it",
+      "fingerprint": "editors/vscode/src/runner.ts:11:HISS-07"
+    },
+    {
+      "rule_id": "HISS-07",
+      "file_path": "editors/vscode/src/runner.ts",
+      "line_number": 12,
+      "message": "Empty catch block swallows the error; handle, rethrow or wrap it",
+      "fingerprint": "editors/vscode/src/runner.ts:12:HISS-07"
+    }
+  ]
 }
