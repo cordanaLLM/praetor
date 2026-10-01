@@ -23,12 +23,26 @@ func labelSession(t *testing.T, labels []byte, opts AdoptOptions) (*adoptSession
 	return &adoptSession{repoPath: root, opts: opts, report: &AdoptReport{}}, filepath.Join(root, filepath.FromSlash(labelsFile))
 }
 
+// sameLabelsIgnoringDescription reports whether both taxonomies hold the same labels by name
+// and color; a refresh may reword a description (hiss-waiver, #393).
+func sameLabelsIgnoringDescription(a, b []forge.Label) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Name != b[i].Name || a[i].Color != b[i].Color {
+			return false
+		}
+	}
+	return true
+}
+
 func TestPriorLabelTaxonomyDigests_Positive_ReproducedByFixtures(t *testing.T) {
 	assertPriorDigestsReproduced(t, priorLabelFixtures, priorLabelTaxonomyDigests)
 }
 
 // Positive: the earlier taxonomy text adoption wrote is refreshed to the current one without
-// --force, and keeps every label; it differs only by the document start yamllint requires.
+// --force, and keeps every label; it differs only by the document start yamllint requires or the hiss-waiver description.
 func TestReconcileLabels_Positive_RefreshesPriorTaxonomy(t *testing.T) {
 	for name, prior := range readFixtureDir(t, priorLabelFixtures) {
 		s, path := labelSession(t, prior, AdoptOptions{})
@@ -46,7 +60,7 @@ func TestReconcileLabels_Positive_RefreshesPriorTaxonomy(t *testing.T) {
 			t.Fatalf("%s: prior taxonomy must parse: %v", name, err)
 		}
 		after, err := forge.ParseLabelTaxonomy(forge.DefaultLabelTaxonomy())
-		if err != nil || !deepEqual(before, after) {
+		if err != nil || !sameLabelsIgnoringDescription(before, after) {
 			t.Errorf("%s: the refresh changed the labels (err %v)", name, err)
 		}
 	}
