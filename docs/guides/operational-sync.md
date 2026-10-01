@@ -313,9 +313,20 @@ test replays both checks against a temp copy of the manifest with the owner over
 | `portability.yml` | runs; its three legs are required checks | skipped with a stated reason unless the repository variable `PRAETOR_FORK_PORTABILITY` is `enabled`; `sync --remote` does not add its legs there and warns about legs an earlier sync added ([HISS-21](../standards/hiss-21-platform-neutrality.md#outside-the-canonical-repository-the-matrix-is-opt-in-and-says-so)) |
 | `adopt.yml` | on dispatch or comment | on dispatch or comment: a person asked for it in that repository |
 
-In every copy a pull request from a `renovate/` branch also skips the Go tests, the Platform
-Neutrality legs, the preset builds, the security scan and the documentation site build, while
-the DCO and REUSE gate runs ([Renovate pull requests](contributing.md#renovate-pull-requests)).
+In every copy a pull request the Renovate app opened from a `renovate/` branch also skips the
+Go tests, the Platform Neutrality legs, the preset builds, the security scan and the
+documentation site build, while the DCO and REUSE gate, the configuration validation and the
+documentation governance gate run
+([Renovate pull requests](contributing.md#renovate-pull-requests)). A person's pull request from
+a branch named `renovate/...` runs every job.
+
+The canonical repository can afford the skip because its ruleset requires the Platform
+Neutrality legs, which a skipped matrix never reports, and because its landing pipeline takes
+every Renovate pull request over. A fork without `PRAETOR_FORK_PORTABILITY=enabled` does not
+require the legs, and GitHub reports each other skipped job as successful. There a Renovate pull
+request shows every required check green although no Go test and no security scan ran. Do not
+merge a Renovate pull request directly in such a copy: take the update over on a branch of your
+own, or disable Renovate there and take updates from the canonical repository through the sync.
 
 Set `PRAETOR_CANONICAL_REPOSITORY` only when the canonical repository itself moves; the
 manifest identity and the literal then change in the same commit. Guards limit what a copy

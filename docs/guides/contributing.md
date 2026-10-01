@@ -62,26 +62,32 @@ A Renovate pull request is not merged as opened. The landing pipeline takes each
 signed-off `fix/renovate-<number>` branch with its own pull request, and that pull request runs
 the full CI and every required check.
 
-CI on the Renovate pull request itself is skipped. Each of these jobs leads its condition with
-`!startsWith(github.head_ref, 'renovate/')`:
+CI on the Renovate pull request itself is skipped. A pull request counts as a Renovate pull
+request only when both hold: its head branch starts with `renovate/`, and the Renovate app's bot
+account `renovate[bot]` opened it. Each of these jobs leads its condition with
+`!(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]')`:
 
-| Workflow | Job skipped on a `renovate/` head branch |
+| Workflow | Job skipped on a Renovate pull request |
 | :--- | :--- |
 | `.github/workflows/ci.yml` | `Standards & Invariant Verification Gate`, `Documentation Preset Builds` |
 | `.github/workflows/portability.yml` | the three `Platform Neutrality` legs |
 | `.github/workflows/security.yml` | `Go Vulnerability & AST Security Scan` |
-| `.github/workflows/pages.yml` | `Build Documentation Site` |
+| `.github/workflows/pages.yml` | `Build Documentation Site (canonical repository only)` |
 
 - `DCO 1.1 & REUSE Compliance Gate`, `Release & Bot Configuration Validation` and
   `Documentation Governance` still run on the Renovate pull request.
+- A person's pull request from a branch named `renovate/...` runs every job, and so does a pull
+  request the app opens from any other branch (`TestRenovateSkipRequiresTheRenovateAuthor` in
+  `internal/forge/workflow_guard_test.go`).
 - The portability workflow's stated-reason job runs instead of the legs and names the Renovate
-  branch as the reason ([HISS-21](../standards/hiss-21-platform-neutrality.md)).
-- Push runs and every other branch are unchanged: `github.head_ref` is set on pull request runs
-  only.
-- The skipped jobs stay required checks (`TestRenovateBranchesSkipOnlyTheHeavyPullRequestJobs`
-  in `internal/forge/workflow_guard_test.go`). GitHub reports a job its condition skipped as
-  successful, but the skipped matrix reports no `Platform Neutrality` leg at all, so the Renovate
-  pull request cannot satisfy the ruleset on its own.
+  pull request as the reason ([HISS-21](../standards/hiss-21-platform-neutrality.md)).
+- Push runs are unchanged: `github.head_ref` and `github.event.pull_request` are set on pull
+  request runs only.
+- The skipped jobs stay required checks (`TestRenovateBranchesSkipOnlyTheHeavyPullRequestJobs`).
+  GitHub reports a job its condition skipped as successful, but in this repository the skipped
+  matrix reports no `Platform Neutrality` leg at all, so the Renovate pull request cannot satisfy
+  the ruleset on its own. An operational fork that does not require the legs has no such stop
+  ([Which workflows run where](operational-sync.md#which-workflows-run-where)).
 
 `renovate.json` keeps the bot from refilling the runners and from merging anything:
 
