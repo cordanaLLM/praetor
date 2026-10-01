@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+# An extensionless script is read when its interpreter line names a shell.
+while true; do
+  sleep 5
+done

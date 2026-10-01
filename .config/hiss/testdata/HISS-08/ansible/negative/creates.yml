@@ -1,0 +1,10 @@
+# creates and removes make the command run only when the host needs it.
+- name: Unpack
+  hosts: all
+  tasks:
+    - name: Unpack the release
+      ansible.builtin.command:
+        cmd: tar -xf /tmp/release.tar -C /opt/app
+        creates: /opt/app/VERSION
+    - name: Remove the stale lock
+      ansible.builtin.command: rm /var/lock/app.lock removes=/var/lock/app.lock

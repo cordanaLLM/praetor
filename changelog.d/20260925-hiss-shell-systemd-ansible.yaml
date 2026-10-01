@@ -1,0 +1,4 @@
+type: added
+title: "The HISS scanner reads shell scripts, systemd service and socket units, and Ansible playbooks, so their debt now counts as HISS infractions; fix it or record it with `praetorctl baseline --record --allow-increase --reason=<why>`"
+issue: "#182"
+breaking: true

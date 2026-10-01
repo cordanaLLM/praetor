@@ -1,19 +1,39 @@
 # How the HISS rule matchers read source
 
-The Go rules use the AST. The rules for C, C++, Rust, Python, JavaScript, TypeScript and Svelte
-match text, and this document records what that means, because the difference is load-bearing.
+The Go rules use the AST. The rules for C, C++, Rust, Python, JavaScript, TypeScript, Svelte and
+shell match text, the systemd rules read a unit's settings, and the Ansible rules read a playbook's
+YAML tree. This document records what that means, because the difference is load-bearing.
 
 ## One engine, one scanner per language
 
 `hiss.Scan` owns the walk, the git scope, the ignore policy, the byte-bounded read and the coverage
 record. Each language is one `languageScanner` in the `languageScanners` table of
 [`internal/hiss/engine.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hiss/engine.go):
-Go, C and C++ (with CUDA and HIP), Python, Rust, and the script scanner for JavaScript, TypeScript
-and Svelte. `hiss.SupportsExtension`, the walk's scope test and `ci filter`'s code classification
-read that table, so a language cannot be reported as supported where it is not scanned. A scanner
-may decline a file, which is then counted as unscanned rather than read; a scanner that needs every
-file of a package after the walk (the Go call graph) is a `packageScanner`
-(`TestLanguageScanners_ClaimDisjointExtensions` in `internal/hiss/engine_test.go`).
+Go, C and C++ (with CUDA and HIP), Python, Rust, the script scanner for JavaScript, TypeScript
+and Svelte, and the shell, systemd and Ansible scanners. `hiss.SupportsExtension`, the walk's scope
+test and `ci filter`'s code classification read that table, so a language cannot be reported as
+supported where it is not scanned. A scanner may decline a file, which is then counted as unscanned
+rather than read; a scanner that needs every file of a package after the walk (the Go call graph) is
+a `packageScanner` (`TestLanguageScanners_ClaimDisjointExtensions` in
+`internal/hiss/engine_test.go`).
+
+Some files are only recognised from their contents: a script without an extension names its shell
+on its `#!` line, a YAML file is a playbook only if it holds a play, and a `.service` or `.socket`
+file is a unit only if it opens a unit section. A scanner that reads such files is a
+`contentScanner`: the walk reads each candidate (an extensionless file, a `.yml` or `.yaml` file, a
+`.service` or `.socket` file) and asks the scanner whether it claims the bytes. A candidate nobody
+claims is recorded exactly as it was before these scanners existed, so `SupportsExtension` widens
+only by `.sh` and `.bash`. A candidate that is a symlink, a special file or larger than the read
+bound is never opened, and one the walk cannot read (permission denied, say) stays unscanned instead
+of failing the scan, while an unreadable `.sh` file fails it like any other scanned source. A
+claimed file the scanner then declines is unscanned source of its language
+(`TestContentScanners_ClaimByBytes`, `TestContentScanners_DeclinedClaimKeepsItsLanguage`,
+`TestContentScanners_UnreadableCandidateStaysUnscanned`,
+`TestScan_UnreadableScannedExtensionIsAnError` in `internal/hiss/engine_test.go`,
+`TestScan_ContentCandidateFIFOIsNeverOpened` in
+`internal/hiss/scan_irregular_unix_test.go`). `util.SourceLanguage` names `.zsh` and `.ksh` files as
+`zsh` and `ksh`, which no scanner reads, so the audit lists them on its `[UNSCANNED]` line instead of
+under the shell it verified.
 
 The coverage record names the languages it read (`languages_read`) and the source languages no
 scanner examined (`unscanned_languages`, named by `util.SourceLanguage`). `praetorctl audit`
@@ -54,6 +74,12 @@ a CRLF checkout on Windows. `TestScriptScanner_CRLFReadsLikeLF` in `internal/his
 replays its cases in both forms, and two more pinned fixtures,
 `HISS-01/typescript/positive/crlf-wrapped-signature.ts` and
 `HISS-04/typescript/positive/crlf-wrapped-props.tsx`, keep a wrapped signature tracked on Linux too.
+
+The shell and systemd scanners read lines the same way: a trailing backslash continues a shell
+command or a unit setting, and a `#!` line ending in a carriage return still names its shell, so
+both read a CRLF file as LF (`TestShellScanner_CRLFReadsLikeLF` in `internal/hiss/shell_test.go`,
+`TestSystemdScanner_Boundaries` in `internal/hiss/systemd_test.go`). `.gitattributes` pins `.sh`
+and `.yml` files to LF anyway, because shellcheck and yamllint reject a carriage return.
 
 ## What a text matcher cannot do
 
@@ -418,6 +444,114 @@ line and in `unscanned_languages`, never as clean
 (`TestScriptScanner_MinifiedIsUnscannedNotClean`, `TestScriptScanner_MisreadFileIsDeclined` in
 `internal/hiss/script_test.go`). `.config/hiss/coverage.yaml` lists each claim and its gaps per
 language (`javascript`, `typescript`, `svelte`).
+
+## Shell, systemd and Ansible
+
+These three scanners cover the files an operations repository keeps its logic in. Each states
+which HISS rules apply to its language and why; a rule left out has no analogue there or is held as
+a gap in `.config/hiss/coverage.yaml` (languages `shell`, `systemd`, `ansible`).
+
+| Rule | Shell | systemd unit | Ansible |
+| :--- | :--- | :--- | :--- |
+| HISS-01 | direct recursion | no functions | no functions |
+| HISS-02 | unbounded loops, curl without a deadline | oneshot start timeout, disabled timeouts, restart loops | not decided |
+| HISS-04 | function length | no functions | no functions |
+| HISS-07 | strict mode, `\|\| true` | `-` command prefix | discarded failures, shell pipes |
+| HISS-08 | `eval`, text piped into a shell | not decided | change not determined by state |
+
+### Shell
+
+[`internal/hiss/shell.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hiss/shell.go)
+reads `.sh` and `.bash` files and files without an extension whose `#!` line names `sh`, `bash`,
+`dash` or `ash`, directly or through `env`. A `.sh` file whose `#!` line names another program
+(`zsh`, `python`) is declined. Its lexer (`shell_lex.go`) blanks quotes, comments, parameter and
+arithmetic expansions and here-document bodies, keeps the code of command and process
+substitutions, even inside double quotes, and carries an open quote or here-document across lines
+(`TestShellLexer_KeepsSubstitutionCode`). `shell_commands.go` cuts each logical line, joined across
+a trailing backslash, pipe or `&&`, into simple commands and reads each command's name past
+reserved words, assignments, redirections and wrappers such as `sudo`, `env` and `timeout`. The
+patterns of a `case` statement, including one opened on the same line as an outer pattern
+(`x) case $b in`) and one after Bash's fall-through `;&` or `;;&`, and the inside of a `[[ ... ]]`
+test name no command, so `*/sh | */bash)` and `[[ $f =~ \.(sh|bash)$ ]]` pipe nothing into a shell
+(`TestShellScanner_CasePatternsAreNotCommands`, `TestShellScanner_NestedCasePatternsAreNotCommands`,
+`TestShellScanner_CaseFallThroughEndsAnItem`, `TestShellScanner_TestExpressionsAreNotPipes`,
+`.config/hiss/testdata/HISS-08/shell/negative/nested-case.sh`,
+`.config/hiss/testdata/HISS-08/shell/negative/case-fall-through.bash`).
+
+- HISS-01: a function whose body is a brace group runs its own name as a command. A call through
+  `command`, `builtin` or `exec` runs a program, never the function, so it is not reported.
+- HISS-02: `while true`, `while :`, `until false` and `for ((;;))` carry no bound. A `curl`
+  transfer with neither `--max-time` nor `-m`, and no `timeout` command around it, has no overall
+  deadline, which is the I/O half of the rule; `curl --version` and `curl --help` transfer nothing.
+- HISS-04: function length, from the line the body brace opens on to the line it closes on, as the
+  spec measures it.
+- HISS-07: a script with a `#!` line that never enables `errexit` and `nounset` (`set -eu`, the
+  long names, or options on the `#!` line), and under Bash `pipefail`, carries on past a failed
+  command, an unset variable or a failure on the left of a pipe; it is reported once at line 1.
+  POSIX `sh` is not required to set `pipefail`, which not every shell still deployed supports. A
+  file without a `#!` line is a library its caller sources and runs under the caller's options.
+  `|| true` and `|| :` discard the failure they follow.
+- HISS-08: `eval`, text piped into a shell that reads its script from standard input
+  (`curl ... | sh`, through `sudo` too), and a process substitution sourced or run as a script.
+
+Not decided: mutual recursion, a loop whose condition always succeeds without being a constant
+(`while sleep 5`), `read` without `-t`, a subshell function body `f() ( ... )`, `set +e` around an
+unchecked command, a failure discarded through a brace group, and a command string given to
+`sh -c`; each is a gap fixture. Shell in a workflow's `run:` blocks is not read (#618). A file whose
+quotes, substitutions, here-documents or braces the scanner misread is declined and shows on the
+`[UNSCANNED]` line (`TestShellScanner_DeclinedFilesAreUnscanned` in `internal/hiss/shell_test.go`).
+
+### systemd units
+
+[`internal/hiss/systemd.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hiss/systemd.go)
+reads `.service` and `.socket` files that open a `[Unit]`, `[Service]`, `[Socket]` or `[Install]`
+section, following `systemd.syntax(7)`: a trailing backslash continues a setting, `#` and `;` start
+a comment line, the last assignment of a setting wins and an empty one resets it.
+
+- HISS-02: a `Type=oneshot` service without `TimeoutStartSec=` or `TimeoutSec=`, because systemd
+  disables the start timeout for oneshot by default (`systemd.service(5)`); a start, stop, abort or
+  socket timeout set to `infinity`, or any of them but the abort timeout set to `0`, which systemd
+  also reads as no timeout (`TestSystemdScanner_Boundaries`); and a service with
+  `Restart=` other than `no` whose `StartLimitIntervalSec=` is `0`, which turns off the rate limit
+  that stops a restart loop (`systemd.unit(5)`).
+- HISS-07: a command setting whose prefix holds `-`, since systemd records its failure and then
+  treats it as success. The command settings are the keys systemd parses as command lines:
+  `ExecCondition=`, `ExecStartPre=`, `ExecStart=`, `ExecStartPost=`, `ExecReload=`,
+  `ExecReloadPost=` (systemd 259), `ExecStop=` and `ExecStopPost=` of a service
+  (`systemd.service(5)`), and `ExecStartPre=`, `ExecStartPost=`, `ExecStopPre=` and
+  `ExecStopPost=` of a socket (`systemd.socket(5)`). `ExecPaths=`, `NoExecPaths=` and
+  `ExecSearchPath=` are path lists, whose `-` ignores a missing path (`systemd.exec(5)`), so they
+  are not read (`TestSystemdScanner_OnlyCommandSettingsAreExec`,
+  `.config/hiss/testdata/HISS-07/systemd/negative/exec-path-lists.service`).
+
+Not decided: a drop-in (`.conf`) that overrides a unit, which is a separate file, and shell inside a
+command setting. A unit has no functions and evaluates nothing itself, so HISS-01, HISS-04 and
+HISS-08 have no analogue (`internal/hiss/systemd_test.go`).
+
+### Ansible
+
+[`internal/hiss/ansible.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/hiss/ansible.go)
+reads a YAML file that is a playbook (a list holding a play with `hosts:` or an `import_playbook:`)
+or a role's task or handler file (`roles/<role>/tasks/` or `roles/<role>/handlers/`). It walks a
+play's `pre_tasks`, `tasks`, `post_tasks` and `handlers` and every `block`, `rescue` and `always`
+section with an explicit stack. The rules follow the matching
+[ansible-lint](https://ansible.readthedocs.io/projects/lint/rules/) rules.
+
+- HISS-07: `ignore_errors: true` or `failed_when: false` on a task or block that does not
+  `register` its result (ignore-errors), and a `shell` task that pipes without `set -o pipefail`,
+  whose status is then the last command's (risky-shell-pipe). The command is the module's
+  free-form value or, when the module holds a mapping, nothing or an empty string, its `cmd`
+  argument, from the module or from the task's `args`, as Ansible reads it
+  (`TestAnsibleScanner_ShellCommandFromArgs`). A pipe inside quotes or Jinja is text.
+- HISS-08: a `command`, `shell`, `raw` or `script` task, under its short, `ansible.builtin` or
+  `ansible.legacy` name, with no `changed_when`, `creates` or `removes` reports a change on every
+  run whatever the host's state, so the play's outcome is not determined by the state it converges
+  (no-changed-when).
+
+Not decided: a task file included by path from outside a role's directories, which its contents
+alone do not mark as Ansible, the Windows command modules, and HISS-02, whose loops run over lists
+and whose I/O deadlines are module arguments this scanner does not read
+(`internal/hiss/ansible_test.go`).
 
 ## HISS-20: claims are replayed
 

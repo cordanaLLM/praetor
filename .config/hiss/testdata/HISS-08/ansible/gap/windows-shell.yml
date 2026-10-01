@@ -1,0 +1,6 @@
+# Windows command modules are not decided; only command, shell, raw and script are.
+- name: Windows hosts
+  hosts: windows
+  tasks:
+    - name: Restart the spooler
+      ansible.windows.win_shell: Restart-Service Spooler

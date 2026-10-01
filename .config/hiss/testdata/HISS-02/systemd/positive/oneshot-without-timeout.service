@@ -1,0 +1,7 @@
+# A oneshot service has no start timeout unless one is set, so a hung command blocks forever.
+[Unit]
+Description=Rotate archives
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/rotate-archives

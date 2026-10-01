@@ -262,13 +262,13 @@ func TestAudit_InvariantVerdictNamesItsLanguages(t *testing.T) {
 		t.Fatalf("a tree without source reports unscanned source:\n%s", out)
 	}
 
-	writeFixtureFile(t, f.dir, "deploy.sh", "#!/bin/sh\necho deploy\n")
+	writeFixtureFile(t, f.dir, "prompt.zsh", "#!/bin/zsh\necho deploy\n")
 	out, err = f.audit(t)
 	if err != nil {
 		t.Fatalf("audit with only unscanned source: %v\n%s", err, out)
 	}
 	mustContain(t, out, "[UNSCANNED] HISS invariant scan read no source file: 0 active violations",
-		"[UNSCANNED] No HISS rule examined shell (1 file); the invariants are unverified there, not passed.")
+		"[UNSCANNED] No HISS rule examined zsh (1 file); the invariants are unverified there, not passed.")
 	if strings.Contains(out, "[PASS] HISS invariant scan verified") {
 		t.Fatalf("a PASS over source no scanner read:\n%s", out)
 	}
@@ -280,7 +280,32 @@ func TestAudit_InvariantVerdictNamesItsLanguages(t *testing.T) {
 		t.Fatalf("audit with scanned and unscanned source: %v\n%s", err, out)
 	}
 	mustContain(t, out, "[PASS] HISS invariant scan verified for svelte, typescript: 0 active violations",
-		"[UNSCANNED] No HISS rule examined shell (1 file)")
+		"[UNSCANNED] No HISS rule examined zsh (1 file)")
+}
+
+// TestAudit_ShellSystemdAnsibleAreScanned: Positive (#182): a strict shell script, a bounded unit
+// and a playbook whose task states its change are read and named on the PASS line. Negative: debt
+// in any one of them is a new infraction the ratchet refuses, where it used to pass unscanned.
+func TestAudit_ShellSystemdAnsibleAreScanned(t *testing.T) {
+	f := newAuditFixture(t)
+	writeFixtureFile(t, f.dir, "tools/build.sh", "#!/bin/sh\nset -eu\necho build\n")
+	writeFixtureFile(t, f.dir, "units/app.service", "[Service]\nExecStart=/usr/bin/app\n")
+	writeFixtureFile(t, f.dir, "site.yml", "- hosts: all\n  tasks:\n    - ansible.builtin.command: uptime\n      changed_when: false\n")
+	out, err := f.audit(t)
+	if err != nil {
+		t.Fatalf("audit over clean shell, unit and playbook: %v\n%s", err, out)
+	}
+	mustContain(t, out, "[PASS] HISS invariant scan verified for ansible, shell, systemd: 0 active violations")
+	for path, body := range map[string]string{
+		"tools/build.sh":    "#!/bin/sh\nset -eu\neval \"$1\"\n",
+		"units/app.service": "[Service]\nType=oneshot\nExecStart=/usr/bin/app\n",
+		"site.yml":          "- hosts: all\n  tasks:\n    - ansible.builtin.command: uptime\n",
+	} {
+		g := newAuditFixture(t)
+		writeFixtureFile(t, g.dir, path, body)
+		_, err := g.audit(t)
+		mustErrContain(t, err, "HISS invariant violations the baseline does not record")
+	}
 }
 
 // TestAudit_ScriptViolationFailsTheRatchet: Positive (#589): an eval in a Svelte component is

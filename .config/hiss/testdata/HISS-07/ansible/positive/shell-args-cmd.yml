@@ -1,0 +1,9 @@
+# A shell module without a value of its own runs the args cmd, and that pipe returns its last command's status.
+- name: Count users
+  hosts: all
+  tasks:
+    - name: Count accounts
+      ansible.builtin.shell:
+      args:
+        cmd: getent passwd | wc -l
+      changed_when: false

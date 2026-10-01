@@ -1,0 +1,6 @@
+# ExecPaths=, NoExecPaths= and ExecSearchPath= are path lists, not commands: their "-" ignores a missing path.
+[Service]
+ExecPaths=-/opt/app /usr/bin
+NoExecPaths=-/srv/data
+ExecSearchPath=/opt/app/bin
+ExecStart=/opt/app/bin/app

@@ -1,0 +1,10 @@
+# A restarting daemon under a start rate limit stops restarting after repeated failures.
+[Unit]
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/daemon
+Restart=on-failure
+RestartSec=5

@@ -1,0 +1,4 @@
+# The "-" prefix records the command's failure but treats it as success.
+[Service]
+ExecStartPre=-/usr/bin/mkdir -p /var/lib/app
+ExecStart=/usr/local/bin/app

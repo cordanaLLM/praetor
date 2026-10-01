@@ -380,8 +380,7 @@ func (w *scanWalker) skipFile(rel string, info os.FileInfo) bool {
 	case !w.visible.HasFile(filepath.ToSlash(rel)), ShouldIgnorePath(rel):
 		return true
 	case !isScannableExt(strings.ToLower(filepath.Ext(rel))):
-		w.rep.Coverage.recordUnscanned(rel)
-		return true
+		return w.skipCandidate(rel, info)
 	case info.Mode()&os.ModeSymlink != 0:
 		w.rep.Skips.Symlinks++
 		return true
@@ -393,6 +392,19 @@ func (w *scanWalker) skipFile(rel string, info os.FileInfo) bool {
 		return true
 	}
 	return false
+}
+
+// skipCandidate decides a file no extension assigns to a scanner. A path a content scanner may
+// claim is read when it is a regular file within MaxScanFileSize; every other such file, a
+// candidate that is a symlink, a special file or oversize included, is counted as unscanned and
+// never opened, exactly as before content scanners existed.
+func (w *scanWalker) skipCandidate(rel string, info os.FileInfo) bool {
+	if isContentCandidate(rel, strings.ToLower(filepath.Ext(rel))) &&
+		info.Mode().IsRegular() && info.Size() <= MaxScanFileSize {
+		return false
+	}
+	w.rep.Coverage.recordUnscanned(rel)
+	return true
 }
 
 // ShouldIgnoreDir reports whether a directory is skipped completely during traversal.

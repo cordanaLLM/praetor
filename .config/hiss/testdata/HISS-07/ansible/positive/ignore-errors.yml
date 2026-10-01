@@ -1,0 +1,8 @@
+# ignore_errors: true without a registered result discards the task's failure.
+- name: Refresh caches
+  hosts: all
+  tasks:
+    - name: Refresh the package cache
+      ansible.builtin.apt:
+        update_cache: true
+      ignore_errors: true

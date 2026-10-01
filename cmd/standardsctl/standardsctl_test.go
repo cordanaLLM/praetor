@@ -363,8 +363,11 @@ func TestDispatchCommand_EditorsAndFlavors(t *testing.T) {
 	if err := dispatchCommand("flavors", []string{"-h"}); err != nil && !errors.Is(err, flag.ErrHelp) {
 		t.Fatalf("flavors -h failed: %v", err)
 	}
+	// plan reads refs, so it runs against a fixture repository rather than the checkout
+	// the tests happen to run in.
+	f := newFlavorFixture(t)
 	out, err := captureStdout(t, func() error {
-		return dispatchCommand("flavors", []string{"--config=../../.config/flavors.yaml", "plan"})
+		return dispatchCommand("flavors", []string{"--config=../../.config/flavors.yaml", "--dir=" + f.repo, "plan"})
 	})
 	if err != nil {
 		t.Fatalf("flavors plan failed: %v", err)

@@ -1,0 +1,3 @@
+# Shell inside an Exec command is not read, so a failure it discards is not decided.
+[Service]
+ExecStart=/bin/sh -c 'rm -r /var/cache/app || true'

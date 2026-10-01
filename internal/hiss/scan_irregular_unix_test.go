@@ -93,3 +93,19 @@ func scanWithinLimit(t *testing.T, root string, opts ScanOptions) *ScanReport {
 		return nil
 	}
 }
+
+// TestScan_ContentCandidateFIFOIsNeverOpened extends BUG-822 to content scanners: an
+// extensionless or YAML entry is read to learn its language, but a FIFO with such a name is
+// refused before any open and counted as an unscanned file.
+func TestScan_ContentCandidateFIFOIsNeverOpened(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"provision", "site.yml"} {
+		if err := syscall.Mkfifo(filepath.Join(root, name), 0o600); err != nil {
+			t.Skipf("mkfifo unavailable on %s: %v", root, err)
+		}
+	}
+	rep := scanWithinLimit(t, root, ScanOptions{Timeout: fifoScanTimeout})
+	if rep.Coverage.UnscannedFiles != 2 || rep.Coverage.FilesRead != 0 || rep.Skips.Irregular != 0 {
+		t.Errorf("FIFO candidates must be unscanned and never opened, got %+v / %+v", rep.Coverage, rep.Skips)
+	}
+}

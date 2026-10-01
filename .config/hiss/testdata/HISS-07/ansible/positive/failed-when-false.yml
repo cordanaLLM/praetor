@@ -1,0 +1,8 @@
+# failed_when: false means the task can never fail.
+- name: Probe services
+  hosts: all
+  tasks:
+    - name: Probe the endpoint
+      ansible.builtin.uri:
+        url: https://example.com/health
+      failed_when: false

@@ -25,9 +25,8 @@ const maxSemverTagCandidates = 4096
 // resolveFlavorRef resolves a declared source ref to the commit it points at. A version
 // tag pattern ("refs/tags/v*") resolves through newestSemverTag; every other glob keeps
 // git's version-sort behavior. ok is false when nothing matches, which the planner turns
-// into ActionUnresolved. err is non-nil only when the matching tags exceed
-// maxSemverTagCandidates, so "no stable tag exists" and "too many tags to decide" stay
-// distinct.
+// into ActionUnresolved. err is non-nil only when matching tags exceed
+// maxSemverTagCandidates or when a git ref read fails (#389, #671).
 func resolveFlavorRef(ctx context.Context, dir, ref string) (string, bool, error) {
 	if strings.ContainsAny(ref, "*?[") && util.ValidateExecArg(ref) == nil {
 		matched, ok, err := matchFlavorRefPattern(ctx, dir, ref)
@@ -36,24 +35,29 @@ func resolveFlavorRef(ctx context.Context, dir, ref string) (string, bool, error
 		}
 		ref = matched
 	}
-	commit, ok := resolveRefCommit(ctx, dir, ref)
-	return commit, ok, nil
+	return resolveRefCommit(ctx, dir, ref)
 }
 
 // resolveRefCommit resolves one concrete ref to the commit it points at. ok is false when
-// the ref is not a usable git argument or names no commit.
-func resolveRefCommit(ctx context.Context, dir, ref string) (string, bool) {
-	if err := util.ValidateExecArg(ref); err != nil {
-		return "", false
+// the ref is not a usable git argument or names no commit (git rev-parse exits 1 with a
+// live context). A failed git read returns an error naming the ref and the cause (#671).
+// git itself answers 1 for a loose ref with unreadable contents or one naming a missing
+// object, so such a ref reads as naming no commit.
+func resolveRefCommit(ctx context.Context, dir, ref string) (string, bool, error) {
+	if util.ValidateExecArg(ref) != nil {
+		return "", false, nil //nolint:nilerr // an invalid ref argument is never passed to git; it names no commit
 	}
 	// "^{commit}" dereferences annotated tags, so a tag object and a branch head both
 	// yield a commit SHA that can be compared for equality.
 	out, err := util.RunGit(ctx, dir, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
 	if err != nil {
-		return "", false
+		if util.GitAnsweredUnset(ctx, err) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("failed to resolve ref %q: %w", ref, err)
 	}
 	commit := firstOutputLine(out)
-	return commit, commit != ""
+	return commit, commit != "", nil
 }
 
 // matchFlavorRefPattern picks the ref a glob source_ref resolves to. A "refs/tags/v*"
@@ -64,18 +68,17 @@ func matchFlavorRefPattern(ctx context.Context, dir, pattern string) (string, bo
 	if strings.HasPrefix(pattern, "refs/tags/v") {
 		return newestSemverTag(ctx, dir, pattern)
 	}
-	matched, ok := newestMatchingRef(ctx, dir, pattern)
-	return matched, ok, nil
+	return newestMatchingRef(ctx, dir, pattern)
 }
 
-func newestMatchingRef(ctx context.Context, dir, pattern string) (string, bool) {
+func newestMatchingRef(ctx context.Context, dir, pattern string) (string, bool, error) {
 	out, err := util.RunGit(ctx, dir, "for-each-ref",
 		"--sort=-v:refname", "--count=1", "--format=%(refname)", pattern)
 	if err != nil {
-		return "", false
+		return "", false, fmt.Errorf("failed to read refs matching %q: %w", pattern, err)
 	}
 	matched := firstOutputLine(out)
-	return matched, matched != ""
+	return matched, matched != "", nil
 }
 
 // newestSemverTag resolves a "refs/tags/v*" pattern to the highest SemVer tag that carries
@@ -85,9 +88,13 @@ func newestMatchingRef(ctx context.Context, dir, pattern string) (string, bool) 
 // as a prerelease standing in for "latest". git lists at most one ref past the bound, and a
 // pattern matching more than maxSemverTagCandidates tags returns an error: the winner can
 // sort anywhere, so a scan of the first maxSemverTagCandidates refs cannot tell "no stable
-// tag" from "stable tag not reached" (#389).
+// tag" from "stable tag not reached" (#389). A failed git read returns an error naming the
+// pattern and the cause (#671).
 func newestSemverTag(ctx context.Context, dir, pattern string) (string, bool, error) {
-	lines := semverTagCandidates(ctx, dir, pattern)
+	lines, err := semverTagCandidates(ctx, dir, pattern)
+	if err != nil {
+		return "", false, err
+	}
 	if len(lines) > maxSemverTagCandidates {
 		return "", false, fmt.Errorf("source ref %q matches more than %d tags, so its highest stable SemVer tag "+
 			"cannot be decided; narrow source_ref (for example refs/tags/v2.*)", pattern, maxSemverTagCandidates)
@@ -112,15 +119,19 @@ func newestSemverTag(ctx context.Context, dir, pattern string) (string, bool, er
 }
 
 // semverTagCandidates lists the refs pattern matches, at most maxSemverTagCandidates+1 so
-// an overflow stays detectable without reading every tag. A git failure lists nothing,
-// which newestSemverTag reports as unresolved.
-func semverTagCandidates(ctx context.Context, dir, pattern string) []string {
+// an overflow stays detectable without reading every tag. A failed git read returns an
+// error naming the pattern and the cause (#671).
+func semverTagCandidates(ctx context.Context, dir, pattern string) ([]string, error) {
 	out, err := util.RunGit(ctx, dir, "for-each-ref",
 		fmt.Sprintf("--count=%d", maxSemverTagCandidates+1), "--format=%(refname)", pattern)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("failed to read refs matching %q: %w", pattern, err)
 	}
-	return strings.Split(strings.TrimSpace(out), "\n")
+	trimmed := strings.TrimSpace(out)
+	if trimmed == "" {
+		return nil, nil
+	}
+	return strings.Split(trimmed, "\n"), nil
 }
 
 func firstOutputLine(out string) string {
@@ -133,18 +144,23 @@ func firstOutputLine(out string) string {
 }
 
 // flavorRefResolver resolves the refs of one flavors run and keeps the first resolution
-// error, so an overflowing tag scan fails the command instead of reading as a pending flavor.
+// error, so an overflowing tag scan or a failed git ref read fails the command instead of
+// reading as a pending flavor.
 type flavorRefResolver struct {
 	ctx context.Context
 	dir string
 	err error
 }
 
-// resolve is a flavors.RefResolver. Calls after an error still answer; planFlavors reports
-// the recorded error before any plan line is printed.
+// resolve is a flavors.RefResolver. After the first error it asks git nothing more and
+// answers "no commit"; planFlavors reports the recorded error before any plan line is
+// printed.
 func (r *flavorRefResolver) resolve(ref string) (string, bool) {
+	if r.err != nil {
+		return "", false
+	}
 	commit, ok, err := resolveFlavorRef(r.ctx, r.dir, ref)
-	if err != nil && r.err == nil {
+	if err != nil {
 		r.err = err
 	}
 	return commit, ok

@@ -1,0 +1,4 @@
+# TimeoutStopSec=infinity disables the stop timeout.
+[Service]
+ExecStart=/usr/local/bin/worker
+TimeoutStopSec=infinity

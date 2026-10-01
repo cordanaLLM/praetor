@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 type shellWord struct {
@@ -382,7 +384,7 @@ func extractHereDoc(lines []string, start int, declaration string, marker int) (
 	token := strings.TrimSpace(declaration[marker+2:])
 	stripTabs := strings.HasPrefix(token, "-")
 	token = strings.TrimSpace(strings.TrimPrefix(token, "-"))
-	delimiter, quoted, err := hereDocDelimiter(token)
+	delimiter, quoted, _, err := util.ShellHereDocDelimiter(token)
 	if err != nil {
 		return "", start, err
 	}
@@ -403,21 +405,4 @@ func extractHereDoc(lines []string, start int, declaration string, marker int) (
 		body = append(body, line)
 	}
 	return "", start, errors.New("unterminated heredoc")
-}
-
-func hereDocDelimiter(token string) (string, bool, error) {
-	if token == "" {
-		return "", false, errors.New("missing heredoc delimiter")
-	}
-	end := strings.IndexAny(token, " \t")
-	if end >= 0 {
-		token = token[:end]
-	}
-	if len(token) >= 2 && (token[0] == '\'' && token[len(token)-1] == '\'' || token[0] == '"' && token[len(token)-1] == '"') {
-		return token[1 : len(token)-1], true, nil
-	}
-	if strings.ContainsAny(token, "$`'\"") {
-		return "", false, errors.New("unsupported heredoc delimiter")
-	}
-	return token, false, nil
 }

@@ -1,0 +1,8 @@
+# changed_when states when the command changed something.
+- name: Read state
+  hosts: all
+  tasks:
+    - name: Read the kernel version
+      ansible.builtin.command: uname -r
+      register: kernel
+      changed_when: false

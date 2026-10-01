@@ -93,16 +93,18 @@ func readFixtureFile(t *testing.T, dir, rel string) string {
 }
 
 // initGitFixture turns dir into a repository with every file committed on main and a
-// lefthook.yml, so the audit's hook gate has its configuration. It skips the test when
-// git is unavailable and returns the environment for further fixture git calls.
-func initGitFixture(t *testing.T, dir string) []string {
+// lefthook.yml, so the audit's hook gate has its configuration. initArgs are appended to
+// git init. It skips the test when git is unavailable and returns the environment for
+// further fixture git calls.
+func initGitFixture(t *testing.T, dir string, initArgs ...string) []string {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skipf("git not available: %v", err)
 	}
 	env := testsupport.HermeticGitEnv(t)
 	writeFixtureFile(t, dir, "lefthook.yml", "pre-commit:\n  commands: {}\n")
-	for _, args := range [][]string{{"init", "-q", "-b", "main"}, {"add", "-A"}, {"commit", "-q", "-m", "fixture"}} {
+	initCmd := append([]string{"init", "-q", "-b", "main"}, initArgs...)
+	for _, args := range [][]string{initCmd, {"add", "-A"}, {"commit", "-q", "-m", "fixture"}} {
 		if out, err := runFixtureGit(t, dir, env, args...); err != nil {
 			t.Skipf("git %v failed in sandbox: %v (%s)", args, err, out)
 		}

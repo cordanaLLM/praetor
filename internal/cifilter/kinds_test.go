@@ -64,7 +64,7 @@ func TestNestedTestDirectoriesAreTests(t *testing.T) {
 // nested or at the root, still fails closed to linters and security; before, a root tests/
 // fixture selected tests alone.
 func TestUnknownKindUnderTestDirectoryFailsClosed(t *testing.T) {
-	for _, path := range []string{"crates/client/tests/run.sh", "tests/fixtures/input.bin", "benches/data/sample.dat"} {
+	for _, path := range []string{"crates/client/tests/run.ps1", "tests/fixtures/input.bin", "benches/data/sample.dat"} {
 		cs := cifilter.ClassifyChanges([]string{path})
 		d := cifilter.MakeDecision(cs, false)
 		if !cs.TestsChanged || !cs.UnclassifiedChanged || !d.RunLinters || !d.RunSecurity || d.SkipHeavyGates {

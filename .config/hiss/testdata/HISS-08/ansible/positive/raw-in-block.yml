@@ -1,0 +1,13 @@
+# A task nested in a block's rescue section is read like any other.
+- name: Bootstrap
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Prepare
+      block:
+        - name: Check python
+          ansible.builtin.raw: test -x /usr/bin/python3
+          changed_when: false
+      rescue:
+        - name: Install python
+          ansible.builtin.raw: apt-get install -y python3

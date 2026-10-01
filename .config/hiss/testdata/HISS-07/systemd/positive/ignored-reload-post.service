@@ -1,0 +1,5 @@
+# ExecReloadPost= (systemd 259) is a command setting like ExecReload=.
+[Service]
+ExecStart=/usr/local/bin/app
+ExecReload=/usr/local/bin/app --reload
+ExecReloadPost=-/usr/local/bin/notify reloaded

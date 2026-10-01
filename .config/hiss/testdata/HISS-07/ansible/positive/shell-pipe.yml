@@ -1,0 +1,7 @@
+# Without pipefail a shell pipe returns its last command's status.
+- name: Count users
+  hosts: all
+  tasks:
+    - name: Count accounts
+      ansible.builtin.shell: getent passwd | wc -l
+      changed_when: false

@@ -1,0 +1,12 @@
+# A registered result is evaluated later, so the failure is handled rather than discarded.
+- name: Probe services
+  hosts: all
+  tasks:
+    - name: Probe the endpoint
+      ansible.builtin.uri:
+        url: https://example.com/health
+      register: probe
+      ignore_errors: true
+    - name: Report the probe
+      ansible.builtin.debug:
+        msg: "{{ probe.status | default('unreachable') }}"

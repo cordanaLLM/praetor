@@ -16,9 +16,11 @@ func TestScan_CxxHhHeaderIsScannedAsNative(t *testing.T) {
 }
 
 // Negative: a kind with no language dispatch stays unscanned; adding .hh admitted no
-// neighbouring suffix and no non-C language; .vue and shell have no scanner yet.
+// neighbouring suffix and no non-C language; .vue and Zsh have no scanner yet. A kind only a
+// content scanner claims from its bytes (an extensionless script, YAML, a unit file) is not a
+// supported extension either.
 func TestSupportsExtension_RejectsUndispatchedKinds(t *testing.T) {
-	for _, ext := range []string{".hhh", ".h.in", ".zig", ".glsl", ".comp", ".vue", ".sh", ""} {
+	for _, ext := range []string{".hhh", ".h.in", ".zig", ".glsl", ".comp", ".vue", ".zsh", ".yml", ".yaml", ".service", ".socket", ""} {
 		if SupportsExtension(ext) {
 			t.Errorf("%q has no HISS dispatch but SupportsExtension accepted it", ext)
 		}

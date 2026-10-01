@@ -35,6 +35,21 @@ type languageScanner interface {
 	scan(src sourceFile, rep *ScanReport, opts ScanOptions) bool
 }
 
+// contentScanner is a language scanner that also reads files whose extension alone does not
+// assign them to it: a script without an extension whose interpreter line names a shell, a YAML
+// file that is an Ansible playbook, a unit file systemd reads. candidate is a path test made
+// before any read; claims decides from the bytes. A candidate no scanner claims is recorded
+// exactly like a file of an extension no scanner reads, so a YAML or extensionless file that is
+// none of these is reported as it always was, and a claim never widens SupportsExtension.
+type contentScanner interface {
+	languageScanner
+	// candidate reports whether the scanner may claim rel, a slash-separated path whose
+	// lower-cased extension is ext.
+	candidate(rel, ext string) bool
+	// claims reports whether the file's bytes are this scanner's language.
+	claims(src sourceFile) bool
+}
+
 // packageScanner is a language scanner whose rules also need every file it examined once the
 // walk is over: a call cycle through two functions is only visible when every file of their
 // package has been read.
@@ -66,6 +81,7 @@ func (s sourceFile) lfLines() []string {
 // languageScanners is the one dispatch table. No two scanners claim one extension.
 var languageScanners = [...]languageScanner{
 	goLanguage{}, nativeLanguage{}, pythonLanguage{}, rustLanguage{}, scriptLanguage{},
+	shellLanguage{}, systemdLanguage{}, ansibleLanguage{},
 }
 
 // scannerIndex returns the index of the scanner that reads ext, a lower-cased extension, or -1
@@ -83,6 +99,38 @@ func isScannableExt(ext string) bool {
 	return scannerIndex(ext) >= 0
 }
 
+// isContentCandidate reports whether a content scanner may claim rel, a path whose lower-cased
+// extension is ext, once its bytes are read.
+func isContentCandidate(rel, ext string) bool {
+	slashRel := filepath.ToSlash(rel)
+	for i := 0; i < len(languageScanners); i++ {
+		if c, ok := languageScanners[i].(contentScanner); ok && c.candidate(slashRel, ext) {
+			return true
+		}
+	}
+	return false
+}
+
+// mayScan reports whether rel, by its path alone, is a file some language scanner may read: an
+// extension a scanner owns, or a path a content scanner may claim from its bytes.
+func mayScan(rel string) bool {
+	ext := strings.ToLower(filepath.Ext(rel))
+	return isScannableExt(ext) || isContentCandidate(rel, ext)
+}
+
+// claimingScanner returns the index of the content scanner that claims src, a file whose
+// lower-cased extension is ext, or -1 when none does.
+func claimingScanner(src sourceFile, ext string) int {
+	slashRel := filepath.ToSlash(src.rel)
+	for i := 0; i < len(languageScanners); i++ {
+		c, ok := languageScanners[i].(contentScanner)
+		if ok && c.candidate(slashRel, ext) && c.claims(src) {
+			return i
+		}
+	}
+	return -1
+}
+
 // fileLanguage names the language of rel for the coverage report: the repository-wide name
 // util.SourceLanguage gives, or the scanner's own for an extension that table leaves out.
 func fileLanguage(s languageScanner, rel string) string {
@@ -92,25 +140,31 @@ func fileLanguage(s languageScanner, rel string) string {
 	return s.name()
 }
 
-// scanFile reads one source file under a byte bound and hands it to its language scanner. The
-// path is re-confined to the root before it is opened.
+// scanFile reads one source file under a byte bound and hands it to its language scanner: the
+// one its extension names, or else the content scanner that claims its bytes. The path is
+// re-confined to the root before it is opened.
 func (w *scanWalker) scanFile(path, rel string) error {
-	idx := scannerIndex(strings.ToLower(filepath.Ext(rel)))
-	if idx < 0 {
+	ext := strings.ToLower(filepath.Ext(rel))
+	idx := scannerIndex(ext)
+	if idx < 0 && !isContentCandidate(rel, ext) {
 		w.rep.Coverage.recordUnscanned(rel)
 		return nil
 	}
 	data, err := readBounded(w.root, rel)
 	if err != nil {
-		if errors.Is(err, errOversize) {
-			w.rep.Skips.Oversize++
+		return w.readFailed(rel, idx, err)
+	}
+	src := sourceFile{rel: rel, data: data}
+	if idx < 0 {
+		if idx = claimingScanner(src, ext); idx < 0 {
+			w.rep.Coverage.recordUnscanned(rel)
 			return nil
 		}
-		return err
 	}
 	scanner := languageScanners[idx]
-	if !scanner.scan(sourceFile{rel: rel, data: data}, w.rep, w.opts) {
-		w.rep.Coverage.recordUnscanned(rel)
+	if !scanner.scan(src, w.rep, w.opts) {
+		// A declined file is source of the scanner's language that no rule examined.
+		w.rep.Coverage.recordUnscannedAs(rel, fileLanguage(scanner, rel))
 		return nil
 	}
 	w.rep.Coverage.recordRead(fileLanguage(scanner, rel))
@@ -118,6 +172,22 @@ func (w *scanWalker) scanFile(path, rel string) error {
 	if _, ok := scanner.(packageScanner); ok && len(w.packages[idx]) < maxCallGraphFiles {
 		w.packages[idx] = append(w.packages[idx], path)
 	}
+	return nil
+}
+
+// readFailed accounts for a file the bounded read refused. A content candidate was never known
+// to be source, so any failed read (oversize, permission denied, a confinement refusal) leaves
+// it an unscanned file, as it was before any scanner could claim one. An oversize file of a
+// scanned extension is a skipped input; any other failure on one fails the scan.
+func (w *scanWalker) readFailed(rel string, idx int, err error) error {
+	if idx < 0 {
+		w.rep.Coverage.recordUnscanned(rel)
+		return nil
+	}
+	if !errors.Is(err, errOversize) {
+		return err
+	}
+	w.rep.Skips.Oversize++
 	return nil
 }
 

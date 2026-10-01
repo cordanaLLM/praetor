@@ -1,0 +1,4 @@
+type: fixed
+title: Fail flavors plan and sync on a failed git ref read instead of reporting the flavor as pending
+issue: "#671"
+breaking: true
