@@ -38,3 +38,53 @@ func TestStripHashCommentsLineBound(t *testing.T) {
 		t.Fatalf("%d lines accepted", maxCommentScanLines+1)
 	}
 }
+
+// Positive: StripLineComment cuts at a whole-line or trailing comment of any marker.
+func TestStripLineCommentMarkers(t *testing.T) {
+	cases := []struct{ line, marker, want string }{
+		{"run() // old note", "//", "run()"},
+		{"// whole line", "//", ""},
+		{"  select 1 -- note", "--", "  select 1"},
+		{"key = 1\t; note", ";", "key = 1"},
+		{"port: 8080 # note", "#", "port: 8080"},
+	}
+	for _, tc := range cases {
+		if got := StripLineComment(tc.line, tc.marker); got != tc.want {
+			t.Errorf("StripLineComment(%q, %q) = %q; want %q", tc.line, tc.marker, got, tc.want)
+		}
+	}
+}
+
+// Negative: a marker inside a token is kept, and an empty marker or a line without the
+// marker is returned unchanged.
+func TestStripLineCommentKeepsMarkerInsideTokens(t *testing.T) {
+	cases := []struct{ line, marker string }{
+		{`get("https://example.invalid/x")`, "//"},
+		{"a--b", "--"},
+		{"color: a#b", "#"},
+		{"no comment here", "//"},
+		{"run() // note", ""},
+	}
+	for _, tc := range cases {
+		if got := StripLineComment(tc.line, tc.marker); got != tc.line {
+			t.Errorf("StripLineComment(%q, %q) = %q; want it unchanged", tc.line, tc.marker, got)
+		}
+	}
+}
+
+// Boundary: an empty line, a line that is only the marker, a marker in token position before
+// a real comment, and a marker as the last bytes of the line.
+func TestStripLineCommentBoundary(t *testing.T) {
+	cases := []struct{ line, marker, want string }{
+		{"", "//", ""},
+		{"//", "//", ""},
+		{"http://a // b", "//", "http://a"},
+		{"x //", "//", "x"},
+		{"x/", "//", "x/"},
+	}
+	for _, tc := range cases {
+		if got := StripLineComment(tc.line, tc.marker); got != tc.want {
+			t.Errorf("StripLineComment(%q, %q) = %q; want %q", tc.line, tc.marker, got, tc.want)
+		}
+	}
+}

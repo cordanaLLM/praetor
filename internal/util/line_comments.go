@@ -27,13 +27,28 @@ func StripHashComments(text string) (string, error) {
 
 // stripLineComment cuts one line at its first comment-starting "#".
 func stripLineComment(line string) string {
-	for i := 0; i < len(line); i++ {
-		if line[i] != '#' {
-			continue
+	return StripLineComment(line, "#")
+}
+
+// StripLineComment cuts one line at its first comment that marker opens, such as "#", "//"
+// or "--", and trims the blanks before it: a marker that starts the line or follows a blank
+// starts a comment running to the end of the line. A marker inside a token, such as the
+// "//" of a URL or the "#" of "a#b", is kept. Quoting is not tracked, as in
+// StripHashComments. An empty marker leaves the line unchanged.
+func StripLineComment(line, marker string) string {
+	if marker == "" {
+		return line
+	}
+	for from := 0; from < len(line); {
+		next := strings.Index(line[from:], marker)
+		if next < 0 {
+			break
 		}
-		if i == 0 || line[i-1] == ' ' || line[i-1] == '\t' {
-			return strings.TrimRight(line[:i], " \t")
+		at := from + next
+		if at == 0 || line[at-1] == ' ' || line[at-1] == '\t' {
+			return strings.TrimRight(line[:at], " \t")
 		}
+		from = at + 1
 	}
 	return line
 }
