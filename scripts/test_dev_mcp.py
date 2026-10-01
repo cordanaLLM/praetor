@@ -112,6 +112,40 @@ class BuildDirectoryTests(unittest.TestCase):
         self.assertEqual(seen[0].parent, self.root / "bin")
 
 
+class BuildVersionTests(unittest.TestCase):
+    """The development build writes its fingerprint into main.version, the variable every
+    praetor binary declares and the release config writes (internal/buildid, #666)."""
+
+    def build_command(self, fingerprint):
+        calls = []
+
+        def fake_output(command, timeout=10):
+            calls.append(command)
+            return b""
+
+        with patch.object(dev_mcp, "source_hash", return_value=fingerprint), \
+                patch.object(dev_mcp, "command_output", side_effect=fake_output), \
+                patch.object(dev_mcp, "read_bounded", return_value=b"binary"):
+            _, metadata = dev_mcp.build(Path("out"))
+        return calls[0], metadata
+
+    def test_fingerprint_is_injected_into_main_version(self):
+        command, metadata = self.build_command("abc123")
+        self.assertEqual(command[:4], ["go", "build", "-ldflags", "-X main.version=dev-abc123"])
+        self.assertEqual(metadata["server_version"], "dev-abc123")
+
+    def test_retired_mcp_version_target_is_not_written(self):
+        command, _ = self.build_command("abc123")
+        self.assertFalse(any("mcpVersion" in part for part in command))
+
+    def test_sources_changing_during_the_build_fail(self):
+        hashes = iter(["before", "after"])
+        with patch.object(dev_mcp, "source_hash", side_effect=lambda: next(hashes)), \
+                patch.object(dev_mcp, "command_output", return_value=b""):
+            with self.assertRaisesRegex(RuntimeError, "changed during build"):
+                dev_mcp.build(Path("out"))
+
+
 class PublicLoopLauncherTests(unittest.TestCase):
     def test_remote_clones_require_explicit_launcher_opt_in(self):
         command = dev_mcp.server_command(Path("binary"), Path("root"))
