@@ -321,17 +321,20 @@ func removalStatusHasOnlyIgnored(status string) bool {
 	return hasRecord
 }
 
-// checkRemovalFilters refuses removal when 'git worktree remove' would execute a filter driver,
+// checkRemovalFilters refuses removal when a status it causes would execute a filter driver,
 // through the shared rule util.RefuseGitStatusFilters owns.
 //
-// Without --force, git checks the tree with a 'git status' of its own before deleting it, and
-// that status runs under the removal's environment (sanitizedGitEnvironment), which keeps the
-// operator's global and system configuration and attributes files. It cleans every tracked path
-// whose attributes select a clean or process driver, so a driver defined or selected there runs
-// although the cleanliness probe, sealed by util.RunGitProbe, never sees it: the check reads
-// that environment through util.WithEffectiveGitConfig. A smudge driver needs no option, since
-// removal deletes the tree and checks nothing out. A driver no tracked path selects never runs,
-// so a stock filter.lfs block passes (#679).
+// Removal causes two statuses, and each reads its own view of the configuration and attributes,
+// so each view is checked. The cleanliness probe in validatedRemovalPathUnlocked is sealed by
+// util.RunGitProbe and reads the repository's files alone: the default check. Without --force,
+// 'git worktree remove' then checks the tree with a 'git status' of its own under the removal's
+// environment (sanitizedGitEnvironment), which keeps the operator's global and system
+// configuration and attributes files, so a driver defined or selected there runs although the
+// sealed probe never sees it: util.WithEffectiveGitConfig. Neither view contains the other. A
+// global macro or a global attr.tree can hide in the effective view a selection the sealed probe
+// still makes, as an operator driver is hidden from the sealed one. A smudge driver passes,
+// since removal deletes the tree and checks nothing out. A driver no tracked path selects never
+// runs, so a stock filter.lfs block passes (#679).
 //
 // No separate refusal of core.attributesFile, core.excludesFile or core.fsmonitor remains. The
 // global attributes file can make git run a program only by selecting a filter, which the
@@ -339,11 +342,14 @@ func removalStatusHasOnlyIgnored(status string) bool {
 // cleanliness probe, which lists every untracked file as untracked or ignored and refuses
 // either; and the removal passes core.fsmonitor=false, which git hands to its status.
 func (m *Manager) checkRemovalFilters(ctx context.Context, path string) error {
-	probeCtx, err := util.WithCommandEnvironment(ctx, sanitizedGitEnvironment())
+	effectiveCtx, err := util.WithCommandEnvironment(ctx, sanitizedGitEnvironment())
 	if err != nil {
 		return fmt.Errorf("cannot inspect worktree filters at %s: %w", path, err)
 	}
-	err = util.RefuseGitStatusFilters(probeCtx, path, util.WithEffectiveGitConfig())
+	err = util.RefuseGitStatusFilters(ctx, path)
+	if err == nil {
+		err = util.RefuseGitStatusFilters(effectiveCtx, path, util.WithEffectiveGitConfig())
+	}
 	if errors.Is(err, util.ErrGitStatusFilters) {
 		return fmt.Errorf("refusing removal of worktree %s: %w", path, err)
 	}

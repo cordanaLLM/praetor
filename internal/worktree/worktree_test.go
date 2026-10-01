@@ -407,6 +407,54 @@ func selectOperatorFilter(t *testing.T, home, where, selection string) {
 	}
 }
 
+// TestWorktree_Negative_ReleasedRemovalRefusesRepositoryFilterOperatorFilesHide: removal runs
+// two statuses, git's own under the operator's files and the cleanliness probe without them, so
+// a driver selected in either view would run. Operator files can hide a selection the probe
+// still makes: a global macro that unsets filter on the line selecting it, or a global
+// attr.tree that reads attributes from HEAD while the tree's .gitattributes selects the driver.
+// The repository-only view is checked too, so both are refused before any status runs.
+func TestWorktree_Negative_ReleasedRemovalRefusesRepositoryFilterOperatorFilesHide(t *testing.T) {
+	for _, tc := range []struct {
+		name, committed, uncommitted, global, globalAttributes string
+	}{
+		{
+			name:      "global macro unsets the filter",
+			committed: "*.txt filter=repo nofilt\n", globalAttributes: "[attr]nofilt -filter\n",
+		},
+		{
+			name:        "global attr.tree reads attributes from HEAD",
+			uncommitted: "*.txt filter=repo\n", global: "[attr]\n\ttree = HEAD\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repoDir := setupTestGitRepo(t)
+			mgr := NewManager(repoDir)
+			wt, err := mgr.Create(t.Context(), "task-hidden-filter", "main")
+			if err != nil {
+				t.Fatalf("failed creating worktree: %v", err)
+			}
+			commitSample(t, wt.Path, tc.committed)
+			home, markers := operatorHome(t, tc.global, "filter")
+			selectOperatorFilter(t, home, "default", tc.globalAttributes)
+			if tc.uncommitted != "" {
+				writeTestFile(t, filepath.Join(wt.Path, ".gitattributes"), tc.uncommitted)
+			}
+			runInDir(t, wt.Path, "config", "filter.repo.clean", expandMarkers("touch MARKER:filter", markers))
+			err = mgr.CheckRemoval(t.Context(), wt.Path)
+			if !errors.Is(err, util.ErrGitStatusFilters) || !strings.Contains(err.Error(), "filter.repo.clean (filter=repo on sample.txt)") {
+				t.Fatalf("expected the repository driver the probe would run to be refused by name, got %v", err)
+			}
+			if err := mgr.RemoveReleased(t.Context(), wt.Path); !errors.Is(err, util.ErrGitStatusFilters) {
+				t.Fatalf("expected released removal to refuse the repository driver, got %v", err)
+			}
+			if _, err := os.Stat(wt.Path); err != nil {
+				t.Fatalf("worktree should survive the refusal: %v", err)
+			}
+			assertNoMarker(t, markers)
+		})
+	}
+}
+
 // stockLFSDriver is the filter.lfs block stock Git for Windows defines in its system
 // configuration and `git lfs install` writes into the global one.
 const stockLFSDriver = "[filter \"lfs\"]\n" +

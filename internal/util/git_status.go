@@ -93,6 +93,10 @@ type GitFilterOption func(*gitFilterProbe)
 // the repository-only view of RunGitProbe. A caller needs it when the git command it guards runs
 // a status of its own under that environment, as `git worktree remove` does to check that the
 // tree is clean: that status cleans a tracked path with an operator-level driver (#679).
+//
+// The effective view does not contain the repository-only one: a global macro that unsets
+// filter, or a global attr.tree, can hide a selection RunGitProbe still makes. A caller that
+// also probes through RunGitProbe runs the default check as well.
 func WithEffectiveGitConfig() GitFilterOption {
 	return func(probe *gitFilterProbe) { *probe = effectiveGitProbe }
 }
