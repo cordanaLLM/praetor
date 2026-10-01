@@ -205,3 +205,38 @@ func TestCommandEnvironmentEmptyAndBounds(t *testing.T) {
 		t.Fatal("oversized environment accepted")
 	}
 }
+
+// InheritedEnvironment (#696): positive, an override replaces the inherited value and a plain
+// variable travels on; negative, the git repository variables and the parent's PWD never do;
+// boundary, no overrides is the scrubbed ambient environment and a name differing only in case
+// is the same name on Windows alone.
+func TestInheritedEnvironment_3D(t *testing.T) {
+	t.Setenv("PRAETOR_INHERITED_KEEP", "kept")
+	t.Setenv("PRAETOR_INHERITED_SET", "ambient")
+	t.Setenv("GIT_DIR", "/hook/.git")
+	t.Setenv("PWD", "/somewhere/else")
+	got := environmentNames(strings.Join(InheritedEnvironment([]string{"PRAETOR_INHERITED_SET=override", "PRAETOR_INHERITED_NEW="}), "\n"))
+	if got["PRAETOR_INHERITED_KEEP"] != "kept" || got["PRAETOR_INHERITED_SET"] != "override" {
+		t.Errorf("override or inherited value lost: %q", got)
+	}
+	if value, set := got["PRAETOR_INHERITED_NEW"]; !set || value != "" {
+		t.Errorf("an empty override must be set to empty, got %q (set %v)", value, set)
+	}
+	if _, leaked := got["GIT_DIR"]; leaked {
+		t.Error("GIT_DIR reached the inherited environment")
+	}
+	if _, leaked := got["PWD"]; leaked {
+		t.Error("the parent's PWD reached the inherited environment")
+	}
+	plain := InheritedEnvironment(nil)
+	for _, entry := range plain {
+		if strings.HasPrefix(entry, "GIT_DIR=") || strings.HasPrefix(entry, "PWD=") {
+			t.Errorf("no overrides still scrubs: %q", entry)
+		}
+	}
+	folded := environmentNames(strings.Join(InheritedEnvironment([]string{"praetor_inherited_keep=lower"}), "\n"))
+	_, upperKept := folded["PRAETOR_INHERITED_KEEP"]
+	if wantKept := runtime.GOOS != "windows"; upperKept != wantKept {
+		t.Errorf("case-differing override on %s: upper kept=%v, want %v", runtime.GOOS, upperKept, wantKept)
+	}
+}
