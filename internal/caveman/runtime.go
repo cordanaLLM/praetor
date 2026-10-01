@@ -58,16 +58,16 @@ func runtimeProseSegments(ln line) []string {
 	}
 	trimmed := strings.TrimSpace(ln.text)
 	if protocolRe.MatchString(trimmed) || evidenceRe.MatchString(trimmed) {
-		return []string{runtimeProseOf(ln.text)}
+		return []string{runtimeProseOf(ln)}
 	}
 	if strings.HasPrefix(trimmed, "|") {
-		return runtimeTableSegments(ln.text)
+		return runtimeTableSegments(ln)
 	}
-	return []string{runtimeProseOf(ln.text)}
+	return []string{runtimeProseOf(ln)}
 }
 
-func runtimeTableSegments(text string) []string {
-	parts := strings.Split(strings.Trim(runtimeProseOf(text), "|"), "|")
+func runtimeTableSegments(ln line) []string {
+	parts := strings.Split(strings.Trim(runtimeProseOf(ln), "|"), "|")
 	segments := make([]string, 0, len(parts))
 	for _, part := range parts {
 		if cell := strings.TrimSpace(part); cell != "" && !tableDelimiter(cell) {
@@ -77,8 +77,10 @@ func runtimeTableSegments(text string) []string {
 	return segments
 }
 
-func runtimeProseOf(text string) string {
-	return inlineCodeRe.ReplaceAllStringFunc(text, func(span string) string {
+// runtimeProseOf keeps the content of every code span piece visible and drops only its
+// backticks: runtime text is adversarial, so a span hides nothing from the grammar rules.
+func runtimeProseOf(ln line) string {
+	return ln.mapSpans(func(span string) string {
 		return strings.Trim(span, "`")
 	})
 }

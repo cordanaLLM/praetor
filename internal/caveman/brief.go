@@ -21,7 +21,7 @@ func ExtractBriefTask(text string) (string, error) {
 		if !shapeContent(line) {
 			continue
 		}
-		prose := maskQuoted(proseOf(line.text))
+		prose := maskQuoted(proseOf(line))
 		if schemaFieldAtStart(prose) != "task" {
 			continue
 		}

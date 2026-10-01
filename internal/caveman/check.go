@@ -66,8 +66,10 @@ var (
 	// A single quote opens a protected diagnostic only at a text boundary. Apostrophes
 	// inside contractions remain visible to C9, including straight and curly forms.
 	singleQuotedRe = regexp.MustCompile(`(^|[[:space:][:punct:]])(?:'[^'\n]*'|‘[^’\n]*’)`)
-	// sentenceBreakRe ends a sentence, or a clause the reader can parse on its own.
-	sentenceBreakRe = regexp.MustCompile(`[.!?]+(?:\s|$)|;|->|→|:(?:\s|$)`)
+	// sentenceBreakRe ends a sentence, or a clause the reader can parse on its own. Closing
+	// brackets, quotes and emphasis delimiters may sit between the final punctuation and
+	// the space after it, so "**Done.** Next." holds two sentences (#378).
+	sentenceBreakRe = regexp.MustCompile(`(?:[.!?]+|:)[)\]"'’”*_` + "`" + `]*(?:\s|$)|;|->|→`)
 	listItemRe      = regexp.MustCompile(`^(?:[-*+]|\d+[.)])\s`)
 	phraseTerms     = map[string]phraseRule{
 		"basedon":       {RuleFiller, "based on"},
@@ -148,7 +150,11 @@ type Report struct {
 	ProseWords int
 	Articles   int
 	OffRegions int
-	Kind       MessageKind
+	// FrontMatterLines counts the lines of a leading YAML front matter block, delimiters
+	// included, that Check left out of the prose rules, so the exclusion stays visible the
+	// way OffRegions does. CheckRuntime reads front matter as prose and reports 0.
+	FrontMatterLines int
+	Kind             MessageKind
 	// Coverage classifies every numbered Caveman skill rule as mechanical or advisory for
 	// this message kind. A passing report means all mechanical rows passed, not that
 	// advisory rows were judged.
@@ -222,6 +228,9 @@ func checkProfile(text string, opts Options, runtime bool) Report {
 	lines, s := scan(text)
 	kind := opts.Kind.normalized()
 	report := Report{OffRegions: s.offRegions, EstimatedTokens: EstimateTokens(text), Kind: kind, Coverage: contractCoverage(kind)}
+	if !runtime {
+		report.FrontMatterLines = s.frontMatter
+	}
 	var found findings
 	checkProfileLines(&report, &found, lines, kind, runtime)
 	paras := profileParagraphs(lines, runtime)
@@ -354,7 +363,7 @@ func checkNoise(found *findings, ln line, runtime bool) {
 	}
 	text := ln.text
 	if !runtime {
-		text = inlineCodeRe.ReplaceAllString(text, " ")
+		text = ln.mapSpans(blankSpan)
 	}
 	for _, r := range text {
 		if isNoiseRune(r) {
@@ -448,7 +457,7 @@ func paragraphs(lines []line) []*paragraph {
 			current = &paragraph{start: ln.num}
 			out = append(out, current)
 		}
-		current.append(ln.num, proseOf(ln.text))
+		current.append(ln.num, proseOf(ln))
 	}
 	return out
 }
@@ -474,7 +483,7 @@ func profileParagraphs(lines []line, runtime bool) []*paragraph {
 			out = append(out, para)
 			current = para
 		}
-		current.append(ln.num, runtimeProseOf(ln.text))
+		current.append(ln.num, runtimeProseOf(ln))
 	}
 	return out
 }
