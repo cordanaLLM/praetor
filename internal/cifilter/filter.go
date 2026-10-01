@@ -199,7 +199,7 @@ func ClassifyChanges(files []string) *ChangeSet {
 }
 
 // classifySource records the domains a non-documentation path belongs to. A path whose file
-// kind none of them recognises (a shell script, a Dockerfile, a template, an unknown manifest)
+// kind none of them recognises (an extensionless script, a Dockerfile, a template, an unknown manifest)
 // fails closed as configuration, so it selects tests, linters and security (BUG-236). A test
 // location names no file kind: a script or fixture under a tests/ directory still fails closed.
 func (cs *ChangeSet) classifySource(path string) {
@@ -346,7 +346,7 @@ func isDocumentation(p string) bool {
 }
 
 // unscannedCodeExtensions are the source kinds the HISS scanner has no dispatch for; JavaScript,
-// TypeScript and Svelte come from the scanner's own table (hiss.SupportsExtension). Shading
+// TypeScript, Svelte and shell come from the scanner's own table (hiss.SupportsExtension). Shading
 // language sources are code: GLSL (.glsl and the stage suffixes glslang infers a stage from),
 // HLSL, WGSL and Metal are compiled into the program, so a change to one selects tests,
 // linters and security, and never context sync.
@@ -356,10 +356,12 @@ var unscannedCodeExtensions = []string{
 	".rgen", ".rint", ".rahit", ".rchit", ".rmiss", ".rcall", ".hlsl", ".wgsl", ".metal",
 }
 
-// isCode reports a source file. Every kind the HISS scanner reads (C, C++ with its .h, .hpp and
-// .hh headers, CUDA, HIP, Go, Python, Rust, JavaScript, TypeScript, Svelte) comes from the
-// scanner's own table (HISS-19), so a file hiss checks for invariants always selects the code
-// gates too.
+// isCode reports a source file. Every extension the HISS scanner reads (C, C++ with its .h, .hpp
+// and .hh headers, CUDA, HIP, Go, Python, Rust, JavaScript, TypeScript, Svelte, and shell's .sh
+// and .bash) comes from the scanner's own table (HISS-19), so a file hiss checks for invariants
+// always selects the code gates too. A file the scanner claims only from its bytes (an
+// extensionless script, a systemd unit, an Ansible playbook) is not named by its path, so it
+// keeps failing closed or classifying as configuration here.
 func isCode(p string) bool {
 	ext := strings.ToLower(filepath.Ext(p))
 	return hiss.SupportsExtension(ext) || slices.Contains(unscannedCodeExtensions, ext)

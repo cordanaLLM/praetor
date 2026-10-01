@@ -400,9 +400,9 @@ func TestClassifyChanges_ClaudeMdInSubdirectoryRunsContextSync(t *testing.T) {
 // security and context sync, and the reason names the unclassified kind.
 func TestClassifyChanges_UnrecognisedExtensionIsNotDocsOrState(t *testing.T) {
 	for _, files := range [][]string{
-		{"scripts/release.sh"},
+		{"scripts/release.ps1"},
 		{"internal/data/fixture.bin"},
-		{"docs/guide.md", "scripts/release.sh"},
+		{"docs/guide.md", "scripts/release.ps1"},
 		{".workingdir/STATE.md", "internal/data/fixture.bin"},
 	} {
 		cs := cifilter.ClassifyChanges(files)
@@ -422,10 +422,12 @@ func TestClassifyChanges_UnrecognisedExtensionIsNotDocsOrState(t *testing.T) {
 }
 
 // Negative (BUG-236): each file kind that no classifier named used to switch every heavy
-// gate off. Every one of them now fails closed.
+// gate off. Every one of them now fails closed. An extensionless script and a systemd unit stay
+// here although the HISS scanner may read them: it claims them from their bytes, which a diff
+// classifier never reads, so they never widen hiss.SupportsExtension (#182).
 func TestUnclassifiedFileKindsRunHeavyGates(t *testing.T) {
 	for _, path := range []string{
-		"Dockerfile", "build/Dockerfile", "scripts/release.sh", "templates/ci.yml.tmpl",
+		"Dockerfile", "build/Dockerfile", "scripts/release.ps1", "templates/ci.yml.tmpl", "bin/provision", "units/app.service",
 		"tools/tool.toml", "internal/data/fixture.json", ".gitignore",
 		// The editor files `make editors-verify` checks (BUG-439): a change to one alone must
 		// reach verify-all, which is where that gate runs.
@@ -535,10 +537,11 @@ func TestClassifyChanges_TsxJsxAreCode(t *testing.T) {
 	}
 }
 
-// Positive (#589): a Svelte component and the TypeScript module suffixes are code because the
-// HISS scanner reads them; they come from its table rather than from a second list here.
+// Positive (#589, #182): a Svelte component, the TypeScript module suffixes and shell scripts are
+// code because the HISS scanner reads them; they come from its table rather than from a second
+// list here.
 func TestClassifyChanges_ScannedScriptKindsAreCode(t *testing.T) {
-	for _, path := range []string{"ui/src/App.svelte", "lib/index.mts", "lib/index.cts"} {
+	for _, path := range []string{"ui/src/App.svelte", "lib/index.mts", "lib/index.cts", "scripts/release.sh", "tools/setup.bash"} {
 		if cs := cifilter.ClassifyChanges([]string{path}); !cs.CodeChanged || cs.UnclassifiedChanged {
 			t.Errorf("%s: want code, got code=%v unclassified=%v", path, cs.CodeChanged, cs.UnclassifiedChanged)
 		}
