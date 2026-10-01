@@ -23,18 +23,26 @@ import (
 // gateRunTimeout bounds one gate run in a test (HISS-02).
 const gateRunTimeout = 3 * time.Minute
 
-// stubCheckerSource stands in for go-apidiff. It records every module run as "<module dir>
-// <old> <new>", the directory relative to --repo-path, and answers from the module it runs in:
-// the gate's canary module is incompatible, as a working checker reports it, unless STUB_BLIND
-// is set; any other module answers from its stub-verdict file.
+// stubCheckerSource stands in for go-apidiff. Like go-apidiff it refuses a dirty tree at
+// --repo-path. It records every module run as "<module dir> <old> <new>", the directory relative
+// to --repo-path, followed by " vendor" when the new commit has a root vendor entry, and answers
+// from the module it runs in: the gate's canary module is incompatible, as a working checker
+// reports it, unless STUB_BLIND is set; any other module answers from its stub-verdict file in
+// the new commit.
 const stubCheckerSource = `package main
 
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
+
+func git(root string, args ...string) (string, error) {
+	out, err := exec.Command("git", append([]string{"-C", root}, args...)...).Output()
+	return string(out), err
+}
 
 func main() {
 	gomod, _ := os.ReadFile("go.mod")
@@ -51,14 +59,27 @@ func main() {
 		fmt.Fprintln(os.Stderr, "stub: unexpected invocation", os.Args, err)
 		os.Exit(3)
 	}
+	if status, err := git(root, "status", "--porcelain"); err != nil || status != "" {
+		fmt.Fprintln(os.Stderr, "stub: current git tree is dirty", status, err)
+		os.Exit(2)
+	}
+	rel = filepath.ToSlash(rel)
+	record := rel + " " + os.Args[1] + " " + os.Args[2]
+	if _, err := git(root, "cat-file", "-e", os.Args[2]+":vendor"); err == nil {
+		record += " vendor"
+	}
 	log, err := os.OpenFile(os.Getenv("STUB_LOG"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		os.Exit(3)
 	}
-	fmt.Fprintln(log, filepath.ToSlash(rel), os.Args[1], os.Args[2])
+	fmt.Fprintln(log, record)
 	log.Close()
-	verdict, _ := os.ReadFile("stub-verdict")
-	switch strings.TrimSpace(string(verdict)) {
+	verdictPath := "stub-verdict"
+	if rel != "." {
+		verdictPath = rel + "/stub-verdict"
+	}
+	verdict, _ := git(root, "show", os.Args[2]+":"+verdictPath)
+	switch strings.TrimSpace(verdict) {
 	case "incompatible":
 		fmt.Println("- Connect: removed")
 		os.Exit(1)
@@ -438,5 +459,139 @@ func TestGate_Boundary_FailsOutsideARepository(t *testing.T) {
 	run := h.run(t, t.TempDir(), nil)
 	if run.status != 2 || !strings.Contains(run.stderr, "did not run") {
 		t.Fatalf("status %d, want 2:\n%s", run.status, run.stderr)
+	}
+}
+
+// scratchEnv points the gate's temporary directories at a fresh directory and returns both.
+func scratchEnv(t *testing.T) (string, []string) {
+	t.Helper()
+	dir := t.TempDir()
+	return dir, []string{"TMPDIR=" + dir, "TMP=" + dir, "TEMP=" + dir}
+}
+
+// requireEmptyDir fails unless dir holds nothing.
+func requireEmptyDir(t *testing.T, dir string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("%s holds %d entries after the run, want none: first %s", dir, len(entries), entries[0].Name())
+	}
+}
+
+// Positive: a module whose path moves in place to a later major version is a new module, which
+// is reported and not compared, so an in-place major version bump passes from v1 on.
+func TestGate_Positive_InPlaceMajorVersionIsANewModule(t *testing.T) {
+	t.Parallel()
+	h := newGateHarness(t)
+	f := newFixture(t, h)
+	base := f.widget()
+	f.git("tag", "v1.0.0")
+	head := f.commit("v2", map[string]string{"go.mod": "module example.com/widget/v2\n\ngo 1.21\n", "stub-verdict": "incompatible\n"})
+	run := h.run(t, f.dir, nil)
+	if run.status != 0 {
+		t.Fatalf("status %d, want 0:\n%s\n%s", run.status, run.stdout, run.stderr)
+	}
+	requireContains(t, run.stdout,
+		"new major    . (example.com/widget/v2): a new major version of example.com/widget, nothing to compare",
+		"Every compared module is compatible")
+	if got, want := h.checked(t), []string{"lib " + base + " " + head}; !slices.Equal(got, want) {
+		t.Fatalf("checker runs %q, want %q", got, want)
+	}
+}
+
+// Boundary: only a higher major version suffix of the same path is a new major version. A lower
+// one, a /v1 or zero-padded element, neither of which is a suffix, and another prefix are
+// compared.
+func TestGate_Boundary_MajorVersionSuffixes(t *testing.T) {
+	t.Parallel()
+	h := newGateHarness(t)
+	f := newFixture(t, h)
+	cases := []struct {
+		from, to string
+		newMajor bool
+	}{
+		{"example.com/widget/v2", "example.com/widget/v3", true},
+		{"gopkg.in/widget.v1", "gopkg.in/widget.v2", true},
+		{"example.com/widget/v3", "example.com/widget/v2", false},
+		{"example.com/widget", "example.com/widget/v1", false},
+		{"example.com/widget", "example.com/widget/v02", false},
+		{"example.com/widget", "example.com/gadget/v2", false},
+	}
+	for _, tc := range cases {
+		files := goModule(".", tc.from, "widget")
+		files["stub-verdict"] = "incompatible\n"
+		base := f.commit("from "+tc.from, files)
+		f.commit("to "+tc.to, map[string]string{"go.mod": "module " + tc.to + "\n\ngo 1.21\n"})
+		runs := len(h.checked(t))
+		run := h.run(t, f.dir, nil, "-base="+base, "-policy=warn")
+		compared := len(h.checked(t)) > runs
+		newMajor := strings.Contains(run.stdout, "new major    . ("+tc.to+"): a new major version of "+tc.from+",")
+		if run.status != 0 || newMajor != tc.newMajor || compared == tc.newMajor {
+			t.Errorf("%s -> %s: status %d, new major %t, compared %t, want new major %t:\n%s\n%s",
+				tc.from, tc.to, run.status, newMajor, compared, tc.newMajor, run.stdout, run.stderr)
+		}
+	}
+}
+
+// Positive: while the root tracks a vendor directory, a nested module is compared in a clone
+// whose commits drop it, since the go command never builds a nested module from the root's
+// vendor directory. The root module is compared in the repository at the release commit and
+// HEAD, and the clone is removed afterwards.
+func TestGate_Positive_ComparesNestedModulesWithoutTheRootVendorDirectory(t *testing.T) {
+	t.Parallel()
+	h := newGateHarness(t)
+	f := newFixture(t, h)
+	f.widget()
+	base := f.commit("vendor", map[string]string{"vendor/README.md": "vendored\n"})
+	f.git("tag", "v1.0.0")
+	head := f.commit("break lib", map[string]string{"lib/stub-verdict": "incompatible\n"})
+	scratch, env := scratchEnv(t)
+	run := h.run(t, f.dir, env)
+	if run.status != 1 {
+		t.Fatalf("status %d, want 1:\n%s\n%s", run.status, run.stdout, run.stderr)
+	}
+	requireContains(t, run.stdout, "incompatible lib (example.com/widget/lib)", "compatible   . (example.com/widget)")
+	got := h.checked(t)
+	if len(got) != 2 || got[0] != ". "+base+" "+head+" vendor" {
+		t.Fatalf("checker runs %q, want the root module at %s and %s with its vendor directory first", got, base, head)
+	}
+	if nested := strings.Fields(got[1]); len(nested) != 3 || nested[0] != "lib" || nested[1] == base || nested[2] == head {
+		t.Fatalf("nested module run %q, want lib at commits without the root vendor directory", got[1])
+	}
+	requireEmptyDir(t, scratch)
+}
+
+// Boundary: a root vendor entry at the base only still moves nested modules into the clone; a
+// nested module's own vendor directory, which the checker reads only for that module, does not.
+func TestGate_Boundary_VendorFreeCloneScope(t *testing.T) {
+	t.Parallel()
+	h := newGateHarness(t)
+	f := newFixture(t, h)
+	f.widget()
+	vendored := f.commit("vendor", map[string]string{"vendor/README.md": "vendored\n"})
+	head := f.commit("drop the vendor directory", map[string]string{"vendor/README.md": ""})
+	if run := h.run(t, f.dir, nil, "-base="+vendored); run.status != 0 {
+		t.Fatalf("status %d, want 0:\n%s\n%s", run.status, run.stdout, run.stderr)
+	}
+	got := h.checked(t)
+	if len(got) != 2 || got[0] != ". "+vendored+" "+head {
+		t.Fatalf("checker runs %q, want the root module at %s and %s first", got, vendored, head)
+	}
+	if nested := strings.Fields(got[1]); len(nested) != 3 || nested[1] == vendored || nested[2] == head {
+		t.Fatalf("nested module run %q, want commits without the root vendor directory", got[1])
+	}
+	g := newFixture(t, h)
+	g.widget()
+	base := g.commit("vendor lib", map[string]string{"lib/vendor/README.md": "vendored\n"})
+	last := g.commit("document", map[string]string{"README.md": "widget\n"})
+	if run := h.run(t, g.dir, nil, "-base="+base); run.status != 0 {
+		t.Fatalf("nested vendor directory: status %d, want 0:\n%s\n%s", run.status, run.stdout, run.stderr)
+	}
+	want := []string{". " + base + " " + last, "lib " + base + " " + last}
+	if got := h.checked(t)[2:]; !slices.Equal(got, want) {
+		t.Fatalf("nested vendor directory: checker runs %q, want %q", got, want)
 	}
 }

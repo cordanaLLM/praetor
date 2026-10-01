@@ -8,4 +8,4 @@
 # appends the new digest; then record the outgoing text in the family's Prior. Never rewrite or
 # drop a line.
 a123aa00616a9ee913dda943e288a64f8f3e3518b7777a4f8ed866c10c47f37e  .github/workflows/praetor-api.yml
-f8f8429f4c71a690f66312ba5bb77bdf177d4de1cef194a6685822e73b6a48cc  tools/apicompat/gate/main.go
+0f1a48dcdccd12c57c7c8cc80dfd7718339272b66c546bf6f80a19336bb74554  tools/apicompat/gate/main.go

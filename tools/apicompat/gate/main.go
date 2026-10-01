@@ -16,10 +16,19 @@
 //
 // A module is a go.mod git tracks at the revision, outside the directories the go command
 // skips in ./... patterns (testdata, vendor, and names starting with "." or "_"), whose module
-// path has no internal element. A module at both revisions is compared; one only at HEAD is
-// reported as added; one only at the base is a removed module, which is an incompatible change.
-// More than maxModules modules, or a revision listing more than maxTreeEntries paths, fails
-// the gate instead of comparing a truncated set.
+// path has no internal element. A module at both revisions is compared, unless its path at HEAD
+// is a later major version of its path at the base (isNewMajor): Go publishes a new major
+// version under a new module path, so importers of the base path lose nothing, and the module is
+// reported as a new major version instead. One only at HEAD is reported as added; one only at
+// the base is a removed module, which is an incompatible change. More than maxModules modules,
+// or a revision listing more than maxTreeEntries paths, fails the gate instead of comparing a
+// truncated set.
+//
+// The checker builds every module with -mod=vendor when the repository root holds a vendor
+// directory, although the go command vendors a nested module from that module's own directory.
+// While the base or HEAD tracks a root vendor entry, nested modules are therefore compared in a
+// temporary clone whose two commits drop it (vendorFreeClone); the root module is compared in
+// the repository itself.
 //
 // -base defaults to the newest root release tag, vMAJOR.MINOR.PATCH with no directory prefix,
 // merged into HEAD. A nested module's tag carries its directory (dir/v1.2.3) and is never
@@ -282,11 +291,11 @@ func resolveRepository(ctx context.Context, opts options) (repository, error) {
 
 // commitOf resolves revision to the full name of the commit it names.
 func commitOf(ctx context.Context, root, revision string) (string, error) {
-	out, err := gitCapture(ctx, root, maxRevisionBytes, "rev-parse", "--verify", "--quiet", revision+"^{commit}")
+	commit, err := gitOutput(ctx, root, "rev-parse", "--verify", "--quiet", revision+"^{commit}")
 	if err != nil {
 		return "", fmt.Errorf("revision %q does not name a commit: %w", revision, err)
 	}
-	return strings.TrimSpace(string(out)), nil
+	return commit, nil
 }
 
 // newestReleaseTag returns the highest root release tag merged into head.
@@ -344,23 +353,27 @@ func resolvePolicy(flagValue string, newest releaseTag) policy {
 	}
 }
 
-// module is one go.mod a revision tracks.
+// module is one go.mod a revision tracks. from is the base revision's module path in the same
+// directory, set only for a new major version.
 type module struct {
 	dir  string
 	path string
+	from string
 }
 
-// modulePlan sorts the modules of both revisions by directory: compared at both, added at HEAD
-// only, removed from HEAD, and not public because the module path has an internal element.
+// modulePlan sorts the modules of both revisions by directory: compared at both, a new major
+// version at HEAD of the base's module, added at HEAD only, removed from HEAD, and not public
+// because the module path has an internal element.
 type modulePlan struct {
 	compared  []module
+	newMajor  []module
 	added     []module
 	removed   []module
 	notPublic []module
 }
 
 func (p modulePlan) empty() bool {
-	return len(p.compared)+len(p.added)+len(p.removed)+len(p.notPublic) == 0
+	return len(p.compared)+len(p.newMajor)+len(p.added)+len(p.removed)+len(p.notPublic) == 0
 }
 
 func planModules(ctx context.Context, repo repository) (modulePlan, error) {
@@ -376,11 +389,7 @@ func planModules(ctx context.Context, repo repository) (modulePlan, error) {
 	base, plan.notPublic = splitPublic(base, nil)
 	head, plan.notPublic = splitPublic(head, plan.notPublic)
 	for index := 0; index < len(head) && index < maxModules; index++ {
-		if containsDir(base, head[index].dir) {
-			plan.compared = append(plan.compared, head[index])
-		} else {
-			plan.added = append(plan.added, head[index])
-		}
+		plan.pair(base, head[index])
 	}
 	for index := 0; index < len(base) && index < maxModules; index++ {
 		if !containsDir(head, base[index].dir) {
@@ -388,6 +397,51 @@ func planModules(ctx context.Context, repo repository) (modulePlan, error) {
 		}
 	}
 	return plan, nil
+}
+
+// pair sorts one HEAD module against the base module in its directory: none there is an added
+// module, a later major version of it is a new major version, and anything else is compared.
+func (p *modulePlan) pair(base []module, target module) {
+	at := slices.IndexFunc(base, func(m module) bool { return m.dir == target.dir })
+	switch {
+	case at < 0:
+		p.added = append(p.added, target)
+	case isNewMajor(base[at].path, target.path):
+		target.from = base[at].path
+		p.newMajor = append(p.newMajor, target)
+	default:
+		p.compared = append(p.compared, target)
+	}
+}
+
+// isNewMajor reports whether headPath is a later major version of basePath: the same prefix
+// with a higher major version suffix (Go modules reference, "Major version suffixes"). Importers
+// of basePath keep building against its own releases, so nothing it exported is removed for
+// them.
+func isNewMajor(basePath, headPath string) bool {
+	basePrefix, baseMajor := splitMajor(basePath)
+	headPrefix, headMajor := splitMajor(headPath)
+	return basePrefix == headPrefix && headMajor > baseMajor
+}
+
+// splitMajor splits a module path into the prefix before its major version suffix and the
+// major version that suffix names: /vN with N of 2 or more, or .vN for a gopkg.in path. A path
+// without a valid suffix is its own prefix and serves major version 1, which covers v0 too.
+func splitMajor(modulePath string) (string, int) {
+	separator, least := "/v", 2
+	if strings.HasPrefix(modulePath, "gopkg.in/") {
+		separator, least = ".v", 0
+	}
+	index := strings.LastIndex(modulePath, separator)
+	if index <= 0 {
+		return modulePath, 1
+	}
+	digits := modulePath[index+len(separator):]
+	major, err := strconv.Atoi(digits)
+	if err != nil || strconv.Itoa(major) != digits || major < least {
+		return modulePath, 1
+	}
+	return modulePath[:index], major
 }
 
 // splitPublic returns the modules whose path has no internal element, and appends the others
@@ -522,18 +576,24 @@ func compareModules(
 	if err := verifyChecker(ctx, checker, stderr.w); err != nil {
 		return nil, err
 	}
-	return compareEach(ctx, repo, plan, checker, stdout, stderr)
+	sites, release, err := checkerSitesFor(ctx, repo, plan, stderr.w)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, release()) }()
+	return compareEach(ctx, repo, plan, checker, sites, stdout, stderr)
 }
 
 // compareEach builds and compares each compared module in directory order, stopping at the
 // first failure.
-func compareEach(ctx context.Context, repo repository, plan modulePlan, checker string, stdout, stderr *printer) ([]result, error) {
+func compareEach(
+	ctx context.Context, repo repository, plan modulePlan, checker string, sites checkerSites, stdout, stderr *printer,
+) ([]result, error) {
 	results := make([]result, 0, len(plan.compared))
 	for index := 0; index < len(plan.compared) && index < maxModules; index++ {
 		target := plan.compared[index]
 		stdout.printf("Comparing %s (%s) from %s to %s\n", target.dir, target.path, short(repo.base), short(repo.head))
-		moduleDir := filepath.Join(repo.root, filepath.FromSlash(target.dir))
-		incompatible, err := compareModule(ctx, checker, repo, moduleDir, stdout.w, stderr.w)
+		incompatible, err := compareModule(ctx, checker, repo.root, sites.of(target.dir), target.dir, stdout.w, stderr.w)
 		if err != nil {
 			return nil, fmt.Errorf("module %s (%s): %w", target.dir, target.path, err)
 		}
@@ -542,15 +602,155 @@ func compareEach(ctx context.Context, repo repository, plan modulePlan, checker 
 	return results, nil
 }
 
-// compareModule builds the module's packages at HEAD, then runs the checker on it. The checker
-// reads a package it cannot type-check as empty without saying so, so a module that does not
-// build would otherwise read as compatible; go list -export builds what the checker loads and
-// writes nothing into the working tree.
-func compareModule(ctx context.Context, checker string, repo repository, moduleDir string, stdout, stderr io.Writer) (bool, error) {
+// compareModule builds the module's packages at HEAD in the repository at root, then runs the
+// checker on the module's directory in site. The checker reads a package it cannot type-check
+// as empty without saying so, so a module that does not build would otherwise read as
+// compatible; go list -export builds what the checker loads and writes nothing into the working
+// tree. A vendor-free clone has no checkout, so the module's directory is created there for the
+// checker to start in.
+func compareModule(ctx context.Context, checker, root string, site checkerSite, dir string, stdout, stderr io.Writer) (bool, error) {
+	moduleDir := filepath.Join(root, filepath.FromSlash(dir))
 	if err := runTool(ctx, moduleDir, io.Discard, stderr, "go", "list", "-export", "./..."); err != nil {
 		return false, fmt.Errorf("its packages do not build at HEAD, so the checker cannot read them: %w", err)
 	}
-	return runChecker(ctx, checker, repo.root, moduleDir, repo.base, repo.head, stdout, stderr)
+	checkerDir := filepath.Join(site.root, filepath.FromSlash(dir))
+	if err := os.MkdirAll(checkerDir, 0o700); err != nil {
+		return false, fmt.Errorf("create the checker's directory: %w", err)
+	}
+	return runChecker(ctx, checker, site.root, checkerDir, site.base, site.head, stdout, stderr)
+}
+
+// checkerSite is where the checker compares a module: a repository root and the two commits.
+type checkerSite struct {
+	root, base, head string
+}
+
+// checkerSites holds the site of the root module and the site of every nested module.
+type checkerSites struct {
+	root, nested checkerSite
+}
+
+func (s checkerSites) of(dir string) checkerSite {
+	if dir == "." {
+		return s.root
+	}
+	return s.nested
+}
+
+// checkerSitesFor returns where each compared module is compared: the repository itself, or,
+// for a nested module while the base or HEAD tracks a root vendor entry, a vendor-free clone.
+// The returned release removes the clone.
+func checkerSitesFor(ctx context.Context, repo repository, plan modulePlan, stderr io.Writer) (checkerSites, func() error, error) {
+	own := checkerSite{root: repo.root, base: repo.base, head: repo.head}
+	sites, release := checkerSites{root: own, nested: own}, func() error { return nil }
+	if !slices.ContainsFunc(plan.compared, func(m module) bool { return m.dir != "." }) {
+		return sites, release, nil
+	}
+	vendored, err := tracksRootVendor(ctx, repo)
+	if err != nil || !vendored {
+		return sites, release, err
+	}
+	clone, release, err := vendorFreeClone(ctx, repo, stderr)
+	if err != nil {
+		return checkerSites{}, nil, err
+	}
+	sites.nested = clone
+	return sites, release, nil
+}
+
+// tracksRootVendor reports whether the base or HEAD tracks an entry named vendor at the root.
+func tracksRootVendor(ctx context.Context, repo repository) (bool, error) {
+	revisions := [...]string{repo.base, repo.head}
+	for index := 0; index < len(revisions); index++ {
+		entries, err := gitRecords(ctx, repo.root, 0, len(revisions), func(string) bool { return true },
+			"ls-tree", "-z", "--full-tree", revisions[index], "--", "vendor")
+		if err != nil {
+			return false, fmt.Errorf("list the root of %s: %w", short(revisions[index]), err)
+		}
+		if len(entries) != 0 {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// vendorFreeClone clones the repository into a temporary directory and commits the base and
+// HEAD trees there without their root vendor entry, which no nested module builds from. The
+// returned release removes the clone.
+func vendorFreeClone(ctx context.Context, repo repository, stderr io.Writer) (checkerSite, func() error, error) {
+	dir, err := os.MkdirTemp("", "apicompat-clone-")
+	if err != nil {
+		return checkerSite{}, nil, fmt.Errorf("create the vendor-free clone: %w", err)
+	}
+	release := func() error { return os.RemoveAll(dir) }
+	clone, err := commitVendorFree(ctx, repo, dir, stderr)
+	if err != nil {
+		return checkerSite{}, nil, errors.Join(fmt.Errorf("create the vendor-free clone: %w", err), release())
+	}
+	return clone, release, nil
+}
+
+// commitVendorFree clones the repository into dir without a checkout and commits the vendor-free
+// base and HEAD trees there. The clone's HEAD then names an empty commit, whose empty index and
+// worktree the checker reads as a clean tree before it checks the two commits out itself.
+func commitVendorFree(ctx context.Context, repo repository, dir string, stderr io.Writer) (checkerSite, error) {
+	config := scratchGitConfig(filepath.Join(dir, "no-hooks"))
+	clone := checkerSite{root: filepath.Join(dir, "repo")}
+	cloneArgs := append(config, "clone", "--quiet", "--no-checkout", "--", repo.root, clone.root)
+	if err := runTool(ctx, dir, io.Discard, stderr, "git", cloneArgs...); err != nil {
+		return checkerSite{}, err
+	}
+	var err error
+	if clone.base, err = vendorFreeCommit(ctx, clone.root, config, repo.base); err != nil {
+		return checkerSite{}, err
+	}
+	if clone.head, err = vendorFreeCommit(ctx, clone.root, config, repo.head); err != nil {
+		return checkerSite{}, err
+	}
+	return clone, emptyHead(ctx, clone.root, config)
+}
+
+// vendorFreeCommit commits the tree of revision without its root vendor entry in the clone and
+// returns the commit. The clone has no checkout, so the index is the only state it changes.
+func vendorFreeCommit(ctx context.Context, clone string, config []string, revision string) (string, error) {
+	if _, err := gitOutput(ctx, clone, "read-tree", revision); err != nil {
+		return "", err
+	}
+	if _, err := gitOutput(ctx, clone, "rm", "-r", "--cached", "--quiet", "--force", "--ignore-unmatch", "--", "vendor"); err != nil {
+		return "", err
+	}
+	tree, err := gitOutput(ctx, clone, "write-tree")
+	if err != nil {
+		return "", err
+	}
+	return gitOutput(ctx, clone, append(config, "commit-tree", tree, "-m", "apicompat: "+revision+" without the root vendor entry")...)
+}
+
+// emptyHead empties the clone's index and points its HEAD at an empty commit. git reads the
+// empty tree without storing it, and the checker's go-git reads only stored objects, so
+// hash-object -w stores it first.
+func emptyHead(ctx context.Context, clone string, config []string) error {
+	if _, err := gitOutput(ctx, clone, "read-tree", "--empty"); err != nil {
+		return err
+	}
+	tree, err := gitOutput(ctx, clone, "hash-object", "-w", "-t", "tree", "--stdin")
+	if err != nil {
+		return err
+	}
+	commit, err := gitOutput(ctx, clone, append(config, "commit-tree", tree, "-m", "apicompat: empty")...)
+	if err != nil {
+		return err
+	}
+	_, err = gitOutput(ctx, clone, append(config, "update-ref", "--no-deref", "HEAD", commit)...)
+	return err
+}
+
+// scratchGitConfig is the configuration of the git commands that write the canary repository
+// and the vendor-free clone: a fixed identity, no signing and a hooks directory that does not
+// exist, so no configuration of the machine changes or blocks them.
+func scratchGitConfig(hooks string) []string {
+	return []string{"-c", "user.name=apicompat", "-c", "user.email=apicompat@example.invalid",
+		"-c", "commit.gpgSign=false", "-c", "core.hooksPath=" + hooks}
 }
 
 // resolveChecker returns the checker binary: the -checker path, or checkerModule installed into
@@ -607,14 +807,12 @@ func verifyChecker(ctx context.Context, checker string, stderr io.Writer) (err e
 }
 
 // commitCanary creates the canary repository in repo with two commits and returns them. The
-// commits run with a fixed identity, no signing and a hooks directory that does not exist, so
-// no configuration of the machine changes or blocks them.
+// commits run under scratchGitConfig.
 func commitCanary(ctx context.Context, repo, hooks string) (base, head string, err error) {
 	if err := os.MkdirAll(repo, 0o700); err != nil {
 		return "", "", err
 	}
-	commit := []string{"-c", "user.name=apicompat", "-c", "user.email=apicompat@example.invalid",
-		"-c", "commit.gpgSign=false", "-c", "core.hooksPath=" + hooks, "commit", "--quiet", "--all", "--message"}
+	commit := slices.Clip(append(scratchGitConfig(hooks), "commit", "--quiet", "--all", "--message"))
 	steps := []func() error{
 		func() error { return runTool(ctx, repo, io.Discard, io.Discard, "git", "init", "--quiet") },
 		func() error { return writeCanary(repo, canaryBefore) },
@@ -698,6 +896,10 @@ func verdict(repo repository, plan modulePlan, results []result, stdout, stderr 
 		}
 		printModule(stdout, state, results[index].module, "")
 	}
+	for index := 0; index < len(plan.newMajor) && index < maxModules; index++ {
+		target := plan.newMajor[index]
+		printModule(stdout, "new major", target, "a new major version of "+target.from+", nothing to compare")
+	}
 	printModules(stdout, "added", plan.added, "new at HEAD, nothing to compare")
 	printModules(stdout, "removed", plan.removed, "every package of the module is gone")
 	printModules(stdout, "not public", plan.notPublic, "the module path has an internal element")
@@ -761,6 +963,13 @@ func gitCapture(ctx context.Context, dir string, limit int, args ...string) ([]b
 		return err
 	}, args...)
 	return out, err
+}
+
+// gitOutput runs git in dir and returns its standard output, at most maxRevisionBytes, without
+// surrounding white space: a commit, tree or object name, or nothing.
+func gitOutput(ctx context.Context, dir string, args ...string) (string, error) {
+	out, err := gitCapture(ctx, dir, maxRevisionBytes, args...)
+	return strings.TrimSpace(string(out)), err
 }
 
 // gitRecords runs git in dir and returns the records of its output, split at sep, that keep

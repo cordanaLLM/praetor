@@ -56,11 +56,27 @@ binary you built.
 2. **Pairs.** A module present at both revisions, matched by directory, is compared. One only at
    `HEAD` is listed as added. One only at the base is a removed module, every package of it gone,
    and counts as an incompatible change.
-3. **Comparison.** For each compared module the gate runs `go list -export ./...` at `HEAD`, so a
+3. **New major versions.** A module whose path at `HEAD` is a later major version of its path at
+   the base, the same path with a higher `/vN` suffix (`.vN` for `gopkg.in`), is listed as a new
+   major version and not compared. Go publishes a new major version under a new module path, so
+   importers of the earlier path keep its releases and lose nothing: an in-place bump to
+   `example.com/w/v2` passes from v1 on. Any other change of the module path is compared, and the
+   checker reads every package of the earlier path as removed (`isNewMajor`;
+   `TestGate_Positive_InPlaceMajorVersionIsANewModule`, `TestGate_Boundary_MajorVersionSuffixes`).
+4. **Comparison.** For each compared module the gate runs `go list -export ./...` at `HEAD`, so a
    module whose packages do not build fails instead of reading as empty, and then
    `go-apidiff <base> <HEAD> --repo-path=<root>` from that module's directory. go-apidiff loads
    `./...` from its working directory, which is what keeps a nested module from being skipped by
    a run at the root.
+5. **Root vendor directory.** go-apidiff loads every module with `-mod=vendor` when the
+   repository root holds a `vendor` directory, and with `-mod=readonly` otherwise (`getPackages`
+   in its `pkg/diff/run.go`). The go command vendors a nested module from that module's own
+   directory, so a nested module with requirements would fail with `inconsistent vendoring`.
+   While the base or `HEAD` tracks a root `vendor` entry, the gate compares nested modules in a
+   temporary clone whose two commits drop that entry, and removes the clone afterwards; the root
+   module is still compared in the checkout (`vendorFreeClone`;
+   `TestGate_Positive_ComparesNestedModulesWithoutTheRootVendorDirectory`,
+   `TestGate_Boundary_VendorFreeCloneScope`).
 
 The base is `-base` when given; the workflow passes the pull request's base commit. Otherwise it
 is the newest root release tag, `vMAJOR.MINOR.PATCH` with no directory prefix and no pre-release
@@ -132,6 +148,9 @@ an adopting repository, so the forbidigo rule and the utility-sprawl check of
 - The base revision is not built separately: the canary covers a checker that cannot read the
   toolchain's packages, and `go list -export` covers `HEAD`, but a base whose packages no longer
   load with the current toolchain is compared as the checker reads it.
+- A nested module's own `vendor` directory is not used: go-apidiff loads a nested module with
+  `-mod=readonly`, so its requirements come from the module cache or proxy. The vendor-free clone
+  copies or hard-links the repository's object store into the temporary directory.
 - go-apidiff opens the repository with go-git, which does not read a linked worktree
   (`git worktree add`): it reports every file as staged and exits 2, so the gate fails there
   without touching the tree. Run it in a clone, as the hosted job does.
