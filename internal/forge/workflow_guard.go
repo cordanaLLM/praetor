@@ -44,6 +44,59 @@ func holdsOnEveryPullRequestRun(condition string) bool {
 	return disjunctionContains(condition, pullRequestRunTerm)
 }
 
+// renovateBranchSkip is the job condition conjunct that skips a job on a pull request whose head
+// branch is a Renovate branch. github.head_ref is set on pull_request and pull_request_target runs
+// only, so the term holds on every push, schedule and dispatch run. The engine's heavy pull request
+// jobs lead their condition with it (ci.yml, portability.yml, security.yml, pages.yml): a Renovate
+// pull request is never merged as opened, the update is taken over on a signed-off branch whose
+// own pull request runs every job.
+const renovateBranchSkip = "!startsWith(github.head_ref, 'renovate/')"
+
+// withoutRenovateBranchSkip returns condition with a leading renovateBranchSkip conjunct removed,
+// so the rest is judged as if the job had no such skip: "" for the term alone, the inside of one
+// parenthesised group that encloses the whole rest, or a rest without a disjunction. Any other
+// shape, such as a rest whose top-level || would bind around the conjunction, returns condition
+// unchanged, and its && then makes the job conditional.
+func withoutRenovateBranchSkip(condition string) string {
+	condition = strings.TrimSpace(condition)
+	if condition == renovateBranchSkip {
+		return ""
+	}
+	rest, found := strings.CutPrefix(condition, renovateBranchSkip+" && ")
+	if !found {
+		return condition
+	}
+	rest = strings.TrimSpace(rest)
+	if inner, enclosed := enclosedGroup(rest); enclosed {
+		return inner
+	}
+	if strings.Contains(rest, "||") {
+		return condition
+	}
+	return rest
+}
+
+// enclosedGroup returns the inside of expression when one pair of parentheses encloses all of it,
+// so that "(a || b)" yields "a || b" while "(a) || (b)" is no group.
+func enclosedGroup(expression string) (string, bool) {
+	if !strings.HasPrefix(expression, "(") || !strings.HasSuffix(expression, ")") {
+		return "", false
+	}
+	depth := 0
+	for i := 0; i < len(expression); i++ {
+		switch expression[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+		}
+		if depth == 0 && i < len(expression)-1 {
+			return "", false
+		}
+	}
+	return strings.TrimSpace(expression[1 : len(expression)-1]), depth == 0
+}
+
 // disjunctionContains reports whether condition is a disjunction holding term, so that the
 // condition is true wherever term is. Any conjunction or negated group is refused, because
 // its value is not knowable from the file.
