@@ -161,7 +161,7 @@ func (s *adoptSession) planDryRunRemoval(rel string) {
 // previewWorkflows is, in a dry run, what the run it previews writes before its branch-ruleset
 // step, for forge.RenderRulesetForRepository to read over the disk: the writes and removals the
 // dry run recorded (planDryRunWrite, planDryRunRemoval), the documentation gate's among them,
-// and the detected flavor's workflows (plannedFlavorWorkflows), which a dry run does not apply,
+// and the detected flavor's workflows (plannedFlavorWorkflows), which a dry run plans unwritten,
 // at every path no step recorded. A real run has written all of them by then and gets nil.
 func (s *adoptSession) previewWorkflows(ctx context.Context) (map[string][]byte, error) {
 	if !s.opts.DryRun {

@@ -5,8 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -62,24 +64,64 @@ func pluginPersonaDirs(rootDir string) []string {
 }
 
 // personaProjections reads every canonical persona once (readCanonicalAgent) and returns its
-// copy in each of dirs, persona by persona. It writes nothing; the copies are checked and
-// written by the caller, all of them checked before the first is written.
-func personaProjections(ctx context.Context, rootDir string, dirs []string) ([]projectionFile, error) {
-	names, err := listCanonicalAgents(ctx, rootDir)
+// copy in each of dirs, persona by persona. A persona in pending, the canonical personas a caller
+// writes before projecting (PlanAgentSurfacesOver), is projected with its pending bytes whether
+// or not it exists yet. It writes nothing; the copies are checked and written by the caller, all
+// of them checked before the first is written.
+func personaProjections(ctx context.Context, rootDir string, dirs []string, pending map[string][]byte) ([]projectionFile, error) {
+	added, err := pendingPersonaNames(pending)
+	if err != nil {
+		return nil, err
+	}
+	names, err := canonicalAgentNames(ctx, rootDir, added)
 	if err != nil {
 		return nil, err
 	}
 	files := make([]projectionFile, 0, len(names)*len(dirs))
 	for i := 0; i < len(names); i++ {
-		data, err := readCanonicalAgent(ctx, rootDir, names[i])
-		if err != nil {
-			return nil, err
+		data, ok := pending[names[i]]
+		if !ok {
+			if data, err = readCanonicalAgent(ctx, rootDir, names[i]); err != nil {
+				return nil, err
+			}
 		}
 		for j := 0; j < len(dirs); j++ {
 			files = append(files, projectionFile{rel: dirs[j] + "/" + names[i], data: data})
 		}
 	}
 	return files, nil
+}
+
+// pendingPersonaNames returns the names of pending, sorted. Each must be the file name of a
+// persona: a ".md" name with no directory, which is what listCanonicalAgents lists.
+func pendingPersonaNames(pending map[string][]byte) ([]string, error) {
+	if len(pending) > maxAgentProjections {
+		return nil, fmt.Errorf("%d pending personas exceed the %d %s holds", len(pending), maxAgentProjections, CanonicalAgentsRel)
+	}
+	names := slices.Sorted(maps.Keys(pending))
+	for _, name := range names {
+		if !strings.HasSuffix(name, ".md") || strings.ContainsAny(name, `/\`) || !filepath.IsLocal(name) {
+			return nil, fmt.Errorf("pending persona %q is not a persona file name", name)
+		}
+	}
+	return names, nil
+}
+
+// canonicalAgentNames lists the canonical personas once those named in added exist: the ones
+// under CanonicalAgentsRel and added, by name, once each, since a persona in added may already
+// exist. A set above the cap is refused.
+func canonicalAgentNames(ctx context.Context, rootDir string, added []string) ([]string, error) {
+	existing, err := listCanonicalAgents(ctx, rootDir)
+	if err != nil {
+		return nil, err
+	}
+	names := append(slices.Clone(existing), added...)
+	slices.Sort(names)
+	names = slices.Compact(names)
+	if len(names) > maxAgentProjections {
+		return nil, fmt.Errorf("%s would hold more than %d files", CanonicalAgentsRel, maxAgentProjections)
+	}
+	return names, nil
 }
 
 // notApplicablePersonaDirs lists the persona directories agent_clients leaves out. It is nil

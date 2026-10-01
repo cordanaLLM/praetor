@@ -951,9 +951,7 @@ func reconcileWorkingDirAndFlavor(ctx context.Context, s *adoptSession) error {
 		Action:  actionCreate,
 		Details: "Initialized canonical session state ledger and bug/question journals",
 	})
-	if !s.opts.DryRun {
-		s.applyDetectedFlavor(ctx)
-	}
+	s.applyDetectedFlavor(ctx)
 	return nil
 }
 
@@ -968,6 +966,10 @@ func reconcileWorkingDirAndFlavor(ctx context.Context, s *adoptSession) error {
 // PyTorch dependency. Before that it scaffolded go-library for a repository nothing matched and
 // discarded the apply report, so neither the written templates nor a total write failure reached
 // the adoption report.
+//
+// A dry run asks the flavor layer for the same apply as a plan (flavor.ApplyOptions.DryRun), so
+// it lists every template the real run writes, refreshes or keeps, and writes none (#366). It
+// used to skip the flavor entirely, and a reviewer never saw the templates the real run created.
 func (s *adoptSession) applyDetectedFlavor(ctx context.Context) {
 	name, err := flavor.ResolveForProfile(s.repoPath, s.arch)
 	if err != nil {
@@ -976,7 +978,8 @@ func (s *adoptSession) applyDetectedFlavor(ctx context.Context) {
 	}
 	// Templates only: the branch-ruleset step renders the ruleset once every workflow of the
 	// run exists, under the policy this run pins, and honours adoption.decline.
-	applied, err := flavor.ApplyFlavorWith(ctx, s.repoPath, name, flavor.ApplyOptions{TemplatesOnly: true})
+	applied, err := flavor.ApplyFlavorWith(ctx, s.repoPath, name,
+		flavor.ApplyOptions{TemplatesOnly: true, DryRun: s.opts.DryRun})
 	s.recordFlavorReport(applied)
 	if err != nil {
 		s.report.addError("apply flavor %s: %v", name, err)
@@ -1007,38 +1010,61 @@ func flavorSkipDetail(profile string, err error) string {
 // (flavor.ApplyReport.UnmetTemplates), such as typescript-node's npm CI job in a pnpm project.
 // Each is a warning: the ruleset derived next requires no check for it, and the operator learns
 // what the flavor audit will report missing.
+//
+// A path an earlier step of this run already listed (listedPaths) is left out. The real run
+// wrote that file before the flavor step, which then keeps it: a skip entry would repeat the
+// earlier step's entry. A dry run wrote nothing, so the flavor plan finds the path absent and
+// plans it as the flavor's own; leaving it out keeps the preview to what the real run records.
 func (s *adoptSession) recordFlavorReport(applied *flavor.ApplyReport) {
 	if applied == nil {
 		return
 	}
-	for _, rel := range applied.CreatedTemplates {
+	listed := s.report.listedPaths()
+	for _, rel := range unlisted(applied.CreatedTemplates, listed) {
 		s.report.recordCreated(rel, fmt.Sprintf("Scaffolded %s flavor template", applied.Flavor))
 	}
 	// An unedited earlier text of a template is Praetor's own, refreshed without --force
 	// (flavor.TemplateItem.Prior), so it is reconciled like any other earlier Praetor text.
-	for _, rel := range applied.RefreshedTemplates {
+	for _, rel := range unlisted(applied.RefreshedTemplates, listed) {
 		s.report.recordReconciled(rel, fmt.Sprintf("Refreshed an earlier Praetor text to the current %s flavor template", applied.Flavor))
 	}
-	for _, rel := range applied.SkippedTemplates {
-		s.report.ActionDetails = append(s.report.ActionDetails, ActionDetail{
-			Path:    rel,
-			Action:  actionSkip,
-			Details: fmt.Sprintf("Existing file kept; the %s flavor template was not written over it", applied.Flavor),
-		})
+	for _, rel := range unlisted(applied.SkippedTemplates, listed) {
+		s.report.recordNotApplicable(rel, fmt.Sprintf("Existing file kept; the %s flavor template was not written over it", applied.Flavor))
 	}
 	// A covered template is recorded against the file in use: the canonical name was never
 	// written, so reporting it would name a file the repository does not have.
 	for _, covered := range applied.CoveredTemplates {
-		s.report.ActionDetails = append(s.report.ActionDetails, ActionDetail{
-			Path:   covered.InUse,
-			Action: actionSkip,
-			Details: fmt.Sprintf("Existing configuration kept; the %s flavor template %s was not written beside it",
-				applied.Flavor, covered.Path),
-		})
+		if !listed[covered.InUse] {
+			s.report.recordNotApplicable(covered.InUse, fmt.Sprintf(
+				"Existing configuration kept; the %s flavor template %s was not written beside it", applied.Flavor, covered.Path))
+		}
 	}
 	for _, unmet := range applied.UnmetTemplates {
 		s.report.addWarning("flavor %s did not scaffold %s", applied.Flavor, unmet)
 	}
+}
+
+// listedPaths returns every path the report lists as written or verified so far, skipped
+// surfaces aside.
+func (r *AdoptReport) listedPaths() map[string]bool {
+	listed := make(map[string]bool, len(r.ActionDetails))
+	for i := 0; i < len(r.ActionDetails) && i < maxReportActions; i++ {
+		if r.ActionDetails[i].Action != actionSkip {
+			listed[r.ActionDetails[i].Path] = true
+		}
+	}
+	return listed
+}
+
+// unlisted returns the paths of rels that listed does not hold, in order.
+func unlisted(rels []string, listed map[string]bool) []string {
+	kept := make([]string, 0, len(rels))
+	for i := 0; i < len(rels) && i < maxReportActions; i++ {
+		if !listed[rels[i]] {
+			kept = append(kept, rels[i])
+		}
+	}
+	return kept
 }
 
 // lowerFirst lower-cases the first byte of an ASCII detail string.

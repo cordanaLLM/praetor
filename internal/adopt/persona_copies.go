@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/compiler"
@@ -65,9 +66,10 @@ var agentSurfaceLabels = projectionLabels{
 }
 
 // plannedAgentSurfaces returns the copies compiler.CompileAgentSurfaces writes for the repository
-// as it is now, as the compiled files the projection record reads.
-func plannedAgentSurfaces(ctx context.Context, repoPath string) ([]compiler.TargetFile, error) {
-	planned, err := compiler.PlanAgentSurfaces(ctx, repoPath)
+// as it is now, as the compiled files the projection record reads. pending holds the canonical
+// personas a dry run would have written by then (pendingPersonas), by file name; nil reads disk.
+func plannedAgentSurfaces(ctx context.Context, repoPath string, pending map[string][]byte) ([]compiler.TargetFile, error) {
+	planned, err := compiler.PlanAgentSurfacesOver(ctx, repoPath, pending)
 	if err != nil {
 		return nil, fmt.Errorf("plan agent definitions: %w", err)
 	}
@@ -81,7 +83,7 @@ func plannedAgentSurfaces(ctx context.Context, repoPath string) ([]compiler.Targ
 // the run found them, before the agent-definitions step refreshes the personas: the copies an
 // unedited earlier run left, which a write over them synchronizes rather than replaces.
 func priorAgentSurfaces(ctx context.Context, repoPath string) (priorVendorProjections, error) {
-	files, err := plannedAgentSurfaces(ctx, repoPath)
+	files, err := plannedAgentSurfaces(ctx, repoPath, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -100,9 +102,11 @@ func agentSurfaceDigests(files []compiler.TargetFile) priorVendorProjections {
 
 // projectAgentSurfaces writes every copy (compiler.CompileAgentSurfaces) and records each one
 // against prior (priorAgentSurfaces): created, synchronized, or replaced with a backup kept
-// before the write (replaceExistingAll).
+// before the write (replaceExistingAll). A dry run writes nothing and records the same entries
+// for the copies of the canonical personas its real run leaves (pendingPersonas), so the preview
+// names every copy the run projects and every hand edit it replaces (#366).
 func projectAgentSurfaces(ctx context.Context, s *adoptSession, prior priorVendorProjections) error {
-	files, err := plannedAgentSurfaces(ctx, s.repoPath)
+	files, err := plannedAgentSurfaces(ctx, s.repoPath, s.pendingPersonas())
 	if err != nil {
 		return err
 	}
@@ -123,6 +127,23 @@ func projectAgentSurfaces(ctx context.Context, s *adoptSession, prior priorVendo
 	return nil
 }
 
+// pendingPersonas returns, in a dry run, the canonical personas the agent-definitions step
+// planned to write or refresh (planDryRunWrite), keyed by file name, which a real run has on
+// disk by the time it projects; a real run, and a dry run that writes no persona, get none.
+func (s *adoptSession) pendingPersonas() map[string][]byte {
+	if !s.opts.DryRun {
+		return nil
+	}
+	personas := generatedPersonas()
+	pending := make(map[string][]byte, len(personas))
+	for i := 0; i < len(personas) && i < maxTranspileTargets; i++ {
+		if content := s.dryRunWrites[personas[i].rel]; content != nil {
+			pending[path.Base(personas[i].rel)] = content
+		}
+	}
+	return pending
+}
+
 // preflightPersonaBackupRoot refuses, on a run without --force, a backup root checkBackupRoot
 // refuses when the agent-definitions step may replace a hand-edited copy: an existing copy that
 // is not the copy of its canonical source as the run found it. That step backs such a copy up
@@ -134,7 +155,7 @@ func preflightPersonaBackupRoot(ctx context.Context, s *adoptSession) error {
 	if s.opts.Force {
 		return nil
 	}
-	files, err := plannedAgentSurfaces(ctx, s.repoPath)
+	files, err := plannedAgentSurfaces(ctx, s.repoPath, nil)
 	if err != nil {
 		return err
 	}

@@ -32,8 +32,8 @@ type PlannedTemplate struct {
 // differs is the repository's own, and one a requirement or an alternative withholds is never
 // written, so neither is listed; a profile with no flavor, or none that matches, has none.
 // Adoption names what scaffolded CI runs from this list, so it names only workflows the flavor
-// owns, and a dry run derives the ruleset's status checks from it, since a dry run applies no
-// flavor. The identity lookup that renders the bodies runs under ctx.
+// owns, and a dry run derives the ruleset's status checks from it, since a dry run writes no
+// workflow (ApplyOptions.DryRun). The identity lookup that renders the bodies runs under ctx.
 func PlannedWorkflows(ctx context.Context, repoPath, profile string) ([]PlannedTemplate, error) {
 	if ctx == nil {
 		return nil, errors.New("planned workflows require a context")

@@ -448,7 +448,7 @@ func reconcileGitHooks(ctx context.Context, s *adoptSession) error {
 	if err := reconcileEvasionHook(ctx, s, false); err != nil {
 		return err
 	}
-	if s.opts.DryRun || s.opts.SkipHookActivation {
+	if s.opts.SkipHookActivation {
 		return nil
 	}
 	return s.activateGitHooks(ctx, lefthookWritten)
@@ -608,7 +608,8 @@ func reconcileEvasionHook(ctx context.Context, s *adoptSession, vendored bool) e
 
 // activateGitHooks installs hooks through lefthook, or the fallback hook when lefthook
 // is unavailable. It never activates a lefthook.yml that praetor did not write: hook
-// commands are shell executed at the adopter's next commit.
+// commands are shell executed at the adopter's next commit. A dry run installs nothing and
+// records the hook the run would install (planHookActivation).
 func (s *adoptSession) activateGitHooks(ctx context.Context, lefthookWritten bool) error {
 	if !lefthookWritten && !s.lefthookConfigIsPraetor() {
 		s.report.recordSkipped(lefthookFile, "existing lefthook.yml is not byte for byte a Praetor rendering adoption can activate; "+
@@ -621,20 +622,44 @@ func (s *adoptSession) activateGitHooks(ctx context.Context, lefthookWritten boo
 		return nil
 	}
 	hookPath := filepath.Join(hooksDir, preCommitHook)
+	if s.opts.DryRun {
+		return s.planHookActivation(hookPath)
+	}
 	installed := fileExists(hookPath)
 	if _, err := util.RunCommand(ctx, s.repoPath, "lefthook", "install"); err == nil {
 		if !fileExists(hookPath) {
 			s.report.addError("git hooks: lefthook install completed but %s was not created", hookPath)
 			return nil
 		}
-		if installed {
-			s.report.recordReconciled(displayHookPath(s.repoPath, hookPath), "Re-activated local Git hooks via lefthook install over the existing hook")
-			return nil
-		}
-		s.report.recordCreated(displayHookPath(s.repoPath, hookPath), "Activated local Git hooks via lefthook install")
+		s.recordLefthookInstall(hookPath, installed)
 		return nil
 	}
 	return s.installFallbackHook(hookPath)
+}
+
+// planHookActivation records, in a dry run, the pre-commit hook activateGitHooks installs at
+// hookPath, and installs nothing: lefthook install when lefthook is on PATH, else the fallback
+// hook, which installFallbackHook plans without writing. Only running lefthook install shows
+// whether it succeeds; one that fails installs the fallback hook at the same path, so the planned
+// path and whether it is created or reconciled hold either way. The dry run used to skip hook
+// activation, so the hook the real run installs under .git/hooks was never previewed (#366).
+func (s *adoptSession) planHookActivation(hookPath string) error {
+	if _, err := exec.LookPath("lefthook"); err != nil {
+		return s.installFallbackHook(hookPath)
+	}
+	s.recordLefthookInstall(hookPath, fileExists(hookPath))
+	return nil
+}
+
+// recordLefthookInstall records the pre-commit hook lefthook install leaves at hookPath: created,
+// or reconciled over the hook installed beforehand.
+func (s *adoptSession) recordLefthookInstall(hookPath string, installed bool) {
+	display := displayHookPath(s.repoPath, hookPath)
+	if installed {
+		s.report.recordReconciled(display, "Re-activated local Git hooks via lefthook install over the existing hook")
+		return
+	}
+	s.report.recordCreated(display, "Activated local Git hooks via lefthook install")
 }
 
 // lefthookConfigIsPraetor reports whether the existing lefthook.yml is byte-identical to a
@@ -674,6 +699,7 @@ const foreignPreCommitNote = "existing pre-commit hook was not written by praeto
 // the hook is the repository's, and adoption neither replaces nor moves it. An existing
 // praetor hook is rewritten, which restores its mode, and listed as reconciled, never as
 // created. A pre-commit.bak an earlier adoption left under --force is reported, never removed.
+// A dry run records the same entry and writes nothing.
 func (s *adoptSession) installFallbackHook(hookPath string) error {
 	display := displayHookPath(s.repoPath, hookPath)
 	warnLegacyHookBackup(s, hookPath, display)
@@ -692,7 +718,7 @@ func (s *adoptSession) installFallbackHook(hookPath string) error {
 		}
 		existing = data
 	}
-	if err := writeRepoFile(hookPath, script, execPerm); err != nil {
+	if err := s.write(hookPath, script, execPerm); err != nil {
 		return err
 	}
 	switch {

@@ -1389,7 +1389,8 @@ the reported delta is that one line; a plain run keeps the file and warns
 Praetor output, so a contract whose every input selects it is bound to the written bytes, pins
 an earlier release bound included (`TestAdoptDeletedHarnessRebindsPinsAcrossReleases`). A
 `.paperclip/rules.md` you deleted stays deleted, under `--force` too
-(`TestAdoptForceKeepsDeletedRulesAbsent`).
+(`TestAdoptForceKeepsDeletedRulesAbsent`). One present where no harness exists is kept when
+adoption writes the harness beside it (`TestAdoptDryRunParity_Boundary_SecondaryScaffoldsListedAndKept`).
 
 ## Canonical context preparation
 

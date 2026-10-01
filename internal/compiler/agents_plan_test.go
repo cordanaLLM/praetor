@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -138,5 +139,69 @@ func TestPlanAgentSurfaces_Boundary_NoPersonasPlansNothing(t *testing.T) {
 	planned, err = PlanAgentSurfaces(t.Context(), root)
 	if err != nil || len(planned) != 0 {
 		t.Fatalf("plugin without sources planned %+v, err %v; want none", planned, err)
+	}
+}
+
+// Positive: PlanAgentSurfacesOver plans the copies of a pending persona that does not exist yet,
+// and of a pending text over one that does, as CompileAgentSurfaces writes them once the caller
+// has written those personas; it writes nothing.
+func TestPlanAgentSurfacesOver_Positive_PlansPendingPersonas(t *testing.T) {
+	root := planPersonaRoot(t, "# Planner, on disk\n")
+	pending := map[string][]byte{"planner.md": []byte("# Planner, pending\n"), "reviewer.md": []byte("# Reviewer\n")}
+	planned, err := PlanAgentSurfacesOver(t.Context(), root, pending)
+	if err != nil {
+		t.Fatalf("PlanAgentSurfacesOver: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, ".claude")); !os.IsNotExist(err) {
+		t.Fatalf("PlanAgentSurfacesOver wrote a persona directory (lstat err=%v)", err)
+	}
+	for name, content := range pending {
+		if err := os.WriteFile(filepath.Join(root, ".agents", "agents", name), content, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	compiled, err := CompileAgentSurfaces(t.Context(), io.Discard, root)
+	if err != nil {
+		t.Fatalf("CompileAgentSurfaces: %v", err)
+	}
+	if len(planned) != 8 || len(planned) != len(compiled) {
+		t.Fatalf("planned %d copies, compiled %d; want 8 each", len(planned), len(compiled))
+	}
+	for i := range compiled {
+		if compiled[i] != planned[i] {
+			t.Errorf("copy %d compiled %+v, planned %+v", i, compiled[i], planned[i])
+		}
+	}
+}
+
+// Negative: a pending name that is not a persona file name is refused, a path outside the
+// persona directory included.
+func TestPlanAgentSurfacesOver_Negative_RefusesNonPersonaNames(t *testing.T) {
+	root := planPersonaRoot(t, "# Planner\n")
+	for _, name := range []string{"notes.txt", "../escape.md", "nested/persona.md", `nested\persona.md`, ""} {
+		if _, err := PlanAgentSurfacesOver(t.Context(), root, map[string][]byte{name: []byte("# x\n")}); err == nil {
+			t.Errorf("pending name %q accepted", name)
+		}
+	}
+}
+
+// Boundary: no pending persona plans what PlanAgentSurfaces plans, and a pending set above the
+// cap a persona directory holds is refused.
+func TestPlanAgentSurfacesOver_Boundary_EmptyAndAboveCap(t *testing.T) {
+	root := planPersonaRoot(t, "# Planner\n")
+	plain, err := PlanAgentSurfaces(t.Context(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	over, err := PlanAgentSurfacesOver(t.Context(), root, map[string][]byte{})
+	if err != nil || len(over) != len(plain) {
+		t.Fatalf("an empty pending set planned %+v (err %v), want %+v", over, err, plain)
+	}
+	tooMany := make(map[string][]byte, maxAgentProjections+1)
+	for i := 0; i <= maxAgentProjections; i++ {
+		tooMany[fmt.Sprintf("persona-%03d.md", i)] = []byte("# x\n")
+	}
+	if _, err := PlanAgentSurfacesOver(t.Context(), root, tooMany); err == nil {
+		t.Fatal("a pending set above the cap was accepted")
 	}
 }

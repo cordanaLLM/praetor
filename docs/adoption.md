@@ -85,10 +85,32 @@ before its `branch-ruleset` step, not only the ones on disk:
   documentation gate's (`TestReplaceExisting_3D_DryRunPlansTheReplacedBytes` in
   `internal/adopt/replace_test.go`);
 - the workflows of the flavor the run applies for the profile it records
-  (`flavor.PlannedWorkflows`), which a dry run does not apply.
+  (`flavor.PlannedWorkflows`), which a dry run plans but does not write.
 
 On a first adoption the preview is therefore the file the run writes, byte for byte
 (`TestAdoptDryRun_Positive_FirstAdoptionPreviewIsTheWrittenRuleset`).
+
+### What a dry run lists
+
+`adopt --dry-run`, `--force` included, lists every path the real run writes, with the action the
+real run records, under the same effective policy (`AdoptReport.EffectivePolicy`):
+
+- the flavor templates, which the flavor layer plans through the decisions an apply makes,
+  writing nothing (`flavor.ApplyOptions.DryRun`, `internal/flavor/dry_run_test.go`);
+- each pinned catalog file below `.config/archetypes/`;
+- the persona copies of the canonical personas the run writes
+  (`compiler.PlanAgentSurfacesOver`);
+- the pre-commit hook that hook activation installs below `.git/hooks`. Only running
+  `lefthook install` shows whether it succeeds; a failed one installs the fallback hook at the
+  same path. A directory git does not know fails activation in both runs;
+- the ADR template and `.paperclip/rules.md` under their own paths. An existing one beside a
+  missing ADR index or harness is kept, not overwritten;
+- an existing file the run overwrites, as replaced (`Planned Replacements`), never as created.
+
+`internal/adopt/dryrun_parity_test.go` runs a dry run and a real run on two copies of one
+fixture, a first adoption and a forced re-adoption among them. It fails when either report has
+an entry the other lacks, when the real run writes a file no planned path names, when a report
+lists an existing file as created, or when the effective policies differ.
 
 ### Which jobs the ruleset requires
 

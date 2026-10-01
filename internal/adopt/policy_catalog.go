@@ -92,10 +92,8 @@ func reconcilePolicyCatalog(ctx context.Context, s *adoptSession) error {
 	if err := config.ValidateCatalogProjectionContext(ctx, s.repoPath, policy.CatalogArtifacts); err != nil {
 		return fmt.Errorf("validate prospective adoption catalog: %w", err)
 	}
-	for i := 0; i < len(writes) && i < maxAdoptPolicyFiles; i++ {
-		if err := publishCatalogFile(ctx, s, writes[i]); err != nil {
-			return err
-		}
+	if err := publishCatalogWrites(ctx, s, writes); err != nil {
+		return err
 	}
 	s.policy, err = config.LoadEffectivePolicyContext(ctx, config.EffectiveOptions{Root: s.repoPath, Audit: true})
 	if err != nil {
@@ -174,8 +172,8 @@ func publishCatalogFile(ctx context.Context, s *adoptSession, write catalogWrite
 
 // catalogReplacement returns the replacement of write when it overwrites adopter bytes: an
 // existing file that holds neither the pinned bytes nor an earlier Praetor text they succeed
-// (isLayoutOnlySuccessor). prepareCatalogWrites admits one only under --force. The real run
-// (publishCatalogFile) and the dry-run plan (planCatalogReplacements) share it.
+// (isLayoutOnlySuccessor). prepareCatalogWrites admits one only under --force. The real run and
+// the dry-run plan share it through publishCatalogFile.
 func catalogReplacement(write catalogWrite) (replacement, bool) {
 	content := write.artifact.Content
 	if !write.exists || bytes.Equal(write.before, content) || isLayoutOnlySuccessor(write.before, content) {
@@ -197,14 +195,15 @@ func (write catalogWrite) publish(ctx context.Context) error {
 	})
 }
 
-// planCatalogReplacements records, in a dry run, every pinned catalog file the run it previews
-// replaces (catalogReplacement), without a backup or a write.
-func planCatalogReplacements(ctx context.Context, s *adoptSession, writes []catalogWrite) error {
+// publishCatalogWrites publishes and records every prepared catalog write (publishCatalogFile).
+// The real run and the dry-run plan (planPolicyCatalog) both go through it, so a dry run lists
+// each pinned file as created, verified, refreshed or replaced, exactly as the run it previews
+// records it, and writes none. A dry run used to record one directory entry for the catalog
+// and list only the replacements, so the files the run created went unnamed (#366).
+func publishCatalogWrites(ctx context.Context, s *adoptSession, writes []catalogWrite) error {
 	for i := 0; i < len(writes) && i < maxAdoptPolicyFiles; i++ {
-		if replace, ok := catalogReplacement(writes[i]); ok {
-			if err := s.replaceExisting(ctx, replace); err != nil {
-				return err
-			}
+		if err := publishCatalogFile(ctx, s, writes[i]); err != nil {
+			return err
 		}
 	}
 	return nil
