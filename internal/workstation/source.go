@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/buildid"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -83,7 +84,7 @@ func cloneCommit(ctx context.Context, checkout, commit string) (string, func() e
 		err = snapshotGit(ctx, dir, "checkout", "--quiet", "--detach", commit)
 	}
 	if err != nil {
-		return "", nil, errors.Join(fmt.Errorf("workstation: snapshot %s from %s: %w", shortCommit(commit), checkout, err), cleanup())
+		return "", nil, errors.Join(fmt.Errorf("workstation: snapshot %s from %s: %w", buildid.Short(commit), checkout, err), cleanup())
 	}
 	return dir, cleanup, nil
 }

@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/buildid"
 	"github.com/cordanaLLM/praetor/internal/cifilter"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
@@ -231,7 +232,7 @@ func driftWaivers(ctx context.Context, bodyFile string, messages []string) ([]do
 	var waivers []docsref.Waiver
 	for index := 0; index < len(messages) && index <= maxAnalyzedCommits; index++ {
 		sha, message, _ := strings.Cut(messages[index], commitFieldSep)
-		waivers = append(waivers, docsref.CommitWaivers(shortSHA(sha), message)...)
+		waivers = append(waivers, docsref.CommitWaivers(buildid.Short(sha), message)...)
 	}
 	if bodyFile == "" {
 		return waivers, nil

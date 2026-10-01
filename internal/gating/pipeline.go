@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cordanaLLM/praetor/internal/baseline"
+	"github.com/cordanaLLM/praetor/internal/buildid"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/devcontainer"
 	"github.com/cordanaLLM/praetor/internal/flavor"
@@ -828,15 +829,7 @@ func runReceiptStage(ctx context.Context, cfg *stageConfig) (string, error) {
 
 	rep.ReceiptSignature = receipt.Signature
 	rep.ReceiptPath = receiptPath
-	return fmt.Sprintf("signed %s for %s@%s", ReceiptFileName, rep.Repository, shortSHA(rep.CommitSHA)), nil
-}
-
-// shortSHA abbreviates a commit sha for human-readable stage messages.
-func shortSHA(sha string) string {
-	if len(sha) <= 12 {
-		return sha
-	}
-	return sha[:12]
+	return fmt.Sprintf("signed %s for %s@%s", ReceiptFileName, rep.Repository, buildid.Short(rep.CommitSHA)), nil
 }
 
 func getGitCommitSHA(ctx context.Context, repoDir string) string {

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/cordanaLLM/praetor/internal/buildid"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/hiss"
 )
@@ -133,10 +134,11 @@ type Server struct {
 	complexity config.ComplexityPolicy
 }
 
-// NewServer instantiates an LSP server instance.
+// NewServer instantiates an LSP server instance that reports version in initialize. An empty
+// version reports what the build can prove (internal/buildid), never a plausible literal.
 func NewServer(in io.Reader, out io.Writer, version string) *Server {
 	if version == "" {
-		version = "v1.0.0"
+		version = buildid.Running("").String()
 	}
 	return &Server{
 		in:          bufio.NewReaderSize(in, 64*1024),

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/buildid"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/forge"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
@@ -213,7 +214,7 @@ func runForgeCheckCommits(ctx context.Context, args []string) error {
 			continue
 		}
 		violations++
-		fmt.Printf("[FAIL] %s: %s\n", shortSHA(sha), strings.Join(analysis.Errors, "; "))
+		fmt.Printf("[FAIL] %s: %s\n", buildid.Short(sha), strings.Join(analysis.Errors, "; "))
 	}
 
 	fmt.Printf("=== HISS-14 Commit Analysis: %d commit(s) in %s..%s ===\n", len(messages), *base, *head)
@@ -222,13 +223,4 @@ func runForgeCheckCommits(ctx context.Context, args []string) error {
 	}
 	fmt.Println("[PASS] Every breaking commit carries a mandatory Migration: footer.")
 	return nil
-}
-
-// shortSHA cuts a commit hash to the length that identifies it in output.
-func shortSHA(sha string) string {
-	trimmed := strings.TrimSpace(sha)
-	if len(trimmed) > shortRevisionLen {
-		return trimmed[:shortRevisionLen]
-	}
-	return trimmed
 }

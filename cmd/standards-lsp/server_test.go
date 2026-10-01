@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/buildid"
 	"github.com/cordanaLLM/praetor/internal/config"
 )
 
@@ -323,8 +324,10 @@ func TestLSP_Positive_LineDelimitedFallback(t *testing.T) {
 	if err != nil || !strings.Contains(string(payload), `"id":7`) {
 		t.Fatalf("line-delimited message must be accepted, got %q err=%v", payload, err)
 	}
-	if srv.version != "v1.0.0" {
-		t.Errorf("empty version must default to v1.0.0, got %q", srv.version)
+	// An empty version reports what the build proves, never the v1.0.0 literal every build
+	// used to report (#666).
+	if want := buildid.Running("").String(); srv.version != want || srv.version == "v1.0.0" {
+		t.Errorf("empty version must default to the build identity %q, got %q", want, srv.version)
 	}
 }
 

@@ -8,10 +8,17 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+
+	"github.com/cordanaLLM/praetor/internal/buildid"
 )
 
-// mcpVersion is set to dev-<source SHA256> by scripts/dev_mcp.py at build time.
-var mcpVersion = "v1.0.0"
+// version is written with -X main.version: by the release config (.goreleaser.yaml) for a
+// release, and as dev-<source SHA256> by scripts/dev_mcp.py for a development build. It must
+// stay an empty var: the linker cannot write a const, and a non-empty default is reported by
+// every build that was not given one. Without it the server reports what the build can prove
+// through internal/buildid, the identity standardsctl and standards-lsp of the same build
+// report too (#666).
+var version = ""
 
 // authTokenEnv names the environment variable consulted when -auth-token is empty.
 const authTokenEnv = "STANDARDS_MCP_TOKEN"
@@ -28,8 +35,9 @@ func main() {
 	versionFlag := flag.Bool("version", false, "Print server version and exit")
 	flag.Parse()
 
+	serverVersion := buildid.Running(version).String()
 	if *versionFlag {
-		fmt.Printf("standards-mcp %s\n", mcpVersion)
+		fmt.Printf("standards-mcp %s\n", serverVersion)
 		return
 	}
 
@@ -43,7 +51,7 @@ func main() {
 
 	server, err := NewServerWithOptions(ServerOptions{
 		RootDir:               *rootDir,
-		Version:               mcpVersion,
+		Version:               serverVersion,
 		AllowOutsideRoot:      *allowOutside,
 		AllowRemoteBenchmarks: *allowRemote,
 		AuthToken:             token,
@@ -81,11 +89,11 @@ func runTransport(ctx context.Context, server *Server, transport, host string, p
 		return server.RunStdio(ctx)
 
 	case "http":
-		fmt.Fprintf(os.Stderr, "standards-mcp %s listening on HTTP at http://%s/\n", mcpVersion, addr)
+		fmt.Fprintf(os.Stderr, "standards-mcp %s listening on HTTP at http://%s/\n", server.version, addr)
 		return server.RunHTTP(ctx, addr)
 
 	case "sse":
-		fmt.Fprintf(os.Stderr, "standards-mcp %s listening on SSE at http://%s/sse\n", mcpVersion, addr)
+		fmt.Fprintf(os.Stderr, "standards-mcp %s listening on SSE at http://%s/sse\n", server.version, addr)
 		return server.RunSSE(ctx, addr)
 
 	default:
