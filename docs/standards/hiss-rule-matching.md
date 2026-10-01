@@ -162,8 +162,10 @@ argument is that sentinel (`AbortsHTTPResponse` in `internal/hiss/go_ast.go`):
 - The argument is resolved through the file's imports, so `http.ErrAbortHandler`, an alias such as
   `web.ErrAbortHandler`, and `ErrAbortHandler` under a dot import of `net/http` are the sentinel.
 - A local or package variable named `ErrAbortHandler`, another package's `ErrAbortHandler`, a
-  binding that shadows the package name, a wrapped sentinel (`fmt.Errorf("%w", ...)`), a recovered
-  value re-panicked as is, and a second argument are still reported.
+  receiver, parameter or local of the enclosing declared function that shadows the package name, a
+  wrapped sentinel (`fmt.Errorf("%w", ...)`), a recovered value re-panicked as is, and a second
+  argument are still reported. A function literal assigned at package level has no enclosing
+  declared function, so a parameter of it that shadows the package name is not seen.
 - `standards-lsp` asks the same function, so the editor and `praetorctl audit` agree
   (`refusedPanic` in `cmd/standards-lsp/server.go`).
 

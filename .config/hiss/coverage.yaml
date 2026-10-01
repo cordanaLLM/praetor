@@ -330,8 +330,9 @@ rules:
           reported. A panic whose single argument is net/http.ErrAbortHandler, reached through
           a plain, aliased or dot import, is not reported, because net/http documents it as
           the way a handler aborts its response and recovers it (AbortsHTTPResponse, issue
-          #331). A same-named local, another package's ErrAbortHandler, a shadowed package name
-          and a wrapped sentinel are still reported. The sentinel is recovered only on the
+          #331). A same-named local, another package's ErrAbortHandler, a package name
+          shadowed inside the enclosing declared function and a wrapped sentinel are still
+          reported; a parameter of a package-level function literal is not seen as shadowing. The sentinel is recovered only on the
           goroutine net/http runs the handler on, and which goroutine runs a function is not
           visible in syntax, so gap/abort-handler-goroutine.go records the sentinel panicked
           on a goroutine the code started itself, which ends the process unreported.
