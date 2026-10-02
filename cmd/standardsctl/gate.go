@@ -114,19 +114,21 @@ func runGateRun(args []string) error {
 		return fmt.Errorf("gating pipeline execution failed: %w", err)
 	}
 
-	if *asJSON {
+	return emitGatingReport(rep, *asJSON)
+}
+
+// emitGatingReport prints the pipeline report, as JSON or as text, and turns a rejected run into
+// the command's error.
+func emitGatingReport(rep *gating.PipelineReport, asJSON bool) error {
+	if asJSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		if encErr := enc.Encode(rep); encErr != nil {
-			return fmt.Errorf("encode gating report: %w", encErr)
+		if err := enc.Encode(rep); err != nil {
+			return fmt.Errorf("encode gating report: %w", err)
 		}
-		if rep.Status == gating.StatusRejected {
-			return fmt.Errorf("repository rejected by gating pipeline")
-		}
-		return nil
+	} else {
+		printGatingReport(rep)
 	}
-
-	printGatingReport(rep)
 	if rep.Status == gating.StatusRejected {
 		return fmt.Errorf("repository rejected by gating pipeline")
 	}
