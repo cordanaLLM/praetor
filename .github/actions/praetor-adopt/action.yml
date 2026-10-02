@@ -20,7 +20,7 @@ inputs:
     required: false
     default: "false"
   record-baseline:
-    description: "adopt: pass --record-baseline. true records existing debt infractions into .standards-baseline.json when the repository has none; a baseline that already exists is kept byte for byte, rescanned, and the report states what praetorctl baseline --verify says about it, so a re-adoption never accepts new debt. false skips the scan. Re-recording an existing baseline is not an input: run praetorctl adopt --rerecord-baseline or praetorctl baseline --record"
+    description: "adopt: pass --record-baseline. true records existing debt infractions into .standards-baseline.json when the repository has none; a baseline that already exists is kept byte for byte, rescanned, and the report states what praetorctl baseline --verify says about it, so a re-adoption never accepts new debt. When that verdict is a rejection the report ends with 'not ready yet: Debt Baseline' in place of the success line, the step still exits 0, and praetorctl audit is what fails on the debt. false skips the scan. Re-recording an existing baseline is not an input: run praetorctl adopt --rerecord-baseline or praetorctl baseline --record"
     required: false
     default: "true"
   go-version:
@@ -34,7 +34,7 @@ inputs:
 
 outputs:
   report:
-    description: "Combined output of the adoption / dogfooding run, written by the run step"
+    description: "Combined output of the adoption / dogfooding run, written by the run step. An adopt run that leaves a pillar pending (the Verification Gate, or a kept baseline the rescan rejects) exits 0 and closes this report with 'not ready yet: <pillars>' in place of the success line"
     value: ${{ steps.run-praetor.outputs.report }}
   binary:
     description: "Absolute path of the standardsctl the build step compiled, for a later step of the same job that has to run that same binary"

@@ -399,8 +399,11 @@ needs `source_root`, a dry run included
 repository that already has the file the tool prints `Existing Legacy Debt Baseline: <n>
 infractions` and, below it, the ratchet verdict on the kept file, the line `praetorctl adopt`
 prints (`adopt.BaselineRatchet.Line`; `TestFormatAdoptionBaselineStatesAndDryRunLabels` in
-`cmd/standards-mcp/tools_test.go`). The tool has no argument that re-records an existing
-baseline; that is `praetorctl adopt --rerecord-baseline` or `praetorctl baseline --record`
+`cmd/standards-mcp/tools_test.go`). A rejecting verdict stays in that line and in a `[WARN]`
+entry that lists the findings: the tool prints no closing line, where `praetorctl adopt` ends
+with `not ready yet: Debt Baseline` in place of its success line. The tool has no argument that
+re-records an existing baseline; that is `praetorctl adopt --rerecord-baseline` or
+`praetorctl baseline --record`
 ([the baseline on a re-adoption](../adoption.md#the-baseline-on-a-re-adoption)).
 
 A dry run also prints the branch ruleset preview the CLI prints: the action

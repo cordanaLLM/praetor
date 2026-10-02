@@ -107,7 +107,8 @@ the verification plan: when the plan is `unavailable`, the `verify-all`
 adoption writes can only exit 1, so the pillar is `warned`, never `✓` or
 `planned`, and carries the plan's warning. An applied run whose Verification
 Gate is warned, failed or unreached ends with `not ready yet: Verification
-Gate` instead of the success line. Only the Verification Gate counts: a
+Gate` instead of the success line, and exits 0: a pending pillar is not an
+error of the run. Among the pillars only the Verification Gate counts: a
 warning on another pillar is informational and stays on that pillar's line,
 such as the notice that an existing `.devcontainer` was preserved, which every
 plain re-run repeats, and a declined pillar does not count either
@@ -117,7 +118,14 @@ plain re-run repeats, and a declined pillar does not count either
 `TestPrintAdoptReportQualifiesSuccessWithPendingPillars` in
 `cmd/standardsctl/adopt_test.go`, and end to end
 `TestAdoptExistingDevContainerKeepsTheSuccessLine` in
-`cmd/standardsctl/adopt_success_line_test.go`).
+`cmd/standardsctl/adopt_success_line_test.go`). One more thing is pending
+under the same rule: a kept `.standards-baseline.json` that the rescan
+rejects. It is named `Debt Baseline` in the same line, after the Verification
+Gate when both are pending, and two lines below it give the verdict and what
+resolves it ([the baseline on a re-adoption](../adoption.md#the-baseline-on-a-re-adoption),
+`TestPendingPillars_Baseline_3D` in `internal/adopt/baseline_pending_test.go`).
+It has no line among the Governance Pillars; the debt summary carries its
+verdict.
 
 Repositories declaring `docs:seo-portal` also receive a locked Markdown gate,
 its dedicated required CI workflow, and private scratch-link protection. The

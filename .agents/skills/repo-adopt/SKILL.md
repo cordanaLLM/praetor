@@ -27,6 +27,7 @@ Adopt any codebase—greenfield, partially setup, or legacy brownfield—into `c
      ```
    - For brownfield legacy codebases, ensure `--record-baseline` is active (default): first adoption records existing debt into `.standards-baseline.json`.
    - Re-adoption keeps existing baseline, reports ratchet verdict; never pass `--rerecord-baseline` to hide new findings. Fix them, or operator accepts debt with `--rerecord-baseline --allow-increase --reason=<why>`.
+   - Rejected verdict: run exits 0, ends `not ready yet: Debt Baseline`, no success line; `praetorctl audit` fails until resolved.
 
 3. **Verify Scaffolding & Context Transpilation**:
    - Check generated files:
