@@ -514,9 +514,9 @@ func TestCavemanFloorPositive(t *testing.T) {
 	}
 }
 
-// TestCavemanFloorANSIEscapes pins #713: ANSI escape sequence parameters are not counted as
-// numbers, so a rewrite removing colour codes passes the clarity floor. A real number lost
-// beside an escape sequence fails, and coloured IDs or directives lost fail their rules.
+// TestCavemanFloorANSIEscapes pins #713 through the command: a rewrite that removes colour
+// codes holds the floor, and a number, id or directive lost beside an escape fails its rule,
+// on a line below an OSC left unterminated on its own line too.
 func TestCavemanFloorANSIEscapes(t *testing.T) {
 	dir := t.TempDir()
 	before := writeFixtureFile(t, dir, "before.md", "a \033[31mMUST\033[0m b\n")
@@ -525,26 +525,21 @@ func TestCavemanFloorANSIEscapes(t *testing.T) {
 	if err != nil || !strings.Contains(out, "after.md: PASS findings=0") {
 		t.Fatalf("issue #713 reproduction files must pass: err=%v\n%s", err, out)
 	}
-
-	lossyBefore := writeFixtureFile(t, dir, "lossy_before.md", "a \033[31mred 7\033[0m b\n")
-	lossyAfter := writeFixtureFile(t, dir, "lossy_after.md", "a red b\n")
-	out, err = runCavemanCLI(t, "", "floor", lossyBefore, lossyAfter)
-	if err == nil || !strings.Contains(out, "lossy_before.md:1 F9 number-lost: 7") {
-		t.Fatalf("real number lost beside escape must fail: err=%v\n%s", err, out)
+	cases := map[string]struct{ before, after, want string }{
+		"number": {"a \033[31mred 7\033[0m b\n", "a red b\n", "number_before.md:1 F9 number-lost: 7"},
+		"id":     {"rule \033[1mHISS-17\033[0m applies\n", "rule applies\n", "id_before.md:1 F3 id-lost: HISS-17"},
+		"must":   {"x \033[31mMUST\033[0m y\n", "x y\n", "must_before.md:0 F6 must-dropped: 1 -> 0"},
+		"osc":    {"log \033]0;title\nrule HISS-17\ndone\a end\n", "log 0;title\ndone end\n", "osc_before.md:2 F3 id-lost: HISS-17"},
 	}
-
-	idBefore := writeFixtureFile(t, dir, "id_before.md", "rule \033[1mHISS-17\033[0m applies\n")
-	idAfter := writeFixtureFile(t, dir, "id_after.md", "rule applies\n")
-	out, err = runCavemanCLI(t, "", "floor", idBefore, idAfter)
-	if err == nil || !strings.Contains(out, "id_before.md:1 F3 id-lost: HISS-17") {
-		t.Fatalf("coloured id lost must fail F3: err=%v\n%s", err, out)
-	}
-
-	mustBefore := writeFixtureFile(t, dir, "must_before.md", "x \033[31mMUST\033[0m y\n")
-	mustAfter := writeFixtureFile(t, dir, "must_after.md", "x y\n")
-	out, err = runCavemanCLI(t, "", "floor", mustBefore, mustAfter)
-	if err == nil || !strings.Contains(out, "must_before.md:0 F6 must-dropped: 1 -> 0") {
-		t.Fatalf("coloured MUST lost must fail F6: err=%v\n%s", err, out)
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			lossyBefore := writeFixtureFile(t, dir, name+"_before.md", tc.before)
+			lossyAfter := writeFixtureFile(t, dir, name+"_after.md", tc.after)
+			out, err := runCavemanCLI(t, "", "floor", lossyBefore, lossyAfter)
+			if err == nil || !strings.Contains(out, tc.want) {
+				t.Fatalf("fact lost beside an escape must fail %q: err=%v\n%s", tc.want, err, out)
+			}
+		})
 	}
 }
 

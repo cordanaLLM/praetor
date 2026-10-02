@@ -106,3 +106,27 @@ func TestCompressKeepsSpansAndFrontMatter(t *testing.T) {
 		})
 	}
 }
+
+// TestCompressUnterminatedEscapes pins the reader Compress shares with Floor (stripANSI): an
+// escape left unterminated on its line stays text, and so does every line below it. An OSC
+// body used to cross line ends, so Compress deleted the lines down to the next BEL or ST and
+// each case that ends a line down came out as "log end\n" (#713).
+func TestCompressUnterminatedEscapes(t *testing.T) {
+	between := "\nrule HISS-17 MUST hold 42 items\nnever drop `foo`\ndone"
+	cases := map[string]struct{ in, want string }{
+		"osc ended by bel a line down": {floorOSCText("\x07"), "log 0;title" + between + "\x07 end\n"},
+		"osc ended by st a line down":  {floorOSCText("\x1b\\"), "log 0;title" + between + " end\n"},
+		"osc ended by bel after crlf":  {"log \x1b]0;title\r\nrule 42\r\ndone\x07 end\r\n", "log 0;title\nrule 42\ndone\x07 end\n"},
+		"osc ended on its line":        {"log \x1b]0;title\x07\nrule 42\n", "log\nrule 42\n"},
+		"osc without terminator":       {"log \x1b]0;build 42\nnext\n", "log 0;build 42\nnext\n"},
+		"csi without final byte":       {"cut \x1b[38;5\nnext m\n", "cut \x1b[38;5\nnext m\n"},
+		"csi cut before blank, letter": {"x \x1b[38;5 MUST y 9\n", "x UST y 9\n"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got, _ := Compress(tc.in); got != tc.want {
+				t.Fatalf("Compress(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}

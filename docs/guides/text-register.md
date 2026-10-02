@@ -650,9 +650,17 @@ the one the documentation reference check reads commands from. The fixtures unde
 `internal/caveman/testdata/floor/<case>/` replay each rule in both directions
 (`TestFloorFixturesReplayBothWays` in `internal/caveman/fixtures_test.go`).
 
+The floor reads both texts with ANSI escape sequences removed (`stripANSI` in
+`internal/caveman/ansi.go`, the reader `caveman.Compress` uses), so a colour code is no fact
+and a coloured id, directive, number or code word is the one it shows, while an escape left
+unterminated on its line stays text with its digits and words
+(`TestFloorANSIEscapesEveryRule` and `TestFloorOSCEndsOnItsLine` in
+`internal/caveman/floor_test.go`).
+
 ### Safe compression
 
-`caveman.Compress` removes ANSI escapes, turns CRLF into LF, trims and collapses blanks in
+`caveman.Compress` removes ANSI escapes (an escape left unterminated on its line stays text,
+and so do the lines below it), turns CRLF into LF, trims and collapses blanks in
 prose lines outside code spans, collapses blank-line runs and folds identical consecutive
 prose lines into one line ending in `(xN)`. Fenced code (blockquoted fences included), YAML
 front matter, structured lines and off regions keep their bytes, and so does a code span
