@@ -1,4 +1,4 @@
-package adopt
+package util
 
 import "strings"
 
@@ -152,7 +152,7 @@ func makefileLineKind(line string) string {
 // reports a colon outside those calls, which the expansion may carry into a rule. The walk ends
 // where Make stops reading the line: at a comment or the ";" of an inline recipe.
 func makefileBareExpansion(line string) (expands, colon bool) {
-	for i := 0; i < len(line) && i < maxMakefileLineBytes; {
+	for i := 0; i < len(line) && i < MaxMakefileLineBytes; {
 		kind, width := makefileOperatorAt(line, i)
 		if kind == makefileEndToken {
 			break
@@ -169,7 +169,7 @@ func makefileBareExpansion(line string) (expands, colon bool) {
 // makefileReferenceHoldsColon reports whether reference text holds a colon outside the info,
 // warning and error calls nested in it and outside an escaped "$$".
 func makefileReferenceHoldsColon(reference string) bool {
-	for i := 0; i < len(reference) && i < maxMakefileLineBytes; i += makefileColonScanStep(reference[i:]) {
+	for i := 0; i < len(reference) && i < MaxMakefileLineBytes; i += makefileColonScanStep(reference[i:]) {
 		if reference[i] == ':' {
 			return true
 		}
@@ -209,7 +209,7 @@ func makefileSilentCallWidth(text string) int {
 func makefileContinues(line string) bool {
 	line = strings.TrimSuffix(line, "\r")
 	run := 0
-	for run < len(line) && run < maxMakefileLineBytes && line[len(line)-1-run] == '\\' {
+	for run < len(line) && run < MaxMakefileLineBytes && line[len(line)-1-run] == '\\' {
 		run++
 	}
 	return run%2 == 1
