@@ -23,7 +23,6 @@ const (
 	cavemanUsage = "usage: praetorctl caveman check [--kind=message|brief|return|context] [--surface=<name>] [--root=.] [--ext=.md,.py] [--selector=<path>] <file|dir|-> [...]\n" +
 		"       praetorctl caveman check --root=. --configured-sources [--max-words=N] [--max-tokens=N]\n" +
 		"       praetorctl caveman floor <before> <after>\n" +
-		"       praetorctl caveman compress [--stats|--in-place] <file|dir|-> [...]\n" +
 		"       praetorctl caveman estimate <file|dir|-> [...]\n" +
 		"       praetorctl caveman estimate --base=<git-rev> <file|dir> [...]"
 	// maxCavemanFiles bounds the files one invocation reads, directories expanded (HISS-02).
@@ -45,8 +44,8 @@ type cavemanInput struct {
 	provenance   string
 }
 
-// runCaveman lints agent-facing text (check), proves a rewrite lost nothing (floor), applies
-// the cleanups that cannot change meaning (compress) or measures its token cost (estimate).
+// runCaveman lints agent-facing text (check), proves a rewrite lost nothing (floor) or
+// measures its token cost (estimate).
 func runCaveman(args []string) error {
 	// cavemanCommand bounds itself by contextopt.MaxDuration.
 	return cavemanCommand(rootContext(), args, os.Stdin, os.Stdout)
@@ -63,8 +62,6 @@ func cavemanCommand(ctx context.Context, args []string, stdin io.Reader, out io.
 		return cavemanCheck(ctx, args[1:], stdin, out)
 	case "floor":
 		return cavemanFloor(ctx, args[1:], stdin, out)
-	case "compress":
-		return cavemanCompress(ctx, args[1:], stdin, out)
 	case "estimate":
 		return cavemanEstimate(ctx, args[1:], stdin, out)
 	}
@@ -584,21 +581,13 @@ func cavemanEstimate(ctx context.Context, args []string, stdin io.Reader, out io
 // and, for "-", standard input. Files go through the bounded snapshot reader (1 MiB, UTF-8,
 // symlink-resistant) that compile-context uses.
 func readCavemanInputs(ctx context.Context, args []string, stdin io.Reader) ([]cavemanInput, error) {
+	if len(args) == 0 {
+		return nil, errors.New(cavemanUsage)
+	}
 	paths, err := expandCavemanPaths(ctx, args, cavemanProseExtensions())
 	if err != nil {
 		return nil, err
 	}
-	return readCavemanPaths(ctx, paths, stdin)
-}
-
-// cavemanProseExtensions is what a directory expands to wherever no --ext says otherwise:
-// Markdown, the one format the lint, the estimate and the compression read as prose.
-func cavemanProseExtensions() map[string]bool {
-	return map[string]bool{cavemanProseExtension: true}
-}
-
-// readCavemanPaths reads every expanded path in order, "-" being standard input.
-func readCavemanPaths(ctx context.Context, paths []string, stdin io.Reader) ([]cavemanInput, error) {
 	inputs := make([]cavemanInput, 0, len(paths))
 	for _, path := range paths {
 		input, err := readCavemanInput(ctx, path, stdin)
@@ -608,6 +597,12 @@ func readCavemanPaths(ctx context.Context, paths []string, stdin io.Reader) ([]c
 		inputs = append(inputs, input)
 	}
 	return inputs, nil
+}
+
+// cavemanProseExtensions is what a directory expands to wherever no --ext says otherwise:
+// Markdown, the one format the lint and the estimate read as prose.
+func cavemanProseExtensions() map[string]bool {
+	return map[string]bool{cavemanProseExtension: true}
 }
 
 func readCavemanInput(ctx context.Context, path string, stdin io.Reader) (cavemanInput, error) {
