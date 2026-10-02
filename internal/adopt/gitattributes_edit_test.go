@@ -12,8 +12,9 @@ import (
 
 // The .gitattributes block is audit-locked, so it follows the replace-vs-refresh contract: an
 // unedited block is verified or moved to the tail without a backup, an edited block is restored
-// only under --force, as a replace with its delta and a backup, and a disable refuses to remove
-// an edited block.
+// only under --force, as a replace with its delta and a backup, and a disable that would remove
+// the block refuses an edited one (TestPreflightAttributes_Boundary_EditedBlock covers the
+// disable that keeps the DevContainer rule).
 
 // editedAttributeBlock is figureAttributeBlock with one rule an operator added inside it.
 var editedAttributeBlock = strings.Replace(figureAttributeBlock, "docs/figures/*.ts text eol=lf\n",
@@ -57,7 +58,8 @@ func TestReconcileGitAttributes_Positive_EditedBlockReplacedUnderForce(t *testin
 }
 
 // Negative: without --force an edited block is refused and left as it is, with no backup; a
-// disable refuses to remove an edited block, in its preflight and in the step itself.
+// disable that removes the block, dev-container being declined, refuses to remove an edited
+// one under --force too, in its preflight and in the step itself.
 func TestReconcileGitAttributes_Negative_EditedBlockRefused(t *testing.T) {
 	edited := "* text=auto\n\n" + editedAttributeBlock
 	s, err := reconcileAttributes(t, edited, AdoptOptions{})
@@ -68,6 +70,7 @@ func TestReconcileGitAttributes_Negative_EditedBlockRefused(t *testing.T) {
 		t.Fatalf("the refused .gitattributes changed or was backed up: %q", got)
 	}
 	disable := backupSession(t, map[string]string{gitAttributesFile: edited}, true, AdoptOptions{Force: true})
+	disable.declined = []string{devContainerStep}
 	if err := preflightDocumentationAttributes(t.Context(), disable); err == nil || !strings.Contains(err.Error(), "refusing to remove the edited managed attribute block") {
 		t.Fatalf("the disable preflight accepted an edited block: %v", err)
 	}

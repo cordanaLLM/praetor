@@ -20,21 +20,24 @@ import (
 // A surface whose files audit compares byte for byte declares the .gitattributes rules that
 // keep a checkout from converting them. The DevContainer bundle declares one
 // (devcontainer.Attributes): its Dockerfile is compared against its render as raw bytes, so a
-// Windows checkout with core.autocrlf=true would otherwise fail audit on a directory nobody
-// edited (#313). A managed asset family declares its own (managedasset.Family.Attributes): the
+// Windows checkout with core.autocrlf=true would otherwise fail audit on a file nobody edited
+// (#313). A managed asset family declares its own (managedasset.Family.Attributes): the
 // figure engine hashes its render files, the specs and the committed outputs
 // (docs/adr/0016-figures-for-adopters.md, section 5). Adoption writes the rules of every such
 // surface (ManagedAttributes) as one block at the tail of .gitattributes, so a later operator
 // rule cannot override them, and removes the block once no surface declares a rule. Every line
-// outside the block is the operator's and is kept; a rule there that names the DevContainer
-// directory and sets another line-ending treatment is refused instead of silently overridden
-// (refuseDevContainerOverride).
+// outside the block is the operator's and is kept. The DevContainer rule names the one file
+// adoption writes there, so no file of the operator's beside the bundle changes its attributes;
+// an operator rule inside the DevContainer directory that matches that file and contradicts the
+// rule is refused instead of silently overridden (refuseDevContainerOverride).
 //
 // Audit checks the block byte for byte, so it follows the replace-vs-refresh contract of every
 // audit-locked file: an unedited block is verified, refreshed to the rules of this run, or
-// moved to the tail with every operator line kept; a block whose lines were edited is restored
-// only under --force, as a replace with its line delta and a backup, and a documentation
-// disable refuses to touch it, as it refuses an edited Makefile documentation block. Unedited
+// moved to the tail with every operator line kept; a block whose lines were edited is refused
+// by a plain run before its first write (preflightManagedAttributes) and restored under
+// --force, as a replace with its line delta and a backup. Only a run that would remove the
+// block, with the documentation facet disabled and dev-container declined, refuses an edited
+// one under --force too, as a disable refuses an edited Makefile documentation block. Unedited
 // means the block of one of canonicalAttributeRuleSets, which holds the documentation-only
 // block every release before the DevContainer rule wrote; a change to the rules must keep the
 // outgoing block there, as priorDocumentationMakefileBlocks does for the Makefile.
@@ -50,6 +53,9 @@ const (
 	// devContainerStep is the adoption step that writes the DevContainer bundle; the attribute
 	// block carries the bundle's rule unless adoption.decline lists it.
 	devContainerStep = "dev-container"
+	// maxAttributePatternDepth bounds the leading "**/" components read off one attribute
+	// pattern (HISS-02).
+	maxAttributePatternDepth = 16
 )
 
 // gitAttributesTailBlock is the attribute block adoption owns at the tail of .gitattributes.
@@ -104,8 +110,8 @@ func ManagedGitAttributesBlock(rules []string) string {
 
 // mergeGitAttributes returns text with the block of rules as its tail, or without any block
 // when rules is empty. Every line outside the block is the operator's and is kept. An operator
-// rule the DevContainer rule would override is refused, and so is removing a block whose lines
-// differ from every block adoption writes.
+// rule the DevContainer rule would contradict is refused, and so is removing a block whose
+// lines differ from every block adoption writes.
 func mergeGitAttributes(text string, rules []string) (string, error) {
 	block := gitAttributesTailBlock()
 	if len(rules) > 0 {
@@ -140,9 +146,9 @@ func gitAttributesBlockEdited(text string) (bool, error) {
 }
 
 // refuseDevContainerOverride refuses to merge rules holding the DevContainer rule into text
-// while an operator line of text names the DevContainer directory and gives text or eol another
-// state (overridesDevContainerRule). The block sits at the tail and git lets the later line win,
-// so merging would silently override what the operator wrote; the refusal names the rule.
+// while an operator line of text contradicts it (overridesDevContainerRule). The block sits at
+// the tail and git lets the later line win, so merging would silently override what the
+// operator wrote for that file; the refusal names the rule.
 func refuseDevContainerOverride(text string, rules []string) error {
 	managed := DevContainerAttributes()
 	if len(managed) == 0 || !slices.Contains(rules, managed[0]) {
@@ -154,40 +160,61 @@ func refuseDevContainerOverride(text string, rules []string) error {
 	}
 	for index := 0; index < len(scan.kept) && index < maxGitAttributesLines; index++ {
 		if overridesDevContainerRule(scan.kept[index]) {
-			return fmt.Errorf("%s rule %q gives the DevContainer directory another line-ending treatment than the managed rule %q, "+
+			return fmt.Errorf("%s rule %q gives %s another line-ending treatment than the managed rule %q, "+
 				"which adoption writes at the tail of the file, where it would override that rule; remove or change the rule, "+
 				"or list %s in adoption.decline, then rerun adopt",
-				gitAttributesFile, strings.TrimSpace(scan.kept[index]), managed[0], devContainerStep)
+				gitAttributesFile, strings.TrimSpace(scan.kept[index]), devcontainer.CheckoutPinnedFile, managed[0], devContainerStep)
 		}
 	}
 	return nil
 }
 
-// overridesDevContainerRule reports whether line is an attribute rule whose pattern names a
-// path inside the DevContainer directory and whose attributes give text or eol a state other
-// than the managed rule's (lineEndingOverride). A rule on a wider pattern, such as *.json, is
-// the operator's default for the repository, which the managed rule overrides for this one
-// directory by design; a rule that only sets other attributes is left alone.
+// overridesDevContainerRule reports whether line is an attribute rule whose pattern names the
+// DevContainer directory and can match the file the managed rule pins
+// (attributePatternMatches), and whose attributes give text or eol a state the managed rule
+// contradicts (lineEndingOverride). A rule on any other file of the directory is the
+// operator's and untouched by the managed rule. A rule on a wider pattern, such as *.praetor or
+// *, is the operator's default for the repository, which the managed rule overrides for the one
+// file adoption writes, by design; a rule that only sets other attributes is left alone.
 func overridesDevContainerRule(line string) bool {
 	fields := strings.Fields(line)
 	if len(fields) < 2 || strings.HasPrefix(fields[0], "#") {
 		return false
 	}
-	pattern := strings.TrimPrefix(strings.TrimPrefix(fields[0], `"`), "/")
-	if !strings.HasPrefix(pattern, path.Dir(devcontainerFile)+"/") {
+	pattern := strings.TrimPrefix(strings.Trim(fields[0], `"`), "/")
+	if !attributePatternMatches(pattern, devcontainer.CheckoutPinnedFile) {
 		return false
 	}
 	return slices.ContainsFunc(fields[1:], lineEndingOverride)
 }
 
-// lineEndingOverride reports whether one attribute of a rule gives text or eol a state other
-// than "text eol=lf": text unset, unspecified or auto, eol unset, unspecified or not lf, or the
-// binary macro, which unsets text.
+// attributePatternMatches reports whether pattern, a .gitattributes pattern at the repository
+// root that spells out the directory of file, can match file: the directory, then any leading
+// "**/" components, then one glob over the file name (path.Match). A pattern with a further
+// directory component matches files below the directory only, and a pattern path.Match cannot
+// parse matches nothing here.
+func attributePatternMatches(pattern, file string) bool {
+	dir, name := path.Split(file)
+	rest, inside := strings.CutPrefix(pattern, dir)
+	if !inside {
+		return false
+	}
+	for depth := 0; depth < maxAttributePatternDepth && strings.HasPrefix(rest, "**/"); depth++ {
+		rest = strings.TrimPrefix(rest, "**/")
+	}
+	matched, err := path.Match(rest, name)
+	return err == nil && matched
+}
+
+// lineEndingOverride reports whether one attribute of a rule gives text or eol a state the
+// managed "text eol=lf" contradicts: text unset or unspecified, eol unset, unspecified or not
+// lf, or the binary macro, which unsets text. text=auto is none: the pinned file is text, so
+// git detects it as what the managed rule declares.
 func lineEndingOverride(attribute string) bool {
 	name, _, _ := strings.Cut(strings.TrimLeft(attribute, "-!"), "=")
 	switch name {
 	case "text":
-		return attribute != "text"
+		return attribute != "text" && attribute != "text=auto"
 	case "eol":
 		return attribute != "eol=lf"
 	case "binary":
@@ -228,38 +255,98 @@ func GitAttributesBlockPresent(text string) (bool, error) {
 	return present, err
 }
 
-// reconcileManagedAttributes brings the attribute block to the rules of this run
-// (ManagedAttributes): the DevContainer rule unless adoption.decline lists dev-container, and
-// the documentation rules while documentation says the facet is enabled. It is the one writer
-// of the block, called by the documentation gate, the step that runs in every adoption.
-func reconcileManagedAttributes(ctx context.Context, s *adoptSession, documentation bool) error {
+// managedAttributesOf returns the rules of this run's attribute block (ManagedAttributes): the
+// DevContainer rule unless adoption.decline lists dev-container, and the documentation rules
+// while documentation says the facet is enabled.
+func managedAttributesOf(s *adoptSession, documentation bool) ([]string, error) {
 	declined, err := ArtifactDeclined(s.declined, devContainerStep)
+	if err != nil {
+		return nil, err
+	}
+	return ManagedAttributes(!declined, documentation), nil
+}
+
+// reconcileManagedAttributes brings the attribute block to the rules of this run
+// (managedAttributesOf). It is the one writer of the block, called by the documentation gate,
+// the step that runs in every adoption.
+func reconcileManagedAttributes(ctx context.Context, s *adoptSession, documentation bool) error {
+	rules, err := managedAttributesOf(s, documentation)
 	if err != nil {
 		return err
 	}
-	return reconcileGitAttributes(ctx, s, ManagedAttributes(!declined, documentation))
+	return reconcileGitAttributes(ctx, s, rules)
+}
+
+// observeGitAttributes reads the repository's .gitattributes: its path, its bytes and whether
+// the file exists.
+func observeGitAttributes(ctx context.Context, s *adoptSession) (full string, data []byte, exists bool, err error) {
+	full, err = repoFile(s.repoPath, gitAttributesFile)
+	if err != nil {
+		return "", nil, false, err
+	}
+	data, exists, err = contextopt.ObserveSnapshot(ctx, full)
+	if err != nil {
+		return "", nil, false, fmt.Errorf("inspect %s: %w", gitAttributesFile, err)
+	}
+	return full, data, exists, nil
+}
+
+// refuseEditedAttributeBlock reports whether text holds an edited attribute block
+// (gitAttributesBlockEdited), and refuses it without --force: the one refusal the preflights
+// and the write (publishGitAttributes) give for a block a run would rewrite.
+func (s *adoptSession) refuseEditedAttributeBlock(text string) (bool, error) {
+	edited, err := gitAttributesBlockEdited(text)
+	if err != nil {
+		return false, err
+	}
+	if edited && !s.opts.Force {
+		return true, fmt.Errorf("%s managed attribute block was edited; review it and rerun %s", gitAttributesFile, s.forceCommand())
+	}
+	return edited, nil
 }
 
 // preflightManagedAttributes refuses, before the first step writes anything, a .gitattributes
-// the DevContainer rule cannot be merged into: an operator rule it would override, ambiguous
-// block markers, mixed line endings or a file over the line bound. Checked only when the block
-// is written, the refusal came after the manifest, the lock and the bundle were already there.
+// the attribute block cannot be brought to the rules of this run in: without --force, an
+// edited block, which every run rewrites or removes; and, unless dev-container is declined,
+// what the DevContainer rule cannot be merged into, that is, an operator rule it would
+// contradict, ambiguous block markers, mixed line endings or a file over the line bound.
+// Checked only when the block is written, the refusal came after the manifest, the lock and
+// the bundle were already there, and after --force had replaced them.
 func preflightManagedAttributes(ctx context.Context, s *adoptSession, declined map[string]bool) error {
-	if declined[devContainerStep] {
-		return nil
+	_, data, exists, err := observeGitAttributes(ctx, s)
+	if err != nil || !exists {
+		return err
 	}
-	full, err := repoFile(s.repoPath, gitAttributesFile)
+	if !declined[devContainerStep] {
+		if _, err := mergeGitAttributes(string(data), DevContainerAttributes()); err != nil {
+			return err
+		}
+	}
+	_, err = s.refuseEditedAttributeBlock(string(data))
+	return err
+}
+
+// preflightDocumentationAttributes refuses a documentation disable, before anything is removed,
+// over a .gitattributes the step could not bring to the rules of this run (managedAttributesOf
+// without the documentation rules): ambiguous attribute-block markers, an operator rule the
+// DevContainer rule would contradict, an edited block a plain run would have to rewrite, or,
+// where no rule remains and the block would go, an edited block even under --force.
+func preflightDocumentationAttributes(ctx context.Context, s *adoptSession) error {
+	rules, err := managedAttributesOf(s, false)
 	if err != nil {
 		return err
 	}
-	data, exists, err := contextopt.ObserveSnapshot(ctx, full)
-	if err != nil {
-		return fmt.Errorf("inspect %s: %w", gitAttributesFile, err)
+	_, data, exists, err := observeGitAttributes(ctx, s)
+	if err != nil || !exists {
+		return err
 	}
-	if !exists {
+	if _, err := mergeGitAttributes(string(data), rules); err != nil {
+		return fmt.Errorf("%s blocks documentation disable: %w", gitAttributesFile, err)
+	}
+	if len(rules) == 0 {
 		return nil
 	}
-	_, err = mergeGitAttributes(string(data), DevContainerAttributes())
+	_, err = s.refuseEditedAttributeBlock(string(data))
 	return err
 }
 
@@ -268,13 +355,9 @@ func preflightManagedAttributes(ctx context.Context, s *adoptSession, declined m
 // deleted rather than left empty; a repository without .gitattributes and without rules is left
 // alone.
 func reconcileGitAttributes(ctx context.Context, s *adoptSession, rules []string) error {
-	full, err := repoFile(s.repoPath, gitAttributesFile)
+	full, data, exists, err := observeGitAttributes(ctx, s)
 	if err != nil {
 		return err
-	}
-	data, exists, err := contextopt.ObserveSnapshot(ctx, full)
-	if err != nil {
-		return fmt.Errorf("inspect %s: %w", gitAttributesFile, err)
 	}
 	if !exists && len(rules) == 0 {
 		return nil
@@ -336,12 +419,9 @@ func (w gitAttributesWrite) detail() (string, error) {
 // over an edited block under --force, replaced with a backup. Without --force an edited block
 // is refused and the file stays as it is.
 func publishGitAttributes(ctx context.Context, s *adoptSession, w gitAttributesWrite) error {
-	edited, err := gitAttributesBlockEdited(string(w.data))
+	edited, err := s.refuseEditedAttributeBlock(string(w.data))
 	if err != nil {
 		return err
-	}
-	if edited && !s.opts.Force {
-		return fmt.Errorf("%s managed attribute block was edited; review it and rerun %s", gitAttributesFile, s.forceCommand())
 	}
 	if edited {
 		return s.replaceExisting(ctx, replacement{
