@@ -31,9 +31,21 @@ stdout ""
 error [FAIL] Disabled documentation facet retains Praetor asset tools/figures/dist/player.js
 == disabled retains attribute block
 stdout ""
-error [FAIL] Disabled documentation facet retains the Praetor .gitattributes block
+error [FAIL] Disabled documentation facet retains the Praetor .gitattributes block: it holds more than the DevContainer rule, or is not at the end of the file; run 'praetorctl adopt'
 == disabled with ambiguous attribute markers
 stdout ""
 error [FAIL] Inspect disabled documentation .gitattributes block: .gitattributes contains an unmatched managed end marker
 == disabled with the operator's own figure rules
 stdout ""
+== attribute block with the DevContainer rule
+stdout "[PASS] Locked documentation gate verified (23 assets, local verify-all, hosted required context, private scratch ignores, formatter inventory, checkout attributes).\n"
+== disabled with the DevContainer rule alone
+stdout ""
+== disabled with the DevContainer rule alone, CRLF
+stdout ""
+== disabled, DevContainer block not at the tail
+stdout ""
+error [FAIL] Disabled documentation facet retains the Praetor .gitattributes block: it holds more than the DevContainer rule, or is not at the end of the file; run 'praetorctl adopt'
+== disabled retains documentation rules beside the DevContainer rule
+stdout ""
+error [FAIL] Disabled documentation facet retains the Praetor .gitattributes block: it holds more than the DevContainer rule, or is not at the end of the file; run 'praetorctl adopt'
