@@ -48,18 +48,28 @@ var (
 	// ErrWorktreeUnrecorded reports gate output that does not state the scanned tree's
 	// cleanliness exactly once, so nothing binds the receipt to a scan of HEAD alone.
 	ErrWorktreeUnrecorded = errors.New("receipt gate output does not record whether the scanned working tree was clean")
+	// ErrExecutionUnrecorded reports gate output without an execution header line, as every
+	// receipt minted before the gate recorded where its toolchain stages ran.
+	ErrExecutionUnrecorded = errors.New("receipt gate output does not record where the toolchain stages ran")
+	// ErrExecutionAmbiguous reports gate output with more than one execution header line, which
+	// the gate never writes, so no single line says where the stages ran.
+	ErrExecutionAmbiguous = errors.New("receipt gate output records more than one place the toolchain stages ran")
 )
 
 // gateWorktreeCleanKey names the gate-output header field recording whether the scanned
 // working tree was clean.
 const gateWorktreeCleanKey = "worktree_clean"
 
-// maxGateOutputHeaderLines bounds the header scan (HISS-02). The gate writes five header lines
+// gateExecutionKey names the gate-output header field recording where the toolchain stages ran:
+// in the repository's devcontainer, with the image ID, or on the host, with the reason.
+const gateExecutionKey = "execution"
+
+// maxGateOutputHeaderLines bounds the header scan (HISS-02). The gate writes six header lines
 // before its first stage line.
 const maxGateOutputHeaderLines = 32
 
 // maxReceiptFileBytes bounds how much of a receipt envelope LoadReceiptFile reads (HISS-02).
-// An envelope is a few hundred bytes of signed fields plus the gate output: five header lines
+// An envelope is a few hundred bytes of signed fields plus the gate output: six header lines
 // and one line per stage. 1 MiB leaves room for long stage messages without allocating a
 // planted multi-GB file in full.
 const maxReceiptFileBytes = 1 << 20
@@ -275,17 +285,7 @@ func WorktreeCleanLine(clean bool) string {
 // signed the output; this is what proves the scan it certifies read HEAD's tree and nothing
 // else. Call it on output the receipt's hash has already been verified against.
 func RequireCleanWorktree(gateOutput string) error {
-	lines := strings.SplitN(gateOutput, "\n", maxGateOutputHeaderLines+1)
-	values := make([]string, 0, 1)
-	for i := 0; i < len(lines) && i < maxGateOutputHeaderLines; i++ {
-		key, value, _ := strings.Cut(lines[i], "\t")
-		if key == "stage" {
-			break
-		}
-		if key == gateWorktreeCleanKey {
-			values = append(values, value)
-		}
-	}
+	values := gateOutputHeaderValues(gateOutput, gateWorktreeCleanKey)
 	if len(values) != 1 {
 		return fmt.Errorf("%w: the header holds %d %s lines, want 1", ErrWorktreeUnrecorded, len(values), gateWorktreeCleanKey)
 	}
@@ -293,4 +293,56 @@ func RequireCleanWorktree(gateOutput string) error {
 		return fmt.Errorf("%w: %s is %q", ErrWorktreeNotClean, gateWorktreeCleanKey, values[0])
 	}
 	return nil
+}
+
+// gateOutputHeaderValues returns the value of every header line of gateOutput -- the lines before
+// the first stage line -- whose key is key, in order.
+func gateOutputHeaderValues(gateOutput, key string) []string {
+	lines := strings.SplitN(gateOutput, "\n", maxGateOutputHeaderLines+1)
+	values := make([]string, 0, 1)
+	for i := 0; i < len(lines) && i < maxGateOutputHeaderLines; i++ {
+		lineKey, value, _ := strings.Cut(lines[i], "\t")
+		if lineKey == "stage" {
+			break
+		}
+		if lineKey == key {
+			values = append(values, value)
+		}
+	}
+	return values
+}
+
+// ExecutionLine renders the gate-output header line recording where the toolchain stages ran: the
+// environment ("devcontainer" or "host") and then its details, each a key=value field. A tab or
+// line break inside a field would split the line, so each becomes a space. The gate writes it and
+// CertifiedExecution reads it, so both share one format.
+func ExecutionLine(environment string, details ...string) string {
+	fields := make([]string, 0, len(details)+2)
+	fields = append(fields, gateExecutionKey, headerField(environment))
+	for i := 0; i < len(details) && i < maxGateOutputHeaderLines; i++ {
+		fields = append(fields, headerField(details[i]))
+	}
+	return strings.Join(fields, "\t")
+}
+
+// headerField makes s safe to carry as one tab-separated field of a gate-output line.
+func headerField(s string) string {
+	return strings.NewReplacer("\t", " ", "\r", " ", "\n", " ").Replace(s)
+}
+
+// CertifiedExecution returns the fields of gateOutput's execution header line, tab-separated. Output
+// without the line is ErrExecutionUnrecorded: a receipt minted before the gate recorded where its
+// toolchain stages ran carries none, and it still verifies, because the line was added within
+// GateOutputVersion and nothing it certifies depends on it. Output with more than one is
+// ErrExecutionAmbiguous, naming the count. Call it on output the receipt's hash has already been
+// verified against.
+func CertifiedExecution(gateOutput string) (string, error) {
+	values := gateOutputHeaderValues(gateOutput, gateExecutionKey)
+	switch len(values) {
+	case 0:
+		return "", ErrExecutionUnrecorded
+	case 1:
+		return values[0], nil
+	}
+	return "", fmt.Errorf("%w: the header holds %d %s lines", ErrExecutionAmbiguous, len(values), gateExecutionKey)
 }

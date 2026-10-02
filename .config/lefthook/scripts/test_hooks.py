@@ -1862,12 +1862,21 @@ class ScopeAndGuard(unittest.TestCase):
         # The hook's bound comes from the CLI it runs, so replay the contract through the hook's
         # own invocation: unset, an unusable value, the exact ceiling and one step past it.
         query = ["go", "run", "./cmd/standardsctl", "gate", "deadline", "--json"]
+        # PRAETOR_GATE_DEVCONTAINER=off keeps the table independent of the host: where a container
+        # runtime exists, the deadline also reserves the devcontainer image build bound.
         expected = {"": 480, "soon": 480, "30m": 2100, "31m": 2100}
         for value, seconds in expected.items():
             with self.subTest(value=value):
-                environment = dict(clean_env(), PRAETOR_TEST_STAGE_TIMEOUT=value)
+                environment = dict(
+                    clean_env(), PRAETOR_TEST_STAGE_TIMEOUT=value, PRAETOR_GATE_DEVCONTAINER="off"
+                )
                 report = run(query, cwd=ROOT, env=environment, timeout=GATE_QUERY_TIMEOUT)
                 self.assertEqual(gate_timeout(report), seconds + GATE_LAUNCH_MARGIN)
+        # With the default (auto) the hook still reads the CLI's figure: the plain deadline, or the
+        # plain deadline plus the 15-minute image build bound when this host can build the image.
+        report = run(query, cwd=ROOT, env=dict(clean_env(), PRAETOR_TEST_STAGE_TIMEOUT=""),
+                     timeout=GATE_QUERY_TIMEOUT)
+        self.assertIn(gate_timeout(report) - GATE_LAUNCH_MARGIN, (480, 480 + 900))
 
     def test_audit_range_uses_exact_oid_and_touched_paths(self):
         with tempfile.TemporaryDirectory(prefix="praetor-audit-range-") as temp:

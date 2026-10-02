@@ -133,7 +133,7 @@ func runCargoTests(ctx context.Context, cfg *stageConfig) (string, error) {
 	if err := requireCargo(cfg); err != nil {
 		return "", err
 	}
-	budget := EnvRunBudget(cfg.repoDir)
+	budget := stageBudget(cfg.repoDir)
 	bound := budget.StageBound
 	targetArgs, targetNote := cargoTargetDir(ctx, cfg.repoDir)
 	err := inStageWorktree(ctx, cfg, bound, func(tCtx context.Context, dir string) error {

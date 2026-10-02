@@ -96,8 +96,11 @@ func runGateRun(args []string) error {
 	// The run deadline follows the race stage's resolved bound, once per test suite the
 	// repository holds. A fixed five minutes cut the stage short whatever
 	// PRAETOR_TEST_STAGE_TIMEOUT asked for (#314).
-	budget := gating.EnvRunBudget(*path)
-	ctx, cancel := gating.WithRunDeadline(rootContext(), budget)
+	// The plan also carries where the toolchain stages run, so the pipeline builds exactly the
+	// devcontainer image the deadline reserved time for, and a dry run asks no container runtime.
+	plan := gating.PlanRun(*path, *dryRun)
+	budget := plan.Budget
+	ctx, cancel := plan.WithDeadline(rootContext())
 	defer cancel()
 
 	if !*asJSON {
@@ -111,19 +114,21 @@ func runGateRun(args []string) error {
 		return fmt.Errorf("gating pipeline execution failed: %w", err)
 	}
 
-	if *asJSON {
+	return emitGatingReport(rep, *asJSON)
+}
+
+// emitGatingReport prints the pipeline report, as JSON or as text, and turns a rejected run into
+// the command's error.
+func emitGatingReport(rep *gating.PipelineReport, asJSON bool) error {
+	if asJSON {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
-		if encErr := enc.Encode(rep); encErr != nil {
-			return fmt.Errorf("encode gating report: %w", encErr)
+		if err := enc.Encode(rep); err != nil {
+			return fmt.Errorf("encode gating report: %w", err)
 		}
-		if rep.Status == gating.StatusRejected {
-			return fmt.Errorf("repository rejected by gating pipeline")
-		}
-		return nil
+	} else {
+		printGatingReport(rep)
 	}
-
-	printGatingReport(rep)
 	if rep.Status == gating.StatusRejected {
 		return fmt.Errorf("repository rejected by gating pipeline")
 	}
@@ -139,7 +144,10 @@ type gateDeadlineReport struct {
 	StageBound           string `json:"stage_bound"`
 	TestSuites           int    `json:"test_suites"`
 	OtherStagesAllowance string `json:"other_stages_allowance"`
-	Note                 string `json:"note,omitempty"`
+	// DevcontainerImageBuild is the image build bound the deadline reserves when the run would
+	// build the repository's devcontainer; absent otherwise.
+	DevcontainerImageBuild string `json:"devcontainer_image_build,omitempty"`
+	Note                   string `json:"note,omitempty"`
 }
 
 // runGateDeadline prints the run deadline `gate run --path` applies to the same repository in this
@@ -158,16 +166,20 @@ func runGateDeadline(args []string) error {
 		return fmt.Errorf("gate deadline accepts no positional arguments, got %q", fs.Args())
 	}
 
-	budget := gating.EnvRunBudget(*path)
+	budget := gating.EnvRunBudget(*path, false)
 	if *asJSON {
-		if err := json.NewEncoder(os.Stdout).Encode(gateDeadlineReport{
+		report := gateDeadlineReport{
 			TimeoutSeconds:       budget.TimeoutSeconds(),
 			Timeout:              budget.Timeout().String(),
 			StageBound:           budget.StageBound.String(),
 			TestSuites:           budget.TestSuites(),
 			OtherStagesAllowance: budget.Allowance.String(),
 			Note:                 budget.Note,
-		}); err != nil {
+		}
+		if budget.Devcontainer > 0 {
+			report.DevcontainerImageBuild = budget.Devcontainer.String()
+		}
+		if err := json.NewEncoder(os.Stdout).Encode(report); err != nil {
 			return fmt.Errorf("encode gate deadline: %w", err)
 		}
 		return nil
@@ -232,12 +244,28 @@ func runGateVerify(args []string) error {
 	fmt.Printf("       Command:    %s\n", rf.Command)
 	fmt.Printf("       Repository: %s\n", rf.Repository)
 	fmt.Printf("       Commit:     %s\n", rf.CommitSHA)
+	fmt.Printf("       Execution:  %s\n", certifiedExecution(rf.GateOutput))
 	if supplied != "" {
 		fmt.Printf("       Signed by supplied key %s\n", hex.EncodeToString(pinned))
 		return nil
 	}
 	fmt.Printf("       Signed by pinned key %s\n", hex.EncodeToString(pinned))
 	return nil
+}
+
+// certifiedExecution renders where a verified receipt says the toolchain stages ran: the fields of
+// its execution header line; a note that a receipt minted before the gate recorded it has none; or,
+// for signed output holding more than one such line, which the gate never writes, that it is
+// ambiguous and how many it holds.
+func certifiedExecution(gateOutput string) string {
+	execution, err := lockdown.CertifiedExecution(gateOutput)
+	switch {
+	case errors.Is(err, lockdown.ErrExecutionUnrecorded):
+		return "not recorded (minted before the gate recorded where its toolchain stages ran)"
+	case err != nil:
+		return "ambiguous (" + err.Error() + ")"
+	}
+	return strings.ReplaceAll(execution, "\t", " ")
 }
 
 // resolveVerifyKey returns the supplied hex-decoded Ed25519 public key when one is given. An
@@ -327,6 +355,9 @@ func runGateKeygen(args []string) error {
 func printGatingReport(rep *gating.PipelineReport) {
 	fmt.Printf("\nPipeline Result: %s (total: %v)\n", rep.Status, rep.TotalElapsed.Round(time.Millisecond))
 	fmt.Printf("Scanned: %s @ %s (worktree clean: %v)\n", rep.Repository, rep.CommitSHA, rep.WorktreeClean)
+	if rep.Execution != nil {
+		fmt.Printf("Toolchain stages ran in: %s\n", rep.Execution)
+	}
 	if rep.DryRun && rep.WorktreeProblem != "" {
 		fmt.Printf("Worktree: %s\n          (gate run without --dry-run refuses this tree)\n", rep.WorktreeProblem)
 	}

@@ -1,4 +1,8 @@
-package devsync
+// SPDX-FileCopyrightText: 2026 lusoris <lusoris@pm.me>
+//
+// SPDX-License-Identifier: EUPL-1.2
+
+package util
 
 import (
 	"archive/tar"
@@ -13,15 +17,15 @@ import (
 	"strings"
 )
 
-// ErrUnsafeEntry reports an archive entry that would land, or point, outside the target.
-var ErrUnsafeEntry = errors.New("devsync: archive entry escapes the target directory")
+// ErrUnsafeArchiveEntry reports an archive entry that would land, or point, outside the target.
+var ErrUnsafeArchiveEntry = errors.New("archive entry escapes the target directory")
 
 // maxLinkSegments bounds the path segments examined per symbolic link (HISS-02).
 const maxLinkSegments = 4096
 
 // maxArchiveTrailerBytes bounds the stream read after the last tar entry, so a crafted
 // archive cannot force unbounded decompression work here (HISS-02): the real entries are
-// already extracted and bounded by maxArchiveEntries; this only drains what gzip has left
+// already extracted and bounded by the caller's entry bound; this only drains what gzip has left
 // so its own trailer is read and validated.
 const maxArchiveTrailerBytes = 64 << 10
 
@@ -29,10 +33,14 @@ const maxArchiveTrailerBytes = 64 << 10
 // links in the archive is known.
 type pendingLink struct{ name, target string }
 
-// extractArchive unpacks a gzip-compressed tar stream into dir. Every write goes through an
-// os.Root, entry names must be local paths, and a link may only point inside dir without
-// passing through another link, so nothing lands or points outside dir.
-func extractArchive(ctx context.Context, r io.Reader, dir string) (err error) {
+// ExtractTarGz unpacks a gzip-compressed tar stream into dir, which must exist. Every write goes
+// through an os.Root, entry names must be local paths, and a link may only point inside dir
+// without passing through another link, so nothing lands or points outside dir. Directories,
+// regular files and symbolic links are extracted; any other entry type fails the extraction. An
+// archive holding more than maxEntries entries fails before the first entry past the bound is
+// written (HISS-02). It is the one tar extractor: devsync restores archives through it and the
+// gate unpacks the pinned Node release through it (internal/devcontainer).
+func ExtractTarGz(ctx context.Context, r io.Reader, dir string, maxEntries int) (err error) {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return err
@@ -43,7 +51,7 @@ func extractArchive(ctx context.Context, r io.Reader, dir string) (err error) {
 		return err
 	}
 	defer func() { err = errors.Join(err, decompressed.Close()) }()
-	links, err := extractEntries(ctx, root, tar.NewReader(decompressed), maxArchiveEntries)
+	links, err := extractEntries(ctx, root, tar.NewReader(decompressed), maxEntries)
 	if err != nil {
 		return err
 	}
@@ -71,7 +79,7 @@ func extractEntries(ctx context.Context, root *os.Root, archive *tar.Reader, lim
 		if i == limit {
 			break
 		}
-		name, err := entryName(header.Name)
+		name, err := LocalArchiveName(header.Name)
 		if err != nil {
 			return nil, err
 		}
@@ -86,13 +94,13 @@ func extractEntries(ctx context.Context, root *os.Root, archive *tar.Reader, lim
 	return nil, fmt.Errorf("archive holds more than %d entries", limit)
 }
 
-// entryName converts an archive name to a local host path, refusing absolute names and any
-// ".." segment even where it would resolve back inside.
-func entryName(raw string) (string, error) {
+// LocalArchiveName converts an archive name to a local host path, refusing absolute names and
+// any ".." segment even where it would resolve back inside.
+func LocalArchiveName(raw string) (string, error) {
 	slashed := strings.TrimSuffix(filepath.ToSlash(raw), "/")
 	local := filepath.FromSlash(slashed)
 	if !filepath.IsLocal(local) || containsSegment(slashed, "..") {
-		return "", fmt.Errorf("%w: %q", ErrUnsafeEntry, raw)
+		return "", fmt.Errorf("%w: %q", ErrUnsafeArchiveEntry, raw)
 	}
 	return local, nil
 }
@@ -141,7 +149,7 @@ func createLinks(root *os.Root, links []pendingLink) error {
 	}
 	for _, link := range links {
 		if !linkStaysInside(filepath.ToSlash(link.name), link.target, names) {
-			return fmt.Errorf("%w: link %s -> %s", ErrUnsafeEntry, link.name, link.target)
+			return fmt.Errorf("%w: link %s -> %s", ErrUnsafeArchiveEntry, link.name, link.target)
 		}
 		if err := root.MkdirAll(filepath.Dir(link.name), 0o700); err != nil {
 			return err

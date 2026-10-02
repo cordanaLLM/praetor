@@ -112,7 +112,7 @@ const gatekeeperRepoDir = "."
 // the gate run's own deadline: a fixed five minutes cut its race stage short (#314).
 func agentContext(agentName string) (context.Context, context.CancelFunc) {
 	if isGatekeeperAgent(agentName) {
-		return gating.WithRunDeadline(rootContext(), gating.EnvRunBudget(gatekeeperRepoDir))
+		return gating.PlanRun(gatekeeperRepoDir, false).WithDeadline(rootContext())
 	}
 	return commandContext(agentTimeout)
 }

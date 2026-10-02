@@ -1023,6 +1023,23 @@ $ praetorctl gate deadline --path=.
 Run Deadline: 15m0s (2 test suites at a 3m0s stage bound each + 9m0s for the other stages)
 ```
 
+A run that will build the repository's devcontainer
+([below](#where-the-toolchain-stages-run)) adds the 15-minute image build bound
+(`devcontainer.ImageBuildTimeout` in
+[`internal/devcontainer/runtime.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/devcontainer/runtime.go)).
+`PlanRun` in
+[`internal/gating/deadline.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/deadline.go)
+reserves it exactly when the run plans a build, so `gate run`, `gate deadline` and the pre-push
+hook still agree; the human form names it and the JSON reports it as `devcontainer_image_build`:
+
+```text
+Run Deadline: 23m0s (3m0s race stage bound + 5m0s for the other stages + 15m0s to build the devcontainer image)
+```
+
+`gate run --dry-run` builds no image, so it reserves nothing and asks no container runtime.
+`gate run` hands its plan to the pipeline, which builds exactly the image the deadline reserved time
+for instead of planning a second time.
+
 Two deadlines can now stop the race stage, and the stage names the one that actually fired. Only
 when the stage's own bound fired does it report `hit the … stage bound`. When the run deadline
 fired first — which means the stages before it used more than their allowance — it reports the
@@ -1042,6 +1059,203 @@ deadline … fired first, so this is not a finding`), so a scanner killed mid-ru
 scanner finding. The cases are replayed in
 [`internal/gating/deadline_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/deadline_test.go) and
 [`cmd/standardsctl/gate_deadline_test.go`](https://github.com/cordanaLLM/praetor/blob/main/cmd/standardsctl/gate_deadline_test.go).
+
+### Where the toolchain stages run
+
+A repository that ships a `.devcontainer` pins its toolchain there, and a gate that used the host's
+toolchain instead could fail every push after a host package update while the repository was fine,
+or give two workstations different verdicts on one commit
+([#652](https://github.com/cordanaLLM/praetor/issues/652)). `gate run` therefore runs the Go part of
+the prefetch and race-detector stages inside the repository's devcontainer where this host can build
+it, and on the host otherwise. Every report says which, and the receipt certifies it.
+
+**When the devcontainer is used.** Before any stage runs, `planDevcontainer`
+([`internal/gating/devcontainer.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/devcontainer.go))
+and `devcontainer.PlanImage` check, building nothing, that:
+
+- `PRAETOR_GATE_DEVCONTAINER` is unset or `auto`, and the run is not a dry run;
+- the repository root holds a `go.mod` and `.devcontainer/devcontainer.json`;
+- the user has a cache directory (`os.UserCacheDir`) to keep the container's `HOME` and the pinned
+  devcontainer CLI in;
+- the host is not Windows, and `docker` or `podman` is on `PATH` and answers `<runtime> info`
+  within `devcontainer.RuntimeProbeTimeout` (10 s), docker first (`devcontainer.FindRuntime`). A
+  CLI whose daemon is stopped, whose socket this user may not open, or whose podman machine is
+  down is passed over for the next runtime, so it cannot plan a build that then fails every run;
+- the configuration is inside the managed schema, and a recorded Praetor bootstrap's companions
+  verify — the check `praetorctl devcontainer verify` applies (`verifyRecordedCompanions` in
+  [`internal/devcontainer/bootstrap_io.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/devcontainer/bootstrap_io.go));
+- the build's `dockerfile` and `context` resolve inside the repository;
+- a configuration that declares `features` is on a platform the gate pins Node for: `linux-x64`,
+  `linux-arm64`, `darwin-x64` or `darwin-arm64`. Only the devcontainer CLI applies features; a
+  docker or podman build of the Dockerfile leaves them out, and an image without its declared
+  features is not the repository's devcontainer. The gate runs a CLI it pins itself
+  ([below](#the-pinned-devcontainer-cli)), never one found on `PATH`.
+
+Any check that fails runs the stages on the host, and its reason is what the report and receipt
+record. Praetor's own `.devcontainer/devcontainer.json` declares the `common-utils`, `go` and `node`
+features, so Praetor's gate builds it with the pinned CLI wherever docker or podman answers on one
+of those platforms.
+
+#### The pinned devcontainer CLI
+
+A configuration with features is built by the reference CLI, `@devcontainers/cli`, at a version
+Praetor pins, run by a Node release Praetor pins. Both pins ship inside the binary
+(`internal/devcontainer/cli.go`), so every workstation and runner builds with the same CLI:
+
+| Pin | File | Checked by |
+| :--- | :--- | :--- |
+| `@devcontainers/cli` 0.89.0 | [`internal/devcontainer/cli/package.json`](https://github.com/cordanaLLM/praetor/blob/main/internal/devcontainer/cli/package.json) and its `package-lock.json` | the lock's `sha512` integrity, which `npm ci` enforces |
+| Node 24.21.0 | [`internal/devcontainer/cli/node.json`](https://github.com/cordanaLLM/praetor/blob/main/internal/devcontainer/cli/node.json) | one SHA-256 per platform, taken from the release's `SHASUMS256.txt` |
+
+The first build with features on a machine fetches both into the tool cache,
+`<user cache dir>/praetor/devcontainer-cli`, beside the container's `HOME`:
+
+1. It downloads `node-v<version>-<platform>.tar.gz` from `https://nodejs.org/dist` and refuses it
+   unless its SHA-256 is the pinned one. It then unpacks the archive (`util.ExtractTarGz`).
+2. It installs the CLI from the pinned lock with that Node's `npm ci --ignore-scripts --no-audit
+   --no-fund`, the flags the Markdown gate's locked install uses, and checks the installed version.
+
+Each step assembles in a stage directory and is published by rename, so an interrupted run leaves
+nothing a later run would reuse. Later builds find both in the cache and fetch nothing. The fetch
+and install run under `devcontainer.CLIProvisionTimeout` (10 minutes) inside the image build bound.
+The npm install reads the host's npm configuration, so a registry mirror or proxy set in
+`~/.npmrc` applies.
+
+A download, checksum or install that fails rejects the run with a failed `Devcontainer Image` stage
+that names the cause and `PRAETOR_GATE_DEVCONTAINER=off`. The gate never falls back to the host or
+to another CLI. A platform without a pinned Node (a Linux or macOS host on another architecture)
+runs the stages on the host, and the reason names the features and the platform.
+
+Renovate keeps both pins current ([`renovate.json`](https://github.com/cordanaLLM/praetor/blob/main/renovate.json)):
+
+- the npm manager moves the CLI's exact version and its lock together;
+- a regex manager reads the Node version out of `node.json` from the `node-version` datasource,
+  held to the Node 24 line.
+
+A Node bump changes the version alone, so its checksums must be refreshed on the Renovate branch.
+`TestPinnedNodeMatchesTheRelease` compares each pinned checksum with the release's `SHASUMS256.txt`
+and fails the branch until they match (it skips under `-short` and where `nodejs.org` cannot be
+reached). The same test rewrites them:
+
+```bash
+PRAETOR_UPDATE_NODE_PINS=1 go test ./internal/devcontainer -run TestPinnedNodeMatchesTheRelease
+```
+
+**How the image is built.** With features, the pinned Node runs the pinned CLI:
+`node <tool cache>/…/devcontainer.js build --workspace-folder <repo> --config <config> --no-lockfile
+--image-name <stable> --image-name <run> --docker-path <runtime>`. The CLI otherwise writes a
+`devcontainer-lock.json` beside the configuration, which would leave the checkout the receipt
+certifies dirty, so a repository without one gets `--no-lockfile` and one that commits it gets
+`--frozen-lockfile`, which builds from the recorded feature digests and fails if they no longer
+match. Without features, `<runtime> build --file <dockerfile> --tag <stable> --tag <run> <context>`
+runs with the configuration's build arguments; an image-only configuration is pulled when the
+runtime does not hold it, and tagged with neither.
+The build runs under the 15-minute bound, and the runtime's layer cache makes a rebuild of an
+unchanged definition quick. The built image must have `go` on its `PATH`; one without it runs the
+stages on the host and says so.
+
+The two tags (`imageRefs` in
+[`internal/gating/devcontainer.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/devcontainer.go))
+keep the image store from growing with every push:
+
+| Tag | Form | Lifetime |
+| :--- | :--- | :--- |
+| Stable | `praetor-gate-<hash>:latest`, the hash of the origin remote's host and path; every repository without an origin shares one | kept. Every clone and worktree of one repository reuses it, the pre-push hook's temporary clone included; a rebuild of a changed definition moves it and leaves the old image dangling for `docker image prune` or `podman image prune` |
+| Per run | `praetor-gate-<hash>:run-<pid>-<time>-<n>` | the image ID is read through it, so a concurrent build that moves the stable tag cannot hand this run another image. It is removed with `<runtime> image rm --no-prune` once the stages are done, or at once when the image is not entered |
+
+**How commands run in it.** Each command runs in a disposable container of the image, named by the
+image ID the runtime reported, so every command runs in exactly the image the receipt names:
+
+| Aspect | What the gate does |
+| :--- | :--- |
+| Checkout | bind-mounted at its own path, so the paths in stage messages are the host's |
+| Git common dir | bind-mounted at its own path when it lies outside the checkout, so a stage worktree's `gitdir` link resolves inside the container |
+| User | the host user, so files the stages write stay the host user's and the host user's files are writable inside: `--user <uid>:<gid>` on rootful docker; `--user 0:0` on rootless docker, whose container root is the host user while every other container UID is a subordinate one (`devcontainer.FindRuntime` reads `name=rootless` from `docker info`'s security options); `--userns=keep-id` on rootless podman |
+| `HOME` | `<user cache dir>/praetor/devcontainer-home` (`os.UserCacheDir`: `$XDG_CACHE_HOME` or `~/.cache` on Linux, `~/Library/Caches` on macOS), created on the host and bind-mounted at its own path. It lies outside every checkout, so Go's build and module caches persist across runs, including the pre-push hook's runs in a temporary clone. One `HOME` serves every repository, as the host's own Go caches do, and the prefetch stage's `go mod verify` re-checks the module cache against `go.sum` |
+| Environment | the image's own, plus `GOPATH=$HOME/go` (not an image's shared `/go`), `PRAETOR_GATE_DEVCONTAINER=off` so a gate a test starts inside never looks for a runtime there, and `GOFLAGS` as the host's value followed by `-modcacherw`, so build tags carry over and the cache can be deleted without restoring write permission first. The host's module and network settings are forwarded when set, even empty: `GOPROXY`, `GOPRIVATE`, `GONOPROXY`, `GONOSUMDB`, `GONOSUMCHECK`, `GOSUMDB`, `GOINSECURE`, `GOTOOLCHAIN`, and `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` in both spellings (`forwardedEnv` in [`internal/gating/devcontainer.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/devcontainer.go)). Nothing else crosses, credentials included |
+| Init | `--init`: the runtime's own init (`docker-init`, or podman's `catatonit`) is the container's PID 1 and reaps orphaned processes as a host's init does. Without it the command itself is PID 1, a killed command's children stay behind as zombies, and a test that waits for a process group to disappear, such as `util.RunCommand`'s own, times out |
+| `/tmp` | a tmpfs mounted `exec` (`--tmpfs /tmp:exec`), where go builds its work directory and tests make theirs. On the container's writable layer that traffic runs about ten times slower than on the host: a nested `go test` in the race stage took 218 s there and 19 s on the tmpfs. A checkout mounted at `/tmp` itself keeps it; one below `/tmp`, such as the pre-push hook's temporary clone, is mounted over the tmpfs |
+| Cleanup | a container whose command failed is removed by name, because a runtime CLI killed by the stage bound leaves its container running |
+
+The race stage keeps its bound and its worktree (`inStageWorktree`); the worktree is created by the
+host's `git`, and `go test -race` runs in it inside the container. The race detector probe asks the
+container's `go env` and looks the compiler up on the container's `PATH`, so a skip names the
+devcontainer: `the C compiler "gcc" named by go env is not on PATH in the devcontainer`. A probe
+the container does not answer at all fails the race stage instead of skipping it: the run planned
+the devcontainer, and a broken one must not reach a signed receipt as a skip.
+
+**What the receipt records.** The signed gate output gains one header line after `dry_run`, its
+fields separated by tabs (shown as spaces below), inside `praetor-gate-output/v2`, so `gate verify`
+accepts receipts with and without it
+(`lockdown.ExecutionLine` and `lockdown.CertifiedExecution` in
+[`internal/lockdown/receipts.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/lockdown/receipts.go)):
+
+```text
+execution devcontainer runtime=docker image=sha256:… builder=devcontainer build (@devcontainers/cli 0.89.0, Node 24.21.0) stages=Prefetch & Lockfiles, Race-Detector Tests (go)
+execution host reason=PRAETOR_GATE_DEVCONTAINER=off
+```
+
+`gate run` prints it as `Toolchain stages ran in: …`, `--json` carries it as `execution`, and
+`gate verify` prints it as `Execution:`. A receipt minted before the line existed prints
+`not recorded`; signed output holding more than one such line, which the gate never writes, prints
+`ambiguous` with the count.
+
+**When the planned devcontainer fails.** A plan whose build, setup or `go` probe fails is not
+replaced by the host: the run is rejected with a failed `Devcontainer Image` stage that names the
+cause and the opt-out. Fix the definition, or opt out.
+
+**Opting out.** `PRAETOR_GATE_DEVCONTAINER=off` runs the stages on the host, and the receipt records
+`reason=PRAETOR_GATE_DEVCONTAINER=off`. Any value other than `auto` or `off` also runs them on the
+host, and the reason quotes the value.
+
+**Platforms (HISS-21).** A Windows host runs the stages on the host: a Linux container cannot mount
+a Windows checkout at its own path, and the reason says so. A macOS or Linux host without docker or
+podman, such as a GitHub-hosted macOS runner, runs them on the host and records
+`neither docker nor podman is on PATH`; one whose runtime is on `PATH` but does not answer records
+`no container runtime answers:` with each runtime's reply. GitHub-hosted Linux runners carry docker,
+so a gate run there builds the devcontainer, features included, and a fresh runner fetches the
+pinned Node and CLI on every job.
+
+**Known gaps** ([#652](https://github.com/cordanaLLM/praetor/issues/652)):
+
+- The security stage's `govulncheck` and `gosec`, the flavor audit, the HISS scan, the Cargo parts
+  and the receipt still run on the host; the Go feature installs neither scanner.
+- The first build with features downloads about 60 MB (Node and the CLI) and needs `nodejs.org` and
+  the npm registry, or the mirrors the host's npm configuration names. An offline host fails that
+  build with the opt-out named. The pinned Node is the glibc build, so a musl host such as Alpine
+  fails the install the same way.
+- Credentials do not reach the container: its `HOME` is the gate's, so `~/.netrc`, git credential
+  helpers, SSH keys and `SSH_AUTH_SOCK` are absent there. A repository whose private modules need
+  them fails the container's prefetch stage; set `PRAETOR_GATE_DEVCONTAINER=off` to run the stages
+  on the host. A proxy the host reaches on its loopback address is not reachable from the
+  container's network namespace either.
+- The container path is exercised against a real runtime with docker, rootful. Rootless docker's
+  `0:0` mapping and rootless podman's `--userns=keep-id` mapping are covered by the command-line
+  tests only. A docker daemon with `userns-remap` gets the rootful mapping, which that daemon
+  remaps; opt out there.
+- A gate killed before its stages finish (`SIGKILL`, a lost machine) leaves its per-run tag;
+  `<runtime> image ls --filter 'reference=praetor-gate-*'` lists it for `<runtime> image rm`. A removal that fails in a run
+  that finished is printed after `Toolchain stages ran in:` as `cleanup:` and carried as
+  `execution.cleanup` in `--json`, outside the signed line.
+- The mounts carry no SELinux relabel option, so a host enforcing SELinux may deny the container
+  access to the checkout; the stage then fails, and `PRAETOR_GATE_DEVCONTAINER=off` runs it on
+  the host.
+
+The seams are replayed without a runtime in
+[`internal/gating/devcontainer_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/devcontainer_test.go)
+and [`internal/devcontainer/runtime_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/devcontainer/runtime_test.go);
+`TestRaceStageRunsInARealDevcontainer` in
+[`internal/gating/devcontainer_runtime_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/gating/devcontainer_runtime_test.go)
+builds a `FROM scratch` image around a stand-in toolchain and runs the race stage in it, skipping
+with its reason under `-short`, off Linux, or where no runtime answers. The pinned CLI's fetch,
+checksum, install and reuse are replayed without a network in
+[`internal/devcontainer/cli_test.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/devcontainer/cli_test.go).
+`TestPraetorsOwnDevcontainerRunsTheGoStages`, in the same file as the real-runtime test, runs the
+case behind [#652](https://github.com/cordanaLLM/praetor/issues/652) end to end when
+`PRAETOR_DEVCONTAINER_E2E=1` is set: it builds Praetor's
+devcontainer, features included, through the pinned CLI with the real runtime, then runs the
+prefetch stage, `go version`, `node --version`, a race test, and the `internal/util` tests that
+wait for a killed process group to disappear, which pass only where an init reaps orphans.
 
 Governance profile names no longer select Go or Meson commands. A shared plan
 renders both newly generated Makefiles and AGENTS.md. Discovery recognizes:

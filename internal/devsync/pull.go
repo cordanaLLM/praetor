@@ -93,9 +93,15 @@ func pullTarget(ctx context.Context, target, devDir string) (string, error) {
 	return resolved, nil
 }
 
+// extractArchive restores one archive into dir through util.ExtractTarGz, bounded by
+// maxArchiveEntries.
+func extractArchive(ctx context.Context, r io.Reader, dir string) error {
+	return util.ExtractTarGz(ctx, r, dir, maxArchiveEntries)
+}
+
 func pullArchive(ctx context.Context, opts PullOptions, target string, archive RemoteArchive) Outcome {
 	outcome := Outcome{Archive: path.Join(opts.Host, archive.Path), Bytes: archive.Size}
-	rel, err := entryName(strings.TrimSuffix(archive.Path, archiveSuffix))
+	rel, err := util.LocalArchiveName(strings.TrimSuffix(archive.Path, archiveSuffix))
 	if err != nil {
 		return failed(outcome, err)
 	}
