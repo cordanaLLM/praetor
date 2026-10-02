@@ -238,11 +238,31 @@ func TestRenovateReadsDevContainerFeaturesFromTheCatalog(t *testing.T) {
 		if want := strings.Count(string(data), "\"ghcr.io/devcontainers/features/"); read["docker"] != want {
 			t.Errorf("Renovate reads %d of the %d feature references in %s", read["docker"], want, rel)
 		}
+		if want := nodeVersionOptions(string(data)); read["node-version"] != want {
+			t.Errorf("Renovate reads %d of the %d Node.js version options in %s", read["node-version"], want, rel)
+		}
 		features, nodeVersions = features+read["docker"], nodeVersions+read["node-version"]
 	}
-	if features == 0 || nodeVersions != 1 {
+	if features == 0 || nodeVersions == 0 {
 		t.Fatalf("catalog scan read %d features and %d node versions; it has stopped matching this tree", features, nodeVersions)
 	}
+}
+
+// nodeVersionOptions counts the node feature references of a catalog file that carry a version
+// option on the next line, by lines and without the manager's own pattern, so the count the
+// test compares against is independent of what it checks. Every file that selects the node
+// feature carries the option (docs/guides/archetype-authoring.md), so the number moves with the
+// catalog.
+func nodeVersionOptions(catalog string) int {
+	lines := strings.Split(catalog, "\n")
+	options := 0
+	for index := 0; index+1 < len(lines); index++ {
+		if strings.Contains(lines[index], "\"ghcr.io/devcontainers/features/node:") &&
+			strings.HasPrefix(strings.TrimSpace(lines[index+1]), "version: \"") {
+			options++
+		}
+	}
+	return options
 }
 
 // taglessDigests returns every image reference in content that pins a digest without a tag:
