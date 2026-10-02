@@ -97,6 +97,11 @@ func Floor(before, after string) Report {
 	return Report{Findings: found.sorted()}
 }
 
+// extractFacts extracts the clarity floor facts from Markdown text. ANSI escape sequences
+// (CSI, OSC and two-byte escapes) are stripped once before scan, through the one ANSI pattern
+// Compress uses (ansiRe, #713), so escape parameters are not counted as numbers, recoloured
+// prose and fences pass, and words glued to escapes are matched for all rules. Unterminated
+// escapes stay text.
 func extractFacts(text string) facts {
 	f := facts{
 		items:  map[string]map[string]int{},
@@ -106,7 +111,7 @@ func extractFacts(text string) facts {
 	for _, rule := range setRules {
 		f.items[rule] = map[string]int{}
 	}
-	lines, _ := scan(text)
+	lines, _ := scan(ansiRe.ReplaceAllString(text, ""))
 	for _, span := range codeSpanTexts(lines) {
 		f.collect(RuleFloorCodeSpan, span.num, []string{span.text})
 		f.keep(RuleFloorCodeWord, codeTokenRe.FindAllString(span.text, -1))
@@ -243,33 +248,17 @@ func fencedCommand(ln line, continued bool) (string, bool) {
 // numbersOf returns the number facts of a line outside fenced code. Code spans, link
 // targets, URLs, HTML markers and ids are masked first, since F1 and F3 to F5 already hold
 // them, and so are the labels of Markdown syntax (orderedMarkerRe, headingNumberRe,
-// refLabelRe) and HTML entities, which are no facts of the text. ANSI escape sequences
-// (CSI, OSC and two-byte escapes) are masked before URLs so their parameters are no
-// numbers and their URIs do not misparse (#713).
+// refLabelRe) and HTML entities, which are no facts of the text.
 func numbersOf(ln line) []string {
-	clean := ln
-	clean.text = maskANSI(ln.text)
-	masked := markerRe.ReplaceAllString(proseOf(clean), " ")
+	masked := markerRe.ReplaceAllString(proseOf(ln), " ")
 	masked = runtimeHTMLEntityRe.ReplaceAllString(idRe.ReplaceAllString(masked, " "), " ")
 	masked = refLabelRe.ReplaceAllString(headingNumberRe.ReplaceAllString(masked, "$1 "), " ")
 	return numbersIn(orderedMarkerRe.ReplaceAllString(masked, " "))
 }
 
-// maskANSI replaces terminated ANSI escape sequences with spaces of the same byte length,
-// keeping line byte offsets and code span bounds intact while removing escape parameters.
-// Unterminated escapes stay text.
-func maskANSI(text string) string {
-	return ansiRe.ReplaceAllStringFunc(text, func(m string) string {
-		return strings.Repeat(" ", len(m))
-	})
-}
-
 // numbersIn returns the number facts of text: every word that holds a digit (numberTokenRe),
-// read by numberFact. Escape sequences (CSI, OSC and two-byte escapes) are ignored before digits
-// are collected, through the one ANSI pattern Compress uses (ansiRe, #713). An unterminated
-// escape stays text.
+// read by numberFact.
 func numbersIn(text string) []string {
-	text = ansiRe.ReplaceAllString(text, "")
 	matches := numberTokenRe.FindAllStringSubmatch(text, -1)
 	numbers := make([]string, 0, len(matches))
 	for _, match := range matches {
