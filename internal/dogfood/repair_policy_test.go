@@ -151,7 +151,11 @@ func repairPublicPolicyMutations() []repairPublicPolicyMutation {
 		{"original truncated", func(item *PublicRepositoryResult) { item.OriginalScan.Truncated = true }},
 		{"verified count", func(item *PublicRepositoryResult) { item.Attempts[0].Verification.Scan.TotalInfractions++ }},
 		{"verified breakdown", func(item *PublicRepositoryResult) { item.Attempts[0].Verification.Scan.Breakdown["HISS-04"]++ }},
-		{"same count different entry", func(item *PublicRepositoryResult) { item.Attempts[0].Verification.Scan.Violations[0].LineNumber++ }},
+		// An entry is identified by its anchor, never its line (#29): the same finding in another
+		// function is another entry.
+		{"same count different entry", func(item *PublicRepositoryResult) {
+			item.Attempts[0].Verification.Scan.Violations[0].Anchor = "fn:elsewhere"
+		}},
 		{"ratchet previous count", func(item *PublicRepositoryResult) { item.Attempts[0].Verification.Ratchet.PreviousCount++ }},
 		{"ratchet current count", func(item *PublicRepositoryResult) { item.Attempts[0].Verification.Ratchet.CurrentCount++ }},
 		{"ratchet new entry", func(item *PublicRepositoryResult) {

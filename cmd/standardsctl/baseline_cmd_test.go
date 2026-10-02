@@ -20,7 +20,7 @@ func runBaselineCmd(t *testing.T, f *auditFixture, extra ...string) (string, err
 
 func TestBaselineRecord_Positive(t *testing.T) {
 	f := newAuditFixture(t)
-	inf := f.addViolation(t)
+	f.addViolation(t)
 
 	// Growth from 0 to 1 needs an explicit, justified increase.
 	out, err := runBaselineCmd(t, f, "--record", "--allow-increase", "--reason=legacy debt inventory")
@@ -32,7 +32,10 @@ func TestBaselineRecord_Positive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.TotalInfractions != 1 || b.Infractions[0].Fingerprint != inf.Fingerprint || b.IncreaseRationale != "legacy debt inventory" {
+	// The entry is recorded in the anchored form: keyed by the function holding the finding,
+	// with the line kept beside it for a reader (#29).
+	if b.TotalInfractions != 1 || b.Infractions[0].Fingerprint != "legacy.go:HISS-07:fn:legacy#1" ||
+		b.Infractions[0].Anchor != "fn:legacy" || b.Infractions[0].LineNumber != 4 || b.IncreaseRationale != "legacy debt inventory" {
 		t.Fatalf("unexpected recorded baseline: %+v", b)
 	}
 

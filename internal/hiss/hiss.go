@@ -584,7 +584,11 @@ func (r *ScanReport) recordSkippedDir(rel string) {
 	}
 }
 
-// ConvertToBaseline converts an InvariantViolation slice to baseline infractions.
+// ConvertToBaseline converts an InvariantViolation slice to baseline infractions, each with
+// the fingerprint the ratchet matches it on (baseline.AssignFingerprints). It is the one place a
+// scan becomes baseline entries: the audit, `praetorctl baseline`, the gate, the standards_audit
+// MCP tool, adoption and the dogfood verification all key a finding here, so a baseline one of
+// them records is one every other verifies.
 func ConvertToBaseline(violations []InvariantViolation) []baseline.Infraction {
 	result := make([]baseline.Infraction, 0, len(violations))
 	for _, v := range violations {
@@ -594,7 +598,9 @@ func ConvertToBaseline(violations []InvariantViolation) []baseline.Infraction {
 			LineNumber: v.LineNumber,
 			Symbol:     v.Symbol,
 			Message:    v.Message,
+			Anchor:     v.Anchor,
 		})
 	}
+	baseline.AssignFingerprints(result)
 	return result
 }
