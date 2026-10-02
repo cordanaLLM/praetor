@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -38,32 +41,65 @@ func requireBaselineDir(ctx context.Context, dir string) error {
 }
 
 // baselineWorktreeFiles returns the working-tree side of a directory: the Markdown files below
-// dir that git tracks or would track, so both sides of the comparison describe one set. A file
-// git ignores and one inside a nested repository are not part of the repository's text; counted,
-// they are base=absent rows that inflate the total of a run at the repository root (ledgers,
-// dependencies, other checkouts). A file the base holds stays a row even when git leaves it
-// alone now, marked ignored: objects are the base files of dir by working-tree spelling.
+// dir that git tracks or would track, so both sides of the comparison describe one set. The set
+// is read off git's own listing (baselineWorktreeListing) and the tree is never walked: a file
+// git ignores and a file of a nested repository are not part of the repository's text, git
+// does not list them, and so neither their rows nor their number reach the run, however many
+// an ignored directory holds (ledgers, dependencies, other checkouts).
+//
+// An entry of the listing counts when its name is local to dir, ends in the Markdown extension
+// and names a regular file (baselineWorktreeMarkdown). The loop is bounded by the listing,
+// which git answers in at most maxBaselineListingBytes; more than maxCavemanFiles files that
+// count is an error naming dir and what was counted. objects are the base files of dir by
+// working-tree spelling.
 func baselineWorktreeFiles(ctx context.Context, dir string, objects map[string]string) ([]baselineFile, error) {
-	walked, err := appendCavemanFiles(ctx, nil, dir, cavemanProseExtensions())
-	if err != nil {
-		return nil, err
-	}
 	listing, err := baselineWorktreeListing(ctx, dir, "")
 	if err != nil {
 		return nil, err
 	}
-	listed := make(map[string]bool, len(listing))
+	var files []baselineFile
 	for _, rel := range listing {
-		listed[filepath.Join(dir, filepath.FromSlash(rel))] = true
-	}
-	files := make([]baselineFile, 0, len(walked))
-	for _, path := range walked {
-		object, atBase := objects[path]
-		if listed[path] || atBase {
-			files = append(files, baselineFile{path: path, object: object, worktree: true, ignored: !listed[path], gitDir: dir})
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("caveman estimate: list the working tree of %s: %w", filepath.ToSlash(dir), err)
 		}
+		path, counts, err := baselineWorktreeMarkdown(dir, rel)
+		if err != nil {
+			return nil, err
+		}
+		if !counts {
+			continue
+		}
+		if len(files) == maxCavemanFiles {
+			return nil, fmt.Errorf("caveman estimate: directory %s holds more than %d Markdown files that git tracks or would track; name its subdirectories or files",
+				filepath.ToSlash(dir), maxCavemanFiles)
+		}
+		files = append(files, baselineFile{path: path, object: objects[path], worktree: true, gitDir: dir})
 	}
 	return files, nil
+}
+
+// baselineWorktreeMarkdown reports whether rel, one entry of git's listing taken in dir, is a
+// Markdown file the working tree holds, and returns its working-tree spelling. The listing
+// names more than such files: an index entry outlives a file that was deleted or whose
+// directory became a file, a symlink and a submodule are entries too, and a nested repository
+// is the one entry "<directory>/". None of them counts. A path that cannot be inspected for
+// any other reason is an error, never a file read as absent.
+func baselineWorktreeMarkdown(dir, rel string) (string, bool, error) {
+	local := filepath.FromSlash(rel)
+	if !filepath.IsLocal(local) || !strings.EqualFold(filepath.Ext(local), cavemanProseExtension) {
+		return "", false, nil
+	}
+	path := filepath.Join(dir, local)
+	// #nosec G703 -- path is an entry git lists below a directory the operator names on the
+	// command line, kept local to it by filepath.IsLocal; it is inspected, never opened.
+	info, err := os.Lstat(path)
+	switch {
+	case err == nil:
+		return path, info.Mode().IsRegular(), nil
+	case errors.Is(err, fs.ErrNotExist), errors.Is(err, syscall.ENOTDIR):
+		return "", false, nil
+	}
+	return "", false, fmt.Errorf("caveman estimate: inspect %s: %w", filepath.ToSlash(path), err)
 }
 
 // baselineWorktreeListing lists the files of the working tree that git tracks or would track,

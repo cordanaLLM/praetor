@@ -584,7 +584,7 @@ func readCavemanInputs(ctx context.Context, args []string, stdin io.Reader) ([]c
 	if len(args) == 0 {
 		return nil, errors.New(cavemanUsage)
 	}
-	paths, err := expandCavemanPaths(ctx, args, cavemanProseExtensions())
+	paths, err := expandCavemanPaths(ctx, args, map[string]bool{cavemanProseExtension: true})
 	if err != nil {
 		return nil, err
 	}
@@ -597,12 +597,6 @@ func readCavemanInputs(ctx context.Context, args []string, stdin io.Reader) ([]c
 		inputs = append(inputs, input)
 	}
 	return inputs, nil
-}
-
-// cavemanProseExtensions is what a directory expands to wherever no --ext says otherwise:
-// Markdown, the one format the lint and the estimate read as prose.
-func cavemanProseExtensions() map[string]bool {
-	return map[string]bool{cavemanProseExtension: true}
 }
 
 func readCavemanInput(ctx context.Context, path string, stdin io.Reader) (cavemanInput, error) {
