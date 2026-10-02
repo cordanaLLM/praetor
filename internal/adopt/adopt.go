@@ -58,13 +58,24 @@ const (
 
 // AdoptOptions controls repository adoption and template compliance.
 type AdoptOptions struct {
-	Path              string   `json:"path"`
-	Profile           string   `json:"profile"`
-	Facets            []string `json:"facets"`
-	DryRun            bool     `json:"dry_run"`
-	Force             bool     `json:"force"`
-	RecordBaseline    bool     `json:"record_baseline"`
-	SkipGitValidation bool     `json:"skip_git_validation"`
+	Path    string   `json:"path"`
+	Profile string   `json:"profile"`
+	Facets  []string `json:"facets"`
+	DryRun  bool     `json:"dry_run"`
+	Force   bool     `json:"force"`
+	// RecordBaseline records the legacy-debt baseline of a repository that has none. A
+	// repository that already has one keeps it: the baseline step rescans, reports the verdict
+	// `praetorctl baseline --verify` gives (AdoptReport.BaselineRatchet) and never rewrites the
+	// file, Force included (#358). False skips the scan.
+	RecordBaseline bool `json:"record_baseline"`
+	// RerecordBaseline replaces an existing baseline with a rescan under the rules of
+	// `praetorctl baseline --record` (baseline.Record): a higher count is refused unless
+	// AllowBaselineIncrease is set with a BaselineIncreaseReason, which the baseline then
+	// stores. It needs RecordBaseline (validateBaselineOptions).
+	RerecordBaseline       bool   `json:"rerecord_baseline,omitempty"`
+	AllowBaselineIncrease  bool   `json:"allow_baseline_increase,omitempty"`
+	BaselineIncreaseReason string `json:"baseline_increase_reason,omitempty"`
+	SkipGitValidation      bool   `json:"skip_git_validation"`
 	// SetFacets records that the caller passed Facets explicitly, an empty list included (the
 	// CLI's --facets=). A first adoption still declares the defaults for an empty list and the
 	// report says the flag named none (defaultFacetNotes); against an existing manifest an
@@ -122,11 +133,16 @@ type AdoptReport struct {
 	Previews        []FilePreview  `json:"previews,omitempty"`
 	DebtBreakdown   map[string]int `json:"debt_breakdown,omitempty"`
 	LegacyDebtCount int            `json:"legacy_debt_count"`
-	// BaselineStatus distinguishes an observed zero from a skipped or unevaluated scan.
-	BaselineStatus string   `json:"baseline_status"`
-	DryRun         bool     `json:"dry_run"`
-	Errors         []string `json:"errors,omitempty"`
-	Warnings       []string `json:"warnings,omitempty"`
+	// BaselineStatus distinguishes an observed zero from a skipped or unevaluated scan:
+	// "scanned" when the run recorded or re-recorded the baseline, "existing" when it kept the
+	// one the repository has, "skipped", "failed" or "not_run".
+	BaselineStatus string `json:"baseline_status"`
+	// BaselineRatchet is the read-only HISS-13 verdict on a baseline the run kept and rescanned
+	// (checkKeptBaseline); nil when the run recorded, re-recorded or did not scan.
+	BaselineRatchet *BaselineRatchet `json:"baseline_ratchet,omitempty"`
+	DryRun          bool             `json:"dry_run"`
+	Errors          []string         `json:"errors,omitempty"`
+	Warnings        []string         `json:"warnings,omitempty"`
 	// Steps records each reached step of the chain; Pillars derives the governance pillar
 	// lines from it.
 	Steps []StepOutcome `json:"steps,omitempty"`
@@ -206,6 +222,9 @@ func Adopt(ctx context.Context, opts AdoptOptions) (*AdoptReport, error) {
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, fmt.Errorf("adopt cancelled: %w", err)
+	}
+	if err := validateBaselineOptions(opts); err != nil {
+		return nil, err
 	}
 
 	normPath, err := resolveTargetPath(opts)
@@ -660,20 +679,25 @@ func reconcileExistingManifest(ctx context.Context, s *adoptSession, full string
 	return nil
 }
 
-// reconcileBaseline records the legacy-debt baseline. A scan that does not complete is
-// an error: persisting an empty baseline would silently mis-anchor the HISS-13 ratchet.
+// reconcileBaseline records the legacy-debt baseline of a repository that has none and keeps
+// the one a governed repository already has. A re-adoption used to rescan and overwrite it,
+// which turned every unbaselined violation into accepted debt, so a plain re-adopt defeated the
+// HISS-13 ratchet (#358). An existing baseline is replaced only on RerecordBaseline, under the
+// rules of `praetorctl baseline --record` (rerecordBaseline).
 func reconcileBaseline(ctx context.Context, s *adoptSession) error {
 	full, err := repoFile(s.repoPath, baselineFile)
 	if err != nil {
 		return err
 	}
 	existed := fileExists(full)
-	if existed && !s.opts.RecordBaseline {
-		s.report.BaselineStatus = "existing"
+	switch {
+	case existed && s.opts.RerecordBaseline:
+		return s.rerecordBaseline(ctx, full)
+	case existed && s.opts.RecordBaseline:
+		return s.checkKeptBaseline(ctx, full)
+	case existed:
 		return s.verifyExistingBaseline(full)
-	}
-
-	if !s.opts.RecordBaseline {
+	case !s.opts.RecordBaseline:
 		// Recording was declined and there is no baseline to keep, so write nothing. Writing an
 		// empty one is not neutral: it asserts total_infractions: 0 with a fresh timestamp, it is
 		// indistinguishable on disk from a scan that genuinely found no debt, and the ratchet
@@ -684,6 +708,13 @@ func reconcileBaseline(ctx context.Context, s *adoptSession) error {
 			"Record one before committing, or every existing infraction is ratcheted as new debt")
 		return nil
 	}
+	return s.recordFirstBaseline(ctx, full)
+}
+
+// recordFirstBaseline scans the repository and records its first baseline at full. A scan that
+// does not complete is an error: persisting an empty baseline would silently mis-anchor the
+// HISS-13 ratchet. A dry run scans and writes nothing.
+func (s *adoptSession) recordFirstBaseline(ctx context.Context, full string) error {
 	commit, err := state.RecordedCommit(ctx, s.repoPath)
 	if err != nil {
 		s.report.BaselineStatus = "failed"
@@ -699,61 +730,196 @@ func reconcileBaseline(ctx context.Context, s *adoptSession) error {
 	}
 	s.report.BaselineStatus = "scanned"
 	s.report.LegacyDebtCount = base.TotalInfractions
-	return s.saveScannedBaseline(full, base, existed)
-}
-
-// saveScannedBaseline writes the rescanned baseline and reports it. An existing baseline
-// that records the same debt (baseline.SameDebt) is kept byte for byte: rewriting it would
-// change only generated_at, and the commit baseline.Record also keeps, so every re-adoption
-// with --record-baseline, the default, would leave a diff in a repository nothing changed.
-func (s *adoptSession) saveScannedBaseline(full string, base *baseline.Baseline, existed bool) error {
-	if existed && unchangedBaseline(full, base) {
-		s.report.recordReconciled(baselineFile, fmt.Sprintf(
-			"Rescanned; baseline unchanged at %d legacy debt infractions", base.TotalInfractions))
-		return nil
+	if err := s.saveBaseline(full, base); err != nil {
+		return err
 	}
-	if !s.opts.DryRun {
-		if err := baseline.SaveBaseline(full, base); err != nil {
-			s.report.BaselineStatus = "failed"
-			return fmt.Errorf("save baseline: %w", err)
-		}
-	}
-	detail := fmt.Sprintf("Recorded %d legacy debt infractions into baseline", base.TotalInfractions)
-	if existed {
-		s.report.recordReconciled(baselineFile, "Rescanned and "+lowerFirst(detail))
-		return nil
-	}
-	s.report.recordCreated(baselineFile, detail)
+	s.report.recordCreated(baselineFile, fmt.Sprintf("Recorded %d legacy debt infractions into baseline", base.TotalInfractions))
 	return nil
 }
 
-// unchangedBaseline reports whether the readable baseline at full records the same debt as base
-// (baseline.SameDebt). A rescan without a resolved identity carries no repository; the one the
-// baseline records is carried into base first, as baseline.Record carries it, so a rescan never
-// blanks a recorded repository (#123).
-func unchangedBaseline(full string, base *baseline.Baseline) bool {
-	previous, err := baseline.LoadBaseline(full)
-	if err != nil {
-		return false
+// saveBaseline writes base to full; a dry run writes nothing.
+func (s *adoptSession) saveBaseline(full string, base *baseline.Baseline) error {
+	if s.opts.DryRun {
+		return nil
 	}
-	if base.Repository == "" {
-		base.Repository = previous.Repository
+	if err := baseline.SaveBaseline(full, base); err != nil {
+		s.report.BaselineStatus = "failed"
+		return fmt.Errorf("save baseline: %w", err)
 	}
-	return previous.SameDebt(base)
+	return nil
 }
 
-// verifyExistingBaseline keeps an existing baseline and exposes its debt count so that
-// later steps (the README badge) reflect the recorded state.
-func (s *adoptSession) verifyExistingBaseline(full string) error {
+// loadExistingBaseline reads the baseline the repository has. An unreadable one fails the step
+// on every path: nothing can be verified against it, and replacing it would accept the current
+// debt with no earlier count to ratchet against.
+func (s *adoptSession) loadExistingBaseline(full string) (*baseline.Baseline, error) {
 	base, err := baseline.LoadBaseline(full)
 	if err != nil {
-		s.report.addError("baseline: existing %s is unreadable: %v", baselineFile, err)
+		s.report.addError("baseline: existing %s is unreadable: %v; restore it from version control, or delete it "+
+			"to record a first baseline", baselineFile, err)
 		s.report.BaselineStatus = "failed"
-		return fmt.Errorf("load existing baseline: %w", err)
-	} else {
-		s.report.LegacyDebtCount = base.Count()
+		return nil, fmt.Errorf("load existing baseline: %w", err)
 	}
+	return base, nil
+}
+
+// verifyExistingBaseline keeps an existing baseline without scanning (--record-baseline=false)
+// and exposes its debt count so that later steps (the README badge) reflect the recorded state.
+func (s *adoptSession) verifyExistingBaseline(full string) error {
+	base, err := s.loadExistingBaseline(full)
+	if err != nil {
+		return err
+	}
+	s.report.BaselineStatus = "existing"
+	s.report.LegacyDebtCount = base.Count()
 	s.report.recordReconciled(baselineFile, "Technical debt baseline verified present")
+	return nil
+}
+
+// currentDebt scans the repository as the baseline step records it (scanLegacyDebt) and returns
+// the infractions it carries now; the scan's rule breakdown lands in report.
+func (s *adoptSession) currentDebt(ctx context.Context, report *AdoptReport) ([]baseline.Infraction, error) {
+	scanned := &baseline.Baseline{Infractions: make([]baseline.Infraction, 0)}
+	if err := scanLegacyDebt(ctx, s.repoPath, scanned, report, s.legacyDebtScanOptions()); err != nil {
+		s.report.BaselineStatus = "failed"
+		return nil, err
+	}
+	return scanned.Infractions, nil
+}
+
+// BaselineRatchet is the HISS-13 verdict on a baseline a re-adoption kept: what `praetorctl
+// baseline --verify` reports for the repository, computed by the same rule
+// (baseline.EvaluateRatchet without a change set).
+type BaselineRatchet struct {
+	// Passed is false when the repository carries an infraction the baseline does not record,
+	// or more infractions than it records.
+	Passed bool `json:"passed"`
+	// Recorded is the count the kept baseline records, Active the count the rescan found and
+	// Unbaselined how many of the active infractions the baseline does not record.
+	Recorded    int `json:"recorded"`
+	Active      int `json:"active"`
+	Unbaselined int `json:"unbaselined"`
+}
+
+// Line renders the verdict as one report line, the same on every surface (CLI, MCP).
+func (v BaselineRatchet) Line() string {
+	if v.Passed {
+		return fmt.Sprintf("Baseline kept, not re-recorded; HISS-13 ratchet passes: %d active infractions within the %d recorded",
+			v.Active, v.Recorded)
+	}
+	return fmt.Sprintf("Baseline kept, not re-recorded; HISS-13 ratchet rejects: %d active infractions against %d recorded, %d not in the baseline",
+		v.Active, v.Recorded, v.Unbaselined)
+}
+
+// rerecordRemedy names the two ways to accept debt a kept baseline does not record.
+const rerecordRemedy = "'praetorctl adopt --rerecord-baseline --allow-increase --reason=<why>' or " +
+	"'praetorctl baseline --record --allow-increase --reason=<why>'"
+
+// checkKeptBaseline keeps the existing baseline at full byte for byte and reports what
+// `praetorctl baseline --verify` says about it: the rescan is evaluated against the recorded
+// debt and never written (#358). A rejection is a warning, not a failed adoption: the files
+// adoption owns are reconciled all the same, and `praetorctl audit` is what rejects the debt.
+func (s *adoptSession) checkKeptBaseline(ctx context.Context, full string) error {
+	recorded, err := s.loadExistingBaseline(full)
+	if err != nil {
+		return err
+	}
+	// The report states the recorded debt, so the rescan's breakdown stays out of it.
+	current, err := s.currentDebt(ctx, &AdoptReport{DebtBreakdown: make(map[string]int)})
+	if err != nil {
+		return err
+	}
+	ratchet := baseline.EvaluateRatchet(recorded, current, nil)
+	verdict := &BaselineRatchet{Passed: ratchet.Passed, Recorded: ratchet.PreviousCount,
+		Active: ratchet.CurrentCount, Unbaselined: len(ratchet.NewViolations)}
+	s.report.BaselineStatus = "existing"
+	s.report.LegacyDebtCount = recorded.Count()
+	s.report.BaselineRatchet = verdict
+	s.report.recordReconciled(baselineFile, verdict.Line())
+	if !ratchet.Passed {
+		hiss.AttributeRatchet(ctx, s.repoPath, full, s.legacyDebtScanOptions(), recorded, current, ratchet)
+		s.report.addWarning("%s was kept and does not record the repository's current debt, which praetorctl audit rejects. %s\n"+
+			"  fix the findings, or accept them deliberately with %s", baselineFile, ratchet.Summary(), rerecordRemedy)
+		return nil
+	}
+	if notice := ratchet.StaleNotice(); notice != "" {
+		s.report.addWarning("%s: %s", baselineFile, notice)
+	}
+	return nil
+}
+
+// rerecordBaseline replaces the existing baseline at full with a rescan, as `praetorctl
+// baseline --record` does (baseline.Record): a higher count is refused unless the caller
+// allowed it with a rationale, the recorded repository and commit are carried over when the
+// run resolves none, and a rescan that records the same debt keeps the file byte for byte.
+func (s *adoptSession) rerecordBaseline(ctx context.Context, full string) error {
+	previous, err := s.loadExistingBaseline(full)
+	if err != nil {
+		return err
+	}
+	commit, err := state.RecordedCommit(ctx, s.repoPath)
+	if err != nil {
+		s.report.BaselineStatus = "failed"
+		return fmt.Errorf("baseline commit: %w", err)
+	}
+	current, err := s.currentDebt(ctx, s.report)
+	if err != nil {
+		return err
+	}
+	next, err := baseline.Record(previous, current, baseline.RecordOptions{AllowIncrease: s.opts.AllowBaselineIncrease,
+		Rationale: s.opts.BaselineIncreaseReason, Repository: s.identity.coordinate(), CommitSHA: commit})
+	if err != nil {
+		s.report.BaselineStatus = "failed"
+		return s.refusedRerecord(ctx, full, previous, current, err)
+	}
+	s.report.BaselineStatus = "scanned"
+	s.report.LegacyDebtCount = next.TotalInfractions
+	if previous.SameDebt(next) && previous.CommitSHA == next.CommitSHA {
+		s.report.recordReconciled(baselineFile, fmt.Sprintf(
+			"Rescanned; baseline unchanged at %d legacy debt infractions", next.TotalInfractions))
+		return nil
+	}
+	if err := s.saveBaseline(full, next); err != nil {
+		return err
+	}
+	s.report.recordReconciled(baselineFile, fmt.Sprintf("Rescanned and re-recorded %d legacy debt infractions into baseline, previously %d",
+		next.TotalInfractions, previous.Count()))
+	if next.IncreaseRationale != "" {
+		s.report.addWarning("%s: debt increased deliberately from %d to %d infractions; recorded rationale: %s",
+			baselineFile, previous.Count(), next.TotalInfractions, next.IncreaseRationale)
+	}
+	return nil
+}
+
+// refusedRerecord renders a re-record baseline.Record refused: the cause, the flags that record
+// a deliberate increase, and the findings the kept baseline does not record.
+func (s *adoptSession) refusedRerecord(ctx context.Context, full string, previous *baseline.Baseline,
+	current []baseline.Infraction, cause error,
+) error {
+	refusal := fmt.Errorf("refusing to re-record %s: %w (pass --allow-increase --reason=<why> to record a deliberate increase); "+
+		"the baseline was kept", baselineFile, cause)
+	ratchet := baseline.EvaluateRatchet(previous, current, nil)
+	if ratchet.Passed {
+		return refusal
+	}
+	hiss.AttributeRatchet(ctx, s.repoPath, full, s.legacyDebtScanOptions(), previous, current, ratchet)
+	return fmt.Errorf("%w\n%s", refusal, ratchet.Summary())
+}
+
+// ErrBaselineOptions reports baseline options that contradict each other.
+var ErrBaselineOptions = errors.New("adopt: contradictory baseline options")
+
+// validateBaselineOptions refuses, before anything is written, a re-record the options also
+// decline and increase options without the re-record they qualify.
+func validateBaselineOptions(opts AdoptOptions) error {
+	increase := opts.AllowBaselineIncrease || strings.TrimSpace(opts.BaselineIncreaseReason) != ""
+	switch {
+	case opts.RerecordBaseline && !opts.RecordBaseline:
+		return fmt.Errorf("%w: --rerecord-baseline replaces the baseline that --record-baseline=false declines to record", ErrBaselineOptions)
+	case increase && !opts.RerecordBaseline:
+		return fmt.Errorf("%w: --allow-increase and --reason qualify --rerecord-baseline; without it adoption keeps an "+
+			"existing baseline and never raises it", ErrBaselineOptions)
+	}
 	return nil
 }
 
