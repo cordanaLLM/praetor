@@ -1,0 +1,4 @@
+type: fixed
+title: "caveman check refuses a negative --max-words or --max-tokens instead of switching the ceiling off"
+issue: "#382"
+breaking: true
