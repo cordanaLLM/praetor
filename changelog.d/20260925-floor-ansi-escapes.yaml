@@ -1,4 +1,4 @@
 type: fixed
-title: "caveman floor no longer fails F9 number-lost on rewrites removing ANSI colour codes"
+title: "caveman floor strips ANSI escape sequences before fact extraction across all rules"
 breaking: false
 issue: "#713"

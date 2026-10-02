@@ -315,8 +315,8 @@ func TestFloorNumbersMoveIntoCode(t *testing.T) {
 }
 
 // TestFloorANSIEscapesPositive pins #713: ANSI escape sequences (CSI, OSC and two-byte escapes)
-// are ignored on both sides before collecting number facts, so a rewrite removing colour codes
-// passes the clarity floor.
+// are ignored on both sides before collecting facts, so rewrites removing or changing colour codes
+// pass the clarity floor, including escapes inside number words, IDs, directives and fenced blocks.
 func TestFloorANSIEscapesPositive(t *testing.T) {
 	cases := map[string]struct {
 		before, after string
@@ -345,6 +345,42 @@ func TestFloorANSIEscapesPositive(t *testing.T) {
 			before: "\x1b[31mred 7\x1b[0m\n",
 			after:  "\x1b[32mgreen 7\x1b[0m\n",
 		},
+		"escape inside digits": {
+			before: "year \x1b[01;31m\x1b[K20\x1b[m\x1b[K26 ok\n",
+			after:  "year 2026 ok\n",
+		},
+		"escape inside version": {
+			before: "version 1.2.\x1b[7m3\x1b[27m ok\n",
+			after:  "version 1.2.3 ok\n",
+		},
+		"escape before version": {
+			before: "\x1b[1mv\x1b[0m1.2 ok\n",
+			after:  "v1.2 ok\n",
+		},
+		"fenced recoloured": {
+			before: "```text\n\x1b[31m3\x1b[0m of 7\n```\n",
+			after:  "```text\n\x1b[32m3\x1b[0m of 7\n```\n",
+		},
+		"fenced uncoloured": {
+			before: "```text\n\x1b[31m3\x1b[0m of 7\n```\n",
+			after:  "```text\n3 of 7\n```\n",
+		},
+		"coloured id kept": {
+			before: "rule \x1b[1mHISS-17\x1b[0m applies\n",
+			after:  "rule HISS-17 applies\n",
+		},
+		"coloured id recoloured": {
+			before: "rule \x1b[1mHISS-17\x1b[0m applies\n",
+			after:  "rule \x1b[32mHISS-17\x1b[0m applies\n",
+		},
+		"coloured must kept": {
+			before: "x \x1b[31mMUST\x1b[0m y\n",
+			after:  "x MUST y\n",
+		},
+		"coloured must recoloured": {
+			before: "x \x1b[31mMUST\x1b[0m y\n",
+			after:  "x \x1b[32mMUST\x1b[0m y\n",
+		},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -355,8 +391,28 @@ func TestFloorANSIEscapesPositive(t *testing.T) {
 	}
 }
 
-// TestFloorANSIEscapesNegative pins #713: a real number lost beside or inside an escape
-// sequence still fails with F9 number-lost.
+// TestFloorANSIEscapesCompress pins #713: Floor(in, Compress(in)) holds when input contains
+// ANSI escape sequences inside number words, IDs, directives or fences.
+func TestFloorANSIEscapesCompress(t *testing.T) {
+	cases := map[string]string{
+		"escape inside digits":   "year \x1b[01;31m\x1b[K20\x1b[m\x1b[K26 ok\n",
+		"escape inside version":  "version 1.2.\x1b[7m3\x1b[27m ok\n",
+		"escape before version":  "\x1b[1mv\x1b[0m1.2 ok\n",
+		"coloured id and must":   "rule \x1b[1mHISS-17\x1b[0m \x1b[31mMUST\x1b[0m apply\n",
+		"fenced coloured number": "```text\n\x1b[31m3\x1b[0m of 7\n```\n",
+	}
+	for name, in := range cases {
+		t.Run(name, func(t *testing.T) {
+			out, _ := Compress(in)
+			if report := Floor(in, out); !report.Passed() {
+				t.Fatalf("Floor(in, Compress(in)) want pass, got findings: %v", report.Findings)
+			}
+		})
+	}
+}
+
+// TestFloorANSIEscapesNegative pins #713: a real number, ID, or directive lost beside or inside
+// an escape sequence still fails its corresponding rule.
 func TestFloorANSIEscapesNegative(t *testing.T) {
 	cases := map[string]struct {
 		before, after string
@@ -376,6 +432,31 @@ func TestFloorANSIEscapesNegative(t *testing.T) {
 			before: "count: 1 and \x1b[31m2\x1b[0m\n",
 			after:  "count: 1\n",
 			want:   []Finding{{1, RuleFloorNumber, "2"}},
+		},
+		"coloured id lost": {
+			before: "rule \x1b[1mHISS-17\x1b[0m applies\n",
+			after:  "rule applies\n",
+			want:   []Finding{{1, RuleFloorID, "HISS-17"}},
+		},
+		"coloured MUST lost": {
+			before: "x \x1b[31mMUST\x1b[0m y\n",
+			after:  "x y\n",
+			want:   []Finding{{0, RuleFloorMust, "1 -> 0"}},
+		},
+		"coloured prohibition lost": {
+			before: "x \x1b[31mnever\x1b[0m y\n",
+			after:  "x y\n",
+			want:   []Finding{{0, RuleFloorProhibition, "1 -> 0"}},
+		},
+		"fenced real number lost": {
+			before: "```text\n\x1b[31m3\x1b[0m of 7\n```\n",
+			after:  "```text\n3 of nine\n```\n",
+			want:   []Finding{{2, RuleFloorNumber, "7"}},
+		},
+		"fenced coloured number lost": {
+			before: "```text\n\x1b[31m3\x1b[0m of 7\n```\n",
+			after:  "```text\nthree of 7\n```\n",
+			want:   []Finding{{2, RuleFloorNumber, "3"}},
 		},
 	}
 	for name, tc := range cases {
