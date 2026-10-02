@@ -6,6 +6,7 @@ package managedasset
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path"
 	"path/filepath"
@@ -13,6 +14,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/cordanaLLM/praetor/internal/strictjson"
 )
 
 // renovateConfig is the part of renovate.json that keeps a hosted workflow's SHA pins current.
@@ -39,6 +42,27 @@ func readRenovateConfig(t *testing.T) renovateConfig {
 		t.Fatal(err)
 	}
 	return config
+}
+
+// renovateJSONBounds bound the strict scan of renovate.json (HISS-02).
+var renovateJSONBounds = strictjson.Options{MaxBytes: 1 << 20, MaxDepth: 16, Names: strictjson.ExactNames}
+
+// Negative, a tripwire for merges: two branches that each add a top-level list such as
+// customManagers merge without a conflict into one file holding the key twice, and a JSON
+// reader then keeps the last list and drops the other without a word (Renovate's validator
+// included). renovate.json repeats no member name in any object.
+func TestRenovateConfigRepeatsNoMemberName(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "renovate.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := strictjson.Validate(raw, renovateJSONBounds); err != nil {
+		t.Fatalf("renovate.json: %v", err)
+	}
+	twice := []byte(`{"customManagers": [{"customType": "regex"}], "customManagers": []}`)
+	if err := strictjson.Validate(twice, renovateJSONBounds); !errors.Is(err, strictjson.ErrDuplicate) {
+		t.Fatalf("a repeated customManagers key was accepted: %v", err)
+	}
 }
 
 // githubActionsReads reports whether one of the github-actions manager's added file patterns,
