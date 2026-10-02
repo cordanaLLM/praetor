@@ -28,6 +28,10 @@ linters:
   - "prettier"
   - "axe-core"
 
+# The Node.js major is the one the tooling:vscode-extension facet selects. One
+# feature selected with different options by two declared files does not
+# resolve, so every file selecting it carries the same options.
 devcontainer_features:
-  - "ghcr.io/devcontainers/features/node:2"
+  - "ghcr.io/devcontainers/features/node:2":
+      version: "24"
   - "ghcr.io/devcontainers/features/common-utils:2"
