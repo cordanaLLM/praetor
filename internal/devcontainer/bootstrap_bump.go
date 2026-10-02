@@ -317,14 +317,16 @@ func moveDockerfilePin(rel, dockerfile string, next reviewedPin, replaced []stri
 }
 
 // moveFromLine rewrites a FROM line pinned to a replaced digest to next's tag and digest,
-// keeping the repository spelling, and reports whether the line then builds from next.
+// keeping the repository spelling, and reports whether the line then builds from next. The
+// replaced digests include the current one, so a move to another tag of the same digest (a
+// floating tag and a patch tag share one) rewrites the tag alone.
 func moveFromLine(line string, next reviewedPin, replaced []string) (string, bool) {
 	reference := fromReference(line)
 	if reference == "" {
 		return line, false
 	}
 	repository, tag, digest := util.SplitImageReference(reference)
-	if digest != "" && digest != next.digest && slices.Contains(replaced, digest) {
+	if digest != "" && slices.Contains(replaced, digest) && (tag != next.tag || digest != next.digest) {
 		tag, digest = next.tag, next.digest
 		line = strings.Replace(line, reference, repository+":"+tag+"@"+digest, 1)
 	}
