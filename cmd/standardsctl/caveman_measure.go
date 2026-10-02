@@ -13,8 +13,8 @@ type cavemanMeasure struct {
 	bytes, lines, tokens int
 }
 
-// measureCavemanText measures text for estimate, estimate --base and compress, so the three
-// reports cannot disagree on one input.
+// measureCavemanText measures text for estimate and estimate --base, so the two reports
+// cannot disagree on one input.
 func measureCavemanText(text string) cavemanMeasure {
 	return cavemanMeasure{bytes: len(text), lines: util.CountLines(text), tokens: caveman.EstimateTokens(text)}
 }
@@ -23,8 +23,8 @@ func (m cavemanMeasure) plus(other cavemanMeasure) cavemanMeasure {
 	return cavemanMeasure{bytes: m.bytes + other.bytes, lines: m.lines + other.lines, tokens: m.tokens + other.tokens}
 }
 
-// cavemanDelta is one text measured before and after a change: a compression, or a rewrite
-// against its git baseline.
+// cavemanDelta is one text measured before and after a change: a rewrite against its git
+// baseline.
 type cavemanDelta struct {
 	name          string
 	before, after cavemanMeasure

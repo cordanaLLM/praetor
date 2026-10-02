@@ -224,6 +224,18 @@ func TestCaseVariants(t *testing.T) {
 	}
 }
 
+// caseInsensitiveDir reports whether the file system below dir ignores letter case, by asking
+// for a file it just wrote under another spelling.
+func caseInsensitiveDir(t *testing.T, dir string) bool {
+	t.Helper()
+	writeFixtureFile(t, dir, "CaseProbe.tmp", "probe\n")
+	_, err := os.Stat(filepath.Join(dir, "caseprobe.TMP"))
+	if removeErr := os.Remove(filepath.Join(dir, "CaseProbe.tmp")); removeErr != nil {
+		t.Fatalf("remove the case probe: %v", removeErr)
+	}
+	return err == nil
+}
+
 // trackedSpellingFixture commits docs/README.md and returns the repository with a second
 // spelling of that one file, docs/readme.md. Where the file system ignores case the spelling
 // is there already; elsewhere a hard link provides it, which is the same situation for the
