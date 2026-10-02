@@ -1,0 +1,3 @@
+type: fixed
+title: "One helper shortens a commit in output: the bundle freshness report uses the build identity one"
+breaking: false

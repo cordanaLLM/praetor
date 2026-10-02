@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/buildid"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
 
@@ -68,7 +69,7 @@ func (r *FreshnessReport) Err() error {
 	}
 	return fmt.Errorf("%w: %d commits behind (bound %d) and %s old (bound %s) since bundle commit %s; "+
 		"regenerate it with praetorctl devcontainer generate --source-root <Praetor checkout> --force",
-		ErrBundleStale, r.Behind, r.Bounds.MaxCommits, formatDays(r.Age), formatDays(r.Bounds.MaxAge), util.ShortCommit(r.Commit))
+		ErrBundleStale, r.Behind, r.Bounds.MaxCommits, formatDays(r.Age), formatDays(r.Bounds.MaxAge), buildid.Short(r.Commit))
 }
 
 // String renders the measurement as one line.
@@ -77,7 +78,7 @@ func (r *FreshnessReport) String() string {
 		return fmt.Sprintf("DevContainer bundle source %s matches the working tree", r.Recorded)
 	}
 	return fmt.Sprintf("DevContainer bundle source %s differs from the working tree (%s): %d commits and %s behind since bundle commit %s; bounds %d commits and %s",
-		r.Recorded, r.Current, r.Behind, formatDays(r.Age), util.ShortCommit(r.Commit), r.Bounds.MaxCommits, formatDays(r.Bounds.MaxAge))
+		r.Recorded, r.Current, r.Behind, formatDays(r.Age), buildid.Short(r.Commit), r.Bounds.MaxCommits, formatDays(r.Bounds.MaxAge))
 }
 
 // CheckFreshness measures the bundle whose configuration is at path against the Praetor source
