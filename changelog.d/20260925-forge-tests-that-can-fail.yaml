@@ -1,4 +1,4 @@
 type: fixed
-title: "forge: reviewer path limit boundary test and ADR collision check cannot fail"
+title: "Forge tests for the reviewer path limit and the ADR collision now fail when the property breaks"
 breaking: false
 issue: "#344"
