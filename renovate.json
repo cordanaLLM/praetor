@@ -150,8 +150,9 @@
       "enabled": false
     },
     {
-      "description": "Reviewed DevContainer images: the builder pin in internal/devcontainer/bootstrap.go and the FROM line of docker/dev/Dockerfile name one image, so one branch moves both, with the base pin, and the takeover runs one praetorctl devcontainer bump for it.",
+      "description": "Reviewed DevContainer images: the builder pin in internal/devcontainer/bootstrap.go and the FROM line of docker/dev/Dockerfile name one image, so one branch moves both, with the base pin, and the takeover runs one praetorctl devcontainer bump for it. matchPackageNames keeps the Alpine packages and the syntax directive the dockerfile manager also reads from docker/dev/Dockerfile in their own branches.",
       "matchFileNames": ["internal/devcontainer/bootstrap.go", "docker/dev/Dockerfile"],
+      "matchPackageNames": ["golang", "docker.io/library/golang", "mcr.microsoft.com/devcontainers/base"],
       "groupName": "reviewed devcontainer images"
     }
   ]
