@@ -1,0 +1,4 @@
+type: fixed
+title: "Re-enable SIGHUP delivery in signal test helper when running under nohup"
+breaking: false
+issue: "#685"
