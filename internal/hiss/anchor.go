@@ -52,6 +52,43 @@ func appendFunction(functions []funcSpan, name string, start, end int) []funcSpa
 	return append(functions, funcSpan{name: name, start: start, end: end})
 }
 
+// noteFunction records a function the scanner located in the file it is reading, so the
+// findings on its lines are anchored to it once the file is read.
+func noteFunction(rep *ScanReport, name string, start, end int) {
+	rep.functions = appendFunction(rep.functions, name, start, end)
+}
+
+// adoptFunctions moves the functions a scanner noted in a per-file report into r, for the
+// scanners that collect a file's findings apart before recording them.
+func (r *ScanReport) adoptFunctions(file *ScanReport) {
+	for i := 0; i < len(file.functions); i++ {
+		noteFunction(r, file.functions[i].name, file.functions[i].start, file.functions[i].end)
+	}
+}
+
+// anchorViolations anchors the findings one file's scan recorded, with the functions that
+// scan noted and the file's own lines. The lines are split only for a file with findings.
+func anchorViolations(violations []InvariantViolation, functions []funcSpan, src sourceFile) {
+	if len(violations) == 0 {
+		return
+	}
+	lines := src.lines()
+	for i := 0; i < len(violations); i++ {
+		violations[i].Anchor = findingAnchor(functions, lines, violations[i].LineNumber, violations[i].Symbol)
+	}
+}
+
+// anchorBySymbol anchors the findings no file scan anchored, those a package pass records
+// once every file is read, to the function each one names. A finding that names none keeps
+// no anchor, and the baseline keys it by its line.
+func anchorBySymbol(violations []InvariantViolation) {
+	for i := 0; i < len(violations); i++ {
+		if violations[i].Anchor == "" && violations[i].Symbol != "" {
+			violations[i].Anchor = anchorFunction + violations[i].Symbol
+		}
+	}
+}
+
 // findingAnchor is the anchor of a finding at the 1-based line of a file whose scan located
 // functions and whose physical lines are lines: the function holding it, else its line's text.
 // symbol is the function the finding itself names, if any.

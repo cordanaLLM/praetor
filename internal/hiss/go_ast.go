@@ -48,7 +48,26 @@ func scanGoSource(data []byte, rel string, rep *ScanReport, opts ScanOptions) {
 		freeContexts: make(map[string]token.Pos),
 	}
 	g.walk(file)
+	g.noteFunctions(file)
 	g.measure(file, opts.Complexity)
+}
+
+// noteFunctions records every function the file declares, a method under its receiver type, so
+// a finding at or inside one is anchored to it rather than to its line (anchor.go). A function
+// literal bound at package level is not a declaration; a finding inside one is anchored by its
+// line's text.
+func (g *goScanner) noteFunctions(file *ast.File) {
+	for i := 0; i < len(file.Decls); i++ {
+		fn, ok := file.Decls[i].(*ast.FuncDecl)
+		if !ok || fn.Name == nil {
+			continue
+		}
+		owner := ""
+		if fn.Recv != nil && len(fn.Recv.List) > 0 {
+			owner, _ = ReceiverTypeName(fn.Recv.List[0].Type)
+		}
+		noteFunction(g.rep, qualifiedName(owner, fn.Name.Name), g.line(fn.Pos()), g.line(fn.End()))
+	}
 }
 
 // measure reports every production function whose complexity exceeds limits. The values

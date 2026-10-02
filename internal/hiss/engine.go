@@ -171,7 +171,7 @@ func (w *scanWalker) scanFile(path, rel string) error {
 		}
 	}
 	scanner := languageScanners[idx]
-	if !w.admit(idx) || !scanner.scan(src, w.rep, w.opts) {
+	if !w.admit(idx) || !w.scanAnchored(scanner, src) {
 		// A declined file, or one past its scanner's file bound, is source of the scanner's
 		// language that no rule examined.
 		w.rep.Coverage.recordUnscannedAs(rel, fileLanguage(scanner, rel))
@@ -197,6 +197,17 @@ func (w *scanWalker) admit(idx int) bool {
 	}
 	w.admitted[idx]++
 	return true
+}
+
+// scanAnchored hands src to scanner and anchors the findings that scan recorded to the
+// functions it noted (anchor.go), so each finding leaves the walk with an identity a line shift
+// does not change. It reports what the scanner reports: whether it examined the file.
+func (w *scanWalker) scanAnchored(scanner languageScanner, src sourceFile) bool {
+	first := len(w.rep.Violations)
+	w.rep.functions = w.rep.functions[:0]
+	examined := scanner.scan(src, w.rep, w.opts)
+	anchorViolations(w.rep.Violations[first:], w.rep.functions, src)
+	return examined
 }
 
 // readFailed accounts for a file the bounded read refused. A content candidate was never known

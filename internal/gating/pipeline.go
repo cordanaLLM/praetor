@@ -447,9 +447,6 @@ func runHissStage(ctx context.Context, cfg *stageConfig) (string, error) {
 	}
 
 	current := hiss.ConvertToBaseline(scanRep.Violations)
-	for i := range current {
-		current[i].Fingerprint = fmt.Sprintf("%s:%d:%s", current[i].FilePath, current[i].LineNumber, current[i].RuleID)
-	}
 
 	ratchet := baseline.EvaluateRatchet(base, current, nil)
 	if !ratchet.Passed {

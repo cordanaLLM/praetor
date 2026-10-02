@@ -149,6 +149,7 @@ func (t *braceTracker) finish(endLine int) {
 	if t.scopeOnly {
 		return
 	}
+	noteFunction(t.rep, t.name, t.start, endLine)
 	funcLen := endLine - t.start + 1
 	if funcLen > t.maxLOC {
 		recordViolation(t.rep, "HISS-04", t.rel, t.start, t.name,
@@ -956,6 +957,7 @@ func (s *pythonScanner) close(indent int) {
 			break
 		}
 		if !top.class {
+			noteFunction(s.rep, qualifiedName(top.owner, top.name), top.start, s.lastCode)
 			checkPythonFuncLen(top.start, s.lastCode, top.name, s.rel, s.rep, s.maxLOC)
 			top.calls.report(s.rep, s.rel)
 		}

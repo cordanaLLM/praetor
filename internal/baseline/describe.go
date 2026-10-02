@@ -433,16 +433,14 @@ func takeLine(lines map[string][]int, key string) (int, bool) {
 	return queue[0], true
 }
 
-// movedRecorded lists, per finding, the lines of the recorded infractions whose fingerprint no
-// current violation carries: findings the recorder saw at a line they no longer occupy.
+// movedRecorded lists, per finding, the lines of the recorded infractions no current violation
+// matches (scannedKeys): findings the recorder saw under a key they no longer carry, a line for
+// an entry of the line-keyed form, an anchor for any other.
 func movedRecorded(recorded, current []Infraction) map[string][]int {
-	present := make(map[string]struct{}, len(current))
-	for i := 0; i < len(current); i++ {
-		present[fingerprintOf(current[i])] = struct{}{}
-	}
+	present := indexScanned(current)
 	moved := make(map[string][]int)
 	for i := 0; i < len(recorded); i++ {
-		if _, ok := present[fingerprintOf(recorded[i])]; !ok {
+		if !present.carries(recorded[i]) {
 			key := findingKey(recorded[i])
 			moved[key] = append(moved[key], recorded[i].LineNumber)
 		}
