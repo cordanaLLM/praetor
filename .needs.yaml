@@ -417,7 +417,7 @@ dependencies:
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
     - package: js-yaml
-      version: 5.4.1
+      version: 5.4.2
       language: typescript
       ecosystem: npm
       capability: ui.external.js_yaml
@@ -431,7 +431,7 @@ dependencies:
       status: gap
       notes: External npm dependency requiring a target framework adapter or evaluation
     - package: micromark
-      version: 4.0.2
+      version: 4.0.3
       language: typescript
       ecosystem: npm
       capability: ui.external.micromark
@@ -464,4 +464,4 @@ readiness:
     total_third_party_deps: 55
     covered_deps: 0
     gap_deps: 55
-updated_at: 2026-10-02T05:13:27.405431107Z
+updated_at: 2026-10-02T08:42:55.801558865Z
