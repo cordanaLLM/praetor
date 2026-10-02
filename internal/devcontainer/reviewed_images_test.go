@@ -86,8 +86,10 @@ func TestGuideStatesThePriorImageBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The guide is hard-wrapped Markdown, so compare with whitespace runs folded to one space.
+	text := strings.Join(strings.Fields(string(guide)), " ")
 	for _, want := range []string{"at most " + strconv.Itoa(maxPriorImages) + " images (`maxPriorImages` in", "`maxPriorImages` in a reviewed change"} {
-		if !strings.Contains(string(guide), want) {
+		if !strings.Contains(text, want) {
 			t.Errorf("docs/guides/devcontainer-bootstrap.md does not state %q", want)
 		}
 	}
@@ -178,6 +180,9 @@ func TestParseTaggedPinRequiresTagAndDigest(t *testing.T) {
 		"docker.io/library/golang:1.28-Alpine@" + digest,
 		"registry.test:5000/golang:1.28@" + digest,
 		"docker.io/library/golang:1.28@" + digest[:len(digest)-1],
+		// The tag is part of the repository, or of the digest: Renovate could not move it alone.
+		"mcr.microsoft.com/devcontainers/base:dev@" + digest,
+		"docker.io/library/golang:" + digest[len("sha256:"):len("sha256:")+2] + "@" + digest,
 		"",
 	} {
 		if _, _, _, err := parseTaggedPin(reference); err == nil {

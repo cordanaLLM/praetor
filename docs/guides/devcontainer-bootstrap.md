@@ -208,12 +208,16 @@ directory of `--config`; `--force` and `--verify` are not accepted. Commit the
 pin, the prior list, the Dockerfile and the bundle together.
 
 The tag moves with the same command. Give the new tag with its digest, and the
-command rewrites the tag in the `// Reviewed at` line and in the `FROM` line; no
-other file is edited by hand. The `// Reviewed at` line is the only place that
-names the reviewed tag: the tests read the tag and the digest from it
-(`ReviewedReferences` in `internal/devcontainer/reviewed_images.go`) and spell
-neither, so the tree passes after a move to another tag, by this command or by
-a Renovate tag update.
+command rewrites the tag in the `// Reviewed at` line and in the `FROM` line,
+also when the new tag names the digest already pinned (a floating tag and a
+patch tag share one). The tests read the tag and the digest from the
+`// Reviewed at` line (`ReviewedReferences` in
+`internal/devcontainer/reviewed_images.go`) and spell neither, so the tree
+passes after a move to another tag, by this command or by a Renovate tag
+update. Prose that explains a tag, such as the comment above `DefaultBaseImage`,
+is not rewritten: review it in the same change. A tag that also occurs in the
+image's repository or digest is refused, because Renovate replaces the tag's
+text inside the pin and could not move such a tag alone.
 
 The prior list only grows, and nothing prunes it: a bundle that recorded a
 removed image would be kept as the adopter's choice instead of refreshed. Each
