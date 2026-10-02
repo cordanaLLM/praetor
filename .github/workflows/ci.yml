@@ -31,10 +31,12 @@ jobs:
     # internal/forge/workflow_guard.go).
     if: "!(startsWith(github.head_ref, 'renovate/') && github.event.pull_request.user.login == 'renovate[bot]')"
     runs-on: ubuntu-26.04
-    # Full verification routinely takes 14-15 minutes; main run 35516836823
-    # passed every gate but was canceled during cache cleanup at the 15-minute
-    # ceiling. Keep a finite bound with headroom for normal runner variance.
-    timeout-minutes: 30
+    # Keep a finite bound with headroom for normal runner variance. The job has outgrown its
+    # limit twice: at 14-15 minutes it was cancelled during cache cleanup at a 15-minute
+    # ceiling (main run 35516836823), and at 26-29 minutes on six consecutive pull requests a
+    # slow runner cancelled a clean change at the 30-minute one (#729). 45 leaves headroom
+    # until the job is made faster or split.
+    timeout-minutes: 45
 
     steps:
       - name: Checkout Source Code
