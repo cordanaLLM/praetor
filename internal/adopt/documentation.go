@@ -102,25 +102,6 @@ func preflightDocumentationDeprovision(ctx context.Context, s *adoptSession) err
 	return preflightDocumentationFormatter(ctx, s)
 }
 
-// preflightDocumentationAttributes refuses a disable, before anything is removed, while
-// .gitattributes carries ambiguous attribute-block markers or an edited attribute block.
-func preflightDocumentationAttributes(ctx context.Context, s *adoptSession) error {
-	full, err := repoFile(s.repoPath, gitAttributesFile)
-	if err != nil {
-		return err
-	}
-	data, exists, err := contextopt.ObserveSnapshot(ctx, full)
-	if err != nil {
-		return fmt.Errorf("inspect %s before documentation disable: %w", gitAttributesFile, err)
-	}
-	if exists {
-		if _, err := mergeGitAttributes(string(data), nil); err != nil {
-			return fmt.Errorf("%s blocks documentation disable: %w", gitAttributesFile, err)
-		}
-	}
-	return nil
-}
-
 func preflightDocumentationRuleset(ctx context.Context, s *adoptSession) error {
 	return preflightContextRemoval(ctx, s, DocumentationFamilies())
 }

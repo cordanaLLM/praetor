@@ -88,7 +88,7 @@ func runDevContainer(args []string) error {
 	if opts.verify {
 		fmt.Printf("Verifying %s against %s...\n", opts.outputPath, opts.configPath)
 		if err := devcontainer.Verify(ctx, opts.outputPath, dc); err != nil {
-			return fmt.Errorf("devcontainer verification failed: %w", devContainerCheckoutRemedy(ctx, filepath.Dir(opts.configPath), err))
+			return fmt.Errorf("devcontainer verification failed: %w", devContainerCheckoutRemedy(ctx, filepath.Dir(opts.configPath), manifest, err))
 		}
 		fmt.Println("[PASS] DevContainer configuration and recorded bootstrap inputs match; runtime execution remains a separate check.")
 		return nil
