@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -34,6 +35,21 @@ func TestSignalProcessHelper(t *testing.T) {
 	arguments := os.Getenv("PRAETOR_SIGNAL_PROCESS_TEST")
 	if arguments == "" {
 		return
+	}
+	if os.Getenv("PRAETOR_TEST_IGNORE_HANGUP") == "" {
+		// When the test runner inherits an ignored SIGHUP (a test started under nohup or setsid nohup),
+		// the child praetorctl process inherits that ignored disposition across exec. In production, nohup
+		// semantics dictate that an inherited ignored SIGHUP must stay ignored (see unignoredTerminatingSignals
+		// in command_signal_context.go and TestGateRun_Negative_IgnoredHangupKeepsTheRunGoing).
+		// For positive hangup tests, however, the child must receive SIGHUP at its default disposition.
+		// Go cannot reset an inherited ignored signal through exec.Cmd directly, and calling
+		// signal.Reset(syscall.SIGHUP) alone restores the exec disposition (SIG_IGN). Per the Go
+		// os/signal documentation ("If the program was started with SIGHUP or SIGINT ignored, and
+		// Notify is called for either signal, a signal handler will be installed for that signal and
+		// it will no longer be ignored"), signal.Notify re-enables delivery so CancelCommandsOnSignal
+		// and TerminateCommandsOnSignal can watch and handle it.
+		hup := make(chan os.Signal, 1)
+		signal.Notify(hup, syscall.SIGHUP)
 	}
 	os.Args = append([]string{"praetorctl"}, strings.Fields(arguments)...)
 	main()
@@ -220,6 +236,9 @@ func startGateRunHelper(t *testing.T, ignoreHangup bool, extraEnv ...string) *ga
 		"PATH="+stubs+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"PRAETOR_SIGNAL_PROCESS_TEST=gate run --path="+h.repo,
 		"PRAETOR_TEST_READY="+h.ready, "PRAETOR_TEST_REPO="+h.repo, "GOCOVERDIR="+t.TempDir())
+	if ignoreHangup {
+		h.cmd.Env = append(h.cmd.Env, "PRAETOR_TEST_IGNORE_HANGUP=1")
+	}
 	h.cmd.Env = append(h.cmd.Env, extraEnv...)
 	h.cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	h.cmd.Stdout, h.cmd.Stderr = &h.out, &h.out
