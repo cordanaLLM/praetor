@@ -725,12 +725,18 @@ total: inputs=5 bytes=71->35 (-36) tokens_est=17->7 (-10) base_absent=1 worktree
 | Input | Behaviour |
 | :--- | :--- |
 | `<rev>` | any revision that names a commit: a branch, a tag, `HEAD~1`, an object id. It is resolved once, in the repository of the first path, and the first line prints the commit, so every read sees one tree. A revision with a shell metacharacter (`HEAD@{1}`) or a leading `-` is refused (`util.ValidateExecArg`) |
-| a file | measured on both sides. On one side only it is a row ending in `base=absent` or `worktree=absent`, the missing side counted as zero; on neither side it is an error, so a typo is never a row |
-| a directory | the union of the Markdown files below it in the working tree and at the revision, in lexical order, so a file or a whole subdirectory deleted since the revision is still reported |
+| a file | measured on both sides. On one side only it is a row ending in `base=absent` or `worktree=absent`, the missing side counted as zero; on neither side it is an error, so a typo is never a row. A file whose directory was deleted or renamed since the revision is such a `worktree=absent` row too |
+| a directory | the union of the Markdown files below it in the working tree and at the revision, in lexical order, so a file or a whole subdirectory deleted since the revision is still reported. A directory the working tree no longer holds is its Markdown files at the revision, each `worktree=absent`; one that held no Markdown file is an error |
 | `-` | an error: standard input has no revision |
 
-A renamed file is two rows, the old path `worktree=absent` and the new one `base=absent`. The
-base side is read from git as stored (`git ls-tree`, `git cat-file blob`) through
+A renamed file is two rows, the old path `worktree=absent` and the new one `base=absent`.
+Git runs in the deepest directory of each path that the working tree still holds
+(`util.SplitAtExistingDir`) and is given the rest as a literal pathspec, so a path below a
+removed or renamed directory is read like any other deleted file, and the paths
+`git diff --name-only <rev>` prints at the repository root can be handed over as they are;
+`TestCavemanEstimateBaseDeletedDirectory` pins it.
+
+The base side is read from git as stored (`git ls-tree`, `git cat-file blob`) through
 `util.RunGitProbe`, each call under its 5 s bound and the command under the 30 s bound of
 `contextopt.MaxDuration`; a blob above 1 MiB or one that is not UTF-8 is an error, as it is
 for a working-tree file. On a checkout that converts line ends, the working-tree bytes include

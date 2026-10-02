@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -28,7 +26,8 @@ var errBaselineStdin = errors.New("caveman estimate: --base compares files with 
 
 // baselineFile is one path of an `estimate --base` run: its working-tree spelling, the blob
 // it was at the base revision ("" when it was no regular file there), whether the working
-// tree holds it, and a directory of its repository that exists, for git to run in.
+// tree holds it, and a directory of its repository that the working tree still holds, for git
+// to run in.
 type baselineFile struct {
 	path     string
 	object   string
@@ -41,8 +40,11 @@ type baselineFile struct {
 // resolved once, in the repository of the first path, so every read sees one commit. A file on
 // one side only is a row that says which side lacks it; a path on neither side is an error.
 // A directory covers its Markdown files on both sides, so a file deleted since the base is
-// reported, never dropped. Bytes are those of the blob as stored: on a checkout that converts
-// line ends the working-tree figure includes the carriage returns, the token estimate does not.
+// reported, never dropped. A path below a directory the working tree no longer holds is read
+// the same way: git runs in the deepest directory that still exists (util.SplitAtExistingDir)
+// and is handed the rest as a pathspec. Bytes are those of the blob as stored: on a checkout
+// that converts line ends the working-tree figure includes the carriage returns, the token
+// estimate does not.
 func cavemanEstimateBase(ctx context.Context, rev string, args []string, out io.Writer) error {
 	if len(args) == 0 {
 		return errors.New(cavemanUsage)
@@ -100,26 +102,30 @@ func resolveBaselineCommit(ctx context.Context, rev, first string) (string, erro
 	if first == "-" {
 		return "", errBaselineStdin
 	}
-	dir := baselineGitDir(first)
-	commit, ok, err := resolveRefCommit(ctx, dir, rev)
+	split, err := splitBaselinePath(first)
+	if err != nil {
+		return "", err
+	}
+	commit, ok, err := resolveRefCommit(ctx, split.Dir, rev)
 	if err != nil {
 		return "", fmt.Errorf("caveman estimate: --base: %w", err)
 	}
 	if !ok {
-		return "", fmt.Errorf("caveman estimate: --base %q names no commit in the repository of %s", rev, filepath.ToSlash(dir))
+		return "", fmt.Errorf("caveman estimate: --base %q names no commit in the repository of %s", rev, filepath.ToSlash(split.Dir))
 	}
 	return commit, nil
 }
 
-// baselineGitDir returns the directory git runs in for path: the path itself when it is a
-// directory, its parent otherwise.
-func baselineGitDir(path string) string {
-	// #nosec G703 -- path is a file or directory the operator names on the command line to
-	// measure, as with cat; no privilege boundary is crossed.
-	if info, err := os.Stat(path); err == nil && info.IsDir() {
-		return path
+// splitBaselinePath splits path at the deepest directory the working tree holds: git runs in
+// split.Dir and split.Rest names the path from there. Starting git in a directory that was
+// deleted or renamed since the base fails before git runs, with an error that reads as git not
+// being installed.
+func splitBaselinePath(path string) (util.DirSplit, error) {
+	split, err := util.SplitAtExistingDir(path)
+	if err != nil {
+		return util.DirSplit{}, fmt.Errorf("caveman estimate: read %s: %w", filepath.ToSlash(path), err)
 	}
-	return filepath.Dir(path)
+	return split, nil
 }
 
 // baselineFiles expands every argument into the files to compare, in argument order and
@@ -143,43 +149,79 @@ func baselineFiles(ctx context.Context, commit string, args []string) ([]baselin
 }
 
 func baselineArgFiles(ctx context.Context, commit, arg string) ([]baselineFile, error) {
-	// #nosec G703 -- arg is a file or directory the operator names on the command line to
-	// measure; the read itself goes through the bounded, symlink-resistant ReadSnapshot.
-	info, err := os.Stat(arg)
-	switch {
-	case err == nil && info.IsDir():
-		return baselineDirFiles(ctx, commit, arg)
-	case err == nil:
-		return baselineNamedFile(ctx, commit, arg, true)
-	case errors.Is(err, fs.ErrNotExist):
-		return baselineNamedFile(ctx, commit, arg, false)
-	}
-	return nil, fmt.Errorf("read %s: %w", arg, err)
-}
-
-// baselineNamedFile looks one named file up at the base revision. A path that is a file on
-// neither side is an error: there is nothing to measure, and a typo must not read as a row.
-func baselineNamedFile(ctx context.Context, commit, path string, worktree bool) ([]baselineFile, error) {
-	dir := filepath.Dir(path)
-	entries, err := baselineTree(ctx, commit, dir, false, "./"+filepath.Base(path))
+	split, err := splitBaselinePath(arg)
 	if err != nil {
 		return nil, err
 	}
-	file := baselineFile{path: path, worktree: worktree, gitDir: dir}
-	if len(entries) == 1 && entries[0].RegularBlob() {
+	if split.Rest == "" {
+		return baselineDirFiles(ctx, commit, arg)
+	}
+	return baselineNamedPath(ctx, commit, arg, split)
+}
+
+// baselineNamedPath looks one named path up at the base revision, from the deepest directory
+// the working tree holds. A file the working tree holds is one row, with or without a base
+// side. A path it lacks is whatever the base held there: a file is one row with no working-tree
+// side, a directory is its Markdown files, each such a row. A path on neither side is an error:
+// there is nothing to measure, and a typo must not read as a row.
+func baselineNamedPath(ctx context.Context, commit, path string, split util.DirSplit) ([]baselineFile, error) {
+	rest := filepath.ToSlash(split.Rest)
+	// Without a working-tree side the base decides between file and directory, so the listing
+	// descends; a single entry at rest itself is the file, entries below it are a directory.
+	entries, err := baselineTree(ctx, commit, split.Dir, !split.Exists, "./"+rest)
+	if err != nil {
+		return nil, err
+	}
+	below := rest + "/"
+	file := baselineFile{path: path, worktree: split.Exists, gitDir: split.Dir}
+	if len(entries) == 1 && entries[0].RegularBlob() && !strings.HasPrefix(entries[0].Path, below) {
 		file.object = entries[0].Object
 	}
-	if !worktree && file.object == "" {
-		return nil, fmt.Errorf("caveman estimate: %s is a file neither in the working tree nor at %s", filepath.ToSlash(path), commit)
+	if file.worktree || file.object != "" {
+		return []baselineFile{file}, nil
 	}
-	return []baselineFile{file}, nil
+	files := baselineOnlyFiles(split.Dir, baselineMarkdownObjects(split.Dir, entries))
+	switch {
+	case len(files) > 0:
+		return files, nil
+	case slices.ContainsFunc(entries, func(entry util.GitTreeEntry) bool { return strings.HasPrefix(entry.Path, below) }):
+		return nil, fmt.Errorf("caveman estimate: directory %s holds no Markdown file in the working tree or at %s", filepath.ToSlash(path), commit)
+	}
+	return nil, fmt.Errorf("caveman estimate: %s is a file neither in the working tree nor at %s", filepath.ToSlash(path), commit)
+}
+
+// baselineMarkdownObjects maps the Markdown files of a base listing taken in dir to their
+// blobs, keyed by working-tree spelling. Only regular files with a local path count.
+func baselineMarkdownObjects(dir string, entries []util.GitTreeEntry) map[string]string {
+	objects := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		rel := filepath.FromSlash(entry.Path)
+		if entry.RegularBlob() && filepath.IsLocal(rel) && strings.EqualFold(filepath.Ext(rel), ".md") {
+			objects[filepath.Join(dir, rel)] = entry.Object
+		}
+	}
+	return objects
+}
+
+// baselineOnlyFiles turns objects into files the working tree lacks, in lexical order; gitDir
+// is the directory their listing was taken in.
+func baselineOnlyFiles(gitDir string, objects map[string]string) []baselineFile {
+	files := make([]baselineFile, 0, len(objects))
+	for path, object := range objects {
+		files = append(files, baselineFile{path: path, object: object, gitDir: gitDir})
+	}
+	sortBaselineFiles(files)
+	return files
+}
+
+func sortBaselineFiles(files []baselineFile) {
+	slices.SortFunc(files, func(a, b baselineFile) int { return strings.Compare(a.path, b.path) })
 }
 
 // baselineDirFiles is the union of the Markdown files below dir in the working tree and at the
 // base revision, so a file added since the base and one deleted since are both rows.
 func baselineDirFiles(ctx context.Context, commit, dir string) ([]baselineFile, error) {
-	markdown := map[string]bool{".md": true}
-	present, err := appendCavemanFiles(ctx, nil, dir, markdown)
+	present, err := appendCavemanFiles(ctx, nil, dir, map[string]bool{".md": true})
 	if err != nil {
 		return nil, err
 	}
@@ -187,31 +229,24 @@ func baselineDirFiles(ctx context.Context, commit, dir string) ([]baselineFile, 
 	if err != nil {
 		return nil, err
 	}
-	objects := make(map[string]string, len(entries))
-	for _, entry := range entries {
-		rel := filepath.FromSlash(entry.Path)
-		if entry.RegularBlob() && filepath.IsLocal(rel) && markdown[strings.ToLower(filepath.Ext(rel))] {
-			objects[filepath.Join(dir, rel)] = entry.Object
-		}
-	}
+	objects := baselineMarkdownObjects(dir, entries)
 	files := make([]baselineFile, 0, len(present)+len(objects))
 	for _, path := range present {
 		files = append(files, baselineFile{path: path, object: objects[path], worktree: true, gitDir: dir})
 		delete(objects, path)
 	}
-	for path, object := range objects {
-		files = append(files, baselineFile{path: path, object: object, gitDir: dir})
-	}
+	files = append(files, baselineOnlyFiles(dir, objects)...)
 	if len(files) == 0 {
 		return nil, fmt.Errorf("caveman estimate: directory %s holds no Markdown file in the working tree or at %s", filepath.ToSlash(dir), commit)
 	}
-	slices.SortFunc(files, func(a, b baselineFile) int { return strings.Compare(a.path, b.path) })
+	sortBaselineFiles(files)
 	return files, nil
 }
 
 // baselineTree lists commit's tree as seen from dir: `git ls-tree -z` run in dir shows only the
 // entries below it, with paths relative to it, and nothing for a directory the commit does not
-// hold; recursive descends into subdirectories, and pathspec, when set, names one entry of dir.
+// hold; recursive descends into subdirectories, and pathspec, when set, names one path below
+// dir, at any depth.
 // It runs through util.RunGitProbe, the bounded read-only inspection (its own timeout, no
 // hooks, no lazy fetch), with the pathspec read literally.
 func baselineTree(ctx context.Context, commit, dir string, recursive bool, pathspec string) ([]util.GitTreeEntry, error) {
