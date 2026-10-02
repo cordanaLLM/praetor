@@ -207,12 +207,13 @@ message a hook would give. A program outside the declared list, such as `git` or
 name, and `run` in `.config/lefthook/scripts/common.py` refuses the commit or push with the
 program named when it is missing.
 
-No leg installs `make`; each runs the one its image carries. On the Windows image that is a
-copy of `mingw32-make` which the image's build script (`Install-Mingw64.ps1` in
-`actions/runner-images`) writes to `C:\mingw64\bin\make.exe` and the image's software list
-does not name, which is why earlier versions of this page and of the workflow called it
-absent (#341). The step makes the dependency a stated one: an image that drops it fails the
-leg at the assertion, with the variable to set.
+No leg installs `make`; each runs the one its image carries. On the Windows image
+(`windows-2025-vs2026`, measured at version 20260925.250) that is a copy of `mingw32-make`
+which the image's build script (`Install-Mingw64.ps1` in `actions/runner-images`) writes to
+`C:\mingw64\bin\make.exe` and the image's software list does not name, which is why earlier
+versions of this page and of the workflow called it absent (#341). The step makes the
+dependency a stated one: an image that drops it fails the leg at the assertion, with the
+variable to set.
 
 ## Required status checks for a matrix job
 
