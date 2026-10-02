@@ -143,7 +143,7 @@ func TestSynthesizeWithFeaturesProfileMatrix(t *testing.T) {
 	}{
 		{"empty", "", ""},
 		{"pages", "pages-site", "ghcr.io/devcontainers/features/node:1"},
-		{"node", "app-service", "ghcr.io/devcontainers/features/docker-in-docker:2"},
+		{"node", "app-service", "ghcr.io/devcontainers/features/docker-in-docker:4"},
 		{"go", "framework", "ghcr.io/devcontainers/features/go:1"},
 		{"native", "native-gpu-systems", "ghcr.io/devcontainers/features/rust:1"},
 		{"iac", "gitops-infra", "ghcr.io/devcontainers/features/terraform:1"},

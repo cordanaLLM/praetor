@@ -63,7 +63,7 @@
     },
     {
       "customType": "regex",
-      "description": "DevContainer features: the archetype and facet catalog selects them and devcontainer.json is generated from it, so feature updates move the catalog. Every file naming one feature changes in one branch, as ResolveDevContainerFeatures requires one reference per feature; the takeover re-pins .standards.lock and regenerates the bundle, as #705 did.",
+      "description": "DevContainer features: the archetype and facet catalog selects them and devcontainer.json is generated from it, so feature updates move the catalog. Every file naming one feature changes in one branch, as ResolveDevContainerFeatures requires one reference per feature; the takeover re-pins .standards.lock and regenerates the bundle when a file this repository's own manifest declares moved, as #705 did (docs/guides/archetype-authoring.md).",
       "managerFilePatterns": ["/^\\.config/archetypes/.+\\.yaml$/"],
       "matchStrings": ["\"(?<depName>ghcr\\.io/devcontainers/features/[a-z0-9-]+):(?<currentValue>[0-9]+)\""],
       "datasourceTemplate": "docker",
