@@ -126,7 +126,7 @@
     "test:host": "npm run compile && node scripts/host-smoke.mjs"
   },
   "devDependencies": {
-    "@types/node": "20.19.43",
+    "@types/node": "24.19.0",
     "@types/vscode": "1.107.0",
     "typescript": "5.9.3"
   },

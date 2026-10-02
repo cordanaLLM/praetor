@@ -1,0 +1,3 @@
+type: changed
+title: "The VS Code extension builds against @types/node 24.19.0 (was 20.19.43), and the committed .needs.yaml records the new version so needs scan --check stays green"
+breaking: false
