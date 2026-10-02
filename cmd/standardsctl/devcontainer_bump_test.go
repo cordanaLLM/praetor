@@ -169,6 +169,37 @@ func TestDevContainerCLIBumpMovesTheBuilderTag(t *testing.T) {
 	}
 }
 
+// Boundary for the tag move (#323): a floating tag and a patch tag of one image share a digest.
+// The command moves the builder to another tag of the digest it already pins: the pin source
+// and the development Dockerfile carry the new tag, nothing joins the prior list, and
+// devcontainer verify passes.
+func TestDevContainerCLIBumpMovesTheBuilderTagUnderTheSameDigest(t *testing.T) {
+	source, manifest, output := cliBumpCheckout(t)
+	before := reviewedReferences(t, source)["builder"]
+	repository, tag, digest := util.SplitImageReference(before)
+	moved := ":moved-" + tag + "@" + digest
+	next := repository + moved
+	priorsFile := filepath.Join(source, filepath.FromSlash(devcontainer.PriorImagesFile))
+	priors, err := os.ReadFile(priorsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bumpCLI(t, source, manifest, output, []string{"[PIN MOVED] builder " + before + " -> " + next, "[PASS]"}, "--builder-image", next)
+	if after, err := os.ReadFile(priorsFile); err != nil || string(after) != string(priors) {
+		t.Fatalf("a tag-only move changed %s: %v", devcontainer.PriorImagesFile, err)
+	}
+	if got := reviewedReferences(t, source)["builder"]; got != next {
+		t.Fatalf("builder pin after the tag move: %s", got)
+	}
+	dockerfile, err := os.ReadFile(filepath.Join(source, filepath.FromSlash(devcontainer.DevImageDockerfile)))
+	if err != nil || !strings.Contains(string(dockerfile), moved) {
+		t.Fatalf("%s does not build from %s: %v", devcontainer.DevImageDockerfile, moved, err)
+	}
+	if err := runDevContainer([]string{"verify", "--config", manifest, "--output", output}); err != nil {
+		t.Fatalf("bundle does not verify after the tag move: %v", err)
+	}
+}
+
 // The update Renovate used to open edits the generated Dockerfile.praetor alone. Verification
 // rejects it and names the commands that repair it; devcontainer bump regenerates the bundle
 // from the unchanged pins, and verification passes again.

@@ -252,6 +252,40 @@ func TestBumpMovesTheTagAndBackToAPriorDigest(t *testing.T) {
 	}
 }
 
+// Boundary, the tag-only move: a floating tag and a patch tag of one image share a digest. A
+// bump to another tag of the current digest rewrites the tag in the comment and in the
+// Dockerfile, retires nothing (the digest is still the reviewed one) and leaves the bundle
+// verifying; before, the Dockerfile kept the old tag and the bump was refused.
+func TestBumpMovesTheTagUnderTheSameDigest(t *testing.T) {
+	checkout := newBumpCheckout(t)
+	before := checkout.tree().pins(t)
+	priorsBefore := checkout.priors(t)
+	moved := movedPin(before["builder"], movedTag(before["builder"]), before["builder"].digest)
+	changes, err := Bump(t.Context(), withBuilder(checkout.options(t), moved.reference()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	builder := changes[slices.IndexFunc(changes, func(c BumpChange) bool { return c.Role == "builder" })]
+	if builder.From != before["builder"].reference() || builder.To != moved.reference() || len(builder.Retired) != 0 {
+		t.Fatalf("builder change %+v", builder)
+	}
+	tree := checkout.tree()
+	if pins := tree.pins(t); pins["builder"].reference() != moved.reference() || pins["base"].reference() != before["base"].reference() {
+		t.Fatalf("pins after the tag move: %s / %s", pins["builder"].reference(), pins["base"].reference())
+	}
+	tree.assertDockerfilesBuildFromThePins(t)
+	tree.assertRenovateReadsThePins(t, readRenovate(t).reviewedPinManager(t))
+	if priors := checkout.priors(t); !slices.Equal(priors.Builder, priorsBefore.Builder) {
+		t.Fatalf("prior builders changed on a tag-only move: %v", priors.Builder)
+	}
+	if recorded := checkout.recorded(t); recorded.BuilderImage != moved.image() {
+		t.Fatalf("bundle records %s", recorded.BuilderImage)
+	}
+	if err := Verify(t.Context(), checkout.output, mustBaseContainer(t)); err != nil {
+		t.Fatalf("bundle does not verify after the tag move: %v", err)
+	}
+}
+
 // Boundary: the prior list only grows, and each role's list is bounded (maxPriorImages). A
 // bump that fills the last free entry succeeds and keeps every earlier entry. One that would
 // pass the bound is refused before anything is written, names the bound and the remedy, and
