@@ -451,8 +451,7 @@ func movedRecorded(recorded, current []Infraction) map[string][]int {
 	return moved
 }
 
-// countBy counts findings by key: findingKey for their line-independent identity, fingerprintOf
-// for the line-bound one.
+// countBy counts findings by key: findingKey for the identity the attribution compares.
 func countBy(findings []Infraction, key func(Infraction) string) map[string]int {
 	counts := make(map[string]int, len(findings))
 	for i := 0; i < len(findings); i++ {
