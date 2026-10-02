@@ -6,32 +6,33 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"runtime/debug"
 	"strings"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/buildid"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/util"
-	"github.com/cordanaLLM/praetor/internal/workstation"
 )
 
 // version is written at release time with -X main.version. It must stay a var: the Go linker
 // cannot write a const, so every -X injection was silently discarded and every build ever
 // produced -- releases included -- reported the same literal (#119). A build that carries no
-// injected version says what it can prove instead of naming one it cannot.
+// injected version says what it can prove instead of naming one it cannot. standards-mcp and
+// standards-lsp declare the same variable and resolve it through the same buildid.Running, so
+// all three binaries of one build report one identity (#666).
 var version = ""
 
 // buildVersion reports the version this binary can actually prove it is.
 //
 // A release carries an injected version. Any other build carries what Go records in its build
 // information: the VCS stamp of a checkout build, which identifies the tree exactly, or the tag
-// or pseudo-version a `go install module@version` build records (identifyBuild, #642).
+// or pseudo-version a `go install module@version` build records (buildid.Identify, #642).
 // When none is present the answer is "unknown", never a plausible-looking constant:
 // .standards.lock records this identity as pinned_version, and a lock naming a version
 // nothing measured cannot say which praetor governed a repository, which is the whole point of
 // writing it down.
 func buildVersion() string {
-	return runningBuildIdentity().display()
+	return buildid.Running(version).String()
 }
 
 // lockVersion is the string init records as .standards.lock pinned_version.
@@ -42,7 +43,7 @@ func buildVersion() string {
 // exact tree, which "v1.0.0" never did. A build that can identify nothing returns ok=false so
 // the caller can say so rather than writing a version it cannot stand behind.
 func lockVersion() (string, bool) {
-	return runningBuildIdentity().lockPin()
+	return lockPin(buildid.Running(version))
 }
 
 // formatDevLockVersion renders an unreleased build's pinned_version.
@@ -60,16 +61,6 @@ func formatDevLockVersion(revision string, modified bool) string {
 // unidentifiedLockVersion is written only when the build can prove nothing about itself. It is
 // deliberately the zero version rather than a plausible release number.
 const unidentifiedLockVersion = config.UnidentifiedLockVersion
-
-// vcsStamp extracts the revision, shortened for output, and the dirty flag Go embeds at build
-// time, through the one build-stamp reader the engine-build check also uses.
-func vcsStamp(info *debug.BuildInfo) (revision string, modified bool) {
-	revision, modified = workstation.BuildStamp(info)
-	return shortSHA(revision), modified
-}
-
-// shortRevisionLen is how much of a commit hash identifies a build in output.
-const shortRevisionLen = 12
 
 // maxCSVFields bounds the comma-separated list parser (HISS-02).
 const maxCSVFields = 1024

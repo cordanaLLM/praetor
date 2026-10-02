@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"path/filepath"
 	"runtime/debug"
+	"strconv"
 	"time"
+
+	"github.com/cordanaLLM/praetor/internal/buildid"
 )
 
 // MaxSuiteDuration is a ceiling for the complete case set, including replay.
@@ -156,19 +159,23 @@ func executeSuiteCase(ctx context.Context, opts SuiteOptions, limits *InputLimit
 	return err
 }
 
+// suiteEngine records the engine build a report came from: the VCS stamp of the running
+// binary as every praetor surface reads it (buildid, #666), and the Go toolchain.
 func suiteEngine() map[string]string {
+	return engineBuild(buildid.RunningInfo())
+}
+
+// engineBuild is the engine_build map of a report for the build information info. A build
+// without information or without a VCS stamp records its revision as "unavailable".
+func engineBuild(info *debug.BuildInfo) map[string]string {
 	result := map[string]string{"revision": "unavailable"}
-	if info, ok := debug.ReadBuildInfo(); ok {
-		result["go_version"] = info.GoVersion
-		for i := 0; i < len(info.Settings) && i < 64; i++ {
-			setting := info.Settings[i]
-			if setting.Key == "vcs.revision" {
-				result["revision"] = setting.Value
-			}
-			if setting.Key == "vcs.modified" {
-				result["modified"] = setting.Value
-			}
-		}
+	if info == nil {
+		return result
+	}
+	result["go_version"] = info.GoVersion
+	if revision, modified := buildid.Stamp(info); revision != "" {
+		result["revision"] = revision
+		result["modified"] = strconv.FormatBool(modified)
 	}
 	return result
 }

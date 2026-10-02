@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/cordanaLLM/praetor/internal/buildid"
 )
 
 // Attribution says why the baseline does not record one new violation (#599).
@@ -38,9 +40,6 @@ const (
 	// debtDeltaFlag judges touched files by debt delta (RatchetOptions.DebtDelta).
 	debtDeltaFlag = "'praetorctl audit --touched-debt-delta-reason=<why>'"
 )
-
-// shortCommitLen is how many characters of the compared commit a rejection prints.
-const shortCommitLen = 12
 
 // violationClass is one listed class of a rejection: the tag each line carries, how its
 // hidden-remainder marker counts it, and the read-only command that lists every member. A
@@ -313,7 +312,7 @@ func (r *RatchetResult) StaleNotice() string {
 func shortCommits(commits []string) string {
 	short := make([]string, 0, len(commits))
 	for i := 0; i < len(commits); i++ {
-		short = append(short, commits[i][:min(len(commits[i]), shortCommitLen)])
+		short = append(short, buildid.Short(commits[i]))
 	}
 	return strings.Join(short, " or ")
 }

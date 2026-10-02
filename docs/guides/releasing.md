@@ -9,12 +9,26 @@ page covers what that tag sets off, how to cut one, and how the moving flavor ta
 | Consumer | Trigger | Result |
 | :--- | :--- | :--- |
 | `.github/workflows/release-binaries.yml` | `push` of a tag matching `v*` | GoReleaser (`.goreleaser.yaml`) builds `praetorctl`, `standardsctl`, `standards-mcp` and `standards-lsp` for Linux, macOS and Windows on amd64 and arm64, writes a CycloneDX and an SPDX SBOM per archive, signs `checksums.txt` keyless with cosign into `checksums.txt.sigstore.json`, and uploads everything into a **draft** release; it also builds the container image from the Linux `praetorctl` binaries, pushes it to `ghcr.io/cordanallm/praetor:<version>` and signs the pushed digest. The job then signs SLSA v1.0 provenance over every checksummed file, verifies both bundles and the image signature, pushes and signs the Helm chart as `oci://ghcr.io/cordanallm/charts/praetor:<version>`, attaches the provenance and publishes the release. `<version>` is the tag without its `v` |
-| `go install github.com/cordanaLLM/praetor/cmd/standardsctl@latest` | any release version on the module proxy | `@latest` selects the highest release version; with no tag at all it falls back to a pseudo-version of `main` ([Go modules reference, version queries](https://go.dev/ref/mod#version-queries)). `praetorctl version` prints the installed tag, or the 12-character commit a pseudo-version ends with (`cmd/standardsctl/buildidentity.go`) |
+| `go install github.com/cordanaLLM/praetor/cmd/standardsctl@latest` | any release version on the module proxy | `@latest` selects the highest release version; with no tag at all it falls back to a pseudo-version of `main` ([Go modules reference, version queries](https://go.dev/ref/mod#version-queries)). `praetorctl version` prints the installed tag, or the 12-character commit a pseudo-version ends with (`internal/buildid/buildid.go`) |
 | `.github/actions/praetor-adopt/action.yml` | `uses: cordanaLLM/praetor/.github/actions/praetor-adopt@<ref>` | the action builds `cmd/standardsctl` from its own checkout at that ref (a forced adopt run, whose remotely loaded tree has no `.git`, builds from a git checkout of that same ref), so `@latest` runs the commit the moving `latest` tag points at; it never installs from the module proxy, and a local or copied action outside a praetor checkout fails instead ([docs/adoption.md](../adoption.md)) |
 | `.github/workflows/sync-flavors.yml` | next run after the tag exists | moves `latest` to the highest `v*` tag |
 
 Once the first release exists, `@latest` stops following `main`. An adopter that wants
 unreleased commits has to ask for them, for example `@main`.
+
+### The version each binary reports
+
+`praetorctl`, `standards-mcp` and `standards-lsp` each declare `var version = ""` in
+package `main`, which every `.goreleaser.yaml` build writes with
+`-X main.version={{.Version}}`. All three resolve what they report through
+`buildid.Running` in `internal/buildid/buildid.go`: the injected release first, then
+Go's VCS stamp (the 12-character commit, suffixed `-dirty` for a modified tree), then the
+module version a `go install` build records, otherwise `unknown (<reason>)`. So
+`praetorctl version`, `standards-mcp -version`, `standards-lsp -version` and the
+`serverInfo.version` the MCP and LSP servers return in `initialize` name the same build.
+`internal/buildid/binaries_test.go` builds the three binaries with one `go build` and
+fails when they disagree, or when a release build's `-X` flag names a variable a `main`
+package does not declare.
 
 ### Signing and SBOM toolchain
 

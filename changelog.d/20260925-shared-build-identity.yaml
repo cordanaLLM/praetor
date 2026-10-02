@@ -1,0 +1,4 @@
+type: fixed
+title: Every praetor binary reports one build identity; standards-mcp and standards-lsp no longer report v1.0.0
+issue: "#666"
+breaking: false

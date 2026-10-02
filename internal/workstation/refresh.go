@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/buildid"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -151,7 +152,7 @@ func refreshGate(ctx context.Context, checkout, branch, installed string) (int, 
 		return 0, "", err
 	}
 	if !ancestor || behind == 0 {
-		return 0, "installed commit " + shortCommit(installed) + " is not behind the checkout HEAD", nil
+		return 0, "installed commit " + buildid.Short(installed) + " is not behind the checkout HEAD", nil
 	}
 	dirty, err := trackedChanges(ctx, checkout)
 	if err != nil || dirty {
@@ -218,12 +219,4 @@ func trackedChanges(ctx context.Context, checkout string) (bool, error) {
 		return false, fmt.Errorf("workstation: read the checkout status: %w", err)
 	}
 	return len(strings.TrimSpace(string(result.Stdout))) > 0, nil
-}
-
-// shortCommit shortens a commit id for a reason line.
-func shortCommit(commit string) string {
-	if len(commit) > shortRevisionLen {
-		return commit[:shortRevisionLen]
-	}
-	return commit
 }

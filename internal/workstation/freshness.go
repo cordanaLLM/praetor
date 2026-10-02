@@ -15,6 +15,7 @@ import (
 	"runtime/debug"
 	"time"
 
+	"github.com/cordanaLLM/praetor/internal/buildid"
 	"github.com/cordanaLLM/praetor/internal/gomanifest"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -42,11 +43,9 @@ var ErrStaleEngine = errors.New("engine build does not match this checkout")
 // Bounds on the build comparison (HISS-02).
 const (
 	maxGoModBytes          = 1 << 20
-	maxBuildSettings       = 256
 	maxBuildInputs         = 1 << 16
 	buildInputProbeBytes   = 8 << 20
 	buildInputProbeTimeout = 20 * time.Second
-	shortRevisionLen       = 12
 )
 
 // objectNamePattern is a full SHA-1 or SHA-256 object name, the only revision form Go stamps.
@@ -54,7 +53,7 @@ var objectNamePattern = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
 
 // RunningBuild describes the current process. A field the runtime cannot answer stays zero.
 func RunningBuild() Build {
-	info, _ := debug.ReadBuildInfo()
+	info := buildid.RunningInfo()
 	executable, err := os.Executable()
 	if err != nil {
 		executable = ""
@@ -68,7 +67,7 @@ func describeBuild(info *debug.BuildInfo, executable string) Build {
 	var build Build
 	if info != nil {
 		build.Module = info.Main.Path
-		build.Revision, build.Modified = BuildStamp(info)
+		build.Revision, build.Modified = buildid.Stamp(info)
 	}
 	if executable == "" {
 		return build
@@ -81,23 +80,6 @@ func describeBuild(info *debug.BuildInfo, executable string) Build {
 		build.ModTime = stat.ModTime()
 	}
 	return build
-}
-
-// BuildStamp extracts the full revision and the dirty flag Go embeds at build time. Both are
-// zero for a build that carries no VCS stamp.
-func BuildStamp(info *debug.BuildInfo) (revision string, modified bool) {
-	if info == nil {
-		return "", false
-	}
-	for i := 0; i < len(info.Settings) && i < maxBuildSettings; i++ {
-		switch info.Settings[i].Key {
-		case "vcs.revision":
-			revision = info.Settings[i].Value
-		case "vcs.modified":
-			modified = info.Settings[i].Value == "true"
-		}
-	}
-	return revision, modified
 }
 
 // CheckBuildCurrent refuses a build that cannot be shown to match the engine checkout at
@@ -173,14 +155,10 @@ func staleBuild(build Build, reason string) error {
 		ErrStaleEngine, buildLabel(build), reason, buildPackages["praetorctl"])
 }
 
-// buildLabel names a build the way `praetorctl version` does: the short revision, suffixed
-// -dirty for a modified tree.
+// buildLabel names a build the way every praetor binary reports its own stamped identity:
+// the short revision, suffixed -dirty for a modified tree (buildid.FromStamp).
 func buildLabel(build Build) string {
-	label := shortCommit(build.Revision)
-	if build.Modified {
-		label += "-dirty"
-	}
-	return label
+	return buildid.FromStamp(build.Revision, build.Modified).String()
 }
 
 // checkoutModule reads the module path root's go.mod declares, or "" when root holds no
@@ -211,7 +189,7 @@ func changedBuildInputs(ctx context.Context, root, revision string) ([]string, e
 	diff, err := util.RunGitProbeWithin(ctx, root, buildInputProbeBytes, buildInputProbeTimeout,
 		"diff", "--name-only", "--no-renames", "-z", revision, "--", "*.go", "go.mod", "go.sum")
 	if err != nil {
-		return nil, fmt.Errorf("git diff against %s: %w", revision[:shortRevisionLen], err)
+		return nil, fmt.Errorf("git diff against %s: %w", buildid.Short(revision), err)
 	}
 	untracked, err := util.RunGitProbeWithin(ctx, root, buildInputProbeBytes, buildInputProbeTimeout,
 		"ls-files", "-z", "--others", "--exclude-standard", "--", "*.go")
