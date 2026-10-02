@@ -87,7 +87,7 @@ printing the report (`TestRunBumpAuditExitsNonZeroOnFailedReport` in
 | Tool | Action pin | Installs | Why the pin reads the way it does |
 | :--- | :--- | :--- | :--- |
 | GoReleaser | `goreleaser/goreleaser-action@v7` | GoReleaser `~> v2`, from the step's `version` input | v7 moves the action runtime to node24 and adds only the optional `version-file` input, so the step's inputs are unchanged |
-| Syft | `anchore/sbom-action/download-syft@v0.24.2` | Syft `v1.51.1` | The `.goreleaser.yaml` `sboms` args are unchanged, but a newer Syft catalogues more packages, so SBOM content differs from that of builds made with an older pin |
+| Syft | `anchore/sbom-action/download-syft@v0.24.3` | Syft `v1.54.0` | The `.goreleaser.yaml` `sboms` args are unchanged, but a newer Syft catalogues more packages, so SBOM content differs from that of builds made with an older pin |
 | cosign | `sigstore/cosign-installer@v4.1.2` | cosign `v3.0.6`, the installer's default | No `cosign-release` input: a version hold there is invisible to the `praetorctl bump` scanner, and `internal/forge/cosign_bundle_test.go` rejects one. The installer publishes no moving `v4` tag, so the pin is exact |
 | Helm | `azure/setup-helm@v5` | Helm `v4.3.0`, from the step's `version` input | Pinned rather than the action's `latest` default, so a Helm release cannot change the packaged chart between two tags. `praetorctl bump` does not read the `version` input, so a newer Helm is picked up by hand |
 | buildx | `docker/setup-buildx-action@v4` | A `docker-container` builder | GoReleaser's `dockers_v2` pushes a multi-platform manifest list, which needs that driver. The Dockerfile only copies prebuilt binaries, so no QEMU step is needed |
