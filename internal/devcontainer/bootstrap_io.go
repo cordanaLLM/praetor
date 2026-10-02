@@ -238,7 +238,7 @@ func validateBundleContents(ctx context.Context, bundle *Bundle) error {
 	}
 	dockerfile := artifacts[bootstrapDockerfile]
 	if !bytes.Equal(dockerfile, []byte(renderBootstrapDockerfile(spec))) {
-		return errors.New("bootstrap Dockerfile differs from its recorded inputs")
+		return errors.New("bootstrap Dockerfile differs from its recorded inputs; " + bundleRepair)
 	}
 	return validateArchivedSource(ctx, spec, artifacts)
 }
@@ -291,7 +291,7 @@ func verifyRecordedBootstrap(ctx context.Context, path string, raw []byte, actua
 		return err
 	}
 	if !identical {
-		return errors.New("recorded bootstrap configuration differs from declared profiles or contains unrecognized edits")
+		return errors.New("recorded bootstrap configuration differs from declared profiles or contains unrecognized edits; " + bundleRepair)
 	}
 	artifacts, err := readBootstrapCompanions(ctx, path, spec)
 	if err != nil {

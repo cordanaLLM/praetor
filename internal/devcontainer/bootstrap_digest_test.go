@@ -3,7 +3,6 @@ package devcontainer
 import (
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -19,30 +18,23 @@ var (
 	taggedDefaultBuilder = strings.Replace(DefaultBuilderImage, "@", ":1.27-alpine@", 1)
 )
 
-// reviewedAt matches a "Reviewed at <reference>" comment line and the constant its comment
-// block documents.
-var reviewedAt = regexp.MustCompile(`// Reviewed at (\S+)\n(?:\t//[^\n]*\n)*\t(\w+)\s*=`)
-
-// The comment beside each default keeps the full reference it was reviewed at, which the
-// repository pin scan (TestRepositoryPinsOneDigestPerImageTag in internal/supplychain)
-// holds to one digest per tag. That reference must name the constant's own repository and
-// digest under a tag, so moving a default cannot leave its comment on the old digest.
+// The line above each default keeps the full reference it was reviewed at, which Renovate
+// reads (ReviewedPinPattern) and the repository pin scan (TestRepositoryPinsOneDigestPerImageTag
+// in internal/supplychain) holds to one digest per tag. It must name the constant's own
+// repository and digest under the reviewed tag, so moving a default cannot leave its comment
+// on the old digest. The pins are read by the parser devcontainer bump uses.
 func TestReviewedDefaultCommentsNameTheirDigest(t *testing.T) {
 	source, err := os.ReadFile("bootstrap.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	found := map[string]string{}
-	for _, match := range reviewedAt.FindAllStringSubmatch(strings.ReplaceAll(string(source), "\r\n", "\n"), -1) {
-		found[match[2]] = match[1]
+	pins, err := parseReviewedPins(strings.ReplaceAll(string(source), "\r\n", "\n"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	want := map[string]string{"DefaultBuilderImage": taggedDefaultBuilder, "DefaultBaseImage": taggedDefaultBase}
-	if len(found) != len(want) {
-		t.Fatalf("reviewed-at comments %v, want one per default", found)
-	}
-	for name, reference := range want {
-		if found[name] != reference {
-			t.Fatalf("%s comment names %q, want %q", name, found[name], reference)
+	for role, reference := range map[string]string{"builder": taggedDefaultBuilder, "base": taggedDefaultBase} {
+		if got := pins[role].reference(); got != reference {
+			t.Fatalf("%s comment names %q, want %q", role, got, reference)
 		}
 	}
 }
@@ -152,15 +144,15 @@ func TestIsReviewedPinMatchesCurrentAndPriorDefaults(t *testing.T) {
 		DefaultBuilderImage:                                          true,
 		taggedDefaultBuilder:                                         true,
 		"docker.io/library/golang:1.28@" + digest:                    true,
-		earlierReviewedBuilder:                                       true,
-		priorDefaultBuilderImages[0]:                                 true,
+		earlierReviewedBuilder(t):                                    true,
+		shippedPriors(t).Builder[0]:                                  true,
 		"registry.example/golang@" + digest:                          false,
 		"golang@" + digest:                                           false,
 		"docker.io/library/golang@sha256:" + strings.Repeat("2", 64): false,
 		"docker.io/library/golang:1.27-alpine":                       false,
 		"":                                                           false,
 	} {
-		if got := isReviewedPin(image, DefaultBuilderImage, priorDefaultBuilderImages); got != want {
+		if got := isReviewedPin(image, DefaultBuilderImage, shippedPriors(t).Builder); got != want {
 			t.Errorf("isReviewedPin(%q) = %v, want %v", image, got, want)
 		}
 	}

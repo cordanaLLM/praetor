@@ -5,6 +5,7 @@ family "Figure engine" source "tools/figures/assets.go" directive "//go:embed co
 family "API compatibility" source "tools/apicompat/assets.go" directive "//go:embed gate/main.go"
   assets ["tools/apicompat/gate/main.go"]
 family "template" source "templates/embed.go" directive "//go:embed */*.tmpl"
+family "reviewed images" source "internal/devcontainer/reviewed_images.go" directive "//go:embed prior-images.json"
 asset tools/markdownlint/verify.mjs true <nil>
 name tools/markdownlint/verify.mjs <nil>
 asset tools/markdownlint/package-lock.json true <nil>
