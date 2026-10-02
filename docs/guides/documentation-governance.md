@@ -386,9 +386,14 @@ a disable removes it (`priorDocumentationMakefileBlocks` in
 `internal/adopt/verification_makefile.go`). A refresh or repair that adds a
 target, such as `docs-figures`, stops when the rest of the Makefile may already
 define it, as a first attachment does. The `.gitattributes` block follows the
-same contract: an edited block fails a plain run, `--force` restores it as a
-replace with a backup, and a disable refuses to touch it
-(`internal/adopt/gitattributes.go`). The block of an earlier release, without
+same contract: an edited block fails a plain run before its first write, and
+`--force` restores it as a replace with a backup, with the facet enabled or
+disabled, because the block stays for its DevContainer rule. Only a disable
+that would remove the block, in a repository whose `adoption.decline` lists
+`dev-container`, refuses an edited one under `--force` too
+(`internal/adopt/gitattributes.go`,
+`TestAdopt_EditedAttributeBlockWithoutDocumentationFacet`,
+`TestPreflightAttributes_Boundary_EditedBlock`). The block of an earlier release, without
 the DevContainer rule, is an unedited block and is refreshed by a plain run
 (`TestReconcileGitAttributes_Positive_EarlierBlockRefreshedWithoutForce`).
 
