@@ -78,7 +78,8 @@ func TestCavemanEstimateBaseSymlinkBoundary(t *testing.T) {
 	removeBaselinePath(t, dir, "docs/old")
 	symlinkOrSkip(t, elsewhere, filepath.Join(dir, "docs", "old"))
 	out, err = estimateBase(t, filepath.Join(dir, "docs"))
-	if err == nil || out != "" || !strings.Contains(err.Error(), "docs/old/x.md") {
+	// The error names the path as the host spells it; compare with slashes on every platform.
+	if err == nil || out != "" || !strings.Contains(filepath.ToSlash(err.Error()), "docs/old/x.md") {
 		t.Fatalf("a tracked directory replaced by a symlink must be refused, not read as deleted: err=%v\n%s", err, out)
 	}
 }

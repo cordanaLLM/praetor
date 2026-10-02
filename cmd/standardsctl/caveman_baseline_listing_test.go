@@ -158,7 +158,8 @@ func TestCavemanEstimateBaseListedEntryWithoutFile(t *testing.T) {
 	removeBaselinePath(t, dir, "docs/kept.md")
 	symlinkOrSkip(t, "edited.md", filepath.Join(dir, "docs", "kept.md"))
 	out, err = estimateBase(t, filepath.Join(dir, "docs"))
-	if err == nil || out != "" || !strings.Contains(err.Error(), "docs/kept.md") {
+	// The error names the path as the host spells it; compare with slashes on every platform.
+	if err == nil || out != "" || !strings.Contains(filepath.ToSlash(err.Error()), "docs/kept.md") {
 		t.Fatalf("a tracked file replaced by a symlink must be refused by the reader: err=%v\n%s", err, out)
 	}
 }
