@@ -1,0 +1,4 @@
+type: fixed
+title: "Two test assertions compared a result with a recomputation of itself: the signed stage output and the projected vendor paths are now checked against literal expectations"
+issue: "#345"
+breaking: false

@@ -21,22 +21,27 @@ import (
 // CLAUDE.md as out of sync and could not reconcile it.
 //
 // These are the real targets the transpiler declares, not invented ones.
+//
+// Each expected path is written out and only spelled with the host's separator
+// (filepath.FromSlash substitutes the separator and nothing else). The expectation
+// used to be filepath.Join(root, relative), the call projectionPath itself makes,
+// so the test stated no path of its own (#345).
 func TestProjectionPathAcceptsDeclaredSlashTargets(t *testing.T) {
-	root := filepath.Join("repo", "root")
-	for _, relative := range []string{
-		"CLAUDE.md",
-		".cursor/rules/hiss-invariants.mdc",
-		".github/copilot-instructions.md",
-		".windsurfrules",
-		".gemini/GEMINI.md",
-		".codex/rules.md",
+	root := filepath.FromSlash("repo/root")
+	for _, tc := range []struct{ relative, want string }{
+		{"CLAUDE.md", "repo/root/CLAUDE.md"},
+		{".cursor/rules/hiss-invariants.mdc", "repo/root/.cursor/rules/hiss-invariants.mdc"},
+		{".github/copilot-instructions.md", "repo/root/.github/copilot-instructions.md"},
+		{".windsurfrules", "repo/root/.windsurfrules"},
+		{".gemini/GEMINI.md", "repo/root/.gemini/GEMINI.md"},
+		{".codex/rules.md", "repo/root/.codex/rules.md"},
 	} {
-		t.Run(relative, func(t *testing.T) {
-			got, err := projectionPath(root, relative)
+		t.Run(tc.relative, func(t *testing.T) {
+			got, err := projectionPath(root, tc.relative)
 			if err != nil {
 				t.Fatalf("declared vendor target rejected: %v", err)
 			}
-			if want := filepath.Join(root, relative); got != want {
+			if want := filepath.FromSlash(tc.want); got != want {
 				t.Fatalf("projection path = %q, want %q", got, want)
 			}
 		})
