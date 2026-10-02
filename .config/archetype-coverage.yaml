@@ -101,6 +101,11 @@ fields:
         effect: >-
           fails the policy load when a pinned file's id differs from its
           lock entry
+      - func: internal/config.retainedContributions
+        kind: reports
+        effect: >-
+          keys each retained catalog text's share of the join by kind and id,
+          so the facet effects name the profile or facet that raised a setting
   - key: name
     go: [Archetype.Name]
     state: unconsumed
@@ -302,6 +307,11 @@ fields:
         effect: >-
           compares the setting GitHub enforces on the default branch with the
           declared one (plan --remote, sync --remote readback)
+      - func: internal/config.raisedSettings
+        kind: reports
+        effect: >-
+          names the setting with both values when a declared facet raises it
+          (the facet effects the policy reports)
   - key: branch_protection.require_signed_commits
     go: [BranchProtectionPolicy.RequireSignedCommits]
     state: consumed
@@ -326,6 +336,11 @@ fields:
         effect: >-
           compares the setting GitHub enforces on the default branch with the
           declared one (plan --remote, sync --remote readback)
+      - func: internal/config.raisedSettings
+        kind: reports
+        effect: >-
+          names the setting with both values when a declared facet raises it
+          (the facet effects the policy reports)
   - key: branch_protection.required_approving_reviewers
     go: [BranchProtectionPolicy.RequiredApprovingReviewers]
     state: consumed
@@ -341,6 +356,11 @@ fields:
       - func: cmd/standards-mcp.writePlanHeader
         kind: reports
         effect: prints the count in the MCP plan
+      - func: internal/config.raisedSettings
+        kind: reports
+        effect: >-
+          names the setting with both values when a declared facet raises it
+          (the facet effects the policy reports)
   - key: branch_protection.dismiss_stale_reviews
     go: [BranchProtectionPolicy.DismissStaleReviews]
     state: consumed
@@ -356,6 +376,11 @@ fields:
         effect: >-
           compares the setting GitHub enforces on the default branch with the
           declared one (plan --remote, sync --remote readback)
+      - func: internal/config.raisedSettings
+        kind: reports
+        effect: >-
+          names the setting with both values when a declared facet raises it
+          (the facet effects the policy reports)
   - key: branch_protection.review_mode
     go: [BranchProtectionPolicy.ReviewMode]
     state: refused
@@ -394,6 +419,11 @@ fields:
       - func: cmd/standards-mcp.writePlanHeader
         kind: reports
         effect: prints the level in the MCP plan
+      - func: internal/config.raisedSettings
+        kind: reports
+        effect: >-
+          names the setting with both values when a declared facet raises it
+          (the facet effects the policy reports)
   - key: supply_chain.enforce_cosign
     go: [SupplyChainPolicy.EnforceCosign]
     state: reported
@@ -407,6 +437,11 @@ fields:
       - func: cmd/standards-mcp.writePlanHeader
         kind: reports
         effect: prints the setting in the MCP plan
+      - func: internal/config.raisedSettings
+        kind: reports
+        effect: >-
+          names the setting with both values when a declared facet raises it
+          (the facet effects the policy reports)
   - key: supply_chain.require_sbom
     go: [SupplyChainPolicy.RequireSBOM]
     state: consumed
@@ -420,6 +455,11 @@ fields:
       - func: cmd/standards-mcp.writePlanHeader
         kind: reports
         effect: prints the setting in the MCP plan
+      - func: internal/config.raisedSettings
+        kind: reports
+        effect: >-
+          names the setting with both values when a declared facet raises it
+          (the facet effects the policy reports)
   - key: linters
     go: [ArchetypeControls.Linters, ResolvedPolicy.Linters]
     state: unconsumed
