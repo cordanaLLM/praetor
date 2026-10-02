@@ -916,9 +916,11 @@ pin the split, its line-shift case and the explanations.
 ### A baseline entry survives a line shift
 
 Inserting lines above a baselined function does not change the baseline. The entry still matches,
-`praetorctl baseline --verify` and `praetorctl audit` pass, and `praetorctl baseline --record`
-keeps the file byte for byte, so two pull requests that both move recorded findings no longer
-conflict in `.standards-baseline.json`. An entry used to be keyed `<file>:<line>:<rule>`: the same
+`praetorctl baseline --verify` passes, and `praetorctl baseline --record` keeps the file byte for
+byte, so two pull requests that both move recorded findings no longer conflict in
+`.standards-baseline.json`. `praetorctl audit` judges a touched file by its own rule, as before: a
+touched file that carries baselined findings is refused unless the change states a
+touched-debt-delta reason (see the split above). An entry used to be keyed `<file>:<line>:<rule>`: the same
 insert turned the unchanged function into a new infraction and every such pull request had to
 re-record (#29).
 
