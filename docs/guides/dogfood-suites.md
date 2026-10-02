@@ -43,7 +43,12 @@ The [adoption command plan](adoption-verification.md) reports declared native co
 Public cases use the [resolved audit policy](effective-policy.md) for both the
 original and post-adoption scans. Each attempt must retain the planned policy
 identity, and its saved baseline must match the independently scanned original
-debt. Reports include the effective digest, function-length limit and validated
+debt. A checkout that already carries `.standards-baseline.json` is therefore
+re-recorded by the plan and the first attempt, with the loop's rationale stored
+when the count rises (`recordPublicBaseline` in `internal/dogfood/public.go`,
+`TestRunPublicLoopReRecordsAnExistingBaseline`); a plain adoption keeps an
+existing baseline ([the baseline on a re-adoption](../adoption.md#the-baseline-on-a-re-adoption)).
+Reports include the effective digest, function-length limit and validated
 baseline hash. A stricter profile can therefore reject a touched function below
 the previous fixed scanner limit. Re-run older public results before treating
 them as evidence for a stricter policy.
