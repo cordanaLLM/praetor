@@ -97,3 +97,114 @@ func TestBugIntegrityRejectsMalformedWithoutWriting(t *testing.T) {
 		})
 	}
 }
+
+func TestBugRefusesUnterminatedCodeFence(t *testing.T) {
+	// Negative: fence between rows hides later rows on unpatched parser and leads to ID reuse.
+	const fenceBetweenRows = "# Bug Ledger\n\n> Defects tracked by autonomous agents.\n\n" +
+		"| ID | Title | Severity | Status | Location | Resolution |\n" +
+		"| :--- | :--- | :--- | :--- | :--- | :--- |\n" +
+		"| `BUG-001` | First | p2 | open | path:1 | |\n" +
+		"```sh\nexample\n" +
+		"| `BUG-002` | Second | p2 | open | path:2 | |\n"
+
+	root := writeBugFixture(t, fenceBetweenRows)
+	bugs, err := ListBugs(root, "all")
+	if err == nil {
+		t.Fatalf("unterminated fence silently hid rows: %+v", bugs)
+	}
+	if !strings.Contains(err.Error(), "BUGS.md line 8: code fence opened and never closed") {
+		t.Fatalf("error does not locate fence opening line: %v", err)
+	}
+	if _, err := AddBug(root, BugEntry{Title: "Third"}); err == nil {
+		t.Fatal("addition accepted ledger with unterminated fence")
+	} else if !strings.Contains(err.Error(), "BUGS.md line 8: code fence opened and never closed") {
+		t.Fatalf("addition error does not locate fence: %v", err)
+	}
+	if err := ResolveBug(root, "BUG-001", "fixed"); err == nil {
+		t.Fatal("resolve accepted ledger with unterminated fence")
+	} else if !strings.Contains(err.Error(), "BUGS.md line 8: code fence opened and never closed") {
+		t.Fatalf("resolve error does not locate fence: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, WorkingDirName, "BUGS.md"))
+	if err != nil || string(data) != fenceBetweenRows {
+		t.Fatalf("refused addition changed ledger: %v", err)
+	}
+
+	// Boundary: trailing unterminated fence after all rows.
+	const trailingFence = "# Bug Ledger\n\n> Defects tracked by autonomous agents.\n\n" +
+		"| ID | Title | Severity | Status | Location | Resolution |\n" +
+		"| :--- | :--- | :--- | :--- | :--- | :--- |\n" +
+		"| `BUG-001` | First | p2 | open | path:1 | |\n" +
+		"| `BUG-002` | Second | p2 | open | path:2 | |\n\n" +
+		"```markdown\ntrailing unclosed fence\n"
+
+	trailingRoot := writeBugFixture(t, trailingFence)
+	if _, err := ListBugs(trailingRoot, "all"); err == nil {
+		t.Fatal("trailing unterminated fence was accepted")
+	} else if !strings.Contains(err.Error(), "BUGS.md line 10: code fence opened and never closed") {
+		t.Fatalf("trailing fence error does not locate line 10: %v", err)
+	}
+	if _, err := AddBug(trailingRoot, BugEntry{Title: "Third"}); err == nil {
+		t.Fatal("addition accepted ledger with trailing unterminated fence")
+	}
+
+	// Boundary: unterminated fence opened at line 1 before table header.
+	const preambleFence = "```sh\nnotes\n" +
+		"# Bug Ledger\n\n| ID | Title | Severity | Status | Location | Resolution |\n" +
+		"| :--- | :--- | :--- | :--- | :--- | :--- |\n" +
+		"| `BUG-001` | First | p2 | open | path:1 | |\n"
+
+	preambleRoot := writeBugFixture(t, preambleFence)
+	if _, err := ListBugs(preambleRoot, "all"); err == nil {
+		t.Fatal("preamble unterminated fence was accepted")
+	} else if !strings.Contains(err.Error(), "BUGS.md line 1: code fence opened and never closed") {
+		t.Fatalf("preamble fence error does not locate line 1: %v", err)
+	}
+
+	// Boundary: closed first fence followed by second unclosed tilde fence.
+	const multiFence = "# Bug Ledger\n\n" +
+		"```text\nfirst closed block\n```\n\n" +
+		"| ID | Title | Severity | Status | Location | Resolution |\n" +
+		"| :--- | :--- | :--- | :--- | :--- | :--- |\n" +
+		"| `BUG-001` | First | p2 | open | path:1 | |\n\n" +
+		"~~~sh\nsecond unclosed block\n"
+
+	multiRoot := writeBugFixture(t, multiFence)
+	if _, err := ListBugs(multiRoot, "all"); err == nil {
+		t.Fatal("second unclosed fence accepted")
+	} else if !strings.Contains(err.Error(), "BUGS.md line 11: code fence opened and never closed") {
+		t.Fatalf("multi fence error does not locate line 11: %v", err)
+	}
+
+	// Boundary / Strict: ParseBugsMarkdownStrict also returns the line error.
+	if _, err := ParseBugsMarkdownStrict(fenceBetweenRows); err == nil {
+		t.Fatal("ParseBugsMarkdownStrict accepted unterminated fence")
+	} else if !strings.Contains(err.Error(), "BUGS.md line 8: code fence opened and never closed") {
+		t.Fatalf("strict parse error does not locate fence: %v", err)
+	}
+
+	// Positive: closed fence inside notes does not hide rows, and next add allocates next ID.
+	const closedFence = "# Bug Ledger\n\n> Defects tracked by autonomous agents.\n\n" +
+		"| ID | Title | Severity | Status | Location | Resolution |\n" +
+		"| :--- | :--- | :--- | :--- | :--- | :--- |\n" +
+		"| `BUG-001` | First | p2 | open | path:1 | |\n\n" +
+		"```markdown\n| `BUG-999` | example row | p0 | open | | |\n```\n\n" +
+		"## Notes\nKeep notes.\n"
+
+	closedRoot := writeBugFixture(t, closedFence)
+	closedBugs, err := ListBugs(closedRoot, "all")
+	if err != nil || len(closedBugs) != 1 || closedBugs[0].ID != "BUG-001" {
+		t.Fatalf("closed fence corrupted bug listing: %v, %v", closedBugs, err)
+	}
+	added, err := AddBug(closedRoot, BugEntry{Title: "Second"})
+	if err != nil {
+		t.Fatalf("add bug refused closed fence: %v", err)
+	}
+	if added.ID != "BUG-002" {
+		t.Fatalf("expected BUG-002, got %s", added.ID)
+	}
+	updatedBugs, err := ListBugs(closedRoot, "all")
+	if err != nil || len(updatedBugs) != 2 || updatedBugs[1].ID != "BUG-002" {
+		t.Fatalf("updated bugs list unexpected: %v, %v", updatedBugs, err)
+	}
+}

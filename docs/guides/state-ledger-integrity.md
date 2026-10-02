@@ -120,7 +120,9 @@ noncanonical ID and a v2 row whose ID has no sidecar record. A sidecar record no
 row refers to is ignored; it is what an interrupted write leaves behind (see below).
 
 The parser requires one complete ledger table. Fenced examples and unrelated
-Markdown are preserved. A claimed bug row outside the table is an error. Limits
+Markdown are preserved. An unterminated code fence is a ledger error naming the
+line it was opened on, so rows after it are never hidden and bug additions never
+reallocate an existing ID. A claimed bug row outside the table is an error. Limits
 are 1 MiB per ledger and per sidecar, 10,000 records, 16 KiB per text field and IDs
 through `BUG-999999999`. Invalid or oversized updates leave both files intact.
 

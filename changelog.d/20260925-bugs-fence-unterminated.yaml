@@ -1,0 +1,4 @@
+type: fixed
+title: Refuse BUGS.md with an unterminated code fence naming the opening line
+issue: "#317"
+breaking: true
