@@ -201,9 +201,23 @@ evidence-write error produces a nonzero exit and cannot claim aggregate success.
 An interrupted process may leave a plan or case reports without a final report;
 that is incomplete evidence. Run again into a new directory.
 
-The report includes the exact config hash and available Go build revision data.
-When build revision metadata is unavailable, it says so; the development MCP
-launcher additionally records the actual source and binary hashes.
+The report includes the exact config hash and the engine build in `engine_build`
+(`engineBuild` in `internal/dogfood/suite.go`; discovery and scheduled suite reports
+record the same map):
+
+| Key | Value |
+| :--- | :--- |
+| `version` | What `praetorctl version` prints for the binary that ran the suite: the injected release, the 12-character commit (suffixed `-dirty` for a modified tree), the module version of a `go install` build, or `unknown (<reason>)` ([version each binary reports](releasing.md#the-version-each-binary-reports)) |
+| `revision` | The full commit from Go's VCS stamp, or `unavailable` |
+| `modified` | `true` or `false`, present only with a VCS stamp |
+| `go_version` | The Go toolchain, present when the binary carries build information |
+
+`praetorctl` and `standards-mcp` pass their own identity into the suite, so a report from
+a release binary names that release. A test binary has neither an injected release nor a
+VCS stamp; its report records `unknown (<reason>)` and stays loadable by `praetorctl dogfood repairs`.
+`internal/dogfood/engine_build_test.go` covers a release, an unstamped and a module-version
+build. The development MCP launcher additionally records the actual source and binary
+hashes.
 
 ## Development MCP
 

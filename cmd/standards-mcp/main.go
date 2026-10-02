@@ -35,7 +35,8 @@ func main() {
 	versionFlag := flag.Bool("version", false, "Print server version and exit")
 	flag.Parse()
 
-	serverVersion := buildid.Running(version).String()
+	build := buildid.Running(version)
+	serverVersion := build.String()
 	if *versionFlag {
 		fmt.Printf("standards-mcp %s\n", serverVersion)
 		return
@@ -52,6 +53,7 @@ func main() {
 	server, err := NewServerWithOptions(ServerOptions{
 		RootDir:               *rootDir,
 		Version:               serverVersion,
+		Build:                 build,
 		AllowOutsideRoot:      *allowOutside,
 		AllowRemoteBenchmarks: *allowRemote,
 		AuthToken:             token,

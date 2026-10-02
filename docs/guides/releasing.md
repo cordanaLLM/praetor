@@ -26,6 +26,8 @@ Go's VCS stamp (the 12-character commit, suffixed `-dirty` for a modified tree),
 module version a `go install` build records, otherwise `unknown (<reason>)`. So
 `praetorctl version`, `standards-mcp -version`, `standards-lsp -version` and the
 `serverInfo.version` the MCP and LSP servers return in `initialize` name the same build.
+Dogfood suite, schedule and discovery reports record the same string as
+`engine_build.version` (see [the dogfood suite guide](dogfood-suites.md#evidence-bounds-and-failure-behavior)).
 `internal/buildid/binaries_test.go` builds the three binaries with one `go build` and
 fails when they disagree, or when a release build's `-X` flag names a variable a `main`
 package does not declare.

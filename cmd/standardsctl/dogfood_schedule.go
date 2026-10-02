@@ -25,7 +25,7 @@ func runDogfoodSchedule(ctx context.Context, args []string) error {
 	var report *dogfood.ScheduleReport
 	var err error
 	if args[0] == "run" {
-		report, err = dogfood.RunSchedule(ctx, *path)
+		report, err = dogfood.RunSchedule(ctx, *path, runningBuild())
 	} else {
 		report, err = dogfood.ScheduleStatus(ctx, *path)
 	}
