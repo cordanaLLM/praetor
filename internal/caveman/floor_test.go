@@ -314,73 +314,21 @@ func TestFloorNumbersMoveIntoCode(t *testing.T) {
 	}
 }
 
-// TestFloorANSIEscapesPositive pins #713: ANSI escape sequences (CSI, OSC and two-byte escapes)
-// are ignored on both sides before collecting facts, so rewrites removing or changing colour codes
-// pass the clarity floor, including escapes inside number words, IDs, directives and fenced blocks.
+// TestFloorANSIEscapesPositive pins #713: a rewrite that removes or changes escape sequences
+// (CSI, OSC, two-byte) holds the floor, an escape inside a number or a fence included.
 func TestFloorANSIEscapesPositive(t *testing.T) {
-	cases := map[string]struct {
-		before, after string
-	}{
-		"csi color removed": {
-			before: "a \x1b[31mMUST\x1b[0m b\n",
-			after:  "a MUST b\n",
-		},
-		"csi 256 color with real number kept": {
-			before: "result: \x1b[38;5;196mred 7\x1b[0m\n",
-			after:  "result: red 7\n",
-		},
-		"osc title removed": {
-			before: "\x1b]0;build 42\x07run\n",
-			after:  "run\n",
-		},
-		"osc hyperlink removed": {
-			before: "see \x1b]8;;https://example.test/1\x1b\\link\x1b]8;;\x1b\\\n",
-			after:  "see link\n",
-		},
-		"two-byte escape removed": {
-			before: "a\x1bMb\n",
-			after:  "ab\n",
-		},
-		"both sides have escapes": {
-			before: "\x1b[31mred 7\x1b[0m\n",
-			after:  "\x1b[32mgreen 7\x1b[0m\n",
-		},
-		"escape inside digits": {
-			before: "year \x1b[01;31m\x1b[K20\x1b[m\x1b[K26 ok\n",
-			after:  "year 2026 ok\n",
-		},
-		"escape inside version": {
-			before: "version 1.2.\x1b[7m3\x1b[27m ok\n",
-			after:  "version 1.2.3 ok\n",
-		},
-		"escape before version": {
-			before: "\x1b[1mv\x1b[0m1.2 ok\n",
-			after:  "v1.2 ok\n",
-		},
-		"fenced recoloured": {
-			before: "```text\n\x1b[31m3\x1b[0m of 7\n```\n",
-			after:  "```text\n\x1b[32m3\x1b[0m of 7\n```\n",
-		},
-		"fenced uncoloured": {
-			before: "```text\n\x1b[31m3\x1b[0m of 7\n```\n",
-			after:  "```text\n3 of 7\n```\n",
-		},
-		"coloured id kept": {
-			before: "rule \x1b[1mHISS-17\x1b[0m applies\n",
-			after:  "rule HISS-17 applies\n",
-		},
-		"coloured id recoloured": {
-			before: "rule \x1b[1mHISS-17\x1b[0m applies\n",
-			after:  "rule \x1b[32mHISS-17\x1b[0m applies\n",
-		},
-		"coloured must kept": {
-			before: "x \x1b[31mMUST\x1b[0m y\n",
-			after:  "x MUST y\n",
-		},
-		"coloured must recoloured": {
-			before: "x \x1b[31mMUST\x1b[0m y\n",
-			after:  "x \x1b[32mMUST\x1b[0m y\n",
-		},
+	cases := map[string]struct{ before, after string }{
+		"csi colour removed":       {"a \x1b[31mMUST\x1b[0m b\n", "a MUST b\n"},
+		"csi 256 colour, number":   {"result: \x1b[38;5;196mred 7\x1b[0m\n", "result: red 7\n"},
+		"osc title removed":        {"\x1b]0;build 42\x07run\n", "run\n"},
+		"osc hyperlink removed":    {"see \x1b]8;;https://example.test/1\x1b\\link\x1b]8;;\x1b\\\n", "see link\n"},
+		"two-byte escape removed":  {"a\x1bMb\n", "ab\n"},
+		"both sides coloured":      {"\x1b[31mred 7\x1b[0m\n", "\x1b[32mgreen 7\x1b[0m\n"},
+		"escape inside digits":     {"year \x1b[01;31m\x1b[K20\x1b[m\x1b[K26 ok\n", "year 2026 ok\n"},
+		"escape inside version":    {"version 1.2.\x1b[7m3\x1b[27m ok\n", "version 1.2.3 ok\n"},
+		"escape before version":    {"\x1b[1mv\x1b[0m1.2 ok\n", "v1.2 ok\n"},
+		"fenced recoloured":        {"```text\n\x1b[31m3\x1b[0m of 7\n```\n", "```text\n\x1b[32m3\x1b[0m of 7\n```\n"},
+		"fenced output uncoloured": {"```console\n$ go test\n\x1b[32mok\x1b[0m pkg 5 tests\n```\n", "```console\n$ go test\nok pkg 5 tests\n```\n"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -391,15 +339,69 @@ func TestFloorANSIEscapesPositive(t *testing.T) {
 	}
 }
 
-// TestFloorANSIEscapesCompress pins #713: Floor(in, Compress(in)) holds when input contains
-// ANSI escape sequences inside number words, IDs, directives or fences.
+// floorANSIRules holds one fact for each rule that reads a line: the text without escapes,
+// the same text coloured, a rewrite that lost the fact and the finding that rewrite earns.
+var floorANSIRules = map[string]struct {
+	plain, coloured, lost string
+	want                  Finding
+}{
+	"F1 code span":      {"use `foo` now\n", "use `\x1b[31mfoo\x1b[0m` now\n", "use now\n", Finding{1, RuleFloorCodeSpan, "`foo`"}},
+	"F2 command":        {"```console\n$ go test\n```\n", "```console\n$ \x1b[1mgo test\x1b[0m\n```\n", "```console\n$ go vet\n```\n", Finding{2, RuleFloorCommand, "go test"}},
+	"F3 id":             {"rule HISS-17 applies\n", "rule \x1b[1mHISS-17\x1b[0m applies\n", "rule applies\n", Finding{1, RuleFloorID, "HISS-17"}},
+	"F6 must":           {"x MUST y\n", "x \x1b[31mMUST\x1b[0m y\n", "x y\n", Finding{0, RuleFloorMust, "1 -> 0"}},
+	"F7 prohibition":    {"x never y\n", "x \x1b[31mnever\x1b[0m y\n", "x y\n", Finding{0, RuleFloorProhibition, "1 -> 0"}},
+	"F9 number":         {"took 42 ms\n", "took \x1b[1m42\x1b[0m ms\n", "took ms\n", Finding{1, RuleFloorNumber, "42"}},
+	"F9 inside digits":  {"year 2026 ok\n", "year \x1b[01;31m\x1b[K20\x1b[m\x1b[K26 ok\n", "year ok\n", Finding{1, RuleFloorNumber, "2026"}},
+	"F9 fenced number":  {"```text\n3 of 7\n```\n", "```text\n\x1b[31m3\x1b[0m of 7\n```\n", "```text\nthree of 7\n```\n", Finding{2, RuleFloorNumber, "3"}},
+	"F10 fenced token":  {"```text\nFAIL 3 of 7\n```\n", "```text\n\x1b[31mFAIL\x1b[0m 3 of 7\n```\n", "```text\n3 of 7\n```\n", Finding{2, RuleFloorCodeWord, "FAIL"}},
+	"F10 session print": {"```console\n$ go test\nok pkg 5 tests\n```\n", "```console\n$ go test\n\x1b[32mok\x1b[0m pkg 5 tests\n```\n", "```console\n$ go test\npkg 5 tests\n```\n", Finding{3, RuleFloorCodeWord, "ok"}},
+}
+
+// TestFloorANSIEscapesEveryRule pins the one strip of extractFacts for each rule and on each
+// side: a fact coloured in the original, in the rewrite or in both is the fact its plain form
+// carries, and losing it earns the finding of its rule. Without the strip on a side, every
+// case here fails on that side: the escape glues to the word or splits the number.
+func TestFloorANSIEscapesEveryRule(t *testing.T) {
+	for name, tc := range floorANSIRules {
+		t.Run(name, func(t *testing.T) {
+			recoloured := strings.ReplaceAll(tc.coloured, "\x1b[", "\x1b[7;")
+			held := map[string][2]string{
+				"original coloured": {tc.coloured, tc.plain},
+				"rewrite coloured":  {tc.plain, tc.coloured},
+				"both recoloured":   {tc.coloured, recoloured},
+			}
+			for side, pair := range held {
+				if report := Floor(pair[0], pair[1]); !report.Passed() {
+					t.Errorf("%s: want floor held, got findings: %v", side, report.Findings)
+				}
+			}
+			if got, want := Floor(tc.coloured, tc.lost).Findings, []Finding{tc.want}; !reflect.DeepEqual(got, want) {
+				t.Errorf("fact lost: findings\n got %v\nwant %v", got, want)
+			}
+		})
+	}
+}
+
+// floorOSCText returns a text whose OSC opens on line 1 and whose terminator, end, sits on
+// line 4. The OSC is unterminated on its line, so lines 2 and 3 are text with facts (#713).
+func floorOSCText(end string) string {
+	return "log \x1b]0;title\nrule HISS-17 MUST hold 42 items\nnever drop `foo`\ndone" + end + " end\n"
+}
+
+// TestFloorANSIEscapesCompress pins #713: Floor(in, Compress(in)) holds for text that holds
+// escape sequences, terminated or not: both read it through stripANSI.
 func TestFloorANSIEscapesCompress(t *testing.T) {
 	cases := map[string]string{
-		"escape inside digits":   "year \x1b[01;31m\x1b[K20\x1b[m\x1b[K26 ok\n",
-		"escape inside version":  "version 1.2.\x1b[7m3\x1b[27m ok\n",
-		"escape before version":  "\x1b[1mv\x1b[0m1.2 ok\n",
-		"coloured id and must":   "rule \x1b[1mHISS-17\x1b[0m \x1b[31mMUST\x1b[0m apply\n",
-		"fenced coloured number": "```text\n\x1b[31m3\x1b[0m of 7\n```\n",
+		"escape inside version":        "version 1.2.\x1b[7m3\x1b[27m ok\n",
+		"escape before version":        "\x1b[1mv\x1b[0m1.2 ok\n",
+		"coloured id and must":         "rule \x1b[1mHISS-17\x1b[0m \x1b[31mMUST\x1b[0m apply\n",
+		"osc ended by bel a line down": floorOSCText("\x07"),
+		"osc ended by st a line down":  floorOSCText("\x1b\\"),
+		"csi without final byte":       "cut \x1b[38;5\nnext 7\n",
+		"csi cut before blank, letter": "x \x1b[38;5 MUST y 9\n",
+	}
+	for name, tc := range floorANSIRules {
+		cases[name] = tc.coloured
 	}
 	for name, in := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -411,53 +413,20 @@ func TestFloorANSIEscapesCompress(t *testing.T) {
 	}
 }
 
-// TestFloorANSIEscapesNegative pins #713: a real number, ID, or directive lost beside or inside
-// an escape sequence still fails its corresponding rule.
+// TestFloorANSIEscapesNegative pins #713: a number lost beside or inside an escape sequence
+// still fails F9, in prose and in a fence. The other rules: TestFloorANSIEscapesEveryRule.
 func TestFloorANSIEscapesNegative(t *testing.T) {
 	cases := map[string]struct {
 		before, after string
 		want          []Finding
 	}{
-		"real number lost beside escape": {
-			before: "a \x1b[31mred 7\x1b[0m b\n",
-			after:  "a red b\n",
-			want:   []Finding{{1, RuleFloorNumber, "7"}},
-		},
-		"real number inside escape lost": {
-			before: "status: \x1b[38;5;196m42\x1b[0m\n",
-			after:  "status: ok\n",
-			want:   []Finding{{1, RuleFloorNumber, "42"}},
-		},
-		"multiple numbers with one lost beside escape": {
-			before: "count: 1 and \x1b[31m2\x1b[0m\n",
-			after:  "count: 1\n",
-			want:   []Finding{{1, RuleFloorNumber, "2"}},
-		},
-		"coloured id lost": {
-			before: "rule \x1b[1mHISS-17\x1b[0m applies\n",
-			after:  "rule applies\n",
-			want:   []Finding{{1, RuleFloorID, "HISS-17"}},
-		},
-		"coloured MUST lost": {
-			before: "x \x1b[31mMUST\x1b[0m y\n",
-			after:  "x y\n",
-			want:   []Finding{{0, RuleFloorMust, "1 -> 0"}},
-		},
-		"coloured prohibition lost": {
-			before: "x \x1b[31mnever\x1b[0m y\n",
-			after:  "x y\n",
-			want:   []Finding{{0, RuleFloorProhibition, "1 -> 0"}},
-		},
-		"fenced real number lost": {
-			before: "```text\n\x1b[31m3\x1b[0m of 7\n```\n",
-			after:  "```text\n3 of nine\n```\n",
-			want:   []Finding{{2, RuleFloorNumber, "7"}},
-		},
-		"fenced coloured number lost": {
-			before: "```text\n\x1b[31m3\x1b[0m of 7\n```\n",
-			after:  "```text\nthree of 7\n```\n",
-			want:   []Finding{{2, RuleFloorNumber, "3"}},
-		},
+		"number lost beside escape":     {"a \x1b[31mred 7\x1b[0m b\n", "a red b\n", []Finding{{1, RuleFloorNumber, "7"}}},
+		"number lost inside escape":     {"status: \x1b[38;5;196m42\x1b[0m\n", "status: ok\n", []Finding{{1, RuleFloorNumber, "42"}}},
+		"one of two numbers lost":       {"count: 1 and \x1b[31m2\x1b[0m\n", "count: 1\n", []Finding{{1, RuleFloorNumber, "2"}}},
+		"fenced plain number lost":      {"```text\n\x1b[31m3\x1b[0m of 7\n```\n", "```text\n3 of nine\n```\n", []Finding{{2, RuleFloorNumber, "7"}}},
+		"parameter is no kept number":   {"took 31 ms\n", "took \x1b[31mfew\x1b[0m ms\n", []Finding{{1, RuleFloorNumber, "31"}}},
+		"osc body is no kept number":    {"build 42\n", "\x1b]0;build 42\x07build\n", []Finding{{1, RuleFloorNumber, "42"}}},
+		"split number is no kept digit": {"count 2\n", "count \x1b[1m1\x1b[0m2\n", []Finding{{1, RuleFloorNumber, "2"}}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -468,33 +437,27 @@ func TestFloorANSIEscapesNegative(t *testing.T) {
 	}
 }
 
-// TestFloorANSIEscapesBoundary pins #713: unterminated escapes stay text and their parameter
-// digits still count as numbers.
+// TestFloorANSIEscapesBoundary pins #713 at the edge of a sequence: an escape left
+// unterminated on its line stays text, so its digits and the words after it are facts. A CSI
+// cut after its parameters is whole when a blank and a letter follow, the letter its final
+// byte (ECMA-48, stripANSI): "MUST" reads "UST" there, and a digit in place of the letter
+// leaves all of it text.
 func TestFloorANSIEscapesBoundary(t *testing.T) {
 	cases := map[string]struct {
 		before, after string
 		want          []Finding
 	}{
-		"unterminated csi digits lost": {
-			before: "unterminated \x1b[38;5\n",
-			after:  "unterminated\n",
-			want:   []Finding{{1, RuleFloorNumber, "38"}, {1, RuleFloorNumber, "5"}},
-		},
-		"unterminated osc digits lost": {
-			before: "unterminated \x1b]0;build 42\n",
-			after:  "unterminated\n",
-			want:   []Finding{{1, RuleFloorNumber, "0"}, {1, RuleFloorNumber, "42"}},
-		},
-		"unterminated escape kept": {
-			before: "unterminated \x1b[38;5\n",
-			after:  "unterminated \x1b[38;5\n",
-			want:   nil,
-		},
-		"escape character alone": {
-			before: "raw \x1b alone\n",
-			after:  "raw \x1b alone\n",
-			want:   nil,
-		},
+		"csi without final byte, digits lost": {"cut \x1b[38;5\n", "cut\n", []Finding{{1, RuleFloorNumber, "38"}, {1, RuleFloorNumber, "5"}}},
+		"csi without final byte, kept":        {"cut \x1b[38;5\n", "cut \x1b[38;5\n", nil},
+		"osc without terminator, digits lost": {"cut \x1b]0;build 42\n", "cut\n", []Finding{{1, RuleFloorNumber, "0"}, {1, RuleFloorNumber, "42"}}},
+		"osc without terminator, body kept":   {"cut \x1b]0;build 42\n", "cut 0;build 42\n", nil},
+		"escape character alone":              {"raw \x1b alone\n", "raw \x1b alone\n", nil},
+		"csi cut, blank, letter: text kept":   {"x \x1b[38;5 MUST y 9\n", "x UST y 9\n", nil},
+		"csi cut, blank, letter: M is final":  {"x \x1b[38;5 MUST y 9\n", "x y 9\n", nil},
+		"csi cut, blank, letter: 9 lost":      {"x \x1b[38;5 MUST y 9\n", "x UST y\n", []Finding{{1, RuleFloorNumber, "9"}}},
+		"csi cut, blank, digit: all text": {"x \x1b[38;5 42 MUST y\n", "x y\n", []Finding{
+			{0, RuleFloorMust, "1 -> 0"}, {1, RuleFloorNumber, "38"}, {1, RuleFloorNumber, "42"}, {1, RuleFloorNumber, "5"},
+		}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -502,5 +465,37 @@ func TestFloorANSIEscapesBoundary(t *testing.T) {
 				t.Fatalf("findings\n got %v\nwant %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestFloorOSCEndsOnItsLine pins the lines between an OSC and a terminator further down, BEL
+// or ST: they are text of the original, so a rewrite that drops one of their facts fails
+// (#713). With an OSC body that crosses line ends they left the original's facts and every
+// rewrite below passed, "log end" included.
+func TestFloorOSCEndsOnItsLine(t *testing.T) {
+	cases := map[string]struct {
+		after string
+		want  []Finding
+	}{
+		"every fact kept":     {"log 0;title\nrule HISS-17 MUST hold 42 items\nnever drop `foo`\ndone end\n", nil},
+		"id dropped":          {"log 0;title\nrule MUST hold 42 items\nnever drop `foo`\ndone end\n", []Finding{{2, RuleFloorID, "HISS-17"}}},
+		"must dropped":        {"log 0;title\nrule HISS-17 hold 42 items\nnever drop `foo`\ndone end\n", []Finding{{0, RuleFloorMust, "1 -> 0"}}},
+		"number dropped":      {"log 0;title\nrule HISS-17 MUST hold items\nnever drop `foo`\ndone end\n", []Finding{{2, RuleFloorNumber, "42"}}},
+		"prohibition dropped": {"log 0;title\nrule HISS-17 MUST hold 42 items\ndrop `foo`\ndone end\n", []Finding{{0, RuleFloorProhibition, "1 -> 0"}}},
+		"code span dropped":   {"log 0;title\nrule HISS-17 MUST hold 42 items\nnever drop\ndone end\n", []Finding{{3, RuleFloorCodeSpan, "`foo`"}}},
+		"lines between dropped": {"log end\n", []Finding{
+			{0, RuleFloorMust, "1 -> 0"}, {0, RuleFloorProhibition, "1 -> 0"}, {1, RuleFloorNumber, "0"},
+			{2, RuleFloorID, "HISS-17"}, {2, RuleFloorNumber, "42"}, {3, RuleFloorCodeSpan, "`foo`"},
+		}},
+	}
+	for end, terminator := range map[string]string{"\x07": "bel", "\x1b\\": "st"} {
+		before := floorOSCText(end)
+		for name, tc := range cases {
+			t.Run(terminator+"/"+name, func(t *testing.T) {
+				if got := Floor(before, tc.after).Findings; !reflect.DeepEqual(got, tc.want) {
+					t.Fatalf("findings\n got %v\nwant %v", got, tc.want)
+				}
+			})
+		}
 	}
 }
