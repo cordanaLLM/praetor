@@ -101,7 +101,7 @@ func (s *Server) createAdoptTool() (mcp.Tool, error) {
 			"source_root": {Type: "string", Description: "Praetor source bundle; required for missing lock and with force; purpose: real pinned lock; confinement: server root"},
 			"record_baseline": {
 				Type:        "boolean",
-				Description: "Record existing infractions into .standards-baseline.json when repository has none. Existing baseline: kept, rescanned, ratchet verdict reported, never rewritten; re-record = CLI only (praetorctl adopt --rerecord-baseline or praetorctl baseline --record). false skips scan (default: true)",
+				Description: "Record existing infractions into .standards-baseline.json when absent. Existing baseline: kept, rescanned, ratchet verdict reported, never rewritten; re-record = CLI only (praetorctl adopt --rerecord-baseline or praetorctl baseline --record). false skips scan (default: true)",
 			},
 		},
 	}
