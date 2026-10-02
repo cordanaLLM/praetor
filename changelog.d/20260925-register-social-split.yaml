@@ -1,0 +1,4 @@
+type: fixed
+title: Render repository forge conventions in the social register from register.conventions or a changelog.d that holds a file, never praetor's own; a release render keeps changelog.d with an empty .gitkeep
+issue: "#328"
+breaking: true

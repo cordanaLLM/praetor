@@ -73,6 +73,9 @@ register:
   evidence:
     inline_max_lines: 58
     inline_max_tokens: 1500
+  conventions:
+    # Repository-specific clauses, rendered after the register's universal form.
+    social: PR template, receipt fence and changelog fragment unchanged
 ```
 
 | Key | Default | Bound | Error when violated |
@@ -84,12 +87,54 @@ register:
 | `tasks.<label>.max_tokens` | none | 256..8192 when written | `register max_tokens for "<k>" must be 256..8192` |
 | `evidence.inline_max_lines` | 58 | 1..58, tighten only | `register evidence bound must be 1..58` |
 | `evidence.inline_max_tokens` | 1500 | 1..1500, tighten only | `register evidence bound must be 1..1500` |
+| `conventions.<social\|docs\|internal>` | none; `social` is detected (see [Repository conventions](#repository-conventions)) | one line of UTF-8, at most 160 bytes, no control character, no `\|` | `register conventions: unsupported text register "<k>"`, `register conventions.<k> exceeds 160 bytes`, `register conventions.<k> must be one line of UTF-8 text without control characters or '\|'` |
 | `sources.expected` / `sources.not_applicable` / `sources.sha256` | none | 1..16384 applicable values; 0..16384 explicitly classified exclusions; full lowercase SHA-256 | applicable count, exclusion count, or digest mismatch |
 | `sources.inputs[]` | none | 1..64 tracked shell, Python, Go, JSON, or YAML scopes | strict field, path, parser, selector, surface, and kind errors |
 
 No default row carries `max_tokens`, and the rendered block prints no token numbers for
 tasks. A budget is a dispatch parameter: set one after repair reports show what a task
 class actually spends.
+
+### Repository conventions
+
+The Form column holds two parts. The engine renders the universal form of each register,
+the same in every repository: for `social`, the `social-text` skill, BLUF, full sentences,
+and a conventional commit subject left unchanged. A clause about how one repository
+publishes (its pull-request template, a receipt fence, a changelog fragment lane) follows
+it only when that repository states it, because an adopter without that lane would
+otherwise be told to keep it, and `compile-context` would restore the claim on every run
+(#328).
+
+The social clause comes from, in order:
+
+1. `register.conventions.social` in `.standards.yaml`, as written. An empty value (`""`)
+   states that the repository has none, whatever else the tree holds.
+2. Otherwise, `changelog fragment unchanged` (`config.FragmentConvention`) when the
+   repository keeps a `changelog.d/` directory that holds at least one regular file: a
+   fragment, the `.gitkeep` placeholder or any other file (`changelog.FragmentDirPresent`).
+   An empty directory does not count, because git keeps no empty directory and a fresh
+   clone of the same commit would not have it. A file or a symbolic link named
+   `changelog.d` does not count either.
+3. Otherwise, nothing: the row ends after the universal form.
+
+`docs` and `internal` take a clause from `conventions` only. Praetor states its own social
+conventions in its `.standards.yaml`, so its row keeps the pull-request template, the
+receipt fence and the fragment lane. Prompt directives (`config.RegisterDirective`, used by
+`dogfood repairs`, the repair runner, notebooks and the Paperclip harness) carry the
+universal form only.
+
+A release render (`praetorctl release`, `changelog.RenderReleaseContext`) removes the
+rendered fragments and leaves an empty `.gitkeep` (`changelog.FragmentPlaceholder`) in
+`changelog.d/` in their place, and leaves an existing one unchanged. Commit it with the rendered
+`CHANGELOG.md`: the directory then survives the release, and the checkout and every fresh
+clone render the same block. Removing every file from `changelog.d/` changes the block, so
+`compile-context --verify` reports drift until `praetorctl compile-context` runs again.
+Tests: `internal/config/register_conventions_test.go`,
+`internal/compiler/register_conventions_test.go` (`TestRegisterBlockAgreesWithFreshClone`
+covers the release render and the clone), `internal/changelog/fragment_dir_test.go`,
+`internal/changelog/placeholder_test.go` and
+`TestAdoptRegisterBlockFollowsFragmentDirectory` in
+`internal/adopt/harness_register_test.go`.
 
 ### Resolution
 

@@ -24,6 +24,14 @@ const (
 	TypeSecurity   FragmentType = "security"
 )
 
+// FragmentDir is the repository-relative directory that holds changelog fragments.
+const FragmentDir = "changelog.d"
+
+// FragmentPlaceholder is the empty file a release render leaves in FragmentDir once it has
+// removed the rendered fragments. Git keeps no empty directory, so without a tracked file the
+// directory would exist in the rendering checkout but not in a fresh clone (FragmentDirPresent).
+const FragmentPlaceholder = ".gitkeep"
+
 // Fragment represents a single changelog entry stored in changelog.d/.
 type Fragment struct {
 	Type     FragmentType `yaml:"type"`
@@ -67,7 +75,7 @@ func CreateFragment(repoPath string, f Fragment) (string, error) {
 		return "", fmt.Errorf("changelog: invalid fragment type %q", f.Type)
 	}
 
-	dir := filepath.Join(repoPath, "changelog.d")
+	dir := filepath.Join(repoPath, FragmentDir)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := contextopt.EnsureDirectory(ctx, dir, 0755); err != nil {

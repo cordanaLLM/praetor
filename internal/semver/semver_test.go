@@ -2,6 +2,48 @@ package semver
 
 import "testing"
 
+// Positive: every node-semver comparator operator is split off, the two-character ones whole.
+func TestCutOperator_Positive_SplitsEveryComparator(t *testing.T) {
+	want := map[string][2]string{
+		"^1.2.3": {"^", "1.2.3"}, "~1.24": {"~", "1.24"}, ">=1.27": {">=", "1.27"},
+		"<=2": {"<=", "2"}, ">1.26": {">", "1.26"}, "<2.0.0": {"<", "2.0.0"}, "=1.27": {"=", "1.27"},
+	}
+	for comparator, parts := range want {
+		if operator, rest := CutOperator(comparator); operator != parts[0] || rest != parts[1] {
+			t.Errorf("CutOperator(%q) = %q, %q; want %q, %q", comparator, operator, rest, parts[0], parts[1])
+		}
+	}
+}
+
+// Negative: a value with no leading operator comes back whole -- a bare version, a tag, or an
+// operator that is not first.
+func TestCutOperator_Negative_LeavesOperatorlessValuesWhole(t *testing.T) {
+	for _, value := range []string{"1.2.3", "latest", "stable", "1.27 <2", " >=1.27", "v1.2.3"} {
+		if operator, rest := CutOperator(value); operator != "" || rest != value {
+			t.Errorf("CutOperator(%q) = %q, %q; want no operator and the value whole", value, operator, rest)
+		}
+	}
+}
+
+// Boundary: an operator alone leaves an empty rest, and only the first operator is cut, so a
+// doubled or malformed prefix stays visible to the caller instead of being swallowed.
+func TestCutOperator_Boundary_OperatorAloneAndDoubledPrefix(t *testing.T) {
+	cases := map[string][2]string{
+		"":     {"", ""},
+		">=":   {">=", ""},
+		">":    {">", ""},
+		">>1":  {">", ">1"},
+		"=>1":  {"=", ">1"},
+		"~>1":  {"~", ">1"},
+		"<==1": {"<=", "=1"},
+	}
+	for comparator, parts := range cases {
+		if operator, rest := CutOperator(comparator); operator != parts[0] || rest != parts[1] {
+			t.Errorf("CutOperator(%q) = %q, %q; want %q, %q", comparator, operator, rest, parts[0], parts[1])
+		}
+	}
+}
+
 func TestParse_Positive_MajorMinorPatchAndVPrefix(t *testing.T) {
 	v, ok := Parse("v1.2.3")
 	if !ok {

@@ -181,7 +181,21 @@ func removeRenderedFragments(ctx context.Context, root *os.Root, fragments []fra
 			return fmt.Errorf("remove rendered fragment %s (resume matching render): %w", fragment.Name, err)
 		}
 	}
-	return contextopt.SyncDirectory(ctx, root)
+	if err := contextopt.SyncDirectory(ctx, root); err != nil {
+		return err
+	}
+	return keepFragmentDir(ctx, root)
+}
+
+// keepFragmentDir leaves FragmentPlaceholder in the fragment directory after its rendered
+// fragments are gone, and leaves an existing file of that name as it is. Without a tracked file
+// the emptied directory exists only in the rendering checkout, never in a fresh clone, and
+// FragmentDirPresent, which the text register follows, would answer differently in the two.
+func keepFragmentDir(ctx context.Context, root *os.Root) error {
+	if _, err := contextopt.CreateRootSnapshot(ctx, root, FragmentPlaceholder, nil, 0o644); err != nil {
+		return fmt.Errorf("keep %s with %s (resume matching render): %w", FragmentDir, FragmentPlaceholder, err)
+	}
+	return nil
 }
 
 func removeRenderJournal(ctx context.Context, root *os.Root, expected []byte) error {

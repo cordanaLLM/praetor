@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/cordanaLLM/praetor/internal/agenthook"
+	"github.com/cordanaLLM/praetor/internal/changelog"
 	"github.com/cordanaLLM/praetor/internal/config"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -40,7 +41,10 @@ func (e *registerBlockDrift) Unwrap() error { return ErrRegisterBlockOutOfSync }
 // (config.LoadCheckedRegisterAuthority) and renders its block. The block says a registered hook
 // denies a subagent brief without `task:` only where root registers the pre-dispatch hook in a
 // client hook file (agenthook.DispatchGateRegistered); elsewhere nothing enforces the label, and
-// the block does not claim it (#504).
+// the block does not claim it (#504). Likewise, the social row names a changelog fragment only
+// where the manifest states it in register.conventions or root keeps a fragment directory
+// (changelog.FragmentDirPresent, config.RegisterPolicy.WithDetectedConventions, #328). The
+// returned policy is the manifest's; what root's files add is a rendering fact, as the hook is.
 func LoadRegisterBlock(ctx context.Context, root string) (config.RegisterPolicy, string, error) {
 	authority, block, err := loadRegister(ctx, root)
 	if err != nil {
@@ -60,7 +64,11 @@ func loadRegister(ctx context.Context, root string) (config.RegisterAuthority, s
 	if err != nil {
 		return config.RegisterAuthority{}, "", fmt.Errorf("text register: %w", err)
 	}
-	block, err := config.RenderRegisterBlock(authority.Policy(), gated)
+	fragments, err := changelog.FragmentDirPresent(ctx, root)
+	if err != nil {
+		return config.RegisterAuthority{}, "", fmt.Errorf("text register: %w", err)
+	}
+	block, err := config.RenderRegisterBlock(authority.Policy().WithDetectedConventions(fragments), gated)
 	if err != nil {
 		return config.RegisterAuthority{}, "", err
 	}

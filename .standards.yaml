@@ -88,6 +88,10 @@ register:
   evidence:
     inline_max_lines: 58
     inline_max_tokens: 1500
+  # This repository's own forge conventions, rendered after the engine-universal social
+  # form: .github/pull_request_template.md, its receipt fence and the changelog.d lane.
+  conventions:
+    social: PR template, receipt fence and changelog fragment unchanged
   # Non-Markdown agent text coverage. Expected count + aggregate digest bind the
   # complete prompt, hook-diagnostic, and MCP runtime inventory selected below;
   # deleting one value or selector fails the gate.
