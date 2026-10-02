@@ -448,7 +448,8 @@ func requireCavemanSurface(ctx context.Context, root string, surface config.Regi
 }
 
 // requireSurfaceVerdict fails when surface resolves to a register the Caveman lint does not
-// judge (docs or social).
+// judge (docs or social). The error says the input was not checked: the caller has read it by
+// then, and a reader of the line must not take the missing verdict for a pass (#367).
 func requireSurfaceVerdict(policy config.RegisterPolicy, surface config.RegisterSurface) error {
 	enforced, err := policy.LintEnforced(surface)
 	if err != nil {
@@ -458,7 +459,7 @@ func requireSurfaceVerdict(policy config.RegisterPolicy, surface config.Register
 		return nil
 	}
 	resolution := policy.Resolve(surface, "")
-	return fmt.Errorf("caveman check: %s = %s has no Caveman verdict", resolution.Source, resolution.Register)
+	return fmt.Errorf("caveman check: %s = %s has no Caveman verdict; input NOT checked", resolution.Source, resolution.Register)
 }
 
 // formatCavemanReport appends the summary line and the bounded findings; it returns whether
