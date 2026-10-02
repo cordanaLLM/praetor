@@ -63,7 +63,7 @@ func runAdopt(args []string) error {
 		"change them with praetorctl profile set --facets")
 	dryRun := fs.Bool("dry-run", false, "Simulate adoption without writing files")
 	force := fs.Bool("force", false, adopt.ForceContract+". --force needs --lock-source-root, --dry-run included")
-	recordBaseline := fs.Bool("record-baseline", true, "Record or estimate legacy debt using verified local pins and catalog, or --lock-source-root (including --dry-run)")
+	baselineFlags := registerAdoptBaselineFlags(fs)
 	lockSource := fs.String("lock-source-root", "", "Praetor source bundle with validated pins and local archetypes for missing lockfiles")
 	allMissing := fs.Bool("all-missing", false, "Adopt all detected unmanaged repositories under --dev-dir")
 	devDir := fs.String("dev-dir", "", "Root directory scanned by --all-missing "+devRootUsageDefault)
@@ -81,25 +81,22 @@ func runAdopt(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), adoptTimeout)
 	defer cancel()
 
+	// The options every adopted repository shares; --all-missing passes exactly these.
+	opts := adopt.AdoptOptions{LockSourceRoot: *lockSource, DryRun: *dryRun, Force: *force}
+	baselineFlags.apply(&opts)
 	if *allMissing {
 		root, err := resolveDevRootDir(*devDir, "--dev-dir")
 		if err != nil {
 			return fmt.Errorf("adopt --all-missing: %w", err)
 		}
-		return batchAdoptMissing(ctx, root, *dryRun, *force, *recordBaseline, *lockSource)
+		return batchAdoptMissing(ctx, root, opts)
 	}
 
-	opts := adopt.AdoptOptions{
-		Path:               *path,
-		LockSourceRoot:     *lockSource,
-		Profile:            *profile,
-		Facets:             splitCommaList(*facets),
-		SetFacets:          flagWasSet(fs, "facets"),
-		DryRun:             *dryRun,
-		Force:              *force,
-		RecordBaseline:     *recordBaseline,
-		VerificationLimits: limitFlags.limits(),
-	}
+	opts.Path = *path
+	opts.Profile = *profile
+	opts.Facets = splitCommaList(*facets)
+	opts.SetFacets = flagWasSet(fs, "facets")
+	opts.VerificationLimits = limitFlags.limits()
 
 	report, err := adopt.Adopt(ctx, opts)
 	if report != nil {
@@ -112,6 +109,35 @@ func runAdopt(args []string) error {
 		return fmt.Errorf("%w: %d error(s) listed above", errAdoptIncomplete, len(report.Errors))
 	}
 	return nil
+}
+
+// adoptBaselineFlags holds adopt's baseline flags. --record-baseline records a first baseline and
+// keeps an existing one; replacing an existing one takes --rerecord-baseline, under the rules of
+// `praetorctl baseline --record`, whose --allow-increase and --reason it shares (#358).
+type adoptBaselineFlags struct {
+	record, rerecord, allowIncrease *bool
+	reason                          *string
+}
+
+func registerAdoptBaselineFlags(fs *flag.FlagSet) adoptBaselineFlags {
+	return adoptBaselineFlags{
+		record: fs.Bool("record-baseline", true, "Record the legacy debt into .standards-baseline.json when the repository has none, "+
+			"using verified local pins and catalog, or --lock-source-root (a --dry-run estimates it). An existing baseline is kept: "+
+			"adoption rescans, reports what 'praetorctl baseline --verify' says and never rewrites the file; false skips the scan"),
+		rerecord: fs.Bool("rerecord-baseline", false, "Replace an existing .standards-baseline.json with a rescan, as "+
+			"'praetorctl baseline --record' does: a higher infraction count is refused without --allow-increase --reason"),
+		allowIncrease: fs.Bool("allow-increase", false, "Permit --rerecord-baseline to raise the infraction count (HISS-13 exception); requires --reason"),
+		reason:        fs.String("reason", "", "Rationale stored in the baseline when --allow-increase raises the count"),
+	}
+}
+
+// apply copies the parsed flags into opts; adopt.Adopt refuses the combinations that contradict
+// each other (adopt.ErrBaselineOptions).
+func (f adoptBaselineFlags) apply(opts *adopt.AdoptOptions) {
+	opts.RecordBaseline = *f.record
+	opts.RerecordBaseline = *f.rerecord
+	opts.AllowBaselineIncrease = *f.allowIncrease
+	opts.BaselineIncreaseReason = *f.reason
 }
 
 // verificationLimitFlags holds the --verification-max-* flags. `adopt` and `paperclip harness`
@@ -159,14 +185,9 @@ func verificationLimitsFromFlags(entries, files, depth int) *adopt.VerificationL
 	return &limits
 }
 
-func batchAdoptMissing(ctx context.Context, devDir string, dryRun, force, recordBaseline bool, sourceRoots ...string) error {
-	if len(sourceRoots) > 1 {
-		return fmt.Errorf("batch adoption accepts one lock source root")
-	}
-	var sourceRoot string
-	if len(sourceRoots) == 1 {
-		sourceRoot = sourceRoots[0]
-	}
+// batchAdoptMissing adopts every unmanaged repository under devDir with shared, the options that
+// do not name one repository (lock source, dry run, force and the baseline flags).
+func batchAdoptMissing(ctx context.Context, devDir string, shared adopt.AdoptOptions) error {
 	scan, err := harvester.ScanLocalWorkstation(ctx, devDir)
 	if err != nil {
 		return fmt.Errorf("scanning workstation: %w", err)
@@ -176,15 +197,10 @@ func batchAdoptMissing(ctx context.Context, devDir string, dryRun, force, record
 	failed := 0
 	for i := 0; i < len(scan.MissingRulesRepos) && i < harvester.MaxDevScanEntries; i++ {
 		repoName := scan.MissingRulesRepos[i]
-		opts := adopt.AdoptOptions{
-			Path:           filepath.Join(devDir, repoName),
-			LockSourceRoot: sourceRoot,
-			DryRun:         dryRun,
-			Force:          force,
-			RecordBaseline: recordBaseline,
-		}
+		opts := shared
+		opts.Path = filepath.Join(devDir, repoName)
 		rep, err := adopt.Adopt(ctx, opts)
-		if !printBatchResult(repoName, dryRun, rep, err) {
+		if !printBatchResult(repoName, shared.DryRun, rep, err) {
 			failed++
 		}
 	}
@@ -312,8 +328,13 @@ func printScannedDebt(rep *adopt.AdoptReport) {
 	printDebtBreakdown(rep, !rep.DryRun)
 }
 
+// printExistingDebt prints the debt a kept baseline records and, when the run rescanned, the
+// ratchet verdict on it (adopt.BaselineRatchet.Line, the line the MCP adopt tool prints too).
 func printExistingDebt(rep *adopt.AdoptReport) {
 	fmt.Printf("\n--- Existing Legacy Technical Debt Baseline: %d infractions ---\n", rep.LegacyDebtCount)
+	if rep.BaselineRatchet != nil {
+		fmt.Println("  " + rep.BaselineRatchet.Line())
+	}
 }
 
 func printDebtBreakdown(rep *adopt.AdoptReport, explain bool) {

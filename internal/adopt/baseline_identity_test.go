@@ -18,6 +18,13 @@ func recordingSession(root string, identity repoIdentity) *adoptSession {
 		report: &AdoptReport{DebtBreakdown: map[string]int{}}}
 }
 
+// rerecordingSession is recordingSession with the explicit re-record of an existing baseline.
+func rerecordingSession(root string, identity repoIdentity) *adoptSession {
+	s := recordingSession(root, identity)
+	s.opts.RerecordBaseline = true
+	return s
+}
+
 // TestReconcileBaseline_RecordsRepositoryIdentity_3D pins BUG-801 for adoption: the recorded
 // baseline names the session's repository and the HEAD commit, and never the unborn marker.
 func TestReconcileBaseline_RecordsRepositoryIdentity_3D(t *testing.T) {
@@ -84,10 +91,11 @@ func committedRecordingRepo(t *testing.T) string {
 	return root
 }
 
-// TestReconcileBaseline_KeepsUnchangedBaseline_3D: a re-adoption that rescans the same debt
+// TestReconcileBaseline_KeepsUnchangedBaseline_3D: a re-record that rescans the same debt
 // keeps the recorded baseline byte for byte, where it used to rewrite generated_at on every
-// run (positive); a changed repository identity rewrites it (negative); an unreadable
-// baseline is replaced by the rescan (boundary).
+// run (positive); a changed repository identity rewrites it on a re-record and is kept by a
+// plain re-adoption (negative); an unreadable baseline fails the step instead of being replaced
+// by a rescan no earlier count ratchets (boundary).
 func TestReconcileBaseline_KeepsUnchangedBaseline_3D(t *testing.T) {
 	root := committedRecordingRepo(t)
 	widgets := repoIdentity{owner: "acme", name: "widgets"}
@@ -106,7 +114,7 @@ func TestReconcileBaseline_KeepsUnchangedBaseline_3D(t *testing.T) {
 	}
 	mustWrite(t, full, planted)
 
-	again := recordingSession(root, widgets)
+	again := rerecordingSession(root, widgets)
 	if err := reconcileBaseline(t.Context(), again); err != nil {
 		t.Fatalf("second reconcile: %v", err)
 	}
@@ -114,28 +122,31 @@ func TestReconcileBaseline_KeepsUnchangedBaseline_3D(t *testing.T) {
 		t.Fatalf("unchanged debt rewrote the baseline, or was not reported as unchanged: %+v", again.report.ActionDetails)
 	}
 
-	moved := recordingSession(root, repoIdentity{owner: "acme", name: "gadgets"})
-	if err := reconcileBaseline(t.Context(), moved); err != nil {
-		t.Fatalf("reconcile under another identity: %v", err)
+	gadgets := repoIdentity{owner: "acme", name: "gadgets"}
+	if err := reconcileBaseline(t.Context(), recordingSession(root, gadgets)); err != nil || mustRead(t, full) != planted {
+		t.Fatalf("a plain re-adoption under another identity = %v; want the recorded baseline kept byte for byte", err)
+	}
+	if err := reconcileBaseline(t.Context(), rerecordingSession(root, gadgets)); err != nil {
+		t.Fatalf("re-record under another identity: %v", err)
 	}
 	if b, err := baseline.LoadBaseline(full); err != nil || b.Repository != "acme/gadgets" || b.GeneratedAt == old {
 		t.Fatalf("changed identity kept the recorded baseline: %+v, %v", b, err)
 	}
 
 	mustWrite(t, full, "{")
-	if err := reconcileBaseline(t.Context(), recordingSession(root, widgets)); err != nil {
-		t.Fatalf("reconcile over an unreadable baseline: %v", err)
-	}
-	if b, err := baseline.LoadBaseline(full); err != nil || b.Repository != "acme/widgets" {
-		t.Fatalf("unreadable baseline not replaced by the rescan: %+v, %v", b, err)
+	for name, s := range map[string]*adoptSession{"re-adoption": recordingSession(root, widgets), "re-record": rerecordingSession(root, widgets)} {
+		if err := reconcileBaseline(t.Context(), s); err == nil || s.report.BaselineStatus != "failed" || mustRead(t, full) != "{" {
+			t.Fatalf("%s over an unreadable baseline = %v, status %q; want a failed step and the file untouched",
+				name, err, s.report.BaselineStatus)
+		}
 	}
 }
 
-// TestReconcileBaseline_UnresolvedIdentityKeepsRecordedRepository_3D pins #123: a rescan without
-// a resolved identity never blanks the repository the baseline records. Positive: the same debt
-// keeps the file byte for byte. Boundary: changed debt rewrites the file and carries the
-// repository forward, as baseline.Record does. Negative: a resolved identity still replaces it
-// (TestReconcileBaseline_KeepsUnchangedBaseline_3D).
+// TestReconcileBaseline_UnresolvedIdentityKeepsRecordedRepository_3D pins #123: a re-record
+// without a resolved identity never blanks the repository the baseline records. Positive: the
+// same debt keeps the file byte for byte. Boundary: changed debt rewrites the file and carries
+// the repository forward, as baseline.Record does. Negative: a resolved identity still replaces
+// it (TestReconcileBaseline_KeepsUnchangedBaseline_3D).
 func TestReconcileBaseline_UnresolvedIdentityKeepsRecordedRepository_3D(t *testing.T) {
 	root := committedRecordingRepo(t)
 	if err := reconcileBaseline(t.Context(), recordingSession(root, repoIdentity{owner: "acme", name: "widgets"})); err != nil {
@@ -143,7 +154,7 @@ func TestReconcileBaseline_UnresolvedIdentityKeepsRecordedRepository_3D(t *testi
 	}
 	full := filepath.Join(root, baselineFile)
 	recorded := mustRead(t, full)
-	if err := reconcileBaseline(t.Context(), recordingSession(root, repoIdentity{})); err != nil {
+	if err := reconcileBaseline(t.Context(), rerecordingSession(root, repoIdentity{})); err != nil {
 		t.Fatalf("unresolved reconcile: %v", err)
 	}
 	if mustRead(t, full) != recorded {
@@ -156,7 +167,15 @@ func TestReconcileBaseline_UnresolvedIdentityKeepsRecordedRepository_3D(t *testi
 		t.Fatalf("fixture did not plant the changed debt:\n%s", recorded)
 	}
 	mustWrite(t, full, planted)
-	if err := reconcileBaseline(t.Context(), recordingSession(root, repoIdentity{})); err != nil {
+	stale := recordingSession(root, repoIdentity{})
+	if err := reconcileBaseline(t.Context(), stale); err != nil || mustRead(t, full) != planted {
+		t.Fatalf("a plain re-adoption over a stale entry = %v; want the baseline kept byte for byte", err)
+	}
+	if verdict := stale.report.BaselineRatchet; verdict == nil || !verdict.Passed || len(stale.report.Warnings) != 1 ||
+		!strings.Contains(stale.report.Warnings[0], "baseline entry matches nothing in the tree") {
+		t.Fatalf("stale entry: verdict %+v, warnings %v; want a pass with the stale notice", verdict, stale.report.Warnings)
+	}
+	if err := reconcileBaseline(t.Context(), rerecordingSession(root, repoIdentity{})); err != nil {
 		t.Fatalf("unresolved reconcile of changed debt: %v", err)
 	}
 	if b, err := baseline.LoadBaseline(full); err != nil || b.Repository != "acme/widgets" || len(b.Infractions) != 0 {

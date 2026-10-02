@@ -101,7 +101,7 @@ func (s *Server) createAdoptTool() (mcp.Tool, error) {
 			"source_root": {Type: "string", Description: "Praetor source bundle; required for missing lock and with force; purpose: real pinned lock; confinement: server root"},
 			"record_baseline": {
 				Type:        "boolean",
-				Description: "Record existing infractions into .standards-baseline.json (default: true)",
+				Description: "Record existing infractions into .standards-baseline.json when repository has none. Existing baseline: kept, rescanned, ratchet verdict reported, never rewritten; re-record = CLI only (praetorctl adopt --rerecord-baseline or praetorctl baseline --record). false skips scan (default: true)",
 			},
 		},
 	}
@@ -231,6 +231,10 @@ func formatAdoptDebt(sb *mcpTextBuilder, r *adopt.AdoptReport, dryRun bool) {
 		sb.Template("Legacy Debt Baselined: %d infractions\n", r.LegacyDebtCount)
 	case "existing":
 		sb.Template("Existing Legacy Debt Baseline: %d infractions\n", r.LegacyDebtCount)
+		if r.BaselineRatchet != nil {
+			// The adopt package's shared verdict line, the same one the CLI prints.
+			sb.External("  "+r.BaselineRatchet.Line()+"\n", mcpTextShared)
+		}
 	case "skipped":
 		sb.Template("Legacy Debt Scan: skipped (baseline recording disabled)\n")
 	default:
