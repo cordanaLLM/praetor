@@ -1,0 +1,4 @@
+type: fixed
+title: Every Git hook spelled its interpreter python3, a name a stock Windows install lacks; the policy now starts the interpreter PRAETOR_PYTHON names through one launcher, python3 where it is unset
+issue: "#339"
+breaking: false

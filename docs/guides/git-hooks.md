@@ -2,7 +2,9 @@
 
 Install Lefthook 2.1.14 or newer, then run `make hooks` and `make hooks-check`.
 The configuration is tested with 2.1.14. Python 3, Git and the repository Go
-version are required. Install `yamllint`, `shellcheck`, `actionlint` and `hadolint`
+version are required; the hooks start `python3` unless `PRAETOR_PYTHON` names
+another interpreter ([the interpreter the hooks run](#the-interpreter-the-hooks-run)).
+Install `yamllint`, `shellcheck`, `actionlint` and `hadolint`
 when editing their file types; applicable checks fail if their tool is missing
 or older than its floor ([linter version floors](#linter-version-floors)).
 Strict source pushes also require `gosec`, `govulncheck` and `semgrep`. Golangci-lint runs
@@ -182,11 +184,65 @@ praetor hooks: shellcheck >= 0.11.0 is required (.config/lefthook/tool-floors.tx
 
 The `ToolFloors` cases in `.config/lefthook/scripts/test_hooks.py` cover each outcome and
 replay the version readers against the linters installed on the host.
-`TestInstalledHookLintersSatisfyTheDeclaredFloors` (`internal/forge/hook_tool_floor_guard_test.go`)
+`TestInstalledHookLintersSatisfyTheDeclaredFloors` (`internal/forge/hook_toolchain_guard_test.go`)
 fails when the `yamllint` pin in `.config/hook-lint/requirements.in` or the `shellcheck`
 release `.github/workflows/portability.yml` installs falls below its floor, or when
 `.github/actionlint.yaml` measures against another `actionlint` release than the floor.
 To raise a floor, change its line together with the source its comment names.
+
+## The interpreter the hooks run
+
+No hook command names a Python interpreter. Every job in `.config/lefthook/praetor.yml`
+and the pre-push script start their hook through `.config/lefthook/python.sh`, the one
+place the interpreter is resolved:
+
+| `PRAETOR_PYTHON` | The hooks run |
+| :--- | :--- |
+| unset or empty | `python3`, the name Linux and macOS give Python 3 |
+| a command name, such as `python` | that command, found on `PATH` |
+| a path, such as `C:\Python313\python.exe` | that file |
+
+A hook that starts another Python process, such as the harness self-tests or the command
+guard, reuses the interpreter it is running under (`sys.executable`), so a second name can
+never run beside the first. When the shell cannot start the interpreter the launcher prints
+`praetor hooks: missing dependency: Python 3 interpreter '<name>' did not start` and returns
+the shell's status (127), so an absent interpreter reads as a missing dependency and not as a
+hook rejecting the commit.
+
+A stock Windows install has `python.exe` and the `py` launcher but no `python3`. Set the
+variable there, or run `scripts/dev_install.py`: before it installs anything,
+`settle_hook_interpreter` checks that the variable, or `python3` where it is unset, is on
+`PATH`. Where neither is, it stores the interpreter running the install as the user's
+`PRAETOR_PYTHON` with `setx` on Windows, which every shell opened afterwards reads; on any
+other platform it stops and prints the `export` line to add. A variable that is already set
+is checked and never replaced. The install report carries the result under
+`hook_interpreter`.
+
+To see what a host provides, run the declared-toolchain report. It starts the interpreter
+through the launcher and reads each floored linter's version:
+
+```bash
+python3 -B .config/lefthook/scripts/toolchain.py
+python3 -B .config/lefthook/scripts/toolchain.py --require python,shellcheck,yamllint
+```
+
+Each declared tool gets one line. Without `--require` the run always exits 0 and a tool that
+is missing is reported as `not asserted` with the message a hook would give; with it, a named
+tool that is unusable is reported as `UNUSABLE` and the run exits 1. The Platform Neutrality
+job runs the second form on every leg before the harness self-tests
+([HISS-21](../standards/hiss-21-platform-neutrality.md#enforcement-in-this-repository)).
+
+The `lefthook.yml` that `praetorctl adopt` writes carries no launcher file, so its two
+checkpoint jobs state the same rule inline (`lefthookPythonCommand` in
+`internal/adopt/hooks.go`): `PRAETOR_PYTHON`, or `python3` where it is unset or empty.
+`TestLefthookPythonCommandMatchesTheCanonicalLauncher` holds the generated line and the
+launcher to one variable and one default, and
+`TestLefthookPythonCommandRunsTheNamedInterpreter` runs the line through `sh`. The
+`HookInterpreter` cases in `.config/lefthook/scripts/test_hooks.py` cover the launcher, and
+`test_hook_jobs_start_the_interpreter_praetor_python_names` drives a real Lefthook job with
+the variable set. The agent-client registrations (`.claude/settings.json`,
+`.codex/hooks.json`, `.gemini/settings.json`) still name `python3` themselves; see
+[agent hooks](agent-hooks.md).
 
 ## The lefthook.yml adoption writes
 

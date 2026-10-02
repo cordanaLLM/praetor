@@ -103,7 +103,8 @@ scripts (`checkpoint.py`, `checkpoint_scope.py`) directly, with no Lefthook hop:
 [agent hooks](agent-hooks.md#checkpoint-evaluators) has the full contract. It
 resolves its own Python interpreter from the `hooks.python` operator setting
 (`python3`, `python`, then the two-token `py -3` a stock Windows install
-carries) instead of the fixed `python3` the Lefthook job names, so a host
+carries), where the Lefthook jobs read one name from `PRAETOR_PYTHON`
+([the interpreter the hooks run](git-hooks.md#the-interpreter-the-hooks-run)), so a host
 without any of the three gets a stated skip on the tool event and a fail-closed
 block on stop rather than a silent `[WinError 2]`. No client registration calls
 this path yet; it exists alongside `.config/agent/hooks/checkpoint.py` and the

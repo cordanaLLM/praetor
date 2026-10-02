@@ -1,8 +1,8 @@
 # Canonical hook policy
 
-`praetor.yml` is consumed through `extends` by Praetor itself. Keep the policy and
-`scripts/` and `pre-push/` together: the YAML entry points intentionally use stable
-repository paths. The pre-push script job preserves checks when Lefthook's final
+`praetor.yml` is consumed through `extends` by Praetor itself. Keep the policy,
+`python.sh`, `tool-floors.txt`, `scripts/` and `pre-push/` together: the YAML entry
+points intentionally use stable repository paths. The pre-push script job preserves checks when Lefthook's final
 file diff is empty. See [the hook guide](../../docs/guides/git-hooks.md) for behavior
 and tools.
 
@@ -77,6 +77,18 @@ including forced staging, submodule entries and private content added then remov
 within outgoing history. Removing legacy tracked entries is allowed. Adopters
 must keep this whole directory ignored and publish reviewed documentation under
 `docs/` instead.
+
+## Interpreter
+
+No job names a Python interpreter. Each one starts its hook with
+`sh .config/lefthook/python.sh <script> ...`, and `python.sh` runs the interpreter
+`PRAETOR_PYTHON` names, or `python3` where the variable is unset or empty. A
+host whose Python 3 has another name, such as a stock Windows install, sets the
+variable instead of editing the policy. An interpreter the shell cannot start
+is reported as a missing dependency with the shell's status, never as a hook
+verdict. Hooks that start further Python processes reuse `sys.executable`.
+`scripts/toolchain.py` prints what the host provides for every declared tool.
+See [the interpreter the hooks run](../../docs/guides/git-hooks.md#the-interpreter-the-hooks-run).
 
 ## Output policy
 

@@ -163,10 +163,22 @@ shell, and on Windows Codex and AGY run hooks through `cmd.exe` and Gemini CLI t
 PowerShell. An `sh` run on the leg's Git Bash would pass without showing what those clients do.
 The Windows leg therefore executes fewer tests than the other two.
 
-Which external binaries this gate reaches, and which of them the job installs, is not
-enumerated on this page: each known gap is tracked as its own issue instead. Open today are
-\#339 (`python3` by name, a spelling the Windows leg is never given) and \#341 (`make` invoked
-by the hook policy, absent on the Windows runner).
+Before the self-tests, every leg runs the Assert Hook Toolchain step:
+`.config/lefthook/scripts/toolchain.py --require python,shellcheck,yamllint`. The hooks start
+their interpreter through `.config/lefthook/python.sh`, which runs what `PRAETOR_PYTHON` names
+([the interpreter the hooks run](../guides/git-hooks.md#the-interpreter-the-hooks-run)); the
+step and the self-tests both set the variable to the path `actions/setup-python` reports, and
+the step starts that interpreter through the launcher. A leg that cannot start it, or whose
+`shellcheck` or `yamllint` is below its floor in `.config/lefthook/tool-floors.txt`, fails
+there as a missing dependency instead of later as a hook rejecting a commit.
+`TestPortabilityAssertsTheHookToolchainBeforeTheSelfTests` in
+`internal/forge/hook_toolchain_guard_test.go` fails when the step is removed, moved after the
+self-tests, guarded by a condition, stops requiring `python`, or hands the hooks another
+interpreter than the self-tests do.
+
+Which other external binaries this gate reaches, and which of them the job installs, is not
+enumerated on this page. Open today is \#341 (`make` invoked by the hook policy on every
+leg).
 
 ## Required status checks for a matrix job
 
