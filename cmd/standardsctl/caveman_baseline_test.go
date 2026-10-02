@@ -300,7 +300,7 @@ func TestCavemanEstimateBaseBoundary(t *testing.T) {
 	}
 }
 
-// TestCavemanDeltaRow pins the row both compress and estimate --base print: the keys of the
+// TestCavemanDeltaRow pins the row estimate --base prints: the keys of the
 // plain estimate line, each as before, after and signed difference.
 func TestCavemanDeltaRow(t *testing.T) {
 	before := measureCavemanText("one two three\nfour\n")
