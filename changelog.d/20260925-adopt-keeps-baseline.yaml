@@ -1,4 +1,4 @@
 type: fixed
-title: "A re-adoption no longer rewrites .standards-baseline.json and accepts new debt; replacing it takes --rerecord-baseline"
+title: "A re-adoption keeps an existing .standards-baseline.json byte for byte instead of rescanning over it and accepting new debt: it reports the verdict of praetorctl baseline --verify, and while that verdict is a rejection it ends with not ready yet: Debt Baseline in place of the success line. Replacing the file takes --rerecord-baseline, and an unreadable baseline stops the adoption instead of being replaced by a rescan"
 breaking: true
 issue: "#358"
