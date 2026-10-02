@@ -186,7 +186,7 @@ command moves a default
 
 ```bash
 praetorctl devcontainer bump \
-  --builder-image docker.io/library/golang:1.27-alpine@sha256:<digest>
+  --builder-image docker.io/library/golang:<tag>@sha256:<digest>
 ```
 
 `--base-image` moves the base the same way, and both may be given. The command
@@ -207,10 +207,25 @@ reference is refused. `--source-root` selects the checkout and defaults to the
 directory of `--config`; `--force` and `--verify` are not accepted. Commit the
 pin, the prior list, the Dockerfile and the bundle together.
 
+The tag moves with the same command. Give the new tag with its digest, and the
+command rewrites the tag in the `// Reviewed at` line and in the `FROM` line; no
+other file is edited by hand. The `// Reviewed at` line is the only place that
+names the reviewed tag: the tests read the tag and the digest from it
+(`ReviewedReferences` in `internal/devcontainer/reviewed_images.go`) and spell
+neither, so the tree passes after a move to another tag, by this command or by
+a Renovate tag update.
+
+The prior list only grows, and nothing prunes it: a bundle that recorded a
+removed image would be kept as the adopter's choice instead of refreshed. Each
+role holds at most 256 images (`maxPriorImages` in
+`internal/devcontainer/reviewed_images.go`). A bump that would pass that bound
+is refused before it writes anything, and the refusal names the remedy: raise
+`maxPriorImages` in a reviewed change, then run the bump again.
+
 Without an image option the command finishes a move already made to the pin: it
 records the image the bundle still holds as replaced and regenerates. That is
-how a Renovate update lands. `renovate.json` points Renovate at the pin, never
-at the bundle:
+how a Renovate update lands, of the digest or of the tag with it.
+`renovate.json` points Renovate at the pin, never at the bundle:
 
 - A regex custom manager reads the `// Reviewed at` line and its constant with
   `ReviewedPinPattern` (`internal/devcontainer/reviewed_images.go`). Renovate
@@ -232,13 +247,17 @@ The Renovate branch moves the pin and the Dockerfile only, so
 `praetorctl devcontainer bump` has run there
 ([Renovate pull requests](contributing.md#renovate-pull-requests)).
 
-Tests: `internal/devcontainer/bootstrap_bump_test.go`,
+Tests: `internal/devcontainer/bootstrap_bump_test.go`, which also bumps to
+another tag and to the bound of the prior list,
 `internal/devcontainer/reviewed_images_test.go`,
 `cmd/standardsctl/devcontainer_bump_test.go`, which replays a Renovate builder
-update through the command and requires `devcontainer verify` to pass, and
-`internal/devcontainer/renovate_test.go`, which applies `renovate.json` to the
-tree: the pins are read with their tags, the bundle is disabled, and no file
-Renovate reads pins a digest without a tag.
+update and a tag move through the command and requires `devcontainer verify` to
+pass, and `internal/devcontainer/renovate_test.go`, which applies
+`renovate.json` to the tree: the pins are read with their tags, the bundle is
+disabled, and no file Renovate reads pins a digest without a tag. The assertions
+the committed tree is held to are in
+`internal/devcontainer/reviewed_tree_test.go`, and the bump tests run them on
+the checkout a bump leaves.
 
 An adopted repository gets the same protection from adoption. When its bundle
 is one Praetor generated, the `renovate-ignore` step lists

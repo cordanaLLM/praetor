@@ -50,8 +50,14 @@ const (
 	priorImagesName      = "prior-images.json"
 	reviewedImagesSource = "internal/devcontainer/reviewed_images.go"
 	priorImagesDirective = "//go:embed " + priorImagesName
-	// maxPriorImages bounds each role's prior-default list (HISS-02).
+	// maxPriorImages bounds each role's prior-default list (HISS-02). devcontainer bump only
+	// appends, and nothing prunes the list: a bundle that recorded a removed image would be kept
+	// as the adopter's choice instead of refreshed (#553). A list at the bound is therefore
+	// refused, and the remedy is to raise this bound in a reviewed change (priorImagesRemedy).
 	maxPriorImages = 256
+	// priorImagesRemedy ends the refusal of a prior-default list past maxPriorImages.
+	priorImagesRemedy = "the list is append-only and never pruned, because a bundle that recorded a removed image is no longer refreshed: " +
+		"raise maxPriorImages in " + reviewedImagesSource + " in a reviewed change"
 )
 
 //go:embed prior-images.json
@@ -141,7 +147,7 @@ func ParsePriorImages(data []byte) (PriorImages, error) {
 // validatePriorList holds one role's list to the prior-default form.
 func validatePriorList(role string, images []string) error {
 	if len(images) > maxPriorImages {
-		return fmt.Errorf("%s lists %d %s images, more than %d", PriorImagesFile, len(images), role, maxPriorImages)
+		return fmt.Errorf("%s lists %d %s images, more than the bound of %d; %s", PriorImagesFile, len(images), role, maxPriorImages, priorImagesRemedy)
 	}
 	for index := 0; index < len(images) && index < maxPriorImages; index++ {
 		if _, tag, _ := util.SplitImageReference(images[index]); tag != "" || validateBootstrapImages(images[index]) != nil {
@@ -182,6 +188,38 @@ func (p reviewedPin) reference() string { return p.repository + ":" + p.tag + "@
 
 // image returns the digest-only form the constant holds.
 func (p reviewedPin) image() string { return p.repository + "@" + p.digest }
+
+// ReviewedReferences returns the reference each reviewed default of source, the bytes of
+// ReviewedPinsFile, was reviewed at, by role ("base" and "builder"), as
+// repository:tag@sha256:<digest>. The digest-only constants hold no tag, so this is where a
+// caller reads the reviewed tag of a default. The pins are read as devcontainer bump reads
+// them, in LF or CRLF form, and a source whose comment and constant disagree is refused.
+func ReviewedReferences(source []byte) (map[string]string, error) {
+	pins, _, _, err := readReviewedPins(source)
+	if err != nil {
+		return nil, err
+	}
+	references := make(map[string]string, len(pins))
+	for _, role := range reviewedRoles {
+		references[role.name] = pins[role.name].reference()
+	}
+	return references, nil
+}
+
+// readReviewedPins parses the pins of source, the bytes of ReviewedPinsFile in one consistent
+// LF or CRLF form, and returns them with the LF-normalized text their offsets index and
+// whether the source was CRLF.
+func readReviewedPins(source []byte) (pins map[string]reviewedPin, text string, crlf bool, err error) {
+	text, crlf, err = util.NormalizeLineEndingsStrict(string(source))
+	if err != nil {
+		return nil, "", false, fmt.Errorf("%s: %w", ReviewedPinsFile, err)
+	}
+	pins, err = parseReviewedPins(text)
+	if err != nil {
+		return nil, "", false, err
+	}
+	return pins, text, crlf, nil
+}
 
 // parseReviewedPins finds exactly one pin per reviewed role in LF-normalized source, each with
 // its comment and constant naming the same repository and digest.

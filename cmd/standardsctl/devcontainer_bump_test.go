@@ -60,37 +60,112 @@ func recordedBuilder(t *testing.T, output string) string {
 	return dc.Customizations.Praetor.Bootstrap.BuilderImage
 }
 
-// Regression for #323: replay Renovate's builder digest update, which now moves the reviewed
-// pin in bootstrap.go and the FROM line of docker/dev/Dockerfile and leaves the generated
-// bundle alone, then finish it with devcontainer bump. The replaced digest joins the prior
-// list, the bundle records the new one, and devcontainer verify passes.
-func TestDevContainerCLIBumpFinishesARenovateBuilderUpdate(t *testing.T) {
-	source, manifest, output := cliBumpCheckout(t)
-	_, _, old := util.SplitImageReference(devcontainer.DefaultBuilderImage)
-	next := "sha256:" + strings.Repeat("c", 64)
-	for _, rel := range []string{devcontainer.ReviewedPinsFile, devcontainer.DevImageDockerfile} {
-		replaceInFile(t, filepath.Join(source, filepath.FromSlash(rel)), old, next)
+// reviewedReferences returns the tagged reference each reviewed default of the Praetor checkout
+// at root was reviewed at, by role, read from its pin source. The tests take the tag and the
+// digest they start from out of the checkout they bump and spell neither, so they pass on a
+// tree whose default has moved to another tag.
+func reviewedReferences(t *testing.T, root string) map[string]string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(devcontainer.ReviewedPinsFile)))
+	if err != nil {
+		t.Fatal(err)
 	}
-	message, err := captureStdout(t, func() error {
-		return runDevContainer([]string{"bump", "--config", manifest, "--output", output, "--source-root", source})
-	})
+	references, err := devcontainer.ReviewedReferences(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return references
+}
+
+// digestOnly returns the repository@digest form of a tagged reference: the form the
+// constants, the prior list and the bundle hold.
+func digestOnly(reference string) string {
+	repository, _, digest := util.SplitImageReference(reference)
+	return repository + "@" + digest
+}
+
+// bumpCLI runs devcontainer bump on the checkout at source with extra options and requires
+// its output to carry every line of want.
+func bumpCLI(t *testing.T, source, manifest, output string, want []string, extra ...string) {
+	t.Helper()
+	args := append([]string{"bump", "--config", manifest, "--output", output, "--source-root", source}, extra...)
+	message, err := captureStdout(t, func() error { return runDevContainer(args) })
 	if err != nil {
 		t.Fatalf("bump: %v\n%s", err, message)
 	}
-	for _, want := range []string{"[PIN KEPT] builder docker.io/library/golang:1.27-alpine@" + next, "records " + devcontainer.DefaultBuilderImage, "[PASS]"} {
-		if !strings.Contains(message, want) {
-			t.Fatalf("bump output lacks %q:\n%s", want, message)
+	for _, line := range want {
+		if !strings.Contains(message, line) {
+			t.Fatalf("bump output lacks %q:\n%s", line, message)
 		}
+	}
+}
+
+// assertCLIBumped checks the checkout at source after its builder moved from the reference
+// before to next: the pin source names next, devcontainer verify passes, the bundle records
+// the new digest-only image, and the prior list holds the replaced one.
+func assertCLIBumped(t *testing.T, source, manifest, output, before, next string) {
+	t.Helper()
+	if got := reviewedReferences(t, source)["builder"]; got != next {
+		t.Fatalf("pin source names builder %s, want %s", got, next)
 	}
 	if err := runDevContainer([]string{"verify", "--config", manifest, "--output", output}); err != nil {
 		t.Fatalf("devcontainer verify after the bump: %v", err)
 	}
-	if got := recordedBuilder(t, output); got != "docker.io/library/golang@"+next {
-		t.Fatalf("bundle records builder %s", got)
+	if got := recordedBuilder(t, output); got != digestOnly(next) {
+		t.Fatalf("bundle records builder %s, want %s", got, digestOnly(next))
 	}
 	priors, err := os.ReadFile(filepath.Join(source, filepath.FromSlash(devcontainer.PriorImagesFile)))
-	if err != nil || !strings.Contains(string(priors), devcontainer.DefaultBuilderImage) {
-		t.Fatalf("prior list lacks the replaced builder: %s %v", priors, err)
+	if err != nil || !strings.Contains(string(priors), digestOnly(before)) || strings.Contains(string(priors), digestOnly(next)) {
+		t.Fatalf("prior list after replacing %s with %s: %s %v", before, next, priors, err)
+	}
+}
+
+// finishRenovateBuilderUpdate replays Renovate's update of the builder digest on the checkout
+// at source, which moves the reviewed pin in bootstrap.go and the FROM line of
+// docker/dev/Dockerfile and leaves the generated bundle alone, then finishes it with
+// devcontainer bump. The pin keeps the tag the checkout holds, the replaced digest joins the
+// prior list, the bundle records the new one, and devcontainer verify passes.
+func finishRenovateBuilderUpdate(t *testing.T, source, manifest, output, digest string) {
+	t.Helper()
+	before := reviewedReferences(t, source)["builder"]
+	repository, tag, old := util.SplitImageReference(before)
+	for _, rel := range []string{devcontainer.ReviewedPinsFile, devcontainer.DevImageDockerfile} {
+		replaceInFile(t, filepath.Join(source, filepath.FromSlash(rel)), old, digest)
+	}
+	next := repository + ":" + tag + "@" + digest
+	bumpCLI(t, source, manifest, output, []string{"[PIN KEPT] builder " + next, "records " + digestOnly(before), "[PASS]"})
+	assertCLIBumped(t, source, manifest, output, before, next)
+}
+
+// Regression for #323: a Renovate builder digest update is finished by devcontainer bump.
+func TestDevContainerCLIBumpFinishesARenovateBuilderUpdate(t *testing.T) {
+	source, manifest, output := cliBumpCheckout(t)
+	finishRenovateBuilderUpdate(t, source, manifest, output, "sha256:"+strings.Repeat("c", 64))
+}
+
+// Regression for the tag move (#323): Renovate proposes tag updates into the reviewed group,
+// and a tag move must be one command like a digest move. Replay a move of the builder to
+// another tag through the command in a scratch checkout: the pin source and the development
+// Dockerfile carry the new tag, the replaced image joins the prior list, and devcontainer
+// verify passes. The checkout then stands where the committed tree stands after a tag move,
+// and the Renovate replay of TestDevContainerCLIBumpFinishesARenovateBuilderUpdate passes on
+// it with the same assertions, under the moved tag.
+func TestDevContainerCLIBumpMovesTheBuilderTag(t *testing.T) {
+	source, manifest, output := cliBumpCheckout(t)
+	before := reviewedReferences(t, source)["builder"]
+	repository, tag, _ := util.SplitImageReference(before)
+	moved := ":moved-" + tag + "@sha256:" + strings.Repeat("e", 64)
+	next := repository + moved
+	want := []string{"[PIN MOVED] builder " + before + " -> " + next, "records " + digestOnly(before), "[PASS]"}
+	bumpCLI(t, source, manifest, output, want, "--builder-image", next)
+	assertCLIBumped(t, source, manifest, output, before, next)
+	dockerfile, err := os.ReadFile(filepath.Join(source, filepath.FromSlash(devcontainer.DevImageDockerfile)))
+	if err != nil || !strings.Contains(string(dockerfile), moved) {
+		t.Fatalf("%s does not build from %s: %v", devcontainer.DevImageDockerfile, moved, err)
+	}
+	finishRenovateBuilderUpdate(t, source, manifest, output, "sha256:"+strings.Repeat("f", 64))
+	if got := reviewedReferences(t, source)["builder"]; !strings.HasPrefix(got, repository+":moved-"+tag+"@") {
+		t.Fatalf("the Renovate update lost the moved tag: %s", got)
 	}
 }
 

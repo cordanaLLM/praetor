@@ -120,20 +120,12 @@ func (r renovateRules) groups(files ...string) (string, []string) {
 	return "", nil
 }
 
-// Positive: one custom manager reads bootstrap.go with exactly ReviewedPinPattern, the expression
-// devcontainer bump uses, through the docker datasource and versioning. Applied to the file, it
-// yields each reviewed default under its tag and digest, and one group moves the pins with the
-// FROM line of the development Dockerfile and nothing else that Dockerfile holds.
-//
-// Renovate rewrites the whole match: with autoReplaceGlobalMatch at its default, true, it
-// replaces every occurrence of the current digest, which moves the comment and the constant
-// together, and every occurrence of the current tag
-// (lib/workers/repository/update/branch/auto-replace.ts in renovatebot/renovate). So the
-// configuration must keep that default, and each match must hold its tag once and its digest
-// twice, or an update would leave the pair disagreeing or rewrite more than the tag.
-func TestRenovateReadsTheReviewedPinsByTag(t *testing.T) {
-	rules := readRenovate(t)
-	managers := rules.readsFile(t, ReviewedPinsFile)
+// reviewedPinManager returns the one custom manager that reads ReviewedPinsFile and requires it
+// to read with exactly ReviewedPinPattern, the expression devcontainer bump uses, through the
+// docker datasource and versioning, under Renovate's default autoReplaceGlobalMatch.
+func (r renovateRules) reviewedPinManager(t *testing.T) renovateCustomManager {
+	t.Helper()
+	managers := r.readsFile(t, ReviewedPinsFile)
 	if len(managers) != 1 {
 		t.Fatalf("%d custom managers read %s, want 1", len(managers), ReviewedPinsFile)
 	}
@@ -142,32 +134,29 @@ func TestRenovateReadsTheReviewedPinsByTag(t *testing.T) {
 		manager.DatasourceTemplate != "docker" || manager.VersioningTemplate != "docker" {
 		t.Fatalf("reviewed-pin custom manager %+v", manager)
 	}
-	source, err := os.ReadFile("bootstrap.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rules.AutoReplaceGlobalMatch != nil && !*rules.AutoReplaceGlobalMatch {
+	if r.AutoReplaceGlobalMatch != nil && !*r.AutoReplaceGlobalMatch {
 		t.Fatal("renovate.json sets autoReplaceGlobalMatch false: an update would move the comment and leave the constant")
 	}
-	expression := regexp.MustCompile(manager.MatchStrings[0])
-	var found, repositories []string
-	for _, match := range expression.FindAllStringSubmatch(strings.ReplaceAll(string(source), "\r\n", "\n"), -1) {
-		group := func(name string) string { return match[expression.SubexpIndex(name)] }
-		found = append(found, group("depName")+":"+group("currentValue")+"@"+group("currentDigest"))
-		repositories = append(repositories, group("depName"))
-		if tags, digests := strings.Count(match[0], group("currentValue")), strings.Count(match[0], group("currentDigest")); tags != 1 || digests != 2 {
-			t.Errorf("the match for %s holds its tag %d times and its digest %d times, want 1 and 2", group("depName"), tags, digests)
-		}
-	}
-	if want := []string{taggedDefaultBuilder, taggedDefaultBase}; !slices.Equal(found, want) {
-		t.Fatalf("Renovate reads %v from bootstrap.go, want %v", found, want)
-	}
+	return manager
+}
+
+// Positive: one custom manager reads bootstrap.go with exactly ReviewedPinPattern. Applied to
+// the committed file, it yields each reviewed default under the tag and digest of its pin
+// (assertRenovateReadsThePins says why the configuration must keep autoReplaceGlobalMatch),
+// and one group moves the pins with the FROM line of the development Dockerfile and nothing
+// else that Dockerfile holds. The expected references are the pins' own, never a spelled tag:
+// Renovate proposes tag updates into that group, and the tree must pass after one.
+func TestRenovateReadsTheReviewedPinsByTag(t *testing.T) {
+	rules := readRenovate(t)
+	pins := committedPins(t)
+	committedTree().assertRenovateReadsThePins(t, rules.reviewedPinManager(t))
 	group, packages := rules.groups(ReviewedPinsFile, DevImageDockerfile)
 	if group == "" {
 		t.Fatalf("no packageRule groups %s with %s", ReviewedPinsFile, DevImageDockerfile)
 	}
 	// The development Dockerfile spells the builder in Docker Hub's short form.
-	want := append(repositories, strings.TrimPrefix(repositories[0], "docker.io/library/"))
+	builder := pins["builder"].repository
+	want := []string{builder, pins["base"].repository, strings.TrimPrefix(builder, "docker.io/library/")}
 	slices.Sort(want)
 	slices.Sort(packages)
 	if !slices.Equal(packages, want) {

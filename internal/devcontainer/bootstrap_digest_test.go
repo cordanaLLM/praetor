@@ -11,30 +11,22 @@ import (
 
 // Issue #333: the reviewed defaults are digest-only, repository@sha256:<digest>, because
 // @devcontainers/cli 0.89.0 refuses repository:tag@sha256:<digest> during registry
-// inspection. These fixtures are the same defaults in the tagged form generation recorded
-// before that change, at the tags named in the comments beside the constants.
-var (
-	taggedDefaultBase    = strings.Replace(DefaultBaseImage, "@", ":ubuntu26.04@", 1)
-	taggedDefaultBuilder = strings.Replace(DefaultBuilderImage, "@", ":1.27-alpine@", 1)
-)
+// inspection. taggedDefault (reviewed_tree_test.go) returns the same defaults in the tagged
+// form generation recorded before that change, read from the comments beside the constants:
+// a test that spelled the tag would fail the tree the moment a default moved to another tag.
 
 // The line above each default keeps the full reference it was reviewed at, which Renovate
 // reads (ReviewedPinPattern) and the repository pin scan (TestRepositoryPinsOneDigestPerImageTag
-// in internal/supplychain) holds to one digest per tag. It must name the constant's own
-// repository and digest under the reviewed tag, so moving a default cannot leave its comment
-// on the old digest. The pins are read by the parser devcontainer bump uses.
+// in internal/supplychain) holds to one digest per tag. It must name a tag and the constant's
+// own repository and digest, so moving a default cannot leave its comment on the old digest.
+// The pins are read by the parser devcontainer bump uses, which refuses a comment whose
+// constant disagrees (committedPins), and the reference each comment names is the compiled
+// default under a tag, as regeneration matches a recorded image to a reviewed default.
 func TestReviewedDefaultCommentsNameTheirDigest(t *testing.T) {
-	source, err := os.ReadFile("bootstrap.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	pins, err := parseReviewedPins(strings.ReplaceAll(string(source), "\r\n", "\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for role, reference := range map[string]string{"builder": taggedDefaultBuilder, "base": taggedDefaultBase} {
-		if got := pins[role].reference(); got != reference {
-			t.Fatalf("%s comment names %q, want %q", role, got, reference)
+	pins := committedPins(t)
+	for role, constant := range map[string]string{"builder": DefaultBuilderImage, "base": DefaultBaseImage} {
+		if reference := pins[role].reference(); reference == constant || !isReviewedPin(reference, constant, nil) {
+			t.Fatalf("%s comment names %q, which is not %s under a tag", role, reference, constant)
 		}
 	}
 }
@@ -74,7 +66,8 @@ func TestReviewedDefaultsRenderDigestOnly(t *testing.T) {
 // still verifies, and a regeneration refreshes both images to the digest-only defaults,
 // says so, and verifies again.
 func TestInheritRecordedImagesRefreshesTaggedCurrentDefault(t *testing.T) {
-	path := writeRecordedBundle(t, BootstrapOptions{SourceRoot: bootstrapSourceFixture(t), BaseImage: taggedDefaultBase, BuilderImage: taggedDefaultBuilder})
+	taggedBase, taggedBuilder := taggedDefault(t, "base"), taggedDefault(t, "builder")
+	path := writeRecordedBundle(t, BootstrapOptions{SourceRoot: bootstrapSourceFixture(t), BaseImage: taggedBase, BuilderImage: taggedBuilder})
 	if err := Verify(t.Context(), path, mustBaseContainer(t)); err != nil {
 		t.Fatalf("bundle recorded with tagged defaults no longer verifies: %v", err)
 	}
@@ -85,7 +78,7 @@ func TestInheritRecordedImagesRefreshesTaggedCurrentDefault(t *testing.T) {
 	if options.BaseImage != DefaultBaseImage || options.BuilderImage != DefaultBuilderImage || len(notes) != 2 {
 		t.Fatalf("tagged defaults not refreshed to digest-only: %+v %+v", options, notes)
 	}
-	for role, recorded := range map[string]string{"base": taggedDefaultBase, "builder": taggedDefaultBuilder} {
+	for role, recorded := range map[string]string{"base": taggedBase, "builder": taggedBuilder} {
 		note := noteFor(t, notes, role)
 		want := "[RECORDED IMAGE REFRESHED] " + role + " image " + recorded + " -> reviewed default " + note.Default +
 			"; devcontainer generate " + note.Flag + " " + recorded + " keeps it"
@@ -118,7 +111,7 @@ func TestInheritRecordedImagesKeepsOperatorImageBesideDigestOnlyDefault(t *testi
 	source := bootstrapSourceFixture(t)
 	for name, recorded := range map[string]BootstrapOptions{
 		"mirrored digest": {SourceRoot: source, BaseImage: "registry.example/mirror/base@" + baseDigest, BuilderImage: "registry.example/mirror/golang@" + builderDigest},
-		"short form":      {SourceRoot: source, BaseImage: adopterBase, BuilderImage: "golang:1.27-alpine@" + builderDigest},
+		"short form":      {SourceRoot: source, BaseImage: adopterBase, BuilderImage: "golang:" + committedPins(t)["builder"].tag + "@" + builderDigest},
 		"other digest":    {SourceRoot: source, BaseImage: "mcr.microsoft.com/devcontainers/base@sha256:" + strings.Repeat("0", 64), BuilderImage: "docker.io/library/golang@sha256:" + strings.Repeat("1", 64)},
 	} {
 		options, notes, err := InheritRecordedImages(t.Context(), writeRecordedBundle(t, recorded), BootstrapOptions{})
@@ -142,7 +135,7 @@ func TestIsReviewedPinMatchesCurrentAndPriorDefaults(t *testing.T) {
 	_, _, digest := util.SplitImageReference(DefaultBuilderImage)
 	for image, want := range map[string]bool{
 		DefaultBuilderImage:                                          true,
-		taggedDefaultBuilder:                                         true,
+		taggedDefault(t, "builder"):                                  true,
 		"docker.io/library/golang:1.28@" + digest:                    true,
 		earlierReviewedBuilder(t):                                    true,
 		shippedPriors(t).Builder[0]:                                  true,
@@ -157,7 +150,7 @@ func TestIsReviewedPinMatchesCurrentAndPriorDefaults(t *testing.T) {
 		}
 	}
 	// A tagged current default still matches itself exactly and by digest.
-	if !isReviewedPin(taggedDefaultBase, taggedDefaultBase, nil) || !isReviewedPin(DefaultBaseImage, taggedDefaultBase, nil) {
+	if taggedBase := taggedDefault(t, "base"); !isReviewedPin(taggedBase, taggedBase, nil) || !isReviewedPin(DefaultBaseImage, taggedBase, nil) {
 		t.Fatal("a tagged current default does not match its own digest")
 	}
 }

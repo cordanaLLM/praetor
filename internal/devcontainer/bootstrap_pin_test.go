@@ -2,8 +2,6 @@ package devcontainer
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -24,25 +22,11 @@ func splitImagePin(ref string) (string, string) {
 	return strings.TrimPrefix(name, "docker.io/library/"), digest
 }
 
-// dockerfileImageRef returns the image reference of a FROM instruction, skipping
-// flags such as --platform, or "" when the line is not a FROM instruction.
-func dockerfileImageRef(line string) string {
-	fields := strings.Fields(line)
-	if len(fields) < 2 || !strings.EqualFold(fields[0], "FROM") {
-		return ""
-	}
-	for i := 1; i < len(fields) && i < MaxLoopLimit; i++ {
-		if !strings.HasPrefix(fields[i], "--") {
-			return fields[i]
-		}
-	}
-	return ""
-}
-
 // pinnedDigestDrift reports whether EVERY FROM instruction naming the pinned
 // repository carries exactly that digest. Stopping at the first match would let
 // a later build stage of the same repository drift unseen, which is the
-// condition this check exists to stop.
+// condition this check exists to stop. The FROM lines are read by fromReference,
+// the reader devcontainer bump moves them with.
 func pinnedDigestDrift(dockerfile []byte, pin string) error {
 	repository, digest := splitImagePin(pin)
 	if digest == "" {
@@ -57,7 +41,7 @@ func pinnedDigestDrift(dockerfile []byte, pin string) error {
 	}
 	matched := 0
 	for i := 0; i < len(lines) && i < MaxLoopLimit; i++ {
-		ref := dockerfileImageRef(lines[i])
+		ref := fromReference(lines[i])
 		if ref == "" {
 			continue
 		}
@@ -80,29 +64,12 @@ func pinnedDigestDrift(dockerfile []byte, pin string) error {
 }
 
 // TestPinnedImagesMatchTheDockerfilesThatUseThem binds the image constants to
-// the files that build with them: a constant nothing checks drifts silently.
+// the files that build with them: a constant nothing checks drifts silently. The
+// committed pins are the compiled constants, and the Dockerfiles of the committed
+// tree build from them.
 func TestPinnedImagesMatchTheDockerfilesThatUseThem(t *testing.T) {
-	root := filepath.Join("..", "..")
-	for _, tc := range []struct {
-		name, path, pin string
-	}{
-		// The Dockerfile devcontainer bump moves with the builder pin (reviewedRoles).
-		{"development image builder", filepath.Join(root, filepath.FromSlash(DevImageDockerfile)), DefaultBuilderImage},
-		{"recorded bootstrap builder", filepath.Join(root, ".devcontainer", "Dockerfile.praetor"), DefaultBuilderImage},
-		{"recorded bootstrap base", filepath.Join(root, ".devcontainer", "Dockerfile.praetor"), DefaultBaseImage},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			data, err := os.ReadFile(tc.path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := pinnedDigestDrift(data, tc.pin); err != nil {
-				// A Renovate update moves the pins but never the generated bundle, so this
-				// drift names the command that finishes it.
-				t.Fatalf("%s: %v (move a reviewed default with praetorctl devcontainer bump, which records the replaced pin in prior-images.json and regenerates the bundle)", tc.path, err)
-			}
-		})
-	}
+	committedPins(t)
+	committedTree().assertDockerfilesBuildFromThePins(t)
 }
 
 // TestPinnedDigestDriftNamesItsReason covers the drift checker itself, so a
