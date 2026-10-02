@@ -382,7 +382,7 @@ func auditDevContainer(ctx context.Context, manifest *config.Manifest, opts *aud
 		return fmt.Errorf("[FAIL] DevContainer synthesis failed: %w", err)
 	}
 	if err := devcontainer.Verify(ctx, dcPath, dc); err != nil {
-		return fmt.Errorf("[FAIL] DevContainer out of sync with declared standards: %w", err)
+		return fmt.Errorf("[FAIL] DevContainer out of sync with declared standards: %w", devContainerCheckoutRemedy(ctx, opts.rootDir, err))
 	}
 	fmt.Println("[PASS] DevContainer configuration verified in sync with declared standards.")
 	return nil
