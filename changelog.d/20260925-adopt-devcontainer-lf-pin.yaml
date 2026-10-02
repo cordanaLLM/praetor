@@ -1,4 +1,4 @@
 type: fixed
-title: "Adoption pins .devcontainer/Dockerfile.praetor to LF in the managed .gitattributes block, so a CRLF checkout on Windows passes audit; a repository rule inside .devcontainer/ that matches that file and contradicts text eol=lf (-text, binary, eol=crlf) now stops praetorctl adopt before its first write, until the rule is changed or dev-container is listed in adoption.decline"
+title: "Adoption pins the generated DevContainer Dockerfile to LF, and refuses a repository rule that contradicts the pin"
 issue: "#313"
 breaking: true
