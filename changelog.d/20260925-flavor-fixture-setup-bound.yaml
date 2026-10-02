@@ -1,0 +1,4 @@
+type: fixed
+title: Flavor test fixture git operations time out under probe deadline on loaded Windows runners
+issue: "721"
+breaking: false
