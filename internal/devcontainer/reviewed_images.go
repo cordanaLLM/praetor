@@ -268,5 +268,11 @@ func parseTaggedPin(reference string) (repository, tag, digest string, err error
 	if tag == "" || validateBootstrapImages(reference) != nil || strings.Contains(repository, ":") {
 		return "", "", "", errors.New("a reviewed pin must be repository:tag@sha256:<64 lowercase hex> with a tag and no registry port, so Renovate reads its tag")
 	}
+	// Renovate moves a tag by replacing the text of the tag inside the pin it matched, so the
+	// tag has to occur there once: a tag that is also part of the repository or of the digest
+	// would be rewritten in the wrong place (the committed tree is held to the same rule).
+	if strings.Contains(repository, tag) || strings.Contains(digest, tag) {
+		return "", "", "", fmt.Errorf("the tag %q also occurs in the repository or the digest of %s, so Renovate could not move it alone; choose a tag that names the image only once", tag, reference)
+	}
 	return repository, tag, digest, nil
 }
