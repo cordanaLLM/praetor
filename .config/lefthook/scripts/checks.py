@@ -9,7 +9,7 @@ import sys
 
 from common import HookError, clean_env, paths, present_files, resolved_relative_to, run
 from privacy import PRIVATE_STATE_ERROR
-from toolchain import require_floors
+from toolchain import make_program, require_floors
 
 GO_CONFIG = {"go.mod", "go.sum", "go.work", "go.work.sum", "Makefile",
              ".golangci.yml", ".gosec.json"}
@@ -317,7 +317,8 @@ def source_checks(directory, names, gate="all", base=None):
     if full_gate:
         # The Make target initializes only absent state, then audits it strictly.
         # Finish before parallel flavor checks and the later receipt pipeline.
-        run(["make", "--no-print-directory", "state-audit"], cwd=directory, env=clean_env())
+        run([make_program(), "--no-print-directory", "state-audit"], cwd=directory,
+            env=clean_env())
     if gate == "all":
         parallel(governance, directory)
         parallel(semgrep_commands(directory, names), directory)

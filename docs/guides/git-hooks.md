@@ -219,11 +219,11 @@ is checked and never replaced. The install report carries the result under
 `hook_interpreter`.
 
 To see what a host provides, run the declared-toolchain report. It starts the interpreter
-through the launcher and reads each floored linter's version:
+through the launcher, asks `make` for its version and reads each floored linter's version:
 
 ```bash
 python3 -B .config/lefthook/scripts/toolchain.py
-python3 -B .config/lefthook/scripts/toolchain.py --require python,shellcheck,yamllint
+python3 -B .config/lefthook/scripts/toolchain.py --require python,make,shellcheck,yamllint
 ```
 
 Each declared tool gets one line. Without `--require` the run always exits 0 and a tool that
@@ -243,6 +243,34 @@ launcher to one variable and one default, and
 the variable set. The agent-client registrations (`.claude/settings.json`,
 `.codex/hooks.json`, `.gemini/settings.json`) still name `python3` themselves; see
 [agent hooks](agent-hooks.md).
+
+## The make the hooks run
+
+The hooks need GNU Make on every platform. `pre-commit`, `commit-msg`, `pre-push` and the
+`post-*` hooks build the repository's CLI through the `hook-cli` Make target before they run
+it (`cli`, `refresh` and `refresh_install` in `.config/lefthook/scripts/hooks.py`), and a
+strict push runs the `state-audit` target (`source_checks` in `checks.py`). They pass
+`--always-make` and `--no-print-directory`, which are GNU Make options.
+
+All four calls take the program from `make_program` (`.config/lefthook/scripts/toolchain.py`):
+the program `PRAETOR_MAKE` names, or `make` where the variable is unset or empty. Set it where
+GNU Make has another name, such as `gmake` or `mingw32-make`. When the program is not on
+`PATH` the hook stops before it runs anything:
+
+```text
+praetor hooks: missing dependency: make program make is not on PATH; the hooks build the CLI through the hook-cli Make target. Install GNU Make, or set PRAETOR_MAKE to it (make where unset)
+```
+
+Nothing is skipped in that case. A hook that cannot build the CLI would run a stale binary
+or none, so a missing `make` refuses the commit or push and says what to install.
+
+The declared-toolchain report above prints the GNU Make version the hooks would run, and
+reports any other `make` as unusable. The Platform Neutrality job requires it on every leg
+before the self-tests; no leg installs it, each uses the one its image carries
+([HISS-21](../standards/hiss-21-platform-neutrality.md#the-hook-toolchain-is-declared-and-the-matrix-asserts-it)).
+The `HookMake` cases in `.config/lefthook/scripts/test_hooks.py` cover the resolution, and
+`test_hook_jobs_run_the_make_praetor_make_names` drives a real Lefthook job with the variable
+set to a program that does not exist and to the host's `make`.
 
 ## The lefthook.yml adoption writes
 
@@ -762,7 +790,10 @@ naming it, not a Python traceback.
 ## Running the gate on Windows
 
 A Windows checkout depends on four platform behaviours. Each one blocks `git commit` if it is
-missing, so all four must hold.
+missing, so all four must hold. Two programs must also resolve there: the hooks' interpreter,
+which a stock install does not call `python3`
+([the interpreter the hooks run](#the-interpreter-the-hooks-run)), and GNU Make
+([the make the hooks run](#the-make-the-hooks-run)).
 
 - The binary is built as `praetorctl.exe` on Windows. `Makefile` derives the suffix from `$(OS)`,
   so every target names the binary for the host rather than for the developer's platform.

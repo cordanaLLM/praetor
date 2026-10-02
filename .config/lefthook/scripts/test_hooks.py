@@ -329,6 +329,18 @@ class GitHooks(unittest.TestCase):
             passed = self.hook("pre-rebase")
         self.assertEqual(passed.returncode, 0, passed.stdout + passed.stderr)
 
+    def test_hook_jobs_run_the_make_praetor_make_names(self):
+        self.write("README.md", "# Staged\n")
+        with mock.patch.dict(os.environ, {"PRAETOR_MAKE": "praetor-no-such-make"}):
+            refused = self.hook()
+        self.assertNotEqual(refused.returncode, 0, refused.stdout + refused.stderr)
+        self.assertIn(b"praetor hooks: missing dependency: make program praetor-no-such-make "
+                      b"is not on PATH", refused.stdout + refused.stderr)
+        with mock.patch.dict(os.environ, {"PRAETOR_MAKE": shutil.which("make")}):
+            passed = self.hook()
+        self.assertEqual(passed.returncode, 0, passed.stdout + passed.stderr)
+        self.assertIn(b"Index: 1 changed paths checked", passed.stdout + passed.stderr)
+
     def test_docs_commit_preserves_unstaged_and_untracked_files(self):
         self.write("README.md", "# Intended\n")
         self.write("README.md", "# Unstaged\n", stage=False)
@@ -1862,7 +1874,7 @@ class ScopeAndGuard(unittest.TestCase):
                 return b'{"timeout_seconds": 480}' if argv[3:5] == ["gate", "deadline"] else b""
             with mock.patch("checks.parallel"), mock.patch("checks.run", side_effect=process):
                 self.assertTrue(source_checks(root, [".standards.yaml"], base=base))
-                self.assertEqual(calls, [["make", "--no-print-directory", "state-audit"],
+                self.assertEqual(calls, [[toolchain.resolved_program("make"), "--no-print-directory", "state-audit"],
                                         ["go", "run", "./cmd/standardsctl", "gate", "deadline", "--json"],
                                         ["go", "run", "./cmd/standardsctl", "gate", "run", "--path=."],
                                         ["go", "run", "./cmd/standardsctl", "gate", "verify", "--path=."]])
@@ -2643,6 +2655,76 @@ class HookInterpreter(unittest.TestCase):
         reported = subprocess.run(runner, env=env, capture_output=True, timeout=120, check=False)
         self.assertEqual(reported.returncode, 0, reported.stdout + reported.stderr)
         self.assertIn(b"python: not asserted: hook interpreter", reported.stdout)
+
+
+class HookMake(unittest.TestCase):
+    """The hooks take make from one place and fail as a missing dependency without it (#341)."""
+
+    def test_make_program_is_the_variable_or_the_default(self):
+        def found(program):
+            return "/usr/bin/" + program
+        self.assertEqual(toolchain.make_program({}, which=found), "make")
+        self.assertEqual(toolchain.make_program({"PRAETOR_MAKE": ""}, which=found), "make")
+        self.assertEqual(toolchain.make_program({"PRAETOR_MAKE": "gmake"}, which=found), "gmake")
+        self.assertEqual(toolchain.RESOLVED["make"], ("PRAETOR_MAKE", "make"))
+
+    def test_a_missing_make_is_a_missing_dependency_naming_the_variable(self):
+        for environ, program in (({}, "make"), ({"PRAETOR_MAKE": "gmake"}, "gmake")):
+            with self.subTest(program=program), self.assertRaises(HookError) as refused:
+                toolchain.make_program(environ, which=lambda _program: None)
+            message = str(refused.exception)
+            self.assertIn(f"missing dependency: make program {program} is not on PATH", message)
+            self.assertIn("PRAETOR_MAKE", message)
+            self.assertIn("hook-cli", message)
+
+    def test_every_make_call_of_the_hooks_runs_the_resolved_program(self):
+        # Any program on PATH stands in for make here; no call is executed.
+        stand_in = sys.executable
+        with mock.patch.dict(os.environ, {"PRAETOR_MAKE": stand_in}), \
+                mock.patch("hooks.run", return_value=b'{"refreshed":false}') as process:
+            hooks.cli(["state", "audit", "."])
+            hooks.refresh(["main.go"])
+            hooks.refresh_install()
+        built = [call.args[0] for call in process.call_args_list if "hook-cli" in call.args[0]]
+        self.assertEqual([argv[0] for argv in built], [stand_in] * 3)
+        self.assertEqual(built[0][1:], ["--always-make", "--no-print-directory", "-s", "hook-cli"])
+        with mock.patch.dict(os.environ, {"PRAETOR_MAKE": "praetor-no-such-make"}), \
+                mock.patch("hooks.run") as process, \
+                self.assertRaisesRegex(HookError, "missing dependency: make program"):
+            hooks.cli(["state", "audit", "."])
+        process.assert_not_called()
+
+    def test_no_hook_script_starts_make_by_name(self):
+        names = {"make", "gmake", "mingw32-make"}
+        scripts = sorted(path for path in (ROOT / ".config/lefthook/scripts").glob("*.py")
+                         if not path.name.startswith("test_"))
+        for path in scripts:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=path.name)
+            spelled = [node.lineno for node in ast.walk(tree)
+                       if isinstance(node, (ast.List, ast.Tuple)) and node.elts
+                       and isinstance(node.elts[0], ast.Constant) and node.elts[0].value in names]
+            self.assertEqual(spelled, [], f"{path.name} starts make by name")
+        resolved = sum(path.read_text(encoding="utf-8").count("[make_program(), ")
+                       for path in scripts)
+        self.assertEqual(resolved, 4)
+
+    def test_only_gnu_make_is_reported_as_usable(self):
+        builds = {b"GNU Make 4.4.1\nBuilt for x86_64-pc-linux-gnu\n": "4.4.1 (make)",
+                  b"GNU Make 3.81\nCopyright (C) 2006\n": "3.81 (make)"}
+        for output, expected in builds.items():
+            with self.subTest(output=output), \
+                    mock.patch("toolchain.make_program", return_value="make"), \
+                    mock.patch("toolchain.run", return_value=output) as process:
+                self.assertEqual(toolchain.make_version(), expected)
+                self.assertEqual(process.call_args.args[0], ["make", "--version"])
+                self.assertEqual(process.call_args.kwargs["timeout"], toolchain.VERSION_TIMEOUT)
+        with mock.patch("toolchain.make_program", return_value="make"), \
+                mock.patch("toolchain.run", return_value=b"bmake 20240108\n"), \
+                self.assertRaisesRegex(HookError, "make is not GNU Make"):
+            toolchain.make_version()
+
+    def test_the_make_on_this_host_is_reported(self):
+        self.assertRegex(toolchain.make_version(), r"^\d+(\.\d+)+ \(.+\)$")
 
 
 if __name__ == "__main__":

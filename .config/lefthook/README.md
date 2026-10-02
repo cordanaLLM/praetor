@@ -90,6 +90,11 @@ verdict. Hooks that start further Python processes reuse `sys.executable`.
 `scripts/toolchain.py` prints what the host provides for every declared tool.
 See [the interpreter the hooks run](../../docs/guides/git-hooks.md#the-interpreter-the-hooks-run).
 
+The `hook-cli` and `state-audit` targets are run with GNU Make: the program
+`PRAETOR_MAKE` names, or `make` where it is unset. A host without it is refused
+with a missing-dependency message before any check runs; no hook skips the build.
+See [the make the hooks run](../../docs/guides/git-hooks.md#the-make-the-hooks-run).
+
 ## Output policy
 
 The policy sets `output: [execution_out, failure]` and `colors: false`. A hook run

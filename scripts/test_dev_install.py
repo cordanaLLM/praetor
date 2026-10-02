@@ -157,7 +157,7 @@ class HookInterpreterTests(unittest.TestCase):
 
     def test_spelling_is_read_from_the_hook_policy(self):
         self.assertEqual(dev_install.hook_interpreter_spelling(), ("PRAETOR_PYTHON", "python3"))
-        self.assertNotIn(str(dev_install.HOOK_SCRIPTS), sys.path)
+        self.assertNotIn(str(dev_mcp.ROOT / ".config" / "lefthook" / "scripts"), sys.path)
         launcher = (dev_mcp.ROOT / ".config/lefthook/python.sh").read_text(encoding="utf-8")
         self.assertIn('"${PRAETOR_PYTHON:-python3}"', launcher)
 

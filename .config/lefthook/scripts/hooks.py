@@ -14,6 +14,7 @@ from common import HookError, changed, clean_env, git, paths, run, snapshot
 from checks import (checkpoint_checks, context_changed, file_checks, go_packages, gofmt_check,
                     source_checks)
 from privacy import check_private_history, check_private_index
+from toolchain import make_program
 
 SUBJECT = re.compile(r"^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)"
                      r"(\([^()\n]+\))?!?: \S.*$")
@@ -227,7 +228,8 @@ def praetorctl_path():
     return os.path.abspath(os.path.join("bin", "praetorctl" + suffix))
 
 def cli(args):
-    run(["make", "--always-make", "--no-print-directory", "-s", "hook-cli"], capture=False, timeout=180)
+    run([make_program(), "--always-make", "--no-print-directory", "-s", "hook-cli"],
+        capture=False, timeout=180)
     run([praetorctl_path(), *args], capture=False, timeout=180)
 
 
@@ -248,7 +250,7 @@ def refresh(names):
         with snapshot("HEAD") as directory:
             run(["go", "mod", "download"], cwd=directory, env=clean_env(), capture=False)
     if any(name.endswith(".go") or name in {"go.mod", "go.sum"} for name in names):
-        run(["make", "--no-print-directory", "-s", "hook-cli"], capture=False)
+        run([make_program(), "--no-print-directory", "-s", "hook-cli"], capture=False)
     if context_changed(names):
         cli(["compile-context", "--verify"])
     if ".standards.yaml" in names:
@@ -269,7 +271,7 @@ def refresh_install():
     install, only from a checkout of its own module on the update branch, only forward and only
     from a clean tree. A skip prints nothing; a rebuild prints one line.
     """
-    run(["make", "--no-print-directory", "-s", "hook-cli"], capture=False)
+    run([make_program(), "--no-print-directory", "-s", "hook-cli"], capture=False)
     report = json.loads(run([praetorctl_path(), "workstation", "install", "--source", os.getcwd(),
                              "--if-stale"], timeout=WORKSTATION_REFRESH_TIMEOUT))
     if not isinstance(report, dict) or type(report.get("refreshed")) is not bool:

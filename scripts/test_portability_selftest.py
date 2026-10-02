@@ -13,6 +13,7 @@ passes a healthy suite proves almost nothing on its own.
 import contextlib
 import importlib.util
 import io
+import os
 import re
 import sys
 import tempfile
@@ -259,6 +260,68 @@ class PortabilityDriver(unittest.TestCase):
             code, output = run_driver(temp, [suite], ["--min-executed", "1"])
         self.assertEqual(code, 0, output)
         self.assertNotIn("failed ", output)
+
+
+# Rewrites the page's table from its rendering instead of comparing.
+UPDATE_TABLE_ENV = "PRAETOR_UPDATE_HOOK_TOOLCHAIN_TABLE"
+
+
+class HookToolchainTable(unittest.TestCase):
+    """The HISS-21 page's tool table is the rendering of the declared list, never prose (#341)."""
+
+    def test_hook_toolchain_table_matches_the_declarations(self):
+        page = (ROOT / driver.PAGE).read_text(encoding="utf-8").replace("\r\n", "\n")
+        table, before, after = driver.marked_table(page)
+        rendered = driver.current_toolchain_table()
+        if os.environ.get(UPDATE_TABLE_ENV) == "1":
+            (ROOT / driver.PAGE).write_text(before + rendered + after, encoding="utf-8",
+                                            newline="\n")
+            return
+        self.assertEqual(table, rendered, f"{driver.PAGE.as_posix()} differs from the declared "
+                         f"hook toolchain; regenerate it with {UPDATE_TABLE_ENV}=1 "
+                         "python3 -B scripts/test_portability_selftest.py")
+
+    def test_the_workflow_requires_only_declared_tools_and_every_resolved_one(self):
+        toolchain = driver.hook_toolchain()
+        asserted = driver.asserted_tools((ROOT / driver.WORKFLOW).read_text(encoding="utf-8"))
+        declared = [*toolchain.RESOLVED, *toolchain.tool_floors()]
+        self.assertEqual([tool for tool in asserted if tool not in declared], [])
+        self.assertEqual(len(asserted), len(set(asserted)))
+        # A program the hooks cannot run without is asserted on every leg.
+        self.assertEqual([tool for tool in toolchain.RESOLVED if tool not in asserted], [])
+        self.assertNotIn(str(ROOT / driver.HOOK_SCRIPTS), sys.path)
+
+    def test_table_rows_follow_the_declarations_and_the_required_list(self):
+        resolved = {"python": ("PRAETOR_PYTHON", "python3")}
+        floors = {"shellcheck": "0.11.0", "hadolint": "2.14.0"}
+        table = driver.toolchain_table(resolved, floors, ["python", "shellcheck"])
+        self.assertEqual(table.splitlines()[2:], [
+            "| `python` | the program `PRAETOR_PYTHON` names, `python3` where unset | "
+            "asserted on every leg |",
+            "| `shellcheck` | version 0.11.0 or newer | asserted on every leg |",
+            "| `hadolint` | version 2.14.0 or newer | reported, not asserted |"])
+        # Negative: nothing required, so nothing is claimed as asserted.
+        self.assertNotIn("asserted on every leg", driver.toolchain_table(resolved, floors, []))
+        # Boundary: no declaration leaves the header alone.
+        self.assertEqual(len(driver.toolchain_table({}, {}, ["python"]).splitlines()), 2)
+
+    def test_the_required_list_is_read_from_one_workflow_line(self):
+        step = "        env:\n          REQUIRED: python,make,yamllint\n"
+        self.assertEqual(driver.asserted_tools(step), ["python", "make", "yamllint"])
+        for workflow in ("jobs: {}\n", step + step, "REQUIRED: python\n",
+                         "          REQUIRED: python make\n"):
+            with self.subTest(workflow=workflow), self.assertRaises(ValueError):
+                driver.asserted_tools(workflow)
+
+    def test_a_page_without_the_marked_block_is_refused(self):
+        block = f"intro\n{driver.TABLE_START}\n| a |\n| b |\n{driver.TABLE_END}\noutro\n"
+        table, before, after = driver.marked_table(block)
+        self.assertEqual(table, "| a |\n| b |")
+        self.assertEqual(before + table + after, block)
+        for page in ("no markers\n", f"{driver.TABLE_START}\n| a |\n",
+                     f"| a |\n{driver.TABLE_END}\n"):
+            with self.subTest(page=page), self.assertRaises(ValueError):
+                driver.marked_table(page)
 
 
 if __name__ == "__main__":

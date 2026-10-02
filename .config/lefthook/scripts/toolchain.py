@@ -10,6 +10,7 @@ import argparse
 import os
 from pathlib import Path
 import re
+import shutil
 import sys
 
 from common import HookError, clean_env, run
@@ -34,11 +35,15 @@ VERSION_OUTPUT = {
     "yamllint": re.compile(r"\Ayamllint (\d+(?:\.\d+)+)"),
 }
 # Programs the policy resolves once from the environment, {tool: (variable, default)},
-# instead of by a name each command spells (#339). python.sh, beside the policy, is the one
-# place a shell starts the interpreter; a hook already running reuses sys.executable.
-RESOLVED = {"python": ("PRAETOR_PYTHON", "python3")}
+# instead of by a name each command spells (#339, #341). python.sh, beside the policy, is
+# the one place a shell starts the interpreter; a hook already running reuses
+# sys.executable. make builds the repository's CLI through the hook-cli target and runs
+# state-audit, and make_program is the one place the hooks take it from.
+RESOLVED = {"python": ("PRAETOR_PYTHON", "python3"), "make": ("PRAETOR_MAKE", "make")}
 LAUNCHER = ".config/lefthook/python.sh"
 PYTHON_VERSION = re.compile(r"\APython (3\.\d+\.\d+\S*)")
+# The policy passes --always-make and --no-print-directory, which are GNU Make's.
+MAKE_VERSION = re.compile(r"\AGNU Make (\d+(?:\.\d+)+)")
 
 
 def parse_floors(text):
@@ -165,10 +170,38 @@ def python_version():
     return f"{match.group(1)} ({program})"
 
 
+def make_program(environ=None, which=shutil.which):
+    """Return the make the hooks run, or fail as a missing dependency when there is none.
+
+    A hook without make cannot build the CLI it is about to run, so nothing is skipped: the
+    commit or push is refused with the program and the variable named, where a bare
+    "[Errno 2]" from the first command read like a rule the commit had broken (#341).
+    """
+    variable, default = RESOLVED["make"]
+    program = resolved_program("make", environ)
+    if which(program) is None:
+        raise HookError(f"missing dependency: make program {program} is not on PATH; the "
+                        f"hooks build the CLI through the hook-cli Make target. Install "
+                        f"GNU Make, or set {variable} to it ({default} where unset)")
+    return program
+
+
+def make_version():
+    """Return the GNU Make version of the make the hooks run; any other make is a HookError."""
+    program = make_program()
+    output = run([program, "--version"], env=clean_env(), timeout=VERSION_TIMEOUT)
+    match = MAKE_VERSION.search(output.decode(errors="replace"))
+    if match is None:
+        raise HookError(f"{program} is not GNU Make; the hooks pass it GNU Make options")
+    return f"{match.group(1)} ({program})"
+
+
 def describe(tool, floors):
     """Return one declared tool's state on this host; a HookError says what is wrong with it."""
     if tool == "python":
         return python_version()
+    if tool == "make":
+        return make_version()
     return f"{checked_version(tool, floors)} (floor {floors[tool]})"
 
 

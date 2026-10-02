@@ -151,8 +151,9 @@ func TestHookToolFloorGuardFixtures(t *testing.T) {
 	}
 }
 
-// The hook interpreter is resolved once, from PRAETOR_PYTHON (#339), and the portability
-// harness asserts the declared hook toolchain before the self-tests start any hook.
+// The hook interpreter and make are each resolved once, from PRAETOR_PYTHON and PRAETOR_MAKE
+// (#339, #341), and the portability harness asserts the declared hook toolchain before the
+// self-tests start any hook.
 const (
 	hookToolchainCheck    = ".config/lefthook/scripts/toolchain.py --require"
 	hookSelfTests         = "scripts/portability_selftest.py"
@@ -190,11 +191,20 @@ func hookToolchainStepGap(step workflowStep, env map[string]string, readable boo
 		return "toolchain assertion is conditional: " + step.If
 	case !readable || env[hookInterpreter] == "":
 		return "toolchain assertion does not set " + hookInterpreter
-	case !slices.Contains(strings.Split(env[hookToolchainRequired], ","), "python"):
-		return "toolchain assertion does not require python"
+	}
+	required := strings.Split(env[hookToolchainRequired], ",")
+	for _, tool := range hookResolvedTools {
+		if !slices.Contains(required, tool) {
+			return "toolchain assertion does not require " + tool
+		}
 	}
 	return ""
 }
+
+// hookResolvedTools are the programs the hooks cannot start without (toolchain.RESOLVED in
+// .config/lefthook/scripts); scripts/test_portability_selftest.py holds the workflow's list to
+// the declaration itself.
+var hookResolvedTools = []string{"python", "make"}
 
 // hookSelfTestGap judges the self-test step against the interpreter the assertion started.
 func hookSelfTestGap(step workflowStep, env map[string]string, asserted string) string {
@@ -220,10 +230,10 @@ func envNode(pairs ...string) yaml.Node {
 	return node
 }
 
-// HISS-21 evidence for the hook interpreter. Positive: the real harness job asserts the
-// toolchain on every leg, python included, before the self-tests, and both steps hand the
-// hooks one interpreter. Negative and boundary: no assertion, one after the self-tests, an
-// OS-guarded one, one that does not require python, and self-tests under another interpreter.
+// HISS-21 evidence for the hook toolchain. Positive: the real harness job asserts it on every
+// leg, python and make included, before the self-tests, and both steps hand the hooks one
+// interpreter. Negative and boundary: no assertion, one after the self-tests, an OS-guarded
+// one, one that does not require python or make, and self-tests under another interpreter.
 func TestPortabilityAssertsTheHookToolchainBeforeTheSelfTests(t *testing.T) {
 	workflows, _ := engineWorkflows(t)
 	var spec workflowSpec
@@ -240,7 +250,7 @@ func TestPortabilityAssertsTheHookToolchainBeforeTheSelfTests(t *testing.T) {
 	tests := func(python string) workflowStep {
 		return workflowStep{Run: `"$PYTHON" -B ` + hookSelfTests, If: every, Env: envNode(hookInterpreter, python)}
 	}
-	asserted := check(every, hookInterpreter, "py", hookToolchainRequired, "python,yamllint")
+	asserted := check(every, hookInterpreter, "py", hookToolchainRequired, "python,make,yamllint")
 	cases := []struct {
 		name string
 		job  workflowJob
@@ -251,11 +261,13 @@ func TestPortabilityAssertsTheHookToolchainBeforeTheSelfTests(t *testing.T) {
 		{"negative no self-tests", workflowJob{Steps: []workflowStep{asserted}}, "no step runs"},
 		{"boundary order", workflowJob{Steps: []workflowStep{tests("py"), asserted}}, "before the hook toolchain is asserted"},
 		{"boundary os guard", workflowJob{Steps: []workflowStep{
-			check("runner.os != 'Windows'", hookInterpreter, "py", hookToolchainRequired, "python"), tests("py")}}, "conditional"},
+			check("runner.os != 'Windows'", hookInterpreter, "py", hookToolchainRequired, "python,make"), tests("py")}}, "conditional"},
 		{"boundary python not required", workflowJob{Steps: []workflowStep{
-			check(every, hookInterpreter, "py", hookToolchainRequired, "yamllint"), tests("py")}}, "does not require python"},
+			check(every, hookInterpreter, "py", hookToolchainRequired, "make,yamllint"), tests("py")}}, "does not require python"},
+		{"boundary make not required", workflowJob{Steps: []workflowStep{
+			check(every, hookInterpreter, "py", hookToolchainRequired, "python,yamllint"), tests("py")}}, "does not require make"},
 		{"boundary variable unset", workflowJob{Steps: []workflowStep{
-			check(every, hookToolchainRequired, "python"), tests("py")}}, "does not set " + hookInterpreter},
+			check(every, hookToolchainRequired, "python,make"), tests("py")}}, "does not set " + hookInterpreter},
 		{"boundary other interpreter", workflowJob{Steps: []workflowStep{asserted, tests("python3")}}, "another interpreter"},
 		{"boundary advisory", workflowJob{ContinueOnError: "true", Steps: []workflowStep{asserted, tests("py")}}, "advisory"},
 	}

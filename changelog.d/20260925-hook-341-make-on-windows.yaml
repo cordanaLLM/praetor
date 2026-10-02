@@ -1,0 +1,4 @@
+type: fixed
+title: The Git hooks ran make on every platform without declaring it; they now take it from PRAETOR_MAKE or make, a missing one is refused as a missing dependency, and the Platform Neutrality job asserts it on every leg
+issue: "#341"
+breaking: false

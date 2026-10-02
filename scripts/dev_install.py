@@ -14,14 +14,13 @@ sys.dont_write_bytecode = True
 
 import dev_mcp
 from dev_mcp_probe import probe
+from portability_selftest import hook_toolchain
 
 # The atomic install itself -- lock, backup, swap, manifest -- is
 # internal/workstation (HISS-19: two installers never coexist). This script keeps only
 # the MCP functional probe as a pre-flight gate and the subprocess call that reaches the
 # Go engine.
 INSTALL_TIMEOUT = 300
-# The hook policy's own modules; toolchain.RESOLVED there declares the interpreter spelling.
-HOOK_SCRIPTS = dev_mcp.ROOT / ".config" / "lefthook" / "scripts"
 # setx writes one registry value and returns.
 SETX_TIMEOUT = 30
 
@@ -32,12 +31,7 @@ def hook_interpreter_spelling():
     It is declared once, in the hook policy (toolchain.RESOLVED, applied by
     .config/lefthook/python.sh), and read from there instead of being repeated here.
     """
-    sys.path.insert(0, str(HOOK_SCRIPTS))
-    try:
-        import toolchain
-    finally:
-        sys.path.remove(str(HOOK_SCRIPTS))
-    return toolchain.RESOLVED["python"]
+    return hook_toolchain().RESOLVED["python"]
 
 
 def store_user_variable(variable, value, default, platform=sys.platform, run=subprocess.run):

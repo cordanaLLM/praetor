@@ -12,7 +12,7 @@ import (
 )
 
 // docsReferencesCommand is what the portability legs run for the documentation reference
-// gate (BUG-992); the binary is the one the job builds, since `make` is absent on Windows.
+// gate (BUG-992); the binary is the one the job builds, run directly instead of through make.
 const docsReferencesCommand = "docs references --path=."
 
 // docsReferencesGap names why a job does not run the documentation reference gate on every

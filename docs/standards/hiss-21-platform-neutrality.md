@@ -78,7 +78,7 @@ Linux only. Its Windows-specific path is described in
 up, or given a condition that could skip it on some legs.
 
 Every leg also runs the figure build check, the commands `make docs-figures-check` and the
-managed `make docs-figures` run, since `make` is not on the Windows image: the locked
+managed `make docs-figures` run, called directly rather than through `make`: the locked
 `npm ci --prefix tools/figures --ignore-scripts`, the engine's tests and type check,
 `node tools/figures/build.mjs check`, `node tools/figures/bundle.mjs --check` and
 `node tools/figures/build.mjs sources`. `check` and `sources` are the commands every adopting
@@ -95,7 +95,7 @@ Chromium smoke test needs a built site and runs in `pages.yml` on Linux only
 
 Every leg also runs the documentation reference gate (`praetorctl docs references --path=.`,
 see [references that stop resolving](../guides/documentation-drift.md#references-that-stop-resolving))
-through the binary the job builds, because `make` is absent on the Windows image. The gate reads
+through the binary the job builds, not through its Makefile target. The gate reads
 Markdown the Windows image checks out with CRLF, lists the tree through git and reads Go source
 by slash-separated repository path, which are the three places a platform difference would make
 it answer differently. `TestPortabilityRunsDocumentationReferencesOnEveryLeg` in
@@ -163,22 +163,56 @@ shell, and on Windows Codex and AGY run hooks through `cmd.exe` and Gemini CLI t
 PowerShell. An `sh` run on the leg's Git Bash would pass without showing what those clients do.
 The Windows leg therefore executes fewer tests than the other two.
 
-Before the self-tests, every leg runs the Assert Hook Toolchain step:
-`.config/lefthook/scripts/toolchain.py --require python,shellcheck,yamllint`. The hooks start
-their interpreter through `.config/lefthook/python.sh`, which runs what `PRAETOR_PYTHON` names
+### The hook toolchain is declared, and the matrix asserts it
+
+Which tools the hooks depend on is declared by the hook policy, not on this page: the
+version floors in `.config/lefthook/tool-floors.txt` and the programs resolved once from the
+environment in `RESOLVED` (`.config/lefthook/scripts/toolchain.py`). Before the self-tests,
+every leg runs the Assert Hook Toolchain step,
+`.config/lefthook/scripts/toolchain.py --require "$REQUIRED"`, which prints one line per
+declared tool and fails the leg when a required one is unusable. The table is rendered from
+those three sources:
+
+<!-- praetor:hook-toolchain:start -->
+| Tool | The hook policy requires | Platform Neutrality job |
+| :--- | :--- | :--- |
+| `python` | the program `PRAETOR_PYTHON` names, `python3` where unset | asserted on every leg |
+| `make` | the program `PRAETOR_MAKE` names, `make` where unset | asserted on every leg |
+| `actionlint` | version 1.7.12 or newer | reported, not asserted |
+| `hadolint` | version 2.14.0 or newer | reported, not asserted |
+| `shellcheck` | version 0.11.0 or newer | asserted on every leg |
+| `yamllint` | version 1.38.0 or newer | asserted on every leg |
+<!-- praetor:hook-toolchain:end -->
+
+`test_hook_toolchain_table_matches_the_declarations` in `scripts/test_portability_selftest.py`
+fails when the table differs from its rendering; regenerate it with
+`PRAETOR_UPDATE_HOOK_TOOLCHAIN_TABLE=1 python3 -B scripts/test_portability_selftest.py`.
+
+Asserted means the step ran the tool on that leg. For `python` it starts the interpreter
+through `.config/lefthook/python.sh`, the launcher every hook uses
 ([the interpreter the hooks run](../guides/git-hooks.md#the-interpreter-the-hooks-run)); the
-step and the self-tests both set the variable to the path `actions/setup-python` reports, and
-the step starts that interpreter through the launcher. A leg that cannot start it, or whose
-`shellcheck` or `yamllint` is below its floor in `.config/lefthook/tool-floors.txt`, fails
-there as a missing dependency instead of later as a hook rejecting a commit.
+step and the self-tests both set `PRAETOR_PYTHON` to the path `actions/setup-python` reports.
+For `make` it requires a GNU Make on `PATH` and prints its version
+([the make the hooks run](../guides/git-hooks.md#the-make-the-hooks-run)). For a linter it
+reads `--version` and holds it to the floor. A leg that fails here fails as a missing
+dependency instead of later as a hook rejecting a commit.
 `TestPortabilityAssertsTheHookToolchainBeforeTheSelfTests` in
 `internal/forge/hook_toolchain_guard_test.go` fails when the step is removed, moved after the
-self-tests, guarded by a condition, stops requiring `python`, or hands the hooks another
-interpreter than the self-tests do.
+self-tests, guarded by a condition, stops requiring `python` or `make`, or hands the hooks
+another interpreter than the self-tests do.
 
-Which other external binaries this gate reaches, and which of them the job installs, is not
-enumerated on this page. Open today is \#341 (`make` invoked by the hook policy on every
-leg).
+Reported, not asserted means no leg installs the tool and no self-test runs a hook on a file
+of its type, so the matrix does not exercise it; the step still prints its line, with the
+message a hook would give. A program outside the declared list, such as `git` or `go`, is started by
+name, and `run` in `.config/lefthook/scripts/common.py` refuses the commit or push with the
+program named when it is missing.
+
+No leg installs `make`; each runs the one its image carries. On the Windows image that is a
+copy of `mingw32-make` which the image's build script (`Install-Mingw64.ps1` in
+`actions/runner-images`) writes to `C:\mingw64\bin\make.exe` and the image's software list
+does not name, which is why earlier versions of this page and of the workflow called it
+absent (#341). The step makes the dependency a stated one: an image that drops it fails the
+leg at the assertion, with the variable to set.
 
 ## Required status checks for a matrix job
 
