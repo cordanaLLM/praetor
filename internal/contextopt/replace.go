@@ -13,10 +13,16 @@ import (
 
 // ReplaceOptions binds a write to observed contents or explicit absence. Mode is
 // a permission ceiling: existing restrictive permissions are never widened.
+//
+// KeepMode lifts that ceiling for a file that exists: the replacement carries the
+// permission bits the file had, an execute bit included, so a caller that rewrites
+// the text of a file somebody else owns does not change its mode with it. Nothing
+// is widened either way, and a file created under KeepMode still takes Mode.
 type ReplaceOptions struct {
 	Expected []byte
 	Exists   bool
 	Mode     os.FileMode
+	KeepMode bool
 }
 
 // ReplaceSnapshot publishes bounded UTF-8 text through a pinned parent directory.
@@ -183,6 +189,9 @@ func verifyReplacement(ctx context.Context, root *os.Root, name string, options 
 	}
 	if !bytes.Equal(current, options.Expected) {
 		return 0, fmt.Errorf("snapshot changed before replacement: %s", name)
+	}
+	if options.KeepMode {
+		return info.Mode().Perm(), nil
 	}
 	return options.Mode & info.Mode().Perm(), nil
 }

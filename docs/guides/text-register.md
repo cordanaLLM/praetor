@@ -661,6 +661,22 @@ front matter, structured lines and off regions keep their bytes, and so does a c
 that wraps onto the next line. It never drops or replaces a word: automatic prose compression saved 1-3%
 on real inputs and inverted one sentence's meaning.
 
+A cleanup must not change what the Markdown renders either, so three more things keep
+their bytes (`internal/caveman/compress_keep.go`, rules from CommonMark 0.31.2):
+
+| Kept | Rule | Pinned by |
+| :--- | :--- | :--- |
+| indented code | a line indented four or more columns (a tab advances to the next multiple of four) that does not continue a paragraph, behind blockquote markers too, and a list item that opens with such code (`-     code`); the blank lines between two such lines belong to the block (section 4.4) | `TestCompressKeepsIndentedCode`, `TestCompressIndentedCodeBoundary` |
+| hard line breaks | two or more trailing spaces, or a backslash, before a line that continues the block; such a line is never folded. Trailing blanks at the end of a block, a single trailing space and a trailing tab are no break and still go (section 6.7) | `TestCompressKeepsHardLineBreaks`, `TestCompressTrailingBlanksNegative` |
+| inline values | blanks inside an inline HTML tag, inside the target and title of an inline link, inside a double-quoted string or a single-quoted attribute value, and anywhere in a link reference definition | `TestCompressKeepsInlineValues` |
+
+The price is a little compression, never meaning: the scan does not track list nesting, so
+a paragraph nested in a list item at four or more columns after a blank line keeps its
+bytes like code. A line indented that far that continues a paragraph is prose and is
+cleaned (`TestCompressIndentedProseNegative`). The recognition works line by line, which
+leaves one limit: a title in single quotes or parentheses on the line after its link
+reference definition is prose to the cleanup, and a blank run inside it collapses.
+
 `praetorctl caveman compress` runs that function on files, so the mechanical part of a
 rewrite can be applied and measured apart from the hand rewrite that follows it:
 
@@ -674,10 +690,17 @@ praetorctl caveman compress --in-place AGENTS.md .agents/
 | :--- | :--- | :--- |
 | no flag | exactly one input: a file, `-` for standard input, or a directory holding one Markdown file | the compressed text to standard output, byte for byte, and nothing else |
 | `--stats` | files, directories and `-` | one line per input and a total; no file |
-| `--in-place` | files and directories; `-` is an error | each file whose text changes, then the same lines |
+| `--in-place` | Markdown files and directories; `-` and a file of another extension are errors | each file whose text changes, then the same lines |
 
 A directory expands to the Markdown files below it, and inputs go through the 1 MiB reader
-`check` uses. A report line carries the keys of `estimate`, each as before, after and signed
+`check` uses. A file reached twice is one input: named twice, named beside its directory,
+or spelled relatively and absolutely, it is compressed once and reported once
+(`uniqueCavemanPaths`, `TestCavemanCompressHandlesEachFileOnce`). `--in-place` rewrites
+`.md` files only, the extension a directory expands to: the cleanup reads its input as
+Markdown, so a named file of another extension is refused by name before anything is
+written (`--in-place rewrites .md files only, not <path>; nothing written`,
+`TestCavemanCompressInPlaceIsMarkdownOnly`). Standard output and `--stats` write no file
+and take any text. A report line carries the keys of `estimate`, each as before, after and signed
 difference, and one status. The fixture of `TestCavemanCompressPositive` (a CRLF line end, an
 ANSI escape, blank runs) reports:
 
@@ -690,13 +713,27 @@ total: inputs=2 bytes=121->106 (-15) tokens_est=20->20 (+0) rewritten=1 unchange
 `status` is `rewritten` (`would-change` under `--stats`), `unchanged` or `refused`. No change
 is a success. The command proves every result with the clarity floor before it prints or
 writes it: folding two identical lines that each carry a MUST lowers the `F6` count, so that
-input is `refused`, its findings follow its line, the file keeps its bytes, the inputs beside
-it are still handled, and the command exits non-zero. The floor compares against the input
-without its ANSI escapes (`caveman.StripANSI`), whose parameter digits `F9` would read as
-numbers. The in-place write is `contextopt.ReplaceSnapshot` bound to the bytes that were
+input is `refused`, its findings follow its line, the file keeps its bytes and the inputs
+beside it are still handled.
+
+| Outcome | Exit status |
+| :--- | :--- |
+| every input `rewritten`, `would-change` or `unchanged` | 0 |
+| at least one input `refused` by the clarity floor, in any mode | non-zero, after the report |
+| a read failure, a failed write, a refused request (`--in-place` on `-` or on a file that is not Markdown) | non-zero |
+
+A refusal is a failure on purpose: a script that runs `compress --in-place` and reads the
+exit status must not take a file the floor held back for a compressed one
+(`TestCavemanCompressRefusesWhatTheFloorHolds`). The floor compares against the input
+without its ANSI escapes (`caveman.StripANSI`), because `F9` reads the parameter digits of
+an escape as numbers (#713); `TestStripANSI` fails once that is fixed, and the workaround
+can go then. The in-place write is `contextopt.ReplaceSnapshot` bound to the bytes that were
 read: a file edited in between is left as it is and the run stops with an error naming it.
+The file keeps the mode it had (`ReplaceOptions.KeepMode`), so an executable file stays
+executable and git sees a text change only (`TestCavemanCompressKeepsFileMode`).
 The command is `cavemanCompress` in `cmd/standardsctl/caveman_compress.go`; its tests are in
-`cmd/standardsctl/caveman_compress_test.go`.
+`cmd/standardsctl/caveman_compress_test.go` and
+`cmd/standardsctl/caveman_compress_inputs_test.go`.
 
 ### One token estimator
 

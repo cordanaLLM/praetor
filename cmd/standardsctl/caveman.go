@@ -28,6 +28,8 @@ const (
 		"       praetorctl caveman estimate --base=<git-rev> <file|dir> [...]"
 	// maxCavemanFiles bounds the files one invocation reads, directories expanded (HISS-02).
 	maxCavemanFiles = 4096
+	// cavemanProseExtension is the extension of the files a directory expands to by default.
+	cavemanProseExtension = ".md"
 	// maxPrintedFindings bounds the findings printed per file; the count line says how many
 	// more exist.
 	maxPrintedFindings = 200
@@ -582,13 +584,21 @@ func cavemanEstimate(ctx context.Context, args []string, stdin io.Reader, out io
 // and, for "-", standard input. Files go through the bounded snapshot reader (1 MiB, UTF-8,
 // symlink-resistant) that compile-context uses.
 func readCavemanInputs(ctx context.Context, args []string, stdin io.Reader) ([]cavemanInput, error) {
-	if len(args) == 0 {
-		return nil, errors.New(cavemanUsage)
-	}
-	paths, err := expandCavemanPaths(ctx, args, map[string]bool{".md": true})
+	paths, err := expandCavemanPaths(ctx, args, cavemanProseExtensions())
 	if err != nil {
 		return nil, err
 	}
+	return readCavemanPaths(ctx, paths, stdin)
+}
+
+// cavemanProseExtensions is what a directory expands to wherever no --ext says otherwise:
+// Markdown, the one format the lint, the estimate and the compression read as prose.
+func cavemanProseExtensions() map[string]bool {
+	return map[string]bool{cavemanProseExtension: true}
+}
+
+// readCavemanPaths reads every expanded path in order, "-" being standard input.
+func readCavemanPaths(ctx context.Context, paths []string, stdin io.Reader) ([]cavemanInput, error) {
 	inputs := make([]cavemanInput, 0, len(paths))
 	for _, path := range paths {
 		input, err := readCavemanInput(ctx, path, stdin)
