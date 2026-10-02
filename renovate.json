@@ -50,6 +50,33 @@
       "matchStrings": ["RENOVATE_VERSION: '(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)'"],
       "depNameTemplate": "renovate",
       "datasourceTemplate": "npm"
+    },
+    {
+      "customType": "regex",
+      "description": "Reviewed DevContainer default images: the Reviewed at line directly above DefaultBuilderImage and DefaultBaseImage in internal/devcontainer/bootstrap.go is each image's one pin, tag included, and the pattern is devcontainer.ReviewedPinPattern. Renovate looks the digest up under that tag, never as latest, and one update moves the line and the digest-only constant together. The takeover then runs praetorctl devcontainer bump, which records the replaced digest in internal/devcontainer/prior-images.json and regenerates and verifies the bundle (#323).",
+      "managerFilePatterns": ["/^internal/devcontainer/bootstrap\\.go$/"],
+      "matchStrings": [
+        "// Reviewed at (?<depName>[a-z0-9][a-z0-9./_-]*):(?<currentValue>[A-Za-z0-9_][A-Za-z0-9._-]*)@(?<currentDigest>sha256:[a-f0-9]{64})\\n\\t(Default(?:Builder|Base)Image) = \"([a-z0-9][a-z0-9./_-]*@sha256:[a-f0-9]{64})\""
+      ],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "DevContainer features: the archetype and facet catalog selects them and devcontainer.json is generated from it, so feature updates move the catalog. Every file naming one feature changes in one branch, as ResolveDevContainerFeatures requires one reference per feature; the takeover re-pins .standards.lock and regenerates the bundle, as #705 did.",
+      "managerFilePatterns": ["/^\\.config/archetypes/.+\\.yaml$/"],
+      "matchStrings": ["\"(?<depName>ghcr\\.io/devcontainers/features/[a-z0-9-]+):(?<currentValue>[0-9]+)\""],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "DevContainer features: the Node.js version option of the node feature in the catalog, which Renovate's devcontainer manager read from devcontainer.json before the bundle was excluded.",
+      "managerFilePatterns": ["/^\\.config/archetypes/.+\\.yaml$/"],
+      "matchStrings": ["\"ghcr\\.io/devcontainers/features/node:[0-9]+\":\\s+version: \"(?<currentValue>[0-9]+)\""],
+      "depNameTemplate": "node",
+      "datasourceTemplate": "node-version",
+      "versioningTemplate": "node"
     }
   ],
   "pip-compile": {
@@ -140,6 +167,16 @@
       "matchManagers": ["pip-compile"],
       "matchFileNames": [".config/hook-lint/**"],
       "groupName": "hook lint toolchain"
+    },
+    {
+      "description": "Generated DevContainer bundle: praetorctl devcontainer renders devcontainer.json and Dockerfile.praetor from the reviewed pins and the catalog, and bundle verification rejects any edit, so no manager updates them. Image updates come through the reviewed-pin custom manager and feature updates through the catalog custom managers (#323, #696).",
+      "matchFileNames": [".devcontainer/devcontainer.json", ".devcontainer/Dockerfile.praetor"],
+      "enabled": false
+    },
+    {
+      "description": "Reviewed DevContainer images: the builder pin in internal/devcontainer/bootstrap.go and the FROM line of docker/dev/Dockerfile name one image, so one branch moves both, with the base pin, and the takeover runs one praetorctl devcontainer bump for it.",
+      "matchFileNames": ["internal/devcontainer/bootstrap.go", "docker/dev/Dockerfile"],
+      "groupName": "reviewed devcontainer images"
     }
   ]
 }
