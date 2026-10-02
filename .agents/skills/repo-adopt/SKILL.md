@@ -25,7 +25,8 @@ Adopt any codebase—greenfield, partially setup, or legacy brownfield—into `c
      ```bash
      praetorctl adopt /path/to/repo --profile=framework --facets=security:high,api:public-contract
      ```
-   - For brownfield legacy codebases, ensure `--record-baseline` is active to ratchet existing debt into `.standards-baseline.json`.
+   - For brownfield legacy codebases, ensure `--record-baseline` is active (default): first adoption records existing debt into `.standards-baseline.json`.
+   - Re-adoption keeps existing baseline, reports ratchet verdict; never pass `--rerecord-baseline` to hide new findings. Fix them, or operator accepts debt with `--rerecord-baseline --allow-increase --reason=<why>`.
 
 3. **Verify Scaffolding & Context Transpilation**:
    - Check generated files:

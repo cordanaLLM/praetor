@@ -15,8 +15,11 @@ praetorctl adopt --lock-source-root=/path/to/praetor
 # Dry-run simulation: inspect proposed changes without writing files
 standardsctl adopt --dry-run
 
-# Regenerate drifted audit-locked files & record technical debt
-praetorctl adopt --force --record-baseline --lock-source-root=/path/to/praetor
+# Regenerate drifted audit-locked files; an existing debt baseline is kept, not re-recorded
+praetorctl adopt --force --lock-source-root=/path/to/praetor
+
+# Replace an existing debt baseline with a rescan; a higher count needs the allowance
+praetorctl adopt --rerecord-baseline --allow-increase --reason="why the debt is accepted"
 
 # Change the declared profile or facets later, or re-pin to a newer catalog
 praetorctl profile set os-image --lock-source-root=/path/to/praetor --dry-run
@@ -290,7 +293,7 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
 
 1. **`.standards.yaml`**: Declarative repository manifest containing profile, facets, tool versions, and policy locks.
 2. **`.standards.lock`**: Cryptographic SemVer lockfile binding your repo to exact governance standard releases.
-3. **`.standards-baseline.json`**: Technical debt ratcheting baseline. Existing infractions (e.g. legacy loop bounds, unwrapped errors) are recorded so legacy code compiles while new code is strictly gated. A re-adoption with `--record-baseline` (the default) rescans the repository and keeps the recorded file untouched when the rescan finds the same debt for the same repository, so an unchanged repository gets no `generated_at`-only diff; it rewrites the file when the infractions or the repository identity changed (`TestReconcileBaseline_KeepsUnchangedBaseline_3D` in `internal/adopt/baseline_identity_test.go`). A rescan without a resolved identity keeps the repository the file records instead of blanking it, as `praetorctl baseline --record` does (`TestReconcileBaseline_UnresolvedIdentityKeepsRecordedRepository_3D`).
+3. **`.standards-baseline.json`**: Technical debt ratcheting baseline. A first adoption records the existing infractions (e.g. legacy loop bounds, unwrapped errors) so legacy code compiles while new code is strictly gated. A re-adoption keeps the file; see [The baseline on a re-adoption](#the-baseline-on-a-re-adoption).
 4. **`AGENTS.md` + 6 Vendor Targets**: Canonical agent operating harness transpiled to `CLAUDE.md`, `.cursor/rules/*.mdc`, `.github/copilot-instructions.md`, `.windsurfrules`, `.gemini/GEMINI.md` and `.codex/rules.md`. `agent_clients` in `.standards.yaml` limits these to the clients the repository uses ([agent client selection](guides/editor-capabilities.md#selecting-agent-clients)).
 5. **`.devcontainer/devcontainer.json`**: Multi-architecture container configuration pinned to verified base images. Adoption also pins the bundle's Dockerfile to LF: the managed block at the end of `.gitattributes` opens with `.devcontainer/Dockerfile.praetor text eol=lf`, so a Windows checkout with `core.autocrlf=true` verifies the same bytes. The rule names that one file, so the repository's own files in `.devcontainer/` keep their attributes. Every other line of an existing `.gitattributes` is kept, and a rule of the repository's own inside `.devcontainer/` that matches `Dockerfile.praetor` and contradicts `text eol=lf` stops adoption before its first write ([checkout line endings](guides/devcontainer-bootstrap.md#checkout-line-endings)).
 6. **Multi-IDE Configs**: Workspace settings for every supported editor, or only the ones `editors` in `.standards.yaml` names ([editor selection](guides/editor-capabilities.md#selecting-editors)).
@@ -323,6 +326,43 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
     untouched, with a warning naming the labels
     ([actionlint runner labels](guides/documentation-governance.md#adoption-audit-and-ci),
     `internal/adopt/actionlint.go`). Decline `actionlint-labels` to opt out.
+
+### The baseline on a re-adoption
+
+Adoption records `.standards-baseline.json` once. A repository that already has the file keeps it
+on every later run, `--force` included, so a re-adoption never turns a violation the baseline does
+not record into accepted debt (`reconcileBaseline` in `internal/adopt/adopt.go`).
+
+| Baseline file | Flags | What the baseline step does |
+| :-- | :-- | :-- |
+| absent | default (`--record-baseline=true`) | scans and records the first baseline; a `--dry-run` scans and writes nothing |
+| absent | `--record-baseline=false` | writes nothing and warns that no baseline was recorded |
+| present | default | keeps the file byte for byte, rescans, and reports the verdict `praetorctl baseline --verify` gives |
+| present | `--record-baseline=false` | keeps the file and skips the scan |
+| present | `--rerecord-baseline` | replaces the file with the rescan under the rules of `praetorctl baseline --record` |
+
+The kept-baseline verdict is one line under the debt summary and `baseline_ratchet` in the report's
+JSON (`passed`, `recorded`, `active`, `unbaselined`); the MCP `standards_adopt` tool prints the same
+line (`adopt.BaselineRatchet.Line`). When the repository carries a finding the baseline does not
+record, or more findings than it records, the run still succeeds and adds a warning that lists the
+findings: adoption reconciles the files it owns, and `praetorctl audit` is what rejects the debt.
+A baseline entry that matches nothing in the tree is reported as a warning too.
+
+`--rerecord-baseline` is the explicit route to a new baseline. A rescan that finds more infractions
+than the file records is refused, the file is kept and the error lists the added findings, unless
+`--allow-increase --reason=<why>` accepts the increase; the reason is stored in the file as
+`increase_rationale`. A rescan that finds the same debt keeps the file byte for byte, and one
+without a resolved repository identity keeps the repository the file records. `--allow-increase`
+and `--reason` without `--rerecord-baseline`, and `--rerecord-baseline` with
+`--record-baseline=false`, are refused before anything is written (`adopt.ErrBaselineOptions`).
+The MCP tool has no re-record: accepting debt is a command an operator runs. A baseline file that
+cannot be parsed fails the step on every path; restore it from version control, or delete it to
+record a first baseline.
+
+Tests: `TestAdopt_Negative_ReAdoptionDoesNotAbsorbNewDebt`, `TestAdopt_RerecordBaseline_3D` and
+`TestAdopt_Boundary_BaselineDryRunWritesNothing` in `internal/adopt/baseline_readopt_test.go`,
+`TestReconcileBaseline_KeepsUnchangedBaseline_3D` in `internal/adopt/baseline_identity_test.go`, and
+`TestAdoptBaselineFlags_3D` in `cmd/standardsctl/adopt_baseline_flags_test.go`.
 
 ### What a forced re-adoption changes
 
@@ -803,6 +843,8 @@ Under the hood, the agent executes the `standards_adopt` tool:
 
 `"force": true` is the refresh described in
 [What a forced re-adoption changes](#what-a-forced-re-adoption-changes) and needs `source_root`.
+`"record_baseline": true` records a first baseline and keeps an existing one
+([The baseline on a re-adoption](#the-baseline-on-a-re-adoption)).
 The tool returns a detailed summary of created, reconciled and replaced files, detected archetypes, and recorded legacy debt.
 
 ---
@@ -939,7 +981,7 @@ which is how a fork head is shown to be refused.
 | `mode` | `PRAETOR_MODE` | selects the subcommand, `adopt` or `dogfood`; any other value is refused |
 | `dry-run` | `PRAETOR_DRY_RUN` | `--dry-run=<value>`; in `adopt` mode `true` plans without writing a file and skips the `compile-context --verify`, which would otherwise check a tree the run did not touch and fail on a repository with no `AGENTS.md` yet (`TestPraetorAdoptAction_Boundary_DryRunSkipsCompileContext`); in `dogfood` mode it changes nothing, because `dogfood` applies adoptions only to `--targets` repositories (`testTargetAdoptions` in `internal/dogfood/dogfood.go`) and the action passes none, so the host is audited either way |
 | `force` | `PRAETOR_FORCE` | `--force=<value>`, adopt only: the refresh in [What a forced re-adoption changes](#what-a-forced-re-adoption-changes). `--force` rebuilds `.standards.lock` and needs a lock source, so with `force: true` the action also passes `--lock-source-root=<checkout>`, the praetor checkout the build step compiled `standardsctl` from, and refuses the run when the build step published none (`TestPraetorAdoptAction_ForcedRunCarriesTheLockSource`). The rebuild inventories that checkout with `git ls-files`. When the action's own tree has no `.git`, as when loaded remotely, a forced adopt run first checks out the action's repository at the action's ref with git under `RUNNER_TEMP` and builds from it. A tree that already is a git checkout is used as it is (`internal/forge/adopt_action_source_test.go`) |
-| `record-baseline` | `PRAETOR_RECORD_BASELINE` | `--record-baseline=<value>`, adopt only |
+| `record-baseline` | `PRAETOR_RECORD_BASELINE` | `--record-baseline=<value>`, adopt only: `true` records a first baseline and keeps an existing one, reporting the ratchet verdict on it; `false` skips the scan. The action has no input that re-records an existing baseline ([The baseline on a re-adoption](#the-baseline-on-a-re-adoption)) |
 | `go-version` | `actions/setup-go` | the toolchain the step compiles `standardsctl` with; it never reaches `standardsctl`, and it has to satisfy the `go` directive of praetor's `go.mod` |
 | `cache` | `actions/setup-go` | its `cache` input, default `true` as in `setup-go` itself; set `false` in a job a pull request or its comment starts, and in a job that keeps its own Go cache (`TestPraetorAdoptAction_Positive_CacheInputReachesSetupGo`) |
 

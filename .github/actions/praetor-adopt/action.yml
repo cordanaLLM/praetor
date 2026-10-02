@@ -20,7 +20,7 @@ inputs:
     required: false
     default: "false"
   record-baseline:
-    description: "Record existing debt infractions into .standards-baseline.json"
+    description: "adopt: pass --record-baseline. true records existing debt infractions into .standards-baseline.json when the repository has none; a baseline that already exists is kept byte for byte, rescanned, and the report states what praetorctl baseline --verify says about it, so a re-adoption never accepts new debt. false skips the scan. Re-recording an existing baseline is not an input: run praetorctl adopt --rerecord-baseline or praetorctl baseline --record"
     required: false
     default: "true"
   go-version:

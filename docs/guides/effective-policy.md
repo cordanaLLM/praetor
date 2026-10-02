@@ -446,7 +446,9 @@ symlinks fail. Existing differing files require explicit `--force`; matching
 files remain unchanged. Baseline recording uses the same resolved audit limit.
 
 Adoption keeps baseline recording enabled by default, including its dry-run debt
-estimate. Both modes require verified local pins and their catalog, or an
+estimate. Recording creates a first baseline; an existing one is kept and checked
+under the same limit ([the baseline on a re-adoption](../adoption.md#the-baseline-on-a-re-adoption)).
+Both modes require verified local pins and their catalog, or an
 explicit `--lock-source-root` for missing inputs. A dry run without these sources
 fails instead of estimating debt with an unrelated default limit. Planning with
 `--record-baseline=false` can explicitly omit that estimate; its report identifies

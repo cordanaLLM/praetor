@@ -1,0 +1,4 @@
+type: fixed
+title: "A re-adoption no longer rewrites .standards-baseline.json and accepts new debt; replacing it takes --rerecord-baseline"
+breaking: true
+issue: "#358"
