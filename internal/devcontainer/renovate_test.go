@@ -26,8 +26,8 @@ var renovateImageManagerPatterns = []string{
 	`^.devcontainer/[^/]+/devcontainer.json$`,
 }
 
-// generatedBundleFiles are the bundle files a Renovate manager reads; the source parts are
-// base64 text no manager parses.
+// generatedBundleFiles are the bundle files a Renovate manager reads, spelled out; the source
+// parts are base64 text no manager parses. UpdateBotBundleFiles must name exactly these.
 var generatedBundleFiles = []string{".devcontainer/devcontainer.json", ".devcontainer/Dockerfile.praetor"}
 
 type renovateCustomManager struct {
@@ -41,6 +41,8 @@ type renovateCustomManager struct {
 type renovateRules struct {
 	CustomManagers []renovateCustomManager     `json:"customManagers"`
 	PackageRules   []map[string]jsontext.Value `json:"packageRules"`
+	// AutoReplaceGlobalMatch is nil while the configuration keeps Renovate's default, true.
+	AutoReplaceGlobalMatch *bool `json:"autoReplaceGlobalMatch"`
 }
 
 func readRenovate(t *testing.T) renovateRules {
@@ -99,25 +101,36 @@ func (r renovateRules) disables(rel string) bool {
 	return false
 }
 
-// groups returns the groupName of the packageRule whose matchFileNames lists every file.
-func (r renovateRules) groups(files ...string) string {
+// groups returns the groupName and matchPackageNames of the packageRule whose matchFileNames
+// lists every file.
+func (r renovateRules) groups(files ...string) (string, []string) {
 	for _, rule := range r.PackageRules {
-		var listed []string
+		var listed, packages []string
 		var group string
 		if json.Unmarshal(rule["matchFileNames"], &listed) != nil || json.Unmarshal(rule["groupName"], &group) != nil {
 			continue
 		}
 		if !slices.ContainsFunc(files, func(file string) bool { return !slices.Contains(listed, file) }) {
-			return group
+			if raw, narrowed := rule["matchPackageNames"]; narrowed && json.Unmarshal(raw, &packages) != nil {
+				return group, nil
+			}
+			return group, packages
 		}
 	}
-	return ""
+	return "", nil
 }
 
 // Positive: one custom manager reads bootstrap.go with exactly ReviewedPinPattern, the expression
 // devcontainer bump uses, through the docker datasource and versioning. Applied to the file, it
 // yields each reviewed default under its tag and digest, and one group moves the pins with the
-// FROM line of the development Dockerfile.
+// FROM line of the development Dockerfile and nothing else that Dockerfile holds.
+//
+// Renovate rewrites the whole match: with autoReplaceGlobalMatch at its default, true, it
+// replaces every occurrence of the current digest, which moves the comment and the constant
+// together, and every occurrence of the current tag
+// (lib/workers/repository/update/branch/auto-replace.ts in renovatebot/renovate). So the
+// configuration must keep that default, and each match must hold its tag once and its digest
+// twice, or an update would leave the pair disagreeing or rewrite more than the tag.
 func TestRenovateReadsTheReviewedPinsByTag(t *testing.T) {
 	rules := readRenovate(t)
 	managers := rules.readsFile(t, ReviewedPinsFile)
@@ -133,17 +146,32 @@ func TestRenovateReadsTheReviewedPinsByTag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if rules.AutoReplaceGlobalMatch != nil && !*rules.AutoReplaceGlobalMatch {
+		t.Fatal("renovate.json sets autoReplaceGlobalMatch false: an update would move the comment and leave the constant")
+	}
 	expression := regexp.MustCompile(manager.MatchStrings[0])
-	var found []string
+	var found, repositories []string
 	for _, match := range expression.FindAllStringSubmatch(strings.ReplaceAll(string(source), "\r\n", "\n"), -1) {
 		group := func(name string) string { return match[expression.SubexpIndex(name)] }
 		found = append(found, group("depName")+":"+group("currentValue")+"@"+group("currentDigest"))
+		repositories = append(repositories, group("depName"))
+		if tags, digests := strings.Count(match[0], group("currentValue")), strings.Count(match[0], group("currentDigest")); tags != 1 || digests != 2 {
+			t.Errorf("the match for %s holds its tag %d times and its digest %d times, want 1 and 2", group("depName"), tags, digests)
+		}
 	}
 	if want := []string{taggedDefaultBuilder, taggedDefaultBase}; !slices.Equal(found, want) {
 		t.Fatalf("Renovate reads %v from bootstrap.go, want %v", found, want)
 	}
-	if rules.groups(ReviewedPinsFile, DevImageDockerfile) == "" {
+	group, packages := rules.groups(ReviewedPinsFile, DevImageDockerfile)
+	if group == "" {
 		t.Fatalf("no packageRule groups %s with %s", ReviewedPinsFile, DevImageDockerfile)
+	}
+	// The development Dockerfile spells the builder in Docker Hub's short form.
+	want := append(repositories, strings.TrimPrefix(repositories[0], "docker.io/library/"))
+	slices.Sort(want)
+	slices.Sort(packages)
+	if !slices.Equal(packages, want) {
+		t.Fatalf("group %q matches packages %v, want the reviewed images only %v", group, packages, want)
 	}
 }
 
@@ -151,6 +179,9 @@ func TestRenovateReadsTheReviewedPinsByTag(t *testing.T) {
 // a manager reads, and no custom manager reads one.
 func TestRenovateNeverReadsTheGeneratedBundle(t *testing.T) {
 	rules := readRenovate(t)
+	if got := UpdateBotBundleFiles(".devcontainer/devcontainer.json"); !slices.Equal(got, generatedBundleFiles) {
+		t.Fatalf("UpdateBotBundleFiles = %v, want %v", got, generatedBundleFiles)
+	}
 	for _, rel := range generatedBundleFiles {
 		if !rules.disables(rel) {
 			t.Errorf("no packageRule disables Renovate for %s", rel)
