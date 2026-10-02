@@ -1,0 +1,4 @@
+type: added
+title: "praetorctl caveman compress applies the meaning-safe cleanups to a file, prints or rewrites it, and refuses a result the clarity floor fails"
+issue: "#368"
+breaking: false

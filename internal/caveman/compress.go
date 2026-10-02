@@ -32,7 +32,7 @@ type Stats struct {
 // ledger rows, hook protocol lines, evidence pointers) keep their bytes apart from ANSI and
 // CRLF. Prose is never rewritten: no word is dropped or replaced.
 func Compress(text string) (string, Stats) {
-	lines, _ := scan(ansiRe.ReplaceAllString(text, ""))
+	lines, _ := scan(StripANSI(text))
 	out := make([]string, 0, len(lines))
 	var c compactor
 	for _, ln := range lines {
@@ -43,6 +43,13 @@ func Compress(text string) (string, Stats) {
 		BytesIn: len(text), BytesOut: len(result),
 		TokensEstIn: EstimateTokens(text), TokensEstOut: EstimateTokens(result),
 	}
+}
+
+// StripANSI removes the escape sequences Compress removes (CSI, OSC and the two-byte escapes)
+// and nothing else. A caller that proves a compression with Floor compares against this text:
+// the parameters of an escape hold digits, and Floor would read them as numbers of the text.
+func StripANSI(text string) string {
+	return ansiRe.ReplaceAllString(text, "")
 }
 
 // compactor holds the prose line that may still repeat and whether the last emitted line

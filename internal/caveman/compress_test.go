@@ -106,3 +106,38 @@ func TestCompressKeepsSpansAndFrontMatter(t *testing.T) {
 		})
 	}
 }
+
+// TestStripANSI: the stripper removes the escapes Compress removes and nothing else, so a
+// Floor comparison against its result judges the text rather than escape parameters. Positive:
+// CSI, OSC and two-byte escapes go, and the digits of their parameters with them. Negative:
+// text without an escape character keeps every byte, bracketed digits included, and no other
+// Compress cleanup runs. Boundary: empty text, an escape alone and an escape that never ends.
+func TestStripANSI(t *testing.T) {
+	cases := map[string]struct{ in, want string }{
+		"csi colour":         {"\x1b[38;5;196mred 7\x1b[0m", "red 7"},
+		"osc title":          {"\x1b]0;build 42\x07run", "run"},
+		"osc string end":     {"\x1b]8;;https://example.test\x1b\\link\x1b]8;;\x1b\\", "link"},
+		"two-byte escape":    {"a\x1bMb", "ab"},
+		"no escape":          {"[31m is no escape, 196 stays", "[31m is no escape, 196 stays"},
+		"other cleanups off": {"a  b  \r\n\n\n\nc\nc", "a  b  \r\n\n\n\nc\nc"},
+		"empty":              {"", ""},
+		"escape alone":       {"\x1b", "\x1b"},
+		"unterminated csi":   {"\x1b[38;5", "\x1b[38;5"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := StripANSI(tc.in); got != tc.want {
+				t.Fatalf("StripANSI(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+	// Floor reads an escape parameter as a number; against the stripped text nothing is lost.
+	coloured := "\x1b[38;5;196msync ok\x1b[0m\n"
+	compressed, _ := Compress(coloured)
+	if Floor(coloured, compressed).Passed() {
+		t.Fatal("Floor no longer reads escape parameters as numbers; StripANSI's reason is gone")
+	}
+	if report := Floor(StripANSI(coloured), compressed); !report.Passed() {
+		t.Fatalf("stripped text must hold the floor: %v", report.Findings)
+	}
+}
