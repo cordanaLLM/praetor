@@ -944,7 +944,10 @@ MiB. Positive, negative, exact-limit, and +1 fixtures live in
 ### Ceilings
 
 `--max-words=N` (C7) and `--max-tokens=N` (C8) add an opt-in ceiling to `check`, on top of
-whatever C1-C6 and C11 already judge; 0 (the default) means no ceiling:
+whatever C1-C6 and C11 already judge; 0 (the default) means no ceiling. A negative value is
+refused before any input is read, with an error naming the flag, so a typo such as
+`--max-tokens=-1` cannot switch a ceiling off (`validateCavemanCeilings` in
+`cmd/standardsctl/caveman.go`, `TestCavemanCheckRefusesNegativeCeilings`):
 
 ```bash
 praetorctl caveman check --kind=context --max-words=600 .agents/skills/<skill>/SKILL.md

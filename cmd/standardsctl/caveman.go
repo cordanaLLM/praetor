@@ -69,7 +69,7 @@ func cavemanCommand(ctx context.Context, args []string, stdin io.Reader, out io.
 // input breaks a rule. --kind defaults to runtime message grammar; brief and return add
 // schemas, while context selects the policy-document profile. With --surface it first
 // resolves the register from --root and errors when the surface is not internal. --max-words
-// and --max-tokens are opt-in ceilings (0 means none).
+// and --max-tokens are opt-in ceilings (0 means none; a negative value is refused).
 func cavemanCheck(ctx context.Context, args []string, stdin io.Reader, out io.Writer) error {
 	fset := flag.NewFlagSet("caveman check", flag.ContinueOnError)
 	kindName := fset.String("kind", string(caveman.KindMessage), "Caveman contract: message, brief, return, or context")
@@ -79,8 +79,8 @@ func cavemanCheck(ctx context.Context, args []string, stdin io.Reader, out io.Wr
 	configured := fset.Bool("configured-sources", false, "Check register.sources from .standards.yaml with expected coverage")
 	var selectors repeatedStringFlag
 	fset.Var(&selectors, "selector", "Dotted JSON/YAML string selector; repeat for multiple fields")
-	maxWords := fset.Int("max-words", 0, "Prose-word ceiling per input (caveman.Options.MaxProseWords, C7); 0 means no ceiling")
-	maxTokens := fset.Int("max-tokens", 0, "Estimated-token ceiling per input (caveman.EstimateTokens, C8); 0 means no ceiling")
+	maxWords := fset.Int("max-words", 0, "Prose-word ceiling per input (caveman.Options.MaxProseWords, C7); 0 means no ceiling, a negative value is refused")
+	maxTokens := fset.Int("max-tokens", 0, "Estimated-token ceiling per input (caveman.EstimateTokens, C8); 0 means no ceiling, a negative value is refused")
 	if _, err := parseInterspersed(fset, args); err != nil {
 		return err
 	}
@@ -93,6 +93,9 @@ func cavemanCheck(ctx context.Context, args []string, stdin io.Reader, out io.Wr
 	kind := caveman.MessageKind(*kindName)
 	if !kind.Valid() {
 		return fmt.Errorf("caveman check: unsupported kind %q (want message, brief, return, or context)", *kindName)
+	}
+	if err := validateCavemanCeilings(*maxWords, *maxTokens); err != nil {
+		return err
 	}
 	inputs, note, err := prepareCavemanCheckInputs(ctx, stdin, cavemanCheckRequest{
 		root: *root, surface: *surface, kind: kind, extensions: *extensions,
@@ -107,6 +110,21 @@ func cavemanCheck(ctx context.Context, args []string, stdin io.Reader, out io.Wr
 	}
 	if failed > 0 {
 		return fmt.Errorf("caveman check: %d of %d input(s) failed", failed, len(inputs))
+	}
+	return nil
+}
+
+// validateCavemanCeilings refuses a negative --max-words or --max-tokens before any input is
+// read. caveman.Options reads a non-positive ceiling as unset, so a typo such as
+// --max-tokens=-1 would otherwise pass every input (#382). 0 stays the documented opt-out.
+func validateCavemanCeilings(maxWords, maxTokens int) error {
+	for _, ceiling := range []struct {
+		flag  string
+		value int
+	}{{"--max-words", maxWords}, {"--max-tokens", maxTokens}} {
+		if ceiling.value < 0 {
+			return fmt.Errorf("caveman check: %s=%d is negative; use a positive ceiling, or 0 for none", ceiling.flag, ceiling.value)
+		}
 	}
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -394,6 +395,42 @@ func TestCavemanCheckCeilingFlags(t *testing.T) {
 	words := strings.Fields(cavemanTerse)
 	if out, err = runCavemanCLI(t, "", "check", fmt.Sprintf("--max-words=%d", len(words)), terse); err != nil || strings.Contains(out, "ceiling") {
 		t.Fatalf("exactly at the word ceiling must pass: err=%v\n%s", err, out)
+	}
+}
+
+// TestCavemanCheckRefusesNegativeCeilings pins #382: a negative ceiling is a usage error that
+// names its flag, never a ceiling silently switched off. Negative: -1 on either flag, on the
+// configured-sources form too, and the refusal comes before any input is read. Boundary: the
+// most negative int is refused like -1, and 0 beside it stays the opt-out. Positive: a
+// ceiling of 1 still judges the text.
+func TestCavemanCheckRefusesNegativeCeilings(t *testing.T) {
+	dir := t.TempDir()
+	terse := writeFixtureFile(t, dir, "terse.md", cavemanTerse)
+	absent := filepath.Join(dir, "absent.md")
+	for name, tc := range map[string]struct {
+		args []string
+		want string
+	}{
+		"words":                 {[]string{"check", "--max-words=-1", terse}, "--max-words=-1 is negative"},
+		"tokens":                {[]string{"check", "--max-tokens=-1", terse}, "--max-tokens=-1 is negative"},
+		"tokens after the path": {[]string{"check", terse, "--max-tokens", "-7"}, "--max-tokens=-7 is negative"},
+		"words beside zero":     {[]string{"check", "--max-tokens=0", "--max-words=-1", terse}, "--max-words=-1 is negative"},
+		"most negative":         {[]string{"check", fmt.Sprintf("--max-words=%d", math.MinInt), terse}, "--max-words=-"},
+		"before the read":       {[]string{"check", "--max-words=-1", absent}, "--max-words=-1 is negative"},
+		"configured sources":    {[]string{"check", "--root=" + dir, "--configured-sources", "--max-tokens=-1"}, "--max-tokens=-1 is negative"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, err := runCavemanCLI(t, "", tc.args...)
+			if err == nil || !strings.Contains(err.Error(), tc.want) || out != "" {
+				t.Fatalf("want a refusal naming the flag (%q) and no report: err=%v\n%s", tc.want, err, out)
+			}
+		})
+	}
+	if out, err := runCavemanCLI(t, "", "check", "--max-words=0", "--max-tokens=0", terse); err != nil || !strings.Contains(out, ": PASS") {
+		t.Fatalf("0 must stay the documented opt-out: err=%v\n%s", err, out)
+	}
+	if out, err := runCavemanCLI(t, "", "check", "--max-tokens=1", terse); err == nil || !strings.Contains(out, "C8 token-ceiling") {
+		t.Fatalf("the smallest positive ceiling must still judge the text: err=%v\n%s", err, out)
 	}
 }
 
