@@ -1,33 +1,33 @@
 == fresh adoption without docs:seo-portal
 action create .gitattributes :: Created the managed attribute block that keeps the files audit compares byte for byte unconverted
-file .gitattributes "# BEGIN praetor managed attributes (praetorctl adopt)\n# praetorctl audit hashes these files; keep their checkout bytes the same on every platform.\n.devcontainer/* text eol=lf\n# END praetor managed attributes\n"
+file .gitattributes "# BEGIN praetor managed attributes (praetorctl adopt)\n# praetorctl audit hashes these files; keep their checkout bytes the same on every platform.\n.devcontainer/Dockerfile.praetor text eol=lf\n# END praetor managed attributes\n"
 == rerun
 action reconcile .gitattributes :: Managed attribute block already at the tail
-file .gitattributes "# BEGIN praetor managed attributes (praetorctl adopt)\n# praetorctl audit hashes these files; keep their checkout bytes the same on every platform.\n.devcontainer/* text eol=lf\n# END praetor managed attributes\n"
+file .gitattributes "# BEGIN praetor managed attributes (praetorctl adopt)\n# praetorctl audit hashes these files; keep their checkout bytes the same on every platform.\n.devcontainer/Dockerfile.praetor text eol=lf\n# END praetor managed attributes\n"
 == operator rules around the block
 action append .gitattributes :: Preserved existing rules and placed the managed attribute block at the tail
-file .gitattributes "* text=auto\n.devcontainer/* text eol=lf\n\n*.png binary\n\n# BEGIN praetor managed attributes (praetorctl adopt)\n# praetorctl audit hashes these files; keep their checkout bytes the same on every platform.\n.devcontainer/* text eol=lf\n# END praetor managed attributes\n"
+file .gitattributes "* text=auto\n.devcontainer/* text eol=lf\n.devcontainer/setup.ps1 text eol=crlf\n\n*.png binary\n\n# BEGIN praetor managed attributes (praetorctl adopt)\n# praetorctl audit hashes these files; keep their checkout bytes the same on every platform.\n.devcontainer/Dockerfile.praetor text eol=lf\n# END praetor managed attributes\n"
 == operator rules, rerun
 action reconcile .gitattributes :: Managed attribute block already at the tail
-file .gitattributes "* text=auto\n.devcontainer/* text eol=lf\n\n*.png binary\n\n# BEGIN praetor managed attributes (praetorctl adopt)\n# praetorctl audit hashes these files; keep their checkout bytes the same on every platform.\n.devcontainer/* text eol=lf\n# END praetor managed attributes\n"
+file .gitattributes "* text=auto\n.devcontainer/* text eol=lf\n.devcontainer/setup.ps1 text eol=crlf\n\n*.png binary\n\n# BEGIN praetor managed attributes (praetorctl adopt)\n# praetorctl audit hashes these files; keep their checkout bytes the same on every platform.\n.devcontainer/Dockerfile.praetor text eol=lf\n# END praetor managed attributes\n"
 == dev-container declined
 action remove .gitattributes :: Removed the managed attribute block because docs:seo-portal is disabled and dev-container is declined
-file .gitattributes "* text=auto\n.devcontainer/* text eol=lf\n\n*.png binary\n"
+file .gitattributes "* text=auto\n.devcontainer/* text eol=lf\n.devcontainer/setup.ps1 text eol=crlf\n\n*.png binary\n"
 == declined, rerun
-file .gitattributes "* text=auto\n.devcontainer/* text eol=lf\n\n*.png binary\n"
+file .gitattributes "* text=auto\n.devcontainer/* text eol=lf\n.devcontainer/setup.ps1 text eol=crlf\n\n*.png binary\n"
 == decline removed
 action append .gitattributes :: Preserved existing rules and placed the managed attribute block at the tail
-file .gitattributes "* text=auto\n.devcontainer/* text eol=lf\n\n*.png binary\n\n# BEGIN praetor managed attributes (praetorctl adopt)\n# praetorctl audit hashes these files; keep their checkout bytes the same on every platform.\n.devcontainer/* text eol=lf\n# END praetor managed attributes\n"
+file .gitattributes "* text=auto\n.devcontainer/* text eol=lf\n.devcontainer/setup.ps1 text eol=crlf\n\n*.png binary\n\n# BEGIN praetor managed attributes (praetorctl adopt)\n# praetorctl audit hashes these files; keep their checkout bytes the same on every platform.\n.devcontainer/Dockerfile.praetor text eol=lf\n# END praetor managed attributes\n"
 == conflicting operator rule
-report-error .gitattributes rule ".devcontainer/* text eol=crlf" gives the DevContainer directory another line-ending treatment than the managed rule ".devcontainer/* text eol=lf", which adoption writes at the tail of the file, where it would override that rule; remove or change the rule, or list dev-container in adoption.decline, then rerun adopt
-error .gitattributes rule ".devcontainer/* text eol=crlf" gives the DevContainer directory another line-ending treatment than the managed rule ".devcontainer/* text eol=lf", which adoption writes at the tail of the file, where it would override that rule; remove or change the rule, or list dev-container in adoption.decline, then rerun adopt
-file .gitattributes ".devcontainer/* text eol=crlf\n\n# BEGIN praetor managed attributes (praetorctl adopt)\n# praetorctl audit hashes these files; keep their checkout bytes the same on every platform.\n.devcontainer/* text eol=lf\n# END praetor managed attributes\n"
+report-error .gitattributes rule ".devcontainer/* text eol=crlf" gives .devcontainer/Dockerfile.praetor another line-ending treatment than the managed rule ".devcontainer/Dockerfile.praetor text eol=lf", which adoption writes at the tail of the file, where it would override that rule; remove or change the rule, or list dev-container in adoption.decline, then rerun adopt
+error .gitattributes rule ".devcontainer/* text eol=crlf" gives .devcontainer/Dockerfile.praetor another line-ending treatment than the managed rule ".devcontainer/Dockerfile.praetor text eol=lf", which adoption writes at the tail of the file, where it would override that rule; remove or change the rule, or list dev-container in adoption.decline, then rerun adopt
+file .gitattributes ".devcontainer/* text eol=crlf\n\n# BEGIN praetor managed attributes (praetorctl adopt)\n# praetorctl audit hashes these files; keep their checkout bytes the same on every platform.\n.devcontainer/Dockerfile.praetor text eol=lf\n# END praetor managed attributes\n"
 == fresh adoption with docs:seo-portal
 action create .gitattributes :: Created the managed attribute block that keeps the files audit compares byte for byte unconverted
-file .gitattributes "# BEGIN praetor managed attributes (praetorctl adopt)\n# praetorctl audit hashes these files; keep their checkout bytes the same on every platform.\n.devcontainer/* text eol=lf\ntools/figures/** text eol=lf\ndocs/figures/*.ts text eol=lf\ndocs/assets/figures/* text eol=lf\ntools/figures/third_party/interfig/upstream/** -text\n# END praetor managed attributes\n"
+file .gitattributes "# BEGIN praetor managed attributes (praetorctl adopt)\n# praetorctl audit hashes these files; keep their checkout bytes the same on every platform.\n.devcontainer/Dockerfile.praetor text eol=lf\ntools/figures/** text eol=lf\ndocs/figures/*.ts text eol=lf\ndocs/assets/figures/* text eol=lf\ntools/figures/third_party/interfig/upstream/** -text\n# END praetor managed attributes\n"
 == documented, dev-container declined
 action append .gitattributes :: Preserved existing rules and refreshed the managed attribute block at the tail to the rules of this run
 file .gitattributes "# BEGIN praetor managed attributes (praetorctl adopt)\n# praetorctl audit hashes these files; keep their checkout bytes the same on every platform.\ntools/figures/** text eol=lf\ndocs/figures/*.ts text eol=lf\ndocs/assets/figures/* text eol=lf\ntools/figures/third_party/interfig/upstream/** -text\n# END praetor managed attributes\n"
 == documented, decline removed
 action append .gitattributes :: Preserved existing rules and refreshed the managed attribute block at the tail to the rules of this run
-file .gitattributes "# BEGIN praetor managed attributes (praetorctl adopt)\n# praetorctl audit hashes these files; keep their checkout bytes the same on every platform.\n.devcontainer/* text eol=lf\ntools/figures/** text eol=lf\ndocs/figures/*.ts text eol=lf\ndocs/assets/figures/* text eol=lf\ntools/figures/third_party/interfig/upstream/** -text\n# END praetor managed attributes\n"
+file .gitattributes "# BEGIN praetor managed attributes (praetorctl adopt)\n# praetorctl audit hashes these files; keep their checkout bytes the same on every platform.\n.devcontainer/Dockerfile.praetor text eol=lf\ntools/figures/** text eol=lf\ndocs/figures/*.ts text eol=lf\ndocs/assets/figures/* text eol=lf\ntools/figures/third_party/interfig/upstream/** -text\n# END praetor managed attributes\n"
