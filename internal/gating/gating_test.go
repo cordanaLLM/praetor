@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/cordanaLLM/praetor/internal/hiss"
 	"github.com/cordanaLLM/praetor/internal/lockdown"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
+	"github.com/cordanaLLM/praetor/internal/util"
 )
 
 // recordedCommand captures one invocation made through the injected command runner.
@@ -82,11 +84,14 @@ func cleanTree(rep *PipelineReport) func(context.Context, string) treeState {
 	return func(context.Context, string) treeState { return treeState{commit: rep.CommitSHA} }
 }
 
-// newGoModuleDir writes a minimal dependency-free Go module.
+// newGoModuleDir writes a minimal dependency-free Go module. Its go.mod names no go version on
+// purpose: a go directive newer than the host's toolchain makes the go command fetch that
+// toolchain, or fail under GOTOOLCHAIN=local, so the one case that runs the real go command
+// on this fixture would depend on the machine it runs on (#306).
 func newGoModuleDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.test\n\ngo 1.27\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.test\n"), 0o600); err != nil {
 		t.Fatalf("write go.mod: %v", err)
 	}
 	return dir
@@ -122,29 +127,142 @@ func newHermeticGitRepo(t *testing.T) string {
 	return dir
 }
 
-func TestPrefetchDependencies_Positive_And_Negative(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
+// goModRunner returns a command runner that records every invocation and fails the `go mod`
+// subcommand named failing with failure, printing diagnostic as that command's output. An empty
+// failing fails nothing.
+func goModRunner(recorded *[]recordedCommand, failing, diagnostic string, failure error) commandRunner {
+	return func(_ context.Context, dir, name string, args ...string) (string, error) {
+		*recorded = append(*recorded, recordedCommand{dir: dir, name: name, args: args})
+		if failing != "" && len(args) == 2 && args[1] == failing {
+			return diagnostic, failure
+		}
+		return "", nil
+	}
+}
+
+// The prefetch runs through the injected runner, as every other stage does, so what it asks
+// of the toolchain is asserted here and no go command runs: the outcome cannot depend on the
+// go on PATH, on the toolchain a go.mod names or on a network fetch (#306).
+func TestPrefetchDependencies_3D(t *testing.T) {
 	goDir := newGoModuleDir(t)
 
-	rep, err := PrefetchDependencies(ctx, goDir)
+	// Positive: verify, then download, both in the repository and both under a deadline no
+	// later than the prefetch bound, although the caller's context carries none (HISS-02).
+	var recorded []recordedCommand
+	record := goModRunner(&recorded, "", "", nil)
+	unbounded := 0
+	bounded := func(ctx context.Context, dir, name string, args ...string) (string, error) {
+		if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) > DefaultPrefetchTimeout {
+			unbounded++
+		}
+		return record(ctx, dir, name, args...)
+	}
+	rep, err := prefetchDependencies(context.Background(), goDir, bounded)
 	if err != nil {
-		t.Fatalf("expected prefetch to succeed on a dependency-free module, got: %v", err)
+		t.Fatalf("prefetch of a dependency-free module failed: %v", err)
 	}
 	if !rep.VerifiedDependencies || rep.Skipped {
 		t.Errorf("expected VerifiedDependencies=true and Skipped=false, got %+v", rep)
 	}
-
-	// Negative: Cancelled Context
-	cancCtx, cancelNow := context.WithCancel(ctx)
-	cancelNow()
-	if _, err := PrefetchDependencies(cancCtx, goDir); err == nil {
-		t.Error("expected error for cancelled context, got nil")
+	want := []recordedCommand{
+		{dir: goDir, name: "go", args: []string{"mod", "verify"}},
+		{dir: goDir, name: "go", args: []string{"mod", "download"}},
+	}
+	if !reflect.DeepEqual(recorded, want) {
+		t.Errorf("prefetch ran %+v, want %+v", recorded, want)
+	}
+	if unbounded != 0 {
+		t.Errorf("%d of %d commands ran without the %s prefetch bound", unbounded, len(recorded), DefaultPrefetchTimeout)
 	}
 
-	// Boundary: Nil Context
-	if _, err := PrefetchDependencies(nil, goDir); err == nil { //nolint:staticcheck // exercising the documented nil-context contract
-		t.Error("expected error for nil context, got nil")
+	// Negative: a failing command fails the prefetch with its own reason, output and error
+	// identity, and a failed verification downloads nothing.
+	exit := errors.New("exit status 1")
+	for _, tc := range []struct {
+		failing string
+		ran     int
+		want    string
+	}{
+		{failing: "verify", ran: 1, want: "dependency verification failed: checksum mismatch (exit status 1)"},
+		{failing: "download", ran: 2, want: "dependency download failed: checksum mismatch (exit status 1)"},
+	} {
+		var ran []recordedCommand
+		rep, err := prefetchDependencies(context.Background(), goDir, goModRunner(&ran, tc.failing, "checksum mismatch", exit))
+		if rep != nil || !errors.Is(err, exit) || err.Error() != tc.want {
+			t.Errorf("go mod %s failing: got report %+v and error %v, want error %q", tc.failing, rep, err, tc.want)
+		}
+		if len(ran) != tc.ran {
+			t.Errorf("go mod %s failing: %d commands ran, want %d: %+v", tc.failing, len(ran), tc.ran, ran)
+		}
+	}
+}
+
+// A prefetch that is refused, or has no module to fetch, starts no command at all.
+func TestPrefetchDependencies_Boundary_RunsNothing(t *testing.T) {
+	goDir := newGoModuleDir(t)
+	var recorded []recordedCommand
+	run := goModRunner(&recorded, "", "", nil)
+
+	// Negative: a cancelled context is refused, and the refusal carries the cancellation.
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if rep, err := prefetchDependencies(cancelled, goDir, run); rep != nil || !errors.Is(err, context.Canceled) {
+		t.Errorf("cancelled context: got report %+v and error %v, want context.Canceled", rep, err)
+	}
+
+	// Boundary: a nil context is refused instead of dereferenced.
+	rep, err := prefetchDependencies(nil, goDir, run) //nolint:staticcheck // exercising the documented nil-context contract
+	if rep != nil || err == nil || !strings.Contains(err.Error(), "context cannot be nil") {
+		t.Errorf("nil context: got report %+v and error %v", rep, err)
+	}
+
+	// Boundary: without a go.mod there is nothing to prefetch, and the report says skipped.
+	rep, err = prefetchDependencies(context.Background(), t.TempDir(), run)
+	if err != nil || rep == nil || !rep.Skipped || rep.VerifiedDependencies {
+		t.Errorf("no go.mod: got report %+v and error %v, want a skipped report", rep, err)
+	}
+
+	if len(recorded) != 0 {
+		t.Errorf("a refused or skipped prefetch ran %+v", recorded)
+	}
+}
+
+// The exported entry point binds the real command runner, so one case runs the go command
+// itself. It is hermetic by construction rather than by luck (#306): the fixture names no go
+// version and requires nothing, and testsupport.OfflineGoEnv turns the proxy, the checksum
+// database, the toolchain switch and the host's own go settings off. The negative half proves
+// that isolation is in force: a go.mod asking for a toolchain no machine has is refused by
+// the installed one, not fetched.
+func TestPrefetchDependencies_RealToolchain(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skipf("go is not on PATH; this case exists to run the real go command: %v", err)
+	}
+	ctx, err := util.WithCommandEnvironment(t.Context(), testsupport.OfflineGoEnv(t))
+	if err != nil {
+		t.Fatalf("offline Go environment: %v", err)
+	}
+
+	// Positive: go mod verify and go mod download succeed, and leave the manifest alone.
+	goDir := newGoModuleDir(t)
+	rep, err := PrefetchDependencies(ctx, goDir)
+	if err != nil {
+		t.Fatalf("prefetch of a dependency-free module failed: %v", err)
+	}
+	if !rep.VerifiedDependencies || rep.Skipped {
+		t.Errorf("expected VerifiedDependencies=true and Skipped=false, got %+v", rep)
+	}
+	if manifest, err := os.ReadFile(filepath.Join(goDir, "go.mod")); err != nil || string(manifest) != "module example.test\n" {
+		t.Errorf("prefetch rewrote go.mod: %q (err %v)", manifest, err)
+	}
+
+	// Negative: the go command's refusal reaches the caller as a verification failure that
+	// carries the command's own reason.
+	newer := t.TempDir()
+	writeFile(t, filepath.Join(newer, "go.mod"), "module example.test\n\ngo 1.999\n")
+	rep, err = PrefetchDependencies(ctx, newer)
+	if rep != nil || err == nil || !strings.Contains(err.Error(), "dependency verification failed") ||
+		!strings.Contains(err.Error(), "GOTOOLCHAIN=local") {
+		t.Errorf("a go directive the installed toolchain cannot satisfy: got report %+v and error %v", rep, err)
 	}
 }
 
