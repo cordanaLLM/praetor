@@ -1,0 +1,3 @@
+type: changed
+title: "Dependencies: update dependency @astrojs/starlight to v0.42.5"
+breaking: false
