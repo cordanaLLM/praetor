@@ -722,8 +722,8 @@ Two bounds apply, and each error says what was counted:
 | 4096 files in one run, files deleted since the revision included | `more than 4096 input files` |
 | 4 MiB for one git listing of a directory | the listing fails with `command output exceeds 4194304 bytes per stream`; it is never cut |
 
-A file reached twice is measured twice: `estimate --base=HEAD docs docs/a.md` prints the row
-of `docs/a.md` two times and adds it to the total two times, as the plain `estimate` does.
+A file reached twice is measured twice: named two times, or named beside its directory, its
+row is printed two times and added to the total two times, as the plain `estimate` does.
 Name each path once.
 
 No row reports a deletion that did not happen:
