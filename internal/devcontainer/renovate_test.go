@@ -45,6 +45,34 @@ type renovateRules struct {
 	AutoReplaceGlobalMatch *bool `json:"autoReplaceGlobalMatch"`
 }
 
+// renovatePackageRule is the typed part of one packageRules entry the CLI pin test reads.
+type renovatePackageRule struct {
+	MatchManagers   []string `json:"matchManagers"`
+	MatchFileNames  []string `json:"matchFileNames"`
+	MatchDepNames   []string `json:"matchDepNames"`
+	AllowedVersions string   `json:"allowedVersions"`
+	RangeStrategy   string   `json:"rangeStrategy"`
+}
+
+// typedPackageRules decodes every package rule into renovatePackageRule, so the tests of this
+// package read renovate.json through one type (readRenovate) and one decode.
+func (r renovateRules) typedPackageRules(t *testing.T) []renovatePackageRule {
+	t.Helper()
+	rules := make([]renovatePackageRule, 0, len(r.PackageRules))
+	for _, raw := range r.PackageRules {
+		data, err := json.Marshal(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var rule renovatePackageRule
+		if err := json.Unmarshal(data, &rule); err != nil {
+			t.Fatal(err)
+		}
+		rules = append(rules, rule)
+	}
+	return rules
+}
+
 func readRenovate(t *testing.T) renovateRules {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join("..", "..", "renovate.json"))

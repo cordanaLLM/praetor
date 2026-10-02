@@ -7,6 +7,8 @@ family "API compatibility" source "tools/apicompat/assets.go" directive "//go:em
 family "template" source "templates/embed.go" directive "//go:embed */*.tmpl"
 family "devcontainer CLI pins" source "internal/devcontainer/cli.go" directive "//go:embed cli/package.json cli/package-lock.json cli/node.json"
   assets ["internal/devcontainer/cli/package.json" "internal/devcontainer/cli/package-lock.json" "internal/devcontainer/cli/node.json"]
+family "reviewed images" source "internal/devcontainer/reviewed_images.go" directive "//go:embed prior-images.json"
+  assets ["internal/devcontainer/prior-images.json"]
 asset tools/markdownlint/verify.mjs true <nil>
 name tools/markdownlint/verify.mjs <nil>
 asset tools/markdownlint/package-lock.json true <nil>

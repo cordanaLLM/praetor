@@ -425,36 +425,11 @@ func rewriteNodePins(t *testing.T, release NodeRelease) {
 	}
 }
 
-// renovateRules is the part of renovate.json that moves the CLI pins.
-type renovateRules struct {
-	CustomManagers []struct {
-		CustomType          string   `json:"customType"`
-		ManagerFilePatterns []string `json:"managerFilePatterns"`
-		MatchStrings        []string `json:"matchStrings"`
-		DepNameTemplate     string   `json:"depNameTemplate"`
-		DatasourceTemplate  string   `json:"datasourceTemplate"`
-	} `json:"customManagers"`
-	PackageRules []struct {
-		MatchManagers   []string `json:"matchManagers"`
-		MatchFileNames  []string `json:"matchFileNames"`
-		MatchDepNames   []string `json:"matchDepNames"`
-		AllowedVersions string   `json:"allowedVersions"`
-		RangeStrategy   string   `json:"rangeStrategy"`
-	} `json:"packageRules"`
-}
-
 // Renovate moves both pins: a regex manager reads the Node version out of cli/node.json from the
 // node-version datasource, held to Node 24, and the npm manager keeps the CLI's exact version and
 // lock together.
 func TestRenovateMovesThePins(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "renovate.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var config renovateRules
-	if err := json.Unmarshal(raw, &config); err != nil {
-		t.Fatal(err)
-	}
+	config := readRenovate(t)
 	pins, err := LoadCLIPins()
 	if err != nil {
 		t.Fatal(err)
@@ -474,7 +449,7 @@ func TestRenovateMovesThePins(t *testing.T) {
 		t.Error("renovate.json has no regex manager reading the Node version out of internal/devcontainer/cli/node.json")
 	}
 	var heldTo24, cliPinned bool
-	for _, rule := range config.PackageRules {
+	for _, rule := range config.typedPackageRules(t) {
 		heldTo24 = heldTo24 || (slices.Contains(rule.MatchDepNames, "node") && slices.Contains(rule.MatchManagers, "custom.regex") &&
 			rule.AllowedVersions == "<25")
 		cliPinned = cliPinned || (slices.Contains(rule.MatchManagers, "npm") && slices.Contains(rule.MatchFileNames, "internal/devcontainer/cli/**") &&
@@ -488,16 +463,7 @@ func TestRenovateMovesThePins(t *testing.T) {
 // renovatePatternsMatch reports whether one of Renovate's /regex/ file patterns matches path.
 func renovatePatternsMatch(t *testing.T, patterns []string, path string) bool {
 	t.Helper()
-	for _, pattern := range patterns {
-		expr, err := regexp.Compile(strings.TrimSuffix(strings.TrimPrefix(pattern, "/"), "/"))
-		if err != nil {
-			t.Fatalf("pattern %q: %v", pattern, err)
-		}
-		if expr.MatchString(path) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(patterns, func(pattern string) bool { return renovatePatternMatches(t, pattern, path) })
 }
 
 // capturesVersion reports whether one of the match strings captures want as currentValue in text.
