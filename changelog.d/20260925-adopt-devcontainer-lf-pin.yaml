@@ -1,0 +1,4 @@
+type: fixed
+title: "Adoption pins .devcontainer/ to LF in .gitattributes, so a CRLF checkout on Windows passes audit"
+issue: "#313"
+breaking: false
