@@ -1,7 +1,8 @@
 // Package strictjson reads one bounded JSON document strictly. It is the one reader for every
 // Praetor input that encoding/json decodes and that must not be reinterpreted on the way in
 // (HISS-19): notebook artifacts, planning drafts, repair configurations, repair provider
-// responses, dogfood repair reports, editor configuration and operational sync derived files.
+// responses, dogfood repair reports, editor configuration, the JSON files a flavor audit
+// validates and operational sync derived files.
 // It performs no I/O. Each caller reads its bytes under its own bound and passes its own bounds
 // and wording through Options.
 //
@@ -17,9 +18,12 @@
 // into one field and the last spelling silently wins. ExactNames narrows the rule for a document
 // whose member names are case-sensitive data decoded into a Go map, which keeps both spellings.
 //
-// Every document is strict JSON today. A JSONC dialect (comments and trailing commas, issue
-// #316) would be one further Options field read by newDecoder, the only place the token source
-// is built; nothing else in the scan depends on the input syntax.
+// A document is strict JSON unless its caller names another Dialect. JSONC (issue #316) adds
+// line comments, block comments and trailing commas for the files VS Code documents as JSON
+// with Comments (DialectOf), and nothing else: newDecoder, the only place the token source is
+// built, hands the scanner the document with those bytes blanked (dialect.go), so every bound
+// and every refusal above applies to a JSONC document exactly as it does to a strict one, and
+// a comment nothing closes is a syntax refusal. No second parser reads either dialect.
 package strictjson
 
 import (
@@ -70,6 +74,7 @@ type Options struct {
 	MaxDepth   int       // array and object nesting accepted; a bound below 1 accepts no container
 	MaxTokens  int       // tokens accepted; below 1 the input length bounds them
 	Names      NameMatch // when two member names of one object are the same name
+	Dialect    Dialect   // the syntax accepted; the zero value is strict JSON
 	RejectNull bool      // refuse every null literal
 	UseNumber  bool      // Decode keeps a number held in an interface value as json.Number
 	Messages   Messages
@@ -107,10 +112,11 @@ func (m Messages) withDefaults() Messages {
 
 // Decode validates raw under opts and decodes it into value with unknown fields disallowed.
 func Decode(raw []byte, value any, opts Options) error {
-	if err := Validate(raw, opts); err != nil {
+	text, err := validate(raw, opts)
+	if err != nil {
 		return err
 	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder := json.NewDecoder(bytes.NewReader(text))
 	decoder.DisallowUnknownFields()
 	if opts.UseNumber {
 		decoder.UseNumber()
@@ -124,39 +130,51 @@ func Decode(raw []byte, value any, opts Options) error {
 // Validate accepts exactly one JSON document that satisfies opts. Every token is read once, so
 // the scan is bounded by MaxTokens, or by the input length when MaxTokens is below 1.
 func Validate(raw []byte, opts Options) error {
+	_, err := validate(raw, opts)
+	return err
+}
+
+// validate is Validate, returning the strict JSON text it accepted: raw itself, or under the
+// JSONC dialect raw with its comments and trailing commas blanked, which is what Decode hands
+// to encoding/json.
+func validate(raw []byte, opts Options) ([]byte, error) {
 	messages := opts.Messages.withDefaults()
 	if len(raw) == 0 || len(raw) > opts.MaxBytes || !utf8.Valid(raw) {
-		return refuse(ErrSize, messages.Size, opts.MaxBytes)
+		return nil, refuse(ErrSize, messages.Size, opts.MaxBytes)
 	}
 	limit := opts.MaxTokens
 	if limit < 1 {
 		limit = len(raw)
 	}
-	s := &scan{raw: raw, opts: opts, messages: messages, decoder: newDecoder(raw)}
+	decoder, text := newDecoder(raw, opts.Dialect)
+	s := &scan{raw: text, opts: opts, messages: messages, decoder: decoder}
 	// One read per accepted token, plus the read that must find the end of input.
 	for i := 0; i <= limit; i++ {
 		token, err := s.decoder.ReadToken()
 		if s.complete {
-			return s.finish(err)
+			return text, s.finish(err)
 		}
 		if err != nil {
-			return s.syntax(err)
+			return nil, s.syntax(err)
 		}
 		if err := s.accept(token); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return refuse(ErrTokens, messages.Count, limit)
+	return nil, refuse(ErrTokens, messages.Count, limit)
 }
 
-// newDecoder builds the token source of one scan. Duplicate names are left to the scan, which
-// applies the caller's NameMatch; invalid UTF-8 and unpaired surrogate escapes stay refused.
-func newDecoder(raw []byte) *jsontext.Decoder {
-	return jsontext.NewDecoder(bytes.NewReader(raw), jsontext.AllowDuplicateNames(true))
+// newDecoder builds the token source of one scan and returns it with the strict JSON text it
+// reads, which is raw unless dialect blanks part of it (Dialect.strict). Duplicate names are
+// left to the scan, which applies the caller's NameMatch; invalid UTF-8 and unpaired surrogate
+// escapes stay refused.
+func newDecoder(raw []byte, dialect Dialect) (*jsontext.Decoder, []byte) {
+	text := dialect.strict(raw)
+	return jsontext.NewDecoder(bytes.NewReader(text), jsontext.AllowDuplicateNames(true)), text
 }
 
 type scan struct {
-	raw      []byte
+	raw      []byte // the strict JSON text the decoder reads
 	opts     Options
 	messages Messages
 	decoder  *jsontext.Decoder

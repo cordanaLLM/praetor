@@ -32,19 +32,31 @@ func TestResolveExisting_Positive_JSONMergeNamesAddedMembers(t *testing.T) {
 	}
 }
 
-// Negative: a JSONC file, and any other file that is not strict JSON, is refused with
-// ErrExistingJSONInvalid; a conflicting managed value is refused without it, so a caller can
-// tell a file it may never re-encode from one whose value the operator must reconcile.
+// Negative: a file that is not a valid document in the dialect its editor reads it in is
+// refused with ErrExistingJSONInvalid: comments and trailing commas outside .vscode, and in a
+// .vscode file what JSON with Comments does not add; a conflicting managed value is refused
+// without it, so a caller can tell a file it may never re-encode from one whose value the
+// operator must reconcile.
 func TestResolveExisting_Negative_UnmergeableJSONIsRefused(t *testing.T) {
 	file := GeneratedFile{Path: ".vscode/settings.json", Editor: EditorVSCode, Content: `{"managed":1}` + "\n"}
-	for name, existing := range map[string]string{
-		"jsonc comment":  "// adopter note\n{\"managed\":1}\n",
-		"trailing comma": `{"managed":1,}`,
-		"duplicate key":  `{"x":1,"x":2}`,
+	zed := GeneratedFile{Path: ".zed/settings.json", Editor: EditorZed, Content: file.Content}
+	for _, tc := range []struct {
+		name     string
+		file     GeneratedFile
+		existing string
+	}{
+		{"duplicate key", file, `{"x":1,"x":2}`},
+		{"duplicate key under a comment", file, "{\"x\":1, // first\n\"x\":2}"},
+		{"unterminated block comment", file, `{"managed":1 /* note }`},
+		{"comment only", file, "// nothing configured\n"},
+		{"strict path, line comment", zed, "// adopter note\n{\"managed\":1}\n"},
+		{"strict path, block comment", zed, `{/* adopter note */"managed":1}`},
+		{"strict path, trailing comma", zed, `{"managed":1,}`},
+		{"strict path, duplicate key", zed, `{"x":1,"x":2}`},
 	} {
-		_, err := ResolveExisting(file, []byte(existing), true)
-		if !errors.Is(err, ErrExistingJSONInvalid) || !strings.Contains(err.Error(), file.Path) {
-			t.Errorf("%s: err = %v, want ErrExistingJSONInvalid naming %s", name, err, file.Path)
+		_, err := ResolveExisting(tc.file, []byte(tc.existing), true)
+		if !errors.Is(err, ErrExistingJSONInvalid) || !strings.Contains(err.Error(), tc.file.Path) {
+			t.Errorf("%s: err = %v, want ErrExistingJSONInvalid naming %s", tc.name, err, tc.file.Path)
 		}
 	}
 	_, err := ResolveExisting(file, []byte(`{"managed":2}`), true)

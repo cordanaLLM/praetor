@@ -130,12 +130,14 @@ func TestAdopt_Positive_ForceMergesEditorJSONKeepingAdopterKeys(t *testing.T) {
 	}
 }
 
-// Negative: under --force a conflicting managed value and a JSONC file are kept byte for byte,
-// each with a warning naming why, and adoption finishes without an error.
+// Negative: under --force a conflicting managed value and a commented .vscode file that lacks
+// managed values are kept byte for byte, each with a warning naming why, and adoption finishes
+// without an error. VS Code reads the commented file as JSON with Comments, so the warning is
+// not that it is invalid: it is that a merge rewrites the file and would lose the comment (#316).
 func TestAdopt_Negative_ForceKeepsUnmergeableEditorJSON(t *testing.T) {
 	conflict := "{\n  \"standards.sentinel.headroomMB\": 512\n}\n"
-	jsonc := "{\n  // adopter note\n  \"recommendations\": []\n}\n"
-	files := map[string]string{".vscode/settings.json": conflict, ".vscode/extensions.json": jsonc}
+	jsonc := "{\n  // adopter note\n  \"version\": \"2.0.0\"\n}\n"
+	files := map[string]string{".vscode/settings.json": conflict, ".vscode/tasks.json": jsonc}
 	repoPath, rep := adoptEditorsFixture(t, "editor-conflict", "vscode", files, true)
 	for rel, content := range files {
 		if got := mustRead(t, filepath.Join(repoPath, filepath.FromSlash(rel))); got != content {
@@ -148,15 +150,17 @@ func TestAdopt_Negative_ForceKeepsUnmergeableEditorJSON(t *testing.T) {
 	if !hasWarningContaining(rep, `.vscode/settings.json: kept unchanged`) || !hasWarningContaining(rep, "conflicts with the existing value") {
 		t.Errorf("conflict must be warned about, got %v", rep.Warnings)
 	}
-	if !hasWarningContaining(rep, ".vscode/extensions.json: kept unchanged, not verified: it is not strict JSON") ||
-		!hasWarningContaining(rep, "Make it strict JSON") || hasWarningContaining(rep, "by hand") {
-		t.Errorf("JSONC file must be warned about with advice that clears it, got %v", rep.Warnings)
+	if !hasWarningContaining(rep, ".vscode/tasks.json: kept unchanged, not verified: it carries comments or trailing commas, which a merge would lose") ||
+		!hasWarningContaining(rep, `lacks the managed values "/tasks"`) || !hasWarningContaining(rep, "Add them by hand") ||
+		hasWarningContaining(rep, "strict JSON") {
+		t.Errorf("commented file must be warned about with the values it lacks and advice that keeps its comments, got %v", rep.Warnings)
 	}
 
 	// The advice clears each warning: with the comment removed and the conflicting value set to
 	// the managed one, --force keeps neither file with a warning, merging what settings.json
-	// still lacks, and `editors verify` passes both.
-	mustWrite(t, filepath.Join(repoPath, ".vscode", "extensions.json"), "{\n  \"recommendations\": []\n}\n")
+	// still lacks, and `editors verify` passes both. Adding the values by hand instead keeps the
+	// comment (TestAdopt_Positive_CommentedVSCodeFilesInSyncAreVerified).
+	mustWrite(t, filepath.Join(repoPath, ".vscode", "tasks.json"), "{\n  \"version\": \"2.0.0\"\n}\n")
 	mustWrite(t, filepath.Join(repoPath, ".vscode", "settings.json"), "{\n  \"standards.sentinel.headroomMB\": 1024\n}\n")
 	rep, err := Adopt(context.Background(), editorAdoptOptions(t, repoPath, true, false))
 	if err != nil {
@@ -171,7 +175,7 @@ func TestAdopt_Negative_ForceKeepsUnmergeableEditorJSON(t *testing.T) {
 		t.Errorf("settings.json must merge its missing managed values: %v", rep.ActionDetails)
 	}
 	verification, err := verifyEditors(t, repoPath, []string{editor.EditorVSCode})
-	if err != nil || !slices.Contains(verification.Verified, ".vscode/extensions.json") ||
+	if err != nil || !slices.Contains(verification.Verified, ".vscode/tasks.json") ||
 		!slices.Contains(verification.Verified, ".vscode/settings.json") {
 		t.Errorf("editors verify after following the advice: %v %+v", err, verification)
 	}

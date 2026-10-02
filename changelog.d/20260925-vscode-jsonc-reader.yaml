@@ -1,0 +1,4 @@
+type: fixed
+title: flavor audit no longer reports a commented .vscode/settings.json as an invalid setting
+issue: "#316"
+breaking: true

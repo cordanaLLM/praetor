@@ -291,6 +291,29 @@ managed requirements. A conflicting managed value is reported for review.
 Verification checks those requirements rather than requiring every JSON byte to
 match a generated template.
 
+An existing JSON file is read in the format its editor documents for it. VS Code
+reads `.vscode/settings.json`, `.vscode/extensions.json`, `.vscode/launch.json` and
+`.vscode/tasks.json` as
+[JSON with Comments](https://code.visualstudio.com/docs/languages/json), so in those
+four files `//` comments, `/* */` comments and a trailing comma are accepted. Every
+other JSON editor file (`.zed`, `.fleet`, `.sublime-project`) is strict JSON, and a
+comment there is a syntax error. The rule is `DialectOf` in
+[`internal/strictjson/dialect.go`](https://github.com/cordanaLLM/praetor/blob/main/internal/strictjson/dialect.go);
+the flavor audit applies the same rule to `.vscode/settings.json`
+([onboarding](onboarding.md)). In both formats a duplicate key is refused.
+
+- **A commented file that holds every managed value is in sync.** `editors generate`
+  reports it `PRESENT` and leaves its bytes alone, and `editors verify` passes it.
+- **A commented file that lacks a managed value is never rewritten.** A merge decodes
+  the file and writes it again, which would delete every comment. `editors generate`
+  stops before it writes any file with
+  `cannot safely merge existing <path>: it carries comments or trailing commas, which a merge would lose because it rewrites the file`,
+  followed by the JSON Pointer of each managed value the file lacks. Add those values
+  by hand, or remove the comments and trailing commas and generate again.
+
+Tests: `internal/editor/jsonc_test.go` and `TestRunEditors_Boundary_CommentedVSCodeFiles`
+in `cmd/standardsctl/vscode_jsonc_cli_test.go`.
+
 Known legacy Go, unavailable LSP, unpublished extension and invented build-task
 settings are reported as conflicts when they are no longer supported by the
 resolved plan. They are retained for review; automatic migration of legacy
@@ -333,7 +356,8 @@ them unchanged:
 | identical (CRLF line endings included), or JSON holding every managed value | verified | verified |
 | developer-owned and different | preserved | preserved |
 | JSON missing managed values | kept; the warning names each one as a JSON Pointer, such as `"/standards.sentinel.headroomMB"` | merged: every adopter key and list entry stays, the managed values are added, and the report lists a `merge` |
-| JSON adoption cannot merge: JSONC comments or a trailing comma, a duplicate key, a conflicting managed value | kept, with a warning naming the reason and the fix | kept, with a warning; adoption continues |
+| `.vscode` JSON missing managed values and carrying comments or a trailing comma | kept; the warning names the values to add by hand | kept, with the same warning: a merge would lose the comments |
+| JSON adoption cannot merge: a duplicate key, a conflicting managed value, or outside `.vscode` a comment or a trailing comma | kept, with a warning naming the reason and the fix | kept, with a warning; adoption continues |
 | any other file that differs, such as `lua/standards.lua` | kept, with a warning and the line delta regenerating would apply | kept, with a warning |
 
 A merge re-indents the file with two spaces and sorts its keys. Its report entry
@@ -346,13 +370,18 @@ How a kept file stops warning depends on what it is:
   from the template for the repository's adopted profile. `praetorctl editors generate`
   is no substitute here: it renders the framework profile whatever profile adoption
   selected, so for another profile it rewrites files adoption had verified.
-- **JSONC comments, a trailing comma or a duplicate key.** Adoption and
-  `praetorctl editors verify` read strict JSON only, so such a file never verifies,
-  even when it holds every managed value. `praetorctl editors generate` refuses it
-  too: it stops with `cannot safely merge existing <path>` before it writes any file.
-  Remove the comments, trailing commas and duplicate keys, then re-run adoption with
-  `--force` to merge the managed values; or delete the file and re-run adoption to
-  regenerate it.
+- **A `.vscode` file with comments or a trailing comma that lacks managed values.**
+  Adoption reads the file as JSON with Comments ([existing configuration](#existing-configuration))
+  and keeps it, `--force` included, because merging would rewrite it without its
+  comments. Add the values the warning names by hand and re-run adoption, which then
+  verifies the file with its comments in place; or remove the comments and trailing
+  commas and re-run adoption with `--force` to merge the values.
+- **A duplicate key, or a comment or trailing comma outside `.vscode`.** Such a file is
+  not valid in the format adoption and `praetorctl editors verify` read it in, so it
+  never verifies, even when it holds every managed value. `praetorctl editors generate`
+  refuses it too: it stops with `cannot safely merge existing <path>` before it writes
+  any file. Remove what the warning names, then re-run adoption with `--force` to merge
+  the managed values; or delete the file and re-run adoption to regenerate it.
 - **A conflicting managed value.** `praetorctl editors generate` refuses it the same
   way. Set the value the warning names to the managed one, then re-run adoption with
   `--force`; or delete the file and re-run adoption.
@@ -361,7 +390,7 @@ Onboarding
 (`internal/harvester/onboard.go`) skips every existing developer-owned file through
 the same `IsPreservedEditorFile`.
 
-Tests: `internal/adopt/editor_files_test.go`,
+Tests: `internal/adopt/editor_files_test.go`, `internal/adopt/editor_jsonc_test.go`,
 `internal/editor/resolve_existing_test.go` and
 `TestOnboardRepository_Boundary_KeepsDeveloperOwnedNvimLua` in
 `internal/harvester/onboard_selection_test.go`.
