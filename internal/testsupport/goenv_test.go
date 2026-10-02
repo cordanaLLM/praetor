@@ -43,6 +43,10 @@ func hostileGoEnvironment(t *testing.T) {
 	t.Setenv("GOFLAGS", "-mod=vendor")
 	t.Setenv("GOWORK", filepath.Join(t.TempDir(), "no-such-go.work"))
 	t.Setenv("GONOSUMDB", "example.invalid")
+	// The case that runs go with this inherited environment asks for a toolchain no machine
+	// has; go then creates a download lock below the module cache. A cache of the test's own
+	// keeps that out of the developer's.
+	t.Setenv("GOMODCACHE", t.TempDir())
 }
 
 // dependencyFreeModule writes a go.mod that names no go version and requires nothing, so no
@@ -117,6 +121,11 @@ func TestOfflineGoEnv_Boundary_EnvironmentContents(t *testing.T) {
 	set := map[string]string{}
 	for _, entry := range OfflineGoEnv(t) {
 		key, value, _ := strings.Cut(entry, "=")
+		if key == "" {
+			// Windows keeps each drive's working directory as a hidden entry ("=C:=C:\\dir"),
+			// and os.Environ returns them; they are not variables a caller sets.
+			continue
+		}
 		if _, dup := set[key]; dup {
 			t.Errorf("%s is set twice", key)
 		}

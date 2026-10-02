@@ -237,9 +237,12 @@ func TestPrefetchDependencies_RealToolchain(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skipf("go is not on PATH; this case exists to run the real go command: %v", err)
 	}
+	// The offline environment is the host's filtered one plus its own settings, and a command
+	// environment is bounded (util.WithCommandEnvironment). A host that exports more variables
+	// than the bound cannot run this case; say so rather than fail on the host's shell.
 	ctx, err := util.WithCommandEnvironment(t.Context(), testsupport.OfflineGoEnv(t))
 	if err != nil {
-		t.Fatalf("offline Go environment: %v", err)
+		t.Skipf("the host environment does not fit a bounded command environment: %v", err)
 	}
 
 	// Positive: go mod verify and go mod download succeed, and leave the manifest alone.
