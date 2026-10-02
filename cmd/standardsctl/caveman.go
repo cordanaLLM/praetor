@@ -24,7 +24,8 @@ const (
 		"       praetorctl caveman check --root=. --configured-sources [--max-words=N] [--max-tokens=N]\n" +
 		"       praetorctl caveman floor <before> <after>\n" +
 		"       praetorctl caveman compress [--stats|--in-place] <file|dir|-> [...]\n" +
-		"       praetorctl caveman estimate <file|dir|-> [...]"
+		"       praetorctl caveman estimate <file|dir|-> [...]\n" +
+		"       praetorctl caveman estimate --base=<git-rev> <file|dir> [...]"
 	// maxCavemanFiles bounds the files one invocation reads, directories expanded (HISS-02).
 	maxCavemanFiles = 4096
 	// maxPrintedFindings bounds the findings printed per file; the count line says how many
@@ -548,9 +549,19 @@ func cavemanFloor(ctx context.Context, args []string, stdin io.Reader, out io.Wr
 	return nil
 }
 
-// cavemanEstimate prints bytes, lines and estimated tokens per input and in total.
+// cavemanEstimate prints bytes, lines and estimated tokens per input and in total. With
+// --base=<rev> it compares each path with that git revision instead (cavemanEstimateBase).
 func cavemanEstimate(ctx context.Context, args []string, stdin io.Reader, out io.Writer) error {
-	inputs, err := readCavemanInputs(ctx, args, stdin)
+	fset := flag.NewFlagSet("caveman estimate", flag.ContinueOnError)
+	base := fset.String("base", "", "Git revision to compare each path with: prints before, after and difference per file and in total")
+	paths, err := parseInterspersed(fset, args)
+	if err != nil {
+		return err
+	}
+	if visitedFlags(fset)["base"] {
+		return cavemanEstimateBase(ctx, *base, paths, out)
+	}
+	inputs, err := readCavemanInputs(ctx, paths, stdin)
 	if err != nil {
 		return err
 	}

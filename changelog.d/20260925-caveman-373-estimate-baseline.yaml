@@ -1,0 +1,4 @@
+type: added
+title: "praetorctl caveman estimate --base=<rev> compares each path with a git revision and prints before, after and difference per file and in total"
+issue: "#373"
+breaking: false

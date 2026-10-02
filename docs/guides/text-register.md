@@ -401,6 +401,7 @@ praetorctl caveman check --kind=message candidate-note.md
 praetorctl caveman floor AGENTS.md AGENTS.caveman.md
 praetorctl caveman compress --stats AGENTS.md
 praetorctl caveman estimate AGENTS.md
+praetorctl caveman estimate --base=origin/main AGENTS.md .agents/
 ```
 
 `check` prints one summary line per input, then its findings as `<path>:<line> <rule>:
@@ -699,6 +700,38 @@ The command is `cavemanCompress` in `cmd/standardsctl/caveman_compress.go`; its 
 estimator. The SARIF distillation in `internal/lockdown` and the package-docs distiller in
 `internal/docdistill` call it, and `praetorctl caveman estimate` prints it per input and in
 total.
+
+#### Measuring a rewrite against a git revision
+
+`estimate --base=<rev>` answers what a rewrite saved: it measures each path at the revision
+and in the working tree and prints before, after and the signed difference per file and in
+total, under the keys of the plain line. The fixture of `TestCavemanEstimateBasePositive` in
+`cmd/standardsctl/caveman_baseline_test.go` reports:
+
+```text
+base: main = <40-digit commit>
+docs/edited.md: bytes=23->11 (-12) lines=1->1 (+0) tokens_est=5->2 (-3)
+docs/gone.md: bytes=30->0 (-30) lines=2->0 (-2) tokens_est=7->0 (-7) worktree=absent
+docs/kept.md: bytes=14->14 (+0) lines=1->1 (+0) tokens_est=3->3 (+0)
+docs/new.md: bytes=0->10 (+10) lines=0->1 (+1) tokens_est=0->2 (+2) base=absent
+docs/old/x.md: bytes=4->0 (-4) lines=1->0 (-1) tokens_est=2->0 (-2) worktree=absent
+total: inputs=5 bytes=71->35 (-36) tokens_est=17->7 (-10) base_absent=1 worktree_absent=2
+```
+
+| Input | Behaviour |
+| :--- | :--- |
+| `<rev>` | any revision that names a commit: a branch, a tag, `HEAD~1`, an object id. It is resolved once, in the repository of the first path, and the first line prints the commit, so every read sees one tree. A revision with a shell metacharacter (`HEAD@{1}`) or a leading `-` is refused (`util.ValidateExecArg`) |
+| a file | measured on both sides. On one side only it is a row ending in `base=absent` or `worktree=absent`, the missing side counted as zero; on neither side it is an error, so a typo is never a row |
+| a directory | the union of the Markdown files below it in the working tree and at the revision, in lexical order, so a file or a whole subdirectory deleted since the revision is still reported |
+| `-` | an error: standard input has no revision |
+
+A renamed file is two rows, the old path `worktree=absent` and the new one `base=absent`. The
+base side is read from git as stored (`git ls-tree`, `git cat-file blob`) through
+`util.RunGitProbe`, each call under its 5 s bound and the command under the 30 s bound of
+`contextopt.MaxDuration`; a blob above 1 MiB or one that is not UTF-8 is an error, as it is
+for a working-tree file. On a checkout that converts line ends, the working-tree bytes include
+the carriage returns the stored blob lacks; the token estimate counts words and is unaffected.
+The implementation is `cavemanEstimateBase` in `cmd/standardsctl/caveman_baseline.go`.
 
 ### Surfaces
 
