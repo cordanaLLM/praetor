@@ -2,8 +2,8 @@
 # SPDX-FileCopyrightText: 2026 Lusoris <lusoris@proton.me>
 #
 # actionlint carries a hard-coded table of GitHub-hosted runner labels
-# (rule_runner_label.go) and rejects anything absent from it. Measured against the
-# actionlint on PATH (v1.7.12) by deleting this file and re-running it:
+# (rule_runner_label.go) and rejects anything absent from it. Measured against
+# actionlint v1.7.12 by deleting this file and re-running it:
 #
 #   .../ci.yml:26:14: label "ubuntu-26.04" is unknown. available labels are
 #   ... "ubuntu-24.04", ... "macos-26-intel", ... "macos-26", ...
@@ -15,10 +15,12 @@
 # names self-hosted-runner.labels itself; actionlint offers no other way to teach it a
 # label, and the declaration suppresses nothing else.
 #
-# .config/lefthook/scripts/checks.py invokes whatever actionlint is on PATH, so the
-# version above is a measurement, not a pin. That gap is issue #343, which covers all
-# four unpinned hook linters (actionlint, shellcheck, hadolint, yamllint); it is not
-# fixed here. Wherever actionlint is on PATH, TestActionlintStillRejectsTheDeclaredLabels
+# That release is the floor .config/lefthook/tool-floors.txt declares for actionlint,
+# and the hook refuses an older one before it runs (scripts/toolchain.py, #343), so the
+# measurement holds for every actionlint a commit or push here is checked with.
+# TestInstalledHookLintersSatisfyTheDeclaredFloors (internal/forge) fails when this
+# header and the floor name different releases. A newer release passes the floor:
+# wherever actionlint is on PATH, TestActionlintStillRejectsTheDeclaredLabels
 # (internal/adopt/actionlint_test.go) re-runs the measurement on every workflow adoption
 # writes and fails once actionlint knows ubuntu-26.04; then upstream has shipped the
 # label, and this file can go once no other workflow here needs it. Adopting

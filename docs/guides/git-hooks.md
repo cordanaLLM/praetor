@@ -3,7 +3,8 @@
 Install Lefthook 2.1.14 or newer, then run `make hooks` and `make hooks-check`.
 The configuration is tested with 2.1.14. Python 3, Git and the repository Go
 version are required. Install `yamllint`, `shellcheck`, `actionlint` and `hadolint`
-when editing their file types; applicable checks fail if their tool is missing.
+when editing their file types; applicable checks fail if their tool is missing
+or older than its floor ([linter version floors](#linter-version-floors)).
 Strict source pushes also require `gosec`, `govulncheck` and `semgrep`. Golangci-lint runs
 from source using the existing repository `@latest` policy. `tools/go/go.mod` pins `gosec`,
 `govulncheck` and `gitleaks` as tool directives, which Renovate keeps current: `make sec`,
@@ -150,6 +151,42 @@ publish only reviewed, sanitized documentation under `docs/`.
 The root `.dockerignore` also excludes this directory and Git history from local
 container builds; Docker applies its [build-context ignore rules](https://docs.docker.com/build/concepts/context/#dockerignore-files)
 separately from Git.
+
+## Linter version floors
+
+`shellcheck`, `actionlint`, `hadolint` and `yamllint` run by name from `PATH`, so the hook
+holds each to a version floor instead of trusting whichever build is installed.
+`.config/lefthook/tool-floors.txt` declares the floors, one `tool>=version` line per linter
+in the shape of the `requirements` files beside it, and each line's comment names where its
+version comes from.
+
+Before any linter runs, `file_checks` (`.config/lefthook/scripts/checks.py`) passes the
+linters with files to check to `require_floors` (`.config/lefthook/scripts/toolchain.py`),
+which reads each one's `--version` in one process bounded to 30 seconds. The commit or push
+is refused, with the required version and the floors file named, when a linter:
+
+- is not installed or does not start;
+- prints no version the policy reads, such as an `actionlint` built from an untagged
+  checkout, which prints `(devel)`;
+- is older than its floor.
+
+A newer release passes: a floor is the oldest version the tree's verdict is known to hold
+with, not a pin. A linter is probed only when a file of its type is staged or pushed, so a
+missing `hadolint` blocks a commit that stages a `Dockerfile` and no other. A linter the hook
+runs without a declared floor fails the same way, as does a floors file that is unreadable
+or holds a line that is not a requirement.
+
+```text
+praetor hooks: shellcheck >= 0.11.0 is required (.config/lefthook/tool-floors.txt): the shellcheck on PATH is 0.9.0
+```
+
+The `ToolFloors` cases in `.config/lefthook/scripts/test_hooks.py` cover each outcome and
+replay the version readers against the linters installed on the host.
+`TestInstalledHookLintersSatisfyTheDeclaredFloors` (`internal/forge/hook_tool_floor_guard_test.go`)
+fails when the `yamllint` pin in `.config/hook-lint/requirements.in` or the `shellcheck`
+release `.github/workflows/portability.yml` installs falls below its floor, or when
+`.github/actionlint.yaml` measures against another `actionlint` release than the floor.
+To raise a floor, change its line together with the source its comment names.
 
 ## The lefthook.yml adoption writes
 

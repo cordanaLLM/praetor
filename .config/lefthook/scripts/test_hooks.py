@@ -23,12 +23,14 @@ from common import (HookError, MANAGED_PROCESS_ENV, MAX_PROCESS_ENV_ENTRIES,
 from checks import (go_packages, source_checks, governance_commands, context_changed,
                     audit_scope, local_package_patterns, checkpoint_checks,
                     semgrep_commands, is_fixture, is_chart_template, file_checks, gofmt_check,
+                    lint_commands,
                     run_full_gate, gate_timeout, FIXTURE_DIRECTORY, GATE_LAUNCH_MARGIN,
                     GATE_QUERY_TIMEOUT, SEMGREP_LANGUAGE_EXTENSIONS, SEMGREP_SUFFIXES)
 import hooks
 from hooks import push_updates, new_branch_base, pre_push, push_check_mode, prepare_message
 from privacy import check_private_history, check_private_index
 import sandbox
+import toolchain
 
 ROOT = Path(__file__).resolve().parents[3]
 RUNNER = Path(".config/lefthook/scripts/hooks.py")
@@ -1412,7 +1414,9 @@ class ScopeAndGuard(unittest.TestCase):
         reads the scheduled argv, so dropping the exclusion from the comprehension
         fails here rather than passing unnoticed.
         """
-        with mock.patch("checks.parallel") as scheduled:
+        # The version probe is ToolFloors' subject; here only the scheduled argv is read, so
+        # the case holds on a host without yamllint.
+        with mock.patch("checks.parallel") as scheduled, mock.patch("checks.require_floors"):
             file_checks(root, names)
         self.assertEqual(scheduled.call_count, 1)
         commands, directory = scheduled.call_args.args
@@ -2297,6 +2301,171 @@ class InstallRefresh(unittest.TestCase):
                 mock.patch("hooks.refresh_install") as install:
             hooks.post_stage("post-checkout", ["a" * 40, "b" * 40, "1"])
             install.assert_not_called()
+
+
+# What each floored linter prints for --version, verbatim from a release build.
+VERSION_REPORTS = {
+    "actionlint": b"v1.7.12\ninstalled by building from source\n"
+                  b"built with go1.26.4 compiler for linux/amd64\n",
+    "hadolint": b"Haskell Dockerfile Linter 2.14.0\n",
+    "shellcheck": b"ShellCheck - shell script analysis tool\nversion: 0.11.0\n"
+                  b"license: GNU General Public License, version 3\n",
+    "yamllint": b"yamllint 1.38.0\n",
+}
+# One staged path per floored linter, in the order lint_commands schedules them.
+LINTED_PATHS = {"shellcheck": "run.sh", "actionlint": ".github/workflows/ci.yml",
+                "hadolint": "Dockerfile", "yamllint": "config.yaml"}
+
+
+class ToolFloors(unittest.TestCase):
+    """The hook linters are held to the floors declared in tool-floors.txt (#343)."""
+
+    def reports(self, **overrides):
+        """A stand-in for toolchain.run that answers --version from VERSION_REPORTS."""
+        answers = {**VERSION_REPORTS, **overrides}
+
+        def process(argv, **settings):
+            self.assertEqual(argv[1:], ["--version"])
+            self.assertEqual(settings["timeout"], toolchain.VERSION_TIMEOUT)
+            answer = answers[argv[0]]
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+        return mock.patch("toolchain.run", side_effect=process)
+
+    def staged(self, root, tools):
+        for tool in tools:
+            path = root / LINTED_PATHS[tool]
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("a: b\n", encoding="utf-8")
+        return [LINTED_PATHS[tool] for tool in tools]
+
+    def test_declared_floors_cover_exactly_the_linters_the_hook_runs(self):
+        floors = toolchain.tool_floors()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            commands = lint_commands(root, self.staged(root, LINTED_PATHS))
+        scheduled = [command[0] for command in commands]
+        self.assertEqual(scheduled, list(LINTED_PATHS))
+        self.assertEqual(sorted(floors), sorted(scheduled))
+        self.assertEqual(sorted(toolchain.VERSION_OUTPUT), sorted(scheduled))
+        for tool, floor in floors.items():
+            self.assertRegex(floor, r"^\d+\.\d+\.\d+$", tool)
+
+    def test_floor_lines_parse_with_comments_and_blanks(self):
+        text = "# header\n\nshellcheck>=0.11.0  # trailing\n  yamllint>=1.38\r\n"
+        self.assertEqual(toolchain.parse_floors(text), {"shellcheck": "0.11.0", "yamllint": "1.38"})
+        self.assertEqual(toolchain.parse_floors(""), {})
+        boundary = "\n" * (toolchain.MAX_FLOOR_LINES - 1) + "hadolint>=2.14.0"
+        self.assertEqual(toolchain.parse_floors(boundary), {"hadolint": "2.14.0"})
+
+    def test_malformed_floor_lines_are_refused_with_their_line(self):
+        cases = {"shellcheck==0.11.0\n": ":1:", "\nshellcheck\n": ":2:",
+                 "shellcheck>=0.11.0\nshellcheck>=0.12.0\n": ":2:",
+                 "shellcheck >= 0.11.0\n": ":1:", "shellcheck>=v0.11.0\n": ":1:"}
+        for text, where in cases.items():
+            with self.subTest(text=text), self.assertRaises(HookError) as refused:
+                toolchain.parse_floors(text)
+            self.assertIn(toolchain.FLOORS_NAME + where, str(refused.exception))
+        with self.assertRaisesRegex(HookError, "more than"):
+            toolchain.parse_floors("\n" * (toolchain.MAX_FLOOR_LINES + 1))
+
+    def test_unreadable_floors_fail_the_hook(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch("toolchain.FLOORS", Path(directory) / "absent.txt"), \
+                self.assertRaisesRegex(HookError, "cannot read the tool floors"):
+            toolchain.require_floors(["shellcheck"])
+
+    def test_versions_compare_as_numbers(self):
+        self.assertFalse(toolchain.below("0.11.0", "0.11.0"))
+        self.assertFalse(toolchain.below("1.7", "1.7.0"))
+        self.assertFalse(toolchain.below("0.11.0", "0.9.0"))
+        self.assertTrue(toolchain.below("0.9.0", "0.11.0"))
+        self.assertTrue(toolchain.below("1.7.11", "1.7.12"))
+        self.assertTrue(toolchain.below("1.7", "1.7.1"))
+        self.assertFalse(toolchain.below("2.0", "1.38.0"))
+
+    def test_each_linter_states_the_version_the_policy_reads(self):
+        with self.reports():
+            for tool, floor in toolchain.tool_floors().items():
+                with self.subTest(tool=tool):
+                    self.assertEqual(toolchain.installed_version(tool), floor)
+        with self.assertRaisesRegex(HookError, "no --version reader"):
+            toolchain.installed_version("gofmt")
+
+    def test_a_build_that_states_no_version_is_refused(self):
+        # An untagged actionlint build prints "(devel)" and names the Go release it was
+        # built with; reading that as its own version would pass any floor.
+        devel = b"(devel)\ninstalled by building from source\nbuilt with go1.26.4 compiler\n"
+        with self.reports(actionlint=devel, hadolint=b"Haskell Dockerfile Linter UNKNOWN\n"):
+            for tool in ("actionlint", "hadolint"):
+                with self.subTest(tool=tool), \
+                        self.assertRaisesRegex(HookError, "states no version"):
+                    toolchain.installed_version(tool)
+
+    def test_a_linter_below_its_floor_fails_with_the_required_version(self):
+        old = {"actionlint": b"v1.7.11\n", "shellcheck": b"version: 0.9.0\n"}
+        with self.reports(**old), self.assertRaises(HookError) as refused:
+            toolchain.require_floors(list(LINTED_PATHS))
+        message = str(refused.exception)
+        self.assertIn("actionlint >= 1.7.12 is required (.config/lefthook/tool-floors.txt): "
+                      "the actionlint on PATH is 1.7.11", message)
+        self.assertIn("shellcheck >= 0.11.0 is required", message)
+        self.assertIn("the shellcheck on PATH is 0.9.0", message)
+        self.assertNotIn("hadolint", message)
+        self.assertNotIn("yamllint", message)
+
+    def test_a_linter_at_or_above_its_floor_passes(self):
+        newer = {"hadolint": b"Haskell Dockerfile Linter 2.15.1\n", "yamllint": b"yamllint 2.0\n"}
+        with self.reports(**newer) as process:
+            toolchain.require_floors(list(LINTED_PATHS))
+        self.assertEqual(process.call_count, len(LINTED_PATHS))
+        with self.reports() as process:
+            toolchain.require_floors([])
+        process.assert_not_called()
+
+    def test_a_missing_linter_fails_with_the_required_version(self):
+        missing = HookError("hadolint: [Errno 2] No such file or directory: 'hadolint'")
+        with self.reports(hadolint=missing), self.assertRaises(HookError) as refused:
+            toolchain.require_floors(["hadolint"])
+        self.assertIn("hadolint >= 2.14.0 is required", str(refused.exception))
+        self.assertIn("No such file or directory", str(refused.exception))
+        with self.assertRaisesRegex(HookError, "gofmt: no version floor declared"):
+            toolchain.require_floors(["gofmt"])
+
+    def test_file_checks_settles_the_floor_before_any_linter_runs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            names = self.staged(root, ["shellcheck", "yamllint"])
+            with self.reports(shellcheck=b"version: 0.10.0\n") as process, \
+                    mock.patch("checks.parallel") as scheduled, \
+                    self.assertRaisesRegex(HookError, "shellcheck >= 0.11.0 is required"):
+                file_checks(root, names)
+            scheduled.assert_not_called()
+            self.assertEqual([call.args[0][0] for call in process.call_args_list],
+                             ["shellcheck", "yamllint"])
+            with self.reports(), mock.patch("checks.parallel") as scheduled:
+                file_checks(root, names)
+            self.assertEqual([command[0] for command in scheduled.call_args.args[0]],
+                             ["shellcheck", "yamllint"])
+            # Boundary: no file of a linter's type staged, no probe of that linter.
+            (root / "notes.txt").write_text("plain\n", encoding="utf-8")
+            with self.reports() as process, mock.patch("checks.parallel"):
+                file_checks(root, ["notes.txt"])
+            process.assert_not_called()
+
+    def test_installed_linters_state_a_readable_version(self):
+        """Replay the readers against the real tools on this host; an absent one is named."""
+        absent = []
+        for tool in toolchain.tool_floors():
+            if shutil.which(tool) is None:
+                absent.append(tool)
+                continue
+            with self.subTest(tool=tool):
+                self.assertRegex(toolchain.installed_version(tool), r"^\d+(\.\d+)+$")
+        if len(absent) == len(toolchain.VERSION_OUTPUT):
+            self.skipTest("none of " + ", ".join(absent) + " is on PATH; the readers are "
+                          "replayed against recorded --version output instead")
 
 
 if __name__ == "__main__":

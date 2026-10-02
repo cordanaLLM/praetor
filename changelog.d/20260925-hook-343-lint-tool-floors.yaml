@@ -1,0 +1,4 @@
+type: fixed
+title: Git hooks ran shellcheck, actionlint, hadolint and yamllint at whatever version was on PATH; each is now refused below the floor declared in .config/lefthook/tool-floors.txt
+issue: "#343"
+breaking: true

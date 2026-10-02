@@ -8,6 +8,7 @@ import re
 
 from common import HookError, clean_env, paths, present_files, resolved_relative_to, run
 from privacy import PRIVATE_STATE_ERROR
+from toolchain import require_floors
 
 GO_CONFIG = {"go.mod", "go.sum", "go.work", "go.work.sum", "Makefile",
              ".golangci.yml", ".gosec.json"}
@@ -148,25 +149,37 @@ def gofmt_check(directory, names):
         raise HookError("Run gofmt and stage the intended changes:\n" + "".join(unformatted))
 
 
+def lint_commands(directory, files):
+    """Return one command per linter that has files to check among files, in a fixed order.
+
+    These are the tools held to a version floor (.config/lefthook/tool-floors.txt): each
+    command starts with the tool's name, which file_checks hands to require_floors before
+    anything runs. A linter with no file of its type yields no command and is not probed.
+    """
+    groups = [(["shellcheck"], lambda p: p.endswith(".sh")),
+              (["actionlint"], lambda p: p.startswith(".github/workflows/")
+               and p.endswith((".yml", ".yaml"))),
+              (["hadolint"], lambda p: Path(p).name == "Dockerfile"),
+              (["yamllint", "--strict", "-d", "{extends: relaxed, rules: {line-length: disable}}"],
+               lambda p: p.endswith((".yml", ".yaml")) and not is_chart_template(directory, p))]
+    commands = []
+    for command, predicate in groups:
+        matches = [name for name in files if predicate(name)]
+        if matches:
+            commands.append([*command, *matches])
+    return commands
+
+
 def file_checks(directory, names):
     files = present_files(directory, names)
     if any(name == ".workingdir" or name.startswith(".workingdir/") for name in files):
         raise HookError(PRIVATE_STATE_ERROR)
     text_checks(directory, files)
     gofmt_check(directory, files)
-    commands = []
-    groups = [(["shellcheck"], lambda p: p.endswith(".sh")),
-              (["actionlint"], lambda p: p.startswith(".github/workflows/")
-               and p.endswith((".yml", ".yaml"))),
-              (["hadolint"], lambda p: Path(p).name == "Dockerfile")]
-    for command, predicate in groups:
-        matches = [name for name in files if predicate(name)]
-        if matches:
-            commands.append([*command, *matches])
-    yaml = [name for name in files
-            if name.endswith((".yml", ".yaml")) and not is_chart_template(directory, name)]
-    if yaml:
-        commands.append(["yamllint", "--strict", "-d", "{extends: relaxed, rules: {line-length: disable}}", *yaml])
+    commands = lint_commands(directory, files)
+    # A linter below its floor gives a verdict the tree was never measured with (#343), so
+    # the version is settled before any of them runs.
+    require_floors(command[0] for command in commands)
     if any(name in {"lefthook.yml", ".codex/hooks.json", ".claude/settings.json",
                     ".gemini/settings.json", ".agents/plugins/praetor/hooks.json",
                     ".agents/plugins/praetor/praetor_hook.py", "scripts/test_checkpoint_hooks.py",

@@ -52,6 +52,13 @@ See [upstream agent integration](https://lefthook.dev/configuration/ai/) and the
 No `stage_fixed` jobs are used. Checking exported index content avoids changing
 partially staged hunks while retaining the formatting gate.
 
+`tool-floors.txt` declares the oldest `shellcheck`, `actionlint`, `hadolint` and
+`yamllint` the file checks accept, one `tool>=version` line each. `scripts/toolchain.py`
+reads a linter's `--version` before it runs and refuses a missing or older one with
+the required version; a linter with no staged or pushed file of its type is not
+probed. Vendor the file with the policy: without it every commit that needs a
+linter is refused. See [linter version floors](../../docs/guides/git-hooks.md#linter-version-floors).
+
 `agent-checkpoint-tool` and `agent-checkpoint-stop` share the bounded checkpoint
 evaluator. Add a reviewed `.config/agent/checkpoint.json` for the adopting repo
 to enable it; missing policy is explicitly disabled. Configure publication only

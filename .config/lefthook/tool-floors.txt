@@ -1,0 +1,27 @@
+# Version floors for the linters the hook policy runs on staged and pushed files
+# (scripts/checks.py lint_commands). One requirement per line, in the shape
+# .config/semgrep/requirements.txt and .config/hook-lint/requirements.in use,
+# with >= where those pin with ==. scripts/toolchain.py reads this file: before
+# a linter runs, the hook reads its --version and fails with the floor below
+# when the tool is missing, states no version or is older. A linter is probed
+# only when a file of its type is staged or pushed.
+#
+# A floor is the oldest version this tree's verdict is known to hold with, not
+# a pin: a newer release passes. Each floor names where its version comes from.
+# Raise one by hand, together with its source.
+
+# .github/actionlint.yaml: v1.7.12 rejects the ubuntu-26.04 runner label, which
+# is why that file declares it (also internal/adopt/actionlint.go, #593).
+actionlint>=1.7.12
+
+# No workflow installs hadolint and no file names a version. 2.14.0 is the
+# release the root Dockerfile, the one file the hook hands it, was checked with.
+hadolint>=2.14.0
+
+# .github/workflows/portability.yml: SHELLCHECK_VERSION, the release every
+# Platform Neutrality leg installs; the ubuntu-26.04 image ships the same one.
+shellcheck>=0.11.0
+
+# .config/hook-lint/requirements.in: the yamllint pin the hash-locked
+# requirements.txt carries, which the Platform Neutrality legs install.
+yamllint>=1.38.0
