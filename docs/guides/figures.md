@@ -42,9 +42,11 @@ set, and removing it is the only way to opt out of figures. With the facet enabl
 - the 18 files `assets.go` lists, under `tools/figures/`. A file the repository already had at
   one of those paths stops the first adoption, with or without `--force`, because
   `tools/figures/` is a name a repository may use for its own code;
-- a block at the end of `.gitattributes` that keeps the engine, `docs/figures/*.ts` and
-  `docs/assets/figures/*` at LF and the vendored interfig files unconverted
-  (`internal/adopt/gitattributes.go`, rules from `Attributes` in `assets.go`);
+- rules in the managed block at the end of `.gitattributes` that keep the engine,
+  `docs/figures/*.ts` and `docs/assets/figures/*` at LF and the vendored interfig files
+  unconverted (`internal/adopt/gitattributes.go`, rules from `Attributes` in `assets.go`). The
+  block opens with the DevContainer rule adoption writes in every repository
+  ([checkout line endings](devcontainer-bootstrap.md#checkout-line-endings));
 - a `docs-figures` target in the managed Makefile block, attached to `verify-all` beside
   `docs-lint`, running `build.mjs check` and `build.mjs sources`. `sources` reads the pages of
   the site configuration at the repository root, an MkDocs `mkdocs.yml` or a Starlight
@@ -64,8 +66,8 @@ command (the first-run tests in `tools/figures/figures.test.mjs`). The target ne
 its own, so a gate cannot pass on outputs nobody committed.
 
 With the
-facet disabled, adoption removes the canonical engine files, the `.gitattributes` block, the
-Makefile block and the documentation workflow, and refuses to remove an engine file that was
+facet disabled, adoption removes the canonical engine files, the engine's rules in the
+`.gitattributes` block, the Makefile block and the documentation workflow, and refuses to remove an engine file that was
 edited. `praetorctl audit` compares every engine file byte for byte,
 requires the target and the block, and warns when the repository's `REUSE.toml` has no
 annotation labelling `tools/figures/third_party/interfig/upstream/**` MIT, or has one that a

@@ -292,13 +292,14 @@ Tests: `internal/adopt/large_repo_bounds_test.go` and
 2. **`.standards.lock`**: Cryptographic SemVer lockfile binding your repo to exact governance standard releases.
 3. **`.standards-baseline.json`**: Technical debt ratcheting baseline. Existing infractions (e.g. legacy loop bounds, unwrapped errors) are recorded so legacy code compiles while new code is strictly gated. A re-adoption with `--record-baseline` (the default) rescans the repository and keeps the recorded file untouched when the rescan finds the same debt for the same repository, so an unchanged repository gets no `generated_at`-only diff; it rewrites the file when the infractions or the repository identity changed (`TestReconcileBaseline_KeepsUnchangedBaseline_3D` in `internal/adopt/baseline_identity_test.go`). A rescan without a resolved identity keeps the repository the file records instead of blanking it, as `praetorctl baseline --record` does (`TestReconcileBaseline_UnresolvedIdentityKeepsRecordedRepository_3D`).
 4. **`AGENTS.md` + 6 Vendor Targets**: Canonical agent operating harness transpiled to `CLAUDE.md`, `.cursor/rules/*.mdc`, `.github/copilot-instructions.md`, `.windsurfrules`, `.gemini/GEMINI.md` and `.codex/rules.md`. `agent_clients` in `.standards.yaml` limits these to the clients the repository uses ([agent client selection](guides/editor-capabilities.md#selecting-agent-clients)).
-5. **`.devcontainer/devcontainer.json`**: Multi-architecture container configuration pinned to verified base images.
+5. **`.devcontainer/devcontainer.json`**: Multi-architecture container configuration pinned to verified base images. Adoption also pins the directory to LF: the managed block at the end of `.gitattributes` opens with `.devcontainer/* text eol=lf`, so a Windows checkout with `core.autocrlf=true` verifies the same bytes. Every other line of an existing `.gitattributes` is kept, and a rule of the repository's own that names `.devcontainer/` and sets another line-ending treatment stops adoption before its first write ([checkout line endings](guides/devcontainer-bootstrap.md#checkout-line-endings)).
 6. **Multi-IDE Configs**: Workspace settings for every supported editor, or only the ones `editors` in `.standards.yaml` names ([editor selection](guides/editor-capabilities.md#selecting-editors)).
 7. **Makefile & LeftHook**: Automated pre-commit hooks and standard verification targets (`make verify-all`).
 8. **Documentation gate** (the `docs:seo-portal` facet, in the default facet set): the locked
    Markdown gate under `tools/markdownlint/`, the interactive figure engine under
-   `tools/figures/`, `docs-lint` and `docs-figures` targets on `verify-all`, a managed block at
-   the end of `.gitattributes`, and `.github/workflows/praetor-docs.yml` with its required
+   `tools/figures/`, `docs-lint` and `docs-figures` targets on `verify-all`, the figure
+   engine's rules in the managed block at the end of `.gitattributes`, and
+   `.github/workflows/praetor-docs.yml` with its required
    **Documentation Governance** context
    ([documentation governance](guides/documentation-governance.md#adoption-audit-and-ci),
    [figures](guides/figures.md#in-adopting-repositories)). The figure checks skip, saying why,
@@ -522,7 +523,7 @@ Loaded remotely, the action has no `.git`, so a forced run first checks out prae
   edited documentation gate block in the `Makefile`, whose delta lists only the lines inside
   the block, and an edited managed attribute block at the end of `.gitattributes`; without
   `--force` either edited block fails the run, and a disable of `docs:seo-portal` refuses to
-  remove it. On every run, `--force` or not, it covers a vendor context file such as
+  touch it. On every run, `--force` or not, it covers a vendor context file such as
   `CLAUDE.md` and a persona copy such as `.claude/agents/praetor-auditor.md` that holds a hand
   edit (`recordProjections` in `internal/adopt/vendor_targets.go`,
   `internal/adopt/persona_copies.go`). A file that already holds its bytes is verified. Earlier
@@ -531,12 +532,15 @@ Loaded remotely, the action has no `.git`, so a forced run first checks out prae
   after the last `compile-context`; without a commit only the first counts), a persona copy
   that is the copy of its canonical persona as the run found it, Praetor's own
   unedited DevContainer placeholder, a catalog
-  text with a layout-only successor, an earlier text of a documentation family file, and the
-  documentation gate block an earlier Praetor wrote (tests in
+  text with a layout-only successor, an earlier text of a documentation family file, the
+  documentation gate block an earlier Praetor wrote, and a managed attribute block holding
+  the rules of an earlier release or of another facet and decline state, such as the block
+  without the DevContainer rule (tests in
   `internal/adopt/locked_replace_test.go`, `internal/adopt/vendor_targets_test.go`,
   `internal/adopt/vendor_head_projection_test.go`,
-  `internal/adopt/documentation_makefile_refresh_test.go` and
-  `internal/adopt/gitattributes_edit_test.go`). Without `--force`, a symlinked backup root
+  `internal/adopt/documentation_makefile_refresh_test.go`,
+  `internal/adopt/gitattributes_edit_test.go` and
+  `internal/adopt/gitattributes_devcontainer_test.go`). Without `--force`, a symlinked backup root
   fails the run before its first write when a vendor file or a persona copy holds a hand edit
   (`preflightVendorBackupRoot` in `internal/adopt/vendor_targets.go`,
   `preflightPersonaBackupRoot` in `internal/adopt/persona_copies.go`,
