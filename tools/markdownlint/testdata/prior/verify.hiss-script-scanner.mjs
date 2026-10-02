@@ -54,7 +54,6 @@ const MAX_COMMAND_BYTES = 24_000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 120_000;
 const INSTALL_TIMEOUT_MS = 300_000;
 const NPM_CI_ARGS = Object.freeze(["ci", "--ignore-scripts", "--no-audit", "--no-fund"]);
-const MARKDOWNLINT_BIN = "./markdownlint-cli2-bin.mjs";
 const MARKDOWN_SUFFIXES = [".md", ".markdown", ".mdx", ".md.tmpl", ".markdown.tmpl", ".mdx.tmpl"];
 const SCRATCH_ROOTS = new Set([".workingdir", ".workingdir2"]);
 const FILESYSTEM_SYMLINK_UNAVAILABLE = new Set(["EPERM", "EACCES", "ENOSYS"]);
@@ -1015,42 +1014,12 @@ function runScratchRule(root, temporary, files, selfTest, emitDiagnostics = true
   return overflow ? 2 : result.status ?? 2;
 }
 
-// The installed markdownlint-cli2 must be the version the copied lock pins and expose the entry
-// the gate starts. The lock is the only place the version is written, so a pin update needs no
-// change here; npm ci has already checked the package's integrity against the same lock.
-function markdownlintBinary(lock, metadata) {
-  const locked = lock?.packages?.["node_modules/markdownlint-cli2"]?.version;
-  if (typeof locked !== "string" || locked === "") {
-    fail("package-lock.json pins no markdownlint-cli2 version");
-  }
-  if (metadata?.version !== locked || metadata?.bin?.["markdownlint-cli2"] !== MARKDOWNLINT_BIN) {
-    fail(`installed markdownlint-cli2 package does not match locked ${locked} binary contract`);
-  }
-  return MARKDOWNLINT_BIN;
-}
-
 function markdownlintEntry(temporary) {
-  const lock = JSON.parse(fs.readFileSync(path.join(temporary, "package-lock.json"), "utf8"));
-  const packageDir = path.join(temporary, "node_modules", "markdownlint-cli2");
-  const metadata = JSON.parse(fs.readFileSync(path.join(packageDir, "package.json"), "utf8"));
-  return path.join(packageDir, markdownlintBinary(lock, metadata));
-}
-
-function markdownlintBinarySelfTest() {
-  const lock = { packages: { "node_modules/markdownlint-cli2": { version: "1.2.3" } } };
-  const installed = { version: "1.2.3", bin: { "markdownlint-cli2": MARKDOWNLINT_BIN } };
-  assert.equal(markdownlintBinary(lock, installed), MARKDOWNLINT_BIN);
-  assert.throws(() => markdownlintBinary(lock, { ...installed, version: "1.2.4" }),
-    (error) => error.message === "installed markdownlint-cli2 package does not match locked 1.2.3 binary contract");
-  assert.throws(() => markdownlintBinary(lock, { ...installed, bin: { "markdownlint-cli2": "./other.mjs" } }),
-    /does not match locked 1\.2\.3 binary contract/u);
-  assert.throws(() => markdownlintBinary(lock, { version: "1.2.3" }), /does not match locked 1\.2\.3/u);
-  for (const missing of [{}, { packages: {} }, { packages: { "node_modules/markdownlint-cli2": { version: "" } } }]) {
-    assert.throws(() => markdownlintBinary(missing, installed),
-      (error) => error.message === "package-lock.json pins no markdownlint-cli2 version");
+  const metadata = JSON.parse(fs.readFileSync(path.join(temporary, "node_modules", "markdownlint-cli2", "package.json"), "utf8"));
+  if (metadata.version !== "0.23.3" || metadata.bin?.["markdownlint-cli2"] !== "./markdownlint-cli2-bin.mjs") {
+    fail("installed markdownlint-cli2 package does not match locked 0.23.3 binary contract");
   }
-  process.stdout.write("markdownlint binary fixtures: the lock's version passes, another version, " +
-    "another entry or an unpinned lock fails\n");
+  return path.join(temporary, "node_modules", "markdownlint-cli2", metadata.bin["markdownlint-cli2"]);
 }
 
 function batches(files) {
@@ -1073,9 +1042,8 @@ function batches(files) {
   return result;
 }
 
-// markdownlint-cli2 has no option that turns configuration discovery off (read through 0.23.3;
-// hermeticConfigSelfTest's control run shows discovery on whatever version the lock pins). Beside
-// the --config file it reads .markdownlint-cli2.{jsonc,yaml,cjs,mjs} and
+// markdownlint-cli2 0.23.3 has no option that turns configuration discovery off. Beside the
+// --config file it reads .markdownlint-cli2.{jsonc,yaml,cjs,mjs} and
 // .markdownlint.{jsonc,json,yaml,yml,cjs,mjs} from its working directory and from every directory
 // between it and a linted file (getAndProcessDirInfo and enumerateParents in
 // markdownlint-cli2.mjs). A .markdownlint.* file found there replaces the --config rules
@@ -1129,7 +1097,6 @@ function main() {
   try {
     if (selfTest) {
       npmInvocationSelfTest(temporary);
-      markdownlintBinarySelfTest();
     }
     install(toolDir, temporary);
     if (selfTest) {

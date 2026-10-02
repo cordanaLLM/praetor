@@ -155,7 +155,9 @@ VS Code and forks older than 1.107 no longer install updates of this extension.
 `src/setup.test.ts` checks that the floor, the pinned types and the lockfile
 agree, that the floor lies between 1.105.0 (the `when` clause) and 1.107.0
 (the trailing fork host), and that the locked `vscode-languageclient` declares
-no higher host floor than the extension (10.x declares `^1.91.0`).
+no higher host floor than the extension (10.x declares `^1.91.0`). Renovate
+leaves `@types/vscode` alone (the `editors/vscode/package.json` rule in
+`renovate.json`), so the pin moves only when someone raises the floor with it.
 
 `vscode-languageclient` 10 publishes its entry points only through the
 `package.json` `exports` field, so `tsconfig.json` sets `module` and
