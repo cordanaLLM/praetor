@@ -99,7 +99,7 @@ func printCoreCommands() {
 	fmt.Println("  audit              Audit repository against declared HISS invariants and lockfile")
 	fmt.Println("  bugs audit         Report bug ledger rows whose recorded location no longer resolves")
 	fmt.Println("  baseline           Inspect or record technical debt infractions")
-	fmt.Println("  devcontainer       Synthesize, verify, or check the bundle freshness of .devcontainer/devcontainer.json")
+	fmt.Println("  devcontainer       Synthesize, verify, bump the reviewed images of, or check the bundle freshness of .devcontainer/devcontainer.json")
 	fmt.Println("  flavor             Inspect, audit, and scaffold engineering flavors (11 archetypes)")
 	fmt.Println("  flavors            Plan or sync moving version flavor tags (bleeding, latest, lts)")
 	fmt.Println("  docs               Harvest, compress, and audit package documentation sheets")
