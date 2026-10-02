@@ -77,7 +77,7 @@ func TestDevContainerCheckoutRemedy_Positive(t *testing.T) {
 func TestDevContainerCheckoutRemedy_Negative(t *testing.T) {
 	root := t.TempDir()
 	plain := errors.New("bootstrap Dockerfile differs from its recorded inputs")
-	if got := devContainerCheckoutRemedy(t.Context(), root, plain); got != plain {
+	if got := devContainerCheckoutRemedy(t.Context(), root, plain); !errors.Is(got, plain) || got.Error() != plain.Error() {
 		t.Fatalf("an unrelated failure was rewritten: %v", got)
 	}
 	if got := devContainerCheckoutRemedy(t.Context(), root, nil); got != nil {
