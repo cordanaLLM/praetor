@@ -153,13 +153,16 @@ func rulesetPreviewNote(contexts int) string {
 // reproduces each digest (ruleset_labels_test.go).
 var priorLabelTaxonomyDigests = map[string]string{
 	"458258424e4d1f9a0a3cb4c20de5f3c039b44c94a3296f1d0105a5305853ea8c": "fourteen labels, no document start",
+	"2b6660c577b5860002a6125b1ddf805653207b7d371cba2751c989ca1b953971": "fourteen labels, hiss-waiver described as signed",
 }
 
 // reconcileLabels writes the canonical label taxonomy sync also writes (forge.DefaultLabelTaxonomy)
 // into a repository that has none. An existing taxonomy is the repository's configuration, so
 // --force leaves it alone: it used to replace it with a shorter three-label copy. The one
 // exception is an earlier taxonomy text adoption wrote and nobody edited: it holds the same
-// labels and failed yamllint's default document-start rule (BUG-782), so it is refreshed.
+// labels, and either failed yamllint's default document-start rule (BUG-782) or described
+// hiss-waiver as cryptographically signed (#393), so it is refreshed. An edited file is left to
+// sync, which rewrites a drifted managed description in place (cmd/standardsctl/sync.go).
 func reconcileLabels(ctx context.Context, s *adoptSession) error {
 	_, err := s.scaffoldFile(ctx, scaffold{
 		rel:       labelsFile,

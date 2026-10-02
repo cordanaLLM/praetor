@@ -1,0 +1,4 @@
+type: fixed
+title: "pages-site and web-package resolve with tooling:vscode-extension: all select Node.js 24"
+breaking: true
+issue: "#663"

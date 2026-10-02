@@ -39,12 +39,19 @@ a value, adopters still on an earlier text need `--force` again
 `catalogValuesChangedSinceBUG782` (`internal/adopt/policy_catalog_prior_test.go`); its test
 names each file that is missing there.
 
-**A DevContainer feature bump moves every file that selects the feature.** Feature resolution
-rejects two references of one feature, such as `node:1` beside `node:2`
+**Every file that selects a DevContainer feature selects it the same way.** Feature resolution
+rejects two references of one feature, such as `node:1` beside `node:2`, and one reference with
+different options, such as `node:2` bare beside `node:2` with `version: "24"`
 (`ResolveDevContainerFeatures` in `internal/config/devcontainer_features.go`), so a repository
-declaring two of those files would stop resolving. `TestShippedFeatures_Positive_OneReferencePerFeature`
-(`internal/config/shipped_features_test.go`) fails while the catalog names one feature two
-ways. Praetor's own `.devcontainer/devcontainer.json` is verified against the rendering of the
+declaring two of those files would stop resolving. A feature bump or an options change therefore
+moves every file that selects the feature: `pages-site`, `web-package` and the
+`tooling:vscode-extension` facet all select `node:2` with `version: "24"`.
+`TestShippedFeatures_Positive_OneReferencePerFeature` (`internal/config/shipped_features_test.go`)
+fails while the catalog names one feature two ways, and
+`TestShippedFeatures_Positive_EveryProfileWithEveryFacetResolves`
+(`internal/config/shipped_feature_combinations_test.go`) resolves every profile alone, with each
+facet and with the whole catalog declared at once, and fails on each selection that does not
+resolve. Praetor's own `.devcontainer/devcontainer.json` is verified against the rendering of the
 pinned catalog, so an update of that file alone, as a Renovate DevContainer branch makes it,
 fails `praetorctl devcontainer verify` and the audit until the catalog files, the lock and
 `catalogValuesChangedSinceBUG782` move with it.
@@ -517,7 +524,9 @@ re-reads the pinned profile and facet files and keys each feature by its identit
 without its tag or digest. The same reference with the same options joins once. One identity with a
 different tag, digest or options is ambiguous and fails closed (`mergeDevContainerFeature`, tested by
 `TestResolveDevContainerFeaturesRejectsConflictsAndMalformedEntries` in
-`internal/config/devcontainer_features_test.go`).
+`internal/config/devcontainer_features_test.go`). The merge never picks between two option sets,
+so the shipped catalog keeps them equal, as "Every file that selects a DevContainer feature
+selects it the same way" above describes.
 
 ### The schema is closed
 

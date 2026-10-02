@@ -888,7 +888,7 @@ entry point:
 
 | Job | Trigger | Token | What it does |
 | :-- | :-- | :-- | :-- |
-| `adopt` | `workflow_dispatch` | `contents: write`, handed only to the commit step | adopts `target_path` (default `.`), runs the HISS-13 debt ratchet on it, then commits with a DCO sign-off and pushes unless `dry_run` is set; keeps its own Go build cache through `.github/actions/go-cache` (`job: adopt`) |
+| `adopt` | `workflow_dispatch` | `contents: write`, handed only to the commit step | adopts `target_path` (default `.`), runs the HISS-13 debt ratchet on it, then commits with a DCO sign-off and pushes; with `dry_run` set it passes `dry-run` to the action, which plans the adoption without writing a file, and skips the ratchet and the commit; keeps its own Go build cache through `.github/actions/go-cache` (`job: adopt`) |
 | `adopt-comment` | `/adopt` or `/dogfood` comment from a trusted commenter | `contents: read`, `pull-requests: read` | resolves the pull request head, refuses it unless it lives in this repository, checks it out without credentials, and runs the adoption and ratchet, or the dogfood benchmark, against it; restores and saves no cache |
 
 Inside praetor the action builds the checked-out tree's own `cmd/standardsctl`, and the job loads
@@ -917,7 +917,8 @@ Two checks keep the split honest. `AuditPullRequestPermissions` in
 `TestAuditPullRequestPermissions_Guard_ThisRepositoryIsDisciplined` runs it over this repository.
 `internal/forge/adopt_workflow_test.go` pins the rest: only the dispatch job writes and pushes,
 every checkout drops its credential, the comment job checks out the head it resolved,
-`target_path` reaches both the adoption and the ratchet through env, only the dispatch job keeps
+`target_path` reaches both the adoption and the ratchet through env, `dry_run` reaches the
+adoption and keeps the ratchet and the push from running, only the dispatch job keeps
 a Go cache and stays visible to `AuditGoBuildCaches`, every job and the head lookup run under an
 explicit `timeout-minutes`, and the head lookup's own shell body is executed against a stub `gh`,
 which is how a fork head is shown to be refused.
@@ -926,9 +927,9 @@ which is how a fork head is shown to be refused.
 
 | Input | Reaches | Effect |
 | :-- | :-- | :-- |
-| `path` | `PRAETOR_PATH` | `--path=<value>`, and the `--source`/`--target-dir` of the `compile-context --verify` that follows an adopt run; an empty value is refused before anything runs |
+| `path` | `PRAETOR_PATH` | `--path=<value>`, and the `--source`/`--target-dir` of the `compile-context --verify` that follows an adopt run that is not a dry run; an empty value is refused before anything runs |
 | `mode` | `PRAETOR_MODE` | selects the subcommand, `adopt` or `dogfood`; any other value is refused |
-| `dry-run` | `PRAETOR_DRY_RUN` | `--dry-run=<value>`; in `dogfood` mode it changes nothing, because `dogfood` applies adoptions only to `--targets` repositories (`testTargetAdoptions` in `internal/dogfood/dogfood.go`) and the action passes none, so the host is audited either way |
+| `dry-run` | `PRAETOR_DRY_RUN` | `--dry-run=<value>`; in `adopt` mode `true` plans without writing a file and skips the `compile-context --verify`, which would otherwise check a tree the run did not touch and fail on a repository with no `AGENTS.md` yet (`TestPraetorAdoptAction_Boundary_DryRunSkipsCompileContext`); in `dogfood` mode it changes nothing, because `dogfood` applies adoptions only to `--targets` repositories (`testTargetAdoptions` in `internal/dogfood/dogfood.go`) and the action passes none, so the host is audited either way |
 | `force` | `PRAETOR_FORCE` | `--force=<value>`, adopt only: the refresh in [What a forced re-adoption changes](#what-a-forced-re-adoption-changes). `--force` rebuilds `.standards.lock` and needs a lock source, so with `force: true` the action also passes `--lock-source-root=<checkout>`, the praetor checkout the build step compiled `standardsctl` from, and refuses the run when the build step published none (`TestPraetorAdoptAction_ForcedRunCarriesTheLockSource`). The rebuild inventories that checkout with `git ls-files`. When the action's own tree has no `.git`, as when loaded remotely, a forced adopt run first checks out the action's repository at the action's ref with git under `RUNNER_TEMP` and builds from it. A tree that already is a git checkout is used as it is (`internal/forge/adopt_action_source_test.go`) |
 | `record-baseline` | `PRAETOR_RECORD_BASELINE` | `--record-baseline=<value>`, adopt only |
 | `go-version` | `actions/setup-go` | the toolchain the step compiles `standardsctl` with; it never reaches `standardsctl`, and it has to satisfy the `go` directive of praetor's `go.mod` |

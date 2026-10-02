@@ -1,0 +1,3 @@
+type: fixed
+title: Make an adoption-workflow dry run write nothing and skip its verify and ratchet, and stop the hiss-waiver label claiming waivers are signed, in adopted and synced taxonomies alike
+breaking: false

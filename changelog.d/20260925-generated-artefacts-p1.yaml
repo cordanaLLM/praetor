@@ -1,0 +1,4 @@
+type: added
+title: "Generated artefacts: declare them in .standards.yaml and list, check (pull requests) or render (default branch) them with praetorctl ci generated (ADR-0017)"
+issue: "#696"
+breaking: false

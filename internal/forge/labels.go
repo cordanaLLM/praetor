@@ -72,7 +72,14 @@ func validateLabelEntries(labels []Label) error {
 //
 // It opens with the "---" document start, so an adopter whose own yamllint runs its default
 // rules in strict mode over the whole tree accepts the file adoption writes (BUG-782).
-// Adoption refreshes the earlier text without the marker (internal/adopt/ruleset.go).
+//
+// hiss-waiver says waivers are not signed: the earlier "Requires cryptographically signed
+// waiver approval" claimed a check no gate performs (#393).
+//
+// Adoption refreshes each earlier unedited text, the one without the marker and the one with
+// the signed-waiver claim, to this one (priorLabelTaxonomyDigests, internal/adopt/ruleset.go).
+// An edited file keeps its labels; sync rewrites only its drifted hiss-violation and
+// hiss-waiver descriptions in place (managedLabelDescriptions, cmd/standardsctl/sync.go).
 const defaultLabelTaxonomy = `---
 # Canonical Repository Label Taxonomy
 version: 1
@@ -83,7 +90,7 @@ labels:
 
   - name: "hiss-waiver"
     color: "fbca04"
-    description: "Requires cryptographically signed waiver approval"
+    description: "Architectural exception to HISS (waivers are not signed)"
 
   - name: "standards-sync"
     color: "0075ca"
