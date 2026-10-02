@@ -14,10 +14,22 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
 )
+
+var catchHangupOnce sync.Once
+
+// catchHangupForExec installs a parent-side SIGHUP handler so subprocesses spawned via exec
+// inherit the default signal disposition (SIG_DFL) rather than SIG_IGN when the test runner
+// itself was invoked under nohup.
+func catchHangupForExec() {
+	catchHangupOnce.Do(func() {
+		signal.Notify(make(chan os.Signal, 1), syscall.SIGHUP)
+	})
+}
 
 // interruptHelperRun selects TestCommandInterruptHelper in the re-executed test binary.
 const interruptHelperRun = "-test.run=^TestCommandInterruptHelper$"
@@ -112,6 +124,7 @@ func cancelledCommandStatus(dir, script string) int {
 // reported ready. extraEnv is added to the helper's environment.
 func startInterruptHelper(t *testing.T, mode, script string, extraEnv ...string) (*exec.Cmd, string, time.Time) {
 	t.Helper()
+	catchHangupForExec()
 	binary, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -324,6 +337,7 @@ func TestTerminateCommandsOnSignal_Negative_IgnoredSignalStaysIgnored(t *testing
 // ended once its cleanup ran.
 func startTracked(t *testing.T, r *commandGroupRegistry, dir, script string) (*exec.Cmd, <-chan syscall.WaitStatus, error) {
 	t.Helper()
+	catchHangupForExec()
 	cmd := exec.CommandContext(t.Context(), "sh", "-c", script)
 	cmd.Dir = dir
 	start, cleanup := r.track(cmd)
