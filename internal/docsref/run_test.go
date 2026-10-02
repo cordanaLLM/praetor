@@ -86,8 +86,11 @@ func TestRun_Positive_ReportCountsAndSkips(t *testing.T) {
 		t.Errorf("report counts = %d documents, %d invocations, %d paths; want 5 documents and nonzero counts",
 			report.Documents, report.Invocations, report.Paths)
 	}
-	if len(report.Skipped) != 1 || !strings.HasPrefix(report.Skipped[0], "docs/adr/0001-accepted.md: Accepted") {
-		t.Errorf("skipped = %q, want only the Accepted record", report.Skipped)
+	if len(report.Skipped) != 1 || !strings.HasPrefix(report.Skipped[0], "docs/adr/0003-superseded.md: Superseded") {
+		t.Errorf("skipped = %q, want only the Superseded record", report.Skipped)
+	}
+	if report.Records != 1 {
+		t.Errorf("records = %d, want the one Accepted record path-checked", report.Records)
 	}
 	want := []string{
 		"docs/directives.md:9: the first illustrative block",
@@ -95,6 +98,36 @@ func TestRun_Positive_ReportCountsAndSkips(t *testing.T) {
 	}
 	if !slices.Equal(report.Suppressions, want) {
 		t.Errorf("suppressions = %q, want %q", report.Suppressions, want)
+	}
+}
+
+// TestRun_Positive_AcceptedRecordPathIsFlaggedNotFailed checks the moved part of #355: an
+// Accepted record that names a path the repository no longer has is flagged, and the flag
+// never becomes a finding, because the record's body may not be edited to fix it.
+func TestRun_Positive_AcceptedRecordPathIsFlaggedNotFailed(t *testing.T) {
+	report := runFixture(t)
+	want := []string{`docs/adr/0001-accepted.md:11: path "internal/retired/engine.go" is not in the repository, ` +
+		`not operator-owned, not ignored and not named by the engine's Go source`}
+	if got := findingLines(report.Flagged); !slices.Equal(got, want) {
+		t.Fatalf("flagged = %q, want %q", got, want)
+	}
+	for _, line := range findingLines(report.Findings) {
+		if strings.HasPrefix(line, "docs/adr/0001-accepted.md:") {
+			t.Errorf("an Accepted record failed the check: %s", line)
+		}
+	}
+}
+
+// TestRun_Boundary_AcceptedRecordChecksPathsOnly checks the edges of the flag: a path the
+// Accepted record names that exists is not flagged, its CLI invocation is not checked, and a
+// Superseded record is not read at all.
+func TestRun_Boundary_AcceptedRecordChecksPathsOnly(t *testing.T) {
+	report := runFixture(t)
+	for _, line := range findingLines(append(report.Flagged, report.Findings...)) {
+		if strings.Contains(line, "deploy/helm/Chart.yaml") || strings.Contains(line, "0001-accepted.md:9:") ||
+			strings.Contains(line, "0003-superseded.md") {
+			t.Errorf("reported outside the flag's scope: %s", line)
+		}
 	}
 }
 

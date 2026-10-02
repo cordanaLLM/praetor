@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/cordanaLLM/praetor/internal/strictjson"
 	"github.com/cordanaLLM/praetor/internal/util"
 	"gopkg.in/yaml.v3"
 )
@@ -209,12 +210,23 @@ func sourceIdentity(repo *yaml.Node, current identity) (identity, error) {
 	return identity{Owner: owner, Name: name}, nil
 }
 
+// rejectSecondSpelling refuses a top-level name that spells key differently: the exact-name
+// replacement in ownerJSON would leave that second spelling behind as another identity.
+func rejectSecondSpelling(value map[string]json.RawMessage, key string) error {
+	for name := range value {
+		if name != key && strings.EqualFold(name, key) {
+			return fmt.Errorf("duplicate JSON key %q", name)
+		}
+	}
+	return nil
+}
+
 func ownerJSON(raw []byte, key, before, after string) ([]byte, error) {
-	if err := validateJSONKeys(raw); err != nil {
+	var value map[string]json.RawMessage
+	if err := strictjson.Decode(raw, &value, derivedJSON); err != nil {
 		return nil, err
 	}
-	var value map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &value); err != nil {
+	if err := rejectSecondSpelling(value, key); err != nil {
 		return nil, err
 	}
 	var old string

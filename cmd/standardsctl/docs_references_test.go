@@ -16,6 +16,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cordanaLLM/praetor/internal/docsref"
 	"github.com/cordanaLLM/praetor/internal/testsupport"
 )
 
@@ -246,4 +247,53 @@ func TestRunDocsReferences_Boundary_AdopterWaivers(t *testing.T) {
 	mustErrContain(t, err, "read the pull request body")
 	_, _, err = f.references(t, "--base=--upload-pack=x")
 	mustErrContain(t, err, "invalid git revision")
+}
+
+// recordFlag is one flagged path of an Accepted decision record.
+func recordFlag(line int) docsref.Finding {
+	return docsref.Finding{Doc: "docs/adr/0001-a.md", Line: line, Message: `path "internal/retired" is not in the repository`}
+}
+
+// A flag on an Accepted decision record is printed with its remedy and never fails the check
+// (#353, the part moved from #355).
+func TestPrintDocsReferences_Positive_RecordFlagsDoNotFail(t *testing.T) {
+	report := &docsref.Report{Documents: 2, Records: 1, Flagged: []docsref.Finding{recordFlag(7)}}
+	out, err := captureStdout(t, func() error { return printDocsReferences(".", report) })
+	if err != nil {
+		t.Fatalf("a flag failed the check: %v", err)
+	}
+	mustContain(t, out, "Decision records:   1 (Accepted; repository paths only)",
+		"[FLAG] 1 reference(s) in Accepted decision records do not resolve",
+		`docs/adr/0001-a.md:7: path "internal/retired" is not in the repository`,
+		"a record that supersedes it states what changed", "[PASS]")
+}
+
+// A finding still fails the check when flags are present beside it.
+func TestPrintDocsReferences_Negative_FindingFailsBesideFlags(t *testing.T) {
+	report := &docsref.Report{Records: 1, Flagged: []docsref.Finding{recordFlag(7)},
+		Findings: []docsref.Finding{{Doc: "docs/guide.md", Line: 3, Message: `path "x/y" is not in the repository`}}}
+	out, err := captureStdout(t, func() error { return printDocsReferences(".", report) })
+	mustErrContain(t, err, "1 documentation reference(s) do not resolve")
+	mustContain(t, out, "[FLAG] 1 reference(s)")
+}
+
+// Boundary: no flag prints no flag section, and more flags than the print bound list only
+// the bound while the count states them all.
+func TestPrintDocsReferences_Boundary_FlagSectionBounds(t *testing.T) {
+	out, err := captureStdout(t, func() error { return printDocsReferences(".", &docsref.Report{}) })
+	if err != nil || strings.Contains(out, "[FLAG]") {
+		t.Fatalf("an empty report printed a flag section: %v\n%s", err, out)
+	}
+	flagged := make([]docsref.Finding, 0, maxReportedFindings+1)
+	for line := 1; line <= maxReportedFindings+1; line++ {
+		flagged = append(flagged, recordFlag(line))
+	}
+	out, err = captureStdout(t, func() error { return printDocsReferences(".", &docsref.Report{Flagged: flagged}) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustContain(t, out, "[FLAG] 513 reference(s)", "docs/adr/0001-a.md:512:")
+	if strings.Contains(out, "docs/adr/0001-a.md:513:") {
+		t.Fatal("printed a flag past the print bound")
+	}
 }

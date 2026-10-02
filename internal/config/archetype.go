@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/cordanaLLM/praetor/internal/util"
@@ -51,6 +53,43 @@ type archetypeDocument struct {
 	SupplyChain          SupplyChainPolicy      `yaml:"supply_chain"`
 	Linters              []string               `yaml:"linters"`
 	DevContainerFeatures yaml.Node              `yaml:"devcontainer_features"`
+}
+
+// ArchetypeKeys returns every key the closed archetype schema decodes, sorted: a top-level key
+// as written (linters) and a key inside a section joined to it with a dot
+// (branch_protection.review_mode). It is read from archetypeDocument itself, so a key added to
+// the schema appears here without a second list; the declarative-coverage manifest
+// (.config/archetype-coverage.yaml) must bind each one (internal/archetypecoverage). A key the
+// decoder accepts but validate refuses in a catalog file, such as branch_protection.review_mode,
+// is included: the manifest records it as refused.
+func ArchetypeKeys() []string {
+	document := reflect.TypeFor[archetypeDocument]()
+	node := reflect.TypeFor[yaml.Node]()
+	var keys []string
+	for i := 0; i < document.NumField(); i++ {
+		field := document.Field(i)
+		key := yamlKey(field)
+		switch {
+		case key == "complexity":
+			for _, name := range complexityNames() {
+				keys = append(keys, key+"."+name)
+			}
+		case field.Type.Kind() == reflect.Struct && field.Type != node:
+			for j := 0; j < field.Type.NumField(); j++ {
+				keys = append(keys, key+"."+yamlKey(field.Type.Field(j)))
+			}
+		default:
+			keys = append(keys, key)
+		}
+	}
+	slices.Sort(keys)
+	return keys
+}
+
+// yamlKey is the mapping key a struct field decodes from: its yaml tag without options.
+func yamlKey(field reflect.StructField) string {
+	key, _, _ := strings.Cut(field.Tag.Get("yaml"), ",")
+	return key
 }
 
 // decodeArchetype checks the bounded document shape every policy source shares, then

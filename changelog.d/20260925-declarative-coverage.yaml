@@ -1,0 +1,3 @@
+type: added
+title: "Every archetype key names its consumer or is marked unconsumed (.config/archetype-coverage.yaml, test-enforced both ways); docs references flags missing paths in Accepted decision records"
+breaking: false

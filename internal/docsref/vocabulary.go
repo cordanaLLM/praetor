@@ -24,7 +24,6 @@ import (
 // Bounds on the source read to build a vocabulary (HISS-02).
 const (
 	maxSourceBytes   = 4 << 20
-	maxGoModBytes    = 1 << 20
 	maxClosureNodes  = 1 << 17
 	maxClosurePops   = 1 << 23
 	maxClosureRounds = 64
@@ -86,7 +85,7 @@ type sourceTree struct {
 
 // newSourceTree indexes the non-test Go sources of inventory by package directory.
 func newSourceTree(root string, inventory []string) (*sourceTree, error) {
-	module, err := modulePath(root)
+	module, err := gomanifest.ReadModulePath(root)
 	if err != nil {
 		return nil, err
 	}
@@ -99,18 +98,6 @@ func newSourceTree(root string, inventory []string) (*sourceTree, error) {
 		}
 	}
 	return tree, nil
-}
-
-// modulePath reads the module directive of the repository's go.mod.
-func modulePath(root string) (string, error) {
-	data, err := util.ReadConfinedLimited(root, "go.mod", maxGoModBytes)
-	if err != nil {
-		return "", fmt.Errorf("read go.mod: %w", err)
-	}
-	if module, ok := gomanifest.ModuleDirective(data); ok {
-		return module, nil
-	}
-	return "", errors.New("go.mod declares no module path")
 }
 
 // flagTable maps a flag name to whether it takes a value (false only for a boolean flag).

@@ -52,19 +52,28 @@ type Options struct {
 // Report is the outcome of one run. The counts print on a clean run too: a report that lists
 // only failures cannot be told apart from one that read nothing.
 type Report struct {
-	Documents    int
+	Documents int
+	// Records counts the Accepted decision records whose repository paths were checked.
+	Records      int
 	Skipped      []string
 	Suppressions []string
 	Invocations  int
 	Paths        int
 	Findings     []Finding
+	// Flagged lists what does not resolve in an Accepted decision record: a repository path,
+	// or a malformed directive. The record's body is immutable (docs/adr/README.md, rule 4),
+	// so an edit cannot fix it and a flag never fails the check; a superseding record is the
+	// remedy. A record's CLI invocations are not checked.
+	Flagged []Finding
 }
 
-// pendingPath is an absent path waiting for the operator-owned and ignored lookups.
+// pendingPath is an absent path waiting for the operator-owned and ignored lookups. A flagged
+// one comes from an Accepted decision record and is reported in Report.Flagged.
 type pendingPath struct {
-	doc  string
-	line int
-	ref  pathReference
+	doc     string
+	line    int
+	ref     pathReference
+	flagged bool
 }
 
 // run carries one check across every document.
@@ -101,10 +110,14 @@ func Run(ctx context.Context, opts Options) (*Report, error) {
 	if err := state.resolvePending(ctx); err != nil {
 		return nil, err
 	}
-	slices.SortFunc(state.report.Findings, func(a, b Finding) int {
-		return cmp.Or(cmp.Compare(a.Doc, b.Doc), cmp.Compare(a.Line, b.Line), cmp.Compare(a.Message, b.Message))
-	})
+	slices.SortFunc(state.report.Findings, compareFindings)
+	slices.SortFunc(state.report.Flagged, compareFindings)
 	return state.report, nil
+}
+
+// compareFindings orders findings by document, line and message.
+func compareFindings(a, b Finding) int {
+	return cmp.Or(cmp.Compare(a.Doc, b.Doc), cmp.Compare(a.Line, b.Line), cmp.Compare(a.Message, b.Message))
 }
 
 // buildModel binds each top-level command to its handler and fails when the package does not
@@ -145,32 +158,70 @@ func (r *run) documents(ctx context.Context, inventory []string) error {
 			return fmt.Errorf("read %s: %w", rel, err)
 		}
 		content := string(data)
-		if reason := frozenReason(rel, content); reason != "" {
-			r.report.Skipped = append(r.report.Skipped, rel+": "+reason)
-			continue
-		}
-		r.report.Documents++
-		if err := r.document(ctx, rel, content); err != nil {
+		if err := r.classified(ctx, rel, content); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
+// classified checks one document as its kind requires: an Accepted decision record for its
+// repository paths only, another frozen record not at all, any other document in full.
+func (r *run) classified(ctx context.Context, rel, content string) error {
+	if acceptedRecord(rel, content) {
+		r.report.Records++
+		r.record(ctx, rel, content)
+		return nil
+	}
+	if reason := frozenReason(rel, content); reason != "" {
+		r.report.Skipped = append(r.report.Skipped, rel+": "+reason)
+		return nil
+	}
+	r.report.Documents++
+	return r.document(ctx, rel, content)
+}
+
 // document checks one document's candidates and records its suppressed blocks.
 func (r *run) document(ctx context.Context, rel, content string) error {
-	scan := Scan(rel, content)
-	r.report.Findings = append(r.report.Findings, scan.Problems...)
-	for _, suppression := range scan.Suppressions {
-		r.report.Suppressions = append(r.report.Suppressions, fmt.Sprintf("%s:%d: %s", rel, suppression.Line, suppression.Reason))
-	}
+	scan := r.scan(rel, content, false)
 	for _, candidate := range scan.Candidates {
 		if err := r.invocations(ctx, rel, candidate); err != nil {
 			return err
 		}
-		r.paths(ctx, rel, candidate)
+		r.paths(ctx, rel, candidate, false)
 	}
 	return nil
+}
+
+// record flags what does not resolve in an Accepted decision record's repository paths
+// (#353, moved from #355). The body stays as written: the report names the drift, and a
+// superseding record corrects it.
+func (r *run) record(ctx context.Context, rel, content string) {
+	for _, candidate := range r.scan(rel, content, true).Candidates {
+		r.paths(ctx, rel, candidate, true)
+	}
+}
+
+// scan reads one document's candidates, records its suppressed blocks and files its
+// malformed directives, flagged for an Accepted record.
+func (r *run) scan(rel, content string, flagged bool) ScanResult {
+	scan := Scan(rel, content)
+	for _, problem := range scan.Problems {
+		r.file(problem, flagged)
+	}
+	for _, suppression := range scan.Suppressions {
+		r.report.Suppressions = append(r.report.Suppressions, fmt.Sprintf("%s:%d: %s", rel, suppression.Line, suppression.Reason))
+	}
+	return scan
+}
+
+// file records a finding, or a flag when it comes from an Accepted decision record.
+func (r *run) file(finding Finding, flagged bool) {
+	if flagged {
+		r.report.Flagged = append(r.report.Flagged, finding)
+		return
+	}
+	r.report.Findings = append(r.report.Findings, finding)
 }
 
 // invocations checks every CLI call of one candidate.
@@ -190,15 +241,15 @@ func (r *run) invocations(ctx context.Context, rel string, candidate Candidate) 
 
 // paths checks every repository path of one candidate; an absent one waits for the
 // operator-owned, ignored and engine-literal lookups.
-func (r *run) paths(ctx context.Context, rel string, candidate Candidate) {
+func (r *run) paths(ctx context.Context, rel string, candidate Candidate, flagged bool) {
 	for _, ref := range pathReferences(candidate, r.index.tops) {
 		r.report.Paths++
 		problem, absent := r.index.pathProblem(ctx, r.tree, ref)
 		switch {
 		case absent:
-			r.pending = append(r.pending, pendingPath{doc: rel, line: candidate.Line, ref: ref})
+			r.pending = append(r.pending, pendingPath{doc: rel, line: candidate.Line, ref: ref, flagged: flagged})
 		case problem != "":
-			r.report.Findings = append(r.report.Findings, Finding{Doc: rel, Line: candidate.Line, Message: problem})
+			r.file(Finding{Doc: rel, Line: candidate.Line, Message: problem}, flagged)
 		}
 	}
 }
@@ -227,8 +278,9 @@ func (r *run) resolvePending(ctx context.Context) error {
 		if allowed[ref.path] || literals[ref.path] || literals[ref.path+"/"] || literals[ref.text] {
 			continue
 		}
-		r.report.Findings = append(r.report.Findings, Finding{Doc: pending.doc, Line: pending.line,
-			Message: fmt.Sprintf("path %q is not in the repository, not operator-owned, not ignored and not named by the engine's Go source", ref.text)})
+		r.file(Finding{Doc: pending.doc, Line: pending.line,
+			Message: fmt.Sprintf("path %q is not in the repository, not operator-owned, not ignored and not named by the engine's Go source", ref.text)},
+			pending.flagged)
 	}
 	return nil
 }
@@ -253,6 +305,12 @@ var frozenStatuses = map[string]string{
 	"deprecated": "Deprecated decision record; its body is immutable (docs/adr/README.md)",
 	"proposed":   "Proposed decision record; it names surfaces that do not exist until it is implemented",
 	"draft":      "Draft decision record; it names surfaces that do not exist until it is implemented",
+}
+
+// acceptedRecord reports whether rel is a decision record whose status is Accepted: its body
+// is immutable, so its repository paths are flagged rather than failed.
+func acceptedRecord(rel, content string) bool {
+	return decisionRecord.MatchString(rel) && recordStatus(content) == "accepted"
 }
 
 // frozenReason returns why a decision record is skipped, or "" when rel is checked. A record

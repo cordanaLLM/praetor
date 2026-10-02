@@ -227,6 +227,25 @@ func TestCompileStrictJSON(t *testing.T) {
 	}
 }
 
+// TestCompileRefusesAmbiguousSpellingsAsStrictJSON covers issue #310: encoding/json would
+// decode a case variant of a field into the same field and an unpaired surrogate escape into
+// U+FFFD, so the strict reader refuses both before the shape check sees the draft.
+func TestCompileRefusesAmbiguousSpellingsAsStrictJSON(t *testing.T) {
+	raw := fixtureBytes(t)
+	cases := map[string]struct {
+		old, new, want string
+	}{
+		"case variant":       {`"schema_version": 1`, `"schema_version": 1, "Schema_Version": 1`, "invalid or duplicate planning JSON key"},
+		"unpaired surrogate": {`"Example Workshop"`, `"Example Workshop \ud800"`, "planning JSON holds an unpaired UTF-16 surrogate escape"},
+	}
+	for name, tc := range cases {
+		candidate := bytes.Replace(raw, []byte(tc.old), []byte(tc.new), 1)
+		if _, err := Compile(t.Context(), candidate); err == nil || err.Error() != tc.want {
+			t.Errorf("%s returned %v, want %q", name, err, tc.want)
+		}
+	}
+}
+
 func TestInstructionsRemainInertData(t *testing.T) {
 	draft := fixtureDraft(t)
 	draft.Steps[0].Actions[0] = "Record the literal text $(external-command) without interpreting it."

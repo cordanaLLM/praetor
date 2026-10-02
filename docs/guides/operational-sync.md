@@ -127,7 +127,11 @@ Unexpected engine differences, extra policy overrides, derived configuration dri
 or missing/symlinked configuration files stop the operation. Unknown upstream YAML
 fields and comments are retained through `yaml.Node`; the owner manifest is never
 round-tripped through the narrower Go `config.Manifest` struct. Identity anchors
-and duplicate JSON keys are rejected. Derived JSON must retain the existing
+are rejected, and so are identical duplicate JSON keys at any depth and a second
+spelling of the replaced top-level key, such as `name` beside `Name`
+(`internal/strictjson`, `derivedJSON` in `internal/operationalsync/json.go`, `ownerJSON`
+in `overlay.go`). Nested keys that differ only in case, such as `HTTP_PROXY` and
+`http_proxy` build arguments, are data and are kept. Derived JSON must retain the existing
 generator's scalar formatting; ambiguous replacements are rejected.
 
 ## Funding surfaces
