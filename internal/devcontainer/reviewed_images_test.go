@@ -149,3 +149,59 @@ func TestParseTaggedPinRequiresTagAndDigest(t *testing.T) {
 		}
 	}
 }
+
+// UpdateBotBundleFiles names the config and the Dockerfile beside it, in the config's own
+// directory, with slashes on every platform; the source parts are never listed.
+func TestUpdateBotBundleFilesNamesConfigAndDockerfile(t *testing.T) {
+	for config, want := range map[string][]string{
+		".devcontainer/devcontainer.json":     {".devcontainer/devcontainer.json", ".devcontainer/Dockerfile.praetor"},
+		".devcontainer/api/devcontainer.json": {".devcontainer/api/devcontainer.json", ".devcontainer/api/Dockerfile.praetor"},
+		"devcontainer.json":                   {"devcontainer.json", "Dockerfile.praetor"},
+	} {
+		if got := UpdateBotBundleFiles(config); !slices.Equal(got, want) {
+			t.Errorf("UpdateBotBundleFiles(%q) = %v, want %v", config, got, want)
+		}
+	}
+}
+
+// RecordsBootstrap tells a config Praetor generated from any other. Positive: a ready bundle
+// and an unavailable placeholder. Negative: an operator's own config, a managed-schema config
+// without a specification, and a bootstrap member that is no object. Boundary: no bytes, and
+// a generated config edited since, by a bot moving an image or a person adding a key or
+// breaking the specification, which is still a generated config.
+func TestRecordsBootstrapRecognisesGeneratedConfigs(t *testing.T) {
+	read := func(path string) []byte {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return data
+	}
+	ready := read(writeRecordedBundle(t, BootstrapOptions{SourceRoot: bootstrapSourceFixture(t)}))
+	placeholder := read(writeRecordedBundle(t, BootstrapOptions{}))
+	edited := bytes.ReplaceAll(ready, []byte(DefaultBaseImage), []byte("mcr.microsoft.com/devcontainers/base@"+fixtureDigest(2)))
+	extended := bytes.Replace(ready, []byte("{"), []byte(`{"runArgs": ["--init"],`), 1)
+	if bytes.Equal(edited, ready) || bytes.Equal(extended, ready) || decodeRecordedBootstrap(edited, "devcontainer.json") != nil {
+		t.Fatal("the edited fixtures do not differ from the ready bundle in what verification reads")
+	}
+	for name, tc := range map[string]struct {
+		data []byte
+		want bool
+	}{
+		"ready bundle":            {ready, true},
+		"unavailable placeholder": {placeholder, true},
+		"image edited by a bot":   {edited, true},
+		"key added by hand":       {extended, true},
+		"broken specification":    {[]byte(`{"customizations": {"praetor": {"bootstrap": {"version": "one"}}}}`), true},
+		"operator's own config":   {[]byte(`{"image": "ghcr.io/acme/dev:1", "runArgs": ["--init"]}`), false},
+		"no specification":        {[]byte(`{"name": "app", "customizations": {"vscode": {"extensions": []}}}`), false},
+		"bootstrap is no object":  {[]byte(`{"customizations": {"praetor": {"bootstrap": "source-bundle"}}}`), false},
+		"null bootstrap":          {[]byte(`{"customizations": {"praetor": {"bootstrap": null}}}`), false},
+		"not JSON":                {[]byte("{"), false},
+		"no bytes":                {nil, false},
+	} {
+		if got := RecordsBootstrap(tc.data); got != tc.want {
+			t.Errorf("%s: RecordsBootstrap = %v, want %v", name, got, tc.want)
+		}
+	}
+}
