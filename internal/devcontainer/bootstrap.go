@@ -52,21 +52,6 @@ const (
 	DefaultBaseImage = "mcr.microsoft.com/devcontainers/base@sha256:edfb983aab9c579a385dc23c57d7d3703f5ec920124d99c16204a2cac465aab4"
 )
 
-// Every earlier reviewed default, as repository@digest. Moving DefaultBaseImage or
-// DefaultBuilderImage appends the replaced pin here, its reviewed tag in the comment, so
-// a regeneration refreshes a bundle that recorded it (InheritRecordedImages); a pin
-// missing here is kept as the adopter's choice, with a note. The digest names the image
-// and the tag only labels it, and a retired digest written beside its tag would read as
-// a second live pin of that tag to TestRepositoryPinsOneDigestPerImageTag.
-var (
-	priorDefaultBaseImages = []string{
-		"mcr.microsoft.com/devcontainers/base@sha256:d94c97dd9cacf183d0a6fd12a8e87b526e9e928307674ae9c94139139c0c6eae", // ubuntu-24.04, before #352
-	}
-	priorDefaultBuilderImages = []string{
-		"docker.io/library/golang@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125", // 1.27-alpine, before #352
-	}
-)
-
 // BootstrapOptions selects a local Praetor source snapshot and immutable images.
 // SourceRoot is explicit; an ordinary config-only catalog cannot install a CLI.
 type BootstrapOptions struct {
@@ -252,7 +237,7 @@ func validateReadyBootstrap(spec *BootstrapSpec) error {
 		}
 	}
 	if bootstrapDigest([]byte(renderBootstrapDockerfile(spec))) != spec.DockerfileSHA256 {
-		return errors.New("bootstrap Dockerfile identity differs from its recorded inputs")
+		return errors.New("bootstrap Dockerfile identity differs from its recorded inputs; " + bundleRepair)
 	}
 	return nil
 }

@@ -86,7 +86,8 @@ func TestPinnedImagesMatchTheDockerfilesThatUseThem(t *testing.T) {
 	for _, tc := range []struct {
 		name, path, pin string
 	}{
-		{"development image builder", filepath.Join(root, "docker", "dev", "Dockerfile"), DefaultBuilderImage},
+		// The Dockerfile devcontainer bump moves with the builder pin (reviewedRoles).
+		{"development image builder", filepath.Join(root, filepath.FromSlash(DevImageDockerfile)), DefaultBuilderImage},
 		{"recorded bootstrap builder", filepath.Join(root, ".devcontainer", "Dockerfile.praetor"), DefaultBuilderImage},
 		{"recorded bootstrap base", filepath.Join(root, ".devcontainer", "Dockerfile.praetor"), DefaultBaseImage},
 	} {
@@ -96,9 +97,9 @@ func TestPinnedImagesMatchTheDockerfilesThatUseThem(t *testing.T) {
 				t.Fatal(err)
 			}
 			if err := pinnedDigestDrift(data, tc.pin); err != nil {
-				// Regenerating the repository bundle keeps a replaced default that is
-				// missing from the prior-default lists, so this drift names that fix too.
-				t.Fatalf("%s: %v (moving a default: append the replaced pin to priorDefaultBaseImages or priorDefaultBuilderImages, then regenerate)", tc.path, err)
+				// A Renovate update moves the pins but never the generated bundle, so this
+				// drift names the command that finishes it.
+				t.Fatalf("%s: %v (move a reviewed default with praetorctl devcontainer bump, which records the replaced pin in prior-images.json and regenerates the bundle)", tc.path, err)
 			}
 		})
 	}

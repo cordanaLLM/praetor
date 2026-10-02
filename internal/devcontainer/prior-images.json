@@ -1,0 +1,8 @@
+{
+  "base": [
+    "mcr.microsoft.com/devcontainers/base@sha256:d94c97dd9cacf183d0a6fd12a8e87b526e9e928307674ae9c94139139c0c6eae"
+  ],
+  "builder": [
+    "docker.io/library/golang@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125"
+  ]
+}

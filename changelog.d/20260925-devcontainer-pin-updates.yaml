@@ -1,0 +1,4 @@
+type: fixed
+title: Keep Renovate off the generated DevContainer bundle, read the reviewed default images by tag, and add devcontainer bump to move a pin, record the prior default, regenerate and verify
+issue: "#323"
+breaking: false

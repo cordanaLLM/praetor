@@ -65,7 +65,8 @@ type imageRole struct {
 // other recorded image, another digest of the default repository or the same digest from
 // another repository included, is the adopter's choice and is kept. A missing, unmanaged or
 // invalid config records no choice and leaves options unchanged. The notes list every
-// image kept, refreshed or replaced against its recorded value.
+// image kept, refreshed or replaced against its recorded value. The earlier reviewed defaults
+// are the prior-images.json compiled into this binary (loadPriorImages).
 func InheritRecordedImages(ctx context.Context, path string, options BootstrapOptions) (BootstrapOptions, []ImageNote, error) {
 	if ctx == nil {
 		return options, nil, errors.New("recorded image inheritance requires context")
@@ -81,10 +82,14 @@ func InheritRecordedImages(ctx context.Context, path string, options BootstrapOp
 	if recorded == nil {
 		return options, nil, nil
 	}
+	priors, err := loadPriorImages()
+	if err != nil {
+		return options, nil, err
+	}
 	var notes []ImageNote
 	for _, role := range []imageRole{
-		{name: "base", flag: "--base-image", fallback: DefaultBaseImage, recorded: recorded.BaseImage, prior: priorDefaultBaseImages, selected: &options.BaseImage},
-		{name: "builder", flag: "--builder-image", fallback: DefaultBuilderImage, recorded: recorded.BuilderImage, prior: priorDefaultBuilderImages, selected: &options.BuilderImage},
+		{name: "base", flag: "--base-image", fallback: DefaultBaseImage, recorded: recorded.BaseImage, prior: priors.Base, selected: &options.BaseImage},
+		{name: "builder", flag: "--builder-image", fallback: DefaultBuilderImage, recorded: recorded.BuilderImage, prior: priors.Builder, selected: &options.BuilderImage},
 	} {
 		if note, changed := inheritImage(role); changed {
 			notes = append(notes, note)
