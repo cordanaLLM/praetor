@@ -640,9 +640,6 @@ func TestAssignReviewers_Boundary_PathLimit(t *testing.T) {
 	if !slices.Equal(beyond.HumanReviewers, wantBeyond) {
 		t.Fatalf("expected reviewers %v beyond limit, got %v", wantBeyond, beyond.HumanReviewers)
 	}
-	if slices.Contains(beyond.HumanReviewers, "@team-beyond") {
-		t.Fatalf("reviewer beyond limit was unexpectedly assigned: %v", beyond.HumanReviewers)
-	}
 }
 
 func TestAnalyzeCommit_Positive_NonBreakingAndBreaking(t *testing.T) {
