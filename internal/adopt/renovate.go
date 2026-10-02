@@ -14,6 +14,7 @@ import (
 
 	"github.com/cordanaLLM/praetor/internal/clientjson"
 	"github.com/cordanaLLM/praetor/internal/contextopt"
+	"github.com/cordanaLLM/praetor/internal/devcontainer"
 	"github.com/cordanaLLM/praetor/internal/managedasset"
 	"github.com/cordanaLLM/praetor/internal/util"
 )
@@ -51,6 +52,12 @@ import (
 //
 // Each test errs towards keeping the managed entry: a rule adoption cannot read this way costs
 // a redundant entry, never an unprotected file.
+//
+// The entry also lists the DevContainer bundle files Renovate's managers read, when the bundle
+// is one Praetor generates (generatedDevContainerPaths): audit verifies them against the
+// rendering of the pinned catalog and their recorded inputs, so a bot's edit fails it, and
+// Renovate reads the digest-only images of Dockerfile.praetor as latest and proposes another
+// image (#323). Their updates arrive with a regeneration from a reviewed Praetor checkout.
 
 const (
 	// renovateRuleDescription marks the one packageRules entry adoption owns.
@@ -226,7 +233,8 @@ func packageJSONConfiguresRenovate(ctx context.Context, data []byte) bool {
 
 // renovateManagedPaths returns the managed paths of every family the active facets enable,
 // except a family whose Source is in the repository: that repository is the family's
-// origin, where the files are sources its own Renovate is meant to update.
+// origin, where the files are sources its own Renovate is meant to update. The generated
+// DevContainer bundle files follow them (generatedDevContainerPaths).
 func renovateManagedPaths(ctx context.Context, s *adoptSession) ([]string, error) {
 	families, err := enabledManagedFamiliesForSession(ctx, s)
 	if err != nil {
@@ -242,7 +250,31 @@ func renovateManagedPaths(ctx context.Context, s *adoptSession) ([]string, error
 			adopted = append(adopted, families[index])
 		}
 	}
-	return managedPathsOf(adopted), nil
+	bundle, err := generatedDevContainerPaths(ctx, s)
+	if err != nil {
+		return nil, err
+	}
+	return append(managedPathsOf(adopted), bundle...), nil
+}
+
+// generatedDevContainerPaths returns the DevContainer bundle files Renovate's managers read
+// (devcontainer.UpdateBotBundleFiles) when the repository's bundle is one Praetor generates,
+// or will be after this adoption: no devcontainer.json yet, which the dev-container step
+// creates; --force, under which that step replaces it; or a file recording a bootstrap
+// specification, edited since or not. An existing DevContainer of the operator's own, which adoption preserves, is
+// theirs to update and contributes no path; so does a file the adoption read contract refuses
+// (a symbolic link, a directory, a file over 1 MiB), which that step preserves the same way.
+// Only an ended adoption context is an error, because then nothing was observed.
+func generatedDevContainerPaths(ctx context.Context, s *adoptSession) ([]string, error) {
+	data, exists, err := observeAdoptionInput(ctx, s, devcontainerFile)
+	if err != nil {
+		_, err = uninspectableReason(ctx, err)
+		return nil, err
+	}
+	if exists && !s.opts.Force && !devcontainer.RecordsBootstrap(data) {
+		return nil, nil
+	}
+	return devcontainer.UpdateBotBundleFiles(devcontainerFile), nil
 }
 
 // reportRenovateUnsafe records a configuration left untouched, with the rule to add by hand

@@ -10,6 +10,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -70,6 +71,32 @@ type reviewedRole struct {
 var reviewedRoles = []reviewedRole{
 	{name: "base", constant: "DefaultBaseImage", flag: "--base-image"},
 	{name: "builder", constant: "DefaultBuilderImage", flag: "--builder-image", dockerfiles: []string{DevImageDockerfile}},
+}
+
+// UpdateBotBundleFiles returns the files of the bundle at config, a slash-separated repository
+// path of its devcontainer.json, that a dependency update bot's managers read: the config and
+// the Dockerfile beside it. Both are generated, so verification rejects a bot's edit, and the
+// Dockerfile pins its images digest-only, which Renovate looks up as latest (#323). The
+// base64 source parts hold nothing a manager parses. Praetor's renovate.json and the rule
+// adoption writes for adopters disable Renovate for exactly these files.
+func UpdateBotBundleFiles(config string) []string {
+	return []string{config, path.Join(path.Dir(config), bootstrapDockerfile)}
+}
+
+// RecordsBootstrap reports whether data, the bytes of a devcontainer.json, is a config Praetor
+// generated: one carrying a customizations.praetor.bootstrap object. It asks neither for the
+// managed schema nor for a specification that still validates, unlike decodeRecordedBootstrap:
+// a generated file a bot or a person edited since is still a generated file, and the one
+// verification rejects.
+func RecordsBootstrap(data []byte) bool {
+	var recorded struct {
+		Customizations struct {
+			Praetor struct {
+				Bootstrap jsontext.Value `json:"bootstrap"`
+			} `json:"praetor"`
+		} `json:"customizations"`
+	}
+	return json.Unmarshal(data, &recorded) == nil && recorded.Customizations.Praetor.Bootstrap.Kind() == '{'
 }
 
 // PriorImages is prior-images.json: every earlier reviewed default of each role, as

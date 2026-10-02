@@ -478,8 +478,8 @@ tells the adopter's Renovate to leave the managed files alone
   the one your platform reads.
 - It adds one `packageRules` entry, described
   `praetor-managed files: praetorctl adopt ships their updates and praetorctl audit locks them byte for byte`,
-  whose `matchFileNames` lists every managed path of the enabled families and
-  sets `enabled: false`. It does not use `ignorePaths`: that option is not
+  whose `matchFileNames` lists every managed path of the enabled families, then
+  the generated DevContainer bundle files, and sets `enabled: false`. It does not use `ignorePaths`: that option is not
   mergeable, so a repository-level list replaces the one `config:recommended`
   contributes and would re-enable updates in test and fixture trees.
 - A rule of the adopter's own that already disables Renovate for managed paths
@@ -516,6 +516,17 @@ tells the adopter's Renovate to leave the managed files alone
   `tools/apicompat/assets.go`, where the managed files are sources its own
   Renovate updates, as in this repository) contributes no path. With no path
   left, no entry is needed and an existing one is removed.
+- After the family files the entry lists `.devcontainer/devcontainer.json` and
+  `.devcontainer/Dockerfile.praetor` when the DevContainer is one Praetor
+  generates: the file records a `customizations.praetor.bootstrap`
+  specification, or adoption is about to write it because none exists or
+  `--force` replaces it. Audit verifies the bundle against its recorded inputs,
+  so a bot's edit fails it, and Renovate reads the digest-only images of
+  `Dockerfile.praetor` as `latest`
+  ([moving a reviewed default image](devcontainer-bootstrap.md#moving-a-reviewed-default-image)).
+  A DevContainer of the adopter's own, which adoption preserves, is not listed
+  (`generatedDevContainerPaths`, tests in
+  `internal/adopt/renovate_devcontainer_test.go`).
 
 `TestRenovateIgnorePositiveDeclaresManagedFilesOnce`,
 `TestRenovateIgnorePositiveAcceptsAnEquivalentAdopterRule`,
