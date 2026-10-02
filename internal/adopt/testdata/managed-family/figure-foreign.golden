@@ -19,12 +19,12 @@ action create tools/figures/build.mjs :: Scaffolded locked figure engine asset
 action create tools/figures/third_party/interfig/upstream/LICENSE :: Scaffolded locked figure engine asset
 action create tools/figures/dist/player.js :: Scaffolded locked figure engine asset
 action create tools/figures/README.md :: Scaffolded locked figure engine asset
-action create .gitattributes :: Created the managed attribute block that keeps hashed documentation files unconverted
+action create .gitattributes :: Created the managed attribute block that keeps the files audit compares byte for byte unconverted
 file tools/figures/build.mjs sha256:e4efaac427bc5ea716b2871c3e7f84366c8954a29e6d71e73a696753b592dfbd
 file tools/figures/dist/player.js sha256:2db2e3bfda05a3776f165530a519b6c4a5def717b4dd4192484f8d86076a4a94
 file tools/figures/third_party/interfig/upstream/LICENSE sha256:01fde0bedf83bdc185065d7af524a61690efe576a67f922eaff3a1280c17b63a
 file tools/figures/README.md sha256:06a88460af38141f8a1ae087a4d54b97514749cb0ad5459a8acec171e0a42580
-file .gitattributes "# BEGIN praetor managed attributes (praetorctl adopt)\n# praetorctl audit hashes these files; keep their checkout bytes the same on every platform.\ntools/figures/** text eol=lf\ndocs/figures/*.ts text eol=lf\ndocs/assets/figures/* text eol=lf\ntools/figures/third_party/interfig/upstream/** -text\n# END praetor managed attributes\n"
+file .gitattributes "# BEGIN praetor managed attributes (praetorctl adopt)\n# praetorctl audit hashes these files; keep their checkout bytes the same on every platform.\n.devcontainer/Dockerfile.praetor text eol=lf\ntools/figures/** text eol=lf\ndocs/figures/*.ts text eol=lf\ndocs/assets/figures/* text eol=lf\ntools/figures/third_party/interfig/upstream/** -text\n# END praetor managed attributes\n"
 == disable over a drifted figure asset
 report-error refusing to remove drifted documentation asset tools/figures/dist/player.js
 error refusing to remove drifted documentation asset tools/figures/dist/player.js
@@ -32,4 +32,4 @@ file tools/figures/build.mjs sha256:e4efaac427bc5ea716b2871c3e7f84366c8954a29e6d
 file tools/figures/dist/player.js sha256:2d2100d97834f203c29e566efb8be317d351fea80646f01fe2e1f0ac336c7676
 file tools/figures/third_party/interfig/upstream/LICENSE sha256:01fde0bedf83bdc185065d7af524a61690efe576a67f922eaff3a1280c17b63a
 file tools/figures/README.md sha256:06a88460af38141f8a1ae087a4d54b97514749cb0ad5459a8acec171e0a42580
-file .gitattributes "# BEGIN praetor managed attributes (praetorctl adopt)\n# praetorctl audit hashes these files; keep their checkout bytes the same on every platform.\ntools/figures/** text eol=lf\ndocs/figures/*.ts text eol=lf\ndocs/assets/figures/* text eol=lf\ntools/figures/third_party/interfig/upstream/** -text\n# END praetor managed attributes\n"
+file .gitattributes "# BEGIN praetor managed attributes (praetorctl adopt)\n# praetorctl audit hashes these files; keep their checkout bytes the same on every platform.\n.devcontainer/Dockerfile.praetor text eol=lf\ntools/figures/** text eol=lf\ndocs/figures/*.ts text eol=lf\ndocs/assets/figures/* text eol=lf\ntools/figures/third_party/interfig/upstream/** -text\n# END praetor managed attributes\n"
