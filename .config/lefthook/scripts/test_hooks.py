@@ -2510,11 +2510,11 @@ class HookInterpreter(unittest.TestCase):
         return subprocess.run([shutil.which("sh") or "sh", LAUNCHER, *args], cwd=ROOT, env=env,
                               input=b"", capture_output=True, timeout=60, check=False)
 
-    def stub(self, directory, name):
-        """A program that prints its name and arguments, standing in for an interpreter."""
+    def stub(self, directory, name, body='echo "stub:$0:$*"\n'):
+        """A program standing in for an interpreter; it prints its name and arguments."""
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / name
-        path.write_text('#!/bin/sh\necho "stub:$0:$*"\n', newline="\n")
+        path.write_text("#!/bin/sh\n" + body, newline="\n")
         path.chmod(0o755)
         return path
 
@@ -2533,6 +2533,32 @@ class HookInterpreter(unittest.TestCase):
         self.assertIn(b"missing dependency", result.stderr)
         self.assertIn(b"'praetor-no-such-interpreter'", result.stderr)
         self.assertIn(b"PRAETOR_PYTHON", result.stderr)
+
+    def test_a_failing_hook_is_a_verdict_whatever_its_status(self):
+        # Boundary: the statuses a shell and the Store alias give an interpreter that never
+        # ran are a verdict when a hook returns them; the status alone decides nothing.
+        for status in (1, 49, 126, 127):
+            with self.subTest(status=status):
+                result = self.launch("-c", f"raise SystemExit({status})", python=sys.executable)
+                self.assertEqual(result.returncode, status, result.stderr)
+                self.assertNotIn(b"missing dependency", result.stderr)
+
+    @unittest.skipIf(os.name == "nt", POSIX_STUB)
+    def test_a_python3_that_is_no_interpreter_is_reported_as_a_missing_dependency(self):
+        # The Microsoft Store alias Windows puts on PATH as python3: it starts, prints its
+        # own message and returns a status that is neither 126 nor 127.
+        alias = ('echo "Python was not found; run without arguments to install from the '
+                 'Microsoft Store" >&2\nexit 49\n')
+        with tempfile.TemporaryDirectory(prefix="praetor-interpreter-") as temp:
+            stub = self.stub(Path(temp) / "bin", "python3", alias)
+            for python in (None, str(stub)):
+                with self.subTest(python=python):
+                    result = self.launch("-B", "hook.py", python=python, path=str(stub.parent))
+                    self.assertEqual(result.returncode, 49, result.stdout + result.stderr)
+                    self.assertIn(b"Python was not found", result.stderr)
+                    self.assertIn(b"missing dependency", result.stderr)
+                    self.assertIn(f"'{python or 'python3'}'".encode(), result.stderr)
+                    self.assertIn(b"PRAETOR_PYTHON", result.stderr)
 
     @unittest.skipIf(os.name == "nt", POSIX_STUB)
     def test_unset_and_empty_select_python3_and_a_path_with_a_space_is_one_word(self):
@@ -2613,6 +2639,33 @@ class HookInterpreter(unittest.TestCase):
         with mock.patch("toolchain.run", return_value=b"Python 2.7.18\n"), \
                 self.assertRaisesRegex(HookError, "is not Python 3"):
             toolchain.python_version()
+
+    def test_interpreter_version_starts_the_program_and_reads_what_it_states(self):
+        version = toolchain.interpreter_version(sys.executable)
+        self.assertTrue(version.startswith("%d.%d.%d" % sys.version_info[:3]), version)
+        with self.assertRaisesRegex(HookError, "praetor-no-such-interpreter"):
+            toolchain.interpreter_version("praetor-no-such-interpreter")
+        # Boundary: Python 2 states its version on stderr, and a name alone states nothing.
+        for output in (b"", b"Python 2.7.18\n", b"python3\n"):
+            with self.subTest(output=output), mock.patch("toolchain.run", return_value=output), \
+                    self.assertRaisesRegex(HookError, "python3 is not Python 3; set PRAETOR_PYTHON"):
+                toolchain.interpreter_version("python3")
+        with mock.patch("toolchain.run", return_value=b"Python 3.9.0\n") as run:
+            self.assertEqual(toolchain.interpreter_version("python3"), "3.9.0")
+        self.assertEqual(run.call_args.args[0], ["python3", "-V"])
+        self.assertEqual(run.call_args.kwargs["timeout"], toolchain.VERSION_TIMEOUT)
+
+    @unittest.skipIf(os.name == "nt", POSIX_STUB)
+    def test_interpreter_version_refuses_a_program_that_exits_nonzero(self):
+        # The Microsoft Store alias: found under the name, started, and no interpreter.
+        with tempfile.TemporaryDirectory(prefix="praetor-interpreter-") as temp:
+            alias = self.stub(Path(temp), "python3", 'echo "Python was not found" >&2\nexit 49\n')
+            with self.assertRaisesRegex(HookError, r"python3 -V exited 49\nPython was not found"):
+                toolchain.interpreter_version(str(alias))
+            # Boundary: a status of zero is not enough either without a stated version.
+            quiet = self.stub(Path(temp), "python", "exit 0\n")
+            with self.assertRaisesRegex(HookError, "is not Python 3"):
+                toolchain.interpreter_version(str(quiet))
 
     def check(self, required, states):
         """Run toolchain.check with describe answering from states; return (failed, lines)."""

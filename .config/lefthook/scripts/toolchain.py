@@ -152,6 +152,28 @@ def resolved_program(tool, environ=None):
     return (os.environ if environ is None else environ).get(variable) or default
 
 
+def stated_python(output, program):
+    """Return the Python 3 version a `-V` output states; any other output is a HookError."""
+    match = PYTHON_VERSION.search(output.decode(errors="replace"))
+    if match is None:
+        variable = RESOLVED["python"][0]
+        raise HookError(f"{program} is not Python 3; set {variable} to a Python 3 interpreter")
+    return match.group(1)
+
+
+def interpreter_version(program):
+    """Start program with -V, in one bounded process, and return the Python 3 version it states.
+
+    A file of that name is no evidence of an interpreter. Windows 10 and 11 put python3.exe on
+    the user's PATH as an App Execution Alias for the Microsoft Store: it is found by every
+    PATH lookup, and started with an argument it prints "Python was not found" and exits
+    nonzero. A program that does not start, exits nonzero or states no Python 3 version is a
+    HookError saying which.
+    """
+    output = run([program, "-V"], env=clean_env(), timeout=VERSION_TIMEOUT)
+    return stated_python(output, program)
+
+
 def python_version():
     """Start the interpreter the way every hook does, through python.sh, and return what it is.
 
@@ -164,10 +186,7 @@ def python_version():
     except HookError as error:
         raise HookError(f"hook interpreter {program} did not start ({variable} names it, "
                         f"{default} where unset): {error}") from error
-    match = PYTHON_VERSION.search(output.decode(errors="replace"))
-    if match is None:
-        raise HookError(f"{program} is not Python 3; set {variable} to a Python 3 interpreter")
-    return f"{match.group(1)} ({program})"
+    return f"{stated_python(output, program)} ({program})"
 
 
 def make_program(environ=None, which=shutil.which):

@@ -23,6 +23,8 @@ from portability_selftest import hook_toolchain
 INSTALL_TIMEOUT = 300
 # setx writes one registry value and returns.
 SETX_TIMEOUT = 30
+# What a failed start printed is quoted in one line of the fault; the rest is cut.
+MAX_FAULT_DETAIL = 240
 
 
 def hook_interpreter_spelling():
@@ -34,16 +36,39 @@ def hook_interpreter_spelling():
     return hook_toolchain().RESOLVED["python"]
 
 
-def store_user_variable(variable, value, default, platform=sys.platform, run=subprocess.run):
+def interpreter_fault(program, which=shutil.which):
+    """Return why program cannot run the Git hooks, or None when it starts as Python 3.
+
+    A name that resolves on PATH is not yet an interpreter, so the file PATH resolves it to
+    is started (toolchain.interpreter_version, one bounded `-V`). Windows 10 and 11 put a
+    python3.exe on the user's PATH that is the Microsoft Store alias: a lookup finds it, and
+    a hook that starts it gets "Python was not found" and a nonzero status.
+    """
+    path = which(program)
+    if path is None:
+        # A value with a directory part is a path, which no PATH lookup resolves.
+        missing = "is not an executable file" if os.path.dirname(program) else "is not on PATH"
+        return f"{program} {missing}"
+    toolchain = hook_toolchain()
+    try:
+        toolchain.interpreter_version(path)
+    except toolchain.HookError as error:
+        detail = " ".join(str(error).split())[:MAX_FAULT_DETAIL]
+        return f"{program} does not start as Python 3 ({detail})"
+    return None
+
+
+def store_user_variable(variable, value, fault, platform=sys.platform, run=subprocess.run):
     """Store variable=value for the user's later processes, where the platform keeps such a store.
 
     Windows has per-user environment variables, written with setx and read by every process
     started afterwards, Git hooks included. No other platform has one store every shell
-    reads, so there the install fails with the line to add rather than guessing a profile.
+    reads, so there the install fails with fault and the line to add rather than guessing a
+    profile.
     """
     if platform != "win32":
         raise RuntimeError(
-            f"{default} is not on PATH, so the Git hooks cannot start; this platform has no "
+            f"{fault}, so the Git hooks cannot start; this platform has no "
             f"per-user environment store, so export {variable}={value} in the shell profile "
             "that starts git and run the install again")
     result = run(["setx", variable, value], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -52,27 +77,31 @@ def store_user_variable(variable, value, default, platform=sys.platform, run=sub
         raise RuntimeError(f"setx {variable} failed: {result.stderr.decode(errors='replace').strip()}")
 
 
-def settle_hook_interpreter(environ=None, which=shutil.which, store=store_user_variable):
+def settle_hook_interpreter(environ=None, fault=interpreter_fault, store=store_user_variable):
     """Make sure the Git hooks can start their interpreter on this host, and report how.
 
     Every hook starts through .config/lefthook/python.sh, which runs the interpreter the
-    variable names, or the default name where it is unset or empty. A set variable is the
-    operator's choice: it is checked, never replaced. Where neither resolves -- a stock
-    Windows install has python.exe and no python3 -- the interpreter running this install
-    is stored as the user's variable, which a shell opened afterwards reads.
+    variable names, or the default name where it is unset or empty. Either one is started
+    here, not only looked up (interpreter_fault). A set variable is the operator's choice:
+    it is checked, never replaced. Where the default name does not start as Python 3 -- a
+    Windows host has no python3, or only the Microsoft Store alias of that name -- the
+    interpreter running this install is stored as the user's variable, which a shell opened
+    afterwards reads, and the report carries the reason.
     """
     environ = os.environ if environ is None else environ
     variable, default = hook_interpreter_spelling()
     configured = environ.get(variable, "")
     if configured:
-        if which(configured) is None:
-            raise RuntimeError(f"{variable}={configured} names no program on PATH; unset it "
-                               "or point it at a Python 3 interpreter")
+        reason = fault(configured)
+        if reason is not None:
+            raise RuntimeError(f"{variable} names an interpreter the Git hooks cannot run: "
+                               f"{reason}; unset it or point it at a Python 3 interpreter")
         return {"variable": variable, "value": configured, "source": "environment"}
-    if which(default) is not None:
+    reason = fault(default)
+    if reason is None:
         return {"variable": variable, "value": default, "source": "default"}
-    store(variable, sys.executable, default)
-    return {"variable": variable, "value": sys.executable, "source": "stored"}
+    store(variable, sys.executable, reason)
+    return {"variable": variable, "value": sys.executable, "source": "stored", "reason": reason}
 
 
 def standardsctl_argv():

@@ -204,19 +204,33 @@ place the interpreter is resolved:
 
 A hook that starts another Python process, such as the harness self-tests or the command
 guard, reuses the interpreter it is running under (`sys.executable`), so a second name can
-never run beside the first. When the shell cannot start the interpreter the launcher prints
-`praetor hooks: missing dependency: Python 3 interpreter '<name>' did not start` and returns
-the shell's status (127), so an absent interpreter reads as a missing dependency and not as a
-hook rejecting the commit.
+never run beside the first.
 
-A stock Windows install has `python.exe` and the `py` launcher but no `python3`. Set the
-variable there, or run `scripts/dev_install.py`: before it installs anything,
-`settle_hook_interpreter` checks that the variable, or `python3` where it is unset, is on
-`PATH`. Where neither is, it stores the interpreter running the install as the user's
-`PRAETOR_PYTHON` with `setx` on Windows, which every shell opened afterwards reads; on any
-other platform it stops and prints the `export` line to add. A variable that is already set
-is checked and never replaced. The install report carries the result under
-`hook_interpreter`.
+A nonzero status is the hook's verdict only when the interpreter ran. On any failure the
+launcher therefore starts the interpreter once more with an empty program, and where that
+fails too it prints
+`praetor hooks: missing dependency: Python 3 interpreter '<name>' did not start` before it
+returns the first status unchanged. The status is not what decides: the shell gives 127 for
+a command it cannot find and 126 for one it cannot execute, a hook may return either
+itself, and the Windows alias below returns a status of its own
+(`test_a_failing_hook_is_a_verdict_whatever_its_status` and
+`test_a_python3_that_is_no_interpreter_is_reported_as_a_missing_dependency` in
+`.config/lefthook/scripts/test_hooks.py`).
+
+On Windows the name `python3` is not a reliable interpreter. An install from python.org
+provides `python` and `py`, and Windows 10 and 11 put a `python3.exe` on the user's `PATH`
+that is an App Execution Alias for the Microsoft Store: every `PATH` lookup finds it, and
+started with arguments it prints `Python was not found` and exits nonzero. Set the variable
+there, or run `scripts/dev_install.py`. Before it installs anything,
+`settle_hook_interpreter` starts the program the variable names, or `python3` where it is
+unset, with `-V` and requires it to state a Python 3 version (`interpreter_fault`, which
+calls `interpreter_version` in `.config/lefthook/scripts/toolchain.py`); finding a file of
+that name is not accepted as proof. Where `python3` is missing or does not start as
+Python 3, it stores the interpreter running the install as the user's `PRAETOR_PYTHON` with
+`setx` on Windows, which every shell opened afterwards reads; on any other platform it stops
+and prints the reason and the `export` line to add. A variable that is already set is
+checked the same way and never replaced: one that does not start fails the install. The
+install report carries the result under `hook_interpreter`.
 
 To see what a host provides, run the declared-toolchain report. It starts the interpreter
 through the launcher, asks `make` for its version and reads each floored linter's version:
@@ -791,7 +805,7 @@ naming it, not a Python traceback.
 
 A Windows checkout depends on four platform behaviours. Each one blocks `git commit` if it is
 missing, so all four must hold. Two programs must also resolve there: the hooks' interpreter,
-which a stock install does not call `python3`
+which Windows does not reliably provide under the name `python3`
 ([the interpreter the hooks run](#the-interpreter-the-hooks-run)), and GNU Make
 ([the make the hooks run](#the-make-the-hooks-run)).
 

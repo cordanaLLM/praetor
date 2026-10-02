@@ -6,15 +6,20 @@
 #
 # PRAETOR_PYTHON names the interpreter: a command on PATH or a path to it. Unset
 # or empty selects python3, the name PEP 394 gives Python 3 on Linux and macOS.
-# A stock Windows install has only python.exe and the py launcher, so that host
-# sets the variable; scripts/dev_install.py stores it there.
+# A python.org install on Windows has python.exe and the py launcher, and the
+# python3 that Windows itself puts on PATH is the Microsoft Store alias, not an
+# interpreter. That host sets the variable; scripts/dev_install.py stores it.
 set -eu
 python="${PRAETOR_PYTHON:-python3}"
 status=0
 "$python" "$@" || status=$?
-# 127: the shell found no such command. 126: it found one it cannot execute.
-# Neither is a verdict of the hook, so say what is missing before returning it.
-if [ "$status" -eq 127 ] || [ "$status" -eq 126 ]; then
+# A nonzero status is the hook's verdict only when the interpreter ran. The shell
+# returns 127 for no such command and 126 for one it cannot execute, and the
+# Microsoft Store alias named python3 starts, prints "Python was not found" and
+# returns a status of its own. So the status is not read: on a failure the
+# interpreter is started once more with an empty program, and one that cannot
+# run even that is reported as the missing dependency it is.
+if [ "$status" -ne 0 ] && ! "$python" -c "" </dev/null >/dev/null 2>&1; then
   echo "praetor hooks: missing dependency: Python 3 interpreter '$python' did not start." \
     "Install it, or set PRAETOR_PYTHON to the interpreter the hooks run." >&2
 fi
