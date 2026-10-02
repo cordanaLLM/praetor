@@ -26,12 +26,14 @@ var errBaselineStdin = errors.New("caveman estimate: --base compares files with 
 
 // baselineFile is one path of an `estimate --base` run: its working-tree spelling, the blob
 // it was at the base revision ("" when it was no regular file there), whether the working
-// tree holds it, and a directory of its repository that the working tree still holds, for git
-// to run in.
+// tree holds it, whether git leaves that working-tree file alone (it neither tracks it nor
+// would: an ignore rule or a nested repository covers it), and a directory of its repository
+// that the working tree still holds, for git to run in.
 type baselineFile struct {
 	path     string
 	object   string
 	worktree bool
+	ignored  bool
 	gitDir   string
 }
 
@@ -40,11 +42,13 @@ type baselineFile struct {
 // resolved once, in the repository of the first path, so every read sees one commit. A file on
 // one side only is a row that says which side lacks it; a path on neither side is an error.
 // A directory covers its Markdown files on both sides, so a file deleted since the base is
-// reported, never dropped. A path below a directory the working tree no longer holds is read
-// the same way: git runs in the deepest directory that still exists (util.SplitAtExistingDir)
-// and is handed the rest as a pathspec. Bytes are those of the blob as stored: on a checkout
-// that converts line ends the working-tree figure includes the carriage returns, the token
-// estimate does not.
+// reported, never dropped; its working-tree side is the files git tracks or would track
+// (baselineWorktreeFiles), the set the base side can hold. A file named outright is measured
+// even when git ignores it, and its row says so. A path below a directory the working tree no
+// longer holds is read the same way: git runs in the deepest directory that still exists
+// (util.SplitAtExistingDir) and is handed the rest as a pathspec. Bytes are those of the blob
+// as stored: on a checkout that converts line ends the working-tree figure includes the
+// carriage returns, the token estimate does not.
 func cavemanEstimateBase(ctx context.Context, rev string, args []string, out io.Writer) error {
 	if len(args) == 0 {
 		return errors.New(cavemanUsage)
@@ -65,32 +69,39 @@ func cavemanEstimateBase(ctx context.Context, rev string, args []string, out io.
 		}
 		report.add(files[i], delta)
 	}
-	text := fmt.Sprintf("base: %s = %s\n%s%s base_absent=%d worktree_absent=%d\n", rev, commit, report.rows.String(),
-		cavemanDeltaTotal(len(files), report.before, report.after), report.baseAbsent, report.worktreeAbsent)
+	text := fmt.Sprintf("base: %s = %s\n%s%s base_absent=%d worktree_absent=%d worktree_ignored=%d\n", rev, commit, report.rows.String(),
+		cavemanDeltaTotal(len(files), report.before, report.after), report.baseAbsent, report.worktreeAbsent, report.worktreeIgnored)
 	if _, err := io.WriteString(out, text); err != nil {
 		return fmt.Errorf("caveman estimate: write report: %w", err)
 	}
 	return nil
 }
 
-// baselineReport collects the rows of one run, their sums and how many files one side lacks.
+// baselineReport collects the rows of one run, their sums, how many files one side lacks and
+// how many working-tree files git ignores.
 type baselineReport struct {
-	rows                       strings.Builder
-	before, after              cavemanMeasure
-	baseAbsent, worktreeAbsent int
+	rows                                        strings.Builder
+	before, after                               cavemanMeasure
+	baseAbsent, worktreeAbsent, worktreeIgnored int
 }
 
-// add appends file's row. A file exists on at least one side, so at most one note applies.
+// add appends file's row. A file exists on at least one side, so base=absent and
+// worktree=absent never meet; worktree=ignored marks a file that is there and can follow
+// base=absent.
 func (r *baselineReport) add(file baselineFile, delta cavemanDelta) {
 	r.before, r.after = r.before.plus(delta.before), r.after.plus(delta.after)
 	note := ""
-	switch {
-	case file.object == "":
+	if file.object == "" {
 		note = " base=absent"
 		r.baseAbsent++
+	}
+	switch {
 	case !file.worktree:
-		note = " worktree=absent"
+		note += " worktree=absent"
 		r.worktreeAbsent++
+	case file.ignored:
+		note += " worktree=ignored"
+		r.worktreeIgnored++
 	}
 	r.rows.WriteString(delta.row() + note + "\n")
 }
@@ -161,9 +172,9 @@ func baselineArgFiles(ctx context.Context, commit, arg string) ([]baselineFile, 
 
 // baselineNamedPath looks one named path up at the base revision, from the deepest directory
 // the working tree holds. A file the working tree holds is one row, with or without a base
-// side. A path it lacks is whatever the base held there: a file is one row with no working-tree
-// side, a directory is its Markdown files, each such a row. A path on neither side is an error:
-// there is nothing to measure, and a typo must not read as a row.
+// side (baselineHeldFile). A path it lacks is whatever the base held there: a file is one row
+// with no working-tree side, a directory is its Markdown files, each such a row. A path on
+// neither side is an error: there is nothing to measure, and a typo must not read as a row.
 func baselineNamedPath(ctx context.Context, commit, path string, split util.DirSplit) ([]baselineFile, error) {
 	rest := filepath.ToSlash(split.Rest)
 	// Without a working-tree side the base decides between file and directory, so the listing
@@ -174,20 +185,44 @@ func baselineNamedPath(ctx context.Context, commit, path string, split util.DirS
 	}
 	below := rest + "/"
 	file := baselineFile{path: path, worktree: split.Exists, gitDir: split.Dir}
+	tracked := ""
 	if len(entries) == 1 && entries[0].RegularBlob() && !strings.HasPrefix(entries[0].Path, below) {
-		file.object = entries[0].Object
+		file.object, tracked = entries[0].Object, entries[0].Path
 	}
-	if file.worktree || file.object != "" {
+	if file.worktree {
+		return baselineHeldFile(ctx, commit, file, rest, tracked)
+	}
+	if file.object != "" {
 		return []baselineFile{file}, nil
 	}
-	files := baselineOnlyFiles(split.Dir, baselineMarkdownObjects(split.Dir, entries))
+	files, err := baselineOnlyFiles(split.Dir, baselineMarkdownObjects(split.Dir, entries))
 	switch {
-	case len(files) > 0:
-		return files, nil
+	case err != nil || len(files) > 0:
+		return files, err
 	case slices.ContainsFunc(entries, func(entry util.GitTreeEntry) bool { return strings.HasPrefix(entry.Path, below) }):
 		return nil, fmt.Errorf("caveman estimate: directory %s holds no Markdown file in the working tree or at %s", filepath.ToSlash(path), commit)
 	}
 	return nil, fmt.Errorf("caveman estimate: %s is a file neither in the working tree nor at %s", filepath.ToSlash(path), commit)
+}
+
+// baselineHeldFile completes the row of a named file the working tree holds; rest is its name
+// in file.gitDir and tracked the spelling the base listing answered with, "" without a base
+// side. Named under a letter case git does not track it under, on a file system that ignores
+// case, the file is an error naming the tracked spelling: git matches a path exactly, so the
+// base side would read as absent (baselineCaseVariant). A file git ignores is still measured,
+// since the operator asked for it by name, and is marked.
+func baselineHeldFile(ctx context.Context, commit string, file baselineFile, rest, tracked string) ([]baselineFile, error) {
+	if tracked != rest {
+		if err := baselineCaseVariant(ctx, commit, file.path, file.gitDir, rest); err != nil {
+			return nil, err
+		}
+	}
+	listed, err := baselineWorktreeListing(ctx, file.gitDir, "./"+rest)
+	if err != nil {
+		return nil, err
+	}
+	file.ignored = len(listed) == 0
+	return []baselineFile{file}, nil
 }
 
 // baselineMarkdownObjects maps the Markdown files of a base listing taken in dir to their
@@ -196,22 +231,31 @@ func baselineMarkdownObjects(dir string, entries []util.GitTreeEntry) map[string
 	objects := make(map[string]string, len(entries))
 	for _, entry := range entries {
 		rel := filepath.FromSlash(entry.Path)
-		if entry.RegularBlob() && filepath.IsLocal(rel) && strings.EqualFold(filepath.Ext(rel), ".md") {
+		if entry.RegularBlob() && filepath.IsLocal(rel) && strings.EqualFold(filepath.Ext(rel), cavemanProseExtension) {
 			objects[filepath.Join(dir, rel)] = entry.Object
 		}
 	}
 	return objects
 }
 
-// baselineOnlyFiles turns objects into files the working tree lacks, in lexical order; gitDir
-// is the directory their listing was taken in.
-func baselineOnlyFiles(gitDir string, objects map[string]string) []baselineFile {
+// baselineOnlyFiles turns objects, files of the base listing taken in gitDir that the walk of
+// the working tree did not find, into rows in lexical order. Each is looked up once more by
+// its tracked spelling (splitBaselinePath) before it is called absent: on a file system that
+// ignores case the working tree can hold it under another letter case, and a path that now
+// runs through a symlink is not a deleted file. Such a file is measured, or refused by the
+// reader, never reported as a deletion. A lookup that fails is an error, not an absence.
+func baselineOnlyFiles(gitDir string, objects map[string]string) ([]baselineFile, error) {
 	files := make([]baselineFile, 0, len(objects))
 	for path, object := range objects {
-		files = append(files, baselineFile{path: path, object: object, gitDir: gitDir})
+		split, err := splitBaselinePath(path)
+		if err != nil {
+			return nil, err
+		}
+		held := split.Exists && split.Rest != ""
+		files = append(files, baselineFile{path: path, object: object, worktree: held, gitDir: gitDir})
 	}
 	sortBaselineFiles(files)
-	return files
+	return files, nil
 }
 
 func sortBaselineFiles(files []baselineFile) {
@@ -219,25 +263,38 @@ func sortBaselineFiles(files []baselineFile) {
 }
 
 // baselineDirFiles is the union of the Markdown files below dir in the working tree and at the
-// base revision, so a file added since the base and one deleted since are both rows.
+// base revision, so a file added since the base and one deleted since are both rows. The
+// working-tree side is what git tracks or would track there (baselineWorktreeFiles). A
+// symlink named as the directory is refused with the reader's own error: the walk does not
+// follow it while git lists its target, which read every file of the target as deleted.
 func baselineDirFiles(ctx context.Context, commit, dir string) ([]baselineFile, error) {
-	present, err := appendCavemanFiles(ctx, nil, dir, map[string]bool{".md": true})
-	if err != nil {
+	if err := requireBaselineDir(ctx, dir); err != nil {
 		return nil, err
 	}
 	entries, err := baselineTree(ctx, commit, dir, true, "")
 	if err != nil {
 		return nil, err
 	}
-	objects := baselineMarkdownObjects(dir, entries)
-	files := make([]baselineFile, 0, len(present)+len(objects))
-	for _, path := range present {
-		files = append(files, baselineFile{path: path, object: objects[path], worktree: true, gitDir: dir})
-		delete(objects, path)
+	if len(entries) == 0 {
+		if err := baselineCaseVariant(ctx, commit, dir, dir, ""); err != nil {
+			return nil, err
+		}
 	}
-	files = append(files, baselineOnlyFiles(dir, objects)...)
+	objects := baselineMarkdownObjects(dir, entries)
+	files, err := baselineWorktreeFiles(ctx, dir, objects)
+	if err != nil {
+		return nil, err
+	}
+	for _, file := range files {
+		delete(objects, file.path)
+	}
+	deleted, err := baselineOnlyFiles(dir, objects)
+	if err != nil {
+		return nil, err
+	}
+	files = append(files, deleted...)
 	if len(files) == 0 {
-		return nil, fmt.Errorf("caveman estimate: directory %s holds no Markdown file in the working tree or at %s", filepath.ToSlash(dir), commit)
+		return nil, fmt.Errorf("caveman estimate: directory %s holds no Markdown file that git tracks or would track in the working tree, and none at %s", filepath.ToSlash(dir), commit)
 	}
 	sortBaselineFiles(files)
 	return files, nil

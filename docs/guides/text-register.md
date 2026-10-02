@@ -756,14 +756,14 @@ docs/gone.md: bytes=30->0 (-30) lines=2->0 (-2) tokens_est=7->0 (-7) worktree=ab
 docs/kept.md: bytes=14->14 (+0) lines=1->1 (+0) tokens_est=3->3 (+0)
 docs/new.md: bytes=0->10 (+10) lines=0->1 (+1) tokens_est=0->2 (+2) base=absent
 docs/old/x.md: bytes=4->0 (-4) lines=1->0 (-1) tokens_est=2->0 (-2) worktree=absent
-total: inputs=5 bytes=71->35 (-36) tokens_est=17->7 (-10) base_absent=1 worktree_absent=2
+total: inputs=5 bytes=71->35 (-36) tokens_est=17->7 (-10) base_absent=1 worktree_absent=2 worktree_ignored=0
 ```
 
 | Input | Behaviour |
 | :--- | :--- |
 | `<rev>` | any revision that names a commit: a branch, a tag, `HEAD~1`, an object id. It is resolved once, in the repository of the first path, and the first line prints the commit, so every read sees one tree. A revision with a shell metacharacter (`HEAD@{1}`) or a leading `-` is refused (`util.ValidateExecArg`) |
-| a file | measured on both sides. On one side only it is a row ending in `base=absent` or `worktree=absent`, the missing side counted as zero; on neither side it is an error, so a typo is never a row. A file whose directory was deleted or renamed since the revision is such a `worktree=absent` row too |
-| a directory | the union of the Markdown files below it in the working tree and at the revision, in lexical order, so a file or a whole subdirectory deleted since the revision is still reported. A directory the working tree no longer holds is its Markdown files at the revision, each `worktree=absent`; one that held no Markdown file is an error |
+| a file | measured on both sides. On one side only it is a row ending in `base=absent` or `worktree=absent`, the missing side counted as zero; on neither side it is an error, so a typo is never a row. A file whose directory was deleted or renamed since the revision is such a `worktree=absent` row too. A file git ignores is measured all the same, because it was asked for by name, and its row ends in `worktree=ignored` |
+| a directory | the union of the Markdown files below it at the revision and of those git tracks or would track in the working tree, in lexical order, so a file or a whole subdirectory deleted since the revision is still reported. A directory the working tree no longer holds is its Markdown files at the revision, each `worktree=absent`; one with no such file on either side is an error. A symlink named as the directory is refused |
 | `-` | an error: standard input has no revision |
 
 A renamed file is two rows, the old path `worktree=absent` and the new one `base=absent`.
@@ -772,6 +772,27 @@ Git runs in the deepest directory of each path that the working tree still holds
 removed or renamed directory is read like any other deleted file, and the paths
 `git diff --name-only <rev>` prints at the repository root can be handed over as they are;
 `TestCavemanEstimateBaseDeletedDirectory` pins it.
+
+Both sides of a directory describe one set. The working-tree side is what
+`git ls-files --cached --others --exclude-standard` lists below it: tracked files, and
+untracked files that no ignore rule of the repository hides. A file git ignores and every
+file of a nested repository or a submodule stay out, so a run at the repository root does
+not count ledgers, dependencies or other checkouts as new text
+(`baselineWorktreeFiles` in `cmd/standardsctl/caveman_baseline_worktree.go`,
+`TestCavemanEstimateBaseDirectoryCountsWhatGitTracks`). The listing goes through
+`util.RunGitProbe`, which reads no per-user git configuration, so a personal ignore file
+does not change the answer between machines. A file the revision holds stays a row whatever
+git does with it now: still on disk but ignored since, it is measured on both sides and
+marked `worktree=ignored`. The total counts the three marks as `base_absent`,
+`worktree_absent` and `worktree_ignored`.
+
+No row reports a deletion that did not happen:
+
+| Situation | Result | Pinned by |
+| :--- | :--- | :--- |
+| the directory named is a symlink | the error the reader gives a file below such a link, `confinement root must be a directory, never a symlink`; the walk does not follow the link while git lists its target, which would read every file as deleted. A path may reach the directory through a symlink, the directory itself may not be one | `TestCavemanEstimateBaseRefusesSymlinkedDirectory` |
+| a tracked directory was replaced by a symlink | its files are refused by the reader, not counted as deleted | `TestCavemanEstimateBaseSymlinkBoundary` |
+| a path is named in another letter case than git tracks it under, on a file system that ignores case (the default on macOS and Windows) | an error naming the tracked spelling relative to the top of the repository, `<path> is tracked as <tracked spelling>`, for a file and for a directory. Git matches a path exactly, so the base side would read as absent. The tracked spellings come from one bounded listing at the top of the repository (`git ls-files --cached --with-tree=<commit>` with an `icase` pathspec), and a spelling counts only when it is the same file (`os.SameFile`). Where case is distinguished, `readme.md` beside a tracked `README.md` is its own file and a `base=absent` row | `TestCavemanEstimateBaseTrackedSpelling`, `TestCavemanEstimateBaseCaseInsensitiveFileSystem` |
 
 The base side is read from git as stored (`git ls-tree`, `git cat-file blob`) through
 `util.RunGitProbe`, each call under its 5 s bound and the command under the 30 s bound of
