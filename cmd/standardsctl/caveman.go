@@ -23,6 +23,7 @@ const (
 	cavemanUsage = "usage: praetorctl caveman check [--kind=message|brief|return|context] [--surface=<name>] [--root=.] [--ext=.md,.py] [--selector=<path>] <file|dir|-> [...]\n" +
 		"       praetorctl caveman check --root=. --configured-sources [--max-words=N] [--max-tokens=N]\n" +
 		"       praetorctl caveman floor <before> <after>\n" +
+		"       praetorctl caveman compress [--stats|--in-place] <file|dir|-> [...]\n" +
 		"       praetorctl caveman estimate <file|dir|-> [...]"
 	// maxCavemanFiles bounds the files one invocation reads, directories expanded (HISS-02).
 	maxCavemanFiles = 4096
@@ -41,8 +42,8 @@ type cavemanInput struct {
 	provenance   string
 }
 
-// runCaveman lints agent-facing text (check), proves a rewrite lost nothing (floor) or
-// measures its token cost (estimate).
+// runCaveman lints agent-facing text (check), proves a rewrite lost nothing (floor), applies
+// the cleanups that cannot change meaning (compress) or measures its token cost (estimate).
 func runCaveman(args []string) error {
 	// cavemanCommand bounds itself by contextopt.MaxDuration.
 	return cavemanCommand(rootContext(), args, os.Stdin, os.Stdout)
@@ -59,6 +60,8 @@ func cavemanCommand(ctx context.Context, args []string, stdin io.Reader, out io.
 		return cavemanCheck(ctx, args[1:], stdin, out)
 	case "floor":
 		return cavemanFloor(ctx, args[1:], stdin, out)
+	case "compress":
+		return cavemanCompress(ctx, args[1:], stdin, out)
 	case "estimate":
 		return cavemanEstimate(ctx, args[1:], stdin, out)
 	}
@@ -552,14 +555,13 @@ func cavemanEstimate(ctx context.Context, args []string, stdin io.Reader, out io
 		return err
 	}
 	var text strings.Builder
-	var bytesTotal, tokensTotal int
+	var total cavemanMeasure
 	for _, input := range inputs {
-		tokens := caveman.EstimateTokens(input.text)
-		fmt.Fprintf(&text, "%s: bytes=%d lines=%d tokens_est=%d\n", input.name, len(input.text), util.CountLines(input.text), tokens)
-		bytesTotal += len(input.text)
-		tokensTotal += tokens
+		measure := measureCavemanText(input.text)
+		fmt.Fprintf(&text, "%s: bytes=%d lines=%d tokens_est=%d\n", input.name, measure.bytes, measure.lines, measure.tokens)
+		total = total.plus(measure)
 	}
-	fmt.Fprintf(&text, "total: inputs=%d bytes=%d tokens_est=%d\n", len(inputs), bytesTotal, tokensTotal)
+	fmt.Fprintf(&text, "total: inputs=%d bytes=%d tokens_est=%d\n", len(inputs), total.bytes, total.tokens)
 	_, err = io.WriteString(out, text.String())
 	return err
 }

@@ -82,7 +82,7 @@ func printCoreCommands() {
 	fmt.Println("  compile-context    Transpile canonical AGENTS.md to vendor-native formats (< 300 LOC)")
 	fmt.Println("  compile-framework-assets  Write a framework kit's llms.txt, agent rule and starter templates")
 	fmt.Println("  context-optimize  Analyze explicit context files and optionally write a private review pack")
-	fmt.Println("  caveman            Lint agent-facing text (check) or estimate its token cost (estimate)")
+	fmt.Println("  caveman            Lint agent-facing text (check), prove a rewrite (floor), clean it up (compress) or estimate its tokens (estimate)")
 	fmt.Println("  clients            Prepare or apply client configurations from one shared tool registry")
 	fmt.Print("  notebook           Prepare source-grounded planning templates or validate generated drafts\n" +
 		"  planning           Compile a structural planning draft and optionally write private artifacts\n")

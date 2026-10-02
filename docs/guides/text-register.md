@@ -392,12 +392,14 @@ Two audiences the schema does not (yet) name a `RegisterSurface` for:
 ## Caveman lint and token estimate
 
 The internal register is measurable. `internal/caveman` lints agent-facing text, proves a
-rewrite lost nothing, and estimates tokens; `praetorctl caveman` runs it on files:
+rewrite lost nothing, applies the cleanups that cannot change meaning, and estimates tokens;
+`praetorctl caveman` runs it on files:
 
 ```bash
 praetorctl caveman check --kind=context AGENTS.md .agents/agents/
 praetorctl caveman check --kind=message candidate-note.md
 praetorctl caveman floor AGENTS.md AGENTS.caveman.md
+praetorctl caveman compress --stats AGENTS.md
 praetorctl caveman estimate AGENTS.md
 ```
 
@@ -653,6 +655,43 @@ prose lines into one line ending in `(xN)`. Fenced code (blockquoted fences incl
 front matter, structured lines and off regions keep their bytes, and so does a code span
 that wraps onto the next line. It never drops or replaces a word: automatic prose compression saved 1-3%
 on real inputs and inverted one sentence's meaning.
+
+`praetorctl caveman compress` runs that function on files, so the mechanical part of a
+rewrite can be applied and measured apart from the hand rewrite that follows it:
+
+```bash
+praetorctl caveman compress AGENTS.md
+praetorctl caveman compress --stats AGENTS.md .agents/
+praetorctl caveman compress --in-place AGENTS.md .agents/
+```
+
+| Form | Reads | Writes |
+| :--- | :--- | :--- |
+| no flag | exactly one input: a file, `-` for standard input, or a directory holding one Markdown file | the compressed text to standard output, byte for byte, and nothing else |
+| `--stats` | files, directories and `-` | one line per input and a total; no file |
+| `--in-place` | files and directories; `-` is an error | each file whose text changes, then the same lines |
+
+A directory expands to the Markdown files below it, and inputs go through the 1 MiB reader
+`check` uses. A report line carries the keys of `estimate`, each as before, after and signed
+difference, and one status. The fixture of `TestCavemanCompressPositive` (a CRLF line end, an
+ANSI escape, blank runs) reports:
+
+```text
+loose.md: bytes=68->53 (-15) lines=8->6 (-2) tokens_est=10->10 (+0) status=rewritten
+nested/tight.md: bytes=53->53 (+0) lines=6->6 (+0) tokens_est=10->10 (+0) status=unchanged
+total: inputs=2 bytes=121->106 (-15) tokens_est=20->20 (+0) rewritten=1 unchanged=1 refused=0
+```
+
+`status` is `rewritten` (`would-change` under `--stats`), `unchanged` or `refused`. No change
+is a success. The command proves every result with the clarity floor before it prints or
+writes it: folding two identical lines that each carry a MUST lowers the `F6` count, so that
+input is `refused`, its findings follow its line, the file keeps its bytes, the inputs beside
+it are still handled, and the command exits non-zero. The floor compares against the input
+without its ANSI escapes (`caveman.StripANSI`), whose parameter digits `F9` would read as
+numbers. The in-place write is `contextopt.ReplaceSnapshot` bound to the bytes that were
+read: a file edited in between is left as it is and the run stops with an error naming it.
+The command is `cavemanCompress` in `cmd/standardsctl/caveman_compress.go`; its tests are in
+`cmd/standardsctl/caveman_compress_test.go`.
 
 ### One token estimator
 
