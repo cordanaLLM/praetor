@@ -28,6 +28,15 @@ it runs the MCP functional probe first, then calls `workstation install --source
 checkout>` (HISS-19 — the atomic install exists in one place, not two). See
 [Develop against this checkout's MCP](development-mcp.md) for that workflow.
 
+Before either step the wrapper settles the interpreter the Git hooks start
+(`settle_hook_interpreter`). It checks that `PRAETOR_PYTHON`, or `python3` where the variable
+is unset, is on `PATH`. Where neither is, as on a stock Windows install, it stores the
+interpreter running the install as the user's `PRAETOR_PYTHON` with `setx`, and on any other
+platform it stops with the `export` line to add. The printed report carries the result under
+`hook_interpreter`, as `variable`, `value` and `source` (`environment`, `default` or `stored`).
+See [the interpreter the hooks run](git-hooks.md#the-interpreter-the-hooks-run); the
+`HookInterpreterTests` cases in `scripts/test_dev_install.py` cover each outcome.
+
 ## `workstation install`
 
 ```text
